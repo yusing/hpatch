@@ -432,7 +432,7 @@ func updateChanges() []change {
 
 func runForTest(root string, args []string, script string) (string, string, int) {
 	var stdout, stderr bytes.Buffer
-	exitCode := Run(args, strings.NewReader(script), &stdout, &stderr, root)
+	exitCode := Run(args, strings.NewReader(script), &stdout, &stderr, root, root+"-metrics")
 	return stdout.String(), stderr.String(), exitCode
 }
 

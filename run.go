@@ -12,14 +12,23 @@ import (
 )
 
 // Run executes the hpatch command-line contract using explicit process boundaries.
-func Run(args []string, stdin io.Reader, stdout, stderr io.Writer, workingDirectory string) int {
+func Run(args []string, stdin io.Reader, stdout, stderr io.Writer, workingDirectory, dataDirectory string) int {
 	translateMode := false
 	switch {
 	case len(args) == 0:
 	case len(args) == 1 && args[0] == "translate":
 		translateMode = true
+	case len(args) == 1 && args[0] == "gain":
+		metrics, err := readMetrics(dataDirectory)
+		if err != nil {
+			return fail(stderr, err.Error())
+		}
+		if _, err := fmt.Fprintf(stdout, "hpatch output tokens: %d\napply_patch output tokens: %d\nreduction: %.1f%%\n", metrics.HPatchTokens, metrics.ApplyPatchTokens, metrics.reduction()); err != nil {
+			return fail(stderr, fmt.Sprintf("writing gain report: %v", err))
+		}
+		return 0
 	default:
-		return fail(stderr, "expected no arguments or exactly: translate")
+		return fail(stderr, "expected no arguments or exactly: translate or gain")
 	}
 
 	script, err := io.ReadAll(stdin)
@@ -64,18 +73,31 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer, workingDirect
 	if err != nil {
 		return fail(stderr, err.Error())
 	}
+	if !translateMode && len(changes) == 0 {
+		return 0
+	}
 	if translateMode {
 		patch, err := translate(changes)
 		if err != nil {
 			return fail(stderr, err.Error())
+		}
+		if dataDirectory != "" {
+			if err := recordMetrics(dataDirectory, string(script), patch); err != nil {
+				warn(stderr, err.Error())
+			}
 		}
 		if _, err := io.WriteString(stdout, patch); err != nil {
 			return fail(stderr, fmt.Sprintf("writing patch: %v", err))
 		}
 		return 0
 	}
-	if len(changes) == 0 {
-		return 0
+	if dataDirectory != "" {
+		patch, err := translate(changes)
+		if err != nil {
+			warn(stderr, "collecting metrics: "+err.Error())
+		} else if err := recordMetrics(dataDirectory, string(script), patch); err != nil {
+			warn(stderr, err.Error())
+		}
 	}
 	if err := commitChanges(workingDirectory, changes, osFileOperations{}); err != nil {
 		return fail(stderr, fmt.Sprintf("changing %s: %v", describePaths(changes), err))
@@ -94,4 +116,9 @@ func fail(stderr io.Writer, message string) int {
 	message = strings.ReplaceAll(message, "\n", "; ")
 	_, _ = fmt.Fprintf(stderr, "hpatch: %s\n", message)
 	return 1
+}
+
+func warn(stderr io.Writer, message string) {
+	message = strings.ReplaceAll(message, "\n", "; ")
+	_, _ = fmt.Fprintf(stderr, "hpatch: warning: %s\n", message)
 }

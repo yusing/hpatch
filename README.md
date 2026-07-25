@@ -4,7 +4,8 @@ Apply compact, editor-like text and file operations from a command stream.
 
 `hpatch` reads commands from standard input and commits their complete multi-file
 result. `hpatch translate` reads the same commands but only prints an OpenAI
-`apply_patch` envelope.
+`apply_patch` envelope. `hpatch gain` reports cumulative output-token usage and the
+reduction achieved by hpatch.
 
 ## Build
 
@@ -46,6 +47,21 @@ CRLF bytes when such a patch is applied, so applying translated output to a CRLF
 may normalize that file to LF. Normal mode itself preserves existing line endings
 outside text explicitly inserted by the script.
 
+## Gain metrics
+
+For each changing script, hpatch records its GPT-5 output-token count and the count for
+the equivalent `apply_patch` output. Normal and translate mode both contribute to the
+cumulative totals.
+
+```sh
+bin/hpatch gain
+```
+
+The report shows total hpatch output tokens, total equivalent `apply_patch` output
+tokens, and their percentage reduction. With no collected metrics, all values are zero.
+Metrics persist in the platform user-configuration directory. Collection failures emit
+a warning but do not prevent the requested edit or translated output.
+
 ## Commands
 
 ```text
@@ -83,7 +99,8 @@ go run ./compare
 ```
 
 The report includes the encoding selected for GPT-5, per-scenario token counts,
-absolute savings, percentage reduction, and totals.
+absolute savings, percentage reduction, and totals. Comparison runs isolate their
+metrics and do not contribute to `hpatch gain`.
 
 ## Validation
 

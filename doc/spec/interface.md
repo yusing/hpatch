@@ -4,13 +4,14 @@
 
 `hpatch` reads a complete script from standard input, evaluates its complete change set
 in memory, stages required filesystem content, and then commits it. It writes nothing
-on success.
+on success unless metrics collection emits the warning defined by `HP-METRICS-001`.
 
 `hpatch translate` performs the same parsing, filesystem reads, and in-memory
 evaluation but never modifies a file. It writes one OpenAI `apply_patch` envelope that
 represents the same net change set.
 
-Any other argument list is invalid.
+`hpatch gain` reads no script and reports the persistent aggregate defined by
+`HP-METRICS-001`. Any other argument list is invalid.
 
 Acceptance:
 
@@ -20,6 +21,49 @@ Acceptance:
    UTF-8 contents as normal mode. For other line endings, it represents the same
    logical-line edits subject to the normalization rule in `HP-OUTPUT-001`.
 3. Translate mode leaves the source tree unchanged.
+4. Gain mode leaves the source tree and metrics unchanged.
+
+## HP-METRICS-001: Persistent token metrics
+
+For every nonempty change set that parses, evaluates, and translates successfully,
+normal and translate modes count the complete input script and translated
+`apply_patch` envelope with the tokenizer library's GPT-5 model mapping. The record is
+updated before normal-mode mutation or translate-mode stdout. In normal mode, failure
+to render the equivalent patch for metrics emits a warning and the evaluated changes
+still commit; in translate mode, rendering failure remains a command failure. Failure
+to tokenize, lock, read, write, or close metrics emits a concise `hpatch: warning:`
+diagnostic but does not prevent either requested effect.
+
+The aggregate is stored in `hpatch/metrics.bin` beneath the platform user configuration
+directory returned by Go's `os.UserConfigDir`. Updates hold an exclusive interprocess
+lock at `hpatch/metrics.lock`; gain reads hold a shared lock. The metrics file contains
+two alternating fixed-size slots, each holding both counters, a generation, and a
+checksum. A reader uses the valid slot with the greatest generation, so an interrupted
+write to the inactive slot leaves the preceding aggregate available. The file reaches
+128 bytes and does not grow further. Invalid or overflowing persisted counts fail
+rather than producing a misleading report.
+
+Metrics writes use normal operating-system page-cache writeback and do not request a
+per-invocation filesystem sync. This allows the operating system to coalesce physical
+writes. Metrics persist across processes and normal restarts, but sudden power loss may
+lose increments that the operating system had not yet flushed.
+
+`hpatch gain` writes exactly the aggregate hpatch output tokens, equivalent
+`apply_patch` output tokens, and the percentage reduction computed as
+`(apply_patch - hpatch) / apply_patch * 100`, rounded to one decimal place. Reduction
+is zero when no apply-patch tokens have been recorded. With no metrics file, both totals
+are zero. Gain reads no stdin and does not create a metrics file when none exists.
+
+Acceptance:
+
+1. Repeated normal and translate invocations persist cumulative paired token counts,
+   and a later gain process reports their totals and percentage reduction.
+2. Concurrent writers lose no records, and concurrent gain reads never observe a
+   partial record.
+3. The metrics file remains fixed-size and a damaged inactive slot falls back to the
+   preceding valid aggregate.
+4. Metrics collection failure warns without preventing workspace mutation or patch
+   output.
 
 ## HP-SCRIPT-001: Script grammar
 

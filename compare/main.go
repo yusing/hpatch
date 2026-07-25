@@ -121,7 +121,7 @@ func runHPatch(scenario scenario) (map[string]string, error) {
 		}
 	}
 	var stdout, stderr bytes.Buffer
-	if exitCode := hpatch.Run(nil, strings.NewReader(scenario.script), &stdout, &stderr, root); exitCode != 0 {
+	if exitCode := hpatch.Run(nil, strings.NewReader(scenario.script), &stdout, &stderr, root, ""); exitCode != 0 {
 		return nil, fmt.Errorf("hpatch exited %d: %s", exitCode, stderr.String())
 	}
 	if stdout.Len() != 0 || stderr.Len() != 0 {
