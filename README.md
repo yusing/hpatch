@@ -38,9 +38,11 @@ type " world\n"
 EOF
 ```
 
-The second command writes an `Add File` patch to stdout. Errors go to stderr and return
-a nonzero status. Normal mode preserves existing file permission bits and creates files
-from `new` with mode `0644`.
+The second command writes an `Add File` patch to stdout. Successful translation keeps
+stdout patch-only. Errors return nonzero and go to stderr; evaluation diagnostics
+identify the command index, source line, operation, relevant path, and failure category.
+Normal mode preserves existing file permission bits and creates files from `new` with
+mode `0644`.
 
 Translate mode emits LF-only logical-line patches. OpenAI `apply_patch` cannot preserve
 CRLF bytes when such a patch is applied, so applying translated output to a CRLF file
@@ -80,9 +82,15 @@ dup
 `in` and `new` select a file at the cursor position before its first character.
 `type` inserts at the cursor or replaces a selection, then advances the cursor. Lines
 and inclusive columns are one-based and count Unicode code points. String operands use
-JSON syntax. Commands execute sequentially, including across repeated `in` commands.
-Paths use normal host filesystem semantics: relative paths resolve from the current
-directory and absolute paths remain absolute.
+JSON syntax; generate nontrivial operands with a JSON encoder. Commands execute
+sequentially against current in-memory content, including across repeated `in`
+commands. `rsel` includes each selected line's terminator when present, so complete-line
+replacement text must include any desired final newline.
+
+Paths use normal host filesystem semantics during translation: relative paths resolve
+from hpatch's current directory and absolute paths remain absolute. The translated text
+contains paths but no current-directory metadata. A downstream patch tool independently
+chooses its application root, so its root must be aligned with the paths hpatch emits.
 
 The complete behavior and failure contract is in
 [`doc/spec/interface.md`](doc/spec/interface.md). A shorter instruction sheet for

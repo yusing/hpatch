@@ -7,7 +7,9 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 )
 
@@ -112,13 +114,29 @@ func resolveFilesystemPath(workingDirectory, path string) string {
 	return filepath.Join(workingDirectory, path)
 }
 
+func sanitizeDiagnostic(message string) string {
+	var sanitized strings.Builder
+	for _, character := range message {
+		switch {
+		case character == '\n':
+			sanitized.WriteString("; ")
+		case unicode.IsControl(character):
+			escaped := strconv.QuoteRune(character)
+			sanitized.WriteString(escaped[1 : len(escaped)-1])
+		default:
+			sanitized.WriteRune(character)
+		}
+	}
+	return sanitized.String()
+}
+
 func fail(stderr io.Writer, message string) int {
-	message = strings.ReplaceAll(message, "\n", "; ")
+	message = sanitizeDiagnostic(message)
 	_, _ = fmt.Fprintf(stderr, "hpatch: %s\n", message)
 	return 1
 }
 
 func warn(stderr io.Writer, message string) {
-	message = strings.ReplaceAll(message, "\n", "; ")
+	message = sanitizeDiagnostic(message)
 	_, _ = fmt.Fprintf(stderr, "hpatch: warning: %s\n", message)
 }

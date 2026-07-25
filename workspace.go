@@ -57,12 +57,42 @@ func (p *program) evaluate(load fileLoader, exists pathProbe) ([]change, error) 
 		load:    load,
 		exists:  exists,
 	}
-	for _, command := range p.instructions {
+	for commandIndex, command := range p.instructions {
 		if err := w.execute(command); err != nil {
-			return nil, scriptError(command.line, err.Error())
+			return nil, &commandError{
+				Command:   commandIndex + 1,
+				Line:      command.line,
+				Operation: command.operation,
+				Path:      w.diagnosticPath(command),
+				Category:  commandCategory(command.operation),
+				Message:   err.Error(),
+			}
 		}
 	}
 	return w.changes(), nil
+}
+
+func (w *workspace) diagnosticPath(command instruction) string {
+	if command.path != "" {
+		return command.path
+	}
+	if w.active != nil {
+		return w.active.path
+	}
+	return ""
+}
+
+func commandCategory(operation string) string {
+	switch operation {
+	case "in", "new", "mv", "rm":
+		return "file"
+	case "sel", "tsel", "rsel":
+		return "selection"
+	case "type", "del", "dup":
+		return "edit"
+	default:
+		panic("parsed instruction has no diagnostic category: " + operation)
+	}
 }
 
 func (w *workspace) execute(command instruction) error {

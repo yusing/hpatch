@@ -2,6 +2,7 @@ package hpatch
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"regexp"
@@ -31,12 +32,30 @@ type program struct {
 }
 
 type commandError struct {
-	Line    int
-	Message string
+	Command   int
+	Line      int
+	Operation string
+	Path      string
+	Category  string
+	Message   string
 }
 
 func (e *commandError) Error() string {
-	return fmt.Sprintf("line %d: %s", e.Line, e.Message)
+	var context []string
+	if e.Command != 0 {
+		context = append(context, fmt.Sprintf("command %d", e.Command))
+	}
+	context = append(context, fmt.Sprintf("source line %d", e.Line))
+	if e.Operation != "" {
+		context = append(context, fmt.Sprintf("operation %q", e.Operation))
+	}
+	if e.Path != "" {
+		context = append(context, fmt.Sprintf("path %q", e.Path))
+	}
+	if e.Category != "" {
+		context = append(context, "category "+e.Category)
+	}
+	return fmt.Sprintf("%s: %s", strings.Join(context, ", "), e.Message)
 }
 
 func parse(source string) (*program, error) {
@@ -47,9 +66,20 @@ func parse(source string) (*program, error) {
 		if strings.TrimSpace(line) == "" {
 			continue
 		}
+		commandIndex := len(program.instructions) + 1
 		command, err := parseInstruction(lineNumber, line)
 		if err != nil {
-			return nil, err
+			message := err.Error()
+			if sourceError, ok := errors.AsType[*commandError](err); ok {
+				message = sourceError.Message
+			}
+			return nil, &commandError{
+				Command:   commandIndex,
+				Line:      lineNumber,
+				Operation: strings.Fields(line)[0],
+				Category:  "syntax",
+				Message:   message,
+			}
 		}
 		program.instructions = append(program.instructions, command)
 	}

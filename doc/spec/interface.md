@@ -86,10 +86,14 @@ Numbers are base-ten integers. Text lines, selection columns, and inclusive endp
 are one-based. Cursor `0:0` denotes the position before the first code point of a file;
 it is editor state, not a command operand. `OCCURRENCE` is nonzero: positive values
 count exact, non-overlapping literal matches from the start; negative values count
-them from the end. JSON operands use standard JSON string decoding. Paths are nonempty
-filesystem paths normalized with the host OS path rules. Relative paths resolve from
-the process working directory; absolute paths remain absolute. Trailing operands and
-unknown commands are invalid.
+them from the end. JSON operands use standard JSON string decoding. `type` strings may
+contain line terminators; `tsel` strings must stay within one logical line.
+
+Paths are nonempty filesystem paths normalized with the host OS path rules. During
+translation, relative paths resolve from the hpatch process working directory and
+absolute paths remain absolute. Emitted patch paths do not carry that process working
+directory as metadata. A downstream patch consumer resolves them according to its own
+application-root contract. Trailing operands and unknown commands are invalid.
 
 Acceptance:
 
@@ -150,12 +154,17 @@ points, including one code point per tab; the line terminator is not selectable.
 The literal must be nonempty and cannot contain a line terminator. Matches do not
 overlap. `-1` selects the last match.
 
-`rsel` selects an inclusive range of complete current logical lines. It records a
-linewise selection so duplication creates another complete adjacent line range,
-including when the selected final line has no terminator.
+`rsel` selects an inclusive range of complete current logical lines. For every
+selected line it owns the line terminator when one is present. It records a linewise
+selection so duplication creates another complete adjacent line range, including when
+the selected final line has no terminator. Replacing an `rsel` selection with `type`
+therefore removes the selected final terminator unless the replacement string supplies
+one.
 
 Every selection replaces the previous cursor or selection. Commands observe current
-contents and current line numbering after earlier edit actions.
+contents and current line numbering after earlier edit actions. `type` leaves the
+cursor immediately after inserted text, `del` leaves it at the removed selection's
+start, and `dup` selects the duplicated copy.
 
 Acceptance:
 
@@ -243,8 +252,12 @@ does not modify source files. Normal mode continues to preserve existing line en
 outside explicitly inserted strings. Applying translated output to a non-LF file may
 normalize that file to LF; this is a declared format limitation, not byte equivalence.
 
-Failures emit one concise diagnostic to stderr, prefixed with `hpatch:` and, for script
-errors, the script line number. They return nonzero and emit no stdout.
+Failures emit one concise diagnostic to stderr, prefixed with `hpatch:`. Script
+diagnostics identify the one-based nonblank command index, one-based source line,
+operation, relevant operand or selected path when one exists, and a failure category
+(`syntax`, `file`, `selection`, or `edit`). Control bytes in every diagnostic are escaped
+and embedded newlines are folded so one failure remains one logical line. Failures
+return nonzero and emit no stdout.
 
 Acceptance:
 

@@ -266,6 +266,66 @@ func TestEvaluationFailuresDoNotMutateOrEmitPatch(t *testing.T) {
 	}
 }
 
+func TestFailureDiagnosticsIdentifyCommandContext(t *testing.T) {
+	tests := []struct {
+		name   string
+		script string
+		want   string
+	}{
+		{
+			name:   "selection failure includes selected path",
+			script: "in file.txt\ntsel 1 2 \"aa\"",
+			want:   "hpatch: command 2, source line 2, operation \"tsel\", path \"file.txt\", category selection: occurrence 2 of \"aa\" not found on line 1\n",
+		},
+		{
+			name:   "file failure includes operand path",
+			script: "new file.txt",
+			want:   "hpatch: command 1, source line 1, operation \"new\", path \"file.txt\", category file: destination file.txt already exists\n",
+		},
+		{
+			name:   "malformed command is syntax",
+			script: "in file.txt\nsel 1 2",
+			want:   "hpatch: command 2, source line 2, operation \"sel\", category syntax: unknown or malformed command\n",
+		},
+		{
+			name:   "unknown future command is syntax",
+			script: "\nin file.txt\nsplice 1:2",
+			want:   "hpatch: command 2, source line 3, operation \"splice\", category syntax: unknown or malformed command\n",
+		},
+		{
+			name:   "tab-separated malformed command identifies token",
+			script: "in file.txt\nsplice\t1:2",
+			want:   "hpatch: command 2, source line 2, operation \"splice\", category syntax: unknown or malformed command\n",
+		},
+		{
+			name:   "control byte in malformed operation is escaped",
+			script: "in file.txt\n\x1b[31msplice 1:2",
+			want:   "hpatch: command 2, source line 2, operation \"\\x1b[31msplice\", category syntax: unknown or malformed command\n",
+		},
+		{
+			name:   "control byte in path message is escaped",
+			script: "new \x1b[31mfile.txt",
+			want:   "hpatch: command 1, source line 1, operation \"new\", path \"\\x1b[31mfile.txt\", category file: destination \\x1b[31mfile.txt already exists\n",
+		},
+		{
+			name:   "edit without file omits path",
+			script: "type \"x\"",
+			want:   "hpatch: command 1, source line 1, operation \"type\", category edit: type requires an active file\n",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			writeTestFile(t, root, "file.txt", "aaa\n", 0o644)
+			writeTestFile(t, root, "\x1b[31mfile.txt", "occupied\n", 0o644)
+			stdout, stderr, exitCode := runForTest(root, []string{"translate"}, test.script)
+			if exitCode != 1 || stdout != "" || stderr != test.want {
+				t.Fatalf("Run() = exit %d, stdout %q, stderr %q; want stderr %q", exitCode, stdout, stderr, test.want)
+			}
+		})
+	}
+}
+
 func TestInvalidUTF8IsRejected(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "binary.txt"), []byte{0xff}, 0o644); err != nil {
