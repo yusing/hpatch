@@ -25,7 +25,7 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer, workingDirect
 		if err != nil {
 			return fail(stderr, err.Error())
 		}
-		if _, err := fmt.Fprintf(stdout, "hpatch output tokens: %d\napply_patch output tokens: %d\nreduction: %.1f%%\n", metrics.HPatchTokens, metrics.ApplyPatchTokens, metrics.reduction()); err != nil {
+		if _, err := fmt.Fprintf(stdout, "estimated hpatch output tokens: %d\nestimated apply_patch output tokens: %d\nestimated reduction: %.1f%%\n", metrics.HPatchTokens, metrics.ApplyPatchTokens, metrics.reduction()); err != nil {
 			return fail(stderr, fmt.Sprintf("writing gain report: %v", err))
 		}
 		return 0
@@ -84,7 +84,7 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer, workingDirect
 			return fail(stderr, err.Error())
 		}
 		if dataDirectory != "" {
-			if err := recordMetrics(dataDirectory, string(script), patch); err != nil {
+			if err := recordMetrics(dataDirectory, workingDirectory, string(script), patch); err != nil {
 				warn(stderr, err.Error())
 			}
 		}
@@ -97,7 +97,7 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer, workingDirect
 		patch, err := translate(changes)
 		if err != nil {
 			warn(stderr, "collecting metrics: "+err.Error())
-		} else if err := recordMetrics(dataDirectory, string(script), patch); err != nil {
+		} else if err := recordMetrics(dataDirectory, workingDirectory, string(script), patch); err != nil {
 			warn(stderr, err.Error())
 		}
 	}

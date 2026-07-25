@@ -26,43 +26,75 @@ Acceptance:
 ## HP-METRICS-001: Persistent token metrics
 
 For every nonempty change set that parses, evaluates, and translates successfully,
-normal and translate modes count the complete input script and translated
-`apply_patch` envelope with the tokenizer library's GPT-5 model mapping. The record is
-updated before normal-mode mutation or translate-mode stdout. In normal mode, failure
-to render the equivalent patch for metrics emits a warning and the evaluated changes
-still commit; in translate mode, rendering failure remains a command failure. Failure
-to tokenize, lock, read, write, or close metrics emits a concise `hpatch: warning:`
-diagnostic but does not prevent either requested effect.
+normal and translate modes estimate the generated GPT-5 output tokens for two
+semantically equivalent tool calls. The hpatch side counts the `functions.exec` tool
+name and a fixed orchestration template containing the working directory, a
+shell-quoted complete input script, `hpatch translate`, failure propagation, and
+`apply_patch` forwarding. The direct side counts the `apply_patch` tool name and
+complete translated patch envelope. Both use the tokenizer library's GPT-5 model
+mapping.
+
+hpatch v1 assumes the OpenAI `apply_patch` patch schema and the Codex free-form tool
+shape documented by `AGENT_INSTRUCTIONS.md`. Tool name and free-form input are joined
+by one newline for tokenization. The fixed hpatch template models a command that pipes
+the script through `printf` to `hpatch translate`, then passes translation stdout
+directly to the native patch tool in the same orchestration boundary. Because that
+patch text is produced by the tool rather than the model, it is not counted on the
+hpatch side. The working directory and shell escaping are counted.
+
+The estimates exclude provider-hidden protocol and reasoning tokens, assistant
+commentary, server-generated identifiers, and tool results. They are reproducible
+comparisons for the stated hpatch-v1 assumption, not authoritative API usage. A host
+with a different tool name, wrapper, formatting, stdin facility, or token accounting
+can have different actual output usage.
+
+The record is updated before normal-mode mutation or translate-mode stdout. In normal
+mode, failure to render the equivalent patch for metrics emits a warning and the
+evaluated changes still commit; in translate mode, rendering failure remains a command
+failure. Failure to tokenize, lock, read, write, or close metrics emits a concise
+`hpatch: warning:` diagnostic but does not prevent either requested effect.
 
 The aggregate is stored in `hpatch/metrics.bin` beneath the platform user configuration
 directory returned by Go's `os.UserConfigDir`. Updates hold an exclusive interprocess
 lock at `hpatch/metrics.lock`; gain reads hold a shared lock. The metrics file contains
 two alternating fixed-size slots, each holding both counters, a generation, and a
-checksum. A reader uses the valid slot with the greatest generation, so an interrupted
-write to the inactive slot leaves the preceding aggregate available. The file reaches
-128 bytes and does not grow further. Invalid or overflowing persisted counts fail
-rather than producing a misleading report.
+checksum. A reader uses the valid current-format slot with the greatest generation, so
+an interrupted write to the inactive slot leaves the preceding aggregate available.
+The file reaches 128 bytes and does not grow further. Invalid, overflowing, or unknown
+future-format persisted counts fail rather than producing a misleading report.
+
+Raw-script/raw-patch counters written by the preceding metric definition cannot be
+converted into workflow estimates. A legacy-only file therefore reads as zero; the
+first later changing invocation preserves its generation ordering but replaces its
+totals with one current-format estimate. Legacy and current totals are never added.
 
 Metrics writes use normal operating-system page-cache writeback and do not request a
 per-invocation filesystem sync. This allows the operating system to coalesce physical
 writes. Metrics persist across processes and normal restarts, but sudden power loss may
 lose increments that the operating system had not yet flushed.
 
-`hpatch gain` writes exactly the aggregate hpatch output tokens, equivalent
-`apply_patch` output tokens, and the percentage reduction computed as
+`hpatch gain` writes exactly the aggregate estimated hpatch output tokens, estimated
+`apply_patch` output tokens, and estimated percentage reduction computed as
 `(apply_patch - hpatch) / apply_patch * 100`, rounded to one decimal place. Reduction
-is zero when no apply-patch tokens have been recorded. With no metrics file, both totals
-are zero. Gain reads no stdin and does not create a metrics file when none exists.
+is zero when no apply-patch tokens have been recorded. With no metrics file or only a
+legacy record, both totals are zero. Gain reads no stdin and does not create or rewrite
+a metrics file.
 
 Acceptance:
 
-1. Repeated normal and translate invocations persist cumulative paired token counts,
-   and a later gain process reports their totals and percentage reduction.
-2. Concurrent writers lose no records, and concurrent gain reads never observe a
+1. Repeated normal and translate invocations persist cumulative paired estimates, and
+   a later gain process reports their totals and percentage reduction.
+2. The hpatch estimate includes its tool name, invocation wrapper, serialized script,
+   working directory, and internal patch-call expression, but not the translated patch
+   contents; the direct estimate includes its tool name and patch envelope.
+3. Scripts containing shell quotes or wrapper-like text remain data and cannot alter
+   the canonical wrapper used for counting.
+4. Concurrent writers lose no records, and concurrent gain reads never observe a
    partial record.
-3. The metrics file remains fixed-size and a damaged inactive slot falls back to the
-   preceding valid aggregate.
-4. Metrics collection failure warns without preventing workspace mutation or patch
+5. The metrics file remains fixed-size, a damaged inactive slot falls back to the
+   preceding valid aggregate, legacy raw totals are not mixed into current estimates,
+   and unknown future formats fail closed.
+6. Metrics collection failure warns without preventing workspace mutation or patch
    output.
 
 ## HP-SCRIPT-001: Script grammar

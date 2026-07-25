@@ -15,11 +15,12 @@ import (
 )
 
 const (
-	metricsFilename = "metrics.bin"
-	metricsLockname = "metrics.lock"
-	metricsMagic    = "HPATCH01"
-	metricsSlotSize = 64
-	metricsFileSize = 2 * metricsSlotSize
+	metricsFilename    = "metrics.bin"
+	metricsLockname    = "metrics.lock"
+	legacyMetricsMagic = "HPATCH01"
+	metricsMagic       = "HPATCH02"
+	metricsSlotSize    = 64
+	metricsFileSize    = 2 * metricsSlotSize
 )
 
 type metrics struct {
@@ -27,24 +28,25 @@ type metrics struct {
 	ApplyPatchTokens uint64
 }
 
-func countMetrics(script, patch string) (metrics, error) {
+func countMetrics(workingDirectory, script, patch string) (metrics, error) {
+	hpatchPayload, applyPatchPayload := metricPayloads(workingDirectory, script, patch)
 	codec, err := tokenizer.ForModel(tokenizer.GPT5)
 	if err != nil {
 		return metrics{}, fmt.Errorf("loading GPT-5 tokenizer: %w", err)
 	}
-	hpatchTokens, err := codec.Count(script)
+	hpatchTokens, err := codec.Count(hpatchPayload)
 	if err != nil {
 		return metrics{}, fmt.Errorf("tokenizing hpatch output: %w", err)
 	}
-	applyPatchTokens, err := codec.Count(patch)
+	applyPatchTokens, err := codec.Count(applyPatchPayload)
 	if err != nil {
 		return metrics{}, fmt.Errorf("tokenizing apply_patch output: %w", err)
 	}
 	return metrics{HPatchTokens: uint64(hpatchTokens), ApplyPatchTokens: uint64(applyPatchTokens)}, nil
 }
 
-func recordMetrics(dataDirectory, script, patch string) error {
-	entry, err := countMetrics(script, patch)
+func recordMetrics(dataDirectory, workingDirectory, script, patch string) error {
+	entry, err := countMetrics(workingDirectory, script, patch)
 	if err != nil {
 		return err
 	}
@@ -150,9 +152,11 @@ func readMetricsFile(file *os.File) (metrics, uint64, error) {
 	}
 
 	var (
-		latest           metrics
-		latestGeneration uint64
-		valid            bool
+		latest                 metrics
+		latestGeneration       uint64
+		latestLegacyGeneration uint64
+		valid                  bool
+		legacyValid            bool
 	)
 	for index := range 2 {
 		var encoded [metricsSlotSize]byte
@@ -163,17 +167,25 @@ func readMetricsFile(file *os.File) (metrics, uint64, error) {
 		if read != metricsSlotSize {
 			continue
 		}
-		candidate, generation, ok := decodeMetricsSlot(encoded)
+		candidate, generation, ok := decodeMetricsSlot(encoded, metricsMagic)
 		if ok && (!valid || generation > latestGeneration) {
 			latest = candidate
 			latestGeneration = generation
 			valid = true
 		}
+		_, legacyGeneration, legacyOK := decodeMetricsSlot(encoded, legacyMetricsMagic)
+		if legacyOK && (!legacyValid || legacyGeneration > latestLegacyGeneration) {
+			latestLegacyGeneration = legacyGeneration
+			legacyValid = true
+		}
 	}
-	if !valid {
-		return metrics{}, 0, fmt.Errorf("reading metrics: no valid counter slot")
+	if valid {
+		return latest, latestGeneration, nil
 	}
-	return latest, latestGeneration, nil
+	if legacyValid {
+		return metrics{}, latestLegacyGeneration, nil
+	}
+	return metrics{}, 0, fmt.Errorf("reading metrics: no valid counter slot")
 }
 
 func encodeMetricsSlot(value metrics, generation uint64) [metricsSlotSize]byte {
@@ -187,8 +199,8 @@ func encodeMetricsSlot(value metrics, generation uint64) [metricsSlotSize]byte {
 	return encoded
 }
 
-func decodeMetricsSlot(encoded [metricsSlotSize]byte) (metrics, uint64, bool) {
-	if !bytes.Equal(encoded[:8], []byte(metricsMagic)) {
+func decodeMetricsSlot(encoded [metricsSlotSize]byte, magic string) (metrics, uint64, bool) {
+	if !bytes.Equal(encoded[:8], []byte(magic)) {
 		return metrics{}, 0, false
 	}
 	checksum := sha256.Sum256(encoded[:32])

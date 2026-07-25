@@ -2,6 +2,7 @@ package hpatch
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"fmt"
 	"os"
 	"os/exec"
@@ -17,7 +18,7 @@ func TestGainReportsPersistedTotals(t *testing.T) {
 	dataDirectory := t.TempDir()
 	script := "new note.txt\ntype \"hello\"\n"
 	patch := "*** Begin Patch\n*** Add File: note.txt\n+hello\n*** End Patch\n"
-	entry, err := countMetrics(script, patch)
+	entry, err := countMetrics(root, script, patch)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -37,7 +38,7 @@ func TestGainReportsPersistedTotals(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	exitCode = Run([]string{"gain"}, strings.NewReader("not a script"), &stdout, &stderr, root, dataDirectory)
 	want := fmt.Sprintf(
-		"hpatch output tokens: %d\napply_patch output tokens: %d\nreduction: %.1f%%\n",
+		"estimated hpatch output tokens: %d\nestimated apply_patch output tokens: %d\nestimated reduction: %.1f%%\n",
 		entry.HPatchTokens*2,
 		entry.ApplyPatchTokens*2,
 		entry.reduction(),
@@ -51,7 +52,7 @@ func TestGainWithoutMetricsReportsZero(t *testing.T) {
 	dataDirectory := filepath.Join(t.TempDir(), "absent")
 	var stdout, stderr bytes.Buffer
 	exitCode := Run([]string{"gain"}, strings.NewReader("ignored"), &stdout, &stderr, t.TempDir(), dataDirectory)
-	want := "hpatch output tokens: 0\napply_patch output tokens: 0\nreduction: 0.0%\n"
+	want := "estimated hpatch output tokens: 0\nestimated apply_patch output tokens: 0\nestimated reduction: 0.0%\n"
 	if exitCode != 0 || stdout.String() != want || stderr.Len() != 0 {
 		t.Fatalf("gain = exit %d, stdout %q, stderr %q; want stdout %q", exitCode, stdout.String(), stderr.String(), want)
 	}
@@ -285,4 +286,50 @@ func TestMetricsProcessHelper(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+}
+
+func TestLegacyMetricsAreResetBeforeNewEstimates(t *testing.T) {
+	dataDirectory := t.TempDir()
+	legacy := rewriteMetricsMagic(encodeMetricsSlot(metrics{HPatchTokens: 5, ApplyPatchTokens: 9}, 7), legacyMetricsMagic)
+	if err := os.WriteFile(filepath.Join(dataDirectory, metricsFilename), legacy[:], 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := readMetrics(dataDirectory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != (metrics{}) {
+		t.Fatalf("legacy metrics were mixed into estimates: %+v", got)
+	}
+
+	want := metrics{HPatchTokens: 11, ApplyPatchTokens: 13}
+	if err := updateMetrics(dataDirectory, want); err != nil {
+		t.Fatal(err)
+	}
+	got, err = readMetrics(dataDirectory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != want {
+		t.Fatalf("metrics after legacy reset = %+v, want %+v", got, want)
+	}
+}
+
+func TestMetricsRejectUnknownFutureFormat(t *testing.T) {
+	dataDirectory := t.TempDir()
+	future := rewriteMetricsMagic(encodeMetricsSlot(metrics{HPatchTokens: 5, ApplyPatchTokens: 9}, 1), "HPATCH99")
+	if err := os.WriteFile(filepath.Join(dataDirectory, metricsFilename), future[:], 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := readMetrics(dataDirectory); err == nil || !strings.Contains(err.Error(), "no valid counter slot") {
+		t.Fatalf("readMetrics() error = %v, want unknown-format failure", err)
+	}
+}
+
+func rewriteMetricsMagic(encoded [metricsSlotSize]byte, magic string) [metricsSlotSize]byte {
+	copy(encoded[:8], magic)
+	checksum := sha256.Sum256(encoded[:32])
+	copy(encoded[32:], checksum[:])
+	return encoded
 }

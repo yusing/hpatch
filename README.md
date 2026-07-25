@@ -4,7 +4,7 @@ Apply compact, editor-like text and file operations from a command stream.
 
 `hpatch` reads commands from standard input and commits their complete multi-file
 result. `hpatch translate` reads the same commands but only prints an OpenAI
-`apply_patch` envelope. `hpatch gain` reports cumulative output-token usage and the
+`apply_patch` envelope. `hpatch gain` reports cumulative estimated output-token usage and the
 reduction achieved by hpatch.
 
 ## Build
@@ -51,18 +51,33 @@ outside text explicitly inserted by the script.
 
 ## Gain metrics
 
-For each changing script, hpatch records its GPT-5 output-token count and the count for
-the equivalent `apply_patch` output. Normal and translate mode both contribute to the
-cumulative totals.
+For each changing script, normal and translate modes record cumulative estimates of
+the GPT-5 output tokens needed for the complete hpatch tool call and for the equivalent
+direct `apply_patch` call:
 
 ```sh
 bin/hpatch gain
 ```
 
-The report shows total hpatch output tokens, total equivalent `apply_patch` output
-tokens, and their percentage reduction. With no collected metrics, all values are zero.
-Metrics persist in the platform user-configuration directory. Collection failures emit
-a warning but do not prevent the requested edit or translated output.
+hpatch v1 assumes the OpenAI `apply_patch` patch schema and the Codex free-form tool
+shape used by `AGENT_INSTRUCTIONS.md`. The hpatch estimate counts the
+`functions.exec` tool name, a fixed translate-and-apply orchestration template, the
+shell-quoted script, and the working directory. The direct estimate counts the
+`apply_patch` tool name and patch envelope. The patch produced by `hpatch translate`
+is passed internally to `apply_patch` and is not counted again as model output.
+
+These are reproducible estimates, not API billing totals. They exclude provider-hidden
+protocol and reasoning tokens, assistant commentary, server-generated identifiers,
+and tool results. Wrapper formatting or a different host tool schema can change actual
+usage.
+
+The report writes estimated hpatch output tokens, estimated direct `apply_patch`
+output tokens, and their estimated percentage reduction. With no current estimates,
+all values are zero. Metrics persist in the platform user-configuration directory.
+Counters produced by the earlier raw-script/raw-patch calculation are not mixed with
+the corrected estimates; they report zero until the next changing invocation replaces
+them. Collection failures emit a warning but do not prevent the requested edit or
+translated output.
 
 ## Commands
 
