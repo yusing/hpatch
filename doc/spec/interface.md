@@ -1,6 +1,6 @@
 # Interface contract
 
-## HP-CLI-001: Modes
+## HP-CLI-001: Modes and informational output
 
 `hpatch` reads a complete script from standard input, evaluates its complete change set
 in memory, stages required filesystem content, and then commits it. It writes nothing
@@ -11,7 +11,13 @@ evaluation but never modifies a file. It writes one OpenAI `apply_patch` envelop
 represents the same net change set.
 
 `hpatch gain` reads no script and reports the persistent aggregate defined by
-`HP-METRICS-001`. Any other argument list is invalid.
+`HP-METRICS-001`. `hpatch --help` is the complete built-in agent reference for
+stdin usage, process and editing commands, editor state, orchestration, trust boundaries,
+and validation. `hpatch translate --help` summarizes translate-mode I/O and points to
+top-level help. `hpatch --version` writes the module build version, or `devel` for an
+unversioned build. Informational commands do not read stdin, resolve a working or
+configuration directory, access metrics, or inspect project files. Any other argument
+list is invalid.
 
 Acceptance:
 
@@ -22,31 +28,32 @@ Acceptance:
    logical-line edits subject to the normalization rule in `HP-OUTPUT-001`.
 3. Translate mode leaves the source tree unchanged.
 4. Gain mode leaves the source tree and metrics unchanged.
+5. Each supported informational form writes its complete result to stdout with status
+   zero and empty stderr without reading stdin or requiring a valid current directory.
+6. Unsupported aliases, trailing arguments, and unknown/future options fail with no
+   stdout.
 
 ## HP-METRICS-001: Persistent token metrics
 
 For every nonempty change set that parses, evaluates, and translates successfully,
 normal and translate modes estimate the generated GPT-5 output tokens for two
 semantically equivalent tool calls. The hpatch side counts the `functions.exec` tool
-name and a fixed orchestration template containing the working directory, a
-shell-quoted complete input script, `hpatch translate`, failure propagation, and
-`apply_patch` forwarding. The direct side counts the `apply_patch` tool name and
-complete translated patch envelope. Both use the tokenizer library's GPT-5 model
-mapping.
+name and a fixed orchestration template containing `cmd: "hpatch translate"`, the
+complete script serialized in a distinct native stdin field, the working directory,
+failure propagation, and direct `apply_patch` forwarding. The direct side counts the
+`apply_patch` tool name and complete translated patch envelope. Both use the tokenizer
+library's GPT-5 model mapping.
 
-hpatch v1 assumes the OpenAI `apply_patch` patch schema and the Codex free-form tool
-shape documented by `AGENT_INSTRUCTIONS.md`. Tool name and free-form input are joined
-by one newline for tokenization. The fixed hpatch template models a command that pipes
-the script through `printf` to `hpatch translate`, then passes translation stdout
-directly to the native patch tool in the same orchestration boundary. Because that
-patch text is produced by the tool rather than the model, it is not counted on the
-hpatch side. The working directory and shell escaping are counted.
+The fixed template does not contain Python, `printf`, an encoding helper, a shell
+pipeline, or another wrapper around `hpatch translate`. Script text is serialized only
+as stdin data. Translation stdout passes directly to the native patch tool in the same
+orchestration boundary and is not counted again as model output.
 
 The estimates exclude provider-hidden protocol and reasoning tokens, assistant
 commentary, server-generated identifiers, and tool results. They are reproducible
-comparisons for the stated hpatch-v1 assumption, not authoritative API usage. A host
-with a different tool name, wrapper, formatting, stdin facility, or token accounting
-can have different actual output usage.
+comparisons for this native-stdin assumption, not authoritative API usage. A host with
+a different tool name, formatting, stdin schema, or token accounting can have different
+actual output usage.
 
 The record is updated before normal-mode mutation or translate-mode stdout. In normal
 mode, failure to render the equivalent patch for metrics emits a warning and the
@@ -63,10 +70,11 @@ an interrupted write to the inactive slot leaves the preceding aggregate availab
 The file reaches 128 bytes and does not grow further. Invalid, overflowing, or unknown
 future-format persisted counts fail rather than producing a misleading report.
 
-Raw-script/raw-patch counters written by the preceding metric definition cannot be
-converted into workflow estimates. A legacy-only file therefore reads as zero; the
-first later changing invocation preserves its generation ordering but replaces its
-totals with one current-format estimate. Legacy and current totals are never added.
+Raw-script/raw-patch counters and shell-wrapper estimates from preceding metric
+definitions cannot be converted into native-stdin workflow estimates. An obsolete-only
+file therefore reads as zero; the first later changing invocation preserves generation
+ordering but replaces its totals with one current-format estimate. Obsolete and current
+totals are never added.
 
 Metrics writes use normal operating-system page-cache writeback and do not request a
 per-invocation filesystem sync. This allows the operating system to coalesce physical
@@ -77,22 +85,22 @@ lose increments that the operating system had not yet flushed.
 `apply_patch` output tokens, and estimated percentage reduction computed as
 `(apply_patch - hpatch) / apply_patch * 100`, rounded to one decimal place. Reduction
 is zero when no apply-patch tokens have been recorded. With no metrics file or only a
-legacy record, both totals are zero. Gain reads no stdin and does not create or rewrite
+obsolete record, both totals are zero. Gain reads no stdin and does not create or rewrite
 a metrics file.
 
 Acceptance:
 
 1. Repeated normal and translate invocations persist cumulative paired estimates, and
    a later gain process reports their totals and percentage reduction.
-2. The hpatch estimate includes its tool name, invocation wrapper, serialized script,
-   working directory, and internal patch-call expression, but not the translated patch
-   contents; the direct estimate includes its tool name and patch envelope.
-3. Scripts containing shell quotes or wrapper-like text remain data and cannot alter
-   the canonical wrapper used for counting.
+2. The hpatch estimate includes its tool name, fixed native-stdin orchestration,
+   serialized script, working directory, and internal patch-call expression, but not
+   translated patch contents; the direct estimate includes its tool name and envelope.
+3. Scripts containing quotes or wrapper-like text remain stdin data and cannot alter
+   the canonical command or orchestration fields used for counting.
 4. Concurrent writers lose no records, and concurrent gain reads never observe a
    partial record.
 5. The metrics file remains fixed-size, a damaged inactive slot falls back to the
-   preceding valid aggregate, legacy raw totals are not mixed into current estimates,
+   preceding valid aggregate, obsolete totals are not mixed into native-stdin estimates,
    and unknown future formats fail closed.
 6. Metrics collection failure warns without preventing workspace mutation or patch
    output.
@@ -108,6 +116,7 @@ mv PATH
 rm
 sel LINE START:END
 tsel LINE OCCURRENCE "JSON STRING"
+bsel "START" "END"
 rsel START:END
 type "JSON STRING"
 del
@@ -118,8 +127,9 @@ Numbers are base-ten integers. Text lines, selection columns, and inclusive endp
 are one-based. Cursor `0:0` denotes the position before the first code point of a file;
 it is editor state, not a command operand. `OCCURRENCE` is nonzero: positive values
 count exact, non-overlapping literal matches from the start; negative values count
-them from the end. JSON operands use standard JSON string decoding. `type` strings may
-contain line terminators; `tsel` strings must stay within one logical line.
+them from the end. JSON operands use standard JSON string decoding. `type` and `bsel`
+strings may contain encoded line terminators; `tsel` strings must stay within one
+logical line. Both `bsel` strings must be nonempty and different.
 
 Paths are nonempty filesystem paths normalized with the host OS path rules. During
 translation, relative paths resolve from the hpatch process working directory and
@@ -129,12 +139,12 @@ application-root contract. Trailing operands and unknown commands are invalid.
 
 Acceptance:
 
-1. JSON escapes allow spaces, quotes, tabs, and newlines in inserted text.
+1. JSON escapes allow spaces, quotes, tabs, and newlines in inserted or anchored text.
 2. File commands may be interleaved with text commands and every command observes all
    preceding in-memory changes.
-3. Zero selection coordinates, malformed ranges, missing operands, trailing operands,
-   and unknown commands fail before filesystem mutation or patch output.
-
+3. Zero selection coordinates, malformed ranges, missing operands, invalid JSON,
+   trailing operands, empty or identical block anchors, and unknown commands fail
+   before filesystem mutation or patch output.
 ## HP-FILE-001: File commands
 
 `in PATH` selects an existing logical file for subsequent commands. It may occur any
@@ -186,37 +196,54 @@ points, including one code point per tab; the line terminator is not selectable.
 The literal must be nonempty and cannot contain a line terminator. Matches do not
 overlap. `-1` selects the last match.
 
+`bsel` uses the current selection as its search scope when a selection exists.
+Otherwise its scope begins at the current cursor and extends to end-of-file. It never
+wraps or falls back to the file beginning. Within that scope, each decoded anchor
+must occur exactly once, counting overlapping occurrences for ambiguity, and the end
+match must begin after the complete start match. It selects both anchors and all
+content between them as a characterwise selection. Missing, duplicate, reversed, or
+overlapping anchors within the scope fail instead of selecting a nearby block.
+
 `rsel` selects an inclusive range of complete current logical lines. For every
 selected line it owns the line terminator when one is present. It records a linewise
-selection so duplication creates another complete adjacent line range, including when
-the selected final line has no terminator. Replacing an `rsel` selection with `type`
-therefore removes the selected final terminator unless the replacement string supplies
-one.
+selection so deletion removes complete lines and duplication creates another complete
+adjacent line range, including when the selected final line has no terminator.
 
 Every selection replaces the previous cursor or selection. Commands observe current
 contents and current line numbering after earlier edit actions. `type` leaves the
-cursor immediately after inserted text, `del` leaves it at the removed selection's
-start, and `dup` selects the duplicated copy.
+cursor immediately after effective inserted text, `del` leaves it at the removed
+selection's start, and `dup` selects the duplicated copy.
 
 Acceptance:
 
-1. Selection works on Unicode text and current line numbering after earlier edits.
-2. Missing lines, columns, ranges, or literal occurrences fail rather than selecting
-   a nearby value.
-3. A literal that merely overlaps but is not a non-overlapping requested occurrence
-   does not count.
+1. Selection works on Unicode text and current content after earlier edits.
+2. Missing lines, columns, ranges, literal occurrences, or block anchors fail rather
+   than selecting a nearby value.
+3. A `tsel` literal that merely overlaps but is not a non-overlapping requested
+   occurrence does not count.
+4. Any second occurrence of a `bsel` anchor within its current selection- or
+   cursor-derived scope, including an overlapping or unrelated occurrence, makes the
+   block ambiguous and fails before mutation or patch output. Occurrences before a
+   cursor-derived scope or outside a selection-derived scope do not collide.
 
 ## HP-EDIT-001: Edit actions
 
 `type STRING` inserts the decoded string at the cursor, or replaces the selection with
-it. It then leaves a cursor immediately after the inserted text. Thus these commands
-on a new file produce `foo bar`:
+it. It then leaves a cursor immediately after the effective inserted text. Thus these
+commands on a new file produce `foo bar`:
 
 ```text
 type "foo"
 type " "
 type "bar"
 ```
+
+When replacing a linewise selection that owns a final LF, CRLF, or standalone-CR
+terminator, `type` preserves that exact terminator if the replacement does not end in
+a terminator. A replacement-supplied terminator is authoritative and is not doubled.
+No terminator is synthesized for an unterminated selected final line. Consequently,
+`rsel` followed by `type "replacement"` retains separation from the following line;
+`type ""` leaves an empty logical line, while `del` removes the selected lines.
 
 `del` requires a selection, removes it, and leaves a cursor at its start.
 
@@ -232,12 +259,13 @@ or LF if the file has none.
 
 Acceptance:
 
-1. Consecutive typing, replacement, deletion, character duplication, and complete
-   line-range duplication produce the specified text and editor state.
-2. A later selection sees text and line-number changes from earlier actions.
-3. CRLF input remains CRLF except where an explicit JSON string inserts another
-   sequence.
-
+1. Consecutive typing, character and linewise replacement, deletion, character
+   duplication, and complete line-range duplication produce the specified text and
+   editor state.
+2. A later selection sees content and line-number changes from earlier actions.
+3. LF, CRLF, and standalone-CR linewise replacement preserve the selected final
+   terminator unless replacement text supplies one; an unterminated final line remains
+   unterminated.
 ## HP-OUTPUT-001: Output and failure
 
 Input is read completely and the entire script is evaluated before commit or stdout.
@@ -302,8 +330,7 @@ Acceptance:
 
 ## HP-GUIDE-001: Agent guidance
 
-The project provides one concise agent instruction file covering both modes, the full
-command grammar, cursor and coordinate rules, sequential multi-file state, and the need
-to inspect relevant source before selecting it. Examples demonstrate consecutive
-typing into a new file, replacement, occurrence deletion, line duplication, movement,
-and removal without adding aliases or commands.
+The built-in top-level help owns the complete agent editing, orchestration,
+trust-boundary, and validation reference. The project agent instruction file only
+directs agents to run and follow `hpatch --help`; it does not duplicate language
+semantics that can become stale.

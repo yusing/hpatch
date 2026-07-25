@@ -49,16 +49,7 @@ func (e *editor) selectOccurrence(lineNumber, occurrence int, literal string) er
 		return err
 	}
 	content := e.text[line.start:line.contentEnd]
-	var offsets []int
-	for searchFrom := 0; searchFrom <= len(content)-len(literal); {
-		relative := strings.Index(content[searchFrom:], literal)
-		if relative < 0 {
-			break
-		}
-		match := searchFrom + relative
-		offsets = append(offsets, match)
-		searchFrom = match + len(literal)
-	}
+	offsets := nonOverlappingLiteralOffsets(content, literal)
 
 	index := occurrence - 1
 	if occurrence < 0 {
@@ -69,6 +60,32 @@ func (e *editor) selectOccurrence(lineNumber, occurrence int, literal string) er
 	}
 	start := line.start + offsets[index]
 	e.selection = &selection{start: start, end: start + len(literal)}
+	return nil
+}
+
+func (e *editor) selectBlock(startLiteral, endLiteral string) error {
+	scopeStart, scopeEnd := e.cursor, len(e.text)
+	if e.selection != nil {
+		scopeStart, scopeEnd = e.selection.start, e.selection.end
+	}
+	scope := e.text[scopeStart:scopeEnd]
+	startOffsets := literalOffsets(scope, startLiteral)
+	if len(startOffsets) != 1 {
+		return fmt.Errorf("start literal %q occurs %d times in the search scope; want exactly once", startLiteral, len(startOffsets))
+	}
+	endOffsets := literalOffsets(scope, endLiteral)
+	if len(endOffsets) != 1 {
+		return fmt.Errorf("end literal %q occurs %d times in the search scope; want exactly once", endLiteral, len(endOffsets))
+	}
+	start := startOffsets[0]
+	endStart := endOffsets[0]
+	if endStart < start+len(startLiteral) {
+		return fmt.Errorf("end literal %q precedes or overlaps start literal %q in the search scope", endLiteral, startLiteral)
+	}
+	e.selection = &selection{
+		start: scopeStart + start,
+		end:   scopeStart + endStart + len(endLiteral),
+	}
 	return nil
 }
 
@@ -89,6 +106,9 @@ func (e *editor) typeText(replacement string) {
 	start, end := e.cursor, e.cursor
 	if e.selection != nil {
 		start, end = e.selection.start, e.selection.end
+		if e.selection.linewise && lineTerminatorSuffix(replacement) == "" {
+			replacement += lineTerminatorSuffix(e.text[start:end])
+		}
 	}
 	e.text = e.text[:start] + replacement + e.text[end:]
 	e.cursor = start + len(replacement)
@@ -126,6 +146,34 @@ func (e *editor) duplicateSelection() error {
 	}
 	e.cursor = e.selection.end
 	return nil
+}
+
+func literalOffsets(text, literal string) []int {
+	var offsets []int
+	for searchFrom := 0; searchFrom <= len(text)-len(literal); {
+		relative := strings.Index(text[searchFrom:], literal)
+		if relative < 0 {
+			break
+		}
+		match := searchFrom + relative
+		offsets = append(offsets, match)
+		searchFrom = match + 1
+	}
+	return offsets
+}
+
+func nonOverlappingLiteralOffsets(text, literal string) []int {
+	var offsets []int
+	for searchFrom := 0; searchFrom <= len(text)-len(literal); {
+		relative := strings.Index(text[searchFrom:], literal)
+		if relative < 0 {
+			break
+		}
+		match := searchFrom + relative
+		offsets = append(offsets, match)
+		searchFrom = match + len(literal)
+	}
+	return offsets
 }
 
 func logicalLines(text string) []logicalLine {
@@ -178,8 +226,21 @@ func byteOffsetAtRune(text string, runeIndex int) int {
 	return len(text)
 }
 
+func lineTerminatorSuffix(text string) string {
+	switch {
+	case strings.HasSuffix(text, "\r\n"):
+		return "\r\n"
+	case strings.HasSuffix(text, "\n"):
+		return "\n"
+	case strings.HasSuffix(text, "\r"):
+		return "\r"
+	default:
+		return ""
+	}
+}
+
 func endsWithLineTerminator(text string) bool {
-	return strings.HasSuffix(text, "\n") || strings.HasSuffix(text, "\r")
+	return lineTerminatorSuffix(text) != ""
 }
 
 func firstLineTerminator(text string) string {

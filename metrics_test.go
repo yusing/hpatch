@@ -288,31 +288,40 @@ func TestMetricsProcessHelper(t *testing.T) {
 	}
 }
 
-func TestLegacyMetricsAreResetBeforeNewEstimates(t *testing.T) {
-	dataDirectory := t.TempDir()
-	legacy := rewriteMetricsMagic(encodeMetricsSlot(metrics{HPatchTokens: 5, ApplyPatchTokens: 9}, 7), legacyMetricsMagic)
-	if err := os.WriteFile(filepath.Join(dataDirectory, metricsFilename), legacy[:], 0o600); err != nil {
-		t.Fatal(err)
-	}
+func TestObsoleteMetricsAreResetBeforeNewEstimates(t *testing.T) {
+	for _, test := range []struct {
+		name, magic string
+	}{
+		{name: "raw counters", magic: legacyMetricsMagic},
+		{name: "shell wrapper estimates", magic: wrapperMetricsMagic},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			dataDirectory := t.TempDir()
+			obsolete := rewriteMetricsMagic(encodeMetricsSlot(metrics{HPatchTokens: 5, ApplyPatchTokens: 9}, 7), test.magic)
+			if err := os.WriteFile(filepath.Join(dataDirectory, metricsFilename), obsolete[:], 0o600); err != nil {
+				t.Fatal(err)
+			}
 
-	got, err := readMetrics(dataDirectory)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got != (metrics{}) {
-		t.Fatalf("legacy metrics were mixed into estimates: %+v", got)
-	}
+			got, err := readMetrics(dataDirectory)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != (metrics{}) {
+				t.Fatalf("obsolete metrics were mixed into estimates: %+v", got)
+			}
 
-	want := metrics{HPatchTokens: 11, ApplyPatchTokens: 13}
-	if err := updateMetrics(dataDirectory, want); err != nil {
-		t.Fatal(err)
-	}
-	got, err = readMetrics(dataDirectory)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got != want {
-		t.Fatalf("metrics after legacy reset = %+v, want %+v", got, want)
+			want := metrics{HPatchTokens: 11, ApplyPatchTokens: 13}
+			if err := updateMetrics(dataDirectory, want); err != nil {
+				t.Fatal(err)
+			}
+			got, err = readMetrics(dataDirectory)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != want {
+				t.Fatalf("metrics after obsolete reset = %+v, want %+v", got, want)
+			}
+		})
 	}
 }
 

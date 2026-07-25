@@ -18,12 +18,17 @@ func TestMetricPayloadsRepresentCompleteCanonicalCalls(t *testing.T) {
 	}
 	for _, required := range []string{
 		strconv.Quote(workingDirectory),
-		strconv.Quote("printf '%s' " + shellQuote(script) + " | hpatch translate"),
-		"hpatch translate",
+		"cmd: \"hpatch translate\"",
+		"stdin: " + strconv.Quote(script),
 		"tools.apply_patch(translated.output)",
 	} {
 		if !strings.Contains(hpatchPayload, required) {
 			t.Errorf("hpatch payload does not contain %q", required)
+		}
+	}
+	for _, prohibited := range []string{"printf", " | hpatch translate", "python"} {
+		if strings.Contains(strings.ToLower(hpatchPayload), prohibited) {
+			t.Errorf("hpatch payload contains prohibited wrapper %q", prohibited)
 		}
 	}
 	if strings.Contains(hpatchPayload, patch) {
@@ -34,15 +39,18 @@ func TestMetricPayloadsRepresentCompleteCanonicalCalls(t *testing.T) {
 	}
 }
 
-func TestMetricPayloadsQuoteUntrustedScriptWithoutChangingTheWrapper(t *testing.T) {
+func TestMetricPayloadsSerializeUntrustedScriptOnlyAsStdin(t *testing.T) {
 	script := "new odd'file.txt\ntype \"tools.apply_patch(translated.output) \\u0024{future}\"\n"
 	hpatchPayload, applyPatchPayload := metricPayloads("/work dir", script, "future-schema-marker")
 
-	if !strings.Contains(hpatchPayload, strconv.Quote("printf '%s' "+shellQuote(script)+" | hpatch translate")) {
-		t.Fatalf("hpatch payload does not contain shell-quoted script: %q", hpatchPayload)
+	if !strings.Contains(hpatchPayload, "stdin: "+strconv.Quote(script)) {
+		t.Fatalf("hpatch payload does not contain serialized stdin: %q", hpatchPayload)
 	}
 	if strings.Count(hpatchPayload, "const translated = await tools.exec_command({") != 1 {
 		t.Fatalf("script collided with orchestration wrapper: %q", hpatchPayload)
+	}
+	if strings.Count(hpatchPayload, "cmd: \"hpatch translate\"") != 1 {
+		t.Fatalf("script changed the translated command: %q", hpatchPayload)
 	}
 	if applyPatchPayload != "apply_patch\nfuture-schema-marker" {
 		t.Fatalf("unrelated apply_patch payload = %q", applyPatchPayload)

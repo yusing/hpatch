@@ -17,10 +17,10 @@ func metricPayloads(workingDirectory, script, patch string) (string, string) {
 }
 
 func hpatchToolInput(workingDirectory, script string) string {
-	command := "printf '%s' " + shellQuote(script) + " | hpatch translate"
 	format := strings.Join([]string{
 		"const translated = await tools.exec_command({",
-		"  cmd: %s,",
+		"  cmd: \"hpatch translate\",",
+		"  stdin: %s,",
 		"  workdir: %s,",
 		"  yield_time_ms: 10000,",
 		"  max_output_tokens: 10000",
@@ -35,9 +35,5 @@ func hpatchToolInput(workingDirectory, script string) string {
 		"  applyPatchResult: applied",
 		"}));",
 	}, "\n")
-	return fmt.Sprintf(format, strconv.Quote(command), strconv.Quote(workingDirectory))
-}
-
-func shellQuote(value string) string {
-	return "'" + strings.ReplaceAll(value, "'", `'"'"'`) + "'"
+	return fmt.Sprintf(format, strconv.Quote(script), strconv.Quote(workingDirectory))
 }

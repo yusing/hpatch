@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -25,6 +26,7 @@ type instruction struct {
 	end        int
 	occurrence int
 	text       string
+	endText    string
 }
 
 type program struct {
@@ -153,6 +155,20 @@ func parseInstruction(sourceLine int, line string) (instruction, error) {
 		}, nil
 	}
 
+	if valueText, ok := strings.CutPrefix(line, "bsel "); ok {
+		startText, endText, err := decodeTwoJSONStrings(valueText)
+		if err != nil {
+			return instruction{}, scriptError(sourceLine, "invalid bsel JSON strings")
+		}
+		if startText == "" || endText == "" {
+			return instruction{}, scriptError(sourceLine, "bsel literals must not be empty")
+		}
+		if startText == endText {
+			return instruction{}, scriptError(sourceLine, "bsel literals must differ")
+		}
+		return instruction{line: sourceLine, operation: "bsel", text: startText, endText: endText}, nil
+	}
+
 	if match := rangePattern.FindStringSubmatch(line); match != nil {
 		start, err := parseInteger(sourceLine, match[1])
 		if err != nil {
@@ -177,6 +193,33 @@ func parseInstruction(sourceLine int, line string) (instruction, error) {
 	}
 
 	return instruction{}, scriptError(sourceLine, "unknown or malformed command")
+}
+
+func decodeTwoJSONStrings(encoded string) (string, string, error) {
+	decoder := json.NewDecoder(strings.NewReader(encoded))
+	var start, end string
+	if err := decoder.Decode(&start); err != nil {
+		return "", "", err
+	}
+	separatorOffset := decoder.InputOffset()
+	if separatorOffset >= int64(len(encoded)) || !isJSONWhitespace(encoded[separatorOffset]) {
+		return "", "", errors.New("bsel literals must be separated by whitespace")
+	}
+	if err := decoder.Decode(&end); err != nil {
+		return "", "", err
+	}
+	var trailing json.RawMessage
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		if err == nil {
+			return "", "", errors.New("trailing JSON value")
+		}
+		return "", "", err
+	}
+	return start, end, nil
+}
+
+func isJSONWhitespace(character byte) bool {
+	return character == ' ' || character == '\t' || character == '\r' || character == '\n'
 }
 
 func decodeJSONString(encoded string) (string, error) {

@@ -15,12 +15,13 @@ import (
 )
 
 const (
-	metricsFilename    = "metrics.bin"
-	metricsLockname    = "metrics.lock"
-	legacyMetricsMagic = "HPATCH01"
-	metricsMagic       = "HPATCH02"
-	metricsSlotSize    = 64
-	metricsFileSize    = 2 * metricsSlotSize
+	metricsFilename     = "metrics.bin"
+	metricsLockname     = "metrics.lock"
+	legacyMetricsMagic  = "HPATCH01"
+	wrapperMetricsMagic = "HPATCH02"
+	metricsMagic        = "HPATCH03"
+	metricsSlotSize     = 64
+	metricsFileSize     = 2 * metricsSlotSize
 )
 
 type metrics struct {
@@ -176,6 +177,11 @@ func readMetricsFile(file *os.File) (metrics, uint64, error) {
 		_, legacyGeneration, legacyOK := decodeMetricsSlot(encoded, legacyMetricsMagic)
 		if legacyOK && (!legacyValid || legacyGeneration > latestLegacyGeneration) {
 			latestLegacyGeneration = legacyGeneration
+			legacyValid = true
+		}
+		_, wrapperGeneration, wrapperOK := decodeMetricsSlot(encoded, wrapperMetricsMagic)
+		if wrapperOK && (!legacyValid || wrapperGeneration > latestLegacyGeneration) {
+			latestLegacyGeneration = wrapperGeneration
 			legacyValid = true
 		}
 	}

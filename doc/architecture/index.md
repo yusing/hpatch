@@ -21,7 +21,9 @@ The CLI boundary owns arguments, stdin, filesystem reads, staging, commit, rollb
 diagnostics, stdout, and exit status for `HP-CLI-001` and `HP-OUTPUT-001`. Paths are
 normalized with the host OS rules; relative paths resolve from the process working
 directory and absolute paths remain absolute. Initial inputs cross into the engine
-only after a regular-file check and strict UTF-8 decoding.
+only after a regular-file check and strict UTF-8 decoding. Informational argument
+forms are resolved at the outer process boundary before stdin, working-directory,
+configuration-directory, metrics, or filesystem access.
 
 Normal mode stages the complete engine result before commit. Its transaction
 coordinator owns backups, ordered path operations, rollback attempts, and honest

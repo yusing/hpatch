@@ -16,8 +16,8 @@ comparisons and a concise instruction sheet suitable for agents.
 ## First-draft scope
 
 - Multiple UTF-8 files selected in sequence by `in PATH` or created by `new PATH`.
-- Single-line column selection, literal text-occurrence selection, and inclusive
-  whole-line range selection.
+- Single-line column selection, literal text-occurrence selection, unique literal-anchored
+  block selection, and inclusive whole-line range selection.
 - Cursor insertion, selection replacement, selection deletion, and duplication.
 - File creation, movement, and deletion.
 - Sequential edits against the in-memory result of prior commands.
@@ -28,10 +28,13 @@ comparisons and a concise instruction sheet suitable for agents.
 
 ## Public surface
 
-- `hpatch`: normal mode; read the script from standard input and edit the file.
+- `hpatch`: normal mode; read the script from standard input and edit files.
 - `hpatch translate`: read the script from standard input and emit `apply_patch` text.
-- Script commands: `in`, `new`, `mv`, `rm`, `sel`, `tsel`, `rsel`, `type`, `del`,
-  and `dup`.
+- `hpatch gain`: report persistent comparative token estimates.
+- `hpatch --help`, `hpatch translate --help`, and `hpatch --version`: informational
+  output without reading stdin or accessing the workspace.
+- Script commands: `in`, `new`, `mv`, `rm`, `sel`, `tsel`, `bsel`, `rsel`,
+  `type`, `del`, and `dup`.
 
 ## Non-goals
 

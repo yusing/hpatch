@@ -59,48 +59,43 @@ direct `apply_patch` call:
 bin/hpatch gain
 ```
 
-hpatch v1 assumes the OpenAI `apply_patch` patch schema and the Codex free-form tool
-shape used by `AGENT_INSTRUCTIONS.md`. The hpatch estimate counts the
-`functions.exec` tool name, a fixed translate-and-apply orchestration template, the
-shell-quoted script, and the working directory. The direct estimate counts the
-`apply_patch` tool name and patch envelope. The patch produced by `hpatch translate`
-is passed internally to `apply_patch` and is not counted again as model output.
+hpatch v1 assumes the OpenAI `apply_patch` schema and an execution tool with a
+native stdin field. The hpatch estimate counts the `functions.exec` tool name, a fixed
+translate-and-apply orchestration template, `cmd: "hpatch translate"`, the serialized
+stdin script, and the working directory. The direct estimate counts the `apply_patch`
+tool name and patch envelope. The internally forwarded translated patch is not counted
+again as model output.
 
 These are reproducible estimates, not API billing totals. They exclude provider-hidden
 protocol and reasoning tokens, assistant commentary, server-generated identifiers,
-and tool results. Wrapper formatting or a different host tool schema can change actual
+and tool results. Host formatting or a different host tool schema can change actual
 usage.
 
 The report writes estimated hpatch output tokens, estimated direct `apply_patch`
 output tokens, and their estimated percentage reduction. With no current estimates,
 all values are zero. Metrics persist in the platform user-configuration directory.
-Counters produced by the earlier raw-script/raw-patch calculation are not mixed with
-the corrected estimates; they report zero until the next changing invocation replaces
-them. Collection failures emit a warning but do not prevent the requested edit or
-translated output.
+Counters produced by the earlier raw-script/raw-patch or shell-wrapper calculations
+are not mixed with native-stdin estimates; they report zero until the next changing
+invocation replaces them. Collection failures warn but do not prevent the requested
+edit or translated output.
 
-## Commands
+## Editing language
 
-```text
-in PATH
-new PATH
-mv PATH
-rm
-sel LINE START:END
-tsel LINE OCCURRENCE "JSON STRING"
-rsel START:END
-type "JSON STRING"
-del
-dup
+Run the built-in reference for stdin usage, process commands, and the complete
+editing-command summary:
+
+```sh
+bin/hpatch --help
+bin/hpatch translate --help
+bin/hpatch --version
 ```
 
-`in` and `new` select a file at the cursor position before its first character.
-`type` inserts at the cursor or replaces a selection, then advances the cursor. Lines
-and inclusive columns are one-based and count Unicode code points. String operands use
-JSON syntax; generate nontrivial operands with a JSON encoder. Commands execute
-sequentially against current in-memory content, including across repeated `in`
-commands. `rsel` includes each selected line's terminator when present, so complete-line
-replacement text must include any desired final newline.
+Commands execute sequentially against current in-memory content, including across
+repeated `in` commands. `rsel` selects complete logical lines; linewise replacement
+inherits the selected final line terminator unless the replacement supplies one.
+`bsel "START" "END"` searches inside the current selection when one exists,
+or from the current cursor to end-of-file otherwise. It never wraps. Each anchor must
+be unique within that scope; ambiguous, reversed, or overlapping anchors fail.
 
 Paths use normal host filesystem semantics during translation: relative paths resolve
 from hpatch's current directory and absolute paths remain absolute. The translated text
@@ -108,8 +103,9 @@ contains paths but no current-directory metadata. A downstream patch tool indepe
 chooses its application root, so its root must be aligned with the paths hpatch emits.
 
 The complete behavior and failure contract is in
-[`doc/spec/interface.md`](doc/spec/interface.md). A shorter instruction sheet for
-coding agents is in [`AGENT_INSTRUCTIONS.md`](AGENT_INSTRUCTIONS.md).
+[`doc/spec/interface.md`](doc/spec/interface.md).
+[`AGENT_INSTRUCTIONS.md`](AGENT_INSTRUCTIONS.md) is the repository agent entry point
+and directs agents to the built-in help.
 
 ## Token comparison
 
