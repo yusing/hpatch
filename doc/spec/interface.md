@@ -35,13 +35,19 @@ Acceptance:
 
 ## HP-METRICS-001: Persistent token metrics
 
-For every nonempty change set that parses, evaluates, and translates successfully,
-normal and translate modes estimate the generated GPT-5 output tokens for two
-semantically equivalent tool calls. The hpatch side counts the `functions.exec` tool
-name and a fixed orchestration template containing `cmd: "hpatch translate"`, the
-complete script serialized in a distinct native stdin field, the working directory,
-failure propagation, and direct `apply_patch` forwarding. The direct side counts the
-`apply_patch` tool name and complete translated patch envelope. Both use the tokenizer
+Every recognized normal or translate invocation is classified after its terminal outcome.
+A successful nonempty change set that parses, evaluates, translates, and completes its
+requested output or mutation contributes paired estimates for two semantically equivalent
+tool calls. A failed invocation contributes only its generated `hpatch` call estimate to
+the ineffective-output counter; it contributes nothing to the effective `hpatch` or direct
+`apply_patch` counters. Successful no-op invocations, `gain`, informational commands, and
+unsupported argument forms do not contribute.
+
+Both effective and ineffective hpatch estimates count the `functions.exec` tool name and
+a fixed orchestration template containing `cmd: "hpatch translate"`, the complete script
+serialized in a distinct native stdin field, the working directory, failure propagation,
+and direct `apply_patch` forwarding. The successful direct side counts the `apply_patch`
+tool name and complete translated patch envelope. All estimates use the tokenizer
 library's GPT-5 model mapping.
 
 The fixed template does not contain Python, `printf`, an encoding helper, a shell
@@ -55,25 +61,31 @@ comparisons for this native-stdin assumption, not authoritative API usage. A hos
 a different tool name, formatting, stdin schema, or token accounting can have different
 actual output usage.
 
-The record is updated before normal-mode mutation or translate-mode stdout. In normal
-mode, failure to render the equivalent patch for metrics emits a warning and the
-evaluated changes still commit; in translate mode, rendering failure remains a command
-failure. Failure to tokenize, lock, read, write, or close metrics emits a concise
-`hpatch: warning:` diagnostic but does not prevent either requested effect.
+Classification is persisted only after the invocation's outcome is known. Translate mode
+records a paired effective estimate after its complete patch reaches stdout; normal mode
+records one after the staged changes commit. Stdin-read, parse, evaluation, translation,
+stdout-write, and commit failures record only the canonical hpatch estimate as ineffective.
+In normal mode, failure to render the equivalent patch after a successful commit emits a
+warning and records neither classification because the direct comparison is unavailable.
+Failure to tokenize, lock, read, write, or close metrics emits a concise `hpatch: warning:`
+diagnostic but does not change the success or failure of the requested effect.
 
 The aggregate is stored in `hpatch/metrics.bin` beneath the platform user configuration
 directory returned by Go's `os.UserConfigDir`. Updates hold an exclusive interprocess
 lock at `hpatch/metrics.lock`; gain reads hold a shared lock. The metrics file contains
-two alternating fixed-size slots, each holding both counters, a generation, and a
-checksum. A reader uses the valid current-format slot with the greatest generation, so
+two alternating fixed-size slots, each holding the effective hpatch, direct
+`apply_patch`, and ineffective hpatch counters, plus a generation and checksum.
+A reader uses the valid current-format slot with the greatest generation, so
 an interrupted write to the inactive slot leaves the preceding aggregate available.
 The file reaches 128 bytes and does not grow further. Invalid, overflowing, or unknown
 future-format persisted counts fail rather than producing a misleading report.
 
 Raw-script/raw-patch counters and shell-wrapper estimates from preceding metric
 definitions cannot be converted into native-stdin workflow estimates. An obsolete-only
-file therefore reads as zero; the first later changing invocation preserves generation
-ordering but replaces its totals with one current-format estimate. Obsolete and current
+file therefore reads as zero; the first later classified invocation preserves generation
+ordering but replaces its totals with one current-format estimate. The preceding paired
+native-stdin format remains compatible: its effective hpatch and `apply_patch` totals are
+read with zero ineffective tokens and migrate on the next update. Obsolete and current
 totals are never added.
 
 Metrics writes use normal operating-system page-cache writeback and do not request a
@@ -81,17 +93,21 @@ per-invocation filesystem sync. This allows the operating system to coalesce phy
 writes. Metrics persist across processes and normal restarts, but sudden power loss may
 lose increments that the operating system had not yet flushed.
 
-`hpatch gain` writes exactly the aggregate estimated hpatch output tokens, estimated
-`apply_patch` output tokens, and estimated percentage reduction computed as
-`(apply_patch - hpatch) / apply_patch * 100`, rounded to one decimal place. Reduction
-is zero when no apply-patch tokens have been recorded. With no metrics file or only a
-obsolete record, both totals are zero. Gain reads no stdin and does not create or rewrite
+`hpatch gain` writes exactly five rows: aggregate estimated effective hpatch output
+tokens, estimated `apply_patch` output tokens, effective-only estimated reduction,
+estimated ineffective hpatch output tokens, and estimated overall reduction. The
+effective-only reduction is `(apply_patch - effective_hpatch) / apply_patch * 100`; the
+overall reduction is `(apply_patch - effective_hpatch - ineffective_hpatch) /
+apply_patch * 100`. Percentages are rounded to one decimal place and are zero when no
+apply-patch tokens have been recorded. With no metrics file or only an obsolete record,
+all totals and percentages are zero. Gain reads no stdin and does not create or rewrite
 a metrics file.
 
 Acceptance:
 
-1. Repeated normal and translate invocations persist cumulative paired estimates, and
-   a later gain process reports their totals and percentage reduction.
+1. Repeated successful normal and translate invocations persist cumulative paired
+   estimates, failed invocations persist only ineffective hpatch estimates, and a later
+   gain process reports both reductions from those totals.
 2. The hpatch estimate includes its tool name, fixed native-stdin orchestration,
    serialized script, working directory, and internal patch-call expression, but not
    translated patch contents; the direct estimate includes its tool name and envelope.
@@ -100,10 +116,11 @@ Acceptance:
 4. Concurrent writers lose no records, and concurrent gain reads never observe a
    partial record.
 5. The metrics file remains fixed-size, a damaged inactive slot falls back to the
-   preceding valid aggregate, obsolete totals are not mixed into native-stdin estimates,
-   and unknown future formats fail closed.
-6. Metrics collection failure warns without preventing workspace mutation or patch
-   output.
+   preceding valid aggregate, preceding paired native-stdin totals migrate without loss,
+   obsolete totals are not mixed into current estimates, and unknown future formats fail
+   closed.
+6. Metrics collection failure warns without changing the success or failure of the
+   requested edit or translated output.
 
 ## HP-SCRIPT-001: Script grammar
 

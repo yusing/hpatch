@@ -25,7 +25,7 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer, workingDirect
 		if err != nil {
 			return fail(stderr, err.Error())
 		}
-		if _, err := fmt.Fprintf(stdout, "estimated hpatch output tokens: %d\nestimated apply_patch output tokens: %d\nestimated reduction: %.1f%%\n", metrics.HPatchTokens, metrics.ApplyPatchTokens, metrics.reduction()); err != nil {
+		if _, err := fmt.Fprintf(stdout, "estimated hpatch output tokens: %d\nestimated apply_patch output tokens: %d\nestimated reduction: %.1f%%\nestimated ineffective hpatch output tokens: %d\nestimated overall reduction: %.1f%%\n", metrics.HPatchTokens, metrics.ApplyPatchTokens, metrics.reduction(), metrics.IneffectiveHPatchTokens, metrics.overallReduction()); err != nil {
 			return fail(stderr, fmt.Sprintf("writing gain report: %v", err))
 		}
 		return 0
@@ -35,11 +35,12 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer, workingDirect
 
 	script, err := io.ReadAll(stdin)
 	if err != nil {
-		return fail(stderr, fmt.Sprintf("reading script: %v", err))
+		return failWithIneffectiveMetrics(stderr, fmt.Sprintf("reading script: %v", err), dataDirectory, workingDirectory, string(script))
 	}
-	program, err := parse(string(script))
+	scriptText := string(script)
+	program, err := parse(scriptText)
 	if err != nil {
-		return fail(stderr, err.Error())
+		return failWithIneffectiveMetrics(stderr, err.Error(), dataDirectory, workingDirectory, scriptText)
 	}
 
 	load := func(path string) (loadedFile, error) {
@@ -73,7 +74,7 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer, workingDirect
 
 	changes, err := program.evaluate(load, exists)
 	if err != nil {
-		return fail(stderr, err.Error())
+		return failWithIneffectiveMetrics(stderr, err.Error(), dataDirectory, workingDirectory, scriptText)
 	}
 	if !translateMode && len(changes) == 0 {
 		return 0
@@ -81,28 +82,28 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer, workingDirect
 	if translateMode {
 		patch, err := translate(changes)
 		if err != nil {
-			return fail(stderr, err.Error())
+			return failWithIneffectiveMetrics(stderr, err.Error(), dataDirectory, workingDirectory, scriptText)
+		}
+		if _, err := io.WriteString(stdout, patch); err != nil {
+			return failWithIneffectiveMetrics(stderr, fmt.Sprintf("writing patch: %v", err), dataDirectory, workingDirectory, scriptText)
 		}
 		if dataDirectory != "" {
-			if err := recordMetrics(dataDirectory, workingDirectory, string(script), patch); err != nil {
+			if err := recordMetrics(dataDirectory, workingDirectory, scriptText, patch); err != nil {
 				warn(stderr, err.Error())
 			}
 		}
-		if _, err := io.WriteString(stdout, patch); err != nil {
-			return fail(stderr, fmt.Sprintf("writing patch: %v", err))
-		}
 		return 0
+	}
+	if err := commitChanges(workingDirectory, changes, osFileOperations{}); err != nil {
+		return failWithIneffectiveMetrics(stderr, fmt.Sprintf("changing %s: %v", describePaths(changes), err), dataDirectory, workingDirectory, scriptText)
 	}
 	if dataDirectory != "" {
 		patch, err := translate(changes)
 		if err != nil {
 			warn(stderr, "collecting metrics: "+err.Error())
-		} else if err := recordMetrics(dataDirectory, workingDirectory, string(script), patch); err != nil {
+		} else if err := recordMetrics(dataDirectory, workingDirectory, scriptText, patch); err != nil {
 			warn(stderr, err.Error())
 		}
-	}
-	if err := commitChanges(workingDirectory, changes, osFileOperations{}); err != nil {
-		return fail(stderr, fmt.Sprintf("changing %s: %v", describePaths(changes), err))
 	}
 	return 0
 }
@@ -134,6 +135,16 @@ func fail(stderr io.Writer, message string) int {
 	message = sanitizeDiagnostic(message)
 	_, _ = fmt.Fprintf(stderr, "hpatch: %s\n", message)
 	return 1
+}
+
+func failWithIneffectiveMetrics(stderr io.Writer, message, dataDirectory, workingDirectory, script string) int {
+	exitCode := fail(stderr, message)
+	if dataDirectory != "" {
+		if err := recordIneffectiveMetrics(dataDirectory, workingDirectory, script); err != nil {
+			warn(stderr, err.Error())
+		}
+	}
+	return exitCode
 }
 
 func warn(stderr io.Writer, message string) {

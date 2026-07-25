@@ -51,33 +51,37 @@ outside text explicitly inserted by the script.
 
 ## Gain metrics
 
-For each changing script, normal and translate modes record cumulative estimates of
-the GPT-5 output tokens needed for the complete hpatch tool call and for the equivalent
-direct `apply_patch` call:
+Successful changing scripts in normal and translate modes record cumulative paired
+estimates of the GPT-5 output tokens needed for the complete hpatch tool call and for the
+equivalent direct `apply_patch` call. Failed normal or translate invocations record only
+the hpatch call as ineffective output; they never add direct `apply_patch` output tokens:
 
 ```sh
 bin/hpatch gain
 ```
 
 hpatch v1 assumes the OpenAI `apply_patch` schema and an execution tool with a
-native stdin field. The hpatch estimate counts the `functions.exec` tool name, a fixed
-translate-and-apply orchestration template, `cmd: "hpatch translate"`, the serialized
-stdin script, and the working directory. The direct estimate counts the `apply_patch`
-tool name and patch envelope. The internally forwarded translated patch is not counted
-again as model output.
+native stdin field. Both effective and ineffective hpatch estimates count the
+`functions.exec` tool name, a fixed translate-and-apply orchestration template,
+`cmd: "hpatch translate"`, the serialized stdin script, and the working directory.
+The successful direct estimate counts the `apply_patch` tool name and patch envelope.
+The internally forwarded translated patch is not counted again as model output.
 
 These are reproducible estimates, not API billing totals. They exclude provider-hidden
 protocol and reasoning tokens, assistant commentary, server-generated identifiers,
 and tool results. Host formatting or a different host tool schema can change actual
 usage.
 
-The report writes estimated hpatch output tokens, estimated direct `apply_patch`
-output tokens, and their estimated percentage reduction. With no current estimates,
-all values are zero. Metrics persist in the platform user-configuration directory.
-Counters produced by the earlier raw-script/raw-patch or shell-wrapper calculations
-are not mixed with native-stdin estimates; they report zero until the next changing
-invocation replaces them. Collection failures warn but do not prevent the requested
-edit or translated output.
+The report preserves the effective hpatch, direct `apply_patch`, and effective-only
+reduction rows, then adds ineffective hpatch output tokens and overall reduction. The
+effective-only percentage is `(apply_patch - effective_hpatch) / apply_patch * 100`;
+overall reduction also subtracts ineffective hpatch tokens. Both percentages are zero
+when no direct tokens have been recorded. Metrics persist in the platform
+user-configuration directory. Counters produced by the earlier raw-script/raw-patch or
+shell-wrapper calculations are not mixed with native-stdin estimates. Paired
+native-stdin totals from the preceding format migrate with zero ineffective tokens.
+Collection failures warn but do not change the success or failure of the requested edit
+or translated output.
 
 ## Editing language
 

@@ -12,8 +12,11 @@ const (
 )
 
 func metricPayloads(workingDirectory, script, patch string) (string, string) {
-	hpatchInput := hpatchToolInput(workingDirectory, script)
-	return hpatchToolName + "\n" + hpatchInput, applyPatchToolName + "\n" + patch
+	return hpatchMetricPayload(workingDirectory, script), applyPatchToolName + "\n" + patch
+}
+
+func hpatchMetricPayload(workingDirectory, script string) string {
+	return hpatchToolName + "\n" + hpatchToolInput(workingDirectory, script)
 }
 
 func hpatchToolInput(workingDirectory, script string) string {

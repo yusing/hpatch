@@ -15,7 +15,7 @@ func TestGainDoesNotRequireWorkingDirectory(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 	exitCode := run([]string{"gain"}, strings.NewReader("ignored"), &stdout, &stderr)
-	want := "estimated hpatch output tokens: 0\nestimated apply_patch output tokens: 0\nestimated reduction: 0.0%\n"
+	want := "estimated hpatch output tokens: 0\nestimated apply_patch output tokens: 0\nestimated reduction: 0.0%\nestimated ineffective hpatch output tokens: 0\nestimated overall reduction: 0.0%\n"
 	if exitCode != 0 || stdout.String() != want || stderr.Len() != 0 {
 		t.Fatalf("gain = exit %d, stdout %q, stderr %q", exitCode, stdout.String(), stderr.String())
 	}
