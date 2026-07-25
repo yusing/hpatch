@@ -70,6 +70,32 @@ func TestTopLevelHelpDescribesCompletePublicSurface(t *testing.T) {
 	}
 }
 
+func TestTopLevelHelpDescribesSelectionOperandConstraints(t *testing.T) {
+	const constraints = "`tsel` occurrence must be nonzero: positive values count from the start, and\n  negative values count from the end. Both `bsel` anchors must be nonempty and\n  different."
+	if !strings.Contains(helpText, constraints) {
+		t.Fatalf("help does not contain accepted operand constraints %q", constraints)
+	}
+
+	for _, fragment := range []string{
+		"`tsel` occurrence must be nonzero",
+		"positive values count from the start",
+		"negative values count from the end",
+		"Both `bsel` anchors must be nonempty",
+		"anchors must be nonempty and\n  different",
+	} {
+		if !strings.Contains(helpText, fragment) {
+			t.Fatalf("help does not contain %q", fragment)
+		}
+	}
+
+	if strings.Contains(translateHelpText, constraints) {
+		t.Fatal("translate help duplicates top-level operand constraints")
+	}
+	if !strings.Contains(translateHelpText, "Run hpatch --help for the complete editing and agent workflow.") {
+		t.Fatal("translate help does not point to top-level help")
+	}
+}
+
 func TestHelpDoesNotLeakSourceTreeReferences(t *testing.T) {
 	for _, output := range []string{helpText, translateHelpText} {
 		for _, stale := range []string{"doc/spec", "AGENT_INSTRUCTIONS.md"} {

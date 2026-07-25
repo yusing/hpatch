@@ -55,6 +55,10 @@ Editor state:
   prior selection. type and del leave the cursor after effective inserted text or at
   the deletion start; dup selects the new copy.
 
+  ` + "`tsel`" + ` occurrence must be nonzero: positive values count from the start, and
+  negative values count from the end. Both ` + "`bsel`" + ` anchors must be nonempty and
+  different.
+
   bsel searches inside the current selection when one exists; otherwise it searches
   from the current cursor to end-of-file. It never wraps to the file beginning.
   START and END must each occur exactly once within that scope, END must follow START
