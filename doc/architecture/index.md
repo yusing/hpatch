@@ -1,7 +1,14 @@
+---
+pjdoc:
+  version: 1
+  kind: architecture
+  scope: root
+  status: approved
+  revision: "4"
+  files:
+    []
+---
 # hpatch architecture contract
-
-Status: accepted draft  
-Revision: 4
 
 ## AC-CORE-001: Virtual workspace and baseline edit state
 
