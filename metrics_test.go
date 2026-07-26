@@ -108,18 +108,20 @@ func TestGainReportsCommandInvocationsErrorsAndRates(t *testing.T) {
 		t.Fatalf("gain report has no command metrics: %q", stdout.String())
 	}
 	want := "command metrics:\n" +
-		"in:\n- invocations: 0\n- errors: 0\n- error rate: 0.0%\n" +
-		"new:\n- invocations: 3\n- errors: 0\n- error rate: 0.0%\n" +
-		"mv:\n- invocations: 0\n- errors: 0\n- error rate: 0.0%\n" +
-		"rm:\n- invocations: 1\n- errors: 0\n- error rate: 0.0%\n" +
-		"sel:\n- invocations: 1\n- errors: 1\n- error rate: 100.0%\n" +
-		"tsel:\n- invocations: 0\n- errors: 0\n- error rate: 0.0%\n" +
-		"bsel:\n- invocations: 1\n- errors: 1\n- error rate: 100.0%\n" +
-		"rsel:\n- invocations: 0\n- errors: 0\n- error rate: 0.0%\n" +
-		"type:\n- invocations: 2\n- errors: 0\n- error rate: 0.0%\n" +
-		"del:\n- invocations: 0\n- errors: 0\n- error rate: 0.0%\n" +
-		"dup:\n- invocations: 0\n- errors: 0\n- error rate: 0.0%\n" +
-		"total:\n- invocations: 8\n- errors: 2\n- error rate: 25.0%\n"
+		"command  invocations  errors  error rate\n" +
+		"-------  -----------  ------  ----------\n" +
+		"in       0            0       0.0%\n" +
+		"new      3            0       0.0%\n" +
+		"mv       0            0       0.0%\n" +
+		"rm       1            0       0.0%\n" +
+		"sel      1            1       100.0%\n" +
+		"tsel     0            0       0.0%\n" +
+		"bsel     1            1       100.0%\n" +
+		"rsel     0            0       0.0%\n" +
+		"type     2            0       0.0%\n" +
+		"del      0            0       0.0%\n" +
+		"dup      0            0       0.0%\n" +
+		"total    8            2       25.0%\n"
 	if got := stdout.String()[start:]; got != want {
 		t.Fatalf("command report = %q, want %q", got, want)
 	}

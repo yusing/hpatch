@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"text/tabwriter"
 
 	"github.com/gofrs/flock"
 	"github.com/tiktoken-go/tokenizer"
@@ -381,11 +382,15 @@ func (m metrics) overallReduction() float64 {
 func gainReport(m metrics) string {
 	var report strings.Builder
 	fmt.Fprintf(&report, "estimated hpatch output tokens: %d\nestimated apply_patch output tokens: %d\nestimated reduction: %.1f%%\nestimated ineffective hpatch output tokens: %d\nestimated overall reduction: %.1f%%\ncommand metrics:\n", m.HPatchTokens, m.ApplyPatchTokens, m.reduction(), m.IneffectiveHPatchTokens, m.overallReduction())
+	table := tabwriter.NewWriter(&report, 0, 4, 2, ' ', 0)
+	fmt.Fprintln(table, "command\tinvocations\terrors\terror rate")
+	fmt.Fprintln(table, "-------\t-----------\t------\t----------")
 	for index, operation := range commandOperations {
 		entry := m.Commands[index]
-		fmt.Fprintf(&report, "%s:\n- invocations: %d\n- errors: %d\n- error rate: %.1f%%\n", operation, entry.Invocations, entry.Errors, entry.errorRate())
+		fmt.Fprintf(table, "%s\t%d\t%d\t%.1f%%\n", operation, entry.Invocations, entry.Errors, entry.errorRate())
 	}
 	total, _ := m.Commands.total()
-	fmt.Fprintf(&report, "total:\n- invocations: %d\n- errors: %d\n- error rate: %.1f%%\n", total.Invocations, total.Errors, total.errorRate())
+	fmt.Fprintf(table, "total\t%d\t%d\t%.1f%%\n", total.Invocations, total.Errors, total.errorRate())
+	_ = table.Flush()
 	return report.String()
 }

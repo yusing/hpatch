@@ -90,8 +90,8 @@ usage.
 
 The report preserves the effective hpatch, direct `apply_patch`, and effective-only
 reduction rows, then adds ineffective hpatch output tokens and overall reduction. It also
-lists every supported patch command with its invocation count, error count, and calculated
-`errors / invocations * 100` rate, followed by a total across commands. The effective-only
+renders a compact table with one row per supported patch command containing its invocation
+count, error count, and calculated `errors / invocations * 100` rate, followed by a total row. The effective-only
 percentage is `(apply_patch - effective_hpatch) / apply_patch * 100`; overall reduction
 also subtracts ineffective hpatch tokens. Percentages are zero when their denominator is
 zero. Metrics persist in the platform user-configuration directory. Only the latest
