@@ -1,6 +1,6 @@
 # Token comparison contract
 
-## HP-COMPARE-001: Token comparisons
+## REQ-COMPARE-001 — Token comparisons
 
 The comparison program emulates at least these equivalent edit scenarios:
 

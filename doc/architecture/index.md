@@ -10,12 +10,12 @@ pjdoc:
 ---
 # hpatch architecture contract
 
-## AC-CORE-001: Virtual workspace and selector state
+## CTR-CORE-001 — Virtual workspace and selector state
 
 One engine owns script parsing, structured command variants, logical path resolution,
 first-touch order, per-file immutable baselines, baseline cursor or selection state,
 recorded edits, conflict validation, final editor state, and net file actions for
-`HP-SCRIPT-001`, `HP-FILE-001`, `HP-SELECT-001`, and `HP-EDIT-001`. It evaluates every
+`REQ-SCRIPT-001`, `REQ-FILE-001`, `REQ-SELECT-001`, and `REQ-EDIT-001`. It evaluates every
 command against one in-memory virtual workspace. Normal and translate modes consume the
 same completed result; neither mode reimplements command semantics.
 
@@ -41,7 +41,7 @@ or process output, and retains baseline identity across moves. Its completed res
 contains ordered net changes, structured command metrics, the final active logical path,
 and cursor or selection state sufficient for rendered-state reporting.
 
-## AC-STATE-001: Rendered final-state projection
+## CTR-STATE-001 — Rendered final-state projection
 
 One state projector owned beside the editor maps the final baseline cursor or selection
 through the ordered edits into rendered post-edit offsets. It owns boundary affinity:
@@ -51,16 +51,16 @@ column positions and extracts the bounded three-line window from the same render
 content. It reports active moved paths, empty new files, active selections, and absent
 active files without consulting the committed filesystem.
 
-One pure formatter converts that projection into the `HP-OUTPUT-001` report, truncates
+One pure formatter converts that projection into the `REQ-OUTPUT-001` report, truncates
 each preview to 64 Unicode code points, and escapes controls before any external effect.
 The projection and formatting path is shared by normal and translate modes. It does not
 persist editor state or create a resume mechanism.
 
-## AC-BOUNDARY-001: Filesystem and output boundary
+## CTR-BOUNDARY-001 — Filesystem and output boundary
 
 The CLI boundary owns arguments, stdin, workspace selection, environment-derived feature
-configuration, diagnostics, stdout, stderr, and exit status for `HP-CLI-001` and
-`HP-OUTPUT-001`. The workspace boundary owns a pinned `*os.Root`, a root-relative cwd,
+configuration, diagnostics, stdout, stderr, and exit status for `REQ-CLI-001` and
+`REQ-OUTPUT-001`. The workspace boundary owns a pinned `*os.Root`, a root-relative cwd,
 root-scoped filesystem reads, staging, commit, and rollback. Relative script paths resolve
 from cwd; absolute script paths become root-relative identities only when within root.
 Lexical and symlink escapes fail. Initial inputs cross into the engine only after a
@@ -82,7 +82,7 @@ A report-write failure after a successful effect is best-effort and cannot be re
 as rollback. The transaction coordinator owns backups, ordered operations, rollback
 attempts, and honest reporting of commit or rollback failure.
 
-## AC-METRICS-001: Metrics classification and persistence
+## CTR-METRICS-001 — Metrics classification and persistence
 
 One metrics classifier consumes structured parser and evaluator events rather than
 re-parsing scripts or diagnostics. It owns effective, ineffective, direct-patch, and
@@ -98,7 +98,7 @@ version reset, and page-cache writeback policy. Classification occurs only after
 outcome and report emission are known. Metrics failure remains a warning and cannot
 change the requested edit, translated patch, state report, or exit status.
 
-## AC-TRANSLATE-001: Patch rendering
+## CTR-TRANSLATE-001 — Patch rendering
 
 One translation renderer owns all OpenAI `apply_patch` syntax. It receives the engine's
 ordered net change set and emits one envelope containing the required `Add File`,
@@ -111,7 +111,7 @@ line-oriented output format. For changed content it expands context until every 
 hunk's old-side sequence is unique, failing instead of emitting an ambiguous patch. The
 engine's normal-mode contents remain unchanged.
 
-## AC-COMPARE-001: Independent comparison cases
+## CTR-COMPARE-001 — Independent comparison cases
 
 The comparison artifact may call the engine as test support, but every equivalent
 `apply_patch` input is independently authored scenario data. A clearly test-only patch

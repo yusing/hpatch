@@ -16,14 +16,14 @@ The interface contract is authoritative for syntax and semantics.
 
 ## Inventory
 
-- [`HP-CLI-001`](interface.md): invocation modes and final-state reporting
-- [`HP-METRICS-001`](interface.md): persistent token, command, and feature metrics
-- [`HP-SCRIPT-001`](interface.md): script grammar
-- [`HP-FILE-001`](interface.md): file selection and lifecycle
-- [`HP-SELECT-001`](interface.md): selection behavior
-- [`HP-EDIT-001`](interface.md): edit behavior
-- [`HP-OUTPUT-001`](interface.md): output and failure behavior
-- [`HP-COMPARE-001`](comparison.md): token comparison scenarios
-- [`HP-GUIDE-001`](interface.md): concise agent guidance
+- [`REQ-CLI-001`](interface.md): invocation modes and final-state reporting
+- [`REQ-METRICS-001`](interface.md): persistent token, command, and feature metrics
+- [`REQ-SCRIPT-001`](interface.md): script grammar
+- [`REQ-FILE-001`](interface.md): file selection and lifecycle
+- [`REQ-SELECT-001`](interface.md): selection behavior
+- [`REQ-EDIT-001`](interface.md): edit behavior
+- [`REQ-OUTPUT-001`](interface.md): output and failure behavior
+- [`REQ-COMPARE-001`](comparison.md): token comparison scenarios
+- [`REQ-GUIDE-001`](interface.md): concise agent guidance
 
 All listed requirements are must-haves for this increment.

@@ -1,11 +1,11 @@
 # Interface contract
 
-## HP-CLI-001: Modes and informational output
+## REQ-CLI-001 — Modes and informational output
 
 `hpatch [--root ROOT] [--cwd CWD]` reads a complete script from standard input,
 evaluates its complete change set in memory, stages required filesystem content, and
 then commits it. After a successful commit it writes the final active-file state report
-defined by `HP-OUTPUT-001` to stderr. Stdout remains empty.
+defined by `REQ-OUTPUT-001` to stderr. Stdout remains empty.
 
 `hpatch translate [--root ROOT] [--cwd CWD]` performs the same parsing, filesystem
 reads, and in-memory evaluation but never modifies a file. It writes one OpenAI
@@ -19,7 +19,7 @@ only when its canonical location is beneath root. Cwd must identify an existing
 directory. The CLI opens root once and uses that pinned capability for the invocation.
 
 `hpatch gain` reads no script and reports the persistent aggregate defined by
-`HP-METRICS-001`. `hpatch --help` is the complete built-in agent reference for
+`REQ-METRICS-001`. `hpatch --help` is the complete built-in agent reference for
 stdin usage, process and editing commands, editor state, orchestration, trust boundaries,
 and validation. `hpatch translate --help` summarizes translate-mode I/O and points to
 top-level help. `hpatch --version` writes the module build version, or `devel` for an
@@ -33,7 +33,7 @@ Acceptance:
    paths and contents, empty stdout, and one final-state report on stderr.
 2. For LF inputs, applying translate mode's patch-only stdout produces the same final
    paths and UTF-8 contents as normal mode. For other line endings, it represents the
-   same logical-line edits subject to the normalization rule in `HP-OUTPUT-001`.
+   same logical-line edits subject to the normalization rule in `REQ-OUTPUT-001`.
 3. Translate mode leaves the source tree unchanged and reports the pending result rather
    than the unchanged source tree.
 4. Gain mode leaves the source tree and metrics unchanged.
@@ -46,7 +46,7 @@ Acceptance:
 8. A relative, absolute, or symlink path that escapes root fails without mutation,
    patch output, or final-state report.
 
-## HP-METRICS-001: Persistent token, command, and feature metrics
+## REQ-METRICS-001 — Persistent token, command, and feature metrics
 
 Every recognized normal or translate invocation is classified after its terminal outcome.
 A successful nonempty change set that parses, evaluates, translates, and completes its
@@ -169,7 +169,7 @@ Acceptance:
 8. Metrics collection failure warns without changing the success or failure of the
    requested edit, translated output, or final-state report.
 
-## HP-SCRIPT-001: Script grammar
+## REQ-SCRIPT-001 — Script grammar
 
 Blank lines are ignored. All other input is one command per line. Commands are:
 
@@ -236,7 +236,7 @@ Acceptance:
 7. With root `/workspace` and cwd `bin/worktree`, script path `main.go` denotes
    `/workspace/bin/worktree/main.go` and translates as `bin/worktree/main.go`.
 
-## HP-FILE-001: File commands
+## REQ-FILE-001 — File commands
 
 The first `in PATH` for an existing logical file loads and captures its immutable UTF-8
 baseline. It selects that baseline for subsequent commands, clears the prior text
@@ -280,7 +280,7 @@ Acceptance:
    existing-file content edit, missing paths, destination collisions, use-after-delete,
    and file commands without an active file fail before commit or patch output.
 
-## HP-SELECT-001: Immutable baseline selections and cursor
+## REQ-SELECT-001 — Immutable baseline selections and cursor
 
 Every existing logical file has one immutable baseline captured on first `in`. A new
 file has an empty baseline. Every `sel`, `tsel`, `bsel`, `bsel_next`, and `rsel` command
@@ -361,7 +361,7 @@ Acceptance:
 7. Missing baseline lines, columns, ranges, literal occurrences, or block anchors fail
    rather than selecting pending or nearby content.
 
-## HP-EDIT-001: Baseline-coordinate edits
+## REQ-EDIT-001 — Baseline-coordinate edits
 
 `type STRING` records insertion of the decoded string at the baseline cursor, or
 replacement of the selected baseline span. `del` requires a selection and records
@@ -407,7 +407,7 @@ Acceptance:
    terminator unless replacement text supplies one; an unterminated final line remains
    unterminated.
 
-## HP-OUTPUT-001: Output, final state, and failure
+## REQ-OUTPUT-001 — Output, final state, and failure
 
 Input is read completely and the entire script is evaluated before commit or stdout.
 An unchanged normal-mode change set performs no filesystem operation but still reports
@@ -504,7 +504,7 @@ Acceptance:
 5. Failure to write a fully rendered report after a successful external effect does not
    reverse that effect or record a complete report-input token estimate.
 
-## HP-GUIDE-001: Agent guidance
+## REQ-GUIDE-001 — Agent guidance
 
 The built-in top-level help owns the complete agent editing, orchestration,
 trust-boundary, validation, final-state-report, and metrics reference. It presents
