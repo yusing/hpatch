@@ -61,7 +61,7 @@ func (e *editor) selectColumns(lineRef lineReference, startColumn, endColumn int
 	return e.setSelection(selection{start: line.start + start, end: line.start + end})
 }
 
-func (e *editor) selectOccurrence(lineRef lineReference, occurrence int, literal string) error {
+func (e *editor) selectOccurrence(lineRef lineReference, occurrence, count int, literal string) error {
 	lineNumber, err := e.resolveLineReference(lineRef)
 	if err != nil {
 		return err
@@ -80,8 +80,21 @@ func (e *editor) selectOccurrence(lineRef lineReference, occurrence int, literal
 	if index < 0 || index >= len(offsets) {
 		return fmt.Errorf("occurrence %d of %q not found on line %d", occurrence, literal, lineNumber)
 	}
-	start := line.start + offsets[index]
-	return e.setSelection(selection{start: start, end: start + len(literal)})
+	startIndex, endIndex := index, index
+	if occurrence < 0 {
+		if count > index+1 {
+			return fmt.Errorf("occurrence group of count %d from %d of %q not found on line %d", count, occurrence, literal, lineNumber)
+		}
+		startIndex = index - count + 1
+	} else {
+		if count > len(offsets)-index {
+			return fmt.Errorf("occurrence group of count %d from %d of %q not found on line %d", count, occurrence, literal, lineNumber)
+		}
+		endIndex = index + count - 1
+	}
+	start := line.start + offsets[startIndex]
+	end := line.start + offsets[endIndex] + len(literal)
+	return e.setSelection(selection{start: start, end: end})
 }
 
 func (e *editor) selectBlock(startLiteral, endLiteral string) error {

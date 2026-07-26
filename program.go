@@ -33,6 +33,7 @@ type instruction struct {
 	start      int
 	end        int
 	occurrence int
+	count      int
 	text       string
 	endText    string
 }
@@ -144,9 +145,9 @@ func parseInstruction(sourceLine int, line string, relativeLines bool) (instruct
 		if err != nil {
 			return instruction{}, err
 		}
-		value, err := decodeJSONString(match[3])
+		value, count, err := decodeTextSelection(match[3])
 		if err != nil {
-			return instruction{}, scriptError(sourceLine, "invalid JSON string")
+			return instruction{}, scriptError(sourceLine, err.Error())
 		}
 		if value == "" {
 			return instruction{}, scriptError(sourceLine, "tsel text must not be empty")
@@ -159,6 +160,7 @@ func parseInstruction(sourceLine int, line string, relativeLines bool) (instruct
 			operation:  "tsel",
 			lineRef:    lineRef,
 			occurrence: occurrence,
+			count:      count,
 			text:       value,
 		}, nil
 	}
@@ -208,6 +210,33 @@ func parseInstruction(sourceLine int, line string, relativeLines bool) (instruct
 	}
 
 	return instruction{}, scriptError(sourceLine, "unknown or malformed command")
+}
+
+func decodeTextSelection(encoded string) (string, int, error) {
+	decoder := json.NewDecoder(strings.NewReader(encoded))
+	var text string
+	if err := decoder.Decode(&text); err != nil {
+		return "", 0, errors.New("invalid JSON string")
+	}
+	offset := decoder.InputOffset()
+	if offset == int64(len(encoded)) {
+		return text, 1, nil
+	}
+	if !isJSONWhitespace(encoded[offset]) {
+		return "", 0, errors.New("tsel count must be separated by whitespace")
+	}
+	countText := strings.TrimSpace(encoded[offset:])
+	if countText == "" {
+		return text, 1, nil
+	}
+	if !absoluteLinePattern.MatchString(countText) {
+		return "", 0, errors.New("invalid tsel count")
+	}
+	count, err := strconv.Atoi(countText)
+	if err != nil {
+		return "", 0, errors.New("tsel count is out of range")
+	}
+	return text, count, nil
 }
 
 func decodeTwoJSONStrings(encoded string) (string, string, error) {

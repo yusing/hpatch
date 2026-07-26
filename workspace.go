@@ -118,7 +118,7 @@ func (w *workspace) execute(command instruction, commandIndex int) error {
 	case "sel":
 		return w.active.editor.selectColumns(command.lineRef, command.start, command.end)
 	case "tsel":
-		return w.active.editor.selectOccurrence(command.lineRef, command.occurrence, command.text)
+		return w.active.editor.selectOccurrence(command.lineRef, command.occurrence, command.count, command.text)
 	case "bsel":
 		return w.active.editor.selectBlock(command.text, command.endText)
 	case "bsel_next":

@@ -146,7 +146,7 @@ func TestWorkspaceOptionsRejectInvalidBoundaries(t *testing.T) {
 }
 
 func TestTopLevelHelpDescribesSelectionOperandConstraints(t *testing.T) {
-	const constraints = "`tsel` occurrence must be nonzero: positive values count from the start, and\n  negative values count from the end. Both `bsel` and `bsel_next` anchors must be\n  nonempty and different."
+	const constraints = "`tsel` occurrence must be nonzero: positive values count from the start, and\n  negative values count from the end. Its optional count must be a positive integer and\n  selects consecutive nonoverlapping occurrences, including intervening source text.\n  Both `bsel` and `bsel_next` anchors must be nonempty and different."
 	if !strings.Contains(helpText(true), constraints) {
 		t.Fatalf("help does not contain accepted operand constraints %q", constraints)
 	}
@@ -155,8 +155,10 @@ func TestTopLevelHelpDescribesSelectionOperandConstraints(t *testing.T) {
 		"`tsel` occurrence must be nonzero",
 		"positive values count from the start",
 		"negative values count from the end",
+		"optional count must be a positive integer",
+		"including intervening source text",
 		"Both `bsel` and `bsel_next` anchors must be",
-		"anchors must be\n  nonempty and different",
+		"anchors must be nonempty and different",
 	} {
 		if !strings.Contains(helpText(true), fragment) {
 			t.Fatalf("help does not contain %q", fragment)

@@ -41,7 +41,7 @@ Editing commands:
   mv PATH                     move the active pending file without changing its baseline
   rm                          remove the active file and clear editor state
   sel LINE START:END          select inclusive one-based Unicode columns
-  tsel LINE OCCURRENCE "TEXT" select a nonempty one-line literal; -1 is last
+  tsel LINE OCCURRENCE "TEXT" [N] select N occurrences; N defaults to 1
   bsel "START" "END"         select one whole-file uniquely anchored block
   bsel_next "START" "END"    select one state-scoped uniquely anchored block
   rsel START:END              select inclusive complete logical lines
@@ -70,8 +70,9 @@ Baseline editor state:
   baseline file that already has content edits.
 
   ` + "`tsel`" + ` occurrence must be nonzero: positive values count from the start, and
-  negative values count from the end. Both ` + "`bsel`" + ` and ` + "`bsel_next`" + ` anchors must be
-  nonempty and different.
+  negative values count from the end. Its optional count must be a positive integer and
+  selects consecutive nonoverlapping occurrences, including intervening source text.
+  Both ` + "`bsel`" + ` and ` + "`bsel_next`" + ` anchors must be nonempty and different.
 
   bsel searches the complete active-file baseline, independent of cursor or selection.
   bsel_next searches inside the current baseline selection when one exists; otherwise

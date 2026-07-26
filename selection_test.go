@@ -3,6 +3,7 @@ package hpatch
 import (
 	"encoding/json"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -402,6 +403,66 @@ func TestInsertionAtReplacementBoundaryIsUnambiguous(t *testing.T) {
 	}
 	if got, want := readTestFile(t, root, "file.txt"), "one\nT!wo\n"; got != want {
 		t.Fatalf("file = %q, want %q", got, want)
+	}
+}
+
+func TestTextSelectionCanSpanMultipleOccurrences(t *testing.T) {
+	tests := []struct {
+		name, script, want string
+	}{
+		{name: "positive group", script: "in file.txt\ntsel 1 2 \"x\" 2\ntype \"Y\"", want: "x, Y\n"},
+		{name: "negative group", script: "in file.txt\ntsel 1 -2 \"x\" 2\ntype \"Y\"", want: "Y, x\n"},
+		{name: "explicit count one", script: "in file.txt\ntsel 1 2 \"x\" 1\ntype \"Y\"", want: "x, Y, x\n"},
+		{name: "nonoverlapping candidates", script: "in file.txt\ntsel 1 1 \"aa\" 2\ntype \"Y\"", want: "Y, x, x\n"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			content := "x, x, x\n"
+			if test.name == "nonoverlapping candidates" {
+				content = "aaaa, x, x\n"
+			}
+			writeTestFile(t, root, "file.txt", content, 0o644)
+			stdout, stderr, exitCode := runForTest(root, nil, test.script)
+			if exitCode != 0 || stdout != "" || stderr != "" {
+				t.Fatalf("Run() = exit %d, stdout %q, stderr %q", exitCode, stdout, stderr)
+			}
+			if got := readTestFile(t, root, "file.txt"); got != test.want {
+				t.Fatalf("file = %q, want %q", got, test.want)
+			}
+		})
+	}
+}
+
+func TestTextSelectionOccurrenceGroupFailuresAreAtomic(t *testing.T) {
+	tests := []struct {
+		name, operand, want string
+	}{
+		{name: "positive group incomplete", operand: "2 \"x\" 3", want: "occurrence group of count 3 from 2"},
+		{name: "negative group incomplete", operand: "-2 \"x\" 3", want: "occurrence group of count 3 from -2"},
+		{name: "zero count", operand: "1 \"x\" 0", want: "invalid tsel count"},
+		{name: "negative count", operand: "1 \"x\" -1", want: "invalid tsel count"},
+		{name: "signed count", operand: "1 \"x\" +1", want: "invalid tsel count"},
+		{name: "leading zero count", operand: "1 \"x\" 01", want: "invalid tsel count"},
+		{name: "trailing operand", operand: "1 \"x\" 2 extra", want: "invalid tsel count"},
+		{name: "missing separator", operand: "1 \"x\"2", want: "tsel count must be separated by whitespace"},
+		{name: "integer overflow", operand: "1 \"x\" 999999999999999999999999999999", want: "tsel count is out of range"},
+		{name: "group arithmetic overflow", operand: "3 \"x\" " + strconv.Itoa(int(^uint(0)>>1)), want: "occurrence group of count"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			writeTestFile(t, root, "file.txt", "x, x, x\n", 0o644)
+			before := readTree(t, root)
+			script := "in file.txt\ntsel 1 " + test.operand
+			stdout, stderr, exitCode := runForTest(root, []string{"translate"}, script)
+			if exitCode != 1 || stdout != "" || !strings.Contains(stderr, test.want) {
+				t.Fatalf("Run() = exit %d, stdout %q, stderr %q; want %q", exitCode, stdout, stderr, test.want)
+			}
+			if after := readTree(t, root); !reflect.DeepEqual(after, before) {
+				t.Fatalf("failure mutated tree: before %#v, after %#v", before, after)
+			}
+		})
 	}
 }
 
