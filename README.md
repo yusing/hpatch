@@ -108,6 +108,7 @@ editing-command summary:
 ```sh
 bin/hpatch --help
 bin/hpatch translate --help
+bin/hpatch --tool-help
 bin/hpatch --version
 ```
 

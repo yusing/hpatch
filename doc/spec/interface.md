@@ -21,11 +21,15 @@ directory. The CLI opens root once and uses that pinned capability for the invoc
 `hpatch gain` reads no script and reports the persistent aggregate defined by
 `REQ-METRICS-001`. `hpatch --help` is the complete built-in agent reference for
 stdin usage, process and editing commands, editor state, orchestration, trust boundaries,
-and validation. `hpatch translate --help` summarizes translate-mode I/O and points to
-top-level help. `hpatch --version` writes the module build version, or `devel` for an
-unversioned build. Informational commands do not read stdin, resolve a working or
-configuration directory, access metrics, or inspect project files. Any other argument
-list is invalid.
+and validation. `hpatch --tool-help` derives a custom-tool-focused reference from the
+same agent workflow, editing-command, baseline-state, selector, and final-state-report
+sections. It omits CLI usage and mode descriptions, root and cwd options, metrics,
+and version material, then adds workspace-relative path and parent-directory preparation
+guidance.
+`hpatch translate --help` summarizes translate-mode I/O and points to top-level help.
+`hpatch --version` writes the module build version, or `devel` for an unversioned build.
+Informational commands do not read stdin, resolve a working or configuration directory,
+access metrics, or inspect project files. Any other argument list is invalid.
 
 Acceptance:
 
@@ -39,11 +43,14 @@ Acceptance:
 4. Gain mode leaves the source tree and metrics unchanged.
 5. Each supported informational form writes its complete result to stdout with status
    zero and empty stderr without reading stdin or requiring a valid current directory.
-6. Unsupported aliases, trailing arguments, and unknown or future options fail with no
+6. Tool help contains the current agent workflow, editing language, state rules, final
+   report, and tool-path guidance; it excludes CLI-only material and omits relative forms
+   when `HPATCH_DISABLE_RELATIVE_LINES=1`.
+7. Unsupported aliases, trailing arguments, and unknown or future options fail with no
    stdout or final-state report.
-7. A nested cwd changes relative path resolution while normal mutations and translated
+8. A nested cwd changes relative path resolution while normal mutations and translated
    patch paths retain the same root-relative file identity.
-8. A relative, absolute, or symlink path that escapes root fails without mutation,
+9. A relative, absolute, or symlink path that escapes root fails without mutation,
    patch output, or final-state report.
 
 ## REQ-METRICS-001 — Persistent token, command, and feature metrics
@@ -507,9 +514,12 @@ Acceptance:
 ## REQ-GUIDE-001 — Agent guidance
 
 The built-in top-level help owns the complete agent editing, orchestration,
-trust-boundary, validation, final-state-report, and metrics reference. It presents
-`bsel` as whole-file and `bsel_next` as explicitly stateful, documents automatic
-horizontal-whitespace tolerance and optional `tsel COUNT`, and shows relative line forms
+trust-boundary, validation, final-state-report, and metrics reference. Tool help reuses
+its agent workflow through final-state-report sections rather than maintaining a second
+editing-language definition, and adds only custom-tool path guidance. Tool help excludes
+CLI usage and mode descriptions, options, metrics, and version material. Both references
+`bsel` as whole-file and `bsel_next` as explicitly stateful, document automatic
+horizontal-whitespace tolerance and optional `tsel COUNT`, and show relative line forms
 only when `HPATCH_DISABLE_RELATIVE_LINES` is not `1`. The project agent instruction file
 only directs agents to run and follow `hpatch --help`; it does not duplicate language
 semantics that can become stale.

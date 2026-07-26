@@ -32,10 +32,11 @@ comparisons and a concise instruction sheet suitable for agents.
 - `hpatch`: normal mode; read the script from standard input and edit files.
 - `hpatch translate`: read the script from standard input and emit `apply_patch` text.
 - `hpatch gain`: report persistent comparative token estimates.
-- `hpatch --help`, `hpatch translate --help`, and `hpatch --version`: informational
-  output without reading stdin or accessing the workspace.
-- Script commands: `in`, `new`, `mv`, `rm`, `sel`, `tsel`, `bsel`, `rsel`,
-  `type`, `del`, and `dup`.
+- `hpatch --help`, `hpatch --tool-help`, `hpatch translate --help`, and
+  `hpatch --version`: informational output without reading stdin or accessing the
+  workspace.
+- Script commands: `in`, `new`, `mv`, `rm`, `sel`, `tsel`, `bsel`, `bsel_next`,
+  `rsel`, `type`, `del`, and `dup`.
 
 ## Non-goals
 
@@ -52,5 +53,6 @@ comparisons and a concise instruction sheet suitable for agents.
 - String operands use JSON string syntax.
 - Parsing, validation, and in-memory evaluation failures must not modify files or emit
   a partial patch.
-- Normal-mode success is silent. Translate-mode success emits only the patch.
+- Normal-mode success writes only the final-state report to stderr. Translate-mode
+  success writes only the patch to stdout and the pending final-state report to stderr.
 - Diagnostics go to standard error with a nonzero exit status.

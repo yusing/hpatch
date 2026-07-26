@@ -4,7 +4,7 @@ pjdoc:
   kind: spec
   scope: root
   status: approved
-  revision: "3"
+  revision: "4"
   files:
     - interface.md
     - comparison.md

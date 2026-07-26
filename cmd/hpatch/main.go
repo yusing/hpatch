@@ -16,6 +16,7 @@ const helpTextBase = `Usage:
   hpatch gain
   hpatch --help
   hpatch translate --help
+  hpatch --tool-help
   hpatch --version
 
 Input and output:
@@ -37,18 +38,18 @@ Agent workflow:
      gofmt before tests so structural errors are reported immediately.
 
 Editing commands:
-  in PATH                     select or reselect an existing file baseline
-  new PATH                    select a pending empty file at cursor 0:0
-  mv PATH                     move the active pending file without changing its baseline
-  rm                          remove the active file and clear editor state
-  sel LINE START:END          select inclusive one-based Unicode columns
-  tsel LINE OCCURRENCE "TEXT" [N] select N occurrences; N defaults to 1
-  bsel "START" "END"         select one whole-file uniquely anchored block
-  bsel_next "START" "END"    select one state-scoped uniquely anchored block
-  rsel START:END              select inclusive complete logical lines
-  type "TEXT"                 record replacement or insertion at baseline coordinates
-  del                         record deletion of the selection
-  dup                         copy the baseline selection immediately after it
+  in PATH                             select or reselect an existing file baseline
+  new PATH                            select a pending empty file at cursor 0:0
+  mv PATH                             move the active pending file without changing its baseline
+  rm                                  remove the active file and clear editor state
+  sel LINE START:END                  select inclusive one-based Unicode columns
+  tsel LINE OCCURRENCE "TEXT" [N]     select N occurrences; N defaults to 1
+  bsel "START" "END"                  select one whole-file uniquely anchored block
+  bsel_next "START" "END"             select one state-scoped uniquely anchored block
+  rsel START:END                      select inclusive complete logical lines
+  type "TEXT"                         record replacement or insertion at baseline coordinates
+  del                                 record deletion of the selection
+  dup                                 copy the baseline selection immediately after it
 
 Baseline editor state:
   The first in for an existing file captures an immutable baseline. Every selector
@@ -92,6 +93,12 @@ Baseline editor state:
   operands rather than hand-escaping quotes, backslashes, newlines, or Unicode.
   type, bsel, and bsel_next strings may contain encoded line terminators; tsel may not.
 
+Final-state report:
+  A successful report starts with the active path and rendered cursor or selection,
+  followed by up to three nearby post-edit lines. Each preview contains at most 64
+  Unicode code points and escapes control characters so it remains on one output line.
+  Use the report to orient focused validation without rereading a successfully edited file.
+
 Metrics:
   hpatch gain reads no script and reports persistent effective, ineffective, and
   apply_patch output-token estimates separately from final-state report input-token
@@ -116,12 +123,24 @@ func helpText(relativeLines bool) string {
 	if !relativeLines {
 		return helpTextBase
 	}
-	text := strings.Replace(helpTextBase, "  sel LINE START:END", "  sel LINE_REF START:END", 1)
-	text = strings.Replace(text, "  tsel LINE OCCURRENCE", "  tsel LINE_REF OCCURRENCE", 1)
-	text = strings.Replace(text, "  rsel START:END", "  rsel LINE_REF:LINE_REF", 1)
+	text := strings.Replace(helpTextBase, "  sel LINE START:END                  select", "  sel LINE_REF START:END              select", 1)
+	text = strings.Replace(text, "  tsel LINE OCCURRENCE \"TEXT\" [N]     select", "  tsel LINE_REF OCCURRENCE \"TEXT\" [N] select", 1)
+	text = strings.Replace(text, "  rsel START:END                      select", "  rsel LINE_REF:LINE_REF              select", 1)
 	const marker = "  Cursors and selections are baseline positions."
 	const relativeHelp = "  LINE_REF is either an absolute one-based line or an experimental signed offset\n  from the current baseline cursor line, such as +0, +3, or -2. Relative selectors\n  require cursor state and fail when a selection is active. Set\n  HPATCH_DISABLE_RELATIVE_LINES=1 to disable signed line references.\n\n"
 	return strings.Replace(text, marker, relativeHelp+marker, 1)
+}
+
+const toolHelpPaths = `Paths:
+  Use workspace-relative paths that stay within the workspace. Parent directories for
+  new files must already exist; create missing directories with a separate exec call
+  before invoking hpatch.
+`
+
+func toolHelpText(relativeLines bool) string {
+	_, reference, _ := strings.Cut(helpText(relativeLines), "Agent workflow:\n")
+	reference, _, _ = strings.Cut(reference, "\nMetrics:\n")
+	return "Edit workspace files with one atomic hpatch script.\n\nAgent workflow:\n" + reference + "\n" + toolHelpPaths
 }
 
 func relativeLinesEnabled() bool {
@@ -256,6 +275,9 @@ func runInformational(args []string, stdout, stderr io.Writer) (int, bool) {
 	case len(args) == 2 && args[0] == "translate" && args[1] == "--help":
 		output = translateHelpText
 		description = "translate help"
+	case len(args) == 1 && args[0] == "--tool-help":
+		output = toolHelpText(relativeLinesEnabled())
+		description = "tool help"
 	case len(args) == 1 && args[0] == "--version":
 		output = "hpatch " + buildVersion() + "\n"
 		description = "version"

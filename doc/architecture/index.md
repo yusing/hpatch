@@ -4,7 +4,7 @@ pjdoc:
   kind: architecture
   scope: root
   status: approved
-  revision: "5"
+  revision: "6"
   files:
     []
 ---
@@ -59,13 +59,16 @@ persist editor state or create a resume mechanism.
 ## CTR-BOUNDARY-001 — Filesystem and output boundary
 
 The CLI boundary owns arguments, stdin, workspace selection, environment-derived feature
-configuration, diagnostics, stdout, stderr, and exit status for `REQ-CLI-001` and
-`REQ-OUTPUT-001`. The workspace boundary owns a pinned `*os.Root`, a root-relative cwd,
-root-scoped filesystem reads, staging, commit, and rollback. Relative script paths resolve
-from cwd; absolute script paths become root-relative identities only when within root.
-Lexical and symlink escapes fail. Initial inputs cross into the engine only after a
-regular-file check and strict UTF-8 decoding. Informational forms are resolved before
-stdin, working-directory, configuration-directory, metrics, or filesystem access.
+configuration, diagnostics, stdout, stderr, exit status, and help composition for
+`REQ-CLI-001`, `REQ-GUIDE-001`, and `REQ-OUTPUT-001`. Top-level and tool help share one
+rendered agent-workflow-through-final-state reference; the tool form excludes CLI mode
+sections and appends its bounded path guidance. The workspace boundary owns a pinned
+`*os.Root`, a root-relative cwd, root-scoped filesystem reads, staging, commit, and
+rollback. Relative script paths resolve from cwd; absolute script paths become
+root-relative identities only when within root. Lexical and symlink escapes fail. Initial
+inputs cross into the engine only after a regular-file check and strict UTF-8 decoding.
+Informational forms are resolved before stdin, working-directory, configuration-directory,
+metrics, or filesystem access.
 
 The standalone CLI canonicalizes root and cwd, opens the root once, and keeps that
 capability open for the invocation. Library callers pass the already-authorized root and

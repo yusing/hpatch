@@ -35,6 +35,7 @@ func TestInformationalCommandsNeedNoEnvironmentOrStdin(t *testing.T) {
 	}{
 		{name: "top-level help", args: []string{"--help"}, want: helpText(true), wantFragment: "hpatch translate [--root ROOT] [--cwd CWD] < SCRIPT"},
 		{name: "translate help", args: []string{"translate", "--help"}, want: translateHelpText, wantFragment: "without modifying"},
+		{name: "tool help", args: []string{"--tool-help"}, want: toolHelpText(true), wantFragment: "Edit workspace files with one atomic hpatch script."},
 		{name: "version", args: []string{"--version"}, want: "hpatch devel\n", wantFragment: "hpatch devel"},
 	}
 	for _, test := range tests {
@@ -83,6 +84,37 @@ func TestTopLevelHelpDescribesCompletePublicSurface(t *testing.T) {
 	}
 }
 
+func TestToolHelpIsFocusedAndAuthoritative(t *testing.T) {
+	help := toolHelpText(true)
+	for _, required := range []string{
+		"functions.hpatch's free-form",
+		"sel LINE_REF START:END",
+		"tsel LINE_REF OCCURRENCE \"TEXT\" [N]",
+		"bsel_next \"START\" \"END\"",
+		"ASCII space and tab runs match interchangeably",
+		"Final-state report:",
+		"three nearby post-edit lines",
+		"workspace-relative paths",
+		"create missing directories with a separate exec call",
+	} {
+		if !strings.Contains(help, required) {
+			t.Fatalf("tool help does not contain %q", required)
+		}
+	}
+	for _, excluded := range []string{
+		"Usage:",
+		"hpatch gain",
+		"--root",
+		"--cwd",
+		"Metrics:",
+		"estimated weighted",
+	} {
+		if strings.Contains(help, excluded) {
+			t.Fatalf("tool help contains CLI-only text %q", excluded)
+		}
+	}
+}
+
 func TestRelativeLineHelpCanBeDisabled(t *testing.T) {
 	t.Setenv("HPATCH_DISABLE_RELATIVE_LINES", "1")
 	var stdout, stderr bytes.Buffer
@@ -92,6 +124,9 @@ func TestRelativeLineHelpCanBeDisabled(t *testing.T) {
 	for _, relative := range []string{"LINE_REF", "+0", "HPATCH_DISABLE_RELATIVE_LINES"} {
 		if strings.Contains(stdout.String(), relative) {
 			t.Fatalf("disabled help contains relative-line text %q", relative)
+		}
+		if strings.Contains(toolHelpText(false), relative) {
+			t.Fatalf("disabled tool help contains relative-line text %q", relative)
 		}
 	}
 	for _, absolute := range []string{"sel LINE START:END", "tsel LINE OCCURRENCE", "rsel START:END"} {
@@ -179,7 +214,7 @@ func TestTopLevelHelpDescribesSelectionOperandConstraints(t *testing.T) {
 }
 
 func TestHelpDoesNotLeakSourceTreeReferences(t *testing.T) {
-	for _, output := range []string{helpText(true), translateHelpText} {
+	for _, output := range []string{helpText(true), toolHelpText(true), translateHelpText} {
 		for _, stale := range []string{"doc/spec", "AGENT_INSTRUCTIONS.md"} {
 			if strings.Contains(output, stale) {
 				t.Fatalf("help contains source-tree reference %q", stale)
@@ -196,6 +231,7 @@ func TestUnsupportedInformationalAliasesRemainErrors(t *testing.T) {
 		{"--help", "extra"},
 		{"translate", "-h"},
 		{"translate", "--help", "extra"},
+		{"--tool-help", "extra"},
 		{"translate", "--version"},
 		{"gain", "--help"},
 	}
