@@ -24,17 +24,15 @@ Input and output:
   OpenAI apply_patch envelope to stdout. Diagnostics use stderr and nonzero status.
 
 Agent workflow:
-  1. Inspect the relevant source before selecting text.
-  2. From the workspace root, invoke exactly hpatch translate and attach SCRIPT
-     through the execution interface's native non-PTY stdin field.
-  3. Do not use Python, printf, an encoding helper, a shell pipeline, or any other
-     wrapper around hpatch translate. If native stdin is unavailable, stop instead
-     of inventing another transport.
-  4. If translation succeeds, pass its stdout directly and internally to the native
-     apply_patch tool in the same orchestration boundary. Do not invoke a shell
-     executable named apply_patch or return the translated patch to the model.
-  5. Propagate failure from either boundary, then reread intended files and run
-     focused validation. An opaque successful apply result is not verification.
+  1. Inspect the relevant source before constructing selectors.
+  2. Submit one complete editing script directly as the free-form input of
+     functions.hpatch.
+  3. Do not call functions.apply_patch, tools.apply_patch, or functions.exec to
+     perform an hpatch edit. Do not invoke hpatch translate as an editing transport.
+  4. If functions.hpatch rejects the script, no staged edits were committed.
+     Correct and resubmit the complete script against the unchanged file state.
+  5. After success, run focused behavioral validation. For Go source changes, run
+     gofmt before tests so structural errors are reported immediately.
 
 Editing commands:
   in PATH                     select an existing file at cursor 0:0
