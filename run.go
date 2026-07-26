@@ -76,11 +76,12 @@ func RunWorkspace(args []string, stdin io.Reader, stdout, stderr io.Writer, work
 		return failWithIneffectiveMetrics(stderr, fmt.Sprintf("reading script: %v", err), dataDirectory, string(script), commandMetrics{})
 	}
 	scriptText := string(script)
-	changes, filesystem, commands, err := evaluateScript(context.TODO(), workspace, scriptText, relativeLinesEnabled())
+	changes, filesystem, commands, report, err := evaluateScript(context.TODO(), workspace, scriptText, relativeLinesEnabled())
 	if err != nil {
 		return failWithIneffectiveMetrics(stderr, err.Error(), dataDirectory, scriptText, commands)
 	}
 	if !translateMode && len(changes) == 0 {
+		writeStateReport(stderr, report)
 		if dataDirectory != "" {
 			if err := recordCommandMetrics(dataDirectory, commands); err != nil {
 				warn(stderr, err.Error())
@@ -96,6 +97,7 @@ func RunWorkspace(args []string, stdin io.Reader, stdout, stderr io.Writer, work
 		if _, err := io.WriteString(stdout, patch); err != nil {
 			return failWithIneffectiveMetrics(stderr, fmt.Sprintf("writing patch: %v", err), dataDirectory, scriptText, commands)
 		}
+		writeStateReport(stderr, report)
 		if dataDirectory != "" {
 			if err := recordMetrics(dataDirectory, scriptText, patch, commands); err != nil {
 				warn(stderr, err.Error())
@@ -106,6 +108,7 @@ func RunWorkspace(args []string, stdin io.Reader, stdout, stderr io.Writer, work
 	if err := commitChanges(changes, rootFileOperations{root: filesystem.root}); err != nil {
 		return failWithIneffectiveMetrics(stderr, fmt.Sprintf("changing %s: %v", describePaths(changes), err), dataDirectory, scriptText, commands)
 	}
+	writeStateReport(stderr, report)
 	if dataDirectory != "" {
 		patch, err := translate(changes)
 		if err != nil {
@@ -122,7 +125,7 @@ func RunWorkspace(args []string, stdin io.Reader, stdout, stderr io.Writer, work
 
 // Apply evaluates and atomically applies script within workspace.
 func Apply(ctx context.Context, workspace Workspace, script string) error {
-	changes, filesystem, _, err := evaluateScript(ctx, workspace, script, relativeLinesEnabled())
+	changes, filesystem, _, _, err := evaluateScript(ctx, workspace, script, relativeLinesEnabled())
 	if err != nil {
 		return err
 	}
@@ -138,7 +141,7 @@ func Apply(ctx context.Context, workspace Workspace, script string) error {
 // Translate evaluates script without mutation and returns an apply_patch envelope
 // whose paths are relative to workspace.Root.
 func Translate(ctx context.Context, workspace Workspace, script string) ([]byte, error) {
-	changes, _, _, err := evaluateScript(ctx, workspace, script, relativeLinesEnabled())
+	changes, _, _, _, err := evaluateScript(ctx, workspace, script, relativeLinesEnabled())
 	if err != nil {
 		return nil, err
 	}
@@ -154,10 +157,10 @@ type filesystemWorkspace struct {
 	cwd  string
 }
 
-func evaluateScript(ctx context.Context, workspace Workspace, script string, relativeLines bool) ([]change, filesystemWorkspace, commandMetrics, error) {
+func evaluateScript(ctx context.Context, workspace Workspace, script string, relativeLines bool) ([]change, filesystemWorkspace, commandMetrics, string, error) {
 	filesystem, err := validateWorkspace(ctx, workspace)
 	if err != nil {
-		return nil, filesystemWorkspace{}, commandMetrics{}, err
+		return nil, filesystemWorkspace{}, commandMetrics{}, "", err
 	}
 	program, err := parse(script, relativeLines)
 	if err != nil {
@@ -165,7 +168,7 @@ func evaluateScript(ctx context.Context, workspace Workspace, script string, rel
 		if sourceError, ok := errors.AsType[*commandError](err); ok {
 			commands.invokeFailure(sourceError.Operation)
 		}
-		return nil, filesystemWorkspace{}, commands, err
+		return nil, filesystemWorkspace{}, commands, "", err
 	}
 	load := func(path string) (loadedFile, error) {
 		if err := ctx.Err(); err != nil {
@@ -205,11 +208,11 @@ func evaluateScript(ctx context.Context, workspace Workspace, script string, rel
 		}
 		return 0, false, err
 	}
-	changes, commands, err := program.evaluate(filesystem.resolvePath, load, exists)
+	changes, commands, report, err := program.evaluate(filesystem.resolvePath, load, exists)
 	if err != nil {
-		return nil, filesystemWorkspace{}, commands, err
+		return nil, filesystemWorkspace{}, commands, "", err
 	}
-	return changes, filesystem, commands, nil
+	return changes, filesystem, commands, report, nil
 }
 
 func validateWorkspace(ctx context.Context, workspace Workspace) (filesystemWorkspace, error) {
@@ -258,6 +261,11 @@ func (w filesystemWorkspace) resolvePath(path string) (string, error) {
 		return "", fmt.Errorf("path resolves outside workspace root")
 	}
 	return path, nil
+}
+
+func writeStateReport(stderr io.Writer, report string) bool {
+	written, err := io.WriteString(stderr, report)
+	return err == nil && written == len(report)
 }
 
 func sanitizeDiagnostic(message string) string {

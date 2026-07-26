@@ -53,7 +53,7 @@ type workspace struct {
 	exists  pathProbe
 }
 
-func (p *program) evaluate(resolve pathResolver, load fileLoader, exists pathProbe) ([]change, commandMetrics, error) {
+func (p *program) evaluate(resolve pathResolver, load fileLoader, exists pathProbe) ([]change, commandMetrics, string, error) {
 	w := &workspace{paths: make(map[string]*fileState), blocked: make(map[string]bool), load: load, exists: exists}
 	var commands commandMetrics
 	for commandIndex, command := range p.instructions {
@@ -63,16 +63,16 @@ func (p *program) evaluate(resolve pathResolver, load fileLoader, exists pathPro
 			resolved, err := resolve(command.path)
 			if err != nil {
 				commands.fail(command.operation)
-				return nil, commands, &commandError{Command: commandIndex + 1, Line: command.line, Operation: command.operation, Path: diagnosticPath, Category: commandCategory(command.operation), Message: err.Error()}
+				return nil, commands, "", &commandError{Command: commandIndex + 1, Line: command.line, Operation: command.operation, Path: diagnosticPath, Category: commandCategory(command.operation), Message: err.Error()}
 			}
 			command.path = resolved
 		}
 		if err := w.execute(command, commandIndex+1); err != nil {
 			commands.fail(command.operation)
-			return nil, commands, &commandError{Command: commandIndex + 1, Line: command.line, Operation: command.operation, Path: w.diagnosticPath(command), Category: commandCategory(command.operation), Message: err.Error()}
+			return nil, commands, "", &commandError{Command: commandIndex + 1, Line: command.line, Operation: command.operation, Path: w.diagnosticPath(command), Category: commandCategory(command.operation), Message: err.Error()}
 		}
 	}
-	return w.changes(), commands, nil
+	return w.changes(), commands, w.finalStateReport(), nil
 }
 
 func (w *workspace) diagnosticPath(command instruction) string {

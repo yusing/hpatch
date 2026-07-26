@@ -552,7 +552,15 @@ func updateChanges() []change {
 func runForTest(root string, args []string, script string) (string, string, int) {
 	var stdout, stderr bytes.Buffer
 	exitCode := Run(args, strings.NewReader(script), &stdout, &stderr, root, root+"-metrics")
-	return stdout.String(), stderr.String(), exitCode
+	stderrText := stderr.String()
+	if exitCode == 0 && isFinalStateReport(stderrText) {
+		stderrText = ""
+	}
+	return stdout.String(), stderrText, exitCode
+}
+
+func isFinalStateReport(output string) bool {
+	return output == "no active file\n" || strings.HasPrefix(output, "in ")
 }
 
 func openTestRoot(t *testing.T, path string) *os.Root {

@@ -21,8 +21,9 @@ const helpTextBase = `Usage:
 Input and output:
   hpatch reads the complete editing script from standard input, validates and
   evaluates every command in memory, stages all changes, and only then commits.
-  Normal-mode success is silent. translate never modifies files and writes one
-  OpenAI apply_patch envelope to stdout. Diagnostics use stderr and nonzero status.
+  Normal-mode success writes the final active-file state report to stderr. translate
+  never modifies files, writes one OpenAI apply_patch envelope to stdout, and then
+  writes the pending final-state report to stderr. Failures use stderr and nonzero status.
 
 Agent workflow:
   1. Inspect the relevant source before constructing selectors.
@@ -122,8 +123,9 @@ const translateHelpText = `Usage:
   hpatch translate [--root ROOT] [--cwd CWD] < SCRIPT
 
 Read and evaluate a complete editing script from standard input without modifying
-files, then write one OpenAI apply_patch envelope to stdout. Successful stdout is
-patch-only; diagnostics use stderr and nonzero status.
+files, then write one OpenAI apply_patch envelope to stdout and the pending final-state
+report to stderr. Successful stdout is patch-only; failures use stderr and nonzero
+status.
 
 Attach SCRIPT through the execution interface's native non-PTY stdin field. Do not
 use Python, printf, an encoding helper, a shell pipeline, or any wrapper around

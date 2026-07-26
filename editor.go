@@ -27,10 +27,11 @@ type baselineEdit struct {
 }
 
 type editor struct {
-	baseline  string
-	cursor    int
-	selection *selection
-	edits     []baselineEdit
+	baseline      string
+	cursor        int
+	selection     *selection
+	cursorCommand int
+	edits         []baselineEdit
 }
 
 type logicalLine struct {
@@ -42,6 +43,7 @@ type logicalLine struct {
 func (e *editor) resetCursor() {
 	e.cursor = 0
 	e.selection = nil
+	e.cursorCommand = 0
 }
 
 func (e *editor) selectColumns(lineRef lineReference, startColumn, endColumn int) error {
@@ -234,6 +236,9 @@ func (e *editor) typeText(replacement string, origin editOrigin) error {
 	}
 	e.cursor = end
 	e.selection = nil
+	if start != end || replacement != "" {
+		e.cursorCommand = origin.command
+	}
 	return nil
 }
 
@@ -247,6 +252,7 @@ func (e *editor) deleteSelection(origin editOrigin) error {
 	}
 	e.cursor = selected.start
 	e.selection = nil
+	e.cursorCommand = origin.command
 	return nil
 }
 
@@ -270,6 +276,7 @@ func (e *editor) duplicateSelection(origin editOrigin) error {
 	}
 	e.cursor = selected.end
 	e.selection = nil
+	e.cursorCommand = origin.command
 	return nil
 }
 
@@ -348,7 +355,7 @@ func (e *editor) firstEdit() (baselineEdit, bool) {
 	return e.edits[0], true
 }
 
-func (e *editor) content() string {
+func (e *editor) orderedEdits() []baselineEdit {
 	edits := slices.Clone(e.edits)
 	slices.SortFunc(edits, func(first, second baselineEdit) int {
 		switch {
@@ -364,6 +371,11 @@ func (e *editor) content() string {
 			return 0
 		}
 	})
+	return edits
+}
+
+func (e *editor) content() string {
+	edits := e.orderedEdits()
 
 	var result strings.Builder
 	cursor := 0

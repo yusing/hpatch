@@ -114,7 +114,7 @@ func TestRootAndCWDOptionsTranslateRootRelativePath(t *testing.T) {
 			&stdout,
 			&stderr,
 		)
-		if exitCode != 0 || stderr.Len() != 0 {
+		if exitCode != 0 || !strings.HasPrefix(stderr.String(), "in nested/main.go ") {
 			t.Fatalf("run(cwd %q) = exit %d, stdout %q, stderr %q", cwd, exitCode, stdout.String(), stderr.String())
 		}
 		if !strings.Contains(stdout.String(), "*** Update File: nested/main.go\n") {
