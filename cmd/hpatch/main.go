@@ -35,7 +35,10 @@ Agent workflow:
   4. If functions.hpatch rejects the script, no staged edits were committed.
      Correct and resubmit the complete script against the unchanged file state.
   5. After success, run focused behavioral validation. For Go source changes, run
-     gofmt before tests so structural errors are reported immediately.
+     gofmt before tests so structural errors are reported immediately. Success means
+     every selector resolved, not that it resolved where you intended: a selector
+     matching an existing but unintended span commits and reports success. Treat the
+     final-state report and a parser or formatter as the check on placement.
 
 Editing commands:
   in PATH                             select or reselect an existing file baseline
@@ -82,7 +85,9 @@ Baseline editor state:
   command resolves START uniquely in its scope, then resolves END uniquely only after
   START. Exact anchors are authoritative; when an anchor has no exact occurrence,
   nonempty ASCII space and tab runs match interchangeably. The selected span includes
-  both anchors.
+  both anchors, so replacement TEXT must reproduce whatever END covers. An END anchor
+  stopping mid-expression leaves the rest of that expression in place, and TEXT that
+  also supplies it duplicates the remainder. Use rsel to replace whole lines.
 
   rsel owns selected line terminators. When type replaces a terminated linewise
   selection and TEXT has no final terminator, hpatch preserves the selected final
