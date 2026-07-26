@@ -109,17 +109,17 @@ per-invocation filesystem sync. This allows the operating system to coalesce phy
 writes. Metrics persist across processes and normal restarts, but sudden power loss may
 lose increments that the operating system had not yet flushed.
 
-`hpatch gain` first writes the five token rows: aggregate estimated effective hpatch
-output tokens, estimated `apply_patch` output tokens, effective-only estimated reduction,
-estimated ineffective hpatch output tokens, and estimated overall reduction. It then writes
-a stable-order compact table with one row per supported patch command containing its
-invocations, errors, and calculated `errors / invocations * 100` rate, followed by a total
-row across all commands. The
+`hpatch gain` first writes six token rows: aggregate estimated effective hpatch output
+tokens, estimated `apply_patch` output tokens, effective-only estimated reduction,
+estimated ineffective hpatch output tokens, calculated total hpatch output tokens, and
+estimated overall reduction. It then writes a stable-order compact table with one row per
+supported patch command containing its invocations, errors, and calculated
+`errors / invocations * 100` rate, followed by a total row across all commands. The
 effective-only reduction is `(apply_patch - effective_hpatch) / apply_patch * 100`; the
-overall reduction is `(apply_patch - effective_hpatch - ineffective_hpatch) /
-apply_patch * 100`. Percentages are rounded to one decimal place and are zero when their
-denominator is zero. With no metrics file or only an obsolete record, all totals and
-percentages are zero. Gain reads no stdin and does not create or rewrite a metrics file.
+overall reduction is `(apply_patch - total_hpatch) / apply_patch * 100`. Percentages are
+rounded to one decimal place and are zero when their denominator is zero. With no metrics
+file or only an obsolete record, all totals and percentages are zero. Gain reads no stdin
+and does not create or rewrite a metrics file.
 
 Acceptance:
 

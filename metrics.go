@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math/big"
 	"os"
 	"path/filepath"
 	"strings"
@@ -380,8 +381,10 @@ func (m metrics) overallReduction() float64 {
 }
 
 func gainReport(m metrics) string {
+	totalHPatchTokens := new(big.Int).SetUint64(m.HPatchTokens)
+	totalHPatchTokens.Add(totalHPatchTokens, new(big.Int).SetUint64(m.IneffectiveHPatchTokens))
 	var report strings.Builder
-	fmt.Fprintf(&report, "estimated hpatch output tokens: %d\nestimated apply_patch output tokens: %d\nestimated reduction: %.1f%%\nestimated ineffective hpatch output tokens: %d\nestimated overall reduction: %.1f%%\ncommand metrics:\n", m.HPatchTokens, m.ApplyPatchTokens, m.reduction(), m.IneffectiveHPatchTokens, m.overallReduction())
+	fmt.Fprintf(&report, "estimated effective hpatch output tokens: %d\nestimated apply_patch output tokens: %d\nestimated effective reduction: %.1f%%\nestimated ineffective hpatch output tokens: %d\nestimated total hpatch output tokens: %s\nestimated overall reduction: %.1f%%\ncommand metrics:\n", m.HPatchTokens, m.ApplyPatchTokens, m.reduction(), m.IneffectiveHPatchTokens, totalHPatchTokens, m.overallReduction())
 	table := tabwriter.NewWriter(&report, 0, 4, 2, ' ', 0)
 	fmt.Fprintln(table, "command\tinvocations\terrors\terror rate")
 	fmt.Fprintln(table, "-------\t-----------\t------\t----------")

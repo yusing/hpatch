@@ -88,17 +88,17 @@ protocol and reasoning tokens, assistant commentary, server-generated identifier
 and tool results. Host formatting or a different host tool schema can change actual
 usage.
 
-The report preserves the effective hpatch, direct `apply_patch`, and effective-only
-reduction rows, then adds ineffective hpatch output tokens and overall reduction. It also
+The report labels effective and ineffective hpatch token estimates separately and shows
+their calculated total, making the overall comparison directly reconcilable. It also
 renders a compact table with one row per supported patch command containing its invocation
-count, error count, and calculated `errors / invocations * 100` rate, followed by a total row. The effective-only
-percentage is `(apply_patch - effective_hpatch) / apply_patch * 100`; overall reduction
-also subtracts ineffective hpatch tokens. Percentages are zero when their denominator is
-zero. Metrics persist in the platform user-configuration directory. Only the latest
-metrics format is decoded. A valid, checksummed slot with another `HPATCH` version resets
-totals when no current-format slot exists; malformed slots do not count as version
-mismatches. Collection failures warn but do not change the success or failure of the
-requested edit or translated output.
+count, error count, and calculated `errors / invocations * 100` rate, followed by a total
+row. The effective-only percentage is `(apply_patch - effective_hpatch) / apply_patch *
+100`; overall reduction is `(apply_patch - total_hpatch) / apply_patch * 100`. Percentages
+are zero when their denominator is zero. Metrics persist in the platform
+user-configuration directory. Only the latest metrics format is decoded. A valid,
+checksummed slot with another `HPATCH` version resets totals when no current-format slot
+exists; malformed slots do not count as version mismatches. Collection failures warn but
+do not change the success or failure of the requested edit or translated output.
 
 ## Editing language
 

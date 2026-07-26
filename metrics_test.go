@@ -60,6 +60,28 @@ func TestGainWithoutMetricsReportsZero(t *testing.T) {
 	}
 }
 
+func TestGainReportReconcilesEffectiveAndIneffectiveTokens(t *testing.T) {
+	report := gainReport(metrics{
+		HPatchTokens:            2404,
+		ApplyPatchTokens:        4764,
+		IneffectiveHPatchTokens: 2172,
+	})
+	want := "estimated effective hpatch output tokens: 2404\n" +
+		"estimated apply_patch output tokens: 4764\n" +
+		"estimated effective reduction: 49.5%\n" +
+		"estimated ineffective hpatch output tokens: 2172\n" +
+		"estimated total hpatch output tokens: 4576\n" +
+		"estimated overall reduction: 3.9%\n"
+	if !strings.HasPrefix(report, want) {
+		t.Fatalf("gain report = %q, want prefix %q", report, want)
+	}
+
+	overflowSafe := gainReport(metrics{HPatchTokens: ^uint64(0), IneffectiveHPatchTokens: ^uint64(0)})
+	if !strings.Contains(overflowSafe, "estimated total hpatch output tokens: 36893488147419103230\n") {
+		t.Fatalf("overflow-safe gain report = %q", overflowSafe)
+	}
+}
+
 func TestGainReportsCommandInvocationsErrorsAndRates(t *testing.T) {
 	root := t.TempDir()
 	dataDirectory := t.TempDir()
