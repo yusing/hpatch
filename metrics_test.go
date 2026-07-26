@@ -3,7 +3,6 @@ package hpatch
 import (
 	"bytes"
 	"crypto/sha256"
-	"encoding/binary"
 	"fmt"
 	"io"
 	"os"
@@ -20,7 +19,7 @@ func TestGainReportsPersistedTotals(t *testing.T) {
 	dataDirectory := t.TempDir()
 	script := "new note.txt\ntype \"hello\"\n"
 	patch := "*** Begin Patch\n*** Add File: note.txt\n+hello\n*** End Patch\n"
-	entry, err := countMetrics(root, script, patch)
+	entry, err := countMetrics(script, patch)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -70,7 +69,7 @@ func TestFailedHPatchCountsOnlyAsIneffectiveOutput(t *testing.T) {
 	dataDirectory := t.TempDir()
 	validScript := "new note.txt\ntype \"hello\"\n"
 	patch := "*** Begin Patch\n*** Add File: note.txt\n+hello\n*** End Patch\n"
-	effective, err := countMetrics(root, validScript, patch)
+	effective, err := countMetrics(validScript, patch)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -81,7 +80,7 @@ func TestFailedHPatchCountsOnlyAsIneffectiveOutput(t *testing.T) {
 	}
 
 	invalidScript := "future-command\n"
-	ineffective, err := countIneffectiveMetrics(root, invalidScript)
+	ineffective, err := countIneffectiveMetrics(invalidScript)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -121,7 +120,7 @@ func TestTranslateOutputFailureCountsOnlyAsIneffective(t *testing.T) {
 	root := t.TempDir()
 	dataDirectory := t.TempDir()
 	script := "new note.txt\ntype \"hello\"\n"
-	want, err := countIneffectiveMetrics(root, script)
+	want, err := countIneffectiveMetrics(script)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -373,11 +372,10 @@ func TestMetricsProcessHelper(t *testing.T) {
 	}
 }
 
-func TestPreviousMetricsFormatIsMigrated(t *testing.T) {
+func TestMismatchedMetricsVersionResetsTotals(t *testing.T) {
 	dataDirectory := t.TempDir()
-	previous := metrics{HPatchTokens: 5, ApplyPatchTokens: 9}
-	encoded := encodeTwoCounterMetricsSlot(previous, 7, previousMetricsMagic)
-	if err := os.WriteFile(filepath.Join(dataDirectory, metricsFilename), encoded[:], 0o600); err != nil {
+	mismatched := rewriteMetricsMagic(encodeMetricsSlot(metrics{HPatchTokens: 5, ApplyPatchTokens: 9}, 7), "HPATCH99")
+	if err := os.WriteFile(filepath.Join(dataDirectory, metricsFilename), mismatched[:], 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -385,94 +383,51 @@ func TestPreviousMetricsFormatIsMigrated(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got != previous {
-		t.Fatalf("previous metrics = %+v, want %+v", got, previous)
+	if got != (metrics{}) {
+		t.Fatalf("mismatched metrics were not reset: %+v", got)
 	}
 
-	entry := metrics{HPatchTokens: 2, ApplyPatchTokens: 3, IneffectiveHPatchTokens: 4}
-	if err := updateMetrics(dataDirectory, entry); err != nil {
+	want := metrics{HPatchTokens: 11, ApplyPatchTokens: 13}
+	if err := updateMetrics(dataDirectory, want); err != nil {
 		t.Fatal(err)
 	}
-	want := metrics{HPatchTokens: 7, ApplyPatchTokens: 12, IneffectiveHPatchTokens: 4}
 	got, err = readMetrics(dataDirectory)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got != want {
-		t.Fatalf("migrated metrics = %+v, want %+v", got, want)
+		t.Fatalf("metrics after version reset = %+v, want %+v", got, want)
 	}
 }
 
-func TestObsoleteMetricsAreResetBeforeNewEstimates(t *testing.T) {
-	for _, test := range []struct {
-		name, magic string
-	}{
-		{name: "raw counters", magic: legacyMetricsMagic},
-		{name: "shell wrapper estimates", magic: wrapperMetricsMagic},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			dataDirectory := t.TempDir()
-			obsolete := encodeTwoCounterMetricsSlot(metrics{HPatchTokens: 5, ApplyPatchTokens: 9}, 7, test.magic)
-			if err := os.WriteFile(filepath.Join(dataDirectory, metricsFilename), obsolete[:], 0o600); err != nil {
-				t.Fatal(err)
-			}
-
-			got, err := readMetrics(dataDirectory)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if got != (metrics{}) {
-				t.Fatalf("obsolete metrics were mixed into estimates: %+v", got)
-			}
-
-			want := metrics{HPatchTokens: 11, ApplyPatchTokens: 13}
-			if err := updateMetrics(dataDirectory, want); err != nil {
-				t.Fatal(err)
-			}
-			got, err = readMetrics(dataDirectory)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if got != want {
-				t.Fatalf("metrics after obsolete reset = %+v, want %+v", got, want)
-			}
-		})
-	}
-}
-
-func TestMetricsRejectUnknownFutureFormat(t *testing.T) {
+func TestMalformedMismatchedMetricsVersionDoesNotReset(t *testing.T) {
 	dataDirectory := t.TempDir()
-	future := rewriteMetricsMagic(encodeMetricsSlot(metrics{HPatchTokens: 5, ApplyPatchTokens: 9}, 1), "HPATCH99")
-	if err := os.WriteFile(filepath.Join(dataDirectory, metricsFilename), future[:], 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := readMetrics(dataDirectory); err == nil || !strings.Contains(err.Error(), "unknown counter format") {
-		t.Fatalf("readMetrics() error = %v, want unknown-format failure", err)
-	}
-}
-
-func TestMetricsRejectUnknownFutureFormatAlongsideCurrent(t *testing.T) {
-	dataDirectory := t.TempDir()
-	current := encodeMetricsSlot(metrics{HPatchTokens: 5, ApplyPatchTokens: 9}, 1)
-	future := rewriteMetricsMagic(encodeMetricsSlot(metrics{HPatchTokens: 7, ApplyPatchTokens: 11}, 2), "HPATCH99")
-	content := append(current[:], future[:]...)
-	metricsPath := filepath.Join(dataDirectory, metricsFilename)
-	if err := os.WriteFile(metricsPath, content, 0o600); err != nil {
+	malformed := rewriteMetricsMagic(encodeMetricsSlot(metrics{HPatchTokens: 5}, 7), "HPATCH99")
+	malformed[40] ^= 0xff
+	if err := os.WriteFile(filepath.Join(dataDirectory, metricsFilename), malformed[:], 0o600); err != nil {
 		t.Fatal(err)
 	}
 
-	if _, err := readMetrics(dataDirectory); err == nil || !strings.Contains(err.Error(), "unknown counter format") {
-		t.Fatalf("readMetrics() error = %v, want mixed future-format failure", err)
+	if _, err := readMetrics(dataDirectory); err == nil || !strings.Contains(err.Error(), "no valid counter slot") {
+		t.Fatalf("readMetrics() error = %v, want malformed-slot failure", err)
 	}
-	if err := updateMetrics(dataDirectory, metrics{HPatchTokens: 13}); err == nil || !strings.Contains(err.Error(), "unknown counter format") {
-		t.Fatalf("updateMetrics() error = %v, want mixed future-format failure", err)
+}
+func TestMismatchedMetricsVersionDoesNotOverrideCurrent(t *testing.T) {
+	dataDirectory := t.TempDir()
+	want := metrics{HPatchTokens: 5, ApplyPatchTokens: 9}
+	current := encodeMetricsSlot(want, 1)
+	mismatched := rewriteMetricsMagic(encodeMetricsSlot(metrics{HPatchTokens: 7, ApplyPatchTokens: 11}, 2), "HPATCH99")
+	content := append(current[:], mismatched[:]...)
+	if err := os.WriteFile(filepath.Join(dataDirectory, metricsFilename), content, 0o600); err != nil {
+		t.Fatal(err)
 	}
-	persisted, err := os.ReadFile(metricsPath)
+
+	got, err := readMetrics(dataDirectory)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Equal(persisted, content) {
-		t.Fatal("failed downgrade update changed the metrics file")
+	if got != want {
+		t.Fatalf("metrics = %+v, want current-format totals %+v", got, want)
 	}
 }
 
@@ -512,16 +467,5 @@ func rewriteMetricsMagic(encoded [metricsSlotSize]byte, magic string) [metricsSl
 	copy(encoded[:8], magic)
 	checksum := sha256.Sum256(encoded[:40])
 	copy(encoded[40:], checksum[:24])
-	return encoded
-}
-
-func encodeTwoCounterMetricsSlot(value metrics, generation uint64, magic string) [metricsSlotSize]byte {
-	var encoded [metricsSlotSize]byte
-	copy(encoded[:8], magic)
-	binary.LittleEndian.PutUint64(encoded[8:16], generation)
-	binary.LittleEndian.PutUint64(encoded[16:24], value.HPatchTokens)
-	binary.LittleEndian.PutUint64(encoded[24:32], value.ApplyPatchTokens)
-	checksum := sha256.Sum256(encoded[:32])
-	copy(encoded[32:], checksum[:])
 	return encoded
 }

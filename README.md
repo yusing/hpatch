@@ -60,12 +60,12 @@ the hpatch call as ineffective output; they never add direct `apply_patch` outpu
 bin/hpatch gain
 ```
 
-hpatch v1 assumes the OpenAI `apply_patch` schema and an execution tool with a
-native stdin field. Both effective and ineffective hpatch estimates count the
-`functions.exec` tool name, a fixed translate-and-apply orchestration template,
-`cmd: "hpatch translate"`, the serialized stdin script, and the working directory.
-The successful direct estimate counts the `apply_patch` tool name and patch envelope.
-The internally forwarded translated patch is not counted again as model output.
+hpatch v1 estimates the current tool-call payloads. Both effective and ineffective
+hpatch estimates count the `functions.hpatch` tool name followed by the free-form
+editing script. The successful direct estimate counts the `functions.exec` tool name
+and a free-form program that passes the serialized patch envelope to
+`tools.apply_patch`. The patch is counted only as that nested tool's model-authored
+input.
 
 These are reproducible estimates, not API billing totals. They exclude provider-hidden
 protocol and reasoning tokens, assistant commentary, server-generated identifiers,
@@ -77,11 +77,10 @@ reduction rows, then adds ineffective hpatch output tokens and overall reduction
 effective-only percentage is `(apply_patch - effective_hpatch) / apply_patch * 100`;
 overall reduction also subtracts ineffective hpatch tokens. Both percentages are zero
 when no direct tokens have been recorded. Metrics persist in the platform
-user-configuration directory. Counters produced by the earlier raw-script/raw-patch or
-shell-wrapper calculations are not mixed with native-stdin estimates. Paired
-native-stdin totals from the preceding format migrate with zero ineffective tokens.
-Collection failures warn but do not change the success or failure of the requested edit
-or translated output.
+user-configuration directory. Only the latest metrics format is decoded. A valid,
+checksummed slot with another `HPATCH` version resets totals when no current-format slot
+exists; malformed slots do not count as version mismatches. Collection failures warn but
+do not change the success or failure of the requested edit or translated output.
 
 ## Editing language
 

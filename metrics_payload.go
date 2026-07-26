@@ -1,42 +1,20 @@
 package hpatch
 
-import (
-	"fmt"
-	"strconv"
-	"strings"
-)
+import "strconv"
 
 const (
-	hpatchToolName     = "functions.exec"
-	applyPatchToolName = "apply_patch"
+	hpatchToolName     = "functions.hpatch"
+	applyPatchToolName = "functions.exec"
 )
 
-func metricPayloads(workingDirectory, script, patch string) (string, string) {
-	return hpatchMetricPayload(workingDirectory, script), applyPatchToolName + "\n" + patch
+func metricPayloads(script, patch string) (string, string) {
+	return hpatchMetricPayload(script), applyPatchMetricPayload(patch)
 }
 
-func hpatchMetricPayload(workingDirectory, script string) string {
-	return hpatchToolName + "\n" + hpatchToolInput(workingDirectory, script)
+func hpatchMetricPayload(script string) string {
+	return hpatchToolName + "\n" + script
 }
 
-func hpatchToolInput(workingDirectory, script string) string {
-	format := strings.Join([]string{
-		"const translated = await tools.exec_command({",
-		"  cmd: \"hpatch translate\",",
-		"  stdin: %s,",
-		"  workdir: %s,",
-		"  yield_time_ms: 10000,",
-		"  max_output_tokens: 10000",
-		"});",
-		"if (translated.exit_code !== 0) {",
-		"  text(`hpatch translate failed: ${translated.output}`);",
-		"  exit();",
-		"}",
-		"const applied = await tools.apply_patch(translated.output);",
-		"text(JSON.stringify({",
-		"  translationExitCode: translated.exit_code,",
-		"  applyPatchResult: applied",
-		"}));",
-	}, "\n")
-	return fmt.Sprintf(format, strconv.Quote(script), strconv.Quote(workingDirectory))
+func applyPatchMetricPayload(patch string) string {
+	return applyPatchToolName + "\nconst result = await tools.apply_patch(" + strconv.Quote(patch) + ");\ntext(result);"
 }

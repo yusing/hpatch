@@ -35,12 +35,12 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer, workingDirect
 
 	script, err := io.ReadAll(stdin)
 	if err != nil {
-		return failWithIneffectiveMetrics(stderr, fmt.Sprintf("reading script: %v", err), dataDirectory, workingDirectory, string(script))
+		return failWithIneffectiveMetrics(stderr, fmt.Sprintf("reading script: %v", err), dataDirectory, string(script))
 	}
 	scriptText := string(script)
 	program, err := parse(scriptText)
 	if err != nil {
-		return failWithIneffectiveMetrics(stderr, err.Error(), dataDirectory, workingDirectory, scriptText)
+		return failWithIneffectiveMetrics(stderr, err.Error(), dataDirectory, scriptText)
 	}
 
 	load := func(path string) (loadedFile, error) {
@@ -74,7 +74,7 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer, workingDirect
 
 	changes, err := program.evaluate(load, exists)
 	if err != nil {
-		return failWithIneffectiveMetrics(stderr, err.Error(), dataDirectory, workingDirectory, scriptText)
+		return failWithIneffectiveMetrics(stderr, err.Error(), dataDirectory, scriptText)
 	}
 	if !translateMode && len(changes) == 0 {
 		return 0
@@ -82,26 +82,26 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer, workingDirect
 	if translateMode {
 		patch, err := translate(changes)
 		if err != nil {
-			return failWithIneffectiveMetrics(stderr, err.Error(), dataDirectory, workingDirectory, scriptText)
+			return failWithIneffectiveMetrics(stderr, err.Error(), dataDirectory, scriptText)
 		}
 		if _, err := io.WriteString(stdout, patch); err != nil {
-			return failWithIneffectiveMetrics(stderr, fmt.Sprintf("writing patch: %v", err), dataDirectory, workingDirectory, scriptText)
+			return failWithIneffectiveMetrics(stderr, fmt.Sprintf("writing patch: %v", err), dataDirectory, scriptText)
 		}
 		if dataDirectory != "" {
-			if err := recordMetrics(dataDirectory, workingDirectory, scriptText, patch); err != nil {
+			if err := recordMetrics(dataDirectory, scriptText, patch); err != nil {
 				warn(stderr, err.Error())
 			}
 		}
 		return 0
 	}
 	if err := commitChanges(workingDirectory, changes, osFileOperations{}); err != nil {
-		return failWithIneffectiveMetrics(stderr, fmt.Sprintf("changing %s: %v", describePaths(changes), err), dataDirectory, workingDirectory, scriptText)
+		return failWithIneffectiveMetrics(stderr, fmt.Sprintf("changing %s: %v", describePaths(changes), err), dataDirectory, scriptText)
 	}
 	if dataDirectory != "" {
 		patch, err := translate(changes)
 		if err != nil {
 			warn(stderr, "collecting metrics: "+err.Error())
-		} else if err := recordMetrics(dataDirectory, workingDirectory, scriptText, patch); err != nil {
+		} else if err := recordMetrics(dataDirectory, scriptText, patch); err != nil {
 			warn(stderr, err.Error())
 		}
 	}
@@ -137,10 +137,10 @@ func fail(stderr io.Writer, message string) int {
 	return 1
 }
 
-func failWithIneffectiveMetrics(stderr io.Writer, message, dataDirectory, workingDirectory, script string) int {
+func failWithIneffectiveMetrics(stderr io.Writer, message, dataDirectory, script string) int {
 	exitCode := fail(stderr, message)
 	if dataDirectory != "" {
-		if err := recordIneffectiveMetrics(dataDirectory, workingDirectory, script); err != nil {
+		if err := recordIneffectiveMetrics(dataDirectory, script); err != nil {
 			warn(stderr, err.Error())
 		}
 	}
