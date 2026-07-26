@@ -62,6 +62,7 @@ func TestTopLevelHelpDescribesCompletePublicSurface(t *testing.T) {
 		"rsel LINE_REF:LINE_REF",
 		"functions.hpatch",
 		"Build selectors against each existing file's immutable baseline.",
+		"Invoke hpatch once per attempt; do not encode, shell-wrap, or route it",
 		"immutable baseline",
 		"Text introduced by an",
 		"multiple insertions",

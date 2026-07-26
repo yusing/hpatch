@@ -28,9 +28,9 @@ Input and output:
 Agent workflow:
   1. Inspect the relevant source before constructing selectors.
   2. Build selectors against each existing file's immutable baseline.
-  3. Submit one complete editing script directly as the free-form input of
-     functions.hpatch. Do not use functions.apply_patch, tools.apply_patch,
-     functions.exec, or hpatch translate as an editing transport.
+  3. Send one complete editing script directly as functions.hpatch's free-form
+     input. Invoke hpatch once per attempt; do not encode, shell-wrap, or route it
+     through functions.exec, apply_patch, or hpatch translate.
   4. If functions.hpatch rejects the script, no staged edits were committed.
      Correct and resubmit the complete script against the unchanged file state.
   5. After success, run focused behavioral validation. For Go source changes, run
