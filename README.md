@@ -68,7 +68,9 @@ outside text explicitly inserted by the script.
 Successful changing scripts in normal and translate modes record cumulative paired
 estimates of the GPT-5 output tokens needed for the complete hpatch tool call and for the
 equivalent direct `apply_patch` call. Failed normal or translate invocations record only
-the hpatch call as ineffective output; they never add direct `apply_patch` output tokens:
+the hpatch call as ineffective output; they never add direct `apply_patch` output tokens.
+The same metrics store tracks invocations and command-caused errors separately for every
+supported patch command, including successful no-op scripts.
 
 ```sh
 bin/hpatch gain
@@ -87,14 +89,16 @@ and tool results. Host formatting or a different host tool schema can change act
 usage.
 
 The report preserves the effective hpatch, direct `apply_patch`, and effective-only
-reduction rows, then adds ineffective hpatch output tokens and overall reduction. The
-effective-only percentage is `(apply_patch - effective_hpatch) / apply_patch * 100`;
-overall reduction also subtracts ineffective hpatch tokens. Both percentages are zero
-when no direct tokens have been recorded. Metrics persist in the platform
-user-configuration directory. Only the latest metrics format is decoded. A valid,
-checksummed slot with another `HPATCH` version resets totals when no current-format slot
-exists; malformed slots do not count as version mismatches. Collection failures warn but
-do not change the success or failure of the requested edit or translated output.
+reduction rows, then adds ineffective hpatch output tokens and overall reduction. It also
+lists every supported patch command with its invocation count, error count, and calculated
+`errors / invocations * 100` rate, followed by a total across commands. The effective-only
+percentage is `(apply_patch - effective_hpatch) / apply_patch * 100`; overall reduction
+also subtracts ineffective hpatch tokens. Percentages are zero when their denominator is
+zero. Metrics persist in the platform user-configuration directory. Only the latest
+metrics format is decoded. A valid, checksummed slot with another `HPATCH` version resets
+totals when no current-format slot exists; malformed slots do not count as version
+mismatches. Collection failures warn but do not change the success or failure of the
+requested edit or translated output.
 
 ## Editing language
 

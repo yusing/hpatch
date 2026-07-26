@@ -44,15 +44,15 @@ Acceptance:
 8. A relative, absolute, or symlink path that escapes root fails without mutation or
    patch output.
 
-## HP-METRICS-001: Persistent token metrics
+## HP-METRICS-001: Persistent token and command metrics
 
 Every recognized normal or translate invocation is classified after its terminal outcome.
 A successful nonempty change set that parses, evaluates, translates, and completes its
 requested output or mutation contributes paired estimates for two semantically equivalent
 tool calls. A failed invocation contributes only its generated `hpatch` call estimate to
 the ineffective-output counter; it contributes nothing to the effective `hpatch` or direct
-`apply_patch` counters. Successful no-op invocations, `gain`, informational commands, and
-unsupported argument forms do not contribute.
+`apply_patch` counters. Successful no-op invocations do not contribute token estimates.
+`gain`, informational commands, and unsupported argument forms do not contribute metrics.
 
 Both effective and ineffective hpatch estimates count the `functions.hpatch` tool
 name followed by the complete free-form editing script. The successful direct side
@@ -74,21 +74,28 @@ Classification is persisted only after the invocation's outcome is known. Transl
 records a paired effective estimate after its complete patch reaches stdout; normal mode
 records one after the staged changes commit. Stdin-read, parse, evaluation, translation,
 stdout-write, and commit failures record only the canonical hpatch estimate as ineffective.
-In normal mode, failure to render the equivalent patch after a successful commit emits a
-warning and records neither classification because the direct comparison is unavailable.
-Failure to tokenize, lock, read, write, or close metrics emits a concise `hpatch: warning:`
-diagnostic but does not change the success or failure of the requested effect.
+Every supported command reached by evaluation contributes one invocation. A supported
+operation rejected by syntax parsing contributes one invocation and one error; an operation
+whose path resolution or execution fails contributes one error after its invocation.
+Unknown or future operations and failures outside command processing are not attributed to
+a supported command. Successfully evaluated commands retain their invocation counts when a
+later output or commit boundary fails. Successful no-op scripts contribute command counts
+without contributing token estimates. In normal mode, failure to render the equivalent
+patch after a successful commit emits a warning and records neither token classification,
+but retains the successfully evaluated command counts. Failure to tokenize, lock, read,
+write, or close metrics emits a concise `hpatch: warning:` diagnostic but does not change
+the success or failure of the requested effect.
 
 The aggregate is stored in `hpatch/metrics.bin` beneath the platform user configuration
 directory returned by Go's `os.UserConfigDir`. Updates hold an exclusive interprocess
 lock at `hpatch/metrics.lock`; gain reads hold a shared lock. The metrics file contains
-two alternating fixed-size slots, each holding the effective hpatch, direct
-`apply_patch`, and ineffective hpatch counters, plus a generation and checksum.
-A reader uses the valid current-format slot with the greatest generation, so
-an interrupted write to the inactive slot leaves the preceding aggregate available.
-The file reaches 128 bytes and does not grow further. Counter overflow fails. Persisted
-data with neither a valid current-format slot nor a valid mismatched-version slot fails
-rather than producing a misleading report.
+two alternating fixed-size slots, each holding the effective hpatch, direct `apply_patch`,
+ineffective hpatch, and per-command invocation and error counters, plus a generation and
+checksum. A reader uses the valid current-format slot with the greatest generation, so an
+interrupted write to the inactive slot leaves the preceding aggregate available. The file
+reaches 512 bytes and does not grow further. Per-counter and aggregate overflow fails.
+Persisted data with neither a valid current-format slot nor a valid mismatched-version slot
+fails rather than producing a misleading report.
 
 Only the latest metrics magic is decoded. A complete, checksummed slot whose eight-byte
 magic starts with `HPATCH` but does not equal the current version resets the reported
@@ -102,21 +109,23 @@ per-invocation filesystem sync. This allows the operating system to coalesce phy
 writes. Metrics persist across processes and normal restarts, but sudden power loss may
 lose increments that the operating system had not yet flushed.
 
-`hpatch gain` writes exactly five rows: aggregate estimated effective hpatch output
-tokens, estimated `apply_patch` output tokens, effective-only estimated reduction,
-estimated ineffective hpatch output tokens, and estimated overall reduction. The
+`hpatch gain` first writes the five token rows: aggregate estimated effective hpatch
+output tokens, estimated `apply_patch` output tokens, effective-only estimated reduction,
+estimated ineffective hpatch output tokens, and estimated overall reduction. It then writes
+a stable-order section for every supported patch command with invocations, errors, and the
+calculated `errors / invocations * 100` rate, followed by a total across all commands. The
 effective-only reduction is `(apply_patch - effective_hpatch) / apply_patch * 100`; the
 overall reduction is `(apply_patch - effective_hpatch - ineffective_hpatch) /
-apply_patch * 100`. Percentages are rounded to one decimal place and are zero when no
-apply-patch tokens have been recorded. With no metrics file or only an obsolete record,
-all totals and percentages are zero. Gain reads no stdin and does not create or rewrite
-a metrics file.
+apply_patch * 100`. Percentages are rounded to one decimal place and are zero when their
+denominator is zero. With no metrics file or only an obsolete record, all totals and
+percentages are zero. Gain reads no stdin and does not create or rewrite a metrics file.
 
 Acceptance:
 
 1. Repeated successful normal and translate invocations persist cumulative paired
    estimates, failed invocations persist only ineffective hpatch estimates, and a later
-   gain process reports both reductions from those totals.
+   gain process reports both reductions plus per-command and aggregate invocation, error,
+   and calculated error-rate metrics.
 2. The hpatch estimate is the `functions.hpatch` tool name plus its free-form script;
    the direct estimate is the `functions.exec` tool name plus a program that passes the
    serialized patch envelope to `tools.apply_patch`.

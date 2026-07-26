@@ -38,14 +38,10 @@ func TestGainReportsPersistedTotals(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 	exitCode = Run([]string{"gain"}, strings.NewReader("not a script"), &stdout, &stderr, root, dataDirectory)
-	want := fmt.Sprintf(
-		"estimated hpatch output tokens: %d\nestimated apply_patch output tokens: %d\nestimated reduction: %.1f%%\nestimated ineffective hpatch output tokens: %d\nestimated overall reduction: %.1f%%\n",
-		entry.HPatchTokens*2,
-		entry.ApplyPatchTokens*2,
-		entry.reduction(),
-		0,
-		entry.overallReduction(),
-	)
+	wantMetrics := metrics{HPatchTokens: entry.HPatchTokens * 2, ApplyPatchTokens: entry.ApplyPatchTokens * 2}
+	wantMetrics.Commands[commandOperationIndex("new")].Invocations = 2
+	wantMetrics.Commands[commandOperationIndex("type")].Invocations = 2
+	want := gainReport(wantMetrics)
 	if exitCode != 0 || stdout.String() != want || stderr.Len() != 0 {
 		t.Fatalf("gain = exit %d, stdout %q, stderr %q; want stdout %q", exitCode, stdout.String(), stderr.String(), want)
 	}
@@ -55,12 +51,77 @@ func TestGainWithoutMetricsReportsZero(t *testing.T) {
 	dataDirectory := filepath.Join(t.TempDir(), "absent")
 	var stdout, stderr bytes.Buffer
 	exitCode := Run([]string{"gain"}, strings.NewReader("ignored"), &stdout, &stderr, t.TempDir(), dataDirectory)
-	want := "estimated hpatch output tokens: 0\nestimated apply_patch output tokens: 0\nestimated reduction: 0.0%\nestimated ineffective hpatch output tokens: 0\nestimated overall reduction: 0.0%\n"
+	want := gainReport(metrics{})
 	if exitCode != 0 || stdout.String() != want || stderr.Len() != 0 {
 		t.Fatalf("gain = exit %d, stdout %q, stderr %q; want stdout %q", exitCode, stdout.String(), stderr.String(), want)
 	}
 	if _, err := os.Stat(dataDirectory); !os.IsNotExist(err) {
 		t.Fatalf("gain created an empty metrics directory: %v", err)
+	}
+}
+
+func TestGainReportsCommandInvocationsErrorsAndRates(t *testing.T) {
+	root := t.TempDir()
+	dataDirectory := t.TempDir()
+	tests := []struct {
+		name    string
+		args    []string
+		script  string
+		success bool
+	}{
+		{name: "success with unrelated command-name text", args: []string{"translate"}, script: "new note.txt\ntype \"bsel sel future-command\"\n", success: true},
+		{name: "execution error", args: []string{"translate"}, script: "new failed.txt\ntype \"ignored\"\nbsel \"missing\" \"end\"\n"},
+		{name: "malformed known command", args: []string{"translate"}, script: "sel nope\n"},
+		{name: "unknown future command", args: []string{"translate"}, script: "future-command\n"},
+		{name: "successful no-op", script: "new transient.txt\nrm\n", success: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			exitCode := Run(test.args, strings.NewReader(test.script), &stdout, &stderr, root, dataDirectory)
+			if (exitCode == 0) != test.success {
+				t.Fatalf("Run() = exit %d, stdout %q, stderr %q", exitCode, stdout.String(), stderr.String())
+			}
+		})
+	}
+
+	got, err := readMetrics(dataDirectory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantCommands := commandMetrics{}
+	wantCommands[commandOperationIndex("new")] = commandMetric{Invocations: 3}
+	wantCommands[commandOperationIndex("rm")] = commandMetric{Invocations: 1}
+	wantCommands[commandOperationIndex("sel")] = commandMetric{Invocations: 1, Errors: 1}
+	wantCommands[commandOperationIndex("bsel")] = commandMetric{Invocations: 1, Errors: 1}
+	wantCommands[commandOperationIndex("type")] = commandMetric{Invocations: 2}
+	if got.Commands != wantCommands {
+		t.Fatalf("command metrics = %+v, want %+v", got.Commands, wantCommands)
+	}
+
+	var stdout, stderr bytes.Buffer
+	if exitCode := Run([]string{"gain"}, strings.NewReader("ignored"), &stdout, &stderr, root, dataDirectory); exitCode != 0 || stderr.Len() != 0 {
+		t.Fatalf("gain = exit %d, stdout %q, stderr %q", exitCode, stdout.String(), stderr.String())
+	}
+	start := strings.Index(stdout.String(), "command metrics:\n")
+	if start < 0 {
+		t.Fatalf("gain report has no command metrics: %q", stdout.String())
+	}
+	want := "command metrics:\n" +
+		"in:\n- invocations: 0\n- errors: 0\n- error rate: 0.0%\n" +
+		"new:\n- invocations: 3\n- errors: 0\n- error rate: 0.0%\n" +
+		"mv:\n- invocations: 0\n- errors: 0\n- error rate: 0.0%\n" +
+		"rm:\n- invocations: 1\n- errors: 0\n- error rate: 0.0%\n" +
+		"sel:\n- invocations: 1\n- errors: 1\n- error rate: 100.0%\n" +
+		"tsel:\n- invocations: 0\n- errors: 0\n- error rate: 0.0%\n" +
+		"bsel:\n- invocations: 1\n- errors: 1\n- error rate: 100.0%\n" +
+		"rsel:\n- invocations: 0\n- errors: 0\n- error rate: 0.0%\n" +
+		"type:\n- invocations: 2\n- errors: 0\n- error rate: 0.0%\n" +
+		"del:\n- invocations: 0\n- errors: 0\n- error rate: 0.0%\n" +
+		"dup:\n- invocations: 0\n- errors: 0\n- error rate: 0.0%\n" +
+		"total:\n- invocations: 8\n- errors: 2\n- error rate: 25.0%\n"
+	if got := stdout.String()[start:]; got != want {
+		t.Fatalf("command report = %q, want %q", got, want)
 	}
 }
 
@@ -90,6 +151,8 @@ func TestFailedHPatchCountsOnlyAsIneffectiveOutput(t *testing.T) {
 	}
 
 	wantMetrics := effective
+	wantMetrics.Commands[commandOperationIndex("new")].Invocations = 1
+	wantMetrics.Commands[commandOperationIndex("type")].Invocations = 1
 	wantMetrics.IneffectiveHPatchTokens = ineffective.IneffectiveHPatchTokens
 	got, err := readMetrics(dataDirectory)
 	if err != nil {
@@ -103,14 +166,7 @@ func TestFailedHPatchCountsOnlyAsIneffectiveOutput(t *testing.T) {
 	if exitCode := Run([]string{"gain"}, strings.NewReader("ignored"), &stdout, &stderr, root, dataDirectory); exitCode != 0 || stderr.Len() != 0 {
 		t.Fatalf("gain = exit %d, stdout %q, stderr %q", exitCode, stdout.String(), stderr.String())
 	}
-	wantReport := fmt.Sprintf(
-		"estimated hpatch output tokens: %d\nestimated apply_patch output tokens: %d\nestimated reduction: %.1f%%\nestimated ineffective hpatch output tokens: %d\nestimated overall reduction: %.1f%%\n",
-		wantMetrics.HPatchTokens,
-		wantMetrics.ApplyPatchTokens,
-		wantMetrics.reduction(),
-		wantMetrics.IneffectiveHPatchTokens,
-		wantMetrics.overallReduction(),
-	)
+	wantReport := gainReport(wantMetrics)
 	if stdout.String() != wantReport {
 		t.Fatalf("gain stdout = %q, want %q", stdout.String(), wantReport)
 	}
@@ -124,6 +180,8 @@ func TestTranslateOutputFailureCountsOnlyAsIneffective(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	want.Commands[commandOperationIndex("new")].Invocations = 1
+	want.Commands[commandOperationIndex("type")].Invocations = 1
 
 	var stderr bytes.Buffer
 	exitCode := Run([]string{"translate"}, strings.NewReader(script), metricsErrorWriter{}, &stderr, root, dataDirectory)
@@ -465,7 +523,7 @@ func TestMetricsRecoversFromTornUnknownInactiveSlot(t *testing.T) {
 
 func rewriteMetricsMagic(encoded [metricsSlotSize]byte, magic string) [metricsSlotSize]byte {
 	copy(encoded[:8], magic)
-	checksum := sha256.Sum256(encoded[:40])
-	copy(encoded[40:], checksum[:24])
+	checksum := sha256.Sum256(encoded[:metricsChecksumOffset])
+	copy(encoded[metricsChecksumOffset:], checksum[:])
 	return encoded
 }
