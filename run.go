@@ -14,6 +14,12 @@ import (
 	"unicode/utf8"
 )
 
+const disableRelativeLinesEnvironment = "HPATCH_DISABLE_RELATIVE_LINES"
+
+func relativeLinesEnabled() bool {
+	return os.Getenv(disableRelativeLinesEnvironment) != "1"
+}
+
 // Workspace is the filesystem authority for one hpatch operation. Root should
 // be opened from its canonical absolute path; absolute script paths are matched
 // against that name. CWD is root-relative and defaults to ".".
@@ -70,7 +76,7 @@ func RunWorkspace(args []string, stdin io.Reader, stdout, stderr io.Writer, work
 		return failWithIneffectiveMetrics(stderr, fmt.Sprintf("reading script: %v", err), dataDirectory, string(script), commandMetrics{})
 	}
 	scriptText := string(script)
-	changes, filesystem, commands, err := evaluateScript(context.TODO(), workspace, scriptText)
+	changes, filesystem, commands, err := evaluateScript(context.TODO(), workspace, scriptText, relativeLinesEnabled())
 	if err != nil {
 		return failWithIneffectiveMetrics(stderr, err.Error(), dataDirectory, scriptText, commands)
 	}
@@ -116,7 +122,7 @@ func RunWorkspace(args []string, stdin io.Reader, stdout, stderr io.Writer, work
 
 // Apply evaluates and atomically applies script within workspace.
 func Apply(ctx context.Context, workspace Workspace, script string) error {
-	changes, filesystem, _, err := evaluateScript(ctx, workspace, script)
+	changes, filesystem, _, err := evaluateScript(ctx, workspace, script, relativeLinesEnabled())
 	if err != nil {
 		return err
 	}
@@ -132,7 +138,7 @@ func Apply(ctx context.Context, workspace Workspace, script string) error {
 // Translate evaluates script without mutation and returns an apply_patch envelope
 // whose paths are relative to workspace.Root.
 func Translate(ctx context.Context, workspace Workspace, script string) ([]byte, error) {
-	changes, _, _, err := evaluateScript(ctx, workspace, script)
+	changes, _, _, err := evaluateScript(ctx, workspace, script, relativeLinesEnabled())
 	if err != nil {
 		return nil, err
 	}
@@ -148,12 +154,12 @@ type filesystemWorkspace struct {
 	cwd  string
 }
 
-func evaluateScript(ctx context.Context, workspace Workspace, script string) ([]change, filesystemWorkspace, commandMetrics, error) {
+func evaluateScript(ctx context.Context, workspace Workspace, script string, relativeLines bool) ([]change, filesystemWorkspace, commandMetrics, error) {
 	filesystem, err := validateWorkspace(ctx, workspace)
 	if err != nil {
 		return nil, filesystemWorkspace{}, commandMetrics{}, err
 	}
-	program, err := parse(script)
+	program, err := parse(script, relativeLines)
 	if err != nil {
 		var commands commandMetrics
 		if sourceError, ok := errors.AsType[*commandError](err); ok {

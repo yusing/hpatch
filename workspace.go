@@ -116,15 +116,15 @@ func (w *workspace) execute(command instruction, commandIndex int) error {
 	origin := editOrigin{command: commandIndex, line: command.line, operation: command.operation}
 	switch command.operation {
 	case "sel":
-		return w.active.editor.selectColumns(command.lineNumber, command.start, command.end)
+		return w.active.editor.selectColumns(command.lineRef, command.start, command.end)
 	case "tsel":
-		return w.active.editor.selectOccurrence(command.lineNumber, command.occurrence, command.text)
+		return w.active.editor.selectOccurrence(command.lineRef, command.occurrence, command.text)
 	case "bsel":
 		return w.active.editor.selectBlock(command.text, command.endText)
 	case "bsel_next":
 		return w.active.editor.selectNextBlock(command.text, command.endText)
 	case "rsel":
-		return w.active.editor.selectLines(command.start, command.end)
+		return w.active.editor.selectLines(command.lineRef, command.endLineRef)
 	case "type":
 		return w.active.editor.typeText(command.text, origin)
 	case "del":

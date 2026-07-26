@@ -7,9 +7,10 @@ import (
 	"os"
 	"path/filepath"
 	"runtime/debug"
+	"strings"
 )
 
-const helpText = `Usage:
+const helpTextBase = `Usage:
   hpatch [--root ROOT] [--cwd CWD] < SCRIPT
   hpatch translate [--root ROOT] [--cwd CWD] < SCRIPT
   hpatch gain
@@ -99,6 +100,22 @@ Paths and patch boundary:
   Apply translated output from the same root. Keep translated stdout patch-only and
   internal.
 `
+
+func helpText(relativeLines bool) string {
+	if !relativeLines {
+		return helpTextBase
+	}
+	text := strings.Replace(helpTextBase, "  sel LINE START:END", "  sel LINE_REF START:END", 1)
+	text = strings.Replace(text, "  tsel LINE OCCURRENCE", "  tsel LINE_REF OCCURRENCE", 1)
+	text = strings.Replace(text, "  rsel START:END", "  rsel LINE_REF:LINE_REF", 1)
+	const marker = "  Cursors and selections are baseline positions."
+	const relativeHelp = "  LINE_REF is either an absolute one-based line or an experimental signed offset\n  from the current baseline cursor line, such as +0, +3, or -2. Relative selectors\n  require cursor state and fail when a selection is active. Set\n  HPATCH_DISABLE_RELATIVE_LINES=1 to disable signed line references.\n\n"
+	return strings.Replace(text, marker, relativeHelp+marker, 1)
+}
+
+func relativeLinesEnabled() bool {
+	return os.Getenv("HPATCH_DISABLE_RELATIVE_LINES") != "1"
+}
 
 const translateHelpText = `Usage:
   hpatch translate [--root ROOT] [--cwd CWD] < SCRIPT
@@ -222,7 +239,7 @@ func runInformational(args []string, stdout, stderr io.Writer) (int, bool) {
 	var output, description string
 	switch {
 	case len(args) == 1 && args[0] == "--help":
-		output = helpText
+		output = helpText(relativeLinesEnabled())
 		description = "help"
 	case len(args) == 2 && args[0] == "translate" && args[1] == "--help":
 		output = translateHelpText

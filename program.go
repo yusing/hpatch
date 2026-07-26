@@ -12,16 +12,24 @@ import (
 )
 
 var (
-	selectPattern     = regexp.MustCompile(`^sel ([1-9][0-9]*) ([1-9][0-9]*):([1-9][0-9]*)$`)
-	textSelectPattern = regexp.MustCompile(`^tsel ([1-9][0-9]*) (-?[1-9][0-9]*) (.+)$`)
-	rangePattern      = regexp.MustCompile(`^rsel ([1-9][0-9]*):([1-9][0-9]*)$`)
+	absoluteLinePattern = regexp.MustCompile(`^[1-9][0-9]*$`)
+	relativeLinePattern = regexp.MustCompile(`^(?:\+[0-9]+|-[1-9][0-9]*)$`)
+	selectPattern       = regexp.MustCompile(`^sel (\S+) ([1-9][0-9]*):([1-9][0-9]*)$`)
+	textSelectPattern   = regexp.MustCompile(`^tsel (\S+) (-?[1-9][0-9]*) (.+)$`)
+	rangePattern        = regexp.MustCompile(`^rsel (\S+):(\S+)$`)
 )
+
+type lineReference struct {
+	value    int
+	relative bool
+}
 
 type instruction struct {
 	line       int
 	operation  string
 	path       string
-	lineNumber int
+	lineRef    lineReference
+	endLineRef lineReference
 	start      int
 	end        int
 	occurrence int
@@ -60,7 +68,7 @@ func (e *commandError) Error() string {
 	return fmt.Sprintf("%s: %s", strings.Join(context, ", "), e.Message)
 }
 
-func parse(source string) (*program, error) {
+func parse(source string, relativeLines bool) (*program, error) {
 	program := &program{}
 	for index, raw := range strings.Split(source, "\n") {
 		lineNumber := index + 1
@@ -69,7 +77,7 @@ func parse(source string) (*program, error) {
 			continue
 		}
 		commandIndex := len(program.instructions) + 1
-		command, err := parseInstruction(lineNumber, line)
+		command, err := parseInstruction(lineNumber, line, relativeLines)
 		if err != nil {
 			message := err.Error()
 			if sourceError, ok := errors.AsType[*commandError](err); ok {
@@ -88,7 +96,7 @@ func parse(source string) (*program, error) {
 	return program, nil
 }
 
-func parseInstruction(sourceLine int, line string) (instruction, error) {
+func parseInstruction(sourceLine int, line string, relativeLines bool) (instruction, error) {
 	for _, operation := range []string{"in", "new", "mv"} {
 		if path, ok := strings.CutPrefix(line, operation+" "); ok {
 			if path == "" {
@@ -103,7 +111,7 @@ func parseInstruction(sourceLine int, line string) (instruction, error) {
 	}
 
 	if match := selectPattern.FindStringSubmatch(line); match != nil {
-		lineNumber, err := parseInteger(sourceLine, match[1])
+		lineRef, err := parseLineReference(sourceLine, match[1], relativeLines)
 		if err != nil {
 			return instruction{}, err
 		}
@@ -119,16 +127,16 @@ func parseInstruction(sourceLine int, line string) (instruction, error) {
 			return instruction{}, scriptError(sourceLine, "selection start exceeds end")
 		}
 		return instruction{
-			line:       sourceLine,
-			operation:  "sel",
-			lineNumber: lineNumber,
-			start:      start,
-			end:        end,
+			line:      sourceLine,
+			operation: "sel",
+			lineRef:   lineRef,
+			start:     start,
+			end:       end,
 		}, nil
 	}
 
 	if match := textSelectPattern.FindStringSubmatch(line); match != nil {
-		lineNumber, err := parseInteger(sourceLine, match[1])
+		lineRef, err := parseLineReference(sourceLine, match[1], relativeLines)
 		if err != nil {
 			return instruction{}, err
 		}
@@ -149,7 +157,7 @@ func parseInstruction(sourceLine int, line string) (instruction, error) {
 		return instruction{
 			line:       sourceLine,
 			operation:  "tsel",
-			lineNumber: lineNumber,
+			lineRef:    lineRef,
 			occurrence: occurrence,
 			text:       value,
 		}, nil
@@ -174,18 +182,21 @@ func parseInstruction(sourceLine int, line string) (instruction, error) {
 	}
 
 	if match := rangePattern.FindStringSubmatch(line); match != nil {
-		start, err := parseInteger(sourceLine, match[1])
+		start, err := parseLineReference(sourceLine, match[1], relativeLines)
 		if err != nil {
 			return instruction{}, err
 		}
-		end, err := parseInteger(sourceLine, match[2])
+		end, err := parseLineReference(sourceLine, match[2], relativeLines)
 		if err != nil {
 			return instruction{}, err
 		}
-		if start > end {
+		if start.relative != end.relative {
+			return instruction{}, scriptError(sourceLine, "rsel endpoints must both be absolute or both be relative")
+		}
+		if !start.relative && start.value > end.value {
 			return instruction{}, scriptError(sourceLine, "line range start exceeds end")
 		}
-		return instruction{line: sourceLine, operation: "rsel", start: start, end: end}, nil
+		return instruction{line: sourceLine, operation: "rsel", lineRef: start, endLineRef: end}, nil
 	}
 
 	if valueText, ok := strings.CutPrefix(line, "type "); ok {
@@ -232,6 +243,21 @@ func decodeJSONString(encoded string) (string, error) {
 		return "", err
 	}
 	return value, nil
+}
+
+func parseLineReference(sourceLine int, value string, relativeLines bool) (lineReference, error) {
+	relative := strings.HasPrefix(value, "+") || strings.HasPrefix(value, "-")
+	if relative && !relativeLines {
+		return lineReference{}, scriptError(sourceLine, "relative line references are disabled by HPATCH_DISABLE_RELATIVE_LINES=1")
+	}
+	if (!relative && !absoluteLinePattern.MatchString(value)) || (relative && !relativeLinePattern.MatchString(value)) {
+		return lineReference{}, scriptError(sourceLine, fmt.Sprintf("invalid line reference %q", value))
+	}
+	number, err := strconv.Atoi(value)
+	if err != nil {
+		return lineReference{}, scriptError(sourceLine, "line reference is out of range")
+	}
+	return lineReference{value: number, relative: relative}, nil
 }
 
 func parseInteger(sourceLine int, value string) (int, error) {

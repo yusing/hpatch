@@ -44,7 +44,11 @@ func (e *editor) resetCursor() {
 	e.selection = nil
 }
 
-func (e *editor) selectColumns(lineNumber, startColumn, endColumn int) error {
+func (e *editor) selectColumns(lineRef lineReference, startColumn, endColumn int) error {
+	lineNumber, err := e.resolveLineReference(lineRef)
+	if err != nil {
+		return err
+	}
 	line, err := lineAt(e.baseline, lineNumber)
 	if err != nil {
 		return err
@@ -57,7 +61,11 @@ func (e *editor) selectColumns(lineNumber, startColumn, endColumn int) error {
 	return e.setSelection(selection{start: line.start + start, end: line.start + end})
 }
 
-func (e *editor) selectOccurrence(lineNumber, occurrence int, literal string) error {
+func (e *editor) selectOccurrence(lineRef lineReference, occurrence int, literal string) error {
+	lineNumber, err := e.resolveLineReference(lineRef)
+	if err != nil {
+		return err
+	}
 	line, err := lineAt(e.baseline, lineNumber)
 	if err != nil {
 		return err
@@ -121,9 +129,48 @@ func (e *editor) selectBlockInScope(startLiteral, endLiteral string, scopeStart,
 	})
 }
 
-func (e *editor) selectLines(startLine, endLine int) error {
+func (e *editor) resolveLineReference(ref lineReference) (int, error) {
+	if !ref.relative {
+		return ref.value, nil
+	}
+	base, err := e.relativeLineBase()
+	if err != nil {
+		return 0, err
+	}
+	return base + ref.value, nil
+}
+
+func (e *editor) relativeLineBase() (int, error) {
+	if e.selection != nil {
+		return 0, fmt.Errorf("relative line reference requires cursor state; a selection is active")
+	}
 	lines := logicalLines(e.baseline)
-	if startLine > len(lines) || endLine > len(lines) {
+	if len(lines) == 0 {
+		return 0, fmt.Errorf("relative line reference requires a nonempty baseline")
+	}
+	for index, line := range lines {
+		if e.cursor < line.fullEnd {
+			return index + 1, nil
+		}
+	}
+	return len(lines), nil
+}
+
+func (e *editor) selectLines(startRef, endRef lineReference) error {
+	startLine, endLine := startRef.value, endRef.value
+	if startRef.relative {
+		base, err := e.relativeLineBase()
+		if err != nil {
+			return err
+		}
+		startLine = base + startRef.value
+		endLine = base + endRef.value
+	}
+	if startLine > endLine {
+		return fmt.Errorf("resolved line range start %d exceeds end %d", startLine, endLine)
+	}
+	lines := logicalLines(e.baseline)
+	if startLine < 1 || endLine < 1 || startLine > len(lines) || endLine > len(lines) {
 		return fmt.Errorf("line range %d:%d is outside the file", startLine, endLine)
 	}
 	return e.setSelection(selection{
