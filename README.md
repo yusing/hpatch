@@ -17,8 +17,8 @@ go build -o bin/hpatch ./cmd/hpatch
 
 ## Quick start
 
-Normal mode is silent on success and changes files only after the full script has been
-parsed, evaluated, and staged:
+Normal mode writes its final active-file state report to stderr on success and changes
+files only after the full script has been parsed, evaluated, and staged:
 
 ```sh
 bin/hpatch <<'EOF'
@@ -53,10 +53,10 @@ path `bin/block-graph-worktree/main.go`. Apply the translated patch from `/works
 Both options have CLI defaults: root is the process current directory and cwd is `.`.
 
 The second command writes an `Add File` patch to stdout. Successful translation keeps
-stdout patch-only. Errors return nonzero and go to stderr; evaluation diagnostics
-identify the command index, source line, operation, relevant path, and failure category.
-Normal mode preserves existing file permission bits and creates files from `new` with
-mode `0644`.
+stdout patch-only and writes its pending final-state report to stderr. Errors return
+nonzero and go to stderr; evaluation diagnostics identify the command index, source line,
+operation, relevant path, and failure category. Normal mode preserves existing file
+permission bits and creates files from `new` with mode `0644`.
 
 Translate mode emits LF-only logical-line patches. OpenAI `apply_patch` cannot preserve
 CRLF bytes when such a patch is applied, so applying translated output to a CRLF file
@@ -69,8 +69,9 @@ Successful changing scripts in normal and translate modes record cumulative pair
 estimates of the GPT-5 output tokens needed for the complete hpatch tool call and for the
 equivalent direct `apply_patch` call. Failed normal or translate invocations record only
 the hpatch call as ineffective output; they never add direct `apply_patch` output tokens.
-The same metrics store tracks invocations and command-caused errors separately for every
-supported patch command, including successful no-op scripts.
+Successfully emitted final-state reports add their exact estimated input-token overhead
+to a separate counter. The same metrics store tracks invocations and command-caused
+errors separately for every supported patch command, including successful no-op scripts.
 
 ```sh
 bin/hpatch gain
@@ -88,14 +89,13 @@ protocol and reasoning tokens, assistant commentary, server-generated identifier
 and tool results. Host formatting or a different host tool schema can change actual
 usage.
 
-The report labels effective and ineffective hpatch token estimates separately and shows
-their calculated total, making the overall comparison directly reconcilable. It also
-renders a compact table with one row per supported patch command containing its invocation
-count, error count, and calculated `errors / invocations * 100` rate, followed by a total
-row. The effective-only percentage is `(apply_patch - effective_hpatch) / apply_patch *
-100`; overall reduction is `(apply_patch - total_hpatch) / apply_patch * 100`. Percentages
-are zero when their denominator is zero. Metrics persist in the platform
-user-configuration directory. Only the latest metrics format is decoded. A valid,
+The report labels effective and ineffective hpatch output-token estimates separately
+and shows their calculated total. It reports output-only reductions and weighted overall
+reductions that price output tokens at five or six times input tokens. Stable tables
+separate aggregate command errors, absolute and relative selectors, single and multiple
+`tsel` spans, exact and whitespace-recovered block selections, and terminal failure
+reasons. Percentages are zero when their denominator is zero. Metrics persist in the
+platform user-configuration directory. Only the latest metrics format is decoded. A valid,
 checksummed slot with another `HPATCH` version resets totals when no current-format slot
 exists; malformed slots do not count as version mismatches. Collection failures warn but
 do not change the success or failure of the requested edit or translated output.
@@ -123,10 +123,13 @@ atomically. New files have an empty baseline and accept one effective complete-c
 
 `rsel` selects complete baseline logical lines; linewise replacement inherits the
 selected final line terminator unless the replacement supplies one.
-`bsel "START" "END"` searches inside the current baseline selection when one exists,
-or from the current baseline cursor to end-of-file otherwise. It never wraps. Each
-anchor must be unique within that scope; ambiguous, reversed, or overlapping anchors
-fail.
+`bsel "START" "END"` searches the complete active-file baseline, independent of cursor
+or selection. `bsel_next "START" "END"` explicitly searches inside the current baseline
+selection when one exists, or from the current baseline cursor to end-of-file otherwise,
+and never wraps. Each command resolves `START` uniquely in its scope, then resolves `END`
+uniquely after that start. Exact anchors are authoritative; when an exact anchor is
+missing, nonempty runs of ASCII spaces and tabs match interchangeably. Ambiguous,
+reversed, or overlapping anchors fail.
 
 Every editing invocation has one root. Relative script paths resolve from cwd within
 that root. Absolute script paths must use the canonical root spelling and remain inside
