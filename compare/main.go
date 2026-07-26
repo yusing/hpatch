@@ -28,7 +28,7 @@ func main() {
 	}
 
 	fmt.Printf("GPT-5 encoding: %s\n\n", codec.GetName())
-	fmt.Printf("%-25s %8s %12s %8s %11s\n", "scenario", "hpatch", "apply_patch", "saved", "reduction")
+	fmt.Printf("%-28s %8s %12s %8s %11s\n", "scenario", "hpatch", "apply_patch", "saved", "reduction")
 
 	var totalHPatch, totalApplyPatch int
 	for _, scenario := range scenarios() {
@@ -124,8 +124,11 @@ func runHPatch(scenario scenario) (map[string]string, error) {
 	if exitCode := hpatch.Run(nil, strings.NewReader(scenario.script), &stdout, &stderr, root, ""); exitCode != 0 {
 		return nil, fmt.Errorf("hpatch exited %d: %s", exitCode, stderr.String())
 	}
-	if stdout.Len() != 0 || stderr.Len() != 0 {
-		return nil, fmt.Errorf("unexpected output: stdout %q, stderr %q", stdout.String(), stderr.String())
+	if stdout.Len() != 0 {
+		return nil, fmt.Errorf("unexpected stdout %q", stdout.String())
+	}
+	if stderr.Len() == 0 {
+		return nil, fmt.Errorf("missing final-state report")
 	}
 	return readTree(root)
 }
@@ -159,7 +162,7 @@ func printRow(name string, hpatchTokens, patchTokens int) {
 	if patchTokens != 0 {
 		reduction = float64(saved) / float64(patchTokens) * 100
 	}
-	fmt.Printf("%-25s %8d %12d %8d %10.1f%%\n", name, hpatchTokens, patchTokens, saved, reduction)
+	fmt.Printf("%-28s %8d %12d %8d %10.1f%%\n", name, hpatchTokens, patchTokens, saved, reduction)
 }
 
 func fatalf(format string, arguments ...any) {
