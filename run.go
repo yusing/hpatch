@@ -1,6 +1,7 @@
 package hpatch
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -13,8 +14,39 @@ import (
 	"unicode/utf8"
 )
 
-// Run executes the hpatch command-line contract using explicit process boundaries.
+// Workspace is the filesystem authority for one hpatch operation. Root should
+// be opened from its canonical absolute path; absolute script paths are matched
+// against that name. CWD is root-relative and defaults to ".".
+type Workspace struct {
+	Root *os.Root
+	CWD  string
+}
+
+// Run executes the hpatch command-line contract with workingDirectory as the
+// workspace root. New callers that already own a root capability should use
+// RunWorkspace, Apply, or Translate.
 func Run(args []string, stdin io.Reader, stdout, stderr io.Writer, workingDirectory, dataDirectory string) int {
+	if len(args) == 1 && args[0] == "gain" {
+		return RunWorkspace(args, stdin, stdout, stderr, Workspace{}, dataDirectory)
+	}
+	rootPath, err := filepath.Abs(workingDirectory)
+	if err != nil {
+		return fail(stderr, fmt.Sprintf("canonicalizing workspace root: %v", err))
+	}
+	rootPath, err = filepath.EvalSymlinks(rootPath)
+	if err != nil {
+		return fail(stderr, fmt.Sprintf("canonicalizing workspace root: %v", err))
+	}
+	root, err := os.OpenRoot(rootPath)
+	if err != nil {
+		return fail(stderr, fmt.Sprintf("opening workspace root: %v", err))
+	}
+	defer root.Close()
+	return RunWorkspace(args, stdin, stdout, stderr, Workspace{Root: root, CWD: "."}, dataDirectory)
+}
+
+// RunWorkspace executes the command-line contract within workspace.
+func RunWorkspace(args []string, stdin io.Reader, stdout, stderr io.Writer, workspace Workspace, dataDirectory string) int {
 	translateMode := false
 	switch {
 	case len(args) == 0:
@@ -38,41 +70,7 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer, workingDirect
 		return failWithIneffectiveMetrics(stderr, fmt.Sprintf("reading script: %v", err), dataDirectory, string(script))
 	}
 	scriptText := string(script)
-	program, err := parse(scriptText)
-	if err != nil {
-		return failWithIneffectiveMetrics(stderr, err.Error(), dataDirectory, scriptText)
-	}
-
-	load := func(path string) (loadedFile, error) {
-		fullPath := resolveFilesystemPath(workingDirectory, path)
-		info, err := os.Stat(fullPath)
-		if err != nil {
-			return loadedFile{}, fmt.Errorf("reading %s: %w", path, err)
-		}
-		if !info.Mode().IsRegular() {
-			return loadedFile{}, fmt.Errorf("%s is not a regular file", path)
-		}
-		content, err := os.ReadFile(fullPath)
-		if err != nil {
-			return loadedFile{}, fmt.Errorf("reading %s: %w", path, err)
-		}
-		if !utf8.Valid(content) {
-			return loadedFile{}, fmt.Errorf("%s is not UTF-8", path)
-		}
-		return loadedFile{content: string(content), mode: info.Mode()}, nil
-	}
-	exists := func(path string) (fs.FileMode, bool, error) {
-		info, err := os.Stat(resolveFilesystemPath(workingDirectory, path))
-		if err == nil {
-			return info.Mode(), true, nil
-		}
-		if errors.Is(err, fs.ErrNotExist) {
-			return 0, false, nil
-		}
-		return 0, false, err
-	}
-
-	changes, err := program.evaluate(load, exists)
+	changes, filesystem, err := evaluateScript(context.TODO(), workspace, scriptText)
 	if err != nil {
 		return failWithIneffectiveMetrics(stderr, err.Error(), dataDirectory, scriptText)
 	}
@@ -94,7 +92,7 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer, workingDirect
 		}
 		return 0
 	}
-	if err := commitChanges(workingDirectory, changes, osFileOperations{}); err != nil {
+	if err := commitChanges(changes, rootFileOperations{root: filesystem.root}); err != nil {
 		return failWithIneffectiveMetrics(stderr, fmt.Sprintf("changing %s: %v", describePaths(changes), err), dataDirectory, scriptText)
 	}
 	if dataDirectory != "" {
@@ -108,11 +106,140 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer, workingDirect
 	return 0
 }
 
-func resolveFilesystemPath(workingDirectory, path string) string {
-	if filepath.IsAbs(path) {
-		return path
+// Apply evaluates and atomically applies script within workspace.
+func Apply(ctx context.Context, workspace Workspace, script string) error {
+	changes, filesystem, err := evaluateScript(ctx, workspace, script)
+	if err != nil {
+		return err
 	}
-	return filepath.Join(workingDirectory, path)
+	if len(changes) == 0 {
+		return nil
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return commitChanges(changes, rootFileOperations{root: filesystem.root})
+}
+
+// Translate evaluates script without mutation and returns an apply_patch envelope
+// whose paths are relative to workspace.Root.
+func Translate(ctx context.Context, workspace Workspace, script string) ([]byte, error) {
+	changes, _, err := evaluateScript(ctx, workspace, script)
+	if err != nil {
+		return nil, err
+	}
+	patch, err := translate(changes)
+	if err != nil {
+		return nil, err
+	}
+	return []byte(patch), nil
+}
+
+type filesystemWorkspace struct {
+	root *os.Root
+	cwd  string
+}
+
+func evaluateScript(ctx context.Context, workspace Workspace, script string) ([]change, filesystemWorkspace, error) {
+	filesystem, err := validateWorkspace(ctx, workspace)
+	if err != nil {
+		return nil, filesystemWorkspace{}, err
+	}
+	program, err := parse(script)
+	if err != nil {
+		return nil, filesystemWorkspace{}, err
+	}
+	load := func(path string) (loadedFile, error) {
+		if err := ctx.Err(); err != nil {
+			return loadedFile{}, err
+		}
+		file, err := filesystem.root.Open(path)
+		if err != nil {
+			return loadedFile{}, fmt.Errorf("reading %s: %w", path, err)
+		}
+		defer file.Close()
+		info, err := file.Stat()
+		if err != nil {
+			return loadedFile{}, fmt.Errorf("reading %s: %w", path, err)
+		}
+		if !info.Mode().IsRegular() {
+			return loadedFile{}, fmt.Errorf("%s is not a regular file", path)
+		}
+		content, err := io.ReadAll(file)
+		if err != nil {
+			return loadedFile{}, fmt.Errorf("reading %s: %w", path, err)
+		}
+		if !utf8.Valid(content) {
+			return loadedFile{}, fmt.Errorf("%s is not UTF-8", path)
+		}
+		return loadedFile{content: string(content), mode: info.Mode()}, nil
+	}
+	exists := func(path string) (fs.FileMode, bool, error) {
+		if err := ctx.Err(); err != nil {
+			return 0, false, err
+		}
+		info, err := filesystem.root.Stat(path)
+		if err == nil {
+			return info.Mode(), true, nil
+		}
+		if errors.Is(err, fs.ErrNotExist) {
+			return 0, false, nil
+		}
+		return 0, false, err
+	}
+	changes, err := program.evaluate(filesystem.resolvePath, load, exists)
+	if err != nil {
+		return nil, filesystemWorkspace{}, err
+	}
+	return changes, filesystem, nil
+}
+
+func validateWorkspace(ctx context.Context, workspace Workspace) (filesystemWorkspace, error) {
+	if ctx == nil {
+		return filesystemWorkspace{}, fmt.Errorf("context is nil")
+	}
+	if err := ctx.Err(); err != nil {
+		return filesystemWorkspace{}, err
+	}
+	if workspace.Root == nil {
+		return filesystemWorkspace{}, fmt.Errorf("workspace root is nil")
+	}
+	cwd := workspace.CWD
+	if cwd == "" {
+		cwd = "."
+	}
+	cwd = filepath.Clean(cwd)
+	if !filepath.IsLocal(cwd) {
+		return filesystemWorkspace{}, fmt.Errorf("workspace cwd %q is not root-relative", workspace.CWD)
+	}
+	info, err := workspace.Root.Stat(cwd)
+	if err != nil {
+		return filesystemWorkspace{}, fmt.Errorf("validating workspace cwd %q: %w", cwd, err)
+	}
+	if !info.IsDir() {
+		return filesystemWorkspace{}, fmt.Errorf("workspace cwd %q is not a directory", cwd)
+	}
+	return filesystemWorkspace{root: workspace.Root, cwd: cwd}, nil
+}
+
+func (w filesystemWorkspace) resolvePath(path string) (string, error) {
+	if filepath.IsAbs(path) {
+		if !filepath.IsAbs(w.root.Name()) {
+			return "", fmt.Errorf("absolute path requires an absolute workspace root")
+		}
+		relative, err := filepath.Rel(w.root.Name(), filepath.Clean(path))
+		if err != nil {
+			return "", fmt.Errorf("resolving path against workspace root: %w", err)
+		}
+		path = relative
+	} else {
+		path = filepath.Join(w.cwd, path)
+	}
+	path = filepath.Clean(path)
+	if !filepath.IsLocal(path) {
+		return "", fmt.Errorf("path resolves outside workspace root")
+	}
+	return path, nil
 }
 
 func sanitizeDiagnostic(message string) string {

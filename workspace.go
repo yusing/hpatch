@@ -11,8 +11,11 @@ type loadedFile struct {
 	mode    fs.FileMode
 }
 
-type fileLoader func(path string) (loadedFile, error)
-type pathProbe func(path string) (fs.FileMode, bool, error)
+type (
+	fileLoader   func(path string) (loadedFile, error)
+	pathProbe    func(path string) (fs.FileMode, bool, error)
+	pathResolver func(path string) (string, error)
+)
 
 type fileState struct {
 	originalPath string
@@ -50,7 +53,7 @@ type workspace struct {
 	exists  pathProbe
 }
 
-func (p *program) evaluate(load fileLoader, exists pathProbe) ([]change, error) {
+func (p *program) evaluate(resolve pathResolver, load fileLoader, exists pathProbe) ([]change, error) {
 	w := &workspace{
 		paths:   make(map[string]*fileState),
 		blocked: make(map[string]bool),
@@ -58,6 +61,21 @@ func (p *program) evaluate(load fileLoader, exists pathProbe) ([]change, error) 
 		exists:  exists,
 	}
 	for commandIndex, command := range p.instructions {
+		diagnosticPath := command.path
+		if command.path != "" {
+			resolved, err := resolve(command.path)
+			if err != nil {
+				return nil, &commandError{
+					Command:   commandIndex + 1,
+					Line:      command.line,
+					Operation: command.operation,
+					Path:      diagnosticPath,
+					Category:  commandCategory(command.operation),
+					Message:   err.Error(),
+				}
+			}
+			command.path = resolved
+		}
 		if err := w.execute(command); err != nil {
 			return nil, &commandError{
 				Command:   commandIndex + 1,

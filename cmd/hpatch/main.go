@@ -1,17 +1,17 @@
 package main
 
 import (
+	"fmt"
+	"hpatch"
 	"io"
 	"os"
 	"path/filepath"
 	"runtime/debug"
-
-	"hpatch"
 )
 
 const helpText = `Usage:
-  hpatch < SCRIPT
-  hpatch translate < SCRIPT
+  hpatch [--root ROOT] [--cwd CWD] < SCRIPT
+  hpatch translate [--root ROOT] [--cwd CWD] < SCRIPT
   hpatch gain
   hpatch --help
   hpatch translate --help
@@ -72,14 +72,18 @@ Editor state:
   type and bsel strings may contain encoded line terminators; tsel may not.
 
 Paths and patch boundary:
-  Relative paths resolve from hpatch's current directory; absolute paths remain
-  absolute. Translation does not embed that working directory. The native patch
-  tool independently chooses its application root, so use workspace-relative paths
-  from the workspace root. Keep translated stdout patch-only and internal.
+  --root selects the trusted workspace boundary and defaults to hpatch's current
+  directory. --cwd selects an existing directory within that root and defaults to
+  ".". Relative script paths resolve from cwd. Absolute script paths must use root's
+  canonical spelling and stay within it. Paths that escape root, including through
+  symlinks, are rejected.
+  Normal edits stay within root, and translate always emits root-relative paths.
+  Apply translated output from the same root. Keep translated stdout patch-only and
+  internal.
 `
 
 const translateHelpText = `Usage:
-  hpatch translate < SCRIPT
+  hpatch translate [--root ROOT] [--cwd CWD] < SCRIPT
 
 Read and evaluate a complete editing script from standard input without modifying
 files, then write one OpenAI apply_patch envelope to stdout. Successful stdout is
@@ -99,15 +103,10 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return exitCode
 	}
 
-	gainMode := len(args) == 1 && args[0] == "gain"
-	workingDirectory := ""
-	if !gainMode {
-		var err error
-		workingDirectory, err = os.Getwd()
-		if err != nil {
-			_, _ = io.WriteString(stderr, "hpatch: determining working directory: "+err.Error()+"\n")
-			return 1
-		}
+	engineArgs, rootPath, cwd, gainMode, err := parseInvocation(args)
+	if err != nil {
+		_, _ = io.WriteString(stderr, "hpatch: "+err.Error()+"\n")
+		return 1
 	}
 	configDirectory, err := os.UserConfigDir()
 	if err != nil {
@@ -116,9 +115,89 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 			return 1
 		}
 		_, _ = io.WriteString(stderr, "hpatch: warning: determining user config directory: "+err.Error()+"\n")
-		return hpatch.Run(args, stdin, stdout, stderr, workingDirectory, "")
+		return runEngine(engineArgs, stdin, stdout, stderr, rootPath, cwd, "")
 	}
-	return hpatch.Run(args, stdin, stdout, stderr, workingDirectory, filepath.Join(configDirectory, "hpatch"))
+	if gainMode {
+		return hpatch.Run(engineArgs, stdin, stdout, stderr, "", filepath.Join(configDirectory, "hpatch"))
+	}
+	return runEngine(engineArgs, stdin, stdout, stderr, rootPath, cwd, filepath.Join(configDirectory, "hpatch"))
+}
+
+func parseInvocation(args []string) (engineArgs []string, rootPath, cwd string, gain bool, err error) {
+	if len(args) == 1 && args[0] == "gain" {
+		return []string{"gain"}, "", "", true, nil
+	}
+	if len(args) > 0 && args[0] == "translate" {
+		engineArgs = []string{"translate"}
+		args = args[1:]
+	}
+	for len(args) > 0 {
+		if len(args) < 2 || (args[0] != "--root" && args[0] != "--cwd") {
+			return nil, "", "", false, fmt.Errorf("expected no arguments or exactly: [--root ROOT] [--cwd CWD], translate [--root ROOT] [--cwd CWD], or gain")
+		}
+		value := args[1]
+		if value == "" {
+			return nil, "", "", false, fmt.Errorf("%s requires a nonempty value", args[0])
+		}
+		switch args[0] {
+		case "--root":
+			if rootPath != "" {
+				return nil, "", "", false, fmt.Errorf("--root may be specified only once")
+			}
+			rootPath = value
+		case "--cwd":
+			if cwd != "" {
+				return nil, "", "", false, fmt.Errorf("--cwd may be specified only once")
+			}
+			cwd = value
+		}
+		args = args[2:]
+	}
+	if rootPath == "" {
+		rootPath, err = os.Getwd()
+		if err != nil {
+			return nil, "", "", false, fmt.Errorf("determining working directory: %w", err)
+		}
+	} else if !filepath.IsAbs(rootPath) {
+		return nil, "", "", false, fmt.Errorf("workspace root must be absolute")
+	}
+	rootPath, err = filepath.EvalSymlinks(rootPath)
+	if err != nil {
+		return nil, "", "", false, fmt.Errorf("canonicalizing workspace root: %w", err)
+	}
+	if cwd == "" {
+		cwd = "."
+	}
+	cwdPath := cwd
+	if !filepath.IsAbs(cwdPath) {
+		cwdPath = filepath.Join(rootPath, cwdPath)
+	}
+	cwdPath, err = filepath.EvalSymlinks(cwdPath)
+	if err != nil {
+		return nil, "", "", false, fmt.Errorf("canonicalizing workspace cwd: %w", err)
+	}
+	cwdInfo, err := os.Stat(cwdPath)
+	if err != nil {
+		return nil, "", "", false, fmt.Errorf("validating workspace cwd: %w", err)
+	}
+	if !cwdInfo.IsDir() {
+		return nil, "", "", false, fmt.Errorf("workspace cwd must be a directory")
+	}
+	cwd, err = filepath.Rel(rootPath, cwdPath)
+	if err != nil || !filepath.IsLocal(cwd) {
+		return nil, "", "", false, fmt.Errorf("workspace cwd must resolve within root")
+	}
+	return engineArgs, rootPath, cwd, false, nil
+}
+
+func runEngine(args []string, stdin io.Reader, stdout, stderr io.Writer, rootPath, cwd, dataDirectory string) int {
+	root, err := os.OpenRoot(rootPath)
+	if err != nil {
+		_, _ = io.WriteString(stderr, "hpatch: opening workspace root: "+err.Error()+"\n")
+		return 1
+	}
+	defer root.Close()
+	return hpatch.RunWorkspace(args, stdin, stdout, stderr, hpatch.Workspace{Root: root, CWD: cwd}, dataDirectory)
 }
 
 func runInformational(args []string, stdout, stderr io.Writer) (int, bool) {

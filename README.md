@@ -38,6 +38,21 @@ type " world\n"
 EOF
 ```
 
+Use `--root` to select the trusted workspace boundary and `--cwd` to resolve
+relative script paths from a directory beneath it:
+
+```sh
+bin/hpatch translate --root /workspace --cwd bin/block-graph-worktree <<'EOF'
+in main.go
+tsel 1 1 "package main"
+type "package graph"
+EOF
+```
+
+That command reads `/workspace/bin/block-graph-worktree/main.go` and emits the patch
+path `bin/block-graph-worktree/main.go`. Apply the translated patch from `/workspace`.
+Both options have CLI defaults: root is the process current directory and cwd is `.`.
+
 The second command writes an `Add File` patch to stdout. Successful translation keeps
 stdout patch-only. Errors return nonzero and go to stderr; evaluation diagnostics
 identify the command index, source line, operation, relevant path, and failure category.
@@ -100,10 +115,33 @@ inherits the selected final line terminator unless the replacement supplies one.
 or from the current cursor to end-of-file otherwise. It never wraps. Each anchor must
 be unique within that scope; ambiguous, reversed, or overlapping anchors fail.
 
-Paths use normal host filesystem semantics during translation: relative paths resolve
-from hpatch's current directory and absolute paths remain absolute. The translated text
-contains paths but no current-directory metadata. A downstream patch tool independently
-chooses its application root, so its root must be aligned with the paths hpatch emits.
+Every editing invocation has one root. Relative script paths resolve from cwd within
+that root. Absolute script paths must use the canonical root spelling and remain inside
+it. Root escapes through `..`, absolute paths, or symlinks fail before staging.
+Translation always emits root-relative paths, so its downstream patch consumer must
+use the same root.
+
+Library callers can pass an already-opened root capability directly:
+
+```go
+root, err := os.OpenRoot("/workspace")
+if err != nil {
+	return err
+}
+defer root.Close()
+
+workspace := hpatch.Workspace{Root: root, CWD: "bin/block-graph-worktree"}
+patch, err := hpatch.Translate(ctx, workspace, script)
+```
+
+`Workspace.CWD` is root-relative and defaults to `.`. The caller owns the `*os.Root`
+and must keep it open for the operation. Hosts should canonicalize and authorize the
+absolute root before opening it; the standalone CLI does this for `--root` and also
+accepts an absolute `--cwd` only when it canonicalizes beneath root. Absolute script
+operands must use that canonical root spelling; equivalent symlink aliases are not
+resolved outside the root capability. Paths through absolute symlink targets are also
+rejected by Go's `os.Root`, even when the target points back inside root. Prefer
+root-relative script operands.
 
 The complete behavior and failure contract is in
 [`doc/spec/interface.md`](doc/spec/interface.md).

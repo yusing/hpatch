@@ -2,13 +2,20 @@
 
 ## HP-CLI-001: Modes and informational output
 
-`hpatch` reads a complete script from standard input, evaluates its complete change set
-in memory, stages required filesystem content, and then commits it. It writes nothing
-on success unless metrics collection emits the warning defined by `HP-METRICS-001`.
+`hpatch [--root ROOT] [--cwd CWD]` reads a complete script from standard input,
+evaluates its complete change set in memory, stages required filesystem content, and
+then commits it. It writes nothing on success unless metrics collection emits the
+warning defined by `HP-METRICS-001`.
 
-`hpatch translate` performs the same parsing, filesystem reads, and in-memory
-evaluation but never modifies a file. It writes one OpenAI `apply_patch` envelope that
-represents the same net change set.
+`hpatch translate [--root ROOT] [--cwd CWD]` performs the same parsing, filesystem
+reads, and in-memory evaluation but never modifies a file. It writes one OpenAI
+`apply_patch` envelope that represents the same net change set.
+
+For normal and translate modes, omitted `--root` means the process current directory
+and omitted `--cwd` means `.`. An explicit root must be absolute and is canonicalized
+before it is opened. A relative cwd resolves beneath root. An absolute cwd is accepted
+only when its canonical location is beneath root. Cwd must identify an existing
+directory. The CLI opens root once and uses that pinned capability for the invocation.
 
 `hpatch gain` reads no script and reports the persistent aggregate defined by
 `HP-METRICS-001`. `hpatch --help` is the complete built-in agent reference for
@@ -32,6 +39,10 @@ Acceptance:
    zero and empty stderr without reading stdin or requiring a valid current directory.
 6. Unsupported aliases, trailing arguments, and unknown/future options fail with no
    stdout.
+7. A nested cwd changes relative path resolution while normal mutations and translated
+   patch paths retain the same root-relative file identity.
+8. A relative, absolute, or symlink path that escapes root fails without mutation or
+   patch output.
 
 ## HP-METRICS-001: Persistent token metrics
 
@@ -146,11 +157,15 @@ them from the end. JSON operands use standard JSON string decoding. `type` and `
 strings may contain encoded line terminators; `tsel` strings must stay within one
 logical line. Both `bsel` strings must be nonempty and different.
 
-Paths are nonempty filesystem paths normalized with the host OS path rules. During
-translation, relative paths resolve from the hpatch process working directory and
-absolute paths remain absolute. Emitted patch paths do not carry that process working
-directory as metadata. A downstream patch consumer resolves them according to its own
-application-root contract. Trailing operands and unknown commands are invalid.
+Paths are nonempty filesystem paths normalized with the host OS path rules. Relative
+paths resolve from cwd and are stored as root-relative identities. Absolute paths are
+accepted when their cleaned spelling lies beneath the canonical absolute name used to
+open root and are then converted to root-relative identities. Equivalent absolute
+symlink aliases are not resolved outside the root capability. Root-scoped lookup rejects
+paths that escape through symlinks and, following Go's `os.Root` contract, paths through
+absolute symlink targets. Translation always emits root-relative paths; a downstream
+patch consumer must apply the envelope from the same root. Trailing operands and unknown
+commands are invalid.
 
 Acceptance:
 
@@ -160,6 +175,9 @@ Acceptance:
 3. Zero selection coordinates, malformed ranges, missing operands, invalid JSON,
    trailing operands, empty or identical block anchors, and unknown commands fail
    before filesystem mutation or patch output.
+4. With root `/workspace` and cwd `bin/worktree`, script path `main.go` denotes
+   `/workspace/bin/worktree/main.go` and translates as `bin/worktree/main.go`.
+
 ## HP-FILE-001: File commands
 
 `in PATH` selects an existing logical file for subsequent commands. It may occur any

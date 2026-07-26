@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -31,7 +32,7 @@ func TestInformationalCommandsNeedNoEnvironmentOrStdin(t *testing.T) {
 		want         string
 		wantFragment string
 	}{
-		{name: "top-level help", args: []string{"--help"}, want: helpText, wantFragment: "hpatch translate < SCRIPT"},
+		{name: "top-level help", args: []string{"--help"}, want: helpText, wantFragment: "hpatch translate [--root ROOT] [--cwd CWD] < SCRIPT"},
 		{name: "translate help", args: []string{"translate", "--help"}, want: translateHelpText, wantFragment: "without modifying"},
 		{name: "version", args: []string{"--version"}, want: "hpatch devel\n", wantFragment: "hpatch devel"},
 	}
@@ -51,22 +52,71 @@ func TestInformationalCommandsNeedNoEnvironmentOrStdin(t *testing.T) {
 
 func TestTopLevelHelpDescribesCompletePublicSurface(t *testing.T) {
 	for _, fragment := range []string{
-		"hpatch < SCRIPT",
-		"hpatch translate < SCRIPT",
+		"hpatch [--root ROOT] [--cwd CWD] < SCRIPT",
+		"hpatch translate [--root ROOT] [--cwd CWD] < SCRIPT",
 		"hpatch gain",
 		"standard input",
 		"bsel \"START\" \"END\"",
 		"rsel START:END",
-		"native non-PTY stdin field",
-		"Do not use Python",
+		"functions.hpatch",
 		"current selection when one exists",
 		"current cursor to end-of-file",
 		"never wraps to the file beginning",
 		"preserves the selected final",
+		"translate always emits root-relative paths",
 	} {
 		if !strings.Contains(helpText, fragment) {
 			t.Fatalf("help does not contain %q", fragment)
 		}
+	}
+}
+
+func TestRootAndCWDOptionsTranslateRootRelativePath(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, "nested"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "nested", "main.go"), []byte("package main\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, cwd := range []string{"nested", filepath.Join(root, "nested")} {
+		var stdout, stderr bytes.Buffer
+		exitCode := run(
+			[]string{"translate", "--root", root, "--cwd", cwd},
+			strings.NewReader("in main.go\ntsel 1 1 \"package main\"\ntype \"package graph\"\n"),
+			&stdout,
+			&stderr,
+		)
+		if exitCode != 0 || stderr.Len() != 0 {
+			t.Fatalf("run(cwd %q) = exit %d, stdout %q, stderr %q", cwd, exitCode, stdout.String(), stderr.String())
+		}
+		if !strings.Contains(stdout.String(), "*** Update File: nested/main.go\n") {
+			t.Fatalf("translation for cwd %q is not root-relative:\n%s", cwd, stdout.String())
+		}
+	}
+}
+
+func TestWorkspaceOptionsRejectInvalidBoundaries(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	if err := os.Symlink(outside, filepath.Join(root, "escape")); err != nil {
+		t.Fatal(err)
+	}
+	tests := [][]string{
+		{"--root", "relative"},
+		{"--root", root, "--cwd", outside},
+		{"--root", root, "--cwd", "escape"},
+	}
+	for _, args := range tests {
+		t.Run(strings.Join(args, "_"), func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			exitCode := run(args, errorReader{}, &stdout, &stderr)
+			if exitCode != 1 || stdout.Len() != 0 || stderr.Len() == 0 {
+				t.Fatalf("run(%q) = exit %d, stdout %q, stderr %q", args, exitCode, stdout.String(), stderr.String())
+			}
+		})
 	}
 }
 

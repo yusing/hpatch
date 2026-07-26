@@ -3,14 +3,13 @@ package hpatch
 import (
 	"bytes"
 	"errors"
+	"hpatch/internal/patchtest"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
-
-	"hpatch/internal/patchtest"
 )
 
 func TestRunNormalMultiFileWorkflow(t *testing.T) {
@@ -352,10 +351,9 @@ func TestSymlinkPathResolvesNormally(t *testing.T) {
 func TestAbsoluteAndNormalizedPaths(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, root, "relative.txt", "old\n", 0o644)
-	absoluteRoot := t.TempDir()
-	writeTestFile(t, absoluteRoot, "absolute.txt", "old\n", 0o644)
+	writeTestFile(t, root, "absolute.txt", "old\n", 0o644)
 
-	script := "in nested/../relative.txt\ntsel 1 1 \"old\"\ntype \"relative\"\nin " + filepath.Join(absoluteRoot, "absolute.txt") + "\ntsel 1 1 \"old\"\ntype \"absolute\"\n"
+	script := "in nested/../relative.txt\ntsel 1 1 \"old\"\ntype \"relative\"\nin " + filepath.Join(root, "absolute.txt") + "\ntsel 1 1 \"old\"\ntype \"absolute\"\n"
 	stdout, stderr, exitCode := runForTest(root, nil, script)
 	if exitCode != 0 || stdout != "" || stderr != "" {
 		t.Fatalf("Run() = exit %d, stdout %q, stderr %q", exitCode, stdout, stderr)
@@ -363,8 +361,72 @@ func TestAbsoluteAndNormalizedPaths(t *testing.T) {
 	if got := readTestFile(t, root, "relative.txt"); got != "relative\n" {
 		t.Fatalf("relative file = %q", got)
 	}
-	if got := readTestFile(t, absoluteRoot, "absolute.txt"); got != "absolute\n" {
+	if got := readTestFile(t, root, "absolute.txt"); got != "absolute\n" {
 		t.Fatalf("absolute file = %q", got)
+	}
+
+	rootCapability := openTestRoot(t, root)
+	patch, err := Translate(t.Context(), Workspace{Root: rootCapability}, "in "+filepath.Join(root, "absolute.txt")+"\ntsel 1 1 \"absolute\"\ntype \"translated\"\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(patch), "*** Update File: absolute.txt\n") {
+		t.Fatalf("absolute path was not translated root-relative:\n%s", patch)
+	}
+}
+
+func TestWorkspaceCWDResolvesReadsAndRootRelativeTranslation(t *testing.T) {
+	rootPath := t.TempDir()
+	if err := os.Mkdir(filepath.Join(rootPath, "bin"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeTestFile(t, rootPath, "bin/main.go", "package main\n", 0o644)
+	root := openTestRoot(t, rootPath)
+	workspace := Workspace{Root: root, CWD: "bin"}
+	script := "in main.go\ntsel 1 1 \"package main\"\ntype \"package graph\"\n"
+
+	patch, err := Translate(t.Context(), workspace, script)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "*** Update File: bin/main.go\n"; !strings.Contains(string(patch), want) {
+		t.Fatalf("translation %q does not contain %q", patch, want)
+	}
+	if err := Apply(t.Context(), workspace, script); err != nil {
+		t.Fatal(err)
+	}
+	if got := readTestFile(t, rootPath, "bin/main.go"); got != "package graph\n" {
+		t.Fatalf("main.go = %q", got)
+	}
+}
+
+func TestWorkspaceRejectsPathsOutsideRoot(t *testing.T) {
+	rootPath := t.TempDir()
+	outside := t.TempDir()
+	writeTestFile(t, outside, "outside.txt", "old\n", 0o644)
+	if err := os.Symlink(outside, filepath.Join(rootPath, "escape")); err != nil {
+		t.Fatal(err)
+	}
+	root := openTestRoot(t, rootPath)
+	workspace := Workspace{Root: root}
+
+	for _, script := range []string{
+		"in ../outside.txt\n",
+		"in " + filepath.Join(outside, "outside.txt") + "\n",
+		"in escape/outside.txt\n",
+	} {
+		if _, err := Translate(t.Context(), workspace, script); err == nil {
+			t.Fatalf("Translate(%q) succeeded", script)
+		}
+	}
+	if err := Apply(t.Context(), workspace, "new escape/new.txt\ntype \"bad\"\n"); err == nil {
+		t.Fatal("Apply() created a file through an escaping symlink")
+	}
+	if _, err := Translate(t.Context(), Workspace{Root: root, CWD: "escape"}, "new file.txt\n"); err == nil {
+		t.Fatal("Translate() accepted an escaping cwd symlink")
+	}
+	if got := readTestFile(t, outside, "outside.txt"); got != "old\n" {
+		t.Fatalf("outside file mutated: %q", got)
 	}
 }
 
@@ -386,8 +448,8 @@ func TestCommitFailureRollsBack(t *testing.T) {
 	writeTestFile(t, root, "a.txt", "a\n", 0o644)
 	writeTestFile(t, root, "b.txt", "b\n", 0o644)
 	changes := updateChanges()
-	operations := &failingFileOperations{fileOperations: osFileOperations{}, failRename: map[int]error{4: errors.New("injected install failure")}}
-	err := commitChanges(root, changes, operations)
+	operations := &failingFileOperations{fileOperations: testRootOperations(t, root), failRename: map[int]error{4: errors.New("injected install failure")}}
+	err := commitChanges(changes, operations)
 	if err == nil || !strings.Contains(err.Error(), "rollback succeeded") {
 		t.Fatalf("commitChanges() error = %v", err)
 	}
@@ -403,13 +465,13 @@ func TestRollbackFailureIsReportedAndBackupPreserved(t *testing.T) {
 	writeTestFile(t, root, "b.txt", "b\n", 0o644)
 	changes := updateChanges()
 	operations := &failingFileOperations{
-		fileOperations: osFileOperations{},
+		fileOperations: testRootOperations(t, root),
 		failRename: map[int]error{
 			4: errors.New("injected install failure"),
 			5: errors.New("injected restore failure"),
 		},
 	}
-	err := commitChanges(root, changes, operations)
+	err := commitChanges(changes, operations)
 	if err == nil || !strings.Contains(err.Error(), "rollback also failed") || !strings.Contains(err.Error(), "b.txt") {
 		t.Fatalf("commitChanges() error = %v", err)
 	}
@@ -428,13 +490,13 @@ func TestStagingCleanupFailureReportsRetainedArtifact(t *testing.T) {
 	writeTestFile(t, root, "a.txt", "a\n", 0o644)
 	changes := updateChanges()[:1]
 	operations := &failingFileOperations{
-		fileOperations: osFileOperations{},
+		fileOperations: testRootOperations(t, root),
 		failRemove: map[int]error{
 			1: errors.New("injected reservation cleanup failure"),
 			2: errors.New("injected staging cleanup failure"),
 		},
 	}
-	err := commitChanges(root, changes, operations)
+	err := commitChanges(changes, operations)
 	if err == nil || !strings.Contains(err.Error(), "cleanup also failed") || !strings.Contains(err.Error(), ".a.txt.hpatch-backup-") {
 		t.Fatalf("commitChanges() error = %v", err)
 	}
@@ -494,6 +556,25 @@ func runForTest(root string, args []string, script string) (string, string, int)
 	var stdout, stderr bytes.Buffer
 	exitCode := Run(args, strings.NewReader(script), &stdout, &stderr, root, root+"-metrics")
 	return stdout.String(), stderr.String(), exitCode
+}
+
+func openTestRoot(t *testing.T, path string) *os.Root {
+	t.Helper()
+	root, err := os.OpenRoot(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := root.Close(); err != nil {
+			t.Errorf("closing root: %v", err)
+		}
+	})
+	return root
+}
+
+func testRootOperations(t *testing.T, path string) rootFileOperations {
+	t.Helper()
+	return rootFileOperations{root: openTestRoot(t, path)}
 }
 
 func writeTestFile(t *testing.T, root, path, content string, mode fs.FileMode) {
