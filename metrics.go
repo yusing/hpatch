@@ -20,16 +20,16 @@ import (
 const (
 	metricsFilename       = "metrics.bin"
 	metricsLockname       = "metrics.lock"
-	metricsMagic          = "HPATCH06"
-	metricsSlotSize       = 256
+	metricsMagic          = "HPATCH07"
+	metricsSlotSize       = 264
 	metricsFileSize       = 2 * metricsSlotSize
-	metricsChecksumOffset = 224
-	commandCount          = 11
+	metricsChecksumOffset = 232
+	commandCount          = 12
 )
 
 var commandOperations = [commandCount]string{
 	"in", "new", "mv", "rm",
-	"sel", "tsel", "bsel", "rsel",
+	"sel", "tsel", "bsel", "bsel_next", "rsel",
 	"type", "del", "dup",
 }
 
@@ -295,7 +295,7 @@ func readMetricsFile(file *os.File) (metrics, uint64, error) {
 	if valid {
 		return latest, latestGeneration, nil
 	}
-	if !mismatchedVersion && info.Size() <= 128 {
+	if !mismatchedVersion {
 		mismatchedVersion, err = hasValidPriorMetricsSlot(file, info.Size())
 		if err != nil {
 			return metrics{}, 0, err
@@ -308,19 +308,28 @@ func readMetricsFile(file *os.File) (metrics, uint64, error) {
 }
 
 func hasValidPriorMetricsSlot(file *os.File, size int64) (bool, error) {
-	const priorSlotSize = 64
-	for offset := int64(0); offset+priorSlotSize <= size; offset += priorSlotSize {
-		var encoded [priorSlotSize]byte
-		if _, err := file.ReadAt(encoded[:], offset); err != nil {
-			return false, fmt.Errorf("reading metrics: %w", err)
-		}
-		if !bytes.HasPrefix(encoded[:8], []byte("HPATCH")) || string(encoded[:8]) == metricsMagic {
-			continue
-		}
-		checksum := sha256.Sum256(encoded[:40])
-		generation := binary.LittleEndian.Uint64(encoded[8:16])
-		if generation != 0 && bytes.Equal(encoded[40:], checksum[:24]) {
-			return true, nil
+	formats := []struct {
+		slotSize       int64
+		checksumOffset int
+		checksumSize   int
+	}{
+		{slotSize: 256, checksumOffset: 224, checksumSize: 32},
+		{slotSize: 64, checksumOffset: 40, checksumSize: 24},
+	}
+	for _, format := range formats {
+		for offset := int64(0); offset+format.slotSize <= size; offset += format.slotSize {
+			encoded := make([]byte, format.slotSize)
+			if _, err := file.ReadAt(encoded, offset); err != nil {
+				return false, fmt.Errorf("reading metrics: %w", err)
+			}
+			if !bytes.HasPrefix(encoded[:8], []byte("HPATCH")) || string(encoded[:8]) == metricsMagic {
+				continue
+			}
+			checksum := sha256.Sum256(encoded[:format.checksumOffset])
+			generation := binary.LittleEndian.Uint64(encoded[8:16])
+			if generation != 0 && bytes.Equal(encoded[format.checksumOffset:], checksum[:format.checksumSize]) {
+				return true, nil
+			}
 		}
 	}
 	return false, nil

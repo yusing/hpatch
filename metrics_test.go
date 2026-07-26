@@ -3,6 +3,7 @@ package hpatch
 import (
 	"bytes"
 	"crypto/sha256"
+	"encoding/binary"
 	"fmt"
 	"io"
 	"os"
@@ -93,6 +94,7 @@ func TestGainReportsCommandInvocationsErrorsAndRates(t *testing.T) {
 	}{
 		{name: "success with unrelated command-name text", args: []string{"translate"}, script: "new note.txt\ntype \"bsel sel future-command\"\n", success: true},
 		{name: "execution error", args: []string{"translate"}, script: "new failed.txt\ntype \"ignored\"\nbsel \"missing\" \"end\"\n"},
+		{name: "bsel_next execution error", args: []string{"translate"}, script: "new failed-next.txt\ntype \"ignored\"\nbsel_next \"missing\" \"end\"\n"},
 		{name: "malformed known command", args: []string{"translate"}, script: "sel nope\n"},
 		{name: "unknown future command", args: []string{"translate"}, script: "future-command\n"},
 		{name: "successful no-op", script: "new transient.txt\nrm\n", success: true},
@@ -112,11 +114,12 @@ func TestGainReportsCommandInvocationsErrorsAndRates(t *testing.T) {
 		t.Fatal(err)
 	}
 	wantCommands := commandMetrics{}
-	wantCommands[commandOperationIndex("new")] = commandMetric{Invocations: 3}
+	wantCommands[commandOperationIndex("new")] = commandMetric{Invocations: 4}
 	wantCommands[commandOperationIndex("rm")] = commandMetric{Invocations: 1}
 	wantCommands[commandOperationIndex("sel")] = commandMetric{Invocations: 1, Errors: 1}
 	wantCommands[commandOperationIndex("bsel")] = commandMetric{Invocations: 1, Errors: 1}
-	wantCommands[commandOperationIndex("type")] = commandMetric{Invocations: 2}
+	wantCommands[commandOperationIndex("bsel_next")] = commandMetric{Invocations: 1, Errors: 1}
+	wantCommands[commandOperationIndex("type")] = commandMetric{Invocations: 3}
 	if got.Commands != wantCommands {
 		t.Fatalf("command metrics = %+v, want %+v", got.Commands, wantCommands)
 	}
@@ -130,20 +133,21 @@ func TestGainReportsCommandInvocationsErrorsAndRates(t *testing.T) {
 		t.Fatalf("gain report has no command metrics: %q", stdout.String())
 	}
 	want := "command metrics:\n" +
-		"command  invocations  errors  error rate\n" +
-		"-------  -----------  ------  ----------\n" +
-		"in       0            0       0.0%\n" +
-		"new      3            0       0.0%\n" +
-		"mv       0            0       0.0%\n" +
-		"rm       1            0       0.0%\n" +
-		"sel      1            1       100.0%\n" +
-		"tsel     0            0       0.0%\n" +
-		"bsel     1            1       100.0%\n" +
-		"rsel     0            0       0.0%\n" +
-		"type     2            0       0.0%\n" +
-		"del      0            0       0.0%\n" +
-		"dup      0            0       0.0%\n" +
-		"total    8            2       25.0%\n"
+		"command    invocations  errors  error rate\n" +
+		"-------    -----------  ------  ----------\n" +
+		"in         0            0       0.0%\n" +
+		"new        4            0       0.0%\n" +
+		"mv         0            0       0.0%\n" +
+		"rm         1            0       0.0%\n" +
+		"sel        1            1       100.0%\n" +
+		"tsel       0            0       0.0%\n" +
+		"bsel       1            1       100.0%\n" +
+		"bsel_next  1            1       100.0%\n" +
+		"rsel       0            0       0.0%\n" +
+		"type       3            0       0.0%\n" +
+		"del        0            0       0.0%\n" +
+		"dup        0            0       0.0%\n" +
+		"total      11           3       27.3%\n"
 	if got := stdout.String()[start:]; got != want {
 		t.Fatalf("command report = %q, want %q", got, want)
 	}
@@ -451,6 +455,26 @@ func TestMetricsProcessHelper(t *testing.T) {
 		if err := updateMetrics(os.Getenv("HPATCH_METRICS_DIRECTORY"), metrics{HPatchTokens: 2, ApplyPatchTokens: 5}); err != nil {
 			t.Fatal(err)
 		}
+	}
+}
+
+func TestPriorMetricsVersionResetsTotals(t *testing.T) {
+	dataDirectory := t.TempDir()
+	var prior [256]byte
+	copy(prior[:8], "HPATCH06")
+	binary.LittleEndian.PutUint64(prior[8:16], 7)
+	binary.LittleEndian.PutUint64(prior[16:24], 5)
+	checksum := sha256.Sum256(prior[:224])
+	copy(prior[224:], checksum[:])
+	if err := os.WriteFile(filepath.Join(dataDirectory, metricsFilename), prior[:], 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := readMetrics(dataDirectory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != (metrics{}) {
+		t.Fatalf("prior metrics were not reset: %+v", got)
 	}
 }
 

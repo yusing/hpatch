@@ -89,7 +89,7 @@ func commandCategory(operation string) string {
 	switch operation {
 	case "in", "new", "mv", "rm":
 		return "file"
-	case "sel", "tsel", "rsel", "bsel":
+	case "sel", "tsel", "rsel", "bsel", "bsel_next":
 		return "selection"
 	case "type", "del", "dup":
 		return "edit"
@@ -121,6 +121,8 @@ func (w *workspace) execute(command instruction, commandIndex int) error {
 		return w.active.editor.selectOccurrence(command.lineNumber, command.occurrence, command.text)
 	case "bsel":
 		return w.active.editor.selectBlock(command.text, command.endText)
+	case "bsel_next":
+		return w.active.editor.selectNextBlock(command.text, command.endText)
 	case "rsel":
 		return w.active.editor.selectLines(command.start, command.end)
 	case "type":

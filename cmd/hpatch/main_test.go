@@ -17,7 +17,7 @@ func TestGainDoesNotRequireWorkingDirectory(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	exitCode := run([]string{"gain"}, strings.NewReader("ignored"), &stdout, &stderr)
 	wantPrefix := "estimated effective hpatch output tokens: 0\nestimated apply_patch output tokens: 0\nestimated effective reduction: 0.0%\nestimated ineffective hpatch output tokens: 0\nestimated total hpatch output tokens: 0\nestimated overall reduction: 0.0%\ncommand metrics:\n"
-	wantSuffix := "total    0            0       0.0%\n"
+	wantSuffix := "total      0            0       0.0%\n"
 	if exitCode != 0 || !strings.HasPrefix(stdout.String(), wantPrefix) || !strings.HasSuffix(stdout.String(), wantSuffix) || stderr.Len() != 0 {
 		t.Fatalf("gain = exit %d, stdout %q, stderr %q", exitCode, stdout.String(), stderr.String())
 	}
@@ -58,14 +58,17 @@ func TestTopLevelHelpDescribesCompletePublicSurface(t *testing.T) {
 		"hpatch gain",
 		"standard input",
 		"bsel \"START\" \"END\"",
+		"bsel_next \"START\" \"END\"",
 		"rsel START:END",
 		"functions.hpatch",
 		"immutable baseline",
 		"Text introduced by an",
 		"multiple insertions",
-		"current baseline selection when one exists",
+		"complete active-file baseline",
+		"bsel_next searches inside the current baseline selection",
 		"current baseline cursor to end-of-file",
-		"never wraps to the file",
+		"never wraps",
+		"ASCII space and tab runs match interchangeably",
 		"preserves the selected final",
 		"translate always emits root-relative paths",
 	} {
@@ -125,7 +128,7 @@ func TestWorkspaceOptionsRejectInvalidBoundaries(t *testing.T) {
 }
 
 func TestTopLevelHelpDescribesSelectionOperandConstraints(t *testing.T) {
-	const constraints = "`tsel` occurrence must be nonzero: positive values count from the start, and\n  negative values count from the end. Both `bsel` anchors must be nonempty and\n  different."
+	const constraints = "`tsel` occurrence must be nonzero: positive values count from the start, and\n  negative values count from the end. Both `bsel` and `bsel_next` anchors must be\n  nonempty and different."
 	if !strings.Contains(helpText, constraints) {
 		t.Fatalf("help does not contain accepted operand constraints %q", constraints)
 	}
@@ -134,8 +137,8 @@ func TestTopLevelHelpDescribesSelectionOperandConstraints(t *testing.T) {
 		"`tsel` occurrence must be nonzero",
 		"positive values count from the start",
 		"negative values count from the end",
-		"Both `bsel` anchors must be nonempty",
-		"anchors must be nonempty and\n  different",
+		"Both `bsel` and `bsel_next` anchors must be",
+		"anchors must be\n  nonempty and different",
 	} {
 		if !strings.Contains(helpText, fragment) {
 			t.Fatalf("help does not contain %q", fragment)

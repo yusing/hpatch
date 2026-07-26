@@ -155,18 +155,22 @@ func parseInstruction(sourceLine int, line string) (instruction, error) {
 		}, nil
 	}
 
-	if valueText, ok := strings.CutPrefix(line, "bsel "); ok {
+	for _, operation := range []string{"bsel", "bsel_next"} {
+		valueText, ok := strings.CutPrefix(line, operation+" ")
+		if !ok {
+			continue
+		}
 		startText, endText, err := decodeTwoJSONStrings(valueText)
 		if err != nil {
-			return instruction{}, scriptError(sourceLine, "invalid bsel JSON strings")
+			return instruction{}, scriptError(sourceLine, "invalid "+operation+" JSON strings")
 		}
 		if startText == "" || endText == "" {
-			return instruction{}, scriptError(sourceLine, "bsel literals must not be empty")
+			return instruction{}, scriptError(sourceLine, operation+" literals must not be empty")
 		}
 		if startText == endText {
-			return instruction{}, scriptError(sourceLine, "bsel literals must differ")
+			return instruction{}, scriptError(sourceLine, operation+" literals must differ")
 		}
-		return instruction{line: sourceLine, operation: "bsel", text: startText, endText: endText}, nil
+		return instruction{line: sourceLine, operation: operation, text: startText, endText: endText}, nil
 	}
 
 	if match := rangePattern.FindStringSubmatch(line); match != nil {

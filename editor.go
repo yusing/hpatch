@@ -77,27 +77,47 @@ func (e *editor) selectOccurrence(lineNumber, occurrence int, literal string) er
 }
 
 func (e *editor) selectBlock(startLiteral, endLiteral string) error {
+	return e.selectBlockInScope(startLiteral, endLiteral, 0, len(e.baseline), "the active file baseline")
+}
+
+func (e *editor) selectNextBlock(startLiteral, endLiteral string) error {
 	scopeStart, scopeEnd := e.cursor, len(e.baseline)
+	scopeDescription := "the baseline suffix from the current cursor"
 	if e.selection != nil {
 		scopeStart, scopeEnd = e.selection.start, e.selection.end
+		scopeDescription = "the current baseline selection"
 	}
+	return e.selectBlockInScope(startLiteral, endLiteral, scopeStart, scopeEnd, scopeDescription)
+}
+
+func (e *editor) selectBlockInScope(startLiteral, endLiteral string, scopeStart, scopeEnd int, scopeDescription string) error {
 	scope := e.baseline[scopeStart:scopeEnd]
-	startOffsets := literalOffsets(scope, startLiteral)
-	if len(startOffsets) != 1 {
-		return fmt.Errorf("start literal %q occurs %d times in the search scope; want exactly once", startLiteral, len(startOffsets))
+	startMatches, tolerant := blockAnchorMatches(scope, startLiteral)
+	if len(startMatches) != 1 {
+		return fmt.Errorf(
+			"start literal %q occurs %d times%s in %s; want exactly once",
+			startLiteral,
+			len(startMatches),
+			blockMatchQualifier(tolerant),
+			scopeDescription,
+		)
 	}
-	endOffsets := literalOffsets(scope, endLiteral)
-	if len(endOffsets) != 1 {
-		return fmt.Errorf("end literal %q occurs %d times in the search scope; want exactly once", endLiteral, len(endOffsets))
+
+	start := startMatches[0]
+	endMatches, tolerant := blockAnchorMatches(scope[start.end:], endLiteral)
+	if len(endMatches) != 1 {
+		return fmt.Errorf(
+			"end literal %q occurs %d times%s after start in %s; want exactly once",
+			endLiteral,
+			len(endMatches),
+			blockMatchQualifier(tolerant),
+			scopeDescription,
+		)
 	}
-	start := startOffsets[0]
-	endStart := endOffsets[0]
-	if endStart < start+len(startLiteral) {
-		return fmt.Errorf("end literal %q precedes or overlaps start literal %q in the search scope", endLiteral, startLiteral)
-	}
+	end := endMatches[0]
 	return e.setSelection(selection{
-		start: scopeStart + start,
-		end:   scopeStart + endStart + len(endLiteral),
+		start: scopeStart + start.start,
+		end:   scopeStart + start.end + end.end,
 	})
 }
 
@@ -294,6 +314,78 @@ func (e *editor) content() string {
 	}
 	result.WriteString(e.baseline[cursor:])
 	return result.String()
+}
+
+type literalMatch struct {
+	start int
+	end   int
+}
+
+func blockAnchorMatches(text, literal string) ([]literalMatch, bool) {
+	offsets := literalOffsets(text, literal)
+	if len(offsets) > 0 {
+		matches := make([]literalMatch, len(offsets))
+		for index, offset := range offsets {
+			matches[index] = literalMatch{start: offset, end: offset + len(literal)}
+		}
+		return matches, false
+	}
+	if !strings.ContainsAny(literal, " \t") {
+		return nil, false
+	}
+	return horizontalWhitespaceLiteralMatches(text, literal), true
+}
+
+func blockMatchQualifier(tolerant bool) string {
+	if tolerant {
+		return " with horizontal whitespace ignored"
+	}
+	return ""
+}
+
+func horizontalWhitespaceLiteralMatches(text, literal string) []literalMatch {
+	if literal == "" {
+		return nil
+	}
+	var matches []literalMatch
+	for start := range len(text) {
+		if isHorizontalWhitespace(literal[0]) && start > 0 && isHorizontalWhitespace(text[start-1]) {
+			continue
+		}
+		end, ok := matchHorizontalWhitespaceLiteral(text, literal, start)
+		if ok {
+			matches = append(matches, literalMatch{start: start, end: end})
+		}
+	}
+	return matches
+}
+
+func matchHorizontalWhitespaceLiteral(text, literal string, textOffset int) (int, bool) {
+	literalOffset := 0
+	for literalOffset < len(literal) {
+		if isHorizontalWhitespace(literal[literalOffset]) {
+			if textOffset >= len(text) || !isHorizontalWhitespace(text[textOffset]) {
+				return 0, false
+			}
+			for literalOffset < len(literal) && isHorizontalWhitespace(literal[literalOffset]) {
+				literalOffset++
+			}
+			for textOffset < len(text) && isHorizontalWhitespace(text[textOffset]) {
+				textOffset++
+			}
+			continue
+		}
+		if textOffset >= len(text) || text[textOffset] != literal[literalOffset] {
+			return 0, false
+		}
+		literalOffset++
+		textOffset++
+	}
+	return textOffset, true
+}
+
+func isHorizontalWhitespace(character byte) bool {
+	return character == ' ' || character == '\t'
 }
 
 func literalOffsets(text, literal string) []int {

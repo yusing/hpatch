@@ -41,7 +41,8 @@ Editing commands:
   rm                          remove the active file and clear editor state
   sel LINE START:END          select inclusive one-based Unicode columns
   tsel LINE OCCURRENCE "TEXT" select a nonempty one-line literal; -1 is last
-  bsel "START" "END"         select one uniquely anchored block in the search scope
+  bsel "START" "END"         select one whole-file uniquely anchored block
+  bsel_next "START" "END"    select one state-scoped uniquely anchored block
   rsel START:END              select inclusive complete logical lines
   type "TEXT"                 record replacement or insertion at baseline coordinates
   del                         record deletion of the selection
@@ -68,13 +69,16 @@ Baseline editor state:
   baseline file that already has content edits.
 
   ` + "`tsel`" + ` occurrence must be nonzero: positive values count from the start, and
-  negative values count from the end. Both ` + "`bsel`" + ` anchors must be nonempty and
-  different.
+  negative values count from the end. Both ` + "`bsel`" + ` and ` + "`bsel_next`" + ` anchors must be
+  nonempty and different.
 
-  bsel searches inside the current baseline selection when one exists; otherwise it
-  searches from the current baseline cursor to end-of-file. It never wraps to the file
-  beginning. START and END must each occur exactly once within that scope, END must
-  follow START without overlap, and the selected span includes both anchors.
+  bsel searches the complete active-file baseline, independent of cursor or selection.
+  bsel_next searches inside the current baseline selection when one exists; otherwise
+  it searches from the current baseline cursor to end-of-file and never wraps. Each
+  command resolves START uniquely in its scope, then resolves END uniquely only after
+  START. Exact anchors are authoritative; when an anchor has no exact occurrence,
+  nonempty ASCII space and tab runs match interchangeably. The selected span includes
+  both anchors.
 
   rsel owns selected line terminators. When type replaces a terminated linewise
   selection and TEXT has no final terminator, hpatch preserves the selected final
@@ -83,7 +87,7 @@ Baseline editor state:
 
   TEXT, START, and END are JSON strings. Use a JSON serializer for nontrivial
   operands rather than hand-escaping quotes, backslashes, newlines, or Unicode.
-  type and bsel strings may contain encoded line terminators; tsel may not.
+  type, bsel, and bsel_next strings may contain encoded line terminators; tsel may not.
 
 Paths and patch boundary:
   --root selects the trusted workspace boundary and defaults to hpatch's current

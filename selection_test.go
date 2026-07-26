@@ -105,15 +105,15 @@ func TestBlockSelectionUsesImmutableBaseline(t *testing.T) {
 
 func TestBlockSelectionFailuresAreAtomic(t *testing.T) {
 	tests := []struct {
-		name, content, script, wantFragment string
+		name, content, script, wantFragment, wantAbsent string
 	}{
-		{name: "missing start", content: "BEGIN\nEND\n", script: "in file.txt\nbsel \"absent\" \"END\"", wantFragment: "start literal \"absent\" occurs 0 times"},
+		{name: "missing start", content: "BEGIN\nEND\n", script: "in file.txt\nbsel \"absent\" \"END\"", wantFragment: "start literal \"absent\" occurs 0 times", wantAbsent: "horizontal whitespace ignored"},
 		{name: "missing end", content: "BEGIN\nEND\n", script: "in file.txt\nbsel \"BEGIN\" \"absent\"", wantFragment: "end literal \"absent\" occurs 0 times"},
 		{name: "unrelated duplicate start", content: "BEGIN\nEND\nunrelated BEGIN\n", script: "in file.txt\nbsel \"BEGIN\" \"END\"", wantFragment: "start literal \"BEGIN\" occurs 2 times"},
 		{name: "duplicate end", content: "BEGIN\nEND\nunrelated END\n", script: "in file.txt\nbsel \"BEGIN\" \"END\"", wantFragment: "end literal \"END\" occurs 2 times"},
 		{name: "overlapping duplicate anchor is ambiguous", content: "aaa\nEND\n", script: "in file.txt\nbsel \"aa\" \"END\"", wantFragment: "start literal \"aa\" occurs 2 times"},
-		{name: "end precedes start", content: "END\nBEGIN\n", script: "in file.txt\nbsel \"BEGIN\" \"END\"", wantFragment: "precedes or overlaps"},
-		{name: "end overlaps start", content: "BEGIN marker\n", script: "in file.txt\nbsel \"BEGIN marker\" \"marker\"", wantFragment: "precedes or overlaps"},
+		{name: "end before start is ignored", content: "END\nBEGIN\n", script: "in file.txt\nbsel \"BEGIN\" \"END\"", wantFragment: "end literal \"END\" occurs 0 times"},
+		{name: "end inside start is ignored", content: "BEGIN marker\n", script: "in file.txt\nbsel \"BEGIN marker\" \"marker\"", wantFragment: "end literal \"marker\" occurs 0 times"},
 		{name: "same literals", content: "BEGIN\n", script: "in file.txt\nbsel \"BEGIN\" \"BEGIN\"", wantFragment: "bsel literals must differ"},
 		{name: "empty literal", content: "BEGIN\nEND\n", script: "in file.txt\nbsel \"\" \"END\"", wantFragment: "bsel literals must not be empty"},
 		{name: "invalid JSON", content: "BEGIN\nEND\n", script: "in file.txt\nbsel \"BEGIN\" nope", wantFragment: "invalid bsel JSON strings"},
@@ -121,8 +121,13 @@ func TestBlockSelectionFailuresAreAtomic(t *testing.T) {
 		{name: "missing operand", content: "BEGIN\nEND\n", script: "in file.txt\nbsel \"BEGIN\"", wantFragment: "invalid bsel JSON strings"},
 		{name: "trailing operand", content: "BEGIN\nEND\n", script: "in file.txt\nbsel \"BEGIN\" \"END\" \"extra\"", wantFragment: "invalid bsel JSON strings"},
 		{name: "missing separator", content: "BEGIN\nEND\n", script: "in file.txt\nbsel \"BEGIN\"\"END\"", wantFragment: "invalid bsel JSON strings"},
+		{name: "bsel_next invalid JSON", content: "BEGIN\nEND\n", script: "in file.txt\nbsel_next \"BEGIN\" nope", wantFragment: "invalid bsel_next JSON strings"},
+		{name: "whitespace fallback ambiguity", content: "\tBEGIN\nEND\n    BEGIN\nEND\n", script: "in file.txt\nbsel \" \\tBEGIN\" \"END\"", wantFragment: "occurs 2 times with horizontal whitespace ignored"},
+		{name: "horizontal whitespace cannot be absent", content: "BEGINEND\n", script: "in file.txt\nbsel \"BEGIN END\" \"absent\"", wantFragment: "start literal \"BEGIN END\" occurs 0 times"},
+		{name: "horizontal whitespace cannot cross line", content: "BEGIN\nEND\n", script: "in file.txt\nbsel \"BEGIN END\" \"absent\"", wantFragment: "start literal \"BEGIN END\" occurs 0 times"},
 		{name: "unknown near alias", content: "BEGIN\nEND\n", script: "in file.txt\nbselect \"BEGIN\" \"END\"", wantFragment: "unknown or malformed command"},
 		{name: "no active file", content: "BEGIN\nEND\n", script: "bsel \"BEGIN\" \"END\"", wantFragment: "bsel requires an active file"},
+		{name: "bsel_next no active file", content: "BEGIN\nEND\n", script: "bsel_next \"BEGIN\" \"END\"", wantFragment: "bsel_next requires an active file"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -132,6 +137,9 @@ func TestBlockSelectionFailuresAreAtomic(t *testing.T) {
 			stdout, stderr, exitCode := runForTest(root, []string{"translate"}, test.script)
 			if exitCode == 0 || stdout != "" || !strings.Contains(stderr, test.wantFragment) {
 				t.Fatalf("Run() = exit %d, stdout %q, stderr %q; want diagnostic containing %q", exitCode, stdout, stderr, test.wantFragment)
+			}
+			if test.wantAbsent != "" && strings.Contains(stderr, test.wantAbsent) {
+				t.Fatalf("stderr %q contains %q", stderr, test.wantAbsent)
 			}
 			if after := readTree(t, root); !reflect.DeepEqual(after, before) {
 				t.Fatalf("failure mutated tree: before %#v, after %#v", before, after)
@@ -154,7 +162,28 @@ func TestBlockSelectionFailureDiagnosticUsesSelectionCategory(t *testing.T) {
 	}
 }
 
-func TestBlockSelectionSearchesForwardFromCursor(t *testing.T) {
+func TestBlockSelectionSearchesWholeFileIndependentOfCursor(t *testing.T) {
+	root := t.TempDir()
+	initial := "BEGIN old\nbody\nEND old\npivot\nBEGIN later\nbody\nEND later\n"
+	writeTestFile(t, root, "file.txt", initial, 0o644)
+	script := strings.Join([]string{
+		"in file.txt",
+		"tsel 4 1 \"pivot\"",
+		"type \"pivot\"",
+		"bsel \"BEGIN old\" \"END old\"",
+		"type \"replacement\"",
+	}, "\n")
+	stdout, stderr, exitCode := runForTest(root, nil, script)
+	if exitCode != 0 || stdout != "" || stderr != "" {
+		t.Fatalf("Run() = exit %d, stdout %q, stderr %q", exitCode, stdout, stderr)
+	}
+	want := "replacement\npivot\nBEGIN later\nbody\nEND later\n"
+	if got := readTestFile(t, root, "file.txt"); got != want {
+		t.Fatalf("file = %q, want %q", got, want)
+	}
+}
+
+func TestBlockSelectionNextSearchesForwardFromCursor(t *testing.T) {
 	root := t.TempDir()
 	initial := "BEGIN old\nbody\nEND\npivot\nBEGIN target\nbody\nEND\n"
 	writeTestFile(t, root, "file.txt", initial, 0o644)
@@ -162,7 +191,7 @@ func TestBlockSelectionSearchesForwardFromCursor(t *testing.T) {
 		"in file.txt",
 		"tsel 4 1 \"pivot\"",
 		"type \"pivot\"",
-		"bsel \"BEGIN\" \"END\"",
+		"bsel_next \"BEGIN\" \"END\"",
 		"type \"replacement\"",
 	}, "\n")
 	stdout, stderr, exitCode := runForTest(root, nil, script)
@@ -175,14 +204,14 @@ func TestBlockSelectionSearchesForwardFromCursor(t *testing.T) {
 	}
 }
 
-func TestBlockSelectionSearchesWithinCurrentSelection(t *testing.T) {
+func TestBlockSelectionNextSearchesWithinCurrentSelection(t *testing.T) {
 	root := t.TempDir()
 	initial := "outside BEGIN\nEND\nbefore\nBEGIN target\nEND\nafter\nBEGIN outside\nEND\n"
 	writeTestFile(t, root, "file.txt", initial, 0o644)
 	script := strings.Join([]string{
 		"in file.txt",
 		"rsel 3:6",
-		"bsel \"BEGIN target\" \"END\"",
+		"bsel_next \"BEGIN target\" \"END\"",
 		"type \"replacement\"",
 	}, "\n")
 	stdout, stderr, exitCode := runForTest(root, nil, script)
@@ -195,6 +224,44 @@ func TestBlockSelectionSearchesWithinCurrentSelection(t *testing.T) {
 	}
 }
 
+func TestBlockSelectionIgnoresEndBeforeStart(t *testing.T) {
+	root := t.TempDir()
+	writeTestFile(t, root, "file.txt", "END target\nBEGIN target\nbody\nEND target\n", 0o644)
+	stdout, stderr, exitCode := runForTest(root, nil, "in file.txt\nbsel \"BEGIN target\" \"END target\"\ntype \"replacement\"\n")
+	if exitCode != 0 || stdout != "" || stderr != "" {
+		t.Fatalf("Run() = exit %d, stdout %q, stderr %q", exitCode, stdout, stderr)
+	}
+	if got, want := readTestFile(t, root, "file.txt"), "END target\nreplacement\n"; got != want {
+		t.Fatalf("file = %q, want %q", got, want)
+	}
+}
+
+func TestBlockSelectionToleratesHorizontalWhitespace(t *testing.T) {
+	root := t.TempDir()
+	initial := "before\n\tcase gain:\n\t\treturn nil\n\tcase next:\nafter\n"
+	writeTestFile(t, root, "file.txt", initial, 0o644)
+	script := "in file.txt\nbsel \"    case gain:\" \"    case next:\"\ntype \"\\tcase done:\"\n"
+	stdout, stderr, exitCode := runForTest(root, nil, script)
+	if exitCode != 0 || stdout != "" || stderr != "" {
+		t.Fatalf("Run() = exit %d, stdout %q, stderr %q", exitCode, stdout, stderr)
+	}
+	if got, want := readTestFile(t, root, "file.txt"), "before\n\tcase done:\nafter\n"; got != want {
+		t.Fatalf("file = %q, want %q", got, want)
+	}
+}
+
+func TestBlockSelectionExactMatchPrecedesWhitespaceFallback(t *testing.T) {
+	root := t.TempDir()
+	initial := "\tBEGIN\nEND tab\n    BEGIN\nEND spaces\n"
+	writeTestFile(t, root, "file.txt", initial, 0o644)
+	stdout, stderr, exitCode := runForTest(root, nil, "in file.txt\nbsel \"    BEGIN\" \"END spaces\"\ntype \"replacement\"\n")
+	if exitCode != 0 || stdout != "" || stderr != "" {
+		t.Fatalf("Run() = exit %d, stdout %q, stderr %q", exitCode, stdout, stderr)
+	}
+	if got, want := readTestFile(t, root, "file.txt"), "\tBEGIN\nEND tab\nreplacement\n"; got != want {
+		t.Fatalf("file = %q, want %q", got, want)
+	}
+}
 func TestBlockSelectionSupportsExistingEditActions(t *testing.T) {
 	tests := []struct {
 		name, action, want string
