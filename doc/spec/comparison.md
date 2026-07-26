@@ -7,8 +7,8 @@ The comparison program emulates at least these equivalent edit scenarios:
 1. Replace a small expression on a long line.
 2. Delete the last literal occurrence on a line.
 3. Duplicate a multi-line implementation block.
-4. Apply sequential edits whose later coordinates observe earlier changes.
-5. Create a file with consecutive typing.
+4. Apply independent edits whose selectors retain original baseline coordinates.
+5. Create a file with one complete-content write.
 6. Edit and move a file, and delete another file, in one script.
 
 Each scenario contains an initial UTF-8 tree, an hpatch script, and an independently

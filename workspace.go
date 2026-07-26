@@ -76,7 +76,7 @@ func (p *program) evaluate(resolve pathResolver, load fileLoader, exists pathPro
 			}
 			command.path = resolved
 		}
-		if err := w.execute(command); err != nil {
+		if err := w.execute(command, commandIndex+1); err != nil {
 			return nil, &commandError{
 				Command:   commandIndex + 1,
 				Line:      command.line,
@@ -113,7 +113,7 @@ func commandCategory(operation string) string {
 	}
 }
 
-func (w *workspace) execute(command instruction) error {
+func (w *workspace) execute(command instruction, commandIndex int) error {
 	switch command.operation {
 	case "in":
 		return w.selectFile(command.path)
@@ -128,6 +128,7 @@ func (w *workspace) execute(command instruction) error {
 		return fmt.Errorf("%s requires an active file", command.operation)
 	}
 
+	origin := editOrigin{command: commandIndex, line: command.line, operation: command.operation}
 	switch command.operation {
 	case "sel":
 		return w.active.editor.selectColumns(command.lineNumber, command.start, command.end)
@@ -138,12 +139,11 @@ func (w *workspace) execute(command instruction) error {
 	case "rsel":
 		return w.active.editor.selectLines(command.start, command.end)
 	case "type":
-		w.active.editor.typeText(command.text)
-		return nil
+		return w.active.editor.typeText(command.text, origin)
 	case "del":
-		return w.active.editor.deleteSelection()
+		return w.active.editor.deleteSelection(origin)
 	case "dup":
-		return w.active.editor.duplicateSelection()
+		return w.active.editor.duplicateSelection(origin)
 	default:
 		panic("parsed instruction has no executor: " + command.operation)
 	}
@@ -167,7 +167,7 @@ func (w *workspace) selectFile(path string) error {
 		path:         path,
 		original:     loaded.content,
 		mode:         loaded.mode,
-		editor:       editor{text: loaded.content},
+		editor:       editor{baseline: loaded.content},
 	}
 	w.paths[path] = file
 	w.files = append(w.files, file)
@@ -208,6 +208,16 @@ func (w *workspace) removeFile() error {
 		return fmt.Errorf("rm requires an active file")
 	}
 	file := w.active
+	if !file.created {
+		if edit, ok := file.editor.firstEdit(); ok {
+			return fmt.Errorf(
+				"cannot remove a baseline file after content edit from command %d (source line %d, operation %q)",
+				edit.command,
+				edit.line,
+				edit.operation,
+			)
+		}
+	}
 	delete(w.paths, file.path)
 	if !file.created {
 		w.blocked[file.originalPath] = true
@@ -257,11 +267,12 @@ func (w *workspace) validateFreeDestination(path string) error {
 func (w *workspace) changes() []change {
 	changes := make([]change, 0, len(w.files))
 	for _, file := range w.files {
+		content := file.editor.content()
 		switch {
 		case file.created && file.deleted:
 			continue
 		case file.created:
-			changes = append(changes, change{kind: changeAdd, path: file.path, content: file.editor.text, mode: 0o644})
+			changes = append(changes, change{kind: changeAdd, path: file.path, content: content, mode: 0o644})
 		case file.deleted:
 			changes = append(changes, change{
 				kind:         changeDelete,
@@ -269,13 +280,13 @@ func (w *workspace) changes() []change {
 				original:     file.original,
 				mode:         file.mode,
 			})
-		case file.originalPath != file.path || file.original != file.editor.text:
+		case file.originalPath != file.path || file.original != content:
 			changes = append(changes, change{
 				kind:         changeUpdate,
 				originalPath: file.originalPath,
 				path:         file.path,
 				original:     file.original,
-				content:      file.editor.text,
+				content:      content,
 				mode:         file.mode,
 			})
 		}

@@ -33,8 +33,7 @@ To inspect or forward the equivalent patch without changing files:
 ```sh
 bin/hpatch translate <<'EOF'
 new message.txt
-type "hello"
-type " world\n"
+type "hello world\n"
 EOF
 ```
 
@@ -108,12 +107,22 @@ bin/hpatch translate --help
 bin/hpatch --version
 ```
 
-Commands execute sequentially against current in-memory content, including across
-repeated `in` commands. `rsel` selects complete logical lines; linewise replacement
-inherits the selected final line terminator unless the replacement supplies one.
-`bsel "START" "END"` searches inside the current selection when one exists,
-or from the current cursor to end-of-file otherwise. It never wraps. Each anchor must
-be unique within that scope; ambiguous, reversed, or overlapping anchors fail.
+The first `in` of an existing file captures an immutable baseline. Every later
+selector for that logical file resolves against that baseline, including after `mv`
+or a repeated `in`; inserted text is not selectable. A selector overlapping baseline
+content already replaced or deleted by an earlier command is rejected. Disjoint edits
+are materialized together after validation, so independent selectors keep their
+original meaning regardless of command order. Overlapping replacements or deletions,
+insertions inside a replaced span, and multiple insertions at one baseline position fail
+atomically. New files have an empty baseline and accept one effective complete-content
+`type`.
+
+`rsel` selects complete baseline logical lines; linewise replacement inherits the
+selected final line terminator unless the replacement supplies one.
+`bsel "START" "END"` searches inside the current baseline selection when one exists,
+or from the current baseline cursor to end-of-file otherwise. It never wraps. Each
+anchor must be unique within that scope; ambiguous, reversed, or overlapping anchors
+fail.
 
 Every editing invocation has one root. Relative script paths resolve from cwd within
 that root. Absolute script paths must use the canonical root spelling and remain inside

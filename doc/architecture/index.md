@@ -1,21 +1,27 @@
 # hpatch architecture contract
 
 Status: accepted draft  
-Revision: 3
+Revision: 4
 
-## AC-CORE-001: Virtual workspace and editor state
+## AC-CORE-001: Virtual workspace and baseline edit state
 
 One engine owns script parsing, logical path resolution, first-touch order, per-file
-original and pending contents, cursor or selection state, and net file actions for
-`HP-SCRIPT-001`, `HP-FILE-001`, `HP-SELECT-001`, and `HP-EDIT-001`. It evaluates every
-command against one in-memory virtual workspace. Normal and translate modes consume
-the same completed change set; neither mode reimplements command semantics.
+immutable baselines, baseline cursor or selection state, recorded edits, conflict
+validation, and net file actions for `HP-SCRIPT-001`, `HP-FILE-001`,
+`HP-SELECT-001`, and `HP-EDIT-001`. It evaluates every command against one in-memory
+virtual workspace. Normal and translate modes consume the same completed change set;
+neither mode reimplements command semantics.
 
 The engine obtains an original file only through a filesystem-loading function owned
 by the workspace boundary. Before evaluation, that boundary converts every command
-path to a clean root-relative identity. The engine never writes files or output. A
-logical file retains a stable identity across moves so original-to-final actions can
-be derived without alias state.
+path to a clean root-relative identity. First load establishes the file's immutable
+baseline. All selectors resolve against that baseline, and edit actions record baseline
+spans rather than mutating selector state. The editor owner rejects selectors over
+already modified spans, intersecting edit spans, insertions inside spans, and duplicate
+insertion positions before it materializes ordered disjoint edits into final content.
+
+The engine never writes files or output. A logical file retains its baseline identity
+across moves so original-to-final actions can be derived without alias state.
 
 ## AC-BOUNDARY-001: Filesystem and output boundary
 

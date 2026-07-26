@@ -75,7 +75,7 @@ func TestLinewiseReplacementTranslateMatchesNormalResult(t *testing.T) {
 	}
 }
 
-func TestBlockSelectionUsesCurrentUnambiguousContent(t *testing.T) {
+func TestBlockSelectionUsesImmutableBaseline(t *testing.T) {
 	initial := map[string]string{"file.txt": "title\nBEGIN old\nbody\nEND\nfooter\n"}
 	root := t.TempDir()
 	writeTestFile(t, root, "file.txt", initial["file.txt"], 0o644)
@@ -215,6 +215,126 @@ func TestBlockSelectionSupportsExistingEditActions(t *testing.T) {
 				t.Fatalf("file = %q, want %q", got, test.want)
 			}
 		})
+	}
+}
+
+func TestSelectorsUseStableBaselineCoordinates(t *testing.T) {
+	initial := "alpha\nbeta\ngamma\ndelta\n"
+	scripts := map[string]string{
+		"top edit first":    "in file.txt\ntsel 1 1 \"alpha\"\ntype \"alpha\\ninserted\"\ntsel 3 1 \"gamma\"\ntype \"G\"\n",
+		"bottom edit first": "in file.txt\ntsel 3 1 \"gamma\"\ntype \"G\"\ntsel 1 1 \"alpha\"\ntype \"alpha\\ninserted\"\n",
+	}
+	for name, script := range scripts {
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			writeTestFile(t, root, "file.txt", initial, 0o644)
+			stdout, stderr, exitCode := runForTest(root, nil, script)
+			if exitCode != 0 || stdout != "" || stderr != "" {
+				t.Fatalf("Run() = exit %d, stdout %q, stderr %q", exitCode, stdout, stderr)
+			}
+			if got, want := readTestFile(t, root, "file.txt"), "alpha\ninserted\nbeta\nG\ndelta\n"; got != want {
+				t.Fatalf("file = %q, want %q", got, want)
+			}
+		})
+	}
+}
+
+func TestInsertedTextDoesNotAffectLaterSelectors(t *testing.T) {
+	root := t.TempDir()
+	initial := "HEAD\nBEGIN\nbody\nEND\nTAIL\n"
+	writeTestFile(t, root, "file.txt", initial, 0o644)
+	script := strings.Join([]string{
+		"in file.txt",
+		"tsel 5 1 \"TAIL\"",
+		"type \"BEGIN injected END\"",
+		"in file.txt",
+		"bsel \"BEGIN\" \"END\"",
+		"type \"REPLACED\"",
+	}, "\n")
+	stdout, stderr, exitCode := runForTest(root, nil, script)
+	if exitCode != 0 || stdout != "" || stderr != "" {
+		t.Fatalf("Run() = exit %d, stdout %q, stderr %q", exitCode, stdout, stderr)
+	}
+	if got, want := readTestFile(t, root, "file.txt"), "HEAD\nREPLACED\nBEGIN injected END\n"; got != want {
+		t.Fatalf("file = %q, want %q", got, want)
+	}
+}
+
+func TestInsertedTextCannotBeSelected(t *testing.T) {
+	root := t.TempDir()
+	writeTestFile(t, root, "file.txt", "old\n", 0o644)
+	before := readTree(t, root)
+	script := "in file.txt\ntsel 1 1 \"old\"\ntype \"future\"\nin file.txt\ntsel 1 1 \"future\"\n"
+	stdout, stderr, exitCode := runForTest(root, []string{"translate"}, script)
+	if exitCode != 1 || stdout != "" || !strings.Contains(stderr, "occurrence 1 of \"future\" not found") {
+		t.Fatalf("Run() = exit %d, stdout %q, stderr %q", exitCode, stdout, stderr)
+	}
+	if after := readTree(t, root); !reflect.DeepEqual(after, before) {
+		t.Fatalf("failure mutated tree: before %#v, after %#v", before, after)
+	}
+}
+
+func TestConflictingBaselineEditsAreAtomic(t *testing.T) {
+	tests := []struct {
+		name, script, want string
+	}{
+		{
+			name:   "overlapping ranges",
+			script: "in file.txt\nrsel 2:3\ntype \"A\"\nrsel 3:4\ntype \"B\"\n",
+			want:   "selection conflicts with edit from command 3 (source line 3, operation \"type\"): baseline line 3 was already modified",
+		},
+		{
+			name:   "nested selection",
+			script: "in file.txt\nrsel 2:4\ntype \"A\"\ntsel 3 1 \"three\"\ndel\n",
+			want:   "selection conflicts with edit from command 3 (source line 3, operation \"type\"): baseline line 3 was already modified",
+		},
+		{
+			name:   "insertion inside replacement",
+			script: "in file.txt\ntsel 2 1 \"t\"\ndup\nrsel 2:2\ntype \"whole\"\n",
+			want:   "conflicts with edit from command 3 (source line 3, operation \"dup\"): baseline line 2 is both replaced and inserted into",
+		},
+		{
+			name:   "same existing-file insertion position",
+			script: "in file.txt\ntype \"A\"\ntype \"B\"\n",
+			want:   "baseline line 1 receives multiple insertions",
+		},
+		{
+			name:   "new file accepts one complete write",
+			script: "new note.txt\ntype \"A\"\ntype \"B\"\n",
+			want:   "baseline line 1 receives multiple insertions",
+		},
+		{
+			name:   "remove after edit",
+			script: "in file.txt\ntsel 1 1 \"one\"\ntype \"ONE\"\nrm\n",
+			want:   "cannot remove a baseline file after content edit from command 3",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			writeTestFile(t, root, "file.txt", "one\ntwo\nthree\nfour\n", 0o644)
+			before := readTree(t, root)
+			stdout, stderr, exitCode := runForTest(root, nil, test.script)
+			if exitCode != 1 || stdout != "" || !strings.Contains(stderr, test.want) {
+				t.Fatalf("Run() = exit %d, stdout %q, stderr %q; want %q", exitCode, stdout, stderr, test.want)
+			}
+			if after := readTree(t, root); !reflect.DeepEqual(after, before) {
+				t.Fatalf("failure mutated tree: before %#v, after %#v", before, after)
+			}
+		})
+	}
+}
+
+func TestInsertionAtReplacementBoundaryIsUnambiguous(t *testing.T) {
+	root := t.TempDir()
+	writeTestFile(t, root, "file.txt", "one\ntwo\n", 0o644)
+	script := "in file.txt\ntsel 2 1 \"t\"\ntype \"T\"\ntype \"!\"\n"
+	stdout, stderr, exitCode := runForTest(root, nil, script)
+	if exitCode != 0 || stdout != "" || stderr != "" {
+		t.Fatalf("Run() = exit %d, stdout %q, stderr %q", exitCode, stdout, stderr)
+	}
+	if got, want := readTestFile(t, root, "file.txt"), "one\nT!wo\n"; got != want {
+		t.Fatalf("file = %q, want %q", got, want)
 	}
 }
 

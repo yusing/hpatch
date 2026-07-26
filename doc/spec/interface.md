@@ -170,8 +170,8 @@ commands are invalid.
 Acceptance:
 
 1. JSON escapes allow spaces, quotes, tabs, and newlines in inserted or anchored text.
-2. File commands may be interleaved with text commands and every command observes all
-   preceding in-memory changes.
+2. File commands may be interleaved with text commands. File lifecycle commands
+   observe preceding pending state, while selectors retain immutable baseline meaning.
 3. Zero selection coordinates, malformed ranges, missing operands, invalid JSON,
    trailing operands, empty or identical block anchors, and unknown commands fail
    before filesystem mutation or patch output.
@@ -180,96 +180,117 @@ Acceptance:
 
 ## HP-FILE-001: File commands
 
-`in PATH` selects an existing logical file for subsequent commands. It may occur any
-number of times. Selecting a file clears the prior text selection and places its cursor
-at `0:0`. Returning to a previously selected path exposes pending edits already made to
-that file in this script.
+The first `in PATH` for an existing logical file loads and captures its immutable UTF-8
+baseline. It selects that baseline for subsequent commands, clears the prior text
+selection, and places its baseline cursor at `0:0`. Returning to the same logical file
+reuses the captured baseline, resets its cursor and selection, and retains its recorded
+baseline-coordinate edits. The baseline is never rebuilt from pending content.
 
-`new PATH` creates and selects a pending empty file at cursor `0:0`. It fails if the
-logical path already exists. A created file does not reach the filesystem unless the
-complete script evaluates and commits successfully.
+`new PATH` creates and selects a pending file with an empty baseline at cursor `0:0`.
+It fails if the logical path already exists. It accepts at most one effective content
+insertion because every cursor insertion targets the same empty-baseline position. A
+created file does not reach the filesystem unless the complete script validates,
+stages, and commits successfully.
 
 `mv PATH` moves the active logical file to an unoccupied logical path. The destination
-becomes active and preserves the current cursor or selection. Pending edits move with
-the file. Later `in` commands resolve the new path, not the old one. Multiple moves of
-one original file collapse to its original-to-final move in the net change set.
+becomes active and preserves the current baseline cursor or selection. Recorded edits
+move with the file, and the immutable baseline identity does not change. Later `in`
+commands resolve the new path, not the old one. Multiple moves of one original file
+collapse to its original-to-final move in the net change set.
 
 `rm` marks the active logical file as deleted, then clears the active file, cursor, and
-selection. Later text or lifecycle operations require another `in` or `new`. Deleting
-a file created in the same script cancels that creation. Deleting an original file
-supersedes its pending content edits and moves and yields deletion of its original
-path.
+selection. Removing an existing baseline file after any content edit is a conflict and
+rejects the complete script; edits are never silently discarded. Removing an unedited
+existing file yields deletion of its original path, including after a move. Removing a
+file created in the same script cancels that creation. Later text or lifecycle
+operations require another `in` or `new`.
 
 `in` fails for a missing or deleted logical path. `new` and `mv` fail on any logical
 destination collision, including a path occupied in the initial tree or by pending
 state. `mv`, `rm`, selection commands, and edit commands fail without an active file.
-Initial files must resolve to regular UTF-8 files when first selected.
-The parent directory of a `new` or `mv` destination must already exist; hpatch does not
-create directories that are absent from the script's file-operation model.
+Initial files must resolve to regular UTF-8 files when first selected. The parent
+directory of a `new` or `mv` destination must already exist; hpatch does not create
+directories that are absent from the script's file-operation model.
 
 Acceptance:
 
-1. A script can edit multiple files by switching among them, and reselecting a path
-   retains its pending content.
-2. `new`, consecutive `type` commands, `mv`, and `rm` produce correct net additions,
-   moves, and deletions.
-3. Missing paths, destination collisions, use-after-delete, and file
-   commands without an active file fail before commit or patch output.
+1. A script can edit multiple files by switching among them; reselecting a path retains
+   recorded edits but exposes the same baseline at cursor `0:0`.
+2. One complete-content `type` can create a file, and `mv` and `rm` produce the specified
+   net additions, moves, and deletions.
+3. Repeated effective writes to one new-file baseline position, removal after an
+   existing-file content edit, missing paths, destination collisions, use-after-delete,
+   and file commands without an active file fail before commit or patch output.
 
-## HP-SELECT-001: Selections and cursor
+## HP-SELECT-001: Immutable baseline selections and cursor
 
-Each active file has either a cursor or a nonempty selection. `in` and `new` establish
-cursor `0:0`, before the first code point. A cursor is an insertion point; a selection
-is a half-open internal span produced by the inclusive commands below.
+Every existing logical file has one immutable baseline captured on first `in`. A new
+file has an empty baseline. Every `sel`, `tsel`, `bsel`, and `rsel` command resolves
+only against that baseline; recorded replacements, deletions, duplications, and
+insertions never change selector text, line numbers, occurrences, scopes, or positions.
+Text introduced by an earlier command is not selectable and cannot create an unrelated
+literal or anchor collision. A selector whose baseline span overlaps content already
+replaced or deleted by an earlier edit is rejected immediately with the prior command
+and affected baseline lines identified.
 
-`sel` selects columns within one current logical line. Columns count Unicode code
+Each active file has either a baseline cursor or a nonempty baseline selection. `in`
+and `new` establish cursor `0:0`, before the first baseline code point. A cursor is an
+insertion position; a selection is a half-open baseline span produced by the inclusive
+commands below.
+
+`sel` selects columns within one baseline logical line. Columns count Unicode code
 points, including one code point per tab; the line terminator is not selectable.
 
-`tsel` selects the requested exact literal occurrence within one current logical line.
+`tsel` selects the requested exact literal occurrence within one baseline logical line.
 The literal must be nonempty and cannot contain a line terminator. Matches do not
 overlap. `-1` selects the last match.
 
-`bsel` uses the current selection as its search scope when a selection exists.
-Otherwise its scope begins at the current cursor and extends to end-of-file. It never
-wraps or falls back to the file beginning. Within that scope, each decoded anchor
-must occur exactly once, counting overlapping occurrences for ambiguity, and the end
-match must begin after the complete start match. It selects both anchors and all
-content between them as a characterwise selection. Missing, duplicate, reversed, or
+`bsel` uses the current baseline selection as its search scope when a selection exists.
+Otherwise its scope begins at the current baseline cursor and extends to baseline
+end-of-file. It never wraps or falls back to the file beginning. Within that scope,
+each decoded anchor must occur exactly once, counting overlapping occurrences for
+ambiguity, and the end match must begin after the complete start match. It selects both
+anchors and all baseline content between them. Missing, duplicate, reversed, or
 overlapping anchors within the scope fail instead of selecting a nearby block.
 
-`rsel` selects an inclusive range of complete current logical lines. For every
+`rsel` selects an inclusive range of complete baseline logical lines. For every
 selected line it owns the line terminator when one is present. It records a linewise
 selection so deletion removes complete lines and duplication creates another complete
 adjacent line range, including when the selected final line has no terminator.
 
-Every selection replaces the previous cursor or selection. Commands observe current
-contents and current line numbering after earlier edit actions. `type` leaves the
-cursor immediately after effective inserted text, `del` leaves it at the removed
-selection's start, and `dup` selects the duplicated copy.
+Every selection replaces the previous selection or cursor. After `type`, the cursor is
+at the selected baseline span's end; an insertion at a cursor remains at that same
+baseline position. `del` leaves the cursor at the selection start. `dup` leaves it at
+the selection end and clears the selection because the inserted copy is not baseline
+content.
 
 Acceptance:
 
-1. Selection works on Unicode text and current content after earlier edits.
-2. Missing lines, columns, ranges, literal occurrences, or block anchors fail rather
-   than selecting a nearby value.
+1. Unicode selectors constructed from the inspected pre-edit file retain the same
+   meaning after earlier edits, independent of edit order and inserted line count.
+2. Missing baseline lines, columns, ranges, literal occurrences, or block anchors fail
+   rather than selecting pending or nearby content.
 3. A `tsel` literal that merely overlaps but is not a non-overlapping requested
    occurrence does not count.
-4. Any second occurrence of a `bsel` anchor within its current selection- or
-   cursor-derived scope, including an overlapping or unrelated occurrence, makes the
-   block ambiguous and fails before mutation or patch output. Occurrences before a
-   cursor-derived scope or outside a selection-derived scope do not collide.
+4. Any second baseline occurrence of a `bsel` anchor within its selection- or
+   cursor-derived baseline scope makes the block ambiguous. Occurrences before or
+   outside that baseline scope, and occurrences introduced by edits, do not collide.
 
-## HP-EDIT-001: Edit actions
+## HP-EDIT-001: Baseline-coordinate edits
 
-`type STRING` inserts the decoded string at the cursor, or replaces the selection with
-it. It then leaves a cursor immediately after the effective inserted text. Thus these
-commands on a new file produce `foo bar`:
+`type STRING` records insertion of the decoded string at the baseline cursor, or
+replacement of the selected baseline span. `del` requires a selection and records
+replacement of that span with empty content. `dup` requires a selection, copies its
+immutable baseline content, and records that copy as an insertion at the selection end.
+No edit action reads an intermediate mutated representation.
 
-```text
-type "foo"
-type " "
-type "bar"
-```
+Recorded edits must be disjoint in baseline coordinates. Two replacements or deletions
+that overlap are rejected. An insertion strictly inside a replaced or deleted span is
+rejected. Multiple effective insertions at one baseline position are rejected as
+ambiguous. An insertion exactly at a replacement boundary is permitted and appears on
+that side of the replacement. Conflict diagnostics identify the prior command and the
+overlapping baseline line or position. All conflicts reject the complete script before
+filesystem mutation or patch output.
 
 When replacing a linewise selection that owns a final LF, CRLF, or standalone-CR
 terminator, `type` preserves that exact terminator if the replacement does not end in
@@ -278,27 +299,29 @@ No terminator is synthesized for an unterminated selected final line. Consequent
 `rsel` followed by `type "replacement"` retains separation from the following line;
 `type ""` leaves an empty logical line, while `del` removes the selected lines.
 
-`del` requires a selection, removes it, and leaves a cursor at its start.
+For characterwise selections, `dup` copies the baseline bytes exactly. For linewise
+selections, the duplicate is an adjacent complete range; if the baseline range ends at
+an unterminated final line, the baseline file's first line-ending style is inserted
+between the original and copy, or LF if the baseline has no line ending. The duplicate
+remains unterminated and is not selectable within the same script.
 
-`dup` requires a selection and inserts a copy immediately after it. For characterwise
-selections the copy is exact. For linewise selections, the duplicate is an adjacent
-complete range; if the original range ends at an unterminated final line, the file's
-existing line-ending style is inserted between copies and the duplicate remains
-unterminated. The duplicated copy becomes the current selection.
-
-Existing line-ending bytes outside explicitly inserted text are preserved. When
-linewise duplication needs a separator, the first existing line terminator is used,
-or LF if the file has none.
+Existing line-ending bytes outside explicitly inserted text are preserved. After the
+complete script validates, hpatch orders the disjoint baseline edits, materializes one
+final content value from the immutable baseline, and passes that value to the shared
+normal/translate change set.
 
 Acceptance:
 
-1. Consecutive typing, character and linewise replacement, deletion, character
-   duplication, and complete line-range duplication produce the specified text and
-   editor state.
-2. A later selection sees content and line-number changes from earlier actions.
-3. LF, CRLF, and standalone-CR linewise replacement preserve the selected final
+1. Independent baseline-coordinate replacement, deletion, insertion, and duplication
+   produce the specified result in either script order.
+2. Overlapping and nested ranges, an insertion inside a replaced range, repeated
+   insertion at one position, and removal of an edited existing file fail atomically
+   with the prior edit and baseline collision identified.
+3. Text introduced by an earlier edit cannot be selected or create a selector collision.
+4. LF, CRLF, and standalone-CR linewise replacement preserve the selected final
    terminator unless replacement text supplies one; an unterminated final line remains
    unterminated.
+
 ## HP-OUTPUT-001: Output and failure
 
 Input is read completely and the entire script is evaluated before commit or stdout.

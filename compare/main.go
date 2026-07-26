@@ -86,15 +86,15 @@ func scenarios() []scenario {
 			patch:  "*** Begin Patch\n*** Update File: service.go\n@@\n \tprepare()\n \texecute()\n+\tprepare()\n+\texecute()\n*** End Patch\n",
 		},
 		{
-			name:    "sequential line shift",
+			name:    "stable baseline line numbers",
 			initial: map[string]string{"config.txt": "name=old\nmode=slow\n"},
-			script:  "in config.txt\ntsel 1 1 \"old\"\ntype \"new\\nextra=yes\"\ntsel 3 1 \"slow\"\ntype \"fast\"\n",
+			script:  "in config.txt\ntsel 1 1 \"old\"\ntype \"new\\nextra=yes\"\ntsel 2 1 \"slow\"\ntype \"fast\"\n",
 			patch:   "*** Begin Patch\n*** Update File: config.txt\n@@\n-name=old\n-mode=slow\n+name=new\n+extra=yes\n+mode=fast\n*** End Patch\n",
 		},
 		{
 			name:    "new file typing",
 			initial: map[string]string{},
-			script:  "new note.txt\ntype \"foo\"\ntype \" \"\ntype \"bar\\n\"\n",
+			script:  "new note.txt\ntype \"foo bar\\n\"\n",
 			patch:   "*** Begin Patch\n*** Add File: note.txt\n+foo bar\n+\n*** End Patch\n",
 		},
 		{

@@ -35,32 +35,46 @@ Agent workflow:
      gofmt before tests so structural errors are reported immediately.
 
 Editing commands:
-  in PATH                     select an existing file at cursor 0:0
+  in PATH                     select or reselect an existing file baseline
   new PATH                    select a pending empty file at cursor 0:0
-  mv PATH                     move the active pending file
-  rm                          remove the active pending file and clear editor state
+  mv PATH                     move the active pending file without changing its baseline
+  rm                          remove the active file and clear editor state
   sel LINE START:END          select inclusive one-based Unicode columns
   tsel LINE OCCURRENCE "TEXT" select a nonempty one-line literal; -1 is last
   bsel "START" "END"         select one uniquely anchored block in the search scope
   rsel START:END              select inclusive complete logical lines
-  type "TEXT"                 replace the selection or insert at the cursor
-  del                         delete the selection
-  dup                         duplicate the selection and select the copy
+  type "TEXT"                 record replacement or insertion at baseline coordinates
+  del                         record deletion of the selection
+  dup                         copy the baseline selection immediately after it
 
-Editor state:
-  Commands observe all preceding in-memory edits. Returning to a file with in resets
-  its cursor to 0:0 but retains pending content. A selection command replaces the
-  prior selection. type and del leave the cursor after effective inserted text or at
-  the deletion start; dup selects the new copy.
+Baseline editor state:
+  The first in for an existing file captures an immutable baseline. Every selector
+  for that file resolves against that baseline, regardless of prior edits or command
+  order. Returning with in resets the baseline cursor to 0:0 and clears the selection,
+  but retains recorded edits. mv preserves baseline identity. Text introduced by an
+  earlier command is not selectable. A selector that overlaps baseline content already
+  replaced or deleted by an earlier edit is rejected.
+
+  Cursors and selections are baseline positions. A selection command replaces the
+  prior selection. After type, the cursor is at the selected baseline span's end; a
+  cursor insertion stays at that baseline position. del leaves it at the selection
+  start. dup leaves it at the selection end and does not select the inserted copy.
+
+  Disjoint baseline edits are applied together after complete validation. Replacements
+  or deletions that overlap, insertions inside a replaced span, and multiple insertions
+  at one baseline position are conflicts and reject the complete script. An insertion
+  exactly at a replacement boundary is unambiguous and permitted. A new file has an
+  empty baseline and accepts at most one effective type write. rm rejects an existing
+  baseline file that already has content edits.
 
   ` + "`tsel`" + ` occurrence must be nonzero: positive values count from the start, and
   negative values count from the end. Both ` + "`bsel`" + ` anchors must be nonempty and
   different.
 
-  bsel searches inside the current selection when one exists; otherwise it searches
-  from the current cursor to end-of-file. It never wraps to the file beginning.
-  START and END must each occur exactly once within that scope, END must follow START
-  without overlap, and the selected span includes both anchors.
+  bsel searches inside the current baseline selection when one exists; otherwise it
+  searches from the current baseline cursor to end-of-file. It never wraps to the file
+  beginning. START and END must each occur exactly once within that scope, END must
+  follow START without overlap, and the selected span includes both anchors.
 
   rsel owns selected line terminators. When type replaces a terminated linewise
   selection and TEXT has no final terminator, hpatch preserves the selected final

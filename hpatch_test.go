@@ -29,9 +29,7 @@ func TestRunNormalMultiFileWorkflow(t *testing.T) {
 		`tsel 2 1 "keep"`,
 		"del",
 		"new draft.txt",
-		`type "foo"`,
-		`type " "`,
-		`type "bar"`,
+		`type "foo bar"`,
 		"mv final.txt",
 		"in obsolete.txt",
 		"rm",
@@ -69,8 +67,7 @@ func TestTranslateMatchesNormalMode(t *testing.T) {
 		`type "current"`,
 		"mv current.go",
 		"new note.txt",
-		`type "hello"`,
-		`type " world\n"`,
+		`type "hello world\n"`,
 		"in obsolete.go",
 		"rm",
 	}, "\n")
@@ -157,7 +154,7 @@ func TestNetFileActionsCollapseMovesAndCanceledCreation(t *testing.T) {
 	}
 }
 
-func TestUnicodeCRLFAndSequentialEditorState(t *testing.T) {
+func TestUnicodeCRLFAndBaselineEditorState(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, root, "text.txt", "αβγ\tbar bar\r\none\r\ntwo", 0o644)
 	script := strings.Join([]string{
@@ -202,12 +199,12 @@ func TestTranslateNormalizesLineEndingsForApplyPatchDisplay(t *testing.T) {
 func TestStandaloneCRLogicalLines(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, root, "text.txt", "first\rsecond\rthird", 0o644)
-	script := "in text.txt\ntsel 2 1 \"second\"\ntype \"middle\"\nrsel 2:3\ndup\n"
+	script := "in text.txt\ntsel 1 1 \"first\"\ntype \"FIRST\"\nrsel 2:3\ndup\n"
 	_, stderr, exitCode := runForTest(root, nil, script)
 	if exitCode != 0 {
 		t.Fatalf("Run() = exit %d, stderr %q", exitCode, stderr)
 	}
-	if got, want := readTestFile(t, root, "text.txt"), "first\rmiddle\rthird\rmiddle\rthird"; got != want {
+	if got, want := readTestFile(t, root, "text.txt"), "FIRST\rsecond\rthird\rsecond\rthird"; got != want {
 		t.Fatalf("text = %q, want %q", got, want)
 	}
 }

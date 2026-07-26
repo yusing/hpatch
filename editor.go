@@ -2,6 +2,7 @@ package hpatch
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"unicode/utf8"
 )
@@ -12,10 +13,24 @@ type selection struct {
 	linewise bool
 }
 
+type editOrigin struct {
+	command   int
+	line      int
+	operation string
+}
+
+type baselineEdit struct {
+	editOrigin
+	start       int
+	end         int
+	replacement string
+}
+
 type editor struct {
-	text      string
+	baseline  string
 	cursor    int
 	selection *selection
+	edits     []baselineEdit
 }
 
 type logicalLine struct {
@@ -30,25 +45,24 @@ func (e *editor) resetCursor() {
 }
 
 func (e *editor) selectColumns(lineNumber, startColumn, endColumn int) error {
-	line, err := lineAt(e.text, lineNumber)
+	line, err := lineAt(e.baseline, lineNumber)
 	if err != nil {
 		return err
 	}
-	content := e.text[line.start:line.contentEnd]
+	content := e.baseline[line.start:line.contentEnd]
 	start, end, ok := runeColumnOffsets(content, startColumn, endColumn)
 	if !ok {
 		return fmt.Errorf("columns %d:%d are outside line %d", startColumn, endColumn, lineNumber)
 	}
-	e.selection = &selection{start: line.start + start, end: line.start + end}
-	return nil
+	return e.setSelection(selection{start: line.start + start, end: line.start + end})
 }
 
 func (e *editor) selectOccurrence(lineNumber, occurrence int, literal string) error {
-	line, err := lineAt(e.text, lineNumber)
+	line, err := lineAt(e.baseline, lineNumber)
 	if err != nil {
 		return err
 	}
-	content := e.text[line.start:line.contentEnd]
+	content := e.baseline[line.start:line.contentEnd]
 	offsets := nonOverlappingLiteralOffsets(content, literal)
 
 	index := occurrence - 1
@@ -59,16 +73,15 @@ func (e *editor) selectOccurrence(lineNumber, occurrence int, literal string) er
 		return fmt.Errorf("occurrence %d of %q not found on line %d", occurrence, literal, lineNumber)
 	}
 	start := line.start + offsets[index]
-	e.selection = &selection{start: start, end: start + len(literal)}
-	return nil
+	return e.setSelection(selection{start: start, end: start + len(literal)})
 }
 
 func (e *editor) selectBlock(startLiteral, endLiteral string) error {
-	scopeStart, scopeEnd := e.cursor, len(e.text)
+	scopeStart, scopeEnd := e.cursor, len(e.baseline)
 	if e.selection != nil {
 		scopeStart, scopeEnd = e.selection.start, e.selection.end
 	}
-	scope := e.text[scopeStart:scopeEnd]
+	scope := e.baseline[scopeStart:scopeEnd]
 	startOffsets := literalOffsets(scope, startLiteral)
 	if len(startOffsets) != 1 {
 		return fmt.Errorf("start literal %q occurs %d times in the search scope; want exactly once", startLiteral, len(startOffsets))
@@ -82,70 +95,205 @@ func (e *editor) selectBlock(startLiteral, endLiteral string) error {
 	if endStart < start+len(startLiteral) {
 		return fmt.Errorf("end literal %q precedes or overlaps start literal %q in the search scope", endLiteral, startLiteral)
 	}
-	e.selection = &selection{
+	return e.setSelection(selection{
 		start: scopeStart + start,
 		end:   scopeStart + endStart + len(endLiteral),
-	}
-	return nil
+	})
 }
 
 func (e *editor) selectLines(startLine, endLine int) error {
-	lines := logicalLines(e.text)
+	lines := logicalLines(e.baseline)
 	if startLine > len(lines) || endLine > len(lines) {
 		return fmt.Errorf("line range %d:%d is outside the file", startLine, endLine)
 	}
-	e.selection = &selection{
+	return e.setSelection(selection{
 		start:    lines[startLine-1].start,
 		end:      lines[endLine-1].fullEnd,
 		linewise: true,
+	})
+}
+
+func (e *editor) setSelection(candidate selection) error {
+	for _, edit := range e.edits {
+		if edit.start == edit.end {
+			continue
+		}
+		start := max(candidate.start, edit.start)
+		end := min(candidate.end, edit.end)
+		if start >= end {
+			continue
+		}
+		startLine := baselineLine(e.baseline, start)
+		endLine := baselineLine(e.baseline, end-1)
+		span := fmt.Sprintf("baseline line %d was already modified", startLine)
+		if startLine != endLine {
+			span = fmt.Sprintf("baseline lines %d:%d were already modified", startLine, endLine)
+		}
+		return fmt.Errorf(
+			"selection conflicts with edit from command %d (source line %d, operation %q): %s",
+			edit.command,
+			edit.line,
+			edit.operation,
+			span,
+		)
 	}
+	e.selection = &candidate
 	return nil
 }
 
-func (e *editor) typeText(replacement string) {
+func (e *editor) typeText(replacement string, origin editOrigin) error {
 	start, end := e.cursor, e.cursor
 	if e.selection != nil {
 		start, end = e.selection.start, e.selection.end
 		if e.selection.linewise && lineTerminatorSuffix(replacement) == "" {
-			replacement += lineTerminatorSuffix(e.text[start:end])
+			replacement += lineTerminatorSuffix(e.baseline[start:end])
 		}
 	}
-	e.text = e.text[:start] + replacement + e.text[end:]
-	e.cursor = start + len(replacement)
-	e.selection = nil
-}
-
-func (e *editor) deleteSelection() error {
-	if e.selection == nil {
-		return fmt.Errorf("del requires a selection")
+	if err := e.recordEdit(baselineEdit{start: start, end: end, replacement: replacement, editOrigin: origin}); err != nil {
+		return err
 	}
-	start := e.selection.start
-	e.text = e.text[:start] + e.text[e.selection.end:]
-	e.cursor = start
+	e.cursor = end
 	e.selection = nil
 	return nil
 }
 
-func (e *editor) duplicateSelection() error {
+func (e *editor) deleteSelection(origin editOrigin) error {
+	if e.selection == nil {
+		return fmt.Errorf("del requires a selection")
+	}
+	selected := *e.selection
+	if err := e.recordEdit(baselineEdit{start: selected.start, end: selected.end, editOrigin: origin}); err != nil {
+		return err
+	}
+	e.cursor = selected.start
+	e.selection = nil
+	return nil
+}
+
+func (e *editor) duplicateSelection(origin editOrigin) error {
 	if e.selection == nil {
 		return fmt.Errorf("dup requires a selection")
 	}
 	selected := *e.selection
-	copyText := e.text[selected.start:selected.end]
+	copyText := e.baseline[selected.start:selected.end]
 	separator := ""
 	if selected.linewise && !endsWithLineTerminator(copyText) {
-		separator = firstLineTerminator(e.text)
+		separator = firstLineTerminator(e.baseline)
 	}
-	insertion := separator + copyText
-	e.text = e.text[:selected.end] + insertion + e.text[selected.end:]
-	copyStart := selected.end + len(separator)
-	e.selection = &selection{
-		start:    copyStart,
-		end:      copyStart + len(copyText),
-		linewise: selected.linewise,
+	if err := e.recordEdit(baselineEdit{
+		start:       selected.end,
+		end:         selected.end,
+		replacement: separator + copyText,
+		editOrigin:  origin,
+	}); err != nil {
+		return err
 	}
-	e.cursor = e.selection.end
+	e.cursor = selected.end
+	e.selection = nil
 	return nil
+}
+
+func (e *editor) recordEdit(candidate baselineEdit) error {
+	if candidate.start == candidate.end && candidate.replacement == "" {
+		return nil
+	}
+	for _, existing := range e.edits {
+		description, conflict := describeEditConflict(e.baseline, existing, candidate)
+		if !conflict {
+			continue
+		}
+		return fmt.Errorf(
+			"conflicts with edit from command %d (source line %d, operation %q): %s",
+			existing.command,
+			existing.line,
+			existing.operation,
+			description,
+		)
+	}
+	e.edits = append(e.edits, candidate)
+	return nil
+}
+
+func describeEditConflict(baseline string, first, second baselineEdit) (string, bool) {
+	firstInsertion := first.start == first.end
+	secondInsertion := second.start == second.end
+	switch {
+	case firstInsertion && secondInsertion:
+		if first.start != second.start {
+			return "", false
+		}
+		return fmt.Sprintf("baseline line %d receives multiple insertions at one position", baselineLine(baseline, first.start)), true
+	case firstInsertion:
+		if first.start <= second.start || first.start >= second.end {
+			return "", false
+		}
+		return fmt.Sprintf("baseline line %d is both replaced and inserted into", baselineLine(baseline, first.start)), true
+	case secondInsertion:
+		if second.start <= first.start || second.start >= first.end {
+			return "", false
+		}
+		return fmt.Sprintf("baseline line %d is both replaced and inserted into", baselineLine(baseline, second.start)), true
+	default:
+		start := max(first.start, second.start)
+		end := min(first.end, second.end)
+		if start >= end {
+			return "", false
+		}
+		startLine := baselineLine(baseline, start)
+		endLine := baselineLine(baseline, end-1)
+		if startLine == endLine {
+			return fmt.Sprintf("baseline line %d is modified by both edits", startLine), true
+		}
+		return fmt.Sprintf("baseline lines %d:%d are modified by both edits", startLine, endLine), true
+	}
+}
+
+func baselineLine(text string, offset int) int {
+	lines := logicalLines(text)
+	for index, line := range lines {
+		if offset < line.fullEnd {
+			return index + 1
+		}
+	}
+	if len(lines) == 0 {
+		return 1
+	}
+	return len(lines)
+}
+
+func (e *editor) firstEdit() (baselineEdit, bool) {
+	if len(e.edits) == 0 {
+		return baselineEdit{}, false
+	}
+	return e.edits[0], true
+}
+
+func (e *editor) content() string {
+	edits := slices.Clone(e.edits)
+	slices.SortFunc(edits, func(first, second baselineEdit) int {
+		switch {
+		case first.start < second.start:
+			return -1
+		case first.start > second.start:
+			return 1
+		case first.end < second.end:
+			return -1
+		case first.end > second.end:
+			return 1
+		default:
+			return 0
+		}
+	})
+
+	var result strings.Builder
+	cursor := 0
+	for _, edit := range edits {
+		result.WriteString(e.baseline[cursor:edit.start])
+		result.WriteString(edit.replacement)
+		cursor = max(cursor, edit.end)
+	}
+	result.WriteString(e.baseline[cursor:])
+	return result.String()
 }
 
 func literalOffsets(text, literal string) []int {

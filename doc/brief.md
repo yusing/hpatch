@@ -20,7 +20,8 @@ comparisons and a concise instruction sheet suitable for agents.
   block selection, and inclusive whole-line range selection.
 - Cursor insertion, selection replacement, selection deletion, and duplication.
 - File creation, movement, and deletion.
-- Sequential edits against the in-memory result of prior commands.
+- Immutable per-file baselines with stable selectors, disjoint edit collection, and
+  explicit conflict rejection.
 - Normal mode that validates and stages the complete change set before committing it.
 - Translate mode that does not modify files and emits one `apply_patch` envelope.
 - Automated scenarios comparing hpatch scripts with equivalent handwritten
