@@ -49,28 +49,28 @@ func (e *editor) resetCursor() {
 func (e *editor) selectColumns(lineRef lineReference, startColumn, endColumn int) error {
 	lineNumber, err := e.resolveLineReference(lineRef)
 	if err != nil {
-		return err
+		return withReason(reasonRelativeState, err)
 	}
 	line, err := lineAt(e.baseline, lineNumber)
 	if err != nil {
-		return err
+		return withReason(reasonCoordinateBounds, err)
 	}
 	content := e.baseline[line.start:line.contentEnd]
 	start, end, ok := runeColumnOffsets(content, startColumn, endColumn)
 	if !ok {
-		return fmt.Errorf("columns %d:%d are outside line %d", startColumn, endColumn, lineNumber)
+		return withReason(reasonCoordinateBounds, fmt.Errorf("columns %d:%d are outside line %d", startColumn, endColumn, lineNumber))
 	}
-	return e.setSelection(selection{start: line.start + start, end: line.start + end})
+	return withReason(reasonEditConflict, e.setSelection(selection{start: line.start + start, end: line.start + end}))
 }
 
 func (e *editor) selectOccurrence(lineRef lineReference, occurrence, count int, literal string) error {
 	lineNumber, err := e.resolveLineReference(lineRef)
 	if err != nil {
-		return err
+		return withReason(reasonRelativeState, err)
 	}
 	line, err := lineAt(e.baseline, lineNumber)
 	if err != nil {
-		return err
+		return withReason(reasonCoordinateBounds, err)
 	}
 	content := e.baseline[line.start:line.contentEnd]
 	offsets := nonOverlappingLiteralOffsets(content, literal)
@@ -80,30 +80,30 @@ func (e *editor) selectOccurrence(lineRef lineReference, occurrence, count int, 
 		index = len(offsets) + occurrence
 	}
 	if index < 0 || index >= len(offsets) {
-		return fmt.Errorf("occurrence %d of %q not found on line %d", occurrence, literal, lineNumber)
+		return withReason(reasonOccurrenceMissing, fmt.Errorf("occurrence %d of %q not found on line %d", occurrence, literal, lineNumber))
 	}
 	startIndex, endIndex := index, index
 	if occurrence < 0 {
 		if count > index+1 {
-			return fmt.Errorf("occurrence group of count %d from %d of %q not found on line %d", count, occurrence, literal, lineNumber)
+			return withReason(reasonOccurrenceMissing, fmt.Errorf("occurrence group of count %d from %d of %q not found on line %d", count, occurrence, literal, lineNumber))
 		}
 		startIndex = index - count + 1
 	} else {
 		if count > len(offsets)-index {
-			return fmt.Errorf("occurrence group of count %d from %d of %q not found on line %d", count, occurrence, literal, lineNumber)
+			return withReason(reasonOccurrenceMissing, fmt.Errorf("occurrence group of count %d from %d of %q not found on line %d", count, occurrence, literal, lineNumber))
 		}
 		endIndex = index + count - 1
 	}
 	start := line.start + offsets[startIndex]
 	end := line.start + offsets[endIndex] + len(literal)
-	return e.setSelection(selection{start: start, end: end})
+	return withReason(reasonEditConflict, e.setSelection(selection{start: start, end: end}))
 }
 
-func (e *editor) selectBlock(startLiteral, endLiteral string) error {
+func (e *editor) selectBlock(startLiteral, endLiteral string) (bool, error) {
 	return e.selectBlockInScope(startLiteral, endLiteral, 0, len(e.baseline), "the active file baseline")
 }
 
-func (e *editor) selectNextBlock(startLiteral, endLiteral string) error {
+func (e *editor) selectNextBlock(startLiteral, endLiteral string) (bool, error) {
 	scopeStart, scopeEnd := e.cursor, len(e.baseline)
 	scopeDescription := "the baseline suffix from the current cursor"
 	if e.selection != nil {
@@ -113,35 +113,44 @@ func (e *editor) selectNextBlock(startLiteral, endLiteral string) error {
 	return e.selectBlockInScope(startLiteral, endLiteral, scopeStart, scopeEnd, scopeDescription)
 }
 
-func (e *editor) selectBlockInScope(startLiteral, endLiteral string, scopeStart, scopeEnd int, scopeDescription string) error {
+func (e *editor) selectBlockInScope(startLiteral, endLiteral string, scopeStart, scopeEnd int, scopeDescription string) (bool, error) {
 	scope := e.baseline[scopeStart:scopeEnd]
-	startMatches, tolerant := blockAnchorMatches(scope, startLiteral)
+	startMatches, startRecovered := blockAnchorMatches(scope, startLiteral)
 	if len(startMatches) != 1 {
-		return fmt.Errorf(
+		reason := reasonAnchorMissing
+		if len(startMatches) > 1 {
+			reason = reasonAnchorAmbiguous
+		}
+		return false, withReason(reason, fmt.Errorf(
 			"start literal %q occurs %d times%s in %s; want exactly once",
 			startLiteral,
 			len(startMatches),
-			blockMatchQualifier(tolerant),
+			blockMatchQualifier(startRecovered),
 			scopeDescription,
-		)
+		))
 	}
 
 	start := startMatches[0]
-	endMatches, tolerant := blockAnchorMatches(scope[start.end:], endLiteral)
+	endMatches, endRecovered := blockAnchorMatches(scope[start.end:], endLiteral)
 	if len(endMatches) != 1 {
-		return fmt.Errorf(
+		reason := reasonAnchorMissing
+		if len(endMatches) > 1 {
+			reason = reasonAnchorAmbiguous
+		}
+		return false, withReason(reason, fmt.Errorf(
 			"end literal %q occurs %d times%s after start in %s; want exactly once",
 			endLiteral,
 			len(endMatches),
-			blockMatchQualifier(tolerant),
+			blockMatchQualifier(endRecovered),
 			scopeDescription,
-		)
+		))
 	}
 	end := endMatches[0]
-	return e.setSelection(selection{
+	recovered := startRecovered || endRecovered
+	return recovered, withReason(reasonEditConflict, e.setSelection(selection{
 		start: scopeStart + start.start,
 		end:   scopeStart + start.end + end.end,
-	})
+	}))
 }
 
 func (e *editor) resolveLineReference(ref lineReference) (int, error) {
@@ -176,23 +185,23 @@ func (e *editor) selectLines(startRef, endRef lineReference) error {
 	if startRef.relative {
 		base, err := e.relativeLineBase()
 		if err != nil {
-			return err
+			return withReason(reasonRelativeState, err)
 		}
 		startLine = base + startRef.value
 		endLine = base + endRef.value
 	}
 	if startLine > endLine {
-		return fmt.Errorf("resolved line range start %d exceeds end %d", startLine, endLine)
+		return withReason(reasonOrderOrOverlap, fmt.Errorf("resolved line range start %d exceeds end %d", startLine, endLine))
 	}
 	lines := logicalLines(e.baseline)
 	if startLine < 1 || endLine < 1 || startLine > len(lines) || endLine > len(lines) {
-		return fmt.Errorf("line range %d:%d is outside the file", startLine, endLine)
+		return withReason(reasonCoordinateBounds, fmt.Errorf("line range %d:%d is outside the file", startLine, endLine))
 	}
-	return e.setSelection(selection{
+	return withReason(reasonEditConflict, e.setSelection(selection{
 		start:    lines[startLine-1].start,
 		end:      lines[endLine-1].fullEnd,
 		linewise: true,
-	})
+	}))
 }
 
 func (e *editor) setSelection(candidate selection) error {
@@ -232,7 +241,7 @@ func (e *editor) typeText(replacement string, origin editOrigin) error {
 		}
 	}
 	if err := e.recordEdit(baselineEdit{start: start, end: end, replacement: replacement, editOrigin: origin}); err != nil {
-		return err
+		return withReason(reasonEditConflict, err)
 	}
 	e.cursor = end
 	e.selection = nil
@@ -244,11 +253,11 @@ func (e *editor) typeText(replacement string, origin editOrigin) error {
 
 func (e *editor) deleteSelection(origin editOrigin) error {
 	if e.selection == nil {
-		return fmt.Errorf("del requires a selection")
+		return withReason(reasonSelectionRequired, fmt.Errorf("del requires a selection"))
 	}
 	selected := *e.selection
 	if err := e.recordEdit(baselineEdit{start: selected.start, end: selected.end, editOrigin: origin}); err != nil {
-		return err
+		return withReason(reasonEditConflict, err)
 	}
 	e.cursor = selected.start
 	e.selection = nil
@@ -258,7 +267,7 @@ func (e *editor) deleteSelection(origin editOrigin) error {
 
 func (e *editor) duplicateSelection(origin editOrigin) error {
 	if e.selection == nil {
-		return fmt.Errorf("dup requires a selection")
+		return withReason(reasonSelectionRequired, fmt.Errorf("dup requires a selection"))
 	}
 	selected := *e.selection
 	copyText := e.baseline[selected.start:selected.end]
@@ -272,7 +281,7 @@ func (e *editor) duplicateSelection(origin editOrigin) error {
 		replacement: separator + copyText,
 		editOrigin:  origin,
 	}); err != nil {
-		return err
+		return withReason(reasonEditConflict, err)
 	}
 	e.cursor = selected.end
 	e.selection = nil

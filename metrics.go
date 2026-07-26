@@ -20,10 +20,10 @@ import (
 const (
 	metricsFilename       = "metrics.bin"
 	metricsLockname       = "metrics.lock"
-	metricsMagic          = "HPATCH07"
-	metricsSlotSize       = 264
+	metricsMagic          = "HPATCH08"
+	metricsSlotSize       = 560
 	metricsFileSize       = 2 * metricsSlotSize
-	metricsChecksumOffset = 232
+	metricsChecksumOffset = 528
 	commandCount          = 12
 )
 
@@ -41,10 +41,12 @@ type commandMetric struct {
 type commandMetrics [commandCount]commandMetric
 
 type metrics struct {
+	invocationMetrics
+
 	HPatchTokens            uint64
 	ApplyPatchTokens        uint64
 	IneffectiveHPatchTokens uint64
-	Commands                commandMetrics
+	ReportInputTokens       uint64
 }
 
 func commandOperationIndex(operation string) int {
@@ -68,21 +70,12 @@ func (m *commandMetrics) fail(operation string) {
 	}
 }
 
-func (m *commandMetrics) invokeFailure(operation string) {
-	m.invoke(operation)
-	m.fail(operation)
-}
-
 func (m commandMetrics) total() (commandMetric, bool) {
 	var total commandMetric
 	for _, entry := range m {
-		if entry.Errors > entry.Invocations ||
-			entry.Invocations > ^uint64(0)-total.Invocations ||
-			entry.Errors > ^uint64(0)-total.Errors {
+		if entry.Errors > entry.Invocations || !addCounter(&total.Invocations, entry.Invocations) || !addCounter(&total.Errors, entry.Errors) {
 			return commandMetric{}, false
 		}
-		total.Invocations += entry.Invocations
-		total.Errors += entry.Errors
 	}
 	return total, true
 }
@@ -95,16 +88,15 @@ func (m commandMetric) errorRate() float64 {
 }
 
 func countMetrics(script, patch string) (metrics, error) {
-	hpatchPayload, applyPatchPayload := metricPayloads(script, patch)
 	codec, err := tokenizer.ForModel(tokenizer.GPT5)
 	if err != nil {
 		return metrics{}, fmt.Errorf("loading GPT-5 tokenizer: %w", err)
 	}
-	hpatchTokens, err := codec.Count(hpatchPayload)
+	hpatchTokens, err := codec.Count(hpatchMetricPayload(script))
 	if err != nil {
 		return metrics{}, fmt.Errorf("tokenizing hpatch output: %w", err)
 	}
-	applyPatchTokens, err := codec.Count(applyPatchPayload)
+	applyPatchTokens, err := codec.Count(applyPatchMetricPayload(patch))
 	if err != nil {
 		return metrics{}, fmt.Errorf("tokenizing apply_patch output: %w", err)
 	}
@@ -123,37 +115,62 @@ func countIneffectiveMetrics(script string) (metrics, error) {
 	return metrics{IneffectiveHPatchTokens: uint64(hpatchTokens)}, nil
 }
 
-func recordMetrics(dataDirectory, script, patch string, commands commandMetrics) error {
+func countReportInputTokens(report string) (uint64, error) {
+	if report == "" {
+		return 0, nil
+	}
+	codec, err := tokenizer.ForModel(tokenizer.GPT5)
+	if err != nil {
+		return 0, fmt.Errorf("loading GPT-5 tokenizer: %w", err)
+	}
+	count, err := codec.Count(report)
+	if err != nil {
+		return 0, fmt.Errorf("tokenizing state report input: %w", err)
+	}
+	return uint64(count), nil
+}
+
+func recordMetrics(dataDirectory, script, patch, emittedReport string, events invocationMetrics) error {
 	entry, err := countMetrics(script, patch)
 	if err != nil {
 		return err
 	}
-	entry.Commands = commands
+	entry.ReportInputTokens, err = countReportInputTokens(emittedReport)
+	if err != nil {
+		return err
+	}
+	entry.invocationMetrics = events
 	return updateMetrics(dataDirectory, entry)
 }
 
-func recordIneffectiveMetrics(dataDirectory, script string, commands commandMetrics) error {
+func recordIneffectiveMetrics(dataDirectory, script string, events invocationMetrics) error {
 	entry, err := countIneffectiveMetrics(script)
 	if err != nil {
 		return err
 	}
-	entry.Commands = commands
+	entry.invocationMetrics = events
 	return updateMetrics(dataDirectory, entry)
 }
 
-func recordCommandMetrics(dataDirectory string, commands commandMetrics) error {
-	if commands == (commandMetrics{}) {
+func recordCommandMetrics(dataDirectory, emittedReport string, events invocationMetrics) error {
+	if events == (invocationMetrics{}) && emittedReport == "" {
 		return nil
 	}
-	return updateMetrics(dataDirectory, metrics{Commands: commands})
+	reportTokens, err := countReportInputTokens(emittedReport)
+	if err != nil {
+		return err
+	}
+	entry := metrics{ReportInputTokens: reportTokens}
+	entry.invocationMetrics = events
+	return updateMetrics(dataDirectory, entry)
 }
 
 func updateMetrics(dataDirectory string, entry metrics) (err error) {
 	if dataDirectory == "" {
 		return fmt.Errorf("metrics directory is unavailable")
 	}
-	if _, ok := entry.Commands.total(); !ok {
-		return fmt.Errorf("updating metrics: invalid command counters")
+	if !validInvocationMetrics(entry.invocationMetrics) {
+		return fmt.Errorf("updating metrics: invalid command or feature counters")
 	}
 	if err := os.MkdirAll(dataDirectory, 0o700); err != nil {
 		return fmt.Errorf("creating metrics directory: %w", err)
@@ -201,25 +218,118 @@ func updateMetrics(dataDirectory string, entry metrics) (err error) {
 }
 
 func (m *metrics) add(entry metrics) error {
-	if entry.HPatchTokens > ^uint64(0)-m.HPatchTokens || entry.ApplyPatchTokens > ^uint64(0)-m.ApplyPatchTokens || entry.IneffectiveHPatchTokens > ^uint64(0)-m.IneffectiveHPatchTokens {
-		return fmt.Errorf("updating metrics: token count overflow")
+	for _, counter := range []struct {
+		destination *uint64
+		increment   uint64
+	}{
+		{&m.HPatchTokens, entry.HPatchTokens},
+		{&m.ApplyPatchTokens, entry.ApplyPatchTokens},
+		{&m.IneffectiveHPatchTokens, entry.IneffectiveHPatchTokens},
+		{&m.ReportInputTokens, entry.ReportInputTokens},
+	} {
+		if !addCounter(counter.destination, counter.increment) {
+			return fmt.Errorf("updating metrics: token count overflow")
+		}
 	}
 	for index := range commandCount {
-		if entry.Commands[index].Invocations > ^uint64(0)-m.Commands[index].Invocations || entry.Commands[index].Errors > ^uint64(0)-m.Commands[index].Errors {
+		if !addCommandMetric(&m.Commands[index], entry.Commands[index]) {
 			return fmt.Errorf("updating metrics: command count overflow")
 		}
 	}
-	m.HPatchTokens += entry.HPatchTokens
-	m.ApplyPatchTokens += entry.ApplyPatchTokens
-	m.IneffectiveHPatchTokens += entry.IneffectiveHPatchTokens
-	for index := range commandCount {
-		m.Commands[index].Invocations += entry.Commands[index].Invocations
-		m.Commands[index].Errors += entry.Commands[index].Errors
+	for index := range selectorVariantCount {
+		if !addCommandMetric(&m.SelectorVariants[index], entry.SelectorVariants[index]) {
+			return fmt.Errorf("updating metrics: selector variant count overflow")
+		}
 	}
-	if _, ok := m.Commands.total(); !ok {
-		return fmt.Errorf("updating metrics: aggregate command count overflow")
+	for index := range textSpanVariantCount {
+		if !addCommandMetric(&m.TextSpans[index], entry.TextSpans[index]) {
+			return fmt.Errorf("updating metrics: tsel span count overflow")
+		}
+	}
+	for index := range blockOutcomeCount {
+		if !addCounter(&m.BlockOutcomes[index], entry.BlockOutcomes[index]) {
+			return fmt.Errorf("updating metrics: block outcome count overflow")
+		}
+	}
+	for index := range failureReasonCount {
+		if !addCounter(&m.Reasons[index], entry.Reasons[index]) {
+			return fmt.Errorf("updating metrics: failure reason count overflow")
+		}
+	}
+	if !validInvocationMetrics(m.invocationMetrics) {
+		return fmt.Errorf("updating metrics: aggregate command or feature counters are inconsistent")
 	}
 	return nil
+}
+
+func addCommandMetric(destination *commandMetric, increment commandMetric) bool {
+	return addCounter(&destination.Invocations, increment.Invocations) && addCounter(&destination.Errors, increment.Errors)
+}
+
+func addCounter(destination *uint64, increment uint64) bool {
+	if increment > ^uint64(0)-*destination {
+		return false
+	}
+	*destination += increment
+	return true
+}
+
+func validInvocationMetrics(events invocationMetrics) bool {
+	total, ok := events.Commands.total()
+	if !ok {
+		return false
+	}
+	for _, entry := range events.SelectorVariants {
+		if entry.Errors > entry.Invocations {
+			return false
+		}
+	}
+	for _, entry := range events.TextSpans {
+		if entry.Errors > entry.Invocations {
+			return false
+		}
+	}
+	for _, operation := range []string{"sel", "tsel", "rsel"} {
+		base := selectorVariantIndex(operation, coordinateAbsolute)
+		combined, ok := sumCommandMetrics(events.SelectorVariants[base], events.SelectorVariants[base+1])
+		if !ok || combined != events.Commands[commandOperationIndex(operation)] {
+			return false
+		}
+	}
+	spans, ok := sumCommandMetrics(events.TextSpans[0], events.TextSpans[1])
+	if !ok || spans != events.Commands[commandOperationIndex("tsel")] {
+		return false
+	}
+	for _, operation := range []string{"bsel", "bsel_next"} {
+		base := blockOutcomeIndex(operation, false)
+		successes, ok := sumCounters(events.BlockOutcomes[base], events.BlockOutcomes[base+1])
+		command := events.Commands[commandOperationIndex(operation)]
+		if !ok || command.Errors > command.Invocations || successes != command.Invocations-command.Errors {
+			return false
+		}
+	}
+	var reasons uint64
+	for _, count := range events.Reasons {
+		if !addCounter(&reasons, count) {
+			return false
+		}
+	}
+	return reasons == total.Errors
+}
+
+func sumCommandMetrics(first, second commandMetric) (commandMetric, bool) {
+	result := first
+	if !addCommandMetric(&result, second) || result.Errors > result.Invocations {
+		return commandMetric{}, false
+	}
+	return result, true
+}
+
+func sumCounters(first, second uint64) (uint64, bool) {
+	if second > ^uint64(0)-first {
+		return 0, false
+	}
+	return first + second, true
 }
 
 func readMetrics(dataDirectory string) (total metrics, err error) {
@@ -313,6 +423,7 @@ func hasValidPriorMetricsSlot(file *os.File, size int64) (bool, error) {
 		checksumOffset int
 		checksumSize   int
 	}{
+		{slotSize: 264, checksumOffset: 232, checksumSize: 32},
 		{slotSize: 256, checksumOffset: 224, checksumSize: 32},
 		{slotSize: 64, checksumOffset: 40, checksumSize: 24},
 	}
@@ -342,14 +453,30 @@ func encodeMetricsSlot(value metrics, generation uint64) [metricsSlotSize]byte {
 	binary.LittleEndian.PutUint64(encoded[16:24], value.HPatchTokens)
 	binary.LittleEndian.PutUint64(encoded[24:32], value.ApplyPatchTokens)
 	binary.LittleEndian.PutUint64(encoded[32:40], value.IneffectiveHPatchTokens)
+	binary.LittleEndian.PutUint64(encoded[40:48], value.ReportInputTokens)
 	for index, entry := range value.Commands {
-		offset := 40 + index*16
-		binary.LittleEndian.PutUint64(encoded[offset:offset+8], entry.Invocations)
-		binary.LittleEndian.PutUint64(encoded[offset+8:offset+16], entry.Errors)
+		putCommandMetric(encoded[:], 48+index*16, entry)
+	}
+	for index, entry := range value.SelectorVariants {
+		putCommandMetric(encoded[:], 240+index*16, entry)
+	}
+	for index, entry := range value.TextSpans {
+		putCommandMetric(encoded[:], 336+index*16, entry)
+	}
+	for index, count := range value.BlockOutcomes {
+		binary.LittleEndian.PutUint64(encoded[368+index*8:376+index*8], count)
+	}
+	for index, count := range value.Reasons {
+		binary.LittleEndian.PutUint64(encoded[400+index*8:408+index*8], count)
 	}
 	checksum := sha256.Sum256(encoded[:metricsChecksumOffset])
 	copy(encoded[metricsChecksumOffset:], checksum[:])
 	return encoded
+}
+
+func putCommandMetric(encoded []byte, offset int, entry commandMetric) {
+	binary.LittleEndian.PutUint64(encoded[offset:offset+8], entry.Invocations)
+	binary.LittleEndian.PutUint64(encoded[offset+8:offset+16], entry.Errors)
 }
 
 func decodeMetricsSlot(encoded [metricsSlotSize]byte) (metrics, uint64, bool) {
@@ -364,15 +491,38 @@ func decodeMetricsSlot(encoded [metricsSlotSize]byte) (metrics, uint64, bool) {
 	if generation == 0 {
 		return metrics{}, 0, false
 	}
-	value := metrics{HPatchTokens: binary.LittleEndian.Uint64(encoded[16:24]), ApplyPatchTokens: binary.LittleEndian.Uint64(encoded[24:32]), IneffectiveHPatchTokens: binary.LittleEndian.Uint64(encoded[32:40])}
-	for index := range commandCount {
-		offset := 40 + index*16
-		value.Commands[index] = commandMetric{Invocations: binary.LittleEndian.Uint64(encoded[offset : offset+8]), Errors: binary.LittleEndian.Uint64(encoded[offset+8 : offset+16])}
+	value := metrics{
+		HPatchTokens:            binary.LittleEndian.Uint64(encoded[16:24]),
+		ApplyPatchTokens:        binary.LittleEndian.Uint64(encoded[24:32]),
+		IneffectiveHPatchTokens: binary.LittleEndian.Uint64(encoded[32:40]),
+		ReportInputTokens:       binary.LittleEndian.Uint64(encoded[40:48]),
 	}
-	if _, ok := value.Commands.total(); !ok {
+	for index := range commandCount {
+		value.Commands[index] = getCommandMetric(encoded[:], 48+index*16)
+	}
+	for index := range selectorVariantCount {
+		value.SelectorVariants[index] = getCommandMetric(encoded[:], 240+index*16)
+	}
+	for index := range textSpanVariantCount {
+		value.TextSpans[index] = getCommandMetric(encoded[:], 336+index*16)
+	}
+	for index := range blockOutcomeCount {
+		value.BlockOutcomes[index] = binary.LittleEndian.Uint64(encoded[368+index*8 : 376+index*8])
+	}
+	for index := range int(failureReasonCount) {
+		value.Reasons[index] = binary.LittleEndian.Uint64(encoded[400+index*8 : 408+index*8])
+	}
+	if !validInvocationMetrics(value.invocationMetrics) {
 		return metrics{}, 0, false
 	}
 	return value, generation, true
+}
+
+func getCommandMetric(encoded []byte, offset int) commandMetric {
+	return commandMetric{
+		Invocations: binary.LittleEndian.Uint64(encoded[offset : offset+8]),
+		Errors:      binary.LittleEndian.Uint64(encoded[offset+8 : offset+16]),
+	}
 }
 
 func (m metrics) reduction() float64 {
@@ -389,20 +539,75 @@ func (m metrics) overallReduction() float64 {
 	return (float64(m.ApplyPatchTokens) - float64(m.HPatchTokens) - float64(m.IneffectiveHPatchTokens)) / float64(m.ApplyPatchTokens) * 100
 }
 
+func (m metrics) weightedOverallReduction(outputToInputRatio float64) float64 {
+	if m.ApplyPatchTokens == 0 {
+		return 0
+	}
+	weightedCost := float64(m.HPatchTokens) + float64(m.IneffectiveHPatchTokens) + float64(m.ReportInputTokens)/outputToInputRatio
+	return (float64(m.ApplyPatchTokens) - weightedCost) / float64(m.ApplyPatchTokens) * 100
+}
+
 func gainReport(m metrics) string {
 	totalHPatchTokens := new(big.Int).SetUint64(m.HPatchTokens)
 	totalHPatchTokens.Add(totalHPatchTokens, new(big.Int).SetUint64(m.IneffectiveHPatchTokens))
 	var report strings.Builder
-	fmt.Fprintf(&report, "estimated effective hpatch output tokens: %d\nestimated apply_patch output tokens: %d\nestimated effective reduction: %.1f%%\nestimated ineffective hpatch output tokens: %d\nestimated total hpatch output tokens: %s\nestimated overall reduction: %.1f%%\ncommand metrics:\n", m.HPatchTokens, m.ApplyPatchTokens, m.reduction(), m.IneffectiveHPatchTokens, totalHPatchTokens, m.overallReduction())
+	fmt.Fprintf(
+		&report,
+		"estimated effective hpatch output tokens: %d\nestimated apply_patch output tokens: %d\nestimated effective reduction: %.1f%%\nestimated ineffective hpatch output tokens: %d\nestimated total hpatch output tokens: %s\nestimated overall output-token reduction: %.1f%%\nestimated state-report input tokens: %d\nestimated weighted overall reduction at 5:1: %.1f%%\nestimated weighted overall reduction at 6:1: %.1f%%\n",
+		m.HPatchTokens,
+		m.ApplyPatchTokens,
+		m.reduction(),
+		m.IneffectiveHPatchTokens,
+		totalHPatchTokens,
+		m.overallReduction(),
+		m.ReportInputTokens,
+		m.weightedOverallReduction(5),
+		m.weightedOverallReduction(6),
+	)
+	writeCommandTable(&report, "command metrics:", "command", commandOperations[:], m.Commands[:], true)
+	writeCommandTable(&report, "selector coordinate metrics:", "selector", selectorVariantNames[:], m.SelectorVariants[:], false)
+	writeCommandTable(&report, "tsel span metrics:", "span", textSpanVariantNames[:], m.TextSpans[:], false)
+
+	report.WriteString("block selector successes:\n")
 	table := tabwriter.NewWriter(&report, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(table, "command\tinvocations\terrors\terror rate")
-	fmt.Fprintln(table, "-------\t-----------\t------\t----------")
-	for index, operation := range commandOperations {
-		entry := m.Commands[index]
-		fmt.Fprintf(table, "%s\t%d\t%d\t%.1f%%\n", operation, entry.Invocations, entry.Errors, entry.errorRate())
+	fmt.Fprintln(table, "selector\tmatch\tsuccesses")
+	fmt.Fprintln(table, "--------\t-----\t---------")
+	for index, name := range blockOutcomeNames {
+		operation, match, _ := strings.Cut(name, " ")
+		fmt.Fprintf(table, "%s\t%s\t%d\n", operation, match, m.BlockOutcomes[index])
 	}
-	total, _ := m.Commands.total()
-	fmt.Fprintf(table, "total\t%d\t%d\t%.1f%%\n", total.Invocations, total.Errors, total.errorRate())
+	_ = table.Flush()
+
+	report.WriteString("failure reasons:\n")
+	table = tabwriter.NewWriter(&report, 0, 4, 2, ' ', 0)
+	fmt.Fprintln(table, "reason\terrors")
+	fmt.Fprintln(table, "------\t------")
+	var totalReasons uint64
+	for index, name := range failureReasonNames {
+		fmt.Fprintf(table, "%s\t%d\n", name, m.Reasons[index])
+		totalReasons += m.Reasons[index]
+	}
+	fmt.Fprintf(table, "total\t%d\n", totalReasons)
 	_ = table.Flush()
 	return report.String()
+}
+
+func writeCommandTable(report *strings.Builder, title, firstHeader string, names []string, values []commandMetric, includeTotal bool) {
+	report.WriteString(title + "\n")
+	table := tabwriter.NewWriter(report, 0, 4, 2, ' ', 0)
+	fmt.Fprintf(table, "%s\tinvocations\terrors\terror rate\n", firstHeader)
+	fmt.Fprintln(table, "-------\t-----------\t------\t----------")
+	var total commandMetric
+	for index, name := range names {
+		entry := values[index]
+		fmt.Fprintf(table, "%s\t%d\t%d\t%.1f%%\n", name, entry.Invocations, entry.Errors, entry.errorRate())
+		if includeTotal {
+			total.Invocations += entry.Invocations
+			total.Errors += entry.Errors
+		}
+	}
+	if includeTotal {
+		fmt.Fprintf(table, "total\t%d\t%d\t%.1f%%\n", total.Invocations, total.Errors, total.errorRate())
+	}
+	_ = table.Flush()
 }

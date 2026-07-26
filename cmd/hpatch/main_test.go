@@ -16,9 +16,9 @@ func TestGainDoesNotRequireWorkingDirectory(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 	exitCode := run([]string{"gain"}, strings.NewReader("ignored"), &stdout, &stderr)
-	wantPrefix := "estimated effective hpatch output tokens: 0\nestimated apply_patch output tokens: 0\nestimated effective reduction: 0.0%\nestimated ineffective hpatch output tokens: 0\nestimated total hpatch output tokens: 0\nestimated overall reduction: 0.0%\ncommand metrics:\n"
-	wantSuffix := "total      0            0       0.0%\n"
-	if exitCode != 0 || !strings.HasPrefix(stdout.String(), wantPrefix) || !strings.HasSuffix(stdout.String(), wantSuffix) || stderr.Len() != 0 {
+	wantPrefix := "estimated effective hpatch output tokens: 0\nestimated apply_patch output tokens: 0\nestimated effective reduction: 0.0%\nestimated ineffective hpatch output tokens: 0\nestimated total hpatch output tokens: 0\nestimated overall output-token reduction: 0.0%\nestimated state-report input tokens: 0\nestimated weighted overall reduction at 5:1: 0.0%\nestimated weighted overall reduction at 6:1: 0.0%\ncommand metrics:\n"
+	wantFragment := "failure reasons:\n"
+	if exitCode != 0 || !strings.HasPrefix(stdout.String(), wantPrefix) || !strings.Contains(stdout.String(), wantFragment) || stderr.Len() != 0 {
 		t.Fatalf("gain = exit %d, stdout %q, stderr %q", exitCode, stdout.String(), stderr.String())
 	}
 }
@@ -61,6 +61,7 @@ func TestTopLevelHelpDescribesCompletePublicSurface(t *testing.T) {
 		"bsel_next \"START\" \"END\"",
 		"rsel LINE_REF:LINE_REF",
 		"functions.hpatch",
+		"Build selectors against each existing file's immutable baseline.",
 		"immutable baseline",
 		"Text introduced by an",
 		"multiple insertions",
@@ -71,6 +72,9 @@ func TestTopLevelHelpDescribesCompletePublicSurface(t *testing.T) {
 		"ASCII space and tab runs match interchangeably",
 		"preserves the selected final",
 		"translate always emits root-relative paths",
+		"weighted overall reductions at 5:1",
+		"absolute and relative selectors",
+		"terminal failure reasons",
 	} {
 		if !strings.Contains(helpText(true), fragment) {
 			t.Fatalf("help does not contain %q", fragment)

@@ -27,10 +27,10 @@ Input and output:
 
 Agent workflow:
   1. Inspect the relevant source before constructing selectors.
-  2. Submit one complete editing script directly as the free-form input of
-     functions.hpatch.
-  3. Do not call functions.apply_patch, tools.apply_patch, or functions.exec to
-     perform an hpatch edit. Do not invoke hpatch translate as an editing transport.
+  2. Build selectors against each existing file's immutable baseline.
+  3. Submit one complete editing script directly as the free-form input of
+     functions.hpatch. Do not use functions.apply_patch, tools.apply_patch,
+     functions.exec, or hpatch translate as an editing transport.
   4. If functions.hpatch rejects the script, no staged edits were committed.
      Correct and resubmit the complete script against the unchanged file state.
   5. After success, run focused behavioral validation. For Go source changes, run
@@ -91,6 +91,15 @@ Baseline editor state:
   TEXT, START, and END are JSON strings. Use a JSON serializer for nontrivial
   operands rather than hand-escaping quotes, backslashes, newlines, or Unicode.
   type, bsel, and bsel_next strings may contain encoded line terminators; tsel may not.
+
+Metrics:
+  hpatch gain reads no script and reports persistent effective, ineffective, and
+  apply_patch output-token estimates separately from final-state report input-token
+  overhead. It includes output-only reduction plus weighted overall reductions at 5:1
+  and 6:1 output-to-input price ratios. Stable tables retain aggregate command errors,
+  absolute and relative selectors, single and multiple tsel spans, exact and recovered
+  block successes, and terminal failure reasons. Metrics failures warn without changing
+  the requested edit, patch, report, or exit status.
 
 Paths and patch boundary:
   --root selects the trusted workspace boundary and defaults to hpatch's current

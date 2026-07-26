@@ -53,26 +53,30 @@ type workspace struct {
 	exists  pathProbe
 }
 
-func (p *program) evaluate(resolve pathResolver, load fileLoader, exists pathProbe) ([]change, commandMetrics, string, error) {
+func (p *program) evaluate(resolve pathResolver, load fileLoader, exists pathProbe) ([]change, invocationMetrics, string, error) {
 	w := &workspace{paths: make(map[string]*fileState), blocked: make(map[string]bool), load: load, exists: exists}
-	var commands commandMetrics
+	var events invocationMetrics
 	for commandIndex, command := range p.instructions {
-		commands.invoke(command.operation)
+		events.invoke(command.operation, command.attempt)
 		diagnosticPath := command.path
 		if command.path != "" {
 			resolved, err := resolve(command.path)
 			if err != nil {
-				commands.fail(command.operation)
-				return nil, commands, "", &commandError{Command: commandIndex + 1, Line: command.line, Operation: command.operation, Path: diagnosticPath, Category: commandCategory(command.operation), Message: err.Error()}
+				reason := reasonPath
+				events.fail(command.operation, command.attempt, reason)
+				return nil, events, "", &commandError{Attempt: command.attempt, Reason: reason, Command: commandIndex + 1, Line: command.line, Operation: command.operation, Path: diagnosticPath, Category: commandCategory(command.operation), Message: err.Error()}
 			}
 			command.path = resolved
 		}
-		if err := w.execute(command, commandIndex+1); err != nil {
-			commands.fail(command.operation)
-			return nil, commands, "", &commandError{Command: commandIndex + 1, Line: command.line, Operation: command.operation, Path: w.diagnosticPath(command), Category: commandCategory(command.operation), Message: err.Error()}
+		outcome, err := w.execute(command, commandIndex+1)
+		if err != nil {
+			reason := reasonOf(err, reasonOther)
+			events.fail(command.operation, command.attempt, reason)
+			return nil, events, "", &commandError{Attempt: command.attempt, Reason: reason, Command: commandIndex + 1, Line: command.line, Operation: command.operation, Path: w.diagnosticPath(command), Category: commandCategory(command.operation), Message: err.Error()}
 		}
+		events.recordOutcome(command.operation, outcome)
 	}
-	return w.changes(), commands, w.finalStateReport(), nil
+	return w.changes(), events, w.finalStateReport(), nil
 }
 
 func (w *workspace) diagnosticPath(command instruction) string {
@@ -98,39 +102,41 @@ func commandCategory(operation string) string {
 	}
 }
 
-func (w *workspace) execute(command instruction, commandIndex int) error {
+func (w *workspace) execute(command instruction, commandIndex int) (commandOutcome, error) {
 	switch command.operation {
 	case "in":
-		return w.selectFile(command.path)
+		return commandOutcome{}, w.selectFile(command.path)
 	case "new":
-		return w.newFile(command.path)
+		return commandOutcome{}, w.newFile(command.path)
 	case "mv":
-		return w.moveFile(command.path)
+		return commandOutcome{}, w.moveFile(command.path)
 	case "rm":
-		return w.removeFile()
+		return commandOutcome{}, w.removeFile()
 	}
 	if w.active == nil {
-		return fmt.Errorf("%s requires an active file", command.operation)
+		return commandOutcome{}, withReason(reasonActiveFile, fmt.Errorf("%s requires an active file", command.operation))
 	}
 
 	origin := editOrigin{command: commandIndex, line: command.line, operation: command.operation}
 	switch command.operation {
 	case "sel":
-		return w.active.editor.selectColumns(command.lineRef, command.start, command.end)
+		return commandOutcome{}, w.active.editor.selectColumns(command.lineRef, command.start, command.end)
 	case "tsel":
-		return w.active.editor.selectOccurrence(command.lineRef, command.occurrence, command.count, command.text)
+		return commandOutcome{}, w.active.editor.selectOccurrence(command.lineRef, command.occurrence, command.count, command.text)
 	case "bsel":
-		return w.active.editor.selectBlock(command.text, command.endText)
+		recovered, err := w.active.editor.selectBlock(command.text, command.endText)
+		return commandOutcome{blockRecovered: recovered}, err
 	case "bsel_next":
-		return w.active.editor.selectNextBlock(command.text, command.endText)
+		recovered, err := w.active.editor.selectNextBlock(command.text, command.endText)
+		return commandOutcome{blockRecovered: recovered}, err
 	case "rsel":
-		return w.active.editor.selectLines(command.lineRef, command.endLineRef)
+		return commandOutcome{}, w.active.editor.selectLines(command.lineRef, command.endLineRef)
 	case "type":
-		return w.active.editor.typeText(command.text, origin)
+		return commandOutcome{}, w.active.editor.typeText(command.text, origin)
 	case "del":
-		return w.active.editor.deleteSelection(origin)
+		return commandOutcome{}, w.active.editor.deleteSelection(origin)
 	case "dup":
-		return w.active.editor.duplicateSelection(origin)
+		return commandOutcome{}, w.active.editor.duplicateSelection(origin)
 	default:
 		panic("parsed instruction has no executor: " + command.operation)
 	}
@@ -143,7 +149,7 @@ func (w *workspace) selectFile(path string) error {
 		return nil
 	}
 	if w.blocked[path] {
-		return fmt.Errorf("%s does not exist in the pending workspace", path)
+		return withReason(reasonFileMissing, fmt.Errorf("%s does not exist in the pending workspace", path))
 	}
 	loaded, err := w.load(path)
 	if err != nil {
@@ -175,7 +181,7 @@ func (w *workspace) newFile(path string) error {
 
 func (w *workspace) moveFile(path string) error {
 	if w.active == nil {
-		return fmt.Errorf("mv requires an active file")
+		return withReason(reasonActiveFile, fmt.Errorf("mv requires an active file"))
 	}
 	if err := w.validateFreeDestination(path); err != nil {
 		return err
@@ -192,17 +198,17 @@ func (w *workspace) moveFile(path string) error {
 
 func (w *workspace) removeFile() error {
 	if w.active == nil {
-		return fmt.Errorf("rm requires an active file")
+		return withReason(reasonActiveFile, fmt.Errorf("rm requires an active file"))
 	}
 	file := w.active
 	if !file.created {
 		if edit, ok := file.editor.firstEdit(); ok {
-			return fmt.Errorf(
+			return withReason(reasonEditConflict, fmt.Errorf(
 				"cannot remove a baseline file after content edit from command %d (source line %d, operation %q)",
 				edit.command,
 				edit.line,
 				edit.operation,
-			)
+			))
 		}
 	}
 	delete(w.paths, file.path)
@@ -232,7 +238,7 @@ func (w *workspace) validateDestinationParent(path string) error {
 		return fmt.Errorf("checking parent directory %s: %w", parent, err)
 	}
 	if !exists || !mode.IsDir() {
-		return fmt.Errorf("parent directory %s does not exist", parent)
+		return withReason(reasonPath, fmt.Errorf("parent directory %s does not exist", parent))
 	}
 	return nil
 }
@@ -246,7 +252,7 @@ func (w *workspace) validateFreeDestination(path string) error {
 		return err
 	}
 	if occupied {
-		return fmt.Errorf("destination %s already exists", path)
+		return withReason(reasonFileConflict, fmt.Errorf("destination %s already exists", path))
 	}
 	return nil
 }

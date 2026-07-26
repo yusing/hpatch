@@ -24,6 +24,10 @@ func TestGainReportsPersistedTotals(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	reportTokens, err := countReportInputTokens("in note.txt 1:6\n1 hello\n")
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	var translateStdout, translateStderr bytes.Buffer
 	exitCode := Run([]string{"translate"}, strings.NewReader(script), &translateStdout, &translateStderr, root, dataDirectory)
@@ -39,7 +43,7 @@ func TestGainReportsPersistedTotals(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 	exitCode = Run([]string{"gain"}, strings.NewReader("not a script"), &stdout, &stderr, root, dataDirectory)
-	wantMetrics := metrics{HPatchTokens: entry.HPatchTokens * 2, ApplyPatchTokens: entry.ApplyPatchTokens * 2}
+	wantMetrics := metrics{HPatchTokens: entry.HPatchTokens * 2, ApplyPatchTokens: entry.ApplyPatchTokens * 2, ReportInputTokens: reportTokens * 2}
 	wantMetrics.Commands[commandOperationIndex("new")].Invocations = 2
 	wantMetrics.Commands[commandOperationIndex("type")].Invocations = 2
 	want := gainReport(wantMetrics)
@@ -72,7 +76,10 @@ func TestGainReportReconcilesEffectiveAndIneffectiveTokens(t *testing.T) {
 		"estimated effective reduction: 49.5%\n" +
 		"estimated ineffective hpatch output tokens: 2172\n" +
 		"estimated total hpatch output tokens: 4576\n" +
-		"estimated overall reduction: 3.9%\n"
+		"estimated overall output-token reduction: 3.9%\n" +
+		"estimated state-report input tokens: 0\n" +
+		"estimated weighted overall reduction at 5:1: 3.9%\n" +
+		"estimated weighted overall reduction at 6:1: 3.9%\n"
 	if !strings.HasPrefix(report, want) {
 		t.Fatalf("gain report = %q, want prefix %q", report, want)
 	}
@@ -95,7 +102,7 @@ func TestGainReportsCommandInvocationsErrorsAndRates(t *testing.T) {
 		{name: "success with unrelated command-name text", args: []string{"translate"}, script: "new note.txt\ntype \"bsel sel future-command\"\n", success: true},
 		{name: "execution error", args: []string{"translate"}, script: "new failed.txt\ntype \"ignored\"\nbsel \"missing\" \"end\"\n"},
 		{name: "bsel_next execution error", args: []string{"translate"}, script: "new failed-next.txt\ntype \"ignored\"\nbsel_next \"missing\" \"end\"\n"},
-		{name: "malformed known command", args: []string{"translate"}, script: "sel nope\n"},
+		{name: "malformed known command", args: []string{"translate"}, script: "sel +x 1:1\n"},
 		{name: "unknown future command", args: []string{"translate"}, script: "future-command\n"},
 		{name: "successful no-op", script: "new transient.txt\nrm\n", success: true},
 	}
@@ -148,7 +155,11 @@ func TestGainReportsCommandInvocationsErrorsAndRates(t *testing.T) {
 		"del        0            0       0.0%\n" +
 		"dup        0            0       0.0%\n" +
 		"total      11           3       27.3%\n"
-	if got := stdout.String()[start:]; got != want {
+	end := strings.Index(stdout.String()[start:], "selector coordinate metrics:\n")
+	if end < 0 {
+		t.Fatalf("gain report has no selector metrics: %q", stdout.String())
+	}
+	if got := stdout.String()[start : start+end]; got != want {
 		t.Fatalf("command report = %q, want %q", got, want)
 	}
 }
@@ -162,6 +173,11 @@ func TestFailedHPatchCountsOnlyAsIneffectiveOutput(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	reportTokens, err := countReportInputTokens("in note.txt 1:6\n1 hello\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	effective.ReportInputTokens = reportTokens
 
 	var validStdout, validStderr bytes.Buffer
 	if exitCode := Run([]string{"translate"}, strings.NewReader(validScript), &validStdout, &validStderr, root, dataDirectory); exitCode != 0 {
@@ -343,7 +359,8 @@ func TestMetricsConcurrentReadersAndWriters(t *testing.T) {
 		writesPerWriter = 20
 		readers         = 8
 	)
-	entry := metrics{HPatchTokens: 3, ApplyPatchTokens: 7}
+	entry := metrics{HPatchTokens: 3, ApplyPatchTokens: 7, ReportInputTokens: 2}
+	entry.Commands[commandOperationIndex("new")] = commandMetric{Invocations: 1}
 
 	start := make(chan struct{})
 	errors := make(chan error, writers+readers)
@@ -400,7 +417,8 @@ func TestMetricsConcurrentReadersAndWriters(t *testing.T) {
 		t.Fatal(err)
 	}
 	wantWrites := uint64(writers * writesPerWriter)
-	want := metrics{HPatchTokens: wantWrites * entry.HPatchTokens, ApplyPatchTokens: wantWrites * entry.ApplyPatchTokens}
+	want := metrics{HPatchTokens: wantWrites * entry.HPatchTokens, ApplyPatchTokens: wantWrites * entry.ApplyPatchTokens, ReportInputTokens: wantWrites * entry.ReportInputTokens}
+	want.Commands[commandOperationIndex("new")] = commandMetric{Invocations: wantWrites}
 	if got != want {
 		t.Fatalf("metrics = %+v, want %+v", got, want)
 	}

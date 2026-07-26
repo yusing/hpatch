@@ -73,7 +73,7 @@ func RunWorkspace(args []string, stdin io.Reader, stdout, stderr io.Writer, work
 
 	script, err := io.ReadAll(stdin)
 	if err != nil {
-		return failWithIneffectiveMetrics(stderr, fmt.Sprintf("reading script: %v", err), dataDirectory, string(script), commandMetrics{})
+		return failWithIneffectiveMetrics(stderr, fmt.Sprintf("reading script: %v", err), dataDirectory, string(script), invocationMetrics{})
 	}
 	scriptText := string(script)
 	changes, filesystem, commands, report, err := evaluateScript(context.TODO(), workspace, scriptText, relativeLinesEnabled())
@@ -81,9 +81,9 @@ func RunWorkspace(args []string, stdin io.Reader, stdout, stderr io.Writer, work
 		return failWithIneffectiveMetrics(stderr, err.Error(), dataDirectory, scriptText, commands)
 	}
 	if !translateMode && len(changes) == 0 {
-		writeStateReport(stderr, report)
+		emittedReport := completedReport(report, writeStateReport(stderr, report))
 		if dataDirectory != "" {
-			if err := recordCommandMetrics(dataDirectory, commands); err != nil {
+			if err := recordCommandMetrics(dataDirectory, emittedReport, commands); err != nil {
 				warn(stderr, err.Error())
 			}
 		}
@@ -97,9 +97,9 @@ func RunWorkspace(args []string, stdin io.Reader, stdout, stderr io.Writer, work
 		if _, err := io.WriteString(stdout, patch); err != nil {
 			return failWithIneffectiveMetrics(stderr, fmt.Sprintf("writing patch: %v", err), dataDirectory, scriptText, commands)
 		}
-		writeStateReport(stderr, report)
+		emittedReport := completedReport(report, writeStateReport(stderr, report))
 		if dataDirectory != "" {
-			if err := recordMetrics(dataDirectory, scriptText, patch, commands); err != nil {
+			if err := recordMetrics(dataDirectory, scriptText, patch, emittedReport, commands); err != nil {
 				warn(stderr, err.Error())
 			}
 		}
@@ -108,15 +108,15 @@ func RunWorkspace(args []string, stdin io.Reader, stdout, stderr io.Writer, work
 	if err := commitChanges(changes, rootFileOperations{root: filesystem.root}); err != nil {
 		return failWithIneffectiveMetrics(stderr, fmt.Sprintf("changing %s: %v", describePaths(changes), err), dataDirectory, scriptText, commands)
 	}
-	writeStateReport(stderr, report)
+	emittedReport := completedReport(report, writeStateReport(stderr, report))
 	if dataDirectory != "" {
 		patch, err := translate(changes)
 		if err != nil {
 			warn(stderr, "collecting metrics: "+err.Error())
-			if err := recordCommandMetrics(dataDirectory, commands); err != nil {
+			if err := recordCommandMetrics(dataDirectory, emittedReport, commands); err != nil {
 				warn(stderr, err.Error())
 			}
-		} else if err := recordMetrics(dataDirectory, scriptText, patch, commands); err != nil {
+		} else if err := recordMetrics(dataDirectory, scriptText, patch, emittedReport, commands); err != nil {
 			warn(stderr, err.Error())
 		}
 	}
@@ -157,18 +157,18 @@ type filesystemWorkspace struct {
 	cwd  string
 }
 
-func evaluateScript(ctx context.Context, workspace Workspace, script string, relativeLines bool) ([]change, filesystemWorkspace, commandMetrics, string, error) {
+func evaluateScript(ctx context.Context, workspace Workspace, script string, relativeLines bool) ([]change, filesystemWorkspace, invocationMetrics, string, error) {
 	filesystem, err := validateWorkspace(ctx, workspace)
 	if err != nil {
-		return nil, filesystemWorkspace{}, commandMetrics{}, "", err
+		return nil, filesystemWorkspace{}, invocationMetrics{}, "", err
 	}
 	program, err := parse(script, relativeLines)
 	if err != nil {
-		var commands commandMetrics
+		var events invocationMetrics
 		if sourceError, ok := errors.AsType[*commandError](err); ok {
-			commands.invokeFailure(sourceError.Operation)
+			events.invokeFailure(sourceError.Operation, sourceError.Attempt, sourceError.Reason)
 		}
-		return nil, filesystemWorkspace{}, commands, "", err
+		return nil, filesystemWorkspace{}, events, "", err
 	}
 	load := func(path string) (loadedFile, error) {
 		if err := ctx.Err(); err != nil {
@@ -176,7 +176,11 @@ func evaluateScript(ctx context.Context, workspace Workspace, script string, rel
 		}
 		file, err := filesystem.root.Open(path)
 		if err != nil {
-			return loadedFile{}, fmt.Errorf("reading %s: %w", path, err)
+			reason := reasonOther
+			if errors.Is(err, fs.ErrNotExist) {
+				reason = reasonFileMissing
+			}
+			return loadedFile{}, withReason(reason, fmt.Errorf("reading %s: %w", path, err))
 		}
 		defer file.Close()
 		info, err := file.Stat()
@@ -263,6 +267,13 @@ func (w filesystemWorkspace) resolvePath(path string) (string, error) {
 	return path, nil
 }
 
+func completedReport(report string, written bool) string {
+	if written {
+		return report
+	}
+	return ""
+}
+
 func writeStateReport(stderr io.Writer, report string) bool {
 	written, err := io.WriteString(stderr, report)
 	return err == nil && written == len(report)
@@ -290,7 +301,7 @@ func fail(stderr io.Writer, message string) int {
 	return 1
 }
 
-func failWithIneffectiveMetrics(stderr io.Writer, message, dataDirectory, script string, commands commandMetrics) int {
+func failWithIneffectiveMetrics(stderr io.Writer, message, dataDirectory, script string, commands invocationMetrics) int {
 	exitCode := fail(stderr, message)
 	if dataDirectory != "" {
 		if err := recordIneffectiveMetrics(dataDirectory, script, commands); err != nil {
