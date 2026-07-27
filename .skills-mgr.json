@@ -1,0 +1,27 @@
+{
+  "schema_revision": 1,
+  "skills": {
+    "authoring-shadowtree-recipes": false,
+    "build-code-skeleton": false,
+    "codebase-design": false,
+    "deliver-vertical-slice": false,
+    "deslop": false,
+    "draft-spec": false,
+    "golang-best-practices": true,
+    "harden-release": false,
+    "herdr": false,
+    "new-project": false,
+    "plan-vertical-slices": false,
+    "postgres-patterns": false,
+    "review-spec": false,
+    "rust-async-patterns": false,
+    "rust-best-practices": false,
+    "shadcn": false,
+    "skill-creator": false,
+    "spec-to-contract": false,
+    "using-shadowtree": false,
+    "verify-conformance": false,
+    "writing-great-skills": false,
+    "writing-readme": false
+  }
+}
