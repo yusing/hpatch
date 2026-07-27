@@ -16,12 +16,6 @@ import (
 	"golang.org/x/term"
 )
 
-const disableRelativeLinesEnvironment = "HPATCH_DISABLE_RELATIVE_LINES"
-
-func relativeLinesEnabled() bool {
-	return os.Getenv(disableRelativeLinesEnvironment) != "1"
-}
-
 // Workspace is the filesystem authority for one hpatch operation. Root should
 // be opened from its canonical absolute path; absolute script paths are matched
 // against that name. CWD is root-relative and defaults to ".".
@@ -91,7 +85,7 @@ func RunWorkspace(args []string, stdin io.Reader, stdout, stderr io.Writer, work
 	if err != nil {
 		return fail(stderr, fmt.Sprintf("reading script: %v", err))
 	}
-	changes, filesystem, commands, report, err := evaluateScript(context.TODO(), workspace, string(script), relativeLinesEnabled())
+	changes, filesystem, commands, report, err := evaluateScript(context.TODO(), workspace, string(script))
 	exported, exportErr := writeInvocationMetrics(commands)
 	if exportErr != nil {
 		return fail(stderr, exportErr.Error())
@@ -128,7 +122,7 @@ func RunWorkspace(args []string, stdin io.Reader, stdout, stderr io.Writer, work
 
 // Apply evaluates and atomically applies script within workspace.
 func Apply(ctx context.Context, workspace Workspace, script string) error {
-	changes, filesystem, _, _, err := evaluateScript(ctx, workspace, script, relativeLinesEnabled())
+	changes, filesystem, _, _, err := evaluateScript(ctx, workspace, script)
 	if err != nil {
 		return err
 	}
@@ -144,7 +138,7 @@ func Apply(ctx context.Context, workspace Workspace, script string) error {
 // Translate evaluates script without mutation and returns an apply_patch envelope
 // whose paths are relative to workspace.Root.
 func Translate(ctx context.Context, workspace Workspace, script string) ([]byte, error) {
-	changes, _, _, _, err := evaluateScript(ctx, workspace, script, relativeLinesEnabled())
+	changes, _, _, _, err := evaluateScript(ctx, workspace, script)
 	if err != nil {
 		return nil, err
 	}
@@ -160,12 +154,12 @@ type filesystemWorkspace struct {
 	cwd  string
 }
 
-func evaluateScript(ctx context.Context, workspace Workspace, script string, relativeLines bool) ([]change, filesystemWorkspace, invocationMetrics, string, error) {
+func evaluateScript(ctx context.Context, workspace Workspace, script string) ([]change, filesystemWorkspace, invocationMetrics, string, error) {
 	filesystem, err := validateWorkspace(ctx, workspace)
 	if err != nil {
 		return nil, filesystemWorkspace{}, invocationMetrics{}, "", err
 	}
-	program, err := parse(script, relativeLines)
+	program, err := parse(script)
 	if err != nil {
 		var events invocationMetrics
 		if sourceError, ok := errors.AsType[*commandError](err); ok {

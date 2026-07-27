@@ -120,9 +120,9 @@ func (w *workspace) execute(command instruction, commandIndex int) (commandOutco
 	origin := editOrigin{command: commandIndex, line: command.line, operation: command.operation}
 	switch command.operation {
 	case "sel":
-		return commandOutcome{}, w.active.editor.selectColumns(command.lineRef, command.start, command.end)
+		return commandOutcome{}, w.active.editor.selectColumns(command.lineNumber, command.start, command.end)
 	case "tsel":
-		return commandOutcome{}, w.active.editor.selectOccurrence(command.lineRef, command.occurrence, command.count, command.text)
+		return commandOutcome{}, w.active.editor.selectOccurrence(command.lineNumber, command.occurrence, command.count, command.text)
 	case "bsel":
 		recovered, err := w.active.editor.selectBlock(command.text, command.endText)
 		return commandOutcome{blockRecovered: recovered}, err
@@ -130,7 +130,7 @@ func (w *workspace) execute(command instruction, commandIndex int) (commandOutco
 		recovered, err := w.active.editor.selectNextBlock(command.text, command.endText)
 		return commandOutcome{blockRecovered: recovered}, err
 	case "rsel":
-		return commandOutcome{}, w.active.editor.selectLines(command.lineRef, command.endLineRef)
+		return commandOutcome{}, w.active.editor.selectLines(command.lineNumber, command.endLine)
 	case "type":
 		return commandOutcome{}, w.active.editor.typeText(command.text, origin)
 	case "del":

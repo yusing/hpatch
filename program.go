@@ -13,24 +13,18 @@ import (
 
 var (
 	absoluteLinePattern = regexp.MustCompile(`^[1-9][0-9]*$`)
-	relativeLinePattern = regexp.MustCompile(`^(?:\+[0-9]+|-[1-9][0-9]*)$`)
 	selectPattern       = regexp.MustCompile(`^sel (\S+) ([1-9][0-9]*):([1-9][0-9]*)$`)
 	textSelectPattern   = regexp.MustCompile(`^tsel (\S+) (-?[1-9][0-9]*) (.+)$`)
 	rangePattern        = regexp.MustCompile(`^rsel (\S+):(\S+)$`)
 )
-
-type lineReference struct {
-	value    int
-	relative bool
-}
 
 type instruction struct {
 	attempt    commandAttempt
 	line       int
 	operation  string
 	path       string
-	lineRef    lineReference
-	endLineRef lineReference
+	lineNumber int
+	endLine    int
 	start      int
 	end        int
 	occurrence int
@@ -76,7 +70,7 @@ func (e *commandError) Error() string {
 	return fmt.Sprintf("%s: %s", strings.Join(context, ", "), e.Message)
 }
 
-func parse(source string, relativeLines bool) (*program, error) {
+func parse(source string) (*program, error) {
 	program := &program{}
 	for index, raw := range strings.Split(source, "\n") {
 		lineNumber := index + 1
@@ -86,7 +80,7 @@ func parse(source string, relativeLines bool) (*program, error) {
 		}
 		commandIndex := len(program.instructions) + 1
 		attempt := recognizeCommandAttempt(line)
-		command, err := parseInstruction(lineNumber, line, relativeLines)
+		command, err := parseInstruction(lineNumber, line)
 		if err != nil {
 			message := err.Error()
 			if sourceError, ok := errors.AsType[*commandError](err); ok {
@@ -117,54 +111,30 @@ func recognizeCommandAttempt(line string) commandAttempt {
 	case "in", "new", "mv", "rm", "bsel", "bsel_next", "type", "del", "dup":
 		return commandAttempt{recognized: true}
 	case "sel":
-		coordinate := recognizeLineVariant(fields, 1)
-		return commandAttempt{recognized: coordinate != coordinateNone, coordinate: coordinate}
+		return commandAttempt{recognized: recognizeLine(fields, 1)}
 	case "rsel":
-		coordinate := recognizeRangeVariant(fields)
-		return commandAttempt{recognized: coordinate != coordinateNone, coordinate: coordinate}
+		return commandAttempt{recognized: recognizeRange(fields)}
 	case "tsel":
-		coordinate := recognizeLineVariant(fields, 1)
 		span := recognizeTextSpanVariant(line)
-		if coordinate == coordinateNone || span == textSpanNone {
+		if !recognizeLine(fields, 1) || span == textSpanNone {
 			return commandAttempt{}
 		}
-		return commandAttempt{recognized: true, coordinate: coordinate, textSpan: span}
+		return commandAttempt{recognized: true, textSpan: span}
 	default:
 		return commandAttempt{}
 	}
 }
 
-func recognizeLineVariant(fields []string, index int) coordinateVariant {
-	if len(fields) <= index {
-		return coordinateNone
-	}
-	value := fields[index]
-	if strings.HasPrefix(value, "+") || strings.HasPrefix(value, "-") {
-		return coordinateRelative
-	}
-	if isUnsignedDecimal(value) {
-		return coordinateAbsolute
-	}
-	return coordinateNone
+func recognizeLine(fields []string, index int) bool {
+	return len(fields) > index && isUnsignedDecimal(fields[index])
 }
 
-func recognizeRangeVariant(fields []string) coordinateVariant {
+func recognizeRange(fields []string) bool {
 	if len(fields) < 2 {
-		return coordinateNone
+		return false
 	}
 	start, end, ok := strings.Cut(fields[1], ":")
-	if !ok || start == "" || end == "" {
-		return coordinateNone
-	}
-	startVariant := recognizeLineVariant([]string{start}, 0)
-	endVariant := recognizeLineVariant([]string{end}, 0)
-	if startVariant == coordinateNone || endVariant == coordinateNone {
-		return coordinateNone
-	}
-	if startVariant == coordinateRelative || endVariant == coordinateRelative {
-		return coordinateRelative
-	}
-	return coordinateAbsolute
+	return ok && isUnsignedDecimal(start) && isUnsignedDecimal(end)
 }
 
 func isUnsignedDecimal(value string) bool {
@@ -206,17 +176,7 @@ func decodeLeadingTextOperand(encoded string) (string, string, bool) {
 
 func attemptForInstruction(command instruction) commandAttempt {
 	attempt := commandAttempt{recognized: true}
-	switch command.operation {
-	case "sel", "rsel":
-		attempt.coordinate = coordinateAbsolute
-		if command.lineRef.relative {
-			attempt.coordinate = coordinateRelative
-		}
-	case "tsel":
-		attempt.coordinate = coordinateAbsolute
-		if command.lineRef.relative {
-			attempt.coordinate = coordinateRelative
-		}
+	if command.operation == "tsel" {
 		attempt.textSpan = textSpanSingle
 		if command.count > 1 {
 			attempt.textSpan = textSpanMultiple
@@ -225,7 +185,7 @@ func attemptForInstruction(command instruction) commandAttempt {
 	return attempt
 }
 
-func parseInstruction(sourceLine int, line string, relativeLines bool) (instruction, error) {
+func parseInstruction(sourceLine int, line string) (instruction, error) {
 	for _, operation := range []string{"in", "new", "mv"} {
 		if path, ok := strings.CutPrefix(line, operation+" "); ok {
 			if path == "" {
@@ -240,7 +200,7 @@ func parseInstruction(sourceLine int, line string, relativeLines bool) (instruct
 	}
 
 	if match := selectPattern.FindStringSubmatch(line); match != nil {
-		lineRef, err := parseLineReference(sourceLine, match[1], relativeLines)
+		lineNumber, err := parseLineNumber(sourceLine, match[1])
 		if err != nil {
 			return instruction{}, err
 		}
@@ -256,16 +216,16 @@ func parseInstruction(sourceLine int, line string, relativeLines bool) (instruct
 			return instruction{}, scriptFailure(sourceLine, reasonOrderOrOverlap, "selection start exceeds end")
 		}
 		return instruction{
-			line:      sourceLine,
-			operation: "sel",
-			lineRef:   lineRef,
-			start:     start,
-			end:       end,
+			line:       sourceLine,
+			operation:  "sel",
+			lineNumber: lineNumber,
+			start:      start,
+			end:        end,
 		}, nil
 	}
 
 	if match := textSelectPattern.FindStringSubmatch(line); match != nil {
-		lineRef, err := parseLineReference(sourceLine, match[1], relativeLines)
+		lineNumber, err := parseLineNumber(sourceLine, match[1])
 		if err != nil {
 			return instruction{}, err
 		}
@@ -286,7 +246,7 @@ func parseInstruction(sourceLine int, line string, relativeLines bool) (instruct
 		return instruction{
 			line:       sourceLine,
 			operation:  "tsel",
-			lineRef:    lineRef,
+			lineNumber: lineNumber,
 			occurrence: occurrence,
 			count:      count,
 			text:       value,
@@ -312,21 +272,18 @@ func parseInstruction(sourceLine int, line string, relativeLines bool) (instruct
 	}
 
 	if match := rangePattern.FindStringSubmatch(line); match != nil {
-		start, err := parseLineReference(sourceLine, match[1], relativeLines)
+		start, err := parseLineNumber(sourceLine, match[1])
 		if err != nil {
 			return instruction{}, err
 		}
-		end, err := parseLineReference(sourceLine, match[2], relativeLines)
+		end, err := parseLineNumber(sourceLine, match[2])
 		if err != nil {
 			return instruction{}, err
 		}
-		if start.relative != end.relative {
-			return instruction{}, scriptFailure(sourceLine, reasonOrderOrOverlap, "rsel endpoints must both be absolute or both be relative")
-		}
-		if !start.relative && start.value > end.value {
+		if start > end {
 			return instruction{}, scriptFailure(sourceLine, reasonOrderOrOverlap, "line range start exceeds end")
 		}
-		return instruction{line: sourceLine, operation: "rsel", lineRef: start, endLineRef: end}, nil
+		return instruction{line: sourceLine, operation: "rsel", lineNumber: start, endLine: end}, nil
 	}
 
 	if valueText, ok := strings.CutPrefix(line, "type "); ok {
@@ -400,19 +357,15 @@ func decodeJSONString(encoded string) (string, error) {
 	return value, nil
 }
 
-func parseLineReference(sourceLine int, value string, relativeLines bool) (lineReference, error) {
-	relative := strings.HasPrefix(value, "+") || strings.HasPrefix(value, "-")
-	if relative && !relativeLines {
-		return lineReference{}, scriptFailure(sourceLine, reasonRelativeDisabled, "relative line references are disabled by HPATCH_DISABLE_RELATIVE_LINES=1")
-	}
-	if (!relative && !absoluteLinePattern.MatchString(value)) || (relative && !relativeLinePattern.MatchString(value)) {
-		return lineReference{}, scriptError(sourceLine, fmt.Sprintf("invalid line reference %q", value))
+func parseLineNumber(sourceLine int, value string) (int, error) {
+	if !absoluteLinePattern.MatchString(value) {
+		return 0, scriptError(sourceLine, fmt.Sprintf("invalid line reference %q", value))
 	}
 	number, err := strconv.Atoi(value)
 	if err != nil {
-		return lineReference{}, scriptError(sourceLine, "line reference is out of range")
+		return 0, scriptError(sourceLine, "line reference is out of range")
 	}
-	return lineReference{value: number, relative: relative}, nil
+	return number, nil
 }
 
 func parseInteger(sourceLine int, value string) (int, error) {

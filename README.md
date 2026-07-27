@@ -109,7 +109,7 @@ and shows their calculated total. Effective-only reduction compares against raw
 `apply_patch` output; overall and weighted reductions compare against the baseline
 including its credited retries, and weighted figures price the state report plus net tool
 definition at five or six times output tokens. Stable tables separate aggregate command
-errors, absolute and relative selectors, single and multiple `tsel` spans, exact and
+errors, `sel`, `tsel`, and `rsel` selectors, single and multiple `tsel` spans, exact and
 whitespace-recovered block selections, terminal failure reasons, and per-command failure
 reasons. Percentages are zero when their denominator is zero. Metrics persist in the
 platform user-configuration directory. Only the latest metrics format is decoded. A valid,

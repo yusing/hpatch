@@ -7,7 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"runtime/debug"
-	"strings"
 )
 
 const helpTextBase = `Usage:
@@ -118,7 +117,7 @@ Final-state report:
 Metrics:
   hpatch gain reads no script and reports caller-accounted hpatch and apply_patch
   output-token estimates separately from input-token estimates. Stable tables retain
-  evaluator-owned command errors, absolute and relative selectors, single and multiple
+  evaluator-owned command errors, absolute selectors, single and multiple
   tsel spans, exact and recovered block successes, and terminal failure reasons.
 
 Paths and patch boundary:
@@ -132,26 +131,6 @@ Paths and patch boundary:
   internal.
 `
 
-func helpText(relativeLines bool) string {
-	if !relativeLines {
-		return helpTextBase
-	}
-	text := strings.Replace(helpTextBase, "  sel LINE START:END                  select", "  sel LINE_REF START:END              select", 1)
-	text = strings.Replace(text, "  tsel LINE OCCURRENCE \"TEXT\" [N]     select", "  tsel LINE_REF OCCURRENCE \"TEXT\" [N] select", 1)
-	text = strings.Replace(text, "  rsel START:END                      select", "  rsel LINE_REF:LINE_REF              select", 1)
-	const marker = "  Cursors and selections are baseline positions."
-	const relativeHelp = "  LINE_REF is either an absolute one-based line or an experimental signed offset\n  from the current baseline cursor line, such as +0, +3, or -2. Relative selectors\n  require cursor state and fail when a selection is active. Set\n  HPATCH_DISABLE_RELATIVE_LINES=1 to disable signed line references.\n\n"
-	return strings.Replace(text, marker, relativeHelp+marker, 1)
-}
-
-const toolHelpRelativeMarker = "{{RELATIVE_LINES}}"
-
-const toolHelpRelativeLines = `  LINE_REF accepts an absolute one-based line or a signed offset from the
-  current baseline cursor, such as +0, +3, or -2. Relative selectors require
-  cursor state and no active selection. Set HPATCH_DISABLE_RELATIVE_LINES=1 to
-  disable them.
-`
-
 const toolHelpTextBase = `Edit workspace files atomically with one free-form script. Submit the complete
 script in one call. A rejected script changes nothing.
 
@@ -160,11 +139,11 @@ Commands:
   new PATH                             select a pending empty file
   mv PATH                              move the active pending file
   rm                                   remove the active file
-  sel LINE_REF START:END               select inclusive one-based rune columns
-  tsel LINE_REF OCCURRENCE "TEXT" [N]  select matching text; N defaults to 1
+  sel LINE START:END                   select inclusive one-based rune columns
+  tsel LINE OCCURRENCE "TEXT" [N]      select matching text; N defaults to 1
   bsel "START" "END"                   select one unique whole-file block
   bsel_next "START" "END"              select one unique block in the current scope
-  rsel LINE_REF:LINE_REF               select inclusive complete logical lines
+  rsel START:END                       select inclusive complete logical lines
   type "TEXT"                          replace the selection or insert at the cursor
   del                                  delete the selection
   dup                                  duplicate the selected baseline text
@@ -175,7 +154,7 @@ State and selectors:
   commands. Returning with in resets its cursor and selection but keeps recorded
   edits. mv preserves baseline identity. Text introduced by an edit is not selectable.
 
-{{RELATIVE_LINES}}  sel columns count Unicode code points, including tabs, and both endpoints are
+  sel columns count Unicode code points, including tabs, and both endpoints are
   inclusive. tsel occurrences are nonzero: positive from the start, negative
   from the end. Its optional N is positive and spans consecutive nonoverlapping
   matches. Prefer tsel or rsel when possible because a valid sel range may still
@@ -207,24 +186,10 @@ Final-state report:
   the unchanged baseline.
 `
 
-const hostMetricsMarker = "Host metrics schema: caller-v1\n"
+const hostMetricsMarker = "Host metrics schema: caller-v2\n"
 
-func toolHelpText(relativeLines bool) string {
-	relativeHelp := ""
-	if relativeLines {
-		relativeHelp = toolHelpRelativeLines
-	}
-	text := strings.Replace(toolHelpTextBase, toolHelpRelativeMarker, relativeHelp, 1)
-	if !relativeLines {
-		text = strings.Replace(text, "sel LINE_REF START:END", "sel LINE START:END", 1)
-		text = strings.Replace(text, "tsel LINE_REF OCCURRENCE", "tsel LINE OCCURRENCE", 1)
-		text = strings.Replace(text, "rsel LINE_REF:LINE_REF", "rsel START:END", 1)
-	}
-	return text + hostMetricsMarker
-}
-
-func relativeLinesEnabled() bool {
-	return os.Getenv("HPATCH_DISABLE_RELATIVE_LINES") != "1"
+func toolHelpText() string {
+	return toolHelpTextBase + hostMetricsMarker
 }
 
 const translateHelpText = `Usage:
@@ -353,13 +318,13 @@ func runInformational(args []string, stdout, stderr io.Writer) (int, bool) {
 	var output, description string
 	switch {
 	case len(args) == 1 && args[0] == "--help":
-		output = helpText(relativeLinesEnabled())
+		output = helpTextBase
 		description = "help"
 	case len(args) == 2 && args[0] == "translate" && args[1] == "--help":
 		output = translateHelpText
 		description = "translate help"
 	case len(args) == 1 && args[0] == "--tool-help":
-		output = toolHelpText(relativeLinesEnabled())
+		output = toolHelpText()
 		description = "tool help"
 	case len(args) == 1 && args[0] == "--version":
 		output = "hpatch " + buildVersion() + "\n"

@@ -2,14 +2,6 @@ package hpatch
 
 import "errors"
 
-type coordinateVariant uint8
-
-const (
-	coordinateNone coordinateVariant = iota
-	coordinateAbsolute
-	coordinateRelative
-)
-
 type textSpanVariant uint8
 
 const (
@@ -20,7 +12,6 @@ const (
 
 type commandAttempt struct {
 	recognized bool
-	coordinate coordinateVariant
 	textSpan   textSpanVariant
 }
 
@@ -29,28 +20,20 @@ type commandOutcome struct {
 }
 
 const (
-	selectorVariantCount = 6
 	textSpanVariantCount = 2
 	blockOutcomeCount    = 4
 )
 
 type invocationMetrics struct {
-	Commands         commandMetrics                      `json:"commands"`
-	SelectorVariants [selectorVariantCount]commandMetric `json:"selector_variants"`
-	TextSpans        [textSpanVariantCount]commandMetric `json:"text_spans"`
-	BlockOutcomes    [blockOutcomeCount]uint64           `json:"block_outcomes"`
-	Reasons          [failureReasonCount]uint64          `json:"reasons"`
+	Commands      commandMetrics                      `json:"commands"`
+	TextSpans     [textSpanVariantCount]commandMetric `json:"text_spans"`
+	BlockOutcomes [blockOutcomeCount]uint64           `json:"block_outcomes"`
+	Reasons       [failureReasonCount]uint64          `json:"reasons"`
 	// CommandReasons attributes each error to the command that raised it. The
 	// flat Reasons histogram cannot answer which primitive a reason belongs
 	// to, which is the question that decides whether a command earns its
 	// place in the language.
 	CommandReasons [commandCount][failureReasonCount]uint64 `json:"command_reasons"`
-}
-
-var selectorVariantNames = [selectorVariantCount]string{
-	"sel absolute", "sel relative",
-	"tsel absolute", "tsel relative",
-	"rsel absolute", "rsel relative",
 }
 
 var textSpanVariantNames = [textSpanVariantCount]string{"single", "multiple"}
@@ -62,9 +45,6 @@ var blockOutcomeNames = [blockOutcomeCount]string{
 
 func (m *invocationMetrics) invoke(operation string, attempt commandAttempt) {
 	m.Commands.invoke(operation)
-	if index := selectorVariantIndex(operation, attempt.coordinate); index >= 0 {
-		m.SelectorVariants[index].Invocations++
-	}
 	if operation == "tsel" && attempt.textSpan != textSpanNone {
 		m.TextSpans[attempt.textSpan-1].Invocations++
 	}
@@ -75,9 +55,6 @@ func (m *invocationMetrics) fail(operation string, attempt commandAttempt, reaso
 		return
 	}
 	m.Commands.fail(operation)
-	if index := selectorVariantIndex(operation, attempt.coordinate); index >= 0 {
-		m.SelectorVariants[index].Errors++
-	}
 	if operation == "tsel" && attempt.textSpan != textSpanNone {
 		m.TextSpans[attempt.textSpan-1].Errors++
 	}
@@ -97,25 +74,6 @@ func (m *invocationMetrics) recordOutcome(operation string, outcome commandOutco
 	if index := blockOutcomeIndex(operation, outcome.blockRecovered); index >= 0 {
 		m.BlockOutcomes[index]++
 	}
-}
-
-func selectorVariantIndex(operation string, variant coordinateVariant) int {
-	if variant != coordinateAbsolute && variant != coordinateRelative {
-		return -1
-	}
-	base := -1
-	switch operation {
-	case "sel":
-		base = 0
-	case "tsel":
-		base = 2
-	case "rsel":
-		base = 4
-	}
-	if base < 0 {
-		return -1
-	}
-	return base + int(variant-coordinateAbsolute)
 }
 
 func blockOutcomeIndex(operation string, recovered bool) int {
@@ -139,8 +97,6 @@ type failureReason uint8
 
 const (
 	reasonSyntax failureReason = iota
-	reasonRelativeDisabled
-	reasonRelativeState
 	reasonCoordinateBounds
 	reasonOccurrenceMissing
 	reasonAnchorMissing
@@ -159,8 +115,6 @@ const (
 
 var failureReasonNames = [failureReasonCount]string{
 	"syntax",
-	"relative-disabled",
-	"relative-state",
 	"coordinate-bounds",
 	"occurrence-missing",
 	"anchor-missing",

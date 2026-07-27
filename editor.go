@@ -46,11 +46,7 @@ func (e *editor) resetCursor() {
 	e.cursorCommand = 0
 }
 
-func (e *editor) selectColumns(lineRef lineReference, startColumn, endColumn int) error {
-	lineNumber, err := e.resolveLineReference(lineRef)
-	if err != nil {
-		return withReason(reasonRelativeState, err)
-	}
+func (e *editor) selectColumns(lineNumber, startColumn, endColumn int) error {
 	line, err := lineAt(e.baseline, lineNumber)
 	if err != nil {
 		return withReason(reasonCoordinateBounds, err)
@@ -63,11 +59,7 @@ func (e *editor) selectColumns(lineRef lineReference, startColumn, endColumn int
 	return withReason(reasonEditConflict, e.setSelection(selection{start: line.start + start, end: line.start + end}))
 }
 
-func (e *editor) selectOccurrence(lineRef lineReference, occurrence, count int, literal string) error {
-	lineNumber, err := e.resolveLineReference(lineRef)
-	if err != nil {
-		return withReason(reasonRelativeState, err)
-	}
+func (e *editor) selectOccurrence(lineNumber, occurrence, count int, literal string) error {
 	line, err := lineAt(e.baseline, lineNumber)
 	if err != nil {
 		return withReason(reasonCoordinateBounds, err)
@@ -153,43 +145,7 @@ func (e *editor) selectBlockInScope(startLiteral, endLiteral string, scopeStart,
 	}))
 }
 
-func (e *editor) resolveLineReference(ref lineReference) (int, error) {
-	if !ref.relative {
-		return ref.value, nil
-	}
-	base, err := e.relativeLineBase()
-	if err != nil {
-		return 0, err
-	}
-	return base + ref.value, nil
-}
-
-func (e *editor) relativeLineBase() (int, error) {
-	if e.selection != nil {
-		return 0, fmt.Errorf("relative line reference requires cursor state; a selection is active")
-	}
-	lines := logicalLines(e.baseline)
-	if len(lines) == 0 {
-		return 0, fmt.Errorf("relative line reference requires a nonempty baseline")
-	}
-	for index, line := range lines {
-		if e.cursor < line.fullEnd {
-			return index + 1, nil
-		}
-	}
-	return len(lines), nil
-}
-
-func (e *editor) selectLines(startRef, endRef lineReference) error {
-	startLine, endLine := startRef.value, endRef.value
-	if startRef.relative {
-		base, err := e.relativeLineBase()
-		if err != nil {
-			return withReason(reasonRelativeState, err)
-		}
-		startLine = base + startRef.value
-		endLine = base + endRef.value
-	}
+func (e *editor) selectLines(startLine, endLine int) error {
 	if startLine > endLine {
 		return withReason(reasonOrderOrOverlap, fmt.Errorf("resolved line range start %d exceeds end %d", startLine, endLine))
 	}

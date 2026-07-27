@@ -106,13 +106,13 @@ func TestMalformedSelectorAttributionRequiresRecognizableVariant(t *testing.T) {
 		{name: "nonnumeric sel", script: "sel nope\n"},
 		{name: "bare tsel", script: "tsel\n"},
 		{name: "tsel without text", script: "tsel 1 1\n"},
-		{name: "zero absolute line", script: "sel 0 1:1\n", want: commandAttempt{recognized: true, coordinate: coordinateAbsolute}, reason: reasonSyntax},
-		{name: "malformed signed line", script: "sel +x 1:1\n", want: commandAttempt{recognized: true, coordinate: coordinateRelative}, reason: reasonSyntax},
-		{name: "invalid multiple count", script: "tsel 1 1 \"x\" nope\n", want: commandAttempt{recognized: true, coordinate: coordinateAbsolute, textSpan: textSpanMultiple}, reason: reasonInvalidCount},
+		{name: "zero absolute line", script: "sel 0 1:1\n", want: commandAttempt{recognized: true}, reason: reasonSyntax},
+		{name: "malformed signed line", script: "sel +x 1:1\n"},
+		{name: "invalid multiple count", script: "tsel 1 1 \"x\" nope\n", want: commandAttempt{recognized: true, textSpan: textSpanMultiple}, reason: reasonInvalidCount},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			_, err := parse(test.script, true)
+			_, err := parse(test.script)
 			sourceError, ok := errors.AsType[*commandError](err)
 			if !ok {
 				t.Fatalf("parse() error = %T %v, want *commandError", err, err)
@@ -154,9 +154,7 @@ func TestMetricsClassifyVariantsOutcomesAndReasons(t *testing.T) {
 
 	for _, script := range []string{
 		"in sample.txt\nsel 1 1:1\ntype \"A\"\n",
-		"in sample.txt\nsel +0 1:1\ntype \"A\"\n",
 		"in sample.txt\nrsel 1:1\ntype \"A\"\n",
-		"in sample.txt\nrsel +0:+0\ntype \"A\"\n",
 		"in sample.txt\ntsel 1 1 \"alpha\"\ntype \"A\"\n",
 		"in sample.txt\ntsel 1 1 \"alpha\" 1\ntype \"A\"\n",
 		"in sample.txt\ntsel 1 1 \"alpha\" 2\ntype \"A\"\n",
@@ -176,23 +174,10 @@ func TestMetricsClassifyVariantsOutcomesAndReasons(t *testing.T) {
 	} {
 		run(script, false)
 	}
-	t.Setenv(disableRelativeLinesEnvironment, "1")
-	run("in sample.txt\nsel +0 1:1\n", false)
 
 	got, err := readMetrics(dataDirectory)
 	if err != nil {
 		t.Fatal(err)
-	}
-	wantSelectorVariants := [selectorVariantCount]commandMetric{
-		{Invocations: 1},
-		{Invocations: 3, Errors: 2},
-		{Invocations: 5, Errors: 2},
-		{},
-		{Invocations: 1},
-		{Invocations: 1},
-	}
-	if got.SelectorVariants != wantSelectorVariants {
-		t.Fatalf("selector variants = %+v, want %+v", got.SelectorVariants, wantSelectorVariants)
 	}
 	wantTextSpans := [textSpanVariantCount]commandMetric{
 		{Invocations: 3, Errors: 1},
@@ -206,8 +191,6 @@ func TestMetricsClassifyVariantsOutcomesAndReasons(t *testing.T) {
 		t.Fatalf("block outcomes = %+v, want %+v", got.BlockOutcomes, wantBlockOutcomes)
 	}
 	for reason, want := range map[failureReason]uint64{
-		reasonSyntax:            1,
-		reasonRelativeDisabled:  1,
 		reasonOccurrenceMissing: 1,
 		reasonAnchorMissing:     1,
 		reasonAnchorAmbiguous:   1,
@@ -225,7 +208,7 @@ func TestMetricsClassifyVariantsOutcomesAndReasons(t *testing.T) {
 	for _, count := range got.Reasons {
 		totalReasons += count
 	}
-	if totalReasons != totalCommands.Errors || totalReasons != 6 {
+	if totalReasons != totalCommands.Errors || totalReasons != 4 {
 		t.Fatalf("reason total = %d, aggregate errors = %d", totalReasons, totalCommands.Errors)
 	}
 }
@@ -254,23 +237,21 @@ func TestMetricsSlotRoundTripsAllCounters(t *testing.T) {
 func representativeMetrics() metrics {
 	value := metrics{HPatchTokens: 11, ApplyPatchTokens: 19, IneffectiveHPatchTokens: 7, FailedApplyPatchTokens: 5, ReportInputTokens: 5}
 	value.Commands[commandOperationIndex("sel")] = commandMetric{Invocations: 3, Errors: 1}
-	value.SelectorVariants[selectorVariantIndex("sel", coordinateAbsolute)] = commandMetric{Invocations: 2}
-	value.SelectorVariants[selectorVariantIndex("sel", coordinateRelative)] = commandMetric{Invocations: 1, Errors: 1}
+
 	value.Commands[commandOperationIndex("tsel")] = commandMetric{Invocations: 2, Errors: 1}
-	value.SelectorVariants[selectorVariantIndex("tsel", coordinateAbsolute)] = commandMetric{Invocations: 1}
-	value.SelectorVariants[selectorVariantIndex("tsel", coordinateRelative)] = commandMetric{Invocations: 1, Errors: 1}
+
 	value.TextSpans[textSpanSingle-1] = commandMetric{Invocations: 1}
 	value.TextSpans[textSpanMultiple-1] = commandMetric{Invocations: 1, Errors: 1}
 	value.Commands[commandOperationIndex("bsel")] = commandMetric{Invocations: 2, Errors: 1}
 	value.BlockOutcomes[blockOutcomeIndex("bsel", false)] = 1
 	value.Commands[commandOperationIndex("bsel_next")] = commandMetric{Invocations: 1}
 	value.BlockOutcomes[blockOutcomeIndex("bsel_next", true)] = 1
-	value.Reasons[reasonRelativeDisabled] = 2
+	value.Reasons[reasonSyntax] = 2
 	value.Reasons[reasonAnchorMissing] = 1
 	// Attribute each reason to the command that raised it so the
 	// cross-tabulation reconciles with both margins.
-	value.CommandReasons[commandOperationIndex("sel")][reasonRelativeDisabled] = 1
-	value.CommandReasons[commandOperationIndex("tsel")][reasonRelativeDisabled] = 1
+	value.CommandReasons[commandOperationIndex("sel")][reasonSyntax] = 1
+	value.CommandReasons[commandOperationIndex("tsel")][reasonSyntax] = 1
 	value.CommandReasons[commandOperationIndex("bsel")][reasonAnchorMissing] = 1
 	return value
 }

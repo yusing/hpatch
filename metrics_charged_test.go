@@ -45,7 +45,7 @@ func TestInvocationMetricsExportWithoutLocalPersistence(t *testing.T) {
 	}
 }
 
-func TestInvocationMetricsExportUsesStableCallerSchema(t *testing.T) {
+func TestInvocationMetricsExportUsesCallerV2Schema(t *testing.T) {
 	value := invocationMetrics{}
 	value.Commands[commandOperationIndex("new")].Invocations = 1
 	encoded, err := json.Marshal(value)
@@ -56,10 +56,13 @@ func TestInvocationMetricsExportUsesStableCallerSchema(t *testing.T) {
 	if err := json.Unmarshal(encoded, &object); err != nil {
 		t.Fatal(err)
 	}
-	for _, key := range []string{"commands", "selector_variants", "text_spans", "block_outcomes", "reasons", "command_reasons"} {
+	for _, key := range []string{"commands", "text_spans", "block_outcomes", "reasons", "command_reasons"} {
 		if _, ok := object[key]; !ok {
 			t.Fatalf("invocation JSON %s lacks %q", encoded, key)
 		}
+	}
+	if _, ok := object["selector_variants"]; ok {
+		t.Fatalf("invocation JSON %s retains the obsolete selector variants field", encoded)
 	}
 	if bytes.Contains(encoded, []byte("Invocations")) || !bytes.Contains(encoded, []byte(`"invocations":1`)) {
 		t.Fatalf("command metric JSON is not stable snake_case: %s", encoded)

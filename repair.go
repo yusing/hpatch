@@ -63,10 +63,8 @@ func (w *workspace) repairContext(command instruction, reason failureReason) str
 // get the file's line count; a rejected column range or missing occurrence gets
 // the addressed line with its measurements.
 func (w *workspace) writeLineRepair(report *strings.Builder, editor *editor, lines []logicalLine, command instruction, reason failureReason) {
-	number, ok := editor.resolvedLineNumber(command.lineRef)
-	if !ok {
-		return
-	}
+	number := command.lineNumber
+
 	if number < 1 || number > len(lines) {
 		fmt.Fprintf(report, "%s has %d lines; line %d does not exist\n", w.active.path, len(lines), number)
 		writeLineWindow(report, editor.baseline, lines, min(max(number, 1), len(lines)))
@@ -93,11 +91,8 @@ func (w *workspace) writeRangeRepair(report *strings.Builder, editor *editor, li
 	if reason != reasonCoordinateBounds && reason != reasonOrderOrOverlap {
 		return
 	}
-	start, startOK := editor.resolvedLineNumber(command.lineRef)
-	end, endOK := editor.resolvedLineNumber(command.endLineRef)
-	if !startOK || !endOK {
-		return
-	}
+	start := command.lineNumber
+	end := command.endLine
 	fmt.Fprintf(report, "%s has %d lines; requested lines %d:%d\n", w.active.path, len(lines), start, end)
 	writeLineWindow(report, editor.baseline, lines, min(max(start, 1), len(lines)))
 }
@@ -181,8 +176,8 @@ func (e *editor) editOffset() int {
 func (e *editor) addressedOffset(command instruction, lines []logicalLine) int {
 	switch command.operation {
 	case "sel", "tsel", "rsel":
-		if number, ok := e.resolvedLineNumber(command.lineRef); ok && number >= 1 && number <= len(lines) {
-			return lines[number-1].start
+		if command.lineNumber >= 1 && command.lineNumber <= len(lines) {
+			return lines[command.lineNumber-1].start
 		}
 	}
 	return e.editOffset()
@@ -292,15 +287,4 @@ func joinLineNumbers(numbers []int, total int) string {
 		rendered = append(rendered, fmt.Sprintf("... (%d more occurrences)", omitted))
 	}
 	return strings.Join(rendered, ", ")
-}
-
-// resolvedLineNumber resolves a line reference without reporting why an
-// unresolvable relative reference failed, because repair context is
-// supplementary to the diagnostic that already stated the cause.
-func (e *editor) resolvedLineNumber(ref lineReference) (int, bool) {
-	number, err := e.resolveLineReference(ref)
-	if err != nil {
-		return 0, false
-	}
-	return number, true
 }

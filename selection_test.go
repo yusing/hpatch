@@ -466,68 +466,20 @@ func TestTextSelectionOccurrenceGroupFailuresAreAtomic(t *testing.T) {
 	}
 }
 
-func TestRelativeLineSelectorsResolveFromCursor(t *testing.T) {
+func TestSelectorsRejectNonAbsoluteLinesAtomically(t *testing.T) {
 	tests := []struct {
-		name, content, script, want string
+		name, script, want string
 	}{
-		{
-			name:    "sel positive offset",
-			content: "one\ntwo\nthree\n",
-			script:  "in file.txt\ntsel 1 1 \"one\"\ntype \"ONE\"\nsel +1 1:3\ntype \"TWO\"\n",
-			want:    "ONE\nTWO\nthree\n",
-		},
-		{
-			name:    "tsel negative offset",
-			content: "one\ntwo\nthree\n",
-			script:  "in file.txt\ntsel 3 1 \"three\"\ntype \"THREE\"\ntsel -1 1 \"two\"\ntype \"TWO\"\n",
-			want:    "one\nTWO\nTHREE\n",
-		},
-		{
-			name:    "rsel plus zero follows line boundary",
-			content: "one\ntwo\nthree\nfour\n",
-			script:  "in file.txt\nrsel 1:1\ntype \"ONE\\n\"\nrsel +0:+1\ntype \"REST\"\n",
-			want:    "ONE\nREST\nfour\n",
-		},
-		{
-			name:    "plus zero at eof uses final line",
-			content: "one\ntwo",
-			script:  "in file.txt\ntsel 2 1 \"two\"\ndup\ntsel +0 1 \"two\"\ntype \"SECOND\"\n",
-			want:    "one\nSECONDtwo",
-		},
+		{name: "sel signed", script: "in file.txt\nsel +0 1:1", want: `invalid line reference "+0"`},
+		{name: "tsel signed", script: "in file.txt\ntsel -1 1 \"one\"", want: `invalid line reference "-1"`},
+		{name: "rsel signed", script: "in file.txt\nrsel +0:+1", want: `invalid line reference "+0"`},
+		{name: "sel zero", script: "in file.txt\nsel 0 1:1", want: `invalid line reference "0"`},
+		{name: "tsel negative zero", script: "in file.txt\ntsel -0 1 \"one\"", want: `invalid line reference "-0"`},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			root := t.TempDir()
-			writeTestFile(t, root, "file.txt", test.content, 0o644)
-			stdout, stderr, exitCode := runForTest(root, nil, test.script)
-			if exitCode != 0 || stdout != "" || stderr != "" {
-				t.Fatalf("Run() = exit %d, stdout %q, stderr %q", exitCode, stdout, stderr)
-			}
-			if got := readTestFile(t, root, "file.txt"); got != test.want {
-				t.Fatalf("file = %q, want %q", got, test.want)
-			}
-		})
-	}
-}
-
-func TestRelativeLineSelectorFailuresAreAtomic(t *testing.T) {
-	tests := []struct {
-		name, content, script, want string
-	}{
-		{name: "active selection", content: "one\ntwo\n", script: "in file.txt\ntsel 1 1 \"one\"\nsel +0 1:1", want: "relative line reference requires cursor state; a selection is active"},
-		{name: "before first line", content: "one\ntwo\n", script: "in file.txt\nsel -1 1:1", want: "line 0 is outside the file"},
-		{name: "after final line", content: "one\ntwo\n", script: "in file.txt\nsel +2 1:1", want: "line 3 is outside the file"},
-		{name: "reversed resolved range", content: "one\ntwo\n", script: "in file.txt\nrsel +1:+0", want: "resolved line range start 2 exceeds end 1"},
-		{name: "mixed range", content: "one\ntwo\n", script: "in file.txt\nrsel +0:2", want: "rsel endpoints must both be absolute or both be relative"},
-		{name: "zero absolute", content: "one\n", script: "in file.txt\nsel 0 1:1", want: "invalid line reference \"0\""},
-		{name: "negative zero", content: "one\n", script: "in file.txt\ntsel -0 1 \"one\"", want: "invalid line reference \"-0\""},
-		{name: "incomplete signed", content: "one\n", script: "in file.txt\nsel + 1:1", want: "invalid line reference \"+\""},
-		{name: "empty baseline", content: "", script: "in file.txt\nsel +0 1:1", want: "relative line reference requires a nonempty baseline"},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			root := t.TempDir()
-			writeTestFile(t, root, "file.txt", test.content, 0o644)
+			writeTestFile(t, root, "file.txt", "one\ntwo\n", 0o644)
 			before := readTree(t, root)
 			stdout, stderr, exitCode := runForTest(root, []string{"translate"}, test.script)
 			if exitCode != 1 || stdout != "" || !strings.Contains(stderr, test.want) {
@@ -539,36 +491,6 @@ func TestRelativeLineSelectorFailuresAreAtomic(t *testing.T) {
 		})
 	}
 }
-
-func TestRelativeLineSyntaxCanBeDisabled(t *testing.T) {
-	t.Setenv("HPATCH_DISABLE_RELATIVE_LINES", "1")
-	root := t.TempDir()
-	writeTestFile(t, root, "file.txt", "one\ntwo\n", 0o644)
-	before := readTree(t, root)
-	stdout, stderr, exitCode := runForTest(root, []string{"translate"}, "in file.txt\nsel +0 1:1")
-	if exitCode != 1 || stdout != "" || !strings.Contains(stderr, "relative line references are disabled by HPATCH_DISABLE_RELATIVE_LINES=1") {
-		t.Fatalf("Run() = exit %d, stdout %q, stderr %q", exitCode, stdout, stderr)
-	}
-	if after := readTree(t, root); !reflect.DeepEqual(after, before) {
-		t.Fatalf("failure mutated tree: before %#v, after %#v", before, after)
-	}
-
-	stdout, stderr, exitCode = runForTest(root, []string{"translate"}, "in file.txt\nsel 1 1:1\ntype \"O\"")
-	if exitCode != 0 || stdout == "" || stderr != "" {
-		t.Fatalf("absolute selector = exit %d, stdout %q, stderr %q", exitCode, stdout, stderr)
-	}
-}
-
-func TestOnlyEnvironmentValueOneDisablesRelativeLines(t *testing.T) {
-	t.Setenv("HPATCH_DISABLE_RELATIVE_LINES", "true")
-	root := t.TempDir()
-	writeTestFile(t, root, "file.txt", "one\n", 0o644)
-	stdout, stderr, exitCode := runForTest(root, []string{"translate"}, "in file.txt\nsel +0 1:1\ntype \"O\"")
-	if exitCode != 0 || stdout == "" || stderr != "" {
-		t.Fatalf("Run() = exit %d, stdout %q, stderr %q", exitCode, stdout, stderr)
-	}
-}
-
 func jsonString(t *testing.T, value string) string {
 	t.Helper()
 	encoded, err := json.Marshal(value)

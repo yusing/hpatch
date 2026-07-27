@@ -19,10 +19,10 @@ import (
 )
 
 const (
-	metricsFilename       = "metrics.bin"
-	metricsLockname       = "metrics.lock"
-	metricsMagic          = "HPATCH14"
-	priorMetricsMagic     = "HPATCH13"
+	metricsFilename = "metrics.bin"
+	metricsLockname = "metrics.lock"
+	metricsMagic    = "HPATCH15"
+
 	metricsSlotSize       = 2160
 	metricsFileSize       = 2 * metricsSlotSize
 	metricsChecksumOffset = 2128
@@ -196,11 +196,6 @@ func (m *metrics) add(entry metrics) error {
 			return fmt.Errorf("updating metrics: command count overflow")
 		}
 	}
-	for index := range selectorVariantCount {
-		if !addCommandMetric(&m.SelectorVariants[index], entry.SelectorVariants[index]) {
-			return fmt.Errorf("updating metrics: selector variant count overflow")
-		}
-	}
 	for index := range textSpanVariantCount {
 		if !addCommandMetric(&m.TextSpans[index], entry.TextSpans[index]) {
 			return fmt.Errorf("updating metrics: tsel span count overflow")
@@ -246,20 +241,8 @@ func validInvocationMetrics(events invocationMetrics) bool {
 	if !ok {
 		return false
 	}
-	for _, entry := range events.SelectorVariants {
-		if entry.Errors > entry.Invocations {
-			return false
-		}
-	}
 	for _, entry := range events.TextSpans {
 		if entry.Errors > entry.Invocations {
-			return false
-		}
-	}
-	for _, operation := range []string{"sel", "tsel", "rsel"} {
-		base := selectorVariantIndex(operation, coordinateAbsolute)
-		combined, ok := sumCommandMetrics(events.SelectorVariants[base], events.SelectorVariants[base+1])
-		if !ok || combined != events.Commands[commandOperationIndex(operation)] {
 			return false
 		}
 	}
@@ -374,9 +357,6 @@ func readMetricsFile(file *os.File) (metrics, uint64, error) {
 	var latest metrics
 	var latestGeneration uint64
 	var valid, mismatchedVersion bool
-	var legacy metrics
-	var legacyGeneration uint64
-	var legacyValid bool
 	for index := range 2 {
 		var encoded [metricsSlotSize]byte
 		read, err := file.ReadAt(encoded[:], int64(index*metricsSlotSize))
@@ -387,13 +367,6 @@ func readMetricsFile(file *os.File) (metrics, uint64, error) {
 			continue
 		}
 		magic := string(encoded[:8])
-		if magic == priorMetricsMagic {
-			candidate, generation, ok := decodeMetricsSlotForMagic(encoded, priorMetricsMagic)
-			if ok && (!legacyValid || generation > legacyGeneration) {
-				legacy, legacyGeneration, legacyValid = candidate, generation, true
-			}
-			continue
-		}
 		if bytes.HasPrefix(encoded[:8], []byte("HPATCH")) && magic != metricsMagic {
 			checksum := sha256.Sum256(encoded[:metricsChecksumOffset])
 			generation := binary.LittleEndian.Uint64(encoded[8:16])
@@ -409,9 +382,6 @@ func readMetricsFile(file *os.File) (metrics, uint64, error) {
 	}
 	if valid {
 		return latest, latestGeneration, nil
-	}
-	if legacyValid {
-		return metrics{invocationMetrics: legacy.invocationMetrics}, legacyGeneration, nil
 	}
 	if !mismatchedVersion {
 		mismatchedVersion, err = hasValidPriorMetricsSlot(file, info.Size())
@@ -471,9 +441,6 @@ func encodeMetricsSlot(value metrics, generation uint64) [metricsSlotSize]byte {
 	for index, entry := range value.Commands {
 		putCommandMetric(encoded[:], 96+index*16, entry)
 	}
-	for index, entry := range value.SelectorVariants {
-		putCommandMetric(encoded[:], 288+index*16, entry)
-	}
 	for index, entry := range value.TextSpans {
 		putCommandMetric(encoded[:], 384+index*16, entry)
 	}
@@ -502,11 +469,7 @@ func putCommandMetric(encoded []byte, offset int, entry commandMetric) {
 }
 
 func decodeMetricsSlot(encoded [metricsSlotSize]byte) (metrics, uint64, bool) {
-	return decodeMetricsSlotForMagic(encoded, metricsMagic)
-}
-
-func decodeMetricsSlotForMagic(encoded [metricsSlotSize]byte, expectedMagic string) (metrics, uint64, bool) {
-	if !bytes.Equal(encoded[:8], []byte(expectedMagic)) {
+	if !bytes.Equal(encoded[:8], []byte(metricsMagic)) {
 		return metrics{}, 0, false
 	}
 	checksum := sha256.Sum256(encoded[:metricsChecksumOffset])
@@ -532,9 +495,6 @@ func decodeMetricsSlotForMagic(encoded [metricsSlotSize]byte, expectedMagic stri
 	}
 	for index := range commandCount {
 		value.Commands[index] = getCommandMetric(encoded[:], 96+index*16)
-	}
-	for index := range selectorVariantCount {
-		value.SelectorVariants[index] = getCommandMetric(encoded[:], 288+index*16)
 	}
 	for index := range textSpanVariantCount {
 		value.TextSpans[index] = getCommandMetric(encoded[:], 384+index*16)
@@ -590,7 +550,12 @@ func gainReportAtWidth(m metrics, width int) string {
 	writeInputGainTable(&report, m, width)
 
 	writeCommandTable(&report, "command metrics:", "command", commandOperations[:], m.Commands[:], true)
-	writeCommandTable(&report, "selector coordinate metrics:", "selector", selectorVariantNames[:], m.SelectorVariants[:], false)
+	selectorNames := []string{"sel", "tsel", "rsel"}
+	selectorMetrics := make([]commandMetric, len(selectorNames))
+	for index, operation := range selectorNames {
+		selectorMetrics[index] = m.Commands[commandOperationIndex(operation)]
+	}
+	writeCommandTable(&report, "selector metrics:", "selector", selectorNames, selectorMetrics, false)
 	writeCommandTable(&report, "tsel span metrics:", "span", textSpanVariantNames[:], m.TextSpans[:], false)
 
 	report.WriteString("block selector successes:\n")

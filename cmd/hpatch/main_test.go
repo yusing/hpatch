@@ -44,9 +44,9 @@ func TestInformationalCommandsNeedNoEnvironmentOrStdin(t *testing.T) {
 		want         string
 		wantFragment string
 	}{
-		{name: "top-level help", args: []string{"--help"}, want: helpText(true), wantFragment: "hpatch translate [--root ROOT] [--cwd CWD] < SCRIPT"},
+		{name: "top-level help", args: []string{"--help"}, want: helpTextBase, wantFragment: "hpatch translate [--root ROOT] [--cwd CWD] < SCRIPT"},
 		{name: "translate help", args: []string{"translate", "--help"}, want: translateHelpText, wantFragment: "without modifying"},
-		{name: "tool help", args: []string{"--tool-help"}, want: toolHelpText(true), wantFragment: "Edit workspace files atomically with one free-form script."},
+		{name: "tool help", args: []string{"--tool-help"}, want: toolHelpText(), wantFragment: "Edit workspace files atomically with one free-form script."},
 		{name: "version", args: []string{"--version"}, want: "hpatch devel\n", wantFragment: "hpatch devel"},
 	}
 	for _, test := range tests {
@@ -71,7 +71,7 @@ func TestTopLevelHelpDescribesCompletePublicSurface(t *testing.T) {
 		"standard input",
 		"bsel \"START\" \"END\"",
 		"bsel_next \"START\" \"END\"",
-		"rsel LINE_REF:LINE_REF",
+		"rsel START:END",
 		"functions.hpatch",
 		"Build selectors against each existing file's immutable baseline.",
 		"Invoke hpatch once per attempt; do not encode, shell-wrap, or route it",
@@ -86,22 +86,22 @@ func TestTopLevelHelpDescribesCompletePublicSurface(t *testing.T) {
 		"preserves the selected final",
 		"translate always emits root-relative paths",
 		"caller-accounted hpatch",
-		"absolute and relative selectors",
+		"absolute selectors",
 		"terminal failure reasons",
 	} {
-		if !strings.Contains(helpText(true), fragment) {
+		if !strings.Contains(helpTextBase, fragment) {
 			t.Fatalf("help does not contain %q", fragment)
 		}
 	}
 }
 
 func TestToolHelpIsFocusedAndAuthoritative(t *testing.T) {
-	help := toolHelpText(true)
+	help := toolHelpText()
 	for _, required := range []string{
 		"one free-form script",
 		"rejected script changes nothing",
-		"sel LINE_REF START:END",
-		"tsel LINE_REF OCCURRENCE \"TEXT\" [N]",
+		"sel LINE START:END",
+		"tsel LINE OCCURRENCE \"TEXT\" [N]",
 		"bsel_next \"START\" \"END\"",
 		"ASCII space and tab runs are",
 		"The first in for an existing file captures an immutable baseline.",
@@ -111,6 +111,7 @@ func TestToolHelpIsFocusedAndAuthoritative(t *testing.T) {
 		"up to three",
 		"workspace-relative paths",
 		"Parent directories for new",
+		"Host metrics schema: caller-v2",
 	} {
 		if !strings.Contains(help, required) {
 			t.Fatalf("tool help does not contain %q", required)
@@ -123,35 +124,13 @@ func TestToolHelpIsFocusedAndAuthoritative(t *testing.T) {
 		"--root",
 		"--cwd",
 		"Metrics:",
-		toolHelpRelativeMarker,
 	} {
 		if strings.Contains(help, excluded) {
 			t.Fatalf("tool help contains non-tool text %q", excluded)
 		}
 	}
-	if len(help) >= len(helpText(true))/2 {
-		t.Fatalf("tool help is not focused: %d bytes versus %d-byte CLI help", len(help), len(helpText(true)))
-	}
-}
-
-func TestRelativeLineHelpCanBeDisabled(t *testing.T) {
-	t.Setenv("HPATCH_DISABLE_RELATIVE_LINES", "1")
-	var stdout, stderr bytes.Buffer
-	if exitCode := run([]string{"--help"}, errorReader{}, &stdout, &stderr); exitCode != 0 || stderr.Len() != 0 {
-		t.Fatalf("run() = exit %d, stdout %q, stderr %q", exitCode, stdout.String(), stderr.String())
-	}
-	for _, relative := range []string{"LINE_REF", "+0", "HPATCH_DISABLE_RELATIVE_LINES"} {
-		if strings.Contains(stdout.String(), relative) {
-			t.Fatalf("disabled help contains relative-line text %q", relative)
-		}
-		if strings.Contains(toolHelpText(false), relative) {
-			t.Fatalf("disabled tool help contains relative-line text %q", relative)
-		}
-	}
-	for _, absolute := range []string{"sel LINE START:END", "tsel LINE OCCURRENCE", "rsel START:END"} {
-		if !strings.Contains(stdout.String(), absolute) {
-			t.Fatalf("disabled help does not contain %q", absolute)
-		}
+	if len(help) >= len(helpTextBase)/2 {
+		t.Fatalf("tool help is not focused: %d bytes versus %d-byte CLI help", len(help), len(helpTextBase))
 	}
 }
 
@@ -206,7 +185,7 @@ func TestWorkspaceOptionsRejectInvalidBoundaries(t *testing.T) {
 
 func TestTopLevelHelpDescribesSelectionOperandConstraints(t *testing.T) {
 	const constraints = "`tsel` occurrence must be nonzero: positive values count from the start, and\n  negative values count from the end. Its optional count must be a positive integer and\n  selects consecutive nonoverlapping occurrences, including intervening source text.\n  Both `bsel` and `bsel_next` anchors must be nonempty and different."
-	if !strings.Contains(helpText(true), constraints) {
+	if !strings.Contains(helpTextBase, constraints) {
 		t.Fatalf("help does not contain accepted operand constraints %q", constraints)
 	}
 
@@ -219,7 +198,7 @@ func TestTopLevelHelpDescribesSelectionOperandConstraints(t *testing.T) {
 		"Both `bsel` and `bsel_next` anchors must be",
 		"anchors must be nonempty and different",
 	} {
-		if !strings.Contains(helpText(true), fragment) {
+		if !strings.Contains(helpTextBase, fragment) {
 			t.Fatalf("help does not contain %q", fragment)
 		}
 	}
@@ -233,7 +212,7 @@ func TestTopLevelHelpDescribesSelectionOperandConstraints(t *testing.T) {
 }
 
 func TestHelpDoesNotLeakSourceTreeReferences(t *testing.T) {
-	for _, output := range []string{helpText(true), toolHelpText(true), translateHelpText} {
+	for _, output := range []string{helpTextBase, toolHelpText(), translateHelpText} {
 		for _, stale := range []string{"doc/spec", "AGENT_INSTRUCTIONS.md"} {
 			if strings.Contains(output, stale) {
 				t.Fatalf("help contains source-tree reference %q", stale)

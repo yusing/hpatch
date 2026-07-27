@@ -4,7 +4,7 @@ pjdoc:
   kind: architecture
   scope: root
   status: approved
-  revision: "6"
+  revision: "7"
   files:
     []
 ---
@@ -19,13 +19,9 @@ recorded edits, conflict validation, final editor state, and net file actions fo
 command against one in-memory virtual workspace. Normal and translate modes consume the
 same completed result; neither mode reimplements command semantics.
 
-The parser retains absolute and signed relative line references structurally, the
-optional `tsel` count, and block-selector operation identity. It attaches recognized
-command and variant metadata plus a stable reason to syntax failures. Relative line
-references are resolved only by the editor owner at execution, against one baseline
-cursor snapshot; the parser and metrics owner never infer cursor positions. The process
-or library boundary resolves `HPATCH_DISABLE_RELATIVE_LINES=1` once and passes the
-feature setting into parsing and help generation.
+The parser retains absolute line numbers, the optional `tsel` count, and block-selector
+operation identity. It attaches recognized command metadata plus a stable reason to
+syntax failures.
 
 The editor owner resolves `bsel` against the full baseline and `bsel_next` against its
 explicit selection- or cursor-derived scope. One block matcher owns exact occurrence
@@ -58,7 +54,7 @@ persist editor state or create a resume mechanism.
 
 ## CTR-BOUNDARY-001 — Filesystem and output boundary
 
-The CLI boundary owns arguments, stdin, workspace selection, environment-derived feature
+The CLI boundary owns arguments, stdin, workspace selection, environment-derived metrics
 configuration, diagnostics, stdout, stderr, exit status, and help composition for
 `REQ-CLI-001`, `REQ-GUIDE-001`, and `REQ-OUTPUT-001`. Top-level and tool help share one
 rendered agent-workflow-through-final-state reference; the tool form excludes CLI mode
@@ -89,11 +85,11 @@ attempts, and honest reporting of commit or rollback failure.
 
 One metrics classifier consumes structured parser and evaluator events rather than
 re-parsing scripts or diagnostics. It owns effective, ineffective, direct-patch, and
-fully emitted report token estimates; aggregate command counters; absolute and relative
-selector variants; single and multiple `tsel` variants; separate `bsel` and `bsel_next`
-counters; exact and whitespace-recovered block outcomes; and stable terminal reason
-counters. The report formatter's exact emitted string is the only source for report-input
-token counting. Price ratios are presentation-time calculations and are never persisted.
+fully emitted report token estimates; aggregate command counters and selector projections; single
+and multiple `tsel` variants; separate `bsel` and `bsel_next` counters; exact and
+whitespace-recovered block outcomes; and stable terminal reason counters. The report
+formatter's exact emitted string is the only source for report-input token counting.
+Price ratios are presentation-time calculations and are never persisted.
 
 The metrics store owns tokenizer use, overflow checks, interprocess locking, alternating
 checksummed fixed-size slots, generation selection, current-version decoding, obsolete

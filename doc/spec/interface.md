@@ -44,8 +44,7 @@ Acceptance:
 5. Each supported informational form writes its complete result to stdout with status
    zero and empty stderr without reading stdin or requiring a valid current directory.
 6. Tool help contains the current agent workflow, editing language, state rules, final
-   report, and tool-path guidance; it excludes CLI-only material and omits relative forms
-   when `HPATCH_DISABLE_RELATIVE_LINES=1`.
+   report, and tool-path guidance while excluding CLI-only material.
 7. Unsupported aliases, trailing arguments, and unknown or future options fail with no
    stdout or final-state report.
 8. A nested cwd changes relative path resolution while normal mutations and translated
@@ -63,9 +62,8 @@ the ineffective-output counter; it contributes nothing to the effective `hpatch`
 A failed invocation is represented downstream by the router's empty `apply_patch` carrier,
 `*** Begin Patch\n*** End Patch\n`. Its tokenized carrier contributes to the failed
 `apply_patch` output counter. The complete failed hpatch call remains in the
-ineffective-output counter and reduces the overall output savings.
-estimates. `gain`, informational commands, and unsupported argument forms do not
-contribute metrics.
+ineffective-output counter and reduces the overall output savings. `gain`, informational
+commands, and unsupported argument forms do not contribute metrics.
 
 Both effective and ineffective hpatch estimates count the `functions.hpatch` tool name
 followed by the charged editing script. The charged script is the script on standard input
@@ -118,29 +116,25 @@ future operations and failures outside command processing are not attributed to 
 supported command. Successfully evaluated commands retain their invocation counts when a
 later output or commit boundary fails.
 
-Selector metrics retain the aggregate command counters and independently classify
-`sel`, `tsel`, and `rsel` attempts as absolute or relative line-coordinate variants.
-`rsel` accepts only all-absolute or all-relative endpoints, so it has no mixed variant.
-Recognizable malformed or disabled relative attempts count as relative invocations and
-errors. `tsel` attempts are additionally classified as single occurrence when `COUNT` is
-omitted or one, and multiple occurrence when the operand is present and intended to
-select more than one occurrence; an invalid count remains attributable to the multiple
-attempt. These orthogonal rows are not added together except where the report explicitly
-derives an aggregate command total.
+The selector metrics table projects the `sel`, `tsel`, and `rsel` rows from aggregate
+command counters, so their invocation and error totals are identical. `tsel` attempts are
+additionally classified as single occurrence when `COUNT` is omitted or one, and multiple
+occurrence when the operand is present and intended to select more than one occurrence;
+an invalid count remains attributable to the multiple attempt.
 
 `bsel` and `bsel_next` have independent command counters. Each successful block selection
 is additionally classified as exact or whitespace-recovered; whitespace-recovered means
 at least one anchor had zero exact matches and the horizontal-whitespace fallback made the
 command succeed. Terminal command errors carry stable internal reason identifiers so gain
-can distinguish malformed or disabled relative coordinates, out-of-bounds coordinates,
-missing or ambiguous occurrences and anchors, invalid occurrence counts, order or overlap,
-edit conflicts, missing active files, and other supported failure families without making
-user-facing diagnostic wording part of the persisted format.
+can distinguish malformed or out-of-bounds coordinates, missing or ambiguous occurrences
+and anchors, invalid occurrence counts, order or overlap, edit conflicts, missing active
+files, and other supported failure families without making user-facing diagnostic wording
+part of the persisted format.
 
 The aggregate is stored in `hpatch/metrics.bin` beneath the platform user configuration
 directory returned by Go's `os.UserConfigDir`. Updates hold an exclusive interprocess
 lock at `hpatch/metrics.lock`; gain reads hold a shared lock. The metrics file contains
-two alternating current-version fixed-size slots holding token, command, variant,
+two alternating current-version fixed-size slots holding token, command, selector,
 recovery, and error-reason counters plus a generation and checksum. A reader uses the
 valid current-format slot with the greatest generation, so an interrupted write to the
 inactive slot leaves the preceding aggregate available. The file does not grow after its
@@ -172,8 +166,7 @@ the report does not subtract definitions, convert input to output, or calculate 
 input/output percentage. Unmeasured `apply_patch` input sources are labeled `not measured`.
 
 Gain then writes stable-order compact tables for aggregate command invocation and error
-rates; absolute and relative selector variants; single and multiple `tsel` spans;
-`bsel` and `bsel_next` exact and whitespace-recovered successes; stable terminal
+rates; `sel`, `tsel`, and `rsel` selector counters; single and multiple `tsel` spans;
 error reasons; and each error attributed to the command that raised it. The last table
 lists only nonzero command-and-reason pairs, and renders a single `none` row when no
 errors are recorded. Every error appears in both the aggregate reason table and the
@@ -191,9 +184,7 @@ Acceptance:
    ineffective hpatch estimates and zero report-input tokens.
 2. Gain reports output and input token classes in separate tables, calculates reductions
    only between output-token quantities, and performs no input/output price conversion.
-3. Aggregate command totals reconcile with absolute and relative selector variants;
-   relative failures cannot be hidden in absolute totals, and disabled recognizable
-   relative attempts count as relative errors.
+3. Each selector metric reconciles with its aggregate command counter.
 4. Single and multiple `tsel` attempts, `bsel` and `bsel_next`, exact and
    whitespace-recovered successes, and stable terminal reasons remain independently
    attributable. Per-command reason counts reconcile with both aggregate command errors
@@ -226,29 +217,19 @@ in PATH
 new PATH
 mv PATH
 rm
-sel LINE_REF START:END
-tsel LINE_REF OCCURRENCE "JSON STRING" [COUNT]
+sel LINE START:END
+tsel LINE OCCURRENCE "JSON STRING" [COUNT]
 bsel "START" "END"
 bsel_next "START" "END"
-rsel LINE_REF:LINE_REF
+rsel START:END
 type "JSON STRING"
 del
 dup
 ```
 
-Absolute line references are one-based base-ten integers matching `[1-9][0-9]*`.
-Experimental relative line references match `+[0-9]+` or `-[1-9][0-9]*`; `+0` denotes
-the current baseline cursor line, and other values add their signed offset to that line.
-`0`, `-0`, and incomplete or nonnumeric signed forms are invalid. Both `rsel` endpoints
-must be absolute or both relative and resolve from one cursor snapshot; mixed ranges are
-invalid. Columns and inclusive endpoints remain one-based. Cursor `0:0` denotes the
-position before the first code point of a file and resolves to line 1 when that line
-exists.
-
-Relative line syntax is enabled unless the process environment contains
-`HPATCH_DISABLE_RELATIVE_LINES=1`. When disabled, agent-facing help omits relative forms
-and a recognizable relative operand fails with a specific disabled-feature diagnostic;
-absolute syntax remains available. No other value disables the feature.
+Line numbers and inclusive endpoints are one-based base-ten integers matching
+`[1-9][0-9]*`. Signed, zero, incomplete, and nonnumeric line operands are invalid.
+Cursor `0:0` denotes the position before the first code point of a file.
 
 `OCCURRENCE` is nonzero: positive values count exact, non-overlapping literal matches
 from the start; negative values count them from the end. Optional `COUNT` defaults to one
@@ -270,18 +251,16 @@ commands are invalid.
 Acceptance:
 
 1. JSON escapes allow spaces, quotes, tabs, and newlines in inserted or anchored text.
-2. Absolute selectors retain their existing forms; valid relative selectors resolve from
-   one baseline cursor snapshot and their equivalent absolute forms select the same span.
-3. Disabling relative lines removes them from help and rejects them specifically without
-   disabling absolute line references.
-4. Optional `tsel COUNT` selects one contiguous occurrence span and omission remains
+2. Signed, zero, malformed, or mixed line ranges fail before filesystem mutation,
+   patch output, or final-state reporting.
+3. Optional `tsel COUNT` selects one contiguous occurrence span and omission remains
    equivalent to count one.
-5. File commands may be interleaved with text commands. File lifecycle commands observe
+4. File commands may be interleaved with text commands. File lifecycle commands observe
    preceding pending state, while selectors retain immutable baseline meaning.
-6. Zero absolute coordinates, malformed or mixed ranges, missing operands, invalid JSON,
-   invalid counts, trailing operands, empty or identical block anchors, and unknown or
-   future commands fail before filesystem mutation, patch output, or final-state report.
-7. With root `/workspace` and cwd `bin/worktree`, script path `main.go` denotes
+5. Missing operands, invalid JSON, invalid counts, trailing operands, empty or identical
+   block anchors, and unknown or future commands fail before filesystem mutation, patch
+   output, or final-state report.
+6. With root `/workspace` and cwd `bin/worktree`, script path `main.go` denotes
    `/workspace/bin/worktree/main.go` and translates as `bin/worktree/main.go`.
 
 ## REQ-FILE-001 — File commands
@@ -342,11 +321,7 @@ and affected baseline lines identified.
 Each active file has either a baseline cursor or a nonempty baseline selection. `in` and
 `new` establish cursor `0:0`, before the first baseline code point. A cursor is an
 insertion position; a selection is a half-open baseline span produced by the inclusive
-commands below. A relative line selector requires cursor state and fails rather than
-consulting a stale hidden cursor when a selection is active. The current cursor line is
-the logical line containing the cursor; `0:0` resolves to the first line, a cursor at a
-line boundary resolves to the following line when one exists, and EOF resolves to the
-final logical line. Empty baselines have no selectable line.
+commands below. Empty baselines have no selectable line.
 
 `sel` selects columns within one resolved baseline logical line. Columns count Unicode
 code points, including one code point per tab; the line terminator is not selectable.
@@ -376,12 +351,11 @@ baseline run rather than one candidate per byte. Matching returns original basel
 boundaries. Missing or ambiguous exact or fallback anchors fail instead of guessing.
 Both selectors include both anchors and all baseline content between them.
 
-`rsel` selects an inclusive range of complete resolved baseline logical lines. Relative
-endpoints resolve independently from the same cursor snapshot before order and bounds are
-validated. For every selected line it owns the line terminator when one is present. It
-records a linewise selection so deletion removes complete lines and duplication creates
-another complete adjacent line range, including when the selected final line has no
-terminator.
+`rsel` selects an inclusive range of complete baseline logical lines after validating
+endpoint order and bounds. For every selected line it owns the line terminator when one
+is present. It records a linewise selection so deletion removes complete lines and
+duplication creates another complete adjacent line range, including when the selected
+final line has no terminator.
 
 Every selection replaces the previous cursor or selection. After `type`, the cursor is
 at the selected baseline span's end; an insertion at a cursor remains at that same
@@ -392,21 +366,18 @@ content.
 Acceptance:
 
 1. Absolute selectors constructed from the inspected pre-edit file retain the same
-   meaning after earlier edits; equivalent valid relative selectors select the same
-   baseline span from their cursor snapshot.
-2. Relative selectors with active selection state, disabled relative syntax, resolved
-   lines outside the baseline, or reversed resolved ranges fail atomically.
-3. Positive and negative multi-occurrence `tsel` spans include intervening source text;
+   meaning after earlier edits.
+2. Positive and negative multi-occurrence `tsel` spans include intervening source text;
    missing initial or complete occurrence groups fail, and overlapping token candidates
    retain non-overlapping occurrence semantics.
-4. `bsel` finds unique anchors before or after the cursor; `bsel_next` respects its
+3. `bsel` finds unique anchors before or after the cursor; `bsel_next` respects its
    selection- or cursor-derived scope and never wraps.
-5. An end occurrence before the resolved start does not collide, while any second start
+4. An end occurrence before the resolved start does not collide, while any second start
    in scope or second end after start remains ambiguous.
-6. A unique spaces-versus-tabs fallback succeeds and maps to original baseline bytes;
+5. A unique spaces-versus-tabs fallback succeeds and maps to original baseline bytes;
    whitespace-equivalent collisions, newline crossing, absent whitespace, and unrelated
    Unicode whitespace do not select a block.
-7. Missing baseline lines, columns, ranges, literal occurrences, or block anchors fail
+6. Missing baseline lines, columns, ranges, literal occurrences, or block anchors fail
    rather than selecting pending or nearby content.
 
 ## REQ-EDIT-001 — Baseline-coordinate edits
@@ -532,8 +503,7 @@ operation, relevant operand or selected path when one exists, and a failure cate
 and embedded newlines are folded so one failure remains one logical line. Failures return
 nonzero and emit no stdout or final-state report. Block-selection diagnostics identify
 whole-file versus state-derived scope and exact versus whitespace-tolerant ambiguity;
-disabled relative syntax receives a specific diagnostic rather than a generic malformed
-command.
+malformed line syntax receives a syntax diagnostic rather than selecting a nearby line.
 
 A command failure that addressed an existing baseline additionally writes repair context
 on the lines following its diagnostic. Selectors resolve against a baseline the caller
@@ -559,7 +529,7 @@ Acceptance:
 2. Rendered cursor affinity, selection ranges, moved paths, empty files, three-line
    boundary windows, Unicode columns, 64-code-point truncation, and control escaping
    produce the specified report without implying cross-invocation persistence.
-3. Malformed input, disabled or out-of-bounds relative selection, unrelated literal or
+3. Malformed input, malformed or out-of-bounds line selection, unrelated literal or
    whitespace collision, unknown or future command, invalid UTF-8, missing or non-regular
    file, logical path collision, staging failure, translation failure, and cancellation
    produce no mutation, patch output, or final-state report.
@@ -578,8 +548,7 @@ trust-boundary, validation, final-state-report, and metrics reference. Tool help
 its agent workflow through final-state-report sections rather than maintaining a second
 editing-language definition, and adds only custom-tool path guidance. Tool help excludes
 CLI usage and mode descriptions, options, metrics, and version material. Both references
-`bsel` as whole-file and `bsel_next` as explicitly stateful, document automatic
-horizontal-whitespace tolerance and optional `tsel COUNT`, and show relative line forms
-only when `HPATCH_DISABLE_RELATIVE_LINES` is not `1`. The project agent instruction file
-only directs agents to run and follow `hpatch --help`; it does not duplicate language
-semantics that can become stale.
+document `bsel` as whole-file and `bsel_next` as explicitly stateful, horizontal-whitespace
+tolerance, and optional `tsel COUNT`. The project agent instruction file only directs
+agents to run and follow `hpatch --help`; it does not duplicate language semantics that
+can become stale.

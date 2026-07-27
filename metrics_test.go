@@ -117,7 +117,7 @@ func TestGainReportReconcilesEffectiveAndIneffectiveTokens(t *testing.T) {
 	for _, nextTable := range []string{
 		"input token estimates:",
 		"command metrics:",
-		"selector coordinate metrics:",
+		"selector metrics:",
 		"tsel span metrics:",
 		"block selector successes:",
 		"failure reasons:",
@@ -183,7 +183,7 @@ func TestGainReportsCommandInvocationsErrorsAndRates(t *testing.T) {
 		{name: "success with unrelated command-name text", args: []string{"translate"}, script: "new note.txt\ntype \"bsel sel future-command\"\n", success: true},
 		{name: "execution error", args: []string{"translate"}, script: "new failed.txt\ntype \"ignored\"\nbsel \"missing\" \"end\"\n"},
 		{name: "bsel_next execution error", args: []string{"translate"}, script: "new failed-next.txt\ntype \"ignored\"\nbsel_next \"missing\" \"end\"\n"},
-		{name: "malformed known command", args: []string{"translate"}, script: "sel +x 1:1\n"},
+		{name: "malformed absolute line", args: []string{"translate"}, script: "sel 0 1:1\n"},
 		{name: "unknown future command", args: []string{"translate"}, script: "future-command\n"},
 		{name: "successful no-op", script: "new transient.txt\nrm\n", success: true},
 	}
@@ -236,7 +236,7 @@ func TestGainReportsCommandInvocationsErrorsAndRates(t *testing.T) {
 		"del        0            0       0.0%\n" +
 		"dup        0            0       0.0%\n" +
 		"total      11           3       27.3%\n\n"
-	end := strings.Index(stdout.String()[start:], "selector coordinate metrics:\n")
+	end := strings.Index(stdout.String()[start:], "selector metrics:\n")
 	if end < 0 {
 		t.Fatalf("gain report has no selector metrics: %q", stdout.String())
 	}
@@ -554,98 +554,6 @@ func TestPriorMetricsVersionResetsTotals(t *testing.T) {
 	}
 	if got != (metrics{}) {
 		t.Fatalf("prior metrics were not reset: %+v", got)
-	}
-}
-
-func TestCallerMetricsUpgradePreservesEvaluatorCounters(t *testing.T) {
-	dataDirectory := t.TempDir()
-	legacy := representativeMetrics()
-	encoded := encodeMetricsSlot(legacy, 7)
-	copy(encoded[:8], priorMetricsMagic)
-	checksum := sha256.Sum256(encoded[:metricsChecksumOffset])
-	copy(encoded[metricsChecksumOffset:], checksum[:])
-	if err := os.WriteFile(filepath.Join(dataDirectory, metricsFilename), encoded[:], 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if fresh, err := claimSession(dataDirectory, "session-one", 6, 7, false); err != nil || !fresh {
-		t.Fatalf("legacy session claim = %t, error %v", fresh, err)
-	}
-
-	got, err := readMetrics(dataDirectory)
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := metrics{invocationMetrics: legacy.invocationMetrics}
-	if got != want {
-		t.Fatalf("migrated metrics = %+v, want evaluator counters %+v", got, want)
-	}
-
-	invocation := invocationMetrics{}
-	recordHostMetricForTest(t, dataDirectory, hostMetricRecord{
-		Invocation:                   &invocation,
-		SessionID:                    "session-one",
-		HPatchTokens:                 11,
-		ApplyPatchTokens:             19,
-		DefinitionRequests:           1,
-		DefinitionInputTokens:        7,
-		RemovedDefinitionInputTokens: 5,
-	})
-	want.HPatchTokens = 11
-	want.ApplyPatchTokens = 19
-	want.Sessions = 1
-	want.DefinitionRequests = 1
-	want.DefinitionInputTokens = 7
-	want.RemovedDefinitionInputTokens = 5
-	got, err = readMetrics(dataDirectory)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got != want {
-		t.Fatalf("metrics after caller-owned update = %+v, want %+v", got, want)
-	}
-}
-
-func TestCallerMetricsMigrationPreservesNewestRecoverySlot(t *testing.T) {
-	dataDirectory := t.TempDir()
-	legacySlot := func(value metrics, generation uint64) [metricsSlotSize]byte {
-		encoded := encodeMetricsSlot(value, generation)
-		copy(encoded[:8], priorMetricsMagic)
-		checksum := sha256.Sum256(encoded[:metricsChecksumOffset])
-		copy(encoded[metricsChecksumOffset:], checksum[:])
-		return encoded
-	}
-	newest := representativeMetrics()
-	newest.Commands[commandOperationIndex("new")].Invocations++
-	older := representativeMetrics()
-	slotZero := legacySlot(newest, 3)
-	slotOne := legacySlot(older, 2)
-	content := append(slotZero[:], slotOne[:]...)
-	metricsPath := filepath.Join(dataDirectory, metricsFilename)
-	if err := os.WriteFile(metricsPath, content, 0o600); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := updateMetrics(dataDirectory, metrics{HPatchTokens: 1}); err != nil {
-		t.Fatal(err)
-	}
-	file, err := os.OpenFile(metricsPath, os.O_WRONLY, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := file.WriteAt(bytes.Repeat([]byte{0xff}, metricsSlotSize/2), metricsSlotSize); err != nil {
-		t.Fatal(err)
-	}
-	if err := file.Close(); err != nil {
-		t.Fatal(err)
-	}
-
-	got, err := readMetrics(dataDirectory)
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := metrics{invocationMetrics: newest.invocationMetrics}
-	if got != want {
-		t.Fatalf("recovered migration metrics = %+v, want newest legacy evaluator counters %+v", got, want)
 	}
 }
 
