@@ -107,7 +107,7 @@ func RunWorkspace(args []string, stdin io.Reader, stdout, stderr io.Writer, work
 		}
 		emittedReport := completedReport(report, writeStateReport(stderr, report))
 		if dataDirectory != "" {
-			if err := recordMetrics(dataDirectory, charged, patch, accounting.visibleReport(emittedReport), commands, accounting); err != nil {
+			if err := recordMetrics(dataDirectory, charged, patch, changes, accounting.visibleReport(emittedReport), commands, accounting); err != nil {
 				warn(stderr, err.Error())
 			}
 		}
@@ -124,7 +124,7 @@ func RunWorkspace(args []string, stdin io.Reader, stdout, stderr io.Writer, work
 			if err := recordCommandMetrics(dataDirectory, accounting.visibleReport(emittedReport), commands, accounting); err != nil {
 				warn(stderr, err.Error())
 			}
-		} else if err := recordMetrics(dataDirectory, charged, patch, accounting.visibleReport(emittedReport), commands, accounting); err != nil {
+		} else if err := recordMetrics(dataDirectory, charged, patch, changes, accounting.visibleReport(emittedReport), commands, accounting); err != nil {
 			warn(stderr, err.Error())
 		}
 	}

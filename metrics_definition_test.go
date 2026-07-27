@@ -19,7 +19,7 @@ func withDefinitionEnvironment(t *testing.T, session string) {
 	t.Setenv(baselineDefinitionEnvironment, baselineDefinition)
 }
 
-func TestDefinitionCountsOncePerSession(t *testing.T) {
+func TestDefinitionCountsEveryInvocationAndSessionOnce(t *testing.T) {
 	root := t.TempDir()
 	dataDirectory := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "note.txt"), []byte("alpha\n"), 0o600); err != nil {
@@ -46,8 +46,8 @@ func TestDefinitionCountsOncePerSession(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.DefinitionInputTokens != single || got.BaselineDefinitionInputTokens != baseline {
-		t.Fatalf("definition tokens = (%d, %d), want (%d, %d)", got.DefinitionInputTokens, got.BaselineDefinitionInputTokens, single, baseline)
+	if got.DefinitionInputTokens != 3*single || got.BaselineDefinitionInputTokens != 3*baseline {
+		t.Fatalf("definition tokens = (%d, %d), want (%d, %d)", got.DefinitionInputTokens, got.BaselineDefinitionInputTokens, 3*single, 3*baseline)
 	}
 
 	// A distinct session pays the definition again.
@@ -60,8 +60,8 @@ func TestDefinitionCountsOncePerSession(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Sessions != 2 || got.DefinitionInputTokens != 2*single {
-		t.Fatalf("second session = (%d sessions, %d tokens), want (2, %d)", got.Sessions, got.DefinitionInputTokens, 2*single)
+	if got.Sessions != 2 || got.DefinitionInputTokens != 4*single {
+		t.Fatalf("second session = (%d sessions, %d tokens), want (2, %d)", got.Sessions, got.DefinitionInputTokens, 4*single)
 	}
 }
 
@@ -171,19 +171,20 @@ func TestWeightedReductionChargesDefinitionOverhead(t *testing.T) {
 		ApplyPatchTokens:     100,
 		EffectiveInvocations: 1,
 		ReportInputTokens:    10,
+		MetadataInputTokens:  5,
 
 		Sessions:                      1,
 		DefinitionInputTokens:         1000,
 		BaselineDefinitionInputTokens: 0,
 	}
-	// (100 - (40 + 1010/5)) / 100 = -142.0%.
-	if got := value.weightedOverallReduction(5); got < -142.1 || got > -141.9 {
-		t.Fatalf("weighted reduction at 5:1 = %f, want ~-142", got)
+	// (100 - (40 + 1015/5)) / 100 = -143.0%.
+	if got := value.weightedOverallReduction(5); got < -143.1 || got > -142.9 {
+		t.Fatalf("weighted reduction at 5:1 = %f, want ~-143", got)
 	}
 	// A host whose native tool costs the same yields no definition overhead.
 	value.BaselineDefinitionInputTokens = 1000
-	if got := value.weightedOverallReduction(5); got < 57.9 || got > 58.1 {
-		t.Fatalf("weighted reduction with displaced definition = %f, want ~58", got)
+	if got := value.weightedOverallReduction(5); got < 56.9 || got > 57.1 {
+		t.Fatalf("weighted reduction with displaced definition = %f, want ~57", got)
 	}
 }
 

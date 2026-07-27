@@ -157,10 +157,12 @@ const toolHelpPaths = `Paths:
   before invoking hpatch.
 `
 
+const hostAccountingMarker = "Host accounting schema: workspace-v1\n"
+
 func toolHelpText(relativeLines bool) string {
 	_, reference, _ := strings.Cut(helpText(relativeLines), "Agent workflow:\n")
 	reference, _, _ = strings.Cut(reference, "\nMetrics:\n")
-	return "Edit workspace files with one atomic hpatch script.\n\nAgent workflow:\n" + reference + "\n" + toolHelpPaths
+	return "Edit workspace files with one atomic hpatch script.\n\nAgent workflow:\n" + reference + "\n" + toolHelpPaths + hostAccountingMarker
 }
 
 func relativeLinesEnabled() bool {

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 )
 
 const (
@@ -19,12 +20,14 @@ const (
 // script. The router writes it to a private bounded file so model payloads and
 // tool definitions are not constrained by the process environment size.
 type metricAccounting struct {
-	ChargedScript      string `json:"charged_script,omitempty"`
-	SessionID          string `json:"session_id,omitempty"`
-	Definition         string `json:"definition,omitempty"`
-	BaselineDefinition string `json:"baseline_definition,omitempty"`
-	DiagnosticSuffix   string `json:"diagnostic_suffix,omitempty"`
-	ReportVisible      bool   `json:"report_visible"`
+	ChargedScript      string   `json:"charged_script,omitempty"`
+	SessionID          string   `json:"session_id,omitempty"`
+	Definition         string   `json:"definition,omitempty"`
+	BaselineDefinition string   `json:"baseline_definition,omitempty"`
+	CarriedMetadata    []string `json:"carried_metadata,omitempty"`
+	ApplyPatchRoot     string   `json:"apply_patch_root,omitempty"`
+	DiagnosticSuffix   string   `json:"diagnostic_suffix,omitempty"`
+	ReportVisible      bool     `json:"report_visible"`
 }
 
 func loadMetricAccounting() (metricAccounting, error) {
@@ -58,6 +61,9 @@ func loadMetricAccounting() (metricAccounting, error) {
 	}
 	if err := decoder.Decode(new(any)); !errors.Is(err, io.EOF) {
 		return metricAccounting{}, fmt.Errorf("decoding host accounting: trailing data")
+	}
+	if accounting.ApplyPatchRoot != "" && (!filepath.IsAbs(accounting.ApplyPatchRoot) || filepath.Clean(accounting.ApplyPatchRoot) != accounting.ApplyPatchRoot) {
+		return metricAccounting{}, fmt.Errorf("decoding host accounting: apply_patch root must be a clean absolute path")
 	}
 	return accounting, nil
 }

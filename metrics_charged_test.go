@@ -2,10 +2,69 @@ package hpatch
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func TestHostAccountingIncludesWorkspaceMetadataAndAbsoluteCarrier(t *testing.T) {
+	root := t.TempDir()
+	dataDirectory := t.TempDir()
+	script := "new note.txt\ntype \"hello\"\n"
+	emitted := "workspace_id workspace-test\n" + script
+	carried := "workspace_id retained-workspace\n"
+	accounting := metricAccounting{
+		ChargedScript:   emitted,
+		CarriedMetadata: []string{carried},
+		ApplyPatchRoot:  root,
+	}
+	encoded, err := json.Marshal(accounting)
+	if err != nil {
+		t.Fatal(err)
+	}
+	accountingPath := filepath.Join(t.TempDir(), "accounting.json")
+	if err := os.WriteFile(accountingPath, encoded, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(accountingFileVariable, accountingPath)
+
+	var stdout, stderr bytes.Buffer
+	if exitCode := Run([]string{"translate"}, strings.NewReader(script), &stdout, &stderr, root, dataDirectory); exitCode != 0 {
+		t.Fatalf("translate = exit %d, stderr %q", exitCode, stderr.String())
+	}
+	absolutePatch := strings.Replace(stdout.String(), "*** Add File: note.txt", "*** Add File: "+filepath.Join(root, "note.txt"), 1)
+	want, err := countMetrics(emitted, absolutePatch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantMetadata, err := countCarriedMetadataInputTokens([]string{carried})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stored, err := readMetrics(dataDirectory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.HPatchTokens != want.HPatchTokens || stored.ApplyPatchTokens != want.ApplyPatchTokens || stored.MetadataInputTokens != wantMetadata {
+		t.Fatalf("workspace accounting = hpatch %d, apply_patch %d, metadata %d; want %d, %d, %d", stored.HPatchTokens, stored.ApplyPatchTokens, stored.MetadataInputTokens, want.HPatchTokens, want.ApplyPatchTokens, wantMetadata)
+	}
+	if strings.Contains(stdout.String(), root) {
+		t.Fatalf("metric-only root changed translated patch: %q", stdout.String())
+	}
+}
+
+func TestHostAccountingRejectsNonAbsoluteApplyPatchRoot(t *testing.T) {
+	accountingPath := filepath.Join(t.TempDir(), "accounting.json")
+	if err := os.WriteFile(accountingPath, []byte(`{"apply_patch_root":"relative"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(accountingFileVariable, accountingPath)
+	if _, err := loadMetricAccounting(); err == nil || !strings.Contains(err.Error(), "clean absolute path") {
+		t.Fatalf("invalid apply_patch root error = %v", err)
+	}
+}
 
 func TestChargedScriptAccountsForTheDeclaredPayload(t *testing.T) {
 	// A caller that rebuilt this script from a short correction declares the

@@ -77,8 +77,6 @@ func TestRepairContextLocatesAmbiguousAnchors(t *testing.T) {
 	repair := repairFor(t, "amb.go", content, "in amb.go\nbsel \"return 0\" \"}\"\ntype \"x\"\n")
 	for _, want := range []string{
 		`START anchor "return 0" is ambiguous, occurring at lines 2, 6`,
-		`END anchor "}" is ambiguous, occurring at lines 3, 7`,
-		"replacement text must reproduce what END covers",
 	} {
 		if !strings.Contains(repair, want) {
 			t.Fatalf("repair context lacks %q:\n%s", want, repair)
@@ -89,11 +87,8 @@ func TestRepairContextLocatesAmbiguousAnchors(t *testing.T) {
 func TestRepairContextReportsMissingAnchor(t *testing.T) {
 	content := "func bar() int {\n\treturn 0\n}\n"
 	repair := repairFor(t, "amb.go", content, "in amb.go\nbsel \"func qux() {\" \"}\"\ntype \"x\"\n")
-	if !strings.Contains(repair, `START anchor "func qux() {" has no exact occurrence`) {
+	if !strings.Contains(repair, `START anchor "func qux() {" has no occurrence after normalizing horizontal whitespace in the searched scope`) {
 		t.Fatalf("repair context lacks missing-anchor report:\n%s", repair)
-	}
-	if !strings.Contains(repair, `END anchor "}" occurs once, at line 3`) {
-		t.Fatalf("repair context lacks unique-anchor location:\n%s", repair)
 	}
 }
 

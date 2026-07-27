@@ -80,6 +80,8 @@ func TestGainReportReconcilesEffectiveAndIneffectiveTokens(t *testing.T) {
 		"estimated baseline output tokens including retries: 4764\n" +
 		"estimated overall output-token reduction: 3.9%\n" +
 		"estimated state-report input tokens: 0\n" +
+		"estimated diagnostic input tokens: 0\n" +
+		"estimated carried-metadata input tokens: 0\n" +
 		"estimated tool-definition input tokens: 0 hpatch, 0 baseline, 0 net over 0 session(s) " +
 		"(not measured; host set no HPATCH_SESSION_ID)\n" +
 		"estimated weighted overall reduction at 5:1: 3.9%\n" +
@@ -197,8 +199,11 @@ func TestFailedHPatchCountsOnlyAsIneffectiveOutput(t *testing.T) {
 	if exitCode := Run([]string{"translate"}, strings.NewReader(invalidScript), &invalidStdout, &invalidStderr, root, dataDirectory); exitCode == 0 || invalidStdout.Len() != 0 || !strings.Contains(invalidStderr.String(), "unknown or malformed command") {
 		t.Fatalf("invalid translate = exit %d, stdout %q, stderr %q", exitCode, invalidStdout.String(), invalidStderr.String())
 	}
-
 	wantMetrics := effective
+	wantMetrics.DiagnosticInputTokens, err = countDiagnosticInputTokens(invalidStderr.String())
+	if err != nil {
+		t.Fatal(err)
+	}
 	wantMetrics.Commands[commandOperationIndex("new")].Invocations = 1
 	wantMetrics.Commands[commandOperationIndex("type")].Invocations = 1
 	wantMetrics.IneffectiveHPatchTokens = ineffective.IneffectiveHPatchTokens
@@ -238,6 +243,10 @@ func TestTranslateOutputFailureCountsOnlyAsIneffective(t *testing.T) {
 	exitCode := Run([]string{"translate"}, strings.NewReader(script), metricsErrorWriter{}, &stderr, root, dataDirectory)
 	if exitCode == 0 || !strings.Contains(stderr.String(), "writing patch") {
 		t.Fatalf("translate = exit %d, stderr %q", exitCode, stderr.String())
+	}
+	want.DiagnosticInputTokens, err = countDiagnosticInputTokens(stderr.String())
+	if err != nil {
+		t.Fatal(err)
 	}
 	got, err := readMetrics(dataDirectory)
 	if err != nil {
@@ -500,6 +509,28 @@ func TestPriorMetricsVersionResetsTotals(t *testing.T) {
 	}
 	if got != (metrics{}) {
 		t.Fatalf("prior metrics were not reset: %+v", got)
+	}
+}
+
+func TestImmediatePriorMetricsVersionResetsTotals(t *testing.T) {
+	dataDirectory := t.TempDir()
+	const priorSlotSize = 2152
+	const priorChecksumOffset = 2120
+	var prior [priorSlotSize]byte
+	copy(prior[:8], "HPATCH10")
+	binary.LittleEndian.PutUint64(prior[8:16], 7)
+	binary.LittleEndian.PutUint64(prior[16:24], 5)
+	checksum := sha256.Sum256(prior[:priorChecksumOffset])
+	copy(prior[priorChecksumOffset:], checksum[:])
+	if err := os.WriteFile(filepath.Join(dataDirectory, metricsFilename), prior[:], 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := readMetrics(dataDirectory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != (metrics{}) {
+		t.Fatalf("immediate prior metrics were not reset: %+v", got)
 	}
 }
 

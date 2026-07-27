@@ -20,10 +20,10 @@ import (
 const (
 	metricsFilename       = "metrics.bin"
 	metricsLockname       = "metrics.lock"
-	metricsMagic          = "HPATCH10"
-	metricsSlotSize       = 2152
+	metricsMagic          = "HPATCH11"
+	metricsSlotSize       = 2160
 	metricsFileSize       = 2 * metricsSlotSize
-	metricsChecksumOffset = 2120
+	metricsChecksumOffset = 2128
 	commandCount          = 12
 )
 
@@ -48,11 +48,11 @@ type metrics struct {
 	IneffectiveHPatchTokens uint64
 	ReportInputTokens       uint64
 	DiagnosticInputTokens   uint64
+	MetadataInputTokens     uint64
 
 	// Sessions counts distinct agent sessions that carried the hpatch tool
-	// definition. Definition text is sent once per session under prompt
-	// caching, so definition input is charged per session rather than per
-	// invocation.
+	// definition. DefinitionInputTokens is cumulative per request carrying the
+	// definition; Sessions is only the distinct-session denominator.
 	Sessions uint64
 	// DefinitionInputTokens is the cumulative hpatch tool-definition input
 	// estimate, and BaselineDefinitionInputTokens is the apply_patch
@@ -186,12 +186,41 @@ func countDiagnosticInputTokens(diagnostic string) (uint64, error) {
 	return uint64(count), nil
 }
 
-func recordMetrics(dataDirectory, script, patch, emittedReport string, events invocationMetrics, accounting metricAccounting) error {
-	entry, err := countMetrics(script, patch)
+func countCarriedMetadataInputTokens(metadata []string) (uint64, error) {
+	if len(metadata) == 0 {
+		return 0, nil
+	}
+	codec, err := gpt5Codec()
+	if err != nil {
+		return 0, err
+	}
+	var total uint64
+	for _, value := range metadata {
+		count, err := codec.Count(value)
+		if err != nil {
+			return 0, fmt.Errorf("tokenizing carried metadata input: %w", err)
+		}
+		if !addCounter(&total, uint64(count)) {
+			return 0, fmt.Errorf("tokenizing carried metadata input: token count overflow")
+		}
+	}
+	return total, nil
+}
+
+func recordMetrics(dataDirectory, script, patch string, changes []change, emittedReport string, events invocationMetrics, accounting metricAccounting) error {
+	metricPatch, err := applyPatchMetricPatch(changes, patch, accounting.ApplyPatchRoot)
+	if err != nil {
+		return fmt.Errorf("rendering apply_patch metric payload: %w", err)
+	}
+	entry, err := countMetrics(script, metricPatch)
 	if err != nil {
 		return err
 	}
 	entry.ReportInputTokens, err = countReportInputTokens(emittedReport)
+	if err != nil {
+		return err
+	}
+	entry.MetadataInputTokens, err = countCarriedMetadataInputTokens(accounting.CarriedMetadata)
 	if err != nil {
 		return err
 	}
@@ -208,6 +237,10 @@ func recordIneffectiveMetrics(dataDirectory, script, diagnostic string, events i
 	if err != nil {
 		return err
 	}
+	entry.MetadataInputTokens, err = countCarriedMetadataInputTokens(accounting.CarriedMetadata)
+	if err != nil {
+		return err
+	}
 	entry.invocationMetrics = events
 	return updateMetricsWithAccounting(dataDirectory, entry, accounting)
 }
@@ -218,6 +251,10 @@ func recordCommandMetrics(dataDirectory, emittedReport string, events invocation
 		return err
 	}
 	entry := metrics{ReportInputTokens: reportTokens}
+	entry.MetadataInputTokens, err = countCarriedMetadataInputTokens(accounting.CarriedMetadata)
+	if err != nil {
+		return err
+	}
 	entry.invocationMetrics = events
 	return updateMetricsWithAccounting(dataDirectory, entry, accounting)
 }
@@ -311,6 +348,7 @@ func (m *metrics) add(entry metrics) error {
 		{&m.IneffectiveHPatchTokens, entry.IneffectiveHPatchTokens},
 		{&m.ReportInputTokens, entry.ReportInputTokens},
 		{&m.DiagnosticInputTokens, entry.DiagnosticInputTokens},
+		{&m.MetadataInputTokens, entry.MetadataInputTokens},
 		{&m.Sessions, entry.Sessions},
 		{&m.DefinitionInputTokens, entry.DefinitionInputTokens},
 		{&m.BaselineDefinitionInputTokens, entry.BaselineDefinitionInputTokens},
@@ -550,6 +588,7 @@ func hasValidPriorMetricsSlot(file *os.File, size int64) (bool, error) {
 		checksumSize   int
 	}{
 		{slotSize: 264, checksumOffset: 232, checksumSize: 32},
+		{slotSize: 2152, checksumOffset: 2120, checksumSize: 32},
 		{slotSize: 256, checksumOffset: 224, checksumSize: 32},
 		{slotSize: 64, checksumOffset: 40, checksumSize: 24},
 	}
@@ -608,6 +647,7 @@ func encodeMetricsSlot(value metrics, generation uint64) [metricsSlotSize]byte {
 		}
 	}
 	binary.LittleEndian.PutUint64(encoded[2112:2120], value.DiagnosticInputTokens)
+	binary.LittleEndian.PutUint64(encoded[2120:2128], value.MetadataInputTokens)
 	checksum := sha256.Sum256(encoded[:metricsChecksumOffset])
 	copy(encoded[metricsChecksumOffset:], checksum[:])
 	return encoded
@@ -642,6 +682,7 @@ func decodeMetricsSlot(encoded [metricsSlotSize]byte) (metrics, uint64, bool) {
 		AttributableFailures:          binary.LittleEndian.Uint64(encoded[80:88]),
 		EffectiveInvocations:          binary.LittleEndian.Uint64(encoded[88:96]),
 		DiagnosticInputTokens:         binary.LittleEndian.Uint64(encoded[2112:2120]),
+		MetadataInputTokens:           binary.LittleEndian.Uint64(encoded[2120:2128]),
 	}
 	for index := range commandCount {
 		value.Commands[index] = getCommandMetric(encoded[:], 96+index*16)
@@ -711,7 +752,7 @@ func (m metrics) weightedOverallReduction(outputToInputRatio float64) float64 {
 	if baseline == 0 {
 		return 0
 	}
-	inputOverhead := float64(m.ReportInputTokens) + float64(m.DiagnosticInputTokens) + float64(m.definitionOverhead())
+	inputOverhead := float64(m.ReportInputTokens) + float64(m.DiagnosticInputTokens) + float64(m.MetadataInputTokens) + float64(m.definitionOverhead())
 	weightedCost := float64(m.HPatchTokens) + float64(m.IneffectiveHPatchTokens) + inputOverhead/outputToInputRatio
 	return (baseline - weightedCost) / baseline * 100
 }
@@ -740,9 +781,10 @@ func gainReport(m metrics) string {
 	)
 	fmt.Fprintf(
 		&report,
-		"estimated state-report input tokens: %d\nestimated diagnostic input tokens: %d\nestimated tool-definition input tokens: %d hpatch, %d baseline, %d net over %d session(s) (%s)\nestimated weighted overall reduction at 5:1: %.1f%%\nestimated weighted overall reduction at 6:1: %.1f%%\n",
+		"estimated state-report input tokens: %d\nestimated diagnostic input tokens: %d\nestimated carried-metadata input tokens: %d\nestimated tool-definition input tokens: %d hpatch, %d baseline, %d net over %d session(s) (%s)\nestimated weighted overall reduction at 5:1: %.1f%%\nestimated weighted overall reduction at 6:1: %.1f%%\n",
 		m.ReportInputTokens,
 		m.DiagnosticInputTokens,
+		m.MetadataInputTokens,
 		m.DefinitionInputTokens,
 		m.BaselineDefinitionInputTokens,
 		m.definitionOverhead(),
