@@ -23,6 +23,17 @@ func TestGainDoesNotRequireWorkingDirectory(t *testing.T) {
 	}
 }
 
+func TestRecordMetricsDoesNotRequireWorkingDirectory(t *testing.T) {
+	removeCurrentDirectory(t)
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+
+	var stdout, stderr bytes.Buffer
+	exitCode := run([]string{"record-metrics"}, strings.NewReader(`{"invocation":{}}`), &stdout, &stderr)
+	if exitCode != 0 || stdout.Len() != 0 || stderr.Len() != 0 {
+		t.Fatalf("record-metrics = exit %d, stdout %q, stderr %q", exitCode, stdout.String(), stderr.String())
+	}
+}
+
 func TestInformationalCommandsNeedNoEnvironmentOrStdin(t *testing.T) {
 	removeCurrentDirectory(t)
 	t.Setenv("XDG_CONFIG_HOME", "")
@@ -74,7 +85,7 @@ func TestTopLevelHelpDescribesCompletePublicSurface(t *testing.T) {
 		"ASCII space and tab runs match interchangeably",
 		"preserves the selected final",
 		"translate always emits root-relative paths",
-		"without conversion to output tokens",
+		"caller-accounted hpatch",
 		"absolute and relative selectors",
 		"terminal failure reasons",
 	} {

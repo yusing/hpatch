@@ -34,7 +34,7 @@ type Workspace struct {
 // workspace root. New callers that already own a root capability should use
 // RunWorkspace, Apply, or Translate.
 func Run(args []string, stdin io.Reader, stdout, stderr io.Writer, workingDirectory, dataDirectory string) int {
-	if len(args) == 1 && args[0] == "gain" {
+	if len(args) == 1 && (args[0] == "gain" || args[0] == hostMetricsCommand) {
 		return RunWorkspace(args, stdin, stdout, stderr, Workspace{}, dataDirectory)
 	}
 	rootPath, err := filepath.Abs(workingDirectory)
@@ -72,8 +72,8 @@ func RunWorkspace(args []string, stdin io.Reader, stdout, stderr io.Writer, work
 	case len(args) == 0:
 	case len(args) == 1 && args[0] == "translate":
 		translateMode = true
-	case len(args) == 1 && args[0] == hostRejectionCommand:
-		return recordHostRejection(stdin, stderr, dataDirectory)
+	case len(args) == 1 && args[0] == hostMetricsCommand:
+		return recordHostMetrics(stdin, stderr, dataDirectory)
 	case len(args) == 1 && args[0] == "gain":
 		metrics, err := readMetrics(dataDirectory)
 		if err != nil {
@@ -87,61 +87,42 @@ func RunWorkspace(args []string, stdin io.Reader, stdout, stderr io.Writer, work
 		return fail(stderr, "expected no arguments or exactly: translate or gain")
 	}
 
-	accounting, err := loadMetricAccounting()
-	if err != nil {
-		return fail(stderr, err.Error())
-	}
 	script, err := io.ReadAll(stdin)
 	if err != nil {
-		charged := accounting.chargedScript(string(script))
-		return failWithIneffectiveMetrics(stderr, fmt.Sprintf("reading script: %v", err), dataDirectory, charged, invocationMetrics{}, accounting, "")
+		return fail(stderr, fmt.Sprintf("reading script: %v", err))
 	}
-	scriptText := string(script)
-	charged := accounting.chargedScript(scriptText)
-	changes, filesystem, commands, report, err := evaluateScript(context.TODO(), workspace, scriptText, relativeLinesEnabled())
+	changes, filesystem, commands, report, err := evaluateScript(context.TODO(), workspace, string(script), relativeLinesEnabled())
+	exported, exportErr := writeInvocationMetrics(commands)
+	if exportErr != nil {
+		return fail(stderr, exportErr.Error())
+	}
+	if !exported && dataDirectory != "" {
+		if metricsErr := updateMetrics(dataDirectory, metrics{invocationMetrics: commands}); metricsErr != nil {
+			warn(stderr, metricsErr.Error())
+		}
+	}
 	if err != nil {
-		return failEvaluation(stderr, err, dataDirectory, charged, commands, accounting)
+		return failEvaluation(stderr, err)
 	}
 	if !translateMode && len(changes) == 0 {
-		emittedReport := completedReport(report, writeStateReport(stderr, report))
-		if dataDirectory != "" {
-			if err := recordCommandMetrics(dataDirectory, accounting.visibleReport(emittedReport), commands, accounting); err != nil {
-				warn(stderr, err.Error())
-			}
-		}
+		writeStateReport(stderr, report)
 		return 0
 	}
 	if translateMode {
 		patch, err := translate(changes)
 		if err != nil {
-			return failWithIneffectiveMetrics(stderr, err.Error(), dataDirectory, charged, commands, accounting, "")
+			return fail(stderr, err.Error())
 		}
 		if _, err := io.WriteString(stdout, patch); err != nil {
-			return failWithIneffectiveMetrics(stderr, fmt.Sprintf("writing patch: %v", err), dataDirectory, charged, commands, accounting, "")
+			return fail(stderr, fmt.Sprintf("writing patch: %v", err))
 		}
-		emittedReport := completedReport(report, writeStateReport(stderr, report))
-		if dataDirectory != "" {
-			if err := recordMetrics(dataDirectory, charged, patch, changes, accounting.visibleReport(emittedReport), commands, accounting); err != nil {
-				warn(stderr, err.Error())
-			}
-		}
+		writeStateReport(stderr, report)
 		return 0
 	}
 	if err := commitChanges(changes, rootFileOperations{root: filesystem.root}); err != nil {
-		return failWithIneffectiveMetrics(stderr, fmt.Sprintf("changing %s: %v", describePaths(changes), err), dataDirectory, charged, commands, accounting, "")
+		return fail(stderr, fmt.Sprintf("changing %s: %v", describePaths(changes), err))
 	}
-	emittedReport := completedReport(report, writeStateReport(stderr, report))
-	if dataDirectory != "" {
-		patch, err := translate(changes)
-		if err != nil {
-			warn(stderr, "collecting metrics: "+err.Error())
-			if err := recordCommandMetrics(dataDirectory, accounting.visibleReport(emittedReport), commands, accounting); err != nil {
-				warn(stderr, err.Error())
-			}
-		} else if err := recordMetrics(dataDirectory, charged, patch, changes, accounting.visibleReport(emittedReport), commands, accounting); err != nil {
-			warn(stderr, err.Error())
-		}
-	}
+	writeStateReport(stderr, report)
 	return 0
 }
 
@@ -289,16 +270,8 @@ func (w filesystemWorkspace) resolvePath(path string) (string, error) {
 	return path, nil
 }
 
-func completedReport(report string, written bool) string {
-	if written {
-		return report
-	}
-	return ""
-}
-
-func writeStateReport(stderr io.Writer, report string) bool {
-	written, err := io.WriteString(stderr, report)
-	return err == nil && written == len(report)
+func writeStateReport(stderr io.Writer, report string) {
+	_, _ = io.WriteString(stderr, report)
 }
 
 func sanitizeDiagnostic(message string) string {
@@ -326,27 +299,13 @@ func fail(stderr io.Writer, message string) int {
 	return 1
 }
 
-func failWithIneffectiveMetrics(stderr io.Writer, message, dataDirectory, script string, commands invocationMetrics, accounting metricAccounting, repair string) int {
-	diagnostic := failureDiagnostic(message) + repair
-	_, _ = io.WriteString(stderr, diagnostic)
-	if dataDirectory != "" {
-		visibleDiagnostic := diagnostic + accounting.DiagnosticSuffix
-		if err := recordIneffectiveMetrics(dataDirectory, script, visibleDiagnostic, commands, accounting); err != nil {
-			warn(stderr, err.Error())
-		}
-	}
-	return 1
-}
-
-// failEvaluation reports an evaluation failure and includes bounded repair
-// context in both stderr and the exact model-input accounting supplied by the
-// host.
-func failEvaluation(stderr io.Writer, err error, dataDirectory, script string, commands invocationMetrics, accounting metricAccounting) int {
-	repair := ""
+func failEvaluation(stderr io.Writer, err error) int {
+	diagnostic := failureDiagnostic(err.Error())
 	if command, ok := errors.AsType[*commandError](err); ok {
-		repair = command.Repair
+		diagnostic += command.Repair
 	}
-	return failWithIneffectiveMetrics(stderr, err.Error(), dataDirectory, script, commands, accounting, repair)
+	_, _ = io.WriteString(stderr, diagnostic)
+	return 1
 }
 
 func warn(stderr io.Writer, message string) {

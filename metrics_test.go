@@ -16,19 +16,15 @@ import (
 	"unicode/utf8"
 )
 
+func gainReport(m metrics) string {
+	return gainReportAtWidth(m, defaultGainReportWidth)
+}
+
 func TestGainReportsPersistedTotals(t *testing.T) {
 	root := t.TempDir()
 	dataDirectory := t.TempDir()
 	script := "new note.txt\ntype \"hello\"\n"
 	patch := "*** Begin Patch\n*** Add File: note.txt\n+hello\n*** End Patch\n"
-	entry, err := countMetrics(script, patch)
-	if err != nil {
-		t.Fatal(err)
-	}
-	reportTokens, err := countReportInputTokens("in note.txt 1:6\n1 hello\n")
-	if err != nil {
-		t.Fatal(err)
-	}
 
 	var translateStdout, translateStderr bytes.Buffer
 	exitCode := Run([]string{"translate"}, strings.NewReader(script), &translateStdout, &translateStderr, root, dataDirectory)
@@ -42,9 +38,17 @@ func TestGainReportsPersistedTotals(t *testing.T) {
 		t.Fatalf("normal = exit %d, stdout %q, stderr %q", exitCode, normalStdout.String(), normalStderr.String())
 	}
 
+	invocation := invocationMetrics{}
+	recordHostMetricForTest(t, dataDirectory, hostMetricRecord{
+		Invocation:        &invocation,
+		HPatchTokens:      20,
+		ApplyPatchTokens:  40,
+		ReportInputTokens: 6,
+	})
+
 	var stdout, stderr bytes.Buffer
 	exitCode = Run([]string{"gain"}, strings.NewReader("not a script"), &stdout, &stderr, root, dataDirectory)
-	wantMetrics := metrics{HPatchTokens: entry.HPatchTokens * 2, ApplyPatchTokens: entry.ApplyPatchTokens * 2, ReportInputTokens: reportTokens * 2}
+	wantMetrics := metrics{HPatchTokens: 20, ApplyPatchTokens: 40, ReportInputTokens: 6}
 	wantMetrics.Commands[commandOperationIndex("new")].Invocations = 2
 	wantMetrics.Commands[commandOperationIndex("type")].Invocations = 2
 	want := gainReport(wantMetrics)
@@ -241,92 +245,60 @@ func TestGainReportsCommandInvocationsErrorsAndRates(t *testing.T) {
 	}
 }
 
-func TestFailedHPatchCountsIneffectiveAndEmptyCarrierOutput(t *testing.T) {
-	root := t.TempDir()
+func TestHostRecordCombinesEffectiveAndIneffectiveOutput(t *testing.T) {
 	dataDirectory := t.TempDir()
-	validScript := "new note.txt\ntype \"hello\"\n"
-	patch := "*** Begin Patch\n*** Add File: note.txt\n+hello\n*** End Patch\n"
-	effective, err := countMetrics(validScript, patch)
-	if err != nil {
-		t.Fatal(err)
-	}
-	reportTokens, err := countReportInputTokens("in note.txt 1:6\n1 hello\n")
-	if err != nil {
-		t.Fatal(err)
-	}
-	effective.ReportInputTokens = reportTokens
-
-	var validStdout, validStderr bytes.Buffer
-	if exitCode := Run([]string{"translate"}, strings.NewReader(validScript), &validStdout, &validStderr, root, dataDirectory); exitCode != 0 {
-		t.Fatalf("valid translate = exit %d, stdout %q, stderr %q", exitCode, validStdout.String(), validStderr.String())
-	}
-
-	invalidScript := "future-command\n"
-	ineffective, err := countIneffectiveMetrics(invalidScript)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if ineffective.FailedApplyPatchTokens == 0 {
-		t.Fatal("failed call did not count the empty apply_patch carrier")
-	}
-	var invalidStdout, invalidStderr bytes.Buffer
-	if exitCode := Run([]string{"translate"}, strings.NewReader(invalidScript), &invalidStdout, &invalidStderr, root, dataDirectory); exitCode == 0 || invalidStdout.Len() != 0 || !strings.Contains(invalidStderr.String(), "unknown or malformed command") {
-		t.Fatalf("invalid translate = exit %d, stdout %q, stderr %q", exitCode, invalidStdout.String(), invalidStderr.String())
-	}
-	wantMetrics := effective
-	wantMetrics.DiagnosticInputTokens, err = countDiagnosticInputTokens(invalidStderr.String())
-	if err != nil {
-		t.Fatal(err)
-	}
-	wantMetrics.Commands[commandOperationIndex("new")].Invocations = 1
-	wantMetrics.Commands[commandOperationIndex("type")].Invocations = 1
-	wantMetrics.IneffectiveHPatchTokens = ineffective.IneffectiveHPatchTokens
-	wantMetrics.FailedApplyPatchTokens = ineffective.FailedApplyPatchTokens
+	invocation := invocationMetrics{}
+	invocation.Commands[commandOperationIndex("new")].Invocations = 1
+	recordHostMetricForTest(t, dataDirectory, hostMetricRecord{
+		Invocation:              &invocation,
+		HPatchTokens:            40,
+		ApplyPatchTokens:        100,
+		IneffectiveHPatchTokens: 30,
+		FailedApplyPatchTokens:  10,
+		ReportInputTokens:       5,
+		DiagnosticInputTokens:   7,
+	})
 
 	got, err := readMetrics(dataDirectory)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got != wantMetrics {
-		t.Fatalf("metrics = %+v, want %+v", got, wantMetrics)
+	want := metrics{
+		HPatchTokens:            40,
+		ApplyPatchTokens:        100,
+		IneffectiveHPatchTokens: 30,
+		FailedApplyPatchTokens:  10,
+		ReportInputTokens:       5,
+		DiagnosticInputTokens:   7,
 	}
-
-	var stdout, stderr bytes.Buffer
-	if exitCode := Run([]string{"gain"}, strings.NewReader("ignored"), &stdout, &stderr, root, dataDirectory); exitCode != 0 || stderr.Len() != 0 {
-		t.Fatalf("gain = exit %d, stdout %q, stderr %q", exitCode, stdout.String(), stderr.String())
+	want.Commands[commandOperationIndex("new")].Invocations = 1
+	if got != want {
+		t.Fatalf("host metrics = %+v, want %+v", got, want)
 	}
-	wantReport := gainReport(wantMetrics)
-	if stdout.String() != wantReport {
-		t.Fatalf("gain stdout = %q, want %q", stdout.String(), wantReport)
+	if report := gainReport(got); !strings.Contains(report, "failed      30      10") || !strings.Contains(report, "all         70      110") {
+		t.Fatalf("gain report does not include host-accounted outcomes: %q", report)
 	}
 }
 
-func TestTranslateOutputFailureCountsOnlyAsIneffective(t *testing.T) {
+func TestTranslateOutputFailureCountsEvaluatorCommandsOnly(t *testing.T) {
 	root := t.TempDir()
 	dataDirectory := t.TempDir()
 	script := "new note.txt\ntype \"hello\"\n"
-	want, err := countIneffectiveMetrics(script)
-	if err != nil {
-		t.Fatal(err)
-	}
-	want.Commands[commandOperationIndex("new")].Invocations = 1
-	want.Commands[commandOperationIndex("type")].Invocations = 1
 
 	var stderr bytes.Buffer
 	exitCode := Run([]string{"translate"}, strings.NewReader(script), metricsErrorWriter{}, &stderr, root, dataDirectory)
 	if exitCode == 0 || !strings.Contains(stderr.String(), "writing patch") {
 		t.Fatalf("translate = exit %d, stderr %q", exitCode, stderr.String())
 	}
-	want.DiagnosticInputTokens, err = countDiagnosticInputTokens(stderr.String())
-	if err != nil {
-		t.Fatal(err)
-	}
 	got, err := readMetrics(dataDirectory)
 	if err != nil {
 		t.Fatal(err)
 	}
+	want := metrics{}
+	want.Commands[commandOperationIndex("new")].Invocations = 1
+	want.Commands[commandOperationIndex("type")].Invocations = 1
 	if got != want {
-		t.Fatalf("metrics = %+v, want ineffective-only %+v", got, want)
+		t.Fatalf("metrics = %+v, want evaluator commands only %+v", got, want)
 	}
 }
 
@@ -582,6 +554,98 @@ func TestPriorMetricsVersionResetsTotals(t *testing.T) {
 	}
 	if got != (metrics{}) {
 		t.Fatalf("prior metrics were not reset: %+v", got)
+	}
+}
+
+func TestCallerMetricsUpgradePreservesEvaluatorCounters(t *testing.T) {
+	dataDirectory := t.TempDir()
+	legacy := representativeMetrics()
+	encoded := encodeMetricsSlot(legacy, 7)
+	copy(encoded[:8], priorMetricsMagic)
+	checksum := sha256.Sum256(encoded[:metricsChecksumOffset])
+	copy(encoded[metricsChecksumOffset:], checksum[:])
+	if err := os.WriteFile(filepath.Join(dataDirectory, metricsFilename), encoded[:], 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if fresh, err := claimSession(dataDirectory, "session-one", 6, 7, false); err != nil || !fresh {
+		t.Fatalf("legacy session claim = %t, error %v", fresh, err)
+	}
+
+	got, err := readMetrics(dataDirectory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := metrics{invocationMetrics: legacy.invocationMetrics}
+	if got != want {
+		t.Fatalf("migrated metrics = %+v, want evaluator counters %+v", got, want)
+	}
+
+	invocation := invocationMetrics{}
+	recordHostMetricForTest(t, dataDirectory, hostMetricRecord{
+		Invocation:                   &invocation,
+		SessionID:                    "session-one",
+		HPatchTokens:                 11,
+		ApplyPatchTokens:             19,
+		DefinitionRequests:           1,
+		DefinitionInputTokens:        7,
+		RemovedDefinitionInputTokens: 5,
+	})
+	want.HPatchTokens = 11
+	want.ApplyPatchTokens = 19
+	want.Sessions = 1
+	want.DefinitionRequests = 1
+	want.DefinitionInputTokens = 7
+	want.RemovedDefinitionInputTokens = 5
+	got, err = readMetrics(dataDirectory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != want {
+		t.Fatalf("metrics after caller-owned update = %+v, want %+v", got, want)
+	}
+}
+
+func TestCallerMetricsMigrationPreservesNewestRecoverySlot(t *testing.T) {
+	dataDirectory := t.TempDir()
+	legacySlot := func(value metrics, generation uint64) [metricsSlotSize]byte {
+		encoded := encodeMetricsSlot(value, generation)
+		copy(encoded[:8], priorMetricsMagic)
+		checksum := sha256.Sum256(encoded[:metricsChecksumOffset])
+		copy(encoded[metricsChecksumOffset:], checksum[:])
+		return encoded
+	}
+	newest := representativeMetrics()
+	newest.Commands[commandOperationIndex("new")].Invocations++
+	older := representativeMetrics()
+	slotZero := legacySlot(newest, 3)
+	slotOne := legacySlot(older, 2)
+	content := append(slotZero[:], slotOne[:]...)
+	metricsPath := filepath.Join(dataDirectory, metricsFilename)
+	if err := os.WriteFile(metricsPath, content, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := updateMetrics(dataDirectory, metrics{HPatchTokens: 1}); err != nil {
+		t.Fatal(err)
+	}
+	file, err := os.OpenFile(metricsPath, os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := file.WriteAt(bytes.Repeat([]byte{0xff}, metricsSlotSize/2), metricsSlotSize); err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := readMetrics(dataDirectory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := metrics{invocationMetrics: newest.invocationMetrics}
+	if got != want {
+		t.Fatalf("recovered migration metrics = %+v, want newest legacy evaluator counters %+v", got, want)
 	}
 }
 

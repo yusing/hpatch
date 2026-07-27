@@ -2,28 +2,10 @@ package hpatch
 
 import (
 	"fmt"
-	"path/filepath"
 	"strings"
 
 	"github.com/pmezard/go-difflib/difflib"
 )
-
-func applyPatchMetricPatch(changes []change, patch, root string) (string, error) {
-	if root == "" {
-		return patch, nil
-	}
-	rebased := make([]change, len(changes))
-	copy(rebased, changes)
-	for index := range rebased {
-		if rebased[index].originalPath != "" {
-			rebased[index].originalPath = filepath.Join(root, rebased[index].originalPath)
-		}
-		if rebased[index].path != "" {
-			rebased[index].path = filepath.Join(root, rebased[index].path)
-		}
-	}
-	return translate(rebased)
-}
 
 func translate(changes []change) (string, error) {
 	if len(changes) == 0 {

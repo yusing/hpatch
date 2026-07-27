@@ -35,16 +35,16 @@ const (
 )
 
 type invocationMetrics struct {
-	Commands         commandMetrics
-	SelectorVariants [selectorVariantCount]commandMetric
-	TextSpans        [textSpanVariantCount]commandMetric
-	BlockOutcomes    [blockOutcomeCount]uint64
-	Reasons          [failureReasonCount]uint64
+	Commands         commandMetrics                      `json:"commands"`
+	SelectorVariants [selectorVariantCount]commandMetric `json:"selector_variants"`
+	TextSpans        [textSpanVariantCount]commandMetric `json:"text_spans"`
+	BlockOutcomes    [blockOutcomeCount]uint64           `json:"block_outcomes"`
+	Reasons          [failureReasonCount]uint64          `json:"reasons"`
 	// CommandReasons attributes each error to the command that raised it. The
 	// flat Reasons histogram cannot answer which primitive a reason belongs
 	// to, which is the question that decides whether a command earns its
 	// place in the language.
-	CommandReasons [commandCount][failureReasonCount]uint64
+	CommandReasons [commandCount][failureReasonCount]uint64 `json:"command_reasons"`
 }
 
 var selectorVariantNames = [selectorVariantCount]string{

@@ -12,16 +12,10 @@ import (
 	"testing"
 )
 
-func TestSuccessfulReportsCountExactInputTokens(t *testing.T) {
+func TestSuccessfulReportsDoNotInventCallerTokens(t *testing.T) {
 	root := t.TempDir()
 	dataDirectory := t.TempDir()
 	script := "new note.txt\ntype \"hello\"\n"
-	report := "in note.txt 1:6\n1 hello\n"
-	wantReportTokens, err := countReportInputTokens(report)
-	if err != nil {
-		t.Fatal(err)
-	}
-
 	var stdout, stderr bytes.Buffer
 	if exitCode := Run([]string{"translate"}, strings.NewReader(script), &stdout, &stderr, root, dataDirectory); exitCode != 0 {
 		t.Fatalf("translate = exit %d, stdout %q, stderr %q", exitCode, stdout.String(), stderr.String())
@@ -30,12 +24,15 @@ func TestSuccessfulReportsCountExactInputTokens(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.ReportInputTokens != wantReportTokens {
-		t.Fatalf("report input tokens = %d, want %d for %q", got.ReportInputTokens, wantReportTokens, report)
+	if got.HPatchTokens != 0 || got.ApplyPatchTokens != 0 || got.ReportInputTokens != 0 || got.DiagnosticInputTokens != 0 {
+		t.Fatalf("standalone evaluation invented caller tokens: %+v", got)
+	}
+	if got.Commands[commandOperationIndex("new")].Invocations != 1 || got.Commands[commandOperationIndex("type")].Invocations != 1 {
+		t.Fatalf("standalone evaluator counters = %+v", got.Commands)
 	}
 }
 
-func TestPartialReportWriteCountsNoInputTokens(t *testing.T) {
+func TestPartialReportWriteDoesNotInventCallerTokens(t *testing.T) {
 	root := t.TempDir()
 	dataDirectory := t.TempDir()
 	script := "new note.txt\ntype \"hello\"\n"
@@ -49,7 +46,7 @@ func TestPartialReportWriteCountsNoInputTokens(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.HPatchTokens == 0 || got.ApplyPatchTokens == 0 || got.ReportInputTokens != 0 {
+	if got.HPatchTokens != 0 || got.ApplyPatchTokens != 0 || got.ReportInputTokens != 0 {
 		t.Fatalf("metrics after partial report = %+v", got)
 	}
 }
@@ -60,14 +57,10 @@ func (partialMetricsWriter) Write(value []byte) (int, error) {
 	return min(3, len(value)), io.ErrClosedPipe
 }
 
-func TestSuccessfulNoopCountsCommandsAndReportOnly(t *testing.T) {
+func TestSuccessfulNoopCountsEvaluatorCommandsOnly(t *testing.T) {
 	root := t.TempDir()
 	dataDirectory := t.TempDir()
 	script := "new transient.txt\nrm\n"
-	wantReportTokens, err := countReportInputTokens("no active file\n")
-	if err != nil {
-		t.Fatal(err)
-	}
 	var stdout, stderr bytes.Buffer
 	if exitCode := Run(nil, strings.NewReader(script), &stdout, &stderr, root, dataDirectory); exitCode != 0 {
 		t.Fatalf("normal = exit %d, stdout %q, stderr %q", exitCode, stdout.String(), stderr.String())
@@ -76,7 +69,7 @@ func TestSuccessfulNoopCountsCommandsAndReportOnly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.HPatchTokens != 0 || got.ApplyPatchTokens != 0 || got.IneffectiveHPatchTokens != 0 || got.ReportInputTokens != wantReportTokens {
+	if got.HPatchTokens != 0 || got.ApplyPatchTokens != 0 || got.IneffectiveHPatchTokens != 0 || got.ReportInputTokens != 0 {
 		t.Fatalf("no-op token metrics = %+v", got)
 	}
 	if got.Commands[commandOperationIndex("new")].Invocations != 1 || got.Commands[commandOperationIndex("rm")].Invocations != 1 {

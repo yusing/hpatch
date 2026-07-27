@@ -116,17 +116,10 @@ Final-state report:
   Use the report to orient focused validation without rereading a successfully edited file.
 
 Metrics:
-  Set HPATCH_CHARGED_SCRIPT when the script on stdin was rebuilt from a shorter
-  payload, such as a caller-side correction. Evaluation always uses stdin; output
-  accounting uses that variable instead, so a repair is not measured as costing the
-  complete retry it replaced.
-  hpatch gain reads no script and reports persistent effective, ineffective, and
-  apply_patch output-token estimates in an output comparison table. Input-token
-  estimates are reported in a separate table without conversion to output tokens.
-  Stable tables retain aggregate command errors,
-  absolute and relative selectors, single and multiple tsel spans, exact and recovered
-  block successes, and terminal failure reasons. Metrics failures warn without changing
-  the requested edit, patch, report, or exit status.
+  hpatch gain reads no script and reports caller-accounted hpatch and apply_patch
+  output-token estimates separately from input-token estimates. Stable tables retain
+  evaluator-owned command errors, absolute and relative selectors, single and multiple
+  tsel spans, exact and recovered block successes, and terminal failure reasons.
 
 Paths and patch boundary:
   --root selects the trusted workspace boundary and defaults to hpatch's current
@@ -222,7 +215,7 @@ Final-state report:
   repair context; retry against the unchanged baseline.
 `
 
-const hostAccountingMarker = "Host accounting schema: workspace-v1\n"
+const hostMetricsMarker = "Host metrics schema: caller-v1\n"
 
 func toolHelpText(relativeLines bool) string {
 	lineGrammar := toolHelpAbsoluteLineGrammar
@@ -234,7 +227,7 @@ func toolHelpText(relativeLines bool) string {
 	if relativeLines {
 		relativeHelp = toolHelpRelativeHelp
 	}
-	return strings.Replace(text, toolHelpRelativeHelpMarker, relativeHelp, 1) + hostAccountingMarker
+	return strings.Replace(text, toolHelpRelativeHelpMarker, relativeHelp, 1) + hostMetricsMarker
 }
 
 func relativeLinesEnabled() bool {
@@ -287,8 +280,8 @@ func parseInvocation(args []string) (engineArgs []string, rootPath, cwd string, 
 	if len(args) == 1 && args[0] == "gain" {
 		return []string{"gain"}, "", "", true, nil
 	}
-	if len(args) == 1 && args[0] == "account-rejection" {
-		return []string{"account-rejection"}, "", "", false, nil
+	if len(args) == 1 && args[0] == "record-metrics" {
+		return []string{"record-metrics"}, "", "", true, nil
 	}
 	if len(args) > 0 && args[0] == "translate" {
 		engineArgs = []string{"translate"}

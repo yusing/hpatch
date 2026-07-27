@@ -8,112 +8,59 @@ import (
 	"testing"
 )
 
-const baselineDefinition = "Apply a patch. Uses *** Begin Patch context hunks."
-
-// definitionEnvironment values are read from the process environment, so tests
-// set them through t.Setenv and rely on its per-test restore.
-func withDefinitionEnvironment(t *testing.T, session string) {
-	t.Helper()
-	t.Setenv(sessionEnvironment, session)
-	t.Setenv(definitionEnvironment, "hpatch tool definition text that a host installs")
-	t.Setenv(baselineDefinitionEnvironment, baselineDefinition)
-}
-
-func TestDefinitionCountsOncePerSessionAcrossOutcomes(t *testing.T) {
-	root := t.TempDir()
+func TestDefinitionCountsOncePerCallerSession(t *testing.T) {
 	dataDirectory := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "note.txt"), []byte("alpha\n"), 0o600); err != nil {
-		t.Fatal(err)
+	invocation := invocationMetrics{}
+	record := hostMetricRecord{
+		Invocation:                   &invocation,
+		SessionID:                    "session-one",
+		DefinitionRequests:           1,
+		DefinitionInputTokens:        17,
+		RemovedDefinitionInputTokens: 11,
 	}
-	withDefinitionEnvironment(t, "session-one")
-
-	editScript := "in note.txt\nrsel 1:1\ntype \"beta\\n\"\n"
-	invocations := []struct {
-		args    []string
-		script  string
-		success bool
-	}{
-		{args: []string{"translate"}, script: editScript, success: true},
-		{args: []string{"translate"}, script: "in note.txt\nsel 99 1:1\n", success: false},
-		{script: "new transient.txt\nrm\n", success: true},
-	}
-	for attempt, invocation := range invocations {
-		var stdout, stderr bytes.Buffer
-		exitCode := Run(invocation.args, strings.NewReader(invocation.script), &stdout, &stderr, root, dataDirectory)
-		if (exitCode == 0) != invocation.success {
-			t.Fatalf("attempt %d = exit %d, stderr %q", attempt, exitCode, stderr.String())
-		}
+	for range 3 {
+		recordHostMetricForTest(t, dataDirectory, record)
 	}
 
 	got, err := readMetrics(dataDirectory)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Sessions != 1 {
-		t.Fatalf("sessions = %d, want 1 across repeated invocations", got.Sessions)
-	}
-	single, baseline, err := definitionTokens(os.Getenv(definitionEnvironment), baselineDefinition)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got.DefinitionRequests != 3 || got.DefinitionInputTokens != single || got.RemovedDefinitionInputTokens != baseline {
-		t.Fatalf("definition requests and tokens = (%d, %d, %d), want (3, %d, %d)", got.DefinitionRequests, got.DefinitionInputTokens, got.RemovedDefinitionInputTokens, single, baseline)
+	if got.Sessions != 1 || got.DefinitionRequests != 3 || got.DefinitionInputTokens != 17 || got.RemovedDefinitionInputTokens != 11 {
+		t.Fatalf("first session definition metrics = %+v", got)
 	}
 
-	// A distinct session pays the definition again.
-	t.Setenv(sessionEnvironment, "session-two")
-	var stdout, stderr bytes.Buffer
-	if exitCode := Run([]string{"translate"}, strings.NewReader(editScript), &stdout, &stderr, root, dataDirectory); exitCode != 0 {
-		t.Fatalf("second session = exit %d, stderr %q", exitCode, stderr.String())
-	}
+	record.SessionID = "session-two"
+	recordHostMetricForTest(t, dataDirectory, record)
 	got, err = readMetrics(dataDirectory)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Sessions != 2 || got.DefinitionRequests != 4 || got.DefinitionInputTokens != 2*single || got.RemovedDefinitionInputTokens != 2*baseline {
-		t.Fatalf("second session = (%d sessions, %d requests, %d, %d tokens), want (2, 4, %d, %d)", got.Sessions, got.DefinitionRequests, got.DefinitionInputTokens, got.RemovedDefinitionInputTokens, 2*single, 2*baseline)
+	if got.Sessions != 2 || got.DefinitionRequests != 4 || got.DefinitionInputTokens != 34 || got.RemovedDefinitionInputTokens != 22 {
+		t.Fatalf("second session definition metrics = %+v", got)
 	}
 }
 
 func TestInterruptedSessionClaimRemainsFreshUntilMetricsCommit(t *testing.T) {
 	dataDirectory := t.TempDir()
-	fresh, err := claimSession(dataDirectory, "session", 0, 1)
+	fresh, err := claimSession(dataDirectory, "session", 0, 1, false)
 	if err != nil || !fresh {
 		t.Fatalf("initial claim = %t, error %v", fresh, err)
 	}
-	fresh, err = claimSession(dataDirectory, "session", 0, 1)
+	fresh, err = claimSession(dataDirectory, "session", 0, 1, false)
 	if err != nil || !fresh {
 		t.Fatalf("interrupted claim retry = %t, error %v", fresh, err)
 	}
-	fresh, err = claimSession(dataDirectory, "session", 1, 2)
+	fresh, err = claimSession(dataDirectory, "session", 1, 2, false)
 	if err != nil || fresh {
 		t.Fatalf("durable claim retry = %t, error %v", fresh, err)
 	}
 }
 
-func TestDefinitionUnmeasuredWithoutSession(t *testing.T) {
-	root := t.TempDir()
-	dataDirectory := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "note.txt"), []byte("alpha\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv(sessionEnvironment, "")
-	t.Setenv(definitionEnvironment, "hpatch tool definition text")
-	t.Setenv(baselineDefinitionEnvironment, baselineDefinition)
-
-	var stdout, stderr bytes.Buffer
-	if exitCode := Run([]string{"translate"}, strings.NewReader("in note.txt\nrsel 1:1\ntype \"beta\\n\"\n"), &stdout, &stderr, root, dataDirectory); exitCode != 0 {
-		t.Fatalf("translate = exit %d, stderr %q", exitCode, stderr.String())
-	}
-	got, err := readMetrics(dataDirectory)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got.Sessions != 0 || got.DefinitionInputTokens != 0 {
-		t.Fatalf("unmeasured definition = %+v", got)
-	}
-	if !strings.Contains(strings.Join(strings.Fields(gainReport(got)), " "), "not measured (missing "+sessionEnvironment+")") {
-		t.Fatal("gain does not disclose that definitions were unmeasured")
+func TestDefinitionReportDisclosesMissingCallerSession(t *testing.T) {
+	report := strings.Join(strings.Fields(gainReport(metrics{})), " ")
+	if !strings.Contains(report, "not measured (missing caller session)") {
+		t.Fatalf("gain does not disclose unmeasured definitions: %q", report)
 	}
 }
 

@@ -16,13 +16,13 @@ import (
 	"unicode/utf8"
 
 	"github.com/gofrs/flock"
-	"github.com/tiktoken-go/tokenizer"
 )
 
 const (
 	metricsFilename       = "metrics.bin"
 	metricsLockname       = "metrics.lock"
-	metricsMagic          = "HPATCH13"
+	metricsMagic          = "HPATCH14"
+	priorMetricsMagic     = "HPATCH13"
 	metricsSlotSize       = 2160
 	metricsFileSize       = 2 * metricsSlotSize
 	metricsChecksumOffset = 2128
@@ -36,8 +36,8 @@ var commandOperations = [commandCount]string{
 }
 
 type commandMetric struct {
-	Invocations uint64
-	Errors      uint64
+	Invocations uint64 `json:"invocations"`
+	Errors      uint64 `json:"errors"`
 }
 
 type commandMetrics [commandCount]commandMetric
@@ -102,164 +102,11 @@ func (m commandMetric) errorRate() float64 {
 	return float64(m.Errors) / float64(m.Invocations) * 100
 }
 
-func gpt5Codec() (tokenizer.Codec, error) {
-	codec, err := tokenizer.ForModel(tokenizer.GPT5)
-	if err != nil {
-		return nil, fmt.Errorf("loading GPT-5 tokenizer: %w", err)
-	}
-	return codec, nil
-}
-
-func countMetrics(script, patch string) (metrics, error) {
-	codec, err := gpt5Codec()
-	if err != nil {
-		return metrics{}, err
-	}
-	hpatchTokens, err := codec.Count(hpatchMetricPayload(script))
-	if err != nil {
-		return metrics{}, fmt.Errorf("tokenizing hpatch output: %w", err)
-	}
-	applyPatchTokens, err := codec.Count(applyPatchMetricPayload(patch))
-	if err != nil {
-		return metrics{}, fmt.Errorf("tokenizing apply_patch output: %w", err)
-	}
-	return metrics{
-		HPatchTokens:     uint64(hpatchTokens),
-		ApplyPatchTokens: uint64(applyPatchTokens),
-	}, nil
-}
-
-func countIneffectiveMetrics(script string) (metrics, error) {
-	codec, err := gpt5Codec()
-	if err != nil {
-		return metrics{}, err
-	}
-	hpatchTokens, err := codec.Count(hpatchMetricPayload(script))
-	if err != nil {
-		return metrics{}, fmt.Errorf("tokenizing ineffective hpatch output: %w", err)
-	}
-	applyPatchTokens, err := codec.Count(applyPatchMetricPayload(failedApplyPatch))
-	if err != nil {
-		return metrics{}, fmt.Errorf("tokenizing failed-call apply_patch output: %w", err)
-	}
-	return metrics{
-		IneffectiveHPatchTokens: uint64(hpatchTokens),
-		FailedApplyPatchTokens:  uint64(applyPatchTokens),
-	}, nil
-}
-
-func countReportInputTokens(report string) (uint64, error) {
-	if report == "" {
-		return 0, nil
-	}
-	codec, err := gpt5Codec()
-	if err != nil {
-		return 0, err
-	}
-	count, err := codec.Count(report)
-	if err != nil {
-		return 0, fmt.Errorf("tokenizing state report input: %w", err)
-	}
-	return uint64(count), nil
-}
-
-func countDiagnosticInputTokens(diagnostic string) (uint64, error) {
-	if diagnostic == "" {
-		return 0, nil
-	}
-	codec, err := gpt5Codec()
-	if err != nil {
-		return 0, err
-	}
-	count, err := codec.Count(diagnostic)
-	if err != nil {
-		return 0, fmt.Errorf("tokenizing diagnostic input: %w", err)
-	}
-	return uint64(count), nil
-}
-
-func countCarriedMetadataInputTokens(metadata []string) (uint64, error) {
-	if len(metadata) == 0 {
-		return 0, nil
-	}
-	codec, err := gpt5Codec()
-	if err != nil {
-		return 0, err
-	}
-	var total uint64
-	for _, value := range metadata {
-		count, err := codec.Count(value)
-		if err != nil {
-			return 0, fmt.Errorf("tokenizing carried metadata input: %w", err)
-		}
-		if !addCounter(&total, uint64(count)) {
-			return 0, fmt.Errorf("tokenizing carried metadata input: token count overflow")
-		}
-	}
-	return total, nil
-}
-
-func recordMetrics(dataDirectory, script, patch string, changes []change, emittedReport string, events invocationMetrics, accounting metricAccounting) error {
-	metricPatch, err := applyPatchMetricPatch(changes, patch, accounting.ApplyPatchRoot)
-	if err != nil {
-		return fmt.Errorf("rendering apply_patch metric payload: %w", err)
-	}
-	entry, err := countMetrics(script, metricPatch)
-	if err != nil {
-		return err
-	}
-	entry.ReportInputTokens, err = countReportInputTokens(emittedReport)
-	if err != nil {
-		return err
-	}
-	entry.MetadataInputTokens, err = countCarriedMetadataInputTokens(accounting.CarriedMetadata)
-	if err != nil {
-		return err
-	}
-	entry.invocationMetrics = events
-	return updateMetricsWithAccounting(dataDirectory, entry, accounting)
-}
-
-func recordIneffectiveMetrics(dataDirectory, script, diagnostic string, events invocationMetrics, accounting metricAccounting) error {
-	entry, err := countIneffectiveMetrics(script)
-	if err != nil {
-		return err
-	}
-	entry.DiagnosticInputTokens, err = countDiagnosticInputTokens(diagnostic)
-	if err != nil {
-		return err
-	}
-	entry.MetadataInputTokens, err = countCarriedMetadataInputTokens(accounting.CarriedMetadata)
-	if err != nil {
-		return err
-	}
-	entry.invocationMetrics = events
-	return updateMetricsWithAccounting(dataDirectory, entry, accounting)
-}
-
-func recordCommandMetrics(dataDirectory, emittedReport string, events invocationMetrics, accounting metricAccounting) error {
-	reportTokens, err := countReportInputTokens(emittedReport)
-	if err != nil {
-		return err
-	}
-	entry := metrics{ReportInputTokens: reportTokens}
-	entry.MetadataInputTokens, err = countCarriedMetadataInputTokens(accounting.CarriedMetadata)
-	if err != nil {
-		return err
-	}
-	entry.invocationMetrics = events
-	return updateMetricsWithAccounting(dataDirectory, entry, accounting)
-}
-
 func updateMetrics(dataDirectory string, entry metrics) error {
-	accounting, err := loadMetricAccounting()
-	if err != nil {
-		return err
-	}
-	return updateMetricsWithAccounting(dataDirectory, entry, accounting)
+	return updateMetricsForSession(dataDirectory, entry, "")
 }
 
-func updateMetricsWithAccounting(dataDirectory string, entry metrics, accounting metricAccounting) (err error) {
+func updateMetricsForSession(dataDirectory string, entry metrics, session string) (err error) {
 	if dataDirectory == "" {
 		return fmt.Errorf("metrics directory is unavailable")
 	}
@@ -279,13 +126,6 @@ func updateMetricsWithAccounting(dataDirectory string, entry metrics, accounting
 		}
 	}()
 
-	// Every classified invocation is a definition request. The session marker
-	// limits installation and removal token accounting to its first durable use.
-	definition, session, err := definitionEntry(accounting)
-	if err != nil {
-		return err
-	}
-
 	file, err := os.OpenFile(filepath.Join(dataDirectory, metricsFilename), os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
 		return fmt.Errorf("opening metrics: %w", err)
@@ -303,20 +143,17 @@ func updateMetricsWithAccounting(dataDirectory string, entry metrics, accounting
 		return fmt.Errorf("updating metrics: generation overflow")
 	}
 	nextGeneration := generation + 1
-	if session != "" {
-		fresh, err := claimSession(dataDirectory, session, generation, nextGeneration)
+	if session != "" && entry.DefinitionRequests != 0 {
+		fresh, err := claimSession(dataDirectory, session, generation, nextGeneration, generation != 0 && total.Sessions == 0 && total.DefinitionRequests == 0)
 		if err != nil {
 			return err
 		}
 		if fresh {
-			definition.Sessions = 1
+			entry.Sessions = 1
 		} else {
-			definition.DefinitionInputTokens = 0
-			definition.RemovedDefinitionInputTokens = 0
+			entry.DefinitionInputTokens = 0
+			entry.RemovedDefinitionInputTokens = 0
 		}
-	}
-	if err := entry.add(definition); err != nil {
-		return err
 	}
 	if err := total.add(entry); err != nil {
 		return err
@@ -537,6 +374,9 @@ func readMetricsFile(file *os.File) (metrics, uint64, error) {
 	var latest metrics
 	var latestGeneration uint64
 	var valid, mismatchedVersion bool
+	var legacy metrics
+	var legacyGeneration uint64
+	var legacyValid bool
 	for index := range 2 {
 		var encoded [metricsSlotSize]byte
 		read, err := file.ReadAt(encoded[:], int64(index*metricsSlotSize))
@@ -547,6 +387,13 @@ func readMetricsFile(file *os.File) (metrics, uint64, error) {
 			continue
 		}
 		magic := string(encoded[:8])
+		if magic == priorMetricsMagic {
+			candidate, generation, ok := decodeMetricsSlotForMagic(encoded, priorMetricsMagic)
+			if ok && (!legacyValid || generation > legacyGeneration) {
+				legacy, legacyGeneration, legacyValid = candidate, generation, true
+			}
+			continue
+		}
 		if bytes.HasPrefix(encoded[:8], []byte("HPATCH")) && magic != metricsMagic {
 			checksum := sha256.Sum256(encoded[:metricsChecksumOffset])
 			generation := binary.LittleEndian.Uint64(encoded[8:16])
@@ -562,6 +409,9 @@ func readMetricsFile(file *os.File) (metrics, uint64, error) {
 	}
 	if valid {
 		return latest, latestGeneration, nil
+	}
+	if legacyValid {
+		return metrics{invocationMetrics: legacy.invocationMetrics}, legacyGeneration, nil
 	}
 	if !mismatchedVersion {
 		mismatchedVersion, err = hasValidPriorMetricsSlot(file, info.Size())
@@ -652,7 +502,11 @@ func putCommandMetric(encoded []byte, offset int, entry commandMetric) {
 }
 
 func decodeMetricsSlot(encoded [metricsSlotSize]byte) (metrics, uint64, bool) {
-	if !bytes.Equal(encoded[:8], []byte(metricsMagic)) {
+	return decodeMetricsSlotForMagic(encoded, metricsMagic)
+}
+
+func decodeMetricsSlotForMagic(encoded [metricsSlotSize]byte, expectedMagic string) (metrics, uint64, bool) {
+	if !bytes.Equal(encoded[:8], []byte(expectedMagic)) {
 		return metrics{}, 0, false
 	}
 	checksum := sha256.Sum256(encoded[:metricsChecksumOffset])
@@ -729,10 +583,6 @@ func (m *metrics) overallReduction() float64 {
 }
 
 const defaultGainReportWidth = 80
-
-func gainReport(m metrics) string {
-	return gainReportAtWidth(m, defaultGainReportWidth)
-}
 
 func gainReportAtWidth(m metrics, width int) string {
 	var report strings.Builder
