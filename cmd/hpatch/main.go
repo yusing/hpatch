@@ -120,6 +120,15 @@ Metrics:
   evaluator-owned command errors, absolute selectors, single and multiple
   tsel spans, exact and recovered block successes, and terminal failure reasons.
 
+Error hook:
+  Agent-correctable script evaluation failures run each command template in
+  <user-config-directory>/hpatch/settings.json under hooks.error. Templates receive
+  the failed command's number, source line, operation, category, path, input, failure,
+  diagnostic, repair context, and a Markdown Body. The format_markdown function returns
+  that Body, and shellquote safely quotes a string for the shell. Hook failures are
+  warnings and never replace the original hpatch failure. All hooks share one 10-second
+  execution deadline.
+
 Paths and patch boundary:
   --root selects the trusted workspace boundary and defaults to hpatch's current
   directory. --cwd selects an existing directory within that root and defaults to

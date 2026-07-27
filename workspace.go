@@ -64,7 +64,7 @@ func (p *program) evaluate(resolve pathResolver, load fileLoader, exists pathPro
 			if err != nil {
 				reason := reasonPath
 				events.fail(command.operation, command.attempt, reason)
-				return nil, events, "", &commandError{Attempt: command.attempt, Reason: reason, Command: commandIndex + 1, Line: command.line, Operation: command.operation, Path: diagnosticPath, Category: commandCategory(command.operation), Message: err.Error()}
+				return nil, events, "", &commandError{Attempt: command.attempt, Reason: reason, Command: commandIndex + 1, Line: command.line, Operation: command.operation, Path: diagnosticPath, Category: commandCategory(command.operation), Source: command.source, Message: err.Error()}
 			}
 			command.path = resolved
 		}
@@ -72,7 +72,7 @@ func (p *program) evaluate(resolve pathResolver, load fileLoader, exists pathPro
 		if err != nil {
 			reason := reasonOf(err, reasonOther)
 			events.fail(command.operation, command.attempt, reason)
-			return nil, events, "", &commandError{Attempt: command.attempt, Reason: reason, Command: commandIndex + 1, Line: command.line, Operation: command.operation, Path: w.diagnosticPath(command), Category: commandCategory(command.operation), Message: err.Error(), Repair: w.repairContext(command, reason)}
+			return nil, events, "", &commandError{Attempt: command.attempt, Reason: reason, Command: commandIndex + 1, Line: command.line, Operation: command.operation, Path: w.diagnosticPath(command), Category: commandCategory(command.operation), Source: command.source, Message: err.Error(), Repair: w.repairContext(command, reason)}
 		}
 		events.recordOutcome(command.operation, outcome)
 	}

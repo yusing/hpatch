@@ -96,7 +96,7 @@ func RunWorkspace(args []string, stdin io.Reader, stdout, stderr io.Writer, work
 		}
 	}
 	if err != nil {
-		return failEvaluation(stderr, err)
+		return failEvaluation(stderr, err, dataDirectory)
 	}
 	if !translateMode && len(changes) == 0 {
 		_, _ = io.WriteString(stderr, report)
@@ -289,10 +289,14 @@ func fail(stderr io.Writer, message string) int {
 	return 1
 }
 
-func failEvaluation(stderr io.Writer, err error) int {
+func failEvaluation(stderr io.Writer, err error, dataDirectory string) int {
 	diagnostic := failureDiagnostic(err.Error())
 	if command, ok := errors.AsType[*commandError](err); ok {
-		diagnostic += command.Repair
+		_, _ = io.WriteString(stderr, diagnostic+command.Repair)
+		for _, hookErr := range runErrorHooks(dataDirectory, command, diagnostic, errorHooksTimeout) {
+			warn(stderr, hookErr.Error())
+		}
+		return 1
 	}
 	_, _ = io.WriteString(stderr, diagnostic)
 	return 1

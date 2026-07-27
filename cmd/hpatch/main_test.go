@@ -88,6 +88,9 @@ func TestTopLevelHelpDescribesCompletePublicSurface(t *testing.T) {
 		"caller-accounted hpatch",
 		"absolute selectors",
 		"terminal failure reasons",
+		"settings.json under hooks.error",
+		"format_markdown",
+		"shellquote",
 	} {
 		if !strings.Contains(helpTextBase, fragment) {
 			t.Fatalf("help does not contain %q", fragment)

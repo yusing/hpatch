@@ -20,6 +20,7 @@ var (
 
 type instruction struct {
 	attempt    commandAttempt
+	source     string
 	line       int
 	operation  string
 	path       string
@@ -45,6 +46,7 @@ type commandError struct {
 	Operation string
 	Path      string
 	Category  string
+	Source    string
 	Message   string
 	// Repair is multi-line baseline context that a retry needs in order to
 	// correct this command. It is excluded from Error, whose result is
@@ -93,9 +95,11 @@ func parse(source string) (*program, error) {
 				Line:      lineNumber,
 				Operation: strings.Fields(line)[0],
 				Category:  "syntax",
+				Source:    line,
 				Message:   message,
 			}
 		}
+		command.source = line
 		command.attempt = attemptForInstruction(command)
 		program.instructions = append(program.instructions, command)
 	}
