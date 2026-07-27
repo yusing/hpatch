@@ -46,7 +46,7 @@ func TestInformationalCommandsNeedNoEnvironmentOrStdin(t *testing.T) {
 	}{
 		{name: "top-level help", args: []string{"--help"}, want: helpText(true), wantFragment: "hpatch translate [--root ROOT] [--cwd CWD] < SCRIPT"},
 		{name: "translate help", args: []string{"translate", "--help"}, want: translateHelpText, wantFragment: "without modifying"},
-		{name: "tool help", args: []string{"--tool-help"}, want: toolHelpText(true), wantFragment: "one free-form script"},
+		{name: "tool help", args: []string{"--tool-help"}, want: toolHelpText(true), wantFragment: "Edit workspace files atomically with one free-form script."},
 		{name: "version", args: []string{"--version"}, want: "hpatch devel\n", wantFragment: "hpatch devel"},
 	}
 	for _, test := range tests {
@@ -95,24 +95,19 @@ func TestTopLevelHelpDescribesCompletePublicSurface(t *testing.T) {
 	}
 }
 
-func TestToolHelpUsesFocusedLarkSyntaxAndAuthoritativeSemantics(t *testing.T) {
+func TestToolHelpIsFocusedAndAuthoritative(t *testing.T) {
 	help := toolHelpText(true)
 	for _, required := range []string{
 		"one free-form script",
 		"rejected script changes nothing",
-		"Lark syntax:",
-		`?command: path_cmd | "rm" | sel | tsel | block | rsel | type_cmd | "del" | "dup"`,
-		`path_cmd: ("in" | "new" | "mv") " " PATH`,
-		`sel: "sel" " " line_ref " " POS ":" POS`,
-		`tsel: "tsel" " " line_ref " " OCC " " HWS? STRING tsel_tail?`,
-		`block: ("bsel" | "bsel_next") " " HWS? STRING HWS STRING HWS?`,
-		`%import common.ESCAPED_STRING -> STRING`,
-		"nonzero\n(start if positive, end if negative)",
-		"nonempty ASCII space and tab runs",
+		"sel LINE_REF START:END",
+		"tsel LINE_REF OCCURRENCE \"TEXT\" [N]",
+		"bsel_next \"START\" \"END\"",
+		"ASCII space and tab runs are",
 		"The first in for an existing file captures an immutable baseline.",
 		"Final-state report:",
-		"multiple",
-		"insertions at one baseline position",
+		"multiple insertions",
+		"at one baseline position",
 		"up to three",
 		"workspace-relative paths",
 		"Parent directories for new",
@@ -128,8 +123,7 @@ func TestToolHelpUsesFocusedLarkSyntaxAndAuthoritativeSemantics(t *testing.T) {
 		"--root",
 		"--cwd",
 		"Metrics:",
-		toolHelpLineGrammarMarker,
-		toolHelpRelativeHelpMarker,
+		toolHelpRelativeMarker,
 	} {
 		if strings.Contains(help, excluded) {
 			t.Fatalf("tool help contains non-tool text %q", excluded)
