@@ -52,6 +52,10 @@ type commandError struct {
 	Path      string
 	Category  string
 	Message   string
+	// Repair is multi-line baseline context that a retry needs in order to
+	// correct this command. It is excluded from Error, whose result is
+	// sanitized onto one line, and is emitted separately.
+	Repair string
 }
 
 func (e *commandError) Error() string {

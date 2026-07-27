@@ -78,7 +78,7 @@ func RunWorkspace(args []string, stdin io.Reader, stdout, stderr io.Writer, work
 	scriptText := string(script)
 	changes, filesystem, commands, report, err := evaluateScript(context.TODO(), workspace, scriptText, relativeLinesEnabled())
 	if err != nil {
-		return failWithIneffectiveMetrics(stderr, err.Error(), dataDirectory, scriptText, commands)
+		return failEvaluation(stderr, err, dataDirectory, scriptText, commands)
 	}
 	if !translateMode && len(changes) == 0 {
 		emittedReport := completedReport(report, writeStateReport(stderr, report))
@@ -307,6 +307,17 @@ func failWithIneffectiveMetrics(stderr io.Writer, message, dataDirectory, script
 		if err := recordIneffectiveMetrics(dataDirectory, script, commands); err != nil {
 			warn(stderr, err.Error())
 		}
+	}
+	return exitCode
+}
+
+// failEvaluation reports an evaluation failure and, when the failing command
+// carried repair context, writes that context on following lines so a retry can
+// correct the selector without rereading the file.
+func failEvaluation(stderr io.Writer, err error, dataDirectory, script string, commands invocationMetrics) int {
+	exitCode := failWithIneffectiveMetrics(stderr, err.Error(), dataDirectory, script, commands)
+	if command, ok := errors.AsType[*commandError](err); ok && command.Repair != "" {
+		_, _ = io.WriteString(stderr, command.Repair)
 	}
 	return exitCode
 }

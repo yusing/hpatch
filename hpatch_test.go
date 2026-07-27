@@ -315,8 +315,11 @@ func TestFailureDiagnosticsIdentifyCommandContext(t *testing.T) {
 			writeTestFile(t, root, "file.txt", "aaa\n", 0o644)
 			writeTestFile(t, root, "\x1b[31mfile.txt", "occupied\n", 0o644)
 			stdout, stderr, exitCode := runForTest(root, []string{"translate"}, test.script)
-			if exitCode != 1 || stdout != "" || stderr != test.want {
-				t.Fatalf("Run() = exit %d, stdout %q, stderr %q; want stderr %q", exitCode, stdout, stderr, test.want)
+			// This test pins the single-line diagnostic. Any repair context
+			// follows it on later lines and is covered by repair_test.go.
+			diagnostic, _, _ := strings.Cut(stderr, "\n")
+			if exitCode != 1 || stdout != "" || diagnostic+"\n" != test.want {
+				t.Fatalf("Run() = exit %d, stdout %q, stderr %q; want diagnostic %q", exitCode, stdout, stderr, test.want)
 			}
 		})
 	}

@@ -527,6 +527,22 @@ whole-file versus state-derived scope and exact versus whitespace-tolerant ambig
 disabled relative syntax receives a specific diagnostic rather than a generic malformed
 command.
 
+A command failure that addressed an existing baseline additionally writes repair context
+on the lines following its diagnostic. Selectors resolve against a baseline the caller
+cannot see, so a diagnostic alone forces a blind retry that costs a whole script; repair
+context supplies the measurements that failure implies. A rejected column range reports the
+addressed line's rune-column count, restates that one tab is one column, and lists the
+rune-column span of each whitespace-separated token on that line. Token spans are used
+rather than sampled columns because a sampled character usually recurs on the line and
+cannot be located unambiguously. An out-of-range line or line range reports the file's
+line count. A missing or ambiguous block anchor reports each anchor's occurrence lines
+within the searched scope and restates that a block selection includes both anchors. An
+edit conflict reports which baseline lines earlier commands already claim. Every repair
+block includes a window of baseline lines around the addressed line, marks that line, and
+escapes control characters so each rendered line stays on one output line. A failure with
+no active baseline, including a missing file, emits its diagnostic alone. Repair context is
+supplementary: it never changes exit status, stdout, mutation, or metrics classification.
+
 Acceptance:
 
 1. Normal success has empty stdout and one rendered final-state report on stderr after
@@ -543,6 +559,9 @@ Acceptance:
    without a successful final-state report.
 5. Failure to write a fully rendered report after a successful external effect does not
    reverse that effect or record a complete report-input token estimate.
+6. A rejected column range, out-of-range line, unresolved or ambiguous anchor, and edit
+   conflict each emit repair context sufficient to correct the command without rereading
+   the file; a failure with no active baseline emits its diagnostic alone.
 
 ## REQ-GUIDE-001 — Agent guidance
 

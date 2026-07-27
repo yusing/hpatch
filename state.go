@@ -132,10 +132,16 @@ func renderedCoordinateAt(text string, lines []renderedLine, offset int) rendere
 }
 
 func previewText(text string) string {
+	return previewTextLimit(text, 64)
+}
+
+// previewTextLimit renders text on one output line, escaping control characters
+// and truncating to limit code points.
+func previewTextLimit(text string, limit int) string {
 	var preview strings.Builder
 	count := 0
 	for _, character := range text {
-		if count == 64 {
+		if count == limit {
 			break
 		}
 		count++

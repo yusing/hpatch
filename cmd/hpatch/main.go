@@ -33,7 +33,11 @@ Agent workflow:
      input. Invoke hpatch once per attempt; do not encode, shell-wrap, or route it
      through functions.exec, apply_patch, or hpatch translate.
   4. If functions.hpatch rejects the script, no staged edits were committed.
-     Correct and resubmit the complete script against the unchanged file state.
+     A rejection that reached an existing file prints repair context after its
+     diagnostic: the addressed line's column count, that line's token column spans,
+     anchor occurrence lines, or the baseline lines earlier commands already claim.
+     Correct from that context and resubmit the complete script against the unchanged
+     file state; do not reread the file to recount columns.
   5. After success, run focused behavioral validation. For Go source changes, run
      gofmt before tests so structural errors are reported immediately. Success means
      every selector resolved, not that it resolved where you intended: a selector
@@ -45,7 +49,7 @@ Editing commands:
   new PATH                            select a pending empty file at cursor 0:0
   mv PATH                             move the active pending file without changing its baseline
   rm                                  remove the active file and clear editor state
-  sel LINE START:END                  select inclusive one-based Unicode columns
+  sel LINE START:END                  select inclusive one-based rune columns
   tsel LINE OCCURRENCE "TEXT" [N]     select N occurrences; N defaults to 1
   bsel "START" "END"                  select one whole-file uniquely anchored block
   bsel_next "START" "END"             select one state-scoped uniquely anchored block
@@ -73,6 +77,13 @@ Baseline editor state:
   exactly at a replacement boundary is unambiguous and permitted. A new file has an
   empty baseline and accepts at most one effective type write. rm rejects an existing
   baseline file that already has content edits.
+
+  ` + "`sel`" + ` columns count Unicode code points, not display width: one tab is one
+  column, so a rendered editor column does not match a sel column on an indented line.
+  Both endpoints are inclusive. Prefer tsel or rsel when the target has a usable text
+  anchor or is a whole line; a sel range that resolves to an unintended but valid span
+  commits silently. A rejected range prints the line's column count and each token's
+  column span, which is enough to correct it without rereading the file.
 
   ` + "`tsel`" + ` occurrence must be nonzero: positive values count from the start, and
   negative values count from the end. Its optional count must be a positive integer and
