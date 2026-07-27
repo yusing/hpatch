@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"text/tabwriter"
+	"unicode/utf8"
 
 	"github.com/gofrs/flock"
 	"github.com/tiktoken-go/tokenizer"
@@ -720,10 +721,16 @@ func (m metrics) overallReduction() float64 {
 	return (float64(m.ApplyPatchTokens) + float64(m.FailedApplyPatchTokens) - float64(m.HPatchTokens) - float64(m.IneffectiveHPatchTokens)) / baseline * 100
 }
 
+const defaultGainReportWidth = 80
+
 func gainReport(m metrics) string {
+	return gainReportAtWidth(m, defaultGainReportWidth)
+}
+
+func gainReportAtWidth(m metrics, width int) string {
 	var report strings.Builder
 	writeOutputGainTable(&report, m)
-	writeInputGainTable(&report, m)
+	writeInputGainTable(&report, m, width)
 
 	writeCommandTable(&report, "command metrics:", "command", commandOperations[:], m.Commands[:], true)
 	writeCommandTable(&report, "selector coordinate metrics:", "selector", selectorVariantNames[:], m.SelectorVariants[:], false)
@@ -774,27 +781,128 @@ func writeOutputGainTable(report *strings.Builder, m metrics) {
 	report.WriteString("failed apply_patch output is the empty carrier emitted by the router.\n\n")
 }
 
-func writeInputGainTable(report *strings.Builder, m metrics) {
+func writeInputGainTable(report *strings.Builder, m metrics, width int) {
 	totalHPatch := new(big.Int).SetUint64(m.ReportInputTokens)
 	for _, count := range []uint64{m.DiagnosticInputTokens, m.MetadataInputTokens, m.DefinitionInputTokens} {
 		totalHPatch.Add(totalHPatch, new(big.Int).SetUint64(count))
 	}
 
 	report.WriteString("input token estimates:\n")
-	table := tabwriter.NewWriter(report, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(table, "source\thpatch\tapply_patch")
-	fmt.Fprintln(table, "------\t------\t-----------")
-	fmt.Fprintf(table, "state reports\t%d\tnot measured\n", m.ReportInputTokens)
-	fmt.Fprintf(table, "failure diagnostics\t%d\tnot measured\n", m.DiagnosticInputTokens)
-	fmt.Fprintf(table, "carried metadata\t%d\tnot measured\n", m.MetadataInputTokens)
-	fmt.Fprintf(table, "tool definitions\t%d\t%d\n", m.DefinitionInputTokens, m.BaselineDefinitionInputTokens)
-	fmt.Fprintf(table, "total measured\t%s\t%d\n", totalHPatch, m.BaselineDefinitionInputTokens)
-	_ = table.Flush()
-	report.WriteString("state reports: final state after successful calls\n")
-	report.WriteString("failure diagnostics: errors and repair context after failed calls\n")
-	report.WriteString("carried metadata: host context repeated with tool calls\n")
-	report.WriteString("tool definitions: host schemas; cumulative per measured call\n")
-	fmt.Fprintf(report, "definition sessions: %d\ndefinition coverage: %s\n\n", m.Sessions, describeDefinitionSources(m))
+	writeWrappedTable(report, width, []string{"source", "hpatch", "apply_patch", "description"}, [][]string{
+		{"state reports", fmt.Sprint(m.ReportInputTokens), "not measured", "final state returned after successful calls"},
+		{"failure diagnostics", fmt.Sprint(m.DiagnosticInputTokens), "not measured", "errors and repair context returned after failed calls"},
+		{"carried metadata", fmt.Sprint(m.MetadataInputTokens), "not measured", "host context repeated with tool calls"},
+		{"tool definitions", fmt.Sprint(m.DefinitionInputTokens), fmt.Sprint(m.BaselineDefinitionInputTokens), "tool schemas supplied by the host"},
+		{"total measured", totalHPatch.String(), fmt.Sprint(m.BaselineDefinitionInputTokens), "columns sum measured inputs only"},
+	})
+	writeWrappedText(report, width, fmt.Sprintf("tool definitions are cumulative per measured call in %d distinct session(s) (%s).", m.Sessions, describeDefinitionSources(m)))
+	report.WriteByte('\n')
+}
+
+const gainTableGap = 2
+
+func writeWrappedTable(report *strings.Builder, width int, headers []string, rows [][]string) {
+	widths := gainTableWidths(width, headers, rows)
+	writeWrappedRow(report, headers, widths)
+	separator := make([]string, len(widths))
+	for index, columnWidth := range widths {
+		separator[index] = strings.Repeat("-", columnWidth)
+	}
+	writeWrappedRow(report, separator, widths)
+	for _, row := range rows {
+		writeWrappedRow(report, row, widths)
+	}
+}
+
+func gainTableWidths(width int, headers []string, rows [][]string) []int {
+	widths := make([]int, len(headers))
+	for index, header := range headers {
+		widths[index] = utf8.RuneCountInString(header)
+	}
+	for _, row := range rows {
+		for index, cell := range row {
+			widths[index] = max(widths[index], utf8.RuneCountInString(cell))
+		}
+	}
+
+	available := max(len(widths), width-gainTableGap*(len(widths)-1))
+	fixed := 0
+	for _, columnWidth := range widths[:len(widths)-1] {
+		fixed += columnWidth
+	}
+	widths[len(widths)-1] = max(1, available-fixed)
+	for sum(widths) > available {
+		widest := 0
+		for index := range len(widths) - 1 {
+			if widths[index] > widths[widest] {
+				widest = index
+			}
+		}
+		if widths[widest] == 1 {
+			break
+		}
+		widths[widest]--
+	}
+	return widths
+}
+
+func sum(values []int) int {
+	var total int
+	for _, value := range values {
+		total += value
+	}
+	return total
+}
+
+func writeWrappedRow(report *strings.Builder, cells []string, widths []int) {
+	wrapped := make([][]string, len(cells))
+	height := 1
+	for index, cell := range cells {
+		wrapped[index] = wrapCell(cell, widths[index])
+		height = max(height, len(wrapped[index]))
+	}
+	for line := range height {
+		for column, columnWidth := range widths {
+			var cell string
+			if line < len(wrapped[column]) {
+				cell = wrapped[column][line]
+			}
+			report.WriteString(cell)
+			if column < len(widths)-1 {
+				report.WriteString(strings.Repeat(" ", columnWidth-utf8.RuneCountInString(cell)+gainTableGap))
+			}
+		}
+		report.WriteByte('\n')
+	}
+}
+
+func wrapCell(value string, width int) []string {
+	var lines []string
+	for _, word := range strings.Fields(value) {
+		wordRunes := []rune(word)
+		if len(lines) > 0 && utf8.RuneCountInString(lines[len(lines)-1])+1+len(wordRunes) <= width {
+			lines[len(lines)-1] += " " + word
+			continue
+		}
+		for len(wordRunes) > width {
+			lines = append(lines, string(wordRunes[:width]))
+			wordRunes = wordRunes[width:]
+		}
+		if len(wordRunes) > 0 {
+			lines = append(lines, string(wordRunes))
+		}
+	}
+	if len(lines) == 0 {
+		return []string{""}
+	}
+	return lines
+}
+
+func writeWrappedText(report *strings.Builder, width int, value string) {
+	for _, line := range wrapCell(value, max(1, width)) {
+		report.WriteString(line)
+		report.WriteByte('\n')
+	}
 }
 
 // writeCommandReasonTable attributes each error to the command that raised it.

@@ -6,6 +6,7 @@ require (
 	github.com/gofrs/flock v0.13.0
 	github.com/pmezard/go-difflib v1.0.0
 	github.com/tiktoken-go/tokenizer v0.8.1
+	golang.org/x/term v0.36.0
 )
 
 require (

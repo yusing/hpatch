@@ -86,7 +86,7 @@ func TestDefinitionUnmeasuredWithoutSession(t *testing.T) {
 	if got.Sessions != 0 || got.DefinitionInputTokens != 0 {
 		t.Fatalf("unmeasured definition = %+v", got)
 	}
-	if !strings.Contains(gainReport(got), "not measured (missing "+sessionEnvironment+")") {
+	if !strings.Contains(strings.Join(strings.Fields(gainReport(got)), " "), "not measured (missing "+sessionEnvironment+")") {
 		t.Fatal("gain does not disclose that definitions were unmeasured")
 	}
 }

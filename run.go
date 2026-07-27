@@ -12,6 +12,8 @@ import (
 	"strings"
 	"unicode"
 	"unicode/utf8"
+
+	"golang.org/x/term"
 )
 
 const disableRelativeLinesEnvironment = "HPATCH_DISABLE_RELATIVE_LINES"
@@ -51,6 +53,18 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer, workingDirect
 	return RunWorkspace(args, stdin, stdout, stderr, Workspace{Root: root, CWD: "."}, dataDirectory)
 }
 
+func gainReportWidth(output io.Writer) int {
+	file, ok := output.(interface{ Fd() uintptr })
+	if !ok {
+		return defaultGainReportWidth
+	}
+	width, _, err := term.GetSize(int(file.Fd()))
+	if err != nil || width <= 0 {
+		return defaultGainReportWidth
+	}
+	return width
+}
+
 // RunWorkspace executes the command-line contract within workspace.
 func RunWorkspace(args []string, stdin io.Reader, stdout, stderr io.Writer, workspace Workspace, dataDirectory string) int {
 	translateMode := false
@@ -65,7 +79,7 @@ func RunWorkspace(args []string, stdin io.Reader, stdout, stderr io.Writer, work
 		if err != nil {
 			return fail(stderr, err.Error())
 		}
-		if _, err := io.WriteString(stdout, gainReport(metrics)); err != nil {
+		if _, err := io.WriteString(stdout, gainReportAtWidth(metrics, gainReportWidth(stdout))); err != nil {
 			return fail(stderr, fmt.Sprintf("writing gain report: %v", err))
 		}
 		return 0

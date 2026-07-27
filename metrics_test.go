@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"unicode/utf8"
 )
 
 func TestGainReportsPersistedTotals(t *testing.T) {
@@ -66,41 +67,32 @@ func TestGainWithoutMetricsReportsZero(t *testing.T) {
 }
 
 func TestGainReportReconcilesEffectiveAndIneffectiveTokens(t *testing.T) {
-	report := gainReport(metrics{
+	metricValues := metrics{
 		HPatchTokens:            2404,
 		ApplyPatchTokens:        4764,
 		IneffectiveHPatchTokens: 2172,
 		FailedApplyPatchTokens:  300,
-	})
+	}
+	report := gainReport(metricValues)
 	for _, want := range []string{
 		"output token estimates:\n",
 		"successful  2404    4764         49.5%\n",
 		"failed      2172    300          n/a\n",
 		"all         4576    5064         9.6%\n",
 		"input token estimates:\n",
+		"source               hpatch  apply_patch   description\n",
 		"state reports        0       not measured",
+		"failure diagnostics  0       not measured",
 		"tool definitions     0       0",
-		"state reports: final state after successful calls\n",
-		"definition sessions: 0\n",
-		"definition coverage: not measured (missing HPATCH_SESSION_ID)\n",
+		"tool definitions are cumulative per measured call",
+		"HPATCH_SESSION_ID",
 	} {
 		if !strings.Contains(report, want) {
 			t.Fatalf("gain report %q does not contain %q", report, want)
 		}
 	}
-	inputStart := strings.Index(report, "input token estimates:\n")
-	inputEnd := strings.Index(report, "command metrics:\n")
-	if inputStart < 0 || inputEnd < inputStart {
-		t.Fatalf("gain report has no bounded input section: %q", report)
-	}
-	for _, line := range strings.Split(report[inputStart:inputEnd], "\n") {
-		if len(line) > 80 {
-			t.Fatalf("input report line exceeds 80 columns: %q", line)
-		}
-	}
 	for _, nextTable := range []string{
 		"input token estimates:",
-
 		"command metrics:",
 		"selector coordinate metrics:",
 		"tsel span metrics:",
@@ -113,10 +105,45 @@ func TestGainReportReconcilesEffectiveAndIneffectiveTokens(t *testing.T) {
 		}
 	}
 
+	for _, width := range []int{64, 80, 117} {
+		t.Run(fmt.Sprintf("width_%d", width), func(t *testing.T) {
+			section := gainInputSection(t, gainReportAtWidth(metricValues, width))
+			for _, line := range strings.Split(strings.TrimSuffix(section, "\n"), "\n") {
+				if utf8.RuneCountInString(line) > width {
+					t.Fatalf("line exceeds width %d: %q", width, line)
+				}
+			}
+			for _, text := range []string{
+				"final state returned after successful calls",
+				"errors and repair context returned after failed calls",
+				"host context repeated with tool calls",
+				"tool schemas supplied by the host",
+				"columns sum measured inputs only",
+			} {
+				if !strings.Contains(strings.Join(strings.Fields(section), " "), text) {
+					t.Fatalf("width %d report lost description %q: %q", width, text, section)
+				}
+			}
+			if width == 80 && !strings.Contains(section, "\n                                           calls\n") {
+				t.Fatalf("wrapped description is not aligned with its column: %q", section)
+			}
+		})
+	}
+
 	overflowSafe := gainReport(metrics{HPatchTokens: ^uint64(0), IneffectiveHPatchTokens: ^uint64(0), ApplyPatchTokens: ^uint64(0), FailedApplyPatchTokens: ^uint64(0)})
 	if !strings.Contains(overflowSafe, "36893488147419103230") {
 		t.Fatalf("overflow-safe gain report = %q", overflowSafe)
 	}
+}
+
+func gainInputSection(t *testing.T, report string) string {
+	t.Helper()
+	start := strings.Index(report, "input token estimates:\n")
+	end := strings.Index(report, "command metrics:\n")
+	if start < 0 || end < start {
+		t.Fatalf("gain report has no bounded input section: %q", report)
+	}
+	return report[start:end]
 }
 
 func TestGainReportsCommandInvocationsErrorsAndRates(t *testing.T) {
