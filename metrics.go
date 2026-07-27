@@ -10,6 +10,7 @@ import (
 	"math/big"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"text/tabwriter"
 	"unicode/utf8"
@@ -84,7 +85,7 @@ func (m *commandMetrics) fail(operation string) {
 	}
 }
 
-func (m commandMetrics) total() (commandMetric, bool) {
+func (m *commandMetrics) total() (commandMetric, bool) {
 	var total commandMetric
 	for _, entry := range m {
 		if entry.Errors > entry.Invocations || !addCounter(&total.Invocations, entry.Invocations) || !addCounter(&total.Errors, entry.Errors) {
@@ -703,7 +704,7 @@ func getCommandMetric(encoded []byte, offset int) commandMetric {
 	}
 }
 
-func (m metrics) reduction() float64 {
+func (m *metrics) reduction() float64 {
 	if m.ApplyPatchTokens == 0 {
 		return 0
 	}
@@ -713,7 +714,7 @@ func (m metrics) reduction() float64 {
 // overallReduction compares all measured hpatch output with the generated
 // apply_patch output. Failed hpatch calls are represented by the empty
 // apply_patch carrier emitted by the router.
-func (m metrics) overallReduction() float64 {
+func (m *metrics) overallReduction() float64 {
 	baseline := float64(m.ApplyPatchTokens) + float64(m.FailedApplyPatchTokens)
 	if baseline == 0 {
 		return 0
@@ -789,11 +790,11 @@ func writeInputGainTable(report *strings.Builder, m metrics, width int) {
 
 	report.WriteString("input token estimates:\n")
 	writeWrappedTable(report, width, []string{"source", "hpatch", "apply_patch", "description"}, [][]string{
-		{"state reports", fmt.Sprint(m.ReportInputTokens), "not measured", "final state returned after successful calls"},
-		{"failure diagnostics", fmt.Sprint(m.DiagnosticInputTokens), "not measured", "errors and repair context returned after failed calls"},
-		{"carried metadata", fmt.Sprint(m.MetadataInputTokens), "not measured", "host context repeated with tool calls"},
-		{"tool definitions", fmt.Sprint(m.DefinitionInputTokens), fmt.Sprint(m.BaselineDefinitionInputTokens), "tool schemas supplied by the host"},
-		{"total measured", totalHPatch.String(), fmt.Sprint(m.BaselineDefinitionInputTokens), "columns sum measured inputs only"},
+		{"state reports", strconv.FormatUint(m.ReportInputTokens, 10), "not measured", "final state returned after successful calls"},
+		{"failure diagnostics", strconv.FormatUint(m.DiagnosticInputTokens, 10), "not measured", "errors and repair context returned after failed calls"},
+		{"carried metadata", strconv.FormatUint(m.MetadataInputTokens, 10), "not measured", "host context repeated with tool calls"},
+		{"tool definitions", strconv.FormatUint(m.DefinitionInputTokens, 10), strconv.FormatUint(m.BaselineDefinitionInputTokens, 10), "tool schemas supplied by the host"},
+		{"total measured", totalHPatch.String(), strconv.FormatUint(m.BaselineDefinitionInputTokens, 10), "columns sum measured inputs only"},
 	})
 	writeWrappedText(report, width, fmt.Sprintf("tool definitions are cumulative per measured call in %d distinct session(s) (%s).", m.Sessions, describeDefinitionSources(m)))
 	report.WriteByte('\n')
@@ -878,7 +879,7 @@ func writeWrappedRow(report *strings.Builder, cells []string, widths []int) {
 
 func wrapCell(value string, width int) []string {
 	var lines []string
-	for _, word := range strings.Fields(value) {
+	for word := range strings.FieldsSeq(value) {
 		wordRunes := []rune(word)
 		if len(lines) > 0 && utf8.RuneCountInString(lines[len(lines)-1])+1+len(wordRunes) <= width {
 			lines[len(lines)-1] += " " + word
@@ -924,7 +925,7 @@ func writeCommandReasonTable(report *strings.Builder, commandReasons [commandCou
 		}
 	}
 	if rows == 0 {
-		fmt.Fprintln(table, "none\tnone\t0")
+		fmt.Fprintln(table, "none\tnone\t0") //nolint:dupword // Both columns intentionally report the empty state.
 	}
 	_ = table.Flush()
 }

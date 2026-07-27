@@ -136,7 +136,7 @@ func TestCommandReasonsAttributeErrorsToCommands(t *testing.T) {
 	if !strings.Contains(report, "sel      coordinate-bounds  1") {
 		t.Fatalf("gain report lacks attributed error row: %q", report)
 	}
-	if !strings.Contains(gainReport(metrics{}), "none     none    0") {
+	if !strings.Contains(gainReport(metrics{}), "none     none    0") { //nolint:dupword // Both empty-state columns read "none".
 		t.Fatalf("empty gain report lacks none row: %q", gainReport(metrics{}))
 	}
 }

@@ -108,7 +108,7 @@ func TestGainReportReconcilesEffectiveAndIneffectiveTokens(t *testing.T) {
 	for _, width := range []int{64, 80, 117} {
 		t.Run(fmt.Sprintf("width_%d", width), func(t *testing.T) {
 			section := gainInputSection(t, gainReportAtWidth(metricValues, width))
-			for _, line := range strings.Split(strings.TrimSuffix(section, "\n"), "\n") {
+			for line := range strings.SplitSeq(strings.TrimSuffix(section, "\n"), "\n") {
 				if utf8.RuneCountInString(line) > width {
 					t.Fatalf("line exceeds width %d: %q", width, line)
 				}
@@ -588,7 +588,7 @@ func TestImmediatePriorMetricsVersionResetsTotals(t *testing.T) {
 
 func TestMismatchedMetricsVersionResetsTotals(t *testing.T) {
 	dataDirectory := t.TempDir()
-	mismatched := rewriteMetricsMagic(encodeMetricsSlot(metrics{HPatchTokens: 5, ApplyPatchTokens: 9}, 7), "HPATCH99")
+	mismatched := rewriteMetricsMagic(encodeMetricsSlot(metrics{HPatchTokens: 5, ApplyPatchTokens: 9}, 7))
 	if err := os.WriteFile(filepath.Join(dataDirectory, metricsFilename), mismatched[:], 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -616,7 +616,7 @@ func TestMismatchedMetricsVersionResetsTotals(t *testing.T) {
 
 func TestMalformedMismatchedMetricsVersionDoesNotReset(t *testing.T) {
 	dataDirectory := t.TempDir()
-	malformed := rewriteMetricsMagic(encodeMetricsSlot(metrics{HPatchTokens: 5}, 7), "HPATCH99")
+	malformed := rewriteMetricsMagic(encodeMetricsSlot(metrics{HPatchTokens: 5}, 7))
 	malformed[40] ^= 0xff
 	if err := os.WriteFile(filepath.Join(dataDirectory, metricsFilename), malformed[:], 0o600); err != nil {
 		t.Fatal(err)
@@ -626,11 +626,12 @@ func TestMalformedMismatchedMetricsVersionDoesNotReset(t *testing.T) {
 		t.Fatalf("readMetrics() error = %v, want malformed-slot failure", err)
 	}
 }
+
 func TestMismatchedMetricsVersionDoesNotOverrideCurrent(t *testing.T) {
 	dataDirectory := t.TempDir()
 	want := metrics{HPatchTokens: 5, ApplyPatchTokens: 9}
 	current := encodeMetricsSlot(want, 1)
-	mismatched := rewriteMetricsMagic(encodeMetricsSlot(metrics{HPatchTokens: 7, ApplyPatchTokens: 11}, 2), "HPATCH99")
+	mismatched := rewriteMetricsMagic(encodeMetricsSlot(metrics{HPatchTokens: 7, ApplyPatchTokens: 11}, 2))
 	content := append(current[:], mismatched[:]...)
 	if err := os.WriteFile(filepath.Join(dataDirectory, metricsFilename), content, 0o600); err != nil {
 		t.Fatal(err)
@@ -649,7 +650,7 @@ func TestMetricsRecoversFromTornUnknownInactiveSlot(t *testing.T) {
 	dataDirectory := t.TempDir()
 	want := metrics{HPatchTokens: 5, ApplyPatchTokens: 9}
 	current := encodeMetricsSlot(want, 1)
-	torn := rewriteMetricsMagic(encodeMetricsSlot(metrics{HPatchTokens: 7, ApplyPatchTokens: 11}, 2), "HPATCH99")
+	torn := rewriteMetricsMagic(encodeMetricsSlot(metrics{HPatchTokens: 7, ApplyPatchTokens: 11}, 2))
 	torn[40] ^= 0xff
 	content := append(current[:], torn[:]...)
 	if err := os.WriteFile(filepath.Join(dataDirectory, metricsFilename), content, 0o600); err != nil {
@@ -677,8 +678,8 @@ func TestMetricsRecoversFromTornUnknownInactiveSlot(t *testing.T) {
 	}
 }
 
-func rewriteMetricsMagic(encoded [metricsSlotSize]byte, magic string) [metricsSlotSize]byte {
-	copy(encoded[:8], magic)
+func rewriteMetricsMagic(encoded [metricsSlotSize]byte) [metricsSlotSize]byte {
+	copy(encoded[:8], "HPATCH99")
 	checksum := sha256.Sum256(encoded[:metricsChecksumOffset])
 	copy(encoded[metricsChecksumOffset:], checksum[:])
 	return encoded
