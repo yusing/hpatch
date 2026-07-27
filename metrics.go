@@ -20,10 +20,10 @@ import (
 const (
 	metricsFilename       = "metrics.bin"
 	metricsLockname       = "metrics.lock"
-	metricsMagic          = "HPATCH09"
-	metricsSlotSize       = 2144
+	metricsMagic          = "HPATCH10"
+	metricsSlotSize       = 2152
 	metricsFileSize       = 2 * metricsSlotSize
-	metricsChecksumOffset = 2112
+	metricsChecksumOffset = 2120
 	commandCount          = 12
 )
 
@@ -47,6 +47,7 @@ type metrics struct {
 	ApplyPatchTokens        uint64
 	IneffectiveHPatchTokens uint64
 	ReportInputTokens       uint64
+	DiagnosticInputTokens   uint64
 
 	// Sessions counts distinct agent sessions that carried the hpatch tool
 	// definition. Definition text is sent once per session under prompt
@@ -170,7 +171,22 @@ func countReportInputTokens(report string) (uint64, error) {
 	return uint64(count), nil
 }
 
-func recordMetrics(dataDirectory, script, patch, emittedReport string, events invocationMetrics) error {
+func countDiagnosticInputTokens(diagnostic string) (uint64, error) {
+	if diagnostic == "" {
+		return 0, nil
+	}
+	codec, err := gpt5Codec()
+	if err != nil {
+		return 0, err
+	}
+	count, err := codec.Count(diagnostic)
+	if err != nil {
+		return 0, fmt.Errorf("tokenizing diagnostic input: %w", err)
+	}
+	return uint64(count), nil
+}
+
+func recordMetrics(dataDirectory, script, patch, emittedReport string, events invocationMetrics, accounting metricAccounting) error {
 	entry, err := countMetrics(script, patch)
 	if err != nil {
 		return err
@@ -180,29 +196,41 @@ func recordMetrics(dataDirectory, script, patch, emittedReport string, events in
 		return err
 	}
 	entry.invocationMetrics = events
-	return updateMetrics(dataDirectory, entry)
+	return updateMetricsWithAccounting(dataDirectory, entry, accounting)
 }
 
-func recordIneffectiveMetrics(dataDirectory, script string, events invocationMetrics) error {
+func recordIneffectiveMetrics(dataDirectory, script, diagnostic string, events invocationMetrics, accounting metricAccounting) error {
 	entry, err := countIneffectiveMetrics(script, events)
 	if err != nil {
 		return err
 	}
+	entry.DiagnosticInputTokens, err = countDiagnosticInputTokens(diagnostic)
+	if err != nil {
+		return err
+	}
 	entry.invocationMetrics = events
-	return updateMetrics(dataDirectory, entry)
+	return updateMetricsWithAccounting(dataDirectory, entry, accounting)
 }
 
-func recordCommandMetrics(dataDirectory, emittedReport string, events invocationMetrics) error {
+func recordCommandMetrics(dataDirectory, emittedReport string, events invocationMetrics, accounting metricAccounting) error {
 	reportTokens, err := countReportInputTokens(emittedReport)
 	if err != nil {
 		return err
 	}
 	entry := metrics{ReportInputTokens: reportTokens}
 	entry.invocationMetrics = events
-	return updateMetrics(dataDirectory, entry)
+	return updateMetricsWithAccounting(dataDirectory, entry, accounting)
 }
 
-func updateMetrics(dataDirectory string, entry metrics) (err error) {
+func updateMetrics(dataDirectory string, entry metrics) error {
+	accounting, err := loadMetricAccounting()
+	if err != nil {
+		return err
+	}
+	return updateMetricsWithAccounting(dataDirectory, entry, accounting)
+}
+
+func updateMetricsWithAccounting(dataDirectory string, entry metrics, accounting metricAccounting) (err error) {
 	if dataDirectory == "" {
 		return fmt.Errorf("metrics directory is unavailable")
 	}
@@ -222,14 +250,10 @@ func updateMetrics(dataDirectory string, entry metrics) (err error) {
 		}
 	}()
 
-	// Every classified invocation carried the tool definition, including
-	// no-op scripts and failures, so the session charge is applied here
-	// rather than in any one outcome path.
-	definition, err := definitionEntry(dataDirectory)
+	// Every classified invocation carries the tool definition. Cached tokens
+	// remain input tokens; the marker only counts the first durable session use.
+	definition, session, err := definitionEntry(accounting)
 	if err != nil {
-		return err
-	}
-	if err := entry.add(definition); err != nil {
 		return err
 	}
 
@@ -246,13 +270,25 @@ func updateMetrics(dataDirectory string, entry metrics) (err error) {
 	if err != nil {
 		return err
 	}
-	if err := total.add(entry); err != nil {
-		return err
-	}
 	if generation == ^uint64(0) {
 		return fmt.Errorf("updating metrics: generation overflow")
 	}
 	nextGeneration := generation + 1
+	if session != "" {
+		fresh, err := claimSession(dataDirectory, session, generation, nextGeneration)
+		if err != nil {
+			return err
+		}
+		if fresh {
+			definition.Sessions = 1
+		}
+	}
+	if err := entry.add(definition); err != nil {
+		return err
+	}
+	if err := total.add(entry); err != nil {
+		return err
+	}
 	encoded := encodeMetricsSlot(total, nextGeneration)
 	offset := int64((nextGeneration-1)%2) * metricsSlotSize
 	written, err := file.WriteAt(encoded[:], offset)
@@ -274,6 +310,7 @@ func (m *metrics) add(entry metrics) error {
 		{&m.ApplyPatchTokens, entry.ApplyPatchTokens},
 		{&m.IneffectiveHPatchTokens, entry.IneffectiveHPatchTokens},
 		{&m.ReportInputTokens, entry.ReportInputTokens},
+		{&m.DiagnosticInputTokens, entry.DiagnosticInputTokens},
 		{&m.Sessions, entry.Sessions},
 		{&m.DefinitionInputTokens, entry.DefinitionInputTokens},
 		{&m.BaselineDefinitionInputTokens, entry.BaselineDefinitionInputTokens},
@@ -570,6 +607,7 @@ func encodeMetricsSlot(value metrics, generation uint64) [metricsSlotSize]byte {
 			binary.LittleEndian.PutUint64(encoded[base+reason*8:base+reason*8+8], count)
 		}
 	}
+	binary.LittleEndian.PutUint64(encoded[2112:2120], value.DiagnosticInputTokens)
 	checksum := sha256.Sum256(encoded[:metricsChecksumOffset])
 	copy(encoded[metricsChecksumOffset:], checksum[:])
 	return encoded
@@ -603,6 +641,7 @@ func decodeMetricsSlot(encoded [metricsSlotSize]byte) (metrics, uint64, bool) {
 		BaselineFailures:              binary.LittleEndian.Uint64(encoded[72:80]),
 		AttributableFailures:          binary.LittleEndian.Uint64(encoded[80:88]),
 		EffectiveInvocations:          binary.LittleEndian.Uint64(encoded[88:96]),
+		DiagnosticInputTokens:         binary.LittleEndian.Uint64(encoded[2112:2120]),
 	}
 	for index := range commandCount {
 		value.Commands[index] = getCommandMetric(encoded[:], 96+index*16)
@@ -672,7 +711,7 @@ func (m metrics) weightedOverallReduction(outputToInputRatio float64) float64 {
 	if baseline == 0 {
 		return 0
 	}
-	inputOverhead := float64(m.ReportInputTokens) + float64(m.definitionOverhead())
+	inputOverhead := float64(m.ReportInputTokens) + float64(m.DiagnosticInputTokens) + float64(m.definitionOverhead())
 	weightedCost := float64(m.HPatchTokens) + float64(m.IneffectiveHPatchTokens) + inputOverhead/outputToInputRatio
 	return (baseline - weightedCost) / baseline * 100
 }
@@ -701,8 +740,9 @@ func gainReport(m metrics) string {
 	)
 	fmt.Fprintf(
 		&report,
-		"estimated state-report input tokens: %d\nestimated tool-definition input tokens: %d hpatch, %d baseline, %d net over %d session(s) (%s)\nestimated weighted overall reduction at 5:1: %.1f%%\nestimated weighted overall reduction at 6:1: %.1f%%\n",
+		"estimated state-report input tokens: %d\nestimated diagnostic input tokens: %d\nestimated tool-definition input tokens: %d hpatch, %d baseline, %d net over %d session(s) (%s)\nestimated weighted overall reduction at 5:1: %.1f%%\nestimated weighted overall reduction at 6:1: %.1f%%\n",
 		m.ReportInputTokens,
+		m.DiagnosticInputTokens,
 		m.DefinitionInputTokens,
 		m.BaselineDefinitionInputTokens,
 		m.definitionOverhead(),

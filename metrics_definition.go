@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
@@ -21,10 +22,10 @@ const (
 
 const sessionMarkerDirectory = "sessions"
 
-// definitionTokens estimates the input cost of the hpatch tool definition the
-// host installed and of the baseline patch tool it replaced. Both are counted
-// only once per session, because a definition sent on every request is served
-// from the provider's prompt cache after the first.
+// definitionTokens estimates the input tokens for the hpatch definition and
+// the baseline definition displaced on this invocation. Cached definitions are
+// still input tokens, so every invocation contributes while Sessions remains a
+// distinct-session counter.
 func definitionTokens(definition, baselineDefinition string) (uint64, uint64, error) {
 	if definition == "" && baselineDefinition == "" {
 		return 0, 0, nil
@@ -47,60 +48,54 @@ func definitionTokens(definition, baselineDefinition string) (uint64, uint64, er
 	return counts[0], counts[1], nil
 }
 
-// definitionEntry returns the once-per-session definition contribution for this
-// invocation. It returns a zero entry when the host named no session or when
-// this session already recorded its definitions, so repeated invocations within
-// one session do not multiply a cached cost.
-func definitionEntry(dataDirectory string) (metrics, error) {
-	session := os.Getenv(sessionEnvironment)
-	definition := trimmedDefinition(os.Getenv(definitionEnvironment))
-	baseline := trimmedDefinition(os.Getenv(baselineDefinitionEnvironment))
-	if session == "" || (definition == "" && baseline == "") {
-		return metrics{}, nil
-	}
-	fresh, err := claimSession(dataDirectory, session)
-	if err != nil || !fresh {
-		return metrics{}, err
+func definitionEntry(accounting metricAccounting) (metrics, string, error) {
+	definition := trimmedDefinition(accounting.Definition)
+	baseline := trimmedDefinition(accounting.BaselineDefinition)
+	if accounting.SessionID == "" || (definition == "" && baseline == "") {
+		return metrics{}, "", nil
 	}
 	definitionCount, baselineCount, err := definitionTokens(definition, baseline)
 	if err != nil {
-		return metrics{}, err
+		return metrics{}, "", err
 	}
 	return metrics{
-		Sessions:                      1,
 		DefinitionInputTokens:         definitionCount,
 		BaselineDefinitionInputTokens: baselineCount,
-	}, nil
+	}, accounting.SessionID, nil
 }
 
-// claimSession reports whether session is seen here for the first time,
-// recording it so later invocations in the same session do not re-charge the
-// definition. Callers hold the metrics lock.
-func claimSession(dataDirectory, session string) (bool, error) {
+// claimSession records the metrics generation that will first include session.
+// A generation newer than the durable metrics slot is an interrupted claim and
+// is safely reused by the next writer. Callers hold the metrics lock.
+func claimSession(dataDirectory, session string, currentGeneration, nextGeneration uint64) (bool, error) {
 	directory := filepath.Join(dataDirectory, sessionMarkerDirectory)
 	if err := os.MkdirAll(directory, 0o700); err != nil {
 		return false, fmt.Errorf("creating session directory: %w", err)
 	}
 	digest := sha256.Sum256([]byte(session))
 	marker := filepath.Join(directory, hex.EncodeToString(digest[:])+".seen")
-	file, err := os.OpenFile(marker, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
-	if err != nil {
-		if os.IsExist(err) {
+	content, err := os.ReadFile(marker)
+	if err == nil {
+		text := strings.TrimSpace(string(content))
+		if text == "" {
+			return false, nil // marker from the prior format
+		}
+		recorded, parseErr := strconv.ParseUint(text, 10, 64)
+		if parseErr != nil {
+			return false, fmt.Errorf("reading session marker: %w", parseErr)
+		}
+		if recorded <= currentGeneration {
 			return false, nil
 		}
-		return false, fmt.Errorf("recording session: %w", err)
+	} else if !os.IsNotExist(err) {
+		return false, fmt.Errorf("reading session marker: %w", err)
 	}
-	if err := file.Close(); err != nil {
+	if err := os.WriteFile(marker, []byte(strconv.FormatUint(nextGeneration, 10)+"\n"), 0o600); err != nil {
 		return false, fmt.Errorf("recording session: %w", err)
 	}
 	return true, nil
 }
 
-// definitionOverhead is the per-session hpatch definition input attributable to
-// hpatch after crediting the baseline definition it displaced. A host whose
-// native patch tool costs more than hpatch's yields no overhead rather than a
-// negative one, so the reported reduction never borrows from the baseline's
-// definition.
 func (m metrics) definitionOverhead() uint64 {
 	if m.BaselineDefinitionInputTokens >= m.DefinitionInputTokens {
 		return 0

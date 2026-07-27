@@ -14,6 +14,7 @@ const repairLineWindow = 2
 // wider than the final-state report's preview because a repair needs to show
 // the span the selector actually addressed, which may sit late in a long line.
 const repairPreviewLimit = 200
+const repairListLimit = 16
 
 // repairContext renders what a failing command needed to know and could not
 // see: the baseline lines it addressed and, where the reason is a coordinate or
@@ -34,8 +35,6 @@ func (w *workspace) repairContext(command instruction, reason failureReason) str
 	}
 
 	var report strings.Builder
-	// A selector that resolved but overlaps an earlier edit needs the conflict
-	// explained, not its coordinates re-measured.
 	// A selector that resolved but overlaps an earlier edit needs the conflict
 	// explained, not its coordinates re-measured. The rejected selection was
 	// never committed to editor state, so the window is centered on the line
@@ -115,28 +114,37 @@ func (w *workspace) writeAnchorRepair(report *strings.Builder, editor *editor, l
 		scopeStart = editor.cursor
 	}
 	scope := editor.baseline[scopeStart:scopeEnd]
-
-	for _, anchor := range []struct {
-		label   string
-		literal string
-	}{{"START", command.text}, {"END", command.endText}} {
-		if anchor.literal == "" {
-			continue
-		}
-		occurrences := anchorLineNumbers(editor.baseline, lines, scope, scopeStart, anchor.literal)
-		switch {
-		case len(occurrences) == 0:
-			fmt.Fprintf(report, "%s anchor %q has no exact occurrence in the searched scope\n", anchor.label, previewText(anchor.literal))
-		case len(occurrences) == 1:
-			fmt.Fprintf(report, "%s anchor %q occurs once, at line %d\n", anchor.label, previewText(anchor.literal), occurrences[0])
-		default:
-			fmt.Fprintf(report, "%s anchor %q is ambiguous, occurring at lines %s\n", anchor.label, previewText(anchor.literal), joinLineNumbers(occurrences))
-		}
+	startMatches, startRecovered := blockAnchorMatches(scope, command.text)
+	writeAnchorMatches(report, "START", command.text, startMatches, startRecovered, lines, scopeStart)
+	if len(startMatches) == 1 {
+		endScopeStart := startMatches[0].end
+		endMatches, endRecovered := blockAnchorMatches(scope[endScopeStart:], command.endText)
+		writeAnchorMatches(report, "END", command.endText, endMatches, endRecovered, lines, scopeStart+endScopeStart)
+	} else {
+		report.WriteString("END anchor was not evaluated because START is not unique\n")
 	}
-	// The selected span includes both anchors, so a repair that replaces the
-	// block must reproduce whatever END covers.
 	if reason == reasonAnchorAmbiguous || reason == reasonAnchorMissing {
 		report.WriteString("a block selection includes both anchors, so replacement text must reproduce what END covers\n")
+	}
+}
+
+func writeAnchorMatches(report *strings.Builder, label, literal string, matches []literalMatch, recovered bool, lines []logicalLine, scopeStart int) {
+	qualifier := ""
+	if recovered {
+		qualifier = " after normalizing horizontal whitespace"
+	}
+	switch len(matches) {
+	case 0:
+		fmt.Fprintf(report, "%s anchor %q has no occurrence%s in the searched scope\n", label, previewText(literal), qualifier)
+	case 1:
+		line := lineNumberAt(lines, scopeStart+matches[0].start)
+		fmt.Fprintf(report, "%s anchor %q occurs once%s, at line %d\n", label, previewText(literal), qualifier, line)
+	default:
+		numbers := make([]int, 0, min(len(matches), repairListLimit))
+		for _, match := range matches[:min(len(matches), repairListLimit)] {
+			numbers = append(numbers, lineNumberAt(lines, scopeStart+match.start))
+		}
+		fmt.Fprintf(report, "%s anchor %q is ambiguous%s, occurring at lines %s\n", label, previewText(literal), qualifier, joinLineNumbers(numbers, len(matches)))
 	}
 }
 
@@ -184,8 +192,9 @@ func (e *editor) addressedOffset(command instruction, lines []logicalLine) int {
 // so a conflicting retry can see which spans are unavailable rather than
 // rediscovering them one rejection at a time.
 func (e *editor) claimedLineSpans(lines []logicalLine) string {
-	var claims []string
-	for _, edit := range e.orderedEdits() {
+	edits := e.orderedEdits()
+	claims := make([]string, 0, min(len(edits), repairListLimit))
+	for _, edit := range edits[:min(len(edits), repairListLimit)] {
 		start := lineNumberAt(lines, edit.start)
 		end := lineNumberAt(lines, max(edit.start, edit.end-1))
 		span := fmt.Sprint(start)
@@ -193,6 +202,9 @@ func (e *editor) claimedLineSpans(lines []logicalLine) string {
 			span = fmt.Sprintf("%d:%d", start, end)
 		}
 		claims = append(claims, fmt.Sprintf("command %d (%s) line %s", edit.command, edit.operation, span))
+	}
+	if omitted := len(edits) - len(claims); omitted > 0 {
+		claims = append(claims, fmt.Sprintf("... (%d more edits)", omitted))
 	}
 	return strings.Join(claims, "; ")
 }
@@ -228,12 +240,16 @@ func columnGuide(content string) string {
 	var spans []string
 	column := 0
 	start := 0
+	total := 0
 	var token strings.Builder
 	flush := func(end int) {
 		if token.Len() == 0 {
 			return
 		}
-		spans = append(spans, fmt.Sprintf("%s=%d:%d", previewText(token.String()), start, end))
+		total++
+		if len(spans) < repairListLimit {
+			spans = append(spans, fmt.Sprintf("%s=%d:%d", previewText(token.String()), start, end))
+		}
 		token.Reset()
 	}
 	for _, character := range content {
@@ -248,27 +264,13 @@ func columnGuide(content string) string {
 		token.WriteRune(character)
 	}
 	flush(column)
-	if len(spans) == 0 {
+	if total == 0 {
 		return "line contains only whitespace"
 	}
-	return strings.Join(spans, " ")
-}
-
-// anchorLineNumbers reports the one-based baseline lines where literal occurs
-// within scope. scopeStart maps a scope offset back to a baseline offset.
-func anchorLineNumbers(baseline string, lines []logicalLine, scope string, scopeStart int, literal string) []int {
-	var numbers []int
-	for offset := 0; ; {
-		index := strings.Index(scope[offset:], literal)
-		if index < 0 {
-			return numbers
-		}
-		numbers = append(numbers, lineNumberAt(lines, scopeStart+offset+index))
-		offset += index + len(literal)
-		if offset > len(scope) {
-			return numbers
-		}
+	if omitted := total - len(spans); omitted > 0 {
+		spans = append(spans, fmt.Sprintf("... (%d more tokens)", omitted))
 	}
+	return strings.Join(spans, " ")
 }
 
 // lineNumberAt maps a baseline offset to its one-based logical line.
@@ -281,10 +283,13 @@ func lineNumberAt(lines []logicalLine, offset int) int {
 	return len(lines)
 }
 
-func joinLineNumbers(numbers []int) string {
-	rendered := make([]string, 0, len(numbers))
+func joinLineNumbers(numbers []int, total int) string {
+	rendered := make([]string, 0, len(numbers)+1)
 	for _, number := range numbers {
 		rendered = append(rendered, fmt.Sprint(number))
+	}
+	if omitted := total - len(numbers); omitted > 0 {
+		rendered = append(rendered, fmt.Sprintf("... (%d more occurrences)", omitted))
 	}
 	return strings.Join(rendered, ", ")
 }

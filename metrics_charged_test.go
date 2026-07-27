@@ -82,11 +82,20 @@ func TestChargedScriptDefaultsToTheEvaluatedScript(t *testing.T) {
 	if err := os.Unsetenv(chargedScriptVariable); err != nil {
 		t.Fatal(err)
 	}
-	if got := chargedScript("in calc.go\n"); got != "in calc.go\n" {
+	t.Setenv(accountingFileVariable, "")
+	accounting, err := loadMetricAccounting()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := accounting.chargedScript("in calc.go\n"); got != "in calc.go\n" {
 		t.Fatalf("charged script with no variable = %q", got)
 	}
 	t.Setenv(chargedScriptVariable, "")
-	if got := chargedScript("in calc.go\n"); got != "in calc.go\n" {
+	accounting, err = loadMetricAccounting()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := accounting.chargedScript("in calc.go\n"); got != "in calc.go\n" {
 		t.Fatalf("charged script with an empty variable = %q", got)
 	}
 }

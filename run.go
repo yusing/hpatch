@@ -58,6 +58,8 @@ func RunWorkspace(args []string, stdin io.Reader, stdout, stderr io.Writer, work
 	case len(args) == 0:
 	case len(args) == 1 && args[0] == "translate":
 		translateMode = true
+	case len(args) == 1 && args[0] == hostRejectionCommand:
+		return recordHostRejection(stdin, stderr, dataDirectory)
 	case len(args) == 1 && args[0] == "gain":
 		metrics, err := readMetrics(dataDirectory)
 		if err != nil {
@@ -71,23 +73,25 @@ func RunWorkspace(args []string, stdin io.Reader, stdout, stderr io.Writer, work
 		return fail(stderr, "expected no arguments or exactly: translate or gain")
 	}
 
+	accounting, err := loadMetricAccounting()
+	if err != nil {
+		return fail(stderr, err.Error())
+	}
 	script, err := io.ReadAll(stdin)
 	if err != nil {
-		return failWithIneffectiveMetrics(stderr, fmt.Sprintf("reading script: %v", err), dataDirectory, chargedScript(string(script)), invocationMetrics{})
+		charged := accounting.chargedScript(string(script))
+		return failWithIneffectiveMetrics(stderr, fmt.Sprintf("reading script: %v", err), dataDirectory, charged, invocationMetrics{}, accounting, "")
 	}
 	scriptText := string(script)
-	// Evaluation always reads the complete script from stdin; output accounting
-	// charges what the model actually wrote, which differs when a caller rebuilt
-	// this script from a correction.
-	charged := chargedScript(scriptText)
+	charged := accounting.chargedScript(scriptText)
 	changes, filesystem, commands, report, err := evaluateScript(context.TODO(), workspace, scriptText, relativeLinesEnabled())
 	if err != nil {
-		return failEvaluation(stderr, err, dataDirectory, charged, commands)
+		return failEvaluation(stderr, err, dataDirectory, charged, commands, accounting)
 	}
 	if !translateMode && len(changes) == 0 {
 		emittedReport := completedReport(report, writeStateReport(stderr, report))
 		if dataDirectory != "" {
-			if err := recordCommandMetrics(dataDirectory, emittedReport, commands); err != nil {
+			if err := recordCommandMetrics(dataDirectory, accounting.visibleReport(emittedReport), commands, accounting); err != nil {
 				warn(stderr, err.Error())
 			}
 		}
@@ -96,31 +100,31 @@ func RunWorkspace(args []string, stdin io.Reader, stdout, stderr io.Writer, work
 	if translateMode {
 		patch, err := translate(changes)
 		if err != nil {
-			return failWithIneffectiveMetrics(stderr, err.Error(), dataDirectory, charged, commands)
+			return failWithIneffectiveMetrics(stderr, err.Error(), dataDirectory, charged, commands, accounting, "")
 		}
 		if _, err := io.WriteString(stdout, patch); err != nil {
-			return failWithIneffectiveMetrics(stderr, fmt.Sprintf("writing patch: %v", err), dataDirectory, charged, commands)
+			return failWithIneffectiveMetrics(stderr, fmt.Sprintf("writing patch: %v", err), dataDirectory, charged, commands, accounting, "")
 		}
 		emittedReport := completedReport(report, writeStateReport(stderr, report))
 		if dataDirectory != "" {
-			if err := recordMetrics(dataDirectory, charged, patch, emittedReport, commands); err != nil {
+			if err := recordMetrics(dataDirectory, charged, patch, accounting.visibleReport(emittedReport), commands, accounting); err != nil {
 				warn(stderr, err.Error())
 			}
 		}
 		return 0
 	}
 	if err := commitChanges(changes, rootFileOperations{root: filesystem.root}); err != nil {
-		return failWithIneffectiveMetrics(stderr, fmt.Sprintf("changing %s: %v", describePaths(changes), err), dataDirectory, charged, commands)
+		return failWithIneffectiveMetrics(stderr, fmt.Sprintf("changing %s: %v", describePaths(changes), err), dataDirectory, charged, commands, accounting, "")
 	}
 	emittedReport := completedReport(report, writeStateReport(stderr, report))
 	if dataDirectory != "" {
 		patch, err := translate(changes)
 		if err != nil {
 			warn(stderr, "collecting metrics: "+err.Error())
-			if err := recordCommandMetrics(dataDirectory, emittedReport, commands); err != nil {
+			if err := recordCommandMetrics(dataDirectory, accounting.visibleReport(emittedReport), commands, accounting); err != nil {
 				warn(stderr, err.Error())
 			}
-		} else if err := recordMetrics(dataDirectory, charged, patch, emittedReport, commands); err != nil {
+		} else if err := recordMetrics(dataDirectory, charged, patch, accounting.visibleReport(emittedReport), commands, accounting); err != nil {
 			warn(stderr, err.Error())
 		}
 	}
@@ -299,31 +303,36 @@ func sanitizeDiagnostic(message string) string {
 	return sanitized.String()
 }
 
+func failureDiagnostic(message string) string {
+	return fmt.Sprintf("hpatch: %s\n", sanitizeDiagnostic(message))
+}
+
 func fail(stderr io.Writer, message string) int {
-	message = sanitizeDiagnostic(message)
-	_, _ = fmt.Fprintf(stderr, "hpatch: %s\n", message)
+	_, _ = io.WriteString(stderr, failureDiagnostic(message))
 	return 1
 }
 
-func failWithIneffectiveMetrics(stderr io.Writer, message, dataDirectory, script string, commands invocationMetrics) int {
-	exitCode := fail(stderr, message)
+func failWithIneffectiveMetrics(stderr io.Writer, message, dataDirectory, script string, commands invocationMetrics, accounting metricAccounting, repair string) int {
+	diagnostic := failureDiagnostic(message) + repair
+	_, _ = io.WriteString(stderr, diagnostic)
 	if dataDirectory != "" {
-		if err := recordIneffectiveMetrics(dataDirectory, script, commands); err != nil {
+		visibleDiagnostic := diagnostic + accounting.DiagnosticSuffix
+		if err := recordIneffectiveMetrics(dataDirectory, script, visibleDiagnostic, commands, accounting); err != nil {
 			warn(stderr, err.Error())
 		}
 	}
-	return exitCode
+	return 1
 }
 
-// failEvaluation reports an evaluation failure and, when the failing command
-// carried repair context, writes that context on following lines so a retry can
-// correct the selector without rereading the file.
-func failEvaluation(stderr io.Writer, err error, dataDirectory, script string, commands invocationMetrics) int {
-	exitCode := failWithIneffectiveMetrics(stderr, err.Error(), dataDirectory, script, commands)
-	if command, ok := errors.AsType[*commandError](err); ok && command.Repair != "" {
-		_, _ = io.WriteString(stderr, command.Repair)
+// failEvaluation reports an evaluation failure and includes bounded repair
+// context in both stderr and the exact model-input accounting supplied by the
+// host.
+func failEvaluation(stderr io.Writer, err error, dataDirectory, script string, commands invocationMetrics, accounting metricAccounting) int {
+	repair := ""
+	if command, ok := errors.AsType[*commandError](err); ok {
+		repair = command.Repair
 	}
-	return exitCode
+	return failWithIneffectiveMetrics(stderr, err.Error(), dataDirectory, script, commands, accounting, repair)
 }
 
 func warn(stderr io.Writer, message string) {

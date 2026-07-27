@@ -213,6 +213,9 @@ func parseInvocation(args []string) (engineArgs []string, rootPath, cwd string, 
 	if len(args) == 1 && args[0] == "gain" {
 		return []string{"gain"}, "", "", true, nil
 	}
+	if len(args) == 1 && args[0] == "account-rejection" {
+		return []string{"account-rejection"}, "", "", false, nil
+	}
 	if len(args) > 0 && args[0] == "translate" {
 		engineArgs = []string{"translate"}
 		args = args[1:]
