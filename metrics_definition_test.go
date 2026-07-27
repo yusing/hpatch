@@ -19,7 +19,7 @@ func withDefinitionEnvironment(t *testing.T, session string) {
 	t.Setenv(baselineDefinitionEnvironment, baselineDefinition)
 }
 
-func TestDefinitionCountsEveryInvocationAndSessionOnce(t *testing.T) {
+func TestDefinitionCountsOncePerSessionAcrossOutcomes(t *testing.T) {
 	root := t.TempDir()
 	dataDirectory := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "note.txt"), []byte("alpha\n"), 0o600); err != nil {
@@ -27,10 +27,20 @@ func TestDefinitionCountsEveryInvocationAndSessionOnce(t *testing.T) {
 	}
 	withDefinitionEnvironment(t, "session-one")
 
-	script := "in note.txt\nrsel 1:1\ntype \"beta\\n\"\n"
-	for attempt := range 3 {
+	editScript := "in note.txt\nrsel 1:1\ntype \"beta\\n\"\n"
+	invocations := []struct {
+		args    []string
+		script  string
+		success bool
+	}{
+		{args: []string{"translate"}, script: editScript, success: true},
+		{args: []string{"translate"}, script: "in note.txt\nsel 99 1:1\n", success: false},
+		{script: "new transient.txt\nrm\n", success: true},
+	}
+	for attempt, invocation := range invocations {
 		var stdout, stderr bytes.Buffer
-		if exitCode := Run([]string{"translate"}, strings.NewReader(script), &stdout, &stderr, root, dataDirectory); exitCode != 0 {
+		exitCode := Run(invocation.args, strings.NewReader(invocation.script), &stdout, &stderr, root, dataDirectory)
+		if (exitCode == 0) != invocation.success {
 			t.Fatalf("attempt %d = exit %d, stderr %q", attempt, exitCode, stderr.String())
 		}
 	}
@@ -46,22 +56,38 @@ func TestDefinitionCountsEveryInvocationAndSessionOnce(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.DefinitionRequests != 3 || got.DefinitionInputTokens != 3*single || got.RemovedDefinitionInputTokens != 3*baseline {
-		t.Fatalf("definition requests and tokens = (%d, %d, %d), want (3, %d, %d)", got.DefinitionRequests, got.DefinitionInputTokens, got.RemovedDefinitionInputTokens, 3*single, 3*baseline)
+	if got.DefinitionRequests != 3 || got.DefinitionInputTokens != single || got.RemovedDefinitionInputTokens != baseline {
+		t.Fatalf("definition requests and tokens = (%d, %d, %d), want (3, %d, %d)", got.DefinitionRequests, got.DefinitionInputTokens, got.RemovedDefinitionInputTokens, single, baseline)
 	}
 
 	// A distinct session pays the definition again.
 	t.Setenv(sessionEnvironment, "session-two")
 	var stdout, stderr bytes.Buffer
-	if exitCode := Run([]string{"translate"}, strings.NewReader(script), &stdout, &stderr, root, dataDirectory); exitCode != 0 {
+	if exitCode := Run([]string{"translate"}, strings.NewReader(editScript), &stdout, &stderr, root, dataDirectory); exitCode != 0 {
 		t.Fatalf("second session = exit %d, stderr %q", exitCode, stderr.String())
 	}
 	got, err = readMetrics(dataDirectory)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Sessions != 2 || got.DefinitionRequests != 4 || got.DefinitionInputTokens != 4*single {
-		t.Fatalf("second session = (%d sessions, %d requests, %d tokens), want (2, 4, %d)", got.Sessions, got.DefinitionRequests, got.DefinitionInputTokens, 4*single)
+	if got.Sessions != 2 || got.DefinitionRequests != 4 || got.DefinitionInputTokens != 2*single || got.RemovedDefinitionInputTokens != 2*baseline {
+		t.Fatalf("second session = (%d sessions, %d requests, %d, %d tokens), want (2, 4, %d, %d)", got.Sessions, got.DefinitionRequests, got.DefinitionInputTokens, got.RemovedDefinitionInputTokens, 2*single, 2*baseline)
+	}
+}
+
+func TestInterruptedSessionClaimRemainsFreshUntilMetricsCommit(t *testing.T) {
+	dataDirectory := t.TempDir()
+	fresh, err := claimSession(dataDirectory, "session", 0, 1)
+	if err != nil || !fresh {
+		t.Fatalf("initial claim = %t, error %v", fresh, err)
+	}
+	fresh, err = claimSession(dataDirectory, "session", 0, 1)
+	if err != nil || !fresh {
+		t.Fatalf("interrupted claim retry = %t, error %v", fresh, err)
+	}
+	fresh, err = claimSession(dataDirectory, "session", 1, 2)
+	if err != nil || fresh {
+		t.Fatalf("durable claim retry = %t, error %v", fresh, err)
 	}
 }
 

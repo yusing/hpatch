@@ -54,13 +54,12 @@ type metrics struct {
 	MetadataInputTokens     uint64
 
 	// Sessions counts distinct agent sessions that carried the routed definition
-	// change. DefinitionInputTokens is cumulative per accounted request;
-	// Sessions is only the distinct-session denominator.
+	// change. DefinitionRequests counts every request carrying that context.
 	Sessions           uint64
 	DefinitionRequests uint64
-	// DefinitionInputTokens is the cumulative standalone hpatch definition added
-	// by the router. RemovedDefinitionInputTokens is the exact Code Mode
-	// apply_patch section removed from those requests and is reported as a credit.
+	// DefinitionInputTokens is the cumulative once-per-session hpatch definition
+	// added by the router. RemovedDefinitionInputTokens is the corresponding
+	// once-per-session Code Mode apply_patch section removed by the router.
 	DefinitionInputTokens        uint64
 	RemovedDefinitionInputTokens uint64
 }
@@ -280,8 +279,8 @@ func updateMetricsWithAccounting(dataDirectory string, entry metrics, accounting
 		}
 	}()
 
-	// Every classified invocation carries the tool definition. Cached tokens
-	// remain input tokens; the marker only counts the first durable session use.
+	// Every classified invocation is a definition request. The session marker
+	// limits installation and removal token accounting to its first durable use.
 	definition, session, err := definitionEntry(accounting)
 	if err != nil {
 		return err
@@ -311,6 +310,9 @@ func updateMetricsWithAccounting(dataDirectory string, entry metrics, accounting
 		}
 		if fresh {
 			definition.Sessions = 1
+		} else {
+			definition.DefinitionInputTokens = 0
+			definition.RemovedDefinitionInputTokens = 0
 		}
 	}
 	if err := entry.add(definition); err != nil {

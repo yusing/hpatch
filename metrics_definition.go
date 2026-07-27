@@ -22,11 +22,10 @@ const (
 
 const sessionMarkerDirectory = "sessions"
 
-// definitionTokens estimates the observed request-input tokens for the
+// definitionTokens estimates the once-per-session input tokens for the
 // standalone hpatch definition added by the router and the exact Code Mode
-// apply_patch section it removed. Cached definitions remain input tokens, so
-// every accounted request contributes while Sessions remains a distinct-session
-// counter.
+// apply_patch section it removed. DefinitionRequests separately records every
+// request carrying that routing context.
 func definitionTokens(definition, removedDefinition string) (uint64, uint64, error) {
 	if definition == "" && removedDefinition == "" {
 		return 0, 0, nil
