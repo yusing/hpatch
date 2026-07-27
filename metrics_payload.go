@@ -5,6 +5,8 @@ import "strconv"
 const (
 	hpatchToolName     = "functions.hpatch"
 	applyPatchToolName = "functions.exec"
+	// Source: ../api_router_builder/hpatch_proxy.go:22:26 hpatchNoopApplyPatchInput
+	failedApplyPatch = "*** Begin Patch\n*** End Patch\n"
 )
 
 func metricPayloads(script, patch string) (string, string) {

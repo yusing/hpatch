@@ -96,40 +96,16 @@ func claimSession(dataDirectory, session string, currentGeneration, nextGenerati
 	return true, nil
 }
 
-func (m metrics) definitionOverhead() uint64 {
-	if m.BaselineDefinitionInputTokens >= m.DefinitionInputTokens {
-		return 0
-	}
-	return m.DefinitionInputTokens - m.BaselineDefinitionInputTokens
-}
-
-// meanApplyPatchTokens is the average direct apply_patch output across recorded
-// effective invocations. It stands in for the patch a failed script never
-// produced.
-func (m metrics) meanApplyPatchTokens() float64 {
-	if m.EffectiveInvocations == 0 {
-		return 0
-	}
-	return float64(m.ApplyPatchTokens) / float64(m.EffectiveInvocations)
-}
-
-// baselineIneffectiveTokens estimates direct apply_patch output wasted by
-// failures a baseline would have hit too. Those retries are a cost of editing,
-// not of hpatch, so charging them to hpatch alone overstates its overhead.
-func (m metrics) baselineIneffectiveTokens() float64 {
-	return float64(m.BaselineFailures) * m.meanApplyPatchTokens()
-}
-
 // describeDefinitionSources reports which definition inputs the host supplied,
 // so a zero definition line is not mistaken for a free tool.
 func describeDefinitionSources(m metrics) string {
 	switch {
 	case m.Sessions == 0:
-		return "not measured; host set no " + sessionEnvironment
+		return "not measured (missing " + sessionEnvironment + ")"
 	case m.DefinitionInputTokens == 0:
-		return "baseline only; host set no " + definitionEnvironment
+		return "baseline only (missing " + definitionEnvironment + ")"
 	case m.BaselineDefinitionInputTokens == 0:
-		return "hpatch only; host set no " + baselineDefinitionEnvironment
+		return "hpatch only (missing " + baselineDefinitionEnvironment + ")"
 	default:
 		return "hpatch and baseline measured"
 	}

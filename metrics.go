@@ -20,7 +20,7 @@ import (
 const (
 	metricsFilename       = "metrics.bin"
 	metricsLockname       = "metrics.lock"
-	metricsMagic          = "HPATCH11"
+	metricsMagic          = "HPATCH12"
 	metricsSlotSize       = 2160
 	metricsFileSize       = 2 * metricsSlotSize
 	metricsChecksumOffset = 2128
@@ -46,6 +46,7 @@ type metrics struct {
 	HPatchTokens            uint64
 	ApplyPatchTokens        uint64
 	IneffectiveHPatchTokens uint64
+	FailedApplyPatchTokens  uint64
 	ReportInputTokens       uint64
 	DiagnosticInputTokens   uint64
 	MetadataInputTokens     uint64
@@ -55,21 +56,10 @@ type metrics struct {
 	// definition; Sessions is only the distinct-session denominator.
 	Sessions uint64
 	// DefinitionInputTokens is the cumulative hpatch tool-definition input
-	// estimate, and BaselineDefinitionInputTokens is the apply_patch
-	// definition a host would otherwise expose. Only their difference is
-	// attributable to hpatch.
+	// estimate, and BaselineDefinitionInputTokens is the apply_patch definition
+	// a host would otherwise expose. Gain reports them separately.
 	DefinitionInputTokens         uint64
 	BaselineDefinitionInputTokens uint64
-	// BaselineFailures counts hpatch failures whose reason has an apply_patch
-	// analogue, so a counterfactual direct call would have wasted output too.
-	// AttributableFailures counts failures with no analogue, whose full cost
-	// belongs to hpatch. A failed script produces no patch to count, so the
-	// credited baseline waste is derived from the mean effective patch size
-	// rather than stored.
-	BaselineFailures     uint64
-	AttributableFailures uint64
-	// EffectiveInvocations is the paired-estimate count backing that mean.
-	EffectiveInvocations uint64
 }
 
 func commandOperationIndex(operation string) int {
@@ -132,13 +122,12 @@ func countMetrics(script, patch string) (metrics, error) {
 		return metrics{}, fmt.Errorf("tokenizing apply_patch output: %w", err)
 	}
 	return metrics{
-		HPatchTokens:         uint64(hpatchTokens),
-		ApplyPatchTokens:     uint64(applyPatchTokens),
-		EffectiveInvocations: 1,
+		HPatchTokens:     uint64(hpatchTokens),
+		ApplyPatchTokens: uint64(applyPatchTokens),
 	}, nil
 }
 
-func countIneffectiveMetrics(script string, events invocationMetrics) (metrics, error) {
+func countIneffectiveMetrics(script string) (metrics, error) {
 	codec, err := gpt5Codec()
 	if err != nil {
 		return metrics{}, err
@@ -147,13 +136,14 @@ func countIneffectiveMetrics(script string, events invocationMetrics) (metrics, 
 	if err != nil {
 		return metrics{}, fmt.Errorf("tokenizing ineffective hpatch output: %w", err)
 	}
-	entry := metrics{IneffectiveHPatchTokens: uint64(hpatchTokens)}
-	if baselineAnalogous(events) {
-		entry.BaselineFailures = 1
-	} else {
-		entry.AttributableFailures = 1
+	applyPatchTokens, err := codec.Count(applyPatchMetricPayload(failedApplyPatch))
+	if err != nil {
+		return metrics{}, fmt.Errorf("tokenizing failed-call apply_patch output: %w", err)
 	}
-	return entry, nil
+	return metrics{
+		IneffectiveHPatchTokens: uint64(hpatchTokens),
+		FailedApplyPatchTokens:  uint64(applyPatchTokens),
+	}, nil
 }
 
 func countReportInputTokens(report string) (uint64, error) {
@@ -229,7 +219,7 @@ func recordMetrics(dataDirectory, script, patch string, changes []change, emitte
 }
 
 func recordIneffectiveMetrics(dataDirectory, script, diagnostic string, events invocationMetrics, accounting metricAccounting) error {
-	entry, err := countIneffectiveMetrics(script, events)
+	entry, err := countIneffectiveMetrics(script)
 	if err != nil {
 		return err
 	}
@@ -346,15 +336,13 @@ func (m *metrics) add(entry metrics) error {
 		{&m.HPatchTokens, entry.HPatchTokens},
 		{&m.ApplyPatchTokens, entry.ApplyPatchTokens},
 		{&m.IneffectiveHPatchTokens, entry.IneffectiveHPatchTokens},
+		{&m.FailedApplyPatchTokens, entry.FailedApplyPatchTokens},
 		{&m.ReportInputTokens, entry.ReportInputTokens},
 		{&m.DiagnosticInputTokens, entry.DiagnosticInputTokens},
 		{&m.MetadataInputTokens, entry.MetadataInputTokens},
 		{&m.Sessions, entry.Sessions},
 		{&m.DefinitionInputTokens, entry.DefinitionInputTokens},
 		{&m.BaselineDefinitionInputTokens, entry.BaselineDefinitionInputTokens},
-		{&m.BaselineFailures, entry.BaselineFailures},
-		{&m.AttributableFailures, entry.AttributableFailures},
-		{&m.EffectiveInvocations, entry.EffectiveInvocations},
 	} {
 		if !addCounter(counter.destination, counter.increment) {
 			return fmt.Errorf("updating metrics: token count overflow")
@@ -622,9 +610,7 @@ func encodeMetricsSlot(value metrics, generation uint64) [metricsSlotSize]byte {
 	binary.LittleEndian.PutUint64(encoded[48:56], value.Sessions)
 	binary.LittleEndian.PutUint64(encoded[56:64], value.DefinitionInputTokens)
 	binary.LittleEndian.PutUint64(encoded[64:72], value.BaselineDefinitionInputTokens)
-	binary.LittleEndian.PutUint64(encoded[72:80], value.BaselineFailures)
-	binary.LittleEndian.PutUint64(encoded[80:88], value.AttributableFailures)
-	binary.LittleEndian.PutUint64(encoded[88:96], value.EffectiveInvocations)
+	binary.LittleEndian.PutUint64(encoded[72:80], value.FailedApplyPatchTokens)
 	for index, entry := range value.Commands {
 		putCommandMetric(encoded[:], 96+index*16, entry)
 	}
@@ -678,9 +664,7 @@ func decodeMetricsSlot(encoded [metricsSlotSize]byte) (metrics, uint64, bool) {
 		Sessions:                      binary.LittleEndian.Uint64(encoded[48:56]),
 		DefinitionInputTokens:         binary.LittleEndian.Uint64(encoded[56:64]),
 		BaselineDefinitionInputTokens: binary.LittleEndian.Uint64(encoded[64:72]),
-		BaselineFailures:              binary.LittleEndian.Uint64(encoded[72:80]),
-		AttributableFailures:          binary.LittleEndian.Uint64(encoded[80:88]),
-		EffectiveInvocations:          binary.LittleEndian.Uint64(encoded[88:96]),
+		FailedApplyPatchTokens:        binary.LittleEndian.Uint64(encoded[72:80]),
 		DiagnosticInputTokens:         binary.LittleEndian.Uint64(encoded[2112:2120]),
 		MetadataInputTokens:           binary.LittleEndian.Uint64(encoded[2120:2128]),
 	}
@@ -725,74 +709,22 @@ func (m metrics) reduction() float64 {
 	return (float64(m.ApplyPatchTokens) - float64(m.HPatchTokens)) / float64(m.ApplyPatchTokens) * 100
 }
 
-// overallReduction compares total hpatch output against the direct baseline's
-// total output. The baseline is credited for the retries it would also have
-// spent, so only hpatch-specific waste counts against hpatch.
+// overallReduction compares all measured hpatch output with the generated
+// apply_patch output. Failed hpatch calls are represented by the empty
+// apply_patch carrier emitted by the router.
 func (m metrics) overallReduction() float64 {
-	baseline := m.baselineOutputTokens()
+	baseline := float64(m.ApplyPatchTokens) + float64(m.FailedApplyPatchTokens)
 	if baseline == 0 {
 		return 0
 	}
-	cost := float64(m.HPatchTokens) + float64(m.IneffectiveHPatchTokens)
-	return (baseline - cost) / baseline * 100
-}
-
-// baselineOutputTokens is the direct apply_patch output for the same work,
-// including the estimated retries a baseline would have spent on failures whose
-// cause was not hpatch's addressing model.
-func (m metrics) baselineOutputTokens() float64 {
-	return float64(m.ApplyPatchTokens) + m.baselineIneffectiveTokens()
-}
-
-// weightedOverallReduction prices hpatch's input overhead against output at
-// outputToInputRatio. Input overhead is the final-state report plus the
-// per-session tool definition net of the baseline definition it displaced.
-func (m metrics) weightedOverallReduction(outputToInputRatio float64) float64 {
-	baseline := m.baselineOutputTokens()
-	if baseline == 0 {
-		return 0
-	}
-	inputOverhead := float64(m.ReportInputTokens) + float64(m.DiagnosticInputTokens) + float64(m.MetadataInputTokens) + float64(m.definitionOverhead())
-	weightedCost := float64(m.HPatchTokens) + float64(m.IneffectiveHPatchTokens) + inputOverhead/outputToInputRatio
-	return (baseline - weightedCost) / baseline * 100
+	return (float64(m.ApplyPatchTokens) + float64(m.FailedApplyPatchTokens) - float64(m.HPatchTokens) - float64(m.IneffectiveHPatchTokens)) / baseline * 100
 }
 
 func gainReport(m metrics) string {
-	totalHPatchTokens := new(big.Int).SetUint64(m.HPatchTokens)
-	totalHPatchTokens.Add(totalHPatchTokens, new(big.Int).SetUint64(m.IneffectiveHPatchTokens))
 	var report strings.Builder
-	fmt.Fprintf(
-		&report,
-		"estimated effective hpatch output tokens: %d\nestimated apply_patch output tokens: %d\nestimated effective reduction: %.1f%%\nestimated ineffective hpatch output tokens: %d\nestimated total hpatch output tokens: %s\n",
-		m.HPatchTokens,
-		m.ApplyPatchTokens,
-		m.reduction(),
-		m.IneffectiveHPatchTokens,
-		totalHPatchTokens,
-	)
-	fmt.Fprintf(
-		&report,
-		"estimated credited baseline retry output tokens: %.0f (%d of %d failures)\nestimated baseline output tokens including retries: %.0f\nestimated overall output-token reduction: %.1f%%\n",
-		m.baselineIneffectiveTokens(),
-		m.BaselineFailures,
-		m.BaselineFailures+m.AttributableFailures,
-		m.baselineOutputTokens(),
-		m.overallReduction(),
-	)
-	fmt.Fprintf(
-		&report,
-		"estimated state-report input tokens: %d\nestimated diagnostic input tokens: %d\nestimated carried-metadata input tokens: %d\nestimated tool-definition input tokens: %d hpatch, %d baseline, %d net over %d session(s) (%s)\nestimated weighted overall reduction at 5:1: %.1f%%\nestimated weighted overall reduction at 6:1: %.1f%%\n",
-		m.ReportInputTokens,
-		m.DiagnosticInputTokens,
-		m.MetadataInputTokens,
-		m.DefinitionInputTokens,
-		m.BaselineDefinitionInputTokens,
-		m.definitionOverhead(),
-		m.Sessions,
-		describeDefinitionSources(m),
-		m.weightedOverallReduction(5),
-		m.weightedOverallReduction(6),
-	)
+	writeOutputGainTable(&report, m)
+	writeInputGainTable(&report, m)
+
 	writeCommandTable(&report, "command metrics:", "command", commandOperations[:], m.Commands[:], true)
 	writeCommandTable(&report, "selector coordinate metrics:", "selector", selectorVariantNames[:], m.SelectorVariants[:], false)
 	writeCommandTable(&report, "tsel span metrics:", "span", textSpanVariantNames[:], m.TextSpans[:], false)
@@ -806,6 +738,7 @@ func gainReport(m metrics) string {
 		fmt.Fprintf(table, "%s\t%s\t%d\n", operation, match, m.BlockOutcomes[index])
 	}
 	_ = table.Flush()
+	report.WriteByte('\n')
 
 	report.WriteString("failure reasons:\n")
 	table = tabwriter.NewWriter(&report, 0, 4, 2, ' ', 0)
@@ -818,9 +751,50 @@ func gainReport(m metrics) string {
 	}
 	fmt.Fprintf(table, "total\t%d\n", totalReasons)
 	_ = table.Flush()
+	report.WriteByte('\n')
 
 	writeCommandReasonTable(&report, m.CommandReasons)
 	return report.String()
+}
+
+func writeOutputGainTable(report *strings.Builder, m metrics) {
+	totalHPatch := new(big.Int).SetUint64(m.HPatchTokens)
+	totalHPatch.Add(totalHPatch, new(big.Int).SetUint64(m.IneffectiveHPatchTokens))
+	totalApplyPatch := new(big.Int).SetUint64(m.ApplyPatchTokens)
+	totalApplyPatch.Add(totalApplyPatch, new(big.Int).SetUint64(m.FailedApplyPatchTokens))
+
+	report.WriteString("output token estimates:\n")
+	table := tabwriter.NewWriter(report, 0, 4, 2, ' ', 0)
+	fmt.Fprintln(table, "calls\thpatch\tapply_patch\treduction")
+	fmt.Fprintln(table, "-----\t------\t-----------\t---------")
+	fmt.Fprintf(table, "successful\t%d\t%d\t%.1f%%\n", m.HPatchTokens, m.ApplyPatchTokens, m.reduction())
+	fmt.Fprintf(table, "failed\t%d\t%d\tn/a\n", m.IneffectiveHPatchTokens, m.FailedApplyPatchTokens)
+	fmt.Fprintf(table, "all\t%s\t%s\t%.1f%%\n", totalHPatch, totalApplyPatch, m.overallReduction())
+	_ = table.Flush()
+	report.WriteString("failed apply_patch output is the empty carrier emitted by the router.\n\n")
+}
+
+func writeInputGainTable(report *strings.Builder, m metrics) {
+	totalHPatch := new(big.Int).SetUint64(m.ReportInputTokens)
+	for _, count := range []uint64{m.DiagnosticInputTokens, m.MetadataInputTokens, m.DefinitionInputTokens} {
+		totalHPatch.Add(totalHPatch, new(big.Int).SetUint64(count))
+	}
+
+	report.WriteString("input token estimates:\n")
+	table := tabwriter.NewWriter(report, 0, 4, 2, ' ', 0)
+	fmt.Fprintln(table, "source\thpatch\tapply_patch")
+	fmt.Fprintln(table, "------\t------\t-----------")
+	fmt.Fprintf(table, "state reports\t%d\tnot measured\n", m.ReportInputTokens)
+	fmt.Fprintf(table, "failure diagnostics\t%d\tnot measured\n", m.DiagnosticInputTokens)
+	fmt.Fprintf(table, "carried metadata\t%d\tnot measured\n", m.MetadataInputTokens)
+	fmt.Fprintf(table, "tool definitions\t%d\t%d\n", m.DefinitionInputTokens, m.BaselineDefinitionInputTokens)
+	fmt.Fprintf(table, "total measured\t%s\t%d\n", totalHPatch, m.BaselineDefinitionInputTokens)
+	_ = table.Flush()
+	report.WriteString("state reports: final state after successful calls\n")
+	report.WriteString("failure diagnostics: errors and repair context after failed calls\n")
+	report.WriteString("carried metadata: host context repeated with tool calls\n")
+	report.WriteString("tool definitions: host schemas; cumulative per measured call\n")
+	fmt.Fprintf(report, "definition sessions: %d\ndefinition coverage: %s\n\n", m.Sessions, describeDefinitionSources(m))
 }
 
 // writeCommandReasonTable attributes each error to the command that raised it.
@@ -865,4 +839,5 @@ func writeCommandTable(report *strings.Builder, title, firstHeader string, names
 		fmt.Fprintf(table, "total\t%d\t%d\t%.1f%%\n", total.Invocations, total.Errors, total.errorRate())
 	}
 	_ = table.Flush()
+	report.WriteByte('\n')
 }

@@ -157,31 +157,6 @@ const (
 	failureReasonCount
 )
 
-// baselineAnalogousReasons marks the terminal failure reasons a direct
-// apply_patch call would also have hit, so its wasted output can be credited to
-// the baseline instead of counted as pure hpatch overhead. Selector arithmetic,
-// anchor resolution, and operand syntax have no analogue: a context-hunk patch
-// carries the surrounding lines instead of coordinates, so those failures are
-// costs hpatch's addressing model introduces.
-var baselineAnalogousReasons = [failureReasonCount]bool{
-	reasonEditConflict: true,
-	reasonFileMissing:  true,
-	reasonFileConflict: true,
-	reasonPath:         true,
-}
-
-// baselineAnalogous reports whether events' single terminal failure would also
-// have failed as a direct apply_patch call. Evaluation stops at the first
-// failing command, so at most one reason is set.
-func baselineAnalogous(events invocationMetrics) bool {
-	for reason, count := range events.Reasons {
-		if count > 0 && baselineAnalogousReasons[reason] {
-			return true
-		}
-	}
-	return false
-}
-
 var failureReasonNames = [failureReasonCount]string{
 	"syntax",
 	"relative-disabled",

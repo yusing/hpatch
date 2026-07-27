@@ -83,108 +83,36 @@ func TestDefinitionUnmeasuredWithoutSession(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Sessions != 0 || got.DefinitionInputTokens != 0 || got.definitionOverhead() != 0 {
+	if got.Sessions != 0 || got.DefinitionInputTokens != 0 {
 		t.Fatalf("unmeasured definition = %+v", got)
 	}
-	if !strings.Contains(gainReport(got), "not measured; host set no "+sessionEnvironment) {
+	if !strings.Contains(gainReport(got), "not measured (missing "+sessionEnvironment+")") {
 		t.Fatal("gain does not disclose that definitions were unmeasured")
 	}
 }
 
-func TestDefinitionOverheadCreditsLargerBaseline(t *testing.T) {
-	value := metrics{DefinitionInputTokens: 100, BaselineDefinitionInputTokens: 250}
-	if got := value.definitionOverhead(); got != 0 {
-		t.Fatalf("overhead = %d, want 0 when baseline definition is larger", got)
-	}
-	value = metrics{DefinitionInputTokens: 400, BaselineDefinitionInputTokens: 150}
-	if got := value.definitionOverhead(); got != 250 {
-		t.Fatalf("overhead = %d, want 250", got)
-	}
-}
-
-func TestBaselineCreditOnlyForAnalogousFailures(t *testing.T) {
-	root := t.TempDir()
-	dataDirectory := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "note.txt"), []byte("alpha\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-
-	// A selector that overruns the file has no apply_patch analogue.
-	var stderr bytes.Buffer
-	if exitCode := Run(nil, strings.NewReader("in note.txt\nsel 99 1:2\ntype \"x\"\n"), &bytes.Buffer{}, &stderr, root, dataDirectory); exitCode == 0 {
-		t.Fatal("out-of-range selector unexpectedly succeeded")
-	}
-	got, err := readMetrics(dataDirectory)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got.AttributableFailures != 1 || got.BaselineFailures != 0 {
-		t.Fatalf("selector failure = (%d attributable, %d baseline), want (1, 0)", got.AttributableFailures, got.BaselineFailures)
-	}
-
-	// A missing file would have failed a direct apply_patch call too.
-	if exitCode := Run(nil, strings.NewReader("in absent.txt\nrsel 1:1\ntype \"x\"\n"), &bytes.Buffer{}, &stderr, root, dataDirectory); exitCode == 0 {
-		t.Fatal("missing file unexpectedly succeeded")
-	}
-	got, err = readMetrics(dataDirectory)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got.AttributableFailures != 1 || got.BaselineFailures != 1 {
-		t.Fatalf("missing-file failure = (%d attributable, %d baseline), want (1, 1)", got.AttributableFailures, got.BaselineFailures)
-	}
-}
-
-func TestBaselineCreditRaisesOverallReduction(t *testing.T) {
-	// Two effective invocations averaging 50 baseline tokens each, plus one
-	// analogous failure, credit the baseline one mean payload.
+func TestFailedOutputBelongsOnlyToHPatch(t *testing.T) {
 	value := metrics{
-		HPatchTokens:         40,
-		ApplyPatchTokens:     100,
-		EffectiveInvocations: 2,
-
+		HPatchTokens:            40,
+		ApplyPatchTokens:        100,
 		IneffectiveHPatchTokens: 30,
-		BaselineFailures:        1,
+		FailedApplyPatchTokens:  10,
 	}
-	if got := value.meanApplyPatchTokens(); got != 50 {
-		t.Fatalf("mean apply_patch = %f, want 50", got)
+	// (100 + 10 - 40 - 30) / (100 + 10) = 36.36%.
+	if got := value.overallReduction(); got < 36.3 || got > 36.4 {
+		t.Fatalf("overall reduction = %f, want ~36.36", got)
 	}
-	if got := value.baselineOutputTokens(); got != 150 {
-		t.Fatalf("baseline output = %f, want 150", got)
+	report := gainReport(value)
+	for _, want := range []string{
+		"failed      30      10           n/a\n",
+		"all         70      110          36.4%\n",
+	} {
+		if !strings.Contains(report, want) {
+			t.Fatalf("gain report %q does not contain %q", report, want)
+		}
 	}
-	// (150 - 70) / 150 = 53.3%, versus (100 - 70) / 100 = 30% uncredited.
-	if got := value.overallReduction(); got < 53.3 || got > 53.4 {
-		t.Fatalf("overall reduction = %f, want ~53.3", got)
-	}
-
-	uncredited := value
-	uncredited.BaselineFailures = 0
-	uncredited.AttributableFailures = 1
-	if got := uncredited.overallReduction(); got < 29.9 || got > 30.1 {
-		t.Fatalf("uncredited overall reduction = %f, want ~30", got)
-	}
-}
-
-func TestWeightedReductionChargesDefinitionOverhead(t *testing.T) {
-	value := metrics{
-		HPatchTokens:         40,
-		ApplyPatchTokens:     100,
-		EffectiveInvocations: 1,
-		ReportInputTokens:    10,
-		MetadataInputTokens:  5,
-
-		Sessions:                      1,
-		DefinitionInputTokens:         1000,
-		BaselineDefinitionInputTokens: 0,
-	}
-	// (100 - (40 + 1015/5)) / 100 = -143.0%.
-	if got := value.weightedOverallReduction(5); got < -143.1 || got > -142.9 {
-		t.Fatalf("weighted reduction at 5:1 = %f, want ~-143", got)
-	}
-	// A host whose native tool costs the same yields no definition overhead.
-	value.BaselineDefinitionInputTokens = 1000
-	if got := value.weightedOverallReduction(5); got < 56.9 || got > 57.1 {
-		t.Fatalf("weighted reduction with displaced definition = %f, want ~57", got)
+	if !strings.Contains(report, "failed apply_patch output is the empty carrier emitted by the router.") {
+		t.Fatalf("gain report does not identify the failed-call carrier: %q", report)
 	}
 }
 

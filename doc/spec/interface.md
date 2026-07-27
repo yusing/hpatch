@@ -60,14 +60,10 @@ A successful nonempty change set that parses, evaluates, translates, and complet
 requested output or mutation contributes paired estimates for two semantically equivalent
 tool calls. A failed invocation contributes only its generated `hpatch` call estimate to
 the ineffective-output counter; it contributes nothing to the effective `hpatch` counter.
-A failure is additionally classified by whether its terminal reason has a direct
-`apply_patch` analogue. Edit-conflict, file-missing, file-conflict, and path failures are
-analogous, because a direct call would have failed for the same cause; the baseline is
-credited one mean effective `apply_patch` payload for each so that shared retry cost is
-not charged to hpatch alone. Selector, anchor, and syntax failures have no analogue and
-remain fully attributable to hpatch's addressing model. Credited baseline retry output is
-derived from recorded effective invocations rather than stored per failure, because a
-failed script produces no patch to count. Successful no-op invocations do not contribute paired token
+A failed invocation is represented downstream by the router's empty `apply_patch` carrier,
+`*** Begin Patch\n*** End Patch\n`. Its tokenized carrier contributes to the failed
+`apply_patch` output counter. The complete failed hpatch call remains in the
+ineffective-output counter and reduces the overall output savings.
 estimates. `gain`, informational commands, and unsupported argument forms do not
 contribute metrics.
 
@@ -159,20 +155,21 @@ a misleading report. Metrics writes use normal operating-system page-cache write
 do not request a per-invocation filesystem sync; sudden power loss may lose increments
 that the operating system had not yet flushed.
 
-`hpatch gain` first reports effective hpatch output tokens, `apply_patch` output tokens,
-effective-only reduction, ineffective hpatch output tokens, and total hpatch output tokens.
-It then reports credited baseline retry output with its analogous and total failure counts,
-baseline output including those retries, and overall output-token reduction. It then reports
-state-report input tokens, hpatch and baseline definition input with their net and session
-count, and weighted overall reductions at output-to-input price ratios of 5:1 and 6:1.
+`hpatch gain` first writes an output-token table comparing successful calls, failed
+calls, and all calls. The successful row compares effective hpatch output with the
+generated `apply_patch` output and reports its reduction. The failed row compares
+ineffective hpatch output with the tokenized empty `apply_patch` carrier emitted by the
+router. The all-calls row reports both totals and the overall output-token reduction.
 
-Effective-only reduction compares effective hpatch output against raw `apply_patch` output.
-Overall and weighted reductions instead use `baseline_output = apply_patch +
-baseline_failures * apply_patch / effective_invocations`. For ratio `k`, weighted hpatch
-cost is `effective_hpatch + ineffective_hpatch + (report_input + definition_net) / k`, and
-weighted reduction is `(baseline_output - weighted_hpatch_cost) / baseline_output * 100`.
-Reductions are zero when `baseline_output` is zero. Raw counters are stored without a price
-conversion, and derived means are computed at report time.
+Effective-only reduction compares effective hpatch output against generated `apply_patch`
+output. Overall reduction is `(effective_apply_patch + failed_apply_patch - effective_hpatch
+- ineffective_hpatch) / (effective_apply_patch + failed_apply_patch) * 100`. It is zero
+when the `apply_patch` denominator is zero. No retry payload is inferred.
+
+Gain then writes a separate input-token table for final-state reports, failure diagnostics,
+carried host metadata, and tool definitions. Hpatch and `apply_patch` values remain separate:
+the report does not subtract definitions, convert input to output, or calculate a combined
+input/output percentage. Unmeasured `apply_patch` input sources are labeled `not measured`.
 
 Gain then writes stable-order compact tables for aggregate command invocation and error
 rates; absolute and relative selector variants; single and multiple `tsel` spans;
@@ -192,8 +189,8 @@ Acceptance:
 1. Repeated successful normal and translate invocations persist cumulative paired
    estimates and fully emitted report-input estimates; failed invocations persist only
    ineffective hpatch estimates and zero report-input tokens.
-2. Gain reports raw output and input token classes separately, output-only reductions,
-   and weighted overall reductions at 5:1 and 6:1 without storing price-converted values.
+2. Gain reports output and input token classes in separate tables, calculates reductions
+   only between output-token quantities, and performs no input/output price conversion.
 3. Aggregate command totals reconcile with absolute and relative selector variants;
    relative failures cannot be hidden in absolute totals, and disabled recognizable
    relative attempts count as relative errors.
@@ -201,23 +198,24 @@ Acceptance:
    whitespace-recovered successes, and stable terminal reasons remain independently
    attributable. Per-command reason counts reconcile with both aggregate command errors
    and aggregate reason totals.
-6. Repeated invocations sharing one `HPATCH_SESSION_ID` count the tool definition once;
-   a distinct session counts it again; an absent session or definition leaves definition
-   counters zero and reports which inputs were measured.
-7. Failures whose reason has an `apply_patch` analogue credit the baseline one mean
-   effective payload each; selector, anchor, and syntax failures credit nothing.
-8. A nonempty `HPATCH_CHARGED_SCRIPT` is charged as model output for both effective and
+5. Each measured invocation accumulates its hpatch and baseline definition input tokens;
+   `HPATCH_SESSION_ID` counts distinct sessions without changing that accumulation. An
+   absent session or definition leaves definition counters zero and reports which inputs
+   were measured.
+6. Failed hpatch invocations contribute their complete output to the ineffective counter;
+   the failed `apply_patch` counter receives the exact empty carrier emitted by the router.
+7. A nonempty `HPATCH_CHARGED_SCRIPT` is charged as model output for both effective and
    ineffective invocations while evaluation still uses standard input; an absent or empty
    value charges the evaluated script.
-5. Scripts and patches containing quotes or program-like text remain data and cannot
+8. Scripts and patches containing quotes or program-like text remain data and cannot
    alter the direct-call program used for counting.
-6. Concurrent writers lose no records, concurrent gain reads never observe a partial
+9. Concurrent writers lose no records, concurrent gain reads never observe a partial
    record, and a damaged inactive slot falls back to the preceding valid aggregate.
-7. A valid mismatched `HPATCH` version resets totals when no current slot exists;
-   malformed data does not count as a version mismatch, and a current slot takes
-   precedence over mismatched versions.
-8. Metrics collection failure warns without changing the success or failure of the
-   requested edit, translated output, or final-state report.
+10. A valid mismatched `HPATCH` version resets totals when no current slot exists;
+    malformed data does not count as a version mismatch, and a current slot takes
+    precedence over mismatched versions.
+11. Metrics collection failure warns without changing the success or failure of the
+    requested edit, translated output, or final-state report.
 
 ## REQ-SCRIPT-001 — Script grammar
 

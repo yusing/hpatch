@@ -84,27 +84,22 @@ func TestSuccessfulNoopCountsCommandsAndReportOnly(t *testing.T) {
 	}
 }
 
-func TestWeightedOverallReductions(t *testing.T) {
-	value := metrics{HPatchTokens: 40, ApplyPatchTokens: 100, IneffectiveHPatchTokens: 10, ReportInputTokens: 50}
-	if got := value.overallReduction(); got != 50 {
-		t.Fatalf("output-only reduction = %v, want 50", got)
-	}
-	if got := value.weightedOverallReduction(5); got != 40 {
-		t.Fatalf("5:1 reduction = %v, want 40", got)
-	}
-	if got := value.weightedOverallReduction(6); got < 41.66 || got > 41.67 {
-		t.Fatalf("6:1 reduction = %v, want about 41.67", got)
+func TestGainReportsOutputAndInputSeparately(t *testing.T) {
+	value := metrics{HPatchTokens: 40, ApplyPatchTokens: 100, IneffectiveHPatchTokens: 10, FailedApplyPatchTokens: 5, ReportInputTokens: 50}
+	if got := value.overallReduction(); got < 52.3 || got > 52.4 {
+		t.Fatalf("output reduction = %v, want ~52.38", got)
 	}
 	report := gainReport(value)
 	for _, want := range []string{
-		"estimated overall output-token reduction: 50.0%\n",
-		"estimated state-report input tokens: 50\n",
-		"estimated weighted overall reduction at 5:1: 40.0%\n",
-		"estimated weighted overall reduction at 6:1: 41.7%\n",
+		"all         50      105          52.4%\n",
+		"state reports        50      not measured",
 	} {
 		if !strings.Contains(report, want) {
 			t.Fatalf("gain report %q does not contain %q", report, want)
 		}
+	}
+	if strings.Contains(report, "combined token-cost") || strings.Contains(report, "output:input cost") {
+		t.Fatalf("gain report combines output and input tokens: %q", report)
 	}
 }
 
@@ -265,7 +260,7 @@ func TestMetricsSlotRoundTripsAllCounters(t *testing.T) {
 }
 
 func representativeMetrics() metrics {
-	value := metrics{HPatchTokens: 11, ApplyPatchTokens: 19, IneffectiveHPatchTokens: 7, ReportInputTokens: 5}
+	value := metrics{HPatchTokens: 11, ApplyPatchTokens: 19, IneffectiveHPatchTokens: 7, FailedApplyPatchTokens: 5, ReportInputTokens: 5}
 	value.Commands[commandOperationIndex("sel")] = commandMetric{Invocations: 3, Errors: 1}
 	value.SelectorVariants[selectorVariantIndex("sel", coordinateAbsolute)] = commandMetric{Invocations: 2}
 	value.SelectorVariants[selectorVariantIndex("sel", coordinateRelative)] = commandMetric{Invocations: 1, Errors: 1}

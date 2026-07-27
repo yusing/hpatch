@@ -16,8 +16,8 @@ func TestGainDoesNotRequireWorkingDirectory(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 	exitCode := run([]string{"gain"}, strings.NewReader("ignored"), &stdout, &stderr)
-	wantPrefix := "estimated effective hpatch output tokens: 0\nestimated apply_patch output tokens: 0\nestimated effective reduction: 0.0%\nestimated ineffective hpatch output tokens: 0\nestimated total hpatch output tokens: 0\nestimated credited baseline retry output tokens: 0 (0 of 0 failures)\nestimated baseline output tokens including retries: 0\nestimated overall output-token reduction: 0.0%\nestimated state-report input tokens: 0\nestimated diagnostic input tokens: 0\nestimated carried-metadata input tokens: 0\nestimated tool-definition input tokens: 0 hpatch, 0 baseline, 0 net over 0 session(s) (not measured; host set no HPATCH_SESSION_ID)\nestimated weighted overall reduction at 5:1: 0.0%\nestimated weighted overall reduction at 6:1: 0.0%\ncommand metrics:\n"
-	wantFragment := "failure reasons:\n"
+	wantPrefix := "output token estimates:\n"
+	wantFragment := "\n\ncommand metrics:\n"
 	if exitCode != 0 || !strings.HasPrefix(stdout.String(), wantPrefix) || !strings.Contains(stdout.String(), wantFragment) || stderr.Len() != 0 {
 		t.Fatalf("gain = exit %d, stdout %q, stderr %q", exitCode, stdout.String(), stderr.String())
 	}
@@ -74,7 +74,7 @@ func TestTopLevelHelpDescribesCompletePublicSurface(t *testing.T) {
 		"ASCII space and tab runs match interchangeably",
 		"preserves the selected final",
 		"translate always emits root-relative paths",
-		"weighted overall reductions at 5:1",
+		"without conversion to output tokens",
 		"absolute and relative selectors",
 		"terminal failure reasons",
 	} {

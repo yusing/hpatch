@@ -126,7 +126,7 @@ func TestChargedScriptAppliesToRejectedScripts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want, err := countIneffectiveMetrics(correction, invocationMetrics{})
+	want, err := countIneffectiveMetrics(correction)
 	if err != nil {
 		t.Fatal(err)
 	}

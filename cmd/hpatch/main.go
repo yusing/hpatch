@@ -121,9 +121,9 @@ Metrics:
   accounting uses that variable instead, so a repair is not measured as costing the
   complete retry it replaced.
   hpatch gain reads no script and reports persistent effective, ineffective, and
-  apply_patch output-token estimates separately from final-state report input-token
-  overhead. It includes output-only reduction plus weighted overall reductions at 5:1
-  and 6:1 output-to-input price ratios. Stable tables retain aggregate command errors,
+  apply_patch output-token estimates in an output comparison table. Input-token
+  estimates are reported in a separate table without conversion to output tokens.
+  Stable tables retain aggregate command errors,
   absolute and relative selectors, single and multiple tsel spans, exact and recovered
   block successes, and terminal failure reasons. Metrics failures warn without changing
   the requested edit, patch, report, or exit status.

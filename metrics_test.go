@@ -70,28 +70,51 @@ func TestGainReportReconcilesEffectiveAndIneffectiveTokens(t *testing.T) {
 		HPatchTokens:            2404,
 		ApplyPatchTokens:        4764,
 		IneffectiveHPatchTokens: 2172,
+		FailedApplyPatchTokens:  300,
 	})
-	want := "estimated effective hpatch output tokens: 2404\n" +
-		"estimated apply_patch output tokens: 4764\n" +
-		"estimated effective reduction: 49.5%\n" +
-		"estimated ineffective hpatch output tokens: 2172\n" +
-		"estimated total hpatch output tokens: 4576\n" +
-		"estimated credited baseline retry output tokens: 0 (0 of 0 failures)\n" +
-		"estimated baseline output tokens including retries: 4764\n" +
-		"estimated overall output-token reduction: 3.9%\n" +
-		"estimated state-report input tokens: 0\n" +
-		"estimated diagnostic input tokens: 0\n" +
-		"estimated carried-metadata input tokens: 0\n" +
-		"estimated tool-definition input tokens: 0 hpatch, 0 baseline, 0 net over 0 session(s) " +
-		"(not measured; host set no HPATCH_SESSION_ID)\n" +
-		"estimated weighted overall reduction at 5:1: 3.9%\n" +
-		"estimated weighted overall reduction at 6:1: 3.9%\n"
-	if !strings.HasPrefix(report, want) {
-		t.Fatalf("gain report = %q, want prefix %q", report, want)
+	for _, want := range []string{
+		"output token estimates:\n",
+		"successful  2404    4764         49.5%\n",
+		"failed      2172    300          n/a\n",
+		"all         4576    5064         9.6%\n",
+		"input token estimates:\n",
+		"state reports        0       not measured",
+		"tool definitions     0       0",
+		"state reports: final state after successful calls\n",
+		"definition sessions: 0\n",
+		"definition coverage: not measured (missing HPATCH_SESSION_ID)\n",
+	} {
+		if !strings.Contains(report, want) {
+			t.Fatalf("gain report %q does not contain %q", report, want)
+		}
+	}
+	inputStart := strings.Index(report, "input token estimates:\n")
+	inputEnd := strings.Index(report, "command metrics:\n")
+	if inputStart < 0 || inputEnd < inputStart {
+		t.Fatalf("gain report has no bounded input section: %q", report)
+	}
+	for _, line := range strings.Split(report[inputStart:inputEnd], "\n") {
+		if len(line) > 80 {
+			t.Fatalf("input report line exceeds 80 columns: %q", line)
+		}
+	}
+	for _, nextTable := range []string{
+		"input token estimates:",
+
+		"command metrics:",
+		"selector coordinate metrics:",
+		"tsel span metrics:",
+		"block selector successes:",
+		"failure reasons:",
+		"command failure reasons:",
+	} {
+		if !strings.Contains(report, "\n\n"+nextTable+"\n") {
+			t.Fatalf("gain report has no blank line before %q: %q", nextTable, report)
+		}
 	}
 
-	overflowSafe := gainReport(metrics{HPatchTokens: ^uint64(0), IneffectiveHPatchTokens: ^uint64(0)})
-	if !strings.Contains(overflowSafe, "estimated total hpatch output tokens: 36893488147419103230\n") {
+	overflowSafe := gainReport(metrics{HPatchTokens: ^uint64(0), IneffectiveHPatchTokens: ^uint64(0), ApplyPatchTokens: ^uint64(0), FailedApplyPatchTokens: ^uint64(0)})
+	if !strings.Contains(overflowSafe, "36893488147419103230") {
 		t.Fatalf("overflow-safe gain report = %q", overflowSafe)
 	}
 }
@@ -160,7 +183,7 @@ func TestGainReportsCommandInvocationsErrorsAndRates(t *testing.T) {
 		"type       3            0       0.0%\n" +
 		"del        0            0       0.0%\n" +
 		"dup        0            0       0.0%\n" +
-		"total      11           3       27.3%\n"
+		"total      11           3       27.3%\n\n"
 	end := strings.Index(stdout.String()[start:], "selector coordinate metrics:\n")
 	if end < 0 {
 		t.Fatalf("gain report has no selector metrics: %q", stdout.String())
@@ -170,7 +193,7 @@ func TestGainReportsCommandInvocationsErrorsAndRates(t *testing.T) {
 	}
 }
 
-func TestFailedHPatchCountsOnlyAsIneffectiveOutput(t *testing.T) {
+func TestFailedHPatchCountsIneffectiveAndEmptyCarrierOutput(t *testing.T) {
 	root := t.TempDir()
 	dataDirectory := t.TempDir()
 	validScript := "new note.txt\ntype \"hello\"\n"
@@ -191,9 +214,12 @@ func TestFailedHPatchCountsOnlyAsIneffectiveOutput(t *testing.T) {
 	}
 
 	invalidScript := "future-command\n"
-	ineffective, err := countIneffectiveMetrics(invalidScript, invocationMetrics{})
+	ineffective, err := countIneffectiveMetrics(invalidScript)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if ineffective.FailedApplyPatchTokens == 0 {
+		t.Fatal("failed call did not count the empty apply_patch carrier")
 	}
 	var invalidStdout, invalidStderr bytes.Buffer
 	if exitCode := Run([]string{"translate"}, strings.NewReader(invalidScript), &invalidStdout, &invalidStderr, root, dataDirectory); exitCode == 0 || invalidStdout.Len() != 0 || !strings.Contains(invalidStderr.String(), "unknown or malformed command") {
@@ -207,9 +233,8 @@ func TestFailedHPatchCountsOnlyAsIneffectiveOutput(t *testing.T) {
 	wantMetrics.Commands[commandOperationIndex("new")].Invocations = 1
 	wantMetrics.Commands[commandOperationIndex("type")].Invocations = 1
 	wantMetrics.IneffectiveHPatchTokens = ineffective.IneffectiveHPatchTokens
-	// An unrecognized command has no apply_patch analogue, so its wasted
-	// output stays attributed to hpatch rather than credited to the baseline.
-	wantMetrics.AttributableFailures = 1
+	wantMetrics.FailedApplyPatchTokens = ineffective.FailedApplyPatchTokens
+
 	got, err := readMetrics(dataDirectory)
 	if err != nil {
 		t.Fatal(err)
@@ -232,7 +257,7 @@ func TestTranslateOutputFailureCountsOnlyAsIneffective(t *testing.T) {
 	root := t.TempDir()
 	dataDirectory := t.TempDir()
 	script := "new note.txt\ntype \"hello\"\n"
-	want, err := countIneffectiveMetrics(script, invocationMetrics{})
+	want, err := countIneffectiveMetrics(script)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -514,10 +539,10 @@ func TestPriorMetricsVersionResetsTotals(t *testing.T) {
 
 func TestImmediatePriorMetricsVersionResetsTotals(t *testing.T) {
 	dataDirectory := t.TempDir()
-	const priorSlotSize = 2152
-	const priorChecksumOffset = 2120
+	const priorSlotSize = 2160
+	const priorChecksumOffset = 2128
 	var prior [priorSlotSize]byte
-	copy(prior[:8], "HPATCH10")
+	copy(prior[:8], "HPATCH11")
 	binary.LittleEndian.PutUint64(prior[8:16], 7)
 	binary.LittleEndian.PutUint64(prior[16:24], 5)
 	checksum := sha256.Sum256(prior[:priorChecksumOffset])
