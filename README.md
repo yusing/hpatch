@@ -68,10 +68,20 @@ outside text explicitly inserted by the script.
 Successful changing scripts in normal and translate modes record cumulative paired
 estimates of the GPT-5 output tokens needed for the complete hpatch tool call and for the
 equivalent direct `apply_patch` call. Failed normal or translate invocations record only
-the hpatch call as ineffective output; they never add direct `apply_patch` output tokens.
-Successfully emitted final-state reports add their exact estimated input-token overhead
-to a separate counter. The same metrics store tracks invocations and command-caused
-errors separately for every supported patch command, including successful no-op scripts.
+the hpatch call as ineffective output. A failure whose cause a direct `apply_patch` call
+would also have hit (edit conflict, missing file, file conflict, path) credits the baseline
+one mean effective payload, so shared retry cost is not charged to hpatch alone; selector,
+anchor, and syntax failures earn no such credit because a context-hunk format does not make
+them. Successfully emitted final-state reports add their exact estimated input-token
+overhead to a separate counter. The same metrics store tracks invocations and command-caused
+errors separately for every supported patch command, including successful no-op scripts,
+and attributes each error to the command that raised it.
+
+Tool definitions are model input too. Set `HPATCH_SESSION_ID` plus `HPATCH_TOOL_DEFINITION`
+and hpatch counts its definition once per session rather than once per call, matching how
+prompt caching bills it. Set `HPATCH_BASELINE_TOOL_DEFINITION` to the native patch tool
+definition hpatch displaces and only the difference counts against hpatch. Without these,
+definition counters stay zero and the report says so instead of implying the tool is free.
 
 ```sh
 bin/hpatch gain
@@ -90,10 +100,12 @@ and tool results. Host formatting or a different host tool schema can change act
 usage.
 
 The report labels effective and ineffective hpatch output-token estimates separately
-and shows their calculated total. It reports output-only reductions and weighted overall
-reductions that price output tokens at five or six times input tokens. Stable tables
-separate aggregate command errors, absolute and relative selectors, single and multiple
-`tsel` spans, exact and whitespace-recovered block selections, and terminal failure
+and shows their calculated total. Effective-only reduction compares against raw
+`apply_patch` output; overall and weighted reductions compare against the baseline
+including its credited retries, and weighted figures price the state report plus net tool
+definition at five or six times output tokens. Stable tables separate aggregate command
+errors, absolute and relative selectors, single and multiple `tsel` spans, exact and
+whitespace-recovered block selections, terminal failure reasons, and per-command failure
 reasons. Percentages are zero when their denominator is zero. Metrics persist in the
 platform user-configuration directory. Only the latest metrics format is decoded. A valid,
 checksummed slot with another `HPATCH` version resets totals when no current-format slot
@@ -161,9 +173,8 @@ rejected by Go's `os.Root`, even when the target points back inside root. Prefer
 root-relative script operands.
 
 The complete behavior and failure contract is in
-[`doc/spec/interface.md`](doc/spec/interface.md).
-[`AGENT_INSTRUCTIONS.md`](AGENT_INSTRUCTIONS.md) is the repository agent entry point
-and directs agents to the built-in help.
+[`doc/spec/interface.md`](doc/spec/interface.md). Agents should read `hpatch --help`,
+which is the authoritative editing reference.
 
 ## Token comparison
 

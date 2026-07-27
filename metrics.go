@@ -20,10 +20,10 @@ import (
 const (
 	metricsFilename       = "metrics.bin"
 	metricsLockname       = "metrics.lock"
-	metricsMagic          = "HPATCH08"
-	metricsSlotSize       = 560
+	metricsMagic          = "HPATCH09"
+	metricsSlotSize       = 2144
 	metricsFileSize       = 2 * metricsSlotSize
-	metricsChecksumOffset = 528
+	metricsChecksumOffset = 2112
 	commandCount          = 12
 )
 
@@ -47,6 +47,28 @@ type metrics struct {
 	ApplyPatchTokens        uint64
 	IneffectiveHPatchTokens uint64
 	ReportInputTokens       uint64
+
+	// Sessions counts distinct agent sessions that carried the hpatch tool
+	// definition. Definition text is sent once per session under prompt
+	// caching, so definition input is charged per session rather than per
+	// invocation.
+	Sessions uint64
+	// DefinitionInputTokens is the cumulative hpatch tool-definition input
+	// estimate, and BaselineDefinitionInputTokens is the apply_patch
+	// definition a host would otherwise expose. Only their difference is
+	// attributable to hpatch.
+	DefinitionInputTokens         uint64
+	BaselineDefinitionInputTokens uint64
+	// BaselineFailures counts hpatch failures whose reason has an apply_patch
+	// analogue, so a counterfactual direct call would have wasted output too.
+	// AttributableFailures counts failures with no analogue, whose full cost
+	// belongs to hpatch. A failed script produces no patch to count, so the
+	// credited baseline waste is derived from the mean effective patch size
+	// rather than stored.
+	BaselineFailures     uint64
+	AttributableFailures uint64
+	// EffectiveInvocations is the paired-estimate count backing that mean.
+	EffectiveInvocations uint64
 }
 
 func commandOperationIndex(operation string) int {
@@ -87,10 +109,18 @@ func (m commandMetric) errorRate() float64 {
 	return float64(m.Errors) / float64(m.Invocations) * 100
 }
 
-func countMetrics(script, patch string) (metrics, error) {
+func gpt5Codec() (tokenizer.Codec, error) {
 	codec, err := tokenizer.ForModel(tokenizer.GPT5)
 	if err != nil {
-		return metrics{}, fmt.Errorf("loading GPT-5 tokenizer: %w", err)
+		return nil, fmt.Errorf("loading GPT-5 tokenizer: %w", err)
+	}
+	return codec, nil
+}
+
+func countMetrics(script, patch string) (metrics, error) {
+	codec, err := gpt5Codec()
+	if err != nil {
+		return metrics{}, err
 	}
 	hpatchTokens, err := codec.Count(hpatchMetricPayload(script))
 	if err != nil {
@@ -100,28 +130,38 @@ func countMetrics(script, patch string) (metrics, error) {
 	if err != nil {
 		return metrics{}, fmt.Errorf("tokenizing apply_patch output: %w", err)
 	}
-	return metrics{HPatchTokens: uint64(hpatchTokens), ApplyPatchTokens: uint64(applyPatchTokens)}, nil
+	return metrics{
+		HPatchTokens:         uint64(hpatchTokens),
+		ApplyPatchTokens:     uint64(applyPatchTokens),
+		EffectiveInvocations: 1,
+	}, nil
 }
 
-func countIneffectiveMetrics(script string) (metrics, error) {
-	codec, err := tokenizer.ForModel(tokenizer.GPT5)
+func countIneffectiveMetrics(script string, events invocationMetrics) (metrics, error) {
+	codec, err := gpt5Codec()
 	if err != nil {
-		return metrics{}, fmt.Errorf("loading GPT-5 tokenizer: %w", err)
+		return metrics{}, err
 	}
 	hpatchTokens, err := codec.Count(hpatchMetricPayload(script))
 	if err != nil {
 		return metrics{}, fmt.Errorf("tokenizing ineffective hpatch output: %w", err)
 	}
-	return metrics{IneffectiveHPatchTokens: uint64(hpatchTokens)}, nil
+	entry := metrics{IneffectiveHPatchTokens: uint64(hpatchTokens)}
+	if baselineAnalogous(events) {
+		entry.BaselineFailures = 1
+	} else {
+		entry.AttributableFailures = 1
+	}
+	return entry, nil
 }
 
 func countReportInputTokens(report string) (uint64, error) {
 	if report == "" {
 		return 0, nil
 	}
-	codec, err := tokenizer.ForModel(tokenizer.GPT5)
+	codec, err := gpt5Codec()
 	if err != nil {
-		return 0, fmt.Errorf("loading GPT-5 tokenizer: %w", err)
+		return 0, err
 	}
 	count, err := codec.Count(report)
 	if err != nil {
@@ -144,7 +184,7 @@ func recordMetrics(dataDirectory, script, patch, emittedReport string, events in
 }
 
 func recordIneffectiveMetrics(dataDirectory, script string, events invocationMetrics) error {
-	entry, err := countIneffectiveMetrics(script)
+	entry, err := countIneffectiveMetrics(script, events)
 	if err != nil {
 		return err
 	}
@@ -153,9 +193,6 @@ func recordIneffectiveMetrics(dataDirectory, script string, events invocationMet
 }
 
 func recordCommandMetrics(dataDirectory, emittedReport string, events invocationMetrics) error {
-	if events == (invocationMetrics{}) && emittedReport == "" {
-		return nil
-	}
 	reportTokens, err := countReportInputTokens(emittedReport)
 	if err != nil {
 		return err
@@ -184,6 +221,17 @@ func updateMetrics(dataDirectory string, entry metrics) (err error) {
 			err = errors.Join(err, fmt.Errorf("unlocking metrics: %w", unlockErr))
 		}
 	}()
+
+	// Every classified invocation carried the tool definition, including
+	// no-op scripts and failures, so the session charge is applied here
+	// rather than in any one outcome path.
+	definition, err := definitionEntry(dataDirectory)
+	if err != nil {
+		return err
+	}
+	if err := entry.add(definition); err != nil {
+		return err
+	}
 
 	file, err := os.OpenFile(filepath.Join(dataDirectory, metricsFilename), os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
@@ -226,6 +274,12 @@ func (m *metrics) add(entry metrics) error {
 		{&m.ApplyPatchTokens, entry.ApplyPatchTokens},
 		{&m.IneffectiveHPatchTokens, entry.IneffectiveHPatchTokens},
 		{&m.ReportInputTokens, entry.ReportInputTokens},
+		{&m.Sessions, entry.Sessions},
+		{&m.DefinitionInputTokens, entry.DefinitionInputTokens},
+		{&m.BaselineDefinitionInputTokens, entry.BaselineDefinitionInputTokens},
+		{&m.BaselineFailures, entry.BaselineFailures},
+		{&m.AttributableFailures, entry.AttributableFailures},
+		{&m.EffectiveInvocations, entry.EffectiveInvocations},
 	} {
 		if !addCounter(counter.destination, counter.increment) {
 			return fmt.Errorf("updating metrics: token count overflow")
@@ -254,6 +308,13 @@ func (m *metrics) add(entry metrics) error {
 	for index := range failureReasonCount {
 		if !addCounter(&m.Reasons[index], entry.Reasons[index]) {
 			return fmt.Errorf("updating metrics: failure reason count overflow")
+		}
+	}
+	for command := range commandCount {
+		for reason := range failureReasonCount {
+			if !addCounter(&m.CommandReasons[command][reason], entry.CommandReasons[command][reason]) {
+				return fmt.Errorf("updating metrics: command reason count overflow")
+			}
 		}
 	}
 	if !validInvocationMetrics(m.invocationMetrics) {
@@ -314,7 +375,35 @@ func validInvocationMetrics(events invocationMetrics) bool {
 			return false
 		}
 	}
-	return reasons == total.Errors
+	if reasons != total.Errors {
+		return false
+	}
+	// The cross-tabulation must reconcile with both margins: each command's
+	// reasons sum to that command's errors, and each reason's commands sum to
+	// that reason's total.
+	for command := range commandCount {
+		var perCommand uint64
+		for reason := range failureReasonCount {
+			if !addCounter(&perCommand, events.CommandReasons[command][reason]) {
+				return false
+			}
+		}
+		if perCommand != events.Commands[command].Errors {
+			return false
+		}
+	}
+	for reason := range failureReasonCount {
+		var perReason uint64
+		for command := range commandCount {
+			if !addCounter(&perReason, events.CommandReasons[command][reason]) {
+				return false
+			}
+		}
+		if perReason != events.Reasons[reason] {
+			return false
+		}
+	}
+	return true
 }
 
 func sumCommandMetrics(first, second commandMetric) (commandMetric, bool) {
@@ -454,20 +543,32 @@ func encodeMetricsSlot(value metrics, generation uint64) [metricsSlotSize]byte {
 	binary.LittleEndian.PutUint64(encoded[24:32], value.ApplyPatchTokens)
 	binary.LittleEndian.PutUint64(encoded[32:40], value.IneffectiveHPatchTokens)
 	binary.LittleEndian.PutUint64(encoded[40:48], value.ReportInputTokens)
+	binary.LittleEndian.PutUint64(encoded[48:56], value.Sessions)
+	binary.LittleEndian.PutUint64(encoded[56:64], value.DefinitionInputTokens)
+	binary.LittleEndian.PutUint64(encoded[64:72], value.BaselineDefinitionInputTokens)
+	binary.LittleEndian.PutUint64(encoded[72:80], value.BaselineFailures)
+	binary.LittleEndian.PutUint64(encoded[80:88], value.AttributableFailures)
+	binary.LittleEndian.PutUint64(encoded[88:96], value.EffectiveInvocations)
 	for index, entry := range value.Commands {
-		putCommandMetric(encoded[:], 48+index*16, entry)
+		putCommandMetric(encoded[:], 96+index*16, entry)
 	}
 	for index, entry := range value.SelectorVariants {
-		putCommandMetric(encoded[:], 240+index*16, entry)
+		putCommandMetric(encoded[:], 288+index*16, entry)
 	}
 	for index, entry := range value.TextSpans {
-		putCommandMetric(encoded[:], 336+index*16, entry)
+		putCommandMetric(encoded[:], 384+index*16, entry)
 	}
 	for index, count := range value.BlockOutcomes {
-		binary.LittleEndian.PutUint64(encoded[368+index*8:376+index*8], count)
+		binary.LittleEndian.PutUint64(encoded[416+index*8:424+index*8], count)
 	}
 	for index, count := range value.Reasons {
-		binary.LittleEndian.PutUint64(encoded[400+index*8:408+index*8], count)
+		binary.LittleEndian.PutUint64(encoded[448+index*8:456+index*8], count)
+	}
+	for command, reasons := range value.CommandReasons {
+		base := 576 + command*int(failureReasonCount)*8
+		for reason, count := range reasons {
+			binary.LittleEndian.PutUint64(encoded[base+reason*8:base+reason*8+8], count)
+		}
 	}
 	checksum := sha256.Sum256(encoded[:metricsChecksumOffset])
 	copy(encoded[metricsChecksumOffset:], checksum[:])
@@ -492,25 +593,37 @@ func decodeMetricsSlot(encoded [metricsSlotSize]byte) (metrics, uint64, bool) {
 		return metrics{}, 0, false
 	}
 	value := metrics{
-		HPatchTokens:            binary.LittleEndian.Uint64(encoded[16:24]),
-		ApplyPatchTokens:        binary.LittleEndian.Uint64(encoded[24:32]),
-		IneffectiveHPatchTokens: binary.LittleEndian.Uint64(encoded[32:40]),
-		ReportInputTokens:       binary.LittleEndian.Uint64(encoded[40:48]),
+		HPatchTokens:                  binary.LittleEndian.Uint64(encoded[16:24]),
+		ApplyPatchTokens:              binary.LittleEndian.Uint64(encoded[24:32]),
+		IneffectiveHPatchTokens:       binary.LittleEndian.Uint64(encoded[32:40]),
+		ReportInputTokens:             binary.LittleEndian.Uint64(encoded[40:48]),
+		Sessions:                      binary.LittleEndian.Uint64(encoded[48:56]),
+		DefinitionInputTokens:         binary.LittleEndian.Uint64(encoded[56:64]),
+		BaselineDefinitionInputTokens: binary.LittleEndian.Uint64(encoded[64:72]),
+		BaselineFailures:              binary.LittleEndian.Uint64(encoded[72:80]),
+		AttributableFailures:          binary.LittleEndian.Uint64(encoded[80:88]),
+		EffectiveInvocations:          binary.LittleEndian.Uint64(encoded[88:96]),
 	}
 	for index := range commandCount {
-		value.Commands[index] = getCommandMetric(encoded[:], 48+index*16)
+		value.Commands[index] = getCommandMetric(encoded[:], 96+index*16)
 	}
 	for index := range selectorVariantCount {
-		value.SelectorVariants[index] = getCommandMetric(encoded[:], 240+index*16)
+		value.SelectorVariants[index] = getCommandMetric(encoded[:], 288+index*16)
 	}
 	for index := range textSpanVariantCount {
-		value.TextSpans[index] = getCommandMetric(encoded[:], 336+index*16)
+		value.TextSpans[index] = getCommandMetric(encoded[:], 384+index*16)
 	}
 	for index := range blockOutcomeCount {
-		value.BlockOutcomes[index] = binary.LittleEndian.Uint64(encoded[368+index*8 : 376+index*8])
+		value.BlockOutcomes[index] = binary.LittleEndian.Uint64(encoded[416+index*8 : 424+index*8])
 	}
 	for index := range int(failureReasonCount) {
-		value.Reasons[index] = binary.LittleEndian.Uint64(encoded[400+index*8 : 408+index*8])
+		value.Reasons[index] = binary.LittleEndian.Uint64(encoded[448+index*8 : 456+index*8])
+	}
+	for command := range commandCount {
+		base := 576 + command*int(failureReasonCount)*8
+		for reason := range int(failureReasonCount) {
+			value.CommandReasons[command][reason] = binary.LittleEndian.Uint64(encoded[base+reason*8 : base+reason*8+8])
+		}
 	}
 	if !validInvocationMetrics(value.invocationMetrics) {
 		return metrics{}, 0, false
@@ -532,19 +645,36 @@ func (m metrics) reduction() float64 {
 	return (float64(m.ApplyPatchTokens) - float64(m.HPatchTokens)) / float64(m.ApplyPatchTokens) * 100
 }
 
+// overallReduction compares total hpatch output against the direct baseline's
+// total output. The baseline is credited for the retries it would also have
+// spent, so only hpatch-specific waste counts against hpatch.
 func (m metrics) overallReduction() float64 {
-	if m.ApplyPatchTokens == 0 {
+	baseline := m.baselineOutputTokens()
+	if baseline == 0 {
 		return 0
 	}
-	return (float64(m.ApplyPatchTokens) - float64(m.HPatchTokens) - float64(m.IneffectiveHPatchTokens)) / float64(m.ApplyPatchTokens) * 100
+	cost := float64(m.HPatchTokens) + float64(m.IneffectiveHPatchTokens)
+	return (baseline - cost) / baseline * 100
 }
 
+// baselineOutputTokens is the direct apply_patch output for the same work,
+// including the estimated retries a baseline would have spent on failures whose
+// cause was not hpatch's addressing model.
+func (m metrics) baselineOutputTokens() float64 {
+	return float64(m.ApplyPatchTokens) + m.baselineIneffectiveTokens()
+}
+
+// weightedOverallReduction prices hpatch's input overhead against output at
+// outputToInputRatio. Input overhead is the final-state report plus the
+// per-session tool definition net of the baseline definition it displaced.
 func (m metrics) weightedOverallReduction(outputToInputRatio float64) float64 {
-	if m.ApplyPatchTokens == 0 {
+	baseline := m.baselineOutputTokens()
+	if baseline == 0 {
 		return 0
 	}
-	weightedCost := float64(m.HPatchTokens) + float64(m.IneffectiveHPatchTokens) + float64(m.ReportInputTokens)/outputToInputRatio
-	return (float64(m.ApplyPatchTokens) - weightedCost) / float64(m.ApplyPatchTokens) * 100
+	inputOverhead := float64(m.ReportInputTokens) + float64(m.definitionOverhead())
+	weightedCost := float64(m.HPatchTokens) + float64(m.IneffectiveHPatchTokens) + inputOverhead/outputToInputRatio
+	return (baseline - weightedCost) / baseline * 100
 }
 
 func gainReport(m metrics) string {
@@ -553,14 +683,31 @@ func gainReport(m metrics) string {
 	var report strings.Builder
 	fmt.Fprintf(
 		&report,
-		"estimated effective hpatch output tokens: %d\nestimated apply_patch output tokens: %d\nestimated effective reduction: %.1f%%\nestimated ineffective hpatch output tokens: %d\nestimated total hpatch output tokens: %s\nestimated overall output-token reduction: %.1f%%\nestimated state-report input tokens: %d\nestimated weighted overall reduction at 5:1: %.1f%%\nestimated weighted overall reduction at 6:1: %.1f%%\n",
+		"estimated effective hpatch output tokens: %d\nestimated apply_patch output tokens: %d\nestimated effective reduction: %.1f%%\nestimated ineffective hpatch output tokens: %d\nestimated total hpatch output tokens: %s\n",
 		m.HPatchTokens,
 		m.ApplyPatchTokens,
 		m.reduction(),
 		m.IneffectiveHPatchTokens,
 		totalHPatchTokens,
+	)
+	fmt.Fprintf(
+		&report,
+		"estimated credited baseline retry output tokens: %.0f (%d of %d failures)\nestimated baseline output tokens including retries: %.0f\nestimated overall output-token reduction: %.1f%%\n",
+		m.baselineIneffectiveTokens(),
+		m.BaselineFailures,
+		m.BaselineFailures+m.AttributableFailures,
+		m.baselineOutputTokens(),
 		m.overallReduction(),
+	)
+	fmt.Fprintf(
+		&report,
+		"estimated state-report input tokens: %d\nestimated tool-definition input tokens: %d hpatch, %d baseline, %d net over %d session(s) (%s)\nestimated weighted overall reduction at 5:1: %.1f%%\nestimated weighted overall reduction at 6:1: %.1f%%\n",
 		m.ReportInputTokens,
+		m.DefinitionInputTokens,
+		m.BaselineDefinitionInputTokens,
+		m.definitionOverhead(),
+		m.Sessions,
+		describeDefinitionSources(m),
 		m.weightedOverallReduction(5),
 		m.weightedOverallReduction(6),
 	)
@@ -589,7 +736,33 @@ func gainReport(m metrics) string {
 	}
 	fmt.Fprintf(table, "total\t%d\n", totalReasons)
 	_ = table.Flush()
+
+	writeCommandReasonTable(&report, m.CommandReasons)
 	return report.String()
+}
+
+// writeCommandReasonTable attributes each error to the command that raised it.
+// Only nonzero pairs appear, because the full 12-by-16 grid is mostly empty and
+// the useful reading is which primitive fails and how.
+func writeCommandReasonTable(report *strings.Builder, commandReasons [commandCount][failureReasonCount]uint64) {
+	report.WriteString("command failure reasons:\n")
+	table := tabwriter.NewWriter(report, 0, 4, 2, ' ', 0)
+	fmt.Fprintln(table, "command\treason\terrors")
+	fmt.Fprintln(table, "-------\t------\t------")
+	var rows int
+	for command, reasons := range commandReasons {
+		for reason, count := range reasons {
+			if count == 0 {
+				continue
+			}
+			fmt.Fprintf(table, "%s\t%s\t%d\n", commandOperations[command], failureReasonNames[reason], count)
+			rows++
+		}
+	}
+	if rows == 0 {
+		fmt.Fprintln(table, "none\tnone\t0")
+	}
+	_ = table.Flush()
 }
 
 func writeCommandTable(report *strings.Builder, title, firstHeader string, names []string, values []commandMetric, includeTotal bool) {

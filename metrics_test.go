@@ -76,8 +76,12 @@ func TestGainReportReconcilesEffectiveAndIneffectiveTokens(t *testing.T) {
 		"estimated effective reduction: 49.5%\n" +
 		"estimated ineffective hpatch output tokens: 2172\n" +
 		"estimated total hpatch output tokens: 4576\n" +
+		"estimated credited baseline retry output tokens: 0 (0 of 0 failures)\n" +
+		"estimated baseline output tokens including retries: 4764\n" +
 		"estimated overall output-token reduction: 3.9%\n" +
 		"estimated state-report input tokens: 0\n" +
+		"estimated tool-definition input tokens: 0 hpatch, 0 baseline, 0 net over 0 session(s) " +
+		"(not measured; host set no HPATCH_SESSION_ID)\n" +
 		"estimated weighted overall reduction at 5:1: 3.9%\n" +
 		"estimated weighted overall reduction at 6:1: 3.9%\n"
 	if !strings.HasPrefix(report, want) {
@@ -185,7 +189,7 @@ func TestFailedHPatchCountsOnlyAsIneffectiveOutput(t *testing.T) {
 	}
 
 	invalidScript := "future-command\n"
-	ineffective, err := countIneffectiveMetrics(invalidScript)
+	ineffective, err := countIneffectiveMetrics(invalidScript, invocationMetrics{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -198,6 +202,9 @@ func TestFailedHPatchCountsOnlyAsIneffectiveOutput(t *testing.T) {
 	wantMetrics.Commands[commandOperationIndex("new")].Invocations = 1
 	wantMetrics.Commands[commandOperationIndex("type")].Invocations = 1
 	wantMetrics.IneffectiveHPatchTokens = ineffective.IneffectiveHPatchTokens
+	// An unrecognized command has no apply_patch analogue, so its wasted
+	// output stays attributed to hpatch rather than credited to the baseline.
+	wantMetrics.AttributableFailures = 1
 	got, err := readMetrics(dataDirectory)
 	if err != nil {
 		t.Fatal(err)
@@ -220,7 +227,7 @@ func TestTranslateOutputFailureCountsOnlyAsIneffective(t *testing.T) {
 	root := t.TempDir()
 	dataDirectory := t.TempDir()
 	script := "new note.txt\ntype \"hello\"\n"
-	want, err := countIneffectiveMetrics(script)
+	want, err := countIneffectiveMetrics(script, invocationMetrics{})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -59,8 +59,15 @@ Every recognized normal or translate invocation is classified after its terminal
 A successful nonempty change set that parses, evaluates, translates, and completes its
 requested output or mutation contributes paired estimates for two semantically equivalent
 tool calls. A failed invocation contributes only its generated `hpatch` call estimate to
-the ineffective-output counter; it contributes nothing to the effective `hpatch` or direct
-`apply_patch` counters. Successful no-op invocations do not contribute paired token
+the ineffective-output counter; it contributes nothing to the effective `hpatch` counter.
+A failure is additionally classified by whether its terminal reason has a direct
+`apply_patch` analogue. Edit-conflict, file-missing, file-conflict, and path failures are
+analogous, because a direct call would have failed for the same cause; the baseline is
+credited one mean effective `apply_patch` payload for each so that shared retry cost is
+not charged to hpatch alone. Selector, anchor, and syntax failures have no analogue and
+remain fully attributable to hpatch's addressing model. Credited baseline retry output is
+derived from recorded effective invocations rather than stored per failure, because a
+failed script produces no patch to count. Successful no-op invocations do not contribute paired token
 estimates. `gain`, informational commands, and unsupported argument forms do not
 contribute metrics.
 
@@ -74,7 +81,17 @@ cannot alter the fixed direct-call program.
 A final-state report successfully emitted by normal or translate mode contributes its
 exact rendered text to a separate estimated state-report input-token counter. This is
 model-input overhead because the tool result becomes subsequent model context; it is not
-added to either model-output counter. A failed or cancelled invocation emits no report
+added to either model-output counter.
+
+The host tool definition is also model input. When the host names a session in
+`HPATCH_SESSION_ID` and supplies definition text in `HPATCH_TOOL_DEFINITION`, the first
+classified invocation of that session counts that text once into a definition input-token
+counter, and subsequent invocations of the same session add nothing, because a definition
+resent on every request is served from the provider's prompt cache. `HPATCH_BASELINE_TOOL_DEFINITION`
+supplies the native patch tool definition hpatch displaces; it is counted the same way and
+only the nonnegative difference is attributable to hpatch. A host that names no session or
+supplies no definition text leaves these counters at zero, and gain states which inputs
+were measured so a zero is not read as a free tool. A failed or cancelled invocation emits no report
 and contributes zero report-input tokens. A partial or failed report write does not count
 as a complete emitted report. Other tool results, provider-hidden protocol and reasoning
 tokens, assistant commentary, and server-generated identifiers remain excluded. These
@@ -136,17 +153,27 @@ do not request a per-invocation filesystem sync; sudden power loss may lose incr
 that the operating system had not yet flushed.
 
 `hpatch gain` first reports effective hpatch output tokens, `apply_patch` output tokens,
-effective-only reduction, ineffective hpatch output tokens, total hpatch output tokens,
-overall output-token reduction, and state-report input tokens. It then reports weighted
-overall reductions at output-to-input price ratios of 5:1 and 6:1. For ratio `k`, weighted
-hpatch cost is `effective_hpatch + ineffective_hpatch + report_input / k`; weighted
-reduction is `(apply_patch - weighted_hpatch_cost) / apply_patch * 100`. Raw counters are
-stored without a price conversion.
+effective-only reduction, ineffective hpatch output tokens, and total hpatch output tokens.
+It then reports credited baseline retry output with its analogous and total failure counts,
+baseline output including those retries, and overall output-token reduction. It then reports
+state-report input tokens, hpatch and baseline definition input with their net and session
+count, and weighted overall reductions at output-to-input price ratios of 5:1 and 6:1.
+
+Effective-only reduction compares effective hpatch output against raw `apply_patch` output.
+Overall and weighted reductions instead use `baseline_output = apply_patch +
+baseline_failures * apply_patch / effective_invocations`. For ratio `k`, weighted hpatch
+cost is `effective_hpatch + ineffective_hpatch + (report_input + definition_net) / k`, and
+weighted reduction is `(baseline_output - weighted_hpatch_cost) / baseline_output * 100`.
+Reductions are zero when `baseline_output` is zero. Raw counters are stored without a price
+conversion, and derived means are computed at report time.
 
 Gain then writes stable-order compact tables for aggregate command invocation and error
 rates; absolute and relative selector variants; single and multiple `tsel` spans;
-`bsel` and `bsel_next` exact and whitespace-recovered successes; and stable terminal
-error reasons. Percentages are rounded to one decimal place and are zero when their
+`bsel` and `bsel_next` exact and whitespace-recovered successes; stable terminal
+error reasons; and each error attributed to the command that raised it. The last table
+lists only nonzero command-and-reason pairs, and renders a single `none` row when no
+errors are recorded. Every error appears in both the aggregate reason table and the
+attributed table, so the two reconcile. Percentages are rounded to one decimal place and are zero when their
 denominator is zero. With no metrics file or only an obsolete record, all totals and
 percentages are zero. Gain reads no stdin and does not create or rewrite a metrics file.
 Failure to tokenize, lock, read, write, or close metrics emits a concise
@@ -165,7 +192,13 @@ Acceptance:
    relative attempts count as relative errors.
 4. Single and multiple `tsel` attempts, `bsel` and `bsel_next`, exact and
    whitespace-recovered successes, and stable terminal reasons remain independently
-   attributable.
+   attributable. Per-command reason counts reconcile with both aggregate command errors
+   and aggregate reason totals.
+6. Repeated invocations sharing one `HPATCH_SESSION_ID` count the tool definition once;
+   a distinct session counts it again; an absent session or definition leaves definition
+   counters zero and reports which inputs were measured.
+7. Failures whose reason has an `apply_patch` analogue credit the baseline one mean
+   effective payload each; selector, anchor, and syntax failures credit nothing.
 5. Scripts and patches containing quotes or program-like text remain data and cannot
    alter the direct-call program used for counting.
 6. Concurrent writers lose no records, concurrent gain reads never observe a partial

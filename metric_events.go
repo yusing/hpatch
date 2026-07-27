@@ -40,6 +40,11 @@ type invocationMetrics struct {
 	TextSpans        [textSpanVariantCount]commandMetric
 	BlockOutcomes    [blockOutcomeCount]uint64
 	Reasons          [failureReasonCount]uint64
+	// CommandReasons attributes each error to the command that raised it. The
+	// flat Reasons histogram cannot answer which primitive a reason belongs
+	// to, which is the question that decides whether a command earns its
+	// place in the language.
+	CommandReasons [commandCount][failureReasonCount]uint64
 }
 
 var selectorVariantNames = [selectorVariantCount]string{
@@ -77,6 +82,7 @@ func (m *invocationMetrics) fail(operation string, attempt commandAttempt, reaso
 		m.TextSpans[attempt.textSpan-1].Errors++
 	}
 	m.Reasons[reason]++
+	m.CommandReasons[commandOperationIndex(operation)][reason]++
 }
 
 func (m *invocationMetrics) invokeFailure(operation string, attempt commandAttempt, reason failureReason) {
@@ -150,6 +156,31 @@ const (
 	reasonOther
 	failureReasonCount
 )
+
+// baselineAnalogousReasons marks the terminal failure reasons a direct
+// apply_patch call would also have hit, so its wasted output can be credited to
+// the baseline instead of counted as pure hpatch overhead. Selector arithmetic,
+// anchor resolution, and operand syntax have no analogue: a context-hunk patch
+// carries the surrounding lines instead of coordinates, so those failures are
+// costs hpatch's addressing model introduces.
+var baselineAnalogousReasons = [failureReasonCount]bool{
+	reasonEditConflict: true,
+	reasonFileMissing:  true,
+	reasonFileConflict: true,
+	reasonPath:         true,
+}
+
+// baselineAnalogous reports whether events' single terminal failure would also
+// have failed as a direct apply_patch call. Evaluation stops at the first
+// failing command, so at most one reason is set.
+func baselineAnalogous(events invocationMetrics) bool {
+	for reason, count := range events.Reasons {
+		if count > 0 && baselineAnalogousReasons[reason] {
+			return true
+		}
+	}
+	return false
+}
 
 var failureReasonNames = [failureReasonCount]string{
 	"syntax",
