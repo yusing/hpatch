@@ -2,6 +2,7 @@ package hpatch
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/pmezard/go-difflib/difflib"
@@ -126,14 +127,7 @@ func diffHunksAreUnique(original, diff string) bool {
 func countLineSequence(lines, sought []string) int {
 	count := 0
 	for start := 0; start+len(sought) <= len(lines); start++ {
-		match := true
-		for offset := range sought {
-			if lines[start+offset] != sought[offset] {
-				match = false
-				break
-			}
-		}
-		if match {
+		if slices.Equal(lines[start:start+len(sought)], sought) {
 			count++
 		}
 	}

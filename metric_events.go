@@ -44,22 +44,27 @@ var blockOutcomeNames = [blockOutcomeCount]string{
 }
 
 func (m *invocationMetrics) invoke(operation string, attempt commandAttempt) {
-	m.Commands.invoke(operation)
+	index := commandOperationIndex(operation)
+	if index < 0 {
+		return
+	}
+	m.Commands[index].Invocations++
 	if operation == "tsel" && attempt.textSpan != textSpanNone {
 		m.TextSpans[attempt.textSpan-1].Invocations++
 	}
 }
 
 func (m *invocationMetrics) fail(operation string, attempt commandAttempt, reason failureReason) {
-	if commandOperationIndex(operation) < 0 {
+	index := commandOperationIndex(operation)
+	if index < 0 {
 		return
 	}
-	m.Commands.fail(operation)
+	m.Commands[index].Errors++
 	if operation == "tsel" && attempt.textSpan != textSpanNone {
 		m.TextSpans[attempt.textSpan-1].Errors++
 	}
 	m.Reasons[reason]++
-	m.CommandReasons[commandOperationIndex(operation)][reason]++
+	m.CommandReasons[index][reason]++
 }
 
 func (m *invocationMetrics) invokeFailure(operation string, attempt commandAttempt, reason failureReason) {

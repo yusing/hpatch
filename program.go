@@ -287,8 +287,8 @@ func parseInstruction(sourceLine int, line string) (instruction, error) {
 	}
 
 	if valueText, ok := strings.CutPrefix(line, "type "); ok {
-		value, err := decodeJSONString(valueText)
-		if err != nil {
+		var value string
+		if err := json.Unmarshal([]byte(valueText), &value); err != nil {
 			return instruction{}, scriptError(sourceLine, "invalid JSON string")
 		}
 		return instruction{line: sourceLine, operation: "type", text: value}, nil
@@ -347,14 +347,6 @@ func decodeTwoJSONStrings(encoded string) (string, string, error) {
 
 func isJSONWhitespace(character byte) bool {
 	return character == ' ' || character == '\t' || character == '\r' || character == '\n'
-}
-
-func decodeJSONString(encoded string) (string, error) {
-	var value string
-	if err := json.Unmarshal([]byte(encoded), &value); err != nil {
-		return "", err
-	}
-	return value, nil
 }
 
 func parseLineNumber(sourceLine int, value string) (int, error) {

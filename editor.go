@@ -1,6 +1,7 @@
 package hpatch
 
 import (
+	"cmp"
 	"fmt"
 	"slices"
 	"strings"
@@ -323,18 +324,10 @@ func (e *editor) firstEdit() (baselineEdit, bool) {
 func (e *editor) orderedEdits() []baselineEdit {
 	edits := slices.Clone(e.edits)
 	slices.SortFunc(edits, func(first, second baselineEdit) int {
-		switch {
-		case first.start < second.start:
-			return -1
-		case first.start > second.start:
-			return 1
-		case first.end < second.end:
-			return -1
-		case first.end > second.end:
-			return 1
-		default:
-			return 0
+		if order := cmp.Compare(first.start, second.start); order != 0 {
+			return order
 		}
+		return cmp.Compare(first.end, second.end)
 	})
 	return edits
 }
@@ -426,20 +419,14 @@ func isHorizontalWhitespace(character byte) bool {
 }
 
 func literalOffsets(text, literal string) []int {
-	var offsets []int
-	for searchFrom := 0; searchFrom <= len(text)-len(literal); {
-		relative := strings.Index(text[searchFrom:], literal)
-		if relative < 0 {
-			break
-		}
-		match := searchFrom + relative
-		offsets = append(offsets, match)
-		searchFrom = match + 1
-	}
-	return offsets
+	return findLiteralOffsets(text, literal, 1)
 }
 
 func nonOverlappingLiteralOffsets(text, literal string) []int {
+	return findLiteralOffsets(text, literal, len(literal))
+}
+
+func findLiteralOffsets(text, literal string, advance int) []int {
 	var offsets []int
 	for searchFrom := 0; searchFrom <= len(text)-len(literal); {
 		relative := strings.Index(text[searchFrom:], literal)
@@ -448,7 +435,7 @@ func nonOverlappingLiteralOffsets(text, literal string) []int {
 		}
 		match := searchFrom + relative
 		offsets = append(offsets, match)
-		searchFrom = match + len(literal)
+		searchFrom = match + advance
 	}
 	return offsets
 }

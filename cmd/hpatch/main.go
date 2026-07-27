@@ -235,11 +235,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 }
 
 func parseInvocation(args []string) (engineArgs []string, rootPath, cwd string, gain bool, err error) {
-	if len(args) == 1 && args[0] == "gain" {
-		return []string{"gain"}, "", "", true, nil
-	}
-	if len(args) == 1 && args[0] == "record-metrics" {
-		return []string{"record-metrics"}, "", "", true, nil
+	if len(args) == 1 && (args[0] == "gain" || args[0] == "record-metrics") {
+		return args, "", "", true, nil
 	}
 	if len(args) > 0 && args[0] == "translate" {
 		engineArgs = []string{"translate"}

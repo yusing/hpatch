@@ -99,7 +99,7 @@ func RunWorkspace(args []string, stdin io.Reader, stdout, stderr io.Writer, work
 		return failEvaluation(stderr, err)
 	}
 	if !translateMode && len(changes) == 0 {
-		writeStateReport(stderr, report)
+		_, _ = io.WriteString(stderr, report)
 		return 0
 	}
 	if translateMode {
@@ -110,13 +110,13 @@ func RunWorkspace(args []string, stdin io.Reader, stdout, stderr io.Writer, work
 		if _, err := io.WriteString(stdout, patch); err != nil {
 			return fail(stderr, fmt.Sprintf("writing patch: %v", err))
 		}
-		writeStateReport(stderr, report)
+		_, _ = io.WriteString(stderr, report)
 		return 0
 	}
 	if err := commitChanges(changes, rootFileOperations{root: filesystem.root}); err != nil {
 		return fail(stderr, fmt.Sprintf("changing %s: %v", describePaths(changes), err))
 	}
-	writeStateReport(stderr, report)
+	_, _ = io.WriteString(stderr, report)
 	return 0
 }
 
@@ -262,10 +262,6 @@ func (w filesystemWorkspace) resolvePath(path string) (string, error) {
 		return "", fmt.Errorf("path resolves outside workspace root")
 	}
 	return path, nil
-}
-
-func writeStateReport(stderr io.Writer, report string) {
-	_, _ = io.WriteString(stderr, report)
 }
 
 func sanitizeDiagnostic(message string) string {

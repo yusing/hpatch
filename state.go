@@ -20,12 +20,6 @@ type renderedCoordinate struct {
 	column int
 }
 
-type renderedLine struct {
-	start      int
-	contentEnd int
-	fullEnd    int
-}
-
 func (w *workspace) finalStateReport() string {
 	if w.active == nil {
 		return "no active file\n"
@@ -92,32 +86,15 @@ func (e *editor) mapBaselineOffset(offset int, affinity boundaryAffinity, target
 	return renderedOffset + max(0, offset-baselineOffset)
 }
 
-func renderedLines(text string) []renderedLine {
-	lines := make([]renderedLine, 0, strings.Count(text, "\n")+1)
-	for start := 0; ; {
-		contentEnd := start
-		for contentEnd < len(text) && text[contentEnd] != '\r' && text[contentEnd] != '\n' {
-			contentEnd++
-		}
-		fullEnd := contentEnd
-		if fullEnd < len(text) {
-			fullEnd++
-			if text[contentEnd] == '\r' && fullEnd < len(text) && text[fullEnd] == '\n' {
-				fullEnd++
-			}
-		}
-		lines = append(lines, renderedLine{start: start, contentEnd: contentEnd, fullEnd: fullEnd})
-		if fullEnd >= len(text) {
-			if fullEnd == len(text) && contentEnd < fullEnd {
-				lines = append(lines, renderedLine{start: fullEnd, contentEnd: fullEnd, fullEnd: fullEnd})
-			}
-			return lines
-		}
-		start = fullEnd
+func renderedLines(text string) []logicalLine {
+	lines := logicalLines(text)
+	if text == "" || endsWithLineTerminator(text) {
+		lines = append(lines, logicalLine{start: len(text), contentEnd: len(text), fullEnd: len(text)})
 	}
+	return lines
 }
 
-func renderedCoordinateAt(text string, lines []renderedLine, offset int) renderedCoordinate {
+func renderedCoordinateAt(text string, lines []logicalLine, offset int) renderedCoordinate {
 	offset = min(max(offset, 0), len(text))
 	for index, line := range lines {
 		if offset <= line.contentEnd {

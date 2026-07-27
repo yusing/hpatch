@@ -73,18 +73,6 @@ func commandOperationIndex(operation string) int {
 	return -1
 }
 
-func (m *commandMetrics) invoke(operation string) {
-	if index := commandOperationIndex(operation); index >= 0 {
-		m[index].Invocations++
-	}
-}
-
-func (m *commandMetrics) fail(operation string) {
-	if index := commandOperationIndex(operation); index >= 0 {
-		m[index].Errors++
-	}
-}
-
 func (m *commandMetrics) total() (commandMetric, bool) {
 	var total commandMetric
 	for _, entry := range m {
