@@ -90,13 +90,12 @@ func TestGainReportsOutputAndInputSeparately(t *testing.T) {
 		t.Fatalf("output reduction = %v, want ~52.38", got)
 	}
 	report := gainReport(value)
-	for _, want := range []string{
-		"all         50      105          52.4%\n",
-		"state reports        50      not measured",
-	} {
-		if !strings.Contains(report, want) {
-			t.Fatalf("gain report %q does not contain %q", report, want)
-		}
+	if !strings.Contains(report, "all         50      105          52.4%\n") {
+		t.Fatalf("gain report %q does not contain the output total", report)
+	}
+	input := strings.Join(strings.Fields(gainInputSection(t, report)), " ")
+	if !strings.Contains(input, "state reports 50") || !strings.Contains(input, "net added input 50") {
+		t.Fatalf("input gain report %q does not reconcile the state report", input)
 	}
 	if strings.Contains(report, "combined token-cost") || strings.Contains(report, "output:input cost") {
 		t.Fatalf("gain report combines output and input tokens: %q", report)

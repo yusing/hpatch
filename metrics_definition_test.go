@@ -46,8 +46,8 @@ func TestDefinitionCountsEveryInvocationAndSessionOnce(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.DefinitionInputTokens != 3*single || got.BaselineDefinitionInputTokens != 3*baseline {
-		t.Fatalf("definition tokens = (%d, %d), want (%d, %d)", got.DefinitionInputTokens, got.BaselineDefinitionInputTokens, 3*single, 3*baseline)
+	if got.DefinitionRequests != 3 || got.DefinitionInputTokens != 3*single || got.RemovedDefinitionInputTokens != 3*baseline {
+		t.Fatalf("definition requests and tokens = (%d, %d, %d), want (3, %d, %d)", got.DefinitionRequests, got.DefinitionInputTokens, got.RemovedDefinitionInputTokens, 3*single, 3*baseline)
 	}
 
 	// A distinct session pays the definition again.
@@ -60,8 +60,8 @@ func TestDefinitionCountsEveryInvocationAndSessionOnce(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Sessions != 2 || got.DefinitionInputTokens != 4*single {
-		t.Fatalf("second session = (%d sessions, %d tokens), want (2, %d)", got.Sessions, got.DefinitionInputTokens, 4*single)
+	if got.Sessions != 2 || got.DefinitionRequests != 4 || got.DefinitionInputTokens != 4*single {
+		t.Fatalf("second session = (%d sessions, %d requests, %d tokens), want (2, 4, %d)", got.Sessions, got.DefinitionRequests, got.DefinitionInputTokens, 4*single)
 	}
 }
 

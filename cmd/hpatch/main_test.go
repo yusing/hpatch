@@ -35,7 +35,7 @@ func TestInformationalCommandsNeedNoEnvironmentOrStdin(t *testing.T) {
 	}{
 		{name: "top-level help", args: []string{"--help"}, want: helpText(true), wantFragment: "hpatch translate [--root ROOT] [--cwd CWD] < SCRIPT"},
 		{name: "translate help", args: []string{"translate", "--help"}, want: translateHelpText, wantFragment: "without modifying"},
-		{name: "tool help", args: []string{"--tool-help"}, want: toolHelpText(true), wantFragment: "Edit workspace files with one atomic hpatch script."},
+		{name: "tool help", args: []string{"--tool-help"}, want: toolHelpText(true), wantFragment: "Edit workspace files atomically with one free-form script."},
 		{name: "version", args: []string{"--version"}, want: "hpatch devel\n", wantFragment: "hpatch devel"},
 	}
 	for _, test := range tests {
@@ -87,15 +87,19 @@ func TestTopLevelHelpDescribesCompletePublicSurface(t *testing.T) {
 func TestToolHelpIsFocusedAndAuthoritative(t *testing.T) {
 	help := toolHelpText(true)
 	for _, required := range []string{
-		"functions.hpatch's free-form",
+		"one free-form script",
+		"rejected script changes nothing",
 		"sel LINE_REF START:END",
 		"tsel LINE_REF OCCURRENCE \"TEXT\" [N]",
 		"bsel_next \"START\" \"END\"",
-		"ASCII space and tab runs match interchangeably",
+		"ASCII space and tab runs are",
+		"The first in for an existing file captures an immutable baseline.",
 		"Final-state report:",
-		"three nearby post-edit lines",
+		"multiple insertions",
+		"at one baseline position",
+		"up to three",
 		"workspace-relative paths",
-		"create missing directories with a separate exec call",
+		"Parent directories for new",
 	} {
 		if !strings.Contains(help, required) {
 			t.Fatalf("tool help does not contain %q", required)
@@ -103,15 +107,19 @@ func TestToolHelpIsFocusedAndAuthoritative(t *testing.T) {
 	}
 	for _, excluded := range []string{
 		"Usage:",
+		"Agent workflow:",
 		"hpatch gain",
 		"--root",
 		"--cwd",
 		"Metrics:",
-		"estimated weighted",
+		toolHelpRelativeMarker,
 	} {
 		if strings.Contains(help, excluded) {
-			t.Fatalf("tool help contains CLI-only text %q", excluded)
+			t.Fatalf("tool help contains non-tool text %q", excluded)
 		}
+	}
+	if len(help) >= len(helpText(true))/2 {
+		t.Fatalf("tool help is not focused: %d bytes versus %d-byte CLI help", len(help), len(helpText(true)))
 	}
 }
 

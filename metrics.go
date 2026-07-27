@@ -22,7 +22,7 @@ import (
 const (
 	metricsFilename       = "metrics.bin"
 	metricsLockname       = "metrics.lock"
-	metricsMagic          = "HPATCH12"
+	metricsMagic          = "HPATCH13"
 	metricsSlotSize       = 2160
 	metricsFileSize       = 2 * metricsSlotSize
 	metricsChecksumOffset = 2128
@@ -53,15 +53,16 @@ type metrics struct {
 	DiagnosticInputTokens   uint64
 	MetadataInputTokens     uint64
 
-	// Sessions counts distinct agent sessions that carried the hpatch tool
-	// definition. DefinitionInputTokens is cumulative per request carrying the
-	// definition; Sessions is only the distinct-session denominator.
-	Sessions uint64
-	// DefinitionInputTokens is the cumulative hpatch tool-definition input
-	// estimate, and BaselineDefinitionInputTokens is the apply_patch definition
-	// a host would otherwise expose. Gain reports them separately.
-	DefinitionInputTokens         uint64
-	BaselineDefinitionInputTokens uint64
+	// Sessions counts distinct agent sessions that carried the routed definition
+	// change. DefinitionInputTokens is cumulative per accounted request;
+	// Sessions is only the distinct-session denominator.
+	Sessions           uint64
+	DefinitionRequests uint64
+	// DefinitionInputTokens is the cumulative standalone hpatch definition added
+	// by the router. RemovedDefinitionInputTokens is the exact Code Mode
+	// apply_patch section removed from those requests and is reported as a credit.
+	DefinitionInputTokens        uint64
+	RemovedDefinitionInputTokens uint64
 }
 
 func commandOperationIndex(operation string) int {
@@ -343,8 +344,9 @@ func (m *metrics) add(entry metrics) error {
 		{&m.DiagnosticInputTokens, entry.DiagnosticInputTokens},
 		{&m.MetadataInputTokens, entry.MetadataInputTokens},
 		{&m.Sessions, entry.Sessions},
+		{&m.DefinitionRequests, entry.DefinitionRequests},
 		{&m.DefinitionInputTokens, entry.DefinitionInputTokens},
-		{&m.BaselineDefinitionInputTokens, entry.BaselineDefinitionInputTokens},
+		{&m.RemovedDefinitionInputTokens, entry.RemovedDefinitionInputTokens},
 	} {
 		if !addCounter(counter.destination, counter.increment) {
 			return fmt.Errorf("updating metrics: token count overflow")
@@ -611,8 +613,9 @@ func encodeMetricsSlot(value metrics, generation uint64) [metricsSlotSize]byte {
 	binary.LittleEndian.PutUint64(encoded[40:48], value.ReportInputTokens)
 	binary.LittleEndian.PutUint64(encoded[48:56], value.Sessions)
 	binary.LittleEndian.PutUint64(encoded[56:64], value.DefinitionInputTokens)
-	binary.LittleEndian.PutUint64(encoded[64:72], value.BaselineDefinitionInputTokens)
+	binary.LittleEndian.PutUint64(encoded[64:72], value.RemovedDefinitionInputTokens)
 	binary.LittleEndian.PutUint64(encoded[72:80], value.FailedApplyPatchTokens)
+	binary.LittleEndian.PutUint64(encoded[80:88], value.DefinitionRequests)
 	for index, entry := range value.Commands {
 		putCommandMetric(encoded[:], 96+index*16, entry)
 	}
@@ -659,16 +662,17 @@ func decodeMetricsSlot(encoded [metricsSlotSize]byte) (metrics, uint64, bool) {
 		return metrics{}, 0, false
 	}
 	value := metrics{
-		HPatchTokens:                  binary.LittleEndian.Uint64(encoded[16:24]),
-		ApplyPatchTokens:              binary.LittleEndian.Uint64(encoded[24:32]),
-		IneffectiveHPatchTokens:       binary.LittleEndian.Uint64(encoded[32:40]),
-		ReportInputTokens:             binary.LittleEndian.Uint64(encoded[40:48]),
-		Sessions:                      binary.LittleEndian.Uint64(encoded[48:56]),
-		DefinitionInputTokens:         binary.LittleEndian.Uint64(encoded[56:64]),
-		BaselineDefinitionInputTokens: binary.LittleEndian.Uint64(encoded[64:72]),
-		FailedApplyPatchTokens:        binary.LittleEndian.Uint64(encoded[72:80]),
-		DiagnosticInputTokens:         binary.LittleEndian.Uint64(encoded[2112:2120]),
-		MetadataInputTokens:           binary.LittleEndian.Uint64(encoded[2120:2128]),
+		HPatchTokens:                 binary.LittleEndian.Uint64(encoded[16:24]),
+		ApplyPatchTokens:             binary.LittleEndian.Uint64(encoded[24:32]),
+		IneffectiveHPatchTokens:      binary.LittleEndian.Uint64(encoded[32:40]),
+		ReportInputTokens:            binary.LittleEndian.Uint64(encoded[40:48]),
+		Sessions:                     binary.LittleEndian.Uint64(encoded[48:56]),
+		DefinitionInputTokens:        binary.LittleEndian.Uint64(encoded[56:64]),
+		RemovedDefinitionInputTokens: binary.LittleEndian.Uint64(encoded[64:72]),
+		FailedApplyPatchTokens:       binary.LittleEndian.Uint64(encoded[72:80]),
+		DefinitionRequests:           binary.LittleEndian.Uint64(encoded[80:88]),
+		DiagnosticInputTokens:        binary.LittleEndian.Uint64(encoded[2112:2120]),
+		MetadataInputTokens:          binary.LittleEndian.Uint64(encoded[2120:2128]),
 	}
 	for index := range commandCount {
 		value.Commands[index] = getCommandMetric(encoded[:], 96+index*16)
@@ -783,20 +787,27 @@ func writeOutputGainTable(report *strings.Builder, m metrics) {
 }
 
 func writeInputGainTable(report *strings.Builder, m metrics, width int) {
-	totalHPatch := new(big.Int).SetUint64(m.ReportInputTokens)
+	added := new(big.Int).SetUint64(m.ReportInputTokens)
 	for _, count := range []uint64{m.DiagnosticInputTokens, m.MetadataInputTokens, m.DefinitionInputTokens} {
-		totalHPatch.Add(totalHPatch, new(big.Int).SetUint64(count))
+		added.Add(added, new(big.Int).SetUint64(count))
 	}
+	removed := new(big.Int).SetUint64(m.RemovedDefinitionInputTokens)
+	net := new(big.Int).Sub(new(big.Int).Set(added), removed)
 
+	removedText := "0"
+	if m.RemovedDefinitionInputTokens != 0 {
+		removedText = "-" + strconv.FormatUint(m.RemovedDefinitionInputTokens, 10)
+	}
 	report.WriteString("input token estimates:\n")
-	writeWrappedTable(report, width, []string{"source", "hpatch", "apply_patch", "description"}, [][]string{
-		{"state reports", strconv.FormatUint(m.ReportInputTokens, 10), "not measured", "final state returned after successful calls"},
-		{"failure diagnostics", strconv.FormatUint(m.DiagnosticInputTokens, 10), "not measured", "errors and repair context returned after failed calls"},
-		{"carried metadata", strconv.FormatUint(m.MetadataInputTokens, 10), "not measured", "host context repeated with tool calls"},
-		{"tool definitions", strconv.FormatUint(m.DefinitionInputTokens, 10), strconv.FormatUint(m.BaselineDefinitionInputTokens, 10), "tool schemas supplied by the host"},
-		{"total measured", totalHPatch.String(), strconv.FormatUint(m.BaselineDefinitionInputTokens, 10), "columns sum measured inputs only"},
+	writeWrappedTable(report, width, []string{"source", "tokens", "description"}, [][]string{
+		{"state reports", strconv.FormatUint(m.ReportInputTokens, 10), "final state returned after successful calls"},
+		{"failure diagnostics", strconv.FormatUint(m.DiagnosticInputTokens, 10), "errors and repair context returned after failed calls"},
+		{"carried metadata", strconv.FormatUint(m.MetadataInputTokens, 10), "host context repeated with tool calls"},
+		{"hpatch definition installed", strconv.FormatUint(m.DefinitionInputTokens, 10), "standalone tool definition added by the router"},
+		{"apply_patch definition removed", removedText, "exact Code Mode section removed by the router"},
+		{"net added input", net.String(), "measured additions minus the removed definition"},
 	})
-	writeWrappedText(report, width, fmt.Sprintf("tool definitions are cumulative per measured call in %d distinct session(s) (%s).", m.Sessions, describeDefinitionSources(m)))
+	writeWrappedText(report, width, fmt.Sprintf("definition routing covers %d accounted request(s) in %d distinct session(s) (%s).", m.DefinitionRequests, m.Sessions, describeDefinitionSources(m)))
 	report.WriteByte('\n')
 }
 

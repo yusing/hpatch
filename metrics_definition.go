@@ -22,12 +22,13 @@ const (
 
 const sessionMarkerDirectory = "sessions"
 
-// definitionTokens estimates the input tokens for the hpatch definition and
-// the baseline definition displaced on this invocation. Cached definitions are
-// still input tokens, so every invocation contributes while Sessions remains a
-// distinct-session counter.
-func definitionTokens(definition, baselineDefinition string) (uint64, uint64, error) {
-	if definition == "" && baselineDefinition == "" {
+// definitionTokens estimates the observed request-input tokens for the
+// standalone hpatch definition added by the router and the exact Code Mode
+// apply_patch section it removed. Cached definitions remain input tokens, so
+// every accounted request contributes while Sessions remains a distinct-session
+// counter.
+func definitionTokens(definition, removedDefinition string) (uint64, uint64, error) {
+	if definition == "" && removedDefinition == "" {
 		return 0, 0, nil
 	}
 	codec, err := gpt5Codec()
@@ -35,13 +36,13 @@ func definitionTokens(definition, baselineDefinition string) (uint64, uint64, er
 		return 0, 0, err
 	}
 	var counts [2]uint64
-	for index, text := range [2]string{definition, baselineDefinition} {
+	for index, text := range [2]string{definition, removedDefinition} {
 		if text == "" {
 			continue
 		}
 		count, err := codec.Count(text)
 		if err != nil {
-			return 0, 0, fmt.Errorf("tokenizing tool definition: %w", err)
+			return 0, 0, fmt.Errorf("tokenizing tool definition routing: %w", err)
 		}
 		counts[index] = uint64(count)
 	}
@@ -54,13 +55,14 @@ func definitionEntry(accounting metricAccounting) (metrics, string, error) {
 	if accounting.SessionID == "" || (definition == "" && baseline == "") {
 		return metrics{}, "", nil
 	}
-	definitionCount, baselineCount, err := definitionTokens(definition, baseline)
+	definitionCount, removedCount, err := definitionTokens(definition, baseline)
 	if err != nil {
 		return metrics{}, "", err
 	}
 	return metrics{
-		DefinitionInputTokens:         definitionCount,
-		BaselineDefinitionInputTokens: baselineCount,
+		DefinitionInputTokens:        definitionCount,
+		RemovedDefinitionInputTokens: removedCount,
+		DefinitionRequests:           1,
 	}, accounting.SessionID, nil
 }
 
@@ -96,18 +98,18 @@ func claimSession(dataDirectory, session string, currentGeneration, nextGenerati
 	return true, nil
 }
 
-// describeDefinitionSources reports which definition inputs the host supplied,
-// so a zero definition line is not mistaken for a free tool.
+// describeDefinitionSources reports which routing inputs the host supplied, so a
+// zero credit is not mistaken for a request that removed a free definition.
 func describeDefinitionSources(m metrics) string {
 	switch {
 	case m.Sessions == 0:
 		return "not measured (missing " + sessionEnvironment + ")"
 	case m.DefinitionInputTokens == 0:
-		return "baseline only (missing " + definitionEnvironment + ")"
-	case m.BaselineDefinitionInputTokens == 0:
-		return "hpatch only (missing " + baselineDefinitionEnvironment + ")"
+		return "removal only (missing " + definitionEnvironment + ")"
+	case m.RemovedDefinitionInputTokens == 0:
+		return "installation only (missing " + baselineDefinitionEnvironment + ")"
 	default:
-		return "hpatch and baseline measured"
+		return "installation and removal measured"
 	}
 }
 

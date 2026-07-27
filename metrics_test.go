@@ -68,10 +68,17 @@ func TestGainWithoutMetricsReportsZero(t *testing.T) {
 
 func TestGainReportReconcilesEffectiveAndIneffectiveTokens(t *testing.T) {
 	metricValues := metrics{
-		HPatchTokens:            2404,
-		ApplyPatchTokens:        4764,
-		IneffectiveHPatchTokens: 2172,
-		FailedApplyPatchTokens:  300,
+		HPatchTokens:                 2404,
+		ApplyPatchTokens:             4764,
+		IneffectiveHPatchTokens:      2172,
+		FailedApplyPatchTokens:       300,
+		ReportInputTokens:            11,
+		DiagnosticInputTokens:        13,
+		MetadataInputTokens:          17,
+		DefinitionInputTokens:        100,
+		RemovedDefinitionInputTokens: 30,
+		Sessions:                     2,
+		DefinitionRequests:           3,
 	}
 	report := gainReport(metricValues)
 	for _, want := range []string{
@@ -80,15 +87,27 @@ func TestGainReportReconcilesEffectiveAndIneffectiveTokens(t *testing.T) {
 		"failed      2172    300          n/a\n",
 		"all         4576    5064         9.6%\n",
 		"input token estimates:\n",
-		"source               hpatch  apply_patch   description\n",
-		"state reports        0       not measured",
-		"failure diagnostics  0       not measured",
-		"tool definitions     0       0",
-		"tool definitions are cumulative per measured call",
-		"HPATCH_SESSION_ID",
+		"hpatch definition installed",
+		"apply_patch definition removed",
+		"net added input",
+		"definition routing covers 3 accounted request(s)",
+		"installation and removal measured",
 	} {
 		if !strings.Contains(report, want) {
 			t.Fatalf("gain report %q does not contain %q", report, want)
+		}
+	}
+	input := strings.Join(strings.Fields(gainInputSection(t, report)), " ")
+	for _, want := range []string{
+		"state reports 11",
+		"failure diagnostics 13",
+		"carried metadata 17",
+		"hpatch definition installed 100",
+		"apply_patch definition removed -30",
+		"net added input 111",
+	} {
+		if !strings.Contains(input, want) {
+			t.Fatalf("input report %q does not contain %q", input, want)
 		}
 	}
 	for _, nextTable := range []string{
@@ -117,15 +136,13 @@ func TestGainReportReconcilesEffectiveAndIneffectiveTokens(t *testing.T) {
 				"final state returned after successful calls",
 				"errors and repair context returned after failed calls",
 				"host context repeated with tool calls",
-				"tool schemas supplied by the host",
-				"columns sum measured inputs only",
+				"standalone tool definition added by the router",
+				"exact Code Mode section removed by the router",
+				"measured additions minus the removed definition",
 			} {
 				if !strings.Contains(strings.Join(strings.Fields(section), " "), text) {
 					t.Fatalf("width %d report lost description %q: %q", width, text, section)
 				}
-			}
-			if width == 80 && !strings.Contains(section, "\n                                           calls\n") {
-				t.Fatalf("wrapped description is not aligned with its column: %q", section)
 			}
 		})
 	}
@@ -133,6 +150,10 @@ func TestGainReportReconcilesEffectiveAndIneffectiveTokens(t *testing.T) {
 	overflowSafe := gainReport(metrics{HPatchTokens: ^uint64(0), IneffectiveHPatchTokens: ^uint64(0), ApplyPatchTokens: ^uint64(0), FailedApplyPatchTokens: ^uint64(0)})
 	if !strings.Contains(overflowSafe, "36893488147419103230") {
 		t.Fatalf("overflow-safe gain report = %q", overflowSafe)
+	}
+	creditCanExceedAdded := strings.Join(strings.Fields(gainInputSection(t, gainReport(metrics{DefinitionInputTokens: 5, RemovedDefinitionInputTokens: 9}))), " ")
+	if !strings.Contains(creditCanExceedAdded, "net added input -4") {
+		t.Fatalf("signed definition credit report = %q", creditCanExceedAdded)
 	}
 }
 
@@ -569,7 +590,7 @@ func TestImmediatePriorMetricsVersionResetsTotals(t *testing.T) {
 	const priorSlotSize = 2160
 	const priorChecksumOffset = 2128
 	var prior [priorSlotSize]byte
-	copy(prior[:8], "HPATCH11")
+	copy(prior[:8], "HPATCH12")
 	binary.LittleEndian.PutUint64(prior[8:16], 7)
 	binary.LittleEndian.PutUint64(prior[16:24], 5)
 	checksum := sha256.Sum256(prior[:priorChecksumOffset])
