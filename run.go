@@ -73,12 +73,16 @@ func RunWorkspace(args []string, stdin io.Reader, stdout, stderr io.Writer, work
 
 	script, err := io.ReadAll(stdin)
 	if err != nil {
-		return failWithIneffectiveMetrics(stderr, fmt.Sprintf("reading script: %v", err), dataDirectory, string(script), invocationMetrics{})
+		return failWithIneffectiveMetrics(stderr, fmt.Sprintf("reading script: %v", err), dataDirectory, chargedScript(string(script)), invocationMetrics{})
 	}
 	scriptText := string(script)
+	// Evaluation always reads the complete script from stdin; output accounting
+	// charges what the model actually wrote, which differs when a caller rebuilt
+	// this script from a correction.
+	charged := chargedScript(scriptText)
 	changes, filesystem, commands, report, err := evaluateScript(context.TODO(), workspace, scriptText, relativeLinesEnabled())
 	if err != nil {
-		return failEvaluation(stderr, err, dataDirectory, scriptText, commands)
+		return failEvaluation(stderr, err, dataDirectory, charged, commands)
 	}
 	if !translateMode && len(changes) == 0 {
 		emittedReport := completedReport(report, writeStateReport(stderr, report))
@@ -92,21 +96,21 @@ func RunWorkspace(args []string, stdin io.Reader, stdout, stderr io.Writer, work
 	if translateMode {
 		patch, err := translate(changes)
 		if err != nil {
-			return failWithIneffectiveMetrics(stderr, err.Error(), dataDirectory, scriptText, commands)
+			return failWithIneffectiveMetrics(stderr, err.Error(), dataDirectory, charged, commands)
 		}
 		if _, err := io.WriteString(stdout, patch); err != nil {
-			return failWithIneffectiveMetrics(stderr, fmt.Sprintf("writing patch: %v", err), dataDirectory, scriptText, commands)
+			return failWithIneffectiveMetrics(stderr, fmt.Sprintf("writing patch: %v", err), dataDirectory, charged, commands)
 		}
 		emittedReport := completedReport(report, writeStateReport(stderr, report))
 		if dataDirectory != "" {
-			if err := recordMetrics(dataDirectory, scriptText, patch, emittedReport, commands); err != nil {
+			if err := recordMetrics(dataDirectory, charged, patch, emittedReport, commands); err != nil {
 				warn(stderr, err.Error())
 			}
 		}
 		return 0
 	}
 	if err := commitChanges(changes, rootFileOperations{root: filesystem.root}); err != nil {
-		return failWithIneffectiveMetrics(stderr, fmt.Sprintf("changing %s: %v", describePaths(changes), err), dataDirectory, scriptText, commands)
+		return failWithIneffectiveMetrics(stderr, fmt.Sprintf("changing %s: %v", describePaths(changes), err), dataDirectory, charged, commands)
 	}
 	emittedReport := completedReport(report, writeStateReport(stderr, report))
 	if dataDirectory != "" {
@@ -116,7 +120,7 @@ func RunWorkspace(args []string, stdin io.Reader, stdout, stderr io.Writer, work
 			if err := recordCommandMetrics(dataDirectory, emittedReport, commands); err != nil {
 				warn(stderr, err.Error())
 			}
-		} else if err := recordMetrics(dataDirectory, scriptText, patch, emittedReport, commands); err != nil {
+		} else if err := recordMetrics(dataDirectory, charged, patch, emittedReport, commands); err != nil {
 			warn(stderr, err.Error())
 		}
 	}

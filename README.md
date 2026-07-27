@@ -77,6 +77,11 @@ overhead to a separate counter. The same metrics store tracks invocations and co
 errors separately for every supported patch command, including successful no-op scripts,
 and attributes each error to the command that raised it.
 
+When a caller rebuilt the script on stdin from a shorter payload, such as a correction
+that replaces named commands of a rejected script, set `HPATCH_CHARGED_SCRIPT` to that
+payload. Evaluation still uses stdin; only output accounting uses the variable, so a
+repair is not measured as costing the complete retry it replaced.
+
 Tool definitions are model input too. Set `HPATCH_SESSION_ID` plus `HPATCH_TOOL_DEFINITION`
 and hpatch counts its definition once per session rather than once per call, matching how
 prompt caching bills it. Set `HPATCH_BASELINE_TOOL_DEFINITION` to the native patch tool

@@ -72,7 +72,14 @@ estimates. `gain`, informational commands, and unsupported argument forms do not
 contribute metrics.
 
 Both effective and ineffective hpatch estimates count the `functions.hpatch` tool name
-followed by the complete free-form editing script. The successful direct side counts the
+followed by the charged editing script. The charged script is the script on standard input
+unless the host sets `HPATCH_CHARGED_SCRIPT` to a nonempty value, in which case that value
+is charged instead. A host sets it when the evaluated script was rebuilt from a shorter
+payload the model actually emitted, such as a correction naming individual commands of a
+rejected script; charging the rebuilt script would measure the repair as costing the
+complete retry it replaced. The variable never affects evaluation, which always reads the
+complete script from standard input, and it never affects the apply_patch baseline, which
+reflects the edit actually applied. The successful direct side counts the
 `functions.exec` tool name and a free-form program that passes the complete translated
 patch envelope, serialized as one string argument, to `tools.apply_patch`. All estimates
 use the tokenizer library's GPT-5 model mapping. Script and patch text remain data and
@@ -199,6 +206,9 @@ Acceptance:
    counters zero and reports which inputs were measured.
 7. Failures whose reason has an `apply_patch` analogue credit the baseline one mean
    effective payload each; selector, anchor, and syntax failures credit nothing.
+8. A nonempty `HPATCH_CHARGED_SCRIPT` is charged as model output for both effective and
+   ineffective invocations while evaluation still uses standard input; an absent or empty
+   value charges the evaluated script.
 5. Scripts and patches containing quotes or program-like text remain data and cannot
    alter the direct-call program used for counting.
 6. Concurrent writers lose no records, concurrent gain reads never observe a partial

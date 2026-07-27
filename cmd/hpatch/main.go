@@ -116,6 +116,10 @@ Final-state report:
   Use the report to orient focused validation without rereading a successfully edited file.
 
 Metrics:
+  Set HPATCH_CHARGED_SCRIPT when the script on stdin was rebuilt from a shorter
+  payload, such as a caller-side correction. Evaluation always uses stdin; output
+  accounting uses that variable instead, so a repair is not measured as costing the
+  complete retry it replaced.
   hpatch gain reads no script and reports persistent effective, ineffective, and
   apply_patch output-token estimates separately from final-state report input-token
   overhead. It includes output-only reduction plus weighted overall reductions at 5:1
