@@ -37,7 +37,6 @@ type hpatchMetricRecord struct {
 	FailedApplyPatchTokens       uint64          `json:"failed_apply_patch_tokens,omitempty"`
 	ReportInputTokens            uint64          `json:"report_input_tokens,omitempty"`
 	DiagnosticInputTokens        uint64          `json:"diagnostic_input_tokens,omitempty"`
-	MetadataInputTokens          uint64          `json:"metadata_input_tokens,omitempty"`
 	DefinitionRequests           uint64          `json:"definition_requests,omitempty"`
 	DefinitionInputTokens        uint64          `json:"definition_input_tokens,omitempty"`
 	RemovedDefinitionInputTokens uint64          `json:"removed_definition_input_tokens,omitempty"`
@@ -49,7 +48,6 @@ type hpatchMetricInputs struct {
 	report             string
 	carrier            string
 	diagnostic         string
-	carriedMetadata    []string
 	sessionID          string
 	definition         string
 	baselineDefinition string
@@ -97,16 +95,6 @@ func calculateHPatchMetricRecord(inputs hpatchMetricInputs) (hpatchMetricRecord,
 				return hpatchMetricRecord{}, err
 			}
 		}
-	}
-	for _, metadata := range inputs.carriedMetadata {
-		count, countErr := countHPatchMetricText(codec, metadata, "carried metadata input")
-		if countErr != nil {
-			return hpatchMetricRecord{}, countErr
-		}
-		if ^uint64(0)-record.MetadataInputTokens < count {
-			return hpatchMetricRecord{}, errors.New("count carried metadata input: token count overflow")
-		}
-		record.MetadataInputTokens += count
 	}
 	definition := strings.TrimRight(inputs.definition, "\n")
 	baseline := strings.TrimRight(inputs.baselineDefinition, "\n")

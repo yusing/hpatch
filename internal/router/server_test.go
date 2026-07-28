@@ -106,6 +106,7 @@ func serverCompactionMetadataHeaders(t *testing.T) http.Header {
 
 func TestExecuteRequestFailsClosedBeforeUpstreamWhenRewriteIsIneligible(t *testing.T) {
 	workspace := t.TempDir()
+	otherWorkspace := t.TempDir()
 	validHeaders := serverMetadataHeaders(t, "turn", map[string]json.RawMessage{workspace: nil})
 	tests := []struct {
 		name      string
@@ -123,6 +124,7 @@ func TestExecuteRequestFailsClosedBeforeUpstreamWhenRewriteIsIneligible(t *testi
 			request["stream"] = true
 			request["parallel_tool_calls"] = false
 		}, want: "compaction request cannot expose tools"},
+		{name: "multiple usable workspaces", sessionID: "session", headers: serverMetadataHeaders(t, "turn", map[string]json.RawMessage{workspace: nil, otherWorkspace: nil}), want: "exactly one usable workspace"},
 		{name: "no usable workspace", sessionID: "session", headers: serverMetadataHeaders(t, "turn", map[string]json.RawMessage{t.TempDir() + "/missing": nil}), want: "usable workspace"},
 		{name: "missing apply_patch", sessionID: "session", headers: validHeaders, mutate: func(request map[string]any) {
 			input := request["input"].([]any)
@@ -227,8 +229,8 @@ func TestExecuteRequestForwardsRewrittenRequestAndRecordsUsage(t *testing.T) {
 	if !strings.Contains(string(forwarded.fields["tools"]), "\"name\":\"hpatch\"") || strings.Contains(string(forwarded.fields["tools"]), workspace) {
 		t.Fatalf("unstable rewritten tools = %s", forwarded.fields["tools"])
 	}
-	if !strings.Contains(string(forwarded.fields["input"]), workspace) {
-		t.Fatalf("forwarded input lacks workspace metadata: %s", forwarded.fields["input"])
+	if strings.Contains(string(forwarded.fields["input"]), workspace) {
+		t.Fatalf("single-workspace input contains redundant metadata: %s", forwarded.fields["input"])
 	}
 	if string(forwarded.fields["reasoning"]) != "{\"effort\":\"high\"}" {
 		t.Fatalf("reasoning request changed: %s", forwarded.fields["reasoning"])
@@ -328,12 +330,12 @@ func TestRoutingWorkspaceDetectsPathReplacement(t *testing.T) {
 	if err := os.Mkdir(path, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	workspaces := usableRoutingWorkspaces(map[string]json.RawMessage{path: nil})
-	if len(workspaces) != 1 {
-		t.Fatalf("usable workspaces = %d, want 1", len(workspaces))
+	workspace, ok := usableRoutingWorkspace(map[string]json.RawMessage{path: nil})
+	if !ok {
+		t.Fatal("usable workspace was rejected")
 	}
-	defer closeRoutingWorkspaces(workspaces)
-	if !workspaces[0].unchanged() {
+	defer workspace.close()
+	if !workspace.unchanged() {
 		t.Fatal("fresh workspace is not unchanged")
 	}
 	if err := os.Rename(path, filepath.Join(parent, "moved")); err != nil {
@@ -342,7 +344,7 @@ func TestRoutingWorkspaceDetectsPathReplacement(t *testing.T) {
 	if err := os.Mkdir(path, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if workspaces[0].unchanged() {
+	if workspace.unchanged() {
 		t.Fatal("replacement workspace retained the original identity")
 	}
 }

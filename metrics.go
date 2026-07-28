@@ -51,7 +51,6 @@ type metrics struct {
 	FailedApplyPatchTokens  uint64
 	ReportInputTokens       uint64
 	DiagnosticInputTokens   uint64
-	MetadataInputTokens     uint64
 
 	// Sessions counts distinct agent sessions that carried the routed definition
 	// change. DefinitionRequests counts every request carrying that context.
@@ -169,7 +168,6 @@ func (m *metrics) add(entry metrics) error {
 		{&m.FailedApplyPatchTokens, entry.FailedApplyPatchTokens},
 		{&m.ReportInputTokens, entry.ReportInputTokens},
 		{&m.DiagnosticInputTokens, entry.DiagnosticInputTokens},
-		{&m.MetadataInputTokens, entry.MetadataInputTokens},
 		{&m.Sessions, entry.Sessions},
 		{&m.DefinitionRequests, entry.DefinitionRequests},
 		{&m.DefinitionInputTokens, entry.DefinitionInputTokens},
@@ -445,7 +443,6 @@ func encodeMetricsSlot(value metrics, generation uint64) [metricsSlotSize]byte {
 		}
 	}
 	binary.LittleEndian.PutUint64(encoded[2112:2120], value.DiagnosticInputTokens)
-	binary.LittleEndian.PutUint64(encoded[2120:2128], value.MetadataInputTokens)
 	checksum := sha256.Sum256(encoded[:metricsChecksumOffset])
 	copy(encoded[metricsChecksumOffset:], checksum[:])
 	return encoded
@@ -479,7 +476,6 @@ func decodeMetricsSlot(encoded [metricsSlotSize]byte) (metrics, uint64, bool) {
 		FailedApplyPatchTokens:       binary.LittleEndian.Uint64(encoded[72:80]),
 		DefinitionRequests:           binary.LittleEndian.Uint64(encoded[80:88]),
 		DiagnosticInputTokens:        binary.LittleEndian.Uint64(encoded[2112:2120]),
-		MetadataInputTokens:          binary.LittleEndian.Uint64(encoded[2120:2128]),
 	}
 	for index := range commandCount {
 		value.Commands[index] = getCommandMetric(encoded[:], 96+index*16)
@@ -593,7 +589,7 @@ func writeOutputGainTable(report *strings.Builder, m metrics) {
 
 func writeInputGainTable(report *strings.Builder, m metrics, width int) {
 	added := new(big.Int).SetUint64(m.ReportInputTokens)
-	for _, count := range []uint64{m.DiagnosticInputTokens, m.MetadataInputTokens, m.DefinitionInputTokens} {
+	for _, count := range []uint64{m.DiagnosticInputTokens, m.DefinitionInputTokens} {
 		added.Add(added, new(big.Int).SetUint64(count))
 	}
 	removed := new(big.Int).SetUint64(m.RemovedDefinitionInputTokens)
@@ -607,7 +603,6 @@ func writeInputGainTable(report *strings.Builder, m metrics, width int) {
 	writeWrappedTable(report, width, []string{"source", "tokens", "description"}, [][]string{
 		{"state reports", strconv.FormatUint(m.ReportInputTokens, 10), "final state returned after successful calls"},
 		{"failure diagnostics", strconv.FormatUint(m.DiagnosticInputTokens, 10), "errors and repair context returned after failed calls"},
-		{"carried metadata", strconv.FormatUint(m.MetadataInputTokens, 10), "host context repeated with tool calls"},
 		{"hpatch definition installed", strconv.FormatUint(m.DefinitionInputTokens, 10), "standalone tool definition added by the router"},
 		{"apply_patch definition removed", removedText, "exact Code Mode section removed by the router"},
 		{"net added input", net.String(), "measured additions minus the removed definition"},

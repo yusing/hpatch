@@ -43,7 +43,7 @@ var (
 
 const (
 	hpatchImmutableBaselineMarker = "The first in for an existing file captures an immutable baseline."
-	hpatchHostMetricsMarker       = "Host metrics schema: caller-v2\n"
+	hpatchHostMetricsMarker       = "Host metrics schema: caller-v3\n"
 )
 
 type hpatchTranslationResult struct {
@@ -259,8 +259,8 @@ func (b *hpatchLimitedBuffer) Write(content []byte) (int, error) {
 }
 
 type hpatchHistory struct {
-	script      string
-	workspaceID string
+	script string
+	root   string
 	// evaluated is the script hpatch actually received when it differs from the
 	// model's payload, which happens when the payload was a correction. Replay
 	// must restore what the model emitted, while a following correction must
@@ -305,7 +305,7 @@ func newHPatchProxy(translator hpatchTranslator) *hpatchProxy {
 	}
 	return &hpatchProxy{
 		translator:      translator,
-		toolDescription: translator.ToolDescription() + hpatchWorkspaceToolInstructions + hpatchCorrectionInstructions,
+		toolDescription: translator.ToolDescription() + hpatchCorrectionInstructions,
 		sessions:        make(map[string]*hpatchHistorySession),
 	}
 }
@@ -352,11 +352,10 @@ type hpatchResponseTransform struct {
 	originalToolChoicePresent bool
 	pending                   map[string]hpatchPendingCall
 	local                     map[string]hpatchHistory
-	workspaces                []routingWorkspace
+	workspace                 routingWorkspace
 	toolDescription           string
 	codeModeToolName          string
 	baselineDefinition        string
-	carriedMetadata           []string
 	requestAccountingClaimed  bool
 
 	// localSequence orders the calls translated during this turn, so a
@@ -370,8 +369,7 @@ func (t *hpatchResponseTransform) Close() {
 	if t == nil {
 		return
 	}
-	closeRoutingWorkspaces(t.workspaces)
-	t.workspaces = nil
+	t.workspace.close()
 }
 
 // validateHPatchCompactionRequest recognizes local Codex compaction requests,
@@ -456,10 +454,9 @@ func (p *hpatchProxy) prepareRequest(ctx context.Context, request *parsedRespons
 	if !metadataValid || metadata.RequestKind != "turn" {
 		return nil, errors.New("hpatch rewrite requires valid turn metadata")
 	}
-	workspaces := usableRoutingWorkspaces(metadata.Workspaces)
-	if len(workspaces) == 0 {
-		closeRoutingWorkspaces(workspaces)
-		return nil, errors.New("hpatch rewrite requires at least one usable workspace")
+	workspace, ok := usableRoutingWorkspace(metadata.Workspaces)
+	if !ok {
+		return nil, errors.New("hpatch rewrite requires exactly one usable workspace")
 	}
 	originalTools, originalToolsPresent := request.fields["tools"]
 	originalTools = bytes.Clone(originalTools)
@@ -467,24 +464,17 @@ func (p *hpatchProxy) prepareRequest(ctx context.Context, request *parsedRespons
 	originalToolChoice = bytes.Clone(originalToolChoice)
 	baselineDefinition, codeModeToolName, replaced, err := replaceAdditionalToolsApplyPatch(request.fields, p.toolDescription)
 	if err != nil {
-		closeRoutingWorkspaces(workspaces)
+		workspace.close()
 		return nil, err
 	}
 	if !replaced {
-		closeRoutingWorkspaces(workspaces)
+		workspace.close()
 		return nil, errors.New("responses request cannot satisfy the required hpatch rewrite")
 	}
-	carriedMetadata, err := p.restoreInputPrefixWithMetadata(request, sessionID)
-	if err != nil {
-		closeRoutingWorkspaces(workspaces)
+	if err := p.restoreInputPrefix(request, sessionID); err != nil {
+		workspace.close()
 		return nil, err
 	}
-	workspaceMetadata, err := appendHPatchWorkspaceMessage(request.fields, workspaces)
-	if err != nil {
-		closeRoutingWorkspaces(workspaces)
-		return nil, err
-	}
-	carriedMetadata = append(carriedMetadata, workspaceMetadata)
 	request.fields["parallel_tool_calls"] = json.RawMessage("false")
 	return &hpatchResponseTransform{
 		ctx:       ctx,
@@ -497,12 +487,11 @@ func (p *hpatchProxy) prepareRequest(ctx context.Context, request *parsedRespons
 		originalToolChoicePresent: originalToolChoicePresent,
 		pending:                   make(map[string]hpatchPendingCall),
 		local:                     make(map[string]hpatchHistory),
-		workspaces:                workspaces,
+		workspace:                 workspace,
 		toolDescription:           p.toolDescription,
 		codeModeToolName:          codeModeToolName,
 
 		baselineDefinition: baselineDefinition,
-		carriedMetadata:    carriedMetadata,
 	}, nil
 }
 
@@ -710,7 +699,7 @@ func (p *hpatchProxy) rememberBatch(sessionID string, histories map[string]hpatc
 		if err != nil {
 			return fmt.Errorf("encode hpatch history item: %w", err)
 		}
-		history.bytes = len(sessionID) + len(callID) + len(history.script) + len(history.workspaceID) + len(history.evaluated) + len(history.patch) + len(history.carrierName) + len(history.report) + len(history.translationError) + len(encodedItem)
+		history.bytes = len(sessionID) + len(callID) + len(history.script) + len(history.root) + len(history.evaluated) + len(history.patch) + len(history.carrierName) + len(history.report) + len(history.translationError) + len(encodedItem)
 		prepared[callID] = history
 	}
 
@@ -826,17 +815,16 @@ func (p *hpatchProxy) history(sessionID, callID string) (hpatchHistory, bool) {
 	return history, ok
 }
 
-func (p *hpatchProxy) restoreInputPrefixWithMetadata(request *parsedResponsesRequest, sessionID string) ([]string, error) {
+func (p *hpatchProxy) restoreInputPrefix(request *parsedResponsesRequest, sessionID string) error {
 	raw, ok := request.fields["input"]
 	if !ok {
-		return nil, nil
+		return nil
 	}
 	var items []map[string]json.RawMessage
 	if json.Unmarshal(raw, &items) != nil {
-		return nil, nil //nolint:nilerr // Non-array input cannot contain replayable hpatch calls.
+		return nil //nolint:nilerr // Non-array input cannot contain replayable hpatch calls.
 	}
 	changed := false
-	var carriedMetadata []string
 	validatedCarriers := make(map[string]bool)
 	for index, item := range items {
 		kind := jsonString(item, "type")
@@ -844,7 +832,7 @@ func (p *hpatchProxy) restoreInputPrefixWithMetadata(request *parsedResponsesReq
 		history, known := p.history(sessionID, callID)
 		if kind != "custom_tool_call" {
 			if known && kind != "custom_tool_call_output" {
-				return nil, fmt.Errorf("replayed call %q changed item type", callID)
+				return fmt.Errorf("replayed call %q changed item type", callID)
 			}
 			continue
 		}
@@ -852,18 +840,15 @@ func (p *hpatchProxy) restoreInputPrefixWithMetadata(request *parsedResponsesReq
 			continue
 		}
 		if jsonString(item, "name") != history.carrierName {
-			return nil, fmt.Errorf("replayed call %q changed carrier name", callID)
+			return fmt.Errorf("replayed call %q changed carrier name", callID)
 		}
 		if validatedCarriers[callID] {
-			return nil, fmt.Errorf("replayed call %q appears more than once", callID)
+			return fmt.Errorf("replayed call %q appears more than once", callID)
 		}
 		if jsonString(item, "input") != history.carrierInput() {
-			return nil, fmt.Errorf("replayed call %q changed translated input", callID)
+			return fmt.Errorf("replayed call %q changed translated input", callID)
 		}
 		validatedCarriers[callID] = true
-		if framing := hpatchWorkspaceDirectivePrefix(history.script); framing != "" {
-			carriedMetadata = append(carriedMetadata, framing)
-		}
 		if len(history.upstreamItem) != 0 {
 			items[index] = maps.Clone(history.upstreamItem)
 		} else {
@@ -875,11 +860,11 @@ func (p *hpatchProxy) restoreInputPrefixWithMetadata(request *parsedResponsesReq
 	if changed {
 		encoded, err := json.Marshal(items)
 		if err != nil {
-			return nil, fmt.Errorf("encode replayed Responses input: %w", err)
+			return fmt.Errorf("encode replayed Responses input: %w", err)
 		}
 		request.fields["input"] = encoded
 	}
-	return carriedMetadata, nil
+	return nil
 }
 
 func (t *hpatchResponseTransform) translate(callID, input string, upstreamItem map[string]json.RawMessage) (hpatchHistory, error) {
@@ -897,49 +882,30 @@ func (t *hpatchResponseTransform) translate(callID, input string, upstreamItem m
 		return hpatchHistory{}, fmt.Errorf("hpatch call %q script exceeds %d bytes", callID, maxHPatchScriptBytes)
 	}
 
-	workspace, script, explicitWorkspace, err := parseHPatchWorkspaceDirective(input, t.workspaces)
-	if err != nil {
-		return t.rejectUnevaluated(callID, input, err, upstreamItem)
-	}
-	evaluated := script
-	if isHPatchCorrection(script) {
+	evaluated := input
+	if isHPatchCorrection(input) {
 		base, baseErr := t.correctionHistory()
 		if baseErr != nil {
 			return t.rejectUnevaluated(callID, input, baseErr, upstreamItem)
 		}
-		if base.workspaceID == "" && len(t.workspaces) != 1 {
-			return t.rejectUnevaluated(callID, input, errors.New("the rejected script predates workspace selection; send a complete script with workspace_id"), upstreamItem)
+		if base.root != t.workspace.canonical {
+			return t.rejectUnevaluated(callID, input, errors.New("the rejected script belongs to a different worktree; send a complete script"), upstreamItem)
 		}
-		if workspace == nil {
-			if base.workspaceID == "" {
-				workspace = &t.workspaces[0]
-			} else if selected, ok := hpatchWorkspaceByID(t.workspaces, base.workspaceID); ok {
-				workspace = selected
-			} else {
-				return t.rejectUnevaluated(callID, input, errors.New("the rejected script's workspace is no longer available; send a complete script"), upstreamItem)
-			}
-		} else if base.workspaceID != "" && workspace.id != base.workspaceID {
-			return t.rejectUnevaluated(callID, input, errors.New("a correction must use the rejected script's workspace_id"), upstreamItem)
-		}
-		corrections, parseErr := parseHPatchCorrections(script)
+		corrections, parseErr := parseHPatchCorrections(input)
 		if parseErr != nil {
 			return t.rejectUnevaluated(callID, input, parseErr, upstreamItem)
 		}
-		evaluated, err = applyHPatchCorrections(base.correctable(), corrections)
-		if err != nil {
-			return t.rejectUnevaluated(callID, input, err, upstreamItem)
+		corrected, correctionErr := applyHPatchCorrections(base.correctable(), corrections)
+		if correctionErr != nil {
+			return t.rejectUnevaluated(callID, input, correctionErr, upstreamItem)
 		}
+		evaluated = corrected
 		if len(evaluated) > maxHPatchScriptBytes {
 			return hpatchHistory{}, fmt.Errorf("hpatch call %q corrected script exceeds %d bytes", callID, maxHPatchScriptBytes)
 		}
-	} else if workspace == nil {
-		if len(t.workspaces) != 1 {
-			return t.rejectUnevaluated(callID, input, errorsForHPatchWorkspace("a complete script requires workspace_id", t.workspaces), upstreamItem)
-		}
-		workspace = &t.workspaces[0]
 	}
 
-	translated, err := t.proxy.translator.Translate(t.ctx, *workspace, evaluated)
+	translated, err := t.proxy.translator.Translate(t.ctx, t.workspace, evaluated)
 	if err != nil {
 		if contextErr := t.ctx.Err(); contextErr != nil {
 			return hpatchHistory{}, contextErr
@@ -959,7 +925,7 @@ func (t *hpatchResponseTransform) translate(callID, input string, upstreamItem m
 		}
 		history := hpatchHistory{
 			script:           input,
-			workspaceID:      workspace.id,
+			root:             t.workspace.canonical,
 			evaluated:        retainedEvaluated(input, evaluated),
 			carrierName:      t.codeModeToolName,
 			translationError: diagnostic,
@@ -969,12 +935,6 @@ func (t *hpatchResponseTransform) translate(callID, input string, upstreamItem m
 		return history, nil
 	}
 	patch := translated.patch
-	if explicitWorkspace || len(t.workspaces) > 1 {
-		patch, err = rebaseHPatchPatch(patch, workspace.canonical)
-		if err != nil {
-			return hpatchHistory{}, err
-		}
-	}
 	if len(patch) > maxHPatchPatchBytes {
 		return hpatchHistory{}, fmt.Errorf("hpatch call %q translation exceeds %d bytes", callID, maxHPatchPatchBytes)
 	}
@@ -990,7 +950,7 @@ func (t *hpatchResponseTransform) translate(callID, input string, upstreamItem m
 	}
 	history := hpatchHistory{
 		script:       input,
-		workspaceID:  workspace.id,
+		root:         t.workspace.canonical,
 		evaluated:    retainedEvaluated(input, evaluated),
 		patch:        string(patch),
 		carrierName:  t.codeModeToolName,
@@ -1045,16 +1005,16 @@ func retainedEvaluated(emitted, evaluated string) string {
 	return evaluated
 }
 
-func (t *hpatchResponseTransform) claimRequestAccounting() (string, string, []string) {
+func (t *hpatchResponseTransform) claimRequestAccounting() (string, string) {
 	if t.requestAccountingClaimed {
-		return "", "", nil
+		return "", ""
 	}
 	t.requestAccountingClaimed = true
-	return t.toolDescription, t.baselineDefinition, slices.Clone(t.carriedMetadata)
+	return t.toolDescription, t.baselineDefinition
 }
 
 func (t *hpatchResponseTransform) recordMetrics(inputs hpatchMetricInputs) error {
-	inputs.definition, inputs.baselineDefinition, inputs.carriedMetadata = t.claimRequestAccounting()
+	inputs.definition, inputs.baselineDefinition = t.claimRequestAccounting()
 	inputs.sessionID = t.sessionID
 	record, err := calculateHPatchMetricRecord(inputs)
 	if err != nil {

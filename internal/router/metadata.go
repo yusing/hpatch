@@ -3,12 +3,9 @@ package router
 // Source: routing_context.go:18:219 Codex metadata and usable workspace handling.
 
 import (
-	"crypto/sha256"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"io"
-	"maps"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -29,8 +26,6 @@ type codexTurnMetadata struct {
 }
 
 type routingWorkspace struct {
-	id        string
-	declared  string
 	canonical string
 	root      *os.Root
 }
@@ -79,11 +74,9 @@ func isASCII(value string) bool {
 	return true
 }
 
-func usableRoutingWorkspaces(declared map[string]json.RawMessage) []routingWorkspace {
-	keys := slices.Sorted(maps.Keys(declared))
-	result := make([]routingWorkspace, 0, len(keys))
-	seen := make(map[string]bool, len(keys))
-	for _, path := range keys {
+func usableRoutingWorkspace(declared map[string]json.RawMessage) (routingWorkspace, bool) {
+	var result routingWorkspace
+	for path := range declared {
 		if !filepath.IsAbs(path) || filepath.Clean(path) != path {
 			continue
 		}
@@ -92,7 +85,7 @@ func usableRoutingWorkspaces(declared map[string]json.RawMessage) []routingWorks
 			continue
 		}
 		canonical, err := filepath.EvalSymlinks(path)
-		if err != nil || !filepath.IsAbs(canonical) || seen[canonical] {
+		if err != nil || !filepath.IsAbs(canonical) {
 			continue
 		}
 		root, err := os.OpenRoot(canonical)
@@ -104,23 +97,20 @@ func usableRoutingWorkspaces(declared map[string]json.RawMessage) []routingWorks
 			root.Close()
 			continue
 		}
-		seen[canonical] = true
-		result = append(result, routingWorkspace{
-			id:        routingWorkspaceID(canonical),
-			declared:  path,
-			canonical: canonical,
-			root:      root,
-		})
+		if result.root != nil {
+			root.Close()
+			if result.canonical == canonical {
+				continue
+			}
+			result.close()
+			return routingWorkspace{}, false
+		}
+		result = routingWorkspace{canonical: canonical, root: root}
 	}
-	return result
+	return result, result.root != nil
 }
 
-func routingWorkspaceID(canonical string) string {
-	digest := sha256.Sum256([]byte(canonical))
-	return "workspace-" + base64.RawURLEncoding.EncodeToString(digest[:])
-}
-
-func (workspace routingWorkspace) unchanged() bool {
+func (workspace *routingWorkspace) unchanged() bool {
 	pathInfo, err := os.Stat(workspace.canonical)
 	if err != nil {
 		return false
@@ -129,13 +119,10 @@ func (workspace routingWorkspace) unchanged() bool {
 	return err == nil && os.SameFile(pathInfo, rootInfo)
 }
 
-func closeRoutingWorkspaces(workspaces []routingWorkspace) {
-	for _, workspace := range workspaces {
-		workspace.root.Close()
+func (workspace *routingWorkspace) close() {
+	if workspace.root == nil {
+		return
 	}
-}
-
-func pathWithin(root, candidate string) bool {
-	relative, err := filepath.Rel(root, candidate)
-	return err == nil && relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator))
+	workspace.root.Close()
+	workspace.root = nil
 }

@@ -1,24 +1,9 @@
 package router
 
 import (
-	"bytes"
 	"strings"
 	"testing"
 )
-
-func TestHPatchToolDefinitionIsIdenticalAcrossWorkspaceSets(t *testing.T) {
-	translator := testTranslator(t, new(int))
-	firstTransform, _, firstRequest := newHPatchTestTransformForWorkspaces(t, translator, t.TempDir())
-	defer firstTransform.Close()
-	secondTransform, _, secondRequest := newHPatchTestTransformForWorkspaces(t, translator, t.TempDir(), t.TempDir())
-	defer secondTransform.Close()
-	if !bytes.Equal(firstRequest.fields["tools"], secondRequest.fields["tools"]) {
-		t.Fatalf("workspace set changed tool definition: first %s, second %s", firstRequest.fields["tools"], secondRequest.fields["tools"])
-	}
-	if bytes.Equal(firstRequest.fields["input"], secondRequest.fields["input"]) {
-		t.Fatal("workspace metadata did not move into request input")
-	}
-}
 
 func TestKnownReplayCarrierRejectsTamperedIdentity(t *testing.T) {
 	proxy := newHPatchProxy(testTranslator(t, new(int)))
@@ -43,7 +28,7 @@ func TestKnownReplayCarrierRejectsTamperedIdentity(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			_, err = proxy.restoreInputPrefixWithMetadata(&request, "session")
+			err = proxy.restoreInputPrefix(&request, "session")
 			if err == nil || !strings.Contains(err.Error(), test.want) {
 				t.Fatalf("error = %v, want containing %q", err, test.want)
 			}
@@ -62,7 +47,7 @@ func TestKnownReplayOutputRemainsValid(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := proxy.restoreInputPrefixWithMetadata(&request, "session"); err != nil {
+	if err := proxy.restoreInputPrefix(&request, "session"); err != nil {
 		t.Fatal(err)
 	}
 }

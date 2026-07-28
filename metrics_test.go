@@ -78,7 +78,6 @@ func TestGainReportReconcilesEffectiveAndIneffectiveTokens(t *testing.T) {
 		FailedApplyPatchTokens:       300,
 		ReportInputTokens:            11,
 		DiagnosticInputTokens:        13,
-		MetadataInputTokens:          17,
 		DefinitionInputTokens:        100,
 		RemovedDefinitionInputTokens: 30,
 		Sessions:                     2,
@@ -105,10 +104,9 @@ func TestGainReportReconcilesEffectiveAndIneffectiveTokens(t *testing.T) {
 	for _, want := range []string{
 		"state reports 11",
 		"failure diagnostics 13",
-		"carried metadata 17",
 		"hpatch definition installed 100",
 		"apply_patch definition removed -30",
-		"net added input 111",
+		"net added input 94",
 	} {
 		if !strings.Contains(input, want) {
 			t.Fatalf("input report %q does not contain %q", input, want)
@@ -139,7 +137,6 @@ func TestGainReportReconcilesEffectiveAndIneffectiveTokens(t *testing.T) {
 			for _, text := range []string{
 				"final state returned after successful calls",
 				"errors and repair context returned after failed calls",
-				"host context repeated with tool calls",
 				"standalone tool definition added by the router",
 				"exact Code Mode section removed by the router",
 				"measured additions minus the removed definition",

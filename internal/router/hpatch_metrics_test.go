@@ -3,8 +3,6 @@ package router
 import (
 	"context"
 	"encoding/json"
-	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/tiktoken-go/tokenizer"
@@ -15,9 +13,8 @@ func TestCalculateHPatchMetricRecordUsesExactCallerPayloads(t *testing.T) {
 	patch := "*** Begin Patch\n*** Update File: /workspace/calc.go\n@@\n-old\n+new\n*** End Patch\n"
 	inputs := hpatchMetricInputs{
 		invocation:         invocation,
-		emittedScript:      "workspace_id ws\n2: sel 2 9:13\n",
+		emittedScript:      "2: sel 2 9:13\n",
 		report:             "in calc.go 2:9\n2 return new\n",
-		carriedMetadata:    []string{"workspace_id ws\n", "workspace_id prior\n"},
 		sessionID:          "session",
 		definition:         "hpatch definition\n\n",
 		baselineDefinition: "apply_patch definition\n",
@@ -49,9 +46,6 @@ func TestCalculateHPatchMetricRecordUsesExactCallerPayloads(t *testing.T) {
 	}
 	if got, want := record.ReportInputTokens, count(inputs.report); got != want {
 		t.Fatalf("report tokens = %d, want %d", got, want)
-	}
-	if got, want := record.MetadataInputTokens, count(inputs.carriedMetadata[0])+count(inputs.carriedMetadata[1]); got != want {
-		t.Fatalf("metadata tokens = %d, want %d", got, want)
 	}
 	if record.SessionID != inputs.sessionID || record.DefinitionRequests != 1 {
 		t.Fatalf("definition attribution = %+v", record)
@@ -103,39 +97,35 @@ func TestCalculateHPatchMetricRecordUsesExactFailureDiagnostic(t *testing.T) {
 	}
 }
 
-func TestHPatchMetricsUseFinalRebasedCarrier(t *testing.T) {
-	var recorded hpatchMetricRecord
+func TestHPatchRequestDefinitionAccountingIsClaimedOnce(t *testing.T) {
+	var records []hpatchMetricRecord
 	translator := metricsObservingTranslator{
 		translate: func(context.Context, routingWorkspace, string) ([]byte, error) {
 			return []byte(testTranslatedPatch), nil
 		},
 		record: func(_ context.Context, record hpatchMetricRecord) error {
-			recorded = record
+			records = append(records, record)
 			return nil
 		},
 	}
-	first := t.TempDir()
-	second := t.TempDir()
-	transform, _, _ := newHPatchTestTransformForWorkspaces(t, translator, first, second)
-	workspace := transform.workspaces[1]
-	input := "workspace_id " + workspace.id + "\n" + testHPatchScript
-	history, err := transform.translate("call-1", input, nil)
-	if err != nil {
+	transform, _, _, _ := newHPatchTestTransform(t, translator)
+	if _, err := transform.translate("call-1", testHPatchScript, nil); err != nil {
 		t.Fatal(err)
 	}
-	if want := filepath.Join(workspace.canonical, "created.txt"); !strings.Contains(history.patch, want) {
-		t.Fatalf("rebased patch %q does not contain %q", history.patch, want)
-	}
-	codec, err := tokenizer.ForModel(tokenizer.GPT5)
-	if err != nil {
+	if _, err := transform.translate("call-2", testHPatchScript, nil); err != nil {
 		t.Fatal(err)
 	}
-	count, err := codec.Count("functions.exec\n" + history.carrierInput())
-	if err != nil {
-		t.Fatal(err)
+	if len(records) != 2 {
+		t.Fatalf("metric records = %d, want 2", len(records))
 	}
-	if recorded.ApplyPatchTokens != uint64(count) {
-		t.Fatalf("apply_patch tokens = %d, want %d from final carrier", recorded.ApplyPatchTokens, count)
+	if records[0].DefinitionRequests != 1 || records[0].SessionID != "session-1" || records[0].DefinitionInputTokens == 0 || records[0].RemovedDefinitionInputTokens == 0 {
+		t.Fatalf("first request accounting = %+v", records[0])
+	}
+	if records[1].DefinitionRequests != 0 || records[1].SessionID != "" || records[1].DefinitionInputTokens != 0 || records[1].RemovedDefinitionInputTokens != 0 {
+		t.Fatalf("second call repeated request accounting = %+v", records[1])
+	}
+	if records[0].ApplyPatchTokens == 0 || records[1].ApplyPatchTokens == 0 {
+		t.Fatalf("per-call patch metrics = %+v", records)
 	}
 }
 
@@ -159,7 +149,7 @@ func TestFinishRecordsDefinitionOverheadWithoutHPatchCall(t *testing.T) {
 		t.Fatalf("metric records = %d, want 1", len(records))
 	}
 	record := records[0]
-	if record.DefinitionRequests != 1 || record.DefinitionInputTokens == 0 || record.RemovedDefinitionInputTokens == 0 || record.MetadataInputTokens == 0 {
+	if record.DefinitionRequests != 1 || record.DefinitionInputTokens == 0 || record.RemovedDefinitionInputTokens == 0 {
 		t.Fatalf("request overhead = %+v", record)
 	}
 	if record.HPatchTokens != 0 || record.ApplyPatchTokens != 0 || record.IneffectiveHPatchTokens != 0 || record.FailedApplyPatchTokens != 0 {

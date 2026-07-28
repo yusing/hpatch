@@ -195,7 +195,7 @@ Final-state report:
   the unchanged baseline.
 `
 
-const hostMetricsMarker = "Host metrics schema: caller-v2\n"
+const hostMetricsMarker = "Host metrics schema: caller-v3\n"
 
 func toolHelpText() string {
 	return toolHelpTextBase + hostMetricsMarker

@@ -27,7 +27,6 @@ type hostMetricRecord struct {
 	FailedApplyPatchTokens       uint64             `json:"failed_apply_patch_tokens,omitempty"`
 	ReportInputTokens            uint64             `json:"report_input_tokens,omitempty"`
 	DiagnosticInputTokens        uint64             `json:"diagnostic_input_tokens,omitempty"`
-	MetadataInputTokens          uint64             `json:"metadata_input_tokens,omitempty"`
 	DefinitionRequests           uint64             `json:"definition_requests,omitempty"`
 	DefinitionInputTokens        uint64             `json:"definition_input_tokens,omitempty"`
 	RemovedDefinitionInputTokens uint64             `json:"removed_definition_input_tokens,omitempty"`
@@ -42,7 +41,6 @@ func (r hostMetricRecord) entry() metrics {
 		FailedApplyPatchTokens:       r.FailedApplyPatchTokens,
 		ReportInputTokens:            r.ReportInputTokens,
 		DiagnosticInputTokens:        r.DiagnosticInputTokens,
-		MetadataInputTokens:          r.MetadataInputTokens,
 		DefinitionRequests:           r.DefinitionRequests,
 		DefinitionInputTokens:        r.DefinitionInputTokens,
 		RemovedDefinitionInputTokens: r.RemovedDefinitionInputTokens,

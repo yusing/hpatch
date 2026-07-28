@@ -114,7 +114,7 @@ func TestToolHelpIsFocusedAndAuthoritative(t *testing.T) {
 		"up to three",
 		"workspace-relative paths",
 		"Parent directories for new",
-		"Host metrics schema: caller-v2",
+		"Host metrics schema: caller-v3",
 	} {
 		if !strings.Contains(help, required) {
 			t.Fatalf("tool help does not contain %q", required)
