@@ -23,17 +23,6 @@ func TestGainDoesNotRequireWorkingDirectory(t *testing.T) {
 	}
 }
 
-func TestRecordMetricsDoesNotRequireWorkingDirectory(t *testing.T) {
-	removeCurrentDirectory(t)
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
-
-	var stdout, stderr bytes.Buffer
-	exitCode := run([]string{"record-metrics"}, strings.NewReader(`{"invocation":{}}`), &stdout, &stderr)
-	if exitCode != 0 || stdout.Len() != 0 || stderr.Len() != 0 {
-		t.Fatalf("record-metrics = exit %d, stdout %q, stderr %q", exitCode, stdout.String(), stderr.String())
-	}
-}
-
 func TestInformationalCommandsNeedNoEnvironmentOrStdin(t *testing.T) {
 	removeCurrentDirectory(t)
 	t.Setenv("XDG_CONFIG_HOME", "")
@@ -114,7 +103,6 @@ func TestToolHelpIsFocusedAndAuthoritative(t *testing.T) {
 		"up to three",
 		"workspace-relative paths",
 		"Parent directories for new",
-		"Host metrics schema: caller-v3",
 	} {
 		if !strings.Contains(help, required) {
 			t.Fatalf("tool help does not contain %q", required)

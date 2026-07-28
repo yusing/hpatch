@@ -162,7 +162,7 @@ func TestErrorHooksShareOneTimeout(t *testing.T) {
 	sourceError := &commandError{Reason: reasonSyntax, Command: 1, Line: 1, Operation: "bad", Category: "syntax", Source: "bad", Message: "unknown command"}
 
 	started := time.Now()
-	errs := runErrorHooks(dataDirectory, sourceError, failureDiagnostic(sourceError.Error()), 20*time.Millisecond)
+	errs := runErrorHooks(t.Context(), dataDirectory, sourceError, failureDiagnostic(sourceError.Error()), 20*time.Millisecond)
 	if elapsed := time.Since(started); elapsed > time.Second {
 		t.Fatalf("runErrorHooks() took %s", elapsed)
 	}

@@ -9,17 +9,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"hpatch"
 	"iter"
 	"maps"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
 	"sync"
-	"time"
-	"unicode/utf8"
 )
 
 const (
@@ -32,8 +30,6 @@ const (
 	maxHPatchHistoryGlobalBytes  = 128 << 20
 	maxHPatchPendingCalls        = 128
 	maxHPatchDiagnosticBytes     = 1 << 20
-	hpatchDiscoveryTimeout       = 5 * time.Second
-	hpatchDiscoveryWaitDelay     = 100 * time.Millisecond
 )
 
 var (
@@ -41,15 +37,11 @@ var (
 	errHPatchWorkspaceChanged = errors.New("hpatch workspace changed during translation")
 )
 
-const (
-	hpatchImmutableBaselineMarker = "The first in for an existing file captures an immutable baseline."
-	hpatchHostMetricsMarker       = "Host metrics schema: caller-v3\n"
-)
-
 type hpatchTranslationResult struct {
 	patch      []byte
 	report     string
-	invocation json.RawMessage
+	diagnostic string
+	invocation hpatch.InvocationMetrics
 }
 
 type hpatchTranslator interface {
@@ -58,204 +50,50 @@ type hpatchTranslator interface {
 	ToolDescription() string
 }
 
-type commandHPatchTranslator struct {
-	executable      string
-	toolDescription string
+type inProcessHPatchTranslator struct {
+	dataDirectory string
 }
 
-func discoverHPatchTranslator(ctx context.Context) (hpatchTranslator, error) {
-	executable, err := exec.LookPath(hpatchToolName)
+func newInProcessHPatchTranslator() (hpatchTranslator, error) {
+	configDirectory, err := os.UserConfigDir()
 	if err != nil {
-		return nil, fmt.Errorf("find hpatch executable: %w", err)
+		return nil, fmt.Errorf("determine hpatch metrics directory: %w", err)
 	}
-	executable, err = filepath.Abs(executable)
-	if err != nil {
-		return nil, fmt.Errorf("resolve hpatch executable: %w", err)
-	}
-	probeContext, cancel := context.WithTimeout(ctx, hpatchDiscoveryTimeout)
-	defer cancel()
-	toolDescription, err := loadHPatchToolDescription(probeContext, executable)
-	if err != nil {
-		return nil, err
-	}
-	return commandHPatchTranslator{executable: executable, toolDescription: toolDescription}, nil
+	return inProcessHPatchTranslator{dataDirectory: filepath.Join(configDirectory, "hpatch")}, nil
 }
 
-func loadHPatchToolDescription(ctx context.Context, executable string) (string, error) {
-	command := exec.CommandContext(ctx, executable, "--tool-help")
-	command.WaitDelay = hpatchDiscoveryWaitDelay
-	stdout := hpatchLimitedBuffer{limit: maxHPatchDiagnosticBytes}
-	stderr := hpatchLimitedBuffer{limit: maxHPatchDiagnosticBytes}
-	command.Stdout = &stdout
-	command.Stderr = &stderr
-	runErr := command.Run()
-	if contextErr := ctx.Err(); contextErr != nil {
-		return "", fmt.Errorf("inspect hpatch tool help: %w", contextErr)
-	}
-	if stdout.overflow || stderr.overflow {
-		return "", fmt.Errorf("%w: hpatch tool help exceeds %d bytes", errHPatchCapacity, maxHPatchDiagnosticBytes)
-	}
-	if runErr != nil {
-		return "", fmt.Errorf("inspect hpatch tool help: %w", hpatchCommandError{cause: runErr, diagnostic: stderr.String()})
-	}
-	if stdout.Len() == 0 {
-		return "", errors.New("hpatch tool help is empty")
-	}
-	if stderr.Len() != 0 {
-		return "", fmt.Errorf("hpatch tool help wrote to stderr: %s", strings.TrimSpace(stderr.String()))
-	}
-	if !utf8.Valid(stdout.Bytes()) {
-		return "", errors.New("hpatch tool help is not valid UTF-8")
-	}
-	if !bytes.Contains(stdout.Bytes(), []byte(hpatchImmutableBaselineMarker)) {
-		return "", errors.New("hpatch executable does not support immutable-baseline selectors")
-	}
-	description, supported := strings.CutSuffix(string(stdout.Bytes()), hpatchHostMetricsMarker)
-	if !supported {
-		return "", errors.New("hpatch executable does not support caller metrics")
-	}
-	return description, nil
+func (inProcessHPatchTranslator) ToolDescription() string {
+	return hpatch.ToolDescription()
 }
 
-func (t commandHPatchTranslator) ToolDescription() string {
-	return t.toolDescription
-}
-
-func (t commandHPatchTranslator) Translate(ctx context.Context, workspace routingWorkspace, script string) (result hpatchTranslationResult, err error) {
+func (t inProcessHPatchTranslator) Translate(ctx context.Context, workspace routingWorkspace, script string) (hpatchTranslationResult, error) {
 	if !workspace.unchanged() {
 		return hpatchTranslationResult{}, errHPatchWorkspaceChanged
 	}
-	metricsFile, err := os.CreateTemp("", "hpatch-router-metrics-*")
-	if err != nil {
-		return hpatchTranslationResult{}, fmt.Errorf("%w: create hpatch metrics output: %w", errHPatchMetricsProtocol, err)
-	}
-	metricsPath := metricsFile.Name()
-	if closeErr := metricsFile.Close(); closeErr != nil {
-		_ = os.Remove(metricsPath)
-		return hpatchTranslationResult{}, fmt.Errorf("%w: close hpatch metrics output: %w", errHPatchMetricsProtocol, closeErr)
-	}
-	defer func() {
-		if removeErr := os.Remove(metricsPath); removeErr != nil {
-			err = errors.Join(err, fmt.Errorf("%w: remove hpatch metrics output: %w", errHPatchMetricsProtocol, removeErr))
-		}
-	}()
-
-	command := exec.CommandContext(ctx, t.executable, "translate", "--root", workspace.canonical)
-	command.WaitDelay = hpatchDiscoveryWaitDelay
-	command.Dir = workspace.canonical
-	command.Stdin = strings.NewReader(script)
-	command.Env = hpatchCommandEnvironment(metricsPath)
-	stdout := hpatchLimitedBuffer{limit: maxHPatchPatchBytes}
-	stderr := hpatchLimitedBuffer{limit: maxHPatchDiagnosticBytes}
-	command.Stdout = &stdout
-	command.Stderr = &stderr
-	runErr := command.Run()
+	translated, err := hpatch.TranslateForHost(ctx, hpatch.Workspace{Root: workspace.root}, script, t.dataDirectory)
 	if !workspace.unchanged() {
 		return hpatchTranslationResult{}, errHPatchWorkspaceChanged
 	}
 	if contextErr := ctx.Err(); contextErr != nil {
 		return hpatchTranslationResult{}, contextErr
 	}
-	if stdout.overflow || stderr.overflow {
+	if len(translated.Patch) > maxHPatchPatchBytes || len(translated.Report) > maxHPatchDiagnosticBytes || len(translated.Diagnostic) > maxHPatchDiagnosticBytes {
 		return hpatchTranslationResult{}, fmt.Errorf("%w: hpatch translation output exceeds its configured bound", errHPatchCapacity)
 	}
-	invocation, metricsErr := readHPatchInvocationMetrics(metricsPath)
-	if metricsErr != nil {
-		return hpatchTranslationResult{}, metricsErr
+	result := hpatchTranslationResult{
+		patch:      translated.Patch,
+		report:     translated.Report,
+		diagnostic: translated.Diagnostic,
+		invocation: translated.Invocation,
 	}
-	result.invocation = invocation
-	if runErr != nil {
-		return result, hpatchCommandError{cause: runErr, diagnostic: stderr.String()}
-	}
-	if stderr.Len() == 0 {
-		return hpatchTranslationResult{}, fmt.Errorf("%w: hpatch translation produced no final-state report", errHPatchMetricsProtocol)
-	}
-	if !utf8.Valid(stderr.Bytes()) {
-		return hpatchTranslationResult{}, fmt.Errorf("%w: hpatch final-state report is not valid UTF-8", errHPatchMetricsProtocol)
-	}
-	result.patch = bytes.Clone(stdout.Bytes())
-	result.report = stderr.String()
-	return result, nil
+	return result, err
 }
 
-func (t commandHPatchTranslator) RecordMetrics(ctx context.Context, record hpatchMetricRecord) error {
-	encoded, err := encodeHPatchMetricRecord(record)
-	if err != nil {
+func (t inProcessHPatchTranslator) RecordMetrics(ctx context.Context, record hpatchMetricRecord) error {
+	if err := ctx.Err(); err != nil {
 		return err
 	}
-	command := exec.CommandContext(ctx, t.executable, "record-metrics")
-	command.WaitDelay = hpatchDiscoveryWaitDelay
-	command.Stdin = bytes.NewReader(encoded)
-	command.Env = hpatchCommandEnvironment("")
-	stdout := hpatchLimitedBuffer{limit: maxHPatchDiagnosticBytes}
-	stderr := hpatchLimitedBuffer{limit: maxHPatchDiagnosticBytes}
-	command.Stdout = &stdout
-	command.Stderr = &stderr
-	if runErr := command.Run(); runErr != nil {
-		if contextErr := ctx.Err(); contextErr != nil {
-			return contextErr
-		}
-		if stdout.overflow || stderr.overflow {
-			return fmt.Errorf("%w: hpatch metrics output exceeds %d bytes", errHPatchCapacity, maxHPatchDiagnosticBytes)
-		}
-		return fmt.Errorf("record hpatch metrics: %w", hpatchCommandError{cause: runErr, diagnostic: stderr.String()})
-	}
-	if stdout.Len() != 0 || stderr.Len() != 0 {
-		return fmt.Errorf("%w: hpatch metrics recording produced output", errHPatchMetricsProtocol)
-	}
-	return nil
-}
-
-type hpatchCommandError struct {
-	cause      error
-	diagnostic string
-}
-
-func (e hpatchCommandError) Error() string {
-	if e.diagnostic == "" {
-		return e.cause.Error()
-	}
-	return fmt.Sprintf("%v: %s", e.cause, strings.TrimSpace(e.diagnostic))
-}
-
-func (e hpatchCommandError) Unwrap() error {
-	return e.cause
-}
-
-func hpatchDiagnostic(err error) string {
-	var commandError hpatchCommandError
-	if errors.As(err, &commandError) && commandError.diagnostic != "" {
-		return commandError.diagnostic
-	}
-	return err.Error()
-}
-
-type hpatchLimitedBuffer struct {
-	buffer   bytes.Buffer
-	limit    int
-	overflow bool
-}
-
-func (b *hpatchLimitedBuffer) Bytes() []byte {
-	return b.buffer.Bytes()
-}
-
-func (b *hpatchLimitedBuffer) Len() int {
-	return b.buffer.Len()
-}
-
-func (b *hpatchLimitedBuffer) String() string {
-	return b.buffer.String()
-}
-
-func (b *hpatchLimitedBuffer) Write(content []byte) (int, error) {
-	remaining := max(0, b.limit-b.Len())
-	if len(content) > remaining {
-		_, _ = b.buffer.Write(content[:remaining])
-		b.overflow = true
-		return len(content), nil
-	}
-	return b.buffer.Write(content)
+	return hpatch.RecordHostMetrics(ctx, t.dataDirectory, record)
 }
 
 type hpatchHistory struct {
@@ -910,16 +748,18 @@ func (t *hpatchResponseTransform) translate(callID, input string, upstreamItem m
 		if contextErr := t.ctx.Err(); contextErr != nil {
 			return hpatchHistory{}, contextErr
 		}
-		if errors.Is(err, errHPatchCapacity) || errors.Is(err, errHPatchMetricsProtocol) || errors.Is(err, errHPatchWorkspaceChanged) {
+		if errors.Is(err, errHPatchCapacity) || errors.Is(err, errHPatchWorkspaceChanged) {
 			return hpatchHistory{}, err
 		}
-		diagnostic := hpatchDiagnostic(err) + hpatchCorrectionHint
-		carrier := hpatchDiagnosticExecInput(diagnostic)
+		diagnostic := translated.diagnostic
+		if diagnostic == "" {
+			diagnostic = err.Error()
+		}
+		diagnostic += hpatchCorrectionHint
 		if err := t.recordMetrics(hpatchMetricInputs{
 			invocation:    translated.invocation,
 			emittedScript: input,
 			diagnostic:    diagnostic,
-			carrier:       carrier,
 		}); err != nil {
 			return hpatchHistory{}, err
 		}
@@ -938,12 +778,12 @@ func (t *hpatchResponseTransform) translate(callID, input string, upstreamItem m
 	if len(patch) > maxHPatchPatchBytes {
 		return hpatchHistory{}, fmt.Errorf("hpatch call %q translation exceeds %d bytes", callID, maxHPatchPatchBytes)
 	}
-	carrier := hpatchApplyExecInput(string(patch), translated.report)
+	patchText := string(patch)
 	if err := t.recordMetrics(hpatchMetricInputs{
 		invocation:    translated.invocation,
 		emittedScript: input,
 		report:        translated.report,
-		carrier:       carrier,
+		patch:         patchText,
 		successful:    true,
 	}); err != nil {
 		return hpatchHistory{}, err
@@ -952,7 +792,7 @@ func (t *hpatchResponseTransform) translate(callID, input string, upstreamItem m
 		script:       input,
 		root:         t.workspace.canonical,
 		evaluated:    retainedEvaluated(input, evaluated),
-		patch:        string(patch),
+		patch:        patchText,
 		carrierName:  t.codeModeToolName,
 		report:       translated.report,
 		upstreamItem: maps.Clone(upstreamItem),
@@ -980,8 +820,7 @@ func (h hpatchHistory) carrierInput() string {
 
 func (t *hpatchResponseTransform) rejectUnevaluated(callID, input string, rejection error, upstreamItem map[string]json.RawMessage) (hpatchHistory, error) {
 	diagnostic := rejection.Error()
-	carrier := hpatchDiagnosticExecInput(diagnostic)
-	if err := t.recordMetrics(hpatchMetricInputs{emittedScript: input, diagnostic: diagnostic, carrier: carrier}); err != nil {
+	if err := t.recordMetrics(hpatchMetricInputs{emittedScript: input, diagnostic: diagnostic}); err != nil {
 		if contextErr := t.ctx.Err(); contextErr != nil {
 			return hpatchHistory{}, contextErr
 		}

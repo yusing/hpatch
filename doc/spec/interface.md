@@ -59,40 +59,36 @@ A successful nonempty change set that parses, evaluates, translates, and complet
 requested output or mutation contributes paired estimates for two semantically equivalent
 tool calls. A failed invocation contributes only its generated `hpatch` call estimate to
 the ineffective-output counter; it contributes nothing to the effective `hpatch` counter.
-A failed invocation is represented downstream by the router's empty `apply_patch` carrier,
-`*** Begin Patch\n*** End Patch\n`. Its tokenized carrier contributes to the failed
-`apply_patch` output counter. The complete failed hpatch call remains in the
-ineffective-output counter and reduces the overall output savings. `gain`, informational
-commands, and unsupported argument forms do not contribute metrics.
+A failed routed invocation is represented downstream by an exec carrier that returns its
+diagnostic and repair context. Its comparison baseline is the fixed direct-call program
+carrying `*** Begin Patch\n*** End Patch\n`; that tokenized semantic baseline contributes
+to the failed `apply_patch` output counter. The diagnostic carrier itself never counts as
+`apply_patch` output. The complete failed hpatch call remains in the ineffective-output
+counter and reduces the overall output savings. `gain`, informational commands, and
+unsupported argument forms do not contribute metrics.
 
 Both effective and ineffective hpatch estimates count the `functions.hpatch` tool name
-followed by the charged editing script. The charged script is the script on standard input
-unless the host sets `HPATCH_CHARGED_SCRIPT` to a nonempty value, in which case that value
-is charged instead. A host sets it when the evaluated script was rebuilt from a shorter
-payload the model actually emitted, such as a correction naming individual commands of a
-rejected script; charging the rebuilt script would measure the repair as costing the
-complete retry it replaced. The variable never affects evaluation, which always reads the
-complete script from standard input, and it never affects the apply_patch baseline, which
-reflects the edit actually applied. The successful direct side counts the
-`functions.exec` tool name and a free-form program that passes the complete translated
-patch envelope, serialized as one string argument, to `tools.apply_patch`. All estimates
-use the tokenizer library's GPT-5 model mapping. Script and patch text remain data and
-cannot alter the fixed direct-call program.
+followed by the editing payload the model emitted. When a correction names commands of a
+rejected script, the shorter correction is charged while the rebuilt complete script is
+used only for evaluation. The successful direct side counts the `functions.exec` tool name
+and a fixed free-form program that passes the complete translated patch envelope,
+serialized as one string argument, to `tools.apply_patch`, then returns that nested tool's
+result. The router-only marker and hpatch final-state report are excluded from this semantic
+baseline. All estimates use the tokenizer library's GPT-5 model mapping. Script and patch
+text remain data and cannot alter the fixed direct-call program.
 
 A final-state report successfully emitted by normal or translate mode contributes its
 exact rendered text to a separate estimated state-report input-token counter. This is
 model-input overhead because the tool result becomes subsequent model context; it is not
 added to either model-output counter.
 
-The host tool definition is also model input. When the host names a session in
-`HPATCH_SESSION_ID` and supplies definition text in `HPATCH_TOOL_DEFINITION`, the first
-classified invocation of that session counts that text once into a definition input-token
-counter, and subsequent invocations of the same session add nothing, because a definition
-resent on every request is served from the provider's prompt cache. `HPATCH_BASELINE_TOOL_DEFINITION`
-supplies the native patch tool definition hpatch displaces; it is counted the same way and
-only the nonnegative difference is attributable to hpatch. A host that names no session or
-supplies no definition text leaves these counters at zero, and gain states which inputs
-were measured so a zero is not read as a free tool. A failed or cancelled invocation emits no report
+The host tool definition is also model input. The router obtains the session identity,
+installed hpatch definition, and displaced native patch definition directly from the
+routed request. The first classified request of a session counts those definitions once;
+subsequent requests in the same session add nothing because the resent definition is
+served from the provider's prompt cache. A host that supplies no session or definition
+text leaves these counters at zero, and gain states which inputs were measured so a zero
+is not read as a free tool. A failed or cancelled invocation emits no report
 and contributes zero report-input tokens. A partial or failed report write does not count
 as a complete emitted report. Other tool results, provider-hidden protocol and reasoning
 tokens, assistant commentary, and server-generated identifiers remain excluded. These
@@ -159,7 +155,7 @@ output. Overall reduction is `(effective_apply_patch + failed_apply_patch - effe
 when the `apply_patch` denominator is zero. No retry payload is inferred.
 
 Gain then writes a separate input-token table for final-state reports, failure diagnostics,
-carried host metadata, and tool definitions. Hpatch and `apply_patch` values remain separate:
+and tool definitions. Hpatch and `apply_patch` values remain separate:
 the report does not subtract definitions, convert input to output, or calculate a combined
 input/output percentage. Unmeasured `apply_patch` input sources are labeled `not measured`.
 
@@ -187,15 +183,15 @@ Acceptance:
    whitespace-recovered successes, and stable terminal reasons remain independently
    attributable. Per-command reason counts reconcile with both aggregate command errors
    and aggregate reason totals.
-5. Each measured invocation accumulates its hpatch and baseline definition input tokens;
-   `HPATCH_SESSION_ID` counts distinct sessions without changing that accumulation. An
+5. Every definition-bearing request increments the definition-request counter, while the
+   hpatch and baseline definition tokens accumulate only once per distinct session. An
    absent session or definition leaves definition counters zero and reports which inputs
    were measured.
 6. Failed hpatch invocations contribute their complete output to the ineffective counter;
-   the failed `apply_patch` counter receives the exact empty carrier emitted by the router.
-7. A nonempty `HPATCH_CHARGED_SCRIPT` is charged as model output for both effective and
-   ineffective invocations while evaluation still uses standard input; an absent or empty
-   value charges the evaluated script.
+   the failed `apply_patch` counter receives the fixed direct-call program carrying the
+   empty patch envelope, while the downstream diagnostic carrier is excluded.
+7. A correction is charged as the shorter payload the model emitted for both effective and
+   ineffective invocations while evaluation uses the rebuilt complete script.
 8. Scripts and patches containing quotes or program-like text remain data and cannot
    alter the direct-call program used for counting.
 9. Concurrent writers lose no records, concurrent gain reads never observe a partial

@@ -51,7 +51,7 @@ func Run(ctx context.Context, args []string, stderr io.Writer) error {
 	}
 	log := newDiagnostics(stderr)
 	provider := newProviderClient(auth, nil)
-	translator, err := discoverHPatchTranslator(ctx)
+	translator, err := newInProcessHPatchTranslator()
 	if err != nil {
 		return fmt.Errorf("initialize hpatch response proxy: %w", err)
 	}

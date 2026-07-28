@@ -2,6 +2,7 @@ package hpatch
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/binary"
 	"errors"
@@ -12,7 +13,9 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"text/tabwriter"
+	"time"
 	"unicode/utf8"
 
 	"github.com/gofrs/flock"
@@ -27,6 +30,7 @@ const (
 	metricsFileSize       = 2 * metricsSlotSize
 	metricsChecksumOffset = 2128
 	commandCount          = 12
+	metricsLockRetryDelay = 10 * time.Millisecond
 )
 
 var commandOperations = [commandCount]string{
@@ -34,6 +38,11 @@ var commandOperations = [commandCount]string{
 	"sel", "tsel", "bsel", "bsel_next", "rsel",
 	"type", "del", "dup",
 }
+
+// pendingMetricsWriters prevents this process's repeated shared-lock readers
+// from starving a writer while it uses cancellable, non-blocking lock attempts.
+// The filesystem lock remains the authority across processes.
+var pendingMetricsWriters atomic.Int64
 
 type commandMetric struct {
 	Invocations uint64 `json:"invocations"`
@@ -82,18 +91,15 @@ func (m *commandMetrics) total() (commandMetric, bool) {
 	return total, true
 }
 
-func (m commandMetric) errorRate() float64 {
-	if m.Invocations == 0 {
-		return 0
-	}
-	return float64(m.Errors) / float64(m.Invocations) * 100
+func (m commandMetric) errorRate() string {
+	return percentage(new(big.Int).SetUint64(m.Errors), new(big.Int).SetUint64(m.Invocations))
 }
 
 func updateMetrics(dataDirectory string, entry metrics) error {
-	return updateMetricsForSession(dataDirectory, entry, "")
+	return updateMetricsForSessionContext(context.TODO(), dataDirectory, entry, "")
 }
 
-func updateMetricsForSession(dataDirectory string, entry metrics, session string) (err error) {
+func updateMetricsForSessionContext(ctx context.Context, dataDirectory string, entry metrics, session string) (err error) {
 	if dataDirectory == "" {
 		return fmt.Errorf("metrics directory is unavailable")
 	}
@@ -104,9 +110,25 @@ func updateMetricsForSession(dataDirectory string, entry metrics, session string
 		return fmt.Errorf("creating metrics directory: %w", err)
 	}
 	lock := flock.New(filepath.Join(dataDirectory, metricsLockname))
-	if err := lock.Lock(); err != nil {
+	pendingMetricsWriters.Add(1)
+	waitingForLock := true
+	defer func() {
+		if waitingForLock {
+			pendingMetricsWriters.Add(-1)
+		}
+	}()
+	locked, err := lock.TryLockContext(ctx, metricsLockRetryDelay)
+	if err != nil {
 		return fmt.Errorf("locking metrics: %w", err)
 	}
+	if !locked {
+		if err := ctx.Err(); err != nil {
+			return fmt.Errorf("locking metrics: %w", err)
+		}
+		return fmt.Errorf("locking metrics: lock was not acquired")
+	}
+	pendingMetricsWriters.Add(-1)
+	waitingForLock = false
 	defer func() {
 		if unlockErr := lock.Unlock(); unlockErr != nil {
 			err = errors.Join(err, fmt.Errorf("unlocking metrics: %w", unlockErr))
@@ -306,6 +328,9 @@ func readMetrics(dataDirectory string) (total metrics, err error) {
 			return metrics{}, nil
 		}
 		return metrics{}, fmt.Errorf("checking metrics: %w", err)
+	}
+	for pendingMetricsWriters.Load() != 0 {
+		time.Sleep(metricsLockRetryDelay)
 	}
 	lock := flock.New(filepath.Join(dataDirectory, metricsLockname))
 	if err := lock.RLock(); err != nil {
@@ -508,22 +533,29 @@ func getCommandMetric(encoded []byte, offset int) commandMetric {
 	}
 }
 
-func (m *metrics) reduction() float64 {
-	if m.ApplyPatchTokens == 0 {
-		return 0
-	}
-	return (float64(m.ApplyPatchTokens) - float64(m.HPatchTokens)) / float64(m.ApplyPatchTokens) * 100
+func (m *metrics) reduction() string {
+	baseline := new(big.Int).SetUint64(m.ApplyPatchTokens)
+	difference := new(big.Int).Sub(new(big.Int).Set(baseline), new(big.Int).SetUint64(m.HPatchTokens))
+	return percentage(difference, baseline)
 }
 
 // overallReduction compares all measured hpatch output with the generated
-// apply_patch output. Failed hpatch calls are represented by the empty
-// apply_patch carrier emitted by the router.
-func (m *metrics) overallReduction() float64 {
-	baseline := float64(m.ApplyPatchTokens) + float64(m.FailedApplyPatchTokens)
-	if baseline == 0 {
-		return 0
+// apply_patch output. Failed hpatch calls use the empty-patch semantic baseline.
+func (m *metrics) overallReduction() string {
+	baseline := new(big.Int).SetUint64(m.ApplyPatchTokens)
+	baseline.Add(baseline, new(big.Int).SetUint64(m.FailedApplyPatchTokens))
+	actual := new(big.Int).SetUint64(m.HPatchTokens)
+	actual.Add(actual, new(big.Int).SetUint64(m.IneffectiveHPatchTokens))
+	difference := new(big.Int).Sub(new(big.Int).Set(baseline), actual)
+	return percentage(difference, baseline)
+}
+
+func percentage(numerator, denominator *big.Int) string {
+	if denominator.Sign() == 0 {
+		return "0.0"
 	}
-	return (float64(m.ApplyPatchTokens) + float64(m.FailedApplyPatchTokens) - float64(m.HPatchTokens) - float64(m.IneffectiveHPatchTokens)) / baseline * 100
+	scaled := new(big.Int).Mul(new(big.Int).Set(numerator), big.NewInt(100))
+	return new(big.Rat).SetFrac(scaled, denominator).FloatString(1)
 }
 
 const defaultGainReportWidth = 80
@@ -574,11 +606,11 @@ func writeOutputGainTable(report *strings.Builder, m metrics) {
 	table := tabwriter.NewWriter(report, 0, 4, 2, ' ', 0)
 	fmt.Fprintln(table, "calls\thpatch\tapply_patch\treduction")
 	fmt.Fprintln(table, "-----\t------\t-----------\t---------")
-	fmt.Fprintf(table, "successful\t%d\t%d\t%.1f%%\n", m.HPatchTokens, m.ApplyPatchTokens, m.reduction())
+	fmt.Fprintf(table, "successful\t%d\t%d\t%s%%\n", m.HPatchTokens, m.ApplyPatchTokens, m.reduction())
 	fmt.Fprintf(table, "failed\t%d\t%d\tn/a\n", m.IneffectiveHPatchTokens, m.FailedApplyPatchTokens)
-	fmt.Fprintf(table, "all\t%s\t%s\t%.1f%%\n", totalHPatch, totalApplyPatch, m.overallReduction())
+	fmt.Fprintf(table, "all\t%s\t%s\t%s%%\n", totalHPatch, totalApplyPatch, m.overallReduction())
 	_ = table.Flush()
-	report.WriteString("failed apply_patch output is the empty carrier emitted by the router.\n\n")
+	report.WriteString("failed apply_patch output uses the empty-patch semantic baseline.\n\n")
 }
 
 func writeInputGainTable(report *strings.Builder, m metrics, width int) {
@@ -743,14 +775,14 @@ func writeCommandTable(report *strings.Builder, title, firstHeader string, names
 	var total commandMetric
 	for index, name := range names {
 		entry := values[index]
-		fmt.Fprintf(table, "%s\t%d\t%d\t%.1f%%\n", name, entry.Invocations, entry.Errors, entry.errorRate())
+		fmt.Fprintf(table, "%s\t%d\t%d\t%s%%\n", name, entry.Invocations, entry.Errors, entry.errorRate())
 		if includeTotal {
 			total.Invocations += entry.Invocations
 			total.Errors += entry.Errors
 		}
 	}
 	if includeTotal {
-		fmt.Fprintf(table, "total\t%d\t%d\t%.1f%%\n", total.Invocations, total.Errors, total.errorRate())
+		fmt.Fprintf(table, "total\t%d\t%d\t%s%%\n", total.Invocations, total.Errors, total.errorRate())
 	}
 	_ = table.Flush()
 	report.WriteByte('\n')

@@ -67,55 +67,46 @@ outside text explicitly inserted by the script.
 
 Successful changing scripts in normal and translate modes record cumulative paired
 estimates of the GPT-5 output tokens needed for the complete hpatch tool call and for the
-equivalent direct `apply_patch` call. Failed normal or translate invocations record only
-the hpatch call as ineffective output. A failure whose cause a direct `apply_patch` call
-would also have hit (edit conflict, missing file, file conflict, path) credits the baseline
-one mean effective payload, so shared retry cost is not charged to hpatch alone; selector,
-anchor, and syntax failures earn no such credit because a context-hunk format does not make
-them. Successfully emitted final-state reports add their exact estimated input-token
-overhead to a separate counter. The same metrics store tracks invocations and command-caused
+equivalent direct `apply_patch` call. The direct estimate is a semantic baseline: a
+`functions.exec` program passes only the translated patch envelope to `tools.apply_patch`
+and returns that tool result. The router's proxy marker and hpatch final-state report are
+not part of this output baseline. Failed calls record the emitted hpatch script as
+ineffective output and compare it with the same direct program carrying an empty patch
+envelope. No retry payload is inferred.
+
+Corrections are charged as the shorter payload the model emitted, while the rebuilt
+complete script is used only for evaluation. Successfully returned final-state reports and
+failure diagnostics add their exact estimated input-token overhead to separate counters.
+The router also counts its installed hpatch definition and the displaced native patch
+definition once per session. The same metrics store tracks invocations and command-caused
 errors separately for every supported patch command, including successful no-op scripts,
 and attributes each error to the command that raised it.
-
-When a caller rebuilt the script on stdin from a shorter payload, such as a correction
-that replaces named commands of a rejected script, set `HPATCH_CHARGED_SCRIPT` to that
-payload. Evaluation still uses stdin; only output accounting uses the variable, so a
-repair is not measured as costing the complete retry it replaced.
-
-Tool definitions are model input too. Set `HPATCH_SESSION_ID` plus `HPATCH_TOOL_DEFINITION`
-and hpatch counts its definition once per session rather than once per call, matching how
-prompt caching bills it. Set `HPATCH_BASELINE_TOOL_DEFINITION` to the native patch tool
-definition hpatch displaces and only the difference counts against hpatch. Without these,
-definition counters stay zero and the report says so instead of implying the tool is free.
 
 ```sh
 bin/hpatch gain
 ```
 
-hpatch v1 estimates the current tool-call payloads. Both effective and ineffective
-hpatch estimates count the `functions.hpatch` tool name followed by the free-form
-editing script. The successful direct estimate counts the `functions.exec` tool name
-and a free-form program that passes the serialized patch envelope to
-`tools.apply_patch`. The patch is counted only as that nested tool's model-authored
-input.
+hpatch estimates the current tool-call payloads. Both effective and ineffective hpatch
+estimates count the `functions.hpatch` tool name followed by the model-emitted free-form
+editing script. The direct estimate counts the `functions.exec` tool name and a fixed
+free-form program that passes the serialized patch envelope to `tools.apply_patch`.
 
 These are reproducible estimates, not API billing totals. They exclude provider-hidden
 protocol and reasoning tokens, assistant commentary, server-generated identifiers,
 and tool results. Host formatting or a different host tool schema can change actual
 usage.
 
-The report labels effective and ineffective hpatch output-token estimates separately
-and shows their calculated total. Effective-only reduction compares against raw
-`apply_patch` output; overall and weighted reductions compare against the baseline
-including its credited retries, and weighted figures price the state report plus net tool
-definition at five or six times output tokens. Stable tables separate aggregate command
-errors, `sel`, `tsel`, and `rsel` selectors, single and multiple `tsel` spans, exact and
+The report labels effective and ineffective hpatch output-token estimates separately and
+shows their calculated total. Effective-only and overall reductions compare output-token
+quantities only; input tokens are not price-converted or combined with output. Stable
+tables separate aggregate command errors, single and multiple `tsel` spans, exact and
 whitespace-recovered block selections, terminal failure reasons, and per-command failure
-reasons. Percentages are zero when their denominator is zero. Metrics persist in the
-platform user-configuration directory. Only the latest metrics format is decoded. A valid,
-checksummed slot with another `HPATCH` version resets totals when no current-format slot
-exists; malformed slots do not count as version mismatches. Collection failures warn but
-do not change the success or failure of the requested edit or translated output.
+reasons. Percentages are rounded exactly to one decimal place and are zero when their
+denominator is zero. Metrics persist in the platform user-configuration directory. Only
+the latest metrics format is decoded. A valid, checksummed slot with another `HPATCH`
+version resets totals when no current-format slot exists; malformed slots do not count as
+version mismatches. Collection failures warn but do not change the success or failure of
+the requested edit or translated output.
 
 ## Editing language
 

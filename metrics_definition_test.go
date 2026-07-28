@@ -11,8 +11,8 @@ import (
 func TestDefinitionCountsOncePerCallerSession(t *testing.T) {
 	dataDirectory := t.TempDir()
 	invocation := invocationMetrics{}
-	record := hostMetricRecord{
-		Invocation:                   &invocation,
+	record := HostMetricRecord{
+		Invocation:                   InvocationMetrics{value: invocation},
 		SessionID:                    "session-one",
 		DefinitionRequests:           1,
 		DefinitionInputTokens:        17,
@@ -72,8 +72,8 @@ func TestFailedOutputBelongsOnlyToHPatch(t *testing.T) {
 		FailedApplyPatchTokens:  10,
 	}
 	// (100 + 10 - 40 - 30) / (100 + 10) = 36.36%.
-	if got := value.overallReduction(); got < 36.3 || got > 36.4 {
-		t.Fatalf("overall reduction = %f, want ~36.36", got)
+	if got := value.overallReduction(); got != "36.4" {
+		t.Fatalf("overall reduction = %s, want 36.4", got)
 	}
 	report := gainReport(value)
 	for _, want := range []string{
@@ -84,8 +84,8 @@ func TestFailedOutputBelongsOnlyToHPatch(t *testing.T) {
 			t.Fatalf("gain report %q does not contain %q", report, want)
 		}
 	}
-	if !strings.Contains(report, "failed apply_patch output is the empty carrier emitted by the router.") {
-		t.Fatalf("gain report does not identify the failed-call carrier: %q", report)
+	if !strings.Contains(report, "failed apply_patch output uses the empty-patch semantic baseline.") {
+		t.Fatalf("gain report does not identify the failed-call baseline: %q", report)
 	}
 }
 

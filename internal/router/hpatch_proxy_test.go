@@ -7,12 +7,10 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
-	"time"
 )
 
 const (
@@ -824,177 +822,9 @@ func TestHPatchBoundsPendingStreamCallsAndRejectsRelatedFutureEvents(t *testing.
 	})
 }
 
-func TestHPatchDiagnosticPreservationAndBounds(t *testing.T) {
-	diagnostic := "exact hpatch diagnostic\n"
-	if got := hpatchDiagnostic(hpatchCommandError{cause: errors.New("exit status 1"), diagnostic: diagnostic}); got != diagnostic {
-		t.Fatalf("diagnostic = %q, want %q", got, diagnostic)
-	}
-	buffer := hpatchLimitedBuffer{limit: 4}
-	content := []byte("0123456789")
-	if written, err := buffer.Write(content); err != nil || written != len(content) || !buffer.overflow || buffer.Len() != buffer.limit {
-		t.Fatalf("bounded diagnostic = written %d, length %d, overflow %v, error %v", written, buffer.Len(), buffer.overflow, err)
-	}
-}
-
-func TestLoadHPatchToolDescriptionValidatesAuthoritativeHelp(t *testing.T) {
-	exact := "authoritative help\n" + hpatchImmutableBaselineMarker + "\ntrailing line\n"
-	raw := exact + hpatchHostMetricsMarker
-	tests := []struct {
-		name, body, want, wantError string
-	}{
-		{
-			name: "compatible exact output",
-			body: "#!/bin/sh\n[ \"$1\" = \"--tool-help\" ] || { printf '%s\\n' 'wrong help flag' >&2; exit 9; }\nprintf '%s' " + shellSingleQuote(raw) + "\n",
-			want: exact,
-		},
-		{name: "empty", body: "#!/bin/sh\nexit 0\n", wantError: "tool help is empty"},
-		{name: "oversized", body: "#!/bin/sh\n/usr/bin/head -c 1048577 /dev/zero\n", wantError: "tool help exceeds"},
-		{name: "oversized stderr", body: "#!/bin/sh\nprintf '%s\\n' " + shellSingleQuote(hpatchImmutableBaselineMarker) + "\n/usr/bin/head -c 1048577 /dev/zero >&2\n", wantError: "tool help exceeds"},
-		{name: "incompatible marker", body: "#!/bin/sh\nprintf '%s\\n' 'Commands observe all preceding in-memory edits.'\n", wantError: "does not support immutable-baseline selectors"},
-		{name: "incompatible accounting", body: "#!/bin/sh\nprintf '%s\\n' " + shellSingleQuote(hpatchImmutableBaselineMarker) + "\n", wantError: "does not support caller metrics"},
-		{name: "successful stderr", body: "#!/bin/sh\nprintf '%s\\n' " + shellSingleQuote(hpatchImmutableBaselineMarker) + "\nprintf '%s\\n' 'unexpected stderr' >&2\n", wantError: "tool help wrote to stderr"},
-		{name: "invalid UTF-8", body: "#!/bin/sh\nprintf '%s\\n' " + shellSingleQuote(hpatchImmutableBaselineMarker) + "\nprintf '\\377'\n", wantError: "not valid UTF-8"},
-		{name: "nonzero", body: "#!/bin/sh\nprintf '%s\\n' 'broken help' >&2\nexit 1\n", wantError: "inspect hpatch tool help: exit status 1: broken help"},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			executable := writeTestExecutable(t, test.body)
-			got, err := loadHPatchToolDescription(t.Context(), executable)
-			if test.wantError == "" {
-				if err != nil || got != test.want {
-					t.Fatalf("load tool help = %q, error %v; want %q", got, err, test.want)
-				}
-				return
-			}
-			if err == nil || !strings.Contains(err.Error(), test.wantError) {
-				t.Fatalf("load tool help error = %v, want %q", err, test.wantError)
-			}
-		})
-	}
-
-	t.Run("bounded cancellation", func(t *testing.T) {
-		executable := writeTestExecutable(t, "#!/bin/sh\nsleep 2 &\nwait\n")
-		ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
-		defer cancel()
-		started := time.Now()
-		_, err := loadHPatchToolDescription(ctx, executable)
-		if !errors.Is(err, context.DeadlineExceeded) {
-			t.Fatalf("load tool help error = %v, want deadline exceeded", err)
-		}
-		if elapsed := time.Since(started); elapsed > time.Second {
-			t.Fatalf("canceled tool-help probe took %v", elapsed)
-		}
-	})
-}
-
-func TestDiscoverHPatchTranslatorPairsExecutableAndExactDescription(t *testing.T) {
-	exact := "paired description\n" + hpatchImmutableBaselineMarker + "\n"
-	raw := exact + hpatchHostMetricsMarker
-	dir := t.TempDir()
-	executable := filepath.Join(dir, hpatchToolName)
-	body := "#!/bin/sh\n[ \"$1\" = \"--tool-help\" ] || exit 8\nprintf '%s' " + shellSingleQuote(raw) + "\n"
-	if err := os.WriteFile(executable, []byte(body), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", dir)
-	translator, err := discoverHPatchTranslator(t.Context())
-	if err != nil {
-		t.Fatal(err)
-	}
-	commandTranslator, ok := translator.(commandHPatchTranslator)
-	if !ok || commandTranslator.executable != executable || translator.ToolDescription() != exact {
-		t.Fatalf("discovered translator = %#v, description %q", translator, translator.ToolDescription())
-	}
-}
-
-func TestCommandHPatchTranslatorPassesExplicitWorkspaceRoot(t *testing.T) {
-	workspacePath := t.TempDir()
-	workspace, ok := usableRoutingWorkspace(map[string]json.RawMessage{workspacePath: nil})
-	if !ok {
-		t.Fatal("workspace unavailable")
-	}
-	defer workspace.close()
-
-	executable := filepath.Join(t.TempDir(), "hpatch-args")
-	if err := os.WriteFile(executable, []byte("#!/bin/sh\nprintf '%s' '{}' > \"$HPATCH_METRICS_OUTPUT_FILE\"\nprintf '%s\\n' \"$@\"\nprintf '%s' "+shellSingleQuote(testHPatchReport)+" >&2\n"), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	translated, err := (commandHPatchTranslator{executable: executable}).Translate(t.Context(), workspace, "ignored")
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := "translate\n--root\n" + workspace.canonical + "\n"
-	if string(translated.patch) != want {
-		t.Fatalf("hpatch arguments = %q, want %q", translated.patch, want)
-	}
-}
-
-func TestCommandHPatchTranslatorKeepsSuccessfulReportOffPatchStdout(t *testing.T) {
-	workspacePath := t.TempDir()
-	workspace, ok := usableRoutingWorkspace(map[string]json.RawMessage{workspacePath: nil})
-	if !ok {
-		t.Fatal("workspace unavailable")
-	}
-	defer workspace.close()
-	executable := writeTestExecutable(t, "#!/bin/sh\nprintf '%s' '{}' > \"$HPATCH_METRICS_OUTPUT_FILE\"\nprintf '%s' '*** Begin Patch\\n*** End Patch\\n'\nprintf '%s\\n' 'Final-state report: pending only' >&2\n")
-	translated, err := (commandHPatchTranslator{executable: executable}).Translate(t.Context(), workspace, "ignored")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got, want := string(translated.patch), "*** Begin Patch\\n*** End Patch\\n"; got != want {
-		t.Fatalf("patch stdout = %q, want %q", got, want)
-	}
-	if got, want := translated.report, "Final-state report: pending only\n"; got != want {
-		t.Fatalf("report stderr = %q, want %q", got, want)
-	}
-}
-
-func TestCommandHPatchTranslatorRejectsMissingSuccessfulReport(t *testing.T) {
-	workspacePath := t.TempDir()
-	workspace, ok := usableRoutingWorkspace(map[string]json.RawMessage{workspacePath: nil})
-	if !ok {
-		t.Fatal("workspace unavailable")
-	}
-	defer workspace.close()
-	executable := writeTestExecutable(t, "#!/bin/sh\nprintf '%s' '{}' > \"$HPATCH_METRICS_OUTPUT_FILE\"\nprintf '%s' '*** Begin Patch\\n*** End Patch\\n'\n")
-	_, err := (commandHPatchTranslator{executable: executable}).Translate(t.Context(), workspace, "ignored")
-	if err == nil || !strings.Contains(err.Error(), "no final-state report") {
-		t.Fatalf("missing report error = %v", err)
-	}
-}
-
-func TestCommandHPatchTranslatorRequiresInvocationMetrics(t *testing.T) {
-	workspacePath := t.TempDir()
-	workspace, ok := usableRoutingWorkspace(map[string]json.RawMessage{workspacePath: nil})
-	if !ok {
-		t.Fatal("workspace unavailable")
-	}
-	defer workspace.close()
-	executable := writeTestExecutable(t, "#!/bin/sh\nprintf '%s' '*** Begin Patch\\n*** End Patch\\n'\nprintf '%s' "+shellSingleQuote(testHPatchReport)+" >&2\n")
-	_, err := (commandHPatchTranslator{executable: executable}).Translate(t.Context(), workspace, "ignored")
-	if !errors.Is(err, errHPatchMetricsProtocol) || !strings.Contains(err.Error(), "invocation metrics are empty") {
-		t.Fatalf("missing invocation metrics error = %v", err)
-	}
-}
-
-func TestHPatchMetricsTempFailureIsNotModelCorrectable(t *testing.T) {
-	translator := commandHPatchTranslator{executable: "unused", toolDescription: testHPatchToolDescription}
-	transform, _, _, _ := newHPatchTestTransform(t, translator)
-	t.Setenv("TMPDIR", filepath.Join(t.TempDir(), "missing"))
-	history, err := transform.translate("call-1", testHPatchScript, nil)
-	if !errors.Is(err, errHPatchMetricsProtocol) || !strings.Contains(err.Error(), "create hpatch metrics output") {
-		t.Fatalf("temporary metrics failure = history %+v, error %v", history, err)
-	}
-	if len(transform.local) != 0 || history.translationError != "" {
-		t.Fatalf("temporary metrics failure became model-correctable: history %+v, local %+v", history, transform.local)
-	}
-}
-
-func TestInstalledHPatchToolDescription(t *testing.T) {
-	if _, err := exec.LookPath(hpatchToolName); err != nil {
-		t.Skipf("installed hpatch unavailable: %v", err)
-	}
-	translator, err := discoverHPatchTranslator(t.Context())
+func TestInProcessHPatchToolDescription(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	translator, err := newInProcessHPatchTranslator()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1016,72 +846,11 @@ func TestInstalledHPatchToolDescription(t *testing.T) {
 	}
 }
 
-func TestInstalledHPatchToolDescriptionWithoutRelativeLines(t *testing.T) {
-	if _, err := exec.LookPath(hpatchToolName); err != nil {
-		t.Skipf("installed hpatch unavailable: %v", err)
-	}
-	t.Setenv("HPATCH_DISABLE_RELATIVE_LINES", "1")
-	translator, err := discoverHPatchTranslator(t.Context())
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, excluded := range []string{"LINE_REF", "+0", "HPATCH_DISABLE_RELATIVE_LINES"} {
-		if strings.Contains(translator.ToolDescription(), excluded) {
-			t.Fatalf("relative-lines-disabled description contains %q", excluded)
-		}
-	}
-}
-
-func TestInstalledHPatchMetricsRoundTrip(t *testing.T) {
-	if _, err := exec.LookPath(hpatchToolName); err != nil {
-		t.Skipf("installed hpatch unavailable: %v", err)
-	}
+func TestInProcessHPatchTranslatorIsRootScopedAndDoesNotMutateWorkspace(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
-	translator, err := discoverHPatchTranslator(t.Context())
+	translator, err := newInProcessHPatchTranslator()
 	if err != nil {
 		t.Fatal(err)
-	}
-	transform, _, _, _ := newHPatchTestTransform(t, translator)
-	history, err := transform.translate("call-1", testHPatchScript, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if history.patch != testTranslatedPatch || history.report != testHPatchReport {
-		t.Fatalf("translated history = %+v", history)
-	}
-	commandTranslator, ok := translator.(commandHPatchTranslator)
-	if !ok {
-		t.Fatalf("installed translator = %T", translator)
-	}
-	output, err := exec.CommandContext(t.Context(), commandTranslator.executable, "gain").Output()
-	if err != nil {
-		t.Fatal(err)
-	}
-	var hpatchTokens, applyPatchTokens uint64
-	for line := range strings.Lines(string(output)) {
-		fields := strings.Fields(line)
-		if len(fields) < 3 || fields[0] != "successful" {
-			continue
-		}
-		hpatchTokens, err = strconv.ParseUint(fields[1], 10, 64)
-		if err != nil {
-			t.Fatal(err)
-		}
-		applyPatchTokens, err = strconv.ParseUint(fields[2], 10, 64)
-		if err != nil {
-			t.Fatal(err)
-		}
-		break
-	}
-	if hpatchTokens == 0 || applyPatchTokens == 0 {
-		t.Fatalf("gain report did not persist caller metrics:\n%s", output)
-	}
-}
-
-func TestCommandHPatchTranslatorIsRootScopedAndDoesNotMutateWorkspace(t *testing.T) {
-	translator, err := discoverHPatchTranslator(t.Context())
-	if err != nil {
-		t.Skipf("hpatch unavailable: %v", err)
 	}
 	workspacePath := t.TempDir()
 	path := filepath.Join(workspacePath, "existing.txt")
@@ -1115,7 +884,7 @@ func TestCommandHPatchTranslatorIsRootScopedAndDoesNotMutateWorkspace(t *testing
 	}
 
 	conflict := "in " + path + "\nrsel 1:2\ntype \"replacement\"\nrsel 2:3\ntype \"overlap\"\n"
-	if _, err := translator.Translate(t.Context(), workspace, conflict); err == nil || !strings.Contains(hpatchDiagnostic(err), "selection conflicts with edit") {
+	if translated, err := translator.Translate(t.Context(), workspace, conflict); err == nil || !strings.Contains(translated.diagnostic, "selection conflicts with edit") {
 		t.Fatalf("overlapping baseline translation error = %v", err)
 	}
 
@@ -1126,19 +895,6 @@ func TestCommandHPatchTranslatorIsRootScopedAndDoesNotMutateWorkspace(t *testing
 	if _, err := translator.Translate(t.Context(), workspace, "in "+outsidePath+"\n"); err == nil {
 		t.Fatal("translation accepted an absolute path outside the trusted root")
 	}
-}
-
-func writeTestExecutable(t *testing.T, body string) string {
-	t.Helper()
-	executable := filepath.Join(t.TempDir(), "hpatch")
-	if err := os.WriteFile(executable, []byte(body), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	return executable
-}
-
-func shellSingleQuote(value string) string {
-	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
 }
 
 func mustTestJSON(t *testing.T, value any) []byte {
@@ -1152,129 +908,4 @@ func mustTestJSON(t *testing.T, value any) []byte {
 
 func jsonQuoted(value string) string {
 	return strconv.Quote(value)
-}
-
-func TestHPatchCommandEnvironmentScrubsInheritedMetricsInputs(t *testing.T) {
-	for name := range hpatchMetricEnvironmentVariables {
-		t.Setenv(name, "stale")
-	}
-	environment := hpatchCommandEnvironment("/tmp/current-metrics")
-	seen := make(map[string]string, len(environment))
-	for _, entry := range environment {
-		name, value, _ := strings.Cut(entry, "=")
-		seen[name] = value
-	}
-	for name := range hpatchMetricEnvironmentVariables {
-		if name == hpatchMetricsOutputFileVariable {
-			continue
-		}
-		if _, exists := seen[name]; exists {
-			t.Errorf("inherited %s was not scrubbed", name)
-		}
-	}
-	if seen[hpatchMetricsOutputFileVariable] != "/tmp/current-metrics" {
-		t.Fatalf("metrics output file = %q", seen[hpatchMetricsOutputFileVariable])
-	}
-}
-
-func TestCommandHPatchTranslatorUsesBoundedInvocationFileAndCleansUp(t *testing.T) {
-	workspacePath := t.TempDir()
-	workspace, ok := usableRoutingWorkspace(map[string]json.RawMessage{workspacePath: nil})
-	if !ok {
-		t.Fatal("workspace unavailable")
-	}
-	defer workspace.close()
-
-	for name := range hpatchMetricEnvironmentVariables {
-		t.Setenv(name, strings.Repeat("stale", 30000))
-	}
-	assertRemoved := func(marker string) {
-		t.Helper()
-		content, err := os.ReadFile(marker)
-		if err != nil {
-			t.Fatalf("read metrics marker: %v", err)
-		}
-		if _, err := os.Stat(string(content)); !os.IsNotExist(err) {
-			t.Fatalf("metrics output file %q remains after subprocess: %v", content, err)
-		}
-	}
-
-	t.Run("success", func(t *testing.T) {
-		marker := filepath.Join(t.TempDir(), "metrics-path")
-		t.Setenv("HPATCH_METRICS_MARKER", marker)
-		executable := writeTestExecutable(t, "#!/bin/sh\nprintf '%s' \"$HPATCH_METRICS_OUTPUT_FILE\" > \"$HPATCH_METRICS_MARKER\"\nprintf '%s' '{}' > \"$HPATCH_METRICS_OUTPUT_FILE\"\nprintf '%s' '*** Begin Patch\\n*** End Patch\\n'\nprintf '%s' "+shellSingleQuote(testHPatchReport)+" >&2\n")
-		translated, err := (commandHPatchTranslator{executable: executable}).Translate(t.Context(), workspace, "new note.txt\n")
-		if err != nil || string(translated.patch) != "*** Begin Patch\\n*** End Patch\\n" || translated.report != testHPatchReport || string(translated.invocation) != "{}" {
-			t.Fatalf("translation = %#v, error %v", translated, err)
-		}
-		assertRemoved(marker)
-	})
-
-	t.Run("evaluator rejection", func(t *testing.T) {
-		marker := filepath.Join(t.TempDir(), "metrics-path")
-		t.Setenv("HPATCH_METRICS_MARKER", marker)
-		executable := writeTestExecutable(t, "#!/bin/sh\nprintf '%s' \"$HPATCH_METRICS_OUTPUT_FILE\" > \"$HPATCH_METRICS_MARKER\"\nprintf '%s' '{}' > \"$HPATCH_METRICS_OUTPUT_FILE\"\nprintf '%s\\n' rejected >&2\nexit 1\n")
-		translated, err := (commandHPatchTranslator{executable: executable}).Translate(t.Context(), workspace, "bad\n")
-		if err == nil || !strings.Contains(err.Error(), "rejected") || string(translated.invocation) != "{}" {
-			t.Fatalf("failed translation = %#v, error %v", translated, err)
-		}
-		assertRemoved(marker)
-	})
-
-	t.Run("cancellation", func(t *testing.T) {
-		marker := filepath.Join(t.TempDir(), "metrics-path")
-		t.Setenv("HPATCH_METRICS_MARKER", marker)
-		executable := writeTestExecutable(t, "#!/bin/sh\nprintf '%s' \"$HPATCH_METRICS_OUTPUT_FILE\" > \"$HPATCH_METRICS_MARKER\"\nsleep 2 &\nwait\n")
-		ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
-		defer cancel()
-		started := time.Now()
-		_, err := (commandHPatchTranslator{executable: executable}).Translate(ctx, workspace, "ignored\n")
-		if !errors.Is(err, context.DeadlineExceeded) {
-			t.Fatalf("canceled translation error = %v", err)
-		}
-		if elapsed := time.Since(started); elapsed > time.Second {
-			t.Fatalf("canceled translation took %v", elapsed)
-		}
-		assertRemoved(marker)
-	})
-}
-
-func TestCommandHPatchTranslatorRecordsCompleteMetrics(t *testing.T) {
-	directory := t.TempDir()
-	commandMarker := filepath.Join(directory, "command")
-	recordMarker := filepath.Join(directory, "record")
-	t.Setenv("HPATCH_COMMAND_MARKER", commandMarker)
-	t.Setenv("HPATCH_RECORD_MARKER", recordMarker)
-	executable := writeTestExecutable(t, "#!/bin/sh\nprintf '%s' \"$1\" > \"$HPATCH_COMMAND_MARKER\"\ncat > \"$HPATCH_RECORD_MARKER\"\n")
-	want := hpatchMetricRecord{
-		Invocation:                   json.RawMessage(`{"commands":[]}`),
-		SessionID:                    "session",
-		HPatchTokens:                 2,
-		ApplyPatchTokens:             3,
-		IneffectiveHPatchTokens:      5,
-		FailedApplyPatchTokens:       7,
-		ReportInputTokens:            11,
-		DiagnosticInputTokens:        13,
-		DefinitionRequests:           1,
-		DefinitionInputTokens:        19,
-		RemovedDefinitionInputTokens: 23,
-	}
-	if err := (commandHPatchTranslator{executable: executable}).RecordMetrics(t.Context(), want); err != nil {
-		t.Fatal(err)
-	}
-	command, err := os.ReadFile(commandMarker)
-	if err != nil || string(command) != "record-metrics" {
-		t.Fatalf("metrics command = %q, error %v", command, err)
-	}
-	content, err := os.ReadFile(recordMarker)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var got hpatchMetricRecord
-	if err := json.Unmarshal(content, &got); err != nil {
-		t.Fatal(err)
-	}
-	if got.SessionID != want.SessionID || got.HPatchTokens != want.HPatchTokens || got.ApplyPatchTokens != want.ApplyPatchTokens || got.IneffectiveHPatchTokens != want.IneffectiveHPatchTokens || got.FailedApplyPatchTokens != want.FailedApplyPatchTokens || got.ReportInputTokens != want.ReportInputTokens || got.DiagnosticInputTokens != want.DiagnosticInputTokens || got.DefinitionRequests != want.DefinitionRequests || got.DefinitionInputTokens != want.DefinitionInputTokens || got.RemovedDefinitionInputTokens != want.RemovedDefinitionInputTokens || string(got.Invocation) != string(want.Invocation) {
-		t.Fatalf("recorded metrics = %+v, want %+v", got, want)
-	}
 }

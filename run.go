@@ -28,7 +28,7 @@ type Workspace struct {
 // workspace root. New callers that already own a root capability should use
 // RunWorkspace, Apply, or Translate.
 func Run(args []string, stdin io.Reader, stdout, stderr io.Writer, workingDirectory, dataDirectory string) int {
-	if len(args) == 1 && (args[0] == "gain" || args[0] == hostMetricsCommand) {
+	if len(args) == 1 && args[0] == "gain" {
 		return RunWorkspace(args, stdin, stdout, stderr, Workspace{}, dataDirectory)
 	}
 	rootPath, err := filepath.Abs(workingDirectory)
@@ -66,8 +66,6 @@ func RunWorkspace(args []string, stdin io.Reader, stdout, stderr io.Writer, work
 	case len(args) == 0:
 	case len(args) == 1 && args[0] == "translate":
 		translateMode = true
-	case len(args) == 1 && args[0] == hostMetricsCommand:
-		return recordHostMetrics(stdin, stderr, dataDirectory)
 	case len(args) == 1 && args[0] == "gain":
 		metrics, err := readMetrics(dataDirectory)
 		if err != nil {
@@ -86,11 +84,7 @@ func RunWorkspace(args []string, stdin io.Reader, stdout, stderr io.Writer, work
 		return fail(stderr, fmt.Sprintf("reading script: %v", err))
 	}
 	changes, filesystem, commands, report, err := evaluateScript(context.TODO(), workspace, string(script))
-	exported, exportErr := writeInvocationMetrics(commands)
-	if exportErr != nil {
-		return fail(stderr, exportErr.Error())
-	}
-	if !exported && dataDirectory != "" {
+	if dataDirectory != "" {
 		if metricsErr := updateMetrics(dataDirectory, metrics{invocationMetrics: commands}); metricsErr != nil {
 			warn(stderr, metricsErr.Error())
 		}
@@ -138,15 +132,57 @@ func Apply(ctx context.Context, workspace Workspace, script string) error {
 // Translate evaluates script without mutation and returns an apply_patch envelope
 // whose paths are relative to workspace.Root.
 func Translate(ctx context.Context, workspace Workspace, script string) ([]byte, error) {
-	changes, _, _, _, err := evaluateScript(ctx, workspace, script)
+	result, err := translateDetailed(ctx, workspace, script)
 	if err != nil {
 		return nil, err
+	}
+	return result.Patch, nil
+}
+
+// HostTranslation contains the complete result needed by an in-process host.
+// Invocation is opaque outside this package and can be returned through
+// RecordHostMetrics without duplicating evaluator-owned accounting types.
+type HostTranslation struct {
+	Patch      []byte
+	Report     string
+	Diagnostic string
+	Invocation InvocationMetrics
+}
+
+// TranslateForHost evaluates script once without mutation and returns the
+// translated patch, final-state report, and evaluator-owned invocation metrics.
+// On an evaluation failure it also returns the command-line diagnostic and
+// repair context, including configured error-hook warnings.
+func TranslateForHost(ctx context.Context, workspace Workspace, script, dataDirectory string) (HostTranslation, error) {
+	result, err := translateDetailed(ctx, workspace, script)
+	if err != nil {
+		if ctx.Err() == nil {
+			result.Diagnostic = evaluationDiagnostic(ctx, err, dataDirectory)
+			if contextErr := ctx.Err(); contextErr != nil {
+				result.Diagnostic = ""
+				return result, contextErr
+			}
+		}
+		return result, err
+	}
+	return result, nil
+}
+
+func translateDetailed(ctx context.Context, workspace Workspace, script string) (HostTranslation, error) {
+	changes, _, invocation, report, err := evaluateScript(ctx, workspace, script)
+	result := HostTranslation{Report: report, Invocation: InvocationMetrics{value: invocation}}
+	if err != nil {
+		return result, err
+	}
+	if err := ctx.Err(); err != nil {
+		return result, err
 	}
 	patch, err := translate(changes)
 	if err != nil {
-		return nil, err
+		return result, err
 	}
-	return []byte(patch), nil
+	result.Patch = []byte(patch)
+	return result, nil
 }
 
 type filesystemWorkspace struct {
@@ -290,16 +326,22 @@ func fail(stderr io.Writer, message string) int {
 }
 
 func failEvaluation(stderr io.Writer, err error, dataDirectory string) int {
+	_, _ = io.WriteString(stderr, evaluationDiagnostic(context.TODO(), err, dataDirectory))
+	return 1
+}
+
+func evaluationDiagnostic(ctx context.Context, err error, dataDirectory string) string {
+	var output strings.Builder
 	diagnostic := failureDiagnostic(err.Error())
 	if command, ok := errors.AsType[*commandError](err); ok {
-		_, _ = io.WriteString(stderr, diagnostic+command.Repair)
-		for _, hookErr := range runErrorHooks(dataDirectory, command, diagnostic, errorHooksTimeout) {
-			warn(stderr, hookErr.Error())
+		output.WriteString(diagnostic)
+		output.WriteString(command.Repair)
+		for _, hookErr := range runErrorHooks(ctx, dataDirectory, command, diagnostic, errorHooksTimeout) {
+			warn(&output, hookErr.Error())
 		}
-		return 1
+		return output.String()
 	}
-	_, _ = io.WriteString(stderr, diagnostic)
-	return 1
+	return diagnostic
 }
 
 func warn(stderr io.Writer, message string) {

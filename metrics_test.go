@@ -39,8 +39,8 @@ func TestGainReportsPersistedTotals(t *testing.T) {
 	}
 
 	invocation := invocationMetrics{}
-	recordHostMetricForTest(t, dataDirectory, hostMetricRecord{
-		Invocation:        &invocation,
+	recordHostMetricForTest(t, dataDirectory, HostMetricRecord{
+		Invocation:        InvocationMetrics{value: invocation},
 		HPatchTokens:      20,
 		ApplyPatchTokens:  40,
 		ReportInputTokens: 6,
@@ -151,6 +151,10 @@ func TestGainReportReconcilesEffectiveAndIneffectiveTokens(t *testing.T) {
 	if !strings.Contains(overflowSafe, "36893488147419103230") {
 		t.Fatalf("overflow-safe gain report = %q", overflowSafe)
 	}
+	precise := metrics{HPatchTokens: 9214148664817921031, ApplyPatchTokens: ^uint64(0)}
+	if got := precise.reduction(); got != "50.1" {
+		t.Fatalf("large-counter reduction = %s, want 50.1", got)
+	}
 	creditCanExceedAdded := strings.Join(strings.Fields(gainInputSection(t, gainReport(metrics{DefinitionInputTokens: 5, RemovedDefinitionInputTokens: 9}))), " ")
 	if !strings.Contains(creditCanExceedAdded, "net added input -4") {
 		t.Fatalf("signed definition credit report = %q", creditCanExceedAdded)
@@ -245,8 +249,8 @@ func TestHostRecordCombinesEffectiveAndIneffectiveOutput(t *testing.T) {
 	dataDirectory := t.TempDir()
 	invocation := invocationMetrics{}
 	invocation.Commands[commandOperationIndex("new")].Invocations = 1
-	recordHostMetricForTest(t, dataDirectory, hostMetricRecord{
-		Invocation:              &invocation,
+	recordHostMetricForTest(t, dataDirectory, HostMetricRecord{
+		Invocation:              InvocationMetrics{value: invocation},
 		HPatchTokens:            40,
 		ApplyPatchTokens:        100,
 		IneffectiveHPatchTokens: 30,
@@ -492,9 +496,9 @@ func TestMetricsConcurrentProcesses(t *testing.T) {
 	for range processes {
 		command := exec.Command(os.Args[0], "-test.run=^TestMetricsProcessHelper$")
 		command.Env = append(os.Environ(),
-			"HPATCH_METRICS_HELPER=1",
-			"HPATCH_METRICS_DIRECTORY="+dataDirectory,
-			fmt.Sprintf("HPATCH_METRICS_WRITES=%d", writesPerProcess),
+			"TEST_METRICS_HELPER=1",
+			"TEST_METRICS_DIRECTORY="+dataDirectory,
+			fmt.Sprintf("TEST_METRICS_WRITES=%d", writesPerProcess),
 		)
 		if err := command.Start(); err != nil {
 			t.Fatal(err)
@@ -519,15 +523,15 @@ func TestMetricsConcurrentProcesses(t *testing.T) {
 }
 
 func TestMetricsProcessHelper(t *testing.T) {
-	if os.Getenv("HPATCH_METRICS_HELPER") != "1" {
+	if os.Getenv("TEST_METRICS_HELPER") != "1" {
 		return
 	}
-	writes, err := strconv.Atoi(os.Getenv("HPATCH_METRICS_WRITES"))
+	writes, err := strconv.Atoi(os.Getenv("TEST_METRICS_WRITES"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	for range writes {
-		if err := updateMetrics(os.Getenv("HPATCH_METRICS_DIRECTORY"), metrics{HPatchTokens: 2, ApplyPatchTokens: 5}); err != nil {
+		if err := updateMetrics(os.Getenv("TEST_METRICS_DIRECTORY"), metrics{HPatchTokens: 2, ApplyPatchTokens: 5}); err != nil {
 			t.Fatal(err)
 		}
 	}

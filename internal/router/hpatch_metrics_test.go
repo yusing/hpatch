@@ -2,25 +2,22 @@ package router
 
 import (
 	"context"
-	"encoding/json"
 	"testing"
 
 	"github.com/tiktoken-go/tokenizer"
 )
 
 func TestCalculateHPatchMetricRecordUsesExactCallerPayloads(t *testing.T) {
-	invocation := json.RawMessage(`{"commands":[{"invocations":1,"errors":0}]}`)
 	patch := "*** Begin Patch\n*** Update File: /workspace/calc.go\n@@\n-old\n+new\n*** End Patch\n"
 	inputs := hpatchMetricInputs{
-		invocation:         invocation,
 		emittedScript:      "2: sel 2 9:13\n",
 		report:             "in calc.go 2:9\n2 return new\n",
+		patch:              patch,
 		sessionID:          "session",
 		definition:         "hpatch definition\n\n",
 		baselineDefinition: "apply_patch definition\n",
 		successful:         true,
 	}
-	inputs.carrier = hpatchApplyExecInput(patch, inputs.report)
 	record, err := calculateHPatchMetricRecord(inputs)
 	if err != nil {
 		t.Fatal(err)
@@ -40,7 +37,7 @@ func TestCalculateHPatchMetricRecordUsesExactCallerPayloads(t *testing.T) {
 	if got, want := record.HPatchTokens, count("functions.hpatch\n"+inputs.emittedScript); got != want {
 		t.Fatalf("hpatch tokens = %d, want %d", got, want)
 	}
-	applyPatchPayload := "functions.exec\n" + inputs.carrier
+	applyPatchPayload := applyPatchMetricPayload(patch)
 	if got, want := record.ApplyPatchTokens, count(applyPatchPayload); got != want {
 		t.Fatalf("apply_patch tokens = %d, want %d", got, want)
 	}
@@ -56,17 +53,16 @@ func TestCalculateHPatchMetricRecordUsesExactCallerPayloads(t *testing.T) {
 	if got, want := record.RemovedDefinitionInputTokens, count("apply_patch definition"); got != want {
 		t.Fatalf("removed definition tokens = %d, want %d", got, want)
 	}
-	if string(record.Invocation) != string(invocation) || record.IneffectiveHPatchTokens != 0 || record.FailedApplyPatchTokens != 0 || record.DiagnosticInputTokens != 0 {
+	if record.IneffectiveHPatchTokens != 0 || record.FailedApplyPatchTokens != 0 || record.DiagnosticInputTokens != 0 {
 		t.Fatalf("successful record = %+v", record)
 	}
 }
 
-func TestCalculateHPatchMetricRecordUsesExactFailureDiagnostic(t *testing.T) {
+func TestCalculateHPatchMetricRecordUsesEmptyFailureBaseline(t *testing.T) {
 	inputs := hpatchMetricInputs{
 		emittedScript: "2: sel 2 9:13\n",
 		diagnostic:    "hpatch: command 2 rejected\nrepair context\n" + hpatchCorrectionHint,
 	}
-	inputs.carrier = hpatchDiagnosticExecInput(inputs.diagnostic)
 	record, err := calculateHPatchMetricRecord(inputs)
 	if err != nil {
 		t.Fatal(err)
@@ -85,14 +81,14 @@ func TestCalculateHPatchMetricRecordUsesExactFailureDiagnostic(t *testing.T) {
 	if got, want := record.IneffectiveHPatchTokens, count("functions.hpatch\n"+inputs.emittedScript); got != want {
 		t.Fatalf("ineffective hpatch tokens = %d, want %d", got, want)
 	}
-	failedPayload := "functions.exec\n" + inputs.carrier
+	failedPayload := applyPatchMetricPayload(failedApplyPatch)
 	if got, want := record.FailedApplyPatchTokens, count(failedPayload); got != want {
-		t.Fatalf("rejected carrier tokens = %d, want %d", got, want)
+		t.Fatalf("failed apply_patch tokens = %d, want %d", got, want)
 	}
 	if got, want := record.DiagnosticInputTokens, count(inputs.diagnostic); got != want {
 		t.Fatalf("diagnostic tokens = %d, want %d", got, want)
 	}
-	if string(record.Invocation) != "{}" || record.HPatchTokens != 0 || record.ApplyPatchTokens != 0 || record.ReportInputTokens != 0 {
+	if record.HPatchTokens != 0 || record.ApplyPatchTokens != 0 || record.ReportInputTokens != 0 {
 		t.Fatalf("failure record = %+v", record)
 	}
 }

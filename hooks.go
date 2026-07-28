@@ -43,9 +43,12 @@ type errorHookEvent struct {
 	Failure       string
 }
 
-func runErrorHooks(dataDirectory string, sourceError *commandError, diagnostic string, timeout time.Duration) []error {
+func runErrorHooks(ctx context.Context, dataDirectory string, sourceError *commandError, diagnostic string, timeout time.Duration) []error {
 	if dataDirectory == "" || sourceError.Reason == reasonOther {
 		return nil
+	}
+	if err := ctx.Err(); err != nil {
+		return []error{err}
 	}
 
 	configured, err := readSettings(dataDirectory)
@@ -57,7 +60,7 @@ func runErrorHooks(dataDirectory string, sourceError *commandError, diagnostic s
 	}
 
 	event := newErrorHookEvent(sourceError, diagnostic)
-	ctx, cancel := context.WithTimeout(context.TODO(), timeout)
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	var hookErrors []error
 	for index, source := range configured.Hooks.Error {

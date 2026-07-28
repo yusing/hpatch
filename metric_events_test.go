@@ -79,8 +79,8 @@ func TestSuccessfulNoopCountsEvaluatorCommandsOnly(t *testing.T) {
 
 func TestGainReportsOutputAndInputSeparately(t *testing.T) {
 	value := metrics{HPatchTokens: 40, ApplyPatchTokens: 100, IneffectiveHPatchTokens: 10, FailedApplyPatchTokens: 5, ReportInputTokens: 50}
-	if got := value.overallReduction(); got < 52.3 || got > 52.4 {
-		t.Fatalf("output reduction = %v, want ~52.38", got)
+	if got := value.overallReduction(); got != "52.4" {
+		t.Fatalf("output reduction = %s, want 52.4", got)
 	}
 	report := gainReport(value)
 	if !strings.Contains(report, "all         50      105          52.4%\n") {
