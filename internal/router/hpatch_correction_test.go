@@ -61,6 +61,19 @@ func TestHPatchCorrectionParsesHeredocAsOneEntry(t *testing.T) {
 	}
 }
 
+func TestHPatchCorrectionParsesRelaxedHeredocTag(t *testing.T) {
+	corrections, err := parseHPatchCorrections("2: type <<'GO'\nraw\nGO\n3: rm\n")
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if len(corrections) != 2 {
+		t.Fatalf("parsed %d corrections, want 2", len(corrections))
+	}
+	if got := corrections[0]; got.command != 2 || got.replacement != "type <<'GO'\nraw\nGO" {
+		t.Errorf("heredoc correction = %+v", got)
+	}
+}
+
 func TestHPatchCorrectionIndexesAndReplacesCompleteHeredocFrames(t *testing.T) {
 	base := "new file.txt\ntype <<BODY\nraw\nBODY\nrm\n"
 	corrected, err := applyHPatchCorrections(base, []hpatchCorrection{{command: 3, replacement: `type "tail"`}})
@@ -160,7 +173,7 @@ func TestHPatchCorrectionRejectsMalformedPayloads(t *testing.T) {
 		{"replacement and deletion", "2: rm\n-2\n", "both replaced and deleted"},
 		{"empty insertion", "+2:\n", "has no replacement command"},
 		{"deletion with command", "-2: rm\n", "is not `INDEX: COMMAND`"},
-		{"invalid heredoc delimiter", "2: type <<bad\n", "invalid heredoc delimiter"},
+		{"invalid heredoc delimiter", "2: type <<\n", "invalid heredoc delimiter"},
 		{"unterminated heredoc", "2: type <<BODY\nraw\n", "unterminated heredoc"},
 		{"empty payload", "\n\n", "correction payload is empty"},
 	} {

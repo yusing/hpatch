@@ -35,7 +35,7 @@ func TestInformationalCommandsNeedNoEnvironmentOrStdin(t *testing.T) {
 	}{
 		{name: "top-level help", args: []string{"--help"}, want: helpTextBase, wantFragment: "hpatch translate [--root ROOT] [--cwd CWD] < SCRIPT"},
 		{name: "translate help", args: []string{"translate", "--help"}, want: translateHelpText, wantFragment: "without modifying"},
-		{name: "tool help", args: []string{"--tool-help"}, want: toolHelpText(), wantFragment: "Edit workspace files atomically with one free-form script."},
+		{name: "tool help", args: []string{"--tool-help"}, want: toolHelpText(), wantFragment: "HPATCH/1"},
 		{name: "version", args: []string{"--version"}, want: "hpatch devel\n", wantFragment: "hpatch devel"},
 	}
 	for _, test := range tests {
@@ -92,36 +92,38 @@ func TestTopLevelHelpDescribesCompletePublicSurface(t *testing.T) {
 	}
 }
 
-func TestToolHelpIsFocusedAndAuthoritative(t *testing.T) {
+func TestToolHelpIsCompactAgentContract(t *testing.T) {
 	help := toolHelpText()
 	for _, required := range []string{
-		"one free-form script",
-		"one command per nonblank physical line",
-		"literal newline always ends the current inline command",
-		"type <<TAG",
-		"line exactly equal to TAG",
-		"JSON-compatible escapes",
-		"accept literal horizontal tabs",
-		"other C0 controls",
-		"tsel starts at column 1 of FROM_LINE",
-		"repairs FROM_LINE to the first",
-		"does not choose the nearest END",
-		"independently unique",
-		"rejected script changes nothing",
-		"sel LINE START:END",
-		"tsel FROM_LINE \"TEXT\" [N]",
-		"first N exact",
-		"commit",
-		"next immutable baseline",
-		"clipboard survives",
-		"ASCII space and tab runs match interchangeably",
-		"The first in for an existing file captures an immutable baseline.",
-		"Final-state report:",
-		"multiple insertions",
-		"at one baseline position",
-		"up to three",
-		"workspace-relative paths",
-		"Parent directories for new",
+		"HPATCH/1",
+		"call=functions.hpatch(raw_complete_script)",
+		"atomic(reject|cancel)=patch:none,workspace:unchanged",
+		"lex.command=nonblank_physical_line",
+		"cmd=in PATH|new PATH|mv DESTINATION|rm|sel LINE START:END",
+		"state.active=in|new=>select;mv DESTINATION=>rename_active_file(source_implicit);rm=>delete_active_file(no_operand)",
+		"cursor:=BOF,selections:=none,active:=keep",
+		"state.coords=file.baseline[generation]",
+		"state.commit=all_live_files",
+		"partial_filesystem_write=false;whole_script_atomic=true",
+		"tsel=baseline[(FROM_LINE,col1)..EOF]",
+		"tsel.TEXT=copy_exact_baseline_text;encode_JSON_only;never_infer|normalize|paraphrase",
+		"tsel.repair=FROM_LINE_only;TEXT_unchanged",
+		"bsel=START!=END;nonempty;START_count(file)==1&&END_count(suffix_after_START)==1",
+		"selection=START.first_byte..END.last_byte;outside_bytes_preserved",
+		"bsel.anchor_fallback=no_exact_match",
+		"rsel=logical_line[START..END]",
+		"numeric_selector.coords=fresh_nl_-ba",
+		"heredoc.tag=[A-Za-z0-9_.-]{1,64}",
+		"inline_linebreaks=type|bsel:allow_encoded_LF_CR;tsel:forbid_LF_CR",
+		"edit.copy=clipboard:=first_selection_baseline_text",
+		"nonlinewise_destination_may_split_line",
+		"following_terminator_outside_selection_unless_encoded_in_END",
+		"edit.conflict=same_generation",
+		"result.success=active_path+cursor_or_selection_envelope",
+		"source_codepoints_per_line<=64;truncation_marker=none",
+		"result.noop=net_workspace_unchanged=>reject",
+		"repair_context_not_match_candidate",
+		"verify=inspect_reported_lines",
 	} {
 		if !strings.Contains(help, required) {
 			t.Fatalf("tool help does not contain %q", required)
@@ -129,18 +131,30 @@ func TestToolHelpIsFocusedAndAuthoritative(t *testing.T) {
 	}
 	for _, excluded := range []string{
 		"Usage:",
-		"Agent workflow:",
+		"Commands:",
+		"Agent use:",
+		"Final-state report:",
 		"hpatch gain",
 		"--root",
 		"--cwd",
 		"Metrics:",
+		"INDEX: COMMAND",
 	} {
 		if strings.Contains(help, excluded) {
-			t.Fatalf("tool help contains non-tool text %q", excluded)
+			t.Fatalf("tool help contains prose or non-tool text %q", excluded)
+		}
+	}
+	body := strings.TrimSuffix(help, "\n")
+	if strings.Contains(body, "\n\n") {
+		t.Fatal("tool help contains layout-only blank lines")
+	}
+	for line := range strings.SplitSeq(body, "\n") {
+		if line != strings.TrimSpace(line) {
+			t.Fatalf("tool help line has layout whitespace: %q", line)
 		}
 	}
 	if len(help) >= len(helpTextBase)/2 {
-		t.Fatalf("tool help is not focused: %d bytes versus %d-byte CLI help", len(help), len(helpTextBase))
+		t.Fatalf("tool help is not compact: %d bytes versus %d-byte CLI help", len(help), len(helpTextBase))
 	}
 }
 

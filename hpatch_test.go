@@ -312,6 +312,27 @@ func TestTypeHeredocPreservesLiteralBodyAndLineEndings(t *testing.T) {
 			want:   "first \"quoted\" \\ slash\t\nrm\n CONTENT\n",
 		},
 		{
+			name:   "short tag",
+			script: "new file.txt\ntype <<GO\nshort\nGO\n",
+			want:   "short\n",
+		},
+		{
+			name:   "single-quoted tag",
+			script: "new file.txt\ntype <<'EOF'\nquoted\n'EOF'\nEOF\n",
+			want:   "quoted\n'EOF'\n",
+		},
+		{
+			name:   "double-quoted lowercase tag",
+			script: "new file.txt\ntype <<\"end\"\nlowercase\nend\n",
+			want:   "lowercase\n",
+		},
+		{
+			name: "maximum-length tag",
+			script: "new file.txt\ntype <<" + strings.Repeat("A", 64) + "\nlimit\n" +
+				strings.Repeat("A", 64) + "\n",
+			want: "limit\n",
+		},
+		{
 			name:   "CRLF body",
 			script: "new file.txt\r\ntype <<PAYLOAD\r\none\r\ntwo\r\nPAYLOAD\r",
 			want:   "one\r\ntwo\r\n",
@@ -336,7 +357,11 @@ func TestTypeHeredocFailuresAreHeaderOwnedAndAtomic(t *testing.T) {
 		script string
 		want   string
 	}{
-		{name: "invalid delimiter", script: "new file.txt\ntype <<bad\n", want: "invalid heredoc delimiter"},
+		{name: "empty delimiter", script: "new file.txt\ntype <<\n", want: "invalid heredoc delimiter"},
+		{name: "whitespace delimiter", script: "new file.txt\ntype <<BAD TAG\n", want: "invalid heredoc delimiter"},
+		{name: "unmatched quote", script: "new file.txt\ntype <<'EOF\n", want: "invalid heredoc delimiter"},
+		{name: "oversized delimiter", script: "new file.txt\ntype <<" + strings.Repeat("A", 65) + "\n", want: "invalid heredoc delimiter"},
+
 		{name: "unterminated", script: "new file.txt\ntype <<PAYLOAD\nrm\n", want: "unterminated heredoc"},
 		{name: "oversized", script: "new file.txt\ntype <<PAYLOAD\n" + strings.Repeat("x", hpatchsyntax.MaxHeredocBodyBytes+1) + "\nPAYLOAD\n", want: "heredoc body exceeds"},
 		{name: "invalid UTF-8", script: "new file.txt\ntype <<PAYLOAD\n" + string([]byte{0xff}) + "\nPAYLOAD\n", want: "heredoc body is not UTF-8"},

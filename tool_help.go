@@ -1,84 +1,48 @@
 package hpatch
 
-const toolDescription = `Edit workspace files atomically with one free-form script. Submit the complete
-script in one call. A rejected script changes nothing.
-
-Script format:
-  Outside a type heredoc, write one command per nonblank physical line;
-  commands cannot continue. A literal newline always ends the current inline command.
-  Only type <<TAG consumes following physical lines as one command.
-  Inline quoted operands use JSON-compatible escapes and accept literal horizontal tabs.
-  Escape quotes, backslashes, newlines, carriage returns, NUL, and other C0 controls.
-
-Commands:
-  in PATH                              select an existing file baseline
-  new PATH                             select a pending empty file
-  mv PATH                              move the active pending file
-  rm                                   remove the active file
-  sel LINE START:END                   select inclusive one-based rune columns
-  tsel FROM_LINE "TEXT" [N]           select the first N separate TEXT matches from FROM_LINE
-  bsel "START" "END"                   select a whole-file block; each anchor must be unique
-  rsel START:END                       select inclusive complete logical lines
-  type "TEXT"                          replace the selection or insert at the cursor
-  type <<TAG                           insert or replace with a literal multiline body
-  del                                  delete the selection
-  copy                                 store the selected baseline text
-  cut                                  store and delete the selected baseline text
-  paste                                insert clipboard text after the selection or at the cursor
-  commit                               advance to the next immutable baseline
-
-State and selectors:
-  The first in for an existing file captures an immutable baseline. Every
-  selector and edit for that file uses baseline coordinates even after earlier
-  commands. Returning with in resets its cursor and selection set but keeps recorded
-  edits. mv preserves baseline identity. Text introduced by an edit is not selectable.
-  The script-local clipboard survives file changes and may be pasted repeatedly.
-  commit makes pending state the next immutable baseline without filesystem or output.
-  It clears edits and resets an active cursor to 0:0; the clipboard survives. Script
-  end finalizes edits without that reset.
-
-  sel columns count Unicode code points, including tabs, and both endpoints are
-  inclusive. tsel starts at column 1 of FROM_LINE and scans forward through EOF.
-  N defaults to 1. tsel selects the first N exact matches; all N must exist. If
-  fewer than N exist in the suffix but exactly N exist file-wide,
-  tsel repairs FROM_LINE to the first; extras reject it.
-  Prefer a broader TEXT over occurrence arithmetic. Prefer tsel or rsel when possible
-  because a valid sel range may still target unintended text.
-
-  bsel searches the whole baseline; it does not choose the nearest END. START and END
-  are independent, and each anchor must be independently unique. Avoid short
-  or punctuation-only anchors such as "}"; lengthen them. Anchors must be nonempty
-  and different. ASCII space and tab runs match interchangeably. A block includes
-  both anchors.
-
-Edits:
-  Inline type, tsel, and bsel operands use the quoted syntax above.
-  type and bsel may encode line terminators with escapes such as \n.
-  A heredoc TAG matches [A-Z][A-Z0-9_]{2,31}; its body is literal until a line exactly equal to TAG.
-  Do not quote, indent, or suffix the closing TAG. Never put a physical newline
-  inside a quoted operand. tsel TEXT must stay on one logical line; use a type heredoc
-  only for multiline replacement text.
-  rsel owns line terminators: replacing a terminated selection without an
-  explicit terminator preserves the existing LF, CRLF, or CR.
-  del and cut remove selected logical lines completely. type, del, cut, and paste
-  apply to every active selection atomically. copy stores their shared TEXT once
-  and preserves the selection set. paste inserts after every active selection, or
-  at the cursor otherwise, and then clears the selection set. A linewise paste adds
-  only missing destination boundary terminators.
-
-  Within one generation, disjoint edits finalize together. Overlapping
-  replacements or deletions, insertions inside replacements, and multiple insertions
-  at one baseline position are conflicts. Boundary insertions are allowed. A new
-  file accepts one effective type; rm conflicts with recorded edits to an existing
-  file.
-
-Final-state report:
-  Use workspace-relative paths within the workspace. Parent directories for new
-  files must already exist. Success reports the active path and up to three nearby
-  post-edit lines. Multiple selections report their bounded envelope. Repairs add
-  requested/resolved lines and up to three post-edit context lines. Use the report
-  to verify placement.
-  A rejection reports repair context when available; retry against the unchanged baseline.
+const toolDescription = `HPATCH/1
+call=functions.hpatch(raw_complete_script);forbid=shell|functions.exec;atomic(reject|cancel)=patch:none,workspace:unchanged
+lex.command=nonblank_physical_line;newline=command_end;exception=type_heredoc
+lex.quote=JSON_double_quote;literal_tab=allow;physical_newline=forbid;escape=quote|backslash|LF|CR|NUL|C0
+cmd=in PATH|new PATH|mv DESTINATION|rm|sel LINE START:END|tsel FROM_LINE "TEXT" [N]|bsel "START" "END"|rsel START:END|type "TEXT"|type <<TAG|del|copy|cut|paste|commit
+path=workspace_relative_within_root;in=existing_regular_UTF-8;destination(new|mv)=free;parent(new|mv)=existing_directory
+state.active=in|new=>select;mv DESTINATION=>rename_active_file(source_implicit);rm=>delete_active_file(no_operand)
+state.coords=file.baseline[generation];earlier_edits_shift_coords=false;inserted_text_selectable=false
+state.in=first_existing=>baseline:=file_bytes;known=>cursor:=BOF,selections:=none,edits:=keep
+state.mv=path:=DESTINATION,baseline_id:=keep
+state.commit=all_live_files{baseline:=rendered,edits:=none,cursor:=BOF,selections:=none,active:=keep};clipboard:=keep;partial_filesystem_write=false;whole_script_atomic=true
+state.script_end=finalize_pending_without_reset
+clipboard=script_scope,cross_file,repeat_paste,commit_preserves
+sel=line[LINE].rune[START..END];index=1;inclusive;tab_runes=1
+tsel=baseline[(FROM_LINE,col1)..EOF];match=exact+nonoverlap;select=first_N;N_default=1;require_N
+tsel.TEXT=copy_exact_baseline_text;encode_JSON_only;never_infer|normalize|paraphrase
+tsel.repair=FROM_LINE_only;TEXT_unchanged;suffix_count<N&&file_count==N=>FROM_LINE:=line(first_match);file_count>N=>reject
+bsel=START!=END;nonempty;START_count(file)==1&&END_count(suffix_after_START)==1;selection=START.first_byte..END.last_byte;outside_bytes_preserved;nearest_END=false
+bsel.anchor_fallback=no_exact_match=>ASCII_space_tab_runs_equivalent
+rsel=logical_line[START..END];index=1;inclusive;owns_terminators
+selector.priority=tsel|rsel>bsel>sel;tsel_TEXT=copy_longer_exact_baseline_span_before_occurrence_arithmetic
+numeric_selector.coords=fresh_nl_-ba;within_script_rebase=forbid
+heredoc.tag=[A-Za-z0-9_.-]{1,64};header=type_<<TAG|type_<<'TAG'|type_<<"TAG"
+heredoc.close=unquoted_TAG_exact;indent=0;suffix=none
+heredoc.body=literal_UTF-8;max_bytes=1048576
+inline_linebreaks=type|bsel:allow_encoded_LF_CR;tsel:forbid_LF_CR
+edit.type=selections?replace_each:insert_cursor;selections:=none
+edit.multiselect=type|del|cut|paste;atomic
+edit.del=delete_each_selection;requires=selection
+edit.copy=clipboard:=first_selection_baseline_text;requires=selection;selections:=keep
+edit.cut=clipboard:=first_selection_baseline_text+delete_each_selection;requires=selection;selections:=none
+edit.paste=after_each_selection|cursor;requires=clipboard;selections:=none;clipboard:=keep
+edit.linewise=type_without_final_terminator=>preserve_selected_LF|CRLF|CR;del|cut=>remove_complete_lines;paste=>insert_after_selection+add_missing_boundaries;nonlinewise_destination_may_split_line
+edit.conflict=same_generation{overlap_replace_delete|insert_inside_replacement|same_offset_multi_insert};allow=disjoint|boundary_insert
+file.new=active:=empty_pending;effective_type_count_per_generation<=1
+file.rm=active:=none;existing_with_content_edits=>conflict
+bsel.replace=both_anchors_consumed;following_terminator_outside_selection_unless_encoded_in_END;replacement_final_terminator_may_add_blank_line
+result.success=active_path+cursor_or_selection_envelope+postedit_context_lines<=3
+result.preview=rendered_postedit;source_codepoints_per_line<=64;truncation_marker=none
+result.noop=net_workspace_unchanged=>reject
+result.tsel_repair=requested_line+resolved_line+postedit_context_lines<=3
+result.failure=command_context+repair_context_if_available;repair_context_not_match_candidate;retry_baseline=unchanged
+verify=inspect_reported_lines+formatter_or_parser+tests+whitespace_lint+git_diff_--check
 `
 
 // ToolDescription returns the authoritative free-form tool instructions.

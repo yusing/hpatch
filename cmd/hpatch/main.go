@@ -28,7 +28,9 @@ Input and output:
 Script framing:
   Outside a type heredoc, every nonblank physical line is one command and a literal
   newline ends that inline command. type <<TAG consumes literal following lines until
-  a line exactly equal to TAG; TAG must match [A-Z][A-Z0-9_]{2,31}.
+  an exact unindented closing TAG. TAG is 1-64 ASCII letters, digits, underscores,
+  dots, or hyphens; matching quotes may wrap it in the header and are omitted from
+  the closing line.
 
 Agent workflow:
   1. Inspect the relevant source before constructing selectors.
@@ -126,8 +128,10 @@ Baseline editor state:
   Inline TEXT, START, and END use JSON-compatible quoted strings and additionally
   accept literal horizontal tabs. Escape quotes, backslashes, line terminators, NUL,
   and other C0 controls. Inline type and bsel may encode line terminators; tsel may
-  not. For multiline type text, use type <<TAG with an exact unindented
-  closing TAG instead of placing physical newlines inside a quoted operand.
+  not. For multiline type text, use type <<TAG with an exact unindented closing TAG
+  instead of placing physical newlines inside a quoted operand. A tag may be short
+  or lowercase, and matching single or double quotes around the header tag are not
+  part of the closing line.
 
 Final-state report:
   A successful report starts with the active path and rendered cursor or selection.

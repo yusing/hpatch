@@ -11,7 +11,7 @@ import (
 // MaxHeredocBodyBytes bounds the decoded payload retained by one heredoc.
 const MaxHeredocBodyBytes = 1 << 20
 
-var heredocDelimiterPattern = regexp.MustCompile(`^[A-Z][A-Z0-9_]{2,31}$`)
+var heredocDelimiterPattern = regexp.MustCompile(`^[A-Za-z0-9_.-]{1,64}$`)
 
 // PhysicalLine retains a script line's exact terminator separately from its text.
 type PhysicalLine struct {
@@ -70,8 +70,15 @@ func heredocDelimiter(command string) (string, error) {
 		return "", nil
 	}
 	delimiter := strings.TrimPrefix(command, prefix)
+	if len(delimiter) >= 2 {
+		first := delimiter[0]
+		last := delimiter[len(delimiter)-1]
+		if (first == '\'' || first == '"') && first == last {
+			delimiter = delimiter[1 : len(delimiter)-1]
+		}
+	}
 	if !heredocDelimiterPattern.MatchString(delimiter) {
-		return "", errors.New("invalid heredoc delimiter; expected [A-Z][A-Z0-9_]{2,31}")
+		return "", errors.New("invalid heredoc delimiter; expected 1-64 ASCII letters, digits, underscores, dots, or hyphens, optionally enclosed in matching single or double quotes")
 	}
 	return delimiter, nil
 }
