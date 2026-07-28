@@ -237,6 +237,10 @@ func TestEvaluationFailuresDoNotMutateOrEmitPatch(t *testing.T) {
 	}{
 		{name: "no active file", script: `type "x"`},
 		{name: "future command", script: "in file.txt\nsplice 1:2"},
+		{name: "non-string type operand", script: "in file.txt\ntype null"},
+		{name: "non-JSON trailing whitespace", script: "in file.txt\ntype \"x\"\u00a0"},
+		{name: "non-JSON tsel trailing whitespace", script: "in file.txt\ntsel 1 1 \"a\" \u00a0"},
+		{name: "non-JSON tsel count whitespace", script: "in file.txt\ntsel 1 1 \"a\" 1\u00a0"},
 		{name: "malformed selection", script: "in file.txt\nsel 1 2"},
 		{name: "number overflow", script: "in file.txt\nsel 999999999999999999999999999 1:1"},
 		{name: "out of bounds", script: "in file.txt\nsel 1 20:21"},
@@ -264,14 +268,44 @@ func TestEvaluationFailuresDoNotMutateOrEmitPatch(t *testing.T) {
 	}
 }
 
+func TestQuotedOperandsAcceptLiteralTabs(t *testing.T) {
+	root := t.TempDir()
+	writeTestFile(t, root, "text.txt", "old\tvalue\n", 0o644)
+	writeTestFile(t, root, "block.txt", "BEGIN\tone\nmiddle\nEND\ttwo\n", 0o644)
+	writeTestFile(t, root, "next.txt", "prefix\nBEGIN\tthree\nmiddle\nEND\tfour\n", 0o644)
+	script := "in text.txt\n" +
+		"tsel 1 1 \t\"old\tvalue\"\n" +
+		"type  \"new\tvalue\"\n" +
+		"in block.txt\n" +
+		"bsel   \"BEGIN\tone\" \"END\ttwo\"\n" +
+		"type \t\"block\"\n" +
+		"in next.txt\n" +
+		"bsel_next \t\"BEGIN\tthree\" \"END\tfour\"\n" +
+		"type  \"next\"\n"
+
+	stdout, stderr, exitCode := runForTest(root, nil, script)
+	if exitCode != 0 || stdout != "" || stderr != "" {
+		t.Fatalf("Run() = exit %d, stdout %q, stderr %q", exitCode, stdout, stderr)
+	}
+	for path, want := range map[string]string{
+		"text.txt":  "new\tvalue\n",
+		"block.txt": "block\n",
+		"next.txt":  "prefix\nnext\n",
+	} {
+		if got := readTestFile(t, root, path); got != want {
+			t.Errorf("%s = %q, want %q", path, got, want)
+		}
+	}
+}
+
 func TestParseReportsAllSyntaxErrorsWithoutEvaluation(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, root, "file.txt", "unchanged\n", 0o644)
 	script := "in file.txt\n" +
-		"type \"literal\tcontrol\"\n" +
+		"type \"literal\x01control\"\n" +
 		"bsel \"start\" nope\n" +
 		"tsel 1 1 \"first\\nsecond\"\n" +
-		"tsel 1 1 \"literal\tcontrol\"\n"
+		"tsel 1 1 \"literal\x01control\"\n"
 
 	stdout, stderr, exitCode := runForTest(root, []string{"translate"}, script)
 	if exitCode != 1 || stdout != "" {
@@ -279,13 +313,13 @@ func TestParseReportsAllSyntaxErrorsWithoutEvaluation(t *testing.T) {
 	}
 	for _, want := range []string{
 		"command 2, source line 2, operation \"type\"",
-		"invalid JSON string for type: invalid character",
+		"invalid quoted string for type: invalid character",
 		"command 3, source line 3, operation \"bsel\"",
-		"invalid bsel JSON strings:",
+		"invalid bsel quoted strings:",
 		"command 4, source line 4, operation \"tsel\"",
 		"tsel text must stay on one line",
 		"command 5, source line 5, operation \"tsel\"",
-		"invalid JSON string for tsel: invalid character",
+		"invalid quoted string for tsel: invalid character",
 	} {
 		if !strings.Contains(stderr, want) {
 			t.Fatalf("diagnostic lacks %q:\n%s", want, stderr)

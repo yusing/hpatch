@@ -5,9 +5,9 @@ script in one call. A rejected script changes nothing.
 
 Script format:
   Write one command per nonblank physical line; commands cannot continue.
-  A literal newline always ends the current command. Quoted operands use JSON
-  syntax. Encode allowed controls as \t, \n, or \r; never insert literal controls
-  or newlines.
+  A literal newline always ends the current command. Inline quoted operands use
+  JSON-compatible escapes and additionally accept literal horizontal tabs. Escape
+  quotes, backslashes, newlines, carriage returns, NUL, and other C0 controls.
 
 Commands:
   in PATH                              select an existing file baseline
@@ -48,8 +48,8 @@ State and selectors:
   anchors.
 
 Edits:
-  type, bsel, and bsel_next JSON operands may encode line terminators with
-  escapes such as \n. The escape stays on the command's physical line and decodes
+  Inline type, tsel, bsel, and bsel_next operands use the quoted syntax above.
+  type, bsel, and bsel_next may encode line terminators with escapes such as \n.
   inside the operand. tsel TEXT must decode to exactly one logical line and must
   not contain \n or \r; use bsel for a multiline substring or rsel for complete
   lines. rsel owns line terminators: replacing a terminated selection without an

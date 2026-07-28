@@ -1,10 +1,9 @@
 package hpatch
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
+	"hpatch/internal/hpatchsyntax"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -206,12 +205,7 @@ func recognizeTextSpanVariant(line string) textSpanVariant {
 }
 
 func decodeLeadingTextOperand(encoded string) (string, string, error) {
-	decoder := json.NewDecoder(strings.NewReader(encoded))
-	var text string
-	if err := decoder.Decode(&text); err != nil {
-		return "", "", err
-	}
-	return text, encoded[decoder.InputOffset():], nil
+	return hpatchsyntax.DecodeQuoted(encoded)
 }
 
 func attemptForInstruction(command instruction) commandAttempt {
@@ -298,9 +292,9 @@ func parseInstruction(sourceLine int, line string) (instruction, error) {
 		if !ok {
 			continue
 		}
-		startText, endText, err := decodeTwoJSONStrings(valueText)
+		startText, endText, err := decodeTwoQuotedStrings(valueText)
 		if err != nil {
-			return instruction{}, scriptError(sourceLine, fmt.Sprintf("invalid %s JSON strings: %v", operation, err))
+			return instruction{}, scriptError(sourceLine, fmt.Sprintf("invalid %s quoted strings: %v", operation, err))
 		}
 		if startText == "" || endText == "" {
 			return instruction{}, scriptError(sourceLine, operation+" literals must not be empty")
@@ -325,11 +319,13 @@ func parseInstruction(sourceLine int, line string) (instruction, error) {
 		}
 		return instruction{line: sourceLine, operation: "rsel", lineNumber: start, endLine: end}, nil
 	}
-
 	if valueText, ok := strings.CutPrefix(line, "type "); ok {
-		var value string
-		if err := json.Unmarshal([]byte(valueText), &value); err != nil {
-			return instruction{}, scriptError(sourceLine, "invalid JSON string for type: "+err.Error())
+		value, trailing, err := hpatchsyntax.DecodeQuoted(valueText)
+		if err != nil {
+			return instruction{}, scriptError(sourceLine, "invalid quoted string for type: "+err.Error())
+		}
+		if !onlyOperandWhitespace(trailing) {
+			return instruction{}, scriptError(sourceLine, "trailing text after type string")
 		}
 		return instruction{line: sourceLine, operation: "type", text: value}, nil
 	}
@@ -340,15 +336,15 @@ func parseInstruction(sourceLine int, line string) (instruction, error) {
 func decodeTextSelection(encoded string) (string, int, error) {
 	text, trailing, err := decodeLeadingTextOperand(encoded)
 	if err != nil {
-		return "", 0, fmt.Errorf("invalid JSON string for tsel: %w", err)
+		return "", 0, fmt.Errorf("invalid quoted string for tsel: %w", err)
 	}
 	if trailing == "" {
 		return text, 1, nil
 	}
-	if !isJSONWhitespace(trailing[0]) {
+	if !isOperandWhitespace(trailing[0]) {
 		return "", 0, withReason(reasonInvalidCount, errors.New("tsel count must be separated by whitespace"))
 	}
-	countText := strings.TrimSpace(trailing)
+	countText := strings.Trim(trailing, " \t\r\n")
 	if countText == "" {
 		return text, 1, nil
 	}
@@ -362,30 +358,35 @@ func decodeTextSelection(encoded string) (string, int, error) {
 	return text, count, nil
 }
 
-func decodeTwoJSONStrings(encoded string) (string, string, error) {
-	decoder := json.NewDecoder(strings.NewReader(encoded))
-	var start, end string
-	if err := decoder.Decode(&start); err != nil {
+func decodeTwoQuotedStrings(encoded string) (string, string, error) {
+	start, trailing, err := hpatchsyntax.DecodeQuoted(encoded)
+	if err != nil {
 		return "", "", err
 	}
-	separatorOffset := decoder.InputOffset()
-	if separatorOffset >= int64(len(encoded)) || !isJSONWhitespace(encoded[separatorOffset]) {
-		return "", "", errors.New("bsel literals must be separated by whitespace")
+	if trailing == "" || !isOperandWhitespace(trailing[0]) {
+		return "", "", errors.New("quoted operands must be separated by whitespace")
 	}
-	if err := decoder.Decode(&end); err != nil {
+	remaining := strings.TrimLeft(trailing, " \t\r\n")
+	end, trailing, err := hpatchsyntax.DecodeQuoted(remaining)
+	if err != nil {
 		return "", "", err
 	}
-	var trailing json.RawMessage
-	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
-		if err == nil {
-			return "", "", errors.New("trailing JSON value")
-		}
-		return "", "", err
+	if !onlyOperandWhitespace(trailing) {
+		return "", "", errors.New("trailing text after bsel literals")
 	}
 	return start, end, nil
 }
 
-func isJSONWhitespace(character byte) bool {
+func onlyOperandWhitespace(value string) bool {
+	for index := range len(value) {
+		if !isOperandWhitespace(value[index]) {
+			return false
+		}
+	}
+	return true
+}
+
+func isOperandWhitespace(character byte) bool {
 	return character == ' ' || character == '\t' || character == '\r' || character == '\n'
 }
 
