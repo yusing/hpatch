@@ -13,7 +13,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"sync/atomic"
+	"sync"
 	"text/tabwriter"
 	"time"
 	"unicode/utf8"
@@ -39,10 +39,61 @@ var commandOperations = [commandCount]string{
 	"type", "del", "dup",
 }
 
+type pendingMetricsWriterState struct {
+	count uint64
+	done  chan struct{}
+}
+
 // pendingMetricsWriters prevents this process's repeated shared-lock readers
 // from starving a writer while it uses cancellable, non-blocking lock attempts.
-// The filesystem lock remains the authority across processes.
-var pendingMetricsWriters atomic.Int64
+// Entries are scoped to the canonical lock path; the filesystem lock remains
+// the authority across processes.
+var pendingMetricsWriters = struct {
+	mu         sync.Mutex
+	byLockPath map[string]*pendingMetricsWriterState
+}{byLockPath: make(map[string]*pendingMetricsWriterState)}
+
+func metricLockPath(dataDirectory string) string {
+	directory, err := filepath.Abs(dataDirectory)
+	if err != nil {
+		directory = filepath.Clean(dataDirectory)
+	}
+	if resolved, err := filepath.EvalSymlinks(directory); err == nil {
+		directory = resolved
+	}
+	return filepath.Join(directory, metricsLockname)
+}
+
+func registerPendingMetricsWriter(lockPath string) {
+	pendingMetricsWriters.mu.Lock()
+	defer pendingMetricsWriters.mu.Unlock()
+	state := pendingMetricsWriters.byLockPath[lockPath]
+	if state == nil {
+		state = &pendingMetricsWriterState{done: make(chan struct{})}
+		pendingMetricsWriters.byLockPath[lockPath] = state
+	}
+	state.count++
+}
+
+func unregisterPendingMetricsWriter(lockPath string) {
+	pendingMetricsWriters.mu.Lock()
+	defer pendingMetricsWriters.mu.Unlock()
+	state := pendingMetricsWriters.byLockPath[lockPath]
+	state.count--
+	if state.count == 0 {
+		delete(pendingMetricsWriters.byLockPath, lockPath)
+		close(state.done)
+	}
+}
+
+func waitForPendingMetricsWriters(lockPath string) {
+	pendingMetricsWriters.mu.Lock()
+	state := pendingMetricsWriters.byLockPath[lockPath]
+	pendingMetricsWriters.mu.Unlock()
+	if state != nil {
+		<-state.done
+	}
+}
 
 type commandMetric struct {
 	Invocations uint64 `json:"invocations"`
@@ -109,12 +160,13 @@ func updateMetricsForSessionContext(ctx context.Context, dataDirectory string, e
 	if err := os.MkdirAll(dataDirectory, 0o700); err != nil {
 		return fmt.Errorf("creating metrics directory: %w", err)
 	}
-	lock := flock.New(filepath.Join(dataDirectory, metricsLockname))
-	pendingMetricsWriters.Add(1)
+	lockPath := metricLockPath(dataDirectory)
+	lock := flock.New(lockPath)
+	registerPendingMetricsWriter(lockPath)
 	waitingForLock := true
 	defer func() {
 		if waitingForLock {
-			pendingMetricsWriters.Add(-1)
+			unregisterPendingMetricsWriter(lockPath)
 		}
 	}()
 	locked, err := lock.TryLockContext(ctx, metricsLockRetryDelay)
@@ -127,7 +179,7 @@ func updateMetricsForSessionContext(ctx context.Context, dataDirectory string, e
 		}
 		return fmt.Errorf("locking metrics: lock was not acquired")
 	}
-	pendingMetricsWriters.Add(-1)
+	unregisterPendingMetricsWriter(lockPath)
 	waitingForLock = false
 	defer func() {
 		if unlockErr := lock.Unlock(); unlockErr != nil {
@@ -329,10 +381,9 @@ func readMetrics(dataDirectory string) (total metrics, err error) {
 		}
 		return metrics{}, fmt.Errorf("checking metrics: %w", err)
 	}
-	for pendingMetricsWriters.Load() != 0 {
-		time.Sleep(metricsLockRetryDelay)
-	}
-	lock := flock.New(filepath.Join(dataDirectory, metricsLockname))
+	lockPath := metricLockPath(dataDirectory)
+	waitForPendingMetricsWriters(lockPath)
+	lock := flock.New(lockPath)
 	if err := lock.RLock(); err != nil {
 		return metrics{}, fmt.Errorf("locking metrics: %w", err)
 	}

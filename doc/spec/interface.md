@@ -146,8 +146,9 @@ that the operating system had not yet flushed.
 `hpatch gain` first writes an output-token table comparing successful calls, failed
 calls, and all calls. The successful row compares effective hpatch output with the
 generated `apply_patch` output and reports its reduction. The failed row compares
-ineffective hpatch output with the tokenized empty `apply_patch` carrier emitted by the
-router. The all-calls row reports both totals and the overall output-token reduction.
+ineffective hpatch output with the fixed direct-call program carrying the empty patch
+semantic baseline. The downstream diagnostic carrier is excluded. The all-calls row
+reports both totals and the overall output-token reduction.
 
 Effective-only reduction compares effective hpatch output against generated `apply_patch`
 output. Overall reduction is `(effective_apply_patch + failed_apply_patch - effective_hpatch

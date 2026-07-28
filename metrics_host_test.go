@@ -169,6 +169,33 @@ func TestRecordHostMetricsCancellationInterruptsLockWait(t *testing.T) {
 	}
 }
 
+func TestPendingMetricsWriterDoesNotBlockOtherDirectory(t *testing.T) {
+	blockedDirectory := t.TempDir()
+	readableDirectory := t.TempDir()
+	if err := updateMetrics(readableDirectory, metrics{HPatchTokens: 1}); err != nil {
+		t.Fatal(err)
+	}
+	lockPath := metricLockPath(blockedDirectory)
+	registerPendingMetricsWriter(lockPath)
+	defer unregisterPendingMetricsWriter(lockPath)
+
+	result := make(chan error, 1)
+	go func() {
+		_, err := readMetrics(readableDirectory)
+		result <- err
+	}()
+	timer := time.NewTimer(time.Second)
+	defer timer.Stop()
+	select {
+	case err := <-result:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-timer.C:
+		t.Fatal("reader for an unrelated metrics directory was blocked")
+	}
+}
+
 func recordHostMetricForTest(t *testing.T, dataDirectory string, record HostMetricRecord) {
 	t.Helper()
 	if err := RecordHostMetrics(t.Context(), dataDirectory, record); err != nil {
