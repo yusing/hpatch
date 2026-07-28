@@ -25,6 +25,11 @@ Input and output:
   never modifies files, writes one OpenAI apply_patch envelope to stdout, and then
   writes the pending final-state report to stderr. Failures use stderr and nonzero status.
 
+Script framing:
+  Outside a type heredoc, every nonblank physical line is one command and a literal
+  newline ends that inline command. type <<TAG consumes literal following lines until
+  a line exactly equal to TAG; TAG must match [A-Z][A-Z0-9_]{2,31}.
+
 Agent workflow:
   1. Inspect the relevant source before constructing selectors.
   2. Build selectors against each existing file's immutable baseline.
@@ -54,6 +59,7 @@ Editing commands:
   bsel_next "START" "END"             select one state-scoped uniquely anchored block
   rsel START:END                      select inclusive complete logical lines
   type "TEXT"                         record replacement or insertion at baseline coordinates
+  type <<TAG                          record literal multiline replacement or insertion text
   del                                 record deletion of the selection
   copy                                store the baseline selection in the script clipboard
   cut                                 store and delete the baseline selection
@@ -112,9 +118,11 @@ Baseline editor state:
   lines. A linewise paste preserves copied bytes and adds only missing destination
   boundary terminators, using the destination file's line-ending style.
 
-  TEXT, START, and END are JSON strings. Use a JSON serializer for nontrivial
-  operands rather than hand-escaping quotes, backslashes, newlines, or Unicode.
-  type, bsel, and bsel_next strings may contain encoded line terminators; tsel may not.
+  Inline TEXT, START, and END use JSON-compatible quoted strings and additionally
+  accept literal horizontal tabs. Escape quotes, backslashes, line terminators, NUL,
+  and other C0 controls. Inline type, bsel, and bsel_next may encode line terminators;
+  tsel may not. For multiline type text, use type <<TAG with an exact unindented
+  closing TAG instead of placing physical newlines inside a quoted operand.
 
 Final-state report:
   A successful report starts with the active path and rendered cursor or selection,

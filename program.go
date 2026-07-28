@@ -105,15 +105,30 @@ func parse(source string) (*program, error) {
 	program := &program{}
 	var failures []*commandError
 	commandIndex := 0
-	for index, raw := range strings.Split(source, "\n") {
-		lineNumber := index + 1
-		line := strings.TrimSuffix(raw, "\r")
+	lines := hpatchsyntax.SplitPhysicalLines(source)
+	for index := 0; index < len(lines); {
+		headerIndex := index
+		line := lines[headerIndex].Text
+		index++
 		if strings.TrimSpace(line) == "" {
 			continue
 		}
 		commandIndex++
+		sourceLine := headerIndex + 1
 		attempt := recognizeCommandAttempt(line)
-		command, err := parseInstruction(lineNumber, line)
+
+		frame, frameErr := hpatchsyntax.FrameCommand(lines, headerIndex, line)
+		index = frame.Next
+		var command instruction
+		var err error
+		switch {
+		case frameErr != nil:
+			err = scriptError(sourceLine, frameErr.Error())
+		case frame.Delimiter != "":
+			command = instruction{line: sourceLine, operation: "type", text: frame.Body}
+		default:
+			command, err = parseInstruction(sourceLine, line)
+		}
 		if err != nil {
 			message := err.Error()
 			if sourceError, ok := errors.AsType[*commandError](err); ok {
@@ -123,7 +138,7 @@ func parse(source string) (*program, error) {
 				Attempt:   attempt,
 				Reason:    reasonOf(err, reasonSyntax),
 				Command:   commandIndex,
-				Line:      lineNumber,
+				Line:      sourceLine,
 				Operation: strings.Fields(line)[0],
 				Category:  "syntax",
 				Source:    line,

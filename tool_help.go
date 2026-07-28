@@ -4,10 +4,11 @@ const toolDescription = `Edit workspace files atomically with one free-form scri
 script in one call. A rejected script changes nothing.
 
 Script format:
-  Write one command per nonblank physical line; commands cannot continue.
-  A literal newline always ends the current command. Inline quoted operands use
-  JSON-compatible escapes and additionally accept literal horizontal tabs. Escape
-  quotes, backslashes, newlines, carriage returns, NUL, and other C0 controls.
+  Outside a type heredoc, write one command per nonblank physical line;
+  commands cannot continue. A literal newline always ends the current inline command.
+  Only type <<TAG consumes following physical lines as one command.
+  Inline quoted operands use JSON-compatible escapes and accept literal horizontal tabs.
+  Escape quotes, backslashes, newlines, carriage returns, NUL, and other C0 controls.
 
 Commands:
   in PATH                              select an existing file baseline
@@ -20,6 +21,7 @@ Commands:
   bsel_next "START" "END"              select a block in scope; each anchor must be unique
   rsel START:END                       select inclusive complete logical lines
   type "TEXT"                          replace the selection or insert at the cursor
+  type <<TAG                           insert or replace with a literal multiline body
   del                                  delete the selection
   copy                                 store the selected baseline text
   cut                                  store and delete the selected baseline text
@@ -50,11 +52,13 @@ State and selectors:
 Edits:
   Inline type, tsel, bsel, and bsel_next operands use the quoted syntax above.
   type, bsel, and bsel_next may encode line terminators with escapes such as \n.
-  inside the operand. tsel TEXT must decode to exactly one logical line and must
-  not contain \n or \r; use bsel for a multiline substring or rsel for complete
-  lines. rsel owns line terminators: replacing a terminated selection without an
+  A heredoc TAG matches [A-Z][A-Z0-9_]{2,31}; its body is literal until a line exactly equal to TAG.
+  Do not quote, indent, or suffix the closing TAG. Never put a physical newline
+  inside a quoted operand. tsel TEXT must stay on one logical line; use a type heredoc
+  only for multiline replacement text.
+  rsel owns line terminators: replacing a terminated selection without an
   explicit terminator preserves the existing LF, CRLF, or CR.
- del and cut remove selected logical lines completely.
+  del and cut remove selected logical lines completely.
   copy preserves the selection; cut leaves the cursor at its start. paste inserts
   after an active selection, or at the cursor otherwise, and then clears the selection.
   A linewise paste adds only missing destination boundary terminators.

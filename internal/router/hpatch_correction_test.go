@@ -41,6 +41,77 @@ func TestHPatchCorrectionParsesEntries(t *testing.T) {
 	}
 }
 
+func TestHPatchCorrectionParsesHeredocAsOneEntry(t *testing.T) {
+	corrections, err := parseHPatchCorrections("2: type <<BODY\n5: rm\nBODY\n3: rm\n")
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if len(corrections) != 2 {
+		t.Fatalf("parsed %d corrections, want 2", len(corrections))
+	}
+	if got := corrections[0]; got.command != 2 || got.replacement != "type <<BODY\n5: rm\nBODY" {
+		t.Errorf("heredoc correction = %+v", got)
+	}
+	if got := corrections[1]; got != (hpatchCorrection{command: 3, replacement: "rm"}) {
+		t.Errorf("following correction = %+v", got)
+	}
+}
+
+func TestHPatchCorrectionIndexesAndReplacesCompleteHeredocFrames(t *testing.T) {
+	base := "new file.txt\ntype <<BODY\nraw\nBODY\nrm\n"
+	corrected, err := applyHPatchCorrections(base, []hpatchCorrection{{command: 3, replacement: `type "tail"`}})
+	if err != nil {
+		t.Fatalf("replace after heredoc: %v", err)
+	}
+	if corrected != "new file.txt\ntype <<BODY\nraw\nBODY\ntype \"tail\"\n" {
+		t.Errorf("replacement after heredoc = %q", corrected)
+	}
+
+	corrected, err = applyHPatchCorrections(base, []hpatchCorrection{{command: 2, replacement: `type "short"`}})
+	if err != nil {
+		t.Fatalf("replace heredoc: %v", err)
+	}
+	if corrected != "new file.txt\ntype \"short\"\nrm\n" {
+		t.Errorf("heredoc frame replacement = %q", corrected)
+	}
+}
+
+func TestHPatchCorrectionAppliesHeredocReplacementLineEndings(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		base    string
+		payload string
+		want    string
+	}{
+		{
+			name:    "LF",
+			base:    "new file.txt\ntype \"old\"\nrm\n",
+			payload: "2: type <<BODY\none\nBODY\n",
+			want:    "new file.txt\ntype <<BODY\none\nBODY\nrm\n",
+		},
+		{
+			name:    "CRLF",
+			base:    "new file.txt\r\ntype \"old\"\r\nrm\r\n",
+			payload: "2: type <<BODY\r\none\r\nBODY\r\n",
+			want:    "new file.txt\r\ntype <<BODY\r\none\r\nBODY\r\nrm\r\n",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			corrections, err := parseHPatchCorrections(test.payload)
+			if err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			corrected, err := applyHPatchCorrections(test.base, corrections)
+			if err != nil {
+				t.Fatalf("apply: %v", err)
+			}
+			if corrected != test.want {
+				t.Fatalf("corrected script = %q, want %q", corrected, test.want)
+			}
+		})
+	}
+}
+
 func TestHPatchCorrectionPreservesSignificantLeadingSpace(t *testing.T) {
 	// Only the single space after the colon separates index from command, so a
 	// replacement that intentionally starts with more whitespace keeps it.
@@ -64,6 +135,8 @@ func TestHPatchCorrectionRejectsMalformedPayloads(t *testing.T) {
 		{"empty replacement", "2:\n", "has no replacement command"},
 		{"blank replacement", "2:   \n", "has no replacement command"},
 		{"duplicate index", "2: sel 2 1:2\n2: sel 2 3:4\n", "appears more than once"},
+		{"invalid heredoc delimiter", "2: type <<bad\n", "invalid heredoc delimiter"},
+		{"unterminated heredoc", "2: type <<BODY\nraw\n", "unterminated heredoc"},
 		{"empty payload", "\n\n", "correction payload is empty"},
 	} {
 		_, err := parseHPatchCorrections(testCase.payload)

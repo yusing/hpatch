@@ -159,15 +159,16 @@ const hpatchCorrectionInstructions = `
 Repairing a rejected script:
   When the previous hpatch call was rejected, you may send a correction instead of
   the complete script. A correction replaces named commands of that rejected script;
-  every other command is reused unchanged. Send one line per replaced command:
+  every other command is reused unchanged. Send one entry per replaced command:
 
     INDEX: COMMAND
 
-  INDEX is the one-based command number the diagnostic reported, counting only
-  nonblank command lines. Every line of the payload must have this form, each index
-  may appear once, and the replacement must be a complete command. The repaired
-  script is revalidated in full against unchanged files, so a correction is atomic
-  exactly as a script is. To add or remove a command, send the complete script.
+  INDEX is the one-based command number the diagnostic reported. A replacement
+  INDEX: type <<TAG consumes its following body and closing TAG as that one entry.
+  Every nonblank line outside such a body must be an indexed replacement header.
+  Each command index may appear once. The repaired script is revalidated in full
+  against unchanged files, so a correction is atomic exactly as a script is. To add
+  or remove a command, send the complete script.
 `
 
 // hpatchCorrectionHint is appended to a rejection so the cheaper repair path is

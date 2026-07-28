@@ -3,6 +3,7 @@ package hpatch
 import (
 	"bytes"
 	"errors"
+	"hpatch/internal/hpatchsyntax"
 	"hpatch/internal/patchtest"
 	"io/fs"
 	"os"
@@ -295,6 +296,70 @@ func TestQuotedOperandsAcceptLiteralTabs(t *testing.T) {
 		if got := readTestFile(t, root, path); got != want {
 			t.Errorf("%s = %q, want %q", path, got, want)
 		}
+	}
+}
+
+func TestTypeHeredocPreservesLiteralBodyAndLineEndings(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		script string
+		want   string
+	}{
+		{
+			name:   "LF literal body",
+			script: "new file.txt\ntype <<CONTENT\nfirst \"quoted\" \\ slash\t\nrm\n CONTENT\nCONTENT\n",
+			want:   "first \"quoted\" \\ slash\t\nrm\n CONTENT\n",
+		},
+		{
+			name:   "CRLF body",
+			script: "new file.txt\r\ntype <<PAYLOAD\r\none\r\ntwo\r\nPAYLOAD\r",
+			want:   "one\r\ntwo\r\n",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			stdout, stderr, exitCode := runForTest(root, nil, test.script)
+			if exitCode != 0 || stdout != "" || stderr != "" {
+				t.Fatalf("Run() = exit %d, stdout %q, stderr %q", exitCode, stdout, stderr)
+			}
+			if got := readTestFile(t, root, "file.txt"); got != test.want {
+				t.Fatalf("file.txt = %q, want %q", got, test.want)
+			}
+		})
+	}
+}
+
+func TestTypeHeredocFailuresAreHeaderOwnedAndAtomic(t *testing.T) {
+	tests := []struct {
+		name   string
+		script string
+		want   string
+	}{
+		{name: "invalid delimiter", script: "new file.txt\ntype <<bad\n", want: "invalid heredoc delimiter"},
+		{name: "unterminated", script: "new file.txt\ntype <<PAYLOAD\nrm\n", want: "unterminated heredoc"},
+		{name: "oversized", script: "new file.txt\ntype <<PAYLOAD\n" + strings.Repeat("x", hpatchsyntax.MaxHeredocBodyBytes+1) + "\nPAYLOAD\n", want: "heredoc body exceeds"},
+		{name: "invalid UTF-8", script: "new file.txt\ntype <<PAYLOAD\n" + string([]byte{0xff}) + "\nPAYLOAD\n", want: "heredoc body is not UTF-8"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			stdout, stderr, exitCode := runForTest(root, []string{"translate"}, test.script)
+			if exitCode == 0 || stdout != "" || !strings.Contains(stderr, test.want) {
+				t.Fatalf("Run() = exit %d, stdout %q, stderr %q", exitCode, stdout, stderr)
+			}
+			if got := readTree(t, root); len(got) != 0 {
+				t.Fatalf("failure mutated tree: %#v", got)
+			}
+
+			_, err := parse(test.script)
+			failures := commandsOf(err)
+			if len(failures) != 1 {
+				t.Fatalf("parse failures = %d, want one header-owned failure: %v", len(failures), err)
+			}
+			if failure := failures[0]; failure.Command != 2 || failure.Line != 2 || failure.Operation != "type" {
+				t.Fatalf("failure context = %+v", failure)
+			}
+		})
 	}
 }
 

@@ -2,6 +2,7 @@ package router
 
 import (
 	"fmt"
+	"hpatch/internal/hpatchsyntax"
 	"regexp"
 	"strconv"
 	"strings"
@@ -24,46 +25,41 @@ type hpatchCorrection struct {
 	replacement string
 }
 
+type hpatchScriptFrame struct {
+	start int
+	end   int
+}
+
 // isHPatchCorrection reports whether payload corrects a rejected script rather
 // than supplying a new one. Blank leading lines are ignored so the test matches
 // hpatch's own tolerance for surrounding blank lines.
 func isHPatchCorrection(payload string) bool {
-	for line := range hpatchScriptLines(payload) {
-		return hpatchCorrectionOpener.MatchString(line)
+	for _, line := range hpatchsyntax.SplitPhysicalLines(payload) {
+		if strings.TrimSpace(line.Text) == "" {
+			continue
+		}
+		return hpatchCorrectionOpener.MatchString(line.Text)
 	}
 	return false
 }
 
-// hpatchScriptLines yields the nonblank lines of a script or correction payload
-// in order. It mirrors hpatch's own parser: a trailing carriage return is not
-// part of the line, and a blank line is not a command. Command indices count
-// only the lines this yields, while hpatch's "source line" diagnostics count
-// every line, so the two numbers diverge whenever a script contains a blank
-// line. Corrections key on the command index.
-func hpatchScriptLines(payload string) func(func(string) bool) {
-	return func(yield func(string) bool) {
-		for raw := range strings.SplitSeq(payload, "\n") {
-			line := strings.TrimSuffix(raw, "\r")
-			if strings.TrimSpace(line) == "" {
-				continue
-			}
-			if !yield(line) {
-				return
-			}
-		}
-	}
-}
-
-// parseHPatchCorrections reads a correction payload. Every nonblank line must
-// be one entry, because a payload that mixes corrections with raw commands has
-// no unambiguous reading.
+// parseHPatchCorrections reads a correction payload. Every nonblank command
+// header must be one entry. A heredoc replacement consumes its literal body and
+// closing delimiter as part of that entry.
 func parseHPatchCorrections(payload string) ([]hpatchCorrection, error) {
+	lines := hpatchsyntax.SplitPhysicalLines(payload)
 	var corrections []hpatchCorrection
 	seen := make(map[int]bool)
-	for line := range hpatchScriptLines(payload) {
+	for index := 0; index < len(lines); {
+		headerIndex := index
+		line := lines[index].Text
+		index++
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
 		match := hpatchCorrectionPattern.FindStringSubmatch(line)
 		if match == nil {
-			return nil, fmt.Errorf("correction %q is not `INDEX: COMMAND`; every line of a correction must name the command it replaces", hpatchCorrectionPreview(line))
+			return nil, fmt.Errorf("correction %q is not `INDEX: COMMAND`; every command header of a correction must name the command it replaces", hpatchCorrectionPreview(line))
 		}
 		command, err := strconv.Atoi(match[1])
 		if err != nil {
@@ -73,11 +69,19 @@ func parseHPatchCorrections(payload string) ([]hpatchCorrection, error) {
 		if strings.TrimSpace(replacement) == "" {
 			return nil, fmt.Errorf("correction for command %d has no replacement command; resend the complete script to remove a command", command)
 		}
+		frame, err := hpatchsyntax.FrameCommand(lines, headerIndex, replacement)
+		if err != nil {
+			return nil, fmt.Errorf("correction for command %d: %w", command, err)
+		}
+		index = frame.Next
 		if seen[command] {
 			return nil, fmt.Errorf("correction for command %d appears more than once", command)
 		}
 		seen[command] = true
-		corrections = append(corrections, hpatchCorrection{command: command, replacement: replacement})
+		corrections = append(corrections, hpatchCorrection{
+			command:     command,
+			replacement: correctionFrameText(lines, headerIndex, frame.Next, replacement),
+		})
 	}
 	if len(corrections) == 0 {
 		return nil, fmt.Errorf("correction payload is empty")
@@ -85,34 +89,72 @@ func parseHPatchCorrections(payload string) ([]hpatchCorrection, error) {
 	return corrections, nil
 }
 
-// applyHPatchCorrections rebuilds base with each named command replaced. Line
-// terminators and blank lines are preserved so that the reconstructed script's
-// command indices and source lines both stay stable across a chain of
-// corrections.
-func applyHPatchCorrections(base string, corrections []hpatchCorrection) (string, error) {
-	raw := strings.Split(base, "\n")
-	positions := make([]int, 0, len(raw))
-	for index, line := range raw {
-		if strings.TrimSpace(strings.TrimSuffix(line, "\r")) == "" {
-			continue
-		}
-		positions = append(positions, index)
+func correctionFrameText(lines []hpatchsyntax.PhysicalLine, start, end int, command string) string {
+	if end == start+1 {
+		return command
 	}
-	if len(positions) == 0 {
+	var replacement strings.Builder
+	replacement.WriteString(command)
+	replacement.WriteString(lines[start].Terminator)
+	for index := start + 1; index < end; index++ {
+		replacement.WriteString(lines[index].Text)
+		if index < end-1 {
+			replacement.WriteString(lines[index].Terminator)
+		}
+	}
+	return replacement.String()
+}
+
+// applyHPatchCorrections rebuilds base with each named command frame replaced.
+// The replacement inherits the replaced frame's final line terminator; heredoc
+// body terminators come from the correction payload itself.
+func applyHPatchCorrections(base string, corrections []hpatchCorrection) (string, error) {
+	lines := hpatchsyntax.SplitPhysicalLines(base)
+	frames := hpatchCommandFrames(lines)
+	if len(frames) == 0 {
 		return "", fmt.Errorf("the rejected script has no commands to correct")
 	}
-	for _, correction := range corrections {
-		if correction.command > len(positions) {
-			return "", fmt.Errorf("command %d does not exist; the rejected script has %d commands", correction.command, len(positions))
-		}
-		index := positions[correction.command-1]
-		terminator := ""
-		if strings.HasSuffix(raw[index], "\r") {
-			terminator = "\r"
-		}
-		raw[index] = correction.replacement + terminator
+	type frameReplacement struct {
+		end  int
+		text string
 	}
-	return strings.Join(raw, "\n"), nil
+	replacements := make(map[int]frameReplacement, len(corrections))
+	for _, correction := range corrections {
+		if correction.command > len(frames) {
+			return "", fmt.Errorf("command %d does not exist; the rejected script has %d commands", correction.command, len(frames))
+		}
+		frame := frames[correction.command-1]
+		replacements[frame.start] = frameReplacement{end: frame.end, text: correction.replacement}
+	}
+
+	var corrected strings.Builder
+	for index := 0; index < len(lines); {
+		if replacement, ok := replacements[index]; ok {
+			corrected.WriteString(replacement.text)
+			corrected.WriteString(lines[replacement.end-1].Terminator)
+			index = replacement.end
+			continue
+		}
+		corrected.WriteString(lines[index].Text)
+		corrected.WriteString(lines[index].Terminator)
+		index++
+	}
+	return corrected.String(), nil
+}
+
+func hpatchCommandFrames(lines []hpatchsyntax.PhysicalLine) []hpatchScriptFrame {
+	var frames []hpatchScriptFrame
+	for index := 0; index < len(lines); {
+		if strings.TrimSpace(lines[index].Text) == "" {
+			index++
+			continue
+		}
+		start := index
+		frame, _ := hpatchsyntax.FrameCommand(lines, start, lines[start].Text)
+		index = frame.Next
+		frames = append(frames, hpatchScriptFrame{start: start, end: index})
+	}
+	return frames
 }
 
 // hpatchCorrectionPreview bounds a rejected line so a malformed payload cannot

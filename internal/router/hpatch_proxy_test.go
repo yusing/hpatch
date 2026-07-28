@@ -129,6 +129,9 @@ func TestHPatchPrepareRequestExposesOnlyStandaloneHPatch(t *testing.T) {
 	if !strings.Contains(exposed, "INDEX: COMMAND") {
 		t.Fatalf("standalone hpatch description omits the correction protocol: %q", exposed)
 	}
+	if !strings.Contains(exposed, "INDEX: type <<TAG") {
+		t.Fatalf("standalone hpatch description omits correction heredocs: %q", exposed)
+	}
 	if strings.Contains(exposed, "workspace_id") {
 		t.Fatalf("standalone hpatch description retains workspace selection: %q", exposed)
 	}
