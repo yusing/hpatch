@@ -3,7 +3,7 @@ package hpatch
 import (
 	"encoding/json"
 	"reflect"
-	"strconv"
+
 	"strings"
 	"testing"
 
@@ -82,7 +82,7 @@ func TestBlockSelectionUsesImmutableBaseline(t *testing.T) {
 	writeTestFile(t, root, "file.txt", initial["file.txt"], 0o644)
 	script := strings.Join([]string{
 		"in file.txt",
-		"tsel 1 1 \"title\"",
+		"tsel 1 \"title\"",
 		"type \"title\\ninserted\"",
 		"bsel \"BEGIN old\" \"END\"",
 		"type \"BEGIN new\\nchanged\\nEND\"",
@@ -122,14 +122,11 @@ func TestBlockSelectionFailuresAreAtomic(t *testing.T) {
 		{name: "missing operand", content: "BEGIN\nEND\n", script: "in file.txt\nbsel \"BEGIN\"", wantFragment: "invalid bsel quoted strings"},
 		{name: "trailing operand", content: "BEGIN\nEND\n", script: "in file.txt\nbsel \"BEGIN\" \"END\" \"extra\"", wantFragment: "invalid bsel quoted strings"},
 		{name: "missing separator", content: "BEGIN\nEND\n", script: "in file.txt\nbsel \"BEGIN\"\"END\"", wantFragment: "invalid bsel quoted strings"},
-		{name: "bsel_next invalid quoted operand", content: "BEGIN\nEND\n", script: "in file.txt\nbsel_next \"BEGIN\" nope", wantFragment: "invalid bsel_next quoted strings"},
-		{name: "bsel_next missing separator", content: "BEGIN\nEND\n", script: "in file.txt\nbsel_next \"BEGIN\"\"END\"", wantFragment: "quoted operands must be separated by whitespace"},
 		{name: "whitespace fallback ambiguity", content: "\tBEGIN\nEND\n    BEGIN\nEND\n", script: "in file.txt\nbsel \" \\tBEGIN\" \"END\"", wantFragment: "occurs 2 times with horizontal whitespace ignored"},
 		{name: "horizontal whitespace cannot be absent", content: "BEGINEND\n", script: "in file.txt\nbsel \"BEGIN END\" \"absent\"", wantFragment: "start literal \"BEGIN END\" occurs 0 times"},
 		{name: "horizontal whitespace cannot cross line", content: "BEGIN\nEND\n", script: "in file.txt\nbsel \"BEGIN END\" \"absent\"", wantFragment: "start literal \"BEGIN END\" occurs 0 times"},
 		{name: "unknown near alias", content: "BEGIN\nEND\n", script: "in file.txt\nbselect \"BEGIN\" \"END\"", wantFragment: "unknown or malformed command"},
 		{name: "no active file", content: "BEGIN\nEND\n", script: "bsel \"BEGIN\" \"END\"", wantFragment: "bsel requires an active file"},
-		{name: "bsel_next no active file", content: "BEGIN\nEND\n", script: "bsel_next \"BEGIN\" \"END\"", wantFragment: "bsel_next requires an active file"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -170,7 +167,7 @@ func TestBlockSelectionSearchesWholeFileIndependentOfCursor(t *testing.T) {
 	writeTestFile(t, root, "file.txt", initial, 0o644)
 	script := strings.Join([]string{
 		"in file.txt",
-		"tsel 4 1 \"pivot\"",
+		"tsel 4 \"pivot\"",
 		"type \"pivot\"",
 		"bsel \"BEGIN old\" \"END old\"",
 		"type \"replacement\"",
@@ -180,47 +177,6 @@ func TestBlockSelectionSearchesWholeFileIndependentOfCursor(t *testing.T) {
 		t.Fatalf("Run() = exit %d, stdout %q, stderr %q", exitCode, stdout, stderr)
 	}
 	want := "replacement\npivot\nBEGIN later\nbody\nEND later\n"
-	if got := readTestFile(t, root, "file.txt"); got != want {
-		t.Fatalf("file = %q, want %q", got, want)
-	}
-}
-
-func TestBlockSelectionNextSearchesForwardFromCursor(t *testing.T) {
-	root := t.TempDir()
-	initial := "BEGIN old\nbody\nEND\npivot\nBEGIN target\nbody\nEND\n"
-	writeTestFile(t, root, "file.txt", initial, 0o644)
-	script := strings.Join([]string{
-		"in file.txt",
-		"tsel 4 1 \"pivot\"",
-		"type \"pivot\"",
-		"bsel_next \"BEGIN\" \"END\"",
-		"type \"replacement\"",
-	}, "\n")
-	stdout, stderr, exitCode := runForTest(root, nil, script)
-	if exitCode != 0 || stdout != "" || stderr != "" {
-		t.Fatalf("Run() = exit %d, stdout %q, stderr %q", exitCode, stdout, stderr)
-	}
-	want := "BEGIN old\nbody\nEND\npivot\nreplacement\n"
-	if got := readTestFile(t, root, "file.txt"); got != want {
-		t.Fatalf("file = %q, want %q", got, want)
-	}
-}
-
-func TestBlockSelectionNextSearchesWithinCurrentSelection(t *testing.T) {
-	root := t.TempDir()
-	initial := "outside BEGIN\nEND\nbefore\nBEGIN target\nEND\nafter\nBEGIN outside\nEND\n"
-	writeTestFile(t, root, "file.txt", initial, 0o644)
-	script := strings.Join([]string{
-		"in file.txt",
-		"rsel 3:6",
-		"bsel_next \"BEGIN target\" \"END\"",
-		"type \"replacement\"",
-	}, "\n")
-	stdout, stderr, exitCode := runForTest(root, nil, script)
-	if exitCode != 0 || stdout != "" || stderr != "" {
-		t.Fatalf("Run() = exit %d, stdout %q, stderr %q", exitCode, stdout, stderr)
-	}
-	want := "outside BEGIN\nEND\nbefore\nreplacement\nafter\nBEGIN outside\nEND\n"
 	if got := readTestFile(t, root, "file.txt"); got != want {
 		t.Fatalf("file = %q, want %q", got, want)
 	}
@@ -290,8 +246,8 @@ func TestBlockSelectionSupportsExistingEditActions(t *testing.T) {
 func TestSelectorsUseStableBaselineCoordinates(t *testing.T) {
 	initial := "alpha\nbeta\ngamma\ndelta\n"
 	scripts := map[string]string{
-		"top edit first":    "in file.txt\ntsel 1 1 \"alpha\"\ntype \"alpha\\ninserted\"\ntsel 3 1 \"gamma\"\ntype \"G\"\n",
-		"bottom edit first": "in file.txt\ntsel 3 1 \"gamma\"\ntype \"G\"\ntsel 1 1 \"alpha\"\ntype \"alpha\\ninserted\"\n",
+		"top edit first":    "in file.txt\ntsel 1 \"alpha\"\ntype \"alpha\\ninserted\"\ntsel 3 \"gamma\"\ntype \"G\"\n",
+		"bottom edit first": "in file.txt\ntsel 3 \"gamma\"\ntype \"G\"\ntsel 1 \"alpha\"\ntype \"alpha\\ninserted\"\n",
 	}
 	for name, script := range scripts {
 		t.Run(name, func(t *testing.T) {
@@ -314,7 +270,7 @@ func TestInsertedTextDoesNotAffectLaterSelectors(t *testing.T) {
 	writeTestFile(t, root, "file.txt", initial, 0o644)
 	script := strings.Join([]string{
 		"in file.txt",
-		"tsel 5 1 \"TAIL\"",
+		"tsel 5 \"TAIL\"",
 		"type \"BEGIN injected END\"",
 		"in file.txt",
 		"bsel \"BEGIN\" \"END\"",
@@ -333,9 +289,9 @@ func TestInsertedTextCannotBeSelected(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, root, "file.txt", "old\n", 0o644)
 	before := readTree(t, root)
-	script := "in file.txt\ntsel 1 1 \"old\"\ntype \"future\"\nin file.txt\ntsel 1 1 \"future\"\n"
+	script := "in file.txt\ntsel 1 \"old\"\ntype \"future\"\nin file.txt\ntsel 1 \"future\"\n"
 	stdout, stderr, exitCode := runForTest(root, []string{"translate"}, script)
-	if exitCode != 1 || stdout != "" || !strings.Contains(stderr, "occurrence 1 of \"future\" not found") {
+	if exitCode != 1 || stdout != "" || !strings.Contains(stderr, "found 0 of 1 requested matches of \"future\"") {
 		t.Fatalf("Run() = exit %d, stdout %q, stderr %q", exitCode, stdout, stderr)
 	}
 	if after := readTree(t, root); !reflect.DeepEqual(after, before) {
@@ -354,12 +310,12 @@ func TestConflictingBaselineEditsAreAtomic(t *testing.T) {
 		},
 		{
 			name:   "nested selection",
-			script: "in file.txt\nrsel 2:4\ntype \"A\"\ntsel 3 1 \"three\"\ndel\n",
+			script: "in file.txt\nrsel 2:4\ntype \"A\"\ntsel 3 \"three\"\ndel\n",
 			want:   "selection conflicts with edit from command 3 (source line 3, operation \"type\"): baseline line 3 was already modified",
 		},
 		{
 			name:   "insertion inside replacement",
-			script: "in file.txt\ntsel 2 1 \"t\"\ncopy\npaste\nrsel 2:2\ntype \"whole\"\n",
+			script: "in file.txt\ntsel 2 \"t\"\ncopy\npaste\nrsel 2:2\ntype \"whole\"\n",
 			want:   "conflicts with edit from command 4 (source line 4, operation \"paste\"): baseline line 2 is both replaced and inserted into",
 		},
 		{
@@ -374,7 +330,7 @@ func TestConflictingBaselineEditsAreAtomic(t *testing.T) {
 		},
 		{
 			name:   "remove after edit",
-			script: "in file.txt\ntsel 1 1 \"one\"\ntype \"ONE\"\nrm\n",
+			script: "in file.txt\ntsel 1 \"one\"\ntype \"ONE\"\nrm\n",
 			want:   "cannot remove a baseline file after content edit from command 3",
 		},
 	}
@@ -397,7 +353,7 @@ func TestConflictingBaselineEditsAreAtomic(t *testing.T) {
 func TestInsertionAtReplacementBoundaryIsUnambiguous(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, root, "file.txt", "one\ntwo\n", 0o644)
-	script := "in file.txt\ntsel 2 1 \"t\"\ntype \"T\"\ntype \"!\"\n"
+	script := "in file.txt\ntsel 2 \"t\"\ntype \"T\"\ntype \"!\"\n"
 	stdout, stderr, exitCode := runForTest(root, nil, script)
 	if exitCode != 0 || stdout != "" || stderr != "" {
 		t.Fatalf("Run() = exit %d, stdout %q, stderr %q", exitCode, stdout, stderr)
@@ -407,23 +363,39 @@ func TestInsertionAtReplacementBoundaryIsUnambiguous(t *testing.T) {
 	}
 }
 
-func TestTextSelectionCanSpanMultipleOccurrences(t *testing.T) {
+func TestTextSelectionCreatesSeparateMatches(t *testing.T) {
 	tests := []struct {
-		name, script, want string
+		name, content, script, want string
 	}{
-		{name: "positive group", script: "in file.txt\ntsel 1 2 \"x\" 2\ntype \"Y\"", want: "x, Y\n"},
-		{name: "negative group", script: "in file.txt\ntsel 1 -2 \"x\" 2\ntype \"Y\"", want: "Y, x\n"},
-		{name: "explicit count one", script: "in file.txt\ntsel 1 2 \"x\" 1\ntype \"Y\"", want: "x, Y, x\n"},
-		{name: "nonoverlapping candidates", script: "in file.txt\ntsel 1 1 \"aa\" 2\ntype \"Y\"", want: "Y, x, x\n"},
+		{
+			name:    "matches across lines",
+			content: "bar := 0\nbaz := 0\n",
+			script:  "in file.txt\ntsel 1 \":= 0\" 2\ntype \"=\"",
+			want:    "bar =\nbaz =\n",
+		},
+		{
+			name:    "from line is an inclusive lower bound",
+			content: "x\nx\nx\n",
+			script:  "in file.txt\ntsel 2 \"x\" 2\ntype \"Y\"",
+			want:    "x\nY\nY\n",
+		},
+		{
+			name:    "explicit count one",
+			content: "x, x, x\n",
+			script:  "in file.txt\ntsel 1 \"x\" 1\ntype \"Y\"",
+			want:    "Y, x, x\n",
+		},
+		{
+			name:    "overlapping candidates are skipped",
+			content: "aaaa\n",
+			script:  "in file.txt\ntsel 1 \"aa\" 2\ntype \"Y\"",
+			want:    "YY\n",
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			root := t.TempDir()
-			content := "x, x, x\n"
-			if test.name == "nonoverlapping candidates" {
-				content = "aaaa, x, x\n"
-			}
-			writeTestFile(t, root, "file.txt", content, 0o644)
+			writeTestFile(t, root, "file.txt", test.content, 0o644)
 			stdout, stderr, exitCode := runForTest(root, nil, test.script)
 			if exitCode != 0 || stdout != "" || stderr != "" {
 				t.Fatalf("Run() = exit %d, stdout %q, stderr %q", exitCode, stdout, stderr)
@@ -435,25 +407,56 @@ func TestTextSelectionCanSpanMultipleOccurrences(t *testing.T) {
 	}
 }
 
-func TestTextSelectionOccurrenceGroupFailuresAreAtomic(t *testing.T) {
+func TestNonOverlappingLiteralOffsetsStopsAtRequestedCount(t *testing.T) {
+	got := nonOverlappingLiteralOffsets("x x x", "x", 1)
+	if want := []int{0}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("offsets = %v, want %v", got, want)
+	}
+}
+
+func TestTextSelectionSetSupportsEditActions(t *testing.T) {
 	tests := []struct {
-		name, operand, want string
+		name, action, want string
 	}{
-		{name: "positive group incomplete", operand: "2 \"x\" 3", want: "occurrence group of count 3 from 2"},
-		{name: "negative group incomplete", operand: "-2 \"x\" 3", want: "occurrence group of count 3 from -2"},
-		{name: "zero count", operand: "1 \"x\" 0", want: "invalid tsel count"},
-		{name: "negative count", operand: "1 \"x\" -1", want: "invalid tsel count"},
-		{name: "signed count", operand: "1 \"x\" +1", want: "invalid tsel count"},
-		{name: "leading zero count", operand: "1 \"x\" 01", want: "invalid tsel count"},
-		{name: "trailing operand", operand: "1 \"x\" 2 extra", want: "invalid tsel count"},
-		{name: "missing separator", operand: "1 \"x\"2", want: "tsel count must be separated by whitespace"},
-		{name: "integer overflow", operand: "1 \"x\" 999999999999999999999999999999", want: "tsel count is out of range"},
-		{name: "group arithmetic overflow", operand: "3 \"x\" " + strconv.Itoa(int(^uint(0)>>1)), want: "occurrence group of count"},
+		{name: "delete", action: "del", want: "a=\nb=\n"},
+		{name: "copy and paste", action: "copy\npaste", want: "a=xx\nb=xx\n"},
+		{name: "cut", action: "cut", want: "a=\nb=\n"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			root := t.TempDir()
-			writeTestFile(t, root, "file.txt", "x, x, x\n", 0o644)
+			writeTestFile(t, root, "file.txt", "a=x\nb=x\n", 0o644)
+			script := "in file.txt\ntsel 1 \"x\" 2\n" + test.action + "\n"
+			stdout, stderr, exitCode := runForTest(root, nil, script)
+			if exitCode != 0 || stdout != "" || stderr != "" {
+				t.Fatalf("Run() = exit %d, stdout %q, stderr %q", exitCode, stdout, stderr)
+			}
+			if got := readTestFile(t, root, "file.txt"); got != test.want {
+				t.Fatalf("file = %q, want %q", got, test.want)
+			}
+		})
+	}
+}
+
+func TestTextSelectionFailuresAreAtomic(t *testing.T) {
+	tests := []struct {
+		name, content, operand, want string
+	}{
+		{name: "requested count incomplete", content: "x, x, x\n", operand: "\"x\" 4", want: "found 3 of 4 requested matches"},
+		{name: "overlapping match unavailable", content: "aaa\n", operand: "\"aa\" 2", want: "found 1 of 2 requested matches"},
+		{name: "zero count", content: "x\n", operand: "\"x\" 0", want: "invalid tsel count"},
+		{name: "negative count", content: "x\n", operand: "\"x\" -1", want: "invalid tsel count"},
+		{name: "signed count", content: "x\n", operand: "\"x\" +1", want: "invalid tsel count"},
+		{name: "leading zero count", content: "x\n", operand: "\"x\" 01", want: "invalid tsel count"},
+		{name: "trailing operand", content: "x\n", operand: "\"x\" 2 extra", want: "invalid tsel count"},
+		{name: "missing separator", content: "x\n", operand: "\"x\"2", want: "tsel count must be separated by whitespace"},
+		{name: "integer overflow", content: "x\n", operand: "\"x\" 999999999999999999999999999999", want: "tsel count is out of range"},
+		{name: "removed occurrence grammar", content: "x\n", operand: "1 \"x\"", want: "invalid quoted string for tsel"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			writeTestFile(t, root, "file.txt", test.content, 0o644)
 			before := readTree(t, root)
 			script := "in file.txt\ntsel 1 " + test.operand
 			stdout, stderr, exitCode := runForTest(root, []string{"translate"}, script)
@@ -467,15 +470,30 @@ func TestTextSelectionOccurrenceGroupFailuresAreAtomic(t *testing.T) {
 	}
 }
 
+func TestMultiSelectionConflictRejectsWholeScript(t *testing.T) {
+	root := t.TempDir()
+	writeTestFile(t, root, "file.txt", "x x x\n", 0o644)
+	before := readTree(t, root)
+	script := "in file.txt\ntsel 1 \"x\" 2\ntype \"Y\"\ntsel 1 \"x\" 3\n"
+	stdout, stderr, exitCode := runForTest(root, []string{"translate"}, script)
+	if exitCode != 1 || stdout != "" || !strings.Contains(stderr, "selection conflicts with edit from command 3") {
+		t.Fatalf("Run() = exit %d, stdout %q, stderr %q", exitCode, stdout, stderr)
+	}
+	if after := readTree(t, root); !reflect.DeepEqual(after, before) {
+		t.Fatalf("failure mutated tree: before %#v, after %#v", before, after)
+	}
+}
+
 func TestSelectorsRejectNonAbsoluteLinesAtomically(t *testing.T) {
+
 	tests := []struct {
 		name, script, want string
 	}{
 		{name: "sel signed", script: "in file.txt\nsel +0 1:1", want: `invalid line reference "+0"`},
-		{name: "tsel signed", script: "in file.txt\ntsel -1 1 \"one\"", want: `invalid line reference "-1"`},
+		{name: "tsel signed", script: "in file.txt\ntsel -1 \"one\"", want: `invalid line reference "-1"`},
 		{name: "rsel signed", script: "in file.txt\nrsel +0:+1", want: `invalid line reference "+0"`},
 		{name: "sel zero", script: "in file.txt\nsel 0 1:1", want: `invalid line reference "0"`},
-		{name: "tsel negative zero", script: "in file.txt\ntsel -0 1 \"one\"", want: `invalid line reference "-0"`},
+		{name: "tsel negative zero", script: "in file.txt\ntsel -0 \"one\"", want: `invalid line reference "-0"`},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

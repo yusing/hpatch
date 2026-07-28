@@ -32,12 +32,27 @@ func (e *editor) finalStateReport(path string) string {
 	lines := renderedLines(content)
 	var report strings.Builder
 	var previewOffset int
-	if e.selection != nil {
-		startOffset := e.mapBaselineOffset(e.selection.start, boundaryAfter, 0)
-		endOffset := e.mapBaselineOffset(e.selection.end, boundaryBefore, 0)
+	if len(e.selections) != 0 {
+		first := e.selections[0]
+		last := e.selections[len(e.selections)-1]
+		startOffset := e.mapBaselineOffset(first.start, boundaryAfter, 0)
+		endOffset := e.mapBaselineOffset(last.end, boundaryBefore, 0)
 		start := renderedCoordinateAt(content, lines, startOffset)
 		end := renderedCoordinateAt(content, lines, endOffset)
-		fmt.Fprintf(&report, "in %s %d:%d-%d:%d\n", escapeReportControls(path), start.line, start.column, end.line, end.column)
+		if len(e.selections) == 1 {
+			fmt.Fprintf(&report, "in %s %d:%d-%d:%d\n", escapeReportControls(path), start.line, start.column, end.line, end.column)
+		} else {
+			fmt.Fprintf(
+				&report,
+				"in %s %d selections %d:%d-%d:%d\n",
+				escapeReportControls(path),
+				len(e.selections),
+				start.line,
+				start.column,
+				end.line,
+				end.column,
+			)
+		}
 		previewOffset = startOffset
 	} else {
 		affinity := boundaryBefore
@@ -71,7 +86,7 @@ func (e *editor) mapBaselineOffset(offset int, affinity boundaryAffinity, target
 		}
 		renderedOffset += edit.start - baselineOffset
 
-		if targetCommand != 0 && edit.command == targetCommand {
+		if targetCommand != 0 && edit.command == targetCommand && (edit.start == offset || edit.end == offset) {
 			return renderedOffset + len(edit.replacement)
 		}
 		if edit.start == offset && affinity == boundaryBefore {

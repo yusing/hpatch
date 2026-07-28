@@ -87,14 +87,14 @@ func TestLinewisePasteAddsOnlyMissingDestinationBoundaries(t *testing.T) {
 			name:        "LF boundaries on both sides",
 			source:      "tail",
 			destination: "beforeafter\n",
-			script:      []string{"in source.txt", "rsel 1:1", "copy", "in destination.txt", `tsel 1 1 "before"`, "paste"},
+			script:      []string{"in source.txt", "rsel 1:1", "copy", "in destination.txt", `tsel 1 "before"`, "paste"},
 			want:        "before\ntail\nafter\n",
 		},
 		{
 			name:        "CRLF boundaries on both sides",
 			source:      "tail",
 			destination: "beforeafter\r\n",
-			script:      []string{"in source.txt", "rsel 1:1", "copy", "in destination.txt", `tsel 1 1 "before"`, "paste"},
+			script:      []string{"in source.txt", "rsel 1:1", "copy", "in destination.txt", `tsel 1 "before"`, "paste"},
 			want:        "before\r\ntail\r\nafter\r\n",
 		},
 		{
@@ -108,7 +108,7 @@ func TestLinewisePasteAddsOnlyMissingDestinationBoundaries(t *testing.T) {
 			name:        "first destination terminator wins",
 			source:      "tail",
 			destination: "before\rafter\nlast",
-			script:      []string{"in source.txt", "rsel 1:1", "copy", "in destination.txt", `tsel 1 1 "before"`, "paste"},
+			script:      []string{"in source.txt", "rsel 1:1", "copy", "in destination.txt", `tsel 1 "before"`, "paste"},
 			want:        "before\rtail\rafter\nlast",
 		},
 		{

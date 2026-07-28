@@ -108,10 +108,10 @@ func TestMalformedSelectorAttributionRequiresRecognizableVariant(t *testing.T) {
 		{name: "bare sel", script: "sel\n"},
 		{name: "nonnumeric sel", script: "sel nope\n"},
 		{name: "bare tsel", script: "tsel\n"},
-		{name: "tsel without text", script: "tsel 1 1\n"},
+		{name: "tsel without text", script: "tsel 1\n"},
 		{name: "zero absolute line", script: "sel 0 1:1\n", want: commandAttempt{recognized: true}, reason: reasonSyntax},
 		{name: "malformed signed line", script: "sel +x 1:1\n"},
-		{name: "invalid multiple count", script: "tsel 1 1 \"x\" nope\n", want: commandAttempt{recognized: true, textSpan: textSpanMultiple}, reason: reasonInvalidCount},
+		{name: "invalid multiple count", script: "tsel 1 \"x\" nope\n", want: commandAttempt{recognized: true, textSpan: textSpanMultiple}, reason: reasonInvalidCount},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -158,19 +158,17 @@ func TestMetricsClassifyVariantsOutcomesAndReasons(t *testing.T) {
 	for _, script := range []string{
 		"in sample.txt\nsel 1 1:1\ntype \"A\"\n",
 		"in sample.txt\nrsel 1:1\ntype \"A\"\n",
-		"in sample.txt\ntsel 1 1 \"alpha\"\ntype \"A\"\n",
-		"in sample.txt\ntsel 1 1 \"alpha\" 1\ntype \"A\"\n",
-		"in sample.txt\ntsel 1 1 \"alpha\" 2\ntype \"A\"\n",
+		"in sample.txt\ntsel 1 \"alpha\"\ntype \"A\"\n",
+		"in sample.txt\ntsel 1 \"alpha\" 1\ntype \"A\"\n",
+		"in sample.txt\ntsel 1 \"alpha\" 2\ntype \"A\"\n",
 		"in sample.txt\nbsel \"func x() {\" \"}\"\ntype \"A\"\n",
 		"in sample.txt\nbsel \"func x() {\" \"    body\"\ntype \"A\"\n",
-		"in sample.txt\nbsel_next \"func x() {\" \"}\"\ntype \"A\"\n",
-		"in sample.txt\nbsel_next \"func x() {\" \"    body\"\ntype \"A\"\n",
 	} {
 		run(script, true)
 	}
 	for _, script := range []string{
-		"in sample.txt\ntsel 1 9 \"alpha\"\n",
-		"in sample.txt\ntsel 1 1 \"alpha\" nope\n",
+		"in sample.txt\ntsel 1 \"alpha\" 9\n",
+		"in sample.txt\ntsel 1 \"alpha\" nope\n",
 		"in sample.txt\nbsel \"missing\" \"}\"\n",
 		"in sample.txt\nbsel \"alpha\" \"}\"\n",
 		"in sample.txt\nsel +x 1:1\n",
@@ -183,13 +181,13 @@ func TestMetricsClassifyVariantsOutcomesAndReasons(t *testing.T) {
 		t.Fatal(err)
 	}
 	wantTextSpans := [textSpanVariantCount]commandMetric{
-		{Invocations: 3, Errors: 1},
-		{Invocations: 2, Errors: 1},
+		{Invocations: 2},
+		{Invocations: 3, Errors: 2},
 	}
 	if got.TextSpans != wantTextSpans {
 		t.Fatalf("tsel spans = %+v, want %+v", got.TextSpans, wantTextSpans)
 	}
-	wantBlockOutcomes := [blockOutcomeCount]uint64{1, 1, 1, 1}
+	wantBlockOutcomes := [blockOutcomeCount]uint64{1, 1}
 	if got.BlockOutcomes != wantBlockOutcomes {
 		t.Fatalf("block outcomes = %+v, want %+v", got.BlockOutcomes, wantBlockOutcomes)
 	}
@@ -247,8 +245,6 @@ func representativeMetrics() metrics {
 	value.TextSpans[textSpanMultiple-1] = commandMetric{Invocations: 1, Errors: 1}
 	value.Commands[commandOperationIndex("bsel")] = commandMetric{Invocations: 2, Errors: 1}
 	value.BlockOutcomes[blockOutcomeIndex("bsel", false)] = 1
-	value.Commands[commandOperationIndex("bsel_next")] = commandMetric{Invocations: 1}
-	value.BlockOutcomes[blockOutcomeIndex("bsel_next", true)] = 1
 	value.Reasons[reasonSyntax] = 2
 	value.Reasons[reasonAnchorMissing] = 1
 	value.Commands[commandOperationIndex("paste")] = commandMetric{Invocations: 1, Errors: 1}

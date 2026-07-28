@@ -24,19 +24,19 @@ import (
 const (
 	metricsFilename = "metrics.bin"
 	metricsLockname = "metrics.lock"
-	metricsMagic    = "HPATCH17"
+	metricsMagic    = "HPATCH18"
 
 	metricsSlotSize         = 2432
 	metricsFileSize         = 2 * metricsSlotSize
 	metricsChecksumOffset   = 2400
 	metricsDiagnosticOffset = 2384
-	commandCount            = 15
+	commandCount            = 14
 	metricsLockRetryDelay   = 10 * time.Millisecond
 )
 
 var commandOperations = [commandCount]string{
 	"in", "new", "mv", "rm",
-	"sel", "tsel", "bsel", "bsel_next", "rsel",
+	"sel", "tsel", "bsel", "rsel",
 	"type", "del", "copy", "cut", "paste", "commit",
 }
 
@@ -311,13 +311,12 @@ func validInvocationMetrics(events invocationMetrics) bool {
 	if !ok || spans != events.Commands[commandOperationIndex("tsel")] {
 		return false
 	}
-	for _, operation := range []string{"bsel", "bsel_next"} {
-		base := blockOutcomeIndex(operation, false)
-		successes, ok := sumCounters(events.BlockOutcomes[base], events.BlockOutcomes[base+1])
-		command := events.Commands[commandOperationIndex(operation)]
-		if !ok || command.Errors > command.Invocations || successes != command.Invocations-command.Errors {
-			return false
-		}
+	operation := "bsel"
+	base := blockOutcomeIndex(operation, false)
+	successes, ok := sumCounters(events.BlockOutcomes[base], events.BlockOutcomes[base+1])
+	command := events.Commands[commandOperationIndex(operation)]
+	if !ok || command.Errors > command.Invocations || successes != command.Invocations-command.Errors {
+		return false
 	}
 	var reasons uint64
 	for _, count := range events.Reasons {
@@ -620,7 +619,7 @@ func gainReportAtWidth(m metrics, width int) string {
 	writeInputGainTable(&report, m, width)
 
 	writeCommandTable(&report, "command metrics:", "command", commandOperations[:], m.Commands[:], true)
-	writeCommandTable(&report, "tsel span metrics:", "span", textSpanVariantNames[:], m.TextSpans[:], false)
+	writeCommandTable(&report, "tsel selection metrics:", "selection", textSpanVariantNames[:], m.TextSpans[:], false)
 
 	report.WriteString("block selector successes:\n")
 	table := tabwriter.NewWriter(&report, 0, 4, 2, ' ', 0)

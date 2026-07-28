@@ -13,7 +13,7 @@ import (
 var (
 	absoluteLinePattern = regexp.MustCompile(`^[1-9][0-9]*$`)
 	selectPattern       = regexp.MustCompile(`^sel (\S+) ([1-9][0-9]*):([1-9][0-9]*)$`)
-	textSelectPattern   = regexp.MustCompile(`^tsel (\S+) (-?[1-9][0-9]*) (.+)$`)
+	textSelectPattern   = regexp.MustCompile(`^tsel (\S+) (.+)$`)
 	rangePattern        = regexp.MustCompile(`^rsel (\S+):(\S+)$`)
 )
 
@@ -27,7 +27,6 @@ type instruction struct {
 	endLine    int
 	start      int
 	end        int
-	occurrence int
 	count      int
 	text       string
 	endText    string
@@ -162,7 +161,7 @@ func recognizeCommandAttempt(line string) commandAttempt {
 		return commandAttempt{}
 	}
 	switch fields[0] {
-	case "in", "new", "mv", "rm", "bsel", "bsel_next", "type", "del", "copy", "cut", "paste", "commit":
+	case "in", "new", "mv", "rm", "bsel", "type", "del", "copy", "cut", "paste", "commit":
 		return commandAttempt{recognized: true}
 	case "sel":
 		return commandAttempt{recognized: recognizeLine(fields, 1)}
@@ -208,7 +207,7 @@ func recognizeTextSpanVariant(line string) textSpanVariant {
 	if match == nil {
 		return textSpanNone
 	}
-	_, trailing, err := decodeLeadingTextOperand(match[3])
+	_, trailing, err := hpatchsyntax.DecodeQuoted(match[2])
 	if err != nil {
 		return textSpanNone
 	}
@@ -217,10 +216,6 @@ func recognizeTextSpanVariant(line string) textSpanVariant {
 		return textSpanMultiple
 	}
 	return textSpanSingle
-}
-
-func decodeLeadingTextOperand(encoded string) (string, string, error) {
-	return hpatchsyntax.DecodeQuoted(encoded)
 }
 
 func attemptForInstruction(command instruction) commandAttempt {
@@ -278,11 +273,7 @@ func parseInstruction(sourceLine int, line string) (instruction, error) {
 		if err != nil {
 			return instruction{}, err
 		}
-		occurrence, err := parseInteger(sourceLine, match[2])
-		if err != nil {
-			return instruction{}, err
-		}
-		value, count, err := decodeTextSelection(match[3])
+		value, count, err := decodeTextSelection(match[2])
 		if err != nil {
 			return instruction{}, scriptFailure(sourceLine, reasonOf(err, reasonSyntax), err.Error())
 		}
@@ -296,28 +287,22 @@ func parseInstruction(sourceLine int, line string) (instruction, error) {
 			line:       sourceLine,
 			operation:  "tsel",
 			lineNumber: lineNumber,
-			occurrence: occurrence,
 			count:      count,
 			text:       value,
 		}, nil
 	}
-
-	for _, operation := range []string{"bsel", "bsel_next"} {
-		valueText, ok := strings.CutPrefix(line, operation+" ")
-		if !ok {
-			continue
-		}
+	if valueText, ok := strings.CutPrefix(line, "bsel "); ok {
 		startText, endText, err := decodeTwoQuotedStrings(valueText)
 		if err != nil {
-			return instruction{}, scriptError(sourceLine, fmt.Sprintf("invalid %s quoted strings: %v", operation, err))
+			return instruction{}, scriptError(sourceLine, fmt.Sprintf("invalid bsel quoted strings: %v", err))
 		}
 		if startText == "" || endText == "" {
-			return instruction{}, scriptError(sourceLine, operation+" literals must not be empty")
+			return instruction{}, scriptError(sourceLine, "bsel literals must not be empty")
 		}
 		if startText == endText {
-			return instruction{}, scriptFailure(sourceLine, reasonOrderOrOverlap, operation+" literals must differ")
+			return instruction{}, scriptFailure(sourceLine, reasonOrderOrOverlap, "bsel literals must differ")
 		}
-		return instruction{line: sourceLine, operation: operation, text: startText, endText: endText}, nil
+		return instruction{line: sourceLine, operation: "bsel", text: startText, endText: endText}, nil
 	}
 
 	if match := rangePattern.FindStringSubmatch(line); match != nil {
@@ -349,7 +334,7 @@ func parseInstruction(sourceLine int, line string) (instruction, error) {
 }
 
 func decodeTextSelection(encoded string) (string, int, error) {
-	text, trailing, err := decodeLeadingTextOperand(encoded)
+	text, trailing, err := hpatchsyntax.DecodeQuoted(encoded)
 	if err != nil {
 		return "", 0, fmt.Errorf("invalid quoted string for tsel: %w", err)
 	}

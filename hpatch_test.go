@@ -21,14 +21,14 @@ func TestRunNormalMultiFileWorkflow(t *testing.T) {
 
 	script := strings.Join([]string{
 		"in a.txt",
-		`tsel 1 -1 "old"`,
+		`tsel 1 "old"`,
 		`type "new"`,
 		"in b.txt",
 		"rsel 1:2",
 		"copy",
 		"paste",
 		"in a.txt",
-		`tsel 2 1 "keep"`,
+		`tsel 2 "keep"`,
 		"del",
 		"new draft.txt",
 		`type "foo bar"`,
@@ -65,7 +65,7 @@ func TestTranslateMatchesNormalMode(t *testing.T) {
 	}
 	script := strings.Join([]string{
 		"in code.go",
-		`tsel 3 1 "old"`,
+		`tsel 3 "old"`,
 		`type "current"`,
 		"mv current.go",
 		"new note.txt",
@@ -164,7 +164,7 @@ func TestUnicodeCRLFAndBaselineEditorState(t *testing.T) {
 		"sel 1 2:3",
 		`type "XY"`,
 		`type "!"`,
-		`tsel 1 -1 "bar"`,
+		"sel 1 9:11",
 		"del",
 		"rsel 2:3",
 		"copy",
@@ -184,7 +184,7 @@ func TestUnicodeCRLFAndBaselineEditorState(t *testing.T) {
 func TestTranslateNormalizesLineEndingsForApplyPatchDisplay(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, root, "text.txt", "old\r\nkeep\r\n", 0o644)
-	stdout, stderr, exitCode := runForTest(root, []string{"translate"}, "in text.txt\ntsel 1 1 \"old\"\ntype \"new\"\n")
+	stdout, stderr, exitCode := runForTest(root, []string{"translate"}, "in text.txt\ntsel 1 \"old\"\ntype \"new\"\n")
 	if exitCode != 0 || stderr != "" {
 		t.Fatalf("translate = exit %d, stderr %q", exitCode, stderr)
 	}
@@ -202,7 +202,7 @@ func TestTranslateNormalizesLineEndingsForApplyPatchDisplay(t *testing.T) {
 func TestStandaloneCRLogicalLines(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, root, "text.txt", "first\rsecond\rthird", 0o644)
-	script := "in text.txt\ntsel 1 1 \"first\"\ntype \"FIRST\"\nrsel 2:3\ncopy\npaste\n"
+	script := "in text.txt\ntsel 1 \"first\"\ntype \"FIRST\"\nrsel 2:3\ncopy\npaste\n"
 	_, stderr, exitCode := runForTest(root, nil, script)
 	if exitCode != 0 {
 		t.Fatalf("Run() = exit %d, stderr %q", exitCode, stderr)
@@ -216,7 +216,7 @@ func TestTranslateDisambiguatesRepeatedBlocks(t *testing.T) {
 	root := t.TempDir()
 	content := "first\nrepeat\nvalue=old\nend\nmiddle\nrepeat\nvalue=old\nend\nlast\n"
 	writeTestFile(t, root, "text.txt", content, 0o644)
-	script := "in text.txt\ntsel 7 1 \"old\"\ntype \"new\"\n"
+	script := "in text.txt\ntsel 7 \"old\"\ntype \"new\"\n"
 	stdout, stderr, exitCode := runForTest(root, []string{"translate"}, script)
 	if exitCode != 0 || stderr != "" {
 		t.Fatalf("translate = exit %d, stderr %q", exitCode, stderr)
@@ -241,12 +241,12 @@ func TestEvaluationFailuresDoNotMutateOrEmitPatch(t *testing.T) {
 		{name: "commit operand", script: "in file.txt\ncommit now"},
 		{name: "non-string type operand", script: "in file.txt\ntype null"},
 		{name: "non-JSON trailing whitespace", script: "in file.txt\ntype \"x\"\u00a0"},
-		{name: "non-JSON tsel trailing whitespace", script: "in file.txt\ntsel 1 1 \"a\" \u00a0"},
-		{name: "non-JSON tsel count whitespace", script: "in file.txt\ntsel 1 1 \"a\" 1\u00a0"},
+		{name: "non-JSON tsel trailing whitespace", script: "in file.txt\ntsel 1 \"a\" \u00a0"},
+		{name: "non-JSON tsel count whitespace", script: "in file.txt\ntsel 1 \"a\" 1\u00a0"},
 		{name: "malformed selection", script: "in file.txt\nsel 1 2"},
 		{name: "number overflow", script: "in file.txt\nsel 999999999999999999999999999 1:1"},
 		{name: "out of bounds", script: "in file.txt\nsel 1 20:21"},
-		{name: "overlapping occurrence is not counted", script: "in file.txt\ntsel 1 2 \"aa\""},
+		{name: "overlapping occurrence is not counted", script: "in file.txt\ntsel 1 \"aa\" 2"},
 		{name: "new collision", script: "new file.txt"},
 		{name: "move collision", script: "in file.txt\nmv occupied.txt"},
 		{name: "old path after move", script: "in file.txt\nmv moved.txt\nin file.txt"},
@@ -276,13 +276,13 @@ func TestQuotedOperandsAcceptLiteralTabs(t *testing.T) {
 	writeTestFile(t, root, "block.txt", "BEGIN\tone\nmiddle\nEND\ttwo\n", 0o644)
 	writeTestFile(t, root, "next.txt", "prefix\nBEGIN\tthree\nmiddle\nEND\tfour\n", 0o644)
 	script := "in text.txt\n" +
-		"tsel 1 1 \t\"old\tvalue\"\n" +
+		"tsel 1 \t\"old\tvalue\"\n" +
 		"type  \"new\tvalue\"\n" +
 		"in block.txt\n" +
 		"bsel   \"BEGIN\tone\" \"END\ttwo\"\n" +
 		"type \t\"block\"\n" +
 		"in next.txt\n" +
-		"bsel_next \t\"BEGIN\tthree\" \"END\tfour\"\n" +
+		"bsel \t\"BEGIN\tthree\" \"END\tfour\"\n" +
 		"type  \"next\"\n"
 
 	stdout, stderr, exitCode := runForTest(root, nil, script)
@@ -370,8 +370,8 @@ func TestParseReportsAllSyntaxErrorsWithoutEvaluation(t *testing.T) {
 	script := "in file.txt\n" +
 		"type \"literal\x01control\"\n" +
 		"bsel \"start\" nope\n" +
-		"tsel 1 1 \"first\\nsecond\"\n" +
-		"tsel 1 1 \"literal\x01control\"\n"
+		"tsel 1 \"first\\nsecond\"\n" +
+		"tsel 1 \"literal\x01control\"\n"
 
 	stdout, stderr, exitCode := runForTest(root, []string{"translate"}, script)
 	if exitCode != 1 || stdout != "" {
@@ -407,8 +407,8 @@ func TestFailureDiagnosticsIdentifyCommandContext(t *testing.T) {
 	}{
 		{
 			name:   "selection failure includes selected path",
-			script: "in file.txt\ntsel 1 2 \"aa\"",
-			want:   "hpatch: command 2, source line 2, operation \"tsel\", path \"file.txt\", category selection: occurrence 2 of \"aa\" not found on line 1\n",
+			script: "in file.txt\ntsel 1 \"aa\" 2",
+			want:   "hpatch: command 2, source line 2, operation \"tsel\", path \"file.txt\", category selection: found 1 of 2 requested matches of \"aa\" at or after line 1\n",
 		},
 		{
 			name:   "file failure includes operand path",
@@ -479,7 +479,7 @@ func TestSymlinkPathResolvesNormally(t *testing.T) {
 	if err := os.Symlink("target.txt", filepath.Join(root, "link.txt")); err != nil {
 		t.Fatal(err)
 	}
-	stdout, stderr, exitCode := runForTest(root, []string{"translate"}, "in link.txt\ntsel 1 1 \"target\"\ntype \"updated\"\n")
+	stdout, stderr, exitCode := runForTest(root, []string{"translate"}, "in link.txt\ntsel 1 \"target\"\ntype \"updated\"\n")
 	if exitCode != 0 || stderr != "" || !strings.Contains(stdout, "+updated") {
 		t.Fatalf("exit %d, stdout %q, stderr %q", exitCode, stdout, stderr)
 	}
@@ -490,7 +490,7 @@ func TestAbsoluteAndNormalizedPaths(t *testing.T) {
 	writeTestFile(t, root, "relative.txt", "old\n", 0o644)
 	writeTestFile(t, root, "absolute.txt", "old\n", 0o644)
 
-	script := "in nested/../relative.txt\ntsel 1 1 \"old\"\ntype \"relative\"\nin " + filepath.Join(root, "absolute.txt") + "\ntsel 1 1 \"old\"\ntype \"absolute\"\n"
+	script := "in nested/../relative.txt\ntsel 1 \"old\"\ntype \"relative\"\nin " + filepath.Join(root, "absolute.txt") + "\ntsel 1 \"old\"\ntype \"absolute\"\n"
 	stdout, stderr, exitCode := runForTest(root, nil, script)
 	if exitCode != 0 || stdout != "" || stderr != "" {
 		t.Fatalf("Run() = exit %d, stdout %q, stderr %q", exitCode, stdout, stderr)
@@ -503,7 +503,7 @@ func TestAbsoluteAndNormalizedPaths(t *testing.T) {
 	}
 
 	rootCapability := openTestRoot(t, root)
-	patch, err := Translate(t.Context(), Workspace{Root: rootCapability}, "in "+filepath.Join(root, "absolute.txt")+"\ntsel 1 1 \"absolute\"\ntype \"translated\"\n")
+	patch, err := Translate(t.Context(), Workspace{Root: rootCapability}, "in "+filepath.Join(root, "absolute.txt")+"\ntsel 1 \"absolute\"\ntype \"translated\"\n")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -520,7 +520,7 @@ func TestWorkspaceCWDResolvesReadsAndRootRelativeTranslation(t *testing.T) {
 	writeTestFile(t, rootPath, "bin/main.go", "package main\n", 0o644)
 	root := openTestRoot(t, rootPath)
 	workspace := Workspace{Root: root, CWD: "bin"}
-	script := "in main.go\ntsel 1 1 \"package main\"\ntype \"package graph\"\n"
+	script := "in main.go\ntsel 1 \"package main\"\ntype \"package graph\"\n"
 
 	patch, err := Translate(t.Context(), workspace, script)
 	if err != nil {

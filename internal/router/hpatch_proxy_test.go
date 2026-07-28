@@ -937,7 +937,7 @@ func TestInProcessHPatchToolDescription(t *testing.T) {
 	description := translator.ToolDescription()
 	for _, required := range []string{
 		"Commands:",
-		"bsel_next",
+		"tsel FROM_LINE \"TEXT\" [N]",
 		"immutable baseline",
 		"Final-state report:",
 	} {
@@ -969,7 +969,7 @@ func TestInProcessHPatchTranslatorIsRootScopedAndDoesNotMutateWorkspace(t *testi
 	}
 	defer workspace.close()
 
-	translated, err := translator.Translate(t.Context(), workspace, "in "+path+"\ntsel 1 1 \"first\"\ntype \"first\\ninserted\"\ntsel 3 1 \"third\"\ntype \"THIRD\"\n")
+	translated, err := translator.Translate(t.Context(), workspace, "in "+path+"\ntsel 1 \"first\"\ntype \"first\\ninserted\"\ntsel 3 \"third\"\ntype \"THIRD\"\n")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -115,7 +115,7 @@ func TestGainReportReconcilesEffectiveAndIneffectiveTokens(t *testing.T) {
 	for _, nextTable := range []string{
 		"input token estimates:",
 		"command metrics:",
-		"tsel span metrics:",
+		"tsel selection metrics:",
 		"block selector successes:",
 		"failure reasons:",
 		"command failure reasons:",
@@ -182,7 +182,6 @@ func TestGainReportsCommandInvocationsErrorsAndRates(t *testing.T) {
 	}{
 		{name: "success with unrelated command-name text", args: []string{"translate"}, script: "new note.txt\ntype \"bsel sel future-command\"\n", success: true},
 		{name: "execution error", args: []string{"translate"}, script: "new failed.txt\ntype \"ignored\"\nbsel \"missing\" \"end\"\n"},
-		{name: "bsel_next execution error", args: []string{"translate"}, script: "new failed-next.txt\ntype \"ignored\"\nbsel_next \"missing\" \"end\"\n"},
 		{name: "malformed absolute line", args: []string{"translate"}, script: "sel 0 1:1\n"},
 		{name: "unknown future command", args: []string{"translate"}, script: "future-command\n"},
 		{name: "successful no-op", script: "new transient.txt\nrm\n", success: true},
@@ -202,12 +201,11 @@ func TestGainReportsCommandInvocationsErrorsAndRates(t *testing.T) {
 		t.Fatal(err)
 	}
 	wantCommands := commandMetrics{}
-	wantCommands[commandOperationIndex("new")] = commandMetric{Invocations: 4}
+	wantCommands[commandOperationIndex("new")] = commandMetric{Invocations: 3}
 	wantCommands[commandOperationIndex("rm")] = commandMetric{Invocations: 1}
 	wantCommands[commandOperationIndex("sel")] = commandMetric{Invocations: 1, Errors: 1}
 	wantCommands[commandOperationIndex("bsel")] = commandMetric{Invocations: 1, Errors: 1}
-	wantCommands[commandOperationIndex("bsel_next")] = commandMetric{Invocations: 1, Errors: 1}
-	wantCommands[commandOperationIndex("type")] = commandMetric{Invocations: 3}
+	wantCommands[commandOperationIndex("type")] = commandMetric{Invocations: 2}
 	if got.Commands != wantCommands {
 		t.Fatalf("command metrics = %+v, want %+v", got.Commands, wantCommands)
 	}
@@ -221,27 +219,26 @@ func TestGainReportsCommandInvocationsErrorsAndRates(t *testing.T) {
 		t.Fatalf("gain report has no command metrics: %q", stdout.String())
 	}
 	want := "command metrics:\n" +
-		"command    invocations  errors  error rate\n" +
-		"-------    -----------  ------  ----------\n" +
-		"in         0            0       0.0%\n" +
-		"new        4            0       0.0%\n" +
-		"mv         0            0       0.0%\n" +
-		"rm         1            0       0.0%\n" +
-		"sel        1            1       100.0%\n" +
-		"tsel       0            0       0.0%\n" +
-		"bsel       1            1       100.0%\n" +
-		"bsel_next  1            1       100.0%\n" +
-		"rsel       0            0       0.0%\n" +
-		"type       3            0       0.0%\n" +
-		"del        0            0       0.0%\n" +
-		"copy       0            0       0.0%\n" +
-		"cut        0            0       0.0%\n" +
-		"paste      0            0       0.0%\n" +
-		"commit     0            0       0.0%\n" +
-		"total      11           3       27.3%\n\n"
-	end := strings.Index(stdout.String()[start:], "tsel span metrics:\n")
+		"command  invocations  errors  error rate\n" +
+		"-------  -----------  ------  ----------\n" +
+		"in       0            0       0.0%\n" +
+		"new      3            0       0.0%\n" +
+		"mv       0            0       0.0%\n" +
+		"rm       1            0       0.0%\n" +
+		"sel      1            1       100.0%\n" +
+		"tsel     0            0       0.0%\n" +
+		"bsel     1            1       100.0%\n" +
+		"rsel     0            0       0.0%\n" +
+		"type     2            0       0.0%\n" +
+		"del      0            0       0.0%\n" +
+		"copy     0            0       0.0%\n" +
+		"cut      0            0       0.0%\n" +
+		"paste    0            0       0.0%\n" +
+		"commit   0            0       0.0%\n" +
+		"total    8            2       25.0%\n\n"
+	end := strings.Index(stdout.String()[start:], "tsel selection metrics:\n")
 	if end < 0 {
-		t.Fatalf("gain report has no tsel span metrics: %q", stdout.String())
+		t.Fatalf("gain report has no tsel selection metrics: %q", stdout.String())
 	}
 	if got := stdout.String()[start : start+end]; got != want {
 		t.Fatalf("command report = %q, want %q", got, want)
@@ -249,6 +246,7 @@ func TestGainReportsCommandInvocationsErrorsAndRates(t *testing.T) {
 }
 
 func TestHostRecordCombinesEffectiveAndIneffectiveOutput(t *testing.T) {
+
 	dataDirectory := t.TempDir()
 	invocation := invocationMetrics{}
 	invocation.Commands[commandOperationIndex("new")].Invocations = 1

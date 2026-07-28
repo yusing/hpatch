@@ -21,7 +21,7 @@ type commandOutcome struct {
 
 const (
 	textSpanVariantCount = 2
-	blockOutcomeCount    = 4
+	blockOutcomeCount    = 2
 )
 
 type invocationMetrics struct {
@@ -38,10 +38,7 @@ type invocationMetrics struct {
 
 var textSpanVariantNames = [textSpanVariantCount]string{"single", "multiple"}
 
-var blockOutcomeNames = [blockOutcomeCount]string{
-	"bsel exact", "bsel recovered",
-	"bsel_next exact", "bsel_next recovered",
-}
+var blockOutcomeNames = [blockOutcomeCount]string{"bsel exact", "bsel recovered"}
 
 func (m *invocationMetrics) invoke(operation string, attempt commandAttempt) {
 	index := commandOperationIndex(operation)
@@ -82,20 +79,13 @@ func (m *invocationMetrics) recordOutcome(operation string, outcome commandOutco
 }
 
 func blockOutcomeIndex(operation string, recovered bool) int {
-	base := -1
-	switch operation {
-	case "bsel":
-		base = 0
-	case "bsel_next":
-		base = 2
-	}
-	if base < 0 {
+	if operation != "bsel" {
 		return -1
 	}
 	if recovered {
-		return base + 1
+		return 1
 	}
-	return base
+	return 0
 }
 
 type failureReason uint8

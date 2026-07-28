@@ -54,9 +54,8 @@ Editing commands:
   mv PATH                             move the active pending file without changing its baseline
   rm                                  remove the active file and clear editor state
   sel LINE START:END                  select inclusive one-based rune columns
-  tsel LINE OCCURRENCE "TEXT" [N]     select N occurrences; N defaults to 1
+  tsel FROM_LINE "TEXT" [N]          select the first N separate matches from FROM_LINE
   bsel "START" "END"                  select one whole-file uniquely anchored block
-  bsel_next "START" "END"             select one state-scoped uniquely anchored block
   rsel START:END                      select inclusive complete logical lines
   type "TEXT"                         record replacement or insertion at baseline coordinates
   type <<TAG                          record literal multiline replacement or insertion text
@@ -74,11 +73,11 @@ Baseline editor state:
   earlier command is not selectable. A selector that overlaps baseline content already
   replaced or deleted by an earlier edit is rejected.
 
-  Cursors and selections are baseline positions. A selection command replaces the
-  prior selection. After type, the cursor is at the selected baseline span's end; a
-  cursor insertion stays at that baseline position. del leaves it at the selection
-  start. copy preserves the selection. paste inserts after an active selection or
-  at the cursor otherwise, then leaves the cursor at that baseline insertion point.
+  Cursors and selection sets are baseline positions. A selector replaces the prior
+  state. tsel may establish separate matches; type, del, cut, and paste apply to every
+  active match atomically. After a multi-selection edit, one cursor remains at the final
+  match in file order. copy stores the shared literal once and preserves the selection
+  set. At a cursor, editing retains the existing single-position behavior.
 
   Disjoint baseline edits are applied together after complete validation. Replacements
   or deletions that overlap, insertions inside a replaced span, and multiple insertions
@@ -102,16 +101,14 @@ Baseline editor state:
   commits silently. A rejected range prints the line's column count and each token's
   column span, which is enough to correct it without rereading the file.
 
-  ` + "`tsel`" + ` occurrence must be nonzero: positive values count from the start, and
-  negative values count from the end. Its optional count must be a positive integer and
-  selects consecutive nonoverlapping occurrences, including intervening source text.
-  Both ` + "`bsel`" + ` and ` + "`bsel_next`" + ` anchors must be nonempty and different.
+  ` + "`tsel`" + ` starts at column 1 of FROM_LINE and scans forward through EOF. Its
+  optional count defaults to one and must be positive. It establishes separate exact
+  matches, resuming search after each match's final character; all requested matches
+  must exist. Prefer a broader TEXT instead of occurrence arithmetic.
 
-  bsel searches the complete active-file baseline, independent of cursor or selection.
-  bsel_next searches inside the current baseline selection when one exists; otherwise
-  it searches from the current baseline cursor to end-of-file and never wraps. Each
-  command resolves START uniquely in its scope, then resolves END uniquely only after
-  START. Exact anchors are authoritative; when an anchor has no exact occurrence,
+  bsel searches the complete active-file baseline, independent of cursor or selection
+  set. It resolves START uniquely, then resolves END uniquely only after START. Exact
+  anchors are authoritative; when an anchor has no exact occurrence,
   nonempty ASCII space and tab runs match interchangeably. The selected span includes
   both anchors, so replacement TEXT must reproduce whatever END covers. An END anchor
   stopping mid-expression leaves the rest of that expression in place, and TEXT that
@@ -126,13 +123,14 @@ Baseline editor state:
 
   Inline TEXT, START, and END use JSON-compatible quoted strings and additionally
   accept literal horizontal tabs. Escape quotes, backslashes, line terminators, NUL,
-  and other C0 controls. Inline type, bsel, and bsel_next may encode line terminators;
-  tsel may not. For multiline type text, use type <<TAG with an exact unindented
+  and other C0 controls. Inline type and bsel may encode line terminators; tsel may
+  not. For multiline type text, use type <<TAG with an exact unindented
   closing TAG instead of placing physical newlines inside a quoted operand.
 
 Final-state report:
-  A successful report starts with the active path and rendered cursor or selection,
-  followed by up to three nearby post-edit lines. Each preview contains at most 64
+  A successful report starts with the active path and rendered cursor or selection.
+  Multiple selections report their count and bounded first-to-last envelope. Up to three
+  nearby post-edit lines follow. Each preview contains at most 64
   Unicode code points and escapes control characters so it remains on one output line.
   Use the report to orient focused validation without rereading a successfully edited file.
 
@@ -140,7 +138,7 @@ Metrics:
   hpatch gain reads no script and reports caller-accounted hpatch and apply_patch
   output-token estimates separately from input-token estimates. Stable tables retain
   evaluator-owned command errors, absolute selectors, single and multiple
-  tsel spans, exact and recovered block successes, and terminal failure reasons.
+  tsel selection counts, exact and recovered block successes, and terminal failure reasons.
 
 Hooks:
   Agent-correctable script evaluation failures run each command template in

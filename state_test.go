@@ -9,7 +9,7 @@ import (
 )
 
 func TestFinalStateReportMatchesNormalAndTranslateResults(t *testing.T) {
-	const script = "in file.txt\ntsel 2 1 \"beta\"\ntype \"B\"\n"
+	const script = "in file.txt\ntsel 2 \"beta\"\ntype \"B\"\n"
 	const wantReport = "in file.txt 2:2\n1 alpha\n2 B\n3 gamma\n"
 	for _, args := range [][]string{nil, {"translate"}} {
 		t.Run(strings.Join(args, "_"), func(t *testing.T) {
@@ -35,7 +35,7 @@ func TestFinalStateReportRepresentsSelectionMoveRemovalAndEmptyFile(t *testing.T
 	tests := []struct {
 		name, content, script, want string
 	}{
-		{name: "selection", content: "alpha\nβeta\ngamma\n", script: "in file.txt\ntsel 2 1 \"βeta\"", want: "in file.txt 2:1-2:5\n1 alpha\n2 βeta\n3 gamma\n"},
+		{name: "selection", content: "alpha\nβeta\ngamma\n", script: "in file.txt\ntsel 2 \"βeta\"", want: "in file.txt 2:1-2:5\n1 alpha\n2 βeta\n3 gamma\n"},
 		{name: "moved path", content: "alpha\n", script: "in file.txt\nmv moved.txt", want: "in moved.txt 1:1\n1 alpha\n2 \n"},
 		{name: "removed active file", content: "alpha\n", script: "in file.txt\nrm", want: "no active file\n"},
 		{name: "new empty file", script: "new empty.txt", want: "in empty.txt 1:1\n1 \n"},
@@ -59,9 +59,9 @@ func TestFinalStateCursorAffinity(t *testing.T) {
 		name, script, wantHeader, wantLine string
 	}{
 		{name: "type insertion", script: "in file.txt\ntype \"X\"", wantHeader: "in file.txt 1:2", wantLine: "1 Xabc"},
-		{name: "type replacement", script: "in file.txt\ntsel 1 1 \"b\"\ntype \"XYZ\"", wantHeader: "in file.txt 1:5", wantLine: "1 aXYZc"},
-		{name: "delete join", script: "in file.txt\ntsel 1 1 \"b\"\ndel", wantHeader: "in file.txt 1:2", wantLine: "1 ac"},
-		{name: "after copy and paste", script: "in file.txt\ntsel 1 1 \"b\"\ncopy\npaste", wantHeader: "in file.txt 1:4", wantLine: "1 abbc"},
+		{name: "type replacement", script: "in file.txt\ntsel 1 \"b\"\ntype \"XYZ\"", wantHeader: "in file.txt 1:5", wantLine: "1 aXYZc"},
+		{name: "delete join", script: "in file.txt\ntsel 1 \"b\"\ndel", wantHeader: "in file.txt 1:2", wantLine: "1 ac"},
+		{name: "after copy and paste", script: "in file.txt\ntsel 1 \"b\"\ncopy\npaste", wantHeader: "in file.txt 1:4", wantLine: "1 abbc"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -82,7 +82,7 @@ func TestEmptyTypePreservesAdjacentEditCursorAffinity(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, root, "file.txt", "ab\n", 0o644)
 	var stdout, stderr bytes.Buffer
-	script := "in file.txt\ntsel 1 1 \"b\"\ncopy\npaste\ntsel 1 1 \"b\"\ntype \"X\"\ntype \"\""
+	script := "in file.txt\ntsel 1 \"b\"\ncopy\npaste\ntsel 1 \"b\"\ntype \"X\"\ntype \"\""
 	if exitCode := Run(nil, strings.NewReader(script), &stdout, &stderr, root, ""); exitCode != 0 {
 		t.Fatalf("Run() = exit %d, stdout %q, stderr %q", exitCode, stdout.String(), stderr.String())
 	}
@@ -96,7 +96,7 @@ func TestFinalStatePreviewWindowTruncationAndControls(t *testing.T) {
 	longLine := "\t" + strings.Repeat("界", 70)
 	writeTestFile(t, root, "file.txt", "one\ntwo\nthree\nfour\n"+longLine, 0o644)
 	var stdout, stderr bytes.Buffer
-	script := "in file.txt\ntsel 5 1 " + jsonString(t, longLine) + "\ncopy\npaste"
+	script := "in file.txt\ntsel 5 " + jsonString(t, longLine) + "\ncopy\npaste"
 	if exitCode := Run(nil, strings.NewReader(script), &stdout, &stderr, root, ""); exitCode != 0 {
 		t.Fatalf("Run() = exit %d, stdout %q, stderr %q", exitCode, stdout.String(), stderr.String())
 	}
@@ -110,7 +110,7 @@ func TestFinalStateReportWriteFailureDoesNotReverseEffect(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, root, "file.txt", "old\n", 0o644)
 	var stdout bytes.Buffer
-	exitCode := Run(nil, strings.NewReader("in file.txt\ntsel 1 1 \"old\"\ntype \"new\""), &stdout, stateReportErrorWriter{}, root, "")
+	exitCode := Run(nil, strings.NewReader("in file.txt\ntsel 1 \"old\"\ntype \"new\""), &stdout, stateReportErrorWriter{}, root, "")
 	if exitCode != 0 || stdout.Len() != 0 {
 		t.Fatalf("Run() = exit %d, stdout %q", exitCode, stdout.String())
 	}
@@ -123,7 +123,7 @@ func TestFailureEmitsNoFinalStateReport(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, root, "file.txt", "old\n", 0o644)
 	var stdout, stderr bytes.Buffer
-	exitCode := Run([]string{"translate"}, strings.NewReader("in file.txt\ntsel 1 1 \"missing\""), &stdout, &stderr, root, "")
+	exitCode := Run([]string{"translate"}, strings.NewReader("in file.txt\ntsel 1 \"missing\""), &stdout, &stderr, root, "")
 	if exitCode != 1 || stdout.Len() != 0 || !strings.HasPrefix(stderr.String(), "hpatch:") || strings.Contains(stderr.String(), "\nin ") {
 		t.Fatalf("Run() = exit %d, stdout %q, stderr %q", exitCode, stdout.String(), stderr.String())
 	}

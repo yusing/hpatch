@@ -23,7 +23,7 @@ func TestErrorHookReceivesFailureAndRepairContext(t *testing.T) {
 		"printf '%s' {{shellquote (format_markdown .)}} > " + shellQuote(bodyPath),
 	})
 
-	script := "in note.txt\ntsel 1 1 \"missing\"\ntype \"replacement\"\n"
+	script := "in note.txt\ntsel 1 \"missing\"\ntype \"replacement\"\n"
 	var stdout, stderr bytes.Buffer
 	exitCode := Run(nil, strings.NewReader(script), &stdout, &stderr, root, dataDirectory)
 	if exitCode != 1 || stdout.Len() != 0 {
@@ -40,11 +40,11 @@ func TestErrorHookReceivesFailureAndRepairContext(t *testing.T) {
 		"- Operation: `tsel`",
 		"- Category: `selection`",
 		"- Path: `note.txt`",
-		"## Failed command\n\n    tsel 1 1 \"missing\"",
-		"## Failure\n\n    occurrence 1 of \"missing\" not found on line 1",
+		"## Failed command\n\n    tsel 1 \"missing\"",
+		"## Failure\n\n    found 0 of 1 requested matches of \"missing\" at or after line 1",
 		"## Diagnostic\n\n    hpatch: command 2, source line 2",
 		"## Repair context",
-		"line 1 does not contain the requested occurrence",
+		"found 0 of 1 requested matches at or after line 1",
 		">1 present words",
 	} {
 		if !strings.Contains(string(body), fragment) {

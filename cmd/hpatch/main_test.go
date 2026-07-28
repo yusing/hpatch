@@ -59,7 +59,7 @@ func TestTopLevelHelpDescribesCompletePublicSurface(t *testing.T) {
 		"hpatch gain",
 		"standard input",
 		"bsel \"START\" \"END\"",
-		"bsel_next \"START\" \"END\"",
+		"tsel FROM_LINE \"TEXT\" [N]",
 		"rsel START:END",
 		"type <<TAG",
 		"commit",
@@ -73,9 +73,9 @@ func TestTopLevelHelpDescribesCompletePublicSurface(t *testing.T) {
 		"Text introduced by an",
 		"multiple insertions",
 		"complete active-file baseline",
-		"bsel_next searches inside the current baseline selection",
-		"current baseline cursor to end-of-file",
-		"never wraps",
+		"separate matches",
+		"Prefer a broader TEXT instead of occurrence arithmetic",
+		"selection sets",
 		"ASCII space and tab runs match interchangeably",
 		"preserves the selected final",
 		"translate always emits root-relative paths",
@@ -103,13 +103,13 @@ func TestToolHelpIsFocusedAndAuthoritative(t *testing.T) {
 		"JSON-compatible escapes",
 		"accept literal horizontal tabs",
 		"other C0 controls",
-		"tsel checks TEXT only on LINE",
+		"tsel starts at column 1 of FROM_LINE",
 		"does not choose the nearest END",
 		"independently unique",
 		"rejected script changes nothing",
 		"sel LINE START:END",
-		"tsel LINE OCCURRENCE \"TEXT\" [N]",
-		"bsel_next \"START\" \"END\"",
+		"tsel FROM_LINE \"TEXT\" [N]",
+		"first N exact",
 		"commit",
 		"next immutable baseline",
 		"clipboard survives",
@@ -157,7 +157,7 @@ func TestRootAndCWDOptionsTranslateRootRelativePath(t *testing.T) {
 		var stdout, stderr bytes.Buffer
 		exitCode := run(
 			[]string{"translate", "--root", root, "--cwd", cwd},
-			strings.NewReader("in main.go\ntsel 1 1 \"package main\"\ntype \"package graph\"\n"),
+			strings.NewReader("in main.go\ntsel 1 \"package main\"\ntype \"package graph\"\n"),
 			&stdout,
 			&stderr,
 		)
@@ -193,26 +193,22 @@ func TestWorkspaceOptionsRejectInvalidBoundaries(t *testing.T) {
 }
 
 func TestTopLevelHelpDescribesSelectionOperandConstraints(t *testing.T) {
-	const constraints = "`tsel` occurrence must be nonzero: positive values count from the start, and\n  negative values count from the end. Its optional count must be a positive integer and\n  selects consecutive nonoverlapping occurrences, including intervening source text.\n  Both `bsel` and `bsel_next` anchors must be nonempty and different."
-	if !strings.Contains(helpTextBase, constraints) {
-		t.Fatalf("help does not contain accepted operand constraints %q", constraints)
-	}
-
 	for _, fragment := range []string{
-		"`tsel` occurrence must be nonzero",
-		"positive values count from the start",
-		"negative values count from the end",
-		"optional count must be a positive integer",
-		"including intervening source text",
-		"Both `bsel` and `bsel_next` anchors must be",
-		"anchors must be nonempty and different",
+		"`tsel` starts at column 1 of FROM_LINE",
+		"scans forward through EOF",
+		"optional count defaults to one",
+		"separate exact",
+		"all requested matches",
+		"Prefer a broader TEXT instead of occurrence arithmetic",
+		"bsel searches the complete active-file baseline",
+		"resolves START uniquely",
+		"resolves END uniquely only after START",
 	} {
 		if !strings.Contains(helpTextBase, fragment) {
 			t.Fatalf("help does not contain %q", fragment)
 		}
 	}
-
-	if strings.Contains(translateHelpText, constraints) {
+	if strings.Contains(translateHelpText, "`tsel` starts at column 1 of FROM_LINE") {
 		t.Fatal("translate help duplicates top-level operand constraints")
 	}
 	if !strings.Contains(translateHelpText, "Run hpatch --help for the complete editing and agent workflow.") {
@@ -221,6 +217,7 @@ func TestTopLevelHelpDescribesSelectionOperandConstraints(t *testing.T) {
 }
 
 func TestHelpDoesNotLeakSourceTreeReferences(t *testing.T) {
+
 	for _, output := range []string{helpTextBase, toolHelpText(), translateHelpText} {
 		for _, stale := range []string{"doc/spec", "AGENT_INSTRUCTIONS.md"} {
 			if strings.Contains(output, stale) {

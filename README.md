@@ -23,7 +23,7 @@ files only after the full script has been parsed, evaluated, and staged:
 ```sh
 bin/hpatch <<'EOF'
 in src/app.go
-tsel 12 -1 "oldName"
+tsel 12 "oldName"
 type "newName"
 EOF
 ```
@@ -43,7 +43,7 @@ relative script paths from a directory beneath it:
 ```sh
 bin/hpatch translate --root /workspace --cwd bin/block-graph-worktree <<'EOF'
 in main.go
-tsel 1 1 "package main"
+tsel 1 "package main"
 type "package graph"
 EOF
 ```
@@ -120,25 +120,25 @@ bin/hpatch --tool-help
 bin/hpatch --version
 ```
 
-The first `in` of an existing file captures an immutable baseline. Every later
-selector for that logical file resolves against that baseline, including after `mv`
-or a repeated `in`; inserted text is not selectable. A selector overlapping baseline
-content already replaced or deleted by an earlier command is rejected. Disjoint edits
-are materialized together after validation, so independent selectors keep their
-original meaning regardless of command order. Overlapping replacements or deletions,
-insertions inside a replaced span, and multiple insertions at one baseline position fail
-atomically. New files have an empty baseline and accept one effective complete-content
-`type`.
+The first `in` of an existing file captures an immutable generation baseline. Every
+selector for that logical file resolves against that baseline, including after `mv` or
+a repeated `in`; inserted text becomes selectable only after `commit` materializes the
+next in-memory baseline. A selector overlapping baseline content already replaced or
+deleted by an earlier command is rejected. Disjoint edits are materialized together
+after validation, so independent selectors keep their original meaning regardless of
+command order. Overlapping replacements or deletions, insertions inside a replaced span,
+and multiple insertions at one baseline position fail atomically. New files have an empty
+baseline and accept one effective complete-content `type` per generation.
 
-`rsel` selects complete baseline logical lines; linewise replacement inherits the
-selected final line terminator unless the replacement supplies one.
-`bsel "START" "END"` searches the complete active-file baseline, independent of cursor
-or selection. `bsel_next "START" "END"` explicitly searches inside the current baseline
-selection when one exists, or from the current baseline cursor to end-of-file otherwise,
-and never wraps. Each command resolves `START` uniquely in its scope, then resolves `END`
-uniquely after that start. Exact anchors are authoritative; when an exact anchor is
-missing, nonempty runs of ASCII spaces and tabs match interchangeably. Ambiguous,
-reversed, or overlapping anchors fail.
+`tsel FROM_LINE "TEXT" [N]` scans forward from the lower line boundary and establishes
+the first `N` exact non-overlapping matches as separate selections. The same edit action
+applies to every selected match atomically. `rsel` selects complete baseline logical
+lines; linewise replacement inherits the selected final line terminator unless the
+replacement supplies one. `bsel "START" "END"` searches the complete active-file
+baseline independently of cursor or selection state. It resolves `START` uniquely, then
+resolves `END` uniquely after that start. Exact anchors are authoritative; when an exact
+anchor is missing, nonempty runs of ASCII spaces and tabs match interchangeably.
+Ambiguous, reversed, or overlapping anchors fail.
 
 Every editing invocation has one root. Relative script paths resolve from cwd within
 that root. Absolute script paths must use the canonical root spelling and remain inside

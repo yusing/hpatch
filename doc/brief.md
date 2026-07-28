@@ -16,10 +16,10 @@ comparisons and a concise instruction sheet suitable for agents.
 ## First-draft scope
 
 - Multiple UTF-8 files selected in sequence by `in PATH` or created by `new PATH`.
-- Single-line column selection, literal text-occurrence selection, unique literal-anchored
+- Single-line column selection, forward literal-match selection sets, unique literal-anchored
   block selection, and inclusive whole-line range selection.
-- Cursor insertion, selection replacement, selection deletion, and invocation-local clipboard
-  copy, cut, and paste.
+- Cursor insertion and atomic selection-set replacement, deletion, and invocation-local
+  clipboard copy, cut, and paste.
 - File creation, movement, and deletion.
 - Immutable per-generation baselines with stable selectors, disjoint edit collection within
   a generation, and an explicit `commit` barrier that advances the in-memory baseline.
@@ -36,9 +36,8 @@ comparisons and a concise instruction sheet suitable for agents.
 - `hpatch --help`, `hpatch --tool-help`, `hpatch translate --help`, and
   `hpatch --version`: informational output without reading stdin or accessing the
   workspace.
-- Script commands: `in`, `new`, `mv`, `rm`, `sel`, `tsel`, `bsel`, `bsel_next`,
-  `rsel`, `type`, `del`, `copy`, `cut`, `paste`, and `commit`; `type` also accepts a
-  framed heredoc body.
+- Script commands: `in`, `new`, `mv`, `rm`, `sel`, `tsel`, `bsel`, `rsel`, `type`,
+  `del`, `copy`, `cut`, `paste`, and `commit`; `type` also accepts a framed heredoc body.
 - Routed rejected-script corrections can replace, delete, or insert commands by command
   index without resending the complete script.
 

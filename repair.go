@@ -48,7 +48,7 @@ func (w *workspace) repairContext(command instruction, reason failureReason) str
 		w.writeLineRepair(&report, editor, lines, command, reason)
 	case "rsel":
 		w.writeRangeRepair(&report, editor, lines, command, reason)
-	case "bsel", "bsel_next":
+	case "bsel":
 		w.writeAnchorRepair(&report, editor, lines, command, reason)
 	case "type", "del", "copy", "cut", "paste":
 		w.writeEditRepair(&report, editor, lines, reason, editor.editOffset())
@@ -59,72 +59,42 @@ func (w *workspace) repairContext(command instruction, reason failureReason) str
 	return report.String()
 }
 
-// writeLineRepair explains a single-line selector failure. Out-of-range lines
-// get the file's line count; a rejected column range or missing occurrence gets
-// the addressed line with its measurements.
+// writeLineRepair explains a line-addressed selector failure and shows the
+// immutable baseline region searched by the command.
 func (w *workspace) writeLineRepair(report *strings.Builder, editor *editor, lines []logicalLine, command instruction, reason failureReason) {
 	number := command.lineNumber
-
 	if number < 1 || number > len(lines) {
 		fmt.Fprintf(report, "%s has %d lines; line %d does not exist\n", w.active.path, len(lines), number)
 		writeLineWindow(report, editor.baseline, lines, min(max(number, 1), len(lines)))
 		return
 	}
+	if command.operation == "tsel" {
+		if reason == reasonOccurrenceMissing {
+			line := lines[number-1]
+			offsets := nonOverlappingLiteralOffsets(editor.baseline[line.start:], command.text, command.count)
+			fmt.Fprintf(report, "found %d of %d requested matches at or after line %d\n", len(offsets), command.count, number)
+			if len(offsets) != 0 {
+				matchLines := make([]int, 0, min(len(offsets), repairListLimit))
+				for _, offset := range offsets[:min(len(offsets), repairListLimit)] {
+					matchLines = append(matchLines, lineNumberAt(lines, line.start+offset))
+				}
+				fmt.Fprintf(report, "matching lines: %s\n", joinLineNumbers(matchLines, len(offsets)))
+			}
+		}
+		writeLineWindow(report, editor.baseline, lines, number)
+		return
+	}
+
 	content := editor.baseline[lines[number-1].start:lines[number-1].contentEnd]
 	columns := utf8.RuneCountInString(content)
-	switch reason {
-	case reasonCoordinateBounds:
+	if reason == reasonCoordinateBounds {
 		fmt.Fprintf(report, "line %d has %d columns; requested %d:%d\n", number, columns, command.start, command.end)
 		fmt.Fprintf(report, "columns count Unicode code points, so one tab is one column\n")
-	case reasonOccurrenceMissing:
-		fmt.Fprintf(report, "line %d does not contain the requested occurrence\n", number)
-		writeOccurrenceCandidates(report, editor.baseline, lines, command)
 	}
 	writeLineWindow(report, editor.baseline, lines, number)
 	if reason == reasonCoordinateBounds && columns > 0 {
 		fmt.Fprintf(report, "column guide for line %d: %s\n", number, columnGuide(content))
 	}
-}
-
-func writeOccurrenceCandidates(report *strings.Builder, baseline string, lines []logicalLine, command instruction) {
-	candidates := make([]int, 0, min(len(lines), repairListLimit))
-	total := 0
-	for index, line := range lines {
-		if index+1 == command.lineNumber {
-			continue
-		}
-		content := baseline[line.start:line.contentEnd]
-		if !occurrenceGroupFits(content, command.text, command.occurrence, command.count) {
-			continue
-		}
-		total++
-		if len(candidates) < repairListLimit {
-			candidates = append(candidates, index+1)
-		}
-	}
-	if total == 0 {
-		return
-	}
-	if total == 1 {
-		fmt.Fprintf(report, "the requested occurrence is selectable on line %d\n", candidates[0])
-		return
-	}
-	fmt.Fprintf(report, "the requested occurrence is selectable on lines %s\n", joinLineNumbers(candidates, total))
-}
-
-func occurrenceGroupFits(content, literal string, occurrence, count int) bool {
-	offsets := nonOverlappingLiteralOffsets(content, literal)
-	index := occurrence - 1
-	if occurrence < 0 {
-		index = len(offsets) + occurrence
-	}
-	if index < 0 || index >= len(offsets) {
-		return false
-	}
-	if occurrence < 0 {
-		return count <= index+1
-	}
-	return count <= len(offsets)-index
 }
 
 // writeRangeRepair explains a linewise selector failure against the file's
@@ -144,13 +114,8 @@ func (w *workspace) writeRangeRepair(report *strings.Builder, editor *editor, li
 // the information the retry needs; a missing anchor is repaired by correcting
 // its text, so the searched scope matters instead.
 func (w *workspace) writeAnchorRepair(report *strings.Builder, editor *editor, lines []logicalLine, command instruction, reason failureReason) {
-	scopeStart, scopeEnd := 0, len(editor.baseline)
-	if command.operation == "bsel_next" && editor.selection != nil {
-		scopeStart, scopeEnd = editor.selection.start, editor.selection.end
-	} else if command.operation == "bsel_next" {
-		scopeStart = editor.cursor
-	}
-	scope := editor.baseline[scopeStart:scopeEnd]
+	scopeStart := 0
+	scope := editor.baseline
 	startMatches, startRecovered := blockAnchorMatches(scope, command.text)
 	writeAnchorMatches(report, "START", command.text, startMatches, startRecovered, lines, scopeStart)
 	if len(startMatches) == 1 {
@@ -208,8 +173,8 @@ func (w *workspace) writeEditRepair(report *strings.Builder, editor *editor, lin
 // editOffset is where an edit command acted: its selection when one is active,
 // otherwise the cursor.
 func (e *editor) editOffset() int {
-	if e.selection != nil {
-		return e.selection.start
+	if len(e.selections) != 0 {
+		return e.selections[0].start
 	}
 	return e.cursor
 }
