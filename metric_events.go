@@ -111,6 +111,7 @@ const (
 	reasonEditConflict
 	reasonActiveFile
 	reasonSelectionRequired
+	reasonClipboardEmpty
 	reasonFileMissing
 	reasonFileConflict
 	reasonPath
@@ -129,6 +130,7 @@ var failureReasonNames = [failureReasonCount]string{
 	"edit-conflict",
 	"active-file",
 	"selection-required",
+	"clipboard-empty",
 	"file-missing",
 	"file-conflict",
 	"path",

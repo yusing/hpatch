@@ -61,7 +61,7 @@ func TestFinalStateCursorAffinity(t *testing.T) {
 		{name: "type insertion", script: "in file.txt\ntype \"X\"", wantHeader: "in file.txt 1:2", wantLine: "1 Xabc"},
 		{name: "type replacement", script: "in file.txt\ntsel 1 1 \"b\"\ntype \"XYZ\"", wantHeader: "in file.txt 1:5", wantLine: "1 aXYZc"},
 		{name: "delete join", script: "in file.txt\ntsel 1 1 \"b\"\ndel", wantHeader: "in file.txt 1:2", wantLine: "1 ac"},
-		{name: "after duplicate", script: "in file.txt\ntsel 1 1 \"b\"\ndup", wantHeader: "in file.txt 1:4", wantLine: "1 abbc"},
+		{name: "after copy and paste", script: "in file.txt\ntsel 1 1 \"b\"\ncopy\npaste", wantHeader: "in file.txt 1:4", wantLine: "1 abbc"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -82,7 +82,7 @@ func TestEmptyTypePreservesAdjacentEditCursorAffinity(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, root, "file.txt", "ab\n", 0o644)
 	var stdout, stderr bytes.Buffer
-	script := "in file.txt\ntsel 1 1 \"b\"\ndup\ntsel 1 1 \"b\"\ntype \"X\"\ntype \"\""
+	script := "in file.txt\ntsel 1 1 \"b\"\ncopy\npaste\ntsel 1 1 \"b\"\ntype \"X\"\ntype \"\""
 	if exitCode := Run(nil, strings.NewReader(script), &stdout, &stderr, root, ""); exitCode != 0 {
 		t.Fatalf("Run() = exit %d, stdout %q, stderr %q", exitCode, stdout.String(), stderr.String())
 	}
@@ -96,7 +96,7 @@ func TestFinalStatePreviewWindowTruncationAndControls(t *testing.T) {
 	longLine := "\t" + strings.Repeat("界", 70)
 	writeTestFile(t, root, "file.txt", "one\ntwo\nthree\nfour\n"+longLine, 0o644)
 	var stdout, stderr bytes.Buffer
-	script := "in file.txt\ntsel 5 1 " + jsonString(t, longLine) + "\ndup"
+	script := "in file.txt\ntsel 5 1 " + jsonString(t, longLine) + "\ncopy\npaste"
 	if exitCode := Run(nil, strings.NewReader(script), &stdout, &stderr, root, ""); exitCode != 0 {
 		t.Fatalf("Run() = exit %d, stdout %q, stderr %q", exitCode, stdout.String(), stderr.String())
 	}

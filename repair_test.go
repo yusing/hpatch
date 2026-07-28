@@ -54,6 +54,19 @@ func TestRepairColumnGuideHandlesWhitespaceOnlyLine(t *testing.T) {
 	}
 }
 
+func TestRepairContextFindsOccurrenceOnOtherBaselineLines(t *testing.T) {
+	content := "target once\nnone\ntarget twice target twice\ntarget once\n"
+	repair := repairFor(t, "find.txt", content, "in find.txt\ntsel 2 1 \"target once\"\ntype \"replacement\"\n")
+	if !strings.Contains(repair, "the requested occurrence is selectable on lines 1, 4") {
+		t.Fatalf("repair context lacks candidate lines:\n%s", repair)
+	}
+
+	repair = repairFor(t, "find.txt", content, "in find.txt\ntsel 2 2 \"target twice\"\ntype \"replacement\"\n")
+	if !strings.Contains(repair, "the requested occurrence is selectable on line 3") {
+		t.Fatalf("repair context lacks unique candidate line:\n%s", repair)
+	}
+}
+
 func TestRepairContextReportsMissingLine(t *testing.T) {
 	repair := repairFor(t, "calc.go", "one\ntwo\nthree\n", "in calc.go\nsel 99 1:3\ntype \"x\"\n")
 	if !strings.Contains(repair, "calc.go has 3 lines; line 99 does not exist") {

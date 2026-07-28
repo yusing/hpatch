@@ -248,11 +248,14 @@ func representativeMetrics() metrics {
 	value.BlockOutcomes[blockOutcomeIndex("bsel_next", true)] = 1
 	value.Reasons[reasonSyntax] = 2
 	value.Reasons[reasonAnchorMissing] = 1
+	value.Commands[commandOperationIndex("paste")] = commandMetric{Invocations: 1, Errors: 1}
+	value.Reasons[reasonClipboardEmpty] = 1
 	// Attribute each reason to the command that raised it so the
 	// cross-tabulation reconciles with both margins.
 	value.CommandReasons[commandOperationIndex("sel")][reasonSyntax] = 1
 	value.CommandReasons[commandOperationIndex("tsel")][reasonSyntax] = 1
 	value.CommandReasons[commandOperationIndex("bsel")][reasonAnchorMissing] = 1
+	value.CommandReasons[commandOperationIndex("paste")][reasonClipboardEmpty] = 1
 	return value
 }
 

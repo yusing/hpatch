@@ -27,10 +27,22 @@ type settings struct {
 }
 
 type hooks struct {
-	Error []string `json:"error"`
+	Error   []string `json:"error"`
+	Outcome []string `json:"outcome"`
+}
+
+type attemptHookFields struct {
+	SessionID     string
+	CorrelationID string
+	CallID        string
+	Attempt       int
+	Correction    bool
+	Outcome       string
 }
 
 type errorHookEvent struct {
+	attemptHookFields
+
 	Body          string
 	Diagnostic    string
 	Repair        string
@@ -43,8 +55,24 @@ type errorHookEvent struct {
 	Failure       string
 }
 
-func runErrorHooks(ctx context.Context, dataDirectory string, sourceError *commandError, diagnostic string, timeout time.Duration) []error {
-	if dataDirectory == "" || sourceError.Reason == reasonOther {
+type outcomeHookEvent struct {
+	attemptHookFields
+
+	Body string
+}
+
+func runCommandErrorHooks(ctx context.Context, dataDirectory string, sourceErrors []*commandError, diagnostic string, timeout time.Duration) []error {
+	if dataDirectory == "" {
+		return nil
+	}
+	hasHookableError := false
+	for _, sourceError := range sourceErrors {
+		if sourceError.Reason != reasonOther {
+			hasHookableError = true
+			break
+		}
+	}
+	if !hasHookableError {
 		return nil
 	}
 	if err := ctx.Err(); err != nil {
@@ -59,20 +87,25 @@ func runErrorHooks(ctx context.Context, dataDirectory string, sourceError *comma
 		return nil
 	}
 
-	event := newErrorHookEvent(sourceError, diagnostic)
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	var hookErrors []error
-	for index, source := range configured.Hooks.Error {
-		command, err := renderErrorHook(source, event)
-		if err != nil {
-			hookErrors = append(hookErrors, fmt.Errorf("rendering error hook %d: %w", index+1, err))
+	for _, sourceError := range sourceErrors {
+		if sourceError.Reason == reasonOther {
 			continue
 		}
-		if err := executeErrorHook(ctx, command); err != nil {
-			hookErrors = append(hookErrors, fmt.Errorf("running error hook %d: %w", index+1, err))
-			if ctx.Err() != nil {
-				break
+		event := newErrorHookEvent(ctx, sourceError, diagnostic)
+		for index, source := range configured.Hooks.Error {
+			command, err := renderHook(source, event, event.Body)
+			if err != nil {
+				hookErrors = append(hookErrors, fmt.Errorf("rendering error hook %d: %w", index+1, err))
+				continue
+			}
+			if err := executeErrorHook(ctx, command); err != nil {
+				hookErrors = append(hookErrors, fmt.Errorf("running error hook %d: %w", index+1, err))
+				if ctx.Err() != nil {
+					return hookErrors
+				}
 			}
 		}
 	}
@@ -113,7 +146,7 @@ func readSettings(dataDirectory string) (settings, error) {
 	return configured, nil
 }
 
-func newErrorHookEvent(sourceError *commandError, diagnostic string) errorHookEvent {
+func newErrorHookEvent(ctx context.Context, sourceError *commandError, diagnostic string) errorHookEvent {
 	event := errorHookEvent{
 		Diagnostic:    strings.TrimSuffix(diagnostic, "\n"),
 		Repair:        strings.TrimSuffix(sourceError.Repair, "\n"),
@@ -124,6 +157,9 @@ func newErrorHookEvent(sourceError *commandError, diagnostic string) errorHookEv
 		Path:          sourceError.Path,
 		FailedCommand: sourceError.Source,
 		Failure:       sourceError.Message,
+	}
+	if metadata, ok := attemptMetadataFromContext(ctx); ok {
+		event.attemptHookFields = newAttemptHookFields(metadata, "rejected")
 	}
 	event.Body = formatErrorHookMarkdown(event)
 	return event
@@ -137,6 +173,7 @@ func formatErrorHookMarkdown(event errorHookEvent) string {
 	writeHookField(&body, "Operation", event.Operation)
 	writeHookField(&body, "Category", event.Category)
 	writeHookField(&body, "Path", event.Path)
+	writeAttemptHookFields(&body, event.attemptHookFields)
 	writeHookBlock(&body, "Failed command", event.FailedCommand)
 	writeHookBlock(&body, "Failure", event.Failure)
 	writeHookBlock(&body, "Diagnostic", event.Diagnostic)
@@ -187,9 +224,9 @@ func writeHookBlock(body *strings.Builder, label, value string) {
 	}
 }
 
-func renderErrorHook(source string, event errorHookEvent) (string, error) {
-	tmpl, err := template.New("error hook").Option("missingkey=error").Funcs(template.FuncMap{
-		"format_markdown": func(errorHookEvent) string { return event.Body },
+func renderHook(source string, event any, body string) (string, error) {
+	tmpl, err := template.New("hook").Option("missingkey=error").Funcs(template.FuncMap{
+		"format_markdown": func(any) string { return body },
 		"shellquote":      shellQuote,
 	}).Parse(source)
 	if err != nil {
@@ -207,6 +244,69 @@ func renderErrorHook(source string, event errorHookEvent) (string, error) {
 
 func shellQuote(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
+}
+
+func newAttemptHookFields(metadata AttemptMetadata, outcome string) attemptHookFields {
+	return attemptHookFields{
+		SessionID:     metadata.SessionID,
+		CorrelationID: metadata.CorrelationID,
+		CallID:        metadata.CallID,
+		Attempt:       metadata.Attempt,
+		Correction:    metadata.Correction,
+		Outcome:       outcome,
+	}
+}
+
+func writeAttemptHookFields(body *strings.Builder, fields attemptHookFields) {
+	if fields.SessionID == "" {
+		return
+	}
+	writeHookField(body, "Session ID", fields.SessionID)
+	writeHookField(body, "Correlation ID", fields.CorrelationID)
+	writeHookField(body, "Call ID", fields.CallID)
+	writeHookField(body, "Attempt", strconv.Itoa(fields.Attempt))
+	writeHookField(body, "Correction", strconv.FormatBool(fields.Correction))
+	writeHookField(body, "Outcome", fields.Outcome)
+}
+
+func runOutcomeHooks(ctx context.Context, dataDirectory, outcome string, timeout time.Duration) []error {
+	metadata, ok := attemptMetadataFromContext(ctx)
+	if !ok || dataDirectory == "" {
+		return nil
+	}
+	configured, err := readSettings(dataDirectory)
+	if err != nil {
+		return []error{err}
+	}
+	if len(configured.Hooks.Outcome) == 0 {
+		return nil
+	}
+	event := outcomeHookEvent{attemptHookFields: newAttemptHookFields(metadata, outcome)}
+	event.Body = formatOutcomeHookMarkdown(event)
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	var hookErrors []error
+	for index, source := range configured.Hooks.Outcome {
+		command, err := renderHook(source, event, event.Body)
+		if err != nil {
+			hookErrors = append(hookErrors, fmt.Errorf("rendering outcome hook %d: %w", index+1, err))
+			continue
+		}
+		if err := executeErrorHook(ctx, command); err != nil {
+			hookErrors = append(hookErrors, fmt.Errorf("running outcome hook %d: %w", index+1, err))
+			if ctx.Err() != nil {
+				break
+			}
+		}
+	}
+	return hookErrors
+}
+
+func formatOutcomeHookMarkdown(event outcomeHookEvent) string {
+	var body strings.Builder
+	body.WriteString("# hpatch attempt " + event.Outcome + "\n\n")
+	writeAttemptHookFields(&body, event.attemptHookFields)
+	return strings.TrimSuffix(body.String(), "\n")
 }
 
 func executeErrorHook(ctx context.Context, command string) error {

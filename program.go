@@ -38,6 +38,36 @@ type program struct {
 	instructions []instruction
 }
 
+type commandGroupError struct {
+	commands []*commandError
+}
+
+func (e *commandGroupError) Error() string {
+	messages := make([]string, len(e.commands))
+	for index, command := range e.commands {
+		messages[index] = command.Error()
+	}
+	return strings.Join(messages, "\n")
+}
+
+func (e *commandGroupError) Unwrap() []error {
+	failures := make([]error, len(e.commands))
+	for index, command := range e.commands {
+		failures[index] = command
+	}
+	return failures
+}
+
+func commandsOf(err error) []*commandError {
+	if failures, ok := errors.AsType[*commandGroupError](err); ok {
+		return failures.commands
+	}
+	if command, ok := errors.AsType[*commandError](err); ok {
+		return []*commandError{command}
+	}
+	return nil
+}
+
 type commandError struct {
 	Attempt   commandAttempt
 	Reason    failureReason
@@ -74,13 +104,15 @@ func (e *commandError) Error() string {
 
 func parse(source string) (*program, error) {
 	program := &program{}
+	var failures []*commandError
+	commandIndex := 0
 	for index, raw := range strings.Split(source, "\n") {
 		lineNumber := index + 1
 		line := strings.TrimSuffix(raw, "\r")
 		if strings.TrimSpace(line) == "" {
 			continue
 		}
-		commandIndex := len(program.instructions) + 1
+		commandIndex++
 		attempt := recognizeCommandAttempt(line)
 		command, err := parseInstruction(lineNumber, line)
 		if err != nil {
@@ -88,7 +120,7 @@ func parse(source string) (*program, error) {
 			if sourceError, ok := errors.AsType[*commandError](err); ok {
 				message = sourceError.Message
 			}
-			return nil, &commandError{
+			failures = append(failures, &commandError{
 				Attempt:   attempt,
 				Reason:    reasonOf(err, reasonSyntax),
 				Command:   commandIndex,
@@ -97,11 +129,15 @@ func parse(source string) (*program, error) {
 				Category:  "syntax",
 				Source:    line,
 				Message:   message,
-			}
+			})
+			continue
 		}
 		command.source = line
 		command.attempt = attemptForInstruction(command)
 		program.instructions = append(program.instructions, command)
+	}
+	if len(failures) != 0 {
+		return nil, &commandGroupError{commands: failures}
 	}
 	return program, nil
 }
@@ -112,7 +148,7 @@ func recognizeCommandAttempt(line string) commandAttempt {
 		return commandAttempt{}
 	}
 	switch fields[0] {
-	case "in", "new", "mv", "rm", "bsel", "bsel_next", "type", "del", "dup":
+	case "in", "new", "mv", "rm", "bsel", "bsel_next", "type", "del", "copy", "cut", "paste":
 		return commandAttempt{recognized: true}
 	case "sel":
 		return commandAttempt{recognized: recognizeLine(fields, 1)}
@@ -158,8 +194,8 @@ func recognizeTextSpanVariant(line string) textSpanVariant {
 	if match == nil {
 		return textSpanNone
 	}
-	_, trailing, ok := decodeLeadingTextOperand(match[3])
-	if !ok {
+	_, trailing, err := decodeLeadingTextOperand(match[3])
+	if err != nil {
 		return textSpanNone
 	}
 	trailing = strings.TrimSpace(trailing)
@@ -169,13 +205,13 @@ func recognizeTextSpanVariant(line string) textSpanVariant {
 	return textSpanSingle
 }
 
-func decodeLeadingTextOperand(encoded string) (string, string, bool) {
+func decodeLeadingTextOperand(encoded string) (string, string, error) {
 	decoder := json.NewDecoder(strings.NewReader(encoded))
 	var text string
 	if err := decoder.Decode(&text); err != nil {
-		return "", "", false
+		return "", "", err
 	}
-	return text, encoded[decoder.InputOffset():], true
+	return text, encoded[decoder.InputOffset():], nil
 }
 
 func attemptForInstruction(command instruction) commandAttempt {
@@ -199,7 +235,7 @@ func parseInstruction(sourceLine int, line string) (instruction, error) {
 		}
 	}
 
-	if line == "rm" || line == "del" || line == "dup" {
+	if line == "rm" || line == "del" || line == "copy" || line == "cut" || line == "paste" {
 		return instruction{line: sourceLine, operation: line}, nil
 	}
 
@@ -264,7 +300,7 @@ func parseInstruction(sourceLine int, line string) (instruction, error) {
 		}
 		startText, endText, err := decodeTwoJSONStrings(valueText)
 		if err != nil {
-			return instruction{}, scriptError(sourceLine, "invalid "+operation+" JSON strings")
+			return instruction{}, scriptError(sourceLine, fmt.Sprintf("invalid %s JSON strings: %v", operation, err))
 		}
 		if startText == "" || endText == "" {
 			return instruction{}, scriptError(sourceLine, operation+" literals must not be empty")
@@ -293,7 +329,7 @@ func parseInstruction(sourceLine int, line string) (instruction, error) {
 	if valueText, ok := strings.CutPrefix(line, "type "); ok {
 		var value string
 		if err := json.Unmarshal([]byte(valueText), &value); err != nil {
-			return instruction{}, scriptError(sourceLine, "invalid JSON string")
+			return instruction{}, scriptError(sourceLine, "invalid JSON string for type: "+err.Error())
 		}
 		return instruction{line: sourceLine, operation: "type", text: value}, nil
 	}
@@ -302,9 +338,9 @@ func parseInstruction(sourceLine int, line string) (instruction, error) {
 }
 
 func decodeTextSelection(encoded string) (string, int, error) {
-	text, trailing, ok := decodeLeadingTextOperand(encoded)
-	if !ok {
-		return "", 0, errors.New("invalid JSON string")
+	text, trailing, err := decodeLeadingTextOperand(encoded)
+	if err != nil {
+		return "", 0, fmt.Errorf("invalid JSON string for tsel: %w", err)
 	}
 	if trailing == "" {
 		return text, 1, nil

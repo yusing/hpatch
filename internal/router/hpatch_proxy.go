@@ -108,6 +108,8 @@ type hpatchHistory struct {
 	carrierName      string
 	report           string
 	translationError string
+	correlationID    string
+	attempt          int
 	upstreamItem     map[string]json.RawMessage
 	bytes            int
 	// unevaluated marks a call the proxy rejected before hpatch saw it, which
@@ -537,7 +539,7 @@ func (p *hpatchProxy) rememberBatch(sessionID string, histories map[string]hpatc
 		if err != nil {
 			return fmt.Errorf("encode hpatch history item: %w", err)
 		}
-		history.bytes = len(sessionID) + len(callID) + len(history.script) + len(history.root) + len(history.evaluated) + len(history.patch) + len(history.carrierName) + len(history.report) + len(history.translationError) + len(encodedItem)
+		history.bytes = len(sessionID) + len(callID) + len(history.script) + len(history.root) + len(history.evaluated) + len(history.patch) + len(history.carrierName) + len(history.report) + len(history.translationError) + len(history.correlationID) + len(encodedItem)
 		prepared[callID] = history
 	}
 
@@ -721,7 +723,10 @@ func (t *hpatchResponseTransform) translate(callID, input string, upstreamItem m
 	}
 
 	evaluated := input
-	if isHPatchCorrection(input) {
+	correlationID := callID
+	attempt := 1
+	correction := isHPatchCorrection(input)
+	if correction {
 		base, baseErr := t.correctionHistory()
 		if baseErr != nil {
 			return t.rejectUnevaluated(callID, input, baseErr, upstreamItem)
@@ -741,9 +746,21 @@ func (t *hpatchResponseTransform) translate(callID, input string, upstreamItem m
 		if len(evaluated) > maxHPatchScriptBytes {
 			return hpatchHistory{}, fmt.Errorf("hpatch call %q corrected script exceeds %d bytes", callID, maxHPatchScriptBytes)
 		}
+		correlationID = base.correlationID
+		if correlationID == "" {
+			correlationID = callID
+		}
+		attempt = max(base.attempt+1, 2)
 	}
 
-	translated, err := t.proxy.translator.Translate(t.ctx, t.workspace, evaluated)
+	attemptContext := hpatch.WithAttemptMetadata(t.ctx, hpatch.AttemptMetadata{
+		SessionID:     t.sessionID,
+		CorrelationID: correlationID,
+		CallID:        callID,
+		Attempt:       attempt,
+		Correction:    correction,
+	})
+	translated, err := t.proxy.translator.Translate(attemptContext, t.workspace, evaluated)
 	if err != nil {
 		if contextErr := t.ctx.Err(); contextErr != nil {
 			return hpatchHistory{}, contextErr
@@ -770,6 +787,8 @@ func (t *hpatchResponseTransform) translate(callID, input string, upstreamItem m
 			carrierName:      t.codeModeToolName,
 			translationError: diagnostic,
 			upstreamItem:     maps.Clone(upstreamItem),
+			correlationID:    correlationID,
+			attempt:          attempt,
 		}
 		t.recordLocal(callID, &history)
 		return history, nil
@@ -785,20 +804,33 @@ func (t *hpatchResponseTransform) translate(callID, input string, upstreamItem m
 		report:        translated.report,
 		patch:         patchText,
 		successful:    true,
+		diagnostic:    translated.diagnostic,
 	}); err != nil {
 		return hpatchHistory{}, err
 	}
 	history := hpatchHistory{
-		script:       input,
-		root:         t.workspace.canonical,
-		evaluated:    retainedEvaluated(input, evaluated),
-		patch:        patchText,
-		carrierName:  t.codeModeToolName,
-		report:       translated.report,
-		upstreamItem: maps.Clone(upstreamItem),
+		script:        input,
+		root:          t.workspace.canonical,
+		evaluated:     retainedEvaluated(input, evaluated),
+		patch:         patchText,
+		carrierName:   t.codeModeToolName,
+		report:        hpatchReport(translated.report, translated.diagnostic),
+		upstreamItem:  maps.Clone(upstreamItem),
+		correlationID: correlationID,
+		attempt:       attempt,
 	}
 	t.recordLocal(callID, &history)
 	return history, nil
+}
+
+func hpatchReport(report, diagnostic string) string {
+	if diagnostic == "" {
+		return report
+	}
+	if report != "" && !strings.HasSuffix(report, "\n") {
+		report += "\n"
+	}
+	return report + diagnostic
 }
 
 func hpatchApplyExecInput(patch, report string) string {

@@ -34,7 +34,7 @@ func translate(changes []change) (string, error) {
 func writeAddition(patch *strings.Builder, path, content string) {
 	fmt.Fprintf(patch, "*** Add File: %s\n", path)
 	content = normalizeLineEndings(content)
-	for _, line := range strings.Split(content, "\n") {
+	for line := range strings.SplitSeq(content, "\n") {
 		patch.WriteByte('+')
 		patch.WriteString(line)
 		patch.WriteByte('\n')

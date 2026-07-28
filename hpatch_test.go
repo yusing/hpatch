@@ -24,7 +24,8 @@ func TestRunNormalMultiFileWorkflow(t *testing.T) {
 		`type "new"`,
 		"in b.txt",
 		"rsel 1:2",
-		"dup",
+		"copy",
+		"paste",
 		"in a.txt",
 		`tsel 2 1 "keep"`,
 		"del",
@@ -165,7 +166,8 @@ func TestUnicodeCRLFAndBaselineEditorState(t *testing.T) {
 		`tsel 1 -1 "bar"`,
 		"del",
 		"rsel 2:3",
-		"dup",
+		"copy",
+		"paste",
 	}, "\n")
 
 	_, stderr, exitCode := runForTest(root, nil, script)
@@ -199,7 +201,7 @@ func TestTranslateNormalizesLineEndingsForApplyPatchDisplay(t *testing.T) {
 func TestStandaloneCRLogicalLines(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, root, "text.txt", "first\rsecond\rthird", 0o644)
-	script := "in text.txt\ntsel 1 1 \"first\"\ntype \"FIRST\"\nrsel 2:3\ndup\n"
+	script := "in text.txt\ntsel 1 1 \"first\"\ntype \"FIRST\"\nrsel 2:3\ncopy\npaste\n"
 	_, stderr, exitCode := runForTest(root, nil, script)
 	if exitCode != 0 {
 		t.Fatalf("Run() = exit %d, stderr %q", exitCode, stderr)
@@ -259,6 +261,41 @@ func TestEvaluationFailuresDoNotMutateOrEmitPatch(t *testing.T) {
 				t.Fatalf("failure mutated tree: before %#v, after %#v", before, after)
 			}
 		})
+	}
+}
+
+func TestParseReportsAllSyntaxErrorsWithoutEvaluation(t *testing.T) {
+	root := t.TempDir()
+	writeTestFile(t, root, "file.txt", "unchanged\n", 0o644)
+	script := "in file.txt\n" +
+		"type \"literal\tcontrol\"\n" +
+		"bsel \"start\" nope\n" +
+		"tsel 1 1 \"first\\nsecond\"\n" +
+		"tsel 1 1 \"literal\tcontrol\"\n"
+
+	stdout, stderr, exitCode := runForTest(root, []string{"translate"}, script)
+	if exitCode != 1 || stdout != "" {
+		t.Fatalf("Run() = exit %d, stdout %q, stderr %q", exitCode, stdout, stderr)
+	}
+	for _, want := range []string{
+		"command 2, source line 2, operation \"type\"",
+		"invalid JSON string for type: invalid character",
+		"command 3, source line 3, operation \"bsel\"",
+		"invalid bsel JSON strings:",
+		"command 4, source line 4, operation \"tsel\"",
+		"tsel text must stay on one line",
+		"command 5, source line 5, operation \"tsel\"",
+		"invalid JSON string for tsel: invalid character",
+	} {
+		if !strings.Contains(stderr, want) {
+			t.Fatalf("diagnostic lacks %q:\n%s", want, stderr)
+		}
+	}
+	if count := strings.Count(stderr, "hpatch: command "); count != 4 {
+		t.Fatalf("reported %d syntax errors, want 4:\n%s", count, stderr)
+	}
+	if got := readTestFile(t, root, "file.txt"); got != "unchanged\n" {
+		t.Fatalf("syntax rejection mutated file: %q", got)
 	}
 }
 

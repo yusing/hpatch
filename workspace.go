@@ -44,13 +44,19 @@ type change struct {
 	mode         fs.FileMode
 }
 
+type clipboardContent struct {
+	text     string
+	linewise bool
+}
+
 type workspace struct {
-	paths   map[string]*fileState
-	blocked map[string]bool
-	files   []*fileState
-	active  *fileState
-	load    fileLoader
-	exists  pathProbe
+	paths     map[string]*fileState
+	blocked   map[string]bool
+	files     []*fileState
+	active    *fileState
+	clipboard *clipboardContent
+	load      fileLoader
+	exists    pathProbe
 }
 
 func (p *program) evaluate(resolve pathResolver, load fileLoader, exists pathProbe) ([]change, invocationMetrics, string, error) {
@@ -95,7 +101,7 @@ func commandCategory(operation string) string {
 		return "file"
 	case "sel", "tsel", "rsel", "bsel", "bsel_next":
 		return "selection"
-	case "type", "del", "dup":
+	case "type", "del", "copy", "cut", "paste":
 		return "edit"
 	default:
 		panic("parsed instruction has no diagnostic category: " + operation)
@@ -135,8 +141,23 @@ func (w *workspace) execute(command instruction, commandIndex int) (commandOutco
 		return commandOutcome{}, w.active.editor.typeText(command.text, origin)
 	case "del":
 		return commandOutcome{}, w.active.editor.deleteSelection(origin)
-	case "dup":
-		return commandOutcome{}, w.active.editor.duplicateSelection(origin)
+	case "copy", "cut":
+		clipboard, ok := w.active.editor.selectedClipboard()
+		if !ok {
+			return commandOutcome{}, withReason(reasonSelectionRequired, fmt.Errorf("%s requires a selection", command.operation))
+		}
+		if command.operation == "cut" {
+			if err := w.active.editor.deleteSelection(origin); err != nil {
+				return commandOutcome{}, err
+			}
+		}
+		w.clipboard = &clipboard
+		return commandOutcome{}, nil
+	case "paste":
+		if w.clipboard == nil {
+			return commandOutcome{}, withReason(reasonClipboardEmpty, fmt.Errorf("paste requires a preceding copy or cut in the same script"))
+		}
+		return commandOutcome{}, w.active.editor.pasteClipboard(*w.clipboard, origin)
 	default:
 		panic("parsed instruction has no executor: " + command.operation)
 	}

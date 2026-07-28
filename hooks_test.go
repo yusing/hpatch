@@ -156,18 +156,36 @@ func TestExecuteErrorHookTimesOut(t *testing.T) {
 	}
 }
 
+func TestAggregatedErrorHooksShareOneTimeout(t *testing.T) {
+	dataDirectory := t.TempDir()
+	writeSettingsForTest(t, dataDirectory, []string{"sleep 10"})
+	sourceErrors := []*commandError{
+		{Reason: reasonSyntax, Command: 1, Line: 1, Operation: "bad", Category: "syntax", Source: "bad", Message: "unknown command"},
+		{Reason: reasonSyntax, Command: 2, Line: 2, Operation: "bad", Category: "syntax", Source: "bad", Message: "unknown command"},
+	}
+
+	started := time.Now()
+	errs := runCommandErrorHooks(t.Context(), dataDirectory, sourceErrors, "failed", 20*time.Millisecond)
+	if elapsed := time.Since(started); elapsed > time.Second {
+		t.Fatalf("runCommandErrorHooks() took %s", elapsed)
+	}
+	if len(errs) != 1 || !errors.Is(errs[0], context.DeadlineExceeded) {
+		t.Fatalf("runCommandErrorHooks() errors = %v", errs)
+	}
+}
+
 func TestErrorHooksShareOneTimeout(t *testing.T) {
 	dataDirectory := t.TempDir()
 	writeSettingsForTest(t, dataDirectory, []string{"sleep 10", "sleep 10"})
 	sourceError := &commandError{Reason: reasonSyntax, Command: 1, Line: 1, Operation: "bad", Category: "syntax", Source: "bad", Message: "unknown command"}
 
 	started := time.Now()
-	errs := runErrorHooks(t.Context(), dataDirectory, sourceError, failureDiagnostic(sourceError.Error()), 20*time.Millisecond)
+	errs := runCommandErrorHooks(t.Context(), dataDirectory, []*commandError{sourceError}, failureDiagnostic(sourceError.Error()), 20*time.Millisecond)
 	if elapsed := time.Since(started); elapsed > time.Second {
-		t.Fatalf("runErrorHooks() took %s", elapsed)
+		t.Fatalf("runCommandErrorHooks() took %s", elapsed)
 	}
 	if len(errs) != 1 || !errors.Is(errs[0], context.DeadlineExceeded) {
-		t.Fatalf("runErrorHooks() errors = %v", errs)
+		t.Fatalf("runCommandErrorHooks() errors = %v", errs)
 	}
 }
 
@@ -187,6 +205,119 @@ func TestMarkdownCodeSpanHandlesBackticks(t *testing.T) {
 	body := formatErrorHookMarkdown(errorHookEvent{Path: "dir/`quoted`/file.md"})
 	if !strings.Contains(body, "- Path: `` dir/`quoted`/file.md ``") {
 		t.Fatalf("formatErrorHookMarkdown() = %q", body)
+	}
+}
+
+func TestOutcomeHookFailureWarnsWithoutReplacingSuccess(t *testing.T) {
+	root, err := os.OpenRoot(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+	dataDirectory := t.TempDir()
+	content, err := json.Marshal(settings{Hooks: hooks{Outcome: []string{"exit 9"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dataDirectory, settingsFilename), content, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ctx := WithAttemptMetadata(t.Context(), AttemptMetadata{SessionID: "session", CorrelationID: "chain", CallID: "call", Attempt: 1})
+	translated, err := TranslateForHost(ctx, Workspace{Root: root}, "new note.txt\ntype \"ok\"\n", dataDirectory)
+	if err != nil || len(translated.Patch) == 0 {
+		t.Fatalf("translation = %+v, error %v", translated, err)
+	}
+	if !strings.Contains(translated.Diagnostic, "warning: running outcome hook 1: exit status 9") {
+		t.Fatalf("outcome warning = %q", translated.Diagnostic)
+	}
+}
+
+func TestRejectedAttemptReportsSettingsFailureOnce(t *testing.T) {
+	root, err := os.OpenRoot(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+	dataDirectory := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dataDirectory, settingsFilename), []byte("{"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ctx := WithAttemptMetadata(t.Context(), AttemptMetadata{SessionID: "session", CorrelationID: "chain", CallID: "call", Attempt: 1})
+
+	translated, err := TranslateForHost(ctx, Workspace{Root: root}, "del\n", dataDirectory)
+	if err == nil {
+		t.Fatalf("TranslateForHost() translation = %+v, want rejection", translated)
+	}
+	if count := strings.Count(translated.Diagnostic, "hpatch: warning: decoding settings:"); count != 1 {
+		t.Fatalf("settings warning count = %d, diagnostic:\n%s", count, translated.Diagnostic)
+	}
+}
+
+func TestErrorAndOutcomeHooksReceiveAttemptMetadata(t *testing.T) {
+	rootPath := t.TempDir()
+	root, err := os.OpenRoot(rootPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+	dataDirectory := t.TempDir()
+	errorPath := filepath.Join(t.TempDir(), "error.md")
+	outcomePath := filepath.Join(t.TempDir(), "outcome.md")
+	metadataPath := filepath.Join(t.TempDir(), "metadata.txt")
+	content, err := json.Marshal(settings{Hooks: hooks{
+		Error: []string{"printf '%s' {{shellquote (format_markdown .)}} > " + shellQuote(errorPath)},
+		Outcome: []string{
+			"printf '%s' {{shellquote (format_markdown .)}} > " + shellQuote(outcomePath),
+			"printf '%s' {{shellquote .CorrelationID}}'|'{{shellquote .CallID}}'|'{{.Attempt}}'|'{{.Correction}}'|'{{shellquote .Outcome}} > " + shellQuote(metadataPath),
+		},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dataDirectory, settingsFilename), content, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	metadata := AttemptMetadata{SessionID: "session-1", CorrelationID: "chain-1", CallID: "call-2", Attempt: 2, Correction: true}
+	ctx := WithAttemptMetadata(t.Context(), metadata)
+
+	failed, err := TranslateForHost(ctx, Workspace{Root: root}, "del\n", dataDirectory)
+	if err == nil || failed.Diagnostic == "" {
+		t.Fatalf("failed translation = %+v, error %v", failed, err)
+	}
+	body, err := os.ReadFile(errorPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"- Session ID: `session-1`", "- Correlation ID: `chain-1`", "- Call ID: `call-2`", "- Attempt: `2`", "- Correction: `true`", "- Outcome: `rejected`"} {
+		if !strings.Contains(string(body), want) {
+			t.Fatalf("error hook lacks %q:\n%s", want, body)
+		}
+	}
+	outcome, err := os.ReadFile(outcomePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(outcome), "# hpatch attempt rejected") {
+		t.Fatalf("rejected outcome hook = %q", outcome)
+	}
+
+	translated, err := TranslateForHost(ctx, Workspace{Root: root}, "new note.txt\ntype \"ok\"\n", dataDirectory)
+	if err != nil || translated.Diagnostic != "" {
+		t.Fatalf("successful translation = %+v, error %v", translated, err)
+	}
+	outcome, err = os.ReadFile(outcomePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(outcome), "# hpatch attempt corrected") {
+		t.Fatalf("corrected outcome hook = %q", outcome)
+	}
+	metadataBody, err := os.ReadFile(metadataPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(metadataBody) != "chain-1|call-2|2|true|corrected" {
+		t.Fatalf("outcome metadata = %q", metadataBody)
 	}
 }
 

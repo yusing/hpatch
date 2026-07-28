@@ -50,7 +50,7 @@ func (w *workspace) repairContext(command instruction, reason failureReason) str
 		w.writeRangeRepair(&report, editor, lines, command, reason)
 	case "bsel", "bsel_next":
 		w.writeAnchorRepair(&report, editor, lines, command, reason)
-	case "type", "del", "dup":
+	case "type", "del", "copy", "cut", "paste":
 		w.writeEditRepair(&report, editor, lines, reason, editor.editOffset())
 	}
 	if report.Len() == 0 {
@@ -78,11 +78,53 @@ func (w *workspace) writeLineRepair(report *strings.Builder, editor *editor, lin
 		fmt.Fprintf(report, "columns count Unicode code points, so one tab is one column\n")
 	case reasonOccurrenceMissing:
 		fmt.Fprintf(report, "line %d does not contain the requested occurrence\n", number)
+		writeOccurrenceCandidates(report, editor.baseline, lines, command)
 	}
 	writeLineWindow(report, editor.baseline, lines, number)
 	if reason == reasonCoordinateBounds && columns > 0 {
 		fmt.Fprintf(report, "column guide for line %d: %s\n", number, columnGuide(content))
 	}
+}
+
+func writeOccurrenceCandidates(report *strings.Builder, baseline string, lines []logicalLine, command instruction) {
+	candidates := make([]int, 0, min(len(lines), repairListLimit))
+	total := 0
+	for index, line := range lines {
+		if index+1 == command.lineNumber {
+			continue
+		}
+		content := baseline[line.start:line.contentEnd]
+		if !occurrenceGroupFits(content, command.text, command.occurrence, command.count) {
+			continue
+		}
+		total++
+		if len(candidates) < repairListLimit {
+			candidates = append(candidates, index+1)
+		}
+	}
+	if total == 0 {
+		return
+	}
+	if total == 1 {
+		fmt.Fprintf(report, "the requested occurrence is selectable on line %d\n", candidates[0])
+		return
+	}
+	fmt.Fprintf(report, "the requested occurrence is selectable on lines %s\n", joinLineNumbers(candidates, total))
+}
+
+func occurrenceGroupFits(content, literal string, occurrence, count int) bool {
+	offsets := nonOverlappingLiteralOffsets(content, literal)
+	index := occurrence - 1
+	if occurrence < 0 {
+		index = len(offsets) + occurrence
+	}
+	if index < 0 || index >= len(offsets) {
+		return false
+	}
+	if occurrence < 0 {
+		return count <= index+1
+	}
+	return count <= len(offsets)-index
 }
 
 // writeRangeRepair explains a linewise selector failure against the file's
@@ -149,6 +191,8 @@ func (w *workspace) writeEditRepair(report *strings.Builder, editor *editor, lin
 	switch reason {
 	case reasonSelectionRequired:
 		report.WriteString("this command requires an active selection\n")
+	case reasonClipboardEmpty:
+		report.WriteString("copy or cut a selection before paste; the clipboard exists only for this script\n")
 	case reasonEditConflict:
 		report.WriteString("baseline content is claimed by an earlier command; each baseline span accepts one edit\n")
 		if claimed := editor.claimedLineSpans(lines); claimed != "" {

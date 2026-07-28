@@ -24,19 +24,20 @@ import (
 const (
 	metricsFilename = "metrics.bin"
 	metricsLockname = "metrics.lock"
-	metricsMagic    = "HPATCH15"
+	metricsMagic    = "HPATCH16"
 
-	metricsSlotSize       = 2160
-	metricsFileSize       = 2 * metricsSlotSize
-	metricsChecksumOffset = 2128
-	commandCount          = 12
-	metricsLockRetryDelay = 10 * time.Millisecond
+	metricsSlotSize         = 2304
+	metricsFileSize         = 2 * metricsSlotSize
+	metricsChecksumOffset   = 2272
+	metricsDiagnosticOffset = 2256
+	commandCount            = 14
+	metricsLockRetryDelay   = 10 * time.Millisecond
 )
 
 var commandOperations = [commandCount]string{
 	"in", "new", "mv", "rm",
 	"sel", "tsel", "bsel", "bsel_next", "rsel",
-	"type", "del", "dup",
+	"type", "del", "copy", "cut", "paste",
 }
 
 type pendingMetricsWriterState struct {
@@ -464,6 +465,7 @@ func hasValidPriorMetricsSlot(file *os.File, size int64) (bool, error) {
 		checksumSize   int
 	}{
 		{slotSize: 264, checksumOffset: 232, checksumSize: 32},
+		{slotSize: 2160, checksumOffset: 2128, checksumSize: 32},
 		{slotSize: 2152, checksumOffset: 2120, checksumSize: 32},
 		{slotSize: 256, checksumOffset: 224, checksumSize: 32},
 		{slotSize: 64, checksumOffset: 40, checksumSize: 24},
@@ -518,7 +520,7 @@ func encodeMetricsSlot(value metrics, generation uint64) [metricsSlotSize]byte {
 			binary.LittleEndian.PutUint64(encoded[base+reason*8:base+reason*8+8], count)
 		}
 	}
-	binary.LittleEndian.PutUint64(encoded[2112:2120], value.DiagnosticInputTokens)
+	binary.LittleEndian.PutUint64(encoded[metricsDiagnosticOffset:metricsDiagnosticOffset+8], value.DiagnosticInputTokens)
 	checksum := sha256.Sum256(encoded[:metricsChecksumOffset])
 	copy(encoded[metricsChecksumOffset:], checksum[:])
 	return encoded
@@ -551,7 +553,7 @@ func decodeMetricsSlot(encoded [metricsSlotSize]byte) (metrics, uint64, bool) {
 		RemovedDefinitionInputTokens: binary.LittleEndian.Uint64(encoded[64:72]),
 		FailedApplyPatchTokens:       binary.LittleEndian.Uint64(encoded[72:80]),
 		DefinitionRequests:           binary.LittleEndian.Uint64(encoded[80:88]),
-		DiagnosticInputTokens:        binary.LittleEndian.Uint64(encoded[2112:2120]),
+		DiagnosticInputTokens:        binary.LittleEndian.Uint64(encoded[metricsDiagnosticOffset : metricsDiagnosticOffset+8]),
 	}
 	for index := range commandCount {
 		value.Commands[index] = getCommandMetric(encoded[:], 96+index*16)

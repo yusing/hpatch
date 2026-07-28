@@ -55,7 +55,9 @@ Editing commands:
   rsel START:END                      select inclusive complete logical lines
   type "TEXT"                         record replacement or insertion at baseline coordinates
   del                                 record deletion of the selection
-  dup                                 copy the baseline selection immediately after it
+  copy                                store the baseline selection in the script clipboard
+  cut                                 store and delete the baseline selection
+  paste                               insert clipboard text after the selection or at the cursor
 
 Baseline editor state:
   The first in for an existing file captures an immutable baseline. Every selector
@@ -68,12 +70,16 @@ Baseline editor state:
   Cursors and selections are baseline positions. A selection command replaces the
   prior selection. After type, the cursor is at the selected baseline span's end; a
   cursor insertion stays at that baseline position. del leaves it at the selection
-  start. dup leaves it at the selection end and does not select the inserted copy.
+  start. copy preserves the selection. paste inserts after an active selection or
+  at the cursor otherwise, then leaves the cursor at that baseline insertion point.
 
   Disjoint baseline edits are applied together after complete validation. Replacements
   or deletions that overlap, insertions inside a replaced span, and multiple insertions
   at one baseline position are conflicts and reject the complete script. An insertion
-  exactly at a replacement boundary is unambiguous and permitted. A new file has an
+  exactly at a replacement boundary is unambiguous and permitted. The script-local
+  clipboard survives file changes, may be pasted repeatedly, and is discarded after the
+  script succeeds or rejects. Pasted text remains introduced text and is not selectable.
+  A new file has an
   empty baseline and accepts at most one effective type write. rm rejects an existing
   baseline file that already has content edits.
 
@@ -102,7 +108,9 @@ Baseline editor state:
   rsel owns selected line terminators. When type replaces a terminated linewise
   selection and TEXT has no final terminator, hpatch preserves the selected final
   LF, CRLF, or CR. An explicit final terminator is authoritative; an unterminated
-  selected final line stays unterminated. del still removes complete selected lines.
+  selected final line stays unterminated. del and cut still remove complete selected
+  lines. A linewise paste preserves copied bytes and adds only missing destination
+  boundary terminators, using the destination file's line-ending style.
 
   TEXT, START, and END are JSON strings. Use a JSON serializer for nontrivial
   operands rather than hand-escaping quotes, backslashes, newlines, or Unicode.
@@ -120,14 +128,19 @@ Metrics:
   evaluator-owned command errors, absolute selectors, single and multiple
   tsel spans, exact and recovered block successes, and terminal failure reasons.
 
-Error hook:
+Hooks:
   Agent-correctable script evaluation failures run each command template in
   <user-config-directory>/hpatch/settings.json under hooks.error. Templates receive
   the failed command's number, source line, operation, category, path, input, failure,
-  diagnostic, repair context, and a Markdown Body. The format_markdown function returns
-  that Body, and shellquote safely quotes a string for the shell. Hook failures are
-  warnings and never replace the original hpatch failure. All hooks share one 10-second
-  execution deadline.
+  diagnostic, repair context, and a Markdown Body. Router-owned attempts also expose
+  SessionID, CorrelationID, CallID, Attempt, Correction, and Outcome.
+
+  Router-owned attempts run hooks.outcome after rejection or success. Outcome is
+  rejected, succeeded, or corrected; correlation IDs remain stable across a correction
+  chain while call IDs identify individual attempts. The format_markdown function
+  returns the event's Markdown Body, and shellquote safely quotes a string for the
+  shell. Hook failures are warnings and never replace the hpatch result. Each hook
+  group shares one 10-second execution deadline.
 
 Paths and patch boundary:
   --root selects the trusted workspace boundary and defaults to hpatch's current

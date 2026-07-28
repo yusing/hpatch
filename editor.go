@@ -222,25 +222,44 @@ func (e *editor) deleteSelection(origin editOrigin) error {
 	return nil
 }
 
-func (e *editor) duplicateSelection(origin editOrigin) error {
+func (e *editor) selectedClipboard() (clipboardContent, bool) {
 	if e.selection == nil {
-		return withReason(reasonSelectionRequired, fmt.Errorf("dup requires a selection"))
+		return clipboardContent{}, false
 	}
 	selected := *e.selection
-	copyText := e.baseline[selected.start:selected.end]
-	separator := ""
-	if selected.linewise && !endsWithLineTerminator(copyText) {
-		separator = firstLineTerminator(e.baseline)
+	return clipboardContent{
+		text:     e.baseline[selected.start:selected.end],
+		linewise: selected.linewise,
+	}, true
+}
+
+func (e *editor) pasteClipboard(clipboard clipboardContent, origin editOrigin) error {
+	position := e.cursor
+	if e.selection != nil {
+		position = e.selection.end
+	}
+	if position > 0 && position < len(e.baseline) && e.baseline[position-1] == '\r' && e.baseline[position] == '\n' {
+		position++
+	}
+	replacement := clipboard.text
+	if clipboard.linewise {
+		terminator := firstLineTerminator(e.baseline)
+		if position > 0 && !endsWithLineTerminator(e.baseline[:position]) {
+			replacement = terminator + replacement
+		}
+		if position < len(e.baseline) && !startsWithLineTerminator(e.baseline[position:]) && !endsWithLineTerminator(replacement) {
+			replacement += terminator
+		}
 	}
 	if err := e.recordEdit(baselineEdit{
-		start:       selected.end,
-		end:         selected.end,
-		replacement: separator + copyText,
+		start:       position,
+		end:         position,
+		replacement: replacement,
 		editOrigin:  origin,
 	}); err != nil {
 		return withReason(reasonEditConflict, err)
 	}
-	e.cursor = selected.end
+	e.cursor = position
 	e.selection = nil
 	e.cursorCommand = origin.command
 	return nil
@@ -503,19 +522,25 @@ func lineTerminatorSuffix(text string) string {
 	}
 }
 
+func startsWithLineTerminator(text string) bool {
+	return strings.HasPrefix(text, "\r") || strings.HasPrefix(text, "\n")
+}
+
 func endsWithLineTerminator(text string) bool {
 	return lineTerminatorSuffix(text) != ""
 }
 
 func firstLineTerminator(text string) string {
-	if index := strings.IndexByte(text, '\n'); index >= 0 {
-		if index > 0 && text[index-1] == '\r' {
-			return "\r\n"
+	for index := range len(text) {
+		switch text[index] {
+		case '\r':
+			if index+1 < len(text) && text[index+1] == '\n' {
+				return "\r\n"
+			}
+			return "\r"
+		case '\n':
+			return "\n"
 		}
-		return "\n"
-	}
-	if strings.Contains(text, "\r") {
-		return "\r"
 	}
 	return "\n"
 }

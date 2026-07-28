@@ -91,11 +91,16 @@ func TestToolHelpIsFocusedAndAuthoritative(t *testing.T) {
 	help := toolHelpText()
 	for _, required := range []string{
 		"one free-form script",
+		"one command per nonblank physical line",
+		"literal newline always ends the current command",
+		"tsel checks TEXT only on LINE",
+		"does not choose the nearest END",
+		"independently unique",
 		"rejected script changes nothing",
 		"sel LINE START:END",
 		"tsel LINE OCCURRENCE \"TEXT\" [N]",
 		"bsel_next \"START\" \"END\"",
-		"ASCII space and tab runs are",
+		"ASCII space and tab runs match interchangeably",
 		"The first in for an existing file captures an immutable baseline.",
 		"Final-state report:",
 		"multiple insertions",

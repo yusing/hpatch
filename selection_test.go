@@ -268,7 +268,7 @@ func TestBlockSelectionSupportsExistingEditActions(t *testing.T) {
 		name, action, want string
 	}{
 		{name: "delete", action: "del", want: "before\n\nafter\n"},
-		{name: "duplicate", action: "dup", want: "before\nBEGIN\nbody\nENDBEGIN\nbody\nEND\nafter\n"},
+		{name: "copy and paste", action: "copy\npaste", want: "before\nBEGIN\nbody\nENDBEGIN\nbody\nEND\nafter\n"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -358,8 +358,8 @@ func TestConflictingBaselineEditsAreAtomic(t *testing.T) {
 		},
 		{
 			name:   "insertion inside replacement",
-			script: "in file.txt\ntsel 2 1 \"t\"\ndup\nrsel 2:2\ntype \"whole\"\n",
-			want:   "conflicts with edit from command 3 (source line 3, operation \"dup\"): baseline line 2 is both replaced and inserted into",
+			script: "in file.txt\ntsel 2 1 \"t\"\ncopy\npaste\nrsel 2:2\ntype \"whole\"\n",
+			want:   "conflicts with edit from command 4 (source line 4, operation \"paste\"): baseline line 2 is both replaced and inserted into",
 		},
 		{
 			name:   "same existing-file insertion position",

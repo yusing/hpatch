@@ -446,6 +446,12 @@ func TestHPatchReplayRejectsChangedExecCarrierAndIgnoresUnrelatedCalls(t *testin
 	}
 }
 
+func TestHPatchReportSeparatesHookWarning(t *testing.T) {
+	if got := hpatchReport("in file.txt 1:1", "hpatch: warning: hook failed\n"); got != "in file.txt 1:1\nhpatch: warning: hook failed\n" {
+		t.Fatalf("hpatchReport() = %q", got)
+	}
+}
+
 func TestHPatchExecInputQuotesPatchReportAndDiagnostic(t *testing.T) {
 	patch := "*** Begin Patch\n*** Add File: quoted.txt\n+` ${value} \\\"\n*** End Patch\n"
 	report := "in quoted.txt 1:14\n1 ` ${value} \\\"\n"
@@ -487,6 +493,34 @@ func TestHPatchStreamingReplacesLifecycleWithoutChangingCallID(t *testing.T) {
 	visible, err = transform.TransformSSE(mustTestJSON(t, map[string]any{"type": "response.completed", "response": completed}))
 	if err != nil || len(visible) != 1 || calls != 1 {
 		t.Fatalf("completed = %q, translations %d, error %v", visible, calls, err)
+	}
+}
+
+func TestHPatchCorrectionRetainsCorrelationAndIncrementsAttempt(t *testing.T) {
+	calls := 0
+	transform, proxy, _, _ := newHPatchTestTransform(t, hpatchTranslatorFunc(func(context.Context, routingWorkspace, string) ([]byte, error) {
+		calls++
+		if calls == 1 {
+			return nil, errors.New("rejected")
+		}
+		return []byte(testTranslatedPatch), nil
+	}))
+	first, err := transform.translate("call-1", testHPatchScript, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.correlationID != "call-1" || first.attempt != 1 {
+		t.Fatalf("first attempt metadata = %+v", first)
+	}
+	second, err := transform.translate("call-2", "2: type \"changed\"\n", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.translationError != "" || second.correlationID != "call-1" || second.attempt != 2 {
+		t.Fatalf("correction metadata = %+v", second)
+	}
+	if _, ok := proxy.history("session-1", "call-1"); ok {
+		t.Fatal("local history committed before response completion")
 	}
 }
 

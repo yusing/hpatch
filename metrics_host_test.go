@@ -2,6 +2,7 @@ package hpatch
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -57,6 +58,32 @@ func TestTranslateForHostCancellationHasNoDiagnostic(t *testing.T) {
 	result, err := TranslateForHost(ctx, Workspace{Root: root}, "new note.txt\n", t.TempDir())
 	if !errors.Is(err, context.Canceled) || result.Diagnostic != "" {
 		t.Fatalf("canceled translation = %+v, error %v", result, err)
+	}
+}
+
+func TestTranslateForHostCancellationSkipsOutcomeHook(t *testing.T) {
+	root, err := os.OpenRoot(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+	dataDirectory := t.TempDir()
+	outcomePath := filepath.Join(t.TempDir(), "outcome")
+	content, err := json.Marshal(settings{Hooks: hooks{Outcome: []string{"touch " + shellQuote(outcomePath)}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dataDirectory, settingsFilename), content, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(WithAttemptMetadata(t.Context(), AttemptMetadata{SessionID: "session", CorrelationID: "chain", CallID: "call", Attempt: 1}))
+	cancel()
+	result, err := TranslateForHost(ctx, Workspace{Root: root}, "new note.txt\n", dataDirectory)
+	if !errors.Is(err, context.Canceled) || result.Diagnostic != "" {
+		t.Fatalf("canceled translation = %+v, error %v", result, err)
+	}
+	if _, err := os.Stat(outcomePath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("canceled attempt ran outcome hook: %v", err)
 	}
 }
 

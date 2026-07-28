@@ -140,8 +140,7 @@ func Translate(ctx context.Context, workspace Workspace, script string) ([]byte,
 }
 
 // HostTranslation contains the complete result needed by an in-process host.
-// Invocation is opaque outside this package and can be returned through
-// RecordHostMetrics without duplicating evaluator-owned accounting types.
+// Diagnostic contains a rejection diagnostic or non-fatal hook warnings.
 type HostTranslation struct {
 	Patch      []byte
 	Report     string
@@ -162,7 +161,28 @@ func TranslateForHost(ctx context.Context, workspace Workspace, script, dataDire
 				result.Diagnostic = ""
 				return result, contextErr
 			}
+			for _, hookErr := range runOutcomeHooks(ctx, dataDirectory, "rejected", errorHooksTimeout) {
+				warning := warningDiagnostic(hookErr.Error())
+				if !strings.Contains(result.Diagnostic, warning) {
+					result.Diagnostic += warning
+				}
+			}
 		}
+		if contextErr := ctx.Err(); contextErr != nil {
+			result.Diagnostic = ""
+			return result, contextErr
+		}
+		return result, err
+	}
+	outcome := "succeeded"
+	if metadata, ok := attemptMetadataFromContext(ctx); ok && metadata.Correction {
+		outcome = "corrected"
+	}
+	for _, hookErr := range runOutcomeHooks(ctx, dataDirectory, outcome, errorHooksTimeout) {
+		result.Diagnostic += warningDiagnostic(hookErr.Error())
+	}
+	if err := ctx.Err(); err != nil {
+		result.Diagnostic = ""
 		return result, err
 	}
 	return result, nil
@@ -198,7 +218,7 @@ func evaluateScript(ctx context.Context, workspace Workspace, script string) ([]
 	program, err := parse(script)
 	if err != nil {
 		var events invocationMetrics
-		if sourceError, ok := errors.AsType[*commandError](err); ok {
+		for _, sourceError := range commandsOf(err) {
 			events.invokeFailure(sourceError.Operation, sourceError.Attempt, sourceError.Reason)
 		}
 		return nil, filesystemWorkspace{}, events, "", err
@@ -331,20 +351,29 @@ func failEvaluation(stderr io.Writer, err error, dataDirectory string) int {
 }
 
 func evaluationDiagnostic(ctx context.Context, err error, dataDirectory string) string {
-	var output strings.Builder
-	diagnostic := failureDiagnostic(err.Error())
-	if command, ok := errors.AsType[*commandError](err); ok {
-		output.WriteString(diagnostic)
-		output.WriteString(command.Repair)
-		for _, hookErr := range runErrorHooks(ctx, dataDirectory, command, diagnostic, errorHooksTimeout) {
-			warn(&output, hookErr.Error())
-		}
-		return output.String()
+	commands := commandsOf(err)
+	if len(commands) == 0 {
+		return failureDiagnostic(err.Error())
 	}
-	return diagnostic
+
+	var output strings.Builder
+	var diagnostic strings.Builder
+	for _, command := range commands {
+		diagnostic.WriteString(failureDiagnostic(command.Error()))
+		diagnostic.WriteString(command.Repair)
+	}
+	output.WriteString(diagnostic.String())
+	for _, hookErr := range runCommandErrorHooks(ctx, dataDirectory, commands, diagnostic.String(), errorHooksTimeout) {
+		warn(&output, hookErr.Error())
+	}
+	return output.String()
+}
+
+func warningDiagnostic(message string) string {
+	message = sanitizeDiagnostic(message)
+	return fmt.Sprintf("hpatch: warning: %s\n", message)
 }
 
 func warn(stderr io.Writer, message string) {
-	message = sanitizeDiagnostic(message)
-	_, _ = fmt.Fprintf(stderr, "hpatch: warning: %s\n", message)
+	_, _ = io.WriteString(stderr, warningDiagnostic(message))
 }
