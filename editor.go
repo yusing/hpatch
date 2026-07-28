@@ -47,6 +47,12 @@ func (e *editor) resetCursor() {
 	e.cursorCommand = 0
 }
 
+func (e *editor) commitGeneration() {
+	e.baseline = e.content()
+	e.edits = nil
+	e.resetCursor()
+}
+
 func (e *editor) selectColumns(lineNumber, startColumn, endColumn int) error {
 	line, err := lineAt(e.baseline, lineNumber)
 	if err != nil {

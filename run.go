@@ -265,7 +265,7 @@ func evaluateScript(ctx context.Context, workspace Workspace, script string) ([]
 		}
 		return 0, false, err
 	}
-	changes, commands, report, err := program.evaluate(filesystem.resolvePath, load, exists)
+	changes, commands, report, err := program.evaluate(ctx, filesystem.resolvePath, load, exists)
 	if err != nil {
 		return nil, filesystemWorkspace{}, commands, "", err
 	}

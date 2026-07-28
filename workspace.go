@@ -1,6 +1,7 @@
 package hpatch
 
 import (
+	"context"
 	"fmt"
 	"io/fs"
 	"path/filepath"
@@ -52,6 +53,8 @@ type clipboardContent struct {
 type workspace struct {
 	paths     map[string]*fileState
 	blocked   map[string]bool
+	reserved  map[string]bool
+	removed   map[string]*fileState
 	files     []*fileState
 	active    *fileState
 	clipboard *clipboardContent
@@ -59,10 +62,20 @@ type workspace struct {
 	exists    pathProbe
 }
 
-func (p *program) evaluate(resolve pathResolver, load fileLoader, exists pathProbe) ([]change, invocationMetrics, string, error) {
-	w := &workspace{paths: make(map[string]*fileState), blocked: make(map[string]bool), load: load, exists: exists}
+func (p *program) evaluate(ctx context.Context, resolve pathResolver, load fileLoader, exists pathProbe) ([]change, invocationMetrics, string, error) {
+	w := &workspace{
+		paths:    make(map[string]*fileState),
+		blocked:  make(map[string]bool),
+		reserved: make(map[string]bool),
+		removed:  make(map[string]*fileState),
+		load:     load,
+		exists:   exists,
+	}
 	var events invocationMetrics
 	for commandIndex, command := range p.instructions {
+		if err := ctx.Err(); err != nil {
+			return nil, events, "", err
+		}
 		events.invoke(command.operation, command.attempt)
 		diagnosticPath := command.path
 		if command.path != "" {
@@ -81,6 +94,9 @@ func (p *program) evaluate(resolve pathResolver, load fileLoader, exists pathPro
 			return nil, events, "", &commandError{Attempt: command.attempt, Reason: reason, Command: commandIndex + 1, Line: command.line, Operation: command.operation, Path: w.diagnosticPath(command), Category: commandCategory(command.operation), Source: command.source, Message: err.Error(), Repair: w.repairContext(command, reason)}
 		}
 		events.recordOutcome(command.operation, outcome)
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, events, "", err
 	}
 	return w.changes(), events, w.finalStateReport(), nil
 }
@@ -103,6 +119,8 @@ func commandCategory(operation string) string {
 		return "selection"
 	case "type", "del", "copy", "cut", "paste":
 		return "edit"
+	case "commit":
+		return "state"
 	default:
 		panic("parsed instruction has no diagnostic category: " + operation)
 	}
@@ -118,6 +136,9 @@ func (w *workspace) execute(command instruction, commandIndex int) (commandOutco
 		return commandOutcome{}, w.moveFile(command.path)
 	case "rm":
 		return commandOutcome{}, w.removeFile()
+	case "commit":
+		w.commitGeneration()
+		return commandOutcome{}, nil
 	}
 	if w.active == nil {
 		return commandOutcome{}, withReason(reasonActiveFile, fmt.Errorf("%s requires an active file", command.operation))
@@ -163,6 +184,15 @@ func (w *workspace) execute(command instruction, commandIndex int) (commandOutco
 	}
 }
 
+func (w *workspace) commitGeneration() {
+	for _, file := range w.files {
+		if !file.deleted {
+			file.editor.commitGeneration()
+		}
+	}
+	clear(w.reserved)
+}
+
 func (w *workspace) selectFile(path string) error {
 	if file := w.paths[path]; file != nil {
 		w.active = file
@@ -193,6 +223,15 @@ func (w *workspace) newFile(path string) error {
 	if err := w.validateFreeDestination(path); err != nil {
 		return err
 	}
+	if file := w.removed[path]; file != nil {
+		delete(w.removed, path)
+		file.path = path
+		file.deleted = false
+		file.editor = editor{}
+		w.paths[path] = file
+		w.active = file
+		return nil
+	}
 	file := &fileState{path: path, created: true}
 	w.paths[path] = file
 	w.files = append(w.files, file)
@@ -209,9 +248,8 @@ func (w *workspace) moveFile(path string) error {
 	}
 	oldPath := w.active.path
 	delete(w.paths, oldPath)
-	if !w.active.created && oldPath == w.active.originalPath {
-		w.blocked[oldPath] = true
-	}
+	w.blocked[oldPath] = true
+	w.reserved[oldPath] = true
 	w.active.path = path
 	w.paths[path] = w.active
 	return nil
@@ -232,7 +270,11 @@ func (w *workspace) removeFile() error {
 			))
 		}
 	}
-	delete(w.paths, file.path)
+	removedPath := file.path
+	delete(w.paths, removedPath)
+	w.blocked[removedPath] = true
+	w.reserved[removedPath] = true
+	w.removed[removedPath] = file
 	if !file.created {
 		w.blocked[file.originalPath] = true
 	}
@@ -242,8 +284,11 @@ func (w *workspace) removeFile() error {
 }
 
 func (w *workspace) pathOccupied(path string) (bool, error) {
-	if w.paths[path] != nil || w.blocked[path] {
+	if w.paths[path] != nil || w.reserved[path] {
 		return true, nil
+	}
+	if w.blocked[path] {
+		return false, nil
 	}
 	_, occupied, err := w.exists(path)
 	if err != nil {

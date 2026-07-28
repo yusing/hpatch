@@ -24,20 +24,20 @@ import (
 const (
 	metricsFilename = "metrics.bin"
 	metricsLockname = "metrics.lock"
-	metricsMagic    = "HPATCH16"
+	metricsMagic    = "HPATCH17"
 
-	metricsSlotSize         = 2304
+	metricsSlotSize         = 2432
 	metricsFileSize         = 2 * metricsSlotSize
-	metricsChecksumOffset   = 2272
-	metricsDiagnosticOffset = 2256
-	commandCount            = 14
+	metricsChecksumOffset   = 2400
+	metricsDiagnosticOffset = 2384
+	commandCount            = 15
 	metricsLockRetryDelay   = 10 * time.Millisecond
 )
 
 var commandOperations = [commandCount]string{
 	"in", "new", "mv", "rm",
 	"sel", "tsel", "bsel", "bsel_next", "rsel",
-	"type", "del", "copy", "cut", "paste",
+	"type", "del", "copy", "cut", "paste", "commit",
 }
 
 type pendingMetricsWriterState struct {
@@ -464,6 +464,7 @@ func hasValidPriorMetricsSlot(file *os.File, size int64) (bool, error) {
 		checksumOffset int
 		checksumSize   int
 	}{
+		{slotSize: 2304, checksumOffset: 2272, checksumSize: 32},
 		{slotSize: 264, checksumOffset: 232, checksumSize: 32},
 		{slotSize: 2160, checksumOffset: 2128, checksumSize: 32},
 		{slotSize: 2152, checksumOffset: 2120, checksumSize: 32},

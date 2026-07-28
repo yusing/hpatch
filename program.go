@@ -162,7 +162,7 @@ func recognizeCommandAttempt(line string) commandAttempt {
 		return commandAttempt{}
 	}
 	switch fields[0] {
-	case "in", "new", "mv", "rm", "bsel", "bsel_next", "type", "del", "copy", "cut", "paste":
+	case "in", "new", "mv", "rm", "bsel", "bsel_next", "type", "del", "copy", "cut", "paste", "commit":
 		return commandAttempt{recognized: true}
 	case "sel":
 		return commandAttempt{recognized: recognizeLine(fields, 1)}
@@ -244,7 +244,7 @@ func parseInstruction(sourceLine int, line string) (instruction, error) {
 		}
 	}
 
-	if line == "rm" || line == "del" || line == "copy" || line == "cut" || line == "paste" {
+	if line == "rm" || line == "del" || line == "copy" || line == "cut" || line == "paste" || line == "commit" {
 		return instruction{line: sourceLine, operation: line}, nil
 	}
 

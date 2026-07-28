@@ -64,6 +64,7 @@ Editing commands:
   copy                                store the baseline selection in the script clipboard
   cut                                 store and delete the baseline selection
   paste                               insert clipboard text after the selection or at the cursor
+  commit                              advance to the next immutable in-memory baseline
 
 Baseline editor state:
   The first in for an existing file captures an immutable baseline. Every selector
@@ -88,6 +89,11 @@ Baseline editor state:
   A new file has an
   empty baseline and accepts at most one effective type write. rm rejects an existing
   baseline file that already has content edits.
+
+  commit validates and materializes all pending files and edits as the next immutable
+  in-memory baseline. It never mutates the filesystem or emits an intermediate patch or
+  report. Pending edits are cleared, a surviving active file resets to cursor 0:0, and
+  the clipboard survives. Script end finalizes pending edits without that cursor reset.
 
   ` + "`sel`" + ` columns count Unicode code points, not display width: one tab is one
   column, so a rendered editor column does not match a sel column on an indented line.

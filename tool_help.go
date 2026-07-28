@@ -26,13 +26,17 @@ Commands:
   copy                                 store the selected baseline text
   cut                                  store and delete the selected baseline text
   paste                                insert clipboard text after the selection or at the cursor
+  commit                               advance to the next immutable baseline
 
 State and selectors:
   The first in for an existing file captures an immutable baseline. Every
   selector and edit for that file uses baseline coordinates even after earlier
   commands. Returning with in resets its cursor and selection but keeps recorded
   edits. mv preserves baseline identity. Text introduced by an edit is not selectable.
-  The clipboard is local to one script, survives file changes, and may be pasted repeatedly.
+  The script-local clipboard survives file changes and may be pasted repeatedly.
+  commit makes pending state the next immutable baseline without filesystem or output.
+  It clears edits and resets an active cursor to 0:0; the clipboard survives. Script
+  end finalizes edits without that reset.
 
   sel columns count Unicode code points, including tabs, and both endpoints are
   inclusive. tsel checks TEXT only on LINE; copy both from the same current numbered
@@ -63,7 +67,7 @@ Edits:
   after an active selection, or at the cursor otherwise, and then clears the selection.
   A linewise paste adds only missing destination boundary terminators.
 
-  Disjoint edits commit together after the whole script validates. Overlapping
+  Within one generation, disjoint edits finalize together. Overlapping
   replacements or deletions, insertions inside replacements, and multiple insertions
   at one baseline position are conflicts. Boundary insertions are allowed. A new
   file accepts one effective type; rm conflicts with recorded edits to an existing

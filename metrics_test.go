@@ -237,6 +237,7 @@ func TestGainReportsCommandInvocationsErrorsAndRates(t *testing.T) {
 		"copy       0            0       0.0%\n" +
 		"cut        0            0       0.0%\n" +
 		"paste      0            0       0.0%\n" +
+		"commit     0            0       0.0%\n" +
 		"total      11           3       27.3%\n\n"
 	end := strings.Index(stdout.String()[start:], "tsel span metrics:\n")
 	if end < 0 {
@@ -561,10 +562,10 @@ func TestPriorMetricsVersionResetsTotals(t *testing.T) {
 
 func TestImmediatePriorMetricsVersionResetsTotals(t *testing.T) {
 	dataDirectory := t.TempDir()
-	const priorSlotSize = 2160
-	const priorChecksumOffset = 2128
+	const priorSlotSize = 2304
+	const priorChecksumOffset = 2272
 	var prior [priorSlotSize]byte
-	copy(prior[:8], "HPATCH15")
+	copy(prior[:8], "HPATCH16")
 	binary.LittleEndian.PutUint64(prior[8:16], 7)
 	binary.LittleEndian.PutUint64(prior[16:24], 5)
 	checksum := sha256.Sum256(prior[:priorChecksumOffset])

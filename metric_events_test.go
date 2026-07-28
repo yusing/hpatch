@@ -60,7 +60,7 @@ func (partialMetricsWriter) Write(value []byte) (int, error) {
 func TestSuccessfulNoopCountsEvaluatorCommandsOnly(t *testing.T) {
 	root := t.TempDir()
 	dataDirectory := t.TempDir()
-	script := "new transient.txt\nrm\n"
+	script := "new transient.txt\ncommit\nrm\n"
 	var stdout, stderr bytes.Buffer
 	if exitCode := Run(nil, strings.NewReader(script), &stdout, &stderr, root, dataDirectory); exitCode != 0 {
 		t.Fatalf("normal = exit %d, stdout %q, stderr %q", exitCode, stdout.String(), stderr.String())
@@ -74,6 +74,9 @@ func TestSuccessfulNoopCountsEvaluatorCommandsOnly(t *testing.T) {
 	}
 	if got.Commands[commandOperationIndex("new")].Invocations != 1 || got.Commands[commandOperationIndex("rm")].Invocations != 1 {
 		t.Fatalf("no-op command metrics = %+v", got.Commands)
+	}
+	if got.Commands[commandOperationIndex("commit")].Invocations != 1 {
+		t.Fatalf("commit metrics = %+v", got.Commands)
 	}
 }
 

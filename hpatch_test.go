@@ -238,6 +238,7 @@ func TestEvaluationFailuresDoNotMutateOrEmitPatch(t *testing.T) {
 	}{
 		{name: "no active file", script: `type "x"`},
 		{name: "future command", script: "in file.txt\nsplice 1:2"},
+		{name: "commit operand", script: "in file.txt\ncommit now"},
 		{name: "non-string type operand", script: "in file.txt\ntype null"},
 		{name: "non-JSON trailing whitespace", script: "in file.txt\ntype \"x\"\u00a0"},
 		{name: "non-JSON tsel trailing whitespace", script: "in file.txt\ntsel 1 1 \"a\" \u00a0"},
