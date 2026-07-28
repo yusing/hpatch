@@ -287,6 +287,96 @@ func TestResponsesHandlerRejectsOversizedBodyBeforeUpstream(t *testing.T) {
 	}
 }
 
+type serverProviderFunc func(context.Context, context.Context, []byte) (*http.Response, error)
+
+func (f serverProviderFunc) forwardExecution(startCtx, responseCtx context.Context, body []byte) (*http.Response, error) {
+	return f(startCtx, responseCtx, body)
+}
+
+type serverCancelableSSEBody struct {
+	ctx      context.Context
+	content  *strings.Reader
+	canceled chan struct{}
+	once     sync.Once
+}
+
+func (body *serverCancelableSSEBody) Read(content []byte) (int, error) {
+	if body.content.Len() > 0 {
+		return body.content.Read(content)
+	}
+	<-body.ctx.Done()
+	body.once.Do(func() { close(body.canceled) })
+	return 0, body.ctx.Err()
+}
+
+func (*serverCancelableSSEBody) Close() error { return nil }
+
+func TestResponsesHandlerDoesNotLogClientCancellationAsOperationalEvent(t *testing.T) {
+	upstreamEvent := "event: response.created\ndata: {\"type\":\"response.created\"}\n\n"
+	upstreamCanceled := make(chan struct{})
+	provider := serverProviderFunc(func(_, responseCtx context.Context, _ []byte) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+			Body: &serverCancelableSSEBody{
+				ctx: responseCtx, content: strings.NewReader(upstreamEvent), canceled: upstreamCanceled,
+			},
+		}, nil
+	})
+	var logOutput bytes.Buffer
+	handler := responsesHandler(t.Context(), time.Minute, provider, newDiagnostics(&logOutput), newHPatchProxy(nil), newMetricsStore(), new(atomic.Uint64))
+	handled := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		handler(writer, request)
+		close(handled)
+	}))
+	defer server.Close()
+
+	body := mustTestJSON(t, map[string]any{
+		"model": "gpt-test",
+		"input": []any{
+			map[string]any{"type": "additional_tools", "role": "developer", "tools": []any{}},
+			map[string]any{"type": "message", "role": "developer", "content": "instructions"},
+			map[string]any{"type": "message", "role": "user", "content": "summarize the conversation"},
+		},
+		"tool_choice": "auto", "parallel_tool_calls": false, "stream": true,
+	})
+	requestCtx, cancelRequest := context.WithCancel(t.Context())
+	request, err := http.NewRequestWithContext(requestCtx, http.MethodPost, server.URL+"/v1/responses", bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header = serverCompactionMetadataHeaders(t)
+	request.Header.Set(sessionIDHeader, "session")
+	response, err := server.Client().Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	visible := make([]byte, len(upstreamEvent))
+	if _, err := io.ReadFull(response.Body, visible); err != nil {
+		t.Fatalf("read initial upstream event: %v", err)
+	}
+	if string(visible) != upstreamEvent {
+		t.Fatalf("visible event = %q, want %q", visible, upstreamEvent)
+	}
+	cancelRequest()
+	response.Body.Close()
+
+	select {
+	case <-handled:
+	case <-time.After(5 * time.Second):
+		t.Fatal("handler did not stop after the client canceled its request")
+	}
+	select {
+	case <-upstreamCanceled:
+	default:
+		t.Fatal("client cancellation did not reach the upstream response body")
+	}
+	if logs := logOutput.String(); strings.Contains(logs, "canceled after response started") {
+		t.Fatalf("client cancellation was logged as an operational event:\n%s", logs)
+	}
+}
+
 type serverRoundTripper func(*http.Request) (*http.Response, error)
 
 func (f serverRoundTripper) RoundTrip(request *http.Request) (*http.Response, error) {

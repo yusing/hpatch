@@ -180,7 +180,7 @@ func writeRequestError(ctx context.Context, writer *trackedResponseWriter, reque
 		return
 	}
 	if errors.Is(ctx.Err(), context.Canceled) && errors.Is(requestErr, context.Canceled) {
-		_ = log.log(ctx, slog.LevelInfo, "Responses request canceled after response started", "err", requestErr)
+		_ = log.log(ctx, slog.LevelDebug, "Responses request canceled after response started", "err", requestErr)
 		return
 	}
 	_ = log.log(ctx, slog.LevelError, "Responses request failed after response started", "err", requestErr)
