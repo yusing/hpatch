@@ -40,6 +40,7 @@ type editor struct {
 	baseline      string
 	cursor        int
 	selections    []selection
+	textMatches   bool
 	cursorCommand int
 	edits         []baselineEdit
 	corrections   []lineCorrection
@@ -53,8 +54,13 @@ type logicalLine struct {
 
 func (e *editor) resetCursor() {
 	e.cursor = 0
-	e.selections = nil
+	e.clearSelections()
 	e.cursorCommand = 0
+}
+
+func (e *editor) clearSelections() {
+	e.selections = nil
+	e.textMatches = false
 }
 
 func (e *editor) commitGeneration() {
@@ -77,7 +83,7 @@ func (e *editor) selectColumns(lineNumber, startColumn, endColumn int) error {
 	if !ok {
 		return withReason(reasonCoordinateBounds, fmt.Errorf("columns %d:%d are outside line %d", startColumn, endColumn, lineNumber))
 	}
-	return withReason(reasonEditConflict, e.setSelections([]selection{{start: line.start + start, end: line.start + end}}))
+	return withReason(reasonEditConflict, e.setSelections([]selection{{start: line.start + start, end: line.start + end}}, false))
 }
 
 func (e *editor) selectMatches(fromLine, count int, literal string, origin editOrigin) error {
@@ -88,7 +94,7 @@ func (e *editor) selectMatches(fromLine, count int, literal string, origin editO
 		found = len(offsets)
 		if found == count {
 			selections := literalSelections(line.start, offsets, literal)
-			return withReason(reasonEditConflict, e.setSelections(selections))
+			return withReason(reasonEditConflict, e.setSelections(selections, true))
 		}
 	}
 
@@ -99,7 +105,7 @@ func (e *editor) selectMatches(fromLine, count int, literal string, origin editO
 	offsets := nonOverlappingLiteralOffsets(e.baseline, literal, limit)
 	if len(offsets) == count {
 		selections := literalSelections(0, offsets, literal)
-		if err := e.setSelections(selections); err != nil {
+		if err := e.setSelections(selections, true); err != nil {
 			return withReason(reasonEditConflict, err)
 		}
 		lines := logicalLines(e.baseline)
@@ -167,7 +173,7 @@ func (e *editor) selectBlock(startLiteral, endLiteral string) (bool, error) {
 	return recovered, withReason(reasonEditConflict, e.setSelections([]selection{{
 		start: start.start,
 		end:   start.end + end.end,
-	}}))
+	}}, false))
 }
 
 func (e *editor) selectLines(startLine, endLine int) error {
@@ -182,10 +188,10 @@ func (e *editor) selectLines(startLine, endLine int) error {
 		start:    lines[startLine-1].start,
 		end:      lines[endLine-1].fullEnd,
 		linewise: true,
-	}}))
+	}}, false))
 }
 
-func (e *editor) setSelections(candidates []selection) error {
+func (e *editor) setSelections(candidates []selection, textMatches bool) error {
 	for _, candidate := range candidates {
 		for _, edit := range e.edits {
 			if edit.start == edit.end {
@@ -212,6 +218,7 @@ func (e *editor) setSelections(candidates []selection) error {
 		}
 	}
 	e.selections = candidates
+	e.textMatches = textMatches
 	return nil
 }
 
@@ -248,7 +255,7 @@ func (e *editor) typeText(replacement string, origin editOrigin) error {
 		return withReason(reasonEditConflict, err)
 	}
 	e.cursor = e.selections[len(e.selections)-1].end
-	e.selections = nil
+	e.clearSelections()
 	e.cursorCommand = origin.command
 	return nil
 }
@@ -265,7 +272,7 @@ func (e *editor) deleteSelection(origin editOrigin) error {
 		return withReason(reasonEditConflict, err)
 	}
 	e.cursor = e.selections[len(e.selections)-1].start
-	e.selections = nil
+	e.clearSelections()
 	e.cursorCommand = origin.command
 	return nil
 }
@@ -316,7 +323,7 @@ func (e *editor) pasteClipboard(clipboard clipboardContent, origin editOrigin) e
 		return withReason(reasonEditConflict, err)
 	}
 	e.cursor = positions[len(positions)-1]
-	e.selections = nil
+	e.clearSelections()
 	e.cursorCommand = origin.command
 	return nil
 }

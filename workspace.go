@@ -51,15 +51,16 @@ type clipboardContent struct {
 }
 
 type workspace struct {
-	paths     map[string]*fileState
-	blocked   map[string]bool
-	reserved  map[string]bool
-	removed   map[string]*fileState
-	files     []*fileState
-	active    *fileState
-	clipboard *clipboardContent
-	load      fileLoader
-	exists    pathProbe
+	paths         map[string]*fileState
+	blocked       map[string]bool
+	reserved      map[string]bool
+	removed       map[string]*fileState
+	files         []*fileState
+	active        *fileState
+	reportedEdits []*reportedEdit
+	clipboard     *clipboardContent
+	load          fileLoader
+	exists        pathProbe
 }
 
 func (p *program) evaluate(ctx context.Context, resolve pathResolver, load fileLoader, exists pathProbe) ([]change, invocationMetrics, string, error) {
@@ -98,7 +99,8 @@ func (p *program) evaluate(ctx context.Context, resolve pathResolver, load fileL
 	if err := ctx.Err(); err != nil {
 		return nil, events, "", err
 	}
-	return w.changes(), events, w.finalStateReport(), nil
+	changes := w.changes()
+	return changes, events, w.finalStateReport(changes), nil
 }
 
 func (w *workspace) diagnosticPath(command instruction) string {
@@ -144,7 +146,10 @@ func (w *workspace) execute(command instruction, commandIndex int) (commandOutco
 		return commandOutcome{}, withReason(reasonActiveFile, fmt.Errorf("%s requires an active file", command.operation))
 	}
 
+	file := w.active
+	textMatches := len(file.editor.selections) != 0 && file.editor.textMatches
 	origin := editOrigin{command: commandIndex, line: command.line, operation: command.operation}
+	var err error
 	switch command.operation {
 	case "sel":
 		return commandOutcome{}, w.active.editor.selectColumns(command.lineNumber, command.start, command.end)
@@ -156,29 +161,39 @@ func (w *workspace) execute(command instruction, commandIndex int) (commandOutco
 	case "rsel":
 		return commandOutcome{}, w.active.editor.selectLines(command.lineNumber, command.endLine)
 	case "type":
-		return commandOutcome{}, w.active.editor.typeText(command.text, origin)
+		err = file.editor.typeText(command.text, origin)
 	case "del":
-		return commandOutcome{}, w.active.editor.deleteSelection(origin)
+		err = file.editor.deleteSelection(origin)
 	case "copy", "cut":
-		clipboard, ok := w.active.editor.selectedClipboard()
+		clipboard, ok := file.editor.selectedClipboard()
 		if !ok {
 			return commandOutcome{}, withReason(reasonSelectionRequired, fmt.Errorf("%s requires a selection", command.operation))
 		}
 		if command.operation == "cut" {
-			if err := w.active.editor.deleteSelection(origin); err != nil {
+			if err := file.editor.deleteSelection(origin); err != nil {
 				return commandOutcome{}, err
 			}
 		}
 		w.clipboard = &clipboard
-		return commandOutcome{}, nil
+		if command.operation == "copy" {
+			return commandOutcome{}, nil
+		}
 	case "paste":
 		if w.clipboard == nil {
 			return commandOutcome{}, withReason(reasonClipboardEmpty, fmt.Errorf("paste requires a preceding copy or cut in the same script"))
 		}
-		return commandOutcome{}, w.active.editor.pasteClipboard(*w.clipboard, origin)
+		err = file.editor.pasteClipboard(*w.clipboard, origin)
 	default:
 		panic("parsed instruction has no executor: " + command.operation)
 	}
+	if err != nil {
+		return commandOutcome{}, err
+	}
+	if edit := file.editor.reportedEdit(origin, textMatches); edit != nil {
+		edit.file = file
+		w.reportedEdits = append(w.reportedEdits, edit)
+	}
+	return commandOutcome{}, nil
 }
 
 func (w *workspace) commitGeneration() {
@@ -276,6 +291,13 @@ func (w *workspace) removeFile() error {
 		w.blocked[file.originalPath] = true
 	}
 	file.deleted = true
+	retained := w.reportedEdits[:0]
+	for _, edit := range w.reportedEdits {
+		if edit.file != file {
+			retained = append(retained, edit)
+		}
+	}
+	w.reportedEdits = retained
 	w.active = nil
 	return nil
 }

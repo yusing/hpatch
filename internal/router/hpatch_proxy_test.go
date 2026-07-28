@@ -940,7 +940,7 @@ func TestInProcessHPatchToolDescription(t *testing.T) {
 		"cmd=in PATH|new PATH|mv DESTINATION|rm|sel LINE START:END",
 		"state.active=in|new=>select;mv DESTINATION=>rename_active_file(source_implicit);rm=>delete_active_file(no_operand)",
 		"state.coords=file.baseline[generation]",
-		"result.success=active_path+cursor_or_selection_envelope",
+		"result.success=active_path+cursor_or_selection_ranges<=3+last_effective_edit",
 	} {
 		if !strings.Contains(description, required) {
 			t.Fatalf("installed tool description omits %q", required)

@@ -135,11 +135,14 @@ Baseline editor state:
 
 Final-state report:
   A successful report starts with the active path and rendered cursor or selection.
-  Multiple selections report their count and bounded first-to-last envelope. Up to three
-  nearby post-edit lines follow. Each repaired line adds its requested and resolved
+  Multiple selections report their count and first three individual ranges. The last
+  effective content edit reports its path, operation, count, and first three rendered
+  ranges. Net file actions appear for lifecycle, multi-file, non-active-file, and normal
+  no-op outcomes. Up to three preview lines sample separate affected locations; one
+  location retains nearby context. Each repaired line adds its requested and resolved
   numbers plus up to three marked post-edit lines. Each preview contains at most 64
-  Unicode code points and escapes control characters so it remains on one output line.
-  Use the report to orient focused validation without rereading a successfully edited file.
+  Unicode code points and escapes controls so it remains on one output line. Use the
+  report to orient focused validation without rereading a successfully edited file.
 
 Metrics:
   hpatch gain reads no script and reports caller-accounted hpatch and apply_patch

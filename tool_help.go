@@ -37,8 +37,10 @@ edit.conflict=same_generation{overlap_replace_delete|insert_inside_replacement|s
 file.new=active:=empty_pending;effective_type_count_per_generation<=1
 file.rm=active:=none;existing_with_content_edits=>conflict
 bsel.replace=both_anchors_consumed;following_terminator_outside_selection_unless_encoded_in_END;replacement_final_terminator_may_add_blank_line
-result.success=active_path+cursor_or_selection_envelope+postedit_context_lines<=3
-result.preview=rendered_postedit;source_codepoints_per_line<=64;truncation_marker=none
+result.success=active_path+cursor_or_selection_ranges<=3+last_effective_edit(path,operation,count,rendered_ranges<=3)+conditional_net_file_actions+postedit_context_lines<=3
+result.selection_ranges=individual;locations>3=>first_3+omitted_count
+result.file_actions=show_if lifecycle|multi_file|changed_file!=active;categories=updated|moved|moved+updated|added|deleted
+result.preview=rendered_postedit;multi_location=>distinct_affected_lines<=3;single_location=>nearby_lines<=3;source_codepoints_per_line<=64;truncation_marker=none
 result.noop=net_workspace_unchanged=>reject
 result.tsel_repair=requested_line+resolved_line+postedit_context_lines<=3
 result.failure=command_context+repair_context_if_available;repair_context_not_match_candidate;retry_baseline=unchanged

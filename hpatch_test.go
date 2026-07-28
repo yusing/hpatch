@@ -726,7 +726,7 @@ func runForTest(root string, args []string, script string) (string, string, int)
 }
 
 func isFinalStateReport(output string) bool {
-	return output == "no active file\n" || strings.HasPrefix(output, "in ")
+	return strings.HasPrefix(output, "no active file\n") || strings.HasPrefix(output, "in ")
 }
 
 func openTestRoot(t *testing.T, path string) *os.Root {

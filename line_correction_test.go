@@ -21,6 +21,7 @@ func TestShiftedTextSelectionAutocorrectsWhenGloballyUnique(t *testing.T) {
 	}
 	wantReport := "" +
 		"in file.txt 2:6\n" +
+		"last edit in file.txt: type 1 tsel match: 2:1-2:6\n" +
 		"1 alpha\n" +
 		"2 fixed\n" +
 		"3 omega\n" +
