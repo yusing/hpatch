@@ -4,48 +4,70 @@ pjdoc:
   kind: architecture
   scope: root
   status: approved
-  revision: "7"
+  revision: "8"
   files:
     []
 ---
 # hpatch architecture contract
 
-## CTR-CORE-001 — Virtual workspace and selector state
+## CTR-SYNTAX-001 — Shared compact-script framing
 
-One engine owns script parsing, structured command variants, logical path resolution,
-first-touch order, per-file immutable baselines, baseline cursor or selection state,
-recorded edits, conflict validation, final editor state, and net file actions for
-`REQ-SCRIPT-001`, `REQ-FILE-001`, `REQ-SELECT-001`, and `REQ-EDIT-001`. It evaluates every
-command against one in-memory virtual workspace. Normal and translate modes consume the
-same completed result; neither mode reimplements command semantics.
+One internal lexical owner implements the inline quoted-operand and heredoc framing
+required by `REQ-SCRIPT-001`. The root parser consumes decoded operands and command
+frames from that owner. The router correction parser consumes the same frame boundaries
+for inserted and replaced commands under `REQ-CORRECT-001`; it does not duplicate
+heredoc delimiter recognition. The lexical owner performs no filesystem access, command
+evaluation, correction ancestry, or output rendering.
 
-The parser retains absolute line numbers, the optional `tsel` count, and block-selector
-operation identity. It attaches recognized command metadata plus a stable reason to
-syntax failures.
+## CTR-CORE-001 — Virtual workspace and selector generations
 
-The editor owner resolves `bsel` against the full baseline and `bsel_next` against its
-explicit selection- or cursor-derived scope. One block matcher owns exact occurrence
-counting, horizontal-whitespace fallback, original-byte range mapping, start-relative
-end search, and exact versus recovered outcome metadata. One occurrence matcher owns
-single and contiguous multiple `tsel` spans. All selectors resolve against immutable
-baseline content. The editor rejects selectors over already modified spans, intersecting
-edit spans, insertions inside spans, and duplicate insertion positions before it
-materializes ordered disjoint edits into final content.
+One engine owns parsed command evaluation, logical path resolution, first-touch order,
+per-file immutable generation baselines, baseline cursor or selection state, pending edit
+conflict validation, explicit generation materialization, invocation-local clipboard
+state, final editor state, and original-to-final net file actions for `REQ-SCRIPT-001`,
+`REQ-FILE-001`, `REQ-SELECT-001`, and `REQ-EDIT-001`. Normal and translate modes consume
+the same completed result; neither mode reimplements command semantics.
+
+The workspace owner retains each touched file's invocation-original identity and contents
+separately from its current generation baseline. A script `commit` orders and materializes
+only the current generation's pending edits into the existing touched-file state, clears
+pending editor state, and advances no filesystem or output boundary. It does not create a
+continuously mutable shadow buffer. Successful script end renders any pending edits into
+the net change set without applying the explicit barrier's editor-state reset.
+
+The editor owner resolves selectors only against the current immutable generation
+baseline and rejects conflicts with pending edits in that generation. Content introduced
+by an edit becomes selector input only after explicit generation materialization. The
+engine checks cancellation before command execution and generation materialization; a
+failure or cancellation returns no completed changes or final state.
 
 The engine obtains original files only through the workspace boundary, never writes files
-or process output, and retains baseline identity across moves. Its completed result
-contains ordered net changes, structured command metrics, the final active logical path,
-and cursor or selection state sufficient for rendered-state reporting.
+or process output, and retains original identity across generation-spanning moves. Its
+completed result contains ordered net changes, structured command metrics, the final
+active logical path, and cursor or selection state sufficient for rendered-state
+reporting.
+
+## CTR-CORRECT-001 — Router correction transformation
+
+The router owns correction detection, index validation, replacement/deletion/insertion
+ordering, rejected-script ancestry, correlation metadata, emitted-payload metrics, and
+rebuilding the complete script for `REQ-CORRECT-001`. Correction indices and insertion
+anchors resolve against the rejected script before transformation. The router validates
+the complete operation set before producing a rebuilt script and passes only that complete
+script to the ordinary hpatch host boundary; the core evaluator has no correction mode.
+Malformed correction framing or transformation remains a router rejection and cannot
+change retained correctable history or workspace state.
 
 ## CTR-STATE-001 — Rendered final-state projection
 
-One state projector owned beside the editor maps the final baseline cursor or selection
-through the ordered edits into rendered post-edit offsets. It owns boundary affinity:
-`type` is after inserted or replacement text, `del` is at the deletion join, and `dup` is
-after the inserted copy. It converts rendered offsets into one-based Unicode line and
-column positions and extracts the bounded three-line window from the same rendered
-content. It reports active moved paths, empty new files, active selections, and absent
-active files without consulting the committed filesystem.
+One state projector owned beside the editor maps the final generation-baseline cursor or
+selection through its pending ordered edits into rendered post-edit offsets. It owns
+boundary affinity for `type`, `del`, `cut`, and `paste`, and consumes the active file state
+left after the last explicit `commit` plus any final pending edits. It converts rendered
+offsets into one-based Unicode line and column positions and extracts the bounded
+three-line window from the same rendered content. It reports active moved paths, empty new
+files, active selections, and absent active files without consulting the committed
+filesystem.
 
 One pure formatter converts that projection into the `REQ-OUTPUT-001` report, truncates
 each preview to 64 Unicode code points, and escapes controls before any external effect.
@@ -74,20 +96,22 @@ commit consume the same identities, so cwd affects relative operands without cha
 the workspace boundary.
 
 Normal mode validates and formats the state report, stages the complete engine result,
-commits it, and only then emits the report to stderr. Translate mode validates and formats
-the same pending-state report, completely renders and writes the patch to stdout, and only
-then emits the report. No failure before the external effect emits a final-state report.
-A report-write failure after a successful effect is best-effort and cannot be represented
-as rollback. The transaction coordinator owns backups, ordered operations, rollback
-attempts, and honest reporting of commit or rollback failure.
+performs the external filesystem commit, and only then emits the report to stderr.
+Translate mode validates and formats the same pending-state report, completely renders
+and writes the patch to stdout, and only then emits the report. Script `commit` commands
+never cross this boundary. No failure before the external effect emits a final-state
+report. A report-write failure after a successful effect is best-effort and cannot be
+represented as rollback. The transaction coordinator owns backups, ordered operations,
+rollback attempts, and honest reporting of external commit or rollback failure.
 
 ## CTR-METRICS-001 — Metrics classification and persistence
 
 One metrics classifier consumes structured parser and evaluator events rather than
 re-parsing scripts or diagnostics. It owns effective, ineffective, direct-patch, and
 fully emitted report token estimates; aggregate command counters and selector projections; single
-and multiple `tsel` variants; separate `bsel` and `bsel_next` counters; exact and
-whitespace-recovered block outcomes; and stable terminal reason counters. The report
+and multiple `tsel` variants; separate `bsel` and `bsel_next` counters; explicit
+`commit` command attempts; exact and whitespace-recovered block outcomes; and stable
+terminal reason counters. The report
 formatter's exact emitted string is the only source for report-input token counting.
 Price ratios are presentation-time calculations and are never persisted.
 

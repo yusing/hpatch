@@ -205,7 +205,8 @@ Acceptance:
 
 ## REQ-SCRIPT-001 — Script grammar
 
-Blank lines are ignored. All other input is one command per line. Commands are:
+Outside a heredoc body, blank lines are ignored and every other physical line begins one
+command. Commands are:
 
 ```text
 in PATH
@@ -213,13 +214,19 @@ new PATH
 mv PATH
 rm
 sel LINE START:END
-tsel LINE OCCURRENCE "JSON STRING" [COUNT]
+tsel LINE OCCURRENCE "QUOTED STRING" [COUNT]
 bsel "START" "END"
 bsel_next "START" "END"
 rsel START:END
-type "JSON STRING"
+type "QUOTED STRING"
+type <<TAG
+BODY
+TAG
 del
-dup
+copy
+cut
+paste
+commit
 ```
 
 Line numbers and inclusive endpoints are one-based base-ten integers matching
@@ -228,10 +235,22 @@ Cursor `0:0` denotes the position before the first code point of a file.
 
 `OCCURRENCE` is nonzero: positive values count exact, non-overlapping literal matches
 from the start; negative values count them from the end. Optional `COUNT` defaults to one
-and must be a positive base-ten integer. JSON operands use standard JSON string decoding.
-`type`, `bsel`, and `bsel_next` strings may contain encoded line terminators; `tsel`
-strings must be nonempty and stay within one logical line. Both anchors of a block
-selector must be nonempty and different.
+and must be a positive base-ten integer. Inline quoted operands retain the existing JSON
+escape repertoire and Unicode decoding, while additionally accepting a literal horizontal
+tab. A literal quote, backslash, carriage return, line feed, NUL, or C0 control other than
+horizontal tab must remain escaped. `type`, `bsel`, and `bsel_next` strings may contain encoded line
+terminators; `tsel` strings must be nonempty and stay within one logical line. Both
+anchors of a block selector must be nonempty and different.
+
+A multiline `type` operand uses `type <<TAG`, where `TAG` matches
+`[A-Z][A-Z0-9_]{2,31}`. Every following physical line is literal UTF-8 payload data until
+a line exactly equal to `TAG`; no escape, interpolation, or indentation processing occurs.
+The payload consists of the bytes between the header terminator and the start of the
+closing delimiter, so a nonempty final body line contributes its physical line terminator.
+The header, body, and delimiter form one command whose command index is the header's;
+body lines retain their physical source lines but are never parsed as commands. An
+unterminated or oversized heredoc is one syntax failure at its header and cannot consume
+unbounded input.
 
 Paths are nonempty filesystem paths normalized with the host OS path rules. Relative
 paths resolve from cwd and are stored as root-relative identities. Absolute paths are
@@ -241,82 +260,153 @@ symlink aliases are not resolved outside the root capability. Root-scoped lookup
 paths that escape through symlinks and, following Go's `os.Root` contract, paths through
 absolute symlink targets. Translation always emits root-relative paths; a downstream
 patch consumer must apply the envelope from the same root. Trailing operands and unknown
-commands are invalid.
+commands are invalid. `commit` accepts no operand.
 
 Acceptance:
 
-1. JSON escapes allow spaces, quotes, tabs, and newlines in inserted or anchored text.
-2. Signed, zero, malformed, or mixed line ranges fail before filesystem mutation,
-   patch output, or final-state reporting.
-3. Optional `tsel COUNT` selects one contiguous occurrence span and omission remains
+1. Existing valid JSON-quoted operands retain their decoded values, and a literal tab in
+   an inline operand decodes as one tab without manual escaping.
+2. A `type` heredoc inserts its literal multiline body, including quotes, backslashes,
+   tabs, and physical line terminators, without interpreting body lines as commands.
+3. An invalid delimiter, unterminated heredoc, forbidden inline control character,
+   malformed escape, or trailing operand fails before filesystem mutation, patch output,
+   or final-state reporting; an unterminated body produces one header-owned error.
+4. Signed, zero, malformed, or mixed line ranges fail before filesystem mutation, patch
+   output, or final-state reporting.
+5. Optional `tsel COUNT` selects one contiguous occurrence span and omission remains
    equivalent to count one.
-4. File commands may be interleaved with text commands. File lifecycle commands observe
-   preceding pending state, while selectors retain immutable baseline meaning.
-5. Missing operands, invalid JSON, invalid counts, trailing operands, empty or identical
-   block anchors, and unknown or future commands fail before filesystem mutation, patch
-   output, or final-state report.
-6. With root `/workspace` and cwd `bin/worktree`, script path `main.go` denotes
+6. File commands may be interleaved with text commands. File lifecycle commands observe
+   preceding pending state within their generation, while selectors retain that
+   generation's immutable-baseline meaning.
+7. Missing operands, invalid counts, empty or identical block anchors, and unknown or
+   future commands fail before filesystem mutation, patch output, or final-state report.
+8. With root `/workspace` and cwd `bin/worktree`, script path `main.go` denotes
    `/workspace/bin/worktree/main.go` and translates as `bin/worktree/main.go`.
+
+## REQ-CORRECT-001 — Compact rejected-script correction
+
+After a routed hpatch script is rejected, a correction payload may transform the rejected
+script with one operation per nonblank command header:
+
+```text
+N: COMMAND     replace command N
+-N             delete command N
++N: COMMAND    insert before command N
+N+: COMMAND    insert after command N
+```
+
+A replacement or insertion whose command is `type <<TAG` consumes its heredoc body and
+closing delimiter as part of that one correction operation. All indices refer to the
+original rejected script before any correction operation is applied. Replacements and
+deletions may name an index at most once and conflict with each other for the same index.
+Multiple insertions at one anchor are allowed and retain payload order; their position is
+relative to the original anchor even when that anchor is deleted. Every nonblank line
+outside a correction heredoc must be a correction operation.
+
+The router validates all operations and referenced indices before rebuilding the script.
+It then reparses and reevaluates the complete transformed script against the unchanged
+workspace. A correction failure changes nothing. A successful transformation becomes the
+base for a later correction, retains the correction-chain correlation ID, increments the
+attempt, and charges metrics for only the compact payload the agent emitted.
+
+Acceptance:
+
+1. `N: COMMAND` remains compatible with existing replacement corrections.
+2. `-N`, `+N: COMMAND`, and `N+: COMMAND` can remove obsolete commands and insert new
+   commands without resending the complete script.
+3. Multiple same-anchor insertions preserve payload order, including when the anchor is
+   deleted, while duplicate replacement/deletion or an absent index rejects the complete
+   correction.
+4. A correction heredoc is one operation; an invalid or unterminated correction heredoc
+   produces one bounded diagnostic and does not reinterpret its body as operations.
+5. Every corrected script is revalidated atomically against the unchanged workspace and
+   retains the established correlation and emitted-payload metrics behavior.
 
 ## REQ-FILE-001 — File commands
 
-The first `in PATH` for an existing logical file loads and captures its immutable UTF-8
-baseline. It selects that baseline for subsequent commands, clears the prior text
-selection, and places its baseline cursor at `0:0`. Returning to the same logical file
+An invocation begins with generation zero. The first `in PATH` for an existing logical
+file loads the UTF-8 contents visible in that generation and captures them as the file's
+immutable generation baseline. It selects that baseline, clears the prior text selection,
+and places its cursor at `0:0`. Returning to the same logical file within the generation
 reuses the captured baseline, resets its cursor and selection, and retains its recorded
-baseline-coordinate edits. The baseline is never rebuilt from pending content.
+baseline-coordinate edits.
 
-`new PATH` creates and selects a pending file with an empty baseline at cursor `0:0`.
-It fails if the logical path already exists. It accepts at most one effective content
-insertion because every cursor insertion targets the same empty-baseline position. A
-created file does not reach the filesystem unless the complete script validates,
-stages, and commits successfully.
+`new PATH` creates and selects a pending file with an empty generation baseline at cursor
+`0:0`. It fails if the logical path already exists in the current generation. Before a
+`commit`, it accepts at most one effective content insertion because every cursor
+insertion targets the same empty-baseline position. A created file does not reach the
+filesystem unless the complete script validates and its requested external output or
+mutation succeeds.
 
-`mv PATH` moves the active logical file to an unoccupied logical path. The destination
-becomes active and preserves the current baseline cursor or selection. Recorded edits
-move with the file, and the immutable baseline identity does not change. Later `in`
-commands resolve the new path, not the old one. Multiple moves of one original file
-collapse to its original-to-final move in the net change set.
+`mv PATH` moves the active logical file to an unoccupied logical path in pending state.
+The destination becomes active and preserves the current baseline cursor or selection.
+Recorded edits move with the file. Later `in` commands resolve the new path, not the old
+one. Multiple moves across generations collapse to the original-to-final move in the net
+change set.
 
-`rm` marks the active logical file as deleted, then clears the active file, cursor, and
-selection. Removing an existing baseline file after any content edit is a conflict and
-rejects the complete script; edits are never silently discarded. Removing an unedited
-existing file yields deletion of its original path, including after a move. Removing a
-file created in the same script cancels that creation. Later text or lifecycle
-operations require another `in` or `new`.
+`rm` marks the active logical file as deleted in pending state, then clears the active
+file, cursor, and selection. Removing an existing baseline file after a content edit in
+the same generation is a conflict; pending edits are never silently discarded. Removing
+an unedited existing file yields deletion of its original path, including after a move.
+Removing a file created in the same generation cancels that creation. A later generation
+may remove content materialized by an earlier `commit`, and the final net change remains
+relative to the invocation's original workspace.
 
-`in` fails for a missing or deleted logical path. `new` and `mv` fail on any logical
-destination collision, including a path occupied in the initial tree or by pending
-state. `mv`, `rm`, selection commands, and edit commands fail without an active file.
-Initial files must resolve to regular UTF-8 files when first selected. The parent
-directory of a `new` or `mv` destination must already exist; hpatch does not create
-directories that are absent from the script's file-operation model.
+`commit` validates and materializes every pending file and content change as the next
+immutable in-memory generation baseline. It performs no filesystem mutation and emits no
+intermediate patch or report; a later failure or cancellation rejects the complete
+invocation. Pending edit sets are cleared. If the active file still exists, it remains
+active under its current path with no selection and cursor `0:0`; if it was deleted, no
+file remains active. A no-op `commit` succeeds with the same state-reset behavior.
+
+At successful script end, hpatch finalizes pending content for normal or translate output
+without applying the explicit barrier's cursor or selection reset.
+
+`in` fails for a missing or deleted logical path. `new` and `mv` fail on a logical
+destination collision in the current generation, including a path occupied in the
+initial tree or by pending state. `mv`, `rm`, selection commands, and edit commands fail
+without an active file. Initial files must resolve to regular UTF-8 files when first
+selected. The parent directory of a `new` or `mv` destination must already exist; hpatch
+does not create directories that are absent from the script's file-operation model.
+Generation materialization tracks only touched logical files and does not bypass existing
+script, content, or translated-output capacity limits.
 
 Acceptance:
 
-1. A script can edit multiple files by switching among them; reselecting a path retains
-   recorded edits but exposes the same baseline at cursor `0:0`.
-2. One complete-content `type` can create a file, and `mv` and `rm` produce the specified
-   net additions, moves, and deletions.
-3. Repeated effective writes to one new-file baseline position, removal after an
-   existing-file content edit, missing paths, destination collisions, use-after-delete,
-   and file commands without an active file fail before commit or patch output.
+1. A script can edit multiple files by switching among them; reselecting a path within a
+   generation retains pending edits but exposes the same generation baseline at cursor
+   `0:0`.
+2. After `commit`, selectors can address content and paths materialized by earlier
+   commands, while the filesystem and translated output remain unchanged until the whole
+   invocation succeeds.
+3. `commit` clears the selection, resets a surviving active file to cursor `0:0`, follows
+   its pending move, and clears the active file after deletion; a no-op barrier succeeds.
+4. File creation, content edits, moves, and removals may span generations and collapse to
+   one original-to-final net change set.
+5. Repeated effective writes to one generation's new-file baseline position, removal
+   after an existing-file content edit in the same generation, missing paths, destination
+   collisions, use-after-delete, and file commands without an active file fail before
+   external mutation or patch output.
+6. Failure or cancellation after any number of `commit` barriers exposes no intermediate
+   filesystem change, patch, or final-state report.
 
-## REQ-SELECT-001 — Immutable baseline selections and cursor
+## REQ-SELECT-001 — Immutable generation-baseline selections and cursor
 
-Every existing logical file has one immutable baseline captured on first `in`. A new
-file has an empty baseline. Every `sel`, `tsel`, `bsel`, `bsel_next`, and `rsel` command
-resolves only against that baseline; recorded replacements, deletions, duplications, and
-insertions never change selector text, line references, occurrences, scopes, or positions.
-Text introduced by an earlier command is not selectable and cannot create an unrelated
-literal or anchor collision. A selector whose baseline span overlaps content already
-replaced or deleted by an earlier edit is rejected immediately with the prior command
-and affected baseline lines identified.
+Each current logical file has one immutable baseline per generation. A new file has an
+empty generation baseline. Every `sel`, `tsel`, `bsel`, `bsel_next`, and `rsel` command
+resolves only against that baseline; pending replacements, deletions, and insertions never
+change selector text, line references, occurrences, scopes, or positions. Text introduced
+by an earlier command is not selectable in the same generation and cannot create an
+unrelated literal or anchor collision. After `commit`, materialized content forms the next
+baseline and is selectable there. A selector whose current-generation baseline span
+overlaps content already replaced or deleted by an earlier pending edit is rejected
+immediately with the prior edit and affected baseline lines identified.
 
-Each active file has either a baseline cursor or a nonempty baseline selection. `in` and
-`new` establish cursor `0:0`, before the first baseline code point. A cursor is an
-insertion position; a selection is a half-open baseline span produced by the inclusive
-commands below. Empty baselines have no selectable line.
+Each active file has either a generation-baseline cursor or a nonempty baseline
+selection. `in`, `new`, and a `commit` that retains the active file establish cursor
+`0:0`, before the first baseline code point. A cursor is an insertion position; a
+selection is a half-open baseline span produced by the inclusive commands below. Empty
+baselines have no selectable line.
 
 `sel` selects columns within one resolved baseline logical line. Columns count Unicode
 code points, including one code point per tab; the line terminator is not selectable.
@@ -329,13 +419,13 @@ normalizes the resulting contiguous span into ascending baseline order. Source c
 between the first and last selected token is included. The complete requested group must
 exist. Omitted `COUNT` is one, so existing single-occurrence behavior is unchanged.
 
-`bsel` always uses the complete active-file baseline as its search scope, independent of
-the current cursor or selection. `bsel_next` explicitly retains stateful search: it uses
-the current baseline selection when one exists, otherwise the suffix from the baseline
-cursor through EOF, and never wraps. Both commands resolve `START` uniquely within their
-scope, then search for `END` only after the complete resolved start; end occurrences
-before the start do not collide. `END` must occur uniquely in that suffix and must not
-overlap `START`.
+`bsel` always uses the complete active-file generation baseline as its search scope,
+independent of the current cursor or selection. `bsel_next` explicitly retains stateful
+search: it uses the current baseline selection when one exists, otherwise the suffix from
+the baseline cursor through EOF, and never wraps. Both commands resolve `START` uniquely
+within their scope, then search for `END` only after the complete resolved start; end
+occurrences before the start do not collide. `END` must occur uniquely in that suffix and
+must not overlap `START`.
 
 For each block anchor, exact occurrences are authoritative when any exist. Only when the
 exact count is zero does matching retry with every nonempty run of ASCII space or tab in
@@ -349,19 +439,22 @@ Both selectors include both anchors and all baseline content between them.
 `rsel` selects an inclusive range of complete baseline logical lines after validating
 endpoint order and bounds. For every selected line it owns the line terminator when one
 is present. It records a linewise selection so deletion removes complete lines and
-duplication creates another complete adjacent line range, including when the selected
-final line has no terminator.
+linewise clipboard content retains its complete-line identity, including when the
+selected final line has no terminator.
 
 Every selection replaces the previous cursor or selection. After `type`, the cursor is
 at the selected baseline span's end; an insertion at a cursor remains at that same
-baseline position. `del` leaves the cursor at the selection start. `dup` leaves it at
-the selection end and clears the selection because the inserted copy is not baseline
-content.
+baseline position. `del` and `cut` leave the cursor at the selection start. `copy`
+preserves the selection. `paste` clears the selection and leaves the cursor at its
+baseline insertion boundary because inserted content is not baseline content within the
+generation. `commit` clears either state and resets a surviving active file to `0:0` in
+the next generation.
 
 Acceptance:
 
-1. Absolute selectors constructed from the inspected pre-edit file retain the same
-   meaning after earlier edits.
+1. Within a generation, absolute selectors constructed from its inspected baseline retain
+   the same meaning after earlier pending edits; after `commit`, selectors use the
+   materialized next baseline.
 2. Positive and negative multi-occurrence `tsel` spans include intervening source text;
    missing initial or complete occurrence groups fail, and overlapping token candidates
    retain non-overlapping occurrence semantics.
@@ -372,59 +465,73 @@ Acceptance:
 5. A unique spaces-versus-tabs fallback succeeds and maps to original baseline bytes;
    whitespace-equivalent collisions, newline crossing, absent whitespace, and unrelated
    Unicode whitespace do not select a block.
-6. Missing baseline lines, columns, ranges, literal occurrences, or block anchors fail
-   rather than selecting pending or nearby content.
+6. Missing generation-baseline lines, columns, ranges, literal occurrences, or block
+   anchors fail rather than selecting pending or nearby content; materialized
+   prior-generation content is selectable.
 
 ## REQ-EDIT-001 — Baseline-coordinate edits
 
-`type STRING` records insertion of the decoded string at the baseline cursor, or
-replacement of the selected baseline span. `del` requires a selection and records
-replacement of that span with empty content. `dup` requires a selection, copies its
-immutable baseline content, and records that copy as an insertion at the selection end.
-No edit action reads an intermediate mutated representation.
+`type STRING` records insertion of the decoded string at the generation-baseline cursor,
+or replacement of the selected generation-baseline span. `del` requires a selection and
+records replacement of that span with empty content. `copy` requires a selection, stores
+its immutable baseline content in invocation-local clipboard state, and preserves the
+selection. `cut` requires a selection, stores the same content, and records deletion of
+the span. `paste` requires clipboard content and records insertion after an active
+selection or at the cursor. No edit action reads pending mutated content.
 
-Recorded edits must be disjoint in baseline coordinates. Two replacements or deletions
-that overlap are rejected. An insertion strictly inside a replaced or deleted span is
-rejected. Multiple effective insertions at one baseline position are rejected as
-ambiguous. An insertion exactly at a replacement boundary is permitted and appears on
-that side of the replacement. Conflict diagnostics identify the prior command and the
-overlapping baseline line or position. All conflicts reject the complete script before
-filesystem mutation or patch output.
+Recorded edits must be disjoint in current-generation baseline coordinates. Two
+replacements or deletions that overlap are rejected. An insertion strictly inside a
+replaced or deleted span is rejected. Multiple effective insertions at one baseline
+position are rejected as ambiguous. An insertion exactly at a replacement boundary is
+permitted and appears on that side of the replacement. Conflict diagnostics identify the
+prior command and the overlapping generation-baseline line or position. All conflicts
+reject the complete script before filesystem mutation or patch output. A `commit` first
+requires this pending edit set to validate; after it materializes the next baseline, later
+edits no longer conflict merely because they address content changed in the prior
+generation.
 
 When replacing a linewise selection that owns a final LF, CRLF, or standalone-CR
-terminator, `type` preserves that exact terminator if the replacement does not end in
-a terminator. A replacement-supplied terminator is authoritative and is not doubled.
-No terminator is synthesized for an unterminated selected final line. Consequently,
-`rsel` followed by `type "replacement"` retains separation from the following line;
-`type ""` leaves an empty logical line, while `del` removes the selected lines.
+terminator, `type` preserves that exact terminator if the replacement does not end in a
+terminator. A replacement-supplied terminator is authoritative and is not doubled. No
+terminator is synthesized for an unterminated selected final line. Consequently, `rsel`
+followed by `type "replacement"` retains separation from the following line; `type ""`
+leaves an empty logical line, while `del` or `cut` removes the selected lines.
 
-For characterwise selections, `dup` copies the baseline bytes exactly. For linewise
-selections, the duplicate is an adjacent complete range; if the baseline range ends at
-an unterminated final line, the baseline file's first line-ending style is inserted
-between the original and copy, or LF if the baseline has no line ending. The duplicate
-remains unterminated and is not selectable within the same script.
+Characterwise clipboard content copies the selected baseline bytes exactly. Linewise
+clipboard content preserves complete-line identity. When pasted at a boundary lacking a
+line terminator, it adds only the missing boundary terminator, using the active baseline's
+first line-ending style or LF when none exists. Clipboard state survives `commit` within
+the invocation, but pasted content becomes selectable only after a later `commit`.
 
-Existing line-ending bytes outside explicitly inserted text are preserved. After the
-complete script validates, hpatch orders the disjoint baseline edits, materializes one
-final content value from the immutable baseline, and passes that value to the shared
-normal/translate change set.
+Existing line-ending bytes outside explicitly inserted text are preserved. At each
+`commit`, hpatch orders the disjoint pending edits, materializes one next-generation
+content value from the current immutable baseline, and clears the pending edit set.
+
+At successful script end, it renders pending edits into the original-to-final change set
+while preserving the active post-edit cursor or selection for final-state projection.
 
 Acceptance:
 
-1. Independent baseline-coordinate replacement, deletion, insertion, and duplication
-   produce the specified result in either script order.
-2. Overlapping and nested ranges, an insertion inside a replaced range, repeated
-   insertion at one position, and removal of an edited existing file fail atomically
-   with the prior edit and baseline collision identified.
-3. Text introduced by an earlier edit cannot be selected or create a selector collision.
+1. Independent generation-baseline replacement, deletion, insertion, copy, cut, and paste
+   produce the specified result in either script order when their pending spans are
+   disjoint.
+2. Overlapping and nested ranges, an insertion inside a replaced range, repeated insertion
+   at one position, and removal of an edited existing file in the same generation fail
+   atomically with the prior edit and baseline collision identified.
+3. Text introduced by an earlier pending edit cannot be selected or create a selector
+   collision until `commit`; after the barrier it is ordinary immutable baseline content.
 4. LF, CRLF, and standalone-CR linewise replacement preserve the selected final
    terminator unless replacement text supplies one; an unterminated final line remains
    unterminated.
+5. Clipboard content survives a generation barrier, while selections and cursors reset as
+   specified by `REQ-SELECT-001`.
 
 ## REQ-OUTPUT-001 — Output, final state, and failure
 
-Input is read completely and the entire script is evaluated before commit or stdout.
-An unchanged normal-mode change set performs no filesystem operation but still reports
+Input is read completely and the entire script is evaluated before an external filesystem
+commit or stdout. Script `commit` barriers only advance the in-memory generation and
+never create an externally visible partial result. An unchanged normal-mode change set
+performs no filesystem operation but still reports
 its final active editor state. An unchanged translate result emits no patch and fails
 because it cannot represent an update; it emits no final-state report.
 
@@ -450,8 +557,9 @@ a minimal verification hunk: one unchanged context line for a nonempty file, or 
 equal remove/add of the empty line representation for an empty file. Translation is
 fully rendered before stdout is written.
 
-After every command and the requested normal commit or translated patch write succeed,
-the CLI writes one final-state report to stderr. For cursor state its first line is
+After every command, in-memory generation barrier, and the requested normal filesystem
+commit or translated patch write succeed, the CLI writes one final-state report to
+stderr. For cursor state its first line is
 `in PATH LINE:COLUMN`; for selection state it is
 `in PATH START_LINE:START_COLUMN-END_LINE:END_COLUMN`. If `rm` leaves no active file,
 the report is `no active file`. The report describes only the completed invocation;
@@ -491,10 +599,11 @@ not modify source files. Normal mode continues to preserve existing line endings
 explicitly inserted strings. Applying translated output to a non-LF file may normalize
 that file to LF; this is a declared format limitation, not byte equivalence.
 
-Failures emit one concise diagnostic to stderr, prefixed with `hpatch:`. Script
-diagnostics identify the one-based nonblank command index, one-based source line,
+Failures emit concise diagnostics to stderr, prefixed with `hpatch:`. Independently
+parseable syntax failures may be reported together before evaluation. Script diagnostics identify the one-based nonblank command index, one-based source line,
 operation, relevant operand or selected path when one exists, and a failure category
-(`syntax`, `file`, `selection`, or `edit`). Control bytes in every diagnostic are escaped
+(`syntax`, `file`, `selection`, or `edit`). A heredoc failure is owned by its header and
+may additionally report its physical source-line span. Control bytes in every diagnostic are escaped
 and embedded newlines are folded so one failure remains one logical line. Failures return
 nonzero and emit no stdout or final-state report. Block-selection diagnostics identify
 whole-file versus state-derived scope and exact versus whitespace-tolerant ambiguity;
@@ -510,8 +619,9 @@ rather than sampled columns because a sampled character usually recurs on the li
 cannot be located unambiguously. An out-of-range line or line range reports the file's
 line count. A missing or ambiguous block anchor reports each anchor's occurrence lines
 within the searched scope and restates that a block selection includes both anchors. An
-edit conflict reports which baseline lines earlier commands already claim. Every repair
-block includes a window of baseline lines around the addressed line, marks that line, and
+edit conflict reports which current-generation baseline lines earlier commands already
+claim and, when a later selector can safely be rerun after materialization, identifies the selector command before which `commit` belongs. Every repair block
+includes a window of baseline lines around the addressed line, marks that line, and
 escapes control characters so each rendered line stays on one output line. A failure with
 no active baseline, including a missing file, emits its diagnostic alone. Repair context is
 supplementary: it never changes exit status, stdout, mutation, or metrics classification.
@@ -528,8 +638,9 @@ Acceptance:
    whitespace collision, unknown or future command, invalid UTF-8, missing or non-regular
    file, logical path collision, staging failure, translation failure, and cancellation
    produce no mutation, patch output, or final-state report.
-4. Injected commit and rollback failures are reported without false atomicity claims and
-   without a successful final-state report.
+4. Injected external filesystem commit and rollback failures are reported without false
+   atomicity claims and without a successful final-state report; script `commit` barriers
+   remain externally invisible.
 5. Failure to write a fully rendered report after a successful external effect does not
    reverse that effect or record a complete report-input token estimate.
 6. A rejected column range, out-of-range line, unresolved or ambiguous anchor, and edit
@@ -542,8 +653,11 @@ The built-in top-level help owns the complete agent editing, orchestration,
 trust-boundary, validation, final-state-report, and metrics reference. Tool help reuses
 its agent workflow through final-state-report sections rather than maintaining a second
 editing-language definition, and adds only custom-tool path guidance. Tool help excludes
-CLI usage and mode descriptions, options, metrics, and version material. Both references
-document `bsel` as whole-file and `bsel_next` as explicitly stateful, horizontal-whitespace
-tolerance, and optional `tsel COUNT`. The project agent instruction file only directs
-agents to run and follow `hpatch --help`; it does not duplicate language semantics that
-can become stale.
+CLI usage and mode descriptions, options, metrics, and version material.
+
+Both references document compact inline quoting, heredoc `type`, immutable generation
+baselines, explicit `commit`, clipboard operations, `bsel` as whole-file and `bsel_next`
+as explicitly stateful, horizontal-whitespace tolerance, and optional `tsel COUNT`. The
+router appends only its compact correction syntax and correction-chain rules to the shared
+tool help. The project agent instruction file only directs agents to run and follow
+`hpatch --help`; it does not duplicate language semantics that can become stale.
