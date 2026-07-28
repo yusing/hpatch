@@ -116,11 +116,9 @@ future operations and failures outside command processing are not attributed to 
 supported command. Successfully evaluated commands retain their invocation counts when a
 later output or commit boundary fails.
 
-The selector metrics table projects the `sel`, `tsel`, and `rsel` rows from aggregate
-command counters, so their invocation and error totals are identical. `tsel` attempts are
-additionally classified as single occurrence when `COUNT` is omitted or one, and multiple
-occurrence when the operand is present and intended to select more than one occurrence;
-an invalid count remains attributable to the multiple attempt.
+`tsel` attempts are additionally classified as single occurrence when `COUNT` is omitted
+or one, and multiple occurrence when the operand is present and intended to select more
+than one occurrence; an invalid count remains attributable to the multiple attempt.
 
 `bsel` and `bsel_next` have independent command counters. Each successful block selection
 is additionally classified as exact or whitespace-recovered; whitespace-recovered means

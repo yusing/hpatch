@@ -115,7 +115,6 @@ func TestGainReportReconcilesEffectiveAndIneffectiveTokens(t *testing.T) {
 	for _, nextTable := range []string{
 		"input token estimates:",
 		"command metrics:",
-		"selector metrics:",
 		"tsel span metrics:",
 		"block selector successes:",
 		"failure reasons:",
@@ -233,9 +232,9 @@ func TestGainReportsCommandInvocationsErrorsAndRates(t *testing.T) {
 		"del        0            0       0.0%\n" +
 		"dup        0            0       0.0%\n" +
 		"total      11           3       27.3%\n\n"
-	end := strings.Index(stdout.String()[start:], "selector metrics:\n")
+	end := strings.Index(stdout.String()[start:], "tsel span metrics:\n")
 	if end < 0 {
-		t.Fatalf("gain report has no selector metrics: %q", stdout.String())
+		t.Fatalf("gain report has no tsel span metrics: %q", stdout.String())
 	}
 	if got := stdout.String()[start : start+end]; got != want {
 		t.Fatalf("command report = %q, want %q", got, want)

@@ -534,12 +534,6 @@ func gainReportAtWidth(m metrics, width int) string {
 	writeInputGainTable(&report, m, width)
 
 	writeCommandTable(&report, "command metrics:", "command", commandOperations[:], m.Commands[:], true)
-	selectorNames := []string{"sel", "tsel", "rsel"}
-	selectorMetrics := make([]commandMetric, len(selectorNames))
-	for index, operation := range selectorNames {
-		selectorMetrics[index] = m.Commands[commandOperationIndex(operation)]
-	}
-	writeCommandTable(&report, "selector metrics:", "selector", selectorNames, selectorMetrics, false)
 	writeCommandTable(&report, "tsel span metrics:", "span", textSpanVariantNames[:], m.TextSpans[:], false)
 
 	report.WriteString("block selector successes:\n")
