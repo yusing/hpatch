@@ -129,8 +129,13 @@ func TestHPatchPrepareRequestExposesOnlyStandaloneHPatch(t *testing.T) {
 	if !strings.Contains(exposed, "INDEX: COMMAND") {
 		t.Fatalf("standalone hpatch description omits the correction protocol: %q", exposed)
 	}
-	if !strings.Contains(exposed, "INDEX: type <<TAG") {
+	if !strings.Contains(exposed, "type <<TAG consumes") {
 		t.Fatalf("standalone hpatch description omits correction heredocs: %q", exposed)
+	}
+	for _, operation := range []string{"-INDEX", "+INDEX: COMMAND", "INDEX+: COMMAND"} {
+		if !strings.Contains(exposed, operation) {
+			t.Fatalf("standalone hpatch description omits %q: %q", operation, exposed)
+		}
 	}
 	if strings.Contains(exposed, "workspace_id") {
 		t.Fatalf("standalone hpatch description retains workspace selection: %q", exposed)
@@ -524,6 +529,70 @@ func TestHPatchCorrectionRetainsCorrelationAndIncrementsAttempt(t *testing.T) {
 	}
 	if _, ok := proxy.history("session-1", "call-1"); ok {
 		t.Fatal("local history committed before response completion")
+	}
+}
+
+func TestHPatchCompactCorrectionRebuildsScriptBeforeTranslation(t *testing.T) {
+	base := "new file.txt\ntype \"old\"\nrm\n"
+	payload := "-2\n+2: type <<BODY\nnew\nBODY\n2+: copy\n"
+	want := "new file.txt\ntype <<BODY\nnew\nBODY\ncopy\nrm\n"
+	calls := 0
+	var evaluated string
+	transform, _, _, _ := newHPatchTestTransform(t, hpatchTranslatorFunc(func(_ context.Context, _ routingWorkspace, script string) ([]byte, error) {
+		calls++
+		if calls == 1 {
+			return nil, errors.New("rejected")
+		}
+		evaluated = script
+		return []byte(testTranslatedPatch), nil
+	}))
+	if _, err := transform.translate("call-1", base, nil); err != nil {
+		t.Fatal(err)
+	}
+	result, err := transform.translate("call-2", payload, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.translationError != "" || calls != 2 {
+		t.Fatalf("correction result = %+v, calls %d", result, calls)
+	}
+	if evaluated != want {
+		t.Fatalf("evaluated script = %q, want %q", evaluated, want)
+	}
+}
+
+func TestHPatchMalformedDeletionPreservesCorrectableHistory(t *testing.T) {
+	base := "new file.txt\ntype \"old\"\nrm\n"
+	want := "new file.txt\ntype \"fixed\"\nrm\n"
+	calls := 0
+	var evaluated string
+	transform, _, _, _ := newHPatchTestTransform(t, hpatchTranslatorFunc(func(_ context.Context, _ routingWorkspace, script string) ([]byte, error) {
+		calls++
+		if calls == 1 {
+			return nil, errors.New("rejected")
+		}
+		evaluated = script
+		return []byte(testTranslatedPatch), nil
+	}))
+	if _, err := transform.translate("call-1", base, nil); err != nil {
+		t.Fatal(err)
+	}
+	malformed, err := transform.translate("call-2", "-2: rm\n", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !malformed.unevaluated || !strings.Contains(malformed.translationError, "is not `INDEX: COMMAND`") || calls != 1 {
+		t.Fatalf("malformed correction = %+v, calls %d", malformed, calls)
+	}
+	corrected, err := transform.translate("call-3", "2: type \"fixed\"\n", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if corrected.translationError != "" || corrected.correlationID != "call-1" || calls != 2 {
+		t.Fatalf("corrected result = %+v, calls %d", corrected, calls)
+	}
+	if evaluated != want {
+		t.Fatalf("evaluated script = %q, want %q", evaluated, want)
 	}
 }
 

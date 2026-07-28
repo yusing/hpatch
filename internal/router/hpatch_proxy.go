@@ -158,24 +158,26 @@ func newHPatchProxy(translator hpatchTranslator) *hpatchProxy {
 const hpatchCorrectionInstructions = `
 Repairing a rejected script:
   When the previous hpatch call was rejected, you may send a correction instead of
-  the complete script. A correction replaces named commands of that rejected script;
-  every other command is reused unchanged. Send one entry per replaced command:
+  the complete script. Send one operation per nonblank command header:
 
     INDEX: COMMAND
+    -INDEX
+    +INDEX: COMMAND
+    INDEX+: COMMAND
 
-  INDEX is the one-based command number the diagnostic reported. A replacement
-  INDEX: type <<TAG consumes its following body and closing TAG as that one entry.
-  Every nonblank line outside such a body must be an indexed replacement header.
-  Each command index may appear once. The repaired script is revalidated in full
-  against unchanged files, so a correction is atomic exactly as a script is. To add
-  or remove a command, send the complete script.
+  These replace, delete, insert before, or insert after the named original command.
+  A replacement or insertion whose command is type <<TAG consumes its body and
+  closing TAG as one operation. Every index refers to the original rejected script.
+  Replacement and deletion may name an index once; same-anchor insertions retain
+  payload order even when the anchor is deleted. The complete rebuilt script is
+  revalidated against unchanged files, so the correction remains atomic.
 `
 
 // hpatchCorrectionHint is appended to a rejection so the cheaper repair path is
 // visible at the moment it applies. A diagnostic states what was wrong but not
 // what to send next, and a model that has forgotten the protocol resends the whole
 // script, which is the cost this feature exists to avoid.
-const hpatchCorrectionHint = "\nRepair this by replacing only the failed commands: send one `INDEX: COMMAND` line per correction, using the command numbers above. Send a complete script instead to add or remove commands.\n"
+const hpatchCorrectionHint = "\nRepair this with indexed operations: `INDEX: COMMAND`, `-INDEX`, `+INDEX: COMMAND`, or `INDEX+: COMMAND`. Indices are the command numbers above.\n"
 
 type hpatchPendingCall struct {
 	callID string

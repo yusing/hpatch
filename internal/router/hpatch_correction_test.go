@@ -1,6 +1,7 @@
 package router
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -14,6 +15,9 @@ func TestHPatchCorrectionDetectionDistinguishesScripts(t *testing.T) {
 		{"correction", "5: sel 2 6:15\n", true},
 		{"correction after blank lines", "\n\n5: sel 2 6:15\n", true},
 		{"multiple corrections", "5: sel 2 6:15\n10: rsel 3:3\n", true},
+		{"deletion", "-5\n", true},
+		{"insert before", "+5: copy\n", true},
+		{"insert after", "5+: paste\n", true},
 		{"script", "in calc.go\nsel 2 6:15\ntype \"x\"\n", false},
 		{"new file script", "new calc.go\ntype \"x\"\n", false},
 		{"empty", "", false},
@@ -112,6 +116,23 @@ func TestHPatchCorrectionAppliesHeredocReplacementLineEndings(t *testing.T) {
 	}
 }
 
+func TestHPatchCorrectionParsesCompactOperations(t *testing.T) {
+	payload := "-2\n+2: copy\n2+: cut\n+2: type <<BODY\nraw\nBODY\n"
+	corrections, err := parseHPatchCorrections(payload)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	want := []hpatchCorrection{
+		{kind: hpatchDelete, command: 2},
+		{kind: hpatchInsertBeforeAnchor, command: 2, replacement: "copy"},
+		{kind: hpatchInsertAfterAnchor, command: 2, replacement: "cut"},
+		{kind: hpatchInsertBeforeAnchor, command: 2, replacement: "type <<BODY\nraw\nBODY"},
+	}
+	if !reflect.DeepEqual(corrections, want) {
+		t.Fatalf("corrections = %#v, want %#v", corrections, want)
+	}
+}
+
 func TestHPatchCorrectionPreservesSignificantLeadingSpace(t *testing.T) {
 	// Only the single space after the colon separates index from command, so a
 	// replacement that intentionally starts with more whitespace keeps it.
@@ -135,6 +156,10 @@ func TestHPatchCorrectionRejectsMalformedPayloads(t *testing.T) {
 		{"empty replacement", "2:\n", "has no replacement command"},
 		{"blank replacement", "2:   \n", "has no replacement command"},
 		{"duplicate index", "2: sel 2 1:2\n2: sel 2 3:4\n", "appears more than once"},
+		{"duplicate deletion", "-2\n-2\n", "appears more than once"},
+		{"replacement and deletion", "2: rm\n-2\n", "both replaced and deleted"},
+		{"empty insertion", "+2:\n", "has no replacement command"},
+		{"deletion with command", "-2: rm\n", "is not `INDEX: COMMAND`"},
 		{"invalid heredoc delimiter", "2: type <<bad\n", "invalid heredoc delimiter"},
 		{"unterminated heredoc", "2: type <<BODY\nraw\n", "unterminated heredoc"},
 		{"empty payload", "\n\n", "correction payload is empty"},
@@ -161,6 +186,50 @@ func TestHPatchCorrectionAppliesByCommandIndexNotSourceLine(t *testing.T) {
 	want := "in calc.go\nrsel 2:2\n\ntype \"\\tset\\n\"\n"
 	if corrected != want {
 		t.Fatalf("corrected script = %q, want %q", corrected, want)
+	}
+}
+
+func TestHPatchCorrectionAppliesOrderedInsertionsAroundDeletedAnchor(t *testing.T) {
+	corrections, err := parseHPatchCorrections("-2\n+2: copy\n2+: cut\n+2: paste\n2+: del\n")
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	base := "in file.txt\nrsel 1:1\ntype \"x\"\n"
+	corrected, err := applyHPatchCorrections(base, corrections)
+	if err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	want := "in file.txt\ncopy\ncut\npaste\ndel\ntype \"x\"\n"
+	if corrected != want {
+		t.Fatalf("corrected script = %q, want %q", corrected, want)
+	}
+}
+
+func TestHPatchCorrectionOperationsUseOriginalIndices(t *testing.T) {
+	corrections, err := parseHPatchCorrections("-1\n3: rm\n")
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	corrected, err := applyHPatchCorrections("one\ntwo\nthree\n", corrections)
+	if err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	if corrected != "two\nrm\n" {
+		t.Fatalf("corrected script = %q", corrected)
+	}
+}
+
+func TestHPatchCorrectionInsertionsPreserveCRLF(t *testing.T) {
+	corrections, err := parseHPatchCorrections("+1: copy\r\n1+: paste\r\n")
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	corrected, err := applyHPatchCorrections("rm\r\n", corrections)
+	if err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	if corrected != "copy\r\nrm\r\npaste\r\n" {
+		t.Fatalf("corrected script = %q", corrected)
 	}
 }
 
