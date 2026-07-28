@@ -55,7 +55,7 @@ func TestRepairColumnGuideHandlesWhitespaceOnlyLine(t *testing.T) {
 }
 
 func TestRepairContextReportsForwardMatchCounts(t *testing.T) {
-	content := "target once\nnone\ntarget twice target twice\ntarget once\n"
+	content := "target once target once\nnone\ntarget twice target twice\ntarget once\n"
 	repair := repairFor(t, "find.txt", content, "in find.txt\ntsel 2 \"target once\" 2\ntype \"replacement\"\n")
 	for _, want := range []string{
 		"found 1 of 2 requested matches at or after line 2",

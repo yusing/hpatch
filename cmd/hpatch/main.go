@@ -104,7 +104,9 @@ Baseline editor state:
   ` + "`tsel`" + ` starts at column 1 of FROM_LINE and scans forward through EOF. Its
   optional count defaults to one and must be positive. It establishes separate exact
   matches, resuming search after each match's final character; all requested matches
-  must exist. Prefer a broader TEXT instead of occurrence arithmetic.
+  must exist. When the whole baseline contains exactly the requested number, hpatch
+  repairs an incomplete suffix to the first match; extras make repair ambiguous.
+  Prefer a broader TEXT instead of occurrence arithmetic.
 
   bsel searches the complete active-file baseline, independent of cursor or selection
   set. It resolves START uniquely, then resolves END uniquely only after START. Exact
@@ -130,7 +132,8 @@ Baseline editor state:
 Final-state report:
   A successful report starts with the active path and rendered cursor or selection.
   Multiple selections report their count and bounded first-to-last envelope. Up to three
-  nearby post-edit lines follow. Each preview contains at most 64
+  nearby post-edit lines follow. Each repaired line adds its requested and resolved
+  numbers plus up to three marked post-edit lines. Each preview contains at most 64
   Unicode code points and escapes control characters so it remains on one output line.
   Use the report to orient focused validation without rereading a successfully edited file.
 

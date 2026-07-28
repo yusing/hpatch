@@ -39,10 +39,11 @@ State and selectors:
 
   sel columns count Unicode code points, including tabs, and both endpoints are
   inclusive. tsel starts at column 1 of FROM_LINE and scans forward through EOF.
-  N defaults to 1. It creates separate selections for the first N exact TEXT
-  matches, resuming after each match; all N must exist. Prefer a broader TEXT over
-  occurrence arithmetic. Prefer tsel or rsel when possible because a valid sel range may
-  still target unintended text.
+  N defaults to 1. tsel selects the first N exact matches; all N must exist. If
+  fewer than N exist in the suffix but exactly N exist file-wide,
+  tsel repairs FROM_LINE to the first; extras reject it.
+  Prefer a broader TEXT over occurrence arithmetic. Prefer tsel or rsel when possible
+  because a valid sel range may still target unintended text.
 
   bsel searches the whole baseline; it does not choose the nearest END. START and END
   are independent, and each anchor must be independently unique. Avoid short
@@ -74,8 +75,9 @@ Edits:
 Final-state report:
   Use workspace-relative paths within the workspace. Parent directories for new
   files must already exist. Success reports the active path and up to three nearby
-  post-edit lines. Multiple selections report their count and bounded first-to-last
-  envelope. Use that report plus a parser or formatter to verify placement.
+  post-edit lines. Multiple selections report their bounded envelope. Repairs add
+  requested/resolved lines and up to three post-edit context lines. Use the report
+  to verify placement.
   A rejection reports repair context when available; retry against the unchanged baseline.
 `
 

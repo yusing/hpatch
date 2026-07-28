@@ -104,6 +104,7 @@ func TestToolHelpIsFocusedAndAuthoritative(t *testing.T) {
 		"accept literal horizontal tabs",
 		"other C0 controls",
 		"tsel starts at column 1 of FROM_LINE",
+		"repairs FROM_LINE to the first",
 		"does not choose the nearest END",
 		"independently unique",
 		"rejected script changes nothing",

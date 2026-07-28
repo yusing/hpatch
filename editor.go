@@ -28,12 +28,21 @@ type baselineEdit struct {
 	replacement string
 }
 
+type lineCorrection struct {
+	editOrigin
+
+	requestedLine int
+	resolvedLine  int
+	offset        int
+}
+
 type editor struct {
 	baseline      string
 	cursor        int
 	selections    []selection
 	cursorCommand int
 	edits         []baselineEdit
+	corrections   []lineCorrection
 }
 
 type logicalLine struct {
@@ -49,7 +58,11 @@ func (e *editor) resetCursor() {
 }
 
 func (e *editor) commitGeneration() {
-	e.baseline = e.content()
+	content := e.content()
+	for index := range e.corrections {
+		e.corrections[index].offset = e.mapCorrectionOffset(e.corrections[index].offset)
+	}
+	e.baseline = content
 	e.edits = nil
 	e.resetCursor()
 }
@@ -67,27 +80,57 @@ func (e *editor) selectColumns(lineNumber, startColumn, endColumn int) error {
 	return withReason(reasonEditConflict, e.setSelections([]selection{{start: line.start + start, end: line.start + end}}))
 }
 
-func (e *editor) selectMatches(fromLine, count int, literal string) error {
-	line, err := lineAt(e.baseline, fromLine)
-	if err != nil {
-		return withReason(reasonCoordinateBounds, err)
+func (e *editor) selectMatches(fromLine, count int, literal string, origin editOrigin) error {
+	line, lineErr := lineAt(e.baseline, fromLine)
+	found := 0
+	if lineErr == nil {
+		offsets := nonOverlappingLiteralOffsets(e.baseline[line.start:], literal, count)
+		found = len(offsets)
+		if found == count {
+			selections := literalSelections(line.start, offsets, literal)
+			return withReason(reasonEditConflict, e.setSelections(selections))
+		}
 	}
-	offsets := nonOverlappingLiteralOffsets(e.baseline[line.start:], literal, count)
-	if len(offsets) < count {
-		return withReason(reasonOccurrenceMissing, fmt.Errorf(
-			"found %d of %d requested matches of %q at or after line %d",
-			len(offsets),
-			count,
-			literal,
-			fromLine,
-		))
+
+	limit := count
+	if count < len(e.baseline) {
+		limit++
 	}
-	selections := make([]selection, count)
-	for index, offset := range offsets[:count] {
-		start := line.start + offset
+	offsets := nonOverlappingLiteralOffsets(e.baseline, literal, limit)
+	if len(offsets) == count {
+		selections := literalSelections(0, offsets, literal)
+		if err := e.setSelections(selections); err != nil {
+			return withReason(reasonEditConflict, err)
+		}
+		lines := logicalLines(e.baseline)
+		e.corrections = append(e.corrections, lineCorrection{
+			editOrigin:    origin,
+			requestedLine: fromLine,
+			resolvedLine:  lineNumberAt(lines, selections[0].start),
+			offset:        selections[0].start,
+		})
+		return nil
+	}
+
+	if lineErr != nil {
+		return withReason(reasonCoordinateBounds, lineErr)
+	}
+	return withReason(reasonOccurrenceMissing, fmt.Errorf(
+		"found %d of %d requested matches of %q at or after line %d",
+		found,
+		count,
+		literal,
+		fromLine,
+	))
+}
+
+func literalSelections(base int, offsets []int, literal string) []selection {
+	selections := make([]selection, len(offsets))
+	for index, offset := range offsets {
+		start := base + offset
 		selections[index] = selection{start: start, end: start + len(literal)}
 	}
-	return withReason(reasonEditConflict, e.setSelections(selections))
+	return selections
 }
 
 func (e *editor) selectBlock(startLiteral, endLiteral string) (bool, error) {

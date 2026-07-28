@@ -149,7 +149,7 @@ func (w *workspace) execute(command instruction, commandIndex int) (commandOutco
 	case "sel":
 		return commandOutcome{}, w.active.editor.selectColumns(command.lineNumber, command.start, command.end)
 	case "tsel":
-		return commandOutcome{}, w.active.editor.selectMatches(command.lineNumber, command.count, command.text)
+		return commandOutcome{}, w.active.editor.selectMatches(command.lineNumber, command.count, command.text, origin)
 	case "bsel":
 		recovered, err := w.active.editor.selectBlock(command.text, command.endText)
 		return commandOutcome{blockRecovered: recovered}, err
