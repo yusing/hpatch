@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Hpatch router telemetry</title>
+  <style>
+    :root{
+      --ink:#171717;--muted:#787774;--paper:#fbfbfa;--surface:#fff;--border:#eaeaea;
+      --pale-blue-bg:#e1f3fe;--pale-blue-text:#1f6c9f;
+      --pale-green-bg:#edf3ec;--pale-green-text:#346538;
+      --pale-yellow-bg:#fbf3db;--pale-yellow-text:#956400;
+      --pale-red-bg:#fdebec;--pale-red-text:#9f2f2d;
+    }
+    *{box-sizing:border-box}
+    body{margin:0;color:var(--ink);background:var(--paper);font-family:'Geist Sans','SF Pro Display','Helvetica Neue',Arial,sans-serif;font-size:14px;line-height:1.6;position:relative}
+    body::before{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;background:radial-gradient(circle at 15% 20%,rgba(31,108,159,.05),transparent 45%),radial-gradient(circle at 85% 78%,rgba(149,100,0,.04),transparent 50%);animation:drift 26s ease-in-out infinite alternate}
+    @keyframes drift{from{transform:translate3d(0,0,0)}to{transform:translate3d(-1.5%,1.5%,0)}}
+    main{position:relative;z-index:1;width:min(1120px,calc(100% - 40px));margin:0 auto;padding:64px 0 96px}
+
+    .mast{display:flex;justify-content:space-between;align-items:flex-end;gap:24px;border-bottom:1px solid var(--border);padding-bottom:28px}
+    .eyebrow{text-transform:uppercase;letter-spacing:.12em;font-size:11px;color:var(--muted);margin:0 0 14px}
+    .mast h1{font:500 clamp(40px,6vw,64px)/1.05 'Newsreader','Playfair Display',Georgia,serif;letter-spacing:-.03em;margin:0}
+    .status{text-align:right;display:flex;flex-direction:column;align-items:flex-end;gap:10px}
+    .status-pill{display:inline-flex;align-items:center;gap:8px;padding:6px 14px;border-radius:9999px;background:var(--pale-yellow-bg);color:var(--pale-yellow-text);font-size:11px;text-transform:uppercase;letter-spacing:.08em;font-weight:600;transition:background .2s,color .2s}
+    .status-pill[data-state="live"]{background:var(--pale-green-bg);color:var(--pale-green-text)}
+    .status-pill[data-state="error"]{background:var(--pale-red-bg);color:var(--pale-red-text)}
+    .pulse{width:7px;height:7px;border-radius:50%;background:currentColor;animation:pulse 2s ease-in-out infinite}
+    @keyframes pulse{50%{opacity:.35;transform:scale(.8)}}
+    .status small{font-family:'Geist Mono','SF Mono',monospace;color:var(--muted);font-size:11px}
+
+    section{margin-top:80px;opacity:0;transform:translateY(12px);transition:opacity .6s cubic-bezier(.16,1,.3,1),transform .6s cubic-bezier(.16,1,.3,1)}
+    section.visible{opacity:1;transform:translateY(0)}
+    .section-head{display:flex;align-items:baseline;justify-content:space-between;border-bottom:1px solid var(--border);padding-bottom:12px;margin-bottom:24px}
+    .section-head h2{font:500 22px/1 'Newsreader','Playfair Display',Georgia,serif;margin:0}
+    .section-head span{text-transform:uppercase;letter-spacing:.1em;font-size:11px;color:var(--muted)}
+
+    .cards{display:grid;grid-template-columns:repeat(4,1fr);gap:16px}
+    .card{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:28px;min-height:132px;display:flex;flex-direction:column;justify-content:space-between;gap:16px;transition:box-shadow .2s}
+    .card:hover{box-shadow:0 2px 8px rgba(0,0,0,.04)}
+    #overview>.cards>.card:first-child{background:var(--pale-blue-bg);border-color:transparent}
+    #overview>.cards>.card:first-child label{color:var(--pale-blue-text)}
+    #overview>.cards>.card:first-child strong{color:var(--pale-blue-text)}
+    .card label{text-transform:uppercase;letter-spacing:.08em;font-size:10px;color:var(--muted)}
+    .card strong{font:500 clamp(26px,3vw,40px)/1 'Newsreader','Playfair Display',Georgia,serif;letter-spacing:-.02em}
+
+    .breakdowns{margin-top:28px}
+    h3{font:600 11px/1 'Geist Sans',sans-serif;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin:0 0 14px}
+    .metric-table{width:100%;border-collapse:collapse;font-family:'Geist Mono','SF Mono',monospace;font-size:12.5px}
+    .metric-table th,.metric-table td{padding:10px 8px;border-bottom:1px solid var(--border);text-align:right;font-variant-numeric:tabular-nums}
+    .metric-table th:first-child,.metric-table td:first-child{text-align:left;font-family:'Geist Sans',sans-serif;font-weight:500}
+    .metric-table th{font-size:10px;text-transform:uppercase;letter-spacing:.06em;font-weight:500;color:var(--muted);border-bottom:1px solid var(--ink)}
+
+    #sessions{border-top:1px solid var(--border)}
+    details{border-bottom:1px solid var(--border)}
+    summary{cursor:pointer;list-style:none;display:grid;grid-template-columns:auto 1fr auto;gap:16px;align-items:center;padding:18px 4px}
+    summary::-webkit-details-marker{display:none}
+    .chev{width:20px;height:20px;display:grid;place-items:center;color:var(--muted);font-family:'Geist Mono',monospace;font-size:16px;flex-shrink:0}
+    .chev::before{content:'+'}
+    details[open] .chev::before{content:'\2212'}
+    .session-id{font-family:'Geist Mono','SF Mono',monospace;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .session-id small{display:block;margin-top:4px;color:var(--muted);font-family:'Geist Sans',sans-serif;font-size:11px;text-transform:uppercase;letter-spacing:.06em}
+    .session-total{font:500 19px 'Newsreader','Playfair Display',Georgia,serif;white-space:nowrap}
+    .session-body{border-top:1px solid var(--border);padding:28px 4px 36px}
+    .session-body .cards{grid-template-columns:repeat(4,1fr)}
+
+    .empty,.error{padding:36px;border:1px dashed var(--border);border-radius:10px;text-align:center;color:var(--muted)}
+    .error{color:var(--pale-red-text);border-color:var(--pale-red-bg);background:var(--pale-red-bg)}
+
+    @media(max-width:800px){.cards,.session-body .cards{grid-template-columns:1fr 1fr}.breakdowns{grid-template-columns:1fr}.mast{flex-direction:column;align-items:flex-start;gap:16px}.status{align-items:flex-start;text-align:left}}
+    @media(max-width:480px){main{width:calc(100% - 24px)}.cards,.session-body .cards{grid-template-columns:1fr}.session-total{display:none}}
+  </style>
+</head>
+<body><main>
+  <header class="mast">
+    <div>
+      <p class="eyebrow">Hpatch router — process ledger</p>
+      <h1>Token<br>Telemetry</h1>
+    </div>
+    <div class="status">
+      <span class="status-pill" id="status-pill" data-state="connecting"><span class="pulse"></span><span id="status">connecting</span></span>
+      <small id="updated">—</small>
+    </div>
+  </header>
+  <section><div class="section-head"><h2>Metrics</h2><span>Cumulative since process start</span></div><div id="overview"></div></section>
+  <section><div class="section-head"><h2>Sessions</h2><span id="session-count">0 sessions</span></div><div id="sessions"><div class="empty">Waiting for identified usage-bearing responses.</div></div></section>
+</main><script>
+const labels={input_tokens:'Input tokens',uncached_input_tokens:'Uncached input',output_tokens:'Output tokens',reasoning_tokens:'Reasoning tokens'};
+const order=Object.keys(labels), fmt=new Intl.NumberFormat();
+function element(tag,className,text){const node=document.createElement(tag);if(className)node.className=className;if(text!==undefined)node.textContent=text;return node}
+function metricValue(counts,key){const value=counts&&counts[key];return typeof value==='number'&&Number.isFinite(value)&&value>=0?value:0}
+function createGroup(root){
+  const cards=element('div','cards');
+  order.forEach(key=>{const card=element('div','card');card.dataset.metric=key;card.append(element('label','',labels[key]),element('strong','','0'));cards.append(card)});
+  const breakdowns=element('div','breakdowns'),wrap=element('div','table-wrap');
+  wrap.append(element('h3','','By model'));
+  const table=element('table','metric-table'),head=element('thead'),headRow=element('tr');
+  headRow.append(element('th','','Model'));order.forEach(key=>headRow.append(element('th','',labels[key].replace(' tokens',''))));
+  head.append(headRow);table.append(head,element('tbody'));wrap.append(table,element('div','empty','No data yet'));breakdowns.append(wrap);root.append(cards,breakdowns)
+}
+function modelRows(byModel){
+  return Object.entries(byModel).map(([model,counts])=>({key:model,name:model,counts})).sort((a,b)=>metricValue(b.counts,'input_tokens')-metricValue(a.counts,'input_tokens')||a.name.localeCompare(b.name))
+}
+function updateGroup(root,data){
+  if(!root.firstElementChild)createGroup(root);
+  order.forEach(key=>{root.querySelector(`.card[data-metric="${key}"] strong`).textContent=fmt.format(metricValue(data.total,key))});
+  const tbody=root.querySelector('.metric-table tbody'),existing=new Map(Array.from(tbody.children,row=>[row.dataset.route,row])),rows=modelRows(data.by_model);
+  rows.forEach(route=>{let row=existing.get(route.key);if(!row){row=element('tr');row.dataset.route=route.key;row.append(element('td'));order.forEach(()=>row.append(element('td')))}row.children[0].textContent=route.name;order.forEach((key,index)=>{row.children[index+1].textContent=fmt.format(metricValue(route.counts,key))});tbody.append(row);existing.delete(route.key)});
+  existing.forEach(row=>row.remove());root.querySelector('.metric-table').hidden=rows.length===0;root.querySelector('.table-wrap>.empty').hidden=rows.length!==0
+}
+function validCounts(counts){return counts&&typeof counts==='object'&&!Array.isArray(counts)&&order.every(key=>typeof counts[key]==='number'&&Number.isFinite(counts[key])&&counts[key]>=0)}
+function validGroup(data){return data&&typeof data==='object'&&!Array.isArray(data)&&validCounts(data.total)&&data.by_model&&typeof data.by_model==='object'&&!Array.isArray(data.by_model)&&Object.values(data.by_model).every(validCounts)}
+function validSnapshot(data){return validGroup(data)&&Array.isArray(data.sessions)&&data.sessions.every(session=>validGroup(session)&&typeof session.session_id==='string'&&typeof session.model==='string')}
+const sessionElements=new Map();
+function createSession(id){
+  const details=element('details');details.dataset.sessionId=id;
+  const summary=element('summary'),name=element('span','session-id'),route=element('small'),total=element('span','session-total');
+  name.append(document.createTextNode(id),element('br'),route);summary.append(element('span','chev'),name,total);
+  const body=element('div','session-body');details.append(summary,body);details.route=route;details.sessionTotal=total;details.sessionBody=body;return details
+}
+function render(data){
+  if(!validSnapshot(data))throw new Error('invalid metrics snapshot');
+  updateGroup(document.querySelector('#overview'),data);
+  const container=document.querySelector('#sessions'),seen=new Set();
+  data.sessions.forEach(session=>{let details=sessionElements.get(session.session_id);if(!details){details=createSession(session.session_id);sessionElements.set(session.session_id,details)}details.route.textContent=session.model;details.sessionTotal.textContent=`${fmt.format(metricValue(session.total,'input_tokens'))} in`;updateGroup(details.sessionBody,session);container.append(details);seen.add(session.session_id)});
+  sessionElements.forEach((details,id)=>{if(!seen.has(id)){details.remove();sessionElements.delete(id)}});
+  let empty=container.querySelector(':scope>.empty');if(data.sessions.length===0){if(!empty){empty=element('div','empty');container.append(empty)}empty.textContent='No identified sessions have recorded usage.'}else if(empty){empty.remove()}
+  document.querySelector('#session-count').textContent=`${data.sessions.length} ${data.sessions.length===1?'session':'sessions'}`
+}
+function setStatus(text,state){document.querySelector('#status').textContent=text;document.querySelector('#status-pill').dataset.state=state}
+const events=new EventSource('/api/metrics');
+events.onmessage=event=>{try{render(JSON.parse(event.data));setStatus('live','live');document.querySelector('#updated').textContent=new Date().toLocaleTimeString()}catch(error){setStatus('invalid event','error')}};
+events.onerror=()=>{setStatus('reconnecting','connecting')};
+const sectionObserver=new IntersectionObserver(entries=>{entries.forEach(entry=>{if(entry.isIntersecting){entry.target.classList.add('visible');sectionObserver.unobserve(entry.target)}})},{threshold:.1});
+document.querySelectorAll('section').forEach(section=>sectionObserver.observe(section));
+</script></body></html>

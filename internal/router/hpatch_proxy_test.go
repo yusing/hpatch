@@ -1,0 +1,1288 @@
+package router
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"testing"
+	"time"
+)
+
+const (
+	testTranslatedPatch = "*** Begin Patch\n*** Add File: created.txt\n+payload\n*** End Patch\n"
+	testHPatchScript    = "new created.txt\ntype \"payload\"\n"
+	testHPatchReport    = "in created.txt 1:8\n1 payload\n"
+)
+
+const testHPatchToolDescription = "fixture hpatch description\nwith exact trailing newline\n"
+
+const testCodeModeDescription = "Run JavaScript.\n\n### `apply_patch`\nThe default editor.\n\nexec tool declaration:\n```ts\ndeclare const tools: { apply_patch(input: string): Promise<unknown>; };\n```\n\n### `create_goal`\nCreate a goal."
+
+type hpatchTranslatorFunc func(context.Context, routingWorkspace, string) ([]byte, error)
+
+func (f hpatchTranslatorFunc) Translate(ctx context.Context, workspace routingWorkspace, script string) (hpatchTranslationResult, error) {
+	patch, err := f(ctx, workspace, script)
+	return hpatchTranslationResult{patch: patch, report: testHPatchReport}, err
+}
+
+func (hpatchTranslatorFunc) ToolDescription() string {
+	return testHPatchToolDescription
+}
+
+func (hpatchTranslatorFunc) RecordMetrics(context.Context, hpatchMetricRecord) error {
+	return nil
+}
+
+func newHPatchTestTransform(t *testing.T, translator hpatchTranslator) (*hpatchResponseTransform, *hpatchProxy, *parsedResponsesRequest, string) {
+	t.Helper()
+	workspace := t.TempDir()
+	transform, proxy, request := newHPatchTestTransformForWorkspaces(t, translator, workspace)
+	return transform, proxy, request, workspace
+}
+
+func newHPatchTestTransformForWorkspaces(t *testing.T, translator hpatchTranslator, workspaces ...string) (*hpatchResponseTransform, *hpatchProxy, *parsedResponsesRequest) {
+	t.Helper()
+	request, err := parseResponsesRequest(mustTestJSON(t, map[string]any{
+		"model": "gpt-test",
+		"input": []any{
+			map[string]any{
+				"type":   "additional_tools",
+				"role":   "developer",
+				"future": map[string]any{"kept": true},
+				"tools": []any{map[string]any{
+					"type":        "custom",
+					"name":        "exec",
+					"description": testCodeModeDescription,
+					"format":      map[string]any{"type": "text"},
+					"future":      true,
+				}},
+			},
+			map[string]any{"role": "user", "content": "task", "future": true},
+		},
+		"tools":               []any{map[string]any{"type": "function", "name": "lookup", "future": true}},
+		"tool_choice":         "auto",
+		"parallel_tool_calls": true,
+		"future_request":      map[string]any{"kept": true},
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	proxy := newHPatchProxy(translator)
+	declared := make(map[string]json.RawMessage, len(workspaces))
+	for _, workspace := range workspaces {
+		declared[workspace] = nil
+	}
+	metadata := codexTurnMetadata{RequestKind: "turn", Workspaces: declared}
+	transform, err := proxy.prepareRequest(t.Context(), &request, "session-1", metadata, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if transform == nil {
+		t.Fatal("prepareRequest returned no transform")
+	}
+	t.Cleanup(transform.Close)
+	return transform, proxy, &request
+}
+
+func testTranslator(t *testing.T, calls *int) hpatchTranslator {
+	t.Helper()
+	return hpatchTranslatorFunc(func(_ context.Context, workspace routingWorkspace, script string) ([]byte, error) {
+		*calls++
+		if workspace.canonical == "" || workspace.root == nil {
+			t.Fatal("translator received no trusted workspace")
+		}
+		if script != testHPatchScript {
+			t.Fatalf("script = %q", script)
+		}
+		return []byte(testTranslatedPatch), nil
+	})
+}
+
+func testHPatchItem() map[string]any {
+	return map[string]any{
+		"type":    "custom_tool_call",
+		"id":      "item-H",
+		"call_id": "call-H",
+		"name":    hpatchToolName,
+		"input":   testHPatchScript,
+		"status":  "completed",
+		"future":  map[string]any{"kept": true},
+	}
+}
+
+func TestHPatchPrepareRequestExposesOnlyStandaloneHPatch(t *testing.T) {
+	transform, _, request, _ := newHPatchTestTransform(t, testTranslator(t, new(int)))
+	if !transform.originalToolsPresent || len(transform.originalTools) == 0 {
+		t.Fatal("original top-level tools were not retained")
+	}
+	var topTools []map[string]json.RawMessage
+	if err := json.Unmarshal(request.fields["tools"], &topTools); err != nil {
+		t.Fatal(err)
+	}
+	if len(topTools) != 2 || jsonString(topTools[0], "name") != "lookup" || jsonString(topTools[1], "name") != hpatchToolName {
+		t.Fatalf("top-level tools = %#v", topTools)
+	}
+	if jsonString(topTools[1], "type") != "custom" || string(topTools[1]["format"]) != `{"type":"text"}` {
+		t.Fatalf("standalone hpatch definition = %#v", topTools[1])
+	}
+	// The exposed description is hpatch's own help plus the correction protocol,
+	// which only the proxy implements.
+	exposed := jsonString(topTools[1], "description")
+	if !strings.HasPrefix(exposed, testHPatchToolDescription) {
+		t.Fatalf("standalone hpatch description = %q, want hpatch tool help first", exposed)
+	}
+	if !strings.Contains(exposed, "INDEX: COMMAND") {
+		t.Fatalf("standalone hpatch description omits the correction protocol: %q", exposed)
+	}
+	if string(topTools[0]["future"]) != "true" {
+		t.Fatalf("unrelated top-level tool changed: %#v", topTools[0])
+	}
+
+	var items []map[string]json.RawMessage
+	if err := json.Unmarshal(request.fields["input"], &items); err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 3 || jsonString(items[0], "type") != "additional_tools" || string(items[1]["future"]) != "true" || jsonString(items[2], "role") != "developer" {
+		t.Fatalf("rewritten input items = %#v", items)
+	}
+	var additionalTools []map[string]json.RawMessage
+	if err := json.Unmarshal(items[0]["tools"], &additionalTools); err != nil {
+		t.Fatal(err)
+	}
+	if len(additionalTools) != 1 || jsonString(additionalTools[0], "name") != "exec" || string(additionalTools[0]["future"]) != "true" {
+		t.Fatalf("additional tools changed unexpectedly: %#v", additionalTools)
+	}
+	description := jsonString(additionalTools[0], "description")
+	if strings.Contains(description, codeModeApplyPatchHeading) || strings.Contains(description, "tools.apply_patch") || !strings.Contains(description, "### `create_goal`") {
+		t.Fatalf("native apply_patch was not hidden exactly: %q", description)
+	}
+	if !bytes.Contains(items[0]["future"], []byte(`"kept":true`)) || !bytes.Contains(request.fields["future_request"], []byte(`"kept":true`)) {
+		t.Fatalf("future fields were not preserved: %#v", request.fields)
+	}
+	if string(request.fields["parallel_tool_calls"]) != "false" {
+		t.Fatalf("parallel_tool_calls = %s", request.fields["parallel_tool_calls"])
+	}
+}
+
+func TestHPatchAdditionalToolsReplacementRejectsDuplicateAndConflictingOwners(t *testing.T) {
+	additional := func(name string) map[string]any {
+		return map[string]any{
+			"type":  "additional_tools",
+			"role":  "developer",
+			"tools": []any{map[string]any{"type": "custom", "name": name, "description": testCodeModeDescription}},
+		}
+	}
+	tests := []struct {
+		name  string
+		input []any
+		tools []any
+	}{
+		{
+			name:  "duplicate additional items",
+			input: []any{additional("exec"), additional("functions.exec")},
+		},
+		{
+			name:  "standalone native collision",
+			input: []any{additional("exec")},
+			tools: []any{map[string]any{"type": "custom", "name": applyPatchToolName}},
+		},
+		{
+			name:  "top-level exec collision",
+			input: []any{additional("exec")},
+			tools: []any{map[string]any{"type": "custom", "name": "functions.exec", "description": testCodeModeDescription}},
+		},
+		{
+			name:  "existing hpatch collision",
+			input: []any{additional("exec")},
+			tools: []any{map[string]any{"type": "custom", "name": hpatchToolName}},
+		},
+		{
+			name: "direct nested apply_patch collision",
+			input: []any{map[string]any{
+				"type": "additional_tools",
+				"tools": []any{
+					map[string]any{"type": "custom", "name": "exec", "description": testCodeModeDescription},
+					map[string]any{"type": "custom", "name": applyPatchToolName},
+				},
+			}},
+		},
+		{
+			name:  "direct nested hpatch collision in another item",
+			input: []any{additional("exec"), map[string]any{"type": "additional_tools", "tools": []any{map[string]any{"type": "custom", "name": hpatchToolName}}}},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			fields := map[string]json.RawMessage{
+				"input": mustTestJSON(t, test.input),
+				"tools": mustTestJSON(t, test.tools),
+			}
+			beforeInput := bytes.Clone(fields["input"])
+			beforeTools := bytes.Clone(fields["tools"])
+			_, _, replaced, err := replaceAdditionalToolsApplyPatch(fields, testHPatchToolDescription)
+			if err == nil || replaced {
+				t.Fatalf("replacement = %v, error %v", replaced, err)
+			}
+			if !bytes.Equal(fields["input"], beforeInput) || !bytes.Equal(fields["tools"], beforeTools) {
+				t.Fatalf("rejected request mutated: %#v", fields)
+			}
+		})
+	}
+}
+
+func TestHPatchAdditionalToolsReplacementLeavesUnsupportedAndMalformedRequestsUnchanged(t *testing.T) {
+	tests := []struct {
+		name       string
+		input      json.RawMessage
+		tools      json.RawMessage
+		toolChoice json.RawMessage
+	}{
+		{
+			name:  "direct apply_patch only",
+			input: mustTestJSON(t, []any{map[string]any{"role": "user", "content": "task"}}),
+			tools: mustTestJSON(t, []any{map[string]any{"type": "custom", "name": applyPatchToolName}}),
+		},
+		{
+			name:  "top-level exec only",
+			input: mustTestJSON(t, []any{map[string]any{"role": "user", "content": "task"}}),
+			tools: mustTestJSON(t, []any{map[string]any{"type": "custom", "name": "exec", "description": testCodeModeDescription}}),
+		},
+		{
+			name:  "malformed additional tools",
+			input: json.RawMessage(`[{"type":"additional_tools","tools":{}}]`),
+			tools: mustTestJSON(t, []any{map[string]any{"type": "function", "name": "lookup"}}),
+		},
+		{
+			name:  "unrelated heading collision",
+			input: mustTestJSON(t, []any{map[string]any{"type": "additional_tools", "tools": []any{map[string]any{"type": "custom", "name": "exec", "description": "### `apply_patch`\ndocumentation only"}}}}),
+			tools: mustTestJSON(t, []any{}),
+		},
+		{
+			name:       "restricted exec choice",
+			input:      mustTestJSON(t, []any{map[string]any{"type": "additional_tools", "tools": []any{map[string]any{"type": "custom", "name": "exec", "description": testCodeModeDescription}}}}),
+			tools:      mustTestJSON(t, []any{}),
+			toolChoice: mustTestJSON(t, map[string]any{"type": "custom", "name": "exec"}),
+		},
+		{
+			name:  "unknown future input shape",
+			input: json.RawMessage(`{"future":true}`),
+			tools: mustTestJSON(t, []any{}),
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			fields := map[string]json.RawMessage{"input": bytes.Clone(test.input), "tools": bytes.Clone(test.tools)}
+			if test.toolChoice != nil {
+				fields["tool_choice"] = bytes.Clone(test.toolChoice)
+			}
+			beforeInput := bytes.Clone(fields["input"])
+			beforeTools := bytes.Clone(fields["tools"])
+			beforeChoice := bytes.Clone(fields["tool_choice"])
+			_, _, replaced, err := replaceAdditionalToolsApplyPatch(fields, testHPatchToolDescription)
+			if err != nil || replaced {
+				t.Fatalf("replacement = %v, error %v", replaced, err)
+			}
+			if !bytes.Equal(fields["input"], beforeInput) || !bytes.Equal(fields["tools"], beforeTools) || !bytes.Equal(fields["tool_choice"], beforeChoice) {
+				t.Fatalf("unsupported request mutated: %#v", fields)
+			}
+		})
+	}
+}
+
+func TestHPatchReplacementRetainsCodeModeOwnerName(t *testing.T) {
+	for _, name := range []string{"exec", "functions.exec"} {
+		t.Run(name, func(t *testing.T) {
+			fields := map[string]json.RawMessage{
+				"input": mustTestJSON(t, []any{map[string]any{
+					"type":  "additional_tools",
+					"tools": []any{map[string]any{"type": "custom", "name": name, "description": testCodeModeDescription}},
+				}}),
+				"tools": mustTestJSON(t, []any{}),
+			}
+			_, got, replaced, err := replaceAdditionalToolsApplyPatch(fields, testHPatchToolDescription)
+			if err != nil || !replaced || got != name {
+				t.Fatalf("owner = %q, replaced %v, error %v", got, replaced, err)
+			}
+		})
+	}
+}
+
+func TestHPatchPrepareRequestLeavesIneligibleRequestUnchanged(t *testing.T) {
+	workspace := t.TempDir()
+	request, err := parseResponsesRequest(mustTestJSON(t, map[string]any{
+		"input": []any{map[string]any{
+			"type":  "additional_tools",
+			"tools": []any{map[string]any{"type": "custom", "name": "exec", "description": testCodeModeDescription}},
+		}},
+		"tools": []any{map[string]any{"type": "function", "name": "lookup"}},
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	beforeInput := bytes.Clone(request.fields["input"])
+	beforeTools := bytes.Clone(request.fields["tools"])
+	proxy := newHPatchProxy(testTranslator(t, new(int)))
+	metadata := codexTurnMetadata{RequestKind: "turn", Workspaces: map[string]json.RawMessage{workspace: nil}}
+	transform, err := proxy.prepareRequest(t.Context(), &request, "", metadata, true)
+	if err == nil || transform != nil || !strings.Contains(err.Error(), "valid session ID") || !bytes.Equal(beforeInput, request.fields["input"]) || !bytes.Equal(beforeTools, request.fields["tools"]) {
+		t.Fatalf("ineligible request = transform %v, error %v, fields %#v", transform, err, request.fields)
+	}
+}
+
+func TestHPatchIneligibleContinuationDoesNotRestoreHistory(t *testing.T) {
+	proxy := newHPatchProxy(testTranslator(t, new(int)))
+	if err := proxy.rememberBatch("session", map[string]hpatchHistory{"call-H": {script: testHPatchScript, patch: testTranslatedPatch}}); err != nil {
+		t.Fatal(err)
+	}
+	request, err := parseResponsesRequest([]byte(`{"input":[{"type":"custom_tool_call","name":"apply_patch","call_id":"call-H","input":` + jsonQuoted(testTranslatedPatch) + `}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := bytes.Clone(request.fields["input"])
+	transform, err := proxy.prepareRequest(t.Context(), &request, "session", codexTurnMetadata{}, false)
+	if err == nil || transform != nil || !strings.Contains(err.Error(), "valid turn metadata") || !bytes.Equal(before, request.fields["input"]) {
+		t.Fatalf("ineligible continuation = transform %v, error %v, input %s", transform, err, request.fields["input"])
+	}
+}
+
+func TestHPatchJSONWrapsPatchAndImmediateReportInCodeModeExec(t *testing.T) {
+	calls := 0
+	transform, proxy, _, _ := newHPatchTestTransform(t, testTranslator(t, &calls))
+	originalItem := mustTestJSON(t, testHPatchItem())
+	payload := mustTestJSON(t, map[string]any{
+		"status":      "completed",
+		"output":      []any{json.RawMessage(originalItem), map[string]any{"type": "message", "future": true}},
+		"tools":       []any{map[string]any{"type": "custom", "name": hpatchToolName}},
+		"tool_choice": map[string]any{"type": "custom", "name": hpatchToolName},
+		"future":      map[string]any{"kept": true},
+	})
+	visible, err := transform.TransformJSON(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if calls != 1 {
+		t.Fatalf("translations = %d", calls)
+	}
+	var response struct {
+		Output     []json.RawMessage `json:"output"`
+		Tools      []json.RawMessage `json:"tools"`
+		ToolChoice json.RawMessage   `json:"tool_choice"`
+	}
+	if err := json.Unmarshal(visible, &response); err != nil {
+		t.Fatal(err)
+	}
+	if len(response.Tools) != 1 || !bytes.Contains(response.Tools[0], []byte(`"name":"lookup"`)) || string(response.ToolChoice) != `"auto"` {
+		t.Fatalf("restored response contract = %s", visible)
+	}
+	var carrier struct {
+		CallID string          `json:"call_id"`
+		Name   string          `json:"name"`
+		Input  string          `json:"input"`
+		Future json.RawMessage `json:"future"`
+	}
+	if err := json.Unmarshal(response.Output[0], &carrier); err != nil {
+		t.Fatal(err)
+	}
+	wantInput := hpatchApplyExecInput(testTranslatedPatch, testHPatchReport)
+	if carrier.CallID != "call-H" || carrier.Name != "exec" || carrier.Input != wantInput || string(carrier.Future) != `{"kept":true}` {
+		t.Fatalf("translated call = %s", response.Output[0])
+	}
+
+	replay, err := parseResponsesRequest([]byte(`{"input":[` + string(response.Output[0]) + `,{"type":"custom_tool_call_output","call_id":"call-H","output":` + jsonQuoted(testHPatchReport) + `}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := proxy.restoreInputPrefixWithMetadata(&replay, "session-1"); err != nil {
+		t.Fatal(err)
+	}
+	var items []json.RawMessage
+	if err := json.Unmarshal(replay.fields["input"], &items); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(items[0], originalItem) {
+		t.Fatalf("reconstructed prefix item = %s, want %s", items[0], originalItem)
+	}
+	if !bytes.Contains(items[1], []byte(`"output":`+jsonQuoted(testHPatchReport))) {
+		t.Fatalf("immediate hpatch report changed during replay: %s", items[1])
+	}
+}
+
+func TestHPatchReplayPreservesImmediateApplyFailure(t *testing.T) {
+	proxy := newHPatchProxy(testTranslator(t, new(int)))
+	history := hpatchHistory{script: testHPatchScript, patch: testTranslatedPatch, carrierName: "exec", report: testHPatchReport}
+	if err := proxy.rememberBatch("session", map[string]hpatchHistory{"call-H": history}); err != nil {
+		t.Fatal(err)
+	}
+	const applyFailure = "Failed to find expected lines in created.txt:\nmissing\n"
+	request, err := parseResponsesRequest(mustTestJSON(t, map[string]any{"input": []any{
+		map[string]any{"type": "custom_tool_call", "name": "exec", "call_id": "call-H", "input": history.carrierInput()},
+		map[string]any{"type": "custom_tool_call_output", "call_id": "call-H", "output": applyFailure},
+	}}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := proxy.restoreInputPrefixWithMetadata(&request, "session"); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(request.fields["input"], []byte(jsonQuoted(applyFailure))) || bytes.Contains(request.fields["input"], []byte(jsonQuoted(testHPatchReport))) {
+		t.Fatalf("apply failure changed during replay: %s", request.fields["input"])
+	}
+}
+
+func TestHPatchReplayRejectsChangedExecCarrierAndIgnoresUnrelatedCalls(t *testing.T) {
+	proxy := newHPatchProxy(testTranslator(t, new(int)))
+	history := hpatchHistory{script: testHPatchScript, patch: testTranslatedPatch, carrierName: "exec", report: testHPatchReport}
+	if err := proxy.rememberBatch("session", map[string]hpatchHistory{"call-H": history}); err != nil {
+		t.Fatal(err)
+	}
+	changed, _ := parseResponsesRequest(mustTestJSON(t, map[string]any{"input": []any{map[string]any{
+		"type": "custom_tool_call", "name": "exec", "call_id": "call-H", "input": "changed",
+	}}}))
+	if _, err := proxy.restoreInputPrefixWithMetadata(&changed, "session"); err == nil {
+		t.Fatal("changed replay was accepted")
+	}
+	unrelated, _ := parseResponsesRequest([]byte(`{"input":[{"type":"custom_tool_call","name":"exec","call_id":"native","input":"unchanged"}]}`))
+	before := bytes.Clone(unrelated.fields["input"])
+	if _, err := proxy.restoreInputPrefixWithMetadata(&unrelated, "session"); err != nil || !bytes.Equal(before, unrelated.fields["input"]) {
+		t.Fatalf("unrelated call changed to %s, error %v", unrelated.fields["input"], err)
+	}
+}
+
+func TestHPatchExecInputQuotesPatchReportAndDiagnostic(t *testing.T) {
+	patch := "*** Begin Patch\n*** Add File: quoted.txt\n+` ${value} \\\"\n*** End Patch\n"
+	report := "in quoted.txt 1:14\n1 ` ${value} \\\"\n"
+	input := hpatchApplyExecInput(patch, report)
+	if !strings.HasPrefix(input, hpatchApplyExecMarker) || !strings.Contains(input, strconv.Quote(patch)) || !strings.Contains(input, strconv.Quote(report)) {
+		t.Fatalf("unsafe or incomplete apply wrapper: %q", input)
+	}
+	diagnostic := "selector `x` rejected: ${value} " + string([]byte{'\\'})
+	if got := hpatchDiagnosticExecInput(diagnostic); got != "text("+strconv.Quote(diagnostic)+");" {
+		t.Fatalf("diagnostic wrapper = %q", got)
+	}
+}
+
+func TestHPatchStreamingReplacesLifecycleWithoutChangingCallID(t *testing.T) {
+	calls := 0
+	transform, _, _, _ := newHPatchTestTransform(t, testTranslator(t, &calls))
+	item := testHPatchItem()
+	added := testHPatchItem()
+	added["status"] = "in_progress"
+	added["input"] = ""
+
+	visible, err := transform.TransformSSE(mustTestJSON(t, map[string]any{"type": "response.output_item.added", "item": added}))
+	if err != nil || visible != nil {
+		t.Fatalf("buffered added = %q, error %v", visible, err)
+	}
+	visible, err = transform.TransformSSE(mustTestJSON(t, map[string]any{"type": "response.custom_tool_call_input.delta", "item_id": "item-H", "delta": "secret"}))
+	if err != nil || visible != nil {
+		t.Fatalf("delta = %q, error %v", visible, err)
+	}
+	visible, err = transform.TransformSSE(mustTestJSON(t, map[string]any{"type": "response.custom_tool_call_input.done", "item_id": "item-H", "input": testHPatchScript}))
+	if err != nil || len(visible) != 2 || !bytes.Contains(visible[0], []byte(`"name":"exec"`)) || !bytes.Contains(visible[0], []byte(`"call_id":"call-H"`)) || !bytes.Contains(visible[1], []byte(jsonQuoted(hpatchApplyExecInput(testTranslatedPatch, testHPatchReport)))) {
+		t.Fatalf("input.done = %q, error %v", visible, err)
+	}
+	visible, err = transform.TransformSSE(mustTestJSON(t, map[string]any{"type": "response.output_item.done", "item": item}))
+	if err != nil || len(visible) != 1 || !bytes.Contains(visible[0], []byte(`"call_id":"call-H"`)) {
+		t.Fatalf("item.done = %q, error %v", visible, err)
+	}
+	completed := map[string]any{"status": "completed", "output": []any{item}}
+	visible, err = transform.TransformSSE(mustTestJSON(t, map[string]any{"type": "response.completed", "response": completed}))
+	if err != nil || len(visible) != 1 || calls != 1 {
+		t.Fatalf("completed = %q, translations %d, error %v", visible, calls, err)
+	}
+}
+
+func TestHPatchTranslationFailureReturnsImmediateDiagnosticExec(t *testing.T) {
+	transform, proxy, _, workspace := newHPatchTestTransform(t, hpatchTranslatorFunc(func(context.Context, routingWorkspace, string) ([]byte, error) {
+		return nil, errors.New("selector is not unique")
+	}))
+	originalItem := mustTestJSON(t, testHPatchItem())
+	visible, err := transform.TransformJSON(mustTestJSON(t, map[string]any{
+		"status": "completed",
+		"output": []any{
+			map[string]any{"type": "message", "future": "preserved", "metadata": map[string]any{"name": "apply_patch"}},
+			json.RawMessage(originalItem),
+		},
+		"future": map[string]any{"kept": true},
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var response struct {
+		Status string                       `json:"status"`
+		Error  json.RawMessage              `json:"error"`
+		Output []map[string]json.RawMessage `json:"output"`
+		Future json.RawMessage              `json:"future"`
+	}
+	if err := json.Unmarshal(visible, &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.Status != "completed" || len(response.Error) != 0 || len(response.Output) != 2 {
+		t.Fatalf("translation rejection carrier = %s", visible)
+	}
+	carrier := response.Output[1]
+	history, remembered := proxy.history("session-1", "call-H")
+	if !remembered {
+		t.Fatal("translation rejection carrier was not remembered")
+	}
+	if jsonString(carrier, "name") != "exec" || jsonString(carrier, "input") != history.carrierInput() || jsonString(carrier, "call_id") != "call-H" || !strings.Contains(history.carrierInput(), "selector is not unique") {
+		t.Fatalf("diagnostic exec carrier = %s", visible)
+	}
+	if jsonString(response.Output[0], "future") != "preserved" || string(response.Future) != `{"kept":true}` || !bytes.Contains(response.Output[0]["metadata"], []byte(`"name":"apply_patch"`)) {
+		t.Fatalf("unrelated response data changed: %s", visible)
+	}
+
+	replay, err := parseResponsesRequest(mustTestJSON(t, map[string]any{
+		"input": []any{
+			map[string]any{"type": "additional_tools", "tools": []any{map[string]any{"type": "custom", "name": "exec", "description": testCodeModeDescription}}},
+			carrier,
+			map[string]any{"type": "custom_tool_call_output", "call_id": "call-H", "output": history.translationError, "future": true},
+			map[string]any{"type": "custom_tool_call_output", "call_id": "other", "output": "keep"},
+		},
+		"tools": []any{},
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	metadata := codexTurnMetadata{RequestKind: "turn", Workspaces: map[string]json.RawMessage{workspace: nil}}
+	continuation, err := proxy.prepareRequest(t.Context(), &replay, "session-1", metadata, true)
+	if err != nil || continuation == nil {
+		t.Fatalf("prepare rejection continuation = transform %v, error %v", continuation, err)
+	}
+	defer continuation.Close()
+	var replayed []map[string]json.RawMessage
+	if err := json.Unmarshal(replay.fields["input"], &replayed); err != nil {
+		t.Fatal(err)
+	}
+	if len(replayed) != 5 || jsonString(replayed[1], "name") != hpatchToolName || jsonString(replayed[1], "input") != testHPatchScript || string(replayed[2]["future"]) != "true" || jsonString(replayed[2], "output") != history.translationError || jsonString(replayed[3], "output") != "keep" || jsonString(replayed[4], "role") != "developer" {
+		t.Fatalf("restored hpatch rejection = %s", replay.fields["input"])
+	}
+}
+
+func TestHPatchStreamingTranslationFailureCompletesDiagnosticExecLifecycle(t *testing.T) {
+	transform, proxy, _, _ := newHPatchTestTransform(t, hpatchTranslatorFunc(func(context.Context, routingWorkspace, string) ([]byte, error) {
+		return nil, errors.New("parent directory does not exist")
+	}))
+	item := testHPatchItem()
+	added := testHPatchItem()
+	added["status"] = "in_progress"
+	added["input"] = ""
+	completed := map[string]any{
+		"status":      "completed",
+		"output":      []any{item},
+		"future":      map[string]any{"kept": true},
+		"tools":       []any{map[string]any{"type": "custom", "name": hpatchToolName}},
+		"tool_choice": hpatchToolName,
+	}
+	body := "event: response.output_item.added\n" +
+		"data: " + string(mustTestJSON(t, map[string]any{"type": "response.output_item.added", "item": added})) + "\n\n" +
+		"event: response.custom_tool_call_input.done\n" +
+		"data: " + string(mustTestJSON(t, map[string]any{"type": "response.custom_tool_call_input.done", "item_id": "item-H", "input": testHPatchScript})) + "\n\n" +
+		"event: response.future\n" +
+		"data: " + string(mustTestJSON(t, map[string]any{"type": "response.future", "future": "future-preserved"})) + "\n\n" +
+		"event: response.output_item.done\n" +
+		"data: " + string(mustTestJSON(t, map[string]any{"type": "response.output_item.done", "item": item})) + "\n\n" +
+		"event: response.completed\n" +
+		"data: " + string(mustTestJSON(t, map[string]any{"type": "response.completed", "response": completed, "future": "outer-preserved"})) + "\n\n"
+	var output bytes.Buffer
+	terminal, err := copySSETransformed(&output, strings.NewReader(body), transform, nil)
+	if err != nil || terminal != responseTerminalCompleted {
+		t.Fatalf("translation rejection stream = terminal %v, error %v, output %q", terminal, err, output.String())
+	}
+	visible := output.String()
+	for _, required := range []string{"event: response.output_item.added", "event: response.custom_tool_call_input.done", "event: response.output_item.done", "event: response.completed", `"name":"exec"`, "text(\\\"parent directory does not exist", `"future":{"kept":true}`, `"future":"outer-preserved"`, "future-preserved", `"name":"lookup"`, `"tool_choice":"auto"`} {
+		if !strings.Contains(visible, required) {
+			t.Fatalf("translation carrier missing %q: %q", required, visible)
+		}
+	}
+	for _, forbidden := range []string{"response.failed", "stream disconnected"} {
+		if strings.Contains(visible, forbidden) {
+			t.Fatalf("translation carrier exposed %q: %q", forbidden, visible)
+		}
+	}
+	if _, remembered := proxy.history("session-1", "call-H"); !remembered {
+		t.Fatal("streaming translation rejection carrier was not remembered")
+	}
+}
+
+func TestHPatchStreamingTranslationFailureRejectsMalformedTerminal(t *testing.T) {
+	transform, _, _, _ := newHPatchTestTransform(t, hpatchTranslatorFunc(func(context.Context, routingWorkspace, string) ([]byte, error) {
+		return nil, errors.New("selector is not unique")
+	}))
+	added := testHPatchItem()
+	added["status"] = "in_progress"
+	added["input"] = ""
+	if visible, err := transform.TransformSSE(mustTestJSON(t, map[string]any{"type": "response.output_item.added", "item": added})); err != nil || visible != nil {
+		t.Fatalf("buffer hpatch call = %q, error %v", visible, err)
+	}
+	if visible, err := transform.TransformSSE(mustTestJSON(t, map[string]any{"type": "response.custom_tool_call_input.done", "item_id": "item-H", "input": testHPatchScript})); err != nil || len(visible) != 2 || !bytes.Contains(visible[1], []byte("selector is not unique")) {
+		t.Fatalf("release hpatch rejection carrier = %q, error %v", visible, err)
+	}
+	if visible, err := transform.TransformSSE(mustTestJSON(t, map[string]any{"type": "response.output_item.done", "item": testHPatchItem()})); err != nil || len(visible) != 1 {
+		t.Fatalf("complete hpatch rejection carrier = %q, error %v", visible, err)
+	}
+	visible, err := transform.TransformSSE([]byte(`{"type":"response.completed","response":null}`))
+	if err == nil || visible != nil || !strings.Contains(err.Error(), "decode hpatch-enabled response") {
+		t.Fatalf("malformed terminal = %q, error %v", visible, err)
+	}
+}
+
+func TestHPatchMalformedCallStillFailsRequest(t *testing.T) {
+	transform, proxy, _, _ := newHPatchTestTransform(t, testTranslator(t, new(int)))
+	item := testHPatchItem()
+	item["type"] = "message"
+	visible, err := transform.TransformJSON(mustTestJSON(t, map[string]any{"status": "completed", "output": []any{item}}))
+	if err == nil || visible != nil {
+		t.Fatalf("malformed hpatch call = visible %q, error %v", visible, err)
+	}
+	if _, remembered := proxy.history("session-1", "call-H"); remembered {
+		t.Fatal("malformed hpatch call created history")
+	}
+}
+
+func TestHPatchTranslationCancellationRemainsRequestCancellation(t *testing.T) {
+	transform, proxy, _, _ := newHPatchTestTransform(t, hpatchTranslatorFunc(func(ctx context.Context, _ routingWorkspace, _ string) ([]byte, error) {
+		return nil, ctx.Err()
+	}))
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	transform.ctx = ctx
+	visible, err := transform.TransformJSON(mustTestJSON(t, map[string]any{"status": "completed", "output": []any{testHPatchItem()}}))
+	if !errors.Is(err, context.Canceled) || visible != nil {
+		t.Fatalf("canceled translation = visible %q, error %v", visible, err)
+	}
+	if _, remembered := proxy.history("session-1", "call-H"); remembered {
+		t.Fatal("canceled translation created rejection history")
+	}
+}
+
+func TestHPatchBoundsTranslationAndHistory(t *testing.T) {
+	t.Run("translation output capacity", func(t *testing.T) {
+		transform, proxy, _, _ := newHPatchTestTransform(t, hpatchTranslatorFunc(func(context.Context, routingWorkspace, string) ([]byte, error) {
+			return make([]byte, maxHPatchPatchBytes+1), nil
+		}))
+		payload := mustTestJSON(t, map[string]any{"status": "completed", "output": []any{testHPatchItem()}})
+		visible, err := transform.TransformJSON(payload)
+		if err == nil || visible != nil || !strings.Contains(err.Error(), "translation exceeds") {
+			t.Fatalf("oversized translation = visible %q, error %v", visible, err)
+		}
+		if _, remembered := proxy.history("session-1", "call-H"); remembered {
+			t.Fatal("oversized translation created rejection history")
+		}
+	})
+
+	t.Run("script capacity", func(t *testing.T) {
+		transform, proxy, _, _ := newHPatchTestTransform(t, hpatchTranslatorFunc(func(context.Context, routingWorkspace, string) ([]byte, error) {
+			t.Fatal("translator called for oversized script")
+			return nil, nil
+		}))
+		item := testHPatchItem()
+		item["input"] = strings.Repeat("x", maxHPatchScriptBytes+1)
+		visible, err := transform.TransformJSON(mustTestJSON(t, map[string]any{"status": "completed", "output": []any{item}}))
+		if err == nil || visible != nil || !strings.Contains(err.Error(), "script exceeds") {
+			t.Fatalf("oversized script = visible bytes %d, error %v", len(visible), err)
+		}
+		if _, remembered := proxy.history("session-1", "call-H"); remembered {
+			t.Fatal("oversized script created rejection history")
+		}
+	})
+
+	t.Run("translator capacity", func(t *testing.T) {
+		transform, proxy, _, _ := newHPatchTestTransform(t, hpatchTranslatorFunc(func(context.Context, routingWorkspace, string) ([]byte, error) {
+			return nil, fmt.Errorf("%w: diagnostic overflow", errHPatchCapacity)
+		}))
+		visible, err := transform.TransformJSON(mustTestJSON(t, map[string]any{"status": "completed", "output": []any{testHPatchItem()}}))
+		if !errors.Is(err, errHPatchCapacity) || visible != nil {
+			t.Fatalf("translator capacity = visible %q, error %v", visible, err)
+		}
+		if _, remembered := proxy.history("session-1", "call-H"); remembered {
+			t.Fatal("translator capacity created rejection history")
+		}
+	})
+
+	t.Run("global history", func(t *testing.T) {
+		proxy := newHPatchProxy(testTranslator(t, new(int)))
+		proxy.historyBytes = maxHPatchHistoryGlobalBytes
+		if err := proxy.rememberBatch("session", map[string]hpatchHistory{"call": {script: "x", patch: "y"}}); err == nil {
+			t.Fatal("history exceeded global capacity")
+		}
+		if len(proxy.sessions) != 0 {
+			t.Fatalf("failed history reservation created %d sessions", len(proxy.sessions))
+		}
+	})
+
+	t.Run("batch history is atomic", func(t *testing.T) {
+		proxy := newHPatchProxy(testTranslator(t, new(int)))
+		proxy.historyBytes = maxHPatchHistoryGlobalBytes - 1
+		err := proxy.rememberBatch("session", map[string]hpatchHistory{
+			"call-first":  {script: "x", patch: "y"},
+			"call-second": {script: "x", patch: "y"},
+		})
+		if err == nil {
+			t.Fatal("history batch exceeded global capacity")
+		}
+		if len(proxy.sessions) != 0 {
+			t.Fatalf("failed history batch created %d sessions", len(proxy.sessions))
+		}
+	})
+}
+
+func TestHPatchBoundsPendingStreamCallsAndRejectsRelatedFutureEvents(t *testing.T) {
+	t.Run("duplicate item", func(t *testing.T) {
+		transform, _, _, _ := newHPatchTestTransform(t, testTranslator(t, new(int)))
+		added := testHPatchItem()
+		added["status"] = "in_progress"
+		added["input"] = ""
+		payload := mustTestJSON(t, map[string]any{"type": "response.output_item.added", "item": added})
+		if _, err := transform.TransformSSE(payload); err != nil {
+			t.Fatal(err)
+		}
+		if visible, err := transform.TransformSSE(payload); err == nil || visible != nil {
+			t.Fatalf("duplicate item = visible %q, error %v", visible, err)
+		}
+	})
+
+	t.Run("pending count", func(t *testing.T) {
+		transform, _, _, _ := newHPatchTestTransform(t, testTranslator(t, new(int)))
+		for index := range maxHPatchPendingCalls + 1 {
+			added := testHPatchItem()
+			added["status"] = "in_progress"
+			added["input"] = ""
+			added["id"] = fmt.Sprintf("item-%d", index)
+			added["call_id"] = fmt.Sprintf("call-%d", index)
+			visible, err := transform.TransformSSE(mustTestJSON(t, map[string]any{"type": "response.output_item.added", "item": added}))
+			if index < maxHPatchPendingCalls {
+				if err != nil || visible != nil {
+					t.Fatalf("pending item %d = visible %q, error %v", index, visible, err)
+				}
+				continue
+			}
+			if err == nil || visible != nil {
+				t.Fatalf("excess pending item = visible %q, error %v", visible, err)
+			}
+		}
+	})
+
+	t.Run("malformed pending event", func(t *testing.T) {
+		transform, _, _, _ := newHPatchTestTransform(t, testTranslator(t, new(int)))
+		added := testHPatchItem()
+		added["status"] = "in_progress"
+		added["input"] = ""
+		if _, err := transform.TransformSSE(mustTestJSON(t, map[string]any{"type": "response.output_item.added", "item": added})); err != nil {
+			t.Fatal(err)
+		}
+		malformed := []byte(`{"type":1,"item_id":"item-H","delta":"secret script"}`)
+		if visible, err := transform.TransformSSE(malformed); err == nil || visible != nil {
+			t.Fatalf("malformed pending event = visible %q, error %v", visible, err)
+		}
+	})
+
+	t.Run("malformed unrelated event", func(t *testing.T) {
+		transform, _, _, _ := newHPatchTestTransform(t, testTranslator(t, new(int)))
+		malformed := []byte(`{"type":1,"future":"kept"}`)
+		visible, err := transform.TransformSSE(malformed)
+		if err != nil || len(visible) != 1 || !bytes.Equal(visible[0], malformed) {
+			t.Fatalf("malformed unrelated event = visible %q, error %v", visible, err)
+		}
+	})
+
+	t.Run("incomplete terminal event", func(t *testing.T) {
+		transform, _, _, _ := newHPatchTestTransform(t, testTranslator(t, new(int)))
+		added := testHPatchItem()
+		added["status"] = "in_progress"
+		added["input"] = ""
+		if _, err := transform.TransformSSE(mustTestJSON(t, map[string]any{"type": "response.output_item.added", "item": added})); err != nil {
+			t.Fatal(err)
+		}
+		completed := mustTestJSON(t, map[string]any{"type": "response.completed", "response": map[string]any{"status": "completed", "output": []any{}}})
+		if visible, err := transform.TransformSSE(completed); err == nil || visible != nil {
+			t.Fatalf("incomplete terminal event = visible %q, error %v", visible, err)
+		}
+	})
+
+	t.Run("related future event", func(t *testing.T) {
+		transform, _, _, _ := newHPatchTestTransform(t, testTranslator(t, new(int)))
+		added := testHPatchItem()
+		added["status"] = "in_progress"
+		added["input"] = ""
+		if _, err := transform.TransformSSE(mustTestJSON(t, map[string]any{"type": "response.output_item.added", "item": added})); err != nil {
+			t.Fatal(err)
+		}
+		future := mustTestJSON(t, map[string]any{"type": "response.future", "call_id": "call-H", "input": "secret"})
+		if visible, err := transform.TransformSSE(future); err == nil || visible != nil {
+			t.Fatalf("related future event = visible %q, error %v", visible, err)
+		}
+	})
+
+	t.Run("unrelated future event", func(t *testing.T) {
+		transform, _, _, _ := newHPatchTestTransform(t, testTranslator(t, new(int)))
+		future := mustTestJSON(t, map[string]any{"type": "response.future", "call_id": "other", "name": "other"})
+		visible, err := transform.TransformSSE(future)
+		if err != nil || len(visible) != 1 || !bytes.Equal(visible[0], future) {
+			t.Fatalf("unrelated future event = visible %q, error %v", visible, err)
+		}
+	})
+}
+
+func TestHPatchDiagnosticPreservationAndBounds(t *testing.T) {
+	diagnostic := "exact hpatch diagnostic\n"
+	if got := hpatchDiagnostic(hpatchCommandError{cause: errors.New("exit status 1"), diagnostic: diagnostic}); got != diagnostic {
+		t.Fatalf("diagnostic = %q, want %q", got, diagnostic)
+	}
+	buffer := hpatchLimitedBuffer{limit: 4}
+	content := []byte("0123456789")
+	if written, err := buffer.Write(content); err != nil || written != len(content) || !buffer.overflow || buffer.Len() != buffer.limit {
+		t.Fatalf("bounded diagnostic = written %d, length %d, overflow %v, error %v", written, buffer.Len(), buffer.overflow, err)
+	}
+}
+
+func TestLoadHPatchToolDescriptionValidatesAuthoritativeHelp(t *testing.T) {
+	exact := "authoritative help\n" + hpatchImmutableBaselineMarker + "\ntrailing line\n"
+	raw := exact + hpatchHostMetricsMarker
+	tests := []struct {
+		name, body, want, wantError string
+	}{
+		{
+			name: "compatible exact output",
+			body: "#!/bin/sh\n[ \"$1\" = \"--tool-help\" ] || { printf '%s\\n' 'wrong help flag' >&2; exit 9; }\nprintf '%s' " + shellSingleQuote(raw) + "\n",
+			want: exact,
+		},
+		{name: "empty", body: "#!/bin/sh\nexit 0\n", wantError: "tool help is empty"},
+		{name: "oversized", body: "#!/bin/sh\n/usr/bin/head -c 1048577 /dev/zero\n", wantError: "tool help exceeds"},
+		{name: "oversized stderr", body: "#!/bin/sh\nprintf '%s\\n' " + shellSingleQuote(hpatchImmutableBaselineMarker) + "\n/usr/bin/head -c 1048577 /dev/zero >&2\n", wantError: "tool help exceeds"},
+		{name: "incompatible marker", body: "#!/bin/sh\nprintf '%s\\n' 'Commands observe all preceding in-memory edits.'\n", wantError: "does not support immutable-baseline selectors"},
+		{name: "incompatible accounting", body: "#!/bin/sh\nprintf '%s\\n' " + shellSingleQuote(hpatchImmutableBaselineMarker) + "\n", wantError: "does not support caller metrics"},
+		{name: "successful stderr", body: "#!/bin/sh\nprintf '%s\\n' " + shellSingleQuote(hpatchImmutableBaselineMarker) + "\nprintf '%s\\n' 'unexpected stderr' >&2\n", wantError: "tool help wrote to stderr"},
+		{name: "invalid UTF-8", body: "#!/bin/sh\nprintf '%s\\n' " + shellSingleQuote(hpatchImmutableBaselineMarker) + "\nprintf '\\377'\n", wantError: "not valid UTF-8"},
+		{name: "nonzero", body: "#!/bin/sh\nprintf '%s\\n' 'broken help' >&2\nexit 1\n", wantError: "inspect hpatch tool help: exit status 1: broken help"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			executable := writeTestExecutable(t, test.body)
+			got, err := loadHPatchToolDescription(t.Context(), executable)
+			if test.wantError == "" {
+				if err != nil || got != test.want {
+					t.Fatalf("load tool help = %q, error %v; want %q", got, err, test.want)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), test.wantError) {
+				t.Fatalf("load tool help error = %v, want %q", err, test.wantError)
+			}
+		})
+	}
+
+	t.Run("bounded cancellation", func(t *testing.T) {
+		executable := writeTestExecutable(t, "#!/bin/sh\nsleep 2 &\nwait\n")
+		ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
+		defer cancel()
+		started := time.Now()
+		_, err := loadHPatchToolDescription(ctx, executable)
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("load tool help error = %v, want deadline exceeded", err)
+		}
+		if elapsed := time.Since(started); elapsed > time.Second {
+			t.Fatalf("canceled tool-help probe took %v", elapsed)
+		}
+	})
+}
+
+func TestDiscoverHPatchTranslatorPairsExecutableAndExactDescription(t *testing.T) {
+	exact := "paired description\n" + hpatchImmutableBaselineMarker + "\n"
+	raw := exact + hpatchHostMetricsMarker
+	dir := t.TempDir()
+	executable := filepath.Join(dir, hpatchToolName)
+	body := "#!/bin/sh\n[ \"$1\" = \"--tool-help\" ] || exit 8\nprintf '%s' " + shellSingleQuote(raw) + "\n"
+	if err := os.WriteFile(executable, []byte(body), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir)
+	translator, err := discoverHPatchTranslator(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	commandTranslator, ok := translator.(commandHPatchTranslator)
+	if !ok || commandTranslator.executable != executable || translator.ToolDescription() != exact {
+		t.Fatalf("discovered translator = %#v, description %q", translator, translator.ToolDescription())
+	}
+}
+
+func TestCommandHPatchTranslatorPassesExplicitWorkspaceRoot(t *testing.T) {
+	workspacePath := t.TempDir()
+	workspaces := usableRoutingWorkspaces(map[string]json.RawMessage{workspacePath: nil})
+	if len(workspaces) != 1 {
+		t.Fatal("workspace unavailable")
+	}
+	defer closeRoutingWorkspaces(workspaces)
+
+	executable := filepath.Join(t.TempDir(), "hpatch-args")
+	if err := os.WriteFile(executable, []byte("#!/bin/sh\nprintf '%s' '{}' > \"$HPATCH_METRICS_OUTPUT_FILE\"\nprintf '%s\\n' \"$@\"\nprintf '%s' "+shellSingleQuote(testHPatchReport)+" >&2\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	translated, err := (commandHPatchTranslator{executable: executable}).Translate(t.Context(), workspaces[0], "ignored")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "translate\n--root\n" + workspaces[0].canonical + "\n"
+	if string(translated.patch) != want {
+		t.Fatalf("hpatch arguments = %q, want %q", translated.patch, want)
+	}
+}
+
+func TestCommandHPatchTranslatorKeepsSuccessfulReportOffPatchStdout(t *testing.T) {
+	workspacePath := t.TempDir()
+	workspaces := usableRoutingWorkspaces(map[string]json.RawMessage{workspacePath: nil})
+	if len(workspaces) != 1 {
+		t.Fatal("workspace unavailable")
+	}
+	defer closeRoutingWorkspaces(workspaces)
+	executable := writeTestExecutable(t, "#!/bin/sh\nprintf '%s' '{}' > \"$HPATCH_METRICS_OUTPUT_FILE\"\nprintf '%s' '*** Begin Patch\\n*** End Patch\\n'\nprintf '%s\\n' 'Final-state report: pending only' >&2\n")
+	translated, err := (commandHPatchTranslator{executable: executable}).Translate(t.Context(), workspaces[0], "ignored")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := string(translated.patch), "*** Begin Patch\\n*** End Patch\\n"; got != want {
+		t.Fatalf("patch stdout = %q, want %q", got, want)
+	}
+	if got, want := translated.report, "Final-state report: pending only\n"; got != want {
+		t.Fatalf("report stderr = %q, want %q", got, want)
+	}
+}
+
+func TestCommandHPatchTranslatorRejectsMissingSuccessfulReport(t *testing.T) {
+	workspacePath := t.TempDir()
+	workspaces := usableRoutingWorkspaces(map[string]json.RawMessage{workspacePath: nil})
+	if len(workspaces) != 1 {
+		t.Fatal("workspace unavailable")
+	}
+	defer closeRoutingWorkspaces(workspaces)
+	executable := writeTestExecutable(t, "#!/bin/sh\nprintf '%s' '{}' > \"$HPATCH_METRICS_OUTPUT_FILE\"\nprintf '%s' '*** Begin Patch\\n*** End Patch\\n'\n")
+	_, err := (commandHPatchTranslator{executable: executable}).Translate(t.Context(), workspaces[0], "ignored")
+	if err == nil || !strings.Contains(err.Error(), "no final-state report") {
+		t.Fatalf("missing report error = %v", err)
+	}
+}
+
+func TestCommandHPatchTranslatorRequiresInvocationMetrics(t *testing.T) {
+	workspacePath := t.TempDir()
+	workspaces := usableRoutingWorkspaces(map[string]json.RawMessage{workspacePath: nil})
+	if len(workspaces) != 1 {
+		t.Fatal("workspace unavailable")
+	}
+	defer closeRoutingWorkspaces(workspaces)
+	executable := writeTestExecutable(t, "#!/bin/sh\nprintf '%s' '*** Begin Patch\\n*** End Patch\\n'\nprintf '%s' "+shellSingleQuote(testHPatchReport)+" >&2\n")
+	_, err := (commandHPatchTranslator{executable: executable}).Translate(t.Context(), workspaces[0], "ignored")
+	if !errors.Is(err, errHPatchMetricsProtocol) || !strings.Contains(err.Error(), "invocation metrics are empty") {
+		t.Fatalf("missing invocation metrics error = %v", err)
+	}
+}
+
+func TestHPatchMetricsTempFailureIsNotModelCorrectable(t *testing.T) {
+	translator := commandHPatchTranslator{executable: "unused", toolDescription: testHPatchToolDescription}
+	transform, _, _, _ := newHPatchTestTransform(t, translator)
+	t.Setenv("TMPDIR", filepath.Join(t.TempDir(), "missing"))
+	history, err := transform.translate("call-1", testHPatchScript, nil)
+	if !errors.Is(err, errHPatchMetricsProtocol) || !strings.Contains(err.Error(), "create hpatch metrics output") {
+		t.Fatalf("temporary metrics failure = history %+v, error %v", history, err)
+	}
+	if len(transform.local) != 0 || history.translationError != "" {
+		t.Fatalf("temporary metrics failure became model-correctable: history %+v, local %+v", history, transform.local)
+	}
+}
+
+func TestInstalledHPatchToolDescription(t *testing.T) {
+	if _, err := exec.LookPath(hpatchToolName); err != nil {
+		t.Skipf("installed hpatch unavailable: %v", err)
+	}
+	translator, err := discoverHPatchTranslator(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	description := translator.ToolDescription()
+	for _, required := range []string{
+		"Commands:",
+		"bsel_next",
+		"immutable baseline",
+		"Final-state report:",
+	} {
+		if !strings.Contains(description, required) {
+			t.Fatalf("installed tool description omits %q", required)
+		}
+	}
+	for _, excluded := range []string{"Usage:", "hpatch gain", "--root", "--cwd", "Metrics:"} {
+		if strings.Contains(description, excluded) {
+			t.Fatalf("installed tool description contains %q", excluded)
+		}
+	}
+}
+
+func TestInstalledHPatchToolDescriptionWithoutRelativeLines(t *testing.T) {
+	if _, err := exec.LookPath(hpatchToolName); err != nil {
+		t.Skipf("installed hpatch unavailable: %v", err)
+	}
+	t.Setenv("HPATCH_DISABLE_RELATIVE_LINES", "1")
+	translator, err := discoverHPatchTranslator(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, excluded := range []string{"LINE_REF", "+0", "HPATCH_DISABLE_RELATIVE_LINES"} {
+		if strings.Contains(translator.ToolDescription(), excluded) {
+			t.Fatalf("relative-lines-disabled description contains %q", excluded)
+		}
+	}
+}
+
+func TestInstalledHPatchMetricsRoundTrip(t *testing.T) {
+	if _, err := exec.LookPath(hpatchToolName); err != nil {
+		t.Skipf("installed hpatch unavailable: %v", err)
+	}
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	translator, err := discoverHPatchTranslator(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	transform, _, _, _ := newHPatchTestTransform(t, translator)
+	history, err := transform.translate("call-1", testHPatchScript, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if history.patch != testTranslatedPatch || history.report != testHPatchReport {
+		t.Fatalf("translated history = %+v", history)
+	}
+	commandTranslator, ok := translator.(commandHPatchTranslator)
+	if !ok {
+		t.Fatalf("installed translator = %T", translator)
+	}
+	output, err := exec.CommandContext(t.Context(), commandTranslator.executable, "gain").Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var hpatchTokens, applyPatchTokens uint64
+	for line := range strings.Lines(string(output)) {
+		fields := strings.Fields(line)
+		if len(fields) < 3 || fields[0] != "successful" {
+			continue
+		}
+		hpatchTokens, err = strconv.ParseUint(fields[1], 10, 64)
+		if err != nil {
+			t.Fatal(err)
+		}
+		applyPatchTokens, err = strconv.ParseUint(fields[2], 10, 64)
+		if err != nil {
+			t.Fatal(err)
+		}
+		break
+	}
+	if hpatchTokens == 0 || applyPatchTokens == 0 {
+		t.Fatalf("gain report did not persist caller metrics:\n%s", output)
+	}
+}
+
+func TestCommandHPatchTranslatorIsRootScopedAndDoesNotMutateWorkspace(t *testing.T) {
+	translator, err := discoverHPatchTranslator(t.Context())
+	if err != nil {
+		t.Skipf("hpatch unavailable: %v", err)
+	}
+	workspacePath := t.TempDir()
+	path := filepath.Join(workspacePath, "existing.txt")
+	if err := os.WriteFile(path, []byte("first\nsecond\nthird\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	workspaces := usableRoutingWorkspaces(map[string]json.RawMessage{workspacePath: nil})
+	if len(workspaces) != 1 {
+		t.Fatal("workspace unavailable")
+	}
+	defer closeRoutingWorkspaces(workspaces)
+
+	translated, err := translator.Translate(t.Context(), workspaces[0], "in "+path+"\ntsel 1 1 \"first\"\ntype \"first\\ninserted\"\ntsel 3 1 \"third\"\ntype \"THIRD\"\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range []string{"*** Update File: existing.txt", "+inserted", "+THIRD"} {
+		if !bytes.Contains(translated.patch, []byte(required)) {
+			t.Fatalf("translation does not contain %q: %s", required, translated.patch)
+		}
+	}
+	if !strings.HasPrefix(translated.report, "in existing.txt ") {
+		t.Fatalf("translation report = %q", translated.report)
+	}
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(content) != "first\nsecond\nthird\n" {
+		t.Fatalf("translation mutated workspace to %q", content)
+	}
+
+	conflict := "in " + path + "\nrsel 1:2\ntype \"replacement\"\nrsel 2:3\ntype \"overlap\"\n"
+	if _, err := translator.Translate(t.Context(), workspaces[0], conflict); err == nil || !strings.Contains(hpatchDiagnostic(err), "selection conflicts with edit") {
+		t.Fatalf("overlapping baseline translation error = %v", err)
+	}
+
+	outsidePath := filepath.Join(t.TempDir(), "outside.txt")
+	if err := os.WriteFile(outsidePath, []byte("outside\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := translator.Translate(t.Context(), workspaces[0], "in "+outsidePath+"\n"); err == nil {
+		t.Fatal("translation accepted an absolute path outside the trusted root")
+	}
+}
+
+func writeTestExecutable(t *testing.T, body string) string {
+	t.Helper()
+	executable := filepath.Join(t.TempDir(), "hpatch")
+	if err := os.WriteFile(executable, []byte(body), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	return executable
+}
+
+func shellSingleQuote(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
+}
+
+func mustTestJSON(t *testing.T, value any) []byte {
+	t.Helper()
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return encoded
+}
+
+func jsonQuoted(value string) string {
+	return strconv.Quote(value)
+}
+
+func TestHPatchCommandEnvironmentScrubsInheritedMetricsInputs(t *testing.T) {
+	for name := range hpatchMetricEnvironmentVariables {
+		t.Setenv(name, "stale")
+	}
+	environment := hpatchCommandEnvironment("/tmp/current-metrics")
+	seen := make(map[string]string, len(environment))
+	for _, entry := range environment {
+		name, value, _ := strings.Cut(entry, "=")
+		seen[name] = value
+	}
+	for name := range hpatchMetricEnvironmentVariables {
+		if name == hpatchMetricsOutputFileVariable {
+			continue
+		}
+		if _, exists := seen[name]; exists {
+			t.Errorf("inherited %s was not scrubbed", name)
+		}
+	}
+	if seen[hpatchMetricsOutputFileVariable] != "/tmp/current-metrics" {
+		t.Fatalf("metrics output file = %q", seen[hpatchMetricsOutputFileVariable])
+	}
+}
+
+func TestCommandHPatchTranslatorUsesBoundedInvocationFileAndCleansUp(t *testing.T) {
+	workspacePath := t.TempDir()
+	workspaces := usableRoutingWorkspaces(map[string]json.RawMessage{workspacePath: nil})
+	if len(workspaces) != 1 {
+		t.Fatal("workspace unavailable")
+	}
+	defer closeRoutingWorkspaces(workspaces)
+
+	for name := range hpatchMetricEnvironmentVariables {
+		t.Setenv(name, strings.Repeat("stale", 30000))
+	}
+	assertRemoved := func(marker string) {
+		t.Helper()
+		content, err := os.ReadFile(marker)
+		if err != nil {
+			t.Fatalf("read metrics marker: %v", err)
+		}
+		if _, err := os.Stat(string(content)); !os.IsNotExist(err) {
+			t.Fatalf("metrics output file %q remains after subprocess: %v", content, err)
+		}
+	}
+
+	t.Run("success", func(t *testing.T) {
+		marker := filepath.Join(t.TempDir(), "metrics-path")
+		t.Setenv("HPATCH_METRICS_MARKER", marker)
+		executable := writeTestExecutable(t, "#!/bin/sh\nprintf '%s' \"$HPATCH_METRICS_OUTPUT_FILE\" > \"$HPATCH_METRICS_MARKER\"\nprintf '%s' '{}' > \"$HPATCH_METRICS_OUTPUT_FILE\"\nprintf '%s' '*** Begin Patch\\n*** End Patch\\n'\nprintf '%s' "+shellSingleQuote(testHPatchReport)+" >&2\n")
+		translated, err := (commandHPatchTranslator{executable: executable}).Translate(t.Context(), workspaces[0], "new note.txt\n")
+		if err != nil || string(translated.patch) != "*** Begin Patch\\n*** End Patch\\n" || translated.report != testHPatchReport || string(translated.invocation) != "{}" {
+			t.Fatalf("translation = %#v, error %v", translated, err)
+		}
+		assertRemoved(marker)
+	})
+
+	t.Run("evaluator rejection", func(t *testing.T) {
+		marker := filepath.Join(t.TempDir(), "metrics-path")
+		t.Setenv("HPATCH_METRICS_MARKER", marker)
+		executable := writeTestExecutable(t, "#!/bin/sh\nprintf '%s' \"$HPATCH_METRICS_OUTPUT_FILE\" > \"$HPATCH_METRICS_MARKER\"\nprintf '%s' '{}' > \"$HPATCH_METRICS_OUTPUT_FILE\"\nprintf '%s\\n' rejected >&2\nexit 1\n")
+		translated, err := (commandHPatchTranslator{executable: executable}).Translate(t.Context(), workspaces[0], "bad\n")
+		if err == nil || !strings.Contains(err.Error(), "rejected") || string(translated.invocation) != "{}" {
+			t.Fatalf("failed translation = %#v, error %v", translated, err)
+		}
+		assertRemoved(marker)
+	})
+
+	t.Run("cancellation", func(t *testing.T) {
+		marker := filepath.Join(t.TempDir(), "metrics-path")
+		t.Setenv("HPATCH_METRICS_MARKER", marker)
+		executable := writeTestExecutable(t, "#!/bin/sh\nprintf '%s' \"$HPATCH_METRICS_OUTPUT_FILE\" > \"$HPATCH_METRICS_MARKER\"\nsleep 2 &\nwait\n")
+		ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
+		defer cancel()
+		started := time.Now()
+		_, err := (commandHPatchTranslator{executable: executable}).Translate(ctx, workspaces[0], "ignored\n")
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("canceled translation error = %v", err)
+		}
+		if elapsed := time.Since(started); elapsed > time.Second {
+			t.Fatalf("canceled translation took %v", elapsed)
+		}
+		assertRemoved(marker)
+	})
+}
+
+func TestCommandHPatchTranslatorRecordsCompleteMetrics(t *testing.T) {
+	directory := t.TempDir()
+	commandMarker := filepath.Join(directory, "command")
+	recordMarker := filepath.Join(directory, "record")
+	t.Setenv("HPATCH_COMMAND_MARKER", commandMarker)
+	t.Setenv("HPATCH_RECORD_MARKER", recordMarker)
+	executable := writeTestExecutable(t, "#!/bin/sh\nprintf '%s' \"$1\" > \"$HPATCH_COMMAND_MARKER\"\ncat > \"$HPATCH_RECORD_MARKER\"\n")
+	want := hpatchMetricRecord{
+		Invocation:                   json.RawMessage(`{"commands":[]}`),
+		SessionID:                    "session",
+		HPatchTokens:                 2,
+		ApplyPatchTokens:             3,
+		IneffectiveHPatchTokens:      5,
+		FailedApplyPatchTokens:       7,
+		ReportInputTokens:            11,
+		DiagnosticInputTokens:        13,
+		MetadataInputTokens:          17,
+		DefinitionRequests:           1,
+		DefinitionInputTokens:        19,
+		RemovedDefinitionInputTokens: 23,
+	}
+	if err := (commandHPatchTranslator{executable: executable}).RecordMetrics(t.Context(), want); err != nil {
+		t.Fatal(err)
+	}
+	command, err := os.ReadFile(commandMarker)
+	if err != nil || string(command) != "record-metrics" {
+		t.Fatalf("metrics command = %q, error %v", command, err)
+	}
+	content, err := os.ReadFile(recordMarker)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got hpatchMetricRecord
+	if err := json.Unmarshal(content, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.SessionID != want.SessionID || got.HPatchTokens != want.HPatchTokens || got.ApplyPatchTokens != want.ApplyPatchTokens || got.IneffectiveHPatchTokens != want.IneffectiveHPatchTokens || got.FailedApplyPatchTokens != want.FailedApplyPatchTokens || got.ReportInputTokens != want.ReportInputTokens || got.DiagnosticInputTokens != want.DiagnosticInputTokens || got.MetadataInputTokens != want.MetadataInputTokens || got.DefinitionRequests != want.DefinitionRequests || got.DefinitionInputTokens != want.DefinitionInputTokens || got.RemovedDefinitionInputTokens != want.RemovedDefinitionInputTokens || string(got.Invocation) != string(want.Invocation) {
+		t.Fatalf("recorded metrics = %+v, want %+v", got, want)
+	}
+}
