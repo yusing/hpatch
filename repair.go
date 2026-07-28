@@ -2,6 +2,7 @@ package hpatch
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 )
@@ -13,8 +14,10 @@ const repairLineWindow = 2
 // repairPreviewLimit is the code-point cap for the failing line itself. It is
 // wider than the final-state report's preview because a repair needs to show
 // the span the selector actually addressed, which may sit late in a long line.
-const repairPreviewLimit = 200
-const repairListLimit = 16
+const (
+	repairPreviewLimit = 200
+	repairListLimit    = 16
+)
 
 // repairContext renders what a failing command needed to know and could not
 // see: the baseline lines it addressed and, where the reason is a coordinate or
@@ -201,7 +204,7 @@ func (e *editor) claimedLineSpans(lines []logicalLine) string {
 	for _, edit := range edits[:min(len(edits), repairListLimit)] {
 		start := lineNumberAt(lines, edit.start)
 		end := lineNumberAt(lines, max(edit.start, edit.end-1))
-		span := fmt.Sprint(start)
+		span := strconv.Itoa(start)
 		if start != end {
 			span = fmt.Sprintf("%d:%d", start, end)
 		}
@@ -290,7 +293,7 @@ func lineNumberAt(lines []logicalLine, offset int) int {
 func joinLineNumbers(numbers []int, total int) string {
 	rendered := make([]string, 0, len(numbers)+1)
 	for _, number := range numbers {
-		rendered = append(rendered, fmt.Sprint(number))
+		rendered = append(rendered, strconv.Itoa(number))
 	}
 	if omitted := total - len(numbers); omitted > 0 {
 		rendered = append(rendered, fmt.Sprintf("... (%d more occurrences)", omitted))

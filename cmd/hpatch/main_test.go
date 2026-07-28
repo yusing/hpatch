@@ -217,7 +217,6 @@ func TestTopLevelHelpDescribesSelectionOperandConstraints(t *testing.T) {
 }
 
 func TestHelpDoesNotLeakSourceTreeReferences(t *testing.T) {
-
 	for _, output := range []string{helpTextBase, toolHelpText(), translateHelpText} {
 		for _, stale := range []string{"doc/spec", "AGENT_INSTRUCTIONS.md"} {
 			if strings.Contains(output, stale) {
@@ -260,20 +259,8 @@ func TestInformationalWriteFailureIsReported(t *testing.T) {
 
 func removeCurrentDirectory(t *testing.T) {
 	t.Helper()
-	originalDirectory, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		if err := os.Chdir(originalDirectory); err != nil {
-			t.Errorf("restoring working directory: %v", err)
-		}
-	})
-
 	removedDirectory := t.TempDir()
-	if err := os.Chdir(removedDirectory); err != nil {
-		t.Fatal(err)
-	}
+	t.Chdir(removedDirectory)
 	if err := os.Remove(removedDirectory); err != nil {
 		t.Skipf("platform does not allow removing the current directory: %v", err)
 	}

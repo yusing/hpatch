@@ -12,7 +12,6 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
-
 	"sync/atomic"
 	"time"
 )

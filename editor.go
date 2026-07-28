@@ -22,6 +22,7 @@ type editOrigin struct {
 
 type baselineEdit struct {
 	editOrigin
+
 	start       int
 	end         int
 	replacement string

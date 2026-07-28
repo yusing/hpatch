@@ -2,12 +2,10 @@ package hpatch
 
 import (
 	"encoding/json"
+	"hpatch/internal/patchtest"
 	"reflect"
-
 	"strings"
 	"testing"
-
-	"hpatch/internal/patchtest"
 )
 
 func TestLinewiseReplacementPreservesFinalTerminator(t *testing.T) {
@@ -220,6 +218,7 @@ func TestBlockSelectionExactMatchPrecedesWhitespaceFallback(t *testing.T) {
 		t.Fatalf("file = %q, want %q", got, want)
 	}
 }
+
 func TestBlockSelectionSupportsExistingEditActions(t *testing.T) {
 	tests := []struct {
 		name, action, want string
@@ -375,13 +374,13 @@ func TestTextSelectionCreatesSeparateMatches(t *testing.T) {
 		},
 		{
 			name:    "from line is an inclusive lower bound",
-			content: "x\nx\nx\n",
+			content: "x\nx\nx\n", //nolint:dupword // Repetition is the multiple-match fixture.
 			script:  "in file.txt\ntsel 2 \"x\" 2\ntype \"Y\"",
 			want:    "x\nY\nY\n",
 		},
 		{
 			name:    "explicit count one",
-			content: "x, x, x\n",
+			content: "x, x, x\n", //nolint:dupword // Repetition is the explicit-count fixture.
 			script:  "in file.txt\ntsel 1 \"x\" 1\ntype \"Y\"",
 			want:    "Y, x, x\n",
 		},
@@ -408,7 +407,7 @@ func TestTextSelectionCreatesSeparateMatches(t *testing.T) {
 }
 
 func TestNonOverlappingLiteralOffsetsStopsAtRequestedCount(t *testing.T) {
-	got := nonOverlappingLiteralOffsets("x x x", "x", 1)
+	got := nonOverlappingLiteralOffsets("x x x", "x", 1) //nolint:dupword // Repetition verifies early count termination.
 	if want := []int{0}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("offsets = %v, want %v", got, want)
 	}
@@ -442,7 +441,7 @@ func TestTextSelectionFailuresAreAtomic(t *testing.T) {
 	tests := []struct {
 		name, content, operand, want string
 	}{
-		{name: "requested count incomplete", content: "x, x, x\n", operand: "\"x\" 4", want: "found 3 of 4 requested matches"},
+		{name: "requested count incomplete", content: "x, x, x\n", operand: "\"x\" 4", want: "found 3 of 4 requested matches"}, //nolint:dupword // Repetition creates three available matches.
 		{name: "overlapping match unavailable", content: "aaa\n", operand: "\"aa\" 2", want: "found 1 of 2 requested matches"},
 		{name: "zero count", content: "x\n", operand: "\"x\" 0", want: "invalid tsel count"},
 		{name: "negative count", content: "x\n", operand: "\"x\" -1", want: "invalid tsel count"},
@@ -472,7 +471,7 @@ func TestTextSelectionFailuresAreAtomic(t *testing.T) {
 
 func TestMultiSelectionConflictRejectsWholeScript(t *testing.T) {
 	root := t.TempDir()
-	writeTestFile(t, root, "file.txt", "x x x\n", 0o644)
+	writeTestFile(t, root, "file.txt", "x x x\n", 0o644) //nolint:dupword // Repetition creates overlapping multi-selection candidates.
 	before := readTree(t, root)
 	script := "in file.txt\ntsel 1 \"x\" 2\ntype \"Y\"\ntsel 1 \"x\" 3\n"
 	stdout, stderr, exitCode := runForTest(root, []string{"translate"}, script)
@@ -485,7 +484,6 @@ func TestMultiSelectionConflictRejectsWholeScript(t *testing.T) {
 }
 
 func TestSelectorsRejectNonAbsoluteLinesAtomically(t *testing.T) {
-
 	tests := []struct {
 		name, script, want string
 	}{
@@ -510,6 +508,7 @@ func TestSelectorsRejectNonAbsoluteLinesAtomically(t *testing.T) {
 		})
 	}
 }
+
 func jsonString(t *testing.T, value string) string {
 	t.Helper()
 	encoded, err := json.Marshal(value)

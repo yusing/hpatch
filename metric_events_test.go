@@ -141,7 +141,7 @@ func TestMalformedSelectorAttributionRequiresRecognizableVariant(t *testing.T) {
 func TestMetricsClassifyVariantsOutcomesAndReasons(t *testing.T) {
 	root := t.TempDir()
 	dataDirectory := t.TempDir()
-	content := "alpha alpha alpha\nfunc x() {\n\tbody\n}\n"
+	content := "alpha beta alpha gamma alpha\nfunc x() {\n\tbody\n}\n"
 	if err := os.WriteFile(filepath.Join(root, "sample.txt"), []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}

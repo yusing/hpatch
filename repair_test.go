@@ -78,7 +78,6 @@ func TestRepairContextReportsForwardMatchCounts(t *testing.T) {
 }
 
 func TestRepairContextReportsMissingLine(t *testing.T) {
-
 	repair := repairFor(t, "calc.go", "one\ntwo\nthree\n", "in calc.go\nsel 99 1:3\ntype \"x\"\n")
 	if !strings.Contains(repair, "calc.go has 3 lines; line 99 does not exist") {
 		t.Fatalf("repair context lacks line count:\n%s", repair)

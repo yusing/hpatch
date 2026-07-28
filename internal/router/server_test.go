@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -43,10 +42,10 @@ func (f *serverFakeProvider) next(body []byte) (*http.Response, error) {
 	return result.response, result.err
 }
 
-func serverHTTPResponse(status int, body string) *http.Response {
+func serverHTTPResponse(body string) *http.Response {
 	return &http.Response{
-		StatusCode: status,
-		Status:     fmt.Sprintf("%d %s", status, http.StatusText(status)),
+		StatusCode: http.StatusOK,
+		Status:     "200 OK",
 		Header:     http.Header{"Content-Type": []string{"application/json"}},
 		Body:       io.NopCloser(strings.NewReader(body)),
 	}
@@ -174,7 +173,7 @@ func TestExecuteRequestForwardsCompactionWithoutHPatchRewrite(t *testing.T) {
 		"response": map[string]any{"status": "completed", "output": []any{}},
 	})
 	responseBody := "event: response.completed\ndata: " + string(completed) + "\n\n"
-	response := serverHTTPResponse(http.StatusOK, responseBody)
+	response := serverHTTPResponse(responseBody)
 	response.Header.Set("Content-Type", "text/event-stream")
 	provider := &serverFakeProvider{results: []serverForwardResult{{response: response}}}
 	proxy := newHPatchProxy(hpatchTranslatorFunc(func(context.Context, routingWorkspace, string) ([]byte, error) {
@@ -208,7 +207,7 @@ func TestExecuteRequestForwardsRewrittenRequestAndRecordsUsage(t *testing.T) {
 		},
 		"future": map[string]any{"kept": true},
 	}))
-	provider := &serverFakeProvider{results: []serverForwardResult{{response: serverHTTPResponse(http.StatusOK, responseBody)}}}
+	provider := &serverFakeProvider{results: []serverForwardResult{{response: serverHTTPResponse(responseBody)}}}
 	proxy := newHPatchProxy(hpatchTranslatorFunc(func(context.Context, routingWorkspace, string) ([]byte, error) {
 		t.Fatal("response without an hpatch call reached the translator")
 		return nil, nil
@@ -254,7 +253,7 @@ func TestExecuteRequestDoesNotRecordUsageWhenDeliveryFails(t *testing.T) {
 		"status": "completed",
 		"usage":  map[string]any{"input_tokens": 10},
 	}))
-	provider := &serverFakeProvider{results: []serverForwardResult{{response: serverHTTPResponse(http.StatusOK, responseBody)}}}
+	provider := &serverFakeProvider{results: []serverForwardResult{{response: serverHTTPResponse(responseBody)}}}
 	store := newMetricsStore()
 	err := executeRequest(t.Context(), t.Context(), serverRequest(t, nil), serverMetadataHeaders(t, "turn", map[string]json.RawMessage{workspace: nil}), "session", provider, serverErrorWriter{err: io.ErrClosedPipe}, newDiagnostics(io.Discard), time.Now, newHPatchProxy(testTranslator(t, new(int))), store)
 	if err == nil {
@@ -347,7 +346,7 @@ func TestResponsesHandlerDoesNotLogClientCancellationAsOperationalEvent(t *testi
 		t.Fatal(err)
 	}
 	request.Header = serverCompactionMetadataHeaders(t)
-	request.Header.Set(sessionIDHeader, "session")
+	request.Header.Set(sessionIDHeader, "session") //nolint:canonicalheader // session-id matches Codex's wire header.
 	response, err := server.Client().Do(request)
 	if err != nil {
 		t.Fatal(err)
@@ -397,7 +396,7 @@ func TestProviderClientDoesNotAcceptCallerCredentialOverrides(t *testing.T) {
 				t.Errorf("header %s = %q, want %q", name, got, value)
 			}
 		}
-		return serverHTTPResponse(http.StatusOK, "{}"), nil
+		return serverHTTPResponse("{}"), nil
 	})}
 	client := newProviderClient(auth, httpClient)
 	response, err := client.forwardExecution(t.Context(), t.Context(), []byte("{}"))

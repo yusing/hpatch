@@ -158,7 +158,7 @@ func TestNetFileActionsCollapseMovesAndCanceledCreation(t *testing.T) {
 
 func TestUnicodeCRLFAndBaselineEditorState(t *testing.T) {
 	root := t.TempDir()
-	writeTestFile(t, root, "text.txt", "αβγ\tbar bar\r\none\r\ntwo", 0o644)
+	writeTestFile(t, root, "text.txt", "αβγ\tbar baz\r\none\r\ntwo", 0o644)
 	script := strings.Join([]string{
 		"in text.txt",
 		"sel 1 2:3",
@@ -645,6 +645,7 @@ func TestStagingCleanupFailureReportsRetainedArtifact(t *testing.T) {
 
 type failingFileOperations struct {
 	fileOperations
+
 	renameCalls int
 	failRename  map[int]error
 	removeCalls int

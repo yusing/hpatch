@@ -246,7 +246,6 @@ func TestGainReportsCommandInvocationsErrorsAndRates(t *testing.T) {
 }
 
 func TestHostRecordCombinesEffectiveAndIneffectiveOutput(t *testing.T) {
-
 	dataDirectory := t.TempDir()
 	invocation := invocationMetrics{}
 	invocation.Commands[commandOperationIndex("new")].Invocations = 1

@@ -7,6 +7,7 @@ import (
 	"math/rand/v2"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -165,8 +166,7 @@ func writeStagedFile(file *os.File, content string, mode fs.FileMode) error {
 
 func rollbackChanges(staged []*stagedChange, operations fileOperations) error {
 	var rollbackErrors []error
-	for index := len(staged) - 1; index >= 0; index-- {
-		item := staged[index]
+	for _, item := range slices.Backward(staged) {
 		if item.installed {
 			if err := operations.Remove(item.path); err != nil && !errors.Is(err, os.ErrNotExist) {
 				rollbackErrors = append(rollbackErrors, fmt.Errorf("removing installed %s: %w", item.path, err))
@@ -175,8 +175,7 @@ func rollbackChanges(staged []*stagedChange, operations fileOperations) error {
 			item.installed = false
 		}
 	}
-	for index := len(staged) - 1; index >= 0; index-- {
-		item := staged[index]
+	for _, item := range slices.Backward(staged) {
 		if !item.backedUp {
 			continue
 		}

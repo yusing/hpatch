@@ -3,6 +3,8 @@ package main
 import (
 	"bytes"
 	"fmt"
+	"hpatch"
+	"hpatch/internal/patchtest"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -10,8 +12,6 @@ import (
 	"strings"
 
 	"github.com/tiktoken-go/tokenizer"
-	"hpatch"
-	"hpatch/internal/patchtest"
 )
 
 type scenario struct {

@@ -1,11 +1,10 @@
 package main
 
 import (
+	"hpatch/internal/patchtest"
 	"reflect"
 	"strings"
 	"testing"
-
-	"hpatch/internal/patchtest"
 )
 
 func TestRunHPatchAcceptsFinalStateReportAndPreservesUnrelatedFiles(t *testing.T) {
