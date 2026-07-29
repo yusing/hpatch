@@ -75,6 +75,18 @@ func TestToolGrammarCommandOperandsUseExactSpaces(t *testing.T) {
 	}
 }
 
+func TestToolDescriptionRejectsSyntaxLikeBselAnchors(t *testing.T) {
+	for _, warning := range []string{
+		"does not parse syntax or pair braces",
+		"Never use a bare } or another duplicated fragment as an anchor",
+		"use fresh nl -ba output and rsel unless both anchors are distinctive and file-unique",
+	} {
+		if !strings.Contains(toolDescription, warning) {
+			t.Errorf("tool description omits bsel warning %q", warning)
+		}
+	}
+}
+
 func TestToolDescriptionSelectorTokenComparisons(t *testing.T) {
 	codec, err := tokenizer.ForModel(tokenizer.GPT5)
 	if err != nil {

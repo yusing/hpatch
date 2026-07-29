@@ -4,7 +4,7 @@ const toolDescription = `HPATCH/1 edits workspace files atomically. Submit one c
 
 Minimize the complete selector-plus-replacement output; a likely retry costs more than a few saved tokens:
 - tsel FROM_LINE "TEXT" [N] selects the first N exact one-line matches from FROM_LINE; use it for a fragment or one replacement at multiple sites.
-- bsel "START" "END" selects from distinct START through END inclusively; START must occur exactly once file-wide and END exactly once after it. Use bsel for a multiline partial region whose outer text should remain, such as a body beneath a long function declaration.
+- bsel "START" "END" selects from distinct START through END inclusively; START must occur exactly once file-wide and END exactly once after it. It matches literals only; it does not parse syntax or pair braces. Use bsel for a multiline partial region whose outer text should remain, such as a body beneath a long function declaration.
 - rsel START:END selects complete logical lines and their terminators; use it when every selected line should be re-emitted.
 - sel LINE START:END selects inclusive one-based rune columns; use it only when verified columns are safer than content anchors.
 
@@ -12,7 +12,7 @@ Illustrative complete-call GPT-5 token estimates: preserving a long signature an
 
 Selection rules:
 - Start tsel TEXT and bsel anchors at stable non-whitespace content. Omit leading spaces and tabs unless indentation is intentionally part of the edit or needed to disambiguate otherwise identical matches; copy any included text exactly from the baseline.
-- bsel consumes both anchors. Re-emit any anchor that should remain. Whole interior lines do not imply rsel: bsel can avoid re-emitting substantial unchanged boundary text.
+- bsel consumes both anchors. Re-emit any anchor that should remain. Never use a bare } or another duplicated fragment as an anchor. For a complete brace-delimited block, use fresh nl -ba output and rsel unless both anchors are distinctive and file-unique. Whole interior lines alone do not require rsel: bsel can avoid re-emitting substantial unchanged boundary text.
 - Use fresh nl -ba output for rsel or sel coordinates. Earlier edits do not shift baseline coordinates.
 - Use type <<PATCH for multiline text and put PATCH immediately after the final content line; an extra blank body line changes the output.
 - Use inline type when replacement text must not end with a newline.
