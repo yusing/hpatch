@@ -946,22 +946,8 @@ func TestInProcessHPatchToolDescription(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	description := translator.ToolDescription()
-	for _, required := range []string{
-		"HPATCH/1 edits workspace files atomically.",
-		"Choose the first matching selector:",
-		"Never include leading spaces or tabs in tsel TEXT or bsel anchors.",
-		"rsel 50:53",
-		"Do not write tsel 90",
-	} {
-		if !strings.Contains(description, required) {
-			t.Fatalf("installed tool description omits %q", required)
-		}
-	}
-	for _, excluded := range []string{"Usage:", "hpatch gain", "--root", "--cwd", "Metrics:"} {
-		if strings.Contains(description, excluded) {
-			t.Fatalf("installed tool description contains %q", excluded)
-		}
+	if got, want := translator.ToolDescription(), hpatch.ToolDescription(); got != want {
+		t.Fatalf("installed tool description differs from authoritative description:\n got %q\nwant %q", got, want)
 	}
 }
 

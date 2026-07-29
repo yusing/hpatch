@@ -96,18 +96,19 @@ func TestToolHelpGuidesAgentCommandChoice(t *testing.T) {
 	help := toolHelpText()
 	for _, required := range []string{
 		"HPATCH/1 edits workspace files atomically.",
-		"Choose the first matching selector:",
-		"Complete logical lines or any indentation change: rsel",
-		"Exact existing non-whitespace content: tsel",
-		"Never include leading spaces or tabs in tsel TEXT or bsel anchors.",
-		"Never use bsel when rsel can own the complete lines.",
-		"Never place a physical newline inside a quoted operand.",
-		"Use type <<PATCH for multiline replacement text.",
-		"Put PATCH immediately after the final content line.",
-		"Replace complete lines:",
-		`tsel 90 "return saveArtifactPayload(path, b)"`,
-		`Do not write tsel 90 "\t\treturn saveArtifactPayload(path, b)".`,
-		`bsel "oldCall(" "finalArgument)"`,
+		"Minimize the complete selector-plus-replacement output",
+		"tsel FROM_LINE \"TEXT\" [N] selects the first N exact one-line matches",
+		"bsel \"START\" \"END\" selects from distinct START through END inclusively",
+		"START must occur exactly once file-wide and END exactly once after it.",
+		"rsel START:END selects complete logical lines",
+		"Omit leading spaces and tabs unless indentation is intentionally part of the edit",
+		"needed to disambiguate otherwise identical matches",
+		"Whole interior lines do not imply rsel",
+		"Use type <<PATCH for multiline text",
+		"put PATCH immediately after the final content line",
+		"Function-body example that preserves the declaration, parameters, opening brace",
+		`bsel "oldResult := compute(input)" "return oldResult, nil"`,
+		`tsel 90 "saveArtifactPayload(path, b)"`,
 		"The first in captures an immutable file baseline.",
 		"After success, inspect the reported edited ranges",
 	} {
@@ -122,9 +123,13 @@ func TestToolHelpGuidesAgentCommandChoice(t *testing.T) {
 		"--cwd",
 		"Metrics:",
 		"INDEX: COMMAND",
+		"Never place a physical newline inside a quoted operand.",
+		"must be nonempty",
+		"PATCH must be the exact unindented closing line.",
+		"never include leading indentation",
 	} {
 		if strings.Contains(help, excluded) {
-			t.Fatalf("tool help contains non-tool text %q", excluded)
+			t.Fatalf("tool help contains unnecessary or non-tool text %q", excluded)
 		}
 	}
 	if !strings.HasPrefix(help, "HPATCH/1 edits workspace files atomically.") {

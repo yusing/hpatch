@@ -2,43 +2,33 @@ package hpatch
 
 const toolDescription = `HPATCH/1 edits workspace files atomically. Submit one complete grammar-constrained script; rejection or cancellation changes nothing.
 
-Choose the first matching selector:
-1. Complete logical lines or any indentation change: rsel START:END.
-2. Exact existing non-whitespace content: tsel FROM_LINE "TEXT" [N].
-3. A block whose boundary must start or end inside a line: bsel "START" "END".
-4. Exact rune columns only when content selectors cannot express the target: sel LINE START:END.
+Minimize the complete selector-plus-replacement output; a likely retry costs more than a few saved tokens:
+- tsel FROM_LINE "TEXT" [N] selects the first N exact one-line matches from FROM_LINE; use it for a fragment or one replacement at multiple sites.
+- bsel "START" "END" selects from distinct START through END inclusively; START must occur exactly once file-wide and END exactly once after it. Use bsel for a multiline partial region whose outer text should remain, such as a body beneath a long function declaration.
+- rsel START:END selects complete logical lines and their terminators; use it when every selected line should be re-emitted.
+- sel LINE START:END selects inclusive one-based rune columns; use it only when verified columns are safer than content anchors.
 
-Hard rules:
-- Never include leading spaces or tabs in tsel TEXT or bsel anchors. Start at stable non-whitespace content.
-- Never infer, normalize, or count indentation. Copy exact baseline content.
-- Never use bsel when rsel can own the complete lines.
-- Never place a physical newline inside a quoted operand. Encode inline line breaks as \n or \r.
-- tsel TEXT and both bsel anchors must be nonempty. tsel cannot contain encoded line breaks.
+Illustrative complete-call GPT-5 token estimates: preserving a long signature and braces costs bsel 71 versus rsel 84; a complete short block costs rsel 32 versus bsel 35; one expression costs tsel or sel 25 versus rsel 26; the same replacement at two sites costs tsel 25 versus rsel 30. Counts vary with paths and text. Prefer a stable anchor over a cheaper ambiguous selector.
+
+Selection rules:
+- Start tsel TEXT and bsel anchors at stable non-whitespace content. Omit leading spaces and tabs unless indentation is intentionally part of the edit or needed to disambiguate otherwise identical matches; copy any included text exactly from the baseline.
+- bsel consumes both anchors. Re-emit any anchor that should remain. Whole interior lines do not imply rsel: bsel can avoid re-emitting substantial unchanged boundary text.
 - Use fresh nl -ba output for rsel or sel coordinates. Earlier edits do not shift baseline coordinates.
-- Use type <<PATCH for multiline replacement text. PATCH must be the exact unindented closing line.
-- Put PATCH immediately after the final content line. Do not add a blank body line unless the output should contain that blank line.
+- Use type <<PATCH for multiline text and put PATCH immediately after the final content line; an extra blank body line changes the output.
 - Use inline type when replacement text must not end with a newline.
 
-Selection examples:
-Replace complete lines:
-  in parser.go
-  rsel 50:53
+Function-body example that preserves the declaration, parameters, opening brace, indentation before the first anchor, and closing brace:
+  in service.go
+  bsel "oldResult := compute(input)" "return oldResult, nil"
   type <<PATCH
-  func parse() error {
-  	return nil
-  }
+  newResult := computeFresh(input)
+      return newResult, nil
   PATCH
 
-Replace content inside an indented line without selecting indentation:
+One-line fragment example that preserves indentation and surrounding text:
   in artifact.go
-  tsel 90 "return saveArtifactPayload(path, b)"
-  type "return saveArtifactPayloadAtomically(path, b)"
-Do not write tsel 90 "\t\treturn saveArtifactPayload(path, b)".
-
-Replace a partial-line block only when complete-line selection does not fit:
-  in expression.go
-  bsel "oldCall(" "finalArgument)"
-  type "newCall(firstArgument, finalArgument)"
+  tsel 90 "saveArtifactPayload(path, b)"
+  type "saveArtifactPayloadAtomically(path, b)"
 
 Commands:
 - in PATH selects an existing UTF-8 file; new PATH selects a pending empty file.
@@ -46,13 +36,6 @@ Commands:
 - type "TEXT" replaces selections or inserts at the cursor. type <<PATCH supplies literal multiline text.
 - del deletes selections; copy preserves and stores them; cut stores and deletes them; paste inserts the clipboard after selections or at the cursor.
 - commit advances all live files to a new immutable baseline without writing the workspace.
-
-Selector semantics:
-- tsel scans from FROM_LINE column 1 through EOF and selects the first N exact nonoverlapping matches; N defaults to 1 and all N must exist.
-- bsel requires distinct START and END anchors. START must occur exactly once file-wide, and END exactly once after START; the selection includes both anchors.
-- rsel selects inclusive complete logical lines and owns their terminators.
-- sel uses inclusive one-based Unicode-rune columns; a tab counts as one rune.
-- Prefer a longer exact content anchor over occurrence arithmetic.
 
 State and safety:
 - The first in captures an immutable file baseline. All selectors in that generation use it; inserted text is not selectable.
