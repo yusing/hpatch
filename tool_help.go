@@ -7,7 +7,7 @@ Minimize the complete selector-plus-replacement output; a likely retry costs mor
 - tsel FROM_LINE "TEXT" [N] selects the first N exact one-line matches from FROM_LINE; use it for a fragment or one replacement at multiple sites.
 - bsel "START" "END" selects from distinct START through END inclusively; START must occur exactly once file-wide and END exactly once after it. It matches literals only; it does not parse syntax or pair braces. Use bsel for a multiline partial region whose outer text should remain, such as a body beneath a long function declaration.
 - rsel START:END selects complete logical lines and their terminators; use it when every selected line should be re-emitted.
-- sel LINE START:END selects inclusive one-based rune columns; use it only when verified columns are safer than content anchors.
+- sel LINE START:END selects inclusive one-based rune columns; prefer it for one short occurrence when identical text repeats on the same line and verified coordinates are available, because tsel cannot target only a later same-line match.
 
 Illustrative complete-call GPT-5 token estimates: preserving a long signature and braces costs bsel 71 versus rsel 84; a complete short block costs rsel 32 versus bsel 35; one expression costs tsel or sel 25 versus rsel 26; the same replacement at two sites costs tsel 25 versus rsel 30. Counts vary with paths and text. Prefer a stable anchor over a cheaper ambiguous selector.
 
@@ -39,12 +39,29 @@ One-line fragment example that preserves indentation and surrounding text:
   tsel 90 "saveArtifactPayload(path, b)"
   type "saveArtifactPayloadAtomically(path, b)"
 
+Precision example after verifying that line 24 is "return ready || ready"; sel changes only the second identical occurrence:
+  in predicate.go
+  sel 24 17:21
+  type "cached"
+
 Commands:
 - in PATH selects an existing UTF-8 file; new PATH selects a pending empty file.
 - mv DESTINATION moves the active file; rm removes it.
 - type "TEXT" replaces selections or inserts at the cursor. type <<PATCH supplies literal multiline text.
 - del deletes selections; copy preserves and stores them; cut stores and deletes them; paste inserts the clipboard after selections or at the cursor.
-- commit advances all live files to a new immutable baseline without writing the workspace.
+- Prefer cut plus paste to move a selection: cut combines copy and deletion in one command, and the script does not re-emit the selected text.
+- commit advances all live files to a new immutable baseline without writing the workspace. Use it only when later commands must select text introduced or changed earlier in the same call, or must reuse a path after mv or rm; otherwise omit it.
+
+Move-and-adjust example that does not re-emit the moved body; commit makes the pasted text selectable for the narrow follow-up edit:
+  in source.go
+  rsel 12:28
+  cut
+  in destination.go
+  rsel 40:40
+  paste
+  commit
+  tsel 41 "sourceRegistry"
+  type "destinationRegistry"
 
 State and safety:
 - The first in captures an immutable file baseline. All selectors in that generation use it; inserted text is not selectable.

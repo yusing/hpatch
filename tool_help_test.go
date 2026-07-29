@@ -105,6 +105,119 @@ func TestToolDescriptionRejectsParallelCalls(t *testing.T) {
 	}
 }
 
+func TestToolDescriptionGuidesSparseCommandChoice(t *testing.T) {
+	for _, guidance := range []string{
+		"tsel cannot target only a later same-line match",
+		"sel changes only the second identical occurrence",
+		"cut combines copy and deletion in one command",
+		"the script does not re-emit the selected text",
+		"later commands must select text introduced or changed earlier in the same call",
+		"otherwise omit it",
+		"commit makes the pasted text selectable",
+	} {
+		if !strings.Contains(toolDescription, guidance) {
+			t.Errorf("tool description omits sparse-command guidance %q", guidance)
+		}
+	}
+}
+
+func TestToolDescriptionSuggestedUseCasesExecute(t *testing.T) {
+	t.Run("sel targets later identical same-line match", func(t *testing.T) {
+		const displayedScript = `  in predicate.go
+  sel 24 17:21
+  type "cached"`
+		if !strings.Contains(toolDescription, displayedScript) {
+			t.Fatal("tool description omits executable sel example")
+		}
+
+		root := t.TempDir()
+		prefix := strings.Repeat("padding\n", 23)
+		writeTestFile(t, root, "predicate.go", prefix+"return ready || ready\n", 0o644)
+
+		script := strings.ReplaceAll(strings.TrimPrefix(displayedScript, "  "), "\n  ", "\n")
+		stdout, stderr, exitCode := runForTest(root, nil, script)
+		if exitCode != 0 || stdout != "" || stderr != "" {
+			t.Fatalf("Run() = exit %d, stdout %q, stderr %q", exitCode, stdout, stderr)
+		}
+		if got, want := readTestFile(t, root, "predicate.go"), prefix+"return ready || cached\n"; got != want {
+			t.Fatalf("predicate.go = %q, want %q", got, want)
+		}
+
+		textRoot := t.TempDir()
+		writeTestFile(t, textRoot, "predicate.go", prefix+"return ready || ready\n", 0o644)
+		stdout, stderr, exitCode = runForTest(textRoot, nil, "in predicate.go\ntsel 24 \"ready\"\ntype \"cached\"")
+		if exitCode != 0 || stdout != "" || stderr != "" {
+			t.Fatalf("tsel Run() = exit %d, stdout %q, stderr %q", exitCode, stdout, stderr)
+		}
+		if got, want := readTestFile(t, textRoot, "predicate.go"), prefix+"return cached || ready\n"; got != want {
+			t.Fatalf("tsel predicate.go = %q, want first same-line match %q", got, want)
+		}
+	})
+
+	t.Run("cut paste commit then edit introduced text", func(t *testing.T) {
+		const displayedScript = `  in source.go
+  rsel 12:28
+  cut
+  in destination.go
+  rsel 40:40
+  paste
+  commit
+  tsel 41 "sourceRegistry"
+  type "destinationRegistry"`
+		if !strings.Contains(toolDescription, displayedScript) {
+			t.Fatal("tool description omits executable cut and commit example")
+		}
+
+		root := t.TempDir()
+		sourcePrefix := strings.Repeat("source padding\n", 11)
+		moved := "sourceRegistry.Register(alpha)\n" + strings.Repeat("move padding\n", 16)
+		destinationPrefix := strings.Repeat("destination padding\n", 39)
+		writeTestFile(t, root, "source.go", sourcePrefix+moved+"tail\n", 0o644)
+		writeTestFile(t, root, "destination.go", destinationPrefix+"// handlers\nafter\n", 0o644)
+
+		script := strings.ReplaceAll(strings.TrimPrefix(displayedScript, "  "), "\n  ", "\n")
+		withoutCommit := strings.Replace(script, "\ncommit\n", "\n", 1)
+		stdout, stderr, exitCode := runForTest(root, []string{"translate"}, withoutCommit)
+		if exitCode != 1 || stdout != "" || !strings.Contains(stderr, `found 0 of 1 requested matches of "sourceRegistry"`) {
+			t.Fatalf("Run() without commit = exit %d, stdout %q, stderr %q", exitCode, stdout, stderr)
+		}
+
+		stdout, stderr, exitCode = runForTest(root, nil, script)
+		if exitCode != 0 || stdout != "" || stderr != "" {
+			t.Fatalf("Run() = exit %d, stdout %q, stderr %q", exitCode, stdout, stderr)
+		}
+		if got, want := readTestFile(t, root, "source.go"), sourcePrefix+"tail\n"; got != want {
+			t.Fatalf("source.go = %q, want %q", got, want)
+		}
+		adjusted := strings.Replace(moved, "sourceRegistry", "destinationRegistry", 1)
+		if got, want := readTestFile(t, root, "destination.go"), destinationPrefix+"// handlers\n"+adjusted+"after\n"; got != want {
+			t.Fatalf("destination.go = %q, want %q", got, want)
+		}
+
+		codec, err := tokenizer.ForModel(tokenizer.GPT5)
+		if err != nil {
+			t.Fatal(err)
+		}
+		countTokens := func(input string) int {
+			t.Helper()
+			count, err := codec.Count(input)
+			if err != nil {
+				t.Fatal(err)
+			}
+			return count
+		}
+		cutTokens := countTokens(script)
+		copyDeleteTokens := countTokens(strings.Replace(script, "\ncut\n", "\ncopy\ndel\n", 1))
+		if cutTokens >= copyDeleteTokens {
+			t.Fatalf("cut script tokens = %d, copy plus del tokens = %d", cutTokens, copyDeleteTokens)
+		}
+		reemit := "in source.go\nrsel 12:28\ndel\nin destination.go\nrsel 40:40\ntype <<PATCH\n// handlers\n" + adjusted + "PATCH"
+		if reemitTokens := countTokens(reemit); cutTokens >= reemitTokens {
+			t.Fatalf("cut script tokens = %d, re-emitted body tokens = %d", cutTokens, reemitTokens)
+		}
+	})
+}
+
 func TestToolDescriptionSelectorTokenComparisons(t *testing.T) {
 	codec, err := tokenizer.ForModel(tokenizer.GPT5)
 	if err != nil {
