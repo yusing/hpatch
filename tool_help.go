@@ -92,7 +92,7 @@ PATH: /[^\r\n]+/
 NL: /\r?\n/
 QUOTED: /"(?:\\(?:["\\\/bfnrt]|u[0-9A-Fa-f]{4})|[^\x00-\x1F"\\]|\t)*"/
 NONEMPTY_QUOTED: /"(?:\\(?:["\\\/bfnrt]|u[0-9A-Fa-f]{4})|[^\x00-\x1F"\\]|\t)+"/
-TSEL_QUOTED: /"(?:\\(?:["\\\/bft]|u(?:[1-9A-Fa-f][0-9A-Fa-f]{3}|0[1-9A-Fa-f][0-9A-Fa-f]{2}|00[1-9A-Fa-f][0-9A-Fa-f]|000[0-9BCEFbcef]))|[^\x00-\x1F"\\]|\t)+"/
+TSEL_QUOTED: /"(?:\\(?:["\\\/t]|u(?:0009|00[2-9A-Fa-f][0-9A-Fa-f]|0[1-9A-Fa-f][0-9A-Fa-f]{2}|[1-9A-Fa-f][0-9A-Fa-f]{3}))|[^\x00-\x1F"\\]|\t)+"/
 PATCH_BODY_LINE: /(?:PATCH[^\r\n]+|PATC[^H\r\n][^\r\n]*|PAT[^C\r\n][^\r\n]*|PA[^T\r\n][^\r\n]*|P[^A\r\n][^\r\n]*|PATC|PAT|PA|P|[^P\r\n][^\r\n]*)(?:\r\n|\n)/
 `
 

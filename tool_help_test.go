@@ -9,28 +9,40 @@ import (
 	"github.com/tiktoken-go/tokenizer"
 )
 
-func TestToolGrammarTSelQuotesExcludeDecodedLineBreaks(t *testing.T) {
+func TestToolGrammarTSelQuotesExcludeC0ControlsExceptTab(t *testing.T) {
 	quoted := grammarTerminalRegexp(t, "TSEL_QUOTED")
-	tests := []struct {
-		value string
-		want  bool
-	}{
-		{value: `"text"`, want: true},
-		{value: `"tab\ttext"`, want: true},
-		{value: `"unicode\u000B"`, want: true},
-		{value: `"unicode\u000b"`, want: true},
-		{value: "\"literal\ttext\"", want: true},
-		{value: `""`, want: false},
-		{value: `"first\nsecond"`, want: false},
-		{value: `"first\rsecond"`, want: false},
-		{value: `"first\u000Asecond"`, want: false},
-		{value: `"first\u000asecond"`, want: false},
-		{value: `"first\u000Dsecond"`, want: false},
-		{value: `"first\u000dsecond"`, want: false},
+	for _, value := range []string{
+		`"text"`,
+		`"quote\"slash\\solidus\/"`,
+		`"tab\ttext"`,
+		`"tab\u0009text"`,
+		`"space\u0020text"`,
+		"\"literal\ttext\"",
+	} {
+		if !quoted.MatchString(value) {
+			t.Errorf("TSEL_QUOTED rejects valid value %q", value)
+		}
 	}
-	for _, test := range tests {
-		if got := quoted.MatchString(test.value); got != test.want {
-			t.Errorf("TSEL_QUOTED matches %q = %v, want %v", test.value, got, test.want)
+	for control := range 0x20 {
+		encoded := fmt.Sprintf(`"before\u%04Xafter"`, control)
+		if got, want := quoted.MatchString(encoded), control == '\t'; got != want {
+			t.Errorf("TSEL_QUOTED matches encoded U+%04X = %v, want %v", control, got, want)
+		}
+		literal := fmt.Sprintf("\"before%cafter\"", control)
+		if got, want := quoted.MatchString(literal), control == '\t'; got != want {
+			t.Errorf("TSEL_QUOTED matches literal U+%04X = %v, want %v", control, got, want)
+		}
+	}
+	for _, value := range []string{
+		`""`,
+		`"backspace\b"`,
+		`"formfeed\f"`,
+		`"newline\n"`,
+		`"return\r"`,
+		`"vertical\u000btab"`,
+	} {
+		if quoted.MatchString(value) {
+			t.Errorf("TSEL_QUOTED accepts invalid value %q", value)
 		}
 	}
 }
