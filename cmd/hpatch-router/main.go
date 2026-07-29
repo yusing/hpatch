@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"hpatch/internal/router"
+	"github.com/yusing/hpatch/internal/router"
 	"os"
 	"os/signal"
 	"syscall"

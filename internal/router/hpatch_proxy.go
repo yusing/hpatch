@@ -9,7 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"hpatch"
+	"github.com/yusing/hpatch"
 	"iter"
 	"maps"
 	"os"
@@ -166,8 +166,8 @@ Repairing a rejected script:
     INDEX+: COMMAND
 
   These replace, delete, insert before, or insert after the named original command.
-  A replacement or insertion whose command is type <<TAG consumes its body and
-  closing TAG as one operation. Every index refers to the original rejected script.
+  A replacement or insertion whose command is type <<PATCH consumes its body and
+  the exact unindented closing PATCH line as one operation. Every index refers to the original rejected script.
   Replacement and deletion may name an index once; same-anchor insertions retain
   payload order even when the anchor is deleted. The complete rebuilt script is
   revalidated against unchanged files, so the correction remains atomic.
@@ -469,7 +469,11 @@ func exposeStandaloneHPatch(fields map[string]json.RawMessage, topTools []map[st
 		"type":        mustMarshalJSON("custom"),
 		"name":        mustMarshalJSON(hpatchToolName),
 		"description": mustMarshalJSON(toolDescription),
-		"format":      json.RawMessage(`{"type":"text"}`),
+		"format": mustMarshalJSON(map[string]string{
+			"type":       "grammar",
+			"syntax":     "lark",
+			"definition": hpatch.ToolGrammar(),
+		}),
 	})
 	encodedTopTools, err := json.Marshal(topTools)
 	if err != nil {
@@ -518,7 +522,7 @@ func stripCodeModeApplyPatchSection(description string) (string, string, bool, e
 	return stripped, section, true, nil
 }
 
-func mustMarshalJSON(value string) json.RawMessage {
+func mustMarshalJSON(value any) json.RawMessage {
 	encoded, err := json.Marshal(value)
 	if err != nil {
 		panic(err)

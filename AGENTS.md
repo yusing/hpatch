@@ -51,7 +51,7 @@ router fails closed instead of selecting one.
 Start the router from this repository:
 
 ```sh
-go run ./cmd/router --listen 0.0.0.0:8080
+go run ./cmd/hpatch-router --listen 0.0.0.0:8080
 ```
 
 For a non-interactive Codex probe, global options such as approval policy must

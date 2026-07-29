@@ -1,4 +1,4 @@
-module hpatch
+module github.com/yusing/hpatch
 
 go 1.26
 

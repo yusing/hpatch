@@ -3,8 +3,8 @@ package hpatch
 import (
 	"bytes"
 	"errors"
-	"hpatch/internal/hpatchsyntax"
-	"hpatch/internal/patchtest"
+	"github.com/yusing/hpatch/internal/hpatchsyntax"
+	"github.com/yusing/hpatch/internal/patchtest"
 	"io/fs"
 	"os"
 	"path/filepath"

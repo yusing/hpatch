@@ -2,7 +2,7 @@ package main
 
 import (
 	"fmt"
-	"hpatch"
+	"github.com/yusing/hpatch"
 	"io"
 	"os"
 	"path/filepath"

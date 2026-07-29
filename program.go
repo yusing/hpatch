@@ -3,7 +3,7 @@ package hpatch
 import (
 	"errors"
 	"fmt"
-	"hpatch/internal/hpatchsyntax"
+	"github.com/yusing/hpatch/internal/hpatchsyntax"
 	"path/filepath"
 	"regexp"
 	"strconv"

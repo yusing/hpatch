@@ -1,7 +1,7 @@
 package main
 
 import (
-	"hpatch/internal/patchtest"
+	"github.com/yusing/hpatch/internal/patchtest"
 	"reflect"
 	"strings"
 	"testing"

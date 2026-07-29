@@ -3,8 +3,8 @@ package main
 import (
 	"bytes"
 	"fmt"
-	"hpatch"
-	"hpatch/internal/patchtest"
+	"github.com/yusing/hpatch"
+	"github.com/yusing/hpatch/internal/patchtest"
 	"io/fs"
 	"os"
 	"path/filepath"

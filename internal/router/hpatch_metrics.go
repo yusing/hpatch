@@ -2,7 +2,7 @@ package router
 
 import (
 	"fmt"
-	"hpatch"
+	"github.com/yusing/hpatch"
 	"strconv"
 	"strings"
 

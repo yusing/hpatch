@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/yusing/hpatch"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -117,8 +118,19 @@ func TestHPatchPrepareRequestExposesOnlyStandaloneHPatch(t *testing.T) {
 	if len(topTools) != 2 || jsonString(topTools[0], "name") != "lookup" || jsonString(topTools[1], "name") != hpatchToolName {
 		t.Fatalf("top-level tools = %#v", topTools)
 	}
-	if jsonString(topTools[1], "type") != "custom" || string(topTools[1]["format"]) != `{"type":"text"}` {
+	if jsonString(topTools[1], "type") != "custom" {
 		t.Fatalf("standalone hpatch definition = %#v", topTools[1])
+	}
+	var format struct {
+		Type       string `json:"type"`
+		Syntax     string `json:"syntax"`
+		Definition string `json:"definition"`
+	}
+	if err := json.Unmarshal(topTools[1]["format"], &format); err != nil {
+		t.Fatal(err)
+	}
+	if format.Type != "grammar" || format.Syntax != "lark" || format.Definition != hpatch.ToolGrammar() {
+		t.Fatalf("standalone hpatch format = %#v", topTools[1])
 	}
 	// The exposed description is hpatch's own help plus the correction protocol,
 	// which only the proxy implements.
@@ -129,7 +141,7 @@ func TestHPatchPrepareRequestExposesOnlyStandaloneHPatch(t *testing.T) {
 	if !strings.Contains(exposed, "INDEX: COMMAND") {
 		t.Fatalf("standalone hpatch description omits the correction protocol: %q", exposed)
 	}
-	if !strings.Contains(exposed, "type <<TAG consumes") {
+	if !strings.Contains(exposed, "type <<PATCH consumes") {
 		t.Fatalf("standalone hpatch description omits correction heredocs: %q", exposed)
 	}
 	for _, operation := range []string{"-INDEX", "+INDEX: COMMAND", "INDEX+: COMMAND"} {
@@ -936,11 +948,11 @@ func TestInProcessHPatchToolDescription(t *testing.T) {
 	}
 	description := translator.ToolDescription()
 	for _, required := range []string{
-		"HPATCH/1",
-		"cmd=in PATH|new PATH|mv DESTINATION|rm|sel LINE START:END",
-		"state.active=in|new=>select;mv DESTINATION=>rename_active_file(source_implicit);rm=>delete_active_file(no_operand)",
-		"state.coords=file.baseline[generation]",
-		"result.success=active_path+cursor_or_selection_ranges<=3+last_effective_edit",
+		"HPATCH/1 edits workspace files atomically.",
+		"Choose the first matching selector:",
+		"Never include leading spaces or tabs in tsel TEXT or bsel anchors.",
+		"rsel 50:53",
+		"Do not write tsel 90",
 	} {
 		if !strings.Contains(description, required) {
 			t.Fatalf("installed tool description omits %q", required)

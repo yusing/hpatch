@@ -1,0 +1,23 @@
+[Unit]
+Description=hpatch Codex Responses router
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Install (puts the binary in $(go env GOPATH)/bin, usually ~/go/bin):
+#   go install github.com/yusing/hpatch/cmd/hpatch-router@latest
+# If you set GOBIN (e.g. ~/.local/bin), point ExecStart at that path instead.
+ExecStart=%h/go/bin/hpatch-router --listen 127.0.0.1:8080
+Restart=on-failure
+RestartSec=2
+
+# Auth defaults to ~/.codex/auth.json (ChatGPT mode from `codex login`).
+# Override only when Codex credentials live elsewhere:
+# Environment=CODEX_HOME=%h/.codex
+
+# Metrics and hooks use the user config dir ($XDG_CONFIG_HOME/hpatch or ~/.config/hpatch).
+# The process creates that directory on demand.
+
+[Install]
+WantedBy=default.target

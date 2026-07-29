@@ -1,194 +1,299 @@
 # hpatch
 
-Apply compact, editor-like text and file operations from a command stream.
+Compact, editor-like file edits for agents: select text, type the change, skip rewriting full patches.
 
-`hpatch` reads commands from standard input and commits their complete multi-file
-result. `hpatch translate` reads the same commands but only prints an OpenAI
-`apply_patch` envelope. `hpatch gain` reports cumulative estimated output-token usage and the
-reduction achieved by hpatch.
+`hpatch` is a stdin script language and CLI. The optional **router** sits in front of Codex Responses, swaps the native `apply_patch` surface for `functions.hpatch`, translates successful scripts into real `apply_patch` payloads, and leaves Codex’s sandbox and permission path intact so the UI still shows a normal diff.
 
-## Build
+TL;DR:
 
-Go 1.26 or newer is required.
+| Goal | Start here |
+| --- | --- |
+| Edit files from a script | [CLI quick start](#cli-quick-start) |
+| Use hpatch inside Codex | [Codex router](#codex-router-systemd-user-service), then [override base instructions](#override-base-instructions-prefer-hpatch-over-apply_patch) |
+| Inspect token savings | `hpatch gain` |
+| Full grammar and semantics | `hpatch --help`, `hpatch --tool-help`, [`doc/spec/interface.md`](doc/spec/interface.md) |
 
-```sh
-go build -o bin/hpatch ./cmd/hpatch
+## Why hpatch?
+
+`apply_patch` makes the model emit envelope framing, old lines, new lines, and context that already exist in the repo. hpatch asks for an editor-style script instead:
+
+```text
+functions.hpatch
+in artifact.go
+tsel 90 "return saveArtifactPayload(path, b)"
+type "return saveArtifactPayloadAtomically(path, b)"
 ```
 
-## Quick start
+Compared with the equivalent Code Mode tool call the model would otherwise write:
 
-Normal mode writes its final active-file state report to stderr on success and changes
-files only after the full script has been parsed, evaluated, and staged:
+```text
+functions.exec
+const result = await tools.apply_patch("*** Begin Patch\n*** Update File: artifact.go\n@@\n-\t\treturn saveArtifactPayload(path, b)\n+\t\treturn saveArtifactPayloadAtomically(path, b)\n*** End Patch\n");
+text(result);
+```
+
+## Requirements
+
+- Go 1.26 or newer (`go install` only; no clone required for normal use)
+- For the router: Codex CLI with ChatGPT file auth (`codex login`, credentials at `~/.codex/auth.json` or `$CODEX_HOME/auth.json`)
+
+## CLI quick start
+
+Install the CLI (requires Go 1.26+; binary lands in `$(go env GOPATH)/bin` or `$GOBIN`):
 
 ```sh
-bin/hpatch <<'EOF'
+go install github.com/yusing/hpatch/cmd/hpatch@latest
+```
+
+Apply a script (writes only after the full script validates and stages; success report on stderr):
+
+```sh
+hpatch <<'EOF'
 in src/app.go
 tsel 12 "oldName"
 type "newName"
 EOF
 ```
 
-To inspect or forward the equivalent patch without changing files:
+Translate to an OpenAI `apply_patch` envelope without touching files (patch on stdout, pending report on stderr):
 
 ```sh
-bin/hpatch translate <<'EOF'
+hpatch translate <<'EOF'
 new message.txt
 type "hello world\n"
 EOF
 ```
 
-Use `--root` to select the trusted workspace boundary and `--cwd` to resolve
-relative script paths from a directory beneath it:
+Script paths are workspace-relative.
+
+| Surface | Workspace root | Path base inside root |
+| --- | --- | --- |
+| Standalone CLI | Process current directory, or absolute `--root` | `.`, or `--cwd` (relative or absolute, must stay under root) |
+| Codex router | The single usable absolute path from `x-codex-turn-metadata` | Root itself (no CLI flags) |
+
+Translated patches always use root-relative paths. Details: `hpatch --help`.
+
+| Mode | Mutates files? | stdout | stderr |
+| --- | --- | --- | --- |
+| `hpatch` | Yes, after full validation | empty on success | final-state report |
+| `hpatch translate` | No | `apply_patch` envelope | pending final-state report |
+| `hpatch gain` | No | metrics report | empty on success |
+| `--help` / `--tool-help` / `--version` | No | help or version | empty |
+
+Built-in references:
 
 ```sh
-bin/hpatch translate --root /workspace --cwd bin/block-graph-worktree <<'EOF'
-in main.go
-tsel 1 "package main"
-type "package graph"
-EOF
+hpatch --help
+hpatch --tool-help
+hpatch translate --help
+hpatch --version
 ```
 
-That command reads `/workspace/bin/block-graph-worktree/main.go` and emits the patch
-path `bin/block-graph-worktree/main.go`. Apply the translated patch from `/workspace`.
-Both options have CLI defaults: root is the process current directory and cwd is `.`.
+## Codex router (systemd user service)
 
-The second command writes an `Add File` patch to stdout. Successful translation keeps
-stdout patch-only and writes its pending final-state report to stderr. Errors return
-nonzero and go to stderr; evaluation diagnostics identify the command index, source line,
-operation, relevant path, and failure category. Normal mode preserves existing file
-permission bits and creates files from `new` with mode `0644`.
+The router listens on HTTP, rewrites Responses traffic so Codex calls `functions.hpatch`, evaluates scripts against the workspace declared in `x-codex-turn-metadata`, and returns the translated `apply_patch` carrier to Codex. You see a real diff in the UI rather than a silent file rewrite.
 
-Translate mode emits LF-only logical-line patches. OpenAI `apply_patch` cannot preserve
-CRLF bytes when such a patch is applied, so applying translated output to a CRLF file
-may normalize that file to LF. Normal mode itself preserves existing line endings
-outside text explicitly inserted by the script.
+On each request it strips the Code Mode `### apply_patch` section from the `functions.exec` / `additional_tools` description and installs a standalone `functions.hpatch` tool instead. That rewrites only the tool **definition** the model is given for that turn; the history may still label the apply step as `apply_patch` because that is what Codex actually runs.
 
-## Gain metrics
+Defaults:
 
-Successful changing scripts in normal and translate modes record cumulative paired
-estimates of the GPT-5 output tokens needed for the complete hpatch tool call and for the
-equivalent direct `apply_patch` call. The direct estimate is a semantic baseline: a
-`functions.exec` program passes only the translated patch envelope to `tools.apply_patch`
-and returns that tool result. The router's proxy marker and hpatch final-state report are
-not part of this output baseline. Failed calls record the emitted hpatch script as
-ineffective output and compare it with the same direct program carrying an empty patch
-envelope. No retry payload is inferred.
+| Setting | Default |
+| --- | --- |
+| Listen | `127.0.0.1:8080` (`--listen`) |
+| Upstream start timeout | `10m` (`--timeout`) |
+| Auth | `~/.codex/auth.json`, or `$CODEX_HOME/auth.json` |
+| Metrics / hooks | `$XDG_CONFIG_HOME/hpatch` or `~/.config/hpatch` |
+| Endpoints | `POST /v1/responses`, `GET /` (dashboard), `GET /api/metrics` |
 
-Corrections are charged as the shorter payload the model emitted, while the rebuilt
-complete script is used only for evaluation. Successfully returned final-state reports and
-failure diagnostics add their exact estimated input-token overhead to separate counters.
-The router also counts its installed hpatch definition and the displaced native patch
-definition once per session. The same metrics store tracks invocations and command-caused
-errors separately for every supported patch command, including successful no-op scripts,
-and attributes each error to the command that raised it.
+The process must run as your login user so it can open the absolute workspace paths Codex sends and read your Codex credentials. A user systemd unit is the intended long-running setup.
+
+### Install the binary
 
 ```sh
-bin/hpatch gain
+go install github.com/yusing/hpatch/cmd/hpatch-router@latest
 ```
 
-hpatch estimates the current tool-call payloads. Both effective and ineffective hpatch
-estimates count the `functions.hpatch` tool name followed by the model-emitted free-form
-editing script. The direct estimate counts the `functions.exec` tool name and a fixed
-free-form program that passes the serialized patch envelope to `tools.apply_patch`.
+Default install path is `~/go/bin/hpatch-router` (or `$GOBIN/hpatch-router` if `GOBIN` is set). Ensure that directory is on your `PATH`.
 
-These are reproducible estimates, not API billing totals. They exclude provider-hidden
-protocol and reasoning tokens, assistant commentary, server-generated identifiers,
-and tool results. Host formatting or a different host tool schema can change actual
-usage.
+### Install and start the unit
 
-The report labels effective and ineffective hpatch output-token estimates separately and
-shows their calculated total. Effective-only and overall reductions compare output-token
-quantities only; input tokens are not price-converted or combined with output. Stable
-tables separate aggregate command errors, single and multiple `tsel` spans, exact and
-whitespace-recovered block selections, terminal failure reasons, and per-command failure
-reasons. Percentages are rounded exactly to one decimal place and are zero when their
-denominator is zero. Metrics persist in the platform user-configuration directory. Only
-the latest metrics format is decoded. A valid, checksummed slot with another `HPATCH`
-version resets totals when no current-format slot exists; malformed slots do not count as
-version mismatches. Collection failures warn but do not change the success or failure of
-the requested edit or translated output.
-
-## Editing language
-
-Run the built-in reference for stdin usage, process commands, and the complete
-editing-command summary:
+The unit template is published at  
+[`contrib/systemd/hpatch-router.service`](contrib/systemd/hpatch-router.service)  
+(raw URL works after the repo is on GitHub):
 
 ```sh
-bin/hpatch --help
-bin/hpatch translate --help
-bin/hpatch --tool-help
-bin/hpatch --version
+mkdir -p ~/.config/systemd/user
+curl -fsSL https://raw.githubusercontent.com/yusing/hpatch/main/contrib/systemd/hpatch-router.service \
+  -o ~/.config/systemd/user/hpatch-router.service
+systemctl --user daemon-reload
+systemctl --user enable --now hpatch-router.service
+systemctl --user status hpatch-router.service
 ```
 
-The first `in` of an existing file captures an immutable generation baseline. Every
-selector for that logical file resolves against that baseline, including after `mv` or
-a repeated `in`; inserted text becomes selectable only after `commit` materializes the
-next in-memory baseline. A selector overlapping baseline content already replaced or
-deleted by an earlier command is rejected. Disjoint edits are materialized together
-after validation, so independent selectors keep their original meaning regardless of
-command order. Overlapping replacements or deletions, insertions inside a replaced span,
-and multiple insertions at one baseline position fail atomically. New files have an empty
-baseline and accept one effective complete-content `type` per generation.
+Optional: keep the service after logout:
 
-`tsel FROM_LINE "TEXT" [N]` scans forward from the lower line boundary and establishes
-the first `N` exact non-overlapping matches as separate selections. The same edit action
-applies to every selected match atomically. `rsel` selects complete baseline logical
-lines; linewise replacement inherits the selected final line terminator unless the
-replacement supplies one. `bsel "START" "END"` searches the complete active-file
-baseline independently of cursor or selection state. It resolves `START` uniquely, then
-resolves `END` uniquely after that start. Exact anchors are authoritative; when an exact
-anchor is missing, nonempty runs of ASCII spaces and tabs match interchangeably.
-Ambiguous, reversed, or overlapping anchors fail.
+```sh
+loginctl enable-linger "$USER"
+```
 
-Every editing invocation has one root. Relative script paths resolve from cwd within
-that root. Absolute script paths must use the canonical root spelling and remain inside
-it. Root escapes through `..`, absolute paths, or symlinks fail before staging.
-Translation always emits root-relative paths, so its downstream patch consumer must
-use the same root.
+One-shot without the unit (still uses the installed binary):
 
-Library callers can pass an already-opened root capability directly:
+```sh
+hpatch-router --listen 127.0.0.1:8080
+```
 
-```go
-root, err := os.OpenRoot("/workspace")
-if err != nil {
-	return err
+If auth lives outside `~/.codex`, or the binary is not in `~/go/bin`, use a drop-in:
+
+```sh
+systemctl --user edit hpatch-router.service
+```
+
+```ini
+[Service]
+Environment=CODEX_HOME=%h/.codex
+# ExecStart=
+# ExecStart=%h/.local/bin/hpatch-router --listen 127.0.0.1:9090
+```
+
+Then `systemctl --user daemon-reload && systemctl --user restart hpatch-router.service`.
+
+### Point Codex at the router
+
+Add a Responses provider in `~/.codex/config.toml` (or another Codex profile config under `~/.codex/`):
+
+```toml
+[model_providers.hpatch]
+name = "hpatch"
+base_url = "http://127.0.0.1:8080/v1"
+wire_api = "responses"
+```
+
+Make it the default for the whole config:
+
+```toml
+model_provider = "hpatch"
+```
+
+Or pick it per invocation (same pattern as other local providers):
+
+```sh
+codex --local-provider hpatch --oss
+```
+
+Profiles work the same way: put the `[model_providers.*]` block in the profile config (or the main config), then run with `--profile <name> --local-provider <provider> --oss`.
+
+Start sessions from a git worktree: the router requires exactly one usable absolute workspace root in turn metadata.
+
+Useful checks:
+
+```sh
+systemctl --user status hpatch-router.service
+journalctl --user -u hpatch-router.service -f
+curl -sS http://127.0.0.1:8080/api/metrics
+# open http://127.0.0.1:8080/ for the local dashboard
+```
+
+### Override base instructions (prefer hpatch over apply_patch)
+
+The router exposes `functions.hpatch` and strips `apply_patch` from the Code Mode `functions.exec` definition, but Codex’s **default base prompt** still tells the model to use `apply_patch` for local edits, and a runtime `ALL_TOOLS` dump can still list `tools.apply_patch`. Point Codex at a custom base-instructions file and replace that section so the model prefers hpatch even when it can see both.
+
+1. Fetch a recent copy of the Codex default base prompt (keep the rest of the file; only replace the file-editing section):
+
+   - <https://github.com/openai/codex/blob/main/codex-rs/protocol/src/prompts/base_instructions/default.md>
+   - <https://github.com/asgeirtj/system_prompts_leaks/blob/main/OpenAI/Codex/gpt-5.6.md>
+
+2. In the file-editing section (often `## File editing` or `## File editing constraints`), replace only the `apply_patch` guidance with [`contrib/codex/file-editing-instructions.md`](contrib/codex/file-editing-instructions.md). Leave dirty-worktree handling and the non-destructive git rules as in the default base prompt; those are not hpatch-specific.
+
+3. Point Codex at your file in `~/.codex/config.toml` (or a profile config):
+
+```toml
+model_instructions_file = "/absolute/path/to/your/base_instructions.md"
+```
+
+Do **not** rely on project `AGENTS.md` alone for this: the stock base prompt still steers file edits toward `apply_patch`. Override the base prompt the same way other host tooling (for example skills) does when it must replace a default section rather than append to `AGENTS.md`.
+
+## Editing language (summary)
+
+Authoritative guidance: `hpatch --help` and `hpatch --tool-help`. Contract: [`doc/spec/interface.md`](doc/spec/interface.md).
+
+Selectors (prefer the first that fits):
+
+1. Complete logical lines or indentation changes: `rsel START:END`
+2. Exact non-whitespace content: `tsel FROM_LINE "TEXT" [N]`
+3. Block whose ends sit inside lines: `bsel "START" "END"`
+4. Exact rune columns only when needed: `sel LINE START:END`
+
+Common commands: `in` / `new` / `mv` / `rm`, `type "…"` or `type <<PATCH` … `PATCH`, `del`, `copy` / `cut` / `paste`, `commit`.
+
+Rules worth remembering:
+
+- Never put leading spaces or tabs in `tsel` / `bsel` anchors; start at stable non-whitespace content.
+- First `in` of a file freezes an immutable baseline; selectors use that baseline until `commit`.
+- Disjoint edits can land together; overlapping replacements fail the whole script atomically.
+- Rejection changes nothing. Router-owned retries can replace, delete, or insert failed commands by index without resending the full script.
+
+Multiline example:
+
+```text
+in parser.go
+rsel 50:53
+type <<PATCH
+func parse() error {
+	return nil
 }
-defer root.Close()
-
-workspace := hpatch.Workspace{Root: root, CWD: "bin/block-graph-worktree"}
-patch, err := hpatch.Translate(ctx, workspace, script)
+PATCH
 ```
 
-`Workspace.CWD` is root-relative and defaults to `.`. The caller owns the `*os.Root`
-and must keep it open for the operation. Hosts should canonicalize and authorize the
-absolute root before opening it; the standalone CLI does this for `--root` and also
-accepts an absolute `--cwd` only when it canonicalizes beneath root. Absolute script
-operands must use that canonical root spelling; equivalent symlink aliases are not
-resolved outside the root capability. Paths through absolute symlink targets are also
-rejected by Go's `os.Root`, even when the target points back inside root. Prefer
-root-relative script operands.
+## Metrics
 
-The complete behavior and failure contract is in
-[`doc/spec/interface.md`](doc/spec/interface.md). Agents should read `hpatch --help`,
-which is the authoritative editing reference.
+Successful CLI and router edits record paired GPT-5 **output-token** estimates for:
 
-## Token comparison
+- hpatch: `functions.hpatch` + the model-emitted script
+- baseline: `functions.exec` + a fixed program that calls `tools.apply_patch` with the translated envelope
 
-The comparison executable first proves that each independently authored hpatch and
-`apply_patch` input produces the same path-to-content map. It then counts both inputs
-with the Go tokenizer library's GPT-5 model mapping:
+Failed calls charge the full rejected hpatch payload against an empty-patch baseline. Final-state reports, diagnostics, and once-per-session tool definitions are tracked as **input** overhead separately.
+
+```sh
+hpatch gain
+```
+
+These are reproducible payload estimates, not provider billing totals. They omit reasoning tokens, commentary, and host-specific framing.
+
+Hand-authored scenario comparison (does not update `hpatch gain`):
 
 ```sh
 go run ./compare
 ```
 
-The report includes the encoding selected for GPT-5, per-scenario token counts,
-absolute savings, percentage reduction, and totals. Comparison runs isolate their
-metrics and do not contribute to `hpatch gain`.
+## How it works
 
-## Validation
+**CLI:** resolve workspace (`--root` / `--cwd` or process cwd) → parse script → evaluate against an in-memory baseline → stage multi-file result → commit (normal mode) or emit one `apply_patch` envelope (translate).
+
+**Router:** load ChatGPT Codex auth → accept `POST /v1/responses` → expose `functions.hpatch` instead of Code Mode `apply_patch` → on tool call, translate against the single usable workspace from Codex metadata (CLI `--root` / `--cwd` are unused here) → return a carrier that makes Codex apply the real patch and surface the diff.
+
+Workspace selection is host-owned. Zero or multiple usable roots fail closed. Codex still enforces sandbox permissions on apply.
+
+## Documentation
+
+| Doc | Contents |
+| --- | --- |
+| [`doc/brief.md`](doc/brief.md) | Product brief and scope |
+| [`doc/spec/index.md`](doc/spec/index.md) | Spec inventory |
+| [`doc/spec/interface.md`](doc/spec/interface.md) | CLI, script, correction, metrics contracts |
+| [`doc/spec/comparison.md`](doc/spec/comparison.md) | Token comparison scenarios |
+| [`doc/architecture/index.md`](doc/architecture/index.md) | Architecture ownership |
+| [`contrib/systemd/hpatch-router.service`](contrib/systemd/hpatch-router.service) | User unit template |
+| [`contrib/codex/file-editing-instructions.md`](contrib/codex/file-editing-instructions.md) | Base-prompt replacement for file editing |
+| [`AGENTS.md`](AGENTS.md) | Codex router E2E notes for agents |
+
+Library use: module path `github.com/yusing/hpatch`. Importable as a library (`hpatch.Translate`, `hpatch.Workspace`, host metrics helpers); hosts should open an `*os.Root` capability for the workspace before calling in.
+
+## Development
 
 ```sh
+git clone https://github.com/yusing/hpatch.git
+cd hpatch
 go test ./...
 go vet ./...
+go install ./cmd/hpatch ./cmd/hpatch-router
 ```

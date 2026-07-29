@@ -92,42 +92,24 @@ func TestTopLevelHelpDescribesCompletePublicSurface(t *testing.T) {
 	}
 }
 
-func TestToolHelpIsCompactAgentContract(t *testing.T) {
+func TestToolHelpGuidesAgentCommandChoice(t *testing.T) {
 	help := toolHelpText()
 	for _, required := range []string{
-		"HPATCH/1",
-		"call=functions.hpatch(raw_complete_script)",
-		"atomic(reject|cancel)=patch:none,workspace:unchanged",
-		"lex.command=nonblank_physical_line;newline=command_end;exception=type_heredoc;recovery=open_quote_across_newline=>one_header_owned_rejected_frame",
-		"lex.quote=JSON_double_quote;literal_tab=allow;physical_newline=never;linebreak_escape=\\n|\\r",
-		"cmd=in PATH|new PATH|mv DESTINATION|rm|sel LINE START:END",
-		"state.active=in|new=>select;mv DESTINATION=>rename_active_file(source_implicit);rm=>delete_active_file(no_operand)",
-		"cursor:=BOF,selections:=none,active:=keep",
-		"state.coords=file.baseline[generation]",
-		"state.commit=all_live_files",
-		"partial_filesystem_write=false;whole_script_atomic=true",
-		"tsel=baseline[(FROM_LINE,col1)..EOF];TEXT=nonempty",
-		"tsel.TEXT=copy_exact_baseline_substring;start_at_first_nonwhitespace;exclude_leading_indent",
-		"tsel.repair=FROM_LINE_only;TEXT_unchanged",
-		"bsel=START!=END;nonempty;START_count(file)==1&&END_count(suffix_after_START)==1",
-		"selection=START.first_byte..END.last_byte;outside_bytes_preserved",
-		"bsel.anchor_fallback=no_exact_match",
-		"anchor=stable_nonwhitespace_content;never_include_leading_indent;whole_line|indent_edit=>rsel",
-		"rsel=logical_line[START..END]",
-		"numeric_selector.coords=fresh_nl_-ba",
-		"heredoc.tag=[A-Za-z0-9_.-]{1,64}",
-		"inline_linebreaks=type|bsel:encode_as_\\n|\\r;tsel:forbid_LF_CR",
-		"edit.copy=clipboard:=first_selection_baseline_text",
-		"nonlinewise_destination_may_split_line",
-		"following_terminator_outside_selection_unless_encoded_in_END",
-		"edit.conflict=same_generation",
-		"result.success=active_path+cursor_or_selection_ranges<=3+last_effective_edit",
-		"result.selection_ranges=individual;locations>3=>first_3+omitted_count",
-		"result.file_actions=show_if lifecycle|multi_file|changed_file!=active",
-		"source_codepoints_per_line<=64;truncation_marker=none",
-		"result.noop=net_workspace_unchanged=>reject",
-		"repair_context_not_match_candidate",
-		"verify=inspect_reported_lines",
+		"HPATCH/1 edits workspace files atomically.",
+		"Choose the first matching selector:",
+		"Complete logical lines or any indentation change: rsel",
+		"Exact existing non-whitespace content: tsel",
+		"Never include leading spaces or tabs in tsel TEXT or bsel anchors.",
+		"Never use bsel when rsel can own the complete lines.",
+		"Never place a physical newline inside a quoted operand.",
+		"Use type <<PATCH for multiline replacement text.",
+		"Put PATCH immediately after the final content line.",
+		"Replace complete lines:",
+		`tsel 90 "return saveArtifactPayload(path, b)"`,
+		`Do not write tsel 90 "\t\treturn saveArtifactPayload(path, b)".`,
+		`bsel "oldCall(" "finalArgument)"`,
+		"The first in captures an immutable file baseline.",
+		"After success, inspect the reported edited ranges",
 	} {
 		if !strings.Contains(help, required) {
 			t.Fatalf("tool help does not contain %q", required)
@@ -135,9 +117,6 @@ func TestToolHelpIsCompactAgentContract(t *testing.T) {
 	}
 	for _, excluded := range []string{
 		"Usage:",
-		"Commands:",
-		"Agent use:",
-		"Final-state report:",
 		"hpatch gain",
 		"--root",
 		"--cwd",
@@ -145,20 +124,14 @@ func TestToolHelpIsCompactAgentContract(t *testing.T) {
 		"INDEX: COMMAND",
 	} {
 		if strings.Contains(help, excluded) {
-			t.Fatalf("tool help contains prose or non-tool text %q", excluded)
+			t.Fatalf("tool help contains non-tool text %q", excluded)
 		}
 	}
-	body := strings.TrimSuffix(help, "\n")
-	if strings.Contains(body, "\n\n") {
-		t.Fatal("tool help contains layout-only blank lines")
+	if !strings.HasPrefix(help, "HPATCH/1 edits workspace files atomically.") {
+		t.Fatal("command-choice guidance is not at the top of tool help")
 	}
-	for line := range strings.SplitSeq(body, "\n") {
-		if line != strings.TrimSpace(line) {
-			t.Fatalf("tool help line has layout whitespace: %q", line)
-		}
-	}
-	if len(help) >= len(helpTextBase)/2 {
-		t.Fatalf("tool help is not compact: %d bytes versus %d-byte CLI help", len(help), len(helpTextBase))
+	if len(help) >= len(helpTextBase) {
+		t.Fatalf("tool help exceeds CLI help: %d bytes versus %d-byte CLI help", len(help), len(helpTextBase))
 	}
 }
 

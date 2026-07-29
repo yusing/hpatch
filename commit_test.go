@@ -2,7 +2,7 @@ package hpatch
 
 import (
 	"bytes"
-	"hpatch/internal/patchtest"
+	"github.com/yusing/hpatch/internal/patchtest"
 	"reflect"
 	"strings"
 	"testing"

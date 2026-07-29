@@ -1,0 +1,206 @@
+//go:build e2e
+
+package router
+
+import (
+	"bytes"
+	"context"
+	"io"
+	"net/http/httptest"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"regexp"
+	"strconv"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"testing"
+	"time"
+)
+
+const codexE2EPrompt = `Use only functions.hpatch for every file edit. Shell commands are allowed only for read-only inspection and verification; never use a shell command or another editing tool to modify a file.
+
+Work through these requests in order:
+
+1. Inspect whole.go with fresh numbered output. Replace the complete logical lines of the status function with:
+func status() string {
+	return "new"
+}
+The replacement must have exactly one trailing newline and no blank line after the closing brace. Do not use copy, cut, or paste.
+
+2. In anchor.go, change only return saveArtifactPayload(path, b) to return saveArtifactPayloadAtomically(path, b). Preserve its existing indentation exactly; do not put the indentation in a content anchor.
+
+3. In partial.go, replace the multiline block beginning at oldCall( and ending at finalArgument) with newCall(firstArgument, finalArgument). Preserve the prefix and suffix on the boundary lines.
+
+Do not merely describe the edits. Make them and verify the resulting files.`
+
+type recordingHPatchTranslator struct {
+	delegate hpatchTranslator
+
+	mu      sync.Mutex
+	scripts []string
+}
+
+func (t *recordingHPatchTranslator) ToolDescription() string {
+	return t.delegate.ToolDescription()
+}
+
+func (t *recordingHPatchTranslator) Translate(ctx context.Context, workspace routingWorkspace, script string) (hpatchTranslationResult, error) {
+	t.mu.Lock()
+	t.scripts = append(t.scripts, script)
+	t.mu.Unlock()
+	return t.delegate.Translate(ctx, workspace, script)
+}
+
+func (t *recordingHPatchTranslator) RecordMetrics(ctx context.Context, record hpatchMetricRecord) error {
+	return t.delegate.RecordMetrics(ctx, record)
+}
+
+func (t *recordingHPatchTranslator) snapshot() []string {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return append([]string(nil), t.scripts...)
+}
+
+func TestCodexHPatchGrammarE2E(t *testing.T) {
+	codexPath := requireExecutable(t, "codex")
+	gitPath := requireExecutable(t, "git")
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+
+	auth, err := loadCodexAuth()
+	if err != nil {
+		t.Fatalf("load router authentication: %v", err)
+	}
+	delegate, err := newInProcessHPatchTranslator()
+	if err != nil {
+		t.Fatalf("create hpatch translator: %v", err)
+	}
+	recorder := &recordingHPatchTranslator{delegate: delegate}
+	var requestSequence atomic.Uint64
+	server := httptest.NewServer(responsesHandler(
+		t.Context(),
+		10*time.Minute,
+		newProviderClient(auth, nil),
+		newDiagnostics(io.Discard),
+		newHPatchProxy(recorder),
+		newMetricsStore(),
+		&requestSequence,
+	))
+	defer server.Close()
+
+	workspace := t.TempDir()
+	runCommand(t, workspace, gitPath, "init", "--quiet")
+	writeFixture(t, workspace, "whole.go", "package sample\n\nfunc status() string {\n\treturn \"old\"\n}\n")
+	writeFixture(t, workspace, "anchor.go", "package sample\n\nfunc save(path string, b []byte) error {\n\t\treturn saveArtifactPayload(path, b)\n}\n")
+	writeFixture(t, workspace, "partial.go", "package sample\n\nvar expression = prefix + oldCall(\n\tfirstArgument,\n\tfinalArgument) + suffix\n")
+
+	model := environmentOrDefault("HPATCH_E2E_MODEL", "gpt-5.6-luna")
+	providerName := "hpatch-e2e"
+	baseURL := server.URL + "/v1"
+	providerConfig := "model_providers." + providerName + "={ name = " + strconv.Quote(providerName) +
+		", base_url = " + strconv.Quote(baseURL) + ", wire_api = \"responses\" }"
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Minute)
+	defer cancel()
+	args := []string{
+		"-c", providerConfig,
+		"--local-provider", providerName,
+		"--oss",
+		"--model", model,
+		"--sandbox", "workspace-write",
+		"--ask-for-approval", "never",
+		"exec",
+		"--ignore-user-config",
+		"--json",
+		"--color", "never",
+		"-C", workspace,
+		codexE2EPrompt,
+	}
+	var stdout, stderr bytes.Buffer
+	codex := exec.CommandContext(ctx, codexPath, args...)
+	codex.Stdout = &stdout
+	codex.Stderr = &stderr
+	if err := codex.Run(); err != nil {
+		t.Fatalf(
+			"run Codex E2E: %v\nstdout tail:\n%s\nstderr tail:\n%s",
+			err,
+			tailBytes(stdout.Bytes(), 64<<10),
+			tailBytes(stderr.Bytes(), 64<<10),
+		)
+	}
+
+	assertFileBytes(t, workspace, "whole.go", "package sample\n\nfunc status() string {\n\treturn \"new\"\n}\n")
+	assertFileBytes(t, workspace, "anchor.go", "package sample\n\nfunc save(path string, b []byte) error {\n\t\treturn saveArtifactPayloadAtomically(path, b)\n}\n")
+	assertFileBytes(t, workspace, "partial.go", "package sample\n\nvar expression = prefix + newCall(firstArgument, finalArgument) + suffix\n")
+
+	scripts := strings.Join(recorder.snapshot(), "\n---CALL---\n")
+	for name, pattern := range map[string]string{
+		"whole-line selector":     `(?s)in whole\.go.*?rsel 3:5.*?type <<PATCH`,
+		"content selector":        `(?m)tsel [1-4] "return saveArtifactPayload\(path, b\)"`,
+		"partial-block selector":  `(?m)bsel "oldCall\(" "finalArgument\)"`,
+		"fixed heredoc delimiter": `(?m)^PATCH$`,
+	} {
+		if !regexp.MustCompile(pattern).MatchString(scripts) {
+			t.Errorf("%s not found in translated hpatch scripts; pattern %q\nscripts:\n%s", name, pattern, scripts)
+		}
+	}
+	for _, forbidden := range []string{
+		`tsel 4 "\t\treturn saveArtifactPayload(path, b)"`,
+		`bsel "\toldCall("`,
+		"\n\nPATCH",
+	} {
+		if strings.Contains(scripts, forbidden) {
+			t.Errorf("translated hpatch scripts contain forbidden edit form %q\nscripts:\n%s", forbidden, scripts)
+		}
+	}
+}
+
+func requireExecutable(t *testing.T, name string) string {
+	t.Helper()
+	path, err := exec.LookPath(name)
+	if err != nil {
+		t.Fatalf("%s is required for the E2E test: %v", name, err)
+	}
+	return path
+}
+
+func environmentOrDefault(name, fallback string) string {
+	if value := strings.TrimSpace(os.Getenv(name)); value != "" {
+		return value
+	}
+	return fallback
+}
+
+func runCommand(t *testing.T, directory, path string, args ...string) {
+	t.Helper()
+	command := exec.Command(path, args...)
+	command.Dir = directory
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("run %s: %v\n%s", filepath.Base(path), err, output)
+	}
+}
+
+func writeFixture(t *testing.T, workspace, name, content string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(workspace, name), []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func assertFileBytes(t *testing.T, workspace, name, want string) {
+	t.Helper()
+	got, err := os.ReadFile(filepath.Join(workspace, name))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, []byte(want)) {
+		t.Errorf("%s bytes differ:\n got %q\nwant %q", name, got, want)
+	}
+}
+
+func tailBytes(value []byte, limit int) []byte {
+	if len(value) <= limit {
+		return value
+	}
+	return value[len(value)-limit:]
+}

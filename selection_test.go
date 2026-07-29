@@ -2,7 +2,7 @@ package hpatch
 
 import (
 	"encoding/json"
-	"hpatch/internal/patchtest"
+	"github.com/yusing/hpatch/internal/patchtest"
 	"reflect"
 	"strings"
 	"testing"
