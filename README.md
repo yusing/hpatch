@@ -168,6 +168,7 @@ Add a Responses provider in `~/.codex/config.toml` (or another Codex profile con
 name = "hpatch"
 base_url = "http://127.0.0.1:8080/v1"
 wire_api = "responses"
+requires_openai_auth = true
 ```
 
 Make it the default for the whole config:
