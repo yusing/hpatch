@@ -123,10 +123,10 @@ func TestToolDescriptionGuidesSparseCommandChoice(t *testing.T) {
 
 func TestToolDescriptionSuggestedUseCasesExecute(t *testing.T) {
 	t.Run("sel targets later identical same-line match", func(t *testing.T) {
-		const displayedScript = `  in predicate.go
-  sel 24 17:21
-  type "cached"`
-		if !strings.Contains(toolDescription, displayedScript) {
+		const script = `in predicate.go
+sel 24 17:21
+type "cached"`
+		if !strings.Contains(toolDescription, fencedScript(script)) {
 			t.Fatal("tool description omits executable sel example")
 		}
 
@@ -134,7 +134,6 @@ func TestToolDescriptionSuggestedUseCasesExecute(t *testing.T) {
 		prefix := strings.Repeat("padding\n", 23)
 		writeTestFile(t, root, "predicate.go", prefix+"return ready || ready\n", 0o644)
 
-		script := strings.ReplaceAll(strings.TrimPrefix(displayedScript, "  "), "\n  ", "\n")
 		stdout, stderr, exitCode := runForTest(root, nil, script)
 		if exitCode != 0 || stdout != "" || stderr != "" {
 			t.Fatalf("Run() = exit %d, stdout %q, stderr %q", exitCode, stdout, stderr)
@@ -155,16 +154,16 @@ func TestToolDescriptionSuggestedUseCasesExecute(t *testing.T) {
 	})
 
 	t.Run("cut paste commit then edit introduced text", func(t *testing.T) {
-		const displayedScript = `  in source.go
-  rsel 12:28
-  cut
-  in destination.go
-  rsel 40:40
-  paste
-  commit
-  tsel 41 "sourceRegistry"
-  type "destinationRegistry"`
-		if !strings.Contains(toolDescription, displayedScript) {
+		const script = `in source.go
+rsel 12:28
+cut
+in destination.go
+rsel 40:40
+paste
+commit
+tsel 41 "sourceRegistry"
+type "destinationRegistry"`
+		if !strings.Contains(toolDescription, fencedScript(script)) {
 			t.Fatal("tool description omits executable cut and commit example")
 		}
 
@@ -175,7 +174,6 @@ func TestToolDescriptionSuggestedUseCasesExecute(t *testing.T) {
 		writeTestFile(t, root, "source.go", sourcePrefix+moved+"tail\n", 0o644)
 		writeTestFile(t, root, "destination.go", destinationPrefix+"// handlers\nafter\n", 0o644)
 
-		script := strings.ReplaceAll(strings.TrimPrefix(displayedScript, "  "), "\n  ", "\n")
 		withoutCommit := strings.Replace(script, "\ncommit\n", "\n", 1)
 		stdout, stderr, exitCode := runForTest(root, []string{"translate"}, withoutCommit)
 		if exitCode != 1 || stdout != "" || !strings.Contains(stderr, `found 0 of 1 requested matches of "sourceRegistry"`) {
@@ -216,6 +214,10 @@ func TestToolDescriptionSuggestedUseCasesExecute(t *testing.T) {
 			t.Fatalf("cut script tokens = %d, re-emitted body tokens = %d", cutTokens, reemitTokens)
 		}
 	})
+}
+
+func fencedScript(script string) string {
+	return "```\n" + script + "\n```"
 }
 
 func TestToolDescriptionSelectorTokenComparisons(t *testing.T) {

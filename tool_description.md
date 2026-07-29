@@ -28,15 +28,12 @@ paste
 - Use type <<PATCH for multiline text and put PATCH immediately after the final content line; an extra blank body line changes the output.
 - Use inline type when replacement text must not end with a newline.
 
-Function-body example that preserves the declaration, parameters, opening brace, indentation before the first anchor, and closing brace:
+Function-body example that preserves the declaration, parameters, opening brace, indentation before the first anchor, and closing brace. Use it after verifying that both distinctive anchors occur exactly once. The baseline tab before the first anchor remains outside the selection; `\t` reproduces that indentation after `\n`. Inline `type` deliberately omits a trailing `\n`, preserving the baseline line terminator without adding a blank line:
 
 ```
 in service.go
-bsel "oldResult := compute(input)" "return oldResult, nil"
-type <<PATCH
-newResult := computeFresh(input)
-    return newResult, nil
-PATCH
+bsel "oldResult := computeServiceTotal(input)" "return oldResult, nil // service total"
+type "newResult := computeFreshServiceTotal(input)\n\treturn newResult, nil // service total"
 ```
 
 One-line fragment example that preserves indentation and surrounding text:

@@ -112,7 +112,7 @@ func TestToolHelpGuidesAgentCommandChoice(t *testing.T) {
 		"Use type <<PATCH for multiline text",
 		"put PATCH immediately after the final content line",
 		"Function-body example that preserves the declaration, parameters, opening brace",
-		`bsel "oldResult := compute(input)" "return oldResult, nil"`,
+		`bsel "oldResult := computeServiceTotal(input)" "return oldResult, nil // service total"`,
 		`tsel 90 "saveArtifactPayload(path, b)"`,
 		"The first in captures an immutable file baseline.",
 		"After success, inspect the reported edited ranges",
