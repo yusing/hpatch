@@ -32,6 +32,8 @@ const result = await tools.apply_patch("*** Begin Patch\n*** Update File: artifa
 text(result);
 ```
 
+The router also supplies `functions.hpatch` to the provider with a [Lark grammar](https://developers.openai.com/api/docs/guides/function-calling#context-free-grammars). As the model writes the tool call, only tokens that can still lead to a valid script are allowed. Bad syntax never becomes a finished tool call, so there is no generate-reject-retry cycle for it. Grammar is syntax only: a valid script can still fail for missing files, ambiguous selectors, or conflicting edits, and those failures stay atomic.
+
 ## Requirements
 
 - Go 1.26 or newer (`go install` only; no clone required for normal use)
