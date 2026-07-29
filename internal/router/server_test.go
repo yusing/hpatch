@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -24,11 +25,15 @@ type serverForwardResult struct {
 }
 
 type serverFakeProvider struct {
-	results   []serverForwardResult
-	forwarded [][]byte
+	results           []serverForwardResult
+	forwarded         [][]byte
+	forwardedHeaders  []http.Header
+	forwardedCacheKey []string
 }
 
-func (f *serverFakeProvider) forwardExecution(_, _ context.Context, body []byte) (*http.Response, error) {
+func (f *serverFakeProvider) forwardExecution(_, _ context.Context, body []byte, headers http.Header, cacheKey string) (*http.Response, error) {
+	f.forwardedHeaders = append(f.forwardedHeaders, headers.Clone())
+	f.forwardedCacheKey = append(f.forwardedCacheKey, cacheKey)
 	return f.next(body)
 }
 
@@ -196,9 +201,21 @@ func TestExecuteRequestForwardsCompactionWithoutHPatchRewrite(t *testing.T) {
 	}
 }
 
+//nolint:canonicalheader // Exact lowercase names match Codex's observed wire headers.
 func TestExecuteRequestForwardsRewrittenRequestAndRecordsUsage(t *testing.T) {
 	workspace := t.TempDir()
-	parsed := serverRequest(t, nil)
+	parsed := serverRequest(t, func(request map[string]any) {
+		request["prompt_cache_key"] = "prompt-cache"
+	})
+
+	headers := serverMetadataHeaders(t, "turn", map[string]json.RawMessage{workspace: nil})
+	headers.Add(sessionIDHeader, "session-primary")
+	headers.Add(sessionIDHeader, "session-secondary")
+	headers.Set(threadIDHeader, "thread")
+	headers.Set(clientRequestIDHeader, "client-request")
+	headers.Set(codexWindowIDHeader, "window:0")
+	headers.Set(codexBetaFeaturesHeader, "feature")
+	headers.Set(codexResponsesLiteHeader, "true")
 	responseBody := string(mustTestJSON(t, map[string]any{
 		"status": "completed",
 		"usage": map[string]any{
@@ -214,12 +231,20 @@ func TestExecuteRequestForwardsRewrittenRequestAndRecordsUsage(t *testing.T) {
 	}))
 	store := newMetricsStore("")
 	var output bytes.Buffer
-	err := executeRequest(t.Context(), t.Context(), parsed, serverMetadataHeaders(t, "turn", map[string]json.RawMessage{workspace: nil}), "session", provider, &output, newDiagnostics(io.Discard), time.Now, proxy, store)
+	err := executeRequest(t.Context(), t.Context(), parsed, headers, "session", provider, &output, newDiagnostics(io.Discard), time.Now, proxy, store)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(provider.forwarded) != 1 {
 		t.Fatalf("upstream requests = %d, want 1", len(provider.forwarded))
+	}
+	if got := provider.forwardedCacheKey[0]; got != "prompt-cache" {
+		t.Fatalf("upstream cache key = %q, want prompt_cache_key", got)
+	}
+	for _, name := range []string{sessionIDHeader, threadIDHeader, clientRequestIDHeader, codexWindowIDHeader, codexBetaFeaturesHeader, codexResponsesLiteHeader, codexTurnMetadataHeader} {
+		if got, want := provider.forwardedHeaders[0].Values(name), headers.Values(name); !slices.Equal(got, want) {
+			t.Fatalf("forwarded header %s = %q, want %q", name, got, want)
+		}
 	}
 	forwarded, err := parseResponsesRequest(provider.forwarded[0])
 	if err != nil {
@@ -286,10 +311,10 @@ func TestResponsesHandlerRejectsOversizedBodyBeforeUpstream(t *testing.T) {
 	}
 }
 
-type serverProviderFunc func(context.Context, context.Context, []byte) (*http.Response, error)
+type serverProviderFunc func(context.Context, context.Context, []byte, http.Header, string) (*http.Response, error)
 
-func (f serverProviderFunc) forwardExecution(startCtx, responseCtx context.Context, body []byte) (*http.Response, error) {
-	return f(startCtx, responseCtx, body)
+func (f serverProviderFunc) forwardExecution(startCtx, responseCtx context.Context, body []byte, headers http.Header, cacheKey string) (*http.Response, error) {
+	return f(startCtx, responseCtx, body, headers, cacheKey)
 }
 
 type serverCancelableSSEBody struct {
@@ -310,10 +335,11 @@ func (body *serverCancelableSSEBody) Read(content []byte) (int, error) {
 
 func (*serverCancelableSSEBody) Close() error { return nil }
 
+//nolint:canonicalheader // Exact lowercase names match Codex's observed wire headers.
 func TestResponsesHandlerDoesNotLogClientCancellationAsOperationalEvent(t *testing.T) {
 	upstreamEvent := "event: response.created\ndata: {\"type\":\"response.created\"}\n\n"
 	upstreamCanceled := make(chan struct{})
-	provider := serverProviderFunc(func(_, responseCtx context.Context, _ []byte) (*http.Response, error) {
+	provider := serverProviderFunc(func(_, responseCtx context.Context, _ []byte, _ http.Header, _ string) (*http.Response, error) {
 		return &http.Response{
 			StatusCode: http.StatusOK,
 			Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
@@ -346,7 +372,7 @@ func TestResponsesHandlerDoesNotLogClientCancellationAsOperationalEvent(t *testi
 		t.Fatal(err)
 	}
 	request.Header = serverCompactionMetadataHeaders(t)
-	request.Header.Set(sessionIDHeader, "session") //nolint:canonicalheader // session-id matches Codex's wire header.
+	request.Header.Set(sessionIDHeader, "session")
 	response, err := server.Client().Do(request)
 	if err != nil {
 		t.Fatal(err)
@@ -382,28 +408,180 @@ func (f serverRoundTripper) RoundTrip(request *http.Request) (*http.Response, er
 	return f(request)
 }
 
-func TestProviderClientDoesNotAcceptCallerCredentialOverrides(t *testing.T) {
+//nolint:canonicalheader // Exact lowercase names match Codex's observed wire headers.
+func TestProviderClientForwardsOnlyCodexRequestHeaders(t *testing.T) {
 	auth := authConfig{Token: "trusted-token", AccountID: "trusted-account", BaseURL: "https://provider.example"}
+	headers := http.Header{
+		"Authorization":           []string{"Bearer caller-token"},
+		"ChatGPT-Account-ID":      []string{"caller-account"},
+		"Originator":              []string{"caller-originator"},
+		"User-Agent":              []string{"caller-agent"},
+		"X-Unrelated-Caller-Data": []string{"not-forwarded"},
+	}
+	headers.Add(sessionIDHeader, "session-primary")
+	headers.Add(sessionIDHeader, "session-secondary")
+	headers.Set(threadIDHeader, "thread")
+	headers.Set(clientRequestIDHeader, "client-request")
+	headers.Set(codexWindowIDHeader, "window:0")
+	headers.Set(codexBetaFeaturesHeader, "feature")
+	headers.Set(codexResponsesLiteHeader, "true")
+	headers.Set(codexTurnMetadataHeader, "metadata")
 	httpClient := &http.Client{Transport: serverRoundTripper(func(request *http.Request) (*http.Response, error) {
-		want := map[string]string{
+		trusted := map[string]string{
 			"Authorization":      "Bearer trusted-token",
 			"ChatGPT-Account-ID": "trusted-account",
 			"Originator":         codexClientIdentity,
 			"User-Agent":         codexClientIdentity,
 		}
-		for name, value := range want {
+		for name, value := range trusted {
 			if got := request.Header.Get(name); got != value {
 				t.Errorf("header %s = %q, want %q", name, got, value)
 			}
 		}
+		for _, name := range []string{threadIDHeader, clientRequestIDHeader, codexWindowIDHeader, codexBetaFeaturesHeader, codexResponsesLiteHeader, codexTurnMetadataHeader} {
+			if got, want := request.Header.Values(name), headers.Values(name); !slices.Equal(got, want) {
+				t.Errorf("header %s = %q, want %q", name, got, want)
+			}
+		}
+		if got := request.Header[codexSessionIDHeader]; !slices.Equal(got, []string{"cache-key"}) {
+			t.Errorf("%s = %q, want cache key", codexSessionIDHeader, got)
+		}
+		if got := request.Header.Get(sessionIDHeader); got != "" {
+			t.Errorf("%s = %q, want empty", sessionIDHeader, got)
+		}
+		if got := request.Header.Values("X-Unrelated-Caller-Data"); len(got) != 0 {
+			t.Errorf("unrelated caller header was forwarded: %q", got)
+		}
 		return serverHTTPResponse("{}"), nil
 	})}
 	client := newProviderClient(auth, httpClient)
-	response, err := client.forwardExecution(t.Context(), t.Context(), []byte("{}"))
+	response, err := client.forwardExecution(t.Context(), t.Context(), []byte("{}"), headers, "cache-key")
 	if err != nil {
 		t.Fatal(err)
 	}
-	response.Body.Close()
+	if err := response.Body.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestProviderClientOmitsUnsafeCodexCacheKey(t *testing.T) {
+	for name, cacheKey := range map[string]string{
+		"control byte": "cache\nkey",
+		"too long":     strings.Repeat("x", maxSessionIDBytes+1),
+	} {
+		t.Run(name, func(t *testing.T) {
+			var forwarded bool
+			httpClient := &http.Client{Transport: serverRoundTripper(func(request *http.Request) (*http.Response, error) {
+				forwarded = true
+				if values, ok := request.Header[codexSessionIDHeader]; ok {
+					t.Errorf("%s = %q, want omitted", codexSessionIDHeader, values)
+				}
+				return serverHTTPResponse("{}"), nil
+			})}
+			client := newProviderClient(authConfig{BaseURL: "https://provider.example"}, httpClient)
+			response, err := client.forwardExecution(t.Context(), t.Context(), []byte("{}"), nil, cacheKey)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := response.Body.Close(); err != nil {
+				t.Fatal(err)
+			}
+			if !forwarded {
+				t.Fatal("request did not reach upstream")
+			}
+		})
+	}
+}
+
+//nolint:canonicalheader // Exact lowercase names match Codex's observed wire headers.
+func TestProviderClientPreservesCodexRequestHeadersAcrossRetries(t *testing.T) {
+	auth := authConfig{Token: "trusted-token", AccountID: "trusted-account", BaseURL: "https://provider.example"}
+	headers := http.Header{}
+	headers.Set(sessionIDHeader, "session")
+	headers.Set(threadIDHeader, "thread")
+	headers.Set(clientRequestIDHeader, "client-request")
+	headers.Set(codexWindowIDHeader, "window:0")
+	headers.Set(codexBetaFeaturesHeader, "feature")
+	headers.Set(codexResponsesLiteHeader, "true")
+	headers.Set(codexTurnMetadataHeader, "metadata")
+	var attempts []http.Header
+	httpClient := &http.Client{Transport: serverRoundTripper(func(request *http.Request) (*http.Response, error) {
+		attempts = append(attempts, request.Header.Clone())
+		if len(attempts) == 1 {
+			return &http.Response{
+				StatusCode: http.StatusServiceUnavailable,
+				Header:     http.Header{"Retry-After": []string{"0"}},
+				Body:       io.NopCloser(strings.NewReader(`{"error":{"message":"selected model is at capacity"}}`)),
+			}, nil
+		}
+		return serverHTTPResponse("{}"), nil
+	})}
+	client := newProviderClient(auth, httpClient)
+	response, err := client.forwardExecution(t.Context(), t.Context(), []byte("{}"), headers, "cache-key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := response.Body.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if len(attempts) != 2 {
+		t.Fatalf("upstream attempts = %d, want 2", len(attempts))
+	}
+	for attempt, forwarded := range attempts {
+		if got := forwarded[codexSessionIDHeader]; !slices.Equal(got, []string{"cache-key"}) {
+			t.Errorf("attempt %d %s = %q, want cache key", attempt+1, codexSessionIDHeader, got)
+		}
+		if got := forwarded.Get(sessionIDHeader); got != "" {
+			t.Errorf("attempt %d %s = %q, want empty", attempt+1, sessionIDHeader, got)
+		}
+		for _, name := range []string{threadIDHeader, clientRequestIDHeader, codexWindowIDHeader, codexBetaFeaturesHeader, codexResponsesLiteHeader, codexTurnMetadataHeader} {
+			if got, want := forwarded.Values(name), headers.Values(name); !slices.Equal(got, want) {
+				t.Errorf("attempt %d header %s = %q, want %q", attempt+1, name, got, want)
+			}
+		}
+	}
+}
+
+//nolint:canonicalheader // Exact lowercase names match Codex's observed wire headers.
+func TestProviderClientCancelsRequestWithCodexRequestHeaders(t *testing.T) {
+	auth := authConfig{Token: "trusted-token", AccountID: "trusted-account", BaseURL: "https://provider.example"}
+	headers := http.Header{}
+	headers.Set(sessionIDHeader, "session")
+	started := make(chan http.Header, 1)
+	httpClient := &http.Client{Transport: serverRoundTripper(func(request *http.Request) (*http.Response, error) {
+		started <- request.Header.Clone()
+		<-request.Context().Done()
+		return nil, request.Context().Err()
+	})}
+	client := newProviderClient(auth, httpClient)
+	ctx, cancel := context.WithCancel(t.Context())
+	result := make(chan error, 1)
+	go func() {
+		_, err := client.forwardExecution(ctx, ctx, []byte("{}"), headers, "cache-key")
+		result <- err
+	}()
+
+	var forwarded http.Header
+	select {
+	case forwarded = <-started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("upstream request did not start")
+	}
+	if got := forwarded[codexSessionIDHeader]; !slices.Equal(got, []string{"cache-key"}) {
+		t.Fatalf("forwarded %s = %q, want cache key", codexSessionIDHeader, got)
+	}
+	if got := forwarded.Get(sessionIDHeader); got != "" {
+		t.Fatalf("forwarded %s = %q, want empty", sessionIDHeader, got)
+	}
+	cancel()
+	select {
+	case err := <-result:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("canceled request error = %v, want context cancellation", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("upstream request did not stop after cancellation")
+	}
 }
 
 func TestCopyJSONTransformedRejectsOversizedResponse(t *testing.T) {

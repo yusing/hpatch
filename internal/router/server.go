@@ -224,7 +224,11 @@ func executeRequest(
 		return fmt.Errorf("write execution log: %w", err)
 	}
 	started := now()
-	response, err := provider.forwardExecution(ctx, executionCtx, forwardBody)
+	cacheKey := parsedRequest.promptCacheKey()
+	if cacheKey == "" {
+		cacheKey = sessionID
+	}
+	response, err := provider.forwardExecution(ctx, executionCtx, forwardBody, headers, cacheKey)
 	if err != nil {
 		return fmt.Errorf("execute request: %w", err)
 	}

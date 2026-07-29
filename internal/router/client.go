@@ -28,13 +28,16 @@ const (
 	initialUpstreamRetryBackoff = 100 * time.Millisecond
 	maxUpstreamRetryBackoff     = 30 * time.Second
 	selectedModelAtCapacity     = "selected model is at capacity"
+	codexBetaFeaturesHeader     = "x-codex-beta-features"
+	codexResponsesLiteHeader    = "x-openai-internal-codex-responses-lite"
+	codexSessionIDHeader        = "Session_id"
 	maxUpstreamJSONBytes        = 64 << 20
 )
 
 var utf8BOM = []byte{0xef, 0xbb, 0xbf}
 
 type responseProvider interface {
-	forwardExecution(startCtx, responseCtx context.Context, body []byte) (*http.Response, error)
+	forwardExecution(startCtx, responseCtx context.Context, body []byte, headers http.Header, cacheKey string) (*http.Response, error)
 }
 
 type providerClient struct {
@@ -46,7 +49,7 @@ func newProviderClient(auth authConfig, supplied *http.Client) *providerClient {
 	return &providerClient{httpClient: withDialTimeout(supplied), auth: auth}
 }
 
-func (c *providerClient) forwardExecution(startCtx, responseCtx context.Context, body []byte) (*http.Response, error) {
+func (c *providerClient) forwardExecution(startCtx, responseCtx context.Context, body []byte, headers http.Header, cacheKey string) (*http.Response, error) {
 	endpoint := strings.TrimRight(c.auth.BaseURL, "/") + "/responses"
 	for attempt := 0; ; attempt++ {
 		requestCtx, cancelRequest := context.WithCancel(responseCtx)
@@ -70,6 +73,10 @@ func (c *providerClient) forwardExecution(startCtx, responseCtx context.Context,
 		}
 		for _, header := range defaults {
 			request.Header.Set(header.name, header.value)
+		}
+		forwardCodexRequestHeaders(request.Header, headers)
+		if validCodexCacheKey(cacheKey) {
+			request.Header[codexSessionIDHeader] = []string{cacheKey}
 		}
 		response, err := c.httpClient.Do(request)
 		if err != nil {
@@ -112,6 +119,34 @@ func (c *providerClient) forwardExecution(startCtx, responseCtx context.Context,
 			return nil, fmt.Errorf("wait to retry upstream request: %w", startCtx.Err())
 		}
 	}
+}
+
+func forwardCodexRequestHeaders(destination, source http.Header) {
+	for _, name := range []string{
+		threadIDHeader,
+		clientRequestIDHeader,
+		codexWindowIDHeader,
+		codexBetaFeaturesHeader,
+		codexResponsesLiteHeader,
+		codexTurnMetadataHeader,
+	} {
+		for _, value := range source.Values(name) {
+			destination.Add(name, value)
+		}
+	}
+}
+
+func validCodexCacheKey(value string) bool {
+	if len(value) == 0 || len(value) > maxSessionIDBytes || strings.TrimSpace(value) != value {
+		return false
+	}
+	for index := range len(value) {
+		char := value[index]
+		if (char < 0x20 && char != '\t') || char == 0x7f {
+			return false
+		}
+	}
+	return true
 }
 
 type cancelOnCloseReadCloser struct {

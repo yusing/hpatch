@@ -9,10 +9,13 @@ import (
 
 const (
 	sessionIDHeader       = "session-id"
+	threadIDHeader        = "thread-id"
 	clientRequestIDHeader = "x-client-request-id"
-	maxSessionIDBytes     = 512
-	maxSessionHistories   = 256
-	maxSessionTurns       = 128
+	codexWindowIDHeader   = "x-codex-window-id"
+
+	maxSessionIDBytes   = 512
+	maxSessionHistories = 256
+	maxSessionTurns     = 128
 )
 
 func routingSessionID(headers http.Header, request parsedResponsesRequest) string {
