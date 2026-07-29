@@ -1,6 +1,7 @@
 package hpatch
 
 const toolDescription = `HPATCH/1 edits workspace files atomically. Submit one complete grammar-constrained script; rejection or cancellation changes nothing.
+Do not call this tool in parallel with other tools.
 
 Minimize the complete selector-plus-replacement output; a likely retry costs more than a few saved tokens:
 - tsel FROM_LINE "TEXT" [N] selects the first N exact one-line matches from FROM_LINE; use it for a fragment or one replacement at multiple sites.

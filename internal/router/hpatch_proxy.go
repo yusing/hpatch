@@ -346,7 +346,6 @@ func (p *hpatchProxy) prepareRequest(ctx context.Context, request *parsedRespons
 		workspace.close()
 		return nil, err
 	}
-	request.fields["parallel_tool_calls"] = json.RawMessage("false")
 	return &hpatchResponseTransform{
 		ctx:       ctx,
 		proxy:     p,

@@ -99,6 +99,12 @@ func TestToolDescriptionRejectsSyntaxLikeBselAnchors(t *testing.T) {
 	}
 }
 
+func TestToolDescriptionRejectsParallelCalls(t *testing.T) {
+	if !strings.Contains(toolDescription, "Do not call this tool in parallel with other tools.") {
+		t.Error("tool description permits parallel calls")
+	}
+}
+
 func TestToolDescriptionSelectorTokenComparisons(t *testing.T) {
 	codec, err := tokenizer.ForModel(tokenizer.GPT5)
 	if err != nil {

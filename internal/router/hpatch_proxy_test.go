@@ -177,7 +177,7 @@ func TestHPatchPrepareRequestExposesOnlyStandaloneHPatch(t *testing.T) {
 	if !bytes.Contains(items[0]["future"], []byte(`"kept":true`)) || !bytes.Contains(request.fields["future_request"], []byte(`"kept":true`)) {
 		t.Fatalf("future fields were not preserved: %#v", request.fields)
 	}
-	if string(request.fields["parallel_tool_calls"]) != "false" {
+	if string(request.fields["parallel_tool_calls"]) != "true" {
 		t.Fatalf("parallel_tool_calls = %s", request.fields["parallel_tool_calls"])
 	}
 }
