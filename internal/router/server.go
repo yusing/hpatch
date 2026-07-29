@@ -50,12 +50,16 @@ func Run(ctx context.Context, args []string, stderr io.Writer) error {
 	}
 	log := newDiagnostics(stderr)
 	provider := newProviderClient(auth, nil)
-	translator, err := newInProcessHPatchTranslator()
+	gainDirectory, err := hpatchMetricsDirectory()
 	if err != nil {
 		return fmt.Errorf("initialize hpatch response proxy: %w", err)
 	}
+	metrics := newMetricsStore(gainDirectory)
+	translator := notifyingHPatchTranslator{
+		inner:   newInProcessHPatchTranslator(gainDirectory),
+		metrics: metrics,
+	}
 	hpatchCalls := newHPatchProxy(translator)
-	metrics := newMetricsStore()
 	var requestSequence atomic.Uint64
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/metrics", metrics.serveAPI)

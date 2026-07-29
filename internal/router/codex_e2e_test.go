@@ -72,11 +72,11 @@ func TestCodexHPatchGrammarE2E(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load router authentication: %v", err)
 	}
-	delegate, err := newInProcessHPatchTranslator()
+	gainDirectory, err := hpatchMetricsDirectory()
 	if err != nil {
 		t.Fatalf("create hpatch translator: %v", err)
 	}
-	recorder := &recordingHPatchTranslator{delegate: delegate}
+	recorder := &recordingHPatchTranslator{delegate: newInProcessHPatchTranslator(gainDirectory)}
 	var requestSequence atomic.Uint64
 	server := httptest.NewServer(responsesHandler(
 		t.Context(),
@@ -84,7 +84,7 @@ func TestCodexHPatchGrammarE2E(t *testing.T) {
 		newProviderClient(auth, nil),
 		newDiagnostics(io.Discard),
 		newHPatchProxy(recorder),
-		newMetricsStore(),
+		newMetricsStore(""),
 		&requestSequence,
 	))
 	defer server.Close()

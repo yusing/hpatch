@@ -941,22 +941,14 @@ func TestHPatchBoundsPendingStreamCallsAndRejectsRelatedFutureEvents(t *testing.
 }
 
 func TestInProcessHPatchToolDescription(t *testing.T) {
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
-	translator, err := newInProcessHPatchTranslator()
-	if err != nil {
-		t.Fatal(err)
-	}
+	translator := newInProcessHPatchTranslator(t.TempDir())
 	if got, want := translator.ToolDescription(), hpatch.ToolDescription(); got != want {
 		t.Fatalf("installed tool description differs from authoritative description:\n got %q\nwant %q", got, want)
 	}
 }
 
 func TestInProcessHPatchTranslatorIsRootScopedAndDoesNotMutateWorkspace(t *testing.T) {
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
-	translator, err := newInProcessHPatchTranslator()
-	if err != nil {
-		t.Fatal(err)
-	}
+	translator := newInProcessHPatchTranslator(t.TempDir())
 	workspacePath := t.TempDir()
 	path := filepath.Join(workspacePath, "existing.txt")
 	if err := os.WriteFile(path, []byte("first\nsecond\nthird\n"), 0o644); err != nil {

@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+
+	"github.com/yusing/hpatch"
 )
 
 const (
@@ -63,7 +65,9 @@ type sessionMetrics struct {
 type metricsSnapshot struct {
 	metricGroup
 
-	Sessions []sessionMetrics `json:"sessions"`
+	Sessions  []sessionMetrics   `json:"sessions"`
+	Gain      hpatch.GainMetrics `json:"gain"`
+	GainError string             `json:"gain_error,omitempty"`
 }
 
 type metricsStore struct {
@@ -76,6 +80,7 @@ type metricsStore struct {
 	sessionUsed      map[string]uint64
 	subscribers      map[uint64]chan struct{}
 	subscriberSeq    uint64
+	gainDirectory    string
 }
 
 type retainedSessionMetrics struct {
@@ -95,14 +100,22 @@ type activeRequestHandle struct {
 	requestID uint64
 }
 
-func newMetricsStore() *metricsStore {
+func newMetricsStore(gainDirectory string) *metricsStore {
 	return &metricsStore{
 		all:              newMetricGroup(),
 		retainedSessions: map[string]retainedSessionMetrics{},
 		activeSessions:   map[string]map[uint64]activeRequest{},
 		sessionUsed:      map[string]uint64{},
 		subscribers:      map[uint64]chan struct{}{},
+		gainDirectory:    gainDirectory,
 	}
+}
+
+// notify publishes a snapshot refresh to live dashboard subscribers.
+func (m *metricsStore) notify() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.notifyLocked()
 }
 
 func (m *metricsStore) beginRequest(sessionID, model string) *activeRequestHandle {
@@ -216,7 +229,6 @@ func (m *metricsStore) evictOldestSessionTotals() {
 
 func (m *metricsStore) snapshot() metricsSnapshot {
 	m.mu.RLock()
-	defer m.mu.RUnlock()
 	sessions := make(map[string]sessionMetrics, len(m.retainedSessions)+len(m.activeSessions))
 	for id, retained := range m.retainedSessions {
 		sessions[id] = sessionMetrics{
@@ -249,7 +261,24 @@ func (m *metricsStore) snapshot() metricsSnapshot {
 		}
 		return 0
 	})
+	gainDirectory := m.gainDirectory
+	m.mu.RUnlock()
+
+	// Durable gain metrics use their own file lock; keep that I/O off the
+	// in-memory telemetry mutex so request lifecycle writers are not blocked.
+	snapshot.Gain, snapshot.GainError = loadGainMetrics(gainDirectory)
 	return snapshot
+}
+
+func loadGainMetrics(gainDirectory string) (hpatch.GainMetrics, string) {
+	if gainDirectory == "" {
+		return hpatch.EmptyGainMetrics(), ""
+	}
+	gain, err := hpatch.LoadGainMetrics(gainDirectory)
+	if err != nil {
+		return hpatch.EmptyGainMetrics(), err.Error()
+	}
+	return gain, ""
 }
 
 func cloneMetricGroup(group metricGroup) metricGroup {

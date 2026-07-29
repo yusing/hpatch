@@ -3,134 +3,367 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="dark">
   <title>Hpatch router telemetry</title>
   <style>
     :root{
-      --ink:#171717;--muted:#787774;--paper:#fbfbfa;--surface:#fff;--border:#eaeaea;
-      --pale-blue-bg:#e1f3fe;--pale-blue-text:#1f6c9f;
-      --pale-green-bg:#edf3ec;--pale-green-text:#346538;
-      --pale-yellow-bg:#fbf3db;--pale-yellow-text:#956400;
-      --pale-red-bg:#fdebec;--pale-red-text:#9f2f2d;
+      --ink:#e8e6e3;--muted:#9a958e;--faint:#6a6660;
+      --paper:#0f0f0f;--surface:#161616;--surface-2:#1c1c1c;--border:#2c2c2c;--border-strong:#3d3d3d;
+      --accent-bg:#152230;--accent-text:#8ec4de;--accent-ring:rgba(142,196,222,.45);
+      --pale-green-bg:#152818;--pale-green-text:#8bc48e;
+      --pale-yellow-bg:#2a2414;--pale-yellow-text:#d9bf72;
+      --pale-red-bg:#2a1616;--pale-red-text:#d98a88;
+      --hover:rgba(255,255,255,.04);--press:rgba(255,255,255,.07);
+      --radius:8px;--radius-sm:6px;
+      --space-1:4px;--space-2:8px;--space-3:12px;--space-4:16px;--space-5:24px;--space-6:32px;--space-7:40px;
+      --ease:cubic-bezier(.16,1,.3,1);--dur:180ms;--dur-enter:420ms;
+      --font-sans:'Geist Sans','SF Pro Display','Helvetica Neue',Arial,sans-serif;
+      --font-serif:'Newsreader','Playfair Display',Georgia,serif;
+      --font-mono:'Geist Mono','SF Mono','JetBrains Mono',ui-monospace,monospace;
+      --focus:0 0 0 2px var(--paper),0 0 0 4px var(--accent-text);
     }
     *{box-sizing:border-box}
-    body{margin:0;color:var(--ink);background:var(--paper);font-family:'Geist Sans','SF Pro Display','Helvetica Neue',Arial,sans-serif;font-size:14px;line-height:1.6;position:relative}
-    body::before{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;background:radial-gradient(circle at 15% 20%,rgba(31,108,159,.05),transparent 45%),radial-gradient(circle at 85% 78%,rgba(149,100,0,.04),transparent 50%);animation:drift 26s ease-in-out infinite alternate}
-    @keyframes drift{from{transform:translate3d(0,0,0)}to{transform:translate3d(-1.5%,1.5%,0)}}
-    main{position:relative;z-index:1;width:min(1120px,calc(100% - 40px));margin:0 auto;padding:64px 0 96px}
+    html{color-scheme:dark;-webkit-text-size-adjust:100%}
+    body{margin:0;color:var(--ink);background:var(--paper);font-family:var(--font-sans);font-size:15px;line-height:1.55;-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
+    body::before{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;background:radial-gradient(circle at 12% 18%,rgba(142,196,222,.055),transparent 42%),radial-gradient(circle at 88% 80%,rgba(217,191,114,.035),transparent 48%);animation:drift 28s ease-in-out infinite alternate}
+    @keyframes drift{from{transform:translate3d(0,0,0)}to{transform:translate3d(-1.2%,1.2%,0)}}
+    @media (prefers-reduced-motion:reduce){
+      body::before{animation:none}
+      *,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important;scroll-behavior:auto!important}
+      section{opacity:1!important;transform:none!important}
+      .pulse{animation:none!important;opacity:1}
+    }
 
-    .mast{display:flex;justify-content:space-between;align-items:flex-end;gap:24px;border-bottom:1px solid var(--border);padding-bottom:28px}
-    .eyebrow{text-transform:uppercase;letter-spacing:.12em;font-size:11px;color:var(--muted);margin:0 0 14px}
-    .mast h1{font:500 clamp(40px,6vw,64px)/1.05 'Newsreader','Playfair Display',Georgia,serif;letter-spacing:-.03em;margin:0}
-    .status{text-align:right;display:flex;flex-direction:column;align-items:flex-end;gap:10px}
-    .status-pill{display:inline-flex;align-items:center;gap:8px;padding:6px 14px;border-radius:9999px;background:var(--pale-yellow-bg);color:var(--pale-yellow-text);font-size:11px;text-transform:uppercase;letter-spacing:.08em;font-weight:600;transition:background .2s,color .2s}
-    .status-pill[data-state="live"]{background:var(--pale-green-bg);color:var(--pale-green-text)}
-    .status-pill[data-state="error"]{background:var(--pale-red-bg);color:var(--pale-red-text)}
-    .pulse{width:7px;height:7px;border-radius:50%;background:currentColor;animation:pulse 2s ease-in-out infinite}
+    .skip{position:absolute;left:var(--space-4);top:var(--space-4);z-index:100;padding:10px 14px;border-radius:var(--radius-sm);background:var(--accent-bg);color:var(--accent-text);font:600 13px/1 var(--font-sans);text-decoration:none;transform:translateY(-160%);transition:transform var(--dur) var(--ease)}
+    .skip:focus{transform:translateY(0);outline:none;box-shadow:var(--focus)}
+
+    main{position:relative;z-index:1;width:min(1120px,calc(100% - 32px));margin:0 auto;padding:var(--space-6) 0 72px}
+
+    .mast{display:flex;justify-content:space-between;align-items:flex-end;gap:var(--space-5);border-bottom:1px solid var(--border);padding-bottom:var(--space-5)}
+    .eyebrow{text-transform:uppercase;letter-spacing:.12em;font-size:11px;font-weight:600;color:var(--muted);margin:0 0 var(--space-3)}
+    .mast h1{font:500 clamp(36px,5.5vw,56px)/1.05 var(--font-serif);letter-spacing:-.03em;margin:0;color:var(--ink)}
+    .status{text-align:right;display:flex;flex-direction:column;align-items:flex-end;gap:var(--space-2)}
+    .status-pill{display:inline-flex;align-items:center;gap:8px;min-height:32px;padding:6px 12px;border-radius:9999px;background:var(--pale-yellow-bg);color:var(--pale-yellow-text);font-size:11px;text-transform:uppercase;letter-spacing:.08em;font-weight:600;border:1px solid transparent;transition:background var(--dur),color var(--dur),border-color var(--dur)}
+    .status-pill[data-state="live"]{background:var(--pale-green-bg);color:var(--pale-green-text);border-color:rgba(139,196,142,.18)}
+    .status-pill[data-state="error"]{background:var(--pale-red-bg);color:var(--pale-red-text);border-color:rgba(217,138,136,.2)}
+    .status-pill[data-state="connecting"]{border-color:rgba(217,191,114,.18)}
+    .pulse{width:7px;height:7px;border-radius:50%;background:currentColor;flex-shrink:0;animation:pulse 2s ease-in-out infinite}
     @keyframes pulse{50%{opacity:.35;transform:scale(.8)}}
-    .status small{font-family:'Geist Mono','SF Mono',monospace;color:var(--muted);font-size:11px}
+    .status-meta{font-family:var(--font-mono);color:var(--muted);font-size:11px;letter-spacing:.02em}
+    .status-meta time{color:var(--ink)}
 
-    section{margin-top:80px;opacity:0;transform:translateY(12px);transition:opacity .6s cubic-bezier(.16,1,.3,1),transform .6s cubic-bezier(.16,1,.3,1)}
+    .tabs{display:flex;gap:2px;margin-top:var(--space-5);border-bottom:1px solid var(--border);padding-bottom:0;position:sticky;top:0;z-index:10;background:linear-gradient(var(--paper) 70%,rgba(15,15,15,.92));backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px)}
+    .tab{appearance:none;border:0;background:transparent;color:var(--muted);font:600 12px/1 var(--font-sans);text-transform:uppercase;letter-spacing:.1em;min-height:44px;padding:12px 16px;cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-1px;transition:color var(--dur),border-color var(--dur),background var(--dur);border-radius:var(--radius-sm) var(--radius-sm) 0 0;touch-action:manipulation}
+    .tab:hover{color:var(--ink);background:var(--hover)}
+    .tab:active{background:var(--press)}
+    .tab[aria-selected="true"]{color:var(--ink);border-bottom-color:var(--accent-text)}
+    .tab:focus{outline:none}
+    .tab:focus-visible{box-shadow:var(--focus);color:var(--ink)}
+
+    .panel{display:none;margin-top:var(--space-6)}
+    .panel.active{display:block}
+    .panel-stack{display:flex;flex-direction:column;gap:var(--space-7)}
+    .panel:focus{outline:none}
+    .panel:focus-visible{box-shadow:var(--focus);border-radius:var(--radius-sm)}
+
+    section{opacity:0;transform:translateY(10px);transition:opacity var(--dur-enter) var(--ease),transform var(--dur-enter) var(--ease)}
     section.visible{opacity:1;transform:translateY(0)}
-    .section-head{display:flex;align-items:baseline;justify-content:space-between;border-bottom:1px solid var(--border);padding-bottom:12px;margin-bottom:24px}
-    .section-head h2{font:500 22px/1 'Newsreader','Playfair Display',Georgia,serif;margin:0}
-    .section-head span{text-transform:uppercase;letter-spacing:.1em;font-size:11px;color:var(--muted)}
+    .section-head{display:flex;align-items:baseline;justify-content:space-between;gap:var(--space-4);border-bottom:1px solid var(--border);padding-bottom:var(--space-3);margin-bottom:var(--space-4)}
+    .section-head h2{font:500 20px/1.15 var(--font-serif);margin:0;letter-spacing:-.015em}
+    .section-head span{text-transform:uppercase;letter-spacing:.1em;font-size:11px;font-weight:600;color:var(--muted);text-align:right}
+    .section-head code{font-family:var(--font-mono);font-size:11px;color:var(--accent-text);background:var(--accent-bg);padding:2px 6px;border-radius:4px}
 
-    .cards{display:grid;grid-template-columns:repeat(4,1fr);gap:16px}
-    .card{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:28px;min-height:132px;display:flex;flex-direction:column;justify-content:space-between;gap:16px;transition:box-shadow .2s}
-    .card:hover{box-shadow:0 2px 8px rgba(0,0,0,.04)}
-    #overview>.cards>.card:first-child{background:var(--pale-blue-bg);border-color:transparent}
-    #overview>.cards>.card:first-child label{color:var(--pale-blue-text)}
-    #overview>.cards>.card:first-child strong{color:var(--pale-blue-text)}
-    .card label{text-transform:uppercase;letter-spacing:.08em;font-size:10px;color:var(--muted)}
-    .card strong{font:500 clamp(26px,3vw,40px)/1 'Newsreader','Playfair Display',Georgia,serif;letter-spacing:-.02em}
+    .cards{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:var(--space-3)}
+    .card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:var(--space-4) var(--space-4) var(--space-5);min-height:112px;display:flex;flex-direction:column;justify-content:space-between;gap:var(--space-3);transition:border-color var(--dur),background var(--dur)}
+    .card:hover{border-color:var(--border-strong);background:var(--surface-2)}
+    #overview>.cards>.card:first-child,#gain>.cards>.card:first-child{background:var(--accent-bg);border-color:rgba(142,196,222,.14)}
+    #overview>.cards>.card:first-child label,#gain>.cards>.card:first-child label{color:var(--accent-text)}
+    #overview>.cards>.card:first-child strong,#gain>.cards>.card:first-child strong{color:var(--accent-text)}
+    .card label{text-transform:uppercase;letter-spacing:.08em;font-size:11px;font-weight:600;color:var(--muted)}
+    .card strong{font:500 clamp(24px,2.8vw,36px)/1.05 var(--font-serif);letter-spacing:-.02em;font-variant-numeric:tabular-nums;word-break:break-word}
 
-    .breakdowns{margin-top:28px}
-    h3{font:600 11px/1 'Geist Sans',sans-serif;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin:0 0 14px}
-    .metric-table{width:100%;border-collapse:collapse;font-family:'Geist Mono','SF Mono',monospace;font-size:12.5px}
-    .metric-table th,.metric-table td{padding:10px 8px;border-bottom:1px solid var(--border);text-align:right;font-variant-numeric:tabular-nums}
-    .metric-table th:first-child,.metric-table td:first-child{text-align:left;font-family:'Geist Sans',sans-serif;font-weight:500}
-    .metric-table th{font-size:10px;text-transform:uppercase;letter-spacing:.06em;font-weight:500;color:var(--muted);border-bottom:1px solid var(--ink)}
+    .breakdowns{margin-top:var(--space-5)}
+    .table-grid{display:grid;grid-template-columns:1fr 1fr;gap:var(--space-5);margin-top:var(--space-5)}
+    .table-wrap{min-width:0}
+    .table-scroll{overflow-x:auto;-webkit-overflow-scrolling:touch;border-radius:var(--radius-sm)}
+    h3{font:600 11px/1 var(--font-sans);text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin:0 0 var(--space-3)}
+    .metric-table{width:100%;border-collapse:collapse;font-family:var(--font-mono);font-size:12.5px}
+    .metric-table th,.metric-table td{padding:10px 8px;border-bottom:1px solid var(--border);text-align:right;font-variant-numeric:tabular-nums;vertical-align:top}
+    .metric-table th:first-child,.metric-table td:first-child{text-align:left;font-family:var(--font-sans);font-weight:500}
+    .metric-table th{font-size:11px;text-transform:uppercase;letter-spacing:.06em;font-weight:600;color:var(--muted);border-bottom:1px solid var(--border-strong);white-space:nowrap}
+    .metric-table tbody tr{transition:background var(--dur)}
+    .metric-table tbody tr:hover{background:var(--hover)}
+    .metric-table tbody tr[data-key="total"],.metric-table tbody tr[data-route="total"]{font-weight:600}
+    .metric-table tbody tr[data-key="total"] td:first-child,.metric-table tbody tr[data-route="total"] td:first-child{color:var(--muted);text-transform:uppercase;letter-spacing:.06em;font-size:11px}
+    .metric-table.desc td:last-child,.metric-table.desc th:last-child{text-align:left;font-family:var(--font-sans);font-weight:400;color:var(--muted)}
+    .note{margin:var(--space-3) 0 0;color:var(--muted);font-size:13px;line-height:1.5;max-width:72ch}
+    .gain-error{margin-top:var(--space-4)}
 
     #sessions{border-top:1px solid var(--border)}
     details{border-bottom:1px solid var(--border)}
-    summary{cursor:pointer;list-style:none;display:grid;grid-template-columns:auto 1fr auto;gap:16px;align-items:center;padding:18px 4px}
+    summary{cursor:pointer;list-style:none;display:grid;grid-template-columns:auto 1fr auto;gap:var(--space-4);align-items:center;padding:14px 8px;min-height:48px;border-radius:var(--radius-sm);transition:background var(--dur);touch-action:manipulation}
     summary::-webkit-details-marker{display:none}
-    .chev{width:20px;height:20px;display:grid;place-items:center;color:var(--muted);font-family:'Geist Mono',monospace;font-size:16px;flex-shrink:0}
+    summary:hover{background:var(--hover)}
+    summary:active{background:var(--press)}
+    summary:focus{outline:none}
+    summary:focus-visible{box-shadow:var(--focus)}
+    .chev{width:28px;height:28px;display:grid;place-items:center;color:var(--muted);font-family:var(--font-mono);font-size:16px;flex-shrink:0;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);transition:color var(--dur),border-color var(--dur),background var(--dur)}
     .chev::before{content:'+'}
+    details[open] .chev{color:var(--accent-text);border-color:rgba(142,196,222,.25);background:var(--accent-bg)}
     details[open] .chev::before{content:'\2212'}
-    .session-id{font-family:'Geist Mono','SF Mono',monospace;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-    .session-id small{display:block;margin-top:4px;color:var(--muted);font-family:'Geist Sans',sans-serif;font-size:11px;text-transform:uppercase;letter-spacing:.06em}
-    .session-total{font:500 19px 'Newsreader','Playfair Display',Georgia,serif;white-space:nowrap}
-    .session-body{border-top:1px solid var(--border);padding:28px 4px 36px}
-    .session-body .cards{grid-template-columns:repeat(4,1fr)}
+    .session-id{font-family:var(--font-mono);font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+    .session-id small{display:block;margin-top:4px;color:var(--muted);font-family:var(--font-sans);font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.06em}
+    .session-total{font:500 18px/1 var(--font-serif);white-space:nowrap;font-variant-numeric:tabular-nums;color:var(--ink)}
+    .session-body{border-top:1px solid var(--border);padding:var(--space-5) 8px var(--space-6)}
+    .session-body .cards{grid-template-columns:repeat(4,minmax(0,1fr))}
 
-    .empty,.error{padding:36px;border:1px dashed var(--border);border-radius:10px;text-align:center;color:var(--muted)}
-    .error{color:var(--pale-red-text);border-color:var(--pale-red-bg);background:var(--pale-red-bg)}
+    .empty,.error{padding:var(--space-6) var(--space-4);border:1px dashed var(--border);border-radius:var(--radius);text-align:center;color:var(--muted);font-size:14px;line-height:1.5}
+    .error{color:var(--pale-red-text);border-style:solid;border-color:rgba(217,138,136,.28);background:var(--pale-red-bg)}
+    .empty strong{display:block;color:var(--ink);font-weight:600;margin-bottom:6px}
 
-    @media(max-width:800px){.cards,.session-body .cards{grid-template-columns:1fr 1fr}.breakdowns{grid-template-columns:1fr}.mast{flex-direction:column;align-items:flex-start;gap:16px}.status{align-items:flex-start;text-align:left}}
-    @media(max-width:480px){main{width:calc(100% - 24px)}.cards,.session-body .cards{grid-template-columns:1fr}.session-total{display:none}}
+    ::selection{background:rgba(142,196,222,.28);color:var(--ink)}
+
+    @media(max-width:900px){
+      .cards,.session-body .cards,.table-grid{grid-template-columns:1fr 1fr}
+      .mast{flex-direction:column;align-items:flex-start;gap:var(--space-4)}
+      .status{align-items:flex-start;text-align:left}
+      .tabs{overflow-x:auto;scrollbar-width:thin}
+      .tab{flex:0 0 auto}
+    }
+    @media(max-width:520px){
+      main{width:calc(100% - 20px);padding-top:var(--space-5)}
+      .cards,.session-body .cards,.table-grid{grid-template-columns:1fr}
+      .session-total{display:none}
+      .section-head{flex-direction:column;align-items:flex-start;gap:6px}
+      .section-head span{text-align:left}
+      .card{min-height:96px;padding:var(--space-4)}
+      body{font-size:16px}
+    }
   </style>
 </head>
-<body><main>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<main id="main">
   <header class="mast">
     <div>
       <p class="eyebrow">Hpatch router — process ledger</p>
       <h1>Token<br>Telemetry</h1>
     </div>
-    <div class="status">
-      <span class="status-pill" id="status-pill" data-state="connecting"><span class="pulse"></span><span id="status">connecting</span></span>
-      <small id="updated">—</small>
+    <div class="status" aria-live="polite" aria-atomic="true">
+      <span class="status-pill" id="status-pill" data-state="connecting"><span class="pulse" aria-hidden="true"></span><span id="status">connecting</span></span>
+      <p class="status-meta" id="updated">Awaiting first snapshot</p>
     </div>
   </header>
-  <section><div class="section-head"><h2>Metrics</h2><span>Cumulative since process start</span></div><div id="overview"></div></section>
-  <section><div class="section-head"><h2>Sessions</h2><span id="session-count">0 sessions</span></div><div id="sessions"><div class="empty">Waiting for identified usage-bearing responses.</div></div></section>
+  <nav class="tabs" role="tablist" aria-label="Telemetry views">
+    <button type="button" class="tab" role="tab" id="tab-usage" aria-controls="panel-usage" aria-selected="true" tabindex="0" data-tab="usage">Usage</button>
+    <button type="button" class="tab" role="tab" id="tab-gain" aria-controls="panel-gain" aria-selected="false" tabindex="-1" data-tab="gain">Gain</button>
+  </nav>
+  <div class="panel active" role="tabpanel" id="panel-usage" aria-labelledby="tab-usage" tabindex="0">
+    <div class="panel-stack">
+      <section><div class="section-head"><h2>Metrics</h2><span>Cumulative since process start</span></div><div id="overview"><div class="empty"><strong>Connecting</strong>Live metrics stream will populate totals and model breakdowns.</div></div></section>
+      <section><div class="section-head"><h2>Sessions</h2><span id="session-count">0 sessions</span></div><div id="sessions"><div class="empty"><strong>No sessions yet</strong>Waiting for identified usage-bearing responses.</div></div></section>
+    </div>
+  </div>
+  <div class="panel" role="tabpanel" id="panel-gain" aria-labelledby="tab-gain" hidden tabindex="0">
+    <section class="visible"><div class="section-head"><h2>Gain</h2><span id="gain-subtitle">Same durable aggregate as <code>hpatch gain</code></span></div><div id="gain"><div class="empty"><strong>Connecting</strong>Reduction and command metrics appear with the first snapshot.</div></div></section>
+  </div>
 </main><script>
 const labels={input_tokens:'Input tokens',uncached_input_tokens:'Uncached input',output_tokens:'Output tokens',reasoning_tokens:'Reasoning tokens'};
 const order=Object.keys(labels), fmt=new Intl.NumberFormat();
 function element(tag,className,text){const node=document.createElement(tag);if(className)node.className=className;if(text!==undefined)node.textContent=text;return node}
 function metricValue(counts,key){const value=counts&&counts[key];return typeof value==='number'&&Number.isFinite(value)&&value>=0?value:0}
+function nonNeg(value){return typeof value==='number'&&Number.isFinite(value)&&value>=0?value:0}
 function createGroup(root){
+  root.replaceChildren();
   const cards=element('div','cards');
   order.forEach(key=>{const card=element('div','card');card.dataset.metric=key;card.append(element('label','',labels[key]),element('strong','','0'));cards.append(card)});
   const breakdowns=element('div','breakdowns'),wrap=element('div','table-wrap');
   wrap.append(element('h3','','By model'));
+  const scroll=element('div','table-scroll');
   const table=element('table','metric-table'),head=element('thead'),headRow=element('tr');
   headRow.append(element('th','','Model'));order.forEach(key=>headRow.append(element('th','',labels[key].replace(' tokens',''))));
-  head.append(headRow);table.append(head,element('tbody'));wrap.append(table,element('div','empty','No data yet'));breakdowns.append(wrap);root.append(cards,breakdowns)
+  head.append(headRow);table.append(head,element('tbody'));scroll.append(table);wrap.append(scroll,element('div','empty','No model breakdown yet'));breakdowns.append(wrap);root.append(cards,breakdowns)
 }
 function modelRows(byModel){
   return Object.entries(byModel).map(([model,counts])=>({key:model,name:model,counts})).sort((a,b)=>metricValue(b.counts,'input_tokens')-metricValue(a.counts,'input_tokens')||a.name.localeCompare(b.name))
 }
 function updateGroup(root,data){
-  if(!root.firstElementChild)createGroup(root);
+  if(!root.querySelector('.cards'))createGroup(root);
   order.forEach(key=>{root.querySelector(`.card[data-metric="${key}"] strong`).textContent=fmt.format(metricValue(data.total,key))});
   const tbody=root.querySelector('.metric-table tbody'),existing=new Map(Array.from(tbody.children,row=>[row.dataset.route,row])),rows=modelRows(data.by_model);
   rows.forEach(route=>{let row=existing.get(route.key);if(!row){row=element('tr');row.dataset.route=route.key;row.append(element('td'));order.forEach(()=>row.append(element('td')))}row.children[0].textContent=route.name;order.forEach((key,index)=>{row.children[index+1].textContent=fmt.format(metricValue(route.counts,key))});tbody.append(row);existing.delete(route.key)});
   existing.forEach(row=>row.remove());root.querySelector('.metric-table').hidden=rows.length===0;root.querySelector('.table-wrap>.empty').hidden=rows.length!==0
 }
+function tableWrap(title,headers,className){
+  const wrap=element('div','table-wrap');wrap.append(element('h3','',title));
+  const scroll=element('div','table-scroll');
+  const table=element('table',className?`metric-table ${className}`:'metric-table'),head=element('thead'),headRow=element('tr');
+  headers.forEach(header=>headRow.append(element('th','',header)));head.append(headRow);table.append(head,element('tbody'));scroll.append(table);wrap.append(scroll);return {wrap,tbody:table.querySelector('tbody')}
+}
+function fillRows(tbody,rows){
+  const existing=new Map(Array.from(tbody.children,row=>[row.dataset.key,row]));
+  rows.forEach(entry=>{let row=existing.get(entry.key);if(!row){row=element('tr');row.dataset.key=entry.key;entry.cells.forEach(()=>row.append(element('td')));tbody.append(row)}entry.cells.forEach((cell,index)=>{row.children[index].textContent=cell});existing.delete(entry.key)});
+  existing.forEach(row=>row.remove())
+}
+function uintText(value){return fmt.format(nonNeg(value))}
+function createGain(root){
+  root.replaceChildren();
+  const cards=element('div','cards');
+  [['success_reduction','Successful reduction'],['overall_reduction','Overall reduction'],['hpatch_all','All hpatch output'],['apply_all','All apply_patch output']].forEach(([key,label])=>{
+    const card=element('div','card');card.dataset.metric=key;card.append(element('label','',label),element('strong','','0'));cards.append(card)
+  });
+  const output=tableWrap('Output token estimates',['Calls','hpatch','apply_patch','Reduction']);
+  const input=tableWrap('Input token estimates',['Source','Tokens','Description'],'desc');
+  const commands=tableWrap('Command metrics',['Command','Invocations','Errors','Error rate']);
+  const textSpans=tableWrap('tsel selection metrics',['Selection','Invocations','Errors','Error rate']);
+  const blocks=tableWrap('Block selector successes',['Selector','Match','Successes']);
+  const reasons=tableWrap('Failure reasons',['Reason','Errors']);
+  const commandReasons=tableWrap('Command failure reasons',['Command','Reason','Errors']);
+  const note=element('p','note','');
+  const definition=element('p','note','');
+  const err=element('div','error gain-error');err.hidden=true;err.setAttribute('role','alert');
+  const gridTop=element('div','table-grid');gridTop.append(output.wrap,input.wrap);
+  const gridMid=element('div','table-grid');gridMid.append(commands.wrap,textSpans.wrap);
+  const gridBot=element('div','table-grid');gridBot.append(blocks.wrap,reasons.wrap);
+  root.append(cards,err,gridTop,note,definition,gridMid,gridBot,commandReasons.wrap);
+  root.gain={output:output.tbody,input:input.tbody,commands:commands.tbody,textSpans:textSpans.tbody,blocks:blocks.tbody,reasons:reasons.tbody,commandReasons:commandReasons.tbody,note,definition,err}
+}
+function sumPair(a,b){return nonNeg(a)+nonNeg(b)}
+function commandTotal(commands){
+  return (commands||[]).reduce((total,entry)=>({invocations:total.invocations+nonNeg(entry.invocations),errors:total.errors+nonNeg(entry.errors)}),{invocations:0,errors:0})
+}
+function errorRate(errors,invocations){
+  if(!invocations)return '0.0%';
+  return `${((errors*100)/invocations).toFixed(1)}%`
+}
+function updateGain(root,gain,gainError){
+  if(!root.querySelector('.cards'))createGain(root);
+  const g=gain||{};
+  root.querySelector('.card[data-metric="success_reduction"] strong').textContent=`${g.successful_reduction_percent||'0.0'}%`;
+  root.querySelector('.card[data-metric="overall_reduction"] strong').textContent=`${g.overall_reduction_percent||'0.0'}%`;
+  root.querySelector('.card[data-metric="hpatch_all"] strong').textContent=uintText(sumPair(g.hpatch_tokens,g.ineffective_hpatch_tokens));
+  root.querySelector('.card[data-metric="apply_all"] strong').textContent=uintText(sumPair(g.apply_patch_tokens,g.failed_apply_patch_tokens));
+  fillRows(root.gain.output,[
+    {key:'successful',cells:['successful',uintText(g.hpatch_tokens),uintText(g.apply_patch_tokens),`${g.successful_reduction_percent||'0.0'}%`]},
+    {key:'failed',cells:['failed',uintText(g.ineffective_hpatch_tokens),uintText(g.failed_apply_patch_tokens),'n/a']},
+    {key:'all',cells:['all',uintText(sumPair(g.hpatch_tokens,g.ineffective_hpatch_tokens)),uintText(sumPair(g.apply_patch_tokens,g.failed_apply_patch_tokens)),`${g.overall_reduction_percent||'0.0'}%`]}
+  ]);
+  const removed=nonNeg(g.removed_definition_input_tokens);
+  fillRows(root.gain.input,[
+    {key:'state',cells:['state reports',uintText(g.report_input_tokens),'final state returned after successful calls']},
+    {key:'diag',cells:['failure diagnostics',uintText(g.diagnostic_input_tokens),'errors and repair context returned after failed calls']},
+    {key:'def',cells:['hpatch definition installed',uintText(g.definition_input_tokens),'standalone tool definition added by the router']},
+    {key:'removed',cells:['apply_patch definition removed',removed?`-${fmt.format(removed)}`:'0','exact Code Mode section removed by the router']},
+    {key:'net',cells:['net added input',g.net_added_input||'0','measured additions minus the removed definition']}
+  ]);
+  root.gain.note.textContent='Failed apply_patch output uses the empty-patch semantic baseline.';
+  root.gain.definition.textContent=`Definition routing covers ${uintText(g.definition_requests)} accounted request(s) in ${uintText(g.sessions)} distinct session(s) (${g.definition_sources||'not measured (missing caller session)'}).`;
+  const commandRows=(g.commands||[]).map(entry=>({key:entry.name,cells:[entry.name,uintText(entry.invocations),uintText(entry.errors),`${entry.error_rate_percent||'0.0'}%`]}));
+  const total=commandTotal(g.commands);
+  commandRows.push({key:'total',cells:['total',uintText(total.invocations),uintText(total.errors),errorRate(total.errors,total.invocations)]});
+  fillRows(root.gain.commands,commandRows);
+  fillRows(root.gain.textSpans,(g.text_spans||[]).map(entry=>({key:entry.name,cells:[entry.name,uintText(entry.invocations),uintText(entry.errors),`${entry.error_rate_percent||'0.0'}%`]})));
+  fillRows(root.gain.blocks,(g.block_outcomes||[]).map(entry=>{const [operation,...match]=String(entry.name||'').split(' ');return {key:entry.name,cells:[operation||entry.name,match.join(' ')||'—',uintText(entry.count)]}}));
+  const reasonRows=(g.reasons||[]).map(entry=>({key:entry.name,cells:[entry.name,uintText(entry.count)]}));
+  const reasonTotal=(g.reasons||[]).reduce((sum,entry)=>sum+nonNeg(entry.count),0);
+  reasonRows.push({key:'total',cells:['total',uintText(reasonTotal)]});
+  fillRows(root.gain.reasons,reasonRows);
+  fillRows(root.gain.commandReasons,(g.command_reasons||[]).map(entry=>({key:`${entry.command}\0${entry.reason}`,cells:[entry.command,entry.reason,uintText(entry.errors)]})));
+  if(gainError){root.gain.err.hidden=false;root.gain.err.textContent=gainError}else{root.gain.err.hidden=true;root.gain.err.textContent=''}
+}
+function validNamedCommand(entry){return entry&&typeof entry==='object'&&typeof entry.name==='string'&&typeof entry.invocations==='number'&&typeof entry.errors==='number'&&typeof entry.error_rate_percent==='string'}
+function validNamedCount(entry){return entry&&typeof entry==='object'&&typeof entry.name==='string'&&typeof entry.count==='number'}
+function validCommandReason(entry){return entry&&typeof entry==='object'&&typeof entry.command==='string'&&typeof entry.reason==='string'&&typeof entry.errors==='number'}
+function validGain(gain){
+  return gain&&typeof gain==='object'&&!Array.isArray(gain)
+    &&typeof gain.hpatch_tokens==='number'&&typeof gain.apply_patch_tokens==='number'
+    &&typeof gain.ineffective_hpatch_tokens==='number'&&typeof gain.failed_apply_patch_tokens==='number'
+    &&typeof gain.successful_reduction_percent==='string'&&typeof gain.overall_reduction_percent==='string'
+    &&typeof gain.report_input_tokens==='number'&&typeof gain.diagnostic_input_tokens==='number'
+    &&typeof gain.definition_input_tokens==='number'&&typeof gain.removed_definition_input_tokens==='number'
+    &&typeof gain.net_added_input==='string'&&typeof gain.sessions==='number'&&typeof gain.definition_requests==='number'
+    &&typeof gain.definition_sources==='string'
+    &&Array.isArray(gain.commands)&&gain.commands.every(validNamedCommand)
+    &&Array.isArray(gain.text_spans)&&gain.text_spans.every(validNamedCommand)
+    &&Array.isArray(gain.block_outcomes)&&gain.block_outcomes.every(validNamedCount)
+    &&Array.isArray(gain.reasons)&&gain.reasons.every(validNamedCount)
+    &&Array.isArray(gain.command_reasons)&&gain.command_reasons.every(validCommandReason)
+}
 function validCounts(counts){return counts&&typeof counts==='object'&&!Array.isArray(counts)&&order.every(key=>typeof counts[key]==='number'&&Number.isFinite(counts[key])&&counts[key]>=0)}
 function validGroup(data){return data&&typeof data==='object'&&!Array.isArray(data)&&validCounts(data.total)&&data.by_model&&typeof data.by_model==='object'&&!Array.isArray(data.by_model)&&Object.values(data.by_model).every(validCounts)}
-function validSnapshot(data){return validGroup(data)&&Array.isArray(data.sessions)&&data.sessions.every(session=>validGroup(session)&&typeof session.session_id==='string'&&typeof session.model==='string')}
+function validSnapshot(data){return validGroup(data)&&Array.isArray(data.sessions)&&data.sessions.every(session=>validGroup(session)&&typeof session.session_id==='string'&&typeof session.model==='string')&&validGain(data.gain)&&(data.gain_error===undefined||typeof data.gain_error==='string')}
 const sessionElements=new Map();
 function createSession(id){
   const details=element('details');details.dataset.sessionId=id;
   const summary=element('summary'),name=element('span','session-id'),route=element('small'),total=element('span','session-total');
   name.append(document.createTextNode(id),element('br'),route);summary.append(element('span','chev'),name,total);
+  summary.querySelector('.chev').setAttribute('aria-hidden','true');
   const body=element('div','session-body');details.append(summary,body);details.route=route;details.sessionTotal=total;details.sessionBody=body;return details
 }
 function render(data){
   if(!validSnapshot(data))throw new Error('invalid metrics snapshot');
   updateGroup(document.querySelector('#overview'),data);
+  updateGain(document.querySelector('#gain'),data.gain,data.gain_error);
   const container=document.querySelector('#sessions'),seen=new Set();
   data.sessions.forEach(session=>{let details=sessionElements.get(session.session_id);if(!details){details=createSession(session.session_id);sessionElements.set(session.session_id,details)}details.route.textContent=session.model;details.sessionTotal.textContent=`${fmt.format(metricValue(session.total,'input_tokens'))} in`;updateGroup(details.sessionBody,session);container.append(details);seen.add(session.session_id)});
   sessionElements.forEach((details,id)=>{if(!seen.has(id)){details.remove();sessionElements.delete(id)}});
-  let empty=container.querySelector(':scope>.empty');if(data.sessions.length===0){if(!empty){empty=element('div','empty');container.append(empty)}empty.textContent='No identified sessions have recorded usage.'}else if(empty){empty.remove()}
+  let empty=container.querySelector(':scope>.empty');if(data.sessions.length===0){if(!empty){empty=element('div','empty');const title=element('strong','','No sessions yet');empty.append(title,document.createTextNode('No identified sessions have recorded usage.'));container.append(empty)}else{empty.replaceChildren(element('strong','','No sessions yet'),document.createTextNode('No identified sessions have recorded usage.'))}}else if(empty){empty.remove()}
   document.querySelector('#session-count').textContent=`${data.sessions.length} ${data.sessions.length===1?'session':'sessions'}`
 }
-function setStatus(text,state){document.querySelector('#status').textContent=text;document.querySelector('#status-pill').dataset.state=state}
+function setStatus(text,state){
+  document.querySelector('#status').textContent=text;
+  document.querySelector('#status-pill').dataset.state=state;
+}
+function setUpdated(label){
+  const node=document.querySelector('#updated');
+  if(label==='live'){
+    const now=new Date();
+    node.replaceChildren(document.createTextNode('Updated '),Object.assign(document.createElement('time'),{dateTime:now.toISOString(),textContent:now.toLocaleTimeString()}));
+    return;
+  }
+  node.textContent=label;
+}
+function selectTab(name,{focusTab=false}={}){
+  const tabs=[...document.querySelectorAll('.tab')];
+  tabs.forEach(tab=>{
+    const selected=tab.dataset.tab===name;
+    tab.setAttribute('aria-selected',selected?'true':'false');
+    tab.tabIndex=selected?0:-1;
+    if(selected&&focusTab)tab.focus();
+  });
+  document.querySelectorAll('.panel').forEach(panel=>{
+    const active=panel.id===`panel-${name}`;
+    panel.classList.toggle('active',active);
+    panel.hidden=!active;
+  });
+  if(name==='usage'){
+    document.querySelectorAll('#panel-usage section').forEach(section=>section.classList.add('visible'));
+  }
+}
+function onTabKeydown(event){
+  const tabs=[...document.querySelectorAll('.tab')];
+  const index=tabs.indexOf(event.currentTarget);
+  if(index<0)return;
+  let next=-1;
+  switch(event.key){
+    case 'ArrowRight':
+    case 'ArrowDown': next=(index+1)%tabs.length;break;
+    case 'ArrowLeft':
+    case 'ArrowUp': next=(index-1+tabs.length)%tabs.length;break;
+    case 'Home': next=0;break;
+    case 'End': next=tabs.length-1;break;
+    default: return;
+  }
+  event.preventDefault();
+  selectTab(tabs[next].dataset.tab,{focusTab:true});
+}
+document.querySelectorAll('.tab').forEach(tab=>{
+  tab.addEventListener('click',()=>selectTab(tab.dataset.tab));
+  tab.addEventListener('keydown',onTabKeydown);
+});
 const events=new EventSource('/api/metrics');
-events.onmessage=event=>{try{render(JSON.parse(event.data));setStatus('live','live');document.querySelector('#updated').textContent=new Date().toLocaleTimeString()}catch(error){setStatus('invalid event','error')}};
-events.onerror=()=>{setStatus('reconnecting','connecting')};
-const sectionObserver=new IntersectionObserver(entries=>{entries.forEach(entry=>{if(entry.isIntersecting){entry.target.classList.add('visible');sectionObserver.unobserve(entry.target)}})},{threshold:.1});
-document.querySelectorAll('section').forEach(section=>sectionObserver.observe(section));
+events.onmessage=event=>{try{render(JSON.parse(event.data));setStatus('live','live');setUpdated('live')}catch(error){setStatus('invalid event','error');setUpdated('Last snapshot rejected')}};
+events.onerror=()=>{setStatus('reconnecting','connecting');setUpdated('Stream interrupted — reconnecting')};
+const sectionObserver=new IntersectionObserver(entries=>{entries.forEach(entry=>{if(entry.isIntersecting){entry.target.classList.add('visible');sectionObserver.unobserve(entry.target)}})},{threshold:.08});
+document.querySelectorAll('#panel-usage section').forEach(section=>sectionObserver.observe(section));
 </script></body></html>

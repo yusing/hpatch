@@ -138,7 +138,7 @@ func TestExecuteRequestFailsClosedBeforeUpstreamWhenRewriteIsIneligible(t *testi
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			provider := &serverFakeProvider{}
-			err := executeRequest(t.Context(), t.Context(), serverRequest(t, test.mutate), test.headers, test.sessionID, provider, io.Discard, newDiagnostics(io.Discard), time.Now, newHPatchProxy(testTranslator(t, new(int))), newMetricsStore())
+			err := executeRequest(t.Context(), t.Context(), serverRequest(t, test.mutate), test.headers, test.sessionID, provider, io.Discard, newDiagnostics(io.Discard), time.Now, newHPatchProxy(testTranslator(t, new(int))), newMetricsStore(""))
 			if err == nil || !strings.Contains(err.Error(), test.want) {
 				t.Fatalf("error = %v, want containing %q", err, test.want)
 			}
@@ -181,7 +181,7 @@ func TestExecuteRequestForwardsCompactionWithoutHPatchRewrite(t *testing.T) {
 		return nil, nil
 	}))
 	var output bytes.Buffer
-	err = executeRequest(t.Context(), t.Context(), parsed, serverCompactionMetadataHeaders(t), "session", provider, &output, newDiagnostics(io.Discard), time.Now, proxy, newMetricsStore())
+	err = executeRequest(t.Context(), t.Context(), parsed, serverCompactionMetadataHeaders(t), "session", provider, &output, newDiagnostics(io.Discard), time.Now, proxy, newMetricsStore(""))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -212,7 +212,7 @@ func TestExecuteRequestForwardsRewrittenRequestAndRecordsUsage(t *testing.T) {
 		t.Fatal("response without an hpatch call reached the translator")
 		return nil, nil
 	}))
-	store := newMetricsStore()
+	store := newMetricsStore("")
 	var output bytes.Buffer
 	err := executeRequest(t.Context(), t.Context(), parsed, serverMetadataHeaders(t, "turn", map[string]json.RawMessage{workspace: nil}), "session", provider, &output, newDiagnostics(io.Discard), time.Now, proxy, store)
 	if err != nil {
@@ -254,7 +254,7 @@ func TestExecuteRequestDoesNotRecordUsageWhenDeliveryFails(t *testing.T) {
 		"usage":  map[string]any{"input_tokens": 10},
 	}))
 	provider := &serverFakeProvider{results: []serverForwardResult{{response: serverHTTPResponse(responseBody)}}}
-	store := newMetricsStore()
+	store := newMetricsStore("")
 	err := executeRequest(t.Context(), t.Context(), serverRequest(t, nil), serverMetadataHeaders(t, "turn", map[string]json.RawMessage{workspace: nil}), "session", provider, serverErrorWriter{err: io.ErrClosedPipe}, newDiagnostics(io.Discard), time.Now, newHPatchProxy(testTranslator(t, new(int))), store)
 	if err == nil {
 		t.Fatal("delivery failure returned no error")
@@ -323,7 +323,7 @@ func TestResponsesHandlerDoesNotLogClientCancellationAsOperationalEvent(t *testi
 		}, nil
 	})
 	var logOutput bytes.Buffer
-	handler := responsesHandler(t.Context(), time.Minute, provider, newDiagnostics(&logOutput), newHPatchProxy(nil), newMetricsStore(), new(atomic.Uint64))
+	handler := responsesHandler(t.Context(), time.Minute, provider, newDiagnostics(&logOutput), newHPatchProxy(nil), newMetricsStore(""), new(atomic.Uint64))
 	handled := make(chan struct{})
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		handler(writer, request)

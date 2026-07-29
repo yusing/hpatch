@@ -54,12 +54,40 @@ type inProcessHPatchTranslator struct {
 	dataDirectory string
 }
 
-func newInProcessHPatchTranslator() (hpatchTranslator, error) {
+func hpatchMetricsDirectory() (string, error) {
 	configDirectory, err := os.UserConfigDir()
 	if err != nil {
-		return nil, fmt.Errorf("determine hpatch metrics directory: %w", err)
+		return "", fmt.Errorf("determine hpatch metrics directory: %w", err)
 	}
-	return inProcessHPatchTranslator{dataDirectory: filepath.Join(configDirectory, "hpatch")}, nil
+	return filepath.Join(configDirectory, "hpatch"), nil
+}
+
+func newInProcessHPatchTranslator(dataDirectory string) hpatchTranslator {
+	return inProcessHPatchTranslator{dataDirectory: dataDirectory}
+}
+
+// notifyingHPatchTranslator refreshes dashboard subscribers after durable gain metrics change.
+type notifyingHPatchTranslator struct {
+	inner   hpatchTranslator
+	metrics *metricsStore
+}
+
+func (t notifyingHPatchTranslator) ToolDescription() string {
+	return t.inner.ToolDescription()
+}
+
+func (t notifyingHPatchTranslator) Translate(ctx context.Context, workspace routingWorkspace, script string) (hpatchTranslationResult, error) {
+	return t.inner.Translate(ctx, workspace, script)
+}
+
+func (t notifyingHPatchTranslator) RecordMetrics(ctx context.Context, record hpatchMetricRecord) error {
+	if err := t.inner.RecordMetrics(ctx, record); err != nil {
+		return err
+	}
+	if t.metrics != nil {
+		t.metrics.notify()
+	}
+	return nil
 }
 
 func (inProcessHPatchTranslator) ToolDescription() string {

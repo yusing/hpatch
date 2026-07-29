@@ -8,6 +8,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/yusing/hpatch"
 )
 
 func TestUsageFromResponsePayload(t *testing.T) {
@@ -44,7 +46,7 @@ func TestUsageFromResponsePayload(t *testing.T) {
 }
 
 func TestMetricsStoreSnapshotAndAPI(t *testing.T) {
-	store := newMetricsStore()
+	store := newMetricsStore("")
 	store.record("session-b", "model-b", tokenCounts{InputTokens: 4, UncachedInputTokens: 3, OutputTokens: 2, ReasoningTokens: 1})
 	store.record("session-a", "model-a", tokenCounts{InputTokens: 10, UncachedInputTokens: 8, OutputTokens: 6, ReasoningTokens: 2})
 	store.record("", "model-a", tokenCounts{InputTokens: 1})
@@ -65,6 +67,9 @@ func TestMetricsStoreSnapshotAndAPI(t *testing.T) {
 	if snapshot.ByModel["model-a"].InputTokens != 11 || snapshot.ByModel["model-b"].OutputTokens != 2 {
 		t.Fatalf("breakdowns = %#v", snapshot)
 	}
+	if snapshot.GainError != "" || len(snapshot.Gain.Commands) == 0 || snapshot.Gain.SuccessfulReduction != "0.0" {
+		t.Fatalf("empty gain = %#v error %q", snapshot.Gain, snapshot.GainError)
+	}
 
 	recorder := httptest.NewRecorder()
 	store.serveAPI(recorder, httptest.NewRequest(http.MethodGet, "/api/metrics", nil))
@@ -78,10 +83,13 @@ func TestMetricsStoreSnapshotAndAPI(t *testing.T) {
 	if decoded.Total != snapshot.Total {
 		t.Fatalf("decoded total = %#v, want %#v", decoded.Total, snapshot.Total)
 	}
+	if decoded.Gain.SuccessfulReduction != snapshot.Gain.SuccessfulReduction || len(decoded.Gain.Commands) != len(snapshot.Gain.Commands) {
+		t.Fatalf("decoded gain = %#v, want %#v", decoded.Gain, snapshot.Gain)
+	}
 }
 
 func TestMetricsAPIStreamsInitialAndChangedSnapshots(t *testing.T) {
-	store := newMetricsStore()
+	store := newMetricsStore("")
 	updates, unsubscribe, ok := store.subscribe()
 	if !ok {
 		t.Fatal("metrics subscription was rejected")
@@ -118,7 +126,7 @@ func TestMetricsAPIStreamsInitialAndChangedSnapshots(t *testing.T) {
 }
 
 func TestMetricsAPIRejectsUnrelatedAcceptCollision(t *testing.T) {
-	store := newMetricsStore()
+	store := newMetricsStore("")
 	request := httptest.NewRequest(http.MethodGet, "/api/metrics", nil)
 	request.Header.Set("Accept", "application/x-text/event-stream-future")
 	recorder := httptest.NewRecorder()
@@ -129,7 +137,7 @@ func TestMetricsAPIRejectsUnrelatedAcceptCollision(t *testing.T) {
 }
 
 func TestMetricsSnapshotInitializesActiveSessionBreakdown(t *testing.T) {
-	store := newMetricsStore()
+	store := newMetricsStore("")
 	handle := store.beginRequest("active", "model-a")
 	if handle == nil {
 		t.Fatal("active request was not tracked")
@@ -152,7 +160,7 @@ func TestMetricsSnapshotInitializesActiveSessionBreakdown(t *testing.T) {
 }
 
 func TestMetricsStoreActiveRequestLifecycle(t *testing.T) {
-	store := newMetricsStore()
+	store := newMetricsStore("")
 	if handle := store.beginRequest("", "model"); handle != nil {
 		t.Fatal("unidentified request became active")
 	}
@@ -173,7 +181,7 @@ func TestMetricsStoreActiveRequestLifecycle(t *testing.T) {
 }
 
 func TestMetricsStoreRetainsCompletedSession(t *testing.T) {
-	store := newMetricsStore()
+	store := newMetricsStore("")
 	handle := store.beginRequest("session", "gpt-5.6-sol")
 	store.record("session", "gpt-5.6-sol", tokenCounts{InputTokens: 12})
 	handle.end()
@@ -188,7 +196,7 @@ func TestMetricsStoreRetainsCompletedSession(t *testing.T) {
 }
 
 func TestMetricsStoreRejectsWhitespaceSession(t *testing.T) {
-	store := newMetricsStore()
+	store := newMetricsStore("")
 	store.record(" \t ", "model", tokenCounts{InputTokens: 1})
 
 	snapshot := store.snapshot()
@@ -201,7 +209,7 @@ func TestMetricsStoreRejectsWhitespaceSession(t *testing.T) {
 }
 
 func TestMetricsStoreGroupsOnlyByModel(t *testing.T) {
-	store := newMetricsStore()
+	store := newMetricsStore("")
 	store.record("", "gpt-5.6-sol", tokenCounts{InputTokens: 11})
 	store.record("", "gpt-5.6-sol", tokenCounts{InputTokens: 7})
 	store.record("", "future-model", tokenCounts{InputTokens: 2})
@@ -224,7 +232,7 @@ func TestMetricsStoreGroupsOnlyByModel(t *testing.T) {
 }
 
 func TestMetricsStoreBoundsCallerControlledDimensions(t *testing.T) {
-	store := newMetricsStore()
+	store := newMetricsStore("")
 	for index := range maxSessionHistories + 1 {
 		store.record(fmt.Sprintf("session-%03d", index), "model", tokenCounts{InputTokens: 1})
 	}
@@ -274,8 +282,55 @@ func TestMetricsEventStreamAcceptQuality(t *testing.T) {
 	}
 }
 
+func TestMetricsSnapshotIncludesDurableGain(t *testing.T) {
+	dataDirectory := t.TempDir()
+	if err := hpatch.RecordHostMetrics(t.Context(), dataDirectory, hpatch.HostMetricRecord{
+		HPatchTokens:     20,
+		ApplyPatchTokens: 50,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	store := newMetricsStore(dataDirectory)
+	snapshot := store.snapshot()
+	if snapshot.Gain.HPatchTokens != 20 || snapshot.Gain.ApplyPatchTokens != 50 || snapshot.Gain.SuccessfulReduction != "60.0" {
+		t.Fatalf("gain snapshot = %#v", snapshot.Gain)
+	}
+	if snapshot.GainError != "" {
+		t.Fatalf("gain error = %q", snapshot.GainError)
+	}
+}
+
+func TestNotifyingTranslatorPublishesGainUpdates(t *testing.T) {
+	dataDirectory := t.TempDir()
+	store := newMetricsStore(dataDirectory)
+	updates, unsubscribe, ok := store.subscribe()
+	if !ok {
+		t.Fatal("subscribe rejected")
+	}
+	defer unsubscribe()
+	translator := notifyingHPatchTranslator{
+		inner:   newInProcessHPatchTranslator(dataDirectory),
+		metrics: store,
+	}
+	if err := translator.RecordMetrics(t.Context(), hpatch.HostMetricRecord{
+		HPatchTokens:     4,
+		ApplyPatchTokens: 8,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-updates:
+	default:
+		t.Fatal("gain record did not publish a metrics update")
+	}
+	snapshot := store.snapshot()
+	if snapshot.Gain.HPatchTokens != 4 || snapshot.Gain.ApplyPatchTokens != 8 {
+		t.Fatalf("gain after notify = %#v", snapshot.Gain)
+	}
+}
+
 func TestMetricsStoreBoundsActiveRequestsAndSubscribers(t *testing.T) {
-	store := newMetricsStore()
+	store := newMetricsStore("")
 	handles := make([]*activeRequestHandle, 0, maxActiveMetricRequests)
 	for range maxActiveMetricRequests {
 		handle := store.beginRequest("session", "model")

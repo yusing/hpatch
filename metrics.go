@@ -611,6 +611,147 @@ func percentage(numerator, denominator *big.Int) string {
 	return new(big.Rat).SetFrac(scaled, denominator).FloatString(1)
 }
 
+// NamedCommandMetric is one labeled invocations/errors pair in a gain report.
+type NamedCommandMetric struct {
+	Name        string `json:"name"`
+	Invocations uint64 `json:"invocations"`
+	Errors      uint64 `json:"errors"`
+	ErrorRate   string `json:"error_rate_percent"`
+}
+
+// NamedCount is one labeled counter in a gain report table.
+type NamedCount struct {
+	Name  string `json:"name"`
+	Count uint64 `json:"count"`
+}
+
+// CommandReasonMetric attributes nonzero errors to the command that raised them.
+type CommandReasonMetric struct {
+	Command string `json:"command"`
+	Reason  string `json:"reason"`
+	Errors  uint64 `json:"errors"`
+}
+
+// GainMetrics is the durable aggregate reported by `hpatch gain`.
+// Percentages and net input use the same formatting as the CLI report.
+type GainMetrics struct {
+	HPatchTokens            uint64 `json:"hpatch_tokens"`
+	ApplyPatchTokens        uint64 `json:"apply_patch_tokens"`
+	IneffectiveHPatchTokens uint64 `json:"ineffective_hpatch_tokens"`
+	FailedApplyPatchTokens  uint64 `json:"failed_apply_patch_tokens"`
+	SuccessfulReduction     string `json:"successful_reduction_percent"`
+	OverallReduction        string `json:"overall_reduction_percent"`
+
+	ReportInputTokens            uint64 `json:"report_input_tokens"`
+	DiagnosticInputTokens        uint64 `json:"diagnostic_input_tokens"`
+	DefinitionInputTokens        uint64 `json:"definition_input_tokens"`
+	RemovedDefinitionInputTokens uint64 `json:"removed_definition_input_tokens"`
+	// NetAddedInput is measured additions minus the removed definition credit.
+	// It is a decimal string so a definition credit can make the net negative.
+	NetAddedInput      string `json:"net_added_input"`
+	Sessions           uint64 `json:"sessions"`
+	DefinitionRequests uint64 `json:"definition_requests"`
+	DefinitionSources  string `json:"definition_sources"`
+
+	Commands       []NamedCommandMetric  `json:"commands"`
+	TextSpans      []NamedCommandMetric  `json:"text_spans"`
+	BlockOutcomes  []NamedCount          `json:"block_outcomes"`
+	Reasons        []NamedCount          `json:"reasons"`
+	CommandReasons []CommandReasonMetric `json:"command_reasons"`
+}
+
+// EmptyGainMetrics returns the zero aggregate printed by `hpatch gain` with no metrics file.
+func EmptyGainMetrics() GainMetrics {
+	return metrics{}.gainMetrics()
+}
+
+// LoadGainMetrics reads the durable metrics aggregate reported by `hpatch gain`.
+// Missing metrics yield a zero value with the same empty tables as gain.
+func LoadGainMetrics(dataDirectory string) (GainMetrics, error) {
+	total, err := readMetrics(dataDirectory)
+	if err != nil {
+		return GainMetrics{}, err
+	}
+	return total.gainMetrics(), nil
+}
+
+// gainMetrics projects the same aggregate gainReportAtWidth formats for hosts
+// that need structured fields (dashboard JSON) instead of terminal text.
+func (m metrics) gainMetrics() GainMetrics {
+	added := new(big.Int).SetUint64(m.ReportInputTokens)
+	for _, count := range []uint64{m.DiagnosticInputTokens, m.DefinitionInputTokens} {
+		added.Add(added, new(big.Int).SetUint64(count))
+	}
+	net := new(big.Int).Sub(added, new(big.Int).SetUint64(m.RemovedDefinitionInputTokens))
+
+	commands := make([]NamedCommandMetric, 0, commandCount)
+	for index, name := range commandOperations {
+		entry := m.Commands[index]
+		commands = append(commands, NamedCommandMetric{
+			Name:        name,
+			Invocations: entry.Invocations,
+			Errors:      entry.Errors,
+			ErrorRate:   entry.errorRate(),
+		})
+	}
+	textSpans := make([]NamedCommandMetric, 0, textSpanVariantCount)
+	for index, name := range textSpanVariantNames {
+		entry := m.TextSpans[index]
+		textSpans = append(textSpans, NamedCommandMetric{
+			Name:        name,
+			Invocations: entry.Invocations,
+			Errors:      entry.Errors,
+			ErrorRate:   entry.errorRate(),
+		})
+	}
+	blockOutcomes := make([]NamedCount, 0, blockOutcomeCount)
+	for index, name := range blockOutcomeNames {
+		blockOutcomes = append(blockOutcomes, NamedCount{Name: name, Count: m.BlockOutcomes[index]})
+	}
+	reasons := make([]NamedCount, 0, failureReasonCount)
+	for index, name := range failureReasonNames {
+		reasons = append(reasons, NamedCount{Name: name, Count: m.Reasons[index]})
+	}
+	commandReasons := make([]CommandReasonMetric, 0)
+	for command, commandReasonsRow := range m.CommandReasons {
+		for reason, count := range commandReasonsRow {
+			if count == 0 {
+				continue
+			}
+			commandReasons = append(commandReasons, CommandReasonMetric{
+				Command: commandOperations[command],
+				Reason:  failureReasonNames[reason],
+				Errors:  count,
+			})
+		}
+	}
+	if len(commandReasons) == 0 {
+		commandReasons = []CommandReasonMetric{{Command: "none", Reason: "none", Errors: 0}}
+	}
+
+	return GainMetrics{
+		HPatchTokens:                 m.HPatchTokens,
+		ApplyPatchTokens:             m.ApplyPatchTokens,
+		IneffectiveHPatchTokens:      m.IneffectiveHPatchTokens,
+		FailedApplyPatchTokens:       m.FailedApplyPatchTokens,
+		SuccessfulReduction:          m.reduction(),
+		OverallReduction:             m.overallReduction(),
+		ReportInputTokens:            m.ReportInputTokens,
+		DiagnosticInputTokens:        m.DiagnosticInputTokens,
+		DefinitionInputTokens:        m.DefinitionInputTokens,
+		RemovedDefinitionInputTokens: m.RemovedDefinitionInputTokens,
+		NetAddedInput:                net.String(),
+		Sessions:                     m.Sessions,
+		DefinitionRequests:           m.DefinitionRequests,
+		DefinitionSources:            describeDefinitionSources(m),
+		Commands:                     commands,
+		TextSpans:                    textSpans,
+		BlockOutcomes:                blockOutcomes,
+		Reasons:                      reasons,
+		CommandReasons:               commandReasons,
+	}
+}
+
 const defaultGainReportWidth = 80
 
 func gainReportAtWidth(m metrics, width int) string {

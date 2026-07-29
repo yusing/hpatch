@@ -172,6 +172,69 @@ func gainInputSection(t *testing.T, report string) string {
 	return report[start:end]
 }
 
+func TestLoadGainMetricsMatchesGainReportTotals(t *testing.T) {
+	dataDirectory := t.TempDir()
+	recordHostMetricForTest(t, dataDirectory, HostMetricRecord{
+		HPatchTokens:                 40,
+		ApplyPatchTokens:             100,
+		IneffectiveHPatchTokens:      30,
+		FailedApplyPatchTokens:       10,
+		ReportInputTokens:            5,
+		DiagnosticInputTokens:        7,
+		DefinitionRequests:           1,
+		DefinitionInputTokens:        11,
+		RemovedDefinitionInputTokens: 9,
+		SessionID:                    "session-gain",
+	})
+	entry := metrics{}
+	entry.Commands[commandOperationIndex("sel")].Invocations = 1
+	entry.Commands[commandOperationIndex("sel")].Errors = 1
+	entry.Reasons[reasonCoordinateBounds] = 1
+	entry.CommandReasons[commandOperationIndex("sel")][reasonCoordinateBounds] = 1
+	if err := updateMetrics(dataDirectory, entry); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := LoadGainMetrics(dataDirectory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.HPatchTokens != 40 || got.ApplyPatchTokens != 100 || got.IneffectiveHPatchTokens != 30 || got.FailedApplyPatchTokens != 10 {
+		t.Fatalf("output tokens = %#v", got)
+	}
+	if got.SuccessfulReduction != "60.0" || got.OverallReduction != "36.4" {
+		t.Fatalf("reductions = %q / %q", got.SuccessfulReduction, got.OverallReduction)
+	}
+	if got.NetAddedInput != "14" || got.DefinitionSources != "installation and removal measured" {
+		t.Fatalf("input = net %q sources %q", got.NetAddedInput, got.DefinitionSources)
+	}
+	if len(got.Commands) != commandCount || got.Commands[commandOperationIndex("sel")].Errors != 1 {
+		t.Fatalf("commands = %#v", got.Commands)
+	}
+	if len(got.CommandReasons) != 1 || got.CommandReasons[0].Command != "sel" || got.CommandReasons[0].Reason != "coordinate-bounds" {
+		t.Fatalf("command reasons = %#v", got.CommandReasons)
+	}
+}
+
+func TestLoadGainMetricsAbsentDirectoryIsZero(t *testing.T) {
+	got, err := LoadGainMetrics(filepath.Join(t.TempDir(), "absent"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.HPatchTokens != 0 || got.SuccessfulReduction != "0.0" || got.OverallReduction != "0.0" {
+		t.Fatalf("empty gain = %#v", got)
+	}
+	if len(got.Commands) != commandCount || len(got.TextSpans) != textSpanVariantCount {
+		t.Fatalf("empty tables = commands %d text spans %d", len(got.Commands), len(got.TextSpans))
+	}
+	if len(got.CommandReasons) != 1 || got.CommandReasons[0] != (CommandReasonMetric{Command: "none", Reason: "none"}) {
+		t.Fatalf("empty command reasons = %#v", got.CommandReasons)
+	}
+	if got.DefinitionSources != "not measured (missing caller session)" {
+		t.Fatalf("definition sources = %q", got.DefinitionSources)
+	}
+}
+
 func TestGainReportsCommandInvocationsErrorsAndRates(t *testing.T) {
 	root := t.TempDir()
 	dataDirectory := t.TempDir()

@@ -38,6 +38,18 @@ func TestDashboardIsSelfContainedAndProtectedByCSP(t *testing.T) {
 	if !strings.Contains(body, "if(!validSnapshot(data))throw") {
 		t.Fatal("dashboard does not reject malformed snapshots before updating")
 	}
+	if !strings.Contains(body, "updateGain(") || !strings.Contains(body, "validGain(data.gain)") {
+		t.Fatal("dashboard does not render gain metrics")
+	}
+	if !strings.Contains(body, "hpatch gain") {
+		t.Fatal("dashboard does not identify the gain aggregate source")
+	}
+	if !strings.Contains(body, `data-tab="gain"`) || !strings.Contains(body, `id="panel-gain"`) {
+		t.Fatal("dashboard does not place gain in a separate tab")
+	}
+	if !strings.Contains(body, "--paper:#0f0f0f") {
+		t.Fatal("dashboard is not dark mode")
+	}
 }
 
 func TestDashboardRejectsUnrelatedPaths(t *testing.T) {
