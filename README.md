@@ -15,23 +15,62 @@ TL;DR:
 
 ## Why hpatch?
 
-`apply_patch` makes the model emit envelope framing, old lines, new lines, and context that already exist in the repo. hpatch asks for an editor-style script instead:
+`apply_patch` makes the model emit envelope framing, old lines, new lines, and context that already exist in the repo. For an 11-line function replacement, hpatch asks the model for this:
 
 ```text
 functions.hpatch
-in artifact.go
-tsel 90 "return saveArtifactPayload(path, b)"
-type "return saveArtifactPayloadAtomically(path, b)"
+in parser.go
+rsel 50:60
+type <<PATCH
+func parse(input []byte) (Document, error) {
+	tokens, err := tokenize(input)
+	if err != nil {
+		return Document{}, fmt.Errorf("tokenize: %w", err)
+	}
+	document, err := buildDocument(tokens)
+	if err != nil {
+		return Document{}, fmt.Errorf("build document: %w", err)
+	}
+	return document, nil
+}
+PATCH
 ```
 
-Compared with the equivalent Code Mode tool call the model would otherwise write:
+The same edit through direct `apply_patch` in Code Mode:
 
 ```text
 functions.exec
-const result = await tools.apply_patch("*** Begin Patch\n*** Update File: artifact.go\n@@\n-\t\treturn saveArtifactPayload(path, b)\n+\t\treturn saveArtifactPayloadAtomically(path, b)\n*** End Patch\n");
+const result = await tools.apply_patch(`*** Begin Patch
+*** Update File: parser.go
+@@
+-func parse(input []byte) (Document, error) {
+-	tokens := tokenize(input)
+-	if len(tokens) == 0 {
+-		return Document{}, errEmptyInput
+-	}
+-	document := buildDocument(tokens)
+-	if document.Empty() {
+-		return Document{}, errEmptyDocument
+-	}
+-	return document, nil
+-}
++func parse(input []byte) (Document, error) {
++	tokens, err := tokenize(input)
++	if err != nil {
++		return Document{}, fmt.Errorf("tokenize: %w", err)
++	}
++	document, err := buildDocument(tokens)
++	if err != nil {
++		return Document{}, fmt.Errorf("build document: %w", err)
++	}
++	return document, nil
++}
+*** End Patch
+`);
 text(result);
 ```
 
+The direct call repeats all 11 old lines, then writes the same 11 new lines plus patch framing and the JavaScript carrier. hpatch writes the new function once; the router reads the old region from the baseline.
 The router also supplies `functions.hpatch` to the provider with a [Lark grammar](https://developers.openai.com/api/docs/guides/function-calling#context-free-grammars). As the model writes the tool call, only tokens that can still lead to a valid script are allowed. Bad syntax never becomes a finished tool call, so there is no generate-reject-retry cycle for it. Grammar is syntax only: a valid script can still fail for missing files, ambiguous selectors, or conflicting edits, and those failures stay atomic.
 
 ## Requirements
@@ -239,10 +278,18 @@ Multiline example:
 
 ```text
 in parser.go
-rsel 50:53
+rsel 50:60
 type <<PATCH
-func parse() error {
-	return nil
+func parse(input []byte) (Document, error) {
+	tokens, err := tokenize(input)
+	if err != nil {
+		return Document{}, fmt.Errorf("tokenize: %w", err)
+	}
+	document, err := buildDocument(tokens)
+	if err != nil {
+		return Document{}, fmt.Errorf("build document: %w", err)
+	}
+	return document, nil
 }
 PATCH
 ```
