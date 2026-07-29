@@ -2,8 +2,8 @@ package hpatch
 
 const toolDescription = `HPATCH/1
 call=functions.hpatch(raw_complete_script);forbid=shell|functions.exec;atomic(reject|cancel)=patch:none,workspace:unchanged
-lex.command=nonblank_physical_line;newline=command_end;exception=type_heredoc
-lex.quote=JSON_double_quote;literal_tab=allow;physical_newline=forbid;escape=quote|backslash|LF|CR|NUL|C0
+lex.command=nonblank_physical_line;newline=command_end;exception=type_heredoc;recovery=open_quote_across_newline=>one_header_owned_rejected_frame
+lex.quote=JSON_double_quote;literal_tab=allow;physical_newline=never;linebreak_escape=\n|\r;escape=quote|backslash|LF|CR|NUL|C0
 cmd=in PATH|new PATH|mv DESTINATION|rm|sel LINE START:END|tsel FROM_LINE "TEXT" [N]|bsel "START" "END"|rsel START:END|type "TEXT"|type <<TAG|del|copy|cut|paste|commit
 path=workspace_relative_within_root;in=existing_regular_UTF-8;destination(new|mv)=free;parent(new|mv)=existing_directory
 state.active=in|new=>select;mv DESTINATION=>rename_active_file(source_implicit);rm=>delete_active_file(no_operand)
@@ -14,18 +14,18 @@ state.commit=all_live_files{baseline:=rendered,edits:=none,cursor:=BOF,selection
 state.script_end=finalize_pending_without_reset
 clipboard=script_scope,cross_file,repeat_paste,commit_preserves
 sel=line[LINE].rune[START..END];index=1;inclusive;tab_runes=1
-tsel=baseline[(FROM_LINE,col1)..EOF];match=exact+nonoverlap;select=first_N;N_default=1;require_N
-tsel.TEXT=copy_exact_baseline_text;encode_JSON_only;never_infer|normalize|paraphrase
+tsel=baseline[(FROM_LINE,col1)..EOF];TEXT=nonempty;match=exact+nonoverlap;select=first_N;N_default=1;require_N
+tsel.TEXT=copy_exact_baseline_substring;start_at_first_nonwhitespace;exclude_leading_indent;encode_JSON_only;never_infer|normalize|paraphrase
 tsel.repair=FROM_LINE_only;TEXT_unchanged;suffix_count<N&&file_count==N=>FROM_LINE:=line(first_match);file_count>N=>reject
 bsel=START!=END;nonempty;START_count(file)==1&&END_count(suffix_after_START)==1;selection=START.first_byte..END.last_byte;outside_bytes_preserved;nearest_END=false
 bsel.anchor_fallback=no_exact_match=>ASCII_space_tab_runs_equivalent
 rsel=logical_line[START..END];index=1;inclusive;owns_terminators
-selector.priority=tsel|rsel>bsel>sel;tsel_TEXT=copy_longer_exact_baseline_span_before_occurrence_arithmetic
+selector.priority=tsel|rsel>bsel>sel;anchor=stable_nonwhitespace_content;never_include_leading_indent;whole_line|indent_edit=>rsel;tsel_TEXT=copy_longer_exact_baseline_span_before_occurrence_arithmetic
 numeric_selector.coords=fresh_nl_-ba;within_script_rebase=forbid
 heredoc.tag=[A-Za-z0-9_.-]{1,64};header=type_<<TAG|type_<<'TAG'|type_<<"TAG"
 heredoc.close=unquoted_TAG_exact;indent=0;suffix=none
 heredoc.body=literal_UTF-8;max_bytes=1048576
-inline_linebreaks=type|bsel:allow_encoded_LF_CR;tsel:forbid_LF_CR
+inline_linebreaks=type|bsel:encode_as_\n|\r;tsel:forbid_LF_CR
 edit.type=selections?replace_each:insert_cursor;selections:=none
 edit.multiselect=type|del|cut|paste;atomic
 edit.del=delete_each_selection;requires=selection

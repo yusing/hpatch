@@ -93,6 +93,27 @@ func TestHPatchCorrectionIndexesAndReplacesCompleteHeredocFrames(t *testing.T) {
 	}
 }
 
+func TestHPatchCorrectionReplacesMalformedMultilineQuotedFrame(t *testing.T) {
+	base := "in file.txt\n" +
+		"bsel \"start\n" +
+		"middle\n" +
+		"end\" \"other\"\n" +
+		"type \"replacement\"\n"
+	corrected, err := applyHPatchCorrections(base, []hpatchCorrection{{
+		command:     2,
+		replacement: `bsel "start\nmiddle" "end"`,
+	}})
+	if err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	want := "in file.txt\n" +
+		"bsel \"start\\nmiddle\" \"end\"\n" +
+		"type \"replacement\"\n"
+	if corrected != want {
+		t.Fatalf("corrected script = %q, want %q", corrected, want)
+	}
+}
+
 func TestHPatchCorrectionAppliesHeredocReplacementLineEndings(t *testing.T) {
 	for _, test := range []struct {
 		name    string

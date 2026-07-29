@@ -389,6 +389,69 @@ func TestTypeHeredocFailuresAreHeaderOwnedAndAtomic(t *testing.T) {
 	}
 }
 
+func TestPhysicalNewlineInQuotedOperandIsOneHeaderOwnedFailure(t *testing.T) {
+	tests := []struct {
+		name      string
+		operation string
+		command   string
+	}{
+		{
+			name:      "bsel",
+			operation: "bsel",
+			command: "bsel \"start\n" +
+				"middle\n" +
+				"end\" \"other\"\n" +
+				"type \"replacement\"\n",
+		},
+		{
+			name:      "tsel",
+			operation: "tsel",
+			command: "tsel 1 \"start\n" +
+				"middle\"\n" +
+				"type \"replacement\"\n",
+		},
+		{
+			name:      "type",
+			operation: "type",
+			command: "type \"replacement\n" +
+				"text\"\n" +
+				"copy\n",
+		},
+		{
+			name:      "unterminated at EOF",
+			operation: "type",
+			command: "type \"replacement\n" +
+				"text",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			const original = "start\nmiddle\nend\n"
+			writeTestFile(t, root, "file.txt", original, 0o644)
+
+			stdout, stderr, exitCode := runForTest(root, []string{"translate"}, "in file.txt\n"+test.command)
+			if exitCode != 1 || stdout != "" {
+				t.Fatalf("Run() = exit %d, stdout %q, stderr %q", exitCode, stdout, stderr)
+			}
+			if count := strings.Count(stderr, "hpatch: command "); count != 1 {
+				t.Fatalf("reported %d command failures, want one:\n%s", count, stderr)
+			}
+			for _, want := range []string{
+				"command 2, source line 2, operation \"" + test.operation + "\"",
+				`physical newline inside quoted operand; encode line terminators as \n or \r`,
+			} {
+				if !strings.Contains(stderr, want) {
+					t.Fatalf("diagnostic lacks %q:\n%s", want, stderr)
+				}
+			}
+			if got := readTestFile(t, root, "file.txt"); got != original {
+				t.Fatalf("failure mutated file: %q", got)
+			}
+		})
+	}
+}
+
 func TestParseReportsAllSyntaxErrorsWithoutEvaluation(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, root, "file.txt", "unchanged\n", 0o644)

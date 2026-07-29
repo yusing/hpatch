@@ -48,8 +48,9 @@ func SplitPhysicalLines(source string) []PhysicalLine {
 }
 
 // FrameCommand returns the complete physical-line span and decoded body for the
-// command at headerIndex. A malformed heredoc still advances past every body line
-// that can be attributed to its valid delimiter.
+// command at headerIndex. Malformed heredocs retain their attributable bodies;
+// quoted operands containing physical newlines retain lines through the closing
+// quote so one indexed correction can replace the malformed command.
 func FrameCommand(lines []PhysicalLine, headerIndex int, command string) (CommandFrame, error) {
 	frame := CommandFrame{Next: headerIndex + 1}
 	delimiter, err := heredocDelimiter(command)
@@ -57,11 +58,53 @@ func FrameCommand(lines []PhysicalLine, headerIndex int, command string) (Comman
 		return frame, err
 	}
 	frame.Delimiter = delimiter
-	if delimiter == "" {
+	if delimiter != "" {
+		frame.Body, frame.Next, err = decodeHeredoc(lines, headerIndex, delimiter)
+		return frame, err
+	}
+	if !isInlineQuotedCommand(command) {
 		return frame, nil
 	}
-	frame.Body, frame.Next, err = decodeHeredoc(lines, headerIndex, delimiter)
-	return frame, err
+
+	quoteOpen := scanQuotedOperand(command, false)
+	if !quoteOpen {
+		return frame, nil
+	}
+	for index := headerIndex + 1; index < len(lines); index++ {
+		frame.Next = index + 1
+		quoteOpen = scanQuotedOperand(lines[index].Text, quoteOpen)
+		if !quoteOpen {
+			break
+		}
+	}
+	return frame, errors.New(`physical newline inside quoted operand; encode line terminators as \n or \r`)
+}
+
+func isInlineQuotedCommand(command string) bool {
+	return strings.HasPrefix(command, "type ") ||
+		strings.HasPrefix(command, "tsel ") ||
+		strings.HasPrefix(command, "bsel ")
+}
+
+func scanQuotedOperand(text string, quoteOpen bool) bool {
+	escaped := false
+	for _, character := range text {
+		if !quoteOpen {
+			if character == '"' {
+				quoteOpen = true
+			}
+			continue
+		}
+		switch {
+		case escaped:
+			escaped = false
+		case character == '\\':
+			escaped = true
+		case character == '"':
+			quoteOpen = false
+		}
+	}
+	return quoteOpen
 }
 
 func heredocDelimiter(command string) (string, error) {
