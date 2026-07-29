@@ -14,6 +14,14 @@ Illustrative complete-call GPT-5 token estimates: preserving a long signature an
 Selection rules:
 - Start tsel TEXT and bsel anchors at stable non-whitespace content. Omit leading spaces and tabs unless indentation is intentionally part of the edit or needed to disambiguate otherwise identical matches; copy any included text exactly from the baseline.
 - bsel consumes both anchors. Re-emit any anchor that should remain. Never use a bare } or another duplicated fragment as an anchor. For a complete brace-delimited block, use fresh nl -ba output and rsel unless both anchors are distinctive and file-unique. Whole interior lines alone do not require rsel: bsel can avoid re-emitting substantial unchanged boundary text.
+- For insertion-only edits, type only the new content; never repeat unchanged selected text in the type payload. To insert before a selected fragment, copy the selection, replace it with only new content, then paste the preserved selection:
+  in handler.go
+  tsel 40 "func handle(request Request) error {"
+  copy
+  type <<PATCH
+  // Audit requests before handling.
+  PATCH
+  paste
 - Use fresh nl -ba output for rsel or sel coordinates. Earlier edits do not shift baseline coordinates.
 - Use type <<PATCH for multiline text and put PATCH immediately after the final content line; an extra blank body line changes the output.
 - Use inline type when replacement text must not end with a newline.
