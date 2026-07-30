@@ -638,6 +638,64 @@ func TestHPatchExecInputQuotesPatchReportAndDiagnostic(t *testing.T) {
 	}
 }
 
+func TestHPatchStreamingTerminalFinalizesRequestAccounting(t *testing.T) {
+	records := 0
+	transform, _, _, _ := newHPatchTestTransform(t, metricsObservingTranslator{
+		translate: func(context.Context, routingWorkspace, string) ([]byte, error) {
+			t.Fatal("terminal response without an hpatch call reached translation")
+			return nil, nil
+		},
+		record: func(context.Context, hpatchMetricRecord) error {
+			records++
+			return nil
+		},
+	})
+	completed := mustTestJSON(t, map[string]any{
+		"type":     "response.completed",
+		"response": map[string]any{"status": "completed", "output": []any{}},
+	})
+	visible, err := transform.TransformSSE(completed)
+	if err != nil || len(visible) != 1 || records != 1 {
+		t.Fatalf("completed = %q, metric records %d, error %v", visible, records, err)
+	}
+	if err := transform.Finish(true); err != nil || records != 1 {
+		t.Fatalf("repeated finish = metric records %d, error %v", records, err)
+	}
+}
+
+func TestWriteSSEEventPreservesTerminalStateWhenHPatchFinishIsCanceled(t *testing.T) {
+	transform, _, _, _ := newHPatchTestTransform(t, metricsObservingTranslator{
+		translate: func(context.Context, routingWorkspace, string) ([]byte, error) {
+			t.Fatal("terminal response without an hpatch call reached translation")
+			return nil, nil
+		},
+		record: func(ctx context.Context, _ hpatchMetricRecord) error {
+			return ctx.Err()
+		},
+	})
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	transform.ctx = ctx
+	completed := mustTestJSON(t, map[string]any{
+		"type":     "response.completed",
+		"response": map[string]any{"status": "completed", "output": []any{}},
+	})
+	var output bytes.Buffer
+	state, err := writeSSEEvent(
+		&output,
+		[]string{"event: response.completed\n", "data: " + string(completed) + "\n"},
+		"\n",
+		transform,
+		nil,
+	)
+	if state != responseTerminalCompleted || !errors.Is(err, context.Canceled) {
+		t.Fatalf("terminal state = %v, error %v", state, err)
+	}
+	if output.Len() != 0 {
+		t.Fatalf("canceled terminal event was written: %q", output.String())
+	}
+}
+
 func TestHPatchStreamingReplacesLifecycleWithoutChangingCallID(t *testing.T) {
 	calls := 0
 	transform, _, _, _ := newHPatchTestTransform(t, testTranslator(t, &calls))

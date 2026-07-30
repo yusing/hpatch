@@ -347,7 +347,7 @@ func copyUpstreamBodyTransformed(writer io.Writer, response *http.Response, stre
 		terminalState, err = copyJSONTransformed(writer, response.Body, transformer, observeUsage)
 	}
 	if err != nil {
-		return responseTerminalUnknown, fmt.Errorf("copy upstream response: %w", err)
+		return terminalState, fmt.Errorf("copy upstream response: %w", err)
 	}
 	return terminalState, nil
 }
@@ -392,9 +392,12 @@ func copySSETransformed(writer io.Writer, reader io.Reader, transformer *hpatchR
 				eventTerminalState, writeErr := writeSSEEvent(writer, event, line, transformer, observeUsage)
 				terminalState = mergeResponseTerminalState(terminalState, eventTerminalState)
 				if writeErr != nil {
-					return responseTerminalUnknown, writeErr
+					return terminalState, writeErr
 				}
 				event = event[:0]
+				if isResponseTerminal(eventTerminalState) {
+					return terminalState, nil
+				}
 			} else {
 				event = append(event, line)
 			}
@@ -404,18 +407,25 @@ func copySSETransformed(writer io.Writer, reader io.Reader, transformer *hpatchR
 				eventTerminalState, writeErr := writeSSEEvent(writer, event, "", transformer, observeUsage)
 				terminalState = mergeResponseTerminalState(terminalState, eventTerminalState)
 				if writeErr != nil {
-					return responseTerminalUnknown, writeErr
+					return terminalState, writeErr
+				}
+				if isResponseTerminal(eventTerminalState) {
+					return terminalState, nil
 				}
 				if transformer != nil {
 					if finishErr := transformer.Finish(true); finishErr != nil {
-						return responseTerminalUnknown, fmt.Errorf("%w: %w", errResponseTransform, finishErr)
+						return terminalState, fmt.Errorf("%w: %w", errResponseTransform, finishErr)
 					}
 				}
 				return terminalState, nil
 			}
-			return responseTerminalUnknown, err
+			return terminalState, err
 		}
 	}
+}
+
+func isResponseTerminal(state responseTerminalState) bool {
+	return state == responseTerminalCompleted || state == responseTerminalFailed
 }
 
 func consumeOptionalUTF8BOM(reader *bufio.Reader) error {
@@ -445,20 +455,21 @@ func writeSSEEvent(writer io.Writer, lines []string, separator string, transform
 		return responseTerminalUnknown, nil
 	}
 	payload := ssePayload(lines)
+	terminalState := observeResponseTerminal(payload, true)
+
 	recordObservedUsage(payload, true, observeUsage)
 	visible := [][]byte{payload}
 	if transformer != nil && len(payload) > 0 {
 		var err error
 		visible, err = transformer.TransformSSE(payload)
 		if err != nil {
-			return responseTerminalUnknown, fmt.Errorf("%w: %w", errResponseTransform, err)
+			return terminalState, fmt.Errorf("%w: %w", errResponseTransform, err)
 		}
 	}
 	if len(visible) == 0 {
-		return responseTerminalUnknown, nil
+		return terminalState, nil
 	}
 
-	terminalState := responseTerminalUnknown
 	var originalEnvelope struct {
 		Type string `json:"type"`
 	}
@@ -486,17 +497,17 @@ func writeSSEEvent(writer io.Writer, lines []string, separator string, transform
 		augmented := encodeSSEEventPayload(eventLines, eventPayload)
 		terminalState = mergeResponseTerminalState(terminalState, observeResponseTerminal(eventPayload, true))
 		if _, err := io.WriteString(writer, augmented); err != nil {
-			return responseTerminalUnknown, fmt.Errorf("%w: %w", errResponseWrite, err)
+			return terminalState, fmt.Errorf("%w: %w", errResponseWrite, err)
 		}
 		if eventSeparator != "" {
 			if _, err := io.WriteString(writer, eventSeparator); err != nil {
-				return responseTerminalUnknown, fmt.Errorf("%w: %w", errResponseWrite, err)
+				return terminalState, fmt.Errorf("%w: %w", errResponseWrite, err)
 			}
 		}
 	}
 	if responseWriter, ok := writer.(http.ResponseWriter); ok {
 		if err := http.NewResponseController(responseWriter).Flush(); err != nil {
-			return responseTerminalUnknown, fmt.Errorf("%w: %w", errResponseWrite, err)
+			return terminalState, fmt.Errorf("%w: %w", errResponseWrite, err)
 		}
 	}
 	return terminalState, nil

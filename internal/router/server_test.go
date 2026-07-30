@@ -757,6 +757,77 @@ func TestExecuteRequestCancellationAfterResponseLifecycle(t *testing.T) {
 	}
 }
 
+type serverCancelAfterTerminalResponseWriter struct {
+	http.ResponseWriter
+	cancel context.CancelFunc
+	once   sync.Once
+}
+
+func (writer *serverCancelAfterTerminalResponseWriter) Write(content []byte) (int, error) {
+	written, err := writer.ResponseWriter.Write(content)
+	if bytes.Contains(content, []byte(`"type":"response.completed"`)) {
+		writer.once.Do(writer.cancel)
+	}
+	return written, err
+}
+
+func (writer *serverCancelAfterTerminalResponseWriter) Unwrap() http.ResponseWriter {
+	return writer.ResponseWriter
+}
+
+func TestExecuteRequestCompletesAtTerminalEventBeforeStreamEOF(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+
+	blocked := make(chan struct{})
+	completed := mustTestJSON(t, map[string]any{
+		"type": "response.completed",
+		"response": map[string]any{
+			"status": "completed",
+			"usage":  map[string]any{"input_tokens": 7},
+		},
+	})
+	provider := serverProviderFunc(func(_, executionCtx context.Context, _ []byte, _ http.Header, _ string) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+			Body: &serverBlockingSSEBody{
+				ctx: executionCtx, content: strings.NewReader("event: response.completed\ndata: " + string(completed) + "\n\n"), blocked: blocked,
+			},
+		}, nil
+	})
+	recorder := httptest.NewRecorder()
+	downstream := &serverCancelAfterTerminalResponseWriter{ResponseWriter: recorder, cancel: cancel}
+	writer := &trackedResponseWriter{ResponseWriter: downstream}
+	store := newMetricsStore("")
+	var logOutput bytes.Buffer
+
+	err := executeRequest(
+		ctx, ctx,
+		serverRequest(t, func(request map[string]any) { request["stream"] = true }),
+		http.Header{}, "session", provider, writer, newDiagnostics(&logOutput),
+		serverLifecycleClock(0, 5*time.Millisecond, 35*time.Millisecond), nil, store,
+	)
+	if err != nil {
+		t.Fatalf("terminal response returned error: %v", err)
+	}
+	select {
+	case <-blocked:
+		t.Fatal("router read upstream after the terminal response event")
+	default:
+	}
+
+	requests := store.snapshot().Requests
+	assertServerLifecycleFinished(t, requests)
+	if requests.Completed != 1 || requests.CanceledAfterResponse != 0 || requests.UsageObserved != 1 {
+		t.Fatalf("terminal response lifecycle = %#v", requests)
+	}
+	if logs := logOutput.String(); !strings.Contains(logs, "outcome=completed") ||
+		!strings.Contains(logs, "upstream_terminal_state=completed") {
+		t.Fatalf("terminal response log = %q", logs)
+	}
+}
+
 func TestExecuteRequestResponseStartDeadlineLifecycle(t *testing.T) {
 	started := make(chan struct{})
 	provider := serverProviderFunc(func(startCtx, _ context.Context, _ []byte, _ http.Header, _ string) (*http.Response, error) {

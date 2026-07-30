@@ -1112,10 +1112,19 @@ func (t *hpatchResponseTransform) TransformSSE(payload []byte) ([][]byte, error)
 		if json.Unmarshal(transformed, &terminal) == nil && terminal.Status == "failed" {
 			event, err = replaceRawField(event, "type", mustMarshalJSON("response.failed"))
 		}
-		return onePayload(event, err)
+		if err != nil {
+			return nil, err
+		}
+		if err := t.Finish(true); err != nil {
+			return nil, err
+		}
+		return [][]byte{event}, nil
 
 	case "response.failed", "response.incomplete":
 		clear(t.pending)
+		if err := t.Finish(true); err != nil {
+			return nil, err
+		}
 		return [][]byte{payload}, nil
 	default:
 		if _, pending := t.pending[envelope.ItemID]; pending || t.pendingCallKnown(envelope.CallID) || envelope.Name == hpatchToolName || envelope.Name == applyPatchToolName {
