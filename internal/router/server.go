@@ -23,6 +23,7 @@ const (
 	requestBodyReadTimeout = 30 * time.Second
 	shutdownTimeout        = 5 * time.Second
 	maxResponsesRequest    = 32 << 20
+	maxModelsResponseBytes = 8 << 20
 )
 
 var errUpstreamResponseWithoutTerminal = errors.New("upstream Responses response ended without a terminal or resumable background state")
@@ -74,6 +75,7 @@ func Run(ctx context.Context, args []string, stderr io.Writer) error {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/metrics", metrics.serveAPI)
 	mux.HandleFunc("GET /", serveDashboard)
+	mux.HandleFunc("GET /v1/models", modelsHandler(provider))
 	mux.HandleFunc("POST /v1/responses", responsesHandler(ctx, *timeout, provider, log, hpatchCalls, metrics, &requestSequence))
 
 	server := &http.Server{
@@ -105,6 +107,33 @@ func Run(ctx context.Context, args []string, stderr io.Writer) error {
 			serveErr = nil
 		}
 		return errors.Join(ctx.Err(), shutdownErr, serveErr)
+	}
+}
+
+func modelsHandler(provider *providerClient) http.HandlerFunc {
+	return func(writer http.ResponseWriter, request *http.Request) {
+		response, err := provider.forwardModels(request.Context(), request.Header, request.URL.RawQuery)
+		if err != nil {
+			http.Error(writer, err.Error(), http.StatusBadGateway)
+			return
+		}
+		defer response.Body.Close()
+		body, err := io.ReadAll(io.LimitReader(response.Body, maxModelsResponseBytes+1))
+		if err != nil {
+			http.Error(writer, fmt.Sprintf("read upstream models response: %v", err), http.StatusBadGateway)
+			return
+		}
+		if len(body) > maxModelsResponseBytes {
+			http.Error(writer, "upstream models response is too large", http.StatusBadGateway)
+			return
+		}
+		for _, name := range []string{"Content-Type", "Cache-Control", "ETag"} {
+			for _, value := range response.Header.Values(name) {
+				writer.Header().Add(name, value)
+			}
+		}
+		writer.WriteHeader(response.StatusCode)
+		_, _ = writer.Write(body)
 	}
 }
 

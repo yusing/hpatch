@@ -16,6 +16,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/iotest"
 	"time"
 )
 
@@ -951,6 +952,119 @@ type serverRoundTripper func(*http.Request) (*http.Response, error)
 
 func (f serverRoundTripper) RoundTrip(request *http.Request) (*http.Response, error) {
 	return f(request)
+}
+
+func TestModelsHandlerForwardsCodexAuthenticationQueryAndResponse(t *testing.T) {
+	httpClient := &http.Client{Transport: serverRoundTripper(func(request *http.Request) (*http.Response, error) {
+		if request.Method != http.MethodGet || request.URL.String() != testProviderBaseURL+"/models?client_version=0.146.0" {
+			t.Errorf("request = %s %s", request.Method, request.URL)
+		}
+		for name, want := range map[string]string{
+			"Authorization":      "Bearer caller-token",
+			"ChatGPT-Account-ID": "caller-account",
+			"Accept":             "application/json",
+			"Originator":         codexClientIdentity,
+			"User-Agent":         codexClientIdentity,
+		} {
+			if got := request.Header.Get(name); got != want {
+				t.Errorf("header %s = %q, want %q", name, got, want)
+			}
+		}
+		responseHeaders := make(http.Header)
+		responseHeaders.Set("Content-Type", "application/json")
+		responseHeaders.Set("Cache-Control", "max-age=60")
+		responseHeaders.Set("ETag", "catalog-version")
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     responseHeaders,
+			Body:       io.NopCloser(strings.NewReader(`{"models":[]}`)),
+		}, nil
+	})}
+	request := httptest.NewRequest(http.MethodGet, "/v1/models?client_version=0.146.0", nil)
+	request.Header = codexAuthHeaders()
+	recorder := httptest.NewRecorder()
+
+	modelsHandler(newProviderClient(testProviderBaseURL, httpClient))(recorder, request)
+
+	if recorder.Code != http.StatusOK || recorder.Body.String() != `{"models":[]}` {
+		t.Fatalf("response = %d %q", recorder.Code, recorder.Body.String())
+	}
+	for name, want := range map[string]string{
+		"Content-Type":  "application/json",
+		"Cache-Control": "max-age=60",
+		"ETag":          "catalog-version",
+	} {
+		if got := recorder.Header().Get(name); got != want {
+			t.Errorf("response header %s = %q, want %q", name, got, want)
+		}
+	}
+}
+
+func TestModelsHandlerRejectsUpstreamBodyReadFailure(t *testing.T) {
+	httpClient := &http.Client{Transport: serverRoundTripper(func(*http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Cache-Control": []string{"max-age=60"}},
+			Body: io.NopCloser(io.MultiReader(
+				strings.NewReader(`{"models":[`),
+				iotest.ErrReader(errors.New("upstream read failed")),
+			)),
+		}, nil
+	})}
+	request := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+	request.Header = codexAuthHeaders()
+	recorder := httptest.NewRecorder()
+
+	modelsHandler(newProviderClient(testProviderBaseURL, httpClient))(recorder, request)
+
+	if recorder.Code != http.StatusBadGateway || !strings.Contains(recorder.Body.String(), "upstream read failed") {
+		t.Fatalf("response = %d %q", recorder.Code, recorder.Body.String())
+	}
+	if strings.Contains(recorder.Body.String(), `{"models":[`) {
+		t.Fatalf("response exposes partial upstream body: %q", recorder.Body.String())
+	}
+	if got := recorder.Header().Get("Cache-Control"); got != "" {
+		t.Errorf("response Cache-Control = %q, want empty", got)
+	}
+}
+
+func TestModelsHandlerRejectsOversizedUpstreamBody(t *testing.T) {
+	httpClient := &http.Client{Transport: serverRoundTripper(func(*http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(io.LimitReader(serverRepeatingReader{}, maxModelsResponseBytes+1)),
+		}, nil
+	})}
+	request := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+	request.Header = codexAuthHeaders()
+	recorder := httptest.NewRecorder()
+
+	modelsHandler(newProviderClient(testProviderBaseURL, httpClient))(recorder, request)
+
+	if recorder.Code != http.StatusBadGateway || !strings.Contains(recorder.Body.String(), "too large") {
+		t.Fatalf("response = %d %q", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestModelsHandlerRejectsMissingAuthentication(t *testing.T) {
+	var forwarded bool
+	httpClient := &http.Client{Transport: serverRoundTripper(func(*http.Request) (*http.Response, error) {
+		forwarded = true
+		return serverHTTPResponse("{}"), nil
+	})}
+	recorder := httptest.NewRecorder()
+
+	modelsHandler(newProviderClient(testProviderBaseURL, httpClient))(
+		recorder,
+		httptest.NewRequest(http.MethodGet, "/v1/models", nil),
+	)
+
+	if recorder.Code != http.StatusBadGateway || !strings.Contains(recorder.Body.String(), "Authorization") {
+		t.Fatalf("response = %d %q", recorder.Code, recorder.Body.String())
+	}
+	if forwarded {
+		t.Fatal("unauthenticated models request reached upstream")
+	}
 }
 
 //nolint:canonicalheader // Exact lowercase names match Codex's observed wire headers.

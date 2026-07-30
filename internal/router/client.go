@@ -76,6 +76,28 @@ func requiredCodexAuthHeaders(headers http.Header) (string, string, error) {
 	return authorizationValues[0], accountValues[0], nil
 }
 
+func (c *providerClient) forwardModels(ctx context.Context, headers http.Header, rawQuery string) (*http.Response, error) {
+	authorization, accountID, err := requiredCodexAuthHeaders(headers)
+	if err != nil {
+		return nil, err
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(c.baseURL, "/")+"/models", nil)
+	if err != nil {
+		return nil, fmt.Errorf("build upstream models request: %w", err)
+	}
+	request.URL.RawQuery = rawQuery
+	request.Header.Set("Authorization", authorization)
+	request.Header.Set("Accept", "application/json")
+	request.Header.Set(chatGPTAccountIDHeader, accountID)
+	request.Header.Set("Originator", codexClientIdentity)
+	request.Header.Set("User-Agent", codexClientIdentity)
+	response, err := c.httpClient.Do(request)
+	if err != nil {
+		return nil, fmt.Errorf("forward upstream models request: %w", err)
+	}
+	return response, nil
+}
+
 func (c *providerClient) forwardExecution(startCtx, responseCtx context.Context, body []byte, headers http.Header, cacheKey string) (*http.Response, error) {
 	authorization, accountID, err := requiredCodexAuthHeaders(headers)
 	if err != nil {
