@@ -4,7 +4,7 @@ pjdoc:
   kind: architecture
   scope: root
   status: approved
-  revision: "9"
+  revision: "11"
   files:
     []
 ---
@@ -78,9 +78,11 @@ persist editor state or create a resume mechanism.
 
 The CLI boundary owns arguments, stdin, workspace selection, environment-derived metrics
 configuration, diagnostics, stdout, stderr, exit status, and help composition for
-`REQ-CLI-001`, `REQ-GUIDE-001`, and `REQ-OUTPUT-001`. Top-level and tool help share one
-rendered agent-workflow-through-final-state reference; the tool form excludes CLI mode
-sections and appends its bounded path guidance. The workspace boundary owns a pinned
+`REQ-CLI-001`, `REQ-GUIDE-001`, and `REQ-OUTPUT-001`. Top-level help owns the complete
+agent-workflow-through-metrics reference. Tool help is an independently maintained concise
+model-facing summary of command choice, baseline rules, and safety; the router appends
+only its compact correction protocol. Tool help excludes CLI mode sections, options,
+metrics, and version material, and includes its bounded path guidance. The workspace boundary owns a pinned
 `*os.Root`, a root-relative cwd, root-scoped filesystem reads, staging, commit, and
 rollback. Relative script paths resolve from cwd; absolute script paths become
 root-relative identities only when within root. Lexical and symlink escapes fail. Initial
@@ -108,9 +110,9 @@ rollback attempts, and honest reporting of external commit or rollback failure.
 
 One metrics classifier consumes structured parser and evaluator events rather than
 re-parsing scripts or diagnostics. It owns effective, ineffective, direct-patch, and
-fully emitted report token estimates; aggregate command counters and selector projections; single and multiple `tsel` variants; the `bsel` counter; explicit `commit` command
-attempts; exact and whitespace-recovered block outcomes; and stable terminal reason
-counters. The report
+fully emitted report token estimates; aggregate command counters and selector projections;
+single and multiple `tsel` variants; explicit `commit` command attempts; and stable terminal
+reason counters. The report
 formatter's exact emitted string is the only source for report-input token counting.
 Price ratios are presentation-time calculations and are never persisted.
 
@@ -140,3 +142,25 @@ The comparison artifact may call the engine as test support, but every equivalen
 applier verifies both representations reach the same final path-to-content map before
 token counts are reported. Neither the applier nor the comparison is part of the
 installed `hpatch` CLI.
+
+## CTR-BENCH-001 — Benchmark trust and execution boundary
+
+The command boundary in `cmd/hpatch-bench` owns invocation,
+progress, exit status, and result destinations for `REQ-BENCH-001`. The benchmark owner in
+`internal/bench` owns the executable manifest schema, source-revision
+resolution, history-free snapshot lifecycle, arm scheduling, Codex process execution,
+pre-grader change capture, hidden-file injection, graders, and structured results. Source
+repositories and hidden inputs are read-only authorities; disposable snapshots own every
+agent and grader mutation and are removed after their artifacts are captured.
+
+The router remains the sole owner of upstream authentication, provider forwarding, cache
+keys, response delivery, and provider usage. Its selected mode determines whether the
+existing hpatch transformer participates. Pass-through does not duplicate forwarding or
+introduce another provider client. The metrics endpoint is the executable mode-label
+boundary used to prevent arm misconfiguration.
+
+Hidden destinations cross into an agent-mutated workspace only through a pinned `*os.Root`
+after change capture. A pre-existing destination, lexical escape, or symlink escape fails
+instead of overwriting agent or external content. Grader commands consume the resulting
+disposable tree; they cannot turn an agent, scope, infrastructure, timeout, or cancellation
+failure into benchmark success.

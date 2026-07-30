@@ -15,20 +15,12 @@ type commandAttempt struct {
 	textSpan   textSpanVariant
 }
 
-type commandOutcome struct {
-	blockRecovered bool
-}
-
-const (
-	textSpanVariantCount = 2
-	blockOutcomeCount    = 2
-)
+const textSpanVariantCount = 2
 
 type invocationMetrics struct {
-	Commands      commandMetrics                      `json:"commands"`
-	TextSpans     [textSpanVariantCount]commandMetric `json:"text_spans"`
-	BlockOutcomes [blockOutcomeCount]uint64           `json:"block_outcomes"`
-	Reasons       [failureReasonCount]uint64          `json:"reasons"`
+	Commands  commandMetrics                      `json:"commands"`
+	TextSpans [textSpanVariantCount]commandMetric `json:"text_spans"`
+	Reasons   [failureReasonCount]uint64          `json:"reasons"`
 	// CommandReasons attributes each error to the command that raised it. The
 	// flat Reasons histogram cannot answer which primitive a reason belongs
 	// to, which is the question that decides whether a command earns its
@@ -37,8 +29,6 @@ type invocationMetrics struct {
 }
 
 var textSpanVariantNames = [textSpanVariantCount]string{"single", "multiple"}
-
-var blockOutcomeNames = [blockOutcomeCount]string{"bsel exact", "bsel recovered"}
 
 func (m *invocationMetrics) invoke(operation string, attempt commandAttempt) {
 	index := commandOperationIndex(operation)
@@ -72,30 +62,12 @@ func (m *invocationMetrics) invokeFailure(operation string, attempt commandAttem
 	m.fail(operation, attempt, reason)
 }
 
-func (m *invocationMetrics) recordOutcome(operation string, outcome commandOutcome) {
-	if index := blockOutcomeIndex(operation, outcome.blockRecovered); index >= 0 {
-		m.BlockOutcomes[index]++
-	}
-}
-
-func blockOutcomeIndex(operation string, recovered bool) int {
-	if operation != "bsel" {
-		return -1
-	}
-	if recovered {
-		return 1
-	}
-	return 0
-}
-
 type failureReason uint8
 
 const (
 	reasonSyntax failureReason = iota
 	reasonCoordinateBounds
 	reasonOccurrenceMissing
-	reasonAnchorMissing
-	reasonAnchorAmbiguous
 	reasonInvalidCount
 	reasonOrderOrOverlap
 	reasonEditConflict
@@ -113,8 +85,6 @@ var failureReasonNames = [failureReasonCount]string{
 	"syntax",
 	"coordinate-bounds",
 	"occurrence-missing",
-	"anchor-missing",
-	"anchor-ambiguous",
 	"invalid-count",
 	"order-or-overlap",
 	"edit-conflict",

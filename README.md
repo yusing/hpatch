@@ -284,14 +284,13 @@ Selectors (prefer the first that fits):
 
 1. Complete logical lines or indentation changes: `rsel START:END`
 2. Exact non-whitespace content: `tsel FROM_LINE "TEXT" [N]`
-3. Block whose ends sit inside lines: `bsel "START" "END"`
-4. Exact rune columns only when needed: `sel LINE START:END`
+3. Exact rune columns only when needed: `sel LINE START:END`
 
 Common commands: `in` / `new` / `mv` / `rm`, `type "…"` or `type <<PATCH` … `PATCH`, `del`, `copy` / `cut` / `paste`, `commit`.
 
 Rules worth remembering:
 
-- Never put leading spaces or tabs in `tsel` / `bsel` anchors; start at stable non-whitespace content.
+- Start `tsel` at stable non-whitespace content; avoid leading spaces or tabs.
 - First `in` of a file freezes an immutable baseline; selectors use that baseline until `commit`.
 - Disjoint edits can land together; overlapping replacements fail the whole script atomically.
 - Rejection changes nothing. Router-owned retries can replace, delete, or insert failed commands by index without resending the full script.

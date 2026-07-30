@@ -161,16 +161,12 @@ func TestMetricsClassifyVariantsOutcomesAndReasons(t *testing.T) {
 		"in sample.txt\ntsel 1 \"alpha\"\ntype \"A\"\n",
 		"in sample.txt\ntsel 1 \"alpha\" 1\ntype \"A\"\n",
 		"in sample.txt\ntsel 1 \"alpha\" 2\ntype \"A\"\n",
-		"in sample.txt\nbsel \"func x() {\" \"}\"\ntype \"A\"\n",
-		"in sample.txt\nbsel \"func x() {\" \"    body\"\ntype \"A\"\n",
 	} {
 		run(script, true)
 	}
 	for _, script := range []string{
 		"in sample.txt\ntsel 1 \"alpha\" 9\n",
 		"in sample.txt\ntsel 1 \"alpha\" nope\n",
-		"in sample.txt\nbsel \"missing\" \"}\"\n",
-		"in sample.txt\nbsel \"alpha\" \"}\"\n",
 		"in sample.txt\nsel +x 1:1\n",
 	} {
 		run(script, false)
@@ -187,14 +183,8 @@ func TestMetricsClassifyVariantsOutcomesAndReasons(t *testing.T) {
 	if got.TextSpans != wantTextSpans {
 		t.Fatalf("tsel spans = %+v, want %+v", got.TextSpans, wantTextSpans)
 	}
-	wantBlockOutcomes := [blockOutcomeCount]uint64{1, 1}
-	if got.BlockOutcomes != wantBlockOutcomes {
-		t.Fatalf("block outcomes = %+v, want %+v", got.BlockOutcomes, wantBlockOutcomes)
-	}
 	for reason, want := range map[failureReason]uint64{
 		reasonOccurrenceMissing: 1,
-		reasonAnchorMissing:     1,
-		reasonAnchorAmbiguous:   1,
 		reasonInvalidCount:      1,
 	} {
 		if got.Reasons[reason] != want {
@@ -209,7 +199,7 @@ func TestMetricsClassifyVariantsOutcomesAndReasons(t *testing.T) {
 	for _, count := range got.Reasons {
 		totalReasons += count
 	}
-	if totalReasons != totalCommands.Errors || totalReasons != 4 {
+	if totalReasons != totalCommands.Errors || totalReasons != 2 {
 		t.Fatalf("reason total = %d, aggregate errors = %d", totalReasons, totalCommands.Errors)
 	}
 }
@@ -243,17 +233,13 @@ func representativeMetrics() metrics {
 
 	value.TextSpans[textSpanSingle-1] = commandMetric{Invocations: 1}
 	value.TextSpans[textSpanMultiple-1] = commandMetric{Invocations: 1, Errors: 1}
-	value.Commands[commandOperationIndex("bsel")] = commandMetric{Invocations: 2, Errors: 1}
-	value.BlockOutcomes[blockOutcomeIndex("bsel", false)] = 1
 	value.Reasons[reasonSyntax] = 2
-	value.Reasons[reasonAnchorMissing] = 1
 	value.Commands[commandOperationIndex("paste")] = commandMetric{Invocations: 1, Errors: 1}
 	value.Reasons[reasonClipboardEmpty] = 1
 	// Attribute each reason to the command that raised it so the
 	// cross-tabulation reconciles with both margins.
 	value.CommandReasons[commandOperationIndex("sel")][reasonSyntax] = 1
 	value.CommandReasons[commandOperationIndex("tsel")][reasonSyntax] = 1
-	value.CommandReasons[commandOperationIndex("bsel")][reasonAnchorMissing] = 1
 	value.CommandReasons[commandOperationIndex("paste")][reasonClipboardEmpty] = 1
 	return value
 }

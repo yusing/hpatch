@@ -24,19 +24,19 @@ import (
 const (
 	metricsFilename = "metrics.bin"
 	metricsLockname = "metrics.lock"
-	metricsMagic    = "HPATCH18"
+	metricsMagic    = "HPATCH19"
 
 	metricsSlotSize         = 2432
 	metricsFileSize         = 2 * metricsSlotSize
 	metricsChecksumOffset   = 2400
 	metricsDiagnosticOffset = 2384
-	commandCount            = 14
+	commandCount            = 13
 	metricsLockRetryDelay   = 10 * time.Millisecond
 )
 
 var commandOperations = [commandCount]string{
 	"in", "new", "mv", "rm",
-	"sel", "tsel", "bsel", "rsel",
+	"sel", "tsel", "rsel",
 	"type", "del", "copy", "cut", "paste", "commit",
 }
 
@@ -262,11 +262,6 @@ func (m *metrics) add(entry metrics) error {
 			return fmt.Errorf("updating metrics: tsel span count overflow")
 		}
 	}
-	for index := range blockOutcomeCount {
-		if !addCounter(&m.BlockOutcomes[index], entry.BlockOutcomes[index]) {
-			return fmt.Errorf("updating metrics: block outcome count overflow")
-		}
-	}
 	for index := range failureReasonCount {
 		if !addCounter(&m.Reasons[index], entry.Reasons[index]) {
 			return fmt.Errorf("updating metrics: failure reason count overflow")
@@ -309,13 +304,6 @@ func validInvocationMetrics(events invocationMetrics) bool {
 	}
 	spans, ok := sumCommandMetrics(events.TextSpans[0], events.TextSpans[1])
 	if !ok || spans != events.Commands[commandOperationIndex("tsel")] {
-		return false
-	}
-	operation := "bsel"
-	base := blockOutcomeIndex(operation, false)
-	successes, ok := sumCounters(events.BlockOutcomes[base], events.BlockOutcomes[base+1])
-	command := events.Commands[commandOperationIndex(operation)]
-	if !ok || command.Errors > command.Invocations || successes != command.Invocations-command.Errors {
 		return false
 	}
 	var reasons uint64
@@ -361,13 +349,6 @@ func sumCommandMetrics(first, second commandMetric) (commandMetric, bool) {
 		return commandMetric{}, false
 	}
 	return result, true
-}
-
-func sumCounters(first, second uint64) (uint64, bool) {
-	if second > ^uint64(0)-first {
-		return 0, false
-	}
-	return first + second, true
 }
 
 func readMetrics(dataDirectory string) (total metrics, err error) {
@@ -508,9 +489,6 @@ func encodeMetricsSlot(value metrics, generation uint64) [metricsSlotSize]byte {
 	for index, entry := range value.TextSpans {
 		putCommandMetric(encoded[:], 384+index*16, entry)
 	}
-	for index, count := range value.BlockOutcomes {
-		binary.LittleEndian.PutUint64(encoded[416+index*8:424+index*8], count)
-	}
 	for index, count := range value.Reasons {
 		binary.LittleEndian.PutUint64(encoded[448+index*8:456+index*8], count)
 	}
@@ -560,9 +538,6 @@ func decodeMetricsSlot(encoded [metricsSlotSize]byte) (metrics, uint64, bool) {
 	}
 	for index := range textSpanVariantCount {
 		value.TextSpans[index] = getCommandMetric(encoded[:], 384+index*16)
-	}
-	for index := range blockOutcomeCount {
-		value.BlockOutcomes[index] = binary.LittleEndian.Uint64(encoded[416+index*8 : 424+index*8])
 	}
 	for index := range int(failureReasonCount) {
 		value.Reasons[index] = binary.LittleEndian.Uint64(encoded[448+index*8 : 456+index*8])
@@ -655,7 +630,6 @@ type GainMetrics struct {
 
 	Commands       []NamedCommandMetric  `json:"commands"`
 	TextSpans      []NamedCommandMetric  `json:"text_spans"`
-	BlockOutcomes  []NamedCount          `json:"block_outcomes"`
 	Reasons        []NamedCount          `json:"reasons"`
 	CommandReasons []CommandReasonMetric `json:"command_reasons"`
 }
@@ -704,10 +678,6 @@ func (m metrics) gainMetrics() GainMetrics {
 			ErrorRate:   entry.errorRate(),
 		})
 	}
-	blockOutcomes := make([]NamedCount, 0, blockOutcomeCount)
-	for index, name := range blockOutcomeNames {
-		blockOutcomes = append(blockOutcomes, NamedCount{Name: name, Count: m.BlockOutcomes[index]})
-	}
 	reasons := make([]NamedCount, 0, failureReasonCount)
 	for index, name := range failureReasonNames {
 		reasons = append(reasons, NamedCount{Name: name, Count: m.Reasons[index]})
@@ -746,7 +716,6 @@ func (m metrics) gainMetrics() GainMetrics {
 		DefinitionSources:            describeDefinitionSources(m),
 		Commands:                     commands,
 		TextSpans:                    textSpans,
-		BlockOutcomes:                blockOutcomes,
 		Reasons:                      reasons,
 		CommandReasons:               commandReasons,
 	}
@@ -762,19 +731,8 @@ func gainReportAtWidth(m metrics, width int) string {
 	writeCommandTable(&report, "command metrics:", "command", commandOperations[:], m.Commands[:], true)
 	writeCommandTable(&report, "tsel selection metrics:", "selection", textSpanVariantNames[:], m.TextSpans[:], false)
 
-	report.WriteString("block selector successes:\n")
-	table := tabwriter.NewWriter(&report, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(table, "selector\tmatch\tsuccesses")
-	fmt.Fprintln(table, "--------\t-----\t---------")
-	for index, name := range blockOutcomeNames {
-		operation, match, _ := strings.Cut(name, " ")
-		fmt.Fprintf(table, "%s\t%s\t%d\n", operation, match, m.BlockOutcomes[index])
-	}
-	_ = table.Flush()
-	report.WriteByte('\n')
-
 	report.WriteString("failure reasons:\n")
-	table = tabwriter.NewWriter(&report, 0, 4, 2, ' ', 0)
+	table := tabwriter.NewWriter(&report, 0, 4, 2, ' ', 0)
 	fmt.Fprintln(table, "reason\terrors")
 	fmt.Fprintln(table, "------\t------")
 	var totalReasons uint64

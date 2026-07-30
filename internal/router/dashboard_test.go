@@ -7,6 +7,12 @@ import (
 	"testing"
 )
 
+func TestDashboardGainStateHasNoRemovedBlockTableReference(t *testing.T) {
+	if strings.Contains(string(dashboardHTML), "blocks:blocks.tbody") {
+		t.Fatal("dashboard gain state references the removed block selector table")
+	}
+}
+
 func TestDashboardIsSelfContainedAndProtectedByCSP(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	serveDashboard(recorder, httptest.NewRequest(http.MethodGet, "/", nil))

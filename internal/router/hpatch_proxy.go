@@ -185,20 +185,23 @@ func newHPatchProxy(translator hpatchTranslator) *hpatchProxy {
 // prompt prefix at exactly the moment a rejection happens.
 const hpatchCorrectionInstructions = `
 Repairing a rejected script:
-  When the previous hpatch call was rejected, you may send a correction instead of
-  the complete script. Send one operation per nonblank command header:
+  When the latest hpatch evaluation was rejected, you may send indexed operations
+  instead of the complete script:
 
     INDEX: COMMAND
     -INDEX
     +INDEX: COMMAND
     INDEX+: COMMAND
 
-  These replace, delete, insert before, or insert after the named original command.
-  A replacement or insertion whose command is type <<PATCH consumes its body and
-  the exact unindented closing PATCH line as one operation. Every index refers to the original rejected script.
-  Replacement and deletion may name an index once; same-anchor insertions retain
-  payload order even when the anchor is deleted. The complete rebuilt script is
-  revalidated against unchanged files, so the correction remains atomic.
+  These replace, delete, insert before, or insert after a command. Indices count the
+  nonblank command headers in the complete script evaluated for the latest rejection;
+  they are not source-line numbers, indices into the first attempt, or indices into a
+  compact correction payload. A heredoc and its body count as one command. A type
+  <<PATCH replacement or insertion consumes through its exact unindented closing PATCH.
+  When an edit diagnostic reflects a bad span, correct its preceding selector. Replace
+  or delete an index at most once; repeated insertions retain payload order even if the
+  anchor is deleted. If the mapping is uncertain, resend the complete script. The
+  rebuilt script is revalidated atomically.
 `
 
 // hpatchCorrectionHint is appended to a rejection so the cheaper repair path is

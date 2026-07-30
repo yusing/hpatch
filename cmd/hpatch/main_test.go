@@ -58,7 +58,6 @@ func TestTopLevelHelpDescribesCompletePublicSurface(t *testing.T) {
 		"hpatch translate [--root ROOT] [--cwd CWD] < SCRIPT",
 		"hpatch gain",
 		"standard input",
-		"bsel \"START\" \"END\"",
 		"tsel FROM_LINE \"TEXT\" [N]",
 		"rsel START:END",
 		"type <<TAG",
@@ -72,11 +71,9 @@ func TestTopLevelHelpDescribesCompletePublicSurface(t *testing.T) {
 		"immutable baseline",
 		"Text introduced by an",
 		"multiple insertions",
-		"complete active-file baseline",
 		"separate matches",
 		"Prefer a broader TEXT instead of occurrence arithmetic",
 		"selection sets",
-		"ASCII space and tab runs match interchangeably",
 		"preserves the selected final",
 		"translate always emits root-relative paths",
 		"caller-accounted hpatch",
@@ -92,30 +89,28 @@ func TestTopLevelHelpDescribesCompletePublicSurface(t *testing.T) {
 	}
 }
 
+func TestHelpDoesNotAdvertiseRemovedBlockSelector(t *testing.T) {
+	for name, text := range map[string]string{"top-level": helpTextBase, "tool": toolHelpText(), "translate": translateHelpText} {
+		if strings.Contains(text, "bsel") {
+			t.Errorf("%s help still advertises removed bsel command", name)
+		}
+	}
+}
+
 func TestToolHelpGuidesAgentCommandChoice(t *testing.T) {
 	help := toolHelpText()
 	for _, required := range []string{
 		"HPATCH/1 edits workspace files atomically.",
-		"Minimize the complete selector-plus-replacement output",
-		"tsel FROM_LINE \"TEXT\" [N] selects the first N exact one-line matches",
-		"bsel \"START\" \"END\" selects from distinct START through END inclusively",
-		"START must occur exactly once file-wide and END exactly once after it.",
-		"does not parse syntax or pair braces",
-		"Never use a bare } or another duplicated fragment as an anchor",
-		"rsel START:END selects complete logical lines",
-		"Omit leading spaces and tabs unless indentation is intentionally part of the edit",
-		"needed to disambiguate otherwise identical matches",
-		"Whole interior lines alone do not require rsel",
+		"tsel FROM_LINE \"TEXT\" [N] selects the first N separate exact matches",
+		"from column 1 of FROM_LINE through EOF",
+		"matches may land on different lines",
+		"whole baseline has exactly N",
+		"No report is available until the whole call finishes",
+		"same-call selectors must use coordinates known before submission",
 		"For insertion-only edits, type only the new content",
-		"never repeat unchanged selected text in the type payload",
-		"copy the selection, replace it with only new content, then paste",
 		"Use type <<PATCH for multiline text",
-		"put PATCH immediately after the final content line",
-		"Function-body example that preserves the declaration, parameters, opening brace",
-		`bsel "oldResult := computeServiceTotal(input)" "return oldResult, nil // service total"`,
-		`tsel 90 "saveArtifactPayload(path, b)"`,
 		"The first in captures an immutable file baseline.",
-		"After success, inspect the reported edited ranges",
+		"any repaired tsel line notes",
 	} {
 		if !strings.Contains(help, required) {
 			t.Fatalf("tool help does not contain %q", required)
@@ -128,13 +123,10 @@ func TestToolHelpGuidesAgentCommandChoice(t *testing.T) {
 		"--cwd",
 		"Metrics:",
 		"INDEX: COMMAND",
-		"Never place a physical newline inside a quoted operand.",
-		"must be nonempty",
-		"PATCH must be the exact unindented closing line.",
-		"never include leading indentation",
+		"matches literals only",
 	} {
 		if strings.Contains(help, excluded) {
-			t.Fatalf("tool help contains unnecessary or non-tool text %q", excluded)
+			t.Fatalf("tool help contains unnecessary or inaccurate text %q", excluded)
 		}
 	}
 	if !strings.HasPrefix(help, "HPATCH/1 edits workspace files atomically.") {
@@ -202,9 +194,6 @@ func TestTopLevelHelpDescribesSelectionOperandConstraints(t *testing.T) {
 		"separate exact",
 		"all requested matches",
 		"Prefer a broader TEXT instead of occurrence arithmetic",
-		"bsel searches the complete active-file baseline",
-		"resolves START uniquely",
-		"resolves END uniquely only after START",
 	} {
 		if !strings.Contains(helpTextBase, fragment) {
 			t.Fatalf("help does not contain %q", fragment)

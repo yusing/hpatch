@@ -273,30 +273,16 @@ func TestEvaluationFailuresDoNotMutateOrEmitPatch(t *testing.T) {
 func TestQuotedOperandsAcceptLiteralTabs(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, root, "text.txt", "old\tvalue\n", 0o644)
-	writeTestFile(t, root, "block.txt", "BEGIN\tone\nmiddle\nEND\ttwo\n", 0o644)
-	writeTestFile(t, root, "next.txt", "prefix\nBEGIN\tthree\nmiddle\nEND\tfour\n", 0o644)
 	script := "in text.txt\n" +
 		"tsel 1 \t\"old\tvalue\"\n" +
-		"type  \"new\tvalue\"\n" +
-		"in block.txt\n" +
-		"bsel   \"BEGIN\tone\" \"END\ttwo\"\n" +
-		"type \t\"block\"\n" +
-		"in next.txt\n" +
-		"bsel \t\"BEGIN\tthree\" \"END\tfour\"\n" +
-		"type  \"next\"\n"
+		"type  \"new\tvalue\"\n"
 
 	stdout, stderr, exitCode := runForTest(root, nil, script)
 	if exitCode != 0 || stdout != "" || stderr != "" {
 		t.Fatalf("Run() = exit %d, stdout %q, stderr %q", exitCode, stdout, stderr)
 	}
-	for path, want := range map[string]string{
-		"text.txt":  "new\tvalue\n",
-		"block.txt": "block\n",
-		"next.txt":  "prefix\nnext\n",
-	} {
-		if got := readTestFile(t, root, path); got != want {
-			t.Errorf("%s = %q, want %q", path, got, want)
-		}
+	if got, want := readTestFile(t, root, "text.txt"), "new\tvalue\n"; got != want {
+		t.Errorf("text.txt = %q, want %q", got, want)
 	}
 }
 
@@ -396,14 +382,6 @@ func TestPhysicalNewlineInQuotedOperandIsOneHeaderOwnedFailure(t *testing.T) {
 		command   string
 	}{
 		{
-			name:      "bsel",
-			operation: "bsel",
-			command: "bsel \"start\n" +
-				"middle\n" +
-				"end\" \"other\"\n" +
-				"type \"replacement\"\n",
-		},
-		{
 			name:      "tsel",
 			operation: "tsel",
 			command: "tsel 1 \"start\n" +
@@ -457,7 +435,6 @@ func TestParseReportsAllSyntaxErrorsWithoutEvaluation(t *testing.T) {
 	writeTestFile(t, root, "file.txt", "unchanged\n", 0o644)
 	script := "in file.txt\n" +
 		"type \"literal\x01control\"\n" +
-		"bsel \"start\" nope\n" +
 		"tsel 1 \"first\\nsecond\"\n" +
 		"tsel 1 \"literal\x01control\"\n"
 
@@ -468,19 +445,17 @@ func TestParseReportsAllSyntaxErrorsWithoutEvaluation(t *testing.T) {
 	for _, want := range []string{
 		"command 2, source line 2, operation \"type\"",
 		"invalid quoted string for type: invalid character",
-		"command 3, source line 3, operation \"bsel\"",
-		"invalid bsel quoted strings:",
-		"command 4, source line 4, operation \"tsel\"",
+		"command 3, source line 3, operation \"tsel\"",
 		"tsel text must stay on one line",
-		"command 5, source line 5, operation \"tsel\"",
+		"command 4, source line 4, operation \"tsel\"",
 		"invalid quoted string for tsel: invalid character",
 	} {
 		if !strings.Contains(stderr, want) {
 			t.Fatalf("diagnostic lacks %q:\n%s", want, stderr)
 		}
 	}
-	if count := strings.Count(stderr, "hpatch: command "); count != 4 {
-		t.Fatalf("reported %d syntax errors, want 4:\n%s", count, stderr)
+	if count := strings.Count(stderr, "hpatch: command "); count != 3 {
+		t.Fatalf("reported %d syntax errors, want 3:\n%s", count, stderr)
 	}
 	if got := readTestFile(t, root, "file.txt"); got != "unchanged\n" {
 		t.Fatalf("syntax rejection mutated file: %q", got)

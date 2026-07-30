@@ -29,7 +29,6 @@ type instruction struct {
 	end        int
 	count      int
 	text       string
-	endText    string
 }
 
 type program struct {
@@ -161,7 +160,7 @@ func recognizeCommandAttempt(line string) commandAttempt {
 		return commandAttempt{}
 	}
 	switch fields[0] {
-	case "in", "new", "mv", "rm", "bsel", "type", "del", "copy", "cut", "paste", "commit":
+	case "in", "new", "mv", "rm", "type", "del", "copy", "cut", "paste", "commit":
 		return commandAttempt{recognized: true}
 	case "sel":
 		return commandAttempt{recognized: recognizeLine(fields, 1)}
@@ -291,19 +290,6 @@ func parseInstruction(sourceLine int, line string) (instruction, error) {
 			text:       value,
 		}, nil
 	}
-	if valueText, ok := strings.CutPrefix(line, "bsel "); ok {
-		startText, endText, err := decodeTwoQuotedStrings(valueText)
-		if err != nil {
-			return instruction{}, scriptError(sourceLine, fmt.Sprintf("invalid bsel quoted strings: %v", err))
-		}
-		if startText == "" || endText == "" {
-			return instruction{}, scriptError(sourceLine, "bsel literals must not be empty")
-		}
-		if startText == endText {
-			return instruction{}, scriptFailure(sourceLine, reasonOrderOrOverlap, "bsel literals must differ")
-		}
-		return instruction{line: sourceLine, operation: "bsel", text: startText, endText: endText}, nil
-	}
 
 	if match := rangePattern.FindStringSubmatch(line); match != nil {
 		start, err := parseLineNumber(sourceLine, match[1])
@@ -356,25 +342,6 @@ func decodeTextSelection(encoded string) (string, int, error) {
 		return "", 0, withReason(reasonInvalidCount, errors.New("tsel count is out of range"))
 	}
 	return text, count, nil
-}
-
-func decodeTwoQuotedStrings(encoded string) (string, string, error) {
-	start, trailing, err := hpatchsyntax.DecodeQuoted(encoded)
-	if err != nil {
-		return "", "", err
-	}
-	if trailing == "" || !isOperandWhitespace(trailing[0]) {
-		return "", "", errors.New("quoted operands must be separated by whitespace")
-	}
-	remaining := strings.TrimLeft(trailing, " \t\r\n")
-	end, trailing, err := hpatchsyntax.DecodeQuoted(remaining)
-	if err != nil {
-		return "", "", err
-	}
-	if !onlyOperandWhitespace(trailing) {
-		return "", "", errors.New("trailing text after bsel literals")
-	}
-	return start, end, nil
 }
 
 func onlyOperandWhitespace(value string) bool {

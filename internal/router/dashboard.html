@@ -216,7 +216,6 @@ function createGain(root){
   const input=tableWrap('Input token estimates',['Source','Tokens','Description'],'desc');
   const commands=tableWrap('Command metrics',['Command','Invocations','Errors','Error rate']);
   const textSpans=tableWrap('tsel selection metrics',['Selection','Invocations','Errors','Error rate']);
-  const blocks=tableWrap('Block selector successes',['Selector','Match','Successes']);
   const reasons=tableWrap('Failure reasons',['Reason','Errors']);
   const commandReasons=tableWrap('Command failure reasons',['Command','Reason','Errors']);
   const note=element('p','note','');
@@ -224,9 +223,9 @@ function createGain(root){
   const err=element('div','error gain-error');err.hidden=true;err.setAttribute('role','alert');
   const gridTop=element('div','table-grid');gridTop.append(output.wrap,input.wrap);
   const gridMid=element('div','table-grid');gridMid.append(commands.wrap,textSpans.wrap);
-  const gridBot=element('div','table-grid');gridBot.append(blocks.wrap,reasons.wrap);
+  const gridBot=element('div','table-grid');gridBot.append(reasons.wrap);
   root.append(cards,err,gridTop,note,definition,gridMid,gridBot,commandReasons.wrap);
-  root.gain={output:output.tbody,input:input.tbody,commands:commands.tbody,textSpans:textSpans.tbody,blocks:blocks.tbody,reasons:reasons.tbody,commandReasons:commandReasons.tbody,note,definition,err}
+  root.gain={output:output.tbody,input:input.tbody,commands:commands.tbody,textSpans:textSpans.tbody,reasons:reasons.tbody,commandReasons:commandReasons.tbody,note,definition,err}
 }
 function sumPair(a,b){return nonNeg(a)+nonNeg(b)}
 function commandTotal(commands){
@@ -263,7 +262,6 @@ function updateGain(root,gain,gainError){
   commandRows.push({key:'total',cells:['total',uintText(total.invocations),uintText(total.errors),errorRate(total.errors,total.invocations)]});
   fillRows(root.gain.commands,commandRows);
   fillRows(root.gain.textSpans,(g.text_spans||[]).map(entry=>({key:entry.name,cells:[entry.name,uintText(entry.invocations),uintText(entry.errors),`${entry.error_rate_percent||'0.0'}%`]})));
-  fillRows(root.gain.blocks,(g.block_outcomes||[]).map(entry=>{const [operation,...match]=String(entry.name||'').split(' ');return {key:entry.name,cells:[operation||entry.name,match.join(' ')||'—',uintText(entry.count)]}}));
   const reasonRows=(g.reasons||[]).map(entry=>({key:entry.name,cells:[entry.name,uintText(entry.count)]}));
   const reasonTotal=(g.reasons||[]).reduce((sum,entry)=>sum+nonNeg(entry.count),0);
   reasonRows.push({key:'total',cells:['total',uintText(reasonTotal)]});
@@ -285,7 +283,6 @@ function validGain(gain){
     &&typeof gain.definition_sources==='string'
     &&Array.isArray(gain.commands)&&gain.commands.every(validNamedCommand)
     &&Array.isArray(gain.text_spans)&&gain.text_spans.every(validNamedCommand)
-    &&Array.isArray(gain.block_outcomes)&&gain.block_outcomes.every(validNamedCount)
     &&Array.isArray(gain.reasons)&&gain.reasons.every(validNamedCount)
     &&Array.isArray(gain.command_reasons)&&gain.command_reasons.every(validCommandReason)
 }

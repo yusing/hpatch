@@ -201,6 +201,42 @@ func TestExecuteRequestForwardsCompactionWithoutHPatchRewrite(t *testing.T) {
 	}
 }
 
+func TestExecuteRequestPassesThroughOriginalRequestAndRecordsUsage(t *testing.T) {
+	parsed := serverRequest(t, func(request map[string]any) {
+		request["prompt_cache_key"] = "control-cache"
+	})
+	originalBody, err := json.Marshal(parsed.fields)
+	if err != nil {
+		t.Fatal(err)
+	}
+	responseBody := string(mustTestJSON(t, map[string]any{
+		"status": "completed",
+		"usage": map[string]any{
+			"input_tokens": 12, "input_tokens_details": map[string]any{"cached_tokens": 5},
+			"output_tokens": 7, "output_tokens_details": map[string]any{"reasoning_tokens": 3},
+		},
+	}))
+	provider := &serverFakeProvider{results: []serverForwardResult{{response: serverHTTPResponse(responseBody)}}}
+	store := newMetricsStore("")
+	var output bytes.Buffer
+	if err := executeRequest(t.Context(), t.Context(), parsed, http.Header{}, "session", provider, &output, newDiagnostics(io.Discard), time.Now, nil, store); err != nil {
+		t.Fatal(err)
+	}
+	if len(provider.forwarded) != 1 || !bytes.Equal(provider.forwarded[0], originalBody) {
+		t.Fatalf("forwarded request = %q, want original %q", provider.forwarded, originalBody)
+	}
+	if got := provider.forwardedCacheKey[0]; got != "control-cache" {
+		t.Fatalf("upstream cache key = %q, want control-cache", got)
+	}
+	if output.String() != responseBody {
+		t.Fatalf("visible response = %q, want %q", output.String(), responseBody)
+	}
+	want := tokenCounts{InputTokens: 12, UncachedInputTokens: 7, OutputTokens: 7, ReasoningTokens: 3}
+	if got := store.snapshot().Total; got != want {
+		t.Fatalf("usage = %#v, want %#v", got, want)
+	}
+}
+
 //nolint:canonicalheader // Exact lowercase names match Codex's observed wire headers.
 func TestExecuteRequestForwardsRewrittenRequestAndRecordsUsage(t *testing.T) {
 	workspace := t.TempDir()
@@ -659,6 +695,13 @@ type cancelOnWrite struct {
 func (writer *cancelOnWrite) Write(content []byte) (int, error) {
 	writer.once.Do(writer.cancel)
 	return len(content), nil
+}
+
+func TestRunRejectsUnknownModeBeforeListening(t *testing.T) {
+	err := Run(t.Context(), []string{"--mode", "unknown"}, io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "--mode must be hpatch or passthrough") {
+		t.Fatalf("Run error = %v", err)
+	}
 }
 
 func TestRunReturnsCancellationAfterGracefulShutdown(t *testing.T) {

@@ -74,171 +74,16 @@ func TestLinewiseReplacementTranslateMatchesNormalResult(t *testing.T) {
 	}
 }
 
-func TestBlockSelectionUsesImmutableBaseline(t *testing.T) {
-	initial := map[string]string{"file.txt": "title\nBEGIN old\nbody\nEND\nfooter\n"}
+func TestRemovedBlockSelectorIsRejected(t *testing.T) {
 	root := t.TempDir()
-	writeTestFile(t, root, "file.txt", initial["file.txt"], 0o644)
-	script := strings.Join([]string{
-		"in file.txt",
-		"tsel 1 \"title\"",
-		"type \"title\\ninserted\"",
-		"bsel \"BEGIN old\" \"END\"",
-		"type \"BEGIN new\\nchanged\\nEND\"",
-	}, "\n")
-	stdout, stderr, exitCode := runForTest(root, []string{"translate"}, script)
-	if exitCode != 0 || stderr != "" {
-		t.Fatalf("translate = exit %d, stderr %q", exitCode, stderr)
-	}
-	if got := readTestFile(t, root, "file.txt"); got != initial["file.txt"] {
-		t.Fatalf("translate mutated source: %q", got)
-	}
-	got, err := patchtest.Apply(initial, stdout)
-	if err != nil {
-		t.Fatalf("applying translation: %v\n%s", err, stdout)
-	}
-	want := map[string]string{"file.txt": "title\ninserted\nBEGIN new\nchanged\nEND\nfooter\n"}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("tree = %#v, want %#v", got, want)
-	}
-}
-
-func TestBlockSelectionFailuresAreAtomic(t *testing.T) {
-	tests := []struct {
-		name, content, script, wantFragment, wantAbsent string
-	}{
-		{name: "missing start", content: "BEGIN\nEND\n", script: "in file.txt\nbsel \"absent\" \"END\"", wantFragment: "start literal \"absent\" occurs 0 times", wantAbsent: "horizontal whitespace ignored"},
-		{name: "missing end", content: "BEGIN\nEND\n", script: "in file.txt\nbsel \"BEGIN\" \"absent\"", wantFragment: "end literal \"absent\" occurs 0 times"},
-		{name: "unrelated duplicate start", content: "BEGIN\nEND\nunrelated BEGIN\n", script: "in file.txt\nbsel \"BEGIN\" \"END\"", wantFragment: "start literal \"BEGIN\" occurs 2 times"},
-		{name: "duplicate end", content: "BEGIN\nEND\nunrelated END\n", script: "in file.txt\nbsel \"BEGIN\" \"END\"", wantFragment: "end literal \"END\" occurs 2 times"},
-		{name: "overlapping duplicate anchor is ambiguous", content: "aaa\nEND\n", script: "in file.txt\nbsel \"aa\" \"END\"", wantFragment: "start literal \"aa\" occurs 2 times"},
-		{name: "end before start is ignored", content: "END\nBEGIN\n", script: "in file.txt\nbsel \"BEGIN\" \"END\"", wantFragment: "end literal \"END\" occurs 0 times"},
-		{name: "end inside start is ignored", content: "BEGIN marker\n", script: "in file.txt\nbsel \"BEGIN marker\" \"marker\"", wantFragment: "end literal \"marker\" occurs 0 times"},
-		{name: "same literals", content: "BEGIN\n", script: "in file.txt\nbsel \"BEGIN\" \"BEGIN\"", wantFragment: "bsel literals must differ"},
-		{name: "empty literal", content: "BEGIN\nEND\n", script: "in file.txt\nbsel \"\" \"END\"", wantFragment: "bsel literals must not be empty"},
-		{name: "invalid quoted operand", content: "BEGIN\nEND\n", script: "in file.txt\nbsel \"BEGIN\" nope", wantFragment: "invalid bsel quoted strings"},
-		{name: "non-string operand", content: "BEGIN\nEND\n", script: "in file.txt\nbsel \"BEGIN\" 7", wantFragment: "invalid bsel quoted strings"},
-		{name: "missing operand", content: "BEGIN\nEND\n", script: "in file.txt\nbsel \"BEGIN\"", wantFragment: "invalid bsel quoted strings"},
-		{name: "trailing operand", content: "BEGIN\nEND\n", script: "in file.txt\nbsel \"BEGIN\" \"END\" \"extra\"", wantFragment: "invalid bsel quoted strings"},
-		{name: "missing separator", content: "BEGIN\nEND\n", script: "in file.txt\nbsel \"BEGIN\"\"END\"", wantFragment: "invalid bsel quoted strings"},
-		{name: "whitespace fallback ambiguity", content: "\tBEGIN\nEND\n    BEGIN\nEND\n", script: "in file.txt\nbsel \" \\tBEGIN\" \"END\"", wantFragment: "occurs 2 times with horizontal whitespace ignored"},
-		{name: "horizontal whitespace cannot be absent", content: "BEGINEND\n", script: "in file.txt\nbsel \"BEGIN END\" \"absent\"", wantFragment: "start literal \"BEGIN END\" occurs 0 times"},
-		{name: "horizontal whitespace cannot cross line", content: "BEGIN\nEND\n", script: "in file.txt\nbsel \"BEGIN END\" \"absent\"", wantFragment: "start literal \"BEGIN END\" occurs 0 times"},
-		{name: "unknown near alias", content: "BEGIN\nEND\n", script: "in file.txt\nbselect \"BEGIN\" \"END\"", wantFragment: "unknown or malformed command"},
-		{name: "no active file", content: "BEGIN\nEND\n", script: "bsel \"BEGIN\" \"END\"", wantFragment: "bsel requires an active file"},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			root := t.TempDir()
-			writeTestFile(t, root, "file.txt", test.content, 0o644)
-			before := readTree(t, root)
-			stdout, stderr, exitCode := runForTest(root, []string{"translate"}, test.script)
-			if exitCode == 0 || stdout != "" || !strings.Contains(stderr, test.wantFragment) {
-				t.Fatalf("Run() = exit %d, stdout %q, stderr %q; want diagnostic containing %q", exitCode, stdout, stderr, test.wantFragment)
-			}
-			if test.wantAbsent != "" && strings.Contains(stderr, test.wantAbsent) {
-				t.Fatalf("stderr %q contains %q", stderr, test.wantAbsent)
-			}
-			if after := readTree(t, root); !reflect.DeepEqual(after, before) {
-				t.Fatalf("failure mutated tree: before %#v, after %#v", before, after)
-			}
-		})
-	}
-}
-
-func TestBlockSelectionFailureDiagnosticUsesSelectionCategory(t *testing.T) {
-	root := t.TempDir()
-	writeTestFile(t, root, "file.txt", "BEGIN\nEND\nBEGIN\n", 0o644)
-	stdout, stderr, exitCode := runForTest(root, []string{"translate"}, "in file.txt\nbsel \"BEGIN\" \"END\"")
-	if exitCode != 1 || stdout != "" {
+	writeTestFile(t, root, "file.txt", "BEGIN\nbody\nEND\n", 0o644)
+	before := readTree(t, root)
+	stdout, stderr, exitCode := runForTest(root, []string{"translate"}, "in file.txt\nbsel \"BEGIN\" \"END\"\n")
+	if exitCode != 1 || stdout != "" || !strings.Contains(stderr, "unknown or malformed command") {
 		t.Fatalf("Run() = exit %d, stdout %q, stderr %q", exitCode, stdout, stderr)
 	}
-	for _, fragment := range []string{"operation \"bsel\"", "path \"file.txt\"", "category selection"} {
-		if !strings.Contains(stderr, fragment) {
-			t.Fatalf("stderr %q does not contain %q", stderr, fragment)
-		}
-	}
-}
-
-func TestBlockSelectionSearchesWholeFileIndependentOfCursor(t *testing.T) {
-	root := t.TempDir()
-	initial := "BEGIN old\nbody\nEND old\npivot\nBEGIN later\nbody\nEND later\n"
-	writeTestFile(t, root, "file.txt", initial, 0o644)
-	script := strings.Join([]string{
-		"in file.txt",
-		"tsel 4 \"pivot\"",
-		"type \"pivot\"",
-		"bsel \"BEGIN old\" \"END old\"",
-		"type \"replacement\"",
-	}, "\n")
-	stdout, stderr, exitCode := runForTest(root, nil, script)
-	if exitCode != 0 || stdout != "" || stderr != "" {
-		t.Fatalf("Run() = exit %d, stdout %q, stderr %q", exitCode, stdout, stderr)
-	}
-	want := "replacement\npivot\nBEGIN later\nbody\nEND later\n"
-	if got := readTestFile(t, root, "file.txt"); got != want {
-		t.Fatalf("file = %q, want %q", got, want)
-	}
-}
-
-func TestBlockSelectionIgnoresEndBeforeStart(t *testing.T) {
-	root := t.TempDir()
-	writeTestFile(t, root, "file.txt", "END target\nBEGIN target\nbody\nEND target\n", 0o644)
-	stdout, stderr, exitCode := runForTest(root, nil, "in file.txt\nbsel \"BEGIN target\" \"END target\"\ntype \"replacement\"\n")
-	if exitCode != 0 || stdout != "" || stderr != "" {
-		t.Fatalf("Run() = exit %d, stdout %q, stderr %q", exitCode, stdout, stderr)
-	}
-	if got, want := readTestFile(t, root, "file.txt"), "END target\nreplacement\n"; got != want {
-		t.Fatalf("file = %q, want %q", got, want)
-	}
-}
-
-func TestBlockSelectionToleratesHorizontalWhitespace(t *testing.T) {
-	root := t.TempDir()
-	initial := "before\n\tcase gain:\n\t\treturn nil\n\tcase next:\nafter\n"
-	writeTestFile(t, root, "file.txt", initial, 0o644)
-	script := "in file.txt\nbsel \"    case gain:\" \"    case next:\"\ntype \"\\tcase done:\"\n"
-	stdout, stderr, exitCode := runForTest(root, nil, script)
-	if exitCode != 0 || stdout != "" || stderr != "" {
-		t.Fatalf("Run() = exit %d, stdout %q, stderr %q", exitCode, stdout, stderr)
-	}
-	if got, want := readTestFile(t, root, "file.txt"), "before\n\tcase done:\nafter\n"; got != want {
-		t.Fatalf("file = %q, want %q", got, want)
-	}
-}
-
-func TestBlockSelectionExactMatchPrecedesWhitespaceFallback(t *testing.T) {
-	root := t.TempDir()
-	initial := "\tBEGIN\nEND tab\n    BEGIN\nEND spaces\n"
-	writeTestFile(t, root, "file.txt", initial, 0o644)
-	stdout, stderr, exitCode := runForTest(root, nil, "in file.txt\nbsel \"    BEGIN\" \"END spaces\"\ntype \"replacement\"\n")
-	if exitCode != 0 || stdout != "" || stderr != "" {
-		t.Fatalf("Run() = exit %d, stdout %q, stderr %q", exitCode, stdout, stderr)
-	}
-	if got, want := readTestFile(t, root, "file.txt"), "\tBEGIN\nEND tab\nreplacement\n"; got != want {
-		t.Fatalf("file = %q, want %q", got, want)
-	}
-}
-
-func TestBlockSelectionSupportsExistingEditActions(t *testing.T) {
-	tests := []struct {
-		name, action, want string
-	}{
-		{name: "delete", action: "del", want: "before\n\nafter\n"},
-		{name: "copy and paste", action: "copy\npaste", want: "before\nBEGIN\nbody\nENDBEGIN\nbody\nEND\nafter\n"},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			root := t.TempDir()
-			writeTestFile(t, root, "file.txt", "before\nBEGIN\nbody\nEND\nafter\n", 0o644)
-			script := "in file.txt\nbsel \"BEGIN\" \"END\"\n" + test.action + "\n"
-			stdout, stderr, exitCode := runForTest(root, nil, script)
-			if exitCode != 0 || stdout != "" || stderr != "" {
-				t.Fatalf("Run() = exit %d, stdout %q, stderr %q", exitCode, stdout, stderr)
-			}
-			if got := readTestFile(t, root, "file.txt"); got != test.want {
-				t.Fatalf("file = %q, want %q", got, test.want)
-			}
-		})
+	if after := readTree(t, root); !reflect.DeepEqual(after, before) {
+		t.Fatalf("rejected command mutated tree: before %#v, after %#v", before, after)
 	}
 }
 
@@ -260,27 +105,6 @@ func TestSelectorsUseStableBaselineCoordinates(t *testing.T) {
 				t.Fatalf("file = %q, want %q", got, want)
 			}
 		})
-	}
-}
-
-func TestInsertedTextDoesNotAffectLaterSelectors(t *testing.T) {
-	root := t.TempDir()
-	initial := "HEAD\nBEGIN\nbody\nEND\nTAIL\n"
-	writeTestFile(t, root, "file.txt", initial, 0o644)
-	script := strings.Join([]string{
-		"in file.txt",
-		"tsel 5 \"TAIL\"",
-		"type \"BEGIN injected END\"",
-		"in file.txt",
-		"bsel \"BEGIN\" \"END\"",
-		"type \"REPLACED\"",
-	}, "\n")
-	stdout, stderr, exitCode := runForTest(root, nil, script)
-	if exitCode != 0 || stdout != "" || stderr != "" {
-		t.Fatalf("Run() = exit %d, stdout %q, stderr %q", exitCode, stdout, stderr)
-	}
-	if got, want := readTestFile(t, root, "file.txt"), "HEAD\nREPLACED\nBEGIN injected END\n"; got != want {
-		t.Fatalf("file = %q, want %q", got, want)
 	}
 }
 

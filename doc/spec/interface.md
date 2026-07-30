@@ -21,11 +21,10 @@ directory. The CLI opens root once and uses that pinned capability for the invoc
 `hpatch gain` reads no script and reports the persistent aggregate defined by
 `REQ-METRICS-001`. `hpatch --help` is the complete built-in agent reference for
 stdin usage, process and editing commands, editor state, orchestration, trust boundaries,
-and validation. `hpatch --tool-help` derives a custom-tool-focused reference from the
-same agent workflow, editing-command, baseline-state, selector, and final-state-report
-sections. It omits CLI usage and mode descriptions, root and cwd options, metrics,
-and version material, then adds workspace-relative path and parent-directory preparation
-guidance.
+and validation. `hpatch --tool-help` emits a separate, shorter model-facing summary of
+selector choice, baseline rules, and safety. It omits CLI usage and mode descriptions,
+root and cwd options, metrics, and version material, and includes workspace-relative path
+and parent-directory preparation guidance. It is not a generated slice of top-level help.
 `hpatch translate --help` summarizes translate-mode I/O and points to top-level help.
 `hpatch --version` writes the module build version, or `devel` for an unversioned build.
 Informational commands do not read stdin, resolve a working or configuration directory,
@@ -43,8 +42,9 @@ Acceptance:
 4. Gain mode leaves the source tree and metrics unchanged.
 5. Each supported informational form writes its complete result to stdout with status
    zero and empty stderr without reading stdin or requiring a valid current directory.
-6. Tool help contains the current agent workflow, editing language, state rules, final
-   report, and tool-path guidance while excluding CLI-only material.
+6. Tool help remains a concise model-facing summary of selector choice, baseline rules,
+   safety, and tool-path guidance while excluding CLI-only material; top-level help remains
+   the complete agent reference.
 7. Unsupported aliases, trailing arguments, and unknown or future options fail with no
    stdout or final-state report.
 8. A nested cwd changes relative path resolution while normal mutations and translated
@@ -116,20 +116,16 @@ later output or commit boundary fails.
 or one, and multiple selection when the operand is present and intended to select more
 than one match; an invalid count remains attributable to the multiple attempt.
 
-Each successful `bsel` is additionally classified as exact or whitespace-recovered;
-whitespace-recovered means at least one anchor had zero exact matches and the
-horizontal-whitespace fallback made the command succeed. Terminal command errors carry
-stable internal reason identifiers so gain can distinguish malformed or out-of-bounds
-coordinates, missing or ambiguous occurrences and anchors, invalid occurrence counts,
+Terminal command errors carry stable internal reason identifiers so gain can distinguish
+malformed or out-of-bounds coordinates, missing occurrences, invalid occurrence counts,
 order or overlap, edit conflicts, missing active files, and other supported failure
-families without making user-facing diagnostic wording
-part of the persisted format.
+families without making user-facing diagnostic wording part of the persisted format.
 
 The aggregate is stored in `hpatch/metrics.bin` beneath the platform user configuration
 directory returned by Go's `os.UserConfigDir`. Updates hold an exclusive interprocess
 lock at `hpatch/metrics.lock`; gain reads hold a shared lock. The metrics file contains
-two alternating current-version fixed-size slots holding token, command, selector,
-recovery, and error-reason counters plus a generation and checksum. A reader uses the
+	two alternating current-version fixed-size slots holding token, command, selector,
+	error-reason counters, a generation, and a checksum. A reader uses the
 valid current-format slot with the greatest generation, so an interrupted write to the
 inactive slot leaves the preceding aggregate available. The file does not grow after its
 current-version slots are created. Per-counter and aggregate overflow fails.
@@ -179,11 +175,10 @@ Acceptance:
    ineffective hpatch estimates and zero report-input tokens.
 2. Gain reports output and input token classes in separate tables, calculates reductions
    only between output-token quantities, and performs no input/output price conversion.
-3. Each selector metric reconciles with its aggregate command counter.
-4. Single and multiple `tsel` attempts, exact and whitespace-recovered `bsel`
-   successes, and stable terminal reasons remain independently attributable.
-   Per-command reason counts reconcile with both aggregate command errors and aggregate
-   reason totals.
+3. Each `tsel` feature metric reconciles with its aggregate command counter.
+4. Single and multiple `tsel` attempts and stable terminal reasons remain independently
+   attributable. Per-command reason counts reconcile with both aggregate command errors and
+   aggregate reason totals.
 5. Every definition-bearing request increments the definition-request counter, while the
    hpatch and baseline definition tokens accumulate only once per distinct session. An
    absent session or definition leaves definition counters zero and reports which inputs
@@ -215,7 +210,6 @@ mv PATH
 rm
 sel LINE START:END
 tsel FROM_LINE "QUOTED STRING" [COUNT]
-bsel "START" "END"
 rsel START:END
 type "QUOTED STRING"
 type <<TAG
@@ -236,13 +230,14 @@ Cursor `0:0` denotes the position before the first code point of a file.
 to one and must be a positive base-ten integer. Inline quoted operands retain the existing
 JSON escape repertoire and Unicode decoding, while additionally accepting a literal
 horizontal tab. A literal quote, backslash, carriage return, line feed, NUL, or C0 control
-other than horizontal tab must remain escaped. `type` and `bsel` strings may contain
-encoded line terminators; `tsel` strings must be nonempty and stay within one logical
-line. Both anchors of a block selector must be nonempty and different.
+other than horizontal tab must remain escaped. `type` strings may contain encoded line
+terminators; `tsel` strings must be nonempty and stay within one logical line.
 
 A multiline `type` operand uses `type <<TAG`, where `TAG` matches
-`[A-Z][A-Z0-9_]{2,31}`. Every following physical line is literal UTF-8 payload data until
-a line exactly equal to `TAG`; no escape, interpolation, or indentation processing occurs.
+`[A-Za-z0-9_.-]{1,64}` and may optionally be wrapped in matching single or double quotes
+on the header only. Every following physical line is literal UTF-8 payload data until
+a line exactly equal to the unquoted `TAG`; no escape, interpolation, or indentation
+processing occurs.
 The payload consists of the bytes between the header terminator and the start of the
 closing delimiter, so a nonempty final body line contributes its physical line terminator.
 The header, body, and delimiter form one command whose command index is the header's;
@@ -391,11 +386,11 @@ Acceptance:
 ## REQ-SELECT-001 — Immutable generation-baseline selections and cursor
 
 Each current logical file has one immutable baseline per generation. A new file has an
-empty generation baseline. Every `sel`, `tsel`, `bsel`, and `rsel` command resolves only
+empty generation baseline. Every `sel`, `tsel`, and `rsel` command resolves only
 against that baseline; pending replacements, deletions, and insertions never change
 selector text, line references, scopes, matches, or positions. Text introduced by an
 earlier command is not selectable in the same generation and cannot create an unrelated
-literal or anchor collision. After `commit`, materialized content forms the next baseline
+literal collision. After `commit`, materialized content forms the next baseline
 and is selectable there. A selector whose current-generation baseline selection overlaps
 content already replaced or deleted by an earlier pending edit is rejected atomically
 with the prior edit and affected baseline lines identified.
@@ -404,8 +399,8 @@ Each active file has either a generation-baseline cursor or a nonempty ordered s
 disjoint generation-baseline selections. `in`, `new`, and a `commit` that retains the
 active file establish cursor `0:0`, before the first baseline code point. A cursor is an
 insertion position; every selection is a half-open baseline span produced by the inclusive
-commands below. `sel`, `bsel`, and `rsel` produce one selection; `tsel` may produce more
-than one. Empty baselines have no selectable line.
+	commands below. `sel` and `rsel` produce one selection; `tsel` may produce more
+	than one. Empty baselines have no selectable line.
 
 `sel` selects columns within one resolved baseline logical line. Columns count Unicode
 code points, including one code point per tab; the line terminator is not selectable.
@@ -414,23 +409,14 @@ code points, including one code point per tab; the line terminator is not select
 forward through EOF. It establishes the first `COUNT` separate exact literal matches as
 an ordered selection set. Matching is left-to-right and resumes after each complete match,
 so selected matches cannot share baseline bytes. Matches may occur on different logical
-lines, but the literal itself cannot contain a line terminator. The complete requested
-count must exist or the command fails without changing state. Omitted `COUNT` is one.
+lines, but the literal itself cannot contain a line terminator. Omitted `COUNT` is one.
 
-`bsel` uses the complete active-file generation baseline as its search scope, independent
-of the current cursor or selection set. It resolves `START` uniquely within that scope,
-then searches for `END` only after the complete resolved start; end occurrences before
-the start do not collide. `END` must occur uniquely in that suffix and must not overlap
-`START`.
-
-For each block anchor, exact occurrences are authoritative when any exist. Only when the
-exact count is zero does matching retry with every nonempty run of ASCII space or tab in
-the anchor equivalent to one nonempty run of ASCII space or tab in the baseline. This
-fallback cannot omit whitespace, cross a line terminator, or normalize other Unicode
-whitespace. A leading whitespace run has one candidate at the start of the corresponding
-baseline run rather than one candidate per byte. Matching returns original baseline byte
-boundaries. Missing or ambiguous exact or fallback anchors fail instead of guessing.
-`bsel` includes both anchors and all baseline content between them.
+When the suffix from `FROM_LINE` does not yield `COUNT` matches, but the whole generation
+baseline contains exactly `COUNT` non-overlapping matches of the literal, the command
+selects that unique whole-file set, records a line repair from the requested `FROM_LINE`
+to the first selected match's line, and succeeds. When the whole baseline contains more
+or fewer than `COUNT` matches, the incomplete suffix fails without repair and without
+changing state.
 
 `rsel` selects an inclusive range of complete baseline logical lines after validating
 endpoint order and bounds. For every selected line it owns the line terminator when one
@@ -453,17 +439,14 @@ Acceptance:
    same meaning after earlier pending edits; after `commit`, selectors use the
    materialized next baseline.
 2. `tsel` finds separate non-overlapping matches from the inclusive line boundary through
-   EOF, may select matches on different lines, rejects an incomplete requested count
-   atomically, and never includes source text between its selected matches.
-3. `bsel` resolves unique whole-file anchors independently of the cursor or selection set;
-   an end occurrence before the resolved start does not collide, while any second start
-   in scope or second end after start remains ambiguous.
-4. A unique spaces-versus-tabs fallback succeeds and maps to original baseline bytes;
-   whitespace-equivalent collisions, newline crossing, absent whitespace, and unrelated
-   Unicode whitespace do not select a block.
-5. Missing generation-baseline lines, columns, ranges, literal matches, or block anchors
-   fail rather than selecting pending or nearby content; materialized prior-generation
-   content is selectable.
+   EOF, may select matches on different lines, never includes source text between its
+   selected matches, and rejects an incomplete requested count when the whole baseline
+   does not contain exactly that many matches.
+3. When a `tsel` suffix is incomplete but the whole baseline has exactly `COUNT` matches,
+   the command repairs to that unique set and records the requested-to-resolved line; extra
+   whole-file matches keep the incomplete suffix a failure.
+	4. Missing generation-baseline lines, columns, ranges, or literal matches fail rather
+	   than selecting pending or nearby content; materialized prior-generation content is selectable.
 
 ## REQ-EDIT-001 — Baseline-coordinate edits
 
@@ -569,19 +552,21 @@ invocation.
 
 Coordinates and previews describe the rendered post-edit content, not immutable-baseline
 positions. Cursor affinity is after replacement or insertion for `type`, at the deletion
-join for `del`, and after the inserted copy for `dup`. A selection left active is reported
-as a range rather than a fictitious cursor. The active path reflects pending moves. A new
-empty file reports position `1:1` and one empty preview line numbered 1.
+join for `del`, and after the pasted insertion for `paste`. A selection left active is
+reported as a range rather than a fictitious cursor. The active path reflects pending
+moves. A new empty file reports position `1:1` and one empty preview line numbered 1.
 
 After the header, the report writes up to three total logical lines nearest the cursor or
 first selection start: normally the preceding, containing, and following lines; at a
 boundary, the first or last three available lines without duplication. Each row is
 `LINE TEXT`. `TEXT` contains at most the first 64 Unicode code points of rendered line content, without
 a line terminator or added ellipsis. Control characters are escaped so each preview stays
-on one output line. The complete report is rendered before commit or patch output, but it
-is emitted only after that mode-specific effect succeeds. A report-write failure after
-the effect is best-effort and cannot retroactively change the successful effect or claim
-rollback.
+on one output line. Each successful `tsel` line repair appends a
+`repaired command N tsel line REQUESTED to RESOLVED in PATH` note plus up to three marked
+post-edit preview lines around the repaired location. The complete report is rendered
+before commit or patch output, but it is emitted only after that mode-specific effect
+succeeds. A report-write failure after the effect is best-effort and cannot retroactively
+change the successful effect or claim rollback.
 
 Normal mode stages new contents in same-directory temporary files before starting the
 commit. Parse, validation, read, and evaluation failures leave the initial tree
@@ -618,11 +603,10 @@ context supplies the measurements that failure implies. A rejected column range 
 addressed line's rune-column count, restates that one tab is one column, and lists the
 rune-column span of each whitespace-separated token on that line. Token spans are used
 rather than sampled columns because a sampled character usually recurs on the line and
-cannot be located unambiguously. An out-of-range line or line range reports the file's
-line count. A missing or ambiguous block anchor reports each anchor's occurrence lines
-within the searched scope and restates that a block selection includes both anchors. An
-edit conflict reports which current-generation baseline lines earlier commands already
-claim and, when a later selector can safely be rerun after materialization, identifies the selector command before which `commit` belongs. Every repair block
+	cannot be located unambiguously. An out-of-range line or line range reports the file's
+	line count. An edit conflict reports which current-generation baseline lines earlier commands
+	already claim and, when a later selector can safely be rerun after materialization,
+	identifies the selector command before which `commit` belongs. Every repair block
 includes a window of baseline lines around the addressed line, marks that line, and
 escapes control characters so each rendered line stays on one output line. A failure with
 no active baseline, including a missing file, emits its diagnostic alone. Repair context is
@@ -645,21 +629,23 @@ Acceptance:
    remain externally invisible.
 5. Failure to write a fully rendered report after a successful external effect does not
    reverse that effect or record a complete report-input token estimate.
-6. A rejected column range, out-of-range line, unresolved or ambiguous anchor, and edit
-   conflict each emit repair context sufficient to correct the command without rereading
-   the file; a failure with no active baseline emits its diagnostic alone.
+	6. A rejected column range, out-of-range line, missing literal occurrence, and edit
+	   conflict each emit repair context sufficient to correct the command without rereading
+	   the file; a failure with no active baseline emits its diagnostic alone.
 
 ## REQ-GUIDE-001 — Agent guidance
 
 The built-in top-level help owns the complete agent editing, orchestration,
-trust-boundary, validation, final-state-report, and metrics reference. Tool help reuses
-its agent workflow through final-state-report sections rather than maintaining a second
-editing-language definition, and adds only custom-tool path guidance. Tool help excludes
-CLI usage and mode descriptions, options, metrics, and version material.
+trust-boundary, validation, final-state-report, and metrics reference. Tool help is a
+separate, shorter model-facing summary of selector choice, baseline rules, and safety; it
+is not a generated slice of top-level help. Tool help excludes CLI usage and mode
+descriptions, options, metrics, and version material.
 
-Both references document compact inline quoting, heredoc `type`, immutable generation
-baselines, explicit `commit`, selection-set clipboard operations, `bsel` as whole-file,
-horizontal-whitespace tolerance, and forward multi-selection `tsel COUNT`. The router
-appends only its compact correction syntax and correction-chain rules to the shared tool
-help. The project agent instruction file only directs agents to run and follow
-`hpatch --help`; it does not duplicate language semantics that can become stale.
+Both references document compact inline quoting, heredoc `type` (tool help teaches the
+grammar-constrained `<<PATCH` delimiter), immutable generation baselines, explicit
+`commit`, selection-set clipboard operations, `rsel` for multiline regions, and forward
+multi-selection `tsel COUNT` including unique whole-file line repair. The router appends
+only its compact correction syntax and correction-chain rules to tool help. Host-specific
+base-prompt overrides may steer tool choice without duplicating the full editing language;
+complete semantics remain in top-level help and this interface contract.
+this interface contract.

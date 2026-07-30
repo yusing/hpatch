@@ -138,10 +138,23 @@ func TestHPatchPrepareRequestExposesOnlyStandaloneHPatch(t *testing.T) {
 	if !strings.HasPrefix(exposed, testHPatchToolDescription) {
 		t.Fatalf("standalone hpatch description = %q, want hpatch tool help first", exposed)
 	}
+	normalizedDescription := strings.Join(strings.Fields(exposed), " ")
+	for _, guidance := range []string{
+		"complete script evaluated for the latest rejection",
+		"not source-line numbers",
+		"not source-line numbers, indices into the first attempt, or indices into a compact correction payload",
+		"correct its preceding selector",
+		"resend the complete script",
+	} {
+		if !strings.Contains(normalizedDescription, guidance) {
+
+			t.Fatalf("standalone hpatch description omits correction guidance %q: %q", guidance, exposed)
+		}
+	}
 	if !strings.Contains(exposed, "INDEX: COMMAND") {
 		t.Fatalf("standalone hpatch description omits the correction protocol: %q", exposed)
 	}
-	if !strings.Contains(exposed, "type <<PATCH consumes") {
+	if !strings.Contains(normalizedDescription, "type <<PATCH replacement or insertion consumes") {
 		t.Fatalf("standalone hpatch description omits correction heredocs: %q", exposed)
 	}
 	for _, operation := range []string{"-INDEX", "+INDEX: COMMAND", "INDEX+: COMMAND"} {

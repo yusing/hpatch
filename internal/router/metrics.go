@@ -68,6 +68,7 @@ type metricsSnapshot struct {
 	Sessions  []sessionMetrics   `json:"sessions"`
 	Gain      hpatch.GainMetrics `json:"gain"`
 	GainError string             `json:"gain_error,omitempty"`
+	Mode      string             `json:"mode,omitempty"`
 }
 
 type metricsStore struct {
@@ -81,6 +82,7 @@ type metricsStore struct {
 	subscribers      map[uint64]chan struct{}
 	subscriberSeq    uint64
 	gainDirectory    string
+	mode             string
 }
 
 type retainedSessionMetrics struct {
@@ -248,7 +250,7 @@ func (m *metricsStore) snapshot() metricsSnapshot {
 			metricGroup: cloneMetricGroup(m.retainedSessions[id].metricGroup),
 		}
 	}
-	snapshot := metricsSnapshot{metricGroup: cloneMetricGroup(m.all), Sessions: make([]sessionMetrics, 0, len(sessions))}
+	snapshot := metricsSnapshot{metricGroup: cloneMetricGroup(m.all), Sessions: make([]sessionMetrics, 0, len(sessions)), Mode: m.mode}
 	for _, session := range sessions {
 		snapshot.Sessions = append(snapshot.Sessions, session)
 	}

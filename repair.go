@@ -51,8 +51,6 @@ func (w *workspace) repairContext(command instruction, reason failureReason) str
 		w.writeLineRepair(&report, editor, lines, command, reason)
 	case "rsel":
 		w.writeRangeRepair(&report, editor, lines, command, reason)
-	case "bsel":
-		w.writeAnchorRepair(&report, editor, lines, command, reason)
 	case "type", "del", "copy", "cut", "paste":
 		w.writeEditRepair(&report, editor, lines, reason, editor.editOffset())
 	}
@@ -110,47 +108,6 @@ func (w *workspace) writeRangeRepair(report *strings.Builder, editor *editor, li
 	end := command.endLine
 	fmt.Fprintf(report, "%s has %d lines; requested lines %d:%d\n", w.active.path, len(lines), start, end)
 	writeLineWindow(report, editor.baseline, lines, min(max(start, 1), len(lines)))
-}
-
-// writeAnchorRepair explains a block-selector failure. An ambiguous anchor is
-// repaired by choosing a unique one, so the lines where each anchor occurs are
-// the information the retry needs; a missing anchor is repaired by correcting
-// its text, so the searched scope matters instead.
-func (w *workspace) writeAnchorRepair(report *strings.Builder, editor *editor, lines []logicalLine, command instruction, reason failureReason) {
-	scopeStart := 0
-	scope := editor.baseline
-	startMatches, startRecovered := blockAnchorMatches(scope, command.text)
-	writeAnchorMatches(report, "START", command.text, startMatches, startRecovered, lines, scopeStart)
-	if len(startMatches) == 1 {
-		endScopeStart := startMatches[0].end
-		endMatches, endRecovered := blockAnchorMatches(scope[endScopeStart:], command.endText)
-		writeAnchorMatches(report, "END", command.endText, endMatches, endRecovered, lines, scopeStart+endScopeStart)
-	} else {
-		report.WriteString("END anchor was not evaluated because START is not unique\n")
-	}
-	if reason == reasonAnchorAmbiguous || reason == reasonAnchorMissing {
-		report.WriteString("a block selection includes both anchors, so replacement text must reproduce what END covers\n")
-	}
-}
-
-func writeAnchorMatches(report *strings.Builder, label, literal string, matches []literalMatch, recovered bool, lines []logicalLine, scopeStart int) {
-	qualifier := ""
-	if recovered {
-		qualifier = " after normalizing horizontal whitespace"
-	}
-	switch len(matches) {
-	case 0:
-		fmt.Fprintf(report, "%s anchor %q has no occurrence%s in the searched scope\n", label, previewText(literal), qualifier)
-	case 1:
-		line := lineNumberAt(lines, scopeStart+matches[0].start)
-		fmt.Fprintf(report, "%s anchor %q occurs once%s, at line %d\n", label, previewText(literal), qualifier, line)
-	default:
-		numbers := make([]int, 0, min(len(matches), repairListLimit))
-		for _, match := range matches[:min(len(matches), repairListLimit)] {
-			numbers = append(numbers, lineNumberAt(lines, scopeStart+match.start))
-		}
-		fmt.Fprintf(report, "%s anchor %q is ambiguous%s, occurring at lines %s\n", label, previewText(literal), qualifier, joinLineNumbers(numbers, len(matches)))
-	}
 }
 
 // writeEditRepair explains an edit failure against the span the edit addressed,

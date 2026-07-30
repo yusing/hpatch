@@ -76,7 +76,6 @@ func TestToolGrammarCommandOperandsUseExactSpaces(t *testing.T) {
 		"path_command: PATH_OP SP PATH",
 		"sel_command: \"sel\" SP POSINT SP POSINT \":\" POSINT",
 		"tsel_command: \"tsel\" SP POSINT SP TSEL_QUOTED (SP POSINT)?",
-		"bsel_command: \"bsel\" SP NONEMPTY_QUOTED SP NONEMPTY_QUOTED",
 		"rsel_command: \"rsel\" SP POSINT \":\" POSINT",
 		"type_command: \"type\" SP QUOTED",
 		"heredoc_command: \"type\" SP \"<<PATCH\" NL _patch_body \"PATCH\"",
@@ -87,14 +86,10 @@ func TestToolGrammarCommandOperandsUseExactSpaces(t *testing.T) {
 	}
 }
 
-func TestToolDescriptionRejectsSyntaxLikeBselAnchors(t *testing.T) {
-	for _, warning := range []string{
-		"does not parse syntax or pair braces",
-		"Never use a bare } or another duplicated fragment as an anchor",
-		"use fresh nl -ba output and rsel unless both anchors are distinctive and file-unique",
-	} {
-		if !strings.Contains(toolDescription, warning) {
-			t.Errorf("tool description omits bsel warning %q", warning)
+func TestRemovedBlockSelectorIsNotAdvertised(t *testing.T) {
+	for name, text := range map[string]string{"grammar": toolGrammar, "description": toolDescription} {
+		if strings.Contains(text, "bsel") {
+			t.Errorf("%s still advertises removed bsel command", name)
 		}
 	}
 }
@@ -108,6 +103,23 @@ func TestToolDescriptionRejectsParallelCalls(t *testing.T) {
 func TestToolDescriptionGuidesSparseCommandChoice(t *testing.T) {
 	for _, guidance := range []string{
 		"tsel cannot target only a later same-line match",
+		"do not default to line 1 when TEXT also occurs earlier",
+		"from column 1 of FROM_LINE through EOF",
+		"matches may land on different lines",
+		"TEXT must stay on one line",
+		"whole baseline has exactly N",
+		"success report records the repaired line",
+		"Prefer a broader TEXT instead of relying on whole-file repair",
+		"any repaired tsel line notes",
+		"it has no syntax or section awareness",
+		"Selecting a heading inserts before that heading's existing body, not after the section",
+		"trust the reported edited ranges and any repaired tsel line notes; do not reread the file solely to verify placement",
+		"parser/compiler",
+		"need not fill it, and matching is not syntax-aware",
+		"prose, links, examples, or repeated code",
+		"No report is available until the whole call finishes",
+		"post-commit selectors address that new content",
+		"include separator blank lines deliberately",
 		"sel changes only the second identical occurrence",
 		"cut combines copy and deletion in one command",
 		"the script does not re-emit the selected text",
@@ -117,6 +129,14 @@ func TestToolDescriptionGuidesSparseCommandChoice(t *testing.T) {
 	} {
 		if !strings.Contains(toolDescription, guidance) {
 			t.Errorf("tool description omits sparse-command guidance %q", guidance)
+		}
+	}
+	for _, excluded := range []string{
+		"confined to one line",
+		"TEXT need not fill the line and matching is not syntax-aware",
+	} {
+		if strings.Contains(toolDescription, excluded) {
+			t.Errorf("tool description retains inaccurate phrasing %q", excluded)
 		}
 	}
 }
@@ -218,96 +238,6 @@ type "destinationRegistry"`
 
 func fencedScript(script string) string {
 	return "```\n" + script + "\n```"
-}
-
-func TestToolDescriptionSelectorTokenComparisons(t *testing.T) {
-	codec, err := tokenizer.ForModel(tokenizer.GPT5)
-	if err != nil {
-		t.Fatal(err)
-	}
-	tests := []struct {
-		name   string
-		script string
-		want   int
-	}{
-		{
-			name: "long body rsel",
-			script: "functions.hpatch\nin invoice.go\nrsel 20:27\ntype <<PATCH\n" +
-				"func calculateInvoiceTotal(\n    invoice Invoice,\n    discounts []Discount,\n) (Money, error) {\n" +
-				"    subtotal := sumLines(invoice.Lines)\n    adjusted, err := applyDiscounts(subtotal, discounts)\n" +
-				"    if err != nil {\n        return Money{}, err\n    }\n    return adjusted, nil\n}\nPATCH",
-			want: 84,
-		},
-		{
-			name: "long body bsel",
-			script: "functions.hpatch\nin invoice.go\n" +
-				"bsel \"subtotal := sumLines(invoice.Lines)\" \"return adjusted, nil\"\ntype <<PATCH\n" +
-				"subtotal := sumLines(invoice.Lines)\n    adjusted, err := applyDiscounts(subtotal, discounts)\n" +
-				"    if err != nil {\n        return Money{}, err\n    }\n    return adjusted, nil\nPATCH",
-			want: 71,
-		},
-		{
-			name:   "short block rsel",
-			script: "functions.hpatch\nin worker.go\nrsel 40:42\ntype <<PATCH\nif ready {\n    return run(ctx)\n} // ready\nPATCH",
-			want:   32,
-		},
-		{
-			name:   "short block bsel",
-			script: "functions.hpatch\nin worker.go\nbsel \"if ready {\" \"} // ready\"\ntype <<PATCH\nif ready {\n    return run(ctx)\n} // ready\nPATCH",
-			want:   35,
-		},
-		{
-			name:   "expression rsel",
-			script: "functions.hpatch\nin worker.go\nrsel 40:40\ntype \"result := calculateFreshValue(request, cache)\"",
-			want:   26,
-		},
-		{
-			name:   "expression tsel",
-			script: "functions.hpatch\nin worker.go\ntsel 40 \"calculateValue(request)\"\ntype \"calculateFreshValue(request, cache)\"",
-			want:   25,
-		},
-		{
-			name:   "expression sel",
-			script: "functions.hpatch\nin worker.go\nsel 40 11:33\ntype \"calculateFreshValue(request, cache)\"",
-			want:   25,
-		},
-		{
-			name:   "two sites rsel",
-			script: "functions.hpatch\nin config.go\nrsel 10:11\ntype <<PATCH\ncache.Enabled = true\nretry.Enabled = true\nPATCH",
-			want:   30,
-		},
-		{
-			name:   "two sites tsel",
-			script: "functions.hpatch\nin config.go\ntsel 10 \"Enabled = false\" 2\ntype \"Enabled = true\"",
-			want:   25,
-		},
-	}
-	counts := make(map[string]int, len(tests))
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			got, err := codec.Count(test.script)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if got != test.want {
-				t.Fatalf("tokens = %d, want %d", got, test.want)
-			}
-			counts[test.name] = got
-		})
-	}
-	if counts["expression tsel"] != counts["expression sel"] {
-		t.Fatalf("expression selectors differ: tsel %d, sel %d", counts["expression tsel"], counts["expression sel"])
-	}
-	for _, comparison := range []string{
-		fmt.Sprintf("bsel %d versus rsel %d", counts["long body bsel"], counts["long body rsel"]),
-		fmt.Sprintf("rsel %d versus bsel %d", counts["short block rsel"], counts["short block bsel"]),
-		fmt.Sprintf("tsel or sel %d versus rsel %d", counts["expression tsel"], counts["expression rsel"]),
-		fmt.Sprintf("tsel %d versus rsel %d", counts["two sites tsel"], counts["two sites rsel"]),
-	} {
-		if !strings.Contains(toolDescription, comparison) {
-			t.Errorf("tool description omits measured comparison %q", comparison)
-		}
-	}
 }
 
 func grammarTerminalRegexp(t *testing.T, name string) *regexp.Regexp {

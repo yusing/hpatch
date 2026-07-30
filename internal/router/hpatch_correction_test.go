@@ -30,7 +30,7 @@ func TestHPatchCorrectionDetectionDistinguishesScripts(t *testing.T) {
 }
 
 func TestHPatchCorrectionParsesEntries(t *testing.T) {
-	corrections, err := parseHPatchCorrections("2: sel 2 6:15\n\n10: bsel \"func bar() {\" \"return 0\\n}\"\n")
+	corrections, err := parseHPatchCorrections("2: sel 2 6:15\n\n10: rsel 3:5\n")
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -40,7 +40,7 @@ func TestHPatchCorrectionParsesEntries(t *testing.T) {
 	if corrections[0] != (hpatchCorrection{command: 2, replacement: "sel 2 6:15"}) {
 		t.Errorf("first correction = %+v", corrections[0])
 	}
-	if corrections[1].command != 10 || corrections[1].replacement != `bsel "func bar() {" "return 0\n}"` {
+	if corrections[1].command != 10 || corrections[1].replacement != "rsel 3:5" {
 		t.Errorf("second correction = %+v", corrections[1])
 	}
 }
@@ -95,19 +95,18 @@ func TestHPatchCorrectionIndexesAndReplacesCompleteHeredocFrames(t *testing.T) {
 
 func TestHPatchCorrectionReplacesMalformedMultilineQuotedFrame(t *testing.T) {
 	base := "in file.txt\n" +
-		"bsel \"start\n" +
-		"middle\n" +
-		"end\" \"other\"\n" +
+		"type \"start\n" +
+		"middle\"\n" +
 		"type \"replacement\"\n"
 	corrected, err := applyHPatchCorrections(base, []hpatchCorrection{{
 		command:     2,
-		replacement: `bsel "start\nmiddle" "end"`,
+		replacement: `type "start\nmiddle"`,
 	}})
 	if err != nil {
 		t.Fatalf("apply: %v", err)
 	}
 	want := "in file.txt\n" +
-		"bsel \"start\\nmiddle\" \"end\"\n" +
+		"type \"start\\nmiddle\"\n" +
 		"type \"replacement\"\n"
 	if corrected != want {
 		t.Fatalf("corrected script = %q, want %q", corrected, want)

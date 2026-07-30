@@ -11,13 +11,13 @@ awkward compared with selecting text in an editor and acting on the selection.
 Provide a small command-line tool that reads a compact, selection-oriented edit script
 from standard input. The same script can update, create, move, or remove files, or
 translate those changes into OpenAI `apply_patch` format. Include measured GPT-5 token
-comparisons and a concise instruction sheet suitable for agents.
+comparisons, a concise instruction sheet suitable for agents, and a reproducible
+historical-commit benchmark that measures hpatch against the native edit path by executable correctness.
 
 ## First-draft scope
 
 - Multiple UTF-8 files selected in sequence by `in PATH` or created by `new PATH`.
-- Single-line column selection, forward literal-match selection sets, unique literal-anchored
-  block selection, and inclusive whole-line range selection.
+- Single-line column selection, forward literal-match selection sets, and inclusive whole-line range selection.
 - Cursor insertion and atomic selection-set replacement, deletion, and invocation-local
   clipboard copy, cut, and paste.
 - File creation, movement, and deletion.
@@ -25,6 +25,12 @@ comparisons and a concise instruction sheet suitable for agents.
   a generation, and an explicit `commit` barrier that advances the in-memory baseline.
 - Normal mode that validates and stages the complete change set before committing it.
 - Translate mode that does not modify files and emits one `apply_patch` envelope.
+- Historical-commit benchmark tasks that prove an evaluator fails on the parent revision,
+  passes on the oracle revision, then run paired randomized Codex attempts against
+  history-free snapshots with hidden graders and structured artifacts.
+- A router pass-through control that shares the hpatch router's provider and usage path
+  without rewriting the model's edit tool.
+
 - Automated scenarios comparing hpatch scripts with equivalent handwritten
   `apply_patch` inputs using the tokenizer returned for the OpenAI `gpt-5` model.
 
@@ -33,10 +39,17 @@ comparisons and a concise instruction sheet suitable for agents.
 - `hpatch`: normal mode; read the script from standard input and edit files.
 - `hpatch translate`: read the script from standard input and emit `apply_patch` text.
 - `hpatch gain`: report persistent comparative token estimates.
+- `hpatch-bench validate --manifest TASK.json`: prove the task's base/oracle grader
+  discrimination before model execution.
+- `hpatch-bench run`: validate and run paired control/hpatch attempts through separately
+  labeled router endpoints, writing JSONL results and diagnostic artifacts.
+- `hpatch-router --mode hpatch|passthrough`: select edit-tool rewriting or the unchanged
+  control path; omitted mode retains hpatch behavior.
+
 - `hpatch --help`, `hpatch --tool-help`, `hpatch translate --help`, and
   `hpatch --version`: informational output without reading stdin or accessing the
   workspace.
-- Script commands: `in`, `new`, `mv`, `rm`, `sel`, `tsel`, `bsel`, `rsel`, `type`,
+- Script commands: `in`, `new`, `mv`, `rm`, `sel`, `tsel`, `rsel`, `type`,
   `del`, `copy`, `cut`, `paste`, and `commit`; `type` also accepts a framed heredoc body.
 - Routed rejected-script corrections can replace, delete, or insert commands by command
   index without resending the complete script.
@@ -48,6 +61,9 @@ comparisons and a concise instruction sheet suitable for agents.
 - A new diff or patch interchange format beyond the command script and translated
   `apply_patch` output.
 - Compatibility aliases for commands or invocation modes.
+- Remote repository cloning, benchmark dataset discovery, hosted orchestration, parallel
+  model execution, exact-reference-patch grading, or automatic cost conversion.
+
 - Implicit selector rebasing after every edit; only explicit `commit` advances a baseline.
 - Verbose object-per-command encoding on the agent-facing edit path.
 
@@ -61,4 +77,11 @@ comparisons and a concise instruction sheet suitable for agents.
   a partial patch.
 - Normal-mode success writes only the final-state report to stderr. Translate-mode
   success writes only the patch to stdout and the pending final-state report to stderr.
+- A benchmark manifest names a local source repository, a base and oracle commit, a prompt,
+  hidden files, grader commands, allowed path prefixes, and finite agent/grader timeouts.
+- The agent receives neither source history nor hidden graders. Correctness is determined
+  after execution from required graders and scope checks, not reference-patch similarity.
+- Control and treatment use distinct router endpoints that report `passthrough` and
+  `hpatch` mode respectively.
+
 - Diagnostics go to standard error with a nonzero exit status.

@@ -133,7 +133,7 @@ func TestCodexHPatchGrammarE2E(t *testing.T) {
 	for name, pattern := range map[string]string{
 		"whole-line selector":     `(?s)in whole\.go.*?rsel 3:5.*?type <<PATCH`,
 		"content selector":        `(?m)tsel [1-4] "return saveArtifactPayload\(path, b\)"`,
-		"partial-block selector":  `(?m)bsel "oldCall\(" "finalArgument\)"`,
+		"partial multiline edit":  `(?s)in partial\.go.*?rsel 3:5.*?type`,
 		"fixed heredoc delimiter": `(?m)^PATCH$`,
 	} {
 		if !regexp.MustCompile(pattern).MatchString(scripts) {
@@ -142,7 +142,6 @@ func TestCodexHPatchGrammarE2E(t *testing.T) {
 	}
 	for _, forbidden := range []string{
 		`tsel 4 "\t\treturn saveArtifactPayload(path, b)"`,
-		`bsel "\toldCall("`,
 		"\n\nPATCH",
 	} {
 		if strings.Contains(scripts, forbidden) {

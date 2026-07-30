@@ -101,7 +101,7 @@ func TestLinewisePasteAddsOnlyMissingDestinationBoundaries(t *testing.T) {
 			name:        "paste does not split CRLF",
 			source:      "tail",
 			destination: "anchor\r\n",
-			script:      []string{"in source.txt", "rsel 1:1", "copy", "in destination.txt", `bsel "anchor" "\r"`, "paste"},
+			script:      []string{"in source.txt", "rsel 1:1", "copy", "in destination.txt", "rsel 1:1", "paste"},
 			want:        "anchor\r\ntail",
 		},
 		{

@@ -88,13 +88,11 @@ func (p *program) evaluate(ctx context.Context, resolve pathResolver, load fileL
 			}
 			command.path = resolved
 		}
-		outcome, err := w.execute(command, commandIndex+1)
-		if err != nil {
+		if err := w.execute(command, commandIndex+1); err != nil {
 			reason := reasonOf(err, reasonOther)
 			events.fail(command.operation, command.attempt, reason)
 			return nil, events, "", &commandError{Attempt: command.attempt, Reason: reason, Command: commandIndex + 1, Line: command.line, Operation: command.operation, Path: w.diagnosticPath(command), Category: commandCategory(command.operation), Source: command.source, Message: err.Error(), Repair: w.repairContext(command, reason)}
 		}
-		events.recordOutcome(command.operation, outcome)
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, events, "", err
@@ -117,7 +115,7 @@ func commandCategory(operation string) string {
 	switch operation {
 	case "in", "new", "mv", "rm":
 		return "file"
-	case "sel", "tsel", "rsel", "bsel":
+	case "sel", "tsel", "rsel":
 		return "selection"
 	case "type", "del", "copy", "cut", "paste":
 		return "edit"
@@ -128,22 +126,22 @@ func commandCategory(operation string) string {
 	}
 }
 
-func (w *workspace) execute(command instruction, commandIndex int) (commandOutcome, error) {
+func (w *workspace) execute(command instruction, commandIndex int) error {
 	switch command.operation {
 	case "in":
-		return commandOutcome{}, w.selectFile(command.path)
+		return w.selectFile(command.path)
 	case "new":
-		return commandOutcome{}, w.newFile(command.path)
+		return w.newFile(command.path)
 	case "mv":
-		return commandOutcome{}, w.moveFile(command.path)
+		return w.moveFile(command.path)
 	case "rm":
-		return commandOutcome{}, w.removeFile()
+		return w.removeFile()
 	case "commit":
 		w.commitGeneration()
-		return commandOutcome{}, nil
+		return nil
 	}
 	if w.active == nil {
-		return commandOutcome{}, withReason(reasonActiveFile, fmt.Errorf("%s requires an active file", command.operation))
+		return withReason(reasonActiveFile, fmt.Errorf("%s requires an active file", command.operation))
 	}
 
 	file := w.active
@@ -152,14 +150,11 @@ func (w *workspace) execute(command instruction, commandIndex int) (commandOutco
 	var err error
 	switch command.operation {
 	case "sel":
-		return commandOutcome{}, w.active.editor.selectColumns(command.lineNumber, command.start, command.end)
+		return w.active.editor.selectColumns(command.lineNumber, command.start, command.end)
 	case "tsel":
-		return commandOutcome{}, w.active.editor.selectMatches(command.lineNumber, command.count, command.text, origin)
-	case "bsel":
-		recovered, err := w.active.editor.selectBlock(command.text, command.endText)
-		return commandOutcome{blockRecovered: recovered}, err
+		return w.active.editor.selectMatches(command.lineNumber, command.count, command.text, origin)
 	case "rsel":
-		return commandOutcome{}, w.active.editor.selectLines(command.lineNumber, command.endLine)
+		return w.active.editor.selectLines(command.lineNumber, command.endLine)
 	case "type":
 		err = file.editor.typeText(command.text, origin)
 	case "del":
@@ -167,33 +162,33 @@ func (w *workspace) execute(command instruction, commandIndex int) (commandOutco
 	case "copy", "cut":
 		clipboard, ok := file.editor.selectedClipboard()
 		if !ok {
-			return commandOutcome{}, withReason(reasonSelectionRequired, fmt.Errorf("%s requires a selection", command.operation))
+			return withReason(reasonSelectionRequired, fmt.Errorf("%s requires a selection", command.operation))
 		}
 		if command.operation == "cut" {
 			if err := file.editor.deleteSelection(origin); err != nil {
-				return commandOutcome{}, err
+				return err
 			}
 		}
 		w.clipboard = &clipboard
 		if command.operation == "copy" {
-			return commandOutcome{}, nil
+			return nil
 		}
 	case "paste":
 		if w.clipboard == nil {
-			return commandOutcome{}, withReason(reasonClipboardEmpty, fmt.Errorf("paste requires a preceding copy or cut in the same script"))
+			return withReason(reasonClipboardEmpty, fmt.Errorf("paste requires a preceding copy or cut in the same script"))
 		}
 		err = file.editor.pasteClipboard(*w.clipboard, origin)
 	default:
 		panic("parsed instruction has no executor: " + command.operation)
 	}
 	if err != nil {
-		return commandOutcome{}, err
+		return err
 	}
 	if edit := file.editor.reportedEdit(origin, textMatches); edit != nil {
 		edit.file = file
 		w.reportedEdits = append(w.reportedEdits, edit)
 	}
-	return commandOutcome{}, nil
+	return nil
 }
 
 func (w *workspace) commitGeneration() {

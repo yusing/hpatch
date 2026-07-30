@@ -57,7 +57,6 @@ Editing commands:
   rm                                  remove the active file and clear editor state
   sel LINE START:END                  select inclusive one-based rune columns
   tsel FROM_LINE "TEXT" [N]          select the first N separate matches from FROM_LINE
-  bsel "START" "END"                  select one whole-file uniquely anchored block
   rsel START:END                      select inclusive complete logical lines
   type "TEXT"                         record replacement or insertion at baseline coordinates
   type <<TAG                          record literal multiline replacement or insertion text
@@ -94,7 +93,9 @@ Baseline editor state:
   commit validates and materializes all pending files and edits as the next immutable
   in-memory baseline. It never mutates the filesystem or emits an intermediate patch or
   report. Pending edits are cleared, a surviving active file resets to cursor 0:0, and
-  the clipboard survives. Script end finalizes pending edits without that cursor reset.
+  the clipboard survives. Selectors later in the same script must use coordinates known
+  before submission; split the work into another call if those coordinates are uncertain.
+  Script end finalizes pending edits without that cursor reset.
 
   ` + "`sel`" + ` columns count Unicode code points, not display width: one tab is one
   column, so a rendered editor column does not match a sel column on an indented line.
@@ -110,13 +111,6 @@ Baseline editor state:
   repairs an incomplete suffix to the first match; extras make repair ambiguous.
   Prefer a broader TEXT instead of occurrence arithmetic.
 
-  bsel searches the complete active-file baseline, independent of cursor or selection
-  set. It resolves START uniquely, then resolves END uniquely only after START. Exact
-  anchors are authoritative; when an anchor has no exact occurrence,
-  nonempty ASCII space and tab runs match interchangeably. The selected span includes
-  both anchors, so replacement TEXT must reproduce whatever END covers. An END anchor
-  stopping mid-expression leaves the rest of that expression in place, and TEXT that
-  also supplies it duplicates the remainder. Use rsel to replace whole lines.
 
   rsel owns selected line terminators. When type replaces a terminated linewise
   selection and TEXT has no final terminator, hpatch preserves the selected final
@@ -125,13 +119,12 @@ Baseline editor state:
   lines. A linewise paste preserves copied bytes and adds only missing destination
   boundary terminators, using the destination file's line-ending style.
 
-  Inline TEXT, START, and END use JSON-compatible quoted strings and additionally
-  accept literal horizontal tabs. Escape quotes, backslashes, line terminators, NUL,
-  and other C0 controls. Inline type and bsel may encode line terminators; tsel may
-  not. For multiline type text, use type <<TAG with an exact unindented closing TAG
-  instead of placing physical newlines inside a quoted operand. A tag may be short
-  or lowercase, and matching single or double quotes around the header tag are not
-  part of the closing line.
+  Inline TEXT uses JSON-compatible quoted strings and additionally accepts literal
+  horizontal tabs. Escape quotes, backslashes, line terminators, NUL, and other C0
+  controls. Inline type may encode line terminators; tsel may not. For multiline type
+  text, use type <<TAG with an exact unindented closing TAG instead of placing physical
+  newlines inside a quoted operand. A tag may be short or lowercase, and matching single
+  or double quotes around the header tag are not part of the closing line.
 
 Final-state report:
   A successful report starts with the active path and rendered cursor or selection.
@@ -148,7 +141,7 @@ Metrics:
   hpatch gain reads no script and reports caller-accounted hpatch and apply_patch
   output-token estimates separately from input-token estimates. Stable tables retain
   evaluator-owned command errors, absolute selectors, single and multiple
-  tsel selection counts, exact and recovered block successes, and terminal failure reasons.
+  tsel selection counts, and terminal failure reasons.
 
 Hooks:
   Agent-correctable script evaluation failures run each command template in

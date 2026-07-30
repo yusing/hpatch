@@ -18,6 +18,7 @@ import (
 
 const (
 	defaultListenAddress   = "127.0.0.1:8080"
+	defaultRewriteMode     = "hpatch"
 	defaultRequestTimeout  = 10 * time.Minute
 	requestBodyReadTimeout = 30 * time.Second
 	shutdownTimeout        = 5 * time.Second
@@ -31,6 +32,7 @@ func Run(ctx context.Context, args []string, stderr io.Writer) error {
 	flags.SetOutput(stderr)
 	listenAddress := flags.String("listen", defaultListenAddress, "HTTP listen address")
 	timeout := flags.Duration("timeout", defaultRequestTimeout, "upstream response-start timeout")
+	mode := flags.String("mode", defaultRewriteMode, "response mode: hpatch or passthrough")
 	if err := flags.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return nil
@@ -40,22 +42,34 @@ func Run(ctx context.Context, args []string, stderr io.Writer) error {
 	if flags.NArg() != 0 {
 		return errors.New("positional arguments are not supported")
 	}
+	if *mode != "hpatch" && *mode != "passthrough" {
+		return errors.New("--mode must be hpatch or passthrough")
+	}
 	if *timeout <= 0 {
 		return errors.New("--timeout must be positive")
 	}
 
 	log := newDiagnostics(stderr)
 	provider := newProviderClient(codexBaseURL, nil)
-	gainDirectory, err := hpatchMetricsDirectory()
-	if err != nil {
-		return fmt.Errorf("initialize hpatch response proxy: %w", err)
+	var gainDirectory string
+	var hpatchCalls *hpatchProxy
+	if *mode == "hpatch" {
+		var err error
+		gainDirectory, err = hpatchMetricsDirectory()
+		if err != nil {
+			return fmt.Errorf("initialize hpatch response proxy: %w", err)
+		}
 	}
 	metrics := newMetricsStore(gainDirectory)
-	translator := notifyingHPatchTranslator{
-		inner:   newInProcessHPatchTranslator(gainDirectory),
-		metrics: metrics,
+	metrics.mode = *mode
+	if *mode == "hpatch" {
+		translator := notifyingHPatchTranslator{
+			inner:   newInProcessHPatchTranslator(gainDirectory),
+			metrics: metrics,
+		}
+		hpatchCalls = newHPatchProxy(translator)
 	}
-	hpatchCalls := newHPatchProxy(translator)
+
 	var requestSequence atomic.Uint64
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/metrics", metrics.serveAPI)
@@ -69,7 +83,7 @@ func Run(ctx context.Context, args []string, stderr io.Writer) error {
 		ReadTimeout:       requestBodyReadTimeout,
 		IdleTimeout:       2 * time.Minute,
 	}
-	if err := log.log(ctx, slog.LevelInfo, "listening", "url", fmt.Sprintf("http://%s/v1/responses", *listenAddress)); err != nil {
+	if err := log.log(ctx, slog.LevelInfo, "listening", "url", fmt.Sprintf("http://%s/v1/responses", *listenAddress), "mode", *mode); err != nil {
 		return fmt.Errorf("write listening log: %w", err)
 	}
 	serverError := make(chan error, 1)
@@ -204,13 +218,20 @@ func executeRequest(
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("prepare request: %w", err)
 	}
-	metadata, metadataValid := decodeCodexTurnMetadata(headers)
-	hpatchTransform, err := hpatchCalls.prepareRequest(ctx, &parsedRequest, sessionID, metadata, metadataValid)
-	if err != nil {
-		return fmt.Errorf("prepare hpatch response proxy: %w", err)
+	var (
+		hpatchTransform *hpatchResponseTransform
+		err             error
+	)
+	if hpatchCalls != nil {
+		metadata, metadataValid := decodeCodexTurnMetadata(headers)
+		hpatchTransform, err = hpatchCalls.prepareRequest(ctx, &parsedRequest, sessionID, metadata, metadataValid)
+		if err != nil {
+			return fmt.Errorf("prepare hpatch response proxy: %w", err)
+		}
 	}
 	if hpatchTransform != nil {
 		defer hpatchTransform.Close()
+
 	}
 	forwardBody, err := json.Marshal(parsedRequest.fields)
 	if err != nil {

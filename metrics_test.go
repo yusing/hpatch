@@ -117,7 +117,6 @@ func TestGainReportReconcilesEffectiveAndIneffectiveTokens(t *testing.T) {
 		"input token estimates:",
 		"command metrics:",
 		"tsel selection metrics:",
-		"block selector successes:",
 		"failure reasons:",
 		"command failure reasons:",
 	} {
@@ -244,8 +243,8 @@ func TestGainReportsCommandInvocationsErrorsAndRates(t *testing.T) {
 		script  string
 		success bool
 	}{
-		{name: "success with unrelated command-name text", args: []string{"translate"}, script: "new note.txt\ntype \"bsel sel future-command\"\n", success: true},
-		{name: "execution error", args: []string{"translate"}, script: "new failed.txt\ntype \"ignored\"\nbsel \"missing\" \"end\"\n"},
+		{name: "success with unrelated command-name text", args: []string{"translate"}, script: "new note.txt\ntype \"rsel sel future-command\"\n", success: true},
+		{name: "execution error", args: []string{"translate"}, script: "new failed.txt\ntype \"ignored\"\nrsel 99:99\n"},
 		{name: "malformed absolute line", args: []string{"translate"}, script: "sel 0 1:1\n"},
 		{name: "unknown future command", args: []string{"translate"}, script: "future-command\n"},
 		{name: "successful no-op", script: "new transient.txt\nrm\n", success: true},
@@ -268,7 +267,7 @@ func TestGainReportsCommandInvocationsErrorsAndRates(t *testing.T) {
 	wantCommands[commandOperationIndex("new")] = commandMetric{Invocations: 3}
 	wantCommands[commandOperationIndex("rm")] = commandMetric{Invocations: 1}
 	wantCommands[commandOperationIndex("sel")] = commandMetric{Invocations: 1, Errors: 1}
-	wantCommands[commandOperationIndex("bsel")] = commandMetric{Invocations: 1, Errors: 1}
+	wantCommands[commandOperationIndex("rsel")] = commandMetric{Invocations: 1, Errors: 1}
 	wantCommands[commandOperationIndex("type")] = commandMetric{Invocations: 2}
 	if got.Commands != wantCommands {
 		t.Fatalf("command metrics = %+v, want %+v", got.Commands, wantCommands)
@@ -291,8 +290,7 @@ func TestGainReportsCommandInvocationsErrorsAndRates(t *testing.T) {
 		"rm       1            0       0.0%\n" +
 		"sel      1            1       100.0%\n" +
 		"tsel     0            0       0.0%\n" +
-		"bsel     1            1       100.0%\n" +
-		"rsel     0            0       0.0%\n" +
+		"rsel     1            1       100.0%\n" +
 		"type     2            0       0.0%\n" +
 		"del      0            0       0.0%\n" +
 		"copy     0            0       0.0%\n" +
@@ -621,12 +619,12 @@ func TestPriorMetricsVersionResetsTotals(t *testing.T) {
 	}
 }
 
-func TestImmediatePriorMetricsVersionResetsTotals(t *testing.T) {
+func TestHPATCH18MetricsReset(t *testing.T) {
 	dataDirectory := t.TempDir()
-	const priorSlotSize = 2304
-	const priorChecksumOffset = 2272
+	const priorSlotSize = 2432
+	const priorChecksumOffset = 2400
 	var prior [priorSlotSize]byte
-	copy(prior[:8], "HPATCH16")
+	copy(prior[:8], "HPATCH18")
 	binary.LittleEndian.PutUint64(prior[8:16], 7)
 	binary.LittleEndian.PutUint64(prior[16:24], 5)
 	checksum := sha256.Sum256(prior[:priorChecksumOffset])
@@ -639,7 +637,7 @@ func TestImmediatePriorMetricsVersionResetsTotals(t *testing.T) {
 		t.Fatal(err)
 	}
 	if got != (metrics{}) {
-		t.Fatalf("immediate prior metrics were not reset: %+v", got)
+		t.Fatalf("HPATCH18 metrics were not reset: %+v", got)
 	}
 }
 

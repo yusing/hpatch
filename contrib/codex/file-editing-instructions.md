@@ -9,6 +9,6 @@ Line numbers in a selector are baseline coordinates. Since the baseline never sh
 adjust one to account for an edit earlier in the same script — that arithmetic is what lands an
 edit on the wrong line. Read numbers from a fresh `nl -ba`.
 
-If a script is rejected, correct it from the diagnostic rather than retrying with an empty or speculative variant.
+If a script is rejected, correct it from the diagnostic rather than retrying with an empty or speculative variant. When the tool result offers indexed repair operations (`INDEX: COMMAND`, `-INDEX`, `+INDEX: COMMAND`, `INDEX+: COMMAND`), prefer those over resending the full script; indices are the rejected evaluation's command numbers, not source-line numbers.
 
 Formatting commands and bulk mechanical rewrites do not need `hpatch`.

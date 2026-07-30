@@ -7,7 +7,6 @@ corrections: correction (_separator correction)*
         | bare_command
         | sel_command
         | tsel_command
-        | bsel_command
         | rsel_command
         | type_command
         | heredoc_command
@@ -16,7 +15,6 @@ path_command: PATH_OP SP PATH
 bare_command: "rm" | "del" | "copy" | "cut" | "paste" | "commit"
 sel_command: "sel" SP POSINT SP POSINT ":" POSINT
 tsel_command: "tsel" SP POSINT SP TSEL_QUOTED (SP POSINT)?
-bsel_command: "bsel" SP NONEMPTY_QUOTED SP NONEMPTY_QUOTED
 rsel_command: "rsel" SP POSINT ":" POSINT
 type_command: "type" SP QUOTED
 heredoc_command: "type" SP "<<PATCH" NL _patch_body "PATCH"
@@ -42,6 +40,5 @@ HSPACE: /[ \t]+/
 PATH: /[^\r\n]+/
 NL: /\r?\n/
 QUOTED: /"(?:\\(?:["\\\/bfnrt]|u[0-9A-Fa-f]{4})|[^\x00-\x1F"\\]|\t)*"/
-NONEMPTY_QUOTED: /"(?:\\(?:["\\\/bfnrt]|u[0-9A-Fa-f]{4})|[^\x00-\x1F"\\]|\t)+"/
 TSEL_QUOTED: /"(?:\\(?:["\\\/t]|u(?:0009|00[2-9A-Fa-f][0-9A-Fa-f]|0[1-9A-Fa-f][0-9A-Fa-f]{2}|[1-9A-Fa-f][0-9A-Fa-f]{3}))|[^\x00-\x1F"\\]|\t)+"/
 PATCH_BODY_LINE: /(?:PATCH[^\r\n]+|PATC[^H\r\n][^\r\n]*|PAT[^C\r\n][^\r\n]*|PA[^T\r\n][^\r\n]*|P[^A\r\n][^\r\n]*|PATC|PAT|PA|P|[^P\r\n][^\r\n]*)(?:\r\n|\n)/

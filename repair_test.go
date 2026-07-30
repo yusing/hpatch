@@ -95,26 +95,6 @@ func TestRepairContextReportsRangeBounds(t *testing.T) {
 	}
 }
 
-func TestRepairContextLocatesAmbiguousAnchors(t *testing.T) {
-	content := "func bar() int {\n\treturn 0\n}\n\nfunc baz() int {\n\treturn 0\n}\n"
-	repair := repairFor(t, "amb.go", content, "in amb.go\nbsel \"return 0\" \"}\"\ntype \"x\"\n")
-	for _, want := range []string{
-		`START anchor "return 0" is ambiguous, occurring at lines 2, 6`,
-	} {
-		if !strings.Contains(repair, want) {
-			t.Fatalf("repair context lacks %q:\n%s", want, repair)
-		}
-	}
-}
-
-func TestRepairContextReportsMissingAnchor(t *testing.T) {
-	content := "func bar() int {\n\treturn 0\n}\n"
-	repair := repairFor(t, "amb.go", content, "in amb.go\nbsel \"func qux() {\" \"}\"\ntype \"x\"\n")
-	if !strings.Contains(repair, `START anchor "func qux() {" has no occurrence after normalizing horizontal whitespace in the searched scope`) {
-		t.Fatalf("repair context lacks missing-anchor report:\n%s", repair)
-	}
-}
-
 func TestRepairContextExplainsEditConflict(t *testing.T) {
 	content := "func bar() int {\n\treturn 0\n}\n"
 	script := "in amb.go\nrsel 2:2\ntype \"\\tready\\n\"\nrsel 2:2\ntype \"\\tagain\\n\"\n"
