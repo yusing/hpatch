@@ -26,7 +26,7 @@ func TestRepairContextReportsColumnCountAndSpans(t *testing.T) {
 	for _, want := range []string{
 		"line 2 has 13 columns; requested 9:14",
 		"one tab is one column",
-		">2 \\treturn a + b",
+		"2|\treturn a + b",
 		"column guide for line 2: return=2:7 a=9:9 +=11:11 b=13:13",
 	} {
 		if !strings.Contains(repair, want) {
@@ -83,7 +83,7 @@ func TestRepairContextReportsMissingLine(t *testing.T) {
 		t.Fatalf("repair context lacks line count:\n%s", repair)
 	}
 	// The window still orients the retry, clamped to the real file.
-	if !strings.Contains(repair, ">3 three") {
+	if !strings.Contains(repair, "3|three") {
 		t.Fatalf("repair context lacks clamped window:\n%s", repair)
 	}
 }
@@ -110,7 +110,7 @@ func TestRepairContextExplainsEditConflict(t *testing.T) {
 	}
 	// The window centers on the line the rejected selector addressed, not on
 	// the stale cursor left by the earlier edit.
-	if !strings.Contains(repair, ">2 \\treturn 0") {
+	if !strings.Contains(repair, "2|\treturn 0") {
 		t.Fatalf("repair window not centered on addressed line:\n%s", repair)
 	}
 }

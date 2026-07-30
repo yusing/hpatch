@@ -15,7 +15,7 @@ func TestMultiSelectionFinalStateReport(t *testing.T) {
 	if exitCode != 0 || stdout.Len() != 0 {
 		t.Fatalf("Run() = exit %d, stdout %q, stderr %q", exitCode, stdout.String(), stderr.String())
 	}
-	want := "in file.txt 2 selections: 1:3-1:4, 2:3-2:4\nfiles: no changes\n1 a=x\n2 b=x\n"
+	want := "in file.txt 2 selections: 1:3-1:4, 2:3-2:4\nfiles: no changes\n1|a=x\n2|b=x\n"
 	if stderr.String() != want {
 		t.Fatalf("report = %q, want %q", stderr.String(), want)
 	}
@@ -32,9 +32,9 @@ func TestMultiSelectionFinalStateReportBoundsLocations(t *testing.T) {
 	}
 	want := "in file.txt 5 selections: 1:1-1:2, 2:1-2:2, 3:1-3:2, … +2\n" +
 		"files: no changes\n" +
-		"1 x\n" +
-		"2 x\n" +
-		"3 x\n"
+		"1|x\n" +
+		"2|x\n" +
+		"3|x\n"
 	if stderr.String() != want {
 		t.Fatalf("report = %q, want %q", stderr.String(), want)
 	}
@@ -67,8 +67,8 @@ func TestMultiSelectionReportProjectsPriorDisjointEdit(t *testing.T) {
 	}
 	want := "in file.txt 2 selections: 3:1-3:2, 5:1-5:2\n" +
 		"last edit in file.txt: type 1 tsel match: 1:1-2:6\n" +
-		"3 x\n" +
-		"5 x\n"
+		"3|x\n" +
+		"5|x\n"
 	if stderr.String() != want {
 		t.Fatalf("report = %q, want %q", stderr.String(), want)
 	}

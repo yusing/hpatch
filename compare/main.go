@@ -69,7 +69,7 @@ func scenarios() []scenario {
 				"calc.go": "package calc\n\nfunc total(subtotal, tax int) int { return subtotal + tax + adjustmentForRegion(subtotal, tax) }\n",
 			},
 			script: "in calc.go\ntsel 3 \"subtotal + tax\"\ntype \"subtotal - discount + tax\"\n",
-			patch:  "*** Begin Patch\n*** Update File: calc.go\n@@\n-func total(subtotal, tax int) int { return subtotal + tax + adjustmentForRegion(subtotal, tax) }\n+func total(subtotal, tax int) int { return subtotal - discount + tax + adjustmentForRegion(subtotal, tax) }\n*** End Patch\n",
+			patch:  "*** Begin Patch\n*** Update File: calc.go\n@@\n-func total(subtotal, tax int) int { return subtotal + tax + adjustmentForRegion(subtotal, tax) }\n+func total(subtotal, tax int) int {\n+\treturn subtotal - discount + tax + adjustmentForRegion(subtotal, tax)\n+}\n*** End Patch\n",
 		},
 		{
 			name:    "last occurrence delete",

@@ -79,6 +79,7 @@ func TestToolGrammarCommandOperandsUseExactSpaces(t *testing.T) {
 		"rsel_command: \"rsel\" SP POSINT \":\" POSINT",
 		"type_command: \"type\" SP QUOTED",
 		"heredoc_command: \"type\" SP \"<<PATCH\" NL _patch_body \"PATCH\"",
+		"acceptance: POSINT \":\" SP \"accept\"",
 	} {
 		if !strings.Contains(toolGrammar, rule) {
 			t.Errorf("tool grammar omits exact-space rule %q", rule)
@@ -97,6 +98,14 @@ func TestRemovedBlockSelectorIsNotAdvertised(t *testing.T) {
 func TestToolDescriptionRejectsParallelCalls(t *testing.T) {
 	if !strings.Contains(toolDescription, "Do not call this tool in parallel with other tools.") {
 		t.Error("tool description permits parallel calls")
+	}
+}
+
+func TestToolDescriptionExplainsAutomaticGoFormatting(t *testing.T) {
+	for _, guidance := range []string{"Go's standard library", "other languages receive no language validation"} {
+		if !strings.Contains(toolDescription, guidance) {
+			t.Errorf("tool description omits validation guidance %q", guidance)
+		}
 	}
 }
 
@@ -132,7 +141,6 @@ func TestToolDescriptionGuidesSparseCommandChoice(t *testing.T) {
 		"it has no syntax or section awareness",
 		"Selecting a heading inserts before that heading's existing body, not after the section",
 		"trust the reported edited ranges and any repaired tsel line notes; do not reread the file solely to verify placement",
-		"parser/compiler",
 		"need not fill it, and matching is not syntax-aware",
 		"prose, links, examples, or repeated code",
 		"No report is available until the whole call finishes",
@@ -152,9 +160,11 @@ func TestToolDescriptionGuidesSparseCommandChoice(t *testing.T) {
 	for _, excluded := range []string{
 		"confined to one line",
 		"TEXT need not fill the line and matching is not syntax-aware",
+		"formatter or parser/compiler",
+		"git diff --check",
 	} {
 		if strings.Contains(toolDescription, excluded) {
-			t.Errorf("tool description retains inaccurate phrasing %q", excluded)
+			t.Errorf("tool description retains inaccurate or blanket guidance %q", excluded)
 		}
 	}
 }
@@ -169,24 +179,26 @@ type "cached"`
 		}
 
 		root := t.TempDir()
-		prefix := strings.Repeat("padding\n", 23)
-		writeTestFile(t, root, "predicate.go", prefix+"return ready || ready\n", 0o644)
+		prefix := "package sample\nfunc predicate() bool {\n" + strings.Repeat("// padding\n", 21)
+		formattedPrefix := "package sample\n\nfunc predicate() bool {\n" + strings.Repeat("\t// padding\n", 21)
+		suffix := "}\n"
+		writeTestFile(t, root, "predicate.go", prefix+"return ready || ready\n"+suffix, 0o644)
 
 		stdout, stderr, exitCode := runForTest(root, nil, script)
 		if exitCode != 0 || stdout != "" || stderr != "" {
 			t.Fatalf("Run() = exit %d, stdout %q, stderr %q", exitCode, stdout, stderr)
 		}
-		if got, want := readTestFile(t, root, "predicate.go"), prefix+"return ready || cached\n"; got != want {
+		if got, want := readTestFile(t, root, "predicate.go"), formattedPrefix+"\treturn ready || cached\n"+suffix; got != want {
 			t.Fatalf("predicate.go = %q, want %q", got, want)
 		}
 
 		textRoot := t.TempDir()
-		writeTestFile(t, textRoot, "predicate.go", prefix+"return ready || ready\n", 0o644)
+		writeTestFile(t, textRoot, "predicate.go", prefix+"return ready || ready\n"+suffix, 0o644)
 		stdout, stderr, exitCode = runForTest(textRoot, nil, "in predicate.go\ntsel 24 \"ready\"\ntype \"cached\"")
 		if exitCode != 0 || stdout != "" || stderr != "" {
 			t.Fatalf("tsel Run() = exit %d, stdout %q, stderr %q", exitCode, stdout, stderr)
 		}
-		if got, want := readTestFile(t, textRoot, "predicate.go"), prefix+"return cached || ready\n"; got != want {
+		if got, want := readTestFile(t, textRoot, "predicate.go"), formattedPrefix+"\treturn cached || ready\n"+suffix; got != want {
 			t.Fatalf("tsel predicate.go = %q, want first same-line match %q", got, want)
 		}
 	})
@@ -206,11 +218,13 @@ type "destinationRegistry"`
 		}
 
 		root := t.TempDir()
-		sourcePrefix := strings.Repeat("source padding\n", 11)
-		moved := "sourceRegistry.Register(alpha)\n" + strings.Repeat("move padding\n", 16)
-		destinationPrefix := strings.Repeat("destination padding\n", 39)
-		writeTestFile(t, root, "source.go", sourcePrefix+moved+"tail\n", 0o644)
-		writeTestFile(t, root, "destination.go", destinationPrefix+"// handlers\nafter\n", 0o644)
+		sourcePrefix := "package sample\n" + strings.Repeat("// source padding\n", 10)
+		formattedSourcePrefix := "package sample\n\n" + strings.Repeat("// source padding\n", 10)
+		moved := "// sourceRegistry.Register(alpha)\n" + strings.Repeat("// move padding\n", 16)
+		destinationPrefix := "package sample\n" + strings.Repeat("// destination padding\n", 38)
+		formattedDestinationPrefix := "package sample\n\n" + strings.Repeat("// destination padding\n", 38)
+		writeTestFile(t, root, "source.go", sourcePrefix+moved+"var sourceTail = true\n", 0o644)
+		writeTestFile(t, root, "destination.go", destinationPrefix+"// handlers\nvar destinationTail = true\n", 0o644)
 
 		withoutCommit := strings.Replace(script, "\ncommit\n", "\n", 1)
 		stdout, stderr, exitCode := runForTest(root, []string{"translate"}, withoutCommit)
@@ -222,11 +236,11 @@ type "destinationRegistry"`
 		if exitCode != 0 || stdout != "" || stderr != "" {
 			t.Fatalf("Run() = exit %d, stdout %q, stderr %q", exitCode, stdout, stderr)
 		}
-		if got, want := readTestFile(t, root, "source.go"), sourcePrefix+"tail\n"; got != want {
+		if got, want := readTestFile(t, root, "source.go"), formattedSourcePrefix+"var sourceTail = true\n"; got != want {
 			t.Fatalf("source.go = %q, want %q", got, want)
 		}
 		adjusted := strings.Replace(moved, "sourceRegistry", "destinationRegistry", 1)
-		if got, want := readTestFile(t, root, "destination.go"), destinationPrefix+"// handlers\n"+adjusted+"after\n"; got != want {
+		if got, want := readTestFile(t, root, "destination.go"), formattedDestinationPrefix+"// handlers\n"+adjusted+"var destinationTail = true\n"; got != want {
 			t.Fatalf("destination.go = %q, want %q", got, want)
 		}
 

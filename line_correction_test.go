@@ -22,13 +22,13 @@ func TestShiftedTextSelectionAutocorrectsWhenGloballyUnique(t *testing.T) {
 	wantReport := "" +
 		"in file.txt 2:6\n" +
 		"last edit in file.txt: type 1 tsel match: 2:1-2:6\n" +
-		"1 alpha\n" +
-		"2 fixed\n" +
-		"3 omega\n" +
+		"1|alpha\n" +
+		"2|fixed\n" +
+		"3|omega\n" +
 		"repaired command 2 tsel line 3 to 2 in file.txt\n" +
-		" 1 alpha\n" +
-		">2 fixed\n" +
-		" 3 omega\n"
+		"1|alpha\n" +
+		"2|fixed\n" +
+		"3|omega\n"
 	if stderr != wantReport {
 		t.Fatalf("report = %q, want %q", stderr, wantReport)
 	}
@@ -65,7 +65,7 @@ func TestShiftedMultiTextSelectionAutocorrectsOnlyCompleteUniqueSet(t *testing.T
 	}
 	for _, want := range []string{
 		"repaired command 2 tsel line 2 to 1 in file.txt\n",
-		">1 fixed\n",
+		"1|fixed\n",
 	} {
 		if !strings.Contains(stderr, want) {
 			t.Fatalf("report = %q, want substring %q", stderr, want)
@@ -105,14 +105,14 @@ func TestLineCorrectionContextMarksMultilineReplacementStart(t *testing.T) {
 	}
 	for _, want := range []string{
 		"repaired command 2 tsel line 2 to 1 in file.txt\n",
-		">1 first\n",
+		"1|first\n",
 	} {
 		if !strings.Contains(stderr, want) {
 			t.Fatalf("report = %q, want substring %q", stderr, want)
 		}
 	}
-	if strings.Contains(stderr, ">2 second\n") {
-		t.Fatalf("report marks the end of the multiline replacement: %q", stderr)
+	if !strings.Contains(stderr, "2|second\n") {
+		t.Fatalf("report omitted the multiline replacement continuation: %q", stderr)
 	}
 }
 
@@ -130,7 +130,7 @@ func TestLineCorrectionContextSurvivesCommitAndLaterEdits(t *testing.T) {
 	}
 	for _, want := range []string{
 		"repaired command 2 tsel line 2 to 1 in file.txt\n",
-		">2 fixed\n",
+		"2|fixed\n",
 	} {
 		if !strings.Contains(stderr, want) {
 			t.Fatalf("report = %q, want substring %q", stderr, want)
@@ -151,7 +151,7 @@ func TestLineCorrectionContextSurvivesFileSwitch(t *testing.T) {
 	for _, want := range []string{
 		"in second.txt 1:4\n",
 		"repaired command 2 tsel line 2 to 1 in first.txt\n",
-		">1 fixed\n",
+		"1|fixed\n",
 	} {
 		if !strings.Contains(stderr, want) {
 			t.Fatalf("report = %q, want substring %q", stderr, want)

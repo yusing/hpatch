@@ -3,11 +3,12 @@ package hpatch
 import (
 	"errors"
 	"fmt"
-	"github.com/yusing/hpatch/internal/hpatchsyntax"
 	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/yusing/hpatch/internal/hpatchsyntax"
 )
 
 var (
@@ -18,17 +19,19 @@ var (
 )
 
 type instruction struct {
-	attempt    commandAttempt
-	source     string
-	line       int
-	operation  string
-	path       string
-	lineNumber int
-	endLine    int
-	start      int
-	end        int
-	count      int
-	text       string
+	attempt        commandAttempt
+	source         string
+	line           int
+	operation      string
+	path           string
+	lineNumber     int
+	endLine        int
+	start          int
+	end            int
+	count          int
+	text           string
+	delimiter      string
+	lineTerminator string
 }
 
 type program struct {
@@ -78,7 +81,8 @@ type commandError struct {
 	// Repair is multi-line baseline context that a retry needs in order to
 	// correct this command. It is excluded from Error, whose result is
 	// sanitized onto one line, and is emitted separately.
-	Repair string
+	Repair     string
+	Correction string
 }
 
 func (e *commandError) Error() string {
@@ -145,6 +149,9 @@ func parse(source string) (*program, error) {
 			continue
 		}
 		command.source = line
+		command.delimiter = frame.Delimiter
+		command.lineTerminator = lines[headerIndex].Terminator
+
 		command.attempt = attemptForInstruction(command)
 		program.instructions = append(program.instructions, command)
 	}

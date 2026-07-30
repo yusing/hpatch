@@ -18,7 +18,7 @@ import (
 const (
 	testTranslatedPatch = "*** Begin Patch\n*** Add File: created.txt\n+payload\n*** End Patch\n"
 	testHPatchScript    = "new created.txt\ntype \"payload\"\n"
-	testHPatchReport    = "in created.txt 1:8\n1 payload\n"
+	testHPatchReport    = "in created.txt 1:8\n1|payload\n"
 )
 
 const testHPatchToolDescription = "fixture hpatch description\nwith exact trailing newline\n"
@@ -37,6 +37,20 @@ func (hpatchTranslatorFunc) ToolDescription() string {
 }
 
 func (hpatchTranslatorFunc) RecordMetrics(context.Context, hpatchMetricRecord) error {
+	return nil
+}
+
+type hpatchResultTranslatorFunc func(context.Context, routingWorkspace, string) (hpatchTranslationResult, error)
+
+func (f hpatchResultTranslatorFunc) Translate(ctx context.Context, workspace routingWorkspace, script string) (hpatchTranslationResult, error) {
+	return f(ctx, workspace, script)
+}
+
+func (hpatchResultTranslatorFunc) ToolDescription() string {
+	return testHPatchToolDescription
+}
+
+func (hpatchResultTranslatorFunc) RecordMetrics(context.Context, hpatchMetricRecord) error {
 	return nil
 }
 
@@ -148,20 +162,16 @@ func TestHPatchPrepareRequestExposesOnlyStandaloneHPatch(t *testing.T) {
 		"resend the complete script",
 	} {
 		if !strings.Contains(normalizedDescription, guidance) {
-
 			t.Fatalf("standalone hpatch description omits correction guidance %q: %q", guidance, exposed)
 		}
 	}
-	if !strings.Contains(exposed, "INDEX: COMMAND") {
-		t.Fatalf("standalone hpatch description omits the correction protocol: %q", exposed)
-	}
-	if !strings.Contains(normalizedDescription, "type <<PATCH replacement or insertion consumes") {
-		t.Fatalf("standalone hpatch description omits correction heredocs: %q", exposed)
-	}
-	for _, operation := range []string{"-INDEX", "+INDEX: COMMAND", "INDEX+: COMMAND"} {
+	for _, operation := range []string{"INDEX: COMMAND", "INDEX: accept", "-INDEX", "+INDEX: COMMAND", "INDEX+: COMMAND"} {
 		if !strings.Contains(exposed, operation) {
 			t.Fatalf("standalone hpatch description omits %q: %q", operation, exposed)
 		}
+	}
+	if !strings.Contains(normalizedDescription, "type <<PATCH replacement or insertion consumes") {
+		t.Fatalf("standalone hpatch description omits correction heredocs: %q", exposed)
 	}
 	if strings.Contains(exposed, "workspace_id") {
 		t.Fatalf("standalone hpatch description retains workspace selection: %q", exposed)
@@ -796,6 +806,51 @@ func TestHPatchCorrectionRetainsCorrelationAndIncrementsAttempt(t *testing.T) {
 	}
 	if _, ok := proxy.history("session-1", "call-1"); ok {
 		t.Fatal("local history committed before response completion")
+	}
+}
+
+func TestHPatchDisplayedCorrectionCanBeAcceptedWithoutRepeatingSource(t *testing.T) {
+	base := "in script.sh\nrsel 1:1\ntype \"exit \\\"$status\\\"\\n\"\n"
+	correctedCommand := "type \"\\texit \\\"$status\\\"\\n\""
+	calls := 0
+	var evaluated string
+	translator := hpatchResultTranslatorFunc(func(_ context.Context, _ routingWorkspace, script string) (hpatchTranslationResult, error) {
+		calls++
+		if calls == 1 {
+			diagnostic := "hpatch: command 3 rejected: indentation-only change to preserved text\n" +
+				"265|exit \"$status\"\n" +
+				"indentation: proposed=\"\" correction=\"\\t\"\n"
+			return hpatchTranslationResult{
+				diagnostic:  diagnostic,
+				corrections: map[int]string{3: correctedCommand},
+			}, errors.New("indentation-only change")
+		}
+		evaluated = script
+		return hpatchTranslationResult{patch: []byte(testTranslatedPatch)}, nil
+	})
+	transform, _, _, _ := newHPatchTestTransform(t, translator)
+
+	first, err := transform.translate("call-1", base, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Count(first.translationError, "265|exit \"$status\"\n") != 1 {
+		t.Fatalf("first diagnostic repeats proposed source:\n%s", first.translationError)
+	}
+	if !strings.Contains(first.translationError, "Apply the displayed correction with:\n3: accept\n") {
+		t.Fatalf("first diagnostic lacks acceptance command:\n%s", first.translationError)
+	}
+
+	second, err := transform.translate("call-2", "3: accept\n", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.translationError != "" || calls != 2 {
+		t.Fatalf("accepted correction = %+v, translations %d", second, calls)
+	}
+	want := "in script.sh\nrsel 1:1\n" + correctedCommand + "\n"
+	if evaluated != want {
+		t.Fatalf("evaluated script = %q, want %q", evaluated, want)
 	}
 }
 

@@ -10,7 +10,7 @@ import (
 
 func TestFinalStateReportMatchesNormalAndTranslateResults(t *testing.T) {
 	const script = "in file.txt\ntsel 2 \"beta\"\ntype \"B\"\n"
-	const wantReport = "in file.txt 2:2\nlast edit in file.txt: type 1 tsel match: 2:1-2:2\n1 alpha\n2 B\n3 gamma\n"
+	const wantReport = "in file.txt 2:2\nlast edit in file.txt: type 1 tsel match: 2:1-2:2\n1|alpha\n2|B\n3|gamma\n"
 	for _, args := range [][]string{nil, {"translate"}} {
 		t.Run(strings.Join(args, "_"), func(t *testing.T) {
 			root := t.TempDir()
@@ -35,10 +35,10 @@ func TestFinalStateReportRepresentsSelectionMoveRemovalAndEmptyFile(t *testing.T
 	tests := []struct {
 		name, content, script, want string
 	}{
-		{name: "selection", content: "alpha\nβeta\ngamma\n", script: "in file.txt\ntsel 2 \"βeta\"", want: "in file.txt 2:1-2:5\nfiles: no changes\n1 alpha\n2 βeta\n3 gamma\n"},
-		{name: "moved path", content: "alpha\n", script: "in file.txt\nmv moved.txt", want: "in moved.txt 1:1\nfiles: 1 moved\n1 alpha\n2 \n"},
+		{name: "selection", content: "alpha\nβeta\ngamma\n", script: "in file.txt\ntsel 2 \"βeta\"", want: "in file.txt 2:1-2:5\nfiles: no changes\n1|alpha\n2|βeta\n3|gamma\n"},
+		{name: "moved path", content: "alpha\n", script: "in file.txt\nmv moved.txt", want: "in moved.txt 1:1\nfiles: 1 moved\n1|alpha\n2|\n"},
 		{name: "removed active file", content: "alpha\n", script: "in file.txt\nrm", want: "no active file\nfiles: 1 deleted\n"},
-		{name: "new empty file", script: "new empty.txt", want: "in empty.txt 1:1\nfiles: 1 added\n1 \n"},
+		{name: "new empty file", script: "new empty.txt", want: "in empty.txt 1:1\nfiles: 1 added\n1|\n"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -58,10 +58,10 @@ func TestFinalStateCursorAffinity(t *testing.T) {
 	tests := []struct {
 		name, script, wantHeader, wantLine string
 	}{
-		{name: "type insertion", script: "in file.txt\ntype \"X\"", wantHeader: "in file.txt 1:2", wantLine: "1 Xabc"},
-		{name: "type replacement", script: "in file.txt\ntsel 1 \"b\"\ntype \"XYZ\"", wantHeader: "in file.txt 1:5", wantLine: "1 aXYZc"},
-		{name: "delete join", script: "in file.txt\ntsel 1 \"b\"\ndel", wantHeader: "in file.txt 1:2", wantLine: "1 ac"},
-		{name: "after copy and paste", script: "in file.txt\ntsel 1 \"b\"\ncopy\npaste", wantHeader: "in file.txt 1:4", wantLine: "1 abbc"},
+		{name: "type insertion", script: "in file.txt\ntype \"X\"", wantHeader: "in file.txt 1:2", wantLine: "1|Xabc"},
+		{name: "type replacement", script: "in file.txt\ntsel 1 \"b\"\ntype \"XYZ\"", wantHeader: "in file.txt 1:5", wantLine: "1|aXYZc"},
+		{name: "delete join", script: "in file.txt\ntsel 1 \"b\"\ndel", wantHeader: "in file.txt 1:2", wantLine: "1|ac"},
+		{name: "after copy and paste", script: "in file.txt\ntsel 1 \"b\"\ncopy\npaste", wantHeader: "in file.txt 1:4", wantLine: "1|abbc"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -86,7 +86,7 @@ func TestEmptyTypePreservesAdjacentEditCursorAffinity(t *testing.T) {
 	if exitCode := Run(nil, strings.NewReader(script), &stdout, &stderr, root, ""); exitCode != 0 {
 		t.Fatalf("Run() = exit %d, stdout %q, stderr %q", exitCode, stdout.String(), stderr.String())
 	}
-	if want := "in file.txt 1:3\nlast edit in file.txt: type 1 tsel match: 1:2-1:3\n1 aXb\n2 \n"; stderr.String() != want {
+	if want := "in file.txt 1:3\nlast edit in file.txt: type 1 tsel match: 1:2-1:3\n1|aXb\n2|\n"; stderr.String() != want {
 		t.Fatalf("report = %q, want %q", stderr.String(), want)
 	}
 }
@@ -100,7 +100,7 @@ func TestFinalStatePreviewWindowTruncationAndControls(t *testing.T) {
 	if exitCode := Run(nil, strings.NewReader(script), &stdout, &stderr, root, ""); exitCode != 0 {
 		t.Fatalf("Run() = exit %d, stdout %q, stderr %q", exitCode, stdout.String(), stderr.String())
 	}
-	want := "in file.txt 5:143\nlast edit in file.txt: paste 1 tsel match: 5:72-5:143\n3 three\n4 four\n5 \\t" + strings.Repeat("界", 63) + "\n"
+	want := "in file.txt 5:143\nlast edit in file.txt: paste 1 tsel match: 5:72-5:143\n3|three\n4|four\n5|\t" + strings.Repeat("界", 63) + "\n"
 	if stderr.String() != want {
 		t.Fatalf("report = %q, want %q", stderr.String(), want)
 	}
@@ -108,16 +108,16 @@ func TestFinalStatePreviewWindowTruncationAndControls(t *testing.T) {
 
 func TestFinalStateReportSummarizesDisjointTextEdits(t *testing.T) {
 	root := t.TempDir()
-	writeTestFile(t, root, "file.go", "func foo() {\n  bar := 0\n  middle()\n  baz := 0\n}\n", 0o644)
+	writeTestFile(t, root, "file.txt", "func foo() {\n  bar := 0\n  middle()\n  baz := 0\n}\n", 0o644)
 	var stdout, stderr bytes.Buffer
-	script := "in file.go\ntsel 1 \":= 0\" 2\ntype \"=\"\n"
+	script := "in file.txt\ntsel 1 \":= 0\" 2\ntype \"=\"\n"
 	if exitCode := Run(nil, strings.NewReader(script), &stdout, &stderr, root, ""); exitCode != 0 || stdout.Len() != 0 {
 		t.Fatalf("Run() = exit %d, stdout %q, stderr %q", exitCode, stdout.String(), stderr.String())
 	}
-	want := "in file.go 4:8\n" +
-		"last edit in file.go: type 2 tsel matches: 2:7-2:8, 4:7-4:8\n" +
-		"2   bar =\n" +
-		"4   baz =\n"
+	want := "in file.txt 4:8\n" +
+		"last edit in file.txt: type 2 tsel matches: 2:7-2:8, 4:7-4:8\n" +
+		"2|  bar =\n" +
+		"4|  baz =\n"
 	if stderr.String() != want {
 		t.Fatalf("report = %q, want %q", stderr.String(), want)
 	}
@@ -133,9 +133,9 @@ func TestFinalStateReportBoundsEditLocations(t *testing.T) {
 	}
 	want := "in file.txt 5:2\n" +
 		"last edit in file.txt: type 5 tsel matches: 1:1-1:2, 2:1-2:2, 3:1-3:2, … +2\n" +
-		"1 y\n" +
-		"2 y\n" +
-		"3 y\n"
+		"1|y\n" +
+		"2|y\n" +
+		"3|y\n"
 	if stderr.String() != want {
 		t.Fatalf("report = %q, want %q", stderr.String(), want)
 	}
@@ -149,7 +149,7 @@ func TestFinalStateReportUsesEditLabelWithoutTextSelector(t *testing.T) {
 	if exitCode := Run(nil, strings.NewReader(script), &stdout, &stderr, root, ""); exitCode != 0 || stdout.Len() != 0 {
 		t.Fatalf("Run() = exit %d, stdout %q, stderr %q", exitCode, stdout.String(), stderr.String())
 	}
-	want := "in file.txt 1:2\nlast edit in file.txt: del 1 edit: 1:2\n1 ac\n2 \n"
+	want := "in file.txt 1:2\nlast edit in file.txt: del 1 edit: 1:2\n1|ac\n2|\n"
 	if stderr.String() != want {
 		t.Fatalf("report = %q, want %q", stderr.String(), want)
 	}
@@ -167,8 +167,8 @@ func TestFinalStateReportSummarizesChangedNonActiveFile(t *testing.T) {
 	want := "in active.txt 1:1\n" +
 		"last edit in changed.txt: type 1 tsel match: 1:1-1:4\n" +
 		"files: 1 updated\n" +
-		"1 new\n" +
-		"2 \n"
+		"1|new\n" +
+		"2|\n"
 	if stderr.String() != want {
 		t.Fatalf("report = %q, want %q", stderr.String(), want)
 	}
@@ -191,8 +191,8 @@ func TestFinalStateReportSummarizesNetFileActions(t *testing.T) {
 	want := "no active file\n" +
 		"last edit in added.txt: type 1 edit: 1:1-2:1\n" +
 		"files: 1 updated, 1 moved, 1 moved+updated, 1 added, 1 deleted\n" +
-		"1 new\n" +
-		"2 \n"
+		"1|new\n" +
+		"2|\n"
 	if stderr.String() != want {
 		t.Fatalf("report = %q, want %q", stderr.String(), want)
 	}
@@ -209,8 +209,8 @@ func TestFinalStateReportPreservesEditAcrossCommitAndMove(t *testing.T) {
 	want := "in moved.txt 1:1\n" +
 		"last edit in moved.txt: type 1 tsel match: 1:1-1:4\n" +
 		"files: 1 moved+updated\n" +
-		"1 new\n" +
-		"2 \n"
+		"1|new\n" +
+		"2|\n"
 	if stderr.String() != want {
 		t.Fatalf("report = %q, want %q", stderr.String(), want)
 	}
@@ -226,9 +226,9 @@ func TestFinalStateReportProjectsLastEditThroughPriorEdit(t *testing.T) {
 	}
 	want := "in file.txt 3:2\n" +
 		"last edit in file.txt: type 1 tsel match: 3:1-3:2\n" +
-		"2 extra\n" +
-		"3 y\n" +
-		"4 \n"
+		"2|extra\n" +
+		"3|y\n" +
+		"4|\n"
 	if stderr.String() != want {
 		t.Fatalf("report = %q, want %q", stderr.String(), want)
 	}
@@ -246,8 +246,8 @@ func TestFinalStateReportFallsBackAfterLatestEditedFileIsRemoved(t *testing.T) {
 	want := "no active file\n" +
 		"last edit in kept.txt: type 1 tsel match: 1:1-1:4\n" +
 		"files: 1 updated\n" +
-		"1 new\n" +
-		"2 \n"
+		"1|new\n" +
+		"2|\n"
 	if stderr.String() != want {
 		t.Fatalf("report = %q, want %q", stderr.String(), want)
 	}

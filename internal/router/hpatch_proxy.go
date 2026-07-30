@@ -38,10 +38,11 @@ var (
 )
 
 type hpatchTranslationResult struct {
-	patch      []byte
-	report     string
-	diagnostic string
-	invocation hpatch.InvocationMetrics
+	patch       []byte
+	report      string
+	diagnostic  string
+	corrections map[int]string
+	invocation  hpatch.InvocationMetrics
 }
 
 type hpatchTranslator interface {
@@ -108,11 +109,16 @@ func (t inProcessHPatchTranslator) Translate(ctx context.Context, workspace rout
 	if len(translated.Patch) > maxHPatchPatchBytes || len(translated.Report) > maxHPatchDiagnosticBytes || len(translated.Diagnostic) > maxHPatchDiagnosticBytes {
 		return hpatchTranslationResult{}, fmt.Errorf("%w: hpatch translation output exceeds its configured bound", errHPatchCapacity)
 	}
+	corrections := make(map[int]string, len(translated.Corrections))
+	for _, correction := range translated.Corrections {
+		corrections[correction.Command] = correction.Replacement
+	}
 	result := hpatchTranslationResult{
-		patch:      translated.Patch,
-		report:     translated.Report,
-		diagnostic: translated.Diagnostic,
-		invocation: translated.Invocation,
+		patch:       translated.Patch,
+		report:      translated.Report,
+		diagnostic:  translated.Diagnostic,
+		corrections: corrections,
+		invocation:  translated.Invocation,
 	}
 	return result, err
 }
@@ -136,6 +142,7 @@ type hpatchHistory struct {
 	carrierName      string
 	report           string
 	translationError string
+	corrections      map[int]string
 	correlationID    string
 	attempt          int
 	upstreamItem     map[string]json.RawMessage
@@ -189,19 +196,21 @@ Repairing a rejected script:
   instead of the complete script:
 
     INDEX: COMMAND
+    INDEX: accept
     -INDEX
     +INDEX: COMMAND
     INDEX+: COMMAND
 
-  These replace, delete, insert before, or insert after a command. Indices count the
-  nonblank command headers in the complete script evaluated for the latest rejection;
-  they are not source-line numbers, indices into the first attempt, or indices into a
-  compact correction payload. A heredoc and its body count as one command. A type
-  <<PATCH replacement or insertion consumes through its exact unindented closing PATCH.
-  When an edit diagnostic reflects a bad span, correct its preceding selector. Replace
-  or delete an index at most once; repeated insertions retain payload order even if the
-  anchor is deleted. If the mapping is uncertain, resend the complete script. The
-  rebuilt script is revalidated atomically.
+  These replace, accept a displayed safe correction for, delete, insert before, or
+  insert after a command. Indices count the nonblank command headers in the complete
+  script evaluated for the latest rejection; they are not source-line numbers,
+  indices into the first attempt, or indices into a compact correction payload. A
+  heredoc and its body count as one command. A type <<PATCH replacement or insertion
+  consumes through its exact unindented closing PATCH. When an edit diagnostic
+  reflects a bad span, correct its preceding selector. Replace, accept, or delete an
+  index at most once; repeated insertions retain payload order even if the anchor is
+  deleted. If the mapping is uncertain, resend the complete script. The rebuilt
+  script is revalidated atomically.
 `
 
 // hpatchCorrectionHint is appended to a rejection so the cheaper repair path is
@@ -209,6 +218,16 @@ Repairing a rejected script:
 // what to send next, and a model that has forgotten the protocol resends the whole
 // script, which is the cost this feature exists to avoid.
 const hpatchCorrectionHint = "\nRepair this with indexed operations: `INDEX: COMMAND`, `-INDEX`, `+INDEX: COMMAND`, or `INDEX+: COMMAND`. Indices are the command numbers above.\n"
+
+func hpatchAcceptHint(corrections map[int]string) string {
+	commands := slices.Sorted(maps.Keys(corrections))
+	var hint strings.Builder
+	hint.WriteString("\nApply the displayed correction with:\n")
+	for _, command := range commands {
+		fmt.Fprintf(&hint, "%d: accept\n", command)
+	}
+	return hint.String()
+}
 
 type hpatchPendingCall struct {
 	callID string
@@ -602,6 +621,9 @@ func (p *hpatchProxy) rememberBatch(sessionID string, histories map[string]hpatc
 			return fmt.Errorf("encode hpatch history item: %w", err)
 		}
 		history.bytes = len(sessionID) + len(callID) + len(history.script) + len(history.root) + len(history.evaluated) + len(history.patch) + len(history.carrierName) + len(history.report) + len(history.translationError) + len(history.correlationID) + len(encodedItem)
+		for _, correction := range history.corrections {
+			history.bytes += len(correction)
+		}
 		prepared[callID] = history
 	}
 
@@ -800,7 +822,7 @@ func (t *hpatchResponseTransform) translate(callID, input string, upstreamItem m
 		if parseErr != nil {
 			return t.rejectUnevaluated(callID, input, parseErr, upstreamItem)
 		}
-		corrected, correctionErr := applyHPatchCorrections(base.correctable(), corrections)
+		corrected, correctionErr := applyHPatchCorrections(base.correctable(), corrections, base.corrections)
 		if correctionErr != nil {
 			return t.rejectUnevaluated(callID, input, correctionErr, upstreamItem)
 		}
@@ -834,7 +856,11 @@ func (t *hpatchResponseTransform) translate(callID, input string, upstreamItem m
 		if diagnostic == "" {
 			diagnostic = err.Error()
 		}
-		diagnostic += hpatchCorrectionHint
+		if len(translated.corrections) != 0 {
+			diagnostic += hpatchAcceptHint(translated.corrections)
+		} else {
+			diagnostic += hpatchCorrectionHint
+		}
 		if err := t.recordMetrics(hpatchMetricInputs{
 			invocation:    translated.invocation,
 			emittedScript: input,
@@ -848,9 +874,11 @@ func (t *hpatchResponseTransform) translate(callID, input string, upstreamItem m
 			evaluated:        retainedEvaluated(input, evaluated),
 			carrierName:      t.codeModeToolName,
 			translationError: diagnostic,
-			upstreamItem:     maps.Clone(upstreamItem),
-			correlationID:    correlationID,
-			attempt:          attempt,
+			corrections:      maps.Clone(translated.corrections),
+
+			upstreamItem:  maps.Clone(upstreamItem),
+			correlationID: correlationID,
+			attempt:       attempt,
 		}
 		t.recordLocal(callID, &history)
 		return history, nil

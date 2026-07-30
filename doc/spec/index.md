@@ -20,7 +20,7 @@ The interface contract is authoritative for syntax and semantics.
 - [`REQ-CLI-001`](interface.md): invocation modes and final-state reporting
 - [`REQ-METRICS-001`](interface.md): persistent token, command, and feature metrics
 - [`REQ-SCRIPT-001`](interface.md): script grammar
-- [`REQ-CORRECT-001`](interface.md): compact correction replacement, deletion, and insertion
+- [`REQ-CORRECT-001`](interface.md): compact correction replacement, safe acceptance, deletion, and insertion
 - [`REQ-FILE-001`](interface.md): file selection and lifecycle
 - [`REQ-SELECT-001`](interface.md): selection behavior
 - [`REQ-EDIT-001`](interface.md): edit behavior

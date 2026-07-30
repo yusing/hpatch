@@ -12,6 +12,7 @@ func TestHPatchCorrectionDetectionDistinguishesScripts(t *testing.T) {
 		payload string
 		want    bool
 	}{
+		{"accept", "5: accept\n", true},
 		{"correction", "5: sel 2 6:15\n", true},
 		{"correction after blank lines", "\n\n5: sel 2 6:15\n", true},
 		{"multiple corrections", "5: sel 2 6:15\n10: rsel 3:3\n", true},
@@ -190,7 +191,10 @@ func TestHPatchCorrectionRejectsMalformedPayloads(t *testing.T) {
 		{"blank replacement", "2:   \n", "has no replacement command"},
 		{"duplicate index", "2: sel 2 1:2\n2: sel 2 3:4\n", "appears more than once"},
 		{"duplicate deletion", "-2\n-2\n", "appears more than once"},
+		{"duplicate acceptance", "2: accept\n2: accept\n", "appears more than once"},
 		{"replacement and deletion", "2: rm\n-2\n", "both replaced and deleted"},
+		{"acceptance and deletion", "2: accept\n-2\n", "both accepted and deleted"},
+		{"acceptance and replacement", "2: accept\n2: rm\n", "both accepted and replaced"},
 		{"empty insertion", "+2:\n", "has no replacement command"},
 		{"deletion with command", "-2: rm\n", "is not `INDEX: COMMAND`"},
 		{"invalid heredoc delimiter", "2: type <<\n", "invalid heredoc delimiter"},
@@ -316,5 +320,57 @@ func TestHPatchCorrectionBoundsMalformedLinePreview(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "…") {
 		t.Fatalf("diagnostic lacks truncation marker: %v", err)
+	}
+}
+
+func TestHPatchCorrectionParsesAndAppliesDisplayedAcceptance(t *testing.T) {
+	corrections, err := parseHPatchCorrections("2: accept\n")
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	want := []hpatchCorrection{{kind: hpatchAccept, command: 2}}
+	if !reflect.DeepEqual(corrections, want) {
+		t.Fatalf("corrections = %#v, want %#v", corrections, want)
+	}
+
+	base := "in script.sh\nrsel 1:1\ntype \"exit\\n\"\n"
+	suggestion := "type \"\\texit\\n\""
+	corrected, err := applyHPatchCorrections(base, corrections, map[int]string{2: suggestion})
+	if err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	if want := "in script.sh\n" + suggestion + "\ntype \"exit\\n\"\n"; corrected != want {
+		t.Fatalf("corrected script = %q, want %q", corrected, want)
+	}
+}
+
+func TestHPatchCorrectionRejectsAcceptanceWithoutDisplayedSuggestion(t *testing.T) {
+	corrections, err := parseHPatchCorrections("2: accept\n")
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	_, err = applyHPatchCorrections("in file.txt\nrm\n", corrections)
+	if err == nil || !strings.Contains(err.Error(), "no displayed correction to accept") {
+		t.Fatalf("error = %v, want missing-suggestion rejection", err)
+	}
+}
+
+func TestHPatchCorrectionComposesAcceptancesAndManualOperations(t *testing.T) {
+	base := "in file.txt\nrsel 1:1\ntype \"one\\n\"\nrsel 2:2\ntype \"two\\n\"\n"
+	corrections, err := parseHPatchCorrections("3: accept\n4: rsel 3:3\n5: accept\n")
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	suggestions := map[int]string{
+		3: "type \"\\tone\\n\"",
+		5: "type \"\\ttwo\\n\"",
+	}
+	corrected, err := applyHPatchCorrections(base, corrections, suggestions)
+	if err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	want := "in file.txt\nrsel 1:1\ntype \"\\tone\\n\"\nrsel 3:3\ntype \"\\ttwo\\n\"\n"
+	if corrected != want {
+		t.Fatalf("corrected script = %q, want %q", corrected, want)
 	}
 }

@@ -20,11 +20,13 @@ type_command: "type" SP QUOTED
 heredoc_command: "type" SP "<<PATCH" NL _patch_body "PATCH"
 
 ?correction: replacement
+           | acceptance
            | deletion
            | insertion_before
            | insertion_after
 
 replacement: POSINT ":" SP? command
+acceptance: POSINT ":" SP "accept"
 deletion: "-" POSINT
 insertion_before: "+" POSINT ":" SP? command
 insertion_after: POSINT "+:" SP? command

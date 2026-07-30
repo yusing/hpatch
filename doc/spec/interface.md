@@ -283,6 +283,7 @@ script with one operation per nonblank command header:
 
 ```text
 N: COMMAND     replace command N
+N: accept      apply hpatch's displayed safe correction for command N
 -N             delete command N
 +N: COMMAND    insert before command N
 N+: COMMAND    insert after command N
@@ -290,29 +291,34 @@ N+: COMMAND    insert after command N
 
 A replacement or insertion whose command is `type <<TAG` consumes its heredoc body and
 closing delimiter as part of that one correction operation. All indices refer to the
-original rejected script before any correction operation is applied. Replacements and
-deletions may name an index at most once and conflict with each other for the same index.
-Multiple insertions at one anchor are allowed and retain payload order; their position is
-relative to the original anchor even when that anchor is deleted. Every nonblank line
-outside a correction heredoc must be a correction operation.
+original rejected script before any correction operation is applied. Replacements,
+acceptances, and deletions may name an index at most once and conflict with each other for
+the same index. An acceptance is valid only when the immediately repairable rejected
+script retained an exact correction for that command; it never approves the rejected
+mutation itself. Multiple insertions at one anchor are allowed and retain payload order;
+their position is relative to the original anchor even when that anchor is deleted. Every
+nonblank line outside a correction heredoc must be a correction operation.
 
-The router validates all operations and referenced indices before rebuilding the script.
-It then reparses and reevaluates the complete transformed script against the unchanged
-workspace. A correction failure changes nothing. A successful transformation becomes the
-base for a later correction, retains the correction-chain correlation ID, increments the
-attempt, and charges metrics for only the compact payload the agent emitted.
+The router validates all operations, retained acceptances, and referenced indices before
+rebuilding the script. It then reparses and reevaluates the complete transformed script
+against the unchanged workspace. A correction failure changes nothing. A successful
+transformation becomes the base for a later correction, retains the correction-chain
+correlation ID, increments the attempt, and charges metrics for only the compact payload
+the agent emitted.
 
 Acceptance:
 
 1. `N: COMMAND` remains compatible with existing replacement corrections.
-2. `-N`, `+N: COMMAND`, and `N+: COMMAND` can remove obsolete commands and insert new
+2. `N: accept` substitutes exactly the safe correction displayed for command N; an absent
+   or stale suggestion rejects without evaluating or mutating the workspace.
+3. `-N`, `+N: COMMAND`, and `N+: COMMAND` can remove obsolete commands and insert new
    commands without resending the complete script.
-3. Multiple same-anchor insertions preserve payload order, including when the anchor is
-   deleted, while duplicate replacement/deletion or an absent index rejects the complete
-   correction.
-4. A correction heredoc is one operation; an invalid or unterminated correction heredoc
+4. Multiple same-anchor insertions preserve payload order, including when the anchor is
+   deleted, while duplicate replacement/acceptance/deletion or an absent index rejects
+   the complete correction.
+5. A correction heredoc is one operation; an invalid or unterminated correction heredoc
    produces one bounded diagnostic and does not reinterpret its body as operations.
-5. Every corrected script is revalidated atomically against the unchanged workspace and
+6. Every corrected script is revalidated atomically against the unchanged workspace and
    retains the established correlation and emitted-payload metrics behavior.
 
 ## REQ-FILE-001 — File commands
@@ -513,10 +519,13 @@ Acceptance:
 
 Input is read completely and the entire script is evaluated before an external filesystem
 commit or stdout. Script `commit` barriers only advance the in-memory generation and
-never create an externally visible partial result. An unchanged normal-mode change set
-performs no filesystem operation but still reports
-its final active editor state. An unchanged translate result emits no patch and fails
-because it cannot represent an update; it emits no final-state report.
+never create an externally visible partial result. Before finalization, every changed file
+whose final path ends in `.go` is parsed and formatted with Go's standard-library
+`go/format`; a parse failure rejects the complete transaction, while non-Go files receive
+no language validation. An unchanged normal-mode change set performs no filesystem
+operation but still reports its final active editor state. An unchanged translate result
+emits no patch and fails because it cannot represent an update; it emits no final-state
+report.
 
 Translate output contains file actions in deterministic first-touch order:
 
@@ -559,14 +568,15 @@ moves. A new empty file reports position `1:1` and one empty preview line number
 After the header, the report writes up to three total logical lines nearest the cursor or
 first selection start: normally the preceding, containing, and following lines; at a
 boundary, the first or last three available lines without duplication. Each row is
-`LINE TEXT`. `TEXT` contains at most the first 64 Unicode code points of rendered line content, without
-a line terminator or added ellipsis. Control characters are escaped so each preview stays
-on one output line. Each successful `tsel` line repair appends a
-`repaired command N tsel line REQUESTED to RESOLVED in PATH` note plus up to three marked
-post-edit preview lines around the repaired location. The complete report is rendered
-before commit or patch output, but it is emitted only after that mode-specific effect
-succeeds. A report-write failure after the effect is best-effort and cannot retroactively
-change the successful effect or claim rollback.
+`LINE|TEXT`, matching `nl -ba -w1 -s'|'` output. `TEXT` contains at most the first 64
+Unicode code points of rendered line content, without a line terminator or added ellipsis.
+Tabs are preserved and other control characters are escaped so each preview stays on one
+output line. Each successful `tsel` line repair appends a
+`repaired command N tsel line REQUESTED to RESOLVED in PATH` note plus up to three
+post-edit `LINE|TEXT` preview lines around the repaired location. The complete report is
+rendered before commit or patch output, but it is emitted only after that mode-specific
+effect succeeds. A report-write failure after the effect is best-effort and cannot
+retroactively change the successful effect or claim rollback.
 
 Normal mode stages new contents in same-directory temporary files before starting the
 commit. Parse, validation, read, and evaluation failures leave the initial tree
@@ -599,39 +609,42 @@ than selecting a nearby line.
 A command failure that addressed an existing baseline additionally writes repair context
 on the lines following its diagnostic. Selectors resolve against a baseline the caller
 cannot see, so a diagnostic alone forces a blind retry that costs a whole script; repair
-context supplies the measurements that failure implies. A rejected column range reports the
-addressed line's rune-column count, restates that one tab is one column, and lists the
+context supplies the measurements that failure implies. A rejected column range reports
+the addressed line's rune-column count, restates that one tab is one column, and lists the
 rune-column span of each whitespace-separated token on that line. Token spans are used
 rather than sampled columns because a sampled character usually recurs on the line and
-	cannot be located unambiguously. An out-of-range line or line range reports the file's
-	line count. An edit conflict reports which current-generation baseline lines earlier commands
-	already claim and, when a later selector can safely be rerun after materialization,
-	identifies the selector command before which `commit` belongs. Every repair block
-includes a window of baseline lines around the addressed line, marks that line, and
-escapes control characters so each rendered line stays on one output line. A failure with
-no active baseline, including a missing file, emits its diagnostic alone. Repair context is
-supplementary: it never changes exit status, stdout, mutation, or metrics classification.
+cannot be located unambiguously. An out-of-range line or line range reports the file's
+line count. An edit conflict reports which current-generation baseline lines earlier
+commands already claim and, when a later selector can safely be rerun after
+materialization, identifies the selector command before which `commit` belongs. Every
+repair block includes a `LINE|TEXT` window of baseline lines around the addressed line and
+escapes non-tab control characters so each rendered line stays on one output line. A
+failure with no active baseline, including a missing file, emits its diagnostic alone.
+Repair context is supplementary: it never changes exit status, stdout, mutation, or
+metrics classification.
 
 Acceptance:
 
 1. Normal success has empty stdout and one rendered final-state report on stderr after
    commit; translate success has patch-only stdout and one pending-state report on stderr
    after the patch is completely written.
-2. Rendered cursor affinity, selection ranges, moved paths, empty files, three-line
-   boundary windows, Unicode columns, 64-code-point truncation, and control escaping
+2. Rendered cursor affinity, selection ranges, moved paths, empty files, `LINE|TEXT`
+   preview windows, Unicode columns, 64-code-point truncation, and control escaping
    produce the specified report without implying cross-invocation persistence.
-3. Malformed input, malformed or out-of-bounds line selection, unrelated literal or
+3. Changed Go files are formatted with the standard library before output, and invalid Go
+   rejects the transaction without mutation; non-Go files receive no language validation.
+4. Malformed input, malformed or out-of-bounds line selection, unrelated literal or
    whitespace collision, unknown or future command, invalid UTF-8, missing or non-regular
    file, logical path collision, staging failure, translation failure, and cancellation
    produce no mutation, patch output, or final-state report.
-4. Injected external filesystem commit and rollback failures are reported without false
+5. Injected external filesystem commit and rollback failures are reported without false
    atomicity claims and without a successful final-state report; script `commit` barriers
    remain externally invisible.
-5. Failure to write a fully rendered report after a successful external effect does not
+6. Failure to write a fully rendered report after a successful external effect does not
    reverse that effect or record a complete report-input token estimate.
-	6. A rejected column range, out-of-range line, missing literal occurrence, and edit
-	   conflict each emit repair context sufficient to correct the command without rereading
-	   the file; a failure with no active baseline emits its diagnostic alone.
+7. A rejected column range, out-of-range line, missing literal occurrence, and edit
+   conflict each emit repair context sufficient to correct the command without rereading
+   the file; a failure with no active baseline emits its diagnostic alone.
 
 ## REQ-GUIDE-001 — Agent guidance
 

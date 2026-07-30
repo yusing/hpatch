@@ -172,19 +172,19 @@ func TestCommitResetsStateButScriptEndDoesNot(t *testing.T) {
 			name:       "explicit commit resets cursor",
 			script:     "in file.txt\ntsel 2 \"beta\"\ntype \"B\"\ncommit\n",
 			wantHeader: "in file.txt 1:1",
-			wantLine:   "2 B",
+			wantLine:   "2|B",
 		},
 		{
 			name:       "no-op commit clears selection",
 			script:     "in file.txt\ntsel 2 \"beta\"\ncommit\n",
 			wantHeader: "in file.txt 1:1",
-			wantLine:   "2 beta",
+			wantLine:   "2|beta",
 		},
 		{
 			name:       "script end preserves pending cursor",
 			script:     "in file.txt\ntsel 2 \"beta\"\ntype \"B\"\ncommit\ntsel 2 \"B\"\ntype \"CC\"\n",
 			wantHeader: "in file.txt 2:3",
-			wantLine:   "2 CC",
+			wantLine:   "2|CC",
 		},
 	}
 	for _, test := range tests {

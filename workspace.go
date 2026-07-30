@@ -2,6 +2,7 @@ package hpatch
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io/fs"
 	"path/filepath"
@@ -19,13 +20,14 @@ type (
 )
 
 type fileState struct {
-	originalPath string
-	path         string
-	original     string
-	mode         fs.FileMode
-	created      bool
-	deleted      bool
-	editor       editor
+	originalPath   string
+	path           string
+	original       string
+	mode           fs.FileMode
+	created        bool
+	deleted        bool
+	mutationOrigin editOrigin
+	editor         editor
 }
 
 type changeKind int
@@ -91,13 +93,27 @@ func (p *program) evaluate(ctx context.Context, resolve pathResolver, load fileL
 		if err := w.execute(command, commandIndex+1); err != nil {
 			reason := reasonOf(err, reasonOther)
 			events.fail(command.operation, command.attempt, reason)
-			return nil, events, "", &commandError{Attempt: command.attempt, Reason: reason, Command: commandIndex + 1, Line: command.line, Operation: command.operation, Path: w.diagnosticPath(command), Category: commandCategory(command.operation), Source: command.source, Message: err.Error(), Repair: w.repairContext(command, reason)}
+			failure := &commandError{Attempt: command.attempt, Reason: reason, Command: commandIndex + 1, Line: command.line, Operation: command.operation, Path: w.diagnosticPath(command), Category: commandCategory(command.operation), Source: command.source, Message: err.Error(), Repair: w.repairContext(command, reason)}
+			if correction, ok := errors.AsType[*indentationCorrectionError](err); ok {
+				failure.Reason = reasonEditConflict
+				failure.Message = "indentation-only change to preserved text"
+				failure.Repair = correction.diagnostic()
+				failure.Correction = correctedTypeCommand(command, correction.correctedText)
+			}
+			return nil, events, "", failure
 		}
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, events, "", err
 	}
+	if failure := w.formatGoFiles(); failure != nil {
+		if failure.Operation != "" {
+			events.fail(failure.Operation, failure.Attempt, failure.Reason)
+		}
+		return nil, events, "", failure
+	}
 	changes := w.changes()
+
 	return changes, events, w.finalStateReport(changes), nil
 }
 
@@ -127,13 +143,14 @@ func commandCategory(operation string) string {
 }
 
 func (w *workspace) execute(command instruction, commandIndex int) error {
+	origin := editOrigin{command: commandIndex, line: command.line, operation: command.operation}
 	switch command.operation {
 	case "in":
 		return w.selectFile(command.path)
 	case "new":
-		return w.newFile(command.path)
+		return w.newFile(command.path, origin)
 	case "mv":
-		return w.moveFile(command.path)
+		return w.moveFile(command.path, origin)
 	case "rm":
 		return w.removeFile()
 	case "commit":
@@ -146,7 +163,6 @@ func (w *workspace) execute(command instruction, commandIndex int) error {
 
 	file := w.active
 	textMatches := len(file.editor.selections) != 0 && file.editor.textMatches
-	origin := editOrigin{command: commandIndex, line: command.line, operation: command.operation}
 	var err error
 	switch command.operation {
 	case "sel":
@@ -226,7 +242,7 @@ func (w *workspace) selectFile(path string) error {
 	return nil
 }
 
-func (w *workspace) newFile(path string) error {
+func (w *workspace) newFile(path string, origin editOrigin) error {
 	if err := w.validateFreeDestination(path); err != nil {
 		return err
 	}
@@ -234,19 +250,20 @@ func (w *workspace) newFile(path string) error {
 		delete(w.removed, path)
 		file.path = path
 		file.deleted = false
+		file.mutationOrigin = origin
 		file.editor = editor{}
 		w.paths[path] = file
 		w.active = file
 		return nil
 	}
-	file := &fileState{path: path, created: true}
+	file := &fileState{path: path, created: true, mutationOrigin: origin}
 	w.paths[path] = file
 	w.files = append(w.files, file)
 	w.active = file
 	return nil
 }
 
-func (w *workspace) moveFile(path string) error {
+func (w *workspace) moveFile(path string, origin editOrigin) error {
 	if w.active == nil {
 		return withReason(reasonActiveFile, fmt.Errorf("mv requires an active file"))
 	}
@@ -258,6 +275,7 @@ func (w *workspace) moveFile(path string) error {
 	w.blocked[oldPath] = true
 	w.reserved[oldPath] = true
 	w.active.path = path
+	w.active.mutationOrigin = origin
 	w.paths[path] = w.active
 	return nil
 }

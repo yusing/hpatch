@@ -183,15 +183,11 @@ func writeLineWindow(report *strings.Builder, baseline string, lines []logicalLi
 	end := min(len(lines), number+repairLineWindow)
 	for index := start; index <= end; index++ {
 		line := lines[index-1]
-		marker := " "
-		if index == number {
-			marker = ">"
-		}
 		limit := 64
 		if index == number {
 			limit = repairPreviewLimit
 		}
-		fmt.Fprintf(report, "%s%d %s\n", marker, index, previewTextLimit(baseline[line.start:line.contentEnd], limit))
+		fmt.Fprintf(report, "%d|%s\n", index, previewTextLimit(baseline[line.start:line.contentEnd], limit))
 	}
 }
 

@@ -89,7 +89,8 @@ State and safety:
 - The first in captures an immutable file baseline. All selectors in that generation use it; inserted text is not selectable.
 - Returning with in resets cursor and selections but keeps pending edits. The clipboard survives file changes and commit.
 - Disjoint edits may finalize together. Overlapping replacements, insertion inside a replacement, and multiple insertions at one offset reject atomically.
+- Changed `.go` files are parsed and formatted with Go's standard library before finalization; other languages receive no language validation.
 - Paths are workspace-relative and must remain inside the one routed root. Parents for new or moved files must already exist.
 - A failed or corrected call is retried against the unchanged baseline.
 
-After success, trust the reported edited ranges and any repaired tsel line notes; do not reread the file solely to verify placement. Run the formatter or parser/compiler, relevant tests, whitespace checks, and git diff --check.
+After success, trust the reported edited ranges and any repaired tsel line notes; do not reread the file solely to verify placement.

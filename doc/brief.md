@@ -51,8 +51,8 @@ historical-commit benchmark that measures hpatch against the native edit path by
   workspace.
 - Script commands: `in`, `new`, `mv`, `rm`, `sel`, `tsel`, `rsel`, `type`,
   `del`, `copy`, `cut`, `paste`, and `commit`; `type` also accepts a framed heredoc body.
-- Routed rejected-script corrections can replace, delete, or insert commands by command
-  index without resending the complete script.
+- Routed rejected-script corrections can replace, accept displayed safe corrections for,
+  delete, or insert commands by command index without resending the complete script.
 
 ## Non-goals
 

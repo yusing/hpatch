@@ -62,6 +62,9 @@ func (w *workspace) finalStateReport(changes []change) string {
 		} else {
 			lastEditDocument = lastEdit.file.editor.renderedDocument()
 		}
+		projected := *lastEdit
+		projected.spans = lastEdit.file.editor.mapFinalSpans(lastEdit.spans)
+		lastEdit = &projected
 		lastEdit.writeSummary(&report, lastEditDocument)
 	}
 	w.writeFileSummary(&report, changes)
@@ -131,8 +134,8 @@ func (e *editor) writeFinalState(report *strings.Builder, path string, document 
 		spans := make([]renderedSpan, len(e.selections))
 		for index, selected := range e.selections {
 			spans[index] = renderedSpan{
-				start: e.mapBaselineOffset(selected.start, boundaryAfter, 0),
-				end:   e.mapBaselineOffset(selected.end, boundaryBefore, 0),
+				start: e.mapFinalOffset(e.mapBaselineOffset(selected.start, boundaryAfter, 0)),
+				end:   e.mapFinalOffset(e.mapBaselineOffset(selected.end, boundaryBefore, 0)),
 			}
 		}
 		if len(spans) == 1 {
@@ -151,6 +154,7 @@ func (e *editor) writeFinalState(report *strings.Builder, path string, document 
 		affinity = boundaryAfter
 	}
 	offset := e.mapBaselineOffset(e.cursor, affinity, e.cursorCommand)
+	offset = e.mapFinalOffset(offset)
 	position := renderedCoordinateAt(document.content, document.lines, offset)
 	fmt.Fprintf(report, "in %s %d:%d\n", escapeReportControls(path), position.line, position.column)
 	return []renderedSpan{{start: offset, end: offset}}
@@ -228,7 +232,7 @@ func writePreview(report *strings.Builder, document renderedDocument, spans []re
 
 func writePreviewLine(report *strings.Builder, document renderedDocument, index int) {
 	line := document.lines[index]
-	fmt.Fprintf(report, "%d %s\n", index+1, previewText(document.content[line.start:line.contentEnd]))
+	fmt.Fprintf(report, "%d|%s\n", index+1, previewText(document.content[line.start:line.contentEnd]))
 }
 
 func (w *workspace) writeFileSummary(report *strings.Builder, changes []change) {
@@ -297,6 +301,7 @@ func (e *editor) writeLineCorrection(report *strings.Builder, path string, corre
 	content := e.content()
 	lines := renderedLines(content)
 	offset := e.mapCorrectionOffset(correction.offset)
+	offset = e.mapFinalOffset(offset)
 	position := renderedCoordinateAt(content, lines, offset)
 	fmt.Fprintf(
 		report,
@@ -314,11 +319,7 @@ func (e *editor) writeLineCorrection(report *strings.Builder, path string, corre
 	}
 	for index := start; index < min(start+3, len(lines)); index++ {
 		line := lines[index]
-		marker := " "
-		if index+1 == position.line {
-			marker = ">"
-		}
-		fmt.Fprintf(report, "%s%d %s\n", marker, index+1, previewText(content[line.start:line.contentEnd]))
+		fmt.Fprintf(report, "%d|%s\n", index+1, previewText(content[line.start:line.contentEnd]))
 	}
 }
 
@@ -342,6 +343,24 @@ func (e *editor) mapCorrectionOffset(offset int) int {
 		baselineOffset = edit.end
 	}
 	return renderedOffset + max(0, offset-baselineOffset)
+}
+
+func (e *editor) mapFinalOffset(offset int) int {
+	return e.finalOffsets.mapOffset(offset)
+}
+
+func (e *editor) mapFinalSpans(spans []renderedSpan) []renderedSpan {
+	if e.finalOffsets == nil {
+		return spans
+	}
+	projected := make([]renderedSpan, len(spans))
+	for index, span := range spans {
+		projected[index] = renderedSpan{
+			start: e.mapFinalOffset(span.start),
+			end:   e.mapFinalOffset(span.end),
+		}
+	}
+	return projected
 }
 
 func (e *editor) mapBaselineOffset(offset int, affinity boundaryAffinity, targetCommand int) int {
@@ -394,8 +413,8 @@ func previewText(text string) string {
 	return previewTextLimit(text, 64)
 }
 
-// previewTextLimit renders text on one output line, escaping control characters
-// and truncating to limit code points.
+// previewTextLimit renders text on one output line, preserving tabs, escaping
+// other control characters, and truncating to limit code points.
 func previewTextLimit(text string, limit int) string {
 	var preview strings.Builder
 	count := 0
@@ -404,7 +423,7 @@ func previewTextLimit(text string, limit int) string {
 			break
 		}
 		count++
-		if unicode.IsControl(character) {
+		if unicode.IsControl(character) && character != '\t' {
 			quoted := strconv.QuoteRune(character)
 			preview.WriteString(quoted[1 : len(quoted)-1])
 			continue

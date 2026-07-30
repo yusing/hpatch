@@ -20,10 +20,24 @@ type hpatchCorrectionKind uint8
 
 const (
 	hpatchReplace hpatchCorrectionKind = iota
+	hpatchAccept
 	hpatchDelete
 	hpatchInsertBeforeAnchor
 	hpatchInsertAfterAnchor
 )
+
+func (k hpatchCorrectionKind) mutationVerb() string {
+	switch k {
+	case hpatchReplace:
+		return "replaced"
+	case hpatchAccept:
+		return "accepted"
+	case hpatchDelete:
+		return "deleted"
+	default:
+		return "mutated"
+	}
+}
 
 type hpatchCorrection struct {
 	kind        hpatchCorrectionKind
@@ -63,24 +77,24 @@ func parseHPatchCorrections(payload string) ([]hpatchCorrection, error) {
 
 		kind, indexText, replacement, ok := parseHPatchCorrectionHeader(line)
 		if !ok {
-			return nil, fmt.Errorf("correction %q is not `INDEX: COMMAND`, `-INDEX`, `+INDEX: COMMAND`, or `INDEX+: COMMAND`", hpatchCorrectionPreview(line))
+			return nil, fmt.Errorf("correction %q is not `INDEX: COMMAND`, `INDEX: accept`, `-INDEX`, `+INDEX: COMMAND`, or `INDEX+: COMMAND`", hpatchCorrectionPreview(line))
 		}
 		command, err := strconv.Atoi(indexText)
 		if err != nil {
 			return nil, fmt.Errorf("correction index %q is out of range", indexText)
 		}
 
-		if kind == hpatchReplace || kind == hpatchDelete {
+		if kind == hpatchReplace || kind == hpatchAccept || kind == hpatchDelete {
 			if previous, exists := mutations[command]; exists {
 				if previous != kind {
-					return nil, fmt.Errorf("command %d cannot be both replaced and deleted", command)
+					return nil, fmt.Errorf("command %d cannot be both %s and %s", command, previous.mutationVerb(), kind.mutationVerb())
 				}
 				return nil, fmt.Errorf("correction for command %d appears more than once", command)
 			}
 			mutations[command] = kind
 		}
 
-		if kind != hpatchDelete {
+		if kind != hpatchDelete && kind != hpatchAccept {
 			if strings.TrimSpace(replacement) == "" {
 				return nil, fmt.Errorf("correction for command %d has no replacement command", command)
 			}
@@ -102,6 +116,10 @@ func parseHPatchCorrections(payload string) ([]hpatchCorrection, error) {
 
 func parseHPatchCorrectionHeader(line string) (hpatchCorrectionKind, string, string, bool) {
 	if match := hpatchReplacementPattern.FindStringSubmatch(line); match != nil {
+		if match[3] == "accept" {
+			return hpatchAccept, match[1], "", true
+		}
+
 		return hpatchReplace, match[1], match[3], true
 	}
 	if match := hpatchDeletionPattern.FindStringSubmatch(line); match != nil {
@@ -144,7 +162,7 @@ type hpatchFrameTransform struct {
 // applyHPatchCorrections resolves every operation against the original command
 // frames before rebuilding the script. Insertions retain payload order even when
 // their original anchor is deleted.
-func applyHPatchCorrections(base string, corrections []hpatchCorrection) (string, error) {
+func applyHPatchCorrections(base string, corrections []hpatchCorrection, suggestions ...map[int]string) (string, error) {
 	lines := hpatchsyntax.SplitPhysicalLines(base)
 	frames := hpatchCommandFrames(lines)
 	if len(frames) == 0 {
@@ -157,6 +175,10 @@ func applyHPatchCorrections(base string, corrections []hpatchCorrection) (string
 	}
 
 	transforms := make([]hpatchFrameTransform, len(frames))
+	var available map[int]string
+	if len(suggestions) != 0 {
+		available = suggestions[0]
+	}
 	for _, correction := range corrections {
 		transform := &transforms[correction.command-1]
 		switch correction.kind {
@@ -165,6 +187,16 @@ func applyHPatchCorrections(base string, corrections []hpatchCorrection) (string
 				return "", fmt.Errorf("command %d has conflicting replacement or deletion operations", correction.command)
 			}
 			transform.replacement = correction.replacement
+			transform.hasReplacement = true
+		case hpatchAccept:
+			replacement, ok := available[correction.command]
+			if !ok {
+				return "", fmt.Errorf("command %d has no displayed correction to accept", correction.command)
+			}
+			if transform.hasReplacement || transform.deleted {
+				return "", fmt.Errorf("command %d has conflicting replacement or deletion operations", correction.command)
+			}
+			transform.replacement = replacement
 			transform.hasReplacement = true
 		case hpatchDelete:
 			if transform.hasReplacement || transform.deleted {

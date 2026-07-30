@@ -45,7 +45,7 @@ func TestErrorHookReceivesFailureAndRepairContext(t *testing.T) {
 		"## Diagnostic\n\n    hpatch: command 2, source line 2",
 		"## Repair context",
 		"found 0 of 1 requested matches at or after line 1",
-		">1 present words",
+		"1|present words",
 	} {
 		if !strings.Contains(string(body), fragment) {
 			t.Fatalf("hook body does not contain %q:\n%s", fragment, body)

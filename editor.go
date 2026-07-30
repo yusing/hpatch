@@ -44,6 +44,9 @@ type editor struct {
 	cursorCommand int
 	edits         []baselineEdit
 	corrections   []lineCorrection
+	lastOrigin    editOrigin
+	finalContent  *string
+	finalOffsets  *formattedOffsetMap
 }
 
 type logicalLine struct {
@@ -207,6 +210,11 @@ func (e *editor) typeText(replacement string, origin editOrigin) error {
 		if selected.linewise && lineTerminatorSuffix(selectedReplacement) == "" {
 			selectedReplacement += lineTerminatorSuffix(e.baseline[selected.start:selected.end])
 		}
+		if len(e.selections) == 1 {
+			if correction := detectIndentationCorrection(e.baseline, selected, selectedReplacement); correction != nil {
+				return correction
+			}
+		}
 		edits[index] = baselineEdit{
 			start:       selected.start,
 			end:         selected.end,
@@ -315,6 +323,10 @@ func (e *editor) recordEdits(candidates []baselineEdit) error {
 		additions = append(additions, candidate)
 	}
 	e.edits = append(e.edits, additions...)
+	if len(additions) != 0 {
+		e.lastOrigin = additions[len(additions)-1].editOrigin
+	}
+
 	return nil
 }
 
@@ -384,6 +396,9 @@ func (e *editor) orderedEdits() []baselineEdit {
 }
 
 func (e *editor) content() string {
+	if e.finalContent != nil {
+		return *e.finalContent
+	}
 	edits := e.orderedEdits()
 
 	var result strings.Builder

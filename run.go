@@ -139,13 +139,20 @@ func Translate(ctx context.Context, workspace Workspace, script string) ([]byte,
 	return result.Patch, nil
 }
 
+// CommandCorrection is an exact replacement for one rejected script command.
+type CommandCorrection struct {
+	Command     int
+	Replacement string
+}
+
 // HostTranslation contains the complete result needed by an in-process host.
 // Diagnostic contains a rejection diagnostic or non-fatal hook warnings.
 type HostTranslation struct {
-	Patch      []byte
-	Report     string
-	Diagnostic string
-	Invocation InvocationMetrics
+	Patch       []byte
+	Report      string
+	Diagnostic  string
+	Corrections []CommandCorrection
+	Invocation  InvocationMetrics
 }
 
 // TranslateForHost evaluates script once without mutation and returns the
@@ -155,6 +162,8 @@ type HostTranslation struct {
 func TranslateForHost(ctx context.Context, workspace Workspace, script, dataDirectory string) (HostTranslation, error) {
 	result, err := translateDetailed(ctx, workspace, script)
 	if err != nil {
+		result.Corrections = commandCorrectionsOf(err)
+
 		if ctx.Err() == nil {
 			result.Diagnostic = evaluationDiagnostic(ctx, err, dataDirectory)
 			if contextErr := ctx.Err(); contextErr != nil {
