@@ -1,27 +1,99 @@
 {
-  "schema_revision": 1,
+  "schema_revision": 2,
   "skills": {
-    "authoring-shadowtree-recipes": false,
-    "build-code-skeleton": true,
-    "codebase-design": false,
-    "deliver-vertical-slice": true,
-    "deslop": false,
-    "draft-spec": true,
-    "golang-best-practices": true,
-    "harden-release": true,
-    "herdr": false,
-    "new-project": false,
-    "plan-vertical-slices": true,
-    "postgres-patterns": false,
-    "review-spec": true,
-    "rust-async-patterns": false,
-    "rust-best-practices": false,
-    "shadcn": false,
-    "skill-creator": false,
-    "spec-to-contract": true,
-    "using-shadowtree": false,
-    "verify-conformance": true,
-    "writing-great-skills": false,
-    "writing-readme": false
+    "authoring-shadowtree-recipes": {
+      "enabled": false
+    },
+    "codebase-design": {
+      "enabled": false,
+      "remote": {
+        "provider": "skills.sh",
+        "id": "mattpocock/skills/codebase-design",
+        "name": "codebase-design",
+        "locator": "mattpocock/skills/codebase-design"
+      }
+    },
+    "go": {
+      "enabled": true,
+      "remote": {
+        "provider": "SkillsMP",
+        "id": "spf13-go-skills-go-skill-md",
+        "name": "go",
+        "locator": "https://github.com/spf13/go-skills/tree/main/go"
+      }
+    },
+    "herdr": {
+      "enabled": false,
+      "remote": {
+        "provider": "skills.sh",
+        "id": "ogulcancelik/herdr/herdr",
+        "name": "herdr",
+        "locator": "ogulcancelik/herdr/herdr"
+      }
+    },
+    "new-project": {
+      "enabled": false
+    },
+    "postgres-patterns": {
+      "enabled": false
+    },
+    "review-spec": {
+      "enabled": true
+    },
+    "rust-async-patterns": {
+      "enabled": false,
+      "remote": {
+        "provider": "SkillsMP",
+        "id": "wshobson-agents-plugins-systems-programming-skills-rust-async-patterns-skill-md",
+        "name": "rust-async-patterns",
+        "locator": "https://github.com/wshobson/agents/tree/main/plugins/systems-programming/skills/rust-async-patterns"
+      }
+    },
+    "rust-best-practices": {
+      "enabled": false,
+      "remote": {
+        "provider": "skills.sh",
+        "id": "apollographql/skills/rust-best-practices",
+        "name": "rust-best-practices",
+        "locator": "apollographql/skills/rust-best-practices"
+      }
+    },
+    "rust-patterns": {
+      "remote": {
+        "provider": "SkillsMP",
+        "id": "affaan-m-ecc-docs-es-skills-rust-patterns-skill-md",
+        "name": "rust-patterns",
+        "locator": "https://github.com/affaan-m/ECC/tree/main/docs/es/skills/rust-patterns"
+      }
+    },
+    "shadcn": {
+      "enabled": false
+    },
+    "skill-creator": {
+      "enabled": false
+    },
+    "ui-ux-pro-max": {
+      "remote": {
+        "provider": "SkillsMP",
+        "id": "nextlevelbuilder-ui-ux-pro-max-skill-claude-skills-ui-ux-pro-max-skill-md",
+        "name": "ui-ux-pro-max",
+        "locator": "https://github.com/nextlevelbuilder/ui-ux-pro-max-skill/tree/main/.claude/skills/ui-ux-pro-max"
+      }
+    },
+    "using-shadowtree": {
+      "enabled": false
+    },
+    "writing-great-skills": {
+      "enabled": false,
+      "remote": {
+        "provider": "skills.sh",
+        "id": "mattpocock/skills/writing-great-skills",
+        "name": "writing-great-skills",
+        "locator": "mattpocock/skills/writing-great-skills"
+      }
+    },
+    "writing-readme": {
+      "enabled": false
+    }
   }
 }
