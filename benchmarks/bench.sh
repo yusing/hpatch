@@ -4,6 +4,7 @@ set -euo pipefail
 benchmark_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 model=${MODEL:-gpt-5.6-sol}
 reasoning_effort=medium
+repetitions=4
 task_id=etcd-fast-keys-range
 task="$benchmark_root/tasks/$task_id"
 source_repo="$benchmark_root/repos/etcd"
@@ -22,7 +23,10 @@ hidden_paths=(
 )
 agent_timeout=900
 grader_timeout=300
-run_dir=$(mktemp -d)
+results_root="$benchmark_root/results"
+mkdir -p "$results_root"
+run_dir=$(mktemp -d "$results_root/.staging-XXXXXX")
+
 results="$run_dir/results.jsonl"
 control_log="$run_dir/control-router.log"
 hpatch_log="$run_dir/hpatch-router.log"
@@ -51,16 +55,33 @@ export HPATCH_BENCH_COMPOSE_FILE="$benchmark_root/compose.yaml"
 
 compose=(docker compose -f "$HPATCH_BENCH_COMPOSE_FILE")
 
+collect_router_metrics() {
+	local url=$1
+	local destination=$2
+	local temporary="$destination.tmp"
+
+	if curl --fail --silent --show-error "$url" >"$temporary"; then
+		mv -f -- "$temporary" "$destination"
+		return
+	fi
+	rm -f -- "$temporary"
+	return 1
+}
+
 collect_artifacts() {
+	local metrics_collected=true
+
 	if [[ $started != true || $collected == true ]]; then
 		return
 	fi
 	"${compose[@]}" logs --no-color control >"$control_log" 2>&1 || true
 	"${compose[@]}" logs --no-color hpatch >"$hpatch_log" 2>&1 || true
-	curl --fail --silent --show-error http://127.0.0.1:8081/api/metrics >"$control_metrics" || true
-	curl --fail --silent --show-error http://127.0.0.1:8082/api/metrics >"$hpatch_metrics" || true
+	collect_router_metrics http://127.0.0.1:8081/api/metrics "$control_metrics" ||
+		metrics_collected=false
+	collect_router_metrics http://127.0.0.1:8082/api/metrics "$hpatch_metrics" ||
+		metrics_collected=false
 	"${compose[@]}" exec -T hpatch hpatch gain >"$gain_report" 2>&1 || true
-	collected=true
+	collected=$metrics_collected
 }
 
 merge_results() {
@@ -69,6 +90,144 @@ merge_results() {
 	if ((${#result_files[@]})); then
 		jq -sc 'sort_by(.repetition, .order_in_block)[]' "${result_files[@]}" >"$results"
 	fi
+}
+
+# Invoked indirectly by cleanup from the EXIT trap.
+# shellcheck disable=SC2329
+print_lifecycle_summary() {
+	local arm
+	local metrics
+	local -a arms=(control hpatch)
+
+	printf '\nRouter lifecycle by benchmark session:\n'
+	printf 'arm\tsession_id\tstarted\tactive\tcompleted\tfailed\tcanceled_before_response\tcanceled_after_response\ttimed_out\tbackground_pending\tusage_observed\tusage_missing\ttotal_duration_ms\tupstream_duration_ms\n'
+	for arm in "${arms[@]}"; do
+		case "$arm" in
+			control) metrics=$control_metrics ;;
+			hpatch) metrics=$hpatch_metrics ;;
+		esac
+		if [[ ! -s $results || ! -s $metrics ]] ||
+			! jq -e '
+				(.sessions | type) == "array" and
+				all(.sessions[]; (.session_id | type) == "string" and (.requests | type) == "object")
+			' "$metrics" >/dev/null; then
+			printf 'bench.sh: lifecycle summary unavailable for %s\n' "$arm" >&2
+			continue
+		fi
+		if ! jq -r --slurp --arg arm "$arm" --slurpfile router "$metrics" '
+			($router[0].sessions | INDEX(.[]; .session_id)) as $sessions |
+			.[] |
+			select(.arm == $arm) |
+			(.agent.thread_id // "") as $session_id |
+			($sessions[$session_id]) as $session |
+			[
+				$arm,
+				$session_id,
+				($session.requests.started // "missing"),
+				($session.requests.active // "missing"),
+				($session.requests.completed // "missing"),
+				($session.requests.failed // "missing"),
+				($session.requests.canceled_before_response // "missing"),
+				($session.requests.canceled_after_response // "missing"),
+				($session.requests.timed_out // "missing"),
+				($session.requests.background_pending // "missing"),
+				($session.requests.usage_observed // "missing"),
+				($session.requests.usage_missing // "missing"),
+				($session.requests.total_duration_ms // "missing"),
+				($session.requests.upstream_duration_ms // "missing")
+			] |
+			@tsv
+		' "$results"; then
+			printf 'bench.sh: lifecycle summary rendering failed for %s\n' "$arm" >&2
+		fi
+	done
+}
+
+# Invoked indirectly by the EXIT trap.
+# shellcheck disable=SC2329
+rewrite_published_paths() {
+	local previous_run_dir=$1
+	local result
+	local temporary
+
+	shopt -s nullglob
+	result_files=("$run_dir"/artifacts/"$task_id"/*/result.json)
+	for result in "${result_files[@]}"; do
+		temporary="$result.tmp"
+		if ! jq --arg previous "$previous_run_dir/" --arg current "$run_dir/" '
+			walk(
+				if type == "string" and startswith($previous) then
+					$current + ltrimstr($previous)
+				else
+					.
+				end
+			)
+		' "$result" >"$temporary"; then
+			rm -f -- "$temporary"
+			return 1
+		fi
+		mv -f -- "$temporary" "$result"
+	done
+	merge_results
+}
+
+# Invoked indirectly by cleanup from the EXIT trap.
+# shellcheck disable=SC2329
+preserve_run() {
+	local previous_run_dir=$run_dir
+
+	local commit_sha
+	local sequence=1
+	local destination
+
+	if ! commit_sha=$(git -C "$benchmark_root/.." rev-parse HEAD); then
+		printf 'bench.sh: cannot determine benchmark commit\n' >&2
+		return 1
+	fi
+	if [[ $previous_run_dir != "$results_root"/.staging-* ]]; then
+		printf 'bench.sh: refusing to publish unexpected staging path: %s\n' "$previous_run_dir" >&2
+		return 1
+	fi
+	while :; do
+		destination="$results_root/$commit_sha-$sequence"
+		if [[ ! -e $destination && ! -L $destination ]]; then
+			break
+		fi
+		((sequence += 1))
+	done
+	if ! mv -T -- "$previous_run_dir" "$destination"; then
+		printf 'bench.sh: cannot preserve benchmark run at %s\n' "$destination" >&2
+		return 1
+	fi
+
+	run_dir=$destination
+	results="$run_dir/results.jsonl"
+	control_log="$run_dir/control-router.log"
+	hpatch_log="$run_dir/hpatch-router.log"
+	control_metrics="$run_dir/control-metrics.json"
+	hpatch_metrics="$run_dir/hpatch-metrics.json"
+	gain_report="$run_dir/gain.txt"
+	instruction_dir="$run_dir/instructions"
+	control_instruction="$instruction_dir/control.md"
+	hpatch_instruction="$instruction_dir/hpatch.md"
+	instruction_diff="$instruction_dir/apply-patch-to-hpatch.diff"
+	export BENCH_RUN_DIR=$run_dir
+
+	if ! rewrite_published_paths "$previous_run_dir"; then
+		printf 'bench.sh: cannot rewrite paths after preserving run at %s\n' "$run_dir" >&2
+		return 1
+	fi
+}
+
+# Invoked indirectly by cleanup from the EXIT trap.
+# shellcheck disable=SC2329
+print_result_paths() {
+	printf 'Results: %s\n' "$results"
+	printf 'Artifacts: %s\n' "$run_dir/artifacts"
+	printf 'Control metrics: %s\n' "$control_metrics"
+	printf 'Hpatch metrics (including gain): %s\n' "$hpatch_metrics"
+	printf 'Gain report: %s\n' "$gain_report"
+	printf 'Router logs: %s, %s\n' "$control_log" "$hpatch_log"
 }
 
 # Invoked indirectly by the EXIT trap.
@@ -90,6 +249,10 @@ cleanup() {
 	merge_results
 	collect_artifacts
 	if [[ $started == true ]]; then
+		if ! print_lifecycle_summary; then
+			printf 'bench.sh: lifecycle summary failed\n' >&2
+		fi
+
 		"${compose[@]}" down --volumes --remove-orphans >/dev/null 2>&1 || true
 		mapfile -t agent_containers < <(
 			docker ps -aq \
@@ -100,13 +263,19 @@ cleanup() {
 			docker rm --force "${agent_containers[@]}" >/dev/null 2>&1 || true
 		fi
 	fi
+	if ! preserve_run; then
+		if ((status == 0)); then
+			status=1
+		fi
+	fi
+	print_result_paths
 	exit "$status"
 }
 trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
-for executable in curl date diff docker git go grep jq sha256sum sort tar timeout; do
+for executable in curl date diff docker git go grep jq mv sha256sum sort tar timeout; do
 	if ! command -v "$executable" >/dev/null; then
 		printf 'bench.sh: %s is required\n' "$executable" >&2
 		exit 1
@@ -574,8 +743,7 @@ run_pair() {
 	trap - EXIT
 	trap 'cancel_pair 130' INT
 	trap 'cancel_pair 143' TERM
-	RANDOM=$repetition
-	if ((RANDOM % 2)); then
+	if ((repetition % 2)); then
 		arms=(hpatch control)
 	fi
 	for index in 0 1; do
@@ -605,7 +773,7 @@ started=true
 "${compose[@]}" up --detach --wait control hpatch
 
 benchmark_status=0
-for repetition in 1 2 3; do
+for ((repetition = 1; repetition <= repetitions; repetition += 1)); do
 	run_pair "$repetition" &
 	worker_pids+=("$!")
 done
@@ -617,19 +785,14 @@ done
 worker_pids=()
 
 merge_results
-if ((${#result_files[@]} != 6)); then
-	printf 'bench.sh: found %d result records, want 6\n' "${#result_files[@]}" >&2
+if ((${#result_files[@]} != repetitions * 2)); then
+	printf 'bench.sh: found %d result records, want %d\n' \
+		"${#result_files[@]}" "$((repetitions * 2))" >&2
 	benchmark_status=1
 fi
 
 collect_artifacts
 
-printf 'Results: %s\n' "$results"
-printf 'Artifacts: %s\n' "$run_dir/artifacts"
-printf 'Control metrics: %s\n' "$control_metrics"
-printf 'Hpatch metrics (including gain): %s\n' "$hpatch_metrics"
-printf 'Gain report: %s\n' "$gain_report"
-printf 'Router logs: %s, %s\n' "$control_log" "$hpatch_log"
 
 shopt -s nullglob
 diffs=("$run_dir"/artifacts/*/*/changes.patch)

@@ -2,9 +2,9 @@ HPATCH/1 edits workspace files atomically. Submit one complete grammar-constrain
 Do not call this tool in parallel with other tools.
 
 Minimize model round trips: after inspecting every file required by the task, batch all known independent edits across files into one atomic script. Split calls only when a later edit depends on the preceding result or diagnostic.
-Read coordinates from fresh `nl -ba -w1 -s'|'` output. The first `|`
-separates the line number from the source; every character after it belongs to the file.
-One inspection supplies all coordinates for selectors against the same baseline; do not reread unchanged content before each edit.
+Only `sel` and `rsel` require coordinates. When either is needed,
+obtain every required coordinate for the current baseline from one `nl -ba -w1 -s'|'`
+inspection; otherwise prefer stable text already established by inspection.
 
 Minimize the complete selector-plus-replacement output; a likely retry costs more than a few saved tokens:
 - tsel FROM_LINE "TEXT" [N] selects the first N separate exact matches from column 1 of FROM_LINE through EOF; matches may land on different lines. TEXT must stay on one line, need not fill it, and matching is not syntax-aware. If the suffix lacks N matches but the whole baseline has exactly N, the selection repairs to that unique set and the success report records the repaired line; extra whole-file matches keep the incomplete suffix a failure.

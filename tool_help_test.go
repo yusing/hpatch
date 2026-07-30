@@ -105,8 +105,9 @@ func TestToolDescriptionMinimizesModelRoundTrips(t *testing.T) {
 		"Minimize model round trips",
 		"batch all known independent edits across files into one atomic script",
 		"Split calls only when a later edit depends on the preceding result or diagnostic",
-		"One inspection supplies all coordinates for selectors against the same baseline",
-		"do not reread unchanged content before each edit",
+		"Only `sel` and `rsel` require coordinates",
+		"obtain every required coordinate for the current baseline",
+		"otherwise prefer stable text already established by inspection",
 	} {
 		if !strings.Contains(toolDescription, guidance) {
 			t.Errorf("tool description omits round-trip guidance %q", guidance)
