@@ -1,6 +1,4 @@
-# AGENTS.md
-
-## Codex router end-to-end behavior
+# Codex router end-to-end behavior
 
 The observations in this section were verified on 2026-07-28 with Codex CLI
 0.145.0, `codex-dynamic`, and `gpt-5.6-luna`. Treat them as the current host
