@@ -1,0 +1,6 @@
+ Container hpatch_bench_tmpdv99atshmh-agent-run-26ca33ccc6a2 Creating 
+ Container hpatch_bench_tmpdv99atshmh-agent-run-26ca33ccc6a2 Created 
+Reading additional input from stdin...
+2026-07-30T15:01:54.458596Z ERROR codex_models_manager::manager: failed to refresh available models: unexpected status 404 Not Found: 404 page not found, url: http://127.0.0.1:8081/v1/models?client_version=0.146.0
+2026-07-30T15:01:54.485295Z ERROR codex_models_manager::manager: failed to refresh available models: unexpected status 404 Not Found: 404 page not found, url: http://127.0.0.1:8081/v1/models?client_version=0.146.0
+2026-07-30T15:04:54.483659Z ERROR codex_models_manager::manager: failed to refresh available models: unexpected status 404 Not Found: 404 page not found, url: http://127.0.0.1:8081/v1/models?client_version=0.146.0

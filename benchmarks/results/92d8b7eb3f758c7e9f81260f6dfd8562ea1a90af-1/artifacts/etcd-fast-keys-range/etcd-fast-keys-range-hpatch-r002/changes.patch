@@ -1,0 +1,116 @@
+diff --git a/server/etcdserver/txn/range.go b/server/etcdserver/txn/range.go
+index 552e752..5331611 100644
+--- a/server/etcdserver/txn/range.go
++++ b/server/etcdserver/txn/range.go
+@@ -64,6 +64,7 @@ func executeRange(ctx context.Context, lg *zap.Logger, txnRead mvcc.TxnRead, r *
+ 		Limit:          limit,
+ 		Rev:            r.Revision,
+ 		CountOnly:      r.CountOnly,
++		FastKeysOnly:   r.KeysOnly && r.SortTarget != pb.RangeRequest_VALUE,
+ 		WithTotalCount: withTotalCount,
+ 	}
+ 
+diff --git a/server/storage/mvcc/index.go b/server/storage/mvcc/index.go
+index 16b54ae..fade67e 100644
+--- a/server/storage/mvcc/index.go
++++ b/server/storage/mvcc/index.go
+@@ -21,6 +21,17 @@ import (
+ 	"k8s.io/utils/third_party/forked/golang/btree"
+ )
+ 
++type indexKeyValue struct {
++	key      []byte
++	modified Revision
++	created  Revision
++	version  int64
++}
++
++type keysOnlyRanger interface {
++	rangeKeys(key, end []byte, atRev int64, limit int, withTotalCount bool) ([]indexKeyValue, int)
++}
++
+ type index interface {
+ 	Get(key []byte, atRev int64) (rev, created Revision, ver int64, err error)
+ 	Range(key, end []byte, atRev int64) ([][]byte, []Revision)
+@@ -160,6 +171,41 @@ func (ti *treeIndex) CountRevisions(key, end []byte, atRev int64) int {
+ 	return total
+ }
+ 
++func (ti *treeIndex) rangeKeys(key, end []byte, atRev int64, limit int, withTotalCount bool) (kvs []indexKeyValue, total int) {
++	ti.RLock()
++	defer ti.RUnlock()
++
++	appendKey := func(key []byte, modified, created Revision, version int64) bool {
++		if limit <= 0 || len(kvs) < limit {
++			kvs = append(kvs, indexKeyValue{
++				key:      key,
++				modified: modified,
++				created:  created,
++				version:  version,
++			})
++		}
++		total++
++		return withTotalCount || limit <= 0 || len(kvs) < limit
++	}
++
++	if end == nil {
++		modified, created, version, err := ti.unsafeGet(key, atRev)
++		if err != nil {
++			return nil, 0
++		}
++		appendKey(key, modified, created, version)
++		return kvs, total
++	}
++	ti.unsafeVisit(key, end, func(ki *keyIndex) bool {
++		modified, created, version, err := ki.get(ti.lg, atRev)
++		if err != nil {
++			return true
++		}
++		return appendKey(ki.key, modified, created, version)
++	})
++	return kvs, total
++}
++
+ func (ti *treeIndex) Range(key, end []byte, atRev int64) (keys [][]byte, revs []Revision) {
+ 	ti.RLock()
+ 	defer ti.RUnlock()
+diff --git a/server/storage/mvcc/kv.go b/server/storage/mvcc/kv.go
+index 3da037b..4162027 100644
+--- a/server/storage/mvcc/kv.go
++++ b/server/storage/mvcc/kv.go
+@@ -27,6 +27,7 @@ type RangeOptions struct {
+ 	Limit          int64
+ 	Rev            int64
+ 	CountOnly      bool
++	FastKeysOnly   bool
+ 	WithTotalCount bool
+ }
+ 
+diff --git a/server/storage/mvcc/kvstore_txn.go b/server/storage/mvcc/kvstore_txn.go
+index 86dd6b5..544fd51 100644
+--- a/server/storage/mvcc/kvstore_txn.go
++++ b/server/storage/mvcc/kvstore_txn.go
+@@ -86,6 +86,23 @@ func (tr *storeTxnCommon) rangeKeys(ctx context.Context, key, end []byte, curRev
+ 		tr.trace.Step("count revisions from in-memory index tree")
+ 		return &RangeResult{KVs: nil, Count: total, Rev: curRev}, nil
+ 	}
++	if ro.FastKeysOnly {
++		if ranger, ok := tr.s.kvindex.(keysOnlyRanger); ok {
++			indexKVs, total := ranger.rangeKeys(key, end, rev, int(ro.Limit), ro.WithTotalCount)
++			tr.trace.Step("keys only range from in-memory index tree")
++			kvs := make([]*mvccpb.KeyValue, len(indexKVs))
++			for i, kv := range indexKVs {
++				kvs[i] = &mvccpb.KeyValue{
++					Key:            kv.key,
++					CreateRevision: kv.created.Main,
++					ModRevision:    kv.modified.Main,
++					Version:        kv.version,
++				}
++			}
++			return &RangeResult{KVs: kvs, Count: total, Rev: curRev}, nil
++		}
++	}
++
+ 	revpairs, total := tr.s.kvindex.Revisions(key, end, rev, int(ro.Limit), ro.WithTotalCount)
+ 	tr.trace.Step("range keys from in-memory index tree")
+ 	if len(revpairs) == 0 {

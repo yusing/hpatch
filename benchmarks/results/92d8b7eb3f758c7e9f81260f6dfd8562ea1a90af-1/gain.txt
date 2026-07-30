@@ -1,0 +1,70 @@
+output token estimates:
+calls       hpatch  apply_patch  reduction
+-----       ------  -----------  ---------
+successful  5583    8912         37.4%
+failed      0       0            n/a
+all         5583    8912         37.4%
+failed apply_patch output uses the empty-patch semantic baseline.
+
+input token estimates:
+source                          tokens  description
+------------------------------  ------  ----------------------------------------
+state reports                   1212    final state returned after successful
+                                        calls
+failure diagnostics             0       errors and repair context returned after
+                                        failed calls
+hpatch definition installed     5764    standalone tool definition added by the
+                                        router
+apply_patch definition removed  -232    exact Code Mode section removed by the
+                                        router
+net added input                 6744    measured additions minus the removed
+                                        definition
+definition routing covers 89 accounted request(s) in 4 distinct session(s)
+(installation and removal measured).
+
+command metrics:
+command  invocations  errors  error rate
+-------  -----------  ------  ----------
+in       29           0       0.0%
+new      0            0       0.0%
+mv       0            0       0.0%
+rm       0            0       0.0%
+sel      0            0       0.0%
+tsel     61           0       0.0%
+rsel     10           0       0.0%
+type     43           0       0.0%
+del      10           0       0.0%
+copy     28           0       0.0%
+cut      0            0       0.0%
+paste    15           0       0.0%
+commit   0            0       0.0%
+total    196          0       0.0%
+
+tsel selection metrics:
+selection  invocations  errors  error rate
+-------    -----------  ------  ----------
+single     60           0       0.0%
+multiple   1            0       0.0%
+
+failure reasons:
+reason              errors
+------              ------
+syntax              0
+coordinate-bounds   0
+occurrence-missing  0
+invalid-count       0
+order-or-overlap    0
+edit-conflict       0
+active-file         0
+selection-required  0
+clipboard-empty     0
+file-missing        0
+file-conflict       0
+path                0
+other               0
+total               0
+
+command failure reasons:
+command  reason  errors
+-------  ------  ------
+none     none    0
