@@ -1,0 +1,11 @@
+ Container hpatch_bench_tmpfpwflv4fba-agent-run-1a708978f6da Creating 
+ Container hpatch_bench_tmpfpwflv4fba-agent-run-1a708978f6da Created 
+Reading additional input from stdin...
+2026-07-30T10:46:04.316941Z ERROR codex_models_manager::manager: failed to refresh available models: unexpected status 404 Not Found: 404 page not found, url: http://127.0.0.1:8081/v1/models?client_version=0.146.0
+2026-07-30T10:46:04.354147Z ERROR codex_models_manager::manager: failed to refresh available models: unexpected status 404 Not Found: 404 page not found, url: http://127.0.0.1:8081/v1/models?client_version=0.146.0
+2026-07-30T10:47:21.243123Z ERROR codex_core::tools::router: error=apply_patch verification failed: Failed to find expected lines in /tmp/tmp.fpwFLV4fba/work/etcd-fast-keys-range-control-r003-oPi3x7/repo/server/storage/mvcc/index.go:
+import (
+	"sync"
+
+	"go.uber.org/zap"
+2026-07-30T10:49:04.354582Z ERROR codex_models_manager::manager: failed to refresh available models: unexpected status 404 Not Found: 404 page not found, url: http://127.0.0.1:8081/v1/models?client_version=0.146.0

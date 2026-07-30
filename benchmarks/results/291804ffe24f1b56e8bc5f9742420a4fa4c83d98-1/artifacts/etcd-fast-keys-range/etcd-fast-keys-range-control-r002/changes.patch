@@ -1,0 +1,126 @@
+diff --git a/server/etcdserver/txn/range.go b/server/etcdserver/txn/range.go
+index 552e752..9710fe9 100644
+--- a/server/etcdserver/txn/range.go
++++ b/server/etcdserver/txn/range.go
+@@ -65,6 +65,7 @@ func executeRange(ctx context.Context, lg *zap.Logger, txnRead mvcc.TxnRead, r *
+ 		Rev:            r.Revision,
+ 		CountOnly:      r.CountOnly,
+ 		WithTotalCount: withTotalCount,
++		KeysOnly:       r.KeysOnly && r.SortTarget != pb.RangeRequest_VALUE,
+ 	}
+ 
+ 	rr, err := txnRead.Range(ctx, r.Key, mkGteRange(r.RangeEnd), ro)
+diff --git a/server/storage/mvcc/index.go b/server/storage/mvcc/index.go
+index 16b54ae..89a12bd 100644
+--- a/server/storage/mvcc/index.go
++++ b/server/storage/mvcc/index.go
+@@ -36,6 +36,17 @@ type index interface {
+ 	KeyIndex(ki *keyIndex) *keyIndex
+ }
+ 
++type keyRevision struct {
++	key      []byte
++	modified Revision
++	created  Revision
++	version  int64
++}
++
++type keyRevisionIndexer interface {
++	RevisionsWithMetadata(key, end []byte, atRev int64, limit int, withTotalCount bool) ([]keyRevision, int)
++}
++
+ type treeIndex struct {
+ 	sync.RWMutex
+ 	tree *btree.BTree[*keyIndex]
+@@ -137,6 +148,46 @@ func (ti *treeIndex) Revisions(key, end []byte, atRev int64, limit int, withTota
+ 	return revs, total
+ }
+ 
++// RevisionsWithMetadata returns limited key metadata from key(included) to
++// end(excluded) at the given revision. The total is not capped by limit when
++// withTotalCount is true.
++func (ti *treeIndex) RevisionsWithMetadata(key, end []byte, atRev int64, limit int, withTotalCount bool) (revs []keyRevision, total int) {
++	ti.RLock()
++	defer ti.RUnlock()
++
++	appendRevision := func(ki *keyIndex) bool {
++		modified, created, version, err := ki.get(ti.lg, atRev)
++		if err != nil {
++			return true
++		}
++		reachedLimit := limit > 0 && len(revs) >= limit
++		if reachedLimit {
++			if !withTotalCount {
++				return false
++			}
++		} else {
++			revs = append(revs, keyRevision{
++				key:      ki.key,
++				modified: modified,
++				created:  created,
++				version:  version,
++			})
++		}
++		total++
++		return true
++	}
++
++	if end == nil {
++		keyi := &keyIndex{key: key}
++		if keyi = ti.keyIndex(keyi); keyi != nil {
++			appendRevision(keyi)
++		}
++		return revs, total
++	}
++	ti.unsafeVisit(key, end, appendRevision)
++	return revs, total
++}
++
+ // CountRevisions returns the number of revisions
+ // from key(included) to end(excluded) at the given rev.
+ func (ti *treeIndex) CountRevisions(key, end []byte, atRev int64) int {
+diff --git a/server/storage/mvcc/kv.go b/server/storage/mvcc/kv.go
+index 3da037b..7a5eb44 100644
+--- a/server/storage/mvcc/kv.go
++++ b/server/storage/mvcc/kv.go
+@@ -28,6 +28,9 @@ type RangeOptions struct {
+ 	Rev            int64
+ 	CountOnly      bool
+ 	WithTotalCount bool
++	// KeysOnly returns key metadata from the in-memory index without reading
++	// values from the backend.
++	KeysOnly bool
+ }
+ 
+ type RangeResult struct {
+diff --git a/server/storage/mvcc/kvstore_txn.go b/server/storage/mvcc/kvstore_txn.go
+index 86dd6b5..07b21f1 100644
+--- a/server/storage/mvcc/kvstore_txn.go
++++ b/server/storage/mvcc/kvstore_txn.go
+@@ -86,6 +86,26 @@ func (tr *storeTxnCommon) rangeKeys(ctx context.Context, key, end []byte, curRev
+ 		tr.trace.Step("count revisions from in-memory index tree")
+ 		return &RangeResult{KVs: nil, Count: total, Rev: curRev}, nil
+ 	}
++	if ro.KeysOnly {
++		index, ok := tr.s.kvindex.(keyRevisionIndexer)
++		if !ok {
++			// Keep the existing backend path for alternate index implementations.
++			ro.KeysOnly = false
++		} else {
++			revs, total := index.RevisionsWithMetadata(key, end, rev, int(ro.Limit), ro.WithTotalCount)
++			tr.trace.Step("range keys and metadata from in-memory index tree")
++			kvs := make([]*mvccpb.KeyValue, len(revs))
++			for i, rev := range revs {
++				kvs[i] = &mvccpb.KeyValue{
++					Key:            rev.key,
++					CreateRevision: rev.created.Main,
++					ModRevision:    rev.modified.Main,
++					Version:        rev.version,
++				}
++			}
++			return &RangeResult{KVs: kvs, Count: total, Rev: curRev}, nil
++		}
++	}
+ 	revpairs, total := tr.s.kvindex.Revisions(key, end, rev, int(ro.Limit), ro.WithTotalCount)
+ 	tr.trace.Step("range keys from in-memory index tree")
+ 	if len(revpairs) == 0 {

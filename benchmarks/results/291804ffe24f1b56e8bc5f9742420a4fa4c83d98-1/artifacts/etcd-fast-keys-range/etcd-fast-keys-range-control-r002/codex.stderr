@@ -1,0 +1,5 @@
+ Container hpatch_bench_tmpfpwflv4fba-agent-run-dc0b2dd60be9 Creating 
+ Container hpatch_bench_tmpfpwflv4fba-agent-run-dc0b2dd60be9 Created 
+Reading additional input from stdin...
+2026-07-30T10:41:43.779714Z ERROR codex_models_manager::manager: failed to refresh available models: unexpected status 404 Not Found: 404 page not found, url: http://127.0.0.1:8081/v1/models?client_version=0.146.0
+2026-07-30T10:41:43.799343Z ERROR codex_models_manager::manager: failed to refresh available models: unexpected status 404 Not Found: 404 page not found, url: http://127.0.0.1:8081/v1/models?client_version=0.146.0

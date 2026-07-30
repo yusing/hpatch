@@ -1,0 +1,46 @@
+--- FAIL: TestHPatchBenchmarkFastKeysRangeLimitAndCount (0.00s)
+    logger.go:146: 2026-07-30T18:44:47.286+0800	INFO	bbolt	Opening db file (/tmp/TestHPatchBenchmarkFastKeysRangeLimitAndCount1871464952/001/etcd_backend_test52461500/database) with mode -rw------- and with options: {Timeout: 0s, NoGrowSync: false, NoFreelistSync: true, PreLoadFreelist: false, FreelistType: , ReadOnly: false, MmapFlags: 8000, InitialMmapSize: 10737418240, PageSize: 0, NoSync: false, OpenFile: 0x0, Mlock: false, Logger: 0x14eeb5d080a0}
+    logger.go:146: 2026-07-30T18:44:47.286+0800	INFO	bbolt	Opening bbolt db (/tmp/TestHPatchBenchmarkFastKeysRangeLimitAndCount1871464952/001/etcd_backend_test52461500/database) successfully
+    logger.go:146: 2026-07-30T18:44:47.286+0800	DEBUG	bbolt	Starting a new transaction [writable: true]
+    logger.go:146: 2026-07-30T18:44:47.286+0800	DEBUG	bbolt	Starting a new transaction [writable: true] successfully
+    logger.go:146: 2026-07-30T18:44:47.286+0800	DEBUG	bbolt	Starting a new transaction [writable: false]
+    logger.go:146: 2026-07-30T18:44:47.286+0800	DEBUG	bbolt	Starting a new transaction [writable: false] successfully
+    logger.go:146: 2026-07-30T18:44:47.286+0800	DEBUG	bbolt	Creating bucket if not exist "key"
+    logger.go:146: 2026-07-30T18:44:47.286+0800	DEBUG	bbolt	Creating bucket if not exist "key" successfully
+    logger.go:146: 2026-07-30T18:44:47.286+0800	DEBUG	bbolt	Creating bucket if not exist "meta"
+    logger.go:146: 2026-07-30T18:44:47.286+0800	DEBUG	bbolt	Creating bucket if not exist "meta" successfully
+    logger.go:146: 2026-07-30T18:44:47.286+0800	DEBUG	bbolt	Committing transaction 2
+    logger.go:146: 2026-07-30T18:44:47.286+0800	DEBUG	bbolt	Committing transaction 2 successfully
+    logger.go:146: 2026-07-30T18:44:47.286+0800	DEBUG	bbolt	Starting a new transaction [writable: true]
+    logger.go:146: 2026-07-30T18:44:47.286+0800	DEBUG	bbolt	Starting a new transaction [writable: true] successfully
+    logger.go:146: 2026-07-30T18:44:47.286+0800	DEBUG	bbolt	Starting a new transaction [writable: false]
+    logger.go:146: 2026-07-30T18:44:47.286+0800	DEBUG	bbolt	Starting a new transaction [writable: false] successfully
+    logger.go:146: 2026-07-30T18:44:47.286+0800	INFO	kvstore restored	{"current-rev": 1}
+    logger.go:146: 2026-07-30T18:44:47.287+0800	DEBUG	bbolt	Putting key "\x00\x00\x00\x00\x00\x00\x00\x02_\x00\x00\x00\x00\x00\x00\x00\x00"
+    logger.go:146: 2026-07-30T18:44:47.287+0800	DEBUG	bbolt	Putting key "\x00\x00\x00\x00\x00\x00\x00\x02_\x00\x00\x00\x00\x00\x00\x00\x00" successfully
+    logger.go:146: 2026-07-30T18:44:47.287+0800	DEBUG	bbolt	Putting key "\x00\x00\x00\x00\x00\x00\x00\x03_\x00\x00\x00\x00\x00\x00\x00\x00"
+    logger.go:146: 2026-07-30T18:44:47.287+0800	DEBUG	bbolt	Putting key "\x00\x00\x00\x00\x00\x00\x00\x03_\x00\x00\x00\x00\x00\x00\x00\x00" successfully
+    logger.go:146: 2026-07-30T18:44:47.287+0800	DEBUG	bbolt	Putting key "\x00\x00\x00\x00\x00\x00\x00\x04_\x00\x00\x00\x00\x00\x00\x00\x00"
+    logger.go:146: 2026-07-30T18:44:47.287+0800	DEBUG	bbolt	Putting key "\x00\x00\x00\x00\x00\x00\x00\x04_\x00\x00\x00\x00\x00\x00\x00\x00" successfully
+    logger.go:146: 2026-07-30T18:44:47.287+0800	DEBUG	bbolt	Putting key "\x00\x00\x00\x00\x00\x00\x00\x05_\x00\x00\x00\x00\x00\x00\x00\x00t"
+    logger.go:146: 2026-07-30T18:44:47.287+0800	DEBUG	bbolt	Putting key "\x00\x00\x00\x00\x00\x00\x00\x05_\x00\x00\x00\x00\x00\x00\x00\x00t" successfully
+    --- FAIL: TestHPatchBenchmarkFastKeysRangeLimitAndCount/limited_scan_stops_without_total_count (0.00s)
+        hpatch_benchmark_test.go:72: FastKeysOnly option is missing
+    --- FAIL: TestHPatchBenchmarkFastKeysRangeLimitAndCount/limited_scan_retains_full_count (0.00s)
+        hpatch_benchmark_test.go:72: FastKeysOnly option is missing
+    --- FAIL: TestHPatchBenchmarkFastKeysRangeLimitAndCount/unlimited_scan (0.00s)
+        hpatch_benchmark_test.go:72: FastKeysOnly option is missing
+    logger.go:146: 2026-07-30T18:44:47.287+0800	DEBUG	bbolt	Committing transaction 3
+    logger.go:146: 2026-07-30T18:44:47.287+0800	DEBUG	bbolt	Committing transaction 3 successfully
+FAIL
+FAIL	go.etcd.io/etcd/server/v3/storage/mvcc	0.006s
+--- FAIL: TestHPatchBenchmarkKeysOnlyRouting (0.00s)
+    --- FAIL: TestHPatchBenchmarkKeysOnlyRouting/keys_only_uses_fast_path (0.00s)
+        hpatch_benchmark_test.go:112: FastKeysOnly option is missing
+    --- FAIL: TestHPatchBenchmarkKeysOnlyRouting/value_sort_requires_backend_values (0.00s)
+        hpatch_benchmark_test.go:112: FastKeysOnly option is missing
+    --- FAIL: TestHPatchBenchmarkKeysOnlyRouting/ordinary_range_requires_backend_values (0.00s)
+        hpatch_benchmark_test.go:112: FastKeysOnly option is missing
+FAIL
+FAIL	go.etcd.io/etcd/server/v3/etcdserver/txn	0.006s
+FAIL

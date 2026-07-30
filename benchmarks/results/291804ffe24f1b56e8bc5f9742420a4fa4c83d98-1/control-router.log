@@ -1,0 +1,108 @@
+control-1  | time=2026-07-30T10:41:41.284Z level=INFO msg=listening url=http://0.0.0.0:8081/v1/responses mode=passthrough
+control-1  | time=2026-07-30T10:41:47.096Z level=INFO msg="forwarding Responses request" request_id=1
+control-1  | time=2026-07-30T10:41:52.240Z level=INFO msg="Responses request completed" request_id=1 upstream_status_code=200 upstream_terminal_state=completed request_duration=5.144732453s upstream_execution_duration=5.144067311s
+control-1  | time=2026-07-30T10:41:52.388Z level=INFO msg="forwarding Responses request" request_id=2
+control-1  | time=2026-07-30T10:41:55.401Z level=INFO msg="Responses request completed" request_id=2 upstream_status_code=200 upstream_terminal_state=completed request_duration=3.012457411s upstream_execution_duration=3.01219575s
+control-1  | time=2026-07-30T10:41:55.483Z level=INFO msg="forwarding Responses request" request_id=3
+control-1  | time=2026-07-30T10:42:00.153Z level=INFO msg="Responses request completed" request_id=3 upstream_status_code=200 upstream_terminal_state=completed request_duration=4.67042406s upstream_execution_duration=4.670027264s
+control-1  | time=2026-07-30T10:42:00.252Z level=INFO msg="forwarding Responses request" request_id=4
+control-1  | time=2026-07-30T10:42:05.635Z level=INFO msg="Responses request completed" request_id=4 upstream_status_code=200 upstream_terminal_state=completed request_duration=5.383228496s upstream_execution_duration=5.382489418s
+control-1  | time=2026-07-30T10:42:05.694Z level=INFO msg="forwarding Responses request" request_id=5
+control-1  | time=2026-07-30T10:42:10.305Z level=INFO msg="Responses request completed" request_id=5 upstream_status_code=200 upstream_terminal_state=completed request_duration=4.634053169s upstream_execution_duration=4.610923133s
+control-1  | time=2026-07-30T10:42:10.361Z level=INFO msg="forwarding Responses request" request_id=6
+control-1  | time=2026-07-30T10:42:14.605Z level=INFO msg="forwarding Responses request" request_id=7
+control-1  | time=2026-07-30T10:42:34.166Z level=INFO msg="Responses request completed" request_id=7 upstream_status_code=200 upstream_terminal_state=completed request_duration=19.562001147s upstream_execution_duration=19.561411536s
+control-1  | time=2026-07-30T10:42:34.250Z level=INFO msg="forwarding Responses request" request_id=8
+control-1  | time=2026-07-30T10:43:07.239Z level=INFO msg="Responses request completed" request_id=8 upstream_status_code=200 upstream_terminal_state=completed request_duration=32.990193133s upstream_execution_duration=32.989568956s
+control-1  | time=2026-07-30T10:43:07.318Z level=INFO msg="forwarding Responses request" request_id=9
+control-1  | time=2026-07-30T10:43:25.431Z level=INFO msg="Responses request completed" request_id=9 upstream_status_code=200 upstream_terminal_state=completed request_duration=18.113958008s upstream_execution_duration=18.113290577s
+control-1  | time=2026-07-30T10:43:25.466Z level=INFO msg="forwarding Responses request" request_id=10
+control-1  | time=2026-07-30T10:43:32.918Z level=INFO msg="Responses request completed" request_id=10 upstream_status_code=200 upstream_terminal_state=completed request_duration=7.452720495s upstream_execution_duration=7.452002233s
+control-1  | time=2026-07-30T10:43:32.955Z level=INFO msg="forwarding Responses request" request_id=11
+control-1  | time=2026-07-30T10:43:38.656Z level=INFO msg="Responses request completed" request_id=11 upstream_status_code=200 upstream_terminal_state=completed request_duration=5.701488309s upstream_execution_duration=5.700855917s
+control-1  | time=2026-07-30T10:43:38.778Z level=INFO msg="forwarding Responses request" request_id=12
+control-1  | time=2026-07-30T10:43:46.348Z level=INFO msg="Responses request completed" request_id=12 upstream_status_code=200 upstream_terminal_state=completed request_duration=7.571090358s upstream_execution_duration=7.570282287s
+control-1  | time=2026-07-30T10:43:46.400Z level=INFO msg="forwarding Responses request" request_id=13
+control-1  | time=2026-07-30T10:43:50.918Z level=INFO msg="Responses request completed" request_id=13 upstream_status_code=200 upstream_terminal_state=completed request_duration=4.518596564s upstream_execution_duration=4.51783794s
+control-1  | time=2026-07-30T10:43:52.124Z level=INFO msg="forwarding Responses request" request_id=14
+control-1  | time=2026-07-30T10:43:54.634Z level=INFO msg="Responses request completed" request_id=14 upstream_status_code=200 upstream_terminal_state=completed request_duration=2.51184809s upstream_execution_duration=2.509905393s
+control-1  | time=2026-07-30T10:43:59.662Z level=INFO msg="forwarding Responses request" request_id=15
+control-1  | time=2026-07-30T10:44:04.016Z level=INFO msg="Responses request completed" request_id=15 upstream_status_code=200 upstream_terminal_state=completed request_duration=4.355573106s upstream_execution_duration=4.354302375s
+control-1  | time=2026-07-30T10:44:09.187Z level=INFO msg="forwarding Responses request" request_id=16
+control-1  | time=2026-07-30T10:44:11.642Z level=INFO msg="Responses request completed" request_id=16 upstream_status_code=200 upstream_terminal_state=completed request_duration=2.455777898s upstream_execution_duration=2.454472446s
+control-1  | time=2026-07-30T10:44:16.698Z level=INFO msg="forwarding Responses request" request_id=17
+control-1  | time=2026-07-30T10:44:21.085Z level=INFO msg="Responses request completed" request_id=17 upstream_status_code=200 upstream_terminal_state=completed request_duration=4.387662867s upstream_execution_duration=4.386901396s
+control-1  | time=2026-07-30T10:44:21.119Z level=INFO msg="forwarding Responses request" request_id=18
+control-1  | time=2026-07-30T10:44:25.689Z level=INFO msg="Responses request completed" request_id=18 upstream_status_code=200 upstream_terminal_state=completed request_duration=4.570511165s upstream_execution_duration=4.569711968s
+control-1  | time=2026-07-30T10:44:25.729Z level=INFO msg="forwarding Responses request" request_id=19
+control-1  | time=2026-07-30T10:44:37.022Z level=INFO msg="Responses request completed" request_id=19 upstream_status_code=200 upstream_terminal_state=completed request_duration=11.294911796s upstream_execution_duration=11.293502387s
+control-1  | time=2026-07-30T10:44:37.062Z level=INFO msg="forwarding Responses request" request_id=20
+control-1  | time=2026-07-30T10:46:07.110Z level=INFO msg="forwarding Responses request" request_id=21
+control-1  | time=2026-07-30T10:46:07.362Z level=INFO msg="forwarding Responses request" request_id=22
+control-1  | time=2026-07-30T10:46:07.400Z level=INFO msg="forwarding Responses request" request_id=23
+control-1  | time=2026-07-30T10:46:11.922Z level=INFO msg="forwarding Responses request" request_id=24
+control-1  | time=2026-07-30T10:46:13.326Z level=INFO msg="forwarding Responses request" request_id=25
+control-1  | time=2026-07-30T10:46:17.997Z level=INFO msg="Responses request completed" request_id=24 upstream_status_code=200 upstream_terminal_state=completed request_duration=6.075045124s upstream_execution_duration=6.073941816s
+control-1  | time=2026-07-30T10:46:18.095Z level=INFO msg="forwarding Responses request" request_id=26
+control-1  | time=2026-07-30T10:46:20.441Z level=INFO msg="forwarding Responses request" request_id=27
+control-1  | time=2026-07-30T10:46:25.657Z level=INFO msg="Responses request completed" request_id=26 upstream_status_code=200 upstream_terminal_state=completed request_duration=7.562519031s upstream_execution_duration=7.562182497s
+control-1  | time=2026-07-30T10:46:25.755Z level=INFO msg="forwarding Responses request" request_id=28
+control-1  | time=2026-07-30T10:46:25.924Z level=INFO msg="forwarding Responses request" request_id=29
+control-1  | time=2026-07-30T10:46:30.653Z level=INFO msg="Responses request completed" request_id=28 upstream_status_code=200 upstream_terminal_state=completed request_duration=4.898754237s upstream_execution_duration=4.898131884s
+control-1  | time=2026-07-30T10:46:30.701Z level=INFO msg="forwarding Responses request" request_id=30
+control-1  | time=2026-07-30T10:46:34.756Z level=INFO msg="Responses request completed" request_id=29 upstream_status_code=200 upstream_terminal_state=completed request_duration=8.833669587s upstream_execution_duration=8.832722031s
+control-1  | time=2026-07-30T10:46:34.845Z level=INFO msg="forwarding Responses request" request_id=31
+control-1  | time=2026-07-30T10:46:37.402Z level=INFO msg="Responses request completed" request_id=30 upstream_status_code=200 upstream_terminal_state=completed request_duration=6.70173025s upstream_execution_duration=6.70125506s
+control-1  | time=2026-07-30T10:46:37.486Z level=INFO msg="forwarding Responses request" request_id=32
+control-1  | time=2026-07-30T10:46:42.849Z level=INFO msg="Responses request completed" request_id=31 upstream_status_code=200 upstream_terminal_state=completed request_duration=8.005190033s upstream_execution_duration=8.004531532s
+control-1  | time=2026-07-30T10:46:42.895Z level=INFO msg="forwarding Responses request" request_id=33
+control-1  | time=2026-07-30T10:47:14.832Z level=INFO msg="forwarding Responses request" request_id=34
+control-1  | time=2026-07-30T10:47:20.378Z level=INFO msg="forwarding Responses request" request_id=35
+control-1  | time=2026-07-30T10:47:21.235Z level=INFO msg="Responses request completed" request_id=33 upstream_status_code=200 upstream_terminal_state=completed request_duration=38.341239798s upstream_execution_duration=38.340005827s
+control-1  | time=2026-07-30T10:47:21.278Z level=INFO msg="forwarding Responses request" request_id=36
+control-1  | time=2026-07-30T10:47:28.825Z level=INFO msg="forwarding Responses request" request_id=37
+control-1  | time=2026-07-30T10:47:37.051Z level=INFO msg="Responses request completed" request_id=37 upstream_status_code=200 upstream_terminal_state=completed request_duration=8.226465464s upstream_execution_duration=8.225849761s
+control-1  | time=2026-07-30T10:47:38.243Z level=INFO msg="forwarding Responses request" request_id=38
+control-1  | time=2026-07-30T10:47:40.589Z level=INFO msg="Responses request completed" request_id=38 upstream_status_code=200 upstream_terminal_state=completed request_duration=2.346000246s upstream_execution_duration=2.34537337s
+control-1  | time=2026-07-30T10:47:46.400Z level=INFO msg="forwarding Responses request" request_id=39
+control-1  | time=2026-07-30T10:47:52.098Z level=INFO msg="Responses request completed" request_id=36 upstream_status_code=200 upstream_terminal_state=completed request_duration=30.819990462s upstream_execution_duration=30.819411348s
+control-1  | time=2026-07-30T10:47:52.573Z level=INFO msg="forwarding Responses request" request_id=40
+control-1  | time=2026-07-30T10:47:55.190Z level=INFO msg="forwarding Responses request" request_id=41
+control-1  | time=2026-07-30T10:47:58.088Z level=INFO msg="Responses request completed" request_id=41 upstream_status_code=200 upstream_terminal_state=completed request_duration=2.900924513s upstream_execution_duration=2.897786774s
+control-1  | time=2026-07-30T10:48:03.706Z level=INFO msg="forwarding Responses request" request_id=42
+control-1  | time=2026-07-30T10:48:07.775Z level=INFO msg="Responses request completed" request_id=42 upstream_status_code=200 upstream_terminal_state=completed request_duration=4.070234609s upstream_execution_duration=4.069434697s
+control-1  | time=2026-07-30T10:48:12.285Z level=INFO msg="Responses request completed" request_id=40 upstream_status_code=200 upstream_terminal_state=completed request_duration=19.715296608s upstream_execution_duration=19.712534181s
+control-1  | time=2026-07-30T10:48:12.467Z level=INFO msg="forwarding Responses request" request_id=43
+control-1  | time=2026-07-30T10:48:13.065Z level=INFO msg="forwarding Responses request" request_id=44
+control-1  | time=2026-07-30T10:48:15.645Z level=INFO msg="Responses request completed" request_id=44 upstream_status_code=200 upstream_terminal_state=completed request_duration=2.581028435s upstream_execution_duration=2.58034098s
+control-1  | time=2026-07-30T10:48:17.484Z level=INFO msg="Responses request completed" request_id=43 upstream_status_code=200 upstream_terminal_state=completed request_duration=5.021565969s upstream_execution_duration=5.016907015s
+control-1  | time=2026-07-30T10:48:17.580Z level=INFO msg="forwarding Responses request" request_id=45
+control-1  | time=2026-07-30T10:48:20.692Z level=INFO msg="forwarding Responses request" request_id=46
+control-1  | time=2026-07-30T10:48:23.232Z level=INFO msg="Responses request completed" request_id=45 upstream_status_code=200 upstream_terminal_state=completed request_duration=5.652940871s upstream_execution_duration=5.652332017s
+control-1  | time=2026-07-30T10:48:23.432Z level=INFO msg="forwarding Responses request" request_id=47
+control-1  | time=2026-07-30T10:48:24.139Z level=INFO msg="Responses request completed" request_id=46 upstream_status_code=200 upstream_terminal_state=completed request_duration=3.447081014s upstream_execution_duration=3.446143849s
+control-1  | time=2026-07-30T10:48:24.172Z level=INFO msg="forwarding Responses request" request_id=48
+control-1  | time=2026-07-30T10:48:28.159Z level=INFO msg="Responses request completed" request_id=47 upstream_status_code=200 upstream_terminal_state=completed request_duration=4.728204025s upstream_execution_duration=4.727351277s
+control-1  | time=2026-07-30T10:48:28.237Z level=INFO msg="forwarding Responses request" request_id=49
+control-1  | time=2026-07-30T10:48:30.267Z level=INFO msg="Responses request completed" request_id=48 upstream_status_code=200 upstream_terminal_state=completed request_duration=6.095685198s upstream_execution_duration=6.095006338s
+control-1  | time=2026-07-30T10:48:30.343Z level=INFO msg="forwarding Responses request" request_id=50
+control-1  | time=2026-07-30T10:48:35.671Z level=INFO msg="Responses request completed" request_id=49 upstream_status_code=200 upstream_terminal_state=completed request_duration=7.434123339s upstream_execution_duration=7.43344894s
+control-1  | time=2026-07-30T10:48:36.881Z level=INFO msg="forwarding Responses request" request_id=51
+control-1  | time=2026-07-30T10:48:39.914Z level=INFO msg="Responses request completed" request_id=51 upstream_status_code=200 upstream_terminal_state=completed request_duration=3.034494412s upstream_execution_duration=3.03345968s
+control-1  | time=2026-07-30T10:48:41.094Z level=INFO msg="forwarding Responses request" request_id=52
+control-1  | time=2026-07-30T10:48:44.567Z level=INFO msg="Responses request completed" request_id=52 upstream_status_code=200 upstream_terminal_state=completed request_duration=3.47332302s upstream_execution_duration=3.472555435s
+control-1  | time=2026-07-30T10:48:45.044Z level=INFO msg="forwarding Responses request" request_id=53
+control-1  | time=2026-07-30T10:48:49.739Z level=INFO msg="Responses request completed" request_id=53 upstream_status_code=200 upstream_terminal_state=completed request_duration=4.696832179s upstream_execution_duration=4.695217226s
+control-1  | time=2026-07-30T10:48:54.885Z level=INFO msg="forwarding Responses request" request_id=54
+control-1  | time=2026-07-30T10:48:57.039Z level=INFO msg="Responses request completed" request_id=54 upstream_status_code=200 upstream_terminal_state=completed request_duration=2.155421529s upstream_execution_duration=2.154009535s
+control-1  | time=2026-07-30T10:49:01.342Z level=INFO msg="forwarding Responses request" request_id=55
+control-1  | time=2026-07-30T10:49:13.210Z level=INFO msg="forwarding Responses request" request_id=56
+control-1  | time=2026-07-30T10:49:19.681Z level=INFO msg="Responses request completed" request_id=56 upstream_status_code=200 upstream_terminal_state=completed request_duration=6.472231953s upstream_execution_duration=6.47091111s
+control-1  | time=2026-07-30T10:49:20.911Z level=INFO msg="forwarding Responses request" request_id=57
+control-1  | time=2026-07-30T10:49:23.928Z level=INFO msg="Responses request completed" request_id=57 upstream_status_code=200 upstream_terminal_state=completed request_duration=3.017352204s upstream_execution_duration=3.016708695s
+control-1  | time=2026-07-30T10:49:28.953Z level=INFO msg="forwarding Responses request" request_id=58
+control-1  | time=2026-07-30T10:49:31.583Z level=INFO msg="Responses request completed" request_id=58 upstream_status_code=200 upstream_terminal_state=completed request_duration=2.63056071s upstream_execution_duration=2.629674342s
+control-1  | time=2026-07-30T10:49:32.480Z level=INFO msg="forwarding Responses request" request_id=59
+control-1  | time=2026-07-30T10:49:41.690Z level=INFO msg="Responses request completed" request_id=59 upstream_status_code=200 upstream_terminal_state=completed request_duration=9.211538677s upstream_execution_duration=9.210327611s
+control-1  | time=2026-07-30T10:49:42.026Z level=INFO msg="forwarding Responses request" request_id=60
+control-1  | time=2026-07-30T10:49:48.919Z level=INFO msg="Responses request completed" request_id=60 upstream_status_code=200 upstream_terminal_state=completed request_duration=6.8939283s upstream_execution_duration=6.893054275s

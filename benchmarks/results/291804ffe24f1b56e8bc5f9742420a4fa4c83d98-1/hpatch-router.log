@@ -1,0 +1,111 @@
+hpatch-1  | time=2026-07-30T10:41:41.284Z level=INFO msg=listening url=http://0.0.0.0:8082/v1/responses mode=hpatch
+hpatch-1  | time=2026-07-30T10:41:47.101Z level=INFO msg="forwarding Responses request" request_id=2
+hpatch-1  | time=2026-07-30T10:41:47.101Z level=INFO msg="forwarding Responses request" request_id=1
+hpatch-1  | time=2026-07-30T10:41:52.612Z level=INFO msg="forwarding Responses request" request_id=3
+hpatch-1  | time=2026-07-30T10:41:52.910Z level=INFO msg="forwarding Responses request" request_id=4
+hpatch-1  | time=2026-07-30T10:41:57.160Z level=INFO msg="Responses request completed" request_id=3 upstream_status_code=200 upstream_terminal_state=completed request_duration=4.549766524s upstream_execution_duration=4.547762903s
+hpatch-1  | time=2026-07-30T10:41:57.176Z level=INFO msg="forwarding Responses request" request_id=5
+hpatch-1  | time=2026-07-30T10:41:57.240Z level=INFO msg="forwarding Responses request" request_id=6
+hpatch-1  | time=2026-07-30T10:42:01.669Z level=INFO msg="forwarding Responses request" request_id=7
+hpatch-1  | time=2026-07-30T10:42:05.871Z level=INFO msg="forwarding Responses request" request_id=8
+hpatch-1  | time=2026-07-30T10:42:11.459Z level=INFO msg="forwarding Responses request" request_id=9
+hpatch-1  | time=2026-07-30T10:42:12.286Z level=INFO msg="forwarding Responses request" request_id=10
+hpatch-1  | time=2026-07-30T10:42:20.236Z level=INFO msg="forwarding Responses request" request_id=11
+hpatch-1  | time=2026-07-30T10:42:24.678Z level=INFO msg="forwarding Responses request" request_id=12
+hpatch-1  | time=2026-07-30T10:42:32.955Z level=INFO msg="forwarding Responses request" request_id=13
+hpatch-1  | time=2026-07-30T10:42:36.826Z level=INFO msg="forwarding Responses request" request_id=14
+hpatch-1  | time=2026-07-30T10:42:37.316Z level=INFO msg="forwarding Responses request" request_id=15
+hpatch-1  | time=2026-07-30T10:42:41.167Z level=INFO msg="forwarding Responses request" request_id=16
+hpatch-1  | time=2026-07-30T10:42:43.466Z level=INFO msg="forwarding Responses request" request_id=17
+hpatch-1  | time=2026-07-30T10:42:45.205Z level=INFO msg="forwarding Responses request" request_id=18
+hpatch-1  | time=2026-07-30T10:42:49.649Z level=INFO msg="forwarding Responses request" request_id=19
+hpatch-1  | time=2026-07-30T10:42:53.941Z level=INFO msg="forwarding Responses request" request_id=20
+hpatch-1  | time=2026-07-30T10:42:55.507Z level=INFO msg="forwarding Responses request" request_id=21
+hpatch-1  | time=2026-07-30T10:43:08.496Z level=INFO msg="forwarding Responses request" request_id=22
+hpatch-1  | time=2026-07-30T10:43:18.539Z level=INFO msg="forwarding Responses request" request_id=23
+hpatch-1  | time=2026-07-30T10:43:24.825Z level=INFO msg="forwarding Responses request" request_id=24
+hpatch-1  | time=2026-07-30T10:43:32.325Z level=INFO msg="forwarding Responses request" request_id=25
+hpatch-1  | time=2026-07-30T10:43:36.144Z level=INFO msg="Responses request completed" request_id=22 upstream_status_code=200 upstream_terminal_state=completed request_duration=27.651603384s upstream_execution_duration=27.647651133s
+hpatch-1  | time=2026-07-30T10:43:36.183Z level=INFO msg="forwarding Responses request" request_id=26
+hpatch-1  | time=2026-07-30T10:43:51.176Z level=INFO msg="forwarding Responses request" request_id=27
+hpatch-1  | time=2026-07-30T10:43:57.680Z level=INFO msg="forwarding Responses request" request_id=28
+hpatch-1  | time=2026-07-30T10:44:01.603Z level=INFO msg="Responses request completed" request_id=28 upstream_status_code=200 upstream_terminal_state=completed request_duration=3.931187367s upstream_execution_duration=3.923005025s
+hpatch-1  | time=2026-07-30T10:44:01.759Z level=INFO msg="forwarding Responses request" request_id=29
+hpatch-1  | time=2026-07-30T10:44:02.665Z level=INFO msg="Responses request completed" request_id=26 upstream_status_code=200 upstream_terminal_state=completed request_duration=26.486146088s upstream_execution_duration=26.481605319s
+hpatch-1  | time=2026-07-30T10:44:02.762Z level=INFO msg="forwarding Responses request" request_id=30
+hpatch-1  | time=2026-07-30T10:44:07.871Z level=INFO msg="forwarding Responses request" request_id=31
+hpatch-1  | time=2026-07-30T10:44:15.816Z level=INFO msg="forwarding Responses request" request_id=32
+hpatch-1  | time=2026-07-30T10:44:20.784Z level=INFO msg="forwarding Responses request" request_id=33
+hpatch-1  | time=2026-07-30T10:44:20.790Z level=INFO msg="forwarding Responses request" request_id=34
+hpatch-1  | time=2026-07-30T10:44:24.925Z level=INFO msg="Responses request completed" request_id=33 upstream_status_code=200 upstream_terminal_state=completed request_duration=4.147306182s upstream_execution_duration=4.141141273s
+hpatch-1  | time=2026-07-30T10:44:24.966Z level=INFO msg="forwarding Responses request" request_id=35
+hpatch-1  | time=2026-07-30T10:44:31.227Z level=INFO msg="forwarding Responses request" request_id=36
+hpatch-1  | time=2026-07-30T10:44:32.536Z level=INFO msg="forwarding Responses request" request_id=37
+hpatch-1  | time=2026-07-30T10:44:35.122Z level=INFO msg="forwarding Responses request" request_id=38
+hpatch-1  | time=2026-07-30T10:44:38.370Z level=INFO msg="forwarding Responses request" request_id=39
+hpatch-1  | time=2026-07-30T10:44:41.201Z level=INFO msg="forwarding Responses request" request_id=40
+hpatch-1  | time=2026-07-30T10:44:42.402Z level=INFO msg="Responses request completed" request_id=39 upstream_status_code=200 upstream_terminal_state=completed request_duration=4.038148032s upstream_execution_duration=4.032017812s
+hpatch-1  | time=2026-07-30T10:44:42.476Z level=INFO msg="forwarding Responses request" request_id=41
+hpatch-1  | time=2026-07-30T10:44:47.203Z level=INFO msg="Responses request completed" request_id=40 upstream_status_code=200 upstream_terminal_state=completed request_duration=6.007917474s upstream_execution_duration=6.0022396s
+hpatch-1  | time=2026-07-30T10:44:47.464Z level=INFO msg="forwarding Responses request" request_id=42
+hpatch-1  | time=2026-07-30T10:44:48.100Z level=INFO msg="Responses request completed" request_id=41 upstream_status_code=200 upstream_terminal_state=completed request_duration=5.628644843s upstream_execution_duration=5.623174941s
+hpatch-1  | time=2026-07-30T10:44:48.157Z level=INFO msg="forwarding Responses request" request_id=43
+hpatch-1  | time=2026-07-30T10:44:53.185Z level=INFO msg="forwarding Responses request" request_id=44
+hpatch-1  | time=2026-07-30T10:44:53.925Z level=INFO msg="forwarding Responses request" request_id=45
+hpatch-1  | time=2026-07-30T10:44:53.999Z level=INFO msg="forwarding Responses request" request_id=46
+hpatch-1  | time=2026-07-30T10:45:00.117Z level=INFO msg="forwarding Responses request" request_id=47
+hpatch-1  | time=2026-07-30T10:45:00.944Z level=INFO msg="forwarding Responses request" request_id=48
+hpatch-1  | time=2026-07-30T10:45:01.641Z level=INFO msg="forwarding Responses request" request_id=49
+hpatch-1  | time=2026-07-30T10:45:04.335Z level=INFO msg="Responses request completed" request_id=47 upstream_status_code=200 upstream_terminal_state=completed request_duration=4.219795152s upstream_execution_duration=4.21784254s
+hpatch-1  | time=2026-07-30T10:45:04.624Z level=INFO msg="forwarding Responses request" request_id=50
+hpatch-1  | time=2026-07-30T10:45:04.937Z level=INFO msg="Responses request completed" request_id=49 upstream_status_code=200 upstream_terminal_state=completed request_duration=3.305198855s upstream_execution_duration=3.296842571s
+hpatch-1  | time=2026-07-30T10:45:09.540Z level=INFO msg="forwarding Responses request" request_id=51
+hpatch-1  | time=2026-07-30T10:45:10.220Z level=INFO msg="forwarding Responses request" request_id=52
+hpatch-1  | time=2026-07-30T10:45:11.713Z level=INFO msg="forwarding Responses request" request_id=53
+hpatch-1  | time=2026-07-30T10:45:13.900Z level=INFO msg="Responses request completed" request_id=52 upstream_status_code=200 upstream_terminal_state=completed request_duration=3.700497637s upstream_execution_duration=3.680309706s
+hpatch-1  | time=2026-07-30T10:45:15.377Z level=INFO msg="forwarding Responses request" request_id=54
+hpatch-1  | time=2026-07-30T10:45:19.324Z level=INFO msg="forwarding Responses request" request_id=55
+hpatch-1  | time=2026-07-30T10:45:20.512Z level=INFO msg="forwarding Responses request" request_id=56
+hpatch-1  | time=2026-07-30T10:45:20.549Z level=INFO msg="Responses request completed" request_id=54 upstream_status_code=200 upstream_terminal_state=completed request_duration=5.178417133s upstream_execution_duration=5.172102046s
+hpatch-1  | time=2026-07-30T10:45:20.651Z level=INFO msg="forwarding Responses request" request_id=57
+hpatch-1  | time=2026-07-30T10:45:23.333Z level=INFO msg="Responses request completed" request_id=55 upstream_status_code=200 upstream_terminal_state=completed request_duration=4.01463111s upstream_execution_duration=4.008463273s
+hpatch-1  | time=2026-07-30T10:45:28.353Z level=INFO msg="forwarding Responses request" request_id=58
+hpatch-1  | time=2026-07-30T10:45:28.406Z level=INFO msg="forwarding Responses request" request_id=59
+hpatch-1  | time=2026-07-30T10:45:28.924Z level=INFO msg="forwarding Responses request" request_id=60
+hpatch-1  | time=2026-07-30T10:45:33.626Z level=INFO msg="forwarding Responses request" request_id=61
+hpatch-1  | time=2026-07-30T10:45:34.835Z level=INFO msg="forwarding Responses request" request_id=62
+hpatch-1  | time=2026-07-30T10:45:35.226Z level=INFO msg="forwarding Responses request" request_id=63
+hpatch-1  | time=2026-07-30T10:45:40.668Z level=INFO msg="forwarding Responses request" request_id=64
+hpatch-1  | time=2026-07-30T10:45:42.771Z level=INFO msg="forwarding Responses request" request_id=65
+hpatch-1  | time=2026-07-30T10:45:45.629Z level=INFO msg="forwarding Responses request" request_id=66
+hpatch-1  | time=2026-07-30T10:45:50.538Z level=INFO msg="forwarding Responses request" request_id=67
+hpatch-1  | time=2026-07-30T10:46:01.651Z level=INFO msg="Responses request completed" request_id=67 upstream_status_code=200 upstream_terminal_state=completed request_duration=11.118493187s upstream_execution_duration=11.112965148s
+hpatch-1  | time=2026-07-30T10:46:02.374Z level=INFO msg="forwarding Responses request" request_id=68
+hpatch-1  | time=2026-07-30T10:46:36.074Z level=INFO msg="forwarding Responses request" request_id=69
+hpatch-1  | time=2026-07-30T10:46:41.646Z level=INFO msg="forwarding Responses request" request_id=70
+hpatch-1  | time=2026-07-30T10:46:47.448Z level=INFO msg="forwarding Responses request" request_id=71
+hpatch-1  | time=2026-07-30T10:46:53.871Z level=INFO msg="forwarding Responses request" request_id=72
+hpatch-1  | time=2026-07-30T10:47:00.169Z level=INFO msg="forwarding Responses request" request_id=73
+hpatch-1  | time=2026-07-30T10:47:05.061Z level=INFO msg="forwarding Responses request" request_id=74
+hpatch-1  | time=2026-07-30T10:47:09.640Z level=INFO msg="Responses request completed" request_id=74 upstream_status_code=200 upstream_terminal_state=completed request_duration=4.585289652s upstream_execution_duration=4.578612375s
+hpatch-1  | time=2026-07-30T10:47:09.722Z level=INFO msg="forwarding Responses request" request_id=75
+hpatch-1  | time=2026-07-30T10:47:17.558Z level=INFO msg="forwarding Responses request" request_id=76
+hpatch-1  | time=2026-07-30T10:47:28.702Z level=INFO msg="forwarding Responses request" request_id=77
+hpatch-1  | time=2026-07-30T10:47:37.338Z level=INFO msg="forwarding Responses request" request_id=78
+hpatch-1  | time=2026-07-30T10:47:46.419Z level=INFO msg="forwarding Responses request" request_id=79
+hpatch-1  | time=2026-07-30T10:47:54.644Z level=INFO msg="forwarding Responses request" request_id=80
+hpatch-1  | time=2026-07-30T10:47:58.062Z level=INFO msg="Responses request completed" request_id=80 upstream_status_code=200 upstream_terminal_state=completed request_duration=3.439659277s upstream_execution_duration=3.418304399s
+hpatch-1  | time=2026-07-30T10:48:03.578Z level=INFO msg="forwarding Responses request" request_id=81
+hpatch-1  | time=2026-07-30T10:48:07.417Z level=INFO msg="Responses request completed" request_id=81 upstream_status_code=200 upstream_terminal_state=completed request_duration=3.845980409s upstream_execution_duration=3.838609477s
+hpatch-1  | time=2026-07-30T10:48:12.522Z level=INFO msg="forwarding Responses request" request_id=82
+hpatch-1  | time=2026-07-30T10:48:30.736Z level=INFO msg="forwarding Responses request" request_id=83
+hpatch-1  | time=2026-07-30T10:48:49.138Z level=INFO msg="Responses request completed" request_id=83 upstream_status_code=200 upstream_terminal_state=completed request_duration=18.409698102s upstream_execution_duration=18.401757512s
+hpatch-1  | time=2026-07-30T10:48:49.390Z level=INFO msg="forwarding Responses request" request_id=84
+hpatch-1  | time=2026-07-30T10:48:54.150Z level=INFO msg="forwarding Responses request" request_id=85
+hpatch-1  | time=2026-07-30T10:48:58.789Z level=INFO msg="forwarding Responses request" request_id=86
+hpatch-1  | time=2026-07-30T10:49:03.289Z level=INFO msg="Responses request completed" request_id=86 upstream_status_code=200 upstream_terminal_state=completed request_duration=4.509294968s upstream_execution_duration=4.500452984s
+hpatch-1  | time=2026-07-30T10:49:03.349Z level=INFO msg="forwarding Responses request" request_id=87
+hpatch-1  | time=2026-07-30T10:49:09.128Z level=INFO msg="forwarding Responses request" request_id=88
+hpatch-1  | time=2026-07-30T10:49:17.098Z level=INFO msg="forwarding Responses request" request_id=89
+hpatch-1  | time=2026-07-30T10:49:21.066Z level=INFO msg="forwarding Responses request" request_id=90
+hpatch-1  | time=2026-07-30T10:49:25.610Z level=INFO msg="forwarding Responses request" request_id=91
