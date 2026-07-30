@@ -1,0 +1,66 @@
+name: ${COMPOSE_PROJECT_NAME:-hpatch-bench}
+
+x-bench-image: &bench-image
+  image: hpatch-bench:${HPATCH_BENCH_IMAGE_TAG:-local}
+
+services:
+  control:
+    build:
+      context: ..
+      dockerfile: benchmarks/Dockerfile
+    <<: *bench-image
+    command:
+      - hpatch-router
+      - --listen
+      - 0.0.0.0:8081
+      - --mode
+      - passthrough
+    ports:
+      - 127.0.0.1:8081:8081
+    volumes:
+      - type: bind
+        source: ${BENCH_RUN_DIR:?BENCH_RUN_DIR must be set}/work
+        target: ${BENCH_RUN_DIR:?BENCH_RUN_DIR must be set}/work
+    healthcheck:
+      test: [CMD, curl, --fail, --silent, http://127.0.0.1:8081/api/metrics]
+      interval: 250ms
+      timeout: 1s
+      retries: 40
+
+  hpatch:
+    <<: *bench-image
+    command:
+      - hpatch-router
+      - --listen
+      - 0.0.0.0:8082
+      - --mode
+      - hpatch
+    ports:
+      - 127.0.0.1:8082:8082
+    volumes:
+      - type: bind
+        source: ${BENCH_RUN_DIR:?BENCH_RUN_DIR must be set}/work
+        target: ${BENCH_RUN_DIR:?BENCH_RUN_DIR must be set}/work
+      - type: bind
+        source: ${BENCH_RUN_DIR:?BENCH_RUN_DIR must be set}/hpatch-config
+        target: /root/.config
+    healthcheck:
+      test: [CMD, curl, --fail, --silent, http://127.0.0.1:8082/api/metrics]
+      interval: 250ms
+      timeout: 1s
+      retries: 40
+
+  agent:
+    <<: *bench-image
+    profiles: [agent]
+    network_mode: host
+    volumes:
+      - type: bind
+        source: ${BENCH_RUN_DIR:?BENCH_RUN_DIR must be set}/instructions
+        target: /bench-instructions
+        read_only: true
+
+      - type: bind
+        source: ${CODEX_AUTH_PATH:?CODEX_AUTH_PATH must be set}
+        target: /root/.codex/auth.json
+        read_only: true

@@ -4,10 +4,11 @@ pjdoc:
   kind: spec
   scope: root
   status: approved
-  revision: "7"
+  revision: "9"
   files:
     - interface.md
     - comparison.md
+    - benchmark.md
 ---
 # hpatch specification
 
@@ -25,6 +26,7 @@ The interface contract is authoritative for syntax and semantics.
 - [`REQ-EDIT-001`](interface.md): edit behavior
 - [`REQ-OUTPUT-001`](interface.md): output and failure behavior
 - [`REQ-COMPARE-001`](comparison.md): token comparison scenarios
+- [`REQ-BENCH-001`](benchmark.md): historical-commit correctness and paired model evaluation
 - [`REQ-GUIDE-001`](interface.md): concise agent guidance
 
 All listed requirements are must-haves for this increment.
