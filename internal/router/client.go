@@ -37,7 +37,11 @@ const (
 	maxUpstreamJSONBytes        = 64 << 20
 )
 
-var utf8BOM = []byte{0xef, 0xbb, 0xbf}
+var (
+	utf8BOM              = []byte{0xef, 0xbb, 0xbf}
+	errResponseTransform = errors.New("transform upstream response")
+	errResponseWrite     = errors.New("write downstream response")
+)
 
 type responseProvider interface {
 	forwardExecution(startCtx, responseCtx context.Context, body []byte, headers http.Header, cacheKey string) (*http.Response, error)
@@ -356,22 +360,22 @@ func copyJSONTransformed(writer io.Writer, reader io.Reader, transformer *hpatch
 	if len(body) > maxUpstreamJSONBytes {
 		return responseTerminalUnknown, fmt.Errorf("upstream JSON response exceeds %d bytes", maxUpstreamJSONBytes)
 	}
+	recordObservedUsage(body, false, observeUsage)
 	visible := body
 	if transformer != nil {
 		visible, err = transformer.TransformJSON(body)
 		if err != nil {
-			return responseTerminalUnknown, err
+			return responseTerminalUnknown, fmt.Errorf("%w: %w", errResponseTransform, err)
 		}
 		if err := transformer.Finish(false); err != nil {
-			return responseTerminalUnknown, err
+			return responseTerminalUnknown, fmt.Errorf("%w: %w", errResponseTransform, err)
 		}
 	}
 	terminalState := observeResponseTerminal(visible, false)
-	_, err = writer.Write(visible)
-	if err == nil {
-		recordObservedUsage(body, false, observeUsage)
+	if _, err = writer.Write(visible); err != nil {
+		return responseTerminalUnknown, fmt.Errorf("%w: %w", errResponseWrite, err)
 	}
-	return terminalState, err
+	return terminalState, nil
 }
 
 func copySSETransformed(writer io.Writer, reader io.Reader, transformer *hpatchResponseTransform, observeUsage func(tokenCounts)) (responseTerminalState, error) {
@@ -404,7 +408,7 @@ func copySSETransformed(writer io.Writer, reader io.Reader, transformer *hpatchR
 				}
 				if transformer != nil {
 					if finishErr := transformer.Finish(true); finishErr != nil {
-						return responseTerminalUnknown, finishErr
+						return responseTerminalUnknown, fmt.Errorf("%w: %w", errResponseTransform, finishErr)
 					}
 				}
 				return terminalState, nil
@@ -430,21 +434,24 @@ func writeSSEEvent(writer io.Writer, lines []string, separator string, transform
 	if len(lines) == 0 {
 		if separator != "" {
 			if _, err := io.WriteString(writer, separator); err != nil {
-				return responseTerminalUnknown, err
+				return responseTerminalUnknown, fmt.Errorf("%w: %w", errResponseWrite, err)
 			}
 		}
 		if responseWriter, ok := writer.(http.ResponseWriter); ok {
-			return responseTerminalUnknown, http.NewResponseController(responseWriter).Flush()
+			if err := http.NewResponseController(responseWriter).Flush(); err != nil {
+				return responseTerminalUnknown, fmt.Errorf("%w: %w", errResponseWrite, err)
+			}
 		}
 		return responseTerminalUnknown, nil
 	}
 	payload := ssePayload(lines)
+	recordObservedUsage(payload, true, observeUsage)
 	visible := [][]byte{payload}
 	if transformer != nil && len(payload) > 0 {
 		var err error
 		visible, err = transformer.TransformSSE(payload)
 		if err != nil {
-			return responseTerminalUnknown, err
+			return responseTerminalUnknown, fmt.Errorf("%w: %w", errResponseTransform, err)
 		}
 	}
 	if len(visible) == 0 {
@@ -479,18 +486,17 @@ func writeSSEEvent(writer io.Writer, lines []string, separator string, transform
 		augmented := encodeSSEEventPayload(eventLines, eventPayload)
 		terminalState = mergeResponseTerminalState(terminalState, observeResponseTerminal(eventPayload, true))
 		if _, err := io.WriteString(writer, augmented); err != nil {
-			return responseTerminalUnknown, err
+			return responseTerminalUnknown, fmt.Errorf("%w: %w", errResponseWrite, err)
 		}
 		if eventSeparator != "" {
 			if _, err := io.WriteString(writer, eventSeparator); err != nil {
-				return responseTerminalUnknown, err
+				return responseTerminalUnknown, fmt.Errorf("%w: %w", errResponseWrite, err)
 			}
 		}
-		recordObservedUsage(eventPayload, true, observeUsage)
 	}
 	if responseWriter, ok := writer.(http.ResponseWriter); ok {
 		if err := http.NewResponseController(responseWriter).Flush(); err != nil {
-			return responseTerminalUnknown, err
+			return responseTerminalUnknown, fmt.Errorf("%w: %w", errResponseWrite, err)
 		}
 	}
 	return terminalState, nil

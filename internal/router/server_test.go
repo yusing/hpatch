@@ -351,7 +351,7 @@ type serverErrorWriter struct{ err error }
 
 func (w serverErrorWriter) Write([]byte) (int, error) { return 0, w.err }
 
-func TestExecuteRequestDoesNotRecordUsageWhenDeliveryFails(t *testing.T) {
+func TestExecuteRequestRecordsUsageAndFailureWhenDeliveryFails(t *testing.T) {
 	workspace := t.TempDir()
 	responseBody := string(mustTestJSON(t, map[string]any{
 		"status": "completed",
@@ -359,12 +359,21 @@ func TestExecuteRequestDoesNotRecordUsageWhenDeliveryFails(t *testing.T) {
 	}))
 	provider := &serverFakeProvider{results: []serverForwardResult{{response: serverHTTPResponse(responseBody)}}}
 	store := newMetricsStore("")
-	err := executeRequest(t.Context(), t.Context(), serverRequest(t, nil), serverMetadataHeaders(t, "turn", map[string]json.RawMessage{workspace: nil}), "session", provider, serverErrorWriter{err: io.ErrClosedPipe}, newDiagnostics(io.Discard), time.Now, newHPatchProxy(testTranslator(t, new(int))), store)
+	var logOutput bytes.Buffer
+	err := executeRequest(t.Context(), t.Context(), serverRequest(t, nil), serverMetadataHeaders(t, "turn", map[string]json.RawMessage{workspace: nil}), "session", provider, serverErrorWriter{err: io.ErrClosedPipe}, newDiagnostics(&logOutput), serverLifecycleClock(0, 10*time.Millisecond, 30*time.Millisecond), newHPatchProxy(testTranslator(t, new(int))), store)
 	if err == nil {
 		t.Fatal("delivery failure returned no error")
 	}
-	if got := store.snapshot().Total; got != (tokenCounts{}) {
-		t.Fatalf("failed delivery recorded metrics: %#v", got)
+	snapshot := store.snapshot()
+	if got := snapshot.Total.InputTokens; got != 10 {
+		t.Fatalf("observed usage after delivery failure = %d, want 10", got)
+	}
+	assertServerLifecycleFinished(t, snapshot.Requests)
+	if snapshot.Requests.Failed != 1 || snapshot.Requests.UsageObserved != 1 {
+		t.Fatalf("delivery lifecycle = %#v", snapshot.Requests)
+	}
+	if logs := logOutput.String(); strings.Count(logs, "Responses request finished") != 1 || !strings.Contains(logs, "failure_phase=write_response") {
+		t.Fatalf("delivery terminal log = %q", logs)
 	}
 }
 
@@ -478,6 +487,390 @@ func TestResponsesHandlerDoesNotLogClientCancellationAsOperationalEvent(t *testi
 	}
 	if logs := logOutput.String(); strings.Contains(logs, "canceled after response started") {
 		t.Fatalf("client cancellation was logged as an operational event:\n%s", logs)
+	}
+}
+
+func serverLifecycleClock(offsets ...time.Duration) func() time.Time {
+	base := time.Unix(1_000, 0)
+	var index atomic.Uint64
+	return func() time.Time {
+		return base.Add(offsets[index.Add(1)-1])
+	}
+}
+
+func assertServerLifecycleFinished(t *testing.T, requests requestLifecycleMetrics) {
+	t.Helper()
+	terminal := requests.Completed +
+		requests.Failed +
+		requests.CanceledBeforeResponse +
+		requests.CanceledAfterResponse +
+		requests.TimedOut +
+		requests.BackgroundPending
+	if requests.Active != 0 || terminal != requests.Started {
+		t.Fatalf("lifecycle invariant failed: %#v", requests)
+	}
+}
+
+func serverSessionLifecycle(t *testing.T, store *metricsStore, sessionID string) requestLifecycleMetrics {
+	t.Helper()
+	for _, session := range store.snapshot().Sessions {
+		if session.SessionID == sessionID {
+			return session.Requests
+		}
+	}
+	t.Fatalf("session %q not retained", sessionID)
+	return requestLifecycleMetrics{}
+}
+
+func TestExecuteRequestSuccessfulStreamLifecycle(t *testing.T) {
+	completed := mustTestJSON(t, map[string]any{
+		"type": "response.completed",
+		"response": map[string]any{
+			"status": "completed",
+			"usage": map[string]any{
+				"input_tokens": 11, "input_tokens_details": map[string]any{"cached_tokens": 4},
+				"output_tokens": 5, "output_tokens_details": map[string]any{"reasoning_tokens": 2},
+			},
+		},
+	})
+	response := serverHTTPResponse("event: response.completed\ndata: " + string(completed) + "\n\n")
+	response.Header.Set("Content-Type", "text/event-stream")
+	provider := &serverFakeProvider{results: []serverForwardResult{{response: response}}}
+	store := newMetricsStore("")
+	recorder := httptest.NewRecorder()
+	writer := &trackedResponseWriter{ResponseWriter: recorder}
+	var logOutput bytes.Buffer
+	err := executeRequest(
+		t.Context(), t.Context(),
+		serverRequest(t, func(request map[string]any) { request["stream"] = true }),
+		http.Header{}, "stream-session", provider, writer, newDiagnostics(&logOutput),
+		serverLifecycleClock(0, 10*time.Millisecond, 40*time.Millisecond), nil, store,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	snapshot := store.snapshot()
+	assertServerLifecycleFinished(t, snapshot.Requests)
+	if snapshot.Requests.Completed != 1 ||
+		snapshot.Requests.TotalDurationMilliseconds != 40 ||
+		snapshot.Requests.UpstreamDurationMilliseconds != 30 ||
+		snapshot.Requests.UsageObserved != 1 {
+		t.Fatalf("stream lifecycle = %#v", snapshot.Requests)
+	}
+	wantUsage := tokenCounts{InputTokens: 11, UncachedInputTokens: 7, OutputTokens: 5, ReasoningTokens: 2}
+	if snapshot.Total != wantUsage {
+		t.Fatalf("stream usage = %#v, want %#v", snapshot.Total, wantUsage)
+	}
+	session := serverSessionLifecycle(t, store, "stream-session")
+	if session != snapshot.Requests {
+		t.Fatalf("session lifecycle = %#v, global %#v", session, snapshot.Requests)
+	}
+	if logs := logOutput.String(); strings.Count(logs, "Responses request finished") != 1 ||
+		!strings.Contains(logs, "outcome=completed") ||
+		!strings.Contains(logs, "response_started=true") {
+		t.Fatalf("stream terminal log = %q", logs)
+	}
+}
+
+func TestExecuteRequestTerminalOutcomes(t *testing.T) {
+	failed := mustTestJSON(t, map[string]any{
+		"type": "response.failed",
+		"response": map[string]any{
+			"status": "failed",
+			"usage":  map[string]any{"input_tokens": 9},
+		},
+	})
+	failedResponse := serverHTTPResponse("event: response.failed\ndata: " + string(failed) + "\n\n")
+	failedResponse.Header.Set("Content-Type", "text/event-stream")
+	tests := []struct {
+		name             string
+		response         *http.Response
+		mutate           func(map[string]any)
+		wantOutcome      requestOutcome
+		wantUsage        uint64
+		wantFailurePhase requestFailurePhase
+	}{
+		{
+			name:             "upstream terminal failure",
+			response:         failedResponse,
+			mutate:           func(request map[string]any) { request["stream"] = true },
+			wantOutcome:      requestOutcomeFailed,
+			wantUsage:        9,
+			wantFailurePhase: requestFailureTerminalValidation,
+		},
+		{
+			name: "non-2xx upstream response",
+			response: &http.Response{
+				StatusCode: http.StatusServiceUnavailable,
+				Status:     "503 Service Unavailable",
+				Header:     http.Header{"Content-Type": []string{"application/json"}},
+				Body:       io.NopCloser(strings.NewReader(`{"error":{"message":"unavailable"}}`)),
+			},
+			wantOutcome:      requestOutcomeFailed,
+			wantFailurePhase: requestFailureTerminalValidation,
+		},
+		{
+			name:        "background pending response",
+			response:    serverHTTPResponse(`{"status":"in_progress"}`),
+			mutate:      func(request map[string]any) { request["background"] = true },
+			wantOutcome: requestOutcomeBackgroundPending,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			provider := &serverFakeProvider{results: []serverForwardResult{{response: test.response}}}
+			store := newMetricsStore("")
+			var logOutput bytes.Buffer
+			err := executeRequest(
+				t.Context(), t.Context(), serverRequest(t, test.mutate), http.Header{}, "session",
+				provider, io.Discard, newDiagnostics(&logOutput),
+				serverLifecycleClock(0, 5*time.Millisecond, 25*time.Millisecond), nil, store,
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+			snapshot := store.snapshot()
+			assertServerLifecycleFinished(t, snapshot.Requests)
+			if got := snapshot.Total.InputTokens; got != test.wantUsage {
+				t.Fatalf("usage = %d, want %d", got, test.wantUsage)
+			}
+			switch test.wantOutcome {
+			case requestOutcomeFailed:
+				if snapshot.Requests.Failed != 1 {
+					t.Fatalf("lifecycle = %#v", snapshot.Requests)
+				}
+			case requestOutcomeBackgroundPending:
+				if snapshot.Requests.BackgroundPending != 1 {
+					t.Fatalf("lifecycle = %#v", snapshot.Requests)
+				}
+			}
+			logs := logOutput.String()
+			if strings.Count(logs, "Responses request finished") != 1 ||
+				!strings.Contains(logs, "outcome="+test.wantOutcome.String()) ||
+				!strings.Contains(logs, "failure_phase="+string(test.wantFailurePhase)) {
+				t.Fatalf("terminal log = %q", logs)
+			}
+		})
+	}
+}
+
+func TestExecuteRequestCancellationBeforeResponseLifecycle(t *testing.T) {
+	started := make(chan struct{})
+	provider := serverProviderFunc(func(startCtx, _ context.Context, _ []byte, _ http.Header, _ string) (*http.Response, error) {
+		close(started)
+		<-startCtx.Done()
+		return nil, startCtx.Err()
+	})
+	ctx, cancel := context.WithCancel(t.Context())
+	store := newMetricsStore("")
+	var logOutput bytes.Buffer
+	result := make(chan error, 1)
+	go func() {
+		result <- executeRequest(
+			ctx, ctx, serverRequest(t, nil), http.Header{}, "session", provider, io.Discard,
+			newDiagnostics(&logOutput), serverLifecycleClock(0, 10*time.Millisecond, 30*time.Millisecond), nil, store,
+		)
+	}()
+	<-started
+	cancel()
+	err := <-result
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("error = %v, want cancellation", err)
+	}
+
+	requests := store.snapshot().Requests
+	assertServerLifecycleFinished(t, requests)
+	if requests.CanceledBeforeResponse != 1 ||
+		requests.TotalDurationMilliseconds != 30 ||
+		requests.UpstreamDurationMilliseconds != 20 {
+		t.Fatalf("cancellation lifecycle = %#v", requests)
+	}
+	if logs := logOutput.String(); strings.Count(logs, "Responses request finished") != 1 ||
+		!strings.Contains(logs, "outcome=canceled_before_response") ||
+		!strings.Contains(logs, "response_started=false") {
+		t.Fatalf("terminal log = %q", logs)
+	}
+}
+
+type serverBlockingSSEBody struct {
+	ctx     context.Context
+	content *strings.Reader
+	blocked chan struct{}
+	once    sync.Once
+}
+
+func (body *serverBlockingSSEBody) Read(content []byte) (int, error) {
+	if body.content.Len() > 0 {
+		return body.content.Read(content)
+	}
+	body.once.Do(func() { close(body.blocked) })
+	<-body.ctx.Done()
+	return 0, body.ctx.Err()
+}
+
+func (*serverBlockingSSEBody) Close() error { return nil }
+
+func TestExecuteRequestCancellationAfterResponseLifecycle(t *testing.T) {
+	blocked := make(chan struct{})
+	provider := serverProviderFunc(func(_, executionCtx context.Context, _ []byte, _ http.Header, _ string) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+			Body: &serverBlockingSSEBody{
+				ctx: executionCtx, content: strings.NewReader("event: response.created\ndata: {\"type\":\"response.created\"}\n\n"), blocked: blocked,
+			},
+		}, nil
+	})
+	ctx, cancel := context.WithCancel(t.Context())
+	store := newMetricsStore("")
+	recorder := httptest.NewRecorder()
+	writer := &trackedResponseWriter{ResponseWriter: recorder}
+	var logOutput bytes.Buffer
+	result := make(chan error, 1)
+	go func() {
+		result <- executeRequest(
+			ctx, ctx,
+			serverRequest(t, func(request map[string]any) { request["stream"] = true }),
+			http.Header{}, "session", provider, writer, newDiagnostics(&logOutput),
+			serverLifecycleClock(0, 5*time.Millisecond, 35*time.Millisecond), nil, store,
+		)
+	}()
+	<-blocked
+	cancel()
+	err := <-result
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("error = %v, want cancellation", err)
+	}
+
+	requests := store.snapshot().Requests
+	assertServerLifecycleFinished(t, requests)
+	if requests.CanceledAfterResponse != 1 ||
+		requests.TotalDurationMilliseconds != 35 ||
+		requests.UpstreamDurationMilliseconds != 30 {
+		t.Fatalf("cancellation lifecycle = %#v", requests)
+	}
+	if logs := logOutput.String(); strings.Count(logs, "Responses request finished") != 1 ||
+		!strings.Contains(logs, "outcome=canceled_after_response") ||
+		!strings.Contains(logs, "response_started=true") {
+		t.Fatalf("terminal log = %q", logs)
+	}
+}
+
+func TestExecuteRequestResponseStartDeadlineLifecycle(t *testing.T) {
+	started := make(chan struct{})
+	provider := serverProviderFunc(func(startCtx, _ context.Context, _ []byte, _ http.Header, _ string) (*http.Response, error) {
+		close(started)
+		<-startCtx.Done()
+		return nil, startCtx.Err()
+	})
+	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond)
+	defer cancel()
+	store := newMetricsStore("")
+	result := make(chan error, 1)
+	go func() {
+		result <- executeRequest(
+			ctx, t.Context(), serverRequest(t, nil), http.Header{}, "session", provider, io.Discard,
+			newDiagnostics(io.Discard), serverLifecycleClock(0, 5*time.Millisecond, 25*time.Millisecond), nil, store,
+		)
+	}()
+	<-started
+	err := <-result
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("error = %v, want deadline", err)
+	}
+	requests := store.snapshot().Requests
+	assertServerLifecycleFinished(t, requests)
+	if requests.TimedOut != 1 || requests.Failed != 0 ||
+		requests.CanceledBeforeResponse != 0 || requests.CanceledAfterResponse != 0 {
+		t.Fatalf("deadline lifecycle = %#v", requests)
+	}
+}
+
+func TestExecuteRequestIndependentUpstreamCancellationIsFailure(t *testing.T) {
+	provider := serverProviderFunc(func(context.Context, context.Context, []byte, http.Header, string) (*http.Response, error) {
+		return nil, context.Canceled
+	})
+	store := newMetricsStore("")
+	var logOutput bytes.Buffer
+	err := executeRequest(
+		t.Context(), t.Context(), serverRequest(t, nil), http.Header{}, "session",
+		provider, io.Discard, newDiagnostics(&logOutput),
+		serverLifecycleClock(0, 5*time.Millisecond, 25*time.Millisecond), nil, store,
+	)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("error = %v, want wrapped upstream cancellation", err)
+	}
+	requests := store.snapshot().Requests
+	assertServerLifecycleFinished(t, requests)
+	if requests.Failed != 1 || requests.CanceledBeforeResponse != 0 || requests.CanceledAfterResponse != 0 {
+		t.Fatalf("independent upstream cancellation lifecycle = %#v", requests)
+	}
+	if logs := logOutput.String(); !strings.Contains(logs, "outcome=failed") {
+		t.Fatalf("terminal log = %q", logs)
+	}
+}
+
+type serverFailTerminalLogWriter struct {
+	writes int
+}
+
+func (writer *serverFailTerminalLogWriter) Write(content []byte) (int, error) {
+	writer.writes++
+	if writer.writes == 2 {
+		return 0, io.ErrClosedPipe
+	}
+	return len(content), nil
+}
+
+func TestExecuteRequestReturnsTerminalLogFailure(t *testing.T) {
+	provider := &serverFakeProvider{results: []serverForwardResult{{response: serverHTTPResponse(`{"status":"completed"}`)}}}
+	store := newMetricsStore("")
+	logOutput := new(serverFailTerminalLogWriter)
+	err := executeRequest(
+		t.Context(), t.Context(), serverRequest(t, nil), http.Header{}, "session",
+		provider, io.Discard, newDiagnostics(logOutput),
+		serverLifecycleClock(0, 5*time.Millisecond, 25*time.Millisecond), nil, store,
+	)
+	if !errors.Is(err, io.ErrClosedPipe) || !strings.Contains(err.Error(), "write terminal log") {
+		t.Fatalf("error = %v, want terminal log failure", err)
+	}
+	requests := store.snapshot().Requests
+	assertServerLifecycleFinished(t, requests)
+	if requests.Completed != 1 {
+		t.Fatalf("request outcome changed by logging failure: %#v", requests)
+	}
+}
+
+func TestExecuteRequestTransformFailureLifecycle(t *testing.T) {
+	workspace := t.TempDir()
+	item := testHPatchItem()
+	item["type"] = "message"
+	responseBody := string(mustTestJSON(t, map[string]any{
+		"status": "completed",
+		"output": []any{item},
+	}))
+	provider := &serverFakeProvider{results: []serverForwardResult{{response: serverHTTPResponse(responseBody)}}}
+	store := newMetricsStore("")
+	var logOutput bytes.Buffer
+	err := executeRequest(
+		t.Context(), t.Context(), serverRequest(t, nil),
+		serverMetadataHeaders(t, "turn", map[string]json.RawMessage{workspace: nil}),
+		"session", provider, io.Discard, newDiagnostics(&logOutput),
+		serverLifecycleClock(0, 5*time.Millisecond, 25*time.Millisecond),
+		newHPatchProxy(testTranslator(t, new(int))), store,
+	)
+	if err == nil {
+		t.Fatal("transform failure returned no error")
+	}
+	requests := store.snapshot().Requests
+	assertServerLifecycleFinished(t, requests)
+	if requests.Failed != 1 || requests.Active != 0 {
+		t.Fatalf("transform lifecycle = %#v", requests)
+	}
+	if logs := logOutput.String(); strings.Count(logs, "Responses request finished") != 1 ||
+		!strings.Contains(logs, "failure_phase=transform") {
+		t.Fatalf("terminal log = %q", logs)
 	}
 }
 

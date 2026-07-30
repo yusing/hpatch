@@ -139,7 +139,7 @@ func responsesHandler(
 		defer cancelRequest()
 		sessionID := routingSessionID(request.Header, parsedRequest)
 		if err := executeRequest(startCtx, executionCtx, parsedRequest, request.Header, sessionID, provider, trackedWriter, requestLog, time.Now, hpatchCalls, metrics); err != nil {
-			writeRequestError(executionCtx, trackedWriter, err, requestLog)
+			writeRequestError(trackedWriter, err)
 		}
 	}
 }
@@ -187,16 +187,97 @@ func (w *trackedResponseWriter) Unwrap() http.ResponseWriter {
 	return w.ResponseWriter
 }
 
-func writeRequestError(ctx context.Context, writer *trackedResponseWriter, requestErr error, log diagnostics) {
+func writeRequestError(writer *trackedResponseWriter, requestErr error) {
 	if !writer.committed {
 		http.Error(writer, requestErr.Error(), http.StatusBadGateway)
-		return
 	}
-	if errors.Is(ctx.Err(), context.Canceled) && errors.Is(requestErr, context.Canceled) {
-		_ = log.log(ctx, slog.LevelDebug, "Responses request canceled after response started", "err", requestErr)
-		return
+}
+
+type requestFailurePhase string
+
+const (
+	requestFailurePrepare            requestFailurePhase = "prepare"
+	requestFailureForward            requestFailurePhase = "forward"
+	requestFailureInspectResponse    requestFailurePhase = "inspect_response"
+	requestFailureTransform          requestFailurePhase = "transform"
+	requestFailureWriteResponse      requestFailurePhase = "write_response"
+	requestFailureTerminalValidation requestFailurePhase = "terminal_validation"
+)
+
+type requestFinalization struct {
+	observation           requestObservation
+	sessionID             string
+	failurePhase          requestFailurePhase
+	upstreamStatusCode    int
+	upstreamTerminalState responseTerminalState
+	upstreamStarted       time.Time
+	upstreamBegan         bool
+}
+
+func (f *requestFinalization) finish(
+	ctx context.Context,
+	activeRequest *activeRequestHandle,
+	requestErr error,
+	output io.Writer,
+	log diagnostics,
+	now func() time.Time,
+	totalStarted time.Time,
+) error {
+	finished := now()
+	responseStarted := requestResponseStarted(output)
+	f.observation.totalDuration = finished.Sub(totalStarted)
+	if f.upstreamBegan {
+		f.observation.upstreamDuration = finished.Sub(f.upstreamStarted)
 	}
-	_ = log.log(ctx, slog.LevelError, "Responses request failed after response started", "err", requestErr)
+	if f.observation.outcome == requestOutcomeUnknown {
+		switch {
+		case errors.Is(requestErr, context.DeadlineExceeded):
+			f.observation.outcome = requestOutcomeTimedOut
+		case errors.Is(requestErr, context.Canceled) && errors.Is(ctx.Err(), context.Canceled):
+			if responseStarted {
+				f.observation.outcome = requestOutcomeCanceledAfterResponse
+			} else {
+				f.observation.outcome = requestOutcomeCanceledBeforeResponse
+			}
+		default:
+			f.observation.outcome = requestOutcomeFailed
+		}
+	}
+	activeRequest.finish(f.observation)
+	args := []any{
+		"session_id", f.sessionID,
+		"outcome", f.observation.outcome.String(),
+		"failure_phase", string(f.failurePhase),
+		"response_started", responseStarted,
+		"upstream_status_code", f.upstreamStatusCode,
+		"upstream_terminal_state", f.upstreamTerminalState.String(),
+		"request_duration", f.observation.totalDuration,
+		"upstream_execution_duration", f.observation.upstreamDuration,
+		"usage_observed", f.observation.usageObserved,
+	}
+	if requestErr != nil {
+		args = append(args, "err", requestErr)
+	}
+	if err := log.log(context.WithoutCancel(ctx), slog.LevelInfo, "Responses request finished", args...); err != nil {
+		return fmt.Errorf("write terminal log: %w", err)
+	}
+	return nil
+}
+
+func requestResponseStarted(output io.Writer) bool {
+	writer, ok := output.(*trackedResponseWriter)
+	return ok && writer.committed
+}
+
+func (f *requestFinalization) classifyCopyError(err error) {
+	switch {
+	case errors.Is(err, errResponseTransform):
+		f.failurePhase = requestFailureTransform
+	case errors.Is(err, errResponseWrite):
+		f.failurePhase = requestFailureWriteResponse
+	default:
+		f.failurePhase = requestFailureInspectResponse
+	}
 }
 
 func executeRequest(
@@ -211,10 +292,21 @@ func executeRequest(
 	now func() time.Time,
 	hpatchCalls *hpatchProxy,
 	metrics *metricsStore,
-) error {
-	activeRequest := metrics.beginRequest(sessionID, parsedRequest.model())
-	defer activeRequest.end()
+) (requestErr error) {
 	totalStarted := now()
+	var activeRequest *activeRequestHandle
+	if metrics != nil {
+		activeRequest = metrics.beginRequest(sessionID, parsedRequest.model())
+	}
+	finalization := requestFinalization{failurePhase: requestFailurePrepare}
+	if validMetricSessionID(sessionID) {
+		finalization.sessionID = sessionID
+	}
+
+	defer func() {
+		requestErr = errors.Join(requestErr, finalization.finish(executionCtx, activeRequest, requestErr, output, log, now, totalStarted))
+	}()
+
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("prepare request: %w", err)
 	}
@@ -231,16 +323,17 @@ func executeRequest(
 	}
 	if hpatchTransform != nil {
 		defer hpatchTransform.Close()
-
 	}
 	forwardBody, err := json.Marshal(parsedRequest.fields)
 	if err != nil {
 		return fmt.Errorf("encode Responses request: %w", err)
 	}
+	finalization.failurePhase = requestFailureForward
 	if err := log.log(ctx, slog.LevelInfo, "forwarding Responses request"); err != nil {
 		return fmt.Errorf("write execution log: %w", err)
 	}
-	started := now()
+	finalization.upstreamStarted = now()
+	finalization.upstreamBegan = true
 	cacheKey := parsedRequest.promptCacheKey()
 	if cacheKey == "" {
 		cacheKey = sessionID
@@ -249,6 +342,8 @@ func executeRequest(
 	if err != nil {
 		return fmt.Errorf("execute request: %w", err)
 	}
+	finalization.upstreamStatusCode = response.StatusCode
+	finalization.failurePhase = requestFailureInspectResponse
 	if hpatchTransform != nil {
 		hpatchTransform.ctx = executionCtx
 	}
@@ -257,36 +352,34 @@ func executeRequest(
 		response.Body.Close()
 		return fmt.Errorf("execute request: inspect upstream response: %w", err)
 	}
-	var (
-		usageCounts   tokenCounts
-		usageObserved bool
-		terminalState responseTerminalState
-	)
 	var responseTransformer *hpatchResponseTransform
 	if response.StatusCode >= http.StatusOK && response.StatusCode < http.StatusMultipleChoices {
 		responseTransformer = hpatchTransform
 	}
 	if hpatchTransform != nil && responseTransformer == nil {
+		finalization.failurePhase = requestFailureTransform
 		if err := hpatchTransform.Finish(false); err != nil {
 			response.Body.Close()
 			return fmt.Errorf("record hpatch request overhead: %w", err)
 		}
 	}
 	observeUsage := func(counts tokenCounts) {
-		usageCounts = counts
-		usageObserved = true
+		finalization.observation.usageCounts = counts
+		finalization.observation.usageObserved = true
 	}
 
 	var stagedBody []byte
 	if !streamResponse {
 		var staged bytes.Buffer
-		terminalState, err = copyUpstreamBodyTransformed(&staged, response, false, responseTransformer, observeUsage)
+		finalization.upstreamTerminalState, err = copyUpstreamBodyTransformed(&staged, response, false, responseTransformer, observeUsage)
 		if err != nil {
+			finalization.classifyCopyError(err)
 			return fmt.Errorf("execute request: %w", err)
 		}
 		stagedBody = staged.Bytes()
 	}
-	if !streamResponse && response.StatusCode >= http.StatusOK && response.StatusCode < http.StatusMultipleChoices && !acceptsResponseEnd(parsedRequest, terminalState) {
+	if !streamResponse && response.StatusCode >= http.StatusOK && response.StatusCode < http.StatusMultipleChoices && !acceptsResponseEnd(parsedRequest, finalization.upstreamTerminalState) {
+		finalization.failurePhase = requestFailureTerminalValidation
 		return fmt.Errorf("execute request: %w", errUpstreamResponseWithoutTerminal)
 	}
 	if writer, ok := output.(http.ResponseWriter); ok {
@@ -299,6 +392,7 @@ func executeRequest(
 	}
 	if streamResponse {
 		if writer, ok := output.(http.ResponseWriter); ok {
+			finalization.failurePhase = requestFailureWriteResponse
 			if err := http.NewResponseController(writer).Flush(); err != nil {
 				response.Body.Close()
 				return fmt.Errorf("execute request: flush response headers: %w", err)
@@ -306,30 +400,37 @@ func executeRequest(
 		}
 	}
 	if stagedBody != nil {
+		finalization.failurePhase = requestFailureWriteResponse
 		if _, err := output.Write(stagedBody); err != nil {
 			return fmt.Errorf("execute request: copy upstream response: %w", err)
 		}
 	} else {
-		terminalState, err = copyUpstreamBodyTransformed(output, response, streamResponse, responseTransformer, observeUsage)
+		finalization.failurePhase = requestFailureInspectResponse
+		finalization.upstreamTerminalState, err = copyUpstreamBodyTransformed(output, response, streamResponse, responseTransformer, observeUsage)
 		if err != nil {
+			finalization.classifyCopyError(err)
 			return fmt.Errorf("execute request: %w", err)
 		}
 	}
-	if streamResponse && response.StatusCode >= http.StatusOK && response.StatusCode < http.StatusMultipleChoices && !acceptsResponseEnd(parsedRequest, terminalState) {
+	if streamResponse && response.StatusCode >= http.StatusOK && response.StatusCode < http.StatusMultipleChoices && !acceptsResponseEnd(parsedRequest, finalization.upstreamTerminalState) {
+		finalization.failurePhase = requestFailureTerminalValidation
 		return fmt.Errorf("execute request: %w", errUpstreamResponseWithoutTerminal)
 	}
-	responseCompleted := response.StatusCode >= http.StatusOK && response.StatusCode < http.StatusMultipleChoices && terminalState == responseTerminalCompleted
-	if responseCompleted && usageObserved {
-		metrics.record(sessionID, parsedRequest.model(), usageCounts)
-	}
-	finished := now()
-	if err := log.log(executionCtx, slog.LevelInfo, "Responses request completed",
-		"upstream_status_code", response.StatusCode,
-		"upstream_terminal_state", terminalState.String(),
-		"request_duration", finished.Sub(totalStarted),
-		"upstream_execution_duration", finished.Sub(started),
-	); err != nil {
-		return fmt.Errorf("write completion log: %w", err)
+	finalization.failurePhase = ""
+	switch {
+	case response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices:
+		finalization.observation.outcome = requestOutcomeFailed
+		finalization.failurePhase = requestFailureTerminalValidation
+	case finalization.upstreamTerminalState == responseTerminalCompleted:
+		finalization.observation.outcome = requestOutcomeCompleted
+	case finalization.upstreamTerminalState == responseTerminalFailed:
+		finalization.observation.outcome = requestOutcomeFailed
+		finalization.failurePhase = requestFailureTerminalValidation
+	case parsedRequest.backgroundResponse && finalization.upstreamTerminalState == responseTerminalPending:
+		finalization.observation.outcome = requestOutcomeBackgroundPending
+	default:
+		finalization.observation.outcome = requestOutcomeFailed
+		finalization.failurePhase = requestFailureTerminalValidation
 	}
 	return nil
 }

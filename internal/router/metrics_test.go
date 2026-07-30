@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/yusing/hpatch"
 )
@@ -30,6 +31,11 @@ func TestUsageFromResponsePayload(t *testing.T) {
 			body:   `{"type":"response.completed","response":{"usage":{"input_tokens":80,"input_tokens_details":{"cached_tokens":120},"output_tokens":12,"output_tokens_details":{"reasoning_tokens":5}}}}`,
 			stream: true, want: tokenCounts{InputTokens: 80, OutputTokens: 12, ReasoningTokens: 5}, ok: true,
 		},
+		{
+			name:   "stream failure",
+			body:   `{"type":"response.failed","response":{"usage":{"input_tokens":13,"output_tokens":2}}}`,
+			stream: true, want: tokenCounts{InputTokens: 13, UncachedInputTokens: 13, OutputTokens: 2}, ok: true,
+		},
 		{name: "nonterminal stream event", body: `{"type":"response.output_text.delta","usage":{"input_tokens":10}}`, stream: true},
 		{name: "malformed", body: `{"usage":`},
 		{name: "unrelated usage collision", body: `{"future":{"usage":{"input_tokens":10}}}`},
@@ -45,17 +51,26 @@ func TestUsageFromResponsePayload(t *testing.T) {
 	}
 }
 
+func finishMetricsTestRequest(store *metricsStore, sessionID, model string, counts tokenCounts) {
+	handle := store.beginRequest(sessionID, model)
+	handle.finish(requestObservation{
+		outcome:       requestOutcomeCompleted,
+		usageCounts:   counts,
+		usageObserved: counts != (tokenCounts{}),
+	})
+}
+
 func TestMetricsStoreSnapshotAndAPI(t *testing.T) {
 	store := newMetricsStore("")
-	store.record("session-b", "model-b", tokenCounts{InputTokens: 4, UncachedInputTokens: 3, OutputTokens: 2, ReasoningTokens: 1})
-	store.record("session-a", "model-a", tokenCounts{InputTokens: 10, UncachedInputTokens: 8, OutputTokens: 6, ReasoningTokens: 2})
-	store.record("", "model-a", tokenCounts{InputTokens: 1})
+	finishMetricsTestRequest(store, "session-b", "model-b", tokenCounts{InputTokens: 4, UncachedInputTokens: 3, OutputTokens: 2, ReasoningTokens: 1})
+	finishMetricsTestRequest(store, "session-a", "model-a", tokenCounts{InputTokens: 10, UncachedInputTokens: 8, OutputTokens: 6, ReasoningTokens: 2})
+	finishMetricsTestRequest(store, "", "model-a", tokenCounts{InputTokens: 1})
 	activeB := store.beginRequest("session-b", "model-b")
 	activeAOld := store.beginRequest("session-a", "model-old")
 	activeANew := store.beginRequest("session-a", "model-a")
-	defer activeB.end()
-	defer activeAOld.end()
-	defer activeANew.end()
+	defer activeB.finish(requestObservation{outcome: requestOutcomeCompleted})
+	defer activeAOld.finish(requestObservation{outcome: requestOutcomeCompleted})
+	defer activeANew.finish(requestObservation{outcome: requestOutcomeCompleted})
 
 	snapshot := store.snapshot()
 	if snapshot.Total.InputTokens != 15 || len(snapshot.Sessions) != 2 {
@@ -83,6 +98,12 @@ func TestMetricsStoreSnapshotAndAPI(t *testing.T) {
 	if decoded.Total != snapshot.Total {
 		t.Fatalf("decoded total = %#v, want %#v", decoded.Total, snapshot.Total)
 	}
+	if decoded.Requests != snapshot.Requests {
+		t.Fatalf("decoded lifecycle = %#v, want %#v", decoded.Requests, snapshot.Requests)
+	}
+	if len(decoded.Sessions) != len(snapshot.Sessions) || decoded.Sessions[0].Requests != snapshot.Sessions[0].Requests {
+		t.Fatalf("decoded session lifecycle = %#v, want %#v", decoded.Sessions, snapshot.Sessions)
+	}
 	if decoded.Gain.SuccessfulReduction != snapshot.Gain.SuccessfulReduction || len(decoded.Gain.Commands) != len(snapshot.Gain.Commands) {
 		t.Fatalf("decoded gain = %#v, want %#v", decoded.Gain, snapshot.Gain)
 	}
@@ -100,7 +121,7 @@ func TestMetricsAPIStreamsInitialAndChangedSnapshots(t *testing.T) {
 	default:
 		t.Fatal("request start did not publish an update")
 	}
-	handle.end()
+	handle.finish(requestObservation{outcome: requestOutcomeCompleted})
 	select {
 	case <-updates:
 	default:
@@ -142,7 +163,7 @@ func TestMetricsSnapshotInitializesActiveSessionBreakdown(t *testing.T) {
 	if handle == nil {
 		t.Fatal("active request was not tracked")
 	}
-	defer handle.end()
+	defer handle.finish(requestObservation{outcome: requestOutcomeCompleted})
 	snapshot := store.snapshot()
 	if len(snapshot.Sessions) != 1 {
 		t.Fatalf("sessions = %d, want 1", len(snapshot.Sessions))
@@ -161,30 +182,59 @@ func TestMetricsSnapshotInitializesActiveSessionBreakdown(t *testing.T) {
 
 func TestMetricsStoreActiveRequestLifecycle(t *testing.T) {
 	store := newMetricsStore("")
-	if handle := store.beginRequest("", "model"); handle != nil {
-		t.Fatal("unidentified request became active")
+	invalid := store.beginRequest("", "model")
+	if invalid == nil {
+		t.Fatal("unidentified request was not tracked globally")
 	}
-	if handle := store.beginRequest(string(make([]byte, maxSessionIDBytes+1)), "model"); handle != nil {
-		t.Fatal("oversized session became active")
+	invalid.finish(requestObservation{outcome: requestOutcomeFailed})
+	oversized := store.beginRequest(string(make([]byte, maxSessionIDBytes+1)), "model")
+	if oversized == nil {
+		t.Fatal("oversized-session request was not tracked globally")
 	}
+	oversized.finish(requestObservation{outcome: requestOutcomeFailed})
 
 	handle := store.beginRequest("session", "")
-	active := store.snapshot().Sessions
-	if len(active) != 1 || active[0].Model != "unknown" {
-		t.Fatalf("active = %#v", active)
+	active := store.snapshot()
+	if len(active.Sessions) != 1 || active.Sessions[0].Model != "unknown" {
+		t.Fatalf("active = %#v", active.Sessions)
 	}
-	handle.end()
-	handle.end()
-	if active := store.snapshot().Sessions; len(active) != 0 {
-		t.Fatalf("ghost sessions = %#v", active)
+	if active.Sessions[0].Requests.Started != 1 || active.Sessions[0].Requests.Active != 1 {
+		t.Fatalf("active lifecycle = %#v", active.Sessions[0].Requests)
+	}
+	handle.finish(requestObservation{outcome: requestOutcomeCompleted})
+	handle.finish(requestObservation{outcome: requestOutcomeFailed})
+
+	snapshot := store.snapshot()
+	if snapshot.Requests.Started != 3 || snapshot.Requests.Active != 0 || snapshot.Requests.Completed != 1 || snapshot.Requests.Failed != 2 {
+		t.Fatalf("global lifecycle = %#v", snapshot.Requests)
+	}
+	if len(snapshot.Sessions) != 1 || snapshot.Sessions[0].Requests.Started != 1 || snapshot.Sessions[0].Requests.Completed != 1 {
+		t.Fatalf("retained lifecycle = %#v", snapshot.Sessions)
+	}
+}
+
+func TestMetricsStorePreservesLatestStartedModel(t *testing.T) {
+	store := newMetricsStore("")
+	oldRequest := store.beginRequest("session", "model-old")
+	newRequest := store.beginRequest("session", "model-new")
+	newRequest.finish(requestObservation{outcome: requestOutcomeFailed})
+	if got := store.snapshot().Sessions[0].Model; got != "model-new" {
+		t.Fatalf("model while older request remains active = %q, want model-new", got)
+	}
+	oldRequest.finish(requestObservation{outcome: requestOutcomeFailed})
+	snapshot := store.snapshot()
+	if got := snapshot.Sessions[0].Model; got != "model-new" {
+		t.Fatalf("retained model = %q, want model-new", got)
+	}
+	if snapshot.Sessions[0].Requests.Started != 2 || snapshot.Sessions[0].Requests.Failed != 2 {
+		t.Fatalf("session lifecycle = %#v", snapshot.Sessions[0].Requests)
 	}
 }
 
 func TestMetricsStoreRetainsCompletedSession(t *testing.T) {
 	store := newMetricsStore("")
 	handle := store.beginRequest("session", "gpt-5.6-sol")
-	store.record("session", "gpt-5.6-sol", tokenCounts{InputTokens: 12})
-	handle.end()
+	handle.finish(requestObservation{outcome: requestOutcomeCompleted, usageCounts: tokenCounts{InputTokens: 12}, usageObserved: true})
 
 	sessions := store.snapshot().Sessions
 	if len(sessions) != 1 {
@@ -197,7 +247,7 @@ func TestMetricsStoreRetainsCompletedSession(t *testing.T) {
 
 func TestMetricsStoreRejectsWhitespaceSession(t *testing.T) {
 	store := newMetricsStore("")
-	store.record(" \t ", "model", tokenCounts{InputTokens: 1})
+	finishMetricsTestRequest(store, " \t ", "model", tokenCounts{InputTokens: 1})
 
 	snapshot := store.snapshot()
 	if snapshot.Total.InputTokens != 1 {
@@ -210,11 +260,11 @@ func TestMetricsStoreRejectsWhitespaceSession(t *testing.T) {
 
 func TestMetricsStoreGroupsOnlyByModel(t *testing.T) {
 	store := newMetricsStore("")
-	store.record("", "gpt-5.6-sol", tokenCounts{InputTokens: 11})
-	store.record("", "gpt-5.6-sol", tokenCounts{InputTokens: 7})
-	store.record("", "future-model", tokenCounts{InputTokens: 2})
-	store.record("", "", tokenCounts{InputTokens: 1})
-	store.record("", "ignored", tokenCounts{})
+	finishMetricsTestRequest(store, "", "gpt-5.6-sol", tokenCounts{InputTokens: 11})
+	finishMetricsTestRequest(store, "", "gpt-5.6-sol", tokenCounts{InputTokens: 7})
+	finishMetricsTestRequest(store, "", "future-model", tokenCounts{InputTokens: 2})
+	finishMetricsTestRequest(store, "", "", tokenCounts{InputTokens: 1})
+	finishMetricsTestRequest(store, "", "ignored", tokenCounts{})
 
 	byModel := store.snapshot().ByModel
 	if got := byModel["gpt-5.6-sol"].InputTokens; got != 18 {
@@ -234,7 +284,7 @@ func TestMetricsStoreGroupsOnlyByModel(t *testing.T) {
 func TestMetricsStoreBoundsCallerControlledDimensions(t *testing.T) {
 	store := newMetricsStore("")
 	for index := range maxSessionHistories + 1 {
-		store.record(fmt.Sprintf("session-%03d", index), "model", tokenCounts{InputTokens: 1})
+		finishMetricsTestRequest(store, fmt.Sprintf("session-%03d", index), "model", tokenCounts{InputTokens: 1})
 	}
 	if got := len(store.retainedSessions); got != maxSessionHistories {
 		t.Fatalf("session totals = %d", got)
@@ -244,13 +294,45 @@ func TestMetricsStoreBoundsCallerControlledDimensions(t *testing.T) {
 	}
 
 	for index := range maxMetricModels + 2 {
-		store.record("bounded", fmt.Sprintf("model-%03d", index), tokenCounts{InputTokens: 1})
+		finishMetricsTestRequest(store, "bounded", fmt.Sprintf("model-%03d", index), tokenCounts{InputTokens: 1})
 	}
 	if got := len(store.all.ByModel); got != maxMetricModels+1 {
 		t.Fatalf("model dimensions = %d", got)
 	}
 	if got := store.all.ByModel[otherMetricModelKey].InputTokens; got != 3 {
 		t.Fatalf("other model tokens = %d", got)
+	}
+}
+
+func TestMetricsStoreBoundsLifecycleOnlySessions(t *testing.T) {
+	store := newMetricsStore("")
+	for index := range maxSessionHistories + 1 {
+		handle := store.beginRequest(fmt.Sprintf("lifecycle-%03d", index), "model")
+		handle.finish(requestObservation{
+			outcome:          requestOutcomeFailed,
+			totalDuration:    2 * time.Millisecond,
+			upstreamDuration: time.Millisecond,
+		})
+	}
+	if got := len(store.retainedSessions); got != maxSessionHistories {
+		t.Fatalf("retained lifecycle sessions = %d, want %d", got, maxSessionHistories)
+	}
+	if _, exists := store.retainedSessions["lifecycle-000"]; exists {
+		t.Fatal("oldest lifecycle-only session was not evicted")
+	}
+	snapshot := store.snapshot()
+	if snapshot.Requests.Started != maxSessionHistories+1 ||
+		snapshot.Requests.Failed != maxSessionHistories+1 ||
+		snapshot.Requests.Active != 0 {
+		t.Fatalf("global lifecycle = %#v", snapshot.Requests)
+	}
+	if len(snapshot.Sessions) != maxSessionHistories {
+		t.Fatalf("snapshot sessions = %d, want %d", len(snapshot.Sessions), maxSessionHistories)
+	}
+	for _, session := range snapshot.Sessions {
+		if session.Requests.Started != 1 || session.Requests.Failed != 1 || session.Requests.Active != 0 {
+			t.Fatalf("session lifecycle = %#v", session)
+		}
 	}
 }
 
@@ -343,10 +425,10 @@ func TestMetricsStoreBoundsActiveRequestsAndSubscribers(t *testing.T) {
 		t.Fatal("active request limit accepted overflow")
 	}
 	for _, handle := range handles {
-		handle.end()
+		handle.finish(requestObservation{outcome: requestOutcomeCompleted})
 	}
-	if store.activeRequests != 0 || len(store.activeSessions) != 0 {
-		t.Fatalf("active telemetry leaked: requests %d, sessions %d", store.activeRequests, len(store.activeSessions))
+	if store.requests.Active != 0 || len(store.activeSessions) != 0 {
+		t.Fatalf("active telemetry leaked: requests %d, sessions %d", store.requests.Active, len(store.activeSessions))
 	}
 
 	unsubscribers := make([]func(), 0, maxMetricSubscribers)
