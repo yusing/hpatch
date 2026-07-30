@@ -2,7 +2,8 @@
 set -euo pipefail
 
 benchmark_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
-model=${MODEL:-gpt-5.6-luna}
+model=${MODEL:-gpt-5.6-sol}
+reasoning_effort=medium
 task_id=etcd-fast-keys-range
 task="$benchmark_root/tasks/$task_id"
 source_repo="$benchmark_root/repos/etcd"
@@ -345,6 +346,7 @@ run_agent() {
 			-c 'model_provider="bench"' \
 			-c 'supports_websockets=true' \
 			--model "$model" \
+			-c "model_reasoning_effort=\"$reasoning_effort\"" \
 			-c 'approval_policy="never"' \
 			-c 'sandbox_mode="danger-full-access"' \
 			exec \
@@ -499,6 +501,7 @@ run_agent() {
 		--argjson repetition "$repetition" \
 		--argjson order "$order" \
 		--arg model "$model" \
+		--arg reasoning_effort "$reasoning_effort" \
 		--arg started_at "$started_at" \
 		--arg task_id "$task_id" \
 		--arg base_instructions_path "$instruction_path" \
@@ -521,6 +524,7 @@ run_agent() {
 			repetition: $repetition,
 			order_in_block: $order,
 			model: $model,
+			reasoning_effort: $reasoning_effort,
 			started_at: $started_at,
 			base_instructions: {
 				path: $base_instructions_path,

@@ -1,6 +1,11 @@
 HPATCH/1 edits workspace files atomically. Submit one complete grammar-constrained script; rejection or cancellation changes nothing.
 Do not call this tool in parallel with other tools.
 
+Minimize model round trips: after inspecting every file required by the task, batch all known independent edits across files into one atomic script. Split calls only when a later edit depends on the preceding result or diagnostic.
+Read coordinates from fresh `nl -ba -w1 -s'|'` output. The first `|`
+separates the line number from the source; every character after it belongs to the file.
+One inspection supplies all coordinates for selectors against the same baseline; do not reread unchanged content before each edit.
+
 Minimize the complete selector-plus-replacement output; a likely retry costs more than a few saved tokens:
 - tsel FROM_LINE "TEXT" [N] selects the first N separate exact matches from column 1 of FROM_LINE through EOF; matches may land on different lines. TEXT must stay on one line, need not fill it, and matching is not syntax-aware. If the suffix lacks N matches but the whole baseline has exactly N, the selection repairs to that unique set and the success report records the repaired line; extra whole-file matches keep the incomplete suffix a failure.
 - rsel START:END selects complete logical lines and their terminators; use it when every selected line should be re-emitted.
@@ -9,9 +14,9 @@ Minimize the complete selector-plus-replacement output; a likely retry costs mor
 
 Selection rules:
 - Start tsel TEXT at stable non-whitespace content.
-- Choose FROM_LINE from fresh numbered output so scanning starts in the intended region; do not default to line 1 when TEXT also occurs earlier. Prefer a broader TEXT instead of relying on whole-file repair of a wrong FROM_LINE.
+- Choose FROM_LINE so scanning starts in the intended region; do not default to line 1 when TEXT also occurs earlier. Prefer a broader TEXT instead of relying on whole-file repair of a wrong FROM_LINE.
 - Before using short TEXT that may also occur in prose, links, examples, or repeated code, verify all occurrences (for example with rg -nF) and include distinguishing text such as ## for a Markdown heading.
-- Use fresh numbered output and rsel for multiline regions. When only part of a boundary line changes, select the complete lines and reproduce the boundary content that should remain.
+- Use rsel for multiline regions. When only part of a boundary line changes, select the complete lines and reproduce the boundary content that should remain.
 - For insertion-only edits, type only the new content; never repeat unchanged selected text in the type payload. To insert before a selected fragment, copy the selection, replace it with only new content, then paste the preserved selection:
 
 ```
@@ -24,12 +29,12 @@ PATCH
 paste
 ```
 
-- Use fresh nl -ba output for rsel or sel coordinates. Earlier edits do not shift baseline coordinates before commit.
-- commit materializes edits as a new baseline; post-commit selectors address that new content. No report is available until the whole call finishes, so same-call selectors must use coordinates known before submission. If uncertain, end the call and use its report or fresh numbered output in a new call.
+- For rsel and sel, use the line and rune coordinates from that baseline inspection. Earlier edits do not shift baseline coordinates before commit.
+- commit materializes edits as a new baseline; post-commit selectors address that new content. No report is available until the whole call finishes, so same-call selectors must use coordinates known before submission. If uncertain, end the call and inspect the resulting baseline before editing again.
 - Use type <<PATCH for multiline text and put PATCH immediately after the final content line; an extra blank body line changes the output.
 - Use inline type when replacement text must not end with a newline.
 
-Whole-function example using fresh numbered output and complete logical lines:
+Whole-function example using complete logical lines:
 
 ```
 in service.go

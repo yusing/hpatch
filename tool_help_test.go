@@ -100,6 +100,23 @@ func TestToolDescriptionRejectsParallelCalls(t *testing.T) {
 	}
 }
 
+func TestToolDescriptionMinimizesModelRoundTrips(t *testing.T) {
+	for _, guidance := range []string{
+		"Minimize model round trips",
+		"batch all known independent edits across files into one atomic script",
+		"Split calls only when a later edit depends on the preceding result or diagnostic",
+		"One inspection supplies all coordinates for selectors against the same baseline",
+		"do not reread unchanged content before each edit",
+	} {
+		if !strings.Contains(toolDescription, guidance) {
+			t.Errorf("tool description omits round-trip guidance %q", guidance)
+		}
+	}
+	if got := strings.Count(toolDescription, "`nl -ba -w1 -s'|'`"); got != 1 {
+		t.Errorf("tool description contains the coordinate command %d times, want 1", got)
+	}
+}
+
 func TestToolDescriptionGuidesSparseCommandChoice(t *testing.T) {
 	for _, guidance := range []string{
 		"tsel cannot target only a later same-line match",
