@@ -375,13 +375,14 @@ type additionalToolsApplyPatchOwner struct {
 	tools               []map[string]json.RawMessage
 	toolIndex           int
 	name                string
+	direct              bool
 	strippedDescription string
-	// baselineDefinition is the apply_patch section removed from the Code Mode
-	// description. hpatch's definition cost is only meaningful net of it.
+	// baselineDefinition is the native apply_patch definition hpatch displaces.
+	// hpatch's definition cost is only meaningful net of it.
 	baselineDefinition string
 }
 
-// replaceAdditionalToolsApplyPatch swaps the Code Mode apply_patch surface for a
+// replaceAdditionalToolsApplyPatch swaps a supported apply_patch surface for a
 // standalone hpatch tool, reporting the native definition it displaced so the
 // caller can attribute hpatch's definition cost net of it.
 func replaceAdditionalToolsApplyPatch(fields map[string]json.RawMessage, toolDescription string) (string, string, bool, error) {
@@ -440,8 +441,28 @@ func findAdditionalToolsApplyPatch(fields map[string]json.RawMessage) (*addition
 		}
 		for toolIndex, tool := range tools {
 			name := jsonString(tool, "name")
-			if name == applyPatchToolName || name == hpatchToolName {
-				return nil, fmt.Errorf("responses additional_tools item defines direct %s", name)
+			if name == hpatchToolName {
+				return nil, errors.New("responses additional_tools item defines direct hpatch")
+			}
+			if name == applyPatchToolName {
+				if owner != nil {
+					return nil, errors.New("responses request defines additional_tools apply_patch more than once")
+				}
+				baseline, err := json.Marshal(tool)
+				if err != nil {
+					return nil, fmt.Errorf("encode direct additional_tools apply_patch: %w", err)
+				}
+				owner = &additionalToolsApplyPatchOwner{
+					items:              items,
+					item:               item,
+					itemIndex:          itemIndex,
+					tools:              tools,
+					toolIndex:          toolIndex,
+					name:               name,
+					direct:             true,
+					baselineDefinition: string(baseline),
+				}
+				continue
 			}
 			if name != "exec" && name != "functions.exec" {
 				continue
@@ -480,10 +501,14 @@ func codeModeToolChoiceRestricted(fields map[string]json.RawMessage, codeToolNam
 }
 
 func exposeStandaloneHPatch(fields map[string]json.RawMessage, topTools []map[string]json.RawMessage, owner *additionalToolsApplyPatchOwner, toolDescription string) error {
-	owner.tools[owner.toolIndex]["description"] = mustMarshalJSON(owner.strippedDescription)
+	if owner.direct {
+		owner.tools = slices.Delete(owner.tools, owner.toolIndex, owner.toolIndex+1)
+	} else {
+		owner.tools[owner.toolIndex]["description"] = mustMarshalJSON(owner.strippedDescription)
+	}
 	encodedAdditionalTools, err := json.Marshal(owner.tools)
 	if err != nil {
-		return fmt.Errorf("encode additional Code Mode tools: %w", err)
+		return fmt.Errorf("encode additional tools: %w", err)
 	}
 	owner.item["tools"] = encodedAdditionalTools
 	encodedItem, err := json.Marshal(owner.item)
@@ -880,7 +905,17 @@ func hpatchDiagnosticExecInput(diagnostic string) string {
 	return "text(" + strconv.Quote(diagnostic) + ");"
 }
 
+func hpatchDiagnosticApplyPatchInput(diagnostic string) string {
+	return "*** Begin Patch\nhpatch translation rejected: " + strconv.Quote(diagnostic) + "\n*** End Patch\n"
+}
+
 func (h hpatchHistory) carrierInput() string {
+	if h.carrierName == applyPatchToolName {
+		if h.translationError != "" {
+			return hpatchDiagnosticApplyPatchInput(h.translationError)
+		}
+		return h.patch
+	}
 	if h.translationError != "" {
 		return hpatchDiagnosticExecInput(h.translationError)
 	}

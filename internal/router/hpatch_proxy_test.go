@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/yusing/hpatch"
+	"github.com/yusing/hpatch/internal/patchtest"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -192,6 +193,145 @@ func TestHPatchPrepareRequestExposesOnlyStandaloneHPatch(t *testing.T) {
 	}
 	if string(request.fields["parallel_tool_calls"]) != "true" {
 		t.Fatalf("parallel_tool_calls = %s", request.fields["parallel_tool_calls"])
+	}
+}
+
+func TestHPatchDirectAdditionalApplyPatchTranslatesAndReplays(t *testing.T) {
+	workspace := t.TempDir()
+	request, err := parseResponsesRequest(mustTestJSON(t, map[string]any{
+		"input": []any{
+			map[string]any{
+				"type": "additional_tools",
+				"role": "developer",
+				"tools": []any{
+					map[string]any{"type": "custom", "name": "shell", "future": true},
+					map[string]any{"type": "custom", "name": applyPatchToolName, "description": "Apply a patch.", "future": map[string]any{"kept": true}},
+				},
+				"future": map[string]any{"kept": true},
+			},
+			map[string]any{"role": "user", "content": "task"},
+		},
+		"tools":       []any{map[string]any{"type": "function", "name": "lookup"}},
+		"tool_choice": "auto",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	proxy := newHPatchProxy(testTranslator(t, new(int)))
+	metadata := codexTurnMetadata{RequestKind: "turn", Workspaces: map[string]json.RawMessage{workspace: nil}}
+	transform, err := proxy.prepareRequest(t.Context(), &request, "session-direct", metadata, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer transform.Close()
+
+	var items []map[string]json.RawMessage
+	if err := json.Unmarshal(request.fields["input"], &items); err != nil {
+		t.Fatal(err)
+	}
+	var additionalTools []map[string]json.RawMessage
+	if err := json.Unmarshal(items[0]["tools"], &additionalTools); err != nil {
+		t.Fatal(err)
+	}
+	if len(additionalTools) != 1 || jsonString(additionalTools[0], "name") != "shell" || string(additionalTools[0]["future"]) != "true" {
+		t.Fatalf("direct apply_patch was not removed exactly: %s", request.fields["input"])
+	}
+	if transform.codeModeToolName != applyPatchToolName {
+		t.Fatalf("carrier = %q, want %q", transform.codeModeToolName, applyPatchToolName)
+	}
+
+	originalItem := mustTestJSON(t, testHPatchItem())
+	visible, err := transform.TransformJSON(mustTestJSON(t, map[string]any{
+		"status": "completed",
+		"output": []any{json.RawMessage(originalItem)},
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var response struct {
+		Output []map[string]json.RawMessage `json:"output"`
+	}
+	if err := json.Unmarshal(visible, &response); err != nil {
+		t.Fatal(err)
+	}
+	if len(response.Output) != 1 || jsonString(response.Output[0], "name") != applyPatchToolName || jsonString(response.Output[0], "input") != testTranslatedPatch {
+		t.Fatalf("direct translated response = %s", visible)
+	}
+
+	replay, err := parseResponsesRequest(mustTestJSON(t, map[string]any{
+		"input": []any{
+			map[string]any{
+				"type": "additional_tools",
+				"tools": []any{
+					map[string]any{"type": "custom", "name": "shell", "future": true},
+					map[string]any{"type": "custom", "name": applyPatchToolName, "description": "Apply a patch.", "future": map[string]any{"kept": true}},
+				},
+			},
+
+			response.Output[0],
+			map[string]any{"type": "custom_tool_call_output", "call_id": "call-H", "output": "Done!"},
+		},
+		"tools": []any{},
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	continuation, err := proxy.prepareRequest(t.Context(), &replay, "session-direct", metadata, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer continuation.Close()
+	var replayed []map[string]json.RawMessage
+	if err := json.Unmarshal(replay.fields["input"], &replayed); err != nil {
+		t.Fatal(err)
+	}
+	if jsonString(replayed[1], "name") != hpatchToolName || jsonString(replayed[1], "input") != testHPatchScript {
+		t.Fatalf("direct replay was not restored: %s", replay.fields["input"])
+	}
+}
+
+func TestHPatchDirectTranslationFailureReturnsNonMutatingDiagnosticPatch(t *testing.T) {
+	workspace := t.TempDir()
+	request, err := parseResponsesRequest(mustTestJSON(t, map[string]any{
+		"input": []any{map[string]any{
+			"type":  "additional_tools",
+			"tools": []any{map[string]any{"type": "custom", "name": applyPatchToolName}},
+		}},
+		"tools": []any{},
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	proxy := newHPatchProxy(hpatchTranslatorFunc(func(context.Context, routingWorkspace, string) ([]byte, error) {
+		return nil, errors.New("selector is not unique")
+	}))
+	metadata := codexTurnMetadata{RequestKind: "turn", Workspaces: map[string]json.RawMessage{workspace: nil}}
+	transform, err := proxy.prepareRequest(t.Context(), &request, "session-direct", metadata, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer transform.Close()
+
+	visible, err := transform.TransformJSON(mustTestJSON(t, map[string]any{
+		"status": "completed",
+		"output": []any{testHPatchItem()},
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var response struct {
+		Output []map[string]json.RawMessage `json:"output"`
+	}
+	if err := json.Unmarshal(visible, &response); err != nil {
+		t.Fatal(err)
+	}
+	input := jsonString(response.Output[0], "input")
+	if jsonString(response.Output[0], "name") != applyPatchToolName || !strings.Contains(input, "selector is not unique") || !strings.Contains(input, "INDEX: COMMAND") {
+		t.Fatalf("direct diagnostic carrier = %s", visible)
+	}
+	initial := map[string]string{"kept.txt": "unchanged"}
+	if tree, applyErr := patchtest.Apply(initial, input); applyErr == nil || tree != nil || !strings.Contains(applyErr.Error(), "selector is not unique") {
+		t.Fatalf("diagnostic patch mutated or hid rejection: tree %#v, error %v", tree, applyErr)
 	}
 }
 
@@ -526,6 +666,50 @@ func TestHPatchStreamingReplacesLifecycleWithoutChangingCallID(t *testing.T) {
 	visible, err = transform.TransformSSE(mustTestJSON(t, map[string]any{"type": "response.completed", "response": completed}))
 	if err != nil || len(visible) != 1 || calls != 1 {
 		t.Fatalf("completed = %q, translations %d, error %v", visible, calls, err)
+	}
+}
+
+func TestHPatchDirectStreamingUsesApplyPatchLifecycle(t *testing.T) {
+	workspace := t.TempDir()
+	request, err := parseResponsesRequest(mustTestJSON(t, map[string]any{
+		"input": []any{map[string]any{
+			"type":  "additional_tools",
+			"tools": []any{map[string]any{"type": "custom", "name": applyPatchToolName}},
+		}},
+		"tools": []any{},
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	calls := 0
+	proxy := newHPatchProxy(testTranslator(t, &calls))
+	metadata := codexTurnMetadata{RequestKind: "turn", Workspaces: map[string]json.RawMessage{workspace: nil}}
+	transform, err := proxy.prepareRequest(t.Context(), &request, "session-direct-stream", metadata, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer transform.Close()
+
+	item := testHPatchItem()
+	added := testHPatchItem()
+	added["status"] = "in_progress"
+	added["input"] = ""
+	visible, err := transform.TransformSSE(mustTestJSON(t, map[string]any{"type": "response.output_item.added", "item": added}))
+	if err != nil || visible != nil {
+		t.Fatalf("buffered added = %q, error %v", visible, err)
+	}
+	visible, err = transform.TransformSSE(mustTestJSON(t, map[string]any{"type": "response.custom_tool_call_input.done", "item_id": "item-H", "input": testHPatchScript}))
+	if err != nil || len(visible) != 2 || !bytes.Contains(visible[0], []byte(`"name":"apply_patch"`)) || !bytes.Contains(visible[1], []byte(jsonQuoted(testTranslatedPatch))) {
+		t.Fatalf("direct input.done = %q, error %v", visible, err)
+	}
+	visible, err = transform.TransformSSE(mustTestJSON(t, map[string]any{"type": "response.output_item.done", "item": item}))
+	if err != nil || len(visible) != 1 || !bytes.Contains(visible[0], []byte(`"name":"apply_patch"`)) {
+		t.Fatalf("direct item.done = %q, error %v", visible, err)
+	}
+	completed := map[string]any{"status": "completed", "output": []any{item}}
+	visible, err = transform.TransformSSE(mustTestJSON(t, map[string]any{"type": "response.completed", "response": completed}))
+	if err != nil || len(visible) != 1 || !bytes.Contains(visible[0], []byte(`"name":"apply_patch"`)) || calls != 1 {
+		t.Fatalf("direct completed = %q, translations %d, error %v", visible, calls, err)
 	}
 }
 

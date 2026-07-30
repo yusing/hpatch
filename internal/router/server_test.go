@@ -304,6 +304,49 @@ func TestExecuteRequestForwardsRewrittenRequestAndRecordsUsage(t *testing.T) {
 	}
 }
 
+func TestExecuteRequestAcceptsDirectAdditionalApplyPatch(t *testing.T) {
+	workspace := t.TempDir()
+	parsed := serverRequest(t, func(request map[string]any) {
+		additional := request["input"].([]any)[0].(map[string]any)
+		additional["tools"] = []any{
+			map[string]any{"type": "custom", "name": "shell"},
+			map[string]any{"type": "custom", "name": applyPatchToolName, "description": "Apply a patch."},
+		}
+	})
+	responseBody := string(mustTestJSON(t, map[string]any{"status": "completed", "output": []any{}}))
+	provider := &serverFakeProvider{results: []serverForwardResult{{response: serverHTTPResponse(responseBody)}}}
+	var output bytes.Buffer
+	err := executeRequest(
+		t.Context(),
+		t.Context(),
+		parsed,
+		serverMetadataHeaders(t, "turn", map[string]json.RawMessage{workspace: nil}),
+		"session-direct",
+		provider,
+		&output,
+		newDiagnostics(io.Discard),
+		time.Now,
+		newHPatchProxy(testTranslator(t, new(int))),
+		newMetricsStore(""),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(provider.forwarded) != 1 {
+		t.Fatalf("upstream requests = %d, want 1", len(provider.forwarded))
+	}
+	forwarded, err := parseResponsesRequest(provider.forwarded[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(forwarded.fields["tools"]), `"name":"hpatch"`) || strings.Contains(string(forwarded.fields["input"]), `"name":"apply_patch"`) || !strings.Contains(string(forwarded.fields["input"]), `"name":"shell"`) {
+		t.Fatalf("direct request was not rewritten exactly: %s", provider.forwarded[0])
+	}
+	if output.String() != responseBody {
+		t.Fatalf("visible response = %s, want %s", output.String(), responseBody)
+	}
+}
+
 type serverErrorWriter struct{ err error }
 
 func (w serverErrorWriter) Write([]byte) (int, error) { return 0, w.err }
