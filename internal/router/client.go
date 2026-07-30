@@ -20,7 +20,10 @@ import (
 )
 
 const (
-	codexClientIdentity         = "codex_cli_rs"
+	codexBaseURL           = "https://chatgpt.com/backend-api/codex"
+	codexClientIdentity    = "codex_cli_rs"
+	chatGPTAccountIDHeader = "Chatgpt-Account-Id"
+
 	defaultDialTimeout          = 5 * time.Second
 	maxUpstreamSniffBytes       = 64 << 10
 	maxUpstreamErrorDetailBytes = 8 << 10
@@ -42,15 +45,39 @@ type responseProvider interface {
 
 type providerClient struct {
 	httpClient *http.Client
-	auth       authConfig
+	baseURL    string
 }
 
-func newProviderClient(auth authConfig, supplied *http.Client) *providerClient {
-	return &providerClient{httpClient: withDialTimeout(supplied), auth: auth}
+func newProviderClient(baseURL string, supplied *http.Client) *providerClient {
+	return &providerClient{httpClient: withDialTimeout(supplied), baseURL: baseURL}
+}
+
+// requiredCodexAuthHeaders enforces the router's authentication boundary.
+// Codex owns login and token refresh; a custom provider configured with
+// requires_openai_auth = true attaches its managed credentials to every request.
+// The router validates those headers and relays them to the ChatGPT Codex backend.
+func requiredCodexAuthHeaders(headers http.Header) (string, string, error) {
+	authorizationValues := headers.Values("Authorization")
+	if len(authorizationValues) != 1 {
+		return "", "", errors.New("codex request must provide exactly one Authorization header; configure the provider with requires_openai_auth = true")
+	}
+	scheme, token, ok := strings.Cut(authorizationValues[0], " ")
+	if !ok || !strings.EqualFold(scheme, "Bearer") || token == "" || token != strings.TrimSpace(token) {
+		return "", "", errors.New("codex request has an invalid bearer Authorization header")
+	}
+	accountValues := headers.Values(chatGPTAccountIDHeader)
+	if len(accountValues) != 1 || accountValues[0] == "" || accountValues[0] != strings.TrimSpace(accountValues[0]) {
+		return "", "", errors.New("codex request must provide exactly one non-empty ChatGPT-Account-ID header")
+	}
+	return authorizationValues[0], accountValues[0], nil
 }
 
 func (c *providerClient) forwardExecution(startCtx, responseCtx context.Context, body []byte, headers http.Header, cacheKey string) (*http.Response, error) {
-	endpoint := strings.TrimRight(c.auth.BaseURL, "/") + "/responses"
+	authorization, accountID, err := requiredCodexAuthHeaders(headers)
+	if err != nil {
+		return nil, err
+	}
+	endpoint := strings.TrimRight(c.baseURL, "/") + "/responses"
 	for attempt := 0; ; attempt++ {
 		requestCtx, cancelRequest := context.WithCancel(responseCtx)
 		stopStartCancellation := context.AfterFunc(startCtx, cancelRequest)
@@ -64,10 +91,10 @@ func (c *providerClient) forwardExecution(startCtx, responseCtx context.Context,
 			name  string
 			value string
 		}{
-			{"Authorization", "Bearer " + c.auth.Token},
+			{"Authorization", authorization},
 			{"Content-Type", "application/json"},
 			{"Accept", "application/json, text/event-stream"},
-			{"ChatGPT-Account-ID", c.auth.AccountID},
+			{chatGPTAccountIDHeader, accountID},
 			{"Originator", codexClientIdentity},
 			{"User-Agent", codexClientIdentity},
 		}

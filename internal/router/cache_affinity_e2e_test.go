@@ -134,11 +134,6 @@ func (b *cacheAffinityE2EBody) finish() {
 func TestCodexCacheAffinityE2E(t *testing.T) {
 	codexPath := requireExecutable(t, "codex")
 	gitPath := requireExecutable(t, "git")
-	auth, err := loadCodexAuth()
-	if err != nil {
-		t.Fatalf("load router authentication: %v", err)
-	}
-
 	upstreamTransport := http.DefaultTransport.(*http.Transport).Clone()
 	defer upstreamTransport.CloseIdleConnections()
 	transport := &cacheAffinityE2ETransport{delegate: upstreamTransport}
@@ -150,7 +145,7 @@ func TestCodexCacheAffinityE2E(t *testing.T) {
 	handler := responsesHandler(
 		t.Context(),
 		10*time.Minute,
-		newProviderClient(auth, httpClient),
+		newProviderClient(codexBaseURL, httpClient),
 		newDiagnostics(io.Discard),
 		newHPatchProxy(translator),
 		metrics,
@@ -182,7 +177,7 @@ func TestCodexCacheAffinityE2E(t *testing.T) {
 	model := environmentOrDefault("HPATCH_E2E_MODEL", "gpt-5.6-sol")
 	providerName := "cache-affinity-e2e"
 	providerConfig := "model_providers." + providerName + "={ name = " + strconv.Quote(providerName) +
-		", base_url = " + strconv.Quote(server.URL+"/v1") + ", wire_api = \"responses\" }"
+		", base_url = " + strconv.Quote(server.URL+"/v1") + ", wire_api = \"responses\", requires_openai_auth = true }"
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Minute)
 	defer cancel()
 	args := []string{
@@ -238,6 +233,9 @@ func TestCodexCacheAffinityE2E(t *testing.T) {
 		}
 	}
 	for index, headers := range capturedInbound {
+		if _, _, err := requiredCodexAuthHeaders(headers); err != nil {
+			t.Fatalf("incoming request %d has invalid Codex authentication: %v", index+1, err)
+		}
 		for _, name := range codexRequestHeaderNames {
 			if got, want := headers.Values(name), expectedHeaders.Values(name); !slices.Equal(got, want) {
 				t.Fatalf("incoming request %d header %s = %q, want stable %q", index+1, name, got, want)
@@ -253,6 +251,9 @@ func TestCodexCacheAffinityE2E(t *testing.T) {
 		}
 	}
 	for index, headers := range forwardedHeaders {
+		if _, _, err := requiredCodexAuthHeaders(headers); err != nil {
+			t.Fatalf("upstream attempt %d has invalid Codex authentication: %v", index+1, err)
+		}
 		if got := headers.Get(codexSessionIDHeader); got != keys[index] {
 			t.Fatalf("upstream attempt %d Session_id = %q, want prompt_cache_key %q", index+1, got, keys[index])
 		}

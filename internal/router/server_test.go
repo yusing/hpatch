@@ -402,6 +402,8 @@ func TestResponsesHandlerDoesNotLogClientCancellationAsOperationalEvent(t *testi
 	}
 }
 
+const testProviderBaseURL = "https://provider.example"
+
 type serverRoundTripper func(*http.Request) (*http.Response, error)
 
 func (f serverRoundTripper) RoundTrip(request *http.Request) (*http.Response, error) {
@@ -409,15 +411,12 @@ func (f serverRoundTripper) RoundTrip(request *http.Request) (*http.Response, er
 }
 
 //nolint:canonicalheader // Exact lowercase names match Codex's observed wire headers.
-func TestProviderClientForwardsOnlyCodexRequestHeaders(t *testing.T) {
-	auth := authConfig{Token: "trusted-token", AccountID: "trusted-account", BaseURL: "https://provider.example"}
-	headers := http.Header{
-		"Authorization":           []string{"Bearer caller-token"},
-		"ChatGPT-Account-ID":      []string{"caller-account"},
-		"Originator":              []string{"caller-originator"},
-		"User-Agent":              []string{"caller-agent"},
-		"X-Unrelated-Caller-Data": []string{"not-forwarded"},
-	}
+func TestProviderClientForwardsCodexAuthenticationAndRequestHeaders(t *testing.T) {
+	headers := codexAuthHeaders()
+	headers.Set("Originator", "caller-originator")
+	headers.Set("User-Agent", "caller-agent")
+	headers.Set("X-Unrelated-Caller-Data", "not-forwarded")
+
 	headers.Add(sessionIDHeader, "session-primary")
 	headers.Add(sessionIDHeader, "session-secondary")
 	headers.Set(threadIDHeader, "thread")
@@ -428,8 +427,8 @@ func TestProviderClientForwardsOnlyCodexRequestHeaders(t *testing.T) {
 	headers.Set(codexTurnMetadataHeader, "metadata")
 	httpClient := &http.Client{Transport: serverRoundTripper(func(request *http.Request) (*http.Response, error) {
 		trusted := map[string]string{
-			"Authorization":      "Bearer trusted-token",
-			"ChatGPT-Account-ID": "trusted-account",
+			"Authorization":      "Bearer caller-token",
+			"ChatGPT-Account-ID": "caller-account",
 			"Originator":         codexClientIdentity,
 			"User-Agent":         codexClientIdentity,
 		}
@@ -454,13 +453,51 @@ func TestProviderClientForwardsOnlyCodexRequestHeaders(t *testing.T) {
 		}
 		return serverHTTPResponse("{}"), nil
 	})}
-	client := newProviderClient(auth, httpClient)
+	client := newProviderClient(testProviderBaseURL, httpClient)
 	response, err := client.forwardExecution(t.Context(), t.Context(), []byte("{}"), headers, "cache-key")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := response.Body.Close(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func codexAuthHeaders() http.Header {
+	headers := http.Header{}
+	headers.Set("Authorization", "Bearer caller-token")
+	headers.Set(chatGPTAccountIDHeader, "caller-account")
+	return headers
+}
+
+func TestProviderClientRejectsMissingOrMalformedCodexAuthentication(t *testing.T) {
+	tests := []struct {
+		name    string
+		headers http.Header
+		want    string
+	}{
+		{"missing authorization", http.Header{chatGPTAccountIDHeader: []string{"account"}}, "Authorization"},
+		{"multiple authorizations", http.Header{"Authorization": []string{"Bearer one", "Bearer two"}, chatGPTAccountIDHeader: []string{"account"}}, "Authorization"},
+		{"unsupported scheme", http.Header{"Authorization": []string{"Basic token"}, chatGPTAccountIDHeader: []string{"account"}}, "invalid bearer"},
+		{"empty token", http.Header{"Authorization": []string{"Bearer "}, chatGPTAccountIDHeader: []string{"account"}}, "invalid bearer"},
+		{"missing account", http.Header{"Authorization": []string{"Bearer token"}}, "ChatGPT-Account-ID"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var forwarded bool
+			httpClient := &http.Client{Transport: serverRoundTripper(func(*http.Request) (*http.Response, error) {
+				forwarded = true
+				return serverHTTPResponse("{}"), nil
+			})}
+			client := newProviderClient(testProviderBaseURL, httpClient)
+			_, err := client.forwardExecution(t.Context(), t.Context(), []byte("{}"), test.headers, "")
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("error = %v, want containing %q", err, test.want)
+			}
+			if forwarded {
+				t.Fatal("request with invalid authentication reached upstream")
+			}
+		})
 	}
 }
 
@@ -478,8 +515,8 @@ func TestProviderClientOmitsUnsafeCodexCacheKey(t *testing.T) {
 				}
 				return serverHTTPResponse("{}"), nil
 			})}
-			client := newProviderClient(authConfig{BaseURL: "https://provider.example"}, httpClient)
-			response, err := client.forwardExecution(t.Context(), t.Context(), []byte("{}"), nil, cacheKey)
+			client := newProviderClient(testProviderBaseURL, httpClient)
+			response, err := client.forwardExecution(t.Context(), t.Context(), []byte("{}"), codexAuthHeaders(), cacheKey)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -495,8 +532,7 @@ func TestProviderClientOmitsUnsafeCodexCacheKey(t *testing.T) {
 
 //nolint:canonicalheader // Exact lowercase names match Codex's observed wire headers.
 func TestProviderClientPreservesCodexRequestHeadersAcrossRetries(t *testing.T) {
-	auth := authConfig{Token: "trusted-token", AccountID: "trusted-account", BaseURL: "https://provider.example"}
-	headers := http.Header{}
+	headers := codexAuthHeaders()
 	headers.Set(sessionIDHeader, "session")
 	headers.Set(threadIDHeader, "thread")
 	headers.Set(clientRequestIDHeader, "client-request")
@@ -516,7 +552,7 @@ func TestProviderClientPreservesCodexRequestHeadersAcrossRetries(t *testing.T) {
 		}
 		return serverHTTPResponse("{}"), nil
 	})}
-	client := newProviderClient(auth, httpClient)
+	client := newProviderClient(testProviderBaseURL, httpClient)
 	response, err := client.forwardExecution(t.Context(), t.Context(), []byte("{}"), headers, "cache-key")
 	if err != nil {
 		t.Fatal(err)
@@ -544,8 +580,7 @@ func TestProviderClientPreservesCodexRequestHeadersAcrossRetries(t *testing.T) {
 
 //nolint:canonicalheader // Exact lowercase names match Codex's observed wire headers.
 func TestProviderClientCancelsRequestWithCodexRequestHeaders(t *testing.T) {
-	auth := authConfig{Token: "trusted-token", AccountID: "trusted-account", BaseURL: "https://provider.example"}
-	headers := http.Header{}
+	headers := codexAuthHeaders()
 	headers.Set(sessionIDHeader, "session")
 	started := make(chan http.Header, 1)
 	httpClient := &http.Client{Transport: serverRoundTripper(func(request *http.Request) (*http.Response, error) {
@@ -553,7 +588,7 @@ func TestProviderClientCancelsRequestWithCodexRequestHeaders(t *testing.T) {
 		<-request.Context().Done()
 		return nil, request.Context().Err()
 	})}
-	client := newProviderClient(auth, httpClient)
+	client := newProviderClient(testProviderBaseURL, httpClient)
 	ctx, cancel := context.WithCancel(t.Context())
 	result := make(chan error, 1)
 	go func() {
@@ -630,12 +665,7 @@ func TestRunReturnsCancellationAfterGracefulShutdown(t *testing.T) {
 	if _, err := exec.LookPath(hpatchToolName); err != nil {
 		t.Skipf("installed hpatch unavailable: %v", err)
 	}
-	codexHome := t.TempDir()
-	auth := []byte(`{"auth_mode":"chatgpt","tokens":{"access_token":"token","account_id":"account"}}`)
-	if err := os.WriteFile(filepath.Join(codexHome, "auth.json"), auth, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("CODEX_HOME", codexHome)
+	t.Setenv("CODEX_HOME", t.TempDir())
 	ctx, cancel := context.WithCancel(t.Context())
 	writer := &cancelOnWrite{cancel: cancel}
 	err := Run(ctx, []string{"--listen", "127.0.0.1:0"}, writer)

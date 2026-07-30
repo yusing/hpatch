@@ -68,10 +68,6 @@ func TestCodexHPatchGrammarE2E(t *testing.T) {
 	gitPath := requireExecutable(t, "git")
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 
-	auth, err := loadCodexAuth()
-	if err != nil {
-		t.Fatalf("load router authentication: %v", err)
-	}
 	gainDirectory, err := hpatchMetricsDirectory()
 	if err != nil {
 		t.Fatalf("create hpatch translator: %v", err)
@@ -81,7 +77,7 @@ func TestCodexHPatchGrammarE2E(t *testing.T) {
 	server := httptest.NewServer(responsesHandler(
 		t.Context(),
 		10*time.Minute,
-		newProviderClient(auth, nil),
+		newProviderClient(codexBaseURL, nil),
 		newDiagnostics(io.Discard),
 		newHPatchProxy(recorder),
 		newMetricsStore(""),
@@ -99,7 +95,7 @@ func TestCodexHPatchGrammarE2E(t *testing.T) {
 	providerName := "hpatch-e2e"
 	baseURL := server.URL + "/v1"
 	providerConfig := "model_providers." + providerName + "={ name = " + strconv.Quote(providerName) +
-		", base_url = " + strconv.Quote(baseURL) + ", wire_api = \"responses\" }"
+		", base_url = " + strconv.Quote(baseURL) + ", wire_api = \"responses\", requires_openai_auth = true }"
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Minute)
 	defer cancel()
 	args := []string{

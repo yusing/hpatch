@@ -44,12 +44,8 @@ func Run(ctx context.Context, args []string, stderr io.Writer) error {
 		return errors.New("--timeout must be positive")
 	}
 
-	auth, err := loadCodexAuth()
-	if err != nil {
-		return err
-	}
 	log := newDiagnostics(stderr)
-	provider := newProviderClient(auth, nil)
+	provider := newProviderClient(codexBaseURL, nil)
 	gainDirectory, err := hpatchMetricsDirectory()
 	if err != nil {
 		return fmt.Errorf("initialize hpatch response proxy: %w", err)
