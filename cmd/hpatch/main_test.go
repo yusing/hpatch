@@ -108,7 +108,7 @@ func TestToolHelpGuidesAgentCommandChoice(t *testing.T) {
 		"No report is available until the whole call finishes",
 		"same-call selectors must use coordinates known before submission",
 		"For insertion-only edits, type only the new content",
-		"Use type <<PATCH for multiline text",
+		"A blank line immediately before PATCH is part of the literal replacement.",
 		"The first in captures an immutable file baseline.",
 		"any repaired tsel line notes",
 	} {

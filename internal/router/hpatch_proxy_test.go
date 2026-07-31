@@ -170,8 +170,8 @@ func TestHPatchPrepareRequestExposesOnlyStandaloneHPatch(t *testing.T) {
 			t.Fatalf("standalone hpatch description omits %q: %q", operation, exposed)
 		}
 	}
-	if !strings.Contains(normalizedDescription, "type <<PATCH replacement or insertion consumes") {
-		t.Fatalf("standalone hpatch description omits correction heredocs: %q", exposed)
+	if strings.Contains(normalizedDescription, "type <<PATCH replacement or insertion consumes") {
+		t.Fatalf("standalone hpatch description retains grammar-enforced correction framing: %q", exposed)
 	}
 	if strings.Contains(exposed, "workspace_id") {
 		t.Fatalf("standalone hpatch description retains workspace selection: %q", exposed)

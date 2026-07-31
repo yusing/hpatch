@@ -7,7 +7,7 @@ obtain every required coordinate for the current baseline from one `nl -ba -w1 -
 inspection; otherwise prefer stable text already established by inspection.
 
 Minimize the complete selector-plus-replacement output; a likely retry costs more than a few saved tokens:
-- tsel FROM_LINE "TEXT" [N] selects the first N separate exact matches from column 1 of FROM_LINE through EOF; matches may land on different lines. TEXT must stay on one line, need not fill it, and matching is not syntax-aware. If the suffix lacks N matches but the whole baseline has exactly N, the selection repairs to that unique set and the success report records the repaired line; extra whole-file matches keep the incomplete suffix a failure.
+- tsel FROM_LINE "TEXT" [N] selects the first N separate exact matches from column 1 of FROM_LINE through EOF; matches may land on different lines. TEXT can match part of a line, and matching is not syntax-aware. If the suffix lacks N matches but the whole baseline has exactly N, the selection repairs to that unique set and the success report records the repaired line; extra whole-file matches keep the incomplete suffix a failure.
 - rsel START:END selects complete logical lines and their terminators; use it when every selected line should be re-emitted.
 - sel LINE START:END selects inclusive one-based rune columns; prefer it for one short occurrence when identical text repeats on the same line and verified coordinates are available, because tsel cannot target only a later same-line match.
 
@@ -31,7 +31,7 @@ paste
 
 - For rsel and sel, use the line and rune coordinates from that baseline inspection. Earlier edits do not shift baseline coordinates before commit.
 - commit materializes edits as a new baseline; post-commit selectors address that new content. No report is available until the whole call finishes, so same-call selectors must use coordinates known before submission. If uncertain, end the call and inspect the resulting baseline before editing again.
-- Use type <<PATCH for multiline text and put PATCH immediately after the final content line; an extra blank body line changes the output.
+- A blank line immediately before PATCH is part of the literal replacement.
 - Use inline type when replacement text must not end with a newline.
 
 Whole-function example using complete logical lines:

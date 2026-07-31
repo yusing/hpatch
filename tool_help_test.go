@@ -133,7 +133,6 @@ func TestToolDescriptionGuidesSparseCommandChoice(t *testing.T) {
 		"do not default to line 1 when TEXT also occurs earlier",
 		"from column 1 of FROM_LINE through EOF",
 		"matches may land on different lines",
-		"TEXT must stay on one line",
 		"whole baseline has exactly N",
 		"success report records the repaired line",
 		"Prefer a broader TEXT instead of relying on whole-file repair",
@@ -141,7 +140,7 @@ func TestToolDescriptionGuidesSparseCommandChoice(t *testing.T) {
 		"it has no syntax or section awareness",
 		"Selecting a heading inserts before that heading's existing body, not after the section",
 		"trust the reported edited ranges and any repaired tsel line notes; do not reread the file solely to verify placement",
-		"need not fill it, and matching is not syntax-aware",
+		"TEXT can match part of a line, and matching is not syntax-aware",
 		"prose, links, examples, or repeated code",
 		"No report is available until the whole call finishes",
 		"post-commit selectors address that new content",
@@ -158,6 +157,9 @@ func TestToolDescriptionGuidesSparseCommandChoice(t *testing.T) {
 		}
 	}
 	for _, excluded := range []string{
+		"TEXT must stay on one line",
+		"Use type <<PATCH for multiline text",
+		"put PATCH immediately after the final content line",
 		"confined to one line",
 		"TEXT need not fill the line and matching is not syntax-aware",
 		"formatter or parser/compiler",

@@ -205,9 +205,8 @@ Repairing a rejected script:
   insert after a command. Indices count the nonblank command headers in the complete
   script evaluated for the latest rejection; they are not source-line numbers,
   indices into the first attempt, or indices into a compact correction payload. A
-  heredoc and its body count as one command. A type <<PATCH replacement or insertion
-  consumes through its exact unindented closing PATCH. When an edit diagnostic
-  reflects a bad span, correct its preceding selector. Replace, accept, or delete an
+  heredoc and its body count as one command. When an edit diagnostic reflects a
+  bad span, correct its preceding selector. Replace, accept, or delete an
   index at most once; repeated insertions retain payload order even if the anchor is
   deleted. If the mapping is uncertain, resend the complete script. The rebuilt
   script is revalidated atomically.
