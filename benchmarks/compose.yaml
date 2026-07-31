@@ -29,6 +29,8 @@ services:
 
   hpatch:
     <<: *bench-image
+    environment:
+      TMPDIR: ${BENCH_RUN_DIR:?BENCH_RUN_DIR must be set}/hpatch-runtime
     command:
       - hpatch-router
       - --listen
@@ -44,6 +46,9 @@ services:
       - type: bind
         source: ${BENCH_RUN_DIR:?BENCH_RUN_DIR must be set}/hpatch-config
         target: /root/.config
+      - type: bind
+        source: ${BENCH_RUN_DIR:?BENCH_RUN_DIR must be set}/hpatch-runtime
+        target: ${BENCH_RUN_DIR:?BENCH_RUN_DIR must be set}/hpatch-runtime
     healthcheck:
       test: [CMD, curl, --fail, --silent, http://127.0.0.1:8082/api/metrics]
       interval: 250ms
@@ -58,6 +63,10 @@ services:
       - type: bind
         source: ${BENCH_RUN_DIR:?BENCH_RUN_DIR must be set}/instructions
         target: /bench-instructions
+        read_only: true
+      - type: bind
+        source: ${BENCH_RUN_DIR:?BENCH_RUN_DIR must be set}/hpatch-runtime
+        target: ${BENCH_RUN_DIR:?BENCH_RUN_DIR must be set}/hpatch-runtime
         read_only: true
 
       - type: bind

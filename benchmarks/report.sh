@@ -74,6 +74,37 @@ patch_wrapper_errors() {
 	grep -c 'error=apply_patch verification failed' "$path" || true
 }
 
+agent_command_errors() {
+	local repetition=$1
+	local arm=$2
+	local kind=$3
+	local path="$run_dir/artifacts/$task_id/${task_id}-$arm-r$(printf '%03d' "$repetition")/codex.jsonl"
+
+	if [[ ! -f $path ]]; then
+		printf 'missing'
+		return
+	fi
+	jq -sr --arg kind "$kind" '
+		[
+			.[] |
+			select(
+				.type == "item.completed" and
+				.item.type == "command_execution" and
+				(.item.exit_code // 0) != 0
+			) |
+			select(
+				if $kind == "search" then
+					(.item.command // "") | test(
+						"(^|[[:space:];|&()])([^[:space:];|&()]+/)?(rg|grep|find|fd|search_code)([[:space:];|&()]|$)"
+					)
+				else
+					(.item.command // "") | test("/hpatch-hread-[^/]+/hread")
+				end
+			)
+		] | length
+	' "$path"
+}
+
 {
 	printf '# Benchmark report — commit `%s`\n\n' "$commit"
 	printf 'Task: `%s`  \n' "$task_id"
@@ -81,15 +112,18 @@ patch_wrapper_errors() {
 		"$model" "$reasoning_effort" "$repetitions"
 
 	printf '## Per repetition\n\n'
-	printf '| Rep | Order | Control result | Hpatch result | Hpatch rejections | Wrapper errors |\n'
-	printf '|---:|---|---|---|---:|---:|\n'
+	printf '| Rep | Order | Control result | Hpatch result | Control search errors | Hpatch search errors | Hread errors | Hpatch rejections | Wrapper errors |\n'
+	printf '|---:|---|---|---|---:|---:|---:|---:|---:|\n'
 	while IFS=$'\t' read -r repetition order control_pass control_duration control_uncached control_output control_reasoning control_grader hpatch_pass hpatch_duration hpatch_uncached hpatch_output hpatch_reasoning hpatch_grader; do
-		printf '| %s | %s | %s — %d.%03d s; %s uncached input; %s output; %s reasoning; grader %d.%03d s | %s — %d.%03d s; %s uncached input; %s output; %s reasoning; grader %d.%03d s | %s | %s |\n' \
+		printf '| %s | %s | %s — %d.%03d s; %s uncached input; %s output; %s reasoning; grader %d.%03d s | %s — %d.%03d s; %s uncached input; %s output; %s reasoning; grader %d.%03d s | %s | %s | %s | %s | %s |\n' \
 			"$repetition" "$order" "$control_pass" \
 			"$((control_duration / 1000))" "$((control_duration % 1000))" "$control_uncached" "$control_output" "$control_reasoning" \
 			"$((control_grader / 1000))" "$((control_grader % 1000))" "$hpatch_pass" \
 			"$((hpatch_duration / 1000))" "$((hpatch_duration % 1000))" "$hpatch_uncached" "$hpatch_output" "$hpatch_reasoning" \
 			"$((hpatch_grader / 1000))" "$((hpatch_grader % 1000))" \
+			"$(agent_command_errors "$repetition" control search)" \
+			"$(agent_command_errors "$repetition" hpatch search)" \
+			"$(agent_command_errors "$repetition" hpatch hread)" \
 			"$(patch_rejections "$repetition")" "$(patch_wrapper_errors "$repetition")"
 	done < <(
 		jq -sr '
@@ -165,10 +199,11 @@ patch_wrapper_errors() {
 	cat "$gain_report"
 	printf '```\n\n'
 	printf 'The command-error and failure-reason totals above are collected by the Hpatch router. '
+	printf '“Search errors” count failed Codex command executions containing rg, grep, find, fd, or search_code; '
+	printf '“Hread errors” count failed executions of the routed private Hread wrapper. '
 	printf '“Wrapper errors” are the `apply_patch verification failed` envelope entries in Hpatch agent stderr; '
 	printf 'they are reported separately because they are not equivalent to Hpatch command errors.\n'
 } >"$temporary"
 
 mv -f -- "$temporary" "$summary"
 printf 'Benchmark summary: %s\n' "$summary"
-

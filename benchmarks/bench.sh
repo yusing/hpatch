@@ -833,7 +833,7 @@ run_pair() {
 	return "$pair_status"
 }
 
-mkdir -p "$run_dir/work" "$run_dir/hpatch-config" "$instruction_dir"
+mkdir -p "$run_dir/work" "$run_dir/hpatch-config" "$run_dir/hpatch-runtime" "$instruction_dir"
 : >"$results"
 
 "${compose[@]}" build control
