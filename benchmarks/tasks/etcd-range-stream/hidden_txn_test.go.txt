@@ -1,0 +1,64 @@
+// Copyright 2026 The etcd Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package txn
+
+import (
+	"testing"
+
+	pb "go.etcd.io/etcd/api/v3/etcdserverpb"
+)
+
+func TestHPatchBenchmarkRangeStreamOrderingHelpers(t *testing.T) {
+	tests := []struct {
+		name   string
+		target pb.RangeRequest_SortTarget
+		order  pb.RangeRequest_SortOrder
+		want   bool
+	}{
+		{name: "unspecified", target: pb.RangeRequest_KEY, order: pb.RangeRequest_NONE, want: true},
+		{name: "key ascending", target: pb.RangeRequest_KEY, order: pb.RangeRequest_ASCEND, want: true},
+		{name: "key descending", target: pb.RangeRequest_KEY, order: pb.RangeRequest_DESCEND, want: false},
+		{name: "value unspecified order", target: pb.RangeRequest_VALUE, order: pb.RangeRequest_NONE, want: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := IsDefaultOrdering(test.target, test.order); got != test.want {
+				t.Fatalf("IsDefaultOrdering(%v, %v) = %t, want %t", test.target, test.order, got, test.want)
+			}
+		})
+	}
+}
+
+func TestHPatchBenchmarkRangeStreamRevisionFilters(t *testing.T) {
+	tests := []struct {
+		name string
+		req  *pb.RangeRequest
+		want bool
+	}{
+		{name: "none", req: &pb.RangeRequest{}, want: false},
+		{name: "minimum modification", req: &pb.RangeRequest{MinModRevision: 1}, want: true},
+		{name: "maximum modification", req: &pb.RangeRequest{MaxModRevision: 1}, want: true},
+		{name: "minimum creation", req: &pb.RangeRequest{MinCreateRevision: 1}, want: true},
+		{name: "maximum creation", req: &pb.RangeRequest{MaxCreateRevision: 1}, want: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := HasRevisionFilters(test.req); got != test.want {
+				t.Fatalf("HasRevisionFilters(%s) = %t, want %t", test.name, got, test.want)
+			}
+		})
+	}
+}
+

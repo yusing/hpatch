@@ -1,0 +1,271 @@
+// Copyright 2026 The etcd Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package etcdserver
+
+import (
+	"bytes"
+	"context"
+	"errors"
+	"fmt"
+	"sync"
+	"testing"
+
+	"go.uber.org/zap/zaptest"
+	"google.golang.org/grpc/metadata"
+
+	pb "go.etcd.io/etcd/api/v3/etcdserverpb"
+	"go.etcd.io/etcd/server/v3/auth"
+	"go.etcd.io/etcd/server/v3/config"
+	"go.etcd.io/etcd/server/v3/lease"
+	betesting "go.etcd.io/etcd/server/v3/storage/backend/testing"
+	"go.etcd.io/etcd/server/v3/storage/mvcc"
+	"go.etcd.io/etcd/server/v3/storage/schema"
+)
+type hpatchBenchmarkRangeStream struct {
+	ctx       context.Context
+	responses []*pb.RangeStreamResponse
+	sendErr   error
+	onSend   func(int)
+}
+
+func (s *hpatchBenchmarkRangeStream) SetHeader(metadata.MD) error  { return nil }
+func (s *hpatchBenchmarkRangeStream) SendHeader(metadata.MD) error { return nil }
+func (s *hpatchBenchmarkRangeStream) SetTrailer(metadata.MD)       {}
+func (s *hpatchBenchmarkRangeStream) Context() context.Context     { return s.ctx }
+func (s *hpatchBenchmarkRangeStream) SendMsg(any) error             { return nil }
+func (s *hpatchBenchmarkRangeStream) RecvMsg(any) error             { return nil }
+
+func (s *hpatchBenchmarkRangeStream) Send(response *pb.RangeStreamResponse) error {
+	if s.onSend != nil {
+		s.onSend(len(s.responses))
+	}
+	if s.sendErr != nil {
+		return s.sendErr
+	}
+	s.responses = append(s.responses, response)
+	return nil
+}
+
+func newHPatchBenchmarkServer(t *testing.T, value []byte) *EtcdServer {
+	t.Helper()
+	backend, _ := betesting.NewDefaultTmpBackend(t)
+	store := mvcc.New(zaptest.NewLogger(t), backend, &lease.FakeLessor{}, mvcc.StoreConfig{})
+	authBackend, _ := betesting.NewDefaultTmpBackend(t)
+	tokenProvider, err := auth.NewTokenProvider(zaptest.NewLogger(t), "", nil, 0)
+	if err != nil {
+		t.Fatalf("NewTokenProvider returned error: %v", err)
+	}
+	authStore := auth.NewAuthStore(zaptest.NewLogger(t), schema.NewAuthBackend(zaptest.NewLogger(t), authBackend), tokenProvider, 0)
+
+	t.Cleanup(func() { _ = store.Close(); _ = authStore.Close() })
+	for i := 0; i < 20; i++ {
+		key := []byte(fmt.Sprintf("k%02d", i))
+		store.Put(key, value, lease.NoLease)
+	}
+	server := &EtcdServer{
+		Cfg:       config.ServerConfig{MaxRequestBytes: 1 << 20},
+		kv:        store,
+		authStore: authStore,
+		lgMu:      new(sync.RWMutex),
+		lg:        zaptest.NewLogger(t),
+	}
+	return server
+}
+
+func TestHPatchBenchmarkPublicRangeStreamHandler(t *testing.T) {
+	server := newHPatchBenchmarkServer(t, []byte("value"))
+	stream := &hpatchBenchmarkRangeStream{ctx: t.Context()}
+	err := server.RangeStream(&pb.RangeRequest{
+		Key: []byte("k00"), RangeEnd: []byte("l"), Serializable: true,
+	}, stream)
+	if err != nil {
+		t.Fatalf("public RangeStream returned error: %v", err)
+	}
+	if len(stream.responses) < 2 {
+		t.Fatalf("public RangeStream emitted %d chunks, want multiple chunks", len(stream.responses))
+	}
+
+	if _, err := server.authStore.UserAdd(&pb.AuthUserAddRequest{Name: "root", Password: "root"}); err != nil {
+		t.Fatalf("UserAdd returned error: %v", err)
+	}
+	if _, err := server.authStore.RoleAdd(&pb.AuthRoleAddRequest{Name: "root"}); err != nil {
+		t.Fatalf("RoleAdd returned error: %v", err)
+	}
+	if _, err := server.authStore.UserGrantRole(&pb.AuthUserGrantRoleRequest{User: "root", Role: "root"}); err != nil {
+		t.Fatalf("UserGrantRole returned error: %v", err)
+	}
+	if err := server.authStore.AuthEnable(); err != nil {
+		t.Fatalf("AuthEnable returned error: %v", err)
+	}
+	denied := &hpatchBenchmarkRangeStream{ctx: t.Context()}
+	if err := server.RangeStream(&pb.RangeRequest{
+		Key: []byte("k00"), RangeEnd: []byte("l"), Serializable: true,
+	}, denied); err == nil {
+		t.Fatal("public RangeStream succeeded after authentication was enabled without credentials")
+	}
+}
+
+func TestHPatchBenchmarkAdjustChunkLimit(t *testing.T) {
+	tests := []struct {
+		name       string
+		lastLimit  int64
+		lastSize   int
+		targetSize int
+		want       int64
+	}{
+		{name: "double undersized chunk", lastLimit: 10, lastSize: 100, targetSize: 1000, want: 20},
+		{name: "halve oversized chunk", lastLimit: 10, lastSize: 3000, targetSize: 1000, want: 5},
+		{name: "never return zero", lastLimit: 1, lastSize: 3000, targetSize: 1000, want: 1},
+		{name: "keep near target", lastLimit: 10, lastSize: 1000, targetSize: 1000, want: 10},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := adjustChunkLimit(test.lastLimit, test.lastSize, test.targetSize); got != test.want {
+				t.Fatalf("adjustChunkLimit(%d, %d, %d) = %d, want %d", test.lastLimit, test.lastSize, test.targetSize, got, test.want)
+			}
+		})
+	}
+}
+
+func TestHPatchBenchmarkRangeStreamDataAndPinning(t *testing.T) {
+	server := newHPatchBenchmarkServer(t, []byte("value"))
+	initialRevision := server.KV().Rev()
+	stream := &hpatchBenchmarkRangeStream{ctx: t.Context()}
+	stream.onSend = func(index int) {
+		if index == 0 {
+			server.KV().Put([]byte("k99"), []byte("late"), lease.NoLease)
+		}
+	}
+
+	err := server.rangeStream(t.Context(), &pb.RangeRequest{Key: []byte("k00"), RangeEnd: []byte("l")}, stream)
+	if err != nil {
+		t.Fatalf("rangeStream returned error: %v", err)
+	}
+	if len(stream.responses) < 2 {
+		t.Fatalf("rangeStream emitted %d chunk(s), want multiple chunks", len(stream.responses))
+	}
+
+	var keys []string
+	for _, chunk := range stream.responses {
+		for _, kv := range chunk.RangeResponse.Kvs {
+			keys = append(keys, string(kv.Key))
+		}
+	}
+	if len(keys) != 20 {
+		t.Fatalf("stream returned %d keys, want 20", len(keys))
+	}
+	for i, key := range keys {
+		want := fmt.Sprintf("k%02d", i)
+		if key != want {
+			t.Fatalf("key[%d] = %q, want %q", i, key, want)
+		}
+	}
+	final := stream.responses[len(stream.responses)-1].RangeResponse
+	if final.Count != 20 || final.More {
+		t.Fatalf("final response count/more = %d/%t, want 20/false", final.Count, final.More)
+	}
+	if final.Header == nil || final.Header.Revision != initialRevision {
+		t.Fatalf("final response revision = %v, want %d", final.Header, initialRevision)
+	}
+}
+
+func TestHPatchBenchmarkRangeStreamExplicitRevision(t *testing.T) {
+	server := newHPatchBenchmarkServer(t, []byte("value"))
+	pinnedRevision := server.KV().Rev()
+	stream := &hpatchBenchmarkRangeStream{ctx: t.Context()}
+	stream.onSend = func(index int) {
+		if index == 0 {
+			server.KV().Put([]byte("k99"), []byte("late"), lease.NoLease)
+		}
+	}
+
+	err := server.rangeStream(t.Context(), &pb.RangeRequest{
+		Key: []byte("k00"), RangeEnd: []byte("l"), Revision: pinnedRevision,
+	}, stream)
+	if err != nil {
+		t.Fatalf("explicit-revision rangeStream returned error: %v", err)
+	}
+	var keys int
+	for _, chunk := range stream.responses {
+		keys += len(chunk.RangeResponse.Kvs)
+	}
+	if keys != 20 {
+		t.Fatalf("explicit-revision stream returned %d keys, want 20", keys)
+	}
+	final := stream.responses[len(stream.responses)-1].RangeResponse
+	if final.Header == nil || final.Header.Revision != pinnedRevision {
+		t.Fatalf("explicit-revision response revision = %v, want %d", final.Header, pinnedRevision)
+	}
+}
+
+func TestHPatchBenchmarkRangeStreamLargeValues(t *testing.T) {
+	server := newHPatchBenchmarkServer(t, bytes.Repeat([]byte("x"), 4096))
+	server.Cfg.MaxRequestBytes = 1024
+	stream := &hpatchBenchmarkRangeStream{ctx: t.Context()}
+
+	err := server.rangeStream(t.Context(), &pb.RangeRequest{Key: []byte("k00"), RangeEnd: []byte("l")}, stream)
+	if err != nil {
+		t.Fatalf("large-value rangeStream returned error: %v", err)
+	}
+	var keys int
+	for _, chunk := range stream.responses {
+		keys += len(chunk.RangeResponse.Kvs)
+	}
+	if keys != 20 {
+		t.Fatalf("large-value stream returned %d keys, want 20", keys)
+	}
+	if len(stream.responses) < 2 {
+		t.Fatalf("large-value stream emitted %d chunks, want adaptation", len(stream.responses))
+	}
+}
+
+func TestHPatchBenchmarkRangeStreamCountOnlyAndLimit(t *testing.T) {
+	server := newHPatchBenchmarkServer(t, []byte("value"))
+
+	countStream := &hpatchBenchmarkRangeStream{ctx: t.Context()}
+	err := server.rangeStream(t.Context(), &pb.RangeRequest{
+		Key: []byte("k00"), RangeEnd: []byte("l"), CountOnly: true,
+	}, countStream)
+	if err != nil {
+		t.Fatalf("CountOnly rangeStream returned error: %v", err)
+	}
+	if len(countStream.responses) != 1 || countStream.responses[0].RangeResponse.Count != 20 {
+		t.Fatalf("CountOnly response = %#v, want one response with count 20", countStream.responses)
+	}
+	if len(countStream.responses[0].RangeResponse.Kvs) != 0 {
+		t.Fatalf("CountOnly returned %d KVs", len(countStream.responses[0].RangeResponse.Kvs))
+	}
+
+	limitedStream := &hpatchBenchmarkRangeStream{ctx: t.Context()}
+	err = server.rangeStream(t.Context(), &pb.RangeRequest{
+		Key: []byte("k00"), RangeEnd: []byte("l"), Limit: 5,
+	}, limitedStream)
+	if err != nil {
+		t.Fatalf("limited rangeStream returned error: %v", err)
+	}
+	final := limitedStream.responses[len(limitedStream.responses)-1].RangeResponse
+	if len(final.Kvs) != 5 || final.Count != 20 || !final.More {
+		t.Fatalf("limited final response = %d KVs, count %d, more %t; want 5/20/true", len(final.Kvs), final.Count, final.More)
+	}
+}
+
+func TestHPatchBenchmarkRangeStreamPropagatesSendError(t *testing.T) {
+	server := newHPatchBenchmarkServer(t, []byte("value"))
+	wantErr := errors.New("send failed")
+	stream := &hpatchBenchmarkRangeStream{ctx: t.Context(), sendErr: wantErr}
+	if err := server.rangeStream(t.Context(), &pb.RangeRequest{Key: []byte("k00"), RangeEnd: []byte("l")}, stream); !errors.Is(err, wantErr) {
+		t.Fatalf("rangeStream error = %v, want %v", err, wantErr)
+	}
+}
