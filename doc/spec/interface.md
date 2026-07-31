@@ -58,26 +58,48 @@ In hpatch router mode, the agent receives a read-only `hread` custom tool beside
 `hpatch`. Its grammar-constrained free-form input is a JSON string containing `PATH`,
 optionally followed by a space and `START:END` for an inclusive bounded logical-line
 range, for example `"editor.go" 40:80`. Line endpoints are positive one-based base-ten
-integers, must be ordered, and must both exist; invalid syntax, a missing endpoint, or an
-out-of-bounds range fails rather than clamping.
+integers and must be ordered. The start line must exist. An end line past EOF returns
+through the final line, while invalid syntax, a missing endpoint, a reversed range, or a
+start line past EOF fails.
 
-The reader resolves relative and absolute paths through the same pinned root-scoped
-workspace boundary used by hpatch, accepts only regular UTF-8 files, and never mutates
-the workspace. It emits each requested logical line as `HHHH: TEXT`. `TEXT` is exact
-logical-line content without its terminator. `HHHH` is lowercase hexadecimal for the
-first two bytes of SHA-256 over that exact content. A trailing file terminator does not
-create an additional empty line.
+The router requires a Code Mode `exec` carrier before forwarding an hpatch-enabled
+request. It creates or reuses one process-scoped executable shell wrapper named `hread`
+and invokes it by absolute path in the translated nested exec command, followed by the
+complete grammar input as one shell-quoted argument. The carrier sets neither an
+environment override nor a working directory. A direct `apply_patch` carrier or
+wrapper-creation failure rejects the rewrite before forwarding.
+
+The Codex executor must see the wrapper directory and the router executable at the same
+absolute paths as the router process. A deployment that isolates their filesystems must
+provide those runtime mounts separately from the user workspace.
+
+The wrapper launches a private worker in Codex's exec context. Relative paths resolve
+from the exec process's current directory; absolute paths retain their ordinary
+filesystem meaning. Codex, not the router or hread, owns the sandbox and filesystem
+permissions. The worker accepts only regular UTF-8 files and never mutates them. It emits
+each requested logical line as
+`HHHH: TEXT`. `TEXT` is exact logical-line content without its terminator. `HHHH` is
+lowercase hexadecimal for the first two bytes of SHA-256 over that exact content. A
+trailing file terminator does not create an additional empty line. The router does not
+execute the read, duplicate its filesystem rules, or encode its output in an
+`apply_patch`-shaped carrier.
 
 Acceptance:
 
 1. Whole-file and bounded reads emit exact UTF-8 content in source order with deterministic
    four-digit hashes that can be copied directly into routed selector operands.
-2. A missing, non-regular, non-UTF-8, escaping, malformed-range, reversed-range, or
-   out-of-bounds input returns a read diagnostic without mutation.
+2. A missing, inaccessible, non-regular, non-UTF-8, malformed-range, reversed-range, or
+   start-past-EOF input returns a read diagnostic without mutation; an end past EOF
+   succeeds through the final line.
 3. The router restores a replayed `hread` call to the original custom-tool shape just as
    it restores routed hpatch calls, without treating reads as editable correction history.
 4. Reading and whole-file UTF-8 validation use bounded streaming storage, observe
    cancellation during processing, and reject before formatted output exceeds 16 MiB.
+5. Success returns the worker's exact stdout through a successful Code Mode exec call;
+   read failures return concise stderr and nonzero shell status without incrementing
+   hpatch edit-failure counters.
+6. Turns and retained-session eviction do not create or own wrapper state. Router
+   shutdown removes the process wrapper.
 
 ## REQ-METRICS-001 — Persistent token, command, and feature metrics
 
@@ -121,6 +143,11 @@ and contributes zero report-input tokens. A partial or failed report write does 
 as a complete emitted report. Other tool results, provider-hidden protocol and reasoning
 tokens, assistant commentary, and server-generated identifiers remain excluded. These
 are reproducible estimates rather than authoritative API usage.
+
+Routed hread results do not add a synthetic gain estimate and do not subtract a
+hypothetical raw `cat` result. The router's end-to-end Responses and per-session usage
+totals are authoritative for model input consumed after the exact exec result is
+returned.
 
 Classification is persisted only after the invocation's outcome is known. Translate mode
 records a paired effective estimate after its complete patch reaches stdout; normal mode
@@ -689,3 +716,9 @@ clipboard operations, `rsel` for multiline regions, and forward multi-selection
 its compact correction syntax and correction-chain rules to tool help. Host-specific
 base-prompt overrides may steer tool choice without duplicating the full editing language;
 complete semantics remain in top-level help and this interface contract.
+
+Tool help directs agents to the smallest coherent batch whose selectors are independently
+verified. It permits batching certain independent edits, isolates uncertain or
+coordinate-dependent work, preserves atomicity within every submitted script, and
+prefers indexed correction operations after rejection; it does not require unrestricted
+cross-file batching.

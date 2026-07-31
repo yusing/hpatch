@@ -39,6 +39,14 @@ func TestReadHashLinesWholeFileAndRange(t *testing.T) {
 	if want := "beta\r\ngamma"; detailed.CatOutput != want {
 		t.Fatalf("cat baseline = %q, want %q", detailed.CatOutput, want)
 	}
+
+	clamped, err := ReadHashLinesForHost(t.Context(), workspace, `"path with spaces.txt" 2:999`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if clamped != detailed {
+		t.Fatalf("end-past-EOF read = %#v, want %#v", clamped, detailed)
+	}
 }
 
 func TestReadHashLinesRejectsInvalidInputAndBounds(t *testing.T) {
@@ -56,7 +64,7 @@ func TestReadHashLinesRejectsInvalidInputAndBounds(t *testing.T) {
 		`""`,
 		`"file.txt" 0:1`,
 		`"file.txt" 2:1`,
-		`"file.txt" 1:3`,
+		`"file.txt" 3:3`,
 		`"file.txt" 1:1 trailing`,
 	} {
 		t.Run(input, func(t *testing.T) {

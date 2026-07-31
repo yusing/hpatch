@@ -147,7 +147,7 @@ func TestCodexCacheAffinityE2E(t *testing.T) {
 		10*time.Minute,
 		newProviderClient(codexBaseURL, httpClient),
 		newDiagnostics(io.Discard),
-		newHPatchProxy(translator),
+		newManagedHPatchProxy(t, translator),
 		metrics,
 		&requestSequence,
 	)

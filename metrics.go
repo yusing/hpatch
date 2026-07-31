@@ -30,8 +30,6 @@ const (
 	metricsFileSize         = 2 * metricsSlotSize
 	metricsChecksumOffset   = 2400
 	metricsDiagnosticOffset = 2384
-	metricsCatInputOffset   = 2392
-	metricsHReadInputOffset = 88
 
 	commandCount          = 12
 	metricsLockRetryDelay = 10 * time.Millisecond
@@ -115,8 +113,6 @@ type metrics struct {
 	FailedApplyPatchTokens  uint64
 	ReportInputTokens       uint64
 	DiagnosticInputTokens   uint64
-	HReadInputTokens        uint64
-	CatInputTokens          uint64
 
 	// Sessions counts distinct agent sessions that carried the routed definition
 	// change. DefinitionRequests counts every request carrying that context.
@@ -248,9 +244,6 @@ func (m *metrics) add(entry metrics) error {
 		{&m.FailedApplyPatchTokens, entry.FailedApplyPatchTokens},
 		{&m.ReportInputTokens, entry.ReportInputTokens},
 		{&m.DiagnosticInputTokens, entry.DiagnosticInputTokens},
-		{&m.HReadInputTokens, entry.HReadInputTokens},
-		{&m.CatInputTokens, entry.CatInputTokens},
-
 		{&m.Sessions, entry.Sessions},
 		{&m.DefinitionRequests, entry.DefinitionRequests},
 		{&m.DefinitionInputTokens, entry.DefinitionInputTokens},
@@ -507,8 +500,6 @@ func encodeMetricsSlot(value metrics, generation uint64) [metricsSlotSize]byte {
 		}
 	}
 	binary.LittleEndian.PutUint64(encoded[metricsDiagnosticOffset:metricsDiagnosticOffset+8], value.DiagnosticInputTokens)
-	binary.LittleEndian.PutUint64(encoded[metricsCatInputOffset:metricsCatInputOffset+8], value.CatInputTokens)
-	binary.LittleEndian.PutUint64(encoded[metricsHReadInputOffset:metricsHReadInputOffset+8], value.HReadInputTokens)
 
 	checksum := sha256.Sum256(encoded[:metricsChecksumOffset])
 	copy(encoded[metricsChecksumOffset:], checksum[:])
@@ -543,8 +534,6 @@ func decodeMetricsSlot(encoded [metricsSlotSize]byte) (metrics, uint64, bool) {
 		FailedApplyPatchTokens:       binary.LittleEndian.Uint64(encoded[72:80]),
 		DefinitionRequests:           binary.LittleEndian.Uint64(encoded[80:88]),
 		DiagnosticInputTokens:        binary.LittleEndian.Uint64(encoded[metricsDiagnosticOffset : metricsDiagnosticOffset+8]),
-		HReadInputTokens:             binary.LittleEndian.Uint64(encoded[metricsHReadInputOffset : metricsHReadInputOffset+8]),
-		CatInputTokens:               binary.LittleEndian.Uint64(encoded[metricsCatInputOffset : metricsCatInputOffset+8]),
 	}
 	for index := range commandCount {
 		value.Commands[index] = getCommandMetric(encoded[:], 96+index*16)
@@ -634,10 +623,8 @@ type GainMetrics struct {
 	DiagnosticInputTokens        uint64 `json:"diagnostic_input_tokens"`
 	DefinitionInputTokens        uint64 `json:"definition_input_tokens"`
 	RemovedDefinitionInputTokens uint64 `json:"removed_definition_input_tokens"`
-	HReadInputTokens             uint64 `json:"hread_input_tokens"`
-	CatInputTokens               uint64 `json:"cat_input_tokens"`
 
-	// NetAddedInput is measured additions minus the equivalent cat results and removed definition credit.
+	// NetAddedInput is measured additions minus the removed definition credit.
 	// It is a decimal string so a definition credit can make the net negative.
 	NetAddedInput      string `json:"net_added_input"`
 	Sessions           uint64 `json:"sessions"`
@@ -669,11 +656,10 @@ func LoadGainMetrics(dataDirectory string) (GainMetrics, error) {
 // that need structured fields (dashboard JSON) instead of terminal text.
 func (m metrics) gainMetrics() GainMetrics {
 	added := new(big.Int).SetUint64(m.ReportInputTokens)
-	for _, count := range []uint64{m.DiagnosticInputTokens, m.DefinitionInputTokens, m.HReadInputTokens} {
+	for _, count := range []uint64{m.DiagnosticInputTokens, m.DefinitionInputTokens} {
 		added.Add(added, new(big.Int).SetUint64(count))
 	}
 	removed := new(big.Int).SetUint64(m.RemovedDefinitionInputTokens)
-	removed.Add(removed, new(big.Int).SetUint64(m.CatInputTokens))
 	net := new(big.Int).Sub(added, removed)
 
 	commands := make([]NamedCommandMetric, 0, commandCount)
@@ -728,8 +714,6 @@ func (m metrics) gainMetrics() GainMetrics {
 		DiagnosticInputTokens:        m.DiagnosticInputTokens,
 		DefinitionInputTokens:        m.DefinitionInputTokens,
 		RemovedDefinitionInputTokens: m.RemovedDefinitionInputTokens,
-		HReadInputTokens:             m.HReadInputTokens,
-		CatInputTokens:               m.CatInputTokens,
 
 		NetAddedInput:      net.String(),
 		Sessions:           m.Sessions,
@@ -788,11 +772,10 @@ func writeOutputGainTable(report *strings.Builder, m metrics) {
 
 func writeInputGainTable(report *strings.Builder, m metrics, width int) {
 	added := new(big.Int).SetUint64(m.ReportInputTokens)
-	for _, count := range []uint64{m.DiagnosticInputTokens, m.DefinitionInputTokens, m.HReadInputTokens} {
+	for _, count := range []uint64{m.DiagnosticInputTokens, m.DefinitionInputTokens} {
 		added.Add(added, new(big.Int).SetUint64(count))
 	}
 	removed := new(big.Int).SetUint64(m.RemovedDefinitionInputTokens)
-	removed.Add(removed, new(big.Int).SetUint64(m.CatInputTokens))
 
 	net := new(big.Int).Sub(new(big.Int).Set(added), removed)
 
@@ -804,22 +787,13 @@ func writeInputGainTable(report *strings.Builder, m metrics, width int) {
 	writeWrappedTable(report, width, []string{"source", "tokens", "description"}, [][]string{
 		{"state reports", strconv.FormatUint(m.ReportInputTokens, 10), "final state returned after successful calls"},
 		{"failure diagnostics", strconv.FormatUint(m.DiagnosticInputTokens, 10), "errors and repair context returned after failed calls"},
-		{"hread results", strconv.FormatUint(m.HReadInputTokens, 10), "hashline-formatted file content returned by hread"},
-		{"equivalent cat results", negativeCount(m.CatInputTokens), "raw file content displaced by hread"},
 		{"hpatch definition installed", strconv.FormatUint(m.DefinitionInputTokens, 10), "hpatch and hread tool definitions added by the router"},
 
 		{"apply_patch definition removed", removedText, "exact Code Mode section removed by the router"},
-		{"net added input", net.String(), "measured additions minus equivalent cat results and the removed definition"},
+		{"net added input", net.String(), "measured additions minus the removed definition"},
 	})
 	writeWrappedText(report, width, fmt.Sprintf("definition routing covers %d accounted request(s) in %d distinct session(s) (%s).", m.DefinitionRequests, m.Sessions, describeDefinitionSources(m)))
 	report.WriteByte('\n')
-}
-
-func negativeCount(value uint64) string {
-	if value == 0 {
-		return "0"
-	}
-	return "-" + strconv.FormatUint(value, 10)
 }
 
 const gainTableGap = 2

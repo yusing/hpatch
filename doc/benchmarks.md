@@ -37,6 +37,17 @@ Codex authentication at $CODEX_AUTH_PATH or $CODEX_HOME/auth.json
 the local etcd clone at benchmarks/repos/etcd
 ```
 
+The runner creates `hpatch-runtime` inside the retained run directory, sets it as the
+Hpatch router's temporary directory, and mounts it at the same absolute path in the
+disposable Codex container. This exposes the private Hread wrapper to the client
+executor without placing it in the task workspace.
+
+The generated per-repetition table counts failed search command executions separately
+for the control and Hpatch arms and counts failed routed Hread executions for the Hpatch
+arm. Search commands are `rg`, `grep`, `find`, `fd`, and `search_code` found in
+completed Codex command items; Hread errors are failed executions of the private
+process wrapper.
+
 ## Procedure
 
 Commands are included in a node whenever that stage executes a process.

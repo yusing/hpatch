@@ -20,8 +20,6 @@ type hpatchMetricInputs struct {
 	patch         string
 	diagnostic    string
 	sessionID     string
-	hreadResult   string
-	catResult     string
 
 	definition         string
 	baselineDefinition string
@@ -43,12 +41,6 @@ func calculateHPatchMetricRecord(inputs hpatchMetricInputs) (hpatchMetricRecord,
 		return hpatchMetricRecord{}, fmt.Errorf("load GPT-5 tokenizer: %w", err)
 	}
 	record := hpatchMetricRecord{Invocation: inputs.invocation}
-	if record.HReadInputTokens, err = countHPatchMetricText(codec, inputs.hreadResult, "hread result input"); err != nil {
-		return hpatchMetricRecord{}, err
-	}
-	if record.CatInputTokens, err = countHPatchMetricText(codec, inputs.catResult, "equivalent cat result input"); err != nil {
-		return hpatchMetricRecord{}, err
-	}
 	if !inputs.overheadOnly {
 		if inputs.successful {
 			if record.HPatchTokens, err = countHPatchMetricText(codec, hpatchMetricPayload(inputs.emittedScript), "hpatch output"); err != nil {

@@ -34,6 +34,9 @@ const (
 
 	maxHPatchPendingCalls    = 128
 	maxHPatchDiagnosticBytes = 1 << 20
+
+	hreadWrapperName   = "hread"
+	hreadWrapperPrefix = "hpatch-hread-"
 )
 
 var (
@@ -184,6 +187,8 @@ type hpatchProxy struct {
 	activeSessions  map[string]int
 	historyBytes    int
 	sessionSequence uint64
+	closed          bool
+	hreadWrapper    string
 }
 
 func newHPatchProxy(translator hpatchTranslator) *hpatchProxy {
@@ -200,13 +205,17 @@ func newHPatchProxy(translator hpatchTranslator) *hpatchProxy {
 	}
 }
 
-func (p *hpatchProxy) activateSession(sessionID string) {
+func (p *hpatchProxy) activateSession(sessionID string) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	if p.closed {
+		return errors.New("hpatch response proxy is closed")
+	}
 	p.activeSessions[sessionID]++
 	if session := p.sessions[sessionID]; session != nil {
 		p.touchSession(session)
 	}
+	return nil
 }
 
 func (p *hpatchProxy) deactivateSession(sessionID string) {
@@ -217,6 +226,102 @@ func (p *hpatchProxy) deactivateSession(sessionID string) {
 		return
 	}
 	p.activeSessions[sessionID]--
+}
+
+func (p *hpatchProxy) Close() error {
+	if p == nil {
+		return nil
+	}
+	p.mu.Lock()
+	p.closed = true
+	wrapper := p.hreadWrapper
+	clear(p.sessions)
+	clear(p.activeSessions)
+	p.historyBytes = 0
+	p.mu.Unlock()
+
+	if err := cleanupHReadWrapper(wrapper); err != nil {
+		return err
+	}
+	p.mu.Lock()
+	if p.hreadWrapper == wrapper {
+		p.hreadWrapper = ""
+	}
+	p.mu.Unlock()
+	return nil
+}
+
+func (p *hpatchProxy) ensureHReadWrapper() (string, error) {
+	p.mu.RLock()
+	if p.closed {
+		p.mu.RUnlock()
+		return "", errors.New("hpatch response proxy is closed")
+	}
+	existing := p.hreadWrapper
+	p.mu.RUnlock()
+	if existing != "" {
+		return existing, nil
+	}
+
+	candidate, err := createHReadWrapper()
+	if err != nil {
+		return "", err
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.closed {
+		return "", errors.Join(errors.New("hpatch response proxy is closed"), cleanupHReadWrapper(candidate))
+	}
+	if p.hreadWrapper != "" {
+		return p.hreadWrapper, cleanupHReadWrapper(candidate)
+	}
+	p.hreadWrapper = candidate
+	return candidate, nil
+}
+
+func createHReadWrapper() (wrapperDirectory string, err error) {
+	executable, err := os.Executable()
+	if err != nil {
+		return "", fmt.Errorf("locate hread worker executable: %w", err)
+	}
+	return createHReadWrapperForExecutable(executable)
+}
+
+func createHReadWrapperForExecutable(executable string) (wrapperDirectory string, err error) {
+	directory, err := os.MkdirTemp("", hreadWrapperPrefix)
+	if err != nil {
+		return "", fmt.Errorf("create hread wrapper directory: %w", err)
+	}
+	defer func() {
+		if err != nil {
+			err = errors.Join(err, cleanupHReadWrapper(directory))
+		}
+	}()
+	script := "#!/bin/sh\n" +
+		hreadWorkerEnvironment + "=1\n" +
+		"export " + hreadWorkerEnvironment + "\n" +
+		"exec " + shellSingleQuote(executable) + " \"$@\"\n"
+	if err := os.WriteFile(filepath.Join(directory, hreadWrapperName), []byte(script), 0o700); err != nil {
+		return "", fmt.Errorf("write hread wrapper: %w", err)
+	}
+	return directory, nil
+}
+
+func cleanupHReadWrapper(directory string) error {
+	if directory == "" {
+		return nil
+	}
+	if filepath.Base(directory) == directory || !strings.HasPrefix(filepath.Base(directory), hreadWrapperPrefix) {
+		return fmt.Errorf("refuse to remove invalid hread wrapper directory %q", directory)
+	}
+	if err := os.RemoveAll(directory); err != nil {
+		return fmt.Errorf("remove hread wrapper directory: %w", err)
+	}
+	return nil
+}
+
+func shellSingleQuote(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
 }
 
 func (p *hpatchProxy) touchSession(session *hpatchHistorySession) {
@@ -288,6 +393,7 @@ type hpatchResponseTransform struct {
 	pending                   map[string]hpatchPendingCall
 	local                     map[string]hpatchHistory
 	workspace                 routingWorkspace
+	hreadWrapperDirectory     string
 
 	installedToolDefinition  string
 	codeModeToolName         string
@@ -413,8 +519,16 @@ func (p *hpatchProxy) prepareRequest(ctx context.Context, request *parsedRespons
 		return nil, errors.New("responses request cannot satisfy the required hpatch rewrite")
 	}
 	historySessionID := workspace.canonical + "\x00" + sessionID
-	p.activateSession(historySessionID)
-	if err := p.restoreInputPrefix(request, historySessionID); err != nil {
+	hreadWrapperDirectory, err := p.ensureHReadWrapper()
+	if err != nil {
+		workspace.close()
+		return nil, fmt.Errorf("initialize hread wrapper: %w", err)
+	}
+	if err := p.activateSession(historySessionID); err != nil {
+		workspace.close()
+		return nil, err
+	}
+	if err := p.restoreInputPrefix(request, historySessionID, hreadWrapperDirectory); err != nil {
 		p.deactivateSession(historySessionID)
 		workspace.close()
 		return nil, err
@@ -433,6 +547,7 @@ func (p *hpatchProxy) prepareRequest(ctx context.Context, request *parsedRespons
 		pending:                   make(map[string]hpatchPendingCall),
 		local:                     make(map[string]hpatchHistory),
 		workspace:                 workspace,
+		hreadWrapperDirectory:     hreadWrapperDirectory,
 
 		installedToolDefinition: string(mustMarshalJSON(installedTools)),
 		codeModeToolName:        codeModeToolName,
@@ -472,6 +587,12 @@ func replaceAdditionalToolsApplyPatch(fields map[string]json.RawMessage, install
 	owner, err := findAdditionalToolsApplyPatch(fields)
 	if err != nil || owner == nil {
 		return "", "", false, err
+	}
+	if owner.direct {
+		return "", "", false, errors.New("responses request has no Code Mode exec carrier required by hread")
+	}
+	if !strings.Contains(owner.strippedDescription, "exec_command(args:") {
+		return "", "", false, errors.New("responses Code Mode carrier does not provide exec_command")
 	}
 	for _, tool := range topTools {
 		if jsonString(tool, "name") == applyPatchToolName {
@@ -573,11 +694,7 @@ func codeModeToolChoiceRestricted(fields map[string]json.RawMessage, codeToolNam
 }
 
 func exposeStandaloneHPatch(fields map[string]json.RawMessage, topTools []map[string]json.RawMessage, owner *additionalToolsApplyPatchOwner, installedTools []map[string]json.RawMessage) error {
-	if owner.direct {
-		owner.tools = slices.Delete(owner.tools, owner.toolIndex, owner.toolIndex+1)
-	} else {
-		owner.tools[owner.toolIndex]["description"] = mustMarshalJSON(owner.strippedDescription)
-	}
+	owner.tools[owner.toolIndex]["description"] = mustMarshalJSON(owner.strippedDescription)
 	encodedAdditionalTools, err := json.Marshal(owner.tools)
 	if err != nil {
 		return fmt.Errorf("encode additional tools: %w", err)
@@ -868,7 +985,7 @@ func (p *hpatchProxy) history(sessionID, callID string) (hpatchHistory, bool) {
 	return history, ok
 }
 
-func (p *hpatchProxy) restoreInputPrefix(request *parsedResponsesRequest, sessionID string) error {
+func (p *hpatchProxy) restoreInputPrefix(request *parsedResponsesRequest, sessionID, hreadWrapperDirectory string) error {
 	raw, ok := request.fields["input"]
 	if !ok {
 		return nil
@@ -898,7 +1015,7 @@ func (p *hpatchProxy) restoreInputPrefix(request *parsedResponsesRequest, sessio
 		if validatedCarriers[callID] {
 			return fmt.Errorf("replayed call %q appears more than once", callID)
 		}
-		if jsonString(item, "input") != history.carrierInput() {
+		if jsonString(item, "input") != history.carrierInput(hreadWrapperDirectory) {
 			return fmt.Errorf("replayed call %q changed translated input", callID)
 		}
 		validatedCarriers[callID] = true
@@ -1072,31 +1189,16 @@ func (t *hpatchResponseTransform) translateHRead(callID, input string, upstreamI
 	if len(input) > maxHPatchScriptBytes {
 		return hpatchHistory{}, fmt.Errorf("hread call %q input exceeds %d bytes", callID, maxHPatchScriptBytes)
 	}
-	if !t.workspace.unchanged() {
-		return hpatchHistory{}, errHPatchWorkspaceChanged
-	}
-	result, readErr := hpatch.ReadHashLinesForHost(t.ctx, hpatch.Workspace{Root: t.workspace.root}, input)
-	if !t.workspace.unchanged() {
-		return hpatchHistory{}, errHPatchWorkspaceChanged
-	}
 	if contextErr := t.ctx.Err(); contextErr != nil {
 		return hpatchHistory{}, contextErr
 	}
-
-	output := result.Output
-	metricInputs := hpatchMetricInputs{}
-	if readErr != nil {
-		if errors.Is(readErr, hpatch.ErrHReadResultTooLarge) {
-			return hpatchHistory{}, fmt.Errorf("%w: %w", errHPatchCapacity, readErr)
-		}
-		output = "hread: " + readErr.Error()
-		metricInputs.hreadResult = output
-		metricInputs.overheadOnly = true
-	} else {
-		metricInputs.hreadResult = result.Output
-		metricInputs.catResult = result.CatOutput
+	if t.codeModeToolName != "exec" && t.codeModeToolName != "functions.exec" {
+		return hpatchHistory{}, errors.New("hread translation requires a Code Mode exec carrier")
 	}
-	if err := t.recordMetrics(metricInputs); err != nil {
+	if t.hreadWrapperDirectory == "" {
+		return hpatchHistory{}, errors.New("hread translation requires a shared wrapper directory")
+	}
+	if err := t.recordMetrics(hpatchMetricInputs{overheadOnly: true}); err != nil {
 		return hpatchHistory{}, err
 	}
 	history := hpatchHistory{
@@ -1104,7 +1206,6 @@ func (t *hpatchResponseTransform) translateHRead(callID, input string, upstreamI
 		script:       input,
 		root:         t.workspace.canonical,
 		carrierName:  t.codeModeToolName,
-		report:       output,
 		upstreamItem: maps.Clone(upstreamItem),
 	}
 	t.recordLocal(callID, &history)
@@ -1131,30 +1232,20 @@ func hpatchDiagnosticExecInput(diagnostic string) string {
 	return "text(" + strconv.Quote(diagnostic) + ");"
 }
 
-func hpatchDiagnosticApplyPatchInput(diagnostic string) string {
-	return "*** Begin Patch\nhpatch translation rejected: " + strconv.Quote(diagnostic) + "\n*** End Patch\n"
-}
-
-func hreadApplyPatchInput(output string) string {
-	return "*** Begin Patch\nhread result: " + strconv.Quote(output) + "\n*** End Patch\n"
-}
-
-func hreadExecInput(output string) string {
-	return "text(" + strconv.Quote(output) + ");"
-}
-
-func (h hpatchHistory) carrierInput() string {
-	if h.toolName == hreadToolName {
-		if h.carrierName == applyPatchToolName {
-			return hreadApplyPatchInput(h.report)
-		}
-		return hreadExecInput(h.report)
+func hreadExecInput(input, wrapperDirectory string) string {
+	command := shellSingleQuote(filepath.Join(wrapperDirectory, hreadWrapperName)) + " " + shellSingleQuote(input)
+	arguments := struct {
+		Command string `json:"cmd"`
+	}{
+		Command: command,
 	}
-	if h.carrierName == applyPatchToolName {
-		if h.translationError != "" {
-			return hpatchDiagnosticApplyPatchInput(h.translationError)
-		}
-		return h.patch
+	return "const result = await tools.exec_command(" + string(mustMarshalJSON(arguments)) + ");\n" +
+		"text(result.output);"
+}
+
+func (h hpatchHistory) carrierInput(hreadWrapperDirectory string) string {
+	if h.toolName == hreadToolName {
+		return hreadExecInput(h.script, hreadWrapperDirectory)
 	}
 	if h.translationError != "" {
 		return hpatchDiagnosticExecInput(h.translationError)
@@ -1318,7 +1409,7 @@ func (t *hpatchResponseTransform) TransformSSE(payload []byte) ([][]byte, error)
 		if err != nil {
 			return nil, err
 		}
-		doneEvent, err := replaceRawField(payload, "input", mustMarshalJSON(history.carrierInput()))
+		doneEvent, err := replaceRawField(payload, "input", mustMarshalJSON(history.carrierInput(t.hreadWrapperDirectory)))
 		if err != nil {
 			return nil, err
 		}
@@ -1472,7 +1563,7 @@ func (t *hpatchResponseTransform) transformOutputItem(item map[string]json.RawMe
 		return false, err
 	}
 	item["name"] = mustMarshalJSON(history.carrierName)
-	item["input"] = mustMarshalJSON(history.carrierInput())
+	item["input"] = mustMarshalJSON(history.carrierInput(t.hreadWrapperDirectory))
 	return true, nil
 }
 

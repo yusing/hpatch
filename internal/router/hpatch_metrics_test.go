@@ -99,32 +99,6 @@ func TestCalculateHPatchMetricRecordUsesEmptyFailureBaseline(t *testing.T) {
 	}
 }
 
-func TestCalculateHPatchMetricRecordCompensatesHReadAgainstCat(t *testing.T) {
-	inputs := hpatchMetricInputs{
-		hreadResult: "8ed3: alpha\nf44e: beta\n",
-		catResult:   "alpha\nbeta\n",
-	}
-	record, err := calculateHPatchMetricRecord(inputs)
-	if err != nil {
-		t.Fatal(err)
-	}
-	codec, err := tokenizer.ForModel(tokenizer.GPT5)
-	if err != nil {
-		t.Fatal(err)
-	}
-	hreadTokens, err := codec.Count(inputs.hreadResult)
-	if err != nil {
-		t.Fatal(err)
-	}
-	catTokens, err := codec.Count(inputs.catResult)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if record.HReadInputTokens != uint64(hreadTokens) || record.CatInputTokens != uint64(catTokens) {
-		t.Fatalf("hread accounting = %+v", record)
-	}
-}
-
 func TestHPatchMetricDefinitionMatchesInstalledGrammarTools(t *testing.T) {
 	var records []hpatchMetricRecord
 	translator := metricsObservingTranslator{
@@ -211,12 +185,9 @@ func TestHPatchMetricPersistenceFailuresDoNotChangeToolResults(t *testing.T) {
 	})
 
 	t.Run("hread call", func(t *testing.T) {
-		transform, _, _, workspace := newHPatchTestTransform(t, translator)
-		if err := os.WriteFile(filepath.Join(workspace, "file.txt"), []byte("alpha\n"), 0o644); err != nil {
-			t.Fatal(err)
-		}
+		transform, _, _, _ := newHPatchTestTransform(t, translator)
 		history, err := transform.translateHRead("call-read", `"file.txt"`, nil)
-		if err != nil || !strings.Contains(history.report, "alpha") {
+		if err != nil || history.carrierInput(transform.hreadWrapperDirectory) != hreadExecInput(`"file.txt"`, transform.hreadWrapperDirectory) {
 			t.Fatalf("history = %+v, error %v", history, err)
 		}
 	})
@@ -285,16 +256,17 @@ func TestHReadOnlyCallClaimsCombinedDefinitionAccountingOnce(t *testing.T) {
 		t.Fatalf("metric records = %d, want 1", len(records))
 	}
 	record := records[0]
-	if record.DefinitionRequests != 1 || record.DefinitionInputTokens == 0 || record.RemovedDefinitionInputTokens == 0 ||
-		record.HReadInputTokens == 0 || record.CatInputTokens == 0 {
+	if record.DefinitionRequests != 1 || record.DefinitionInputTokens == 0 || record.RemovedDefinitionInputTokens == 0 {
 		t.Fatalf("hread-only accounting = %+v", record)
 	}
-	if record.HPatchTokens != 0 || record.ApplyPatchTokens != 0 {
+	if record.HPatchTokens != 0 || record.ApplyPatchTokens != 0 ||
+		record.IneffectiveHPatchTokens != 0 || record.FailedApplyPatchTokens != 0 ||
+		record.ReportInputTokens != 0 || record.DiagnosticInputTokens != 0 {
 		t.Fatalf("hread-only accounting contains patch tokens: %+v", record)
 	}
 }
 
-func TestFailedHReadCountsOnlyVisibleReaderDiagnostic(t *testing.T) {
+func TestHReadTranslationProducesNoSyntheticResultMetrics(t *testing.T) {
 	var records []hpatchMetricRecord
 	translator := metricsObservingTranslator{
 		translate: func(context.Context, routingWorkspace, string) ([]byte, error) {
@@ -317,22 +289,14 @@ func TestFailedHReadCountsOnlyVisibleReaderDiagnostic(t *testing.T) {
 	if len(records) != 1 {
 		t.Fatalf("metric records = %d, want 1", len(records))
 	}
-	codec, err := tokenizer.ForModel(tokenizer.GPT5)
-	if err != nil {
-		t.Fatal(err)
-	}
-	wantTokens, err := codec.Count(history.report)
-	if err != nil {
-		t.Fatal(err)
-	}
 	record := records[0]
-	if record.HReadInputTokens != uint64(wantTokens) || record.CatInputTokens != 0 {
-		t.Fatalf("failed hread accounting = %+v, report %q", record, history.report)
-	}
 	if record.HPatchTokens != 0 || record.ApplyPatchTokens != 0 ||
 		record.IneffectiveHPatchTokens != 0 || record.FailedApplyPatchTokens != 0 ||
-		record.DiagnosticInputTokens != 0 {
-		t.Fatalf("failed hread accounting contains patch tokens: %+v", record)
+		record.ReportInputTokens != 0 || record.DiagnosticInputTokens != 0 {
+		t.Fatalf("hread accounting contains synthetic result tokens: %+v", record)
+	}
+	if strings.Contains(history.carrierInput(transform.hreadWrapperDirectory), "missing.txt:") {
+		t.Fatalf("router fabricated a reader diagnostic: %q", history.carrierInput(transform.hreadWrapperDirectory))
 	}
 }
 

@@ -35,7 +35,7 @@ flowchart LR
     A --> D
 ```
 
-The patch is not eliminated: the router generates it after inference. Savings are the difference between the two model-output payload estimates shown above. State reports, rejection diagnostics, and the net cost of installing the hpatch tool definition while removing the Code Mode `apply_patch` section are tracked separately as input overhead. These are reproducible GPT-5 token estimates, not provider billing totals.
+The patch is not eliminated: the router generates it after inference. Savings are the difference between the two model-output payload estimates shown above. State reports, rejection diagnostics, and the net cost of installing the hpatch and hread tool definitions while removing the Code Mode `apply_patch` section are tracked separately as input overhead. Hread results are not compared with a hypothetical `cat`; the dashboard's end-to-end Responses and session usage totals are authoritative for their model-input cost. Gain values remain reproducible GPT-5 estimates rather than provider billing totals.
 
 For an 11-line function replacement, hpatch asks the model for this:
 
@@ -102,9 +102,9 @@ The router also supplies `functions.hpatch` to the provider with a [Lark grammar
 
 ## Codex router (systemd user service)
 
-The router listens on HTTP, rewrites Responses traffic so Codex calls `functions.hpatch`, evaluates scripts against the workspace declared in `x-codex-turn-metadata`, and returns the translated `apply_patch` carrier to Codex. You see a real diff in the UI rather than a silent file rewrite. Background Responses requests are rejected before forwarding because the router does not expose the retrieval and cancellation endpoints required to complete them.
+The router listens on HTTP, rewrites Responses traffic so Codex calls `functions.hpatch` or `functions.hread`, evaluates scripts against the workspace declared in `x-codex-turn-metadata`, and returns client-executed Code Mode carriers. Hpatch produces a real `apply_patch` call, so you see the normal diff rather than a silent file rewrite. Hread resolves through one process-scoped temporary wrapper invoked by absolute path in the nested exec command; the carrier does not override the exec environment or working directory. The worker reads from Codex's exec working directory under Codex's sandbox and permissions rather than receiving a router workspace capability. When the router and Codex executor have isolated filesystems, deployment must expose the wrapper directory and router executable at the same absolute paths in both environments. Background Responses requests are rejected before forwarding because the router does not expose the retrieval and cancellation endpoints required to complete them.
 
-On each request it strips the Code Mode `### apply_patch` section from the `functions.exec` / `additional_tools` description and installs a standalone `functions.hpatch` tool instead. That rewrites only the tool **definition** the model is given for that turn; the history may still label the apply step as `apply_patch` because that is what Codex actually runs.
+On each request it strips the Code Mode `### apply_patch` section from the `functions.exec` / `additional_tools` description and installs standalone `functions.hpatch` and `functions.hread` tools. A request with only a direct `apply_patch` carrier is rejected before forwarding because it cannot execute hread safely. The rewrite changes only the tool **definitions** the model receives for that turn; translated history still uses the Code Mode exec carrier that Codex actually runs.
 
 Defaults:
 
@@ -347,9 +347,9 @@ go run ./compare
 
 **CLI:** resolve workspace (`--root` / `--cwd` or process cwd) → parse script → evaluate against an in-memory baseline → stage multi-file result → commit (normal mode) or emit one `apply_patch` envelope (translate).
 
-**Router:** load ChatGPT Codex auth → accept `POST /v1/responses` → expose `functions.hpatch` instead of Code Mode `apply_patch` → on tool call, translate against the single usable workspace from Codex metadata (CLI `--root` / `--cwd` are unused here) → return a carrier that makes Codex apply the real patch and surface the diff.
+**Router:** load ChatGPT Codex auth → accept `POST /v1/responses` → require a Code Mode exec owner and expose `functions.hpatch` plus `functions.hread` instead of its nested `apply_patch` → translate hpatch against the single usable workspace from Codex metadata or route hread through the process wrapper in Codex's exec context → return an exec carrier that applies the real patch or returns the exact read result.
 
-Workspace selection is host-owned. Zero or multiple usable roots fail closed. Codex still enforces sandbox permissions on apply.
+Hpatch workspace selection is host-owned, and zero or multiple usable roots fail closed. Codex enforces sandbox and filesystem permissions for the client-executed hread and apply operations.
 
 ## Project structure
 

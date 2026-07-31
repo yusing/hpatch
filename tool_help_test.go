@@ -119,20 +119,29 @@ func TestToolDescriptionExplainsAutomaticGoFormatting(t *testing.T) {
 	}
 }
 
-func TestToolDescriptionMinimizesModelRoundTrips(t *testing.T) {
+func TestToolDescriptionGuidesSmallestVerifiedBatch(t *testing.T) {
 	normalized := strings.Join(strings.Fields(toolDescription), " ")
 	for _, guidance := range []string{
-		"Minimize model round trips",
-		"batch all known independent edits across files into one atomic script",
-		"When a later edit depends on content or paths introduced earlier in the same script, use `commit`",
-		"Split calls only when the next script depends on a diagnostic or another result unavailable until this call finishes",
-
-		"after inspecting every file required by the task with `hread`",
-		"Copy each selector's `HASH`",
-		"never reconstruct or guess a hash",
+		"smallest coherent batch",
+		"selectors you independently verified",
+		"Batch known independent edits when their selectors and placement are certain",
+		"isolate uncertain or coordinate-dependent edits",
+		"Every submitted script remains atomic",
+		"use `commit` to advance the immutable baseline only if its new selectors are already known",
+		"otherwise finish, inspect, and submit a separate script",
+		"prefer the router's indexed correction operations",
+		"Never reconstruct or guess a selector `HASH`",
 	} {
 		if !strings.Contains(normalized, guidance) {
-			t.Errorf("tool description omits round-trip guidance %q", guidance)
+			t.Errorf("tool description omits batching guidance %q", guidance)
+		}
+	}
+	for _, unrestricted := range []string{
+		"batch all known independent edits across files into one atomic script",
+		"Split calls only when",
+	} {
+		if strings.Contains(normalized, unrestricted) {
+			t.Errorf("tool description still requires unrestricted batching %q", unrestricted)
 		}
 	}
 	if strings.Contains(toolDescription, "`nl -ba -w1 -s'|'`") {

@@ -79,7 +79,7 @@ func TestCodexHPatchGrammarE2E(t *testing.T) {
 		10*time.Minute,
 		newProviderClient(codexBaseURL, nil),
 		newDiagnostics(io.Discard),
-		newHPatchProxy(recorder),
+		newManagedHPatchProxy(t, recorder),
 		newMetricsStore(""),
 		&requestSequence,
 	))

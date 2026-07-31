@@ -24,8 +24,6 @@ type HostMetricRecord struct {
 	FailedApplyPatchTokens  uint64
 	ReportInputTokens       uint64
 	DiagnosticInputTokens   uint64
-	HReadInputTokens        uint64
-	CatInputTokens          uint64
 
 	DefinitionRequests           uint64
 	DefinitionInputTokens        uint64
@@ -41,8 +39,6 @@ func (r HostMetricRecord) entry() metrics {
 		FailedApplyPatchTokens:  r.FailedApplyPatchTokens,
 		ReportInputTokens:       r.ReportInputTokens,
 		DiagnosticInputTokens:   r.DiagnosticInputTokens,
-		HReadInputTokens:        r.HReadInputTokens,
-		CatInputTokens:          r.CatInputTokens,
 
 		DefinitionRequests:           r.DefinitionRequests,
 		DefinitionInputTokens:        r.DefinitionInputTokens,

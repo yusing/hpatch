@@ -4,7 +4,7 @@ pjdoc:
   kind: architecture
   scope: root
   status: approved
-  revision: "13"
+  revision: "14"
   files:
     []
 ---
@@ -112,17 +112,30 @@ response, while request cancellation still propagates. Definition accounting use
 serialized hpatch and hread custom grammar objects installed in the routed request,
 including their names, wrappers, and grammar bodies.
 
-The router boundary exposes `hread` beside hpatch in hpatch mode. It validates the
-grammar-constrained JSON path and optional trailing line range, reads through the same
-pinned `*os.Root`, delegates hashline rendering to the core owner, and translates the
-result into the existing client-executed text carrier. When the displaced owner is a
-direct `apply_patch` tool rather than an executable carrier, the router uses a
-non-mutating rejected-patch diagnostic envelope so hashline output remains model-visible
-instead of being interpreted as a patch. Core rendering streams fixed-size chunks,
-validates UTF-8 across the complete file, buffers only selected lines, observes
-cancellation between reads, and stops before the 16 MiB formatted-result bound. Read
-calls are replayable but never enter edit correction history or editing metrics.
-Passthrough mode exposes neither replacement tool.
+The router boundary exposes `hread` beside hpatch only when the displaced owner is a
+Code Mode `exec` carrier. Before forwarding, it creates or reuses one process-scoped
+temporary wrapper directory. A translated hread call invokes that wrapper by absolute
+path with its grammar input shell-quoted as one argument. The nested exec carrier sets
+neither an environment override nor a working directory. A direct `apply_patch` owner
+or wrapper-creation failure rejects the rewrite before forwarding.
+
+The wrapper path and the router executable path embedded in it must resolve in the
+Codex executor. Same-host execution satisfies this directly. Deployments with isolated
+router and executor filesystems must mount both paths into the executor; this runtime
+visibility is independent of workspace selection.
+
+The wrapper launches a private child-process mode of the running router binary in Codex's
+exec context. The worker derives relative-path resolution from its actual current
+directory and leaves sandbox and permission enforcement to Codex. It passes the unchanged
+grammar input to the core hashline owner and returns stdout on success or concise stderr
+with nonzero status on failure.
+Core rendering streams fixed-size chunks, validates UTF-8 across the complete file,
+buffers only selected lines, observes cancellation between reads, and stops before the
+16 MiB formatted-result bound. The outer exec returns the worker's exact output payload;
+the router neither pre-reads the file nor fabricates an `apply_patch` or diagnostic
+envelope. Read calls are replayable but never enter edit correction history or editing
+metrics. The process wrapper is removed at router shutdown. Passthrough mode exposes
+neither replacement tool.
 
 The standalone CLI canonicalizes root and cwd, opens the root once, and keeps that
 capability open for the invocation. Library callers pass the already-authorized root and
@@ -155,6 +168,9 @@ checksummed fixed-size slots, generation selection, current-version decoding, ob
 version reset, and page-cache writeback policy. Classification occurs only after terminal
 outcome and report emission are known. Metrics failure remains a warning and cannot
 change the requested edit, translated patch, state report, or exit status.
+Routed reads add no synthetic hashline or hypothetical raw-cat gain estimates. Exact
+end-to-end Responses usage retained by the router is authoritative for the input consumed
+after a wrapper result.
 
 ## CTR-TRANSLATE-001 — Patch rendering
 

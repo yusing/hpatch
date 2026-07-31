@@ -28,7 +28,7 @@ const (
 
 var errUpstreamResponseWithoutTerminal = errors.New("upstream Responses response ended without a terminal state")
 
-func Run(ctx context.Context, args []string, stderr io.Writer) error {
+func Run(ctx context.Context, args []string, stderr io.Writer) (runErr error) {
 	flags := flag.NewFlagSet("hpatch-router", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	listenAddress := flags.String("listen", defaultListenAddress, "HTTP listen address")
@@ -69,6 +69,9 @@ func Run(ctx context.Context, args []string, stderr io.Writer) error {
 			metrics: metrics,
 		}
 		hpatchCalls = newHPatchProxy(translator)
+		defer func() {
+			runErr = errors.Join(runErr, hpatchCalls.Close())
+		}()
 	}
 
 	var requestSequence atomic.Uint64

@@ -1,12 +1,14 @@
 HPATCH/1 edits workspace files atomically. Submit one complete grammar-constrained script; rejection or cancellation changes nothing.
 Do not call this tool in parallel with other tools.
 
-Minimize model round trips: after inspecting every file required by the task with `hread`, batch all
-known independent edits across files into one atomic script. When a later edit depends on content or
-paths introduced earlier in the same script, use `commit` to advance the immutable baseline. Split
-calls only when the next script depends on a diagnostic or another result unavailable until this call
-finishes. Copy each selector's `HASH` from hread output or an hpatch report; never reconstruct or
-guess a hash.
+Use the smallest coherent batch whose selectors you independently verified from `hread` output or an
+hpatch report. Batch known independent edits when their selectors and placement are certain, but
+isolate uncertain or coordinate-dependent edits until their required result is available. Every
+submitted script remains atomic. When a later edit depends on content or paths introduced earlier in
+the same script, use `commit` to advance the immutable baseline only if its new selectors are already
+known; otherwise finish, inspect, and submit a separate script. After rejection, prefer the router's
+indexed correction operations over resending an unchanged complete script. Never reconstruct or guess
+a selector `HASH`.
 
 Minimize the complete selector-plus-replacement output; a likely retry costs more than a few saved tokens:
 - tsel HASH "TEXT" [N] resolves HASH only when exactly one immutable-baseline logical line has it, then selects the first N separate exact matches from column 1 of that line through EOF. Matches may land on different lines. TEXT must stay on one line, need not fill it, and matching is not syntax-aware. If fewer than N matches exist at or after the resolved anchor, the command rejects and never searches before it.

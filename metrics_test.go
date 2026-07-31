@@ -81,8 +81,6 @@ func TestGainReportReconcilesEffectiveAndIneffectiveTokens(t *testing.T) {
 		DiagnosticInputTokens:        13,
 		DefinitionInputTokens:        100,
 		RemovedDefinitionInputTokens: 30,
-		HReadInputTokens:             19,
-		CatInputTokens:               7,
 
 		Sessions:           2,
 		DefinitionRequests: 3,
@@ -94,8 +92,6 @@ func TestGainReportReconcilesEffectiveAndIneffectiveTokens(t *testing.T) {
 		"failed      2172    300          n/a\n",
 		"all         4576    5064         9.6%\n",
 		"input token estimates:\n",
-		"hread results",
-		"equivalent cat results",
 		"hpatch definition installed",
 
 		"apply_patch definition removed",
@@ -111,12 +107,10 @@ func TestGainReportReconcilesEffectiveAndIneffectiveTokens(t *testing.T) {
 	for _, want := range []string{
 		"state reports 11",
 		"failure diagnostics 13",
-		"hread results 19",
-		"equivalent cat results -7",
 		"hpatch definition installed 100",
 
 		"apply_patch definition removed -30",
-		"net added input 106",
+		"net added input 94",
 	} {
 		if !strings.Contains(input, want) {
 			t.Fatalf("input report %q does not contain %q", input, want)
@@ -145,12 +139,10 @@ func TestGainReportReconcilesEffectiveAndIneffectiveTokens(t *testing.T) {
 			for _, text := range []string{
 				"final state returned after successful calls",
 				"errors and repair context returned after failed calls",
-				"hashline-formatted file content returned by hread",
-				"raw file content displaced by hread",
 				"hpatch and hread tool definitions added by the router",
 
 				"exact Code Mode section removed by the router",
-				"measured additions minus equivalent cat results and the removed definition",
+				"measured additions minus the removed definition",
 			} {
 				if !strings.Contains(strings.Join(strings.Fields(section), " "), text) {
 					t.Fatalf("width %d report lost description %q: %q", width, text, section)
@@ -158,7 +150,6 @@ func TestGainReportReconcilesEffectiveAndIneffectiveTokens(t *testing.T) {
 			}
 		})
 	}
-
 	overflowSafe := gainReport(metrics{HPatchTokens: ^uint64(0), IneffectiveHPatchTokens: ^uint64(0), ApplyPatchTokens: ^uint64(0), FailedApplyPatchTokens: ^uint64(0)})
 	if !strings.Contains(overflowSafe, "36893488147419103230") {
 		t.Fatalf("overflow-safe gain report = %q", overflowSafe)
@@ -195,8 +186,6 @@ func TestLoadGainMetricsMatchesGainReportTotals(t *testing.T) {
 		DefinitionRequests:           1,
 		DefinitionInputTokens:        11,
 		RemovedDefinitionInputTokens: 9,
-		HReadInputTokens:             17,
-		CatInputTokens:               4,
 
 		SessionID: "session-gain",
 	})
@@ -219,7 +208,7 @@ func TestLoadGainMetricsMatchesGainReportTotals(t *testing.T) {
 	if got.SuccessfulReduction != "60.0" || got.OverallReduction != "36.4" {
 		t.Fatalf("reductions = %q / %q", got.SuccessfulReduction, got.OverallReduction)
 	}
-	if got.NetAddedInput != "27" || got.HReadInputTokens != 17 || got.CatInputTokens != 4 || got.DefinitionSources != "installation and removal measured" {
+	if got.NetAddedInput != "14" || got.DefinitionSources != "installation and removal measured" {
 		t.Fatalf("input = net %q sources %q", got.NetAddedInput, got.DefinitionSources)
 	}
 	if len(got.Commands) != commandCount || got.Commands[commandOperationIndex("rsel")].Errors != 1 {

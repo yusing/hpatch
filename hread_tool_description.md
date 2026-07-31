@@ -10,6 +10,7 @@ inclusive one-based logical-line range:
 
 Output rows are `HHHH: TEXT`, where `HHHH` is a stable four-digit lowercase hash of the
 complete logical-line content. Copy the hash into hpatch selectors. Bounded reads still use
-numeric input ranges, but their output remains hash-only. Invalid, reversed, or out-of-bounds
-ranges reject instead of clamping. Reading and UTF-8 validation are streamed and cancellable;
-formatting rejects before output exceeds 16 MiB.
+numeric input ranges, but their output remains hash-only. An end line past EOF returns through
+the final line. Invalid or reversed ranges and ranges starting past EOF reject. Reading and
+UTF-8 validation are streamed and cancellable; formatting rejects before output exceeds
+16 MiB.

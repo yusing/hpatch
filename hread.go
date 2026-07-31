@@ -276,7 +276,7 @@ func formatHashLineStream(
 	}
 
 	lineCount := lineNumber - 1
-	if !wholeFile && (startLine < 1 || endLine < startLine || endLine > lineCount) {
+	if !wholeFile && (startLine < 1 || endLine < startLine || startLine > lineCount) {
 		return HashLineReadResult{}, fmt.Errorf(
 			"requested lines %d:%d are outside file with %d lines",
 			startLine,

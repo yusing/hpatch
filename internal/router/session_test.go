@@ -20,7 +20,7 @@ func TestRoutingSessionIDKeepsCorrectionHistoryAcrossRequestIDs(t *testing.T) {
 		t.Fatalf("routing sessions = %q and %q, want one stable session", firstSession, secondSession)
 	}
 
-	proxy := newHPatchProxy(testTranslator(t, new(int)))
+	proxy := newManagedHPatchProxy(t, testTranslator(t, new(int)))
 	if err := proxy.rememberBatch(firstSession, map[string]hpatchHistory{
 		"call": {
 			toolName:         hpatchToolName,

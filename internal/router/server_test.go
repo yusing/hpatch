@@ -144,7 +144,7 @@ func TestExecuteRequestFailsClosedBeforeUpstreamWhenRewriteIsIneligible(t *testi
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			provider := &serverFakeProvider{}
-			err := executeRequest(t.Context(), t.Context(), serverRequest(t, test.mutate), test.headers, test.sessionID, provider, io.Discard, newDiagnostics(io.Discard), time.Now, newHPatchProxy(testTranslator(t, new(int))), newMetricsStore(""))
+			err := executeRequest(t.Context(), t.Context(), serverRequest(t, test.mutate), test.headers, test.sessionID, provider, io.Discard, newDiagnostics(io.Discard), time.Now, newManagedHPatchProxy(t, testTranslator(t, new(int))), newMetricsStore(""))
 			if err == nil || !strings.Contains(err.Error(), test.want) {
 				t.Fatalf("error = %v, want containing %q", err, test.want)
 			}
@@ -182,7 +182,7 @@ func TestExecuteRequestForwardsCompactionWithoutHPatchRewrite(t *testing.T) {
 	response := serverHTTPResponse(responseBody)
 	response.Header.Set("Content-Type", "text/event-stream")
 	provider := &serverFakeProvider{results: []serverForwardResult{{response: response}}}
-	proxy := newHPatchProxy(hpatchTranslatorFunc(func(context.Context, routingWorkspace, string) ([]byte, error) {
+	proxy := newManagedHPatchProxy(t, hpatchTranslatorFunc(func(context.Context, routingWorkspace, string) ([]byte, error) {
 		t.Fatal("compaction reached the hpatch translator")
 		return nil, nil
 	}))
@@ -262,7 +262,7 @@ func TestExecuteRequestForwardsRewrittenRequestAndRecordsUsage(t *testing.T) {
 		"future": map[string]any{"kept": true},
 	}))
 	provider := &serverFakeProvider{results: []serverForwardResult{{response: serverHTTPResponse(responseBody)}}}
-	proxy := newHPatchProxy(hpatchTranslatorFunc(func(context.Context, routingWorkspace, string) ([]byte, error) {
+	proxy := newManagedHPatchProxy(t, hpatchTranslatorFunc(func(context.Context, routingWorkspace, string) ([]byte, error) {
 		t.Fatal("response without an hpatch call reached the translator")
 		return nil, nil
 	}))
@@ -305,7 +305,7 @@ func TestExecuteRequestForwardsRewrittenRequestAndRecordsUsage(t *testing.T) {
 	}
 }
 
-func TestExecuteRequestAcceptsDirectAdditionalApplyPatch(t *testing.T) {
+func TestExecuteRequestRejectsDirectAdditionalApplyPatchWithoutExecCarrier(t *testing.T) {
 	workspace := t.TempDir()
 	parsed := serverRequest(t, func(request map[string]any) {
 		additional := request["input"].([]any)[0].(map[string]any)
@@ -317,6 +317,7 @@ func TestExecuteRequestAcceptsDirectAdditionalApplyPatch(t *testing.T) {
 	responseBody := string(mustTestJSON(t, map[string]any{"status": "completed", "output": []any{}}))
 	provider := &serverFakeProvider{results: []serverForwardResult{{response: serverHTTPResponse(responseBody)}}}
 	var output bytes.Buffer
+	proxy := newManagedHPatchProxy(t, testTranslator(t, new(int)))
 	err := executeRequest(
 		t.Context(),
 		t.Context(),
@@ -327,24 +328,14 @@ func TestExecuteRequestAcceptsDirectAdditionalApplyPatch(t *testing.T) {
 		&output,
 		newDiagnostics(io.Discard),
 		time.Now,
-		newHPatchProxy(testTranslator(t, new(int))),
+		proxy,
 		newMetricsStore(""),
 	)
-	if err != nil {
-		t.Fatal(err)
+	if err == nil || !strings.Contains(err.Error(), "no Code Mode exec carrier") {
+		t.Fatalf("direct request error = %v", err)
 	}
-	if len(provider.forwarded) != 1 {
-		t.Fatalf("upstream requests = %d, want 1", len(provider.forwarded))
-	}
-	forwarded, err := parseResponsesRequest(provider.forwarded[0])
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(forwarded.fields["tools"]), `"name":"hpatch"`) || strings.Contains(string(forwarded.fields["input"]), `"name":"apply_patch"`) || !strings.Contains(string(forwarded.fields["input"]), `"name":"shell"`) {
-		t.Fatalf("direct request was not rewritten exactly: %s", provider.forwarded[0])
-	}
-	if output.String() != responseBody {
-		t.Fatalf("visible response = %s, want %s", output.String(), responseBody)
+	if len(provider.forwarded) != 0 || output.Len() != 0 {
+		t.Fatalf("direct request was forwarded %d time(s), output %q", len(provider.forwarded), output.String())
 	}
 }
 
@@ -361,7 +352,7 @@ func TestExecuteRequestRecordsUsageAndFailureWhenDeliveryFails(t *testing.T) {
 	provider := &serverFakeProvider{results: []serverForwardResult{{response: serverHTTPResponse(responseBody)}}}
 	store := newMetricsStore("")
 	var logOutput bytes.Buffer
-	err := executeRequest(t.Context(), t.Context(), serverRequest(t, nil), serverMetadataHeaders(t, "turn", map[string]json.RawMessage{workspace: nil}), "session", provider, serverErrorWriter{err: io.ErrClosedPipe}, newDiagnostics(&logOutput), serverLifecycleClock(0, 10*time.Millisecond, 30*time.Millisecond), newHPatchProxy(testTranslator(t, new(int))), store)
+	err := executeRequest(t.Context(), t.Context(), serverRequest(t, nil), serverMetadataHeaders(t, "turn", map[string]json.RawMessage{workspace: nil}), "session", provider, serverErrorWriter{err: io.ErrClosedPipe}, newDiagnostics(&logOutput), serverLifecycleClock(0, 10*time.Millisecond, 30*time.Millisecond), newManagedHPatchProxy(t, testTranslator(t, new(int))), store)
 	if err == nil {
 		t.Fatal("delivery failure returned no error")
 	}
@@ -458,7 +449,7 @@ func TestResponsesHandlerDoesNotLogClientCancellationAsOperationalEvent(t *testi
 		}, nil
 	})
 	var logOutput bytes.Buffer
-	handler := responsesHandler(t.Context(), time.Minute, provider, newDiagnostics(&logOutput), newHPatchProxy(nil), newMetricsStore(""), new(atomic.Uint64))
+	handler := responsesHandler(t.Context(), time.Minute, provider, newDiagnostics(&logOutput), newManagedHPatchProxy(t, nil), newMetricsStore(""), new(atomic.Uint64))
 	handled := make(chan struct{})
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		handler(writer, request)
@@ -973,7 +964,7 @@ func TestExecuteRequestTransformFailureLifecycle(t *testing.T) {
 		serverMetadataHeaders(t, "turn", map[string]json.RawMessage{workspace: nil}),
 		"session", provider, io.Discard, newDiagnostics(&logOutput),
 		serverLifecycleClock(0, 5*time.Millisecond, 25*time.Millisecond),
-		newHPatchProxy(testTranslator(t, new(int))), store,
+		newManagedHPatchProxy(t, testTranslator(t, new(int))), store,
 	)
 	if err == nil {
 		t.Fatal("transform failure returned no error")

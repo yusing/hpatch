@@ -9,12 +9,12 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/yusing/hpatch"
-	"github.com/yusing/hpatch/internal/patchtest"
 )
 
 const (
@@ -25,7 +25,7 @@ const (
 
 const testHPatchToolDescription = "fixture hpatch description\nwith exact trailing newline\n"
 
-const testCodeModeDescription = "Run JavaScript.\n\n### `apply_patch`\nThe default editor.\n\nexec tool declaration:\n```ts\ndeclare const tools: { apply_patch(input: string): Promise<unknown>; };\n```\n\n### `create_goal`\nCreate a goal."
+const testCodeModeDescription = "Run JavaScript.\n\n### `exec_command`\nRun a shell command.\n\nexec tool declaration:\n```ts\ndeclare const tools: { exec_command(args: { cmd: string; workdir?: string }): Promise<unknown>; };\n```\n\n### `apply_patch`\nThe default editor.\n\nexec tool declaration:\n```ts\ndeclare const tools: { apply_patch(input: string): Promise<unknown>; };\n```\n\n### `create_goal`\nCreate a goal."
 
 type hpatchTranslatorFunc func(context.Context, routingWorkspace, string) ([]byte, error)
 
@@ -56,6 +56,17 @@ func (hpatchResultTranslatorFunc) RecordMetrics(context.Context, hpatchMetricRec
 	return nil
 }
 
+func newManagedHPatchProxy(t *testing.T, translator hpatchTranslator) *hpatchProxy {
+	t.Helper()
+	proxy := newHPatchProxy(translator)
+	t.Cleanup(func() {
+		if err := proxy.Close(); err != nil {
+			t.Error(err)
+		}
+	})
+	return proxy
+}
+
 func newHPatchTestTransform(t *testing.T, translator hpatchTranslator) (*hpatchResponseTransform, *hpatchProxy, *parsedResponsesRequest, string) {
 	t.Helper()
 	workspace := t.TempDir()
@@ -84,7 +95,7 @@ func newHPatchTestTransform(t *testing.T, translator hpatchTranslator) (*hpatchR
 	if err != nil {
 		t.Fatal(err)
 	}
-	proxy := newHPatchProxy(translator)
+	proxy := newManagedHPatchProxy(t, translator)
 	metadata := codexTurnMetadata{RequestKind: "turn", Workspaces: map[string]json.RawMessage{workspace: nil}}
 	transform, err := proxy.prepareRequest(t.Context(), &request, "session-1", metadata, true)
 	if err != nil {
@@ -93,7 +104,9 @@ func newHPatchTestTransform(t *testing.T, translator hpatchTranslator) (*hpatchR
 	if transform == nil {
 		t.Fatal("prepareRequest returned no transform")
 	}
-	t.Cleanup(transform.Close)
+	t.Cleanup(func() {
+		transform.Close()
+	})
 	return transform, proxy, &request, workspace
 }
 
@@ -217,7 +230,7 @@ func TestHPatchPrepareRequestExposesOnlyStandaloneHPatch(t *testing.T) {
 	}
 }
 
-func TestHPatchDirectAdditionalApplyPatchTranslatesAndReplays(t *testing.T) {
+func TestHPatchDirectAdditionalApplyPatchIsRejectedWithoutExecCarrier(t *testing.T) {
 	workspace := t.TempDir()
 	request, err := parseResponsesRequest(mustTestJSON(t, map[string]any{
 		"input": []any{
@@ -239,120 +252,47 @@ func TestHPatchDirectAdditionalApplyPatchTranslatesAndReplays(t *testing.T) {
 		t.Fatal(err)
 	}
 	proxy := newHPatchProxy(testTranslator(t, new(int)))
+	t.Cleanup(func() {
+		if err := proxy.Close(); err != nil {
+			t.Error(err)
+		}
+	})
 	metadata := codexTurnMetadata{RequestKind: "turn", Workspaces: map[string]json.RawMessage{workspace: nil}}
 	transform, err := proxy.prepareRequest(t.Context(), &request, "session-direct", metadata, true)
-	if err != nil {
-		t.Fatal(err)
+	if err == nil || transform != nil || !strings.Contains(err.Error(), "no Code Mode exec carrier") {
+		t.Fatalf("direct rewrite = transform %v, error %v", transform, err)
 	}
-	defer transform.Close()
-
-	var items []map[string]json.RawMessage
-	if err := json.Unmarshal(request.fields["input"], &items); err != nil {
-		t.Fatal(err)
-	}
-	var additionalTools []map[string]json.RawMessage
-	if err := json.Unmarshal(items[0]["tools"], &additionalTools); err != nil {
-		t.Fatal(err)
-	}
-	if len(additionalTools) != 1 || jsonString(additionalTools[0], "name") != "shell" || string(additionalTools[0]["future"]) != "true" {
-		t.Fatalf("direct apply_patch was not removed exactly: %s", request.fields["input"])
-	}
-	if transform.codeModeToolName != applyPatchToolName {
-		t.Fatalf("carrier = %q, want %q", transform.codeModeToolName, applyPatchToolName)
-	}
-
-	originalItem := mustTestJSON(t, testHPatchItem())
-	visible, err := transform.TransformJSON(mustTestJSON(t, map[string]any{
-		"status": "completed",
-		"output": []any{json.RawMessage(originalItem)},
-	}))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var response struct {
-		Output []map[string]json.RawMessage `json:"output"`
-	}
-	if err := json.Unmarshal(visible, &response); err != nil {
-		t.Fatal(err)
-	}
-	if len(response.Output) != 1 || jsonString(response.Output[0], "name") != applyPatchToolName || jsonString(response.Output[0], "input") != testTranslatedPatch {
-		t.Fatalf("direct translated response = %s", visible)
-	}
-
-	replay, err := parseResponsesRequest(mustTestJSON(t, map[string]any{
-		"input": []any{
-			map[string]any{
-				"type": "additional_tools",
-				"tools": []any{
-					map[string]any{"type": "custom", "name": "shell", "future": true},
-					map[string]any{"type": "custom", "name": applyPatchToolName, "description": "Apply a patch.", "future": map[string]any{"kept": true}},
-				},
-			},
-
-			response.Output[0],
-			map[string]any{"type": "custom_tool_call_output", "call_id": "call-H", "output": "Done!"},
-		},
-		"tools": []any{},
-	}))
-	if err != nil {
-		t.Fatal(err)
-	}
-	continuation, err := proxy.prepareRequest(t.Context(), &replay, "session-direct", metadata, true)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer continuation.Close()
-	var replayed []map[string]json.RawMessage
-	if err := json.Unmarshal(replay.fields["input"], &replayed); err != nil {
-		t.Fatal(err)
-	}
-	if jsonString(replayed[1], "name") != hpatchToolName || jsonString(replayed[1], "input") != testHPatchScript {
-		t.Fatalf("direct replay was not restored: %s", replay.fields["input"])
+	if len(proxy.sessions) != 0 {
+		t.Fatalf("direct rejection created session resources: %#v", proxy.sessions)
 	}
 }
 
-func TestHPatchDirectTranslationFailureReturnsNonMutatingDiagnosticPatch(t *testing.T) {
+func TestHPatchPrepareRejectsUnavailableWrapperLocation(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("session wrapper is a POSIX shell script")
+	}
 	workspace := t.TempDir()
+	t.Setenv("TMPDIR", filepath.Join(t.TempDir(), "missing"))
 	request, err := parseResponsesRequest(mustTestJSON(t, map[string]any{
 		"input": []any{map[string]any{
-			"type":  "additional_tools",
-			"tools": []any{map[string]any{"type": "custom", "name": applyPatchToolName}},
+			"type": "additional_tools",
+			"tools": []any{map[string]any{
+				"type": "custom", "name": "exec", "description": testCodeModeDescription,
+			}},
 		}},
 		"tools": []any{},
 	}))
 	if err != nil {
 		t.Fatal(err)
 	}
-	proxy := newHPatchProxy(hpatchTranslatorFunc(func(context.Context, routingWorkspace, string) ([]byte, error) {
-		return nil, errors.New("selector is not unique")
-	}))
+	proxy := newManagedHPatchProxy(t, testTranslator(t, new(int)))
 	metadata := codexTurnMetadata{RequestKind: "turn", Workspaces: map[string]json.RawMessage{workspace: nil}}
-	transform, err := proxy.prepareRequest(t.Context(), &request, "session-direct", metadata, true)
-	if err != nil {
-		t.Fatal(err)
+	transform, err := proxy.prepareRequest(t.Context(), &request, "session-wrapper-failure", metadata, true)
+	if err == nil || transform != nil || !strings.Contains(err.Error(), "create hread wrapper directory") {
+		t.Fatalf("wrapper setup = transform %v, error %v", transform, err)
 	}
-	defer transform.Close()
-
-	visible, err := transform.TransformJSON(mustTestJSON(t, map[string]any{
-		"status": "completed",
-		"output": []any{testHPatchItem()},
-	}))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var response struct {
-		Output []map[string]json.RawMessage `json:"output"`
-	}
-	if err := json.Unmarshal(visible, &response); err != nil {
-		t.Fatal(err)
-	}
-	input := jsonString(response.Output[0], "input")
-	if jsonString(response.Output[0], "name") != applyPatchToolName || !strings.Contains(input, "selector is not unique") || !strings.Contains(input, "INDEX: COMMAND") {
-		t.Fatalf("direct diagnostic carrier = %s", visible)
-	}
-	initial := map[string]string{"kept.txt": "unchanged"}
-	if tree, applyErr := patchtest.Apply(initial, input); applyErr == nil || tree != nil || !strings.Contains(applyErr.Error(), "selector is not unique") {
-		t.Fatalf("diagnostic patch mutated or hid rejection: tree %#v, error %v", tree, applyErr)
+	if len(proxy.sessions) != 0 || len(proxy.activeSessions) != 0 {
+		t.Fatalf("failed wrapper setup retained session state: %#v / %#v", proxy.sessions, proxy.activeSessions)
 	}
 }
 
@@ -401,6 +341,16 @@ func TestHPatchAdditionalToolsReplacementRejectsDuplicateAndConflictingOwners(t 
 		{
 			name:  "direct nested hpatch collision in another item",
 			input: []any{additional("exec"), map[string]any{"type": "additional_tools", "tools": []any{map[string]any{"type": "custom", "name": hpatchToolName}}}},
+		},
+		{
+			name: "missing exec command declaration",
+			input: []any{map[string]any{
+				"type": "additional_tools",
+				"tools": []any{map[string]any{
+					"type": "custom", "name": "exec",
+					"description": strings.Replace(testCodeModeDescription, "exec_command(args:", "run_command(args:", 1),
+				}},
+			}},
 		},
 	}
 	for _, test := range tests {
@@ -584,7 +534,7 @@ func TestHPatchJSONWrapsPatchAndImmediateReportInCodeModeExec(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := proxy.restoreInputPrefix(&replay, transform.historySessionID); err != nil {
+	if err := proxy.restoreInputPrefix(&replay, transform.historySessionID, transform.hreadWrapperDirectory); err != nil {
 		t.Fatal(err)
 	}
 	var items []json.RawMessage
@@ -599,11 +549,8 @@ func TestHPatchJSONWrapsPatchAndImmediateReportInCodeModeExec(t *testing.T) {
 	}
 }
 
-func TestHReadJSONReturnsHashlinesAndRestoresReplay(t *testing.T) {
-	transform, proxy, _, workspace := newHPatchTestTransform(t, testTranslator(t, new(int)))
-	if err := os.WriteFile(filepath.Join(workspace, "lines.txt"), []byte("alpha\nbeta\r\ngamma"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+func TestHReadJSONReturnsExecCommandAndRestoresReplay(t *testing.T) {
+	transform, proxy, _, _ := newHPatchTestTransform(t, testTranslator(t, new(int)))
 	readItem := map[string]any{
 		"type": "custom_tool_call", "id": "item-R", "call_id": "call-R",
 		"name": hreadToolName, "input": `"lines.txt" 2:3`, "status": "completed",
@@ -627,11 +574,30 @@ func TestHReadJSONReturnsHashlinesAndRestoresReplay(t *testing.T) {
 	}
 	if len(response.Output) != 2 ||
 		jsonString(response.Output[0], "name") != "exec" ||
-		jsonString(response.Output[0], "input") != hreadExecInput("f44e: beta\nbe9d: gamma\n") {
+		jsonString(response.Output[0], "input") != hreadExecInput(`"lines.txt" 2:3`, transform.hreadWrapperDirectory) {
 		t.Fatalf("translated hread response = %s", visible)
 	}
-	if missing := jsonString(response.Output[1], "input"); !strings.HasPrefix(missing, `text("hread: reading missing.txt:`) {
+	if missing := jsonString(response.Output[1], "input"); missing != hreadExecInput(`"missing.txt"`, transform.hreadWrapperDirectory) {
 		t.Fatalf("translated missing-file response = %q", missing)
+	}
+	carrierInput := jsonString(response.Output[0], "input")
+	encodedArguments := strings.TrimPrefix(carrierInput, "const result = await tools.exec_command(")
+	encodedArguments = strings.TrimSuffix(encodedArguments, ");\ntext(result.output);")
+	var arguments struct {
+		Command     string          `json:"cmd"`
+		Environment json.RawMessage `json:"env"`
+		Workdir     json.RawMessage `json:"workdir"`
+	}
+	if err := json.Unmarshal([]byte(encodedArguments), &arguments); err != nil {
+		t.Fatalf("decode translated exec arguments: %v\n%s", err, carrierInput)
+	}
+	wantCommand := shellSingleQuote(filepath.Join(transform.hreadWrapperDirectory, hreadWrapperName)) +
+		` '"lines.txt" 2:3'`
+	if arguments.Command != wantCommand {
+		t.Fatalf("translated exec arguments = %#v", arguments)
+	}
+	if len(arguments.Environment) != 0 || len(arguments.Workdir) != 0 {
+		t.Fatalf("translated hread overrides Codex environment or working directory: %s", carrierInput)
 	}
 
 	replay, err := parseResponsesRequest(mustTestJSON(t, map[string]any{
@@ -640,7 +606,7 @@ func TestHReadJSONReturnsHashlinesAndRestoresReplay(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := proxy.restoreInputPrefix(&replay, transform.historySessionID); err != nil {
+	if err := proxy.restoreInputPrefix(&replay, transform.historySessionID, transform.hreadWrapperDirectory); err != nil {
 		t.Fatal(err)
 	}
 	var replayed []map[string]json.RawMessage
@@ -652,80 +618,16 @@ func TestHReadJSONReturnsHashlinesAndRestoresReplay(t *testing.T) {
 	}
 }
 
-func TestHReadDirectApplyPatchCarrierUsesNonMutatingDiagnostic(t *testing.T) {
-	t.Run("JSON", func(t *testing.T) {
-		transform, _, _, workspace := newHPatchTestTransform(t, testTranslator(t, new(int)))
-		transform.codeModeToolName = applyPatchToolName
-		if err := os.WriteFile(filepath.Join(workspace, "line.txt"), []byte("alpha\n"), 0o644); err != nil {
-			t.Fatal(err)
-		}
-		item := map[string]any{
-			"type": "custom_tool_call", "id": "item-R", "call_id": "call-R",
-			"name": hreadToolName, "input": `"line.txt"`, "status": "completed",
-		}
-		visible, err := transform.TransformJSON(mustTestJSON(t, map[string]any{
-			"status": "completed",
-			"output": []any{item},
-		}))
-		if err != nil {
-			t.Fatal(err)
-		}
-		var response struct {
-			Output []map[string]json.RawMessage `json:"output"`
-		}
-		if err := json.Unmarshal(visible, &response); err != nil {
-			t.Fatal(err)
-		}
-		if len(response.Output) != 1 ||
-			jsonString(response.Output[0], "name") != applyPatchToolName ||
-			jsonString(response.Output[0], "input") != hreadApplyPatchInput("8ed3: alpha\n") {
-			t.Fatalf("direct hread response = %s", visible)
-		}
-	})
-
-	t.Run("SSE", func(t *testing.T) {
-		transform, _, _, workspace := newHPatchTestTransform(t, testTranslator(t, new(int)))
-		transform.codeModeToolName = applyPatchToolName
-		if err := os.WriteFile(filepath.Join(workspace, "line.txt"), []byte("alpha\n"), 0o644); err != nil {
-			t.Fatal(err)
-		}
-		item := map[string]any{
-			"type": "custom_tool_call", "id": "item-R", "call_id": "call-R",
-			"name": hreadToolName, "input": `"line.txt"`, "status": "completed",
-		}
-		added := maps.Clone(item)
-		added["status"] = "in_progress"
-		added["input"] = ""
-		visible, err := transform.TransformSSE(mustTestJSON(t, map[string]any{
-			"type": "response.output_item.added", "item": added,
-		}))
-		if err != nil || visible != nil {
-			t.Fatalf("buffered direct hread = %q, error %v", visible, err)
-		}
-		visible, err = transform.TransformSSE(mustTestJSON(t, map[string]any{
-			"type": "response.custom_tool_call_input.done", "item_id": "item-R", "input": `"line.txt"`,
-		}))
-		if err != nil || len(visible) != 2 ||
-			!bytes.Contains(visible[0], []byte(`"name":"apply_patch"`)) ||
-			!bytes.Contains(visible[1], []byte(jsonQuoted(hreadApplyPatchInput("8ed3: alpha\n")))) {
-			t.Fatalf("direct hread input.done = %q, error %v", visible, err)
-		}
-	})
-}
-
-func TestHReadRejectsOversizedResultBeforeCreatingCarrier(t *testing.T) {
-	transform, _, _, workspace := newHPatchTestTransform(t, testTranslator(t, new(int)))
-	content := strings.Repeat("x", 16<<20)
-	if err := os.WriteFile(filepath.Join(workspace, "large.txt"), []byte(content), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := transform.translateHRead("call-large", `"large.txt"`, nil); !errors.Is(err, errHPatchCapacity) {
-		t.Fatalf("oversized hread error = %v, want capacity error", err)
+func TestHReadRejectsOversizedInputBeforeCreatingCarrier(t *testing.T) {
+	transform, _, _, _ := newHPatchTestTransform(t, testTranslator(t, new(int)))
+	input := strings.Repeat("x", maxHPatchScriptBytes+1)
+	if _, err := transform.translateHRead("call-large", input, nil); err == nil || !strings.Contains(err.Error(), "input exceeds") {
+		t.Fatalf("oversized hread error = %v", err)
 	}
 }
 
 func TestHPatchHistoryDoesNotCrossWorkspacesSharingSessionIdentity(t *testing.T) {
-	proxy := newHPatchProxy(testTranslator(t, new(int)))
+	proxy := newManagedHPatchProxy(t, testTranslator(t, new(int)))
 	requestFor := func(t *testing.T, extraItems ...any) parsedResponsesRequest {
 		t.Helper()
 		items := []any{map[string]any{
@@ -818,13 +720,13 @@ func TestHPatchReplayPreservesImmediateApplyFailure(t *testing.T) {
 	}
 	const applyFailure = "Failed to find expected lines in created.txt:\nmissing\n"
 	request, err := parseResponsesRequest(mustTestJSON(t, map[string]any{"input": []any{
-		map[string]any{"type": "custom_tool_call", "name": "exec", "call_id": "call-H", "input": history.carrierInput()},
+		map[string]any{"type": "custom_tool_call", "name": "exec", "call_id": "call-H", "input": history.carrierInput("")},
 		map[string]any{"type": "custom_tool_call_output", "call_id": "call-H", "output": applyFailure},
 	}}))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := proxy.restoreInputPrefix(&request, "session"); err != nil {
+	if err := proxy.restoreInputPrefix(&request, "session", ""); err != nil {
 		t.Fatal(err)
 	}
 	if !bytes.Contains(request.fields["input"], []byte(jsonQuoted(applyFailure))) || bytes.Contains(request.fields["input"], []byte(jsonQuoted(testHPatchReport))) {
@@ -841,12 +743,12 @@ func TestHPatchReplayRejectsChangedExecCarrierAndIgnoresUnrelatedCalls(t *testin
 	changed, _ := parseResponsesRequest(mustTestJSON(t, map[string]any{"input": []any{map[string]any{
 		"type": "custom_tool_call", "name": "exec", "call_id": "call-H", "input": "changed",
 	}}}))
-	if err := proxy.restoreInputPrefix(&changed, "session"); err == nil {
+	if err := proxy.restoreInputPrefix(&changed, "session", ""); err == nil {
 		t.Fatal("changed replay was accepted")
 	}
 	unrelated, _ := parseResponsesRequest([]byte(`{"input":[{"type":"custom_tool_call","name":"exec","call_id":"native","input":"unchanged"}]}`))
 	before := bytes.Clone(unrelated.fields["input"])
-	if err := proxy.restoreInputPrefix(&unrelated, "session"); err != nil || !bytes.Equal(before, unrelated.fields["input"]) {
+	if err := proxy.restoreInputPrefix(&unrelated, "session", ""); err != nil || !bytes.Equal(before, unrelated.fields["input"]) {
 		t.Fatalf("unrelated call changed to %s, error %v", unrelated.fields["input"], err)
 	}
 }
@@ -981,56 +883,12 @@ func TestHReadStreamingUsesTextLifecycle(t *testing.T) {
 	}))
 	if err != nil || len(visible) != 2 ||
 		!bytes.Contains(visible[0], []byte(`"name":"exec"`)) ||
-		!bytes.Contains(visible[1], []byte(jsonQuoted(hreadExecInput("8ed3: alpha\n")))) {
+		!bytes.Contains(visible[1], []byte(jsonQuoted(hreadExecInput(`"line.txt"`, transform.hreadWrapperDirectory)))) {
 		t.Fatalf("hread input.done = %q, error %v", visible, err)
 	}
 	visible, err = transform.TransformSSE(mustTestJSON(t, map[string]any{"type": "response.output_item.done", "item": item}))
 	if err != nil || len(visible) != 1 || !bytes.Contains(visible[0], []byte(`"call_id":"call-R"`)) {
 		t.Fatalf("hread item.done = %q, error %v", visible, err)
-	}
-}
-
-func TestHPatchDirectStreamingUsesApplyPatchLifecycle(t *testing.T) {
-	workspace := t.TempDir()
-	request, err := parseResponsesRequest(mustTestJSON(t, map[string]any{
-		"input": []any{map[string]any{
-			"type":  "additional_tools",
-			"tools": []any{map[string]any{"type": "custom", "name": applyPatchToolName}},
-		}},
-		"tools": []any{},
-	}))
-	if err != nil {
-		t.Fatal(err)
-	}
-	calls := 0
-	proxy := newHPatchProxy(testTranslator(t, &calls))
-	metadata := codexTurnMetadata{RequestKind: "turn", Workspaces: map[string]json.RawMessage{workspace: nil}}
-	transform, err := proxy.prepareRequest(t.Context(), &request, "session-direct-stream", metadata, true)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer transform.Close()
-
-	item := testHPatchItem()
-	added := testHPatchItem()
-	added["status"] = "in_progress"
-	added["input"] = ""
-	visible, err := transform.TransformSSE(mustTestJSON(t, map[string]any{"type": "response.output_item.added", "item": added}))
-	if err != nil || visible != nil {
-		t.Fatalf("buffered added = %q, error %v", visible, err)
-	}
-	visible, err = transform.TransformSSE(mustTestJSON(t, map[string]any{"type": "response.custom_tool_call_input.done", "item_id": "item-H", "input": testHPatchScript}))
-	if err != nil || len(visible) != 2 || !bytes.Contains(visible[0], []byte(`"name":"apply_patch"`)) || !bytes.Contains(visible[1], []byte(jsonQuoted(testTranslatedPatch))) {
-		t.Fatalf("direct input.done = %q, error %v", visible, err)
-	}
-	visible, err = transform.TransformSSE(mustTestJSON(t, map[string]any{"type": "response.output_item.done", "item": item}))
-	if err != nil || len(visible) != 1 || !bytes.Contains(visible[0], []byte(`"name":"apply_patch"`)) {
-		t.Fatalf("direct item.done = %q, error %v", visible, err)
-	}
-	completed := map[string]any{"status": "completed", "output": []any{item}}
-	visible, err = transform.TransformSSE(mustTestJSON(t, map[string]any{"type": "response.completed", "response": completed}))
-	if err != nil || len(visible) != 1 || !bytes.Contains(visible[0], []byte(`"name":"apply_patch"`)) || calls != 1 {
-		t.Fatalf("direct completed = %q, translations %d, error %v", visible, calls, err)
 	}
 }
 
@@ -1249,7 +1107,7 @@ func TestHPatchTranslationFailureReturnsImmediateDiagnosticExec(t *testing.T) {
 	if !remembered {
 		t.Fatal("translation rejection carrier was not remembered")
 	}
-	if jsonString(carrier, "name") != "exec" || jsonString(carrier, "input") != history.carrierInput() || jsonString(carrier, "call_id") != "call-H" || !strings.Contains(history.carrierInput(), "selector is not unique") {
+	if jsonString(carrier, "name") != "exec" || jsonString(carrier, "input") != history.carrierInput(transform.hreadWrapperDirectory) || jsonString(carrier, "call_id") != "call-H" || !strings.Contains(history.carrierInput(transform.hreadWrapperDirectory), "selector is not unique") {
 		t.Fatalf("diagnostic exec carrier = %s", visible)
 	}
 	if jsonString(response.Output[0], "future") != "preserved" || string(response.Future) != `{"kept":true}` || !bytes.Contains(response.Output[0]["metadata"], []byte(`"name":"apply_patch"`)) {
@@ -1405,13 +1263,20 @@ func TestHPatchHistoryByteAccountingIncludesExistingCalls(t *testing.T) {
 
 func TestHPatchHistoryDoesNotEvictActiveSessions(t *testing.T) {
 	proxy := newHPatchProxy(testTranslator(t, new(int)))
+	t.Cleanup(func() {
+		if err := proxy.Close(); err != nil {
+			t.Error(err)
+		}
+	})
 	for index := range maxSessionHistories {
 		sessionID := fmt.Sprintf("session-%03d", index)
 		if err := proxy.rememberBatch(sessionID, map[string]hpatchHistory{"call": {script: sessionID}}); err != nil {
 			t.Fatalf("remember session %d: %v", index, err)
 		}
 	}
-	proxy.activateSession("session-000")
+	if err := proxy.activateSession("session-000"); err != nil {
+		t.Fatal(err)
+	}
 	defer proxy.deactivateSession("session-000")
 
 	if err := proxy.rememberBatch("session-new", map[string]hpatchHistory{"call": {script: "new"}}); err != nil {
