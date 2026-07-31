@@ -1,9 +1,13 @@
 package router
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/tiktoken-go/tokenizer"
@@ -118,6 +122,140 @@ func TestCalculateHPatchMetricRecordCompensatesHReadAgainstCat(t *testing.T) {
 	}
 	if record.HReadInputTokens != uint64(hreadTokens) || record.CatInputTokens != uint64(catTokens) {
 		t.Fatalf("hread accounting = %+v", record)
+	}
+}
+
+func TestHPatchMetricDefinitionMatchesInstalledGrammarTools(t *testing.T) {
+	var records []hpatchMetricRecord
+	translator := metricsObservingTranslator{
+		translate: func(context.Context, routingWorkspace, string) ([]byte, error) {
+			t.Fatal("unexpected hpatch translation")
+			return nil, nil
+		},
+		record: func(_ context.Context, record hpatchMetricRecord) error {
+			records = append(records, record)
+			return nil
+		},
+	}
+	transform, _, request, _ := newHPatchTestTransform(t, translator)
+	if err := transform.Finish(false); err != nil {
+		t.Fatal(err)
+	}
+	if len(records) != 1 {
+		t.Fatalf("metric records = %d, want 1", len(records))
+	}
+
+	var tools []json.RawMessage
+	if err := json.Unmarshal(request.fields["tools"], &tools); err != nil {
+		t.Fatal(err)
+	}
+	installed := make([]json.RawMessage, 0, 2)
+	for _, raw := range tools {
+		var tool map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &tool); err != nil {
+			t.Fatal(err)
+		}
+		if name := jsonString(tool, "name"); name == hpatchToolName || name == hreadToolName {
+			installed = append(installed, raw)
+		}
+	}
+	encoded, err := json.Marshal(installed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	codec, err := tokenizer.ForModel(tokenizer.GPT5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, err := codec.Count(string(encoded))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := records[0].DefinitionInputTokens; got != uint64(want) {
+		t.Fatalf("definition tokens = %d, want exact installed definitions %d", got, want)
+	}
+}
+
+func TestHPatchMetricPersistenceFailuresDoNotChangeToolResults(t *testing.T) {
+	metricErr := errors.New("metrics unavailable")
+	translator := metricsObservingTranslator{
+		translate: func(context.Context, routingWorkspace, string) ([]byte, error) {
+			return []byte(testTranslatedPatch), nil
+		},
+		record: func(context.Context, hpatchMetricRecord) error {
+			return metricErr
+		},
+	}
+
+	t.Run("successful JSON call", func(t *testing.T) {
+		transform, _, _, _ := newHPatchTestTransform(t, translator)
+		visible, err := transform.TransformJSON(mustTestJSON(t, map[string]any{
+			"status": "completed",
+			"output": []any{testHPatchItem()},
+		}))
+		if err != nil || !bytes.Contains(visible, []byte("*** Begin Patch")) {
+			t.Fatalf("visible = %q, error %v", visible, err)
+		}
+	})
+
+	t.Run("rejected call", func(t *testing.T) {
+		rejected := translator
+		rejected.translate = func(context.Context, routingWorkspace, string) ([]byte, error) {
+			return nil, errors.New("rejected")
+		}
+		transform, _, _, _ := newHPatchTestTransform(t, rejected)
+		history, err := transform.translate("call-rejected", testHPatchScript, nil)
+		if err != nil || !strings.Contains(history.translationError, "rejected") {
+			t.Fatalf("history = %+v, error %v", history, err)
+		}
+	})
+
+	t.Run("hread call", func(t *testing.T) {
+		transform, _, _, workspace := newHPatchTestTransform(t, translator)
+		if err := os.WriteFile(filepath.Join(workspace, "file.txt"), []byte("alpha\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		history, err := transform.translateHRead("call-read", `"file.txt"`, nil)
+		if err != nil || !strings.Contains(history.report, "alpha") {
+			t.Fatalf("history = %+v, error %v", history, err)
+		}
+	})
+
+	t.Run("overhead only", func(t *testing.T) {
+		transform, _, _, _ := newHPatchTestTransform(t, translator)
+		if err := transform.Finish(false); err != nil {
+			t.Fatalf("Finish() error = %v", err)
+		}
+	})
+
+	t.Run("stream call", func(t *testing.T) {
+		transform, _, _, _ := newHPatchTestTransform(t, translator)
+		event := mustTestJSON(t, map[string]any{
+			"type": "response.output_item.done",
+			"item": testHPatchItem(),
+		})
+		visible, err := transform.TransformSSE(event)
+		if err != nil || len(visible) != 1 || !bytes.Contains(visible[0], []byte("*** Begin Patch")) {
+			t.Fatalf("visible = %q, error %v", visible, err)
+		}
+	})
+}
+
+func TestHPatchMetricFailureStillPropagatesRequestCancellation(t *testing.T) {
+	translator := metricsObservingTranslator{
+		translate: func(context.Context, routingWorkspace, string) ([]byte, error) {
+			return nil, nil
+		},
+		record: func(context.Context, hpatchMetricRecord) error {
+			return errors.New("metrics unavailable")
+		},
+	}
+	transform, _, _, _ := newHPatchTestTransform(t, translator)
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	transform.ctx = ctx
+	if err := transform.Finish(false); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Finish() error = %v, want cancellation", err)
 	}
 }
 

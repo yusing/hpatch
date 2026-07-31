@@ -102,7 +102,7 @@ The router also supplies `functions.hpatch` to the provider with a [Lark grammar
 
 ## Codex router (systemd user service)
 
-The router listens on HTTP, rewrites Responses traffic so Codex calls `functions.hpatch`, evaluates scripts against the workspace declared in `x-codex-turn-metadata`, and returns the translated `apply_patch` carrier to Codex. You see a real diff in the UI rather than a silent file rewrite.
+The router listens on HTTP, rewrites Responses traffic so Codex calls `functions.hpatch`, evaluates scripts against the workspace declared in `x-codex-turn-metadata`, and returns the translated `apply_patch` carrier to Codex. You see a real diff in the UI rather than a silent file rewrite. Background Responses requests are rejected before forwarding because the router does not expose the retrieval and cancellation endpoints required to complete them.
 
 On each request it strips the Code Mode `### apply_patch` section from the `functions.exec` / `additional_tools` description and installs a standalone `functions.hpatch` tool instead. That rewrites only the tool **definition** the model is given for that turn; the history may still label the apply step as `apply_patch` because that is what Codex actually runs.
 

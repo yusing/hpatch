@@ -26,7 +26,7 @@ const (
 	maxModelsResponseBytes = 8 << 20
 )
 
-var errUpstreamResponseWithoutTerminal = errors.New("upstream Responses response ended without a terminal or resumable background state")
+var errUpstreamResponseWithoutTerminal = errors.New("upstream Responses response ended without a terminal state")
 
 func Run(ctx context.Context, args []string, stderr io.Writer) error {
 	flags := flag.NewFlagSet("hpatch-router", flag.ContinueOnError)
@@ -407,7 +407,7 @@ func executeRequest(
 		}
 		stagedBody = staged.Bytes()
 	}
-	if !streamResponse && response.StatusCode >= http.StatusOK && response.StatusCode < http.StatusMultipleChoices && !acceptsResponseEnd(parsedRequest, finalization.upstreamTerminalState) {
+	if !streamResponse && response.StatusCode >= http.StatusOK && response.StatusCode < http.StatusMultipleChoices && !acceptsResponseEnd(finalization.upstreamTerminalState) {
 		finalization.failurePhase = requestFailureTerminalValidation
 		return fmt.Errorf("execute request: %w", errUpstreamResponseWithoutTerminal)
 	}
@@ -441,7 +441,7 @@ func executeRequest(
 			return fmt.Errorf("execute request: %w", err)
 		}
 	}
-	if streamResponse && response.StatusCode >= http.StatusOK && response.StatusCode < http.StatusMultipleChoices && !acceptsResponseEnd(parsedRequest, finalization.upstreamTerminalState) {
+	if streamResponse && response.StatusCode >= http.StatusOK && response.StatusCode < http.StatusMultipleChoices && !acceptsResponseEnd(finalization.upstreamTerminalState) {
 		finalization.failurePhase = requestFailureTerminalValidation
 		return fmt.Errorf("execute request: %w", errUpstreamResponseWithoutTerminal)
 	}
@@ -455,8 +455,6 @@ func executeRequest(
 	case finalization.upstreamTerminalState == responseTerminalFailed:
 		finalization.observation.outcome = requestOutcomeFailed
 		finalization.failurePhase = requestFailureTerminalValidation
-	case parsedRequest.backgroundResponse && finalization.upstreamTerminalState == responseTerminalPending:
-		finalization.observation.outcome = requestOutcomeBackgroundPending
 	default:
 		finalization.observation.outcome = requestOutcomeFailed
 		finalization.failurePhase = requestFailureTerminalValidation
@@ -464,9 +462,6 @@ func executeRequest(
 	return nil
 }
 
-func acceptsResponseEnd(request parsedResponsesRequest, state responseTerminalState) bool {
-	if state == responseTerminalCompleted || state == responseTerminalFailed {
-		return true
-	}
-	return request.backgroundResponse && state == responseTerminalPending
+func acceptsResponseEnd(state responseTerminalState) bool {
+	return state == responseTerminalCompleted || state == responseTerminalFailed
 }

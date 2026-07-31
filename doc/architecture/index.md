@@ -95,6 +95,23 @@ inputs cross into the engine only after a regular-file check and strict UTF-8 de
 Informational forms are resolved before stdin, working-directory, configuration-directory,
 metrics, or filesystem access.
 
+The router chooses retained-state identity from an explicit `session-id`, then a stable
+`prompt_cache_key`, and only then a request-scoped client request ID. Retained history is
+additionally scoped to the canonical workspace, preventing a reused cache key from exposing
+correction or replay state across worktrees. Retained correction and replay history is
+bounded: the oldest calls within a session and the least-recently used inactive sessions are
+evicted before capacity can reject new completed work. An
+active request protects its session throughout replay restoration and response
+transformation. Background Responses requests reject before upstream forwarding because
+the router has no retrieval boundary for their eventual result. Malformed SSE state is
+sticky and cannot be overwritten by a later terminal event.
+
+Metrics on the response path are auxiliary: tokenization or durable-write failures cannot
+replace a successful tool result, rejection diagnostic, read result, or overhead-only
+response, while request cancellation still propagates. Definition accounting uses the
+serialized hpatch and hread custom grammar objects installed in the routed request,
+including their names, wrappers, and grammar bodies.
+
 The router boundary exposes `hread` beside hpatch in hpatch mode. It validates the
 grammar-constrained JSON path and optional trailing line range, reads through the same
 pinned `*os.Root`, delegates hashline rendering to the core owner, and translates the

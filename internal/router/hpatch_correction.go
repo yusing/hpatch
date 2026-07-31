@@ -182,16 +182,14 @@ func applyHPatchCorrections(base string, corrections []hpatchCorrection, suggest
 	for _, correction := range corrections {
 		transform := &transforms[correction.command-1]
 		switch correction.kind {
-		case hpatchReplace:
-			if transform.hasReplacement || transform.deleted {
-				return "", fmt.Errorf("command %d has conflicting replacement or deletion operations", correction.command)
-			}
-			transform.replacement = correction.replacement
-			transform.hasReplacement = true
-		case hpatchAccept:
-			replacement, ok := available[correction.command]
-			if !ok {
-				return "", fmt.Errorf("command %d has no displayed correction to accept", correction.command)
+		case hpatchReplace, hpatchAccept:
+			replacement := correction.replacement
+			if correction.kind == hpatchAccept {
+				var ok bool
+				replacement, ok = available[correction.command]
+				if !ok {
+					return "", fmt.Errorf("command %d has no displayed correction to accept", correction.command)
+				}
 			}
 			if transform.hasReplacement || transform.deleted {
 				return "", fmt.Errorf("command %d has conflicting replacement or deletion operations", correction.command)
@@ -203,6 +201,7 @@ func applyHPatchCorrections(base string, corrections []hpatchCorrection, suggest
 				return "", fmt.Errorf("command %d has conflicting replacement or deletion operations", correction.command)
 			}
 			transform.deleted = true
+
 		case hpatchInsertBeforeAnchor:
 			transform.before = append(transform.before, correction.replacement)
 			transform.insertions = append(transform.insertions, correction.replacement)

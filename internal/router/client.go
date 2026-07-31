@@ -634,14 +634,11 @@ func observeResponseTerminal(body []byte, streamEvent bool) responseTerminalStat
 }
 
 func mergeResponseTerminalState(current, observed responseTerminalState) responseTerminalState {
-	if observed == responseTerminalUnknown {
-		return current
-	}
-	if observed == responseTerminalInvalid {
+	if current == responseTerminalInvalid || observed == responseTerminalInvalid {
 		return responseTerminalInvalid
 	}
-	if current == responseTerminalInvalid {
-		return observed
+	if observed == responseTerminalUnknown {
+		return current
 	}
 	if current == responseTerminalFailed || observed == responseTerminalFailed {
 		return responseTerminalFailed

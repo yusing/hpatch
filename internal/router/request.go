@@ -12,9 +12,8 @@ import (
 )
 
 type parsedResponsesRequest struct {
-	fields             map[string]json.RawMessage
-	streamResponse     bool
-	backgroundResponse bool
+	fields         map[string]json.RawMessage
+	streamResponse bool
 }
 
 func (r parsedResponsesRequest) model() string {
@@ -62,9 +61,10 @@ func parseResponsesRequest(body []byte) (parsedResponsesRequest, error) {
 	_ = json.Unmarshal(request["stream"], &streamResponse)
 	var backgroundResponse bool
 	_ = json.Unmarshal(request["background"], &backgroundResponse)
-	return parsedResponsesRequest{
-		fields: request, streamResponse: streamResponse, backgroundResponse: backgroundResponse,
-	}, nil
+	if backgroundResponse {
+		return parsedResponsesRequest{}, errors.New("background Responses requests are not supported")
+	}
+	return parsedResponsesRequest{fields: request, streamResponse: streamResponse}, nil
 }
 
 func readResponsesRequest(reader io.Reader) ([]byte, error) {

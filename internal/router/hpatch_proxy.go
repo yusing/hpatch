@@ -170,6 +170,7 @@ type hpatchHistorySession struct {
 	bytes int
 	// nextSequence is the order to assign the session's next retained call.
 	nextSequence uint64
+	lastUsed     uint64
 }
 
 type hpatchProxy struct {
@@ -178,9 +179,11 @@ type hpatchProxy struct {
 
 	toolDescription string
 
-	mu           sync.RWMutex
-	sessions     map[string]*hpatchHistorySession
-	historyBytes int
+	mu              sync.RWMutex
+	sessions        map[string]*hpatchHistorySession
+	activeSessions  map[string]int
+	historyBytes    int
+	sessionSequence uint64
 }
 
 func newHPatchProxy(translator hpatchTranslator) *hpatchProxy {
@@ -193,7 +196,32 @@ func newHPatchProxy(translator hpatchTranslator) *hpatchProxy {
 
 		toolDescription: translator.ToolDescription() + hpatchCorrectionInstructions,
 		sessions:        make(map[string]*hpatchHistorySession),
+		activeSessions:  make(map[string]int),
 	}
+}
+
+func (p *hpatchProxy) activateSession(sessionID string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.activeSessions[sessionID]++
+	if session := p.sessions[sessionID]; session != nil {
+		p.touchSession(session)
+	}
+}
+
+func (p *hpatchProxy) deactivateSession(sessionID string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.activeSessions[sessionID] <= 1 {
+		delete(p.activeSessions, sessionID)
+		return
+	}
+	p.activeSessions[sessionID]--
+}
+
+func (p *hpatchProxy) touchSession(session *hpatchHistorySession) {
+	p.sessionSequence++
+	session.lastUsed = p.sessionSequence
 }
 
 // hpatchCorrectionInstructions documents the correction payload the proxy accepts
@@ -247,9 +275,11 @@ type hpatchPendingCall struct {
 }
 
 type hpatchResponseTransform struct {
-	ctx       context.Context
-	proxy     *hpatchProxy
-	sessionID string
+	ctx              context.Context
+	proxy            *hpatchProxy
+	sessionID        string
+	historySessionID string
+	sessionActive    bool
 
 	originalTools             json.RawMessage
 	originalToolsPresent      bool
@@ -258,9 +288,8 @@ type hpatchResponseTransform struct {
 	pending                   map[string]hpatchPendingCall
 	local                     map[string]hpatchHistory
 	workspace                 routingWorkspace
-	toolDescription           string
-	hreadToolDescription      string
 
+	installedToolDefinition  string
 	codeModeToolName         string
 	baselineDefinition       string
 	requestAccountingClaimed bool
@@ -275,6 +304,10 @@ type hpatchResponseTransform struct {
 func (t *hpatchResponseTransform) Close() {
 	if t == nil {
 		return
+	}
+	if t.sessionActive {
+		t.proxy.deactivateSession(t.historySessionID)
+		t.sessionActive = false
 	}
 	t.workspace.close()
 }
@@ -369,7 +402,8 @@ func (p *hpatchProxy) prepareRequest(ctx context.Context, request *parsedRespons
 	originalTools = bytes.Clone(originalTools)
 	originalToolChoice, originalToolChoicePresent := request.fields["tool_choice"]
 	originalToolChoice = bytes.Clone(originalToolChoice)
-	baselineDefinition, codeModeToolName, replaced, err := replaceAdditionalToolsApplyPatch(request.fields, p.toolDescription, p.hreadToolDescription)
+	installedTools := customGrammarTools(p.toolDescription, p.hreadToolDescription)
+	baselineDefinition, codeModeToolName, replaced, err := replaceAdditionalToolsApplyPatch(request.fields, installedTools)
 	if err != nil {
 		workspace.close()
 		return nil, err
@@ -378,14 +412,19 @@ func (p *hpatchProxy) prepareRequest(ctx context.Context, request *parsedRespons
 		workspace.close()
 		return nil, errors.New("responses request cannot satisfy the required hpatch rewrite")
 	}
-	if err := p.restoreInputPrefix(request, sessionID); err != nil {
+	historySessionID := workspace.canonical + "\x00" + sessionID
+	p.activateSession(historySessionID)
+	if err := p.restoreInputPrefix(request, historySessionID); err != nil {
+		p.deactivateSession(historySessionID)
 		workspace.close()
 		return nil, err
 	}
 	return &hpatchResponseTransform{
-		ctx:       ctx,
-		proxy:     p,
-		sessionID: sessionID,
+		ctx:              ctx,
+		proxy:            p,
+		sessionID:        sessionID,
+		historySessionID: historySessionID,
+		sessionActive:    true,
 
 		originalTools:             originalTools,
 		originalToolsPresent:      originalToolsPresent,
@@ -394,12 +433,10 @@ func (p *hpatchProxy) prepareRequest(ctx context.Context, request *parsedRespons
 		pending:                   make(map[string]hpatchPendingCall),
 		local:                     make(map[string]hpatchHistory),
 		workspace:                 workspace,
-		toolDescription:           p.toolDescription,
-		hreadToolDescription:      p.hreadToolDescription,
 
-		codeModeToolName: codeModeToolName,
-
-		baselineDefinition: baselineDefinition,
+		installedToolDefinition: string(mustMarshalJSON(installedTools)),
+		codeModeToolName:        codeModeToolName,
+		baselineDefinition:      baselineDefinition,
 	}, nil
 }
 
@@ -420,7 +457,7 @@ type additionalToolsApplyPatchOwner struct {
 // replaceAdditionalToolsApplyPatch swaps a supported apply_patch surface for a
 // standalone hpatch tool, reporting the native definition it displaced so the
 // caller can attribute hpatch's definition cost net of it.
-func replaceAdditionalToolsApplyPatch(fields map[string]json.RawMessage, toolDescription, hreadToolDescription string) (string, string, bool, error) {
+func replaceAdditionalToolsApplyPatch(fields map[string]json.RawMessage, installedTools []map[string]json.RawMessage) (string, string, bool, error) {
 	var topTools []map[string]json.RawMessage
 	if rawTools, exists := fields["tools"]; exists {
 		if err := json.Unmarshal(rawTools, &topTools); err != nil {
@@ -453,7 +490,7 @@ func replaceAdditionalToolsApplyPatch(fields map[string]json.RawMessage, toolDes
 	if codeModeToolChoiceRestricted(fields, owner.name) {
 		return "", "", false, nil
 	}
-	if err := exposeStandaloneHPatch(fields, topTools, owner, toolDescription, hreadToolDescription); err != nil {
+	if err := exposeStandaloneHPatch(fields, topTools, owner, installedTools); err != nil {
 		return "", "", false, err
 	}
 	return owner.baselineDefinition, owner.name, true, nil
@@ -535,7 +572,7 @@ func codeModeToolChoiceRestricted(fields map[string]json.RawMessage, codeToolNam
 	return jsonString(choice, "type") == "custom" && jsonString(choice, "name") == codeToolName
 }
 
-func exposeStandaloneHPatch(fields map[string]json.RawMessage, topTools []map[string]json.RawMessage, owner *additionalToolsApplyPatchOwner, toolDescription, hreadToolDescription string) error {
+func exposeStandaloneHPatch(fields map[string]json.RawMessage, topTools []map[string]json.RawMessage, owner *additionalToolsApplyPatchOwner, installedTools []map[string]json.RawMessage) error {
 	if owner.direct {
 		owner.tools = slices.Delete(owner.tools, owner.toolIndex, owner.toolIndex+1)
 	} else {
@@ -555,10 +592,7 @@ func exposeStandaloneHPatch(fields map[string]json.RawMessage, topTools []map[st
 	if err != nil {
 		return fmt.Errorf("encode Responses input: %w", err)
 	}
-	topTools = append(topTools,
-		customGrammarTool(hpatchToolName, toolDescription, hpatch.ToolGrammar()),
-		customGrammarTool(hreadToolName, hreadToolDescription, hpatch.HReadToolGrammar()),
-	)
+	topTools = append(topTools, installedTools...)
 	encodedTopTools, err := json.Marshal(topTools)
 	if err != nil {
 		return fmt.Errorf("encode Responses tools: %w", err)
@@ -566,6 +600,13 @@ func exposeStandaloneHPatch(fields map[string]json.RawMessage, topTools []map[st
 	fields["input"] = encodedInput
 	fields["tools"] = encodedTopTools
 	return nil
+}
+
+func customGrammarTools(toolDescription, hreadToolDescription string) []map[string]json.RawMessage {
+	return []map[string]json.RawMessage{
+		customGrammarTool(hpatchToolName, toolDescription, hpatch.ToolGrammar()),
+		customGrammarTool(hreadToolName, hreadToolDescription, hpatch.HReadToolGrammar()),
+	}
 }
 
 func customGrammarTool(name, description, grammar string) map[string]json.RawMessage {
@@ -649,41 +690,25 @@ func (p *hpatchProxy) rememberBatch(sessionID string, histories map[string]hpatc
 		}
 		prepared[callID] = history
 	}
+	if len(prepared) > maxSessionTurns {
+		return errors.New("hpatch history batch exceeds call capacity")
+	}
 
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	session := p.sessions[sessionID]
-	if session == nil && len(p.sessions) >= maxSessionHistories {
-		return errors.New("hpatch history session capacity reached")
-	}
+
+	existing := p.sessions[sessionID]
+	calls := make(map[string]hpatchHistory, len(prepared))
+	nextSequence := uint64(0)
+	oldSessionBytes := 0
 	sessionBytes := 0
-	existingCalls := map[string]hpatchHistory(nil)
-	if session != nil {
-		sessionBytes = session.bytes
-		existingCalls = session.calls
+	if existing != nil {
+		calls = maps.Clone(existing.calls)
+		nextSequence = existing.nextSequence
+		oldSessionBytes = existing.bytes
+		sessionBytes = existing.bytes
 	}
-	newCalls := 0
-	delta := 0
-	for callID, history := range prepared {
-		previous, exists := existingCalls[callID]
-		if !exists {
-			newCalls++
-		}
-		delta += history.bytes - previous.bytes
-	}
-	if len(existingCalls)+newCalls > maxSessionTurns {
-		return errors.New("hpatch history call capacity reached")
-	}
-	if sessionBytes+delta > maxHPatchHistorySessionBytes || p.historyBytes+delta > maxHPatchHistoryGlobalBytes {
-		return errors.New("hpatch history byte capacity reached")
-	}
-	if session == nil {
-		session = &hpatchHistorySession{calls: make(map[string]hpatchHistory, len(prepared))}
-		p.sessions[sessionID] = session
-	}
-	// Preserve response order when a transform supplied it. Manually assembled
-	// batches have zero sequences and use call-ID order only as a deterministic
-	// fallback. Replaying an existing call never changes its retained order.
+
 	callIDs := slices.Collect(maps.Keys(prepared))
 	slices.SortFunc(callIDs, func(first, second string) int {
 		if order := cmp.Compare(prepared[first].sequence, prepared[second].sequence); order != 0 {
@@ -691,19 +716,100 @@ func (p *hpatchProxy) rememberBatch(sessionID string, histories map[string]hpatc
 		}
 		return strings.Compare(first, second)
 	})
+	protected := make(map[string]bool, len(prepared))
 	for _, callID := range callIDs {
 		history := prepared[callID]
-		if previous, exists := session.calls[callID]; exists {
+		if previous, ok := calls[callID]; ok {
+			sessionBytes -= previous.bytes
 			history.sequence = previous.sequence
 		} else {
-			session.nextSequence++
-			history.sequence = session.nextSequence
+			nextSequence++
+			history.sequence = nextSequence
 		}
-		session.calls[callID] = history
+		sessionBytes += history.bytes
+		calls[callID] = history
+		protected[callID] = true
 	}
-	session.bytes += delta
-	p.historyBytes += delta
+
+	for len(calls) > maxSessionTurns || sessionBytes > maxHPatchHistorySessionBytes {
+		oldest, ok := oldestHistoryCall(calls, protected)
+		if !ok {
+			if len(calls) > maxSessionTurns {
+				return errors.New("hpatch history call capacity reached")
+			}
+			return errors.New("hpatch history byte capacity reached")
+		}
+		sessionBytes -= calls[oldest].bytes
+		delete(calls, oldest)
+	}
+
+	totalBytes := p.historyBytes - oldSessionBytes + sessionBytes
+	sessionCount := len(p.sessions)
+	if existing == nil {
+		sessionCount++
+	}
+	type sessionCandidate struct {
+		id       string
+		lastUsed uint64
+	}
+	candidates := make([]sessionCandidate, 0, len(p.sessions))
+	for id, session := range p.sessions {
+		if id == sessionID || p.activeSessions[id] != 0 {
+			continue
+		}
+		candidates = append(candidates, sessionCandidate{id: id, lastUsed: session.lastUsed})
+	}
+	slices.SortFunc(candidates, func(first, second sessionCandidate) int {
+		if order := cmp.Compare(first.lastUsed, second.lastUsed); order != 0 {
+			return order
+		}
+		return strings.Compare(first.id, second.id)
+	})
+
+	evicted := make([]string, 0)
+	for sessionCount > maxSessionHistories || totalBytes > maxHPatchHistoryGlobalBytes {
+		if len(evicted) == len(candidates) {
+			if sessionCount > maxSessionHistories {
+				return errors.New("hpatch history session capacity reached")
+			}
+			return errors.New("hpatch history byte capacity reached")
+		}
+		id := candidates[len(evicted)].id
+		evicted = append(evicted, id)
+		sessionCount--
+		totalBytes -= p.sessions[id].bytes
+	}
+	for _, id := range evicted {
+		delete(p.sessions, id)
+	}
+
+	if existing == nil {
+		existing = &hpatchHistorySession{}
+		p.sessions[sessionID] = existing
+	}
+	existing.calls = calls
+	existing.bytes = sessionBytes
+	existing.nextSequence = nextSequence
+	p.touchSession(existing)
+	p.historyBytes = totalBytes
 	return nil
+}
+
+func oldestHistoryCall(histories map[string]hpatchHistory, protected map[string]bool) (string, bool) {
+	oldestID := ""
+	var oldest hpatchHistory
+	found := false
+	for callID, history := range histories {
+		if protected[callID] {
+			continue
+		}
+		if !found || history.sequence < oldest.sequence || history.sequence == oldest.sequence && callID < oldestID {
+			oldestID = callID
+			oldest = history
+			found = true
+		}
+	}
+	return oldestID, found
 }
 
 func (p *hpatchProxy) correctableHistory(sessionID string) (hpatchHistory, error) {
@@ -1059,9 +1165,6 @@ func (h hpatchHistory) carrierInput() string {
 func (t *hpatchResponseTransform) rejectUnevaluated(callID, input string, rejection error, upstreamItem map[string]json.RawMessage) (hpatchHistory, error) {
 	diagnostic := rejection.Error()
 	if err := t.recordMetrics(hpatchMetricInputs{emittedScript: input, diagnostic: diagnostic}); err != nil {
-		if contextErr := t.ctx.Err(); contextErr != nil {
-			return hpatchHistory{}, contextErr
-		}
 		return hpatchHistory{}, err
 	}
 	history := hpatchHistory{
@@ -1089,17 +1192,24 @@ func (t *hpatchResponseTransform) claimRequestAccounting() (string, string) {
 		return "", ""
 	}
 	t.requestAccountingClaimed = true
-	return t.toolDescription + t.hreadToolDescription, t.baselineDefinition
+	return t.installedToolDefinition, t.baselineDefinition
 }
 
 func (t *hpatchResponseTransform) recordMetrics(inputs hpatchMetricInputs) error {
 	inputs.definition, inputs.baselineDefinition = t.claimRequestAccounting()
 	inputs.sessionID = t.sessionID
 	record, err := calculateHPatchMetricRecord(inputs)
-	if err != nil {
-		return err
+	if err == nil {
+		err = t.proxy.translator.RecordMetrics(t.ctx, record)
 	}
-	return t.proxy.translator.RecordMetrics(t.ctx, record)
+	if err != nil {
+		if contextErr := t.ctx.Err(); contextErr != nil {
+			return contextErr
+		}
+		// Gain metrics are auxiliary telemetry and cannot change a tool result.
+		return nil
+	}
+	return nil
 }
 
 func (t *hpatchResponseTransform) recordLocal(callID string, history *hpatchHistory) {
@@ -1117,7 +1227,7 @@ func (t *hpatchResponseTransform) correctionHistory() (hpatchHistory, error) {
 			return correctionHistoryOf(maps.Values(t.local))
 		}
 	}
-	return t.proxy.correctableHistory(t.sessionID)
+	return t.proxy.correctableHistory(t.historySessionID)
 }
 
 func (t *hpatchResponseTransform) TransformJSON(payload []byte) ([]byte, error) {
@@ -1324,7 +1434,7 @@ func (t *hpatchResponseTransform) commitHistory() error {
 	if t.historyCommitted {
 		return nil
 	}
-	if err := t.proxy.rememberBatch(t.sessionID, t.local); err != nil {
+	if err := t.proxy.rememberBatch(t.historySessionID, t.local); err != nil {
 		return err
 	}
 	t.historyCommitted = true

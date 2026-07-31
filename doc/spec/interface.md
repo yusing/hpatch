@@ -109,9 +109,10 @@ exact rendered text to a separate estimated state-report input-token counter. Th
 model-input overhead because the tool result becomes subsequent model context; it is not
 added to either model-output counter.
 
-The host tool definition is also model input. The router obtains the session identity,
-installed hpatch definition, and displaced native patch definition directly from the
-routed request. The first classified request of a session counts those definitions once;
+The host tool definition is also model input. The router obtains the session identity, the
+serialized hpatch and hread custom grammar objects installed in the routed request, and
+the displaced native patch definition directly from that request. The first classified
+request of a session counts those definitions once;
 subsequent requests in the same session add nothing because the resent definition is
 served from the provider's prompt cache. A host that supplies no session or definition
 text leaves these counters at zero, and gain states which inputs were measured so a zero
@@ -207,9 +208,9 @@ Acceptance:
    attributable. Per-command reason counts reconcile with both aggregate command errors and
    aggregate reason totals.
 5. Every definition-bearing request increments the definition-request counter, while the
-   hpatch and baseline definition tokens accumulate only once per distinct session. An
-   absent session or definition leaves definition counters zero and reports which inputs
-   were measured.
+   serialized installed hpatch and hread grammar objects and the baseline definition
+   accumulate only once per distinct session. An absent session or definition leaves
+   definition counters zero and reports which inputs were measured.
 6. Failed hpatch invocations contribute their complete output to the ineffective counter;
    the failed `apply_patch` counter receives the fixed direct-call program carrying the
    empty patch envelope, while the downstream diagnostic carrier is excluded.

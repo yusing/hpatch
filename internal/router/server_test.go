@@ -387,6 +387,26 @@ func (serverRepeatingReader) Read(content []byte) (int, error) {
 	return len(content), nil
 }
 
+func TestResponsesHandlerRejectsBackgroundBeforeUpstream(t *testing.T) {
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/v1/responses",
+		strings.NewReader(`{"model":"gpt-test","input":"task","background":true}`),
+	)
+	recorder := httptest.NewRecorder()
+	provider := &serverFakeProvider{}
+	responsesHandler(t.Context(), time.Minute, provider, newDiagnostics(io.Discard), nil, nil, new(atomic.Uint64))(recorder, request)
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusBadRequest)
+	}
+	if !strings.Contains(recorder.Body.String(), "background Responses requests are not supported") {
+		t.Fatalf("response = %q", recorder.Body.String())
+	}
+	if len(provider.forwarded) != 0 {
+		t.Fatal("background request reached upstream")
+	}
+}
+
 func TestResponsesHandlerRejectsOversizedBodyBeforeUpstream(t *testing.T) {
 	request := httptest.NewRequest(http.MethodPost, "/v1/responses", io.LimitReader(serverRepeatingReader{}, maxResponsesRequest+1))
 	recorder := httptest.NewRecorder()
@@ -611,12 +631,6 @@ func TestExecuteRequestTerminalOutcomes(t *testing.T) {
 			wantOutcome:      requestOutcomeFailed,
 			wantFailurePhase: requestFailureTerminalValidation,
 		},
-		{
-			name:        "background pending response",
-			response:    serverHTTPResponse(`{"status":"in_progress"}`),
-			mutate:      func(request map[string]any) { request["background"] = true },
-			wantOutcome: requestOutcomeBackgroundPending,
-		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -639,10 +653,6 @@ func TestExecuteRequestTerminalOutcomes(t *testing.T) {
 			switch test.wantOutcome {
 			case requestOutcomeFailed:
 				if snapshot.Requests.Failed != 1 {
-					t.Fatalf("lifecycle = %#v", snapshot.Requests)
-				}
-			case requestOutcomeBackgroundPending:
-				if snapshot.Requests.BackgroundPending != 1 {
 					t.Fatalf("lifecycle = %#v", snapshot.Requests)
 				}
 			}
@@ -711,6 +721,39 @@ func (body *serverBlockingSSEBody) Read(content []byte) (int, error) {
 }
 
 func (*serverBlockingSSEBody) Close() error { return nil }
+
+func TestCopySSETransformedKeepsMalformedStateInvalid(t *testing.T) {
+	completed := mustTestJSON(t, map[string]any{
+		"type":     "response.completed",
+		"response": map[string]any{"status": "completed"},
+	})
+	body := "data: {not-json}\n\n" +
+		"event: response.completed\n" +
+		"data: " + string(completed) + "\n\n"
+	state, err := copySSETransformed(io.Discard, strings.NewReader(body), nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state != responseTerminalInvalid {
+		t.Fatalf("terminal state = %v, want invalid", state)
+	}
+
+	for _, test := range []struct {
+		name              string
+		current, observed responseTerminalState
+	}{
+		{name: "invalid then completed", current: responseTerminalInvalid, observed: responseTerminalCompleted},
+		{name: "invalid then failed", current: responseTerminalInvalid, observed: responseTerminalFailed},
+		{name: "completed then invalid", current: responseTerminalCompleted, observed: responseTerminalInvalid},
+		{name: "failed then invalid", current: responseTerminalFailed, observed: responseTerminalInvalid},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := mergeResponseTerminalState(test.current, test.observed); got != responseTerminalInvalid {
+				t.Fatalf("mergeResponseTerminalState() = %v, want invalid", got)
+			}
+		})
+	}
+}
 
 func TestExecuteRequestCancellationAfterResponseLifecycle(t *testing.T) {
 	blocked := make(chan struct{})

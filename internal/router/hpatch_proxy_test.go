@@ -411,7 +411,7 @@ func TestHPatchAdditionalToolsReplacementRejectsDuplicateAndConflictingOwners(t 
 			}
 			beforeInput := bytes.Clone(fields["input"])
 			beforeTools := bytes.Clone(fields["tools"])
-			_, _, replaced, err := replaceAdditionalToolsApplyPatch(fields, testHPatchToolDescription, "fixture hread description")
+			_, _, replaced, err := replaceAdditionalToolsApplyPatch(fields, customGrammarTools(testHPatchToolDescription, "fixture hread description"))
 			if err == nil || replaced {
 				t.Fatalf("replacement = %v, error %v", replaced, err)
 			}
@@ -470,7 +470,7 @@ func TestHPatchAdditionalToolsReplacementLeavesUnsupportedAndMalformedRequestsUn
 			beforeInput := bytes.Clone(fields["input"])
 			beforeTools := bytes.Clone(fields["tools"])
 			beforeChoice := bytes.Clone(fields["tool_choice"])
-			_, _, replaced, err := replaceAdditionalToolsApplyPatch(fields, testHPatchToolDescription, "fixture hread description")
+			_, _, replaced, err := replaceAdditionalToolsApplyPatch(fields, customGrammarTools(testHPatchToolDescription, "fixture hread description"))
 			if err != nil || replaced {
 				t.Fatalf("replacement = %v, error %v", replaced, err)
 			}
@@ -491,7 +491,7 @@ func TestHPatchReplacementRetainsCodeModeOwnerName(t *testing.T) {
 				}}),
 				"tools": mustTestJSON(t, []any{}),
 			}
-			_, got, replaced, err := replaceAdditionalToolsApplyPatch(fields, testHPatchToolDescription, "fixture hread description")
+			_, got, replaced, err := replaceAdditionalToolsApplyPatch(fields, customGrammarTools(testHPatchToolDescription, "fixture hread description"))
 			if err != nil || !replaced || got != name {
 				t.Fatalf("owner = %q, replaced %v, error %v", got, replaced, err)
 			}
@@ -584,7 +584,7 @@ func TestHPatchJSONWrapsPatchAndImmediateReportInCodeModeExec(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := proxy.restoreInputPrefix(&replay, "session-1"); err != nil {
+	if err := proxy.restoreInputPrefix(&replay, transform.historySessionID); err != nil {
 		t.Fatal(err)
 	}
 	var items []json.RawMessage
@@ -640,7 +640,7 @@ func TestHReadJSONReturnsHashlinesAndRestoresReplay(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := proxy.restoreInputPrefix(&replay, "session-1"); err != nil {
+	if err := proxy.restoreInputPrefix(&replay, transform.historySessionID); err != nil {
 		t.Fatal(err)
 	}
 	var replayed []map[string]json.RawMessage
@@ -721,6 +721,92 @@ func TestHReadRejectsOversizedResultBeforeCreatingCarrier(t *testing.T) {
 	}
 	if _, err := transform.translateHRead("call-large", `"large.txt"`, nil); !errors.Is(err, errHPatchCapacity) {
 		t.Fatalf("oversized hread error = %v, want capacity error", err)
+	}
+}
+
+func TestHPatchHistoryDoesNotCrossWorkspacesSharingSessionIdentity(t *testing.T) {
+	proxy := newHPatchProxy(testTranslator(t, new(int)))
+	requestFor := func(t *testing.T, extraItems ...any) parsedResponsesRequest {
+		t.Helper()
+		items := []any{map[string]any{
+			"type": "additional_tools",
+			"tools": []any{map[string]any{
+				"type":        "custom",
+				"name":        "exec",
+				"description": testCodeModeDescription,
+			}},
+		}}
+		items = append(items, extraItems...)
+		request, err := parseResponsesRequest(mustTestJSON(t, map[string]any{
+			"input":               items,
+			"tools":               []any{},
+			"tool_choice":         "auto",
+			"parallel_tool_calls": true,
+		}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return request
+	}
+	metadataFor := func(workspace string) codexTurnMetadata {
+		return codexTurnMetadata{
+			RequestKind: "turn",
+			Workspaces:  map[string]json.RawMessage{workspace: nil},
+		}
+	}
+
+	firstWorkspace := t.TempDir()
+	firstRequest := requestFor(t)
+	first, err := proxy.prepareRequest(t.Context(), &firstRequest, "shared-cache-key", metadataFor(firstWorkspace), true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	visible, err := first.TransformJSON(mustTestJSON(t, map[string]any{
+		"status": "completed",
+		"output": []any{testHPatchItem()},
+	}))
+	first.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var response struct {
+		Output []map[string]json.RawMessage `json:"output"`
+	}
+	if err := json.Unmarshal(visible, &response); err != nil {
+		t.Fatal(err)
+	}
+	if len(response.Output) != 1 {
+		t.Fatalf("translated output = %s", visible)
+	}
+
+	secondWorkspace := t.TempDir()
+	secondRequest := requestFor(t, response.Output[0])
+	second, err := proxy.prepareRequest(t.Context(), &secondRequest, "shared-cache-key", metadataFor(secondWorkspace), true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer second.Close()
+
+	var replayed []map[string]json.RawMessage
+	if err := json.Unmarshal(secondRequest.fields["input"], &replayed); err != nil {
+		t.Fatal(err)
+	}
+	if len(replayed) != 2 {
+		t.Fatalf("replayed input = %s", secondRequest.fields["input"])
+	}
+	if name := jsonString(replayed[1], "name"); name != "exec" {
+		t.Fatalf("cross-workspace replay restored tool name %q", name)
+	}
+	if input := jsonString(replayed[1], "input"); input != hpatchApplyExecInput(testTranslatedPatch, testHPatchReport) {
+		t.Fatalf("cross-workspace replay restored input %q", input)
+	}
+
+	history, err := second.translate("call-correction", "1: accept\n", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(history.translationError, "no hpatch call to correct") {
+		t.Fatalf("cross-workspace correction history = %+v", history)
 	}
 }
 
@@ -972,8 +1058,10 @@ func TestHReadHistoryIsExcludedFromCorrections(t *testing.T) {
 	}
 
 	transform := &hpatchResponseTransform{
-		proxy:     proxy,
-		sessionID: "session",
+		proxy:            proxy,
+		sessionID:        "session",
+		historySessionID: "session",
+
 		local: map[string]hpatchHistory{
 			"call-local-read": {
 				toolName: hreadToolName,
@@ -1014,7 +1102,7 @@ func TestHPatchCorrectionRetainsCorrelationAndIncrementsAttempt(t *testing.T) {
 	if second.translationError != "" || second.correlationID != "call-1" || second.attempt != 2 {
 		t.Fatalf("correction metadata = %+v", second)
 	}
-	if _, ok := proxy.history("session-1", "call-1"); ok {
+	if _, ok := proxy.history(transform.historySessionID, "call-1"); ok {
 		t.Fatal("local history committed before response completion")
 	}
 }
@@ -1157,7 +1245,7 @@ func TestHPatchTranslationFailureReturnsImmediateDiagnosticExec(t *testing.T) {
 		t.Fatalf("translation rejection carrier = %s", visible)
 	}
 	carrier := response.Output[1]
-	history, remembered := proxy.history("session-1", "call-H")
+	history, remembered := proxy.history(transform.historySessionID, "call-H")
 	if !remembered {
 		t.Fatal("translation rejection carrier was not remembered")
 	}
@@ -1236,7 +1324,7 @@ func TestHPatchStreamingTranslationFailureCompletesDiagnosticExecLifecycle(t *te
 			t.Fatalf("translation carrier exposed %q: %q", forbidden, visible)
 		}
 	}
-	if _, remembered := proxy.history("session-1", "call-H"); !remembered {
+	if _, remembered := proxy.history(transform.historySessionID, "call-H"); !remembered {
 		t.Fatal("streaming translation rejection carrier was not remembered")
 	}
 }
@@ -1271,7 +1359,7 @@ func TestHPatchMalformedCallStillFailsRequest(t *testing.T) {
 	if err == nil || visible != nil {
 		t.Fatalf("malformed hpatch call = visible %q, error %v", visible, err)
 	}
-	if _, remembered := proxy.history("session-1", "call-H"); remembered {
+	if _, remembered := proxy.history(transform.historySessionID, "call-H"); remembered {
 		t.Fatal("malformed hpatch call created history")
 	}
 }
@@ -1287,8 +1375,103 @@ func TestHPatchTranslationCancellationRemainsRequestCancellation(t *testing.T) {
 	if !errors.Is(err, context.Canceled) || visible != nil {
 		t.Fatalf("canceled translation = visible %q, error %v", visible, err)
 	}
-	if _, remembered := proxy.history("session-1", "call-H"); remembered {
+	if _, remembered := proxy.history(transform.historySessionID, "call-H"); remembered {
 		t.Fatal("canceled translation created rejection history")
+	}
+}
+
+func TestHPatchHistoryByteAccountingIncludesExistingCalls(t *testing.T) {
+	proxy := newHPatchProxy(testTranslator(t, new(int)))
+	if err := proxy.rememberBatch("session", map[string]hpatchHistory{
+		"call-1": {script: "first"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := proxy.rememberBatch("session", map[string]hpatchHistory{
+		"call-2": {script: "second"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	session := proxy.sessions["session"]
+	want := 0
+	for _, history := range session.calls {
+		want += history.bytes
+	}
+	if session.bytes != want || proxy.historyBytes != want {
+		t.Fatalf("history bytes = session %d, global %d, want %d", session.bytes, proxy.historyBytes, want)
+	}
+}
+
+func TestHPatchHistoryDoesNotEvictActiveSessions(t *testing.T) {
+	proxy := newHPatchProxy(testTranslator(t, new(int)))
+	for index := range maxSessionHistories {
+		sessionID := fmt.Sprintf("session-%03d", index)
+		if err := proxy.rememberBatch(sessionID, map[string]hpatchHistory{"call": {script: sessionID}}); err != nil {
+			t.Fatalf("remember session %d: %v", index, err)
+		}
+	}
+	proxy.activateSession("session-000")
+	defer proxy.deactivateSession("session-000")
+
+	if err := proxy.rememberBatch("session-new", map[string]hpatchHistory{"call": {script: "new"}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := proxy.sessions["session-000"]; !ok {
+		t.Fatal("active oldest session was evicted")
+	}
+	if _, ok := proxy.sessions["session-001"]; ok {
+		t.Fatal("oldest inactive session was not evicted")
+	}
+}
+
+func TestHPatchHistoryEvictsOldestCallsAndSessions(t *testing.T) {
+	proxy := newHPatchProxy(testTranslator(t, new(int)))
+	for index := range maxSessionTurns + 1 {
+		callID := fmt.Sprintf("call-%03d", index)
+		err := proxy.rememberBatch("session", map[string]hpatchHistory{
+			callID: {
+				toolName:         hpatchToolName,
+				script:           callID,
+				translationError: "rejected",
+			},
+		})
+		if err != nil {
+			t.Fatalf("remember call %d: %v", index, err)
+		}
+	}
+	session := proxy.sessions["session"]
+	if len(session.calls) != maxSessionTurns {
+		t.Fatalf("retained calls = %d, want %d", len(session.calls), maxSessionTurns)
+	}
+	if _, ok := session.calls["call-000"]; ok {
+		t.Fatal("oldest call was not evicted")
+	}
+	if _, ok := session.calls[fmt.Sprintf("call-%03d", maxSessionTurns)]; !ok {
+		t.Fatal("newest call was not retained")
+	}
+	latest, err := proxy.correctableHistory("session")
+	if err != nil || latest.script != fmt.Sprintf("call-%03d", maxSessionTurns) {
+		t.Fatalf("latest history = %+v, error %v", latest, err)
+	}
+
+	for index := range maxSessionHistories {
+		sessionID := fmt.Sprintf("session-%03d", index)
+		if err := proxy.rememberBatch(sessionID, map[string]hpatchHistory{"call": {script: sessionID}}); err != nil {
+			t.Fatalf("remember session %d: %v", index, err)
+		}
+	}
+	if err := proxy.rememberBatch("session-new", map[string]hpatchHistory{"call": {script: "new"}}); err != nil {
+		t.Fatalf("remember replacement session: %v", err)
+	}
+	if len(proxy.sessions) != maxSessionHistories {
+		t.Fatalf("retained sessions = %d, want %d", len(proxy.sessions), maxSessionHistories)
+	}
+	if _, ok := proxy.sessions["session-000"]; ok {
+		t.Fatal("oldest session was not evicted")
+	}
+	if _, ok := proxy.sessions["session-new"]; !ok {
+		t.Fatal("new session was not retained")
 	}
 }
 
@@ -1302,7 +1485,7 @@ func TestHPatchBoundsTranslationAndHistory(t *testing.T) {
 		if err == nil || visible != nil || !strings.Contains(err.Error(), "translation exceeds") {
 			t.Fatalf("oversized translation = visible %q, error %v", visible, err)
 		}
-		if _, remembered := proxy.history("session-1", "call-H"); remembered {
+		if _, remembered := proxy.history(transform.historySessionID, "call-H"); remembered {
 			t.Fatal("oversized translation created rejection history")
 		}
 	})
@@ -1318,7 +1501,7 @@ func TestHPatchBoundsTranslationAndHistory(t *testing.T) {
 		if err == nil || visible != nil || !strings.Contains(err.Error(), "script exceeds") {
 			t.Fatalf("oversized script = visible bytes %d, error %v", len(visible), err)
 		}
-		if _, remembered := proxy.history("session-1", "call-H"); remembered {
+		if _, remembered := proxy.history(transform.historySessionID, "call-H"); remembered {
 			t.Fatal("oversized script created rejection history")
 		}
 	})
@@ -1331,7 +1514,7 @@ func TestHPatchBoundsTranslationAndHistory(t *testing.T) {
 		if !errors.Is(err, errHPatchCapacity) || visible != nil {
 			t.Fatalf("translator capacity = visible %q, error %v", visible, err)
 		}
-		if _, remembered := proxy.history("session-1", "call-H"); remembered {
+		if _, remembered := proxy.history(transform.historySessionID, "call-H"); remembered {
 			t.Fatal("translator capacity created rejection history")
 		}
 	})

@@ -19,12 +19,18 @@ const (
 )
 
 func routingSessionID(headers http.Header, request parsedResponsesRequest) string {
-	for _, name := range []string{sessionIDHeader, clientRequestIDHeader} {
-		for _, value := range headers.Values(name) {
-			if strings.TrimSpace(value) != "" {
-				return value
-			}
+	for _, value := range headers.Values(sessionIDHeader) {
+		if strings.TrimSpace(value) != "" {
+			return value
 		}
 	}
-	return request.promptCacheKey()
+	if key := request.promptCacheKey(); key != "" {
+		return key
+	}
+	for _, value := range headers.Values(clientRequestIDHeader) {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
 }
