@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
-	"unicode/utf8"
 )
 
 // repairLineWindow is how many baseline lines accompany a failure on each side
@@ -47,7 +46,7 @@ func (w *workspace) repairContext(command instruction, reason failureReason) str
 		return report.String()
 	}
 	switch command.operation {
-	case "sel", "tsel":
+	case "tsel":
 		w.writeLineRepair(&report, editor, lines, command, reason)
 	case "rsel":
 		w.writeRangeRepair(&report, editor, lines, command, reason)
@@ -69,33 +68,19 @@ func (w *workspace) writeLineRepair(report *strings.Builder, editor *editor, lin
 		writeLineWindow(report, editor.baseline, lines, min(max(number, 1), len(lines)))
 		return
 	}
-	if command.operation == "tsel" {
-		if reason == reasonOccurrenceMissing {
-			line := lines[number-1]
-			offsets := nonOverlappingLiteralOffsets(editor.baseline[line.start:], command.text, command.count)
-			fmt.Fprintf(report, "found %d of %d requested matches at or after line %d\n", len(offsets), command.count, number)
-			if len(offsets) != 0 {
-				matchLines := make([]int, 0, min(len(offsets), repairListLimit))
-				for _, offset := range offsets[:min(len(offsets), repairListLimit)] {
-					matchLines = append(matchLines, lineNumberAt(lines, line.start+offset))
-				}
-				fmt.Fprintf(report, "matching lines: %s\n", joinLineNumbers(matchLines, len(offsets)))
+	if reason == reasonOccurrenceMissing {
+		line := lines[number-1]
+		offsets := nonOverlappingLiteralOffsets(editor.baseline[line.start:], command.text, command.count)
+		fmt.Fprintf(report, "found %d of %d requested matches at or after line %d\n", len(offsets), command.count, number)
+		if len(offsets) != 0 {
+			matchLines := make([]int, 0, min(len(offsets), repairListLimit))
+			for _, offset := range offsets[:min(len(offsets), repairListLimit)] {
+				matchLines = append(matchLines, lineNumberAt(lines, line.start+offset))
 			}
+			fmt.Fprintf(report, "matching lines: %s\n", joinLineNumbers(matchLines, len(offsets)))
 		}
-		writeLineWindow(report, editor.baseline, lines, number)
-		return
-	}
-
-	content := editor.baseline[lines[number-1].start:lines[number-1].contentEnd]
-	columns := utf8.RuneCountInString(content)
-	if reason == reasonCoordinateBounds {
-		fmt.Fprintf(report, "line %d has %d columns; requested %d:%d\n", number, columns, command.start, command.end)
-		fmt.Fprintf(report, "columns count Unicode code points, so one tab is one column\n")
 	}
 	writeLineWindow(report, editor.baseline, lines, number)
-	if reason == reasonCoordinateBounds && columns > 0 {
-		fmt.Fprintf(report, "column guide for line %d: %s\n", number, columnGuide(content))
-	}
 }
 
 // writeRangeRepair explains a linewise selector failure against the file's
@@ -144,7 +129,7 @@ func (e *editor) editOffset() int {
 // relevant span; commands without a line operand fall back to edit state.
 func (e *editor) addressedOffset(command instruction, lines []logicalLine) int {
 	switch command.operation {
-	case "sel", "tsel", "rsel":
+	case "tsel", "rsel":
 		if command.lineNumber >= 1 && command.lineNumber <= len(lines) {
 			return lines[command.lineNumber-1].start
 		}
@@ -189,48 +174,6 @@ func writeLineWindow(report *strings.Builder, baseline string, lines []logicalLi
 		}
 		fmt.Fprintf(report, "%d|%s\n", index, previewTextLimit(baseline[line.start:line.contentEnd], limit))
 	}
-}
-
-// columnGuide reports the rune-column span of each whitespace-separated token
-// on the line. Sampling individual columns is ambiguous, because a sampled
-// character usually recurs on the line and the reader cannot tell which
-// occurrence was meant; a token's start:end span is unambiguous and is what a
-// column selector actually needs.
-func columnGuide(content string) string {
-	var spans []string
-	column := 0
-	start := 0
-	total := 0
-	var token strings.Builder
-	flush := func(end int) {
-		if token.Len() == 0 {
-			return
-		}
-		total++
-		if len(spans) < repairListLimit {
-			spans = append(spans, fmt.Sprintf("%s=%d:%d", previewText(token.String()), start, end))
-		}
-		token.Reset()
-	}
-	for _, character := range content {
-		column++
-		if character == ' ' || character == '\t' {
-			flush(column - 1)
-			continue
-		}
-		if token.Len() == 0 {
-			start = column
-		}
-		token.WriteRune(character)
-	}
-	flush(column)
-	if total == 0 {
-		return "line contains only whitespace"
-	}
-	if omitted := total - len(spans); omitted > 0 {
-		spans = append(spans, fmt.Sprintf("... (%d more tokens)", omitted))
-	}
-	return strings.Join(spans, " ")
 }
 
 // lineNumberAt maps a baseline offset to its one-based logical line.

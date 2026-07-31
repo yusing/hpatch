@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"slices"
 	"strings"
-	"unicode/utf8"
 )
 
 type selection struct {
@@ -74,19 +73,6 @@ func (e *editor) commitGeneration() {
 	e.baseline = content
 	e.edits = nil
 	e.resetCursor()
-}
-
-func (e *editor) selectColumns(lineNumber, startColumn, endColumn int) error {
-	line, err := lineAt(e.baseline, lineNumber)
-	if err != nil {
-		return withReason(reasonCoordinateBounds, err)
-	}
-	content := e.baseline[line.start:line.contentEnd]
-	start, end, ok := runeColumnOffsets(content, startColumn, endColumn)
-	if !ok {
-		return withReason(reasonCoordinateBounds, fmt.Errorf("columns %d:%d are outside line %d", startColumn, endColumn, lineNumber))
-	}
-	return withReason(reasonEditConflict, e.setSelections([]selection{{start: line.start + start, end: line.start + end}}, false))
 }
 
 func (e *editor) selectMatches(fromLine, count int, literal string, origin editOrigin) error {
@@ -459,28 +445,6 @@ func lineAt(text string, number int) (logicalLine, error) {
 		return logicalLine{}, fmt.Errorf("line %d is outside the file", number)
 	}
 	return lines[number-1], nil
-}
-
-func runeColumnOffsets(content string, startColumn, endColumn int) (int, int, bool) {
-	runeCount := utf8.RuneCountInString(content)
-	if startColumn < 1 || endColumn < startColumn || endColumn > runeCount {
-		return 0, 0, false
-	}
-	return byteOffsetAtRune(content, startColumn-1), byteOffsetAtRune(content, endColumn), true
-}
-
-func byteOffsetAtRune(text string, runeIndex int) int {
-	if runeIndex == utf8.RuneCountInString(text) {
-		return len(text)
-	}
-	seen := 0
-	for offset := range text {
-		if seen == runeIndex {
-			return offset
-		}
-		seen++
-	}
-	return len(text)
 }
 
 func lineTerminatorSuffix(text string) string {

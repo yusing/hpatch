@@ -49,7 +49,7 @@ historical-commit benchmark that measures hpatch against the native edit path by
 - `hpatch --help`, `hpatch --tool-help`, `hpatch translate --help`, and
   `hpatch --version`: informational output without reading stdin or accessing the
   workspace.
-- Script commands: `in`, `new`, `mv`, `rm`, `sel`, `tsel`, `rsel`, `type`,
+- Script commands: `in`, `new`, `mv`, `rm`, `tsel`, `rsel`, `type`,
   `del`, `copy`, `cut`, `paste`, and `commit`; `type` also accepts a framed heredoc body.
 - Routed rejected-script corrections can replace, accept displayed safe corrections for,
   delete, or insert commands by command index without resending the complete script.

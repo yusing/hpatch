@@ -24,19 +24,19 @@ import (
 const (
 	metricsFilename = "metrics.bin"
 	metricsLockname = "metrics.lock"
-	metricsMagic    = "HPATCH19"
+	metricsMagic    = "HPATCH20"
 
 	metricsSlotSize         = 2432
 	metricsFileSize         = 2 * metricsSlotSize
 	metricsChecksumOffset   = 2400
 	metricsDiagnosticOffset = 2384
-	commandCount            = 13
+	commandCount            = 12
 	metricsLockRetryDelay   = 10 * time.Millisecond
 )
 
 var commandOperations = [commandCount]string{
 	"in", "new", "mv", "rm",
-	"sel", "tsel", "rsel",
+	"tsel", "rsel",
 	"type", "del", "copy", "cut", "paste", "commit",
 }
 

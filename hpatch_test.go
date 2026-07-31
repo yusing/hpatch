@@ -161,10 +161,10 @@ func TestUnicodeCRLFAndBaselineEditorState(t *testing.T) {
 	writeTestFile(t, root, "text.txt", "αβγ\tbar baz\r\none\r\ntwo", 0o644)
 	script := strings.Join([]string{
 		"in text.txt",
-		"sel 1 2:3",
+		`tsel 1 "βγ"`,
 		`type "XY"`,
 		`type "!"`,
-		"sel 1 9:11",
+		`tsel 1 "baz"`,
 		"del",
 		"rsel 2:3",
 		"copy",
@@ -479,8 +479,8 @@ func TestFailureDiagnosticsIdentifyCommandContext(t *testing.T) {
 			want:   "hpatch: command 1, source line 1, operation \"new\", path \"file.txt\", category file: destination file.txt already exists\n",
 		},
 		{
-			name:   "malformed command is syntax",
-			script: "in file.txt\nsel 1 2",
+			name:   "removed sel command is syntax",
+			script: "in file.txt\nsel 1 1:1",
 			want:   "hpatch: command 2, source line 2, operation \"sel\", category syntax: unknown or malformed command\n",
 		},
 		{

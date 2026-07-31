@@ -5,7 +5,6 @@ corrections: correction (_separator correction)*
 
 ?command: path_command
         | bare_command
-        | sel_command
         | tsel_command
         | rsel_command
         | type_command
@@ -13,7 +12,6 @@ corrections: correction (_separator correction)*
 
 path_command: PATH_OP SP PATH
 bare_command: "rm" | "del" | "copy" | "cut" | "paste" | "commit"
-sel_command: "sel" SP POSINT SP POSINT ":" POSINT
 tsel_command: "tsel" SP POSINT SP TSEL_QUOTED (SP POSINT)?
 rsel_command: "rsel" SP POSINT ":" POSINT
 type_command: "type" SP QUOTED

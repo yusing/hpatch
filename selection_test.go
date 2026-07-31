@@ -311,10 +311,8 @@ func TestSelectorsRejectNonAbsoluteLinesAtomically(t *testing.T) {
 	tests := []struct {
 		name, script, want string
 	}{
-		{name: "sel signed", script: "in file.txt\nsel +0 1:1", want: `invalid line reference "+0"`},
 		{name: "tsel signed", script: "in file.txt\ntsel -1 \"one\"", want: `invalid line reference "-1"`},
 		{name: "rsel signed", script: "in file.txt\nrsel +0:+1", want: `invalid line reference "+0"`},
-		{name: "sel zero", script: "in file.txt\nsel 0 1:1", want: `invalid line reference "0"`},
 		{name: "tsel negative zero", script: "in file.txt\ntsel -0 \"one\"", want: `invalid line reference "-0"`},
 	}
 	for _, test := range tests {

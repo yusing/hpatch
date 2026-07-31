@@ -74,7 +74,6 @@ func TestToolGrammarLineTerminatorsMatchPhysicalLineParser(t *testing.T) {
 func TestToolGrammarCommandOperandsUseExactSpaces(t *testing.T) {
 	for _, rule := range []string{
 		"path_command: PATH_OP SP PATH",
-		"sel_command: \"sel\" SP POSINT SP POSINT \":\" POSINT",
 		"tsel_command: \"tsel\" SP POSINT SP TSEL_QUOTED (SP POSINT)?",
 		"rsel_command: \"rsel\" SP POSINT \":\" POSINT",
 		"type_command: \"type\" SP QUOTED",
@@ -87,10 +86,10 @@ func TestToolGrammarCommandOperandsUseExactSpaces(t *testing.T) {
 	}
 }
 
-func TestRemovedBlockSelectorIsNotAdvertised(t *testing.T) {
+func TestRemovedSelectorsAreNotAdvertised(t *testing.T) {
 	for name, text := range map[string]string{"grammar": toolGrammar, "description": toolDescription} {
-		if strings.Contains(text, "bsel") {
-			t.Errorf("%s still advertises removed bsel command", name)
+		if strings.Contains(text, "bsel") || strings.Contains(text, "\nsel_command:") || strings.Contains(text, "| sel_command") || strings.Contains(text, "- sel ") {
+			t.Errorf("%s still advertises a removed selector", name)
 		}
 	}
 }
@@ -114,7 +113,7 @@ func TestToolDescriptionMinimizesModelRoundTrips(t *testing.T) {
 		"Minimize model round trips",
 		"batch all known independent edits across files into one atomic script",
 		"Split calls only when a later edit depends on the preceding result or diagnostic",
-		"Only `sel` and `rsel` require coordinates",
+		"Only `rsel` requires coordinates",
 		"obtain every required coordinate for the current baseline",
 		"otherwise prefer stable text already established by inspection",
 	} {
@@ -129,7 +128,7 @@ func TestToolDescriptionMinimizesModelRoundTrips(t *testing.T) {
 
 func TestToolDescriptionGuidesSparseCommandChoice(t *testing.T) {
 	for _, guidance := range []string{
-		"tsel cannot target only a later same-line match",
+
 		"do not default to line 1 when TEXT also occurs earlier",
 		"from column 1 of FROM_LINE through EOF",
 		"matches may land on different lines",
@@ -145,7 +144,7 @@ func TestToolDescriptionGuidesSparseCommandChoice(t *testing.T) {
 		"No report is available until the whole call finishes",
 		"post-commit selectors address that new content",
 		"include separator blank lines deliberately",
-		"sel changes only the second identical occurrence",
+
 		"cut combines copy and deletion in one command",
 		"the script does not re-emit the selected text",
 		"later commands must select text introduced or changed earlier in the same call",
@@ -172,38 +171,6 @@ func TestToolDescriptionGuidesSparseCommandChoice(t *testing.T) {
 }
 
 func TestToolDescriptionSuggestedUseCasesExecute(t *testing.T) {
-	t.Run("sel targets later identical same-line match", func(t *testing.T) {
-		const script = `in predicate.go
-sel 24 17:21
-type "cached"`
-		if !strings.Contains(toolDescription, fencedScript(script)) {
-			t.Fatal("tool description omits executable sel example")
-		}
-
-		root := t.TempDir()
-		prefix := "package sample\nfunc predicate() bool {\n" + strings.Repeat("// padding\n", 21)
-		formattedPrefix := "package sample\n\nfunc predicate() bool {\n" + strings.Repeat("\t// padding\n", 21)
-		suffix := "}\n"
-		writeTestFile(t, root, "predicate.go", prefix+"return ready || ready\n"+suffix, 0o644)
-
-		stdout, stderr, exitCode := runForTest(root, nil, script)
-		if exitCode != 0 || stdout != "" || stderr != "" {
-			t.Fatalf("Run() = exit %d, stdout %q, stderr %q", exitCode, stdout, stderr)
-		}
-		if got, want := readTestFile(t, root, "predicate.go"), formattedPrefix+"\treturn ready || cached\n"+suffix; got != want {
-			t.Fatalf("predicate.go = %q, want %q", got, want)
-		}
-
-		textRoot := t.TempDir()
-		writeTestFile(t, textRoot, "predicate.go", prefix+"return ready || ready\n"+suffix, 0o644)
-		stdout, stderr, exitCode = runForTest(textRoot, nil, "in predicate.go\ntsel 24 \"ready\"\ntype \"cached\"")
-		if exitCode != 0 || stdout != "" || stderr != "" {
-			t.Fatalf("tsel Run() = exit %d, stdout %q, stderr %q", exitCode, stdout, stderr)
-		}
-		if got, want := readTestFile(t, textRoot, "predicate.go"), formattedPrefix+"\treturn cached || ready\n"+suffix; got != want {
-			t.Fatalf("tsel predicate.go = %q, want first same-line match %q", got, want)
-		}
-	})
 
 	t.Run("cut paste commit then edit introduced text", func(t *testing.T) {
 		const script = `in source.go

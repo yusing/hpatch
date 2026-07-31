@@ -55,7 +55,6 @@ Editing commands:
   new PATH                            select a pending empty file at cursor 0:0
   mv PATH                             move the active pending file without changing its baseline
   rm                                  remove the active file and clear editor state
-  sel LINE START:END                  select inclusive one-based rune columns
   tsel FROM_LINE "TEXT" [N]          select the first N separate matches from FROM_LINE
   rsel START:END                      select inclusive complete logical lines
   type "TEXT"                         record replacement or insertion at baseline coordinates
@@ -96,13 +95,6 @@ Baseline editor state:
   the clipboard survives. Selectors later in the same script must use coordinates known
   before submission; split the work into another call if those coordinates are uncertain.
   Script end finalizes pending edits without that cursor reset.
-
-  ` + "`sel`" + ` columns count Unicode code points, not display width: one tab is one
-  column, so a rendered editor column does not match a sel column on an indented line.
-  Both endpoints are inclusive. Prefer tsel or rsel when the target has a usable text
-  anchor or is a whole line; a sel range that resolves to an unintended but valid span
-  commits silently. A rejected range prints the line's column count and each token's
-  column span, which is enough to correct it without rereading the file.
 
   ` + "`tsel`" + ` starts at column 1 of FROM_LINE and scans forward through EOF. Its
   optional count defaults to one and must be positive. It establishes separate exact

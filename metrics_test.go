@@ -186,10 +186,10 @@ func TestLoadGainMetricsMatchesGainReportTotals(t *testing.T) {
 		SessionID:                    "session-gain",
 	})
 	entry := metrics{}
-	entry.Commands[commandOperationIndex("sel")].Invocations = 1
-	entry.Commands[commandOperationIndex("sel")].Errors = 1
+	entry.Commands[commandOperationIndex("rsel")].Invocations = 1
+	entry.Commands[commandOperationIndex("rsel")].Errors = 1
 	entry.Reasons[reasonCoordinateBounds] = 1
-	entry.CommandReasons[commandOperationIndex("sel")][reasonCoordinateBounds] = 1
+	entry.CommandReasons[commandOperationIndex("rsel")][reasonCoordinateBounds] = 1
 	if err := updateMetrics(dataDirectory, entry); err != nil {
 		t.Fatal(err)
 	}
@@ -207,10 +207,10 @@ func TestLoadGainMetricsMatchesGainReportTotals(t *testing.T) {
 	if got.NetAddedInput != "14" || got.DefinitionSources != "installation and removal measured" {
 		t.Fatalf("input = net %q sources %q", got.NetAddedInput, got.DefinitionSources)
 	}
-	if len(got.Commands) != commandCount || got.Commands[commandOperationIndex("sel")].Errors != 1 {
+	if len(got.Commands) != commandCount || got.Commands[commandOperationIndex("rsel")].Errors != 1 {
 		t.Fatalf("commands = %#v", got.Commands)
 	}
-	if len(got.CommandReasons) != 1 || got.CommandReasons[0].Command != "sel" || got.CommandReasons[0].Reason != "coordinate-bounds" {
+	if len(got.CommandReasons) != 1 || got.CommandReasons[0].Command != "rsel" || got.CommandReasons[0].Reason != "coordinate-bounds" {
 		t.Fatalf("command reasons = %#v", got.CommandReasons)
 	}
 }
@@ -243,9 +243,9 @@ func TestGainReportsCommandInvocationsErrorsAndRates(t *testing.T) {
 		script  string
 		success bool
 	}{
-		{name: "success with unrelated command-name text", args: []string{"translate"}, script: "new note.txt\ntype \"rsel sel future-command\"\n", success: true},
+		{name: "success with unrelated command-name text", args: []string{"translate"}, script: "new note.txt\ntype \"rsel future-command\"\n", success: true},
 		{name: "execution error", args: []string{"translate"}, script: "new failed.txt\ntype \"ignored\"\nrsel 99:99\n"},
-		{name: "malformed absolute line", args: []string{"translate"}, script: "sel 0 1:1\n"},
+		{name: "malformed absolute line", args: []string{"translate"}, script: "tsel 0 \"x\"\n"},
 		{name: "unknown future command", args: []string{"translate"}, script: "future-command\n"},
 		{name: "successful no-op", script: "new transient.txt\nrm\n", success: true},
 	}
@@ -266,7 +266,7 @@ func TestGainReportsCommandInvocationsErrorsAndRates(t *testing.T) {
 	wantCommands := commandMetrics{}
 	wantCommands[commandOperationIndex("new")] = commandMetric{Invocations: 3}
 	wantCommands[commandOperationIndex("rm")] = commandMetric{Invocations: 1}
-	wantCommands[commandOperationIndex("sel")] = commandMetric{Invocations: 1, Errors: 1}
+	wantCommands[commandOperationIndex("tsel")] = commandMetric{Invocations: 1, Errors: 1}
 	wantCommands[commandOperationIndex("rsel")] = commandMetric{Invocations: 1, Errors: 1}
 	wantCommands[commandOperationIndex("type")] = commandMetric{Invocations: 2}
 	if got.Commands != wantCommands {
@@ -288,8 +288,7 @@ func TestGainReportsCommandInvocationsErrorsAndRates(t *testing.T) {
 		"new      3            0       0.0%\n" +
 		"mv       0            0       0.0%\n" +
 		"rm       1            0       0.0%\n" +
-		"sel      1            1       100.0%\n" +
-		"tsel     0            0       0.0%\n" +
+		"tsel     1            1       100.0%\n" +
 		"rsel     1            1       100.0%\n" +
 		"type     2            0       0.0%\n" +
 		"del      0            0       0.0%\n" +

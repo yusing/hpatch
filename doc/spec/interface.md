@@ -157,7 +157,7 @@ the report does not subtract definitions, convert input to output, or calculate 
 input/output percentage. Unmeasured `apply_patch` input sources are labeled `not measured`.
 
 Gain then writes stable-order compact tables for aggregate command invocation and error
-rates; `sel`, `tsel`, and `rsel` selector counters; single and multiple `tsel` spans;
+rates; `tsel` and `rsel` selector counters; single and multiple `tsel` spans;
 error reasons; and each error attributed to the command that raised it. The last table
 lists only nonzero command-and-reason pairs, and renders a single `none` row when no
 errors are recorded. Every error appears in both the aggregate reason table and the
@@ -208,7 +208,6 @@ in PATH
 new PATH
 mv PATH
 rm
-sel LINE START:END
 tsel FROM_LINE "QUOTED STRING" [COUNT]
 rsel START:END
 type "QUOTED STRING"
@@ -392,7 +391,7 @@ Acceptance:
 ## REQ-SELECT-001 — Immutable generation-baseline selections and cursor
 
 Each current logical file has one immutable baseline per generation. A new file has an
-empty generation baseline. Every `sel`, `tsel`, and `rsel` command resolves only
+empty generation baseline. Every `tsel` and `rsel` command resolves only
 against that baseline; pending replacements, deletions, and insertions never change
 selector text, line references, scopes, matches, or positions. Text introduced by an
 earlier command is not selectable in the same generation and cannot create an unrelated
@@ -403,13 +402,9 @@ with the prior edit and affected baseline lines identified.
 
 Each active file has either a generation-baseline cursor or a nonempty ordered set of
 disjoint generation-baseline selections. `in`, `new`, and a `commit` that retains the
-active file establish cursor `0:0`, before the first baseline code point. A cursor is an
-insertion position; every selection is a half-open baseline span produced by the inclusive
-	commands below. `sel` and `rsel` produce one selection; `tsel` may produce more
-	than one. Empty baselines have no selectable line.
-
-`sel` selects columns within one resolved baseline logical line. Columns count Unicode
-code points, including one code point per tab; the line terminator is not selectable.
+insertion position; every selection is a half-open baseline span produced by the
+commands below. `rsel` produces one selection; `tsel` may produce more than one.
+Empty baselines have no selectable line.
 
 `tsel` starts searching at column 1 of resolved baseline `FROM_LINE` and continues
 forward through EOF. It establishes the first `COUNT` separate exact literal matches as

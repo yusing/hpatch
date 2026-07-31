@@ -131,7 +131,7 @@ func commandCategory(operation string) string {
 	switch operation {
 	case "in", "new", "mv", "rm":
 		return "file"
-	case "sel", "tsel", "rsel":
+	case "tsel", "rsel":
 		return "selection"
 	case "type", "del", "copy", "cut", "paste":
 		return "edit"
@@ -165,8 +165,6 @@ func (w *workspace) execute(command instruction, commandIndex int) error {
 	textMatches := len(file.editor.selections) != 0 && file.editor.textMatches
 	var err error
 	switch command.operation {
-	case "sel":
-		return w.active.editor.selectColumns(command.lineNumber, command.start, command.end)
 	case "tsel":
 		return w.active.editor.selectMatches(command.lineNumber, command.count, command.text, origin)
 	case "rsel":

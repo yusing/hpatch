@@ -13,7 +13,6 @@ import (
 
 var (
 	absoluteLinePattern = regexp.MustCompile(`^[1-9][0-9]*$`)
-	selectPattern       = regexp.MustCompile(`^sel (\S+) ([1-9][0-9]*):([1-9][0-9]*)$`)
 	textSelectPattern   = regexp.MustCompile(`^tsel (\S+) (.+)$`)
 	rangePattern        = regexp.MustCompile(`^rsel (\S+):(\S+)$`)
 )
@@ -26,8 +25,6 @@ type instruction struct {
 	path           string
 	lineNumber     int
 	endLine        int
-	start          int
-	end            int
 	count          int
 	text           string
 	delimiter      string
@@ -169,8 +166,6 @@ func recognizeCommandAttempt(line string) commandAttempt {
 	switch fields[0] {
 	case "in", "new", "mv", "rm", "type", "del", "copy", "cut", "paste", "commit":
 		return commandAttempt{recognized: true}
-	case "sel":
-		return commandAttempt{recognized: recognizeLine(fields, 1)}
 	case "rsel":
 		return commandAttempt{recognized: recognizeRange(fields)}
 	case "tsel":
@@ -247,31 +242,6 @@ func parseInstruction(sourceLine int, line string) (instruction, error) {
 
 	if line == "rm" || line == "del" || line == "copy" || line == "cut" || line == "paste" || line == "commit" {
 		return instruction{line: sourceLine, operation: line}, nil
-	}
-
-	if match := selectPattern.FindStringSubmatch(line); match != nil {
-		lineNumber, err := parseLineNumber(sourceLine, match[1])
-		if err != nil {
-			return instruction{}, err
-		}
-		start, err := parseInteger(sourceLine, match[2])
-		if err != nil {
-			return instruction{}, err
-		}
-		end, err := parseInteger(sourceLine, match[3])
-		if err != nil {
-			return instruction{}, err
-		}
-		if start > end {
-			return instruction{}, scriptFailure(sourceLine, reasonOrderOrOverlap, "selection start exceeds end")
-		}
-		return instruction{
-			line:       sourceLine,
-			operation:  "sel",
-			lineNumber: lineNumber,
-			start:      start,
-			end:        end,
-		}, nil
 	}
 
 	if match := textSelectPattern.FindStringSubmatch(line); match != nil {
@@ -371,14 +341,6 @@ func parseLineNumber(sourceLine int, value string) (int, error) {
 	number, err := strconv.Atoi(value)
 	if err != nil {
 		return 0, scriptError(sourceLine, "line reference is out of range")
-	}
-	return number, nil
-}
-
-func parseInteger(sourceLine int, value string) (int, error) {
-	number, err := strconv.Atoi(value)
-	if err != nil {
-		return 0, scriptError(sourceLine, "number is out of range")
 	}
 	return number, nil
 }

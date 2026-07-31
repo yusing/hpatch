@@ -105,12 +105,10 @@ func TestMalformedSelectorAttributionRequiresRecognizableVariant(t *testing.T) {
 		want   commandAttempt
 		reason failureReason
 	}{
-		{name: "bare sel", script: "sel\n"},
-		{name: "nonnumeric sel", script: "sel nope\n"},
 		{name: "bare tsel", script: "tsel\n"},
 		{name: "tsel without text", script: "tsel 1\n"},
-		{name: "zero absolute line", script: "sel 0 1:1\n", want: commandAttempt{recognized: true}, reason: reasonSyntax},
-		{name: "malformed signed line", script: "sel +x 1:1\n"},
+		{name: "zero absolute line", script: "tsel 0 \"x\"\n", want: commandAttempt{recognized: true, textSpan: textSpanSingle}, reason: reasonSyntax},
+		{name: "malformed signed line", script: "tsel +x \"x\"\n"},
 		{name: "invalid multiple count", script: "tsel 1 \"x\" nope\n", want: commandAttempt{recognized: true, textSpan: textSpanMultiple}, reason: reasonInvalidCount},
 	}
 	for _, test := range tests {
@@ -156,7 +154,6 @@ func TestMetricsClassifyVariantsOutcomesAndReasons(t *testing.T) {
 	}
 
 	for _, script := range []string{
-		"in sample.txt\nsel 1 1:1\ntype \"A\"\n",
 		"in sample.txt\nrsel 1:1\ntype \"A\"\n",
 		"in sample.txt\ntsel 1 \"alpha\"\ntype \"A\"\n",
 		"in sample.txt\ntsel 1 \"alpha\" 1\ntype \"A\"\n",
@@ -167,7 +164,6 @@ func TestMetricsClassifyVariantsOutcomesAndReasons(t *testing.T) {
 	for _, script := range []string{
 		"in sample.txt\ntsel 1 \"alpha\" 9\n",
 		"in sample.txt\ntsel 1 \"alpha\" nope\n",
-		"in sample.txt\nsel +x 1:1\n",
 	} {
 		run(script, false)
 	}
@@ -227,7 +223,7 @@ func TestMetricsSlotRoundTripsAllCounters(t *testing.T) {
 
 func representativeMetrics() metrics {
 	value := metrics{HPatchTokens: 11, ApplyPatchTokens: 19, IneffectiveHPatchTokens: 7, FailedApplyPatchTokens: 5, ReportInputTokens: 5}
-	value.Commands[commandOperationIndex("sel")] = commandMetric{Invocations: 3, Errors: 1}
+	value.Commands[commandOperationIndex("rsel")] = commandMetric{Invocations: 3, Errors: 1}
 
 	value.Commands[commandOperationIndex("tsel")] = commandMetric{Invocations: 2, Errors: 1}
 
@@ -238,7 +234,7 @@ func representativeMetrics() metrics {
 	value.Reasons[reasonClipboardEmpty] = 1
 	// Attribute each reason to the command that raised it so the
 	// cross-tabulation reconciles with both margins.
-	value.CommandReasons[commandOperationIndex("sel")][reasonSyntax] = 1
+	value.CommandReasons[commandOperationIndex("rsel")][reasonSyntax] = 1
 	value.CommandReasons[commandOperationIndex("tsel")][reasonSyntax] = 1
 	value.CommandReasons[commandOperationIndex("paste")][reasonClipboardEmpty] = 1
 	return value

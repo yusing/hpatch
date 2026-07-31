@@ -89,10 +89,12 @@ func TestTopLevelHelpDescribesCompletePublicSurface(t *testing.T) {
 	}
 }
 
-func TestHelpDoesNotAdvertiseRemovedBlockSelector(t *testing.T) {
+func TestHelpDoesNotAdvertiseRemovedSelectors(t *testing.T) {
 	for name, text := range map[string]string{"top-level": helpTextBase, "tool": toolHelpText(), "translate": translateHelpText} {
-		if strings.Contains(text, "bsel") {
-			t.Errorf("%s help still advertises removed bsel command", name)
+		for _, removed := range []string{"bsel", "sel LINE", "`sel` columns"} {
+			if strings.Contains(text, removed) {
+				t.Errorf("%s help still advertises removed selector %q", name, removed)
+			}
 		}
 	}
 }

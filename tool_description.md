@@ -2,15 +2,11 @@ HPATCH/1 edits workspace files atomically. Submit one complete grammar-constrain
 Do not call this tool in parallel with other tools.
 
 Minimize model round trips: after inspecting every file required by the task, batch all known independent edits across files into one atomic script. Split calls only when a later edit depends on the preceding result or diagnostic.
-Only `sel` and `rsel` require coordinates. When either is needed,
-obtain every required coordinate for the current baseline from one `nl -ba -w1 -s'|'`
-inspection; otherwise prefer stable text already established by inspection.
+Only `rsel` requires coordinates. When it is needed, obtain every required coordinate for the current baseline from one `nl -ba -w1 -s'|'` inspection; otherwise prefer stable text already established by inspection.
 
 Minimize the complete selector-plus-replacement output; a likely retry costs more than a few saved tokens:
 - tsel FROM_LINE "TEXT" [N] selects the first N separate exact matches from column 1 of FROM_LINE through EOF; matches may land on different lines. TEXT can match part of a line, and matching is not syntax-aware. If the suffix lacks N matches but the whole baseline has exactly N, the selection repairs to that unique set and the success report records the repaired line; extra whole-file matches keep the incomplete suffix a failure.
 - rsel START:END selects complete logical lines and their terminators; use it when every selected line should be re-emitted.
-- sel LINE START:END selects inclusive one-based rune columns; prefer it for one short occurrence when identical text repeats on the same line and verified coordinates are available, because tsel cannot target only a later same-line match.
-
 
 Selection rules:
 - Start tsel TEXT at stable non-whitespace content.
@@ -29,7 +25,7 @@ PATCH
 paste
 ```
 
-- For rsel and sel, use the line and rune coordinates from that baseline inspection. Earlier edits do not shift baseline coordinates before commit.
+- For rsel, use the line coordinates from that baseline inspection. Earlier edits do not shift baseline coordinates before commit.
 - commit materializes edits as a new baseline; post-commit selectors address that new content. No report is available until the whole call finishes, so same-call selectors must use coordinates known before submission. If uncertain, end the call and inspect the resulting baseline before editing again.
 - A blank line immediately before PATCH is part of the literal replacement.
 - Use inline type when replacement text must not end with a newline.
@@ -54,13 +50,6 @@ tsel 90 "saveArtifactPayload(path, b)"
 type "saveArtifactPayloadAtomically(path, b)"
 ```
 
-Precision example after verifying that line 24 is "return ready || ready"; sel changes only the second identical occurrence:
-
-```
-in predicate.go
-sel 24 17:21
-type "cached"
-```
 
 Commands:
 - in PATH selects an existing UTF-8 file; new PATH selects a pending empty file.

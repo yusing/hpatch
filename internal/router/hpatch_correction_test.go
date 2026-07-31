@@ -13,9 +13,9 @@ func TestHPatchCorrectionDetectionDistinguishesScripts(t *testing.T) {
 		want    bool
 	}{
 		{"accept", "5: accept\n", true},
-		{"correction", "5: sel 2 6:15\n", true},
-		{"correction after blank lines", "\n\n5: sel 2 6:15\n", true},
-		{"multiple corrections", "5: sel 2 6:15\n10: rsel 3:3\n", true},
+		{"correction", "5: rsel 2:6\n", true},
+		{"correction after blank lines", "\n\n5: rsel 2:6\n", true},
+		{"multiple corrections", "5: rsel 2:6\n10: rsel 3:3\n", true},
 		{"deletion", "-5\n", true},
 		{"insert before", "+5: copy\n", true},
 		{"insert after", "5+: paste\n", true},
@@ -31,14 +31,14 @@ func TestHPatchCorrectionDetectionDistinguishesScripts(t *testing.T) {
 }
 
 func TestHPatchCorrectionParsesEntries(t *testing.T) {
-	corrections, err := parseHPatchCorrections("2: sel 2 6:15\n\n10: rsel 3:5\n")
+	corrections, err := parseHPatchCorrections("2: rsel 2:6\n\n10: rsel 3:5\n")
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
 	if len(corrections) != 2 {
 		t.Fatalf("parsed %d corrections, want 2", len(corrections))
 	}
-	if corrections[0] != (hpatchCorrection{command: 2, replacement: "sel 2 6:15"}) {
+	if corrections[0] != (hpatchCorrection{command: 2, replacement: "rsel 2:6"}) {
 		t.Errorf("first correction = %+v", corrections[0])
 	}
 	if corrections[1].command != 10 || corrections[1].replacement != "rsel 3:5" {
@@ -185,11 +185,11 @@ func TestHPatchCorrectionRejectsMalformedPayloads(t *testing.T) {
 		payload string
 		want    string
 	}{
-		{"raw command", "2: sel 2 6:15\ntype \"x\"\n", "is not `INDEX: COMMAND`"},
-		{"zero index", "0: sel 2 6:15\n", "is not `INDEX: COMMAND`"},
+		{"raw command", "2: rsel 2:6\ntype \"x\"\n", "is not `INDEX: COMMAND`"},
+		{"zero index", "0: rsel 2:6\n", "is not `INDEX: COMMAND`"},
 		{"empty replacement", "2:\n", "has no replacement command"},
 		{"blank replacement", "2:   \n", "has no replacement command"},
-		{"duplicate index", "2: sel 2 1:2\n2: sel 2 3:4\n", "appears more than once"},
+		{"duplicate index", "2: rsel 1:2\n2: rsel 3:4\n", "appears more than once"},
 		{"duplicate deletion", "-2\n-2\n", "appears more than once"},
 		{"duplicate acceptance", "2: accept\n2: accept\n", "appears more than once"},
 		{"replacement and deletion", "2: rm\n-2\n", "both replaced and deleted"},
@@ -271,26 +271,26 @@ func TestHPatchCorrectionInsertionsPreserveCRLF(t *testing.T) {
 }
 
 func TestHPatchCorrectionAppliesSeveralCommands(t *testing.T) {
-	base := "in calc.go\nsel 2 9:14\ntype \"a - b\"\n"
+	base := "in calc.go\nrsel 2:9\ntype \"a - b\"\n"
 	corrected, err := applyHPatchCorrections(base, []hpatchCorrection{
-		{command: 2, replacement: "sel 2 9:13"},
+		{command: 2, replacement: "rsel 2:9"},
 		{command: 3, replacement: `type "a * b"`},
 	})
 	if err != nil {
 		t.Fatalf("apply: %v", err)
 	}
-	if corrected != "in calc.go\nsel 2 9:13\ntype \"a * b\"\n" {
+	if corrected != "in calc.go\nrsel 2:9\ntype \"a * b\"\n" {
 		t.Fatalf("corrected script = %q", corrected)
 	}
 }
 
 func TestHPatchCorrectionPreservesCarriageReturns(t *testing.T) {
-	base := "in calc.go\r\nsel 2 9:14\r\ntype \"x\"\r\n"
-	corrected, err := applyHPatchCorrections(base, []hpatchCorrection{{command: 2, replacement: "sel 2 9:13"}})
+	base := "in calc.go\r\nrsel 2:9\r\ntype \"x\"\r\n"
+	corrected, err := applyHPatchCorrections(base, []hpatchCorrection{{command: 2, replacement: "rsel 2:9"}})
 	if err != nil {
 		t.Fatalf("apply: %v", err)
 	}
-	if corrected != "in calc.go\r\nsel 2 9:13\r\ntype \"x\"\r\n" {
+	if corrected != "in calc.go\r\nrsel 2:9\r\ntype \"x\"\r\n" {
 		t.Fatalf("corrected script = %q", corrected)
 	}
 }

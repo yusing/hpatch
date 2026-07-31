@@ -284,7 +284,6 @@ Selectors (prefer the first that fits):
 
 1. Complete logical lines or indentation changes: `rsel START:END`
 2. Exact non-whitespace content: `tsel FROM_LINE "TEXT" [N]`
-3. Exact rune columns only when needed: `sel LINE START:END`
 
 Common commands: `in` / `new` / `mv` / `rm`, `type "…"` or `type <<PATCH` … `PATCH`, `del`, `copy` / `cut` / `paste`, `commit`.
 

@@ -145,11 +145,11 @@ func TestFinalStateReportUsesEditLabelWithoutTextSelector(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, root, "file.txt", "abc\n", 0o644)
 	var stdout, stderr bytes.Buffer
-	script := "in file.txt\nsel 1 2:2\ndel\n"
+	script := "in file.txt\nrsel 1:1\ndel\n"
 	if exitCode := Run(nil, strings.NewReader(script), &stdout, &stderr, root, ""); exitCode != 0 || stdout.Len() != 0 {
 		t.Fatalf("Run() = exit %d, stdout %q, stderr %q", exitCode, stdout.String(), stderr.String())
 	}
-	want := "in file.txt 1:2\nlast edit in file.txt: del 1 edit: 1:2\n1|ac\n2|\n"
+	want := "in file.txt 1:1\nlast edit in file.txt: del 1 edit: 1:1\n1|\n"
 	if stderr.String() != want {
 		t.Fatalf("report = %q, want %q", stderr.String(), want)
 	}

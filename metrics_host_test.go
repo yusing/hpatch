@@ -34,15 +34,15 @@ func TestTranslateForHostReturnsCompleteSuccessAndFailureAccounting(t *testing.T
 		t.Fatalf("successful invocation metrics = %+v", success.Invocation.value.Commands)
 	}
 
-	rejected, err := TranslateForHost(t.Context(), workspace, "in note.txt\nsel 99 1:1\n", t.TempDir())
+	rejected, err := TranslateForHost(t.Context(), workspace, "in note.txt\nrsel 99:99\n", t.TempDir())
 	if err == nil {
 		t.Fatal("out-of-range selector unexpectedly succeeded")
 	}
-	sel := rejected.Invocation.value.Commands[commandOperationIndex("sel")]
-	if sel.Invocations != 1 || sel.Errors != 1 || rejected.Invocation.value.Reasons[reasonCoordinateBounds] != 1 {
+	rsel := rejected.Invocation.value.Commands[commandOperationIndex("rsel")]
+	if rsel.Invocations != 1 || rsel.Errors != 1 || rejected.Invocation.value.Reasons[reasonCoordinateBounds] != 1 {
 		t.Fatalf("rejected invocation metrics = %+v", rejected.Invocation.value)
 	}
-	if !strings.HasPrefix(rejected.Diagnostic, "hpatch: ") || !strings.Contains(rejected.Diagnostic, "operation \"sel\"") {
+	if !strings.HasPrefix(rejected.Diagnostic, "hpatch: ") || !strings.Contains(rejected.Diagnostic, "operation \"rsel\"") {
 		t.Fatalf("rejected diagnostic = %q", rejected.Diagnostic)
 	}
 }

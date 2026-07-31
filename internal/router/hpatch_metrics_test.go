@@ -10,7 +10,7 @@ import (
 func TestCalculateHPatchMetricRecordUsesExactCallerPayloads(t *testing.T) {
 	patch := "*** Begin Patch\n*** Update File: /workspace/calc.go\n@@\n-old\n+new\n*** End Patch\n"
 	inputs := hpatchMetricInputs{
-		emittedScript:      "2: sel 2 9:13\n",
+		emittedScript:      "2: rsel 2:2\n",
 		report:             "in calc.go 2:9\n2 return new\n",
 		patch:              patch,
 		sessionID:          "session",
@@ -60,7 +60,7 @@ func TestCalculateHPatchMetricRecordUsesExactCallerPayloads(t *testing.T) {
 
 func TestCalculateHPatchMetricRecordUsesEmptyFailureBaseline(t *testing.T) {
 	inputs := hpatchMetricInputs{
-		emittedScript: "2: sel 2 9:13\n",
+		emittedScript: "2: rsel 2:2\n",
 		diagnostic:    "hpatch: command 2 rejected\nrepair context\n" + hpatchCorrectionHint,
 	}
 	record, err := calculateHPatchMetricRecord(inputs)

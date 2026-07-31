@@ -19,41 +19,6 @@ func repairFor(t *testing.T, name, content, script string) string {
 	return repair
 }
 
-func TestRepairContextReportsColumnCountAndSpans(t *testing.T) {
-	// A tab is one column, so a line that looks wider than it measures is the
-	// case a column selector gets wrong most often.
-	repair := repairFor(t, "calc.go", "func total(a, b int) int {\n\treturn a + b\n}\n", "in calc.go\nsel 2 9:14\ntype \"a - b\"\n")
-	for _, want := range []string{
-		"line 2 has 13 columns; requested 9:14",
-		"one tab is one column",
-		"2|\treturn a + b",
-		"column guide for line 2: return=2:7 a=9:9 +=11:11 b=13:13",
-	} {
-		if !strings.Contains(repair, want) {
-			t.Fatalf("repair context lacks %q:\n%s", want, repair)
-		}
-	}
-}
-
-func TestRepairColumnGuideIsUnambiguousForRepeatedRunes(t *testing.T) {
-	// Sampling single columns is ambiguous when a character recurs: on this
-	// line "r" appears at columns 6 and 10, so a sampled "10=r" invites a
-	// selector starting mid-token. Token spans cannot be misread that way.
-	guide := columnGuide("\t\t\t\t\treturn nil")
-	if guide != "return=6:11 nil=13:15" {
-		t.Fatalf("column guide = %q, want token spans", guide)
-	}
-	if strings.Contains(guide, "10=") {
-		t.Fatalf("column guide samples ambiguous single columns: %q", guide)
-	}
-}
-
-func TestRepairColumnGuideHandlesWhitespaceOnlyLine(t *testing.T) {
-	if got := columnGuide("\t\t  "); got != "line contains only whitespace" {
-		t.Fatalf("whitespace-only guide = %q", got)
-	}
-}
-
 func TestRepairContextReportsForwardMatchCounts(t *testing.T) {
 	content := "target once target once\nnone\ntarget twice target twice\ntarget once\n"
 	repair := repairFor(t, "find.txt", content, "in find.txt\ntsel 2 \"target once\" 2\ntype \"replacement\"\n")
@@ -78,7 +43,7 @@ func TestRepairContextReportsForwardMatchCounts(t *testing.T) {
 }
 
 func TestRepairContextReportsMissingLine(t *testing.T) {
-	repair := repairFor(t, "calc.go", "one\ntwo\nthree\n", "in calc.go\nsel 99 1:3\ntype \"x\"\n")
+	repair := repairFor(t, "calc.go", "one\ntwo\nthree\n", "in calc.go\ntsel 99 \"x\"\ntype \"x\"\n")
 	if !strings.Contains(repair, "calc.go has 3 lines; line 99 does not exist") {
 		t.Fatalf("repair context lacks line count:\n%s", repair)
 	}
@@ -116,7 +81,7 @@ func TestRepairContextExplainsEditConflict(t *testing.T) {
 }
 
 func TestRepairContextEscapesControlCharacters(t *testing.T) {
-	repair := repairFor(t, "ctl.txt", "a\x1b[31mb\n", "in ctl.txt\nsel 1 40:50\ntype \"x\"\n")
+	repair := repairFor(t, "ctl.txt", "a\x1b[31mb\n", "in ctl.txt\ntsel 1 \"missing\"\ntype \"x\"\n")
 	if strings.Contains(repair, "\x1b") {
 		t.Fatalf("repair context leaked a control byte: %q", repair)
 	}
@@ -141,7 +106,7 @@ func TestRepairContextAbsentForFileFailures(t *testing.T) {
 func TestRepairContextDoesNotAffectSuccess(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, root, "calc.go", "func total(a, b int) int {\n\treturn a + b\n}\n", 0o644)
-	stdout, stderr, exitCode := runForTest(root, []string{"translate"}, "in calc.go\nsel 2 9:13\ntype \"a - b\"\n")
+	stdout, stderr, exitCode := runForTest(root, []string{"translate"}, "in calc.go\ntsel 2 \"a + b\"\ntype \"a - b\"\n")
 	if exitCode != 0 || stderr != "" {
 		t.Fatalf("success = exit %d, stderr %q", exitCode, stderr)
 	}
