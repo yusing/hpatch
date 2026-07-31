@@ -84,6 +84,25 @@ collect_artifacts() {
 	collected=$metrics_collected
 }
 
+normalize_hpatch_config_ownership() {
+	local directory="$run_dir/hpatch-config"
+	local owner
+
+	if docker info --format '{{json .SecurityOptions}}' | grep -Fq '"name=rootless"'; then
+		owner=0:0
+	else
+		owner="$(id -u):$(id -g)"
+	fi
+
+	if ! docker run --rm \
+		--mount type=bind,source="$directory",target=/hpatch-config \
+		"$benchmark_image" \
+		chown -R "$owner" /hpatch-config; then
+		printf 'bench.sh: cannot normalize hpatch metric artifact ownership at %s\n' "$directory" >&2
+		return 1
+	fi
+}
+
 merge_results() {
 	shopt -s nullglob
 	result_files=("$run_dir"/artifacts/"$task_id"/*/result.json)
@@ -254,6 +273,11 @@ cleanup() {
 		fi
 
 		"${compose[@]}" down --volumes --remove-orphans >/dev/null 2>&1 || true
+		if ! normalize_hpatch_config_ownership; then
+			if ((status == 0)); then
+				status=1
+			fi
+		fi
 		mapfile -t agent_containers < <(
 			docker ps -aq \
 				--filter "label=com.docker.compose.project=$COMPOSE_PROJECT_NAME" \
@@ -275,7 +299,7 @@ trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
-for executable in curl date diff docker git go grep jq mv sha256sum sort tar timeout; do
+for executable in curl date diff docker git go grep id jq mv sha256sum sort tar timeout; do
 	if ! command -v "$executable" >/dev/null; then
 		printf 'bench.sh: %s is required\n' "$executable" >&2
 		exit 1
