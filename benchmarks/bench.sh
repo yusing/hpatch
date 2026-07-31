@@ -5,24 +5,65 @@ benchmark_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 model=${MODEL:-gpt-5.6-sol}
 reasoning_effort=medium
 repetitions=4
-task_id=etcd-fast-keys-range
+task_id=etcd-range-stream
 task="$benchmark_root/tasks/$task_id"
-source_repo="$benchmark_root/repos/etcd"
-base_commit=27d5ef1b4da1d76ca8b9421d667e87d2fd2aba9d
-oracle_commit=dd57ad39fa4eb1afcd9abdadf75354bca0600d9f
-allowed_paths=(
-	server/etcdserver/txn/range.go
-	server/storage/mvcc/index.go
-	server/storage/mvcc/kv.go
-	server/storage/mvcc/kvstore_txn.go
-)
-hidden_sources=(hidden_mvcc_test.go.txt hidden_txn_test.go.txt)
-hidden_paths=(
-	server/storage/mvcc/hpatch_benchmark_test.go
-	server/etcdserver/txn/hpatch_benchmark_test.go
-)
-agent_timeout=900
-grader_timeout=300
+task_manifest="$task/task.json"
+prompt_file=
+source_repo=
+base_commit=
+oracle_commit=
+allowed_paths=()
+hidden_sources=()
+hidden_paths=()
+grader_command=()
+grader_name=
+baseline_output_contains=
+
+agent_timeout=
+grader_timeout=
+is_allowed_path() {
+	local candidate=$1
+	local allowed
+	for allowed in "${allowed_paths[@]}"; do
+		if [[ $candidate == "$allowed" ]]; then
+			return 0
+		fi
+	done
+	return 1
+}
+load_task_manifest() {
+	local repository
+	if ! jq -e --arg id "$task_id" '.id == $id' "$task_manifest" >/dev/null; then
+		printf 'bench.sh: task manifest id mismatch: %s\n' "$task_manifest" >&2
+		return 1
+	fi
+	repository=$(jq -er '.source.repository' "$task_manifest")
+	prompt_file=$(jq -er '.prompt_file' "$task_manifest")
+	source_repo=$(cd "$task/$repository" && pwd)
+	if [[ ! -f "$task/$prompt_file" ]]; then
+		printf 'bench.sh: prompt file not found: %s\n' "$task/$prompt_file" >&2
+		return 1
+	fi
+	base_commit=$(jq -er '.source.base_commit' "$task_manifest")
+	oracle_commit=$(jq -er '.source.oracle_commit' "$task_manifest")
+	mapfile -t allowed_paths < <(jq -er '.allowed_path_prefixes[]' "$task_manifest")
+	mapfile -t hidden_sources < <(jq -er '.hidden_files[].source' "$task_manifest")
+	mapfile -t hidden_paths < <(jq -er '.hidden_files[].destination' "$task_manifest")
+	mapfile -t grader_command < <(jq -er '.graders[0].command[]' "$task_manifest")
+	grader_name=$(jq -er '.graders[0].name' "$task_manifest")
+baseline_output_contains=$(jq -er '.graders[0].baseline_output_contains' "$task_manifest")
+
+	agent_timeout=$(jq -er '.agent_timeout_seconds' "$task_manifest")
+	grader_timeout=$(jq -er '.graders[0].timeout_seconds' "$task_manifest")
+	if ((${#hidden_sources[@]} == 0 || ${#hidden_sources[@]} != ${#hidden_paths[@]})); then
+		printf 'bench.sh: hidden file mappings are empty or unbalanced\n' >&2
+		return 1
+	fi
+	if ((${#allowed_paths[@]} == 0 || ${#grader_command[@]} == 0)); then
+		printf 'bench.sh: task manifest has no allowed paths or grader command\n' >&2
+		return 1
+	fi
+}
 results_root="$benchmark_root/results"
 mkdir -p "$results_root"
 run_dir=$(mktemp -d "$results_root/.staging-XXXXXX")
@@ -240,6 +281,14 @@ preserve_run() {
 
 # Invoked indirectly by cleanup from the EXIT trap.
 # shellcheck disable=SC2329
+generate_summary() {
+	if [[ ! -x $benchmark_root/report.sh ]]; then
+		printf 'bench.sh: report generator is not executable: %s\n' "$benchmark_root/report.sh" >&2
+		return 1
+	fi
+	"$benchmark_root/report.sh" "$run_dir"
+}
+
 print_result_paths() {
 	printf 'Results: %s\n' "$results"
 	printf 'Artifacts: %s\n' "$run_dir/artifacts"
@@ -292,6 +341,11 @@ cleanup() {
 			status=1
 		fi
 	fi
+	if ! generate_summary; then
+		if ((status == 0)); then
+			status=1
+		fi
+	fi
 	print_result_paths
 	exit "$status"
 }
@@ -307,6 +361,9 @@ for executable in curl date diff docker git go grep id jq mv sha256sum sort tar 
 done
 if [[ ! -f $CODEX_AUTH_PATH ]]; then
 	printf 'bench.sh: Codex auth file not found: %s\n' "$CODEX_AUTH_PATH" >&2
+	exit 1
+fi
+if ! load_task_manifest; then
 	exit 1
 fi
 if [[ ! -d $source_repo/.git ]]; then
@@ -422,9 +479,7 @@ grade() {
 	(
 		cd "$repository"
 		timeout --signal=TERM --kill-after=10s "${grader_timeout}s" \
-			go test ./server/storage/mvcc ./server/etcdserver/txn \
-			-run '^TestHPatchBenchmark' \
-			-count=1
+			"${grader_command[@]}"
 	) >"$stdout" 2>"$stderr"
 }
 
@@ -450,8 +505,8 @@ validate_revision() {
 		return 1
 	fi
 	if [[ $name == base ]] &&
-		! grep -Fq 'FastKeysOnly option is missing' "$workspace/grader.stdout" "$workspace/grader.stderr"; then
-		printf 'validation base: missing FastKeysOnly discriminator\n' >&2
+		! grep -Fq "$baseline_output_contains" "$workspace/grader.stdout" "$workspace/grader.stderr"; then
+		printf 'validation base: missing compile-failure discriminator\n' >&2
 		return 1
 	fi
 	rm -rf "$workspace"
@@ -546,7 +601,7 @@ run_agent() {
 			--json \
 			--color never \
 			-C "$repository" \
-			"$(cat "$task/prompt.md")"
+			"$(cat "$task/$prompt_file")"
 	) >"$codex_stdout" 2>"$codex_stderr" &
 	active_agent_pid=$!
 	wait "$active_agent_pid"
@@ -572,13 +627,10 @@ run_agent() {
 		} | sort -zu
 	)
 	for path in "${changed[@]}"; do
-		case "$path" in
-			"${allowed_paths[0]}"|"${allowed_paths[1]}"|"${allowed_paths[2]}"|"${allowed_paths[3]}") ;;
-			*)
-				unauthorized+=("$path")
-				task_pass=false
-				;;
-		esac
+		if ! is_allowed_path "$path"; then
+			unauthorized+=("$path")
+			task_pass=false
+		fi
 	done
 	if ((${#changed[@]})); then
 		changed_json=$(printf '%s\0' "${changed[@]}" | jq -Rs 'split("\u0000")[:-1]')
@@ -593,15 +645,15 @@ run_agent() {
 	git -C "$repository" diff --binary HEAD >"$diff_path"
 
 	if [[ $canceled == true ]]; then
-		: >"$artifact_dir/grader-fast-keys-range.stdout"
-		: >"$artifact_dir/grader-fast-keys-range.stderr"
+		: >"$artifact_dir/grader-$task_id.stdout"
+		: >"$artifact_dir/grader-$task_id.stderr"
 		grader_exit=$pair_cancel_status
 		grader_duration_ms=0
 	else
 		inject_hidden_tests "$repository"
 		grader_started_ms=$(date +%s%3N)
 		set +e
-		grade "$repository" "$artifact_dir/grader-fast-keys-range.stdout" "$artifact_dir/grader-fast-keys-range.stderr"
+		grade "$repository" "$artifact_dir/grader-$task_id.stdout" "$artifact_dir/grader-$task_id.stderr"
 		grader_exit=$?
 		set -e
 		grader_duration_ms=$(($(date +%s%3N) - grader_started_ms))
@@ -673,10 +725,11 @@ run_agent() {
 		--argjson passed "$([[ $grader_exit -eq 0 ]] && printf true || printf false)" \
 		--argjson exit_code "$grader_exit" \
 		--argjson duration_ms "$grader_duration_ms" \
-		--arg stdout_path "$artifact_dir/grader-fast-keys-range.stdout" \
-		--arg stderr_path "$artifact_dir/grader-fast-keys-range.stderr" '
+		--arg stdout_path "$artifact_dir/grader-$task_id.stdout" \
+		--arg stderr_path "$artifact_dir/grader-$task_id.stderr" \
+		--arg grader_name "$grader_name" '
 		[{
-			name: "fast-keys-range",
+			name: $grader_name,
 			required: true,
 			passed: $passed,
 			exit_code: $exit_code,

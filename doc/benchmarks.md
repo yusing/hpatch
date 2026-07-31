@@ -207,69 +207,89 @@ hpatch translation. The benchmark does not set the reserved
 The active task is:
 
 ```text
-benchmarks/tasks/etcd-fast-keys-range/
+benchmarks/tasks/etcd-range-stream/
 ```
 
-It reconstructs an etcd MVCC optimization across four production files, not a
-single-branch three-line fix.
+It reconstructs etcd's server-side RangeStream feature across eight production
+files and six package-level behavior checks. The task is deliberately
+cross-layer: the stream handler, validation, header handling, client forwarding,
+and proxy fallbacks all have to agree.
 
 Historical revisions:
 
 ```text
-base:   27d5ef1b4da1d76ca8b9421d667e87d2fd2aba9d
-oracle: dd57ad39fa4eb1afcd9abdadf75354bca0600d9f
+base:   84e612f39b82d1c8ee3f884a59e3f973209d8fbc
+oracle: fd2cc937c9d4413a410d36eb340d83981535b00f
 ```
 
-The scoped oracle production diff is 50 insertions and 15 deletions across:
+The scoped oracle production diff is 236 insertions and 7 deletions across:
 
 ```text
+client/v3/mock/mockserver/mockserver.go
+client/v3/retry.go
+server/etcdserver/api/v3rpc/header.go
+server/etcdserver/api/v3rpc/key.go
 server/etcdserver/txn/range.go
-server/storage/mvcc/index.go
-server/storage/mvcc/kv.go
-server/storage/mvcc/kvstore_txn.go
+server/etcdserver/v3_server.go
+server/proxy/grpcproxy/adapter/kv_client_adapter.go
+server/proxy/grpcproxy/kv.go
 ```
 
-The task requires keys-only range requests to use the in-memory MVCC index when
-values are unnecessary, propagate key metadata, preserve revision and deletion
-semantics, avoid the fast path for value sorting, and implement limit versus
-total-count behavior while scanning the index.
+The task requires a bounded key-ordered stream with a pinned revision,
+CountOnly handling, adaptive chunk limits, final-chunk totals, context and send
+error propagation, stream-specific validation, revision-preserving headers,
+and consistent client, mock, and proxy behavior. The existing protobuf and
+generated gRPC files are intentionally already present and are out of scope.
 
 The task files are:
 
 ```text
 task.json
 prompt.md
-hidden_mvcc_test.go.txt
 hidden_txn_test.go.txt
+hidden_v3rpc_test.go.txt
+hidden_server_test.go.txt
+hidden_adapter_test.go.txt
+hidden_proxy_mock_test.go.txt
+hidden_client_test.go.txt
 ```
 
-Only the four production paths above are allowed to change. Tests,
+Only the eight production paths above are allowed to change. Tests,
 documentation, dependencies, generated files, and all other production paths
 are rejected even if the hidden grader passes.
 
 ## Task qualification
 
 Before spending model tokens, the shell exports each revision into a fresh
-history-free Git repository and injects both hidden tests.
+history-free Git repository and injects all six hidden tests.
 
 The grader command is:
 
 ```sh
-go test ./server/storage/mvcc ./server/etcdserver/txn \
+go test ./server/etcdserver/txn \
+  ./server/etcdserver/api/v3rpc \
+  ./server/etcdserver \
+  ./server/proxy/grpcproxy/adapter \
+  ./client/v3/mock/mockserver \
+  ./client/v3 \
   -run '^TestHPatchBenchmark' \
   -count=1
 ```
 
 Qualification requires:
 
-- the base to fail with `FastKeysOnly option is missing`;
+- the base to fail with the expected compile-time `undefined:` signals for
+  the not-yet-wired RangeStream path;
 - the oracle to pass the same command.
 
-The hidden MVCC test exercises limited scans with and without total counts,
-unlimited scans, deleted keys, key metadata, and the absence of backend values.
-The hidden transaction test verifies that keys-only requests select the fast
-path, value-sorted keys-only requests do not, ordinary requests do not, and
-total-count intent is propagated.
+The hidden transaction test covers ordering and revision-filter predicates.
+The v3rpc tests cover stream rejection and header field filling without
+overwriting a pinned revision. The server tests exercise multi-chunk ordered
+output, implicit revision pinning, CountOnly, limited final counts, and Send
+error propagation in addition to adaptive chunk sizing and its zero-limit
+guard. The adapter and mock tests require explicit Unimplemented gRPC
+responses, while the client test verifies RangeStream forwarding through the
+retry wrapper.
 
 An agent does not need to reproduce the oracle diff. Any confined
 implementation satisfying the hidden behavior passes.
