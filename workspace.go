@@ -166,9 +166,10 @@ func (w *workspace) execute(command instruction, commandIndex int) error {
 	var err error
 	switch command.operation {
 	case "tsel":
-		return w.active.editor.selectMatches(command.lineNumber, command.count, command.text, origin)
+		return w.active.editor.selectMatches(command.lineHash, command.count, command.text)
+
 	case "rsel":
-		return w.active.editor.selectLines(command.lineNumber, command.endLine)
+		return w.active.editor.selectLines(command.lineHash, command.endHash)
 	case "type":
 		err = file.editor.typeText(command.text, origin)
 	case "del":

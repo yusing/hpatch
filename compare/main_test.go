@@ -1,10 +1,11 @@
 package main
 
 import (
-	"github.com/yusing/hpatch/internal/patchtest"
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/yusing/hpatch/internal/patchtest"
 )
 
 func TestRunHPatchAcceptsFinalStateReportAndPreservesUnrelatedFiles(t *testing.T) {
@@ -13,7 +14,7 @@ func TestRunHPatchAcceptsFinalStateReportAndPreservesUnrelatedFiles(t *testing.T
 			"target.txt":    "old\n",
 			"unrelated.txt": "keep\n",
 		},
-		script: "in target.txt\ntsel 1 \"old\"\ntype \"new\"\n",
+		script: "in target.txt\ntsel cba0 \"old\"\ntype \"new\"\n",
 	}
 	got, err := runHPatch(scenario)
 	if err != nil {
@@ -26,7 +27,7 @@ func TestRunHPatchAcceptsFinalStateReportAndPreservesUnrelatedFiles(t *testing.T
 
 func TestRunHPatchRejectsMalformedAndFutureCommands(t *testing.T) {
 	for _, script := range []string{
-		"in target.txt\ntsel 1\n",
+		"in target.txt\ntsel cba0\n",
 		"future-command\n",
 	} {
 		t.Run(strings.TrimSpace(script), func(t *testing.T) {

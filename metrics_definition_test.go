@@ -95,18 +95,18 @@ func TestCommandReasonsAttributeErrorsToCommands(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "note.txt"), []byte("alpha\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if exitCode := Run(nil, strings.NewReader("in note.txt\nrsel 99:99\ntype \"x\"\n"), &bytes.Buffer{}, &bytes.Buffer{}, root, dataDirectory); exitCode == 0 {
+	if exitCode := Run(nil, strings.NewReader("in note.txt\ntsel ffff \"x\"\n"), &bytes.Buffer{}, &bytes.Buffer{}, root, dataDirectory); exitCode == 0 {
 		t.Fatal("out-of-range selector unexpectedly succeeded")
 	}
 	got, err := readMetrics(dataDirectory)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.CommandReasons[commandOperationIndex("rsel")][reasonCoordinateBounds] != 1 {
-		t.Fatalf("rsel coordinate-bounds = %d, want 1", got.CommandReasons[commandOperationIndex("rsel")][reasonCoordinateBounds])
+	if got.CommandReasons[commandOperationIndex("tsel")][reasonCoordinateBounds] != 1 {
+		t.Fatalf("tsel coordinate-bounds = %d, want 1", got.CommandReasons[commandOperationIndex("tsel")][reasonCoordinateBounds])
 	}
 	report := gainReport(got)
-	if !strings.Contains(report, "rsel     coordinate-bounds  1") {
+	if !strings.Contains(report, "tsel     coordinate-bounds  1") {
 		t.Fatalf("gain report lacks attributed error row: %q", report)
 	}
 	if !strings.Contains(gainReport(metrics{}), "none     none    0") { //nolint:dupword // Both empty-state columns read "none".

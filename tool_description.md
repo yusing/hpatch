@@ -1,23 +1,29 @@
 HPATCH/1 edits workspace files atomically. Submit one complete grammar-constrained script; rejection or cancellation changes nothing.
 Do not call this tool in parallel with other tools.
 
-Minimize model round trips: after inspecting every file required by the task, batch all known independent edits across files into one atomic script. Split calls only when a later edit depends on the preceding result or diagnostic.
-Only `rsel` requires coordinates. When it is needed, obtain every required coordinate for the current baseline from one `nl -ba -w1 -s'|'` inspection; otherwise prefer stable text already established by inspection.
+Minimize model round trips: after inspecting every file required by the task with `hread`, batch all
+known independent edits across files into one atomic script. When a later edit depends on content or
+paths introduced earlier in the same script, use `commit` to advance the immutable baseline. Split
+calls only when the next script depends on a diagnostic or another result unavailable until this call
+finishes. Copy each selector's `HASH` from hread output or an hpatch report; never reconstruct or
+guess a hash.
 
 Minimize the complete selector-plus-replacement output; a likely retry costs more than a few saved tokens:
-- tsel FROM_LINE "TEXT" [N] selects the first N separate exact matches from column 1 of FROM_LINE through EOF; matches may land on different lines. TEXT can match part of a line, and matching is not syntax-aware. If the suffix lacks N matches but the whole baseline has exactly N, the selection repairs to that unique set and the success report records the repaired line; extra whole-file matches keep the incomplete suffix a failure.
-- rsel START:END selects complete logical lines and their terminators; use it when every selected line should be re-emitted.
+- tsel HASH "TEXT" [N] resolves HASH only when exactly one immutable-baseline logical line has it, then selects the first N separate exact matches from column 1 of that line through EOF. Matches may land on different lines. TEXT must stay on one line, need not fill it, and matching is not syntax-aware. If fewer than N matches exist at or after the resolved anchor, the command rejects and never searches before it.
+- rsel START_HASH END_HASH resolves both hashes uniquely, then selects the inclusive complete logical lines and their terminators. Use it when every selected line should be re-emitted.
+- Missing hashes, duplicate-content hashes, and truncated-hash collisions reject without guessing or repair context.
 
 Selection rules:
-- Start tsel TEXT at stable non-whitespace content.
-- Choose FROM_LINE so scanning starts in the intended region; do not default to line 1 when TEXT also occurs earlier. Prefer a broader TEXT instead of relying on whole-file repair of a wrong FROM_LINE.
+- Start tsel TEXT at stable non-whitespace content and copy its HASH from hread.
+- Choose an anchor whose resolved line starts the intended search region. Do not use an earlier convenient hash when TEXT also occurs before the intended target.
+- Because tsel cannot target only a later same-line match, expand TEXT to distinguish the intended occurrence or replace the complete line.
 - Before using short TEXT that may also occur in prose, links, examples, or repeated code, verify all occurrences (for example with rg -nF) and include distinguishing text such as ## for a Markdown heading.
 - Use rsel for multiline regions. When only part of a boundary line changes, select the complete lines and reproduce the boundary content that should remain.
 - For insertion-only edits, type only the new content; never repeat unchanged selected text in the type payload. To insert before a selected fragment, copy the selection, replace it with only new content, then paste the preserved selection:
 
 ```
 in handler.go
-tsel 40 "func handle(request Request) error {"
+tsel 3316 "func handle(request Request) error {"
 copy
 type <<PATCH
 // Audit requests before handling.
@@ -25,7 +31,7 @@ PATCH
 paste
 ```
 
-- For rsel, use the line coordinates from that baseline inspection. Earlier edits do not shift baseline coordinates before commit.
+- For every selector, use a hashline from the current baseline inspection. Earlier edits do not shift baseline identity before commit.
 - commit materializes edits as a new baseline; post-commit selectors address that new content. No report is available until the whole call finishes, so same-call selectors must use coordinates known before submission. If uncertain, end the call and inspect the resulting baseline before editing again.
 - A blank line immediately before PATCH is part of the literal replacement.
 - Use inline type when replacement text must not end with a newline.
@@ -34,7 +40,7 @@ Whole-function example using complete logical lines:
 
 ```
 in service.go
-rsel 12:15
+rsel 2ff7 d10b
 type <<PATCH
 func calculateResult(input Input) (Result, error) {
 	return computeFreshResult(input), nil
@@ -46,10 +52,17 @@ One-line fragment example that preserves indentation and surrounding text:
 
 ```
 in artifact.go
-tsel 90 "saveArtifactPayload(path, b)"
+tsel 6403 "saveArtifactPayload(path, b)"
 type "saveArtifactPayloadAtomically(path, b)"
 ```
 
+Precision example after verifying the complete line is "return ready || ready":
+
+```
+in predicate.go
+tsel 9645 "return ready || ready"
+type "return ready || cached"
+```
 
 Commands:
 - in PATH selects an existing UTF-8 file; new PATH selects a pending empty file.
@@ -64,22 +77,22 @@ Move-and-adjust example that does not re-emit the moved body; commit makes the p
 
 ```
 in source.go
-rsel 12:28
+rsel ffb0 4b7b
 cut
 in destination.go
-rsel 40:40
+rsel 12d9 12d9
 paste
 commit
-tsel 41 "sourceRegistry"
+tsel ffb0 "sourceRegistry"
 type "destinationRegistry"
 ```
 
 State and safety:
-- The first in captures an immutable file baseline. All selectors in that generation use it; inserted text is not selectable.
+- The first in captures an immutable file baseline. Hashline selectors resolve exactly one baseline logical line; missing and ambiguous hashes reject without guessing. All selectors in that generation use it; inserted text is not selectable.
 - Returning with in resets cursor and selections but keeps pending edits. The clipboard survives file changes and commit.
 - Disjoint edits may finalize together. Overlapping replacements, insertion inside a replacement, and multiple insertions at one offset reject atomically.
 - Changed `.go` files are parsed and formatted with Go's standard library before finalization; other languages receive no language validation.
 - Paths are workspace-relative and must remain inside the one routed root. Parents for new or moved files must already exist.
 - A failed or corrected call is retried against the unchanged baseline.
 
-After success, trust the reported edited ranges and any repaired tsel line notes; do not reread the file solely to verify placement.
+After success, trust the reported edited ranges and hash-only preview rows; do not reread the file solely to verify placement.

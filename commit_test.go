@@ -2,10 +2,11 @@ package hpatch
 
 import (
 	"bytes"
-	"github.com/yusing/hpatch/internal/patchtest"
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/yusing/hpatch/internal/patchtest"
 )
 
 func TestCommitMaterializesGenerationBaseline(t *testing.T) {
@@ -18,18 +19,18 @@ func TestCommitMaterializesGenerationBaseline(t *testing.T) {
 		{
 			name:    "introduced text becomes selectable",
 			initial: map[string]string{"file.txt": "old\n"},
-			script:  "in file.txt\ntsel 1 \"old\"\ntype \"middle\"\ncommit\ntsel 1 \"middle\"\ntype \"final\"\n",
+			script:  "in file.txt\ntsel " + hashLine("old") + " \"old\"\ntype \"middle\"\ncommit\ntsel " + hashLine("middle") + " \"middle\"\ntype \"final\"\n",
 			want:    map[string]string{"file.txt": "final\n"},
 		},
 		{
 			name:   "new file accepts another generation edit",
-			script: "new note.txt\ntype \"first\"\ncommit\ntsel 1 \"first\"\ntype \"second\"\n",
+			script: "new note.txt\ntype \"first\"\ncommit\ntsel " + hashLine("first") + " \"first\"\ntype \"second\"\n",
 			want:   map[string]string{"note.txt": "second"},
 		},
 		{
 			name:    "materialized existing edit can be removed",
 			initial: map[string]string{"file.txt": "old\n"},
-			script:  "in file.txt\ntsel 1 \"old\"\ntype \"new\"\ncommit\nrm\n",
+			script:  "in file.txt\ntsel " + hashLine("old") + " \"old\"\ntype \"new\"\ncommit\nrm\n",
 			want:    map[string]string{},
 		},
 		{
@@ -59,7 +60,7 @@ func TestCommitMaterializesGenerationBaseline(t *testing.T) {
 func TestCommitPreservesClipboardAcrossGenerations(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, root, "source.txt", "copied\n", 0o644)
-	script := "in source.txt\nrsel 1:1\ncopy\nnew destination.txt\ncommit\npaste\n"
+	script := "in source.txt\nrsel " + hashLine("copied") + " " + hashLine("copied") + "\ncopy\nnew destination.txt\ncommit\npaste\n"
 	stdout, stderr, exitCode := runForTest(root, nil, script)
 	if exitCode != 0 || stdout != "" || stderr != "" {
 		t.Fatalf("Run() = exit %d, stdout %q, stderr %q", exitCode, stdout, stderr)
@@ -151,7 +152,7 @@ func TestGenerationReservationPreventsSameGenerationPathReuse(t *testing.T) {
 func TestFailureAfterCommitRemainsAtomic(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, root, "file.txt", "old\n", 0o644)
-	script := "in file.txt\ntsel 1 \"old\"\ntype \"middle\"\ncommit\ntsel 1 \"missing\"\n"
+	script := "in file.txt\ntsel " + hashLine("old") + " \"old\"\ntype \"middle\"\ncommit\ntsel " + hashLine("middle") + " \"missing\"\n"
 	stdout, stderr, exitCode := runForTest(root, []string{"translate"}, script)
 	if exitCode != 1 || stdout != "" || !strings.Contains(stderr, "found 0 of 1 requested matches of \"missing\" at or after line 1") {
 		t.Fatalf("Run() = exit %d, stdout %q, stderr %q", exitCode, stdout, stderr)
@@ -170,21 +171,21 @@ func TestCommitResetsStateButScriptEndDoesNot(t *testing.T) {
 	}{
 		{
 			name:       "explicit commit resets cursor",
-			script:     "in file.txt\ntsel 2 \"beta\"\ntype \"B\"\ncommit\n",
+			script:     "in file.txt\ntsel f44e \"beta\"\ntype \"B\"\ncommit\n",
 			wantHeader: "in file.txt 1:1",
-			wantLine:   "2|B",
+			wantLine:   "#|B",
 		},
 		{
 			name:       "no-op commit clears selection",
-			script:     "in file.txt\ntsel 2 \"beta\"\ncommit\n",
+			script:     "in file.txt\ntsel f44e \"beta\"\ncommit\n",
 			wantHeader: "in file.txt 1:1",
-			wantLine:   "2|beta",
+			wantLine:   "#|beta",
 		},
 		{
 			name:       "script end preserves pending cursor",
-			script:     "in file.txt\ntsel 2 \"beta\"\ntype \"B\"\ncommit\ntsel 2 \"B\"\ntype \"CC\"\n",
+			script:     "in file.txt\ntsel f44e \"beta\"\ntype \"B\"\ncommit\ntsel " + hashLine("B") + " \"B\"\ntype \"CC\"\n",
 			wantHeader: "in file.txt 2:3",
-			wantLine:   "2|CC",
+			wantLine:   "#|CC",
 		},
 	}
 	for _, test := range tests {
@@ -193,10 +194,10 @@ func TestCommitResetsStateButScriptEndDoesNot(t *testing.T) {
 			writeTestFile(t, root, "file.txt", "alpha\nbeta\ngamma\n", 0o644)
 			var stdout, stderr bytes.Buffer
 			if exitCode := Run(nil, strings.NewReader(test.script), &stdout, &stderr, root, ""); exitCode != 0 || stdout.Len() != 0 {
-				t.Fatalf("Run() = exit %d, stdout %q, stderr %q", exitCode, stdout.String(), stderr.String())
+				t.Fatalf("Run() = exit %d, stdout %q, stderr %q", exitCode, stdout.String(), normalizeHashlineRows(stderr.String()))
 			}
-			if !strings.HasPrefix(stderr.String(), test.wantHeader+"\n") || !strings.Contains(stderr.String(), test.wantLine+"\n") {
-				t.Fatalf("report %q does not contain %q and %q", stderr.String(), test.wantHeader, test.wantLine)
+			if !strings.HasPrefix(normalizeHashlineRows(stderr.String()), test.wantHeader+"\n") || !strings.Contains(normalizeHashlineRows(stderr.String()), test.wantLine+"\n") {
+				t.Fatalf("report %q does not contain %q and %q", normalizeHashlineRows(stderr.String()), test.wantHeader, test.wantLine)
 			}
 		})
 	}

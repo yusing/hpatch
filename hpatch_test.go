@@ -3,14 +3,15 @@ package hpatch
 import (
 	"bytes"
 	"errors"
-	"github.com/yusing/hpatch/internal/hpatchsyntax"
-	"github.com/yusing/hpatch/internal/patchtest"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/yusing/hpatch/internal/hpatchsyntax"
+	"github.com/yusing/hpatch/internal/patchtest"
 )
 
 func TestRunNormalMultiFileWorkflow(t *testing.T) {
@@ -21,14 +22,14 @@ func TestRunNormalMultiFileWorkflow(t *testing.T) {
 
 	script := strings.Join([]string{
 		"in a.txt",
-		`tsel 1 "old"`,
+		"tsel " + hashLine("alpha old") + ` "old"`,
 		`type "new"`,
 		"in b.txt",
-		"rsel 1:2",
+		"rsel " + hashLine("one") + " " + hashLine("two"),
 		"copy",
 		"paste",
 		"in a.txt",
-		`tsel 2 "keep"`,
+		"tsel " + hashLine("keep") + ` "keep"`,
 		"del",
 		"new draft.txt",
 		`type "foo bar"`,
@@ -65,7 +66,7 @@ func TestTranslateMatchesNormalMode(t *testing.T) {
 	}
 	script := strings.Join([]string{
 		"in code.go",
-		`tsel 3 "old"`,
+		"tsel " + hashLine("var value = old") + ` "old"`,
 		`type "current"`,
 		"mv current.go",
 		"new note.txt",
@@ -158,15 +159,17 @@ func TestNetFileActionsCollapseMovesAndCanceledCreation(t *testing.T) {
 
 func TestUnicodeCRLFAndBaselineEditorState(t *testing.T) {
 	root := t.TempDir()
-	writeTestFile(t, root, "text.txt", "αβγ\tbar baz\r\none\r\ntwo", 0o644)
+	const firstLine = "αβγ\tbar baz"
+	writeTestFile(t, root, "text.txt", firstLine+"\r\none\r\ntwo", 0o644)
+	anchor := hashLine(firstLine)
 	script := strings.Join([]string{
 		"in text.txt",
-		`tsel 1 "βγ"`,
+		"tsel " + anchor + ` "βγ"`,
 		`type "XY"`,
 		`type "!"`,
-		`tsel 1 "baz"`,
+		"tsel " + anchor + ` "baz"`,
 		"del",
-		"rsel 2:3",
+		"rsel " + hashLine("one") + " " + hashLine("two"),
 		"copy",
 		"paste",
 	}, "\n")
@@ -184,7 +187,7 @@ func TestUnicodeCRLFAndBaselineEditorState(t *testing.T) {
 func TestTranslateNormalizesLineEndingsForApplyPatchDisplay(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, root, "text.txt", "old\r\nkeep\r\n", 0o644)
-	stdout, stderr, exitCode := runForTest(root, []string{"translate"}, "in text.txt\ntsel 1 \"old\"\ntype \"new\"\n")
+	stdout, stderr, exitCode := runForTest(root, []string{"translate"}, "in text.txt\ntsel "+hashLine("old")+" \"old\"\ntype \"new\"\n")
 	if exitCode != 0 || stderr != "" {
 		t.Fatalf("translate = exit %d, stderr %q", exitCode, stderr)
 	}
@@ -202,7 +205,7 @@ func TestTranslateNormalizesLineEndingsForApplyPatchDisplay(t *testing.T) {
 func TestStandaloneCRLogicalLines(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, root, "text.txt", "first\rsecond\rthird", 0o644)
-	script := "in text.txt\ntsel 1 \"first\"\ntype \"FIRST\"\nrsel 2:3\ncopy\npaste\n"
+	script := "in text.txt\ntsel " + hashLine("first") + " \"first\"\ntype \"FIRST\"\nrsel " + hashLine("second") + " " + hashLine("third") + "\ncopy\npaste\n"
 	_, stderr, exitCode := runForTest(root, nil, script)
 	if exitCode != 0 {
 		t.Fatalf("Run() = exit %d, stderr %q", exitCode, stderr)
@@ -216,7 +219,7 @@ func TestTranslateDisambiguatesRepeatedBlocks(t *testing.T) {
 	root := t.TempDir()
 	content := "first\nrepeat\nvalue=old\nend\nmiddle\nrepeat\nvalue=old\nend\nlast\n"
 	writeTestFile(t, root, "text.txt", content, 0o644)
-	script := "in text.txt\ntsel 7 \"old\"\ntype \"new\"\n"
+	script := "in text.txt\ntsel " + hashLine("middle") + " \"old\"\ntype \"new\"\n"
 	stdout, stderr, exitCode := runForTest(root, []string{"translate"}, script)
 	if exitCode != 0 || stderr != "" {
 		t.Fatalf("translate = exit %d, stderr %q", exitCode, stderr)
@@ -241,12 +244,12 @@ func TestEvaluationFailuresDoNotMutateOrEmitPatch(t *testing.T) {
 		{name: "commit operand", script: "in file.txt\ncommit now"},
 		{name: "non-string type operand", script: "in file.txt\ntype null"},
 		{name: "non-JSON trailing whitespace", script: "in file.txt\ntype \"x\"\u00a0"},
-		{name: "non-JSON tsel trailing whitespace", script: "in file.txt\ntsel 1 \"a\" \u00a0"},
-		{name: "non-JSON tsel count whitespace", script: "in file.txt\ntsel 1 \"a\" 1\u00a0"},
+		{name: "non-JSON tsel trailing whitespace", script: "in file.txt\ntsel " + hashLine("aaa") + " \"a\" \u00a0"},
+		{name: "non-JSON tsel count whitespace", script: "in file.txt\ntsel " + hashLine("aaa") + " \"a\" 1\u00a0"},
 		{name: "malformed selection", script: "in file.txt\nsel 1 2"},
 		{name: "number overflow", script: "in file.txt\nsel 999999999999999999999999999 1:1"},
-		{name: "out of bounds", script: "in file.txt\nsel 1 20:21"},
-		{name: "overlapping occurrence is not counted", script: "in file.txt\ntsel 1 \"aa\" 2"},
+		{name: "missing hash", script: "in file.txt\nrsel ffff fffe"},
+		{name: "overlapping occurrence is not counted", script: "in file.txt\ntsel " + hashLine("aaa") + " \"aa\" 2"},
 		{name: "new collision", script: "new file.txt"},
 		{name: "move collision", script: "in file.txt\nmv occupied.txt"},
 		{name: "old path after move", script: "in file.txt\nmv moved.txt\nin file.txt"},
@@ -272,9 +275,10 @@ func TestEvaluationFailuresDoNotMutateOrEmitPatch(t *testing.T) {
 
 func TestQuotedOperandsAcceptLiteralTabs(t *testing.T) {
 	root := t.TempDir()
-	writeTestFile(t, root, "text.txt", "old\tvalue\n", 0o644)
+	const content = "old\tvalue"
+	writeTestFile(t, root, "text.txt", content+"\n", 0o644)
 	script := "in text.txt\n" +
-		"tsel 1 \t\"old\tvalue\"\n" +
+		"tsel " + hashLine(content) + " \t\"old\tvalue\"\n" +
 		"type  \"new\tvalue\"\n"
 
 	stdout, stderr, exitCode := runForTest(root, nil, script)
@@ -435,8 +439,8 @@ func TestParseReportsAllSyntaxErrorsWithoutEvaluation(t *testing.T) {
 	writeTestFile(t, root, "file.txt", "unchanged\n", 0o644)
 	script := "in file.txt\n" +
 		"type \"literal\x01control\"\n" +
-		"tsel 1 \"first\\nsecond\"\n" +
-		"tsel 1 \"literal\x01control\"\n"
+		"tsel 0123 \"first\\nsecond\"\n" +
+		"tsel 0123 \"literal\x01control\"\n"
 
 	stdout, stderr, exitCode := runForTest(root, []string{"translate"}, script)
 	if exitCode != 1 || stdout != "" {
@@ -470,7 +474,7 @@ func TestFailureDiagnosticsIdentifyCommandContext(t *testing.T) {
 	}{
 		{
 			name:   "selection failure includes selected path",
-			script: "in file.txt\ntsel 1 \"aa\" 2",
+			script: "in file.txt\ntsel " + hashLine("aaa") + " \"aa\" 2",
 			want:   "hpatch: command 2, source line 2, operation \"tsel\", path \"file.txt\", category selection: found 1 of 2 requested matches of \"aa\" at or after line 1\n",
 		},
 		{
@@ -542,7 +546,7 @@ func TestSymlinkPathResolvesNormally(t *testing.T) {
 	if err := os.Symlink("target.txt", filepath.Join(root, "link.txt")); err != nil {
 		t.Fatal(err)
 	}
-	stdout, stderr, exitCode := runForTest(root, []string{"translate"}, "in link.txt\ntsel 1 \"target\"\ntype \"updated\"\n")
+	stdout, stderr, exitCode := runForTest(root, []string{"translate"}, "in link.txt\ntsel "+hashLine("target")+" \"target\"\ntype \"updated\"\n")
 	if exitCode != 0 || stderr != "" || !strings.Contains(stdout, "+updated") {
 		t.Fatalf("exit %d, stdout %q, stderr %q", exitCode, stdout, stderr)
 	}
@@ -553,7 +557,7 @@ func TestAbsoluteAndNormalizedPaths(t *testing.T) {
 	writeTestFile(t, root, "relative.txt", "old\n", 0o644)
 	writeTestFile(t, root, "absolute.txt", "old\n", 0o644)
 
-	script := "in nested/../relative.txt\ntsel 1 \"old\"\ntype \"relative\"\nin " + filepath.Join(root, "absolute.txt") + "\ntsel 1 \"old\"\ntype \"absolute\"\n"
+	script := "in nested/../relative.txt\ntsel " + hashLine("old") + " \"old\"\ntype \"relative\"\nin " + filepath.Join(root, "absolute.txt") + "\ntsel " + hashLine("old") + " \"old\"\ntype \"absolute\"\n"
 	stdout, stderr, exitCode := runForTest(root, nil, script)
 	if exitCode != 0 || stdout != "" || stderr != "" {
 		t.Fatalf("Run() = exit %d, stdout %q, stderr %q", exitCode, stdout, stderr)
@@ -566,7 +570,7 @@ func TestAbsoluteAndNormalizedPaths(t *testing.T) {
 	}
 
 	rootCapability := openTestRoot(t, root)
-	patch, err := Translate(t.Context(), Workspace{Root: rootCapability}, "in "+filepath.Join(root, "absolute.txt")+"\ntsel 1 \"absolute\"\ntype \"translated\"\n")
+	patch, err := Translate(t.Context(), Workspace{Root: rootCapability}, "in "+filepath.Join(root, "absolute.txt")+"\ntsel "+hashLine("absolute")+" \"absolute\"\ntype \"translated\"\n")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -583,7 +587,7 @@ func TestWorkspaceCWDResolvesReadsAndRootRelativeTranslation(t *testing.T) {
 	writeTestFile(t, rootPath, "bin/main.go", "package main\n", 0o644)
 	root := openTestRoot(t, rootPath)
 	workspace := Workspace{Root: root, CWD: "bin"}
-	script := "in main.go\ntsel 1 \"package main\"\ntype \"package graph\"\n"
+	script := "in main.go\ntsel " + hashLine("package main") + " \"package main\"\ntype \"package graph\"\n"
 
 	patch, err := Translate(t.Context(), workspace, script)
 	if err != nil {
@@ -751,6 +755,34 @@ func updateChanges() []change {
 		})
 	}
 	return changes
+}
+
+func normalizeHashlineRows(output string) string {
+	lines := strings.SplitAfter(output, "\n")
+	for index, line := range lines {
+		start := 0
+		for start < len(line) && (line[start] == ' ' || line[start] == '\t') {
+			start++
+		}
+		hashEnd := start + lineHashLength
+		if hashEnd+1 >= len(line) || line[hashEnd] != ':' || line[hashEnd+1] != ' ' ||
+			!allBytes(line[start:hashEnd], func(value byte) bool {
+				return value >= '0' && value <= '9' || value >= 'a' && value <= 'f'
+			}) {
+			continue
+		}
+		lines[index] = line[:start] + "#|" + line[hashEnd+2:]
+	}
+	return strings.Join(lines, "")
+}
+
+func allBytes(value string, valid func(byte) bool) bool {
+	for index := range len(value) {
+		if !valid(value[index]) {
+			return false
+		}
+	}
+	return true
 }
 
 func runForTest(root string, args []string, script string) (string, string, int) {

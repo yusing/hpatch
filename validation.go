@@ -9,10 +9,10 @@ import (
 	"path/filepath"
 	"sort"
 	"strconv"
+	"strings"
 )
 
 type indentationCorrectionError struct {
-	line             int
 	proposedLine     string
 	proposedIndent   string
 	correctionIndent string
@@ -24,13 +24,15 @@ func (e *indentationCorrectionError) Error() string {
 }
 
 func (e *indentationCorrectionError) diagnostic() string {
-	return fmt.Sprintf(
-		"%d|%s\nindentation: proposed=%s correction=%s\n",
-		e.line,
-		previewTextLimit(e.proposedLine, repairPreviewLimit),
+	var output strings.Builder
+	writeHashLine(&output, e.proposedLine, previewTextLimit(e.proposedLine, repairPreviewLimit))
+	fmt.Fprintf(
+		&output,
+		"indentation: proposed=%s correction=%s\n",
 		strconv.Quote(e.proposedIndent),
 		strconv.Quote(e.correctionIndent),
 	)
+	return output.String()
 }
 
 func detectIndentationCorrection(baseline string, selected selection, replacement string) *indentationCorrectionError {
@@ -61,7 +63,6 @@ func detectIndentationCorrection(baseline string, selected selection, replacemen
 
 	corrected := replacement[:line.start] + originalIndent + replacement[line.start+len(proposedIndent):]
 	return &indentationCorrectionError{
-		line:             baselineLine(baseline, selected.start),
 		proposedLine:     content,
 		proposedIndent:   proposedIndent,
 		correctionIndent: originalIndent,

@@ -13,13 +13,13 @@ func TestHPatchCorrectionDetectionDistinguishesScripts(t *testing.T) {
 		want    bool
 	}{
 		{"accept", "5: accept\n", true},
-		{"correction", "5: rsel 2:6\n", true},
-		{"correction after blank lines", "\n\n5: rsel 2:6\n", true},
-		{"multiple corrections", "5: rsel 2:6\n10: rsel 3:3\n", true},
+		{"correction", "5: rsel a793 b1e9\n", true},
+		{"correction after blank lines", "\n\n5: rsel a793 b1e9\n", true},
+		{"multiple corrections", "5: rsel a793 b1e9\n10: rsel be9d b1e9\n", true},
 		{"deletion", "-5\n", true},
 		{"insert before", "+5: copy\n", true},
 		{"insert after", "5+: paste\n", true},
-		{"script", "in calc.go\nsel 2 6:15\ntype \"x\"\n", false},
+		{"script", "in calc.go\nrsel a793 b1e9\ntype \"x\"\n", false},
 		{"new file script", "new calc.go\ntype \"x\"\n", false},
 		{"empty", "", false},
 		{"blank only", "\n \n", false},
@@ -31,17 +31,17 @@ func TestHPatchCorrectionDetectionDistinguishesScripts(t *testing.T) {
 }
 
 func TestHPatchCorrectionParsesEntries(t *testing.T) {
-	corrections, err := parseHPatchCorrections("2: rsel 2:6\n\n10: rsel 3:5\n")
+	corrections, err := parseHPatchCorrections("2: rsel a793 b1e9\n\n10: rsel be9d 55af\n")
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
 	if len(corrections) != 2 {
 		t.Fatalf("parsed %d corrections, want 2", len(corrections))
 	}
-	if corrections[0] != (hpatchCorrection{command: 2, replacement: "rsel 2:6"}) {
+	if corrections[0] != (hpatchCorrection{command: 2, replacement: "rsel a793 b1e9"}) {
 		t.Errorf("first correction = %+v", corrections[0])
 	}
-	if corrections[1].command != 10 || corrections[1].replacement != "rsel 3:5" {
+	if corrections[1].command != 10 || corrections[1].replacement != "rsel be9d 55af" {
 		t.Errorf("second correction = %+v", corrections[1])
 	}
 }
@@ -185,11 +185,11 @@ func TestHPatchCorrectionRejectsMalformedPayloads(t *testing.T) {
 		payload string
 		want    string
 	}{
-		{"raw command", "2: rsel 2:6\ntype \"x\"\n", "is not `INDEX: COMMAND`"},
-		{"zero index", "0: rsel 2:6\n", "is not `INDEX: COMMAND`"},
+		{"raw command", "2: rsel a793 b1e9\ntype \"x\"\n", "is not `INDEX: COMMAND`"},
+		{"zero index", "0: rsel a793 b1e9\n", "is not `INDEX: COMMAND`"},
 		{"empty replacement", "2:\n", "has no replacement command"},
 		{"blank replacement", "2:   \n", "has no replacement command"},
-		{"duplicate index", "2: rsel 1:2\n2: rsel 3:4\n", "appears more than once"},
+		{"duplicate index", "2: rsel a793 1636\n2: rsel 1636 b1e9\n", "appears more than once"},
 		{"duplicate deletion", "-2\n-2\n", "appears more than once"},
 		{"duplicate acceptance", "2: accept\n2: accept\n", "appears more than once"},
 		{"replacement and deletion", "2: rm\n-2\n", "both replaced and deleted"},
@@ -215,12 +215,12 @@ func TestHPatchCorrectionRejectsMalformedPayloads(t *testing.T) {
 func TestHPatchCorrectionAppliesByCommandIndexNotSourceLine(t *testing.T) {
 	// The blank line makes command 3 land on source line 4. A correction keys
 	// on the command index, which is what the diagnostic reports.
-	base := "in calc.go\nrsel 2:2\n\ntype \"\\tready\\n\"\n"
+	base := "in calc.go\nrsel 1636 b1e9\n\ntype \"\\tready\\n\"\n"
 	corrected, err := applyHPatchCorrections(base, []hpatchCorrection{{command: 3, replacement: `type "\tset\n"`}})
 	if err != nil {
 		t.Fatalf("apply: %v", err)
 	}
-	want := "in calc.go\nrsel 2:2\n\ntype \"\\tset\\n\"\n"
+	want := "in calc.go\nrsel 1636 b1e9\n\ntype \"\\tset\\n\"\n"
 	if corrected != want {
 		t.Fatalf("corrected script = %q, want %q", corrected, want)
 	}
@@ -231,7 +231,7 @@ func TestHPatchCorrectionAppliesOrderedInsertionsAroundDeletedAnchor(t *testing.
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	base := "in file.txt\nrsel 1:1\ntype \"x\"\n"
+	base := "in file.txt\nrsel a793 1636\ntype \"x\"\n"
 	corrected, err := applyHPatchCorrections(base, corrections)
 	if err != nil {
 		t.Fatalf("apply: %v", err)
@@ -271,26 +271,26 @@ func TestHPatchCorrectionInsertionsPreserveCRLF(t *testing.T) {
 }
 
 func TestHPatchCorrectionAppliesSeveralCommands(t *testing.T) {
-	base := "in calc.go\nrsel 2:9\ntype \"a - b\"\n"
+	base := "in calc.go\nrsel 9645 9645\ntype \"a - b\"\n"
 	corrected, err := applyHPatchCorrections(base, []hpatchCorrection{
-		{command: 2, replacement: "rsel 2:9"},
+		{command: 2, replacement: "rsel 9645 4b7b"},
 		{command: 3, replacement: `type "a * b"`},
 	})
 	if err != nil {
 		t.Fatalf("apply: %v", err)
 	}
-	if corrected != "in calc.go\nrsel 2:9\ntype \"a * b\"\n" {
+	if corrected != "in calc.go\nrsel 9645 4b7b\ntype \"a * b\"\n" {
 		t.Fatalf("corrected script = %q", corrected)
 	}
 }
 
 func TestHPatchCorrectionPreservesCarriageReturns(t *testing.T) {
-	base := "in calc.go\r\nrsel 2:9\r\ntype \"x\"\r\n"
-	corrected, err := applyHPatchCorrections(base, []hpatchCorrection{{command: 2, replacement: "rsel 2:9"}})
+	base := "in calc.go\r\nrsel 9645 9645\r\ntype \"x\"\r\n"
+	corrected, err := applyHPatchCorrections(base, []hpatchCorrection{{command: 2, replacement: "rsel 9645 4b7b"}})
 	if err != nil {
 		t.Fatalf("apply: %v", err)
 	}
-	if corrected != "in calc.go\r\nrsel 2:9\r\ntype \"x\"\r\n" {
+	if corrected != "in calc.go\r\nrsel 9645 4b7b\r\ntype \"x\"\r\n" {
 		t.Fatalf("corrected script = %q", corrected)
 	}
 }
@@ -333,7 +333,7 @@ func TestHPatchCorrectionParsesAndAppliesDisplayedAcceptance(t *testing.T) {
 		t.Fatalf("corrections = %#v, want %#v", corrections, want)
 	}
 
-	base := "in script.sh\nrsel 1:1\ntype \"exit\\n\"\n"
+	base := "in script.sh\nrsel a793 1636\ntype \"exit\\n\"\n"
 	suggestion := "type \"\\texit\\n\""
 	corrected, err := applyHPatchCorrections(base, corrections, map[int]string{2: suggestion})
 	if err != nil {
@@ -356,8 +356,8 @@ func TestHPatchCorrectionRejectsAcceptanceWithoutDisplayedSuggestion(t *testing.
 }
 
 func TestHPatchCorrectionComposesAcceptancesAndManualOperations(t *testing.T) {
-	base := "in file.txt\nrsel 1:1\ntype \"one\\n\"\nrsel 2:2\ntype \"two\\n\"\n"
-	corrections, err := parseHPatchCorrections("3: accept\n4: rsel 3:3\n5: accept\n")
+	base := "in file.txt\nrsel a793 1636\ntype \"one\\n\"\nrsel 1636 b1e9\ntype \"two\\n\"\n"
+	corrections, err := parseHPatchCorrections("3: accept\n4: rsel be9d b1e9\n5: accept\n")
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -369,7 +369,7 @@ func TestHPatchCorrectionComposesAcceptancesAndManualOperations(t *testing.T) {
 	if err != nil {
 		t.Fatalf("apply: %v", err)
 	}
-	want := "in file.txt\nrsel 1:1\ntype \"\\tone\\n\"\nrsel 3:3\ntype \"\\ttwo\\n\"\n"
+	want := "in file.txt\nrsel a793 1636\ntype \"\\tone\\n\"\nrsel be9d b1e9\ntype \"\\ttwo\\n\"\n"
 	if corrected != want {
 		t.Fatalf("corrected script = %q, want %q", corrected, want)
 	}

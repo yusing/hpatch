@@ -1,9 +1,7 @@
 package hpatch
 
 import (
-	"cmp"
 	"fmt"
-	"slices"
 	"strconv"
 	"strings"
 	"unicode"
@@ -37,11 +35,6 @@ type reportedEdit struct {
 	operation   string
 	textMatches bool
 	spans       []renderedSpan
-}
-
-type reportedLineCorrection struct {
-	file       *fileState
-	correction lineCorrection
 }
 
 func (w *workspace) finalStateReport(changes []change) string {
@@ -78,18 +71,6 @@ func (w *workspace) finalStateReport(changes []change) string {
 		writePreview(&report, activeDocument, activeSpans, false)
 	}
 
-	var corrections []reportedLineCorrection
-	for _, file := range w.files {
-		for _, correction := range file.editor.corrections {
-			corrections = append(corrections, reportedLineCorrection{file: file, correction: correction})
-		}
-	}
-	slices.SortFunc(corrections, func(first, second reportedLineCorrection) int {
-		return cmp.Compare(first.correction.command, second.correction.command)
-	})
-	for _, repaired := range corrections {
-		repaired.file.editor.writeLineCorrection(&report, repaired.file.path, repaired.correction)
-	}
 	return report.String()
 }
 
@@ -232,7 +213,8 @@ func writePreview(report *strings.Builder, document renderedDocument, spans []re
 
 func writePreviewLine(report *strings.Builder, document renderedDocument, index int) {
 	line := document.lines[index]
-	fmt.Fprintf(report, "%d|%s\n", index+1, previewText(document.content[line.start:line.contentEnd]))
+	content := lineContent(document.content, line)
+	writeHashLine(report, content, previewText(content))
 }
 
 func (w *workspace) writeFileSummary(report *strings.Builder, changes []change) {
@@ -295,54 +277,6 @@ func (w *workspace) shouldReportSingleFileAction(change change) bool {
 		return true
 	}
 	return w.active == nil || w.active.path != change.path
-}
-
-func (e *editor) writeLineCorrection(report *strings.Builder, path string, correction lineCorrection) {
-	content := e.content()
-	lines := renderedLines(content)
-	offset := e.mapCorrectionOffset(correction.offset)
-	offset = e.mapFinalOffset(offset)
-	position := renderedCoordinateAt(content, lines, offset)
-	fmt.Fprintf(
-		report,
-		"repaired command %d %s line %d to %d in %s\n",
-		correction.command,
-		correction.operation,
-		correction.requestedLine,
-		correction.resolvedLine,
-		escapeReportControls(path),
-	)
-
-	start := max(0, position.line-2)
-	if start+3 > len(lines) {
-		start = max(0, len(lines)-3)
-	}
-	for index := start; index < min(start+3, len(lines)); index++ {
-		line := lines[index]
-		fmt.Fprintf(report, "%d|%s\n", index+1, previewText(content[line.start:line.contentEnd]))
-	}
-}
-
-func (e *editor) mapCorrectionOffset(offset int) int {
-	renderedOffset := 0
-	baselineOffset := 0
-	for _, edit := range e.orderedEdits() {
-		if edit.start > offset {
-			break
-		}
-		renderedOffset += edit.start - baselineOffset
-		if edit.start == edit.end {
-			renderedOffset += len(edit.replacement)
-			baselineOffset = edit.end
-			continue
-		}
-		if edit.start == offset || edit.end > offset {
-			return renderedOffset
-		}
-		renderedOffset += len(edit.replacement)
-		baselineOffset = edit.end
-	}
-	return renderedOffset + max(0, offset-baselineOffset)
 }
 
 func (e *editor) mapFinalOffset(offset int) int {

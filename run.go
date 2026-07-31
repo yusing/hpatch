@@ -11,7 +11,6 @@ import (
 	"strconv"
 	"strings"
 	"unicode"
-	"unicode/utf8"
 
 	"golang.org/x/term"
 )
@@ -233,33 +232,7 @@ func evaluateScript(ctx context.Context, workspace Workspace, script string) ([]
 		return nil, filesystemWorkspace{}, events, "", err
 	}
 	load := func(path string) (loadedFile, error) {
-		if err := ctx.Err(); err != nil {
-			return loadedFile{}, err
-		}
-		file, err := filesystem.root.Open(path)
-		if err != nil {
-			reason := reasonOther
-			if errors.Is(err, fs.ErrNotExist) {
-				reason = reasonFileMissing
-			}
-			return loadedFile{}, withReason(reason, fmt.Errorf("reading %s: %w", path, err))
-		}
-		defer file.Close()
-		info, err := file.Stat()
-		if err != nil {
-			return loadedFile{}, fmt.Errorf("reading %s: %w", path, err)
-		}
-		if !info.Mode().IsRegular() {
-			return loadedFile{}, fmt.Errorf("%s is not a regular file", path)
-		}
-		content, err := io.ReadAll(file)
-		if err != nil {
-			return loadedFile{}, fmt.Errorf("reading %s: %w", path, err)
-		}
-		if !utf8.Valid(content) {
-			return loadedFile{}, fmt.Errorf("%s is not UTF-8", path)
-		}
-		return loadedFile{content: string(content), mode: info.Mode()}, nil
+		return filesystem.readFile(ctx, path)
 	}
 	exists := func(path string) (fs.FileMode, bool, error) {
 		if err := ctx.Err(); err != nil {

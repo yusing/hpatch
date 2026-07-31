@@ -28,15 +28,15 @@ func TestGainReportsPersistedTotals(t *testing.T) {
 
 	var translateStdout, translateStderr bytes.Buffer
 	exitCode := Run([]string{"translate"}, strings.NewReader(script), &translateStdout, &translateStderr, root, dataDirectory)
-	wantState := "in note.txt 1:6\nlast edit in note.txt: type 1 edit: 1:1-1:6\nfiles: 1 added\n1|hello\n"
-	if exitCode != 0 || translateStdout.String() != patch || translateStderr.String() != wantState {
-		t.Fatalf("translate = exit %d, stdout %q, stderr %q", exitCode, translateStdout.String(), translateStderr.String())
+	wantState := "in note.txt 1:6\nlast edit in note.txt: type 1 edit: 1:1-1:6\nfiles: 1 added\n#|hello\n"
+	if exitCode != 0 || translateStdout.String() != patch || normalizeHashlineRows(translateStderr.String()) != wantState {
+		t.Fatalf("translate = exit %d, stdout %q, stderr %q", exitCode, translateStdout.String(), normalizeHashlineRows(translateStderr.String()))
 	}
 
 	var normalStdout, normalStderr bytes.Buffer
 	exitCode = Run(nil, strings.NewReader(script), &normalStdout, &normalStderr, root, dataDirectory)
-	if exitCode != 0 || normalStdout.Len() != 0 || normalStderr.String() != wantState {
-		t.Fatalf("normal = exit %d, stdout %q, stderr %q", exitCode, normalStdout.String(), normalStderr.String())
+	if exitCode != 0 || normalStdout.Len() != 0 || normalizeHashlineRows(normalStderr.String()) != wantState {
+		t.Fatalf("normal = exit %d, stdout %q, stderr %q", exitCode, normalStdout.String(), normalizeHashlineRows(normalStderr.String()))
 	}
 
 	invocation := invocationMetrics{}
@@ -81,8 +81,11 @@ func TestGainReportReconcilesEffectiveAndIneffectiveTokens(t *testing.T) {
 		DiagnosticInputTokens:        13,
 		DefinitionInputTokens:        100,
 		RemovedDefinitionInputTokens: 30,
-		Sessions:                     2,
-		DefinitionRequests:           3,
+		HReadInputTokens:             19,
+		CatInputTokens:               7,
+
+		Sessions:           2,
+		DefinitionRequests: 3,
 	}
 	report := gainReport(metricValues)
 	for _, want := range []string{
@@ -91,7 +94,10 @@ func TestGainReportReconcilesEffectiveAndIneffectiveTokens(t *testing.T) {
 		"failed      2172    300          n/a\n",
 		"all         4576    5064         9.6%\n",
 		"input token estimates:\n",
+		"hread results",
+		"equivalent cat results",
 		"hpatch definition installed",
+
 		"apply_patch definition removed",
 		"net added input",
 		"definition routing covers 3 accounted request(s)",
@@ -105,9 +111,12 @@ func TestGainReportReconcilesEffectiveAndIneffectiveTokens(t *testing.T) {
 	for _, want := range []string{
 		"state reports 11",
 		"failure diagnostics 13",
+		"hread results 19",
+		"equivalent cat results -7",
 		"hpatch definition installed 100",
+
 		"apply_patch definition removed -30",
-		"net added input 94",
+		"net added input 106",
 	} {
 		if !strings.Contains(input, want) {
 			t.Fatalf("input report %q does not contain %q", input, want)
@@ -136,9 +145,12 @@ func TestGainReportReconcilesEffectiveAndIneffectiveTokens(t *testing.T) {
 			for _, text := range []string{
 				"final state returned after successful calls",
 				"errors and repair context returned after failed calls",
-				"standalone tool definition added by the router",
+				"hashline-formatted file content returned by hread",
+				"raw file content displaced by hread",
+				"hpatch and hread tool definitions added by the router",
+
 				"exact Code Mode section removed by the router",
-				"measured additions minus the removed definition",
+				"measured additions minus equivalent cat results and the removed definition",
 			} {
 				if !strings.Contains(strings.Join(strings.Fields(section), " "), text) {
 					t.Fatalf("width %d report lost description %q: %q", width, text, section)
@@ -183,7 +195,10 @@ func TestLoadGainMetricsMatchesGainReportTotals(t *testing.T) {
 		DefinitionRequests:           1,
 		DefinitionInputTokens:        11,
 		RemovedDefinitionInputTokens: 9,
-		SessionID:                    "session-gain",
+		HReadInputTokens:             17,
+		CatInputTokens:               4,
+
+		SessionID: "session-gain",
 	})
 	entry := metrics{}
 	entry.Commands[commandOperationIndex("rsel")].Invocations = 1
@@ -204,7 +219,7 @@ func TestLoadGainMetricsMatchesGainReportTotals(t *testing.T) {
 	if got.SuccessfulReduction != "60.0" || got.OverallReduction != "36.4" {
 		t.Fatalf("reductions = %q / %q", got.SuccessfulReduction, got.OverallReduction)
 	}
-	if got.NetAddedInput != "14" || got.DefinitionSources != "installation and removal measured" {
+	if got.NetAddedInput != "27" || got.HReadInputTokens != 17 || got.CatInputTokens != 4 || got.DefinitionSources != "installation and removal measured" {
 		t.Fatalf("input = net %q sources %q", got.NetAddedInput, got.DefinitionSources)
 	}
 	if len(got.Commands) != commandCount || got.Commands[commandOperationIndex("rsel")].Errors != 1 {
@@ -243,9 +258,9 @@ func TestGainReportsCommandInvocationsErrorsAndRates(t *testing.T) {
 		script  string
 		success bool
 	}{
-		{name: "success with unrelated command-name text", args: []string{"translate"}, script: "new note.txt\ntype \"rsel future-command\"\n", success: true},
-		{name: "execution error", args: []string{"translate"}, script: "new failed.txt\ntype \"ignored\"\nrsel 99:99\n"},
-		{name: "malformed absolute line", args: []string{"translate"}, script: "tsel 0 \"x\"\n"},
+		{name: "success with unrelated command-name text", args: []string{"translate"}, script: "new note.txt\ntype \"rsel sel future-command\"\n", success: true},
+		{name: "execution error", args: []string{"translate"}, script: "new failed.txt\ntype \"ignored\"\nrsel ffff fffe\n"},
+		{name: "removed numeric selector", args: []string{"translate"}, script: "sel 0 1:1\n"},
 		{name: "unknown future command", args: []string{"translate"}, script: "future-command\n"},
 		{name: "successful no-op", script: "new transient.txt\nrm\n", success: true},
 	}
@@ -266,7 +281,7 @@ func TestGainReportsCommandInvocationsErrorsAndRates(t *testing.T) {
 	wantCommands := commandMetrics{}
 	wantCommands[commandOperationIndex("new")] = commandMetric{Invocations: 3}
 	wantCommands[commandOperationIndex("rm")] = commandMetric{Invocations: 1}
-	wantCommands[commandOperationIndex("tsel")] = commandMetric{Invocations: 1, Errors: 1}
+
 	wantCommands[commandOperationIndex("rsel")] = commandMetric{Invocations: 1, Errors: 1}
 	wantCommands[commandOperationIndex("type")] = commandMetric{Invocations: 2}
 	if got.Commands != wantCommands {
@@ -288,7 +303,8 @@ func TestGainReportsCommandInvocationsErrorsAndRates(t *testing.T) {
 		"new      3            0       0.0%\n" +
 		"mv       0            0       0.0%\n" +
 		"rm       1            0       0.0%\n" +
-		"tsel     1            1       100.0%\n" +
+
+		"tsel     0            0       0.0%\n" +
 		"rsel     1            1       100.0%\n" +
 		"type     2            0       0.0%\n" +
 		"del      0            0       0.0%\n" +
@@ -296,7 +312,7 @@ func TestGainReportsCommandInvocationsErrorsAndRates(t *testing.T) {
 		"cut      0            0       0.0%\n" +
 		"paste    0            0       0.0%\n" +
 		"commit   0            0       0.0%\n" +
-		"total    8            2       25.0%\n\n"
+		"total    7            1       14.3%\n\n"
 	end := strings.Index(stdout.String()[start:], "tsel selection metrics:\n")
 	if end < 0 {
 		t.Fatalf("gain report has no tsel selection metrics: %q", stdout.String())

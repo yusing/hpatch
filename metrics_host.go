@@ -16,14 +16,17 @@ type InvocationMetrics struct {
 // Invocation counters originate in hpatch; every token count and the session
 // attribution originate at the host seam where the visible payload is known.
 type HostMetricRecord struct {
-	Invocation                   InvocationMetrics
-	SessionID                    string
-	HPatchTokens                 uint64
-	ApplyPatchTokens             uint64
-	IneffectiveHPatchTokens      uint64
-	FailedApplyPatchTokens       uint64
-	ReportInputTokens            uint64
-	DiagnosticInputTokens        uint64
+	Invocation              InvocationMetrics
+	SessionID               string
+	HPatchTokens            uint64
+	ApplyPatchTokens        uint64
+	IneffectiveHPatchTokens uint64
+	FailedApplyPatchTokens  uint64
+	ReportInputTokens       uint64
+	DiagnosticInputTokens   uint64
+	HReadInputTokens        uint64
+	CatInputTokens          uint64
+
 	DefinitionRequests           uint64
 	DefinitionInputTokens        uint64
 	RemovedDefinitionInputTokens uint64
@@ -31,13 +34,16 @@ type HostMetricRecord struct {
 
 func (r HostMetricRecord) entry() metrics {
 	return metrics{
-		invocationMetrics:            r.Invocation.value,
-		HPatchTokens:                 r.HPatchTokens,
-		ApplyPatchTokens:             r.ApplyPatchTokens,
-		IneffectiveHPatchTokens:      r.IneffectiveHPatchTokens,
-		FailedApplyPatchTokens:       r.FailedApplyPatchTokens,
-		ReportInputTokens:            r.ReportInputTokens,
-		DiagnosticInputTokens:        r.DiagnosticInputTokens,
+		invocationMetrics:       r.Invocation.value,
+		HPatchTokens:            r.HPatchTokens,
+		ApplyPatchTokens:        r.ApplyPatchTokens,
+		IneffectiveHPatchTokens: r.IneffectiveHPatchTokens,
+		FailedApplyPatchTokens:  r.FailedApplyPatchTokens,
+		ReportInputTokens:       r.ReportInputTokens,
+		DiagnosticInputTokens:   r.DiagnosticInputTokens,
+		HReadInputTokens:        r.HReadInputTokens,
+		CatInputTokens:          r.CatInputTokens,
+
 		DefinitionRequests:           r.DefinitionRequests,
 		DefinitionInputTokens:        r.DefinitionInputTokens,
 		RemovedDefinitionInputTokens: r.RemovedDefinitionInputTokens,

@@ -74,8 +74,8 @@ func TestToolGrammarLineTerminatorsMatchPhysicalLineParser(t *testing.T) {
 func TestToolGrammarCommandOperandsUseExactSpaces(t *testing.T) {
 	for _, rule := range []string{
 		"path_command: PATH_OP SP PATH",
-		"tsel_command: \"tsel\" SP POSINT SP TSEL_QUOTED (SP POSINT)?",
-		"rsel_command: \"rsel\" SP POSINT \":\" POSINT",
+		"tsel_command: \"tsel\" SP HASH SP TSEL_QUOTED (SP POSINT)?",
+		"rsel_command: \"rsel\" SP HASH SP HASH",
 		"type_command: \"type\" SP QUOTED",
 		"heredoc_command: \"type\" SP \"<<PATCH\" NL _patch_body \"PATCH\"",
 		"acceptance: POSINT \":\" SP \"accept\"",
@@ -86,10 +86,21 @@ func TestToolGrammarCommandOperandsUseExactSpaces(t *testing.T) {
 	}
 }
 
+func TestToolGrammarHasNoDuplicateCommandAlternatives(t *testing.T) {
+	if got := strings.Count(toolGrammar, "\n        | heredoc_command\n"); got != 1 {
+		t.Fatalf("heredoc command alternatives = %d, want 1", got)
+	}
+}
+
 func TestRemovedSelectorsAreNotAdvertised(t *testing.T) {
-	for name, text := range map[string]string{"grammar": toolGrammar, "description": toolDescription} {
-		if strings.Contains(text, "bsel") || strings.Contains(text, "\nsel_command:") || strings.Contains(text, "| sel_command") || strings.Contains(text, "- sel ") {
-			t.Errorf("%s still advertises a removed selector", name)
+	for _, removed := range []string{"\nsel_command:", "LINE_REF", "\"sel\""} {
+		if strings.Contains(toolGrammar, removed) {
+			t.Errorf("grammar still advertises removed selector form %q", removed)
+		}
+	}
+	for _, removed := range []string{"bsel", "LINE:HASH", "\n- sel ", "\nsel "} {
+		if strings.Contains(toolDescription, removed) {
+			t.Errorf("description still advertises removed selector form %q", removed)
 		}
 	}
 }
@@ -109,42 +120,42 @@ func TestToolDescriptionExplainsAutomaticGoFormatting(t *testing.T) {
 }
 
 func TestToolDescriptionMinimizesModelRoundTrips(t *testing.T) {
+	normalized := strings.Join(strings.Fields(toolDescription), " ")
 	for _, guidance := range []string{
 		"Minimize model round trips",
 		"batch all known independent edits across files into one atomic script",
-		"Split calls only when a later edit depends on the preceding result or diagnostic",
-		"Only `rsel` requires coordinates",
-		"obtain every required coordinate for the current baseline",
-		"otherwise prefer stable text already established by inspection",
+		"When a later edit depends on content or paths introduced earlier in the same script, use `commit`",
+		"Split calls only when the next script depends on a diagnostic or another result unavailable until this call finishes",
+
+		"after inspecting every file required by the task with `hread`",
+		"Copy each selector's `HASH`",
+		"never reconstruct or guess a hash",
 	} {
-		if !strings.Contains(toolDescription, guidance) {
+		if !strings.Contains(normalized, guidance) {
 			t.Errorf("tool description omits round-trip guidance %q", guidance)
 		}
 	}
-	if got := strings.Count(toolDescription, "`nl -ba -w1 -s'|'`"); got != 1 {
-		t.Errorf("tool description contains the coordinate command %d times, want 1", got)
+	if strings.Contains(toolDescription, "`nl -ba -w1 -s'|'`") {
+		t.Error("tool description still directs agents to number unhashed lines")
 	}
 }
 
 func TestToolDescriptionGuidesSparseCommandChoice(t *testing.T) {
 	for _, guidance := range []string{
-
-		"do not default to line 1 when TEXT also occurs earlier",
-		"from column 1 of FROM_LINE through EOF",
-		"matches may land on different lines",
-		"whole baseline has exactly N",
-		"success report records the repaired line",
-		"Prefer a broader TEXT instead of relying on whole-file repair",
-		"any repaired tsel line notes",
+		"tsel cannot target only a later same-line match",
+		"from column 1 of that line through EOF",
+		"Matches may land on different lines",
+		"TEXT must stay on one line",
+		"never searches before it",
+		"Missing hashes, duplicate-content hashes, and truncated-hash collisions reject without guessing or repair context",
 		"it has no syntax or section awareness",
 		"Selecting a heading inserts before that heading's existing body, not after the section",
-		"trust the reported edited ranges and any repaired tsel line notes; do not reread the file solely to verify placement",
-		"TEXT can match part of a line, and matching is not syntax-aware",
+		"trust the reported edited ranges and hash-only preview rows; do not reread the file solely to verify placement",
+		"need not fill it, and matching is not syntax-aware",
 		"prose, links, examples, or repeated code",
 		"No report is available until the whole call finishes",
 		"post-commit selectors address that new content",
 		"include separator blank lines deliberately",
-
 		"cut combines copy and deletion in one command",
 		"the script does not re-emit the selected text",
 		"later commands must select text introduced or changed earlier in the same call",
@@ -156,31 +167,52 @@ func TestToolDescriptionGuidesSparseCommandChoice(t *testing.T) {
 		}
 	}
 	for _, excluded := range []string{
-		"TEXT must stay on one line",
-		"Use type <<PATCH for multiline text",
-		"put PATCH immediately after the final content line",
 		"confined to one line",
 		"TEXT need not fill the line and matching is not syntax-aware",
 		"formatter or parser/compiler",
 		"git diff --check",
+		"repaired hashline",
+		"repaired line",
 	} {
 		if strings.Contains(toolDescription, excluded) {
-			t.Errorf("tool description retains inaccurate or blanket guidance %q", excluded)
+			t.Errorf("tool description retains inaccurate or removed guidance %q", excluded)
 		}
 	}
 }
 
 func TestToolDescriptionSuggestedUseCasesExecute(t *testing.T) {
+	t.Run("tsel replaces an exact complete line", func(t *testing.T) {
+		const script = `in predicate.go
+tsel 9645 "return ready || ready"
+type "return ready || cached"`
+		if !strings.Contains(toolDescription, fencedScript(script)) {
+			t.Fatal("tool description omits executable exact-line tsel example")
+		}
+
+		root := t.TempDir()
+		prefix := "package sample\nfunc predicate() bool {\n" + strings.Repeat("// padding\n", 21)
+		formattedPrefix := "package sample\n\nfunc predicate() bool {\n" + strings.Repeat("\t// padding\n", 21)
+		suffix := "}\n"
+		writeTestFile(t, root, "predicate.go", prefix+"return ready || ready\n"+suffix, 0o644)
+
+		stdout, stderr, exitCode := runForTest(root, nil, script)
+		if exitCode != 0 || stdout != "" || stderr != "" {
+			t.Fatalf("Run() = exit %d, stdout %q, stderr %q", exitCode, stdout, stderr)
+		}
+		if got, want := readTestFile(t, root, "predicate.go"), formattedPrefix+"\treturn ready || cached\n"+suffix; got != want {
+			t.Fatalf("predicate.go = %q, want %q", got, want)
+		}
+	})
 
 	t.Run("cut paste commit then edit introduced text", func(t *testing.T) {
 		const script = `in source.go
-rsel 12:28
+rsel ffb0 4b7b
 cut
 in destination.go
-rsel 40:40
+rsel 12d9 12d9
 paste
 commit
-tsel 41 "sourceRegistry"
+tsel ffb0 "sourceRegistry"
 type "destinationRegistry"`
 		if !strings.Contains(toolDescription, fencedScript(script)) {
 			t.Fatal("tool description omits executable cut and commit example")
@@ -189,7 +221,7 @@ type "destinationRegistry"`
 		root := t.TempDir()
 		sourcePrefix := "package sample\n" + strings.Repeat("// source padding\n", 10)
 		formattedSourcePrefix := "package sample\n\n" + strings.Repeat("// source padding\n", 10)
-		moved := "// sourceRegistry.Register(alpha)\n" + strings.Repeat("// move padding\n", 16)
+		moved := "// sourceRegistry.Register(alpha)\n" + strings.Repeat("// move padding\n", 15) + "// move end\n"
 		destinationPrefix := "package sample\n" + strings.Repeat("// destination padding\n", 38)
 		formattedDestinationPrefix := "package sample\n\n" + strings.Repeat("// destination padding\n", 38)
 		writeTestFile(t, root, "source.go", sourcePrefix+moved+"var sourceTail = true\n", 0o644)
@@ -197,7 +229,7 @@ type "destinationRegistry"`
 
 		withoutCommit := strings.Replace(script, "\ncommit\n", "\n", 1)
 		stdout, stderr, exitCode := runForTest(root, []string{"translate"}, withoutCommit)
-		if exitCode != 1 || stdout != "" || !strings.Contains(stderr, `found 0 of 1 requested matches of "sourceRegistry"`) {
+		if exitCode != 1 || stdout != "" || !strings.Contains(stderr, `hashline ffb0 does not identify any line`) {
 			t.Fatalf("Run() without commit = exit %d, stdout %q, stderr %q", exitCode, stdout, stderr)
 		}
 
@@ -230,7 +262,7 @@ type "destinationRegistry"`
 		if cutTokens >= copyDeleteTokens {
 			t.Fatalf("cut script tokens = %d, copy plus del tokens = %d", cutTokens, copyDeleteTokens)
 		}
-		reemit := "in source.go\nrsel 12:28\ndel\nin destination.go\nrsel 40:40\ntype <<PATCH\n// handlers\n" + adjusted + "PATCH"
+		reemit := "in source.go\nrsel ffb0 4b7b\ndel\nin destination.go\nrsel 12d9 12d9\ntype <<PATCH\n// handlers\n" + adjusted + "PATCH"
 		if reemitTokens := countTokens(reemit); cutTokens >= reemitTokens {
 			t.Fatalf("cut script tokens = %d, re-emitted body tokens = %d", cutTokens, reemitTokens)
 		}

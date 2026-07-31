@@ -12,8 +12,9 @@ corrections: correction (_separator correction)*
 
 path_command: PATH_OP SP PATH
 bare_command: "rm" | "del" | "copy" | "cut" | "paste" | "commit"
-tsel_command: "tsel" SP POSINT SP TSEL_QUOTED (SP POSINT)?
-rsel_command: "rsel" SP POSINT ":" POSINT
+
+tsel_command: "tsel" SP HASH SP TSEL_QUOTED (SP POSINT)?
+rsel_command: "rsel" SP HASH SP HASH
 type_command: "type" SP QUOTED
 heredoc_command: "type" SP "<<PATCH" NL _patch_body "PATCH"
 
@@ -34,7 +35,10 @@ _blank_line: HSPACE? NL
 _patch_body: (PATCH_BODY_LINE | NL)*
 
 PATH_OP: "in" | "new" | "mv"
+
 POSINT: /[1-9][0-9]*/
+HASH: /[0-9a-f]{4}/
+
 SP: " "
 HSPACE: /[ \t]+/
 PATH: /[^\r\n]+/

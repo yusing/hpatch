@@ -14,17 +14,18 @@ import (
 var (
 	absoluteLinePattern = regexp.MustCompile(`^[1-9][0-9]*$`)
 	textSelectPattern   = regexp.MustCompile(`^tsel (\S+) (.+)$`)
-	rangePattern        = regexp.MustCompile(`^rsel (\S+):(\S+)$`)
+	hashRangePattern    = regexp.MustCompile(`^rsel (\S+) (\S+)$`)
 )
 
 type instruction struct {
-	attempt        commandAttempt
-	source         string
-	line           int
-	operation      string
-	path           string
-	lineNumber     int
-	endLine        int
+	attempt   commandAttempt
+	source    string
+	line      int
+	operation string
+	path      string
+	lineHash  string
+	endHash   string
+
 	count          int
 	text           string
 	delimiter      string
@@ -167,10 +168,10 @@ func recognizeCommandAttempt(line string) commandAttempt {
 	case "in", "new", "mv", "rm", "type", "del", "copy", "cut", "paste", "commit":
 		return commandAttempt{recognized: true}
 	case "rsel":
-		return commandAttempt{recognized: recognizeRange(fields)}
+		return commandAttempt{recognized: len(fields) >= 3 && isLowerHexHash(fields[1]) && isLowerHexHash(fields[2])}
 	case "tsel":
 		span := recognizeTextSpanVariant(line)
-		if !recognizeLine(fields, 1) || span == textSpanNone {
+		if len(fields) < 2 || !isLowerHexHash(fields[1]) || span == textSpanNone {
 			return commandAttempt{}
 		}
 		return commandAttempt{recognized: true, textSpan: span}
@@ -179,27 +180,16 @@ func recognizeCommandAttempt(line string) commandAttempt {
 	}
 }
 
-func recognizeLine(fields []string, index int) bool {
-	return len(fields) > index && isUnsignedDecimal(fields[index])
-}
-
-func recognizeRange(fields []string) bool {
-	if len(fields) < 2 {
-		return false
-	}
-	start, end, ok := strings.Cut(fields[1], ":")
-	return ok && isUnsignedDecimal(start) && isUnsignedDecimal(end)
-}
-
-func isUnsignedDecimal(value string) bool {
-	if value == "" {
+func isLowerHexHash(value string) bool {
+	if len(value) != lineHashLength {
 		return false
 	}
 	for _, character := range value {
-		if character < '0' || character > '9' {
+		if (character < '0' || character > '9') && (character < 'a' || character > 'f') {
 			return false
 		}
 	}
+
 	return true
 }
 
@@ -245,7 +235,7 @@ func parseInstruction(sourceLine int, line string) (instruction, error) {
 	}
 
 	if match := textSelectPattern.FindStringSubmatch(line); match != nil {
-		lineNumber, err := parseLineNumber(sourceLine, match[1])
+		hash, err := parseLineHash(sourceLine, match[1])
 		if err != nil {
 			return instruction{}, err
 		}
@@ -260,27 +250,29 @@ func parseInstruction(sourceLine int, line string) (instruction, error) {
 			return instruction{}, scriptError(sourceLine, "tsel text must stay on one line")
 		}
 		return instruction{
-			line:       sourceLine,
-			operation:  "tsel",
-			lineNumber: lineNumber,
-			count:      count,
-			text:       value,
+			line:      sourceLine,
+			operation: "tsel",
+			lineHash:  hash,
+			count:     count,
+			text:      value,
 		}, nil
 	}
 
-	if match := rangePattern.FindStringSubmatch(line); match != nil {
-		start, err := parseLineNumber(sourceLine, match[1])
+	if match := hashRangePattern.FindStringSubmatch(line); match != nil {
+		startHash, err := parseLineHash(sourceLine, match[1])
 		if err != nil {
 			return instruction{}, err
 		}
-		end, err := parseLineNumber(sourceLine, match[2])
+		endHash, err := parseLineHash(sourceLine, match[2])
 		if err != nil {
 			return instruction{}, err
 		}
-		if start > end {
-			return instruction{}, scriptFailure(sourceLine, reasonOrderOrOverlap, "line range start exceeds end")
-		}
-		return instruction{line: sourceLine, operation: "rsel", lineNumber: start, endLine: end}, nil
+		return instruction{
+			line:      sourceLine,
+			operation: "rsel",
+			lineHash:  startHash,
+			endHash:   endHash,
+		}, nil
 	}
 	if valueText, ok := strings.CutPrefix(line, "type "); ok {
 		value, trailing, err := hpatchsyntax.DecodeQuoted(valueText)
@@ -334,15 +326,11 @@ func isOperandWhitespace(character byte) bool {
 	return character == ' ' || character == '\t' || character == '\r' || character == '\n'
 }
 
-func parseLineNumber(sourceLine int, value string) (int, error) {
-	if !absoluteLinePattern.MatchString(value) {
-		return 0, scriptError(sourceLine, fmt.Sprintf("invalid line reference %q", value))
+func parseLineHash(sourceLine int, value string) (string, error) {
+	if !isLowerHexHash(value) {
+		return "", scriptError(sourceLine, fmt.Sprintf("invalid hashline reference %q", value))
 	}
-	number, err := strconv.Atoi(value)
-	if err != nil {
-		return 0, scriptError(sourceLine, "line reference is out of range")
-	}
-	return number, nil
+	return value, nil
 }
 
 func scriptError(line int, message string) *commandError {

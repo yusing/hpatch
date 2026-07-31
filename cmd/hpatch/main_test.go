@@ -58,8 +58,8 @@ func TestTopLevelHelpDescribesCompletePublicSurface(t *testing.T) {
 		"hpatch translate [--root ROOT] [--cwd CWD] < SCRIPT",
 		"hpatch gain",
 		"standard input",
-		"tsel FROM_LINE \"TEXT\" [N]",
-		"rsel START:END",
+		"tsel HASH \"TEXT\" [N]",
+		"rsel START_HASH END_HASH",
 		"type <<TAG",
 		"commit",
 		"next immutable in-memory baseline",
@@ -72,7 +72,7 @@ func TestTopLevelHelpDescribesCompletePublicSurface(t *testing.T) {
 		"Text introduced by an",
 		"multiple insertions",
 		"separate matches",
-		"Prefer a broader TEXT instead of occurrence arithmetic",
+		"Prefer a broader TEXT",
 		"selection sets",
 		"preserves the selected final",
 		"translate always emits root-relative paths",
@@ -103,16 +103,17 @@ func TestToolHelpGuidesAgentCommandChoice(t *testing.T) {
 	help := toolHelpText()
 	for _, required := range []string{
 		"HPATCH/1 edits workspace files atomically.",
-		"tsel FROM_LINE \"TEXT\" [N] selects the first N separate exact matches",
-		"from column 1 of FROM_LINE through EOF",
-		"matches may land on different lines",
-		"whole baseline has exactly N",
+		"tsel HASH \"TEXT\" [N] resolves HASH only when exactly one immutable-baseline logical line has it",
+		"from column 1 of that line through EOF",
+		"Matches may land on different lines",
+		"never searches before it",
+		"Missing hashes, duplicate-content hashes, and truncated-hash collisions reject without guessing or repair context",
 		"No report is available until the whole call finishes",
 		"same-call selectors must use coordinates known before submission",
 		"For insertion-only edits, type only the new content",
 		"A blank line immediately before PATCH is part of the literal replacement.",
 		"The first in captures an immutable file baseline.",
-		"any repaired tsel line notes",
+		"hash-only preview rows",
 	} {
 		if !strings.Contains(help, required) {
 			t.Fatalf("tool help does not contain %q", required)
@@ -126,6 +127,8 @@ func TestToolHelpGuidesAgentCommandChoice(t *testing.T) {
 		"Metrics:",
 		"INDEX: COMMAND",
 		"matches literals only",
+		"LINE:HASH",
+		"repaired hashline",
 	} {
 		if strings.Contains(help, excluded) {
 			t.Fatalf("tool help contains unnecessary or inaccurate text %q", excluded)
@@ -153,7 +156,7 @@ func TestRootAndCWDOptionsTranslateRootRelativePath(t *testing.T) {
 		var stdout, stderr bytes.Buffer
 		exitCode := run(
 			[]string{"translate", "--root", root, "--cwd", cwd},
-			strings.NewReader("in main.go\ntsel 1 \"package main\"\ntype \"package graph\"\n"),
+			strings.NewReader("in main.go\ntsel 5128 \"package main\"\ntype \"package graph\"\n"),
 			&stdout,
 			&stderr,
 		)
@@ -190,18 +193,22 @@ func TestWorkspaceOptionsRejectInvalidBoundaries(t *testing.T) {
 
 func TestTopLevelHelpDescribesSelectionOperandConstraints(t *testing.T) {
 	for _, fragment := range []string{
-		"`tsel` starts at column 1 of FROM_LINE",
-		"scans forward through EOF",
+		"`tsel` starts at column 1 of the uniquely resolved HASH line",
+		"scans",
+		"forward through EOF",
 		"optional count defaults to one",
 		"separate exact",
-		"all requested matches",
-		"Prefer a broader TEXT instead of occurrence arithmetic",
+		"all requested matches must exist at or after the anchor",
+		"It never",
+		"searches earlier baseline content",
+		"Prefer a broader TEXT",
+		"`rsel` resolves START_HASH and END_HASH uniquely",
 	} {
 		if !strings.Contains(helpTextBase, fragment) {
 			t.Fatalf("help does not contain %q", fragment)
 		}
 	}
-	if strings.Contains(translateHelpText, "`tsel` starts at column 1 of FROM_LINE") {
+	if strings.Contains(translateHelpText, "uniquely resolved HASH line") {
 		t.Fatal("translate help duplicates top-level operand constraints")
 	}
 	if !strings.Contains(translateHelpText, "Run hpatch --help for the complete editing and agent workflow.") {

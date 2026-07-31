@@ -2,11 +2,12 @@ package main
 
 import (
 	"fmt"
-	"github.com/yusing/hpatch"
 	"io"
 	"os"
 	"path/filepath"
 	"runtime/debug"
+
+	"github.com/yusing/hpatch"
 )
 
 const helpTextBase = `Usage:
@@ -34,17 +35,17 @@ Script framing:
 
 Agent workflow:
   1. Inspect the relevant source before constructing selectors.
-  2. Build selectors against each existing file's immutable baseline.
-  3. Send one complete editing script directly as functions.hpatch's free-form
+  2. Copy selector hashes from hash-only hread or hpatch rows; never guess them.
+  3. Build selectors against each existing file's immutable baseline.
+  4. Send one complete editing script directly as functions.hpatch's free-form
      input. Invoke hpatch once per attempt; do not encode, shell-wrap, or route it
      through functions.exec, apply_patch, or hpatch translate.
-  4. If functions.hpatch rejects the script, no staged edits were committed.
-     A rejection that reached an existing file prints repair context after its
-     diagnostic: the addressed line's column count, that line's token column spans,
-     anchor occurrence lines, or the baseline lines earlier commands already claim.
+  5. If functions.hpatch rejects the script, no staged edits were committed.
+     A rejection may print hash-only baseline context when a selector or existing
+     editor state resolves uniquely. Missing or ambiguous hashes print no context.
      Correct from that context and resubmit the complete script against the unchanged
-     file state; do not reread the file to recount columns.
-  5. After success, run focused behavioral validation. For Go source changes, run
+     file state.
+  6. After success, run focused behavioral validation. For Go source changes, run
      gofmt before tests so structural errors are reported immediately. Success means
      every selector resolved, not that it resolved where you intended: a selector
      matching an existing but unintended span commits and reports success. Treat the
@@ -55,8 +56,8 @@ Editing commands:
   new PATH                            select a pending empty file at cursor 0:0
   mv PATH                             move the active pending file without changing its baseline
   rm                                  remove the active file and clear editor state
-  tsel FROM_LINE "TEXT" [N]          select the first N separate matches from FROM_LINE
-  rsel START:END                      select inclusive complete logical lines
+  tsel HASH "TEXT" [N]               select the first N separate matches at or after HASH
+  rsel START_HASH END_HASH            select inclusive complete logical lines
   type "TEXT"                         record replacement or insertion at baseline coordinates
   type <<TAG                          record literal multiline replacement or insertion text
   del                                 record deletion of the selection
@@ -66,12 +67,14 @@ Editing commands:
   commit                              advance to the next immutable in-memory baseline
 
 Baseline editor state:
-  The first in for an existing file captures an immutable baseline. Every selector
-  for that file resolves against that baseline, regardless of prior edits or command
-  order. Returning with in resets the baseline cursor to 0:0 and clears the selection,
-  but retains recorded edits. mv preserves baseline identity. Text introduced by an
-  earlier command is not selectable. A selector that overlaps baseline content already
-  replaced or deleted by an earlier edit is rejected.
+  The first in for an existing file captures an immutable baseline. Each selector
+  hash must identify exactly one complete logical line in that baseline; missing,
+  duplicate-content, and truncated-hash collision cases reject without guessing.
+  Every selector for that file resolves against the same baseline regardless of prior
+  edits or command order. Returning with in resets the baseline cursor to 0:0 and
+  clears the selection but retains recorded edits. mv preserves baseline identity.
+  Text introduced by an earlier command is not selectable before commit. A selector
+  that overlaps baseline content already replaced or deleted is rejected.
 
   Cursors and selection sets are baseline positions. A selector replaces the prior
   state. tsel may establish separate matches; type, del, cut, and paste apply to every
@@ -96,15 +99,17 @@ Baseline editor state:
   before submission; split the work into another call if those coordinates are uncertain.
   Script end finalizes pending edits without that cursor reset.
 
-  ` + "`tsel`" + ` starts at column 1 of FROM_LINE and scans forward through EOF. Its
-  optional count defaults to one and must be positive. It establishes separate exact
-  matches, resuming search after each match's final character; all requested matches
-  must exist. When the whole baseline contains exactly the requested number, hpatch
-  repairs an incomplete suffix to the first match; extras make repair ambiguous.
-  Prefer a broader TEXT instead of occurrence arithmetic.
+  ` + "`tsel`" + ` starts at column 1 of the uniquely resolved HASH line and scans
+  forward through EOF. Its optional count defaults to one and must be positive. It
+  establishes separate exact matches, resuming search after each match's final
+  character; all requested matches must exist at or after the anchor. It never
+  searches earlier baseline content. Prefer a broader TEXT instead of occurrence
+  arithmetic. tsel cannot target only a later same-line match; expand TEXT or replace
+  the complete line instead.
 
-
-  rsel owns selected line terminators. When type replaces a terminated linewise
+  ` + "`rsel`" + ` resolves START_HASH and END_HASH uniquely and owns the selected
+  complete logical lines and their terminators.
+  When type replaces a terminated linewise
   selection and TEXT has no final terminator, hpatch preserves the selected final
   LF, CRLF, or CR. An explicit final terminator is authoritative; an unterminated
   selected final line stays unterminated. del and cut still remove complete selected
@@ -120,14 +125,14 @@ Baseline editor state:
 
 Final-state report:
   A successful report starts with the active path and rendered cursor or selection.
-  Multiple selections report their count and first three individual ranges. The last
-  effective content edit reports its path, operation, count, and first three rendered
-  ranges. Net file actions appear for lifecycle, multi-file, non-active-file, and normal
-  no-op outcomes. Up to three preview lines sample separate affected locations; one
-  location retains nearby context. Each repaired line adds its requested and resolved
-  numbers plus up to three marked post-edit lines. Each preview contains at most 64
-  Unicode code points and escapes controls so it remains on one output line. Use the
-  report to orient focused validation without rereading a successfully edited file.
+  These positional headers retain numeric line and column coordinates. Multiple
+  selections report their count and first three individual ranges. The last effective
+  content edit reports its path, operation, count, and first three rendered ranges.
+  Net file actions appear for lifecycle, multi-file, non-active-file, and normal no-op
+  outcomes. Preview and repair-context rows use only ` + "`HHHH: TEXT`" + `, never a
+  numeric line prefix. Each preview contains at most 64 Unicode code points and
+  escapes controls so it remains on one output line. Use the report to orient focused
+  validation without rereading a successfully edited file.
 
 Metrics:
   hpatch gain reads no script and reports caller-accounted hpatch and apply_patch

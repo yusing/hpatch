@@ -23,7 +23,7 @@ const codexE2EPrompt = `Use only functions.hpatch for every file edit. Shell com
 
 Work through these requests in order:
 
-1. Inspect whole.go with fresh numbered output. Replace the complete logical lines of the status function with:
+1. Inspect whole.go with fresh hread output. Replace the complete logical lines of the status function with:
 func status() string {
 	return "new"
 }
@@ -131,9 +131,9 @@ func TestCodexHPatchGrammarE2E(t *testing.T) {
 
 	scripts := strings.Join(recorder.snapshot(), "\n---CALL---\n")
 	for name, pattern := range map[string]string{
-		"whole-line selector":     `(?s)in whole\.go.*?rsel 3:5.*?type <<PATCH`,
-		"content selector":        `(?m)tsel [1-4] "return saveArtifactPayload\(path, b\)"`,
-		"partial multiline edit":  `(?s)in partial\.go.*?rsel 3:5.*?type`,
+		"whole-line selector":     `(?s)in whole\.go.*?rsel [0-9a-f]{4} [0-9a-f]{4}.*?type <<PATCH`,
+		"content selector":        `(?m)tsel [0-9a-f]{4} "return saveArtifactPayload\(path, b\)"`,
+		"partial multiline edit":  `(?s)in partial\.go.*?rsel [0-9a-f]{4} [0-9a-f]{4}.*?type`,
 		"fixed heredoc delimiter": `(?m)^PATCH$`,
 	} {
 		if !regexp.MustCompile(pattern).MatchString(scripts) {

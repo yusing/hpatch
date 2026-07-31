@@ -9,7 +9,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/yusing/hpatch"
 	"iter"
 	"maps"
 	"os"
@@ -18,18 +17,23 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+
+	"github.com/yusing/hpatch"
 )
 
 const (
-	hpatchToolName               = "hpatch"
+	hpatchToolName = "hpatch"
+	hreadToolName  = "hread"
+
 	applyPatchToolName           = "apply_patch"
 	hpatchApplyExecMarker        = "// hpatch-proxy: apply translated patch\n"
 	maxHPatchScriptBytes         = 1 << 20
 	maxHPatchPatchBytes          = 16 << 20
 	maxHPatchHistorySessionBytes = 32 << 20
 	maxHPatchHistoryGlobalBytes  = 128 << 20
-	maxHPatchPendingCalls        = 128
-	maxHPatchDiagnosticBytes     = 1 << 20
+
+	maxHPatchPendingCalls    = 128
+	maxHPatchDiagnosticBytes = 1 << 20
 )
 
 var (
@@ -131,15 +135,18 @@ func (t inProcessHPatchTranslator) RecordMetrics(ctx context.Context, record hpa
 }
 
 type hpatchHistory struct {
+	toolName string
+
 	script string
 	root   string
 	// evaluated is the script hpatch actually received when it differs from the
 	// model's payload, which happens when the payload was a correction. Replay
 	// must restore what the model emitted, while a following correction must
 	// resolve command indices against what was evaluated.
-	evaluated        string
-	patch            string
-	carrierName      string
+	evaluated   string
+	patch       string
+	carrierName string
+
 	report           string
 	translationError string
 	corrections      map[int]string
@@ -166,7 +173,9 @@ type hpatchHistorySession struct {
 }
 
 type hpatchProxy struct {
-	translator      hpatchTranslator
+	translator           hpatchTranslator
+	hreadToolDescription string
+
 	toolDescription string
 
 	mu           sync.RWMutex
@@ -179,7 +188,9 @@ func newHPatchProxy(translator hpatchTranslator) *hpatchProxy {
 		return nil
 	}
 	return &hpatchProxy{
-		translator:      translator,
+		translator:           translator,
+		hreadToolDescription: hpatch.HReadToolDescription(),
+
 		toolDescription: translator.ToolDescription() + hpatchCorrectionInstructions,
 		sessions:        make(map[string]*hpatchHistorySession),
 	}
@@ -229,8 +240,10 @@ func hpatchAcceptHint(corrections map[int]string) string {
 }
 
 type hpatchPendingCall struct {
-	callID string
-	added  []byte
+	callID   string
+	toolName string
+
+	added []byte
 }
 
 type hpatchResponseTransform struct {
@@ -246,9 +259,11 @@ type hpatchResponseTransform struct {
 	local                     map[string]hpatchHistory
 	workspace                 routingWorkspace
 	toolDescription           string
-	codeModeToolName          string
-	baselineDefinition        string
-	requestAccountingClaimed  bool
+	hreadToolDescription      string
+
+	codeModeToolName         string
+	baselineDefinition       string
+	requestAccountingClaimed bool
 
 	// localSequence orders the calls translated during this turn, so a
 	// correction resolves against the newest rejection rather than an arbitrary
@@ -354,7 +369,7 @@ func (p *hpatchProxy) prepareRequest(ctx context.Context, request *parsedRespons
 	originalTools = bytes.Clone(originalTools)
 	originalToolChoice, originalToolChoicePresent := request.fields["tool_choice"]
 	originalToolChoice = bytes.Clone(originalToolChoice)
-	baselineDefinition, codeModeToolName, replaced, err := replaceAdditionalToolsApplyPatch(request.fields, p.toolDescription)
+	baselineDefinition, codeModeToolName, replaced, err := replaceAdditionalToolsApplyPatch(request.fields, p.toolDescription, p.hreadToolDescription)
 	if err != nil {
 		workspace.close()
 		return nil, err
@@ -380,7 +395,9 @@ func (p *hpatchProxy) prepareRequest(ctx context.Context, request *parsedRespons
 		local:                     make(map[string]hpatchHistory),
 		workspace:                 workspace,
 		toolDescription:           p.toolDescription,
-		codeModeToolName:          codeModeToolName,
+		hreadToolDescription:      p.hreadToolDescription,
+
+		codeModeToolName: codeModeToolName,
 
 		baselineDefinition: baselineDefinition,
 	}, nil
@@ -403,7 +420,7 @@ type additionalToolsApplyPatchOwner struct {
 // replaceAdditionalToolsApplyPatch swaps a supported apply_patch surface for a
 // standalone hpatch tool, reporting the native definition it displaced so the
 // caller can attribute hpatch's definition cost net of it.
-func replaceAdditionalToolsApplyPatch(fields map[string]json.RawMessage, toolDescription string) (string, string, bool, error) {
+func replaceAdditionalToolsApplyPatch(fields map[string]json.RawMessage, toolDescription, hreadToolDescription string) (string, string, bool, error) {
 	var topTools []map[string]json.RawMessage
 	if rawTools, exists := fields["tools"]; exists {
 		if err := json.Unmarshal(rawTools, &topTools); err != nil {
@@ -411,8 +428,8 @@ func replaceAdditionalToolsApplyPatch(fields map[string]json.RawMessage, toolDes
 		}
 	}
 	for _, tool := range topTools {
-		if jsonString(tool, "name") == hpatchToolName {
-			return "", "", false, errors.New("responses request already defines hpatch")
+		if name := jsonString(tool, "name"); name == hpatchToolName || name == hreadToolName {
+			return "", "", false, fmt.Errorf("responses request already defines %s", name)
 		}
 	}
 	owner, err := findAdditionalToolsApplyPatch(fields)
@@ -436,7 +453,7 @@ func replaceAdditionalToolsApplyPatch(fields map[string]json.RawMessage, toolDes
 	if codeModeToolChoiceRestricted(fields, owner.name) {
 		return "", "", false, nil
 	}
-	if err := exposeStandaloneHPatch(fields, topTools, owner, toolDescription); err != nil {
+	if err := exposeStandaloneHPatch(fields, topTools, owner, toolDescription, hreadToolDescription); err != nil {
 		return "", "", false, err
 	}
 	return owner.baselineDefinition, owner.name, true, nil
@@ -459,8 +476,8 @@ func findAdditionalToolsApplyPatch(fields map[string]json.RawMessage) (*addition
 		}
 		for toolIndex, tool := range tools {
 			name := jsonString(tool, "name")
-			if name == hpatchToolName {
-				return nil, errors.New("responses additional_tools item defines direct hpatch")
+			if name == hpatchToolName || name == hreadToolName {
+				return nil, fmt.Errorf("responses additional_tools item defines direct %s", name)
 			}
 			if name == applyPatchToolName {
 				if owner != nil {
@@ -518,7 +535,7 @@ func codeModeToolChoiceRestricted(fields map[string]json.RawMessage, codeToolNam
 	return jsonString(choice, "type") == "custom" && jsonString(choice, "name") == codeToolName
 }
 
-func exposeStandaloneHPatch(fields map[string]json.RawMessage, topTools []map[string]json.RawMessage, owner *additionalToolsApplyPatchOwner, toolDescription string) error {
+func exposeStandaloneHPatch(fields map[string]json.RawMessage, topTools []map[string]json.RawMessage, owner *additionalToolsApplyPatchOwner, toolDescription, hreadToolDescription string) error {
 	if owner.direct {
 		owner.tools = slices.Delete(owner.tools, owner.toolIndex, owner.toolIndex+1)
 	} else {
@@ -538,16 +555,10 @@ func exposeStandaloneHPatch(fields map[string]json.RawMessage, topTools []map[st
 	if err != nil {
 		return fmt.Errorf("encode Responses input: %w", err)
 	}
-	topTools = append(topTools, map[string]json.RawMessage{
-		"type":        mustMarshalJSON("custom"),
-		"name":        mustMarshalJSON(hpatchToolName),
-		"description": mustMarshalJSON(toolDescription),
-		"format": mustMarshalJSON(map[string]string{
-			"type":       "grammar",
-			"syntax":     "lark",
-			"definition": hpatch.ToolGrammar(),
-		}),
-	})
+	topTools = append(topTools,
+		customGrammarTool(hpatchToolName, toolDescription, hpatch.ToolGrammar()),
+		customGrammarTool(hreadToolName, hreadToolDescription, hpatch.HReadToolGrammar()),
+	)
 	encodedTopTools, err := json.Marshal(topTools)
 	if err != nil {
 		return fmt.Errorf("encode Responses tools: %w", err)
@@ -555,6 +566,19 @@ func exposeStandaloneHPatch(fields map[string]json.RawMessage, topTools []map[st
 	fields["input"] = encodedInput
 	fields["tools"] = encodedTopTools
 	return nil
+}
+
+func customGrammarTool(name, description, grammar string) map[string]json.RawMessage {
+	return map[string]json.RawMessage{
+		"type":        mustMarshalJSON("custom"),
+		"name":        mustMarshalJSON(name),
+		"description": mustMarshalJSON(description),
+		"format": mustMarshalJSON(map[string]string{
+			"type":       "grammar",
+			"syntax":     "lark",
+			"definition": grammar,
+		}),
+	}
 }
 
 const codeModeApplyPatchHeading = "### `apply_patch`"
@@ -619,7 +643,7 @@ func (p *hpatchProxy) rememberBatch(sessionID string, histories map[string]hpatc
 		if err != nil {
 			return fmt.Errorf("encode hpatch history item: %w", err)
 		}
-		history.bytes = len(sessionID) + len(callID) + len(history.script) + len(history.root) + len(history.evaluated) + len(history.patch) + len(history.carrierName) + len(history.report) + len(history.translationError) + len(history.correlationID) + len(encodedItem)
+		history.bytes = len(sessionID) + len(callID) + len(history.toolName) + len(history.script) + len(history.root) + len(history.evaluated) + len(history.patch) + len(history.carrierName) + len(history.report) + len(history.translationError) + len(history.correlationID) + len(encodedItem)
 		for _, correction := range history.corrections {
 			history.bytes += len(correction)
 		}
@@ -700,7 +724,7 @@ func correctionHistoryOf(histories iter.Seq[hpatchHistory]) (hpatchHistory, erro
 	var latest hpatchHistory
 	found := false
 	for history := range histories {
-		if history.unevaluated {
+		if history.unevaluated || history.toolName == hreadToolName {
 			continue
 		}
 		if !found || history.sequence > latest.sequence {
@@ -775,7 +799,12 @@ func (p *hpatchProxy) restoreInputPrefix(request *parsedResponsesRequest, sessio
 		if len(history.upstreamItem) != 0 {
 			items[index] = maps.Clone(history.upstreamItem)
 		} else {
-			item["name"] = mustMarshalJSON(hpatchToolName)
+			name := history.toolName
+			if name == "" {
+				name = hpatchToolName
+			}
+			item["name"] = mustMarshalJSON(name)
+
 			item["input"] = mustMarshalJSON(history.script)
 		}
 		changed = true
@@ -792,7 +821,7 @@ func (p *hpatchProxy) restoreInputPrefix(request *parsedResponsesRequest, sessio
 
 func (t *hpatchResponseTransform) translate(callID, input string, upstreamItem map[string]json.RawMessage) (hpatchHistory, error) {
 	if history, ok := t.local[callID]; ok {
-		if history.script != input {
+		if history.toolName == hreadToolName || history.script != input {
 			return hpatchHistory{}, fmt.Errorf("hpatch call %q changed input", callID)
 		}
 		if len(upstreamItem) != 0 {
@@ -868,7 +897,9 @@ func (t *hpatchResponseTransform) translate(callID, input string, upstreamItem m
 			return hpatchHistory{}, err
 		}
 		history := hpatchHistory{
-			script:           input,
+			toolName: hpatchToolName,
+			script:   input,
+
 			root:             t.workspace.canonical,
 			evaluated:        retainedEvaluated(input, evaluated),
 			carrierName:      t.codeModeToolName,
@@ -898,7 +929,9 @@ func (t *hpatchResponseTransform) translate(callID, input string, upstreamItem m
 		return hpatchHistory{}, err
 	}
 	history := hpatchHistory{
-		script:        input,
+		toolName: hpatchToolName,
+		script:   input,
+
 		root:          t.workspace.canonical,
 		evaluated:     retainedEvaluated(input, evaluated),
 		patch:         patchText,
@@ -907,6 +940,66 @@ func (t *hpatchResponseTransform) translate(callID, input string, upstreamItem m
 		upstreamItem:  maps.Clone(upstreamItem),
 		correlationID: correlationID,
 		attempt:       attempt,
+	}
+	t.recordLocal(callID, &history)
+	return history, nil
+}
+
+func (t *hpatchResponseTransform) translateTool(name, callID, input string, upstreamItem map[string]json.RawMessage) (hpatchHistory, error) {
+	if name == hreadToolName {
+		return t.translateHRead(callID, input, upstreamItem)
+	}
+	return t.translate(callID, input, upstreamItem)
+}
+
+func (t *hpatchResponseTransform) translateHRead(callID, input string, upstreamItem map[string]json.RawMessage) (hpatchHistory, error) {
+	if history, ok := t.local[callID]; ok {
+		if history.toolName != hreadToolName || history.script != input {
+			return hpatchHistory{}, fmt.Errorf("hread call %q changed input", callID)
+		}
+		if len(upstreamItem) != 0 {
+			history.upstreamItem = maps.Clone(upstreamItem)
+			t.local[callID] = history
+		}
+		return history, nil
+	}
+	if len(input) > maxHPatchScriptBytes {
+		return hpatchHistory{}, fmt.Errorf("hread call %q input exceeds %d bytes", callID, maxHPatchScriptBytes)
+	}
+	if !t.workspace.unchanged() {
+		return hpatchHistory{}, errHPatchWorkspaceChanged
+	}
+	result, readErr := hpatch.ReadHashLinesForHost(t.ctx, hpatch.Workspace{Root: t.workspace.root}, input)
+	if !t.workspace.unchanged() {
+		return hpatchHistory{}, errHPatchWorkspaceChanged
+	}
+	if contextErr := t.ctx.Err(); contextErr != nil {
+		return hpatchHistory{}, contextErr
+	}
+
+	output := result.Output
+	metricInputs := hpatchMetricInputs{}
+	if readErr != nil {
+		if errors.Is(readErr, hpatch.ErrHReadResultTooLarge) {
+			return hpatchHistory{}, fmt.Errorf("%w: %w", errHPatchCapacity, readErr)
+		}
+		output = "hread: " + readErr.Error()
+		metricInputs.hreadResult = output
+		metricInputs.overheadOnly = true
+	} else {
+		metricInputs.hreadResult = result.Output
+		metricInputs.catResult = result.CatOutput
+	}
+	if err := t.recordMetrics(metricInputs); err != nil {
+		return hpatchHistory{}, err
+	}
+	history := hpatchHistory{
+		toolName:     hreadToolName,
+		script:       input,
+		root:         t.workspace.canonical,
+		carrierName:  t.codeModeToolName,
+		report:       output,
+		upstreamItem: maps.Clone(upstreamItem),
 	}
 	t.recordLocal(callID, &history)
 	return history, nil
@@ -936,7 +1029,21 @@ func hpatchDiagnosticApplyPatchInput(diagnostic string) string {
 	return "*** Begin Patch\nhpatch translation rejected: " + strconv.Quote(diagnostic) + "\n*** End Patch\n"
 }
 
+func hreadApplyPatchInput(output string) string {
+	return "*** Begin Patch\nhread result: " + strconv.Quote(output) + "\n*** End Patch\n"
+}
+
+func hreadExecInput(output string) string {
+	return "text(" + strconv.Quote(output) + ");"
+}
+
 func (h hpatchHistory) carrierInput() string {
+	if h.toolName == hreadToolName {
+		if h.carrierName == applyPatchToolName {
+			return hreadApplyPatchInput(h.report)
+		}
+		return hreadExecInput(h.report)
+	}
 	if h.carrierName == applyPatchToolName {
 		if h.translationError != "" {
 			return hpatchDiagnosticApplyPatchInput(h.translationError)
@@ -958,7 +1065,9 @@ func (t *hpatchResponseTransform) rejectUnevaluated(callID, input string, reject
 		return hpatchHistory{}, err
 	}
 	history := hpatchHistory{
-		script:           input,
+		toolName: hpatchToolName,
+		script:   input,
+
 		carrierName:      t.codeModeToolName,
 		translationError: diagnostic,
 		upstreamItem:     maps.Clone(upstreamItem),
@@ -980,7 +1089,7 @@ func (t *hpatchResponseTransform) claimRequestAccounting() (string, string) {
 		return "", ""
 	}
 	t.requestAccountingClaimed = true
-	return t.toolDescription, t.baselineDefinition
+	return t.toolDescription + t.hreadToolDescription, t.baselineDefinition
 }
 
 func (t *hpatchResponseTransform) recordMetrics(inputs hpatchMetricInputs) error {
@@ -1004,7 +1113,7 @@ func (t *hpatchResponseTransform) recordLocal(callID string, history *hpatchHist
 // the response completes.
 func (t *hpatchResponseTransform) correctionHistory() (hpatchHistory, error) {
 	for _, history := range t.local {
-		if !history.unevaluated {
+		if !history.unevaluated && history.toolName != hreadToolName {
 			return correctionHistoryOf(maps.Values(t.local))
 		}
 	}
@@ -1044,8 +1153,12 @@ func (t *hpatchResponseTransform) TransformSSE(payload []byte) ([][]byte, error)
 	switch envelope.Type {
 	case "response.output_item.added":
 		var item map[string]json.RawMessage
-		if json.Unmarshal(envelope.Item, &item) != nil || jsonString(item, "name") != hpatchToolName {
+		if json.Unmarshal(envelope.Item, &item) != nil {
 			return [][]byte{payload}, nil //nolint:nilerr // Unrelated output items pass through unchanged.
+		}
+		name := jsonString(item, "name")
+		if name != hpatchToolName && name != hreadToolName {
+			return [][]byte{payload}, nil
 		}
 		itemID, callID := jsonString(item, "id"), jsonString(item, "call_id")
 		if jsonString(item, "type") != "custom_tool_call" || itemID == "" || callID == "" {
@@ -1057,7 +1170,7 @@ func (t *hpatchResponseTransform) TransformSSE(payload []byte) ([][]byte, error)
 		if _, exists := t.pending[itemID]; exists {
 			return nil, errors.New("upstream reused hpatch item ID")
 		}
-		t.pending[itemID] = hpatchPendingCall{callID: callID, added: bytes.Clone(payload)}
+		t.pending[itemID] = hpatchPendingCall{callID: callID, toolName: name, added: bytes.Clone(payload)}
 		return nil, nil
 
 	case "response.custom_tool_call_input.delta":
@@ -1071,7 +1184,7 @@ func (t *hpatchResponseTransform) TransformSSE(payload []byte) ([][]byte, error)
 		if !ok {
 			return [][]byte{payload}, nil
 		}
-		history, err := t.translate(pending.callID, envelope.Input, nil)
+		history, err := t.translateTool(pending.toolName, pending.callID, envelope.Input, nil)
 		if err != nil {
 			return nil, err
 		}
@@ -1154,7 +1267,7 @@ func (t *hpatchResponseTransform) TransformSSE(payload []byte) ([][]byte, error)
 		}
 		return [][]byte{payload}, nil
 	default:
-		if _, pending := t.pending[envelope.ItemID]; pending || t.pendingCallKnown(envelope.CallID) || envelope.Name == hpatchToolName || envelope.Name == applyPatchToolName {
+		if _, pending := t.pending[envelope.ItemID]; pending || t.pendingCallKnown(envelope.CallID) || envelope.Name == hpatchToolName || envelope.Name == hreadToolName || envelope.Name == applyPatchToolName {
 			return nil, fmt.Errorf("unsupported hpatch-related stream event %q", envelope.Type)
 		}
 		return [][]byte{payload}, nil
@@ -1236,14 +1349,15 @@ func (t *hpatchResponseTransform) restoreResponseContract(object map[string]json
 }
 
 func (t *hpatchResponseTransform) transformOutputItem(item map[string]json.RawMessage) (bool, error) {
-	if jsonString(item, "name") != hpatchToolName {
+	name := jsonString(item, "name")
+	if name != hpatchToolName && name != hreadToolName {
 		return false, nil
 	}
 	callID := jsonString(item, "call_id")
 	if jsonString(item, "type") != "custom_tool_call" || callID == "" {
-		return false, errors.New("upstream emitted malformed hpatch call")
+		return false, fmt.Errorf("upstream emitted malformed %s call", name)
 	}
-	history, err := t.translate(callID, jsonString(item, "input"), maps.Clone(item))
+	history, err := t.translateTool(name, callID, jsonString(item, "input"), maps.Clone(item))
 	if err != nil {
 		return false, err
 	}

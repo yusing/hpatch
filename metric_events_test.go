@@ -105,11 +105,12 @@ func TestMalformedSelectorAttributionRequiresRecognizableVariant(t *testing.T) {
 		want   commandAttempt
 		reason failureReason
 	}{
+		{name: "bare removed sel", script: "sel\n"},
+		{name: "malformed removed sel", script: "sel nope\n"},
 		{name: "bare tsel", script: "tsel\n"},
-		{name: "tsel without text", script: "tsel 1\n"},
-		{name: "zero absolute line", script: "tsel 0 \"x\"\n", want: commandAttempt{recognized: true, textSpan: textSpanSingle}, reason: reasonSyntax},
-		{name: "malformed signed line", script: "tsel +x \"x\"\n"},
-		{name: "invalid multiple count", script: "tsel 1 \"x\" nope\n", want: commandAttempt{recognized: true, textSpan: textSpanMultiple}, reason: reasonInvalidCount},
+		{name: "tsel without text", script: "tsel 0123\n"},
+		{name: "malformed hash", script: "tsel 123 \"x\"\n"},
+		{name: "invalid multiple count", script: "tsel 0123 \"x\" nope\n", want: commandAttempt{recognized: true, textSpan: textSpanMultiple}, reason: reasonInvalidCount},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -154,16 +155,17 @@ func TestMetricsClassifyVariantsOutcomesAndReasons(t *testing.T) {
 	}
 
 	for _, script := range []string{
-		"in sample.txt\nrsel 1:1\ntype \"A\"\n",
-		"in sample.txt\ntsel 1 \"alpha\"\ntype \"A\"\n",
-		"in sample.txt\ntsel 1 \"alpha\" 1\ntype \"A\"\n",
-		"in sample.txt\ntsel 1 \"alpha\" 2\ntype \"A\"\n",
+		"in sample.txt\nrsel " + hashLine("alpha beta alpha gamma alpha") + " " + hashLine("alpha beta alpha gamma alpha") + "\ntype \"A\"\n",
+		"in sample.txt\ntsel " + hashLine("alpha beta alpha gamma alpha") + " \"alpha\"\ntype \"A\"\n",
+		"in sample.txt\ntsel " + hashLine("alpha beta alpha gamma alpha") + " \"alpha\" 1\ntype \"A\"\n",
+		"in sample.txt\ntsel " + hashLine("alpha beta alpha gamma alpha") + " \"alpha\" 2\ntype \"A\"\n",
 	} {
 		run(script, true)
 	}
 	for _, script := range []string{
-		"in sample.txt\ntsel 1 \"alpha\" 9\n",
-		"in sample.txt\ntsel 1 \"alpha\" nope\n",
+		"in sample.txt\ntsel " + hashLine("alpha beta alpha gamma alpha") + " \"alpha\" 9\n",
+		"in sample.txt\ntsel " + hashLine("alpha beta alpha gamma alpha") + " \"alpha\" nope\n",
+		"in sample.txt\nsel +x 1:1\n",
 	} {
 		run(script, false)
 	}

@@ -2,10 +2,11 @@ package hpatch
 
 import (
 	"encoding/json"
-	"github.com/yusing/hpatch/internal/patchtest"
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/yusing/hpatch/internal/patchtest"
 )
 
 func TestLinewiseReplacementPreservesFinalTerminator(t *testing.T) {
@@ -28,7 +29,7 @@ func TestLinewiseReplacementPreservesFinalTerminator(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			root := t.TempDir()
 			writeTestFile(t, root, "file.txt", test.initial, 0o644)
-			script := "in file.txt\nrsel 2:2\ntype " + jsonString(t, test.replacement) + "\n"
+			script := "in file.txt\nrsel " + hashLine("old") + " " + hashLine("old") + "\ntype " + jsonString(t, test.replacement) + "\n"
 			stdout, stderr, exitCode := runForTest(root, nil, script)
 			if exitCode != 0 || stdout != "" || stderr != "" {
 				t.Fatalf("Run() = exit %d, stdout %q, stderr %q", exitCode, stdout, stderr)
@@ -43,7 +44,7 @@ func TestLinewiseReplacementPreservesFinalTerminator(t *testing.T) {
 func TestLinewiseDeleteStillOwnsFinalTerminator(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, root, "file.txt", "one\ntwo\nthree\nfour\n", 0o644)
-	stdout, stderr, exitCode := runForTest(root, nil, "in file.txt\nrsel 2:3\ndel\n")
+	stdout, stderr, exitCode := runForTest(root, nil, "in file.txt\nrsel "+hashLine("two")+" "+hashLine("three")+"\ndel\n")
 	if exitCode != 0 || stdout != "" || stderr != "" {
 		t.Fatalf("Run() = exit %d, stdout %q, stderr %q", exitCode, stdout, stderr)
 	}
@@ -56,7 +57,7 @@ func TestLinewiseReplacementTranslateMatchesNormalResult(t *testing.T) {
 	initial := map[string]string{"file.txt": "one\ntwo\nthree\nfour\n"}
 	root := t.TempDir()
 	writeTestFile(t, root, "file.txt", initial["file.txt"], 0o644)
-	script := "in file.txt\nrsel 2:3\ntype \"replacement\"\n"
+	script := "in file.txt\nrsel " + hashLine("two") + " " + hashLine("three") + "\ntype \"replacement\"\n"
 	stdout, stderr, exitCode := runForTest(root, []string{"translate"}, script)
 	if exitCode != 0 || stderr != "" {
 		t.Fatalf("translate = exit %d, stderr %q", exitCode, stderr)
@@ -90,8 +91,8 @@ func TestRemovedBlockSelectorIsRejected(t *testing.T) {
 func TestSelectorsUseStableBaselineCoordinates(t *testing.T) {
 	initial := "alpha\nbeta\ngamma\ndelta\n"
 	scripts := map[string]string{
-		"top edit first":    "in file.txt\ntsel 1 \"alpha\"\ntype \"alpha\\ninserted\"\ntsel 3 \"gamma\"\ntype \"G\"\n",
-		"bottom edit first": "in file.txt\ntsel 3 \"gamma\"\ntype \"G\"\ntsel 1 \"alpha\"\ntype \"alpha\\ninserted\"\n",
+		"top edit first":    "in file.txt\ntsel 8ed3 \"alpha\"\ntype \"alpha\\ninserted\"\ntsel be9d \"gamma\"\ntype \"G\"\n",
+		"bottom edit first": "in file.txt\ntsel be9d \"gamma\"\ntype \"G\"\ntsel 8ed3 \"alpha\"\ntype \"alpha\\ninserted\"\n",
 	}
 	for name, script := range scripts {
 		t.Run(name, func(t *testing.T) {
@@ -112,7 +113,7 @@ func TestInsertedTextCannotBeSelected(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, root, "file.txt", "old\n", 0o644)
 	before := readTree(t, root)
-	script := "in file.txt\ntsel 1 \"old\"\ntype \"future\"\nin file.txt\ntsel 1 \"future\"\n"
+	script := "in file.txt\ntsel " + hashLine("old") + " \"old\"\ntype \"future\"\nin file.txt\ntsel " + hashLine("old") + " \"future\"\n"
 	stdout, stderr, exitCode := runForTest(root, []string{"translate"}, script)
 	if exitCode != 1 || stdout != "" || !strings.Contains(stderr, "found 0 of 1 requested matches of \"future\"") {
 		t.Fatalf("Run() = exit %d, stdout %q, stderr %q", exitCode, stdout, stderr)
@@ -128,17 +129,17 @@ func TestConflictingBaselineEditsAreAtomic(t *testing.T) {
 	}{
 		{
 			name:   "overlapping ranges",
-			script: "in file.txt\nrsel 2:3\ntype \"A\"\nrsel 3:4\ntype \"B\"\n",
+			script: "in file.txt\nrsel " + hashLine("two") + " " + hashLine("three") + "\ntype \"A\"\nrsel " + hashLine("three") + " " + hashLine("four") + "\ntype \"B\"\n",
 			want:   "selection conflicts with edit from command 3 (source line 3, operation \"type\"): baseline line 3 was already modified",
 		},
 		{
 			name:   "nested selection",
-			script: "in file.txt\nrsel 2:4\ntype \"A\"\ntsel 3 \"three\"\ndel\n",
+			script: "in file.txt\nrsel " + hashLine("two") + " " + hashLine("four") + "\ntype \"A\"\ntsel " + hashLine("three") + " \"three\"\ndel\n",
 			want:   "selection conflicts with edit from command 3 (source line 3, operation \"type\"): baseline line 3 was already modified",
 		},
 		{
 			name:   "insertion inside replacement",
-			script: "in file.txt\ntsel 2 \"t\"\ncopy\npaste\nrsel 2:2\ntype \"whole\"\n",
+			script: "in file.txt\ntsel " + hashLine("two") + " \"t\"\ncopy\npaste\nrsel " + hashLine("two") + " " + hashLine("two") + "\ntype \"whole\"\n",
 			want:   "conflicts with edit from command 4 (source line 4, operation \"paste\"): baseline line 2 is both replaced and inserted into",
 		},
 		{
@@ -153,7 +154,7 @@ func TestConflictingBaselineEditsAreAtomic(t *testing.T) {
 		},
 		{
 			name:   "remove after edit",
-			script: "in file.txt\ntsel 1 \"one\"\ntype \"ONE\"\nrm\n",
+			script: "in file.txt\ntsel " + hashLine("one") + " \"one\"\ntype \"ONE\"\nrm\n",
 			want:   "cannot remove a baseline file after content edit from command 3",
 		},
 	}
@@ -176,7 +177,7 @@ func TestConflictingBaselineEditsAreAtomic(t *testing.T) {
 func TestInsertionAtReplacementBoundaryIsUnambiguous(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, root, "file.txt", "one\ntwo\n", 0o644)
-	script := "in file.txt\ntsel 2 \"t\"\ntype \"T\"\ntype \"!\"\n"
+	script := "in file.txt\ntsel " + hashLine("two") + " \"t\"\ntype \"T\"\ntype \"!\"\n"
 	stdout, stderr, exitCode := runForTest(root, nil, script)
 	if exitCode != 0 || stdout != "" || stderr != "" {
 		t.Fatalf("Run() = exit %d, stdout %q, stderr %q", exitCode, stdout, stderr)
@@ -193,25 +194,25 @@ func TestTextSelectionCreatesSeparateMatches(t *testing.T) {
 		{
 			name:    "matches across lines",
 			content: "bar := 0\nbaz := 0\n",
-			script:  "in file.txt\ntsel 1 \":= 0\" 2\ntype \"=\"",
+			script:  "in file.txt\ntsel " + hashLine("bar := 0") + " \":= 0\" 2\ntype \"=\"",
 			want:    "bar =\nbaz =\n",
 		},
 		{
-			name:    "from line is an inclusive lower bound",
-			content: "x\nx\nx\n", //nolint:dupword // Repetition is the multiple-match fixture.
-			script:  "in file.txt\ntsel 2 \"x\" 2\ntype \"Y\"",
-			want:    "x\nY\nY\n",
+			name:    "hash anchor is an inclusive lower bound",
+			content: "first x\nsecond x\nthird x\n",
+			script:  "in file.txt\ntsel " + hashLine("second x") + " \"x\" 2\ntype \"Y\"",
+			want:    "first x\nsecond Y\nthird Y\n",
 		},
 		{
 			name:    "explicit count one",
-			content: "x, x, x\n", //nolint:dupword // Repetition is the explicit-count fixture.
-			script:  "in file.txt\ntsel 1 \"x\" 1\ntype \"Y\"",
+			content: "x, x, x\n",                                                         //nolint:dupword // Repetition is the explicit-count fixture.
+			script:  "in file.txt\ntsel " + hashLine("x, x, x") + " \"x\" 1\ntype \"Y\"", //nolint:dupword // Repetition is the exact-match fixture.
 			want:    "Y, x, x\n",
 		},
 		{
 			name:    "overlapping candidates are skipped",
 			content: "aaaa\n",
-			script:  "in file.txt\ntsel 1 \"aa\" 2\ntype \"Y\"",
+			script:  "in file.txt\ntsel " + hashLine("aaaa") + " \"aa\" 2\ntype \"Y\"",
 			want:    "YY\n",
 		},
 	}
@@ -249,7 +250,7 @@ func TestTextSelectionSetSupportsEditActions(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			root := t.TempDir()
 			writeTestFile(t, root, "file.txt", "a=x\nb=x\n", 0o644)
-			script := "in file.txt\ntsel 1 \"x\" 2\n" + test.action + "\n"
+			script := "in file.txt\ntsel " + hashLine("a=x") + " \"x\" 2\n" + test.action + "\n"
 			stdout, stderr, exitCode := runForTest(root, nil, script)
 			if exitCode != 0 || stdout != "" || stderr != "" {
 				t.Fatalf("Run() = exit %d, stdout %q, stderr %q", exitCode, stdout, stderr)
@@ -281,7 +282,7 @@ func TestTextSelectionFailuresAreAtomic(t *testing.T) {
 			root := t.TempDir()
 			writeTestFile(t, root, "file.txt", test.content, 0o644)
 			before := readTree(t, root)
-			script := "in file.txt\ntsel 1 " + test.operand
+			script := "in file.txt\ntsel " + hashLine(strings.TrimSuffix(test.content, "\n")) + " " + test.operand
 			stdout, stderr, exitCode := runForTest(root, []string{"translate"}, script)
 			if exitCode != 1 || stdout != "" || !strings.Contains(stderr, test.want) {
 				t.Fatalf("Run() = exit %d, stdout %q, stderr %q; want %q", exitCode, stdout, stderr, test.want)
@@ -297,7 +298,7 @@ func TestMultiSelectionConflictRejectsWholeScript(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, root, "file.txt", "x x x\n", 0o644) //nolint:dupword // Repetition creates overlapping multi-selection candidates.
 	before := readTree(t, root)
-	script := "in file.txt\ntsel 1 \"x\" 2\ntype \"Y\"\ntsel 1 \"x\" 3\n"
+	script := "in file.txt\ntsel " + hashLine("x x x") + " \"x\" 2\ntype \"Y\"\ntsel " + hashLine("x x x") + " \"x\" 3\n" //nolint:dupword // Repetition creates the conflicting selections.
 	stdout, stderr, exitCode := runForTest(root, []string{"translate"}, script)
 	if exitCode != 1 || stdout != "" || !strings.Contains(stderr, "selection conflicts with edit from command 3") {
 		t.Fatalf("Run() = exit %d, stdout %q, stderr %q", exitCode, stdout, stderr)
@@ -307,13 +308,16 @@ func TestMultiSelectionConflictRejectsWholeScript(t *testing.T) {
 	}
 }
 
-func TestSelectorsRejectNonAbsoluteLinesAtomically(t *testing.T) {
+func TestLegacyAndMalformedSelectorsAreRejectedAtomically(t *testing.T) {
 	tests := []struct {
-		name, script, want string
+		name, script string
 	}{
-		{name: "tsel signed", script: "in file.txt\ntsel -1 \"one\"", want: `invalid line reference "-1"`},
-		{name: "rsel signed", script: "in file.txt\nrsel +0:+1", want: `invalid line reference "+0"`},
-		{name: "tsel negative zero", script: "in file.txt\ntsel -0 \"one\"", want: `invalid line reference "-0"`},
+		{name: "removed sel", script: "in file.txt\nsel 1 1:1"},
+		{name: "numeric tsel", script: "in file.txt\ntsel 1 \"one\""},
+		{name: "line and hash tsel", script: "in file.txt\ntsel 1:7692 \"one\""},
+		{name: "numeric rsel", script: "in file.txt\nrsel 1:2"},
+		{name: "uppercase hash", script: "in file.txt\ntsel ABCD \"one\""},
+		{name: "short hash", script: "in file.txt\nrsel abc abcd"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -321,8 +325,8 @@ func TestSelectorsRejectNonAbsoluteLinesAtomically(t *testing.T) {
 			writeTestFile(t, root, "file.txt", "one\ntwo\n", 0o644)
 			before := readTree(t, root)
 			stdout, stderr, exitCode := runForTest(root, []string{"translate"}, test.script)
-			if exitCode != 1 || stdout != "" || !strings.Contains(stderr, test.want) {
-				t.Fatalf("Run() = exit %d, stdout %q, stderr %q; want %q", exitCode, stdout, stderr, test.want)
+			if exitCode != 1 || stdout != "" || !strings.Contains(stderr, "syntax") {
+				t.Fatalf("Run() = exit %d, stdout %q, stderr %q", exitCode, stdout, stderr)
 			}
 			if after := readTree(t, root); !reflect.DeepEqual(after, before) {
 				t.Fatalf("failure mutated tree: before %#v, after %#v", before, after)

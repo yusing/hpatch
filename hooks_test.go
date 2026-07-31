@@ -23,7 +23,7 @@ func TestErrorHookReceivesFailureAndRepairContext(t *testing.T) {
 		"printf '%s' {{shellquote (format_markdown .)}} > " + shellQuote(bodyPath),
 	})
 
-	script := "in note.txt\ntsel 1 \"missing\"\ntype \"replacement\"\n"
+	script := "in note.txt\ntsel " + hashLine("present words") + " \"missing\"\ntype \"replacement\"\n"
 	var stdout, stderr bytes.Buffer
 	exitCode := Run(nil, strings.NewReader(script), &stdout, &stderr, root, dataDirectory)
 	if exitCode != 1 || stdout.Len() != 0 {
@@ -40,14 +40,14 @@ func TestErrorHookReceivesFailureAndRepairContext(t *testing.T) {
 		"- Operation: `tsel`",
 		"- Category: `selection`",
 		"- Path: `note.txt`",
-		"## Failed command\n\n    tsel 1 \"missing\"",
+		"## Failed command\n\n    tsel " + hashLine("present words") + " \"missing\"",
 		"## Failure\n\n    found 0 of 1 requested matches of \"missing\" at or after line 1",
 		"## Diagnostic\n\n    hpatch: command 2, source line 2",
 		"## Repair context",
 		"found 0 of 1 requested matches at or after line 1",
-		"1|present words",
+		"#|present words",
 	} {
-		if !strings.Contains(string(body), fragment) {
+		if !strings.Contains(normalizeHashlineRows(string(body)), fragment) {
 			t.Fatalf("hook body does not contain %q:\n%s", fragment, body)
 		}
 	}
@@ -80,7 +80,7 @@ func TestErrorHookReceivesMalformedCommand(t *testing.T) {
 		"## Failed command\n\n    select the file",
 		"unknown or malformed command",
 	} {
-		if !strings.Contains(string(body), fragment) {
+		if !strings.Contains(normalizeHashlineRows(string(body)), fragment) {
 			t.Fatalf("hook body does not contain %q:\n%s", fragment, body)
 		}
 	}
@@ -289,7 +289,7 @@ func TestErrorAndOutcomeHooksReceiveAttemptMetadata(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, want := range []string{"- Session ID: `session-1`", "- Correlation ID: `chain-1`", "- Call ID: `call-2`", "- Attempt: `2`", "- Correction: `true`", "- Outcome: `rejected`"} {
-		if !strings.Contains(string(body), want) {
+		if !strings.Contains(normalizeHashlineRows(string(body)), want) {
 			t.Fatalf("error hook lacks %q:\n%s", want, body)
 		}
 	}

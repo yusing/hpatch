@@ -18,11 +18,8 @@ const (
 	repairListLimit    = 16
 )
 
-// repairContext renders what a failing command needed to know and could not
-// see: the baseline lines it addressed and, where the reason is a coordinate or
-// anchor mismatch, the measurements that would have made the selector correct.
-// Selectors resolve against a baseline the model is guessing at, so a failure
-// without this context forces a blind retry that costs a whole script.
+// repairContext renders baseline context only when the failed command has a
+// uniquely resolved anchor or existing editor state identifies the edit span.
 func (w *workspace) repairContext(command instruction, reason failureReason) string {
 	if w.active == nil {
 		return ""
@@ -37,62 +34,62 @@ func (w *workspace) repairContext(command instruction, reason failureReason) str
 	}
 
 	var report strings.Builder
-	// A selector that resolved but overlaps an earlier edit needs the conflict
-	// explained, not its coordinates re-measured. The rejected selection was
-	// never committed to editor state, so the window is centered on the line
-	// the failing command addressed rather than on the stale cursor.
 	if reason == reasonEditConflict {
-		w.writeEditRepair(&report, editor, lines, reason, editor.addressedOffset(command, lines))
+		offset := editor.editOffset()
+		switch command.operation {
+		case "tsel", "rsel":
+			line, _, err := resolveLineHash(editor.baseline, command.lineHash)
+			if err != nil {
+				return ""
+			}
+			offset = line.start
+		}
+		w.writeEditRepair(&report, editor, lines, reason, offset)
 		return report.String()
 	}
+
 	switch command.operation {
 	case "tsel":
-		w.writeLineRepair(&report, editor, lines, command, reason)
+		w.writeTextSelectorRepair(&report, editor, lines, command, reason)
 	case "rsel":
 		w.writeRangeRepair(&report, editor, lines, command, reason)
 	case "type", "del", "copy", "cut", "paste":
 		w.writeEditRepair(&report, editor, lines, reason, editor.editOffset())
 	}
-	if report.Len() == 0 {
-		return ""
-	}
 	return report.String()
 }
 
-// writeLineRepair explains a line-addressed selector failure and shows the
-// immutable baseline region searched by the command.
-func (w *workspace) writeLineRepair(report *strings.Builder, editor *editor, lines []logicalLine, command instruction, reason failureReason) {
-	number := command.lineNumber
-	if number < 1 || number > len(lines) {
-		fmt.Fprintf(report, "%s has %d lines; line %d does not exist\n", w.active.path, len(lines), number)
-		writeLineWindow(report, editor.baseline, lines, min(max(number, 1), len(lines)))
+func (w *workspace) writeTextSelectorRepair(report *strings.Builder, editor *editor, lines []logicalLine, command instruction, reason failureReason) {
+	if reason != reasonOccurrenceMissing {
 		return
 	}
-	if reason == reasonOccurrenceMissing {
-		line := lines[number-1]
-		offsets := nonOverlappingLiteralOffsets(editor.baseline[line.start:], command.text, command.count)
-		fmt.Fprintf(report, "found %d of %d requested matches at or after line %d\n", len(offsets), command.count, number)
-		if len(offsets) != 0 {
-			matchLines := make([]int, 0, min(len(offsets), repairListLimit))
-			for _, offset := range offsets[:min(len(offsets), repairListLimit)] {
-				matchLines = append(matchLines, lineNumberAt(lines, line.start+offset))
-			}
-			fmt.Fprintf(report, "matching lines: %s\n", joinLineNumbers(matchLines, len(offsets)))
+	line, number, err := resolveLineHash(editor.baseline, command.lineHash)
+	if err != nil {
+		return
+	}
+	offsets := nonOverlappingLiteralOffsets(editor.baseline[line.start:], command.text, command.count)
+	fmt.Fprintf(report, "found %d of %d requested matches at or after line %d\n", len(offsets), command.count, number)
+	if len(offsets) != 0 {
+		matchLines := make([]int, 0, min(len(offsets), repairListLimit))
+		for _, offset := range offsets[:min(len(offsets), repairListLimit)] {
+			matchLines = append(matchLines, lineNumberAt(lines, line.start+offset))
 		}
+		fmt.Fprintf(report, "matching lines: %s\n", joinLineNumbers(matchLines, len(offsets)))
 	}
 	writeLineWindow(report, editor.baseline, lines, number)
 }
 
-// writeRangeRepair explains a linewise selector failure against the file's
-// actual line count.
 func (w *workspace) writeRangeRepair(report *strings.Builder, editor *editor, lines []logicalLine, command instruction, reason failureReason) {
-	if reason != reasonCoordinateBounds && reason != reasonOrderOrOverlap {
+	if reason != reasonOrderOrOverlap {
 		return
 	}
-	start := command.lineNumber
-	end := command.endLine
-	fmt.Fprintf(report, "%s has %d lines; requested lines %d:%d\n", w.active.path, len(lines), start, end)
-	writeLineWindow(report, editor.baseline, lines, min(max(start, 1), len(lines)))
+	_, start, startErr := resolveLineHash(editor.baseline, command.lineHash)
+	_, end, endErr := resolveLineHash(editor.baseline, command.endHash)
+	if startErr != nil || endErr != nil {
+		return
+	}
+	fmt.Fprintf(report, "resolved hashline range to lines %d:%d\n", start, end)
+	writeLineWindow(report, editor.baseline, lines, start)
 }
 
 // writeEditRepair explains an edit failure against the span the edit addressed,
@@ -124,22 +121,7 @@ func (e *editor) editOffset() int {
 	return e.cursor
 }
 
-// addressedOffset is the baseline offset a failing selector named. A rejected
-// selector leaves editor state untouched, so its own operands identify the
-// relevant span; commands without a line operand fall back to edit state.
-func (e *editor) addressedOffset(command instruction, lines []logicalLine) int {
-	switch command.operation {
-	case "tsel", "rsel":
-		if command.lineNumber >= 1 && command.lineNumber <= len(lines) {
-			return lines[command.lineNumber-1].start
-		}
-	}
-	return e.editOffset()
-}
-
-// claimedLineSpans lists the baseline lines each recorded edit already claims,
-// so a conflicting retry can see which spans are unavailable rather than
-// rediscovering them one rejection at a time.
+// claimedLineSpans lists the baseline lines each recorded edit already claims.
 func (e *editor) claimedLineSpans(lines []logicalLine) string {
 	edits := e.orderedEdits()
 	claims := make([]string, 0, min(len(edits), repairListLimit))
@@ -158,8 +140,8 @@ func (e *editor) claimedLineSpans(lines []logicalLine) string {
 	return strings.Join(claims, "; ")
 }
 
-// writeLineWindow renders baseline lines around number with one-based numbers,
-// matching the final-state report's shape so both read the same way.
+// writeLineWindow renders baseline lines around number using the same hash-only
+// row shape as hread and the final-state report.
 func writeLineWindow(report *strings.Builder, baseline string, lines []logicalLine, number int) {
 	if number < 1 || number > len(lines) {
 		return
@@ -172,7 +154,8 @@ func writeLineWindow(report *strings.Builder, baseline string, lines []logicalLi
 		if index == number {
 			limit = repairPreviewLimit
 		}
-		fmt.Fprintf(report, "%d|%s\n", index, previewTextLimit(baseline[line.start:line.contentEnd], limit))
+		content := lineContent(baseline, line)
+		writeHashLine(report, content, previewTextLimit(content, limit))
 	}
 }
 

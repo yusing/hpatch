@@ -42,7 +42,7 @@ For an 11-line function replacement, hpatch asks the model for this:
 ```text
 functions.hpatch
 in parser.go
-rsel 50:60
+rsel e217 d10b
 type <<PATCH
 func parse(input []byte) (Document, error) {
 	tokens, err := tokenize(input)
@@ -232,12 +232,13 @@ Install the CLI (requires Go 1.26+; binary lands in `$(go env GOPATH)/bin` or `$
 go install github.com/yusing/hpatch/cmd/hpatch@latest
 ```
 
-Apply a script (writes only after the full script validates and stages; success report on stderr):
+Apply a script using a hash copied from hread or an earlier hpatch report (writes only
+after the full script validates and stages; success report on stderr):
 
 ```sh
 hpatch <<'EOF'
 in src/app.go
-tsel 12 "oldName"
+tsel 55af "oldName"
 type "newName"
 EOF
 ```
@@ -280,25 +281,32 @@ hpatch --version
 
 Authoritative guidance: `hpatch --help` and `hpatch --tool-help`. Contract: [`doc/spec/interface.md`](doc/spec/interface.md).
 
-Selectors (prefer the first that fits):
+Hread and hpatch preview/context rows have the shape `HHHH: TEXT`. Numeric ranges remain
+valid only as bounded hread input; selectors copy the four-digit lowercase hash from an
+output row.
 
-1. Complete logical lines or indentation changes: `rsel START:END`
-2. Exact non-whitespace content: `tsel FROM_LINE "TEXT" [N]`
+Selectors:
+
+1. Complete logical lines or indentation changes: `rsel START_HASH END_HASH`
+2. Exact non-whitespace content at or after an anchor: `tsel HASH "TEXT" [N]`
+
+Each selector hash must identify exactly one immutable-baseline logical line. Missing hashes,
+duplicate content, and truncated-hash collisions reject without guessing. `tsel` never
+searches before its resolved anchor.
 
 Common commands: `in` / `new` / `mv` / `rm`, `type "…"` or `type <<PATCH` … `PATCH`, `del`, `copy` / `cut` / `paste`, `commit`.
 
 Rules worth remembering:
 
-- Start `tsel` at stable non-whitespace content; avoid leading spaces or tabs.
+- Start `tsel` text at stable non-whitespace content; avoid leading spaces or tabs.
 - First `in` of a file freezes an immutable baseline; selectors use that baseline until `commit`.
 - Disjoint edits can land together; overlapping replacements fail the whole script atomically.
 - Rejection changes nothing. Router-owned retries can replace, delete, or insert failed commands by index without resending the full script.
-
 Multiline example:
 
 ```text
 in parser.go
-rsel 50:60
+rsel e217 d10b
 type <<PATCH
 func parse(input []byte) (Document, error) {
 	tokens, err := tokenize(input)

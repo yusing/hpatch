@@ -2,11 +2,11 @@ package router
 
 import (
 	"fmt"
-	"github.com/yusing/hpatch"
 	"strconv"
 	"strings"
 
 	"github.com/tiktoken-go/tokenizer"
+	"github.com/yusing/hpatch"
 )
 
 const failedApplyPatch = "*** Begin Patch\n*** End Patch\n"
@@ -14,12 +14,15 @@ const failedApplyPatch = "*** Begin Patch\n*** End Patch\n"
 type hpatchMetricRecord = hpatch.HostMetricRecord
 
 type hpatchMetricInputs struct {
-	invocation         hpatch.InvocationMetrics
-	emittedScript      string
-	report             string
-	patch              string
-	diagnostic         string
-	sessionID          string
+	invocation    hpatch.InvocationMetrics
+	emittedScript string
+	report        string
+	patch         string
+	diagnostic    string
+	sessionID     string
+	hreadResult   string
+	catResult     string
+
 	definition         string
 	baselineDefinition string
 	successful         bool
@@ -40,6 +43,12 @@ func calculateHPatchMetricRecord(inputs hpatchMetricInputs) (hpatchMetricRecord,
 		return hpatchMetricRecord{}, fmt.Errorf("load GPT-5 tokenizer: %w", err)
 	}
 	record := hpatchMetricRecord{Invocation: inputs.invocation}
+	if record.HReadInputTokens, err = countHPatchMetricText(codec, inputs.hreadResult, "hread result input"); err != nil {
+		return hpatchMetricRecord{}, err
+	}
+	if record.CatInputTokens, err = countHPatchMetricText(codec, inputs.catResult, "equivalent cat result input"); err != nil {
+		return hpatchMetricRecord{}, err
+	}
 	if !inputs.overheadOnly {
 		if inputs.successful {
 			if record.HPatchTokens, err = countHPatchMetricText(codec, hpatchMetricPayload(inputs.emittedScript), "hpatch output"); err != nil {

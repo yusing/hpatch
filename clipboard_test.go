@@ -21,10 +21,10 @@ func TestClipboardCopiesAndCutsAcrossFiles(t *testing.T) {
 			writeTestFile(t, root, "destination.txt", "target\nafter\n", 0o644)
 			script := strings.Join([]string{
 				"in source.txt",
-				"rsel 2:3",
+				"rsel " + hashLine("move one") + " " + hashLine("move two"),
 				test.operation,
 				"in destination.txt",
-				"rsel 1:1",
+				"rsel " + hashLine("target") + " " + hashLine("target"),
 				"paste",
 			}, "\n")
 			stdout, stderr, exitCode := runForTest(root, nil, script)
@@ -48,13 +48,13 @@ func TestClipboardCanBePastedAcrossSeveralFiles(t *testing.T) {
 	writeTestFile(t, root, "second.txt", "second\n", 0o644)
 	script := strings.Join([]string{
 		"in source.txt",
-		"rsel 1:1",
+		"rsel " + hashLine("copied") + " " + hashLine("copied"),
 		"copy",
 		"in first.txt",
-		"rsel 1:1",
+		"rsel " + hashLine("first") + " " + hashLine("first"),
 		"paste",
 		"in second.txt",
-		"rsel 1:1",
+		"rsel " + hashLine("second") + " " + hashLine("second"),
 		"paste",
 	}, "\n")
 	stdout, stderr, exitCode := runForTest(root, nil, script)
@@ -80,41 +80,41 @@ func TestLinewisePasteAddsOnlyMissingDestinationBoundaries(t *testing.T) {
 		{
 			name:   "empty new file has no leading terminator",
 			source: "tail",
-			script: []string{"in source.txt", "rsel 1:1", "copy", "new destination.txt", "paste"},
+			script: []string{"in source.txt", "rsel " + hashLine("tail") + " " + hashLine("tail"), "copy", "new destination.txt", "paste"},
 			want:   "tail",
 		},
 		{
 			name:        "LF boundaries on both sides",
 			source:      "tail",
 			destination: "beforeafter\n",
-			script:      []string{"in source.txt", "rsel 1:1", "copy", "in destination.txt", `tsel 1 "before"`, "paste"},
+			script:      []string{"in source.txt", "rsel " + hashLine("tail") + " " + hashLine("tail"), "copy", "in destination.txt", `tsel ` + hashLine("beforeafter") + ` "before"`, "paste"},
 			want:        "before\ntail\nafter\n",
 		},
 		{
 			name:        "CRLF boundaries on both sides",
 			source:      "tail",
 			destination: "beforeafter\r\n",
-			script:      []string{"in source.txt", "rsel 1:1", "copy", "in destination.txt", `tsel 1 "before"`, "paste"},
+			script:      []string{"in source.txt", "rsel " + hashLine("tail") + " " + hashLine("tail"), "copy", "in destination.txt", `tsel ` + hashLine("beforeafter") + ` "before"`, "paste"},
 			want:        "before\r\ntail\r\nafter\r\n",
 		},
 		{
 			name:        "paste does not split CRLF",
 			source:      "tail",
 			destination: "anchor\r\n",
-			script:      []string{"in source.txt", "rsel 1:1", "copy", "in destination.txt", "rsel 1:1", "paste"},
+			script:      []string{"in source.txt", "rsel " + hashLine("tail") + " " + hashLine("tail"), "copy", "in destination.txt", "rsel " + hashLine("anchor") + " " + hashLine("anchor"), "paste"},
 			want:        "anchor\r\ntail",
 		},
 		{
 			name:        "first destination terminator wins",
 			source:      "tail",
 			destination: "before\rafter\nlast",
-			script:      []string{"in source.txt", "rsel 1:1", "copy", "in destination.txt", `tsel 1 "before"`, "paste"},
+			script:      []string{"in source.txt", "rsel " + hashLine("tail") + " " + hashLine("tail"), "copy", "in destination.txt", `tsel ` + hashLine("before") + ` "before"`, "paste"},
 			want:        "before\rtail\rafter\nlast",
 		},
 		{
 			name:   "internal source terminators stay exact",
 			source: "one\rtwo",
-			script: []string{"in source.txt", "rsel 1:2", "copy", "new destination.txt", "paste"},
+			script: []string{"in source.txt", "rsel " + hashLine("one") + " " + hashLine("two"), "copy", "new destination.txt", "paste"},
 			want:   "one\rtwo",
 		},
 	}
@@ -145,7 +145,7 @@ func TestClipboardFailuresAreAtomicAndActionable(t *testing.T) {
 		{name: "copy requires selection", script: "in source.txt\ncopy", want: "copy requires a selection"},
 		{name: "cut requires selection", script: "in source.txt\ncut", want: "cut requires a selection"},
 		{name: "paste requires clipboard", script: "in source.txt\npaste", want: "paste requires a preceding copy or cut in the same script"},
-		{name: "removed dup is rejected", script: "in source.txt\nrsel 1:1\ndup", want: "unknown or malformed command"},
+		{name: "removed dup is rejected", script: "in source.txt\nrsel " + hashLine("source") + " " + hashLine("source") + "\ndup", want: "unknown or malformed command"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -170,7 +170,7 @@ func TestFailedCrossFilePasteDoesNotCommitCut(t *testing.T) {
 	before := readTree(t, root)
 	script := strings.Join([]string{
 		"in source.txt",
-		"rsel 1:1",
+		"rsel " + hashLine("source") + " " + hashLine("source"),
 		"cut",
 		"in destination.txt",
 		`type "first insertion"`,
@@ -188,7 +188,7 @@ func TestFailedCrossFilePasteDoesNotCommitCut(t *testing.T) {
 func TestClipboardDoesNotPersistAcrossScripts(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, root, "source.txt", "source\n", 0o644)
-	if stdout, stderr, exitCode := runForTest(root, nil, "in source.txt\nrsel 1:1\ncopy"); exitCode != 0 || stdout != "" || stderr != "" {
+	if stdout, stderr, exitCode := runForTest(root, nil, "in source.txt\nrsel "+hashLine("source")+" "+hashLine("source")+"\ncopy"); exitCode != 0 || stdout != "" || stderr != "" {
 		t.Fatalf("copy Run() = exit %d, stdout %q, stderr %q", exitCode, stdout, stderr)
 	}
 	stdout, stderr, exitCode := runForTest(root, []string{"translate"}, "in source.txt\npaste")

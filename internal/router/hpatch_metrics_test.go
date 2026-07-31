@@ -2,6 +2,8 @@ package router
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/tiktoken-go/tokenizer"
@@ -10,8 +12,8 @@ import (
 func TestCalculateHPatchMetricRecordUsesExactCallerPayloads(t *testing.T) {
 	patch := "*** Begin Patch\n*** Update File: /workspace/calc.go\n@@\n-old\n+new\n*** End Patch\n"
 	inputs := hpatchMetricInputs{
-		emittedScript:      "2: rsel 2:2\n",
-		report:             "in calc.go 2:9\n2 return new\n",
+		emittedScript:      "2: rsel 9645 4b7b\n",
+		report:             "in calc.go 2:9\n9645: return new\n",
 		patch:              patch,
 		sessionID:          "session",
 		definition:         "hpatch definition\n\n",
@@ -60,7 +62,7 @@ func TestCalculateHPatchMetricRecordUsesExactCallerPayloads(t *testing.T) {
 
 func TestCalculateHPatchMetricRecordUsesEmptyFailureBaseline(t *testing.T) {
 	inputs := hpatchMetricInputs{
-		emittedScript: "2: rsel 2:2\n",
+		emittedScript: "2: rsel 9645 4b7b\n",
 		diagnostic:    "hpatch: command 2 rejected\nrepair context\n" + hpatchCorrectionHint,
 	}
 	record, err := calculateHPatchMetricRecord(inputs)
@@ -90,6 +92,109 @@ func TestCalculateHPatchMetricRecordUsesEmptyFailureBaseline(t *testing.T) {
 	}
 	if record.HPatchTokens != 0 || record.ApplyPatchTokens != 0 || record.ReportInputTokens != 0 {
 		t.Fatalf("failure record = %+v", record)
+	}
+}
+
+func TestCalculateHPatchMetricRecordCompensatesHReadAgainstCat(t *testing.T) {
+	inputs := hpatchMetricInputs{
+		hreadResult: "8ed3: alpha\nf44e: beta\n",
+		catResult:   "alpha\nbeta\n",
+	}
+	record, err := calculateHPatchMetricRecord(inputs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	codec, err := tokenizer.ForModel(tokenizer.GPT5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hreadTokens, err := codec.Count(inputs.hreadResult)
+	if err != nil {
+		t.Fatal(err)
+	}
+	catTokens, err := codec.Count(inputs.catResult)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.HReadInputTokens != uint64(hreadTokens) || record.CatInputTokens != uint64(catTokens) {
+		t.Fatalf("hread accounting = %+v", record)
+	}
+}
+
+func TestHReadOnlyCallClaimsCombinedDefinitionAccountingOnce(t *testing.T) {
+	var records []hpatchMetricRecord
+	translator := metricsObservingTranslator{
+		translate: func(context.Context, routingWorkspace, string) ([]byte, error) {
+			t.Fatal("hread reached hpatch translation")
+			return nil, nil
+		},
+		record: func(_ context.Context, record hpatchMetricRecord) error {
+			records = append(records, record)
+			return nil
+		},
+	}
+	transform, _, _, workspace := newHPatchTestTransform(t, translator)
+	if err := os.WriteFile(filepath.Join(workspace, "file.txt"), []byte("alpha\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := transform.translateHRead("call-R", `"file.txt"`, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := transform.Finish(false); err != nil {
+		t.Fatal(err)
+	}
+	if len(records) != 1 {
+		t.Fatalf("metric records = %d, want 1", len(records))
+	}
+	record := records[0]
+	if record.DefinitionRequests != 1 || record.DefinitionInputTokens == 0 || record.RemovedDefinitionInputTokens == 0 ||
+		record.HReadInputTokens == 0 || record.CatInputTokens == 0 {
+		t.Fatalf("hread-only accounting = %+v", record)
+	}
+	if record.HPatchTokens != 0 || record.ApplyPatchTokens != 0 {
+		t.Fatalf("hread-only accounting contains patch tokens: %+v", record)
+	}
+}
+
+func TestFailedHReadCountsOnlyVisibleReaderDiagnostic(t *testing.T) {
+	var records []hpatchMetricRecord
+	translator := metricsObservingTranslator{
+		translate: func(context.Context, routingWorkspace, string) ([]byte, error) {
+			t.Fatal("hread reached hpatch translation")
+			return nil, nil
+		},
+		record: func(_ context.Context, record hpatchMetricRecord) error {
+			records = append(records, record)
+			return nil
+		},
+	}
+	transform, _, _, _ := newHPatchTestTransform(t, translator)
+	history, err := transform.translateHRead("call-R", `"missing.txt"`, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := transform.Finish(false); err != nil {
+		t.Fatal(err)
+	}
+	if len(records) != 1 {
+		t.Fatalf("metric records = %d, want 1", len(records))
+	}
+	codec, err := tokenizer.ForModel(tokenizer.GPT5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantTokens, err := codec.Count(history.report)
+	if err != nil {
+		t.Fatal(err)
+	}
+	record := records[0]
+	if record.HReadInputTokens != uint64(wantTokens) || record.CatInputTokens != 0 {
+		t.Fatalf("failed hread accounting = %+v, report %q", record, history.report)
+	}
+	if record.HPatchTokens != 0 || record.ApplyPatchTokens != 0 ||
+		record.IneffectiveHPatchTokens != 0 || record.FailedApplyPatchTokens != 0 ||
+		record.DiagnosticInputTokens != 0 {
+		t.Fatalf("failed hread accounting contains patch tokens: %+v", record)
 	}
 }
 

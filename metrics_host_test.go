@@ -23,7 +23,7 @@ func TestTranslateForHostReturnsCompleteSuccessAndFailureAccounting(t *testing.T
 	defer root.Close()
 	workspace := Workspace{Root: root}
 
-	success, err := TranslateForHost(t.Context(), workspace, "in note.txt\nrsel 1:1\ntype \"beta\\n\"\n", t.TempDir())
+	success, err := TranslateForHost(t.Context(), workspace, "in note.txt\nrsel 8ed3 8ed3\ntype \"beta\\n\"\n", t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -34,15 +34,15 @@ func TestTranslateForHostReturnsCompleteSuccessAndFailureAccounting(t *testing.T
 		t.Fatalf("successful invocation metrics = %+v", success.Invocation.value.Commands)
 	}
 
-	rejected, err := TranslateForHost(t.Context(), workspace, "in note.txt\nrsel 99:99\n", t.TempDir())
+	rejected, err := TranslateForHost(t.Context(), workspace, "in note.txt\ntsel ffff \"x\"\n", t.TempDir())
 	if err == nil {
-		t.Fatal("out-of-range selector unexpectedly succeeded")
+		t.Fatal("missing-hash selector unexpectedly succeeded")
 	}
-	rsel := rejected.Invocation.value.Commands[commandOperationIndex("rsel")]
-	if rsel.Invocations != 1 || rsel.Errors != 1 || rejected.Invocation.value.Reasons[reasonCoordinateBounds] != 1 {
+	selection := rejected.Invocation.value.Commands[commandOperationIndex("tsel")]
+	if selection.Invocations != 1 || selection.Errors != 1 || rejected.Invocation.value.Reasons[reasonCoordinateBounds] != 1 {
 		t.Fatalf("rejected invocation metrics = %+v", rejected.Invocation.value)
 	}
-	if !strings.HasPrefix(rejected.Diagnostic, "hpatch: ") || !strings.Contains(rejected.Diagnostic, "operation \"rsel\"") {
+	if !strings.HasPrefix(rejected.Diagnostic, "hpatch: ") || !strings.Contains(rejected.Diagnostic, "operation \"tsel\"") {
 		t.Fatalf("rejected diagnostic = %q", rejected.Diagnostic)
 	}
 }
