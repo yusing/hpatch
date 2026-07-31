@@ -1,0 +1,75 @@
+output token estimates:
+calls       hpatch  apply_patch  reduction
+-----       ------  -----------  ---------
+successful  5288    19355        72.7%
+failed      11577   1276         n/a
+all         16865   20631        18.3%
+failed apply_patch output uses the empty-patch semantic baseline.
+
+input token estimates:
+source                          tokens  description
+------------------------------  ------  ----------------------------------------
+state reports                   1100    final state returned after successful
+                                        calls
+failure diagnostics             1032    errors and repair context returned after
+                                        failed calls
+hread results                   61440   hashline-formatted file content returned
+                                        by hread
+equivalent cat results          -40061  raw file content displaced by hread
+hpatch definition installed     10076   hpatch and hread tool definitions added
+                                        by the router
+apply_patch definition removed  -1172   exact Code Mode section removed by the
+                                        router
+net added input                 32415   measured additions minus equivalent cat
+                                        results and the removed definition
+definition routing covers 170 accounted request(s) in 4 distinct session(s)
+(installation and removal measured).
+
+command metrics:
+command  invocations  errors  error rate
+-------  -----------  ------  ----------
+in       83           0       0.0%
+new      1            0       0.0%
+mv       0            0       0.0%
+rm       1            0       0.0%
+tsel     154          1       0.6%
+rsel     31           3       9.7%
+type     178          2       1.1%
+del      5            0       0.0%
+copy     66           0       0.0%
+cut      0            0       0.0%
+paste    65           2       3.1%
+commit   1            0       0.0%
+total    585          8       1.4%
+
+tsel selection metrics:
+selection  invocations  errors  error rate
+-------    -----------  ------  ----------
+single     154          1       0.6%
+multiple   0            0       0.0%
+
+failure reasons:
+reason              errors
+------              ------
+syntax              2
+coordinate-bounds   3
+occurrence-missing  1
+invalid-count       0
+order-or-overlap    0
+edit-conflict       2
+active-file         0
+selection-required  0
+clipboard-empty     0
+file-missing        0
+file-conflict       0
+path                0
+other               0
+total               8
+
+command failure reasons:
+command  reason              errors
+-------  ------              ------
+tsel     occurrence-missing  1
+rsel     coordinate-bounds   3
+type     edit-conflict       2
+paste    syntax              2
