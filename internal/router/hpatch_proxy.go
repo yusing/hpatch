@@ -49,6 +49,7 @@ type hpatchTranslationResult struct {
 	report      string
 	diagnostic  string
 	corrections map[int]string
+	rejections  []hpatch.HostRejection
 	invocation  hpatch.InvocationMetrics
 }
 
@@ -93,7 +94,7 @@ func (t notifyingHPatchTranslator) RecordMetrics(ctx context.Context, record hpa
 		return err
 	}
 	if t.metrics != nil {
-		t.metrics.notify()
+		t.metrics.recordHPatch(record)
 	}
 	return nil
 }
@@ -125,6 +126,7 @@ func (t inProcessHPatchTranslator) Translate(ctx context.Context, workspace rout
 		report:      translated.Report,
 		diagnostic:  translated.Diagnostic,
 		corrections: corrections,
+		rejections:  slices.Clone(translated.Rejections),
 		invocation:  translated.Invocation,
 	}
 	return result, err
@@ -1114,6 +1116,7 @@ func (t *hpatchResponseTransform) translate(callID, input string, upstreamItem m
 		}
 		if err := t.recordMetrics(hpatchMetricInputs{
 			invocation:    translated.invocation,
+			rejections:    translated.rejections,
 			emittedScript: input,
 			diagnostic:    diagnostic,
 		}); err != nil {

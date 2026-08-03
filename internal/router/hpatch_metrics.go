@@ -2,6 +2,7 @@ package router
 
 import (
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -15,6 +16,7 @@ type hpatchMetricRecord = hpatch.HostMetricRecord
 
 type hpatchMetricInputs struct {
 	invocation    hpatch.InvocationMetrics
+	rejections    []hpatch.HostRejection
 	emittedScript string
 	report        string
 	patch         string
@@ -40,7 +42,11 @@ func calculateHPatchMetricRecord(inputs hpatchMetricInputs) (hpatchMetricRecord,
 	if err != nil {
 		return hpatchMetricRecord{}, fmt.Errorf("load GPT-5 tokenizer: %w", err)
 	}
-	record := hpatchMetricRecord{Invocation: inputs.invocation}
+	record := hpatchMetricRecord{
+		Invocation: inputs.invocation,
+		Rejections: slices.Clone(inputs.rejections),
+		SessionID:  inputs.sessionID,
+	}
 	if !inputs.overheadOnly {
 		if inputs.successful {
 			if record.HPatchTokens, err = countHPatchMetricText(codec, hpatchMetricPayload(inputs.emittedScript), "hpatch output"); err != nil {
@@ -69,7 +75,6 @@ func calculateHPatchMetricRecord(inputs hpatchMetricInputs) (hpatchMetricRecord,
 	if inputs.sessionID == "" || (definition == "" && baseline == "") {
 		return record, nil
 	}
-	record.SessionID = inputs.sessionID
 	record.DefinitionRequests = 1
 	if record.DefinitionInputTokens, err = countHPatchMetricText(codec, definition, "hpatch definition input"); err != nil {
 		return hpatchMetricRecord{}, err

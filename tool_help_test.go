@@ -82,6 +82,8 @@ func TestHPatch2ToolDescriptionCoversSafeCommandChoice(t *testing.T) {
 	for _, guidance := range []string{
 		"HPATCH/2",
 		"Do not call this tool in parallel with other tools.",
+		"use `hread` for its first content read instead of `sed` or `cat`",
+		"independent `hread` calls may run together",
 		"LINE:HASH TEXT",
 		"copy the complete `LINE:HASH` reference",
 		"Line and range replacement preserve",
@@ -91,6 +93,8 @@ func TestHPatch2ToolDescriptionCoversSafeCommandChoice(t *testing.T) {
 		"`del` deletes",
 		"fixed `<<PATCH`",
 		"immutable baseline",
+		"One call may repeat `in PATH` for multiple files",
+		"batch every disjoint edit",
 		"not targetable in the same call",
 		"apply, reread, and use a later invocation",
 		"Multiple insertions at the same boundary render in script order.",

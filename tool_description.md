@@ -1,9 +1,11 @@
 HPATCH/2 applies one complete target-bearing edit script atomically. Do not call this tool
 in parallel with other tools. Rejection or cancellation changes nothing.
 
-Read first with `hread`. Its rows are `LINE:HASH TEXT`; copy the complete `LINE:HASH`
-reference. The line selects one exact logical line and the hash rejects stale content.
-Never guess or reconstruct a row.
+Use search to locate relevant regions. For any region likely to be edited, use `hread`
+for its first content read instead of `sed` or `cat`; independent `hread` calls may run
+together. Its rows are `LINE:HASH TEXT`; copy the complete `LINE:HASH` reference. The
+line selects one exact logical line and the hash rejects stale content. Never guess or
+reconstruct a row.
 
 Commands:
 
@@ -59,9 +61,9 @@ PATCH
 ```
 
 Every existing file has one immutable baseline for the complete invocation. Pending edits
-do not shift later targets. Batch disjoint edits that use the inspected baselines. Content
-introduced by a mutation is not targetable in the same call; apply, reread, and use a
-later invocation for dependent edits.
+do not shift later targets. One call may repeat `in PATH` for multiple files; batch every
+disjoint edit that uses the inspected baselines. Content introduced by a mutation is not
+targetable in the same call; apply, reread, and use a later invocation for dependent edits.
 
 Line and range replacement preserve the target's final LF, CRLF, or CR when the value
 omits a terminator. Explicit terminators are authoritative. `type-` and `type+` insert

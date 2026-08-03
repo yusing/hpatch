@@ -107,6 +107,37 @@ func commandCorrectionsOf(err error) []CommandCorrection {
 	return corrections
 }
 
+func hostRejectionsOf(err error) []HostRejection {
+	commands := commandsOf(err)
+	rejections := make([]HostRejection, 0, len(commands))
+	for _, command := range commands {
+		rejections = append(rejections, HostRejection{
+			Command:    command.Command,
+			SourceLine: command.Line,
+			Operation:  command.Operation,
+			Target:     hostTargetName(command.Attempt.target),
+			Reason:     hostReasonName(command.Reason),
+			Path:       command.Path,
+		})
+	}
+	return rejections
+}
+
+func hostTargetName(target targetVariant) string {
+	index := int(target) - 1
+	if index < 0 || index >= len(targetVariantNames) {
+		return ""
+	}
+	return targetVariantNames[index]
+}
+
+func hostReasonName(reason failureReason) string {
+	if int(reason) < 0 || int(reason) >= len(failureReasonNames) {
+		return failureReasonNames[reasonOther]
+	}
+	return failureReasonNames[reason]
+}
+
 func (w *workspace) formatGoFiles() *commandError {
 	for _, file := range w.files {
 		if file.deleted || filepath.Ext(file.path) != ".go" {

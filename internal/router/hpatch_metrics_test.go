@@ -7,10 +7,12 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/tiktoken-go/tokenizer"
+	"github.com/yusing/hpatch"
 )
 
 func TestCalculateHPatchMetricRecordUsesExactCallerPayloads(t *testing.T) {
@@ -68,6 +70,11 @@ func TestCalculateHPatchMetricRecordUsesEmptyFailureBaseline(t *testing.T) {
 	inputs := hpatchMetricInputs{
 		emittedScript: "2: type 12:9645..18:4b7b \"replacement\"\n",
 		diagnostic:    "hpatch: command 2 rejected\nrepair context\n" + hpatchCorrectionHint,
+		rejections: []hpatch.HostRejection{{
+			Command: 2, SourceLine: 2, Operation: "type", Target: "range",
+			Reason: "row-stale", Path: "calc.go",
+		}},
+		sessionID: "session-without-definition-accounting",
 	}
 	record, err := calculateHPatchMetricRecord(inputs)
 	if err != nil {
@@ -93,6 +100,12 @@ func TestCalculateHPatchMetricRecordUsesEmptyFailureBaseline(t *testing.T) {
 	}
 	if got, want := record.DiagnosticInputTokens, count(inputs.diagnostic); got != want {
 		t.Fatalf("diagnostic tokens = %d, want %d", got, want)
+	}
+	if record.SessionID != inputs.sessionID {
+		t.Fatalf("session ID = %q, want %q", record.SessionID, inputs.sessionID)
+	}
+	if !reflect.DeepEqual(record.Rejections, inputs.rejections) {
+		t.Fatalf("rejections = %#v, want %#v", record.Rejections, inputs.rejections)
 	}
 	if record.HPatchTokens != 0 || record.ApplyPatchTokens != 0 || record.ReportInputTokens != 0 {
 		t.Fatalf("failure record = %+v", record)
@@ -324,7 +337,7 @@ func TestHPatchRequestDefinitionAccountingIsClaimedOnce(t *testing.T) {
 	if records[0].DefinitionRequests != 1 || records[0].SessionID != "session-1" || records[0].DefinitionInputTokens == 0 || records[0].RemovedDefinitionInputTokens == 0 {
 		t.Fatalf("first request accounting = %+v", records[0])
 	}
-	if records[1].DefinitionRequests != 0 || records[1].SessionID != "" || records[1].DefinitionInputTokens != 0 || records[1].RemovedDefinitionInputTokens != 0 {
+	if records[1].DefinitionRequests != 0 || records[1].SessionID != "session-1" || records[1].DefinitionInputTokens != 0 || records[1].RemovedDefinitionInputTokens != 0 {
 		t.Fatalf("second call repeated request accounting = %+v", records[1])
 	}
 	if records[0].ApplyPatchTokens == 0 || records[1].ApplyPatchTokens == 0 {

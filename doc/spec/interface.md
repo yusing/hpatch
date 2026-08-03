@@ -156,6 +156,17 @@ hypothetical raw `cat` result. The router's end-to-end Responses and per-session
 totals are authoritative for model input consumed after the exact exec result is
 returned.
 
+The router's in-memory metrics snapshot also attributes successful and rejected hpatch
+translations and rejected-call diagnostic input tokens to the request session. Each session
+retains the latest 32 evaluator rejection identities: command index, physical source line,
+operation, target kind when known, stable reason, and affected path when known. These bounded
+session records use the same session identity as request lifecycle metrics and are not written
+to `metrics.bin`. They retain neither scripts, replacement text, diagnostics, nor repair
+context. Proxy failures that occur before evaluator invocation do not fabricate evaluator
+rejection identities. The snapshot also exposes aggregate counters so a benchmark can
+reconcile routed calls with client-visible file-change items without inferring failures from
+stderr envelopes.
+
 Classification is persisted only after the invocation's outcome is known. Translate mode
 records a paired effective estimate after its complete patch reaches stdout; normal mode
 records one after the staged changes commit. Each records report-input tokens only after
@@ -281,6 +292,10 @@ Acceptance:
    precedence over mismatched versions.
 10. Metrics collection failure warns without changing the success or failure of the
     requested edit, translated output, or final-state report.
+11. Router snapshots attribute successful and rejected hpatch translations, diagnostic token
+    totals, and the latest 32 structured evaluator rejection identities to their request
+    sessions without persisting scripts, replacement text, diagnostics, repair context, or
+    new per-session records in `metrics.bin`.
 
 ## REQ-SCRIPT-001 — HPATCH/2 script grammar
 
@@ -669,9 +684,12 @@ retained rejected script is actually correctable.
 
 Both references teach this workflow:
 
-1. Use hread for the first relevant read and copy complete `LINE:HASH` references.
+1. Use search to locate relevant regions, then use hread for the first content read of a
+   region likely to be edited; issue independent hread calls together and copy complete
+   `LINE:HASH` references.
 2. Choose a line, inclusive range, or anchored literal target inside the mutation command.
-3. Batch disjoint edits that depend only on the same inspected immutable baselines.
+3. Repeat `in PATH` in one call to batch disjoint edits across files when they depend only
+   on the inspected immutable baselines.
 4. Split dependent edits into layers: apply, reread, then use fresh references.
 5. Use `type` to replace, `type-` to insert before, `type+` to insert after, and `del` to
    delete; do not construct a separate selection or clipboard program.

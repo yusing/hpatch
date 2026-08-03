@@ -15,8 +15,10 @@ type InvocationMetrics struct {
 // HostMetricRecord is the complete accounting entry calculated by the host.
 // Invocation counters originate in hpatch; every token count and the session
 // attribution originate at the host seam where the visible payload is known.
+// Rejections are transient host telemetry and are not written to metrics.bin.
 type HostMetricRecord struct {
 	Invocation              InvocationMetrics
+	Rejections              []HostRejection
 	SessionID               string
 	HPatchTokens            uint64
 	ApplyPatchTokens        uint64

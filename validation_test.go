@@ -27,6 +27,13 @@ func TestHPatch2IndentationOnlyReplacementOffersExactCorrection(t *testing.T) {
 	if !reflect.DeepEqual(result.Corrections, want) {
 		t.Fatalf("corrections = %#v, want %#v", result.Corrections, want)
 	}
+	wantRejections := []HostRejection{{
+		Command: 2, SourceLine: 2, Operation: "type", Target: "line",
+		Reason: "edit-conflict", Path: "script.sh",
+	}}
+	if !reflect.DeepEqual(result.Rejections, wantRejections) {
+		t.Fatalf("rejections = %#v, want %#v", result.Rejections, wantRejections)
+	}
 	if !strings.Contains(result.Diagnostic, "indentation-only change") {
 		t.Fatalf("diagnostic = %q", result.Diagnostic)
 	}
@@ -37,6 +44,27 @@ func TestHPatch2IndentationOnlyReplacementOffersExactCorrection(t *testing.T) {
 	if metrics.Reasons[reasonEditConflict] != 1 ||
 		metrics.CommandReasons[commandOperationIndex("type")][reasonEditConflict] != 1 {
 		t.Fatalf("indentation correction metrics = %+v", metrics)
+	}
+}
+
+func TestHostRejectionsPreserveGroupedCommandIdentityWithoutSourceText(t *testing.T) {
+	rootPath := t.TempDir()
+	root, err := os.OpenRoot(rootPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+
+	result, err := TranslateForHost(t.Context(), Workspace{Root: root}, "bad\nworse\n", t.TempDir())
+	if err == nil {
+		t.Fatal("invalid commands unexpectedly succeeded")
+	}
+	want := []HostRejection{
+		{Command: 1, SourceLine: 1, Operation: "bad", Reason: "script-syntax"},
+		{Command: 2, SourceLine: 2, Operation: "worse", Reason: "script-syntax"},
+	}
+	if !reflect.DeepEqual(result.Rejections, want) {
+		t.Fatalf("rejections = %#v, want %#v", result.Rejections, want)
 	}
 }
 

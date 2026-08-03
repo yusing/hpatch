@@ -17,10 +17,11 @@ import (
 )
 
 const (
-	maxMetricModels         = 128
-	maxActiveMetricRequests = 1024
-	maxMetricSubscribers    = 128
-	otherMetricModelKey     = "other"
+	maxMetricModels            = 128
+	maxActiveMetricRequests    = 1024
+	maxMetricSubscribers       = 128
+	maxSessionHPatchRejections = 32
+	otherMetricModelKey        = "other"
 )
 
 type tokenCounts struct {
@@ -145,25 +146,45 @@ func (g *metricGroup) add(model string, counts tokenCounts) {
 type sessionMetrics struct {
 	metricGroup
 
-	Requests  requestLifecycleMetrics `json:"requests"`
-	SessionID string                  `json:"session_id"`
-	Model     string                  `json:"model"`
+	Requests         requestLifecycleMetrics `json:"requests"`
+	HPatchCalls      hpatchCallMetrics       `json:"hpatch_calls"`
+	HPatchRejections []hpatch.HostRejection  `json:"hpatch_rejections"`
+	SessionID        string                  `json:"session_id"`
+	Model            string                  `json:"model"`
+}
+
+type hpatchCallMetrics struct {
+	Successful            uint64 `json:"successful"`
+	Rejected              uint64 `json:"rejected"`
+	DiagnosticInputTokens uint64 `json:"diagnostic_input_tokens"`
+}
+
+func (m *hpatchCallMetrics) add(record hpatchMetricRecord) {
+	if record.HPatchTokens != 0 {
+		m.Successful++
+	}
+	if record.IneffectiveHPatchTokens != 0 {
+		m.Rejected++
+	}
+	m.DiagnosticInputTokens += record.DiagnosticInputTokens
 }
 
 type metricsSnapshot struct {
 	metricGroup
 
-	Requests  requestLifecycleMetrics `json:"requests"`
-	Sessions  []sessionMetrics        `json:"sessions"`
-	Gain      hpatch.GainMetrics      `json:"gain"`
-	GainError string                  `json:"gain_error,omitempty"`
-	Mode      string                  `json:"mode,omitempty"`
+	Requests    requestLifecycleMetrics `json:"requests"`
+	HPatchCalls hpatchCallMetrics       `json:"hpatch_calls"`
+	Sessions    []sessionMetrics        `json:"sessions"`
+	Gain        hpatch.GainMetrics      `json:"gain"`
+	GainError   string                  `json:"gain_error,omitempty"`
+	Mode        string                  `json:"mode,omitempty"`
 }
 
 type metricsStore struct {
 	mu               sync.RWMutex
 	all              metricGroup
 	requests         requestLifecycleMetrics
+	hpatchCalls      hpatchCallMetrics
 	retainedSessions map[string]retainedSessionMetrics
 	activeSessions   map[string]map[uint64]activeRequest
 
@@ -178,9 +199,11 @@ type metricsStore struct {
 type retainedSessionMetrics struct {
 	metricGroup
 
-	requests   requestLifecycleMetrics
-	model      string
-	modelOrder uint64
+	requests         requestLifecycleMetrics
+	hpatchCalls      hpatchCallMetrics
+	hpatchRejections []hpatch.HostRejection
+	model            string
+	modelOrder       uint64
 }
 
 type activeRequest struct {
@@ -207,10 +230,19 @@ func newMetricsStore(gainDirectory string) *metricsStore {
 	}
 }
 
-// notify publishes a snapshot refresh to live dashboard subscribers.
-func (m *metricsStore) notify() {
+func (m *metricsStore) recordHPatch(record hpatchMetricRecord) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.hpatchCalls.add(record)
+	if validMetricSessionID(record.SessionID) {
+		retained := m.retainedSessionLocked(record.SessionID)
+		retained.hpatchCalls.add(record)
+		retained.hpatchRejections = append(retained.hpatchRejections, record.Rejections...)
+		if excess := len(retained.hpatchRejections) - maxSessionHPatchRejections; excess > 0 {
+			retained.hpatchRejections = slices.Clone(retained.hpatchRejections[excess:])
+		}
+		m.retainedSessions[record.SessionID] = retained
+	}
 	m.notifyLocked()
 }
 
@@ -338,6 +370,7 @@ func (m *metricsStore) snapshot() metricsSnapshot {
 	for id, retained := range m.retainedSessions {
 		sessions[id] = sessionMetrics{
 			SessionID: id, Model: retained.model, Requests: retained.requests,
+			HPatchCalls: retained.hpatchCalls, HPatchRejections: slices.Clone(retained.hpatchRejections),
 			metricGroup: cloneMetricGroup(retained.metricGroup),
 		}
 	}
@@ -364,6 +397,7 @@ func (m *metricsStore) snapshot() metricsSnapshot {
 	snapshot := metricsSnapshot{
 		metricGroup: cloneMetricGroup(m.all),
 		Requests:    m.requests,
+		HPatchCalls: m.hpatchCalls,
 		Sessions:    make([]sessionMetrics, 0, len(sessions)),
 		Mode:        m.mode,
 	}

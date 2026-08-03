@@ -51,6 +51,15 @@ objects after fail-fast cancellation into `results.jsonl`.
 After the paired attempts, the shell retains control and treatment router
 metrics and an isolated treatment `hpatch gain` report. A gain of zero is not an
 editing-performance result when no treatment request reached hpatch.
+The generated summary joins each attempt's thread ID to router session metrics and reports
+model requests, command executions, hread calls, client-visible file-change items, routed
+hpatch translations and rejections, and rejected-call diagnostic tokens. It separately shows
+semantic edit-payload reduction, end-to-end agent output change, and estimated non-edit
+output so payload savings cannot be mistaken for whole-agent savings. A client stderr
+translation envelope is labeled separately from an hpatch command rejection. When the router
+artifact supports it, the summary lists bounded evaluator rejection evidence by repetition,
+command, physical source line, operation, target kind, stable reason, and path. An older
+artifact without that field is labeled unavailable rather than reported as zero rejections.
 
 Acceptance:
 
@@ -67,3 +76,7 @@ Acceptance:
    failure makes the attempt fail without deleting its evidence.
 6. Results retain elapsed/token metrics and the actual agent diff; treatment
    artifacts retain structured router gain metrics and textual `hpatch gain`.
+7. The summary attributes routed hpatch outcomes to their originating repetitions,
+   distinguishes client file-change items from routed calls, and separates semantic
+   edit-payload estimates from end-to-end output usage. It reports structured evaluator
+   rejection evidence when present and identifies artifacts that predate that evidence.

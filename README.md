@@ -299,8 +299,9 @@ Commands are `in` / `new` / `mv` / `rm`, target-bearing `type` / `type-` / `type
 Rules worth remembering:
 
 - Use `type` to replace, `type-` to insert before, `type+` to insert after, and `del` to delete.
+- Use search to locate likely edit regions, then use HREAD for their first content read; issue independent HREAD calls together.
 - First `in` of a file freezes its immutable invocation baseline. Pending edits never shift later targets.
-- Batch disjoint edits based on inspected baselines. Content introduced by a mutation requires a successful call, reread, and later invocation.
+- Repeat `in PATH` in one call to batch disjoint edits across inspected files. Content introduced by a mutation requires a successful call, reread, and later invocation.
 - Overlapping replacements or deletions and insertions strictly inside them fail atomically. Boundary insertions are valid.
 - Use inline quoted values for short single-line edits; include `\n` when an insertion must form a new line. Reserve fixed `<<PATCH` for multiline or escape-heavy values.
 - Rejection changes nothing. Router-owned retries can replace, delete, or insert failed commands by index without resending the full script.
