@@ -1,0 +1,1 @@
+control-1  | time=2026-08-03T10:13:25.755Z level=INFO msg=listening url=http://0.0.0.0:8081/v1/responses mode=passthrough

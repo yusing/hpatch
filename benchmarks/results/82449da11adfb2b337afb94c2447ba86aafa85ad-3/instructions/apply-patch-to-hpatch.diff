@@ -1,0 +1,25 @@
+--- control.md
++++ hpatch.md
+@@ -82,9 +82,20 @@
+ - Avoid performing blocking sleep or wait calls longer than 60 seconds, as they may prevent you from communicating with the user for their duration.
+ - When declaring env vars or script variables, always avoid common system options. Never repurpose `$HOME`, `$home`, or `$CODEX_HOME`. Instead, use a task-specific variable name.
+ 
+-## File editing constraints
++## File editing
+ 
+-Use `apply_patch` for local file edits. Do not create or edit files with `cat` or other shell write tricks. Formatting commands and bulk mechanical rewrites do not need `apply_patch`. Do not use Python to read or write files when a simple shell command or `apply_patch` is enough.
++Use `functions.hpatch` for local file edits, not `apply_patch`.
++Hpatch will be translated internally and so you will see `apply_patch` in the history.
++The router removes `apply_patch` from the `functions.exec` tool description, but a runtime `ALL_TOOLS` listing may still show `tools.apply_patch`; do not call it for ordinary file edits.
++Do not create or edit files with shell write tricks, and do not use Python as a workaround when a simple shell command or `hpatch` is enough.
++
++Follow hpatch's tool description and rejection diagnostics for target and correction mechanics.
++Use search to locate edit regions, then use `hread` instead of `sed` or `cat` for their first content read.
++Use only complete rows copied from current `hread` output for that exact path; after a successful call touches a file, discard its saved references and reread it before another edit.
++Issue independent `hread` calls together, and batch disjoint edits across inspected files into one hpatch call with repeated `in PATH` sections.
++For an existing Go declaration or function, prefer one range `type` command over assembling the same replacement through several insertions.
++
++Formatting commands and bulk mechanical rewrites do not need `hpatch`.
+ 
+ You may find yourself working in a dirty worktree. Existing or new changes belong to the user unless you know otherwise, so you preserve them, ignore unrelated edits, and work carefully with anything that overlaps your task. If you cannot work around them you escalate to the user.
+ 
