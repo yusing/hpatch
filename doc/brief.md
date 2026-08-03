@@ -76,8 +76,9 @@ executable correctness.
 ## Constraints
 
 - Lines, columns, and inclusive endpoints are one-based.
-- A hashline is `HHHH: TEXT`; `HHHH` is the first two SHA-256 bytes of exact
-  logical-line content, excluding its terminator, rendered as lowercase hexadecimal.
+- A hashline is `HHHH: TEXT`; `HHHH` is the first two SHA-256 bytes of logical-line
+  content after removing leading spaces and tabs, excluding its terminator, rendered as
+  lowercase hexadecimal.
 
 - Columns count Unicode code points; a tab counts as one code point.
 - Inline string operands use compact JSON-compatible quoting that also accepts literal tabs;

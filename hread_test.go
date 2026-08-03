@@ -49,6 +49,31 @@ func TestReadHashLinesWholeFileAndRange(t *testing.T) {
 	}
 }
 
+func TestHashLinesIgnoreLeadingIndentation(t *testing.T) {
+	wantHash := hashLine("foo")
+	for _, content := range []string{"  foo", "\t\tfoo", " \t foo"} {
+		if got := hashLine(content); got != wantHash {
+			t.Errorf("hashLine(%q) = %q, want %q", content, got, wantHash)
+		}
+	}
+
+	result, err := formatHashLineStream(t.Context(), strings.NewReader("\t\tfoo\n"), "fixture.txt", 0, 0, maxHReadOutputBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := wantHash + ": \t\tfoo\n"; result.Output != want {
+		t.Fatalf("indented output = %q, want %q", result.Output, want)
+	}
+
+	line, lineNumber, err := resolveLineHash("\t\tfoo\n", wantHash)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if content := lineContent("\t\tfoo\n", line); content != "\t\tfoo" || lineNumber != 1 {
+		t.Fatalf("resolved line = %q at %d, want %q at 1", content, lineNumber, "\t\tfoo")
+	}
+}
+
 func TestReadHashLinesRejectsInvalidInputAndBounds(t *testing.T) {
 	rootPath := t.TempDir()
 	writeTestFile(t, rootPath, "file.txt", "one\ntwo\n", 0o644)
@@ -176,6 +201,12 @@ func TestHashlineSelectorsRequireUniqueBaselineIdentity(t *testing.T) {
 		{
 			name:        "duplicate content hash rejects",
 			current:     "target\ntop\ntarget\nbottom\n",
+			script:      "in file.txt\nrsel 34a0 34a0\ntype \"WRONG\"\n",
+			wantFailure: "ambiguous",
+		},
+		{
+			name:        "indentation-only hash collision rejects",
+			current:     "target\ntop\n\ttarget\nbottom\n",
 			script:      "in file.txt\nrsel 34a0 34a0\ntype \"WRONG\"\n",
 			wantFailure: "ambiguous",
 		},

@@ -10,7 +10,7 @@ import (
 const lineHashLength = 4
 
 func hashLine(content string) string {
-	sum := sha256.Sum256([]byte(content))
+	sum := sha256.Sum256([]byte(strings.TrimLeft(content, " \t")))
 	return hex.EncodeToString(sum[:2])
 }
 
