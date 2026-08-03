@@ -3,8 +3,8 @@ set -euo pipefail
 
 benchmark_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 model=${MODEL:-gpt-5.6-sol}
-reasoning_effort=medium
-repetitions=4
+reasoning_effort=${REASONING_EFFORT:-medium}
+repetitions=${REPETITIONS:-4}
 task_id=etcd-range-stream
 task="$benchmark_root/tasks/$task_id"
 task_manifest="$task/task.json"
@@ -409,6 +409,7 @@ prepare_instructions() {
 	# Backticks are literal instruction text.
 	# shellcheck disable=SC2016
 	if ! grep -Fqx 'Use `functions.hpatch` for local file edits, not `apply_patch`.' "$hpatch_instruction" ||
+		! grep -Fqx 'Use search to locate edit regions, then use `hread` instead of `sed` or `cat` for their first content read.' "$hpatch_instruction" ||
 		grep -Fqx "$stock_instruction" "$hpatch_instruction"; then
 		printf 'bench.sh: hpatch base-instruction override was not exact\n' >&2
 		return 1
