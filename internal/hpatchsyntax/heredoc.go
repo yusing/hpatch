@@ -3,15 +3,12 @@ package hpatchsyntax
 import (
 	"errors"
 	"fmt"
-	"regexp"
 	"strings"
 	"unicode/utf8"
 )
 
 // MaxHeredocBodyBytes bounds the decoded payload retained by one heredoc.
 const MaxHeredocBodyBytes = 1 << 20
-
-var heredocDelimiterPattern = regexp.MustCompile(`^[A-Za-z0-9_.-]{1,64}$`)
 
 // PhysicalLine retains a script line's exact terminator separately from its text.
 type PhysicalLine struct {
@@ -55,6 +52,9 @@ func FrameCommand(lines []PhysicalLine, headerIndex int, command string) (Comman
 	frame := CommandFrame{Next: headerIndex + 1}
 	delimiter, err := heredocDelimiter(command)
 	if err != nil {
+		// An invalid heredoc header owns the remaining physical lines. They are
+		// payload-shaped data, not independent commands or correction entries.
+		frame.Next = len(lines)
 		return frame, err
 	}
 	frame.Delimiter = delimiter
@@ -82,7 +82,9 @@ func FrameCommand(lines []PhysicalLine, headerIndex int, command string) (Comman
 
 func isInlineQuotedCommand(command string) bool {
 	return strings.HasPrefix(command, "type ") ||
-		strings.HasPrefix(command, "tsel ")
+		strings.HasPrefix(command, "type- ") ||
+		strings.HasPrefix(command, "type+ ") ||
+		strings.HasPrefix(command, "del ")
 }
 
 func scanQuotedOperand(text string, quoteOpen bool) bool {
@@ -107,22 +109,45 @@ func scanQuotedOperand(text string, quoteOpen bool) bool {
 }
 
 func heredocDelimiter(command string) (string, error) {
-	const prefix = "type <<"
-	if !strings.HasPrefix(command, prefix) {
+	operation, _, _ := strings.Cut(command, " ")
+	if operation != "type" && operation != "type-" && operation != "type+" {
 		return "", nil
 	}
-	delimiter := strings.TrimPrefix(command, prefix)
-	if len(delimiter) >= 2 {
-		first := delimiter[0]
-		last := delimiter[len(delimiter)-1]
-		if (first == '\'' || first == '"') && first == last {
-			delimiter = delimiter[1 : len(delimiter)-1]
+	marker := unquotedDoubleLess(command)
+	if marker < 0 {
+		return "", nil
+	}
+	if marker > 0 && command[marker-1] == ' ' && command[marker:] == "<<PATCH" {
+		return "PATCH", nil
+	}
+	return "", errors.New("invalid heredoc; HPATCH/2 requires an unquoted <<PATCH final operand")
+}
+
+func unquotedDoubleLess(text string) int {
+	quoted := false
+	escaped := false
+	for index := 0; index < len(text); index++ {
+		character := text[index]
+		if !quoted {
+			if character == '"' {
+				quoted = true
+				continue
+			}
+			if character == '<' && index+1 < len(text) && text[index+1] == '<' {
+				return index
+			}
+			continue
+		}
+		switch {
+		case escaped:
+			escaped = false
+		case character == '\\':
+			escaped = true
+		case character == '"':
+			quoted = false
 		}
 	}
-	if !heredocDelimiterPattern.MatchString(delimiter) {
-		return "", errors.New("invalid heredoc delimiter; expected 1-64 ASCII letters, digits, underscores, dots, or hyphens, optionally enclosed in matching single or double quotes")
-	}
-	return delimiter, nil
+	return -1
 }
 
 func decodeHeredoc(lines []PhysicalLine, headerIndex int, delimiter string) (string, int, error) {

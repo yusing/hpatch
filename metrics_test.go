@@ -28,15 +28,15 @@ func TestGainReportsPersistedTotals(t *testing.T) {
 
 	var translateStdout, translateStderr bytes.Buffer
 	exitCode := Run([]string{"translate"}, strings.NewReader(script), &translateStdout, &translateStderr, root, dataDirectory)
-	wantState := "in note.txt 1:6\nlast edit in note.txt: type 1 edit: 1:1-1:6\nfiles: 1 added\n#|hello\n"
-	if exitCode != 0 || translateStdout.String() != patch || normalizeHashlineRows(translateStderr.String()) != wantState {
-		t.Fatalf("translate = exit %d, stdout %q, stderr %q", exitCode, translateStdout.String(), normalizeHashlineRows(translateStderr.String()))
+	wantState := "in note.txt\nlast type note.txt 1 ranges 1:1-1:1\nfiles add=1 update=0 move=0 delete=0\n1:2cf2 hello\n"
+	if exitCode != 0 || translateStdout.String() != patch || translateStderr.String() != wantState {
+		t.Fatalf("translate = exit %d, stdout %q, stderr %q", exitCode, translateStdout.String(), translateStderr.String())
 	}
 
 	var normalStdout, normalStderr bytes.Buffer
 	exitCode = Run(nil, strings.NewReader(script), &normalStdout, &normalStderr, root, dataDirectory)
-	if exitCode != 0 || normalStdout.Len() != 0 || normalizeHashlineRows(normalStderr.String()) != wantState {
-		t.Fatalf("normal = exit %d, stdout %q, stderr %q", exitCode, normalStdout.String(), normalizeHashlineRows(normalStderr.String()))
+	if exitCode != 0 || normalStdout.Len() != 0 || normalStderr.String() != wantState {
+		t.Fatalf("normal = exit %d, stdout %q, stderr %q", exitCode, normalStdout.String(), normalStderr.String())
 	}
 
 	invocation := invocationMetrics{}
@@ -119,7 +119,7 @@ func TestGainReportReconcilesEffectiveAndIneffectiveTokens(t *testing.T) {
 	for _, nextTable := range []string{
 		"input token estimates:",
 		"command metrics:",
-		"tsel selection metrics:",
+		"target metrics:",
 		"failure reasons:",
 		"command failure reasons:",
 	} {
@@ -190,10 +190,11 @@ func TestLoadGainMetricsMatchesGainReportTotals(t *testing.T) {
 		SessionID: "session-gain",
 	})
 	entry := metrics{}
-	entry.Commands[commandOperationIndex("rsel")].Invocations = 1
-	entry.Commands[commandOperationIndex("rsel")].Errors = 1
-	entry.Reasons[reasonCoordinateBounds] = 1
-	entry.CommandReasons[commandOperationIndex("rsel")][reasonCoordinateBounds] = 1
+	entry.Commands[commandOperationIndex("type+")].Invocations = 1
+	entry.Commands[commandOperationIndex("type+")].Errors = 1
+	entry.Targets[targetVariantLine-1] = commandMetric{Invocations: 1, Errors: 1}
+	entry.Reasons[reasonRowStale] = 1
+	entry.CommandReasons[commandOperationIndex("type+")][reasonRowStale] = 1
 	if err := updateMetrics(dataDirectory, entry); err != nil {
 		t.Fatal(err)
 	}
@@ -211,10 +212,10 @@ func TestLoadGainMetricsMatchesGainReportTotals(t *testing.T) {
 	if got.NetAddedInput != "14" || got.DefinitionSources != "installation and removal measured" {
 		t.Fatalf("input = net %q sources %q", got.NetAddedInput, got.DefinitionSources)
 	}
-	if len(got.Commands) != commandCount || got.Commands[commandOperationIndex("rsel")].Errors != 1 {
+	if len(got.Commands) != commandCount || got.Commands[commandOperationIndex("type+")].Errors != 1 {
 		t.Fatalf("commands = %#v", got.Commands)
 	}
-	if len(got.CommandReasons) != 1 || got.CommandReasons[0].Command != "rsel" || got.CommandReasons[0].Reason != "coordinate-bounds" {
+	if len(got.CommandReasons) != 1 || got.CommandReasons[0].Command != "type+" || got.CommandReasons[0].Reason != "row-stale" {
 		t.Fatalf("command reasons = %#v", got.CommandReasons)
 	}
 }
@@ -227,8 +228,8 @@ func TestLoadGainMetricsAbsentDirectoryIsZero(t *testing.T) {
 	if got.HPatchTokens != 0 || got.SuccessfulReduction != "0.0" || got.OverallReduction != "0.0" {
 		t.Fatalf("empty gain = %#v", got)
 	}
-	if len(got.Commands) != commandCount || len(got.TextSpans) != textSpanVariantCount {
-		t.Fatalf("empty tables = commands %d text spans %d", len(got.Commands), len(got.TextSpans))
+	if len(got.Commands) != commandCount || len(got.Targets) != targetVariantCount {
+		t.Fatalf("empty tables = commands %d targets %d", len(got.Commands), len(got.Targets))
 	}
 	if len(got.CommandReasons) != 1 || got.CommandReasons[0] != (CommandReasonMetric{Command: "none", Reason: "none"}) {
 		t.Fatalf("empty command reasons = %#v", got.CommandReasons)
@@ -247,8 +248,8 @@ func TestGainReportsCommandInvocationsErrorsAndRates(t *testing.T) {
 		script  string
 		success bool
 	}{
-		{name: "success with unrelated command-name text", args: []string{"translate"}, script: "new note.txt\ntype \"rsel sel future-command\"\n", success: true},
-		{name: "execution error", args: []string{"translate"}, script: "new failed.txt\ntype \"ignored\"\nrsel ffff fffe\n"},
+		{name: "success with unrelated command-name text", args: []string{"translate"}, script: "new note.txt\ntype \"type+ future-command\"\n", success: true},
+		{name: "execution error", args: []string{"translate"}, script: "new failed.txt\ntype \"ignored\"\ntype 1:ffff \"x\"\n"},
 		{name: "removed numeric selector", args: []string{"translate"}, script: "sel 0 1:1\n"},
 		{name: "unknown future command", args: []string{"translate"}, script: "future-command\n"},
 		{name: "successful no-op", script: "new transient.txt\nrm\n", success: true},
@@ -271,8 +272,7 @@ func TestGainReportsCommandInvocationsErrorsAndRates(t *testing.T) {
 	wantCommands[commandOperationIndex("new")] = commandMetric{Invocations: 3}
 	wantCommands[commandOperationIndex("rm")] = commandMetric{Invocations: 1}
 
-	wantCommands[commandOperationIndex("rsel")] = commandMetric{Invocations: 1, Errors: 1}
-	wantCommands[commandOperationIndex("type")] = commandMetric{Invocations: 2}
+	wantCommands[commandOperationIndex("type")] = commandMetric{Invocations: 3, Errors: 1}
 	if got.Commands != wantCommands {
 		t.Fatalf("command metrics = %+v, want %+v", got.Commands, wantCommands)
 	}
@@ -293,18 +293,14 @@ func TestGainReportsCommandInvocationsErrorsAndRates(t *testing.T) {
 		"mv       0            0       0.0%\n" +
 		"rm       1            0       0.0%\n" +
 
-		"tsel     0            0       0.0%\n" +
-		"rsel     1            1       100.0%\n" +
-		"type     2            0       0.0%\n" +
+		"type     3            1       33.3%\n" +
+		"type-    0            0       0.0%\n" +
+		"type+    0            0       0.0%\n" +
 		"del      0            0       0.0%\n" +
-		"copy     0            0       0.0%\n" +
-		"cut      0            0       0.0%\n" +
-		"paste    0            0       0.0%\n" +
-		"commit   0            0       0.0%\n" +
 		"total    7            1       14.3%\n\n"
-	end := strings.Index(stdout.String()[start:], "tsel selection metrics:\n")
+	end := strings.Index(stdout.String()[start:], "target metrics:\n")
 	if end < 0 {
-		t.Fatalf("gain report has no tsel selection metrics: %q", stdout.String())
+		t.Fatalf("gain report has no target metrics: %q", stdout.String())
 	}
 	if got := stdout.String()[start : start+end]; got != want {
 		t.Fatalf("command report = %q, want %q", got, want)

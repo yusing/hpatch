@@ -25,7 +25,7 @@ func (e *indentationCorrectionError) Error() string {
 
 func (e *indentationCorrectionError) diagnostic() string {
 	var output strings.Builder
-	writeHashLine(&output, e.proposedLine, previewTextLimit(e.proposedLine, repairPreviewLimit))
+	fmt.Fprintf(&output, "proposed text: %s\n", strconv.Quote(e.proposedLine))
 	fmt.Fprintf(
 		&output,
 		"indentation: proposed=%s correction=%s\n",
@@ -35,7 +35,7 @@ func (e *indentationCorrectionError) diagnostic() string {
 	return output.String()
 }
 
-func detectIndentationCorrection(baseline string, selected selection, replacement string) *indentationCorrectionError {
+func detectIndentationCorrection(baseline string, selected targetSpan, replacement string) *indentationCorrectionError {
 	if !selected.linewise {
 		return nil
 	}
@@ -86,7 +86,10 @@ func correctedTypeCommand(command instruction, correctedText string) string {
 	if err != nil {
 		panic("encoding a Go string as JSON cannot fail: " + err.Error())
 	}
-	return "type " + string(encoded)
+	if command.valueStart <= 0 || command.valueStart > len(command.source) {
+		return command.source
+	}
+	return command.source[:command.valueStart] + string(encoded)
 }
 
 func commandCorrectionsOf(err error) []CommandCorrection {
@@ -115,7 +118,7 @@ func (w *workspace) formatGoFiles() *commandError {
 		}
 		formatted, err := format.Source([]byte(content))
 		if err != nil {
-			return formatCommandError(file, reasonSyntax, fmt.Sprintf("format Go source: %v", err))
+			return formatCommandError(file, reasonLanguageSyntax, fmt.Sprintf("format Go source: %v", err))
 		}
 		if string(formatted) != content {
 			final := string(formatted)
@@ -131,29 +134,10 @@ func (w *workspace) formatGoFiles() *commandError {
 }
 
 func (f *fileState) validationOrigin() editOrigin {
-	origin := f.mutationOrigin
-	if f.editor.lastOrigin.command > origin.command {
-		origin = f.editor.lastOrigin
+	if f.editor.lastOrigin.command != 0 {
+		return f.editor.lastOrigin
 	}
-	return origin
-}
-
-func formatCommandError(file *fileState, reason failureReason, message string) *commandError {
-	origin := file.validationOrigin()
-	category := ""
-	if origin.operation != "" {
-		category = commandCategory(origin.operation)
-	}
-	return &commandError{
-		Attempt:   commandAttempt{recognized: origin.operation != ""},
-		Reason:    reason,
-		Command:   origin.command,
-		Line:      origin.line,
-		Operation: origin.operation,
-		Path:      file.path,
-		Category:  category,
-		Message:   message,
-	}
+	return f.mutationOrigin
 }
 
 type formatToken struct {
@@ -267,4 +251,22 @@ func (m *formattedOffsetMap) mapOffset(offset int) int {
 		return max(afterEnd, 0)
 	}
 	return afterStart + (offset-beforeStart)*(afterEnd-afterStart)/(beforeEnd-beforeStart)
+}
+
+func formatCommandError(file *fileState, reason failureReason, message string) *commandError {
+	origin := file.validationOrigin()
+	category := ""
+	if origin.operation != "" {
+		category = commandCategory(origin.operation)
+	}
+	return &commandError{
+		Attempt:   commandAttempt{recognized: origin.operation != ""},
+		Reason:    reason,
+		Command:   origin.command,
+		Line:      origin.line,
+		Operation: origin.operation,
+		Path:      file.path,
+		Category:  category,
+		Message:   message,
+	}
 }

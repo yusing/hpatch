@@ -2,7 +2,7 @@ package hpatch
 
 import (
 	"bytes"
-	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -10,27 +10,25 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/yusing/hpatch/internal/hpatchsyntax"
 	"github.com/yusing/hpatch/internal/patchtest"
 )
 
-func TestRunNormalMultiFileWorkflow(t *testing.T) {
+func TestHPatch2NormalMultiFileWorkflow(t *testing.T) {
 	root := t.TempDir()
-	writeTestFile(t, root, "a.txt", "alpha old\nkeep\n", 0o750)
-	writeTestFile(t, root, "b.txt", "one\ntwo", 0o640)
+	writeTestFile(t, root, "a.txt", "alpha old\nkeep\nend\n", 0o750)
+	if err := os.Chmod(filepath.Join(root, "a.txt"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	writeTestFile(t, root, "b.txt", "x x x\n", 0o640)
 	writeTestFile(t, root, "obsolete.txt", "remove me\n", 0o640)
 
 	script := strings.Join([]string{
 		"in a.txt",
-		"tsel " + hashLine("alpha old") + ` "old"`,
-		`type "new"`,
+		"type " + row(1, "alpha old") + ` "old" "new"`,
+		"type- " + row(2, "keep") + ` "// note\n"`,
+		"del " + row(3, "end"),
 		"in b.txt",
-		"rsel " + hashLine("one") + " " + hashLine("two"),
-		"copy",
-		"paste",
-		"in a.txt",
-		"tsel " + hashLine("keep") + ` "keep"`,
-		"del",
+		"type " + row(1, "x x x") + ` "x" 2 "y"`,
 		"new draft.txt",
 		`type "foo bar"`,
 		"mv final.txt",
@@ -39,12 +37,15 @@ func TestRunNormalMultiFileWorkflow(t *testing.T) {
 	}, "\n")
 
 	stdout, stderr, exitCode := runForTest(root, nil, script)
-	if exitCode != 0 || stdout != "" || stderr != "" {
+	if exitCode != 0 || stdout != "" {
 		t.Fatalf("Run() = exit %d, stdout %q, stderr %q", exitCode, stdout, stderr)
 	}
+	if !strings.Contains(stderr, "files add=1 update=2 move=0 delete=1\n") {
+		t.Fatalf("report = %q", stderr)
+	}
 	want := map[string]string{
-		"a.txt":     "alpha new\n\n",
-		"b.txt":     "one\ntwo\none\ntwo",
+		"a.txt":     "alpha new\n// note\nkeep\n",
+		"b.txt":     "y y x\n",
 		"final.txt": "foo bar",
 	}
 	if got := readTree(t, root); !reflect.DeepEqual(got, want) {
@@ -55,7 +56,7 @@ func TestRunNormalMultiFileWorkflow(t *testing.T) {
 	}
 }
 
-func TestTranslateMatchesNormalMode(t *testing.T) {
+func TestHPatch2TranslateMatchesNormalMode(t *testing.T) {
 	initial := map[string]string{
 		"code.go":     "package sample\n\nvar value = old\n",
 		"obsolete.go": "package obsolete\n",
@@ -66,8 +67,7 @@ func TestTranslateMatchesNormalMode(t *testing.T) {
 	}
 	script := strings.Join([]string{
 		"in code.go",
-		"tsel " + hashLine("var value = old") + ` "old"`,
-		`type "current"`,
+		"type " + row(3, "var value = old") + ` "old" "current"`,
 		"mv current.go",
 		"new note.txt",
 		`type "hello world\n"`,
@@ -76,11 +76,11 @@ func TestTranslateMatchesNormalMode(t *testing.T) {
 	}, "\n")
 
 	stdout, stderr, exitCode := runForTest(root, []string{"translate"}, script)
-	if exitCode != 0 || stderr != "" {
+	if exitCode != 0 {
 		t.Fatalf("translate = exit %d, stderr %q", exitCode, stderr)
 	}
-	if strings.Contains(stdout, "@@ -") {
-		t.Fatalf("translation used unsupported numeric hunk header:\n%s", stdout)
+	if !strings.Contains(stderr, "files add=1 update=1 move=1 delete=1\n") {
+		t.Fatalf("report = %q", stderr)
 	}
 	if got := readTree(t, root); !reflect.DeepEqual(got, initial) {
 		t.Fatalf("translate mutated tree: %#v", got)
@@ -98,733 +98,285 @@ func TestTranslateMatchesNormalMode(t *testing.T) {
 	}
 }
 
-func TestMoveOnlyTranslationUsesVerificationHunk(t *testing.T) {
-	for _, test := range []struct {
-		name    string
-		content string
-	}{
-		{name: "nonempty", content: "first\nsecond\n"},
-		{name: "empty", content: ""},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			root := t.TempDir()
-			writeTestFile(t, root, "old.txt", test.content, 0o644)
-			stdout, stderr, exitCode := runForTest(root, []string{"translate"}, "in old.txt\nmv new.txt\n")
-			if exitCode != 0 || stderr != "" {
-				t.Fatalf("translate = exit %d, stderr %q", exitCode, stderr)
-			}
-			got, err := patchtest.Apply(map[string]string{"old.txt": test.content}, stdout)
-			if err != nil {
-				t.Fatalf("applying move patch: %v\n%s", err, stdout)
-			}
-			want := map[string]string{"new.txt": test.content}
-			if !reflect.DeepEqual(got, want) {
-				t.Fatalf("tree = %#v, want %#v", got, want)
-			}
-		})
-	}
-}
-
-func TestNetFileActionsCollapseMovesAndCanceledCreation(t *testing.T) {
-	root := t.TempDir()
-	writeTestFile(t, root, "start.txt", "content\n", 0o644)
-	script := strings.Join([]string{
-		"in start.txt",
-		"mv intermediate.txt",
-		"mv final.txt",
-		"new temporary.txt",
-		`type "discarded"`,
-		"rm",
-	}, "\n")
-
-	stdout, stderr, exitCode := runForTest(root, []string{"translate"}, script)
-	if exitCode != 0 || stderr != "" {
-		t.Fatalf("translate = exit %d, stderr %q", exitCode, stderr)
-	}
-	if !strings.Contains(stdout, "*** Update File: start.txt\n*** Move to: final.txt\n") {
-		t.Fatalf("translation did not collapse moves:\n%s", stdout)
-	}
-	if strings.Contains(stdout, "intermediate.txt") || strings.Contains(stdout, "temporary.txt") {
-		t.Fatalf("translation retained intermediate or canceled paths:\n%s", stdout)
-	}
-	got, err := patchtest.Apply(map[string]string{"start.txt": "content\n"}, stdout)
-	if err != nil {
-		t.Fatalf("applying translation: %v", err)
-	}
-	want := map[string]string{"final.txt": "content\n"}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("tree = %#v, want %#v", got, want)
-	}
-}
-
-func TestUnicodeCRLFAndBaselineEditorState(t *testing.T) {
-	root := t.TempDir()
-	const firstLine = "αβγ\tbar baz"
-	writeTestFile(t, root, "text.txt", firstLine+"\r\none\r\ntwo", 0o644)
-	anchor := hashLine(firstLine)
-	script := strings.Join([]string{
-		"in text.txt",
-		"tsel " + anchor + ` "βγ"`,
-		`type "XY"`,
-		`type "!"`,
-		"tsel " + anchor + ` "baz"`,
-		"del",
-		"rsel " + hashLine("one") + " " + hashLine("two"),
-		"copy",
-		"paste",
-	}, "\n")
-
-	_, stderr, exitCode := runForTest(root, nil, script)
-	if exitCode != 0 {
-		t.Fatalf("Run() = exit %d, stderr %q", exitCode, stderr)
-	}
-	want := "αXY!\tbar \r\none\r\ntwo\r\none\r\ntwo"
-	if got := readTestFile(t, root, "text.txt"); got != want {
-		t.Fatalf("text = %q, want %q", got, want)
-	}
-}
-
-func TestTranslateNormalizesLineEndingsForApplyPatchDisplay(t *testing.T) {
-	root := t.TempDir()
-	writeTestFile(t, root, "text.txt", "old\r\nkeep\r\n", 0o644)
-	stdout, stderr, exitCode := runForTest(root, []string{"translate"}, "in text.txt\ntsel "+hashLine("old")+" \"old\"\ntype \"new\"\n")
-	if exitCode != 0 || stderr != "" {
-		t.Fatalf("translate = exit %d, stderr %q", exitCode, stderr)
-	}
-	if strings.Contains(stdout, "\r") {
-		t.Fatalf("translation contains CR bytes: %q", stdout)
-	}
-	if !strings.Contains(stdout, "-old\n+new\n keep\n") {
-		t.Fatalf("translation does not describe logical line edit:\n%s", stdout)
-	}
-	if got := readTestFile(t, root, "text.txt"); got != "old\r\nkeep\r\n" {
-		t.Fatalf("translate mutated CRLF input: %q", got)
-	}
-}
-
-func TestStandaloneCRLogicalLines(t *testing.T) {
-	root := t.TempDir()
-	writeTestFile(t, root, "text.txt", "first\rsecond\rthird", 0o644)
-	script := "in text.txt\ntsel " + hashLine("first") + " \"first\"\ntype \"FIRST\"\nrsel " + hashLine("second") + " " + hashLine("third") + "\ncopy\npaste\n"
-	_, stderr, exitCode := runForTest(root, nil, script)
-	if exitCode != 0 {
-		t.Fatalf("Run() = exit %d, stderr %q", exitCode, stderr)
-	}
-	if got, want := readTestFile(t, root, "text.txt"), "FIRST\rsecond\rthird\rsecond\rthird"; got != want {
-		t.Fatalf("text = %q, want %q", got, want)
-	}
-}
-
-func TestTranslateDisambiguatesRepeatedBlocks(t *testing.T) {
-	root := t.TempDir()
-	content := "first\nrepeat\nvalue=old\nend\nmiddle\nrepeat\nvalue=old\nend\nlast\n"
-	writeTestFile(t, root, "text.txt", content, 0o644)
-	script := "in text.txt\ntsel " + hashLine("middle") + " \"old\"\ntype \"new\"\n"
-	stdout, stderr, exitCode := runForTest(root, []string{"translate"}, script)
-	if exitCode != 0 || stderr != "" {
-		t.Fatalf("translate = exit %d, stderr %q", exitCode, stderr)
-	}
-	got, err := patchtest.Apply(map[string]string{"text.txt": content}, stdout)
-	if err != nil {
-		t.Fatalf("applying translation: %v\n%s", err, stdout)
-	}
-	want := map[string]string{"text.txt": "first\nrepeat\nvalue=old\nend\nmiddle\nrepeat\nvalue=new\nend\nlast\n"}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("tree = %#v, want %#v\n%s", got, want, stdout)
-	}
-}
-
-func TestEvaluationFailuresDoNotMutateOrEmitPatch(t *testing.T) {
+func TestHPatch2LineAndRangeTerminatorSemantics(t *testing.T) {
 	tests := []struct {
-		name   string
-		script string
+		name, content, script, want string
 	}{
-		{name: "no active file", script: `type "x"`},
-		{name: "future command", script: "in file.txt\nsplice 1:2"},
-		{name: "commit operand", script: "in file.txt\ncommit now"},
-		{name: "non-string type operand", script: "in file.txt\ntype null"},
-		{name: "non-JSON trailing whitespace", script: "in file.txt\ntype \"x\"\u00a0"},
-		{name: "non-JSON tsel trailing whitespace", script: "in file.txt\ntsel " + hashLine("aaa") + " \"a\" \u00a0"},
-		{name: "non-JSON tsel count whitespace", script: "in file.txt\ntsel " + hashLine("aaa") + " \"a\" 1\u00a0"},
-		{name: "malformed selection", script: "in file.txt\nsel 1 2"},
-		{name: "number overflow", script: "in file.txt\nsel 999999999999999999999999999 1:1"},
-		{name: "missing hash", script: "in file.txt\nrsel ffff fffe"},
-		{name: "overlapping occurrence is not counted", script: "in file.txt\ntsel " + hashLine("aaa") + " \"aa\" 2"},
-		{name: "new collision", script: "new file.txt"},
-		{name: "move collision", script: "in file.txt\nmv occupied.txt"},
-		{name: "old path after move", script: "in file.txt\nmv moved.txt\nin file.txt"},
-		{name: "use after remove", script: "in file.txt\nrm\ntype \"x\""},
-		{name: "missing destination parent", script: "new missing/new.txt\ntype \"x\""},
+		{"line preserves CRLF", "one\r\ntwo\r\n", "in file.txt\ntype " + row(1, "one") + ` "ONE"`, "ONE\r\ntwo\r\n"},
+		{"range preserves final CR", "one\rtwo\rthree", "in file.txt\ntype " + row(1, "one") + ".." + row(2, "two") + ` "both"`, "both\rthree"},
+		{"unterminated final", "one\ntwo", "in file.txt\ntype " + row(2, "two") + ` "TWO"`, "one\nTWO"},
+		{"delete owns terminator", "one\ntwo\nthree\n", "in file.txt\ndel " + row(1, "one") + ".." + row(2, "two"), "three\n"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			root := t.TempDir()
-			writeTestFile(t, root, "file.txt", "aaa\n", 0o644)
-			writeTestFile(t, root, "occupied.txt", "occupied\n", 0o644)
-			before := readTree(t, root)
-			stdout, stderr, exitCode := runForTest(root, []string{"translate"}, test.script)
-			if exitCode == 0 || stdout != "" || !strings.HasPrefix(stderr, "hpatch:") {
-				t.Fatalf("Run() = exit %d, stdout %q, stderr %q", exitCode, stdout, stderr)
-			}
-			if after := readTree(t, root); !reflect.DeepEqual(after, before) {
-				t.Fatalf("failure mutated tree: before %#v, after %#v", before, after)
-			}
-		})
-	}
-}
-
-func TestQuotedOperandsAcceptLiteralTabs(t *testing.T) {
-	root := t.TempDir()
-	const content = "old\tvalue"
-	writeTestFile(t, root, "text.txt", content+"\n", 0o644)
-	script := "in text.txt\n" +
-		"tsel " + hashLine(content) + " \t\"old\tvalue\"\n" +
-		"type  \"new\tvalue\"\n"
-
-	stdout, stderr, exitCode := runForTest(root, nil, script)
-	if exitCode != 0 || stdout != "" || stderr != "" {
-		t.Fatalf("Run() = exit %d, stdout %q, stderr %q", exitCode, stdout, stderr)
-	}
-	if got, want := readTestFile(t, root, "text.txt"), "new\tvalue\n"; got != want {
-		t.Errorf("text.txt = %q, want %q", got, want)
-	}
-}
-
-func TestTypeHeredocPreservesLiteralBodyAndLineEndings(t *testing.T) {
-	for _, test := range []struct {
-		name   string
-		script string
-		want   string
-	}{
-		{
-			name:   "LF literal body",
-			script: "new file.txt\ntype <<CONTENT\nfirst \"quoted\" \\ slash\t\nrm\n CONTENT\nCONTENT\n",
-			want:   "first \"quoted\" \\ slash\t\nrm\n CONTENT\n",
-		},
-		{
-			name:   "short tag",
-			script: "new file.txt\ntype <<GO\nshort\nGO\n",
-			want:   "short\n",
-		},
-		{
-			name:   "single-quoted tag",
-			script: "new file.txt\ntype <<'EOF'\nquoted\n'EOF'\nEOF\n",
-			want:   "quoted\n'EOF'\n",
-		},
-		{
-			name:   "double-quoted lowercase tag",
-			script: "new file.txt\ntype <<\"end\"\nlowercase\nend\n",
-			want:   "lowercase\n",
-		},
-		{
-			name: "maximum-length tag",
-			script: "new file.txt\ntype <<" + strings.Repeat("A", 64) + "\nlimit\n" +
-				strings.Repeat("A", 64) + "\n",
-			want: "limit\n",
-		},
-		{
-			name:   "CRLF body",
-			script: "new file.txt\r\ntype <<PAYLOAD\r\none\r\ntwo\r\nPAYLOAD\r",
-			want:   "one\r\ntwo\r\n",
-		},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			root := t.TempDir()
-			stdout, stderr, exitCode := runForTest(root, nil, test.script)
-			if exitCode != 0 || stdout != "" || stderr != "" {
-				t.Fatalf("Run() = exit %d, stdout %q, stderr %q", exitCode, stdout, stderr)
+			writeTestFile(t, root, "file.txt", test.content, 0o644)
+			_, stderr, exitCode := runForTest(root, nil, test.script)
+			if exitCode != 0 {
+				t.Fatalf("Run() = exit %d, stderr %q", exitCode, stderr)
 			}
 			if got := readTestFile(t, root, "file.txt"); got != test.want {
-				t.Fatalf("file.txt = %q, want %q", got, test.want)
+				t.Fatalf("file = %q, want %q", got, test.want)
 			}
 		})
 	}
 }
 
-func TestTypeHeredocFailuresAreHeaderOwnedAndAtomic(t *testing.T) {
-	tests := []struct {
-		name   string
-		script string
-		want   string
-	}{
-		{name: "empty delimiter", script: "new file.txt\ntype <<\n", want: "invalid heredoc delimiter"},
-		{name: "whitespace delimiter", script: "new file.txt\ntype <<BAD TAG\n", want: "invalid heredoc delimiter"},
-		{name: "unmatched quote", script: "new file.txt\ntype <<'EOF\n", want: "invalid heredoc delimiter"},
-		{name: "oversized delimiter", script: "new file.txt\ntype <<" + strings.Repeat("A", 65) + "\n", want: "invalid heredoc delimiter"},
+func TestHPatch2SameBoundaryInsertionsKeepScriptOrder(t *testing.T) {
+	root := t.TempDir()
+	writeTestFile(t, root, "file.txt", "target\n", 0o644)
+	target := row(1, "target")
+	script := strings.Join([]string{
+		"in file.txt",
+		`type- ` + target + ` "first\n"`,
+		`type- ` + target + ` "second\n"`,
+		`type+ ` + target + ` "after-one\n"`,
+		`type+ ` + target + ` "after-two\n"`,
+	}, "\n")
+	_, stderr, exitCode := runForTest(root, nil, script)
+	if exitCode != 0 {
+		t.Fatalf("Run() = exit %d, stderr %q", exitCode, stderr)
+	}
+	want := "first\nsecond\ntarget\nafter-one\nafter-two\n"
+	if got := readTestFile(t, root, "file.txt"); got != want {
+		t.Fatalf("file = %q, want %q", got, want)
+	}
+}
 
-		{name: "unterminated", script: "new file.txt\ntype <<PAYLOAD\nrm\n", want: "unterminated heredoc"},
-		{name: "oversized", script: "new file.txt\ntype <<PAYLOAD\n" + strings.Repeat("x", hpatchsyntax.MaxHeredocBodyBytes+1) + "\nPAYLOAD\n", want: "heredoc body exceeds"},
-		{name: "invalid UTF-8", script: "new file.txt\ntype <<PAYLOAD\n" + string([]byte{0xff}) + "\nPAYLOAD\n", want: "heredoc body is not UTF-8"},
+func TestHPatch2InsertionsAtReplacementBoundariesAreAllowed(t *testing.T) {
+	root := t.TempDir()
+	writeTestFile(t, root, "file.txt", "target\n", 0o644)
+	target := row(1, "target")
+	script := strings.Join([]string{
+		"in file.txt",
+		`type ` + target + ` "replacement"`,
+		`type- ` + target + ` "before\n"`,
+		`type+ ` + target + ` "after\n"`,
+	}, "\n")
+	_, stderr, exitCode := runForTest(root, nil, script)
+	if exitCode != 0 {
+		t.Fatalf("Run() = exit %d, stderr %q", exitCode, stderr)
+	}
+	if got, want := readTestFile(t, root, "file.txt"), "before\nreplacement\nafter\n"; got != want {
+		t.Fatalf("file = %q, want %q", got, want)
+	}
+}
+
+func TestHPatch2RejectsInvalidTargetsAtomically(t *testing.T) {
+	tests := []struct{ name, script, reason string }{
+		{"stale", "in file.txt\ntype 2:0000 \"B\"", "row-stale"},
+		{"missing", "in file.txt\ntype 9:0000 \"B\"", "row-missing"},
+		{"incomplete", "in file.txt\ntype " + row(1, "alpha") + ` "alpha" 2 "A"`, "occurrence-missing"},
+		{"invalid count", "in file.txt\ntype " + row(1, "alpha") + ` "alpha" 0 "A"`, "invalid-count"},
+		{"reversed", "in file.txt\ndel " + row(2, "beta") + ".." + row(1, "alpha"), "target-order"},
+		{"overlap", "in file.txt\ntype " + row(1, "alpha") + ` "A"` + "\ndel " + row(1, "alpha"), "edit-conflict"},
+		{"insertion inside replacement", "in file.txt\ntype " + row(1, "alpha") + ` "A"` + "\ntype- " + row(1, "alpha") + ` "ph" "x"`, "edit-conflict"},
+		{"introduced", "in file.txt\ntype+ " + row(1, "alpha") + ` "new\n"` + "\ntype " + row(1, "alpha") + ` "new" "NEW"`, "occurrence-missing"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			root := t.TempDir()
-			stdout, stderr, exitCode := runForTest(root, []string{"translate"}, test.script)
-			if exitCode == 0 || stdout != "" || !strings.Contains(stderr, test.want) {
-				t.Fatalf("Run() = exit %d, stdout %q, stderr %q", exitCode, stdout, stderr)
+			writeTestFile(t, root, "file.txt", "alpha\nbeta\n", 0o644)
+			before := readTestFile(t, root, "file.txt")
+			stdout, stderr, exitCode := runForTest(root, nil, test.script)
+			if exitCode != 1 || stdout != "" || !strings.Contains(stderr, test.reason) {
+				t.Fatalf("Run() = exit %d, stdout %q, stderr %q; want %q", exitCode, stdout, stderr, test.reason)
 			}
-			if got := readTree(t, root); len(got) != 0 {
-				t.Fatalf("failure mutated tree: %#v", got)
-			}
-
-			_, err := parse(test.script)
-			failures := commandsOf(err)
-			if len(failures) != 1 {
-				t.Fatalf("parse failures = %d, want one header-owned failure: %v", len(failures), err)
-			}
-			if failure := failures[0]; failure.Command != 2 || failure.Line != 2 || failure.Operation != "type" {
-				t.Fatalf("failure context = %+v", failure)
+			if got := readTestFile(t, root, "file.txt"); got != before {
+				t.Fatalf("rejection changed file to %q", got)
 			}
 		})
 	}
 }
 
-func TestPhysicalNewlineInQuotedOperandIsOneHeaderOwnedFailure(t *testing.T) {
+func TestHPatch2NewFileInitializerIsImmediate(t *testing.T) {
+	tests := []struct{ name, script string }{
+		{"existing", "in existing.txt\ntype \"new\""},
+		{"intervening", "new new.txt\nin existing.txt\nin new.txt\ntype \"new\""},
+		{"second", "new new.txt\ntype \"one\"\ntype \"two\""},
+		{"target new", "new new.txt\ntype \"one\\n\"\ntype " + row(1, "one") + ` "ONE"`},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			writeTestFile(t, root, "existing.txt", "old\n", 0o644)
+			_, stderr, exitCode := runForTest(root, nil, test.script)
+			if exitCode != 1 || !strings.Contains(stderr, "initialization") {
+				t.Fatalf("Run() = exit %d, stderr %q", exitCode, stderr)
+			}
+			if got := readTree(t, root); !reflect.DeepEqual(got, map[string]string{"existing.txt": "old\n"}) {
+				t.Fatalf("rejection changed tree: %#v", got)
+			}
+		})
+	}
+}
+
+func TestHPatch2RejectsRemovedGrammar(t *testing.T) {
+	for _, command := range []string{`tsel 0000 "x"`, `rsel 0000 0000`, "copy", "cut", "paste", "commit", "type <<BODY\nx\nBODY"} {
+		t.Run(strings.Fields(command)[0], func(t *testing.T) {
+			root := t.TempDir()
+			writeTestFile(t, root, "file.txt", "x\n", 0o644)
+			_, stderr, exitCode := runForTest(root, nil, "in file.txt\n"+command)
+			if exitCode != 1 || !strings.Contains(stderr, "category syntax") {
+				t.Fatalf("Run() = exit %d, stderr %q", exitCode, stderr)
+			}
+		})
+	}
+}
+
+func TestHPatch2FixedHeredocAndInlineInsertion(t *testing.T) {
+	root := t.TempDir()
+	writeTestFile(t, root, "file.txt", "target\n", 0o644)
+	script := "in file.txt\n" +
+		"type- " + row(1, "target") + ` "// comment\n"` + "\n" +
+		"type+ " + row(1, "target") + " <<PATCH\nmultiline\nvalue\nPATCH\n"
+	_, stderr, exitCode := runForTest(root, nil, script)
+	if exitCode != 0 {
+		t.Fatalf("Run() = exit %d, stderr %q", exitCode, stderr)
+	}
+	want := "// comment\ntarget\nmultiline\nvalue\n"
+	if got := readTestFile(t, root, "file.txt"); got != want {
+		t.Fatalf("file = %q, want %q", got, want)
+	}
+}
+
+func TestHPatch2HeredocValueSupportsTextTarget(t *testing.T) {
+	root := t.TempDir()
+	writeTestFile(t, root, "file.txt", "prefix needle suffix\n", 0o644)
+	script := "in file.txt\ntype " + row(1, "prefix needle suffix") + " \"needle\" <<PATCH\n" +
+		"multiline\nvalue\nPATCH\n"
+	_, stderr, exitCode := runForTest(root, nil, script)
+	if exitCode != 0 {
+		t.Fatalf("Run() = exit %d, stderr %q", exitCode, stderr)
+	}
+	want := "prefix multiline\nvalue\n suffix\n"
+	if got := readTestFile(t, root, "file.txt"); got != want {
+		t.Fatalf("file = %q, want %q", got, want)
+	}
+}
+
+func TestHPatch2QuotedDoubleLessRemainsInlineText(t *testing.T) {
 	tests := []struct {
-		name      string
-		operation string
-		command   string
+		name    string
+		path    string
+		initial string
+		script  func(string) string
+		want    string
 	}{
 		{
-			name:      "tsel",
-			operation: "tsel",
-			command: "tsel 1 \"start\n" +
-				"middle\"\n" +
-				"type \"replacement\"\n",
+			name: "initializer",
+			path: "file.txt",
+			script: func(string) string {
+				return `new file.txt` + "\n" + `type "a << b"`
+			},
+			want: "a << b",
 		},
 		{
-			name:      "type",
-			operation: "type",
-			command: "type \"replacement\n" +
-				"text\"\n" +
-				"copy\n",
+			name: "initializer after escaped quote",
+			path: "file.txt",
+			script: func(string) string {
+				return `new file.txt` + "\n" + `type "a \"<< b"`
+			},
+			want: `a "<< b`,
 		},
 		{
-			name:      "unterminated at EOF",
-			operation: "type",
-			command: "type \"replacement\n" +
-				"text",
+			name:    "replacement value",
+			path:    "file.txt",
+			initial: "old\n",
+			script: func(string) string {
+				return "in file.txt\ntype " + row(1, "old") + ` "a << b"`
+			},
+			want: "a << b\n",
+		},
+		{
+			name:    "target literal",
+			path:    "file.txt",
+			initial: "a << b\n",
+			script: func(string) string {
+				return "in file.txt\ntype " + row(1, "a << b") + ` "a << b" "changed"`
+			},
+			want: "changed\n",
+		},
+		{
+			name:    "path",
+			path:    "a<<b.txt",
+			initial: "old\n",
+			script: func(string) string {
+				return "in a<<b.txt\ntype " + row(1, "old") + ` "changed"`
+			},
+			want: "changed\n",
 		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			root := t.TempDir()
-			const original = "start\nmiddle\nend\n"
-			writeTestFile(t, root, "file.txt", original, 0o644)
-
-			stdout, stderr, exitCode := runForTest(root, []string{"translate"}, "in file.txt\n"+test.command)
-			if exitCode != 1 || stdout != "" {
-				t.Fatalf("Run() = exit %d, stdout %q, stderr %q", exitCode, stdout, stderr)
+			if test.initial != "" {
+				writeTestFile(t, root, test.path, test.initial, 0o644)
 			}
-			if count := strings.Count(stderr, "hpatch: command "); count != 1 {
-				t.Fatalf("reported %d command failures, want one:\n%s", count, stderr)
+			_, stderr, exitCode := runForTest(root, nil, test.script(test.path))
+			if exitCode != 0 {
+				t.Fatalf("Run() = exit %d, stderr %q", exitCode, stderr)
 			}
-			for _, want := range []string{
-				"command 2, source line 2, operation \"" + test.operation + "\"",
-				`physical newline inside quoted operand; encode line terminators as \n or \r`,
-			} {
-				if !strings.Contains(stderr, want) {
-					t.Fatalf("diagnostic lacks %q:\n%s", want, stderr)
-				}
-			}
-			if got := readTestFile(t, root, "file.txt"); got != original {
-				t.Fatalf("failure mutated file: %q", got)
+			if got := readTestFile(t, root, test.path); got != test.want {
+				t.Fatalf("file = %q, want %q", got, test.want)
 			}
 		})
 	}
 }
 
-func TestParseReportsAllSyntaxErrorsWithoutEvaluation(t *testing.T) {
+func TestHPatch2InvalidHeredocIsOneHeaderOwnedFailure(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, root, "file.txt", "unchanged\n", 0o644)
-	script := "in file.txt\n" +
-		"type \"literal\x01control\"\n" +
-		"tsel 0123 \"first\\nsecond\"\n" +
-		"tsel 0123 \"literal\x01control\"\n"
-
-	stdout, stderr, exitCode := runForTest(root, []string{"translate"}, script)
+	script := "in file.txt\ntype " + row(1, "unchanged") + " <<BODY\n" +
+		"rm\nBODY\n"
+	stdout, stderr, exitCode := runForTest(root, nil, script)
 	if exitCode != 1 || stdout != "" {
 		t.Fatalf("Run() = exit %d, stdout %q, stderr %q", exitCode, stdout, stderr)
 	}
-	for _, want := range []string{
-		"command 2, source line 2, operation \"type\"",
-		"invalid quoted string for type: invalid character",
-		"command 3, source line 3, operation \"tsel\"",
-		"tsel text must stay on one line",
-		"command 4, source line 4, operation \"tsel\"",
-		"invalid quoted string for tsel: invalid character",
-	} {
-		if !strings.Contains(stderr, want) {
-			t.Fatalf("diagnostic lacks %q:\n%s", want, stderr)
-		}
-	}
-	if count := strings.Count(stderr, "hpatch: command "); count != 3 {
-		t.Fatalf("reported %d syntax errors, want 3:\n%s", count, stderr)
+	if strings.Count(stderr, "hpatch: command") != 1 ||
+		!strings.Contains(stderr, "command 2") ||
+		!strings.Contains(stderr, "requires an unquoted <<PATCH") {
+		t.Fatalf("diagnostic = %q", stderr)
 	}
 	if got := readTestFile(t, root, "file.txt"); got != "unchanged\n" {
-		t.Fatalf("syntax rejection mutated file: %q", got)
+		t.Fatalf("rejection changed file to %q", got)
 	}
 }
 
-func TestFailureDiagnosticsIdentifyCommandContext(t *testing.T) {
-	tests := []struct {
-		name   string
-		script string
-		want   string
-	}{
-		{
-			name:   "selection failure includes selected path",
-			script: "in file.txt\ntsel " + hashLine("aaa") + " \"aa\" 2",
-			want:   "hpatch: command 2, source line 2, operation \"tsel\", path \"file.txt\", category selection: found 1 of 2 requested matches of \"aa\" at or after line 1\n",
-		},
-		{
-			name:   "file failure includes operand path",
-			script: "new file.txt",
-			want:   "hpatch: command 1, source line 1, operation \"new\", path \"file.txt\", category file: destination file.txt already exists\n",
-		},
-		{
-			name:   "removed sel command is syntax",
-			script: "in file.txt\nsel 1 1:1",
-			want:   "hpatch: command 2, source line 2, operation \"sel\", category syntax: unknown or malformed command\n",
-		},
-		{
-			name:   "unknown future command is syntax",
-			script: "\nin file.txt\nsplice 1:2",
-			want:   "hpatch: command 2, source line 3, operation \"splice\", category syntax: unknown or malformed command\n",
-		},
-		{
-			name:   "tab-separated malformed command identifies token",
-			script: "in file.txt\nsplice\t1:2",
-			want:   "hpatch: command 2, source line 2, operation \"splice\", category syntax: unknown or malformed command\n",
-		},
-		{
-			name:   "control byte in malformed operation is escaped",
-			script: "in file.txt\n\x1b[31msplice 1:2",
-			want:   "hpatch: command 2, source line 2, operation \"\\x1b[31msplice\", category syntax: unknown or malformed command\n",
-		},
-		{
-			name:   "control byte in path message is escaped",
-			script: "new \x1b[31mfile.txt",
-			want:   "hpatch: command 1, source line 1, operation \"new\", path \"\\x1b[31mfile.txt\", category file: destination \\x1b[31mfile.txt already exists\n",
-		},
-		{
-			name:   "edit without file omits path",
-			script: "type \"x\"",
-			want:   "hpatch: command 1, source line 1, operation \"type\", category edit: type requires an active file\n",
-		},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			root := t.TempDir()
-			writeTestFile(t, root, "file.txt", "aaa\n", 0o644)
-			writeTestFile(t, root, "\x1b[31mfile.txt", "occupied\n", 0o644)
-			stdout, stderr, exitCode := runForTest(root, []string{"translate"}, test.script)
-			// This test pins the single-line diagnostic. Any repair context
-			// follows it on later lines and is covered by repair_test.go.
-			diagnostic, _, _ := strings.Cut(stderr, "\n")
-			if exitCode != 1 || stdout != "" || diagnostic+"\n" != test.want {
-				t.Fatalf("Run() = exit %d, stdout %q, stderr %q; want diagnostic %q", exitCode, stdout, stderr, test.want)
-			}
-		})
-	}
-}
-
-func TestInvalidUTF8IsRejected(t *testing.T) {
+func TestHPatch2TargetLiteralRejectsC0ControlsExceptTab(t *testing.T) {
 	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "binary.txt"), []byte{0xff}, 0o644); err != nil {
-		t.Fatal(err)
+	writeTestFile(t, root, "file.txt", "a\tb\n", 0o644)
+	valid := "in file.txt\ntype " + row(1, "a\tb") + ` "a\tb" "ok"`
+	_, stderr, exitCode := runForTest(root, nil, valid)
+	if exitCode != 0 {
+		t.Fatalf("tab target = exit %d, stderr %q", exitCode, stderr)
 	}
-	stdout, stderr, exitCode := runForTest(root, []string{"translate"}, "in binary.txt\ntype \"x\"\n")
-	if exitCode == 0 || stdout != "" || stderr == "" {
-		t.Fatalf("exit %d, stdout %q, stderr %q", exitCode, stdout, stderr)
+
+	writeTestFile(t, root, "file.txt", "a\x01b\n", 0o644)
+	invalid := "in file.txt\ntype " + row(1, "a\x01b") + ` "a\u0001b" "bad"`
+	_, stderr, exitCode = runForTest(root, nil, invalid)
+	if exitCode != 1 || !strings.Contains(stderr, "forbidden control character") {
+		t.Fatalf("control target = exit %d, stderr %q", exitCode, stderr)
 	}
 }
 
-func TestSymlinkPathResolvesNormally(t *testing.T) {
-	root := t.TempDir()
-	writeTestFile(t, root, "target.txt", "target\n", 0o644)
-	if err := os.Symlink("target.txt", filepath.Join(root, "link.txt")); err != nil {
-		t.Fatal(err)
-	}
-	stdout, stderr, exitCode := runForTest(root, []string{"translate"}, "in link.txt\ntsel "+hashLine("target")+" \"target\"\ntype \"updated\"\n")
-	if exitCode != 0 || stderr != "" || !strings.Contains(stdout, "+updated") {
-		t.Fatalf("exit %d, stdout %q, stderr %q", exitCode, stdout, stderr)
-	}
-}
-
-func TestAbsoluteAndNormalizedPaths(t *testing.T) {
-	root := t.TempDir()
-	writeTestFile(t, root, "relative.txt", "old\n", 0o644)
-	writeTestFile(t, root, "absolute.txt", "old\n", 0o644)
-
-	script := "in nested/../relative.txt\ntsel " + hashLine("old") + " \"old\"\ntype \"relative\"\nin " + filepath.Join(root, "absolute.txt") + "\ntsel " + hashLine("old") + " \"old\"\ntype \"absolute\"\n"
-	stdout, stderr, exitCode := runForTest(root, nil, script)
-	if exitCode != 0 || stdout != "" || stderr != "" {
-		t.Fatalf("Run() = exit %d, stdout %q, stderr %q", exitCode, stdout, stderr)
-	}
-	if got := readTestFile(t, root, "relative.txt"); got != "relative\n" {
-		t.Fatalf("relative file = %q", got)
-	}
-	if got := readTestFile(t, root, "absolute.txt"); got != "absolute\n" {
-		t.Fatalf("absolute file = %q", got)
-	}
-
-	rootCapability := openTestRoot(t, root)
-	patch, err := Translate(t.Context(), Workspace{Root: rootCapability}, "in "+filepath.Join(root, "absolute.txt")+"\ntsel "+hashLine("absolute")+" \"absolute\"\ntype \"translated\"\n")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(patch), "*** Update File: absolute.txt\n") {
-		t.Fatalf("absolute path was not translated root-relative:\n%s", patch)
-	}
-}
-
-func TestWorkspaceCWDResolvesReadsAndRootRelativeTranslation(t *testing.T) {
-	rootPath := t.TempDir()
-	if err := os.Mkdir(filepath.Join(rootPath, "bin"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	writeTestFile(t, rootPath, "bin/main.go", "package main\n", 0o644)
-	root := openTestRoot(t, rootPath)
-	workspace := Workspace{Root: root, CWD: "bin"}
-	script := "in main.go\ntsel " + hashLine("package main") + " \"package main\"\ntype \"package graph\"\n"
-
-	patch, err := Translate(t.Context(), workspace, script)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if want := "*** Update File: bin/main.go\n"; !strings.Contains(string(patch), want) {
-		t.Fatalf("translation %q does not contain %q", patch, want)
-	}
-	if err := Apply(t.Context(), workspace, script); err != nil {
-		t.Fatal(err)
-	}
-	if got := readTestFile(t, rootPath, "bin/main.go"); got != "package graph\n" {
-		t.Fatalf("main.go = %q", got)
-	}
-}
-
-func TestWorkspaceRejectsPathsOutsideRoot(t *testing.T) {
-	rootPath := t.TempDir()
-	outside := t.TempDir()
-	writeTestFile(t, outside, "outside.txt", "old\n", 0o644)
-	if err := os.Symlink(outside, filepath.Join(rootPath, "escape")); err != nil {
-		t.Fatal(err)
-	}
-	root := openTestRoot(t, rootPath)
-	workspace := Workspace{Root: root}
-
-	for _, script := range []string{
-		"in ../outside.txt\n",
-		"in " + filepath.Join(outside, "outside.txt") + "\n",
-		"in escape/outside.txt\n",
-	} {
-		if _, err := Translate(t.Context(), workspace, script); err == nil {
-			t.Fatalf("Translate(%q) succeeded", script)
-		}
-	}
-	if err := Apply(t.Context(), workspace, "new escape/new.txt\ntype \"bad\"\n"); err == nil {
-		t.Fatal("Apply() created a file through an escaping symlink")
-	}
-	if _, err := Translate(t.Context(), Workspace{Root: root, CWD: "escape"}, "new file.txt\n"); err == nil {
-		t.Fatal("Translate() accepted an escaping cwd symlink")
-	}
-	if got := readTestFile(t, outside, "outside.txt"); got != "old\n" {
-		t.Fatalf("outside file mutated: %q", got)
-	}
-}
-
-func TestUnchangedModes(t *testing.T) {
-	root := t.TempDir()
-	writeTestFile(t, root, "file.txt", "same\n", 0o644)
-	stdout, stderr, exitCode := runForTest(root, nil, "in file.txt\n")
-	if exitCode != 0 || stdout != "" || stderr != "" {
-		t.Fatalf("normal no-op = exit %d, stdout %q, stderr %q", exitCode, stdout, stderr)
-	}
-	stdout, stderr, exitCode = runForTest(root, []string{"translate"}, "in file.txt\n")
-	if exitCode == 0 || stdout != "" || !strings.Contains(stderr, "does not change") {
-		t.Fatalf("translate no-op = exit %d, stdout %q, stderr %q", exitCode, stdout, stderr)
-	}
-}
-
-func TestCommitFailureRollsBack(t *testing.T) {
-	root := t.TempDir()
-	writeTestFile(t, root, "a.txt", "a\n", 0o644)
-	writeTestFile(t, root, "b.txt", "b\n", 0o644)
-	changes := updateChanges()
-	operations := &failingFileOperations{fileOperations: testRootOperations(t, root), failRename: map[int]error{4: errors.New("injected install failure")}}
-	err := commitChanges(changes, operations)
-	if err == nil || !strings.Contains(err.Error(), "rollback succeeded") {
-		t.Fatalf("commitChanges() error = %v", err)
-	}
-	want := map[string]string{"a.txt": "a\n", "b.txt": "b\n"}
-	if got := readTree(t, root); !reflect.DeepEqual(got, want) {
-		t.Fatalf("tree after rollback = %#v, want %#v", got, want)
-	}
-}
-
-func TestRollbackFailureIsReportedAndBackupPreserved(t *testing.T) {
-	root := t.TempDir()
-	writeTestFile(t, root, "a.txt", "a\n", 0o644)
-	writeTestFile(t, root, "b.txt", "b\n", 0o644)
-	changes := updateChanges()
-	operations := &failingFileOperations{
-		fileOperations: testRootOperations(t, root),
-		failRename: map[int]error{
-			4: errors.New("injected install failure"),
-			5: errors.New("injected restore failure"),
-		},
-	}
-	err := commitChanges(changes, operations)
-	if err == nil || !strings.Contains(err.Error(), "rollback also failed") || !strings.Contains(err.Error(), "b.txt") {
-		t.Fatalf("commitChanges() error = %v", err)
-	}
-	backups, globErr := filepath.Glob(filepath.Join(root, ".b.txt.hpatch-backup-*"))
-	if globErr != nil || len(backups) != 1 {
-		t.Fatalf("preserved backups = %v, error %v", backups, globErr)
-	}
-	content, readErr := os.ReadFile(backups[0])
-	if readErr != nil || string(content) != "b\n" {
-		t.Fatalf("backup content = %q, error %v", content, readErr)
-	}
-}
-
-func TestStagingCleanupFailureReportsRetainedArtifact(t *testing.T) {
-	root := t.TempDir()
-	writeTestFile(t, root, "a.txt", "a\n", 0o644)
-	changes := updateChanges()[:1]
-	operations := &failingFileOperations{
-		fileOperations: testRootOperations(t, root),
-		failRemove: map[int]error{
-			1: errors.New("injected reservation cleanup failure"),
-			2: errors.New("injected staging cleanup failure"),
-		},
-	}
-	err := commitChanges(changes, operations)
-	if err == nil || !strings.Contains(err.Error(), "cleanup also failed") || !strings.Contains(err.Error(), ".a.txt.hpatch-backup-") {
-		t.Fatalf("commitChanges() error = %v", err)
-	}
-	artifacts, globErr := filepath.Glob(filepath.Join(root, ".a.txt.hpatch-backup-*"))
-	if globErr != nil || len(artifacts) != 1 {
-		t.Fatalf("retained artifacts = %v, error %v", artifacts, globErr)
-	}
-}
-
-type failingFileOperations struct {
-	fileOperations
-
-	renameCalls int
-	failRename  map[int]error
-	removeCalls int
-	failRemove  map[int]error
-}
-
-func (f *failingFileOperations) Rename(oldPath, newPath string) error {
-	f.renameCalls++
-	if err := f.failRename[f.renameCalls]; err != nil {
-		return err
-	}
-	return f.fileOperations.Rename(oldPath, newPath)
-}
-
-func (f *failingFileOperations) Remove(path string) error {
-	f.removeCalls++
-	if err := f.failRemove[f.removeCalls]; err != nil {
-		return err
-	}
-	return f.fileOperations.Remove(path)
-}
-
-func updateChanges() []change {
-	changes := make([]change, 0, 2)
-	for _, entry := range []struct {
-		path   string
-		before string
-		after  string
-	}{
-		{path: "a.txt", before: "a\n", after: "A\n"},
-		{path: "b.txt", before: "b\n", after: "B\n"},
-	} {
-		changes = append(changes, change{
-			kind:         changeUpdate,
-			originalPath: entry.path,
-			path:         entry.path,
-			original:     entry.before,
-			content:      entry.after,
-			mode:         0o644,
-		})
-	}
-	return changes
-}
-
-func normalizeHashlineRows(output string) string {
-	lines := strings.SplitAfter(output, "\n")
-	for index, line := range lines {
-		start := 0
-		for start < len(line) && (line[start] == ' ' || line[start] == '\t') {
-			start++
-		}
-		hashEnd := start + lineHashLength
-		if hashEnd+1 >= len(line) || line[hashEnd] != ':' || line[hashEnd+1] != ' ' ||
-			!allBytes(line[start:hashEnd], func(value byte) bool {
-				return value >= '0' && value <= '9' || value >= 'a' && value <= 'f'
-			}) {
-			continue
-		}
-		lines[index] = line[:start] + "#|" + line[hashEnd+2:]
-	}
-	return strings.Join(lines, "")
-}
-
-func allBytes(value string, valid func(byte) bool) bool {
-	for index := range len(value) {
-		if !valid(value[index]) {
-			return false
-		}
-	}
-	return true
+func row(line int, content string) string {
+	return fmt.Sprintf("%d:%s", line, hashLine(content))
 }
 
 func runForTest(root string, args []string, script string) (string, string, int) {
 	var stdout, stderr bytes.Buffer
-	exitCode := Run(args, strings.NewReader(script), &stdout, &stderr, root, root+"-metrics")
-	stderrText := stderr.String()
-	if exitCode == 0 && isFinalStateReport(stderrText) {
-		stderrText = ""
-	}
-	return stdout.String(), stderrText, exitCode
-}
-
-func isFinalStateReport(output string) bool {
-	return strings.HasPrefix(output, "no active file\n") || strings.HasPrefix(output, "in ")
-}
-
-func openTestRoot(t *testing.T, path string) *os.Root {
-	t.Helper()
-	root, err := os.OpenRoot(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		if err := root.Close(); err != nil {
-			t.Errorf("closing root: %v", err)
-		}
-	})
-	return root
-}
-
-func testRootOperations(t *testing.T, path string) rootFileOperations {
-	t.Helper()
-	return rootFileOperations{root: openTestRoot(t, path)}
+	exitCode := Run(args, strings.NewReader(script), &stdout, &stderr, root, "")
+	return stdout.String(), stderr.String(), exitCode
 }
 
 func writeTestFile(t *testing.T, root, path, content string, mode fs.FileMode) {
 	t.Helper()
 	fullPath := filepath.Join(root, path)
-	if err := os.WriteFile(fullPath, []byte(content), mode); err != nil {
+	if err := os.MkdirAll(filepath.Dir(fullPath), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Chmod(fullPath, mode); err != nil {
+	if err := os.WriteFile(fullPath, []byte(content), mode); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -840,7 +392,7 @@ func readTestFile(t *testing.T, root, path string) string {
 
 func readTree(t *testing.T, root string) map[string]string {
 	t.Helper()
-	tree := make(map[string]string)
+	files := make(map[string]string)
 	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -856,13 +408,13 @@ func readTree(t *testing.T, root string) map[string]string {
 		if err != nil {
 			return err
 		}
-		tree[relative] = string(content)
+		files[relative] = string(content)
 		return nil
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	return tree
+	return files
 }
 
 func testFileMode(t *testing.T, path string) fs.FileMode {

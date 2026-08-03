@@ -1,270 +1,94 @@
 package hpatch
 
 import (
-	"bytes"
-	"crypto/sha256"
-	"encoding/binary"
-	"errors"
-	"io"
+	"context"
 	"os"
-	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
 
-func TestSuccessfulReportsDoNotInventCallerTokens(t *testing.T) {
+func TestHPatch2InvocationMetricsCountCommandsTargetsAndReasons(t *testing.T) {
 	root := t.TempDir()
-	dataDirectory := t.TempDir()
-	script := "new note.txt\ntype \"hello\"\n"
-	var stdout, stderr bytes.Buffer
-	if exitCode := Run([]string{"translate"}, strings.NewReader(script), &stdout, &stderr, root, dataDirectory); exitCode != 0 {
-		t.Fatalf("translate = exit %d, stdout %q, stderr %q", exitCode, stdout.String(), stderr.String())
-	}
-	got, err := readMetrics(dataDirectory)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got.HPatchTokens != 0 || got.ApplyPatchTokens != 0 || got.ReportInputTokens != 0 || got.DiagnosticInputTokens != 0 {
-		t.Fatalf("standalone evaluation invented caller tokens: %+v", got)
-	}
-	if got.Commands[commandOperationIndex("new")].Invocations != 1 || got.Commands[commandOperationIndex("type")].Invocations != 1 {
-		t.Fatalf("standalone evaluator counters = %+v", got.Commands)
-	}
-}
+	writeTestFile(t, root, "file.txt", "alpha\nbeta\n", 0o644)
+	script := "in file.txt\n" +
+		"type " + row(1, "alpha") + " \"A\"\n" +
+		"type+ " + row(2, "beta") + " \"B\"\n" +
+		"del 9:0000\n"
 
-func TestPartialReportWriteDoesNotInventCallerTokens(t *testing.T) {
-	root := t.TempDir()
-	dataDirectory := t.TempDir()
-	script := "new note.txt\ntype \"hello\"\n"
-	var stdout bytes.Buffer
-
-	exitCode := Run([]string{"translate"}, strings.NewReader(script), &stdout, partialMetricsWriter{}, root, dataDirectory)
-	if exitCode != 0 || stdout.Len() == 0 {
-		t.Fatalf("translate = exit %d, stdout %q", exitCode, stdout.String())
+	invocation, err := evaluateInvocationForTest(t, root, script)
+	if err == nil {
+		t.Fatal("missing row unexpectedly succeeded")
 	}
-	got, err := readMetrics(dataDirectory)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got.HPatchTokens != 0 || got.ApplyPatchTokens != 0 || got.ReportInputTokens != 0 {
-		t.Fatalf("metrics after partial report = %+v", got)
-	}
-}
-
-type partialMetricsWriter struct{}
-
-func (partialMetricsWriter) Write(value []byte) (int, error) {
-	return min(3, len(value)), io.ErrClosedPipe
-}
-
-func TestSuccessfulNoopCountsEvaluatorCommandsOnly(t *testing.T) {
-	root := t.TempDir()
-	dataDirectory := t.TempDir()
-	script := "new transient.txt\ncommit\nrm\n"
-	var stdout, stderr bytes.Buffer
-	if exitCode := Run(nil, strings.NewReader(script), &stdout, &stderr, root, dataDirectory); exitCode != 0 {
-		t.Fatalf("normal = exit %d, stdout %q, stderr %q", exitCode, stdout.String(), stderr.String())
-	}
-	got, err := readMetrics(dataDirectory)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got.HPatchTokens != 0 || got.ApplyPatchTokens != 0 || got.IneffectiveHPatchTokens != 0 || got.ReportInputTokens != 0 {
-		t.Fatalf("no-op token metrics = %+v", got)
-	}
-	if got.Commands[commandOperationIndex("new")].Invocations != 1 || got.Commands[commandOperationIndex("rm")].Invocations != 1 {
-		t.Fatalf("no-op command metrics = %+v", got.Commands)
-	}
-	if got.Commands[commandOperationIndex("commit")].Invocations != 1 {
-		t.Fatalf("commit metrics = %+v", got.Commands)
-	}
-}
-
-func TestGainReportsOutputAndInputSeparately(t *testing.T) {
-	value := metrics{HPatchTokens: 40, ApplyPatchTokens: 100, IneffectiveHPatchTokens: 10, FailedApplyPatchTokens: 5, ReportInputTokens: 50}
-	if got := value.overallReduction(); got != "52.4" {
-		t.Fatalf("output reduction = %s, want 52.4", got)
-	}
-	report := gainReport(value)
-	if !strings.Contains(report, "all         50      105          52.4%\n") {
-		t.Fatalf("gain report %q does not contain the output total", report)
-	}
-	input := strings.Join(strings.Fields(gainInputSection(t, report)), " ")
-	if !strings.Contains(input, "state reports 50") || !strings.Contains(input, "net added input 50") {
-		t.Fatalf("input gain report %q does not reconcile the state report", input)
-	}
-	if strings.Contains(report, "combined token-cost") || strings.Contains(report, "output:input cost") {
-		t.Fatalf("gain report combines output and input tokens: %q", report)
-	}
-}
-
-func TestMalformedSelectorAttributionRequiresRecognizableVariant(t *testing.T) {
-	tests := []struct {
-		name   string
-		script string
-		want   commandAttempt
-		reason failureReason
-	}{
-		{name: "bare removed sel", script: "sel\n"},
-		{name: "malformed removed sel", script: "sel nope\n"},
-		{name: "bare tsel", script: "tsel\n"},
-		{name: "tsel without text", script: "tsel 0123\n"},
-		{name: "malformed hash", script: "tsel 123 \"x\"\n"},
-		{name: "invalid multiple count", script: "tsel 0123 \"x\" nope\n", want: commandAttempt{recognized: true, textSpan: textSpanMultiple}, reason: reasonInvalidCount},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			_, err := parse(test.script)
-			sourceError, ok := errors.AsType[*commandError](err)
-			if !ok {
-				t.Fatalf("parse() error = %T %v, want *commandError", err, err)
-			}
-			if sourceError.Attempt != test.want {
-				t.Fatalf("attempt = %+v, want %+v", sourceError.Attempt, test.want)
-			}
-			if test.want.recognized && sourceError.Reason != test.reason {
-				t.Fatalf("reason = %s, want %s", failureReasonNames[sourceError.Reason], failureReasonNames[test.reason])
-			}
-			var events invocationMetrics
-			events.invokeFailure(sourceError.Operation, sourceError.Attempt, sourceError.Reason)
-			if !validInvocationMetrics(events) {
-				t.Fatalf("attributed events are inconsistent: %+v", events)
-			}
-			if !test.want.recognized && events != (invocationMetrics{}) {
-				t.Fatalf("unrecognizable selector was attributed: %+v", events)
-			}
-		})
-	}
-}
-
-func TestMetricsClassifyVariantsOutcomesAndReasons(t *testing.T) {
-	root := t.TempDir()
-	dataDirectory := t.TempDir()
-	content := "alpha beta alpha gamma alpha\nfunc x() {\n\tbody\n}\n"
-	if err := os.WriteFile(filepath.Join(root, "sample.txt"), []byte(content), 0o600); err != nil {
-		t.Fatal(err)
-	}
-
-	run := func(script string, success bool) {
-		t.Helper()
-		var stdout, stderr bytes.Buffer
-		exitCode := Run([]string{"translate"}, strings.NewReader(script), &stdout, &stderr, root, dataDirectory)
-		if (exitCode == 0) != success {
-			t.Fatalf("script %q = exit %d, stdout %q, stderr %q", script, exitCode, stdout.String(), stderr.String())
+	for _, operation := range []string{"in", "type", "type+", "del"} {
+		entry := invocation.Commands[commandOperationIndex(operation)]
+		if entry.Invocations != 1 {
+			t.Fatalf("%s metrics = %+v", operation, entry)
 		}
 	}
-
-	for _, script := range []string{
-		"in sample.txt\nrsel " + hashLine("alpha beta alpha gamma alpha") + " " + hashLine("alpha beta alpha gamma alpha") + "\ntype \"A\"\n",
-		"in sample.txt\ntsel " + hashLine("alpha beta alpha gamma alpha") + " \"alpha\"\ntype \"A\"\n",
-		"in sample.txt\ntsel " + hashLine("alpha beta alpha gamma alpha") + " \"alpha\" 1\ntype \"A\"\n",
-		"in sample.txt\ntsel " + hashLine("alpha beta alpha gamma alpha") + " \"alpha\" 2\ntype \"A\"\n",
-	} {
-		run(script, true)
+	if invocation.Commands[commandOperationIndex("del")].Errors != 1 {
+		t.Fatalf("del metrics = %+v", invocation.Commands[commandOperationIndex("del")])
 	}
-	for _, script := range []string{
-		"in sample.txt\ntsel " + hashLine("alpha beta alpha gamma alpha") + " \"alpha\" 9\n",
-		"in sample.txt\ntsel " + hashLine("alpha beta alpha gamma alpha") + " \"alpha\" nope\n",
-		"in sample.txt\nsel +x 1:1\n",
-	} {
-		run(script, false)
+	if invocation.Targets[targetVariantLine-1] != (commandMetric{Invocations: 3, Errors: 1}) {
+		t.Fatalf("line targets = %+v", invocation.Targets)
 	}
-
-	got, err := readMetrics(dataDirectory)
-	if err != nil {
-		t.Fatal(err)
-	}
-	wantTextSpans := [textSpanVariantCount]commandMetric{
-		{Invocations: 2},
-		{Invocations: 3, Errors: 2},
-	}
-	if got.TextSpans != wantTextSpans {
-		t.Fatalf("tsel spans = %+v, want %+v", got.TextSpans, wantTextSpans)
-	}
-	for reason, want := range map[failureReason]uint64{
-		reasonOccurrenceMissing: 1,
-		reasonInvalidCount:      1,
-	} {
-		if got.Reasons[reason] != want {
-			t.Fatalf("reason %s = %d, want %d", failureReasonNames[reason], got.Reasons[reason], want)
-		}
-	}
-	totalCommands, ok := got.Commands.total()
-	if !ok {
-		t.Fatal("aggregate command metrics overflow")
-	}
-	var totalReasons uint64
-	for _, count := range got.Reasons {
-		totalReasons += count
-	}
-	if totalReasons != totalCommands.Errors || totalReasons != 2 {
-		t.Fatalf("reason total = %d, aggregate errors = %d", totalReasons, totalCommands.Errors)
+	if invocation.Reasons[reasonRowMissing] != 1 {
+		t.Fatalf("reasons = %+v", invocation.Reasons)
 	}
 }
 
-func TestMetricsSlotRoundTripsAllCounters(t *testing.T) {
-	want := representativeMetrics()
-	encoded := encodeMetricsSlot(want, 9)
+func TestHPatch2TextTargetMetricsDistinguishMultiplicity(t *testing.T) {
+	root := t.TempDir()
+	writeTestFile(t, root, "file.txt", "x x\n", 0o644)
+	script := "in file.txt\n" +
+		"type " + row(1, "x x") + " \"x\" \"y\"\n" +
+		"type+ " + row(1, "x x") + " \"x\" 2 \"!\""
+	invocation, err := evaluateInvocationForTest(t, root, script)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if invocation.Targets[targetVariantTextSingle-1].Invocations != 1 ||
+		invocation.Targets[targetVariantTextMultiple-1].Invocations != 1 {
+		t.Fatalf("targets = %+v", invocation.Targets)
+	}
+}
+
+func TestHPatch2MetricsSlotRoundTrip(t *testing.T) {
+	value := metrics{}
+	value.Commands[commandOperationIndex("type+")] = commandMetric{Invocations: 3, Errors: 1}
+	value.Targets[targetVariantRange-1] = commandMetric{Invocations: 3, Errors: 1}
+	value.Reasons[reasonEditConflict] = 1
+	value.CommandReasons[commandOperationIndex("type+")][reasonEditConflict] = 1
+	encoded := encodeMetricsSlot(value, 7)
 	got, generation, ok := decodeMetricsSlot(encoded)
-	if !ok || generation != 9 || got != want {
-		t.Fatalf("decode = (%+v, %d, %t), want (%+v, 9, true)", got, generation, ok, want)
+	if !ok || generation != 7 || !reflect.DeepEqual(got, value) {
+		t.Fatalf("decode = %+v, %d, %v; want %+v, 7, true", got, generation, ok, value)
 	}
+}
 
-	dataDirectory := t.TempDir()
-	if err := updateMetrics(dataDirectory, want); err != nil {
-		t.Fatal(err)
+func TestHPatch2GainReportNamesTargets(t *testing.T) {
+	value := metrics{}
+	value.Commands[commandOperationIndex("type")] = commandMetric{Invocations: 1}
+	value.Targets[targetVariantLine-1] = commandMetric{Invocations: 1}
+	report := gainReportAtWidth(value, 100)
+	for _, want := range []string{"target metrics:", "line", "text-single", "type+"} {
+		if !strings.Contains(report, want) {
+			t.Fatalf("report lacks %q:\n%s", want, report)
+		}
 	}
-	persisted, err := readMetrics(dataDirectory)
+}
+
+func evaluateInvocationForTest(t *testing.T, rootPath, script string) (invocationMetrics, error) {
+	t.Helper()
+	root, err := os.OpenRoot(rootPath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if persisted != want {
-		t.Fatalf("persisted metrics = %+v, want %+v", persisted, want)
-	}
-}
-
-func representativeMetrics() metrics {
-	value := metrics{HPatchTokens: 11, ApplyPatchTokens: 19, IneffectiveHPatchTokens: 7, FailedApplyPatchTokens: 5, ReportInputTokens: 5}
-	value.Commands[commandOperationIndex("rsel")] = commandMetric{Invocations: 3, Errors: 1}
-
-	value.Commands[commandOperationIndex("tsel")] = commandMetric{Invocations: 2, Errors: 1}
-
-	value.TextSpans[textSpanSingle-1] = commandMetric{Invocations: 1}
-	value.TextSpans[textSpanMultiple-1] = commandMetric{Invocations: 1, Errors: 1}
-	value.Reasons[reasonSyntax] = 2
-	value.Commands[commandOperationIndex("paste")] = commandMetric{Invocations: 1, Errors: 1}
-	value.Reasons[reasonClipboardEmpty] = 1
-	// Attribute each reason to the command that raised it so the
-	// cross-tabulation reconciles with both margins.
-	value.CommandReasons[commandOperationIndex("rsel")][reasonSyntax] = 1
-	value.CommandReasons[commandOperationIndex("tsel")][reasonSyntax] = 1
-	value.CommandReasons[commandOperationIndex("paste")][reasonClipboardEmpty] = 1
-	return value
-}
-
-func TestMetricsReportCounterOverflowFails(t *testing.T) {
-	value := metrics{ReportInputTokens: ^uint64(0)}
-	if err := value.add(metrics{ReportInputTokens: 1}); err == nil || !strings.Contains(err.Error(), "token count overflow") {
-		t.Fatalf("add overflow error = %v", err)
-	}
-}
-
-func TestHPATCH07MetricsReset(t *testing.T) {
-	dataDirectory := t.TempDir()
-	var prior [264]byte
-	copy(prior[:8], "HPATCH07")
-	binary.LittleEndian.PutUint64(prior[8:16], 3)
-	binary.LittleEndian.PutUint64(prior[16:24], 99)
-	checksum := sha256.Sum256(prior[:232])
-	copy(prior[232:], checksum[:])
-	if err := os.WriteFile(filepath.Join(dataDirectory, metricsFilename), prior[:], 0o600); err != nil {
-		t.Fatal(err)
-	}
-	got, err := readMetrics(dataDirectory)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got != (metrics{}) {
-		t.Fatalf("HPATCH07 metrics were not reset: %+v", got)
-	}
+	defer func() {
+		if err := root.Close(); err != nil {
+			t.Errorf("closing workspace root: %v", err)
+		}
+	}()
+	_, _, invocation, _, err := evaluateScript(context.Background(), Workspace{Root: root, CWD: "."}, script)
+	return invocation, err
 }

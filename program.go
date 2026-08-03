@@ -12,22 +12,58 @@ import (
 )
 
 var (
-	absoluteLinePattern = regexp.MustCompile(`^[1-9][0-9]*$`)
-	textSelectPattern   = regexp.MustCompile(`^tsel (\S+) (.+)$`)
-	hashRangePattern    = regexp.MustCompile(`^rsel (\S+) (\S+)$`)
+	positiveDecimalPattern = regexp.MustCompile(`^[1-9][0-9]*$`)
+	rowPattern             = regexp.MustCompile(`^([1-9][0-9]*):([0-9a-f]{4})$`)
 )
 
-type instruction struct {
-	attempt   commandAttempt
-	source    string
-	line      int
-	operation string
-	path      string
-	lineHash  string
-	endHash   string
+type targetKind uint8
 
-	count          int
-	text           string
+const (
+	targetNone targetKind = iota
+	targetLine
+	targetRange
+	targetText
+)
+
+type rowReference struct {
+	line int
+	hash string
+}
+
+type targetSpec struct {
+	kind    targetKind
+	start   rowReference
+	end     rowReference
+	literal string
+	count   int
+}
+
+func (t targetSpec) variant() targetVariant {
+	switch t.kind {
+	case targetLine:
+		return targetVariantLine
+	case targetRange:
+		return targetVariantRange
+	case targetText:
+		if t.count > 1 {
+			return targetVariantTextMultiple
+		}
+		return targetVariantTextSingle
+	default:
+		return targetVariantNone
+	}
+}
+
+type instruction struct {
+	attempt    commandAttempt
+	source     string
+	line       int
+	operation  string
+	path       string
+	target     targetSpec
+	text       string
+	valueStart int
+
 	delimiter      string
 	lineTerminator string
 }
@@ -98,6 +134,9 @@ func (e *commandError) Error() string {
 	if e.Category != "" {
 		context = append(context, "category "+e.Category)
 	}
+	if int(e.Reason) < len(failureReasonNames) {
+		context = append(context, "reason "+failureReasonNames[e.Reason])
+	}
 	return fmt.Sprintf("%s: %s", strings.Join(context, ", "), e.Message)
 }
 
@@ -125,7 +164,12 @@ func parse(source string) (*program, error) {
 		case frameErr != nil:
 			err = scriptError(sourceLine, frameErr.Error())
 		case frame.Delimiter != "":
-			command = instruction{line: sourceLine, operation: "type", text: frame.Body}
+			header := strings.TrimSuffix(line, " <<PATCH")
+			if header == "type" {
+				command = instruction{line: sourceLine, operation: "type", text: frame.Body}
+			} else {
+				command, err = parseInstructionWithValue(sourceLine, header, frame.Body, true)
+			}
 		default:
 			command, err = parseInstruction(sourceLine, line)
 		}
@@ -134,12 +178,16 @@ func parse(source string) (*program, error) {
 			if sourceError, ok := errors.AsType[*commandError](err); ok {
 				message = sourceError.Message
 			}
+			operation := ""
+			if fields := strings.Fields(line); len(fields) != 0 {
+				operation = fields[0]
+			}
 			failures = append(failures, &commandError{
 				Attempt:   attempt,
 				Reason:    reasonOf(err, reasonSyntax),
 				Command:   commandIndex,
 				Line:      sourceLine,
-				Operation: strings.Fields(line)[0],
+				Operation: operation,
 				Category:  "syntax",
 				Source:    line,
 				Message:   message,
@@ -149,7 +197,6 @@ func parse(source string) (*program, error) {
 		command.source = line
 		command.delimiter = frame.Delimiter
 		command.lineTerminator = lines[headerIndex].Terminator
-
 		command.attempt = attemptForInstruction(command)
 		program.instructions = append(program.instructions, command)
 	}
@@ -165,59 +212,44 @@ func recognizeCommandAttempt(line string) commandAttempt {
 		return commandAttempt{}
 	}
 	switch fields[0] {
-	case "in", "new", "mv", "rm", "type", "del", "copy", "cut", "paste", "commit":
+	case "in", "new", "mv", "rm":
 		return commandAttempt{recognized: true}
-	case "rsel":
-		return commandAttempt{recognized: len(fields) >= 3 && isLowerHexHash(fields[1]) && isLowerHexHash(fields[2])}
-	case "tsel":
-		span := recognizeTextSpanVariant(line)
-		if len(fields) < 2 || !isLowerHexHash(fields[1]) || span == textSpanNone {
-			return commandAttempt{}
+	case "type", "type-", "type+", "del":
+		attempt := commandAttempt{recognized: true}
+		if len(fields) > 1 {
+			attempt.target = recognizeTargetVariant(strings.TrimPrefix(line, fields[0]+" "))
 		}
-		return commandAttempt{recognized: true, textSpan: span}
+		return attempt
 	default:
 		return commandAttempt{}
 	}
 }
 
-func isLowerHexHash(value string) bool {
-	if len(value) != lineHashLength {
-		return false
+func recognizeTargetVariant(operands string) targetVariant {
+	token, trailing := firstToken(operands)
+	if strings.Contains(token, "..") {
+		return targetVariantRange
 	}
-	for _, character := range value {
-		if (character < '0' || character > '9') && (character < 'a' || character > 'f') {
-			return false
-		}
-	}
-
-	return true
-}
-
-func recognizeTextSpanVariant(line string) textSpanVariant {
-	match := textSelectPattern.FindStringSubmatch(line)
-	if match == nil {
-		return textSpanNone
-	}
-	_, trailing, err := hpatchsyntax.DecodeQuoted(match[2])
-	if err != nil {
-		return textSpanNone
+	if !rowPattern.MatchString(token) {
+		return targetVariantNone
 	}
 	trailing = strings.TrimSpace(trailing)
-	if trailing != "" && trailing != "1" {
-		return textSpanMultiple
+	if !strings.HasPrefix(trailing, `"`) {
+		return targetVariantLine
 	}
-	return textSpanSingle
+	_, rest, err := hpatchsyntax.DecodeQuoted(trailing)
+	if err != nil || strings.TrimSpace(rest) == "" {
+		return targetVariantLine
+	}
+	rest = strings.TrimSpace(rest)
+	if strings.HasPrefix(rest, `"`) || strings.HasPrefix(rest, "<<PATCH") {
+		return targetVariantTextSingle
+	}
+	return targetVariantTextMultiple
 }
 
 func attemptForInstruction(command instruction) commandAttempt {
-	attempt := commandAttempt{recognized: true}
-	if command.operation == "tsel" {
-		attempt.textSpan = textSpanSingle
-		if command.count > 1 {
-			attempt.textSpan = textSpanMultiple
-		}
-	}
-	return attempt
+	return commandAttempt{recognized: true, target: command.target.variant()}
 }
 
 func parseInstruction(sourceLine int, line string) (instruction, error) {
@@ -229,88 +261,165 @@ func parseInstruction(sourceLine int, line string) (instruction, error) {
 			return instruction{line: sourceLine, operation: operation, path: filepath.Clean(path)}, nil
 		}
 	}
-
-	if line == "rm" || line == "del" || line == "copy" || line == "cut" || line == "paste" || line == "commit" {
+	if line == "rm" {
 		return instruction{line: sourceLine, operation: line}, nil
 	}
 
-	if match := textSelectPattern.FindStringSubmatch(line); match != nil {
-		hash, err := parseLineHash(sourceLine, match[1])
+	operation, operands, ok := strings.Cut(line, " ")
+	if !ok {
+		return instruction{}, scriptError(sourceLine, "unknown or malformed command")
+	}
+	switch operation {
+	case "del":
+		target, trailing, err := parseTarget(sourceLine, operands, false)
 		if err != nil {
 			return instruction{}, err
 		}
-		value, count, err := decodeTextSelection(match[2])
-		if err != nil {
-			return instruction{}, scriptFailure(sourceLine, reasonOf(err, reasonSyntax), err.Error())
+		if strings.TrimSpace(trailing) != "" {
+			return instruction{}, scriptError(sourceLine, "trailing text after del target")
 		}
-		if value == "" {
-			return instruction{}, scriptError(sourceLine, "tsel text must not be empty")
-		}
-		if strings.ContainsAny(value, "\r\n") {
-			return instruction{}, scriptError(sourceLine, "tsel text must stay on one line")
-		}
-		return instruction{
-			line:      sourceLine,
-			operation: "tsel",
-			lineHash:  hash,
-			count:     count,
-			text:      value,
-		}, nil
+		return instruction{line: sourceLine, operation: operation, target: target}, nil
+	case "type", "type-", "type+":
+		return parseInstructionWithValue(sourceLine, line, "", false)
+	default:
+		return instruction{}, scriptError(sourceLine, "unknown or malformed command")
 	}
+}
 
-	if match := hashRangePattern.FindStringSubmatch(line); match != nil {
-		startHash, err := parseLineHash(sourceLine, match[1])
-		if err != nil {
-			return instruction{}, err
-		}
-		endHash, err := parseLineHash(sourceLine, match[2])
-		if err != nil {
-			return instruction{}, err
-		}
-		return instruction{
-			line:      sourceLine,
-			operation: "rsel",
-			lineHash:  startHash,
-			endHash:   endHash,
-		}, nil
+func parseInstructionWithValue(sourceLine int, line, heredocValue string, heredoc bool) (instruction, error) {
+	operation, operands, ok := strings.Cut(line, " ")
+	if !ok || (operation != "type" && operation != "type-" && operation != "type+") {
+		return instruction{}, scriptError(sourceLine, "heredoc is valid only for type, type-, or type+")
 	}
-	if valueText, ok := strings.CutPrefix(line, "type "); ok {
-		value, trailing, err := hpatchsyntax.DecodeQuoted(valueText)
+	if operation == "type" && strings.HasPrefix(operands, `"`) {
+		if heredoc {
+			return instruction{}, scriptError(sourceLine, "targetless heredoc type must not have an inline operand")
+		}
+		value, trailing, err := hpatchsyntax.DecodeQuoted(operands)
 		if err != nil {
 			return instruction{}, scriptError(sourceLine, "invalid quoted string for type: "+err.Error())
 		}
 		if !onlyOperandWhitespace(trailing) {
-			return instruction{}, scriptError(sourceLine, "trailing text after type string")
+			return instruction{}, scriptError(sourceLine, "trailing text after type initializer")
 		}
-		return instruction{line: sourceLine, operation: "type", text: value}, nil
+		return instruction{line: sourceLine, operation: operation, text: value, valueStart: len(line) - len(operands)}, nil
+	}
+	if heredoc && operation == "type" && strings.TrimSpace(operands) == "" {
+		return instruction{line: sourceLine, operation: operation, text: heredocValue}, nil
 	}
 
-	return instruction{}, scriptError(sourceLine, "unknown or malformed command")
+	target, trailing, err := parseTarget(sourceLine, operands, !heredoc)
+	if err != nil {
+		return instruction{}, err
+	}
+	value := heredocValue
+	valueStart := 0
+	if heredoc {
+		if strings.TrimSpace(trailing) != "" {
+			return instruction{}, scriptError(sourceLine, "trailing text before heredoc value")
+		}
+	} else {
+		trailing = strings.TrimLeft(trailing, " \t")
+		if trailing == "" {
+			return instruction{}, scriptError(sourceLine, operation+" requires a value")
+		}
+		valueStart = len(line) - len(trailing)
+		value, trailing, err = hpatchsyntax.DecodeQuoted(trailing)
+		if err != nil {
+			return instruction{}, scriptError(sourceLine, "invalid quoted string for "+operation+": "+err.Error())
+		}
+		if !onlyOperandWhitespace(trailing) {
+			return instruction{}, scriptError(sourceLine, "trailing text after "+operation+" value")
+		}
+	}
+	return instruction{line: sourceLine, operation: operation, target: target, text: value, valueStart: valueStart}, nil
 }
 
-func decodeTextSelection(encoded string) (string, int, error) {
-	text, trailing, err := hpatchsyntax.DecodeQuoted(encoded)
+// parseTarget parses a target prefix. When finalValueFollows is false, a quoted
+// operand after ROW is the target literal. When true, a lone quoted operand is
+// the mutation value and therefore leaves a line target.
+func parseTarget(sourceLine int, operands string, finalValueFollows bool) (targetSpec, string, error) {
+	token, trailing := firstToken(operands)
+	if token == "" {
+		return targetSpec{}, "", scriptError(sourceLine, "target must not be empty")
+	}
+	if startText, endText, rangeTarget := strings.Cut(token, ".."); rangeTarget {
+		if strings.Contains(endText, "..") {
+			return targetSpec{}, "", scriptError(sourceLine, "range target must contain exactly two rows")
+		}
+		start, err := parseRowReference(sourceLine, startText)
+		if err != nil {
+			return targetSpec{}, "", err
+		}
+		end, err := parseRowReference(sourceLine, endText)
+		if err != nil {
+			return targetSpec{}, "", err
+		}
+		return targetSpec{kind: targetRange, start: start, end: end}, trailing, nil
+	}
+
+	row, err := parseRowReference(sourceLine, token)
 	if err != nil {
-		return "", 0, fmt.Errorf("invalid quoted string for tsel: %w", err)
+		return targetSpec{}, "", err
 	}
-	if trailing == "" {
-		return text, 1, nil
+	trimmed := strings.TrimLeft(trailing, " \t")
+	if !strings.HasPrefix(trimmed, `"`) {
+		return targetSpec{kind: targetLine, start: row}, trailing, nil
 	}
-	if !isOperandWhitespace(trailing[0]) {
-		return "", 0, withReason(reasonInvalidCount, errors.New("tsel count must be separated by whitespace"))
-	}
-	countText := strings.Trim(trailing, " \t\r\n")
-	if countText == "" {
-		return text, 1, nil
-	}
-	if !absoluteLinePattern.MatchString(countText) {
-		return "", 0, withReason(reasonInvalidCount, errors.New("invalid tsel count"))
-	}
-	count, err := strconv.Atoi(countText)
+	literal, rest, err := hpatchsyntax.DecodeQuoted(trimmed)
 	if err != nil {
-		return "", 0, withReason(reasonInvalidCount, errors.New("tsel count is out of range"))
+		return targetSpec{}, "", scriptError(sourceLine, "invalid quoted target literal: "+err.Error())
 	}
-	return text, count, nil
+	if finalValueFollows && strings.TrimSpace(rest) == "" {
+		return targetSpec{kind: targetLine, start: row}, trimmed, nil
+	}
+	if literal == "" {
+		return targetSpec{}, "", scriptError(sourceLine, "target literal must not be empty")
+	}
+	if strings.ContainsAny(literal, "\r\n") {
+		return targetSpec{}, "", scriptError(sourceLine, "target literal must stay on one line")
+	}
+	for _, character := range literal {
+		if character < 0x20 && character != '\t' {
+			return targetSpec{}, "", scriptError(sourceLine, "target literal contains a forbidden control character")
+		}
+	}
+	count := 1
+	rest = strings.TrimLeft(rest, " \t")
+	if rest != "" && !strings.HasPrefix(rest, `"`) {
+		countText, afterCount := firstToken(rest)
+		if !positiveDecimalPattern.MatchString(countText) {
+			return targetSpec{}, "", scriptFailure(sourceLine, reasonInvalidCount, "invalid target count")
+		}
+		count, err = strconv.Atoi(countText)
+		if err != nil {
+			return targetSpec{}, "", scriptFailure(sourceLine, reasonInvalidCount, "target count is out of range")
+		}
+		rest = afterCount
+	}
+	return targetSpec{kind: targetText, start: row, literal: literal, count: count}, rest, nil
+}
+
+func firstToken(value string) (string, string) {
+	value = strings.TrimLeft(value, " \t")
+	for index := range len(value) {
+		if value[index] == ' ' || value[index] == '\t' || value[index] == '\r' || value[index] == '\n' {
+			return value[:index], value[index:]
+		}
+	}
+	return value, ""
+}
+
+func parseRowReference(sourceLine int, value string) (rowReference, error) {
+	match := rowPattern.FindStringSubmatch(value)
+	if match == nil {
+		return rowReference{}, scriptError(sourceLine, fmt.Sprintf("invalid row reference %q; expected LINE:HASH", value))
+	}
+	line, err := strconv.Atoi(match[1])
+	if err != nil {
+		return rowReference{}, scriptError(sourceLine, "row line is out of range")
+	}
+	return rowReference{line: line, hash: match[2]}, nil
 }
 
 func onlyOperandWhitespace(value string) bool {
@@ -324,13 +433,6 @@ func onlyOperandWhitespace(value string) bool {
 
 func isOperandWhitespace(character byte) bool {
 	return character == ' ' || character == '\t' || character == '\r' || character == '\n'
-}
-
-func parseLineHash(sourceLine int, value string) (string, error) {
-	if !isLowerHexHash(value) {
-		return "", scriptError(sourceLine, fmt.Sprintf("invalid hashline reference %q", value))
-	}
-	return value, nil
 }
 
 func scriptError(line int, message string) *commandError {

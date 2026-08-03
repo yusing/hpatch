@@ -7,7 +7,7 @@ import (
 	"strings"
 )
 
-type selection struct {
+type targetSpan struct {
 	start    int
 	end      int
 	linewise bool
@@ -24,19 +24,18 @@ type baselineEdit struct {
 
 	start       int
 	end         int
+	targetStart int
+	targetEnd   int
 	replacement string
+	sequence    int
 }
 
 type editor struct {
-	baseline      string
-	cursor        int
-	selections    []selection
-	textMatches   bool
-	cursorCommand int
-	edits         []baselineEdit
-	lastOrigin    editOrigin
-	finalContent  *string
-	finalOffsets  *formattedOffsetMap
+	baseline     string
+	edits        []baselineEdit
+	lastOrigin   editOrigin
+	finalContent *string
+	finalOffsets *formattedOffsetMap
 }
 
 type logicalLine struct {
@@ -45,213 +44,140 @@ type logicalLine struct {
 	fullEnd    int
 }
 
-func (e *editor) resetCursor() {
-	e.cursor = 0
-	e.clearSelections()
-	e.cursorCommand = 0
+func (e *editor) resolveTarget(target targetSpec) ([]targetSpan, error) {
+	switch target.kind {
+	case targetLine:
+		line, err := resolveRow(e.baseline, target.start)
+		if err != nil {
+			return nil, err
+		}
+		return []targetSpan{{start: line.start, end: line.fullEnd, linewise: true}}, nil
+	case targetRange:
+		start, err := resolveRow(e.baseline, target.start)
+		if err != nil {
+			return nil, err
+		}
+		end, err := resolveRow(e.baseline, target.end)
+		if err != nil {
+			return nil, err
+		}
+		if target.start.line > target.end.line {
+			return nil, withReason(reasonTargetOrder, fmt.Errorf(
+				"row range start %d exceeds end %d",
+				target.start.line,
+				target.end.line,
+			))
+		}
+		return []targetSpan{{start: start.start, end: end.fullEnd, linewise: true}}, nil
+	case targetText:
+		anchor, err := resolveRow(e.baseline, target.start)
+		if err != nil {
+			return nil, err
+		}
+		offsets := nonOverlappingLiteralOffsets(e.baseline[anchor.start:], target.literal, target.count)
+		if len(offsets) != target.count {
+			return nil, withReason(reasonOccurrenceMissing, fmt.Errorf(
+				"found %d of %d requested matches of %q at or after line %d",
+				len(offsets),
+				target.count,
+				target.literal,
+				target.start.line,
+			))
+		}
+		spans := make([]targetSpan, len(offsets))
+		for index, offset := range offsets {
+			start := anchor.start + offset
+			spans[index] = targetSpan{start: start, end: start + len(target.literal)}
+		}
+		return spans, nil
+	default:
+		return nil, withReason(reasonInitialization, fmt.Errorf("mutation requires an explicit target"))
+	}
 }
 
-func (e *editor) clearSelections() {
-	e.selections = nil
-	e.textMatches = false
+func resolveRow(baseline string, reference rowReference) (logicalLine, error) {
+	lines := logicalLines(baseline)
+	if reference.line < 1 || reference.line > len(lines) {
+		return logicalLine{}, withReason(reasonRowMissing, fmt.Errorf(
+			"row %d is outside immutable baseline with %d lines",
+			reference.line,
+			len(lines),
+		))
+	}
+	line := lines[reference.line-1]
+	actual := hashLine(lineContent(baseline, line))
+	if actual != reference.hash {
+		return logicalLine{}, withReason(reasonRowStale, fmt.Errorf(
+			"row %d is stale: expected hash %s, actual %s",
+			reference.line,
+			reference.hash,
+			actual,
+		))
+	}
+	return line, nil
 }
 
-func (e *editor) commitGeneration() {
-	e.baseline = e.content()
+func (e *editor) applyMutation(operation string, target targetSpec, value string, origin editOrigin) error {
+	spans, err := e.resolveTarget(target)
+	if err != nil {
+		return err
+	}
+	edits := make([]baselineEdit, len(spans))
+	for index, span := range spans {
+		replacement := value
+		start, end := span.start, span.end
+		switch operation {
+		case "type":
+			if span.linewise && lineTerminatorSuffix(replacement) == "" {
+				replacement += lineTerminatorSuffix(e.baseline[span.start:span.end])
+			}
+			if len(spans) == 1 {
+				if correction := detectIndentationCorrection(e.baseline, span, replacement); correction != nil {
+					return correction
+				}
+			}
+		case "type-":
+			end = start
+		case "type+":
+			start = end
+		case "del":
+			replacement = ""
+		default:
+			panic("parsed instruction has no mutation executor: " + operation)
+		}
+		edits[index] = baselineEdit{
+			start:       start,
+			end:         end,
+			targetStart: span.start,
+			targetEnd:   span.end,
+			replacement: replacement,
+			editOrigin:  origin,
+		}
+	}
+	if err := e.recordEdits(edits); err != nil {
+		return withReason(reasonEditConflict, err)
+	}
+	return nil
+}
+
+func (e *editor) initialize(value string, origin editOrigin) {
+	e.baseline = ""
 	e.edits = nil
-	e.resetCursor()
-}
-
-func (e *editor) selectMatches(hash string, count int, literal string) error {
-	line, resolvedLine, err := resolveLineHash(e.baseline, hash)
-	if err != nil {
-		return withReason(reasonCoordinateBounds, err)
+	e.finalContent = nil
+	e.finalOffsets = nil
+	if value == "" {
+		return
 	}
-
-	offsets := nonOverlappingLiteralOffsets(e.baseline[line.start:], literal, count)
-	found := len(offsets)
-	if found == count {
-		selections := literalSelections(line.start, offsets, literal)
-		return withReason(reasonEditConflict, e.setSelections(selections, true))
-	}
-
-	return withReason(reasonOccurrenceMissing, fmt.Errorf(
-		"found %d of %d requested matches of %q at or after line %d",
-		found,
-		count,
-		literal,
-		resolvedLine,
-	))
-}
-
-func literalSelections(base int, offsets []int, literal string) []selection {
-	selections := make([]selection, len(offsets))
-	for index, offset := range offsets {
-		start := base + offset
-		selections[index] = selection{start: start, end: start + len(literal)}
-	}
-	return selections
-}
-
-func (e *editor) selectLines(startHash, endHash string) error {
-	start, resolvedStart, err := resolveLineHash(e.baseline, startHash)
-	if err != nil {
-		return withReason(reasonCoordinateBounds, err)
-	}
-	end, resolvedEnd, err := resolveLineHash(e.baseline, endHash)
-	if err != nil {
-		return withReason(reasonCoordinateBounds, err)
-	}
-	if resolvedStart > resolvedEnd {
-		return withReason(reasonOrderOrOverlap, fmt.Errorf("resolved line range start %d exceeds end %d", resolvedStart, resolvedEnd))
-	}
-	return withReason(reasonEditConflict, e.setSelections([]selection{{
-		start:    start.start,
-		end:      end.fullEnd,
-		linewise: true,
-	}}, false))
-}
-
-func (e *editor) setSelections(candidates []selection, textMatches bool) error {
-	for _, candidate := range candidates {
-		for _, edit := range e.edits {
-			if edit.start == edit.end {
-				continue
-			}
-			start := max(candidate.start, edit.start)
-			end := min(candidate.end, edit.end)
-			if start >= end {
-				continue
-			}
-			startLine := baselineLine(e.baseline, start)
-			endLine := baselineLine(e.baseline, end-1)
-			span := fmt.Sprintf("baseline line %d was already modified", startLine)
-			if startLine != endLine {
-				span = fmt.Sprintf("baseline lines %d:%d were already modified", startLine, endLine)
-			}
-			return fmt.Errorf(
-				"selection conflicts with edit from command %d (source line %d, operation %q): %s",
-				edit.command,
-				edit.line,
-				edit.operation,
-				span,
-			)
-		}
-	}
-	e.selections = candidates
-	e.textMatches = textMatches
-	return nil
-}
-
-func (e *editor) typeText(replacement string, origin editOrigin) error {
-	if len(e.selections) == 0 {
-		if err := e.recordEdits([]baselineEdit{{
-			start:       e.cursor,
-			end:         e.cursor,
-			replacement: replacement,
-			editOrigin:  origin,
-		}}); err != nil {
-			return withReason(reasonEditConflict, err)
-		}
-		if replacement != "" {
-			e.cursorCommand = origin.command
-		}
-		return nil
-	}
-
-	edits := make([]baselineEdit, len(e.selections))
-	for index, selected := range e.selections {
-		selectedReplacement := replacement
-		if selected.linewise && lineTerminatorSuffix(selectedReplacement) == "" {
-			selectedReplacement += lineTerminatorSuffix(e.baseline[selected.start:selected.end])
-		}
-		if len(e.selections) == 1 {
-			if correction := detectIndentationCorrection(e.baseline, selected, selectedReplacement); correction != nil {
-				return correction
-			}
-		}
-		edits[index] = baselineEdit{
-			start:       selected.start,
-			end:         selected.end,
-			replacement: selectedReplacement,
-			editOrigin:  origin,
-		}
-	}
-	if err := e.recordEdits(edits); err != nil {
-		return withReason(reasonEditConflict, err)
-	}
-	e.cursor = e.selections[len(e.selections)-1].end
-	e.clearSelections()
-	e.cursorCommand = origin.command
-	return nil
-}
-
-func (e *editor) deleteSelection(origin editOrigin) error {
-	if len(e.selections) == 0 {
-		return withReason(reasonSelectionRequired, fmt.Errorf("del requires a selection"))
-	}
-	edits := make([]baselineEdit, len(e.selections))
-	for index, selected := range e.selections {
-		edits[index] = baselineEdit{start: selected.start, end: selected.end, editOrigin: origin}
-	}
-	if err := e.recordEdits(edits); err != nil {
-		return withReason(reasonEditConflict, err)
-	}
-	e.cursor = e.selections[len(e.selections)-1].start
-	e.clearSelections()
-	e.cursorCommand = origin.command
-	return nil
-}
-
-func (e *editor) selectedClipboard() (clipboardContent, bool) {
-	if len(e.selections) == 0 {
-		return clipboardContent{}, false
-	}
-	selected := e.selections[0]
-	return clipboardContent{
-		text:     e.baseline[selected.start:selected.end],
-		linewise: selected.linewise,
-	}, true
-}
-
-func (e *editor) pasteClipboard(clipboard clipboardContent, origin editOrigin) error {
-	positions := []int{e.cursor}
-	if len(e.selections) != 0 {
-		positions = make([]int, len(e.selections))
-		for index, selected := range e.selections {
-			positions[index] = selected.end
-		}
-	}
-	edits := make([]baselineEdit, len(positions))
-	for index, position := range positions {
-		if position > 0 && position < len(e.baseline) && e.baseline[position-1] == '\r' && e.baseline[position] == '\n' {
-			position++
-		}
-		replacement := clipboard.text
-		if clipboard.linewise {
-			terminator := firstLineTerminator(e.baseline)
-			if position > 0 && !endsWithLineTerminator(e.baseline[:position]) {
-				replacement = terminator + replacement
-			}
-			if position < len(e.baseline) && !startsWithLineTerminator(e.baseline[position:]) && !endsWithLineTerminator(replacement) {
-				replacement += terminator
-			}
-		}
-		positions[index] = position
-		edits[index] = baselineEdit{
-			start:       position,
-			end:         position,
-			replacement: replacement,
-			editOrigin:  origin,
-		}
-	}
-	if err := e.recordEdits(edits); err != nil {
-		return withReason(reasonEditConflict, err)
-	}
-	e.cursor = positions[len(positions)-1]
-	e.clearSelections()
-	e.cursorCommand = origin.command
-	return nil
+	e.edits = []baselineEdit{{
+		start:       0,
+		end:         0,
+		targetStart: 0,
+		targetEnd:   0,
+		replacement: value,
+		sequence:    1,
+		editOrigin:  origin,
+	}}
+	e.lastOrigin = origin
 }
 
 func (e *editor) recordEdits(candidates []baselineEdit) error {
@@ -259,6 +185,9 @@ func (e *editor) recordEdits(candidates []baselineEdit) error {
 	additions := make([]baselineEdit, 0, len(candidates))
 	for _, candidate := range candidates {
 		if candidate.start == candidate.end && candidate.replacement == "" {
+			continue
+		}
+		if candidate.start != candidate.end && candidate.replacement == e.baseline[candidate.start:candidate.end] {
 			continue
 		}
 		for _, existing := range pending {
@@ -274,6 +203,7 @@ func (e *editor) recordEdits(candidates []baselineEdit) error {
 				description,
 			)
 		}
+		candidate.sequence = len(pending) + 1
 		pending = append(pending, candidate)
 		additions = append(additions, candidate)
 	}
@@ -281,7 +211,6 @@ func (e *editor) recordEdits(candidates []baselineEdit) error {
 	if len(additions) != 0 {
 		e.lastOrigin = additions[len(additions)-1].editOrigin
 	}
-
 	return nil
 }
 
@@ -290,10 +219,7 @@ func describeEditConflict(baseline string, first, second baselineEdit) (string, 
 	secondInsertion := second.start == second.end
 	switch {
 	case firstInsertion && secondInsertion:
-		if first.start != second.start {
-			return "", false
-		}
-		return fmt.Sprintf("baseline line %d receives multiple insertions at one position", baselineLine(baseline, first.start)), true
+		return "", false
 	case firstInsertion:
 		if first.start <= second.start || first.start >= second.end {
 			return "", false
@@ -345,7 +271,15 @@ func (e *editor) orderedEdits() []baselineEdit {
 		if order := cmp.Compare(first.start, second.start); order != 0 {
 			return order
 		}
-		return cmp.Compare(first.end, second.end)
+		firstInsertion := first.start == first.end
+		secondInsertion := second.start == second.end
+		if firstInsertion != secondInsertion {
+			if firstInsertion {
+				return -1
+			}
+			return 1
+		}
+		return cmp.Compare(first.sequence, second.sequence)
 	})
 	return edits
 }
@@ -355,7 +289,6 @@ func (e *editor) content() string {
 		return *e.finalContent
 	}
 	edits := e.orderedEdits()
-
 	var result strings.Builder
 	cursor := 0
 	for _, edit := range edits {
@@ -421,25 +354,6 @@ func lineTerminatorSuffix(text string) string {
 	}
 }
 
-func startsWithLineTerminator(text string) bool {
-	return strings.HasPrefix(text, "\r") || strings.HasPrefix(text, "\n")
-}
-
 func endsWithLineTerminator(text string) bool {
 	return lineTerminatorSuffix(text) != ""
-}
-
-func firstLineTerminator(text string) string {
-	for index := range len(text) {
-		switch text[index] {
-		case '\r':
-			if index+1 < len(text) && text[index+1] == '\n' {
-				return "\r\n"
-			}
-			return "\r"
-		case '\n':
-			return "\n"
-		}
-	}
-	return "\n"
 }

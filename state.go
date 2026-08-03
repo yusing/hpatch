@@ -8,13 +8,6 @@ import (
 	"unicode/utf8"
 )
 
-type boundaryAffinity uint8
-
-const (
-	boundaryBefore boundaryAffinity = iota
-	boundaryAfter
-)
-
 type renderedCoordinate struct {
 	line   int
 	column int
@@ -31,46 +24,30 @@ type renderedDocument struct {
 }
 
 type reportedEdit struct {
-	file        *fileState
-	operation   string
-	textMatches bool
-	spans       []renderedSpan
+	file          *fileState
+	operation     string
+	spans         []renderedSpan
+	previewOffset int
 }
 
 func (w *workspace) finalStateReport(changes []change) string {
 	var report strings.Builder
-	var activeSpans []renderedSpan
-	var activeDocument renderedDocument
 	if w.active == nil {
 		report.WriteString("no active file\n")
 	} else {
-		activeDocument = w.active.editor.renderedDocument()
-		activeSpans = w.active.editor.writeFinalState(&report, w.active.path, activeDocument)
+		fmt.Fprintf(&report, "in %s\n", escapeReportControls(w.active.path))
 	}
-	lastEdit := w.lastReportedEdit()
-	var lastEditDocument renderedDocument
-	if lastEdit != nil {
-		if lastEdit.file == w.active {
-			lastEditDocument = activeDocument
-		} else {
-			lastEditDocument = lastEdit.file.editor.renderedDocument()
-		}
-		projected := *lastEdit
-		projected.spans = lastEdit.file.editor.mapFinalSpans(lastEdit.spans)
-		lastEdit = &projected
-		lastEdit.writeSummary(&report, lastEditDocument)
+
+	last := w.lastReportedEdit()
+	if last == nil {
+		report.WriteString("last none\n")
+	} else {
+		last.writeSummary(&report)
 	}
 	w.writeFileSummary(&report, changes)
-
-	switch {
-	case w.active != nil && len(w.active.editor.selections) != 0:
-		writePreview(&report, activeDocument, activeSpans, len(activeSpans) > 1)
-	case lastEdit != nil:
-		writePreview(&report, lastEditDocument, lastEdit.spans, len(lastEdit.spans) > 1)
-	case w.active != nil:
-		writePreview(&report, activeDocument, activeSpans, false)
+	if w.active != nil {
+		w.writeActivePreview(&report, last)
 	}
-
 	return report.String()
 }
 
@@ -81,84 +58,40 @@ func (w *workspace) lastReportedEdit() *reportedEdit {
 	return w.reportedEdits[len(w.reportedEdits)-1]
 }
 
-func (e *editor) renderedDocument() renderedDocument {
-	content := e.content()
-	return renderedDocument{content: content, lines: renderedLines(content)}
-}
-
-func (e *editor) reportedEdit(origin editOrigin, textMatches bool) *reportedEdit {
-	spans := e.renderedEdits(origin.command)
+func (e *editor) reportedEdit(origin editOrigin) *reportedEdit {
+	var spans []renderedSpan
+	for _, edit := range e.edits {
+		if edit.command == origin.command {
+			spans = append(spans, renderedSpan{start: edit.targetStart, end: edit.targetEnd})
+		}
+	}
 	if len(spans) == 0 {
 		return nil
 	}
-	return &reportedEdit{operation: origin.operation, textMatches: textMatches, spans: spans}
-}
 
-func (e *editor) renderedEdits(command int) []renderedSpan {
-	var spans []renderedSpan
+	previewOffset := 0
 	renderedOffset := 0
 	baselineOffset := 0
 	for _, edit := range e.orderedEdits() {
 		renderedOffset += edit.start - baselineOffset
-		start := renderedOffset
+		if edit.command == origin.command {
+			previewOffset = renderedOffset
+			break
+		}
 		renderedOffset += len(edit.replacement)
 		baselineOffset = max(baselineOffset, edit.end)
-		if edit.command == command {
-			spans = append(spans, renderedSpan{start: start, end: renderedOffset})
-		}
 	}
-	return spans
+	return &reportedEdit{operation: origin.operation, spans: spans, previewOffset: previewOffset}
 }
 
-func (e *editor) writeFinalState(report *strings.Builder, path string, document renderedDocument) []renderedSpan {
-	if len(e.selections) != 0 {
-		spans := make([]renderedSpan, len(e.selections))
-		for index, selected := range e.selections {
-			spans[index] = renderedSpan{
-				start: e.mapFinalOffset(e.mapBaselineOffset(selected.start, boundaryAfter, 0)),
-				end:   e.mapFinalOffset(e.mapBaselineOffset(selected.end, boundaryBefore, 0)),
-			}
-		}
-		if len(spans) == 1 {
-			start := renderedCoordinateAt(document.content, document.lines, spans[0].start)
-			end := renderedCoordinateAt(document.content, document.lines, spans[0].end)
-			fmt.Fprintf(report, "in %s %d:%d-%d:%d\n", escapeReportControls(path), start.line, start.column, end.line, end.column)
-			return spans
-		}
-		fmt.Fprintf(report, "in %s %d selections: ", escapeReportControls(path), len(spans))
-		writeSpanLocations(report, document, spans)
-		return spans
-	}
-
-	affinity := boundaryBefore
-	if e.cursorCommand != 0 {
-		affinity = boundaryAfter
-	}
-	offset := e.mapBaselineOffset(e.cursor, affinity, e.cursorCommand)
-	offset = e.mapFinalOffset(offset)
-	position := renderedCoordinateAt(document.content, document.lines, offset)
-	fmt.Fprintf(report, "in %s %d:%d\n", escapeReportControls(path), position.line, position.column)
-	return []renderedSpan{{start: offset, end: offset}}
-}
-
-func (e *reportedEdit) writeSummary(report *strings.Builder, document renderedDocument) {
-	noun := "edit"
-	if len(e.spans) != 1 {
-		noun = "edits"
-	}
-	if e.textMatches {
-		noun = "tsel match"
-		if len(e.spans) != 1 {
-			noun = "tsel matches"
-		}
-	}
+func (e *reportedEdit) writeSummary(report *strings.Builder) {
+	document := renderedDocument{content: e.file.editor.baseline, lines: renderedLines(e.file.editor.baseline)}
 	fmt.Fprintf(
 		report,
-		"last edit in %s: %s %d %s: ",
-		escapeReportControls(e.file.path),
+		"last %s %s %d ranges ",
 		e.operation,
+		escapeReportControls(e.file.path),
 		len(e.spans),
-		noun,
 	)
 	writeSpanLocations(report, document, e.spans)
 }
@@ -171,154 +104,62 @@ func writeSpanLocations(report *strings.Builder, document renderedDocument, span
 		}
 		start := renderedCoordinateAt(document.content, document.lines, span.start)
 		end := renderedCoordinateAt(document.content, document.lines, span.end)
-		fmt.Fprintf(report, "%d:%d", start.line, start.column)
-		if start != end {
-			fmt.Fprintf(report, "-%d:%d", end.line, end.column)
-		}
+		fmt.Fprintf(report, "%d:%d-%d:%d", start.line, start.column, end.line, end.column)
 	}
 	if omitted := len(spans) - locationLimit; omitted > 0 {
-		fmt.Fprintf(report, ", … +%d", omitted)
+		fmt.Fprintf(report, " +%d more", omitted)
 	}
 	report.WriteByte('\n')
 }
 
-func writePreview(report *strings.Builder, document renderedDocument, spans []renderedSpan, separate bool) {
-	if !separate {
-		position := renderedCoordinateAt(document.content, document.lines, spans[0].start)
-		start := max(0, position.line-2)
-		if start+3 > len(document.lines) {
-			start = max(0, len(document.lines)-3)
-		}
-		for index := start; index < min(start+3, len(document.lines)); index++ {
-			writePreviewLine(report, document, index)
-		}
-		return
+func (w *workspace) writeActivePreview(report *strings.Builder, last *reportedEdit) {
+	document := renderedDocument{content: w.active.editor.content(), lines: previewLines(w.active.editor.content())}
+	line := 1
+	if last != nil && last.file == w.active && len(last.spans) != 0 {
+		offset := w.active.editor.finalOffsets.mapOffset(last.previewOffset)
+		line = renderedCoordinateAt(document.content, document.lines, offset).line
 	}
+	line = min(max(line, 1), len(document.lines))
+	start := max(0, line-2)
+	if start+3 > len(document.lines) {
+		start = max(0, len(document.lines)-3)
+	}
+	for index := start; index < min(start+3, len(document.lines)); index++ {
+		writePreviewLine(report, document, index)
+	}
+}
 
-	lastLine := -1
-	written := 0
-	for _, span := range spans {
-		line := renderedCoordinateAt(document.content, document.lines, span.start).line - 1
-		if line == lastLine {
-			continue
-		}
-		writePreviewLine(report, document, line)
-		lastLine = line
-		written++
-		if written == 3 {
-			return
-		}
+func previewLines(text string) []logicalLine {
+	if text == "" {
+		return []logicalLine{{}}
 	}
+	return logicalLines(text)
 }
 
 func writePreviewLine(report *strings.Builder, document renderedDocument, index int) {
 	line := document.lines[index]
 	content := lineContent(document.content, line)
-	writeHashLine(report, content, previewText(content))
+	writeHashLine(report, index+1, content, previewText(content))
 }
 
 func (w *workspace) writeFileSummary(report *strings.Builder, changes []change) {
-	if len(changes) == 0 {
-		report.WriteString("files: no changes\n")
-		return
-	}
-	if len(changes) == 1 && !w.shouldReportSingleFileAction(changes[0]) {
-		return
-	}
-
-	type actionCount struct {
-		count int
-		name  string
-	}
-	actions := []actionCount{
-		{name: "updated"},
-		{name: "moved"},
-		{name: "moved+updated"},
-		{name: "added"},
-		{name: "deleted"},
-	}
+	added, updated, moved, deleted := 0, 0, 0, 0
 	for _, change := range changes {
 		switch change.kind {
 		case changeAdd:
-			actions[3].count++
+			added++
 		case changeDelete:
-			actions[4].count++
+			deleted++
 		case changeUpdate:
-			moved := change.originalPath != change.path
-			updated := change.original != change.content
-			switch {
-			case moved && updated:
-				actions[2].count++
-			case moved:
-				actions[1].count++
-			case updated:
-				actions[0].count++
+			if change.originalPath != change.path {
+				moved++
+			}
+			if change.original != change.content {
+				updated++
 			}
 		}
 	}
-
-	report.WriteString("files: ")
-	written := 0
-	for _, action := range actions {
-		if action.count == 0 {
-			continue
-		}
-		if written != 0 {
-			report.WriteString(", ")
-		}
-		fmt.Fprintf(report, "%d %s", action.count, action.name)
-		written++
-	}
-	report.WriteByte('\n')
-}
-
-func (w *workspace) shouldReportSingleFileAction(change change) bool {
-	if change.kind != changeUpdate || change.originalPath != change.path {
-		return true
-	}
-	return w.active == nil || w.active.path != change.path
-}
-
-func (e *editor) mapFinalOffset(offset int) int {
-	return e.finalOffsets.mapOffset(offset)
-}
-
-func (e *editor) mapFinalSpans(spans []renderedSpan) []renderedSpan {
-	if e.finalOffsets == nil {
-		return spans
-	}
-	projected := make([]renderedSpan, len(spans))
-	for index, span := range spans {
-		projected[index] = renderedSpan{
-			start: e.mapFinalOffset(span.start),
-			end:   e.mapFinalOffset(span.end),
-		}
-	}
-	return projected
-}
-
-func (e *editor) mapBaselineOffset(offset int, affinity boundaryAffinity, targetCommand int) int {
-	renderedOffset := 0
-	baselineOffset := 0
-	for _, edit := range e.orderedEdits() {
-		if edit.start > offset {
-			break
-		}
-		renderedOffset += edit.start - baselineOffset
-
-		if targetCommand != 0 && edit.command == targetCommand && (edit.start == offset || edit.end == offset) {
-			return renderedOffset + len(edit.replacement)
-		}
-		if edit.start == offset && affinity == boundaryBefore {
-			return renderedOffset
-		}
-		renderedOffset += len(edit.replacement)
-		baselineOffset = edit.end
-		if edit.end > offset {
-			return renderedOffset
-		}
-	}
-	return renderedOffset + max(0, offset-baselineOffset)
+	fmt.Fprintf(report, "files add=%d update=%d move=%d delete=%d\n", added, updated, moved, deleted)
 }
 
 func renderedLines(text string) []logicalLine {
@@ -347,8 +188,6 @@ func previewText(text string) string {
 	return previewTextLimit(text, 64)
 }
 
-// previewTextLimit renders text on one output line, preserving tabs, escaping
-// other control characters, and truncating to limit code points.
 func previewTextLimit(text string, limit int) string {
 	var preview strings.Builder
 	count := 0

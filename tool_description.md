@@ -1,100 +1,76 @@
-HPATCH/1 edits workspace files atomically. Submit one complete grammar-constrained script; rejection or cancellation changes nothing.
-Do not call this tool in parallel with other tools.
+HPATCH/2 applies one complete target-bearing edit script atomically. Do not call this tool
+in parallel with other tools. Rejection or cancellation changes nothing.
 
-Use the smallest coherent batch whose selectors you independently verified from `hread` output or an
-hpatch report. Batch known independent edits when their selectors and placement are certain, but
-isolate uncertain or coordinate-dependent edits until their required result is available. Every
-submitted script remains atomic. When a later edit depends on content or paths introduced earlier in
-the same script, use `commit` to advance the immutable baseline only if its new selectors are already
-known; otherwise finish, inspect, and submit a separate script. After rejection, prefer the router's
-indexed correction operations over resending an unchanged complete script. Never reconstruct or guess
-a selector `HASH`.
+Read first with `hread`. Its rows are `LINE:HASH TEXT`; copy the complete `LINE:HASH`
+reference. The line selects one exact logical line and the hash rejects stale content.
+Never guess or reconstruct a row.
 
-Minimize the complete selector-plus-replacement output; a likely retry costs more than a few saved tokens:
-- tsel HASH "TEXT" [N] resolves HASH only when exactly one immutable-baseline logical line has it, then selects the first N separate exact matches from column 1 of that line through EOF. Matches may land on different lines. TEXT must stay on one line, need not fill it, and matching is not syntax-aware. If fewer than N matches exist at or after the resolved anchor, the command rejects and never searches before it.
-- rsel START_HASH END_HASH resolves both hashes uniquely, then selects the inclusive complete logical lines and their terminators. Use it when every selected line should be re-emitted.
-- Missing hashes, duplicate-content hashes, and truncated-hash collisions reject without guessing or repair context.
+Commands:
 
-Selection rules:
-- Start tsel TEXT at stable non-whitespace content and copy its HASH from hread.
-- Choose an anchor whose resolved line starts the intended search region. Do not use an earlier convenient hash when TEXT also occurs before the intended target.
-- Because tsel cannot target only a later same-line match, expand TEXT to distinguish the intended occurrence or replace the complete line.
-- Before using short TEXT that may also occur in prose, links, examples, or repeated code, verify all occurrences (for example with rg -nF) and include distinguishing text such as ## for a Markdown heading.
-- Use rsel for multiline regions. When only part of a boundary line changes, select the complete lines and reproduce the boundary content that should remain.
-- For insertion-only edits, type only the new content; never repeat unchanged selected text in the type payload. To insert before a selected fragment, copy the selection, replace it with only new content, then paste the preserved selection:
-
-```
-in handler.go
-tsel 3316 "func handle(request Request) error {"
-copy
-type <<PATCH
-// Audit requests before handling.
-PATCH
-paste
+```text
+in PATH
+new PATH
+mv PATH
+rm
+type TARGET VALUE
+type- TARGET VALUE
+type+ TARGET VALUE
+del TARGET
 ```
 
-- For every selector, use a hashline from the current baseline inspection. Earlier edits do not shift baseline identity before commit.
-- commit materializes edits as a new baseline; post-commit selectors address that new content. No report is available until the whole call finishes, so same-call selectors must use coordinates known before submission. If uncertain, end the call and inspect the resulting baseline before editing again.
-- A blank line immediately before PATCH is part of the literal replacement.
-- Use inline type when replacement text must not end with a newline.
+Targets:
 
-Whole-function example using complete logical lines:
-
+```text
+LINE:HASH                         complete logical line
+LINE:HASH..LINE:HASH              inclusive complete-line range
+LINE:HASH "TEXT" [N]              first N exact matches from that row through EOF
 ```
+
+`type` replaces. `type-` inserts before while preserving the target. `type+` inserts
+after while preserving it. `del` deletes. A text target defaults to one match; every
+requested non-overlapping match must exist or the script rejects.
+
+Use inline JSON-compatible strings for short or single-line values. Include `\n` when a
+before/after insertion must form a complete new line:
+
+```text
+in parser.go
+type- 37:8c2f "// parseCommand parses one physical script line.\n"
+```
+
+Use the fixed `<<PATCH` frame for multiline or escape-heavy values:
+
+```text
 in service.go
-rsel 2ff7 d10b
-type <<PATCH
+type 20:2ff7..28:d10b <<PATCH
 func calculateResult(input Input) (Result, error) {
 	return computeFreshResult(input), nil
 }
 PATCH
 ```
 
-One-line fragment example that preserves indentation and surrounding text:
+Create a file with at most one immediately following targetless initializer:
 
-```
-in artifact.go
-tsel 6403 "saveArtifactPayload(path, b)"
-type "saveArtifactPayloadAtomically(path, b)"
-```
-
-Precision example after verifying the complete line is "return ready || ready":
-
-```
-in predicate.go
-tsel 9645 "return ready || ready"
-type "return ready || cached"
+```text
+new internal/target.go
+type <<PATCH
+package internal
+PATCH
 ```
 
-Commands:
-- in PATH selects an existing UTF-8 file; new PATH selects a pending empty file.
-- mv DESTINATION moves the active file; rm removes it.
-- type "TEXT" replaces selections or inserts at the cursor. type <<PATCH supplies literal multiline text.
-- del deletes selections; copy preserves and stores them; cut stores and deletes them; paste inserts the clipboard after selections or at the cursor.
-- Prefer cut plus paste to move a selection: cut combines copy and deletion in one command, and the script does not re-emit the selected text. For linewise section moves, include separator blank lines deliberately so the pasted heading does not join the preceding paragraph.
-- paste inserts immediately after the selected span or at the cursor; it has no syntax or section awareness. Selecting a heading inserts before that heading's existing body, not after the section.
-- commit advances all live files to a new immutable baseline without writing the workspace. Use it only when later commands must select text introduced or changed earlier in the same call, or must reuse a path after mv or rm; otherwise omit it.
+Every existing file has one immutable baseline for the complete invocation. Pending edits
+do not shift later targets. Batch disjoint edits that use the inspected baselines. Content
+introduced by a mutation is not targetable in the same call; apply, reread, and use a
+later invocation for dependent edits.
 
-Move-and-adjust example that does not re-emit the moved body; commit makes the pasted text selectable for the narrow follow-up edit:
+Line and range replacement preserve the target's final LF, CRLF, or CR when the value
+omits a terminator. Explicit terminators are authoritative. `type-` and `type+` insert
+byte-exact values and do not synthesize newlines.
 
-```
-in source.go
-rsel ffb0 4b7b
-cut
-in destination.go
-rsel 12d9 12d9
-paste
-commit
-tsel ffb0 "sourceRegistry"
-type "destinationRegistry"
-```
+Overlapping replacements/deletions and insertions strictly inside them reject. Boundary
+insertions are valid. Multiple insertions at the same boundary render in script order.
 
-State and safety:
-- The first in captures an immutable file baseline. Hashline selectors resolve exactly one baseline logical line; missing and ambiguous hashes reject without guessing. All selectors in that generation use it; inserted text is not selectable.
-- Returning with in resets cursor and selections but keeps pending edits. The clipboard survives file changes and commit.
-- Disjoint edits may finalize together. Overlapping replacements, insertion inside a replacement, and multiple insertions at one offset reject atomically.
-- Changed `.go` files are parsed and formatted with Go's standard library before finalization; other languages receive no language validation.
-- Paths are workspace-relative and must remain inside the one routed root. Parents for new or moved files must already exist.
-- A failed or corrected call is retried against the unchanged baseline.
-
-After success, trust the reported edited ranges and hash-only preview rows; do not reread the file solely to verify placement.
+Changed Go files are parsed and formatted before success; do not run redundant `gofmt`.
+Paths remain within the routed workspace root, and parents for `new` or `mv` must exist.
+After rejection, use the router's indexed correction only when the rows still belong to
+the same baseline; reread stale rows instead of guessing.

@@ -2,33 +2,32 @@ package hpatch
 
 import "errors"
 
-type textSpanVariant uint8
+type targetVariant uint8
 
 const (
-	textSpanNone textSpanVariant = iota
-	textSpanSingle
-	textSpanMultiple
+	targetVariantNone targetVariant = iota
+	targetVariantLine
+	targetVariantRange
+	targetVariantTextSingle
+	targetVariantTextMultiple
 )
+
+const targetVariantCount = 4
+
+var targetVariantNames = [targetVariantCount]string{"line", "range", "text-single", "text-multiple"}
 
 type commandAttempt struct {
 	recognized bool
-	textSpan   textSpanVariant
+	target     targetVariant
 }
-
-const textSpanVariantCount = 2
 
 type invocationMetrics struct {
-	Commands  commandMetrics                      `json:"commands"`
-	TextSpans [textSpanVariantCount]commandMetric `json:"text_spans"`
-	Reasons   [failureReasonCount]uint64          `json:"reasons"`
-	// CommandReasons attributes each error to the command that raised it. The
-	// flat Reasons histogram cannot answer which primitive a reason belongs
-	// to, which is the question that decides whether a command earns its
-	// place in the language.
+	Commands commandMetrics                    `json:"commands"`
+	Targets  [targetVariantCount]commandMetric `json:"targets"`
+	Reasons  [failureReasonCount]uint64        `json:"reasons"`
+	// CommandReasons attributes each error to the command that raised it.
 	CommandReasons [commandCount][failureReasonCount]uint64 `json:"command_reasons"`
 }
-
-var textSpanVariantNames = [textSpanVariantCount]string{"single", "multiple"}
 
 func (m *invocationMetrics) invoke(operation string, attempt commandAttempt) {
 	index := commandOperationIndex(operation)
@@ -36,8 +35,8 @@ func (m *invocationMetrics) invoke(operation string, attempt commandAttempt) {
 		return
 	}
 	m.Commands[index].Invocations++
-	if operation == "tsel" && attempt.textSpan != textSpanNone {
-		m.TextSpans[attempt.textSpan-1].Invocations++
+	if attempt.target != targetVariantNone {
+		m.Targets[attempt.target-1].Invocations++
 	}
 }
 
@@ -47,8 +46,8 @@ func (m *invocationMetrics) fail(operation string, attempt commandAttempt, reaso
 		return
 	}
 	m.Commands[index].Errors++
-	if operation == "tsel" && attempt.textSpan != textSpanNone {
-		m.TextSpans[attempt.textSpan-1].Errors++
+	if attempt.target != targetVariantNone {
+		m.Targets[attempt.target-1].Errors++
 	}
 	m.Reasons[reason]++
 	m.CommandReasons[index][reason]++
@@ -66,34 +65,40 @@ type failureReason uint8
 
 const (
 	reasonSyntax failureReason = iota
-	reasonCoordinateBounds
+	reasonRowMissing
+	reasonRowStale
 	reasonOccurrenceMissing
 	reasonInvalidCount
-	reasonOrderOrOverlap
+	reasonTargetOrder
 	reasonEditConflict
 	reasonActiveFile
-	reasonSelectionRequired
-	reasonClipboardEmpty
-	reasonFileMissing
-	reasonFileConflict
-	reasonPath
+	reasonInitialization
+	reasonFilePath
+	reasonLanguageSyntax
 	reasonOther
 	failureReasonCount
 )
 
+// Existing filesystem owners classify their more specific failures into the
+// HPATCH/2 file-path aggregate without duplicating persisted reason families.
+const (
+	reasonFileMissing  = reasonFilePath
+	reasonFileConflict = reasonFilePath
+	reasonPath         = reasonFilePath
+)
+
 var failureReasonNames = [failureReasonCount]string{
-	"syntax",
-	"coordinate-bounds",
+	"script-syntax",
+	"row-missing",
+	"row-stale",
 	"occurrence-missing",
 	"invalid-count",
-	"order-or-overlap",
+	"target-order",
 	"edit-conflict",
 	"active-file",
-	"selection-required",
-	"clipboard-empty",
-	"file-missing",
-	"file-conflict",
-	"path",
+	"initialization",
+	"file-path",
+	"language-syntax",
 	"other",
 }
 

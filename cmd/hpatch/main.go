@@ -19,150 +19,139 @@ const helpTextBase = `Usage:
   hpatch --tool-help
   hpatch --version
 
-Input and output:
-  hpatch reads the complete editing script from standard input, validates and
-  evaluates every command in memory, stages all changes, and only then commits.
-  Normal-mode success writes the final active-file state report to stderr. translate
-  never modifies files, writes one OpenAI apply_patch envelope to stdout, and then
-  writes the pending final-state report to stderr. Failures use stderr and nonzero status.
+HPATCH/2:
+  hpatch reads one complete script from standard input, evaluates every command
+  against immutable invocation baselines, stages the complete change set, and
+  commits only after all parsing, target verification, conflict checks, and
+  language validation succeed. Rejection or cancellation changes nothing.
 
-Script framing:
-  Outside a type heredoc, every nonblank physical line is one command and a literal
-  newline ends that inline command. type <<TAG consumes literal following lines until
-  an exact unindented closing TAG. TAG is 1-64 ASCII letters, digits, underscores,
-  dots, or hyphens; matching quotes may wrap it in the header and are omitted from
-  the closing line.
+  translate performs the same evaluation without modifying files. It writes one
+  OpenAI apply_patch envelope to stdout and the pending final-state report to
+  stderr. Normal mode leaves stdout empty and writes the report after commit.
+
+Commands:
+  in PATH
+  new PATH
+  mv PATH
+  rm
+  type TARGET VALUE
+  type- TARGET VALUE
+  type+ TARGET VALUE
+  del TARGET
+  type VALUE
+
+Targets:
+  LINE:HASH                         complete logical line
+  LINE:HASH..LINE:HASH              inclusive complete-line range
+  LINE:HASH "TEXT" [COUNT]          anchored exact literal occurrence(s)
+
+  Copy complete LINE:HASH references from hread output. LINE is a positive
+  one-based logical line and HASH is exactly four lowercase hexadecimal digits
+  over that line's exact content, including indentation. The line number chooses
+  the line; the hash rejects stale content. Hpatch never searches for a nearby
+  hash or substitutes another matching line.
+
+  A text target verifies its anchor row, then finds the first COUNT non-overlapping
+  exact matches from that row's column 1 through EOF. COUNT defaults to one.
+  TEXT must be nonempty and remain within one logical line. Every requested match
+  must exist.
+
+Mutations:
+  type replaces every target span. type- inserts immediately before every span.
+  type+ inserts immediately after every span. del deletes every span. Before and
+  after insertion preserve the target and never synthesize a newline; include \n
+  when the inserted value must form a complete line.
+
+  Complete-line and range replacement preserve the target's final LF, CRLF, or
+  standalone CR when VALUE omits a terminator. An explicit terminator is
+  authoritative. Deletion removes owned terminators.
+
+Values and framing:
+  Use an inline JSON-compatible quoted string for short or single-line values.
+  Inline strings also accept literal horizontal tabs. Escape quotes, backslashes,
+  line terminators, NUL, and other controls.
+
+  Use only the fixed <<PATCH frame for multiline or escape-heavy values:
+
+    type 20:2ff7..28:d10b <<PATCH
+    replacement
+    text
+    PATCH
+
+  The unindented closing line must be exactly PATCH. There is no interpolation,
+  dedent, escaping, or alternate delimiter. A physical body line equal to PATCH
+  must instead be represented by an inline escaped value.
+
+Baselines and conflict safety:
+  Read first with hread. Every existing file has one immutable baseline for the
+  complete invocation. Pending edits do not move later targets, and introduced
+  content is not targetable in that call. Batch disjoint edits based only on the
+  inspected baselines. For a dependent edit, apply the prerequisite, reread, and
+  submit a later invocation with fresh references.
+
+  Replacements and deletions may not overlap. An insertion strictly inside either
+  one conflicts. Insertions at a destructive span boundary are valid. Multiple
+  insertions at the same baseline boundary render in script order. A multi-match
+  mutation is all-or-nothing.
+
+File lifecycle:
+  in selects an existing regular UTF-8 file. Returning to a touched file reuses
+  its baseline and pending edits. new selects a pending empty file; its immediately
+  following nonblank command may be one targetless type VALUE initializer. Any
+  intervening command closes that opportunity. New-file content cannot be targeted
+  until a successful invocation and fresh read.
+
+  mv moves the active logical file and preserves its baseline and pending edits.
+  rm deletes the active file and clears the active file. Removing an existing file
+  after a content mutation is a conflict. Parents for new and mv must already
+  exist; hpatch does not create directories.
 
 Agent workflow:
-  1. Inspect the relevant source before constructing selectors.
-  2. Copy selector hashes from hash-only hread or hpatch rows; never guess them.
-  3. Build selectors against each existing file's immutable baseline.
-  4. Send one complete editing script directly as functions.hpatch's free-form
-     input. Invoke hpatch once per attempt; do not encode, shell-wrap, or route it
-     through functions.exec, apply_patch, or hpatch translate.
-  5. If functions.hpatch rejects the script, no staged edits were committed.
-     A rejection may print hash-only baseline context when a selector or existing
-     editor state resolves uniquely. Missing or ambiguous hashes print no context.
-     Correct from that context and resubmit the complete script against the unchanged
-     file state.
-  6. After success, run focused behavioral validation. For Go source changes, run
-     gofmt before tests so structural errors are reported immediately. Success means
-     every selector resolved, not that it resolved where you intended: a selector
-     matching an existing but unintended span commits and reports success. Treat the
-     final-state report and a parser or formatter as the check on placement.
-
-Editing commands:
-  in PATH                             select or reselect an existing file baseline
-  new PATH                            select a pending empty file at cursor 0:0
-  mv PATH                             move the active pending file without changing its baseline
-  rm                                  remove the active file and clear editor state
-  tsel HASH "TEXT" [N]               select the first N separate matches at or after HASH
-  rsel START_HASH END_HASH            select inclusive complete logical lines
-  type "TEXT"                         record replacement or insertion at baseline coordinates
-  type <<TAG                          record literal multiline replacement or insertion text
-  del                                 record deletion of the selection
-  copy                                store the baseline selection in the script clipboard
-  cut                                 store and delete the baseline selection
-  paste                               insert clipboard text after the selection or at the cursor
-  commit                              advance to the next immutable in-memory baseline
-
-Baseline editor state:
-  The first in for an existing file captures an immutable baseline. Each selector
-  hash must identify exactly one complete logical line in that baseline; missing,
-  duplicate-content, and truncated-hash collision cases reject without guessing.
-  Every selector for that file resolves against the same baseline regardless of prior
-  edits or command order. Returning with in resets the baseline cursor to 0:0 and
-  clears the selection but retains recorded edits. mv preserves baseline identity.
-  Text introduced by an earlier command is not selectable before commit. A selector
-  that overlaps baseline content already replaced or deleted is rejected.
-
-  Cursors and selection sets are baseline positions. A selector replaces the prior
-  state. tsel may establish separate matches; type, del, cut, and paste apply to every
-  active match atomically. After a multi-selection edit, one cursor remains at the final
-  match in file order. copy stores the shared literal once and preserves the selection
-  set. At a cursor, editing retains the existing single-position behavior.
-
-  Disjoint baseline edits are applied together after complete validation. Replacements
-  or deletions that overlap, insertions inside a replaced span, and multiple insertions
-  at one baseline position are conflicts and reject the complete script. An insertion
-  exactly at a replacement boundary is unambiguous and permitted. The script-local
-  clipboard survives file changes, may be pasted repeatedly, and is discarded after the
-  script succeeds or rejects. Pasted text remains introduced text and is not selectable.
-  A new file has an
-  empty baseline and accepts at most one effective type write. rm rejects an existing
-  baseline file that already has content edits.
-
-  commit validates and materializes all pending files and edits as the next immutable
-  in-memory baseline. It never mutates the filesystem or emits an intermediate patch or
-  report. Pending edits are cleared, a surviving active file resets to cursor 0:0, and
-  the clipboard survives. Selectors later in the same script must use coordinates known
-  before submission; split the work into another call if those coordinates are uncertain.
-  Script end finalizes pending edits without that cursor reset.
-
-  ` + "`tsel`" + ` starts at column 1 of the uniquely resolved HASH line and scans
-  forward through EOF. Its optional count defaults to one and must be positive. It
-  establishes separate exact matches, resuming search after each match's final
-  character; all requested matches must exist at or after the anchor. It never
-  searches earlier baseline content. Prefer a broader TEXT instead of occurrence
-  arithmetic. tsel cannot target only a later same-line match; expand TEXT or replace
-  the complete line instead.
-
-  ` + "`rsel`" + ` resolves START_HASH and END_HASH uniquely and owns the selected
-  complete logical lines and their terminators.
-  When type replaces a terminated linewise
-  selection and TEXT has no final terminator, hpatch preserves the selected final
-  LF, CRLF, or CR. An explicit final terminator is authoritative; an unterminated
-  selected final line stays unterminated. del and cut still remove complete selected
-  lines. A linewise paste preserves copied bytes and adds only missing destination
-  boundary terminators, using the destination file's line-ending style.
-
-  Inline TEXT uses JSON-compatible quoted strings and additionally accepts literal
-  horizontal tabs. Escape quotes, backslashes, line terminators, NUL, and other C0
-  controls. Inline type may encode line terminators; tsel may not. For multiline type
-  text, use type <<TAG with an exact unindented closing TAG instead of placing physical
-  newlines inside a quoted operand. A tag may be short or lowercase, and matching single
-  or double quotes around the header tag are not part of the closing line.
+  1. Use hread for the first relevant read and copy complete LINE:HASH rows.
+  2. Put a line, range, or anchored literal target directly in each mutation.
+  3. Use type to replace, type- to insert before, type+ to insert after, and del
+     to delete. HPATCH/1 selection, clipboard, and script commit commands are invalid.
+  4. Batch only disjoint edits whose inspected immutable-baseline placement is known.
+  5. Split dependent edits into apply, reread, and fresh-reference layers.
+  6. Prefer inline single-line values; reserve <<PATCH for multiline or escape-heavy text.
+  7. After rejection, use a router indexed correction only while the referenced
+     rows still belong to the same baseline. Reread stale rows instead of guessing.
+  8. Changed Go files are parsed and formatted with Go's standard library before
+     success. Do not run redundant gofmt. Other languages receive no validation.
 
 Final-state report:
-  A successful report starts with the active path and rendered cursor or selection.
-  These positional headers retain numeric line and column coordinates. Multiple
-  selections report their count and first three individual ranges. The last effective
-  content edit reports its path, operation, count, and first three rendered ranges.
-  Net file actions appear for lifecycle, multi-file, non-active-file, and normal no-op
-  outcomes. Preview and repair-context rows use only ` + "`HHHH: TEXT`" + `, never a
-  numeric line prefix. Each preview contains at most 64 Unicode code points and
-  escapes controls so it remains on one output line. Use the report to orient focused
-  validation without rereading a successfully edited file.
+  Success reports the active final path or "no active file", the last effective
+  mutation and at most three immutable-baseline Unicode ranges, net add/update/
+  move/delete counts, and at most three final preview rows as LINE:HASH TEXT.
+  Preview content is bounded and controls are escaped. The report describes only
+  the completed invocation and carries no target or editor state into a later call.
+
+Failures and repair:
+  Failures use stderr, nonzero status, and no patch or final-state report. Script
+  diagnostics identify command index, source line, operation, path when known,
+  category, and stable reason. Stale rows show verified current rows; incomplete
+  literal targets show anchor context; conflicts identify the prior mutation.
+  Missing rows do not guess. A malformed heredoc is one header-owned failure.
 
 Metrics:
-  hpatch gain reads no script and reports caller-accounted hpatch and apply_patch
-  output-token estimates separately from input-token estimates. Stable tables retain
-  evaluator-owned command errors, absolute selectors, single and multiple
-  tsel selection counts, and terminal failure reasons.
+  hpatch gain reads no script and reports separate output-token estimates, input
+  overhead, command counters for in/new/mv/rm/type/type-/type+/del, target counters
+  for line/range/text-single/text-multiple, and stable failure reasons. Gain does
+  not inspect or change the workspace.
 
 Hooks:
-  Agent-correctable script evaluation failures run each command template in
-  <user-config-directory>/hpatch/settings.json under hooks.error. Templates receive
-  the failed command's number, source line, operation, category, path, input, failure,
-  diagnostic, repair context, and a Markdown Body. Router-owned attempts also expose
-  SessionID, CorrelationID, CallID, Attempt, Correction, and Outcome.
+  Agent-correctable evaluation failures run commands configured under hooks.error
+  in <user-config-directory>/hpatch/settings.json. Router attempts also run
+  hooks.outcome. Templates receive structured command, diagnostic, repair, attempt,
+  and outcome data; format_markdown renders the Markdown body and shellquote quotes
+  shell data. Hook failures are warnings and do not replace the hpatch result.
 
-  Router-owned attempts run hooks.outcome after rejection or success. Outcome is
-  rejected, succeeded, or corrected; correlation IDs remain stable across a correction
-  chain while call IDs identify individual attempts. The format_markdown function
-  returns the event's Markdown Body, and shellquote safely quotes a string for the
-  shell. Hook failures are warnings and never replace the hpatch result. Each hook
-  group shares one 10-second execution deadline.
-
-Paths and patch boundary:
-  --root selects the trusted workspace boundary and defaults to hpatch's current
-  directory. --cwd selects an existing directory within that root and defaults to
-  ".". Relative script paths resolve from cwd. Absolute script paths must use root's
-  canonical spelling and stay within it. Paths that escape root, including through
-  symlinks, are rejected.
-  Normal edits stay within root, and translate always emits root-relative paths.
-  Apply translated output from the same root. Keep translated stdout patch-only and
-  internal.
+Workspace boundary:
+  --root selects the trusted workspace and defaults to the current directory.
+  --cwd selects an existing directory beneath root and defaults to ".". Relative
+  script paths resolve from cwd. Absolute paths must use root's canonical spelling
+  and remain beneath it. Lexical and symlink escapes reject. Translation always
+  emits root-relative paths.
 `
 
 func toolHelpText() string {
@@ -172,14 +161,10 @@ func toolHelpText() string {
 const translateHelpText = `Usage:
   hpatch translate [--root ROOT] [--cwd CWD] < SCRIPT
 
-Read and evaluate a complete editing script from standard input without modifying
-files, then write one OpenAI apply_patch envelope to stdout and the pending final-state
+Read and evaluate a complete HPATCH/2 script from standard input without modifying
+files. Write one OpenAI apply_patch envelope to stdout and the pending final-state
 report to stderr. Successful stdout is patch-only; failures use stderr and nonzero
-status.
-
-Attach SCRIPT through the execution interface's native non-PTY stdin field. Do not
-use Python, printf, an encoding helper, a shell pipeline, or any wrapper around
-hpatch translate. Run hpatch --help for the complete editing and agent workflow.
+status. Run hpatch --help for editing, target, safety, and workflow guidance.
 `
 
 func main() {

@@ -2,96 +2,90 @@
 
 ## Problem
 
-Agents currently describe small edits with line-oriented diffs, repeating unchanged
-context and existing text. That is token-heavy and makes repeated or duplicated edits
-awkward compared with selecting text in an editor and acting on the selection. Numeric
-line references can also drift after another edit, causing a syntactically valid selector
-to target different content.
+Agents describe edits with line-oriented diffs that repeat old content and unchanged
+context. HPATCH/1 reduces that repetition, but its separate selector, cursor, clipboard,
+and generation state makes simple mutations multi-command programs. A failed selector or
+state precondition discards the complete atomic script and can consume more output and
+model turns than the successful encoding saves.
 
 ## Outcome
 
-Provide a small command-line tool that reads a compact, selection-oriented edit script
-from standard input. The same script can update, create, move, or remove files, or
-translate those changes into OpenAI `apply_patch` format. A router-exposed read tool emits
-stable hashline references for constructing selectors. Include measured GPT-5 token
-comparisons, a concise instruction sheet suitable for agents, and a reproducible
-historical-commit benchmark that measures hpatch against the native edit path by
-executable correctness.
+Provide an atomic edit tool whose mutation commands carry compact, verified targets.
+The agent emits replacement or inserted content once; hpatch resolves the target against
+an immutable invocation baseline and constructs the ordinary `apply_patch` representation
+internally. A routed reader emits copyable line-and-content references that disambiguate
+repeated lines and detect stale inspection without requiring old regions to be re-emitted.
+
+The historical benchmark remains the end-to-end authority: correctness must match the
+native edit path, output tokens must be lower, and input, reasoning, request count, and
+wall time must remain close to control.
 
 ## First-draft scope
 
-- Multiple UTF-8 files selected in sequence by `in PATH` or created by `new PATH`.
-- Forward literal-match selection sets and inclusive whole-line range selection.
-- Cursor insertion and atomic selection-set replacement, deletion, and invocation-local
-  clipboard copy, cut, and paste.
+- Multiple UTF-8 files opened in sequence by `in PATH` or created by `new PATH`.
+- Mutation-owned complete-line, inclusive line-range, and anchored literal targets.
+- Replacement, insertion immediately before or after a target, and deletion without a
+  separate selection, cursor, or clipboard protocol.
+- Optional positive multiplicity for repeated anchored literal mutations.
 - File creation, movement, and deletion.
-- Immutable per-generation baselines with hash-only line identities, disjoint edit
-  collection within a generation, rejection instead of guessing when identity is missing
-  or ambiguous, and an explicit `commit` barrier that advances the in-memory baseline.
-- Normal mode that validates and stages the complete change set before committing it.
-- Translate mode that does not modify files and emits one `apply_patch` envelope.
-- Historical-commit benchmark tasks that prove an evaluator fails on the parent revision,
-  passes on the oracle revision, then run paired randomized Codex attempts against
-  history-free snapshots with hidden graders and structured artifacts.
-- A router pass-through control that shares the hpatch router's provider and usage path
-  without rewriting the model's edit tool.
-
-- Automated scenarios comparing hpatch scripts with equivalent handwritten
-  `apply_patch` inputs using the tokenizer returned for the OpenAI `gpt-5` model.
+- One immutable baseline per touched existing file for the complete script; overlapping
+  mutations reject instead of rebasing or guessing.
+- Normal mode that validates and stages the complete change set before filesystem commit.
+- Translate mode that does not modify files and emits one OpenAI `apply_patch` envelope.
+- Compact indexed corrections of rejected scripts without resending unaffected commands.
+- Persistent encoding, diagnostic, command, target, and end-to-end benchmark metrics.
+- Historical-commit benchmark tasks with hidden graders, paired randomized attempts, and
+  structured artifacts.
 
 ## Public surface
 
-- `hpatch`: normal mode; read the script from standard input and edit files.
-- `hpatch translate`: read the script from standard input and emit `apply_patch` text.
-- `hpatch gain`: report persistent comparative token estimates.
-- `hpatch-bench validate --manifest TASK.json`: prove the task's base/oracle grader
-  discrimination before model execution.
-- `hpatch-bench run`: validate and run paired control/hpatch attempts through separately
-  labeled router endpoints, writing JSONL results and diagnostic artifacts.
-- `hpatch-router --mode hpatch|passthrough`: select edit-tool rewriting or the unchanged
-  control path; hpatch mode exposes the `hread` hashline reader beside the editor, while
-  omitted mode retains hpatch behavior.
-
+- `hpatch`: evaluate one complete script and atomically update the workspace.
+- `hpatch translate`: evaluate the same script and emit its `apply_patch` representation.
+- `hpatch gain`: report persistent edit-encoding and failure metrics.
+- `hpatch-router --mode hpatch|passthrough`: expose the routed hpatch/hread treatment or
+  unchanged control path.
+- `hpatch-bench validate --manifest TASK.json` and `hpatch-bench run`: validate and run
+  paired historical-commit evaluations.
 - `hpatch --help`, `hpatch --tool-help`, `hpatch translate --help`, and
-  `hpatch --version`: informational output without reading stdin or accessing the
-  workspace.
-- Script commands: `in`, `new`, `mv`, `rm`, `tsel`, `rsel`, `type`,
-  `del`, `copy`, `cut`, `paste`, and `commit`; `type` also accepts a framed heredoc body.
-- Routed rejected-script corrections can replace, accept displayed safe corrections for,
-  delete, or insert commands by command index without resending the complete script.
+  `hpatch --version`: informational output.
+- Script commands: `in`, `new`, `mv`, `rm`, `type`, `type-`, `type+`, and `del`.
+- `type` replaces its explicit target; `type-` and `type+` insert before and after their
+  explicit target while preserving it; `del` deletes its explicit target.
+- Immediately after `new`, targetless `type` may initialize the empty file once.
+- A target is a copyable hread row, an inclusive pair of rows, or a row-anchored literal
+  with optional multiplicity, as specified by `REQ-SCRIPT-001`.
 
 ## Non-goals
 
-- Interactive editor UI, undo history, file discovery, configuration, or plugins.
-- Binary or non-UTF-8 files.
-- A new diff or patch interchange format beyond the command script and translated
+- Compatibility aliases or legacy support for `tsel`, `rsel`, `copy`, `cut`, `paste`, or
+  script-level `commit`.
+- A persistent selection, cursor, clipboard, mutable shadow buffer, undo history, or
+  resume protocol.
+- Content movement without re-emitting the moved content; `mv` moves complete files only.
+- Selecting content introduced earlier in the same script. Dependent edits use a later
+  inspected invocation.
+- Interactive editor UI, file discovery, plugins, binary files, or non-UTF-8 files.
+- A new patch interchange format beyond the compact command script and translated
   `apply_patch` output.
-- Compatibility aliases for commands or invocation modes.
-- Remote repository cloning, benchmark dataset discovery, hosted orchestration, parallel
-  model execution, exact-reference-patch grading, or automatic cost conversion.
-
-- Implicit selector rebasing after every edit; only explicit `commit` advances a baseline.
-- Verbose object-per-command encoding on the agent-facing edit path.
+- AST-specific mutation commands or language-specific editing frameworks.
+- Remote dataset discovery, hosted benchmark orchestration, exact-reference-patch grading,
+  or automatic cost conversion.
 
 ## Constraints
 
-- Lines, columns, and inclusive endpoints are one-based.
-- A hashline is `HHHH: TEXT`; `HHHH` is the first two SHA-256 bytes of logical-line
-  content after removing leading spaces and tabs, excluding its terminator, rendered as
-  lowercase hexadecimal.
-
-- Columns count Unicode code points; a tab counts as one code point.
-- Inline string operands use compact JSON-compatible quoting that also accepts literal tabs;
-  multiline `type` content uses an explicit heredoc frame.
-- Parsing, validation, and in-memory evaluation failures must not modify files or emit
-  a partial patch.
-- Normal-mode success writes only the final-state report to stderr. Translate-mode
-  success writes only the patch to stdout and the pending final-state report to stderr.
-- A benchmark manifest names a local source repository, a base and oracle commit, a prompt,
-  hidden files, grader commands, allowed path prefixes, and finite agent/grader timeouts.
-- The agent receives neither source history nor hidden graders. Correctness is determined
-  after execution from required graders and scope checks, not reference-patch similarity.
-- Control and treatment use distinct router endpoints that report `passthrough` and
-  `hpatch` mode respectively.
-
-- Diagnostics go to standard error with a nonzero exit status.
+- The HPATCH/2 grammar replaces HPATCH/1; compatibility is not required.
+- A routed row reference combines a positive one-based logical line with a lowercase
+  four-digit content hash. The line disambiguates repeated content; the hash verifies the
+  complete logical-line bytes, including indentation and excluding its terminator.
+- A target must resolve against the active file's immutable invocation baseline. Missing,
+  stale, reversed, incomplete, and overlapping targets reject the complete script.
+- Inline strings use compact JSON-compatible quoting with literal horizontal tabs;
+  multiline values use the grammar-constrained `<<PATCH` frame.
+- Parsing, target resolution, validation, and in-memory evaluation failures must not
+  modify files or emit a partial patch or successful final-state report.
+- Normal success writes the final-state report to stderr. Translate success writes the
+  patch to stdout and the pending final-state report to stderr.
+- Changed Go files are parsed and formatted with Go's standard library before success.
+- Correctness is determined by required graders and path-scope checks, not reference-patch
+  similarity. End-to-end Responses usage is authoritative for task-level token results.
+- Diagnostics use stderr and a nonzero exit status for standalone CLI failures.

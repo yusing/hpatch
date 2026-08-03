@@ -16,7 +16,7 @@ import (
 func TestCalculateHPatchMetricRecordUsesExactCallerPayloads(t *testing.T) {
 	patch := "*** Begin Patch\n*** Update File: /workspace/calc.go\n@@\n-old\n+new\n*** End Patch\n"
 	inputs := hpatchMetricInputs{
-		emittedScript:      "2: rsel 9645 4b7b\n",
+		emittedScript:      "2: type 12:9645..18:4b7b \"replacement\"\n",
 		report:             "in calc.go 2:9\n9645: return new\n",
 		patch:              patch,
 		sessionID:          "session",
@@ -66,7 +66,7 @@ func TestCalculateHPatchMetricRecordUsesExactCallerPayloads(t *testing.T) {
 
 func TestCalculateHPatchMetricRecordUsesEmptyFailureBaseline(t *testing.T) {
 	inputs := hpatchMetricInputs{
-		emittedScript: "2: rsel 9645 4b7b\n",
+		emittedScript: "2: type 12:9645..18:4b7b \"replacement\"\n",
 		diagnostic:    "hpatch: command 2 rejected\nrepair context\n" + hpatchCorrectionHint,
 	}
 	record, err := calculateHPatchMetricRecord(inputs)

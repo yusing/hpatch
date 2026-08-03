@@ -27,7 +27,7 @@ Work through these requests in order:
 func status() string {
 	return "new"
 }
-The replacement must have exactly one trailing newline and no blank line after the closing brace. Do not use copy, cut, or paste.
+The replacement must have exactly one trailing newline and no blank line after the closing brace. Use a range target directly in type.
 
 2. In anchor.go, change only return saveArtifactPayload(path, b) to return saveArtifactPayloadAtomically(path, b). Preserve its existing indentation exactly; do not put the indentation in a content anchor.
 
@@ -131,9 +131,9 @@ func TestCodexHPatchGrammarE2E(t *testing.T) {
 
 	scripts := strings.Join(recorder.snapshot(), "\n---CALL---\n")
 	for name, pattern := range map[string]string{
-		"whole-line selector":     `(?s)in whole\.go.*?rsel [0-9a-f]{4} [0-9a-f]{4}.*?type <<PATCH`,
-		"content selector":        `(?m)tsel [0-9a-f]{4} "return saveArtifactPayload\(path, b\)"`,
-		"partial multiline edit":  `(?s)in partial\.go.*?rsel [0-9a-f]{4} [0-9a-f]{4}.*?type`,
+		"whole-line target":       `(?s)in whole\.go.*?type [1-9][0-9]*:[0-9a-f]{4}\.\.[1-9][0-9]*:[0-9a-f]{4} <<PATCH`,
+		"content target":          `(?m)type [1-9][0-9]*:[0-9a-f]{4} "return saveArtifactPayload\(path, b\)" "return saveArtifactPayloadAtomically\(path, b\)"`,
+		"partial multiline edit":  `(?s)in partial\.go.*?type [1-9][0-9]*:[0-9a-f]{4}\.\.[1-9][0-9]*:[0-9a-f]{4}`,
 		"fixed heredoc delimiter": `(?m)^PATCH$`,
 	} {
 		if !regexp.MustCompile(pattern).MatchString(scripts) {
@@ -141,7 +141,8 @@ func TestCodexHPatchGrammarE2E(t *testing.T) {
 		}
 	}
 	for _, forbidden := range []string{
-		`tsel 4 "\t\treturn saveArtifactPayload(path, b)"`,
+		`tsel`,
+		`rsel`,
 		"\n\nPATCH",
 	} {
 		if strings.Contains(scripts, forbidden) {

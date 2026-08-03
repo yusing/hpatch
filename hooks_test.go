@@ -23,7 +23,7 @@ func TestErrorHookReceivesFailureAndRepairContext(t *testing.T) {
 		"printf '%s' {{shellquote (format_markdown .)}} > " + shellQuote(bodyPath),
 	})
 
-	script := "in note.txt\ntsel " + hashLine("present words") + " \"missing\"\ntype \"replacement\"\n"
+	script := "in note.txt\ntype 1:" + hashLine("present words") + " \"missing\" \"replacement\"\n"
 	var stdout, stderr bytes.Buffer
 	exitCode := Run(nil, strings.NewReader(script), &stdout, &stderr, root, dataDirectory)
 	if exitCode != 1 || stdout.Len() != 0 {
@@ -37,17 +37,17 @@ func TestErrorHookReceivesFailureAndRepairContext(t *testing.T) {
 		"# hpatch command failed",
 		"- Command: `2`",
 		"- Source line: `2`",
-		"- Operation: `tsel`",
-		"- Category: `selection`",
+		"- Operation: `type`",
+		"- Category: `edit`",
 		"- Path: `note.txt`",
-		"## Failed command\n\n    tsel " + hashLine("present words") + " \"missing\"",
+		"## Failed command\n\n    type 1:" + hashLine("present words") + " \"missing\" \"replacement\"",
 		"## Failure\n\n    found 0 of 1 requested matches of \"missing\" at or after line 1",
 		"## Diagnostic\n\n    hpatch: command 2, source line 2",
 		"## Repair context",
 		"found 0 of 1 requested matches at or after line 1",
-		"#|present words",
+		"1:" + hashLine("present words") + " present words",
 	} {
-		if !strings.Contains(normalizeHashlineRows(string(body)), fragment) {
+		if !strings.Contains(string(body), fragment) {
 			t.Fatalf("hook body does not contain %q:\n%s", fragment, body)
 		}
 	}
@@ -80,7 +80,7 @@ func TestErrorHookReceivesMalformedCommand(t *testing.T) {
 		"## Failed command\n\n    select the file",
 		"unknown or malformed command",
 	} {
-		if !strings.Contains(normalizeHashlineRows(string(body)), fragment) {
+		if !strings.Contains(string(body), fragment) {
 			t.Fatalf("hook body does not contain %q:\n%s", fragment, body)
 		}
 	}
@@ -96,7 +96,7 @@ func TestErrorHookFailureDoesNotReplaceDiagnostic(t *testing.T) {
 	if exitCode != 1 || stdout.Len() != 0 {
 		t.Fatalf("Run() = exit %d, stdout %q, stderr %q", exitCode, stdout.String(), stderr.String())
 	}
-	if !strings.HasPrefix(stderr.String(), "hpatch: command 1, source line 1, operation \"del\", category edit: del requires an active file\n") {
+	if !strings.HasPrefix(stderr.String(), "hpatch: command 1, source line 1, operation \"del\", category syntax, reason script-syntax: unknown or malformed command\n") {
 		t.Fatalf("original diagnostic was not preserved: %q", stderr.String())
 	}
 	if !strings.Contains(stderr.String(), "hpatch: warning: running error hook 1: exit status 7\n") {
@@ -289,7 +289,7 @@ func TestErrorAndOutcomeHooksReceiveAttemptMetadata(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, want := range []string{"- Session ID: `session-1`", "- Correlation ID: `chain-1`", "- Call ID: `call-2`", "- Attempt: `2`", "- Correction: `true`", "- Outcome: `rejected`"} {
-		if !strings.Contains(normalizeHashlineRows(string(body)), want) {
+		if !strings.Contains(string(body), want) {
 			t.Fatalf("error hook lacks %q:\n%s", want, body)
 		}
 	}

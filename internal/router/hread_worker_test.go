@@ -29,7 +29,7 @@ func TestRunHReadWorkerUsesTrustedWorkspaceAndExactGrammarInput(t *testing.T) {
 	if !handled || exitCode != 0 || stderr.Len() != 0 {
 		t.Fatalf("worker = handled %t, exit %d, stderr %q", handled, exitCode, stderr.String())
 	}
-	if got, want := stdout.String(), "f44e: beta\nbe9d: gamma\n"; got != want {
+	if got, want := stdout.String(), "2:f44e beta\n3:be9d gamma\n"; got != want {
 		t.Fatalf("worker output = %q, want %q", got, want)
 	}
 }
@@ -134,7 +134,7 @@ func TestHReadWrapperExecutesPrivateWorkerEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatalf("execute wrapper: %v\n%s", err, output)
 	}
-	if got, want := string(output), "8ed3: alpha\n304b: omega\n"; got != want {
+	if got, want := string(output), "1:8ed3 alpha\n2:304b omega\n"; got != want {
 		t.Fatalf("wrapper output = %q, want %q", got, want)
 	}
 }

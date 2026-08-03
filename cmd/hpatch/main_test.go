@@ -35,7 +35,7 @@ func TestInformationalCommandsNeedNoEnvironmentOrStdin(t *testing.T) {
 	}{
 		{name: "top-level help", args: []string{"--help"}, want: helpTextBase, wantFragment: "hpatch translate [--root ROOT] [--cwd CWD] < SCRIPT"},
 		{name: "translate help", args: []string{"translate", "--help"}, want: translateHelpText, wantFragment: "without modifying"},
-		{name: "tool help", args: []string{"--tool-help"}, want: toolHelpText(), wantFragment: "HPATCH/1"},
+		{name: "tool help", args: []string{"--tool-help"}, want: toolHelpText(), wantFragment: "HPATCH/2"},
 		{name: "version", args: []string{"--version"}, want: "hpatch devel\n", wantFragment: "hpatch devel"},
 	}
 	for _, test := range tests {
@@ -53,37 +53,31 @@ func TestInformationalCommandsNeedNoEnvironmentOrStdin(t *testing.T) {
 }
 
 func TestTopLevelHelpDescribesCompletePublicSurface(t *testing.T) {
+	normalized := strings.Join(strings.Fields(helpTextBase), " ")
 	for _, fragment := range []string{
 		"hpatch [--root ROOT] [--cwd CWD] < SCRIPT",
 		"hpatch translate [--root ROOT] [--cwd CWD] < SCRIPT",
 		"hpatch gain",
 		"standard input",
-		"tsel HASH \"TEXT\" [N]",
-		"rsel START_HASH END_HASH",
-		"type <<TAG",
-		"commit",
-		"next immutable in-memory baseline",
-		"Outside a type heredoc",
-		"exact unindented",
-		"functions.hpatch",
-		"Build selectors against each existing file's immutable baseline.",
-		"Invoke hpatch once per attempt; do not encode, shell-wrap, or route it",
+		"type TARGET VALUE",
+		"type- TARGET VALUE",
+		"type+ TARGET VALUE",
+		"del TARGET",
+		"LINE:HASH..LINE:HASH",
+		"fixed <<PATCH frame",
+		"unindented closing line must be exactly PATCH",
 		"immutable baseline",
-		"Text introduced by an",
-		"multiple insertions",
-		"separate matches",
-		"Prefer a broader TEXT",
-		"selection sets",
-		"preserves the selected final",
-		"translate always emits root-relative paths",
-		"caller-accounted hpatch",
-		"absolute selectors",
-		"terminal failure reasons",
-		"settings.json under hooks.error",
+		"introduced content is not targetable",
+		"Multiple insertions",
+		"Every requested match must exist",
+		"preserve the target's final LF",
+		"Translation always",
+		"stable failure reasons",
+		"hooks.error",
 		"format_markdown",
 		"shellquote",
 	} {
-		if !strings.Contains(helpTextBase, fragment) {
+		if !strings.Contains(normalized, fragment) {
 			t.Fatalf("help does not contain %q", fragment)
 		}
 	}
@@ -101,21 +95,20 @@ func TestHelpDoesNotAdvertiseRemovedSelectors(t *testing.T) {
 
 func TestToolHelpGuidesAgentCommandChoice(t *testing.T) {
 	help := toolHelpText()
+	normalized := strings.Join(strings.Fields(help), " ")
 	for _, required := range []string{
-		"HPATCH/1 edits workspace files atomically.",
-		"tsel HASH \"TEXT\" [N] resolves HASH only when exactly one immutable-baseline logical line has it",
-		"from column 1 of that line through EOF",
-		"Matches may land on different lines",
-		"never searches before it",
-		"Missing hashes, duplicate-content hashes, and truncated-hash collisions reject without guessing or repair context",
-		"No report is available until the whole call finishes",
-		"same-call selectors must use coordinates known before submission",
-		"For insertion-only edits, type only the new content",
-		"A blank line immediately before PATCH is part of the literal replacement.",
-		"The first in captures an immutable file baseline.",
-		"hash-only preview rows",
+		"HPATCH/2 applies one complete target-bearing edit script atomically.",
+		"copy the complete `LINE:HASH` reference",
+		"`type-` inserts before",
+		"`type+` inserts after",
+		"fixed `<<PATCH` frame",
+		"one immutable baseline",
+		"not targetable in the same call",
+		"apply, reread, and use a later invocation",
+		"Multiple insertions at the same boundary render in script order.",
+		"reread stale rows instead of guessing",
 	} {
-		if !strings.Contains(help, required) {
+		if !strings.Contains(normalized, required) {
 			t.Fatalf("tool help does not contain %q", required)
 		}
 	}
@@ -127,14 +120,14 @@ func TestToolHelpGuidesAgentCommandChoice(t *testing.T) {
 		"Metrics:",
 		"INDEX: COMMAND",
 		"matches literals only",
-		"LINE:HASH",
-		"repaired hashline",
+		"HPATCH/1",
+		"<<TAG",
 	} {
 		if strings.Contains(help, excluded) {
 			t.Fatalf("tool help contains unnecessary or inaccurate text %q", excluded)
 		}
 	}
-	if !strings.HasPrefix(help, "HPATCH/1 edits workspace files atomically.") {
+	if !strings.HasPrefix(help, "HPATCH/2 applies one complete target-bearing edit script atomically.") {
 		t.Fatal("command-choice guidance is not at the top of tool help")
 	}
 	if len(help) >= len(helpTextBase) {
@@ -156,11 +149,11 @@ func TestRootAndCWDOptionsTranslateRootRelativePath(t *testing.T) {
 		var stdout, stderr bytes.Buffer
 		exitCode := run(
 			[]string{"translate", "--root", root, "--cwd", cwd},
-			strings.NewReader("in main.go\ntsel 5128 \"package main\"\ntype \"package graph\"\n"),
+			strings.NewReader("in main.go\ntype 1:5128 \"package graph\"\n"),
 			&stdout,
 			&stderr,
 		)
-		if exitCode != 0 || !strings.HasPrefix(stderr.String(), "in nested/main.go ") {
+		if exitCode != 0 || !strings.HasPrefix(stderr.String(), "in nested/main.go\n") {
 			t.Fatalf("run(cwd %q) = exit %d, stdout %q, stderr %q", cwd, exitCode, stdout.String(), stderr.String())
 		}
 		if !strings.Contains(stdout.String(), "*** Update File: nested/main.go\n") {
@@ -191,27 +184,25 @@ func TestWorkspaceOptionsRejectInvalidBoundaries(t *testing.T) {
 	}
 }
 
-func TestTopLevelHelpDescribesSelectionOperandConstraints(t *testing.T) {
+func TestTopLevelHelpDescribesTargetOperandConstraints(t *testing.T) {
+	normalized := strings.Join(strings.Fields(helpTextBase), " ")
 	for _, fragment := range []string{
-		"`tsel` starts at column 1 of the uniquely resolved HASH line",
-		"scans",
-		"forward through EOF",
-		"optional count defaults to one",
-		"separate exact",
-		"all requested matches must exist at or after the anchor",
-		"It never",
-		"searches earlier baseline content",
-		"Prefer a broader TEXT",
-		"`rsel` resolves START_HASH and END_HASH uniquely",
+		"line number chooses the line; the hash rejects stale content",
+		"never searches for a nearby hash",
+		"COUNT defaults to one",
+		"non-overlapping",
+		"Every requested match must exist",
+		"text target verifies its anchor row",
+		"through EOF",
 	} {
-		if !strings.Contains(helpTextBase, fragment) {
+		if !strings.Contains(normalized, fragment) {
 			t.Fatalf("help does not contain %q", fragment)
 		}
 	}
-	if strings.Contains(translateHelpText, "uniquely resolved HASH line") {
+	if strings.Contains(translateHelpText, "COUNT defaults") {
 		t.Fatal("translate help duplicates top-level operand constraints")
 	}
-	if !strings.Contains(translateHelpText, "Run hpatch --help for the complete editing and agent workflow.") {
+	if !strings.Contains(translateHelpText, "Run hpatch --help for editing, target, safety, and workflow guidance.") {
 		t.Fatal("translate help does not point to top-level help")
 	}
 }

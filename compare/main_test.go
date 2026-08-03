@@ -14,7 +14,7 @@ func TestRunHPatchAcceptsFinalStateReportAndPreservesUnrelatedFiles(t *testing.T
 			"target.txt":    "old\n",
 			"unrelated.txt": "keep\n",
 		},
-		script: "in target.txt\ntsel cba0 \"old\"\ntype \"new\"\n",
+		script: "in target.txt\ntype 1:cba0 \"old\" \"new\"\n",
 	}
 	got, err := runHPatch(scenario)
 	if err != nil {
@@ -27,7 +27,7 @@ func TestRunHPatchAcceptsFinalStateReportAndPreservesUnrelatedFiles(t *testing.T
 
 func TestRunHPatchRejectsMalformedAndFutureCommands(t *testing.T) {
 	for _, script := range []string{
-		"in target.txt\ntsel cba0\n",
+		"in target.txt\ntype 1:cba0\n",
 		"future-command\n",
 	} {
 		t.Run(strings.TrimSpace(script), func(t *testing.T) {

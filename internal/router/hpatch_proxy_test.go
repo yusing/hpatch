@@ -182,7 +182,7 @@ func TestHPatchPrepareRequestExposesOnlyStandaloneHPatch(t *testing.T) {
 		"complete script evaluated for the latest rejection",
 		"not source-line numbers",
 		"not source-line numbers, indices into the first attempt, or indices into a compact correction payload",
-		"correct its preceding selector",
+		"correct the target in that mutation",
 		"resend the complete script",
 	} {
 		if !strings.Contains(normalizedDescription, guidance) {
@@ -966,19 +966,19 @@ func TestHPatchCorrectionRetainsCorrelationAndIncrementsAttempt(t *testing.T) {
 }
 
 func TestHPatchDisplayedCorrectionCanBeAcceptedWithoutRepeatingSource(t *testing.T) {
-	base := "in script.sh\nrsel a793 1636\ntype \"exit \\\"$status\\\"\\n\"\n"
-	correctedCommand := "type \"\\texit \\\"$status\\\"\\n\""
+	base := "in script.sh\ntype 1:a793..2:1636 \"exit \\\"$status\\\"\\n\"\n"
+	correctedCommand := "type 1:a793..2:1636 \"\\texit \\\"$status\\\"\\n\""
 	calls := 0
 	var evaluated string
 	translator := hpatchResultTranslatorFunc(func(_ context.Context, _ routingWorkspace, script string) (hpatchTranslationResult, error) {
 		calls++
 		if calls == 1 {
-			diagnostic := "hpatch: command 3 rejected: indentation-only change to preserved text\n" +
-				"2a44: exit \"$status\"\n" +
+			diagnostic := "hpatch: command 2 rejected: indentation-only change to preserved text\n" +
+				"1:2a44 exit \"$status\"\n" +
 				"indentation: proposed=\"\" correction=\"\\t\"\n"
 			return hpatchTranslationResult{
 				diagnostic:  diagnostic,
-				corrections: map[int]string{3: correctedCommand},
+				corrections: map[int]string{2: correctedCommand},
 			}, errors.New("indentation-only change")
 		}
 		evaluated = script
@@ -990,21 +990,21 @@ func TestHPatchDisplayedCorrectionCanBeAcceptedWithoutRepeatingSource(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Count(first.translationError, "2a44: exit \"$status\"\n") != 1 {
+	if strings.Count(first.translationError, "1:2a44 exit \"$status\"\n") != 1 {
 		t.Fatalf("first diagnostic repeats proposed source:\n%s", first.translationError)
 	}
-	if !strings.Contains(first.translationError, "Apply the displayed correction with:\n3: accept\n") {
+	if !strings.Contains(first.translationError, "Apply the displayed correction with:\n2: accept\n") {
 		t.Fatalf("first diagnostic lacks acceptance command:\n%s", first.translationError)
 	}
 
-	second, err := transform.translate("call-2", "3: accept\n", nil)
+	second, err := transform.translate("call-2", "2: accept\n", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if second.translationError != "" || calls != 2 {
 		t.Fatalf("accepted correction = %+v, translations %d", second, calls)
 	}
-	want := "in script.sh\nrsel a793 1636\n" + correctedCommand + "\n"
+	want := "in script.sh\n" + correctedCommand + "\n"
 	if evaluated != want {
 		t.Fatalf("evaluated script = %q, want %q", evaluated, want)
 	}
@@ -1012,8 +1012,8 @@ func TestHPatchDisplayedCorrectionCanBeAcceptedWithoutRepeatingSource(t *testing
 
 func TestHPatchCompactCorrectionRebuildsScriptBeforeTranslation(t *testing.T) {
 	base := "new file.txt\ntype \"old\"\nrm\n"
-	payload := "-2\n+2: type <<BODY\nnew\nBODY\n2+: copy\n"
-	want := "new file.txt\ntype <<BODY\nnew\nBODY\ncopy\nrm\n"
+	payload := "-2\n+2: type <<PATCH\nnew\nPATCH\n2+: rm\n"
+	want := "new file.txt\ntype <<PATCH\nnew\nPATCH\nrm\nrm\n"
 	calls := 0
 	var evaluated string
 	transform, _, _, _ := newHPatchTestTransform(t, hpatchTranslatorFunc(func(_ context.Context, _ routingWorkspace, script string) ([]byte, error) {
@@ -1528,7 +1528,7 @@ func TestInProcessHPatchTranslatorIsRootScopedAndDoesNotMutateWorkspace(t *testi
 	}
 	defer workspace.close()
 
-	translated, err := translator.Translate(t.Context(), workspace, "in "+path+"\ntsel a793 \"first\"\ntype \"first\\ninserted\"\ntsel b1e9 \"third\"\ntype \"THIRD\"\n")
+	translated, err := translator.Translate(t.Context(), workspace, "in "+path+"\ntype+ 1:a793 \"inserted\\n\"\ntype 3:b1e9 \"THIRD\"\n")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1537,7 +1537,7 @@ func TestInProcessHPatchTranslatorIsRootScopedAndDoesNotMutateWorkspace(t *testi
 			t.Fatalf("translation does not contain %q: %s", required, translated.patch)
 		}
 	}
-	if !strings.HasPrefix(translated.report, "in existing.txt ") {
+	if !strings.HasPrefix(translated.report, "in existing.txt\n") {
 		t.Fatalf("translation report = %q", translated.report)
 	}
 	content, err := os.ReadFile(path)
@@ -1548,8 +1548,8 @@ func TestInProcessHPatchTranslatorIsRootScopedAndDoesNotMutateWorkspace(t *testi
 		t.Fatalf("translation mutated workspace to %q", content)
 	}
 
-	conflict := "in " + path + "\nrsel a793 1636\ntype \"replacement\"\nrsel 1636 b1e9\ntype \"overlap\"\n"
-	if translated, err := translator.Translate(t.Context(), workspace, conflict); err == nil || !strings.Contains(translated.diagnostic, "selection conflicts with edit") {
+	conflict := "in " + path + "\ntype 1:a793..2:1636 \"replacement\"\ntype 2:1636..3:b1e9 \"overlap\"\n"
+	if translated, err := translator.Translate(t.Context(), workspace, conflict); err == nil || !strings.Contains(translated.diagnostic, "conflicts with edit") {
 		t.Fatalf("overlapping baseline translation error = %v", err)
 	}
 

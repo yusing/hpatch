@@ -23,26 +23,26 @@ func TestTranslateForHostReturnsCompleteSuccessAndFailureAccounting(t *testing.T
 	defer root.Close()
 	workspace := Workspace{Root: root}
 
-	success, err := TranslateForHost(t.Context(), workspace, "in note.txt\nrsel 8ed3 8ed3\ntype \"beta\\n\"\n", t.TempDir())
+	success, err := TranslateForHost(t.Context(), workspace, "in note.txt\ntype 1:8ed3 \"beta\\n\"\n", t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(success.Patch), "*** Update File: note.txt") || !strings.HasPrefix(success.Report, "in note.txt ") || success.Diagnostic != "" {
+	if !strings.Contains(string(success.Patch), "*** Update File: note.txt") || !strings.HasPrefix(success.Report, "in note.txt\n") || success.Diagnostic != "" {
 		t.Fatalf("successful host translation = %+v", success)
 	}
-	if success.Invocation.value.Commands[commandOperationIndex("in")].Invocations != 1 || success.Invocation.value.Commands[commandOperationIndex("rsel")].Invocations != 1 {
+	if success.Invocation.value.Commands[commandOperationIndex("in")].Invocations != 1 || success.Invocation.value.Commands[commandOperationIndex("type")].Invocations != 1 {
 		t.Fatalf("successful invocation metrics = %+v", success.Invocation.value.Commands)
 	}
 
-	rejected, err := TranslateForHost(t.Context(), workspace, "in note.txt\ntsel ffff \"x\"\n", t.TempDir())
+	rejected, err := TranslateForHost(t.Context(), workspace, "in note.txt\ntype 1:ffff \"x\"\n", t.TempDir())
 	if err == nil {
 		t.Fatal("missing-hash selector unexpectedly succeeded")
 	}
-	selection := rejected.Invocation.value.Commands[commandOperationIndex("tsel")]
-	if selection.Invocations != 1 || selection.Errors != 1 || rejected.Invocation.value.Reasons[reasonCoordinateBounds] != 1 {
+	mutation := rejected.Invocation.value.Commands[commandOperationIndex("type")]
+	if mutation.Invocations != 1 || mutation.Errors != 1 || rejected.Invocation.value.Reasons[reasonRowStale] != 1 {
 		t.Fatalf("rejected invocation metrics = %+v", rejected.Invocation.value)
 	}
-	if !strings.HasPrefix(rejected.Diagnostic, "hpatch: ") || !strings.Contains(rejected.Diagnostic, "operation \"tsel\"") {
+	if !strings.HasPrefix(rejected.Diagnostic, "hpatch: ") || !strings.Contains(rejected.Diagnostic, "operation \"type\"") {
 		t.Fatalf("rejected diagnostic = %q", rejected.Diagnostic)
 	}
 }

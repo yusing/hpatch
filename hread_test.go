@@ -1,7 +1,6 @@
 package hpatch
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -25,7 +24,7 @@ func TestReadHashLinesWholeFileAndRange(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := "8ed3: alpha\nf44e: beta\nbe9d: gamma\n"; whole != want {
+	if want := "1:8ed3 alpha\n2:f44e beta\n3:be9d gamma\n"; whole != want {
 		t.Fatalf("whole read = %q, want %q", whole, want)
 	}
 
@@ -33,11 +32,8 @@ func TestReadHashLinesWholeFileAndRange(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := "f44e: beta\nbe9d: gamma\n"; detailed.Output != want {
+	if want := "2:f44e beta\n3:be9d gamma\n"; detailed.Output != want {
 		t.Fatalf("bounded read = %q, want %q", detailed.Output, want)
-	}
-	if want := "beta\r\ngamma"; detailed.CatOutput != want {
-		t.Fatalf("cat baseline = %q, want %q", detailed.CatOutput, want)
 	}
 
 	clamped, err := ReadHashLinesForHost(t.Context(), workspace, `"path with spaces.txt" 2:999`)
@@ -49,28 +45,27 @@ func TestReadHashLinesWholeFileAndRange(t *testing.T) {
 	}
 }
 
-func TestHashLinesIgnoreLeadingIndentation(t *testing.T) {
-	wantHash := hashLine("foo")
-	for _, content := range []string{"  foo", "\t\tfoo", " \t foo"} {
-		if got := hashLine(content); got != wantHash {
-			t.Errorf("hashLine(%q) = %q, want %q", content, got, wantHash)
-		}
+func TestHashLinesIncludeLeadingIndentation(t *testing.T) {
+	plainHash := hashLine("foo")
+	indentedHash := hashLine("\t\tfoo")
+	if indentedHash == plainHash {
+		t.Fatalf("indented hash %q equals plain hash", indentedHash)
 	}
 
 	result, err := formatHashLineStream(t.Context(), strings.NewReader("\t\tfoo\n"), "fixture.txt", 0, 0, maxHReadOutputBytes)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := wantHash + ": \t\tfoo\n"; result.Output != want {
+	if want := "1:" + indentedHash + " \t\tfoo\n"; result.Output != want {
 		t.Fatalf("indented output = %q, want %q", result.Output, want)
 	}
 
-	line, lineNumber, err := resolveLineHash("\t\tfoo\n", wantHash)
+	line, err := resolveRow("\t\tfoo\n", rowReference{line: 1, hash: indentedHash})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if content := lineContent("\t\tfoo\n", line); content != "\t\tfoo" || lineNumber != 1 {
-		t.Fatalf("resolved line = %q at %d, want %q at 1", content, lineNumber, "\t\tfoo")
+	if content := lineContent("\t\tfoo\n", line); content != "\t\tfoo" {
+		t.Fatalf("resolved line = %q, want %q", content, "\t\tfoo")
 	}
 }
 
@@ -145,11 +140,8 @@ func TestFormatHashLineStreamBoundsRangesAndCancellation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := hashLine("target") + ": target\n"; result.Output != want {
+	if want := "1001:" + hashLine("target") + " target\n"; result.Output != want {
 		t.Fatalf("bounded range = %q, want %q", result.Output, want)
-	}
-	if result.CatOutput != "target\r\n" {
-		t.Fatalf("cat baseline = %q, want %q", result.CatOutput, "target\r\n")
 	}
 	if _, err := formatHashLineStream(t.Context(), strings.NewReader("ok\n\xff"), "fixture.txt", 1, 1, 64); err == nil {
 		t.Fatal("invalid UTF-8 after the selected range was accepted")
@@ -178,100 +170,15 @@ func (r *cancelingReader) Read(output []byte) (int, error) {
 	return readBytes, nil
 }
 
-func TestHashlineSelectorsRequireUniqueBaselineIdentity(t *testing.T) {
-	tests := []struct {
-		name        string
-		current     string
-		script      string
-		want        string
-		wantFailure string
-	}{
-		{
-			name:    "unique hash selects its line",
-			current: "inserted\ntop\ntarget\nbottom\n",
-			script:  "in file.txt\nrsel 34a0 34a0\ntype \"TARGET\"\n",
-			want:    "inserted\ntop\nTARGET\nbottom\n",
-		},
-		{
-			name:        "missing hash rejects",
-			current:     "top\nother\nbottom\n",
-			script:      "in file.txt\nrsel 34a0 34a0\ntype \"WRONG\"\n",
-			wantFailure: "does not identify any line",
-		},
-		{
-			name:        "duplicate content hash rejects",
-			current:     "target\ntop\ntarget\nbottom\n",
-			script:      "in file.txt\nrsel 34a0 34a0\ntype \"WRONG\"\n",
-			wantFailure: "ambiguous",
-		},
-		{
-			name:        "indentation-only hash collision rejects",
-			current:     "target\ntop\n\ttarget\nbottom\n",
-			script:      "in file.txt\nrsel 34a0 34a0\ntype \"WRONG\"\n",
-			wantFailure: "ambiguous",
-		},
-		{
-			name:        "text selection stays at or after its anchor",
-			current:     "match\nanchor\nlater\n",
-			script:      "in file.txt\ntsel " + hashLine("anchor") + " \"match\"\ntype \"WRONG\"\n",
-			wantFailure: "found 0 of 1 requested matches",
-		},
-		{
-			name:        "truncated hash collision rejects",
-			current:     "line-503\nother\nline-526\n",
-			script:      "in file.txt\nrsel 51d2 51d2\ndel\n",
-			wantFailure: "ambiguous",
-		},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			rootPath := t.TempDir()
-			writeTestFile(t, rootPath, "file.txt", test.current, 0o644)
-			before := readTestFile(t, rootPath, "file.txt")
-			stdout, stderr, exitCode := runWithStateReport(rootPath, test.script)
-			if test.wantFailure != "" {
-				if exitCode != 1 || stdout != "" || !strings.Contains(stderr, test.wantFailure) {
-					t.Fatalf("Run() = exit %d, stdout %q, stderr %q", exitCode, stdout, stderr)
-				}
-				if strings.Contains(test.wantFailure, "identif") || strings.Contains(test.wantFailure, "ambiguous") {
-					if strings.Count(stderr, "\n") != 1 {
-						t.Fatalf("missing or ambiguous hash chose repair context: %q", stderr)
-					}
-				}
-				if got := readTestFile(t, rootPath, "file.txt"); got != before {
-					t.Fatalf("rejected selector mutated file to %q", got)
-				}
-				return
-			}
-			if exitCode != 0 || stdout != "" {
-				t.Fatalf("Run() = exit %d, stdout %q, stderr %q", exitCode, stdout, stderr)
-			}
-			if got := readTestFile(t, rootPath, "file.txt"); got != test.want {
-				t.Fatalf("file = %q, want %q", got, test.want)
-			}
-		})
-	}
-}
-
-func runWithStateReport(root, script string) (string, string, int) {
-	var stdout, stderr bytes.Buffer
-	exitCode := Run(nil, strings.NewReader(script), &stdout, &stderr, root, "")
-	return stdout.String(), stderr.String(), exitCode
-}
-
-func TestHashlineSelectorsKeepSameGenerationIdentity(t *testing.T) {
+func TestVerifiedRowsDisambiguateDuplicateContent(t *testing.T) {
 	rootPath := t.TempDir()
-	writeTestFile(t, rootPath, "file.txt", "alpha\nbeta\ngamma\n", 0o644)
-	script := "in file.txt\n" +
-		"tsel 8ed3 \"alpha\"\n" +
-		"type \"alpha\\ninserted\"\n" +
-		"tsel be9d \"gamma\"\n" +
-		"type \"G\"\n"
+	writeTestFile(t, rootPath, "file.txt", "same\nmiddle\nsame\n", 0o644)
+	script := "in file.txt\ntype " + row(3, "same") + " \"changed\""
 	stdout, _, exitCode := runForTest(rootPath, nil, script)
 	if exitCode != 0 || stdout != "" {
 		t.Fatalf("Run() = exit %d, stdout %q", exitCode, stdout)
 	}
-	if got, want := readTestFile(t, rootPath, "file.txt"), "alpha\ninserted\nbeta\nG\n"; got != want {
+	if got, want := readTestFile(t, rootPath, "file.txt"), "same\nmiddle\nchanged\n"; got != want {
 		t.Fatalf("file = %q, want %q", got, want)
 	}
 }

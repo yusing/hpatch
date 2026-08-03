@@ -68,13 +68,13 @@ func scenarios() []scenario {
 			initial: map[string]string{
 				"calc.go": "package calc\n\nfunc total(subtotal, tax int) int { return subtotal + tax + adjustmentForRegion(subtotal, tax) }\n",
 			},
-			script: "in calc.go\ntsel db22 \"subtotal + tax\"\ntype \"subtotal - discount + tax\"\n",
+			script: "in calc.go\ntype 3:db22 \"subtotal + tax\" \"subtotal - discount + tax\"\n",
 			patch:  "*** Begin Patch\n*** Update File: calc.go\n@@\n-func total(subtotal, tax int) int { return subtotal + tax + adjustmentForRegion(subtotal, tax) }\n+func total(subtotal, tax int) int {\n+\treturn subtotal - discount + tax + adjustmentForRegion(subtotal, tax)\n+}\n*** End Patch\n",
 		},
 		{
 			name:    "last occurrence delete",
 			initial: map[string]string{"logs.txt": "debug info debug\n"},
-			script:  "in logs.txt\ntsel 22b6 \" debug\"\ndel\n",
+			script:  "in logs.txt\ndel 1:22b6 \" debug\"\n",
 			patch:   "*** Begin Patch\n*** Update File: logs.txt\n@@\n-debug info debug\n+debug info\n*** End Patch\n",
 		},
 		{
@@ -82,13 +82,13 @@ func scenarios() []scenario {
 			initial: map[string]string{
 				"service.go": "func run() {\n\tprepare()\n\texecute()\n}\n",
 			},
-			script: "in service.go\nrsel 9980 8d32\ncopy\npaste\n",
+			script: "in service.go\ntype+ 2:83b5..3:a42e \"\\tprepare()\\n\\texecute()\\n\"\n",
 			patch:  "*** Begin Patch\n*** Update File: service.go\n@@\n \tprepare()\n \texecute()\n+\tprepare()\n+\texecute()\n*** End Patch\n",
 		},
 		{
 			name:    "stable baseline hashes",
 			initial: map[string]string{"config.txt": "name=old\nmode=slow\n"},
-			script:  "in config.txt\ntsel 165f \"old\"\ntype \"new\\nextra=yes\"\ntsel 763c \"slow\"\ntype \"fast\"\n",
+			script:  "in config.txt\ntype 1:165f \"old\" \"new\\nextra=yes\"\ntype 2:763c \"slow\" \"fast\"\n",
 			patch:   "*** Begin Patch\n*** Update File: config.txt\n@@\n-name=old\n-mode=slow\n+name=new\n+extra=yes\n+mode=fast\n*** End Patch\n",
 		},
 		{
@@ -103,7 +103,7 @@ func scenarios() []scenario {
 				"old.txt":      "hello old\n",
 				"obsolete.txt": "unused\n",
 			},
-			script: "in old.txt\ntsel 53e5 \"old\"\ntype \"new\"\nmv moved.txt\nin obsolete.txt\nrm\n",
+			script: "in old.txt\ntype 1:53e5 \"old\" \"new\"\nmv moved.txt\nin obsolete.txt\nrm\n",
 			patch:  "*** Begin Patch\n*** Update File: old.txt\n*** Move to: moved.txt\n@@\n-hello old\n+hello new\n*** Delete File: obsolete.txt\n*** End Patch\n",
 		},
 	}

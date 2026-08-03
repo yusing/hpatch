@@ -4,19 +4,23 @@ script: command (_separator command)*
 corrections: correction (_separator correction)*
 
 ?command: path_command
-        | bare_command
-        | tsel_command
-        | rsel_command
-        | type_command
-        | heredoc_command
+        | "rm"
+        | inline_mutation
+        | heredoc_mutation
+        | inline_initializer
+        | heredoc_initializer
+        | delete_command
 
 path_command: PATH_OP SP PATH
-bare_command: "rm" | "del" | "copy" | "cut" | "paste" | "commit"
+inline_mutation: TYPE_OP SP target SP QUOTED
+heredoc_mutation: TYPE_OP SP target SP "<<PATCH" NL _patch_body "PATCH"
+inline_initializer: "type" SP QUOTED
+heredoc_initializer: "type" SP "<<PATCH" NL _patch_body "PATCH"
+delete_command: "del" SP target
 
-tsel_command: "tsel" SP HASH SP TSEL_QUOTED (SP POSINT)?
-rsel_command: "rsel" SP HASH SP HASH
-type_command: "type" SP QUOTED
-heredoc_command: "type" SP "<<PATCH" NL _patch_body "PATCH"
+?target: ROW
+       | ROW ".." ROW
+       | ROW SP TARGET_QUOTED (SP POSINT)?
 
 ?correction: replacement
            | acceptance
@@ -35,14 +39,14 @@ _blank_line: HSPACE? NL
 _patch_body: (PATCH_BODY_LINE | NL)*
 
 PATH_OP: "in" | "new" | "mv"
-
+TYPE_OP: "type" | "type-" | "type+"
+ROW: /[1-9][0-9]*:[0-9a-f]{4}/
 POSINT: /[1-9][0-9]*/
-HASH: /[0-9a-f]{4}/
 
 SP: " "
 HSPACE: /[ \t]+/
 PATH: /[^\r\n]+/
 NL: /\r?\n/
 QUOTED: /"(?:\\(?:["\\\/bfnrt]|u[0-9A-Fa-f]{4})|[^\x00-\x1F"\\]|\t)*"/
-TSEL_QUOTED: /"(?:\\(?:["\\\/t]|u(?:0009|00[2-9A-Fa-f][0-9A-Fa-f]|0[1-9A-Fa-f][0-9A-Fa-f]{2}|[1-9A-Fa-f][0-9A-Fa-f]{3}))|[^\x00-\x1F"\\]|\t)+"/
+TARGET_QUOTED: /"(?:\\(?:["\\\/t]|u(?:0009|00[2-9A-Fa-f][0-9A-Fa-f]|0[1-9A-Fa-f][0-9A-Fa-f]{2}|[1-9A-Fa-f][0-9A-Fa-f]{3}))|[^\x00-\x1F"\\]|\t)+"/
 PATCH_BODY_LINE: /(?:PATCH[^\r\n]+|PATC[^H\r\n][^\r\n]*|PAT[^C\r\n][^\r\n]*|PA[^T\r\n][^\r\n]*|P[^A\r\n][^\r\n]*|PATC|PAT|PA|P|[^P\r\n][^\r\n]*)(?:\r\n|\n)/

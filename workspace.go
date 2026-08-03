@@ -47,20 +47,14 @@ type change struct {
 	mode         fs.FileMode
 }
 
-type clipboardContent struct {
-	text     string
-	linewise bool
-}
-
 type workspace struct {
 	paths         map[string]*fileState
 	blocked       map[string]bool
 	reserved      map[string]bool
-	removed       map[string]*fileState
 	files         []*fileState
 	active        *fileState
+	initializable *fileState
 	reportedEdits []*reportedEdit
-	clipboard     *clipboardContent
 	load          fileLoader
 	exists        pathProbe
 }
@@ -70,7 +64,6 @@ func (p *program) evaluate(ctx context.Context, resolve pathResolver, load fileL
 		paths:    make(map[string]*fileState),
 		blocked:  make(map[string]bool),
 		reserved: make(map[string]bool),
-		removed:  make(map[string]*fileState),
 		load:     load,
 		exists:   exists,
 	}
@@ -92,10 +85,12 @@ func (p *program) evaluate(ctx context.Context, resolve pathResolver, load fileL
 		}
 		if err := w.execute(command, commandIndex+1); err != nil {
 			reason := reasonOf(err, reasonOther)
+			if _, ok := errors.AsType[*indentationCorrectionError](err); ok {
+				reason = reasonEditConflict
+			}
 			events.fail(command.operation, command.attempt, reason)
 			failure := &commandError{Attempt: command.attempt, Reason: reason, Command: commandIndex + 1, Line: command.line, Operation: command.operation, Path: w.diagnosticPath(command), Category: commandCategory(command.operation), Source: command.source, Message: err.Error(), Repair: w.repairContext(command, reason)}
 			if correction, ok := errors.AsType[*indentationCorrectionError](err); ok {
-				failure.Reason = reasonEditConflict
 				failure.Message = "indentation-only change to preserved text"
 				failure.Repair = correction.diagnostic()
 				failure.Correction = correctedTypeCommand(command, correction.correctedText)
@@ -131,12 +126,8 @@ func commandCategory(operation string) string {
 	switch operation {
 	case "in", "new", "mv", "rm":
 		return "file"
-	case "tsel", "rsel":
-		return "selection"
-	case "type", "del", "copy", "cut", "paste":
+	case "type", "type-", "type+", "del":
 		return "edit"
-	case "commit":
-		return "state"
 	default:
 		panic("parsed instruction has no diagnostic category: " + operation)
 	}
@@ -144,6 +135,10 @@ func commandCategory(operation string) string {
 
 func (w *workspace) execute(command instruction, commandIndex int) error {
 	origin := editOrigin{command: commandIndex, line: command.line, operation: command.operation}
+	initializing := command.operation == "type" && command.target.kind == targetNone && w.initializable == w.active
+	if !initializing {
+		w.initializable = nil
+	}
 	switch command.operation {
 	case "in":
 		return w.selectFile(command.path)
@@ -153,72 +148,36 @@ func (w *workspace) execute(command instruction, commandIndex int) error {
 		return w.moveFile(command.path, origin)
 	case "rm":
 		return w.removeFile()
-	case "commit":
-		w.commitGeneration()
-		return nil
 	}
 	if w.active == nil {
 		return withReason(reasonActiveFile, fmt.Errorf("%s requires an active file", command.operation))
 	}
 
 	file := w.active
-	textMatches := len(file.editor.selections) != 0 && file.editor.textMatches
-	var err error
-	switch command.operation {
-	case "tsel":
-		return w.active.editor.selectMatches(command.lineHash, command.count, command.text)
-
-	case "rsel":
-		return w.active.editor.selectLines(command.lineHash, command.endHash)
-	case "type":
-		err = file.editor.typeText(command.text, origin)
-	case "del":
-		err = file.editor.deleteSelection(origin)
-	case "copy", "cut":
-		clipboard, ok := file.editor.selectedClipboard()
-		if !ok {
-			return withReason(reasonSelectionRequired, fmt.Errorf("%s requires a selection", command.operation))
+	if command.target.kind == targetNone {
+		if !initializing || !file.created {
+			return withReason(reasonInitialization, fmt.Errorf("targetless type is valid only immediately after new"))
 		}
-		if command.operation == "cut" {
-			if err := file.editor.deleteSelection(origin); err != nil {
-				return err
-			}
+		file.editor.initialize(command.text, origin)
+		w.initializable = nil
+	} else {
+		if file.created {
+			return withReason(reasonInitialization, fmt.Errorf("new file content is not targetable before a successful invocation and hread"))
 		}
-		w.clipboard = &clipboard
-		if command.operation == "copy" {
-			return nil
+		if err := file.editor.applyMutation(command.operation, command.target, command.text, origin); err != nil {
+			return err
 		}
-	case "paste":
-		if w.clipboard == nil {
-			return withReason(reasonClipboardEmpty, fmt.Errorf("paste requires a preceding copy or cut in the same script"))
-		}
-		err = file.editor.pasteClipboard(*w.clipboard, origin)
-	default:
-		panic("parsed instruction has no executor: " + command.operation)
 	}
-	if err != nil {
-		return err
-	}
-	if edit := file.editor.reportedEdit(origin, textMatches); edit != nil {
+	if edit := file.editor.reportedEdit(origin); edit != nil {
 		edit.file = file
 		w.reportedEdits = append(w.reportedEdits, edit)
 	}
 	return nil
 }
 
-func (w *workspace) commitGeneration() {
-	for _, file := range w.files {
-		if !file.deleted {
-			file.editor.commitGeneration()
-		}
-	}
-	clear(w.reserved)
-}
-
 func (w *workspace) selectFile(path string) error {
 	if file := w.paths[path]; file != nil {
 		w.active = file
-		file.editor.resetCursor()
 		return nil
 	}
 	if w.blocked[path] {
@@ -245,20 +204,11 @@ func (w *workspace) newFile(path string, origin editOrigin) error {
 	if err := w.validateFreeDestination(path); err != nil {
 		return err
 	}
-	if file := w.removed[path]; file != nil {
-		delete(w.removed, path)
-		file.path = path
-		file.deleted = false
-		file.mutationOrigin = origin
-		file.editor = editor{}
-		w.paths[path] = file
-		w.active = file
-		return nil
-	}
 	file := &fileState{path: path, created: true, mutationOrigin: origin}
 	w.paths[path] = file
 	w.files = append(w.files, file)
 	w.active = file
+	w.initializable = file
 	return nil
 }
 
@@ -298,7 +248,6 @@ func (w *workspace) removeFile() error {
 	delete(w.paths, removedPath)
 	w.blocked[removedPath] = true
 	w.reserved[removedPath] = true
-	w.removed[removedPath] = file
 	if !file.created {
 		w.blocked[file.originalPath] = true
 	}
@@ -311,6 +260,7 @@ func (w *workspace) removeFile() error {
 	}
 	w.reportedEdits = retained
 	w.active = nil
+	w.initializable = nil
 	return nil
 }
 

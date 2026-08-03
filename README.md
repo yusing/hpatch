@@ -1,6 +1,6 @@
 # hpatch
 
-A Codex Responses router that lets agents edit with compact selectors and replacement text instead of emitting full patches.
+A Codex Responses router that lets agents edit with verified target-bearing mutations instead of emitting full patches.
 
 `hpatch-router` sits between Codex and the Responses API. It replaces the Code Mode `apply_patch` surface with constrained `functions.hpatch`, resolves successful scripts against the declared workspace, and hands Codex a real `apply_patch` carrier so sandbox checks and the normal diff UI remain intact. The repository also includes the standalone `hpatch` CLI and reusable Go engine used by the router.
 
@@ -21,7 +21,7 @@ A direct Code Mode edit makes the model repeat patch framing, old context, repla
 ```mermaid
 flowchart LR
     subgraph output["Alternative model-output payloads"]
-        H["hpatch path<br/>functions.hpatch + selectors + replacement"]
+        H["hpatch path<br/>functions.hpatch + verified targets + replacement"]
         A["apply_patch baseline<br/>functions.exec + JavaScript carrier<br/>+ old context + replacement + patch framing"]
     end
 
@@ -42,8 +42,7 @@ For an 11-line function replacement, hpatch asks the model for this:
 ```text
 functions.hpatch
 in parser.go
-rsel e217 d10b
-type <<PATCH
+type 42:e217..52:d10b <<PATCH
 func parse(input []byte) (Document, error) {
 	tokens, err := tokenize(input)
 	if err != nil {
@@ -92,8 +91,8 @@ const result = await tools.apply_patch(`*** Begin Patch
 text(result);
 ```
 
-The direct call repeats all 11 old lines, then writes the same 11 new lines plus patch framing and the JavaScript carrier. hpatch writes the new function once; the router reads the old region from the baseline.
-The router also supplies `functions.hpatch` to the provider with a [Lark grammar](https://developers.openai.com/api/docs/guides/function-calling#context-free-grammars). As the model writes the tool call, only tokens that can still lead to a valid script are allowed. Bad syntax never becomes a finished tool call, so there is no generate-reject-retry cycle for it. Grammar is syntax only: a valid script can still fail for missing files, ambiguous selectors, or conflicting edits, and those failures stay atomic.
+The direct call repeats all 11 old lines, then writes the same 11 new lines plus patch framing and the JavaScript carrier. Hpatch writes the new function once and identifies the old region with two verified rows.
+The router also supplies `functions.hpatch` to the provider with a [Lark grammar](https://developers.openai.com/api/docs/guides/function-calling#context-free-grammars). As the model writes the tool call, only tokens that can still lead to a valid script are allowed. Bad syntax never becomes a finished tool call, so there is no generate-reject-retry cycle for it. Grammar is syntax only: a valid script can still fail for missing files, missing or stale rows, incomplete literal targets, or conflicting edits, and those failures stay atomic.
 
 ## Requirements
 
@@ -238,8 +237,7 @@ after the full script validates and stages; success report on stderr):
 ```sh
 hpatch <<'EOF'
 in src/app.go
-tsel 55af "oldName"
-type "newName"
+type 12:55af "oldName" "newName"
 EOF
 ```
 
@@ -281,33 +279,37 @@ hpatch --version
 
 Authoritative guidance: `hpatch --help` and `hpatch --tool-help`. Contract: [`doc/spec/interface.md`](doc/spec/interface.md).
 
-Hread and hpatch preview/context rows have the shape `HHHH: TEXT`. Numeric ranges remain
-valid only as bounded hread input; selectors copy the four-digit lowercase hash from an
-output row.
+Hread and hpatch preview/context rows have the shape `LINE:HASH TEXT`. Copy the complete
+`LINE:HASH` reference into a mutation target. The one-based line selects the exact logical
+line; the four-digit lowercase hash rejects stale content, including changed indentation.
 
-Selectors:
+Targets:
 
-1. Complete logical lines or indentation changes: `rsel START_HASH END_HASH`
-2. Exact non-whitespace content at or after an anchor: `tsel HASH "TEXT" [N]`
+1. Complete logical line: `LINE:HASH`
+2. Inclusive complete-line range: `LINE:HASH..LINE:HASH`
+3. Exact literal occurrence(s) from a verified row through EOF: `LINE:HASH "TEXT" [COUNT]`
 
-Each selector hash must identify exactly one immutable-baseline logical line. Missing hashes,
-duplicate content, and truncated-hash collisions reject without guessing. `tsel` never
-searches before its resolved anchor.
+Rows verify only their named immutable-baseline line. Hpatch does not scan for a matching
+hash elsewhere, so equal lines at different positions are unambiguous. A text target starts
+at its verified row and every requested non-overlapping match must exist.
 
-Common commands: `in` / `new` / `mv` / `rm`, `type "…"` or `type <<PATCH` … `PATCH`, `del`, `copy` / `cut` / `paste`, `commit`.
+Commands are `in` / `new` / `mv` / `rm`, target-bearing `type` / `type-` / `type+` /
+`del`, and one targetless `type VALUE` immediately after `new`.
 
 Rules worth remembering:
 
-- Start `tsel` text at stable non-whitespace content; avoid leading spaces or tabs.
-- First `in` of a file freezes an immutable baseline; selectors use that baseline until `commit`.
-- Disjoint edits can land together; overlapping replacements fail the whole script atomically.
+- Use `type` to replace, `type-` to insert before, `type+` to insert after, and `del` to delete.
+- First `in` of a file freezes its immutable invocation baseline. Pending edits never shift later targets.
+- Batch disjoint edits based on inspected baselines. Content introduced by a mutation requires a successful call, reread, and later invocation.
+- Overlapping replacements or deletions and insertions strictly inside them fail atomically. Boundary insertions are valid.
+- Use inline quoted values for short single-line edits; include `\n` when an insertion must form a new line. Reserve fixed `<<PATCH` for multiline or escape-heavy values.
 - Rejection changes nothing. Router-owned retries can replace, delete, or insert failed commands by index without resending the full script.
+
 Multiline example:
 
 ```text
 in parser.go
-rsel e217 d10b
-type <<PATCH
+type 42:e217..52:d10b <<PATCH
 func parse(input []byte) (Document, error) {
 	tokens, err := tokenize(input)
 	if err != nil {
@@ -345,7 +347,7 @@ go run ./compare
 
 ## How it works
 
-**CLI:** resolve workspace (`--root` / `--cwd` or process cwd) → parse script → evaluate against an in-memory baseline → stage multi-file result → commit (normal mode) or emit one `apply_patch` envelope (translate).
+**CLI:** resolve workspace (`--root` / `--cwd` or process cwd) → parse script → verify targets against immutable baselines → plan and render disjoint splices → stage the multi-file result → commit (normal mode) or emit one `apply_patch` envelope (translate).
 
 **Router:** load ChatGPT Codex auth → accept `POST /v1/responses` → require a Code Mode exec owner and expose `functions.hpatch` plus `functions.hread` instead of its nested `apply_patch` → translate hpatch against the single usable workspace from Codex metadata or route hread through the process wrapper in Codex's exec context → return an exec carrier that applies the real patch or returns the exact read result.
 

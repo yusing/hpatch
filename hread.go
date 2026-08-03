@@ -28,24 +28,20 @@ var (
 	ErrHReadResultTooLarge = errors.New("hread result exceeds its configured bound")
 )
 
-// HashLineReadResult is the host-facing result of one hread call. Output is
-// returned to the model; CatOutput is the exact equivalent raw file slice used
-// to measure the input overhead introduced by hashline metadata.
+// HashLineReadResult is the host-facing result of one hread call.
 type HashLineReadResult struct {
-	Output    string
-	CatOutput string
+	Output string
 }
 
 // ReadHashLines reads one grammar-constrained hread input through workspace and
-// returns hash-prefixed logical lines, optionally selected by an absolute numeric
-// input range. Output rows never include numeric line prefixes.
+// returns verified LINE:HASH logical rows, optionally selected by an absolute
+// numeric input range.
 func ReadHashLines(ctx context.Context, workspace Workspace, input string) (string, error) {
 	result, err := ReadHashLinesForHost(ctx, workspace, input)
 	return result.Output, err
 }
 
-// ReadHashLinesForHost returns both hread output and its equivalent raw file
-// slice so a router can account for the added model-input cost.
+// ReadHashLinesForHost returns the formatted hread output for host integrations.
 func ReadHashLinesForHost(ctx context.Context, workspace Workspace, input string) (HashLineReadResult, error) {
 	path, trailing, err := hpatchsyntax.DecodeQuoted(input)
 	if err != nil {
@@ -144,11 +140,11 @@ func formatHashLineStream(
 ) (HashLineReadResult, error) {
 	wholeFile := startLine == 0 && endLine == 0
 	lineNumber := 1
+	lineNumberWidth := 1
 	lineOpen := false
 	pendingCR := false
 
 	var output strings.Builder
-	var catOutput strings.Builder
 	var content strings.Builder
 	selected := func() bool {
 		return wholeFile || lineNumber >= startLine && lineNumber <= endLine
@@ -161,26 +157,25 @@ func formatHashLineStream(
 		if !selected() {
 			return nil
 		}
-		rowBytes := output.Len() + 7 + content.Len() + 1
+		rowBytes := output.Len() + lineNumberWidth + 7 + content.Len() + 1
 		if rowBytes > maxOutputBytes {
 			return capacityError()
 		}
 		content.WriteByte(character)
 		return nil
 	}
-	finishLine := func(terminator string) error {
+	finishLine := func() error {
 		if selected() {
-			rowBytes := output.Len() + 7 + content.Len()
+			rowBytes := output.Len() + lineNumberWidth + 7 + content.Len()
 			if rowBytes > maxOutputBytes {
 				return capacityError()
 			}
 			lineContent := content.String()
-			writeHashLine(&output, lineContent, lineContent)
-			catOutput.WriteString(lineContent)
-			catOutput.WriteString(terminator)
+			writeHashLine(&output, lineNumber, lineContent, lineContent)
 		}
 		content.Reset()
 		lineNumber++
+		lineNumberWidth = len(strconv.Itoa(lineNumber))
 		lineOpen = false
 		return nil
 	}
@@ -228,12 +223,12 @@ func formatHashLineStream(
 			if pendingCR {
 				pendingCR = false
 				if character == '\n' {
-					if err := finishLine("\r\n"); err != nil {
+					if err := finishLine(); err != nil {
 						return HashLineReadResult{}, err
 					}
 					continue
 				}
-				if err := finishLine("\r"); err != nil {
+				if err := finishLine(); err != nil {
 					return HashLineReadResult{}, err
 				}
 			}
@@ -243,7 +238,7 @@ func formatHashLineStream(
 				pendingCR = true
 			case '\n':
 				lineOpen = true
-				if err := finishLine("\n"); err != nil {
+				if err := finishLine(); err != nil {
 					return HashLineReadResult{}, err
 				}
 			default:
@@ -263,11 +258,11 @@ func formatHashLineStream(
 		return HashLineReadResult{}, fmt.Errorf("%s is not UTF-8", path)
 	}
 	if pendingCR {
-		if err := finishLine("\r"); err != nil {
+		if err := finishLine(); err != nil {
 			return HashLineReadResult{}, err
 		}
 	} else if lineOpen {
-		if err := finishLine(""); err != nil {
+		if err := finishLine(); err != nil {
 			return HashLineReadResult{}, err
 		}
 	}
@@ -284,5 +279,5 @@ func formatHashLineStream(
 			lineCount,
 		)
 	}
-	return HashLineReadResult{Output: output.String(), CatOutput: catOutput.String()}, nil
+	return HashLineReadResult{Output: output.String()}, nil
 }
