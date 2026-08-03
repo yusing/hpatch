@@ -1,9 +1,9 @@
 # Historical etcd A/B benchmark
 
 The benchmark compares stock Codex editing with hpatch on the same nontrivial
-historical etcd change. It is a randomized paired experiment: every repetition
-runs one control attempt and one hpatch attempt from independent copies of the
-same base revision.
+historical etcd change, the `etcd-range-stream` task. It is a paired experiment:
+every repetition runs one control attempt and one hpatch attempt from independent
+copies of the same base revision, alternating which arm runs first.
 
 Correctness is decided by hidden executable tests plus a changed-path boundary.
 The historical oracle qualifies the grader, but its Git history and patch are
@@ -17,13 +17,14 @@ From the repository root:
 bash benchmarks/bench.sh
 ```
 
-The default model is `gpt-5.6-luna`. Override it with:
+The default model is `gpt-5.6-sol` with medium reasoning. Override the model with:
 
 ```sh
 MODEL=gpt-5.6-sol bash benchmarks/bench.sh
 ```
 
-The script runs three pairs, six model attempts in total. It prints the retained
+The script runs four pairs, eight model attempts in total. `REPETITIONS` and
+`REASONING_EFFORT` override those defaults. The script prints the retained
 temporary run directory and every agent patch when the run finishes. A nonzero
 exit means at least one attempt or infrastructure check failed; artifacts are
 still retained.
@@ -64,8 +65,8 @@ flowchart TD
     ORACLE["Export historical oracle<br/><code>git archive ORACLE | tar -x</code>"]
     OTEST["Inject the same tests and require success<br/><code>go test ./server/storage/mvcc ./server/etcdserver/txn ...</code>"]
     ROUTERS["Start both routers<br/><code>docker compose up --detach --wait control hpatch</code>"]
-    FORK["Start repetitions 1, 2, and 3 concurrently<br/><code>for repetition in 1 2 3; do run_pair &quot;$repetition&quot; &amp; done</code>"]
-    PAIR["Inside each repetition<br/>randomize arm order and run the two arms sequentially"]
+    FORK["Start repetitions 1 through 4 concurrently<br/><code>for repetition in 1 2 3 4; do run_pair &quot;$repetition&quot; &amp; done</code>"]
+    PAIR["Inside each repetition<br/>alternate arm order and run the two arms sequentially"]
     SNAP["Create a fresh history-free base repository<br/><code>git archive; git init; git commit</code>"]
     AGENT["Run a disposable agent container with closed stdin and no TTY<br/><code>docker compose run --interactive=false --no-tty --rm agent codex ... exec</code>"]
     CAPTURE["Capture changed paths and literal patch<br/><code>git diff --name-only</code><br/><code>git diff --binary HEAD</code>"]
@@ -75,7 +76,7 @@ flowchart TD
     HPFAIL{"Did an hpatch arm fail?"}
     ABORT["Signal the parent and terminate every active arm<br/><code>kill -TERM &quot;$benchmark_pid&quot;</code>"]
     NEXT{"Second arm in this repetition?"}
-    JOIN["Wait for all three repetition workers<br/><code>wait worker_pid</code>"]
+    JOIN["Wait for all four repetition workers<br/><code>wait worker_pid</code>"]
     MERGE["Merge retained records deterministically<br/><code>jq -sc 'sort_by(.repetition, .order_in_block)[]' ... &gt; results.jsonl</code>"]
     METRICS["Collect router metrics and gain<br/><code>curl /api/metrics</code><br/><code>docker compose exec hpatch hpatch gain</code>"]
     CLEAN["Stop disposable infrastructure<br/><code>docker compose down --volumes --remove-orphans</code>"]
@@ -215,7 +216,7 @@ hpatch translation. The benchmark does not set the reserved
 
 ## Benchmark task
 
-The active task is:
+The active task is `etcd-range-stream`, defined at:
 
 ```text
 benchmarks/tasks/etcd-range-stream/
@@ -487,7 +488,22 @@ delta = hpatch - control
 ```
 
 Negative duration or token deltas favor hpatch. Report medians and individual
-pairs for small samples; three pairs are too few for a strong statistical
-claim. Keep infrastructure failures separate from correctness failures, and use
+pairs for small samples; four pairs are too few for a strong statistical claim.
+Keep infrastructure failures separate from correctness failures, and use
 `gain.txt` plus the structured gain object only for treatment requests that
 actually invoked hpatch.
+
+## Latest published result
+
+The latest published result is the two-repetition
+[`etcd-range-stream` benchmark report](../benchmarks/results/e7100e5fc5b76b326fc97a930e2ebacac1e5ae30-1/summary.md)
+for commit `e7100e5fc5b76b326fc97a930e2ebacac1e5ae30`. It used `gpt-5.6-sol`
+with medium reasoning. Both arms passed the task and grader in both repetitions.
+Across that run, aggregate agent wall time was 630.856 seconds for control and
+626.767 seconds for hpatch, while output tokens were 19,594 and 14,289,
+respectively. Successful edit payload fell from 8,576 control-equivalent tokens
+to 4,887 hpatch tokens, a reported 43.0% reduction.
+
+These figures describe that specific two-repetition run. They are not a general
+performance guarantee; larger samples are required before drawing strong timing
+or token-efficiency conclusions.

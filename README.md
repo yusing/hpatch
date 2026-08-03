@@ -347,6 +347,21 @@ Hand-authored scenario comparison (does not update `hpatch gain`):
 go run ./compare
 ```
 
+### End-to-end benchmark
+
+The paired benchmark runs one stock Codex control attempt and one Hpatch attempt
+from independent copies of the same historical etcd base revision, alternating
+which arm runs first. Hidden executable tests and an allowed-path boundary grade
+correctness before timing or token-efficiency differences are considered. The
+active task, `etcd-range-stream`, reconstructs etcd's cross-layer server-side
+RangeStream behavior. See the [benchmark methodology](doc/benchmarks.md) and the
+[latest published result](benchmarks/results/e7100e5fc5b76b326fc97a930e2ebacac1e5ae30-1/summary.md).
+
+That two-repetition `gpt-5.6-sol` run passed both arms 2/2 and reported 43.0%
+lower successful edit payload for Hpatch (4,887 tokens versus 8,576
+control-equivalent tokens). It is one observed run, not a general performance
+guarantee.
+
 ## How it works
 
 **CLI:** resolve workspace (`--root` / `--cwd` or process cwd) → parse script → verify targets against immutable baselines → plan and render disjoint splices → stage the multi-file result → commit (normal mode) or emit one `apply_patch` envelope (translate).
