@@ -129,15 +129,66 @@ func TestHPatch2ChangedGoFilesAreFormatted(t *testing.T) {
 }
 
 func TestHPatch2InvalidGoRejectsAtomically(t *testing.T) {
-	root := t.TempDir()
+	rootPath := t.TempDir()
 	before := "package p\n\nvar value = 1\n"
-	writeTestFile(t, root, "file.go", before, 0o644)
+	writeTestFile(t, rootPath, "file.go", before, 0o644)
 	script := "in file.go\ntype " + row(3, "var value = 1") + ` "var ="`
-	stdout, stderr, exitCode := runForTest(root, nil, script)
+	root, err := os.OpenRoot(rootPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := TranslateForHost(t.Context(), Workspace{Root: root}, script, t.TempDir())
+	root.Close()
+	if err == nil {
+		t.Fatal("invalid Go unexpectedly translated")
+	}
+	want := []HostRejection{{
+		Command: 2, SourceLine: 2, Operation: "type", Target: "line",
+		Reason: "language-syntax", Path: "file.go", GeneratedLine: 3, GeneratedColumn: 5,
+	}}
+	if !reflect.DeepEqual(result.Rejections, want) {
+		t.Fatalf("rejections = %#v, want %#v", result.Rejections, want)
+	}
+
+	stdout, stderr, exitCode := runForTest(rootPath, nil, script)
 	if exitCode != 1 || stdout != "" || !strings.Contains(stderr, "language-syntax") {
 		t.Fatalf("Run() = exit %d, stdout %q, stderr %q", exitCode, stdout, stderr)
 	}
-	if got := readTestFile(t, root, "file.go"); got != before {
+	if !strings.Contains(stderr, "generated Go near 3:5\n") || !strings.Contains(stderr, "> 3 | var =\n") {
+		t.Fatalf("diagnostic lacks generated-source context: %q", stderr)
+	}
+	if got := readTestFile(t, rootPath, "file.go"); got != before {
+		t.Fatalf("file = %q, want unchanged", got)
+	}
+}
+
+func TestHPatch2InvalidGoAttributesCausativeMutation(t *testing.T) {
+	rootPath := t.TempDir()
+	before := "package p\n\nvar first = 1\nvar second = 2\n"
+	writeTestFile(t, rootPath, "file.go", before, 0o644)
+	script := strings.Join([]string{
+		"in file.go",
+		"type " + row(3, "var first = 1") + ` "var ="`,
+		"type " + row(4, "var second = 2") + ` "var second = 3"`,
+	}, "\n")
+
+	root, err := os.OpenRoot(rootPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := TranslateForHost(t.Context(), Workspace{Root: root}, script, t.TempDir())
+	root.Close()
+	if err == nil {
+		t.Fatal("invalid Go unexpectedly translated")
+	}
+	want := []HostRejection{{
+		Command: 2, SourceLine: 2, Operation: "type", Target: "line",
+		Reason: "language-syntax", Path: "file.go", GeneratedLine: 3, GeneratedColumn: 5,
+	}}
+	if !reflect.DeepEqual(result.Rejections, want) {
+		t.Fatalf("rejections = %#v, want %#v", result.Rejections, want)
+	}
+	if got := readTestFile(t, rootPath, "file.go"); got != before {
 		t.Fatalf("file = %q, want unchanged", got)
 	}
 }

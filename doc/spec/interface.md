@@ -159,13 +159,16 @@ returned.
 The router's in-memory metrics snapshot also attributes successful and rejected hpatch
 translations and rejected-call diagnostic input tokens to the request session. Each session
 retains the latest 32 evaluator rejection identities: command index, physical source line,
-operation, target kind when known, stable reason, and affected path when known. These bounded
-session records use the same session identity as request lifecycle metrics and are not written
-to `metrics.bin`. They retain neither scripts, replacement text, diagnostics, nor repair
-context. Proxy failures that occur before evaluator invocation do not fabricate evaluator
-rejection identities. The snapshot also exposes aggregate counters so a benchmark can
-reconcile routed calls with client-visible file-change items without inferring failures from
-stderr envelopes.
+operation, target kind when known, stable reason, affected path when known, and the generated
+line and column reported by Go syntax validation when applicable. Each session also retains the
+latest 128 routed attempt identities: chain/call identity, attempt and outcome, emitted and
+comparison token counts, evaluated command count, and its bounded rejection identities. These
+count limits are reinforced by per-session text-byte limits, so an oversized rejection identity
+is not retained. Session records use the same session identity as request lifecycle metrics and
+are not written to `metrics.bin`. They retain neither scripts, replacement text, diagnostics,
+nor repair context. Proxy failures that occur before evaluator invocation do not fabricate
+evaluator rejection identities. The snapshot also exposes aggregate counters so a benchmark can reconcile routed calls with
+client-visible file-change items without inferring failures from stderr envelopes.
 
 Classification is persisted only after the invocation's outcome is known. Translate mode
 records a paired effective estimate after its complete patch reaches stdout; normal mode
@@ -293,9 +296,10 @@ Acceptance:
 10. Metrics collection failure warns without changing the success or failure of the
     requested edit, translated output, or final-state report.
 11. Router snapshots attribute successful and rejected hpatch translations, diagnostic token
-    totals, and the latest 32 structured evaluator rejection identities to their request
-    sessions without persisting scripts, replacement text, diagnostics, repair context, or
-    new per-session records in `metrics.bin`.
+    totals, at most the latest 128 correction-aware attempt identities, and at most the latest
+    32 structured evaluator rejection identities to their request sessions without persisting
+    scripts, replacement text, diagnostics, repair context, or new per-session records in
+    `metrics.bin`; per-session text-byte limits may retain fewer identities.
 
 ## REQ-SCRIPT-001 — HPATCH/2 script grammar
 
@@ -558,8 +562,14 @@ Acceptance:
 Input is read completely and the entire script is evaluated before an external filesystem
 commit or stdout. Before finalization, every changed file whose final path ends in `.go`
 is parsed and formatted with Go's standard-library `go/format`; a parse failure rejects
-the complete transaction, while non-Go files receive no language validation. An unchanged
-normal-mode change set performs no filesystem operation but still reports final state.
+the complete transaction. For at most 32 content-mutating commands in one invalid Go file,
+the evaluator replays command-group subsets against the immutable baseline to select a
+one-minimal syntax-failing set, then attributes the failure to the retained edit nearest the
+generated parser position. Larger groups or an invalid baseline use nearest-edit attribution
+without subset replay. The rejection includes at most two generated lines before and after
+the failing line; neighboring lines are capped at 64 runes and the failing line at 200.
+Non-Go files receive no language validation. An unchanged normal-mode change set performs no
+filesystem operation but still reports final state.
 An unchanged translate result emits no patch and fails because it cannot represent an
 update; it emits no final-state report.
 
@@ -686,11 +696,12 @@ Both references teach this workflow:
 
 1. Use search to locate relevant regions, then use hread for the first content read of a
    region likely to be edited; issue independent hread calls together and copy complete
-   `LINE:HASH` references.
+   `LINE:HASH` references only from current output for that exact path.
 2. Choose a line, inclusive range, or anchored literal target inside the mutation command.
-3. Repeat `in PATH` in one call to batch disjoint edits across files when they depend only
-   on the inspected immutable baselines.
-4. Split dependent edits into layers: apply, reread, then use fresh references.
+3. Repeat `in PATH` to batch disjoint edits across inspected files.
+4. For an existing Go declaration or function, prefer one range `type` instead of assembling
+   the same replacement through several insertions. After success touches a file, discard its
+   saved references and hread it again before another edit.
 5. Use `type` to replace, `type-` to insert before, `type+` to insert after, and `del` to
    delete; do not construct a separate selection or clipboard program.
 6. Encode short single-line values inline. Include `\n` when a before/after insertion

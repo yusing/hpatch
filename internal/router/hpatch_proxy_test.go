@@ -1059,18 +1059,45 @@ func TestHPatchMalformedDeletionPreservesCorrectableHistory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !malformed.unevaluated || !strings.Contains(malformed.translationError, "is not `INDEX: COMMAND`") || calls != 1 {
+	if !malformed.unevaluated || malformed.correlationID != "call-1" || malformed.attempt != 2 ||
+		!strings.Contains(malformed.translationError, "is not `INDEX: COMMAND`") || calls != 1 {
 		t.Fatalf("malformed correction = %+v, calls %d", malformed, calls)
 	}
 	corrected, err := transform.translate("call-3", "2: type \"fixed\"\n", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if corrected.translationError != "" || corrected.correlationID != "call-1" || calls != 2 {
+	if corrected.translationError != "" || corrected.correlationID != "call-1" || corrected.attempt != 3 || calls != 2 {
 		t.Fatalf("corrected result = %+v, calls %d", corrected, calls)
 	}
 	if evaluated != want {
 		t.Fatalf("evaluated script = %q, want %q", evaluated, want)
+	}
+}
+
+func TestHPatchRetainedProxyRejectionAdvancesCorrectionAttempt(t *testing.T) {
+	proxy := newManagedHPatchProxy(t, testTranslator(t, new(int)))
+	if err := proxy.rememberBatch("session", map[string]hpatchHistory{
+		"call-1": {
+			toolName: hpatchToolName, script: testHPatchScript, translationError: "rejected",
+			correlationID: "call-1", attempt: 1, sequence: 1,
+		},
+		"call-2": {
+			toolName: hpatchToolName, script: "-2: rm\n", translationError: "malformed", unevaluated: true,
+			correlationID: "call-1", attempt: 2, sequence: 2,
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	base, err := proxy.correctableHistory("session")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if base.attempt != 1 {
+		t.Fatalf("correctable base attempt = %d, want 1", base.attempt)
+	}
+	if got := proxy.latestCorrectionAttempt("session", "call-1"); got != 2 {
+		t.Fatalf("latest retained chain attempt = %d, want 2", got)
 	}
 }
 

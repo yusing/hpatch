@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -419,14 +420,18 @@ func TestNotifyingTranslatorAttributesHPatchCallsToSession(t *testing.T) {
 		metrics: store,
 	}
 	for _, record := range []hpatch.HostMetricRecord{
-		{SessionID: "session", HPatchTokens: 4, ApplyPatchTokens: 8},
 		{
+			Attempt:   hpatch.AttemptMetadata{SessionID: "session", CorrelationID: "chain", CallID: "call-1", Attempt: 1},
 			SessionID: "session", IneffectiveHPatchTokens: 5,
 			FailedApplyPatchTokens: 2, DiagnosticInputTokens: 3,
 			Rejections: []hpatch.HostRejection{{
 				Command: 2, SourceLine: 3, Operation: "type", Target: "line",
-				Reason: "language-syntax", Path: "file.go",
+				Reason: "language-syntax", Path: "file.go", GeneratedLine: 8, GeneratedColumn: 3,
 			}},
+		},
+		{
+			Attempt:   hpatch.AttemptMetadata{SessionID: "session", CorrelationID: "chain", CallID: "call-2", Attempt: 2, Correction: true},
+			SessionID: "session", HPatchTokens: 4, ApplyPatchTokens: 8,
 		},
 	} {
 		if err := translator.RecordMetrics(t.Context(), record); err != nil {
@@ -444,10 +449,17 @@ func TestNotifyingTranslatorAttributesHPatchCallsToSession(t *testing.T) {
 	}
 	wantRejection := hpatch.HostRejection{
 		Command: 2, SourceLine: 3, Operation: "type", Target: "line",
-		Reason: "language-syntax", Path: "file.go",
+		Reason: "language-syntax", Path: "file.go", GeneratedLine: 8, GeneratedColumn: 3,
 	}
 	if got := snapshot.Sessions[0].HPatchRejections; len(got) != 1 || got[0] != wantRejection {
 		t.Fatalf("session hpatch rejections = %+v, want %+v", got, wantRejection)
+	}
+	wantAttempts := []hpatchAttemptMetrics{
+		{Sequence: 1, CorrelationID: "chain", CallID: "call-1", Attempt: 1, Outcome: "rejected", EmittedHPatchTokens: 5, ApplyPatchTokens: 2, DiagnosticInputTokens: 3, Rejections: []hpatch.HostRejection{wantRejection}},
+		{Sequence: 2, CorrelationID: "chain", CallID: "call-2", Attempt: 2, Correction: true, Outcome: "successful", EmittedHPatchTokens: 4, ApplyPatchTokens: 8},
+	}
+	if got := snapshot.Sessions[0].HPatchAttempts; !reflect.DeepEqual(got, wantAttempts) {
+		t.Fatalf("session hpatch attempts = %+v, want %+v", got, wantAttempts)
 	}
 	recorder := httptest.NewRecorder()
 	store.serveAPI(recorder, httptest.NewRequest(http.MethodGet, "/api/metrics", nil))
@@ -460,6 +472,31 @@ func TestNotifyingTranslatorAttributesHPatchCallsToSession(t *testing.T) {
 	}
 	if got := decoded.Sessions[0].HPatchRejections; len(got) != 1 || got[0] != wantRejection {
 		t.Fatalf("metrics API hpatch rejections = %+v, want %+v", got, wantRejection)
+	}
+	if got := decoded.Sessions[0].HPatchAttempts; !reflect.DeepEqual(got, wantAttempts) {
+		t.Fatalf("metrics API hpatch attempts = %+v, want %+v", got, wantAttempts)
+	}
+}
+
+func TestMetricsStoreBoundsSessionHPatchAttempts(t *testing.T) {
+	store := newMetricsStore("")
+	for index := range maxSessionHPatchAttempts + 1 {
+		store.recordHPatch(hpatch.HostMetricRecord{
+			Attempt: hpatch.AttemptMetadata{
+				SessionID: "session", CorrelationID: "chain", CallID: fmt.Sprintf("call-%d", index+1), Attempt: index + 1,
+			},
+			SessionID: "session", IneffectiveHPatchTokens: 1,
+			Rejections: []hpatch.HostRejection{{Command: index + 1, Reason: "script-syntax"}},
+		})
+	}
+
+	got := store.snapshot().Sessions[0].HPatchAttempts
+	if len(got) != maxSessionHPatchAttempts || got[0].Sequence != 2 || got[len(got)-1].Sequence != maxSessionHPatchAttempts+1 {
+		t.Fatalf("bounded hpatch attempts = %+v", got)
+	}
+	got[0].Rejections[0].Command = 999
+	if next := store.snapshot().Sessions[0].HPatchAttempts[0].Rejections[0].Command; next != 2 {
+		t.Fatalf("snapshot mutation changed retained attempt rejection command to %d", next)
 	}
 }
 
@@ -481,6 +518,43 @@ func TestMetricsStoreBoundsSessionHPatchRejectionEvidence(t *testing.T) {
 	got[0].Command = 999
 	if next := store.snapshot().Sessions[0].HPatchRejections[0].Command; next != 2 {
 		t.Fatalf("snapshot mutation changed retained rejection command to %d", next)
+	}
+}
+
+func TestMetricsStoreBoundsSessionHPatchEvidenceText(t *testing.T) {
+	store := newMetricsStore("")
+	store.recordHPatch(hpatch.HostMetricRecord{
+		Attempt: hpatch.AttemptMetadata{
+			SessionID: "session", CorrelationID: "chain", CallID: "call-1", Attempt: 1,
+		},
+		SessionID: "session", IneffectiveHPatchTokens: 1,
+		Rejections: []hpatch.HostRejection{{Reason: "path-resolution", Path: strings.Repeat("x", maxSessionHPatchAttemptTextBytes+1)}},
+	})
+
+	snapshot := store.snapshot()
+	if got := snapshot.Sessions[0].HPatchAttempts; len(got) != 0 {
+		t.Fatalf("oversized attempt evidence was retained: %+v", got)
+	}
+	if got := snapshot.Sessions[0].HPatchRejections; len(got) != 0 {
+		t.Fatalf("oversized rejection evidence was retained: %+v", got)
+	}
+
+	store.recordHPatch(hpatch.HostMetricRecord{
+		Attempt: hpatch.AttemptMetadata{
+			SessionID: "session", CorrelationID: "chain", CallID: "call-2", Attempt: 2,
+		},
+		SessionID: "session", IneffectiveHPatchTokens: 1,
+		Rejections: []hpatch.HostRejection{{Reason: "script-syntax"}},
+	})
+	snapshot = store.snapshot()
+	if got := snapshot.Sessions[0].HPatchAttempts; len(got) != 1 || got[0].Sequence != 2 {
+		t.Fatalf("bounded attempt evidence did not retain the later small record: %+v", got)
+	}
+	if got := snapshot.Sessions[0].HPatchRejections; len(got) != 1 || got[0].Reason != "script-syntax" {
+		t.Fatalf("bounded rejection evidence did not retain the later small record: %+v", got)
+	}
+	if got := snapshot.Sessions[0].HPatchCalls.Rejected; got != 2 {
+		t.Fatalf("retention changed the durable rejected-call count to %d", got)
 	}
 }
 
@@ -509,8 +583,14 @@ func TestRoutedEvaluatorRejectionReachesSessionEvidence(t *testing.T) {
 	if got := snapshot.Sessions[0].HPatchRejections; len(got) != 1 || got[0] != want {
 		t.Fatalf("routed evaluator rejection = %+v, want %+v", got, want)
 	}
+	if got := snapshot.Sessions[0].HPatchAttempts; len(got) != 1 || got[0].Outcome != "rejected" || got[0].EvaluatedCommands != 0 || got[0].Correction {
+		t.Fatalf("routed evaluator attempt = %+v", got)
+	}
 
-	if _, err := transform.rejectUnevaluated("call-proxy", "1: accept", fmt.Errorf("proxy rejection"), nil); err != nil {
+	proxyAttempt := hpatch.AttemptMetadata{
+		SessionID: transform.sessionID, CorrelationID: "call-evaluator", CallID: "call-proxy", Attempt: 2, Correction: true,
+	}
+	if _, err := transform.rejectUnevaluated("call-proxy", "1: accept", fmt.Errorf("proxy rejection"), proxyAttempt, nil); err != nil {
 		t.Fatal(err)
 	}
 	snapshot = store.snapshot()
@@ -519,6 +599,9 @@ func TestRoutedEvaluatorRejectionReachesSessionEvidence(t *testing.T) {
 	}
 	if got := snapshot.Sessions[0].HPatchRejections; len(got) != 1 || got[0] != want {
 		t.Fatalf("proxy rejection fabricated evaluator evidence: %+v", got)
+	}
+	if got := snapshot.Sessions[0].HPatchAttempts; len(got) != 2 || got[1].Outcome != "rejected" || got[1].EvaluatedCommands != 0 || !got[1].Correction {
+		t.Fatalf("proxy rejection attempt = %+v", got)
 	}
 }
 

@@ -84,3 +84,17 @@ func TestHPatch2RepairContextForReversedRange(t *testing.T) {
 		t.Fatalf("repair = %q", repair)
 	}
 }
+
+func TestGeneratedSourceRepairIsBounded(t *testing.T) {
+	long := strings.Repeat("x", repairPreviewLimit+50)
+	content := strings.Join([]string{"one", "two", "three", "four", "five", long, "seven", "eight", "nine"}, "\n")
+	repair := generatedSourceRepair(content, 6, 201)
+	if strings.Count(repair, "\n") != 6 {
+		t.Fatalf("repair line count = %d, want 6:\n%s", strings.Count(repair, "\n"), repair)
+	}
+	if !strings.Contains(repair, "generated Go near 6:201\n") ||
+		!strings.Contains(repair, "> 6 | "+strings.Repeat("x", repairPreviewLimit)+"\n") ||
+		strings.Contains(repair, long) || strings.Contains(repair, " 3 |") || strings.Contains(repair, " 9 |") {
+		t.Fatalf("repair is not bounded around generated position:\n%s", repair)
+	}
+}

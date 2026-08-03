@@ -17,6 +17,7 @@ type hpatchMetricRecord = hpatch.HostMetricRecord
 type hpatchMetricInputs struct {
 	invocation    hpatch.InvocationMetrics
 	rejections    []hpatch.HostRejection
+	attempt       hpatch.AttemptMetadata
 	emittedScript string
 	report        string
 	patch         string
@@ -45,6 +46,7 @@ func calculateHPatchMetricRecord(inputs hpatchMetricInputs) (hpatchMetricRecord,
 	record := hpatchMetricRecord{
 		Invocation: inputs.invocation,
 		Rejections: slices.Clone(inputs.rejections),
+		Attempt:    inputs.attempt,
 		SessionID:  inputs.sessionID,
 	}
 	if !inputs.overheadOnly {

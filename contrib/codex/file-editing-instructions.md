@@ -7,7 +7,8 @@ Do not create or edit files with shell write tricks, and do not use Python as a 
 
 Follow hpatch's tool description and rejection diagnostics for target and correction mechanics.
 Use search to locate edit regions, then use `hread` instead of `sed` or `cat` for their first content read.
-Issue independent `hread` calls together, and batch disjoint edits across files into one hpatch call with repeated `in PATH` sections.
-Reread only when a later edit depends on content introduced by a successful call.
+Use only complete rows copied from current `hread` output for that exact path; after a successful call touches a file, discard its saved references and reread it before another edit.
+Issue independent `hread` calls together, and batch disjoint edits across inspected files into one hpatch call with repeated `in PATH` sections.
+For an existing Go declaration or function, prefer one range `type` command over assembling the same replacement through several insertions.
 
 Formatting commands and bulk mechanical rewrites do not need `hpatch`.

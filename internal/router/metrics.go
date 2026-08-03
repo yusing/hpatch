@@ -17,11 +17,14 @@ import (
 )
 
 const (
-	maxMetricModels            = 128
-	maxActiveMetricRequests    = 1024
-	maxMetricSubscribers       = 128
-	maxSessionHPatchRejections = 32
-	otherMetricModelKey        = "other"
+	maxMetricModels                    = 128
+	maxActiveMetricRequests            = 1024
+	maxMetricSubscribers               = 128
+	maxSessionHPatchRejections         = 32
+	maxSessionHPatchAttempts           = 128
+	maxSessionHPatchRejectionTextBytes = 16 << 10
+	maxSessionHPatchAttemptTextBytes   = 48 << 10
+	otherMetricModelKey                = "other"
 )
 
 type tokenCounts struct {
@@ -148,9 +151,103 @@ type sessionMetrics struct {
 
 	Requests         requestLifecycleMetrics `json:"requests"`
 	HPatchCalls      hpatchCallMetrics       `json:"hpatch_calls"`
+	HPatchAttempts   []hpatchAttemptMetrics  `json:"hpatch_attempts"`
 	HPatchRejections []hpatch.HostRejection  `json:"hpatch_rejections"`
 	SessionID        string                  `json:"session_id"`
 	Model            string                  `json:"model"`
+}
+
+type hpatchAttemptMetrics struct {
+	Sequence              uint64                 `json:"sequence"`
+	CorrelationID         string                 `json:"correlation_id"`
+	CallID                string                 `json:"call_id"`
+	Attempt               int                    `json:"attempt"`
+	Correction            bool                   `json:"correction"`
+	Outcome               string                 `json:"outcome"`
+	EmittedHPatchTokens   uint64                 `json:"emitted_hpatch_tokens"`
+	ApplyPatchTokens      uint64                 `json:"apply_patch_tokens"`
+	EvaluatedCommands     uint64                 `json:"evaluated_commands"`
+	DiagnosticInputTokens uint64                 `json:"diagnostic_input_tokens"`
+	Rejections            []hpatch.HostRejection `json:"rejections"`
+}
+
+func hpatchAttemptMetricsOf(record hpatchMetricRecord) (hpatchAttemptMetrics, bool) {
+	metadata := record.Attempt
+	if metadata.SessionID != record.SessionID || metadata.Attempt < 1 ||
+		strings.TrimSpace(metadata.CorrelationID) == "" || len(metadata.CorrelationID) > maxSessionIDBytes ||
+		strings.TrimSpace(metadata.CallID) == "" || len(metadata.CallID) > maxSessionIDBytes {
+		return hpatchAttemptMetrics{}, false
+	}
+	rejections := record.Rejections
+	if excess := len(rejections) - maxSessionHPatchRejections; excess > 0 {
+		rejections = rejections[excess:]
+	}
+	attempt := hpatchAttemptMetrics{
+		CorrelationID:         metadata.CorrelationID,
+		CallID:                metadata.CallID,
+		Attempt:               metadata.Attempt,
+		Correction:            metadata.Correction,
+		EvaluatedCommands:     record.Invocation.EvaluatedCommandCount(),
+		DiagnosticInputTokens: record.DiagnosticInputTokens,
+		Rejections:            slices.Clone(rejections),
+	}
+	switch {
+	case record.HPatchTokens != 0 && record.IneffectiveHPatchTokens == 0:
+		attempt.Outcome = "successful"
+		attempt.EmittedHPatchTokens = record.HPatchTokens
+		attempt.ApplyPatchTokens = record.ApplyPatchTokens
+	case record.HPatchTokens == 0 && record.IneffectiveHPatchTokens != 0:
+		attempt.Outcome = "rejected"
+		attempt.EmittedHPatchTokens = record.IneffectiveHPatchTokens
+		attempt.ApplyPatchTokens = record.FailedApplyPatchTokens
+	default:
+		return hpatchAttemptMetrics{}, false
+	}
+	return attempt, true
+}
+
+func hpatchRejectionTextBytes(rejection hpatch.HostRejection) int {
+	return len(rejection.Operation) + len(rejection.Target) + len(rejection.Reason) + len(rejection.Path)
+}
+
+func hpatchAttemptTextBytes(attempt hpatchAttemptMetrics) int {
+	bytes := len(attempt.CorrelationID) + len(attempt.CallID) + len(attempt.Outcome)
+	for _, rejection := range attempt.Rejections {
+		bytes += hpatchRejectionTextBytes(rejection)
+	}
+	return bytes
+}
+
+func boundedHPatchAttempts(attempts []hpatchAttemptMetrics) []hpatchAttemptMetrics {
+	start := max(len(attempts)-maxSessionHPatchAttempts, 0)
+	retainedBytes := 0
+	for index := len(attempts) - 1; index >= start; index-- {
+		retainedBytes += hpatchAttemptTextBytes(attempts[index])
+		if retainedBytes > maxSessionHPatchAttemptTextBytes {
+			start = index + 1
+			break
+		}
+	}
+	if start == 0 {
+		return attempts
+	}
+	return slices.Clone(attempts[start:])
+}
+
+func boundedHPatchRejections(rejections []hpatch.HostRejection) []hpatch.HostRejection {
+	start := max(len(rejections)-maxSessionHPatchRejections, 0)
+	retainedBytes := 0
+	for index := len(rejections) - 1; index >= start; index-- {
+		retainedBytes += hpatchRejectionTextBytes(rejections[index])
+		if retainedBytes > maxSessionHPatchRejectionTextBytes {
+			start = index + 1
+			break
+		}
+	}
+	if start == 0 {
+		return rejections
+	}
+	return slices.Clone(rejections[start:])
 }
 
 type hpatchCallMetrics struct {
@@ -201,7 +298,9 @@ type retainedSessionMetrics struct {
 
 	requests         requestLifecycleMetrics
 	hpatchCalls      hpatchCallMetrics
+	hpatchAttempts   []hpatchAttemptMetrics
 	hpatchRejections []hpatch.HostRejection
+	hpatchSequence   uint64
 	model            string
 	modelOrder       uint64
 }
@@ -237,10 +336,14 @@ func (m *metricsStore) recordHPatch(record hpatchMetricRecord) {
 	if validMetricSessionID(record.SessionID) {
 		retained := m.retainedSessionLocked(record.SessionID)
 		retained.hpatchCalls.add(record)
-		retained.hpatchRejections = append(retained.hpatchRejections, record.Rejections...)
-		if excess := len(retained.hpatchRejections) - maxSessionHPatchRejections; excess > 0 {
-			retained.hpatchRejections = slices.Clone(retained.hpatchRejections[excess:])
+		if attempt, ok := hpatchAttemptMetricsOf(record); ok {
+			retained.hpatchSequence++
+			attempt.Sequence = retained.hpatchSequence
+			retained.hpatchAttempts = append(retained.hpatchAttempts, attempt)
+			retained.hpatchAttempts = boundedHPatchAttempts(retained.hpatchAttempts)
 		}
+		retained.hpatchRejections = append(retained.hpatchRejections, record.Rejections...)
+		retained.hpatchRejections = boundedHPatchRejections(retained.hpatchRejections)
 		m.retainedSessions[record.SessionID] = retained
 	}
 	m.notifyLocked()
@@ -370,8 +473,9 @@ func (m *metricsStore) snapshot() metricsSnapshot {
 	for id, retained := range m.retainedSessions {
 		sessions[id] = sessionMetrics{
 			SessionID: id, Model: retained.model, Requests: retained.requests,
-			HPatchCalls: retained.hpatchCalls, HPatchRejections: slices.Clone(retained.hpatchRejections),
-			metricGroup: cloneMetricGroup(retained.metricGroup),
+			HPatchCalls: retained.hpatchCalls, HPatchAttempts: cloneHPatchAttempts(retained.hpatchAttempts),
+			HPatchRejections: slices.Clone(retained.hpatchRejections),
+			metricGroup:      cloneMetricGroup(retained.metricGroup),
 		}
 	}
 	for id, active := range m.activeSessions {
@@ -420,6 +524,14 @@ func (m *metricsStore) snapshot() metricsSnapshot {
 	// in-memory telemetry mutex so request lifecycle writers are not blocked.
 	snapshot.Gain, snapshot.GainError = loadGainMetrics(gainDirectory)
 	return snapshot
+}
+
+func cloneHPatchAttempts(attempts []hpatchAttemptMetrics) []hpatchAttemptMetrics {
+	cloned := slices.Clone(attempts)
+	for index := range cloned {
+		cloned[index].Rejections = slices.Clone(cloned[index].Rejections)
+	}
+	return cloned
 }
 
 func loadGainMetrics(gainDirectory string) (hpatch.GainMetrics, string) {

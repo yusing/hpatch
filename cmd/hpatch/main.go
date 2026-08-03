@@ -87,9 +87,10 @@ Baselines and conflict safety:
   hread for its first content read; independent hread calls may run together.
   Every existing file has one immutable baseline for the complete invocation.
   Pending edits do not move later targets, and introduced content is not targetable
-  in that call. One call may repeat in PATH to batch disjoint edits across files.
-  For a dependent edit, apply the prerequisite, reread, and submit a later
-  invocation with fresh references.
+  in that call. One call may repeat in PATH to batch disjoint edits across files
+  that use inspected baselines. For an existing Go declaration or function, prefer
+  one range type over assembling the same replacement through several insertions.
+  After success touches a file, discard its saved references and hread it again.
 
   Replacements and deletions may not overlap. An insertion strictly inside either
   one conflicts. Insertions at a destructive span boundary are valid. Multiple
@@ -111,17 +112,20 @@ File lifecycle:
 Agent workflow:
   1. Use search to locate relevant regions, then hread for the first content read
      of likely edit regions. Issue independent hread calls together and copy
-     complete LINE:HASH rows.
+     complete LINE:HASH rows only from current output for that exact path.
   2. Put a line, range, or anchored literal target directly in each mutation.
   3. Use type to replace, type- to insert before, type+ to insert after, and del
      to delete. HPATCH/1 selection, clipboard, and script commit commands are invalid.
-  4. Repeat in PATH in one call to batch disjoint edits across inspected files.
-  5. Split dependent edits into apply, reread, and fresh-reference layers.
+  4. Repeat in PATH to batch disjoint edits across files that use inspected baselines.
+  5. For an existing Go declaration or function, prefer one range type over several
+     insertions. After success, discard references for touched files and reread.
   6. Prefer inline single-line values; reserve <<PATCH for multiline or escape-heavy text.
   7. After rejection, use a router indexed correction only while the referenced
      rows still belong to the same baseline. Reread stale rows instead of guessing.
   8. Changed Go files are parsed and formatted with Go's standard library before
-     success. Do not run redundant gofmt. Other languages receive no validation.
+     success. Syntax rejection identifies the implicated command and shows at most
+     five generated-source lines. Do not run redundant gofmt. Other languages receive
+     no validation.
 
 Final-state report:
   Success reports the active final path or "no active file", the last effective

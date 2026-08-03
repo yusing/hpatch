@@ -57,9 +57,12 @@ hpatch translations and rejections, and rejected-call diagnostic tokens. It sepa
 semantic edit-payload reduction, end-to-end agent output change, and estimated non-edit
 output so payload savings cannot be mistaken for whole-agent savings. A client stderr
 translation envelope is labeled separately from an hpatch command rejection. When the router
-artifact supports it, the summary lists bounded evaluator rejection evidence by repetition,
-command, physical source line, operation, target kind, stable reason, and path. An older
-artifact without that field is labeled unavailable rather than reported as zero rejections.
+artifact supports it, the summary lists bounded attempt sequences and evaluator rejection
+evidence by repetition, command, physical source line, operation, target kind, stable reason,
+path, and generated Go line and column when applicable. An older artifact without either
+bounded collection is labeled unavailable rather than reported as zero activity. When lifetime
+routed-call counters exceed retained attempts, retention-dependent correction-adoption and
+recovery measures are labeled unavailable rather than reported as full-run rates.
 
 Acceptance:
 

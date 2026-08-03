@@ -18,6 +18,7 @@ import (
 func TestCalculateHPatchMetricRecordUsesExactCallerPayloads(t *testing.T) {
 	patch := "*** Begin Patch\n*** Update File: /workspace/calc.go\n@@\n-old\n+new\n*** End Patch\n"
 	inputs := hpatchMetricInputs{
+		attempt:            hpatch.AttemptMetadata{SessionID: "session", CorrelationID: "chain", CallID: "call", Attempt: 2, Correction: true},
 		emittedScript:      "2: type 12:9645..18:4b7b \"replacement\"\n",
 		report:             "in calc.go 2:9\n9645: return new\n",
 		patch:              patch,
@@ -55,6 +56,9 @@ func TestCalculateHPatchMetricRecordUsesExactCallerPayloads(t *testing.T) {
 	if record.SessionID != inputs.sessionID || record.DefinitionRequests != 1 {
 		t.Fatalf("definition attribution = %+v", record)
 	}
+	if record.Attempt != inputs.attempt {
+		t.Fatalf("attempt metadata = %+v, want %+v", record.Attempt, inputs.attempt)
+	}
 	if got, want := record.DefinitionInputTokens, count("hpatch definition"); got != want {
 		t.Fatalf("definition tokens = %d, want %d", got, want)
 	}
@@ -72,7 +76,7 @@ func TestCalculateHPatchMetricRecordUsesEmptyFailureBaseline(t *testing.T) {
 		diagnostic:    "hpatch: command 2 rejected\nrepair context\n" + hpatchCorrectionHint,
 		rejections: []hpatch.HostRejection{{
 			Command: 2, SourceLine: 2, Operation: "type", Target: "range",
-			Reason: "row-stale", Path: "calc.go",
+			Reason: "language-syntax", Path: "calc.go", GeneratedLine: 8, GeneratedColumn: 3,
 		}},
 		sessionID: "session-without-definition-accounting",
 	}

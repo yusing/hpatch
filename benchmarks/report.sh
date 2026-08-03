@@ -302,6 +302,105 @@ aggregate_agent_interactions() {
 	printf '\nHread calls are a subset of command executions. Client file-change items are completed Codex events; '
 	printf 'routed translations and rejections are server-side HPATCH outcomes.\n'
 
+	printf '\n## Hpatch attempt analysis\n\n'
+	attempt_analysis=$(jq -nr --slurpfile runs "$results" --slurpfile metrics "$hpatch_metrics" '
+		def percent($numerator; $denominator):
+			if $denominator == 0 then "n/a"
+			else (((($numerator * 1000 / $denominator) | round) / 10) | tostring) + "%"
+			end;
+		($metrics[0]) as $metrics |
+		($runs | map(select(.arm == "hpatch") | {
+			repetition,
+			session_id: .agent.thread_id
+		})) as $runs |
+		[$runs[] as $run |
+			([$metrics.sessions[]? | select(.session_id == $run.session_id)][0]) as $session |
+			{run: $run, session: $session}
+		] as $joined |
+		if any($joined[]; .session == null or (.session | has("hpatch_attempts") | not)) then
+			"Unavailable for this artifact."
+		else
+			([$joined[] | .run.repetition as $repetition | .session.hpatch_attempts[] | . + {repetition: $repetition}]) as $attempts |
+			([$joined[] | .session.hpatch_calls.successful + .session.hpatch_calls.rejected] | add // 0) as $routed |
+			([$joined[] | .session.hpatch_calls.rejected] | add // 0) as $rejected |
+			(($attempts | length) < $routed) as $truncated |
+			([$attempts[] | select(.correction and .attempt > 1)] | length) as $corrections |
+			($attempts | group_by([.repetition, .correlation_id])) as $chains |
+			([$chains[] | select(any(.[]; .outcome == "rejected"))]) as $rejected_chains |
+			([$rejected_chains[] | select(any(.[]; .outcome == "successful"))] | length) as $recovered_chains |
+			$metrics.gain as $gain |
+			($gain.hpatch_tokens + $gain.ineffective_hpatch_tokens) as $all_hpatch |
+			($gain.apply_patch_tokens + $gain.failed_apply_patch_tokens - $gain.hpatch_tokens) as $break_even_budget |
+			($break_even_budget - $gain.ineffective_hpatch_tokens) as $headroom |
+			[
+				["Retained attempts", "\($attempts | length)/\($routed) routed calls"],
+				["Call rejection rate", "\($rejected)/\($routed) (\(percent($rejected; $routed)))"],
+				["Indexed correction adoption", (if $truncated then "unavailable (attempt telemetry truncated)" else "\($corrections)/\($rejected) rejected calls (\(percent($corrections; $rejected)))" end)],
+				["Recovered rejection chains", (if $truncated then "unavailable (attempt telemetry truncated)" else "\($recovered_chains)/\($rejected_chains | length)" end)],
+				["Failed-payload share", "\($gain.ineffective_hpatch_tokens)/\($all_hpatch) tokens (\(percent($gain.ineffective_hpatch_tokens; $all_hpatch)))"],
+				["Break-even failed-payload budget", "\($break_even_budget) tokens"],
+				["Current failed payload", "\($gain.ineffective_hpatch_tokens) tokens (\(if $headroom >= 0 then "\($headroom) under budget" else "\(-$headroom) over budget" end))"]
+			] |
+			map("| " + join(" | ") + " |") |
+			join("\n") +
+			(if $truncated then
+				"\n\nAttempt telemetry is truncated; the bounded session snapshot retained \($attempts | length) of \($routed) calls."
+			else "" end)
+		end
+	')
+	if [[ $attempt_analysis == \|* ]]; then
+		printf '| Measure | Result |\n'
+		printf '|---|---:|\n'
+	fi
+	printf '%s\n' "$attempt_analysis"
+
+	printf '\n### Attempt sequence\n\n'
+	attempt_sequence=$(jq -nr --slurpfile runs "$results" --slurpfile metrics "$hpatch_metrics" '
+		def cell: tostring | gsub("[\\t\\r\\n]"; " ") | gsub("\\|"; "\\|");
+		def rejection_evidence:
+			if (.rejections | length) == 0 then "—"
+			else [.rejections[] |
+				"command \(.command) · script line \(.source_line) · \(.operation)\(if (.target // "") == "" then "" else "/\(.target)" end) · \(.reason)" +
+				(if (.path // "") == "" then "" else " · \(.path)" end) +
+				(if (.generated_line // 0) == 0 then "" else " · generated \(.generated_line):\(.generated_column // "—")" end)
+			] | join("<br>")
+			end;
+		($metrics[0]) as $metrics |
+		($runs | map(select(.arm == "hpatch") | {
+			repetition,
+			session_id: .agent.thread_id
+		})) as $runs |
+		[$runs[] as $run |
+			([$metrics.sessions[]? | select(.session_id == $run.session_id)][0]) as $session |
+			{run: $run, session: $session}
+		] as $joined |
+		if any($joined[]; .session == null or (.session | has("hpatch_attempts") | not)) then
+			"Unavailable for this artifact."
+		else
+			[$joined[] |
+				.run.repetition as $repetition |
+				.session.hpatch_attempts[] |
+				[
+					$repetition, .sequence, .correlation_id, .call_id, .attempt,
+					(if .correction then "indexed" else "complete" end), .outcome,
+					.evaluated_commands, .emitted_hpatch_tokens, .apply_patch_tokens,
+					.diagnostic_input_tokens, rejection_evidence
+				] |
+				map(cell) |
+				"| " + join(" | ") + " |"
+			] as $rows |
+			if ($rows | length) == 0 then "No Hpatch attempts."
+			else $rows | join("\n")
+			end
+		end
+	')
+	if [[ $attempt_sequence == \|* ]]; then
+		printf '| Rep | Sequence | Chain | Call | Attempt | Payload | Outcome | Evaluated commands | Hpatch tokens | Apply-patch baseline | Diagnostic tokens | Rejection evidence |\n'
+		printf '|---:|---:|---|---|---:|---|---|---:|---:|---:|---:|---|\n'
+	fi
+	printf '%s\n' "$attempt_sequence"
+	printf '\nAttempt telemetry is bounded and contains no script, replacement text, diagnostic body, or repair context.\n'
+
 	printf '\n## Hpatch rejection evidence\n\n'
 	rejection_evidence=$(jq -nr --slurpfile runs "$results" --slurpfile metrics "$hpatch_metrics" '
 		def cell: tostring | gsub("[\\t\\r\\n]"; " ") | gsub("\\|"; "\\|");
@@ -320,7 +419,10 @@ aggregate_agent_interactions() {
 			[$joined[] |
 				.run.repetition as $repetition |
 				(.session.hpatch_rejections // [])[] |
-				[$repetition, .command, .source_line, .operation, (.target // "—"), .reason, (.path // "—")] |
+				[
+					$repetition, .command, .source_line, .operation, (.target // "—"),
+					.reason, (.path // "—"), (.generated_line // "—"), (.generated_column // "—")
+				] |
 				map(cell) |
 				"| " + join(" | ") + " |"
 			] as $rows |
@@ -332,11 +434,11 @@ aggregate_agent_interactions() {
 		end
 	')
 	if [[ $rejection_evidence == \|* ]]; then
-		printf '| Rep | Command | Source line | Operation | Target | Reason | Path |\n'
-		printf '|---:|---:|---:|---|---|---|---|\n'
+		printf '| Rep | Command | Source line | Operation | Target | Reason | Path | Generated line | Generated column |\n'
+		printf '|---:|---:|---:|---|---|---|---|---:|---:|\n'
 	fi
 	printf '%s\n' "$rejection_evidence"
-	printf '\nEvidence contains evaluator-owned command identity only; scripts, replacement text, diagnostics, and repair context are not retained.\n'
+	printf '\nEvidence contains evaluator-owned command identity and generated Go position only; scripts, replacement text, diagnostics, and repair context are not retained.\n'
 
 	printf '\n## Editing efficiency\n\n'
 	printf '| Measure | Control-equivalent | Hpatch | Change |\n'

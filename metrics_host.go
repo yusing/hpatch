@@ -12,13 +12,25 @@ type InvocationMetrics struct {
 	value invocationMetrics
 }
 
+// EvaluatedCommandCount returns the number of recognized commands evaluated
+// during this translation attempt.
+func (m InvocationMetrics) EvaluatedCommandCount() uint64 {
+	total, ok := m.value.Commands.total()
+	if !ok {
+		return 0
+	}
+	return total.Invocations
+}
+
 // HostMetricRecord is the complete accounting entry calculated by the host.
 // Invocation counters originate in hpatch; every token count and the session
 // attribution originate at the host seam where the visible payload is known.
-// Rejections are transient host telemetry and are not written to metrics.bin.
+// Rejections and attempt identity are transient host telemetry and are not
+// written to metrics.bin.
 type HostMetricRecord struct {
 	Invocation              InvocationMetrics
 	Rejections              []HostRejection
+	Attempt                 AttemptMetadata
 	SessionID               string
 	HPatchTokens            uint64
 	ApplyPatchTokens        uint64

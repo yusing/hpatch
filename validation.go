@@ -1,12 +1,15 @@
 package hpatch
 
 import (
+	"cmp"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"go/format"
 	"go/scanner"
 	"go/token"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -112,12 +115,14 @@ func hostRejectionsOf(err error) []HostRejection {
 	rejections := make([]HostRejection, 0, len(commands))
 	for _, command := range commands {
 		rejections = append(rejections, HostRejection{
-			Command:    command.Command,
-			SourceLine: command.Line,
-			Operation:  command.Operation,
-			Target:     hostTargetName(command.Attempt.target),
-			Reason:     hostReasonName(command.Reason),
-			Path:       command.Path,
+			Command:         command.Command,
+			SourceLine:      command.Line,
+			Operation:       command.Operation,
+			Target:          hostTargetName(command.Attempt.target),
+			Reason:          hostReasonName(command.Reason),
+			Path:            command.Path,
+			GeneratedLine:   command.GeneratedLine,
+			GeneratedColumn: command.GeneratedColumn,
 		})
 	}
 	return rejections
@@ -149,13 +154,21 @@ func (w *workspace) formatGoFiles() *commandError {
 		}
 		formatted, err := format.Source([]byte(content))
 		if err != nil {
-			return formatCommandError(file, reasonLanguageSyntax, fmt.Sprintf("format Go source: %v", err))
+			line, column := generatedPositionOf(err)
+			origin := file.editor.syntaxFailureOrigin(content, line, column)
+			if origin.command == 0 {
+				origin = file.validationOrigin()
+			}
+			return formatCommandError(
+				file, origin, reasonLanguageSyntax, fmt.Sprintf("format Go source: %v", err),
+				generatedSourceRepair(content, line, column), line, column,
+			)
 		}
 		if string(formatted) != content {
 			final := string(formatted)
 			offsets, err := newFormattedOffsetMap(content, final)
 			if err != nil {
-				return formatCommandError(file, reasonOther, fmt.Sprintf("map formatted Go source: %v", err))
+				return formatCommandError(file, file.validationOrigin(), reasonOther, fmt.Sprintf("map formatted Go source: %v", err), "", 0, 0)
 			}
 			file.editor.finalContent = &final
 			file.editor.finalOffsets = offsets
@@ -169,6 +182,106 @@ func (f *fileState) validationOrigin() editOrigin {
 		return f.editor.lastOrigin
 	}
 	return f.mutationOrigin
+}
+
+func generatedPositionOf(err error) (int, int) {
+	if failures, ok := errors.AsType[scanner.ErrorList](err); ok && len(failures) != 0 && failures[0] != nil {
+		return failures[0].Pos.Line, failures[0].Pos.Column
+	}
+	return 0, 0
+}
+
+const syntaxLocalizationGroupLimit = 32
+
+type syntaxEditGroup struct {
+	origin   editOrigin
+	edits    []baselineEdit
+	distance int
+}
+
+func (e *editor) syntaxFailureOrigin(content string, line, column int) editOrigin {
+	groups := e.syntaxEditGroups(generatedByteOffset(content, line, column), len(content))
+	if len(groups) == 0 {
+		return e.lastOrigin
+	}
+	if len(groups) == 1 || len(groups) > syntaxLocalizationGroupLimit {
+		return closestSyntaxEditGroup(groups).origin
+	}
+	if _, err := format.Source([]byte(e.baseline)); err != nil {
+		return closestSyntaxEditGroup(groups).origin
+	}
+
+	// Remove far-away groups first. The remaining set is one-minimal: removing
+	// any retained command makes the candidate source syntactically valid.
+	slices.SortFunc(groups, func(first, second syntaxEditGroup) int {
+		if order := cmp.Compare(second.distance, first.distance); order != 0 {
+			return order
+		}
+		return cmp.Compare(first.origin.command, second.origin.command)
+	})
+	for index := 0; index < len(groups); {
+		candidate := slices.Concat(groups[:index], groups[index+1:])
+		if _, err := format.Source([]byte(e.contentWithSyntaxGroups(candidate))); err != nil {
+			groups = candidate
+			continue
+		}
+		index++
+	}
+	return closestSyntaxEditGroup(groups).origin
+}
+
+func (e *editor) syntaxEditGroups(generatedOffset, contentLength int) []syntaxEditGroup {
+	indices := make(map[int]int)
+	var groups []syntaxEditGroup
+	for _, edit := range e.edits {
+		index, ok := indices[edit.command]
+		if !ok {
+			index = len(groups)
+			indices[edit.command] = index
+			groups = append(groups, syntaxEditGroup{origin: edit.editOrigin, distance: contentLength})
+		}
+		groups[index].edits = append(groups[index].edits, edit)
+	}
+
+	baselineOffset := 0
+	renderedOffset := 0
+	for _, edit := range e.orderedEdits() {
+		renderedOffset += edit.start - baselineOffset
+		start := renderedOffset
+		end := start + len(edit.replacement)
+		distance := max(start-generatedOffset, generatedOffset-end, 0)
+		index := indices[edit.command]
+		groups[index].distance = min(groups[index].distance, distance)
+		renderedOffset = end
+		baselineOffset = max(baselineOffset, edit.end)
+	}
+	return groups
+}
+
+func closestSyntaxEditGroup(groups []syntaxEditGroup) syntaxEditGroup {
+	return slices.MinFunc(groups, func(first, second syntaxEditGroup) int {
+		if order := cmp.Compare(first.distance, second.distance); order != 0 {
+			return order
+		}
+		return cmp.Compare(second.origin.command, first.origin.command)
+	})
+}
+
+func (e *editor) contentWithSyntaxGroups(groups []syntaxEditGroup) string {
+	var edits []baselineEdit
+	for _, group := range groups {
+		edits = append(edits, group.edits...)
+	}
+	return e.contentWithEdits(edits)
+}
+
+func generatedByteOffset(content string, line, column int) int {
+	lines := renderedLines(content)
+	if line < 1 || line > len(lines) {
+		return len(content)
+	}
+	current := lines[line-1]
+	return min(current.start+max(column-1, 0), current.contentEnd)
 }
 
 type formatToken struct {
@@ -284,20 +397,22 @@ func (m *formattedOffsetMap) mapOffset(offset int) int {
 	return afterStart + (offset-beforeStart)*(afterEnd-afterStart)/(beforeEnd-beforeStart)
 }
 
-func formatCommandError(file *fileState, reason failureReason, message string) *commandError {
-	origin := file.validationOrigin()
+func formatCommandError(file *fileState, origin editOrigin, reason failureReason, message, repair string, generatedLine, generatedColumn int) *commandError {
 	category := ""
 	if origin.operation != "" {
 		category = commandCategory(origin.operation)
 	}
 	return &commandError{
-		Attempt:   commandAttempt{recognized: origin.operation != ""},
-		Reason:    reason,
-		Command:   origin.command,
-		Line:      origin.line,
-		Operation: origin.operation,
-		Path:      file.path,
-		Category:  category,
-		Message:   message,
+		Attempt:         commandAttempt{recognized: origin.operation != "", target: origin.target},
+		Reason:          reason,
+		Command:         origin.command,
+		Line:            origin.line,
+		Operation:       origin.operation,
+		Path:            file.path,
+		Category:        category,
+		Message:         message,
+		Repair:          repair,
+		GeneratedLine:   generatedLine,
+		GeneratedColumn: generatedColumn,
 	}
 }

@@ -33,6 +33,9 @@ func TestTranslateForHostReturnsCompleteSuccessAndFailureAccounting(t *testing.T
 	if success.Invocation.value.Commands[commandOperationIndex("in")].Invocations != 1 || success.Invocation.value.Commands[commandOperationIndex("type")].Invocations != 1 {
 		t.Fatalf("successful invocation metrics = %+v", success.Invocation.value.Commands)
 	}
+	if got := success.Invocation.EvaluatedCommandCount(); got != 2 {
+		t.Fatalf("successful evaluated commands = %d, want 2", got)
+	}
 
 	rejected, err := TranslateForHost(t.Context(), workspace, "in note.txt\ntype 1:ffff \"x\"\n", t.TempDir())
 	if err == nil {
@@ -41,6 +44,9 @@ func TestTranslateForHostReturnsCompleteSuccessAndFailureAccounting(t *testing.T
 	mutation := rejected.Invocation.value.Commands[commandOperationIndex("type")]
 	if mutation.Invocations != 1 || mutation.Errors != 1 || rejected.Invocation.value.Reasons[reasonRowStale] != 1 {
 		t.Fatalf("rejected invocation metrics = %+v", rejected.Invocation.value)
+	}
+	if got := rejected.Invocation.EvaluatedCommandCount(); got != 2 {
+		t.Fatalf("rejected evaluated commands = %d, want 2", got)
 	}
 	if !strings.HasPrefix(rejected.Diagnostic, "hpatch: ") || !strings.Contains(rejected.Diagnostic, "operation \"type\"") {
 		t.Fatalf("rejected diagnostic = %q", rejected.Diagnostic)

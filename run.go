@@ -148,12 +148,14 @@ type CommandCorrection struct {
 // command. It intentionally excludes source text, diagnostics, and repair
 // context so hosts can retain it as telemetry without retaining edit content.
 type HostRejection struct {
-	Command    int    `json:"command"`
-	SourceLine int    `json:"source_line"`
-	Operation  string `json:"operation"`
-	Target     string `json:"target,omitempty"`
-	Reason     string `json:"reason"`
-	Path       string `json:"path,omitempty"`
+	Command         int    `json:"command"`
+	SourceLine      int    `json:"source_line"`
+	Operation       string `json:"operation"`
+	Target          string `json:"target,omitempty"`
+	Reason          string `json:"reason"`
+	Path            string `json:"path,omitempty"`
+	GeneratedLine   int    `json:"generated_line,omitempty"`
+	GeneratedColumn int    `json:"generated_column,omitempty"`
 }
 
 // HostTranslation contains the complete result needed by an in-process host.

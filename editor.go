@@ -17,6 +17,7 @@ type editOrigin struct {
 	command   int
 	line      int
 	operation string
+	target    targetVariant
 }
 
 type baselineEdit struct {
@@ -266,7 +267,11 @@ func (e *editor) firstEdit() (baselineEdit, bool) {
 }
 
 func (e *editor) orderedEdits() []baselineEdit {
-	edits := slices.Clone(e.edits)
+	return orderedBaselineEdits(e.edits)
+}
+
+func orderedBaselineEdits(source []baselineEdit) []baselineEdit {
+	edits := slices.Clone(source)
 	slices.SortFunc(edits, func(first, second baselineEdit) int {
 		if order := cmp.Compare(first.start, second.start); order != 0 {
 			return order
@@ -288,7 +293,11 @@ func (e *editor) content() string {
 	if e.finalContent != nil {
 		return *e.finalContent
 	}
-	edits := e.orderedEdits()
+	return e.contentWithEdits(e.edits)
+}
+
+func (e *editor) contentWithEdits(source []baselineEdit) string {
+	edits := orderedBaselineEdits(source)
 	var result strings.Builder
 	cursor := 0
 	for _, edit := range edits {

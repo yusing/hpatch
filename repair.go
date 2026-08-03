@@ -101,6 +101,30 @@ func writeLineWindow(report *strings.Builder, baseline string, lines []logicalLi
 	}
 }
 
+func generatedSourceRepair(content string, line, column int) string {
+	lines := renderedLines(content)
+	if line < 1 || line > len(lines) {
+		return ""
+	}
+
+	var report strings.Builder
+	fmt.Fprintf(&report, "generated Go near %d:%d\n", line, column)
+	start := max(1, line-repairLineWindow)
+	end := min(len(lines), line+repairLineWindow)
+	for index := start; index <= end; index++ {
+		current := lines[index-1]
+		limit := 64
+		marker := " "
+		if index == line {
+			limit = repairPreviewLimit
+			marker = ">"
+		}
+		text := lineContent(content, current)
+		fmt.Fprintf(&report, "%s %d | %s\n", marker, index, previewTextLimit(text, limit))
+	}
+	return report.String()
+}
+
 func lineNumberAt(lines []logicalLine, offset int) int {
 	for index, line := range lines {
 		if offset < line.fullEnd {
