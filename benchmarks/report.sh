@@ -325,6 +325,8 @@ aggregate_agent_interactions() {
 			([$joined[] | .session.hpatch_calls.rejected] | add // 0) as $rejected |
 			(($attempts | length) < $routed) as $truncated |
 			([$attempts[] | select(.correction and .attempt > 1)] | length) as $corrections |
+			([$attempts[] | select(.correction and .attempt > 1 and .correction_scope == "value-row")] | length) as $value_row_corrections |
+			([$attempts[] | select(.correction and .attempt > 1) | (.value_row_operations // 0)] | add // 0) as $value_row_operations |
 			($attempts | group_by([.repetition, .correlation_id])) as $chains |
 			([$chains[] | select(any(.[]; .outcome == "rejected"))]) as $rejected_chains |
 			([$rejected_chains[] | select(any(.[]; .outcome == "successful"))] | length) as $recovered_chains |
@@ -336,6 +338,7 @@ aggregate_agent_interactions() {
 				["Retained attempts", "\($attempts | length)/\($routed) routed calls"],
 				["Call rejection rate", "\($rejected)/\($routed) (\(percent($rejected; $routed)))"],
 				["Indexed correction adoption", (if $truncated then "unavailable (attempt telemetry truncated)" else "\($corrections)/\($rejected) rejected calls (\(percent($corrections; $rejected)))" end)],
+				["Value-row correction use", (if $truncated then "unavailable (attempt telemetry truncated)" else "\($value_row_corrections)/\($corrections) indexed corrections (\(percent($value_row_corrections; $corrections))); \($value_row_operations) row operations" end)],
 				["Recovered rejection chains", (if $truncated then "unavailable (attempt telemetry truncated)" else "\($recovered_chains)/\($rejected_chains | length)" end)],
 				["Failed-payload share", "\($gain.ineffective_hpatch_tokens)/\($all_hpatch) tokens (\(percent($gain.ineffective_hpatch_tokens; $all_hpatch)))"],
 				["Break-even failed-payload budget", "\($break_even_budget) tokens"],
@@ -362,6 +365,7 @@ aggregate_agent_interactions() {
 			else [.rejections[] |
 				"command \(.command) · script line \(.source_line) · \(.operation)\(if (.target // "") == "" then "" else "/\(.target)" end) · \(.reason)" +
 				(if (.path // "") == "" then "" else " · \(.path)" end) +
+				(if (.value_line // 0) == 0 then "" else " · value row \(.value_line)" end) +
 				(if (.generated_line // 0) == 0 then "" else " · generated \(.generated_line):\(.generated_column // "—")" end)
 			] | join("<br>")
 			end;
@@ -382,7 +386,8 @@ aggregate_agent_interactions() {
 				.session.hpatch_attempts[] |
 				[
 					$repetition, .sequence, .correlation_id, .call_id, .attempt,
-					(if .correction then "indexed" else "complete" end), .outcome,
+					(if .correction then (.correction_scope // "command") else "complete" end), .outcome,
+					(.value_row_operations // 0), (.base_value_rows // 0), (.base_command_tokens // 0),
 					.evaluated_commands, .emitted_hpatch_tokens, .apply_patch_tokens,
 					.diagnostic_input_tokens, rejection_evidence
 				] |
@@ -395,8 +400,8 @@ aggregate_agent_interactions() {
 		end
 	')
 	if [[ $attempt_sequence == \|* ]]; then
-		printf '| Rep | Sequence | Chain | Call | Attempt | Payload | Outcome | Evaluated commands | Hpatch tokens | Apply-patch baseline | Diagnostic tokens | Rejection evidence |\n'
-		printf '|---:|---:|---|---|---:|---|---|---:|---:|---:|---:|---|\n'
+		printf '| Rep | Sequence | Chain | Call | Attempt | Payload | Outcome | Value-row ops | Base body rows | Base command tokens | Evaluated commands | Hpatch tokens | Apply-patch baseline | Diagnostic tokens | Rejection evidence |\n'
+		printf '|---:|---:|---|---|---:|---|---|---:|---:|---:|---:|---:|---:|---:|---|\n'
 	fi
 	printf '%s\n' "$attempt_sequence"
 	printf '\nAttempt telemetry is bounded and contains no script, replacement text, diagnostic body, or repair context.\n'
@@ -421,7 +426,8 @@ aggregate_agent_interactions() {
 				(.session.hpatch_rejections // [])[] |
 				[
 					$repetition, .command, .source_line, .operation, (.target // "—"),
-					.reason, (.path // "—"), (.generated_line // "—"), (.generated_column // "—")
+					(.value_line // "—"), .reason, (.path // "—"),
+					(.generated_line // "—"), (.generated_column // "—")
 				] |
 				map(cell) |
 				"| " + join(" | ") + " |"
@@ -434,11 +440,11 @@ aggregate_agent_interactions() {
 		end
 	')
 	if [[ $rejection_evidence == \|* ]]; then
-		printf '| Rep | Command | Source line | Operation | Target | Reason | Path | Generated line | Generated column |\n'
-		printf '|---:|---:|---:|---|---|---|---|---:|---:|\n'
+		printf '| Rep | Command | Source line | Operation | Target | Value row | Reason | Path | Generated line | Generated column |\n'
+		printf '|---:|---:|---:|---|---|---:|---|---|---:|---:|\n'
 	fi
 	printf '%s\n' "$rejection_evidence"
-	printf '\nEvidence contains evaluator-owned command identity and generated Go position only; scripts, replacement text, diagnostics, and repair context are not retained.\n'
+	printf '\nEvidence contains evaluator-owned command identity, multiline value row, and generated Go position only; scripts, replacement text, diagnostics, and repair context are not retained.\n'
 
 	printf '\n## Editing efficiency\n\n'
 	printf '| Measure | Control-equivalent | Hpatch | Change |\n'

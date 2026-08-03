@@ -136,7 +136,7 @@ func (t inProcessHPatchTranslator) RecordMetrics(ctx context.Context, record hpa
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	return hpatch.RecordHostMetrics(ctx, t.dataDirectory, record)
+	return hpatch.RecordHostMetrics(ctx, t.dataDirectory, record.HostMetricRecord)
 }
 
 type hpatchHistory struct {
@@ -347,22 +347,40 @@ Repairing a rejected script:
     +INDEX: COMMAND
     INDEX+: COMMAND
 
-  These replace, accept a displayed safe correction for, delete, insert before, or
-  insert after a command. Indices count the nonblank command headers in the complete
-  script evaluated for the latest rejection; they are not source-line numbers,
-  indices into the first attempt, or indices into a compact correction payload. A
-  fixed <<PATCH heredoc and its body count as one command. When an edit diagnostic
-  reflects a bad span, correct the target in that mutation. Replace, accept, or delete an
-  index at most once; repeated insertions retain payload order even if the anchor is
-  deleted. If the mapping is uncertain, resend the complete script. The rebuilt
-  script is revalidated atomically.
+  A command whose value uses the fixed <<PATCH frame also exposes its physical
+  value rows as INDEX.ROW. Repair only the malformed row without resending the
+  unaffected multiline value with:
+
+    INDEX.ROW: "VALUE"
+    -INDEX.ROW
+    +INDEX.ROW: "VALUE"
+    INDEX.ROW+: "VALUE"
+
+  Command operations replace, accept a displayed safe correction for, delete, insert
+  before, or insert after a command. Indices count the nonblank command headers in the
+  complete script evaluated for the latest rejection; they are not source-line numbers,
+  indices into the first attempt, or indices into a compact correction payload. A fixed
+  <<PATCH heredoc and its body count as one command. When an edit diagnostic reflects a
+  bad span, correct the target in that mutation.
+
+  ROW counts physical body rows between that command's fixed <<PATCH opener and closing
+  PATCH line in the latest evaluated script; decoded inline multiline strings expose no
+  rows. VALUE is one JSON-compatible quoted physical row. A value-row replacement
+  preserves the original row terminator when VALUE omits one, while an explicit
+  terminator wins. Insertions never synthesize a terminator, and deletion removes the
+  row's terminator. A value-row replacement or insertion cannot materialize the exact
+  PATCH delimiter row. Value rows cannot use accept. A whole-command replacement,
+  acceptance, or deletion cannot be combined with a value-row mutation of the same command.
+  Replace, accept, or delete an index at most once; repeated insertions retain payload order
+  even if the anchor is deleted. If the mapping is uncertain, replace the complete command
+  or resend the complete script. The rebuilt script is revalidated atomically.
 `
 
 // hpatchCorrectionHint is appended to a rejection so the cheaper repair path is
 // visible at the moment it applies. A diagnostic states what was wrong but not
 // what to send next, and a model that has forgotten the protocol resends the whole
 // script, which is the cost this feature exists to avoid.
-const hpatchCorrectionHint = "\nRepair this with indexed operations: `INDEX: COMMAND`, `-INDEX`, `+INDEX: COMMAND`, or `INDEX+: COMMAND`. Indices are the command numbers above.\n"
+const hpatchCorrectionHint = "\nRepair this with indexed operations: `INDEX: COMMAND`, `-INDEX`, `+INDEX: COMMAND`, or `INDEX+: COMMAND`. For a displayed multiline value row, use `INDEX.ROW: \"VALUE\"`, `-INDEX.ROW`, `+INDEX.ROW: \"VALUE\"`, or `INDEX.ROW+: \"VALUE\"`. Indices are the command and value-row numbers above.\n"
 
 func hpatchAcceptHint(corrections map[int]string) string {
 	commands := slices.Sorted(maps.Keys(corrections))
@@ -1081,6 +1099,7 @@ func (t *hpatchResponseTransform) translate(callID, input string, upstreamItem m
 
 	evaluated := input
 	correction := isHPatchCorrection(input)
+	correctionStats := hpatchCorrectionStats{}
 	attemptMetadata := hpatch.AttemptMetadata{
 		SessionID:     t.sessionID,
 		CorrelationID: callID,
@@ -1089,9 +1108,10 @@ func (t *hpatchResponseTransform) translate(callID, input string, upstreamItem m
 		Correction:    correction,
 	}
 	if correction {
+		correctionStats.scope = hpatchCorrectionScope(input)
 		base, baseErr := t.correctionHistory()
 		if baseErr != nil {
-			return t.rejectUnevaluated(callID, input, baseErr, attemptMetadata, upstreamItem)
+			return t.rejectUnevaluated(callID, input, baseErr, attemptMetadata, correctionStats, upstreamItem)
 		}
 		attemptMetadata.CorrelationID = base.correlationID
 		if attemptMetadata.CorrelationID == "" {
@@ -1099,15 +1119,16 @@ func (t *hpatchResponseTransform) translate(callID, input string, upstreamItem m
 		}
 		attemptMetadata.Attempt = t.nextCorrectionAttempt(attemptMetadata.CorrelationID, base.attempt)
 		if base.root != t.workspace.canonical {
-			return t.rejectUnevaluated(callID, input, errors.New("the rejected script belongs to a different worktree; send a complete script"), attemptMetadata, upstreamItem)
+			return t.rejectUnevaluated(callID, input, errors.New("the rejected script belongs to a different worktree; send a complete script"), attemptMetadata, correctionStats, upstreamItem)
 		}
 		corrections, parseErr := parseHPatchCorrections(input)
 		if parseErr != nil {
-			return t.rejectUnevaluated(callID, input, parseErr, attemptMetadata, upstreamItem)
+			return t.rejectUnevaluated(callID, input, parseErr, attemptMetadata, correctionStats, upstreamItem)
 		}
+		correctionStats = hpatchCorrectionStatsOf(corrections).withBase(base.correctable(), corrections)
 		corrected, correctionErr := applyHPatchCorrections(base.correctable(), corrections, base.corrections)
 		if correctionErr != nil {
-			return t.rejectUnevaluated(callID, input, correctionErr, attemptMetadata, upstreamItem)
+			return t.rejectUnevaluated(callID, input, correctionErr, attemptMetadata, correctionStats, upstreamItem)
 		}
 		evaluated = corrected
 		if len(evaluated) > maxHPatchScriptBytes {
@@ -1137,6 +1158,7 @@ func (t *hpatchResponseTransform) translate(callID, input string, upstreamItem m
 			invocation:    translated.invocation,
 			rejections:    translated.rejections,
 			attempt:       attemptMetadata,
+			correction:    correctionStats,
 			emittedScript: input,
 			diagnostic:    diagnostic,
 		}); err != nil {
@@ -1167,6 +1189,7 @@ func (t *hpatchResponseTransform) translate(callID, input string, upstreamItem m
 	if err := t.recordMetrics(hpatchMetricInputs{
 		invocation:    translated.invocation,
 		attempt:       attemptMetadata,
+		correction:    correctionStats,
 		emittedScript: input,
 		report:        translated.report,
 		patch:         patchText,
@@ -1277,9 +1300,9 @@ func (h hpatchHistory) carrierInput(hreadWrapperDirectory string) string {
 	return hpatchApplyExecInput(h.patch, h.report)
 }
 
-func (t *hpatchResponseTransform) rejectUnevaluated(callID, input string, rejection error, attempt hpatch.AttemptMetadata, upstreamItem map[string]json.RawMessage) (hpatchHistory, error) {
+func (t *hpatchResponseTransform) rejectUnevaluated(callID, input string, rejection error, attempt hpatch.AttemptMetadata, correction hpatchCorrectionStats, upstreamItem map[string]json.RawMessage) (hpatchHistory, error) {
 	diagnostic := rejection.Error()
-	if err := t.recordMetrics(hpatchMetricInputs{attempt: attempt, emittedScript: input, diagnostic: diagnostic}); err != nil {
+	if err := t.recordMetrics(hpatchMetricInputs{attempt: attempt, correction: correction, emittedScript: input, diagnostic: diagnostic}); err != nil {
 		return hpatchHistory{}, err
 	}
 	history := hpatchHistory{

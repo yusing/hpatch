@@ -125,6 +125,27 @@ func generatedSourceRepair(content string, line, column int) string {
 	return report.String()
 }
 
+func multilineValueRepair(command int, value string, line int) string {
+	lines := physicalValueLines(value)
+	if command < 1 || line < 1 || line > len(lines) {
+		return ""
+	}
+
+	var report strings.Builder
+	fmt.Fprintf(&report, "command %d multiline value near row %d\n", command, line)
+	start := max(1, line-repairLineWindow)
+	end := min(len(lines), line+repairLineWindow)
+	for index := start; index <= end; index++ {
+		marker := " "
+		if index == line {
+			marker = ">"
+		}
+		text := lineContent(value, lines[index-1])
+		fmt.Fprintf(&report, "%s %d.%d | %s\n", marker, command, index, previewTextLimit(text, repairPreviewLimit))
+	}
+	return report.String()
+}
+
 func lineNumberAt(lines []logicalLine, offset int) int {
 	for index, line := range lines {
 		if offset < line.fullEnd {

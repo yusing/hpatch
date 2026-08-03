@@ -192,3 +192,86 @@ func TestHPatch2InvalidGoAttributesCausativeMutation(t *testing.T) {
 		t.Fatalf("file = %q, want unchanged", got)
 	}
 }
+
+func TestHPatch2InvalidGoReportsMultilineValueRow(t *testing.T) {
+	rootPath := t.TempDir()
+	before := "package p\n\nvar value = 1\n"
+	writeTestFile(t, rootPath, "file.go", before, 0o644)
+	script := "in file.go\ntype " + row(3, "var value = 1") + " <<PATCH\n" +
+		"var first = 1\n" +
+		"var =\n" +
+		"var third = 3\n" +
+		"PATCH\n"
+
+	root, err := os.OpenRoot(rootPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := TranslateForHost(t.Context(), Workspace{Root: root}, script, t.TempDir())
+	root.Close()
+	if err == nil {
+		t.Fatal("invalid Go unexpectedly translated")
+	}
+	want := []HostRejection{{
+		Command: 2, SourceLine: 2, Operation: "type", Target: "line",
+		Reason: "language-syntax", Path: "file.go", GeneratedLine: 4, GeneratedColumn: 5, ValueLine: 2,
+	}}
+	if !reflect.DeepEqual(result.Rejections, want) {
+		t.Fatalf("rejections = %#v, want %#v", result.Rejections, want)
+	}
+
+	_, stderr, exitCode := runForTest(rootPath, nil, script)
+	if exitCode != 1 {
+		t.Fatalf("Run() = exit %d, stderr %q", exitCode, stderr)
+	}
+	for _, fragment := range []string{
+		"command 2 multiline value near row 2\n",
+		"  2.1 | var first = 1\n",
+		"> 2.2 | var =\n",
+		"  2.3 | var third = 3\n",
+	} {
+		if !strings.Contains(stderr, fragment) {
+			t.Fatalf("diagnostic lacks %q:\n%s", fragment, stderr)
+		}
+	}
+	if got := readTestFile(t, rootPath, "file.go"); got != before {
+		t.Fatalf("file = %q, want unchanged", got)
+	}
+}
+
+func TestHPatch2MultilineValueRowsUsePhysicalFraming(t *testing.T) {
+	rootPath := t.TempDir()
+	script := "new file.go\ntype <<PATCH\npackage p\rvar =\nPATCH\n"
+
+	root, err := os.OpenRoot(rootPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := TranslateForHost(t.Context(), Workspace{Root: root}, script, t.TempDir())
+	root.Close()
+	if err == nil {
+		t.Fatal("invalid Go unexpectedly translated")
+	}
+	if len(result.Rejections) != 1 || result.Rejections[0].Command != 2 || result.Rejections[0].ValueLine != 1 {
+		t.Fatalf("rejections = %#v, want command 2 physical value row 1", result.Rejections)
+	}
+
+	_, stderr, exitCode := runForTest(rootPath, nil, script)
+	if exitCode != 1 {
+		t.Fatalf("Run() = exit %d, stderr %q", exitCode, stderr)
+	}
+	for _, fragment := range []string{
+		"command 2 multiline value near row 1\n",
+		"> 2.1 | package p\\rvar =\n",
+	} {
+		if !strings.Contains(stderr, fragment) {
+			t.Fatalf("diagnostic lacks %q:\n%s", fragment, stderr)
+		}
+	}
+	if strings.Contains(stderr, "2.2 |") {
+		t.Fatalf("diagnostic split an embedded carriage return into another value row:\n%s", stderr)
+	}
+	if _, err := os.Stat(rootPath + "/file.go"); !os.IsNotExist(err) {
+		t.Fatalf("rejected translation created file.go: %v", err)
+	}
+}

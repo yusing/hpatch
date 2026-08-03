@@ -14,10 +14,11 @@ type targetSpan struct {
 }
 
 type editOrigin struct {
-	command   int
-	line      int
-	operation string
-	target    targetVariant
+	command        int
+	line           int
+	operation      string
+	target         targetVariant
+	multilineValue bool
 }
 
 type baselineEdit struct {

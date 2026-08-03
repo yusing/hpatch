@@ -137,6 +137,7 @@ func (w *workspace) execute(command instruction, commandIndex int) error {
 	origin := editOrigin{
 		command: commandIndex, line: command.line,
 		operation: command.operation, target: command.attempt.target,
+		multilineValue: command.delimiter != "",
 	}
 	initializing := command.operation == "type" && command.target.kind == targetNone && w.initializable == w.active
 	if !initializing {

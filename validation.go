@@ -13,6 +13,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/yusing/hpatch/internal/hpatchsyntax"
 )
 
 type indentationCorrectionError struct {
@@ -123,6 +125,7 @@ func hostRejectionsOf(err error) []HostRejection {
 			Path:            command.Path,
 			GeneratedLine:   command.GeneratedLine,
 			GeneratedColumn: command.GeneratedColumn,
+			ValueLine:       command.ValueLine,
 		})
 	}
 	return rejections
@@ -155,20 +158,22 @@ func (w *workspace) formatGoFiles() *commandError {
 		formatted, err := format.Source([]byte(content))
 		if err != nil {
 			line, column := generatedPositionOf(err)
-			origin := file.editor.syntaxFailureOrigin(content, line, column)
-			if origin.command == 0 {
-				origin = file.validationOrigin()
+			location := file.editor.syntaxFailureLocation(content, line, column)
+			if location.origin.command == 0 {
+				location.origin = file.validationOrigin()
 			}
+			repair := generatedSourceRepair(content, line, column)
+			repair += multilineValueRepair(location.origin.command, location.replacement, location.valueLine)
 			return formatCommandError(
-				file, origin, reasonLanguageSyntax, fmt.Sprintf("format Go source: %v", err),
-				generatedSourceRepair(content, line, column), line, column,
+				file, location.origin, reasonLanguageSyntax, fmt.Sprintf("format Go source: %v", err),
+				repair, line, column, location.valueLine,
 			)
 		}
 		if string(formatted) != content {
 			final := string(formatted)
 			offsets, err := newFormattedOffsetMap(content, final)
 			if err != nil {
-				return formatCommandError(file, file.validationOrigin(), reasonOther, fmt.Sprintf("map formatted Go source: %v", err), "", 0, 0)
+				return formatCommandError(file, file.validationOrigin(), reasonOther, fmt.Sprintf("map formatted Go source: %v", err), "", 0, 0, 0)
 			}
 			file.editor.finalContent = &final
 			file.editor.finalOffsets = offsets
@@ -197,18 +202,28 @@ type syntaxEditGroup struct {
 	origin   editOrigin
 	edits    []baselineEdit
 	distance int
+
+	replacement string
+	valueLine   int
 }
 
-func (e *editor) syntaxFailureOrigin(content string, line, column int) editOrigin {
-	groups := e.syntaxEditGroups(generatedByteOffset(content, line, column), len(content))
+type syntaxFailureLocation struct {
+	origin      editOrigin
+	replacement string
+	valueLine   int
+}
+
+func (e *editor) syntaxFailureLocation(content string, line, column int) syntaxFailureLocation {
+	generatedOffset := generatedByteOffset(content, line, column)
+	groups := e.syntaxEditGroups(generatedOffset, len(content))
 	if len(groups) == 0 {
-		return e.lastOrigin
+		return syntaxFailureLocation{origin: e.lastOrigin}
 	}
 	if len(groups) == 1 || len(groups) > syntaxLocalizationGroupLimit {
-		return closestSyntaxEditGroup(groups).origin
+		return syntaxLocationOf(closestSyntaxEditGroup(groups))
 	}
 	if _, err := format.Source([]byte(e.baseline)); err != nil {
-		return closestSyntaxEditGroup(groups).origin
+		return syntaxLocationOf(closestSyntaxEditGroup(groups))
 	}
 
 	// Remove far-away groups first. The remaining set is one-minimal: removing
@@ -227,7 +242,11 @@ func (e *editor) syntaxFailureOrigin(content string, line, column int) editOrigi
 		}
 		index++
 	}
-	return closestSyntaxEditGroup(groups).origin
+	return syntaxLocationOf(closestSyntaxEditGroup(groups))
+}
+
+func syntaxLocationOf(group syntaxEditGroup) syntaxFailureLocation {
+	return syntaxFailureLocation{origin: group.origin, replacement: group.replacement, valueLine: group.valueLine}
 }
 
 func (e *editor) syntaxEditGroups(generatedOffset, contentLength int) []syntaxEditGroup {
@@ -251,11 +270,42 @@ func (e *editor) syntaxEditGroups(generatedOffset, contentLength int) []syntaxEd
 		end := start + len(edit.replacement)
 		distance := max(start-generatedOffset, generatedOffset-end, 0)
 		index := indices[edit.command]
-		groups[index].distance = min(groups[index].distance, distance)
+		if distance <= groups[index].distance {
+			groups[index].distance = distance
+			if edit.multilineValue {
+				groups[index].replacement = edit.replacement
+				groups[index].valueLine = replacementValueLine(edit.replacement, generatedOffset-start)
+			}
+		}
 		renderedOffset = end
 		baselineOffset = max(baselineOffset, edit.end)
 	}
 	return groups
+}
+
+func replacementValueLine(replacement string, offset int) int {
+	lines := physicalValueLines(replacement)
+	if len(lines) == 0 {
+		return 0
+	}
+	offset = min(max(offset, 0), len(replacement))
+	return lineNumberAt(lines, offset)
+}
+
+func physicalValueLines(value string) []logicalLine {
+	physical := hpatchsyntax.SplitPhysicalLines(value)
+	lines := make([]logicalLine, 0, len(physical))
+	offset := 0
+	for _, line := range physical {
+		if line.Text == "" && line.Terminator == "" && offset == len(value) {
+			break
+		}
+		contentEnd := offset + len(line.Text)
+		fullEnd := contentEnd + len(line.Terminator)
+		lines = append(lines, logicalLine{start: offset, contentEnd: contentEnd, fullEnd: fullEnd})
+		offset = fullEnd
+	}
+	return lines
 }
 
 func closestSyntaxEditGroup(groups []syntaxEditGroup) syntaxEditGroup {
@@ -397,7 +447,7 @@ func (m *formattedOffsetMap) mapOffset(offset int) int {
 	return afterStart + (offset-beforeStart)*(afterEnd-afterStart)/(beforeEnd-beforeStart)
 }
 
-func formatCommandError(file *fileState, origin editOrigin, reason failureReason, message, repair string, generatedLine, generatedColumn int) *commandError {
+func formatCommandError(file *fileState, origin editOrigin, reason failureReason, message, repair string, generatedLine, generatedColumn, valueLine int) *commandError {
 	category := ""
 	if origin.operation != "" {
 		category = commandCategory(origin.operation)
@@ -414,5 +464,6 @@ func formatCommandError(file *fileState, origin editOrigin, reason failureReason
 		Repair:          repair,
 		GeneratedLine:   generatedLine,
 		GeneratedColumn: generatedColumn,
+		ValueLine:       valueLine,
 	}
 }

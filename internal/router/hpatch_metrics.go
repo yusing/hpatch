@@ -12,7 +12,14 @@ import (
 
 const failedApplyPatch = "*** Begin Patch\n*** End Patch\n"
 
-type hpatchMetricRecord = hpatch.HostMetricRecord
+type hpatchMetricRecord struct {
+	hpatch.HostMetricRecord
+
+	correctionScope    string
+	valueRowOperations uint64
+	baseValueRows      uint64
+	baseCommandTokens  uint64
+}
 
 type hpatchMetricInputs struct {
 	invocation    hpatch.InvocationMetrics
@@ -23,6 +30,7 @@ type hpatchMetricInputs struct {
 	patch         string
 	diagnostic    string
 	sessionID     string
+	correction    hpatchCorrectionStats
 
 	definition         string
 	baselineDefinition string
@@ -44,10 +52,22 @@ func calculateHPatchMetricRecord(inputs hpatchMetricInputs) (hpatchMetricRecord,
 		return hpatchMetricRecord{}, fmt.Errorf("load GPT-5 tokenizer: %w", err)
 	}
 	record := hpatchMetricRecord{
-		Invocation: inputs.invocation,
-		Rejections: slices.Clone(inputs.rejections),
-		Attempt:    inputs.attempt,
-		SessionID:  inputs.sessionID,
+		HostMetricRecord: hpatch.HostMetricRecord{
+			Invocation: inputs.invocation,
+			Rejections: slices.Clone(inputs.rejections),
+			Attempt:    inputs.attempt,
+			SessionID:  inputs.sessionID,
+		},
+		correctionScope:    inputs.correction.scope,
+		valueRowOperations: inputs.correction.valueRowOperations,
+		baseValueRows:      inputs.correction.baseValueRows,
+	}
+	for _, command := range inputs.correction.baseCommands {
+		count, countErr := countHPatchMetricText(codec, command, "corrected base command")
+		if countErr != nil {
+			return hpatchMetricRecord{}, countErr
+		}
+		record.baseCommandTokens += count
 	}
 	if !inputs.overheadOnly {
 		if inputs.successful {

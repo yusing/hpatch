@@ -26,6 +26,13 @@ func TestCalculateHPatchMetricRecordUsesExactCallerPayloads(t *testing.T) {
 		definition:         "hpatch definition\n\n",
 		baselineDefinition: "apply_patch definition\n",
 		successful:         true,
+		correction: hpatchCorrectionStats{
+			scope: "value-row", valueRowOperations: 1, baseValueRows: 24,
+			baseCommands: []string{
+				"type 1:a793..24:b1e9 <<PATCH\nlarge body\nPATCH\n",
+				"type 30:cafe..31:beef <<PATCH\nsecond body\nPATCH\n",
+			},
+		},
 	}
 	record, err := calculateHPatchMetricRecord(inputs)
 	if err != nil {
@@ -58,6 +65,12 @@ func TestCalculateHPatchMetricRecordUsesExactCallerPayloads(t *testing.T) {
 	}
 	if record.Attempt != inputs.attempt {
 		t.Fatalf("attempt metadata = %+v, want %+v", record.Attempt, inputs.attempt)
+	}
+	if record.correctionScope != "value-row" || record.valueRowOperations != 1 || record.baseValueRows != 24 {
+		t.Fatalf("correction telemetry = %+v", record)
+	}
+	if got, want := record.baseCommandTokens, count(inputs.correction.baseCommands[0])+count(inputs.correction.baseCommands[1]); got != want {
+		t.Fatalf("base command tokens = %d, want %d", got, want)
 	}
 	if got, want := record.DefinitionInputTokens, count("hpatch definition"); got != want {
 		t.Fatalf("definition tokens = %d, want %d", got, want)

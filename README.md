@@ -301,11 +301,11 @@ Rules worth remembering:
 - Use `type` to replace, `type-` to insert before, `type+` to insert after, and `del` to delete.
 - Use search to locate likely edit regions, then use HREAD for their first content read; issue independent HREAD calls together and use only current rows from the exact path.
 - First `in` of a file freezes its immutable invocation baseline. Pending edits never shift later targets.
-- Batch disjoint edits across inspected files with repeated `in PATH` sections.
+- Batch short, disjoint edits across inspected files when they are expected to validate or fail together. Keep unrelated large `<<PATCH` values in separate calls, with at most one syntax-sensitive multiline Go declaration or function replacement per call; short supporting edits for that same change may remain with it.
 - For an existing Go declaration or function, prefer one range `type` over assembling the same replacement through several insertions. After success touches a file, discard its saved references and HREAD it again before another edit.
 - Overlapping replacements or deletions and insertions strictly inside them fail atomically. Boundary insertions are valid.
 - Use inline quoted values for short single-line edits; include `\n` when an insertion must form a new line. Reserve fixed `<<PATCH` for multiline or escape-heavy values.
-- Rejection changes nothing. Router-owned retries can replace, delete, or insert failed commands by index without resending the full script.
+- Rejection changes nothing. Router-owned retries can replace, delete, or insert failed commands by index; for a fixed `<<PATCH` value, they can address one physical body row as `COMMAND.ROW` without resending the large value.
 
 Multiline example:
 

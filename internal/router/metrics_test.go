@@ -395,10 +395,10 @@ func TestNotifyingTranslatorPublishesGainUpdates(t *testing.T) {
 		inner:   newInProcessHPatchTranslator(dataDirectory),
 		metrics: store,
 	}
-	if err := translator.RecordMetrics(t.Context(), hpatch.HostMetricRecord{
+	if err := translator.RecordMetrics(t.Context(), hpatchMetricRecord{HostMetricRecord: hpatch.HostMetricRecord{
 		HPatchTokens:     4,
 		ApplyPatchTokens: 8,
-	}); err != nil {
+	}}); err != nil {
 		t.Fatal(err)
 	}
 	select {
@@ -419,19 +419,24 @@ func TestNotifyingTranslatorAttributesHPatchCallsToSession(t *testing.T) {
 		inner:   newInProcessHPatchTranslator(dataDirectory),
 		metrics: store,
 	}
-	for _, record := range []hpatch.HostMetricRecord{
+	for _, record := range []hpatchMetricRecord{
 		{
-			Attempt:   hpatch.AttemptMetadata{SessionID: "session", CorrelationID: "chain", CallID: "call-1", Attempt: 1},
-			SessionID: "session", IneffectiveHPatchTokens: 5,
-			FailedApplyPatchTokens: 2, DiagnosticInputTokens: 3,
-			Rejections: []hpatch.HostRejection{{
-				Command: 2, SourceLine: 3, Operation: "type", Target: "line",
-				Reason: "language-syntax", Path: "file.go", GeneratedLine: 8, GeneratedColumn: 3,
-			}},
+			HostMetricRecord: hpatch.HostMetricRecord{
+				Attempt:   hpatch.AttemptMetadata{SessionID: "session", CorrelationID: "chain", CallID: "call-1", Attempt: 1},
+				SessionID: "session", IneffectiveHPatchTokens: 5,
+				FailedApplyPatchTokens: 2, DiagnosticInputTokens: 3,
+				Rejections: []hpatch.HostRejection{{
+					Command: 2, SourceLine: 3, Operation: "type", Target: "line",
+					Reason: "language-syntax", Path: "file.go", GeneratedLine: 8, GeneratedColumn: 3, ValueLine: 2,
+				}},
+			},
 		},
 		{
-			Attempt:   hpatch.AttemptMetadata{SessionID: "session", CorrelationID: "chain", CallID: "call-2", Attempt: 2, Correction: true},
-			SessionID: "session", HPatchTokens: 4, ApplyPatchTokens: 8,
+			HostMetricRecord: hpatch.HostMetricRecord{
+				Attempt:   hpatch.AttemptMetadata{SessionID: "session", CorrelationID: "chain", CallID: "call-2", Attempt: 2, Correction: true},
+				SessionID: "session", HPatchTokens: 4, ApplyPatchTokens: 8,
+			},
+			correctionScope: "value-row", valueRowOperations: 1, baseValueRows: 20, baseCommandTokens: 30,
 		},
 	} {
 		if err := translator.RecordMetrics(t.Context(), record); err != nil {
@@ -449,14 +454,14 @@ func TestNotifyingTranslatorAttributesHPatchCallsToSession(t *testing.T) {
 	}
 	wantRejection := hpatch.HostRejection{
 		Command: 2, SourceLine: 3, Operation: "type", Target: "line",
-		Reason: "language-syntax", Path: "file.go", GeneratedLine: 8, GeneratedColumn: 3,
+		Reason: "language-syntax", Path: "file.go", GeneratedLine: 8, GeneratedColumn: 3, ValueLine: 2,
 	}
 	if got := snapshot.Sessions[0].HPatchRejections; len(got) != 1 || got[0] != wantRejection {
 		t.Fatalf("session hpatch rejections = %+v, want %+v", got, wantRejection)
 	}
 	wantAttempts := []hpatchAttemptMetrics{
 		{Sequence: 1, CorrelationID: "chain", CallID: "call-1", Attempt: 1, Outcome: "rejected", EmittedHPatchTokens: 5, ApplyPatchTokens: 2, DiagnosticInputTokens: 3, Rejections: []hpatch.HostRejection{wantRejection}},
-		{Sequence: 2, CorrelationID: "chain", CallID: "call-2", Attempt: 2, Correction: true, Outcome: "successful", EmittedHPatchTokens: 4, ApplyPatchTokens: 8},
+		{Sequence: 2, CorrelationID: "chain", CallID: "call-2", Attempt: 2, Correction: true, CorrectionScope: "value-row", ValueRowOperations: 1, BaseValueRows: 20, BaseCommandTokens: 30, Outcome: "successful", EmittedHPatchTokens: 4, ApplyPatchTokens: 8},
 	}
 	if got := snapshot.Sessions[0].HPatchAttempts; !reflect.DeepEqual(got, wantAttempts) {
 		t.Fatalf("session hpatch attempts = %+v, want %+v", got, wantAttempts)
@@ -481,13 +486,13 @@ func TestNotifyingTranslatorAttributesHPatchCallsToSession(t *testing.T) {
 func TestMetricsStoreBoundsSessionHPatchAttempts(t *testing.T) {
 	store := newMetricsStore("")
 	for index := range maxSessionHPatchAttempts + 1 {
-		store.recordHPatch(hpatch.HostMetricRecord{
+		store.recordHPatch(hpatchMetricRecord{HostMetricRecord: hpatch.HostMetricRecord{
 			Attempt: hpatch.AttemptMetadata{
 				SessionID: "session", CorrelationID: "chain", CallID: fmt.Sprintf("call-%d", index+1), Attempt: index + 1,
 			},
 			SessionID: "session", IneffectiveHPatchTokens: 1,
 			Rejections: []hpatch.HostRejection{{Command: index + 1, Reason: "script-syntax"}},
-		})
+		}})
 	}
 
 	got := store.snapshot().Sessions[0].HPatchAttempts
@@ -506,9 +511,9 @@ func TestMetricsStoreBoundsSessionHPatchRejectionEvidence(t *testing.T) {
 	for index := range rejections {
 		rejections[index] = hpatch.HostRejection{Command: index + 1, Reason: "script-syntax"}
 	}
-	store.recordHPatch(hpatch.HostMetricRecord{
+	store.recordHPatch(hpatchMetricRecord{HostMetricRecord: hpatch.HostMetricRecord{
 		SessionID: "session", IneffectiveHPatchTokens: 1, Rejections: rejections,
-	})
+	}})
 
 	snapshot := store.snapshot()
 	got := snapshot.Sessions[0].HPatchRejections
@@ -523,13 +528,13 @@ func TestMetricsStoreBoundsSessionHPatchRejectionEvidence(t *testing.T) {
 
 func TestMetricsStoreBoundsSessionHPatchEvidenceText(t *testing.T) {
 	store := newMetricsStore("")
-	store.recordHPatch(hpatch.HostMetricRecord{
+	store.recordHPatch(hpatchMetricRecord{HostMetricRecord: hpatch.HostMetricRecord{
 		Attempt: hpatch.AttemptMetadata{
 			SessionID: "session", CorrelationID: "chain", CallID: "call-1", Attempt: 1,
 		},
 		SessionID: "session", IneffectiveHPatchTokens: 1,
 		Rejections: []hpatch.HostRejection{{Reason: "path-resolution", Path: strings.Repeat("x", maxSessionHPatchAttemptTextBytes+1)}},
-	})
+	}})
 
 	snapshot := store.snapshot()
 	if got := snapshot.Sessions[0].HPatchAttempts; len(got) != 0 {
@@ -539,13 +544,13 @@ func TestMetricsStoreBoundsSessionHPatchEvidenceText(t *testing.T) {
 		t.Fatalf("oversized rejection evidence was retained: %+v", got)
 	}
 
-	store.recordHPatch(hpatch.HostMetricRecord{
+	store.recordHPatch(hpatchMetricRecord{HostMetricRecord: hpatch.HostMetricRecord{
 		Attempt: hpatch.AttemptMetadata{
 			SessionID: "session", CorrelationID: "chain", CallID: "call-2", Attempt: 2,
 		},
 		SessionID: "session", IneffectiveHPatchTokens: 1,
 		Rejections: []hpatch.HostRejection{{Reason: "script-syntax"}},
-	})
+	}})
 	snapshot = store.snapshot()
 	if got := snapshot.Sessions[0].HPatchAttempts; len(got) != 1 || got[0].Sequence != 2 {
 		t.Fatalf("bounded attempt evidence did not retain the later small record: %+v", got)
@@ -590,7 +595,7 @@ func TestRoutedEvaluatorRejectionReachesSessionEvidence(t *testing.T) {
 	proxyAttempt := hpatch.AttemptMetadata{
 		SessionID: transform.sessionID, CorrelationID: "call-evaluator", CallID: "call-proxy", Attempt: 2, Correction: true,
 	}
-	if _, err := transform.rejectUnevaluated("call-proxy", "1: accept", fmt.Errorf("proxy rejection"), proxyAttempt, nil); err != nil {
+	if _, err := transform.rejectUnevaluated("call-proxy", "1: accept", fmt.Errorf("proxy rejection"), proxyAttempt, hpatchCorrectionStats{scope: "command"}, nil); err != nil {
 		t.Fatal(err)
 	}
 	snapshot = store.snapshot()

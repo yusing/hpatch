@@ -410,7 +410,7 @@ prepare_instructions() {
 	# shellcheck disable=SC2016
 	if ! grep -Fqx 'Use `functions.hpatch` for local file edits, not `apply_patch`.' "$hpatch_instruction" ||
 		! grep -Fqx 'Use search to locate edit regions, then use `hread` instead of `sed` or `cat` for their first content read.' "$hpatch_instruction" ||
-		! grep -Fqx 'Issue independent `hread` calls together, and batch disjoint edits across inspected files into one hpatch call with repeated `in PATH` sections.' "$hpatch_instruction" ||
+		! grep -Fqx 'Issue independent `hread` calls together. Batch short, disjoint edits across inspected files when they are expected to validate or fail together.' "$hpatch_instruction" ||
 		grep -Fqx "$stock_instruction" "$hpatch_instruction"; then
 		printf 'bench.sh: hpatch base-instruction override was not exact\n' >&2
 		return 1

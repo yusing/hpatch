@@ -159,15 +159,18 @@ returned.
 The router's in-memory metrics snapshot also attributes successful and rejected hpatch
 translations and rejected-call diagnostic input tokens to the request session. Each session
 retains the latest 32 evaluator rejection identities: command index, physical source line,
-operation, target kind when known, stable reason, affected path when known, and the generated
-line and column reported by Go syntax validation when applicable. Each session also retains the
-latest 128 routed attempt identities: chain/call identity, attempt and outcome, emitted and
+operation, target kind when known, stable reason, affected path when known, the physical
+multiline value row when localized, and the generated line and column reported by Go syntax
+validation when applicable. Each session also retains the latest 128 routed attempt identities:
+chain/call identity, attempt and outcome, correction scope (`command` or `value-row`), value-row
+operation count, affected base-body row count, affected base-command token count, emitted and
 comparison token counts, evaluated command count, and its bounded rejection identities. These
 count limits are reinforced by per-session text-byte limits, so an oversized rejection identity
-is not retained. Session records use the same session identity as request lifecycle metrics and
-are not written to `metrics.bin`. They retain neither scripts, replacement text, diagnostics,
-nor repair context. Proxy failures that occur before evaluator invocation do not fabricate
-evaluator rejection identities. The snapshot also exposes aggregate counters so a benchmark can reconcile routed calls with
+is not retained. Session records use the same session identity as request lifecycle metrics and are not written
+to `metrics.bin`. They retain neither scripts, replacement text, diagnostics, nor repair
+context. Base-command text exists only long enough to count it and is not retained. Proxy
+failures that occur before evaluator invocation do not fabricate evaluator rejection identities.
+The snapshot also exposes aggregate counters so a benchmark can reconcile routed calls with
 client-visible file-change items without inferring failures from stderr envelopes.
 
 Classification is persisted only after the invocation's outcome is known. Translate mode
@@ -296,10 +299,10 @@ Acceptance:
 10. Metrics collection failure warns without changing the success or failure of the
     requested edit, translated output, or final-state report.
 11. Router snapshots attribute successful and rejected hpatch translations, diagnostic token
-    totals, at most the latest 128 correction-aware attempt identities, and at most the latest
-    32 structured evaluator rejection identities to their request sessions without persisting
-    scripts, replacement text, diagnostics, repair context, or new per-session records in
-    `metrics.bin`; per-session text-byte limits may retain fewer identities.
+    totals, at most the latest 128 correction-aware attempt identities, and at most the latest 32 structured
+    evaluator rejection identities to their request sessions without persisting scripts,
+    replacement text, diagnostics, repair context, or new per-session records in `metrics.bin`;
+    per-session text-byte limits may retain fewer identities.
 
 ## REQ-SCRIPT-001 — HPATCH/2 script grammar
 
@@ -408,6 +411,10 @@ N: accept      apply hpatch's displayed safe correction for command N
 -N             delete command N
 +N: COMMAND    insert before command N
 N+: COMMAND    insert after command N
+N.R: "VALUE"   replace physical body row R of command N
+-N.R            delete physical body row R of command N
++N.R: "VALUE"  insert before physical body row R of command N
+N.R+: "VALUE"  insert after physical body row R of command N
 ```
 
 A replacement or insertion whose command ends in `<<PATCH` consumes its heredoc body and
@@ -420,12 +427,27 @@ mutation itself. Multiple insertions at one anchor are allowed and retain payloa
 their position is relative to the original anchor even when that anchor is deleted. Every
 nonblank line outside a correction heredoc must be a correction operation.
 
+Body-row addressing is available only for the physical rows between the opener and closing
+delimiter of a complete fixed `<<PATCH` value. It does not address decoded inline-string
+lines. `VALUE` is one JSON-compatible quoted physical row, optionally including its own
+terminator. Replacement preserves the addressed row's terminator when `VALUE` omits one;
+an explicit terminator is authoritative. Insertions are byte-exact and synthesize no
+terminator. Deletion removes the addressed row and its terminator. A replacement or
+insertion cannot materialize an exact `PATCH` delimiter row; replace the complete command
+with an inline-escaped value instead. Body-row `accept` is not supported. A complete-command
+replacement, acceptance, or deletion conflicts with any body-row mutation of the same
+command; multiple insertions at one body-row anchor retain payload order. Diagnostic row
+numbers use the same LF/CRLF physical framing as correction indices, so an embedded standalone
+carriage return remains within one escaped display row.
+
 The router validates all operations, retained acceptances, and referenced indices before
 rebuilding the script. It then reparses and reevaluates the complete transformed script
 against the unchanged workspace. A correction failure changes nothing. A successful
-transformation becomes the base for a later correction, retains the correction-chain
-correlation ID, increments the attempt, and charges metrics for only the compact payload
-the agent emitted. The core evaluator has no correction mode.
+transformation becomes the base for a later correction, whose command and body-row indices
+resolve against that latest evaluated script. The chain retains the correction-chain
+correlation ID, increments the attempt for every evaluated or proxy-rejected correction, and
+charges metrics for only the compact payload the agent emitted. A proxy-rejected correction
+leaves the last evaluated script as the repair base. The core evaluator has no correction mode.
 
 Acceptance:
 
@@ -441,6 +463,10 @@ Acceptance:
    produces one bounded diagnostic and does not reinterpret its body as operations.
 6. Every corrected script is revalidated atomically against the unchanged workspace and
    retains the established correlation and emitted-payload metrics behavior.
+7. `N.R` operations address only a complete fixed-heredoc body, obey physical terminator
+   ownership, reject absent rows and mixed whole-command/body-row mutation, and reindex
+   against the latest evaluated rejected script in a chained correction. They cannot create
+   an exact fixed delimiter row.
 
 ## REQ-FILE-001 — File scope and lifecycle
 
@@ -661,6 +687,10 @@ depends on content introduced by another command, the diagnostic directs the age
 apply the prerequisite independently, reread, and submit a later invocation. A missing
 row or failure without a verified baseline does not choose repair context. Repair context
 is supplementary: it never changes exit status, stdout, mutation, or metrics classification.
+When invalid generated Go is localized to a fixed-heredoc mutation, its rejection identity
+includes the non-sensitive `value_line`, and the transient diagnostic displays that
+`COMMAND.ROW` plus at most two neighboring physical body rows on each side. Inline decoded
+multiline values and failures outside a multiline replacement do not fabricate a value row.
 
 Acceptance:
 
@@ -683,6 +713,8 @@ Acceptance:
 7. Stale rows, incomplete literal targets, and edit conflicts emit verified repair context;
    a missing row fails without guessing, and a failure with no active baseline emits its
    diagnostic alone.
+8. Invalid Go localized inside a fixed `<<PATCH` value reports its physical body row in
+   bounded repair context and structured host rejection identity without retaining body text.
 
 ## REQ-GUIDE-001 — Agent guidance
 
@@ -698,7 +730,10 @@ Both references teach this workflow:
    region likely to be edited; issue independent hread calls together and copy complete
    `LINE:HASH` references only from current output for that exact path.
 2. Choose a line, inclusive range, or anchored literal target inside the mutation command.
-3. Repeat `in PATH` to batch disjoint edits across inspected files.
+3. Batch short, disjoint edits across inspected files when they are expected to validate or
+   fail together. Keep unrelated large `<<PATCH` values in separate failure-domain calls,
+   with at most one syntax-sensitive multiline Go declaration or function replacement per
+   call; short supporting edits for that same change may remain with it.
 4. For an existing Go declaration or function, prefer one range `type` instead of assembling
    the same replacement through several insertions. After success touches a file, discard its
    saved references and hread it again before another edit.
@@ -706,8 +741,8 @@ Both references teach this workflow:
    delete; do not construct a separate selection or clipboard program.
 6. Encode short single-line values inline. Include `\n` when a before/after insertion
    must form a complete new line; reserve `<<PATCH` for multiline or escape-heavy values.
-7. After rejection, prefer a compact indexed correction when the desired targets still
-   belong to the same baseline; reread stale rows instead of guessing.
+7. After rejection, prefer a compact indexed command or multiline-value-row correction when
+   the desired targets still belong to the same baseline; reread stale rows instead of guessing.
 8. Do not run redundant `gofmt`; hpatch formats changed Go files before success.
 
 Guidance includes minimal examples for line replacement, range deletion, inline

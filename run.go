@@ -156,6 +156,7 @@ type HostRejection struct {
 	Path            string `json:"path,omitempty"`
 	GeneratedLine   int    `json:"generated_line,omitempty"`
 	GeneratedColumn int    `json:"generated_column,omitempty"`
+	ValueLine       int    `json:"value_line,omitempty"`
 }
 
 // HostTranslation contains the complete result needed by an in-process host.

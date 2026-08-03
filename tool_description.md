@@ -61,11 +61,13 @@ PATCH
 ```
 
 Every existing file has one immutable baseline for the complete invocation. Pending edits
-do not shift later targets. One call may repeat `in PATH` to batch disjoint edits across files
-that use inspected baselines. For an existing Go declaration or function, prefer one range
-`type` over assembling the same replacement through several insertions. Content introduced by
-a mutation is not targetable in the same call. After success touches a file, discard its saved
-references and `hread` it again before another edit.
+do not shift later targets. One call may repeat `in PATH` to batch short, disjoint edits across
+files when they are expected to validate or fail together. Keep unrelated large `<<PATCH`
+values in separate calls, with at most one syntax-sensitive multiline Go declaration or
+function replacement per call; short supporting edits for that same change may remain with it.
+For an existing Go declaration or function, prefer one range `type` over assembling the same
+replacement through several insertions. Content introduced by a mutation is not targetable in
+the same call. After success touches a file, discard its saved references and `hread` it again.
 
 Line and range replacement preserve the target's final LF, CRLF, or CR when the value
 omits a terminator. Explicit terminators are authoritative. `type-` and `type+` insert
@@ -76,5 +78,5 @@ insertions are valid. Multiple insertions at the same boundary render in script 
 
 Changed Go files are parsed and formatted before success; do not run redundant `gofmt`.
 Paths remain within the routed workspace root, and parents for `new` or `mv` must exist.
-After rejection, use the router's indexed correction only when the rows still belong to
-the same baseline; reread stale rows instead of guessing.
+After rejection, use the router's indexed command or multiline-value-row correction only
+when the rows still belong to the same baseline; reread stale rows instead of guessing.

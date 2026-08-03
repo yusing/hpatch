@@ -163,6 +163,10 @@ type hpatchAttemptMetrics struct {
 	CallID                string                 `json:"call_id"`
 	Attempt               int                    `json:"attempt"`
 	Correction            bool                   `json:"correction"`
+	CorrectionScope       string                 `json:"correction_scope,omitempty"`
+	ValueRowOperations    uint64                 `json:"value_row_operations,omitempty"`
+	BaseValueRows         uint64                 `json:"base_value_rows,omitempty"`
+	BaseCommandTokens     uint64                 `json:"base_command_tokens,omitempty"`
 	Outcome               string                 `json:"outcome"`
 	EmittedHPatchTokens   uint64                 `json:"emitted_hpatch_tokens"`
 	ApplyPatchTokens      uint64                 `json:"apply_patch_tokens"`
@@ -187,6 +191,10 @@ func hpatchAttemptMetricsOf(record hpatchMetricRecord) (hpatchAttemptMetrics, bo
 		CallID:                metadata.CallID,
 		Attempt:               metadata.Attempt,
 		Correction:            metadata.Correction,
+		CorrectionScope:       record.correctionScope,
+		ValueRowOperations:    record.valueRowOperations,
+		BaseValueRows:         record.baseValueRows,
+		BaseCommandTokens:     record.baseCommandTokens,
 		EvaluatedCommands:     record.Invocation.EvaluatedCommandCount(),
 		DiagnosticInputTokens: record.DiagnosticInputTokens,
 		Rejections:            slices.Clone(rejections),
@@ -211,7 +219,7 @@ func hpatchRejectionTextBytes(rejection hpatch.HostRejection) int {
 }
 
 func hpatchAttemptTextBytes(attempt hpatchAttemptMetrics) int {
-	bytes := len(attempt.CorrelationID) + len(attempt.CallID) + len(attempt.Outcome)
+	bytes := len(attempt.CorrelationID) + len(attempt.CallID) + len(attempt.CorrectionScope) + len(attempt.Outcome)
 	for _, rejection := range attempt.Rejections {
 		bytes += hpatchRejectionTextBytes(rejection)
 	}

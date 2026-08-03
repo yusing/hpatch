@@ -194,6 +194,11 @@ func TestHPatchPrepareRequestExposesOnlyStandaloneHPatch(t *testing.T) {
 			t.Fatalf("standalone hpatch description omits %q: %q", operation, exposed)
 		}
 	}
+	for _, operation := range []string{`INDEX.ROW: "VALUE"`, "-INDEX.ROW", `+INDEX.ROW: "VALUE"`, `INDEX.ROW+: "VALUE"`} {
+		if !strings.Contains(exposed, operation) {
+			t.Fatalf("standalone hpatch description omits multiline-value operation %q: %q", operation, exposed)
+		}
+	}
 	if strings.Contains(normalizedDescription, "type <<PATCH replacement or insertion consumes") {
 		t.Fatalf("standalone hpatch description retains grammar-enforced correction framing: %q", exposed)
 	}
@@ -1036,6 +1041,56 @@ func TestHPatchCompactCorrectionRebuildsScriptBeforeTranslation(t *testing.T) {
 	}
 	if evaluated != want {
 		t.Fatalf("evaluated script = %q, want %q", evaluated, want)
+	}
+}
+
+func TestHPatchMultilineValueCorrectionRebuildsOnlyAddressedRow(t *testing.T) {
+	base := "new file.go\ntype <<PATCH\npackage p\nvar =\nvar tail = 2\nPATCH\n"
+	want := "new file.go\ntype <<PATCH\npackage p\nvar fixed = 1\nvar tail = 2\nPATCH\n"
+	calls := 0
+	var evaluated string
+	transform, _, _, _ := newHPatchTestTransform(t, hpatchTranslatorFunc(func(_ context.Context, _ routingWorkspace, script string) ([]byte, error) {
+		calls++
+		if calls == 1 {
+			return nil, errors.New("rejected")
+		}
+		evaluated = script
+		return []byte(testTranslatedPatch), nil
+	}))
+	if _, err := transform.translate("call-1", base, nil); err != nil {
+		t.Fatal(err)
+	}
+	result, err := transform.translate("call-2", "2.2: \"var fixed = 1\"\n", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.translationError != "" || calls != 2 {
+		t.Fatalf("correction result = %+v, calls %d", result, calls)
+	}
+	if evaluated != want {
+		t.Fatalf("evaluated script = %q, want %q", evaluated, want)
+	}
+}
+
+func TestHPatchMultilineValueCorrectionRejectsComposedDelimiterBeforeTranslation(t *testing.T) {
+	base := "new file.txt\ntype <<PATCH\nold\nPATCH\n"
+	calls := 0
+	transform, _, _, _ := newHPatchTestTransform(t, hpatchTranslatorFunc(func(_ context.Context, _ routingWorkspace, _ string) ([]byte, error) {
+		calls++
+		if calls == 1 {
+			return nil, errors.New("rejected")
+		}
+		return []byte(testTranslatedPatch), nil
+	}))
+	if _, err := transform.translate("call-1", base, nil); err != nil {
+		t.Fatal(err)
+	}
+	result, err := transform.translate("call-2", "+2.1: \"PA\"\n+2.1: \"TCH\\n\"\n", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.unevaluated || !strings.Contains(result.translationError, "cannot materialize the fixed PATCH delimiter") || calls != 1 {
+		t.Fatalf("composed delimiter correction = %+v, translations %d", result, calls)
 	}
 }
 

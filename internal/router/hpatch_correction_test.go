@@ -19,6 +19,10 @@ func TestHPatchCorrectionDetectionDistinguishesScripts(t *testing.T) {
 		{"deletion", "-5\n", true},
 		{"insert before", "+5: rm\n", true},
 		{"insert after", "5+: del 1:a793\n", true},
+		{"value row replacement", "5.2: \"fixed\"\n", true},
+		{"value row deletion", "-5.2\n", true},
+		{"value row insert before", "+5.2: \"before\\n\"\n", true},
+		{"value row insert after", "5.2+: \"after\\n\"\n", true},
 		{"script", "in calc.go\ntype 1:a793..2:b1e9 \"x\"\n", false},
 		{"new file script", "new calc.go\ntype \"x\"\n", false},
 		{"empty", "", false},
@@ -365,5 +369,164 @@ func TestHPatchCorrectionComposesAcceptancesAndManualOperations(t *testing.T) {
 	want := "in file.txt\ntype 1:a793..2:1636 \"\\tone\\n\"\ntype 2:be9d..3:b1e9 \"two\\n\"\nrm\n"
 	if corrected != want {
 		t.Fatalf("corrected script = %q, want %q", corrected, want)
+	}
+}
+
+func TestHPatchCorrectionAppliesMultilineValueRowOperations(t *testing.T) {
+	base := "in file.go\r\ntype 1:a793..3:b1e9 <<PATCH\r\none\r\ntwo\r\nthree\r\nPATCH\r\nrm\r\n"
+	payload := "+2.1: \"zero\\r\\n\"\n2.2: \"TWO\"\n2.3+: \"four\\r\\n\"\n"
+	corrections, err := parseHPatchCorrections(payload)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	wantCorrections := []hpatchCorrection{
+		{kind: hpatchInsertBeforeAnchor, command: 2, valueRow: 1, replacement: "zero\r\n"},
+		{kind: hpatchReplace, command: 2, valueRow: 2, replacement: "TWO"},
+		{kind: hpatchInsertAfterAnchor, command: 2, valueRow: 3, replacement: "four\r\n"},
+	}
+	if !reflect.DeepEqual(corrections, wantCorrections) {
+		t.Fatalf("corrections = %#v, want %#v", corrections, wantCorrections)
+	}
+
+	corrected, err := applyHPatchCorrections(base, corrections)
+	if err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	want := "in file.go\r\ntype 1:a793..3:b1e9 <<PATCH\r\nzero\r\none\r\nTWO\r\nthree\r\nfour\r\nPATCH\r\nrm\r\n"
+	if corrected != want {
+		t.Fatalf("corrected script = %q, want %q", corrected, want)
+	}
+
+	stats := hpatchCorrectionStatsOf(corrections).withBase(base, corrections)
+	if stats.scope != "value-row" || stats.valueRowOperations != 3 || stats.baseValueRows != 3 || len(stats.baseCommands) != 1 {
+		t.Fatalf("correction stats = %+v", stats)
+	}
+}
+
+func TestHPatchCorrectionChainsAgainstLatestMultilineValueRows(t *testing.T) {
+	base := "in file.go\ntype 1:a793..2:1636 <<PATCH\none\ntwo\nPATCH\n"
+	first, err := parseHPatchCorrections("2.1+: \"middle\\n\"\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	corrected, err := applyHPatchCorrections(base, first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := parseHPatchCorrections("2.2: \"MIDDLE\"\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	corrected, err = applyHPatchCorrections(corrected, second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "in file.go\ntype 1:a793..2:1636 <<PATCH\none\nMIDDLE\ntwo\nPATCH\n"
+	if corrected != want {
+		t.Fatalf("corrected script = %q, want %q", corrected, want)
+	}
+}
+
+func TestHPatchCorrectionMultilineValueRowDeletionKeepsInsertionOrder(t *testing.T) {
+	base := "in file.go\ntype 1:a793 <<PATCH\nold\nPATCH\n"
+	corrections, err := parseHPatchCorrections("-2.1\n+2.1: \"first\\n\"\n2.1+: \"second\\n\"\n+2.1: \"third\\n\"\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	corrected, err := applyHPatchCorrections(base, corrections)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "in file.go\ntype 1:a793 <<PATCH\nfirst\nsecond\nthird\nPATCH\n"
+	if corrected != want {
+		t.Fatalf("corrected script = %q, want %q", corrected, want)
+	}
+}
+
+func TestHPatchCorrectionMultilineValueRowsOwnPhysicalTerminators(t *testing.T) {
+	base := "in file.go\r\ntype 1:a793 <<PATCH\r\none\r\ntwo\r\nPATCH\r\n"
+	for _, test := range []struct {
+		name    string
+		payload string
+		want    string
+	}{
+		{
+			name:    "replacement preserves omitted terminator",
+			payload: "2.1: \"ONE\"\n",
+			want:    "in file.go\r\ntype 1:a793 <<PATCH\r\nONE\r\ntwo\r\nPATCH\r\n",
+		},
+		{
+			name:    "replacement explicit terminator wins",
+			payload: "2.1: \"ONE\\n\"\n",
+			want:    "in file.go\r\ntype 1:a793 <<PATCH\r\nONE\ntwo\r\nPATCH\r\n",
+		},
+		{
+			name:    "insertion synthesizes no terminator",
+			payload: "+2.2: \"joined\"\n",
+			want:    "in file.go\r\ntype 1:a793 <<PATCH\r\none\r\njoinedtwo\r\nPATCH\r\n",
+		},
+		{
+			name:    "deletion removes owned terminator",
+			payload: "-2.1\n",
+			want:    "in file.go\r\ntype 1:a793 <<PATCH\r\ntwo\r\nPATCH\r\n",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			corrections, err := parseHPatchCorrections(test.payload)
+			if err != nil {
+				t.Fatal(err)
+			}
+			corrected, err := applyHPatchCorrections(base, corrections)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if corrected != test.want {
+				t.Fatalf("corrected script = %q, want %q", corrected, test.want)
+			}
+		})
+	}
+}
+
+func TestHPatchCorrectionRejectsInvalidMultilineValueOperations(t *testing.T) {
+	base := "in file.go\ntype 1:a793 <<PATCH\none\nPATCH\nrm\n"
+	for _, test := range []struct {
+		name    string
+		payload string
+		want    string
+	}{
+		{"zero row", "2.0: \"x\"\n", "is not `INDEX: COMMAND`"},
+		{"unquoted row", "2.1: x\n", "invalid quoted value"},
+		{"multiple rows", "2.1: \"x\\ny\\n\"\n", "must contain one physical row"},
+		{"delimiter replacement", "2.1: \"PATCH\"\n", "cannot materialize the fixed PATCH delimiter"},
+		{"delimiter insertion before", "+2.1: \"PATCH\\n\"\n", "cannot materialize the fixed PATCH delimiter"},
+		{"delimiter insertion after", "2.1+: \"PATCH\\r\\n\"\n", "cannot materialize the fixed PATCH delimiter"},
+		{"part acceptance", "2.1: accept\n", "no displayed correction to accept"},
+		{"complete and part", "2: rm\n2.1: \"x\"\n", "cannot combine complete-command and multiline-value mutations"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := parseHPatchCorrections(test.payload)
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("error = %v, want %q", err, test.want)
+			}
+		})
+	}
+
+	for _, test := range []struct {
+		name       string
+		base       string
+		correction hpatchCorrection
+		want       string
+	}{
+		{"inline command", base, hpatchCorrection{kind: hpatchReplace, command: 3, valueRow: 1, replacement: "x"}, "has no multiline <<PATCH value"},
+		{"decoded inline multiline", "in file.go\ntype 1:a793 \"one\\ntwo\"\n", hpatchCorrection{kind: hpatchReplace, command: 2, valueRow: 1, replacement: "x"}, "has no multiline <<PATCH value"},
+		{"unterminated heredoc", "in file.go\ntype 1:a793 <<PATCH\none\n", hpatchCorrection{kind: hpatchReplace, command: 2, valueRow: 1, replacement: "x"}, "has no multiline <<PATCH value"},
+		{"row beyond body", base, hpatchCorrection{kind: hpatchReplace, command: 2, valueRow: 2, replacement: "x"}, "value has 1 rows"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := applyHPatchCorrections(test.base, []hpatchCorrection{test.correction})
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("error = %v, want %q", err, test.want)
+			}
+		})
 	}
 }
