@@ -1,0 +1,76 @@
+output token estimates:
+calls       hpatch  apply_patch  reduction
+-----       ------  -----------  ---------
+successful  7212    17686        59.2%
+failed      9334    330          n/a
+all         16546   18016        8.2%
+failed apply_patch output uses the empty-patch semantic baseline.
+
+input token estimates:
+source                          tokens  description
+------------------------------  ------  ----------------------------------------
+state reports                   1687    final state returned after successful
+                                        calls
+failure diagnostics             1813    errors and repair context returned after
+                                        failed calls
+hpatch definition installed     10212   hpatch and hread tool definitions added
+                                        by the router
+apply_patch definition removed  -232    exact Code Mode section removed by the
+                                        router
+net added input                 13480   measured additions minus the removed
+                                        definition
+definition routing covers 169 accounted request(s) in 4 distinct session(s)
+(installation and removal measured).
+
+command metrics:
+command  invocations  errors  error rate
+-------  -----------  ------  ----------
+in       61           0       0.0%
+new      0            0       0.0%
+mv       0            0       0.0%
+rm       0            0       0.0%
+tsel     142          2       1.4%
+rsel     18           7       38.9%
+type     148          4       2.7%
+del      4            0       0.0%
+copy     72           1       1.4%
+cut      0            0       0.0%
+paste    67           1       1.5%
+commit   0            0       0.0%
+total    512          15      2.9%
+
+tsel selection metrics:
+selection  invocations  errors  error rate
+-------    -----------  ------  ----------
+single     142          2       1.4%
+multiple   0            0       0.0%
+
+failure reasons:
+reason              errors
+------              ------
+syntax              3
+coordinate-bounds   6
+occurrence-missing  0
+invalid-count       0
+order-or-overlap    0
+edit-conflict       4
+active-file         1
+selection-required  1
+clipboard-empty     0
+file-missing        0
+file-conflict       0
+path                0
+other               0
+total               15
+
+command failure reasons:
+command  reason              errors
+-------  ------              ------
+tsel     edit-conflict       1
+tsel     active-file         1
+rsel     coordinate-bounds   6
+rsel     edit-conflict       1
+type     syntax              2
+type     edit-conflict       2
+copy     selection-required  1
+paste    syntax              1

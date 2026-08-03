@@ -1,0 +1,6 @@
+ok  	go.etcd.io/etcd/server/v3/etcdserver/txn	0.021s
+ok  	go.etcd.io/etcd/server/v3/etcdserver/api/v3rpc	0.007s
+ok  	go.etcd.io/etcd/server/v3/etcdserver	0.063s
+ok  	go.etcd.io/etcd/server/v3/proxy/grpcproxy/adapter	0.004s
+ok  	go.etcd.io/etcd/client/v3/mock/mockserver	0.004s
+ok  	go.etcd.io/etcd/client/v3	0.006s
