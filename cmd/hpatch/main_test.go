@@ -72,7 +72,7 @@ func TestTopLevelHelpDescribesCompletePublicSurface(t *testing.T) {
 		"Issue every independent hread call",
 		"batch all short supporting edits",
 		"at most one syntax-sensitive multiline Go",
-		"For an existing Go declaration or function, prefer",
+		"Prefer the smallest mutation that expresses the semantic change",
 		"hread only the required region",
 		"Multiple insertions",
 		"Every requested match must exist",
@@ -112,7 +112,10 @@ func TestToolHelpGuidesAgentCommandChoice(t *testing.T) {
 		"not targetable in the same call",
 		"batch all short supporting edits",
 		"at most one syntax-sensitive multiline Go",
-		"For an existing Go declaration or function, prefer one range `type`",
+		"Prefer the smallest mutation that expresses the semantic change",
+		"When a formatter owns formatting, alignment, or indentation",
+		"add one struct field with one insertion",
+		"indentation-sensitive languages such as Python",
 		"`hread` only the required region",
 		"Multiple insertions at the same boundary render in script order.",
 		"reread stale rows instead of guessing",
@@ -130,6 +133,7 @@ func TestToolHelpGuidesAgentCommandChoice(t *testing.T) {
 		"INDEX: COMMAND",
 		"matches literals only",
 		"HPATCH/1",
+		"prefer one range `type`",
 		"<<TAG",
 	} {
 		if strings.Contains(help, excluded) {

@@ -92,9 +92,12 @@ Baselines and conflict safety:
   that share a failure domain into one call with repeated in PATH sections; do not
   issue one call per file. Keep unrelated large <<PATCH values in separate calls,
   with at most one syntax-sensitive multiline Go declaration or function replacement
-  per call; short supporting edits for that same change may remain with it. For an
-  existing Go declaration or function, prefer one range type over assembling the
-  same replacement through several insertions. Before a later invocation targets a
+  per call; short supporting edits for that same change may remain with it. Prefer the
+  smallest mutation that expresses the semantic change. When a formatter owns formatting,
+  alignment, or indentation, do not replace surrounding lines merely to reproduce its
+  output; let the formatter apply those changes. For example, add one struct field with one
+  insertion rather than replacing the declaration. Preserve required indentation prefixes
+  in indentation-sensitive languages such as Python. Before a later invocation targets a
   file changed by a successful call, discard its saved references and hread only the
   required region again; do not reread a file that needs no further edit.
 
@@ -127,9 +130,13 @@ Agent workflow:
      with repeated in PATH sections; do not issue one call per file. Put unrelated
      large <<PATCH values in separate calls, with at most one syntax-sensitive multiline
      Go declaration or function replacement in each failure-domain call.
-  5. For an existing Go declaration or function, prefer one range type over several
-     insertions. Before a later invocation targets a changed file, discard its saved
-     references and hread only the required region; do not reread files needing no edit.
+  5. Prefer the smallest mutation that expresses the semantic change. When a formatter
+     owns formatting, alignment, or indentation, do not replace surrounding lines merely
+     to reproduce its output; let the formatter apply those changes. For example, add one
+     struct field with one insertion rather than replacing the declaration. Preserve
+     required indentation prefixes in indentation-sensitive languages such as Python.
+     Before a later invocation targets a changed file, discard its saved references and
+     hread only the required region; do not reread files needing no edit.
   6. Prefer inline single-line values; reserve <<PATCH for multiline or escape-heavy text.
   7. After rejection, use a router indexed command or multiline-value-row correction
      only while the referenced rows still belong to the same baseline. Reread stale

@@ -86,7 +86,7 @@ func TestCalculateHPatchMetricRecordUsesExactCallerPayloads(t *testing.T) {
 func TestCalculateHPatchMetricRecordUsesEmptyFailureBaseline(t *testing.T) {
 	inputs := hpatchMetricInputs{
 		emittedScript: "2: type 12:9645..18:4b7b \"replacement\"\n",
-		diagnostic:    "hpatch: command 2 rejected\nrepair context\n" + hpatchCorrectionHint,
+		diagnostic:    "hpatch: command 2 rejected\nrepair context\n" + hpatchCorrectionInstructions,
 		rejections: []hpatch.HostRejection{{
 			Command: 2, SourceLine: 2, Operation: "type", Target: "range",
 			Reason: "language-syntax", Path: "calc.go", GeneratedLine: 8, GeneratedColumn: 3,

@@ -161,11 +161,9 @@ func TestHPatchPrepareRequestExposesOnlyStandaloneHPatch(t *testing.T) {
 	if format.Type != "grammar" || format.Syntax != "lark" || format.Definition != hpatch.ToolGrammar() {
 		t.Fatalf("standalone hpatch format = %#v", topTools[1])
 	}
-	// The exposed description is hpatch's own help plus the correction protocol,
-	// which only the proxy implements.
 	exposed := jsonString(topTools[1], "description")
-	if !strings.HasPrefix(exposed, testHPatchToolDescription) {
-		t.Fatalf("standalone hpatch description = %q, want hpatch tool help first", exposed)
+	if exposed != testHPatchToolDescription {
+		t.Fatalf("standalone hpatch description = %q, want native tool help only", exposed)
 	}
 	if jsonString(topTools[2], "description") != hpatch.HReadToolDescription() {
 		t.Fatalf("standalone hread description = %q", jsonString(topTools[2], "description"))
@@ -176,29 +174,16 @@ func TestHPatchPrepareRequestExposesOnlyStandaloneHPatch(t *testing.T) {
 	if format.Type != "grammar" || format.Syntax != "lark" || format.Definition != hpatch.HReadToolGrammar() {
 		t.Fatalf("standalone hread format = %#v", topTools[2])
 	}
-	normalizedDescription := strings.Join(strings.Fields(exposed), " ")
-	for _, guidance := range []string{
-		"complete script evaluated for the latest rejection",
-		"not source-line numbers",
-		"not source-line numbers, indices into the first attempt, or indices into a compact correction payload",
-		"correct the target in that mutation",
-		"resend the complete script",
+	for _, correctionGuidance := range []string{
+		"Repairing a rejected script:",
+		"INDEX: COMMAND",
+		`INDEX.ROW: "VALUE"`,
 	} {
-		if !strings.Contains(normalizedDescription, guidance) {
-			t.Fatalf("standalone hpatch description omits correction guidance %q: %q", guidance, exposed)
+		if strings.Contains(exposed, correctionGuidance) {
+			t.Fatalf("standalone hpatch description includes rejection-only guidance %q: %q", correctionGuidance, exposed)
 		}
 	}
-	for _, operation := range []string{"INDEX: COMMAND", "INDEX: accept", "-INDEX", "+INDEX: COMMAND", "INDEX+: COMMAND"} {
-		if !strings.Contains(exposed, operation) {
-			t.Fatalf("standalone hpatch description omits %q: %q", operation, exposed)
-		}
-	}
-	for _, operation := range []string{`INDEX.ROW: "VALUE"`, "-INDEX.ROW", `+INDEX.ROW: "VALUE"`, `INDEX.ROW+: "VALUE"`} {
-		if !strings.Contains(exposed, operation) {
-			t.Fatalf("standalone hpatch description omits multiline-value operation %q: %q", operation, exposed)
-		}
-	}
-	if strings.Contains(normalizedDescription, "type <<PATCH replacement or insertion consumes") {
+	if strings.Contains(exposed, "type <<PATCH replacement or insertion consumes") {
 		t.Fatalf("standalone hpatch description retains grammar-enforced correction framing: %q", exposed)
 	}
 	if strings.Contains(exposed, "workspace_id") {
@@ -977,6 +962,34 @@ func TestHPatchCorrectionRetainsCorrelationAndIncrementsAttempt(t *testing.T) {
 	}
 }
 
+func TestHPatchCorrectionInstructionsAppearOnlyOnInitialRejection(t *testing.T) {
+	transform, _, _, _ := newHPatchTestTransform(t, hpatchTranslatorFunc(func(context.Context, routingWorkspace, string) ([]byte, error) {
+		return nil, errors.New("rejected")
+	}))
+
+	first, err := transform.translate("call-1", testHPatchScript, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Count(first.translationError, "Repairing a rejected script:"); got != 1 {
+		t.Fatalf("initial rejection correction instruction count = %d, want 1:\n%s", got, first.translationError)
+	}
+	if !strings.Contains(first.translationError, `INDEX.ROW: "VALUE"`) {
+		t.Fatalf("initial rejection lacks multiline correction instructions:\n%s", first.translationError)
+	}
+
+	second, err := transform.translate("call-2", "2: type \"changed\"\n", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.correlationID != "call-1" || second.attempt != 2 {
+		t.Fatalf("correction rejection metadata = %+v", second)
+	}
+	if strings.Contains(second.translationError, "Repairing a rejected script:") {
+		t.Fatalf("correction rejection repeats correction instructions:\n%s", second.translationError)
+	}
+}
+
 func TestHPatchDisplayedCorrectionCanBeAcceptedWithoutRepeatingSource(t *testing.T) {
 	base := "in script.sh\ntype 1:a793..2:1636 \"exit \\\"$status\\\"\\n\"\n"
 	correctedCommand := "type 1:a793..2:1636 \"\\texit \\\"$status\\\"\\n\""
@@ -1004,6 +1017,9 @@ func TestHPatchDisplayedCorrectionCanBeAcceptedWithoutRepeatingSource(t *testing
 	}
 	if strings.Count(first.translationError, "1:2a44 exit \"$status\"\n") != 1 {
 		t.Fatalf("first diagnostic repeats proposed source:\n%s", first.translationError)
+	}
+	if strings.Count(first.translationError, "Repairing a rejected script:") != 1 {
+		t.Fatalf("first diagnostic does not contain one correction protocol:\n%s", first.translationError)
 	}
 	if !strings.Contains(first.translationError, "Apply the displayed correction with:\n2: accept\n") {
 		t.Fatalf("first diagnostic lacks acceptance command:\n%s", first.translationError)

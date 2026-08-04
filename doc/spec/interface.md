@@ -723,8 +723,8 @@ Acceptance:
 Top-level help owns the complete CLI, editing, validation, trust-boundary, report, and
 metrics reference. Tool help is a separately maintained concise model-facing summary. It
 excludes CLI modes, options, metrics, version material, and the full correction DSL.
-After a rejection, the router supplies compact indexed correction syntax only when a
-retained rejected script is actually correctable.
+The router supplies indexed correction syntax once in the first correctable rejection
+diagnostic of a correction chain; later rejection diagnostics in that chain do not repeat it.
 
 Both references teach this workflow:
 
@@ -738,10 +738,13 @@ Both references teach this workflow:
    `<<PATCH` values in separate failure-domain calls, with at most one syntax-sensitive
    multiline Go declaration or function replacement per call; short supporting edits for
    that same change may remain with it.
-4. For an existing Go declaration or function, prefer one range `type` instead of assembling
-   the same replacement through several insertions. Before a later invocation targets a file
-   changed by a successful call, discard its saved references and hread only the required
-   region again; do not reread a file that needs no further edit.
+4. Prefer the smallest mutation that expresses the semantic change. When a formatter owns
+   formatting, alignment, or indentation, do not replace surrounding lines merely to reproduce
+   its output; let the formatter apply those changes. For example, add one struct field with one
+   insertion rather than replacing the declaration. Preserve required indentation prefixes in
+   indentation-sensitive languages such as Python. Before a later invocation targets a file
+   changed by a successful call, discard its saved references and hread only the required region
+   again; do not reread a file that needs no further edit.
 5. Use nonempty `type` to replace, empty target-bearing `type` to delete, `type-` to insert
    before, and `type+` to insert after; do not construct a separate selection or clipboard
    program.

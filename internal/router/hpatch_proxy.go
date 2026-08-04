@@ -198,7 +198,7 @@ func newHPatchProxy(translator hpatchTranslator) *hpatchProxy {
 		translator:           translator,
 		hreadToolDescription: hpatch.HReadToolDescription(),
 
-		toolDescription: translator.ToolDescription() + hpatchCorrectionInstructions,
+		toolDescription: translator.ToolDescription(),
 		sessions:        make(map[string]*hpatchHistorySession),
 		activeSessions:  make(map[string]int),
 	}
@@ -269,10 +269,9 @@ func (p *hpatchProxy) touchSession(session *hpatchHistorySession) {
 }
 
 // hpatchCorrectionInstructions documents the correction payload the proxy accepts
-// in place of a complete script. It is appended to hpatch's own tool help rather
-// than exposed as a second tool, because a second tool would cost another cached
-// definition payload and would have to appear mid-session, invalidating the
-// prompt prefix at exactly the moment a rejection happens.
+// in place of a complete script. It is returned with the first rejection in a
+// correction chain, when the protocol is actionable, rather than installed in
+// every request's tool definition.
 const hpatchCorrectionInstructions = `
 Repairing a rejected script:
   When the latest hpatch evaluation was rejected, you may send indexed operations
@@ -313,11 +312,15 @@ Repairing a rejected script:
   or resend the complete script. The rebuilt script is revalidated atomically.
 `
 
-// hpatchCorrectionHint is appended to a rejection so the cheaper repair path is
-// visible at the moment it applies. A diagnostic states what was wrong but not
-// what to send next, and a model that has forgotten the protocol resends the whole
-// script, which is the cost this feature exists to avoid.
-const hpatchCorrectionHint = "\nRepair this with indexed operations: `INDEX: COMMAND`, `-INDEX`, `+INDEX: COMMAND`, or `INDEX+: COMMAND`. For a displayed multiline value row, use `INDEX.ROW: \"VALUE\"`, `-INDEX.ROW`, `+INDEX.ROW: \"VALUE\"`, or `INDEX.ROW+: \"VALUE\"`. Indices are the command and value-row numbers above.\n"
+func hpatchCorrectionGuidance(correction bool, corrections map[int]string) string {
+	if correction {
+		return ""
+	}
+	if len(corrections) == 0 {
+		return hpatchCorrectionInstructions
+	}
+	return hpatchCorrectionInstructions + hpatchAcceptHint(corrections)
+}
 
 func hpatchAcceptHint(corrections map[int]string) string {
 	commands := slices.Sorted(maps.Keys(corrections))
@@ -1079,11 +1082,7 @@ func (t *hpatchResponseTransform) translate(callID, input string, upstreamItem m
 		if diagnostic == "" {
 			diagnostic = err.Error()
 		}
-		if len(translated.corrections) != 0 {
-			diagnostic += hpatchAcceptHint(translated.corrections)
-		} else {
-			diagnostic += hpatchCorrectionHint
-		}
+		diagnostic += hpatchCorrectionGuidance(correction, translated.corrections)
 		if err := t.recordMetrics(hpatchMetricInputs{
 			invocation:    translated.invocation,
 			rejections:    translated.rejections,

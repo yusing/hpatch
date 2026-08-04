@@ -1,6 +1,6 @@
 HREAD/2 reads one UTF-8 workspace file without modifying it.
-When several independent files or ranges are already known, issue their `hread` calls together
-in one response; do not serialize them.
+When several independent files or ranges are already known, emit all of their `hread` calls as
+parallel tool-call items in one assistant response; do not wait for one result before issuing the others.
 
 Input is a JSON string containing the workspace-relative path, optionally followed by an
 inclusive one-based logical-line range:

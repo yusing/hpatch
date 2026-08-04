@@ -93,9 +93,10 @@ configuration, diagnostics, stdout, stderr, exit status, and help composition fo
 `REQ-CLI-001`, `REQ-GUIDE-001`, and `REQ-OUTPUT-001`. Top-level help owns the complete
 agent-workflow-through-metrics reference. Tool help is an independently maintained concise
 model-facing summary of target choice, mutation choice, baseline rules, and safety. It
-teaches inline single-line values before heredocs; the router appends the compact correction
-protocol only for an actionable rejected script. Tool help excludes CLI mode sections,
-options, metrics, and version material, and includes its bounded path guidance. The
+teaches inline single-line values before heredocs; the router supplies the compact correction
+protocol once with the first actionable rejection in a correction chain. Tool help excludes
+CLI mode sections, options, metrics, and version material, and includes its bounded path
+guidance. The
 workspace boundary owns a pinned
 `*os.Root`, a root-relative cwd, root-scoped filesystem reads, staging, commit, and
 rollback. Relative script paths resolve from cwd; absolute script paths become

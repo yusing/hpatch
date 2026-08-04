@@ -2,8 +2,9 @@ HPATCH/2 applies one complete target-bearing edit script atomically. Do not call
 in parallel with other tools. Rejection or cancellation changes nothing.
 
 Use search to locate relevant regions. For any region likely to be edited, use `hread`
-for its first content read instead of `sed` or `cat`. Issue every independent `hread`
-call for already-known files or ranges together in one response; do not serialize them.
+for its first content read instead of `sed` or `cat`. Emit every independent `hread` call for
+already-known files or ranges as parallel tool-call items in one assistant response; do not wait
+for one result before issuing the others.
 Its rows are `LINE:HASH TEXT`; copy the complete `LINE:HASH` reference. The line selects
 one exact logical line and the hash rejects stale content. Use only rows copied from
 current `hread` output for that exact path. Never guess or reconstruct a row.
@@ -66,8 +67,12 @@ do not shift later targets. When inspected files are ready, batch all short supp
 that share a failure domain into one call with repeated `in PATH` sections; do not issue one
 call per file. Keep unrelated large `<<PATCH` values in separate calls, with at most one
 syntax-sensitive multiline Go declaration or function replacement per call; short supporting
-edits for that same change may remain with it. For an existing Go declaration or function,
-prefer one range `type` over assembling the same replacement through several insertions.
+edits for that same change may remain with it. Prefer the smallest mutation that expresses
+the semantic change. When a formatter owns formatting, alignment, or indentation, do not
+replace surrounding lines merely to reproduce its output; let the formatter apply those
+changes. For example, add one struct field with one insertion rather than replacing the
+declaration. Preserve required indentation prefixes in indentation-sensitive languages
+such as Python.
 Content introduced by a mutation is not targetable in the same call. Before a later invocation
 targets a file changed by a successful call, discard its saved references and `hread` only the
 required region again; do not reread a file that needs no further edit.

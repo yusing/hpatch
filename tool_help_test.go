@@ -82,7 +82,7 @@ func TestHPatch2ToolDescriptionCoversSafeCommandChoice(t *testing.T) {
 		"HPATCH/2",
 		"Do not call this tool in parallel with other tools.",
 		"use `hread` for its first content read instead of `sed` or `cat`",
-		"Issue every independent `hread` call",
+		"parallel tool-call items in one assistant response",
 		"LINE:HASH TEXT",
 		"copy the complete `LINE:HASH` reference",
 		"Nonempty line and range `type` replacements preserve",
@@ -95,7 +95,10 @@ func TestHPatch2ToolDescriptionCoversSafeCommandChoice(t *testing.T) {
 		"Use only rows copied from current `hread` output for that exact path",
 		"batch all short supporting edits",
 		"at most one syntax-sensitive multiline Go",
-		"For an existing Go declaration or function, prefer one range `type`",
+		"Prefer the smallest mutation that expresses the semantic change",
+		"When a formatter owns formatting, alignment, or indentation",
+		"add one struct field with one insertion",
+		"indentation-sensitive languages such as Python",
 		"discard its saved references",
 		"do not reread a file that needs no further edit",
 		"not targetable in the same call",
@@ -108,7 +111,7 @@ func TestHPatch2ToolDescriptionCoversSafeCommandChoice(t *testing.T) {
 			t.Errorf("tool description omits %q", guidance)
 		}
 	}
-	for _, excluded := range []string{"HPATCH/1", "\ntsel ", "\nrsel ", "\ncopy", "\ncut", "\npaste", "\ncommit", "<<TAG", "Usage:", "--root", "hpatch gain"} {
+	for _, excluded := range []string{"HPATCH/1", "\ntsel ", "\nrsel ", "\ncopy", "\ncut", "\npaste", "\ncommit", "<<TAG", "Usage:", "--root", "hpatch gain", "prefer one range `type`"} {
 		if strings.Contains(toolDescription, excluded) {
 			t.Errorf("tool description retains excluded material %q", excluded)
 		}
@@ -119,8 +122,8 @@ func TestHReadToolDescriptionRequiresParallelIndependentReads(t *testing.T) {
 	normalized := strings.Join(strings.Fields(HReadToolDescription()), " ")
 	for _, guidance := range []string{
 		"independent files or ranges are already known",
-		"issue their `hread` calls together in one response",
-		"do not serialize them",
+		"emit all of their `hread` calls as parallel tool-call items in one assistant response",
+		"do not wait for one result before issuing the others",
 	} {
 		if !strings.Contains(normalized, guidance) {
 			t.Errorf("hread tool description omits %q", guidance)
