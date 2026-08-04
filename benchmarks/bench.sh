@@ -67,6 +67,8 @@ baseline_output_contains=$(jq -er '.graders[0].baseline_output_contains' "$task_
 results_root="$benchmark_root/results"
 mkdir -p "$results_root"
 run_dir=$(mktemp -d "$results_root/.staging-XXXXXX")
+dependency_cache=$(mktemp -d "$results_root/.dependency-cache-XXXXXX")
+dependency_workspace=
 
 results="$run_dir/results.jsonl"
 control_log="$run_dir/control-router.log"
@@ -82,13 +84,14 @@ instruction_source="$benchmark_root/../contrib/codex/file-editing-instructions.m
 benchmark_image="hpatch-bench:${HPATCH_BENCH_IMAGE_TAG:-local}"
 control_instruction_sha=
 hpatch_instruction_sha=
-benchmark_pid=$$
 result_files=()
 worker_pids=()
 started=false
+compose_used=false
 collected=false
 
 export BENCH_RUN_DIR=$run_dir
+export BENCH_DEPENDENCY_CACHE=$dependency_cache
 export CODEX_AUTH_PATH=${CODEX_AUTH_PATH:-${CODEX_HOME:-$HOME/.codex}/auth.json}
 compose_project_name="hpatch_bench_$(basename "$run_dir" | tr '[:upper:]' '[:lower:]' | tr -cd '[:alnum:]_')"
 export COMPOSE_PROJECT_NAME=$compose_project_name
@@ -320,20 +323,38 @@ cleanup() {
 		if ! print_lifecycle_summary; then
 			printf 'bench.sh: lifecycle summary failed\n' >&2
 		fi
-
+	fi
+	if [[ $compose_used == true ]]; then
+		mapfile -t agent_containers < <(
+			docker ps -aq \
+				--filter "label=com.docker.compose.project=$COMPOSE_PROJECT_NAME" \
+				--filter label=hpatch.benchmark.role=agent
+		)
+		if ((${#agent_containers[@]})); then
+			docker rm --force "${agent_containers[@]}" >/dev/null 2>&1 || true
+		fi
 		"${compose[@]}" down --volumes --remove-orphans >/dev/null 2>&1 || true
-		if ! normalize_hpatch_config_ownership; then
+		if [[ $started == true ]] && ! normalize_hpatch_config_ownership; then
 			if ((status == 0)); then
 				status=1
 			fi
 		fi
-		mapfile -t agent_containers < <(
-			docker ps -aq \
-				--filter "label=com.docker.compose.project=$COMPOSE_PROJECT_NAME" \
-				--filter label=com.docker.compose.service=agent
-		)
-		if ((${#agent_containers[@]})); then
-			docker rm --force "${agent_containers[@]}" >/dev/null 2>&1 || true
+	fi
+	if [[ -n $dependency_workspace && -d $dependency_workspace ]]; then
+		rm -rf -- "$dependency_workspace"
+		dependency_workspace=
+	fi
+	if [[ $dependency_cache == "$results_root"/.dependency-cache-* && -d $dependency_cache ]]; then
+		if ! chmod -R u+w -- "$dependency_cache" || ! rm -rf -- "$dependency_cache"; then
+			printf 'bench.sh: cannot remove dependency cache: %s\n' "$dependency_cache" >&2
+			if ((status == 0)); then
+				status=1
+			fi
+		fi
+	else
+		printf 'bench.sh: refusing to remove unexpected dependency cache path: %s\n' "$dependency_cache" >&2
+		if ((status == 0)); then
+			status=1
 		fi
 	fi
 	if ! preserve_run; then
@@ -353,7 +374,7 @@ trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
-for executable in curl date diff docker git go grep id jq mv sha256sum sort tar timeout; do
+for executable in chmod curl date diff docker git go grep id jq mv sha256sum sort tar timeout; do
 	if ! command -v "$executable" >/dev/null; then
 		printf 'bench.sh: %s is required\n' "$executable" >&2
 		exit 1
@@ -379,6 +400,13 @@ prepare_instructions() {
 	local heading_line
 	local instruction_line
 	local diff_status=0
+	local offline_instruction
+	offline_instruction=$(cat <<'INSTRUCTION'
+## Benchmark isolation
+
+This benchmark is intentionally offline. Use only the supplied workspace, visible task prompt, local toolchain, and visible tests. Do not seek or use oracle revisions, hidden tests, another arm's artifacts, upstream source, commit history, patches, documentation, package networks, or any other external resource. The read-only Go module cache is for compilation only; do not inspect it for task implementation.
+INSTRUCTION
+	)
 
 	docker run --rm "$benchmark_image" codex debug models --bundled |
 		jq -er --arg model "$model" \
@@ -405,12 +433,16 @@ prepare_instructions() {
 		cat "$instruction_source"
 		tail -n "+$((instruction_line + 1))" "$control_instruction"
 	} >"$hpatch_instruction"
+	printf '\n%s\n' "$offline_instruction" >>"$control_instruction"
+	printf '\n%s\n' "$offline_instruction" >>"$hpatch_instruction"
 
 	# Backticks are literal instruction text.
 	# shellcheck disable=SC2016
 	if ! grep -Fqx 'Use `functions.hpatch` for local file edits, not `apply_patch`.' "$hpatch_instruction" ||
 		! grep -Fqx 'Use search to locate edit regions, then use `hread` instead of `sed` or `cat` for their first content read.' "$hpatch_instruction" ||
 		! grep -Fqx 'Issue independent `hread` calls together. Batch short, disjoint edits across inspected files when they are expected to validate or fail together.' "$hpatch_instruction" ||
+		[[ $(grep -Fxc '## Benchmark isolation' "$control_instruction") -ne 1 ]] ||
+		[[ $(grep -Fxc '## Benchmark isolation' "$hpatch_instruction") -ne 1 ]] ||
 		grep -Fqx "$stock_instruction" "$hpatch_instruction"; then
 		printf 'bench.sh: hpatch base-instruction override was not exact\n' >&2
 		return 1
@@ -442,7 +474,93 @@ snapshot() {
 	git -C "$destination" add --all --force
 	GIT_AUTHOR_DATE=2000-01-01T00:00:00Z \
 		GIT_COMMITTER_DATE=2000-01-01T00:00:00Z \
-		git -C "$destination" commit --quiet -m "benchmark baseline"
+	git -C "$destination" commit --quiet -m "benchmark baseline"
+}
+
+prepare_dependency_cache() {
+	local module
+	local -a project_modules=(
+		v3
+		api/v3
+		cache/v3
+		client/pkg/v3
+		client/v3
+		etcdctl/v3
+		etcdutl/v3
+		pkg/v3
+		server/v3
+		tests/v3
+	)
+	local -a cached_sources=()
+
+	dependency_workspace=$(mktemp -d "$run_dir/dependency-source-XXXXXX")
+	snapshot "$base_commit" "$dependency_workspace/repo"
+	compose_used=true
+	if ! "${compose[@]}" run \
+		--interactive=false \
+		--no-tty \
+		--rm \
+		--no-deps \
+		--user "$(id -u):$(id -g)" \
+		--env HOME=/tmp \
+		--volume "$dependency_workspace/repo:$dependency_workspace/repo:ro" \
+		--workdir "$dependency_workspace/repo" \
+		dependency-loader \
+		go mod download all; then
+		printf 'bench.sh: cannot preload benchmark dependencies\n' >&2
+		return 1
+	fi
+
+	# Workspace replacements own these modules. Their source must never appear
+	# in the agent-visible dependency cache as a downloadable implementation.
+	shopt -s nullglob
+	for module in "${project_modules[@]}"; do
+		cached_sources=("$dependency_cache/go.etcd.io/etcd/$module"@*)
+		if ((${#cached_sources[@]})) ||
+			[[ -e $dependency_cache/cache/download/go.etcd.io/etcd/$module ]]; then
+			printf 'bench.sh: dependency cache contains benchmark-owned module: go.etcd.io/etcd/%s\n' "$module" >&2
+			shopt -u nullglob
+			return 1
+		fi
+	done
+	shopt -u nullglob
+}
+
+qualify_agent_isolation() {
+	local service=$1
+	local assigned_router=$2
+	local assigned_port=$3
+	local forbidden_router=$4
+	local forbidden_port=$5
+
+	printf 'validate agent isolation: %s may reach only %s:%s\n' \
+		"$service" "$assigned_router" "$assigned_port"
+	if ! "${compose[@]}" run \
+		--interactive=false \
+		--no-tty \
+		--rm \
+		--no-deps \
+		--env "ASSIGNED_ROUTER=http://$assigned_router:$assigned_port/api/metrics" \
+		--env "FORBIDDEN_ROUTER=http://$forbidden_router:$forbidden_port/api/metrics" \
+		--volume "$dependency_workspace/repo:$dependency_workspace/repo:ro" \
+		--workdir "$dependency_workspace/repo" \
+		"$service" \
+		sh -euc '
+			curl --fail --silent --show-error "$ASSIGNED_ROUTER" >/dev/null
+			if curl --fail --silent --connect-timeout 2 --max-time 4 "$FORBIDDEN_ROUTER" >/dev/null 2>&1; then
+				echo "unexpected access to the other benchmark router" >&2
+				exit 1
+			fi
+			if curl --fail --silent --connect-timeout 2 --max-time 4 https://example.com/ >/dev/null 2>&1; then
+				echo "unexpected external network access" >&2
+				exit 1
+			fi
+			test "$(codex --disable apps mcp list --json)" = "[]"
+			go mod download all
+		'; then
+		printf 'bench.sh: agent isolation qualification failed for %s\n' "$service" >&2
+		return 1
+	fi
 }
 
 inject_hidden_tests() {
@@ -538,7 +656,8 @@ run_agent() {
 	local workspace
 	local repository
 	local artifact_dir="$run_dir/artifacts/$task_id/$run_id"
-	local base_url=http://127.0.0.1:8081/v1
+	local base_url=http://control:8081/v1
+	local agent_service=control-agent
 	local codex_stdout="$artifact_dir/codex.jsonl"
 	local codex_stderr="$artifact_dir/codex.stderr"
 	local started_at
@@ -572,7 +691,8 @@ run_agent() {
 	local -a unauthorized=()
 
 	if [[ $arm == hpatch ]]; then
-		base_url=http://127.0.0.1:8082/v1
+		base_url=http://hpatch:8082/v1
+		agent_service=hpatch-agent
 		instruction_name=hpatch.md
 		instruction_path=$hpatch_instruction
 		instruction_sha=$hpatch_instruction_sha
@@ -589,6 +709,7 @@ run_agent() {
 	set +e
 	(
 		cd "$repository"
+		export BENCH_AGENT_SERVICE=$agent_service
 		exec timeout --signal=TERM --kill-after=10s "${agent_timeout}s" \
 			"$benchmark_root/codex-compose.sh" \
 			-c "$provider_config" \
@@ -801,10 +922,6 @@ run_agent() {
 			"$run_id" "$duration_ms" "$input_tokens" "$cached_tokens" "$output_tokens" "$reasoning_tokens"
 	else
 		printf 'fail %s\n' "$run_id"
-		if [[ $arm == hpatch ]]; then
-			printf 'bench.sh: %s failed; stopping every active benchmark arm\n' "$run_id" >&2
-			kill -TERM "$benchmark_pid" 2>/dev/null || true
-		fi
 	fi
 	rm -rf "$workspace"
 	[[ $task_pass == true ]]
@@ -840,6 +957,7 @@ mkdir -p "$run_dir/work" "$run_dir/hpatch-config" "$run_dir/hpatch-runtime" "$in
 
 "${compose[@]}" build control
 prepare_instructions
+prepare_dependency_cache
 printf 'Control base instructions: %s\n' "$control_instruction"
 printf 'Hpatch base instructions: %s\n' "$hpatch_instruction"
 printf 'Base instruction override source: %s\n' "$instruction_source"
@@ -850,6 +968,15 @@ validate_revision oracle "$oracle_commit" pass
 
 started=true
 "${compose[@]}" up --detach --wait control hpatch
+qualify_agent_isolation control-agent control 8081 hpatch 8082
+qualify_agent_isolation hpatch-agent hpatch 8082 control 8081
+if [[ $dependency_workspace == "$run_dir"/dependency-source-* ]]; then
+	rm -rf -- "$dependency_workspace"
+	dependency_workspace=
+else
+	printf 'bench.sh: refusing to remove unexpected dependency workspace: %s\n' "$dependency_workspace" >&2
+	exit 1
+fi
 
 benchmark_status=0
 for ((repetition = 1; repetition <= repetitions; repetition += 1)); do

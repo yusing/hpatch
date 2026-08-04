@@ -19,6 +19,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"sync"
 	"testing"
 
@@ -33,19 +34,20 @@ import (
 	"go.etcd.io/etcd/server/v3/storage/mvcc"
 	"go.etcd.io/etcd/server/v3/storage/schema"
 )
+
 type hpatchBenchmarkRangeStream struct {
 	ctx       context.Context
 	responses []*pb.RangeStreamResponse
 	sendErr   error
-	onSend   func(int)
+	onSend    func(int)
 }
 
 func (s *hpatchBenchmarkRangeStream) SetHeader(metadata.MD) error  { return nil }
 func (s *hpatchBenchmarkRangeStream) SendHeader(metadata.MD) error { return nil }
 func (s *hpatchBenchmarkRangeStream) SetTrailer(metadata.MD)       {}
 func (s *hpatchBenchmarkRangeStream) Context() context.Context     { return s.ctx }
-func (s *hpatchBenchmarkRangeStream) SendMsg(any) error             { return nil }
-func (s *hpatchBenchmarkRangeStream) RecvMsg(any) error             { return nil }
+func (s *hpatchBenchmarkRangeStream) SendMsg(any) error            { return nil }
+func (s *hpatchBenchmarkRangeStream) RecvMsg(any) error            { return nil }
 
 func (s *hpatchBenchmarkRangeStream) Send(response *pb.RangeStreamResponse) error {
 	if s.onSend != nil {
@@ -56,6 +58,59 @@ func (s *hpatchBenchmarkRangeStream) Send(response *pb.RangeStreamResponse) erro
 	}
 	s.responses = append(s.responses, response)
 	return nil
+}
+
+func invokeHPatchBenchmarkRangeStream(t *testing.T, server *EtcdServer, request *pb.RangeRequest, stream *hpatchBenchmarkRangeStream) error {
+	t.Helper()
+	method := reflect.ValueOf(server).MethodByName("RangeStream")
+	if !method.IsValid() {
+		t.Fatal("EtcdServer has no RangeStream method")
+	}
+
+	methodType := method.Type()
+	var arguments []reflect.Value
+	switch methodType.NumIn() {
+	case 2:
+		arguments = []reflect.Value{reflect.ValueOf(request), reflect.ValueOf(stream)}
+	case 3:
+		third := methodType.In(2)
+		if third.Kind() == reflect.Func && third.NumIn() == 1 && third.NumOut() == 1 {
+			send := reflect.MakeFunc(third, func(arguments []reflect.Value) []reflect.Value {
+				var response *pb.RangeStreamResponse
+				switch value := arguments[0].Interface().(type) {
+				case *pb.RangeResponse:
+					response = &pb.RangeStreamResponse{RangeResponse: value}
+				case *pb.RangeStreamResponse:
+					response = value
+				default:
+					t.Fatalf("RangeStream callback response type = %T, want *RangeResponse or *RangeStreamResponse", value)
+				}
+				err := stream.Send(response)
+				if err == nil {
+					return []reflect.Value{reflect.Zero(third.Out(0))}
+				}
+				return []reflect.Value{reflect.ValueOf(err)}
+			})
+			arguments = []reflect.Value{reflect.ValueOf(stream.ctx), reflect.ValueOf(request), send}
+		} else {
+			arguments = []reflect.Value{reflect.ValueOf(stream.ctx), reflect.ValueOf(request), reflect.ValueOf(stream)}
+		}
+	default:
+		t.Fatalf("EtcdServer.RangeStream has %d arguments, want 2 or 3", methodType.NumIn())
+	}
+
+	results := method.Call(arguments)
+	if len(results) != 1 {
+		t.Fatalf("EtcdServer.RangeStream returned %d values, want 1", len(results))
+	}
+	if results[0].IsNil() {
+		return nil
+	}
+	err, ok := results[0].Interface().(error)
+	if !ok {
+		t.Fatalf("EtcdServer.RangeStream result type = %T, want error", results[0].Interface())
+	}
+	return err
 }
 
 func newHPatchBenchmarkServer(t *testing.T, value []byte) *EtcdServer {
@@ -87,14 +142,14 @@ func newHPatchBenchmarkServer(t *testing.T, value []byte) *EtcdServer {
 func TestHPatchBenchmarkPublicRangeStreamHandler(t *testing.T) {
 	server := newHPatchBenchmarkServer(t, []byte("value"))
 	stream := &hpatchBenchmarkRangeStream{ctx: t.Context()}
-	err := server.RangeStream(&pb.RangeRequest{
+	err := invokeHPatchBenchmarkRangeStream(t, server, &pb.RangeRequest{
 		Key: []byte("k00"), RangeEnd: []byte("l"), Serializable: true,
 	}, stream)
 	if err != nil {
 		t.Fatalf("public RangeStream returned error: %v", err)
 	}
-	if len(stream.responses) < 2 {
-		t.Fatalf("public RangeStream emitted %d chunks, want multiple chunks", len(stream.responses))
+	if len(stream.responses) == 0 {
+		t.Fatal("public RangeStream emitted no response")
 	}
 
 	if _, err := server.authStore.UserAdd(&pb.AuthUserAddRequest{Name: "root", Password: "root"}); err != nil {
@@ -110,37 +165,16 @@ func TestHPatchBenchmarkPublicRangeStreamHandler(t *testing.T) {
 		t.Fatalf("AuthEnable returned error: %v", err)
 	}
 	denied := &hpatchBenchmarkRangeStream{ctx: t.Context()}
-	if err := server.RangeStream(&pb.RangeRequest{
+	if err := invokeHPatchBenchmarkRangeStream(t, server, &pb.RangeRequest{
 		Key: []byte("k00"), RangeEnd: []byte("l"), Serializable: true,
 	}, denied); err == nil {
 		t.Fatal("public RangeStream succeeded after authentication was enabled without credentials")
 	}
 }
 
-func TestHPatchBenchmarkAdjustChunkLimit(t *testing.T) {
-	tests := []struct {
-		name       string
-		lastLimit  int64
-		lastSize   int
-		targetSize int
-		want       int64
-	}{
-		{name: "double undersized chunk", lastLimit: 10, lastSize: 100, targetSize: 1000, want: 20},
-		{name: "halve oversized chunk", lastLimit: 10, lastSize: 3000, targetSize: 1000, want: 5},
-		{name: "never return zero", lastLimit: 1, lastSize: 3000, targetSize: 1000, want: 1},
-		{name: "keep near target", lastLimit: 10, lastSize: 1000, targetSize: 1000, want: 10},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			if got := adjustChunkLimit(test.lastLimit, test.lastSize, test.targetSize); got != test.want {
-				t.Fatalf("adjustChunkLimit(%d, %d, %d) = %d, want %d", test.lastLimit, test.lastSize, test.targetSize, got, test.want)
-			}
-		})
-	}
-}
-
 func TestHPatchBenchmarkRangeStreamDataAndPinning(t *testing.T) {
-	server := newHPatchBenchmarkServer(t, []byte("value"))
+	server := newHPatchBenchmarkServer(t, bytes.Repeat([]byte("x"), 128))
+	server.Cfg.MaxRequestBytes = 1024
 	initialRevision := server.KV().Rev()
 	stream := &hpatchBenchmarkRangeStream{ctx: t.Context()}
 	stream.onSend = func(index int) {
@@ -149,7 +183,7 @@ func TestHPatchBenchmarkRangeStreamDataAndPinning(t *testing.T) {
 		}
 	}
 
-	err := server.rangeStream(t.Context(), &pb.RangeRequest{Key: []byte("k00"), RangeEnd: []byte("l")}, stream)
+	err := invokeHPatchBenchmarkRangeStream(t, server, &pb.RangeRequest{Key: []byte("k00"), RangeEnd: []byte("l"), Serializable: true}, stream)
 	if err != nil {
 		t.Fatalf("rangeStream returned error: %v", err)
 	}
@@ -182,7 +216,8 @@ func TestHPatchBenchmarkRangeStreamDataAndPinning(t *testing.T) {
 }
 
 func TestHPatchBenchmarkRangeStreamExplicitRevision(t *testing.T) {
-	server := newHPatchBenchmarkServer(t, []byte("value"))
+	server := newHPatchBenchmarkServer(t, bytes.Repeat([]byte("x"), 128))
+	server.Cfg.MaxRequestBytes = 1024
 	pinnedRevision := server.KV().Rev()
 	stream := &hpatchBenchmarkRangeStream{ctx: t.Context()}
 	stream.onSend = func(index int) {
@@ -191,11 +226,14 @@ func TestHPatchBenchmarkRangeStreamExplicitRevision(t *testing.T) {
 		}
 	}
 
-	err := server.rangeStream(t.Context(), &pb.RangeRequest{
-		Key: []byte("k00"), RangeEnd: []byte("l"), Revision: pinnedRevision,
+	err := invokeHPatchBenchmarkRangeStream(t, server, &pb.RangeRequest{
+		Key: []byte("k00"), RangeEnd: []byte("l"), Revision: pinnedRevision, Serializable: true,
 	}, stream)
 	if err != nil {
 		t.Fatalf("explicit-revision rangeStream returned error: %v", err)
+	}
+	if len(stream.responses) < 2 {
+		t.Fatalf("explicit-revision rangeStream emitted %d chunk(s), want multiple chunks", len(stream.responses))
 	}
 	var keys int
 	for _, chunk := range stream.responses {
@@ -215,7 +253,7 @@ func TestHPatchBenchmarkRangeStreamLargeValues(t *testing.T) {
 	server.Cfg.MaxRequestBytes = 1024
 	stream := &hpatchBenchmarkRangeStream{ctx: t.Context()}
 
-	err := server.rangeStream(t.Context(), &pb.RangeRequest{Key: []byte("k00"), RangeEnd: []byte("l")}, stream)
+	err := invokeHPatchBenchmarkRangeStream(t, server, &pb.RangeRequest{Key: []byte("k00"), RangeEnd: []byte("l"), Serializable: true}, stream)
 	if err != nil {
 		t.Fatalf("large-value rangeStream returned error: %v", err)
 	}
@@ -235,8 +273,8 @@ func TestHPatchBenchmarkRangeStreamCountOnlyAndLimit(t *testing.T) {
 	server := newHPatchBenchmarkServer(t, []byte("value"))
 
 	countStream := &hpatchBenchmarkRangeStream{ctx: t.Context()}
-	err := server.rangeStream(t.Context(), &pb.RangeRequest{
-		Key: []byte("k00"), RangeEnd: []byte("l"), CountOnly: true,
+	err := invokeHPatchBenchmarkRangeStream(t, server, &pb.RangeRequest{
+		Key: []byte("k00"), RangeEnd: []byte("l"), CountOnly: true, Serializable: true,
 	}, countStream)
 	if err != nil {
 		t.Fatalf("CountOnly rangeStream returned error: %v", err)
@@ -249,15 +287,19 @@ func TestHPatchBenchmarkRangeStreamCountOnlyAndLimit(t *testing.T) {
 	}
 
 	limitedStream := &hpatchBenchmarkRangeStream{ctx: t.Context()}
-	err = server.rangeStream(t.Context(), &pb.RangeRequest{
-		Key: []byte("k00"), RangeEnd: []byte("l"), Limit: 5,
+	err = invokeHPatchBenchmarkRangeStream(t, server, &pb.RangeRequest{
+		Key: []byte("k00"), RangeEnd: []byte("l"), Limit: 5, Serializable: true,
 	}, limitedStream)
 	if err != nil {
 		t.Fatalf("limited rangeStream returned error: %v", err)
 	}
 	final := limitedStream.responses[len(limitedStream.responses)-1].RangeResponse
-	if len(final.Kvs) != 5 || final.Count != 20 || !final.More {
-		t.Fatalf("limited final response = %d KVs, count %d, more %t; want 5/20/true", len(final.Kvs), final.Count, final.More)
+	var limitedKeys int
+	for _, chunk := range limitedStream.responses {
+		limitedKeys += len(chunk.RangeResponse.Kvs)
+	}
+	if limitedKeys != 5 || final.Count != 20 || !final.More {
+		t.Fatalf("limited response = %d KVs, count %d, more %t; want 5/20/true", limitedKeys, final.Count, final.More)
 	}
 }
 
@@ -265,7 +307,7 @@ func TestHPatchBenchmarkRangeStreamPropagatesSendError(t *testing.T) {
 	server := newHPatchBenchmarkServer(t, []byte("value"))
 	wantErr := errors.New("send failed")
 	stream := &hpatchBenchmarkRangeStream{ctx: t.Context(), sendErr: wantErr}
-	if err := server.rangeStream(t.Context(), &pb.RangeRequest{Key: []byte("k00"), RangeEnd: []byte("l")}, stream); !errors.Is(err, wantErr) {
+	if err := invokeHPatchBenchmarkRangeStream(t, server, &pb.RangeRequest{Key: []byte("k00"), RangeEnd: []byte("l"), Serializable: true}, stream); !errors.Is(err, wantErr) {
 		t.Fatalf("rangeStream error = %v, want %v", err, wantErr)
 	}
 }

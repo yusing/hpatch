@@ -17,48 +17,32 @@ package txn
 import (
 	"testing"
 
+	"go.uber.org/zap/zaptest"
+
 	pb "go.etcd.io/etcd/api/v3/etcdserverpb"
+	"go.etcd.io/etcd/server/v3/lease"
+	betesting "go.etcd.io/etcd/server/v3/storage/backend/testing"
+	"go.etcd.io/etcd/server/v3/storage/mvcc"
 )
 
-func TestHPatchBenchmarkRangeStreamOrderingHelpers(t *testing.T) {
-	tests := []struct {
-		name   string
-		target pb.RangeRequest_SortTarget
-		order  pb.RangeRequest_SortOrder
-		want   bool
-	}{
-		{name: "unspecified", target: pb.RangeRequest_KEY, order: pb.RangeRequest_NONE, want: true},
-		{name: "key ascending", target: pb.RangeRequest_KEY, order: pb.RangeRequest_ASCEND, want: true},
-		{name: "key descending", target: pb.RangeRequest_KEY, order: pb.RangeRequest_DESCEND, want: false},
-		{name: "value unspecified order", target: pb.RangeRequest_VALUE, order: pb.RangeRequest_NONE, want: true},
+func TestHPatchBenchmarkNormalRangeStillSupportsSortingAndRevisionFilters(t *testing.T) {
+	backend, _ := betesting.NewDefaultTmpBackend(t)
+	store := mvcc.New(zaptest.NewLogger(t), backend, &lease.FakeLessor{}, mvcc.StoreConfig{})
+	t.Cleanup(func() { _ = store.Close() })
+	store.Put([]byte("a"), []byte("2"), lease.NoLease)
+	filterRevision := store.Put([]byte("b"), []byte("1"), lease.NoLease)
+
+	response, _, err := Range(t.Context(), zaptest.NewLogger(t), store, &pb.RangeRequest{
+		Key:            []byte("a"),
+		RangeEnd:       []byte("c"),
+		SortTarget:     pb.RangeRequest_VALUE,
+		SortOrder:      pb.RangeRequest_ASCEND,
+		MinModRevision: filterRevision,
+	}, true)
+	if err != nil {
+		t.Fatalf("Range returned error: %v", err)
 	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			if got := IsDefaultOrdering(test.target, test.order); got != test.want {
-				t.Fatalf("IsDefaultOrdering(%v, %v) = %t, want %t", test.target, test.order, got, test.want)
-			}
-		})
+	if len(response.Kvs) != 1 || string(response.Kvs[0].Key) != "b" {
+		t.Fatalf("Range keys = %q, want [b]", response.Kvs)
 	}
 }
-
-func TestHPatchBenchmarkRangeStreamRevisionFilters(t *testing.T) {
-	tests := []struct {
-		name string
-		req  *pb.RangeRequest
-		want bool
-	}{
-		{name: "none", req: &pb.RangeRequest{}, want: false},
-		{name: "minimum modification", req: &pb.RangeRequest{MinModRevision: 1}, want: true},
-		{name: "maximum modification", req: &pb.RangeRequest{MaxModRevision: 1}, want: true},
-		{name: "minimum creation", req: &pb.RangeRequest{MinCreateRevision: 1}, want: true},
-		{name: "maximum creation", req: &pb.RangeRequest{MaxCreateRevision: 1}, want: true},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			if got := HasRevisionFilters(test.req); got != test.want {
-				t.Fatalf("HasRevisionFilters(%s) = %t, want %t", test.name, got, test.want)
-			}
-		})
-	}
-}
-

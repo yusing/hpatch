@@ -3,6 +3,34 @@ name: ${COMPOSE_PROJECT_NAME:-hpatch-bench}
 x-bench-image: &bench-image
   image: hpatch-bench:${HPATCH_BENCH_IMAGE_TAG:-local}
 
+x-agent: &agent
+  <<: *bench-image
+  profiles: [agent]
+  environment:
+    GOPROXY: "off"
+    GOSUMDB: "off"
+    GOTOOLCHAIN: "local"
+    GOVCS: "*:off"
+  labels:
+    hpatch.benchmark.role: agent
+  volumes:
+    - type: bind
+      source: ${BENCH_RUN_DIR:?BENCH_RUN_DIR must be set}/instructions
+      target: /bench-instructions
+      read_only: true
+    - type: bind
+      source: ${BENCH_RUN_DIR:?BENCH_RUN_DIR must be set}/hpatch-runtime
+      target: ${BENCH_RUN_DIR:?BENCH_RUN_DIR must be set}/hpatch-runtime
+      read_only: true
+    - type: bind
+      source: ${BENCH_DEPENDENCY_CACHE:?BENCH_DEPENDENCY_CACHE must be set}
+      target: /go/pkg/mod
+      read_only: true
+    - type: bind
+      source: ${CODEX_AUTH_PATH:?CODEX_AUTH_PATH must be set}
+      target: /root/.codex/auth.json
+      read_only: true
+
 services:
   control:
     build:
@@ -17,6 +45,10 @@ services:
       - passthrough
     ports:
       - 127.0.0.1:8081:8081
+    networks:
+      control-agent: {}
+      egress:
+        gw_priority: 1
     volumes:
       - type: bind
         source: ${BENCH_RUN_DIR:?BENCH_RUN_DIR must be set}/work
@@ -39,6 +71,10 @@ services:
       - hpatch
     ports:
       - 127.0.0.1:8082:8082
+    networks:
+      hpatch-agent: {}
+      egress:
+        gw_priority: 1
     volumes:
       - type: bind
         source: ${BENCH_RUN_DIR:?BENCH_RUN_DIR must be set}/work
@@ -55,21 +91,31 @@ services:
       timeout: 1s
       retries: 40
 
-  agent:
+  dependency-loader:
     <<: *bench-image
-    profiles: [agent]
-    network_mode: host
+    profiles: [setup]
+    environment:
+      GOTOOLCHAIN: local
+    networks:
+      egress: {}
     volumes:
       - type: bind
-        source: ${BENCH_RUN_DIR:?BENCH_RUN_DIR must be set}/instructions
-        target: /bench-instructions
-        read_only: true
-      - type: bind
-        source: ${BENCH_RUN_DIR:?BENCH_RUN_DIR must be set}/hpatch-runtime
-        target: ${BENCH_RUN_DIR:?BENCH_RUN_DIR must be set}/hpatch-runtime
-        read_only: true
+        source: ${BENCH_DEPENDENCY_CACHE:?BENCH_DEPENDENCY_CACHE must be set}
+        target: /go/pkg/mod
 
-      - type: bind
-        source: ${CODEX_AUTH_PATH:?CODEX_AUTH_PATH must be set}
-        target: /root/.codex/auth.json
-        read_only: true
+  control-agent:
+    <<: *agent
+    networks:
+      control-agent: {}
+
+  hpatch-agent:
+    <<: *agent
+    networks:
+      hpatch-agent: {}
+
+networks:
+  control-agent:
+    internal: true
+  hpatch-agent:
+    internal: true
+  egress: {}

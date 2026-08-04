@@ -206,27 +206,27 @@ aggregate_agent_interactions() {
 			"$(translation_envelope_errors "$repetition")" "$(patch_wrapper_errors "$repetition")"
 	done < <(
 		jq -sr '
+			def arm_fields($runs; $arm):
+				([$runs[] | select(.arm == $arm)][0]) as $run |
+				if $run == null then
+					["missing", 0, "missing", "missing", "missing", 0]
+				else
+					[
+						(if $run.task_pass then "PASS" else "FAIL" end),
+						$run.agent.duration_ms,
+						($run.agent.usage.input_tokens - $run.agent.usage.cached_input_tokens),
+						$run.agent.usage.output_tokens,
+						$run.agent.usage.reasoning_output_tokens,
+						$run.graders[0].duration_ms
+					]
+				end;
 			sort_by(.repetition, .order_in_block) |
 			group_by(.repetition)[] |
 			(. as $runs |
 				[
 					$runs[0].repetition,
-					($runs | sort_by(.order_in_block) | map(.arm) | join(" → ")),
-					($runs[] | select(.arm == "control") |
-						(if .task_pass then "PASS" else "FAIL" end),
-						.agent.duration_ms,
-						(.agent.usage.input_tokens - .agent.usage.cached_input_tokens),
-						.agent.usage.output_tokens,
-						.agent.usage.reasoning_output_tokens,
-						.graders[0].duration_ms),
-					($runs[] | select(.arm == "hpatch") |
-						(if .task_pass then "PASS" else "FAIL" end),
-						.agent.duration_ms,
-						(.agent.usage.input_tokens - .agent.usage.cached_input_tokens),
-						.agent.usage.output_tokens,
-						.agent.usage.reasoning_output_tokens,
-						.graders[0].duration_ms)
-				] | @tsv
+					($runs | sort_by(.order_in_block) | map(.arm) | join(" → "))
+				] + arm_fields($runs; "control") + arm_fields($runs; "hpatch") | @tsv
 			)
 		' "$results"
 	)
@@ -266,15 +266,31 @@ aggregate_agent_interactions() {
 			grader: [.[].graders[].duration_ms] | add
 		}}) | from_entries |
 		. as $arms |
+		($arms.control // null) as $control |
+		($arms.hpatch // null) as $hpatch |
+		def rate($arm):
+			if $arm == null then "missing" else "\($arm.passed)/\($arm.runs)" end;
+		def seconds($arm; $field):
+			if $arm == null then "missing" else "\($arm[$field] / 1000)s" end;
+		def mean_seconds($arm):
+			if $arm == null then "missing" else "\($arm.duration / $arm.runs / 1000)s" end;
+		def value($arm; $field):
+			if $arm == null then "missing" else "\($arm[$field])" end;
+		def delta($control; $hpatch; $field; $divisor):
+			if $control == null or $hpatch == null then
+				"unavailable"
+			else
+				"\(($hpatch[$field] - $control[$field]) / $divisor)"
+			end;
 		[
-			["Task / grader pass rate", "\($arms.control.passed)/\($arms.control.runs)", "\($arms.hpatch.passed)/\($arms.hpatch.runs)", if $arms.control.passed == $arms.hpatch.passed then "Equal" else "" end],
-			["Agent wall time", "\($arms.control.duration / 1000)s", "\($arms.hpatch.duration / 1000)s", "\(($arms.hpatch.duration - $arms.control.duration) / 1000)s"],
-			["Mean agent wall time", "\($arms.control.duration / $arms.control.runs / 1000)s", "\($arms.hpatch.duration / $arms.hpatch.runs / 1000)s", "\(($arms.hpatch.duration / $arms.hpatch.runs - $arms.control.duration / $arms.control.runs) / 1000)s"],
-			["Grader time", "\($arms.control.grader / 1000)s", "\($arms.hpatch.grader / 1000)s", "\(($arms.hpatch.grader - $arms.control.grader) / 1000)s"],
-			["Total input tokens", "\($arms.control.input)", "\($arms.hpatch.input)", "\($arms.hpatch.input - $arms.control.input)"],
-			["Uncached input tokens", "\($arms.control.uncached)", "\($arms.hpatch.uncached)", "\($arms.hpatch.uncached - $arms.control.uncached)"],
-			["Output tokens", "\($arms.control.output)", "\($arms.hpatch.output)", "\($arms.hpatch.output - $arms.control.output)"],
-			["Reasoning tokens", "\($arms.control.reasoning)", "\($arms.hpatch.reasoning)", "\($arms.hpatch.reasoning - $arms.control.reasoning)"]
+			["Task / grader pass rate", rate($control), rate($hpatch), if $control == null or $hpatch == null then "unavailable" elif $control.passed == $hpatch.passed then "Equal" else "" end],
+			["Agent wall time", seconds($control; "duration"), seconds($hpatch; "duration"), delta($control; $hpatch; "duration"; 1000) + (if $control == null or $hpatch == null then "" else "s" end)],
+			["Mean agent wall time", mean_seconds($control), mean_seconds($hpatch), if $control == null or $hpatch == null then "unavailable" else "\(($hpatch.duration / $hpatch.runs - $control.duration / $control.runs) / 1000)s" end],
+			["Grader time", seconds($control; "grader"), seconds($hpatch; "grader"), delta($control; $hpatch; "grader"; 1000) + (if $control == null or $hpatch == null then "" else "s" end)],
+			["Total input tokens", value($control; "input"), value($hpatch; "input"), delta($control; $hpatch; "input"; 1)],
+			["Uncached input tokens", value($control; "uncached"), value($hpatch; "uncached"), delta($control; $hpatch; "uncached"; 1)],
+			["Output tokens", value($control; "output"), value($hpatch; "output"), delta($control; $hpatch; "output"; 1)],
+			["Reasoning tokens", value($control; "reasoning"), value($hpatch; "reasoning"), delta($control; $hpatch; "reasoning"; 1)]
 		][] | "| " + join(" | ") + " |"
 	' "$results"
 
@@ -452,22 +468,24 @@ aggregate_agent_interactions() {
 	jq -nr --slurpfile runs "$results" --slurpfile metrics "$hpatch_metrics" '
 		def one_decimal: ((. * 10) | round) / 10;
 		def change($baseline; $actual):
-			if $baseline == 0 then "unavailable"
+			if $baseline == null or $actual == null or $baseline == 0 then "unavailable"
 			else (((($actual - $baseline) * 100 / $baseline) | one_decimal) as $value |
 				(if $value > 0 then "+" else "" end) + ($value | tostring) + "%")
 			end;
+		def subtract($value; $payload):
+			if $value == null then null else $value - $payload end;
 		($runs | group_by(.arm) | map({key: .[0].arm, value: (map(.agent.usage.output_tokens) | add)}) | from_entries) as $output |
 		$metrics[0].gain as $gain |
 		($gain.hpatch_tokens + $gain.ineffective_hpatch_tokens) as $hpatch_payload |
 		($gain.apply_patch_tokens + $gain.failed_apply_patch_tokens) as $apply_payload |
-		($output.hpatch - $hpatch_payload) as $hpatch_non_edit |
-		($output.control - $apply_payload) as $control_non_edit |
+		subtract($output.hpatch; $hpatch_payload) as $hpatch_non_edit |
+		subtract($output.control; $apply_payload) as $control_non_edit |
 		[
 			["Successful edit payload", $gain.apply_patch_tokens, $gain.hpatch_tokens, "\($gain.successful_reduction_percent)% reduction"],
 			["All edit payload", $apply_payload, $hpatch_payload, "\($gain.overall_reduction_percent)% reduction"],
 			["End-to-end agent output", $output.control, $output.hpatch, change($output.control; $output.hpatch)],
 			["Estimated non-edit output", $control_non_edit, $hpatch_non_edit, change($control_non_edit; $hpatch_non_edit)]
-		][] | "| " + (map(tostring) | join(" | ")) + " |"
+		][] | "| " + (map(if . == null then "missing" else tostring end) | join(" | ")) + " |"
 	'
 	printf '\nEstimated non-edit output subtracts each edit payload estimate from that arm total. '
 	printf 'It is a semantic comparison, not direct attribution of the control arm emitted patch tokens.\n'

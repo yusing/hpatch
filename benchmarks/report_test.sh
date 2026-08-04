@@ -81,3 +81,17 @@ jq '.sessions[0].hpatch_rejections = []' "$fixture/hpatch-metrics.json" >"$fixtu
 mv -f -- "$fixture/hpatch-metrics.tmp" "$fixture/hpatch-metrics.json"
 "$benchmark_root/report.sh" "$fixture" >/dev/null
 grep -Fq 'No evaluator rejections.' "$fixture/summary.md"
+
+jq -c '.' "$fixture/results.jsonl" >"$fixture/results.tmp"
+jq -c 'select(.arm == "hpatch") | .repetition = 2 | .order_in_block = 1' "$fixture/results.jsonl" >>"$fixture/results.tmp"
+mv -f -- "$fixture/results.tmp" "$fixture/results.jsonl"
+"$benchmark_root/report.sh" "$fixture" >/dev/null
+grep -Fq '| 2 | hpatch | missing — 0.000 s; missing uncached input; missing output; missing reasoning; grader 0.000 s | PASS — 1.200 s; 250 uncached input; 80 output; 12 reasoning; grader 0.011 s |' "$fixture/summary.md"
+
+jq -c 'select(.arm == "hpatch")' "$fixture/results.jsonl" >"$fixture/results.tmp"
+mv -f -- "$fixture/results.tmp" "$fixture/results.jsonl"
+"$benchmark_root/report.sh" "$fixture" >/dev/null
+grep -Fq '| Task / grader pass rate | missing | 2/2 | unavailable |' "$fixture/summary.md"
+grep -Fq '| Agent wall time | missing | 2.4s | unavailable |' "$fixture/summary.md"
+grep -Fq '| End-to-end agent output | missing | 160 | unavailable |' "$fixture/summary.md"
+grep -Fq '| Estimated non-edit output | missing | 130 | unavailable |' "$fixture/summary.md"

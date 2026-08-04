@@ -27,23 +27,27 @@ import (
 
 type hpatchBenchmarkKVClient struct {
 	pb.KVClient
-	calls int
+	calls   int
+	options int
 }
 
-func (c *hpatchBenchmarkKVClient) RangeStream(context.Context, *pb.RangeRequest, ...grpc.CallOption) (pb.KV_RangeStreamClient, error) {
+func (c *hpatchBenchmarkKVClient) RangeStream(_ context.Context, _ *pb.RangeRequest, options ...grpc.CallOption) (pb.KV_RangeStreamClient, error) {
 	c.calls++
+	c.options = len(options)
 	return nil, status.Error(codes.Unavailable, "stream unavailable")
 }
 
 func TestHPatchBenchmarkRetryForwardsRangeStream(t *testing.T) {
 	fake := &hpatchBenchmarkKVClient{}
 	client := &retryKVClient{kc: fake}
-	_, err := client.RangeStream(context.Background(), &pb.RangeRequest{})
+	_, err := client.RangeStream(t.Context(), &pb.RangeRequest{}, grpc.EmptyCallOption{})
 	if status.Code(err) != codes.Unavailable {
 		t.Fatalf("RangeStream error code = %s, want %s", status.Code(err), codes.Unavailable)
 	}
 	if fake.calls != 1 {
 		t.Fatalf("RangeStream calls = %d, want 1", fake.calls)
 	}
+	if fake.options != 1 {
+		t.Fatalf("RangeStream options = %d, want the one caller option unchanged", fake.options)
+	}
 }
-

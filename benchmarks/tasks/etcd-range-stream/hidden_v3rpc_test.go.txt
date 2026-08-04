@@ -15,22 +15,43 @@
 package v3rpc
 
 import (
+	"context"
 	"testing"
 
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
 	pb "go.etcd.io/etcd/api/v3/etcdserverpb"
 	"go.etcd.io/etcd/client/pkg/v3/types"
+	"go.etcd.io/etcd/server/v3/etcdserver"
 )
 
 type hpatchBenchmarkRaftStatus struct{}
 
-func (hpatchBenchmarkRaftStatus) MemberID() types.ID       { return 1 }
-func (hpatchBenchmarkRaftStatus) Leader() types.ID         { return 2 }
-func (hpatchBenchmarkRaftStatus) CommittedIndex() uint64    { return 3 }
-func (hpatchBenchmarkRaftStatus) AppliedIndex() uint64      { return 4 }
-func (hpatchBenchmarkRaftStatus) Term() uint64              { return 9 }
+func (hpatchBenchmarkRaftStatus) MemberID() types.ID     { return 1 }
+func (hpatchBenchmarkRaftStatus) Leader() types.ID       { return 2 }
+func (hpatchBenchmarkRaftStatus) CommittedIndex() uint64 { return 3 }
+func (hpatchBenchmarkRaftStatus) AppliedIndex() uint64   { return 4 }
+func (hpatchBenchmarkRaftStatus) Term() uint64           { return 9 }
+
+type hpatchBenchmarkRaftKV struct {
+	etcdserver.RaftKV
+}
+
+type hpatchBenchmarkRangeStream struct {
+	ctx context.Context
+}
+
+func (s *hpatchBenchmarkRangeStream) SetHeader(metadata.MD) error  { return nil }
+func (s *hpatchBenchmarkRangeStream) SendHeader(metadata.MD) error { return nil }
+func (s *hpatchBenchmarkRangeStream) SetTrailer(metadata.MD)       {}
+func (s *hpatchBenchmarkRangeStream) Context() context.Context     { return s.ctx }
+func (s *hpatchBenchmarkRangeStream) SendMsg(any) error            { return nil }
+func (s *hpatchBenchmarkRangeStream) RecvMsg(any) error            { return nil }
+func (s *hpatchBenchmarkRangeStream) Send(*pb.RangeStreamResponse) error {
+	return nil
+}
 
 func TestHPatchBenchmarkRangeStreamValidation(t *testing.T) {
 	tests := []struct {
@@ -39,9 +60,9 @@ func TestHPatchBenchmarkRangeStreamValidation(t *testing.T) {
 		want codes.Code
 	}{
 		{
-			name: "default ordering is accepted",
-			req:  &pb.RangeRequest{Key: []byte("a")},
-			want: codes.OK,
+			name: "normal range validation is preserved",
+			req:  &pb.RangeRequest{},
+			want: codes.InvalidArgument,
 		},
 		{
 			name: "value sorting is rejected",
@@ -58,10 +79,12 @@ func TestHPatchBenchmarkRangeStreamValidation(t *testing.T) {
 			want: codes.Unimplemented,
 		},
 	}
+	server := &kvServer{kv: &hpatchBenchmarkRaftKV{}}
+	stream := &hpatchBenchmarkRangeStream{ctx: t.Context()}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			if got := status.Code(checkRangeStreamRequest(test.req)); got != test.want {
-				t.Fatalf("checkRangeStreamRequest() code = %s, want %s", got, test.want)
+			if got := status.Code(server.RangeStream(test.req, stream)); got != test.want {
+				t.Fatalf("RangeStream() code = %s, want %s", got, test.want)
 			}
 		})
 	}
@@ -74,12 +97,11 @@ func TestHPatchBenchmarkStreamingHeaderPreservesRevision(t *testing.T) {
 		sg:        hpatchBenchmarkRaftStatus{},
 	}
 	response := &pb.ResponseHeader{Revision: 42}
-	header.fillWithoutRevision(response)
+	header.fill(response)
 	if response.ClusterId != 7 || response.MemberId != 11 || response.RaftTerm != 9 {
 		t.Fatalf("header fields = cluster:%d member:%d term:%d", response.ClusterId, response.MemberId, response.RaftTerm)
 	}
 	if response.Revision != 42 {
-		t.Fatalf("fillWithoutRevision changed pinned revision to %d", response.Revision)
+		t.Fatalf("header fill changed pinned revision to %d", response.Revision)
 	}
 }
-
