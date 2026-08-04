@@ -532,6 +532,10 @@ qualify_agent_isolation() {
 	local assigned_port=$3
 	local forbidden_router=$4
 	local forbidden_port=$5
+	local require_hread=0
+	if [[ $service == hpatch-agent ]]; then
+		require_hread=1
+	fi
 
 	printf 'validate agent isolation: %s may reach only %s:%s\n' \
 		"$service" "$assigned_router" "$assigned_port"
@@ -542,6 +546,7 @@ qualify_agent_isolation() {
 		--no-deps \
 		--env "ASSIGNED_ROUTER=http://$assigned_router:$assigned_port/api/metrics" \
 		--env "FORBIDDEN_ROUTER=http://$forbidden_router:$forbidden_port/api/metrics" \
+		--env "REQUIRE_HREAD=$require_hread" \
 		--volume "$dependency_workspace/repo:$dependency_workspace/repo:ro" \
 		--workdir "$dependency_workspace/repo" \
 		"$service" \
@@ -557,6 +562,9 @@ qualify_agent_isolation() {
 			fi
 			test "$(codex --disable apps mcp list --json)" = "[]"
 			go mod download all
+			if [ "$REQUIRE_HREAD" = 1 ]; then
+				hread go.mod 1:1 >/dev/null
+			fi
 		'; then
 		printf 'bench.sh: agent isolation qualification failed for %s\n' "$service" >&2
 		return 1

@@ -17,5 +17,6 @@ ARG CODEX_RELEASE=0.146.0
 RUN curl -fsSL https://chatgpt.com/codex/install.sh \
 	| CODEX_RELEASE="$CODEX_RELEASE" CODEX_NON_INTERACTIVE=1 CODEX_INSTALL_DIR=/usr/local/bin sh
 COPY --from=builder /out/ /usr/local/bin/
+RUN ln -s hpatch-router /usr/local/bin/hread
 
 WORKDIR /workspace
