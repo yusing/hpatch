@@ -179,7 +179,6 @@ type hpatchHistorySession struct {
 type hpatchProxy struct {
 	translator           hpatchTranslator
 	hreadToolDescription string
-	hreadExecutable      string
 
 	toolDescription string
 
@@ -191,14 +190,13 @@ type hpatchProxy struct {
 	closed          bool
 }
 
-func newHPatchProxy(translator hpatchTranslator, hreadExecutable string) *hpatchProxy {
+func newHPatchProxy(translator hpatchTranslator) *hpatchProxy {
 	if translator == nil {
 		return nil
 	}
 	return &hpatchProxy{
 		translator:           translator,
 		hreadToolDescription: hpatch.HReadToolDescription(),
-		hreadExecutable:      hreadExecutable,
 
 		toolDescription: translator.ToolDescription() + hpatchCorrectionInstructions,
 		sessions:        make(map[string]*hpatchHistorySession),
@@ -352,7 +350,6 @@ type hpatchResponseTransform struct {
 	pending                   map[string]hpatchPendingCall
 	local                     map[string]hpatchHistory
 	workspace                 routingWorkspace
-	hreadExecutable           string
 
 	installedToolDefinition  string
 	codeModeToolName         string
@@ -482,7 +479,7 @@ func (p *hpatchProxy) prepareRequest(ctx context.Context, request *parsedRespons
 		workspace.close()
 		return nil, err
 	}
-	if err := p.restoreInputPrefix(request, historySessionID, p.hreadExecutable); err != nil {
+	if err := p.restoreInputPrefix(request, historySessionID); err != nil {
 		p.deactivateSession(historySessionID)
 		workspace.close()
 		return nil, err
@@ -501,7 +498,6 @@ func (p *hpatchProxy) prepareRequest(ctx context.Context, request *parsedRespons
 		pending:                   make(map[string]hpatchPendingCall),
 		local:                     make(map[string]hpatchHistory),
 		workspace:                 workspace,
-		hreadExecutable:           p.hreadExecutable,
 
 		installedToolDefinition: string(mustMarshalJSON(installedTools)),
 		codeModeToolName:        codeModeToolName,
@@ -959,7 +955,7 @@ func (p *hpatchProxy) history(sessionID, callID string) (hpatchHistory, bool) {
 	return history, ok
 }
 
-func (p *hpatchProxy) restoreInputPrefix(request *parsedResponsesRequest, sessionID, hreadExecutable string) error {
+func (p *hpatchProxy) restoreInputPrefix(request *parsedResponsesRequest, sessionID string) error {
 	raw, ok := request.fields["input"]
 	if !ok {
 		return nil
@@ -989,7 +985,7 @@ func (p *hpatchProxy) restoreInputPrefix(request *parsedResponsesRequest, sessio
 		if validatedCarriers[callID] {
 			return fmt.Errorf("replayed call %q appears more than once", callID)
 		}
-		if jsonString(item, "input") != history.carrierInput(hreadExecutable) {
+		if jsonString(item, "input") != history.carrierInput() {
 			return fmt.Errorf("replayed call %q changed translated input", callID)
 		}
 		validatedCarriers[callID] = true
@@ -1176,9 +1172,6 @@ func (t *hpatchResponseTransform) translateHRead(callID, input string, upstreamI
 	if t.codeModeToolName != "exec" && t.codeModeToolName != "functions.exec" {
 		return hpatchHistory{}, errors.New("hread translation requires a Code Mode exec carrier")
 	}
-	if t.hreadExecutable == "" {
-		return hpatchHistory{}, errors.New("hread translation requires the startup executable")
-	}
 	if err := t.recordMetrics(hpatchMetricInputs{overheadOnly: true}); err != nil {
 		return hpatchHistory{}, err
 	}
@@ -1213,8 +1206,8 @@ func hpatchDiagnosticExecInput(diagnostic string) string {
 	return "text(" + strconv.Quote(diagnostic) + ");"
 }
 
-func hreadExecInput(input, hreadExecutable string) string {
-	command := shellQuoteArgument(hreadExecutable)
+func hreadExecInput(input string) string {
+	command := hreadExecutableName
 	if path, trailing, err := hpatchsyntax.DecodeQuoted(input); err == nil {
 		switch {
 		case trailing == "":
@@ -1234,9 +1227,9 @@ func hreadExecInput(input, hreadExecutable string) string {
 		"text(result.output);"
 }
 
-func (h hpatchHistory) carrierInput(hreadExecutable string) string {
+func (h hpatchHistory) carrierInput() string {
 	if h.toolName == hreadToolName {
-		return hreadExecInput(h.script, hreadExecutable)
+		return hreadExecInput(h.script)
 	}
 	if h.translationError != "" {
 		return hpatchDiagnosticExecInput(h.translationError)
@@ -1408,7 +1401,7 @@ func (t *hpatchResponseTransform) TransformSSE(payload []byte) ([][]byte, error)
 		if err != nil {
 			return nil, err
 		}
-		doneEvent, err := replaceRawField(payload, "input", mustMarshalJSON(history.carrierInput(t.hreadExecutable)))
+		doneEvent, err := replaceRawField(payload, "input", mustMarshalJSON(history.carrierInput()))
 		if err != nil {
 			return nil, err
 		}
@@ -1562,7 +1555,7 @@ func (t *hpatchResponseTransform) transformOutputItem(item map[string]json.RawMe
 		return false, err
 	}
 	item["name"] = mustMarshalJSON(history.carrierName)
-	item["input"] = mustMarshalJSON(history.carrierInput(t.hreadExecutable))
+	item["input"] = mustMarshalJSON(history.carrierInput())
 	return true, nil
 }
 

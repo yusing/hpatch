@@ -140,7 +140,7 @@ func TestHReadStartupSymlinkOutlivesProxy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	proxy := newHPatchProxy(testTranslator(t, new(int)), hreadExecutable)
+	proxy := newHPatchProxy(testTranslator(t, new(int)))
 	if err := proxy.Close(); err != nil {
 		t.Fatal(err)
 	}
