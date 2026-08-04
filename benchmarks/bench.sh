@@ -439,8 +439,8 @@ INSTRUCTION
 	# Backticks are literal instruction text.
 	# shellcheck disable=SC2016
 	if ! grep -Fqx 'Use `functions.hpatch` for local file edits, not `apply_patch`.' "$hpatch_instruction" ||
-		! grep -Fqx 'Use search to locate edit regions, then use `hread` instead of `sed` or `cat` for their first content read.' "$hpatch_instruction" ||
-		! grep -Fqx 'Issue independent `hread` calls together. Batch short, disjoint edits across inspected files when they are expected to validate or fail together.' "$hpatch_instruction" ||
+		! grep -Fqx "Follow hpatch's live tool description and rejection diagnostics." "$hpatch_instruction" ||
+		! grep -Fqx 'Formatting commands and bulk mechanical rewrites do not need `hpatch`.' "$hpatch_instruction" ||
 		[[ $(grep -Fxc '## Benchmark isolation' "$control_instruction") -ne 1 ]] ||
 		[[ $(grep -Fxc '## Benchmark isolation' "$hpatch_instruction") -ne 1 ]] ||
 		grep -Fqx "$stock_instruction" "$hpatch_instruction"; then
