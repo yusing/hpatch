@@ -8,11 +8,41 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/yusing/hpatch"
 )
 
 const hreadExecutableName = "hread"
+
+func conciseHReadError(err error) string {
+	for {
+		next := errors.Unwrap(err)
+		if next == nil || err.Error() != next.Error() {
+			break
+		}
+		err = next
+	}
+
+	next := errors.Unwrap(err)
+	if next == nil {
+		return err.Error()
+	}
+	prefix, ok := strings.CutSuffix(err.Error(), ": "+next.Error())
+	if !ok || prefix == "" {
+		return err.Error()
+	}
+
+	root := next
+	for {
+		next = errors.Unwrap(root)
+		if next == nil {
+			break
+		}
+		root = next
+	}
+	return prefix + ": " + root.Error()
+}
 
 // RunHReadWorker handles the private child-process mode used by a routed
 // session's hread executable. The argv0 gate keeps this out of the public
@@ -22,7 +52,7 @@ func RunHReadWorker(ctx context.Context, argv0 string, args []string, stdout, st
 		return false, 0
 	}
 	fail := func(err error) (bool, int) {
-		_, _ = fmt.Fprintln(stderr, "hread:", err)
+		_, _ = fmt.Fprintln(stderr, "hread:", conciseHReadError(err))
 		return true, 1
 	}
 	if len(args) < 1 || len(args) > 2 {

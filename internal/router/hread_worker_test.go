@@ -2,6 +2,8 @@ package router
 
 import (
 	"bytes"
+	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -38,12 +40,13 @@ func TestRunHReadWorkerReturnsConciseFailures(t *testing.T) {
 	t.Chdir(workspace)
 
 	for _, test := range []struct {
-		name string
-		args []string
-		want string
+		name    string
+		args    []string
+		want    string
+		notWant string
 	}{
 		{name: "missing input", want: "expected PATH"},
-		{name: "missing file", args: []string{"missing.txt"}, want: "missing.txt"},
+		{name: "missing file", args: []string{"missing.txt"}, want: "missing.txt", notWant: "openat missing.txt"},
 		{name: "too many arguments", args: []string{"file.txt", "1:2", "extra"}, want: "expected PATH"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -52,8 +55,44 @@ func TestRunHReadWorkerReturnsConciseFailures(t *testing.T) {
 			if !handled || exitCode != 1 || stdout.Len() != 0 || !strings.Contains(stderr.String(), test.want) {
 				t.Fatalf("worker = handled %t, exit %d, stdout %q, stderr %q", handled, exitCode, stdout.String(), stderr.String())
 			}
+			if test.notWant != "" && strings.Contains(stderr.String(), test.notWant) {
+				t.Fatalf("worker diagnostic contains internal wrapper %q: %q", test.notWant, stderr.String())
+			}
 			if strings.Count(stderr.String(), "\n") != 1 {
 				t.Fatalf("worker diagnostic is not concise: %q", stderr.String())
+			}
+		})
+	}
+}
+
+func TestConciseHReadError(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		err  error
+		want string
+	}{
+		{
+			name: "filesystem failure",
+			err: fmt.Errorf(
+				"reading missing.txt: %w",
+				&os.PathError{Op: "openat", Path: "missing.txt", Err: os.ErrNotExist},
+			),
+			want: "reading missing.txt: " + os.ErrNotExist.Error(),
+		},
+		{
+			name: "nested generic failure",
+			err:  fmt.Errorf("writing result: %w", fmt.Errorf("flush buffer: %w", io.ErrClosedPipe)),
+			want: "writing result: " + io.ErrClosedPipe.Error(),
+		},
+		{
+			name: "plain failure",
+			err:  io.ErrUnexpectedEOF,
+			want: io.ErrUnexpectedEOF.Error(),
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := conciseHReadError(test.err); got != test.want {
+				t.Fatalf("conciseHReadError() = %q, want %q", got, test.want)
 			}
 		})
 	}
