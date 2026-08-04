@@ -19,6 +19,7 @@ import (
 	"sync"
 
 	"github.com/yusing/hpatch"
+	"github.com/yusing/hpatch/internal/hpatchsyntax"
 )
 
 const (
@@ -241,7 +242,26 @@ func (p *hpatchProxy) Close() error {
 	return nil
 }
 
-func shellSingleQuote(value string) string {
+func shellQuoteArgument(value string) string {
+	if value != "" {
+		safe := true
+		for _, char := range value {
+			switch {
+			case 'a' <= char && char <= 'z',
+				'A' <= char && char <= 'Z',
+				'0' <= char && char <= '9',
+				strings.ContainsRune("_@%+=:,./-", char):
+			default:
+				safe = false
+			}
+			if !safe {
+				break
+			}
+		}
+		if safe {
+			return value
+		}
+	}
 	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
 }
 
@@ -1194,7 +1214,15 @@ func hpatchDiagnosticExecInput(diagnostic string) string {
 }
 
 func hreadExecInput(input, hreadExecutable string) string {
-	command := shellSingleQuote(hreadExecutable) + " " + shellSingleQuote(input)
+	command := shellQuoteArgument(hreadExecutable)
+	if path, trailing, err := hpatchsyntax.DecodeQuoted(input); err == nil {
+		switch {
+		case trailing == "":
+			command += " " + shellQuoteArgument(path)
+		case strings.HasPrefix(trailing, " "):
+			command += " " + shellQuoteArgument(path) + " " + shellQuoteArgument(strings.TrimPrefix(trailing, " "))
+		}
+	}
 	arguments := struct {
 		Command string `json:"cmd"`
 		Login   bool   `json:"login"`

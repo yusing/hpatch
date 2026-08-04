@@ -6,12 +6,11 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"strconv"
 	"strings"
 	"testing"
 )
 
-func TestRunHReadWorkerUsesTrustedWorkspaceAndExactGrammarInput(t *testing.T) {
+func TestRunHReadWorkerUsesTrustedWorkspaceAndSeparateArguments(t *testing.T) {
 	workspace := t.TempDir()
 	if err := os.WriteFile(filepath.Join(workspace, "path with spaces.txt"), []byte("alpha\nbeta\r\ngamma"), 0o644); err != nil {
 		t.Fatal(err)
@@ -22,7 +21,7 @@ func TestRunHReadWorkerUsesTrustedWorkspaceAndExactGrammarInput(t *testing.T) {
 	handled, exitCode := RunHReadWorker(
 		t.Context(),
 		hreadExecutableName,
-		[]string{`"path with spaces.txt" 2:3`},
+		[]string{"path with spaces.txt", "2:3"},
 		&stdout,
 		&stderr,
 	)
@@ -43,8 +42,9 @@ func TestRunHReadWorkerReturnsConciseFailures(t *testing.T) {
 		args []string
 		want string
 	}{
-		{name: "missing input", want: "expected exactly one"},
-		{name: "missing file", args: []string{`"missing.txt"`}, want: "missing.txt"},
+		{name: "missing input", want: "expected PATH"},
+		{name: "missing file", args: []string{"missing.txt"}, want: "missing.txt"},
+		{name: "too many arguments", args: []string{"file.txt", "1:2", "extra"}, want: "expected PATH"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			var stdout, stderr bytes.Buffer
@@ -67,7 +67,7 @@ func TestRunHReadWorkerDefersAbsolutePathPermissionToExecSandbox(t *testing.T) {
 	t.Chdir(t.TempDir())
 
 	var stdout, stderr bytes.Buffer
-	handled, exitCode := RunHReadWorker(t.Context(), hreadExecutableName, []string{strconv.Quote(path)}, &stdout, &stderr)
+	handled, exitCode := RunHReadWorker(t.Context(), hreadExecutableName, []string{path}, &stdout, &stderr)
 	if !handled || exitCode != 0 || stderr.Len() != 0 || !strings.Contains(stdout.String(), "outside cwd") {
 		t.Fatalf("worker = handled %t, exit %d, stdout %q, stderr %q", handled, exitCode, stdout.String(), stderr.String())
 	}
@@ -117,7 +117,7 @@ func TestHReadStartupSymlinkExecutesPrivateWorkerEndToEnd(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(workspace, "line's name.txt"), []byte("alpha\r\nomega"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	command := exec.CommandContext(t.Context(), hreadExecutable, `"line's name.txt" 1:999`)
+	command := exec.CommandContext(t.Context(), hreadExecutable, "line's name.txt", "1:999")
 	command.Dir = workspace
 	output, err := command.CombinedOutput()
 	if err != nil {

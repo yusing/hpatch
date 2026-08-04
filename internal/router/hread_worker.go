@@ -2,6 +2,7 @@ package router
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -24,8 +25,13 @@ func RunHReadWorker(ctx context.Context, argv0 string, args []string, stdout, st
 		_, _ = fmt.Fprintln(stderr, "hread:", err)
 		return true, 1
 	}
-	if len(args) != 1 {
-		return fail(fmt.Errorf(`expected exactly one "PATH" or "PATH" START:END argument`))
+	if len(args) < 1 || len(args) > 2 {
+		return fail(fmt.Errorf(`expected PATH and optional START:END arguments`))
+	}
+	encodedPath, _ := json.Marshal(args[0]) // Strings are always JSON-encodable.
+	input := string(encodedPath)
+	if len(args) == 2 {
+		input += " " + args[1]
 	}
 	cwd, err := os.Getwd()
 	if err != nil {
@@ -44,7 +50,7 @@ func RunHReadWorker(ctx context.Context, argv0 string, args []string, stdout, st
 		}
 		return fail(fmt.Errorf("working directory is unavailable"))
 	}
-	output, readErr := hpatch.ReadHashLines(ctx, hpatch.Workspace{Root: root, CWD: relativeCWD}, args[0])
+	output, readErr := hpatch.ReadHashLines(ctx, hpatch.Workspace{Root: root, CWD: relativeCWD}, input)
 	closeErr := root.Close()
 	if readErr != nil {
 		return fail(readErr)
