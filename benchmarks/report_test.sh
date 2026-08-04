@@ -33,6 +33,8 @@ JSON
 
 cat >"$artifact_root/task-hpatch-r001/codex.jsonl" <<'JSON'
 {"type":"item.completed","item":{"type":"command_execution","command":"/tmp/hpatch-hread-fixture/hread \"file.go\"","exit_code":0,"status":"completed"}}
+{"type":"item.completed","item":{"type":"command_execution","command":"/bin/bash -c 'hread other.go 1:20'","exit_code":1,"status":"failed"}}
+{"type":"item.completed","item":{"type":"command_execution","command":"printf 'hread not-a-command'","exit_code":0,"status":"completed"}}
 {"type":"item.completed","item":{"type":"command_execution","command":"go test ./...","exit_code":0,"status":"completed"}}
 {"type":"item.completed","item":{"type":"file_change","status":"completed"}}
 {"type":"item.completed","item":{"type":"file_change","status":"completed"}}
@@ -41,8 +43,9 @@ JSON
 
 "$benchmark_root/report.sh" "$fixture" >/dev/null
 
-grep -Fq '| 1 | 3 | 5 | 2 | 1 | 2 | 1 | 1 | 2 | 2 | 1 | 7 |' "$fixture/summary.md"
-grep -Fq '| Hpatch | 5 | 2 | 1 | 2 | 2 | 1 | 7 |' "$fixture/summary.md"
+grep -Fq '| 1 | 3 | 5 | 2 | 1 | 4 | 2 | 1 | 2 | 2 | 1 | 7 |' "$fixture/summary.md"
+grep -Fq '| 0 | 0 | 1 | 0 | 0 |' "$fixture/summary.md"
+grep -Fq '| Hpatch | 5 | 4 | 2 | 2 | 2 | 1 | 7 |' "$fixture/summary.md"
 grep -Fq '| Call rejection rate | 1/3 (33.3%) |' "$fixture/summary.md"
 grep -Fq '| Indexed correction adoption | 1/1 rejected calls (100%) |' "$fixture/summary.md"
 grep -Fq '| Value-row correction use | 1/1 indexed corrections (100%); 1 row operations |' "$fixture/summary.md"

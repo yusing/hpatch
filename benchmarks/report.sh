@@ -98,7 +98,7 @@ agent_command_errors() {
 						"(^|[[:space:];|&()])([^[:space:];|&()]+/)?(rg|grep|find|fd|search_code)([[:space:];|&()]|$)"
 					)
 				else
-					(.item.command // "") | test("/hpatch-hread-[^/]+/hread")
+					(.item.command // "") | test("(/hpatch-hread-[^/]+/hread([[:space:]]|$))|((^|[;&|][[:space:]]*|-[lc]+[[:space:]]+[^[:alnum:]_./-]?)([^[:space:];|&()]+/)?hread[[:space:]])")
 				end
 			)
 		] | length
@@ -125,7 +125,7 @@ agent_interactions_from() {
 			([.[] | select(
 				.type == "item.completed" and
 				.item.type == "command_execution" and
-				((.item.command // "") | test("/hpatch-hread-[^/]+/hread"))
+				((.item.command // "") | test("(/hpatch-hread-[^/]+/hread([[:space:]]|$))|((^|[;&|][[:space:]]*|-[lc]+[[:space:]]+[^[:alnum:]_./-]?)([^[:space:];|&()]+/)?hread[[:space:]])"))
 			)] | length),
 			([.[] | select(
 				.type == "item.completed" and
@@ -510,7 +510,7 @@ aggregate_agent_interactions() {
 	printf '```\n\n'
 	printf 'The command-error and failure-reason totals above are collected by the Hpatch router. '
 	printf '“Search errors” count failed Codex command executions containing rg, grep, find, fd, or search_code; '
-	printf '“Hread errors” count failed executions of the routed private Hread wrapper. '
+	printf '“Hread errors” count failed Codex command executions identified as Hread invocations. '
 	printf '“Translation envelope errors” count client stderr envelopes and are not Hpatch command rejections; '
 	printf '“Wrapper errors” are the `apply_patch verification failed` envelope entries in Hpatch agent stderr; '
 	printf 'they are reported separately because they are not equivalent to Hpatch command errors.\n'
