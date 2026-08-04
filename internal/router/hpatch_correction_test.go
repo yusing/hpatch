@@ -13,12 +13,12 @@ func TestHPatchCorrectionDetectionDistinguishesScripts(t *testing.T) {
 		want    bool
 	}{
 		{"accept", "5: accept\n", true},
-		{"correction", "5: del 1:a793..2:b1e9\n", true},
-		{"correction after blank lines", "\n\n5: del 1:a793..2:b1e9\n", true},
-		{"multiple corrections", "5: del 1:a793..2:b1e9\n10: del 3:be9d..4:b1e9\n", true},
+		{"correction", "5: type 1:a793..2:b1e9 \"\"\n", true},
+		{"correction after blank lines", "\n\n5: type 1:a793..2:b1e9 \"\"\n", true},
+		{"multiple corrections", "5: type 1:a793..2:b1e9 \"\"\n10: type 3:be9d..4:b1e9 \"\"\n", true},
 		{"deletion", "-5\n", true},
 		{"insert before", "+5: rm\n", true},
-		{"insert after", "5+: del 1:a793\n", true},
+		{"insert after", "5+: type 1:a793 \"\"\n", true},
 		{"value row replacement", "5.2: \"fixed\"\n", true},
 		{"value row deletion", "-5.2\n", true},
 		{"value row insert before", "+5.2: \"before\\n\"\n", true},
@@ -35,17 +35,17 @@ func TestHPatchCorrectionDetectionDistinguishesScripts(t *testing.T) {
 }
 
 func TestHPatchCorrectionParsesEntries(t *testing.T) {
-	corrections, err := parseHPatchCorrections("2: del 1:a793..2:b1e9\n\n10: del 3:be9d..4:55af\n")
+	corrections, err := parseHPatchCorrections("2: type 1:a793..2:b1e9 \"\"\n\n10: type 3:be9d..4:55af \"\"\n")
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
 	if len(corrections) != 2 {
 		t.Fatalf("parsed %d corrections, want 2", len(corrections))
 	}
-	if corrections[0] != (hpatchCorrection{command: 2, replacement: "del 1:a793..2:b1e9"}) {
+	if corrections[0] != (hpatchCorrection{command: 2, replacement: "type 1:a793..2:b1e9 \"\""}) {
 		t.Errorf("first correction = %+v", corrections[0])
 	}
-	if corrections[1].command != 10 || corrections[1].replacement != "del 3:be9d..4:55af" {
+	if corrections[1].command != 10 || corrections[1].replacement != "type 3:be9d..4:55af \"\"" {
 		t.Errorf("second correction = %+v", corrections[1])
 	}
 }
@@ -149,7 +149,7 @@ func TestHPatchCorrectionAppliesHeredocReplacementLineEndings(t *testing.T) {
 }
 
 func TestHPatchCorrectionParsesCompactOperations(t *testing.T) {
-	payload := "-2\n+2: rm\n2+: del 1:a793\n+2: type <<PATCH\nraw\nPATCH\n"
+	payload := "-2\n+2: rm\n2+: type 1:a793 \"\"\n+2: type <<PATCH\nraw\nPATCH\n"
 	corrections, err := parseHPatchCorrections(payload)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
@@ -157,7 +157,7 @@ func TestHPatchCorrectionParsesCompactOperations(t *testing.T) {
 	want := []hpatchCorrection{
 		{kind: hpatchDelete, command: 2},
 		{kind: hpatchInsertBeforeAnchor, command: 2, replacement: "rm"},
-		{kind: hpatchInsertAfterAnchor, command: 2, replacement: "del 1:a793"},
+		{kind: hpatchInsertAfterAnchor, command: 2, replacement: "type 1:a793 \"\""},
 		{kind: hpatchInsertBeforeAnchor, command: 2, replacement: "type <<PATCH\nraw\nPATCH"},
 	}
 	if !reflect.DeepEqual(corrections, want) {
@@ -183,11 +183,11 @@ func TestHPatchCorrectionRejectsMalformedPayloads(t *testing.T) {
 		payload string
 		want    string
 	}{
-		{"raw command", "2: del 1:a793..2:b1e9\ntype \"x\"\n", "is not `INDEX: COMMAND`"},
-		{"zero index", "0: del 1:a793..2:b1e9\n", "is not `INDEX: COMMAND`"},
+		{"raw command", "2: type 1:a793..2:b1e9 \"\"\ntype \"x\"\n", "is not `INDEX: COMMAND`"},
+		{"zero index", "0: type 1:a793..2:b1e9 \"\"\n", "is not `INDEX: COMMAND`"},
 		{"empty replacement", "2:\n", "has no replacement command"},
 		{"blank replacement", "2:   \n", "has no replacement command"},
-		{"duplicate index", "2: del 1:a793..2:1636\n2: del 2:1636..3:b1e9\n", "appears more than once"},
+		{"duplicate index", "2: type 1:a793..2:1636 \"\"\n2: type 2:1636..3:b1e9 \"\"\n", "appears more than once"},
 		{"duplicate deletion", "-2\n-2\n", "appears more than once"},
 		{"duplicate acceptance", "2: accept\n2: accept\n", "appears more than once"},
 		{"replacement and deletion", "2: rm\n-2\n", "both replaced and deleted"},
@@ -225,7 +225,7 @@ func TestHPatchCorrectionAppliesByCommandIndexNotSourceLine(t *testing.T) {
 }
 
 func TestHPatchCorrectionAppliesOrderedInsertionsAroundDeletedAnchor(t *testing.T) {
-	corrections, err := parseHPatchCorrections("-2\n+2: type- 1:a793 \"x\"\n2+: del 1:a793\n+2: type+ 1:a793 \"y\"\n2+: rm\n")
+	corrections, err := parseHPatchCorrections("-2\n+2: type- 1:a793 \"x\"\n2+: type 1:a793 \"\"\n+2: type+ 1:a793 \"y\"\n2+: rm\n")
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -234,7 +234,7 @@ func TestHPatchCorrectionAppliesOrderedInsertionsAroundDeletedAnchor(t *testing.
 	if err != nil {
 		t.Fatalf("apply: %v", err)
 	}
-	want := "in file.txt\ntype- 1:a793 \"x\"\ndel 1:a793\ntype+ 1:a793 \"y\"\nrm\ntype 3:b1e9 \"z\"\n"
+	want := "in file.txt\ntype- 1:a793 \"x\"\ntype 1:a793 \"\"\ntype+ 1:a793 \"y\"\nrm\ntype 3:b1e9 \"z\"\n"
 	if corrected != want {
 		t.Fatalf("corrected script = %q, want %q", corrected, want)
 	}

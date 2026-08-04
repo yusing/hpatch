@@ -14,20 +14,24 @@ func TestHPatch2InvocationMetricsCountCommandsTargetsAndReasons(t *testing.T) {
 	script := "in file.txt\n" +
 		"type " + row(1, "alpha") + " \"A\"\n" +
 		"type+ " + row(2, "beta") + " \"B\"\n" +
-		"del 9:0000\n"
+		"type 9:0000 \"\"\n"
 
 	invocation, err := evaluateInvocationForTest(t, root, script)
 	if err == nil {
 		t.Fatal("missing row unexpectedly succeeded")
 	}
-	for _, operation := range []string{"in", "type", "type+", "del"} {
+	for _, operation := range []string{"in", "type", "type+"} {
 		entry := invocation.Commands[commandOperationIndex(operation)]
-		if entry.Invocations != 1 {
+		wantInvocations := uint64(1)
+		if operation == "type" {
+			wantInvocations = 2
+		}
+		if entry.Invocations != wantInvocations {
 			t.Fatalf("%s metrics = %+v", operation, entry)
 		}
 	}
-	if invocation.Commands[commandOperationIndex("del")].Errors != 1 {
-		t.Fatalf("del metrics = %+v", invocation.Commands[commandOperationIndex("del")])
+	if invocation.Commands[commandOperationIndex("type")].Errors != 1 {
+		t.Fatalf("type metrics = %+v", invocation.Commands[commandOperationIndex("type")])
 	}
 	if invocation.Targets[targetVariantLine-1] != (commandMetric{Invocations: 3, Errors: 1}) {
 		t.Fatalf("line targets = %+v", invocation.Targets)

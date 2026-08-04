@@ -192,7 +192,7 @@ supported command. Successfully evaluated commands retain their invocation count
 later output or filesystem-commit boundary fails. Supported command counters are:
 
 ```text
-in  new  mv  rm  type  type-  type+  del
+in  new  mv  rm  type  type-  type+
 ```
 
 Every structurally recognized explicit target attempt increments one target counter:
@@ -277,7 +277,7 @@ Acceptance:
    ineffective hpatch estimates and zero report-input tokens.
 2. Gain reports output and input token classes in separate tables, calculates reductions
    only between output-token quantities, and performs no input/output price conversion.
-3. The eight supported command counters and four target counters reconcile with aggregate
+3. The seven supported command counters and four target counters reconcile with aggregate
    command attempts and errors. No selector, clipboard, editor-generation, or script-level
    commit counter remains.
 4. Every definition-bearing request increments the definition-request counter, while the
@@ -317,7 +317,6 @@ rm
 type TARGET VALUE
 type- TARGET VALUE
 type+ TARGET VALUE
-del TARGET
 type VALUE
 ```
 
@@ -387,8 +386,8 @@ commands are invalid.
 
 Acceptance:
 
-1. Every accepted nonblank command is one of the eight public commands; `tsel`, `rsel`,
-   `copy`, `cut`, `paste`, and script-level `commit` are syntax errors.
+1. Every accepted nonblank command is one of the seven public commands; `tsel`, `rsel`,
+   `copy`, `cut`, `paste`, `del`, and script-level `commit` are syntax errors.
 2. Line, range, and text targets parse without a separate selection command, and inline
    replacement values remain distinguishable from a text target's quoted literal.
 3. JSON-compatible values and the fixed `<<PATCH` heredoc reproduce their exact decoded
@@ -548,11 +547,12 @@ Acceptance:
 
 ## REQ-EDIT-001 — Target-bearing mutations
 
-`type TARGET VALUE` replaces every target span with the decoded value. `type- TARGET
-VALUE` inserts the value immediately before every span and preserves the target.
-`type+ TARGET VALUE` inserts immediately after every span and preserves the target.
-`del TARGET` replaces every span with empty content. A command with multiple text matches
-is atomic: resolution or conflict at any match records none of its mutations.
+`type TARGET VALUE` replaces every target span with the decoded value. An empty target-bearing
+value deletes every target span, including a terminator owned by a complete-line or range
+target. `type- TARGET VALUE` inserts the value immediately before every span and preserves
+the target. `type+ TARGET VALUE` inserts immediately after every span and preserves the
+target. A command with multiple text matches is atomic: resolution or conflict at any match
+records none of its mutations.
 
 Replacements and deletions must have disjoint baseline interiors. An insertion strictly
 inside a replacement or deletion conflicts. Insertions exactly at either boundary are
@@ -561,11 +561,12 @@ script command order. Conflicts identify the prior command and affected baseline
 they reject the complete script before filesystem mutation or patch output.
 
 For a complete-line or range replacement whose target owns a final LF, CRLF, or
-standalone-CR terminator, `type` preserves that exact final terminator when the replacement
-does not end in a terminator. A replacement-supplied final terminator is authoritative
-and is not doubled. No terminator is synthesized for an unterminated selected final line.
-`del` removes owned terminators. Inserted values are otherwise byte-exact decoded UTF-8.
-Existing line endings outside explicit inserted or replaced text remain unchanged.
+standalone-CR terminator, nonempty `type` preserves that exact final terminator when the
+replacement does not end in a terminator. A replacement-supplied final terminator is
+authoritative and is not doubled. No terminator is synthesized for an unterminated selected
+final line. An empty target-bearing `type` value removes owned terminators. Inserted values
+are otherwise byte-exact decoded UTF-8. Existing line endings outside explicit inserted or
+replaced text remain unchanged.
 
 The engine orders registered immutable-baseline edits once and renders one final content
 value per file. It never reads pending mutated content while resolving a later target.
@@ -581,7 +582,8 @@ Acceptance:
 4. Overlapping destructive spans and insertions strictly inside them reject atomically;
    boundary insertions remain valid.
 5. LF, CRLF, and standalone-CR complete-line replacement preserve the owned terminator
-   unless the value supplies one; an unterminated final line stays unterminated.
+   for a nonempty value unless the value supplies one; an unterminated final line stays
+   unterminated, while an empty value deletes any owned terminator.
 
 ## REQ-OUTPUT-001 — Output, final state, and failure behavior
 
@@ -727,18 +729,22 @@ retained rejected script is actually correctable.
 Both references teach this workflow:
 
 1. Use search to locate relevant regions, then use hread for the first content read of a
-   region likely to be edited; issue independent hread calls together and copy complete
+   region likely to be edited. Issue every independent hread call for already-known files
+   or ranges together in one response instead of serializing them, and copy complete
    `LINE:HASH` references only from current output for that exact path.
 2. Choose a line, inclusive range, or anchored literal target inside the mutation command.
-3. Batch short, disjoint edits across inspected files when they are expected to validate or
-   fail together. Keep unrelated large `<<PATCH` values in separate failure-domain calls,
-   with at most one syntax-sensitive multiline Go declaration or function replacement per
-   call; short supporting edits for that same change may remain with it.
+3. Batch all ready short supporting edits that share a failure domain into one call with
+   repeated `in PATH` sections instead of issuing one call per file. Keep unrelated large
+   `<<PATCH` values in separate failure-domain calls, with at most one syntax-sensitive
+   multiline Go declaration or function replacement per call; short supporting edits for
+   that same change may remain with it.
 4. For an existing Go declaration or function, prefer one range `type` instead of assembling
-   the same replacement through several insertions. After success touches a file, discard its
-   saved references and hread it again before another edit.
-5. Use `type` to replace, `type-` to insert before, `type+` to insert after, and `del` to
-   delete; do not construct a separate selection or clipboard program.
+   the same replacement through several insertions. Before a later invocation targets a file
+   changed by a successful call, discard its saved references and hread only the required
+   region again; do not reread a file that needs no further edit.
+5. Use nonempty `type` to replace, empty target-bearing `type` to delete, `type-` to insert
+   before, and `type+` to insert after; do not construct a separate selection or clipboard
+   program.
 6. Encode short single-line values inline. Include `\n` when a before/after insertion
    must form a complete new line; reserve `<<PATCH` for multiline or escape-heavy values.
 7. After rejection, prefer a compact indexed command or multiline-value-row correction when

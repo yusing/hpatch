@@ -26,7 +26,7 @@ func TestHPatch2NormalMultiFileWorkflow(t *testing.T) {
 		"in a.txt",
 		"type " + row(1, "alpha old") + ` "old" "new"`,
 		"type- " + row(2, "keep") + ` "// note\n"`,
-		"del " + row(3, "end"),
+		"type " + row(3, "end") + ` ""`,
 		"in b.txt",
 		"type " + row(1, "x x x") + ` "x" 2 "y"`,
 		"new draft.txt",
@@ -104,8 +104,15 @@ func TestHPatch2LineAndRangeTerminatorSemantics(t *testing.T) {
 	}{
 		{"line preserves CRLF", "one\r\ntwo\r\n", "in file.txt\ntype " + row(1, "one") + ` "ONE"`, "ONE\r\ntwo\r\n"},
 		{"range preserves final CR", "one\rtwo\rthree", "in file.txt\ntype " + row(1, "one") + ".." + row(2, "two") + ` "both"`, "both\rthree"},
-		{"unterminated final", "one\ntwo", "in file.txt\ntype " + row(2, "two") + ` "TWO"`, "one\nTWO"},
-		{"delete owns terminator", "one\ntwo\nthree\n", "in file.txt\ndel " + row(1, "one") + ".." + row(2, "two"), "three\n"},
+		{"unterminated final replacement", "one\ntwo", "in file.txt\ntype " + row(2, "two") + ` "TWO"`, "one\nTWO"},
+		{"empty line removes LF", "one\ntwo\n", "in file.txt\ntype " + row(1, "one") + ` ""`, "two\n"},
+		{"empty line removes CRLF", "one\r\ntwo\r\n", "in file.txt\ntype " + row(1, "one") + ` ""`, "two\r\n"},
+		{"empty line removes standalone CR", "one\rtwo\r", "in file.txt\ntype " + row(1, "one") + ` ""`, "two\r"},
+		{"empty unterminated final line", "one\ntwo", "in file.txt\ntype " + row(2, "two") + ` ""`, "one\n"},
+		{"empty range removes final terminator", "one\ntwo\nthree\n", "in file.txt\ntype " + row(1, "one") + ".." + row(2, "two") + ` ""`, "three\n"},
+		{"empty heredoc removes line", "one\ntwo\n", "in file.txt\ntype " + row(1, "one") + " <<PATCH\nPATCH\n", "two\n"},
+		{"empty text replacement keeps terminator", "one\ntwo\n", "in file.txt\ntype " + row(1, "one") + ` "one" ""`, "\ntwo\n"},
+		{"explicit terminator creates blank line", "one\ntwo\n", "in file.txt\ntype " + row(1, "one") + ` "\n"`, "\ntwo\n"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -119,6 +126,17 @@ func TestHPatch2LineAndRangeTerminatorSemantics(t *testing.T) {
 				t.Fatalf("file = %q, want %q", got, test.want)
 			}
 		})
+	}
+}
+
+func TestHPatch2EmptyInitializerRemainsEmptyFile(t *testing.T) {
+	root := t.TempDir()
+	_, stderr, exitCode := runForTest(root, nil, "new empty.txt\ntype \"\"\n")
+	if exitCode != 0 {
+		t.Fatalf("Run() = exit %d, stderr %q", exitCode, stderr)
+	}
+	if got := readTestFile(t, root, "empty.txt"); got != "" {
+		t.Fatalf("file = %q, want empty", got)
 	}
 }
 
@@ -168,8 +186,8 @@ func TestHPatch2RejectsInvalidTargetsAtomically(t *testing.T) {
 		{"missing", "in file.txt\ntype 9:0000 \"B\"", "row-missing"},
 		{"incomplete", "in file.txt\ntype " + row(1, "alpha") + ` "alpha" 2 "A"`, "occurrence-missing"},
 		{"invalid count", "in file.txt\ntype " + row(1, "alpha") + ` "alpha" 0 "A"`, "invalid-count"},
-		{"reversed", "in file.txt\ndel " + row(2, "beta") + ".." + row(1, "alpha"), "target-order"},
-		{"overlap", "in file.txt\ntype " + row(1, "alpha") + ` "A"` + "\ndel " + row(1, "alpha"), "edit-conflict"},
+		{"reversed", "in file.txt\ntype " + row(2, "beta") + ".." + row(1, "alpha") + ` ""`, "target-order"},
+		{"overlap", "in file.txt\ntype " + row(1, "alpha") + ` "A"` + "\ntype " + row(1, "alpha") + ` ""`, "edit-conflict"},
 		{"insertion inside replacement", "in file.txt\ntype " + row(1, "alpha") + ` "A"` + "\ntype- " + row(1, "alpha") + ` "ph" "x"`, "edit-conflict"},
 		{"introduced", "in file.txt\ntype+ " + row(1, "alpha") + ` "new\n"` + "\ntype " + row(1, "alpha") + ` "new" "NEW"`, "occurrence-missing"},
 	}
@@ -212,7 +230,7 @@ func TestHPatch2NewFileInitializerIsImmediate(t *testing.T) {
 }
 
 func TestHPatch2RejectsRemovedGrammar(t *testing.T) {
-	for _, command := range []string{`tsel 0000 "x"`, `rsel 0000 0000`, "copy", "cut", "paste", "commit", "type <<BODY\nx\nBODY"} {
+	for _, command := range []string{`tsel 0000 "x"`, `rsel 0000 0000`, "copy", "cut", "paste", "commit", "del " + row(1, "x"), "type <<BODY\nx\nBODY"} {
 		t.Run(strings.Fields(command)[0], func(t *testing.T) {
 			root := t.TempDir()
 			writeTestFile(t, root, "file.txt", "x\n", 0o644)

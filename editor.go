@@ -130,7 +130,7 @@ func (e *editor) applyMutation(operation string, target targetSpec, value string
 		start, end := span.start, span.end
 		switch operation {
 		case "type":
-			if span.linewise && lineTerminatorSuffix(replacement) == "" {
+			if replacement != "" && span.linewise && lineTerminatorSuffix(replacement) == "" {
 				replacement += lineTerminatorSuffix(e.baseline[span.start:span.end])
 			}
 			if len(spans) == 1 {
@@ -142,8 +142,6 @@ func (e *editor) applyMutation(operation string, target targetSpec, value string
 			end = start
 		case "type+":
 			start = end
-		case "del":
-			replacement = ""
 		default:
 			panic("parsed instruction has no mutation executor: " + operation)
 		}

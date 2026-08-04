@@ -48,9 +48,10 @@ wall time must remain close to control.
   paired historical-commit evaluations.
 - `hpatch --help`, `hpatch --tool-help`, `hpatch translate --help`, and
   `hpatch --version`: informational output.
-- Script commands: `in`, `new`, `mv`, `rm`, `type`, `type-`, `type+`, and `del`.
-- `type` replaces its explicit target; `type-` and `type+` insert before and after their
-  explicit target while preserving it; `del` deletes its explicit target.
+- Script commands: `in`, `new`, `mv`, `rm`, `type`, `type-`, and `type+`.
+- `type` replaces its explicit target; an empty target-bearing value deletes the target,
+  including an owned line or range terminator. `type-` and `type+` insert before and after
+  their explicit target while preserving it.
 - Immediately after `new`, targetless `type` may initialize the empty file once.
 - A target is a copyable hread row, an inclusive pair of rows, or a row-anchored literal
   with optional multiplicity, as specified by `REQ-SCRIPT-001`.

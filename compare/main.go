@@ -74,7 +74,7 @@ func scenarios() []scenario {
 		{
 			name:    "last occurrence delete",
 			initial: map[string]string{"logs.txt": "debug info debug\n"},
-			script:  "in logs.txt\ndel 1:22b6 \" debug\"\n",
+			script:  "in logs.txt\ntype 1:22b6 \" debug\" \"\"\n",
 			patch:   "*** Begin Patch\n*** Update File: logs.txt\n@@\n-debug info debug\n+debug info\n*** End Patch\n",
 		},
 		{

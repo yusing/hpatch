@@ -296,7 +296,6 @@ func TestGainReportsCommandInvocationsErrorsAndRates(t *testing.T) {
 		"type     3            1       33.3%\n" +
 		"type-    0            0       0.0%\n" +
 		"type+    0            0       0.0%\n" +
-		"del      0            0       0.0%\n" +
 		"total    7            1       14.3%\n\n"
 	end := strings.Index(stdout.String()[start:], "target metrics:\n")
 	if end < 0 {

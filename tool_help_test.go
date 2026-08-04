@@ -47,7 +47,6 @@ func TestHPatch2ToolGrammarMatchesPublicCommands(t *testing.T) {
 		`heredoc_mutation: TYPE_OP SP target SP "<<PATCH" NL _patch_body "PATCH"`,
 		`inline_initializer: "type" SP QUOTED`,
 		`heredoc_initializer: "type" SP "<<PATCH" NL _patch_body "PATCH"`,
-		`delete_command: "del" SP target`,
 		`ROW: /[1-9][0-9]*:[0-9a-f]{4}/`,
 		`TYPE_OP: "type" | "type-" | "type+"`,
 	} {
@@ -55,7 +54,7 @@ func TestHPatch2ToolGrammarMatchesPublicCommands(t *testing.T) {
 			t.Errorf("tool grammar omits %q", rule)
 		}
 	}
-	for _, removed := range []string{"tsel_command", "rsel_command", `"copy"`, `"cut"`, `"paste"`, `"commit"`, "<<TAG"} {
+	for _, removed := range []string{"tsel_command", "rsel_command", "delete_command", `"del"`, `"copy"`, `"cut"`, `"paste"`, `"commit"`, "<<TAG"} {
 		if strings.Contains(toolGrammar, removed) {
 			t.Errorf("tool grammar retains HPATCH/1 form %q", removed)
 		}
@@ -83,21 +82,22 @@ func TestHPatch2ToolDescriptionCoversSafeCommandChoice(t *testing.T) {
 		"HPATCH/2",
 		"Do not call this tool in parallel with other tools.",
 		"use `hread` for its first content read instead of `sed` or `cat`",
-		"independent `hread` calls may run together",
+		"Issue every independent `hread` call",
 		"LINE:HASH TEXT",
 		"copy the complete `LINE:HASH` reference",
-		"Line and range replacement preserve",
+		"Nonempty line and range `type` replacements preserve",
 		"`type` replaces",
 		"`type-` inserts before",
 		"`type+` inserts after",
-		"`del` deletes",
+		"An empty target-bearing `type` value deletes",
 		"fixed `<<PATCH`",
 		"immutable baseline",
 		"Use only rows copied from current `hread` output for that exact path",
-		"batch short, disjoint edits across files",
+		"batch all short supporting edits",
 		"at most one syntax-sensitive multiline Go",
 		"For an existing Go declaration or function, prefer one range `type`",
 		"discard its saved references",
+		"do not reread a file that needs no further edit",
 		"not targetable in the same call",
 		"Multiple insertions at the same boundary render in script order.",
 		"Changed Go files are parsed and formatted before success",
@@ -111,6 +111,19 @@ func TestHPatch2ToolDescriptionCoversSafeCommandChoice(t *testing.T) {
 	for _, excluded := range []string{"HPATCH/1", "\ntsel ", "\nrsel ", "\ncopy", "\ncut", "\npaste", "\ncommit", "<<TAG", "Usage:", "--root", "hpatch gain"} {
 		if strings.Contains(toolDescription, excluded) {
 			t.Errorf("tool description retains excluded material %q", excluded)
+		}
+	}
+}
+
+func TestHReadToolDescriptionRequiresParallelIndependentReads(t *testing.T) {
+	normalized := strings.Join(strings.Fields(HReadToolDescription()), " ")
+	for _, guidance := range []string{
+		"independent files or ranges are already known",
+		"issue their `hread` calls together in one response",
+		"do not serialize them",
+	} {
+		if !strings.Contains(normalized, guidance) {
+			t.Errorf("hread tool description omits %q", guidance)
 		}
 	}
 }

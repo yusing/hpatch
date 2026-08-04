@@ -217,7 +217,7 @@ func recognizeCommandAttempt(line string) commandAttempt {
 	switch fields[0] {
 	case "in", "new", "mv", "rm":
 		return commandAttempt{recognized: true}
-	case "type", "type-", "type+", "del":
+	case "type", "type-", "type+":
 		attempt := commandAttempt{recognized: true}
 		if len(fields) > 1 {
 			attempt.target = recognizeTargetVariant(strings.TrimPrefix(line, fields[0]+" "))
@@ -268,20 +268,11 @@ func parseInstruction(sourceLine int, line string) (instruction, error) {
 		return instruction{line: sourceLine, operation: line}, nil
 	}
 
-	operation, operands, ok := strings.Cut(line, " ")
+	operation, _, ok := strings.Cut(line, " ")
 	if !ok {
 		return instruction{}, scriptError(sourceLine, "unknown or malformed command")
 	}
 	switch operation {
-	case "del":
-		target, trailing, err := parseTarget(sourceLine, operands, false)
-		if err != nil {
-			return instruction{}, err
-		}
-		if strings.TrimSpace(trailing) != "" {
-			return instruction{}, scriptError(sourceLine, "trailing text after del target")
-		}
-		return instruction{line: sourceLine, operation: operation, target: target}, nil
 	case "type", "type-", "type+":
 		return parseInstructionWithValue(sourceLine, line, "", false)
 	default:

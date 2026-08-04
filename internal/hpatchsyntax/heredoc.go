@@ -83,8 +83,7 @@ func FrameCommand(lines []PhysicalLine, headerIndex int, command string) (Comman
 func isInlineQuotedCommand(command string) bool {
 	return strings.HasPrefix(command, "type ") ||
 		strings.HasPrefix(command, "type- ") ||
-		strings.HasPrefix(command, "type+ ") ||
-		strings.HasPrefix(command, "del ")
+		strings.HasPrefix(command, "type+ ")
 }
 
 func scanQuotedOperand(text string, quoteOpen bool) bool {

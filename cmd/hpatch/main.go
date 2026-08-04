@@ -37,7 +37,6 @@ Commands:
   type TARGET VALUE
   type- TARGET VALUE
   type+ TARGET VALUE
-  del TARGET
   type VALUE
 
 Targets:
@@ -57,14 +56,15 @@ Targets:
   must exist.
 
 Mutations:
-  type replaces every target span. type- inserts immediately before every span.
-  type+ inserts immediately after every span. del deletes every span. Before and
-  after insertion preserve the target and never synthesize a newline; include \n
+  type replaces every target span. An empty target-bearing type value deletes every
+  span, including terminators owned by complete-line and range targets. type- inserts
+  immediately before every span; type+ inserts immediately after every span. Before
+  and after insertion preserve the target and never synthesize a newline; include \n
   when the inserted value must form a complete line.
 
-  Complete-line and range replacement preserve the target's final LF, CRLF, or
-  standalone CR when VALUE omits a terminator. An explicit terminator is
-  authoritative. Deletion removes owned terminators.
+  Nonempty complete-line and range replacement preserve the target's final LF, CRLF,
+  or standalone CR when VALUE omits a terminator. An explicit terminator is
+  authoritative.
 
 Values and framing:
   Use an inline JSON-compatible quoted string for short or single-line values.
@@ -84,16 +84,19 @@ Values and framing:
 
 Baselines and conflict safety:
   Use search to locate relevant regions. For any region likely to be edited, use
-  hread for its first content read; independent hread calls may run together.
+  hread for its first content read. Issue every independent hread call for
+  already-known files or ranges together; do not serialize them.
   Every existing file has one immutable baseline for the complete invocation.
   Pending edits do not move later targets, and introduced content is not targetable
-  in that call. One call may repeat in PATH to batch short, disjoint edits across
-  files when they are expected to validate or fail together. Keep unrelated large
-  <<PATCH values in separate calls, with at most one syntax-sensitive multiline Go
-  declaration or function replacement per call; short supporting edits for that same
-  change may remain with it. For an existing Go declaration or function, prefer one
-  range type over assembling the same replacement through several insertions. After
-  success touches a file, discard its saved references and hread it again.
+  in that call. When inspected files are ready, batch all short supporting edits
+  that share a failure domain into one call with repeated in PATH sections; do not
+  issue one call per file. Keep unrelated large <<PATCH values in separate calls,
+  with at most one syntax-sensitive multiline Go declaration or function replacement
+  per call; short supporting edits for that same change may remain with it. For an
+  existing Go declaration or function, prefer one range type over assembling the
+  same replacement through several insertions. Before a later invocation targets a
+  file changed by a successful call, discard its saved references and hread only the
+  required region again; do not reread a file that needs no further edit.
 
   Replacements and deletions may not overlap. An insertion strictly inside either
   one conflicts. Insertions at a destructive span boundary are valid. Multiple
@@ -114,17 +117,19 @@ File lifecycle:
 
 Agent workflow:
   1. Use search to locate relevant regions, then hread for the first content read
-     of likely edit regions. Issue independent hread calls together and copy
-     complete LINE:HASH rows only from current output for that exact path.
+     of likely edit regions. Issue every independent hread call for already-known
+     files or ranges together; do not serialize them. Copy complete LINE:HASH rows
+     only from current output for that exact path.
   2. Put a line, range, or anchored literal target directly in each mutation.
-  3. Use type to replace, type- to insert before, type+ to insert after, and del
-     to delete. HPATCH/1 selection, clipboard, and script commit commands are invalid.
-  4. Batch short, disjoint edits that should validate or fail together. Put unrelated
+  3. Use type to replace or delete, type- to insert before, and type+ to insert after.
+     HPATCH/1 selection, clipboard, script commit, and del commands are invalid.
+  4. Batch all ready short supporting edits that share a failure domain into one call
+     with repeated in PATH sections; do not issue one call per file. Put unrelated
      large <<PATCH values in separate calls, with at most one syntax-sensitive multiline
      Go declaration or function replacement in each failure-domain call.
   5. For an existing Go declaration or function, prefer one range type over several
-     insertions. Short supporting edits may share its call. After success, discard
-     references for touched files and reread.
+     insertions. Before a later invocation targets a changed file, discard its saved
+     references and hread only the required region; do not reread files needing no edit.
   6. Prefer inline single-line values; reserve <<PATCH for multiline or escape-heavy text.
   7. After rejection, use a router indexed command or multiline-value-row correction
      only while the referenced rows still belong to the same baseline. Reread stale
@@ -150,7 +155,7 @@ Failures and repair:
 
 Metrics:
   hpatch gain reads no script and reports separate output-token estimates, input
-  overhead, command counters for in/new/mv/rm/type/type-/type+/del, target counters
+  overhead, command counters for in/new/mv/rm/type/type-/type+, target counters
   for line/range/text-single/text-multiple, and stable failure reasons. Gain does
   not inspect or change the workspace.
 

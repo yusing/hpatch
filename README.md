@@ -293,16 +293,16 @@ Rows verify only their named immutable-baseline line. Hpatch does not scan for a
 hash elsewhere, so equal lines at different positions are unambiguous. A text target starts
 at its verified row and every requested non-overlapping match must exist.
 
-Commands are `in` / `new` / `mv` / `rm`, target-bearing `type` / `type-` / `type+` /
-`del`, and one targetless `type VALUE` immediately after `new`.
+Commands are `in` / `new` / `mv` / `rm`, target-bearing `type` / `type-` / `type+`,
+and one targetless `type VALUE` immediately after `new`.
 
 Rules worth remembering:
 
-- Use `type` to replace, `type-` to insert before, `type+` to insert after, and `del` to delete.
-- Use search to locate likely edit regions, then use HREAD for their first content read; issue independent HREAD calls together and use only current rows from the exact path.
+- Use `type` with a nonempty value to replace, `type` with an empty value to delete, `type-` to insert before, and `type+` to insert after.
+- Use search to locate likely edit regions, then use HREAD for their first content read. Issue every independent HREAD call for already-known files or ranges together in one response instead of serializing them, and use only current rows from the exact path.
 - First `in` of a file freezes its immutable invocation baseline. Pending edits never shift later targets.
-- Batch short, disjoint edits across inspected files when they are expected to validate or fail together. Keep unrelated large `<<PATCH` values in separate calls, with at most one syntax-sensitive multiline Go declaration or function replacement per call; short supporting edits for that same change may remain with it.
-- For an existing Go declaration or function, prefer one range `type` over assembling the same replacement through several insertions. After success touches a file, discard its saved references and HREAD it again before another edit.
+- Batch all ready short supporting edits that share a failure domain into one call with repeated `in PATH` sections instead of issuing one call per file. Keep unrelated large `<<PATCH` values in separate calls, with at most one syntax-sensitive multiline Go declaration or function replacement per call; short supporting edits for that same change may remain with it.
+- For an existing Go declaration or function, prefer one range `type` over assembling the same replacement through several insertions. Before a later invocation targets a file changed by a successful call, discard its saved references and HREAD only the required region again; do not reread a file that needs no further edit.
 - Overlapping replacements or deletions and insertions strictly inside them fail atomically. Boundary insertions are valid.
 - Use inline quoted values for short single-line edits; include `\n` when an insertion must form a new line. Reserve fixed `<<PATCH` for multiline or escape-heavy values.
 - Rejection changes nothing. Router-owned retries can replace, delete, or insert failed commands by index; for a fixed `<<PATCH` value, they can address one physical body row as `COMMAND.ROW` without resending the large value.

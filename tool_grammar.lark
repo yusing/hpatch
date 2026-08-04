@@ -9,14 +9,12 @@ corrections: correction (_separator correction)*
         | heredoc_mutation
         | inline_initializer
         | heredoc_initializer
-        | delete_command
 
 path_command: PATH_OP SP PATH
 inline_mutation: TYPE_OP SP target SP QUOTED
 heredoc_mutation: TYPE_OP SP target SP "<<PATCH" NL _patch_body "PATCH"
 inline_initializer: "type" SP QUOTED
 heredoc_initializer: "type" SP "<<PATCH" NL _patch_body "PATCH"
-delete_command: "del" SP target
 
 ?target: ROW
        | ROW ".." ROW

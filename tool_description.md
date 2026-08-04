@@ -2,10 +2,11 @@ HPATCH/2 applies one complete target-bearing edit script atomically. Do not call
 in parallel with other tools. Rejection or cancellation changes nothing.
 
 Use search to locate relevant regions. For any region likely to be edited, use `hread`
-for its first content read instead of `sed` or `cat`; independent `hread` calls may run
-together. Its rows are `LINE:HASH TEXT`; copy the complete `LINE:HASH` reference. The
-line selects one exact logical line and the hash rejects stale content. Use only rows
-copied from current `hread` output for that exact path. Never guess or reconstruct a row.
+for its first content read instead of `sed` or `cat`. Issue every independent `hread`
+call for already-known files or ranges together in one response; do not serialize them.
+Its rows are `LINE:HASH TEXT`; copy the complete `LINE:HASH` reference. The line selects
+one exact logical line and the hash rejects stale content. Use only rows copied from
+current `hread` output for that exact path. Never guess or reconstruct a row.
 
 Commands:
 
@@ -17,7 +18,6 @@ rm
 type TARGET VALUE
 type- TARGET VALUE
 type+ TARGET VALUE
-del TARGET
 ```
 
 Targets:
@@ -28,9 +28,10 @@ LINE:HASH..LINE:HASH              inclusive complete-line range
 LINE:HASH "TEXT" [N]              first N exact matches from that row through EOF
 ```
 
-`type` replaces. `type-` inserts before while preserving the target. `type+` inserts
-after while preserving it. `del` deletes. A text target defaults to one match; every
-requested non-overlapping match must exist or the script rejects.
+`type` replaces. An empty target-bearing `type` value deletes every target span, including
+terminators owned by line and range targets. `type-` inserts before while preserving the
+target; `type+` inserts after while preserving it. A text target defaults to one match;
+every requested non-overlapping match must exist or the script rejects.
 
 Use inline JSON-compatible strings for short or single-line values. Include `\n` when a
 before/after insertion must form a complete new line:
@@ -61,16 +62,19 @@ PATCH
 ```
 
 Every existing file has one immutable baseline for the complete invocation. Pending edits
-do not shift later targets. One call may repeat `in PATH` to batch short, disjoint edits across
-files when they are expected to validate or fail together. Keep unrelated large `<<PATCH`
-values in separate calls, with at most one syntax-sensitive multiline Go declaration or
-function replacement per call; short supporting edits for that same change may remain with it.
-For an existing Go declaration or function, prefer one range `type` over assembling the same
-replacement through several insertions. Content introduced by a mutation is not targetable in
-the same call. After success touches a file, discard its saved references and `hread` it again.
+do not shift later targets. When inspected files are ready, batch all short supporting edits
+that share a failure domain into one call with repeated `in PATH` sections; do not issue one
+call per file. Keep unrelated large `<<PATCH` values in separate calls, with at most one
+syntax-sensitive multiline Go declaration or function replacement per call; short supporting
+edits for that same change may remain with it. For an existing Go declaration or function,
+prefer one range `type` over assembling the same replacement through several insertions.
+Content introduced by a mutation is not targetable in the same call. Before a later invocation
+targets a file changed by a successful call, discard its saved references and `hread` only the
+required region again; do not reread a file that needs no further edit.
 
-Line and range replacement preserve the target's final LF, CRLF, or CR when the value
-omits a terminator. Explicit terminators are authoritative. `type-` and `type+` insert
+Nonempty line and range `type` replacements preserve the target's final LF, CRLF, or CR
+when the value omits a terminator. Explicit terminators are authoritative. An empty
+target-bearing `type` value removes owned terminators. `type-` and `type+` insert
 byte-exact values and do not synthesize newlines.
 
 Overlapping replacements/deletions and insertions strictly inside them reject. Boundary

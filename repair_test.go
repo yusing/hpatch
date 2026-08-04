@@ -42,7 +42,7 @@ func TestHPatch2RepairContextForStaleRow(t *testing.T) {
 
 func TestHPatch2RepairContextForStaleRangeEnd(t *testing.T) {
 	content := "one\ntwo\nthree\nfour\nfive\nsix\nseven\n"
-	repair := repairFor(t, content, "in file.txt\ndel "+row(1, "one")+"..7:0000")
+	repair := repairFor(t, content, "in file.txt\ntype "+row(1, "one")+"..7:0000 \"\"")
 	if !strings.Contains(repair, "7:"+hashLine("seven")+" seven") {
 		t.Fatalf("repair = %q", repair)
 	}
@@ -62,7 +62,7 @@ func TestHPatch2MissingRowDoesNotGuessRepairContext(t *testing.T) {
 
 func TestHPatch2RepairContextForEditConflict(t *testing.T) {
 	content := "alpha\nbeta\n"
-	script := "in file.txt\ntype " + row(1, "alpha") + ` "A"` + "\ndel " + row(1, "alpha")
+	script := "in file.txt\ntype " + row(1, "alpha") + ` "A"` + "\ntype " + row(1, "alpha") + ` ""`
 	repair := repairFor(t, content, script)
 	for _, want := range []string{
 		"baseline content conflicts with an earlier mutation",
@@ -77,7 +77,7 @@ func TestHPatch2RepairContextForEditConflict(t *testing.T) {
 
 func TestHPatch2RepairContextForReversedRange(t *testing.T) {
 	content := "alpha\nbeta\n"
-	script := "in file.txt\ndel " + row(2, "beta") + ".." + row(1, "alpha")
+	script := "in file.txt\ntype " + row(2, "beta") + ".." + row(1, "alpha") + ` ""`
 	repair := repairFor(t, content, script)
 	if !strings.Contains(repair, "row range resolves to lines 2:1") ||
 		!strings.Contains(repair, "2:"+hashLine("beta")+" beta") {
