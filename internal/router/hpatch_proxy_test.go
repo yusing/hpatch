@@ -9,7 +9,6 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -58,7 +57,7 @@ func (hpatchResultTranslatorFunc) RecordMetrics(context.Context, hpatchMetricRec
 
 func newManagedHPatchProxy(t *testing.T, translator hpatchTranslator) *hpatchProxy {
 	t.Helper()
-	proxy := newHPatchProxy(translator)
+	proxy := newHPatchProxy(translator, filepath.Join(t.TempDir(), hreadExecutableName))
 	t.Cleanup(func() {
 		if err := proxy.Close(); err != nil {
 			t.Error(err)
@@ -256,7 +255,7 @@ func TestHPatchDirectAdditionalApplyPatchIsRejectedWithoutExecCarrier(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	proxy := newHPatchProxy(testTranslator(t, new(int)))
+	proxy := newHPatchProxy(testTranslator(t, new(int)), hreadExecutableName)
 	t.Cleanup(func() {
 		if err := proxy.Close(); err != nil {
 			t.Error(err)
@@ -269,35 +268,6 @@ func TestHPatchDirectAdditionalApplyPatchIsRejectedWithoutExecCarrier(t *testing
 	}
 	if len(proxy.sessions) != 0 {
 		t.Fatalf("direct rejection created session resources: %#v", proxy.sessions)
-	}
-}
-
-func TestHPatchPrepareRejectsUnavailableWrapperLocation(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("session wrapper is a POSIX shell script")
-	}
-	workspace := t.TempDir()
-	t.Setenv("TMPDIR", filepath.Join(t.TempDir(), "missing"))
-	request, err := parseResponsesRequest(mustTestJSON(t, map[string]any{
-		"input": []any{map[string]any{
-			"type": "additional_tools",
-			"tools": []any{map[string]any{
-				"type": "custom", "name": "exec", "description": testCodeModeDescription,
-			}},
-		}},
-		"tools": []any{},
-	}))
-	if err != nil {
-		t.Fatal(err)
-	}
-	proxy := newManagedHPatchProxy(t, testTranslator(t, new(int)))
-	metadata := codexTurnMetadata{RequestKind: "turn", Workspaces: map[string]json.RawMessage{workspace: nil}}
-	transform, err := proxy.prepareRequest(t.Context(), &request, "session-wrapper-failure", metadata, true)
-	if err == nil || transform != nil || !strings.Contains(err.Error(), "create hread wrapper directory") {
-		t.Fatalf("wrapper setup = transform %v, error %v", transform, err)
-	}
-	if len(proxy.sessions) != 0 || len(proxy.activeSessions) != 0 {
-		t.Fatalf("failed wrapper setup retained session state: %#v / %#v", proxy.sessions, proxy.activeSessions)
 	}
 }
 
@@ -468,7 +438,7 @@ func TestHPatchPrepareRequestLeavesIneligibleRequestUnchanged(t *testing.T) {
 	}
 	beforeInput := bytes.Clone(request.fields["input"])
 	beforeTools := bytes.Clone(request.fields["tools"])
-	proxy := newHPatchProxy(testTranslator(t, new(int)))
+	proxy := newHPatchProxy(testTranslator(t, new(int)), hreadExecutableName)
 	metadata := codexTurnMetadata{RequestKind: "turn", Workspaces: map[string]json.RawMessage{workspace: nil}}
 	transform, err := proxy.prepareRequest(t.Context(), &request, "", metadata, true)
 	if err == nil || transform != nil || !strings.Contains(err.Error(), "valid session ID") || !bytes.Equal(beforeInput, request.fields["input"]) || !bytes.Equal(beforeTools, request.fields["tools"]) {
@@ -477,7 +447,7 @@ func TestHPatchPrepareRequestLeavesIneligibleRequestUnchanged(t *testing.T) {
 }
 
 func TestHPatchIneligibleContinuationDoesNotRestoreHistory(t *testing.T) {
-	proxy := newHPatchProxy(testTranslator(t, new(int)))
+	proxy := newHPatchProxy(testTranslator(t, new(int)), hreadExecutableName)
 	if err := proxy.rememberBatch("session", map[string]hpatchHistory{"call-H": {script: testHPatchScript, patch: testTranslatedPatch}}); err != nil {
 		t.Fatal(err)
 	}
@@ -539,7 +509,7 @@ func TestHPatchJSONWrapsPatchAndImmediateReportInCodeModeExec(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := proxy.restoreInputPrefix(&replay, transform.historySessionID, transform.hreadWrapperDirectory); err != nil {
+	if err := proxy.restoreInputPrefix(&replay, transform.historySessionID, transform.hreadExecutable); err != nil {
 		t.Fatal(err)
 	}
 	var items []json.RawMessage
@@ -579,10 +549,10 @@ func TestHReadJSONReturnsExecCommandAndRestoresReplay(t *testing.T) {
 	}
 	if len(response.Output) != 2 ||
 		jsonString(response.Output[0], "name") != "exec" ||
-		jsonString(response.Output[0], "input") != hreadExecInput(`"lines.txt" 2:3`, transform.hreadWrapperDirectory) {
+		jsonString(response.Output[0], "input") != hreadExecInput(`"lines.txt" 2:3`, transform.hreadExecutable) {
 		t.Fatalf("translated hread response = %s", visible)
 	}
-	if missing := jsonString(response.Output[1], "input"); missing != hreadExecInput(`"missing.txt"`, transform.hreadWrapperDirectory) {
+	if missing := jsonString(response.Output[1], "input"); missing != hreadExecInput(`"missing.txt"`, transform.hreadExecutable) {
 		t.Fatalf("translated missing-file response = %q", missing)
 	}
 	carrierInput := jsonString(response.Output[0], "input")
@@ -592,14 +562,18 @@ func TestHReadJSONReturnsExecCommandAndRestoresReplay(t *testing.T) {
 		Command     string          `json:"cmd"`
 		Environment json.RawMessage `json:"env"`
 		Workdir     json.RawMessage `json:"workdir"`
+		Shell       json.RawMessage `json:"shell"`
+		Login       *bool           `json:"login"`
 	}
 	if err := json.Unmarshal([]byte(encodedArguments), &arguments); err != nil {
 		t.Fatalf("decode translated exec arguments: %v\n%s", err, carrierInput)
 	}
-	wantCommand := shellSingleQuote(filepath.Join(transform.hreadWrapperDirectory, hreadWrapperName)) +
-		` '"lines.txt" 2:3'`
+	wantCommand := shellSingleQuote(transform.hreadExecutable) + ` '"lines.txt" 2:3'`
 	if arguments.Command != wantCommand {
-		t.Fatalf("translated exec arguments = %#v", arguments)
+		t.Fatalf("translated exec command = %q, want %q", arguments.Command, wantCommand)
+	}
+	if len(arguments.Shell) != 0 || arguments.Login == nil || *arguments.Login {
+		t.Fatalf("translated exec shell = %s, login = %v", arguments.Shell, arguments.Login)
 	}
 	if len(arguments.Environment) != 0 || len(arguments.Workdir) != 0 {
 		t.Fatalf("translated hread overrides Codex environment or working directory: %s", carrierInput)
@@ -611,7 +585,7 @@ func TestHReadJSONReturnsExecCommandAndRestoresReplay(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := proxy.restoreInputPrefix(&replay, transform.historySessionID, transform.hreadWrapperDirectory); err != nil {
+	if err := proxy.restoreInputPrefix(&replay, transform.historySessionID, transform.hreadExecutable); err != nil {
 		t.Fatal(err)
 	}
 	var replayed []map[string]json.RawMessage
@@ -718,7 +692,7 @@ func TestHPatchHistoryDoesNotCrossWorkspacesSharingSessionIdentity(t *testing.T)
 }
 
 func TestHPatchReplayPreservesImmediateApplyFailure(t *testing.T) {
-	proxy := newHPatchProxy(testTranslator(t, new(int)))
+	proxy := newHPatchProxy(testTranslator(t, new(int)), hreadExecutableName)
 	history := hpatchHistory{script: testHPatchScript, patch: testTranslatedPatch, carrierName: "exec", report: testHPatchReport}
 	if err := proxy.rememberBatch("session", map[string]hpatchHistory{"call-H": history}); err != nil {
 		t.Fatal(err)
@@ -740,7 +714,7 @@ func TestHPatchReplayPreservesImmediateApplyFailure(t *testing.T) {
 }
 
 func TestHPatchReplayRejectsChangedExecCarrierAndIgnoresUnrelatedCalls(t *testing.T) {
-	proxy := newHPatchProxy(testTranslator(t, new(int)))
+	proxy := newHPatchProxy(testTranslator(t, new(int)), hreadExecutableName)
 	history := hpatchHistory{script: testHPatchScript, patch: testTranslatedPatch, carrierName: "exec", report: testHPatchReport}
 	if err := proxy.rememberBatch("session", map[string]hpatchHistory{"call-H": history}); err != nil {
 		t.Fatal(err)
@@ -888,7 +862,7 @@ func TestHReadStreamingUsesTextLifecycle(t *testing.T) {
 	}))
 	if err != nil || len(visible) != 2 ||
 		!bytes.Contains(visible[0], []byte(`"name":"exec"`)) ||
-		!bytes.Contains(visible[1], []byte(jsonQuoted(hreadExecInput(`"line.txt"`, transform.hreadWrapperDirectory)))) {
+		!bytes.Contains(visible[1], []byte(jsonQuoted(hreadExecInput(`"line.txt"`, transform.hreadExecutable)))) {
 		t.Fatalf("hread input.done = %q, error %v", visible, err)
 	}
 	visible, err = transform.TransformSSE(mustTestJSON(t, map[string]any{"type": "response.output_item.done", "item": item}))
@@ -898,7 +872,7 @@ func TestHReadStreamingUsesTextLifecycle(t *testing.T) {
 }
 
 func TestHReadHistoryIsExcludedFromCorrections(t *testing.T) {
-	proxy := newHPatchProxy(testTranslator(t, new(int)))
+	proxy := newHPatchProxy(testTranslator(t, new(int)), hreadExecutableName)
 	err := proxy.rememberBatch("session", map[string]hpatchHistory{
 		"call-H": {
 			toolName: hpatchToolName, script: testHPatchScript,
@@ -1189,7 +1163,7 @@ func TestHPatchTranslationFailureReturnsImmediateDiagnosticExec(t *testing.T) {
 	if !remembered {
 		t.Fatal("translation rejection carrier was not remembered")
 	}
-	if jsonString(carrier, "name") != "exec" || jsonString(carrier, "input") != history.carrierInput(transform.hreadWrapperDirectory) || jsonString(carrier, "call_id") != "call-H" || !strings.Contains(history.carrierInput(transform.hreadWrapperDirectory), "selector is not unique") {
+	if jsonString(carrier, "name") != "exec" || jsonString(carrier, "input") != history.carrierInput(transform.hreadExecutable) || jsonString(carrier, "call_id") != "call-H" || !strings.Contains(history.carrierInput(transform.hreadExecutable), "selector is not unique") {
 		t.Fatalf("diagnostic exec carrier = %s", visible)
 	}
 	if jsonString(response.Output[0], "future") != "preserved" || string(response.Future) != `{"kept":true}` || !bytes.Contains(response.Output[0]["metadata"], []byte(`"name":"apply_patch"`)) {
@@ -1321,7 +1295,7 @@ func TestHPatchTranslationCancellationRemainsRequestCancellation(t *testing.T) {
 }
 
 func TestHPatchHistoryByteAccountingIncludesExistingCalls(t *testing.T) {
-	proxy := newHPatchProxy(testTranslator(t, new(int)))
+	proxy := newHPatchProxy(testTranslator(t, new(int)), hreadExecutableName)
 	if err := proxy.rememberBatch("session", map[string]hpatchHistory{
 		"call-1": {script: "first"},
 	}); err != nil {
@@ -1344,7 +1318,7 @@ func TestHPatchHistoryByteAccountingIncludesExistingCalls(t *testing.T) {
 }
 
 func TestHPatchHistoryDoesNotEvictActiveSessions(t *testing.T) {
-	proxy := newHPatchProxy(testTranslator(t, new(int)))
+	proxy := newHPatchProxy(testTranslator(t, new(int)), hreadExecutableName)
 	t.Cleanup(func() {
 		if err := proxy.Close(); err != nil {
 			t.Error(err)
@@ -1373,7 +1347,7 @@ func TestHPatchHistoryDoesNotEvictActiveSessions(t *testing.T) {
 }
 
 func TestHPatchHistoryEvictsOldestCallsAndSessions(t *testing.T) {
-	proxy := newHPatchProxy(testTranslator(t, new(int)))
+	proxy := newHPatchProxy(testTranslator(t, new(int)), hreadExecutableName)
 	for index := range maxSessionTurns + 1 {
 		callID := fmt.Sprintf("call-%03d", index)
 		err := proxy.rememberBatch("session", map[string]hpatchHistory{
@@ -1467,7 +1441,7 @@ func TestHPatchBoundsTranslationAndHistory(t *testing.T) {
 	})
 
 	t.Run("global history", func(t *testing.T) {
-		proxy := newHPatchProxy(testTranslator(t, new(int)))
+		proxy := newHPatchProxy(testTranslator(t, new(int)), hreadExecutableName)
 		proxy.historyBytes = maxHPatchHistoryGlobalBytes
 		if err := proxy.rememberBatch("session", map[string]hpatchHistory{"call": {script: "x", patch: "y"}}); err == nil {
 			t.Fatal("history exceeded global capacity")
@@ -1478,7 +1452,7 @@ func TestHPatchBoundsTranslationAndHistory(t *testing.T) {
 	})
 
 	t.Run("batch history is atomic", func(t *testing.T) {
-		proxy := newHPatchProxy(testTranslator(t, new(int)))
+		proxy := newHPatchProxy(testTranslator(t, new(int)), hreadExecutableName)
 		proxy.historyBytes = maxHPatchHistoryGlobalBytes - 1
 		err := proxy.rememberBatch("session", map[string]hpatchHistory{
 			"call-first":  {script: "x", patch: "y"},

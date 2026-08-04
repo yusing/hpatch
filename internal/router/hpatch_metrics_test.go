@@ -217,7 +217,7 @@ func TestHPatchMetricPersistenceFailuresDoNotChangeToolResults(t *testing.T) {
 	t.Run("hread call", func(t *testing.T) {
 		transform, _, _, _ := newHPatchTestTransform(t, translator)
 		history, err := transform.translateHRead("call-read", `"file.txt"`, nil)
-		if err != nil || history.carrierInput(transform.hreadWrapperDirectory) != hreadExecInput(`"file.txt"`, transform.hreadWrapperDirectory) {
+		if err != nil || history.carrierInput(transform.hreadExecutable) != hreadExecInput(`"file.txt"`, transform.hreadExecutable) {
 			t.Fatalf("history = %+v, error %v", history, err)
 		}
 	})
@@ -325,8 +325,8 @@ func TestHReadTranslationProducesNoSyntheticResultMetrics(t *testing.T) {
 		record.ReportInputTokens != 0 || record.DiagnosticInputTokens != 0 {
 		t.Fatalf("hread accounting contains synthetic result tokens: %+v", record)
 	}
-	if strings.Contains(history.carrierInput(transform.hreadWrapperDirectory), "missing.txt:") {
-		t.Fatalf("router fabricated a reader diagnostic: %q", history.carrierInput(transform.hreadWrapperDirectory))
+	if strings.Contains(history.carrierInput(transform.hreadExecutable), "missing.txt:") {
+		t.Fatalf("router fabricated a reader diagnostic: %q", history.carrierInput(transform.hreadExecutable))
 	}
 }
 

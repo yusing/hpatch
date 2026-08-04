@@ -17,11 +17,11 @@ func TestRunHReadWorkerUsesTrustedWorkspaceAndExactGrammarInput(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Chdir(workspace)
-	t.Setenv(hreadWorkerEnvironment, "1")
 
 	var stdout, stderr bytes.Buffer
 	handled, exitCode := RunHReadWorker(
 		t.Context(),
+		hreadExecutableName,
 		[]string{`"path with spaces.txt" 2:3`},
 		&stdout,
 		&stderr,
@@ -37,7 +37,6 @@ func TestRunHReadWorkerUsesTrustedWorkspaceAndExactGrammarInput(t *testing.T) {
 func TestRunHReadWorkerReturnsConciseFailures(t *testing.T) {
 	workspace := t.TempDir()
 	t.Chdir(workspace)
-	t.Setenv(hreadWorkerEnvironment, "1")
 
 	for _, test := range []struct {
 		name string
@@ -49,7 +48,7 @@ func TestRunHReadWorkerReturnsConciseFailures(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			var stdout, stderr bytes.Buffer
-			handled, exitCode := RunHReadWorker(t.Context(), test.args, &stdout, &stderr)
+			handled, exitCode := RunHReadWorker(t.Context(), hreadExecutableName, test.args, &stdout, &stderr)
 			if !handled || exitCode != 1 || stdout.Len() != 0 || !strings.Contains(stderr.String(), test.want) {
 				t.Fatalf("worker = handled %t, exit %d, stdout %q, stderr %q", handled, exitCode, stdout.String(), stderr.String())
 			}
@@ -66,26 +65,24 @@ func TestRunHReadWorkerDefersAbsolutePathPermissionToExecSandbox(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Chdir(t.TempDir())
-	t.Setenv(hreadWorkerEnvironment, "1")
 
 	var stdout, stderr bytes.Buffer
-	handled, exitCode := RunHReadWorker(t.Context(), []string{strconv.Quote(path)}, &stdout, &stderr)
+	handled, exitCode := RunHReadWorker(t.Context(), hreadExecutableName, []string{strconv.Quote(path)}, &stdout, &stderr)
 	if !handled || exitCode != 0 || stderr.Len() != 0 || !strings.Contains(stdout.String(), "outside cwd") {
 		t.Fatalf("worker = handled %t, exit %d, stdout %q, stderr %q", handled, exitCode, stdout.String(), stderr.String())
 	}
 }
 
 func TestRunHReadWorkerIgnoresNormalRouterInvocation(t *testing.T) {
-	t.Setenv(hreadWorkerEnvironment, "")
-	handled, exitCode := RunHReadWorker(t.Context(), []string{"--help"}, &bytes.Buffer{}, &bytes.Buffer{})
+	handled, exitCode := RunHReadWorker(t.Context(), "hpatch-router", []string{"--help"}, &bytes.Buffer{}, &bytes.Buffer{})
 	if handled || exitCode != 0 {
 		t.Fatalf("normal invocation = handled %t, exit %d", handled, exitCode)
 	}
 }
 
-func TestHReadWrapperExecutesPrivateWorkerEndToEnd(t *testing.T) {
+func TestHReadStartupSymlinkExecutesPrivateWorkerEndToEnd(t *testing.T) {
 	if runtime.GOOS == "windows" {
-		t.Skip("session wrapper is a POSIX shell script")
+		t.Skip("test requires symbolic-link support")
 	}
 	moduleRoot, err := filepath.Abs(filepath.Join("..", ".."))
 	if err != nil {
@@ -98,72 +95,56 @@ func TestHReadWrapperExecutesPrivateWorkerEndToEnd(t *testing.T) {
 		t.Fatalf("build hpatch-router: %v\n%s", err, output)
 	}
 
+	hreadExecutable, err := ensureHReadSymlinkForExecutable(binary)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second, err := ensureHReadSymlinkForExecutable(binary); err != nil || second != hreadExecutable {
+		t.Fatalf("second startup symlink = %q, %v; want %q", second, err, hreadExecutable)
+	}
+	linkInfo, err := os.Lstat(hreadExecutable)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if linkInfo.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("hread mode = %v, want symlink", linkInfo.Mode())
+	}
+	if target, err := os.Readlink(hreadExecutable); err != nil || target != binary {
+		t.Fatalf("hread target = %q, %v; want %q", target, err, binary)
+	}
+
 	workspace := t.TempDir()
 	if err := os.WriteFile(filepath.Join(workspace, "line's name.txt"), []byte("alpha\r\nomega"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	wrapperDirectory, err := createHReadWrapperForExecutable(binary)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		if err := cleanupHReadWrapper(wrapperDirectory); err != nil {
-			t.Error(err)
-		}
-	})
-	wrapperPath := filepath.Join(wrapperDirectory, hreadWrapperName)
-	info, err := os.Stat(wrapperPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if info.Mode().Perm() != 0o700 {
-		t.Fatalf("wrapper mode = %o, want 700", info.Mode().Perm())
-	}
-	if relative, err := filepath.Rel(workspace, wrapperPath); err == nil && filepath.IsLocal(relative) {
-		t.Fatalf("wrapper was created in the user worktree: %s", wrapperPath)
-	}
-
-	command := exec.CommandContext(
-		t.Context(),
-		"/bin/sh",
-		"-c",
-		shellSingleQuote(wrapperPath)+" "+shellSingleQuote(`"line's name.txt" 1:999`),
-	)
+	command := exec.CommandContext(t.Context(), hreadExecutable, `"line's name.txt" 1:999`)
 	command.Dir = workspace
 	output, err := command.CombinedOutput()
 	if err != nil {
-		t.Fatalf("execute wrapper: %v\n%s", err, output)
+		t.Fatalf("execute hread: %v\n%s", err, output)
 	}
 	if got, want := string(output), "1:8ed3 alpha\n2:304b omega\n"; got != want {
-		t.Fatalf("wrapper output = %q, want %q", got, want)
+		t.Fatalf("hread output = %q, want %q", got, want)
 	}
 }
 
-func TestHReadWrapperCleanupFollowsProxyLifetime(t *testing.T) {
-	transform, proxy, _, _ := newHPatchTestTransform(t, testTranslator(t, new(int)))
-	wrapperDirectory := transform.hreadWrapperDirectory
-	if _, err := os.Stat(filepath.Join(wrapperDirectory, hreadWrapperName)); err != nil {
+func TestHReadStartupSymlinkOutlivesProxy(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test requires symbolic-link support")
+	}
+	executable := filepath.Join(t.TempDir(), "hpatch-router")
+	if err := os.WriteFile(executable, []byte("fixture"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	transform.Close()
-	if _, err := os.Stat(wrapperDirectory); err != nil {
-		t.Fatalf("proxy wrapper was released with a turn: %v", err)
-	}
-
-	secondWrapper, err := proxy.ensureHReadWrapper()
+	hreadExecutable, err := ensureHReadSymlinkForExecutable(executable)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if secondWrapper != wrapperDirectory {
-		t.Fatalf("reused wrapper = %q, want %q", secondWrapper, wrapperDirectory)
-	}
-	if _, err := os.Stat(wrapperDirectory); err != nil {
-		t.Fatalf("proxy wrapper was released with second turn: %v", err)
-	}
+	proxy := newHPatchProxy(testTranslator(t, new(int)), hreadExecutable)
 	if err := proxy.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(wrapperDirectory); !os.IsNotExist(err) {
-		t.Fatalf("proxy shutdown left wrapper behind: %v", err)
+	if _, err := os.Lstat(hreadExecutable); err != nil {
+		t.Fatalf("proxy shutdown removed startup hread symlink: %v", err)
 	}
 }

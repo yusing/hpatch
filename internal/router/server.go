@@ -64,11 +64,15 @@ func Run(ctx context.Context, args []string, stderr io.Writer) (runErr error) {
 	metrics := newMetricsStore(gainDirectory)
 	metrics.mode = *mode
 	if *mode == "hpatch" {
+		hreadExecutable, err := ensureHReadSymlink()
+		if err != nil {
+			return fmt.Errorf("initialize hread executable: %w", err)
+		}
 		translator := notifyingHPatchTranslator{
 			inner:   newInProcessHPatchTranslator(gainDirectory),
 			metrics: metrics,
 		}
-		hpatchCalls = newHPatchProxy(translator)
+		hpatchCalls = newHPatchProxy(translator, hreadExecutable)
 		defer func() {
 			runErr = errors.Join(runErr, hpatchCalls.Close())
 		}()

@@ -34,9 +34,6 @@ const (
 
 	maxHPatchPendingCalls    = 128
 	maxHPatchDiagnosticBytes = 1 << 20
-
-	hreadWrapperName   = "hread"
-	hreadWrapperPrefix = "hpatch-hread-"
 )
 
 var (
@@ -181,6 +178,7 @@ type hpatchHistorySession struct {
 type hpatchProxy struct {
 	translator           hpatchTranslator
 	hreadToolDescription string
+	hreadExecutable      string
 
 	toolDescription string
 
@@ -190,16 +188,16 @@ type hpatchProxy struct {
 	historyBytes    int
 	sessionSequence uint64
 	closed          bool
-	hreadWrapper    string
 }
 
-func newHPatchProxy(translator hpatchTranslator) *hpatchProxy {
+func newHPatchProxy(translator hpatchTranslator, hreadExecutable string) *hpatchProxy {
 	if translator == nil {
 		return nil
 	}
 	return &hpatchProxy{
 		translator:           translator,
 		hreadToolDescription: hpatch.HReadToolDescription(),
+		hreadExecutable:      hreadExecutable,
 
 		toolDescription: translator.ToolDescription() + hpatchCorrectionInstructions,
 		sessions:        make(map[string]*hpatchHistorySession),
@@ -235,90 +233,11 @@ func (p *hpatchProxy) Close() error {
 		return nil
 	}
 	p.mu.Lock()
+	defer p.mu.Unlock()
 	p.closed = true
-	wrapper := p.hreadWrapper
 	clear(p.sessions)
 	clear(p.activeSessions)
 	p.historyBytes = 0
-	p.mu.Unlock()
-
-	if err := cleanupHReadWrapper(wrapper); err != nil {
-		return err
-	}
-	p.mu.Lock()
-	if p.hreadWrapper == wrapper {
-		p.hreadWrapper = ""
-	}
-	p.mu.Unlock()
-	return nil
-}
-
-func (p *hpatchProxy) ensureHReadWrapper() (string, error) {
-	p.mu.RLock()
-	if p.closed {
-		p.mu.RUnlock()
-		return "", errors.New("hpatch response proxy is closed")
-	}
-	existing := p.hreadWrapper
-	p.mu.RUnlock()
-	if existing != "" {
-		return existing, nil
-	}
-
-	candidate, err := createHReadWrapper()
-	if err != nil {
-		return "", err
-	}
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if p.closed {
-		return "", errors.Join(errors.New("hpatch response proxy is closed"), cleanupHReadWrapper(candidate))
-	}
-	if p.hreadWrapper != "" {
-		return p.hreadWrapper, cleanupHReadWrapper(candidate)
-	}
-	p.hreadWrapper = candidate
-	return candidate, nil
-}
-
-func createHReadWrapper() (wrapperDirectory string, err error) {
-	executable, err := os.Executable()
-	if err != nil {
-		return "", fmt.Errorf("locate hread worker executable: %w", err)
-	}
-	return createHReadWrapperForExecutable(executable)
-}
-
-func createHReadWrapperForExecutable(executable string) (wrapperDirectory string, err error) {
-	directory, err := os.MkdirTemp("", hreadWrapperPrefix)
-	if err != nil {
-		return "", fmt.Errorf("create hread wrapper directory: %w", err)
-	}
-	defer func() {
-		if err != nil {
-			err = errors.Join(err, cleanupHReadWrapper(directory))
-		}
-	}()
-	script := "#!/bin/sh\n" +
-		hreadWorkerEnvironment + "=1\n" +
-		"export " + hreadWorkerEnvironment + "\n" +
-		"exec " + shellSingleQuote(executable) + " \"$@\"\n"
-	if err := os.WriteFile(filepath.Join(directory, hreadWrapperName), []byte(script), 0o700); err != nil {
-		return "", fmt.Errorf("write hread wrapper: %w", err)
-	}
-	return directory, nil
-}
-
-func cleanupHReadWrapper(directory string) error {
-	if directory == "" {
-		return nil
-	}
-	if filepath.Base(directory) == directory || !strings.HasPrefix(filepath.Base(directory), hreadWrapperPrefix) {
-		return fmt.Errorf("refuse to remove invalid hread wrapper directory %q", directory)
-	}
-	if err := os.RemoveAll(directory); err != nil {
-		return fmt.Errorf("remove hread wrapper directory: %w", err)
-	}
 	return nil
 }
 
@@ -413,7 +332,7 @@ type hpatchResponseTransform struct {
 	pending                   map[string]hpatchPendingCall
 	local                     map[string]hpatchHistory
 	workspace                 routingWorkspace
-	hreadWrapperDirectory     string
+	hreadExecutable           string
 
 	installedToolDefinition  string
 	codeModeToolName         string
@@ -539,16 +458,11 @@ func (p *hpatchProxy) prepareRequest(ctx context.Context, request *parsedRespons
 		return nil, errors.New("responses request cannot satisfy the required hpatch rewrite")
 	}
 	historySessionID := workspace.canonical + "\x00" + sessionID
-	hreadWrapperDirectory, err := p.ensureHReadWrapper()
-	if err != nil {
-		workspace.close()
-		return nil, fmt.Errorf("initialize hread wrapper: %w", err)
-	}
 	if err := p.activateSession(historySessionID); err != nil {
 		workspace.close()
 		return nil, err
 	}
-	if err := p.restoreInputPrefix(request, historySessionID, hreadWrapperDirectory); err != nil {
+	if err := p.restoreInputPrefix(request, historySessionID, p.hreadExecutable); err != nil {
 		p.deactivateSession(historySessionID)
 		workspace.close()
 		return nil, err
@@ -567,7 +481,7 @@ func (p *hpatchProxy) prepareRequest(ctx context.Context, request *parsedRespons
 		pending:                   make(map[string]hpatchPendingCall),
 		local:                     make(map[string]hpatchHistory),
 		workspace:                 workspace,
-		hreadWrapperDirectory:     hreadWrapperDirectory,
+		hreadExecutable:           p.hreadExecutable,
 
 		installedToolDefinition: string(mustMarshalJSON(installedTools)),
 		codeModeToolName:        codeModeToolName,
@@ -1025,7 +939,7 @@ func (p *hpatchProxy) history(sessionID, callID string) (hpatchHistory, bool) {
 	return history, ok
 }
 
-func (p *hpatchProxy) restoreInputPrefix(request *parsedResponsesRequest, sessionID, hreadWrapperDirectory string) error {
+func (p *hpatchProxy) restoreInputPrefix(request *parsedResponsesRequest, sessionID, hreadExecutable string) error {
 	raw, ok := request.fields["input"]
 	if !ok {
 		return nil
@@ -1055,7 +969,7 @@ func (p *hpatchProxy) restoreInputPrefix(request *parsedResponsesRequest, sessio
 		if validatedCarriers[callID] {
 			return fmt.Errorf("replayed call %q appears more than once", callID)
 		}
-		if jsonString(item, "input") != history.carrierInput(hreadWrapperDirectory) {
+		if jsonString(item, "input") != history.carrierInput(hreadExecutable) {
 			return fmt.Errorf("replayed call %q changed translated input", callID)
 		}
 		validatedCarriers[callID] = true
@@ -1242,8 +1156,8 @@ func (t *hpatchResponseTransform) translateHRead(callID, input string, upstreamI
 	if t.codeModeToolName != "exec" && t.codeModeToolName != "functions.exec" {
 		return hpatchHistory{}, errors.New("hread translation requires a Code Mode exec carrier")
 	}
-	if t.hreadWrapperDirectory == "" {
-		return hpatchHistory{}, errors.New("hread translation requires a shared wrapper directory")
+	if t.hreadExecutable == "" {
+		return hpatchHistory{}, errors.New("hread translation requires the startup executable")
 	}
 	if err := t.recordMetrics(hpatchMetricInputs{overheadOnly: true}); err != nil {
 		return hpatchHistory{}, err
@@ -1279,20 +1193,22 @@ func hpatchDiagnosticExecInput(diagnostic string) string {
 	return "text(" + strconv.Quote(diagnostic) + ");"
 }
 
-func hreadExecInput(input, wrapperDirectory string) string {
-	command := shellSingleQuote(filepath.Join(wrapperDirectory, hreadWrapperName)) + " " + shellSingleQuote(input)
+func hreadExecInput(input, hreadExecutable string) string {
+	command := shellSingleQuote(hreadExecutable) + " " + shellSingleQuote(input)
 	arguments := struct {
 		Command string `json:"cmd"`
+		Login   bool   `json:"login"`
 	}{
 		Command: command,
+		Login:   false,
 	}
 	return "const result = await tools.exec_command(" + string(mustMarshalJSON(arguments)) + ");\n" +
 		"text(result.output);"
 }
 
-func (h hpatchHistory) carrierInput(hreadWrapperDirectory string) string {
+func (h hpatchHistory) carrierInput(hreadExecutable string) string {
 	if h.toolName == hreadToolName {
-		return hreadExecInput(h.script, hreadWrapperDirectory)
+		return hreadExecInput(h.script, hreadExecutable)
 	}
 	if h.translationError != "" {
 		return hpatchDiagnosticExecInput(h.translationError)
@@ -1464,7 +1380,7 @@ func (t *hpatchResponseTransform) TransformSSE(payload []byte) ([][]byte, error)
 		if err != nil {
 			return nil, err
 		}
-		doneEvent, err := replaceRawField(payload, "input", mustMarshalJSON(history.carrierInput(t.hreadWrapperDirectory)))
+		doneEvent, err := replaceRawField(payload, "input", mustMarshalJSON(history.carrierInput(t.hreadExecutable)))
 		if err != nil {
 			return nil, err
 		}
@@ -1618,7 +1534,7 @@ func (t *hpatchResponseTransform) transformOutputItem(item map[string]json.RawMe
 		return false, err
 	}
 	item["name"] = mustMarshalJSON(history.carrierName)
-	item["input"] = mustMarshalJSON(history.carrierInput(t.hreadWrapperDirectory))
+	item["input"] = mustMarshalJSON(history.carrierInput(t.hreadExecutable))
 	return true, nil
 }
 

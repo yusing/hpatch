@@ -2,6 +2,7 @@ package router
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -10,15 +11,13 @@ import (
 	"github.com/yusing/hpatch"
 )
 
-const (
-	hreadWorkerEnvironment = "HPATCH_INTERNAL_HREAD_WORKER"
-)
+const hreadExecutableName = "hread"
 
 // RunHReadWorker handles the private child-process mode used by a routed
-// session's hread wrapper. The environment gate keeps this out of the public
+// session's hread executable. The argv0 gate keeps this out of the public
 // hpatch-router command surface.
-func RunHReadWorker(ctx context.Context, args []string, stdout, stderr io.Writer) (bool, int) {
-	if os.Getenv(hreadWorkerEnvironment) != "1" {
+func RunHReadWorker(ctx context.Context, argv0 string, args []string, stdout, stderr io.Writer) (bool, int) {
+	if filepath.Base(argv0) != hreadExecutableName {
 		return false, 0
 	}
 	fail := func(err error) (bool, int) {
@@ -57,4 +56,28 @@ func RunHReadWorker(ctx context.Context, args []string, stdout, stderr io.Writer
 		return fail(fmt.Errorf("writing result: %w", err))
 	}
 	return true, 0
+}
+
+func ensureHReadSymlink() (string, error) {
+	executable, err := os.Executable()
+	if err != nil {
+		return "", fmt.Errorf("locate hread executable: %w", err)
+	}
+	return ensureHReadSymlinkForExecutable(executable)
+}
+
+func ensureHReadSymlinkForExecutable(executable string) (string, error) {
+	link := filepath.Join(filepath.Dir(executable), hreadExecutableName)
+	if _, err := os.Lstat(link); err == nil {
+		return link, nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return "", fmt.Errorf("inspect hread symlink: %w", err)
+	}
+	if err := os.Symlink(executable, link); err != nil {
+		if errors.Is(err, os.ErrExist) {
+			return link, nil
+		}
+		return "", fmt.Errorf("create hread symlink: %w", err)
+	}
+	return link, nil
 }
