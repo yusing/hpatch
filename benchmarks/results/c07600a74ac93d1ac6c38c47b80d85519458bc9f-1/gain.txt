@@ -1,0 +1,65 @@
+output token estimates:
+calls       hpatch  apply_patch  reduction
+-----       ------  -----------  ---------
+successful  2138    4127         48.2%
+failed      345     22           n/a
+all         2483    4149         40.2%
+failed apply_patch output uses the empty-patch semantic baseline.
+
+input token estimates:
+source                          tokens  description
+------------------------------  ------  ----------------------------------------
+state reports                   322     final state returned after successful
+                                        calls
+failure diagnostics             541     errors and repair context returned after
+                                        failed calls
+hpatch definition installed     2118    hpatch and hread tool definitions added
+                                        by the router
+apply_patch definition removed  -58     exact Code Mode section removed by the
+                                        router
+net added input                 2923    measured additions minus the removed
+                                        definition
+definition routing covers 29 accounted request(s) in 1 distinct session(s)
+(installation and removal measured).
+
+command metrics:
+command  invocations  errors  error rate
+-------  -----------  ------  ----------
+in       13           0       0.0%
+new      0            0       0.0%
+mv       0            0       0.0%
+rm       0            0       0.0%
+type     13           1       7.7%
+type-    0            0       0.0%
+type+    13           0       0.0%
+total    39           1       2.6%
+
+target metrics:
+target         invocations  errors  error rate
+-------        -----------  ------  ----------
+line           21           0       0.0%
+range          5            1       20.0%
+text-single    0            0       0.0%
+text-multiple  0            0       0.0%
+
+failure reasons:
+reason              errors
+------              ------
+script-syntax       0
+row-missing         0
+row-stale           1
+occurrence-missing  0
+invalid-count       0
+target-order        0
+edit-conflict       0
+active-file         0
+initialization      0
+file-path           0
+language-syntax     0
+other               0
+total               1
+
+command failure reasons:
+command  reason     errors
+-------  ------     ------
+type     row-stale  1

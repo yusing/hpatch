@@ -495,15 +495,15 @@ actually invoked hpatch.
 
 ## Latest published result
 
-The latest published result is the two-repetition
-[`etcd-range-stream` benchmark report](../benchmarks/results/e7100e5fc5b76b326fc97a930e2ebacac1e5ae30-1/summary.md)
-for commit `e7100e5fc5b76b326fc97a930e2ebacac1e5ae30`. It used `gpt-5.6-sol`
-with medium reasoning. Both arms passed the task and grader in both repetitions.
-Across that run, aggregate agent wall time was 630.856 seconds for control and
-626.767 seconds for hpatch, while output tokens were 19,594 and 14,289,
-respectively. Successful edit payload fell from 8,576 control-equivalent tokens
-to 4,887 hpatch tokens, a reported 43.0% reduction.
+The latest published result is the one-repetition
+[`etcd-range-stream` benchmark report](../benchmarks/results/c07600a74ac93d1ac6c38c47b80d85519458bc9f-1/summary.md)
+for commit `c07600a74ac93d1ac6c38c47b80d85519458bc9f`. It used `gpt-5.6-sol`
+with medium reasoning. Both arms passed the task and grader in the repetition.
+Across that run, agent wall time was 392.352 seconds for control and 405.199
+seconds for hpatch, while output tokens were 12,765 and 11,469,
+respectively. Successful edit payload fell from 4,127 control-equivalent tokens
+to 2,138 hpatch tokens, a reported 48.2% reduction.
 
-These figures describe that specific two-repetition run. They are not a general
+These figures describe that specific one-repetition run. They are not a general
 performance guarantee; larger samples are required before drawing strong timing
 or token-efficiency conclusions.

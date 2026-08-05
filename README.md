@@ -360,11 +360,11 @@ which arm runs first. Hidden executable tests and an allowed-path boundary grade
 correctness before timing or token-efficiency differences are considered. The
 active task, `etcd-range-stream`, reconstructs etcd's cross-layer server-side
 RangeStream behavior. See the [benchmark methodology](doc/benchmarks.md) and the
-[latest published result](benchmarks/results/7dd21c8e7604770d427d6b28670354254717c4ae-1/summary.md).
+[latest published result](benchmarks/results/c07600a74ac93d1ac6c38c47b80d85519458bc9f-1/summary.md).
 
-That two-repetition `gpt-5.6-sol` run passed both arms 2/2 and reported 43.0%
-lower successful edit payload for Hpatch (4,887 tokens versus 8,576
-control-equivalent tokens). It is one observed run, not a general performance
+That one-repetition `gpt-5.6-sol` run passed both arms 1/1 and reported 48.2%
+lower successful edit payload for Hpatch (2,138 tokens versus 4,127 control-equivalent
+tokens). It is one observed run, not a general performance
 guarantee.
 
 ## How it works
