@@ -10,13 +10,15 @@ import (
 	"strings"
 )
 
+// Session claims share the metrics slot revision so a format reset cannot be
+// suppressed by attribution state from an older aggregate.
 const sessionMarkerDirectory = "sessions"
 
 // claimSession records the metrics generation that will first include session.
 // A generation newer than the durable metrics slot is an interrupted claim and
 // is safely reused by the next writer. Callers hold the metrics lock.
 func claimSession(dataDirectory, session string, currentGeneration, nextGeneration uint64, reset bool) (bool, error) {
-	directory := filepath.Join(dataDirectory, sessionMarkerDirectory)
+	directory := filepath.Join(dataDirectory, sessionMarkerDirectory, metricsMagic)
 	if err := os.MkdirAll(directory, 0o700); err != nil {
 		return false, fmt.Errorf("creating session directory: %w", err)
 	}

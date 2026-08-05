@@ -2,6 +2,8 @@ package hpatch
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"os"
 	"path/filepath"
 	"strings"
@@ -54,6 +56,28 @@ func TestInterruptedSessionClaimRemainsFreshUntilMetricsCommit(t *testing.T) {
 	fresh, err = claimSession(dataDirectory, "session", 1, 2, false)
 	if err != nil || fresh {
 		t.Fatalf("durable claim retry = %t, error %v", fresh, err)
+	}
+}
+
+func TestDefinitionSessionClaimsAreScopedToMetricsRevision(t *testing.T) {
+	dataDirectory := t.TempDir()
+	digest := sha256.Sum256([]byte("session"))
+	legacyDirectory := filepath.Join(dataDirectory, sessionMarkerDirectory)
+	if err := os.MkdirAll(legacyDirectory, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	legacyMarker := filepath.Join(legacyDirectory, hex.EncodeToString(digest[:])+".seen")
+	if err := os.WriteFile(legacyMarker, []byte("1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	fresh, err := claimSession(dataDirectory, "session", 1, 2, false)
+	if err != nil || !fresh {
+		t.Fatalf("claim with prior-revision marker = %t, error %v", fresh, err)
+	}
+	fresh, err = claimSession(dataDirectory, "session", 2, 3, false)
+	if err != nil || fresh {
+		t.Fatalf("claim within current revision = %t, error %v", fresh, err)
 	}
 }
 
