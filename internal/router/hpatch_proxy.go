@@ -543,9 +543,9 @@ func replaceAdditionalToolsApplyPatch(fields map[string]json.RawMessage, install
 	if owner.direct {
 		return "", "", false, errors.New("responses request has no Code Mode exec carrier required by hread")
 	}
-	if !strings.Contains(owner.strippedDescription, "exec_command(args:") {
-		return "", "", false, errors.New("responses Code Mode carrier does not provide exec_command")
-	}
+	// The carrier description is model-facing documentation, not runtime
+	// capability negotiation. A recognized exec carrier is the host boundary;
+	// its documented nested tools may change independently of that runtime API.
 	for _, tool := range topTools {
 		if jsonString(tool, "name") == applyPatchToolName {
 			return "", "", false, errors.New("responses request exposes an additional apply_patch owner")

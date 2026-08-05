@@ -302,16 +302,6 @@ func TestHPatchAdditionalToolsReplacementRejectsDuplicateAndConflictingOwners(t 
 			name:  "direct nested hpatch collision in another item",
 			input: []any{additional("exec"), map[string]any{"type": "additional_tools", "tools": []any{map[string]any{"type": "custom", "name": hpatchToolName}}}},
 		},
-		{
-			name: "missing exec command declaration",
-			input: []any{map[string]any{
-				"type": "additional_tools",
-				"tools": []any{map[string]any{
-					"type": "custom", "name": "exec",
-					"description": strings.Replace(testCodeModeDescription, "exec_command(args:", "run_command(args:", 1),
-				}},
-			}},
-		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -329,6 +319,40 @@ func TestHPatchAdditionalToolsReplacementRejectsDuplicateAndConflictingOwners(t 
 				t.Fatalf("rejected request mutated: %#v", fields)
 			}
 		})
+	}
+}
+
+func TestHPatchAdditionalToolsReplacementDoesNotRequireDocumentedExecCommand(t *testing.T) {
+	description := strings.Replace(testCodeModeDescription, "exec_command(args:", "run_command(args:", 1)
+	if strings.Contains(description, "exec_command(args:") {
+		t.Fatal("fixture still documents exec_command")
+	}
+	fields := map[string]json.RawMessage{
+		"input": mustTestJSON(t, []any{map[string]any{
+			"type": "additional_tools",
+			"tools": []any{map[string]any{
+				"type": "custom", "name": "exec", "description": description,
+			}},
+		}}),
+		"tools": mustTestJSON(t, []any{}),
+	}
+
+	_, owner, replaced, err := replaceAdditionalToolsApplyPatch(fields, customGrammarTools(testHPatchToolDescription, "fixture hread description"))
+	if err != nil || !replaced || owner != "exec" {
+		t.Fatalf("owner = %q, replaced %v, error %v", owner, replaced, err)
+	}
+
+	var items []map[string]json.RawMessage
+	if err := json.Unmarshal(fields["input"], &items); err != nil {
+		t.Fatal(err)
+	}
+	var additionalTools []map[string]json.RawMessage
+	if err := json.Unmarshal(items[0]["tools"], &additionalTools); err != nil {
+		t.Fatal(err)
+	}
+	gotDescription := jsonString(additionalTools[0], "description")
+	if strings.Contains(gotDescription, codeModeApplyPatchHeading) || !strings.Contains(gotDescription, "run_command(args:") {
+		t.Fatalf("rewritten carrier description = %q", gotDescription)
 	}
 }
 
