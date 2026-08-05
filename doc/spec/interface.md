@@ -55,7 +55,7 @@ Acceptance:
 ## REQ-READ-001 — Routed verified-row reader
 
 In hpatch router mode, the model receives a read-only `hread` custom tool beside
-`hpatch`. Its grammar-constrained free-form input contains one to 32 newline-delimited
+`hpatch`. Its grammar-constrained free-form input contains one to 6 newline-delimited
 read specifications. Each specification is a JSON string containing `PATH`, optionally
 followed by a space and `START:END` for an inclusive bounded logical-line range, for
 example `"editor.go" 40:80`. A single specification remains valid and retains its existing
@@ -100,7 +100,7 @@ Acceptance:
 1. A legacy single whole-file or bounded read emits the same exact UTF-8 rows as before.
    Equal lines at different positions have distinct row references, and indentation changes
    the hash.
-2. Up to 32 read specifications in one call emit labeled item results in input order.
+2. Up to 6 read specifications in one call emit labeled item results in input order.
    A missing, inaccessible, non-regular, non-UTF-8, reversed-range, or start-past-EOF
    item reports a read diagnostic without suppressing successful siblings; an end past EOF
    succeeds through the final line. Invalid batch syntax rejects the complete tool input.
@@ -739,7 +739,7 @@ diagnostic of a correction chain; later rejection diagnostics in that chain do n
 Both references teach this workflow:
 
 1. Use search to locate relevant regions, then use hread for the first content read of a
-   region likely to be edited. Put up to 32 already-known files or ranges into one
+   region likely to be edited. Put up to 6 already-known files or ranges into one
    newline-delimited hread call, and copy complete `LINE:HASH` references only from current
    output for that exact path.
 2. Choose a line, inclusive range, or anchored literal target inside the mutation command.

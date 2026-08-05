@@ -1,4 +1,9 @@
-start: read_spec (NL read_spec)*
+start: read_spec read_spec_2?
+read_spec_2: NL read_spec read_spec_3?
+read_spec_3: NL read_spec read_spec_4?
+read_spec_4: NL read_spec read_spec_5?
+read_spec_5: NL read_spec read_spec_6?
+read_spec_6: NL read_spec
 read_spec: QUOTED (SP POSINT ":" POSINT)?
 
 NL: /\r?\n/

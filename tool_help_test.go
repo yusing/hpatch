@@ -121,7 +121,7 @@ func TestHPatch2ToolDescriptionCoversSafeCommandChoice(t *testing.T) {
 func TestHReadToolDescriptionRequiresOneOrderedBatch(t *testing.T) {
 	normalized := strings.Join(strings.Fields(HReadToolDescription()), " ")
 	for _, guidance := range []string{
-		"up to 32 existing read specifications separated by newlines",
+		"up to 6 existing read specifications separated by newlines",
 		"A single specification remains valid",
 		"A batch preserves input order",
 		"without hiding successful siblings",
@@ -129,6 +129,17 @@ func TestHReadToolDescriptionRequiresOneOrderedBatch(t *testing.T) {
 		if !strings.Contains(normalized, guidance) {
 			t.Errorf("hread tool description omits %q", guidance)
 		}
+	}
+}
+
+func TestHReadToolGrammarBoundsBatch(t *testing.T) {
+	grammar := HReadToolGrammar()
+	productions, _, _ := strings.Cut(grammar, "\n\n")
+	if strings.Contains(productions, "*") {
+		t.Fatalf("hread grammar contains unbounded repetition: %q", grammar)
+	}
+	if got, want := strings.Count(grammar, "NL read_spec"), maxHReadBatchItems-1; got != want {
+		t.Fatalf("hread grammar allows %d trailing specifications, want %d", got, want)
 	}
 }
 

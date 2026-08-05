@@ -17,7 +17,7 @@ import (
 
 const (
 	maxHReadOutputBytes    = 16 << 20
-	maxHReadBatchItems     = 32
+	maxHReadBatchItems     = 6
 	hreadBufferBytes       = 32 << 10
 	hreadBatchLimitMessage = "hread: batch output limit reached; retry remaining items in a narrower batch\n"
 )

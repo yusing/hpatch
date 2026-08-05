@@ -1,6 +1,6 @@
 HREAD/2 reads one or more UTF-8 workspace files without modifying them.
 
-Input contains up to 32 existing read specifications separated by newlines. Each specification
+Input contains up to 6 existing read specifications separated by newlines. Each specification
 is a JSON string containing the workspace-relative path, optionally followed by an inclusive
 one-based logical-line range:
 
