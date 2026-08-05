@@ -29,7 +29,7 @@ func TestSplitHGrepArgumentsPreservesLiteralArgv(t *testing.T) {
 }
 
 func TestHGrepExecInputUsesNormalQuotedArgv(t *testing.T) {
-	carrier := hgrepExecInput([]string{"-F", "two words", "path with spaces.txt", "semi;colon"})
+	carrier := workerExecInput(hgrepExecutableName, []string{"-F", "two words", "path with spaces.txt", "semi;colon"})
 	encoded := strings.TrimPrefix(carrier, "const result = await tools.exec_command(")
 	encoded = strings.TrimSuffix(encoded, ");\ntext(result.output);")
 	var arguments struct {
@@ -345,7 +345,7 @@ func TestEnsureHGrepSymlinkForExecutable(t *testing.T) {
 	if err := os.WriteFile(executable, []byte("fixture"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	link, err := ensureHGrepSymlinkForExecutable(executable)
+	link, err := ensureWorkerSymlinkInDirectory(executable, filepath.Dir(executable), hgrepExecutableName)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -363,7 +363,7 @@ func TestEnsureHGrepSymlinkRejectsExistingCommand(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(directory, hgrepExecutableName), []byte("other"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := ensureHGrepSymlinkForExecutable(executable); err == nil || !strings.Contains(err.Error(), "not a symlink") {
+	if _, err := ensureWorkerSymlinkInDirectory(executable, filepath.Dir(executable), hgrepExecutableName); err == nil || !strings.Contains(err.Error(), "not a symlink") {
 		t.Fatalf("existing command error = %v", err)
 	}
 }
@@ -380,7 +380,7 @@ func TestHGrepStartupSymlinkExecutesPrivateWorkerEndToEnd(t *testing.T) {
 	if output, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("build hpatch-router: %v\n%s", err, output)
 	}
-	hgrepExecutable, err := ensureHGrepSymlinkForExecutable(binary)
+	hgrepExecutable, err := ensureWorkerSymlinkInDirectory(binary, filepath.Dir(binary), hgrepExecutableName)
 	if err != nil {
 		t.Fatal(err)
 	}

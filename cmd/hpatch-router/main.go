@@ -24,6 +24,9 @@ func run() int {
 	if handled, exitCode := router.RunHGrepWorker(ctx, os.Args[0], os.Args[1:], os.Stdout, os.Stderr); handled {
 		return exitCode
 	}
+	if handled, exitCode := router.RunToolPluginWorker(ctx, os.Args[0], os.Args[1:], os.Stdout, os.Stderr); handled {
+		return exitCode
+	}
 	if err := router.Run(ctx, os.Args[1:], os.Stderr); err != nil {
 		if errors.Is(err, context.Canceled) {
 			fmt.Fprintln(os.Stderr, "router: canceled")

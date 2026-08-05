@@ -1,0 +1,41 @@
+package router
+
+import (
+	"encoding/json"
+	"sync"
+)
+
+type (
+	toolContribution struct {
+		PluginID      string          `json:"plugin_id"`
+		Name          string          `json:"name"`
+		Specification json.RawMessage `json:"specification"`
+		MaxInputBytes int             `json:"max_input_bytes"`
+		Module        string          `json:"module,omitempty"`
+		ModuleIndex   int             `json:"module_index,omitempty"`
+		Executor      bool            `json:"executor"`
+		Builtin       bool            `json:"builtin"`
+	}
+
+	toolRegistry struct {
+		ID             string
+		SnapshotDir    string
+		RuntimeRoot    string
+		NodeExecutable string
+
+		ordered  []toolContribution
+		byName   map[string]toolContribution
+		wrappers map[string]string
+
+		closeOnce sync.Once
+		closeErr  error
+	}
+
+	toolWorkerManifest struct {
+		Version        int                `json:"version"`
+		RegistryID     string             `json:"registry_id"`
+		NodeExecutable string             `json:"node_executable,omitempty"`
+		RuntimeRoot    string             `json:"runtime_root"`
+		Tools          []toolContribution `json:"tools"`
+	}
+)

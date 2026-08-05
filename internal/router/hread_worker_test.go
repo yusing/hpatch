@@ -191,11 +191,11 @@ func TestHReadStartupSymlinkExecutesPrivateWorkerEndToEnd(t *testing.T) {
 		t.Fatalf("build hpatch-router: %v\n%s", err, output)
 	}
 
-	hreadExecutable, err := ensureHReadSymlinkForExecutable(binary)
+	hreadExecutable, err := ensureWorkerSymlinkInDirectory(binary, filepath.Dir(binary), hreadExecutableName)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if second, err := ensureHReadSymlinkForExecutable(binary); err != nil || second != hreadExecutable {
+	if second, err := ensureWorkerSymlinkInDirectory(binary, filepath.Dir(binary), hreadExecutableName); err != nil || second != hreadExecutable {
 		t.Fatalf("second startup symlink = %q, %v; want %q", second, err, hreadExecutable)
 	}
 	linkInfo, err := os.Lstat(hreadExecutable)
@@ -249,11 +249,11 @@ func TestHReadStartupSymlinkOutlivesProxy(t *testing.T) {
 	if err := os.WriteFile(executable, []byte("fixture"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	hreadExecutable, err := ensureHReadSymlinkForExecutable(executable)
+	hreadExecutable, err := ensureWorkerSymlinkInDirectory(executable, filepath.Dir(executable), hreadExecutableName)
 	if err != nil {
 		t.Fatal(err)
 	}
-	proxy := newHPatchProxy(testTranslator(t, new(int)))
+	proxy := newManagedHPatchProxy(t, testTranslator(t, new(int)))
 	if err := proxy.Close(); err != nil {
 		t.Fatal(err)
 	}

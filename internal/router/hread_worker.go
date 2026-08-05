@@ -96,20 +96,8 @@ func RunHReadWorker(ctx context.Context, argv0 string, args []string, stdout, st
 	return true, 0
 }
 
-func ensureWorkerSymlink(name string) (string, error) {
-	executable, err := os.Executable()
-	if err != nil {
-		return "", fmt.Errorf("locate %s executable: %w", name, err)
-	}
-	return ensureWorkerSymlinkForExecutable(executable, name)
-}
-
-func ensureHReadSymlinkForExecutable(executable string) (string, error) {
-	return ensureWorkerSymlinkForExecutable(executable, hreadExecutableName)
-}
-
-func ensureWorkerSymlinkForExecutable(executable, name string) (string, error) {
-	link := filepath.Join(filepath.Dir(executable), name)
+func ensureWorkerSymlinkInDirectory(executable, directory, name string) (string, error) {
+	link := filepath.Join(directory, name)
 	if _, err := os.Lstat(link); err == nil {
 		return verifyWorkerSymlink(link, executable, name)
 	} else if !errors.Is(err, os.ErrNotExist) {

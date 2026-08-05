@@ -19,6 +19,7 @@ import (
 	"sync"
 
 	"github.com/yusing/hpatch"
+	"github.com/yusing/hpatch/internal/router/toolplugin"
 )
 
 const (
@@ -138,8 +139,10 @@ func (t inProcessHPatchTranslator) RecordMetrics(ctx context.Context, record hpa
 }
 
 type hpatchHistory struct {
-	toolName        string
-	workerArguments []string
+	toolName         string
+	pluginID         string
+	workerArguments  []string
+	workerExecutable string
 
 	script string
 	root   string
@@ -147,9 +150,11 @@ type hpatchHistory struct {
 	// model's payload, which happens when the payload was a correction. Replay
 	// must restore what the model emitted, while a following correction must
 	// resolve command indices against what was evaluated.
-	evaluated   string
-	patch       string
-	carrierName string
+	evaluated      string
+	patch          string
+	carrierName    string
+	carrierKind    codeModeCarrierKind
+	carrierPayload string
 
 	report           string
 	translationError string
@@ -178,11 +183,8 @@ type hpatchHistorySession struct {
 }
 
 type hpatchProxy struct {
-	translator           hpatchTranslator
-	hreadToolDescription string
-	hgrepToolDescription string
-
-	toolDescription string
+	translator hpatchTranslator
+	registry   *toolRegistry
 
 	mu              sync.RWMutex
 	sessions        map[string]*hpatchHistorySession
@@ -192,18 +194,15 @@ type hpatchProxy struct {
 	closed          bool
 }
 
-func newHPatchProxy(translator hpatchTranslator) *hpatchProxy {
-	if translator == nil {
+func newHPatchProxy(translator hpatchTranslator, registry *toolRegistry) *hpatchProxy {
+	if translator == nil || registry == nil {
 		return nil
 	}
 	return &hpatchProxy{
-		translator:           translator,
-		hreadToolDescription: hpatch.HReadToolDescription(),
-		hgrepToolDescription: hpatch.HGrepToolDescription(),
-
-		toolDescription: translator.ToolDescription(),
-		sessions:        make(map[string]*hpatchHistorySession),
-		activeSessions:  make(map[string]int),
+		translator:     translator,
+		registry:       registry,
+		sessions:       make(map[string]*hpatchHistorySession),
+		activeSessions: make(map[string]int),
 	}
 }
 
@@ -356,6 +355,7 @@ type hpatchResponseTransform struct {
 	pending                   map[string]hpatchPendingCall
 	local                     map[string]hpatchHistory
 	workspace                 routingWorkspace
+	carriers                  codeModeCarrierCatalog
 
 	installedToolDefinition  string
 	codeModeToolName         string
@@ -470,7 +470,16 @@ func (p *hpatchProxy) prepareRequest(ctx context.Context, request *parsedRespons
 	originalTools = bytes.Clone(originalTools)
 	originalToolChoice, originalToolChoicePresent := request.fields["tool_choice"]
 	originalToolChoice = bytes.Clone(originalToolChoice)
-	installedTools := customGrammarTools(p.toolDescription, p.hreadToolDescription, p.hgrepToolDescription)
+	carriers, err := buildCodeModeCarrierCatalog(request.fields, p.registry)
+	if err != nil {
+		workspace.close()
+		return nil, err
+	}
+	installedTools, err := p.registry.specifications()
+	if err != nil {
+		workspace.close()
+		return nil, err
+	}
 	baselineDefinition, codeModeToolName, replaced, err := replaceAdditionalToolsApplyPatch(request.fields, installedTools)
 	if err != nil {
 		workspace.close()
@@ -504,6 +513,7 @@ func (p *hpatchProxy) prepareRequest(ctx context.Context, request *parsedRespons
 		pending:                   make(map[string]hpatchPendingCall),
 		local:                     make(map[string]hpatchHistory),
 		workspace:                 workspace,
+		carriers:                  carriers,
 
 		installedToolDefinition: string(mustMarshalJSON(installedTools)),
 		codeModeToolName:        codeModeToolName,
@@ -691,6 +701,14 @@ func isHPatchModeToolName(name string) bool {
 	return name == hpatchToolName || isReadOnlyToolName(name)
 }
 
+func (t *hpatchResponseTransform) routesTool(name string) bool {
+	if t == nil || t.proxy == nil {
+		return false
+	}
+	_, ok := t.proxy.registry.contribution(name)
+	return ok
+}
+
 func customGrammarTool(name, description, grammar string) map[string]json.RawMessage {
 	return map[string]json.RawMessage{
 		"type":        mustMarshalJSON("custom"),
@@ -766,7 +784,10 @@ func (p *hpatchProxy) rememberBatch(sessionID string, histories map[string]hpatc
 		if err != nil {
 			return fmt.Errorf("encode hpatch history item: %w", err)
 		}
-		history.bytes = len(sessionID) + len(callID) + len(history.toolName) + len(history.script) + len(history.root) + len(history.evaluated) + len(history.patch) + len(history.carrierName) + len(history.report) + len(history.translationError) + len(history.correlationID) + len(encodedItem)
+		history.bytes = len(sessionID) + len(callID) + len(history.toolName) + len(history.pluginID) + len(history.workerExecutable) + len(history.script) + len(history.root) + len(history.evaluated) + len(history.patch) + len(history.carrierKind) + len(history.carrierName) + len(history.carrierPayload) + len(history.report) + len(history.translationError) + len(history.correlationID) + len(encodedItem)
+		for _, argument := range history.workerArguments {
+			history.bytes += len(argument)
+		}
 		for _, correction := range history.corrections {
 			history.bytes += len(correction)
 		}
@@ -912,7 +933,7 @@ func correctionHistoryOf(histories iter.Seq[hpatchHistory]) (hpatchHistory, erro
 	var latest hpatchHistory
 	found := false
 	for history := range histories {
-		if history.unevaluated || isReadOnlyToolName(history.toolName) {
+		if history.unevaluated || history.toolName != hpatchToolName {
 			continue
 		}
 		if !found || history.sequence > latest.sequence {
@@ -932,7 +953,7 @@ func correctionHistoryOf(histories iter.Seq[hpatchHistory]) (hpatchHistory, erro
 func latestCorrectionAttempt(histories iter.Seq[hpatchHistory], correlationID string) int {
 	latest := 0
 	for history := range histories {
-		if !isReadOnlyToolName(history.toolName) && history.correlationID == correlationID {
+		if history.toolName == hpatchToolName && history.correlationID == correlationID {
 			latest = max(latest, history.attempt)
 		}
 	}
@@ -982,17 +1003,18 @@ func (p *hpatchProxy) restoreInputPrefix(request *parsedResponsesRequest, sessio
 	changed := false
 	validatedCarriers := make(map[string]bool)
 	for index, item := range items {
-		kind := jsonString(item, "type")
+		itemType := jsonString(item, "type")
 		callID := jsonString(item, "call_id")
 		history, known := p.history(sessionID, callID)
-		if kind != "custom_tool_call" {
-			if known && kind != "custom_tool_call_output" {
-				return fmt.Errorf("replayed call %q changed item type", callID)
-			}
-			continue
-		}
 		if !known {
 			continue
+		}
+		carrierKind := history.effectiveCarrierKind()
+		if itemType == carrierOutputItemType(carrierKind) {
+			continue
+		}
+		if itemType != carrierItemType(carrierKind) {
+			return fmt.Errorf("replayed call %q changed item type", callID)
 		}
 		if jsonString(item, "name") != history.carrierName {
 			return fmt.Errorf("replayed call %q changed carrier name", callID)
@@ -1000,8 +1022,8 @@ func (p *hpatchProxy) restoreInputPrefix(request *parsedResponsesRequest, sessio
 		if validatedCarriers[callID] {
 			return fmt.Errorf("replayed call %q appears more than once", callID)
 		}
-		if jsonString(item, "input") != history.carrierInput() {
-			return fmt.Errorf("replayed call %q changed translated input", callID)
+		if jsonString(item, carrierPayloadField(carrierKind)) != history.carrierInput() {
+			return fmt.Errorf("replayed call %q changed translated payload", callID)
 		}
 		validatedCarriers[callID] = true
 		if len(history.upstreamItem) != 0 {
@@ -1160,7 +1182,14 @@ func (t *hpatchResponseTransform) translateTool(name, callID, input string, upst
 	if isReadOnlyToolName(name) {
 		return t.translateReadOnlyTool(name, callID, input, upstreamItem)
 	}
-	return t.translate(callID, input, upstreamItem)
+	if name == hpatchToolName {
+		return t.translate(callID, input, upstreamItem)
+	}
+	contribution, ok := t.proxy.registry.contribution(name)
+	if !ok || contribution.Builtin {
+		return hpatchHistory{}, fmt.Errorf("registered tool %q is unavailable", name)
+	}
+	return t.translateRegisteredTool(contribution, callID, input, upstreamItem)
 }
 
 func (t *hpatchResponseTransform) translateHRead(callID, input string, upstreamItem map[string]json.RawMessage) (hpatchHistory, error) {
@@ -1187,6 +1216,10 @@ func (t *hpatchResponseTransform) translateReadOnlyTool(name, callID, input stri
 	if t.codeModeToolName != "exec" && t.codeModeToolName != "functions.exec" {
 		return hpatchHistory{}, fmt.Errorf("%s translation requires a Code Mode exec carrier", name)
 	}
+	workerExecutable, ok := t.proxy.registry.wrapper(name)
+	if !ok {
+		return hpatchHistory{}, fmt.Errorf("%s worker is unavailable", name)
+	}
 	var workerArguments []string
 	if name == hgrepToolName {
 		var err error
@@ -1199,12 +1232,108 @@ func (t *hpatchResponseTransform) translateReadOnlyTool(name, callID, input stri
 		return hpatchHistory{}, err
 	}
 	history := hpatchHistory{
-		toolName:        name,
-		workerArguments: slices.Clone(workerArguments),
-		script:          input,
-		root:            t.workspace.canonical,
-		carrierName:     t.codeModeToolName,
-		upstreamItem:    maps.Clone(upstreamItem),
+		toolName:         name,
+		workerArguments:  slices.Clone(workerArguments),
+		workerExecutable: workerExecutable,
+		script:           input,
+		root:             t.workspace.canonical,
+		carrierName:      t.codeModeToolName,
+		upstreamItem:     maps.Clone(upstreamItem),
+	}
+	t.recordLocal(callID, &history)
+	return history, nil
+}
+
+func (t *hpatchResponseTransform) translateRegisteredTool(contribution toolContribution, callID, input string, upstreamItem map[string]json.RawMessage) (hpatchHistory, error) {
+	if history, ok := t.local[callID]; ok {
+		if history.toolName != contribution.Name || history.pluginID != contribution.PluginID || history.script != input {
+			return hpatchHistory{}, fmt.Errorf("%s call %q changed input", contribution.Name, callID)
+		}
+		if len(upstreamItem) != 0 {
+			history.upstreamItem = maps.Clone(upstreamItem)
+			t.local[callID] = history
+		}
+		return history, nil
+	}
+	if len(input) > contribution.MaxInputBytes {
+		return hpatchHistory{}, fmt.Errorf(
+			"%s call %q input exceeds %d bytes",
+			contribution.Name,
+			callID,
+			contribution.MaxInputBytes,
+		)
+	}
+	translation, err := toolplugin.Translate(
+		t.ctx,
+		t.proxy.registry.NodeExecutable,
+		t.proxy.registry.RuntimeRoot,
+		contribution.Module,
+		contribution.ModuleIndex,
+		input,
+	)
+	if err != nil {
+		return hpatchHistory{}, fmt.Errorf("translate registered tool %s: %w", contribution.Name, err)
+	}
+
+	kind := codeModeCarrierCustom
+	name := t.codeModeToolName
+	payload := ""
+	if translation.Rejected {
+		if err := t.carriers.require(name, kind); err != nil {
+			return hpatchHistory{}, fmt.Errorf("%s input rejection: %w", contribution.Name, err)
+		}
+		diagnostic := translation.Diagnostic
+		if diagnostic == "" {
+			diagnostic = contribution.Name + " rejected the model input"
+		}
+		payload = hpatchDiagnosticExecInput(diagnostic)
+	} else {
+		switch translation.Carrier.Kind {
+		case "exec":
+			if err := t.carriers.require(name, kind); err != nil {
+				return hpatchHistory{}, fmt.Errorf("%s exec carrier: %w", contribution.Name, err)
+			}
+			executable, ok := t.proxy.registry.wrapper(contribution.Name)
+			if !ok {
+				return hpatchHistory{}, fmt.Errorf("%s worker is unavailable", contribution.Name)
+			}
+			payload = workerExecInput(executable, translation.Arguments)
+		case "custom":
+			name = translation.Carrier.Name
+			payload = translation.Carrier.Payload
+			if err := t.carriers.require(name, kind); err != nil {
+				return hpatchHistory{}, fmt.Errorf("%s custom carrier: %w", contribution.Name, err)
+			}
+		case "function":
+			kind = codeModeCarrierFunction
+			name = translation.Carrier.Name
+			payload = translation.Carrier.Payload
+			if err := t.carriers.require(name, kind); err != nil {
+				return hpatchHistory{}, fmt.Errorf("%s function carrier: %w", contribution.Name, err)
+			}
+			var arguments map[string]json.RawMessage
+			if json.Unmarshal([]byte(payload), &arguments) != nil || arguments == nil {
+				return hpatchHistory{}, fmt.Errorf("%s function carrier returned invalid JSON object arguments", contribution.Name)
+			}
+		default:
+			return hpatchHistory{}, fmt.Errorf(
+				"%s translator returned unsupported carrier kind %q",
+				contribution.Name,
+				translation.Carrier.Kind,
+			)
+		}
+	}
+
+	history := hpatchHistory{
+		toolName:         contribution.Name,
+		pluginID:         contribution.PluginID,
+		script:           input,
+		root:             t.workspace.canonical,
+		carrierKind:      kind,
+		carrierName:      name,
+		carrierPayload:   payload,
+		translationError: translation.Diagnostic,
+		upstreamItem:     maps.Clone(upstreamItem),
 	}
 	t.recordLocal(callID, &history)
 	return history, nil
@@ -1230,8 +1359,12 @@ func hpatchDiagnosticExecInput(diagnostic string) string {
 	return "text(" + strconv.Quote(diagnostic) + ");"
 }
 
-func workerExecInput(executableName, input string) string {
-	return workerCommandExecInput(executableName + " " + shellQuoteArgument(input))
+func workerExecInput(executable string, arguments []string) string {
+	command := shellQuoteArgument(executable)
+	for _, argument := range arguments {
+		command += " " + shellQuoteArgument(argument)
+	}
+	return workerCommandExecInput(command)
 }
 
 func workerCommandExecInput(command string) string {
@@ -1246,29 +1379,28 @@ func workerCommandExecInput(command string) string {
 		"text(result.output);"
 }
 
-func hreadExecInput(input string) string {
-	return workerExecInput(hreadExecutableName, input)
-}
-
-func hgrepExecInput(arguments []string) string {
-	command := hgrepExecutableName
-	for _, argument := range arguments {
-		command += " " + shellQuoteArgument(argument)
-	}
-	return workerCommandExecInput(command)
-}
-
 func (h hpatchHistory) carrierInput() string {
-	if h.toolName == hreadToolName {
-		return hreadExecInput(h.script)
+	if h.pluginID != "" || h.carrierKind != "" {
+		return h.carrierPayload
 	}
-	if h.toolName == hgrepToolName {
-		return hgrepExecInput(h.workerArguments)
+	if isReadOnlyToolName(h.toolName) {
+		arguments := h.workerArguments
+		if h.toolName == hreadToolName {
+			arguments = []string{h.script}
+		}
+		return workerExecInput(h.workerExecutable, arguments)
 	}
 	if h.translationError != "" {
 		return hpatchDiagnosticExecInput(h.translationError)
 	}
 	return hpatchApplyExecInput(h.patch, h.report)
+}
+
+func (h hpatchHistory) effectiveCarrierKind() codeModeCarrierKind {
+	if h.carrierKind != "" {
+		return h.carrierKind
+	}
+	return codeModeCarrierCustom
 }
 
 func (t *hpatchResponseTransform) rejectUnevaluated(callID, input string, rejection error, attempt hpatch.AttemptMetadata, correction hpatchCorrectionStats, upstreamItem map[string]json.RawMessage) (hpatchHistory, error) {
@@ -1334,7 +1466,7 @@ func (t *hpatchResponseTransform) recordLocal(callID string, history *hpatchHist
 // the response completes.
 func (t *hpatchResponseTransform) correctionHistory() (hpatchHistory, error) {
 	for _, history := range t.local {
-		if !history.unevaluated && !isReadOnlyToolName(history.toolName) {
+		if !history.unevaluated && history.toolName == hpatchToolName {
 			return correctionHistoryOf(maps.Values(t.local))
 		}
 	}
@@ -1384,7 +1516,7 @@ func (t *hpatchResponseTransform) TransformSSE(payload []byte) ([][]byte, error)
 			return [][]byte{payload}, nil //nolint:nilerr // Unrelated output items pass through unchanged.
 		}
 		name := jsonString(item, "name")
-		if !isHPatchModeToolName(name) {
+		if !t.routesTool(name) {
 			return [][]byte{payload}, nil
 		}
 		itemID, callID := jsonString(item, "id"), jsonString(item, "call_id")
@@ -1425,8 +1557,8 @@ func (t *hpatchResponseTransform) TransformSSE(payload []byte) ([][]byte, error)
 		if json.Unmarshal(addedEnvelope.Item, &addedItem) != nil {
 			return nil, errors.New("decode buffered hpatch call")
 		}
-		addedItem["name"] = mustMarshalJSON(history.carrierName)
-		addedItem["input"] = mustMarshalJSON("")
+		kind := history.effectiveCarrierKind()
+		renderCarrierItem(addedItem, kind, history.carrierName, "")
 		itemPayload, err := json.Marshal(addedItem)
 		if err != nil {
 			return nil, err
@@ -1435,7 +1567,7 @@ func (t *hpatchResponseTransform) TransformSSE(payload []byte) ([][]byte, error)
 		if err != nil {
 			return nil, err
 		}
-		doneEvent, err := replaceRawField(payload, "input", mustMarshalJSON(history.carrierInput()))
+		doneEvent, err := renderCarrierDoneEvent(payload, kind, history.carrierInput())
 		if err != nil {
 			return nil, err
 		}
@@ -1494,7 +1626,7 @@ func (t *hpatchResponseTransform) TransformSSE(payload []byte) ([][]byte, error)
 		}
 		return [][]byte{payload}, nil
 	default:
-		if _, pending := t.pending[envelope.ItemID]; pending || t.pendingCallKnown(envelope.CallID) || isHPatchModeToolName(envelope.Name) || envelope.Name == applyPatchToolName {
+		if _, pending := t.pending[envelope.ItemID]; pending || t.pendingCallKnown(envelope.CallID) || t.routesTool(envelope.Name) || envelope.Name == applyPatchToolName {
 			return nil, fmt.Errorf("unsupported hpatch-related stream event %q", envelope.Type)
 		}
 		return [][]byte{payload}, nil
@@ -1577,7 +1709,7 @@ func (t *hpatchResponseTransform) restoreResponseContract(object map[string]json
 
 func (t *hpatchResponseTransform) transformOutputItem(item map[string]json.RawMessage) (bool, error) {
 	name := jsonString(item, "name")
-	if !isHPatchModeToolName(name) {
+	if !t.routesTool(name) {
 		return false, nil
 	}
 	callID := jsonString(item, "call_id")
@@ -1588,8 +1720,7 @@ func (t *hpatchResponseTransform) transformOutputItem(item map[string]json.RawMe
 	if err != nil {
 		return false, err
 	}
-	item["name"] = mustMarshalJSON(history.carrierName)
-	item["input"] = mustMarshalJSON(history.carrierInput())
+	renderCarrierItem(item, history.effectiveCarrierKind(), history.carrierName, history.carrierInput())
 	return true, nil
 }
 

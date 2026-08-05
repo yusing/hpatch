@@ -10,7 +10,7 @@ func TestHPatchCorrectionRejectsDifferentWorktree(t *testing.T) {
 	calls := 0
 	transform, proxy, _, workspace := newHPatchTestTransform(t, testTranslator(t, &calls))
 	if err := proxy.rememberBatch(transform.historySessionID, map[string]hpatchHistory{"call-old": {
-		script: testHPatchScript, root: workspace + "-other", carrierName: "exec",
+		toolName: hpatchToolName, script: testHPatchScript, root: workspace + "-other", carrierName: "exec",
 		translationError: "rejected", sequence: 1,
 	}}); err != nil {
 		t.Fatal(err)

@@ -220,7 +220,7 @@ func TestHPatchMetricPersistenceFailuresDoNotChangeToolResults(t *testing.T) {
 	t.Run("hread call", func(t *testing.T) {
 		transform, _, _, _ := newHPatchTestTransform(t, translator)
 		history, err := transform.translateHRead("call-read", `"file.txt"`, nil)
-		if err != nil || history.carrierInput() != hreadExecInput(`"file.txt"`) {
+		if err != nil || history.carrierInput() != workerExecInput(history.workerExecutable, []string{`"file.txt"`}) {
 			t.Fatalf("history = %+v, error %v", history, err)
 		}
 	})

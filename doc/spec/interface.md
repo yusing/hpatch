@@ -229,6 +229,13 @@ hpatch correction ancestry. Runtime model-input rejection returns a bounded diag
 through an available Code Mode carrier; a translator protocol violation, unavailable carrier,
 or malformed carrier is a routing failure rather than a successful approximation.
 
+Grammar compatibility for this requirement is pinned to OpenAI's Custom tools guide
+(<https://developers.openai.com/api/docs/guides/function-calling#custom-tools>): regex
+definitions use Rust `regex` syntax and do not support lookarounds or lazy quantifiers; Lark
+definitions support common imports and `%ignore` while terminal priorities, templates,
+non-common imports, and `%declare` are unsupported. Startup validates this stable subset
+locally; provider model-specific and complexity limits remain provider-owned.
+
 Acceptance:
 
 1. A valid discovered JavaScript declaration contributes its exact unconstrained, Lark, or

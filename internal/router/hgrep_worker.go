@@ -472,7 +472,3 @@ func (b *limitedBuffer) Write(data []byte) (int, error) {
 	}
 	return written, nil
 }
-
-func ensureHGrepSymlinkForExecutable(executable string) (string, error) {
-	return ensureWorkerSymlinkForExecutable(executable, hgrepExecutableName)
-}

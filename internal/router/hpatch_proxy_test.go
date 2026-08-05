@@ -8,9 +8,7 @@ import (
 	"fmt"
 	"maps"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -59,13 +57,29 @@ func (hpatchResultTranslatorFunc) RecordMetrics(context.Context, hpatchMetricRec
 
 func newManagedHPatchProxy(t *testing.T, translator hpatchTranslator) *hpatchProxy {
 	t.Helper()
-	proxy := newHPatchProxy(translator)
+	if translator == nil {
+		return nil
+	}
+	registry, err := buildToolRegistry(t.Context(), t.TempDir(), translator.ToolDescription())
+	if err != nil {
+		t.Fatal(err)
+	}
+	proxy := newHPatchProxy(translator, registry)
 	t.Cleanup(func() {
-		if err := proxy.Close(); err != nil {
+		if err := errors.Join(proxy.Close(), registry.Close()); err != nil {
 			t.Error(err)
 		}
 	})
 	return proxy
+}
+
+func registeredWorkerInput(t *testing.T, proxy *hpatchProxy, name string, arguments []string) string {
+	t.Helper()
+	executable, ok := proxy.registry.wrapper(name)
+	if !ok {
+		t.Fatalf("registered worker %q is unavailable", name)
+	}
+	return workerExecInput(executable, arguments)
 }
 
 func newHPatchTestTransform(t *testing.T, translator hpatchTranslator) (*hpatchResponseTransform, *hpatchProxy, *parsedResponsesRequest, string) {
@@ -251,7 +265,7 @@ func TestHPatchDirectAdditionalApplyPatchIsRejectedWithoutExecCarrier(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	proxy := newHPatchProxy(testTranslator(t, new(int)))
+	proxy := newManagedHPatchProxy(t, testTranslator(t, new(int)))
 	t.Cleanup(func() {
 		if err := proxy.Close(); err != nil {
 			t.Error(err)
@@ -458,7 +472,7 @@ func TestHPatchPrepareRequestLeavesIneligibleRequestUnchanged(t *testing.T) {
 	}
 	beforeInput := bytes.Clone(request.fields["input"])
 	beforeTools := bytes.Clone(request.fields["tools"])
-	proxy := newHPatchProxy(testTranslator(t, new(int)))
+	proxy := newManagedHPatchProxy(t, testTranslator(t, new(int)))
 	metadata := codexTurnMetadata{RequestKind: "turn", Workspaces: map[string]json.RawMessage{workspace: nil}}
 	transform, err := proxy.prepareRequest(t.Context(), &request, "", metadata, true)
 	if err == nil || transform != nil || !strings.Contains(err.Error(), "valid session ID") || !bytes.Equal(beforeInput, request.fields["input"]) || !bytes.Equal(beforeTools, request.fields["tools"]) {
@@ -467,7 +481,7 @@ func TestHPatchPrepareRequestLeavesIneligibleRequestUnchanged(t *testing.T) {
 }
 
 func TestHPatchIneligibleContinuationDoesNotRestoreHistory(t *testing.T) {
-	proxy := newHPatchProxy(testTranslator(t, new(int)))
+	proxy := newManagedHPatchProxy(t, testTranslator(t, new(int)))
 	if err := proxy.rememberBatch("session", map[string]hpatchHistory{"call-H": {script: testHPatchScript, patch: testTranslatedPatch}}); err != nil {
 		t.Fatal(err)
 	}
@@ -569,10 +583,10 @@ func TestHReadJSONReturnsExecCommandAndRestoresReplay(t *testing.T) {
 	}
 	if len(response.Output) != 2 ||
 		jsonString(response.Output[0], "name") != "exec" ||
-		jsonString(response.Output[0], "input") != hreadExecInput(`"lines.txt" 2:3`) {
+		jsonString(response.Output[0], "input") != registeredWorkerInput(t, proxy, hreadToolName, []string{`"lines.txt" 2:3`}) {
 		t.Fatalf("translated hread response = %s", visible)
 	}
-	if missing := jsonString(response.Output[1], "input"); missing != hreadExecInput(`"missing.txt"`) {
+	if missing := jsonString(response.Output[1], "input"); missing != registeredWorkerInput(t, proxy, hreadToolName, []string{`"missing.txt"`}) {
 		t.Fatalf("translated missing-file response = %q", missing)
 	}
 	carrierInput := jsonString(response.Output[0], "input")
@@ -588,7 +602,11 @@ func TestHReadJSONReturnsExecCommandAndRestoresReplay(t *testing.T) {
 	if err := json.Unmarshal([]byte(encodedArguments), &arguments); err != nil {
 		t.Fatalf("decode translated exec arguments: %v\n%s", err, carrierInput)
 	}
-	wantCommand := `hread '"lines.txt" 2:3'`
+	hreadWorker, ok := proxy.registry.wrapper(hreadToolName)
+	if !ok {
+		t.Fatal("hread worker is unavailable")
+	}
+	wantCommand := shellQuoteArgument(hreadWorker) + ` '"lines.txt" 2:3'`
 	if arguments.Command != wantCommand {
 		t.Fatalf("translated exec command = %q, want %q", arguments.Command, wantCommand)
 	}
@@ -637,7 +655,7 @@ func TestHGrepJSONReturnsExecCommandAndRestoresReplay(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(response.Output) != 1 || jsonString(response.Output[0], "name") != "exec" ||
-		jsonString(response.Output[0], "input") != hgrepExecInput([]string{"-F", "needle", "internal/router"}) {
+		jsonString(response.Output[0], "input") != registeredWorkerInput(t, proxy, hgrepToolName, []string{"-F", "needle", "internal/router"}) {
 		t.Fatalf("translated hgrep response = %s", visible)
 	}
 
@@ -661,7 +679,7 @@ func TestHGrepJSONReturnsExecCommandAndRestoresReplay(t *testing.T) {
 }
 
 func TestHReadExecInputQuotesOnlyShellSensitiveArguments(t *testing.T) {
-	carrierInput := hreadExecInput(`"line's $(echo injected).txt" 2:3`)
+	carrierInput := workerExecInput(hreadExecutableName, []string{`"line's $(echo injected).txt" 2:3`})
 	encodedArguments := strings.TrimPrefix(carrierInput, "const result = await tools.exec_command(")
 	encodedArguments = strings.TrimSuffix(encodedArguments, ");\ntext(result.output);")
 
@@ -677,58 +695,9 @@ func TestHReadExecInputQuotesOnlyShellSensitiveArguments(t *testing.T) {
 	}
 }
 
-func TestReadOnlyCarriersResolveBasenamesFromTrustedPATH(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("test requires symbolic links and /bin/sh")
-	}
-	workerDirectory := t.TempDir()
-	routerExecutable := filepath.Join(workerDirectory, "hpatch-router")
-	if err := os.WriteFile(routerExecutable, []byte("#!/bin/sh\nprintf 'trusted:%s\\n' \"${0##*/}\"\n"), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	for _, name := range []string{hreadExecutableName, hgrepExecutableName} {
-		if _, err := ensureWorkerSymlinkForExecutable(routerExecutable, name); err != nil {
-			t.Fatal(err)
-		}
-	}
-
-	decodeCommand := func(carrier string) string {
-		encoded := strings.TrimPrefix(carrier, "const result = await tools.exec_command(")
-		encoded = strings.TrimSuffix(encoded, ");\ntext(result.output);")
-		var arguments struct {
-			Command string `json:"cmd"`
-		}
-		if err := json.Unmarshal([]byte(encoded), &arguments); err != nil {
-			t.Fatal(err)
-		}
-		return arguments.Command
-	}
-	carriers := map[string]string{
-		hreadExecutableName: hreadExecInput(`"file.txt"`),
-		hgrepExecutableName: hgrepExecInput([]string{"pattern"}),
-	}
-	for name, carrier := range carriers {
-		t.Run(name, func(t *testing.T) {
-			commandText := decodeCommand(carrier)
-			if !strings.HasPrefix(commandText, name+" ") {
-				t.Fatalf("carrier command = %q, want basename %q", commandText, name)
-			}
-			command := exec.CommandContext(t.Context(), "/bin/sh", "-c", commandText)
-			command.Env = []string{"PATH=" + workerDirectory}
-			output, err := command.CombinedOutput()
-			if err != nil {
-				t.Fatalf("execute carrier: %v\n%s", err, output)
-			}
-			if got, want := string(output), "trusted:"+name+"\n"; got != want {
-				t.Fatalf("carrier output = %q, want %q", got, want)
-			}
-		})
-	}
-}
-
 func TestHReadExecInputCarriesOneNewlineDelimitedBatchArgument(t *testing.T) {
 	input := "\"alpha.txt\"\n\"beta.txt\" 2:3"
-	carrierInput := hreadExecInput(input)
+	carrierInput := workerExecInput(hreadExecutableName, []string{input})
 	encodedArguments := strings.TrimPrefix(carrierInput, "const result = await tools.exec_command(")
 	encodedArguments = strings.TrimSuffix(encodedArguments, ");\ntext(result.output);")
 
@@ -745,7 +714,7 @@ func TestHReadExecInputCarriesOneNewlineDelimitedBatchArgument(t *testing.T) {
 }
 
 func TestHReadExecInputDoesNotRepairMissingRangeSeparator(t *testing.T) {
-	carrierInput := hreadExecInput(`"file.txt"2:3`)
+	carrierInput := workerExecInput(hreadExecutableName, []string{`"file.txt"2:3`})
 	encodedArguments := strings.TrimPrefix(carrierInput, "const result = await tools.exec_command(")
 	encodedArguments = strings.TrimSuffix(encodedArguments, ");\ntext(result.output);")
 
@@ -856,7 +825,7 @@ func TestHPatchHistoryDoesNotCrossWorkspacesSharingSessionIdentity(t *testing.T)
 }
 
 func TestHPatchReplayPreservesImmediateApplyFailure(t *testing.T) {
-	proxy := newHPatchProxy(testTranslator(t, new(int)))
+	proxy := newManagedHPatchProxy(t, testTranslator(t, new(int)))
 	history := hpatchHistory{script: testHPatchScript, patch: testTranslatedPatch, carrierName: "exec", report: testHPatchReport}
 	if err := proxy.rememberBatch("session", map[string]hpatchHistory{"call-H": history}); err != nil {
 		t.Fatal(err)
@@ -878,7 +847,7 @@ func TestHPatchReplayPreservesImmediateApplyFailure(t *testing.T) {
 }
 
 func TestHPatchReplayRejectsChangedExecCarrierAndIgnoresUnrelatedCalls(t *testing.T) {
-	proxy := newHPatchProxy(testTranslator(t, new(int)))
+	proxy := newManagedHPatchProxy(t, testTranslator(t, new(int)))
 	history := hpatchHistory{script: testHPatchScript, patch: testTranslatedPatch, carrierName: "exec", report: testHPatchReport}
 	if err := proxy.rememberBatch("session", map[string]hpatchHistory{"call-H": history}); err != nil {
 		t.Fatal(err)
@@ -1026,7 +995,7 @@ func TestHReadStreamingUsesTextLifecycle(t *testing.T) {
 	}))
 	if err != nil || len(visible) != 2 ||
 		!bytes.Contains(visible[0], []byte(`"name":"exec"`)) ||
-		!bytes.Contains(visible[1], []byte(jsonQuoted(hreadExecInput(`"line.txt"`)))) {
+		!bytes.Contains(visible[1], []byte(jsonQuoted(registeredWorkerInput(t, transform.proxy, hreadToolName, []string{`"line.txt"`})))) {
 		t.Fatalf("hread input.done = %q, error %v", visible, err)
 	}
 	visible, err = transform.TransformSSE(mustTestJSON(t, map[string]any{"type": "response.output_item.done", "item": item}))
@@ -1036,7 +1005,7 @@ func TestHReadStreamingUsesTextLifecycle(t *testing.T) {
 }
 
 func TestReadOnlyHistoryIsExcludedFromCorrections(t *testing.T) {
-	proxy := newHPatchProxy(testTranslator(t, new(int)))
+	proxy := newManagedHPatchProxy(t, testTranslator(t, new(int)))
 	err := proxy.rememberBatch("session", map[string]hpatchHistory{
 		"call-H": {
 			toolName: hpatchToolName, script: testHPatchScript,
@@ -1494,7 +1463,7 @@ func TestHPatchTranslationCancellationRemainsRequestCancellation(t *testing.T) {
 }
 
 func TestHPatchHistoryByteAccountingIncludesExistingCalls(t *testing.T) {
-	proxy := newHPatchProxy(testTranslator(t, new(int)))
+	proxy := newManagedHPatchProxy(t, testTranslator(t, new(int)))
 	if err := proxy.rememberBatch("session", map[string]hpatchHistory{
 		"call-1": {script: "first"},
 	}); err != nil {
@@ -1517,7 +1486,7 @@ func TestHPatchHistoryByteAccountingIncludesExistingCalls(t *testing.T) {
 }
 
 func TestHPatchHistoryDoesNotEvictActiveSessions(t *testing.T) {
-	proxy := newHPatchProxy(testTranslator(t, new(int)))
+	proxy := newManagedHPatchProxy(t, testTranslator(t, new(int)))
 	t.Cleanup(func() {
 		if err := proxy.Close(); err != nil {
 			t.Error(err)
@@ -1546,7 +1515,7 @@ func TestHPatchHistoryDoesNotEvictActiveSessions(t *testing.T) {
 }
 
 func TestHPatchHistoryEvictsOldestCallsAndSessions(t *testing.T) {
-	proxy := newHPatchProxy(testTranslator(t, new(int)))
+	proxy := newManagedHPatchProxy(t, testTranslator(t, new(int)))
 	for index := range maxSessionTurns + 1 {
 		callID := fmt.Sprintf("call-%03d", index)
 		err := proxy.rememberBatch("session", map[string]hpatchHistory{
@@ -1640,7 +1609,7 @@ func TestHPatchBoundsTranslationAndHistory(t *testing.T) {
 	})
 
 	t.Run("global history", func(t *testing.T) {
-		proxy := newHPatchProxy(testTranslator(t, new(int)))
+		proxy := newManagedHPatchProxy(t, testTranslator(t, new(int)))
 		proxy.historyBytes = maxHPatchHistoryGlobalBytes
 		if err := proxy.rememberBatch("session", map[string]hpatchHistory{"call": {script: "x", patch: "y"}}); err == nil {
 			t.Fatal("history exceeded global capacity")
@@ -1651,7 +1620,7 @@ func TestHPatchBoundsTranslationAndHistory(t *testing.T) {
 	})
 
 	t.Run("batch history is atomic", func(t *testing.T) {
-		proxy := newHPatchProxy(testTranslator(t, new(int)))
+		proxy := newManagedHPatchProxy(t, testTranslator(t, new(int)))
 		proxy.historyBytes = maxHPatchHistoryGlobalBytes - 1
 		err := proxy.rememberBatch("session", map[string]hpatchHistory{
 			"call-first":  {script: "x", patch: "y"},

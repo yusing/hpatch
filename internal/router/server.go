@@ -70,16 +70,18 @@ func Run(ctx context.Context, args []string, stderr io.Writer) (runErr error) {
 	metrics := newMetricsStore(gainDirectory)
 	metrics.mode = *mode
 	if *mode == "hpatch" {
-		for _, name := range []string{hreadExecutableName, hgrepExecutableName} {
-			if _, err := ensureWorkerSymlink(name); err != nil {
-				return fmt.Errorf("initialize %s executable: %w", name, err)
-			}
-		}
 		translator := notifyingHPatchTranslator{
 			inner:   newInProcessHPatchTranslator(gainDirectory),
 			metrics: metrics,
 		}
-		hpatchCalls = newHPatchProxy(translator)
+		registry, err := buildToolRegistry(ctx, gainDirectory, translator.ToolDescription())
+		if err != nil {
+			return fmt.Errorf("initialize tool registry: %w", err)
+		}
+		defer func() {
+			runErr = errors.Join(runErr, registry.Close())
+		}()
+		hpatchCalls = newHPatchProxy(translator, registry)
 		defer func() {
 			runErr = errors.Join(runErr, hpatchCalls.Close())
 		}()
