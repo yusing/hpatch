@@ -50,43 +50,94 @@ func requireRipgrep(t *testing.T) {
 	}
 }
 
-func TestAnalyzeHGrepArgumentsRejectsIncompatibleModes(t *testing.T) {
+func TestNormalizeHGrepArguments(t *testing.T) {
+	for _, test := range []struct {
+		name         string
+		arguments    []string
+		want         []string
+		wantWarnings []string
+		wantDefault  bool
+	}{
+		{
+			name:        "ordinary search",
+			arguments:   []string{"-Fi", "pattern", "--glob", "*.go", "."},
+			want:        []string{"-Fi", "pattern", "--glob", "*.go", "."},
+			wantDefault: false,
+		},
+		{
+			name:        "silent fixed presentation",
+			arguments:   []string{"-inH", "--line-number", "--no-heading", "pattern"},
+			want:        []string{"-i", "pattern"},
+			wantDefault: true,
+		},
+		{
+			name:         "warned conflicting presentation",
+			arguments:    []string{"-iN", "--json", "--count", "pattern"},
+			want:         []string{"-i", "pattern"},
+			wantWarnings: []string{"-N", "--json", "--count"},
+			wantDefault:  true,
+		},
+		{
+			name:         "ignored options consume values",
+			arguments:    []string{"--color", "always", "-M80", "-r", "replacement", "pattern", "."},
+			want:         []string{"pattern", "."},
+			wantWarnings: []string{"--color", "-M", "-r"},
+		},
+		{
+			name:        "empty supported option value",
+			arguments:   []string{"-e", "", "."},
+			want:        []string{"-e", "", "."},
+			wantDefault: false,
+		},
+		{
+			name:        "option-like values stay literal",
+			arguments:   []string{"-e", "-n", "."},
+			want:        []string{"-e", "-n", "."},
+			wantDefault: false,
+		},
+		{
+			name:        "double dash ends options",
+			arguments:   []string{"--", "--json"},
+			want:        []string{"--", "--json"},
+			wantDefault: true,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			got, warnings, gotDefault, err := normalizeHGrepArguments(test.arguments)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.Join(got, "\x00") != strings.Join(test.want, "\x00") {
+				t.Errorf("normalized arguments = %#v, want %#v", got, test.want)
+			}
+			if strings.Join(warnings, "\x00") != strings.Join(test.wantWarnings, "\x00") {
+				t.Errorf("warnings = %#v, want %#v", warnings, test.wantWarnings)
+			}
+			if gotDefault != test.wantDefault {
+				t.Errorf("needs default path = %t, want %t", gotDefault, test.wantDefault)
+			}
+		})
+	}
+
 	for _, arguments := range [][]string{
-		{"--json", "pattern"},
-		{"--count", "pattern"},
-		{"-n", "pattern"},
 		{"-U", "pattern"},
 		{"--pre=cat", "pattern"},
 		{"--encoding", "utf-16", "pattern"},
 		{"-a", "pattern"},
-		{"--field-match-separator", "X", "pattern"},
+		{"--help", "pattern"},
 	} {
-		if _, err := analyzeHGrepArguments(arguments); err == nil {
-			t.Fatalf("analyzeHGrepArguments(%q) unexpectedly succeeded", arguments)
-		}
-	}
-	if _, err := analyzeHGrepArguments([]string{"-Fi", "pattern", "--glob", "*.go", "."}); err != nil {
-		t.Fatalf("ordinary search arguments rejected: %v", err)
-	}
-	if _, err := analyzeHGrepArguments([]string{"-A10", "-B", "5", "pattern"}); err != nil {
-		t.Fatalf("context arguments rejected: %v", err)
-	}
-	if _, err := analyzeHGrepArguments([]string{"--", "--json"}); err != nil {
-		t.Fatalf("pattern after -- rejected: %v", err)
-	}
-	for _, arguments := range [][]string{{"-e", "-n", "."}, {"--glob", "--json", "pattern", "."}} {
-		if _, err := analyzeHGrepArguments(arguments); err != nil {
-			t.Fatalf("option-like value in %q rejected: %v", arguments, err)
+		if _, _, _, err := normalizeHGrepArguments(arguments); err == nil {
+			t.Fatalf("normalizeHGrepArguments(%q) unexpectedly succeeded", arguments)
 		}
 	}
 	for _, arguments := range [][]string{{}, {"--glob"}, {"-e"}} {
-		if _, err := analyzeHGrepArguments(arguments); err == nil {
+		if _, _, _, err := normalizeHGrepArguments(arguments); err == nil {
 			t.Fatalf("incomplete arguments %q unexpectedly succeeded", arguments)
 		}
 	}
 }
 
-func TestAnalyzeHGrepArgumentsFindsDefaultPath(t *testing.T) {
+func TestNormalizeHGrepArgumentsFindsDefaultPath(t *testing.T) {
 	for _, test := range []struct {
 		arguments []string
 		want      bool
@@ -101,11 +152,11 @@ func TestAnalyzeHGrepArgumentsFindsDefaultPath(t *testing.T) {
 		{arguments: []string{"-ig", "*.go", "pattern"}, want: true},
 		{arguments: []string{"-A10", "-B5", "pattern"}, want: true},
 	} {
-		got, err := analyzeHGrepArguments(test.arguments)
+		_, _, got, err := normalizeHGrepArguments(test.arguments)
 		if err != nil {
-			t.Errorf("analyzeHGrepArguments(%q): %v", test.arguments, err)
+			t.Errorf("normalizeHGrepArguments(%q): %v", test.arguments, err)
 		} else if got != test.want {
-			t.Errorf("analyzeHGrepArguments(%q) = %t, want %t", test.arguments, got, test.want)
+			t.Errorf("normalizeHGrepArguments(%q) default path = %t, want %t", test.arguments, got, test.want)
 		}
 	}
 }
@@ -128,6 +179,45 @@ func TestRunHGrepWorkerReturnsVerifiedRows(t *testing.T) {
 		`"path with spaces.txt":2:09af beta alpha` + "\n"
 	if stdout.String() != want {
 		t.Fatalf("worker output = %q, want %q", stdout.String(), want)
+	}
+}
+
+func TestRunHGrepWorkerIgnoresPresentationOptions(t *testing.T) {
+	requireRipgrep(t)
+	workspace := t.TempDir()
+	if err := os.WriteFile(filepath.Join(workspace, "source.txt"), []byte("alpha\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(workspace)
+
+	for _, test := range []struct {
+		name       string
+		arguments  []string
+		wantStderr string
+	}{
+		{
+			name:      "matching format is silent",
+			arguments: []string{"-FnH", "--line-number", "alpha", "source.txt"},
+		},
+		{
+			name:       "conflicting format warns",
+			arguments:  []string{"-FN", "--json", "alpha", "source.txt"},
+			wantStderr: "hgrep: warning: ignoring ripgrep options -N, --json; output remains verified rows\n",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			handled, exitCode := RunHGrepWorker(t.Context(), hgrepExecutableName, test.arguments, &stdout, &stderr)
+			if !handled || exitCode != 0 {
+				t.Fatalf("worker = handled %t, exit %d, stderr %q", handled, exitCode, stderr.String())
+			}
+			if got, want := stdout.String(), `"source.txt":1:8ed3 alpha`+"\n"; got != want {
+				t.Errorf("worker output = %q, want %q", got, want)
+			}
+			if stderr.String() != test.wantStderr {
+				t.Errorf("worker stderr = %q, want %q", stderr.String(), test.wantStderr)
+			}
+		})
 	}
 }
 
@@ -227,7 +317,7 @@ func TestRunHGrepWorkerReturnsConciseFailures(t *testing.T) {
 		want       string
 		requiresRG bool
 	}{
-		{name: "reserved option", arguments: []string{"--count", "pattern"}, want: "incompatible"},
+		{name: "reserved option", arguments: []string{"-U", "pattern"}, want: "incompatible"},
 		{name: "invalid pattern", arguments: []string{"[", "."}, want: "hgrep:", requiresRG: true},
 		{name: "missing executable", arguments: []string{"pattern", "."}, path: t.TempDir(), want: "executable file not found"},
 	} {

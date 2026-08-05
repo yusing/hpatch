@@ -25,35 +25,44 @@ const (
 	hgrepLimitMessage         = "hgrep: output limit reached; retry with a narrower search\n"
 )
 
-var hgrepForbiddenLongOptions = map[string]struct{}{
-	"block-buffered": {}, "color": {},
-	"binary": {}, "colors": {}, "column": {}, "context-separator": {},
-	"count": {}, "count-matches": {},
-	"debug": {}, "files": {}, "files-with-matches": {}, "files-without-match": {},
-	"encoding": {}, "field-context-separator": {}, "field-match-separator": {},
-	"generate": {}, "heading": {}, "help": {}, "hostname-bin": {}, "hyperlink-format": {}, "include-zero": {},
-	"json": {}, "line-buffered": {}, "line-number": {}, "max-columns": {},
-	"max-columns-preview": {}, "multiline": {}, "multiline-dotall": {}, "no-column": {},
-	"no-binary": {}, "no-config": {}, "no-filename": {}, "no-heading": {}, "no-ignore-messages": {},
-	"no-json": {}, "no-line-number": {}, "no-max-columns-preview": {}, "no-messages": {},
-	"no-stats": {}, "no-text": {}, "no-trim": {}, "null": {}, "null-data": {}, "only-matching": {},
-	"passthru": {}, "passthrough": {}, "path-separator": {}, "pcre2-version": {},
-	"pre": {}, "pre-glob": {}, "pretty": {}, "quiet": {}, "replace": {},
-	"search-zip": {}, "stats": {}, "text": {}, "trace": {}, "trim": {}, "type-list": {},
-	"version": {}, "vimgrep": {}, "with-filename": {},
-}
-
-var hgrepLongOptionsWithValue = map[string]struct{}{
-	"after-context": {}, "before-context": {}, "context": {},
-	"dfa-size-limit": {}, "engine": {}, "file": {}, "glob": {},
-	"iglob": {}, "ignore-file": {}, "max-count": {}, "max-depth": {},
-	"max-filesize": {}, "regex-size-limit": {}, "regexp": {}, "sort": {},
-	"sortr": {}, "threads": {}, "type": {}, "type-add": {}, "type-clear": {},
-	"type-not": {},
-}
-
-const hgrepForbiddenShortOptions = "0EHIMNUVabchlnopqrz"
-const hgrepShortOptionsWithValue = "ABCTdefgjmt"
+var (
+	hgrepSilentLongOptions = map[string]bool{
+		"line-number": false, "no-column": false, "no-config": false, "no-heading": false,
+		"no-json": false, "no-max-columns-preview": false, "no-stats": false, "no-trim": false,
+		"with-filename": false,
+	}
+	hgrepWarnedLongOptions = map[string]bool{
+		"block-buffered": false, "column": false, "count": false, "count-matches": false,
+		"debug": false, "files": false, "files-with-matches": false, "files-without-match": false,
+		"heading": false, "include-zero": false, "json": false, "line-buffered": false,
+		"max-columns-preview": false, "no-filename": false, "no-ignore-messages": false,
+		"no-line-number": false, "no-messages": false, "null": false, "only-matching": false,
+		"passthru": false, "passthrough": false, "pretty": false, "quiet": false, "stats": false,
+		"trace": false, "trim": false, "vimgrep": false,
+		"color": true, "colors": true, "context-separator": true,
+		"field-context-separator": true, "field-match-separator": true,
+		"hyperlink-format": true, "max-columns": true, "path-separator": true,
+		"replace": true,
+	}
+	hgrepForbiddenLongOptions = map[string]struct{}{
+		"binary": {}, "encoding": {}, "generate": {}, "help": {}, "hostname-bin": {},
+		"multiline": {}, "multiline-dotall": {}, "no-binary": {}, "no-text": {},
+		"null-data": {}, "pcre2-version": {}, "pre": {}, "pre-glob": {},
+		"search-zip": {}, "text": {}, "type-list": {}, "version": {},
+	}
+	hgrepLongOptionsWithValue = map[string]struct{}{
+		"after-context": {}, "before-context": {}, "context": {},
+		"dfa-size-limit": {}, "engine": {}, "file": {}, "glob": {},
+		"iglob": {}, "ignore-file": {}, "max-count": {}, "max-depth": {},
+		"max-filesize": {}, "regex-size-limit": {}, "regexp": {}, "sort": {},
+		"sortr": {}, "threads": {}, "type": {}, "type-add": {}, "type-clear": {},
+		"type-not": {},
+	}
+	hgrepSilentShortOptions    = "Hn"
+	hgrepWarnedShortOptions    = map[rune]bool{'0': false, 'I': false, 'M': true, 'N': false, 'b': false, 'c': false, 'h': false, 'l': false, 'o': false, 'p': false, 'q': false, 'r': true}
+	hgrepForbiddenShortOptions = "EUVaz"
+	hgrepShortOptionsWithValue = "ABCTdefgjmt"
+)
 
 type hgrepJSONText struct {
 	Text  *string `json:"text"`
@@ -83,8 +92,14 @@ func RunHGrepWorker(ctx context.Context, argv0 string, args []string, stdout, st
 		_, _ = fmt.Fprintln(stderr, "hgrep:", conciseHReadError(err))
 		return true, 1
 	}
-	arguments := append([]string(nil), args...)
-	needsDefaultPath, err := analyzeHGrepArguments(arguments)
+	arguments, warnings, needsDefaultPath, err := normalizeHGrepArguments(args)
+	if len(warnings) != 0 {
+		_, _ = fmt.Fprintf(
+			stderr,
+			"hgrep: warning: ignoring ripgrep options %s; output remains verified rows\n",
+			strings.Join(warnings, ", "),
+		)
+	}
 	if err != nil {
 		return fail(err)
 	}
@@ -165,62 +180,124 @@ func splitHGrepArguments(input string) ([]string, error) {
 	return arguments, nil
 }
 
-func analyzeHGrepArguments(arguments []string) (bool, error) {
+func normalizeHGrepArguments(arguments []string) (normalized, warnings []string, needsDefaultPath bool, err error) {
 	options := true
 	patternFromOption := false
 	positionals := 0
+	normalized = make([]string, 0, len(arguments))
+	warned := make(map[string]struct{})
+	addWarning := func(option string) {
+		if _, exists := warned[option]; exists {
+			return
+		}
+		warned[option] = struct{}{}
+		warnings = append(warnings, option)
+	}
 	for index := 0; index < len(arguments); index++ {
 		argument := arguments[index]
 		if options && argument == "--" {
 			options = false
+			normalized = append(normalized, argument)
 			continue
 		}
 		if !options || argument == "-" || !strings.HasPrefix(argument, "-") {
 			positionals++
+			normalized = append(normalized, argument)
 			continue
 		}
 		if strings.HasPrefix(argument, "--") {
 			name, _, attached := strings.Cut(strings.TrimPrefix(argument, "--"), "=")
-			if _, forbidden := hgrepForbiddenLongOptions[name]; forbidden {
-				return false, fmt.Errorf("ripgrep option --%s is incompatible with verified-row output", name)
+			if hasValue, silent := hgrepSilentLongOptions[name]; silent {
+				if hasValue && !attached {
+					if index+1 == len(arguments) {
+						return normalized, warnings, false, fmt.Errorf("ripgrep option --%s requires a value", name)
+					}
+					index++
+				}
+				continue
 			}
+			if hasValue, ignored := hgrepWarnedLongOptions[name]; ignored {
+				addWarning("--" + name)
+				if hasValue && !attached {
+					if index+1 == len(arguments) {
+						return normalized, warnings, false, fmt.Errorf("ripgrep option --%s requires a value", name)
+					}
+					index++
+				}
+				continue
+			}
+			if _, forbidden := hgrepForbiddenLongOptions[name]; forbidden {
+				return normalized, warnings, false, fmt.Errorf("ripgrep option --%s is incompatible with verified-row output", name)
+			}
+			normalized = append(normalized, argument)
 			if name == "regexp" || name == "file" {
 				patternFromOption = true
 			}
 			if _, hasValue := hgrepLongOptionsWithValue[name]; hasValue && !attached {
 				if index+1 == len(arguments) {
-					return false, fmt.Errorf("ripgrep option --%s requires a value", name)
+					return normalized, warnings, false, fmt.Errorf("ripgrep option --%s requires a value", name)
 				}
 				index++
+				normalized = append(normalized, arguments[index])
 			}
 			continue
 		}
 		short := strings.TrimPrefix(argument, "-")
+		var kept strings.Builder
+		var keptValue string
+		var hasKeptValue bool
 		for offset, option := range short {
-			if strings.ContainsRune(hgrepForbiddenShortOptions, option) {
-				return false, fmt.Errorf("ripgrep option -%c is incompatible with verified-row output", option)
+			if strings.ContainsRune(hgrepSilentShortOptions, option) {
+				continue
 			}
+			if hasValue, ignored := hgrepWarnedShortOptions[option]; ignored {
+				addWarning(fmt.Sprintf("-%c", option))
+				if hasValue {
+					if offset == len(short)-1 {
+						if index+1 == len(arguments) {
+							return normalized, warnings, false, fmt.Errorf("ripgrep option -%c requires a value", option)
+						}
+						index++
+					}
+					break
+				}
+				continue
+			}
+			if strings.ContainsRune(hgrepForbiddenShortOptions, option) {
+				return normalized, warnings, false, fmt.Errorf("ripgrep option -%c is incompatible with verified-row output", option)
+			}
+			kept.WriteRune(option)
 			if option == 'e' || option == 'f' {
 				patternFromOption = true
 			}
 			if strings.ContainsRune(hgrepShortOptionsWithValue, option) {
 				if offset == len(short)-1 {
 					if index+1 == len(arguments) {
-						return false, fmt.Errorf("ripgrep option -%c requires a value", option)
+						return normalized, warnings, false, fmt.Errorf("ripgrep option -%c requires a value", option)
 					}
 					index++
+					keptValue = arguments[index]
+					hasKeptValue = true
+				} else {
+					kept.WriteString(short[offset+1:])
 				}
 				break
 			}
 		}
+		if kept.Len() != 0 {
+			normalized = append(normalized, "-"+kept.String())
+			if hasKeptValue {
+				normalized = append(normalized, keptValue)
+			}
+		}
 	}
 	if patternFromOption {
-		return positionals == 0, nil
+		return normalized, warnings, positionals == 0, nil
 	}
 	if positionals == 0 {
-		return false, errors.New("ripgrep search requires a pattern")
+		return normalized, warnings, false, errors.New("ripgrep search requires a pattern")
 	}
-	return positionals == 1, nil
+	return normalized, warnings, positionals == 1, nil
 }
 
 func executeHGrep(ctx context.Context, arguments []string) (string, error) {
