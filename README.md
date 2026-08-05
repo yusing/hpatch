@@ -35,7 +35,7 @@ flowchart LR
     A --> D
 ```
 
-The patch is not eliminated: the router generates it after inference. Savings are the difference between the two model-output payload estimates shown above. State reports, rejection diagnostics, and the net cost of installing the hpatch and hread tool definitions while removing the Code Mode `apply_patch` section are tracked separately as input overhead. Hread results are not compared with a hypothetical `cat`; the dashboard's end-to-end Responses and session usage totals are authoritative for their model-input cost. Gain values remain reproducible GPT-5 estimates rather than provider billing totals.
+The patch is not eliminated: the router generates it after inference. Savings are the difference between the two model-output payload estimates shown above. State reports, rejection diagnostics, and the net cost of installing the hpatch, hread, and hgrep tool definitions while removing the Code Mode `apply_patch` section are tracked separately as input overhead. Hread and hgrep results are not compared with hypothetical shell commands; the dashboard's end-to-end Responses and session usage totals are authoritative for their model-input cost. Gain values remain reproducible GPT-5 estimates rather than provider billing totals.
 
 For an 11-line function replacement, hpatch asks the model for this:
 
@@ -98,12 +98,15 @@ The router also supplies `functions.hpatch` to the provider with a [Lark grammar
 
 - Go 1.26 or newer (`go install` only; no clone required for normal use)
 - For the router: Codex CLI with ChatGPT file auth (`codex login`, credentials at `~/.codex/auth.json` or `$CODEX_HOME/auth.json`)
+- For routed hgrep: `rg` available on the Codex executor's `PATH`
+- For routed hread and hgrep: the router wrapper directory precedes unrelated entries on the
+  Codex executor's trusted `PATH`
 
 ## Codex router (systemd user service)
 
-The router listens on HTTP, rewrites Responses traffic so Codex calls `functions.hpatch` or `functions.hread`, evaluates scripts against the workspace declared in `x-codex-turn-metadata`, and returns client-executed Code Mode carriers. Hpatch produces a real `apply_patch` call, so you see the normal diff rather than a silent file rewrite. Hread resolves through one process-scoped temporary wrapper invoked by absolute path in the nested exec command; the carrier does not override the exec environment or working directory. The worker reads from Codex's exec working directory under Codex's sandbox and permissions rather than receiving a router workspace capability. When the router and Codex executor have isolated filesystems, deployment must expose the wrapper directory and router executable at the same absolute paths in both environments. Background Responses requests are rejected before forwarding because the router does not expose the retrieval and cancellation endpoints required to complete them.
+The router listens on HTTP, rewrites Responses traffic so Codex calls `functions.hpatch`, `functions.hread`, or `functions.hgrep`, evaluates scripts against the workspace declared in `x-codex-turn-metadata`, and returns client-executed Code Mode carriers. Hpatch produces a real `apply_patch` call, so you see the normal diff rather than a silent file rewrite. Hread and hgrep resolve their basenames through the Codex executor's trusted `PATH`; the wrapper directory must precede unrelated entries. The carrier does not override the exec environment or working directory. The workers use Codex's exec working directory under Codex's sandbox and permissions rather than receiving a router workspace capability. Hgrep invokes `rg --json --no-config` internally and emits complete matching and requested context rows as `"PATH":LINE:HASH TEXT`. When the router and Codex executor have isolated filesystems, deployment must expose the wrapper directory and router executable at the same paths in both environments and configure the executor PATH accordingly. Background Responses requests are rejected before forwarding because the router does not expose the retrieval and cancellation endpoints required to complete them.
 
-On each request it strips the Code Mode `### apply_patch` section from the `functions.exec` / `additional_tools` description and installs standalone `functions.hpatch` and `functions.hread` tools. A request with only a direct `apply_patch` carrier is rejected before forwarding because it cannot execute hread safely. The rewrite changes only the tool **definitions** the model receives for that turn; translated history still uses the Code Mode exec carrier that Codex actually runs.
+On each request it strips the Code Mode `### apply_patch` section from the `functions.exec` / `additional_tools` description and installs standalone `functions.hpatch`, `functions.hread`, and `functions.hgrep` tools. A request with only a direct `apply_patch` carrier is rejected before forwarding because it cannot execute the read-only wrappers safely. The rewrite changes only the tool **definitions** the model receives for that turn; translated history still uses the Code Mode exec carrier that Codex actually runs.
 
 Defaults:
 
@@ -299,7 +302,7 @@ and one targetless `type VALUE` immediately after `new`.
 Rules worth remembering:
 
 - Use `type` with a nonempty value to replace, `type` with an empty value to delete, `type-` to insert before, and `type+` to insert after.
-- Use search to locate likely edit regions, then use HREAD for their first content read. Put up to 6 already-known files or ranges into one newline-delimited HREAD call, and use only current rows from the exact path.
+- Use HGREP to locate matching complete lines and copy its current `LINE:HASH` directly when sufficient. Use HREAD for surrounding or nonmatching context instead of repeating an exact HGREP result. Put up to 6 already-known files or ranges into one newline-delimited HREAD call, and use only current rows from the exact path.
 - First `in` of a file freezes its immutable invocation baseline. Pending edits never shift later targets.
 - Batch all ready short supporting edits that share a failure domain into one call with repeated `in PATH` sections instead of issuing one call per file. Keep unrelated large `<<PATCH` values in separate calls, with at most one syntax-sensitive multiline Go declaration or function replacement per call; short supporting edits for that same change may remain with it.
 - Prefer the smallest mutation that expresses the semantic change. When a formatter owns formatting, alignment, or indentation, do not replace surrounding lines merely to reproduce its output; let the formatter apply those changes. For example, add one struct field with one insertion rather than replacing the declaration.
@@ -368,9 +371,9 @@ guarantee.
 
 **CLI:** resolve workspace (`--root` / `--cwd` or process cwd) → parse script → verify targets against immutable baselines → plan and render disjoint splices → stage the multi-file result → commit (normal mode) or emit one `apply_patch` envelope (translate).
 
-**Router:** load ChatGPT Codex auth → accept `POST /v1/responses` → require a Code Mode exec owner and expose `functions.hpatch` plus `functions.hread` instead of its nested `apply_patch` → translate hpatch against the single usable workspace from Codex metadata or route hread through the process wrapper in Codex's exec context → return an exec carrier that applies the real patch or returns the exact read result.
+**Router:** load ChatGPT Codex auth → accept `POST /v1/responses` → require a Code Mode exec owner and expose `functions.hpatch`, `functions.hread`, and `functions.hgrep` instead of its nested `apply_patch` → translate hpatch against the single usable workspace from Codex metadata or route read/search calls through process wrappers in Codex's exec context → return an exec carrier that applies the real patch or returns the exact read/search result.
 
-Hpatch workspace selection is host-owned, and zero or multiple usable roots fail closed. Codex enforces sandbox and filesystem permissions for the client-executed hread and apply operations.
+Hpatch workspace selection is host-owned, and zero or multiple usable roots fail closed. Codex enforces sandbox and filesystem permissions for the client-executed hread, hgrep, and apply operations.
 
 ## Project structure
 

@@ -8,7 +8,9 @@ import (
 	"fmt"
 	"maps"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -144,7 +146,7 @@ func TestHPatchPrepareRequestExposesOnlyStandaloneHPatch(t *testing.T) {
 	if err := json.Unmarshal(request.fields["tools"], &topTools); err != nil {
 		t.Fatal(err)
 	}
-	if len(topTools) != 3 || jsonString(topTools[0], "name") != "lookup" || jsonString(topTools[1], "name") != hpatchToolName || jsonString(topTools[2], "name") != hreadToolName {
+	if len(topTools) != 4 || jsonString(topTools[0], "name") != "lookup" || jsonString(topTools[1], "name") != hpatchToolName || jsonString(topTools[2], "name") != hreadToolName || jsonString(topTools[3], "name") != hgrepToolName {
 		t.Fatalf("top-level tools = %#v", topTools)
 	}
 	if jsonString(topTools[1], "type") != "custom" {
@@ -173,6 +175,15 @@ func TestHPatchPrepareRequestExposesOnlyStandaloneHPatch(t *testing.T) {
 	}
 	if format.Type != "grammar" || format.Syntax != "lark" || format.Definition != hpatch.HReadToolGrammar() {
 		t.Fatalf("standalone hread format = %#v", topTools[2])
+	}
+	if jsonString(topTools[3], "description") != hpatch.HGrepToolDescription() {
+		t.Fatalf("standalone hgrep description = %q", jsonString(topTools[3], "description"))
+	}
+	if err := json.Unmarshal(topTools[3]["format"], &format); err != nil {
+		t.Fatal(err)
+	}
+	if format.Type != "grammar" || format.Syntax != "lark" || format.Definition != hpatch.HGrepToolGrammar() {
+		t.Fatalf("standalone hgrep format = %#v", topTools[3])
 	}
 	for _, correctionGuidance := range []string{
 		"Repairing a rejected script:",
@@ -311,7 +322,7 @@ func TestHPatchAdditionalToolsReplacementRejectsDuplicateAndConflictingOwners(t 
 			}
 			beforeInput := bytes.Clone(fields["input"])
 			beforeTools := bytes.Clone(fields["tools"])
-			_, _, replaced, err := replaceAdditionalToolsApplyPatch(fields, customGrammarTools(testHPatchToolDescription, "fixture hread description"))
+			_, _, replaced, err := replaceAdditionalToolsApplyPatch(fields, customGrammarTools(testHPatchToolDescription, "fixture hread description", "fixture hgrep description"))
 			if err == nil || replaced {
 				t.Fatalf("replacement = %v, error %v", replaced, err)
 			}
@@ -337,7 +348,7 @@ func TestHPatchAdditionalToolsReplacementDoesNotRequireDocumentedExecCommand(t *
 		"tools": mustTestJSON(t, []any{}),
 	}
 
-	_, owner, replaced, err := replaceAdditionalToolsApplyPatch(fields, customGrammarTools(testHPatchToolDescription, "fixture hread description"))
+	_, owner, replaced, err := replaceAdditionalToolsApplyPatch(fields, customGrammarTools(testHPatchToolDescription, "fixture hread description", "fixture hgrep description"))
 	if err != nil || !replaced || owner != "exec" {
 		t.Fatalf("owner = %q, replaced %v, error %v", owner, replaced, err)
 	}
@@ -404,7 +415,7 @@ func TestHPatchAdditionalToolsReplacementLeavesUnsupportedAndMalformedRequestsUn
 			beforeInput := bytes.Clone(fields["input"])
 			beforeTools := bytes.Clone(fields["tools"])
 			beforeChoice := bytes.Clone(fields["tool_choice"])
-			_, _, replaced, err := replaceAdditionalToolsApplyPatch(fields, customGrammarTools(testHPatchToolDescription, "fixture hread description"))
+			_, _, replaced, err := replaceAdditionalToolsApplyPatch(fields, customGrammarTools(testHPatchToolDescription, "fixture hread description", "fixture hgrep description"))
 			if err != nil || replaced {
 				t.Fatalf("replacement = %v, error %v", replaced, err)
 			}
@@ -425,7 +436,7 @@ func TestHPatchReplacementRetainsCodeModeOwnerName(t *testing.T) {
 				}}),
 				"tools": mustTestJSON(t, []any{}),
 			}
-			_, got, replaced, err := replaceAdditionalToolsApplyPatch(fields, customGrammarTools(testHPatchToolDescription, "fixture hread description"))
+			_, got, replaced, err := replaceAdditionalToolsApplyPatch(fields, customGrammarTools(testHPatchToolDescription, "fixture hread description", "fixture hgrep description"))
 			if err != nil || !replaced || got != name {
 				t.Fatalf("owner = %q, replaced %v, error %v", got, replaced, err)
 			}
@@ -606,6 +617,49 @@ func TestHReadJSONReturnsExecCommandAndRestoresReplay(t *testing.T) {
 	}
 }
 
+func TestHGrepJSONReturnsExecCommandAndRestoresReplay(t *testing.T) {
+	transform, proxy, _, _ := newHPatchTestTransform(t, testTranslator(t, new(int)))
+	searchItem := map[string]any{
+		"type": "custom_tool_call", "id": "item-G", "call_id": "call-G",
+		"name": hgrepToolName, "input": `-F needle internal/router`, "status": "completed",
+	}
+	visible, err := transform.TransformJSON(mustTestJSON(t, map[string]any{
+		"status": "completed",
+		"output": []any{searchItem},
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var response struct {
+		Output []map[string]json.RawMessage `json:"output"`
+	}
+	if err := json.Unmarshal(visible, &response); err != nil {
+		t.Fatal(err)
+	}
+	if len(response.Output) != 1 || jsonString(response.Output[0], "name") != "exec" ||
+		jsonString(response.Output[0], "input") != hgrepExecInput([]string{"-F", "needle", "internal/router"}) {
+		t.Fatalf("translated hgrep response = %s", visible)
+	}
+
+	replay, err := parseResponsesRequest(mustTestJSON(t, map[string]any{
+		"input": []any{response.Output[0]},
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := proxy.restoreInputPrefix(&replay, transform.historySessionID); err != nil {
+		t.Fatal(err)
+	}
+	var replayed []map[string]json.RawMessage
+	if err := json.Unmarshal(replay.fields["input"], &replayed); err != nil {
+		t.Fatal(err)
+	}
+	if len(replayed) != 1 || jsonString(replayed[0], "name") != hgrepToolName ||
+		jsonString(replayed[0], "input") != `-F needle internal/router` {
+		t.Fatalf("replayed hgrep = %s", replay.fields["input"])
+	}
+}
+
 func TestHReadExecInputQuotesOnlyShellSensitiveArguments(t *testing.T) {
 	carrierInput := hreadExecInput(`"line's $(echo injected).txt" 2:3`)
 	encodedArguments := strings.TrimPrefix(carrierInput, "const result = await tools.exec_command(")
@@ -620,6 +674,55 @@ func TestHReadExecInputQuotesOnlyShellSensitiveArguments(t *testing.T) {
 	want := `hread '"line'"'"'s $(echo injected).txt" 2:3'`
 	if arguments.Command != want {
 		t.Fatalf("translated exec command = %q, want %q", arguments.Command, want)
+	}
+}
+
+func TestReadOnlyCarriersResolveBasenamesFromTrustedPATH(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test requires symbolic links and /bin/sh")
+	}
+	workerDirectory := t.TempDir()
+	routerExecutable := filepath.Join(workerDirectory, "hpatch-router")
+	if err := os.WriteFile(routerExecutable, []byte("#!/bin/sh\nprintf 'trusted:%s\\n' \"${0##*/}\"\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{hreadExecutableName, hgrepExecutableName} {
+		if _, err := ensureWorkerSymlinkForExecutable(routerExecutable, name); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	decodeCommand := func(carrier string) string {
+		encoded := strings.TrimPrefix(carrier, "const result = await tools.exec_command(")
+		encoded = strings.TrimSuffix(encoded, ");\ntext(result.output);")
+		var arguments struct {
+			Command string `json:"cmd"`
+		}
+		if err := json.Unmarshal([]byte(encoded), &arguments); err != nil {
+			t.Fatal(err)
+		}
+		return arguments.Command
+	}
+	carriers := map[string]string{
+		hreadExecutableName: hreadExecInput(`"file.txt"`),
+		hgrepExecutableName: hgrepExecInput([]string{"pattern"}),
+	}
+	for name, carrier := range carriers {
+		t.Run(name, func(t *testing.T) {
+			commandText := decodeCommand(carrier)
+			if !strings.HasPrefix(commandText, name+" ") {
+				t.Fatalf("carrier command = %q, want basename %q", commandText, name)
+			}
+			command := exec.CommandContext(t.Context(), "/bin/sh", "-c", commandText)
+			command.Env = []string{"PATH=" + workerDirectory}
+			output, err := command.CombinedOutput()
+			if err != nil {
+				t.Fatalf("execute carrier: %v\n%s", err, output)
+			}
+			if got, want := string(output), "trusted:"+name+"\n"; got != want {
+				t.Fatalf("carrier output = %q, want %q", got, want)
+			}
+		})
 	}
 }
 
@@ -932,7 +1035,7 @@ func TestHReadStreamingUsesTextLifecycle(t *testing.T) {
 	}
 }
 
-func TestHReadHistoryIsExcludedFromCorrections(t *testing.T) {
+func TestReadOnlyHistoryIsExcludedFromCorrections(t *testing.T) {
 	proxy := newHPatchProxy(testTranslator(t, new(int)))
 	err := proxy.rememberBatch("session", map[string]hpatchHistory{
 		"call-H": {
@@ -942,6 +1045,10 @@ func TestHReadHistoryIsExcludedFromCorrections(t *testing.T) {
 		"call-R": {
 			toolName: hreadToolName, script: `"file.txt"`,
 			report: "8ed3: alpha\n", sequence: 2,
+		},
+		"call-G": {
+			toolName: hgrepToolName, script: `alpha .`,
+			sequence: 3,
 		},
 	})
 	if err != nil {
@@ -962,8 +1069,8 @@ func TestHReadHistoryIsExcludedFromCorrections(t *testing.T) {
 
 		local: map[string]hpatchHistory{
 			"call-local-read": {
-				toolName: hreadToolName,
-				script:   `"file.txt"`,
+				toolName: hgrepToolName,
+				script:   `alpha .`,
 				sequence: 1,
 			},
 		},
@@ -973,7 +1080,7 @@ func TestHReadHistoryIsExcludedFromCorrections(t *testing.T) {
 		t.Fatal(err)
 	}
 	if history.toolName != hpatchToolName || history.script != testHPatchScript {
-		t.Fatalf("correction after local hread = %+v", history)
+		t.Fatalf("correction after local read-only call = %+v", history)
 	}
 }
 

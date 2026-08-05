@@ -81,10 +81,9 @@ func TestHPatch2ToolDescriptionCoversSafeCommandChoice(t *testing.T) {
 	for _, guidance := range []string{
 		"HPATCH/2",
 		"Do not call this tool in parallel with other tools.",
-		"use `hread` for its first content read instead of `sed` or `cat`",
-		"place their read specifications in one `hread` call",
-		"LINE:HASH TEXT",
-		"copy the complete `LINE:HASH` reference",
+		"Use `hgrep` as replacement of `rg` or `grep`",
+		"Use `hread` as replacement of `cat` or `sed`",
+		"current `LINE:HASH` references",
 		"Nonempty line and range `type` replacements preserve",
 		"`type` replaces",
 		"`type-` inserts before",
@@ -92,7 +91,6 @@ func TestHPatch2ToolDescriptionCoversSafeCommandChoice(t *testing.T) {
 		"An empty target-bearing `type` value deletes",
 		"fixed `<<PATCH`",
 		"immutable baseline",
-		"Use only rows copied from current `hread` output for that exact path",
 		"batch all short supporting edits",
 		"at most one syntax-sensitive multiline Go",
 		"Prefer the smallest mutation that expresses the semantic change",
@@ -118,28 +116,55 @@ func TestHPatch2ToolDescriptionCoversSafeCommandChoice(t *testing.T) {
 	}
 }
 
-func TestHReadToolDescriptionRequiresOneOrderedBatch(t *testing.T) {
+func TestHReadToolDescriptionExplainsReplacementOutput(t *testing.T) {
 	normalized := strings.Join(strings.Fields(HReadToolDescription()), " ")
 	for _, guidance := range []string{
-		"up to 6 existing read specifications separated by newlines",
-		"A single specification remains valid",
-		"A batch preserves input order",
-		"without hiding successful siblings",
+		"Use `hread` as replacement of `cat` or `sed`",
+		"Use a bare path when it has no whitespace",
+		"LINE:HASH TEXT",
 	} {
 		if !strings.Contains(normalized, guidance) {
 			t.Errorf("hread tool description omits %q", guidance)
 		}
 	}
+	if strings.Contains(HReadToolDescription(), "hgrep") {
+		t.Error("hread tool description refers to hgrep")
+	}
 }
 
 func TestHReadToolGrammarBoundsBatch(t *testing.T) {
 	grammar := HReadToolGrammar()
+	if !strings.Contains(grammar, "?path: QUOTED | BARE") {
+		t.Errorf("hread grammar omits bare paths: %q", grammar)
+	}
 	productions, _, _ := strings.Cut(grammar, "\n\n")
 	if strings.Contains(productions, "*") {
 		t.Fatalf("hread grammar contains unbounded repetition: %q", grammar)
 	}
 	if got, want := strings.Count(grammar, "NL read_spec"), maxHReadBatchItems-1; got != want {
 		t.Fatalf("hread grammar allows %d trailing specifications, want %d", got, want)
+	}
+}
+
+func TestHGrepToolGuidanceAndGrammar(t *testing.T) {
+	normalized := strings.Join(strings.Fields(HGrepToolDescription()), " ")
+	for _, guidance := range []string{
+		"Use `hgrep` as replacement of `rg` or `grep`",
+		"ripgrep wrapper",
+		`"PATH":LINE:HASH TEXT`,
+	} {
+		if !strings.Contains(normalized, guidance) {
+			t.Errorf("hgrep tool description omits %q", guidance)
+		}
+	}
+	if strings.Contains(HGrepToolDescription(), "hread") {
+		t.Error("hgrep tool description refers to hread")
+	}
+	grammar := HGrepToolGrammar()
+	for _, production := range []string{"SINGLE_QUOTED", "DOUBLE_QUOTED", "BARE"} {
+		if !strings.Contains(grammar, production) {
+			t.Errorf("hgrep grammar omits %q", production)
+		}
 	}
 }
 

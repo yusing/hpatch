@@ -1,12 +1,9 @@
 HPATCH/2 applies one complete target-bearing edit script atomically. Do not call this tool
 in parallel with other tools. Rejection or cancellation changes nothing.
 
-Use search to locate relevant regions. For any region likely to be edited, use `hread`
-for its first content read instead of `sed` or `cat`. When several independent files or
-ranges are already known, place their read specifications in one `hread` call.
-Its rows are `LINE:HASH TEXT`; copy the complete `LINE:HASH` reference. The line selects
-one exact logical line and the hash rejects stale content. Use only rows copied from
-current `hread` output for that exact path. Never guess or reconstruct a row.
+Use `hgrep` as replacement of `rg` or `grep`. Use `hread` as replacement of `cat` or `sed`.
+Both return complete lines with current `LINE:HASH` references for HPATCH/2 targets; hgrep
+prefixes each match with its quoted path. Never guess or reconstruct a row.
 
 Commands:
 

@@ -44,7 +44,7 @@ Targets:
   LINE:HASH..LINE:HASH              inclusive complete-line range
   LINE:HASH "TEXT" [COUNT]          anchored exact literal occurrence(s)
 
-  Copy complete LINE:HASH references from hread output. LINE is a positive
+  Copy complete LINE:HASH references from hgrep or hread output. LINE is a positive
   one-based logical line and HASH is exactly four lowercase hexadecimal digits
   over that line's exact content, including indentation. The line number chooses
   the line; the hash rejects stale content. Hpatch never searches for a nearby
@@ -83,9 +83,10 @@ Values and framing:
   must instead be represented by an inline escaped value.
 
 Baselines and conflict safety:
-  Use search to locate relevant regions. For any region likely to be edited, use
-  hread for its first content read. Issue every independent hread call for
-  already-known files or ranges together; do not serialize them.
+  Use hgrep to locate matching complete lines and copy its current LINE:HASH
+  directly when that row is sufficient. Use hread for surrounding or nonmatching
+  context rather than repeating an exact hgrep result. Issue every independent
+  hread call for already-known files or ranges together; do not serialize them.
   Every existing file has one immutable baseline for the complete invocation.
   Pending edits do not move later targets, and introduced content is not targetable
   in that call. When inspected files are ready, batch all short supporting edits
@@ -119,10 +120,11 @@ File lifecycle:
   exist; hpatch does not create directories.
 
 Agent workflow:
-  1. Use search to locate relevant regions, then hread for the first content read
-     of likely edit regions. Issue every independent hread call for already-known
-     files or ranges together; do not serialize them. Copy complete LINE:HASH rows
-     only from current output for that exact path.
+  1. Use hgrep to locate matching complete lines and copy its current LINE:HASH
+     directly when sufficient. Use hread for surrounding or nonmatching context,
+     not to repeat an exact hgrep result. Issue every independent hread call for
+     already-known files or ranges together; do not serialize them. Copy rows only
+     from current output for that exact path.
   2. Put a line, range, or anchored literal target directly in each mutation.
   3. Use type to replace or delete, type- to insert before, and type+ to insert after.
      HPATCH/1 selection, clipboard, script commit, and del commands are invalid.

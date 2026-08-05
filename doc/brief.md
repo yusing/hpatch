@@ -15,7 +15,9 @@ The agent emits replacement or inserted content once; hpatch resolves the target
 an immutable invocation baseline and constructs the ordinary `apply_patch` representation
 internally. A routed reader emits copyable line-and-content references that disambiguate
 repeated lines, detect stale inspection, and read several already-known files or ranges in
-one ordered call without requiring old regions to be re-emitted.
+one ordered call without requiring old regions to be re-emitted. A routed ripgrep wrapper
+emits those same verified references for complete matching and requested context lines so an
+agent does not need to repeat an exact search result through the reader before editing it.
 
 The historical benchmark remains the end-to-end authority: correctness must match the
 native edit path, output tokens must be lower, and input, reasoning, request count, and
@@ -26,6 +28,8 @@ wall time must remain close to control.
 - Multiple UTF-8 files opened in sequence by `in PATH` or created by `new PATH`.
 - One routed hread call may contain an ordered newline-delimited batch of those existing
   single-file read specifications.
+- Routed hgrep searches with familiar ripgrep matching, context, and file-selection arguments
+  and emits complete UTF-8 result rows as copyable path-and-`LINE:HASH` results.
 - Mutation-owned complete-line, inclusive line-range, and anchored literal targets.
 - Replacement, insertion immediately before or after a target, and deletion without a
   separate selection, cursor, or clipboard protocol.
@@ -45,7 +49,7 @@ wall time must remain close to control.
 - `hpatch`: evaluate one complete script and atomically update the workspace.
 - `hpatch translate`: evaluate the same script and emit its `apply_patch` representation.
 - `hpatch gain`: report persistent edit-encoding and failure metrics.
-- `hpatch-router --mode hpatch|passthrough`: expose routed hpatch and single- or
+- `hpatch-router --mode hpatch|passthrough`: expose routed hpatch, hgrep, and single- or
   multi-item hread treatment, or the unchanged control path.
 - `hpatch-bench validate --manifest TASK.json` and `hpatch-bench run`: validate and run
   paired historical-commit evaluations.
@@ -68,7 +72,8 @@ wall time must remain close to control.
 - Content movement without re-emitting the moved content; `mv` moves complete files only.
 - Selecting content introduced earlier in the same script. Dependent edits use a later
   inspected invocation.
-- Interactive editor UI, file discovery, plugins, binary files, or non-UTF-8 files.
+- Interactive editor UI, plugins, binary files, non-UTF-8 files, or search semantics beyond
+  the installed ripgrep executable.
 - A new patch interchange format beyond the compact command script and translated
   `apply_patch` output.
 - AST-specific mutation commands or language-specific editing frameworks.
@@ -81,6 +86,9 @@ wall time must remain close to control.
 - A routed row reference combines a positive one-based logical line with a lowercase
   four-digit content hash. The line disambiguates repeated content; the hash verifies the
   complete logical-line bytes, including indentation and excluding its terminator.
+- Routed hgrep accepts familiar ripgrep search arguments, invokes the installed `rg` with
+  internal `--json --no-config` transport, and exposes only complete current logical lines
+  with the same routed row identity. Shell syntax in an argument is data, never execution.
 - A target must resolve against the active file's immutable invocation baseline. Missing,
   stale, reversed, incomplete, and overlapping targets reject the complete script.
 - Inline strings use compact JSON-compatible quoting with literal horizontal tabs;

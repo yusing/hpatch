@@ -68,7 +68,8 @@ func TestTopLevelHelpDescribesCompletePublicSurface(t *testing.T) {
 		"unindented closing line must be exactly PATCH",
 		"immutable baseline",
 		"introduced content is not targetable",
-		"hread for its first content read",
+		"Use hgrep to locate matching complete lines",
+		"Use hread for surrounding or nonmatching context",
 		"Issue every independent hread call",
 		"batch all short supporting edits",
 		"at most one syntax-sensitive multiline Go",
@@ -104,7 +105,8 @@ func TestToolHelpGuidesAgentCommandChoice(t *testing.T) {
 	normalized := strings.Join(strings.Fields(help), " ")
 	for _, required := range []string{
 		"HPATCH/2 applies one complete target-bearing edit script atomically.",
-		"copy the complete `LINE:HASH` reference",
+		"Use `hgrep` as replacement of `rg` or `grep`",
+		"Use `hread` as replacement of `cat` or `sed`",
 		"`type-` inserts before",
 		"`type+` inserts after",
 		"fixed `<<PATCH` frame",

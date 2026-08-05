@@ -64,8 +64,10 @@ func Run(ctx context.Context, args []string, stderr io.Writer) (runErr error) {
 	metrics := newMetricsStore(gainDirectory)
 	metrics.mode = *mode
 	if *mode == "hpatch" {
-		if _, err := ensureHReadSymlink(); err != nil {
-			return fmt.Errorf("initialize hread executable: %w", err)
+		for _, name := range []string{hreadExecutableName, hgrepExecutableName} {
+			if _, err := ensureWorkerSymlink(name); err != nil {
+				return fmt.Errorf("initialize %s executable: %w", name, err)
+			}
 		}
 		translator := notifyingHPatchTranslator{
 			inner:   newInProcessHPatchTranslator(gainDirectory),

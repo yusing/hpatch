@@ -91,26 +91,41 @@ func RunHReadWorker(ctx context.Context, argv0 string, args []string, stdout, st
 	return true, 0
 }
 
-func ensureHReadSymlink() (string, error) {
+func ensureWorkerSymlink(name string) (string, error) {
 	executable, err := os.Executable()
 	if err != nil {
-		return "", fmt.Errorf("locate hread executable: %w", err)
+		return "", fmt.Errorf("locate %s executable: %w", name, err)
 	}
-	return ensureHReadSymlinkForExecutable(executable)
+	return ensureWorkerSymlinkForExecutable(executable, name)
 }
 
 func ensureHReadSymlinkForExecutable(executable string) (string, error) {
-	link := filepath.Join(filepath.Dir(executable), hreadExecutableName)
+	return ensureWorkerSymlinkForExecutable(executable, hreadExecutableName)
+}
+
+func ensureWorkerSymlinkForExecutable(executable, name string) (string, error) {
+	link := filepath.Join(filepath.Dir(executable), name)
 	if _, err := os.Lstat(link); err == nil {
-		return link, nil
+		return verifyWorkerSymlink(link, executable, name)
 	} else if !errors.Is(err, os.ErrNotExist) {
-		return "", fmt.Errorf("inspect hread symlink: %w", err)
+		return "", fmt.Errorf("inspect %s worker symlink: %w", name, err)
 	}
 	if err := os.Symlink(executable, link); err != nil {
 		if errors.Is(err, os.ErrExist) {
-			return link, nil
+			return verifyWorkerSymlink(link, executable, name)
 		}
-		return "", fmt.Errorf("create hread symlink: %w", err)
+		return "", fmt.Errorf("create %s worker symlink: %w", name, err)
+	}
+	return link, nil
+}
+
+func verifyWorkerSymlink(link, executable, name string) (string, error) {
+	target, err := os.Readlink(link)
+	if err != nil {
+		return "", fmt.Errorf("install %s worker: %s already exists and is not a symlink", name, link)
+	}
+	if target != executable {
+		return "", fmt.Errorf("install %s worker: %s points to %s, want %s", name, link, target, executable)
 	}
 	return link, nil
 }

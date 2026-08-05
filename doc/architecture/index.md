@@ -4,7 +4,7 @@ pjdoc:
   kind: architecture
   scope: root
   status: approved
-  revision: "15"
+  revision: "16"
   files:
     []
 ---
@@ -117,29 +117,39 @@ the router has no retrieval boundary for their eventual result. Malformed SSE st
 sticky and cannot be overwritten by a later terminal event.
 
 Metrics on the response path are auxiliary: tokenization or durable-write failures cannot
-replace a successful tool result, rejection diagnostic, read result, or overhead-only
+replace a successful tool result, rejection diagnostic, read or search result, or overhead-only
 response, while request cancellation still propagates. Definition accounting uses the
-serialized hpatch and hread custom grammar objects installed in the routed request,
+serialized hpatch, hread, and hgrep custom grammar objects installed in the routed request,
 including their names, wrappers, and grammar bodies.
 
-The router boundary exposes `hread` beside hpatch only when the displaced owner is a
+The router boundary exposes `hread` and `hgrep` beside hpatch only when the displaced owner is a
 Code Mode `exec` carrier. Before forwarding, it creates or reuses one process-scoped
-temporary wrapper directory. A translated hread call invokes that wrapper by absolute
-path with its grammar input shell-quoted as one argument. The nested exec carrier sets
+worker location. A translated read or search call invokes its wrapper by the `hread` or
+`hgrep` basename with each argument shell-quoted independently. The nested exec carrier sets
 neither an environment override nor a working directory. A direct `apply_patch` owner
 or wrapper-creation failure rejects the rewrite before forwarding.
 
-The wrapper path and the router executable path embedded in it must resolve in the
-Codex executor. Same-host execution satisfies this directly. Deployments with isolated
-router and executor filesystems must mount both paths into the executor; this runtime
-visibility is independent of workspace selection.
+The Codex executor's trusted `PATH` must resolve those basenames to the wrapper directory
+before any unrelated entries. The wrapper and router executable paths must also resolve in
+the executor. Same-host execution satisfies filesystem visibility but still requires the
+service PATH to contain the wrapper directory. Deployments with isolated router and executor
+filesystems must mount both paths and configure that trusted PATH independently of workspace
+selection.
 
-The wrapper launches a private child-process mode of the running router binary in Codex's
+Each wrapper launches a private child-process mode of the running router binary in Codex's
 exec context. The worker derives relative-path resolution from its actual current
-directory and leaves sandbox and permission enforcement to Codex. It passes the complete
+directory and leaves sandbox and permission enforcement to Codex. Hread passes the complete
 grammar input unchanged to the core verified-row owner. The core reads batch items
 sequentially, preserves legacy single-read output, and labels ordered batch results so an
 item error does not hide successful siblings.
+
+Under `REQ-GREP-001` and the supplied constraint in `doc/brief.md` § Constraints, hgrep
+parses its grammar input into literal argv without shell evaluation, rejects incompatible
+source and output modes, and invokes the installed ripgrep with its internal structured
+transport. Ripgrep alone owns search selection. The worker consumes match and context events, renders
+complete rows through the shared verified-row owner, deduplicates only identical path-and-line
+results, and neither adds a fallback search implementation nor moves search into the edit
+engine.
 
 Core rendering streams fixed-size chunks, validates UTF-8 across each complete file,
 buffers only selected lines, observes cancellation between reads, and keeps the complete
@@ -147,9 +157,9 @@ formatted call within 16 MiB. A single oversized result rejects. A batch reserve
 a bounded limit diagnostic, returns already completed rows, and stops successfully before
 another result would cross the call-wide bound. The outer exec returns the worker's exact
 output payload; the router neither pre-reads files nor fabricates an `apply_patch` result.
-Read calls are replayable but never enter edit correction history or editing metrics.
-The process wrapper is removed at router shutdown. Passthrough mode exposes neither
-replacement tool.
+Read and search calls are replayable but never enter edit correction history or editing metrics.
+The process wrappers are removed at router shutdown. Passthrough mode exposes none of the
+replacement tools.
 
 The standalone CLI canonicalizes root and cwd, opens the root once, and keeps that
 capability open for the invocation. Library callers pass the already-authorized root and

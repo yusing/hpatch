@@ -5,8 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"os"
-	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -153,15 +151,20 @@ func TestHPatchMetricDefinitionMatchesInstalledGrammarTools(t *testing.T) {
 	if err := json.Unmarshal(request.fields["tools"], &tools); err != nil {
 		t.Fatal(err)
 	}
-	installed := make([]json.RawMessage, 0, 2)
+	installed := make([]json.RawMessage, 0, 3)
+	var installedNames []string
 	for _, raw := range tools {
 		var tool map[string]json.RawMessage
 		if err := json.Unmarshal(raw, &tool); err != nil {
 			t.Fatal(err)
 		}
-		if name := jsonString(tool, "name"); name == hpatchToolName || name == hreadToolName {
+		if name := jsonString(tool, "name"); isHPatchModeToolName(name) {
 			installed = append(installed, raw)
+			installedNames = append(installedNames, name)
 		}
+	}
+	if want := []string{hpatchToolName, hreadToolName, hgrepToolName}; !reflect.DeepEqual(installedNames, want) {
+		t.Fatalf("metered tool definitions = %v, want %v", installedNames, want)
 	}
 	encoded, err := json.Marshal(installed)
 	if err != nil {
@@ -260,39 +263,40 @@ func TestHPatchMetricFailureStillPropagatesRequestCancellation(t *testing.T) {
 	}
 }
 
-func TestHReadOnlyCallClaimsCombinedDefinitionAccountingOnce(t *testing.T) {
-	var records []hpatchMetricRecord
-	translator := metricsObservingTranslator{
-		translate: func(context.Context, routingWorkspace, string) ([]byte, error) {
-			t.Fatal("hread reached hpatch translation")
-			return nil, nil
-		},
-		record: func(_ context.Context, record hpatchMetricRecord) error {
-			records = append(records, record)
-			return nil
-		},
-	}
-	transform, _, _, workspace := newHPatchTestTransform(t, translator)
-	if err := os.WriteFile(filepath.Join(workspace, "file.txt"), []byte("alpha\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := transform.translateHRead("call-R", `"file.txt"`, nil); err != nil {
-		t.Fatal(err)
-	}
-	if err := transform.Finish(false); err != nil {
-		t.Fatal(err)
-	}
-	if len(records) != 1 {
-		t.Fatalf("metric records = %d, want 1", len(records))
-	}
-	record := records[0]
-	if record.DefinitionRequests != 1 || record.DefinitionInputTokens == 0 || record.RemovedDefinitionInputTokens == 0 {
-		t.Fatalf("hread-only accounting = %+v", record)
-	}
-	if record.HPatchTokens != 0 || record.ApplyPatchTokens != 0 ||
-		record.IneffectiveHPatchTokens != 0 || record.FailedApplyPatchTokens != 0 ||
-		record.ReportInputTokens != 0 || record.DiagnosticInputTokens != 0 {
-		t.Fatalf("hread-only accounting contains patch tokens: %+v", record)
+func TestReadOnlyToolCallClaimsCombinedDefinitionAccountingOnce(t *testing.T) {
+	for _, toolName := range []string{hreadToolName, hgrepToolName} {
+		t.Run(toolName, func(t *testing.T) {
+			var records []hpatchMetricRecord
+			translator := metricsObservingTranslator{
+				translate: func(context.Context, routingWorkspace, string) ([]byte, error) {
+					t.Fatalf("%s reached hpatch translation", toolName)
+					return nil, nil
+				},
+				record: func(_ context.Context, record hpatchMetricRecord) error {
+					records = append(records, record)
+					return nil
+				},
+			}
+			transform, _, _, _ := newHPatchTestTransform(t, translator)
+			if _, err := transform.translateReadOnlyTool(toolName, "call-R", "input", nil); err != nil {
+				t.Fatal(err)
+			}
+			if err := transform.Finish(false); err != nil {
+				t.Fatal(err)
+			}
+			if len(records) != 1 {
+				t.Fatalf("metric records = %d, want 1", len(records))
+			}
+			record := records[0]
+			if record.DefinitionRequests != 1 || record.DefinitionInputTokens == 0 || record.RemovedDefinitionInputTokens == 0 {
+				t.Fatalf("%s-only accounting = %+v", toolName, record)
+			}
+			if record.HPatchTokens != 0 || record.ApplyPatchTokens != 0 ||
+				record.IneffectiveHPatchTokens != 0 || record.FailedApplyPatchTokens != 0 ||
+				record.ReportInputTokens != 0 || record.DiagnosticInputTokens != 0 {
+				t.Fatalf("%s-only accounting contains patch tokens: %+v", toolName, record)
+			}
+		})
 	}
 }
 

@@ -43,9 +43,22 @@ func ReadHashLines(ctx context.Context, workspace Workspace, input string) (stri
 }
 
 func parseHReadSpec(input string) (path string, startLine, endLine int, err error) {
-	path, trailing, err := hpatchsyntax.DecodeQuoted(input)
-	if err != nil {
-		return "", 0, 0, fmt.Errorf("invalid hread path: %w", err)
+	var trailing string
+	if strings.HasPrefix(input, `"`) {
+		path, trailing, err = hpatchsyntax.DecodeQuoted(input)
+		if err != nil {
+			return "", 0, 0, fmt.Errorf("invalid hread path: %w", err)
+		}
+	} else {
+		path = input
+		if separator := strings.IndexByte(input, ' '); separator >= 0 {
+			path, trailing = input[:separator], input[separator:]
+		}
+		if strings.IndexFunc(path, func(character rune) bool {
+			return character <= ' ' || character == '"'
+		}) >= 0 {
+			return "", 0, 0, errors.New("invalid bare hread path")
+		}
 	}
 	if path == "" {
 		return "", 0, 0, errors.New("hread path must not be empty")
@@ -55,7 +68,7 @@ func parseHReadSpec(input string) (path string, startLine, endLine int, err erro
 	}
 	match := hreadRangePattern.FindStringSubmatch(trailing)
 	if match == nil {
-		return "", 0, 0, errors.New(`hread input must be "PATH" or "PATH" START:END`)
+		return "", 0, 0, errors.New("hread input must be PATH or PATH START:END")
 	}
 	startLine, err = strconv.Atoi(match[1])
 	if err != nil {
@@ -181,11 +194,11 @@ func (w filesystemWorkspace) openRegularFile(ctx context.Context, path string) (
 	}
 	info, err := file.Stat()
 	if err != nil {
-		file.Close()
+		_ = file.Close()
 		return nil, 0, fmt.Errorf("reading %s: %w", path, err)
 	}
 	if !info.Mode().IsRegular() {
-		file.Close()
+		_ = file.Close()
 		return nil, 0, fmt.Errorf("%s is not a regular file", path)
 	}
 	return file, info.Mode(), nil
@@ -196,7 +209,9 @@ func (w filesystemWorkspace) readFile(ctx context.Context, path string) (loadedF
 	if err != nil {
 		return loadedFile{}, err
 	}
-	defer file.Close()
+	defer func() {
+		_ = file.Close()
+	}()
 
 	content, err := io.ReadAll(file)
 	if err != nil {
@@ -213,7 +228,9 @@ func (w filesystemWorkspace) readHashLines(ctx context.Context, path string, sta
 	if err != nil {
 		return HashLineReadResult{}, err
 	}
-	defer file.Close()
+	defer func() {
+		_ = file.Close()
+	}()
 
 	return formatHashLineStream(ctx, file, path, startLine, endLine, maxOutputBytes)
 }

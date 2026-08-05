@@ -14,6 +14,12 @@ var hreadToolDescription string
 //go:embed hread_tool_grammar.lark
 var hreadToolGrammar string
 
+//go:embed hgrep_tool_description.md
+var hgrepToolDescription string
+
+//go:embed hgrep_tool_grammar.lark
+var hgrepToolGrammar string
+
 // ToolDescription returns the authoritative model guidance and examples.
 func ToolDescription() string {
 	return toolDescription
@@ -32,4 +38,14 @@ func HReadToolDescription() string {
 // HReadToolGrammar returns the authoritative Lark grammar for hread calls.
 func HReadToolGrammar() string {
 	return hreadToolGrammar
+}
+
+// HGrepToolDescription returns the authoritative routed search guidance.
+func HGrepToolDescription() string {
+	return hgrepToolDescription
+}
+
+// HGrepToolGrammar returns the authoritative Lark grammar for hgrep calls.
+func HGrepToolGrammar() string {
+	return hgrepToolGrammar
 }

@@ -56,13 +56,13 @@ Acceptance:
 
 In hpatch router mode, the model receives a read-only `hread` custom tool beside
 `hpatch`. Its grammar-constrained free-form input contains one to 6 newline-delimited
-read specifications. Each specification is a JSON string containing `PATH`, optionally
-followed by a space and `START:END` for an inclusive bounded logical-line range, for
-example `"editor.go" 40:80`. A single specification remains valid and retains its existing
-output. Line endpoints are positive one-based base-ten integers and must be ordered. The
-start line must exist. An end line past EOF returns through the final line. Invalid syntax or
-a missing endpoint rejects the complete tool input; a reversed range or start past EOF fails
-that item.
+read specifications. Each specification starts with a bare path containing no whitespace or
+a JSON-quoted path, optionally followed by a space and `START:END` for an inclusive bounded
+logical-line range, for example `editor.go 40:80`. A single specification remains valid and
+retains its existing output. Line endpoints are positive one-based base-ten integers and must
+be ordered. The start line must exist. An end line past EOF returns through the final line.
+Invalid syntax or a missing endpoint rejects the complete tool input; a reversed range or
+start past EOF fails that item.
 
 The router requires a Code Mode `exec` carrier before forwarding an hpatch-enabled
 request. It creates or reuses one process-scoped executable shell wrapper named `hread`
@@ -118,6 +118,62 @@ Acceptance:
 6. Turns and retained-session eviction do not create or own wrapper state. Router
    shutdown removes the process wrapper.
 
+## REQ-GREP-001 — Routed verified-row search
+
+In hpatch router mode, the model receives a read-only `hgrep` custom tool beside `hpatch`
+and `hread`. Its grammar-constrained free-form input is a nonempty, whitespace-separated
+ripgrep argument list. Bare arguments, single-quoted arguments, double-quoted arguments,
+and backslash-escaped characters preserve one argument each; quoting and escaping perform
+no shell expansion or execution. The tool accepts ordinary ripgrep pattern, matching, file,
+glob, type, ignore, context-selection, and resource-selection arguments.
+
+The worker invokes the installed `rg` from Codex's exec context with internal
+`--json --no-config` arguments. Its process-scoped executable accepts ordinary ripgrep argv;
+the routed carrier safely quotes each free-form input argument into the basename command. It
+rejects model-supplied output, multiline,
+preprocessor, compressed-input, informational, and other modes that cannot identify one
+complete editable source row per result. With no explicit path argument, search defaults to
+the exec process's current directory. Ripgrep retains ownership of regex parsing, ignore
+rules, traversal, matching, and search diagnostics; hgrep does not implement a fallback
+search engine.
+
+The worker consumes ripgrep's structured match and context events and emits each first-seen
+logical row once in ripgrep result order:
+
+```text
+"PATH":LINE:HASH TEXT
+```
+
+`PATH` is JSON-quoted. `LINE:HASH TEXT` has exactly the identity and complete UTF-8
+logical-line semantics of `REQ-READ-001`; match highlighting, match-only fragments,
+replacement output, trimming, and line truncation cannot change it. Multiple matches on one
+path and line produce one row. Ripgrep's no-match exit status is a successful empty result.
+Execution, syntax, filesystem, encoding, cancellation, and missing-executable failures remain
+concise `hgrep` diagnostics with nonzero status. Output contains only complete rows and stays
+within 16 MiB; reaching the bound preserves completed rows and adds a limit diagnostic.
+
+The router exposes, translates, and replays hgrep through the same Code Mode exec boundary
+as hread. The nested carrier invokes the worker basename and supplies neither environment nor
+working-directory overrides, so deployment must place the trusted wrapper directory first on
+the Codex executor's PATH. The router does not execute or pre-read the search, and hgrep calls
+never enter edit correction history or editing metrics.
+
+Acceptance:
+
+1. A search using a regular expression, explicit path, and glob emits JSON-quoted paths,
+   positive line numbers, standard four-digit hashes, and exact complete matching lines that
+   can be copied directly into an hpatch target without an intervening hread.
+2. Search arguments containing whitespace or shell metacharacters reach ripgrep as literal
+   argv values and cannot execute another command. A conflicting output or transformed-input
+   mode rejects before ripgrep starts.
+3. Requested before/after context emits complete verified rows alongside matches. Repeated
+   match or context events on one row emit that row once; no matches return successful empty
+   stdout; invalid patterns and unavailable ripgrep return concise nonzero diagnostics.
+4. A replayed hgrep call is restored to its original custom-tool name and input, remains
+   scoped to its routed workspace session, and is not eligible for hpatch correction.
+5. Passthrough mode exposes neither hgrep nor the other replacement tools. Router startup
+   fails before serving if its private hgrep worker cannot be installed.
+
 ## REQ-METRICS-001 — Persistent token, command, target, and failure metrics
 
 Every recognized normal or translate invocation is classified after its terminal outcome.
@@ -149,7 +205,7 @@ model-input overhead because the tool result becomes subsequent model context; i
 added to either model-output counter.
 
 The host tool definition is also model input. The router obtains the session identity, the
-serialized hpatch and hread custom grammar objects installed in the routed request, and
+serialized hpatch, hread, and hgrep custom grammar objects installed in the routed request, and
 the displaced native patch definition directly from that request. The first classified
 request of a session counts those definitions once;
 subsequent requests in the same session add nothing because the resent definition is
@@ -161,7 +217,7 @@ as a complete emitted report. Other tool results, provider-hidden protocol and r
 tokens, assistant commentary, and server-generated identifiers remain excluded. These
 are reproducible estimates rather than authoritative API usage.
 
-Routed hread results do not add a synthetic gain estimate and do not subtract a
+Routed hread and hgrep results do not add a synthetic gain estimate and do not subtract a
 hypothetical raw `cat` result. The router's end-to-end Responses and per-session usage
 totals are authoritative for model input consumed after the exact exec result is
 returned.
@@ -291,7 +347,7 @@ Acceptance:
    command attempts and errors. No selector, clipboard, editor-generation, or script-level
    commit counter remains.
 4. Every definition-bearing request increments the definition-request counter, while the
-   serialized installed hpatch and hread grammar objects and the baseline definition
+   serialized installed hpatch, hread, and hgrep grammar objects and the baseline definition
    accumulate only once per distinct session. An absent session or definition leaves
    definition counters zero and reports which inputs were measured.
 5. Failed hpatch invocations contribute their complete output to the ineffective counter;
@@ -738,10 +794,11 @@ diagnostic of a correction chain; later rejection diagnostics in that chain do n
 
 Both references teach this workflow:
 
-1. Use search to locate relevant regions, then use hread for the first content read of a
-   region likely to be edited. Put up to 6 already-known files or ranges into one
-   newline-delimited hread call, and copy complete `LINE:HASH` references only from current
-   output for that exact path.
+1. Use hgrep to locate matching complete lines and copy its current `LINE:HASH` directly
+   when that exact row is sufficient for the edit. Use hread for surrounding or nonmatching
+   context rather than repeating an exact hgrep result. Put up to 6 already-known files or
+   ranges into one newline-delimited hread call, and copy references only from current output
+   for that exact path.
 2. Choose a line, inclusive range, or anchored literal target inside the mutation command.
 3. Batch all ready short supporting edits that share a failure domain into one call with
    repeated `in PATH` sections instead of issuing one call per file. Keep unrelated large

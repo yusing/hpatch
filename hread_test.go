@@ -12,6 +12,7 @@ import (
 
 func TestReadHashLinesWholeFileAndRange(t *testing.T) {
 	rootPath := t.TempDir()
+	writeTestFile(t, rootPath, "hpatch_test.go", "alpha\nbeta\ngamma", 0o644)
 	writeTestFile(t, rootPath, "path with spaces.txt", "alpha\nbeta\r\ngamma", 0o644)
 	root, err := os.OpenRoot(rootPath)
 	if err != nil {
@@ -19,6 +20,14 @@ func TestReadHashLinesWholeFileAndRange(t *testing.T) {
 	}
 	defer root.Close()
 	workspace := Workspace{Root: root, CWD: "."}
+
+	bare, err := ReadHashLines(t.Context(), workspace, `hpatch_test.go 1:120`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "1:8ed3 alpha\n2:f44e beta\n3:be9d gamma\n"; bare != want {
+		t.Fatalf("bare-path read = %q, want %q", bare, want)
+	}
 
 	whole, err := ReadHashLines(t.Context(), workspace, `"path with spaces.txt"`)
 	if err != nil {
@@ -127,8 +136,8 @@ func TestReadHashLinesRejectsInvalidInputAndBounds(t *testing.T) {
 	workspace := Workspace{Root: root}
 
 	for _, input := range []string{
-		`file.txt`,
 		`""`,
+		`file.txt 1:1 trailing`,
 		`"file.txt" 0:1`,
 		`"file.txt" 2:1`,
 		`"file.txt" 3:3`,

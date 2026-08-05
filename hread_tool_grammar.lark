@@ -4,9 +4,11 @@ read_spec_3: NL read_spec read_spec_4?
 read_spec_4: NL read_spec read_spec_5?
 read_spec_5: NL read_spec read_spec_6?
 read_spec_6: NL read_spec
-read_spec: QUOTED (SP POSINT ":" POSINT)?
+read_spec: path (SP POSINT ":" POSINT)?
+?path: QUOTED | BARE
 
 NL: /\r?\n/
 POSINT: /[1-9][0-9]*/
 SP: " "
+BARE: /[^\x00-\x20"]+/
 QUOTED: /"(?:\\(?:["\\\/bfnrt]|u[0-9A-Fa-f]{4})|[^\x00-\x1F"\\]|\t)*"/
