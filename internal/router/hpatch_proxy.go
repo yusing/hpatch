@@ -19,7 +19,6 @@ import (
 	"sync"
 
 	"github.com/yusing/hpatch"
-	"github.com/yusing/hpatch/internal/hpatchsyntax"
 )
 
 const (
@@ -1206,20 +1205,11 @@ func hpatchDiagnosticExecInput(diagnostic string) string {
 }
 
 func hreadExecInput(input string) string {
-	command := hreadExecutableName
-	if path, trailing, err := hpatchsyntax.DecodeQuoted(input); err == nil {
-		switch {
-		case trailing == "":
-			command += " " + shellQuoteArgument(path)
-		case strings.HasPrefix(trailing, " "):
-			command += " " + shellQuoteArgument(path) + " " + shellQuoteArgument(strings.TrimPrefix(trailing, " "))
-		}
-	}
 	arguments := struct {
 		Command string `json:"cmd"`
 		Login   bool   `json:"login"`
 	}{
-		Command: command,
+		Command: hreadExecutableName + " " + shellQuoteArgument(input),
 		Login:   false,
 	}
 	return "const result = await tools.exec_command(" + string(mustMarshalJSON(arguments)) + ");\n" +

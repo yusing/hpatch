@@ -14,7 +14,8 @@ Provide an atomic edit tool whose mutation commands carry compact, verified targ
 The agent emits replacement or inserted content once; hpatch resolves the target against
 an immutable invocation baseline and constructs the ordinary `apply_patch` representation
 internally. A routed reader emits copyable line-and-content references that disambiguate
-repeated lines and detect stale inspection without requiring old regions to be re-emitted.
+repeated lines, detect stale inspection, and read several already-known files or ranges in
+one ordered call without requiring old regions to be re-emitted.
 
 The historical benchmark remains the end-to-end authority: correctness must match the
 native edit path, output tokens must be lower, and input, reasoning, request count, and
@@ -23,6 +24,8 @@ wall time must remain close to control.
 ## First-draft scope
 
 - Multiple UTF-8 files opened in sequence by `in PATH` or created by `new PATH`.
+- One routed hread call may contain an ordered newline-delimited batch of those existing
+  single-file read specifications.
 - Mutation-owned complete-line, inclusive line-range, and anchored literal targets.
 - Replacement, insertion immediately before or after a target, and deletion without a
   separate selection, cursor, or clipboard protocol.
@@ -42,8 +45,8 @@ wall time must remain close to control.
 - `hpatch`: evaluate one complete script and atomically update the workspace.
 - `hpatch translate`: evaluate the same script and emit its `apply_patch` representation.
 - `hpatch gain`: report persistent edit-encoding and failure metrics.
-- `hpatch-router --mode hpatch|passthrough`: expose the routed hpatch/hread treatment or
-  unchanged control path.
+- `hpatch-router --mode hpatch|passthrough`: expose routed hpatch and single- or
+  multi-item hread treatment, or the unchanged control path.
 - `hpatch-bench validate --manifest TASK.json` and `hpatch-bench run`: validate and run
   paired historical-commit evaluations.
 - `hpatch --help`, `hpatch --tool-help`, `hpatch translate --help`, and

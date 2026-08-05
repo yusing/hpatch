@@ -299,7 +299,7 @@ and one targetless `type VALUE` immediately after `new`.
 Rules worth remembering:
 
 - Use `type` with a nonempty value to replace, `type` with an empty value to delete, `type-` to insert before, and `type+` to insert after.
-- Use search to locate likely edit regions, then use HREAD for their first content read. Issue every independent HREAD call for already-known files or ranges together in one response instead of serializing them, and use only current rows from the exact path.
+- Use search to locate likely edit regions, then use HREAD for their first content read. Put up to 32 already-known files or ranges into one newline-delimited HREAD call, and use only current rows from the exact path.
 - First `in` of a file freezes its immutable invocation baseline. Pending edits never shift later targets.
 - Batch all ready short supporting edits that share a failure domain into one call with repeated `in PATH` sections instead of issuing one call per file. Keep unrelated large `<<PATCH` values in separate calls, with at most one syntax-sensitive multiline Go declaration or function replacement per call; short supporting edits for that same change may remain with it.
 - Prefer the smallest mutation that expresses the semantic change. When a formatter owns formatting, alignment, or indentation, do not replace surrounding lines merely to reproduce its output; let the formatter apply those changes. For example, add one struct field with one insertion rather than replacing the declaration.

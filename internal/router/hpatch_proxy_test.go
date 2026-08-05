@@ -553,7 +553,7 @@ func TestHReadJSONReturnsExecCommandAndRestoresReplay(t *testing.T) {
 	if err := json.Unmarshal([]byte(encodedArguments), &arguments); err != nil {
 		t.Fatalf("decode translated exec arguments: %v\n%s", err, carrierInput)
 	}
-	wantCommand := "hread lines.txt 2:3"
+	wantCommand := `hread '"lines.txt" 2:3'`
 	if arguments.Command != wantCommand {
 		t.Fatalf("translated exec command = %q, want %q", arguments.Command, wantCommand)
 	}
@@ -593,9 +593,27 @@ func TestHReadExecInputQuotesOnlyShellSensitiveArguments(t *testing.T) {
 	if err := json.Unmarshal([]byte(encodedArguments), &arguments); err != nil {
 		t.Fatalf("decode translated exec arguments: %v\n%s", err, carrierInput)
 	}
-	want := `hread 'line'"'"'s $(echo injected).txt' 2:3`
+	want := `hread '"line'"'"'s $(echo injected).txt" 2:3'`
 	if arguments.Command != want {
 		t.Fatalf("translated exec command = %q, want %q", arguments.Command, want)
+	}
+}
+
+func TestHReadExecInputCarriesOneNewlineDelimitedBatchArgument(t *testing.T) {
+	input := "\"alpha.txt\"\n\"beta.txt\" 2:3"
+	carrierInput := hreadExecInput(input)
+	encodedArguments := strings.TrimPrefix(carrierInput, "const result = await tools.exec_command(")
+	encodedArguments = strings.TrimSuffix(encodedArguments, ");\ntext(result.output);")
+
+	var arguments struct {
+		Command string `json:"cmd"`
+	}
+	if err := json.Unmarshal([]byte(encodedArguments), &arguments); err != nil {
+		t.Fatalf("decode translated exec arguments: %v\n%s", err, carrierInput)
+	}
+	want := "hread '\"alpha.txt\"\n\"beta.txt\" 2:3'"
+	if arguments.Command != want {
+		t.Fatalf("translated batch command = %q, want %q", arguments.Command, want)
 	}
 }
 
@@ -610,8 +628,9 @@ func TestHReadExecInputDoesNotRepairMissingRangeSeparator(t *testing.T) {
 	if err := json.Unmarshal([]byte(encodedArguments), &arguments); err != nil {
 		t.Fatalf("decode translated exec arguments: %v\n%s", err, carrierInput)
 	}
-	if arguments.Command != "hread" {
-		t.Fatalf("translated malformed exec command = %q, want worker invocation without repaired arguments", arguments.Command)
+	want := `hread '"file.txt"2:3'`
+	if arguments.Command != want {
+		t.Fatalf("translated malformed exec command = %q, want unchanged grammar input %q", arguments.Command, want)
 	}
 }
 

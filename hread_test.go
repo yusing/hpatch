@@ -45,6 +45,53 @@ func TestReadHashLinesWholeFileAndRange(t *testing.T) {
 	}
 }
 
+func TestReadHashLinesBatchPreservesOrderAndItemErrors(t *testing.T) {
+	rootPath := t.TempDir()
+	writeTestFile(t, rootPath, "alpha.txt", "first\nsecond\n", 0o644)
+	writeTestFile(t, rootPath, "beta.txt", "third\nfourth\n", 0o644)
+	root, err := os.OpenRoot(rootPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+
+	input := "\"alpha.txt\"\n\"missing.txt\"\n\"beta.txt\" 2:99\n\"beta.txt\" 2:1"
+	result, err := ReadHashLinesForHost(t.Context(), Workspace{Root: root}, input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fragments := []string{
+		"==> \"alpha.txt\" <==\n1:" + hashLine("first") + " first\n2:" + hashLine("second") + " second\n",
+		"==> \"missing.txt\" <==\nhread: reading missing.txt:",
+		"==> \"beta.txt\" 2:99 <==\n2:" + hashLine("fourth") + " fourth\n",
+		"==> \"beta.txt\" 2:1 <==\nhread: hread line range start exceeds end\n",
+	}
+	offset := 0
+	for _, fragment := range fragments {
+		index := strings.Index(result.Output[offset:], fragment)
+		if index < 0 {
+			t.Fatalf("batch output lacks ordered fragment %q:\n%s", fragment, result.Output)
+		}
+		offset += index + len(fragment)
+	}
+
+	const batchLimit = 128
+	limited, err := readHashLinesForHost(t.Context(), Workspace{Root: root}, input, batchLimit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(limited.Output) > batchLimit ||
+		!strings.Contains(limited.Output, `==> "alpha.txt" <==`) ||
+		!strings.HasSuffix(limited.Output, hreadBatchLimitMessage) {
+		t.Fatalf("bounded batch = %d bytes, %q", len(limited.Output), limited.Output)
+	}
+
+	tooMany := strings.TrimSuffix(strings.Repeat("\"alpha.txt\"\n", maxHReadBatchItems+1), "\n")
+	if output, err := ReadHashLines(t.Context(), Workspace{Root: root}, tooMany); err == nil || output != "" {
+		t.Fatalf("oversized batch = %q, %v", output, err)
+	}
+}
+
 func TestHashLinesIncludeLeadingIndentation(t *testing.T) {
 	plainHash := hashLine("foo")
 	indentedHash := hashLine("\t\tfoo")

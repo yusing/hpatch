@@ -1,6 +1,7 @@
-start: QUOTED (SP POSINT ":" POSINT)?
+start: read_spec (NL read_spec)*
+read_spec: QUOTED (SP POSINT ":" POSINT)?
 
+NL: /\r?\n/
 POSINT: /[1-9][0-9]*/
 SP: " "
 QUOTED: /"(?:\\(?:["\\\/bfnrt]|u[0-9A-Fa-f]{4})|[^\x00-\x1F"\\]|\t)*"/
-

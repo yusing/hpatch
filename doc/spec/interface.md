@@ -55,12 +55,14 @@ Acceptance:
 ## REQ-READ-001 — Routed verified-row reader
 
 In hpatch router mode, the model receives a read-only `hread` custom tool beside
-`hpatch`. Its grammar-constrained free-form input is a JSON string containing `PATH`,
-optionally followed by a space and `START:END` for an inclusive bounded logical-line
-range, for example `"editor.go" 40:80`. Line endpoints are positive one-based base-ten
-integers and must be ordered. The start line must exist. An end line past EOF returns
-through the final line, while invalid syntax, a missing endpoint, a reversed range, or a
-start line past EOF fails.
+`hpatch`. Its grammar-constrained free-form input contains one to 32 newline-delimited
+read specifications. Each specification is a JSON string containing `PATH`, optionally
+followed by a space and `START:END` for an inclusive bounded logical-line range, for
+example `"editor.go" 40:80`. A single specification remains valid and retains its existing
+output. Line endpoints are positive one-based base-ten integers and must be ordered. The
+start line must exist. An end line past EOF returns through the final line. Invalid syntax or
+a missing endpoint rejects the complete tool input; a reversed range or start past EOF fails
+that item.
 
 The router requires a Code Mode `exec` carrier before forwarding an hpatch-enabled
 request. It creates or reuses one process-scoped executable shell wrapper named `hread`
@@ -74,10 +76,13 @@ absolute paths as the router process. A deployment that isolates their filesyste
 provide those runtime mounts separately from the user workspace.
 
 The wrapper launches a private worker in Codex's exec context. Relative paths resolve
-from the exec process's current directory; absolute paths retain their ordinary
-filesystem meaning. Codex, not the router or hread, owns the sandbox and filesystem
-permissions. The worker accepts only regular UTF-8 files and never mutates them. It emits
-each requested logical line as:
+from the exec process's current directory; absolute paths retain their ordinary filesystem
+meaning. Codex, not the router or hread, owns the sandbox and filesystem permissions.
+The worker accepts only regular UTF-8 files and never mutates them. A single read emits
+only its requested logical lines. A batch emits one non-row header containing the original
+read specification before each item's result, preserves input order, and reports an item's
+read error beneath that header without hiding independent successful items. Every
+successful logical line retains the single-read form:
 
 ```text
 LINE:HASH TEXT
@@ -92,19 +97,24 @@ carrier.
 
 Acceptance:
 
-1. Whole-file and bounded reads emit exact UTF-8 content in source order with deterministic
-   `LINE:HASH` references that can be copied directly into mutation targets. Equal lines
-   at different positions have distinct row references, and indentation changes the hash.
-2. A missing, inaccessible, non-regular, non-UTF-8, malformed-range, reversed-range, or
-   start-past-EOF input returns a read diagnostic without mutation; an end past EOF
-   succeeds through the final line.
+1. A legacy single whole-file or bounded read emits the same exact UTF-8 rows as before.
+   Equal lines at different positions have distinct row references, and indentation changes
+   the hash.
+2. Up to 32 read specifications in one call emit labeled item results in input order.
+   A missing, inaccessible, non-regular, non-UTF-8, reversed-range, or start-past-EOF
+   item reports a read diagnostic without suppressing successful siblings; an end past EOF
+   succeeds through the final line. Invalid batch syntax rejects the complete tool input.
 3. The router restores a replayed `hread` call to the original custom-tool shape just as
    it restores routed hpatch calls, without treating reads as editable correction history.
-4. Reading and whole-file UTF-8 validation use bounded streaming storage, observe
-   cancellation during processing, and reject before formatted output exceeds 16 MiB.
-5. Success returns the worker's exact stdout through a successful Code Mode exec call;
-   read failures return concise stderr and nonzero shell status without incrementing
-   hpatch edit-failure counters.
+4. Reading and whole-file UTF-8 validation use bounded streaming storage and observe
+   cancellation during processing. A single formatted item rejects before exceeding 16 MiB.
+   A batch never exceeds the same complete-call bound; if another result would exceed it,
+   the batch successfully returns its existing rows followed by a diagnostic instructing the
+   agent to retry the remaining items in a narrower batch.
+5. Success returns the worker's exact stdout through a successful Code Mode exec call.
+   A failing legacy single read retains concise stderr and nonzero shell status, while a
+   syntactically valid batch returns per-item diagnostics with successful shell status and
+   does not increment hpatch edit-failure counters.
 6. Turns and retained-session eviction do not create or own wrapper state. Router
    shutdown removes the process wrapper.
 
@@ -729,9 +739,9 @@ diagnostic of a correction chain; later rejection diagnostics in that chain do n
 Both references teach this workflow:
 
 1. Use search to locate relevant regions, then use hread for the first content read of a
-   region likely to be edited. Issue every independent hread call for already-known files
-   or ranges together in one response instead of serializing them, and copy complete
-   `LINE:HASH` references only from current output for that exact path.
+   region likely to be edited. Put up to 32 already-known files or ranges into one
+   newline-delimited hread call, and copy complete `LINE:HASH` references only from current
+   output for that exact path.
 2. Choose a line, inclusive range, or anchored literal target inside the mutation command.
 3. Batch all ready short supporting edits that share a failure domain into one call with
    repeated `in PATH` sections instead of issuing one call per file. Keep unrelated large

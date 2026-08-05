@@ -82,7 +82,7 @@ func TestHPatch2ToolDescriptionCoversSafeCommandChoice(t *testing.T) {
 		"HPATCH/2",
 		"Do not call this tool in parallel with other tools.",
 		"use `hread` for its first content read instead of `sed` or `cat`",
-		"parallel tool-call items in one assistant response",
+		"place their read specifications in one `hread` call",
 		"LINE:HASH TEXT",
 		"copy the complete `LINE:HASH` reference",
 		"Nonempty line and range `type` replacements preserve",
@@ -118,12 +118,13 @@ func TestHPatch2ToolDescriptionCoversSafeCommandChoice(t *testing.T) {
 	}
 }
 
-func TestHReadToolDescriptionRequiresParallelIndependentReads(t *testing.T) {
+func TestHReadToolDescriptionRequiresOneOrderedBatch(t *testing.T) {
 	normalized := strings.Join(strings.Fields(HReadToolDescription()), " ")
 	for _, guidance := range []string{
-		"independent files or ranges are already known",
-		"emit all of their `hread` calls as parallel tool-call items in one assistant response",
-		"do not wait for one result before issuing the others",
+		"up to 32 existing read specifications separated by newlines",
+		"A single specification remains valid",
+		"A batch preserves input order",
+		"without hiding successful siblings",
 	} {
 		if !strings.Contains(normalized, guidance) {
 			t.Errorf("hread tool description omits %q", guidance)

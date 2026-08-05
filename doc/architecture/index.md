@@ -136,16 +136,20 @@ visibility is independent of workspace selection.
 
 The wrapper launches a private child-process mode of the running router binary in Codex's
 exec context. The worker derives relative-path resolution from its actual current
-directory and leaves sandbox and permission enforcement to Codex. It passes the unchanged
-grammar input to the core verified-row owner and returns stdout on success or concise stderr
-with nonzero status on failure.
-Core rendering streams fixed-size chunks, validates UTF-8 across the complete file,
-buffers only selected lines, observes cancellation between reads, and stops before the
-16 MiB formatted-result bound. The outer exec returns the worker's exact output payload;
-the router neither pre-reads the file nor fabricates an `apply_patch` or diagnostic
-envelope. Read calls are replayable but never enter edit correction history or editing
-metrics. The process wrapper is removed at router shutdown. Passthrough mode exposes
-neither replacement tool.
+directory and leaves sandbox and permission enforcement to Codex. It passes the complete
+grammar input unchanged to the core verified-row owner. The core reads batch items
+sequentially, preserves legacy single-read output, and labels ordered batch results so an
+item error does not hide successful siblings.
+
+Core rendering streams fixed-size chunks, validates UTF-8 across each complete file,
+buffers only selected lines, observes cancellation between reads, and keeps the complete
+formatted call within 16 MiB. A single oversized result rejects. A batch reserves room for
+a bounded limit diagnostic, returns already completed rows, and stops successfully before
+another result would cross the call-wide bound. The outer exec returns the worker's exact
+output payload; the router neither pre-reads files nor fabricates an `apply_patch` result.
+Read calls are replayable but never enter edit correction history or editing metrics.
+The process wrapper is removed at router shutdown. Passthrough mode exposes neither
+replacement tool.
 
 The standalone CLI canonicalizes root and cwd, opens the root once, and keeps that
 capability open for the invocation. Library callers pass the already-authorized root and

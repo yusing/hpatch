@@ -16,8 +16,10 @@ import (
 )
 
 const (
-	maxHReadOutputBytes = 16 << 20
-	hreadBufferBytes    = 32 << 10
+	maxHReadOutputBytes    = 16 << 20
+	maxHReadBatchItems     = 32
+	hreadBufferBytes       = 32 << 10
+	hreadBatchLimitMessage = "hread: batch output limit reached; retry remaining items in a narrower batch\n"
 )
 
 var (
@@ -33,52 +35,136 @@ type HashLineReadResult struct {
 	Output string
 }
 
-// ReadHashLines reads one grammar-constrained hread input through workspace and
-// returns verified LINE:HASH logical rows, optionally selected by an absolute
-// numeric input range.
+// ReadHashLines reads one grammar-constrained hread call through workspace and
+// returns verified LINE:HASH logical rows for one or more file specifications.
 func ReadHashLines(ctx context.Context, workspace Workspace, input string) (string, error) {
 	result, err := ReadHashLinesForHost(ctx, workspace, input)
 	return result.Output, err
 }
 
-// ReadHashLinesForHost returns the formatted hread output for host integrations.
-func ReadHashLinesForHost(ctx context.Context, workspace Workspace, input string) (HashLineReadResult, error) {
+func parseHReadSpec(input string) (path string, startLine, endLine int, err error) {
 	path, trailing, err := hpatchsyntax.DecodeQuoted(input)
 	if err != nil {
-		return HashLineReadResult{}, fmt.Errorf("invalid hread path: %w", err)
+		return "", 0, 0, fmt.Errorf("invalid hread path: %w", err)
 	}
 	if path == "" {
-		return HashLineReadResult{}, errors.New("hread path must not be empty")
+		return "", 0, 0, errors.New("hread path must not be empty")
+	}
+	if trailing == "" {
+		return path, 0, 0, nil
+	}
+	match := hreadRangePattern.FindStringSubmatch(trailing)
+	if match == nil {
+		return "", 0, 0, errors.New(`hread input must be "PATH" or "PATH" START:END`)
+	}
+	startLine, err = strconv.Atoi(match[1])
+	if err != nil {
+		return "", 0, 0, errors.New("hread start line is out of range")
+	}
+	endLine, err = strconv.Atoi(match[2])
+	if err != nil {
+		return "", 0, 0, errors.New("hread end line is out of range")
+	}
+	if startLine > endLine {
+		return "", 0, 0, errors.New("hread line range start exceeds end")
+	}
+	return path, startLine, endLine, nil
+}
+
+// ReadHashLinesForHost returns the formatted hread output for host integrations.
+func ReadHashLinesForHost(ctx context.Context, workspace Workspace, input string) (HashLineReadResult, error) {
+	return readHashLinesForHost(ctx, workspace, input, maxHReadOutputBytes)
+}
+
+func readHashLinesForHost(ctx context.Context, workspace Workspace, input string, maxOutputBytes int) (HashLineReadResult, error) {
+	rawSpecs := strings.Split(input, "\n")
+	if len(rawSpecs) > maxHReadBatchItems {
+		return HashLineReadResult{}, fmt.Errorf("hread batch exceeds %d items", maxHReadBatchItems)
 	}
 
-	startLine, endLine := 0, 0
-	if trailing != "" {
-		match := hreadRangePattern.FindStringSubmatch(trailing)
-		if match == nil {
-			return HashLineReadResult{}, errors.New(`hread input must be "PATH" or "PATH" START:END`)
+	type readSpec struct {
+		input              string
+		path               string
+		startLine, endLine int
+		err                error
+	}
+	specs := make([]readSpec, len(rawSpecs))
+	for index, raw := range rawSpecs {
+		raw = strings.TrimSuffix(raw, "\r")
+		if raw == "" {
+			return HashLineReadResult{}, errors.New("hread batch contains an empty read specification")
 		}
-		startLine, err = strconv.Atoi(match[1])
-		if err != nil {
-			return HashLineReadResult{}, errors.New("hread start line is out of range")
+		path, startLine, endLine, err := parseHReadSpec(raw)
+		specs[index] = readSpec{
+			input:     raw,
+			path:      path,
+			startLine: startLine,
+			endLine:   endLine,
+			err:       err,
 		}
-		endLine, err = strconv.Atoi(match[2])
-		if err != nil {
-			return HashLineReadResult{}, errors.New("hread end line is out of range")
-		}
-		if startLine > endLine {
-			return HashLineReadResult{}, errors.New("hread line range start exceeds end")
-		}
+	}
+	if len(specs) == 1 && specs[0].err != nil {
+		return HashLineReadResult{}, specs[0].err
 	}
 
 	filesystem, err := validateWorkspace(ctx, workspace)
 	if err != nil {
 		return HashLineReadResult{}, err
 	}
-	path, err = filesystem.resolvePath(path)
-	if err != nil {
-		return HashLineReadResult{}, err
+	read := func(spec readSpec, limit int) (HashLineReadResult, error) {
+		if spec.err != nil {
+			return HashLineReadResult{}, spec.err
+		}
+		path, err := filesystem.resolvePath(spec.path)
+		if err != nil {
+			return HashLineReadResult{}, err
+		}
+		return filesystem.readHashLines(ctx, path, spec.startLine, spec.endLine, limit)
 	}
-	return filesystem.readHashLines(ctx, path, startLine, endLine)
+	if len(specs) == 1 {
+		return read(specs[0], maxOutputBytes)
+	}
+
+	dataLimit := max(0, maxOutputBytes-len(hreadBatchLimitMessage))
+	var output strings.Builder
+	appendBounded := func(text string) bool {
+		if len(text) > dataLimit-output.Len() {
+			return false
+		}
+		output.WriteString(text)
+		return true
+	}
+	appendLimitMessage := func() {
+		if len(hreadBatchLimitMessage) <= maxOutputBytes-output.Len() {
+			output.WriteString(hreadBatchLimitMessage)
+		}
+	}
+	for _, spec := range specs {
+		if err := ctx.Err(); err != nil {
+			return HashLineReadResult{}, err
+		}
+		if !appendBounded(fmt.Sprintf("==> %s <==\n", spec.input)) {
+			appendLimitMessage()
+			break
+		}
+		result, err := read(spec, dataLimit-output.Len())
+		if contextErr := ctx.Err(); contextErr != nil {
+			return HashLineReadResult{}, contextErr
+		}
+		if errors.Is(err, ErrHReadResultTooLarge) {
+			appendLimitMessage()
+			break
+		}
+		if err != nil {
+			if !appendBounded(fmt.Sprintf("hread: %s\n", err)) {
+				appendLimitMessage()
+				break
+			}
+			continue
+		}
+		output.WriteString(result.Output)
+	}
+	return HashLineReadResult{Output: output.String()}, nil
 }
 
 func (w filesystemWorkspace) openRegularFile(ctx context.Context, path string) (*os.File, fs.FileMode, error) {
@@ -122,14 +208,14 @@ func (w filesystemWorkspace) readFile(ctx context.Context, path string) (loadedF
 	return loadedFile{content: string(content), mode: mode}, nil
 }
 
-func (w filesystemWorkspace) readHashLines(ctx context.Context, path string, startLine, endLine int) (HashLineReadResult, error) {
+func (w filesystemWorkspace) readHashLines(ctx context.Context, path string, startLine, endLine, maxOutputBytes int) (HashLineReadResult, error) {
 	file, _, err := w.openRegularFile(ctx, path)
 	if err != nil {
 		return HashLineReadResult{}, err
 	}
 	defer file.Close()
 
-	return formatHashLineStream(ctx, file, path, startLine, endLine, maxHReadOutputBytes)
+	return formatHashLineStream(ctx, file, path, startLine, endLine, maxOutputBytes)
 }
 
 func formatHashLineStream(

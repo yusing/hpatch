@@ -2,7 +2,6 @@ package router
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -55,14 +54,12 @@ func RunHReadWorker(ctx context.Context, argv0 string, args []string, stdout, st
 		_, _ = fmt.Fprintln(stderr, "hread:", conciseHReadError(err))
 		return true, 1
 	}
-	if len(args) < 1 || len(args) > 2 {
-		return fail(fmt.Errorf(`expected PATH and optional START:END arguments`))
+
+	if len(args) != 1 {
+		return fail(errors.New("expected one hread input argument"))
 	}
-	encodedPath, _ := json.Marshal(args[0]) // Strings are always JSON-encodable.
-	input := string(encodedPath)
-	if len(args) == 2 {
-		input += " " + args[1]
-	}
+	input := args[0]
+
 	cwd, err := os.Getwd()
 	if err != nil {
 		return fail(fmt.Errorf("determine working directory: %w", err))
