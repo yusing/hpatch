@@ -358,6 +358,7 @@ type hpatchResponseTransform struct {
 	carriers                  codeModeCarrierCatalog
 
 	installedToolDefinition  string
+	installedToolBreakdown   []hpatch.HostToolDefinition
 	codeModeToolName         string
 	baselineDefinition       string
 	requestAccountingClaimed bool
@@ -480,6 +481,14 @@ func (p *hpatchProxy) prepareRequest(ctx context.Context, request *parsedRespons
 		workspace.close()
 		return nil, err
 	}
+	installedToolBreakdown := make([]hpatch.HostToolDefinition, len(installedTools))
+	for index, contribution := range p.registry.ordered {
+		installedToolBreakdown[index] = hpatch.HostToolDefinition{
+			PluginID:   contribution.PluginID,
+			ToolName:   contribution.Name,
+			Definition: string(mustMarshalJSON(installedTools[index])),
+		}
+	}
 	baselineDefinition, codeModeToolName, replaced, err := replaceAdditionalToolsApplyPatch(request.fields, installedTools)
 	if err != nil {
 		workspace.close()
@@ -516,6 +525,7 @@ func (p *hpatchProxy) prepareRequest(ctx context.Context, request *parsedRespons
 		carriers:                  carriers,
 
 		installedToolDefinition: string(mustMarshalJSON(installedTools)),
+		installedToolBreakdown:  installedToolBreakdown,
 		codeModeToolName:        codeModeToolName,
 		baselineDefinition:      baselineDefinition,
 	}, nil
@@ -1228,7 +1238,21 @@ func (t *hpatchResponseTransform) translateReadOnlyTool(name, callID, input stri
 			return hpatchHistory{}, fmt.Errorf("hgrep input: %w", err)
 		}
 	}
-	if err := t.recordMetrics(hpatchMetricInputs{overheadOnly: true}); err != nil {
+	metricArguments := workerArguments
+	if name == hreadToolName {
+		metricArguments = []string{input}
+	}
+	if err := t.recordMetrics(hpatchMetricInputs{
+		overheadOnly: true,
+		toolCall: &hpatch.HostToolCall{
+			PluginID:          "builtin.hpatch",
+			ToolName:          name,
+			EmittedName:       name,
+			EmittedInput:      input,
+			TranslatedName:    t.codeModeToolName,
+			TranslatedPayload: workerExecInput(workerExecutable, metricArguments),
+		},
+	}); err != nil {
 		return hpatchHistory{}, err
 	}
 	history := hpatchHistory{
@@ -1278,11 +1302,11 @@ func (t *hpatchResponseTransform) translateRegisteredTool(contribution toolContr
 	kind := codeModeCarrierCustom
 	name := t.codeModeToolName
 	payload := ""
+	diagnostic := translation.Diagnostic
 	if translation.Rejected {
 		if err := t.carriers.require(name, kind); err != nil {
 			return hpatchHistory{}, fmt.Errorf("%s input rejection: %w", contribution.Name, err)
 		}
-		diagnostic := translation.Diagnostic
 		if diagnostic == "" {
 			diagnostic = contribution.Name + " rejected the model input"
 		}
@@ -1324,6 +1348,25 @@ func (t *hpatchResponseTransform) translateRegisteredTool(contribution toolContr
 		}
 	}
 
+	metricCall := &hpatch.HostToolCall{
+		PluginID:          contribution.PluginID,
+		ToolName:          contribution.Name,
+		EmittedName:       contribution.Name,
+		EmittedInput:      input,
+		FailedTranslation: translation.Rejected,
+	}
+	if !translation.Rejected {
+		metricCall.TranslatedName = name
+		metricCall.TranslatedPayload = payload
+	}
+	if err := t.recordMetrics(hpatchMetricInputs{
+		overheadOnly: true,
+		toolCall:     metricCall,
+		diagnostic:   diagnostic,
+	}); err != nil {
+		return hpatchHistory{}, err
+	}
+
 	history := hpatchHistory{
 		toolName:         contribution.Name,
 		pluginID:         contribution.PluginID,
@@ -1332,7 +1375,7 @@ func (t *hpatchResponseTransform) translateRegisteredTool(contribution toolContr
 		carrierKind:      kind,
 		carrierName:      name,
 		carrierPayload:   payload,
-		translationError: translation.Diagnostic,
+		translationError: diagnostic,
 		upstreamItem:     maps.Clone(upstreamItem),
 	}
 	t.recordLocal(callID, &history)
@@ -1430,16 +1473,16 @@ func retainedEvaluated(emitted, evaluated string) string {
 	return evaluated
 }
 
-func (t *hpatchResponseTransform) claimRequestAccounting() (string, string) {
+func (t *hpatchResponseTransform) claimRequestAccounting() (string, []hpatch.HostToolDefinition, string) {
 	if t.requestAccountingClaimed {
-		return "", ""
+		return "", nil, ""
 	}
 	t.requestAccountingClaimed = true
-	return t.installedToolDefinition, t.baselineDefinition
+	return t.installedToolDefinition, slices.Clone(t.installedToolBreakdown), t.baselineDefinition
 }
 
 func (t *hpatchResponseTransform) recordMetrics(inputs hpatchMetricInputs) error {
-	inputs.definition, inputs.baselineDefinition = t.claimRequestAccounting()
+	inputs.definition, inputs.definitions, inputs.baselineDefinition = t.claimRequestAccounting()
 	inputs.sessionID = t.sessionID
 	record, err := calculateHPatchMetricRecord(inputs)
 	if err == nil {

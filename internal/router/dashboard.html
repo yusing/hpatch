@@ -212,7 +212,7 @@ function createGain(root){
   [['success_reduction','Successful reduction'],['overall_reduction','Overall reduction'],['hpatch_all','All hpatch output'],['apply_all','All apply_patch output']].forEach(([key,label])=>{
     const card=element('div','card');card.dataset.metric=key;card.append(element('label','',label),element('strong','','0'));cards.append(card)
   });
-  const output=tableWrap('Output token estimates',['Calls','hpatch','apply_patch','Reduction']);
+  const output=tableWrap('Output token estimates',['Tool','Emitted','Translated','Reduction']);
   const input=tableWrap('Input token estimates',['Source','Tokens','Description'],'desc');
   const commands=tableWrap('Command metrics',['Command','Invocations','Errors','Error rate']);
   const targets=tableWrap('Target metrics',['Target','Invocations','Errors','Error rate']);
@@ -242,20 +242,32 @@ function updateGain(root,gain,gainError){
   root.querySelector('.card[data-metric="overall_reduction"] strong').textContent=`${g.overall_reduction_percent||'0.0'}%`;
   root.querySelector('.card[data-metric="hpatch_all"] strong').textContent=uintText(sumPair(g.hpatch_tokens,g.ineffective_hpatch_tokens));
   root.querySelector('.card[data-metric="apply_all"] strong').textContent=uintText(sumPair(g.apply_patch_tokens,g.failed_apply_patch_tokens));
-  fillRows(root.gain.output,[
-    {key:'successful',cells:['successful',uintText(g.hpatch_tokens),uintText(g.apply_patch_tokens),`${g.successful_reduction_percent||'0.0'}%`]},
-    {key:'failed',cells:['failed',uintText(g.ineffective_hpatch_tokens),uintText(g.failed_apply_patch_tokens),'n/a']},
-    {key:'all',cells:['all',uintText(sumPair(g.hpatch_tokens,g.ineffective_hpatch_tokens)),uintText(sumPair(g.apply_patch_tokens,g.failed_apply_patch_tokens)),`${g.overall_reduction_percent||'0.0'}%`]}
-  ]);
+  const outputRows=(g.tools||[]).map(entry=>({
+    key:`${entry.plugin_id}\0${entry.tool_name}\0${entry.failed}`,
+    cells:[`${entry.plugin_id}/${entry.tool_name}${entry.failed?' failed':''}`,uintText(entry.emitted_tokens),uintText(entry.translated_tokens),entry.reduction_percent==='n/a'?'n/a':`${entry.reduction_percent}%`]
+  }));
+  const all=g.all_tools||{};
+  outputRows.push({key:'all-tools',cells:['all-tools',uintText(all.emitted_tokens),uintText(all.translated_tokens),all.reduction_percent==='n/a'?'n/a':`${all.reduction_percent||'0.0'}%`]});
+  fillRows(root.gain.output,outputRows);
   const removed=nonNeg(g.removed_definition_input_tokens);
-  fillRows(root.gain.input,[
+  const inputRows=[
     {key:'state',cells:['state reports',uintText(g.report_input_tokens),'final state returned after successful calls']},
     {key:'diag',cells:['failure diagnostics',uintText(g.diagnostic_input_tokens),'errors and repair context returned after failed calls']},
-    {key:'def',cells:['hpatch definition installed',uintText(g.definition_input_tokens),'standalone tool definition added by the router']},
+    {key:'def',cells:['installed tool definitions',uintText(g.definition_input_tokens),'exact serialized collection installed by the router']}
+  ];
+  (g.tool_definitions||[]).forEach(entry=>inputRows.push({
+    key:`def\0${entry.plugin_id}\0${entry.tool_name}`,
+    cells:[`  ${entry.plugin_id}/${entry.tool_name}`,uintText(entry.tokens),'descriptive child of the installed-definition total']
+  }));
+  if(nonNeg(g.definition_requests)!==0){
+    inputRows.push({key:'framing',cells:['  shared framing',String(g.shared_definition_tokens),'shared collection serialization needed to reconcile installed definitions']})
+  }
+  inputRows.push(
     {key:'removed',cells:['apply_patch definition removed',removed?`-${fmt.format(removed)}`:'0','exact Code Mode section removed by the router']},
     {key:'net',cells:['net added input',g.net_added_input||'0','measured additions minus the removed definition']}
-  ]);
-  root.gain.note.textContent='Failed apply_patch output uses the empty-patch semantic baseline.';
+  );
+  fillRows(root.gain.input,inputRows);
+  root.gain.note.textContent='Failed hpatch translation uses the empty-patch semantic baseline; other router rejections have no translated carrier.';
   root.gain.definition.textContent=`Definition routing covers ${uintText(g.definition_requests)} accounted request(s) in ${uintText(g.sessions)} distinct session(s) (${g.definition_sources||'not measured (missing caller session)'}).`;
   const commandRows=(g.commands||[]).map(entry=>({key:entry.name,cells:[entry.name,uintText(entry.invocations),uintText(entry.errors),`${entry.error_rate_percent||'0.0'}%`]}));
   const total=commandTotal(g.commands);
@@ -272,6 +284,8 @@ function updateGain(root,gain,gainError){
 function validNamedCommand(entry){return entry&&typeof entry==='object'&&typeof entry.name==='string'&&typeof entry.invocations==='number'&&typeof entry.errors==='number'&&typeof entry.error_rate_percent==='string'}
 function validNamedCount(entry){return entry&&typeof entry==='object'&&typeof entry.name==='string'&&typeof entry.count==='number'}
 function validCommandReason(entry){return entry&&typeof entry==='object'&&typeof entry.command==='string'&&typeof entry.reason==='string'&&typeof entry.errors==='number'}
+function validToolGain(entry){return entry&&typeof entry==='object'&&typeof entry.plugin_id==='string'&&typeof entry.tool_name==='string'&&typeof entry.failed==='boolean'&&typeof entry.calls==='number'&&typeof entry.emitted_tokens==='number'&&typeof entry.translated_tokens==='number'&&typeof entry.reduction_percent==='string'}
+function validToolDefinition(entry){return entry&&typeof entry==='object'&&typeof entry.plugin_id==='string'&&typeof entry.tool_name==='string'&&typeof entry.tokens==='number'}
 function validGain(gain){
   return gain&&typeof gain==='object'&&!Array.isArray(gain)
     &&typeof gain.hpatch_tokens==='number'&&typeof gain.apply_patch_tokens==='number'
@@ -281,6 +295,8 @@ function validGain(gain){
     &&typeof gain.definition_input_tokens==='number'&&typeof gain.removed_definition_input_tokens==='number'
     &&typeof gain.net_added_input==='string'&&typeof gain.sessions==='number'&&typeof gain.definition_requests==='number'
     &&typeof gain.definition_sources==='string'
+    &&Array.isArray(gain.tools)&&gain.tools.every(validToolGain)&&validToolGain(gain.all_tools)
+    &&Array.isArray(gain.tool_definitions)&&gain.tool_definitions.every(validToolDefinition)&&typeof gain.shared_definition_tokens==='number'
     &&Array.isArray(gain.commands)&&gain.commands.every(validNamedCommand)
     &&Array.isArray(gain.targets)&&gain.targets.every(validNamedCommand)
     &&Array.isArray(gain.reasons)&&gain.reasons.every(validNamedCount)

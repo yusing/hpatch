@@ -370,6 +370,7 @@ func TestMetricsSnapshotIncludesDurableGain(t *testing.T) {
 	if err := hpatch.RecordHostMetrics(t.Context(), dataDirectory, hpatch.HostMetricRecord{
 		HPatchTokens:     20,
 		ApplyPatchTokens: 50,
+		ToolMetrics:      []hpatch.ToolMetricRecord{{PluginID: "builtin.hpatch", ToolName: "hpatch", Calls: 1, EmittedTokens: 20, TranslatedTokens: 50}},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -377,6 +378,9 @@ func TestMetricsSnapshotIncludesDurableGain(t *testing.T) {
 	snapshot := store.snapshot()
 	if snapshot.Gain.HPatchTokens != 20 || snapshot.Gain.ApplyPatchTokens != 50 || snapshot.Gain.SuccessfulReduction != "60.0" {
 		t.Fatalf("gain snapshot = %#v", snapshot.Gain)
+	}
+	if len(snapshot.Gain.Tools) != 1 || snapshot.Gain.Tools[0].ToolName != "hpatch" || snapshot.Gain.AllTools.TranslatedTokens != 50 {
+		t.Fatalf("per-tool gain snapshot = %#v", snapshot.Gain)
 	}
 	if snapshot.GainError != "" {
 		t.Fatalf("gain error = %q", snapshot.GainError)

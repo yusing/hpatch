@@ -20,6 +20,27 @@ func gainReport(m metrics) string {
 	return gainReportAtWidth(m, defaultGainReportWidth)
 }
 
+func toolPersistenceFixture() metrics {
+	value := metrics{ToolCount: 1}
+	value.Tools[0] = toolMetric{
+		PluginID: "example.plugin", ToolName: "example_tool",
+		Calls: 1, EmittedTokens: 3, TranslatedTokens: 7,
+		FailedTranslations: 1, FailedEmittedTokens: 2,
+	}
+	return value
+}
+
+func TestMetricsRejectInvalidToolCollectionBeforeCreatingStore(t *testing.T) {
+	dataDirectory := filepath.Join(t.TempDir(), "metrics")
+	err := updateMetrics(dataDirectory, metrics{ToolCount: maxMetricTools + 1})
+	if err == nil || !strings.Contains(err.Error(), "invalid command, feature, or tool counters") {
+		t.Fatalf("updateMetrics() error = %v", err)
+	}
+	if _, statErr := os.Stat(dataDirectory); !os.IsNotExist(statErr) {
+		t.Fatalf("invalid metrics created data directory: %v", statErr)
+	}
+}
+
 func TestGainReportsPersistedTotals(t *testing.T) {
 	root := t.TempDir()
 	dataDirectory := t.TempDir()
@@ -82,24 +103,25 @@ func TestGainReportReconcilesEffectiveAndIneffectiveTokens(t *testing.T) {
 		DefinitionInputTokens:        100,
 		RemovedDefinitionInputTokens: 30,
 
-		Sessions:           2,
-		DefinitionRequests: 3,
+		Sessions:                    2,
+		DefinitionRequests:          3,
+		SharedDefinitionInputTokens: 100,
 	}
 	report := gainReport(metricValues)
+	compactReport := strings.Join(strings.Fields(report), " ")
 	for _, want := range []string{
-		"output token estimates:\n",
-		"successful  2404    4764         49.5%\n",
-		"failed      2172    300          n/a\n",
-		"all         4576    5064         9.6%\n",
-		"input token estimates:\n",
-		"hpatch definition installed",
-
+		"output token estimates:",
+		"builtin.hpatch/hpatch 2404 4764 49.5%",
+		"builtin.hpatch/hpatch failed 2172 300 n/a",
+		"all-tools 4576 5064 9.6%",
+		"input token estimates:",
+		"installed tool definitions",
 		"apply_patch definition removed",
 		"net added input",
-		"definition routing covers 3 accounted request(s)",
+		"Definition routing covers 3 accounted request(s)",
 		"installation and removal measured",
 	} {
-		if !strings.Contains(report, want) {
+		if !strings.Contains(compactReport, want) {
 			t.Fatalf("gain report %q does not contain %q", report, want)
 		}
 	}
@@ -107,7 +129,7 @@ func TestGainReportReconcilesEffectiveAndIneffectiveTokens(t *testing.T) {
 	for _, want := range []string{
 		"state reports 11",
 		"failure diagnostics 13",
-		"hpatch definition installed 100",
+		"installed tool definitions 100",
 
 		"apply_patch definition removed -30",
 		"net added input 94",
@@ -139,7 +161,7 @@ func TestGainReportReconcilesEffectiveAndIneffectiveTokens(t *testing.T) {
 			for _, text := range []string{
 				"final state returned after successful calls",
 				"errors and repair context returned after failed calls",
-				"hpatch and hread tool definitions added by the router",
+				"exact serialized collection installed by the router",
 
 				"exact Code Mode section removed by the router",
 				"measured additions minus the removed definition",
@@ -150,9 +172,11 @@ func TestGainReportReconcilesEffectiveAndIneffectiveTokens(t *testing.T) {
 			}
 		})
 	}
-	overflowSafe := gainReport(metrics{HPatchTokens: ^uint64(0), IneffectiveHPatchTokens: ^uint64(0), ApplyPatchTokens: ^uint64(0), FailedApplyPatchTokens: ^uint64(0)})
-	if !strings.Contains(overflowSafe, "36893488147419103230") {
-		t.Fatalf("overflow-safe gain report = %q", overflowSafe)
+	overflow := metrics{ToolCount: 2}
+	overflow.Tools[0] = toolMetric{PluginID: "a", ToolName: "one", EmittedTokens: ^uint64(0)}
+	overflow.Tools[1] = toolMetric{PluginID: "b", ToolName: "two", EmittedTokens: 1}
+	if err := updateMetrics(t.TempDir(), overflow); err == nil || !strings.Contains(err.Error(), "invalid command, feature, or tool counters") {
+		t.Fatalf("aggregate tool overflow error = %v", err)
 	}
 	precise := metrics{HPatchTokens: 9214148664817921031, ApplyPatchTokens: ^uint64(0)}
 	if got := precise.reduction(); got != "50.1" {
@@ -187,7 +211,8 @@ func TestLoadGainMetricsMatchesGainReportTotals(t *testing.T) {
 		DefinitionInputTokens:        11,
 		RemovedDefinitionInputTokens: 9,
 
-		SessionID: "session-gain",
+		SessionID:   "session-gain",
+		ToolMetrics: []ToolMetricRecord{{PluginID: "builtin.hpatch", ToolName: "hpatch", DefinitionInputTokens: 11}},
 	})
 	entry := metrics{}
 	entry.Commands[commandOperationIndex("type+")].Invocations = 1
@@ -336,7 +361,7 @@ func TestHostRecordCombinesEffectiveAndIneffectiveOutput(t *testing.T) {
 	if got != want {
 		t.Fatalf("host metrics = %+v, want %+v", got, want)
 	}
-	if report := gainReport(got); !strings.Contains(report, "failed      30      10") || !strings.Contains(report, "all         70      110") {
+	if report := strings.Join(strings.Fields(gainReport(got)), " "); !strings.Contains(report, "builtin.hpatch/hpatch failed 30 10 n/a") || !strings.Contains(report, "all-tools 70 110 36.4%") {
 		t.Fatalf("gain report does not include host-accounted outcomes: %q", report)
 	}
 }
@@ -433,7 +458,8 @@ func TestGainRejectsCorruptMetrics(t *testing.T) {
 
 func TestMetricsRecoversPreviousSlotAfterTornWrite(t *testing.T) {
 	dataDirectory := t.TempDir()
-	want := metrics{HPatchTokens: 5, ApplyPatchTokens: 9}
+	want := toolPersistenceFixture()
+	want.HPatchTokens, want.ApplyPatchTokens = 5, 9
 	if err := updateMetrics(dataDirectory, want); err != nil {
 		t.Fatal(err)
 	}
@@ -481,7 +507,8 @@ func TestMetricsConcurrentReadersAndWriters(t *testing.T) {
 		writesPerWriter = 20
 		readers         = 8
 	)
-	entry := metrics{HPatchTokens: 3, ApplyPatchTokens: 7, ReportInputTokens: 2}
+	entry := toolPersistenceFixture()
+	entry.HPatchTokens, entry.ApplyPatchTokens, entry.ReportInputTokens = 3, 7, 2
 	entry.Commands[commandOperationIndex("new")] = commandMetric{Invocations: 1}
 
 	start := make(chan struct{})
@@ -539,7 +566,12 @@ func TestMetricsConcurrentReadersAndWriters(t *testing.T) {
 		t.Fatal(err)
 	}
 	wantWrites := uint64(writers * writesPerWriter)
-	want := metrics{HPatchTokens: wantWrites * entry.HPatchTokens, ApplyPatchTokens: wantWrites * entry.ApplyPatchTokens, ReportInputTokens: wantWrites * entry.ReportInputTokens}
+	want := metrics{HPatchTokens: wantWrites * entry.HPatchTokens, ApplyPatchTokens: wantWrites * entry.ApplyPatchTokens, ReportInputTokens: wantWrites * entry.ReportInputTokens, ToolCount: 1}
+	want.Tools[0] = toolMetric{
+		PluginID: "example.plugin", ToolName: "example_tool",
+		Calls: wantWrites, EmittedTokens: wantWrites * 3, TranslatedTokens: wantWrites * 7,
+		FailedTranslations: wantWrites, FailedEmittedTokens: wantWrites * 2,
+	}
 	want.Commands[commandOperationIndex("new")] = commandMetric{Invocations: wantWrites}
 	if got != want {
 		t.Fatalf("metrics = %+v, want %+v", got, want)
@@ -683,7 +715,8 @@ func TestMalformedMismatchedMetricsVersionDoesNotReset(t *testing.T) {
 
 func TestMismatchedMetricsVersionDoesNotOverrideCurrent(t *testing.T) {
 	dataDirectory := t.TempDir()
-	want := metrics{HPatchTokens: 5, ApplyPatchTokens: 9}
+	want := toolPersistenceFixture()
+	want.HPatchTokens, want.ApplyPatchTokens = 5, 9
 	current := encodeMetricsSlot(want, 1)
 	mismatched := rewriteMetricsMagic(encodeMetricsSlot(metrics{HPatchTokens: 7, ApplyPatchTokens: 11}, 2))
 	content := append(current[:], mismatched[:]...)

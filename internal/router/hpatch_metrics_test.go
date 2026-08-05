@@ -51,7 +51,7 @@ func TestCalculateHPatchMetricRecordUsesExactCallerPayloads(t *testing.T) {
 	if got, want := record.HPatchTokens, count("functions.hpatch\n"+inputs.emittedScript); got != want {
 		t.Fatalf("hpatch tokens = %d, want %d", got, want)
 	}
-	applyPatchPayload := applyPatchMetricPayload(patch)
+	applyPatchPayload := "functions.exec\n" + applyPatchMetricProgram(patch)
 	if got, want := record.ApplyPatchTokens, count(applyPatchPayload); got != want {
 		t.Fatalf("apply_patch tokens = %d, want %d", got, want)
 	}
@@ -70,10 +70,10 @@ func TestCalculateHPatchMetricRecordUsesExactCallerPayloads(t *testing.T) {
 	if got, want := record.baseCommandTokens, count(inputs.correction.baseCommands[0])+count(inputs.correction.baseCommands[1]); got != want {
 		t.Fatalf("base command tokens = %d, want %d", got, want)
 	}
-	if got, want := record.DefinitionInputTokens, count("hpatch definition"); got != want {
+	if got, want := record.DefinitionInputTokens, count(inputs.definition); got != want {
 		t.Fatalf("definition tokens = %d, want %d", got, want)
 	}
-	if got, want := record.RemovedDefinitionInputTokens, count("apply_patch definition"); got != want {
+	if got, want := record.RemovedDefinitionInputTokens, count(inputs.baselineDefinition); got != want {
 		t.Fatalf("removed definition tokens = %d, want %d", got, want)
 	}
 	if record.IneffectiveHPatchTokens != 0 || record.FailedApplyPatchTokens != 0 || record.DiagnosticInputTokens != 0 {
@@ -109,7 +109,7 @@ func TestCalculateHPatchMetricRecordUsesEmptyFailureBaseline(t *testing.T) {
 	if got, want := record.IneffectiveHPatchTokens, count("functions.hpatch\n"+inputs.emittedScript); got != want {
 		t.Fatalf("ineffective hpatch tokens = %d, want %d", got, want)
 	}
-	failedPayload := applyPatchMetricPayload(failedApplyPatch)
+	failedPayload := "functions.exec\n" + applyPatchMetricProgram(failedApplyPatch)
 	if got, want := record.FailedApplyPatchTokens, count(failedPayload); got != want {
 		t.Fatalf("failed apply_patch tokens = %d, want %d", got, want)
 	}

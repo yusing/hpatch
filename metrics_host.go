@@ -42,10 +42,13 @@ type HostMetricRecord struct {
 	DefinitionRequests           uint64
 	DefinitionInputTokens        uint64
 	RemovedDefinitionInputTokens uint64
+	ToolMetrics                  []ToolMetricRecord
+	SharedDefinitionInputTokens  int64
+	AuxiliaryTokens              uint64
 }
 
-func (r HostMetricRecord) entry() metrics {
-	return metrics{
+func (r HostMetricRecord) entry() (metrics, error) {
+	entry := metrics{
 		invocationMetrics:       r.Invocation.value,
 		HPatchTokens:            r.HPatchTokens,
 		ApplyPatchTokens:        r.ApplyPatchTokens,
@@ -57,7 +60,26 @@ func (r HostMetricRecord) entry() metrics {
 		DefinitionRequests:           r.DefinitionRequests,
 		DefinitionInputTokens:        r.DefinitionInputTokens,
 		RemovedDefinitionInputTokens: r.RemovedDefinitionInputTokens,
+		SharedDefinitionInputTokens:  r.SharedDefinitionInputTokens,
 	}
+	for _, record := range r.ToolMetrics {
+		if err := validateMetricToolKey(record.PluginID, record.ToolName); err != nil {
+			return metrics{}, err
+		}
+		if err := entry.addTool(toolMetric{
+			PluginID: record.PluginID, ToolName: record.ToolName,
+			DefinitionInputTokens: record.DefinitionInputTokens, Calls: record.Calls,
+			EmittedTokens: record.EmittedTokens, TranslatedTokens: record.TranslatedTokens,
+			FailedTranslations: record.FailedTranslations, FailedEmittedTokens: record.FailedEmittedTokens,
+			FailedTranslatedTokens: record.FailedTranslatedTokens,
+		}); err != nil {
+			return metrics{}, err
+		}
+	}
+	if !validToolMetrics(entry) {
+		return metrics{}, fmt.Errorf("host tool metrics are inconsistent")
+	}
+	return entry, nil
 }
 
 // RecordHostMetrics persists one complete host-accounted call.
@@ -71,11 +93,23 @@ func RecordHostMetrics(ctx context.Context, dataDirectory string, record HostMet
 	if record.DefinitionRequests > 1 {
 		return fmt.Errorf("host metrics contain more than one definition request")
 	}
-	if record.DefinitionRequests == 0 && (record.DefinitionInputTokens != 0 || record.RemovedDefinitionInputTokens != 0) {
-		return fmt.Errorf("host definition token counts require a definition request")
+	if record.DefinitionRequests == 0 {
+		if record.DefinitionInputTokens != 0 || record.RemovedDefinitionInputTokens != 0 ||
+			record.SharedDefinitionInputTokens != 0 {
+			return fmt.Errorf("host definition token counts require a definition request")
+		}
+		for _, tool := range record.ToolMetrics {
+			if tool.DefinitionInputTokens != 0 {
+				return fmt.Errorf("host definition token counts require a definition request")
+			}
+		}
 	}
 	if record.SessionID == "" && record.DefinitionRequests != 0 {
 		return fmt.Errorf("host definition metrics require a session")
 	}
-	return updateMetricsForSessionContext(ctx, dataDirectory, record.entry(), record.SessionID)
+	entry, err := record.entry()
+	if err != nil {
+		return err
+	}
+	return updateMetricsForSessionContext(ctx, dataDirectory, entry, record.SessionID)
 }

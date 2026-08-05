@@ -24,12 +24,16 @@ import (
 const (
 	metricsFilename = "metrics.bin"
 	metricsLockname = "metrics.lock"
-	metricsMagic    = "HPATCH23"
+	metricsMagic    = "HPATCH24"
 
-	metricsSlotSize         = 2432
+	metricsToolOffset       = 1280
+	metricsToolEntrySize    = 256
+	metricsChecksumOffset   = metricsToolOffset + maxMetricTools*metricsToolEntrySize
+	metricsSlotSize         = metricsChecksumOffset + sha256.Size
 	metricsFileSize         = 2 * metricsSlotSize
-	metricsChecksumOffset   = 2400
-	metricsDiagnosticOffset = 2384
+	metricsDiagnosticOffset = 1248
+	metricsToolCountOffset  = 1256
+	metricsSharedOffset     = 1264
 
 	commandCount          = 7
 	metricsLockRetryDelay = 10 * time.Millisecond
@@ -116,11 +120,14 @@ type metrics struct {
 	// change. DefinitionRequests counts every request carrying that context.
 	Sessions           uint64
 	DefinitionRequests uint64
-	// DefinitionInputTokens is the cumulative once-per-session hpatch definition
-	// added by the router. RemovedDefinitionInputTokens is the corresponding
-	// once-per-session Code Mode apply_patch section removed by the router.
+	// DefinitionInputTokens is the cumulative once-per-session installed tool
+	// collection added by the router. RemovedDefinitionInputTokens is the
+	// corresponding Code Mode apply_patch definition removed by the router.
 	DefinitionInputTokens        uint64
 	RemovedDefinitionInputTokens uint64
+	SharedDefinitionInputTokens  int64
+	ToolCount                    uint16
+	Tools                        [maxMetricTools]toolMetric
 }
 
 func commandOperationIndex(operation string) int {
@@ -154,8 +161,8 @@ func updateMetricsForSessionContext(ctx context.Context, dataDirectory string, e
 	if dataDirectory == "" {
 		return fmt.Errorf("metrics directory is unavailable")
 	}
-	if !validInvocationMetrics(entry.invocationMetrics) {
-		return fmt.Errorf("updating metrics: invalid command or feature counters")
+	if !validInvocationMetrics(entry.invocationMetrics) || !validToolMetrics(entry) {
+		return fmt.Errorf("updating metrics: invalid command, feature, or tool counters")
 	}
 	if err := os.MkdirAll(dataDirectory, 0o700); err != nil {
 		return fmt.Errorf("creating metrics directory: %w", err)
@@ -212,8 +219,7 @@ func updateMetricsForSessionContext(ctx context.Context, dataDirectory string, e
 		if fresh {
 			entry.Sessions = 1
 		} else {
-			entry.DefinitionInputTokens = 0
-			entry.RemovedDefinitionInputTokens = 0
+			entry.clearDefinitionMetrics()
 		}
 	}
 	if err := total.add(entry); err != nil {
@@ -251,6 +257,14 @@ func (m *metrics) add(entry metrics) error {
 			return fmt.Errorf("updating metrics: token count overflow")
 		}
 	}
+	if !addSignedCounter(&m.SharedDefinitionInputTokens, entry.SharedDefinitionInputTokens) {
+		return fmt.Errorf("updating metrics: shared definition framing overflow")
+	}
+	for _, tool := range entry.Tools[:entry.ToolCount] {
+		if err := m.addTool(tool); err != nil {
+			return err
+		}
+	}
 	for index := range commandCount {
 		if !addCommandMetric(&m.Commands[index], entry.Commands[index]) {
 			return fmt.Errorf("updating metrics: command count overflow")
@@ -273,8 +287,8 @@ func (m *metrics) add(entry metrics) error {
 			}
 		}
 	}
-	if !validInvocationMetrics(m.invocationMetrics) {
-		return fmt.Errorf("updating metrics: aggregate command or feature counters are inconsistent")
+	if !validInvocationMetrics(m.invocationMetrics) || !validToolMetrics(*m) {
+		return fmt.Errorf("updating metrics: aggregate command, feature, or tool counters are inconsistent")
 	}
 	return nil
 }
@@ -431,6 +445,7 @@ func hasValidPriorMetricsSlot(file *os.File, size int64) (bool, error) {
 		checksumOffset int
 		checksumSize   int
 	}{
+		{slotSize: 2432, checksumOffset: 2400, checksumSize: 32},
 		{slotSize: 2304, checksumOffset: 2272, checksumSize: 32},
 		{slotSize: 264, checksumOffset: 232, checksumSize: 32},
 		{slotSize: 2160, checksumOffset: 2128, checksumSize: 32},
@@ -486,6 +501,7 @@ func encodeMetricsSlot(value metrics, generation uint64) [metricsSlotSize]byte {
 		}
 	}
 	binary.LittleEndian.PutUint64(encoded[metricsDiagnosticOffset:metricsDiagnosticOffset+8], value.DiagnosticInputTokens)
+	encodeToolMetrics(encoded[:], value)
 
 	checksum := sha256.Sum256(encoded[:metricsChecksumOffset])
 	copy(encoded[metricsChecksumOffset:], checksum[:])
@@ -536,7 +552,10 @@ func decodeMetricsSlot(encoded [metricsSlotSize]byte) (metrics, uint64, bool) {
 			value.CommandReasons[command][reason] = binary.LittleEndian.Uint64(encoded[base+reason*8 : base+reason*8+8])
 		}
 	}
-	if !validInvocationMetrics(value.invocationMetrics) {
+	if !decodeToolMetrics(encoded[:], &value) {
+		return metrics{}, 0, false
+	}
+	if !validInvocationMetrics(value.invocationMetrics) || !validToolMetrics(value) {
 		return metrics{}, 0, false
 	}
 	return value, generation, true
@@ -617,6 +636,11 @@ type GainMetrics struct {
 	DefinitionRequests uint64 `json:"definition_requests"`
 	DefinitionSources  string `json:"definition_sources"`
 
+	Tools                  []ToolGainMetric           `json:"tools"`
+	AllTools               ToolGainMetric             `json:"all_tools"`
+	ToolDefinitions        []ToolDefinitionGainMetric `json:"tool_definitions"`
+	SharedDefinitionTokens int64                      `json:"shared_definition_tokens"`
+
 	Commands       []NamedCommandMetric  `json:"commands"`
 	Targets        []NamedCommandMetric  `json:"targets"`
 	Reasons        []NamedCount          `json:"reasons"`
@@ -641,6 +665,7 @@ func LoadGainMetrics(dataDirectory string) (GainMetrics, error) {
 // gainMetrics projects the same aggregate gainReportAtWidth formats for hosts
 // that need structured fields (dashboard JSON) instead of terminal text.
 func (m metrics) gainMetrics() GainMetrics {
+	tools, allTools, toolDefinitions := m.gainToolRows()
 	added := new(big.Int).SetUint64(m.ReportInputTokens)
 	for _, count := range []uint64{m.DiagnosticInputTokens, m.DefinitionInputTokens} {
 		added.Add(added, new(big.Int).SetUint64(count))
@@ -701,14 +726,18 @@ func (m metrics) gainMetrics() GainMetrics {
 		DefinitionInputTokens:        m.DefinitionInputTokens,
 		RemovedDefinitionInputTokens: m.RemovedDefinitionInputTokens,
 
-		NetAddedInput:      net.String(),
-		Sessions:           m.Sessions,
-		DefinitionRequests: m.DefinitionRequests,
-		DefinitionSources:  describeDefinitionSources(m),
-		Commands:           commands,
-		Targets:            targets,
-		Reasons:            reasons,
-		CommandReasons:     commandReasons,
+		NetAddedInput:          net.String(),
+		Sessions:               m.Sessions,
+		DefinitionRequests:     m.DefinitionRequests,
+		DefinitionSources:      describeDefinitionSources(m),
+		Tools:                  tools,
+		AllTools:               allTools,
+		ToolDefinitions:        toolDefinitions,
+		SharedDefinitionTokens: m.SharedDefinitionInputTokens,
+		Commands:               commands,
+		Targets:                targets,
+		Reasons:                reasons,
+		CommandReasons:         commandReasons,
 	}
 }
 
@@ -740,20 +769,25 @@ func gainReportAtWidth(m metrics, width int) string {
 }
 
 func writeOutputGainTable(report *strings.Builder, m metrics) {
-	totalHPatch := new(big.Int).SetUint64(m.HPatchTokens)
-	totalHPatch.Add(totalHPatch, new(big.Int).SetUint64(m.IneffectiveHPatchTokens))
-	totalApplyPatch := new(big.Int).SetUint64(m.ApplyPatchTokens)
-	totalApplyPatch.Add(totalApplyPatch, new(big.Int).SetUint64(m.FailedApplyPatchTokens))
-
+	tools, allTools, _ := m.gainToolRows()
 	report.WriteString("output token estimates:\n")
 	table := tabwriter.NewWriter(report, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(table, "calls\thpatch\tapply_patch\treduction")
-	fmt.Fprintln(table, "-----\t------\t-----------\t---------")
-	fmt.Fprintf(table, "successful\t%d\t%d\t%s%%\n", m.HPatchTokens, m.ApplyPatchTokens, m.reduction())
-	fmt.Fprintf(table, "failed\t%d\t%d\tn/a\n", m.IneffectiveHPatchTokens, m.FailedApplyPatchTokens)
-	fmt.Fprintf(table, "all\t%s\t%s\t%s%%\n", totalHPatch, totalApplyPatch, m.overallReduction())
+	fmt.Fprintln(table, "tool\temitted\ttranslated\treduction")
+	fmt.Fprintln(table, "----\t-------\t----------\t---------")
+	for _, row := range tools {
+		reduction := row.Reduction
+		if reduction != "n/a" {
+			reduction += "%"
+		}
+		fmt.Fprintf(table, "%s\t%d\t%d\t%s\n", toolMetricLabel(row.PluginID, row.ToolName, row.Failed), row.EmittedTokens, row.TranslatedTokens, reduction)
+	}
+	allReduction := allTools.Reduction
+	if allReduction != "n/a" {
+		allReduction += "%"
+	}
+	fmt.Fprintf(table, "all-tools\t%d\t%d\t%s\n", allTools.EmittedTokens, allTools.TranslatedTokens, allReduction)
 	_ = table.Flush()
-	report.WriteString("failed apply_patch output uses the empty-patch semantic baseline.\n\n")
+	report.WriteString("Failed hpatch translation uses the empty-patch semantic baseline; other router rejections have no translated carrier.\n\n")
 }
 
 func writeInputGainTable(report *strings.Builder, m metrics, width int) {
@@ -762,23 +796,39 @@ func writeInputGainTable(report *strings.Builder, m metrics, width int) {
 		added.Add(added, new(big.Int).SetUint64(count))
 	}
 	removed := new(big.Int).SetUint64(m.RemovedDefinitionInputTokens)
-
 	net := new(big.Int).Sub(new(big.Int).Set(added), removed)
 
 	removedText := "0"
 	if m.RemovedDefinitionInputTokens != 0 {
 		removedText = "-" + strconv.FormatUint(m.RemovedDefinitionInputTokens, 10)
 	}
-	report.WriteString("input token estimates:\n")
-	writeWrappedTable(report, width, []string{"source", "tokens", "description"}, [][]string{
+	rows := [][]string{
 		{"state reports", strconv.FormatUint(m.ReportInputTokens, 10), "final state returned after successful calls"},
 		{"failure diagnostics", strconv.FormatUint(m.DiagnosticInputTokens, 10), "errors and repair context returned after failed calls"},
-		{"hpatch definition installed", strconv.FormatUint(m.DefinitionInputTokens, 10), "hpatch and hread tool definitions added by the router"},
-
-		{"apply_patch definition removed", removedText, "exact Code Mode section removed by the router"},
-		{"net added input", net.String(), "measured additions minus the removed definition"},
-	})
-	writeWrappedText(report, width, fmt.Sprintf("definition routing covers %d accounted request(s) in %d distinct session(s) (%s).", m.DefinitionRequests, m.Sessions, describeDefinitionSources(m)))
+		{"installed tool definitions", strconv.FormatUint(m.DefinitionInputTokens, 10), "exact serialized collection installed by the router"},
+	}
+	_, _, definitions := m.gainToolRows()
+	for _, definition := range definitions {
+		rows = append(rows, []string{
+			"  " + toolMetricLabel(definition.PluginID, definition.ToolName, false),
+			strconv.FormatUint(definition.Tokens, 10),
+			"descriptive child of the installed-definition total",
+		})
+	}
+	if m.DefinitionRequests != 0 {
+		rows = append(rows, []string{
+			"  shared framing",
+			formatSignedMetric(m.SharedDefinitionInputTokens),
+			"shared collection serialization needed to reconcile installed definitions",
+		})
+	}
+	rows = append(rows,
+		[]string{"apply_patch definition removed", removedText, "exact Code Mode section removed by the router"},
+		[]string{"net added input", net.String(), "measured additions minus the removed definition"},
+	)
+	report.WriteString("input token estimates:\n")
+	writeWrappedTable(report, width, []string{"source", "tokens", "description"}, rows)
+	writeWrappedText(report, width, fmt.Sprintf("Definition routing covers %d accounted request(s) in %d distinct session(s) (%s).", m.DefinitionRequests, m.Sessions, describeDefinitionSources(m)))
 	report.WriteByte('\n')
 }
 

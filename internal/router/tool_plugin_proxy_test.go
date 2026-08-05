@@ -2,6 +2,7 @@ package router
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"maps"
@@ -9,6 +10,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/tiktoken-go/tokenizer"
+	"github.com/yusing/hpatch"
 )
 
 const testToolPluginDeclaration = `export default {
@@ -192,6 +196,116 @@ func TestToolPluginRequestJSONAndReplay(t *testing.T) {
 	if err := proxy.restoreInputPrefix(&replay, transform.historySessionID); err == nil ||
 		!strings.Contains(err.Error(), "changed translated payload") {
 		t.Fatalf("tampered replay error = %v", err)
+	}
+}
+
+func TestToolPluginMetricsUseOriginalAndValidatedCarrierShapes(t *testing.T) {
+	codec, err := tokenizer.ForModel(tokenizer.GPT5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	count := func(value string) uint64 {
+		t.Helper()
+		got, countErr := codec.Count(value)
+		if countErr != nil {
+			t.Fatal(countErr)
+		}
+		return uint64(got)
+	}
+	run := func(input string) (hpatchMetricRecord, string) {
+		t.Helper()
+		transform, proxy, _ := newToolPluginTestTransform(t)
+		var records []hpatchMetricRecord
+		proxy.translator = metricsObservingTranslator{
+			translate: func(context.Context, routingWorkspace, string) ([]byte, error) {
+				t.Fatal("plugin call reached hpatch translation")
+				return nil, nil
+			},
+			record: func(_ context.Context, record hpatchMetricRecord) error {
+				records = append(records, record)
+				return nil
+			},
+		}
+		response, transformErr := transform.TransformJSON(mustTestJSON(t, map[string]any{
+			"status": "completed",
+			"output": []any{testToolPluginItem(input)},
+		}))
+		if transformErr != nil {
+			t.Fatal(transformErr)
+		}
+		visible := decodeResponseItem(t, response)
+		if len(records) != 1 {
+			t.Fatalf("metric records = %d, want 1", len(records))
+		}
+		return records[0], jsonString(visible, "input")
+	}
+
+	success, payload := run("execute")
+	var successTool *hpatch.ToolMetricRecord
+	for index := range success.ToolMetrics {
+		if success.ToolMetrics[index].PluginID == "proxy.test" && success.ToolMetrics[index].ToolName == "plugin_tool" {
+			successTool = &success.ToolMetrics[index]
+			break
+		}
+	}
+	if successTool == nil || successTool.Calls != 1 ||
+		successTool.EmittedTokens != count("plugin_tool\nexecute") ||
+		successTool.TranslatedTokens != count("exec\n"+payload) ||
+		successTool.FailedTranslations != 0 {
+		t.Fatalf("successful plugin metric = %+v, payload %q", successTool, payload)
+	}
+	if success.DefinitionRequests != 1 || len(success.ToolMetrics) != 4 {
+		t.Fatalf("installed definition breakdown = %+v", success)
+	}
+
+	rejected, _ := run("reject")
+	var rejectedTool *hpatch.ToolMetricRecord
+	for index := range rejected.ToolMetrics {
+		if rejected.ToolMetrics[index].PluginID == "proxy.test" && rejected.ToolMetrics[index].ToolName == "plugin_tool" {
+			rejectedTool = &rejected.ToolMetrics[index]
+			break
+		}
+	}
+	if rejectedTool == nil || rejectedTool.FailedTranslations != 1 ||
+		rejectedTool.FailedEmittedTokens != count("plugin_tool\nreject") ||
+		rejectedTool.FailedTranslatedTokens != 0 || rejectedTool.Calls != 0 ||
+		rejected.DiagnosticInputTokens == 0 {
+		t.Fatalf("rejected plugin metric = %+v, record %+v", rejectedTool, rejected)
+	}
+}
+
+func TestToolPluginMetricPersistenceFailuresDoNotChangeCarriers(t *testing.T) {
+	for _, test := range []struct {
+		name         string
+		input        string
+		wantFragment string
+	}{
+		{name: "successful translation", input: "execute", wantFragment: "tools.exec_command"},
+		{name: "input rejection", input: "reject", wantFragment: "fixture input rejected"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			transform, proxy, _ := newToolPluginTestTransform(t)
+			proxy.translator = metricsObservingTranslator{
+				translate: func(context.Context, routingWorkspace, string) ([]byte, error) {
+					t.Fatal("plugin call reached hpatch translation")
+					return nil, nil
+				},
+				record: func(context.Context, hpatchMetricRecord) error {
+					return errors.New("metrics unavailable")
+				},
+			}
+			response, err := transform.TransformJSON(mustTestJSON(t, map[string]any{
+				"status": "completed",
+				"output": []any{testToolPluginItem(test.input)},
+			}))
+			if err != nil {
+				t.Fatal(err)
+			}
+			visible := decodeResponseItem(t, response)
+			if jsonString(visible, "name") != "exec" || !strings.Contains(jsonString(visible, "input"), test.wantFragment) {
+				t.Fatalf("carrier after metrics failure = %#v", visible)
+			}
+		})
 	}
 }
 

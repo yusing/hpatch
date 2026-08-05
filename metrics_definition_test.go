@@ -19,6 +19,7 @@ func TestDefinitionCountsOncePerCallerSession(t *testing.T) {
 		DefinitionRequests:           1,
 		DefinitionInputTokens:        17,
 		RemovedDefinitionInputTokens: 11,
+		ToolMetrics:                  []ToolMetricRecord{{PluginID: "builtin.hpatch", ToolName: "hpatch", DefinitionInputTokens: 17}},
 	}
 	for range 3 {
 		recordHostMetricForTest(t, dataDirectory, record)
@@ -99,17 +100,15 @@ func TestFailedOutputBelongsOnlyToHPatch(t *testing.T) {
 	if got := value.overallReduction(); got != "36.4" {
 		t.Fatalf("overall reduction = %s, want 36.4", got)
 	}
-	report := gainReport(value)
+	report := strings.Join(strings.Fields(gainReport(value)), " ")
 	for _, want := range []string{
-		"failed      30      10           n/a\n",
-		"all         70      110          36.4%\n",
+		"builtin.hpatch/hpatch failed 30 10 n/a",
+		"all-tools 70 110 36.4%",
+		"Failed hpatch translation uses the empty-patch semantic baseline",
 	} {
 		if !strings.Contains(report, want) {
 			t.Fatalf("gain report %q does not contain %q", report, want)
 		}
-	}
-	if !strings.Contains(report, "failed apply_patch output uses the empty-patch semantic baseline.") {
-		t.Fatalf("gain report does not identify the failed-call baseline: %q", report)
 	}
 }
 

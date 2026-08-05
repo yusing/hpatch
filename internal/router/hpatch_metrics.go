@@ -1,12 +1,8 @@
 package router
 
 import (
-	"fmt"
-	"slices"
 	"strconv"
-	"strings"
 
-	"github.com/tiktoken-go/tokenizer"
 	"github.com/yusing/hpatch"
 )
 
@@ -34,89 +30,54 @@ type hpatchMetricInputs struct {
 
 	definition         string
 	baselineDefinition string
+	definitions        []hpatch.HostToolDefinition
+	toolCall           *hpatch.HostToolCall
 	successful         bool
 	overheadOnly       bool
 }
 
-func hpatchMetricPayload(script string) string {
-	return "functions.hpatch\n" + script
-}
-
-func applyPatchMetricPayload(patch string) string {
-	return "functions.exec\nconst result = await tools.apply_patch(" + strconv.Quote(patch) + ");\ntext(result);"
+func applyPatchMetricProgram(patch string) string {
+	return "const result = await tools.apply_patch(" + strconv.Quote(patch) + ");\ntext(result);"
 }
 
 func calculateHPatchMetricRecord(inputs hpatchMetricInputs) (hpatchMetricRecord, error) {
-	codec, err := tokenizer.ForModel(tokenizer.GPT5)
-	if err != nil {
-		return hpatchMetricRecord{}, fmt.Errorf("load GPT-5 tokenizer: %w", err)
+	call := inputs.toolCall
+	if !inputs.overheadOnly && call == nil {
+		patch := inputs.patch
+		if !inputs.successful {
+			patch = failedApplyPatch
+		}
+		call = &hpatch.HostToolCall{
+			PluginID:          "builtin.hpatch",
+			ToolName:          hpatchToolName,
+			EmittedName:       "functions.hpatch",
+			EmittedInput:      inputs.emittedScript,
+			TranslatedName:    "functions.exec",
+			TranslatedPayload: applyPatchMetricProgram(patch),
+			FailedTranslation: !inputs.successful,
+		}
 	}
-	record := hpatchMetricRecord{
-		HostMetricRecord: hpatch.HostMetricRecord{
-			Invocation: inputs.invocation,
-			Rejections: slices.Clone(inputs.rejections),
-			Attempt:    inputs.attempt,
-			SessionID:  inputs.sessionID,
-		},
+	classified, err := hpatch.ClassifyHostMetrics(hpatch.HostMetricInput{
+		Invocation:          inputs.invocation,
+		Rejections:          inputs.rejections,
+		Attempt:             inputs.attempt,
+		SessionID:           inputs.sessionID,
+		InstalledDefinition: inputs.definition,
+		ToolDefinitions:     inputs.definitions,
+		RemovedDefinition:   inputs.baselineDefinition,
+		ToolCall:            call,
+		StateReport:         inputs.report,
+		Diagnostic:          inputs.diagnostic,
+		AuxiliaryTexts:      inputs.correction.baseCommands,
+	})
+	if err != nil {
+		return hpatchMetricRecord{}, err
+	}
+	return hpatchMetricRecord{
+		HostMetricRecord:   classified,
 		correctionScope:    inputs.correction.scope,
 		valueRowOperations: inputs.correction.valueRowOperations,
 		baseValueRows:      inputs.correction.baseValueRows,
-	}
-	for _, command := range inputs.correction.baseCommands {
-		count, countErr := countHPatchMetricText(codec, command, "corrected base command")
-		if countErr != nil {
-			return hpatchMetricRecord{}, countErr
-		}
-		record.baseCommandTokens += count
-	}
-	if !inputs.overheadOnly {
-		if inputs.successful {
-			if record.HPatchTokens, err = countHPatchMetricText(codec, hpatchMetricPayload(inputs.emittedScript), "hpatch output"); err != nil {
-				return hpatchMetricRecord{}, err
-			}
-			if record.ApplyPatchTokens, err = countHPatchMetricText(codec, applyPatchMetricPayload(inputs.patch), "apply_patch output"); err != nil {
-				return hpatchMetricRecord{}, err
-			}
-			if record.ReportInputTokens, err = countHPatchMetricText(codec, inputs.report, "state report input"); err != nil {
-				return hpatchMetricRecord{}, err
-			}
-		} else {
-			if record.IneffectiveHPatchTokens, err = countHPatchMetricText(codec, hpatchMetricPayload(inputs.emittedScript), "ineffective hpatch output"); err != nil {
-				return hpatchMetricRecord{}, err
-			}
-			if record.FailedApplyPatchTokens, err = countHPatchMetricText(codec, applyPatchMetricPayload(failedApplyPatch), "failed apply_patch output"); err != nil {
-				return hpatchMetricRecord{}, err
-			}
-			if record.DiagnosticInputTokens, err = countHPatchMetricText(codec, inputs.diagnostic, "diagnostic input"); err != nil {
-				return hpatchMetricRecord{}, err
-			}
-		}
-	}
-	definition := strings.TrimRight(inputs.definition, "\n")
-	baseline := strings.TrimRight(inputs.baselineDefinition, "\n")
-	if inputs.sessionID == "" || (definition == "" && baseline == "") {
-		return record, nil
-	}
-	record.DefinitionRequests = 1
-	if record.DefinitionInputTokens, err = countHPatchMetricText(codec, definition, "hpatch definition input"); err != nil {
-		return hpatchMetricRecord{}, err
-	}
-	if record.RemovedDefinitionInputTokens, err = countHPatchMetricText(codec, baseline, "removed apply_patch definition input"); err != nil {
-		return hpatchMetricRecord{}, err
-	}
-	return record, nil
-}
-
-func countHPatchMetricText(codec tokenizer.Codec, value, description string) (uint64, error) {
-	if value == "" {
-		return 0, nil
-	}
-	count, err := codec.Count(value)
-	if err != nil {
-		return 0, fmt.Errorf("count %s: %w", description, err)
-	}
-	if count < 0 {
-		return 0, fmt.Errorf("count %s: negative token count", description)
-	}
-	return uint64(count), nil
+		baseCommandTokens:  classified.AuxiliaryTokens,
+	}, nil
 }

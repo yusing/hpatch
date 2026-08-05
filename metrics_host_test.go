@@ -129,6 +129,7 @@ func TestHostMetricRecordPersistsCompleteCallerEntry(t *testing.T) {
 		DefinitionRequests:           1,
 		DefinitionInputTokens:        13,
 		RemovedDefinitionInputTokens: 9,
+		ToolMetrics:                  []ToolMetricRecord{{PluginID: "builtin.hpatch", ToolName: "hpatch", DefinitionInputTokens: 13}},
 	}
 	if err := RecordHostMetrics(t.Context(), dataDirectory, record); err != nil {
 		t.Fatal(err)
@@ -153,6 +154,8 @@ func TestHostMetricRecordPersistsCompleteCallerEntry(t *testing.T) {
 		DefinitionInputTokens:        13,
 		RemovedDefinitionInputTokens: 9,
 	}
+	want.ToolCount = 1
+	want.Tools[0] = toolMetric{PluginID: "builtin.hpatch", ToolName: "hpatch", DefinitionInputTokens: 13}
 	want.Commands[commandOperationIndex("new")].Invocations = 2
 	if got != want {
 		t.Fatalf("persisted host metrics = %+v, want %+v", got, want)
@@ -166,6 +169,8 @@ func TestRecordHostMetricsRejectsInvalidDefinitionAttribution(t *testing.T) {
 		want   string
 	}{
 		{name: "definition tokens without request", record: HostMetricRecord{DefinitionInputTokens: 1}, want: "require a definition request"},
+		{name: "shared definition tokens without request", record: HostMetricRecord{SharedDefinitionInputTokens: 1}, want: "require a definition request"},
+		{name: "tool definition tokens without request", record: HostMetricRecord{ToolMetrics: []ToolMetricRecord{{PluginID: "example.plugin", ToolName: "tool", DefinitionInputTokens: 1}}}, want: "require a definition request"},
 		{name: "definition request without session", record: HostMetricRecord{DefinitionRequests: 1}, want: "require a session"},
 		{name: "too many definition requests", record: HostMetricRecord{SessionID: "s", DefinitionRequests: 2}, want: "more than one"},
 	}

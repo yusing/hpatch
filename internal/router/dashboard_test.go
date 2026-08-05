@@ -56,6 +56,12 @@ func TestDashboardIsSelfContainedAndProtectedByCSP(t *testing.T) {
 	if !strings.Contains(body, "--paper:#0f0f0f") {
 		t.Fatal("dashboard is not dark mode")
 	}
+	if !strings.Contains(body, "validToolGain") || !strings.Contains(body, "g.tools") || !strings.Contains(body, "all-tools") {
+		t.Fatal("dashboard does not validate and reconcile per-tool gain rows")
+	}
+	if !strings.Contains(body, "installed tool definitions") || !strings.Contains(body, "shared framing") {
+		t.Fatal("dashboard does not expose the reconciling definition breakdown")
+	}
 }
 
 func TestDashboardRejectsUnrelatedPaths(t *testing.T) {
