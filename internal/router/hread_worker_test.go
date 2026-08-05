@@ -35,6 +35,29 @@ func TestRunHReadWorkerUsesCompleteInputArgument(t *testing.T) {
 	}
 }
 
+func TestRunHReadWorkerAcceptsSeparatePathAndRangeArguments(t *testing.T) {
+	workspace := t.TempDir()
+	if err := os.WriteFile(filepath.Join(workspace, "path with spaces.txt"), []byte("alpha\nbeta\r\ngamma"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(workspace)
+
+	var stdout, stderr bytes.Buffer
+	handled, exitCode := RunHReadWorker(
+		t.Context(),
+		hreadExecutableName,
+		[]string{"path with spaces.txt", "2:3"},
+		&stdout,
+		&stderr,
+	)
+	if !handled || exitCode != 0 || stderr.Len() != 0 {
+		t.Fatalf("worker = handled %t, exit %d, stderr %q", handled, exitCode, stderr.String())
+	}
+	if got, want := stdout.String(), "2:f44e beta\n3:be9d gamma\n"; got != want {
+		t.Fatalf("worker output = %q, want %q", got, want)
+	}
+}
+
 func TestRunHReadWorkerAcceptsCompleteBatchInput(t *testing.T) {
 	workspace := t.TempDir()
 	if err := os.WriteFile(filepath.Join(workspace, "alpha.txt"), []byte("alpha\n"), 0o644); err != nil {
@@ -79,9 +102,9 @@ func TestRunHReadWorkerReturnsConciseFailures(t *testing.T) {
 		want    string
 		notWant string
 	}{
-		{name: "missing input", want: "expected one hread input"},
+		{name: "missing input", want: "expected PATH"},
 		{name: "missing file", args: []string{`"missing.txt"`}, want: "missing.txt", notWant: "openat missing.txt"},
-		{name: "too many arguments", args: []string{`"file.txt"`, "extra"}, want: "expected one hread input"},
+		{name: "too many arguments", args: []string{"file.txt", "1:2", "extra"}, want: "expected PATH"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			var stdout, stderr bytes.Buffer
