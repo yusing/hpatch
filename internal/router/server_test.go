@@ -17,6 +17,7 @@ import (
 	"sync/atomic"
 	"testing"
 	"testing/iotest"
+	"testing/synctest"
 	"time"
 )
 
@@ -517,6 +518,7 @@ func assertServerLifecycleFinished(t *testing.T, requests requestLifecycleMetric
 		requests.CanceledBeforeResponse +
 		requests.CanceledAfterResponse +
 		requests.TimedOut +
+		requests.StreamIdleTimedOut +
 		requests.BackgroundPending
 	if requests.Active != 0 || terminal != requests.Started {
 		t.Fatalf("lifecycle invariant failed: %#v", requests)
@@ -713,6 +715,160 @@ func (body *serverBlockingSSEBody) Read(content []byte) (int, error) {
 
 func (*serverBlockingSSEBody) Close() error { return nil }
 
+type serverBlockingWriter struct {
+	blocked chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+func (writer *serverBlockingWriter) Write(content []byte) (int, error) {
+	writer.once.Do(func() { close(writer.blocked) })
+	<-writer.release
+	return len(content), nil
+}
+
+func TestStreamIdleTimeoutPausesDuringDownstreamBackpressure(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		upstreamReader, upstreamWriter := io.Pipe()
+		stream := newStreamIdleReadCloser(t.Context(), upstreamReader, time.Minute)
+		defer func() { _ = stream.Close() }()
+		defer func() { _ = upstreamWriter.Close() }()
+
+		downstream := &serverBlockingWriter{blocked: make(chan struct{}), release: make(chan struct{})}
+		type copyResult struct {
+			state responseTerminalState
+			err   error
+		}
+		result := make(chan copyResult, 1)
+		go func() {
+			state, err := copySSETransformed(downstream, stream, nil, nil)
+			result <- copyResult{state: state, err: err}
+		}()
+
+		if _, err := io.WriteString(upstreamWriter, "event: response.created\ndata: {\"type\":\"response.created\"}\n\n"); err != nil {
+			t.Fatal(err)
+		}
+		<-downstream.blocked
+		upstreamResult := make(chan error, 1)
+		go func() {
+			_, err := io.WriteString(upstreamWriter, "event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\"}}\n\n")
+			upstreamResult <- err
+		}()
+		synctest.Wait()
+		time.Sleep(2 * time.Minute)
+		synctest.Wait()
+		if stream.timedOut.Load() {
+			t.Fatal("upstream stream timed out while downstream processing was blocked")
+		}
+
+		close(downstream.release)
+		if err := <-upstreamResult; err != nil {
+			t.Fatal(err)
+		}
+		got := <-result
+		if got.err != nil {
+			t.Fatal(got.err)
+		}
+		if got.state != responseTerminalCompleted {
+			t.Fatalf("terminal state = %s, want completed", got.state)
+		}
+	})
+}
+
+func TestStreamIdleTimeoutResetsOnPartialSSEBytes(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		upstreamReader, upstreamWriter := io.Pipe()
+		stream := newStreamIdleReadCloser(t.Context(), upstreamReader, time.Minute)
+		defer func() { _ = stream.Close() }()
+		defer func() { _ = upstreamWriter.Close() }()
+
+		type copyResult struct {
+			state responseTerminalState
+			err   error
+		}
+		result := make(chan copyResult, 1)
+		go func() {
+			state, err := copySSETransformed(io.Discard, stream, nil, nil)
+			result <- copyResult{state: state, err: err}
+		}()
+
+		for _, fragment := range []string{
+			"event: response.",
+			"completed\n",
+			"data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\"}}\n",
+			"\n",
+		} {
+			if _, err := io.WriteString(upstreamWriter, fragment); err != nil {
+				t.Fatal(err)
+			}
+			synctest.Wait()
+			time.Sleep(45 * time.Second)
+		}
+
+		got := <-result
+		if got.err != nil {
+			t.Fatal(got.err)
+		}
+		if got.state != responseTerminalCompleted {
+			t.Fatalf("terminal state = %s, want completed", got.state)
+		}
+	})
+}
+
+func TestExecuteRequestStreamIdleTimeoutLifecycle(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		upstreamReader, upstreamWriter := io.Pipe()
+		defer func() { _ = upstreamWriter.Close() }()
+
+		response := &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+			Body:       newStreamIdleReadCloser(t.Context(), upstreamReader, time.Minute),
+		}
+		provider := &serverFakeProvider{results: []serverForwardResult{{response: response}}}
+		store := newMetricsStore("")
+		recorder := httptest.NewRecorder()
+		writer := &trackedResponseWriter{ResponseWriter: recorder}
+		var logOutput bytes.Buffer
+		result := make(chan error, 1)
+		go func() {
+			result <- executeRequest(
+				t.Context(), t.Context(),
+				serverRequest(t, func(request map[string]any) { request["stream"] = true }),
+				http.Header{}, "idle-session", provider, writer, newDiagnostics(&logOutput),
+				serverLifecycleClock(0, 5*time.Millisecond, 35*time.Millisecond), nil, store,
+			)
+		}()
+
+		if _, err := io.WriteString(upstreamWriter, "event: response.created\ndata: {\"type\":\"response.created\"}\n\n"); err != nil {
+			t.Fatal(err)
+		}
+		synctest.Wait()
+		time.Sleep(time.Minute)
+		synctest.Wait()
+
+		err := <-result
+		if !errors.Is(err, errUpstreamStreamIdleTimeout) {
+			t.Fatalf("error = %v, want stream idle timeout", err)
+		}
+
+		requests := store.snapshot().Requests
+		assertServerLifecycleFinished(t, requests)
+		if requests.StreamIdleTimedOut != 1 || requests.Failed != 0 ||
+			requests.TimedOut != 0 || requests.CanceledAfterResponse != 0 {
+			t.Fatalf("stream idle lifecycle = %#v", requests)
+		}
+		if session := serverSessionLifecycle(t, store, "idle-session"); session.StreamIdleTimedOut != 1 {
+			t.Fatalf("session stream idle lifecycle = %#v", session)
+		}
+		if logs := logOutput.String(); !strings.Contains(logs, "outcome=stream_idle_timed_out") ||
+			!strings.Contains(logs, "failure_phase=stream_idle_timeout") ||
+			!strings.Contains(logs, "response_started=true") {
+			t.Fatalf("stream idle terminal log = %q", logs)
+		}
+	})
+}
+
 func TestCopySSETransformedKeepsMalformedStateInvalid(t *testing.T) {
 	completed := mustTestJSON(t, map[string]any{
 		"type":     "response.completed",
@@ -752,9 +908,9 @@ func TestExecuteRequestCancellationAfterResponseLifecycle(t *testing.T) {
 		return &http.Response{
 			StatusCode: http.StatusOK,
 			Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
-			Body: &serverBlockingSSEBody{
+			Body: newStreamIdleReadCloser(executionCtx, &serverBlockingSSEBody{
 				ctx: executionCtx, content: strings.NewReader("event: response.created\ndata: {\"type\":\"response.created\"}\n\n"), blocked: blocked,
-			},
+			}, time.Hour),
 		}, nil
 	})
 	ctx, cancel := context.WithCancel(t.Context())
@@ -1145,9 +1301,13 @@ func TestProviderClientForwardsCodexAuthenticationAndRequestHeaders(t *testing.T
 		return serverHTTPResponse("{}"), nil
 	})}
 	client := newProviderClient(testProviderBaseURL, httpClient)
+	client.streamIdleTimeout = time.Minute
 	response, err := client.forwardExecution(t.Context(), t.Context(), []byte("{}"), headers, "cache-key")
 	if err != nil {
 		t.Fatal(err)
+	}
+	if _, ok := response.Body.(*streamIdleReadCloser); !ok {
+		t.Fatalf("response body = %T, want stream idle wrapper", response.Body)
 	}
 	if err := response.Body.Close(); err != nil {
 		t.Fatal(err)
@@ -1355,6 +1515,13 @@ func (writer *cancelOnWrite) Write(content []byte) (int, error) {
 func TestRunRejectsUnknownModeBeforeListening(t *testing.T) {
 	err := Run(t.Context(), []string{"--mode", "unknown"}, io.Discard)
 	if err == nil || !strings.Contains(err.Error(), "--mode must be hpatch or passthrough") {
+		t.Fatalf("Run error = %v", err)
+	}
+}
+
+func TestRunRejectsNonPositiveStreamIdleTimeoutBeforeListening(t *testing.T) {
+	err := Run(t.Context(), []string{"--stream-idle-timeout", "0"}, io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "--stream-idle-timeout must be positive") {
 		t.Fatalf("Run error = %v", err)
 	}
 }

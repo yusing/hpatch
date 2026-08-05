@@ -17,13 +17,14 @@ import (
 )
 
 const (
-	defaultListenAddress   = "127.0.0.1:8080"
-	defaultRewriteMode     = "hpatch"
-	defaultRequestTimeout  = 10 * time.Minute
-	requestBodyReadTimeout = 30 * time.Second
-	shutdownTimeout        = 5 * time.Second
-	maxResponsesRequest    = 32 << 20
-	maxModelsResponseBytes = 8 << 20
+	defaultListenAddress     = "127.0.0.1:8080"
+	defaultRewriteMode       = "hpatch"
+	defaultRequestTimeout    = 10 * time.Minute
+	defaultStreamIdleTimeout = 4 * time.Minute
+	requestBodyReadTimeout   = 30 * time.Second
+	shutdownTimeout          = 5 * time.Second
+	maxResponsesRequest      = 32 << 20
+	maxModelsResponseBytes   = 8 << 20
 )
 
 var errUpstreamResponseWithoutTerminal = errors.New("upstream Responses response ended without a terminal state")
@@ -33,6 +34,7 @@ func Run(ctx context.Context, args []string, stderr io.Writer) (runErr error) {
 	flags.SetOutput(stderr)
 	listenAddress := flags.String("listen", defaultListenAddress, "HTTP listen address")
 	timeout := flags.Duration("timeout", defaultRequestTimeout, "upstream response-start timeout")
+	streamIdleTimeout := flags.Duration("stream-idle-timeout", defaultStreamIdleTimeout, "maximum upstream response-stream inactivity between bytes")
 	mode := flags.String("mode", defaultRewriteMode, "response mode: hpatch or passthrough")
 	if err := flags.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -49,9 +51,13 @@ func Run(ctx context.Context, args []string, stderr io.Writer) (runErr error) {
 	if *timeout <= 0 {
 		return errors.New("--timeout must be positive")
 	}
+	if *streamIdleTimeout <= 0 {
+		return errors.New("--stream-idle-timeout must be positive")
+	}
 
 	log := newDiagnostics(stderr)
 	provider := newProviderClient(codexBaseURL, nil)
+	provider.streamIdleTimeout = *streamIdleTimeout
 	var gainDirectory string
 	var hpatchCalls *hpatchProxy
 	if *mode == "hpatch" {
@@ -236,6 +242,7 @@ const (
 	requestFailurePrepare            requestFailurePhase = "prepare"
 	requestFailureForward            requestFailurePhase = "forward"
 	requestFailureInspectResponse    requestFailurePhase = "inspect_response"
+	requestFailureStreamIdleTimeout  requestFailurePhase = "stream_idle_timeout"
 	requestFailureTransform          requestFailurePhase = "transform"
 	requestFailureWriteResponse      requestFailurePhase = "write_response"
 	requestFailureTerminalValidation requestFailurePhase = "terminal_validation"
@@ -271,11 +278,16 @@ func (f *requestFinalization) finish(
 		case errors.Is(requestErr, context.DeadlineExceeded):
 			f.observation.outcome = requestOutcomeTimedOut
 		case errors.Is(requestErr, context.Canceled) && errors.Is(ctx.Err(), context.Canceled):
+			if errors.Is(requestErr, errUpstreamStreamIdleTimeout) {
+				f.failurePhase = requestFailureInspectResponse
+			}
 			if responseStarted {
 				f.observation.outcome = requestOutcomeCanceledAfterResponse
 			} else {
 				f.observation.outcome = requestOutcomeCanceledBeforeResponse
 			}
+		case errors.Is(requestErr, errUpstreamStreamIdleTimeout):
+			f.observation.outcome = requestOutcomeStreamIdleTimedOut
 		default:
 			f.observation.outcome = requestOutcomeFailed
 		}
@@ -308,6 +320,8 @@ func requestResponseStarted(output io.Writer) bool {
 
 func (f *requestFinalization) classifyCopyError(err error) {
 	switch {
+	case errors.Is(err, errUpstreamStreamIdleTimeout):
+		f.failurePhase = requestFailureStreamIdleTimeout
 	case errors.Is(err, errResponseTransform):
 		f.failurePhase = requestFailureTransform
 	case errors.Is(err, errResponseWrite):

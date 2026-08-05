@@ -114,6 +114,7 @@ Defaults:
 | --- | --- |
 | Listen | `127.0.0.1:8080` (`--listen`) |
 | Upstream start timeout | `10m` (`--timeout`) |
+| Upstream stream idle timeout | `4m` per blocked upstream read (`--stream-idle-timeout`); resets on byte progress, pauses during downstream processing, and imposes no total-duration limit |
 | Auth | `~/.codex/auth.json`, or `$CODEX_HOME/auth.json` |
 | Metrics / hooks | `$XDG_CONFIG_HOME/hpatch` or `~/.config/hpatch` |
 | Endpoints | `POST /v1/responses`, `GET /` (dashboard), `GET /api/metrics` |

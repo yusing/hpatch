@@ -16,6 +16,8 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -38,9 +40,10 @@ const (
 )
 
 var (
-	utf8BOM              = []byte{0xef, 0xbb, 0xbf}
-	errResponseTransform = errors.New("transform upstream response")
-	errResponseWrite     = errors.New("write downstream response")
+	utf8BOM                      = []byte{0xef, 0xbb, 0xbf}
+	errResponseTransform         = errors.New("transform upstream response")
+	errResponseWrite             = errors.New("write downstream response")
+	errUpstreamStreamIdleTimeout = errors.New("upstream response stream idle timeout")
 )
 
 type responseProvider interface {
@@ -48,8 +51,9 @@ type responseProvider interface {
 }
 
 type providerClient struct {
-	httpClient *http.Client
-	baseURL    string
+	httpClient        *http.Client
+	baseURL           string
+	streamIdleTimeout time.Duration
 }
 
 func newProviderClient(baseURL string, supplied *http.Client) *providerClient {
@@ -146,7 +150,11 @@ func (c *providerClient) forwardExecution(startCtx, responseCtx context.Context,
 				}
 				return context.Canceled
 			}
-			response.Body = &cancelOnCloseReadCloser{body: response.Body, cancel: cancelRequest}
+			var body io.ReadCloser = &cancelOnCloseReadCloser{body: response.Body, cancel: cancelRequest}
+			if c.streamIdleTimeout > 0 {
+				body = newStreamIdleReadCloser(responseCtx, body, c.streamIdleTimeout)
+			}
+			response.Body = body
 			return nil
 		}
 		if response.StatusCode >= http.StatusOK && response.StatusCode < http.StatusMultipleChoices {
@@ -215,6 +223,53 @@ func (r *cancelOnCloseReadCloser) Close() error {
 	err := r.body.Close()
 	r.cancel()
 	return err
+}
+
+type streamIdleReadCloser struct {
+	ctx       context.Context
+	body      io.ReadCloser
+	timeout   time.Duration
+	timedOut  atomic.Bool
+	closeOnce sync.Once
+	closeErr  error
+}
+
+func newStreamIdleReadCloser(ctx context.Context, body io.ReadCloser, timeout time.Duration) *streamIdleReadCloser {
+	return &streamIdleReadCloser{ctx: ctx, body: body, timeout: timeout}
+}
+
+func (r *streamIdleReadCloser) Read(buffer []byte) (int, error) {
+	if r.timedOut.Load() {
+		return 0, errUpstreamStreamIdleTimeout
+	}
+	expired := make(chan struct{})
+	timer := time.AfterFunc(r.timeout, func() {
+		r.timedOut.Store(true)
+		_ = r.closeBody()
+		close(expired)
+	})
+	read, err := r.body.Read(buffer)
+	if !timer.Stop() {
+		<-expired
+	}
+	if r.timedOut.Load() {
+		if contextErr := r.ctx.Err(); contextErr != nil {
+			return read, errors.Join(contextErr, errUpstreamStreamIdleTimeout, err)
+		}
+		return read, errors.Join(errUpstreamStreamIdleTimeout, err)
+	}
+	return read, err
+}
+
+func (r *streamIdleReadCloser) closeBody() error {
+	r.closeOnce.Do(func() {
+		r.closeErr = r.body.Close()
+	})
+	return r.closeErr
+}
+
+func (r *streamIdleReadCloser) Close() error {
+	return r.closeBody()
 }
 
 func upstreamRetryDelay(response *http.Response, attempt int) time.Duration {

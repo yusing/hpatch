@@ -50,6 +50,7 @@ const (
 	requestOutcomeCanceledBeforeResponse
 	requestOutcomeCanceledAfterResponse
 	requestOutcomeTimedOut
+	requestOutcomeStreamIdleTimedOut
 	requestOutcomeBackgroundPending
 )
 
@@ -65,6 +66,8 @@ func (outcome requestOutcome) String() string {
 		return "canceled_after_response"
 	case requestOutcomeTimedOut:
 		return "timed_out"
+	case requestOutcomeStreamIdleTimedOut:
+		return "stream_idle_timed_out"
 	case requestOutcomeBackgroundPending:
 		return "background_pending"
 	default:
@@ -89,6 +92,7 @@ type requestLifecycleMetrics struct {
 	CanceledBeforeResponse       uint64 `json:"canceled_before_response"`
 	CanceledAfterResponse        uint64 `json:"canceled_after_response"`
 	TimedOut                     uint64 `json:"timed_out"`
+	StreamIdleTimedOut           uint64 `json:"stream_idle_timed_out"`
 	BackgroundPending            uint64 `json:"background_pending"`
 	UsageObserved                uint64 `json:"usage_observed"`
 	UsageMissing                 uint64 `json:"usage_missing"`
@@ -106,6 +110,8 @@ func (m *requestLifecycleMetrics) addFinished(observation requestObservation) {
 		m.CanceledAfterResponse++
 	case requestOutcomeTimedOut:
 		m.TimedOut++
+	case requestOutcomeStreamIdleTimedOut:
+		m.StreamIdleTimedOut++
 	case requestOutcomeBackgroundPending:
 		m.BackgroundPending++
 	default:
