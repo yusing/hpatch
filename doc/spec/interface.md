@@ -174,6 +174,86 @@ Acceptance:
 5. Passthrough mode exposes neither hgrep nor the other replacement tools. Router startup
    fails before serving if its private hgrep worker cannot be installed.
 
+## REQ-PLUGIN-001 — Router-local tool plugins
+
+In hpatch mode, `hpatch-router` discovers tool plugins only from the `hpatch/plugins`
+directory beneath the platform user configuration directory. Each direct regular file whose
+name ends in `.js` or `.mjs` is one compiled ECMAScript-module declaration, loaded in lexical
+filename order; directories, symlinks, and other entries are not declarations. A missing or
+empty directory contributes no plugins. There are no plugin-related router flags,
+workspace-local discovery, remote discovery, or hot reload. TypeScript is an authoring format,
+and the complete registry remains immutable for the router process lifetime. Passthrough mode
+neither loads nor exposes the contributed tools.
+
+Each plugin declares a stable plugin identity and one or more globally named tools. Each tool
+provides its exact OpenAI Responses custom-tool specification, a bounded string-input parser,
+a translator, and an executor-side implementation. A specification may omit `format` for
+unconstrained text or use an OpenAI grammar format whose syntax is `lark` or `regex`. The
+model-visible name, description, format, grammar definition, input limit, translator, and
+implementation are part of the validated declaration. Standard JSON-schema function tools,
+runtime TypeScript transpilation, and arbitrary undocumented specification fields are not
+supported by this increment.
+
+Before opening its listener or installing any contributed-tool wrapper, the router loads every
+discovered declaration and validates the complete registry. It reports all detected plugin
+schema, API-version, identity, duplicate-name, input, translator, implementation, and wrapper
+conflicts, then exits nonzero if any declaration is invalid. Failure exposes no
+partial registry, forwards no Responses request, starts no executor implementation, and
+changes no durable metrics. Locally deterministic grammar syntax and unsupported construct
+checks occur at startup; this does not promise to reproduce a provider's model-specific or
+complexity limits.
+
+A successful translator returns a typed normal Code Mode tool-call carrier. The router
+validates the carrier kind, name, and payload against the Code Mode tools available in that
+request and retains ownership of response item IDs, call IDs, status, JSON and SSE framing,
+history, and replay. A plugin cannot invent an unavailable carrier or return a raw Responses
+envelope. The plugin API provides a canonical exec wrapper for tools that need one; that
+wrapper owns the repeated outer Code Mode exec program, nested tool invocation, serialization,
+argument quoting, and result forwarding so plugin declarations do not reproduce or guess the
+exec shape.
+
+For each executor-backed contributed tool, startup creates or verifies an executable symlink
+whose basename is exactly the contributed tool name and whose target is the running
+`hpatch-router` executable. The exec wrapper invokes that basename and represents the parsed
+model input as its ordered argv. When launched through the symlink, the router selects the
+registered implementation from the basename of `argv[0]` and passes the remaining argv
+unchanged. The carrier supplies no working-directory or environment override. The child
+therefore runs in Codex's execution context, and Codex remains the owner of sandbox,
+filesystem, process, network, and permission enforcement. Missing, conflicting, incorrectly
+targeted, or unusable symlinks fail startup before the listener opens.
+
+Translated history retains the plugin identity, original tool name and input, and exact carrier
+kind, name, and payload. Replay accepts only the byte-identical retained carrier and restores
+the original model-visible call before upstream forwarding. Ordinary plugins do not enter
+hpatch correction ancestry. Runtime model-input rejection returns a bounded diagnostic
+through an available Code Mode carrier; a translator protocol violation, unavailable carrier,
+or malformed carrier is a routing failure rather than a successful approximation.
+
+Acceptance:
+
+1. A valid discovered JavaScript declaration contributes its exact unconstrained, Lark, or
+   regex custom-tool object to hpatch-mode Responses requests without a plugin flag.
+2. A missing or empty plugin directory preserves the built-in hpatch-mode behavior, while
+   passthrough mode loads and exposes no contributed tools.
+3. One invalid declaration or tool symlink prevents the listener from opening; independent
+   startup mismatches are reported together and no valid subset is exposed.
+4. Duplicate tool names across plugins or built-ins fail startup, and the registry does not
+   change until process restart.
+5. A plugin may translate to any compatible Code Mode tool call available in the current
+   request; an unavailable or wrong-kind carrier rejects before upstream execution.
+6. The exec wrapper renders the canonical outer exec shape and independently quotes every argv
+   value. The plugin declaration does not contain or generate that outer shape.
+7. Invoking an executor-backed tool resolves the tool-name symlink to `hpatch-router`,
+   dispatches by `argv[0]`, and delivers the declared input argv to its implementation under
+   Codex's cwd, sandbox, and permissions.
+8. JSON and SSE responses preserve call identity while replacing a contributed call with its
+   validated carrier, and replay restores the exact original contributed call after verifying
+   the retained carrier.
+9. A model-input diagnostic is bounded and recoverable, while an invalid translator result
+   cannot be returned or counted as a successful tool call.
+10. Startup validation and tool-call metrics failures cannot replace an otherwise successful
+    translated carrier or executor result; request cancellation still propagates.
+
 ## REQ-METRICS-001 — Persistent token, command, target, and failure metrics
 
 Every recognized normal or translate invocation is classified after its terminal outcome.
@@ -181,46 +261,59 @@ A successful nonempty change set that parses, evaluates, translates, and complet
 requested output or mutation contributes paired estimates for two semantically equivalent
 tool calls. A failed invocation contributes only its generated `hpatch` call estimate to
 the ineffective-output counter; it contributes nothing to the effective `hpatch` counter.
-A failed routed invocation is represented downstream by an exec carrier that returns its
+A failed routed invocation is represented downstream by a Code Mode carrier that returns its
 diagnostic and repair context. Its comparison baseline is the fixed direct-call program
 carrying `*** Begin Patch\n*** End Patch\n`; that tokenized semantic baseline contributes
-to the failed `apply_patch` output counter. The diagnostic carrier itself never counts as
-`apply_patch` output. The complete failed hpatch call remains in the ineffective-output
-counter and reduces the overall output savings. `gain`, informational commands, and
-unsupported argument forms do not contribute metrics.
+to the failed translated counter. The diagnostic carrier itself never counts as translated
+hpatch output. The complete failed hpatch call remains in the ineffective-output counter and
+reduces the overall output savings. `gain`, informational commands, and unsupported argument
+forms do not contribute metrics.
 
-Both effective and ineffective hpatch estimates count the `functions.hpatch` tool name
-followed by the editing payload the model emitted. When a correction names commands of a
-rejected script, the shorter correction is charged while the rebuilt complete script is
-used only for evaluation. The successful direct side counts the `functions.exec` tool name
-and a fixed free-form program that passes the complete translated patch envelope,
-serialized as one string argument, to `tools.apply_patch`, then returns that nested tool's
-result. The router-only marker and hpatch final-state report are excluded from this semantic
-baseline. All estimates use the tokenizer library's GPT-5 model mapping. Script and patch
-text remain data and cannot alter the fixed direct-call program.
+Every routed contributed-tool call classified by `REQ-PLUGIN-001` contributes a row keyed by
+plugin identity and tool name. Its emitted estimate counts the model-visible tool name followed
+by the exact input the model emitted. Its translated estimate counts the validated Code Mode
+carrier name followed by the router's canonical serialized carrier payload. Provider-generated
+item IDs, call IDs, status, and JSON or SSE envelopes are excluded from both shapes. The router
+derives both counts from the installed specification and validated carrier; plugins neither
+supply token counts nor override their metric shape. A translated row's reduction is
+`(translated - emitted) / translated * 100`, may be negative, and is `n/a` when translated
+tokens are zero. Router-side input rejection uses a separate failed row with `n/a` reduction.
+Executor failures after Codex accepts the carrier do not retroactively become router translation
+failures.
 
-A final-state report successfully emitted by normal or translate mode contributes its
-exact rendered text to a separate estimated state-report input-token counter. This is
-model-input overhead because the tool result becomes subsequent model context; it is not
-added to either model-output counter.
+For hpatch, both effective and ineffective emitted estimates count the `functions.hpatch` tool
+name followed by the editing payload the model emitted. When a correction names commands of a
+rejected script, the shorter correction is charged while the rebuilt complete script is used
+only for evaluation. The successful translated side counts the Code Mode carrier name and a
+fixed free-form program that passes the complete translated patch envelope, serialized as one
+string argument, to `tools.apply_patch`, then returns that nested tool's result. The router-only
+marker and hpatch final-state report are excluded from this established semantic baseline.
+All estimates use the tokenizer library's GPT-5 model mapping. Tool inputs and translated
+payloads remain data and cannot alter the fixed programs used for counting.
 
-The host tool definition is also model input. The router obtains the session identity, the
-serialized hpatch, hread, and hgrep custom grammar objects installed in the routed request, and
-the displaced native patch definition directly from that request. The first classified
-request of a session counts those definitions once;
-subsequent requests in the same session add nothing because the resent definition is
-served from the provider's prompt cache. A host that supplies no session or definition
-text leaves these counters at zero, and gain states which inputs were measured so a zero
-is not read as a free tool. A failed or cancelled invocation emits no report
-and contributes zero report-input tokens. A partial or failed report write does not count
-as a complete emitted report. Other tool results, provider-hidden protocol and reasoning
-tokens, assistant commentary, and server-generated identifiers remain excluded. These
-are reproducible estimates rather than authoritative API usage.
+A final-state report successfully emitted by normal or translate mode contributes its exact
+rendered text to a separate estimated state-report input-token counter. This is model-input
+overhead because the tool result becomes subsequent model context; it is not added to either
+model-output counter.
 
-Routed hread and hgrep results do not add a synthetic gain estimate and do not subtract a
-hypothetical raw `cat` result. The router's end-to-end Responses and per-session usage
-totals are authoritative for model input consumed after the exact exec result is
-returned.
+The host tool definitions are also model input. The router obtains the session identity, the
+exact serialized collection of installed built-in and plugin tool objects, its stable
+per-plugin and per-tool definition breakdown, and the displaced native patch definition
+directly from the routed request. The first classified request of a session counts those
+definitions once; subsequent requests in the same session add nothing because the resent
+definition is served from the provider's prompt cache. The installed-definition total is
+authoritative; per-tool rows and a shared framing row reconcile it without being added again
+when computing net input. A host that supplies no session or definition leaves these counters
+at zero, and gain states which inputs were measured so a zero is not read as a free tool.
+
+A failed or cancelled invocation emits no report and contributes zero report-input tokens.
+A partial or failed report write does not count as a complete emitted report. Tool-result
+contents, provider-hidden protocol and reasoning tokens, assistant commentary, and
+server-generated identifiers remain excluded. Routed read and search results do not subtract
+a hypothetical `cat`, `grep`, or `rg` result; only their model-emitted call and translated
+carrier shapes contribute the plugin rows. The router's end-to-end Responses and per-session
+usage totals remain authoritative for model input consumed after the exact executor result is
+returned. These token counts are reproducible estimates rather than provider billing totals.
 
 The router's in-memory metrics snapshot also attributes successful and rejected hpatch
 translations and rejected-call diagnostic input tokens to the request session. Each session
@@ -291,39 +384,41 @@ other
 ```
 
 The aggregate is stored in `hpatch/metrics.bin` beneath the platform user configuration
-directory returned by Go's `os.UserConfigDir`. Updates hold an exclusive interprocess
-lock at `hpatch/metrics.lock`; gain reads hold a shared lock. The metrics file contains
-two alternating current-version fixed-size slots holding token, command, target,
-error-reason counters, a persistence generation, and a checksum. A reader uses the
-valid current-format slot with the greatest persistence generation, so an interrupted
-write to the inactive slot leaves the preceding aggregate available. The file does not
-grow after its current-version slots are created. Per-counter and aggregate overflow fails.
+directory returned by Go's `os.UserConfigDir`. Updates hold an exclusive interprocess lock at
+`hpatch/metrics.lock`; gain reads hold a shared lock. The current-version metrics format uses
+two alternating bounded slots holding global hpatch counters and a keyed collection of
+plugin-and-tool definition, call, emitted, translated, and failed-translation counters, plus
+a persistence generation and checksum. A reader uses the valid current-format slot with the
+greatest persistence generation, so an interrupted write to the inactive slot leaves the
+preceding aggregate available. The file does not grow after its current-version slots are
+created. Per-counter, per-tool, collection, and aggregate overflow fails without changing the
+tool result.
 
-Only the latest metrics magic is decoded. A complete, checksummed slot whose eight-byte
-magic starts with `HPATCH` but does not equal the current version resets the reported
-totals to zero. A malformed slot, including a mismatched version with an invalid checksum,
-does not qualify for reset. When a current-format slot is also valid, its totals take
-precedence over mismatched-version slots. Other invalid data fails rather than producing
-a misleading report. Metrics writes use normal operating-system page-cache writeback and
-do not request a per-invocation filesystem sync; sudden power loss may lose increments
-that the operating system had not yet flushed.
+Only the latest metrics magic is decoded. A complete, checksummed slot whose eight-byte magic
+starts with `HPATCH` but does not equal the current version resets the reported totals to zero.
+A malformed slot, including a mismatched version with an invalid checksum, does not qualify
+for reset. When a current-format slot is also valid, its totals take precedence over
+mismatched-version slots. Other invalid data fails rather than producing a misleading report.
+Metrics writes use normal operating-system page-cache writeback and do not request a
+per-invocation filesystem sync; sudden power loss may lose increments that the operating
+system had not yet flushed.
 
-`hpatch gain` first writes an output-token table comparing successful calls, failed
-calls, and all calls. The successful row compares effective hpatch output with the
-generated `apply_patch` output and reports its reduction. The failed row compares
-ineffective hpatch output with the fixed direct-call program carrying the empty patch
-semantic baseline. The downstream diagnostic carrier is excluded. The all-calls row
-reports both totals and the overall output-token reduction.
-
-Effective-only reduction compares effective hpatch output against generated `apply_patch`
-output. Overall reduction is `(effective_apply_patch + failed_apply_patch - effective_hpatch
-- ineffective_hpatch) / (effective_apply_patch + failed_apply_patch) * 100`. It is zero
-when the `apply_patch` denominator is zero. No retry payload is inferred.
+`hpatch gain` first writes an output-token table with one stable row per plugin and tool,
+placing a failed-translation row immediately after its successful row when present, followed
+by an all-tools row. Its columns are emitted tokens, translated tokens, and reduction. The
+hpatch failed row retains the fixed direct-call program carrying the empty patch as its
+established semantic baseline and reports `n/a`; its downstream diagnostic carrier remains
+excluded. The all-tools row sums the displayed emitted and translated quantities and applies
+the same reduction formula when its translated denominator is nonzero.
 
 Gain then writes a separate input-token table for final-state reports, failure diagnostics,
-and tool definitions. Hpatch and `apply_patch` values remain separate:
-the report does not subtract definitions, convert input to output, or calculate a combined
-input/output percentage. Unmeasured `apply_patch` input sources are labeled `not measured`.
+the exact displaced `apply_patch` definition credit, and the total installed tool definitions.
+Indented stable plugin-and-tool rows and any shared serialization-framing row reconcile the
+installed-definition total and are descriptive children rather than additional input. Net
+added input is reports plus diagnostics plus the installed-definition total minus the removed
+definition. Gain does not subtract definitions from output, convert input to output, or
+calculate a combined input/output percentage. Unmeasured definition sources are labeled
+`not measured`.
 
 Gain then writes stable-order compact tables for aggregate command invocation and error
 rates; line, range, text-single, and text-multiple target counters; error reasons; and
@@ -339,36 +434,40 @@ but does not change the success or failure of the requested effect.
 Acceptance:
 
 1. Repeated successful normal and translate invocations persist cumulative paired
-   estimates and fully emitted report-input estimates; failed invocations persist only
+   hpatch estimates and fully emitted report-input estimates; failed invocations persist only
    ineffective hpatch estimates and zero report-input tokens.
-2. Gain reports output and input token classes in separate tables, calculates reductions
-   only between output-token quantities, and performs no input/output price conversion.
-3. The seven supported command counters and four target counters reconcile with aggregate
-   command attempts and errors. No selector, clipboard, editor-generation, or script-level
-   commit counter remains.
-4. Every definition-bearing request increments the definition-request counter, while the
-   serialized installed hpatch, hread, and hgrep grammar objects and the baseline definition
-   accumulate only once per distinct session. An absent session or definition leaves
-   definition counters zero and reports which inputs were measured.
-5. Failed hpatch invocations contribute their complete output to the ineffective counter;
-   the failed `apply_patch` counter receives the fixed direct-call program carrying the
-   empty patch envelope, while the downstream diagnostic carrier is excluded.
-6. A correction is charged as the shorter payload the model emitted for both effective and
+2. Every successfully translated contributed-tool call persists a plugin-and-tool row whose
+   emitted count uses the exact model-visible call shape and whose translated count uses the
+   validated canonical Code Mode carrier shape. Runtime executor failure does not reclassify it.
+3. Gain reports stable per-plugin and per-tool output rows, optional adjacent failed rows, and
+   one all-tools row; it reports output and input token classes separately and performs no
+   input/output price conversion.
+4. The seven supported hpatch command counters and four target counters reconcile with
+   aggregate command attempts and errors. No selector, clipboard, editor-generation, or
+   script-level commit counter remains.
+5. Every definition-bearing request increments the definition-request counter, while the exact
+   installed tool collection, its reconciling per-tool breakdown, and the displaced baseline
+   definition accumulate only once per distinct session. An absent session or definition
+   leaves definition counters zero and reports which inputs were measured.
+6. Failed hpatch invocations contribute their complete output to the ineffective counter; the
+   failed translated counter receives the fixed direct-call program carrying the empty patch
+   envelope, while the downstream diagnostic carrier is excluded.
+7. A correction is charged as the shorter payload the model emitted for both effective and
    ineffective invocations while evaluation uses the rebuilt complete script.
-7. Scripts and patches containing quotes or program-like text remain data and cannot
-   alter the direct-call program used for counting.
-8. Concurrent writers lose no records, concurrent gain reads never observe a partial
-   record, and a damaged inactive slot falls back to the preceding valid aggregate.
-9. A valid mismatched `HPATCH` version resets totals when no current slot exists;
-   malformed data does not count as a version mismatch, and a current slot takes
-   precedence over mismatched versions.
-10. Metrics collection failure warns without changing the success or failure of the
-    requested edit, translated output, or final-state report.
-11. Router snapshots attribute successful and rejected hpatch translations, diagnostic token
-    totals, at most the latest 128 correction-aware attempt identities, and at most the latest 32 structured
-    evaluator rejection identities to their request sessions without persisting scripts,
-    replacement text, diagnostics, repair context, or new per-session records in `metrics.bin`;
-    per-session text-byte limits may retain fewer identities.
+8. Tool inputs and translated payloads containing quotes or program-like text remain data and
+   cannot alter the canonical programs used for counting.
+9. Concurrent writers lose no records, concurrent gain reads never observe a partial
+   aggregate, and an interrupted or damaged latest state falls back to the preceding valid
+   aggregate.
+10. A valid mismatched `HPATCH` version resets totals when no current state exists; malformed
+    data does not count as a version mismatch, and current state takes precedence.
+11. Metrics collection failure warns without changing the success or failure of the requested
+    edit, translated carrier, executor result, or final-state report.
+12. Router snapshots attribute successful and rejected hpatch translations, diagnostic token
+    totals, at most the latest 128 correction-aware attempt identities, and at most the latest
+    32 structured evaluator rejection identities to their request sessions without persisting
+    scripts, replacement text, diagnostics, repair context, or new per-session records in
+    `metrics.bin`; per-session text-byte limits may retain fewer identities.
 
 ## REQ-SCRIPT-001 — HPATCH/2 script grammar
 

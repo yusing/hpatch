@@ -4,7 +4,7 @@ pjdoc:
   kind: architecture
   scope: root
   status: approved
-  revision: "16"
+  revision: "17"
   files:
     []
 ---
@@ -118,9 +118,9 @@ sticky and cannot be overwritten by a later terminal event.
 
 Metrics on the response path are auxiliary: tokenization or durable-write failures cannot
 replace a successful tool result, rejection diagnostic, read or search result, or overhead-only
-response, while request cancellation still propagates. Definition accounting uses the
-serialized hpatch, hread, and hgrep custom grammar objects installed in the routed request,
-including their names, wrappers, and grammar bodies.
+response, while request cancellation still propagates. Definition accounting consumes the
+exact serialized collection installed from the validated built-in and plugin registry and a
+stable per-plugin and per-tool breakdown derived from that same collection.
 
 The router boundary exposes `hread` and `hgrep` beside hpatch only when the displaced owner is a
 Code Mode `exec` carrier. Before forwarding, it creates or reuses one process-scoped
@@ -177,24 +177,80 @@ report. A report-write failure after a successful effect is best-effort and cann
 represented as rollback. The transaction coordinator owns backups, ordered operations,
 rollback attempts, and honest reporting of external commit or rollback failure.
 
+## CTR-PLUGIN-001 — Tool registry and Code Mode carrier boundary
+
+For `REQ-PLUGIN-001`, the router owns discovery from the public configuration surface in
+`doc/brief.md` § Public surface, complete-registry validation, stable registration order,
+global tool-name ownership, immutable process-lifetime registry state, and the fail-before-serve
+sequence required by `doc/brief.md` § Constraints. One JavaScript runtime adapter loads compiled
+declaration modules and invokes their input parsers and translators; it does not own Responses
+rewriting, Code Mode capability discovery, wrappers, history, metrics, workspace authority, or
+executor effects. Loading a declaration is trusted local extension code, but the adapter
+receives no engine workspace capability or Codex credential interface.
+
+The registry normalizes each accepted declaration into one router-owned contribution containing
+its plugin and tool identity, exact serialized OpenAI specification, bounded input parser and
+argv projection, translator handle, executor implementation handle, and metrics identity. This
+normalized interface is the only input from plugin code to request rewriting. The router
+validates every translator result as a typed Code Mode tool-call carrier against the carrier
+catalog retained from that request. Plugins never construct output IDs, call IDs, status,
+JSON/SSE envelopes, or replay items.
+
+One carrier renderer owns each supported carrier shape. The generic path preserves a validated
+normal Code Mode tool name and payload. The exec helper is a renderer over that path: it alone
+owns the outer exec program, nested invocation, serialization, independent argv quoting, and
+result forwarding. An implementation needing another Code Mode carrier uses the generic path
+rather than encoding an exec surrogate. Hpatch's native workspace translation, correction
+ancestry, patch renderer, and semantic failure baseline remain adapter extensions beside this
+generic interface rather than capabilities granted to ordinary plugins.
+
+For every executor-backed contribution, the router wrapper owner creates or verifies the
+tool-name basename symlink to the running router executable only after the complete registry
+passes validation and before the listener opens. Private child dispatch selects the immutable
+implementation by the basename of `argv[0]` and gives it the remaining argv without inventing
+a cwd or environment. The child executes only because Codex ran the returned carrier, so Codex
+continues to own sandbox and permission enforcement. Wrapper creation is all-or-nothing for
+startup, wrapper removal belongs to router shutdown, and an isolated executor deployment must
+make the router executable, wrapper directory, plugin runtime, and implementation resources
+visible independently of workspace selection.
+
+Startup materializes the validated implementation modules and dispatch metadata into an
+immutable process-scoped worker snapshot associated with the wrapper directory. A symlink-
+launched child reads that snapshot and verifies its registry identity before loading an
+implementation; it never rediscovers or executes the live configuration directory. Changing a
+configured module therefore cannot alter served tool behavior before restart. Missing,
+corrupted, or mismatched snapshot state fails the child honestly, and shutdown cleanup owns
+both wrappers and the snapshot.
+
+The response transformer uses registry membership instead of hardcoded tool-name predicates for
+JSON, SSE, and replay. Retained history stores the original contribution identity and input plus
+the exact validated carrier kind, name, and payload. Replay verifies the carrier byte-for-byte
+before restoring the model-visible call. Generic history cannot enter correction ancestry;
+hpatch alone attaches its existing correction state. A plugin input rejection may become a
+bounded diagnostic carrier, while a runtime-adapter failure, malformed translator result, or
+unavailable carrier fails routing and cannot be represented as successful translation.
+
 ## CTR-METRICS-001 — Metrics classification and persistence
 
-One metrics classifier consumes structured parser and evaluator events for
-`REQ-METRICS-001` rather than re-parsing scripts or diagnostics. It owns effective,
-ineffective, direct-patch, and fully emitted report token estimates; counters for the
-eight commands and four target forms; and stable terminal reason counters. Unsupported
-HPATCH/1 commands receive no supported-command attribution. The report
-formatter's exact emitted string is the only source for report-input token counting.
+One metrics classifier consumes structured parser, evaluator, registry, and carrier events for
+`REQ-METRICS-001` rather than re-parsing tool inputs, diagnostics, or rendered responses. The
+generic classification path owns per-plugin and per-tool definition, call, emitted-shape,
+translated-shape, and failed-translation counters. It derives canonical shapes from the
+installed registry entry and validated carrier; plugin code supplies neither token counts nor
+metric overrides. Hpatch's adapter additionally owns its effective, ineffective, fixed failed
+semantic baseline, report, command, target, and stable terminal-reason classifications. The
+report formatter's exact emitted string is the only source for report-input token counting.
 Price ratios are presentation-time calculations and are never persisted.
 
-The metrics store owns tokenizer use, overflow checks, interprocess locking, alternating
-checksummed fixed-size slots, persistence-generation selection, current-version decoding,
-obsolete-version reset, and page-cache writeback policy. Classification occurs only after terminal
-outcome and report emission are known. Metrics failure remains a warning and cannot
-change the requested edit, translated patch, state report, or exit status.
-Routed reads add no synthetic hashline or hypothetical raw-cat gain estimates. Exact
-end-to-end Responses usage retained by the router is authoritative for the input consumed
-after a wrapper result.
+The metrics store owns tokenizer use, stable tool identity keys, exact installed-definition
+totals and their reconciling breakdown, overflow checks, interprocess locking, alternating
+checksummed bounded slots, persistence-generation selection, current-version decoding,
+obsolete-version reset, and page-cache writeback policy. Classification occurs only after the
+router knows whether translation produced a valid carrier; later executor failure does not
+rewrite that classification. Metrics failure remains auxiliary and cannot change the requested
+edit, translated carrier, executor result, state report, or exit status. Routed tool-result
+contents add no hypothetical shell-result comparison; exact end-to-end Responses usage retained
+by the router remains authoritative for the model input consumed after an executor result.
 
 ## CTR-TRANSLATE-001 — Patch rendering
 

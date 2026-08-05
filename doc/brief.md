@@ -19,6 +19,13 @@ one ordered call without requiring old regions to be re-emitted. A routed ripgre
 emits those same verified references for complete matching and requested context lines so an
 agent does not need to repeat an exact search result through the reader before editing it.
 
+A router-local tool plugin system loads TypeScript-authored, compiled JavaScript declarations
+from the user configuration directory, exposes their OpenAI custom-tool specifications, and
+translates model calls into ordinary Code Mode tool-call carriers. Common exec translations
+use a router-owned wrapper, while tool implementations run only when Codex executes the
+translated carrier under its normal sandbox and permissions. Gain reporting attributes
+installed definitions and emitted-versus-translated output shapes to each contributed tool.
+
 The historical benchmark remains the end-to-end authority: correctness must match the
 native edit path, output tokens must be lower, and input, reasoning, request count, and
 wall time must remain close to control.
@@ -43,6 +50,13 @@ wall time must remain close to control.
 - Persistent encoding, diagnostic, command, target, and end-to-end benchmark metrics.
 - Historical-commit benchmark tasks with hidden graders, paired randomized attempts, and
   structured artifacts.
+- Router-local tool plugins discovered from `hpatch/plugins` beneath the platform user
+  configuration directory, with complete-registry startup validation.
+- Model-visible custom-tool declarations using unconstrained string input or OpenAI-supported
+  Lark and regex grammars, typed translation into Code Mode carriers, and executor-side tool
+  implementations.
+- Per-plugin and per-tool installed-definition, emitted-call, and translated-carrier token
+  estimates in `hpatch gain` and the router gain page.
 
 ## Public surface
 
@@ -51,6 +65,8 @@ wall time must remain close to control.
 - `hpatch gain`: report persistent edit-encoding and failure metrics.
 - `hpatch-router --mode hpatch|passthrough`: expose routed hpatch, hgrep, and single- or
   multi-item hread treatment, or the unchanged control path.
+- `hpatch/plugins` beneath the platform user configuration directory: the only tool-plugin
+  discovery surface; the router has no plugin command-line flags.
 - `hpatch-bench validate --manifest TASK.json` and `hpatch-bench run`: validate and run
   paired historical-commit evaluations.
 - `hpatch --help`, `hpatch --tool-help`, `hpatch translate --help`, and
@@ -72,8 +88,9 @@ wall time must remain close to control.
 - Content movement without re-emitting the moved content; `mv` moves complete files only.
 - Selecting content introduced earlier in the same script. Dependent edits use a later
   inspected invocation.
-- Interactive editor UI, plugins, binary files, non-UTF-8 files, or search semantics beyond
-  the installed ripgrep executable.
+- Interactive editor UI, binary files, non-UTF-8 files, remote plugin discovery, runtime
+  TypeScript transpilation, hot plugin reload, or search semantics beyond the installed
+  ripgrep executable.
 - A new patch interchange format beyond the compact command script and translated
   `apply_patch` output.
 - AST-specific mutation commands or language-specific editing frameworks.
@@ -101,3 +118,13 @@ wall time must remain close to control.
 - Correctness is determined by required graders and path-scope checks, not reference-patch
   similarity. End-to-end Responses usage is authoritative for task-level token results.
 - Diagnostics use stderr and a nonzero exit status for standalone CLI failures.
+- In hpatch mode the router validates the complete discovered plugin registry before opening
+  its listener or installing tool wrappers; any schema, identity, implementation, or wrapper
+  mismatch reports diagnostics and stops startup without exposing a partial registry.
+- Each executor-backed contributed tool uses a basename symlink named for the tool and pointing
+  to `hpatch-router`. A translated exec carrier invokes that basename with the declared input
+  represented as argv; private child dispatch selects the implementation from `argv[0]`, so
+  Codex remains the owner of working directory, sandbox, and permissions.
+- A plugin translator returns a normal Code Mode tool-call carrier rather than an exec-specific
+  envelope. The plugin API may provide an exec wrapper that alone owns the repeated outer exec
+  shape.
