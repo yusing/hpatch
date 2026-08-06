@@ -18,6 +18,14 @@ const READ_BUFFER_BYTES = 32 * 1024;
 const BATCH_LIMIT_MESSAGE = "hread: batch output limit reached; retry remaining items in a narrower batch\n";
 
 class ResultTooLargeError extends Error {}
+function conciseErrorText(error: unknown): string {
+  const message = errorText(error);
+  if (!(error instanceof Error) || !("syscall" in error) || typeof error.syscall !== "string") {
+    return message;
+  }
+  const detailsStart = message.indexOf(`, ${error.syscall}`);
+  return detailsStart < 0 ? message : message.slice(0, detailsStart);
+}
 
 type ReadSpec = {
   input: string;
@@ -124,17 +132,12 @@ function parseReadSpecs(input: string): ParsedReadSpec[] {
 }
 
 async function readHashLines(spec: ReadSpec, maxOutputBytes: number): Promise<string> {
-  let handle;
-  try {
-    handle = await open(spec.path, constants.O_RDONLY | (constants.O_NONBLOCK ?? 0));
-  } catch (error) {
-    throw new Error(`reading ${spec.path}: ${errorText(error)}`);
-  }
+  const handle = await open(spec.path, constants.O_RDONLY | (constants.O_NONBLOCK ?? 0));
 
   try {
     const info = await handle.stat();
     if (!info.isFile()) {
-      throw new Error(`${spec.path} is not a regular file`);
+      throw new Error("not a regular file");
     }
 
     const wholeFile = spec.startLine === 0 && spec.endLine === 0;
@@ -231,9 +234,9 @@ async function readHashLines(spec: ReadSpec, maxOutputBytes: number): Promise<st
         throw error;
       }
       if (error instanceof TypeError) {
-        throw new Error(`${spec.path} is not UTF-8`);
+        throw new Error("not UTF-8");
       }
-      throw new Error(`reading ${spec.path}: ${errorText(error)}`);
+      throw error;
     } finally {
       stream.destroy();
     }
@@ -286,7 +289,7 @@ async function executeRead(input: string): Promise<string> {
       break;
     }
     if (item.error !== null) {
-      if (!appendBounded(`hread: ${errorText(item.error)}\n`)) {
+      if (!appendBounded(`hread: ${conciseErrorText(item.error)}\n`)) {
         appendLimitMessage();
         break;
       }
@@ -301,7 +304,7 @@ async function executeRead(input: string): Promise<string> {
         appendLimitMessage();
         break;
       }
-      if (!appendBounded(`hread: ${errorText(error)}\n`)) {
+      if (!appendBounded(`hread: ${conciseErrorText(error)}\n`)) {
         appendLimitMessage();
         break;
       }
@@ -328,7 +331,7 @@ export function createHReadTool(description: string, grammar: string): Tool<stri
       try {
         return {stdout: await executeRead(argv[0]), exitCode: 0};
       } catch (error) {
-        return {stderr: `hread: ${errorText(error)}\n`, exitCode: 1};
+        return {stderr: `hread: ${conciseErrorText(error)}\n`, exitCode: 1};
       }
     },
   });

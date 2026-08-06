@@ -370,9 +370,20 @@ function conciseDiagnostic(diagnostic: string): string {
   const lines = diagnostic.split("\n");
   for (let index = lines.length - 1; index >= 0; index -= 1) {
     const line = lines[index].trim();
-    if (line !== "") {
-      return line;
+    if (line === "") {
+      continue;
     }
+    const operationMarker = ": IO error for operation on ";
+    const operationStart = line.indexOf(operationMarker);
+    if (line.startsWith("rg: ") && operationStart >= 0) {
+      const path = line.slice("rg: ".length, operationStart);
+      const messageStart = `${operationMarker}${path}: `;
+      const details = line.slice(operationStart);
+      if (details.startsWith(messageStart)) {
+        return details.slice(messageStart.length);
+      }
+    }
+    return line;
   }
   return diagnostic;
 }

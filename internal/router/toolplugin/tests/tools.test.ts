@@ -100,6 +100,12 @@ describe("hread built-in plugin", () => {
       exitCode: 0,
     });
 
+    const missing = await tool.execute(["missing.txt"]);
+    expect(missing).toEqual({
+      stderr: "hread: ENOENT: no such file or directory\n",
+      exitCode: 1,
+    });
+
     const batch = await tool.execute([
       "plain.txt 2:9\n\"second file.txt\" 2:3\nmissing.txt\r\n",
     ]);
@@ -108,7 +114,9 @@ describe("hread built-in plugin", () => {
     expect(batch.stdout).toContain(formatHashLine(2, "beta"));
     expect(batch.stdout).toContain("==> \"second file.txt\" 2:3 <==\n");
     expect(batch.stdout).toContain(formatHashLine(3, "three"));
-    expect(batch.stdout).toContain("==> missing.txt <==\nhread: reading missing.txt:");
+    expect(batch.stdout).toContain(
+      "==> missing.txt <==\nhread: ENOENT: no such file or directory\n",
+    );
 
     const sixSpecs = Array.from({length: 6}, (_, index) => `missing${index}.txt`).join("\n");
     const framedSix = await tool.execute([`${sixSpecs}\n`]);
@@ -136,9 +144,9 @@ describe("hread built-in plugin", () => {
     for (const [input, diagnostic] of [
       ["short.txt 2:3", "outside file with 1 lines"],
       ["short.txt 3:2", "range start exceeds end"],
-      ["binary.txt", "is not UTF-8"],
-      ["folder", "is not a regular file"],
-      ...(process.platform === "win32" ? [] : [["pipe", "is not a regular file"]]),
+      ["binary.txt", "not UTF-8"],
+      ["folder", "not a regular file"],
+      ...(process.platform === "win32" ? [] : [["pipe", "not a regular file"]]),
     ]) {
       const result = await tool.execute([input]);
       expect(result.exitCode).toBe(1);
@@ -225,6 +233,12 @@ describe("hgrep built-in plugin", () => {
       stderr: "",
       exitCode: 0,
     });
+
+    const missing = await tool.execute(["-F", "needle", "missing.txt"]);
+    expect(missing.exitCode).toBe(1);
+    expect(missing.stderr).toMatch(
+      /^hgrep: (?!rg:)(?!.*missing\.txt)(?!.*IO error for operation on ).+\n$/u,
+    );
   });
 
   test("stops immediately on an oversized unterminated rg event", async () => {
