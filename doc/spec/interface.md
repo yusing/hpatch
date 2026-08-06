@@ -209,18 +209,23 @@ A successful translator returns a typed normal Code Mode tool-call carrier. The 
 validates the carrier kind, name, and payload against the Code Mode tools available in that
 request and retains ownership of response item IDs, call IDs, status, JSON and SSE framing,
 history, and replay. A plugin cannot invent an unavailable carrier or return a raw Responses
-envelope. The plugin API provides a canonical exec wrapper for tools that need one; that
-wrapper owns the repeated outer Code Mode exec program, nested tool invocation, serialization,
-argument quoting, and result forwarding so plugin declarations do not reproduce or guess the
-exec shape.
+envelope. The plugin API provides a canonical exec wrapper for tools that need one. The wrapper
+owns the repeated outer Code Mode exec program, nested tool invocation, serialization, argument
+quoting, and result forwarding. The optional exec command template contains exactly one `{.}`
+placeholder, which the router replaces with the complete quoted frontend command.
 
 For each executor-backed contributed tool, startup creates or verifies a stable executable
 symlink beside the running `hpatch-router`. Its basename is exactly the contributed tool name,
 and its target is the authenticated process-scoped snapshot wrapper with the same basename.
-The snapshot wrapper targets the running `hpatch-router` executable. The exec wrapper invokes
-only the basename and represents the parsed model input as its ordered argv. When launched
-through both symlinks, the router verifies the stable frontend location, snapshot identity,
-wrapper target, and registered implementation before passing the remaining argv unchanged.
+The snapshot wrapper targets the running `hpatch-router` executable. Without a command template,
+the exec wrapper invokes only the basename and represents the parsed model input as its ordered
+argv. With a command template, the router replaces `{.}` with that same independently quoted
+basename and argv. When launched through both symlinks, the router verifies the stable frontend
+location, snapshot identity, wrapper target, and registered implementation before passing the
+remaining argv unchanged.
+The private worker keeps the frontend standard input separate from the JavaScript host's JSON
+control stream. The host exposes that input only as a dedicated inherited descriptor during
+executor calls.
 The carrier supplies no working-directory or environment override. The child therefore runs in
 Codex's execution context, and Codex remains the owner of sandbox, filesystem, process, network,
 and permission enforcement. Missing, conflicting, incorrectly targeted, or unusable symlinks
@@ -256,7 +261,8 @@ Acceptance:
 5. A plugin may translate to any compatible Code Mode tool call available in the current
    request; an unavailable or wrong-kind carrier rejects before upstream execution.
 6. The exec wrapper renders the canonical outer exec shape and independently quotes every argv
-   value. The plugin declaration does not contain or generate that outer shape.
+   value. An optional template contains exactly one `{.}`, which expands to the complete frontend
+   command. The plugin declaration does not contain or generate the outer carrier shape.
 7. Invoking an executor-backed tool resolves its stable basename frontend through the
    authenticated snapshot wrapper to `hpatch-router`, verifies the pinned registry, dispatches
    by `argv[0]`, and delivers the declared argv under Codex's cwd, sandbox, and permissions.
@@ -293,32 +299,51 @@ the complete input is the body. The translated argv contains each normalized int
 followed by the exact body as its final value. The resulting Codex exec carrier therefore shows
 a command equivalent to `shell python3 'print("Hello")'`; the model does not author its quoting.
 
-The executor runs the first translated argv field as the selected interpreter, passes any
-middle fields as interpreter arguments, and sends the final exact body field through standard
-input. It stores no intermediate script file. It supplies no cwd or environment override, so
-the process inherits Codex's execution context and resolves bare interpreters through its
-`PATH`. It returns the interpreter stdout, stderr, and exit status without copying the script
-body into either output stream.
+An optional command directive is the first logical line after an optional interpreter shebang.
+The directive starts with `#!cmd=` after trimming ASCII spaces and tabs around the complete line.
+Its nonempty value is a shell command template containing exactly one `{.}` placeholder. The
+tool removes the directive and its complete line terminator from the body. The router replaces
+`{.}` with the canonical independently quoted `shell` frontend command and argv. The command
+template then runs through the normal exec carrier shell. Without an interpreter shebang, the
+nested frontend command selects `bash`. Without a command directive, current direct execution
+behavior remains unchanged.
+
+The executor runs the first translated argv field as the selected interpreter and passes any
+middle fields as interpreter arguments. It supplies the final exact body through an anonymous
+script descriptor and invokes the interpreter with that descriptor's `/dev/fd` path. The
+interpreter inherits the frontend standard input as program data. The executor stores no
+intermediate script file and supplies no cwd or environment override. The process inherits
+Codex's execution context and resolves bare interpreters through its `PATH`. It returns the
+interpreter stdout, stderr, and exit status without copying the script body into either output
+stream.
 
 Acceptance:
 
 1. A free-form call containing `#!/usr/bin/env python3` translates to an exec carrier whose
    visible command arguments are `shell`, `python3`, and the exact body; execution runs
-   `python3` with that body as standard input.
+   `python3` with that body as its anonymous script source.
 2. `#!python3`, `#! python3`, and `#!/usr/bin/env python3` select `python3`. A directly supplied
    path such as `#!/opt/python/bin/python3` remains unchanged.
-3. `#!/usr/bin/env -S python3 -u` runs `python3` with `-u` and sends the exact body through
-   standard input.
-4. Input without a shebang selects `bash` and sends the complete input through standard input.
-5. Python indentation and all other body-leading or body-trailing whitespace remain byte-exact
-   after shebang removal.
-6. The child inherits cwd and environment. Its stdout, stderr, and nonzero status are returned
-   without script-source duplication or an intermediate script file.
-7. Malformed selectors and input that cannot fit the bounded exec argv return a concise
-   diagnostic without starting an interpreter.
-8. A temporary installation root receives both Go binaries and `shell.mjs` from `make install`;
-   the normal install target uses the Go binary destination and platform user configuration
-   plugin directory.
+3. `#!/usr/bin/env -S python3 -u` runs `python3` with `-u` and the exact body as its anonymous
+   script source.
+4. `#!cmd=curl -fsSL URL | {.} | jq` without an interpreter shebang expands `{.}` to the
+   independently quoted `shell bash` frontend command. The curl response becomes Bash standard
+   input while the exact remaining body remains the script source.
+5. When `#!python3` precedes that command directive, `{.}` expands to the independently quoted
+   `shell python3` frontend command. The command-template input becomes Python standard input.
+6. A missing, empty, or repeated `{.}` placeholder rejects before execution. A command directive
+   in any later body line remains ordinary body text.
+7. Input without a shebang or command directive selects `bash` and uses the complete input as the
+   script source.
+8. Python indentation and all other body-leading or body-trailing whitespace remain byte-exact
+   after recognized directive removal.
+9. The child inherits cwd, environment, and frontend standard input. Its stdout, stderr, and
+   nonzero status are returned without script-source duplication or an intermediate script file.
+10. Malformed selectors and input that cannot fit the bounded exec argv return a concise
+    diagnostic without starting an interpreter.
+11. A temporary installation root receives both Go binaries and `shell.mjs` from `make install`;
+    the normal install target uses the Go binary destination and platform user configuration
+    plugin directory.
 
 ## REQ-METRICS-001 — Persistent token, command, target, and failure metrics
 

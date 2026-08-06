@@ -27,9 +27,11 @@ translated carrier under its normal sandbox and permissions. Gain reporting attr
 installed definitions and emitted-versus-translated output shapes to each contributed tool.
 
 An installable `shell` plugin accepts one free-form script and exposes its normalized interpreter
-and exact body in the translated Codex exec carrier. The executor runs the selected interpreter
-with the body as standard input and stores no intermediate script file. A compact shebang selects
-the interpreter, while a missing shebang selects `bash`.
+and exact body in the translated Codex exec carrier. The executor supplies the body through an
+anonymous script descriptor and preserves standard input for program data. It stores no
+intermediate script file. A compact shebang selects the interpreter, while a missing shebang
+selects `bash`. An optional `#!cmd=` directive wraps that canonical shell frontend command in
+one user-supplied command template.
 
 The historical benchmark remains the end-to-end authority: correctness must match the
 native edit path, output tokens must be lower, and input, reasoning, request count, and
@@ -62,8 +64,8 @@ wall time must remain close to control.
   implementations.
 - Per-plugin and per-tool installed-definition, emitted-call, and translated-carrier token
   estimates in `hpatch gain` and the router gain page.
-- A repository `plugins/shell.mjs` example and `make install` path that install both binaries
-  and configured plugins.
+- A repository `plugins/shell.mjs` example with optional interpreter and command-template
+  directives, plus a `make install` path that installs both binaries and configured plugins.
 
 ## Public surface
 
@@ -75,7 +77,7 @@ wall time must remain close to control.
 - `hpatch/plugins` beneath the platform user configuration directory: the only tool-plugin
   discovery surface; the router has no plugin command-line flags.
 - `shell`: an installable unconstrained custom tool whose translated exec carrier shows the
-  interpreter and exact script body.
+  interpreter and exact script body, optionally inside a `#!cmd=` command template.
 - `make install`: install `hpatch`, `hpatch-router`, and repository plugin declarations.
 - `hpatch-bench validate --manifest TASK.json` and `hpatch-bench run`: validate and run
   paired historical-commit evaluations.

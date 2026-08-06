@@ -7,18 +7,29 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 )
 
-func invoke(ctx context.Context, node, hostPath, isolatedCWD string, outputLimit int64, request, response any) error {
+func invoke(
+	ctx context.Context,
+	node, hostPath, isolatedCWD string,
+	outputLimit int64,
+	inheritedInput *os.File,
+	transientExtraFiles []*os.File,
+	request, response any,
+) error {
 	encoded, err := json.Marshal(request)
 	if err != nil {
 		return fmt.Errorf("encode plugin runtime request: %w", err)
 	}
 	command := exec.CommandContext(ctx, node, hostPath)
 	configurePluginProcessGroup(command)
+	if inheritedInput != nil {
+		command.ExtraFiles = append([]*os.File{inheritedInput}, transientExtraFiles...)
+	}
 	if isolatedCWD != "" {
 		command.Dir = isolatedCWD
 		command.Env = []string{
@@ -38,6 +49,15 @@ func invoke(ctx context.Context, node, hostPath, isolatedCWD string, outputLimit
 	}
 	if err := command.Start(); err != nil {
 		return fmt.Errorf("start plugin runtime: %w", err)
+	}
+	var closeErr error
+	for _, file := range transientExtraFiles {
+		closeErr = errors.Join(closeErr, file.Close())
+	}
+	if closeErr != nil {
+		_ = command.Process.Kill()
+		_ = command.Wait()
+		return fmt.Errorf("close inherited plugin runtime files: %w", closeErr)
 	}
 
 	type capturedOutput struct {

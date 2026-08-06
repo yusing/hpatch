@@ -571,6 +571,13 @@ function validateCarrier(carrier) {
   if (carrier.kind === "exec" && exactKeys(carrier, ["kind"])) {
     return carrier;
   }
+  if (carrier.kind === "exec"
+      && exactKeys(carrier, ["kind", "template"])
+      && typeof carrier.template === "string"
+      && byteLength(carrier.template) <= MAX_ARG_BYTES
+      && carrier.template.split("{.}").length === 2) {
+    return carrier;
+  }
   if ((carrier.kind === "custom" || carrier.kind === "function")
       && exactKeys(carrier, ["kind", "name", "payload"])
       && typeof carrier.name === "string"
@@ -597,8 +604,11 @@ async function translateTool(request) {
     function(name, argumentsJSON) {
       return Object.freeze({kind: "function", name, payload: argumentsJSON});
     },
-    exec() {
-      return Object.freeze({kind: "exec"});
+    exec(template) {
+      if (template === undefined) {
+        return Object.freeze({kind: "exec"});
+      }
+      return Object.freeze({kind: "exec", template});
     },
   });
   const carrier = validateCarrier(await tool.translate(parsed, api));
@@ -608,7 +618,13 @@ async function translateTool(request) {
 async function executeTool(request) {
   const tool = await loadTool(request.snapshotRoot, request.module, request.index);
   const argumentsValue = validateArguments(request.arguments);
-  const execution = await tool.execute(argumentsValue);
+  const hasInput = request.inputFD === true;
+  const context = Object.freeze({
+    stdinFD: hasInput ? 3 : null,
+    scriptReadFD: hasInput ? 4 : null,
+    scriptWriteFD: hasInput ? 5 : null,
+  });
+  const execution = await tool.execute(argumentsValue, context);
   if (execution === null || typeof execution !== "object" || Array.isArray(execution)
       || !Object.keys(execution).every((key) => ["stdout", "stderr", "exitCode"].includes(key))
       || !Number.isSafeInteger(execution.exitCode) || execution.exitCode < 0 || execution.exitCode > 255

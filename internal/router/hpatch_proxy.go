@@ -1241,7 +1241,18 @@ func (t *hpatchResponseTransform) translateRegisteredTool(contribution toolContr
 			if !ok {
 				return hpatchHistory{}, fmt.Errorf("%s worker is unavailable", contribution.Name)
 			}
-			payload = workerExecInput(contribution.Name, translation.Arguments)
+			if translation.Carrier.Template == "" {
+				payload = workerExecInput(contribution.Name, translation.Arguments)
+			} else {
+				payload, err = workerTemplateExecInput(
+					contribution.Name,
+					translation.Arguments,
+					translation.Carrier.Template,
+				)
+				if err != nil {
+					return hpatchHistory{}, fmt.Errorf("%s exec carrier: %w", contribution.Name, err)
+				}
+			}
 		case "custom":
 			name = translation.Carrier.Name
 			payload = translation.Carrier.Payload
@@ -1322,12 +1333,24 @@ func hpatchDiagnosticExecInput(diagnostic string) string {
 	return "text(" + strconv.Quote(diagnostic) + ");"
 }
 
-func workerExecInput(executable string, arguments []string) string {
+func workerCommand(executable string, arguments []string) string {
 	command := shellQuoteArgument(executable)
 	for _, argument := range arguments {
 		command += " " + shellQuoteArgument(argument)
 	}
-	return workerCommandExecInput(command)
+	return command
+}
+
+func workerExecInput(executable string, arguments []string) string {
+	return workerCommandExecInput(workerCommand(executable, arguments))
+}
+
+func workerTemplateExecInput(executable string, arguments []string, template string) (string, error) {
+	if strings.Count(template, "{.}") != 1 {
+		return "", errors.New("exec command template must contain exactly one {.} placeholder")
+	}
+	command := strings.Replace(template, "{.}", workerCommand(executable, arguments), 1)
+	return workerCommandExecInput(command), nil
 }
 
 func workerCommandExecInput(command string) string {

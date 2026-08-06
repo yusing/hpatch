@@ -20,7 +20,13 @@ const maxToolWorkerManifestBytes = 32 << 20
 
 // RunToolPluginWorker handles the private child-process mode used by a
 // stable contributed-tool frontend and its process-scoped snapshot wrapper.
-func RunToolPluginWorker(ctx context.Context, argv0 string, args []string, stdout, stderr io.Writer) (bool, int) {
+func RunToolPluginWorker(
+	ctx context.Context,
+	argv0 string,
+	args []string,
+	stdin *os.File,
+	stdout, stderr io.Writer,
+) (bool, int) {
 	invokedName := filepath.Base(argv0)
 	candidate := argv0
 	if invokedName == candidate {
@@ -137,6 +143,7 @@ func RunToolPluginWorker(ctx context.Context, argv0 string, args []string, stdou
 		contribution.Module,
 		contribution.ModuleIndex,
 		args,
+		stdin,
 	)
 	if err != nil {
 		return fail(fmt.Errorf("execute tool plugin: %w", err))

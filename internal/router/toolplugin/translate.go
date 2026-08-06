@@ -33,6 +33,8 @@ func Translate(ctx context.Context, node, runtimeRoot, module string, index int,
 		filepath.Join(runtimeRoot, hostFilename),
 		filepath.Join(runtimeRoot, snapshotDirectory),
 		maxHostOutputBytes,
+		nil,
+		nil,
 		request,
 		&result,
 	)

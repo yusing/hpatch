@@ -49,6 +49,7 @@ func TestToolPluginWorkerRunsPinnedImplementationInCodexContext(t *testing.T) {
 		t.Context(),
 		wrapper,
 		[]string{"one", "two words"},
+		os.Stdin,
 		&stdout,
 		&stderr,
 	)
@@ -80,6 +81,7 @@ func TestToolPluginWorkerResolvesBasenameFromPath(t *testing.T) {
 		t.Context(),
 		filepath.Base(frontend),
 		[]string{"one", "two words"},
+		os.Stdin,
 		&stdout,
 		&stderr,
 	)
@@ -126,6 +128,7 @@ func TestBuiltinToolWorkersRunGeneratedTypeScriptImplementations(t *testing.T) {
 				t.Context(),
 				wrapper,
 				test.arguments,
+				os.Stdin,
 				&stdout,
 				&stderr,
 			)
@@ -166,7 +169,7 @@ func TestToolPluginWorkerRejectsSnapshotMismatch(t *testing.T) {
 	}
 
 	var stderr bytes.Buffer
-	handled, exitCode := RunToolPluginWorker(t.Context(), wrapper, nil, &bytes.Buffer{}, &stderr)
+	handled, exitCode := RunToolPluginWorker(t.Context(), wrapper, nil, os.Stdin, &bytes.Buffer{}, &stderr)
 	if !handled || exitCode != 1 || !strings.Contains(stderr.String(), "registry identity mismatch") {
 		t.Fatalf("worker handled %t, exit code %d, stderr %q", handled, exitCode, stderr.String())
 	}
@@ -181,7 +184,7 @@ func TestToolPluginWorkerRejectsMissingManifest(t *testing.T) {
 		t.Fatal(err)
 	}
 	var stderr bytes.Buffer
-	handled, exitCode := RunToolPluginWorker(t.Context(), wrapper, nil, &bytes.Buffer{}, &stderr)
+	handled, exitCode := RunToolPluginWorker(t.Context(), wrapper, nil, os.Stdin, &bytes.Buffer{}, &stderr)
 	if !handled || exitCode != 1 || !strings.Contains(stderr.String(), "open tool worker manifest") {
 		t.Fatalf("worker handled %t, exit code %d, stderr %q", handled, exitCode, stderr.String())
 	}

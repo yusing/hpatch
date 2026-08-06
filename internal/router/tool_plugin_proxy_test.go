@@ -32,6 +32,7 @@ const testToolPluginDeclaration = `export default {
       if (parsed === "missing") return api.custom("missing_carrier", parsed);
       if (parsed === "wrong-kind") return api.function("exec", "{}");
       if (parsed === "invalid-json") return api.function("lookup", "{");
+      if (parsed === "template") return api.exec("before | {.} | after");
       if (parsed === "malformed") return {kind: "exec", payload: "forbidden"};
       return api.exec();
     },
@@ -196,6 +197,36 @@ func TestToolPluginRequestJSONAndReplay(t *testing.T) {
 	if err := proxy.restoreInputPrefix(&replay, transform.historySessionID); err == nil ||
 		!strings.Contains(err.Error(), "changed translated payload") {
 		t.Fatalf("tampered replay error = %v", err)
+	}
+}
+
+func TestToolPluginExecTemplateUsesCanonicalWorkerCommand(t *testing.T) {
+	transform, proxy, _ := newToolPluginTestTransform(t)
+	response, err := transform.TransformJSON(mustTestJSON(t, map[string]any{
+		"status":      "completed",
+		"output":      []any{testToolPluginItem("template")},
+		"tools":       []any{},
+		"tool_choice": "auto",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	visible := decodeResponseItem(t, response)
+	payload, err := workerTemplateExecInput(
+		"plugin_tool",
+		[]string{"--fixed", "template"},
+		"before | {.} | after",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if jsonString(visible, "name") != "exec" || jsonString(visible, "input") != payload {
+		t.Fatalf("visible template carrier = %#v", visible)
+	}
+	history, ok := proxy.history(transform.historySessionID, "call-P")
+	if !ok || history.carrierPayload != payload {
+		t.Fatalf("template history = %+v, available %t", history, ok)
 	}
 }
 

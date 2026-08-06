@@ -100,6 +100,28 @@ describe("installable shell plugin", () => {
     expect(await tool.translate(bash, {exec: () => ({kind: "exec"})})).toEqual({kind: "exec"});
   });
 
+  test("expands a command directive after an optional interpreter shebang", async () => {
+    const template = "curl -fsSL URL | {.} | jq";
+    const exec = (commandTemplate?: string) => (
+      commandTemplate === undefined ? {kind: "exec"} : {kind: "exec", template: commandTemplate}
+    );
+
+    const bash = await tool.parse(`#!cmd=${template}\nprint('bash')`);
+    expect(await tool.argv(bash)).toEqual(["bash", "print('bash')"]);
+    expect(await tool.translate(bash, {exec})).toEqual({kind: "exec", template});
+
+    const python = await tool.parse(`#!python3\r\n#!cmd=${template}\r\nprint('python')\r\n`);
+    expect(await tool.argv(python)).toEqual(["python3", "print('python')\r\n"]);
+    expect(await tool.translate(python, {exec})).toEqual({kind: "exec", template});
+
+    const laterDirective = await tool.parse(`#!python3\nprint('python')\n#!cmd=${template}`);
+    expect(await tool.argv(laterDirective)).toEqual([
+      "python3",
+      `print('python')\n#!cmd=${template}`,
+    ]);
+    expect(await tool.translate(laterDirective, {exec})).toEqual({kind: "exec"});
+  });
+
   test("rejects malformed or unsafe input before execution", async () => {
     for (const input of [
       "#!",
@@ -108,6 +130,9 @@ describe("installable shell plugin", () => {
       "#!/usr/bin/env -S",
       "#!/usr/bin/env -u python3",
       "printf '\\0'\0",
+      "#!cmd=",
+      "#!cmd=printf ok",
+      "#!cmd={.} && {.}",
     ]) {
       expect(() => tool.parse(input)).toThrow();
     }
@@ -116,7 +141,7 @@ describe("installable shell plugin", () => {
     );
   });
 
-  test("sends the exact body through stdin and inherits cwd and environment", async () => {
+  test("executes the exact body and inherits cwd and environment", async () => {
     const temporaryRoot = await temporaryDirectory("shell-plugin-tmp-");
     const workingRoot = await temporaryDirectory("shell-plugin-cwd-");
     const workingDirectory = path.join(workingRoot, "work");
@@ -247,6 +272,22 @@ describe("installable shell plugin", () => {
       expect(executed.status).toBe(0);
       expect(executed.stdout).toBe("frontend:stdin");
       expect(executed.stderr).toBe("");
+
+      const piped = spawnSync(shellPath, [
+        "bash",
+        "IFS= read -r value; printf 'piped:%s' \"$value\"",
+      ], {
+        cwd: repositoryRoot,
+        encoding: "utf8",
+        env: {
+          ...installEnvironment,
+          PATH: `${binaryDirectory}${path.delimiter}${process.env.PATH ?? ""}`,
+        },
+        input: "program-input\n",
+      });
+      expect(piped.status).toBe(0);
+      expect(piped.stdout).toBe("piped:program-input");
+      expect(piped.stderr).toBe("");
     } finally {
       if (router.exitCode === null && router.signalCode === null) {
         router.kill("SIGTERM");

@@ -698,6 +698,36 @@ func TestHGrepExecInputUsesStableBasename(t *testing.T) {
 	}
 }
 
+func TestWorkerTemplateExecInputQuotesNestedShellCommand(t *testing.T) {
+	carrierInput, err := workerTemplateExecInput(
+		"shell",
+		[]string{"python3", `print('{"hello":"world"}')`},
+		"curl -fsSL URL | {.} | jq",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encodedArguments := strings.TrimPrefix(carrierInput, "const result = await tools.exec_command(")
+	encodedArguments = strings.TrimSuffix(encodedArguments, ");\ntext(result.output);")
+
+	var arguments struct {
+		Command string `json:"cmd"`
+	}
+	if err := json.Unmarshal([]byte(encodedArguments), &arguments); err != nil {
+		t.Fatalf("decode translated exec arguments: %v\n%s", err, carrierInput)
+	}
+	want := `curl -fsSL URL | shell python3 'print('"'"'{"hello":"world"}'"'"')' | jq`
+	if arguments.Command != want {
+		t.Fatalf("translated template command = %q, want %q", arguments.Command, want)
+	}
+
+	for _, template := range []string{"missing", "{.} then {.}"} {
+		if _, err := workerTemplateExecInput("shell", []string{"bash", ""}, template); err == nil {
+			t.Fatalf("worker template %q did not reject", template)
+		}
+	}
+}
+
 func TestHReadExecInputQuotesOnlyShellSensitiveArguments(t *testing.T) {
 	carrierInput := workerExecInput("hread", []string{`"line's $(echo injected).txt" 2:3`})
 	encodedArguments := strings.TrimPrefix(carrierInput, "const result = await tools.exec_command(")

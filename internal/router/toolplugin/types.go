@@ -15,9 +15,10 @@ type (
 	}
 
 	Carrier struct {
-		Kind    string `json:"kind"`
-		Name    string `json:"name"`
-		Payload string `json:"payload"`
+		Kind     string `json:"kind"`
+		Name     string `json:"name"`
+		Payload  string `json:"payload"`
+		Template string `json:"template"`
 	}
 
 	Translation struct {

@@ -3,8 +3,8 @@ pjdoc:
   version: 1
   kind: spec
   scope: root
-  status: approved
-  revision: "18"
+  status: draft
+  revision: "19"
   files:
     - interface.md
     - comparison.md

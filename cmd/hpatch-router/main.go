@@ -18,7 +18,14 @@ func main() {
 func run() int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	if handled, exitCode := router.RunToolPluginWorker(ctx, os.Args[0], os.Args[1:], os.Stdout, os.Stderr); handled {
+	if handled, exitCode := router.RunToolPluginWorker(
+		ctx,
+		os.Args[0],
+		os.Args[1:],
+		os.Stdin,
+		os.Stdout,
+		os.Stderr,
+	); handled {
 		return exitCode
 	}
 	if err := router.Run(ctx, os.Args[1:], os.Stderr); err != nil {

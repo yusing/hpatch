@@ -3,8 +3,8 @@ pjdoc:
   version: 1
   kind: architecture
   scope: root
-  status: approved
-  revision: "19"
+  status: draft
+  revision: "20"
   files:
     []
 ---
@@ -195,12 +195,14 @@ catalog retained from that request. Plugins never construct output IDs, call IDs
 JSON/SSE envelopes, or replay items.
 
 One carrier renderer owns each supported carrier shape. The generic path preserves a validated
-normal Code Mode tool name and payload. The exec helper is a renderer over that path: it alone
-owns the outer exec program, nested invocation, serialization, independent argv quoting, and
-result forwarding. An implementation needing another Code Mode carrier uses the generic path
-rather than encoding an exec surrogate. Hpatch's native workspace translation, correction
-ancestry, patch renderer, and semantic failure baseline remain adapter extensions beside this
-generic interface rather than capabilities granted to ordinary plugins.
+normal Code Mode tool name and payload. The exec helper is a renderer over that path. It alone
+owns the outer exec program, nested invocation, serialization, independent argv quoting, optional
+single-placeholder command-template expansion, and result forwarding. Plugin code can select the
+typed template variant but cannot construct the outer carrier or quote the nested frontend command.
+An implementation needing another Code Mode carrier uses the generic path rather than encoding an
+exec surrogate. Hpatch's native workspace translation, correction ancestry, patch renderer, and
+semantic failure baseline remain adapter extensions beside this generic interface rather than
+capabilities granted to ordinary plugins.
 
 For every executor-backed contribution, the router wrapper owner creates a symlink inside the
 authenticated snapshot directory. The snapshot symlink has the tool-name basename and targets
@@ -208,14 +210,20 @@ the running router executable. After complete-registry validation, the owner cre
 a stable same-basename frontend beside the router executable. The frontend targets the snapshot
 wrapper. Private child dispatch resolves the frontend once, validates the snapshot wrapper and
 registry identity, and gives the implementation the remaining argv without inventing a cwd or
-environment. The child executes only because Codex ran the returned basename carrier, so Codex
-continues to own sandbox and permission enforcement. Frontend and wrapper creation is
-all-or-nothing for startup. The router holds one exclusive frontend lock for its process
-lifetime. Another router using that frontend directory fails startup. A later process can
-replace an authenticated prior frontend after a crash releases the lock. Shutdown removes
-owned frontends before removing the snapshot and releasing the lock. An isolated executor
-deployment must make the router executable, frontend directory, plugin runtime, and
-implementation resources visible independently of workspace selection.
+environment. The worker passes frontend standard input to the JavaScript host on a dedicated
+inherited descriptor while the host retains descriptor zero for its bounded JSON control request.
+For execution, the worker also owns an anonymous script pipe pair and closes its copies after host
+startup. The typed execution context identifies the pipeline descriptor and both script-pipe
+descriptors. The shell executor writes the body to the pipe and maps its read end to the
+interpreter's script descriptor. The child executes only because Codex ran the returned basename
+carrier, so Codex continues to own sandbox and permission enforcement.
+Frontend and wrapper creation is all-or-nothing for startup. The router
+holds one exclusive frontend lock for its process lifetime. Another router using that frontend
+directory fails startup. A later process can replace an authenticated prior frontend after a
+crash releases the lock. Shutdown removes owned frontends before removing the snapshot and
+releasing the lock. An isolated executor deployment must make the router executable, frontend
+directory, plugin runtime, and implementation resources visible independently of workspace
+selection.
 
 Startup materializes the validated implementation modules and dispatch metadata into an
 immutable process-scoped worker snapshot. A symlink-launched child reads that snapshot and

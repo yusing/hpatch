@@ -178,6 +178,8 @@ describe("plugin translation and execution", () => {
     translate(input, api) {
       if (input === "custom") return api.custom("exec", "custom payload");
       if (input === "function") return api.function("lookup", "{\\"value\\":1}");
+      if (input === "template") return api.exec("before | {.} | after");
+      if (input === "invalid-template") return api.exec("missing placeholder");
       if (input === "malformed") return {kind: "exec", payload: "unexpected"};
       return api.exec();
     },
@@ -192,6 +194,7 @@ describe("plugin translation and execution", () => {
 
     for (const [input, carrier] of [
       ["exec", {kind: "exec"}],
+      ["template", {kind: "exec", template: "before | {.} | after"}],
       ["custom", {kind: "custom", name: "exec", payload: "custom payload"}],
       ["function", {kind: "function", name: "lookup", payload: "{\"value\":1}"}],
     ] as const) {
@@ -231,6 +234,15 @@ describe("plugin translation and execution", () => {
     });
     expect(malformed.status).toBe(1);
     expect(malformed.stderr).toContain("translator returned a malformed carrier");
+
+    const invalidTemplate = invokeHost(directory, {
+      operation: "translate",
+      module: "plugin.mjs",
+      index: 0,
+      input: "invalid-template",
+    });
+    expect(invalidTemplate.status).toBe(1);
+    expect(invalidTemplate.stderr).toContain("translator returned a malformed carrier");
 
     const executed = invokeHost(directory, {
       operation: "execute",

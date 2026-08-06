@@ -12,6 +12,7 @@ export type FunctionCarrier = {
 
 export type ExecCarrier = {
   kind: "exec";
+  template?: string;
 };
 
 export type Carrier = CustomCarrier | FunctionCarrier | ExecCarrier;
@@ -19,13 +20,19 @@ export type Carrier = CustomCarrier | FunctionCarrier | ExecCarrier;
 export type TranslationAPI = {
   custom(name: string, input: string): CustomCarrier;
   function(name: string, argumentsJSON: string): FunctionCarrier;
-  exec(): ExecCarrier;
+  exec(template?: string): ExecCarrier;
 };
 
 export type ExecutionResult = {
   stdout?: string;
   stderr?: string;
   exitCode: number;
+};
+
+export type ExecutionContext = {
+  stdinFD: number | null;
+  scriptReadFD: number | null;
+  scriptWriteFD: number | null;
 };
 
 export type Tool<T> = {
@@ -43,7 +50,7 @@ export type Tool<T> = {
   parse(input: string): T | Promise<T>;
   argv(input: T): string[] | Promise<string[]>;
   translate(input: T, api: TranslationAPI): Carrier | Promise<Carrier>;
-  execute(argv: string[]): ExecutionResult | Promise<ExecutionResult>;
+  execute(argv: string[], context: ExecutionContext): ExecutionResult | Promise<ExecutionResult>;
 };
 
 export type Plugin = {
