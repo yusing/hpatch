@@ -8,21 +8,9 @@ otherwise use a JSON-quoted path. Unlike plain file output, every complete line 
 as \`LINE:HASH TEXT\`; copy the current \`LINE:HASH\` directly into an HPATCH/2 target.
 `;
 
-const hreadGrammar = `start: read_spec read_spec_2?
-read_spec_2: NL read_spec read_spec_3?
-read_spec_3: NL read_spec read_spec_4?
-read_spec_4: NL read_spec read_spec_5?
-read_spec_5: NL read_spec read_spec_6?
-read_spec_6: NL read_spec
-read_spec: path (SP POSINT ":" POSINT)?
-?path: QUOTED | BARE
-
-NL: /\\r?\\n/
-POSINT: /[1-9][0-9]*/
-SP: " "
-BARE: /[^\\x00-\\x20"]+/
-QUOTED: /"(?:\\\\(?:["\\\\\\/bfnrt]|u[0-9A-Fa-f]{4})|[^\\x00-\\x1F"\\\\]|\\t)*"/
-`;
+const hreadPath = `(?:"(?:\\\\(?:["\\\\/bfnrt]|u[0-9A-Fa-f]{4})|[^\\x00-\\x1F"\\\\]|\\t)*"|[^\\x00-\\x20"]+)`;
+const hreadReadSpec = `${hreadPath}(?: [1-9][0-9]*:[1-9][0-9]*)?`;
+const hreadRegex = `^${hreadReadSpec}(?:\\r?\\n${hreadReadSpec}){0,5}$`;
 
 const hgrepDescription = `Use \`hgrep\` as replacement of \`rg\` or \`grep\`. It is a ripgrep wrapper that accepts familiar
 arguments but returns complete matching and requested context lines as
@@ -47,7 +35,7 @@ const plugin: BuiltinPlugin = {
   apiVersion: "hpatch-tool-plugin/v1",
   id: "builtin.hpatch",
   tools: [
-    createHReadTool(hreadDescription, hreadGrammar),
+    createHReadTool(hreadDescription, hreadRegex),
     createHGrepTool(hgrepDescription, hgrepGrammar),
   ],
 };

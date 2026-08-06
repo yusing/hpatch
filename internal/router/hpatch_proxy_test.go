@@ -195,7 +195,7 @@ func TestHPatchPrepareRequestExposesOnlyStandaloneHPatch(t *testing.T) {
 	if err := json.Unmarshal(topTools[2]["format"], &format); err != nil {
 		t.Fatal(err)
 	}
-	if format.Type != "grammar" || format.Syntax != "lark" || !strings.Contains(format.Definition, "read_spec_6") {
+	if format.Type != "grammar" || format.Syntax != "regex" || !strings.Contains(format.Definition, "{0,5}") {
 		t.Fatalf("standalone hread format = %#v", topTools[2])
 	}
 	if description := jsonString(topTools[3], "description"); !strings.Contains(description, "Use `hgrep` as replacement") {

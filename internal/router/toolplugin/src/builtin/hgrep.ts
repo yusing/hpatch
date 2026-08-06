@@ -500,6 +500,7 @@ export function createHGrepTool(description: string, grammar: string): Tool<stri
     name: "hgrep",
     description,
     grammar,
+    syntax: "lark",
     argv(input) {
       return splitArguments(input);
     },

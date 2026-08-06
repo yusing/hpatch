@@ -314,6 +314,7 @@ export function createHReadTool(description: string, grammar: string): Tool<stri
     name: "hread",
     description,
     grammar,
+    syntax: "regex",
     argv(input) {
       return [input];
     },

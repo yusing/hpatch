@@ -35,6 +35,7 @@ type ExecutorToolOptions = {
   name: string;
   description: string;
   grammar: string;
+  syntax: "lark" | "regex";
   argv(input: string): string[] | Promise<string[]>;
   execute(argv: string[]): ExecutionResult | Promise<ExecutionResult>;
 };
@@ -45,7 +46,7 @@ export function createExecutorTool(options: ExecutorToolOptions): Tool<string> {
       type: "custom",
       name: options.name,
       description: options.description,
-      format: {type: "grammar", syntax: "lark", definition: options.grammar},
+      format: {type: "grammar", syntax: options.syntax, definition: options.grammar},
     },
     maxInputBytes: MAX_INPUT_BYTES,
     parse(input) {

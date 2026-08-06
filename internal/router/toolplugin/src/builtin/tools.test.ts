@@ -7,6 +7,7 @@ import path from "node:path";
 import {formatHashLine} from "./common.ts";
 import {createHGrepTool, splitArguments} from "./hgrep.ts";
 import {createHReadTool} from "./hread.ts";
+import plugin from "./tools.ts";
 
 const originalCWD = process.cwd();
 const originalPath = process.env.PATH;
@@ -31,6 +32,40 @@ afterEach(async () => {
 });
 
 describe("hread built-in plugin", () => {
+  test("declares a bounded regex grammar", () => {
+    const format = plugin.tools[0].specification.format;
+    expect(format?.syntax).toBe("regex");
+    if (format === undefined) {
+      throw new Error("hread grammar format is missing");
+    }
+    const pattern = new RegExp(format.definition, "u");
+    const sixSpecs = Array.from({length: 6}, (_, index) => `file${index}.txt`).join("\r\n");
+    for (const input of [
+      "plain.txt",
+      "plain.txt 2:9",
+      "\"second file.txt\" 2:3",
+      `"quoted\\"file.txt"`,
+      sixSpecs,
+    ]) {
+      expect(pattern.test(input)).toBe(true);
+    }
+    const sevenSpecs = Array.from({length: 7}, (_, index) => `file${index}.txt`).join("\n");
+    for (const input of [
+      "",
+      "\nplain.txt",
+      "plain.txt\n",
+      "plain.txt\n\nsecond.txt",
+      "plain file.txt",
+      "plain.txt 0:2",
+      "plain.txt 2:0",
+      "plain.txt 2:3 extra",
+      "\"unterminated",
+      sevenSpecs,
+    ]) {
+      expect(pattern.test(input)).toBe(false);
+    }
+  });
+
   test("reads whole files, ranges, and ordered batches", async () => {
     const directory = await temporaryDirectory("hread-plugin-");
     process.chdir(directory);
