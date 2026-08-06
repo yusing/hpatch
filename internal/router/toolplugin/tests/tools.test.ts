@@ -4,10 +4,10 @@ import {mkdtemp, mkdir, rm, writeFile} from "node:fs/promises";
 import {tmpdir} from "node:os";
 import path from "node:path";
 
-import {formatHashLine} from "./common.ts";
-import {createHGrepTool, splitArguments} from "./hgrep.ts";
-import {createHReadTool} from "./hread.ts";
-import plugin from "./tools.ts";
+import {formatHashLine} from "../src/builtin/common.ts";
+import {createHGrepTool, splitArguments} from "../src/builtin/hgrep.ts";
+import {createHReadTool} from "../src/builtin/hread.ts";
+import plugin from "../src/builtin/tools.ts";
 
 const originalCWD = process.cwd();
 const originalPath = process.env.PATH;

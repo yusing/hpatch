@@ -422,7 +422,7 @@ Library use: module path `github.com/yusing/hpatch`. Importable as a library (`h
 git clone https://github.com/yusing/hpatch.git
 cd hpatch
 go generate ./internal/router/toolplugin
-bun test ./internal/router/toolplugin/src/builtin
+bun test ./internal/router/toolplugin/tests
 go test ./...
 go vet ./...
 go install ./cmd/hpatch ./cmd/hpatch-router

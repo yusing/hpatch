@@ -108,7 +108,7 @@ Use the cheapest package-level check that covers the changed owner:
 - Standalone CLI/help contract: `go test ./cmd/hpatch`
 - Router request, response, correction, workspace, hread, or transport behavior:
   `go test ./internal/router`
-- Built-in hread or hgrep TypeScript behavior: `bun test ./internal/router/toolplugin/src/builtin`
+- Plugin TypeScript behavior: `bun test ./internal/router/toolplugin/tests`
 - Router process entry point: `go test ./cmd/hpatch-router`
 - Cross-package or broad contract changes: `go test ./...`
 
