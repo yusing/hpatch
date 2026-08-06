@@ -204,7 +204,7 @@ func TestHPatchPrepareRequestExposesOnlyStandaloneHPatch(t *testing.T) {
 	if err := json.Unmarshal(topTools[3]["format"], &format); err != nil {
 		t.Fatal(err)
 	}
-	if format.Type != "grammar" || format.Syntax != "lark" || !strings.Contains(format.Definition, "DOUBLE_QUOTED") {
+	if format.Type != "grammar" || format.Syntax != "regex" || !strings.HasPrefix(format.Definition, "^") || !strings.HasSuffix(format.Definition, "$") {
 		t.Fatalf("standalone hgrep format = %#v", topTools[3])
 	}
 	for _, correctionGuidance := range []string{

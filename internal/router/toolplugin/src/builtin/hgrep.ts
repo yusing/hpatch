@@ -495,12 +495,11 @@ async function runRipgrep(argumentsValue: string[], maxOutputBytes: number): Pro
   throw new Error(`execute rg: exit status ${exitCode ?? "unknown"}`);
 }
 
-export function createHGrepTool(description: string, grammar: string): Tool<string> {
+export function createHGrepTool(description: string, grammar: string): Tool<string[]> {
   return createExecutorTool({
     name: "hgrep",
     description,
     grammar,
-    syntax: "lark",
     argv(input) {
       return splitArguments(input);
     },

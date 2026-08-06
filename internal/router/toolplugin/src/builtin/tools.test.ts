@@ -137,6 +137,41 @@ describe("hgrep built-in plugin", () => {
     }
   });
 
+  test("declares an anchored regex grammar that matches runtime parsing", async () => {
+    const format = plugin.tools[1].specification.format;
+    expect(format?.syntax).toBe("regex");
+    if (format === undefined) {
+      throw new Error("hgrep grammar format is missing");
+    }
+    const pattern = new RegExp(format.definition, "u");
+    const tool = createHGrepTool("description", format.definition);
+    const accepted = [
+      "needle",
+      "  -F 'two words' \"path with spaces.txt\"\t",
+      "empty''argument",
+      "escaped\\ space",
+      "\"\"",
+    ];
+    for (const input of accepted) {
+      expect(pattern.test(input)).toBe(true);
+      const parsed = await tool.parse(input);
+      expect(await tool.argv(parsed)).toEqual(splitArguments(input));
+    }
+    for (const input of [
+      "",
+      " \t",
+      "\nneedle",
+      "needle\n",
+      "one\r\ntwo",
+      "'unterminated",
+      "\"escape\\",
+      "'one\nsecond'",
+    ]) {
+      expect(pattern.test(input)).toBe(false);
+      expect(() => tool.parse(input)).toThrow();
+    }
+  });
+
   test("runs ripgrep and emits verified complete rows", async () => {
     const directory = await temporaryDirectory("hgrep-plugin-");
     process.chdir(directory);

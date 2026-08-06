@@ -17,18 +17,11 @@ arguments but returns complete matching and requested context lines as
 \`"PATH":LINE:HASH TEXT\`. Copy the current \`LINE:HASH\` directly into an HPATCH/2 target.
 `;
 
-const hgrepGrammar = `start: WS? argument (WS argument)* WS?
-argument: part+
-?part: SINGLE_QUOTED | DOUBLE_QUOTED | BARE
-
-WS: /[ \\t]+/
-SINGLE_QUOTED: /'[^'\\r\\n]*'/
-DOUBLE_QUOTED: /"(?:\\\\[^\\r\\n]|[^"\\\\\\r\\n])*"/
-BARE: /(?:\\\\[^\\r\\n]|[^\\s'"\\\\])+/
-`;
+const hgrepPart = `(?:'[^'\\r\\n]*'|"(?:\\\\[^\\r\\n]|[^"\\\\\\r\\n])*"|(?:\\\\[^\\r\\n]|[^\\s'"\\\\])+)`;
+const hgrepRegex = `^[ \\t]*${hgrepPart}+(?:[ \\t]+${hgrepPart}+)*[ \\t]*$`;
 
 type BuiltinPlugin = Omit<Plugin, "tools"> & {
-  tools: [Tool<string>, Tool<string>];
+  tools: [Tool<string[]>, Tool<string[]>];
 };
 
 const plugin: BuiltinPlugin = {
@@ -36,7 +29,7 @@ const plugin: BuiltinPlugin = {
   id: "builtin.hpatch",
   tools: [
     createHReadTool(hreadDescription, hreadRegex),
-    createHGrepTool(hgrepDescription, hgrepGrammar),
+    createHGrepTool(hgrepDescription, hgrepRegex),
   ],
 };
 

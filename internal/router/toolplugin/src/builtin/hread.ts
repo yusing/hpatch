@@ -309,12 +309,11 @@ async function executeRead(input: string): Promise<string> {
   return output;
 }
 
-export function createHReadTool(description: string, grammar: string): Tool<string> {
+export function createHReadTool(description: string, grammar: string): Tool<string[]> {
   return createExecutorTool({
     name: "hread",
     description,
     grammar,
-    syntax: "regex",
     argv(input) {
       return [input];
     },

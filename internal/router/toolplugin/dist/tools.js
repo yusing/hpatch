@@ -36,13 +36,15 @@ function createExecutorTool(options) {
       type: "custom",
       name: options.name,
       description: options.description,
-      format: { type: "grammar", syntax: options.syntax, definition: options.grammar }
+      format: { type: "grammar", syntax: "regex", definition: options.grammar }
     },
     maxInputBytes: MAX_INPUT_BYTES,
     parse(input) {
+      return options.argv(input);
+    },
+    argv(input) {
       return input;
     },
-    argv: options.argv,
     translate(_input, api) {
       return api.exec();
     },
@@ -508,7 +510,6 @@ function createHGrepTool(description, grammar) {
     name: "hgrep",
     description,
     grammar,
-    syntax: "lark",
     argv(input) {
       return splitArguments(input);
     },
@@ -817,7 +818,6 @@ function createHReadTool(description, grammar) {
     name: "hread",
     description,
     grammar,
-    syntax: "regex",
     argv(input) {
       return [input];
     },
@@ -852,21 +852,14 @@ var hgrepDescription = `Use \`hgrep\` as replacement of \`rg\` or \`grep\`. It i
 arguments but returns complete matching and requested context lines as
 \`"PATH":LINE:HASH TEXT\`. Copy the current \`LINE:HASH\` directly into an HPATCH/2 target.
 `;
-var hgrepGrammar = `start: WS? argument (WS argument)* WS?
-argument: part+
-?part: SINGLE_QUOTED | DOUBLE_QUOTED | BARE
-
-WS: /[ \\t]+/
-SINGLE_QUOTED: /'[^'\\r\\n]*'/
-DOUBLE_QUOTED: /"(?:\\\\[^\\r\\n]|[^"\\\\\\r\\n])*"/
-BARE: /(?:\\\\[^\\r\\n]|[^\\s'"\\\\])+/
-`;
+var hgrepPart = `(?:'[^'\\r\\n]*'|"(?:\\\\[^\\r\\n]|[^"\\\\\\r\\n])*"|(?:\\\\[^\\r\\n]|[^\\s'"\\\\])+)`;
+var hgrepRegex = `^[ \\t]*${hgrepPart}+(?:[ \\t]+${hgrepPart}+)*[ \\t]*$`;
 var plugin = {
   apiVersion: "hpatch-tool-plugin/v1",
   id: "builtin.hpatch",
   tools: [
     createHReadTool(hreadDescription, hreadRegex),
-    createHGrepTool(hgrepDescription, hgrepGrammar)
+    createHGrepTool(hgrepDescription, hgrepRegex)
   ]
 };
 var tools_default = plugin;
