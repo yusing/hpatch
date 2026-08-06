@@ -25,16 +25,6 @@ const (
 	maxToolRegistryContributions = 128
 )
 
-func builtinToolContributions(hpatchDescription string) []toolContribution {
-	return []toolContribution{{
-		PluginID:      "builtin.hpatch",
-		Name:          hpatchToolName,
-		Specification: mustMarshalJSON(customGrammarTool(hpatchToolName, hpatchDescription, hpatch.ToolGrammar())),
-		MaxInputBytes: maxHPatchScriptBytes,
-		Builtin:       true,
-	}}
-}
-
 func buildToolRegistry(ctx context.Context, dataDirectory, hpatchDescription string) (*toolRegistry, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -74,7 +64,13 @@ func buildToolRegistry(ctx context.Context, dataDirectory, hpatchDescription str
 	if err != nil {
 		return fail(err)
 	}
-	contributions := builtinToolContributions(hpatchDescription)
+	contributions := []toolContribution{{
+		PluginID:      "builtin.hpatch",
+		Name:          hpatchToolName,
+		Specification: mustMarshalJSON(customGrammarTool(hpatchToolName, hpatchDescription, hpatch.ToolGrammar())),
+		MaxInputBytes: maxHPatchScriptBytes,
+		Builtin:       true,
+	}}
 	var validationErrors []error
 	for _, diagnostic := range pluginSnapshot.Diagnostics {
 		validationErrors = append(validationErrors, errors.New(diagnostic))
@@ -91,13 +87,13 @@ func buildToolRegistry(ctx context.Context, dataDirectory, hpatchDescription str
 		} else {
 			pluginIDs[plugin.ID] = plugin.Module
 		}
-		for _, tool := range plugin.Tools {
+		for toolIndex, tool := range plugin.Tools {
 			var specification map[string]json.RawMessage
 			if decodeErr := json.Unmarshal(tool.Specification, &specification); decodeErr != nil {
 				validationErrors = append(validationErrors, fmt.Errorf(
 					"%s tool %d: decode normalized specification: %w",
 					plugin.Module,
-					tool.Index+1,
+					toolIndex+1,
 					decodeErr,
 				))
 				continue
@@ -108,7 +104,7 @@ func buildToolRegistry(ctx context.Context, dataDirectory, hpatchDescription str
 				Specification: slices.Clone(tool.Specification),
 				MaxInputBytes: tool.MaxInputBytes,
 				Module:        plugin.Module,
-				ModuleIndex:   tool.Index,
+				ModuleIndex:   toolIndex,
 				Executor:      true,
 			}
 			if validationErr := validateToolContribution(contribution); validationErr != nil {

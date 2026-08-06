@@ -472,7 +472,7 @@ function validateSpecification(specification, label, errors) {
   return specification;
 }
 
-function validateTool(tool, pluginID, modulePath, index, errors) {
+function validateTool(tool, modulePath, index, errors) {
   const label = `${modulePath}: tool ${index + 1}`;
   if (tool === null || typeof tool !== "object" || Array.isArray(tool)
       || !exactKeys(tool, ["specification", "maxInputBytes", "parse", "argv", "translate", "execute"])) {
@@ -492,9 +492,6 @@ function validateTool(tool, pluginID, modulePath, index, errors) {
     return null;
   }
   return {
-    pluginId: pluginID,
-    module: modulePath,
-    index,
     specification,
     maxInputBytes: tool.maxInputBytes,
   };
@@ -535,7 +532,7 @@ async function validateModule(snapshotRoot, modulePath) {
   const tools = [];
   if (Array.isArray(declaration.tools)) {
     for (const [index, tool] of declaration.tools.entries()) {
-      const normalized = validateTool(tool, declaration.id, modulePath, index, errors);
+      const normalized = validateTool(tool, modulePath, index, errors);
       if (normalized !== null) {
         tools.push(normalized);
       }

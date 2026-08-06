@@ -58,22 +58,22 @@ func TestExecuteBoundsPluginImplementationOutput(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var tool *Tool
+	var plugin *Plugin
 	for pluginIndex := range snapshot.Plugins {
 		if snapshot.Plugins[pluginIndex].ID == "execute-output.test" {
-			tool = &snapshot.Plugins[pluginIndex].Tools[0]
+			plugin = &snapshot.Plugins[pluginIndex]
 			break
 		}
 	}
-	if tool == nil {
+	if plugin == nil {
 		t.Fatal("configured execution-output plugin is unavailable")
 	}
 	_, err = Execute(
 		t.Context(),
 		snapshot.NodeExecutable,
 		snapshot.Root,
-		tool.Module,
-		tool.Index,
+		plugin.Module,
+		0,
 		[]string{},
 	)
 	if err == nil || !strings.Contains(err.Error(), "executor stdout and stderr exceed 16777216 UTF-8 bytes") {

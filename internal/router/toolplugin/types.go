@@ -4,9 +4,6 @@ import "encoding/json"
 
 type (
 	Tool struct {
-		PluginID      string          `json:"pluginId"`
-		Module        string          `json:"module"`
-		Index         int             `json:"index"`
 		Specification json.RawMessage `json:"specification"`
 		MaxInputBytes int             `json:"maxInputBytes"`
 	}
