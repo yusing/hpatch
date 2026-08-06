@@ -26,6 +26,11 @@ use a router-owned wrapper, while tool implementations run only when Codex execu
 translated carrier under its normal sandbox and permissions. Gain reporting attributes
 installed definitions and emitted-versus-translated output shapes to each contributed tool.
 
+An installable `shell` plugin accepts one free-form script and exposes its normalized interpreter
+and exact body in the translated Codex exec carrier. The executor runs the selected interpreter
+with the body as standard input and stores no intermediate script file. A compact shebang selects
+the interpreter, while a missing shebang selects `bash`.
+
 The historical benchmark remains the end-to-end authority: correctness must match the
 native edit path, output tokens must be lower, and input, reasoning, request count, and
 wall time must remain close to control.
@@ -57,6 +62,8 @@ wall time must remain close to control.
   implementations.
 - Per-plugin and per-tool installed-definition, emitted-call, and translated-carrier token
   estimates in `hpatch gain` and the router gain page.
+- A repository `plugins/shell.mjs` example and `make install` path that install both binaries
+  and configured plugins.
 
 ## Public surface
 
@@ -67,6 +74,9 @@ wall time must remain close to control.
   multi-item hread treatment, or the unchanged control path.
 - `hpatch/plugins` beneath the platform user configuration directory: the only tool-plugin
   discovery surface; the router has no plugin command-line flags.
+- `shell`: an installable unconstrained custom tool whose translated exec carrier shows the
+  interpreter and exact script body.
+- `make install`: install `hpatch`, `hpatch-router`, and repository plugin declarations.
 - `hpatch-bench validate --manifest TASK.json` and `hpatch-bench run`: validate and run
   paired historical-commit evaluations.
 - `hpatch --help`, `hpatch --tool-help`, `hpatch translate --help`, and
@@ -91,6 +101,9 @@ wall time must remain close to control.
 - Interactive editor UI, binary files, non-UTF-8 files, remote plugin discovery, runtime
   TypeScript transpilation, hot plugin reload, or search semantics beyond the installed
   ripgrep executable.
+- Bundling configured example plugins into the router, parsing the script body as shell syntax,
+  storing the body in an intermediate file, overriding the executor working directory or
+  environment, or printing script source into program output.
 - A new patch interchange format beyond the compact command script and translated
   `apply_patch` output.
 - AST-specific mutation commands or language-specific editing frameworks.

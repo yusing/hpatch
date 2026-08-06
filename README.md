@@ -102,6 +102,36 @@ The router also supplies `functions.hpatch` to the provider with a [Lark grammar
 - For routed hgrep: `rg` available on the Codex executor's `PATH`
 - For routed hread and hgrep: the router executable directory precedes unrelated entries on the
   Codex executor's trusted `PATH`
+- For the installed shell plugin: `bash` for scripts without a shebang; selected interpreters
+  available through the inherited `PATH`
+- For `make install`: `make` and a POSIX-compatible `install` utility
+
+## Install from a checkout
+
+`make install` installs `hpatch` and `hpatch-router` through `go install`. It also installs each
+declaration from [`plugins/`](plugins/) into the platform user configuration
+`hpatch/plugins` directory.
+
+```sh
+make install
+```
+
+On Linux, the plugin destination is `$XDG_CONFIG_HOME/hpatch/plugins` or
+`~/.config/hpatch/plugins`. Restart `hpatch-router` after installation because its plugin
+registry is immutable for the process lifetime.
+
+The installed `shell` custom tool accepts a free-form script. A compact shebang selects the
+interpreter through the inherited `PATH`, and a missing shebang selects `bash`:
+
+```python
+#!/usr/bin/env python3
+print("Hello")
+```
+
+The translated Codex exec carrier shows arguments equivalent to
+`shell python3 'print("Hello")'`. The executor removes the shebang, preserves the remaining
+script exactly, and sends that body to `python3` through standard input. It stores no
+intermediate script file.
 
 ## Codex router (systemd user service)
 
@@ -395,6 +425,8 @@ Hpatch workspace selection is host-owned, and zero or multiple usable roots fail
 ├── contrib/              # Codex prompt guidance and systemd service template
 ├── doc/                  # Product brief, interface specification, and architecture index
 ├── *.go                  # Core parser, editor, workspace, transaction, translation, hooks, and metrics
+├── plugins/              # Installable configured tool declarations
+├── Makefile              # Binary and plugin installation
 ├── tool_description.md   # Embedded function-tool instructions
 └── tool_grammar.lark     # Embedded constrained-decoding grammar
 ```

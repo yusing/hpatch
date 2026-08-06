@@ -268,6 +268,58 @@ Acceptance:
 10. Startup validation and tool-call metrics failures cannot replace an otherwise successful
     translated carrier or executor result; request cancellation still propagates.
 
+## REQ-SHELL-001 — Installable free-form script tool
+
+The first working path in `doc/brief.md` § Outcome supplies a repository
+plugin declaration at `plugins/shell.mjs`. The declaration contributes an unconstrained custom
+tool named `shell`, limits its UTF-8 input to the executor argv limit, and translates successful
+input through the canonical exec carrier from `REQ-PLUGIN-001`. The repository `make install`
+target installs `hpatch`, `hpatch-router`, and each repository plugin declaration into the
+platform user configuration `hpatch/plugins` directory. The plugin remains configured rather
+than built in.
+
+The tool treats the first logical line as a shebang when that line, after trimming only its
+leading and trailing ASCII spaces and tabs, starts with `#!`. It removes `#!`, trims the
+remaining selector, and separates the selector at ASCII spaces or tabs. A bare executable name
+is valid. A direct executable path remains unchanged. A leading `env` or `/usr/bin/env` and an
+optional following `-S` are removed so the inherited `PATH` selects the next executable.
+An empty selector, an `env` selector without an executable, a NUL byte, or too many or oversized
+argv values rejects before execution. Without a shebang, the selected interpreter is `bash`.
+
+When a shebang is present, the script body is every input byte after the complete first-line
+terminator. The tool removes only the shebang line and its terminator. It preserves all leading
+and trailing body whitespace, including an absent or final line terminator. Without a shebang,
+the complete input is the body. The translated argv contains each normalized interpreter field
+followed by the exact body as its final value. The resulting Codex exec carrier therefore shows
+a command equivalent to `shell python3 'print("Hello")'`; the model does not author its quoting.
+
+The executor runs the first translated argv field as the selected interpreter, passes any
+middle fields as interpreter arguments, and sends the final exact body field through standard
+input. It stores no intermediate script file. It supplies no cwd or environment override, so
+the process inherits Codex's execution context and resolves bare interpreters through its
+`PATH`. It returns the interpreter stdout, stderr, and exit status without copying the script
+body into either output stream.
+
+Acceptance:
+
+1. A free-form call containing `#!/usr/bin/env python3` translates to an exec carrier whose
+   visible command arguments are `shell`, `python3`, and the exact body; execution runs
+   `python3` with that body as standard input.
+2. `#!python3`, `#! python3`, and `#!/usr/bin/env python3` select `python3`. A directly supplied
+   path such as `#!/opt/python/bin/python3` remains unchanged.
+3. `#!/usr/bin/env -S python3 -u` runs `python3` with `-u` and sends the exact body through
+   standard input.
+4. Input without a shebang selects `bash` and sends the complete input through standard input.
+5. Python indentation and all other body-leading or body-trailing whitespace remain byte-exact
+   after shebang removal.
+6. The child inherits cwd and environment. Its stdout, stderr, and nonzero status are returned
+   without script-source duplication or an intermediate script file.
+7. Malformed selectors and input that cannot fit the bounded exec argv return a concise
+   diagnostic without starting an interpreter.
+8. A temporary installation root receives both Go binaries and `shell.mjs` from `make install`;
+   the normal install target uses the Go binary destination and platform user configuration
+   plugin directory.
+
 ## REQ-METRICS-001 — Persistent token, command, target, and failure metrics
 
 Every recognized normal or translate invocation is classified after its terminal outcome.

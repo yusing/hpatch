@@ -4,7 +4,7 @@ pjdoc:
   kind: spec
   scope: root
   status: approved
-  revision: "17"
+  revision: "18"
   files:
     - interface.md
     - comparison.md
@@ -23,6 +23,7 @@ implementation baseline until a separately authorized implementation slice repla
 - [`REQ-READ-001`](interface.md): routed verified-row reading and bounded ranges
 - [`REQ-GREP-001`](interface.md): routed ripgrep search with directly editable verified rows
 - [`REQ-PLUGIN-001`](interface.md): router-local custom tools and Code Mode carrier translation
+- [`REQ-SHELL-001`](interface.md): installable free-form script tool and interpreter selection
 - [`REQ-METRICS-001`](interface.md): persistent encoding, command, target, and failure metrics
 - [`REQ-SCRIPT-001`](interface.md): HPATCH/2 grammar and target forms
 - [`REQ-CORRECT-001`](interface.md): compact rejected-script corrections
