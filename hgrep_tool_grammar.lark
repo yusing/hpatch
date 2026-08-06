@@ -1,8 +1,0 @@
-start: WS? argument (WS argument)* WS?
-argument: part+
-?part: SINGLE_QUOTED | DOUBLE_QUOTED | BARE
-
-WS: /[ \t]+/
-SINGLE_QUOTED: /'[^'\r\n]*'/
-DOUBLE_QUOTED: /"(?:\\[^\r\n]|[^"\\\r\n])*"/
-BARE: /(?:\\[^\r\n]|[^\s'"\\])+/

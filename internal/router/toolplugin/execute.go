@@ -20,6 +20,6 @@ func Execute(ctx context.Context, node, runtimeRoot, module string, index int, a
 		Arguments:    arguments,
 	}
 	var result Execution
-	err := invoke(ctx, node, filepath.Join(runtimeRoot, hostFilename), "", request, &result)
+	err := invoke(ctx, node, filepath.Join(runtimeRoot, hostFilename), "", maxExecutionHostOutputBytes, request, &result)
 	return result, err
 }

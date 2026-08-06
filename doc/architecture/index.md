@@ -4,7 +4,7 @@ pjdoc:
   kind: architecture
   scope: root
   status: approved
-  revision: "17"
+  revision: "19"
   files:
     []
 ---
@@ -123,43 +123,41 @@ exact serialized collection installed from the validated built-in and plugin reg
 stable per-plugin and per-tool breakdown derived from that same collection.
 
 The router boundary exposes `hread` and `hgrep` beside hpatch only when the displaced owner is a
-Code Mode `exec` carrier. Before forwarding, it creates or reuses one process-scoped
-worker location. A translated read or search call invokes its wrapper by the `hread` or
-`hgrep` basename with each argument shell-quoted independently. The nested exec carrier sets
-neither an environment override nor a working directory. A direct `apply_patch` owner
-or wrapper-creation failure rejects the rewrite before forwarding.
+Code Mode `exec` carrier. Hpatch remains the native router contribution. Hread and hgrep are
+TypeScript-authored built-in plugin declarations compiled by Bun to one embedded JavaScript
+module. The plugin runtime snapshots and validates that immutable module before user
+declarations, so the built-ins use the same normalized registry, translation, carrier, wrapper,
+history, replay, and worker paths as configured plugins. Their names and `builtin.hpatch`
+identity remain reserved, and passthrough mode loads no registry.
 
-The Codex executor's trusted `PATH` must resolve those basenames to the wrapper directory
-before any unrelated entries. The wrapper and router executable paths must also resolve in
-the executor. Same-host execution satisfies filesystem visibility but still requires the
-service PATH to contain the wrapper directory. Deployments with isolated router and executor
-filesystems must mount both paths and configure that trusted PATH independently of workspace
-selection.
+Each built-in wrapper launches the generic private plugin worker in Codex's exec context. The
+worker derives relative-path resolution from its actual current directory and leaves sandbox
+and permission enforcement to Codex. The carrier quotes each translated argv value
+independently and sets neither an environment override nor a working directory. A direct
+`apply_patch` owner, missing Node.js runtime, invalid embedded declaration, or wrapper failure
+rejects startup or rewriting before forwarding as required by the owning boundary.
 
-Each wrapper launches a private child-process mode of the running router binary in Codex's
-exec context. The worker derives relative-path resolution from its actual current
-directory and leaves sandbox and permission enforcement to Codex. Hread passes the complete
-grammar input unchanged to the core verified-row owner. The core reads batch items
-sequentially, preserves legacy single-read output, and labels ordered batch results so an
-item error does not hide successful siblings.
+The hread built-in receives the complete grammar input as one argv value. Its TypeScript
+implementation parses and reads batch items sequentially, preserves single-read output, labels
+ordered batch results, and keeps an item error from hiding successful siblings. Rendering
+streams fixed-size chunks, validates UTF-8 across each complete file, buffers only selected
+lines, and keeps the formatted call within 16 MiB. A single oversized result rejects. A batch
+reserves room for its bounded limit diagnostic and stops successfully before another result
+would cross the call-wide bound.
 
-Under `REQ-GREP-001` and the supplied constraint in `doc/brief.md` § Constraints, hgrep
-parses its grammar input into literal argv without shell evaluation, rejects incompatible
-source and output modes, and invokes the installed ripgrep with its internal structured
-transport. Ripgrep alone owns search selection. The worker consumes match and context events, renders
-complete rows through the shared verified-row owner, deduplicates only identical path-and-line
-results, and neither adds a fallback search implementation nor moves search into the edit
-engine.
+Under `REQ-GREP-001` and `doc/brief.md` § Constraints, the hgrep built-in parses grammar input
+into literal argv without shell evaluation. Its TypeScript implementation rejects incompatible
+source and output modes and invokes installed ripgrep through `--json --no-config`. Ripgrep
+alone owns search selection. The implementation consumes match and context events, renders
+complete verified rows, deduplicates only identical path-and-line results, and provides no
+fallback search implementation.
 
-Core rendering streams fixed-size chunks, validates UTF-8 across each complete file,
-buffers only selected lines, observes cancellation between reads, and keeps the complete
-formatted call within 16 MiB. A single oversized result rejects. A batch reserves room for
-a bounded limit diagnostic, returns already completed rows, and stops successfully before
-another result would cross the call-wide bound. The outer exec returns the worker's exact
-output payload; the router neither pre-reads files nor fabricates an `apply_patch` result.
-Read and search calls are replayable but never enter edit correction history or editing metrics.
-The process wrappers are removed at router shutdown. Passthrough mode exposes none of the
-replacement tools.
+The generated built-in JavaScript and runtime host are materialized inside the authenticated
+process snapshot. A symlink-launched child verifies that snapshot before loading either
+built-in implementation. The router never pre-reads files and never fabricates an
+`apply_patch` result for read or search. Read and search calls remain replayable, stay outside
+edit correction ancestry, and use generalized per-tool metrics. Registry shutdown removes the
+wrappers and snapshot.
 
 The standalone CLI canonicalizes root and cwd, opens the root once, and keeps that
 capability open for the invocation. Library callers pass the already-authorized root and
@@ -204,23 +202,27 @@ rather than encoding an exec surrogate. Hpatch's native workspace translation, c
 ancestry, patch renderer, and semantic failure baseline remain adapter extensions beside this
 generic interface rather than capabilities granted to ordinary plugins.
 
-For every executor-backed contribution, the router wrapper owner creates or verifies the
-tool-name basename symlink to the running router executable only after the complete registry
-passes validation and before the listener opens. Private child dispatch selects the immutable
-implementation by the basename of `argv[0]` and gives it the remaining argv without inventing
-a cwd or environment. The child executes only because Codex ran the returned carrier, so Codex
-continues to own sandbox and permission enforcement. Wrapper creation is all-or-nothing for
-startup, wrapper removal belongs to router shutdown, and an isolated executor deployment must
-make the router executable, wrapper directory, plugin runtime, and implementation resources
-visible independently of workspace selection.
+For every executor-backed contribution, the router wrapper owner creates a symlink inside the
+authenticated snapshot directory. The snapshot symlink has the tool-name basename and targets
+the running router executable. After complete-registry validation, the owner creates or verifies
+a stable same-basename frontend beside the router executable. The frontend targets the snapshot
+wrapper. Private child dispatch resolves the frontend once, validates the snapshot wrapper and
+registry identity, and gives the implementation the remaining argv without inventing a cwd or
+environment. The child executes only because Codex ran the returned basename carrier, so Codex
+continues to own sandbox and permission enforcement. Frontend and wrapper creation is
+all-or-nothing for startup. The router holds one exclusive frontend lock for its process
+lifetime. Another router using that frontend directory fails startup. A later process can
+replace an authenticated prior frontend after a crash releases the lock. Shutdown removes
+owned frontends before removing the snapshot and releasing the lock. An isolated executor
+deployment must make the router executable, frontend directory, plugin runtime, and
+implementation resources visible independently of workspace selection.
 
 Startup materializes the validated implementation modules and dispatch metadata into an
-immutable process-scoped worker snapshot associated with the wrapper directory. A symlink-
-launched child reads that snapshot and verifies its registry identity before loading an
-implementation; it never rediscovers or executes the live configuration directory. Changing a
-configured module therefore cannot alter served tool behavior before restart. Missing,
-corrupted, or mismatched snapshot state fails the child honestly, and shutdown cleanup owns
-both wrappers and the snapshot.
+immutable process-scoped worker snapshot. A symlink-launched child reads that snapshot and
+verifies its registry identity before loading an implementation. The child never rediscovers or
+executes the live configuration directory. Changing a configured module therefore cannot alter
+served tool behavior before restart. Missing, corrupted, or mismatched snapshot state fails the
+child honestly. Shutdown cleanup owns the stable frontends, snapshot wrappers, and snapshot.
 
 The response transformer uses registry membership instead of hardcoded tool-name predicates for
 JSON, SSE, and replay. Retained history stores the original contribution identity and input plus

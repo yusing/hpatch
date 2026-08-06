@@ -98,13 +98,17 @@ The router also supplies `functions.hpatch` to the provider with a [Lark grammar
 
 - Go 1.26 or newer (`go install` only; no clone required for normal use)
 - For the router: Codex CLI with ChatGPT file auth (`codex login`, credentials at `~/.codex/auth.json` or `$CODEX_HOME/auth.json`)
+- For the router: Node.js 24 or newer; built-in and configured plugins use the same runtime
 - For routed hgrep: `rg` available on the Codex executor's `PATH`
-- For routed hread and hgrep: the router wrapper directory precedes unrelated entries on the
+- For routed hread and hgrep: the router executable directory precedes unrelated entries on the
   Codex executor's trusted `PATH`
 
 ## Codex router (systemd user service)
 
-The router listens on HTTP, rewrites Responses traffic so Codex calls `functions.hpatch`, `functions.hread`, or `functions.hgrep`, evaluates scripts against the workspace declared in `x-codex-turn-metadata`, and returns client-executed Code Mode carriers. Hpatch produces a real `apply_patch` call, so you see the normal diff rather than a silent file rewrite. Hread and hgrep resolve their basenames through the Codex executor's trusted `PATH`; the wrapper directory must precede unrelated entries. The carrier does not override the exec environment or working directory. The workers use Codex's exec working directory under Codex's sandbox and permissions rather than receiving a router workspace capability. Hgrep invokes `rg --json --no-config` internally and emits complete matching and requested context rows as `"PATH":LINE:HASH TEXT`. When the router and Codex executor have isolated filesystems, deployment must expose the wrapper directory and router executable at the same paths in both environments and configure the executor PATH accordingly. Background Responses requests are rejected before forwarding because the router does not expose the retrieval and cancellation endpoints required to complete them.
+The router listens on HTTP, rewrites Responses traffic so Codex calls `functions.hpatch`, `functions.hread`, or `functions.hgrep`, evaluates scripts against the workspace declared in `x-codex-turn-metadata`, and returns client-executed Code Mode carriers. Hpatch produces a real `apply_patch` call, so you see the normal diff rather than a silent file rewrite. Hread and hgrep resolve stable basename frontends through the Codex executor's trusted `PATH`; the router executable directory must precede unrelated entries. Each frontend targets an authenticated process snapshot wrapper, which targets `hpatch-router`. The carrier does not override the exec environment or working directory. The workers use Codex's exec working directory under Codex's sandbox and permissions rather than receiving a router workspace capability. Hgrep invokes `rg --json --no-config` internally and emits complete matching and requested context rows as `"PATH":LINE:HASH TEXT`. When the router and Codex executor have isolated filesystems, deployment must expose the frontend directory, snapshot, and router executable at the same paths in both environments. Background Responses requests are rejected before forwarding because the router does not expose the retrieval and cancellation endpoints required to complete them.
+
+Only one router process can own these basename frontends. A concurrent router fails before
+listening. A restart automatically reclaims authenticated frontend links left by a crash.
 
 On each request it strips the Code Mode `### apply_patch` section from the `functions.exec` / `additional_tools` description and installs standalone `functions.hpatch`, `functions.hread`, and `functions.hgrep` tools. A request with only a direct `apply_patch` carrier is rejected before forwarding because it cannot execute the read-only wrappers safely. The rewrite changes only the tool **definitions** the model receives for that turn; translated history still uses the Code Mode exec carrier that Codex actually runs.
 
@@ -417,6 +421,8 @@ Library use: module path `github.com/yusing/hpatch`. Importable as a library (`h
 ```sh
 git clone https://github.com/yusing/hpatch.git
 cd hpatch
+go generate ./internal/router/toolplugin
+bun test ./internal/router/toolplugin/src/builtin
 go test ./...
 go vet ./...
 go install ./cmd/hpatch ./cmd/hpatch-router

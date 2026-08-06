@@ -26,6 +26,14 @@ const testHPatchToolDescription = "fixture hpatch description\nwith exact traili
 
 const testCodeModeDescription = "Run JavaScript.\n\n### `exec_command`\nRun a shell command.\n\nexec tool declaration:\n```ts\ndeclare const tools: { exec_command(args: { cmd: string; workdir?: string }): Promise<unknown>; };\n```\n\n### `apply_patch`\nThe default editor.\n\nexec tool declaration:\n```ts\ndeclare const tools: { apply_patch(input: string): Promise<unknown>; };\n```\n\n### `create_goal`\nCreate a goal."
 
+func testInstalledTools() []map[string]json.RawMessage {
+	return []map[string]json.RawMessage{
+		customGrammarTool(hpatchToolName, testHPatchToolDescription, hpatch.ToolGrammar()),
+		customGrammarTool("hread", "fixture hread description", "start: TEST"),
+		customGrammarTool("hgrep", "fixture hgrep description", "start: TEST"),
+	}
+}
+
 type hpatchTranslatorFunc func(context.Context, routingWorkspace, string) ([]byte, error)
 
 func (f hpatchTranslatorFunc) Translate(ctx context.Context, workspace routingWorkspace, script string) (hpatchTranslationResult, error) {
@@ -75,11 +83,11 @@ func newManagedHPatchProxy(t *testing.T, translator hpatchTranslator) *hpatchPro
 
 func registeredWorkerInput(t *testing.T, proxy *hpatchProxy, name string, arguments []string) string {
 	t.Helper()
-	executable, ok := proxy.registry.wrapper(name)
+	_, ok := proxy.registry.wrapper(name)
 	if !ok {
 		t.Fatalf("registered worker %q is unavailable", name)
 	}
-	return workerExecInput(executable, arguments)
+	return workerExecInput(name, arguments)
 }
 
 func newHPatchTestTransform(t *testing.T, translator hpatchTranslator) (*hpatchResponseTransform, *hpatchProxy, *parsedResponsesRequest, string) {
@@ -160,7 +168,7 @@ func TestHPatchPrepareRequestExposesOnlyStandaloneHPatch(t *testing.T) {
 	if err := json.Unmarshal(request.fields["tools"], &topTools); err != nil {
 		t.Fatal(err)
 	}
-	if len(topTools) != 4 || jsonString(topTools[0], "name") != "lookup" || jsonString(topTools[1], "name") != hpatchToolName || jsonString(topTools[2], "name") != hreadToolName || jsonString(topTools[3], "name") != hgrepToolName {
+	if len(topTools) != 4 || jsonString(topTools[0], "name") != "lookup" || jsonString(topTools[1], "name") != hpatchToolName || jsonString(topTools[2], "name") != "hread" || jsonString(topTools[3], "name") != "hgrep" {
 		t.Fatalf("top-level tools = %#v", topTools)
 	}
 	if jsonString(topTools[1], "type") != "custom" {
@@ -181,22 +189,22 @@ func TestHPatchPrepareRequestExposesOnlyStandaloneHPatch(t *testing.T) {
 	if exposed != testHPatchToolDescription {
 		t.Fatalf("standalone hpatch description = %q, want native tool help only", exposed)
 	}
-	if jsonString(topTools[2], "description") != hpatch.HReadToolDescription() {
+	if description := jsonString(topTools[2], "description"); !strings.Contains(description, "Use `hread` as replacement") {
 		t.Fatalf("standalone hread description = %q", jsonString(topTools[2], "description"))
 	}
 	if err := json.Unmarshal(topTools[2]["format"], &format); err != nil {
 		t.Fatal(err)
 	}
-	if format.Type != "grammar" || format.Syntax != "lark" || format.Definition != hpatch.HReadToolGrammar() {
+	if format.Type != "grammar" || format.Syntax != "lark" || !strings.Contains(format.Definition, "read_spec_6") {
 		t.Fatalf("standalone hread format = %#v", topTools[2])
 	}
-	if jsonString(topTools[3], "description") != hpatch.HGrepToolDescription() {
+	if description := jsonString(topTools[3], "description"); !strings.Contains(description, "Use `hgrep` as replacement") {
 		t.Fatalf("standalone hgrep description = %q", jsonString(topTools[3], "description"))
 	}
 	if err := json.Unmarshal(topTools[3]["format"], &format); err != nil {
 		t.Fatal(err)
 	}
-	if format.Type != "grammar" || format.Syntax != "lark" || format.Definition != hpatch.HGrepToolGrammar() {
+	if format.Type != "grammar" || format.Syntax != "lark" || !strings.Contains(format.Definition, "DOUBLE_QUOTED") {
 		t.Fatalf("standalone hgrep format = %#v", topTools[3])
 	}
 	for _, correctionGuidance := range []string{
@@ -336,7 +344,7 @@ func TestHPatchAdditionalToolsReplacementRejectsDuplicateAndConflictingOwners(t 
 			}
 			beforeInput := bytes.Clone(fields["input"])
 			beforeTools := bytes.Clone(fields["tools"])
-			_, _, replaced, err := replaceAdditionalToolsApplyPatch(fields, customGrammarTools(testHPatchToolDescription, "fixture hread description", "fixture hgrep description"))
+			_, _, replaced, err := replaceAdditionalToolsApplyPatch(fields, testInstalledTools())
 			if err == nil || replaced {
 				t.Fatalf("replacement = %v, error %v", replaced, err)
 			}
@@ -362,7 +370,7 @@ func TestHPatchAdditionalToolsReplacementDoesNotRequireDocumentedExecCommand(t *
 		"tools": mustTestJSON(t, []any{}),
 	}
 
-	_, owner, replaced, err := replaceAdditionalToolsApplyPatch(fields, customGrammarTools(testHPatchToolDescription, "fixture hread description", "fixture hgrep description"))
+	_, owner, replaced, err := replaceAdditionalToolsApplyPatch(fields, testInstalledTools())
 	if err != nil || !replaced || owner != "exec" {
 		t.Fatalf("owner = %q, replaced %v, error %v", owner, replaced, err)
 	}
@@ -429,7 +437,7 @@ func TestHPatchAdditionalToolsReplacementLeavesUnsupportedAndMalformedRequestsUn
 			beforeInput := bytes.Clone(fields["input"])
 			beforeTools := bytes.Clone(fields["tools"])
 			beforeChoice := bytes.Clone(fields["tool_choice"])
-			_, _, replaced, err := replaceAdditionalToolsApplyPatch(fields, customGrammarTools(testHPatchToolDescription, "fixture hread description", "fixture hgrep description"))
+			_, _, replaced, err := replaceAdditionalToolsApplyPatch(fields, testInstalledTools())
 			if err != nil || replaced {
 				t.Fatalf("replacement = %v, error %v", replaced, err)
 			}
@@ -450,7 +458,7 @@ func TestHPatchReplacementRetainsCodeModeOwnerName(t *testing.T) {
 				}}),
 				"tools": mustTestJSON(t, []any{}),
 			}
-			_, got, replaced, err := replaceAdditionalToolsApplyPatch(fields, customGrammarTools(testHPatchToolDescription, "fixture hread description", "fixture hgrep description"))
+			_, got, replaced, err := replaceAdditionalToolsApplyPatch(fields, testInstalledTools())
 			if err != nil || !replaced || got != name {
 				t.Fatalf("owner = %q, replaced %v, error %v", got, replaced, err)
 			}
@@ -562,11 +570,11 @@ func TestHReadJSONReturnsExecCommandAndRestoresReplay(t *testing.T) {
 	transform, proxy, _, _ := newHPatchTestTransform(t, testTranslator(t, new(int)))
 	readItem := map[string]any{
 		"type": "custom_tool_call", "id": "item-R", "call_id": "call-R",
-		"name": hreadToolName, "input": `"lines.txt" 2:3`, "status": "completed",
+		"name": "hread", "input": `"lines.txt" 2:3`, "status": "completed",
 	}
 	missingItem := map[string]any{
 		"type": "custom_tool_call", "id": "item-M", "call_id": "call-M",
-		"name": hreadToolName, "input": `"missing.txt"`, "status": "completed",
+		"name": "hread", "input": `"missing.txt"`, "status": "completed",
 	}
 	visible, err := transform.TransformJSON(mustTestJSON(t, map[string]any{
 		"status": "completed",
@@ -583,10 +591,10 @@ func TestHReadJSONReturnsExecCommandAndRestoresReplay(t *testing.T) {
 	}
 	if len(response.Output) != 2 ||
 		jsonString(response.Output[0], "name") != "exec" ||
-		jsonString(response.Output[0], "input") != registeredWorkerInput(t, proxy, hreadToolName, []string{`"lines.txt" 2:3`}) {
+		jsonString(response.Output[0], "input") != registeredWorkerInput(t, proxy, "hread", []string{`"lines.txt" 2:3`}) {
 		t.Fatalf("translated hread response = %s", visible)
 	}
-	if missing := jsonString(response.Output[1], "input"); missing != registeredWorkerInput(t, proxy, hreadToolName, []string{`"missing.txt"`}) {
+	if missing := jsonString(response.Output[1], "input"); missing != registeredWorkerInput(t, proxy, "hread", []string{`"missing.txt"`}) {
 		t.Fatalf("translated missing-file response = %q", missing)
 	}
 	carrierInput := jsonString(response.Output[0], "input")
@@ -602,11 +610,7 @@ func TestHReadJSONReturnsExecCommandAndRestoresReplay(t *testing.T) {
 	if err := json.Unmarshal([]byte(encodedArguments), &arguments); err != nil {
 		t.Fatalf("decode translated exec arguments: %v\n%s", err, carrierInput)
 	}
-	hreadWorker, ok := proxy.registry.wrapper(hreadToolName)
-	if !ok {
-		t.Fatal("hread worker is unavailable")
-	}
-	wantCommand := shellQuoteArgument(hreadWorker) + ` '"lines.txt" 2:3'`
+	wantCommand := `hread '"lines.txt" 2:3'`
 	if arguments.Command != wantCommand {
 		t.Fatalf("translated exec command = %q, want %q", arguments.Command, wantCommand)
 	}
@@ -630,7 +634,7 @@ func TestHReadJSONReturnsExecCommandAndRestoresReplay(t *testing.T) {
 	if err := json.Unmarshal(replay.fields["input"], &replayed); err != nil {
 		t.Fatal(err)
 	}
-	if len(replayed) != 1 || jsonString(replayed[0], "name") != hreadToolName || jsonString(replayed[0], "input") != `"lines.txt" 2:3` {
+	if len(replayed) != 1 || jsonString(replayed[0], "name") != "hread" || jsonString(replayed[0], "input") != `"lines.txt" 2:3` {
 		t.Fatalf("replayed hread = %s", replay.fields["input"])
 	}
 }
@@ -639,7 +643,7 @@ func TestHGrepJSONReturnsExecCommandAndRestoresReplay(t *testing.T) {
 	transform, proxy, _, _ := newHPatchTestTransform(t, testTranslator(t, new(int)))
 	searchItem := map[string]any{
 		"type": "custom_tool_call", "id": "item-G", "call_id": "call-G",
-		"name": hgrepToolName, "input": `-F needle internal/router`, "status": "completed",
+		"name": "hgrep", "input": `-F needle internal/router`, "status": "completed",
 	}
 	visible, err := transform.TransformJSON(mustTestJSON(t, map[string]any{
 		"status": "completed",
@@ -655,7 +659,7 @@ func TestHGrepJSONReturnsExecCommandAndRestoresReplay(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(response.Output) != 1 || jsonString(response.Output[0], "name") != "exec" ||
-		jsonString(response.Output[0], "input") != registeredWorkerInput(t, proxy, hgrepToolName, []string{"-F", "needle", "internal/router"}) {
+		jsonString(response.Output[0], "input") != registeredWorkerInput(t, proxy, "hgrep", []string{"-F", "needle", "internal/router"}) {
 		t.Fatalf("translated hgrep response = %s", visible)
 	}
 
@@ -672,14 +676,30 @@ func TestHGrepJSONReturnsExecCommandAndRestoresReplay(t *testing.T) {
 	if err := json.Unmarshal(replay.fields["input"], &replayed); err != nil {
 		t.Fatal(err)
 	}
-	if len(replayed) != 1 || jsonString(replayed[0], "name") != hgrepToolName ||
+	if len(replayed) != 1 || jsonString(replayed[0], "name") != "hgrep" ||
 		jsonString(replayed[0], "input") != `-F needle internal/router` {
 		t.Fatalf("replayed hgrep = %s", replay.fields["input"])
 	}
 }
 
+func TestHGrepExecInputUsesStableBasename(t *testing.T) {
+	carrierInput := workerExecInput("hgrep", []string{"-n", "-A", "80", "-B", "20"})
+	encodedArguments := strings.TrimPrefix(carrierInput, "const result = await tools.exec_command(")
+	encodedArguments = strings.TrimSuffix(encodedArguments, ");\ntext(result.output);")
+
+	var arguments struct {
+		Command string `json:"cmd"`
+	}
+	if err := json.Unmarshal([]byte(encodedArguments), &arguments); err != nil {
+		t.Fatalf("decode translated exec arguments: %v\n%s", err, carrierInput)
+	}
+	if arguments.Command != "hgrep -n -A 80 -B 20" {
+		t.Fatalf("translated exec command = %q", arguments.Command)
+	}
+}
+
 func TestHReadExecInputQuotesOnlyShellSensitiveArguments(t *testing.T) {
-	carrierInput := workerExecInput(hreadExecutableName, []string{`"line's $(echo injected).txt" 2:3`})
+	carrierInput := workerExecInput("hread", []string{`"line's $(echo injected).txt" 2:3`})
 	encodedArguments := strings.TrimPrefix(carrierInput, "const result = await tools.exec_command(")
 	encodedArguments = strings.TrimSuffix(encodedArguments, ");\ntext(result.output);")
 
@@ -697,7 +717,7 @@ func TestHReadExecInputQuotesOnlyShellSensitiveArguments(t *testing.T) {
 
 func TestHReadExecInputCarriesOneNewlineDelimitedBatchArgument(t *testing.T) {
 	input := "\"alpha.txt\"\n\"beta.txt\" 2:3"
-	carrierInput := workerExecInput(hreadExecutableName, []string{input})
+	carrierInput := workerExecInput("hread", []string{input})
 	encodedArguments := strings.TrimPrefix(carrierInput, "const result = await tools.exec_command(")
 	encodedArguments = strings.TrimSuffix(encodedArguments, ");\ntext(result.output);")
 
@@ -714,7 +734,7 @@ func TestHReadExecInputCarriesOneNewlineDelimitedBatchArgument(t *testing.T) {
 }
 
 func TestHReadExecInputDoesNotRepairMissingRangeSeparator(t *testing.T) {
-	carrierInput := workerExecInput(hreadExecutableName, []string{`"file.txt"2:3`})
+	carrierInput := workerExecInput("hread", []string{`"file.txt"2:3`})
 	encodedArguments := strings.TrimPrefix(carrierInput, "const result = await tools.exec_command(")
 	encodedArguments = strings.TrimSuffix(encodedArguments, ");\ntext(result.output);")
 
@@ -733,7 +753,7 @@ func TestHReadExecInputDoesNotRepairMissingRangeSeparator(t *testing.T) {
 func TestHReadRejectsOversizedInputBeforeCreatingCarrier(t *testing.T) {
 	transform, _, _, _ := newHPatchTestTransform(t, testTranslator(t, new(int)))
 	input := strings.Repeat("x", maxHPatchScriptBytes+1)
-	if _, err := transform.translateHRead("call-large", input, nil); err == nil || !strings.Contains(err.Error(), "input exceeds") {
+	if _, err := transform.translateTool("hread", "call-large", input, nil); err == nil || !strings.Contains(err.Error(), "input exceeds") {
 		t.Fatalf("oversized hread error = %v", err)
 	}
 }
@@ -980,7 +1000,7 @@ func TestHReadStreamingUsesTextLifecycle(t *testing.T) {
 	}
 	item := map[string]any{
 		"type": "custom_tool_call", "id": "item-R", "call_id": "call-R",
-		"name": hreadToolName, "input": `"line.txt"`, "status": "completed",
+		"name": "hread", "input": `"line.txt"`, "status": "completed",
 	}
 	added := maps.Clone(item)
 	added["status"] = "in_progress"
@@ -995,7 +1015,7 @@ func TestHReadStreamingUsesTextLifecycle(t *testing.T) {
 	}))
 	if err != nil || len(visible) != 2 ||
 		!bytes.Contains(visible[0], []byte(`"name":"exec"`)) ||
-		!bytes.Contains(visible[1], []byte(jsonQuoted(registeredWorkerInput(t, transform.proxy, hreadToolName, []string{`"line.txt"`})))) {
+		!bytes.Contains(visible[1], []byte(jsonQuoted(registeredWorkerInput(t, transform.proxy, "hread", []string{`"line.txt"`})))) {
 		t.Fatalf("hread input.done = %q, error %v", visible, err)
 	}
 	visible, err = transform.TransformSSE(mustTestJSON(t, map[string]any{"type": "response.output_item.done", "item": item}))
@@ -1012,11 +1032,11 @@ func TestReadOnlyHistoryIsExcludedFromCorrections(t *testing.T) {
 			translationError: "rejected", sequence: 1,
 		},
 		"call-R": {
-			toolName: hreadToolName, script: `"file.txt"`,
+			toolName: "hread", script: `"file.txt"`,
 			report: "8ed3: alpha\n", sequence: 2,
 		},
 		"call-G": {
-			toolName: hgrepToolName, script: `alpha .`,
+			toolName: "hgrep", script: `alpha .`,
 			sequence: 3,
 		},
 	})
@@ -1038,7 +1058,7 @@ func TestReadOnlyHistoryIsExcludedFromCorrections(t *testing.T) {
 
 		local: map[string]hpatchHistory{
 			"call-local-read": {
-				toolName: hgrepToolName,
+				toolName: "hgrep",
 				script:   `alpha .`,
 				sequence: 1,
 			},

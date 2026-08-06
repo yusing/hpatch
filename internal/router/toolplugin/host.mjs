@@ -10,12 +10,26 @@ const MAX_DESCRIPTION_BYTES = 16 * 1024;
 const MAX_GRAMMAR_BYTES = 1024 * 1024;
 const MAX_INPUT_BYTES = 1024 * 1024;
 const MAX_ARGV_ITEMS = 256;
+const MAX_ARG_BYTES = 64 * 1024;
 const MAX_DIAGNOSTIC_BYTES = 16 * 1024;
+const MAX_EXECUTION_OUTPUT_BYTES = 16 * 1024 * 1024;
 const identifierPattern = /^[A-Za-z][A-Za-z0-9._-]*$/;
 const toolNamePattern = /^[A-Za-z_][A-Za-z0-9_-]*$/;
 const ruleHeaderPattern = /^[!?]?([A-Za-z_][A-Za-z0-9_]*)\s*:\s*(.*)$/s;
 const priorityHeaderPattern = /^[!?]?[A-Za-z_][A-Za-z0-9_]*\.-?[0-9]+\s*:/;
 const commonImportPattern = /^%import\s+common\.[A-Za-z_][A-Za-z0-9_]*(?:\s*->\s*[A-Za-z_][A-Za-z0-9_]*)?$/;
+
+const shellCommandNames = new Set([
+  "alias", "bg", "bind", "break", "builtin", "caller", "case", "cd", "command",
+  "compgen", "complete", "compopt", "continue", "coproc", "declare", "dirs", "disown",
+  "do", "done", "echo", "elif", "else", "enable", "esac", "eval", "exec", "exit",
+  "export", "false", "fc", "fg", "fi", "for", "function", "getopts", "hash", "help",
+  "history", "if", "in", "jobs", "kill", "let", "local", "logout", "mapfile", "popd",
+  "printf", "pushd", "pwd", "read", "readarray", "readonly", "return", "select", "set",
+  "shift", "shopt", "source", "suspend", "test", "then", "time", "times", "trap",
+  "true", "type", "typeset", "ulimit", "umask", "unalias", "unset", "until", "wait",
+  "while",
+]);
 
 function byteLength(value) {
   return Buffer.byteLength(value, "utf8");
@@ -431,6 +445,8 @@ function validateSpecification(specification, label, errors) {
   }
   if (typeof specification.name !== "string" || byteLength(specification.name) > 64 || !toolNamePattern.test(specification.name)) {
     errors.push(`${label}: specification name is invalid`);
+  } else if (shellCommandNames.has(specification.name)) {
+    errors.push(`${label}: specification name collides with a shell keyword or built-in`);
   }
   if (typeof specification.description !== "string" || byteLength(specification.description) === 0 || byteLength(specification.description) > MAX_DESCRIPTION_BYTES) {
     errors.push(`${label}: specification description must contain 1 to ${MAX_DESCRIPTION_BYTES} UTF-8 bytes`);
@@ -545,8 +561,8 @@ async function loadTool(snapshotRoot, modulePath, index) {
 
 function validateArguments(argumentsValue) {
   if (!Array.isArray(argumentsValue) || argumentsValue.length > MAX_ARGV_ITEMS
-      || argumentsValue.some((argument) => typeof argument !== "string" || byteLength(argument) > MAX_INPUT_BYTES)) {
-    throw new Error(`argv must contain at most ${MAX_ARGV_ITEMS} strings of at most ${MAX_INPUT_BYTES} UTF-8 bytes`);
+      || argumentsValue.some((argument) => typeof argument !== "string" || byteLength(argument) > MAX_ARG_BYTES)) {
+    throw new Error(`argv must contain at most ${MAX_ARGV_ITEMS} strings of at most ${MAX_ARG_BYTES} UTF-8 bytes`);
   }
   return argumentsValue;
 }
@@ -603,9 +619,14 @@ async function executeTool(request) {
       || (execution.stderr !== undefined && typeof execution.stderr !== "string")) {
     throw new Error("executor must return stdout/stderr strings and an exitCode from 0 through 255");
   }
+  const stdout = execution.stdout ?? "";
+  const stderr = execution.stderr ?? "";
+  if (byteLength(stdout) + byteLength(stderr) > MAX_EXECUTION_OUTPUT_BYTES) {
+    throw new Error(`executor stdout and stderr exceed ${MAX_EXECUTION_OUTPUT_BYTES} UTF-8 bytes`);
+  }
   return {
-    stdout: execution.stdout ?? "",
-    stderr: execution.stderr ?? "",
+    stdout,
+    stderr,
     exitCode: execution.exitCode,
   };
 }

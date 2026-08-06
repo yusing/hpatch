@@ -36,6 +36,51 @@ export default {
 	}
 }
 
+func TestExecuteBoundsPluginImplementationOutput(t *testing.T) {
+	pluginDirectory := t.TempDir()
+	declaration := `export default {
+  apiVersion: "hpatch-tool-plugin/v1",
+  id: "execute-output.test",
+  tools: [{
+    specification: {type: "custom", name: "execute_output_test", description: "test tool"},
+    maxInputBytes: 1,
+    parse(input) { return input; },
+    argv(input) { return [input]; },
+    translate(_input, api) { return api.exec(); },
+    execute() { return {stdout: "x".repeat(16 * 1024 * 1024 + 1), exitCode: 0}; }
+  }]
+};
+`
+	if err := os.WriteFile(filepath.Join(pluginDirectory, "output.mjs"), []byte(declaration), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := Load(t.Context(), pluginDirectory, filepath.Join(t.TempDir(), "snapshot"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var tool *Tool
+	for pluginIndex := range snapshot.Plugins {
+		if snapshot.Plugins[pluginIndex].ID == "execute-output.test" {
+			tool = &snapshot.Plugins[pluginIndex].Tools[0]
+			break
+		}
+	}
+	if tool == nil {
+		t.Fatal("configured execution-output plugin is unavailable")
+	}
+	_, err = Execute(
+		t.Context(),
+		snapshot.NodeExecutable,
+		snapshot.Root,
+		tool.Module,
+		tool.Index,
+		[]string{},
+	)
+	if err == nil || !strings.Contains(err.Error(), "executor stdout and stderr exceed 16777216 UTF-8 bytes") {
+		t.Fatalf("Execute() error = %v", err)
+	}
+}
+
 func grammarPluginDeclaration(t *testing.T, syntax, definition string) string {
 	t.Helper()
 	format, err := json.Marshal(map[string]string{

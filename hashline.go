@@ -21,11 +21,3 @@ func lineContent(text string, line logicalLine) string {
 func writeHashLine(output *strings.Builder, number int, content, displayed string) {
 	fmt.Fprintf(output, "%d:%s %s\n", number, hashLine(content), displayed)
 }
-
-// FormatHashLineForHost renders one complete logical line with the verified-row
-// identity shared by hread, hgrep, edit validation, and reports.
-func FormatHashLineForHost(number int, content string) string {
-	var output strings.Builder
-	writeHashLine(&output, number, content, content)
-	return output.String()
-}

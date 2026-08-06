@@ -61,6 +61,88 @@ func TestToolPluginWorkerRunsPinnedImplementationInCodexContext(t *testing.T) {
 	}
 }
 
+func TestToolPluginWorkerResolvesBasenameFromPath(t *testing.T) {
+	registry, _ := newToolPluginTestRegistry(t)
+	if err := registry.installFrontends(); err != nil {
+		t.Fatal(err)
+	}
+	frontend, ok := registry.frontends["plugin_tool"]
+	if !ok {
+		t.Fatal("plugin frontend is unavailable")
+	}
+	cwd := t.TempDir()
+	t.Chdir(cwd)
+	t.Setenv("PATH", filepath.Dir(frontend))
+	t.Setenv("HPATCH_PLUGIN_TEST", "inherited")
+
+	var stdout, stderr bytes.Buffer
+	handled, exitCode := RunToolPluginWorker(
+		t.Context(),
+		filepath.Base(frontend),
+		[]string{"one", "two words"},
+		&stdout,
+		&stderr,
+	)
+	if !handled || exitCode != 7 {
+		t.Fatalf("worker handled %t, exit code %d, stderr %q", handled, exitCode, stderr.String())
+	}
+	wantStdout := strings.Join([]string{cwd, "inherited", "one", "two words"}, "|")
+	if stdout.String() != wantStdout || stderr.String() != "fixture stderr" {
+		t.Fatalf("worker stdout %q, stderr %q", stdout.String(), stderr.String())
+	}
+}
+
+func TestBuiltinToolWorkersRunGeneratedTypeScriptImplementations(t *testing.T) {
+	registry, err := buildToolRegistry(t.Context(), t.TempDir(), testHPatchToolDescription)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := registry.Close(); err != nil {
+			t.Error(err)
+		}
+	})
+	workspace := t.TempDir()
+	t.Chdir(workspace)
+	if err := os.WriteFile("file.txt", []byte("alpha\nbeta\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, test := range []struct {
+		name       string
+		arguments  []string
+		wantOutput string
+	}{
+		{name: "hread", arguments: []string{"file.txt 1:1"}, wantOutput: "1:8ed3 alpha\n"},
+		{name: "hgrep", arguments: []string{"-F", "alpha", "file.txt"}, wantOutput: "\"file.txt\":1:8ed3 alpha\n"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			wrapper, ok := registry.wrapper(test.name)
+			if !ok {
+				t.Fatalf("%s wrapper is unavailable", test.name)
+			}
+			var stdout, stderr bytes.Buffer
+			handled, exitCode := RunToolPluginWorker(
+				t.Context(),
+				wrapper,
+				test.arguments,
+				&stdout,
+				&stderr,
+			)
+			if !handled || exitCode != 0 || stdout.String() != test.wantOutput || stderr.Len() != 0 {
+				t.Fatalf(
+					"%s worker handled %t, exit %d, stdout %q, stderr %q",
+					test.name,
+					handled,
+					exitCode,
+					stdout.String(),
+					stderr.String(),
+				)
+			}
+		})
+	}
+}
+
 func TestToolPluginWorkerRejectsSnapshotMismatch(t *testing.T) {
 	registry, _ := newToolPluginTestRegistry(t)
 	wrapper, ok := registry.wrapper("plugin_tool")

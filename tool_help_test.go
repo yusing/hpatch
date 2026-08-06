@@ -116,58 +116,6 @@ func TestHPatch2ToolDescriptionCoversSafeCommandChoice(t *testing.T) {
 	}
 }
 
-func TestHReadToolDescriptionExplainsReplacementOutput(t *testing.T) {
-	normalized := strings.Join(strings.Fields(HReadToolDescription()), " ")
-	for _, guidance := range []string{
-		"Use `hread` as replacement of `cat` or `sed`",
-		"Use a bare path when it has no whitespace",
-		"LINE:HASH TEXT",
-	} {
-		if !strings.Contains(normalized, guidance) {
-			t.Errorf("hread tool description omits %q", guidance)
-		}
-	}
-	if strings.Contains(HReadToolDescription(), "hgrep") {
-		t.Error("hread tool description refers to hgrep")
-	}
-}
-
-func TestHReadToolGrammarBoundsBatch(t *testing.T) {
-	grammar := HReadToolGrammar()
-	if !strings.Contains(grammar, "?path: QUOTED | BARE") {
-		t.Errorf("hread grammar omits bare paths: %q", grammar)
-	}
-	productions, _, _ := strings.Cut(grammar, "\n\n")
-	if strings.Contains(productions, "*") {
-		t.Fatalf("hread grammar contains unbounded repetition: %q", grammar)
-	}
-	if got, want := strings.Count(grammar, "NL read_spec"), maxHReadBatchItems-1; got != want {
-		t.Fatalf("hread grammar allows %d trailing specifications, want %d", got, want)
-	}
-}
-
-func TestHGrepToolGuidanceAndGrammar(t *testing.T) {
-	normalized := strings.Join(strings.Fields(HGrepToolDescription()), " ")
-	for _, guidance := range []string{
-		"Use `hgrep` as replacement of `rg` or `grep`",
-		"ripgrep wrapper",
-		`"PATH":LINE:HASH TEXT`,
-	} {
-		if !strings.Contains(normalized, guidance) {
-			t.Errorf("hgrep tool description omits %q", guidance)
-		}
-	}
-	if strings.Contains(HGrepToolDescription(), "hread") {
-		t.Error("hgrep tool description refers to hread")
-	}
-	grammar := HGrepToolGrammar()
-	for _, production := range []string{"SINGLE_QUOTED", "DOUBLE_QUOTED", "BARE"} {
-		if !strings.Contains(grammar, production) {
-			t.Errorf("hgrep grammar omits %q", production)
-		}
-	}
-}
-
 func TestHPatch2ToolDescriptionExamplesExecute(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, root, "parser.go", "package parser\n\nfunc parse() {}\n", 0o644)

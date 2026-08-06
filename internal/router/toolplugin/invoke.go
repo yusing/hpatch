@@ -12,12 +12,13 @@ import (
 	"strings"
 )
 
-func invoke(ctx context.Context, node, hostPath, isolatedCWD string, request, response any) error {
+func invoke(ctx context.Context, node, hostPath, isolatedCWD string, outputLimit int64, request, response any) error {
 	encoded, err := json.Marshal(request)
 	if err != nil {
 		return fmt.Errorf("encode plugin runtime request: %w", err)
 	}
 	command := exec.CommandContext(ctx, node, hostPath)
+	configurePluginProcessGroup(command)
 	if isolatedCWD != "" {
 		command.Dir = isolatedCWD
 		command.Env = []string{
@@ -48,12 +49,12 @@ func invoke(ctx context.Context, node, hostPath, isolatedCWD string, request, re
 		result := make(chan capturedOutput, 1)
 		go func() {
 			var output bytes.Buffer
-			_, readErr := io.CopyN(&output, reader, maxHostOutputBytes+1)
+			_, readErr := io.CopyN(&output, reader, outputLimit+1)
 			switch {
 			case readErr == nil:
 				_, drainErr := io.Copy(io.Discard, reader)
 				result <- capturedOutput{
-					data:     bytes.Clone(output.Bytes()[:maxHostOutputBytes]),
+					data:     bytes.Clone(output.Bytes()[:outputLimit]),
 					overflow: true,
 					err:      drainErr,
 				}
@@ -78,7 +79,7 @@ func invoke(ctx context.Context, node, hostPath, isolatedCWD string, request, re
 		return fmt.Errorf("read plugin runtime output: %w", errors.Join(stdout.err, stderr.err))
 	}
 	if stdout.overflow || stderr.overflow {
-		return fmt.Errorf("plugin runtime output exceeds %d bytes", maxHostOutputBytes)
+		return fmt.Errorf("plugin runtime output exceeds %d bytes", outputLimit)
 	}
 	if runErr != nil {
 		diagnostic := strings.TrimSpace(string(stderr.data))

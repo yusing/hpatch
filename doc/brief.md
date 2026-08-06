@@ -121,10 +121,13 @@ wall time must remain close to control.
 - In hpatch mode the router validates the complete discovered plugin registry before opening
   its listener or installing tool wrappers; any schema, identity, implementation, or wrapper
   mismatch reports diagnostics and stops startup without exposing a partial registry.
-- Each executor-backed contributed tool uses a basename symlink named for the tool and pointing
-  to `hpatch-router`. A translated exec carrier invokes that basename with the declared input
-  represented as argv; private child dispatch selects the implementation from `argv[0]`, so
-  Codex remains the owner of working directory, sandbox, and permissions.
+- Each executor-backed contributed tool uses a stable basename symlink beside `hpatch-router`.
+  The stable symlink targets an authenticated snapshot wrapper with the same basename, and the
+  snapshot wrapper targets `hpatch-router`. A translated exec carrier invokes only the basename;
+  private child dispatch validates both links and selects the pinned implementation from the
+  snapshot, so Codex remains the owner of working directory, sandbox, and permissions.
+  One process-lifetime lock owns the frontend set. A restart can reclaim authenticated links
+  after a crash, while a concurrent router fails startup.
 - A plugin translator returns a normal Code Mode tool-call carrier rather than an exec-specific
   envelope. The plugin API may provide an exec wrapper that alone owns the repeated outer exec
   shape.

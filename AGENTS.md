@@ -20,10 +20,10 @@ The hpatch/router path uses one edit engine and two thin binaries:
   mutation and emits an `apply_patch` envelope.
 - `internal/router` owns the Codex Responses integration: HTTP serving, Codex
   authentication and upstream forwarding, request tool rewriting, response
-  transformation, routed `hread`, bounded session/history state, correction
+  transformation, built-in and configured tool plugins, bounded session/history state,
   rebuilding, replay, router metrics, and the dashboard.
 - `cmd/hpatch-router` is only the process entry point. It installs signal
-  cancellation, dispatches the private `hread` worker mode, calls `router.Run`,
+  cancellation, dispatches the generic private plugin worker mode, calls `router.Run`,
   and maps errors to exit codes.
 
 There is no second edit engine in the router and no separate top-level
@@ -38,7 +38,7 @@ The normal hpatch-mode path is:
    session, and requires valid turn metadata with exactly one usable workspace.
 3. `internal/router/hpatch_proxy.go` retains the original Code Mode tool state,
    removes the model-visible `apply_patch` surface, and installs standalone
-   grammar-constrained `hpatch` and `hread` tools.
+   grammar-constrained `hpatch`, `hread`, and `hgrep` tools.
 4. `internal/router/client.go` validates the Codex-managed bearer token and
    account ID, then forwards the rewritten request to the ChatGPT Codex backend.
 5. When a terminal response contains an `hpatch` call, the router invokes
@@ -52,11 +52,10 @@ The normal hpatch-mode path is:
    presents the normal diff. The router itself does not silently write the
    translated workspace changes.
 
-`hread` follows a different execution boundary. The router installs a
-process-scoped wrapper, and the returned exec carrier invokes the private worker
-in Codex's execution context. Relative paths therefore use Codex's actual
-working directory, and Codex continues to enforce filesystem permissions. The
-router does not pre-read the requested file.
+`hread` and `hgrep` are TypeScript-authored built-in plugins. The router embeds their
+Bun-generated JavaScript module and routes both through the generic plugin registry,
+translator, wrapper, and private worker. Their exec carriers run in Codex's actual
+working directory, so Codex continues to enforce filesystem and process permissions.
 
 A rejected script changes nothing. The engine owns evaluation diagnostics and
 exact command repair context. The router owns bounded, workspace-and-session
@@ -64,7 +63,7 @@ scoped rejected-script history and converts a later indexed correction into one
 complete script before sending it through the ordinary engine boundary. The
 core engine has no correction mode.
 
-Passthrough mode forwards Responses traffic without installing hpatch or hread.
+Passthrough mode forwards Responses traffic without installing hpatch or any plugin.
 
 ## Ownership and change boundaries
 
@@ -79,7 +78,7 @@ Start with the owner that matches the behavior:
 | Router lifecycle and HTTP endpoints | `internal/router/server.go` |
 | Codex authentication and upstream Responses transport | `internal/router/client.go` |
 | Tool replacement, host translation, response restoration, replay, and corrections | `internal/router/hpatch_proxy.go` |
-| Routed read wrapper and worker behavior | `internal/router` hread implementation |
+| Built-in hread and hgrep declarations, parsing, and execution | `internal/router/toolplugin/src/builtin` |
 | Router process signals and top-level exit behavior | `cmd/hpatch-router/main.go` |
 | Interface requirements | `doc/spec/interface.md` |
 | Stable ownership contracts | `doc/architecture/index.md` |
@@ -96,7 +95,7 @@ Preserve these boundaries:
 - Workspace authority is a pinned `*os.Root`. Router translation verifies that
   the declared workspace remains unchanged around engine evaluation.
 - Keep translated history in the Code Mode carrier shape even though the model
-  sees standalone hpatch and hread tools.
+  sees standalone registry tools.
 - Treat metrics and hooks as auxiliary: their failures must not replace a
   successful edit, read, translation, or rejection diagnostic.
 - Keep benchmark and dashboard concerns out of the edit-engine ownership model.
@@ -109,6 +108,7 @@ Use the cheapest package-level check that covers the changed owner:
 - Standalone CLI/help contract: `go test ./cmd/hpatch`
 - Router request, response, correction, workspace, hread, or transport behavior:
   `go test ./internal/router`
+- Built-in hread or hgrep TypeScript behavior: `bun test ./internal/router/toolplugin/src/builtin`
 - Router process entry point: `go test ./cmd/hpatch-router`
 - Cross-package or broad contract changes: `go test ./...`
 

@@ -3,6 +3,8 @@ package router
 import (
 	"encoding/json"
 	"sync"
+
+	"github.com/gofrs/flock"
 )
 
 type (
@@ -23,9 +25,13 @@ type (
 		RuntimeRoot    string
 		NodeExecutable string
 
-		ordered  []toolContribution
-		byName   map[string]toolContribution
-		wrappers map[string]string
+		executable        string
+		frontendDirectory string
+		frontendLock      *flock.Flock
+		ordered           []toolContribution
+		byName            map[string]toolContribution
+		wrappers          map[string]string
+		frontends         map[string]string
 
 		closeOnce sync.Once
 		closeErr  error

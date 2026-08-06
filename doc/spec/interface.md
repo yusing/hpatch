@@ -193,6 +193,8 @@ model-visible name, description, format, grammar definition, input limit, transl
 implementation are part of the validated declaration. Standard JSON-schema function tools,
 runtime TypeScript transpilation, and arbitrary undocumented specification fields are not
 supported by this increment.
+Executor-backed names must also differ from shell keywords and built-ins. This rule ensures that
+the basename carrier selects an executable frontend instead of shell-owned behavior.
 
 Before opening its listener or installing any contributed-tool wrapper, the router loads every
 discovered declaration and validates the complete registry. It reports all detected plugin
@@ -212,15 +214,20 @@ wrapper owns the repeated outer Code Mode exec program, nested tool invocation, 
 argument quoting, and result forwarding so plugin declarations do not reproduce or guess the
 exec shape.
 
-For each executor-backed contributed tool, startup creates or verifies an executable symlink
-whose basename is exactly the contributed tool name and whose target is the running
-`hpatch-router` executable. The exec wrapper invokes that basename and represents the parsed
-model input as its ordered argv. When launched through the symlink, the router selects the
-registered implementation from the basename of `argv[0]` and passes the remaining argv
-unchanged. The carrier supplies no working-directory or environment override. The child
-therefore runs in Codex's execution context, and Codex remains the owner of sandbox,
-filesystem, process, network, and permission enforcement. Missing, conflicting, incorrectly
-targeted, or unusable symlinks fail startup before the listener opens.
+For each executor-backed contributed tool, startup creates or verifies a stable executable
+symlink beside the running `hpatch-router`. Its basename is exactly the contributed tool name,
+and its target is the authenticated process-scoped snapshot wrapper with the same basename.
+The snapshot wrapper targets the running `hpatch-router` executable. The exec wrapper invokes
+only the basename and represents the parsed model input as its ordered argv. When launched
+through both symlinks, the router verifies the stable frontend location, snapshot identity,
+wrapper target, and registered implementation before passing the remaining argv unchanged.
+The carrier supplies no working-directory or environment override. The child therefore runs in
+Codex's execution context, and Codex remains the owner of sandbox, filesystem, process, network,
+and permission enforcement. Missing, conflicting, incorrectly targeted, or unusable symlinks
+fail startup before the listener opens.
+The router holds one exclusive frontend lock for its process lifetime. A concurrent router fails
+startup. After a crash releases the lock, a later router can replace authenticated prior
+frontends even when the prior process snapshot remains.
 
 Translated history retains the plugin identity, original tool name and input, and exact carrier
 kind, name, and payload. Replay accepts only the byte-identical retained carrier and restores
@@ -250,9 +257,9 @@ Acceptance:
    request; an unavailable or wrong-kind carrier rejects before upstream execution.
 6. The exec wrapper renders the canonical outer exec shape and independently quotes every argv
    value. The plugin declaration does not contain or generate that outer shape.
-7. Invoking an executor-backed tool resolves the tool-name symlink to `hpatch-router`,
-   dispatches by `argv[0]`, and delivers the declared input argv to its implementation under
-   Codex's cwd, sandbox, and permissions.
+7. Invoking an executor-backed tool resolves its stable basename frontend through the
+   authenticated snapshot wrapper to `hpatch-router`, verifies the pinned registry, dispatches
+   by `argv[0]`, and delivers the declared argv under Codex's cwd, sandbox, and permissions.
 8. JSON and SSE responses preserve call identity while replacing a contributed call with its
    validated carrier, and replay restores the exact original contributed call after verifying
    the retained carrier.

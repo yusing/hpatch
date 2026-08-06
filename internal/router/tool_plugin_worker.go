@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -18,31 +19,72 @@ import (
 const maxToolWorkerManifestBytes = 32 << 20
 
 // RunToolPluginWorker handles the private child-process mode used by a
-// process-scoped contributed-tool wrapper.
+// stable contributed-tool frontend and its process-scoped snapshot wrapper.
 func RunToolPluginWorker(ctx context.Context, argv0 string, args []string, stdout, stderr io.Writer) (bool, int) {
-	wrapper, err := filepath.Abs(argv0)
+	invokedName := filepath.Base(argv0)
+	candidate := argv0
+	if invokedName == candidate {
+		var err error
+		candidate, err = exec.LookPath(candidate)
+		if err != nil {
+			return false, 0
+		}
+	}
+	candidate, err := filepath.Abs(candidate)
 	if err != nil {
 		return false, 0
 	}
-	info, err := os.Lstat(wrapper)
-	directory := filepath.Dir(wrapper)
-	expectedRegistryID, recognized := toolRegistryIDFromDirectory(directory)
-	if err != nil || info.Mode()&os.ModeSymlink == 0 || !recognized {
+	info, err := os.Lstat(candidate)
+	if err != nil || info.Mode()&os.ModeSymlink == 0 {
 		return false, 0
 	}
 	fail := func(err error) (bool, int) {
-		_, _ = fmt.Fprintf(stderr, "%s: %v\n", filepath.Base(wrapper), err)
+		_, _ = fmt.Fprintf(stderr, "%s: %v\n", invokedName, err)
 		return true, 1
 	}
 
-	executable, err := os.Executable()
+	executableLocation, err := os.Executable()
 	if err != nil {
 		return fail(fmt.Errorf("locate hpatch-router executable: %w", err))
 	}
-	executable, err = filepath.EvalSymlinks(executable)
+	executableLocation, err = filepath.Abs(executableLocation)
+	if err != nil {
+		return fail(fmt.Errorf("locate hpatch-router executable: %w", err))
+	}
+	executable, err := filepath.EvalSymlinks(executableLocation)
 	if err != nil {
 		return fail(fmt.Errorf("resolve hpatch-router executable: %w", err))
 	}
+
+	wrapper := candidate
+	directory := filepath.Dir(wrapper)
+	expectedRegistryID, snapshotWrapper := toolRegistryIDFromDirectory(directory)
+	if !snapshotWrapper {
+		if filepath.Dir(candidate) != filepath.Dir(executableLocation) {
+			return false, 0
+		}
+		target, readErr := os.Readlink(candidate)
+		if readErr != nil {
+			return fail(fmt.Errorf("resolve tool frontend: %w", readErr))
+		}
+		if !filepath.IsAbs(target) {
+			target = filepath.Join(filepath.Dir(candidate), target)
+		}
+		wrapper = filepath.Clean(target)
+		if filepath.Base(wrapper) != invokedName {
+			return fail(errors.New("tool frontend and snapshot wrapper names differ"))
+		}
+		wrapperInfo, wrapperErr := os.Lstat(wrapper)
+		directory = filepath.Dir(wrapper)
+		expectedRegistryID, snapshotWrapper = toolRegistryIDFromDirectory(directory)
+		if wrapperErr != nil || wrapperInfo.Mode()&os.ModeSymlink == 0 || !snapshotWrapper {
+			return fail(errors.New("tool frontend does not target an authenticated snapshot wrapper"))
+		}
+	}
+	if filepath.Base(wrapper) != invokedName {
+		return fail(errors.New("invoked tool and snapshot wrapper names differ"))
+	}
+
 	target, err := filepath.EvalSymlinks(wrapper)
 	if err != nil {
 		return fail(fmt.Errorf("resolve tool wrapper: %w", err))

@@ -139,7 +139,7 @@ func TestHPatchMetricDefinitionMatchesInstalledGrammarTools(t *testing.T) {
 			return nil
 		},
 	}
-	transform, _, request, _ := newHPatchTestTransform(t, translator)
+	transform, proxy, request, _ := newHPatchTestTransform(t, translator)
 	if err := transform.Finish(false); err != nil {
 		t.Fatal(err)
 	}
@@ -158,12 +158,15 @@ func TestHPatchMetricDefinitionMatchesInstalledGrammarTools(t *testing.T) {
 		if err := json.Unmarshal(raw, &tool); err != nil {
 			t.Fatal(err)
 		}
-		if name := jsonString(tool, "name"); isHPatchModeToolName(name) {
+		if name := jsonString(tool, "name"); name != "" {
+			if _, ok := proxy.registry.contribution(name); !ok {
+				continue
+			}
 			installed = append(installed, raw)
 			installedNames = append(installedNames, name)
 		}
 	}
-	if want := []string{hpatchToolName, hreadToolName, hgrepToolName}; !reflect.DeepEqual(installedNames, want) {
+	if want := []string{hpatchToolName, "hread", "hgrep"}; !reflect.DeepEqual(installedNames, want) {
 		t.Fatalf("metered tool definitions = %v, want %v", installedNames, want)
 	}
 	encoded, err := json.Marshal(installed)
@@ -219,8 +222,8 @@ func TestHPatchMetricPersistenceFailuresDoNotChangeToolResults(t *testing.T) {
 
 	t.Run("hread call", func(t *testing.T) {
 		transform, _, _, _ := newHPatchTestTransform(t, translator)
-		history, err := transform.translateHRead("call-read", `"file.txt"`, nil)
-		if err != nil || history.carrierInput() != workerExecInput(history.workerExecutable, []string{`"file.txt"`}) {
+		history, err := transform.translateTool("hread", "call-read", `"file.txt"`, nil)
+		if err != nil || history.pluginID != "builtin.hpatch" || !strings.Contains(history.carrierInput(), "file.txt") {
 			t.Fatalf("history = %+v, error %v", history, err)
 		}
 	})
@@ -264,7 +267,7 @@ func TestHPatchMetricFailureStillPropagatesRequestCancellation(t *testing.T) {
 }
 
 func TestReadOnlyToolCallClaimsCombinedDefinitionAccountingOnce(t *testing.T) {
-	for _, toolName := range []string{hreadToolName, hgrepToolName} {
+	for _, toolName := range []string{"hread", "hgrep"} {
 		t.Run(toolName, func(t *testing.T) {
 			var records []hpatchMetricRecord
 			translator := metricsObservingTranslator{
@@ -278,7 +281,7 @@ func TestReadOnlyToolCallClaimsCombinedDefinitionAccountingOnce(t *testing.T) {
 				},
 			}
 			transform, _, _, _ := newHPatchTestTransform(t, translator)
-			if _, err := transform.translateReadOnlyTool(toolName, "call-R", "input", nil); err != nil {
+			if _, err := transform.translateTool(toolName, "call-R", "input", nil); err != nil {
 				t.Fatal(err)
 			}
 			if err := transform.Finish(false); err != nil {
@@ -313,7 +316,7 @@ func TestHReadTranslationProducesNoSyntheticResultMetrics(t *testing.T) {
 		},
 	}
 	transform, _, _, _ := newHPatchTestTransform(t, translator)
-	history, err := transform.translateHRead("call-R", `"missing.txt"`, nil)
+	history, err := transform.translateTool("hread", "call-R", `"missing.txt"`, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

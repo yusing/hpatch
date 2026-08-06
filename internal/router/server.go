@@ -78,6 +78,12 @@ func Run(ctx context.Context, args []string, stderr io.Writer) (runErr error) {
 		if err != nil {
 			return fmt.Errorf("initialize tool registry: %w", err)
 		}
+		if err := registry.installFrontends(); err != nil {
+			return errors.Join(
+				fmt.Errorf("initialize tool registry frontends: %w", err),
+				registry.Close(),
+			)
+		}
 		defer func() {
 			runErr = errors.Join(runErr, registry.Close())
 		}()
