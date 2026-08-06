@@ -88,6 +88,21 @@ function executionError(error) {
   return error instanceof Error ? error.message : String(error);
 }
 
+function scriptEvaluationFlag(interpreter) {
+  const executable = interpreter.replaceAll("\\", "/").split("/").at(-1)?.toLowerCase();
+  switch (executable) {
+    case "bun":
+    case "bun.exe":
+    case "node":
+    case "node.exe":
+    case "nodejs":
+    case "nodejs.exe":
+      return "-e";
+    default:
+      return null;
+  }
+}
+
 function executeScriptThroughStdin(argv) {
   const interpreter = argv[0];
   const interpreterArguments = argv.slice(1, -1);
@@ -123,15 +138,21 @@ function executeScriptThroughStdin(argv) {
 
 function executeScriptWithProgramInput(argv, context) {
   const interpreter = argv[0];
-  const interpreterArguments = [...argv.slice(1, -1), "/dev/fd/3"];
   const body = argv.at(-1);
+  const evaluationFlag = scriptEvaluationFlag(interpreter);
+  const usesDescriptor = evaluationFlag === null;
+  const interpreterArguments = usesDescriptor
+    ? [...argv.slice(1, -1), "/dev/fd/3"]
+    : [...argv.slice(1, -1), evaluationFlag, body];
 
   return new Promise((resolve) => {
     let child;
     try {
       child = spawn(interpreter, interpreterArguments, {
         env: process.env,
-        stdio: [context.stdinFD, "pipe", "pipe", context.scriptReadFD],
+        stdio: usesDescriptor
+          ? [context.stdinFD, "pipe", "pipe", context.scriptReadFD]
+          : [context.stdinFD, "pipe", "pipe"],
       });
     } catch (error) {
       resolve({stderr: `shell: ${executionError(error)}\n`, exitCode: 1});
@@ -198,7 +219,9 @@ function executeScriptWithProgramInput(argv, context) {
     });
 
     try {
-      writeFileSync(context.scriptWriteFD, body);
+      if (usesDescriptor) {
+        writeFileSync(context.scriptWriteFD, body);
+      }
     } catch (error) {
       scriptError = error;
       child.kill("SIGKILL");
@@ -236,7 +259,9 @@ Use the first line as an optional shebang. A bare interpreter, a full path, and
 /usr/bin/env forms are accepted. Without a shebang, bash runs the complete input.
 An optional #!cmd= directive can follow the shebang or be the first line.
 Its single {.} placeholder expands to the normalized shell frontend command.
-The executor uses an anonymous descriptor for the exact remaining script body.
+The executor passes the exact body without shell parsing or a temporary file.
+Bun and Node.js receive the body through their direct evaluation option.
+Other interpreters receive the body through an anonymous descriptor.
 The interpreter keeps frontend standard input available as program data.`,
   },
   maxInputBytes,

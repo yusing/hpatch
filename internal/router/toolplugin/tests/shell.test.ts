@@ -288,6 +288,43 @@ describe("installable shell plugin", () => {
       expect(piped.status).toBe(0);
       expect(piped.stdout).toBe("piped:program-input");
       expect(piped.stderr).toBe("");
+
+      const bunBody = [
+        "import {basename} from \"node:path\";",
+        "const input = await Bun.stdin.text();",
+        "process.stdout.write(`${basename(process.cwd())}|${input.trim()}`);",
+      ].join("\n");
+      const bunExecuted = spawnSync(shellPath, [process.execPath, bunBody], {
+        cwd: repositoryRoot,
+        encoding: "utf8",
+        env: {
+          ...installEnvironment,
+          PATH: `${binaryDirectory}${path.delimiter}${process.env.PATH ?? ""}`,
+        },
+        input: "bun-input\n",
+      });
+      expect(bunExecuted.status).toBe(0);
+      expect(bunExecuted.stdout).toBe(`${path.basename(repositoryRoot)}|bun-input`);
+      expect(bunExecuted.stderr).toBe("");
+
+      const nodeBody = [
+        "process.stdin.setEncoding(\"utf8\");",
+        "let input = \"\";",
+        "process.stdin.on(\"data\", (chunk) => { input += chunk; });",
+        "process.stdin.on(\"end\", () => process.stdout.write(`node|${input.trim()}`));",
+      ].join("\n");
+      const nodeExecuted = spawnSync(shellPath, ["node", "--no-warnings", nodeBody], {
+        cwd: repositoryRoot,
+        encoding: "utf8",
+        env: {
+          ...installEnvironment,
+          PATH: `${binaryDirectory}${path.delimiter}${process.env.PATH ?? ""}`,
+        },
+        input: "node-input\n",
+      });
+      expect(nodeExecuted.status).toBe(0);
+      expect(nodeExecuted.stdout).toBe("node|node-input");
+      expect(nodeExecuted.stderr).toBe("");
     } finally {
       if (router.exitCode === null && router.signalCode === null) {
         router.kill("SIGTERM");
