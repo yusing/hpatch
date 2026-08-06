@@ -195,7 +195,7 @@ func TestHPatchPrepareRequestExposesOnlyStandaloneHPatch(t *testing.T) {
 	if err := json.Unmarshal(topTools[2]["format"], &format); err != nil {
 		t.Fatal(err)
 	}
-	if format.Type != "grammar" || format.Syntax != "regex" || !strings.Contains(format.Definition, "{0,5}") {
+	if format.Type != "grammar" || format.Syntax != "regex" || !strings.HasPrefix(format.Definition, "\\A") || !strings.Contains(format.Definition, "{0,5}") || !strings.HasSuffix(format.Definition, "\\z") {
 		t.Fatalf("standalone hread format = %#v", topTools[2])
 	}
 	if description := jsonString(topTools[3], "description"); !strings.Contains(description, "Use `hgrep` as replacement") {
@@ -204,7 +204,7 @@ func TestHPatchPrepareRequestExposesOnlyStandaloneHPatch(t *testing.T) {
 	if err := json.Unmarshal(topTools[3]["format"], &format); err != nil {
 		t.Fatal(err)
 	}
-	if format.Type != "grammar" || format.Syntax != "regex" || !strings.HasPrefix(format.Definition, "^") || !strings.HasSuffix(format.Definition, "$") {
+	if format.Type != "grammar" || format.Syntax != "regex" || !strings.HasPrefix(format.Definition, "\\A") || !strings.HasSuffix(format.Definition, "\\z") {
 		t.Fatalf("standalone hgrep format = %#v", topTools[3])
 	}
 	for _, correctionGuidance := range []string{

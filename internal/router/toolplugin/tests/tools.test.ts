@@ -19,6 +19,21 @@ async function temporaryDirectory(prefix: string): Promise<string> {
   return directory;
 }
 
+function rustRegexMatches(pattern: string, input: string): boolean {
+  const result = spawnSync(
+    "rg",
+    ["--no-config", "--multiline", "--quiet", "--", pattern, "-"],
+    {input, encoding: "utf8"},
+  );
+  if (result.error !== undefined) {
+    throw result.error;
+  }
+  if (result.status !== 0 && result.status !== 1) {
+    throw new Error(`rg regex evaluation failed: ${result.stderr}`);
+  }
+  return result.status === 0;
+}
+
 afterEach(async () => {
   process.chdir(originalCWD);
   if (originalPath === undefined) {
@@ -38,7 +53,6 @@ describe("hread built-in plugin", () => {
     if (format === undefined) {
       throw new Error("hread grammar format is missing");
     }
-    const pattern = new RegExp(format.definition, "u");
     const sixSpecs = Array.from({length: 6}, (_, index) => `file${index}.txt`).join("\r\n");
     for (const input of [
       "plain.txt",
@@ -47,7 +61,7 @@ describe("hread built-in plugin", () => {
       `"quoted\\"file.txt"`,
       sixSpecs,
     ]) {
-      expect(pattern.test(input)).toBe(true);
+      expect(rustRegexMatches(format.definition, input)).toBe(true);
     }
     const sevenSpecs = Array.from({length: 7}, (_, index) => `file${index}.txt`).join("\n");
     for (const input of [
@@ -65,7 +79,7 @@ describe("hread built-in plugin", () => {
       "\"unterminated",
       sevenSpecs,
     ]) {
-      expect(pattern.test(input)).toBe(false);
+      expect(rustRegexMatches(format.definition, input)).toBe(false);
     }
   });
 
@@ -150,13 +164,12 @@ describe("hgrep built-in plugin", () => {
     }
   });
 
-  test("declares a single-line regex and accepts one transport newline", async () => {
+  test("declares a strict Rust regex and accepts one transport newline", async () => {
     const format = plugin.tools[1].specification.format;
     expect(format?.syntax).toBe("regex");
     if (format === undefined) {
       throw new Error("hgrep grammar format is missing");
     }
-    const pattern = new RegExp(format.definition, "u");
     const tool = createHGrepTool("description", format.definition);
     const accepted = [
       "needle",
@@ -166,12 +179,12 @@ describe("hgrep built-in plugin", () => {
       "\"\"",
     ];
     for (const input of accepted) {
-      expect(pattern.test(input)).toBe(true);
+      expect(rustRegexMatches(format.definition, input)).toBe(true);
       const parsed = await tool.parse(input);
       expect(await tool.argv(parsed)).toEqual(splitArguments(input));
     }
     for (const input of ["needle\n", "needle\r\n"]) {
-      expect(pattern.test(input)).toBe(false);
+      expect(rustRegexMatches(format.definition, input)).toBe(false);
       const parsed = await tool.parse(input);
       expect(await tool.argv(parsed)).toEqual(["needle"]);
     }
@@ -186,7 +199,7 @@ describe("hgrep built-in plugin", () => {
       "\"escape\\",
       "'one\nsecond'",
     ]) {
-      expect(pattern.test(input)).toBe(false);
+      expect(rustRegexMatches(format.definition, input)).toBe(false);
       expect(() => tool.parse(input)).toThrow();
     }
   });

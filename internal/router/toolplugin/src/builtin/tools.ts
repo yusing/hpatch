@@ -10,7 +10,7 @@ as \`LINE:HASH TEXT\`; copy the current \`LINE:HASH\` directly into an HPATCH/2 
 
 const hreadPath = `(?:"(?:\\\\(?:["\\\\/bfnrt]|u[0-9A-Fa-f]{4})|[^\\x00-\\x1F"\\\\]|\\t)*"|[^\\x00-\\x20"]+)`;
 const hreadReadSpec = `${hreadPath}(?: [1-9][0-9]*:[1-9][0-9]*)?`;
-const hreadRegex = `^${hreadReadSpec}(?:\\r?\\n${hreadReadSpec}){0,5}$`;
+const hreadRegex = `\\A${hreadReadSpec}(?:\\r?\\n${hreadReadSpec}){0,5}\\z`;
 
 const hgrepDescription = `Use \`hgrep\` as replacement of \`rg\` or \`grep\`. It is a ripgrep wrapper that accepts familiar
 arguments but returns complete matching and requested context lines as
@@ -18,7 +18,7 @@ arguments but returns complete matching and requested context lines as
 `;
 
 const hgrepPart = `(?:'[^'\\r\\n]*'|"(?:\\\\[^\\r\\n]|[^"\\\\\\r\\n])*"|(?:\\\\[^\\r\\n]|[^\\s'"\\\\])+)`;
-const hgrepRegex = `^[ \\t]*${hgrepPart}+(?:[ \\t]+${hgrepPart}+)*[ \\t]*$`;
+const hgrepRegex = `\\A[ \\t]*${hgrepPart}+(?:[ \\t]+${hgrepPart}+)*[ \\t]*\\z`;
 
 type BuiltinPlugin = Omit<Plugin, "tools"> & {
   tools: [Tool<string[]>, Tool<string[]>];

@@ -859,13 +859,13 @@ as \`LINE:HASH TEXT\`; copy the current \`LINE:HASH\` directly into an HPATCH/2 
 `;
 var hreadPath = `(?:"(?:\\\\(?:["\\\\/bfnrt]|u[0-9A-Fa-f]{4})|[^\\x00-\\x1F"\\\\]|\\t)*"|[^\\x00-\\x20"]+)`;
 var hreadReadSpec = `${hreadPath}(?: [1-9][0-9]*:[1-9][0-9]*)?`;
-var hreadRegex = `^${hreadReadSpec}(?:\\r?\\n${hreadReadSpec}){0,5}$`;
+var hreadRegex = `\\A${hreadReadSpec}(?:\\r?\\n${hreadReadSpec}){0,5}\\z`;
 var hgrepDescription = `Use \`hgrep\` as replacement of \`rg\` or \`grep\`. It is a ripgrep wrapper that accepts familiar
 arguments but returns complete matching and requested context lines as
 \`"PATH":LINE:HASH TEXT\`. Copy the current \`LINE:HASH\` directly into an HPATCH/2 target.
 `;
 var hgrepPart = `(?:'[^'\\r\\n]*'|"(?:\\\\[^\\r\\n]|[^"\\\\\\r\\n])*"|(?:\\\\[^\\r\\n]|[^\\s'"\\\\])+)`;
-var hgrepRegex = `^[ \\t]*${hgrepPart}+(?:[ \\t]+${hgrepPart}+)*[ \\t]*$`;
+var hgrepRegex = `\\A[ \\t]*${hgrepPart}+(?:[ \\t]+${hgrepPart}+)*[ \\t]*\\z`;
 var plugin = {
   apiVersion: "hpatch-tool-plugin/v1",
   id: "builtin.hpatch",
