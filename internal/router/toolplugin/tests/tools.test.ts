@@ -54,6 +54,9 @@ describe("hread built-in plugin", () => {
       "",
       "\nplain.txt",
       "plain.txt\n",
+      `${sixSpecs}\r\n`,
+      "plain.txt\n\n",
+      "plain.txt\r",
       "plain.txt\n\nsecond.txt",
       "plain file.txt",
       "plain.txt 0:2",
@@ -73,7 +76,7 @@ describe("hread built-in plugin", () => {
     await writeFile("second file.txt", "one\ntwo\nthree", "utf8");
 
     const tool = createHReadTool("description", "start: TEST");
-    const whole = await tool.execute(["plain.txt"]);
+    const whole = await tool.execute(["plain.txt\n"]);
     expect(whole).toEqual({
       stdout: [
         formatHashLine(1, "alpha"),
@@ -84,7 +87,7 @@ describe("hread built-in plugin", () => {
     });
 
     const batch = await tool.execute([
-      "plain.txt 2:9\n\"second file.txt\" 2:3\nmissing.txt",
+      "plain.txt 2:9\n\"second file.txt\" 2:3\nmissing.txt\r\n",
     ]);
     expect(batch.exitCode).toBe(0);
     expect(batch.stdout).toContain("==> plain.txt 2:9 <==\n");
@@ -92,6 +95,16 @@ describe("hread built-in plugin", () => {
     expect(batch.stdout).toContain("==> \"second file.txt\" 2:3 <==\n");
     expect(batch.stdout).toContain(formatHashLine(3, "three"));
     expect(batch.stdout).toContain("==> missing.txt <==\nhread: reading missing.txt:");
+
+    const sixSpecs = Array.from({length: 6}, (_, index) => `missing${index}.txt`).join("\n");
+    const framedSix = await tool.execute([`${sixSpecs}\n`]);
+    expect(framedSix.exitCode).toBe(0);
+    expect(framedSix.stdout).toContain("==> missing5.txt <==\n");
+    const framedSeven = await tool.execute([`${sixSpecs}\nmissing6.txt\n`]);
+    expect(framedSeven).toEqual({
+      stderr: "hread: hread batch exceeds 6 items\n",
+      exitCode: 1,
+    });
   });
 
   test("rejects invalid ranges, non-regular files, and invalid UTF-8", async () => {
@@ -137,7 +150,7 @@ describe("hgrep built-in plugin", () => {
     }
   });
 
-  test("declares an anchored regex grammar that matches runtime parsing", async () => {
+  test("declares a single-line regex and accepts one transport newline", async () => {
     const format = plugin.tools[1].specification.format;
     expect(format?.syntax).toBe("regex");
     if (format === undefined) {
@@ -157,11 +170,17 @@ describe("hgrep built-in plugin", () => {
       const parsed = await tool.parse(input);
       expect(await tool.argv(parsed)).toEqual(splitArguments(input));
     }
+    for (const input of ["needle\n", "needle\r\n"]) {
+      expect(pattern.test(input)).toBe(false);
+      const parsed = await tool.parse(input);
+      expect(await tool.argv(parsed)).toEqual(["needle"]);
+    }
     for (const input of [
       "",
       " \t",
       "\nneedle",
-      "needle\n",
+      "needle\n\n",
+      "needle\r",
       "one\r\ntwo",
       "'unterminated",
       "\"escape\\",

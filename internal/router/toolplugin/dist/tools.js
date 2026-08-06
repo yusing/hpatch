@@ -30,6 +30,17 @@ function decodeUTF8(value, label) {
     throw new Error(`${label} is not UTF-8`);
   }
 }
+function stripOptionalFinalNewline(value) {
+  if (value.endsWith(`\r
+`)) {
+    return value.slice(0, -2);
+  }
+  if (value.endsWith(`
+`)) {
+    return value.slice(0, -1);
+  }
+  return value;
+}
 function createExecutorTool(options) {
   return {
     specification: {
@@ -165,7 +176,8 @@ var warnedShortOptions = new Map([
 ]);
 var forbiddenShortOptions = new Set("EUVaz");
 var shortOptionsWithValue = new Set("ABCTdefgjmt");
-function splitArguments(input) {
+function splitArguments(rawInput) {
+  const input = stripOptionalFinalNewline(rawInput);
   if (input === "") {
     throw new Error("input must not be empty");
   }
@@ -611,7 +623,7 @@ function parseReadSpec(input) {
   return { input, path, startLine, endLine };
 }
 function parseReadSpecs(input) {
-  const rawSpecs = input.split(`
+  const rawSpecs = stripOptionalFinalNewline(input).split(`
 `);
   if (rawSpecs.length > MAX_BATCH_ITEMS) {
     throw new Error(`hread batch exceeds ${MAX_BATCH_ITEMS} items`);

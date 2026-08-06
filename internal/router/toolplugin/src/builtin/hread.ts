@@ -9,6 +9,7 @@ import {
   errorText,
   createExecutorTool,
   formatHashLine,
+  stripOptionalFinalNewline,
 } from "./common.ts";
 
 // Source: hread.go:45:385 parseHReadSpec, readHashLinesForHost, and formatHashLineStream.
@@ -98,7 +99,7 @@ function parseReadSpec(input: string): ReadSpec {
 }
 
 function parseReadSpecs(input: string): ParsedReadSpec[] {
-  const rawSpecs = input.split("\n");
+  const rawSpecs = stripOptionalFinalNewline(input).split("\n");
   if (rawSpecs.length > MAX_BATCH_ITEMS) {
     throw new Error(`hread batch exceeds ${MAX_BATCH_ITEMS} items`);
   }

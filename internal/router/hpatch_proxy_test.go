@@ -643,7 +643,7 @@ func TestHGrepJSONReturnsExecCommandAndRestoresReplay(t *testing.T) {
 	transform, proxy, _, _ := newHPatchTestTransform(t, testTranslator(t, new(int)))
 	searchItem := map[string]any{
 		"type": "custom_tool_call", "id": "item-G", "call_id": "call-G",
-		"name": "hgrep", "input": `-F needle internal/router`, "status": "completed",
+		"name": "hgrep", "input": "-F needle internal/router\n", "status": "completed",
 	}
 	visible, err := transform.TransformJSON(mustTestJSON(t, map[string]any{
 		"status": "completed",
@@ -677,7 +677,7 @@ func TestHGrepJSONReturnsExecCommandAndRestoresReplay(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(replayed) != 1 || jsonString(replayed[0], "name") != "hgrep" ||
-		jsonString(replayed[0], "input") != `-F needle internal/router` {
+		jsonString(replayed[0], "input") != "-F needle internal/router\n" {
 		t.Fatalf("replayed hgrep = %s", replay.fields["input"])
 	}
 }

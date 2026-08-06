@@ -8,6 +8,7 @@ import {
   errorText,
   createExecutorTool,
   formatHashLine,
+  stripOptionalFinalNewline,
 } from "./common.ts";
 
 // Source: internal/router/hgrep_worker.go:119:460 argument parsing, rg transport, and row rendering.
@@ -143,7 +144,8 @@ type JSONEvent = {
   };
 };
 
-export function splitArguments(input: string): string[] {
+export function splitArguments(rawInput: string): string[] {
+  const input = stripOptionalFinalNewline(rawInput);
   if (input === "") {
     throw new Error("input must not be empty");
   }

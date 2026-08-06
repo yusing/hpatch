@@ -31,6 +31,16 @@ export function decodeUTF8(value: Uint8Array, label: string): string {
   }
 }
 
+export function stripOptionalFinalNewline(value: string): string {
+  if (value.endsWith("\r\n")) {
+    return value.slice(0, -2);
+  }
+  if (value.endsWith("\n")) {
+    return value.slice(0, -1);
+  }
+  return value;
+}
+
 type ExecutorToolOptions = {
   name: string;
   description: string;
