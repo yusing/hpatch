@@ -986,7 +986,7 @@ func TestHReadJSONReturnsExecCommandAndRestoresReplay(t *testing.T) {
 	}
 	carrierInput := jsonString(response.Output[0], "input")
 	encodedArguments := strings.TrimPrefix(carrierInput, "const result = await tools.exec_command(")
-	encodedArguments = strings.TrimSuffix(encodedArguments, ");\ntext(result.output);")
+	encodedArguments = strings.TrimSuffix(encodedArguments, ");\nnotify(result.output);")
 	var arguments struct {
 		Command     string          `json:"cmd"`
 		Environment json.RawMessage `json:"env"`
@@ -1075,7 +1075,7 @@ func TestHGrepExecInputUsesStableBasename(t *testing.T) {
 		t.Fatal(err)
 	}
 	encodedArguments := strings.TrimPrefix(carrierInput, "const result = await tools.exec_command(")
-	encodedArguments = strings.TrimSuffix(encodedArguments, ");\ntext(result.output);")
+	encodedArguments = strings.TrimSuffix(encodedArguments, ");\nnotify(result.output);")
 
 	var arguments struct {
 		Command string `json:"cmd"`
@@ -1099,7 +1099,7 @@ func TestWorkerTemplateExecInputQuotesNestedShellCommand(t *testing.T) {
 		t.Fatal(err)
 	}
 	encodedArguments := strings.TrimPrefix(carrierInput, "const result = await tools.exec_command(")
-	encodedArguments = strings.TrimSuffix(encodedArguments, ");\ntext(result.output);")
+	encodedArguments = strings.TrimSuffix(encodedArguments, ");\nnotify(result.output);")
 
 	var arguments struct {
 		Command string `json:"cmd"`
@@ -1129,7 +1129,7 @@ func TestWorkerExecInputMergesValidatedParams(t *testing.T) {
 		t.Fatal(err)
 	}
 	encodedArguments := strings.TrimPrefix(carrierInput, "const result = await tools.exec_command(")
-	encodedArguments = strings.TrimSuffix(encodedArguments, ");\ntext(result.output);")
+	encodedArguments = strings.TrimSuffix(encodedArguments, ");\nnotify(result.output);")
 	var arguments struct {
 		Command string `json:"cmd"`
 		Workdir string `json:"workdir"`
@@ -1161,7 +1161,7 @@ func TestHReadExecInputQuotesOnlyShellSensitiveArguments(t *testing.T) {
 		t.Fatal(err)
 	}
 	encodedArguments := strings.TrimPrefix(carrierInput, "const result = await tools.exec_command(")
-	encodedArguments = strings.TrimSuffix(encodedArguments, ");\ntext(result.output);")
+	encodedArguments = strings.TrimSuffix(encodedArguments, ");\nnotify(result.output);")
 
 	var arguments struct {
 		Command string `json:"cmd"`
@@ -1182,7 +1182,7 @@ func TestHReadExecInputCarriesOneNewlineDelimitedBatchArgument(t *testing.T) {
 		t.Fatal(err)
 	}
 	encodedArguments := strings.TrimPrefix(carrierInput, "const result = await tools.exec_command(")
-	encodedArguments = strings.TrimSuffix(encodedArguments, ");\ntext(result.output);")
+	encodedArguments = strings.TrimSuffix(encodedArguments, ");\nnotify(result.output);")
 
 	var arguments struct {
 		Command string `json:"cmd"`
@@ -1202,7 +1202,7 @@ func TestHReadExecInputDoesNotRepairMissingRangeSeparator(t *testing.T) {
 		t.Fatal(err)
 	}
 	encodedArguments := strings.TrimPrefix(carrierInput, "const result = await tools.exec_command(")
-	encodedArguments = strings.TrimSuffix(encodedArguments, ");\ntext(result.output);")
+	encodedArguments = strings.TrimSuffix(encodedArguments, ");\nnotify(result.output);")
 
 	var arguments struct {
 		Command string `json:"cmd"`

@@ -1512,7 +1512,7 @@ func workerCommandExecInputWithParams(command string, params map[string]json.Raw
 		arguments["login"] = mustMarshalJSON(false)
 	}
 	return "const result = await tools.exec_command(" + string(mustMarshalJSON(arguments)) + ");\n" +
-		"text(result.output);", nil
+		"notify(result.output);", nil
 }
 
 func (h hpatchHistory) carrierInput() string {
