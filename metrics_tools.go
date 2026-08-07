@@ -40,7 +40,7 @@ type HostToolDefinition struct {
 }
 
 // HostToolCall is one terminal router translation classification.
-// Names and payloads are the exact model-visible and validated carrier shapes.
+// Names and payloads are the model-visible call and its validated stock carrier shape.
 type HostToolCall struct {
 	PluginID          string
 	ToolName          string

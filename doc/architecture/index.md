@@ -201,11 +201,15 @@ single-placeholder command-template expansion, optional JSON parameters, and res
 The parameter object cannot contain `cmd`; the renderer supplies `cmd` from the independently
 quoted frontend command. A present `login` value must be exactly `false`, and the renderer
 supplies `login: false` when it is absent. Plugin code can select the typed template and
-parameter variants but cannot construct the outer carrier
-or quote the nested frontend command. An implementation needing another Code Mode carrier uses
-the generic path rather than encoding an exec surrogate. Hpatch's native workspace translation,
-correction ancestry, patch renderer, and semantic failure baseline remain adapter extensions
-beside this generic interface rather than capabilities granted to ordinary plugins.
+parameter variants but cannot construct the outer carrier or quote the nested frontend command.
+
+An exec translator may provide a validated nonempty stock command for output metrics. The same
+renderer applies the selected template and parameters to produce its canonical stock carrier.
+This evidence never replaces the frontend carrier used for the response, history, replay, or
+execution. An implementation needing another executable Code Mode carrier uses the generic path
+rather than encoding an exec surrogate. Hpatch's native workspace translation, correction
+ancestry, patch renderer, and semantic failure baseline remain adapter extensions beside this
+generic interface rather than capabilities granted to ordinary plugins.
 
 For each eligible request, the router recognizes exactly one authoritative Code Mode owner: the
 custom `exec` tool either directly inside an `additional_tools` input item's tool list for
@@ -262,16 +266,17 @@ unavailable carrier fails routing and cannot be represented as successful transl
 
 ## CTR-METRICS-001 — Metrics classification and persistence
 
-One metrics classifier consumes structured parser, evaluator, registry, carrier, and completed
-executor-result events for `REQ-METRICS-001`. It does not re-parse tool inputs, diagnostics, or
-rendered responses. The translation path owns per-plugin and per-tool definition, call,
-emitted-shape, translated-shape, and failed-translation counters. The execution path owns current
-and stock result-shape counters from the private worker's validated evidence. Both paths derive
-token counts and stable identity inside the metrics owner; plugin code supplies content shapes but
-never supplies token counts or overrides. Hpatch's adapter additionally owns its effective,
-ineffective, fixed failed semantic baseline, report, command, target, and stable terminal-reason
-classifications. The report formatter's exact emitted string is the only source for report-input
-token counting. Reduction ratios and signed net input are presentation-time calculations from
+One metrics classifier consumes structured parser, evaluator, registry, carrier, stock-carrier,
+and completed executor-result events for `REQ-METRICS-001`. It does not re-parse tool inputs,
+diagnostics, or rendered responses. The translation path owns per-plugin and per-tool definition,
+call, emitted-shape, translated-shape, and failed-translation counters. The execution path owns
+current and stock result-shape counters from the private worker's validated evidence. Both paths
+derive token counts and stable identity inside the metrics owner; plugin code may supply validated
+content evidence but never token counts or outer carrier serialization. Hpatch's adapter additionally
+owns its effective, ineffective, fixed failed semantic baseline, report, command, target, and stable
+terminal-reason classifications. The report formatter's exact emitted string is the only source
+for report-input token counting. Reduction ratios and signed net input are presentation-time
+calculations from
 persisted counters.
 
 The metrics store owns tokenizer use, stable tool identity keys, exact installed-definition

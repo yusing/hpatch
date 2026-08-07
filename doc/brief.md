@@ -69,13 +69,13 @@ wall time must remain close to control.
 - Model-visible custom-tool declarations using unconstrained string input or OpenAI-supported
   Lark and regex grammars, typed translation into Code Mode carriers, and executor-side tool
   implementations.
-- Per-plugin and per-tool installed-definition, emitted-call, translated-carrier, current-result,
+- Per-plugin and per-tool installed-definition, emitted-call, validated stock-carrier, current-result,
   and optional stock-result token estimates in `hpatch gain` and the router gain page.
 - Built-in hread and hgrep stock results preserve returned content while omitting their verified
   `LINE:HASH` row identity, so gain reports the input cost of editable row references.
-- A repository `plugins/shell.mjs` example with optional interpreter, command-template, and JSON
-  parameter directives, plus a `make install` path that installs both binaries and configured
-  plugins.
+- A repository `plugins/shell.mjs` example with optional interpreter, command-template, JSON
+  parameter directives, and an interpreter-specific native exec baseline for output metrics, plus
+  a `make install` path that installs both binaries and configured plugins.
 
 ## Public surface
 

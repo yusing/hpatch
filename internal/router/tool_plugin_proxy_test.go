@@ -32,6 +32,7 @@ const testToolPluginDeclaration = `export default {
       if (parsed === "wrong-kind") return api.function("exec", "{}");
       if (parsed === "invalid-json") return api.function("lookup", "{");
       if (parsed === "template") return api.exec("before | {.} | after");
+      if (parsed === "stock") return api.exec("before | {.} | after", undefined, "python3 -c 'print(1)'");
       if (parsed === "malformed") return {kind: "exec", payload: "forbidden"};
       return api.exec();
     },
@@ -222,7 +223,7 @@ func TestToolPluginExecTemplateUsesCanonicalWorkerCommand(t *testing.T) {
 	}
 }
 
-func TestToolPluginMetricsUseOriginalAndValidatedCarrierShapes(t *testing.T) {
+func TestToolPluginMetricsUseOriginalAndStockCarrierShapes(t *testing.T) {
 	codec, err := tokenizer.ForModel(tokenizer.GPT5)
 	if err != nil {
 		t.Fatal(err)
@@ -263,7 +264,7 @@ func TestToolPluginMetricsUseOriginalAndValidatedCarrierShapes(t *testing.T) {
 		return records[0], jsonString(visible, "input")
 	}
 
-	success, payload := run("execute")
+	success, payload := run("stock")
 	var successTool *hpatch.ToolMetricRecord
 	for index := range success.ToolMetrics {
 		if success.ToolMetrics[index].PluginID == "proxy.test" && success.ToolMetrics[index].ToolName == "plugin_tool" {
@@ -271,11 +272,19 @@ func TestToolPluginMetricsUseOriginalAndValidatedCarrierShapes(t *testing.T) {
 			break
 		}
 	}
+	stockPayload, err := workerCommandExecInputWithParams(
+		"before | python3 -c 'print(1)' | after",
+		nil,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if successTool == nil || successTool.Calls != 1 ||
-		successTool.EmittedTokens != count("plugin_tool\nexecute") ||
-		successTool.TranslatedTokens != count("exec\n"+payload) ||
-		successTool.FailedTranslations != 0 {
-		t.Fatalf("successful plugin metric = %+v, payload %q", successTool, payload)
+		successTool.EmittedTokens != count("plugin_tool\nstock") ||
+		successTool.TranslatedTokens != count("functions.exec\n"+stockPayload) ||
+		successTool.FailedTranslations != 0 ||
+		payload == stockPayload {
+		t.Fatalf("successful plugin metric = %+v, payload %q, stock %q", successTool, payload, stockPayload)
 	}
 	if success.DefinitionRequests != 1 || len(success.ToolMetrics) != 4 {
 		t.Fatalf("installed definition breakdown = %+v", success)

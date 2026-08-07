@@ -1409,6 +1409,19 @@ func (t *hpatchResponseTransform) translateRegisteredTool(contribution toolContr
 		}
 	}
 
+	metricName := name
+	metricPayload := payload
+	if !translation.Rejected && translation.Carrier.Kind == "exec" && translation.Carrier.StockCommand != "" {
+		stockCommand := translation.Carrier.StockCommand
+		if translation.Carrier.Template != "" {
+			stockCommand = strings.Replace(translation.Carrier.Template, "{.}", stockCommand, 1)
+		}
+		if stockPayload, stockErr := workerCommandExecInputWithParams(stockCommand, translation.Carrier.Params); stockErr == nil {
+			metricName = "functions.exec"
+			metricPayload = stockPayload
+		}
+	}
+
 	metricCall := &hpatch.HostToolCall{
 		PluginID:          contribution.PluginID,
 		ToolName:          contribution.Name,
@@ -1417,8 +1430,8 @@ func (t *hpatchResponseTransform) translateRegisteredTool(contribution toolContr
 		FailedTranslation: translation.Rejected,
 	}
 	if !translation.Rejected {
-		metricCall.TranslatedName = name
-		metricCall.TranslatedPayload = payload
+		metricCall.TranslatedName = metricName
+		metricCall.TranslatedPayload = metricPayload
 	}
 	if err := t.recordMetrics(hpatchMetricInputs{
 		overheadOnly: true,

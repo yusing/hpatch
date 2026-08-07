@@ -599,7 +599,7 @@ function validateCarrier(carrier) {
   }
   if (carrier.kind === "exec") {
     const keys = Object.keys(carrier);
-    if (!keys.every((key) => ["kind", "template", "params"].includes(key))) {
+    if (!keys.every((key) => ["kind", "template", "params", "stockCommand"].includes(key))) {
       throw new Error("translator returned a malformed carrier");
     }
     const normalized = {kind: "exec"};
@@ -612,6 +612,12 @@ function validateCarrier(carrier) {
     }
     if (carrier.params !== undefined) {
       normalized.params = validateExecParams(carrier.params);
+    }
+    if (carrier.stockCommand !== undefined) {
+      if (typeof carrier.stockCommand !== "string" || carrier.stockCommand === "") {
+        throw new Error("translator returned a malformed carrier");
+      }
+      normalized.stockCommand = carrier.stockCommand;
     }
     return Object.freeze(normalized);
   }
@@ -641,13 +647,16 @@ async function translateTool(request) {
     function(name, argumentsJSON) {
       return Object.freeze({kind: "function", name, payload: argumentsJSON});
     },
-    exec(template, params) {
+    exec(template, params, stockCommand) {
       const carrier = {kind: "exec"};
       if (template !== undefined) {
         carrier.template = template;
       }
       if (params !== undefined) {
         carrier.params = params;
+      }
+      if (stockCommand !== undefined) {
+        carrier.stockCommand = stockCommand;
       }
       return Object.freeze(carrier);
     },

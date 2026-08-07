@@ -228,6 +228,12 @@ placeholder, which the router replaces with the complete quoted frontend command
 JSON parameter object cannot contain `cmd`. The router supplies `cmd` from that frontend
 command. If the parameter object contains `login`, its value must be exactly `false`.
 
+An exec translator may also return one nonempty stock command for output metrics. The router
+applies the same optional command template and JSON parameters, then renders the stock command
+through the canonical exec wrapper. This stock carrier is metric evidence only: the response,
+history, replay, and execution paths retain the validated frontend carrier. Without a stock
+command, output metrics use that frontend carrier as before.
+
 For each executor-backed contributed tool, startup creates or verifies a stable executable
 symlink beside the running `hpatch-router`. Its basename is exactly the contributed tool name,
 and its target is the authenticated process-scoped snapshot wrapper with the same basename.
@@ -350,6 +356,15 @@ With `!params`, Codex applies the accepted outer exec arguments before it launch
 The executor resolves bare interpreters through `PATH` and returns stdout, stderr, and exit
 status without copying the script body into either output stream.
 
+For output metrics, the shell translator supplies a stock exec command for the normalized
+interpreter and exact body. Python-family executables pass the shell-quoted body as the `-c`
+argument, and Bun and Node-family executables pass it as the `-e` argument. Other interpreters
+receive `/dev/fd/3`; a quoted heredoc supplies that descriptor while leaving program stdin
+available. Its interpreter-derived delimiter changes when the body contains that delimiter as a
+complete line. The router applies any command template and parameters and counts the complete
+canonical Code Mode exec shape. It still executes and replays only the authenticated `shell`
+frontend carrier.
+
 Acceptance:
 
 1. A free-form call containing `#!/usr/bin/env python3` translates to an exec carrier whose
@@ -411,14 +426,16 @@ forms do not contribute metrics.
 Every routed contributed-tool call classified by `REQ-PLUGIN-001` contributes a row keyed by
 plugin identity and tool name. Its emitted estimate counts the model-visible tool name followed
 by the exact input the model emitted. Its translated estimate counts the validated Code Mode
-carrier name followed by the router's canonical serialized carrier payload. Provider-generated
-item IDs, call IDs, status, and JSON or SSE envelopes are excluded from both shapes. The router
-derives both counts from the installed specification and validated carrier; plugins neither
-supply token counts nor override their metric shape. A translated row's reduction is
-`(translated - emitted) / translated * 100`, may be negative, and is `n/a` when translated
-tokens are zero. Router-side input rejection uses a separate failed row with `n/a` reduction.
-Executor failures after Codex accepts the carrier do not retroactively become router translation
-failures.
+carrier name followed by the router's canonical serialized stock payload. The stock payload is
+the execution carrier unless an exec translator supplies a validated stock command. In that case,
+the stock carrier uses the semantic name `functions.exec`, and the router renders the command
+through the same canonical exec wrapper, template, and parameters.
+Provider-generated item IDs, call IDs, status, and JSON or SSE envelopes are excluded from both
+shapes. Plugins supply content evidence but not token counts or outer carrier serialization. A
+translated row's reduction is `(translated - emitted) / translated * 100`, may be negative, and
+is `n/a` when translated tokens are zero. Router-side input rejection uses a separate failed row
+with `n/a` reduction. Executor failures after Codex accepts the execution carrier do not
+retroactively become router translation failures.
 
 For hpatch, both effective and ineffective emitted estimates count the `functions.hpatch` tool
 name followed by the editing payload the model emitted. When a correction names commands of a
@@ -590,8 +607,9 @@ Acceptance:
    hpatch estimates and fully emitted report-input estimates; failed invocations persist only
    ineffective hpatch estimates and zero report-input tokens.
 2. Every successfully translated contributed-tool call persists a plugin-and-tool output row whose
-   emitted count uses the exact model-visible call shape and whose translated count uses the
-   validated canonical Code Mode carrier shape. Runtime executor failure does not reclassify it.
+   emitted count uses the exact model-visible call shape. Its translated count uses the validated
+   stock carrier when supplied and otherwise the validated execution carrier. A stock carrier does
+   not change execution, history, replay, or runtime-failure classification.
 3. Every completed executor result persists current and stock input estimates for its plugin and
    tool. An omitted stock result produces equal estimates and zero reduction without a second
    execution. A zero-token stock result reports `n/a`.

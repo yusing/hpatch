@@ -101,6 +101,63 @@ describe("installable shell plugin", () => {
     expect(await tool.translate(bash, {exec: () => ({kind: "exec"})})).toEqual({kind: "exec"});
   });
 
+  test("supplies executable interpreter-specific stock exec commands", async () => {
+    const translate = async (input: string) => {
+      const parsed = await tool.parse(input);
+      return tool.translate(parsed, {
+        exec: (
+          template?: string,
+          params?: Record<string, unknown>,
+          stockCommand?: string,
+        ) => ({kind: "exec", template, params, stockCommand}),
+      });
+    };
+
+    expect((await translate("#!/usr/bin/python3 -u\nprint(\"ok\")")).stockCommand).toBe(
+      "/usr/bin/python3 -u -c 'print(\"ok\")'",
+    );
+    expect((await translate("#!nodejs\nconsole.log(\"ok\")")).stockCommand).toBe(
+      "nodejs -e 'console.log(\"ok\")'",
+    );
+    expect((await translate("#!/opt/bun.exe\nconsole.log(\"ok\")")).stockCommand).toBe(
+      "/opt/bun.exe -e 'console.log(\"ok\")'",
+    );
+    expect((await translate("printf ok")).stockCommand).toBe(
+      "bash /dev/fd/3 3<<'BASH'\nprintf ok\nBASH",
+    );
+    expect((await translate("BASH\n")).stockCommand).toBe(
+      "bash /dev/fd/3 3<<'BASH_'\nBASH\nBASH_",
+    );
+
+    for (const [input, output] of [
+      ["#!python3\nprint(\"python\")", "python\n"],
+      ["#!node\nprocess.stdout.write(\"node\")", "node"],
+      [`#!${process.execPath}\nprocess.stdout.write("bun")`, "bun"],
+    ]) {
+      const command = (await translate(input)).stockCommand;
+      const executed = spawnSync("bash", ["-c", command], {encoding: "utf8"});
+      expect(executed.status).toBe(0);
+      expect(executed.stdout).toBe(output);
+      expect(executed.stderr).toBe("");
+    }
+
+    const bashCommand = (await translate("IFS= read -r value; printf 'bash:%s' \"$value\"")).stockCommand;
+    const bashExecuted = spawnSync("bash", ["-c", bashCommand], {
+      encoding: "utf8",
+      input: "program-input\n",
+    });
+    expect(bashExecuted.status).toBe(0);
+    expect(bashExecuted.stdout).toBe("bash:program-input");
+    expect(bashExecuted.stderr).toBe("");
+
+    const carriageCommand = (await translate("printf cr\r")).stockCommand;
+    expect(carriageCommand).toBe("bash /dev/fd/3 3<<'BASH'\nprintf cr\r\nBASH");
+    const carriageExecuted = spawnSync("bash", ["-c", carriageCommand], {encoding: "utf8"});
+    expect(carriageExecuted.status).toBe(0);
+    expect(carriageExecuted.stdout).toBe("cr\r");
+    expect(carriageExecuted.stderr).toBe("");
+  });
+
   test("expands a command directive after an optional interpreter shebang", async () => {
     const template = "curl -fsSL URL | {.} | jq";
     const exec = (commandTemplate?: string) => (

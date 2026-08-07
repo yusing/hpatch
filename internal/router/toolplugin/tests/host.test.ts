@@ -177,6 +177,7 @@ describe("plugin translation and execution", () => {
       if (input === "function") return api.function("lookup", "{\\"value\\":1}");
       if (input === "template") return api.exec("before | {.} | after");
       if (input === "params") return api.exec(undefined, {workdir: "/tmp"});
+      if (input === "stock") return api.exec(undefined, undefined, "python3 -c 'print(1)'");
       if (input === "invalid-params") return api.exec(undefined, {cmd: "forbidden"});
       if (input === "invalid-login") return api.exec(undefined, {login: true});
       if (input === "invalid-undefined") return api.exec(undefined, {workdir: undefined});
@@ -184,6 +185,7 @@ describe("plugin translation and execution", () => {
       if (input === "invalid-symbol") return api.exec(undefined, {tty: Symbol("tty")});
       if (input === "invalid-nan") return api.exec(undefined, {tty: Number.NaN});
       if (input === "invalid-template") return api.exec("missing placeholder");
+      if (input === "invalid-stock") return api.exec(undefined, undefined, "");
       if (input === "malformed") return {kind: "exec", payload: "unexpected"};
       return api.exec();
     },
@@ -200,6 +202,7 @@ describe("plugin translation and execution", () => {
       ["exec", {kind: "exec"}],
       ["template", {kind: "exec", template: "before | {.} | after"}],
       ["params", {kind: "exec", params: {workdir: "/tmp"}}],
+      ["stock", {kind: "exec", stockCommand: "python3 -c 'print(1)'"}],
       ["custom", {kind: "custom", name: "exec", payload: "custom payload"}],
       ["function", {kind: "function", name: "lookup", payload: "{\"value\":1}"}],
     ] as const) {
@@ -248,6 +251,15 @@ describe("plugin translation and execution", () => {
     });
     expect(invalidTemplate.status).toBe(1);
     expect(invalidTemplate.stderr).toContain("translator returned a malformed carrier");
+
+    const invalidStock = invokeHost(directory, {
+      operation: "translate",
+      module: "plugin.mjs",
+      index: 0,
+      input: "invalid-stock",
+    });
+    expect(invalidStock.status).toBe(1);
+    expect(invalidStock.stderr).toContain("translator returned a malformed carrier");
 
     const invalidParams = invokeHost(directory, {
       operation: "translate",

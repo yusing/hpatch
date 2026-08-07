@@ -14,11 +14,12 @@ type (
 	}
 
 	Carrier struct {
-		Kind     string                     `json:"kind"`
-		Name     string                     `json:"name"`
-		Payload  string                     `json:"payload"`
-		Template string                     `json:"template"`
-		Params   map[string]json.RawMessage `json:"params"`
+		Kind         string                     `json:"kind"`
+		Name         string                     `json:"name"`
+		Payload      string                     `json:"payload"`
+		Template     string                     `json:"template"`
+		Params       map[string]json.RawMessage `json:"params"`
+		StockCommand string                     `json:"stockCommand"`
 	}
 
 	Translation struct {
