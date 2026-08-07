@@ -8,6 +8,7 @@ import {
   errorText,
   createExecutorTool,
   formatHashLine,
+  shellQuoteArgument,
   stripOptionalFinalNewline,
 } from "./common.ts";
 
@@ -320,11 +321,28 @@ async function executeRead(input: string, maxOutputBytes: number): Promise<Compa
   return {current, stock};
 }
 
+function hreadStockCommand(argv: string[]): string {
+  if (argv.length !== 1) {
+    throw new Error("hread stock command requires one complete input");
+  }
+  return parseReadSpecs(argv[0]).map((item) => {
+    if (item.error !== null) {
+      throw item.error;
+    }
+    const command = `cat ${shellQuoteArgument(item.spec.path)}`;
+    if (item.spec.startLine === 0) {
+      return command;
+    }
+    return `${command} | sed -n '${item.spec.startLine},${item.spec.endLine}p'`;
+  }).join("; ");
+}
+
 export function createHReadTool(description: string, grammar: string): Tool<string[]> {
   return createExecutorTool({
     name: "hread",
     description,
     grammar,
+    stockCommand: hreadStockCommand,
     argv(input) {
       return [input];
     },

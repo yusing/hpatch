@@ -39,12 +39,20 @@ export function stripOptionalFinalNewline(value: string): string {
   return value;
 }
 
+export function shellQuoteArgument(value: string): string {
+  if (/^[A-Za-z0-9_@%+=:,./-]+$/u.test(value)) {
+    return value;
+  }
+  return `'${value.replaceAll("'", "'\"'\"'")}'`;
+}
+
 type ExecutorToolOptions = {
   name: string;
   description: string;
   grammar: string;
   argv(input: string): string[] | Promise<string[]>;
   execute(argv: string[], context: ExecutionContext): ExecutionResult | Promise<ExecutionResult>;
+  stockCommand?(input: string[]): string;
 };
 
 export function createExecutorTool(options: ExecutorToolOptions): Tool<string[]> {
@@ -61,8 +69,8 @@ export function createExecutorTool(options: ExecutorToolOptions): Tool<string[]>
     argv(input) {
       return input;
     },
-    translate(_input, api) {
-      return api.exec();
+    translate(input, api) {
+      return api.exec(undefined, undefined, options.stockCommand?.(input));
     },
     execute: options.execute,
   };

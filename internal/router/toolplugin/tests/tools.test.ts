@@ -84,6 +84,18 @@ describe("hread built-in plugin", () => {
     }
   });
 
+  test("supplies cat and cat-plus-sed stock exec commands", async () => {
+    const tool = createHReadTool("description", "start: TEST");
+    const translate = async (input: string) => tool.translate(await tool.parse(input), {
+      exec: (_template, _params, stockCommand) => ({kind: "exec", stockCommand}),
+    });
+
+    expect((await translate("plain.txt")).stockCommand).toBe("cat plain.txt");
+    expect((await translate("\"path with spaces.txt\" 2:9\n\"quote'file.txt\"")).stockCommand).toBe(
+      "cat 'path with spaces.txt' | sed -n '2,9p'; cat 'quote'\"'\"'file.txt'",
+    );
+  });
+
   test("reads whole files, ranges, and ordered batches", async () => {
     const directory = await temporaryDirectory("hread-plugin-");
     process.chdir(directory);
@@ -210,6 +222,15 @@ describe("hgrep built-in plugin", () => {
       expect(rustRegexMatches(format.definition, input)).toBe(false);
       expect(() => tool.parse(input)).toThrow();
     }
+  });
+
+  test("supplies an rg stock exec command", async () => {
+    const tool = createHGrepTool("description", "start: TEST");
+    const parsed = await tool.parse("-F 'two words' \"path with spaces.txt\" semi;colon");
+    const translated = await tool.translate(parsed, {
+      exec: (_template, _params, stockCommand) => ({kind: "exec", stockCommand}),
+    });
+    expect(translated.stockCommand).toBe("rg -F 'two words' 'path with spaces.txt' 'semi;colon'");
   });
 
   test("runs ripgrep and emits verified complete rows", async () => {

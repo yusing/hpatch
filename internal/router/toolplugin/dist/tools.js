@@ -39,6 +39,12 @@ function stripOptionalFinalNewline(value) {
   }
   return value;
 }
+function shellQuoteArgument(value) {
+  if (/^[A-Za-z0-9_@%+=:,./-]+$/u.test(value)) {
+    return value;
+  }
+  return `'${value.replaceAll("'", `'"'"'`)}'`;
+}
 function createExecutorTool(options) {
   return {
     specification: {
@@ -53,8 +59,8 @@ function createExecutorTool(options) {
     argv(input) {
       return input;
     },
-    translate(_input, api) {
-      return api.exec();
+    translate(input, api) {
+      return api.exec(undefined, undefined, options.stockCommand?.(input));
     },
     execute: options.execute
   };
@@ -534,6 +540,7 @@ function createHGrepTool(description, grammar) {
     name: "hgrep",
     description,
     grammar,
+    stockCommand: (argv) => ["rg", ...argv].map(shellQuoteArgument).join(" "),
     argv(input) {
       return splitArguments(input);
     },
@@ -848,11 +855,27 @@ async function executeRead(input, maxOutputBytes) {
   }
   return { current, stock };
 }
+function hreadStockCommand(argv) {
+  if (argv.length !== 1) {
+    throw new Error("hread stock command requires one complete input");
+  }
+  return parseReadSpecs(argv[0]).map((item) => {
+    if (item.error !== null) {
+      throw item.error;
+    }
+    const command = `cat ${shellQuoteArgument(item.spec.path)}`;
+    if (item.spec.startLine === 0) {
+      return command;
+    }
+    return `${command} | sed -n '${item.spec.startLine},${item.spec.endLine}p'`;
+  }).join("; ");
+}
 function createHReadTool(description, grammar) {
   return createExecutorTool({
     name: "hread",
     description,
     grammar,
+    stockCommand: hreadStockCommand,
     argv(input) {
       return [input];
     },

@@ -7,6 +7,7 @@ import {
   errorText,
   createExecutorTool,
   formatHashLine,
+  shellQuoteArgument,
   stripOptionalFinalNewline,
 } from "./common.ts";
 
@@ -517,6 +518,7 @@ export function createHGrepTool(description: string, grammar: string): Tool<stri
     name: "hgrep",
     description,
     grammar,
+    stockCommand: (argv) => ["rg", ...argv].map(shellQuoteArgument).join(" "),
     argv(input) {
       return splitArguments(input);
     },
