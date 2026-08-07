@@ -13,6 +13,13 @@
       --pale-green-bg:#152818;--pale-green-text:#8bc48e;
       --pale-yellow-bg:#2a2414;--pale-yellow-text:#d9bf72;
       --pale-red-bg:#2a1616;--pale-red-text:#d98a88;
+      /* Data-mark tones. Text tokens above are too light for marks, so marks use
+         their own validated steps: cool and warm are a warm/cool diverging pair
+         (OKLCH L in the dark band, chroma above the floor, adjacent CVD dE >= 8
+         for protan, deutan and tritan, contrast > 5:1 on --surface). The flat
+         tone is the deliberate de-emphasis gray and reads gray by design. */
+      --mark-cool:#499dcf;--mark-warm:#d27a44;--mark-flat:#6a6660;
+      --mark-track:rgba(232,230,227,.09);
       --hover:rgba(255,255,255,.04);--press:rgba(255,255,255,.07);
       --radius:8px;--radius-sm:6px;
       --space-1:4px;--space-2:8px;--space-3:12px;--space-4:16px;--space-5:24px;--space-6:32px;--space-7:40px;
@@ -41,6 +48,7 @@
 
     .mast{display:flex;justify-content:space-between;align-items:flex-end;gap:var(--space-5);border-bottom:1px solid var(--border);padding-bottom:var(--space-5)}
     .eyebrow{text-transform:uppercase;letter-spacing:.12em;font-size:11px;font-weight:600;color:var(--muted);margin:0 0 var(--space-3)}
+    .eyebrow b{color:var(--accent-text);font-weight:600}
     .mast h1{font:500 clamp(36px,5.5vw,56px)/1.05 var(--font-serif);letter-spacing:-.03em;margin:0;color:var(--ink)}
     .status{text-align:right;display:flex;flex-direction:column;align-items:flex-end;gap:var(--space-2)}
     .status-pill{display:inline-flex;align-items:center;gap:8px;min-height:32px;padding:6px 12px;border-radius:9999px;background:var(--pale-yellow-bg);color:var(--pale-yellow-text);font-size:11px;text-transform:uppercase;letter-spacing:.08em;font-weight:600;border:1px solid transparent;transition:background var(--dur),color var(--dur),border-color var(--dur)}
@@ -74,30 +82,61 @@
     .section-head code{font-family:var(--font-mono);font-size:11px;color:var(--accent-text);background:var(--accent-bg);padding:2px 6px;border-radius:4px}
 
     .cards{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:var(--space-3)}
-    .card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:var(--space-4) var(--space-4) var(--space-5);min-height:112px;display:flex;flex-direction:column;justify-content:space-between;gap:var(--space-3);transition:border-color var(--dur),background var(--dur)}
+    .card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:var(--space-4);min-height:112px;display:flex;flex-direction:column;justify-content:space-between;gap:var(--space-2);transition:border-color var(--dur),background var(--dur)}
     .card:hover{border-color:var(--border-strong);background:var(--surface-2)}
-    #overview>.cards>.card:first-child,#gain>.cards>.card:first-child{background:var(--accent-bg);border-color:rgba(142,196,222,.14)}
-    #overview>.cards>.card:first-child label,#gain>.cards>.card:first-child label{color:var(--accent-text)}
-    #overview>.cards>.card:first-child strong,#gain>.cards>.card:first-child strong{color:var(--accent-text)}
+    .card.lead{background:var(--accent-bg);border-color:rgba(142,196,222,.14)}
+    .card.lead label{color:var(--accent-text)}
+    .card.lead strong{color:var(--accent-text)}
     .card label{text-transform:uppercase;letter-spacing:.08em;font-size:11px;font-weight:600;color:var(--muted)}
-    .card strong{font:500 clamp(24px,2.8vw,36px)/1.05 var(--font-serif);letter-spacing:-.02em;font-variant-numeric:tabular-nums;word-break:break-word}
+    /* Tile values are proportional-figure sans: tabular-nums only aligns columns. */
+    .card strong{font:600 clamp(24px,2.6vw,34px)/1.05 var(--font-sans);letter-spacing:-.02em;word-break:break-word}
+    .card small{color:var(--muted);font-size:11.5px;font-weight:500;letter-spacing:.02em}
+
+    /* Meter: 4px rounded data-end anchored to the baseline, recessive track. */
+    .meter{display:flex;align-items:center;height:6px;margin-top:6px;border-radius:3px;background:var(--mark-track);overflow:hidden}
+    .meter[data-mode="signed"]{background:none;position:relative}
+    .meter[data-mode="signed"]::before{content:'';position:absolute;left:50%;top:-2px;bottom:-2px;width:1px;background:var(--faint)}
+    .meter-half{flex:0 0 50%;display:flex;height:100%;background:var(--mark-track)}
+    .meter-half.neg{justify-content:flex-end;border-radius:3px 0 0 3px}
+    .meter-half.pos{border-radius:0 3px 3px 0}
+    .meter[data-mode="magnitude"] .meter-half.neg{display:none}
+    .meter[data-mode="magnitude"] .meter-half.pos{flex:0 0 100%;background:none;border-radius:3px}
+    .meter-fill{height:100%;background:var(--mark-cool);border-radius:0 3px 3px 0;transition:width var(--dur) var(--ease)}
+    .meter-half.neg .meter-fill{background:var(--mark-warm);border-radius:3px 0 0 3px}
+    .meter-fill[data-tone="warm"]{background:var(--mark-warm)}
+    .meter-fill[data-tone="flat"]{background:var(--mark-flat)}
 
     .breakdowns{margin-top:var(--space-5)}
-    .table-grid{display:grid;grid-template-columns:1fr 1fr;gap:var(--space-5);margin-top:var(--space-5)}
-    .table-wrap{min-width:0}
+    .table-grid{display:grid;grid-template-columns:1fr 1fr;gap:var(--space-5);margin-top:var(--space-5);align-items:start}
+    .table-wrap{min-width:0;margin-top:var(--space-5)}
+    .table-grid>.table-wrap{margin-top:0}
     .table-scroll{overflow-x:auto;-webkit-overflow-scrolling:touch;border-radius:var(--radius-sm)}
     h3{font:600 11px/1 var(--font-sans);text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin:0 0 var(--space-3)}
     .metric-table{width:100%;border-collapse:collapse;font-family:var(--font-mono);font-size:12.5px}
-    .metric-table th,.metric-table td{padding:10px 8px;border-bottom:1px solid var(--border);text-align:right;font-variant-numeric:tabular-nums;vertical-align:top}
+    .metric-table th,.metric-table td{padding:9px 8px;border-bottom:1px solid var(--border);text-align:right;font-variant-numeric:tabular-nums;vertical-align:top}
     .metric-table th:first-child,.metric-table td:first-child{text-align:left;font-family:var(--font-sans);font-weight:500}
     .metric-table th{font-size:11px;text-transform:uppercase;letter-spacing:.06em;font-weight:600;color:var(--muted);border-bottom:1px solid var(--border-strong);white-space:nowrap}
     .metric-table tbody tr{transition:background var(--dur)}
     .metric-table tbody tr:hover{background:var(--hover)}
-    .metric-table tbody tr[data-key="total"],.metric-table tbody tr[data-route="total"]{font-weight:600}
-    .metric-table tbody tr[data-key="total"] td:first-child,.metric-table tbody tr[data-route="total"] td:first-child{color:var(--muted);text-transform:uppercase;letter-spacing:.06em;font-size:11px}
-    .metric-table.desc td:last-child,.metric-table.desc th:last-child{text-align:left;font-family:var(--font-sans);font-weight:400;color:var(--muted)}
+    .metric-table tbody tr.total{font-weight:600;border-top:1px solid var(--border-strong)}
+    .metric-table tbody tr.total td{border-bottom:none}
+    .metric-table tbody tr.total td:first-child{color:var(--muted);text-transform:uppercase;letter-spacing:.06em;font-size:11px}
+    .metric-table tbody tr.idle td{color:var(--faint)}
+    .metric-table tbody tr.idle:hover td{color:var(--muted)}
+    .metric-table.desc td:last-child,.metric-table.desc th:last-child{text-align:left;font-family:var(--font-sans);font-weight:400;color:var(--muted);white-space:normal}
+    .metric-table.pair td:nth-child(2),.metric-table.pair th:nth-child(2){text-align:left}
+    .cell-value{display:block}
+    .metric-table td .meter{margin-top:5px;min-width:56px}
     .note{margin:var(--space-3) 0 0;color:var(--muted);font-size:13px;line-height:1.5;max-width:72ch}
     .gain-error{margin-top:var(--space-4)}
+
+    .stack{margin-top:var(--space-5)}
+    .stack-bar{display:flex;height:10px;border-radius:5px;overflow:hidden;background:var(--surface-2);gap:2px}
+    .stack-seg{height:100%;min-width:0;transition:flex-basis var(--dur) var(--ease)}
+    .legend{display:flex;flex-wrap:wrap;gap:var(--space-2) var(--space-5);margin-top:var(--space-3);font-size:12px;color:var(--muted)}
+    .legend-item{display:inline-flex;align-items:center;gap:8px}
+    .legend-key{width:10px;height:10px;border-radius:3px;flex-shrink:0}
+    .legend-item b{color:var(--ink);font-weight:600;font-variant-numeric:tabular-nums;font-family:var(--font-mono);font-size:12px}
 
     #sessions{border-top:1px solid var(--border)}
     details{border-bottom:1px solid var(--border)}
@@ -113,18 +152,24 @@
     details[open] .chev::before{content:'\2212'}
     .session-id{font-family:var(--font-mono);font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
     .session-id small{display:block;margin-top:4px;color:var(--muted);font-family:var(--font-sans);font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.06em}
-    .session-total{font:500 18px/1 var(--font-serif);white-space:nowrap;font-variant-numeric:tabular-nums;color:var(--ink)}
+    .session-total{font:600 16px/1 var(--font-sans);white-space:nowrap;font-variant-numeric:tabular-nums;color:var(--ink)}
     .session-body{border-top:1px solid var(--border);padding:var(--space-5) 8px var(--space-6)}
     .session-body .cards{grid-template-columns:repeat(4,minmax(0,1fr))}
+    .facts{display:flex;flex-wrap:wrap;gap:var(--space-2) var(--space-5);margin:var(--space-5) 0 0;padding:0;list-style:none;font-size:12.5px;color:var(--muted)}
+    .facts li{display:inline-flex;align-items:baseline;gap:6px}
+    .facts b{color:var(--ink);font-family:var(--font-mono);font-weight:600;font-variant-numeric:tabular-nums}
+    .facts li[data-tone="warm"] b{color:var(--pale-red-text)}
 
     .empty,.error{padding:var(--space-6) var(--space-4);border:1px dashed var(--border);border-radius:var(--radius);text-align:center;color:var(--muted);font-size:14px;line-height:1.5}
     .error{color:var(--pale-red-text);border-style:solid;border-color:rgba(217,138,136,.28);background:var(--pale-red-bg)}
     .empty strong{display:block;color:var(--ink);font-weight:600;margin-bottom:6px}
+    .table-wrap>.empty{padding:var(--space-5) var(--space-4);text-align:left}
 
     ::selection{background:rgba(142,196,222,.28);color:var(--ink)}
 
     @media(max-width:900px){
       .cards,.session-body .cards,.table-grid{grid-template-columns:1fr 1fr}
+      .table-grid>.table-wrap+.table-wrap{margin-top:0}
       .mast{flex-direction:column;align-items:flex-start;gap:var(--space-4)}
       .status{align-items:flex-start;text-align:left}
       .tabs{overflow-x:auto;scrollbar-width:thin}
@@ -136,7 +181,7 @@
       .session-total{display:none}
       .section-head{flex-direction:column;align-items:flex-start;gap:6px}
       .section-head span{text-align:left}
-      .card{min-height:96px;padding:var(--space-4)}
+      .card{min-height:96px}
       body{font-size:16px}
     }
   </style>
@@ -146,7 +191,7 @@
 <main id="main">
   <header class="mast">
     <div>
-      <p class="eyebrow">Hpatch router — process ledger</p>
+      <p class="eyebrow" id="mast-mode">Hpatch router — process ledger</p>
       <h1>Token<br>Telemetry</h1>
     </div>
     <div class="status" aria-live="polite" aria-atomic="true">
@@ -160,7 +205,8 @@
   </nav>
   <div class="panel active" role="tabpanel" id="panel-usage" aria-labelledby="tab-usage" tabindex="0">
     <div class="panel-stack">
-      <section><div class="section-head"><h2>Metrics</h2><span>Cumulative since process start</span></div><div id="overview"><div class="empty"><strong>Connecting</strong>Live metrics stream will populate totals and model breakdowns.</div></div></section>
+      <section><div class="section-head"><h2>Tokens</h2><span>Cumulative since process start</span></div><div id="overview"><div class="empty"><strong>Connecting</strong>Live metrics stream will populate totals and model breakdowns.</div></div></section>
+      <section><div class="section-head"><h2>Requests</h2><span>Upstream Responses lifecycle</span></div><div id="requests"><div class="empty"><strong>Connecting</strong>Request outcomes and durations appear with the first snapshot.</div></div></section>
       <section><div class="section-head"><h2>Sessions</h2><span id="session-count">0 sessions</span></div><div id="sessions"><div class="empty"><strong>No sessions yet</strong>Waiting for identified usage-bearing responses.</div></div></section>
     </div>
   </div>
@@ -170,13 +216,75 @@
 </main><script>
 const labels={input_tokens:'Input tokens',uncached_input_tokens:'Uncached input',output_tokens:'Output tokens',reasoning_tokens:'Reasoning tokens'};
 const order=Object.keys(labels), fmt=new Intl.NumberFormat();
+const lifecycleKeys=['started','active','completed','failed','canceled_before_response','canceled_after_response','timed_out','stream_idle_timed_out','background_pending','usage_observed','usage_missing','total_duration_ms','upstream_duration_ms'];
+const callKeys=['successful','rejected','diagnostic_input_tokens'];
 function element(tag,className,text){const node=document.createElement(tag);if(className)node.className=className;if(text!==undefined)node.textContent=text;return node}
 function metricValue(counts,key){const value=counts&&counts[key];return typeof value==='number'&&Number.isFinite(value)&&value>=0?value:0}
 function nonNeg(value){return typeof value==='number'&&Number.isFinite(value)&&value>=0?value:0}
-function createGroup(root){
-  root.replaceChildren();
+function decimal(text){const value=Number(text);return Number.isFinite(value)?value:null}
+function uintText(value){return fmt.format(nonNeg(value))}
+function signedText(text){const value=decimal(text);if(value===null)return typeof text==='string'?text:'0';return value>0?`+${fmt.format(value)}`:fmt.format(value)}
+function percentText(text){return typeof text==='string'&&text!==''?`${text}%`:'0.0%'}
+function ratio(part,whole){const total=nonNeg(whole);return total?(nonNeg(part)*100)/total:0}
+function durationText(ms){
+  const value=nonNeg(ms);
+  if(value<1000)return `${fmt.format(Math.round(value))} ms`;
+  if(value<60000)return `${(value/1000).toFixed(1)} s`;
+  if(value<3600000)return `${Math.floor(value/60000)}m ${Math.round((value%60000)/1000)}s`;
+  return `${Math.floor(value/3600000)}h ${Math.round((value%3600000)/60000)}m`
+}
+/* A magnitude meter fills one direction; a signed meter grows from a centre zero
+   rule so overhead (warm, left) never reads as a reduction (cool, right). Every
+   meter sits beside its own value text, so no reading depends on colour alone. */
+function meter(mode){
+  const track=element('div','meter');track.dataset.mode=mode;
+  const negative=element('div','meter-half neg'),positive=element('div','meter-half pos');
+  negative.append(element('span','meter-fill'));positive.append(element('span','meter-fill'));
+  track.append(negative,positive);return track
+}
+function setMeter(track,percent,tone){
+  const magnitude=track.dataset.mode==='magnitude',value=Number.isFinite(percent)?percent:0;
+  const width=Math.max(0,Math.min(100,Math.abs(value)));
+  const negativeFill=track.firstChild.firstChild,positiveFill=track.lastChild.firstChild;
+  negativeFill.style.width=!magnitude&&value<0?`${width}%`:'0%';
+  positiveFill.style.width=magnitude||value>=0?`${width}%`:'0%';
+  positiveFill.dataset.tone=tone||'cool'
+}
+function magnitude(text,percent,tone){return {text,percent,tone,mode:'magnitude'}}
+function signed(text,percent){return {text,percent,mode:'signed'}}
+function setCell(cell,value){
+  if(typeof value==='string'){
+    if(cell.dataset.kind!=='text'){cell.replaceChildren();cell.dataset.kind='text'}
+    cell.textContent=value;return
+  }
+  if(cell.dataset.kind!==value.mode){cell.replaceChildren(element('span','cell-value'),meter(value.mode));cell.dataset.kind=value.mode}
+  cell.firstChild.textContent=value.text;
+  setMeter(cell.lastChild,value.percent,value.tone)
+}
+function card(key,label,lead){
+  const node=element('div',lead?'card lead':'card');node.dataset.metric=key;
+  node.append(element('label','',label),element('strong','','0'));return node
+}
+function cardRow(entries,leadKey){
   const cards=element('div','cards');
-  order.forEach(key=>{const card=element('div','card');card.dataset.metric=key;card.append(element('label','',labels[key]),element('strong','','0'));cards.append(card)});
+  entries.forEach(([key,label])=>cards.append(card(key,label,key===leadKey)));return cards
+}
+function setCard(root,key,text){root.querySelector(`.card[data-metric="${key}"] strong`).textContent=text}
+function setCardNote(root,key,text){
+  const node=root.querySelector(`.card[data-metric="${key}"]`);
+  let note=node.querySelector('small');
+  if(!note){note=element('small');node.append(note)}
+  note.textContent=text
+}
+function setCardMeter(root,key,percent,tone,mode){
+  const node=root.querySelector(`.card[data-metric="${key}"]`);
+  let track=node.querySelector('.meter');
+  if(!track){track=meter(mode||'magnitude');node.append(track)}
+  setMeter(track,percent,tone)
+}
+function createGroup(root,lead){
+  root.replaceChildren();
+  const cards=cardRow(order.map(key=>[key,labels[key]]),lead?'input_tokens':'');
   const breakdowns=element('div','breakdowns'),wrap=element('div','table-wrap');
   wrap.append(element('h3','','By model'));
   const scroll=element('div','table-scroll');
@@ -187,12 +295,20 @@ function createGroup(root){
 function modelRows(byModel){
   return Object.entries(byModel).map(([model,counts])=>({key:model,name:model,counts})).sort((a,b)=>metricValue(b.counts,'input_tokens')-metricValue(a.counts,'input_tokens')||a.name.localeCompare(b.name))
 }
-function updateGroup(root,data){
-  if(!root.querySelector('.cards'))createGroup(root);
-  order.forEach(key=>{root.querySelector(`.card[data-metric="${key}"] strong`).textContent=fmt.format(metricValue(data.total,key))});
-  const tbody=root.querySelector('.metric-table tbody'),existing=new Map(Array.from(tbody.children,row=>[row.dataset.route,row])),rows=modelRows(data.by_model);
-  rows.forEach(route=>{let row=existing.get(route.key);if(!row){row=element('tr');row.dataset.route=route.key;row.append(element('td'));order.forEach(()=>row.append(element('td')))}row.children[0].textContent=route.name;order.forEach((key,index)=>{row.children[index+1].textContent=fmt.format(metricValue(route.counts,key))});tbody.append(row);existing.delete(route.key)});
-  existing.forEach(row=>row.remove());root.querySelector('.metric-table').hidden=rows.length===0;root.querySelector('.table-wrap>.empty').hidden=rows.length!==0
+function updateGroup(root,data,lead){
+  if(!root.querySelector('.cards'))createGroup(root,lead);
+  order.forEach(key=>setCard(root,key,fmt.format(metricValue(data.total,key))));
+  const input=metricValue(data.total,'input_tokens'),uncached=metricValue(data.total,'uncached_input_tokens');
+  const cached=Math.max(0,input-uncached),cachedShare=ratio(cached,input);
+  setCardNote(root,'input_tokens',input?`${cachedShare.toFixed(1)}% cached · ${fmt.format(cached)} reused`:'no usage observed yet');
+  setCardMeter(root,'input_tokens',cachedShare,'cool');
+  const rows=modelRows(data.by_model),peak=rows.reduce((max,row)=>Math.max(max,metricValue(row.counts,'input_tokens')),0);
+  fillRows(root.querySelector('.metric-table tbody'),rows.map(row=>({
+    key:row.key,
+    cells:[row.name,magnitude(fmt.format(metricValue(row.counts,'input_tokens')),ratio(metricValue(row.counts,'input_tokens'),peak),'cool')]
+      .concat(order.slice(1).map(key=>fmt.format(metricValue(row.counts,key))))
+  })));
+  root.querySelector('.metric-table').hidden=rows.length===0;root.querySelector('.table-wrap>.empty').hidden=rows.length!==0
 }
 function tableWrap(title,headers,className){
   const wrap=element('div','table-wrap');wrap.append(element('h3','',title));
@@ -200,33 +316,129 @@ function tableWrap(title,headers,className){
   const table=element('table',className?`metric-table ${className}`:'metric-table'),head=element('thead'),headRow=element('tr');
   headers.forEach(header=>headRow.append(element('th','',header)));head.append(headRow);table.append(head,element('tbody'));scroll.append(table);wrap.append(scroll);return {wrap,tbody:table.querySelector('tbody')}
 }
+/* Rows are reconciled by key and then re-appended in the supplied order, so a
+   new tool or command cannot strand the total row above later rows. */
 function fillRows(tbody,rows){
   const existing=new Map(Array.from(tbody.children,row=>[row.dataset.key,row]));
-  rows.forEach(entry=>{let row=existing.get(entry.key);if(!row){row=element('tr');row.dataset.key=entry.key;entry.cells.forEach(()=>row.append(element('td')));tbody.append(row)}entry.cells.forEach((cell,index)=>{row.children[index].textContent=cell});existing.delete(entry.key)});
+  rows.forEach(entry=>{
+    let row=existing.get(entry.key);
+    if(!row){row=element('tr');row.dataset.key=entry.key;entry.cells.forEach(()=>row.append(element('td')))}
+    while(row.children.length<entry.cells.length)row.append(element('td'));
+    row.className=entry.className||'';
+    entry.cells.forEach((cell,index)=>setCell(row.children[index],cell));
+    existing.delete(entry.key);tbody.append(row)
+  });
   existing.forEach(row=>row.remove())
 }
-function uintText(value){return fmt.format(nonNeg(value))}
+/* Only an all-zero row is de-emphasized. A negative delta is still a reading. */
+function idleClass(...values){return values.every(value=>!Number(value))?'idle':''}
+function createRequests(root){
+  root.replaceChildren();
+  const cards=cardRow([['started','Requests started'],['completed','Completed'],['failed','Failed'],['active','In flight']],'started');
+  const stack=element('div','stack');
+  stack.append(element('h3','','Outcome share of started requests'));
+  const bar=element('div','stack-bar');bar.setAttribute('role','img');
+  const legend=element('div','legend');
+  const segments=[['completed','Completed','var(--mark-cool)'],['failed','Failed','var(--mark-warm)'],['other','In flight or canceled','var(--mark-flat)']].map(([key,label,color])=>{
+    const segment=element('div','stack-seg');segment.dataset.key=key;segment.style.background=color;bar.append(segment);
+    const item=element('div','legend-item'),swatch=element('span','legend-key');
+    swatch.style.background=color;const value=element('b','','0');
+    item.append(swatch,element('span','',label),value);legend.append(item);
+    return {key,label,segment,value}
+  });
+  stack.append(bar,legend);
+  const lifecycle=tableWrap('Lifecycle',['Outcome','Requests','Share of started']);
+  const durations=tableWrap('Durations',['Measure','Value']);
+  const calls=element('div','table-wrap');calls.append(element('h3','','hpatch calls this process'));
+  const callFacts=element('ul','facts');calls.append(callFacts);
+  const grid=element('div','table-grid');grid.append(lifecycle.wrap,durations.wrap);
+  root.append(cards,stack,grid,calls);
+  root.requests={bar,segments,lifecycle:lifecycle.tbody,durations:durations.tbody,callFacts}
+}
+function setFacts(list,entries){
+  const existing=new Map(Array.from(list.children,item=>[item.dataset.key,item]));
+  entries.forEach(entry=>{
+    let item=existing.get(entry.key);
+    if(!item){item=element('li');item.dataset.key=entry.key;item.append(element('span'),element('b'))}
+    item.firstChild.textContent=entry.label;item.lastChild.textContent=entry.value;
+    item.dataset.tone=entry.tone||'flat';
+    existing.delete(entry.key);list.append(item)
+  });
+  existing.forEach(item=>item.remove())
+}
+function updateRequests(root,requests,calls){
+  if(!root.querySelector('.cards'))createRequests(root);
+  const started=nonNeg(requests.started),completed=nonNeg(requests.completed),failed=nonNeg(requests.failed);
+  const other=Math.max(0,started-completed-failed);
+  setCard(root,'started',uintText(started));
+  setCard(root,'completed',uintText(completed));
+  setCard(root,'failed',uintText(failed));
+  setCard(root,'active',uintText(requests.active));
+  setCardNote(root,'started',`${uintText(requests.usage_observed)} with usage · ${uintText(requests.usage_missing)} without`);
+  setCardMeter(root,'started',ratio(requests.usage_observed,started),'cool');
+  setCardNote(root,'completed',`${ratio(completed,started).toFixed(1)}% of started`);
+  setCardMeter(root,'completed',ratio(completed,started),'cool');
+  setCardNote(root,'failed',`${ratio(failed,started).toFixed(1)}% of started`);
+  setCardMeter(root,'failed',ratio(failed,started),'warm');
+  setCardNote(root,'active',`${uintText(requests.background_pending)} background pending`);
+  setCardMeter(root,'active',ratio(requests.active,started),'flat');
+  const totals={completed,failed,other},denominator=completed+failed+other;
+  root.requests.segments.forEach(segment=>{
+    const value=totals[segment.key];
+    /* A zero segment is removed so its 2px surface gap does not survive it. */
+    segment.segment.hidden=value===0;
+    segment.segment.style.flexBasis=`${denominator?(value*100)/denominator:0}%`;
+    segment.value.textContent=uintText(value)
+  });
+  root.requests.bar.setAttribute('aria-label',`Of ${uintText(started)} started requests: ${uintText(completed)} completed, ${uintText(failed)} failed, ${uintText(other)} in flight or canceled.`);
+  fillRows(root.requests.lifecycle,[
+    ['completed','completed',requests.completed],
+    ['failed','failed',requests.failed],
+    ['active','in flight',requests.active],
+    ['canceled_before_response','canceled before response',requests.canceled_before_response],
+    ['canceled_after_response','canceled after response',requests.canceled_after_response],
+    ['timed_out','timed out',requests.timed_out],
+    ['stream_idle_timed_out','stream idle timed out',requests.stream_idle_timed_out],
+    ['background_pending','background pending',requests.background_pending],
+    ['usage_observed','usage observed',requests.usage_observed],
+    ['usage_missing','usage missing',requests.usage_missing]
+  ].map(([key,label,value])=>({
+    key,className:idleClass(value),
+    cells:[label,uintText(value),magnitude(`${ratio(value,started).toFixed(1)}%`,ratio(value,started),key==='completed'||key==='usage_observed'?'cool':key==='usage_missing'||key==='failed'||key==='timed_out'||key==='stream_idle_timed_out'?'warm':'flat')]
+  })));
+  const accounted=completed+failed;
+  fillRows(root.requests.durations,[
+    {key:'total',cells:['total routed time',durationText(requests.total_duration_ms)]},
+    {key:'upstream',cells:['upstream time',durationText(requests.upstream_duration_ms)]},
+    {key:'router',cells:['router overhead',durationText(Math.max(0,nonNeg(requests.total_duration_ms)-nonNeg(requests.upstream_duration_ms)))]},
+    {key:'mean',cells:['mean per settled request',accounted?durationText(nonNeg(requests.total_duration_ms)/accounted):'n/a']},
+    {key:'share',cells:['upstream share',magnitude(`${ratio(requests.upstream_duration_ms,requests.total_duration_ms).toFixed(1)}%`,ratio(requests.upstream_duration_ms,requests.total_duration_ms),'cool')]}
+  ]);
+  setFacts(root.requests.callFacts,[
+    {key:'successful',label:'successful',value:uintText(calls.successful),tone:'flat'},
+    {key:'rejected',label:'rejected',value:uintText(calls.rejected),tone:nonNeg(calls.rejected)?'warm':'flat'},
+    {key:'diagnostic',label:'diagnostic input tokens',value:uintText(calls.diagnostic_input_tokens),tone:'flat'}
+  ])
+}
 function createGain(root){
   root.replaceChildren();
-  const cards=element('div','cards');
-  [['success_reduction','Successful reduction'],['overall_reduction','Overall reduction'],['hpatch_all','All hpatch output'],['apply_all','All apply_patch output']].forEach(([key,label])=>{
-    const card=element('div','card');card.dataset.metric=key;card.append(element('label','',label),element('strong','','0'));cards.append(card)
-  });
-  const output=tableWrap('Output token estimates',['Tool','Emitted','Translated','Reduction']);
-  const input=tableWrap('Input token estimates',['Tool','Current','Stock','Reduction']);
+  const cards=cardRow([['success_reduction','Successful reduction'],['overall_reduction','Overall reduction'],['hpatch_all','All hpatch output'],['apply_all','All apply_patch output']],'success_reduction');
+  const output=tableWrap('Output token estimates',['Tool','Calls','Emitted','Translated','Reduction']);
+  const input=tableWrap('Input token estimates',['Tool','Executions','Current','Stock','Reduction']);
+  const definitions=tableWrap('Installed tool definitions',['Tool','Tokens','Share']);
   const overhead=tableWrap('Input token overhead estimates',['Source','Tokens','Description'],'desc');
   const commands=tableWrap('Command metrics',['Command','Invocations','Errors','Error rate']);
   const targets=tableWrap('Target metrics',['Target','Invocations','Errors','Error rate']);
   const reasons=tableWrap('Failure reasons',['Reason','Errors']);
-  const commandReasons=tableWrap('Command failure reasons',['Command','Reason','Errors']);
+  const commandReasons=tableWrap('Command failure reasons',['Command','Reason','Errors'],'pair');
   const note=element('p','note','');
   const definition=element('p','note','');
   const err=element('div','error gain-error');err.hidden=true;err.setAttribute('role','alert');
-  const gridTop=element('div','table-grid');gridTop.append(input.wrap,overhead.wrap);
+  const gridTop=element('div','table-grid');gridTop.append(input.wrap,definitions.wrap);
   const gridMid=element('div','table-grid');gridMid.append(commands.wrap,targets.wrap);
-  const gridBot=element('div','table-grid');gridBot.append(reasons.wrap);
-  root.append(cards,err,output.wrap,note,gridTop,definition,gridMid,gridBot,commandReasons.wrap);
-  root.gain={output:output.tbody,input:input.tbody,overhead:overhead.tbody,commands:commands.tbody,targets:targets.tbody,reasons:reasons.tbody,commandReasons:commandReasons.tbody,note,definition,err}
+  const gridBot=element('div','table-grid');gridBot.append(reasons.wrap,commandReasons.wrap);
+  root.append(cards,err,output.wrap,note,gridTop,overhead.wrap,definition,gridMid,gridBot);
+  root.gain={output:output.tbody,input:input.tbody,definitions:definitions.tbody,overhead:overhead.tbody,commands:commands.tbody,targets:targets.tbody,reasons:reasons.tbody,commandReasons:commandReasons.tbody,note,definition,err}
 }
 function sumPair(a,b){return nonNeg(a)+nonNeg(b)}
 function commandTotal(commands){
@@ -236,46 +448,87 @@ function errorRate(errors,invocations){
   if(!invocations)return '0.0%';
   return `${((errors*100)/invocations).toFixed(1)}%`
 }
+function reductionCell(text){
+  if(typeof text!=='string'||text==='')return 'n/a';
+  const value=decimal(text);
+  return value===null?text:signed(`${text}%`,value)
+}
+function toolLabel(entry){return `${entry.plugin_id}/${entry.tool_name}`}
 function updateGain(root,gain,gainError){
   if(!root.querySelector('.cards'))createGain(root);
   const g=gain||{};
-  root.querySelector('.card[data-metric="success_reduction"] strong').textContent=`${g.successful_reduction_percent||'0.0'}%`;
-  root.querySelector('.card[data-metric="overall_reduction"] strong').textContent=`${g.overall_reduction_percent||'0.0'}%`;
-  root.querySelector('.card[data-metric="hpatch_all"] strong').textContent=uintText(sumPair(g.hpatch_tokens,g.ineffective_hpatch_tokens));
-  root.querySelector('.card[data-metric="apply_all"] strong').textContent=uintText(sumPair(g.apply_patch_tokens,g.failed_apply_patch_tokens));
-  const outputRows=(g.tools||[]).map(entry=>({
-    key:`${entry.plugin_id}\0${entry.tool_name}\0${entry.failed}`,
-    cells:[`${entry.plugin_id}/${entry.tool_name}${entry.failed?' failed':''}`,uintText(entry.emitted_tokens),uintText(entry.translated_tokens),entry.reduction_percent==='n/a'?'n/a':`${entry.reduction_percent}%`]
-  }));
+  setCard(root,'success_reduction',percentText(g.successful_reduction_percent));
+  setCard(root,'overall_reduction',percentText(g.overall_reduction_percent));
+  setCard(root,'hpatch_all',uintText(sumPair(g.hpatch_tokens,g.ineffective_hpatch_tokens)));
+  setCard(root,'apply_all',uintText(sumPair(g.apply_patch_tokens,g.failed_apply_patch_tokens)));
+  /* Signed mode so a negative reduction draws as overhead instead of reading
+     zero while the label above it shows a minus sign. */
+  setCardMeter(root,'success_reduction',decimal(g.successful_reduction_percent)||0,'cool','signed');
+  setCardMeter(root,'overall_reduction',decimal(g.overall_reduction_percent)||0,'cool','signed');
+  setCardNote(root,'hpatch_all',`${uintText(g.hpatch_tokens)} translated · ${uintText(g.ineffective_hpatch_tokens)} rejected`);
+  setCardNote(root,'apply_all',`${uintText(g.apply_patch_tokens)} accepted · ${uintText(g.failed_apply_patch_tokens)} baseline`);
   const all=g.all_tools||{};
-  outputRows.push({key:'all-tools',cells:['all-tools',uintText(all.emitted_tokens),uintText(all.translated_tokens),all.reduction_percent==='n/a'?'n/a':`${all.reduction_percent||'0.0'}%`]});
-  fillRows(root.gain.output,outputRows);
-  const inputRows=(g.tool_inputs||[]).map(entry=>({
-    key:`${entry.plugin_id}\0${entry.tool_name}`,
-    cells:[`${entry.plugin_id}/${entry.tool_name}`,uintText(entry.current_tokens),uintText(entry.stock_tokens),entry.reduction_percent==='n/a'?'n/a':`${entry.reduction_percent}%`]
-  }));
+  fillRows(root.gain.output,(g.tools||[]).map(entry=>({
+    key:`${entry.plugin_id}\0${entry.tool_name}\0${entry.failed}`,
+    cells:[`${toolLabel(entry)}${entry.failed?' failed':''}`,uintText(entry.calls),uintText(entry.emitted_tokens),uintText(entry.translated_tokens),reductionCell(entry.reduction_percent)]
+  })).concat([{
+    key:'all-tools',className:'total',
+    cells:['all-tools',uintText(all.calls),uintText(all.emitted_tokens),uintText(all.translated_tokens),reductionCell(all.reduction_percent)]
+  }]));
   const allInput=g.all_tool_inputs||{};
-  inputRows.push({key:'all-tools',cells:['all-tools',uintText(allInput.current_tokens),uintText(allInput.stock_tokens),allInput.reduction_percent==='n/a'?'n/a':`${allInput.reduction_percent||'0.0'}%`]});
-  fillRows(root.gain.input,inputRows);
+  fillRows(root.gain.input,(g.tool_inputs||[]).map(entry=>({
+    key:`${entry.plugin_id}\0${entry.tool_name}`,
+    cells:[toolLabel(entry),uintText(entry.executions),uintText(entry.current_tokens),uintText(entry.stock_tokens),reductionCell(entry.reduction_percent)]
+  })).concat([{
+    key:'all-tools',className:'total',
+    cells:['all-tools',uintText(allInput.executions),uintText(allInput.current_tokens),uintText(allInput.stock_tokens),reductionCell(allInput.reduction_percent)]
+  }]));
+  const definitions=g.tool_definitions||[];
+  const definitionTotal=definitions.reduce((sum,entry)=>sum+nonNeg(entry.tokens),0);
+  /* Share is scaled by the same denominator it prints, so the bar can never
+     disagree with its own label. */
+  fillRows(root.gain.definitions,definitions.map(entry=>({
+    key:`${entry.plugin_id}\0${entry.tool_name}`,
+    cells:[toolLabel(entry),uintText(entry.tokens),magnitude(`${ratio(entry.tokens,definitionTotal).toFixed(1)}%`,ratio(entry.tokens,definitionTotal),'cool')]
+  })).concat([{
+    key:'shared',className:idleClass(g.shared_definition_tokens),
+    cells:['shared serialization delta',signedText(g.shared_definition_tokens||0),'']
+  },{
+    key:'total',className:'total',cells:['installed total',uintText(definitionTotal+(g.shared_definition_tokens||0)),'']
+  }]));
   const removed=nonNeg(g.removed_definition_input_tokens);
-  const overheadRows=[
+  fillRows(root.gain.overhead,[
     {key:'state',cells:['state reports',uintText(g.report_input_tokens),'final state returned after successful calls']},
     {key:'diag',cells:['failure diagnostics',uintText(g.diagnostic_input_tokens),'errors and repair context returned after failed calls']},
     {key:'def',cells:['installed tool definitions',uintText(g.definition_input_tokens),'exact serialized collection installed by the router']},
     {key:'removed',cells:['apply_patch definition removed',removed?`-${fmt.format(removed)}`:'0','exact Code Mode section removed by the router']},
-    {key:'net',cells:['net added input',g.net_added_input||'0','actual measured input overhead after stock-result and definition credits']}
-  ];
-  fillRows(root.gain.overhead,overheadRows);
-  root.gain.note.textContent='Failed hpatch translation uses the empty-patch semantic baseline; other router rejections have no translated carrier.';
+    {key:'net',className:'total',cells:['net added input',signedText(g.net_added_input),'actual measured input overhead after stock-result and definition credits']}
+  ]);
+  root.gain.note.textContent='Failed hpatch translation uses the empty-patch semantic baseline; other router rejections have no translated carrier. A negative reduction is measured overhead.';
   root.gain.definition.textContent=`Definition routing covers ${uintText(g.definition_requests)} accounted request(s) in ${uintText(g.sessions)} distinct session(s) (${g.definition_sources||'not measured (missing caller session)'}).`;
-  const commandRows=(g.commands||[]).map(entry=>({key:entry.name,cells:[entry.name,uintText(entry.invocations),uintText(entry.errors),`${entry.error_rate_percent||'0.0'}%`]}));
+  const commandPeak=(g.commands||[]).reduce((max,entry)=>Math.max(max,nonNeg(entry.invocations)),0);
+  const commandRows=(g.commands||[]).map(entry=>({
+    key:entry.name,className:idleClass(entry.invocations),
+    cells:[entry.name,magnitude(uintText(entry.invocations),ratio(entry.invocations,commandPeak),'cool'),uintText(entry.errors),magnitude(percentText(entry.error_rate_percent),decimal(entry.error_rate_percent)||0,'warm')]
+  }));
   const total=commandTotal(g.commands);
-  commandRows.push({key:'total',cells:['total',uintText(total.invocations),uintText(total.errors),errorRate(total.errors,total.invocations)]});
+  commandRows.push({key:'total',className:'total',cells:['total',uintText(total.invocations),uintText(total.errors),errorRate(total.errors,total.invocations)]});
   fillRows(root.gain.commands,commandRows);
-  fillRows(root.gain.targets,(g.targets||[]).map(entry=>({key:entry.name,cells:[entry.name,uintText(entry.invocations),uintText(entry.errors),`${entry.error_rate_percent||'0.0'}%`]})));
-  const reasonRows=(g.reasons||[]).map(entry=>({key:entry.name,cells:[entry.name,uintText(entry.count)]}));
+  const targetPeak=(g.targets||[]).reduce((max,entry)=>Math.max(max,nonNeg(entry.invocations)),0);
+  const targetRows=(g.targets||[]).map(entry=>({
+    key:entry.name,className:idleClass(entry.invocations),
+    cells:[entry.name,magnitude(uintText(entry.invocations),ratio(entry.invocations,targetPeak),'cool'),uintText(entry.errors),magnitude(percentText(entry.error_rate_percent),decimal(entry.error_rate_percent)||0,'warm')]
+  }));
+  const targetTotal=commandTotal(g.targets);
+  targetRows.push({key:'total',className:'total',cells:['total',uintText(targetTotal.invocations),uintText(targetTotal.errors),errorRate(targetTotal.errors,targetTotal.invocations)]});
+  fillRows(root.gain.targets,targetRows);
+  const reasonPeak=(g.reasons||[]).reduce((max,entry)=>Math.max(max,nonNeg(entry.count)),0);
+  const reasonRows=(g.reasons||[]).map(entry=>({
+    key:entry.name,className:idleClass(entry.count),
+    cells:[entry.name,magnitude(uintText(entry.count),ratio(entry.count,reasonPeak),'warm')]
+  }));
   const reasonTotal=(g.reasons||[]).reduce((sum,entry)=>sum+nonNeg(entry.count),0);
-  reasonRows.push({key:'total',cells:['total',uintText(reasonTotal)]});
+  reasonRows.push({key:'total',className:'total',cells:['total',uintText(reasonTotal)]});
   fillRows(root.gain.reasons,reasonRows);
   fillRows(root.gain.commandReasons,(g.command_reasons||[]).map(entry=>({key:`${entry.command}\0${entry.reason}`,cells:[entry.command,entry.reason,uintText(entry.errors)]})));
   if(gainError){root.gain.err.hidden=false;root.gain.err.textContent=gainError}else{root.gain.err.hidden=true;root.gain.err.textContent=''}
@@ -303,23 +556,45 @@ function validGain(gain){
     &&Array.isArray(gain.reasons)&&gain.reasons.every(validNamedCount)
     &&Array.isArray(gain.command_reasons)&&gain.command_reasons.every(validCommandReason)
 }
-function validCounts(counts){return counts&&typeof counts==='object'&&!Array.isArray(counts)&&order.every(key=>typeof counts[key]==='number'&&Number.isFinite(counts[key])&&counts[key]>=0)}
-function validGroup(data){return data&&typeof data==='object'&&!Array.isArray(data)&&validCounts(data.total)&&data.by_model&&typeof data.by_model==='object'&&!Array.isArray(data.by_model)&&Object.values(data.by_model).every(validCounts)}
-function validSnapshot(data){return validGroup(data)&&Array.isArray(data.sessions)&&data.sessions.every(session=>validGroup(session)&&typeof session.session_id==='string'&&typeof session.model==='string')&&validGain(data.gain)&&(data.gain_error===undefined||typeof data.gain_error==='string')}
+function validUints(source,keys){return source&&typeof source==='object'&&!Array.isArray(source)&&keys.every(key=>typeof source[key]==='number'&&Number.isFinite(source[key])&&source[key]>=0)}
+function validRequests(requests){return validUints(requests,lifecycleKeys)}
+function validCalls(calls){return validUints(calls,callKeys)}
+function validCounts(counts){return validUints(counts,order)}
+function validGroup(data){return data&&typeof data==='object'&&!Array.isArray(data)&&validCounts(data.total)&&data.by_model&&typeof data.by_model==='object'&&!Array.isArray(data.by_model)&&Object.values(data.by_model).every(validCounts)&&validRequests(data.requests)&&validCalls(data.hpatch_calls)}
+function validSnapshot(data){return validGroup(data)&&Array.isArray(data.sessions)&&data.sessions.every(session=>validGroup(session)&&typeof session.session_id==='string'&&typeof session.model==='string')&&validGain(data.gain)&&(data.gain_error===undefined||typeof data.gain_error==='string')&&(data.mode===undefined||typeof data.mode==='string')}
 const sessionElements=new Map();
 function createSession(id){
   const details=element('details');details.dataset.sessionId=id;
   const summary=element('summary'),name=element('span','session-id'),route=element('small'),total=element('span','session-total');
   name.append(document.createTextNode(id),element('br'),route);summary.append(element('span','chev'),name,total);
   summary.querySelector('.chev').setAttribute('aria-hidden','true');
-  const body=element('div','session-body');details.append(summary,body);details.route=route;details.sessionTotal=total;details.sessionBody=body;return details
+  const body=element('div','session-body'),group=element('div'),facts=element('ul','facts');
+  body.append(group,facts);
+  details.append(summary,body);details.route=route;details.sessionTotal=total;details.sessionBody=group;details.sessionFacts=facts;return details
+}
+function sessionFacts(session){
+  const requests=session.requests,calls=session.hpatch_calls;
+  const rejections=Array.isArray(session.hpatch_rejections)?session.hpatch_rejections.length:0;
+  return [
+    {key:'started',label:'requests',value:uintText(requests.started)},
+    {key:'completed',label:'completed',value:uintText(requests.completed)},
+    {key:'failed',label:'failed',value:uintText(requests.failed),tone:nonNeg(requests.failed)?'warm':'flat'},
+    {key:'active',label:'in flight',value:uintText(requests.active)},
+    {key:'missing',label:'usage missing',value:uintText(requests.usage_missing),tone:nonNeg(requests.usage_missing)?'warm':'flat'},
+    {key:'duration',label:'upstream time',value:durationText(requests.upstream_duration_ms)},
+    {key:'hpatch',label:'hpatch calls',value:uintText(calls.successful)},
+    {key:'rejected',label:'hpatch rejected',value:uintText(calls.rejected),tone:nonNeg(calls.rejected)?'warm':'flat'},
+    {key:'rejections',label:'recorded rejections',value:uintText(rejections),tone:rejections?'warm':'flat'}
+  ]
 }
 function render(data){
   if(!validSnapshot(data))throw new Error('invalid metrics snapshot');
-  updateGroup(document.querySelector('#overview'),data);
+  updateGroup(document.querySelector('#overview'),data,true);
+  updateRequests(document.querySelector('#requests'),data.requests,data.hpatch_calls);
   updateGain(document.querySelector('#gain'),data.gain,data.gain_error);
+  document.querySelector('#mast-mode').textContent=`Hpatch router — ${data.mode||'unknown'} mode — process ledger`;
   const container=document.querySelector('#sessions'),seen=new Set();
-  data.sessions.forEach(session=>{let details=sessionElements.get(session.session_id);if(!details){details=createSession(session.session_id);sessionElements.set(session.session_id,details)}details.route.textContent=session.model;details.sessionTotal.textContent=`${fmt.format(metricValue(session.total,'input_tokens'))} in`;updateGroup(details.sessionBody,session);container.append(details);seen.add(session.session_id)});
+  data.sessions.forEach(session=>{let details=sessionElements.get(session.session_id);if(!details){details=createSession(session.session_id);sessionElements.set(session.session_id,details)}details.route.textContent=session.model;details.sessionTotal.textContent=`${fmt.format(metricValue(session.total,'input_tokens'))} in`;updateGroup(details.sessionBody,session,false);setFacts(details.sessionFacts,sessionFacts(session));container.append(details);seen.add(session.session_id)});
   sessionElements.forEach((details,id)=>{if(!seen.has(id)){details.remove();sessionElements.delete(id)}});
   let empty=container.querySelector(':scope>.empty');if(data.sessions.length===0){if(!empty){empty=element('div','empty');const title=element('strong','','No sessions yet');empty.append(title,document.createTextNode('No identified sessions have recorded usage.'));container.append(empty)}else{empty.replaceChildren(element('strong','','No sessions yet'),document.createTextNode('No identified sessions have recorded usage.'))}}else if(empty){empty.remove()}
   document.querySelector('#session-count').textContent=`${data.sessions.length} ${data.sessions.length===1?'session':'sessions'}`
