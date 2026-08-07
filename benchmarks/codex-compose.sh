@@ -4,8 +4,13 @@ set -euo pipefail
 : "${HPATCH_BENCH_COMPOSE_FILE:?HPATCH_BENCH_COMPOSE_FILE must be set}"
 : "${BENCH_AGENT_SERVICE:?BENCH_AGENT_SERVICE must be set}"
 
+agent_environment=()
 case $BENCH_AGENT_SERVICE in
-	control-agent | hpatch-agent) ;;
+	control-agent) ;;
+	hpatch-agent)
+		: "${HPATCH_BENCH_HPATCH_AGENT_PATH:?HPATCH_BENCH_HPATCH_AGENT_PATH must be set}"
+		agent_environment=(--env "PATH=$HPATCH_BENCH_HPATCH_AGENT_PATH")
+		;;
 	*)
 		printf 'codex-compose.sh: unsupported agent service: %s\n' "$BENCH_AGENT_SERVICE" >&2
 		exit 1
@@ -20,6 +25,7 @@ exec docker compose -f "$HPATCH_BENCH_COMPOSE_FILE" run \
 	--env GIT_CONFIG_COUNT=1 \
 	--env GIT_CONFIG_KEY_0=safe.directory \
 	--env "GIT_CONFIG_VALUE_0=$PWD" \
+	"${agent_environment[@]}" \
 	--volume "$PWD:$PWD" \
 	--workdir "$PWD" \
 	"$BENCH_AGENT_SERVICE" \

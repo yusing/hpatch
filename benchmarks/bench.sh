@@ -526,6 +526,32 @@ prepare_dependency_cache() {
 	shopt -u nullglob
 }
 
+configure_hpatch_agent_path() {
+	local snapshot
+
+	if ! snapshot=$("${compose[@]}" exec -T hpatch sh -euc '
+		count=0
+		snapshot=
+		for candidate in "$TMPDIR"/hpatch-router-tools-*; do
+			if [ -f "$candidate/workers.json" ] &&
+				[ -L "$candidate/hread" ] &&
+				[ -L "$candidate/hgrep" ] &&
+				[ -L "$candidate/shell" ]; then
+				count=$((count + 1))
+				snapshot=$candidate
+			fi
+		done
+		if [ "$count" -ne 1 ]; then
+			printf "bench.sh: found %d authenticated hpatch tool snapshots, want 1\n" "$count" >&2
+			exit 1
+		fi
+		printf "%s\n" "$snapshot"
+	'); then
+		return 1
+	fi
+	export HPATCH_BENCH_HPATCH_AGENT_PATH="$snapshot:/usr/local/go/bin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin"
+}
+
 qualify_agent_isolation() {
 	local service=$1
 	local assigned_router=$2
@@ -533,8 +559,10 @@ qualify_agent_isolation() {
 	local forbidden_router=$4
 	local forbidden_port=$5
 	local require_hread=0
+	local -a agent_environment=()
 	if [[ $service == hpatch-agent ]]; then
 		require_hread=1
+		agent_environment=(--env "PATH=$HPATCH_BENCH_HPATCH_AGENT_PATH")
 	fi
 
 	printf 'validate agent isolation: %s may reach only %s:%s\n' \
@@ -547,6 +575,7 @@ qualify_agent_isolation() {
 		--env "ASSIGNED_ROUTER=http://$assigned_router:$assigned_port/api/metrics" \
 		--env "FORBIDDEN_ROUTER=http://$forbidden_router:$forbidden_port/api/metrics" \
 		--env "REQUIRE_HREAD=$require_hread" \
+		"${agent_environment[@]}" \
 		--volume "$dependency_workspace/repo:$dependency_workspace/repo:ro" \
 		--workdir "$dependency_workspace/repo" \
 		"$service" \
@@ -563,7 +592,7 @@ qualify_agent_isolation() {
 			test "$(codex --disable apps mcp list --json)" = "[]"
 			go mod download all
 			if [ "$REQUIRE_HREAD" = 1 ]; then
-				hread go.mod 1:1 >/dev/null
+				hread "go.mod 1:1" >/dev/null
 			fi
 		'; then
 		printf 'bench.sh: agent isolation qualification failed for %s\n' "$service" >&2
@@ -961,6 +990,7 @@ run_pair() {
 }
 
 mkdir -p "$run_dir/work" "$run_dir/hpatch-config" "$run_dir/hpatch-runtime" "$instruction_dir"
+install -D -m 0644 "$benchmark_root/../plugins/shell.mjs" "$run_dir/hpatch-config/hpatch/plugins/shell.mjs"
 : >"$results"
 
 "${compose[@]}" build control
@@ -976,6 +1006,7 @@ validate_revision oracle "$oracle_commit" pass
 
 started=true
 "${compose[@]}" up --detach --wait control hpatch
+configure_hpatch_agent_path
 qualify_agent_isolation control-agent control 8081 hpatch 8082
 qualify_agent_isolation hpatch-agent hpatch 8082 control 8081
 if [[ $dependency_workspace == "$run_dir"/dependency-source-* ]]; then
