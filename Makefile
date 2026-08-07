@@ -22,6 +22,7 @@ PLUGIN_FILES := $(wildcard plugins/*.js plugins/*.mjs)
 install: install-binaries install-plugins
 
 install-binaries:
+	go generate ./internal/router/toolplugin
 	$(GO) install ./cmd/hpatch ./cmd/hpatch-router
 
 install-plugins:
