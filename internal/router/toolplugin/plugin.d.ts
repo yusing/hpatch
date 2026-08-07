@@ -13,6 +13,7 @@ export type FunctionCarrier = {
 export type ExecCarrier = {
   kind: "exec";
   template?: string;
+  params?: Record<string, unknown>;
 };
 
 export type Carrier = CustomCarrier | FunctionCarrier | ExecCarrier;
@@ -20,7 +21,7 @@ export type Carrier = CustomCarrier | FunctionCarrier | ExecCarrier;
 export type TranslationAPI = {
   custom(name: string, input: string): CustomCarrier;
   function(name: string, argumentsJSON: string): FunctionCarrier;
-  exec(template?: string): ExecCarrier;
+  exec(template?: string, params?: Record<string, unknown>): ExecCarrier;
 };
 
 export type ExecutionOutput = {

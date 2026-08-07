@@ -28,12 +28,13 @@ type hpatchMetricInputs struct {
 	sessionID     string
 	correction    hpatchCorrectionStats
 
-	definition         string
-	baselineDefinition string
-	definitions        []hpatch.HostToolDefinition
-	toolCall           *hpatch.HostToolCall
-	successful         bool
-	overheadOnly       bool
+	definition             string
+	baselineDefinition     string
+	execCommandDefinitions []string
+	definitions            []hpatch.HostToolDefinition
+	toolCall               *hpatch.HostToolCall
+	successful             bool
+	overheadOnly           bool
 }
 
 func applyPatchMetricProgram(patch string) string {
@@ -58,17 +59,18 @@ func calculateHPatchMetricRecord(inputs hpatchMetricInputs) (hpatchMetricRecord,
 		}
 	}
 	classified, err := hpatch.ClassifyHostMetrics(hpatch.HostMetricInput{
-		Invocation:          inputs.invocation,
-		Rejections:          inputs.rejections,
-		Attempt:             inputs.attempt,
-		SessionID:           inputs.sessionID,
-		InstalledDefinition: inputs.definition,
-		ToolDefinitions:     inputs.definitions,
-		RemovedDefinition:   inputs.baselineDefinition,
-		ToolCall:            call,
-		StateReport:         inputs.report,
-		Diagnostic:          inputs.diagnostic,
-		AuxiliaryTexts:      inputs.correction.baseCommands,
+		Invocation:                    inputs.invocation,
+		Rejections:                    inputs.rejections,
+		Attempt:                       inputs.attempt,
+		SessionID:                     inputs.sessionID,
+		InstalledDefinition:           inputs.definition,
+		ToolDefinitions:               inputs.definitions,
+		RemovedDefinition:             inputs.baselineDefinition,
+		RemovedExecCommandDefinitions: inputs.execCommandDefinitions,
+		ToolCall:                      call,
+		StateReport:                   inputs.report,
+		Diagnostic:                    inputs.diagnostic,
+		AuxiliaryTexts:                inputs.correction.baseCommands,
 	})
 	if err != nil {
 		return hpatchMetricRecord{}, err

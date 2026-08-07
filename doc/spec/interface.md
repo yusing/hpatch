@@ -224,7 +224,9 @@ history, and replay. A plugin cannot invent an unavailable carrier or return a r
 envelope. The plugin API provides a canonical exec wrapper for tools that need one. The wrapper
 owns the repeated outer Code Mode exec program, nested tool invocation, serialization, argument
 quoting, and result forwarding. The optional exec command template contains exactly one `{.}`
-placeholder, which the router replaces with the complete quoted frontend command.
+placeholder, which the router replaces with the complete quoted frontend command. An optional
+JSON parameter object cannot contain `cmd`. The router supplies `cmd` from that frontend
+command. If the parameter object contains `login`, its value must be exactly `false`.
 
 For each executor-backed contributed tool, startup creates or verifies a stable executable
 symlink beside the running `hpatch-router`. Its basename is exactly the contributed tool name,
@@ -247,10 +249,12 @@ The worker returns only the current result to Codex. It validates and records th
 metric evidence without allowing it to change the current output or status. When the stock result
 is absent or invalid, metrics use the validated current result as its stock result. Invalid optional
 metric evidence cannot replace or modify the current executor result.
-The carrier supplies no working-directory or environment override. The child therefore runs in
-Codex's execution context, and Codex remains the owner of sandbox, filesystem, process, network,
-and permission enforcement. Missing, conflicting, incorrectly targeted, or unusable symlinks
-fail startup before the listener opens.
+
+Without exec parameters, the carrier supplies no working-directory or environment override.
+With exec parameters, the router forwards the JSON values without replacing the request-specific
+Codex contract. Codex validates those values and remains the owner of working directory, sandbox,
+filesystem, process, network, terminal, and permission enforcement. Missing, conflicting,
+incorrectly targeted, or unusable symlinks fail startup before the listener opens.
 The router holds one exclusive frontend lock for its process lifetime. A concurrent router fails
 startup. After a crash releases the lock, a later router can replace authenticated prior
 frontends even when the prior process snapshot remains.
@@ -322,23 +326,29 @@ the complete input is the body. The translated argv contains each normalized int
 followed by the exact body as its final value. The resulting Codex exec carrier therefore shows
 a command equivalent to `shell python3 'print("Hello")'`; the model does not author its quoting.
 
-An optional command directive is the first logical line after an optional interpreter shebang.
-The directive starts with `#!cmd=` after trimming ASCII spaces and tabs around the complete line.
-Its nonempty value is a shell command template containing exactly one `{.}` placeholder. The
-tool removes the directive and its complete line terminator from the body. The router replaces
-`{.}` with the canonical independently quoted `shell` frontend command and argv. The command
-template then runs through the normal exec carrier shell. Without an interpreter shebang, the
-nested frontend command selects `bash`. Without a command directive, current direct execution
-behavior remains unchanged.
+After an optional interpreter shebang, a leading directive block can contain one `#!cmd=` line
+and one `!params JSON` line in either order. The tool trims ASCII spaces and tabs around each
+complete directive line. The nonempty command value is a shell command template containing
+exactly one `{.}` placeholder. The params value is a JSON object that cannot contain `cmd`
+because the script body supplies `cmd`. A present `login` value must be exactly `false`.
+A duplicate directive, malformed JSON, non-object JSON, unsupported leading `!` directive,
+params object containing `cmd`, or unsafe `login` value rejects.
+
+The tool removes recognized directive lines and their complete line terminators from the body.
+The router replaces `{.}` with the canonical independently quoted `shell` frontend command and
+argv. The command template then runs through the normal exec carrier shell. Without an
+interpreter shebang, the nested frontend command selects `bash`. Without either directive,
+current direct execution behavior remains unchanged. After the first body line, directive-like
+lines remain ordinary body data.
 
 The executor runs the first translated argv field as the selected interpreter and passes any
 middle fields as interpreter arguments. It supplies the final exact body through an anonymous
 script descriptor and invokes the interpreter with that descriptor's `/dev/fd` path. The
 interpreter inherits the frontend standard input as program data. The executor stores no
-intermediate script file and supplies no cwd or environment override. The process inherits
-Codex's execution context and resolves bare interpreters through its `PATH`. It returns the
-interpreter stdout, stderr, and exit status without copying the script body into either output
-stream.
+intermediate script file. Without `!params`, the process inherits Codex's execution context.
+With `!params`, Codex applies the accepted outer exec arguments before it launches the frontend.
+The executor resolves bare interpreters through `PATH` and returns stdout, stderr, and exit
+status without copying the script body into either output stream.
 
 Acceptance:
 
@@ -367,6 +377,21 @@ Acceptance:
 11. A temporary installation root receives both Go binaries and `shell.mjs` from `make install`;
     the normal install target uses the Go binary destination and platform user configuration
     plugin directory.
+12. `!params {"workdir":"/tmp","tty":true}` before or after `#!cmd=` produces an exec carrier
+    containing those fields and the router-supplied `cmd`. An object containing `cmd` rejects,
+    and a present `login` value must be `false`.
+13. The authoritative Code Mode owner is exactly one custom `exec` tool. App-server requests place
+    it directly in an `additional_tools` input item's tool list; CLI requests place it under that
+    item's `functions` namespace. When `shell` is installed, the router removes the exact Markdown
+    `exec_command` section and introductory `tools.exec_command` example from the owning
+    description. It does not copy the removed contract into another model-visible description.
+    Backtick and plain headings are accepted without depending on one Codex app or Codex CLI
+    parameter schema. Without `shell`, the router preserves the native command contract.
+14. Direct `additional_tools` entries named `functions.exec` and top-level tools named `exec` or
+    `functions.exec` are unsupported and fail before forwarding. Defining more than one eligible
+    owner also fails before forwarding. The existing `apply_patch` section extractor remains
+    independent. Every sibling direct tool, sibling namespace, unrelated top-level tool, and other
+    nested section remains byte-equivalent after the request rewrite.
 
 ## REQ-METRICS-001 — Persistent token, command, target, and failure metrics
 
@@ -411,14 +436,16 @@ overhead because the tool result becomes subsequent model context; it is not add
 model-output counter.
 
 The host tool definitions are also model input. The router obtains the session identity, the
-exact serialized collection of installed built-in and plugin tool objects, its stable
-per-plugin and per-tool definition breakdown, and the displaced native patch definition
-directly from the routed request. The first classified request of a session counts those
-definitions once; subsequent requests in the same session add nothing because the resent
-definition is served from the provider's prompt cache. The installed-definition total is
-authoritative; per-tool rows and a shared framing row reconcile it without being added again
-when computing net input. A host that supplies no session or definition leaves these counters
-at zero, and gain states which inputs were measured so a zero is not read as a free tool.
+exact serialized collection of installed built-in and plugin tool objects, its stable per-plugin
+and per-tool definition breakdown, the displaced native patch definition, and the displaced
+request-specific `exec_command` fragments directly from the routed request. The first classified
+request of a session counts these inputs once. Each removed fragment is tokenized independently,
+without synthetic separator text. Subsequent requests in the same session add nothing because
+the resent definition is served from the provider's prompt cache. The two removed-definition
+counters remain separate. The installed-definition total is authoritative; per-tool rows and a
+shared framing row reconcile it without being added again when computing net input. A host that
+supplies no session or definition leaves these counters at zero, and gain states which inputs
+were measured so a zero is not read as a free tool.
 
 A failed or cancelled invocation emits no report and contributes zero report-input tokens. A partial
 or failed report write does not count as a complete emitted report. For each completed contributed
@@ -533,11 +560,13 @@ the same reduction formula when its translated denominator is nonzero.
 Gain then writes an input-token table with one stable row per executed plugin and tool, followed by
 an all-tools row. Its columns are current tokens, stock tokens, and reduction. Gain next writes the
 input-token overhead table for final-state reports, failure diagnostics, the exact displaced
-`apply_patch` definition credit, the aggregate installed tool-definition total, and net added input.
-It does not show plugin child rows in this overhead table. Net added input is reports plus
-diagnostics plus installed definitions minus the removed definition plus the signed sum of current
-tool-result tokens minus stock tool-result tokens. Gain does not convert input to output or
-calculate a combined input/output percentage. Unmeasured definition sources are labeled
+`apply_patch` definition credit, the displaced `exec_command` section credit, and the aggregate
+installed tool-definition total. Indented stable plugin-and-tool rows and any shared
+serialization-framing row reconcile the installed-definition total and are descriptive children
+rather than additional input. Net added input is reports plus diagnostics plus installed
+definitions minus both removed definitions plus the signed sum of current tool-result tokens minus
+stock tool-result tokens. Gain does not subtract definitions from output, convert input to output,
+or calculate a combined input/output percentage. Unmeasured definition sources are labeled
 `not measured`.
 
 The router gain page places the input-token and input-token overhead tables below the output-token

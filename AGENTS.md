@@ -52,6 +52,64 @@ The normal hpatch-mode path is:
    presents the normal diff. The router itself does not silently write the
    translated workspace changes.
 
+### Codex CLI and app-server request layouts
+
+The accepted owner paths are exact:
+
+Codex CLI:
+
+```json
+{
+  "input": [
+    {
+      "type": "additional_tools",
+      "tools": [
+        {
+          "type": "namespace",
+          "name": "functions",
+          "tools": [
+            {
+              "type": "custom",
+              "name": "exec",
+              "description": "<Code Mode description>"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
+```
+
+Codex app-server:
+
+```json
+{
+  "input": [
+    {
+      "type": "additional_tools",
+      "tools": [
+        {
+          "type": "custom",
+          "name": "exec",
+          "description": "<Code Mode description>"
+        }
+      ]
+    }
+  ]
+}
+```
+
+The router may encounter unrelated fields, input items, sibling tools, and sibling namespaces,
+but the owner path, `type` values, and `name` values above must match. The owning description
+contains the native `apply_patch` section and, when present, the native `exec_command` surface.
+The router recognizes exactly one owner, sends both layouts through the same extraction,
+standalone-tool installation, carrier catalog, response restoration, history, and metrics path,
+and preserves sibling content. A direct tool named `functions.exec` and top-level tools named
+`exec` or `functions.exec` are not owner layouts and fail before forwarding. Keep CLI-shape
+coverage in `internal/router/hpatch_proxy_test.go` and app-server-shape coverage in
+`internal/router/server_test.go`.
+
 `hread` and `hgrep` are TypeScript-authored built-in plugins. The router embeds their
 Bun-generated JavaScript module and routes both through the generic plugin registry,
 translator, wrapper, and private worker. Their exec carriers run in Codex's actual

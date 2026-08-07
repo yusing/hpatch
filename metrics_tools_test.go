@@ -40,6 +40,10 @@ func TestToolMetricsClassifyPersistAndReportCanonicalShapes(t *testing.T) {
 			PluginID: pluginID, ToolName: toolName, Definition: definition,
 		}},
 		RemovedDefinition: "native patch definition",
+		RemovedExecCommandDefinitions: []string{
+			"native exec command definition",
+			"second native command section",
+		},
 		ToolCall: &HostToolCall{
 			PluginID: pluginID, ToolName: toolName,
 			EmittedName: toolName, EmittedInput: emitted,
@@ -65,6 +69,10 @@ func TestToolMetricsClassifyPersistAndReportCanonicalShapes(t *testing.T) {
 	}
 	if got := int64(tool.DefinitionInputTokens) + success.SharedDefinitionInputTokens; got != int64(count(installed)) {
 		t.Fatalf("definition breakdown = %d + %d, total %d", tool.DefinitionInputTokens, success.SharedDefinitionInputTokens, count(installed))
+	}
+	if success.RemovedDefinitionInputTokens != count("native patch definition") ||
+		success.RemovedExecCommandDefinitionInputTokens != count("native exec command definition")+count("second native command section") {
+		t.Fatalf("removed definitions = %+v", success)
 	}
 
 	rejected, err := ClassifyHostMetrics(HostMetricInput{

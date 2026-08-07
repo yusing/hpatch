@@ -14,12 +14,13 @@ func TestDefinitionCountsOncePerCallerSession(t *testing.T) {
 	dataDirectory := t.TempDir()
 	invocation := invocationMetrics{}
 	record := HostMetricRecord{
-		Invocation:                   InvocationMetrics{value: invocation},
-		SessionID:                    "session-one",
-		DefinitionRequests:           1,
-		DefinitionInputTokens:        17,
-		RemovedDefinitionInputTokens: 11,
-		ToolMetrics:                  []ToolMetricRecord{{PluginID: "builtin.hpatch", ToolName: "hpatch", DefinitionInputTokens: 17}},
+		Invocation:                              InvocationMetrics{value: invocation},
+		SessionID:                               "session-one",
+		DefinitionRequests:                      1,
+		DefinitionInputTokens:                   17,
+		RemovedDefinitionInputTokens:            11,
+		RemovedExecCommandDefinitionInputTokens: 7,
+		ToolMetrics:                             []ToolMetricRecord{{PluginID: "builtin.hpatch", ToolName: "hpatch", DefinitionInputTokens: 17}},
 	}
 	for range 3 {
 		recordHostMetricForTest(t, dataDirectory, record)
@@ -29,7 +30,7 @@ func TestDefinitionCountsOncePerCallerSession(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Sessions != 1 || got.DefinitionRequests != 3 || got.DefinitionInputTokens != 17 || got.RemovedDefinitionInputTokens != 11 {
+	if got.Sessions != 1 || got.DefinitionRequests != 3 || got.DefinitionInputTokens != 17 || got.RemovedDefinitionInputTokens != 11 || got.RemovedExecCommandDefinitionInputTokens != 7 {
 		t.Fatalf("first session definition metrics = %+v", got)
 	}
 
@@ -39,7 +40,7 @@ func TestDefinitionCountsOncePerCallerSession(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Sessions != 2 || got.DefinitionRequests != 4 || got.DefinitionInputTokens != 34 || got.RemovedDefinitionInputTokens != 22 {
+	if got.Sessions != 2 || got.DefinitionRequests != 4 || got.DefinitionInputTokens != 34 || got.RemovedDefinitionInputTokens != 22 || got.RemovedExecCommandDefinitionInputTokens != 14 {
 		t.Fatalf("second session definition metrics = %+v", got)
 	}
 }
@@ -60,10 +61,23 @@ func TestInterruptedSessionClaimRemainsFreshUntilMetricsCommit(t *testing.T) {
 	}
 }
 
-func TestDefinitionSessionClaimsAreScopedToMetricsRevision(t *testing.T) {
+func TestHPATCH25DefinitionMetricsResetBeforeNewCounter(t *testing.T) {
 	dataDirectory := t.TempDir()
+	prior := encodeMetricsSlot(metrics{
+		Sessions:                     3,
+		DefinitionRequests:           5,
+		DefinitionInputTokens:        17,
+		RemovedDefinitionInputTokens: 11,
+	}, 1)
+	copy(prior[:8], "HPATCH25")
+	checksum := sha256.Sum256(prior[:metricsChecksumOffset])
+	copy(prior[metricsChecksumOffset:], checksum[:])
+	if err := os.WriteFile(filepath.Join(dataDirectory, metricsFilename), prior[:], 0o600); err != nil {
+		t.Fatal(err)
+	}
+
 	digest := sha256.Sum256([]byte("session"))
-	legacyDirectory := filepath.Join(dataDirectory, sessionMarkerDirectory)
+	legacyDirectory := filepath.Join(dataDirectory, sessionMarkerDirectory, "HPATCH25")
 	if err := os.MkdirAll(legacyDirectory, 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -72,13 +86,22 @@ func TestDefinitionSessionClaimsAreScopedToMetricsRevision(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	fresh, err := claimSession(dataDirectory, "session", 1, 2, false)
-	if err != nil || !fresh {
-		t.Fatalf("claim with prior-revision marker = %t, error %v", fresh, err)
+	recordHostMetricForTest(t, dataDirectory, HostMetricRecord{
+		SessionID:                               "session",
+		DefinitionRequests:                      1,
+		RemovedExecCommandDefinitionInputTokens: 7,
+	})
+	got, err := readMetrics(dataDirectory)
+	if err != nil {
+		t.Fatal(err)
 	}
-	fresh, err = claimSession(dataDirectory, "session", 2, 3, false)
-	if err != nil || fresh {
-		t.Fatalf("claim within current revision = %t, error %v", fresh, err)
+	want := metrics{
+		Sessions:                                1,
+		DefinitionRequests:                      1,
+		RemovedExecCommandDefinitionInputTokens: 7,
+	}
+	if got != want {
+		t.Fatalf("metrics after HPATCH25 reset = %+v, want %+v", got, want)
 	}
 }
 

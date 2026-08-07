@@ -38,7 +38,7 @@ func buildCodeModeCarrierCatalog(fields map[string]json.RawMessage, registry *to
 			return nil
 		}
 		if _, exists := catalog[name]; exists {
-			return fmt.Errorf("Code Mode carrier %q is defined more than once", name)
+			return fmt.Errorf("code mode carrier %q is defined more than once", name)
 		}
 		catalog[name] = kind
 		return nil
@@ -61,13 +61,25 @@ func buildCodeModeCarrierCatalog(fields map[string]json.RawMessage, registry *to
 			if jsonString(item, "type") != "additional_tools" {
 				continue
 			}
-			var tools []map[string]json.RawMessage
-			if err := json.Unmarshal(item["tools"], &tools); err != nil {
+			var additionalTools []map[string]json.RawMessage
+			if err := json.Unmarshal(item["tools"], &additionalTools); err != nil {
 				return nil, fmt.Errorf("decode additional tools for carrier catalog: %w", err)
 			}
-			for _, tool := range tools {
-				if err := add(tool); err != nil {
-					return nil, err
+			for _, additionalTool := range additionalTools {
+				if jsonString(additionalTool, "type") != "namespace" {
+					if err := add(additionalTool); err != nil {
+						return nil, err
+					}
+					continue
+				}
+				var tools []map[string]json.RawMessage
+				if err := json.Unmarshal(additionalTool["tools"], &tools); err != nil {
+					return nil, fmt.Errorf("decode namespaced tools for carrier catalog: %w", err)
+				}
+				for _, tool := range tools {
+					if err := add(tool); err != nil {
+						return nil, err
+					}
 				}
 			}
 		}

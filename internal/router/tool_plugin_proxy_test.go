@@ -40,7 +40,7 @@ const testToolPluginDeclaration = `export default {
         stdout: [process.cwd(), process.env.HPATCH_PLUGIN_TEST, ...argv].join("|"),
         stderr: "fixture stderr",
         stock: {stdout: "stock result", exitCode: 0},
-        exitCode: 7
+        exitCode: 7,
       };
     }
   }]
@@ -71,16 +71,7 @@ func newToolPluginTestTransform(t *testing.T) (*hpatchResponseTransform, *hpatch
 	request, err := parseResponsesRequest(mustTestJSON(t, map[string]any{
 		"model": "gpt-test",
 		"input": []any{
-			map[string]any{
-				"type": "additional_tools",
-				"role": "developer",
-				"tools": []any{map[string]any{
-					"type":        "custom",
-					"name":        "exec",
-					"description": testCodeModeDescription,
-					"format":      map[string]any{"type": "text"},
-				}},
-			},
+			testCodeModeAdditionalTools(testCodeModeDescription),
 			map[string]any{"role": "user", "content": "task"},
 		},
 		"tools": []any{
@@ -213,10 +204,11 @@ func TestToolPluginExecTemplateUsesCanonicalWorkerCommand(t *testing.T) {
 	}
 
 	visible := decodeResponseItem(t, response)
-	payload, err := workerTemplateExecInput(
+	payload, err := workerTemplateExecInputWithParams(
 		"plugin_tool",
 		[]string{"--fixed", "template"},
 		"before | {.} | after",
+		nil,
 	)
 	if err != nil {
 		t.Fatal(err)

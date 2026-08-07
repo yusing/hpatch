@@ -67,14 +67,15 @@ type HostMetricInput struct {
 	Attempt    AttemptMetadata
 	SessionID  string
 
-	InstalledDefinition string
-	ToolDefinitions     []HostToolDefinition
-	RemovedDefinition   string
-	ToolCall            *HostToolCall
-	ToolResult          *HostToolResult
-	StateReport         string
-	Diagnostic          string
-	AuxiliaryTexts      []string
+	InstalledDefinition           string
+	ToolDefinitions               []HostToolDefinition
+	RemovedDefinition             string
+	RemovedExecCommandDefinitions []string
+	ToolCall                      *HostToolCall
+	ToolResult                    *HostToolResult
+	StateReport                   string
+	Diagnostic                    string
+	AuxiliaryTexts                []string
 }
 
 // ToolMetricRecord is one classified plugin-and-tool increment.
@@ -149,13 +150,22 @@ func ClassifyHostMetrics(input HostMetricInput) (HostMetricRecord, error) {
 	if record.DiagnosticInputTokens, err = countMetricText(codec, input.Diagnostic, "diagnostic input"); err != nil {
 		return HostMetricRecord{}, err
 	}
-	if input.SessionID != "" && (input.InstalledDefinition != "" || input.RemovedDefinition != "") {
+	if input.SessionID != "" && (input.InstalledDefinition != "" || input.RemovedDefinition != "" || len(input.RemovedExecCommandDefinitions) != 0) {
 		record.DefinitionRequests = 1
 		if record.DefinitionInputTokens, err = countMetricText(codec, input.InstalledDefinition, "installed tool definitions"); err != nil {
 			return HostMetricRecord{}, err
 		}
 		if record.RemovedDefinitionInputTokens, err = countMetricText(codec, input.RemovedDefinition, "removed tool definition"); err != nil {
 			return HostMetricRecord{}, err
+		}
+		for _, definition := range input.RemovedExecCommandDefinitions {
+			count, countErr := countMetricText(codec, definition, "removed exec_command definition")
+			if countErr != nil {
+				return HostMetricRecord{}, countErr
+			}
+			if !addCounter(&record.RemovedExecCommandDefinitionInputTokens, count) {
+				return HostMetricRecord{}, fmt.Errorf("classifying metrics: removed exec_command token count overflow")
+			}
 		}
 		var breakdown uint64
 		for _, definition := range input.ToolDefinitions {
@@ -361,6 +371,7 @@ func (m *metrics) addTool(increment toolMetric) error {
 func (m *metrics) clearDefinitionMetrics() {
 	m.DefinitionInputTokens = 0
 	m.RemovedDefinitionInputTokens = 0
+	m.RemovedExecCommandDefinitionInputTokens = 0
 	m.SharedDefinitionInputTokens = 0
 	for index := range int(m.ToolCount) {
 		m.Tools[index].DefinitionInputTokens = 0

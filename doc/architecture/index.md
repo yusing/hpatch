@@ -197,12 +197,26 @@ JSON/SSE envelopes, or replay items.
 One carrier renderer owns each supported carrier shape. The generic path preserves a validated
 normal Code Mode tool name and payload. The exec helper is a renderer over that path. It alone
 owns the outer exec program, nested invocation, serialization, independent argv quoting, optional
-single-placeholder command-template expansion, and result forwarding. Plugin code can select the
-typed template variant but cannot construct the outer carrier or quote the nested frontend command.
-An implementation needing another Code Mode carrier uses the generic path rather than encoding an
-exec surrogate. Hpatch's native workspace translation, correction ancestry, patch renderer, and
-semantic failure baseline remain adapter extensions beside this generic interface rather than
-capabilities granted to ordinary plugins.
+single-placeholder command-template expansion, optional JSON parameters, and result forwarding.
+The parameter object cannot contain `cmd`; the renderer supplies `cmd` from the independently
+quoted frontend command. A present `login` value must be exactly `false`, and the renderer
+supplies `login: false` when it is absent. Plugin code can select the typed template and
+parameter variants but cannot construct the outer carrier
+or quote the nested frontend command. An implementation needing another Code Mode carrier uses
+the generic path rather than encoding an exec surrogate. Hpatch's native workspace translation,
+correction ancestry, patch renderer, and semantic failure baseline remain adapter extensions
+beside this generic interface rather than capabilities granted to ordinary plugins.
+
+For each eligible request, the router recognizes exactly one authoritative Code Mode owner: the
+custom `exec` tool either directly inside an `additional_tools` input item's tool list for
+app-server traffic or nested under that item's `functions` namespace for CLI traffic. The
+`apply_patch` extractor rewrites the owning description. When `shell` is installed, the router also
+removes the `exec_command` Markdown section and introductory `tools.exec_command` example from that
+description. It does not parse or hard-code the section body and does not copy the removed contract
+into another model-visible description. The installed `shell` tool owns its narrow script and
+directive contract. Without `shell`, the native command contract remains visible. Sibling direct
+tools, sibling namespaces, and nested tools remain unchanged. Direct `functions.exec` entries and
+top-level `exec` or `functions.exec` tools fail closed.
 
 For every executor-backed contribution, the router wrapper owner creates a symlink inside the
 authenticated snapshot directory. The snapshot symlink has the tool-name basename and targets

@@ -551,18 +551,69 @@ function validateArguments(argumentsValue) {
   return argumentsValue;
 }
 
+function isJSONNativeValue(value, seen = new Set()) {
+  if (value === null || typeof value === "string" || typeof value === "boolean") {
+    return true;
+  }
+  if (typeof value === "number") {
+    return Number.isFinite(value);
+  }
+  if (typeof value !== "object" || seen.has(value)) {
+    return false;
+  }
+  if (!Array.isArray(value)) {
+    const prototype = Object.getPrototypeOf(value);
+    if (prototype !== Object.prototype && prototype !== null) {
+      return false;
+    }
+  }
+  seen.add(value);
+  const valid = Object.keys(value).every((key) => isJSONNativeValue(value[key], seen));
+  seen.delete(value);
+  return valid;
+}
+
+function validateExecParams(params) {
+  if (params === null || typeof params !== "object" || Array.isArray(params)
+      || Object.hasOwn(params, "cmd")) {
+    throw new Error("exec carrier params must be an object without cmd");
+  }
+  if (Object.hasOwn(params, "login") && params.login !== false) {
+    throw new Error("exec carrier params login must be false");
+  }
+  let snapshot;
+  try {
+    if (!isJSONNativeValue(params)) {
+      throw new Error("not JSON-native");
+    }
+    snapshot = JSON.parse(JSON.stringify(params));
+  } catch {
+    throw new Error("exec carrier params must contain only JSON-native values");
+  }
+  return snapshot;
+}
+
 function validateCarrier(carrier) {
   if (carrier === null || typeof carrier !== "object" || Array.isArray(carrier)) {
     throw new Error("translator must return a carrier object");
   }
-  if (carrier.kind === "exec" && exactKeys(carrier, ["kind"])) {
-    return carrier;
-  }
-  if (carrier.kind === "exec"
-      && exactKeys(carrier, ["kind", "template"])
-      && typeof carrier.template === "string"
-      && carrier.template.split("{.}").length === 2) {
-    return carrier;
+  if (carrier.kind === "exec") {
+    const keys = Object.keys(carrier);
+    if (!keys.every((key) => ["kind", "template", "params"].includes(key))) {
+      throw new Error("translator returned a malformed carrier");
+    }
+    const normalized = {kind: "exec"};
+    if (carrier.template !== undefined) {
+      if (typeof carrier.template !== "string"
+          || carrier.template.split("{.}").length !== 2) {
+        throw new Error("translator returned a malformed carrier");
+      }
+      normalized.template = carrier.template;
+    }
+    if (carrier.params !== undefined) {
+      normalized.params = validateExecParams(carrier.params);
+    }
+    return Object.freeze(normalized);
   }
   if ((carrier.kind === "custom" || carrier.kind === "function")
       && exactKeys(carrier, ["kind", "name", "payload"])
@@ -590,11 +641,15 @@ async function translateTool(request) {
     function(name, argumentsJSON) {
       return Object.freeze({kind: "function", name, payload: argumentsJSON});
     },
-    exec(template) {
-      if (template === undefined) {
-        return Object.freeze({kind: "exec"});
+    exec(template, params) {
+      const carrier = {kind: "exec"};
+      if (template !== undefined) {
+        carrier.template = template;
       }
-      return Object.freeze({kind: "exec", template});
+      if (params !== undefined) {
+        carrier.params = params;
+      }
+      return Object.freeze(carrier);
     },
   });
   const carrier = validateCarrier(await tool.translate(parsed, api));

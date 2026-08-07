@@ -9,6 +9,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -24,7 +25,89 @@ const (
 
 const testHPatchToolDescription = "fixture hpatch description\nwith exact trailing newline\n"
 
-const testCodeModeDescription = "Run JavaScript.\n\n### `exec_command`\nRun a shell command.\n\nexec tool declaration:\n```ts\ndeclare const tools: { exec_command(args: { cmd: string; workdir?: string }): Promise<unknown>; };\n```\n\n### `apply_patch`\nThe default editor.\n\nexec tool declaration:\n```ts\ndeclare const tools: { apply_patch(input: string): Promise<unknown>; };\n```\n\n### `create_goal`\nCreate a goal."
+const testCodeModeDescription = "Run JavaScript.\n- All nested tools are available on the global `tools` object, for example `await tools.exec_command(...)`. Tool names are exposed as normalized JavaScript identifiers.\n\n### `exec_command`\nRun a shell command.\n\nexec tool declaration:\n```ts\ndeclare const tools: { exec_command(args: { cmd: string; workdir?: string }): Promise<unknown>; };\n```\n\n### `apply_patch`\nThe default editor.\n\nexec tool declaration:\n```ts\ndeclare const tools: { apply_patch(input: string): Promise<unknown>; };\n```\n\n### `create_goal`\nCreate a goal."
+
+func testCodeModeAdditionalTools(description string) map[string]any {
+	return map[string]any{
+		"type":   "additional_tools",
+		"role":   "developer",
+		"future": map[string]any{"kept": true},
+		"tools": []any{
+			map[string]any{
+				"type":        "namespace",
+				"name":        "functions",
+				"description": "",
+				"future":      true,
+				"tools": []any{
+					map[string]any{
+						"type":        "custom",
+						"name":        "exec",
+						"description": description,
+						"format":      map[string]any{"type": "text"},
+						"future":      true,
+					},
+					map[string]any{"type": "function", "name": "wait", "future": true},
+				},
+			},
+			map[string]any{
+				"type":   "namespace",
+				"name":   "collaboration",
+				"future": true,
+				"tools":  []any{map[string]any{"type": "function", "name": "send_message", "future": true}},
+			},
+		},
+	}
+}
+
+func testFlatCodeModeAdditionalTools(description string) map[string]any {
+	return map[string]any{
+		"type":   "additional_tools",
+		"role":   "developer",
+		"future": map[string]any{"kept": true},
+		"tools": []any{
+			map[string]any{
+				"type":        "custom",
+				"name":        "exec",
+				"description": description,
+				"format":      map[string]any{"type": "text"},
+				"future":      true,
+			},
+			map[string]any{"type": "function", "name": "wait", "future": true},
+			map[string]any{
+				"type":   "namespace",
+				"name":   "collaboration",
+				"future": true,
+				"tools":  []any{map[string]any{"type": "function", "name": "send_message", "future": true}},
+			},
+		},
+	}
+}
+
+func testFunctionsNamespaceTools(t *testing.T, fields map[string]json.RawMessage) ([]map[string]json.RawMessage, []map[string]json.RawMessage) {
+	t.Helper()
+	var items []map[string]json.RawMessage
+	if err := json.Unmarshal(fields["input"], &items); err != nil {
+		t.Fatal(err)
+	}
+	if len(items) == 0 || jsonString(items[0], "type") != "additional_tools" {
+		t.Fatalf("input has no leading additional_tools item: %#v", items)
+	}
+	var namespaces []map[string]json.RawMessage
+	if err := json.Unmarshal(items[0]["tools"], &namespaces); err != nil {
+		t.Fatal(err)
+	}
+	index := slices.IndexFunc(namespaces, func(tool map[string]json.RawMessage) bool {
+		return jsonString(tool, "type") == "namespace" && jsonString(tool, "name") == "functions"
+	})
+	if index < 0 {
+		t.Fatalf("additional_tools has no functions namespace: %#v", namespaces)
+	}
+	var tools []map[string]json.RawMessage
+	if err := json.Unmarshal(namespaces[index]["tools"], &tools); err != nil {
+		t.Fatal(err)
+	}
+	return tools, namespaces
+}
 
 func testInstalledTools() []map[string]json.RawMessage {
 	return []map[string]json.RawMessage{
@@ -87,7 +170,11 @@ func registeredWorkerInput(t *testing.T, proxy *hpatchProxy, name string, argume
 	if !ok {
 		t.Fatalf("registered worker %q is unavailable", name)
 	}
-	return workerExecInput(name, arguments)
+	input, err := workerExecInputWithParams(name, arguments, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return input
 }
 
 func newHPatchTestTransform(t *testing.T, translator hpatchTranslator) (*hpatchResponseTransform, *hpatchProxy, *parsedResponsesRequest, string) {
@@ -96,18 +183,7 @@ func newHPatchTestTransform(t *testing.T, translator hpatchTranslator) (*hpatchR
 	request, err := parseResponsesRequest(mustTestJSON(t, map[string]any{
 		"model": "gpt-test",
 		"input": []any{
-			map[string]any{
-				"type":   "additional_tools",
-				"role":   "developer",
-				"future": map[string]any{"kept": true},
-				"tools": []any{map[string]any{
-					"type":        "custom",
-					"name":        "exec",
-					"description": testCodeModeDescription,
-					"format":      map[string]any{"type": "text"},
-					"future":      true,
-				}},
-			},
+			testCodeModeAdditionalTools(testCodeModeDescription),
 			map[string]any{"role": "user", "content": "task", "future": true},
 		},
 		"tools":               []any{map[string]any{"type": "function", "name": "lookup", "future": true}},
@@ -156,6 +232,133 @@ func testHPatchItem() map[string]any {
 		"input":   testHPatchScript,
 		"status":  "completed",
 		"future":  map[string]any{"kept": true},
+	}
+}
+
+func TestBuildCodeModeCarrierCatalogReadsNamespacedTools(t *testing.T) {
+	additional := testCodeModeAdditionalTools(testCodeModeDescription)
+	fields := map[string]json.RawMessage{
+		"input": mustTestJSON(t, []any{additional}),
+	}
+	registry := &toolRegistry{byName: map[string]toolContribution{}}
+	catalog, err := buildCodeModeCarrierCatalog(fields, registry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := catalog["exec"]; got != codeModeCarrierCustom {
+		t.Fatalf("exec carrier kind = %q", got)
+	}
+
+	namespaces := additional["tools"].([]any)
+	functionsNamespace := namespaces[0].(map[string]any)
+	nestedTools := functionsNamespace["tools"].([]any)
+	nestedTools[0].(map[string]any)["type"] = "function"
+	fields["input"] = mustTestJSON(t, []any{additional})
+	catalog, err = buildCodeModeCarrierCatalog(fields, registry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := catalog["exec"]; got != codeModeCarrierFunction {
+		t.Fatalf("exec carrier kind = %q", got)
+	}
+}
+
+func TestBuildCodeModeCarrierCatalogReadsFlatTools(t *testing.T) {
+	fields := map[string]json.RawMessage{
+		"input": mustTestJSON(t, []any{testFlatCodeModeAdditionalTools(testCodeModeDescription)}),
+	}
+	registry := &toolRegistry{byName: map[string]toolContribution{}}
+	catalog, err := buildCodeModeCarrierCatalog(fields, registry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, kind := range map[string]codeModeCarrierKind{
+		"exec":         codeModeCarrierCustom,
+		"wait":         codeModeCarrierFunction,
+		"send_message": codeModeCarrierFunction,
+	} {
+		if got := catalog[name]; got != kind {
+			t.Fatalf("%s carrier kind = %q, want %q", name, got, kind)
+		}
+	}
+}
+
+func TestBuildCodeModeCarrierCatalogRejectsDuplicateNames(t *testing.T) {
+	additional := testCodeModeAdditionalTools(testCodeModeDescription)
+	namespaces := additional["tools"].([]any)
+	functionsNamespace := namespaces[0].(map[string]any)
+	functionsNamespace["tools"] = append(functionsNamespace["tools"].([]any), map[string]any{
+		"type": "custom", "name": "exec", "description": "duplicate",
+	})
+	fields := map[string]json.RawMessage{
+		"input": mustTestJSON(t, []any{additional}),
+	}
+	registry := &toolRegistry{byName: map[string]toolContribution{}}
+	if _, err := buildCodeModeCarrierCatalog(fields, registry); err == nil || !strings.Contains(err.Error(), "defined more than once") {
+		t.Fatalf("duplicate carrier error = %v", err)
+	}
+}
+
+func TestHPatchPrepareRequestRewritesNamespacedExecWithShell(t *testing.T) {
+	workspace := t.TempDir()
+	request, err := parseResponsesRequest(mustTestJSON(t, map[string]any{
+		"input":       []any{testCodeModeAdditionalTools(testCodeModeDescription)},
+		"tools":       []any{map[string]any{"type": "function", "name": "lookup", "future": true}},
+		"tool_choice": "auto",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	proxy := newManagedHPatchProxy(t, testTranslator(t, new(int)))
+	shell := toolContribution{
+		PluginID: "test.shell",
+		Name:     "shell",
+		Specification: mustMarshalJSON(map[string]any{
+			"type": "custom", "name": "shell", "description": "shell base description",
+		}),
+		Executor: true,
+	}
+	proxy.registry.ordered = append(proxy.registry.ordered, shell)
+	proxy.registry.byName[shell.Name] = shell
+
+	metadata := codexTurnMetadata{RequestKind: "turn", Workspaces: map[string]json.RawMessage{workspace: nil}}
+	transform, err := proxy.prepareRequest(t.Context(), &request, "session-functions-exec", metadata, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if transform == nil {
+		t.Fatal("prepareRequest returned no transform")
+	}
+	defer transform.Close()
+
+	functionsTools, namespaces := testFunctionsNamespaceTools(t, request.fields)
+	execIndex := slices.IndexFunc(functionsTools, func(tool map[string]json.RawMessage) bool {
+		return jsonString(tool, "name") == "exec"
+	})
+	if execIndex < 0 {
+		t.Fatalf("functions namespace lost exec: %#v", functionsTools)
+	}
+	description := jsonString(functionsTools[execIndex], "description")
+	for _, forbidden := range []string{codeModeApplyPatchHeading, codeModeExecCommandHeading, "tools.apply_patch", "tools.exec_command", "exec_command(args:"} {
+		if strings.Contains(description, forbidden) {
+			t.Fatalf("namespaced exec description contains %q: %q", forbidden, description)
+		}
+	}
+	if !strings.Contains(description, "### `create_goal`") {
+		t.Fatalf("namespaced exec lost unrelated nested tool: %q", description)
+	}
+	if !slices.ContainsFunc(functionsTools, func(tool map[string]json.RawMessage) bool {
+		return jsonString(tool, "name") == "wait" && string(tool["future"]) == "true"
+	}) {
+		t.Fatalf("functions namespace lost sibling tools: %#v", functionsTools)
+	}
+	if !slices.ContainsFunc(namespaces, func(tool map[string]json.RawMessage) bool {
+		return jsonString(tool, "name") == "collaboration" && string(tool["future"]) == "true"
+	}) {
+		t.Fatalf("additional_tools lost sibling namespace: %#v", namespaces)
+	}
+	if len(transform.execCommandDefinitions) != 2 {
+		t.Fatalf("removed exec_command definitions = %d, want 2", len(transform.execCommandDefinitions))
 	}
 }
 
@@ -233,22 +436,225 @@ func TestHPatchPrepareRequestExposesOnlyStandaloneHPatch(t *testing.T) {
 	if len(items) != 2 || jsonString(items[0], "type") != "additional_tools" || string(items[1]["future"]) != "true" {
 		t.Fatalf("rewritten input items = %#v", items)
 	}
-	var additionalTools []map[string]json.RawMessage
-	if err := json.Unmarshal(items[0]["tools"], &additionalTools); err != nil {
-		t.Fatal(err)
+	functionsTools, namespaces := testFunctionsNamespaceTools(t, request.fields)
+	if len(namespaces) != 2 || string(namespaces[0]["future"]) != "true" || jsonString(namespaces[1], "name") != "collaboration" {
+		t.Fatalf("additional tool namespaces changed unexpectedly: %#v", namespaces)
 	}
-	if len(additionalTools) != 1 || jsonString(additionalTools[0], "name") != "exec" || string(additionalTools[0]["future"]) != "true" {
-		t.Fatalf("additional tools changed unexpectedly: %#v", additionalTools)
+	execIndex := slices.IndexFunc(functionsTools, func(tool map[string]json.RawMessage) bool {
+		return jsonString(tool, "name") == "exec"
+	})
+	if execIndex < 0 || string(functionsTools[execIndex]["future"]) != "true" {
+		t.Fatalf("functions namespace changed unexpectedly: %#v", functionsTools)
 	}
-	description := jsonString(additionalTools[0], "description")
-	if strings.Contains(description, codeModeApplyPatchHeading) || strings.Contains(description, "tools.apply_patch") || !strings.Contains(description, "### `create_goal`") {
-		t.Fatalf("native apply_patch was not hidden exactly: %q", description)
+	description := jsonString(functionsTools[execIndex], "description")
+	if strings.Contains(description, codeModeApplyPatchHeading) ||
+		strings.Contains(description, "tools.apply_patch") ||
+		!strings.Contains(description, codeModeExecCommandHeading) ||
+		!strings.Contains(description, "tools.exec_command") ||
+		!strings.Contains(description, "### `create_goal`") {
+		t.Fatalf("native apply_patch was not hidden or native exec_command was not preserved: %q", description)
 	}
 	if !bytes.Contains(items[0]["future"], []byte(`"kept":true`)) || !bytes.Contains(request.fields["future_request"], []byte(`"kept":true`)) {
 		t.Fatalf("future fields were not preserved: %#v", request.fields)
 	}
 	if string(request.fields["parallel_tool_calls"]) != "true" {
 		t.Fatalf("parallel_tool_calls = %s", request.fields["parallel_tool_calls"])
+	}
+}
+
+func TestHPatchReplacementRemovesExecCommandContractFromNamespacedExec(t *testing.T) {
+	fields := map[string]json.RawMessage{
+		"input": mustTestJSON(t, []any{testCodeModeAdditionalTools(testCodeModeDescription)}),
+		"tools": mustTestJSON(t, []any{}),
+	}
+	installed := append(testInstalledTools(), map[string]json.RawMessage{
+		"type":        mustMarshalJSON("custom"),
+		"name":        mustMarshalJSON("shell"),
+		"description": mustMarshalJSON("shell base description"),
+	})
+	applyPatchDefinition, execCommandDefinitions, owner, replaced, err := replaceAdditionalToolsApplyPatch(fields, installed)
+	if err != nil || !replaced || owner != "exec" {
+		t.Fatalf("owner = %q, replaced %v, error %v", owner, replaced, err)
+	}
+	if !strings.HasPrefix(applyPatchDefinition, codeModeApplyPatchHeading) || len(execCommandDefinitions) != 2 {
+		t.Fatalf("removed definitions = apply %q, exec %q", applyPatchDefinition, execCommandDefinitions)
+	}
+	if !slices.ContainsFunc(execCommandDefinitions, func(definition string) bool {
+		return strings.Contains(definition, codeModeExecCommandHeading)
+	}) || !slices.ContainsFunc(execCommandDefinitions, func(definition string) bool {
+		return strings.Contains(definition, "tools.exec_command")
+	}) {
+		t.Fatalf("removed exec definitions = %q", execCommandDefinitions)
+	}
+
+	functionsTools, namespaces := testFunctionsNamespaceTools(t, fields)
+	if len(namespaces) != 2 || jsonString(namespaces[1], "name") != "collaboration" {
+		t.Fatalf("sibling namespace changed: %#v", namespaces)
+	}
+	execIndex := slices.IndexFunc(functionsTools, func(tool map[string]json.RawMessage) bool {
+		return jsonString(tool, "name") == "exec"
+	})
+	if execIndex < 0 {
+		t.Fatalf("functions namespace lost exec: %#v", functionsTools)
+	}
+	description := jsonString(functionsTools[execIndex], "description")
+	for _, forbidden := range []string{
+		codeModeApplyPatchHeading,
+		codeModeExecCommandHeading,
+		codeModeExecCommandPlainHeading,
+		"tools.exec_command",
+		"exec_command(args:",
+		"declare const tools: { exec_command",
+	} {
+		if strings.Contains(description, forbidden) {
+			t.Fatalf("exec description contains %q: %q", forbidden, description)
+		}
+	}
+	if !strings.Contains(description, "### `create_goal`") {
+		t.Fatalf("rewritten exec description lost unrelated tools: %q", description)
+	}
+
+	var tools []map[string]json.RawMessage
+	if err := json.Unmarshal(fields["tools"], &tools); err != nil {
+		t.Fatal(err)
+	}
+	shellIndex := slices.IndexFunc(tools, func(tool map[string]json.RawMessage) bool {
+		return jsonString(tool, "name") == "shell"
+	})
+	if shellIndex < 0 || jsonString(tools[shellIndex], "description") != "shell base description" {
+		t.Fatalf("shell description = %#v", tools)
+	}
+}
+
+func TestHPatchReplacementRemovesExecCommandContractFromFlatExec(t *testing.T) {
+	fields := map[string]json.RawMessage{
+		"input": mustTestJSON(t, []any{testFlatCodeModeAdditionalTools(testCodeModeDescription)}),
+		"tools": mustTestJSON(t, []any{}),
+	}
+	installed := append(testInstalledTools(), map[string]json.RawMessage{
+		"type":        mustMarshalJSON("custom"),
+		"name":        mustMarshalJSON("shell"),
+		"description": mustMarshalJSON("shell base description"),
+	})
+	applyPatchDefinition, execCommandDefinitions, owner, replaced, err := replaceAdditionalToolsApplyPatch(fields, installed)
+	if err != nil || !replaced || owner != "exec" {
+		t.Fatalf("owner = %q, replaced %v, error %v", owner, replaced, err)
+	}
+	if !strings.HasPrefix(applyPatchDefinition, codeModeApplyPatchHeading) || len(execCommandDefinitions) != 2 {
+		t.Fatalf("removed definitions = apply %q, exec %q", applyPatchDefinition, execCommandDefinitions)
+	}
+
+	var items []map[string]json.RawMessage
+	if err := json.Unmarshal(fields["input"], &items); err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 || !bytes.Contains(items[0]["future"], []byte(`"kept":true`)) {
+		t.Fatalf("flat additional_tools item changed: %#v", items)
+	}
+	var tools []map[string]json.RawMessage
+	if err := json.Unmarshal(items[0]["tools"], &tools); err != nil {
+		t.Fatal(err)
+	}
+	execIndex := slices.IndexFunc(tools, func(tool map[string]json.RawMessage) bool {
+		return jsonString(tool, "type") == "custom" && jsonString(tool, "name") == "exec"
+	})
+	if execIndex < 0 {
+		t.Fatalf("flat additional_tools lost exec: %#v", tools)
+	}
+	description := jsonString(tools[execIndex], "description")
+	for _, forbidden := range []string{codeModeApplyPatchHeading, codeModeExecCommandHeading, "tools.apply_patch", "tools.exec_command"} {
+		if strings.Contains(description, forbidden) {
+			t.Fatalf("flat exec description contains %q: %q", forbidden, description)
+		}
+	}
+	if !strings.Contains(description, "### `create_goal`") ||
+		!slices.ContainsFunc(tools, func(tool map[string]json.RawMessage) bool {
+			return jsonString(tool, "name") == "wait" && string(tool["future"]) == "true"
+		}) ||
+		!slices.ContainsFunc(tools, func(tool map[string]json.RawMessage) bool {
+			return jsonString(tool, "name") == "collaboration" && string(tool["future"]) == "true"
+		}) {
+		t.Fatalf("flat exec rewrite lost sibling content: %#v", tools)
+	}
+}
+
+func TestHPatchReplacementRejectsUnsupportedAndTopLevelExecCarriers(t *testing.T) {
+	flat := func(name string) []any {
+		return []any{map[string]any{
+			"type": "additional_tools",
+			"tools": []any{map[string]any{
+				"type": "custom", "name": name, "description": testCodeModeDescription,
+			}},
+		}}
+	}
+	tests := []struct {
+		name  string
+		input []any
+		tools []any
+	}{
+		{name: "flat functions exec", input: flat("functions.exec")},
+		{
+			name:  "top-level exec",
+			input: []any{testCodeModeAdditionalTools(testCodeModeDescription)},
+			tools: []any{map[string]any{"type": "custom", "name": "exec", "description": testCodeModeDescription}},
+		},
+		{
+			name:  "top-level functions exec",
+			input: []any{testCodeModeAdditionalTools(testCodeModeDescription)},
+			tools: []any{map[string]any{"type": "custom", "name": "functions.exec", "description": testCodeModeDescription}},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			fields := map[string]json.RawMessage{
+				"input": mustTestJSON(t, test.input),
+				"tools": mustTestJSON(t, test.tools),
+			}
+			beforeInput := bytes.Clone(fields["input"])
+			beforeTools := bytes.Clone(fields["tools"])
+			_, _, _, replaced, err := replaceAdditionalToolsApplyPatch(fields, testInstalledTools())
+			if err == nil || replaced {
+				t.Fatalf("replacement = %t, error %v", replaced, err)
+			}
+			if !bytes.Equal(fields["input"], beforeInput) || !bytes.Equal(fields["tools"], beforeTools) {
+				t.Fatalf("rejected request mutated: %#v", fields)
+			}
+		})
+	}
+}
+
+func TestStripCodeModeExecCommandSectionAcceptsAppAndCLISchemas(t *testing.T) {
+	descriptions := map[string]string{
+		"app": "Run JavaScript.\n\n### `exec_command` \t\nRun a command.\n\nexec tool declaration:\n```ts\ndeclare const tools: { exec_command(args: { cmd: string; workdir?: string; tty?: boolean }): Promise<{ output: string }>; };\n```\n\n### `create_goal`\nKeep this.",
+		"cli": "Run JavaScript.\n\n### exec_command\t \nRun a command in a PTY.\n\nParameters:\n- `cmd`: required command text.\n- `workdir`: optional working directory.\n- `yield_time_ms`: optional initial wait.\n\n### `create_goal`\nKeep this.",
+	}
+	for name, baseDescription := range descriptions {
+		for lineEndingName, lineEnding := range map[string]string{"lf": "\n", "crlf": "\r\n"} {
+			t.Run(name+"/"+lineEndingName, func(t *testing.T) {
+				description := strings.ReplaceAll(baseDescription, "\n", lineEnding)
+				stripped, section, found, err := stripCodeModeExecCommandSection(description)
+				if err != nil || !found {
+					t.Fatalf("found = %t, error %v", found, err)
+				}
+				want := strings.ReplaceAll("Run JavaScript.\n\n### `create_goal`\nKeep this.", "\n", lineEnding)
+				if !strings.Contains(section, "exec_command") || stripped != want {
+					t.Fatalf("section = %q, stripped = %q, want %q", section, stripped, want)
+				}
+			})
+		}
+	}
+}
+
+func TestStripCodeModeExecCommandContractRejectsUnownedReference(t *testing.T) {
+	description := "Run JavaScript with `tools.exec_command(...)`.\n\n### `create_goal`\nKeep this."
+	if _, _, _, err := stripCodeModeExecCommandContract(description); err == nil {
+		t.Fatal("unowned exec_command reference was accepted")
+	}
+
+	description = "Run JavaScript.\n\n### `create_goal`\nKeep this."
+	stripped, definitions, found, err := stripCodeModeExecCommandContract(description)
+	if err != nil || found || len(definitions) != 0 || stripped != description {
+		t.Fatalf("absent contract = stripped %q, definitions %q, found %t, error %v", stripped, definitions, found, err)
 	}
 }
 
@@ -281,7 +687,7 @@ func TestHPatchDirectAdditionalApplyPatchIsRejectedWithoutExecCarrier(t *testing
 	})
 	metadata := codexTurnMetadata{RequestKind: "turn", Workspaces: map[string]json.RawMessage{workspace: nil}}
 	transform, err := proxy.prepareRequest(t.Context(), &request, "session-direct", metadata, true)
-	if err == nil || transform != nil || !strings.Contains(err.Error(), "no Code Mode exec carrier") {
+	if err == nil || transform != nil || !strings.Contains(err.Error(), "unsupported flat apply_patch") {
 		t.Fatalf("direct rewrite = transform %v, error %v", transform, err)
 	}
 	if len(proxy.sessions) != 0 {
@@ -290,11 +696,16 @@ func TestHPatchDirectAdditionalApplyPatchIsRejectedWithoutExecCarrier(t *testing
 }
 
 func TestHPatchAdditionalToolsReplacementRejectsDuplicateAndConflictingOwners(t *testing.T) {
-	additional := func(name string) map[string]any {
+	execTool := func() map[string]any {
+		return map[string]any{"type": "custom", "name": "exec", "description": testCodeModeDescription}
+	}
+	additional := func(tools ...any) map[string]any {
 		return map[string]any{
-			"type":  "additional_tools",
-			"role":  "developer",
-			"tools": []any{map[string]any{"type": "custom", "name": name, "description": testCodeModeDescription}},
+			"type": "additional_tools",
+			"role": "developer",
+			"tools": []any{map[string]any{
+				"type": "namespace", "name": "functions", "tools": tools,
+			}},
 		}
 	}
 	tests := []struct {
@@ -304,36 +715,33 @@ func TestHPatchAdditionalToolsReplacementRejectsDuplicateAndConflictingOwners(t 
 	}{
 		{
 			name:  "duplicate additional items",
-			input: []any{additional("exec"), additional("functions.exec")},
+			input: []any{additional(execTool()), additional(execTool())},
+		},
+		{
+			name:  "duplicate exec tools",
+			input: []any{additional(execTool(), execTool())},
+		},
+		{
+			name:  "flat and namespaced exec",
+			input: []any{testFlatCodeModeAdditionalTools(testCodeModeDescription), additional(execTool())},
 		},
 		{
 			name:  "standalone native collision",
-			input: []any{additional("exec")},
+			input: []any{additional(execTool())},
 			tools: []any{map[string]any{"type": "custom", "name": applyPatchToolName}},
 		},
 		{
-			name:  "top-level exec collision",
-			input: []any{additional("exec")},
-			tools: []any{map[string]any{"type": "custom", "name": "functions.exec", "description": testCodeModeDescription}},
-		},
-		{
 			name:  "existing hpatch collision",
-			input: []any{additional("exec")},
+			input: []any{additional(execTool())},
 			tools: []any{map[string]any{"type": "custom", "name": hpatchToolName}},
 		},
 		{
-			name: "direct nested apply_patch collision",
-			input: []any{map[string]any{
-				"type": "additional_tools",
-				"tools": []any{
-					map[string]any{"type": "custom", "name": "exec", "description": testCodeModeDescription},
-					map[string]any{"type": "custom", "name": applyPatchToolName},
-				},
-			}},
+			name:  "direct namespaced apply_patch collision",
+			input: []any{additional(execTool(), map[string]any{"type": "custom", "name": applyPatchToolName})},
 		},
 		{
-			name:  "direct nested hpatch collision in another item",
-			input: []any{additional("exec"), map[string]any{"type": "additional_tools", "tools": []any{map[string]any{"type": "custom", "name": hpatchToolName}}}},
+			name:  "namespaced hpatch collision",
+			input: []any{additional(execTool(), map[string]any{"type": "custom", "name": hpatchToolName})},
 		},
 	}
 	for _, test := range tests {
@@ -344,7 +752,7 @@ func TestHPatchAdditionalToolsReplacementRejectsDuplicateAndConflictingOwners(t 
 			}
 			beforeInput := bytes.Clone(fields["input"])
 			beforeTools := bytes.Clone(fields["tools"])
-			_, _, replaced, err := replaceAdditionalToolsApplyPatch(fields, testInstalledTools())
+			_, _, _, replaced, err := replaceAdditionalToolsApplyPatch(fields, testInstalledTools())
 			if err == nil || replaced {
 				t.Fatalf("replacement = %v, error %v", replaced, err)
 			}
@@ -355,37 +763,33 @@ func TestHPatchAdditionalToolsReplacementRejectsDuplicateAndConflictingOwners(t 
 	}
 }
 
-func TestHPatchAdditionalToolsReplacementDoesNotRequireDocumentedExecCommand(t *testing.T) {
-	description := strings.Replace(testCodeModeDescription, "exec_command(args:", "run_command(args:", 1)
-	if strings.Contains(description, "exec_command(args:") {
-		t.Fatal("fixture still documents exec_command")
-	}
+func TestHPatchAdditionalToolsReplacementPreservesExecCommandWithoutShell(t *testing.T) {
 	fields := map[string]json.RawMessage{
-		"input": mustTestJSON(t, []any{map[string]any{
-			"type": "additional_tools",
-			"tools": []any{map[string]any{
-				"type": "custom", "name": "exec", "description": description,
-			}},
-		}}),
+		"input": mustTestJSON(t, []any{testCodeModeAdditionalTools(testCodeModeDescription)}),
 		"tools": mustTestJSON(t, []any{}),
 	}
 
-	_, owner, replaced, err := replaceAdditionalToolsApplyPatch(fields, testInstalledTools())
+	_, removedExecCommandDefinitions, owner, replaced, err := replaceAdditionalToolsApplyPatch(fields, testInstalledTools())
 	if err != nil || !replaced || owner != "exec" {
 		t.Fatalf("owner = %q, replaced %v, error %v", owner, replaced, err)
 	}
+	if len(removedExecCommandDefinitions) != 0 {
+		t.Fatalf("removed exec_command definitions without shell = %q", removedExecCommandDefinitions)
+	}
 
-	var items []map[string]json.RawMessage
-	if err := json.Unmarshal(fields["input"], &items); err != nil {
-		t.Fatal(err)
+	functionsTools, _ := testFunctionsNamespaceTools(t, fields)
+	execIndex := slices.IndexFunc(functionsTools, func(tool map[string]json.RawMessage) bool {
+		return jsonString(tool, "name") == "exec"
+	})
+	if execIndex < 0 {
+		t.Fatalf("functions namespace lost exec: %#v", functionsTools)
 	}
-	var additionalTools []map[string]json.RawMessage
-	if err := json.Unmarshal(items[0]["tools"], &additionalTools); err != nil {
-		t.Fatal(err)
-	}
-	gotDescription := jsonString(additionalTools[0], "description")
-	if strings.Contains(gotDescription, codeModeApplyPatchHeading) || !strings.Contains(gotDescription, "run_command(args:") {
-		t.Fatalf("rewritten carrier description = %q", gotDescription)
+	description := jsonString(functionsTools[execIndex], "description")
+	if strings.Contains(description, codeModeApplyPatchHeading) ||
+		!strings.Contains(description, codeModeExecCommandHeading) ||
+		!strings.Contains(description, "tools.exec_command") ||
+		!strings.Contains(description, "### `create_goal`") {
+		t.Fatalf("rewritten carrier description = %q", description)
 	}
 }
 
@@ -397,28 +801,18 @@ func TestHPatchAdditionalToolsReplacementLeavesUnsupportedAndMalformedRequestsUn
 		toolChoice json.RawMessage
 	}{
 		{
-			name:  "direct apply_patch only",
-			input: mustTestJSON(t, []any{map[string]any{"role": "user", "content": "task"}}),
-			tools: mustTestJSON(t, []any{map[string]any{"type": "custom", "name": applyPatchToolName}}),
-		},
-		{
-			name:  "top-level exec only",
-			input: mustTestJSON(t, []any{map[string]any{"role": "user", "content": "task"}}),
-			tools: mustTestJSON(t, []any{map[string]any{"type": "custom", "name": "exec", "description": testCodeModeDescription}}),
-		},
-		{
 			name:  "malformed additional tools",
 			input: json.RawMessage(`[{"type":"additional_tools","tools":{}}]`),
 			tools: mustTestJSON(t, []any{map[string]any{"type": "function", "name": "lookup"}}),
 		},
 		{
 			name:  "unrelated heading collision",
-			input: mustTestJSON(t, []any{map[string]any{"type": "additional_tools", "tools": []any{map[string]any{"type": "custom", "name": "exec", "description": "### `apply_patch`\ndocumentation only"}}}}),
+			input: mustTestJSON(t, []any{testCodeModeAdditionalTools("### `apply_patch`\ndocumentation only")}),
 			tools: mustTestJSON(t, []any{}),
 		},
 		{
 			name:       "restricted exec choice",
-			input:      mustTestJSON(t, []any{map[string]any{"type": "additional_tools", "tools": []any{map[string]any{"type": "custom", "name": "exec", "description": testCodeModeDescription}}}}),
+			input:      mustTestJSON(t, []any{testCodeModeAdditionalTools(testCodeModeDescription)}),
 			tools:      mustTestJSON(t, []any{}),
 			toolChoice: mustTestJSON(t, map[string]any{"type": "custom", "name": "exec"}),
 		},
@@ -437,7 +831,7 @@ func TestHPatchAdditionalToolsReplacementLeavesUnsupportedAndMalformedRequestsUn
 			beforeInput := bytes.Clone(fields["input"])
 			beforeTools := bytes.Clone(fields["tools"])
 			beforeChoice := bytes.Clone(fields["tool_choice"])
-			_, _, replaced, err := replaceAdditionalToolsApplyPatch(fields, testInstalledTools())
+			_, _, _, replaced, err := replaceAdditionalToolsApplyPatch(fields, testInstalledTools())
 			if err != nil || replaced {
 				t.Fatalf("replacement = %v, error %v", replaced, err)
 			}
@@ -448,21 +842,14 @@ func TestHPatchAdditionalToolsReplacementLeavesUnsupportedAndMalformedRequestsUn
 	}
 }
 
-func TestHPatchReplacementRetainsCodeModeOwnerName(t *testing.T) {
-	for _, name := range []string{"exec", "functions.exec"} {
-		t.Run(name, func(t *testing.T) {
-			fields := map[string]json.RawMessage{
-				"input": mustTestJSON(t, []any{map[string]any{
-					"type":  "additional_tools",
-					"tools": []any{map[string]any{"type": "custom", "name": name, "description": testCodeModeDescription}},
-				}}),
-				"tools": mustTestJSON(t, []any{}),
-			}
-			_, got, replaced, err := replaceAdditionalToolsApplyPatch(fields, testInstalledTools())
-			if err != nil || !replaced || got != name {
-				t.Fatalf("owner = %q, replaced %v, error %v", got, replaced, err)
-			}
-		})
+func TestHPatchReplacementRetainsNamespacedExecOwnerName(t *testing.T) {
+	fields := map[string]json.RawMessage{
+		"input": mustTestJSON(t, []any{testCodeModeAdditionalTools(testCodeModeDescription)}),
+		"tools": mustTestJSON(t, []any{}),
+	}
+	_, _, got, replaced, err := replaceAdditionalToolsApplyPatch(fields, testInstalledTools())
+	if err != nil || !replaced || got != "exec" {
+		t.Fatalf("owner = %q, replaced %v, error %v", got, replaced, err)
 	}
 }
 
@@ -683,7 +1070,10 @@ func TestHGrepJSONReturnsExecCommandAndRestoresReplay(t *testing.T) {
 }
 
 func TestHGrepExecInputUsesStableBasename(t *testing.T) {
-	carrierInput := workerExecInput("hgrep", []string{"-n", "-A", "80", "-B", "20"})
+	carrierInput, err := workerExecInputWithParams("hgrep", []string{"-n", "-A", "80", "-B", "20"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 	encodedArguments := strings.TrimPrefix(carrierInput, "const result = await tools.exec_command(")
 	encodedArguments = strings.TrimSuffix(encodedArguments, ");\ntext(result.output);")
 
@@ -699,10 +1089,11 @@ func TestHGrepExecInputUsesStableBasename(t *testing.T) {
 }
 
 func TestWorkerTemplateExecInputQuotesNestedShellCommand(t *testing.T) {
-	carrierInput, err := workerTemplateExecInput(
+	carrierInput, err := workerTemplateExecInputWithParams(
 		"shell",
 		[]string{"python3", `print('{"hello":"world"}')`},
 		"curl -fsSL URL | {.} | jq",
+		nil,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -722,14 +1113,53 @@ func TestWorkerTemplateExecInputQuotesNestedShellCommand(t *testing.T) {
 	}
 
 	for _, template := range []string{"missing", "{.} then {.}"} {
-		if _, err := workerTemplateExecInput("shell", []string{"bash", ""}, template); err == nil {
+		if _, err := workerTemplateExecInputWithParams("shell", []string{"bash", ""}, template, nil); err == nil {
 			t.Fatalf("worker template %q did not reject", template)
 		}
 	}
 }
 
+func TestWorkerExecInputMergesValidatedParams(t *testing.T) {
+	carrierInput, err := workerExecInputWithParams("shell", []string{"bash", "printf ok"}, map[string]json.RawMessage{
+		"workdir": mustMarshalJSON("/tmp/example"),
+		"tty":     mustMarshalJSON(true),
+		"login":   mustMarshalJSON(false),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	encodedArguments := strings.TrimPrefix(carrierInput, "const result = await tools.exec_command(")
+	encodedArguments = strings.TrimSuffix(encodedArguments, ");\ntext(result.output);")
+	var arguments struct {
+		Command string `json:"cmd"`
+		Workdir string `json:"workdir"`
+		TTY     bool   `json:"tty"`
+		Login   bool   `json:"login"`
+	}
+	if err := json.Unmarshal([]byte(encodedArguments), &arguments); err != nil {
+		t.Fatalf("decode translated exec arguments: %v\n%s", err, carrierInput)
+	}
+	if arguments.Command != "shell bash 'printf ok'" || arguments.Workdir != "/tmp/example" ||
+		!arguments.TTY || arguments.Login {
+		t.Fatalf("translated exec arguments = %+v", arguments)
+	}
+	if _, err := workerExecInputWithParams("shell", []string{"bash", ""}, map[string]json.RawMessage{
+		"cmd": mustMarshalJSON("forbidden"),
+	}); err == nil {
+		t.Fatal("exec params accepted cmd")
+	}
+	if _, err := workerExecInputWithParams("shell", []string{"bash", ""}, map[string]json.RawMessage{
+		"login": mustMarshalJSON(true),
+	}); err == nil {
+		t.Fatal("exec params accepted login true")
+	}
+}
+
 func TestHReadExecInputQuotesOnlyShellSensitiveArguments(t *testing.T) {
-	carrierInput := workerExecInput("hread", []string{`"line's $(echo injected).txt" 2:3`})
+	carrierInput, err := workerExecInputWithParams("hread", []string{`"line's $(echo injected).txt" 2:3`}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 	encodedArguments := strings.TrimPrefix(carrierInput, "const result = await tools.exec_command(")
 	encodedArguments = strings.TrimSuffix(encodedArguments, ");\ntext(result.output);")
 
@@ -747,7 +1177,10 @@ func TestHReadExecInputQuotesOnlyShellSensitiveArguments(t *testing.T) {
 
 func TestHReadExecInputCarriesOneNewlineDelimitedBatchArgument(t *testing.T) {
 	input := "\"alpha.txt\"\n\"beta.txt\" 2:3"
-	carrierInput := workerExecInput("hread", []string{input})
+	carrierInput, err := workerExecInputWithParams("hread", []string{input}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 	encodedArguments := strings.TrimPrefix(carrierInput, "const result = await tools.exec_command(")
 	encodedArguments = strings.TrimSuffix(encodedArguments, ");\ntext(result.output);")
 
@@ -764,7 +1197,10 @@ func TestHReadExecInputCarriesOneNewlineDelimitedBatchArgument(t *testing.T) {
 }
 
 func TestHReadExecInputDoesNotRepairMissingRangeSeparator(t *testing.T) {
-	carrierInput := workerExecInput("hread", []string{`"file.txt"2:3`})
+	carrierInput, err := workerExecInputWithParams("hread", []string{`"file.txt"2:3`}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 	encodedArguments := strings.TrimPrefix(carrierInput, "const result = await tools.exec_command(")
 	encodedArguments = strings.TrimSuffix(encodedArguments, ");\ntext(result.output);")
 
@@ -784,14 +1220,7 @@ func TestHPatchHistoryDoesNotCrossWorkspacesSharingSessionIdentity(t *testing.T)
 	proxy := newManagedHPatchProxy(t, testTranslator(t, new(int)))
 	requestFor := func(t *testing.T, extraItems ...any) parsedResponsesRequest {
 		t.Helper()
-		items := []any{map[string]any{
-			"type": "additional_tools",
-			"tools": []any{map[string]any{
-				"type":        "custom",
-				"name":        "exec",
-				"description": testCodeModeDescription,
-			}},
-		}}
+		items := []any{testCodeModeAdditionalTools(testCodeModeDescription)}
 		items = append(items, extraItems...)
 		request, err := parseResponsesRequest(mustTestJSON(t, map[string]any{
 			"input":               items,
@@ -1382,7 +1811,7 @@ func TestHPatchTranslationFailureReturnsImmediateDiagnosticExec(t *testing.T) {
 
 	replay, err := parseResponsesRequest(mustTestJSON(t, map[string]any{
 		"input": []any{
-			map[string]any{"type": "additional_tools", "tools": []any{map[string]any{"type": "custom", "name": "exec", "description": testCodeModeDescription}}},
+			testCodeModeAdditionalTools(testCodeModeDescription),
 			carrier,
 			map[string]any{"type": "custom_tool_call_output", "call_id": "call-H", "output": history.translationError, "future": true},
 			map[string]any{"type": "custom_tool_call_output", "call_id": "other", "output": "keep"},

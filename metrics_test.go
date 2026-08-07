@@ -94,14 +94,15 @@ func TestGainWithoutMetricsReportsZero(t *testing.T) {
 
 func TestGainReportReconcilesEffectiveAndIneffectiveTokens(t *testing.T) {
 	metricValues := metrics{
-		HPatchTokens:                 2404,
-		ApplyPatchTokens:             4764,
-		IneffectiveHPatchTokens:      2172,
-		FailedApplyPatchTokens:       300,
-		ReportInputTokens:            11,
-		DiagnosticInputTokens:        13,
-		DefinitionInputTokens:        100,
-		RemovedDefinitionInputTokens: 30,
+		HPatchTokens:                            2404,
+		ApplyPatchTokens:                        4764,
+		IneffectiveHPatchTokens:                 2172,
+		FailedApplyPatchTokens:                  300,
+		ReportInputTokens:                       11,
+		DiagnosticInputTokens:                   13,
+		DefinitionInputTokens:                   100,
+		RemovedDefinitionInputTokens:            30,
+		RemovedExecCommandDefinitionInputTokens: 20,
 
 		Sessions:                    2,
 		DefinitionRequests:          3,
@@ -118,6 +119,7 @@ func TestGainReportReconcilesEffectiveAndIneffectiveTokens(t *testing.T) {
 		"input token overhead estimates:",
 		"installed tool definitions",
 		"apply_patch definition removed",
+		"exec_command definition removed",
 		"net added input",
 		"Definition routing covers 3 accounted request(s)",
 		"installation and removal measured",
@@ -133,7 +135,8 @@ func TestGainReportReconcilesEffectiveAndIneffectiveTokens(t *testing.T) {
 		"installed tool definitions 100",
 
 		"apply_patch definition removed -30",
-		"net added input 94",
+		"exec_command definition removed -20",
+		"net added input 74",
 	} {
 		if !strings.Contains(input, want) {
 			t.Fatalf("input report %q does not contain %q", input, want)
@@ -203,15 +206,16 @@ func gainInputSection(t *testing.T, report string) string {
 func TestLoadGainMetricsMatchesGainReportTotals(t *testing.T) {
 	dataDirectory := t.TempDir()
 	recordHostMetricForTest(t, dataDirectory, HostMetricRecord{
-		HPatchTokens:                 40,
-		ApplyPatchTokens:             100,
-		IneffectiveHPatchTokens:      30,
-		FailedApplyPatchTokens:       10,
-		ReportInputTokens:            5,
-		DiagnosticInputTokens:        7,
-		DefinitionRequests:           1,
-		DefinitionInputTokens:        11,
-		RemovedDefinitionInputTokens: 9,
+		HPatchTokens:                            40,
+		ApplyPatchTokens:                        100,
+		IneffectiveHPatchTokens:                 30,
+		FailedApplyPatchTokens:                  10,
+		ReportInputTokens:                       5,
+		DiagnosticInputTokens:                   7,
+		DefinitionRequests:                      1,
+		DefinitionInputTokens:                   11,
+		RemovedDefinitionInputTokens:            9,
+		RemovedExecCommandDefinitionInputTokens: 4,
 
 		SessionID: "session-gain",
 		ToolMetrics: []ToolMetricRecord{{
@@ -239,7 +243,7 @@ func TestLoadGainMetricsMatchesGainReportTotals(t *testing.T) {
 	if got.SuccessfulReduction != "60.0" || got.OverallReduction != "36.4" {
 		t.Fatalf("reductions = %q / %q", got.SuccessfulReduction, got.OverallReduction)
 	}
-	if got.NetAddedInput != "24" || got.DefinitionSources != "installation and removal measured" {
+	if got.NetAddedInput != "20" || got.DefinitionSources != "installation and removal measured" || got.RemovedDefinitionInputTokens != 9 || got.RemovedExecCommandDefinitionInputTokens != 4 {
 		t.Fatalf("input = net %q sources %q", got.NetAddedInput, got.DefinitionSources)
 	}
 	if len(got.ToolInputs) != 1 || got.ToolInputs[0].CurrentTokens != 20 ||
@@ -678,28 +682,6 @@ func TestHPATCH18MetricsReset(t *testing.T) {
 	}
 	if got != (metrics{}) {
 		t.Fatalf("HPATCH18 metrics were not reset: %+v", got)
-	}
-}
-
-func TestHPATCH24MetricsReset(t *testing.T) {
-	dataDirectory := t.TempDir()
-	const priorSlotSize = 34080
-	const priorChecksumOffset = 34048
-	var prior [priorSlotSize]byte
-	copy(prior[:8], "HPATCH24")
-	binary.LittleEndian.PutUint64(prior[8:16], 7)
-	binary.LittleEndian.PutUint64(prior[16:24], 5)
-	checksum := sha256.Sum256(prior[:priorChecksumOffset])
-	copy(prior[priorChecksumOffset:], checksum[:])
-	if err := os.WriteFile(filepath.Join(dataDirectory, metricsFilename), prior[:], 0o600); err != nil {
-		t.Fatal(err)
-	}
-	got, err := readMetrics(dataDirectory)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got != (metrics{}) {
-		t.Fatalf("HPATCH24 metrics were not reset: %+v", got)
 	}
 }
 

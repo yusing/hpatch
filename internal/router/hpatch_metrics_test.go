@@ -16,14 +16,15 @@ import (
 func TestCalculateHPatchMetricRecordUsesExactCallerPayloads(t *testing.T) {
 	patch := "*** Begin Patch\n*** Update File: /workspace/calc.go\n@@\n-old\n+new\n*** End Patch\n"
 	inputs := hpatchMetricInputs{
-		attempt:            hpatch.AttemptMetadata{SessionID: "session", CorrelationID: "chain", CallID: "call", Attempt: 2, Correction: true},
-		emittedScript:      "2: type 12:9645..18:4b7b \"replacement\"\n",
-		report:             "in calc.go 2:9\n9645: return new\n",
-		patch:              patch,
-		sessionID:          "session",
-		definition:         "hpatch definition\n\n",
-		baselineDefinition: "apply_patch definition\n",
-		successful:         true,
+		attempt:                hpatch.AttemptMetadata{SessionID: "session", CorrelationID: "chain", CallID: "call", Attempt: 2, Correction: true},
+		emittedScript:          "2: type 12:9645..18:4b7b \"replacement\"\n",
+		report:                 "in calc.go 2:9\n9645: return new\n",
+		patch:                  patch,
+		sessionID:              "session",
+		definition:             "hpatch definition\n\n",
+		baselineDefinition:     "apply_patch definition\n",
+		execCommandDefinitions: []string{"exec_command definition\n", "second exec definition\n"},
+		successful:             true,
 		correction: hpatchCorrectionStats{
 			scope: "value-row", valueRowOperations: 1, baseValueRows: 24,
 			baseCommands: []string{
@@ -75,6 +76,9 @@ func TestCalculateHPatchMetricRecordUsesExactCallerPayloads(t *testing.T) {
 	}
 	if got, want := record.RemovedDefinitionInputTokens, count(inputs.baselineDefinition); got != want {
 		t.Fatalf("removed definition tokens = %d, want %d", got, want)
+	}
+	if got, want := record.RemovedExecCommandDefinitionInputTokens, count(inputs.execCommandDefinitions[0])+count(inputs.execCommandDefinitions[1]); got != want {
+		t.Fatalf("removed exec definition tokens = %d, want %d", got, want)
 	}
 	if record.IneffectiveHPatchTokens != 0 || record.FailedApplyPatchTokens != 0 || record.DiagnosticInputTokens != 0 {
 		t.Fatalf("successful record = %+v", record)
@@ -291,7 +295,7 @@ func TestReadOnlyToolCallClaimsCombinedDefinitionAccountingOnce(t *testing.T) {
 				t.Fatalf("metric records = %d, want 1", len(records))
 			}
 			record := records[0]
-			if record.DefinitionRequests != 1 || record.DefinitionInputTokens == 0 || record.RemovedDefinitionInputTokens == 0 {
+			if record.DefinitionRequests != 1 || record.DefinitionInputTokens == 0 || record.RemovedDefinitionInputTokens == 0 || record.RemovedExecCommandDefinitionInputTokens != 0 {
 				t.Fatalf("%s-only accounting = %+v", toolName, record)
 			}
 			if record.HPatchTokens != 0 || record.ApplyPatchTokens != 0 ||
@@ -358,10 +362,10 @@ func TestHPatchRequestDefinitionAccountingIsClaimedOnce(t *testing.T) {
 	if len(records) != 2 {
 		t.Fatalf("metric records = %d, want 2", len(records))
 	}
-	if records[0].DefinitionRequests != 1 || records[0].SessionID != "session-1" || records[0].DefinitionInputTokens == 0 || records[0].RemovedDefinitionInputTokens == 0 {
+	if records[0].DefinitionRequests != 1 || records[0].SessionID != "session-1" || records[0].DefinitionInputTokens == 0 || records[0].RemovedDefinitionInputTokens == 0 || records[0].RemovedExecCommandDefinitionInputTokens != 0 {
 		t.Fatalf("first request accounting = %+v", records[0])
 	}
-	if records[1].DefinitionRequests != 0 || records[1].SessionID != "session-1" || records[1].DefinitionInputTokens != 0 || records[1].RemovedDefinitionInputTokens != 0 {
+	if records[1].DefinitionRequests != 0 || records[1].SessionID != "session-1" || records[1].DefinitionInputTokens != 0 || records[1].RemovedDefinitionInputTokens != 0 || records[1].RemovedExecCommandDefinitionInputTokens != 0 {
 		t.Fatalf("second call repeated request accounting = %+v", records[1])
 	}
 	if records[0].ApplyPatchTokens == 0 || records[1].ApplyPatchTokens == 0 {
@@ -389,7 +393,7 @@ func TestFinishRecordsDefinitionOverheadWithoutHPatchCall(t *testing.T) {
 		t.Fatalf("metric records = %d, want 1", len(records))
 	}
 	record := records[0]
-	if record.DefinitionRequests != 1 || record.DefinitionInputTokens == 0 || record.RemovedDefinitionInputTokens == 0 {
+	if record.DefinitionRequests != 1 || record.DefinitionInputTokens == 0 || record.RemovedDefinitionInputTokens == 0 || record.RemovedExecCommandDefinitionInputTokens != 0 {
 		t.Fatalf("request overhead = %+v", record)
 	}
 	if record.HPatchTokens != 0 || record.ApplyPatchTokens != 0 || record.IneffectiveHPatchTokens != 0 || record.FailedApplyPatchTokens != 0 {

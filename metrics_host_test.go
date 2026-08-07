@@ -118,18 +118,19 @@ func TestHostMetricRecordPersistsCompleteCallerEntry(t *testing.T) {
 	invocation := invocationMetrics{}
 	invocation.Commands[commandOperationIndex("new")].Invocations = 1
 	record := HostMetricRecord{
-		Invocation:                   InvocationMetrics{value: invocation},
-		SessionID:                    "session-one",
-		HPatchTokens:                 11,
-		ApplyPatchTokens:             19,
-		IneffectiveHPatchTokens:      7,
-		FailedApplyPatchTokens:       5,
-		ReportInputTokens:            3,
-		DiagnosticInputTokens:        4,
-		DefinitionRequests:           1,
-		DefinitionInputTokens:        13,
-		RemovedDefinitionInputTokens: 9,
-		ToolMetrics:                  []ToolMetricRecord{{PluginID: "builtin.hpatch", ToolName: "hpatch", DefinitionInputTokens: 13}},
+		Invocation:                              InvocationMetrics{value: invocation},
+		SessionID:                               "session-one",
+		HPatchTokens:                            11,
+		ApplyPatchTokens:                        19,
+		IneffectiveHPatchTokens:                 7,
+		FailedApplyPatchTokens:                  5,
+		ReportInputTokens:                       3,
+		DiagnosticInputTokens:                   4,
+		DefinitionRequests:                      1,
+		DefinitionInputTokens:                   13,
+		RemovedDefinitionInputTokens:            9,
+		RemovedExecCommandDefinitionInputTokens: 6,
+		ToolMetrics:                             []ToolMetricRecord{{PluginID: "builtin.hpatch", ToolName: "hpatch", DefinitionInputTokens: 13}},
 	}
 	if err := RecordHostMetrics(t.Context(), dataDirectory, record); err != nil {
 		t.Fatal(err)
@@ -143,16 +144,17 @@ func TestHostMetricRecordPersistsCompleteCallerEntry(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := metrics{
-		HPatchTokens:                 22,
-		ApplyPatchTokens:             38,
-		IneffectiveHPatchTokens:      14,
-		FailedApplyPatchTokens:       10,
-		ReportInputTokens:            6,
-		DiagnosticInputTokens:        8,
-		Sessions:                     1,
-		DefinitionRequests:           2,
-		DefinitionInputTokens:        13,
-		RemovedDefinitionInputTokens: 9,
+		HPatchTokens:                            22,
+		ApplyPatchTokens:                        38,
+		IneffectiveHPatchTokens:                 14,
+		FailedApplyPatchTokens:                  10,
+		ReportInputTokens:                       6,
+		DiagnosticInputTokens:                   8,
+		Sessions:                                1,
+		DefinitionRequests:                      2,
+		DefinitionInputTokens:                   13,
+		RemovedDefinitionInputTokens:            9,
+		RemovedExecCommandDefinitionInputTokens: 6,
 	}
 	want.ToolCount = 1
 	want.Tools[0] = toolMetric{PluginID: "builtin.hpatch", ToolName: "hpatch", DefinitionInputTokens: 13}
@@ -169,6 +171,7 @@ func TestRecordHostMetricsRejectsInvalidDefinitionAttribution(t *testing.T) {
 		want   string
 	}{
 		{name: "definition tokens without request", record: HostMetricRecord{DefinitionInputTokens: 1}, want: "require a definition request"},
+		{name: "exec definition tokens without request", record: HostMetricRecord{RemovedExecCommandDefinitionInputTokens: 1}, want: "require a definition request"},
 		{name: "shared definition tokens without request", record: HostMetricRecord{SharedDefinitionInputTokens: 1}, want: "require a definition request"},
 		{name: "tool definition tokens without request", record: HostMetricRecord{ToolMetrics: []ToolMetricRecord{{PluginID: "example.plugin", ToolName: "tool", DefinitionInputTokens: 1}}}, want: "require a definition request"},
 		{name: "definition request without session", record: HostMetricRecord{DefinitionRequests: 1}, want: "require a session"},

@@ -496,12 +496,14 @@ function updateGain(root,gain,gainError){
   },{
     key:'total',className:'total',cells:['installed total',uintText(definitionTotal+(g.shared_definition_tokens||0)),'']
   }]));
-  const removed=nonNeg(g.removed_definition_input_tokens);
+  const applyPatchRemoved=nonNeg(g.removed_definition_input_tokens);
+  const execCommandRemoved=nonNeg(g.removed_exec_command_definition_input_tokens);
   fillRows(root.gain.overhead,[
     {key:'state',cells:['state reports',uintText(g.report_input_tokens),'final state returned after successful calls']},
     {key:'diag',cells:['failure diagnostics',uintText(g.diagnostic_input_tokens),'errors and repair context returned after failed calls']},
     {key:'def',cells:['installed tool definitions',uintText(g.definition_input_tokens),'exact serialized collection installed by the router']},
-    {key:'removed',cells:['apply_patch definition removed',removed?`-${fmt.format(removed)}`:'0','exact Code Mode section removed by the router']},
+    {key:'apply-removed',cells:['apply_patch definition removed',applyPatchRemoved?`-${fmt.format(applyPatchRemoved)}`:'0','exact Code Mode section removed by the router']},
+    {key:'exec-removed',cells:['exec_command definition removed',execCommandRemoved?`-${fmt.format(execCommandRemoved)}`:'0','exact Code Mode section removed by the router']},
     {key:'net',className:'total',cells:['net added input',signedText(g.net_added_input),'actual measured input overhead after stock-result and definition credits']}
   ]);
   root.gain.note.textContent='Failed hpatch translation uses the empty-patch semantic baseline; other router rejections have no translated carrier. A negative reduction is measured overhead.';
@@ -545,7 +547,7 @@ function validGain(gain){
     &&typeof gain.ineffective_hpatch_tokens==='number'&&typeof gain.failed_apply_patch_tokens==='number'
     &&typeof gain.successful_reduction_percent==='string'&&typeof gain.overall_reduction_percent==='string'
     &&typeof gain.report_input_tokens==='number'&&typeof gain.diagnostic_input_tokens==='number'
-    &&typeof gain.definition_input_tokens==='number'&&typeof gain.removed_definition_input_tokens==='number'
+    &&typeof gain.definition_input_tokens==='number'&&typeof gain.removed_definition_input_tokens==='number'&&typeof gain.removed_exec_command_definition_input_tokens==='number'
     &&typeof gain.net_added_input==='string'&&typeof gain.sessions==='number'&&typeof gain.definition_requests==='number'
     &&typeof gain.definition_sources==='string'
     &&Array.isArray(gain.tools)&&gain.tools.every(validToolGain)&&validToolGain(gain.all_tools)

@@ -135,6 +135,11 @@ func TestDashboardUsesValidatedMarkTones(t *testing.T) {
 			t.Fatalf("dashboard does not use the validated mark tones: missing %q", fragment)
 		}
 	}
+	if !strings.Contains(body, "apply_patch definition removed") ||
+		!strings.Contains(body, "exec_command definition removed") ||
+		!strings.Contains(body, "removed_exec_command_definition_input_tokens") {
+		t.Fatal("dashboard does not expose separate removed-definition metrics")
+	}
 }
 
 func TestDashboardRejectsUnrelatedPaths(t *testing.T) {

@@ -56,7 +56,7 @@ func describeDefinitionSources(m metrics) string {
 		return "not measured (missing caller session)"
 	case m.DefinitionInputTokens == 0:
 		return "removal only"
-	case m.RemovedDefinitionInputTokens == 0:
+	case m.RemovedDefinitionInputTokens == 0 && m.RemovedExecCommandDefinitionInputTokens == 0:
 		return "installation only"
 	default:
 		return "installation and removal measured"

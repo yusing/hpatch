@@ -356,6 +356,7 @@ type hpatchResponseTransform struct {
 	installedToolBreakdown   []hpatch.HostToolDefinition
 	codeModeToolName         string
 	baselineDefinition       string
+	execCommandDefinitions   []string
 	requestAccountingClaimed bool
 
 	// localSequence orders the calls translated during this turn, so a
@@ -476,15 +477,7 @@ func (p *hpatchProxy) prepareRequest(ctx context.Context, request *parsedRespons
 		workspace.close()
 		return nil, err
 	}
-	installedToolBreakdown := make([]hpatch.HostToolDefinition, len(installedTools))
-	for index, contribution := range p.registry.ordered {
-		installedToolBreakdown[index] = hpatch.HostToolDefinition{
-			PluginID:   contribution.PluginID,
-			ToolName:   contribution.Name,
-			Definition: string(mustMarshalJSON(installedTools[index])),
-		}
-	}
-	baselineDefinition, codeModeToolName, replaced, err := replaceAdditionalToolsApplyPatch(request.fields, installedTools)
+	baselineDefinition, execCommandDefinitions, codeModeToolName, replaced, err := replaceAdditionalToolsApplyPatch(request.fields, installedTools)
 	if err != nil {
 		workspace.close()
 		return nil, err
@@ -492,6 +485,14 @@ func (p *hpatchProxy) prepareRequest(ctx context.Context, request *parsedRespons
 	if !replaced {
 		workspace.close()
 		return nil, errors.New("responses request cannot satisfy the required hpatch rewrite")
+	}
+	installedToolBreakdown := make([]hpatch.HostToolDefinition, len(installedTools))
+	for index, contribution := range p.registry.ordered {
+		installedToolBreakdown[index] = hpatch.HostToolDefinition{
+			PluginID:   contribution.PluginID,
+			ToolName:   contribution.Name,
+			Definition: string(mustMarshalJSON(installedTools[index])),
+		}
 	}
 	historySessionID := workspace.canonical + "\x00" + sessionID
 	if err := p.activateSession(historySessionID); err != nil {
@@ -523,6 +524,7 @@ func (p *hpatchProxy) prepareRequest(ctx context.Context, request *parsedRespons
 		installedToolBreakdown:  installedToolBreakdown,
 		codeModeToolName:        codeModeToolName,
 		baselineDefinition:      baselineDefinition,
+		execCommandDefinitions:  execCommandDefinitions,
 	}, nil
 }
 
@@ -530,14 +532,18 @@ type additionalToolsApplyPatchOwner struct {
 	items               []json.RawMessage
 	item                map[string]json.RawMessage
 	itemIndex           int
+	additionalTools     []map[string]json.RawMessage
+	additionalToolIndex int
 	tools               []map[string]json.RawMessage
 	toolIndex           int
+	nested              bool
 	name                string
-	direct              bool
+
 	strippedDescription string
 	// baselineDefinition is the native apply_patch definition hpatch displaces.
 	// hpatch's definition cost is only meaningful net of it.
-	baselineDefinition string
+	baselineDefinition     string
+	execCommandDefinitions []string
 }
 
 func installedToolNames(tools []map[string]json.RawMessage) map[string]struct{} {
@@ -548,56 +554,37 @@ func installedToolNames(tools []map[string]json.RawMessage) map[string]struct{} 
 	return names
 }
 
-// replaceAdditionalToolsApplyPatch swaps a supported apply_patch surface for a
-// standalone hpatch tool, reporting the native definition it displaced so the
-// caller can attribute hpatch's definition cost net of it.
-func replaceAdditionalToolsApplyPatch(fields map[string]json.RawMessage, installedTools []map[string]json.RawMessage) (string, string, bool, error) {
+// replaceAdditionalToolsApplyPatch rewrites the Code Mode exec tool from an
+// app or CLI additional_tools owner and exposes the router's standalone tools.
+func replaceAdditionalToolsApplyPatch(fields map[string]json.RawMessage, installedTools []map[string]json.RawMessage) (string, []string, string, bool, error) {
 	var topTools []map[string]json.RawMessage
 	if rawTools, exists := fields["tools"]; exists {
 		if err := json.Unmarshal(rawTools, &topTools); err != nil {
-			return "", "", false, fmt.Errorf("decode responses tools: %w", err)
+			return "", nil, "", false, fmt.Errorf("decode responses tools: %w", err)
 		}
 	}
 	installedNames := installedToolNames(installedTools)
 	for _, tool := range topTools {
-		if name := jsonString(tool, "name"); name != "" {
-			if _, exists := installedNames[name]; !exists {
-				continue
-			}
-			return "", "", false, fmt.Errorf("responses request already defines %s", name)
+		name := jsonString(tool, "name")
+		if _, exists := installedNames[name]; exists {
+			return "", nil, "", false, fmt.Errorf("responses request already defines %s", name)
+		}
+		if name == applyPatchToolName || name == "exec" || name == "functions.exec" {
+			return "", nil, "", false, fmt.Errorf("responses request exposes unsupported top-level %s", name)
 		}
 	}
+
 	owner, err := findAdditionalToolsApplyPatch(fields, installedNames)
 	if err != nil || owner == nil {
-		return "", "", false, err
-	}
-	if owner.direct {
-		return "", "", false, errors.New("responses request has no Code Mode exec carrier required by routed tools")
-	}
-	// The carrier description is model-facing documentation, not runtime
-	// capability negotiation. A recognized exec carrier is the host boundary;
-	// its documented nested tools may change independently of that runtime API.
-	for _, tool := range topTools {
-		if jsonString(tool, "name") == applyPatchToolName {
-			return "", "", false, errors.New("responses request exposes an additional apply_patch owner")
-		}
-		name := jsonString(tool, "name")
-		if name != "exec" && name != "functions.exec" {
-			continue
-		}
-		if _, _, found, stripErr := stripCodeModeApplyPatchSection(jsonString(tool, "description")); stripErr != nil {
-			return "", "", false, stripErr
-		} else if found {
-			return "", "", false, errors.New("responses request exposes apply_patch in top-level exec")
-		}
+		return "", nil, "", false, err
 	}
 	if codeModeToolChoiceRestricted(fields, owner.name) {
-		return "", "", false, nil
+		return "", nil, "", false, nil
 	}
 	if err := exposeStandaloneHPatch(fields, topTools, owner, installedTools); err != nil {
-		return "", "", false, err
+		return "", nil, "", false, err
 	}
-	return owner.baselineDefinition, owner.name, true, nil
+	return owner.baselineDefinition, owner.execCommandDefinitions, owner.name, true, nil
 }
 
 func findAdditionalToolsApplyPatch(fields map[string]json.RawMessage, installedNames map[string]struct{}) (*additionalToolsApplyPatchOwner, error) {
@@ -605,65 +592,113 @@ func findAdditionalToolsApplyPatch(fields map[string]json.RawMessage, installedN
 	if json.Unmarshal(fields["input"], &items) != nil {
 		return nil, nil //nolint:nilerr // Unsupported input shapes are simply not Code Mode owners.
 	}
+	_, shellInstalled := installedNames["shell"]
 	var owner *additionalToolsApplyPatchOwner
+	claim := func(
+		item map[string]json.RawMessage,
+		itemIndex int,
+		additionalTools []map[string]json.RawMessage,
+		additionalToolIndex int,
+		tools []map[string]json.RawMessage,
+		toolIndex int,
+		nested bool,
+	) error {
+		tool := tools[toolIndex]
+		name := jsonString(tool, "name")
+		if _, exists := installedNames[name]; exists {
+			if nested {
+				return fmt.Errorf("responses functions namespace defines %s", name)
+			}
+			return fmt.Errorf("responses additional_tools item defines direct %s", name)
+		}
+		if name == applyPatchToolName {
+			if nested {
+				return errors.New("responses functions namespace exposes direct apply_patch")
+			}
+			return errors.New("responses additional_tools item exposes unsupported flat apply_patch")
+		}
+		if name != "exec" {
+			return nil
+		}
+		if owner != nil {
+			return errors.New("responses request defines Code Mode exec more than once")
+		}
+		stripped, baseline, found, err := stripCodeModeApplyPatchSection(jsonString(tool, "description"))
+		if err != nil {
+			return err
+		}
+		if !found || jsonString(tool, "type") != "custom" {
+			return nil
+		}
+		var execCommandDefinitions []string
+		if shellInstalled {
+			var definitions []string
+			stripped, definitions, found, err = stripCodeModeExecCommandContract(stripped)
+			if err != nil {
+				return err
+			}
+			if found {
+				execCommandDefinitions = append(execCommandDefinitions, definitions...)
+			}
+		}
+		owner = &additionalToolsApplyPatchOwner{
+			item:                   item,
+			itemIndex:              itemIndex,
+			additionalTools:        additionalTools,
+			additionalToolIndex:    additionalToolIndex,
+			tools:                  tools,
+			toolIndex:              toolIndex,
+			nested:                 nested,
+			name:                   name,
+			strippedDescription:    stripped,
+			baselineDefinition:     baseline,
+			execCommandDefinitions: execCommandDefinitions,
+		}
+		return nil
+	}
 	for itemIndex, rawItem := range items {
 		var item map[string]json.RawMessage
 		if json.Unmarshal(rawItem, &item) != nil || jsonString(item, "type") != "additional_tools" {
 			continue
 		}
-		var tools []map[string]json.RawMessage
-		if json.Unmarshal(item["tools"], &tools) != nil {
+		var additionalTools []map[string]json.RawMessage
+		if json.Unmarshal(item["tools"], &additionalTools) != nil {
 			continue
 		}
-		for toolIndex, tool := range tools {
-			name := jsonString(tool, "name")
+		for additionalToolIndex, additionalTool := range additionalTools {
+			name := jsonString(additionalTool, "name")
+			if jsonString(additionalTool, "type") != "namespace" {
+				if name == "functions.exec" {
+					return nil, errors.New("responses additional_tools item exposes unsupported flat functions.exec")
+				}
+				if err := claim(item, itemIndex, additionalTools, additionalToolIndex, additionalTools, additionalToolIndex, false); err != nil {
+					return nil, err
+				}
+				continue
+			}
+			if name == "exec" || name == "functions.exec" || name == applyPatchToolName {
+				return nil, fmt.Errorf("responses additional_tools item exposes unsupported flat %s", name)
+			}
 			if _, exists := installedNames[name]; exists {
 				return nil, fmt.Errorf("responses additional_tools item defines direct %s", name)
 			}
-			if name == applyPatchToolName {
-				if owner != nil {
-					return nil, errors.New("responses request defines additional_tools apply_patch more than once")
-				}
-				baseline, err := json.Marshal(tool)
-				if err != nil {
-					return nil, fmt.Errorf("encode direct additional_tools apply_patch: %w", err)
-				}
-				owner = &additionalToolsApplyPatchOwner{
-					items:              items,
-					item:               item,
-					itemIndex:          itemIndex,
-					tools:              tools,
-					toolIndex:          toolIndex,
-					name:               name,
-					direct:             true,
-					baselineDefinition: string(baseline),
-				}
+			if name != "functions" {
 				continue
 			}
-			if name != "exec" && name != "functions.exec" {
+
+			var tools []map[string]json.RawMessage
+			if json.Unmarshal(additionalTool["tools"], &tools) != nil {
 				continue
 			}
-			stripped, baseline, found, err := stripCodeModeApplyPatchSection(jsonString(tool, "description"))
-			if err != nil {
-				return nil, err
-			}
-			if !found {
-				continue
-			}
-			if owner != nil {
-				return nil, errors.New("responses request defines additional_tools apply_patch more than once")
-			}
-			owner = &additionalToolsApplyPatchOwner{
-				items:               items,
-				item:                item,
-				itemIndex:           itemIndex,
-				tools:               tools,
-				toolIndex:           toolIndex,
-				name:                name,
-				strippedDescription: stripped,
-				baselineDefinition:  baseline,
+			for toolIndex := range tools {
+				if err := claim(item, itemIndex, additionalTools, additionalToolIndex, tools, toolIndex, true); err != nil {
+					return nil, err
+				}
 			}
 		}
+	}
+	if owner != nil {
+		owner.items = items
 	}
 	return owner, nil
 }
@@ -678,7 +713,14 @@ func codeModeToolChoiceRestricted(fields map[string]json.RawMessage, codeToolNam
 
 func exposeStandaloneHPatch(fields map[string]json.RawMessage, topTools []map[string]json.RawMessage, owner *additionalToolsApplyPatchOwner, installedTools []map[string]json.RawMessage) error {
 	owner.tools[owner.toolIndex]["description"] = mustMarshalJSON(owner.strippedDescription)
-	encodedAdditionalTools, err := json.Marshal(owner.tools)
+	if owner.nested {
+		encodedNestedTools, err := json.Marshal(owner.tools)
+		if err != nil {
+			return fmt.Errorf("encode functions namespace tools: %w", err)
+		}
+		owner.additionalTools[owner.additionalToolIndex]["tools"] = encodedNestedTools
+	}
+	encodedAdditionalTools, err := json.Marshal(owner.additionalTools)
 	if err != nil {
 		return fmt.Errorf("encode additional tools: %w", err)
 	}
@@ -724,41 +766,133 @@ func customGrammarTool(name, description, grammar string) map[string]json.RawMes
 }
 
 const codeModeApplyPatchHeading = "### `apply_patch`"
+const codeModeExecCommandHeading = "### `exec_command`"
+const codeModeExecCommandPlainHeading = "### exec_command"
+
+type codeModeSectionMatcher func(string) (int, string)
+
+func stripCodeModeSection(description string, findHeading codeModeSectionMatcher, valid func(string) bool, duplicateError string) (string, string, bool, error) {
+	start, heading := findHeading(description)
+	if start < 0 {
+		return description, "", false, nil
+	}
+	sectionEnd := len(description)
+	remaining := description[start+len(heading):]
+	for _, nextHeading := range []string{"\n### ", "\n## "} {
+		if offset := strings.Index(remaining, nextHeading); offset >= 0 {
+			sectionEnd = min(sectionEnd, start+len(heading)+offset+1)
+		}
+	}
+	section := description[start:sectionEnd]
+	if valid != nil && !valid(section) {
+		return description, "", false, nil
+	}
+	lineEnding := "\n"
+	if strings.Contains(description, "\r\n") {
+		lineEnding = "\r\n"
+	}
+	stripped := strings.TrimRight(description[:start], "\r\n")
+	suffix := strings.TrimLeft(description[sectionEnd:], "\r\n")
+	if stripped != "" && suffix != "" {
+		stripped += lineEnding + lineEnding
+	}
+	stripped += suffix
+	if duplicateStart, _ := findHeading(stripped); duplicateStart >= 0 {
+		return "", "", false, errors.New(duplicateError)
+	}
+	return stripped, section, true, nil
+}
 
 // stripCodeModeApplyPatchSection removes the Code Mode apply_patch section from a
 // tool description. It also returns that removed section, which is the native
 // patch tool definition hpatch displaces: the host pays for one or the other as
 // request input, so measuring hpatch's definition cost requires the text it replaced.
 func stripCodeModeApplyPatchSection(description string) (string, string, bool, error) {
-	start := strings.Index(description, codeModeApplyPatchHeading)
-	if start < 0 {
-		return description, "", false, nil
-	}
-	if start > 0 && description[start-1] != '\n' {
-		return description, "", false, nil
-	}
-	sectionEnd := len(description)
-	remaining := description[start+len(codeModeApplyPatchHeading):]
-	for _, nextHeading := range []string{"\n### `", "\n### ", "\n## "} {
-		if offset := strings.Index(remaining, nextHeading); offset >= 0 {
-			sectionEnd = min(sectionEnd, start+len(codeModeApplyPatchHeading)+offset+1)
+	findHeading := func(text string) (int, string) {
+		start := strings.Index(text, codeModeApplyPatchHeading)
+		if start < 0 || start > 0 && text[start-1] != '\n' {
+			return -1, ""
 		}
+		return start, codeModeApplyPatchHeading
 	}
-	section := description[start:sectionEnd]
 	const declaration = "declare const tools: { apply_patch(input: string): Promise<unknown>; };"
-	if !strings.Contains(section, "exec tool declaration:") || !strings.Contains(section, declaration) {
-		return description, "", false, nil
+	valid := func(section string) bool {
+		return strings.Contains(section, "exec tool declaration:") && strings.Contains(section, declaration)
 	}
-	stripped := strings.TrimRight(description[:start], "\n")
-	suffix := strings.TrimLeft(description[sectionEnd:], "\n")
-	if stripped != "" && suffix != "" {
-		stripped += "\n\n"
+	return stripCodeModeSection(
+		description,
+		findHeading,
+		valid,
+		"responses Code Mode tool defines nested apply_patch more than once",
+	)
+}
+
+// stripCodeModeExecCommandSection removes only the nested command-execution
+// section. It recognizes app and CLI description bodies without parsing either
+// parameter schema. The apply_patch extractor remains an independent contract.
+func stripCodeModeExecCommandSection(description string) (string, string, bool, error) {
+	findHeading := func(text string) (int, string) {
+		best := -1
+		matched := ""
+		for _, heading := range []string{codeModeExecCommandHeading, codeModeExecCommandPlainHeading} {
+			searchFrom := 0
+			for searchFrom < len(text) {
+				offset := strings.Index(text[searchFrom:], heading)
+				if offset < 0 {
+					break
+				}
+				index := searchFrom + offset
+				end := index + len(heading)
+				for end < len(text) && (text[end] == ' ' || text[end] == '\t') {
+					end++
+				}
+				lineStart := index == 0 || text[index-1] == '\n'
+				lineEnd := end == len(text) || text[end] == '\n' || text[end] == '\r'
+				if lineStart && lineEnd {
+					if best < 0 || index < best {
+						best = index
+						matched = heading
+					}
+					break
+				}
+				searchFrom = index + len(heading)
+			}
+		}
+		return best, matched
 	}
-	stripped += suffix
-	if strings.Contains(stripped, codeModeApplyPatchHeading) {
-		return "", "", false, errors.New("responses Code Mode tool defines nested apply_patch more than once")
+	return stripCodeModeSection(
+		description,
+		findHeading,
+		nil,
+		"responses Code Mode tool defines nested exec_command more than once",
+	)
+}
+
+// stripCodeModeExecCommandContract removes the command tool section and the
+// introductory example that points models at tools.exec_command.
+func stripCodeModeExecCommandContract(description string) (string, []string, bool, error) {
+	stripped, section, found, err := stripCodeModeExecCommandSection(description)
+	if err != nil {
+		return "", nil, false, err
 	}
-	return stripped, section, true, nil
+	if !found {
+		if strings.Contains(description, "exec_command") {
+			return "", nil, false, errors.New("responses Code Mode tool exposes exec_command without an owned section")
+		}
+		return description, nil, false, nil
+	}
+	definitions := []string{section}
+	const example = " for example `await tools.exec_command(...)`."
+	if count := strings.Count(stripped, example); count > 1 {
+		return "", nil, false, errors.New("responses Code Mode tool references tools.exec_command more than once outside its section")
+	} else if count == 1 {
+		stripped = strings.Replace(stripped, example, "", 1)
+		definitions = append([]string{example}, definitions...)
+	}
+	if strings.Contains(stripped, "exec_command") {
+		return "", nil, false, errors.New("responses Code Mode tool exposes exec_command outside its owned contract")
+	}
+	return stripped, definitions, true, nil
 }
 
 func mustMarshalJSON(value any) json.RawMessage {
@@ -1233,16 +1367,21 @@ func (t *hpatchResponseTransform) translateRegisteredTool(contribution toolContr
 				return hpatchHistory{}, fmt.Errorf("%s worker is unavailable", contribution.Name)
 			}
 			if translation.Carrier.Template == "" {
-				payload = workerExecInput(contribution.Name, translation.Arguments)
+				payload, err = workerExecInputWithParams(
+					contribution.Name,
+					translation.Arguments,
+					translation.Carrier.Params,
+				)
 			} else {
-				payload, err = workerTemplateExecInput(
+				payload, err = workerTemplateExecInputWithParams(
 					contribution.Name,
 					translation.Arguments,
 					translation.Carrier.Template,
+					translation.Carrier.Params,
 				)
-				if err != nil {
-					return hpatchHistory{}, fmt.Errorf("%s exec carrier: %w", contribution.Name, err)
-				}
+			}
+			if err != nil {
+				return hpatchHistory{}, fmt.Errorf("%s exec carrier: %w", contribution.Name, err)
 			}
 		case "custom":
 			name = translation.Carrier.Name
@@ -1332,28 +1471,35 @@ func workerCommand(executable string, arguments []string) string {
 	return command
 }
 
-func workerExecInput(executable string, arguments []string) string {
-	return workerCommandExecInput(workerCommand(executable, arguments))
+func workerExecInputWithParams(executable string, arguments []string, params map[string]json.RawMessage) (string, error) {
+	return workerCommandExecInputWithParams(workerCommand(executable, arguments), params)
 }
 
-func workerTemplateExecInput(executable string, arguments []string, template string) (string, error) {
+func workerTemplateExecInputWithParams(executable string, arguments []string, template string, params map[string]json.RawMessage) (string, error) {
 	if strings.Count(template, "{.}") != 1 {
 		return "", errors.New("exec command template must contain exactly one {.} placeholder")
 	}
 	command := strings.Replace(template, "{.}", workerCommand(executable, arguments), 1)
-	return workerCommandExecInput(command), nil
+	return workerCommandExecInputWithParams(command, params)
 }
 
-func workerCommandExecInput(command string) string {
-	arguments := struct {
-		Command string `json:"cmd"`
-		Login   bool   `json:"login"`
-	}{
-		Command: command,
-		Login:   false,
+func workerCommandExecInputWithParams(command string, params map[string]json.RawMessage) (string, error) {
+	if _, exists := params["cmd"]; exists {
+		return "", errors.New("exec params must not contain cmd")
+	}
+	if login, exists := params["login"]; exists && !bytes.Equal(bytes.TrimSpace(login), []byte("false")) {
+		return "", errors.New("exec params login must be false")
+	}
+	arguments := maps.Clone(params)
+	if arguments == nil {
+		arguments = make(map[string]json.RawMessage)
+	}
+	arguments["cmd"] = mustMarshalJSON(command)
+	if _, exists := arguments["login"]; !exists {
+		arguments["login"] = mustMarshalJSON(false)
 	}
 	return "const result = await tools.exec_command(" + string(mustMarshalJSON(arguments)) + ");\n" +
-		"text(result.output);"
+		"text(result.output);", nil
 }
 
 func (h hpatchHistory) carrierInput() string {
@@ -1400,16 +1546,16 @@ func retainedEvaluated(emitted, evaluated string) string {
 	return evaluated
 }
 
-func (t *hpatchResponseTransform) claimRequestAccounting() (string, []hpatch.HostToolDefinition, string) {
+func (t *hpatchResponseTransform) claimRequestAccounting() (string, []hpatch.HostToolDefinition, string, []string) {
 	if t.requestAccountingClaimed {
-		return "", nil, ""
+		return "", nil, "", nil
 	}
 	t.requestAccountingClaimed = true
-	return t.installedToolDefinition, slices.Clone(t.installedToolBreakdown), t.baselineDefinition
+	return t.installedToolDefinition, slices.Clone(t.installedToolBreakdown), t.baselineDefinition, slices.Clone(t.execCommandDefinitions)
 }
 
 func (t *hpatchResponseTransform) recordMetrics(inputs hpatchMetricInputs) error {
-	inputs.definition, inputs.definitions, inputs.baselineDefinition = t.claimRequestAccounting()
+	inputs.definition, inputs.definitions, inputs.baselineDefinition, inputs.execCommandDefinitions = t.claimRequestAccounting()
 	inputs.sessionID = t.sessionID
 	record, err := calculateHPatchMetricRecord(inputs)
 	if err == nil {

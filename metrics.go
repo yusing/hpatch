@@ -24,7 +24,7 @@ import (
 const (
 	metricsFilename = "metrics.bin"
 	metricsLockname = "metrics.lock"
-	metricsMagic    = "HPATCH25"
+	metricsMagic    = "HPATCH26"
 
 	metricsToolOffset       = 1280
 	metricsToolEntrySize    = 280
@@ -123,11 +123,13 @@ type metrics struct {
 	// DefinitionInputTokens is the cumulative once-per-session installed tool
 	// collection added by the router. RemovedDefinitionInputTokens is the
 	// corresponding Code Mode apply_patch definition removed by the router.
-	DefinitionInputTokens        uint64
-	RemovedDefinitionInputTokens uint64
-	SharedDefinitionInputTokens  int64
-	ToolCount                    uint16
-	Tools                        [maxMetricTools]toolMetric
+	// RemovedExecCommandDefinitionInputTokens tracks the independent command sections.
+	DefinitionInputTokens                   uint64
+	RemovedDefinitionInputTokens            uint64
+	RemovedExecCommandDefinitionInputTokens uint64
+	SharedDefinitionInputTokens             int64
+	ToolCount                               uint16
+	Tools                                   [maxMetricTools]toolMetric
 }
 
 func commandOperationIndex(operation string) int {
@@ -252,6 +254,7 @@ func (m *metrics) add(entry metrics) error {
 		{&m.DefinitionRequests, entry.DefinitionRequests},
 		{&m.DefinitionInputTokens, entry.DefinitionInputTokens},
 		{&m.RemovedDefinitionInputTokens, entry.RemovedDefinitionInputTokens},
+		{&m.RemovedExecCommandDefinitionInputTokens, entry.RemovedExecCommandDefinitionInputTokens},
 	} {
 		if !addCounter(counter.destination, counter.increment) {
 			return fmt.Errorf("updating metrics: token count overflow")
@@ -486,6 +489,7 @@ func encodeMetricsSlot(value metrics, generation uint64) [metricsSlotSize]byte {
 	binary.LittleEndian.PutUint64(encoded[64:72], value.RemovedDefinitionInputTokens)
 	binary.LittleEndian.PutUint64(encoded[72:80], value.FailedApplyPatchTokens)
 	binary.LittleEndian.PutUint64(encoded[80:88], value.DefinitionRequests)
+	binary.LittleEndian.PutUint64(encoded[88:96], value.RemovedExecCommandDefinitionInputTokens)
 	for index, entry := range value.Commands {
 		putCommandMetric(encoded[:], 96+index*16, entry)
 	}
@@ -527,16 +531,17 @@ func decodeMetricsSlot(encoded [metricsSlotSize]byte) (metrics, uint64, bool) {
 		return metrics{}, 0, false
 	}
 	value := metrics{
-		HPatchTokens:                 binary.LittleEndian.Uint64(encoded[16:24]),
-		ApplyPatchTokens:             binary.LittleEndian.Uint64(encoded[24:32]),
-		IneffectiveHPatchTokens:      binary.LittleEndian.Uint64(encoded[32:40]),
-		ReportInputTokens:            binary.LittleEndian.Uint64(encoded[40:48]),
-		Sessions:                     binary.LittleEndian.Uint64(encoded[48:56]),
-		DefinitionInputTokens:        binary.LittleEndian.Uint64(encoded[56:64]),
-		RemovedDefinitionInputTokens: binary.LittleEndian.Uint64(encoded[64:72]),
-		FailedApplyPatchTokens:       binary.LittleEndian.Uint64(encoded[72:80]),
-		DefinitionRequests:           binary.LittleEndian.Uint64(encoded[80:88]),
-		DiagnosticInputTokens:        binary.LittleEndian.Uint64(encoded[metricsDiagnosticOffset : metricsDiagnosticOffset+8]),
+		HPatchTokens:                            binary.LittleEndian.Uint64(encoded[16:24]),
+		ApplyPatchTokens:                        binary.LittleEndian.Uint64(encoded[24:32]),
+		IneffectiveHPatchTokens:                 binary.LittleEndian.Uint64(encoded[32:40]),
+		ReportInputTokens:                       binary.LittleEndian.Uint64(encoded[40:48]),
+		Sessions:                                binary.LittleEndian.Uint64(encoded[48:56]),
+		DefinitionInputTokens:                   binary.LittleEndian.Uint64(encoded[56:64]),
+		RemovedDefinitionInputTokens:            binary.LittleEndian.Uint64(encoded[64:72]),
+		FailedApplyPatchTokens:                  binary.LittleEndian.Uint64(encoded[72:80]),
+		DefinitionRequests:                      binary.LittleEndian.Uint64(encoded[80:88]),
+		RemovedExecCommandDefinitionInputTokens: binary.LittleEndian.Uint64(encoded[88:96]),
+		DiagnosticInputTokens:                   binary.LittleEndian.Uint64(encoded[metricsDiagnosticOffset : metricsDiagnosticOffset+8]),
 	}
 	for index := range commandCount {
 		value.Commands[index] = getCommandMetric(encoded[:], 96+index*16)
@@ -625,10 +630,11 @@ type GainMetrics struct {
 	SuccessfulReduction     string `json:"successful_reduction_percent"`
 	OverallReduction        string `json:"overall_reduction_percent"`
 
-	ReportInputTokens            uint64 `json:"report_input_tokens"`
-	DiagnosticInputTokens        uint64 `json:"diagnostic_input_tokens"`
-	DefinitionInputTokens        uint64 `json:"definition_input_tokens"`
-	RemovedDefinitionInputTokens uint64 `json:"removed_definition_input_tokens"`
+	ReportInputTokens                       uint64 `json:"report_input_tokens"`
+	DiagnosticInputTokens                   uint64 `json:"diagnostic_input_tokens"`
+	DefinitionInputTokens                   uint64 `json:"definition_input_tokens"`
+	RemovedDefinitionInputTokens            uint64 `json:"removed_definition_input_tokens"`
+	RemovedExecCommandDefinitionInputTokens uint64 `json:"removed_exec_command_definition_input_tokens"`
 
 	// NetAddedInput is measured additions plus current-minus-stock tool results,
 	// minus the removed definition credit. It is a decimal string.
@@ -665,19 +671,25 @@ func LoadGainMetrics(dataDirectory string) (GainMetrics, error) {
 	return total.gainMetrics(), nil
 }
 
-// gainMetrics projects the same aggregate gainReportAtWidth formats for hosts
-// that need structured fields (dashboard JSON) instead of terminal text.
-func (m metrics) gainMetrics() GainMetrics {
-	tools, allTools, toolDefinitions := m.gainToolRows()
-	toolInputs, allToolInputs := m.gainToolInputRows()
+func (m metrics) netAddedInput(allToolInputs ToolInputGainMetric) *big.Int {
 	added := new(big.Int).SetUint64(m.ReportInputTokens)
 	for _, count := range []uint64{m.DiagnosticInputTokens, m.DefinitionInputTokens} {
 		added.Add(added, new(big.Int).SetUint64(count))
 	}
 	removed := new(big.Int).SetUint64(m.RemovedDefinitionInputTokens)
+	removed.Add(removed, new(big.Int).SetUint64(m.RemovedExecCommandDefinitionInputTokens))
 	net := new(big.Int).Sub(added, removed)
 	net.Add(net, new(big.Int).SetUint64(allToolInputs.CurrentTokens))
 	net.Sub(net, new(big.Int).SetUint64(allToolInputs.StockTokens))
+	return net
+}
+
+// gainMetrics projects the same aggregate gainReportAtWidth formats for hosts
+// that need structured fields (dashboard JSON) instead of terminal text.
+func (m metrics) gainMetrics() GainMetrics {
+	tools, allTools, toolDefinitions := m.gainToolRows()
+	toolInputs, allToolInputs := m.gainToolInputRows()
+	net := m.netAddedInput(allToolInputs)
 
 	commands := make([]NamedCommandMetric, 0, commandCount)
 	for index, name := range commandOperations {
@@ -721,16 +733,17 @@ func (m metrics) gainMetrics() GainMetrics {
 	}
 
 	return GainMetrics{
-		HPatchTokens:                 m.HPatchTokens,
-		ApplyPatchTokens:             m.ApplyPatchTokens,
-		IneffectiveHPatchTokens:      m.IneffectiveHPatchTokens,
-		FailedApplyPatchTokens:       m.FailedApplyPatchTokens,
-		SuccessfulReduction:          m.reduction(),
-		OverallReduction:             m.overallReduction(),
-		ReportInputTokens:            m.ReportInputTokens,
-		DiagnosticInputTokens:        m.DiagnosticInputTokens,
-		DefinitionInputTokens:        m.DefinitionInputTokens,
-		RemovedDefinitionInputTokens: m.RemovedDefinitionInputTokens,
+		HPatchTokens:                            m.HPatchTokens,
+		ApplyPatchTokens:                        m.ApplyPatchTokens,
+		IneffectiveHPatchTokens:                 m.IneffectiveHPatchTokens,
+		FailedApplyPatchTokens:                  m.FailedApplyPatchTokens,
+		SuccessfulReduction:                     m.reduction(),
+		OverallReduction:                        m.overallReduction(),
+		ReportInputTokens:                       m.ReportInputTokens,
+		DiagnosticInputTokens:                   m.DiagnosticInputTokens,
+		DefinitionInputTokens:                   m.DefinitionInputTokens,
+		RemovedDefinitionInputTokens:            m.RemovedDefinitionInputTokens,
+		RemovedExecCommandDefinitionInputTokens: m.RemovedExecCommandDefinitionInputTokens,
 
 		NetAddedInput:          net.String(),
 		Sessions:               m.Sessions,
@@ -822,27 +835,42 @@ func writeInputTokenGainTable(report *strings.Builder, m metrics) {
 }
 
 func writeInputOverheadGainTable(report *strings.Builder, m metrics, width int) {
-	added := new(big.Int).SetUint64(m.ReportInputTokens)
-	for _, count := range []uint64{m.DiagnosticInputTokens, m.DefinitionInputTokens} {
-		added.Add(added, new(big.Int).SetUint64(count))
-	}
-	removed := new(big.Int).SetUint64(m.RemovedDefinitionInputTokens)
-	net := new(big.Int).Sub(new(big.Int).Set(added), removed)
 	_, allToolInputs := m.gainToolInputRows()
-	net.Add(net, new(big.Int).SetUint64(allToolInputs.CurrentTokens))
-	net.Sub(net, new(big.Int).SetUint64(allToolInputs.StockTokens))
+	net := m.netAddedInput(allToolInputs)
 
-	removedText := "0"
+	applyPatchRemovedText := "0"
 	if m.RemovedDefinitionInputTokens != 0 {
-		removedText = "-" + strconv.FormatUint(m.RemovedDefinitionInputTokens, 10)
+		applyPatchRemovedText = "-" + strconv.FormatUint(m.RemovedDefinitionInputTokens, 10)
+	}
+	execCommandRemovedText := "0"
+	if m.RemovedExecCommandDefinitionInputTokens != 0 {
+		execCommandRemovedText = "-" + strconv.FormatUint(m.RemovedExecCommandDefinitionInputTokens, 10)
 	}
 	rows := [][]string{
 		{"state reports", strconv.FormatUint(m.ReportInputTokens, 10), "final state returned after successful calls"},
 		{"failure diagnostics", strconv.FormatUint(m.DiagnosticInputTokens, 10), "errors and repair context returned after failed calls"},
 		{"installed tool definitions", strconv.FormatUint(m.DefinitionInputTokens, 10), "exact serialized collection installed by the router"},
-		{"apply_patch definition removed", removedText, "exact Code Mode section removed by the router"},
-		{"net added input", net.String(), "actual measured input overhead after stock-result and definition credits"},
 	}
+	_, _, definitions := m.gainToolRows()
+	for _, definition := range definitions {
+		rows = append(rows, []string{
+			"  " + toolMetricLabel(definition.PluginID, definition.ToolName, false),
+			strconv.FormatUint(definition.Tokens, 10),
+			"descriptive child of the installed-definition total",
+		})
+	}
+	if m.DefinitionRequests != 0 {
+		rows = append(rows, []string{
+			"  shared framing",
+			strconv.FormatInt(m.SharedDefinitionInputTokens, 10),
+			"shared collection serialization needed to reconcile installed definitions",
+		})
+	}
+	rows = append(rows,
+		[]string{"apply_patch definition removed", applyPatchRemovedText, "exact Code Mode section removed by the router"},
+		[]string{"exec_command definition removed", execCommandRemovedText, "exact Code Mode section removed by the router"},
+		[]string{"net added input", net.String(), "actual measured input overhead after stock-result and definition credits"},
+	)
 	report.WriteString("input token overhead estimates:\n")
 	writeWrappedTable(report, width, []string{"source", "tokens", "description"}, rows)
 	writeWrappedText(report, width, fmt.Sprintf("Definition routing covers %d accounted request(s) in %d distinct session(s) (%s).", m.DefinitionRequests, m.Sessions, describeDefinitionSources(m)))

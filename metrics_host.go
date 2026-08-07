@@ -39,12 +39,13 @@ type HostMetricRecord struct {
 	ReportInputTokens       uint64
 	DiagnosticInputTokens   uint64
 
-	DefinitionRequests           uint64
-	DefinitionInputTokens        uint64
-	RemovedDefinitionInputTokens uint64
-	ToolMetrics                  []ToolMetricRecord
-	SharedDefinitionInputTokens  int64
-	AuxiliaryTokens              uint64
+	DefinitionRequests                      uint64
+	DefinitionInputTokens                   uint64
+	RemovedDefinitionInputTokens            uint64
+	RemovedExecCommandDefinitionInputTokens uint64
+	ToolMetrics                             []ToolMetricRecord
+	SharedDefinitionInputTokens             int64
+	AuxiliaryTokens                         uint64
 }
 
 func (r HostMetricRecord) entry() (metrics, error) {
@@ -57,10 +58,11 @@ func (r HostMetricRecord) entry() (metrics, error) {
 		ReportInputTokens:       r.ReportInputTokens,
 		DiagnosticInputTokens:   r.DiagnosticInputTokens,
 
-		DefinitionRequests:           r.DefinitionRequests,
-		DefinitionInputTokens:        r.DefinitionInputTokens,
-		RemovedDefinitionInputTokens: r.RemovedDefinitionInputTokens,
-		SharedDefinitionInputTokens:  r.SharedDefinitionInputTokens,
+		DefinitionRequests:                      r.DefinitionRequests,
+		DefinitionInputTokens:                   r.DefinitionInputTokens,
+		RemovedDefinitionInputTokens:            r.RemovedDefinitionInputTokens,
+		RemovedExecCommandDefinitionInputTokens: r.RemovedExecCommandDefinitionInputTokens,
+		SharedDefinitionInputTokens:             r.SharedDefinitionInputTokens,
 	}
 	for _, record := range r.ToolMetrics {
 		if err := validateMetricToolKey(record.PluginID, record.ToolName); err != nil {
@@ -89,7 +91,7 @@ func RecordHostMetrics(ctx context.Context, dataDirectory string, record HostMet
 	}
 	if record.DefinitionRequests == 0 {
 		if record.DefinitionInputTokens != 0 || record.RemovedDefinitionInputTokens != 0 ||
-			record.SharedDefinitionInputTokens != 0 {
+			record.RemovedExecCommandDefinitionInputTokens != 0 || record.SharedDefinitionInputTokens != 0 {
 			return fmt.Errorf("host definition token counts require a definition request")
 		}
 		for _, tool := range record.ToolMetrics {

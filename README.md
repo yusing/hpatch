@@ -133,6 +133,11 @@ The translated Codex exec carrier shows arguments equivalent to
 script exactly, and sends that body to `python3` through standard input. It stores no
 intermediate script file.
 
+A leading `!params` line accepts a JSON object of optional outer exec arguments except `cmd`.
+The script body supplies `cmd`. If `login` is present, its value must be `false`. The router
+forwards those values without exposing the native `exec_command` description to the model; Codex
+validates the translated carrier when it executes it.
+
 ## Codex router (systemd user service)
 
 The router listens on HTTP, rewrites Responses traffic so Codex calls `functions.hpatch`, `functions.hread`, or `functions.hgrep`, evaluates scripts against the workspace declared in `x-codex-turn-metadata`, and returns client-executed Code Mode carriers. Hpatch produces a real `apply_patch` call, so you see the normal diff rather than a silent file rewrite. Hread and hgrep resolve stable basename frontends through the Codex executor's trusted `PATH`; the router executable directory must precede unrelated entries. Each frontend targets an authenticated process snapshot wrapper, which targets `hpatch-router`. The carrier does not override the exec environment or working directory. The workers use Codex's exec working directory under Codex's sandbox and permissions rather than receiving a router workspace capability. Hgrep invokes `rg --json --no-config` internally and emits complete matching and requested context rows as `"PATH":LINE:HASH TEXT`. When the router and Codex executor have isolated filesystems, deployment must expose the frontend directory, snapshot, and router executable at the same paths in both environments. Background Responses requests are rejected before forwarding because the router does not expose the retrieval and cancellation endpoints required to complete them.
@@ -140,7 +145,18 @@ The router listens on HTTP, rewrites Responses traffic so Codex calls `functions
 Only one router process can own these basename frontends. A concurrent router fails before
 listening. A restart automatically reclaims authenticated frontend links left by a crash.
 
-On each request it strips the Code Mode `### apply_patch` section from the `functions.exec` / `additional_tools` description and installs standalone `functions.hpatch`, `functions.hread`, and `functions.hgrep` tools. A request with only a direct `apply_patch` carrier is rejected before forwarding because it cannot execute the read-only wrappers safely. The rewrite changes only the tool **definitions** the model receives for that turn; translated history still uses the Code Mode exec carrier that Codex actually runs.
+On each eligible request, the router finds exactly one Code Mode custom `exec` tool: either directly
+inside the leading `additional_tools` item for app-server traffic or inside that item's `functions`
+namespace for CLI traffic. It strips the owner's `### apply_patch` section. When the standalone
+`shell` plugin is installed, the router also removes that owner's Markdown `exec_command` section
+and introductory `tools.exec_command` example. It does not relocate either contract into another
+model-visible description. `shell` keeps its own narrow script and directive contract. Without
+`shell`, the native `exec_command` contract remains visible. Sibling direct tools, sibling tools in
+the `functions` namespace, other namespaces, and unrelated top-level tools remain unchanged. A
+direct `additional_tools` tool named `functions.exec` and top-level `exec` or `functions.exec` tools
+are unsupported and fail before forwarding. The router installs standalone `functions.hpatch`,
+`functions.hread`, and `functions.hgrep` tools. Translated history uses the matched Code Mode `exec`
+carrier that Codex runs.
 
 Defaults:
 

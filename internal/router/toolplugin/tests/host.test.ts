@@ -176,6 +176,13 @@ describe("plugin translation and execution", () => {
       if (input === "custom") return api.custom("exec", "custom payload");
       if (input === "function") return api.function("lookup", "{\\"value\\":1}");
       if (input === "template") return api.exec("before | {.} | after");
+      if (input === "params") return api.exec(undefined, {workdir: "/tmp"});
+      if (input === "invalid-params") return api.exec(undefined, {cmd: "forbidden"});
+      if (input === "invalid-login") return api.exec(undefined, {login: true});
+      if (input === "invalid-undefined") return api.exec(undefined, {workdir: undefined});
+      if (input === "invalid-function") return api.exec(undefined, {tty: () => true});
+      if (input === "invalid-symbol") return api.exec(undefined, {tty: Symbol("tty")});
+      if (input === "invalid-nan") return api.exec(undefined, {tty: Number.NaN});
       if (input === "invalid-template") return api.exec("missing placeholder");
       if (input === "malformed") return {kind: "exec", payload: "unexpected"};
       return api.exec();
@@ -192,6 +199,7 @@ describe("plugin translation and execution", () => {
     for (const [input, carrier] of [
       ["exec", {kind: "exec"}],
       ["template", {kind: "exec", template: "before | {.} | after"}],
+      ["params", {kind: "exec", params: {workdir: "/tmp"}}],
       ["custom", {kind: "custom", name: "exec", payload: "custom payload"}],
       ["function", {kind: "function", name: "lookup", payload: "{\"value\":1}"}],
     ] as const) {
@@ -240,6 +248,35 @@ describe("plugin translation and execution", () => {
     });
     expect(invalidTemplate.status).toBe(1);
     expect(invalidTemplate.stderr).toContain("translator returned a malformed carrier");
+
+    const invalidParams = invokeHost(directory, {
+      operation: "translate",
+      module: "plugin.mjs",
+      index: 0,
+      input: "invalid-params",
+    });
+    expect(invalidParams.status).toBe(1);
+    expect(invalidParams.stderr).toContain("exec carrier params must be an object without cmd");
+
+    const invalidLogin = invokeHost(directory, {
+      operation: "translate",
+      module: "plugin.mjs",
+      index: 0,
+      input: "invalid-login",
+    });
+    expect(invalidLogin.status).toBe(1);
+    expect(invalidLogin.stderr).toContain("exec carrier params login must be false");
+
+    for (const input of ["invalid-undefined", "invalid-function", "invalid-symbol", "invalid-nan"]) {
+      const invalidJSONValue = invokeHost(directory, {
+        operation: "translate",
+        module: "plugin.mjs",
+        index: 0,
+        input,
+      });
+      expect(invalidJSONValue.status).toBe(1);
+      expect(invalidJSONValue.stderr).toContain("exec carrier params must contain only JSON-native values");
+    }
 
     const executed = invokeHost(directory, {
       operation: "execute",

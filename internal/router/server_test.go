@@ -64,12 +64,7 @@ func serverRequest(t *testing.T, mutate func(map[string]any)) parsedResponsesReq
 		"model":     "gpt-test",
 		"reasoning": map[string]any{"effort": "high"},
 		"input": []any{
-			map[string]any{
-				"type": "additional_tools",
-				"tools": []any{map[string]any{
-					"type": "custom", "name": "exec", "description": testCodeModeDescription,
-				}},
-			},
+			testFlatCodeModeAdditionalTools(testCodeModeDescription),
 			map[string]any{"role": "user", "content": "task"},
 		},
 		"tools":       []any{map[string]any{"type": "function", "name": "lookup"}},
@@ -294,6 +289,12 @@ func TestExecuteRequestForwardsRewrittenRequestAndRecordsUsage(t *testing.T) {
 	if strings.Contains(string(forwarded.fields["input"]), workspace) {
 		t.Fatalf("single-workspace input contains redundant metadata: %s", forwarded.fields["input"])
 	}
+	input := string(forwarded.fields["input"])
+	if strings.Contains(input, codeModeApplyPatchHeading) ||
+		!strings.Contains(input, codeModeExecCommandHeading) ||
+		!strings.Contains(input, `"name":"exec"`) {
+		t.Fatalf("flat app-server exec was not rewritten: %s", input)
+	}
 	if string(forwarded.fields["reasoning"]) != "{\"effort\":\"high\"}" {
 		t.Fatalf("reasoning request changed: %s", forwarded.fields["reasoning"])
 	}
@@ -332,7 +333,7 @@ func TestExecuteRequestRejectsDirectAdditionalApplyPatchWithoutExecCarrier(t *te
 		proxy,
 		newMetricsStore(""),
 	)
-	if err == nil || !strings.Contains(err.Error(), "no Code Mode exec carrier") {
+	if err == nil || !strings.Contains(err.Error(), "unsupported flat apply_patch") {
 		t.Fatalf("direct request error = %v", err)
 	}
 	if len(provider.forwarded) != 0 || output.Len() != 0 {

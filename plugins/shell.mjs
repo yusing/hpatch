@@ -18,21 +18,68 @@ function splitFirstLine(input) {
 }
 
 
-function parseCommandTemplate(body) {
-  const first = splitFirstLine(body);
-  const trimmedLine = trimShebangField(first.line);
-  if (!trimmedLine.startsWith("#!cmd=")) {
-    return {commandTemplate: "", body};
+function parseDirectives(body) {
+  let remaining = body;
+  let commandTemplate = "";
+  let params;
+  const seen = new Set();
+
+  while (remaining !== "") {
+    const first = splitFirstLine(remaining);
+    const trimmedLine = trimShebangField(first.line);
+    let key;
+    let value;
+    if (trimmedLine.startsWith("#!cmd=")) {
+      key = "cmd";
+      value = trimmedLine.slice("#!cmd=".length);
+    } else if (trimmedLine.startsWith("!")) {
+      const directive = /^!([A-Za-z][A-Za-z0-9_-]*) ([\s\S]+)$/u.exec(trimmedLine);
+      if (directive === null) {
+        throw new Error("shell directive must use !{key} {value}");
+      }
+      [, key, value] = directive;
+      if (key !== "params") {
+        throw new Error(`unsupported shell directive !${key}`);
+      }
+    } else {
+      break;
+    }
+
+    if (seen.has(key)) {
+      throw new Error(`shell directive !${key} must not occur more than once`);
+    }
+    seen.add(key);
+
+    if (key === "cmd") {
+      if (value === "") {
+        throw new Error("command template must not be empty");
+      }
+      if (value.split("{.}").length !== 2) {
+        throw new Error("command template must contain exactly one {.} placeholder");
+      }
+      commandTemplate = value;
+    } else {
+      let parsed;
+      try {
+        parsed = JSON.parse(value);
+      } catch (error) {
+        throw new Error(`!params must contain a JSON object: ${executionError(error)}`);
+      }
+      if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+        throw new Error("!params must contain a JSON object");
+      }
+      if (Object.hasOwn(parsed, "cmd")) {
+        throw new Error("!params must not contain cmd; the script body supplies it");
+      }
+      if (Object.hasOwn(parsed, "login") && parsed.login !== false) {
+        throw new Error("!params login must be false");
+      }
+      params = parsed;
+    }
+    remaining = first.body;
   }
 
-  const commandTemplate = trimmedLine.slice("#!cmd=".length);
-  if (commandTemplate === "") {
-    throw new Error("command template must not be empty");
-  }
-  if (commandTemplate.split("{.}").length !== 2) {
-    throw new Error("command template must contain exactly one {.} placeholder");
-  }
-  return {commandTemplate, body: first.body};
+  return {commandTemplate, params, body: remaining};
 }
 
 function parseScript(input) {
@@ -63,8 +110,13 @@ function parseScript(input) {
     body = first.body;
   }
 
-  const command = parseCommandTemplate(body);
-  return {interpreter, body: command.body, commandTemplate: command.commandTemplate};
+  const directives = parseDirectives(body);
+  return {
+    interpreter,
+    body: directives.body,
+    commandTemplate: directives.commandTemplate,
+    params: directives.params,
+  };
 }
 
 function executionError(error) {
@@ -251,8 +303,11 @@ const shellTool = {
     description: `Run one free-form script without an outer heredoc or command-string quoting.
 Use the first line as an optional shebang. A bare interpreter, a full path, and
 /usr/bin/env forms are accepted. Without a shebang, bash runs the complete input.
-An optional #!cmd= directive can follow the shebang or be the first line.
+An optional #!cmd= directive can follow the shebang or be the first directive line.
 Its single {.} placeholder expands to the normalized shell frontend command.
+An optional !params JSON-object directive can occur beside #!cmd= in either order.
+The script body supplies cmd, so !params must not contain cmd.
+If !params contains login, its value must be false.
 The executor passes the exact body without shell parsing or a temporary file.
 Bun and Node.js receive the body through their direct evaluation option.
 Other interpreters receive the body through an anonymous descriptor.
@@ -268,7 +323,8 @@ The interpreter keeps frontend standard input available as program data.`,
   },
 
   translate(input, api) {
-    return input.commandTemplate === "" ? api.exec() : api.exec(input.commandTemplate);
+    const template = input.commandTemplate === "" ? undefined : input.commandTemplate;
+    return api.exec(template, input.params);
   },
 
   execute(argv, context) {
