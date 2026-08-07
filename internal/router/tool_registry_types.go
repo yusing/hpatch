@@ -12,7 +12,6 @@ type (
 		PluginID      string          `json:"plugin_id"`
 		Name          string          `json:"name"`
 		Specification json.RawMessage `json:"specification"`
-		MaxInputBytes int             `json:"max_input_bytes"`
 		Module        string          `json:"module,omitempty"`
 		ModuleIndex   int             `json:"module_index,omitempty"`
 		Executor      bool            `json:"executor"`

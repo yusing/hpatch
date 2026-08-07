@@ -16,7 +16,6 @@ export default {
   id: "output.test",
   tools: [{
     specification: {type: "custom", name: "output_test", description: "test tool"},
-    maxInputBytes: 1,
     parse(input) { return input; },
     argv(input) { return [input]; },
     translate(_input, api) { return api.exec(); },
@@ -34,10 +33,10 @@ export default {
 	}
 }
 
-func TestComparedExecutionHostOutputBoundCoversJSONExpansion(t *testing.T) {
-	const minimum = 2*6*maxHostOutputBytes + 1024
-	if maxComparedExecutionHostOutputBytes < minimum {
-		t.Fatalf("compared execution output bound = %d, want at least %d", maxComparedExecutionHostOutputBytes, minimum)
+func TestExecutionHostOutputBoundCoversJSONExpansion(t *testing.T) {
+	const minimum = 6*maxHostOutputBytes + 1024
+	if maxEncodedExecutionHostOutputBytes < minimum {
+		t.Fatalf("execution output bound = %d, want at least %d", maxEncodedExecutionHostOutputBytes, minimum)
 	}
 }
 

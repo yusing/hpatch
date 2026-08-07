@@ -2,7 +2,6 @@ import {spawn} from "node:child_process";
 
 import type {Tool} from "../../plugin.d.ts";
 import {
-  MAX_OUTPUT_BYTES,
   byteLength,
   decodeUTF8,
   errorText,
@@ -13,7 +12,6 @@ import {
 
 // Source: internal/router/hgrep_worker.go:119:460 argument parsing, rg transport, and row rendering.
 const MAX_STDERR_BYTES = 64 * 1024;
-const MAX_CONTROL_EVENT_BYTES = 64 * 1024;
 const LIMIT_MESSAGE = "hgrep: output limit reached; retry with a narrower search\n";
 
 const silentLongOptions = new Set([
@@ -388,7 +386,12 @@ function conciseDiagnostic(diagnostic: string): string {
   return diagnostic;
 }
 
-async function runRipgrep(argumentsValue: string[], maxOutputBytes: number): Promise<{current: string; stock: string}> {
+type ComparedOutput = {
+  current: string;
+  stock: string;
+};
+
+async function runRipgrep(argumentsValue: string[], maxOutputBytes: number): Promise<ComparedOutput> {
   const child = spawn("rg", ["--json", "--no-config", ...argumentsValue], {
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -444,10 +447,7 @@ async function runRipgrep(argumentsValue: string[], maxOutputBytes: number): Pro
     currentBytes += rowBytes;
     return true;
   };
-  const eventLimit = (): number => Math.max(
-    MAX_CONTROL_EVENT_BYTES,
-    maxOutputBytes - currentBytes - byteLength(LIMIT_MESSAGE),
-  );
+const eventLimit = (): number => Math.max(0, maxOutputBytes - currentBytes - byteLength(LIMIT_MESSAGE));
   const takePending = (): Buffer => {
     const raw = pending.length === 1 ? pending[0] : Buffer.concat(pending, pendingBytes);
     pending = [];
@@ -520,7 +520,7 @@ export function createHGrepTool(description: string, grammar: string): Tool<stri
     argv(input) {
       return splitArguments(input);
     },
-    async execute(argv) {
+    async execute(argv, context) {
       let normalized: NormalizedArguments;
       try {
         normalized = normalizeArguments(argv);
@@ -531,7 +531,7 @@ export function createHGrepTool(description: string, grammar: string): Tool<stri
         ? ""
         : `hgrep: warning: ignoring ripgrep options ${normalized.warnings.join(", ")}; output remains verified rows\n`;
       try {
-        const maxOutputBytes = MAX_OUTPUT_BYTES - byteLength(warning);
+        const maxOutputBytes = context.outputBudgetBytes - byteLength(warning);
         const result = await runRipgrep(normalized.arguments, maxOutputBytes);
         return {
           stdout: result.current,

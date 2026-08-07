@@ -399,16 +399,18 @@ func TestResponsesHandlerRejectsBackgroundBeforeUpstream(t *testing.T) {
 	}
 }
 
-func TestResponsesHandlerRejectsOversizedBodyBeforeUpstream(t *testing.T) {
-	request := httptest.NewRequest(http.MethodPost, "/v1/responses", io.LimitReader(serverRepeatingReader{}, maxResponsesRequest+1))
+func TestResponsesHandlerRejectsBodyBeyondRouterBufferBudget(t *testing.T) {
+	request := httptest.NewRequest(http.MethodPost, "/v1/responses", io.LimitReader(serverRepeatingReader{}, responsesRequestBufferBytes+1))
 	recorder := httptest.NewRecorder()
 	provider := &serverFakeProvider{}
+
 	responsesHandler(t.Context(), time.Minute, provider, newDiagnostics(io.Discard), nil, nil, new(atomic.Uint64))(recorder, request)
+
 	if recorder.Code != http.StatusRequestEntityTooLarge {
 		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusRequestEntityTooLarge)
 	}
 	if len(provider.forwarded) != 0 {
-		t.Fatal("oversized request reached upstream")
+		t.Fatal("request beyond router buffer budget reached upstream")
 	}
 }
 
@@ -1218,11 +1220,11 @@ func TestModelsHandlerRejectsUpstreamBodyReadFailure(t *testing.T) {
 	}
 }
 
-func TestModelsHandlerRejectsOversizedUpstreamBody(t *testing.T) {
+func TestModelsHandlerRejectsBodyBeyondRouterBufferBudget(t *testing.T) {
 	httpClient := &http.Client{Transport: serverRoundTripper(func(*http.Request) (*http.Response, error) {
 		return &http.Response{
 			StatusCode: http.StatusOK,
-			Body:       io.NopCloser(io.LimitReader(serverRepeatingReader{}, maxModelsResponseBytes+1)),
+			Body:       io.NopCloser(io.LimitReader(serverRepeatingReader{}, modelsResponseBufferBytes+1)),
 		}, nil
 	})}
 	request := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
@@ -1231,7 +1233,7 @@ func TestModelsHandlerRejectsOversizedUpstreamBody(t *testing.T) {
 
 	modelsHandler(newProviderClient(testProviderBaseURL, httpClient))(recorder, request)
 
-	if recorder.Code != http.StatusBadGateway || !strings.Contains(recorder.Body.String(), "too large") {
+	if recorder.Code != http.StatusBadGateway || !strings.Contains(recorder.Body.String(), "router buffer budget") {
 		t.Fatalf("response = %d %q", recorder.Code, recorder.Body.String())
 	}
 }
@@ -1355,7 +1357,6 @@ func TestProviderClientRejectsMissingOrMalformedCodexAuthentication(t *testing.T
 func TestProviderClientOmitsUnsafeCodexCacheKey(t *testing.T) {
 	for name, cacheKey := range map[string]string{
 		"control byte": "cache\nkey",
-		"too long":     strings.Repeat("x", maxSessionIDBytes+1),
 	} {
 		t.Run(name, func(t *testing.T) {
 			var forwarded bool
@@ -1470,10 +1471,10 @@ func TestProviderClientCancelsRequestWithCodexRequestHeaders(t *testing.T) {
 	}
 }
 
-func TestCopyJSONTransformedRejectsOversizedResponse(t *testing.T) {
-	_, err := copyJSONTransformed(io.Discard, io.LimitReader(serverRepeatingReader{}, maxUpstreamJSONBytes+1), nil, nil)
-	if err == nil || !strings.Contains(err.Error(), "exceeds") {
-		t.Fatalf("error = %v, want response size rejection", err)
+func TestCopyJSONTransformedRejectsBodyBeyondRouterBufferBudget(t *testing.T) {
+	_, err := copyJSONTransformed(io.Discard, io.LimitReader(serverRepeatingReader{}, upstreamJSONBufferBytes+1), nil, nil)
+	if err == nil || !strings.Contains(err.Error(), "router buffer budget") {
+		t.Fatalf("error = %v, want router buffer budget rejection", err)
 	}
 }
 
@@ -1531,6 +1532,7 @@ func TestRunReturnsCancellationAfterGracefulShutdown(t *testing.T) {
 		t.Skipf("installed hpatch unavailable: %v", err)
 	}
 	t.Setenv("CODEX_HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	ctx, cancel := context.WithCancel(t.Context())
 	writer := &cancelOnWrite{cancel: cancel}
 	err := Run(ctx, []string{"--listen", "127.0.0.1:0"}, writer)

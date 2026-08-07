@@ -19,10 +19,8 @@ import (
 )
 
 const (
-	toolPluginManifestFilename   = "workers.json"
-	toolFrontendLockFilename     = ".hpatch-router-tools.lock"
-	maxToolWorkerSnapshotBytes   = 64 << 20
-	maxToolRegistryContributions = 128
+	toolPluginManifestFilename = "workers.json"
+	toolFrontendLockFilename   = ".hpatch-router-tools.lock"
 )
 
 func buildToolRegistry(ctx context.Context, dataDirectory, hpatchDescription string) (*toolRegistry, error) {
@@ -68,7 +66,6 @@ func buildToolRegistry(ctx context.Context, dataDirectory, hpatchDescription str
 		PluginID:      "builtin.hpatch",
 		Name:          hpatchToolName,
 		Specification: mustMarshalJSON(customGrammarTool(hpatchToolName, hpatchDescription, hpatch.ToolGrammar())),
-		MaxInputBytes: maxHPatchScriptBytes,
 		Builtin:       true,
 	}}
 	var validationErrors []error
@@ -102,7 +99,6 @@ func buildToolRegistry(ctx context.Context, dataDirectory, hpatchDescription str
 				PluginID:      plugin.ID,
 				Name:          jsonString(specification, "name"),
 				Specification: slices.Clone(tool.Specification),
-				MaxInputBytes: tool.MaxInputBytes,
 				Module:        plugin.Module,
 				ModuleIndex:   toolIndex,
 				Executor:      true,
@@ -112,13 +108,6 @@ func buildToolRegistry(ctx context.Context, dataDirectory, hpatchDescription str
 			}
 			contributions = append(contributions, contribution)
 		}
-	}
-	if len(contributions) > maxToolRegistryContributions {
-		validationErrors = append(validationErrors, fmt.Errorf(
-			"tool registry contains %d contributions, limit is %d",
-			len(contributions),
-			maxToolRegistryContributions,
-		))
 	}
 	byName := make(map[string]toolContribution, len(contributions))
 	for _, contribution := range contributions {
@@ -203,12 +192,6 @@ func validateToolContribution(contribution toolContribution) error {
 	if specification.Type != "custom" || specification.Name != contribution.Name || specification.Description == "" {
 		return fmt.Errorf("%s/%s: normalized custom-tool specification is inconsistent", contribution.PluginID, contribution.Name)
 	}
-	if len(specification.Description) > 16<<10 {
-		return fmt.Errorf("%s/%s: description exceeds %d bytes", contribution.PluginID, contribution.Name, 16<<10)
-	}
-	if contribution.MaxInputBytes < 1 || contribution.MaxInputBytes > maxHPatchScriptBytes {
-		return fmt.Errorf("%s/%s: input limit must be from 1 through %d bytes", contribution.PluginID, contribution.Name, maxHPatchScriptBytes)
-	}
 	if specification.Format == nil {
 		return nil
 	}
@@ -235,7 +218,6 @@ func toolRegistryIdentity(manifest toolWorkerManifest, runtimePath string) (iden
 
 	digest := sha256.New()
 	_, _ = digest.Write(encoded)
-	var total int64
 	err = fs.WalkDir(runtimeRoot.FS(), ".", func(relative string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
@@ -263,20 +245,16 @@ func toolRegistryIdentity(manifest toolWorkerManifest, runtimePath string) (iden
 			return fmt.Errorf("tool registry snapshot entry %s changed during verification", relative)
 		}
 		fileDigest := sha256.New()
-		copied, copyErr := io.Copy(fileDigest, io.LimitReader(file, maxToolWorkerSnapshotBytes-total+1))
+		copied, copyErr := io.Copy(fileDigest, file)
 		after, afterErr := file.Stat()
 		closeErr := file.Close()
 		if copyErr != nil || afterErr != nil || closeErr != nil {
 			return errors.Join(copyErr, afterErr, closeErr)
 		}
-		if copied > maxToolWorkerSnapshotBytes-total {
-			return fmt.Errorf("tool registry snapshot exceeds %d bytes", maxToolWorkerSnapshotBytes)
-		}
 		if !os.SameFile(before, after) || before.Size() != after.Size() || before.ModTime() != after.ModTime() ||
 			copied != before.Size() {
 			return fmt.Errorf("tool registry snapshot entry %s changed during verification", relative)
 		}
-		total += copied
 		_, _ = digest.Write([]byte(filepath.ToSlash(relative)))
 		_, _ = digest.Write([]byte{0})
 		_, _ = digest.Write(fileDigest.Sum(nil))

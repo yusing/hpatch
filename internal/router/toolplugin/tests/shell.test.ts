@@ -1,5 +1,6 @@
 import {afterEach, describe, expect, test} from "bun:test";
 import {spawn, spawnSync, type ChildProcessWithoutNullStreams} from "node:child_process";
+import {closeSync, openSync} from "node:fs";
 import {lstat, mkdtemp, mkdir, readFile, readdir, rm, stat} from "node:fs/promises";
 import {tmpdir} from "node:os";
 import path from "node:path";
@@ -136,9 +137,6 @@ describe("installable shell plugin", () => {
     ]) {
       expect(() => tool.parse(input)).toThrow();
     }
-    expect(() => tool.parse("x".repeat(64 * 1024 + 1))).toThrow(
-      "script must not exceed 65536 UTF-8 bytes",
-    );
   });
 
   test("executes the exact body and inherits cwd and environment", async () => {
@@ -157,7 +155,7 @@ describe("installable shell plugin", () => {
       "",
     ].join("\n");
     const parsed = await tool.parse(input);
-    const result = await tool.execute(await tool.argv(parsed));
+    const result = await tool.execute(await tool.argv(parsed), {stdinFD: null, scriptReadFD: null, scriptWriteFD: null, outputBudgetBytes: 16 * 1024 * 1024});
 
     expect(result).toEqual({
       stdout: `${workingDirectory}|inherited`,
@@ -169,10 +167,60 @@ describe("installable shell plugin", () => {
 
   test("reports an unavailable interpreter", async () => {
     const parsed = await tool.parse("#!hpatch-missing-interpreter\nignored");
-    const result = await tool.execute(await tool.argv(parsed));
+    const result = await tool.execute(await tool.argv(parsed), {stdinFD: null, scriptReadFD: null, scriptWriteFD: null, outputBudgetBytes: 16 * 1024 * 1024});
 
     expect(result.exitCode).toBe(127);
     expect(result.stderr).toContain("not found");
+  });
+
+  test("keeps an overflow diagnostic inside the shared output budget", async () => {
+    const nullDevice = process.platform === "win32" ? "NUL" : "/dev/null";
+    const inputFD = openSync(nullDevice, "r");
+    const scriptReadFD = openSync(nullDevice, "r");
+    const scriptWriteFD = openSync(nullDevice, "r");
+    try {
+      const budget = 128;
+      const result = await tool.execute(
+        [process.execPath, "process.stdout.write('x'.repeat(200))"],
+        {
+          stdinFD: inputFD,
+          scriptReadFD,
+          scriptWriteFD,
+          outputBudgetBytes: budget,
+        },
+      );
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toContain("interpreter output exceeds");
+      expect(Buffer.byteLength((result.stdout ?? "") + (result.stderr ?? ""), "utf8")).toBeLessThanOrEqual(budget);
+    } finally {
+      closeSync(inputFD);
+      closeSync(scriptReadFD);
+    }
+  });
+
+  test("bounds malformed UTF-8 interpreter output", async () => {
+    const nullDevice = process.platform === "win32" ? "NUL" : "/dev/null";
+    const inputFD = openSync(nullDevice, "r");
+    const scriptReadFD = openSync(nullDevice, "r");
+    const scriptWriteFD = openSync(nullDevice, "r");
+    try {
+      const budget = 128;
+      const result = await tool.execute(
+        [process.execPath, "process.stdout.write(Buffer.alloc(200, 0xff))"],
+        {
+          stdinFD: inputFD,
+          scriptReadFD,
+          scriptWriteFD,
+          outputBudgetBytes: budget,
+        },
+      );
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toContain("output is not UTF-8");
+      expect(Buffer.byteLength((result.stdout ?? "") + (result.stderr ?? ""), "utf8")).toBeLessThanOrEqual(budget);
+    } finally {
+      closeSync(inputFD);
+      closeSync(scriptReadFD);
+    }
   });
 
   test("validates and executes through the production plugin host", () => {
@@ -201,6 +249,7 @@ describe("installable shell plugin", () => {
       env: {...process.env, HPATCH_SHELL_HOST_TEST: "stdin", NODE_NO_WARNINGS: "1"},
       input: JSON.stringify({
         operation: "execute",
+        outputBudgetBytes: 16 * 1024 * 1024,
         snapshotRoot: repositoryRoot,
         module: "plugins/shell.mjs",
         index: 0,

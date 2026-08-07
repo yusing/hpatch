@@ -7,9 +7,9 @@ import (
 	"path/filepath"
 )
 
-// One execution output can expand to six times its UTF-8 size during JSON encoding.
-// The compared response carries two independently bounded outputs.
-const maxComparedExecutionHostOutputBytes = 2 * maxExecutionHostOutputBytes
+// JSON can encode each byte as a six-byte Unicode escape. The additional
+// allowance covers the execution envelope.
+const maxEncodedExecutionHostOutputBytes = 6*maxHostOutputBytes + 1<<20
 
 func Execute(
 	ctx context.Context,
@@ -17,28 +17,30 @@ func Execute(
 	index int,
 	arguments []string,
 	stdin *os.File,
-) (Execution, error) {
+) (ExecutionOutput, error) {
 	request := struct {
-		Operation    string   `json:"operation"`
-		SnapshotRoot string   `json:"snapshotRoot"`
-		Module       string   `json:"module"`
-		Index        int      `json:"index"`
-		Arguments    []string `json:"arguments"`
-		InputFD      bool     `json:"inputFD"`
+		Operation         string   `json:"operation"`
+		SnapshotRoot      string   `json:"snapshotRoot"`
+		Module            string   `json:"module"`
+		Index             int      `json:"index"`
+		Arguments         []string `json:"arguments"`
+		InputFD           bool     `json:"inputFD"`
+		OutputBudgetBytes int      `json:"outputBudgetBytes"`
 	}{
-		Operation:    "execute",
-		SnapshotRoot: filepath.Join(runtimeRoot, snapshotDirectory),
-		Module:       module,
-		Index:        index,
-		Arguments:    arguments,
-		InputFD:      stdin != nil,
+		Operation:         "execute",
+		SnapshotRoot:      filepath.Join(runtimeRoot, snapshotDirectory),
+		Module:            module,
+		Index:             index,
+		Arguments:         arguments,
+		InputFD:           stdin != nil,
+		OutputBudgetBytes: maxHostOutputBytes,
 	}
-	var result Execution
+	var result ExecutionOutput
 	var scriptFiles []*os.File
 	if stdin != nil {
 		scriptRead, scriptWrite, err := os.Pipe()
 		if err != nil {
-			return Execution{}, fmt.Errorf("create plugin script pipe: %w", err)
+			return ExecutionOutput{}, fmt.Errorf("create plugin script pipe: %w", err)
 		}
 		scriptFiles = []*os.File{scriptRead, scriptWrite}
 		defer func() {
@@ -51,7 +53,7 @@ func Execute(
 		node,
 		filepath.Join(runtimeRoot, hostFilename),
 		"",
-		maxComparedExecutionHostOutputBytes,
+		maxEncodedExecutionHostOutputBytes,
 		stdin,
 		scriptFiles,
 		request,

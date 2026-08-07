@@ -12,6 +12,7 @@ import plugin from "../src/builtin/tools.ts";
 const originalCWD = process.cwd();
 const originalPath = process.env.PATH;
 const temporaryDirectories: string[] = [];
+const executionContext = {stdinFD: null, scriptReadFD: null, scriptWriteFD: null, outputBudgetBytes: 16 * 1024 * 1024};
 
 async function temporaryDirectory(prefix: string): Promise<string> {
   const directory = await mkdtemp(path.join(tmpdir(), prefix));
@@ -90,18 +91,21 @@ describe("hread built-in plugin", () => {
     await writeFile("second file.txt", "one\ntwo\nthree", "utf8");
 
     const tool = createHReadTool("description", "start: TEST");
-    const whole = await tool.execute(["plain.txt\n"]);
+    const whole = await tool.execute(["plain.txt\n"], executionContext);
     expect(whole).toEqual({
       stdout: [
         formatHashLine(1, "alpha"),
         formatHashLine(2, "beta"),
         formatHashLine(3, "gamma"),
       ].join(""),
-      stock: {stdout: "alpha\nbeta\ngamma\n", exitCode: 0},
+      stock: {
+        stdout: "alpha\nbeta\ngamma\n",
+        exitCode: 0,
+      },
       exitCode: 0,
     });
 
-    const missing = await tool.execute(["missing.txt"]);
+    const missing = await tool.execute(["missing.txt"], executionContext);
     expect(missing).toEqual({
       stderr: "hread: ENOENT: no such file or directory\n",
       exitCode: 1,
@@ -109,7 +113,7 @@ describe("hread built-in plugin", () => {
 
     const batch = await tool.execute([
       "plain.txt 2:9\n\"second file.txt\" 2:3\nmissing.txt\r\n",
-    ]);
+    ], executionContext);
     expect(batch.exitCode).toBe(0);
     expect(batch.stdout).toContain("==> plain.txt 2:9 <==\n");
     expect(batch.stdout).toContain(formatHashLine(2, "beta"));
@@ -118,19 +122,11 @@ describe("hread built-in plugin", () => {
     expect(batch.stdout).toContain(
       "==> missing.txt <==\nhread: ENOENT: no such file or directory\n",
     );
-    expect(batch.stock?.stdout).toContain(
-      "==> plain.txt 2:9 <==\nbeta\ngamma\n==> \"second file.txt\" 2:3 <==\ntwo\nthree\n",
-    );
 
-    const sixSpecs = Array.from({length: 6}, (_, index) => `missing${index}.txt`).join("\n");
-    const framedSix = await tool.execute([`${sixSpecs}\n`]);
-    expect(framedSix.exitCode).toBe(0);
-    expect(framedSix.stdout).toContain("==> missing5.txt <==\n");
-    const framedSeven = await tool.execute([`${sixSpecs}\nmissing6.txt\n`]);
-    expect(framedSeven).toEqual({
-      stderr: "hread: hread batch exceeds 6 items\n",
-      exitCode: 1,
-    });
+    const sevenSpecs = Array.from({length: 7}, (_, index) => `missing${index}.txt`).join("\n");
+    const framedSeven = await tool.execute([`${sevenSpecs}\n`], executionContext);
+    expect(framedSeven.exitCode).toBe(0);
+    expect(framedSeven.stdout).toContain("==> missing6.txt <==\n");
   });
 
   test("rejects invalid ranges, non-regular files, and invalid UTF-8", async () => {
@@ -152,7 +148,7 @@ describe("hread built-in plugin", () => {
       ["folder", "not a regular file"],
       ...(process.platform === "win32" ? [] : [["pipe", "not a regular file"]]),
     ]) {
-      const result = await tool.execute([input]);
+      const result = await tool.execute([input], executionContext);
       expect(result.exitCode).toBe(1);
       expect(result.stderr).toContain(diagnostic);
     }
@@ -222,34 +218,33 @@ describe("hgrep built-in plugin", () => {
     await writeFile("path with spaces.txt", "before\nneedle\nafter\n", "utf8");
 
     const tool = createHGrepTool("description", "start: TEST");
-    const result = await tool.execute(["-A1", "-F", "needle", "path with spaces.txt"]);
+    const result = await tool.execute(["-A1", "-F", "needle", "path with spaces.txt"], executionContext);
     expect(result).toEqual({
       stdout: `${JSON.stringify("path with spaces.txt")}:${formatHashLine(2, "needle")}`
         + `${JSON.stringify("path with spaces.txt")}:${formatHashLine(3, "after")}`,
-      stderr: "",
       stock: {
-        stdout: `${JSON.stringify("path with spaces.txt")}:needle\n`
-          + `${JSON.stringify("path with spaces.txt")}:after\n`,
+        stdout: "\"path with spaces.txt\":needle\n\"path with spaces.txt\":after\n",
         stderr: "",
         exitCode: 0,
       },
+      stderr: "",
       exitCode: 0,
     });
 
     await writeFile("carriage.txt", "needle\r", "utf8");
-    const carriage = await tool.execute(["-F", "needle", "carriage.txt"]);
+    const carriage = await tool.execute(["-F", "needle", "carriage.txt"], executionContext);
     expect(carriage).toEqual({
       stdout: `${JSON.stringify("carriage.txt")}:${formatHashLine(1, "needle")}`,
-      stderr: "",
       stock: {
-        stdout: `${JSON.stringify("carriage.txt")}:needle\n`,
+        stdout: "\"carriage.txt\":needle\n",
         stderr: "",
         exitCode: 0,
       },
+      stderr: "",
       exitCode: 0,
     });
 
-    const missing = await tool.execute(["-F", "needle", "missing.txt"]);
+    const missing = await tool.execute(["-F", "needle", "missing.txt"], executionContext);
     expect(missing.exitCode).toBe(1);
     expect(missing.stderr).toMatch(
       /^hgrep: (?!rg:)(?!.*missing\.txt)(?!.*IO error for operation on ).+\n$/u,
@@ -274,15 +269,15 @@ describe("hgrep built-in plugin", () => {
       timer = setTimeout(() => reject(new Error("hgrep did not stop after its event limit")), 3000);
     });
     try {
-      const result = await Promise.race([tool.execute(["needle", "."]), timeout]);
+      const result = await Promise.race([tool.execute(["needle", "."], executionContext), timeout]);
       expect(result).toEqual({
         stdout: "hgrep: output limit reached; retry with a narrower search\n",
-        stderr: "",
         stock: {
           stdout: "hgrep: output limit reached; retry with a narrower search\n",
           stderr: "",
           exitCode: 0,
         },
+        stderr: "",
         exitCode: 0,
       });
     } finally {
@@ -296,11 +291,11 @@ describe("hgrep built-in plugin", () => {
     await writeFile("file.txt", "needle\n", "utf8");
 
     const tool = createHGrepTool("description", "start: TEST");
-    const ignored = await tool.execute(["--color", "always", "-F", "needle", "file.txt"]);
+    const ignored = await tool.execute(["--color", "always", "-F", "needle", "file.txt"], executionContext);
     expect(ignored.exitCode).toBe(0);
     expect(ignored.stderr).toContain("ignoring ripgrep options --color");
 
-    const rejected = await tool.execute(["--multiline", "needle", "file.txt"]);
+    const rejected = await tool.execute(["--multiline", "needle", "file.txt"], executionContext);
     expect(rejected.exitCode).toBe(1);
     expect(rejected.stderr).toContain("--multiline is incompatible");
   });

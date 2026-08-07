@@ -29,14 +29,13 @@ export type ExecutionOutput = {
   exitCode: number;
 };
 
-export type ExecutionResult = ExecutionOutput & {
-  stock?: ExecutionOutput;
-};
+export type ExecutionResult = ExecutionOutput & {stock?: ExecutionOutput};
 
 export type ExecutionContext = {
   stdinFD: number | null;
   scriptReadFD: number | null;
   scriptWriteFD: number | null;
+  outputBudgetBytes: number;
 };
 
 export type Tool<T> = {
@@ -50,7 +49,6 @@ export type Tool<T> = {
       definition: string;
     };
   };
-  maxInputBytes: number;
   parse(input: string): T | Promise<T>;
   argv(input: T): string[] | Promise<string[]>;
   translate(input: T, api: TranslationAPI): Carrier | Promise<Carrier>;

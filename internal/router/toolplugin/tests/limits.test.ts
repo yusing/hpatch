@@ -24,7 +24,6 @@ test("bounds combined executor output", async () => {
   id: "execution-output.test",
   tools: [{
     specification: {type: "custom", name: "execution_output_test", description: "test tool"},
-    maxInputBytes: 1,
     parse(input) { return input; },
     argv(input) { return [input]; },
     translate(_input, api) { return api.exec(); },
@@ -43,6 +42,7 @@ test("bounds combined executor output", async () => {
     env: {...process.env, NODE_NO_WARNINGS: "1"},
     input: JSON.stringify({
       operation: "execute",
+      outputBudgetBytes: 16 * 1024 * 1024,
       snapshotRoot: directory,
       module: "plugin.mjs",
       index: 0,
@@ -54,4 +54,3 @@ test("bounds combined executor output", async () => {
     "executor stdout and stderr exceed 16777216 UTF-8 bytes",
   );
 });
-

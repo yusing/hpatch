@@ -62,6 +62,18 @@ func TestToolPluginWorkerRunsPinnedImplementationInCodexContext(t *testing.T) {
 	if stdout.String() != wantStdout || stderr.String() != "fixture stderr" {
 		t.Fatalf("worker stdout %q, stderr %q", stdout.String(), stderr.String())
 	}
+	manifest, err := readToolWorkerManifest(filepath.Join(registry.SnapshotDir, toolPluginManifestFilename))
+	if err != nil {
+		t.Fatal(err)
+	}
+	gain, err := hpatch.LoadGainMetrics(manifest.MetricsDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(gain.ToolInputs) != 1 || gain.ToolInputs[0].StockTokens == 0 ||
+		gain.ToolInputs[0].CurrentTokens == gain.ToolInputs[0].StockTokens {
+		t.Fatalf("worker stock-result metrics = %+v", gain.ToolInputs)
+	}
 }
 
 func TestToolPluginWorkerResolvesBasenameFromPath(t *testing.T) {
@@ -151,13 +163,16 @@ func TestBuiltinToolWorkersRunGeneratedTypeScriptImplementations(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(gain.ToolInputs) != 2 || gain.NetAddedInput == "0" {
+	if len(gain.ToolInputs) != 2 {
 		t.Fatalf("built-in input metrics = %+v", gain)
 	}
 	for _, row := range gain.ToolInputs {
-		if row.CurrentTokens <= row.StockTokens || row.Reduction == "n/a" {
+		if row.CurrentTokens <= row.StockTokens || row.Reduction == "0.0" {
 			t.Fatalf("built-in input metric row = %+v", row)
 		}
+	}
+	if gain.AllToolInputs.CurrentTokens <= gain.AllToolInputs.StockTokens {
+		t.Fatalf("all built-in input metrics = %+v", gain.AllToolInputs)
 	}
 }
 

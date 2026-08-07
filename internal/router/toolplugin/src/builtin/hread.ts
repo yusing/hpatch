@@ -4,7 +4,6 @@ import {open} from "node:fs/promises";
 import type {Tool} from "../../plugin.d.ts";
 
 import {
-  MAX_OUTPUT_BYTES,
   byteLength,
   errorText,
   createExecutorTool,
@@ -13,7 +12,6 @@ import {
 } from "./common.ts";
 
 // Source: hread.go:45:385 parseHReadSpec, readHashLinesForHost, and formatHashLineStream.
-const MAX_BATCH_ITEMS = 6;
 const READ_BUFFER_BYTES = 32 * 1024;
 const BATCH_LIMIT_MESSAGE = "hread: batch output limit reached; retry remaining items in a narrower batch\n";
 
@@ -108,9 +106,6 @@ function parseReadSpec(input: string): ReadSpec {
 
 function parseReadSpecs(input: string): ParsedReadSpec[] {
   const rawSpecs = stripOptionalFinalNewline(input).split("\n");
-  if (rawSpecs.length > MAX_BATCH_ITEMS) {
-    throw new Error(`hread batch exceeds ${MAX_BATCH_ITEMS} items`);
-  }
   const specs = rawSpecs.map((raw) => {
     const normalized = raw.endsWith("\r") ? raw.slice(0, -1) : raw;
     if (normalized === "") {
@@ -135,6 +130,7 @@ type ComparedOutput = {
   current: string;
   stock: string;
 };
+
 
 async function readHashLines(spec: ReadSpec, maxOutputBytes: number): Promise<ComparedOutput> {
   const handle = await open(spec.path, constants.O_RDONLY | (constants.O_NONBLOCK ?? 0));
@@ -265,13 +261,13 @@ async function readHashLines(spec: ReadSpec, maxOutputBytes: number): Promise<Co
   }
 }
 
-async function executeRead(input: string): Promise<ComparedOutput> {
+async function executeRead(input: string, maxOutputBytes: number): Promise<ComparedOutput> {
   const specs = parseReadSpecs(input);
   if (specs.length === 1) {
-    return readHashLines(specs[0].spec, MAX_OUTPUT_BYTES);
+    return readHashLines(specs[0].spec, maxOutputBytes);
   }
 
-  const dataLimit = Math.max(0, MAX_OUTPUT_BYTES - byteLength(BATCH_LIMIT_MESSAGE));
+  const dataLimit = Math.max(0, maxOutputBytes - byteLength(BATCH_LIMIT_MESSAGE));
   let current = "";
   let currentBytes = 0;
   let stock = "";
@@ -286,7 +282,7 @@ async function executeRead(input: string): Promise<ComparedOutput> {
     return true;
   };
   const appendLimitMessage = (): void => {
-    if (currentBytes + byteLength(BATCH_LIMIT_MESSAGE) <= MAX_OUTPUT_BYTES) {
+    if (currentBytes + byteLength(BATCH_LIMIT_MESSAGE) <= maxOutputBytes) {
       current += BATCH_LIMIT_MESSAGE;
       stock += BATCH_LIMIT_MESSAGE;
       currentBytes += byteLength(BATCH_LIMIT_MESSAGE);
@@ -332,7 +328,7 @@ export function createHReadTool(description: string, grammar: string): Tool<stri
     argv(input) {
       return [input];
     },
-    async execute(argv) {
+    async execute(argv, context) {
       if (argv.length !== 1) {
         return {
           stderr: "hread: expected one complete grammar input argument\n",
@@ -340,7 +336,7 @@ export function createHReadTool(description: string, grammar: string): Tool<stri
         };
       }
       try {
-        const result = await executeRead(argv[0]);
+        const result = await executeRead(argv[0], context.outputBudgetBytes);
         return {
           stdout: result.current,
           stock: {stdout: result.stock, exitCode: 0},

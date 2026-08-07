@@ -5,7 +5,6 @@ import "encoding/json"
 type (
 	Tool struct {
 		Specification json.RawMessage `json:"specification"`
-		MaxInputBytes int             `json:"maxInputBytes"`
 	}
 
 	Plugin struct {
@@ -29,14 +28,10 @@ type (
 	}
 
 	ExecutionOutput struct {
-		Stdout   string `json:"stdout"`
-		Stderr   string `json:"stderr"`
-		ExitCode int    `json:"exitCode"`
-	}
-
-	Execution struct {
-		ExecutionOutput
-		Stock *ExecutionOutput `json:"stock,omitempty"`
+		Stdout   string           `json:"stdout"`
+		Stderr   string           `json:"stderr"`
+		ExitCode int              `json:"exitCode"`
+		Stock    *ExecutionOutput `json:"stock,omitempty"`
 	}
 
 	Snapshot struct {

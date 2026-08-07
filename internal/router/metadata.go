@@ -13,10 +13,7 @@ import (
 	"strings"
 )
 
-const (
-	codexTurnMetadataHeader   = "x-codex-turn-metadata"
-	maxCodexTurnMetadataBytes = 32 << 10
-)
+const codexTurnMetadataHeader = "x-codex-turn-metadata"
 
 type codexTurnMetadata struct {
 	RequestKind string                     `json:"request_kind"`
@@ -45,7 +42,7 @@ func decodeCodexTurnMetadata(headers http.Header) (codexTurnMetadata, bool) {
 			}
 		}
 	}
-	if len(values) != 1 || len(values[0]) > maxCodexTurnMetadataBytes || !isASCII(values[0]) {
+	if len(values) != 1 || !isASCII(values[0]) {
 		return codexTurnMetadata{}, false
 	}
 

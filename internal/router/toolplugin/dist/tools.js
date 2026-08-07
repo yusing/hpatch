@@ -5,8 +5,6 @@ import { spawn } from "node:child_process";
 
 // src/builtin/common.ts
 import { createHash } from "node:crypto";
-var MAX_INPUT_BYTES = 64 * 1024;
-var MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
 function byteLength(value) {
   return Buffer.byteLength(value, "utf8");
 }
@@ -49,7 +47,6 @@ function createExecutorTool(options) {
       description: options.description,
       format: { type: "grammar", syntax: "regex", definition: options.grammar }
     },
-    maxInputBytes: MAX_INPUT_BYTES,
     parse(input) {
       return options.argv(input);
     },
@@ -65,7 +62,6 @@ function createExecutorTool(options) {
 
 // src/builtin/hgrep.ts
 var MAX_STDERR_BYTES = 64 * 1024;
-var MAX_CONTROL_EVENT_BYTES = 64 * 1024;
 var LIMIT_MESSAGE = `hgrep: output limit reached; retry with a narrower search
 `;
 var silentLongOptions = new Set([
@@ -471,7 +467,7 @@ async function runRipgrep(argumentsValue, maxOutputBytes) {
     currentBytes += rowBytes;
     return true;
   };
-  const eventLimit = () => Math.max(MAX_CONTROL_EVENT_BYTES, maxOutputBytes - currentBytes - byteLength(LIMIT_MESSAGE));
+  const eventLimit = () => Math.max(0, maxOutputBytes - currentBytes - byteLength(LIMIT_MESSAGE));
   const takePending = () => {
     const raw = pending.length === 1 ? pending[0] : Buffer.concat(pending, pendingBytes);
     pending = [];
@@ -541,7 +537,7 @@ function createHGrepTool(description, grammar) {
     argv(input) {
       return splitArguments(input);
     },
-    async execute(argv) {
+    async execute(argv, context) {
       let normalized;
       try {
         normalized = normalizeArguments(argv);
@@ -552,7 +548,7 @@ function createHGrepTool(description, grammar) {
       const warning = normalized.warnings.length === 0 ? "" : `hgrep: warning: ignoring ripgrep options ${normalized.warnings.join(", ")}; output remains verified rows
 `;
       try {
-        const maxOutputBytes = MAX_OUTPUT_BYTES - byteLength(warning);
+        const maxOutputBytes = context.outputBudgetBytes - byteLength(warning);
         const result = await runRipgrep(normalized.arguments, maxOutputBytes);
         return {
           stdout: result.current,
@@ -571,7 +567,6 @@ function createHGrepTool(description, grammar) {
 // src/builtin/hread.ts
 import { constants } from "node:fs";
 import { open } from "node:fs/promises";
-var MAX_BATCH_ITEMS = 6;
 var READ_BUFFER_BYTES = 32 * 1024;
 var BATCH_LIMIT_MESSAGE = `hread: batch output limit reached; retry remaining items in a narrower batch
 `;
@@ -654,9 +649,6 @@ function parseReadSpec(input) {
 function parseReadSpecs(input) {
   const rawSpecs = stripOptionalFinalNewline(input).split(`
 `);
-  if (rawSpecs.length > MAX_BATCH_ITEMS) {
-    throw new Error(`hread batch exceeds ${MAX_BATCH_ITEMS} items`);
-  }
   const specs = rawSpecs.map((raw) => {
     const normalized = raw.endsWith("\r") ? raw.slice(0, -1) : raw;
     if (normalized === "") {
@@ -797,12 +789,12 @@ async function readHashLines(spec, maxOutputBytes) {
     await handle.close();
   }
 }
-async function executeRead(input) {
+async function executeRead(input, maxOutputBytes) {
   const specs = parseReadSpecs(input);
   if (specs.length === 1) {
-    return readHashLines(specs[0].spec, MAX_OUTPUT_BYTES);
+    return readHashLines(specs[0].spec, maxOutputBytes);
   }
-  const dataLimit = Math.max(0, MAX_OUTPUT_BYTES - byteLength(BATCH_LIMIT_MESSAGE));
+  const dataLimit = Math.max(0, maxOutputBytes - byteLength(BATCH_LIMIT_MESSAGE));
   let current = "";
   let currentBytes = 0;
   let stock = "";
@@ -817,7 +809,7 @@ async function executeRead(input) {
     return true;
   };
   const appendLimitMessage = () => {
-    if (currentBytes + byteLength(BATCH_LIMIT_MESSAGE) <= MAX_OUTPUT_BYTES) {
+    if (currentBytes + byteLength(BATCH_LIMIT_MESSAGE) <= maxOutputBytes) {
       current += BATCH_LIMIT_MESSAGE;
       stock += BATCH_LIMIT_MESSAGE;
       currentBytes += byteLength(BATCH_LIMIT_MESSAGE);
@@ -864,7 +856,7 @@ function createHReadTool(description, grammar) {
     argv(input) {
       return [input];
     },
-    async execute(argv) {
+    async execute(argv, context) {
       if (argv.length !== 1) {
         return {
           stderr: `hread: expected one complete grammar input argument
@@ -873,7 +865,7 @@ function createHReadTool(description, grammar) {
         };
       }
       try {
-        const result = await executeRead(argv[0]);
+        const result = await executeRead(argv[0], context.outputBudgetBytes);
         return {
           stdout: result.current,
           stock: { stdout: result.stock, exitCode: 0 },

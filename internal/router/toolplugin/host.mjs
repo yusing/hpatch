@@ -4,15 +4,8 @@ import process from "node:process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const API_VERSION = "hpatch-tool-plugin/v1";
-const MAX_PLUGIN_TOOLS = 32;
-const MAX_ID_BYTES = 128;
-const MAX_DESCRIPTION_BYTES = 16 * 1024;
 const MAX_GRAMMAR_BYTES = 1024 * 1024;
-const MAX_INPUT_BYTES = 1024 * 1024;
-const MAX_ARGV_ITEMS = 256;
-const MAX_ARG_BYTES = 64 * 1024;
 const MAX_DIAGNOSTIC_BYTES = 16 * 1024;
-const MAX_EXECUTION_OUTPUT_BYTES = 16 * 1024 * 1024;
 const identifierPattern = /^[A-Za-z][A-Za-z0-9._-]*$/;
 const toolNamePattern = /^[A-Za-z_][A-Za-z0-9_-]*$/;
 const ruleHeaderPattern = /^[!?]?([A-Za-z_][A-Za-z0-9_]*)\s*:\s*(.*)$/s;
@@ -443,13 +436,13 @@ function validateSpecification(specification, label, errors) {
   if (specification.type !== "custom") {
     errors.push(`${label}: specification type must be "custom"`);
   }
-  if (typeof specification.name !== "string" || byteLength(specification.name) > 64 || !toolNamePattern.test(specification.name)) {
+  if (typeof specification.name !== "string" || !toolNamePattern.test(specification.name)) {
     errors.push(`${label}: specification name is invalid`);
   } else if (shellCommandNames.has(specification.name)) {
     errors.push(`${label}: specification name collides with a shell keyword or built-in`);
   }
-  if (typeof specification.description !== "string" || byteLength(specification.description) === 0 || byteLength(specification.description) > MAX_DESCRIPTION_BYTES) {
-    errors.push(`${label}: specification description must contain 1 to ${MAX_DESCRIPTION_BYTES} UTF-8 bytes`);
+  if (typeof specification.description !== "string" || specification.description === "") {
+    errors.push(`${label}: specification description must not be empty`);
   }
   if (specification.format !== undefined) {
     const format = specification.format;
@@ -475,14 +468,11 @@ function validateSpecification(specification, label, errors) {
 function validateTool(tool, modulePath, index, errors) {
   const label = `${modulePath}: tool ${index + 1}`;
   if (tool === null || typeof tool !== "object" || Array.isArray(tool)
-      || !exactKeys(tool, ["specification", "maxInputBytes", "parse", "argv", "translate", "execute"])) {
-    errors.push(`${label}: declaration must contain only specification, maxInputBytes, parse, argv, translate, and execute`);
+      || !exactKeys(tool, ["specification", "parse", "argv", "translate", "execute"])) {
+    errors.push(`${label}: declaration contains unsupported or missing fields`);
     return null;
   }
   const specification = validateSpecification(tool.specification, label, errors);
-  if (!Number.isSafeInteger(tool.maxInputBytes) || tool.maxInputBytes < 1 || tool.maxInputBytes > MAX_INPUT_BYTES) {
-    errors.push(`${label}: maxInputBytes must be an integer from 1 through ${MAX_INPUT_BYTES}`);
-  }
   for (const name of ["parse", "argv", "translate", "execute"]) {
     if (typeof tool[name] !== "function") {
       errors.push(`${label}: ${name} must be a function`);
@@ -491,10 +481,7 @@ function validateTool(tool, modulePath, index, errors) {
   if (specification === null || errors.some((message) => message.startsWith(`${label}:`))) {
     return null;
   }
-  return {
-    specification,
-    maxInputBytes: tool.maxInputBytes,
-  };
+  return {specification};
 }
 
 async function loadDeclaration(snapshotRoot, modulePath) {
@@ -523,11 +510,11 @@ async function validateModule(snapshotRoot, modulePath) {
   if (declaration.apiVersion !== API_VERSION) {
     errors.push(`${modulePath}: apiVersion must be "${API_VERSION}"`);
   }
-  if (typeof declaration.id !== "string" || byteLength(declaration.id) > MAX_ID_BYTES || !identifierPattern.test(declaration.id)) {
+  if (typeof declaration.id !== "string" || !identifierPattern.test(declaration.id)) {
     errors.push(`${modulePath}: id is invalid`);
   }
-  if (!Array.isArray(declaration.tools) || declaration.tools.length === 0 || declaration.tools.length > MAX_PLUGIN_TOOLS) {
-    errors.push(`${modulePath}: tools must contain 1 to ${MAX_PLUGIN_TOOLS} declarations`);
+  if (!Array.isArray(declaration.tools) || declaration.tools.length === 0) {
+    errors.push(`${modulePath}: tools must not be empty`);
   }
   const tools = [];
   if (Array.isArray(declaration.tools)) {
@@ -557,9 +544,9 @@ async function loadTool(snapshotRoot, modulePath, index) {
 }
 
 function validateArguments(argumentsValue) {
-  if (!Array.isArray(argumentsValue) || argumentsValue.length > MAX_ARGV_ITEMS
-      || argumentsValue.some((argument) => typeof argument !== "string" || byteLength(argument) > MAX_ARG_BYTES)) {
-    throw new Error(`argv must contain at most ${MAX_ARGV_ITEMS} strings of at most ${MAX_ARG_BYTES} UTF-8 bytes`);
+  if (!Array.isArray(argumentsValue)
+      || argumentsValue.some((argument) => typeof argument !== "string")) {
+    throw new Error("argv must contain only strings");
   }
   return argumentsValue;
 }
@@ -574,7 +561,6 @@ function validateCarrier(carrier) {
   if (carrier.kind === "exec"
       && exactKeys(carrier, ["kind", "template"])
       && typeof carrier.template === "string"
-      && byteLength(carrier.template) <= MAX_ARG_BYTES
       && carrier.template.split("{.}").length === 2) {
     return carrier;
   }
@@ -640,31 +626,35 @@ async function executeTool(request) {
   const tool = await loadTool(request.snapshotRoot, request.module, request.index);
   const argumentsValue = validateArguments(request.arguments);
   const hasInput = request.inputFD === true;
+  if (!Number.isSafeInteger(request.outputBudgetBytes) || request.outputBudgetBytes < 1) {
+    throw new Error("executor output budget must be a positive integer");
+  }
   const context = Object.freeze({
     stdinFD: hasInput ? 3 : null,
     scriptReadFD: hasInput ? 4 : null,
     scriptWriteFD: hasInput ? 5 : null,
+    outputBudgetBytes: request.outputBudgetBytes,
   });
   const execution = await tool.execute(argumentsValue, context);
   const current = normalizeExecutionOutput(execution, ["stdout", "stderr", "exitCode", "stock"]);
   if (current === null) {
     throw new Error("executor must return stdout/stderr strings and an exitCode from 0 through 255");
   }
-  if (byteLength(current.stdout) + byteLength(current.stderr) > MAX_EXECUTION_OUTPUT_BYTES) {
-    throw new Error(`executor stdout and stderr exceed ${MAX_EXECUTION_OUTPUT_BYTES} UTF-8 bytes`);
+  const currentBytes = byteLength(current.stdout) + byteLength(current.stderr);
+  if (currentBytes > request.outputBudgetBytes) {
+    throw new Error(`executor stdout and stderr exceed ${request.outputBudgetBytes} UTF-8 bytes`);
   }
-  let candidate;
+  let stock = null;
   try {
-    candidate = execution.stock;
+    stock = normalizeExecutionOutput(execution.stock, ["stdout", "stderr", "exitCode"]);
   } catch {
-    return current;
+    // Optional metric evidence cannot replace or invalidate the current result.
   }
-  const stock = normalizeExecutionOutput(candidate, ["stdout", "stderr", "exitCode"]);
-  if (stock === null
-      || byteLength(stock.stdout) + byteLength(stock.stderr) > MAX_EXECUTION_OUTPUT_BYTES) {
-    return current;
+  if (stock !== null
+      && currentBytes + byteLength(stock.stdout) + byteLength(stock.stderr) <= request.outputBudgetBytes) {
+    return {...current, stock};
   }
-  return {...current, stock};
+  return current;
 }
 
 async function main() {

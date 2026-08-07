@@ -1,10 +1,6 @@
 import {spawn, spawnSync} from "node:child_process";
 import {closeSync, writeFileSync} from "node:fs";
 
-const maxInputBytes = 64 * 1024;
-const maxArgvItems = 256;
-const maxArgBytes = 64 * 1024;
-const maxOutputBytesPerStream = 8 * 1024 * 1024 - 4096;
 
 function trimShebangField(value) {
   return value.replace(/^[ \t]+|[ \t]+$/gu, "");
@@ -21,15 +17,6 @@ function splitFirstLine(input) {
   };
 }
 
-function validateArgv(interpreter, body) {
-  const argv = [...interpreter, body];
-  if (argv.length > maxArgvItems) {
-    throw new Error(`shebang selects more than ${maxArgvItems - 1} interpreter fields`);
-  }
-  if (argv.some((value) => Buffer.byteLength(value, "utf8") > maxArgBytes)) {
-    throw new Error(`shell arguments must not exceed ${maxArgBytes} UTF-8 bytes each`);
-  }
-}
 
 function parseCommandTemplate(body) {
   const first = splitFirstLine(body);
@@ -49,9 +36,6 @@ function parseCommandTemplate(body) {
 }
 
 function parseScript(input) {
-  if (Buffer.byteLength(input, "utf8") > maxInputBytes) {
-    throw new Error(`script must not exceed ${maxInputBytes} UTF-8 bytes`);
-  }
   if (input.includes("\0")) {
     throw new Error("script must not contain a NUL byte");
   }
@@ -80,7 +64,6 @@ function parseScript(input) {
   }
 
   const command = parseCommandTemplate(body);
-  validateArgv(interpreter, command.body);
   return {interpreter, body: command.body, commandTemplate: command.commandTemplate};
 }
 
@@ -103,7 +86,7 @@ function scriptEvaluationFlag(interpreter) {
   }
 }
 
-function executeScriptThroughStdin(argv) {
+function executeScriptThroughStdin(argv, maxOutputBytes) {
   const interpreter = argv[0];
   const interpreterArguments = argv.slice(1, -1);
   const body = argv.at(-1);
@@ -113,7 +96,7 @@ function executeScriptThroughStdin(argv) {
       encoding: "utf8",
       env: process.env,
       input: body,
-      maxBuffer: maxOutputBytesPerStream,
+      maxBuffer: Math.max(1, Math.floor(maxOutputBytes / 2)),
     });
     const stdout = result.stdout ?? "";
     let stderr = result.stderr ?? "";
@@ -159,17 +142,21 @@ function executeScriptWithProgramInput(argv, context) {
       return;
     }
 
+    const overflowDiagnostic = `shell: interpreter output exceeds ${context.outputBudgetBytes} bytes\n`;
+    const captureBudgetBytes = Math.max(
+      0,
+      context.outputBudgetBytes - Buffer.byteLength(overflowDiagnostic, "utf8") - 3,
+    );
     const stdoutChunks = [];
     const stderrChunks = [];
-    let stdoutBytes = 0;
-    let stderrBytes = 0;
+    let capturedBytes = 0;
     let overflow = false;
     let spawnError;
     let scriptError;
 
-    const capture = (chunks, currentBytes, chunk) => {
+    const capture = (chunks, chunk) => {
       const bytes = Buffer.from(chunk);
-      const remaining = Math.max(0, maxOutputBytesPerStream - currentBytes);
+      const remaining = Math.max(0, captureBudgetBytes - capturedBytes);
       if (remaining > 0) {
         chunks.push(bytes.subarray(0, remaining));
       }
@@ -177,20 +164,27 @@ function executeScriptWithProgramInput(argv, context) {
         overflow = true;
         child.kill("SIGKILL");
       }
-      return currentBytes + bytes.length;
+      capturedBytes += Math.min(bytes.length, remaining);
     };
     child.stdout.on("data", (chunk) => {
-      stdoutBytes = capture(stdoutChunks, stdoutBytes, chunk);
+      capture(stdoutChunks, chunk);
     });
     child.stderr.on("data", (chunk) => {
-      stderrBytes = capture(stderrChunks, stderrBytes, chunk);
+      capture(stderrChunks, chunk);
     });
     child.on("error", (error) => {
       spawnError = error;
     });
     child.on("close", (status, signal) => {
-      const stdout = Buffer.concat(stdoutChunks).toString("utf8");
-      let stderr = Buffer.concat(stderrChunks).toString("utf8");
+      let stdout;
+      let stderr;
+      try {
+        stdout = new TextDecoder("utf-8", {fatal: true}).decode(Buffer.concat(stdoutChunks));
+        stderr = new TextDecoder("utf-8", {fatal: true}).decode(Buffer.concat(stderrChunks));
+      } catch {
+        resolve({stderr: "shell: interpreter output is not UTF-8\n", exitCode: 1});
+        return;
+      }
       if (spawnError !== undefined) {
         stderr += `shell: ${executionError(spawnError)}\n`;
         resolve({
@@ -201,7 +195,7 @@ function executeScriptWithProgramInput(argv, context) {
         return;
       }
       if (overflow) {
-        stderr += `shell: interpreter output exceeds ${maxOutputBytesPerStream} bytes per stream\n`;
+        stderr += overflowDiagnostic;
         resolve({stdout, stderr, exitCode: 1});
         return;
       }
@@ -245,7 +239,7 @@ function executeScript(argv, context) {
   if (![context?.stdinFD, context?.scriptReadFD, context?.scriptWriteFD].every(
     (fileDescriptor) => Number.isSafeInteger(fileDescriptor) && fileDescriptor >= 3,
   )) {
-    return executeScriptThroughStdin(argv);
+    return executeScriptThroughStdin(argv, context.outputBudgetBytes);
   }
   return executeScriptWithProgramInput(argv, context);
 }
@@ -264,7 +258,6 @@ Bun and Node.js receive the body through their direct evaluation option.
 Other interpreters receive the body through an anonymous descriptor.
 The interpreter keeps frontend standard input available as program data.`,
   },
-  maxInputBytes,
 
   parse(input) {
     return parseScript(input);

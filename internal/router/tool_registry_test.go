@@ -87,7 +87,6 @@ func TestToolRegistryStartup(t *testing.T) {
   id: %q,
   tools: [{
     specification: {type: "custom", name: %q, description: "test tool"%s},
-    maxInputBytes: 4096,
     parse(input) { return input; },
     argv(input) { return [input]; },
     translate(_input, api) { return api.exec(); },
@@ -116,9 +115,9 @@ func TestToolRegistryStartup(t *testing.T) {
 			t.Fatal(err)
 		}
 		for _, name := range []string{"hread", "hgrep"} {
-			contribution, ok := registry.contribution(name)
-			if !ok || contribution.MaxInputBytes != 64<<10 {
-				t.Fatalf("built-in %q input limit = %d, available %t", name, contribution.MaxInputBytes, ok)
+			_, ok := registry.contribution(name)
+			if !ok {
+				t.Fatalf("built-in %q is unavailable", name)
 			}
 			wrapper, ok := registry.wrapper(name)
 			if !ok || filepath.Dir(wrapper) != snapshot {

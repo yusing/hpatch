@@ -100,6 +100,47 @@ Preserve these boundaries:
   successful edit, read, translation, or rejection diagnostic.
 - Keep benchmark and dashboard concerns out of the edit-engine ownership model.
 
+## Complexity and ownership gate
+
+Before adding a limit, validation layer, compatibility path, retry, buffer, history,
+metric, or defensive branch, classify the proposed implementation with this checklist:
+
+- [ ] `N` — Not this project's responsibility. Do not implement policy owned by Codex,
+      the upstream provider, the host executor, or another external boundary. A local
+      resource guard must describe a local failure and must not redefine external validity.
+- [ ] `O` — Likely overengineering. Do not add machinery whose maintenance cost is larger
+      than the demonstrated failure it prevents.
+- [ ] `D` — Duplicated policy. Keep one authoritative owner. Add a second check only when
+      it protects a distinct boundary and derives its value from the authoritative owner.
+- [ ] `I` — Impossible or unreachable. Do not add a branch that accepted inputs cannot
+      reach. If corruption or external mutation is the threat, validate that invariant
+      directly.
+- [ ] `J` — Justified local responsibility. Identify the owned resource or invariant,
+      choose the smallest protection, and add the cheapest test that can falsify it.
+- [ ] `U` — Uncertain. Do not implement it. First establish the owner, reproducer,
+      immediate failure, violated invariant, and smallest operation-ready requirement.
+
+Complete the checklist before implementation. If any item is `N`, `O`, `D`, `I`, or `U`,
+stop and simplify or discuss it. Implement only the remaining `J` behavior.
+
+Use these mandatory rules:
+
+- Do not invent request, response, metadata, identifier, argument, or retry policy for Codex.
+- Do not treat a local memory guard as an external protocol limit.
+- Do not copy one numeric limit across Go, JavaScript, built-ins, plugins, and executors.
+- Do not add a stricter later limit when an accepted-input boundary already bounds the data.
+- Do not buffer expanded or duplicate representations when streaming, hashing, or direct
+  comparison can bound memory.
+- Do not add a count or size limit without a concrete owner and demonstrated failure.
+- Do not emulate broad compatibility when the required interface can accept a narrow subset.
+- Do not retain the same operational payload in history, telemetry, diagnostics, and caches.
+- Define one combined resource budget when several retained collections share the same process.
+- Do not add speculative validation for future formats, sizes, or configurations.
+- Keep metrics, hooks, dashboards, and diagnostics auxiliary to successful core behavior.
+- Discuss every new user-facing restriction before implementation.
+- Add a focused boundary test for each justified protection.
+- Test that duplicated boundary checks cannot drift when separate enforcement is unavoidable.
+
 ## Focused validation
 
 Use the cheapest package-level check that covers the changed owner:

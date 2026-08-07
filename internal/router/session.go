@@ -13,7 +13,6 @@ const (
 	clientRequestIDHeader = "x-client-request-id"
 	codexWindowIDHeader   = "x-codex-window-id"
 
-	maxSessionIDBytes   = 512
 	maxSessionHistories = 256
 	maxSessionTurns     = 128
 )

@@ -184,8 +184,8 @@ type hpatchAttemptMetrics struct {
 func hpatchAttemptMetricsOf(record hpatchMetricRecord) (hpatchAttemptMetrics, bool) {
 	metadata := record.Attempt
 	if metadata.SessionID != record.SessionID || metadata.Attempt < 1 ||
-		strings.TrimSpace(metadata.CorrelationID) == "" || len(metadata.CorrelationID) > maxSessionIDBytes ||
-		strings.TrimSpace(metadata.CallID) == "" || len(metadata.CallID) > maxSessionIDBytes {
+		strings.TrimSpace(metadata.CorrelationID) == "" ||
+		strings.TrimSpace(metadata.CallID) == "" {
 		return hpatchAttemptMetrics{}, false
 	}
 	rejections := record.Rejections
@@ -390,7 +390,7 @@ func (m *metricsStore) beginRequest(sessionID, model string) *activeRequestHandl
 }
 
 func validMetricSessionID(sessionID string) bool {
-	return strings.TrimSpace(sessionID) != "" && len(sessionID) <= maxSessionIDBytes
+	return strings.TrimSpace(sessionID) != ""
 }
 
 func (h *activeRequestHandle) finish(observation requestObservation) {

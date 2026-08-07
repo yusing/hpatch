@@ -17,14 +17,14 @@ import (
 )
 
 const (
-	defaultListenAddress     = "127.0.0.1:8080"
-	defaultRewriteMode       = "hpatch"
-	defaultRequestTimeout    = 10 * time.Minute
-	defaultStreamIdleTimeout = 4 * time.Minute
-	requestBodyReadTimeout   = 30 * time.Second
-	shutdownTimeout          = 5 * time.Second
-	maxResponsesRequest      = 32 << 20
-	maxModelsResponseBytes   = 8 << 20
+	defaultListenAddress        = "127.0.0.1:8080"
+	defaultRewriteMode          = "hpatch"
+	defaultRequestTimeout       = 10 * time.Minute
+	defaultStreamIdleTimeout    = 4 * time.Minute
+	requestBodyReadTimeout      = 30 * time.Second
+	shutdownTimeout             = 5 * time.Second
+	responsesRequestBufferBytes = 32 << 20
+	modelsResponseBufferBytes   = 8 << 20
 )
 
 var errUpstreamResponseWithoutTerminal = errors.New("upstream Responses response ended without a terminal state")
@@ -140,13 +140,13 @@ func modelsHandler(provider *providerClient) http.HandlerFunc {
 			return
 		}
 		defer response.Body.Close()
-		body, err := io.ReadAll(io.LimitReader(response.Body, maxModelsResponseBytes+1))
+		body, err := io.ReadAll(io.LimitReader(response.Body, modelsResponseBufferBytes+1))
 		if err != nil {
 			http.Error(writer, fmt.Sprintf("read upstream models response: %v", err), http.StatusBadGateway)
 			return
 		}
-		if len(body) > maxModelsResponseBytes {
-			http.Error(writer, "upstream models response is too large", http.StatusBadGateway)
+		if len(body) > modelsResponseBufferBytes {
+			http.Error(writer, "upstream models response exceeds the router buffer budget", http.StatusBadGateway)
 			return
 		}
 		for _, name := range []string{"Content-Type", "Cache-Control", "ETag"} {
@@ -171,14 +171,13 @@ func responsesHandler(
 	return func(writer http.ResponseWriter, request *http.Request) {
 		trackedWriter := &trackedResponseWriter{ResponseWriter: writer}
 		requestLog := log.with("request_id", requestSequence.Add(1))
-		request.Body = http.MaxBytesReader(trackedWriter, request.Body, maxResponsesRequest)
-		body, err := readResponsesRequest(request.Body)
+		body, err := readResponsesRequest(io.LimitReader(request.Body, responsesRequestBufferBytes+1))
 		if err != nil {
-			if _, tooLarge := errors.AsType[*http.MaxBytesError](err); tooLarge {
-				http.Error(trackedWriter, "Responses request body is too large", http.StatusRequestEntityTooLarge)
-				return
-			}
 			http.Error(trackedWriter, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if len(body) > responsesRequestBufferBytes {
+			http.Error(trackedWriter, "Responses request exceeds the router buffer budget", http.StatusRequestEntityTooLarge)
 			return
 		}
 		parsedRequest, err := parseResponsesRequest(body)

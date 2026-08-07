@@ -32,8 +32,7 @@ const (
 	maxHPatchHistorySessionBytes = 32 << 20
 	maxHPatchHistoryGlobalBytes  = 128 << 20
 
-	maxHPatchPendingCalls    = 128
-	maxHPatchDiagnosticBytes = 1 << 20
+	maxHPatchPendingCalls = 128
 )
 
 var (
@@ -111,7 +110,7 @@ func (t inProcessHPatchTranslator) Translate(ctx context.Context, workspace rout
 	if contextErr := ctx.Err(); contextErr != nil {
 		return hpatchTranslationResult{}, contextErr
 	}
-	if len(translated.Patch) > maxHPatchPatchBytes || len(translated.Report) > maxHPatchDiagnosticBytes || len(translated.Diagnostic) > maxHPatchDiagnosticBytes {
+	if len(translated.Patch) > maxHPatchPatchBytes {
 		return hpatchTranslationResult{}, fmt.Errorf("%w: hpatch translation output exceeds its configured bound", errHPatchCapacity)
 	}
 	corrections := make(map[int]string, len(translated.Corrections))
@@ -453,7 +452,7 @@ func (p *hpatchProxy) prepareRequest(ctx context.Context, request *parsedRespons
 	if p == nil {
 		return nil, errors.New("hpatch response proxy is unavailable")
 	}
-	if strings.TrimSpace(sessionID) == "" || len(sessionID) > maxSessionIDBytes {
+	if strings.TrimSpace(sessionID) == "" {
 		return nil, errors.New("hpatch rewrite requires a valid session ID")
 	}
 	if !metadataValid || metadata.RequestKind != "turn" {
@@ -1199,14 +1198,6 @@ func (t *hpatchResponseTransform) translateRegisteredTool(contribution toolContr
 		}
 		return history, nil
 	}
-	if len(input) > contribution.MaxInputBytes {
-		return hpatchHistory{}, fmt.Errorf(
-			"%s call %q input exceeds %d bytes",
-			contribution.Name,
-			callID,
-			contribution.MaxInputBytes,
-		)
-	}
 	translation, err := toolplugin.Translate(
 		t.ctx,
 		t.proxy.registry.NodeExecutable,
@@ -1502,7 +1493,7 @@ func (t *hpatchResponseTransform) TransformSSE(payload []byte) ([][]byte, error)
 		if jsonString(item, "type") != "custom_tool_call" || itemID == "" || callID == "" {
 			return nil, errors.New("upstream emitted malformed hpatch call")
 		}
-		if len(itemID) > maxSessionIDBytes || len(callID) > maxSessionIDBytes || len(t.pending) >= maxHPatchPendingCalls {
+		if len(t.pending) >= maxHPatchPendingCalls {
 			return nil, errors.New("upstream hpatch call identity capacity exceeded")
 		}
 		if _, exists := t.pending[itemID]; exists {

@@ -780,14 +780,6 @@ func TestHReadExecInputDoesNotRepairMissingRangeSeparator(t *testing.T) {
 	}
 }
 
-func TestHReadRejectsOversizedInputBeforeCreatingCarrier(t *testing.T) {
-	transform, _, _, _ := newHPatchTestTransform(t, testTranslator(t, new(int)))
-	input := strings.Repeat("x", maxHPatchScriptBytes+1)
-	if _, err := transform.translateTool("hread", "call-large", input, nil); err == nil || !strings.Contains(err.Error(), "input exceeds") {
-		t.Fatalf("oversized hread error = %v", err)
-	}
-}
-
 func TestHPatchHistoryDoesNotCrossWorkspacesSharingSessionIdentity(t *testing.T) {
 	proxy := newManagedHPatchProxy(t, testTranslator(t, new(int)))
 	requestFor := func(t *testing.T, extraItems ...any) parsedResponsesRequest {

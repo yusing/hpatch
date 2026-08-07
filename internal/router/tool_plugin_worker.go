@@ -17,8 +17,6 @@ import (
 	"github.com/yusing/hpatch/internal/router/toolplugin"
 )
 
-const maxToolWorkerManifestBytes = 32 << 20
-
 // RunToolPluginWorker handles the private child-process mode used by a
 // stable contributed-tool frontend and its process-scoped snapshot wrapper.
 func RunToolPluginWorker(
@@ -155,16 +153,16 @@ func RunToolPluginWorker(
 	if _, err := io.WriteString(stderr, execution.Stderr); err != nil {
 		return fail(fmt.Errorf("write plugin stderr: %w", err))
 	}
-	stock := execution.ExecutionOutput
+	stockOutput := execution.Stdout + execution.Stderr
 	if execution.Stock != nil {
-		stock = *execution.Stock
+		stockOutput = execution.Stock.Stdout + execution.Stock.Stderr
 	}
 	record, metricsErr := hpatch.ClassifyHostMetrics(hpatch.HostMetricInput{
 		ToolResult: &hpatch.HostToolResult{
 			PluginID:      contribution.PluginID,
 			ToolName:      contribution.Name,
 			CurrentOutput: execution.Stdout + execution.Stderr,
-			StockOutput:   stock.Stdout + stock.Stderr,
+			StockOutput:   stockOutput,
 		},
 	})
 	if metricsErr == nil {
@@ -193,12 +191,9 @@ func readToolWorkerManifest(path string) (manifest toolWorkerManifest, err error
 		return toolWorkerManifest{}, fmt.Errorf("open tool worker manifest: %w", err)
 	}
 	defer func() { err = errors.Join(err, file.Close()) }()
-	content, err := io.ReadAll(io.LimitReader(file, maxToolWorkerManifestBytes+1))
+	content, err := io.ReadAll(file)
 	if err != nil {
 		return toolWorkerManifest{}, fmt.Errorf("read tool worker manifest: %w", err)
-	}
-	if len(content) > maxToolWorkerManifestBytes {
-		return toolWorkerManifest{}, fmt.Errorf("tool worker manifest exceeds %d bytes", maxToolWorkerManifestBytes)
 	}
 	decoder := json.NewDecoder(bytes.NewReader(content))
 	decoder.DisallowUnknownFields()

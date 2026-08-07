@@ -12,7 +12,6 @@ type HostResponse = {
     module: string;
     tools: Array<{
       specification: Record<string, unknown>;
-      maxInputBytes: number;
     }>;
   }>;
 };
@@ -64,7 +63,6 @@ function pluginDeclaration(format?: {
       name: "grammar_test",
       description: "test tool"${formatField}
     },
-    maxInputBytes: 4096,
     parse(input) { return input; },
     argv(input) { return [input]; },
     translate(_input, api) { return api.exec(); },
@@ -169,7 +167,6 @@ describe("plugin translation and execution", () => {
   id: "translation.test",
   tools: [{
     specification: {type: "custom", name: "translation_test", description: "test tool"},
-    maxInputBytes: 4096,
     parse(input) {
       if (input === "reject") throw new Error("input rejected");
       return input;
@@ -246,6 +243,7 @@ describe("plugin translation and execution", () => {
 
     const executed = invokeHost(directory, {
       operation: "execute",
+      outputBudgetBytes: 16 * 1024 * 1024,
       module: "plugin.mjs",
       index: 0,
       arguments: ["one", "two words"],
@@ -271,6 +269,7 @@ describe("plugin translation and execution", () => {
     );
     const result = invokeHost(directory, {
       operation: "execute",
+      outputBudgetBytes: 16 * 1024 * 1024,
       module: "plugin.mjs",
       index: 0,
       arguments: [],
@@ -286,6 +285,7 @@ describe("plugin translation and execution", () => {
       'execute() { return {stdout: "current", stock: {stdout: 1}, exitCode: 0}; }',
       'execute() { return {stdout: "current", get stock() { throw new Error("stock"); }, exitCode: 0}; }',
       'execute() { return {stdout: "current", stock: {get stdout() { throw new Error("stdout"); }, exitCode: 0}, exitCode: 0}; }',
+      'execute() { return {stdout: "current", stock: {stdout: "stock", exitCode: 0}, exitCode: 0}; }',
     ]) {
       const directory = await temporaryDirectory();
       await writeFile(
@@ -298,6 +298,7 @@ describe("plugin translation and execution", () => {
       );
       const result = invokeHost(directory, {
         operation: "execute",
+        outputBudgetBytes: Buffer.byteLength("current", "utf8"),
         module: "plugin.mjs",
         index: 0,
         arguments: [],

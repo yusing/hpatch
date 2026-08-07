@@ -36,7 +36,7 @@ const (
 	codexBetaFeaturesHeader     = "x-codex-beta-features"
 	codexResponsesLiteHeader    = "x-openai-internal-codex-responses-lite"
 	codexSessionIDHeader        = "Session_id"
-	maxUpstreamJSONBytes        = 64 << 20
+	upstreamJSONBufferBytes     = 64 << 20
 )
 
 var (
@@ -198,7 +198,7 @@ func forwardCodexRequestHeaders(destination, source http.Header) {
 }
 
 func validCodexCacheKey(value string) bool {
-	if len(value) == 0 || len(value) > maxSessionIDBytes || strings.TrimSpace(value) != value {
+	if value == "" || strings.TrimSpace(value) != value {
 		return false
 	}
 	for index := range len(value) {
@@ -430,12 +430,12 @@ func copyUpstreamBodyTransformed(writer io.Writer, response *http.Response, stre
 }
 
 func copyJSONTransformed(writer io.Writer, reader io.Reader, transformer *hpatchResponseTransform, observeUsage func(tokenCounts)) (responseTerminalState, error) {
-	body, err := io.ReadAll(io.LimitReader(reader, maxUpstreamJSONBytes+1))
+	body, err := io.ReadAll(io.LimitReader(reader, upstreamJSONBufferBytes+1))
 	if err != nil {
 		return responseTerminalUnknown, err
 	}
-	if len(body) > maxUpstreamJSONBytes {
-		return responseTerminalUnknown, fmt.Errorf("upstream JSON response exceeds %d bytes", maxUpstreamJSONBytes)
+	if len(body) > upstreamJSONBufferBytes {
+		return responseTerminalUnknown, fmt.Errorf("upstream JSON response exceeds the router buffer budget")
 	}
 	recordObservedUsage(body, false, observeUsage)
 	visible := body

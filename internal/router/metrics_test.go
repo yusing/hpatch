@@ -188,11 +188,6 @@ func TestMetricsStoreActiveRequestLifecycle(t *testing.T) {
 		t.Fatal("unidentified request was not tracked globally")
 	}
 	invalid.finish(requestObservation{outcome: requestOutcomeFailed})
-	oversized := store.beginRequest(string(make([]byte, maxSessionIDBytes+1)), "model")
-	if oversized == nil {
-		t.Fatal("oversized-session request was not tracked globally")
-	}
-	oversized.finish(requestObservation{outcome: requestOutcomeFailed})
 
 	handle := store.beginRequest("session", "")
 	active := store.snapshot()
@@ -206,7 +201,7 @@ func TestMetricsStoreActiveRequestLifecycle(t *testing.T) {
 	handle.finish(requestObservation{outcome: requestOutcomeFailed})
 
 	snapshot := store.snapshot()
-	if snapshot.Requests.Started != 3 || snapshot.Requests.Active != 0 || snapshot.Requests.Completed != 1 || snapshot.Requests.Failed != 2 {
+	if snapshot.Requests.Started != 2 || snapshot.Requests.Active != 0 || snapshot.Requests.Completed != 1 || snapshot.Requests.Failed != 1 {
 		t.Fatalf("global lifecycle = %#v", snapshot.Requests)
 	}
 	if len(snapshot.Sessions) != 1 || snapshot.Sessions[0].Requests.Started != 1 || snapshot.Sessions[0].Requests.Completed != 1 {

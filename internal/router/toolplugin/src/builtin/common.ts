@@ -1,8 +1,6 @@
 import {createHash} from "node:crypto";
-import type {ExecutionResult, Tool} from "../../plugin.d.ts";
+import type {ExecutionContext, ExecutionResult, Tool} from "../../plugin.d.ts";
 
-export const MAX_INPUT_BYTES = 64 * 1024;
-export const MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
 
 export function byteLength(value: string): number {
   return Buffer.byteLength(value, "utf8");
@@ -46,7 +44,7 @@ type ExecutorToolOptions = {
   description: string;
   grammar: string;
   argv(input: string): string[] | Promise<string[]>;
-  execute(argv: string[]): ExecutionResult | Promise<ExecutionResult>;
+  execute(argv: string[], context: ExecutionContext): ExecutionResult | Promise<ExecutionResult>;
 };
 
 export function createExecutorTool(options: ExecutorToolOptions): Tool<string[]> {
@@ -57,7 +55,6 @@ export function createExecutorTool(options: ExecutorToolOptions): Tool<string[]>
       description: options.description,
       format: {type: "grammar", syntax: "regex", definition: options.grammar},
     },
-    maxInputBytes: MAX_INPUT_BYTES,
     parse(input) {
       return options.argv(input);
     },

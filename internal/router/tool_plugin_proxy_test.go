@@ -20,7 +20,6 @@ const testToolPluginDeclaration = `export default {
   id: "proxy.test",
   tools: [{
     specification: {type: "custom", name: "plugin_tool", description: "fixture plugin tool"},
-    maxInputBytes: 4096,
     parse(input) {
       if (input === "reject") throw new Error("fixture input rejected");
       return input;
@@ -40,6 +39,7 @@ const testToolPluginDeclaration = `export default {
       return {
         stdout: [process.cwd(), process.env.HPATCH_PLUGIN_TEST, ...argv].join("|"),
         stderr: "fixture stderr",
+        stock: {stdout: "stock result", exitCode: 0},
         exitCode: 7
       };
     }
@@ -533,17 +533,6 @@ func TestToolPluginFailuresStayOutsideHPatchCorrections(t *testing.T) {
 		if _, err := proxy.correctableHistory(transform.historySessionID); err == nil ||
 			!strings.Contains(err.Error(), "no hpatch call") {
 			t.Fatalf("plugin entered correction ancestry: %v", err)
-		}
-	})
-
-	t.Run("input byte limit", func(t *testing.T) {
-		transform, _, _ := newToolPluginTestTransform(t)
-		_, err := transform.TransformJSON(mustTestJSON(t, map[string]any{
-			"status": "completed",
-			"output": []any{testToolPluginItem(strings.Repeat("x", 4097))},
-		}))
-		if err == nil || !strings.Contains(err.Error(), "input exceeds 4096 bytes") {
-			t.Fatalf("oversized input error = %v", err)
 		}
 	})
 
