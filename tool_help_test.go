@@ -68,10 +68,36 @@ func TestHPatch2ToolGrammarLineTerminators(t *testing.T) {
 			t.Errorf("NL matches %q = %v, want %v", value, got, want)
 		}
 	}
-	bodyLine := grammarTerminalRegexp(t, "PATCH_BODY_LINE")
-	for value, want := range map[string]bool{"body\n": true, "body\r\n": true, "body\r": false} {
-		if got := bodyLine.MatchString(value); got != want {
-			t.Errorf("PATCH_BODY_LINE matches %q = %v, want %v", value, got, want)
+
+	bodyLines := []*regexp.Regexp{
+		grammarTerminalRegexp(t, "PATCH_BODY_LINE"),
+		grammarTerminalRegexp(t, "PATCH_TYPE_PREFIX_LINE"),
+		grammarTerminalRegexp(t, "PATCH_TYPE_VALUE_LINE"),
+	}
+	matchesBodyLine := func(value string) bool {
+		for _, bodyLine := range bodyLines {
+			if bodyLine.MatchString(value) {
+				return true
+			}
+		}
+		return false
+	}
+	for value, want := range map[string]bool{
+		"body\n":                               true,
+		"body\r\n":                             true,
+		"body\r":                               false,
+		"PATCH\n":                              false,
+		"new index.html\n":                     true,
+		" type <<PATCH\n":                      true,
+		"type <<PATCH extra\n":                 true,
+		"type+not-an-opener <<PATCH\n":         true,
+		"type <<PATCH\n":                       false,
+		"type 1:a2b3 <<PATCH\n":                false,
+		"type- 1:a2b3..2:b3c4 <<PATCH\r\n":     false,
+		"type+ 1:a2b3 \"literal\" 2 <<PATCH\n": false,
+	} {
+		if got := matchesBodyLine(value); got != want {
+			t.Errorf("patch body matches %q = %v, want %v", value, got, want)
 		}
 	}
 }
@@ -90,6 +116,7 @@ func TestHPatch2ToolDescriptionCoversSafeCommandChoice(t *testing.T) {
 		"`type+` inserts after",
 		"An empty target-bearing `type` value deletes",
 		"fixed `<<PATCH`",
+		"reserved as a nested opener",
 		"immutable baseline",
 		"batch all short supporting edits",
 		"at most one syntax-sensitive multiline Go",

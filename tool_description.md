@@ -49,6 +49,10 @@ func calculateResult(input Input) (Result, error) {
 PATCH
 ```
 
+An unindented heredoc body line that begins with `type `, `type- `, or `type+ ` and
+then contains only `<<PATCH` or ends with ` <<PATCH` is reserved as a nested opener. Close the
+current frame first; use an inline value or indent literal HPATCH examples.
+
 Create a file with at most one immediately following targetless initializer:
 
 ```text

@@ -34,7 +34,7 @@ insertion_after: POSINT "+:" SP? command
 
 _separator: NL _blank_line*
 _blank_line: HSPACE? NL
-_patch_body: (PATCH_BODY_LINE | NL)*
+_patch_body: (PATCH_BODY_LINE | PATCH_TYPE_PREFIX_LINE | PATCH_TYPE_VALUE_LINE | NL)*
 
 PATH_OP: "in" | "new" | "mv"
 TYPE_OP: "type" | "type-" | "type+"
@@ -47,4 +47,6 @@ PATH: /[^\r\n]+/
 NL: /\r?\n/
 QUOTED: /"(?:\\(?:["\\\/bfnrt]|u[0-9A-Fa-f]{4})|[^\x00-\x1F"\\]|\t)*"/
 TARGET_QUOTED: /"(?:\\(?:["\\\/t]|u(?:0009|00[2-9A-Fa-f][0-9A-Fa-f]|0[1-9A-Fa-f][0-9A-Fa-f]{2}|[1-9A-Fa-f][0-9A-Fa-f]{3}))|[^\x00-\x1F"\\]|\t)+"/
-PATCH_BODY_LINE: /(?:PATCH[^\r\n]+|PATC[^H\r\n][^\r\n]*|PAT[^C\r\n][^\r\n]*|PA[^T\r\n][^\r\n]*|P[^A\r\n][^\r\n]*|PATC|PAT|PA|P|[^P\r\n][^\r\n]*)(?:\r\n|\n)/
+PATCH_BODY_LINE: /(?:PATCH[^\r\n]+|PATC[^H\r\n][^\r\n]*|PAT[^C\r\n][^\r\n]*|PA[^T\r\n][^\r\n]*|P[^A\r\n][^\r\n]*|PATC|PAT|PA|P|[^Pt\r\n][^\r\n]*)(?:\r\n|\n)/
+PATCH_TYPE_PREFIX_LINE: /(?:t|t[^y\r\n][^\r\n]*|ty|ty[^p\r\n][^\r\n]*|typ|typ[^e\r\n][^\r\n]*|type|type[^ +\r\n-][^\r\n]*|type[+-]|type[+-][^ \r\n][^\r\n]*)(?:\r\n|\n)/
+PATCH_TYPE_VALUE_LINE: /type(?:[+-])? (?:[^\r\n]{0,6}|[^<\r\n][^\r\n]{6}|<[^<\r\n][^\r\n]{5}|<<[^P\r\n][^\r\n]{4}|<<P[^A\r\n][^\r\n]{3}|<<PA[^T\r\n][^\r\n]{2}|<<PAT[^C\r\n][^\r\n]|<<PATC[^H\r\n]|[^\r\n]*[^ \r\n][^\r\n]{7}|[^\r\n]* [^<\r\n][^\r\n]{6}|[^\r\n]* <[^<\r\n][^\r\n]{5}|[^\r\n]* <<[^P\r\n][^\r\n]{4}|[^\r\n]* <<P[^A\r\n][^\r\n]{3}|[^\r\n]* <<PA[^T\r\n][^\r\n]{2}|[^\r\n]* <<PAT[^C\r\n][^\r\n]|[^\r\n]* <<PATC[^H\r\n])(?:\r\n|\n)/
