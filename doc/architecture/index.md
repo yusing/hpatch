@@ -4,7 +4,7 @@ pjdoc:
   kind: architecture
   scope: root
   status: draft
-  revision: "20"
+  revision: "21"
   files:
     []
 ---
@@ -217,6 +217,12 @@ startup. The typed execution context identifies the pipeline descriptor and both
 descriptors. The shell executor writes the body to the pipe and maps its read end to the
 interpreter's script descriptor. The child executes only because Codex ran the returned basename
 carrier, so Codex continues to own sandbox and permission enforcement.
+
+`internal/router/toolplugin/plugin.d.ts` owns the executable result schema. The runtime adapter
+validates the current result independently from its optional stock metric evidence. The private
+worker writes only the current result to the frontend streams and sends structured current and
+validated stock evidence, with the pinned plugin and tool identity, to the root metrics owner.
+The executor is the only content producer for both shapes; no metrics owner invokes it again.
 Frontend and wrapper creation is all-or-nothing for startup. The router
 holds one exclusive frontend lock for its process lifetime. Another router using that frontend
 directory fails startup. A later process can replace an authenticated prior frontend after a
@@ -242,25 +248,27 @@ unavailable carrier fails routing and cannot be represented as successful transl
 
 ## CTR-METRICS-001 — Metrics classification and persistence
 
-One metrics classifier consumes structured parser, evaluator, registry, and carrier events for
-`REQ-METRICS-001` rather than re-parsing tool inputs, diagnostics, or rendered responses. The
-generic classification path owns per-plugin and per-tool definition, call, emitted-shape,
-translated-shape, and failed-translation counters. It derives canonical shapes from the
-installed registry entry and validated carrier; plugin code supplies neither token counts nor
-metric overrides. Hpatch's adapter additionally owns its effective, ineffective, fixed failed
-semantic baseline, report, command, target, and stable terminal-reason classifications. The
-report formatter's exact emitted string is the only source for report-input token counting.
-Price ratios are presentation-time calculations and are never persisted.
+One metrics classifier consumes structured parser, evaluator, registry, carrier, and completed
+executor-result events for `REQ-METRICS-001`. It does not re-parse tool inputs, diagnostics, or
+rendered responses. The translation path owns per-plugin and per-tool definition, call,
+emitted-shape, translated-shape, and failed-translation counters. The execution path owns current
+and stock result-shape counters from the private worker's validated evidence. Both paths derive
+token counts and stable identity inside the metrics owner; plugin code supplies content shapes but
+never supplies token counts or overrides. Hpatch's adapter additionally owns its effective,
+ineffective, fixed failed semantic baseline, report, command, target, and stable terminal-reason
+classifications. The report formatter's exact emitted string is the only source for report-input
+token counting. Reduction ratios and signed net input are presentation-time calculations from
+persisted counters.
 
 The metrics store owns tokenizer use, stable tool identity keys, exact installed-definition
-totals and their reconciling breakdown, overflow checks, interprocess locking, alternating
-checksummed bounded slots, persistence-generation selection, current-version decoding,
-obsolete-version reset, and page-cache writeback policy. Classification occurs only after the
-router knows whether translation produced a valid carrier; later executor failure does not
-rewrite that classification. Metrics failure remains auxiliary and cannot change the requested
-edit, translated carrier, executor result, state report, or exit status. Routed tool-result
-contents add no hypothetical shell-result comparison; exact end-to-end Responses usage retained
-by the router remains authoritative for the model input consumed after an executor result.
+totals, executor-result totals, overflow checks, interprocess locking, alternating checksummed
+bounded slots, persistence-generation selection, current-version decoding, obsolete-version reset,
+and page-cache writeback policy. Translation classification occurs after the router validates a
+carrier. Executor-result classification occurs in the private worker after one completed execution
+and does not rewrite translation classification. Missing or invalid stock evidence uses the current
+shape under `REQ-METRICS-001`. Metrics failure remains auxiliary and cannot change the requested
+edit, translated carrier, executor result, state report, or exit status. Router end-to-end Responses
+usage remains authoritative for provider-consumed model input.
 
 ## CTR-TRANSLATE-001 — Patch rendering
 

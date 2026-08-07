@@ -7,6 +7,10 @@ import (
 	"path/filepath"
 )
 
+// One execution output can expand to six times its UTF-8 size during JSON encoding.
+// The compared response carries two independently bounded outputs.
+const maxComparedExecutionHostOutputBytes = 2 * maxExecutionHostOutputBytes
+
 func Execute(
 	ctx context.Context,
 	node, runtimeRoot, module string,
@@ -47,7 +51,7 @@ func Execute(
 		node,
 		filepath.Join(runtimeRoot, hostFilename),
 		"",
-		maxExecutionHostOutputBytes,
+		maxComparedExecutionHostOutputBytes,
 		stdin,
 		scriptFiles,
 		request,

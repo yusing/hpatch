@@ -213,7 +213,8 @@ function createGain(root){
     const card=element('div','card');card.dataset.metric=key;card.append(element('label','',label),element('strong','','0'));cards.append(card)
   });
   const output=tableWrap('Output token estimates',['Tool','Emitted','Translated','Reduction']);
-  const input=tableWrap('Input token estimates',['Source','Tokens','Description'],'desc');
+  const input=tableWrap('Input token estimates',['Tool','Current','Stock','Reduction']);
+  const overhead=tableWrap('Input token overhead estimates',['Source','Tokens','Description'],'desc');
   const commands=tableWrap('Command metrics',['Command','Invocations','Errors','Error rate']);
   const targets=tableWrap('Target metrics',['Target','Invocations','Errors','Error rate']);
   const reasons=tableWrap('Failure reasons',['Reason','Errors']);
@@ -221,11 +222,11 @@ function createGain(root){
   const note=element('p','note','');
   const definition=element('p','note','');
   const err=element('div','error gain-error');err.hidden=true;err.setAttribute('role','alert');
-  const gridTop=element('div','table-grid');gridTop.append(output.wrap,input.wrap);
+  const gridTop=element('div','table-grid');gridTop.append(input.wrap,overhead.wrap);
   const gridMid=element('div','table-grid');gridMid.append(commands.wrap,targets.wrap);
   const gridBot=element('div','table-grid');gridBot.append(reasons.wrap);
-  root.append(cards,err,gridTop,note,definition,gridMid,gridBot,commandReasons.wrap);
-  root.gain={output:output.tbody,input:input.tbody,commands:commands.tbody,targets:targets.tbody,reasons:reasons.tbody,commandReasons:commandReasons.tbody,note,definition,err}
+  root.append(cards,err,output.wrap,note,gridTop,definition,gridMid,gridBot,commandReasons.wrap);
+  root.gain={output:output.tbody,input:input.tbody,overhead:overhead.tbody,commands:commands.tbody,targets:targets.tbody,reasons:reasons.tbody,commandReasons:commandReasons.tbody,note,definition,err}
 }
 function sumPair(a,b){return nonNeg(a)+nonNeg(b)}
 function commandTotal(commands){
@@ -249,24 +250,22 @@ function updateGain(root,gain,gainError){
   const all=g.all_tools||{};
   outputRows.push({key:'all-tools',cells:['all-tools',uintText(all.emitted_tokens),uintText(all.translated_tokens),all.reduction_percent==='n/a'?'n/a':`${all.reduction_percent||'0.0'}%`]});
   fillRows(root.gain.output,outputRows);
+  const inputRows=(g.tool_inputs||[]).map(entry=>({
+    key:`${entry.plugin_id}\0${entry.tool_name}`,
+    cells:[`${entry.plugin_id}/${entry.tool_name}`,uintText(entry.current_tokens),uintText(entry.stock_tokens),entry.reduction_percent==='n/a'?'n/a':`${entry.reduction_percent}%`]
+  }));
+  const allInput=g.all_tool_inputs||{};
+  inputRows.push({key:'all-tools',cells:['all-tools',uintText(allInput.current_tokens),uintText(allInput.stock_tokens),allInput.reduction_percent==='n/a'?'n/a':`${allInput.reduction_percent||'0.0'}%`]});
+  fillRows(root.gain.input,inputRows);
   const removed=nonNeg(g.removed_definition_input_tokens);
-  const inputRows=[
+  const overheadRows=[
     {key:'state',cells:['state reports',uintText(g.report_input_tokens),'final state returned after successful calls']},
     {key:'diag',cells:['failure diagnostics',uintText(g.diagnostic_input_tokens),'errors and repair context returned after failed calls']},
-    {key:'def',cells:['installed tool definitions',uintText(g.definition_input_tokens),'exact serialized collection installed by the router']}
-  ];
-  (g.tool_definitions||[]).forEach(entry=>inputRows.push({
-    key:`def\0${entry.plugin_id}\0${entry.tool_name}`,
-    cells:[`  ${entry.plugin_id}/${entry.tool_name}`,uintText(entry.tokens),'descriptive child of the installed-definition total']
-  }));
-  if(nonNeg(g.definition_requests)!==0){
-    inputRows.push({key:'framing',cells:['  shared framing',String(g.shared_definition_tokens),'shared collection serialization needed to reconcile installed definitions']})
-  }
-  inputRows.push(
+    {key:'def',cells:['installed tool definitions',uintText(g.definition_input_tokens),'exact serialized collection installed by the router']},
     {key:'removed',cells:['apply_patch definition removed',removed?`-${fmt.format(removed)}`:'0','exact Code Mode section removed by the router']},
-    {key:'net',cells:['net added input',g.net_added_input||'0','measured additions minus the removed definition']}
-  );
-  fillRows(root.gain.input,inputRows);
+    {key:'net',cells:['net added input',g.net_added_input||'0','actual measured input overhead after stock-result and definition credits']}
+  ];
+  fillRows(root.gain.overhead,overheadRows);
   root.gain.note.textContent='Failed hpatch translation uses the empty-patch semantic baseline; other router rejections have no translated carrier.';
   root.gain.definition.textContent=`Definition routing covers ${uintText(g.definition_requests)} accounted request(s) in ${uintText(g.sessions)} distinct session(s) (${g.definition_sources||'not measured (missing caller session)'}).`;
   const commandRows=(g.commands||[]).map(entry=>({key:entry.name,cells:[entry.name,uintText(entry.invocations),uintText(entry.errors),`${entry.error_rate_percent||'0.0'}%`]}));
@@ -285,6 +284,7 @@ function validNamedCommand(entry){return entry&&typeof entry==='object'&&typeof 
 function validNamedCount(entry){return entry&&typeof entry==='object'&&typeof entry.name==='string'&&typeof entry.count==='number'}
 function validCommandReason(entry){return entry&&typeof entry==='object'&&typeof entry.command==='string'&&typeof entry.reason==='string'&&typeof entry.errors==='number'}
 function validToolGain(entry){return entry&&typeof entry==='object'&&typeof entry.plugin_id==='string'&&typeof entry.tool_name==='string'&&typeof entry.failed==='boolean'&&typeof entry.calls==='number'&&typeof entry.emitted_tokens==='number'&&typeof entry.translated_tokens==='number'&&typeof entry.reduction_percent==='string'}
+function validToolInput(entry){return entry&&typeof entry==='object'&&typeof entry.plugin_id==='string'&&typeof entry.tool_name==='string'&&typeof entry.executions==='number'&&typeof entry.current_tokens==='number'&&typeof entry.stock_tokens==='number'&&typeof entry.reduction_percent==='string'}
 function validToolDefinition(entry){return entry&&typeof entry==='object'&&typeof entry.plugin_id==='string'&&typeof entry.tool_name==='string'&&typeof entry.tokens==='number'}
 function validGain(gain){
   return gain&&typeof gain==='object'&&!Array.isArray(gain)
@@ -296,6 +296,7 @@ function validGain(gain){
     &&typeof gain.net_added_input==='string'&&typeof gain.sessions==='number'&&typeof gain.definition_requests==='number'
     &&typeof gain.definition_sources==='string'
     &&Array.isArray(gain.tools)&&gain.tools.every(validToolGain)&&validToolGain(gain.all_tools)
+    &&Array.isArray(gain.tool_inputs)&&gain.tool_inputs.every(validToolInput)&&validToolInput(gain.all_tool_inputs)
     &&Array.isArray(gain.tool_definitions)&&gain.tool_definitions.every(validToolDefinition)&&typeof gain.shared_definition_tokens==='number'
     &&Array.isArray(gain.commands)&&gain.commands.every(validNamedCommand)
     &&Array.isArray(gain.targets)&&gain.targets.every(validNamedCommand)

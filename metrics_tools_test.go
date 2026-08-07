@@ -24,12 +24,14 @@ func TestToolMetricsClassifyPersistAndReportCanonicalShapes(t *testing.T) {
 	}
 
 	const (
-		pluginID   = "example.plugin"
-		toolName   = "example_tool"
-		definition = `{"type":"custom","name":"example_tool","description":"Example"}`
-		installed  = `[{"type":"custom","name":"example_tool","description":"Example"}]`
-		emitted    = `"quotes"; await tools.exec_command({cmd:"not code"})`
-		carrier    = `{"path":"a b","literal":"$(still-data)"}`
+		pluginID      = "example.plugin"
+		toolName      = "example_tool"
+		definition    = `{"type":"custom","name":"example_tool","description":"Example"}`
+		installed     = `[{"type":"custom","name":"example_tool","description":"Example"}]`
+		emitted       = `"quotes"; await tools.exec_command({cmd:"not code"})`
+		carrier       = `{"path":"a b","literal":"$(still-data)"}`
+		currentResult = "verified rows\nwarning\n"
+		stockResult   = "plain rows\nwarning\n"
 	)
 	success, err := ClassifyHostMetrics(HostMetricInput{
 		SessionID:           "session",
@@ -43,6 +45,10 @@ func TestToolMetricsClassifyPersistAndReportCanonicalShapes(t *testing.T) {
 			EmittedName: toolName, EmittedInput: emitted,
 			TranslatedName: "functions.exec", TranslatedPayload: carrier,
 		},
+		ToolResult: &HostToolResult{
+			PluginID: pluginID, ToolName: toolName,
+			CurrentOutput: currentResult, StockOutput: stockResult,
+		},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -53,7 +59,8 @@ func TestToolMetricsClassifyPersistAndReportCanonicalShapes(t *testing.T) {
 	tool := success.ToolMetrics[0]
 	if tool.Calls != 1 || tool.EmittedTokens != count(toolName+"\n"+emitted) ||
 		tool.TranslatedTokens != count("functions.exec\n"+carrier) ||
-		tool.DefinitionInputTokens != count(definition) {
+		tool.DefinitionInputTokens != count(definition) || tool.Executions != 1 ||
+		tool.CurrentInputTokens != count(currentResult) || tool.StockInputTokens != count(stockResult) {
 		t.Fatalf("classified tool = %+v", tool)
 	}
 	if got := int64(tool.DefinitionInputTokens) + success.SharedDefinitionInputTokens; got != int64(count(installed)) {
@@ -98,6 +105,12 @@ func TestToolMetricsClassifyPersistAndReportCanonicalShapes(t *testing.T) {
 		gain.ToolDefinitions[0].Tokens != count(definition) ||
 		int64(gain.ToolDefinitions[0].Tokens)+gain.SharedDefinitionTokens != int64(gain.DefinitionInputTokens) {
 		t.Fatalf("gain definitions = %+v", gain)
+	}
+	if len(gain.ToolInputs) != 1 || gain.ToolInputs[0].PluginID != pluginID ||
+		gain.ToolInputs[0].CurrentTokens != count(currentResult) ||
+		gain.ToolInputs[0].StockTokens != count(stockResult) ||
+		gain.AllToolInputs.CurrentTokens != count(currentResult) {
+		t.Fatalf("gain input rows = %+v", gain)
 	}
 }
 

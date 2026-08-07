@@ -184,7 +184,7 @@ describe("plugin translation and execution", () => {
       return api.exec();
     },
     execute(argv) {
-      return {stdout: argv.join("|"), stderr: "fixture stderr", exitCode: 7};
+      return {stdout: argv.join("|"), stderr: "fixture stderr", stock: {stdout: "stock output", exitCode: 0}, exitCode: 7};
     }
   }]
 };
@@ -254,6 +254,7 @@ describe("plugin translation and execution", () => {
     expect(JSON.parse(executed.stdout)).toEqual({
       stdout: "one|two words",
       stderr: "fixture stderr",
+      stock: {stdout: "stock output", stderr: "", exitCode: 0},
       exitCode: 7,
     });
   });
@@ -279,5 +280,34 @@ describe("plugin translation and execution", () => {
       "executor must return stdout/stderr strings and an exitCode from 0 through 255",
     );
   });
-});
 
+  test("ignores invalid or throwing optional stock evidence", async () => {
+    for (const execute of [
+      'execute() { return {stdout: "current", stock: {stdout: 1}, exitCode: 0}; }',
+      'execute() { return {stdout: "current", get stock() { throw new Error("stock"); }, exitCode: 0}; }',
+      'execute() { return {stdout: "current", stock: {get stdout() { throw new Error("stdout"); }, exitCode: 0}, exitCode: 0}; }',
+    ]) {
+      const directory = await temporaryDirectory();
+      await writeFile(
+        path.join(directory, "plugin.mjs"),
+        pluginDeclaration().replace(
+          'execute() { return {stdout: "", exitCode: 0}; }',
+          execute,
+        ),
+        "utf8",
+      );
+      const result = invokeHost(directory, {
+        operation: "execute",
+        module: "plugin.mjs",
+        index: 0,
+        arguments: [],
+      });
+      expect(result.status).toBe(0);
+      expect(JSON.parse(result.stdout)).toEqual({
+        stdout: "current",
+        stderr: "",
+        exitCode: 0,
+      });
+    }
+  });
+});

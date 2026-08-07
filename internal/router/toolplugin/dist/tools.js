@@ -397,9 +397,20 @@ function conciseDiagnostic(diagnostic) {
 `);
   for (let index = lines.length - 1;index >= 0; index -= 1) {
     const line = lines[index].trim();
-    if (line !== "") {
-      return line;
+    if (line === "") {
+      continue;
     }
+    const operationMarker = ": IO error for operation on ";
+    const operationStart = line.indexOf(operationMarker);
+    if (line.startsWith("rg: ") && operationStart >= 0) {
+      const path = line.slice("rg: ".length, operationStart);
+      const messageStart = `${operationMarker}${path}: `;
+      const details = line.slice(operationStart);
+      if (details.startsWith(messageStart)) {
+        return details.slice(messageStart.length);
+      }
+    }
+    return line;
   }
   return diagnostic;
 }
@@ -412,8 +423,9 @@ async function runRipgrep(argumentsValue, maxOutputBytes) {
     child.once("close", (code) => resolve(code));
   });
   const stderrPromise = collectStderr(child.stderr);
-  let output = "";
-  let outputBytes = 0;
+  let current = "";
+  let currentBytes = 0;
+  let stock = "";
   let pending = [];
   let pendingBytes = 0;
   let truncated = false;
@@ -447,16 +459,19 @@ async function runRipgrep(argumentsValue, maxOutputBytes) {
       return true;
     }
     seen.add(key);
-    const row = `${JSON.stringify(path)}:${formatHashLine(lineNumber, line)}`;
+    const prefix = `${JSON.stringify(path)}:`;
+    const row = `${prefix}${formatHashLine(lineNumber, line)}`;
     const rowBytes = byteLength(row);
-    if (outputBytes + rowBytes + byteLength(LIMIT_MESSAGE) > maxOutputBytes) {
+    if (currentBytes + rowBytes + byteLength(LIMIT_MESSAGE) > maxOutputBytes) {
       return false;
     }
-    output += row;
-    outputBytes += rowBytes;
+    current += row;
+    stock += `${prefix}${line}
+`;
+    currentBytes += rowBytes;
     return true;
   };
-  const eventLimit = () => Math.max(MAX_CONTROL_EVENT_BYTES, maxOutputBytes - outputBytes - byteLength(LIMIT_MESSAGE));
+  const eventLimit = () => Math.max(MAX_CONTROL_EVENT_BYTES, maxOutputBytes - currentBytes - byteLength(LIMIT_MESSAGE));
   const takePending = () => {
     const raw = pending.length === 1 ? pending[0] : Buffer.concat(pending, pendingBytes);
     pending = [];
@@ -505,11 +520,12 @@ async function runRipgrep(argumentsValue, maxOutputBytes) {
     throw error;
   }
   if (truncated) {
-    output += LIMIT_MESSAGE;
-    return output;
+    current += LIMIT_MESSAGE;
+    stock += LIMIT_MESSAGE;
+    return { current, stock };
   }
   if (exitCode === 0 || exitCode === 1) {
-    return output;
+    return { current, stock };
   }
   const diagnostic = conciseDiagnostic(stderr.trim());
   if (diagnostic !== "") {
@@ -537,8 +553,13 @@ function createHGrepTool(description, grammar) {
 `;
       try {
         const maxOutputBytes = MAX_OUTPUT_BYTES - byteLength(warning);
-        const stdout = await runRipgrep(normalized.arguments, maxOutputBytes);
-        return { stdout, stderr: warning, exitCode: 0 };
+        const result = await runRipgrep(normalized.arguments, maxOutputBytes);
+        return {
+          stdout: result.current,
+          stderr: warning,
+          stock: { stdout: result.stock, stderr: warning, exitCode: 0 },
+          exitCode: 0
+        };
       } catch (error) {
         return { stderr: `${warning}hgrep: ${errorText(error)}
 `, exitCode: 1 };
@@ -556,6 +577,14 @@ var BATCH_LIMIT_MESSAGE = `hread: batch output limit reached; retry remaining it
 `;
 
 class ResultTooLargeError extends Error {
+}
+function conciseErrorText(error) {
+  const message = errorText(error);
+  if (!(error instanceof Error) || !("syscall" in error) || typeof error.syscall !== "string") {
+    return message;
+  }
+  const detailsStart = message.indexOf(`, ${error.syscall}`);
+  return detailsStart < 0 ? message : message.slice(0, detailsStart);
 }
 function parseQuotedPath(input) {
   let escaped = false;
@@ -648,16 +677,11 @@ function parseReadSpecs(input) {
   return specs;
 }
 async function readHashLines(spec, maxOutputBytes) {
-  let handle;
-  try {
-    handle = await open(spec.path, constants.O_RDONLY | (constants.O_NONBLOCK ?? 0));
-  } catch (error) {
-    throw new Error(`reading ${spec.path}: ${errorText(error)}`);
-  }
+  const handle = await open(spec.path, constants.O_RDONLY | (constants.O_NONBLOCK ?? 0));
   try {
     const info = await handle.stat();
     if (!info.isFile()) {
-      throw new Error(`${spec.path} is not a regular file`);
+      throw new Error("not a regular file");
     }
     const wholeFile = spec.startLine === 0 && spec.endLine === 0;
     let lineNumber = 1;
@@ -665,8 +689,9 @@ async function readHashLines(spec, maxOutputBytes) {
     let pendingCR = false;
     let content = "";
     let contentBytes = 0;
-    let output = "";
-    let outputBytes = 0;
+    let current = "";
+    let currentBytes = 0;
+    let stock = "";
     const selected = () => wholeFile || lineNumber >= spec.startLine && lineNumber <= spec.endLine;
     const capacityError = () => new ResultTooLargeError(`hread result exceeds its configured bound of ${maxOutputBytes} bytes`);
     const appendContent = (text) => {
@@ -679,7 +704,7 @@ async function readHashLines(spec, maxOutputBytes) {
       }
       const addedBytes = byteLength(text);
       const rowFramingBytes = byteLength(String(lineNumber)) + 7;
-      if (outputBytes + rowFramingBytes + contentBytes + addedBytes > maxOutputBytes) {
+      if (currentBytes + rowFramingBytes + contentBytes + addedBytes > maxOutputBytes) {
         throw capacityError();
       }
       content += text;
@@ -689,11 +714,13 @@ async function readHashLines(spec, maxOutputBytes) {
       if (selected()) {
         const row = formatHashLine(lineNumber, content);
         const rowBytes = byteLength(row);
-        if (outputBytes + rowBytes > maxOutputBytes) {
+        if (currentBytes + rowBytes > maxOutputBytes) {
           throw capacityError();
         }
-        output += row;
-        outputBytes += rowBytes;
+        current += row;
+        currentBytes += rowBytes;
+        stock += `${content}
+`;
       }
       content = "";
       contentBytes = 0;
@@ -750,9 +777,9 @@ async function readHashLines(spec, maxOutputBytes) {
         throw error;
       }
       if (error instanceof TypeError) {
-        throw new Error(`${spec.path} is not UTF-8`);
+        throw new Error("not UTF-8");
       }
-      throw new Error(`reading ${spec.path}: ${errorText(error)}`);
+      throw error;
     } finally {
       stream.destroy();
     }
@@ -765,7 +792,7 @@ async function readHashLines(spec, maxOutputBytes) {
     if (!wholeFile && spec.startLine > lineCount) {
       throw new Error(`requested lines ${spec.startLine}:${spec.endLine} are outside file with ${lineCount} lines`);
     }
-    return output;
+    return { current, stock };
   } finally {
     await handle.close();
   }
@@ -776,21 +803,24 @@ async function executeRead(input) {
     return readHashLines(specs[0].spec, MAX_OUTPUT_BYTES);
   }
   const dataLimit = Math.max(0, MAX_OUTPUT_BYTES - byteLength(BATCH_LIMIT_MESSAGE));
-  let output = "";
-  let outputBytes = 0;
+  let current = "";
+  let currentBytes = 0;
+  let stock = "";
   const appendBounded = (text) => {
     const addedBytes = byteLength(text);
-    if (outputBytes + addedBytes > dataLimit) {
+    if (currentBytes + addedBytes > dataLimit) {
       return false;
     }
-    output += text;
-    outputBytes += addedBytes;
+    current += text;
+    stock += text;
+    currentBytes += addedBytes;
     return true;
   };
   const appendLimitMessage = () => {
-    if (outputBytes + byteLength(BATCH_LIMIT_MESSAGE) <= MAX_OUTPUT_BYTES) {
-      output += BATCH_LIMIT_MESSAGE;
-      outputBytes += byteLength(BATCH_LIMIT_MESSAGE);
+    if (currentBytes + byteLength(BATCH_LIMIT_MESSAGE) <= MAX_OUTPUT_BYTES) {
+      current += BATCH_LIMIT_MESSAGE;
+      stock += BATCH_LIMIT_MESSAGE;
+      currentBytes += byteLength(BATCH_LIMIT_MESSAGE);
     }
   };
   for (const item of specs) {
@@ -800,7 +830,7 @@ async function executeRead(input) {
       break;
     }
     if (item.error !== null) {
-      if (!appendBounded(`hread: ${errorText(item.error)}
+      if (!appendBounded(`hread: ${conciseErrorText(item.error)}
 `)) {
         appendLimitMessage();
         break;
@@ -808,22 +838,23 @@ async function executeRead(input) {
       continue;
     }
     try {
-      const result = await readHashLines(item.spec, dataLimit - outputBytes);
-      output += result;
-      outputBytes += byteLength(result);
+      const result = await readHashLines(item.spec, dataLimit - currentBytes);
+      current += result.current;
+      stock += result.stock;
+      currentBytes += byteLength(result.current);
     } catch (error) {
       if (error instanceof ResultTooLargeError) {
         appendLimitMessage();
         break;
       }
-      if (!appendBounded(`hread: ${errorText(error)}
+      if (!appendBounded(`hread: ${conciseErrorText(error)}
 `)) {
         appendLimitMessage();
         break;
       }
     }
   }
-  return output;
+  return { current, stock };
 }
 function createHReadTool(description, grammar) {
   return createExecutorTool({
@@ -842,9 +873,14 @@ function createHReadTool(description, grammar) {
         };
       }
       try {
-        return { stdout: await executeRead(argv[0]), exitCode: 0 };
+        const result = await executeRead(argv[0]);
+        return {
+          stdout: result.current,
+          stock: { stdout: result.stock, exitCode: 0 },
+          exitCode: 0
+        };
       } catch (error) {
-        return { stderr: `hread: ${errorText(error)}
+        return { stderr: `hread: ${conciseErrorText(error)}
 `, exitCode: 1 };
       }
     }

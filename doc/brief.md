@@ -23,8 +23,9 @@ A router-local tool plugin system loads TypeScript-authored, compiled JavaScript
 from the user configuration directory, exposes their OpenAI custom-tool specifications, and
 translates model calls into ordinary Code Mode tool-call carriers. Common exec translations
 use a router-owned wrapper, while tool implementations run only when Codex executes the
-translated carrier under its normal sandbox and permissions. Gain reporting attributes
-installed definitions and emitted-versus-translated output shapes to each contributed tool.
+translated carrier under its normal sandbox and permissions. Gain reporting attributes installed
+definitions, emitted-versus-translated output shapes, and current-versus-stock executor-result input
+shapes to each contributed tool.
 
 An installable `shell` plugin accepts one free-form script and exposes its normalized interpreter
 and exact body in the translated Codex exec carrier. The executor supplies the body through an
@@ -62,8 +63,10 @@ wall time must remain close to control.
 - Model-visible custom-tool declarations using unconstrained string input or OpenAI-supported
   Lark and regex grammars, typed translation into Code Mode carriers, and executor-side tool
   implementations.
-- Per-plugin and per-tool installed-definition, emitted-call, and translated-carrier token
-  estimates in `hpatch gain` and the router gain page.
+- Per-plugin and per-tool installed-definition, emitted-call, translated-carrier, current-result,
+  and optional stock-result token estimates in `hpatch gain` and the router gain page.
+- Built-in hread and hgrep stock results preserve returned content while omitting their verified
+  `LINE:HASH` row identity, so gain reports the input cost of editable row references.
 - A repository `plugins/shell.mjs` example with optional interpreter and command-template
   directives, plus a `make install` path that installs both binaries and configured plugins.
 
@@ -146,3 +149,7 @@ wall time must remain close to control.
 - A plugin translator returns a normal Code Mode tool-call carrier rather than an exec-specific
   envelope. The plugin API may provide an exec wrapper that alone owns the repeated outer exec
   shape.
+
+- A plugin executor returns its current result once and may include a stock result produced during
+  that same execution. The stock result is metric evidence only and cannot change the current
+  stdout, stderr, or exit status.

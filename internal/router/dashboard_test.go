@@ -59,8 +59,14 @@ func TestDashboardIsSelfContainedAndProtectedByCSP(t *testing.T) {
 	if !strings.Contains(body, "validToolGain") || !strings.Contains(body, "g.tools") || !strings.Contains(body, "all-tools") {
 		t.Fatal("dashboard does not validate and reconcile per-tool gain rows")
 	}
-	if !strings.Contains(body, "installed tool definitions") || !strings.Contains(body, "shared framing") {
-		t.Fatal("dashboard does not expose the reconciling definition breakdown")
+	if !strings.Contains(body, "Input token overhead estimates") || !strings.Contains(body, "validToolInput") ||
+		!strings.Contains(body, "g.tool_inputs") || !strings.Contains(body, "all_tool_inputs") ||
+		!strings.Contains(body, "root.gain.overhead") {
+		t.Fatal("dashboard does not expose current-versus-stock input estimates and overhead")
+	}
+	if strings.Contains(body, "descriptive child of the installed-definition total") ||
+		strings.Contains(body, "shared framing") {
+		t.Fatal("dashboard input overhead retains plugin definition child rows")
 	}
 }
 

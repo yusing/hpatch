@@ -388,7 +388,7 @@ function conciseDiagnostic(diagnostic: string): string {
   return diagnostic;
 }
 
-async function runRipgrep(argumentsValue: string[], maxOutputBytes: number): Promise<string> {
+async function runRipgrep(argumentsValue: string[], maxOutputBytes: number): Promise<{current: string; stock: string}> {
   const child = spawn("rg", ["--json", "--no-config", ...argumentsValue], {
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -398,8 +398,9 @@ async function runRipgrep(argumentsValue: string[], maxOutputBytes: number): Pro
   });
   const stderrPromise = collectStderr(child.stderr);
 
-  let output = "";
-  let outputBytes = 0;
+  let current = "";
+  let currentBytes = 0;
+  let stock = "";
   let pending: Buffer[] = [];
   let pendingBytes = 0;
   let truncated = false;
@@ -432,18 +433,20 @@ async function runRipgrep(argumentsValue: string[], maxOutputBytes: number): Pro
       return true;
     }
     seen.add(key);
-    const row = `${JSON.stringify(path)}:${formatHashLine(lineNumber, line)}`;
+    const prefix = `${JSON.stringify(path)}:`;
+    const row = `${prefix}${formatHashLine(lineNumber, line)}`;
     const rowBytes = byteLength(row);
-    if (outputBytes + rowBytes + byteLength(LIMIT_MESSAGE) > maxOutputBytes) {
+    if (currentBytes + rowBytes + byteLength(LIMIT_MESSAGE) > maxOutputBytes) {
       return false;
     }
-    output += row;
-    outputBytes += rowBytes;
+    current += row;
+    stock += `${prefix}${line}\n`;
+    currentBytes += rowBytes;
     return true;
   };
   const eventLimit = (): number => Math.max(
     MAX_CONTROL_EVENT_BYTES,
-    maxOutputBytes - outputBytes - byteLength(LIMIT_MESSAGE),
+    maxOutputBytes - currentBytes - byteLength(LIMIT_MESSAGE),
   );
   const takePending = (): Buffer => {
     const raw = pending.length === 1 ? pending[0] : Buffer.concat(pending, pendingBytes);
@@ -495,11 +498,12 @@ async function runRipgrep(argumentsValue: string[], maxOutputBytes: number): Pro
   }
 
   if (truncated) {
-    output += LIMIT_MESSAGE;
-    return output;
+    current += LIMIT_MESSAGE;
+    stock += LIMIT_MESSAGE;
+    return {current, stock};
   }
   if (exitCode === 0 || exitCode === 1) {
-    return output;
+    return {current, stock};
   }
   const diagnostic = conciseDiagnostic(stderr.trim());
   if (diagnostic !== "") {
@@ -528,8 +532,13 @@ export function createHGrepTool(description: string, grammar: string): Tool<stri
         : `hgrep: warning: ignoring ripgrep options ${normalized.warnings.join(", ")}; output remains verified rows\n`;
       try {
         const maxOutputBytes = MAX_OUTPUT_BYTES - byteLength(warning);
-        const stdout = await runRipgrep(normalized.arguments, maxOutputBytes);
-        return {stdout, stderr: warning, exitCode: 0};
+        const result = await runRipgrep(normalized.arguments, maxOutputBytes);
+        return {
+          stdout: result.current,
+          stderr: warning,
+          stock: {stdout: result.stock, stderr: warning, exitCode: 0},
+          exitCode: 0,
+        };
       } catch (error) {
         return {stderr: `${warning}hgrep: ${errorText(error)}\n`, exitCode: 1};
       }

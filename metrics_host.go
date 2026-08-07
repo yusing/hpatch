@@ -66,13 +66,7 @@ func (r HostMetricRecord) entry() (metrics, error) {
 		if err := validateMetricToolKey(record.PluginID, record.ToolName); err != nil {
 			return metrics{}, err
 		}
-		if err := entry.addTool(toolMetric{
-			PluginID: record.PluginID, ToolName: record.ToolName,
-			DefinitionInputTokens: record.DefinitionInputTokens, Calls: record.Calls,
-			EmittedTokens: record.EmittedTokens, TranslatedTokens: record.TranslatedTokens,
-			FailedTranslations: record.FailedTranslations, FailedEmittedTokens: record.FailedEmittedTokens,
-			FailedTranslatedTokens: record.FailedTranslatedTokens,
-		}); err != nil {
+		if err := entry.addTool(toolMetric(record)); err != nil {
 			return metrics{}, err
 		}
 	}

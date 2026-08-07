@@ -115,6 +115,7 @@ func TestGainReportReconcilesEffectiveAndIneffectiveTokens(t *testing.T) {
 		"builtin.hpatch/hpatch failed 2172 300 n/a",
 		"all-tools 4576 5064 9.6%",
 		"input token estimates:",
+		"input token overhead estimates:",
 		"installed tool definitions",
 		"apply_patch definition removed",
 		"net added input",
@@ -140,6 +141,7 @@ func TestGainReportReconcilesEffectiveAndIneffectiveTokens(t *testing.T) {
 	}
 	for _, nextTable := range []string{
 		"input token estimates:",
+		"input token overhead estimates:",
 		"command metrics:",
 		"target metrics:",
 		"failure reasons:",
@@ -164,7 +166,7 @@ func TestGainReportReconcilesEffectiveAndIneffectiveTokens(t *testing.T) {
 				"exact serialized collection installed by the router",
 
 				"exact Code Mode section removed by the router",
-				"measured additions minus the removed definition",
+				"actual measured input overhead after stock-result and definition credits",
 			} {
 				if !strings.Contains(strings.Join(strings.Fields(section), " "), text) {
 					t.Fatalf("width %d report lost description %q: %q", width, text, section)
@@ -190,7 +192,7 @@ func TestGainReportReconcilesEffectiveAndIneffectiveTokens(t *testing.T) {
 
 func gainInputSection(t *testing.T, report string) string {
 	t.Helper()
-	start := strings.Index(report, "input token estimates:\n")
+	start := strings.Index(report, "input token overhead estimates:\n")
 	end := strings.Index(report, "command metrics:\n")
 	if start < 0 || end < start {
 		t.Fatalf("gain report has no bounded input section: %q", report)
@@ -211,8 +213,11 @@ func TestLoadGainMetricsMatchesGainReportTotals(t *testing.T) {
 		DefinitionInputTokens:        11,
 		RemovedDefinitionInputTokens: 9,
 
-		SessionID:   "session-gain",
-		ToolMetrics: []ToolMetricRecord{{PluginID: "builtin.hpatch", ToolName: "hpatch", DefinitionInputTokens: 11}},
+		SessionID: "session-gain",
+		ToolMetrics: []ToolMetricRecord{{
+			PluginID: "builtin.hpatch", ToolName: "hpatch", DefinitionInputTokens: 11,
+			Executions: 1, CurrentInputTokens: 20, StockInputTokens: 10,
+		}},
 	})
 	entry := metrics{}
 	entry.Commands[commandOperationIndex("type+")].Invocations = 1
@@ -234,8 +239,12 @@ func TestLoadGainMetricsMatchesGainReportTotals(t *testing.T) {
 	if got.SuccessfulReduction != "60.0" || got.OverallReduction != "36.4" {
 		t.Fatalf("reductions = %q / %q", got.SuccessfulReduction, got.OverallReduction)
 	}
-	if got.NetAddedInput != "14" || got.DefinitionSources != "installation and removal measured" {
+	if got.NetAddedInput != "24" || got.DefinitionSources != "installation and removal measured" {
 		t.Fatalf("input = net %q sources %q", got.NetAddedInput, got.DefinitionSources)
+	}
+	if len(got.ToolInputs) != 1 || got.ToolInputs[0].CurrentTokens != 20 ||
+		got.ToolInputs[0].StockTokens != 10 || got.ToolInputs[0].Reduction != "-100.0" {
+		t.Fatalf("tool input estimates = %#v", got.ToolInputs)
 	}
 	if len(got.Commands) != commandCount || got.Commands[commandOperationIndex("type+")].Errors != 1 {
 		t.Fatalf("commands = %#v", got.Commands)
@@ -669,6 +678,28 @@ func TestHPATCH18MetricsReset(t *testing.T) {
 	}
 	if got != (metrics{}) {
 		t.Fatalf("HPATCH18 metrics were not reset: %+v", got)
+	}
+}
+
+func TestHPATCH24MetricsReset(t *testing.T) {
+	dataDirectory := t.TempDir()
+	const priorSlotSize = 34080
+	const priorChecksumOffset = 34048
+	var prior [priorSlotSize]byte
+	copy(prior[:8], "HPATCH24")
+	binary.LittleEndian.PutUint64(prior[8:16], 7)
+	binary.LittleEndian.PutUint64(prior[16:24], 5)
+	checksum := sha256.Sum256(prior[:priorChecksumOffset])
+	copy(prior[priorChecksumOffset:], checksum[:])
+	if err := os.WriteFile(filepath.Join(dataDirectory, metricsFilename), prior[:], 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := readMetrics(dataDirectory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != (metrics{}) {
+		t.Fatalf("HPATCH24 metrics were not reset: %+v", got)
 	}
 }
 

@@ -23,10 +23,14 @@ export type TranslationAPI = {
   exec(template?: string): ExecCarrier;
 };
 
-export type ExecutionResult = {
+export type ExecutionOutput = {
   stdout?: string;
   stderr?: string;
   exitCode: number;
+};
+
+export type ExecutionResult = ExecutionOutput & {
+  stock?: ExecutionOutput;
 };
 
 export type ExecutionContext = {

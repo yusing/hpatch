@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/yusing/hpatch"
 )
 
 func newToolPluginTestRegistry(t *testing.T) (*toolRegistry, string) {
@@ -95,7 +97,8 @@ func TestToolPluginWorkerResolvesBasenameFromPath(t *testing.T) {
 }
 
 func TestBuiltinToolWorkersRunGeneratedTypeScriptImplementations(t *testing.T) {
-	registry, err := buildToolRegistry(t.Context(), t.TempDir(), testHPatchToolDescription)
+	dataDirectory := t.TempDir()
+	registry, err := buildToolRegistry(t.Context(), dataDirectory, testHPatchToolDescription)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -143,6 +146,18 @@ func TestBuiltinToolWorkersRunGeneratedTypeScriptImplementations(t *testing.T) {
 				)
 			}
 		})
+	}
+	gain, err := hpatch.LoadGainMetrics(dataDirectory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(gain.ToolInputs) != 2 || gain.NetAddedInput == "0" {
+		t.Fatalf("built-in input metrics = %+v", gain)
+	}
+	for _, row := range gain.ToolInputs {
+		if row.CurrentTokens <= row.StockTokens || row.Reduction == "n/a" {
+			t.Fatalf("built-in input metric row = %+v", row)
+		}
 	}
 }
 

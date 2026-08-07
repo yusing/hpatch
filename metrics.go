@@ -24,10 +24,10 @@ import (
 const (
 	metricsFilename = "metrics.bin"
 	metricsLockname = "metrics.lock"
-	metricsMagic    = "HPATCH24"
+	metricsMagic    = "HPATCH25"
 
 	metricsToolOffset       = 1280
-	metricsToolEntrySize    = 256
+	metricsToolEntrySize    = 280
 	metricsChecksumOffset   = metricsToolOffset + maxMetricTools*metricsToolEntrySize
 	metricsSlotSize         = metricsChecksumOffset + sha256.Size
 	metricsFileSize         = 2 * metricsSlotSize
@@ -445,6 +445,7 @@ func hasValidPriorMetricsSlot(file *os.File, size int64) (bool, error) {
 		checksumOffset int
 		checksumSize   int
 	}{
+		{slotSize: 34080, checksumOffset: 34048, checksumSize: 32},
 		{slotSize: 2432, checksumOffset: 2400, checksumSize: 32},
 		{slotSize: 2304, checksumOffset: 2272, checksumSize: 32},
 		{slotSize: 264, checksumOffset: 232, checksumSize: 32},
@@ -629,8 +630,8 @@ type GainMetrics struct {
 	DefinitionInputTokens        uint64 `json:"definition_input_tokens"`
 	RemovedDefinitionInputTokens uint64 `json:"removed_definition_input_tokens"`
 
-	// NetAddedInput is measured additions minus the removed definition credit.
-	// It is a decimal string so a definition credit can make the net negative.
+	// NetAddedInput is measured additions plus current-minus-stock tool results,
+	// minus the removed definition credit. It is a decimal string.
 	NetAddedInput      string `json:"net_added_input"`
 	Sessions           uint64 `json:"sessions"`
 	DefinitionRequests uint64 `json:"definition_requests"`
@@ -638,6 +639,8 @@ type GainMetrics struct {
 
 	Tools                  []ToolGainMetric           `json:"tools"`
 	AllTools               ToolGainMetric             `json:"all_tools"`
+	ToolInputs             []ToolInputGainMetric      `json:"tool_inputs"`
+	AllToolInputs          ToolInputGainMetric        `json:"all_tool_inputs"`
 	ToolDefinitions        []ToolDefinitionGainMetric `json:"tool_definitions"`
 	SharedDefinitionTokens int64                      `json:"shared_definition_tokens"`
 
@@ -666,12 +669,15 @@ func LoadGainMetrics(dataDirectory string) (GainMetrics, error) {
 // that need structured fields (dashboard JSON) instead of terminal text.
 func (m metrics) gainMetrics() GainMetrics {
 	tools, allTools, toolDefinitions := m.gainToolRows()
+	toolInputs, allToolInputs := m.gainToolInputRows()
 	added := new(big.Int).SetUint64(m.ReportInputTokens)
 	for _, count := range []uint64{m.DiagnosticInputTokens, m.DefinitionInputTokens} {
 		added.Add(added, new(big.Int).SetUint64(count))
 	}
 	removed := new(big.Int).SetUint64(m.RemovedDefinitionInputTokens)
 	net := new(big.Int).Sub(added, removed)
+	net.Add(net, new(big.Int).SetUint64(allToolInputs.CurrentTokens))
+	net.Sub(net, new(big.Int).SetUint64(allToolInputs.StockTokens))
 
 	commands := make([]NamedCommandMetric, 0, commandCount)
 	for index, name := range commandOperations {
@@ -732,6 +738,8 @@ func (m metrics) gainMetrics() GainMetrics {
 		DefinitionSources:      describeDefinitionSources(m),
 		Tools:                  tools,
 		AllTools:               allTools,
+		ToolInputs:             toolInputs,
+		AllToolInputs:          allToolInputs,
 		ToolDefinitions:        toolDefinitions,
 		SharedDefinitionTokens: m.SharedDefinitionInputTokens,
 		Commands:               commands,
@@ -746,21 +754,22 @@ const defaultGainReportWidth = 80
 func gainReportAtWidth(m metrics, width int) string {
 	var report strings.Builder
 	writeOutputGainTable(&report, m)
-	writeInputGainTable(&report, m, width)
+	writeInputTokenGainTable(&report, m)
+	writeInputOverheadGainTable(&report, m, width)
 
 	writeCommandTable(&report, "command metrics:", "command", commandOperations[:], m.Commands[:], true)
 	writeCommandTable(&report, "target metrics:", "target", targetVariantNames[:], m.Targets[:], false)
 
 	report.WriteString("failure reasons:\n")
 	table := tabwriter.NewWriter(&report, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(table, "reason\terrors")
-	fmt.Fprintln(table, "------\t------")
+	_, _ = fmt.Fprintln(table, "reason\terrors")
+	_, _ = fmt.Fprintln(table, "------\t------")
 	var totalReasons uint64
 	for index, name := range failureReasonNames {
-		fmt.Fprintf(table, "%s\t%d\n", name, m.Reasons[index])
+		_, _ = fmt.Fprintf(table, "%s\t%d\n", name, m.Reasons[index])
 		totalReasons += m.Reasons[index]
 	}
-	fmt.Fprintf(table, "total\t%d\n", totalReasons)
+	_, _ = fmt.Fprintf(table, "total\t%d\n", totalReasons)
 	_ = table.Flush()
 	report.WriteByte('\n')
 
@@ -772,31 +781,56 @@ func writeOutputGainTable(report *strings.Builder, m metrics) {
 	tools, allTools, _ := m.gainToolRows()
 	report.WriteString("output token estimates:\n")
 	table := tabwriter.NewWriter(report, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(table, "tool\temitted\ttranslated\treduction")
-	fmt.Fprintln(table, "----\t-------\t----------\t---------")
+	_, _ = fmt.Fprintln(table, "tool\temitted\ttranslated\treduction")
+	_, _ = fmt.Fprintln(table, "----\t-------\t----------\t---------")
 	for _, row := range tools {
 		reduction := row.Reduction
 		if reduction != "n/a" {
 			reduction += "%"
 		}
-		fmt.Fprintf(table, "%s\t%d\t%d\t%s\n", toolMetricLabel(row.PluginID, row.ToolName, row.Failed), row.EmittedTokens, row.TranslatedTokens, reduction)
+		_, _ = fmt.Fprintf(table, "%s\t%d\t%d\t%s\n", toolMetricLabel(row.PluginID, row.ToolName, row.Failed), row.EmittedTokens, row.TranslatedTokens, reduction)
 	}
 	allReduction := allTools.Reduction
 	if allReduction != "n/a" {
 		allReduction += "%"
 	}
-	fmt.Fprintf(table, "all-tools\t%d\t%d\t%s\n", allTools.EmittedTokens, allTools.TranslatedTokens, allReduction)
+	_, _ = fmt.Fprintf(table, "all-tools\t%d\t%d\t%s\n", allTools.EmittedTokens, allTools.TranslatedTokens, allReduction)
 	_ = table.Flush()
 	report.WriteString("Failed hpatch translation uses the empty-patch semantic baseline; other router rejections have no translated carrier.\n\n")
 }
 
-func writeInputGainTable(report *strings.Builder, m metrics, width int) {
+func writeInputTokenGainTable(report *strings.Builder, m metrics) {
+	tools, allTools := m.gainToolInputRows()
+	report.WriteString("input token estimates:\n")
+	table := tabwriter.NewWriter(report, 0, 4, 2, ' ', 0)
+	_, _ = fmt.Fprintln(table, "tool\tcurrent\tstock\treduction")
+	_, _ = fmt.Fprintln(table, "----\t-------\t-----\t---------")
+	for _, row := range tools {
+		reduction := row.Reduction
+		if reduction != "n/a" {
+			reduction += "%"
+		}
+		_, _ = fmt.Fprintf(table, "%s\t%d\t%d\t%s\n", toolMetricLabel(row.PluginID, row.ToolName, false), row.CurrentTokens, row.StockTokens, reduction)
+	}
+	allReduction := allTools.Reduction
+	if allReduction != "n/a" {
+		allReduction += "%"
+	}
+	_, _ = fmt.Fprintf(table, "all-tools\t%d\t%d\t%s\n", allTools.CurrentTokens, allTools.StockTokens, allReduction)
+	_ = table.Flush()
+	report.WriteByte('\n')
+}
+
+func writeInputOverheadGainTable(report *strings.Builder, m metrics, width int) {
 	added := new(big.Int).SetUint64(m.ReportInputTokens)
 	for _, count := range []uint64{m.DiagnosticInputTokens, m.DefinitionInputTokens} {
 		added.Add(added, new(big.Int).SetUint64(count))
 	}
 	removed := new(big.Int).SetUint64(m.RemovedDefinitionInputTokens)
 	net := new(big.Int).Sub(new(big.Int).Set(added), removed)
+	_, allToolInputs := m.gainToolInputRows()
+	net.Add(net, new(big.Int).SetUint64(allToolInputs.CurrentTokens))
+	net.Sub(net, new(big.Int).SetUint64(allToolInputs.StockTokens))
 
 	removedText := "0"
 	if m.RemovedDefinitionInputTokens != 0 {
@@ -806,27 +840,10 @@ func writeInputGainTable(report *strings.Builder, m metrics, width int) {
 		{"state reports", strconv.FormatUint(m.ReportInputTokens, 10), "final state returned after successful calls"},
 		{"failure diagnostics", strconv.FormatUint(m.DiagnosticInputTokens, 10), "errors and repair context returned after failed calls"},
 		{"installed tool definitions", strconv.FormatUint(m.DefinitionInputTokens, 10), "exact serialized collection installed by the router"},
+		{"apply_patch definition removed", removedText, "exact Code Mode section removed by the router"},
+		{"net added input", net.String(), "actual measured input overhead after stock-result and definition credits"},
 	}
-	_, _, definitions := m.gainToolRows()
-	for _, definition := range definitions {
-		rows = append(rows, []string{
-			"  " + toolMetricLabel(definition.PluginID, definition.ToolName, false),
-			strconv.FormatUint(definition.Tokens, 10),
-			"descriptive child of the installed-definition total",
-		})
-	}
-	if m.DefinitionRequests != 0 {
-		rows = append(rows, []string{
-			"  shared framing",
-			formatSignedMetric(m.SharedDefinitionInputTokens),
-			"shared collection serialization needed to reconcile installed definitions",
-		})
-	}
-	rows = append(rows,
-		[]string{"apply_patch definition removed", removedText, "exact Code Mode section removed by the router"},
-		[]string{"net added input", net.String(), "measured additions minus the removed definition"},
-	)
-	report.WriteString("input token estimates:\n")
+	report.WriteString("input token overhead estimates:\n")
 	writeWrappedTable(report, width, []string{"source", "tokens", "description"}, rows)
 	writeWrappedText(report, width, fmt.Sprintf("Definition routing covers %d accounted request(s) in %d distinct session(s) (%s).", m.DefinitionRequests, m.Sessions, describeDefinitionSources(m)))
 	report.WriteByte('\n')
@@ -944,20 +961,20 @@ func writeWrappedText(report *strings.Builder, width int, value string) {
 func writeCommandReasonTable(report *strings.Builder, commandReasons [commandCount][failureReasonCount]uint64) {
 	report.WriteString("command failure reasons:\n")
 	table := tabwriter.NewWriter(report, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(table, "command\treason\terrors")
-	fmt.Fprintln(table, "-------\t------\t------")
+	_, _ = fmt.Fprintln(table, "command\treason\terrors")
+	_, _ = fmt.Fprintln(table, "-------\t------\t------")
 	var rows int
 	for command, reasons := range commandReasons {
 		for reason, count := range reasons {
 			if count == 0 {
 				continue
 			}
-			fmt.Fprintf(table, "%s\t%s\t%d\n", commandOperations[command], failureReasonNames[reason], count)
+			_, _ = fmt.Fprintf(table, "%s\t%s\t%d\n", commandOperations[command], failureReasonNames[reason], count)
 			rows++
 		}
 	}
 	if rows == 0 {
-		fmt.Fprintln(table, "none\tnone\t0") //nolint:dupword // Both columns intentionally report the empty state.
+		_, _ = fmt.Fprintln(table, "none\tnone\t0") //nolint:dupword // Both columns intentionally report the empty state.
 	}
 	_ = table.Flush()
 }
@@ -965,19 +982,19 @@ func writeCommandReasonTable(report *strings.Builder, commandReasons [commandCou
 func writeCommandTable(report *strings.Builder, title, firstHeader string, names []string, values []commandMetric, includeTotal bool) {
 	report.WriteString(title + "\n")
 	table := tabwriter.NewWriter(report, 0, 4, 2, ' ', 0)
-	fmt.Fprintf(table, "%s\tinvocations\terrors\terror rate\n", firstHeader)
-	fmt.Fprintln(table, "-------\t-----------\t------\t----------")
+	_, _ = fmt.Fprintf(table, "%s\tinvocations\terrors\terror rate\n", firstHeader)
+	_, _ = fmt.Fprintln(table, "-------\t-----------\t------\t----------")
 	var total commandMetric
 	for index, name := range names {
 		entry := values[index]
-		fmt.Fprintf(table, "%s\t%d\t%d\t%s%%\n", name, entry.Invocations, entry.Errors, entry.errorRate())
+		_, _ = fmt.Fprintf(table, "%s\t%d\t%d\t%s%%\n", name, entry.Invocations, entry.Errors, entry.errorRate())
 		if includeTotal {
 			total.Invocations += entry.Invocations
 			total.Errors += entry.Errors
 		}
 	}
 	if includeTotal {
-		fmt.Fprintf(table, "total\t%d\t%d\t%s%%\n", total.Invocations, total.Errors, total.errorRate())
+		_, _ = fmt.Fprintf(table, "total\t%d\t%d\t%s%%\n", total.Invocations, total.Errors, total.errorRate())
 	}
 	_ = table.Flush()
 	report.WriteByte('\n')

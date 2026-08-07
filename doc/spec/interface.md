@@ -95,6 +95,10 @@ terminator does not create an additional empty line. The router does not execute
 read, duplicate its filesystem rules, or encode its output in an `apply_patch`-shaped
 carrier.
 
+For input metrics, hread produces its current and stock results from the same read. The stock result
+preserves batch headers, diagnostics, order, selected `TEXT`, and one LF per returned logical line.
+It omits the `LINE:HASH ` prefix from each successful row.
+
 Acceptance:
 
 1. A legacy single whole-file or bounded read emits the same exact UTF-8 rows as before.
@@ -117,6 +121,8 @@ Acceptance:
    does not increment hpatch edit-failure counters.
 6. Turns and retained-session eviction do not create or own wrapper state. Router
    shutdown removes the process wrapper.
+7. Hread input metrics compare returned verified rows with the same result without each
+   `LINE:HASH ` prefix. The comparison does not read a file twice.
 
 ## REQ-GREP-001 — Routed verified-row search
 
@@ -152,6 +158,10 @@ Execution, syntax, filesystem, encoding, cancellation, and missing-executable fa
 concise `hgrep` diagnostics with nonzero status. Output contains only complete rows and stays
 within 16 MiB; reaching the bound preserves completed rows and adds a limit diagnostic.
 
+For input metrics, hgrep produces its current and stock results from the same ripgrep event stream.
+The stock result preserves each JSON-quoted `PATH`, `TEXT`, LF, result order, and diagnostic. It
+omits the `LINE:HASH ` portion from each successful row.
+
 The router exposes, translates, and replays hgrep through the same Code Mode exec boundary
 as hread. The nested carrier invokes the worker basename and supplies neither environment nor
 working-directory overrides, so deployment must place the trusted wrapper directory first on
@@ -173,6 +183,8 @@ Acceptance:
    scoped to its routed workspace session, and is not eligible for hpatch correction.
 5. Passthrough mode exposes neither hgrep nor the other replacement tools. Router startup
    fails before serving if its private hgrep worker cannot be installed.
+6. Hgrep input metrics compare returned verified rows with the same result without each
+   `LINE:HASH ` portion. The comparison does not run ripgrep twice.
 
 ## REQ-PLUGIN-001 — Router-local tool plugins
 
@@ -226,6 +238,15 @@ remaining argv unchanged.
 The private worker keeps the frontend standard input separate from the JavaScript host's JSON
 control stream. The host exposes that input only as a dedicated inherited descriptor during
 executor calls.
+
+An executor returns its current stdout, stderr, and exit status once. It may also return one
+optional stock result with the same fields. The stock result represents the output that the
+displaced stock tool path would have returned for the same operation. The executor computes both
+results during the same execution; the router does not invoke a second metric-only implementation.
+The worker returns only the current result to Codex. It validates and records the stock result as
+metric evidence without allowing it to change the current output or status. When the stock result
+is absent or invalid, metrics use the validated current result as its stock result. Invalid optional
+metric evidence cannot replace or modify the current executor result.
 The carrier supplies no working-directory or environment override. The child therefore runs in
 Codex's execution context, and Codex remains the owner of sandbox, filesystem, process, network,
 and permission enforcement. Missing, conflicting, incorrectly targeted, or unusable symlinks
@@ -273,6 +294,8 @@ Acceptance:
    cannot be returned or counted as a successful tool call.
 10. Startup validation and tool-call metrics failures cannot replace an otherwise successful
     translated carrier or executor result; request cancellation still propagates.
+11. An executor can return one validated current result with or without a validated stock result.
+    The worker returns only the current result and does not run a second comparison execution.
 
 ## REQ-SHELL-001 — Installable free-form script tool
 
@@ -397,14 +420,19 @@ authoritative; per-tool rows and a shared framing row reconcile it without being
 when computing net input. A host that supplies no session or definition leaves these counters
 at zero, and gain states which inputs were measured so a zero is not read as a free tool.
 
-A failed or cancelled invocation emits no report and contributes zero report-input tokens.
-A partial or failed report write does not count as a complete emitted report. Tool-result
-contents, provider-hidden protocol and reasoning tokens, assistant commentary, and
-server-generated identifiers remain excluded. Routed read and search results do not subtract
-a hypothetical `cat`, `grep`, or `rg` result; only their model-emitted call and translated
-carrier shapes contribute the plugin rows. The router's end-to-end Responses and per-session
-usage totals remain authoritative for model input consumed after the exact executor result is
-returned. These token counts are reproducible estimates rather than provider billing totals.
+A failed or cancelled invocation emits no report and contributes zero report-input tokens. A partial
+or failed report write does not count as a complete emitted report. For each completed contributed
+tool execution, the current input estimate tokenizes the current stdout followed by current stderr.
+The stock estimate tokenizes the optional stock stdout followed by stock stderr. The current result
+is also the stock result when the executor omits the optional result. Exit status, provider-hidden
+protocol and reasoning tokens, assistant commentary, and server-generated identifiers are excluded.
+
+A contributed tool's input reduction is `(stock - current) / stock * 100`, may be negative, and is
+`n/a` when stock tokens are zero. Its signed input overhead is `current - stock`. The sum of these
+signed tool-result overheads contributes to net added input but does not add plugin rows to the
+input-overhead source table. The router's end-to-end Responses and per-session usage totals remain
+authoritative for provider-consumed model input. These token counts are reproducible estimates rather
+than provider billing totals.
 
 The router's in-memory metrics snapshot also attributes successful and rejected hpatch
 translations and rejected-call diagnostic input tokens to the request session. Each session
@@ -478,8 +506,8 @@ The aggregate is stored in `hpatch/metrics.bin` beneath the platform user config
 directory returned by Go's `os.UserConfigDir`. Updates hold an exclusive interprocess lock at
 `hpatch/metrics.lock`; gain reads hold a shared lock. The current-version metrics format uses
 two alternating bounded slots holding global hpatch counters and a keyed collection of
-plugin-and-tool definition, call, emitted, translated, and failed-translation counters, plus
-a persistence generation and checksum. A reader uses the valid current-format slot with the
+plugin-and-tool definition, call, emitted, translated, failed-translation, current-result, and
+stock-result counters, plus a persistence generation and checksum. A reader uses the valid
 greatest persistence generation, so an interrupted write to the inactive slot leaves the
 preceding aggregate available. The file does not grow after its current-version slots are
 created. Per-counter, per-tool, collection, and aggregate overflow fails without changing the
@@ -502,14 +530,19 @@ established semantic baseline and reports `n/a`; its downstream diagnostic carri
 excluded. The all-tools row sums the displayed emitted and translated quantities and applies
 the same reduction formula when its translated denominator is nonzero.
 
-Gain then writes a separate input-token table for final-state reports, failure diagnostics,
-the exact displaced `apply_patch` definition credit, and the total installed tool definitions.
-Indented stable plugin-and-tool rows and any shared serialization-framing row reconcile the
-installed-definition total and are descriptive children rather than additional input. Net
-added input is reports plus diagnostics plus the installed-definition total minus the removed
-definition. Gain does not subtract definitions from output, convert input to output, or
+Gain then writes an input-token table with one stable row per executed plugin and tool, followed by
+an all-tools row. Its columns are current tokens, stock tokens, and reduction. Gain next writes the
+input-token overhead table for final-state reports, failure diagnostics, the exact displaced
+`apply_patch` definition credit, the aggregate installed tool-definition total, and net added input.
+It does not show plugin child rows in this overhead table. Net added input is reports plus
+diagnostics plus installed definitions minus the removed definition plus the signed sum of current
+tool-result tokens minus stock tool-result tokens. Gain does not convert input to output or
 calculate a combined input/output percentage. Unmeasured definition sources are labeled
 `not measured`.
+
+The router gain page places the input-token and input-token overhead tables below the output-token
+table in left and right columns. It uses the headings `Input token estimates` and
+`Input token overhead estimates`.
 
 Gain then writes stable-order compact tables for aggregate command invocation and error
 rates; line, range, text-single, and text-multiple target counters; error reasons; and
@@ -527,34 +560,39 @@ Acceptance:
 1. Repeated successful normal and translate invocations persist cumulative paired
    hpatch estimates and fully emitted report-input estimates; failed invocations persist only
    ineffective hpatch estimates and zero report-input tokens.
-2. Every successfully translated contributed-tool call persists a plugin-and-tool row whose
+2. Every successfully translated contributed-tool call persists a plugin-and-tool output row whose
    emitted count uses the exact model-visible call shape and whose translated count uses the
    validated canonical Code Mode carrier shape. Runtime executor failure does not reclassify it.
-3. Gain reports stable per-plugin and per-tool output rows, optional adjacent failed rows, and
-   one all-tools row; it reports output and input token classes separately and performs no
-   input/output price conversion.
-4. The seven supported hpatch command counters and four target counters reconcile with
+3. Every completed executor result persists current and stock input estimates for its plugin and
+   tool. An omitted stock result produces equal estimates and zero reduction without a second
+   execution. A zero-token stock result reports `n/a`.
+4. Gain reports stable per-plugin and per-tool output rows, optional adjacent failed rows, and one
+   all-tools output row. It reports a separate input table with current, stock, reduction, and one
+   all-tools row.
+5. The input-overhead table has no plugin child rows. Net added input includes the signed difference
+   between current and stock tool-result estimates.
+6. The seven supported hpatch command counters and four target counters reconcile with
    aggregate command attempts and errors. No selector, clipboard, editor-generation, or
    script-level commit counter remains.
-5. Every definition-bearing request increments the definition-request counter, while the exact
+7. Every definition-bearing request increments the definition-request counter, while the exact
    installed tool collection, its reconciling per-tool breakdown, and the displaced baseline
    definition accumulate only once per distinct session. An absent session or definition
    leaves definition counters zero and reports which inputs were measured.
-6. Failed hpatch invocations contribute their complete output to the ineffective counter; the
+8. Failed hpatch invocations contribute their complete output to the ineffective counter; the
    failed translated counter receives the fixed direct-call program carrying the empty patch
    envelope, while the downstream diagnostic carrier is excluded.
-7. A correction is charged as the shorter payload the model emitted for both effective and
+9. A correction is charged as the shorter payload the model emitted for both effective and
    ineffective invocations while evaluation uses the rebuilt complete script.
-8. Tool inputs and translated payloads containing quotes or program-like text remain data and
+10. Tool inputs and translated payloads containing quotes or program-like text remain data and
    cannot alter the canonical programs used for counting.
-9. Concurrent writers lose no records, concurrent gain reads never observe a partial
+11. Concurrent writers lose no records, concurrent gain reads never observe a partial
    aggregate, and an interrupted or damaged latest state falls back to the preceding valid
    aggregate.
-10. A valid mismatched `HPATCH` version resets totals when no current state exists; malformed
+12. A valid mismatched `HPATCH` version resets totals when no current state exists; malformed
     data does not count as a version mismatch, and current state takes precedence.
-11. Metrics collection failure warns without changing the success or failure of the requested
+13. Metrics collection failure warns without changing the success or failure of the requested
     edit, translated carrier, executor result, or final-state report.
-12. Router snapshots attribute successful and rejected hpatch translations, diagnostic token
+14. Router snapshots attribute successful and rejected hpatch translations, diagnostic token
     totals, at most the latest 128 correction-aware attempt identities, and at most the latest
     32 structured evaluator rejection identities to their request sessions without persisting
     scripts, replacement text, diagnostics, repair context, or new per-session records in

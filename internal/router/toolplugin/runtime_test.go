@@ -34,6 +34,13 @@ export default {
 	}
 }
 
+func TestComparedExecutionHostOutputBoundCoversJSONExpansion(t *testing.T) {
+	const minimum = 2*6*maxHostOutputBytes + 1024
+	if maxComparedExecutionHostOutputBytes < minimum {
+		t.Fatalf("compared execution output bound = %d, want at least %d", maxComparedExecutionHostOutputBytes, minimum)
+	}
+}
+
 func TestLoadTimesOutPluginValidation(t *testing.T) {
 	pluginDirectory := t.TempDir()
 	declaration := `await new Promise((resolve) => setTimeout(resolve, 60_000));

@@ -97,6 +97,7 @@ describe("hread built-in plugin", () => {
         formatHashLine(2, "beta"),
         formatHashLine(3, "gamma"),
       ].join(""),
+      stock: {stdout: "alpha\nbeta\ngamma\n", exitCode: 0},
       exitCode: 0,
     });
 
@@ -116,6 +117,9 @@ describe("hread built-in plugin", () => {
     expect(batch.stdout).toContain(formatHashLine(3, "three"));
     expect(batch.stdout).toContain(
       "==> missing.txt <==\nhread: ENOENT: no such file or directory\n",
+    );
+    expect(batch.stock?.stdout).toContain(
+      "==> plain.txt 2:9 <==\nbeta\ngamma\n==> \"second file.txt\" 2:3 <==\ntwo\nthree\n",
     );
 
     const sixSpecs = Array.from({length: 6}, (_, index) => `missing${index}.txt`).join("\n");
@@ -223,6 +227,12 @@ describe("hgrep built-in plugin", () => {
       stdout: `${JSON.stringify("path with spaces.txt")}:${formatHashLine(2, "needle")}`
         + `${JSON.stringify("path with spaces.txt")}:${formatHashLine(3, "after")}`,
       stderr: "",
+      stock: {
+        stdout: `${JSON.stringify("path with spaces.txt")}:needle\n`
+          + `${JSON.stringify("path with spaces.txt")}:after\n`,
+        stderr: "",
+        exitCode: 0,
+      },
       exitCode: 0,
     });
 
@@ -231,6 +241,11 @@ describe("hgrep built-in plugin", () => {
     expect(carriage).toEqual({
       stdout: `${JSON.stringify("carriage.txt")}:${formatHashLine(1, "needle")}`,
       stderr: "",
+      stock: {
+        stdout: `${JSON.stringify("carriage.txt")}:needle\n`,
+        stderr: "",
+        exitCode: 0,
+      },
       exitCode: 0,
     });
 
@@ -263,6 +278,11 @@ describe("hgrep built-in plugin", () => {
       expect(result).toEqual({
         stdout: "hgrep: output limit reached; retry with a narrower search\n",
         stderr: "",
+        stock: {
+          stdout: "hgrep: output limit reached; retry with a narrower search\n",
+          stderr: "",
+          exitCode: 0,
+        },
         exitCode: 0,
       });
     } finally {

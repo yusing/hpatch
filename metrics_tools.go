@@ -27,6 +27,9 @@ type toolMetric struct {
 	FailedTranslations     uint64
 	FailedEmittedTokens    uint64
 	FailedTranslatedTokens uint64
+	Executions             uint64
+	CurrentInputTokens     uint64
+	StockInputTokens       uint64
 }
 
 // HostToolDefinition identifies one installed model-visible tool object.
@@ -48,6 +51,15 @@ type HostToolCall struct {
 	FailedTranslation bool
 }
 
+// HostToolResult is one completed executor result classification.
+// CurrentOutput and StockOutput are the canonical stdout-then-stderr content shapes.
+type HostToolResult struct {
+	PluginID      string
+	ToolName      string
+	CurrentOutput string
+	StockOutput   string
+}
+
 // HostMetricInput is the structured host evidence consumed by the metrics classifier.
 type HostMetricInput struct {
 	Invocation InvocationMetrics
@@ -59,6 +71,7 @@ type HostMetricInput struct {
 	ToolDefinitions     []HostToolDefinition
 	RemovedDefinition   string
 	ToolCall            *HostToolCall
+	ToolResult          *HostToolResult
 	StateReport         string
 	Diagnostic          string
 	AuxiliaryTexts      []string
@@ -75,6 +88,9 @@ type ToolMetricRecord struct {
 	FailedTranslations     uint64
 	FailedEmittedTokens    uint64
 	FailedTranslatedTokens uint64
+	Executions             uint64
+	CurrentInputTokens     uint64
+	StockInputTokens       uint64
 }
 
 // ToolGainMetric is one stable output-token row in structured gain data.
@@ -86,6 +102,16 @@ type ToolGainMetric struct {
 	EmittedTokens    uint64 `json:"emitted_tokens"`
 	TranslatedTokens uint64 `json:"translated_tokens"`
 	Reduction        string `json:"reduction_percent"`
+}
+
+// ToolInputGainMetric is one stable input-token row in structured gain data.
+type ToolInputGainMetric struct {
+	PluginID      string `json:"plugin_id"`
+	ToolName      string `json:"tool_name"`
+	Executions    uint64 `json:"executions"`
+	CurrentTokens uint64 `json:"current_tokens"`
+	StockTokens   uint64 `json:"stock_tokens"`
+	Reduction     string `json:"reduction_percent"`
 }
 
 // ToolDefinitionGainMetric is one descriptive child of the installed-definition total.
@@ -197,6 +223,26 @@ func ClassifyHostMetrics(input HostMetricInput) (HostMetricRecord, error) {
 			}
 		}
 	}
+	if input.ToolResult != nil {
+		result := input.ToolResult
+		if err := validateMetricToolKey(result.PluginID, result.ToolName); err != nil {
+			return HostMetricRecord{}, err
+		}
+		current, countErr := countMetricText(codec, result.CurrentOutput, "current tool result")
+		if countErr != nil {
+			return HostMetricRecord{}, countErr
+		}
+		stock, countErr := countMetricText(codec, result.StockOutput, "stock tool result")
+		if countErr != nil {
+			return HostMetricRecord{}, countErr
+		}
+		if err := mergeToolMetricRecord(&record.ToolMetrics, ToolMetricRecord{
+			PluginID: result.PluginID, ToolName: result.ToolName,
+			Executions: 1, CurrentInputTokens: current, StockInputTokens: stock,
+		}); err != nil {
+			return HostMetricRecord{}, err
+		}
+	}
 	slices.SortFunc(record.ToolMetrics, compareToolMetricRecords)
 	return record, nil
 }
@@ -234,7 +280,7 @@ func validMetricIdentifier(value string, maxBytes int, allowLeadingUnderscore, a
 	for index, character := range []byte(value) {
 		letter := character >= 'A' && character <= 'Z' || character >= 'a' && character <= 'z'
 		if index == 0 {
-			if !letter && !(allowLeadingUnderscore && character == '_') {
+			if !letter && (!allowLeadingUnderscore || character != '_') {
 				return false
 			}
 			continue
@@ -276,7 +322,10 @@ func addToolMetricRecord(destination *ToolMetricRecord, increment ToolMetricReco
 		addCounter(&destination.TranslatedTokens, increment.TranslatedTokens) &&
 		addCounter(&destination.FailedTranslations, increment.FailedTranslations) &&
 		addCounter(&destination.FailedEmittedTokens, increment.FailedEmittedTokens) &&
-		addCounter(&destination.FailedTranslatedTokens, increment.FailedTranslatedTokens)
+		addCounter(&destination.FailedTranslatedTokens, increment.FailedTranslatedTokens) &&
+		addCounter(&destination.Executions, increment.Executions) &&
+		addCounter(&destination.CurrentInputTokens, increment.CurrentInputTokens) &&
+		addCounter(&destination.StockInputTokens, increment.StockInputTokens)
 }
 
 func (m *metrics) addTool(increment toolMetric) error {
@@ -284,29 +333,11 @@ func (m *metrics) addTool(increment toolMetric) error {
 		current := &m.Tools[index]
 		order := cmp.Or(cmp.Compare(current.PluginID, increment.PluginID), cmp.Compare(current.ToolName, increment.ToolName))
 		if order == 0 {
-			record := ToolMetricRecord{
-				PluginID: current.PluginID, ToolName: current.ToolName,
-				DefinitionInputTokens: current.DefinitionInputTokens, Calls: current.Calls,
-				EmittedTokens: current.EmittedTokens, TranslatedTokens: current.TranslatedTokens,
-				FailedTranslations: current.FailedTranslations, FailedEmittedTokens: current.FailedEmittedTokens,
-				FailedTranslatedTokens: current.FailedTranslatedTokens,
-			}
-			if !addToolMetricRecord(&record, ToolMetricRecord{
-				PluginID: increment.PluginID, ToolName: increment.ToolName,
-				DefinitionInputTokens: increment.DefinitionInputTokens, Calls: increment.Calls,
-				EmittedTokens: increment.EmittedTokens, TranslatedTokens: increment.TranslatedTokens,
-				FailedTranslations: increment.FailedTranslations, FailedEmittedTokens: increment.FailedEmittedTokens,
-				FailedTranslatedTokens: increment.FailedTranslatedTokens,
-			}) {
+			record := ToolMetricRecord(*current)
+			if !addToolMetricRecord(&record, ToolMetricRecord(increment)) {
 				return fmt.Errorf("updating metrics: tool counter overflow")
 			}
-			*current = toolMetric{
-				PluginID: record.PluginID, ToolName: record.ToolName,
-				DefinitionInputTokens: record.DefinitionInputTokens, Calls: record.Calls,
-				EmittedTokens: record.EmittedTokens, TranslatedTokens: record.TranslatedTokens,
-				FailedTranslations: record.FailedTranslations, FailedEmittedTokens: record.FailedEmittedTokens,
-				FailedTranslatedTokens: record.FailedTranslatedTokens,
-			}
+			*current = toolMetric(record)
 			return nil
 		}
 		if order > 0 {
@@ -351,6 +382,7 @@ func validToolMetrics(m metrics) bool {
 	}
 	var prior toolMetric
 	var definitions, calls, emitted, translated, failed, failedEmitted, failedTranslated uint64
+	var executions, currentInput, stockInput uint64
 	for index := range int(m.ToolCount) {
 		entry := m.Tools[index]
 		if validateMetricToolKey(entry.PluginID, entry.ToolName) != nil {
@@ -368,6 +400,7 @@ func validToolMetrics(m metrics) bool {
 			{&emitted, entry.EmittedTokens}, {&translated, entry.TranslatedTokens},
 			{&failed, entry.FailedTranslations}, {&failedEmitted, entry.FailedEmittedTokens},
 			{&failedTranslated, entry.FailedTranslatedTokens},
+			{&executions, entry.Executions}, {&currentInput, entry.CurrentInputTokens}, {&stockInput, entry.StockInputTokens},
 		} {
 			if !addCounter(pair.total, pair.value) {
 				return false
@@ -442,6 +475,30 @@ func (m metrics) gainToolRows() ([]ToolGainMetric, ToolGainMetric, []ToolDefinit
 	return tools, all, definitions
 }
 
+func (m metrics) gainToolInputRows() ([]ToolInputGainMetric, ToolInputGainMetric) {
+	rows := make([]ToolInputGainMetric, 0, m.ToolCount)
+	all := ToolInputGainMetric{ToolName: "all-tools"}
+	for _, entry := range m.Tools[:m.ToolCount] {
+		if entry.Executions == 0 {
+			continue
+		}
+		row := ToolInputGainMetric{
+			PluginID:      entry.PluginID,
+			ToolName:      entry.ToolName,
+			Executions:    entry.Executions,
+			CurrentTokens: entry.CurrentInputTokens,
+			StockTokens:   entry.StockInputTokens,
+			Reduction:     metricReduction(entry.CurrentInputTokens, entry.StockInputTokens),
+		}
+		rows = append(rows, row)
+		all.Executions += row.Executions
+		all.CurrentTokens += row.CurrentTokens
+		all.StockTokens += row.StockTokens
+	}
+	all.Reduction = metricReduction(all.CurrentTokens, all.StockTokens)
+	return rows, all
+}
+
 func boolCount(value bool) uint64 {
 	if value {
 		return 1
@@ -457,10 +514,6 @@ func toolMetricLabel(pluginID, toolName string, failed bool) string {
 	return label
 }
 
-func formatSignedMetric(value int64) string {
-	return fmt.Sprintf("%d", value)
-}
-
 func encodeToolMetrics(encoded []byte, value metrics) {
 	binary.LittleEndian.PutUint16(encoded[metricsToolCountOffset:metricsToolCountOffset+2], value.ToolCount)
 	binary.LittleEndian.PutUint64(encoded[metricsSharedOffset:metricsSharedOffset+8], uint64(value.SharedDefinitionInputTokens))
@@ -473,6 +526,7 @@ func encodeToolMetrics(encoded []byte, value metrics) {
 		for offset, count := range []uint64{
 			entry.DefinitionInputTokens, entry.Calls, entry.EmittedTokens, entry.TranslatedTokens,
 			entry.FailedTranslations, entry.FailedEmittedTokens, entry.FailedTranslatedTokens,
+			entry.Executions, entry.CurrentInputTokens, entry.StockInputTokens,
 		} {
 			position := base + 200 + offset*8
 			binary.LittleEndian.PutUint64(encoded[position:position+8], count)
@@ -501,6 +555,7 @@ func decodeToolMetrics(encoded []byte, value *metrics) bool {
 		counts := []*uint64{
 			&entry.DefinitionInputTokens, &entry.Calls, &entry.EmittedTokens, &entry.TranslatedTokens,
 			&entry.FailedTranslations, &entry.FailedEmittedTokens, &entry.FailedTranslatedTokens,
+			&entry.Executions, &entry.CurrentInputTokens, &entry.StockInputTokens,
 		}
 		for offset, destination := range counts {
 			position := base + 200 + offset*8

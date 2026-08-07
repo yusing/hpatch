@@ -131,7 +131,12 @@ function parseReadSpecs(input: string): ParsedReadSpec[] {
   return specs;
 }
 
-async function readHashLines(spec: ReadSpec, maxOutputBytes: number): Promise<string> {
+type ComparedOutput = {
+  current: string;
+  stock: string;
+};
+
+async function readHashLines(spec: ReadSpec, maxOutputBytes: number): Promise<ComparedOutput> {
   const handle = await open(spec.path, constants.O_RDONLY | (constants.O_NONBLOCK ?? 0));
 
   try {
@@ -146,8 +151,9 @@ async function readHashLines(spec: ReadSpec, maxOutputBytes: number): Promise<st
     let pendingCR = false;
     let content = "";
     let contentBytes = 0;
-    let output = "";
-    let outputBytes = 0;
+    let current = "";
+    let currentBytes = 0;
+    let stock = "";
 
     const selected = () => wholeFile
       || (lineNumber >= spec.startLine && lineNumber <= spec.endLine);
@@ -164,7 +170,7 @@ async function readHashLines(spec: ReadSpec, maxOutputBytes: number): Promise<st
       }
       const addedBytes = byteLength(text);
       const rowFramingBytes = byteLength(String(lineNumber)) + 7;
-      if (outputBytes + rowFramingBytes + contentBytes + addedBytes > maxOutputBytes) {
+      if (currentBytes + rowFramingBytes + contentBytes + addedBytes > maxOutputBytes) {
         throw capacityError();
       }
       content += text;
@@ -174,11 +180,12 @@ async function readHashLines(spec: ReadSpec, maxOutputBytes: number): Promise<st
       if (selected()) {
         const row = formatHashLine(lineNumber, content);
         const rowBytes = byteLength(row);
-        if (outputBytes + rowBytes > maxOutputBytes) {
+        if (currentBytes + rowBytes > maxOutputBytes) {
           throw capacityError();
         }
-        output += row;
-        outputBytes += rowBytes;
+        current += row;
+        currentBytes += rowBytes;
+        stock += `${content}\n`;
       }
       content = "";
       contentBytes = 0;
@@ -252,34 +259,37 @@ async function readHashLines(spec: ReadSpec, maxOutputBytes: number): Promise<st
         `requested lines ${spec.startLine}:${spec.endLine} are outside file with ${lineCount} lines`,
       );
     }
-    return output;
+    return {current, stock};
   } finally {
     await handle.close();
   }
 }
 
-async function executeRead(input: string): Promise<string> {
+async function executeRead(input: string): Promise<ComparedOutput> {
   const specs = parseReadSpecs(input);
   if (specs.length === 1) {
     return readHashLines(specs[0].spec, MAX_OUTPUT_BYTES);
   }
 
   const dataLimit = Math.max(0, MAX_OUTPUT_BYTES - byteLength(BATCH_LIMIT_MESSAGE));
-  let output = "";
-  let outputBytes = 0;
+  let current = "";
+  let currentBytes = 0;
+  let stock = "";
   const appendBounded = (text: string): boolean => {
     const addedBytes = byteLength(text);
-    if (outputBytes + addedBytes > dataLimit) {
+    if (currentBytes + addedBytes > dataLimit) {
       return false;
     }
-    output += text;
-    outputBytes += addedBytes;
+    current += text;
+    stock += text;
+    currentBytes += addedBytes;
     return true;
   };
   const appendLimitMessage = (): void => {
-    if (outputBytes + byteLength(BATCH_LIMIT_MESSAGE) <= MAX_OUTPUT_BYTES) {
-      output += BATCH_LIMIT_MESSAGE;
-      outputBytes += byteLength(BATCH_LIMIT_MESSAGE);
+    if (currentBytes + byteLength(BATCH_LIMIT_MESSAGE) <= MAX_OUTPUT_BYTES) {
+      current += BATCH_LIMIT_MESSAGE;
+      stock += BATCH_LIMIT_MESSAGE;
+      currentBytes += byteLength(BATCH_LIMIT_MESSAGE);
     }
   };
 
@@ -296,9 +306,10 @@ async function executeRead(input: string): Promise<string> {
       continue;
     }
     try {
-      const result = await readHashLines(item.spec, dataLimit - outputBytes);
-      output += result;
-      outputBytes += byteLength(result);
+      const result = await readHashLines(item.spec, dataLimit - currentBytes);
+      current += result.current;
+      stock += result.stock;
+      currentBytes += byteLength(result.current);
     } catch (error) {
       if (error instanceof ResultTooLargeError) {
         appendLimitMessage();
@@ -310,7 +321,7 @@ async function executeRead(input: string): Promise<string> {
       }
     }
   }
-  return output;
+  return {current, stock};
 }
 
 export function createHReadTool(description: string, grammar: string): Tool<string[]> {
@@ -329,7 +340,12 @@ export function createHReadTool(description: string, grammar: string): Tool<stri
         };
       }
       try {
-        return {stdout: await executeRead(argv[0]), exitCode: 0};
+        const result = await executeRead(argv[0]);
+        return {
+          stdout: result.current,
+          stock: {stdout: result.stock, exitCode: 0},
+          exitCode: 0,
+        };
       } catch (error) {
         return {stderr: `hread: ${conciseErrorText(error)}\n`, exitCode: 1};
       }

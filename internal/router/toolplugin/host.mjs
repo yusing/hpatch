@@ -615,6 +615,27 @@ async function translateTool(request) {
   return {rejected: false, diagnostic: "", arguments: argumentsValue, carrier};
 }
 
+function normalizeExecutionOutput(candidate, allowedKeys) {
+  try {
+    if (candidate === null || typeof candidate !== "object" || Array.isArray(candidate)) {
+      return null;
+    }
+    const keys = Object.keys(candidate);
+    const stdout = candidate.stdout;
+    const stderr = candidate.stderr;
+    const exitCode = candidate.exitCode;
+    if (!keys.every((key) => allowedKeys.includes(key))
+        || !Number.isSafeInteger(exitCode) || exitCode < 0 || exitCode > 255
+        || (stdout !== undefined && typeof stdout !== "string")
+        || (stderr !== undefined && typeof stderr !== "string")) {
+      return null;
+    }
+    return {stdout: stdout ?? "", stderr: stderr ?? "", exitCode};
+  } catch {
+    return null;
+  }
+}
+
 async function executeTool(request) {
   const tool = await loadTool(request.snapshotRoot, request.module, request.index);
   const argumentsValue = validateArguments(request.arguments);
@@ -625,23 +646,25 @@ async function executeTool(request) {
     scriptWriteFD: hasInput ? 5 : null,
   });
   const execution = await tool.execute(argumentsValue, context);
-  if (execution === null || typeof execution !== "object" || Array.isArray(execution)
-      || !Object.keys(execution).every((key) => ["stdout", "stderr", "exitCode"].includes(key))
-      || !Number.isSafeInteger(execution.exitCode) || execution.exitCode < 0 || execution.exitCode > 255
-      || (execution.stdout !== undefined && typeof execution.stdout !== "string")
-      || (execution.stderr !== undefined && typeof execution.stderr !== "string")) {
+  const current = normalizeExecutionOutput(execution, ["stdout", "stderr", "exitCode", "stock"]);
+  if (current === null) {
     throw new Error("executor must return stdout/stderr strings and an exitCode from 0 through 255");
   }
-  const stdout = execution.stdout ?? "";
-  const stderr = execution.stderr ?? "";
-  if (byteLength(stdout) + byteLength(stderr) > MAX_EXECUTION_OUTPUT_BYTES) {
+  if (byteLength(current.stdout) + byteLength(current.stderr) > MAX_EXECUTION_OUTPUT_BYTES) {
     throw new Error(`executor stdout and stderr exceed ${MAX_EXECUTION_OUTPUT_BYTES} UTF-8 bytes`);
   }
-  return {
-    stdout,
-    stderr,
-    exitCode: execution.exitCode,
-  };
+  let candidate;
+  try {
+    candidate = execution.stock;
+  } catch {
+    return current;
+  }
+  const stock = normalizeExecutionOutput(candidate, ["stdout", "stderr", "exitCode"]);
+  if (stock === null
+      || byteLength(stock.stdout) + byteLength(stock.stderr) > MAX_EXECUTION_OUTPUT_BYTES) {
+    return current;
+  }
+  return {...current, stock};
 }
 
 async function main() {
