@@ -28,16 +28,16 @@ definitions, emitted-versus-translated output shapes, and current-versus-stock e
 shapes to each contributed tool.
 
 An installable `shell` plugin accepts one free-form script and exposes its normalized interpreter
-and exact body in the translated Codex exec carrier. The executor supplies the body through an
-anonymous script descriptor and preserves standard input for program data. It stores no
-intermediate script file. A compact shebang selects the interpreter, while a missing shebang
-selects `bash`. An optional `#!cmd=` directive wraps that canonical shell frontend command in
-one user-supplied command template. An optional `!params` directive forwards a JSON object,
-except `cmd`, through the typed exec carrier. A present `login` value must be `false`. When
-`shell` is installed, the router rewrites the custom `exec` tool either directly inside an
-`additional_tools` item for app-server traffic or inside that item's `functions` namespace for CLI
-traffic. It removes that owner's `exec_command` section and introductory `tools.exec_command`
-example instead of relocating the contract into another model-visible description. Direct
+and exact body in the translated Codex exec carrier. The executor preserves standard input for
+program data. A compact shebang selects the interpreter, while a missing shebang selects `bash`.
+Optional directives use one `#!key=value` syntax: `#!cmd=` wraps that canonical shell frontend
+command in one user-supplied command template, while `#!params=` forwards a JSON object, except
+`cmd`, through the typed exec carrier. A present `login` value must be `false`. When `shell` is
+installed, the router
+rewrites the custom `exec` tool either directly inside an `additional_tools` item for app-server
+traffic or inside that item's `functions` namespace for CLI traffic. It removes that owner's
+`exec_command` section and introductory `tools.exec_command` example, then appends the exact section
+to the request-local `shell` description without parsing or hard-coding its parameter schema. Direct
 `functions.exec` and top-level exec carriers remain unsupported.
 
 The historical benchmark remains the end-to-end authority: correctness must match the
@@ -87,8 +87,8 @@ wall time must remain close to control.
 - `hpatch/plugins` beneath the platform user configuration directory: the only tool-plugin
   discovery surface; the router has no plugin command-line flags.
 - `shell`: an installable unconstrained custom tool whose translated exec carrier shows the
-  interpreter and exact script body, optionally inside a `#!cmd=` command template and with
-  request-specific `!params` exec arguments.
+  interpreter and exact script body, optionally with `#!cmd=` and request-specific `#!params=`
+  assignments.
 - `make install`: install `hpatch`, `hpatch-router`, and repository plugin declarations.
 - `hpatch-bench validate --manifest TASK.json` and `hpatch-bench run`: validate and run
   paired historical-commit evaluations.

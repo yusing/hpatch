@@ -18,6 +18,24 @@ function splitFirstLine(input) {
 }
 
 
+function parseDirectiveLine(line) {
+  const assignment = /^#!([A-Za-z][A-Za-z0-9_-]*)=([\s\S]*)$/u.exec(line);
+  if (assignment !== null) {
+    return {key: assignment[1], value: assignment[2]};
+  }
+  const recoveredParams = /^(?:#[ \t]*!|!)params(?:[ \t]+([\s\S]+))?$/u.exec(line);
+  if (recoveredParams !== null) {
+    return {key: "params", value: recoveredParams[1] ?? ""};
+  }
+  return null;
+}
+
+
+function isDirectiveCandidate(line) {
+  return parseDirectiveLine(line) !== null || /^#!(?:cmd|params)(?:[ \t]|$)/u.test(line);
+}
+
+
 function parseDirectives(body) {
   let remaining = body;
   let commandTemplate = "";
@@ -27,26 +45,20 @@ function parseDirectives(body) {
   while (remaining !== "") {
     const first = splitFirstLine(remaining);
     const trimmedLine = trimShebangField(first.line);
-    let key;
-    let value;
-    if (trimmedLine.startsWith("#!cmd=")) {
-      key = "cmd";
-      value = trimmedLine.slice("#!cmd=".length);
-    } else if (trimmedLine.startsWith("!")) {
-      const directive = /^!([A-Za-z][A-Za-z0-9_-]*) ([\s\S]+)$/u.exec(trimmedLine);
-      if (directive === null) {
-        throw new Error("shell directive must use !{key} {value}");
+    const directive = parseDirectiveLine(trimmedLine);
+    if (directive === null) {
+      if (/^#!(?:cmd|params)(?:[ \t]|$)/u.test(trimmedLine) || trimmedLine.startsWith("!")) {
+        throw new Error("shell directive must use #!{key}={value}");
       }
-      [, key, value] = directive;
-      if (key !== "params") {
-        throw new Error(`unsupported shell directive !${key}`);
-      }
-    } else {
       break;
     }
 
+    const {key, value} = directive;
+    if (key !== "cmd" && key !== "params") {
+      throw new Error(`unsupported shell directive #!${key}`);
+    }
     if (seen.has(key)) {
-      throw new Error(`shell directive !${key} must not occur more than once`);
+      throw new Error(`shell directive #!${key} must not occur more than once`);
     }
     seen.add(key);
 
@@ -63,16 +75,16 @@ function parseDirectives(body) {
       try {
         parsed = JSON.parse(value);
       } catch (error) {
-        throw new Error(`!params must contain a JSON object: ${executionError(error)}`);
+        throw new Error(`#!params must contain a JSON object: ${executionError(error)}`);
       }
       if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
-        throw new Error("!params must contain a JSON object");
+        throw new Error("#!params must contain a JSON object");
       }
       if (Object.hasOwn(parsed, "cmd")) {
-        throw new Error("!params must not contain cmd; the script body supplies it");
+        throw new Error("#!params must not contain cmd; the script body supplies it");
       }
       if (Object.hasOwn(parsed, "login") && parsed.login !== false) {
-        throw new Error("!params login must be false");
+        throw new Error("#!params login must be false");
       }
       params = parsed;
     }
@@ -91,7 +103,8 @@ function parseScript(input) {
   let body = input;
   const first = splitFirstLine(input);
   const trimmedLine = trimShebangField(first.line);
-  if (trimmedLine.startsWith("#!") && !trimmedLine.startsWith("#!cmd=")) {
+  const leadingDirective = isDirectiveCandidate(trimmedLine);
+  if (trimmedLine.startsWith("#!") && !leadingDirective) {
     const selector = trimShebangField(trimmedLine.slice(2));
     if (selector === "") {
       throw new Error("shebang must select an interpreter");
@@ -357,15 +370,13 @@ const shellTool = {
     description: `Run one free-form script without an outer heredoc or command-string quoting.
 Use the first line as an optional shebang. A bare interpreter, a full path, and
 /usr/bin/env forms are accepted. Without a shebang, bash runs the complete input.
-An optional #!cmd= directive can follow the shebang or be the first directive line.
-Its single {.} placeholder expands to the normalized shell frontend command.
-An optional !params JSON-object directive can occur beside #!cmd= in either order.
-The script body supplies cmd, so !params must not contain cmd.
-If !params contains login, its value must be false.
-The executor passes the exact body without shell parsing or a temporary file.
-Bun and Node.js receive the body through their direct evaluation option.
-Other interpreters receive the body through an anonymous descriptor.
-The interpreter keeps frontend standard input available as program data.`,
+Optional directive assignments use #!key=value and can follow the shebang or be first.
+#!cmd= accepts one {.} placeholder that expands to the normalized shell frontend command.
+#!params=<JSON object> supplies other supported execution arguments and can occur beside
+#!cmd= in either order. The script body supplies cmd, so #!params must not contain cmd.
+If #!params contains login, its value must be false.
+The selected interpreter receives the exact script body, and frontend standard input
+remains available as program data.`,
   },
 
   parse(input) {

@@ -543,6 +543,7 @@ type additionalToolsApplyPatchOwner struct {
 	// baselineDefinition is the native apply_patch definition hpatch displaces.
 	// hpatch's definition cost is only meaningful net of it.
 	baselineDefinition     string
+	execCommandSection     string
 	execCommandDefinitions []string
 }
 
@@ -630,10 +631,11 @@ func findAdditionalToolsApplyPatch(fields map[string]json.RawMessage, installedN
 		if !found || jsonString(tool, "type") != "custom" {
 			return nil
 		}
+		var execCommandSection string
 		var execCommandDefinitions []string
 		if shellInstalled {
 			var definitions []string
-			stripped, definitions, found, err = stripCodeModeExecCommandContract(stripped)
+			stripped, execCommandSection, definitions, found, err = stripCodeModeExecCommandContract(stripped)
 			if err != nil {
 				return err
 			}
@@ -652,6 +654,7 @@ func findAdditionalToolsApplyPatch(fields map[string]json.RawMessage, installedN
 			name:                   name,
 			strippedDescription:    stripped,
 			baselineDefinition:     baseline,
+			execCommandSection:     execCommandSection,
 			execCommandDefinitions: execCommandDefinitions,
 		}
 		return nil
@@ -713,6 +716,18 @@ func codeModeToolChoiceRestricted(fields map[string]json.RawMessage, codeToolNam
 
 func exposeStandaloneHPatch(fields map[string]json.RawMessage, topTools []map[string]json.RawMessage, owner *additionalToolsApplyPatchOwner, installedTools []map[string]json.RawMessage) error {
 	owner.tools[owner.toolIndex]["description"] = mustMarshalJSON(owner.strippedDescription)
+	if owner.execCommandSection != "" {
+		for _, tool := range installedTools {
+			if jsonString(tool, "name") != "shell" {
+				continue
+			}
+			description := strings.TrimRight(jsonString(tool, "description"), "\r\n")
+			description += "\n\nThe script body supplies `cmd`. Put other supported execution arguments in a leading `#!params={...}` directive.\n\n"
+			description += owner.execCommandSection
+			tool["description"] = mustMarshalJSON(description)
+			break
+		}
+	}
 	if owner.nested {
 		encodedNestedTools, err := json.Marshal(owner.tools)
 		if err != nil {
@@ -869,30 +884,30 @@ func stripCodeModeExecCommandSection(description string) (string, string, bool, 
 }
 
 // stripCodeModeExecCommandContract removes the command tool section and the
-// introductory example that points models at tools.exec_command.
-func stripCodeModeExecCommandContract(description string) (string, []string, bool, error) {
+// introductory example, returning the exact section separately for the replacement tool.
+func stripCodeModeExecCommandContract(description string) (string, string, []string, bool, error) {
 	stripped, section, found, err := stripCodeModeExecCommandSection(description)
 	if err != nil {
-		return "", nil, false, err
+		return "", "", nil, false, err
 	}
 	if !found {
 		if strings.Contains(description, "exec_command") {
-			return "", nil, false, errors.New("responses Code Mode tool exposes exec_command without an owned section")
+			return "", "", nil, false, errors.New("responses Code Mode tool exposes exec_command without an owned section")
 		}
-		return description, nil, false, nil
+		return description, "", nil, false, nil
 	}
 	definitions := []string{section}
 	const example = " for example `await tools.exec_command(...)`."
 	if count := strings.Count(stripped, example); count > 1 {
-		return "", nil, false, errors.New("responses Code Mode tool references tools.exec_command more than once outside its section")
+		return "", "", nil, false, errors.New("responses Code Mode tool references tools.exec_command more than once outside its section")
 	} else if count == 1 {
 		stripped = strings.Replace(stripped, example, "", 1)
 		definitions = append([]string{example}, definitions...)
 	}
 	if strings.Contains(stripped, "exec_command") {
-		return "", nil, false, errors.New("responses Code Mode tool exposes exec_command outside its owned contract")
+		return "", "", nil, false, errors.New("responses Code Mode tool exposes exec_command outside its owned contract")
 	}
-	return stripped, definitions, true, nil
+	return stripped, section, definitions, true, nil
 }
 
 func mustMarshalJSON(value any) json.RawMessage {

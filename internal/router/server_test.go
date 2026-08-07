@@ -262,6 +262,16 @@ func TestExecuteRequestForwardsRewrittenRequestAndRecordsUsage(t *testing.T) {
 		t.Fatal("response without an hpatch call reached the translator")
 		return nil, nil
 	}))
+	shell := toolContribution{
+		PluginID: "test.shell",
+		Name:     "shell",
+		Specification: mustMarshalJSON(map[string]any{
+			"type": "custom", "name": "shell", "description": "shell base description",
+		}),
+		Executor: true,
+	}
+	proxy.registry.ordered = append(proxy.registry.ordered, shell)
+	proxy.registry.byName[shell.Name] = shell
 	store := newMetricsStore("")
 	var output bytes.Buffer
 	err := executeRequest(t.Context(), t.Context(), parsed, headers, "session", provider, &output, newDiagnostics(io.Discard), time.Now, proxy, store)
@@ -291,9 +301,27 @@ func TestExecuteRequestForwardsRewrittenRequestAndRecordsUsage(t *testing.T) {
 	}
 	input := string(forwarded.fields["input"])
 	if strings.Contains(input, codeModeApplyPatchHeading) ||
-		!strings.Contains(input, codeModeExecCommandHeading) ||
+		strings.Contains(input, codeModeExecCommandHeading) ||
 		!strings.Contains(input, `"name":"exec"`) {
 		t.Fatalf("flat app-server exec was not rewritten: %s", input)
+	}
+	var forwardedTools []map[string]json.RawMessage
+	if err := json.Unmarshal(forwarded.fields["tools"], &forwardedTools); err != nil {
+		t.Fatal(err)
+	}
+	shellIndex := slices.IndexFunc(forwardedTools, func(tool map[string]json.RawMessage) bool {
+		return jsonString(tool, "name") == "shell"
+	})
+	if shellIndex < 0 {
+		t.Fatalf("rewritten tools lost shell: %#v", forwardedTools)
+	}
+	_, execCommandSection, _, found, err := stripCodeModeExecCommandContract(testCodeModeDescription)
+	if err != nil || !found {
+		t.Fatalf("extract app-server exec contract: found %t, error %v", found, err)
+	}
+	wantShellDescription := "shell base description\n\nThe script body supplies `cmd`. Put other supported execution arguments in a leading `#!params={...}` directive.\n\n" + execCommandSection
+	if shellDescription := jsonString(forwardedTools[shellIndex], "description"); shellDescription != wantShellDescription {
+		t.Fatalf("shell description = %q, want %q", shellDescription, wantShellDescription)
 	}
 	if string(forwarded.fields["reasoning"]) != "{\"effort\":\"high\"}" {
 		t.Fatalf("reasoning request changed: %s", forwarded.fields["reasoning"])

@@ -27,6 +27,8 @@ const testHPatchToolDescription = "fixture hpatch description\nwith exact traili
 
 const testCodeModeDescription = "Run JavaScript.\n- All nested tools are available on the global `tools` object, for example `await tools.exec_command(...)`. Tool names are exposed as normalized JavaScript identifiers.\n\n### `exec_command`\nRun a shell command.\n\nexec tool declaration:\n```ts\ndeclare const tools: { exec_command(args: { cmd: string; workdir?: string }): Promise<unknown>; };\n```\n\n### `apply_patch`\nThe default editor.\n\nexec tool declaration:\n```ts\ndeclare const tools: { apply_patch(input: string): Promise<unknown>; };\n```\n\n### `create_goal`\nCreate a goal."
 
+const testCLICodeModeDescription = "Run JavaScript.\n- All nested tools are available on the global `tools` object, for example `await tools.exec_command(...)`. Tool names are exposed as normalized JavaScript identifiers.\n\n### exec_command\nRun a command in a PTY.\n\nParameters:\n- `cmd`: required command text.\n- `workdir`: optional working directory.\n- `tty`: optional terminal allocation.\n\n### `apply_patch`\nThe default editor.\n\nexec tool declaration:\n```ts\ndeclare const tools: { apply_patch(input: string): Promise<unknown>; };\n```\n\n### `create_goal`\nCreate a goal."
+
 func testCodeModeAdditionalTools(description string) map[string]any {
 	return map[string]any{
 		"type":   "additional_tools",
@@ -462,9 +464,9 @@ func TestHPatchPrepareRequestExposesOnlyStandaloneHPatch(t *testing.T) {
 	}
 }
 
-func TestHPatchReplacementRemovesExecCommandContractFromNamespacedExec(t *testing.T) {
+func TestHPatchReplacementMovesExecCommandContractFromNamespacedExecToShell(t *testing.T) {
 	fields := map[string]json.RawMessage{
-		"input": mustTestJSON(t, []any{testCodeModeAdditionalTools(testCodeModeDescription)}),
+		"input": mustTestJSON(t, []any{testCodeModeAdditionalTools(testCLICodeModeDescription)}),
 		"tools": mustTestJSON(t, []any{}),
 	}
 	installed := append(testInstalledTools(), map[string]json.RawMessage{
@@ -479,9 +481,13 @@ func TestHPatchReplacementRemovesExecCommandContractFromNamespacedExec(t *testin
 	if !strings.HasPrefix(applyPatchDefinition, codeModeApplyPatchHeading) || len(execCommandDefinitions) != 2 {
 		t.Fatalf("removed definitions = apply %q, exec %q", applyPatchDefinition, execCommandDefinitions)
 	}
-	if !slices.ContainsFunc(execCommandDefinitions, func(definition string) bool {
-		return strings.Contains(definition, codeModeExecCommandHeading)
-	}) || !slices.ContainsFunc(execCommandDefinitions, func(definition string) bool {
+	var execCommandSection string
+	for _, definition := range execCommandDefinitions {
+		if strings.Contains(definition, codeModeExecCommandPlainHeading) {
+			execCommandSection = definition
+		}
+	}
+	if execCommandSection == "" || !slices.ContainsFunc(execCommandDefinitions, func(definition string) bool {
 		return strings.Contains(definition, "tools.exec_command")
 	}) {
 		t.Fatalf("removed exec definitions = %q", execCommandDefinitions)
@@ -521,12 +527,14 @@ func TestHPatchReplacementRemovesExecCommandContractFromNamespacedExec(t *testin
 	shellIndex := slices.IndexFunc(tools, func(tool map[string]json.RawMessage) bool {
 		return jsonString(tool, "name") == "shell"
 	})
-	if shellIndex < 0 || jsonString(tools[shellIndex], "description") != "shell base description" {
-		t.Fatalf("shell description = %#v", tools)
+	wantShellDescription := "shell base description\n\nThe script body supplies `cmd`. Put other supported execution arguments in a leading `#!params={...}` directive.\n\n" + execCommandSection
+	if shellIndex < 0 || jsonString(tools[shellIndex], "description") != wantShellDescription ||
+		strings.Contains(jsonString(tools[shellIndex], "description"), "for example `await tools.exec_command(...)`.") {
+		t.Fatalf("shell description = %#v, want %q", tools, wantShellDescription)
 	}
 }
 
-func TestHPatchReplacementRemovesExecCommandContractFromFlatExec(t *testing.T) {
+func TestHPatchReplacementMovesExecCommandContractFromFlatExecToShell(t *testing.T) {
 	fields := map[string]json.RawMessage{
 		"input": mustTestJSON(t, []any{testFlatCodeModeAdditionalTools(testCodeModeDescription)}),
 		"tools": mustTestJSON(t, []any{}),
@@ -575,6 +583,53 @@ func TestHPatchReplacementRemovesExecCommandContractFromFlatExec(t *testing.T) {
 			return jsonString(tool, "name") == "collaboration" && string(tool["future"]) == "true"
 		}) {
 		t.Fatalf("flat exec rewrite lost sibling content: %#v", tools)
+	}
+
+	var installedTools []map[string]json.RawMessage
+	if err := json.Unmarshal(fields["tools"], &installedTools); err != nil {
+		t.Fatal(err)
+	}
+	shellIndex := slices.IndexFunc(installedTools, func(tool map[string]json.RawMessage) bool {
+		return jsonString(tool, "name") == "shell"
+	})
+	execCommandSectionIndex := slices.IndexFunc(execCommandDefinitions, func(definition string) bool {
+		return strings.Contains(definition, codeModeExecCommandHeading)
+	})
+	if execCommandSectionIndex < 0 {
+		t.Fatalf("removed exec definitions = %q", execCommandDefinitions)
+	}
+	execCommandSection := execCommandDefinitions[execCommandSectionIndex]
+	wantShellDescription := "shell base description\n\nThe script body supplies `cmd`. Put other supported execution arguments in a leading `#!params={...}` directive.\n\n" + execCommandSection
+	if shellIndex < 0 || jsonString(installedTools[shellIndex], "description") != wantShellDescription {
+		t.Fatalf("shell description = %#v, want %q", installedTools, wantShellDescription)
+	}
+}
+
+func TestHPatchReplacementKeepsBaseShellDescriptionWithoutExecCommandContract(t *testing.T) {
+	description := "Run JavaScript.\n\n### `apply_patch`\nThe default editor.\n\nexec tool declaration:\n```ts\ndeclare const tools: { apply_patch(input: string): Promise<unknown>; };\n```\n\n### `create_goal`\nCreate a goal."
+	fields := map[string]json.RawMessage{
+		"input": mustTestJSON(t, []any{testCodeModeAdditionalTools(description)}),
+		"tools": mustTestJSON(t, []any{}),
+	}
+	installed := append(testInstalledTools(), map[string]json.RawMessage{
+		"type":        mustMarshalJSON("custom"),
+		"name":        mustMarshalJSON("shell"),
+		"description": mustMarshalJSON("shell base description"),
+	})
+
+	_, execCommandDefinitions, _, replaced, err := replaceAdditionalToolsApplyPatch(fields, installed)
+	if err != nil || !replaced || len(execCommandDefinitions) != 0 {
+		t.Fatalf("replacement = %t, definitions %q, error %v", replaced, execCommandDefinitions, err)
+	}
+	var tools []map[string]json.RawMessage
+	if err := json.Unmarshal(fields["tools"], &tools); err != nil {
+		t.Fatal(err)
+	}
+	shellIndex := slices.IndexFunc(tools, func(tool map[string]json.RawMessage) bool {
+		return jsonString(tool, "name") == "shell"
+	})
+	if shellIndex < 0 || jsonString(tools[shellIndex], "description") != "shell base description" {
+		t.Fatalf("shell description = %#v", tools)
 	}
 }
 
@@ -647,14 +702,14 @@ func TestStripCodeModeExecCommandSectionAcceptsAppAndCLISchemas(t *testing.T) {
 
 func TestStripCodeModeExecCommandContractRejectsUnownedReference(t *testing.T) {
 	description := "Run JavaScript with `tools.exec_command(...)`.\n\n### `create_goal`\nKeep this."
-	if _, _, _, err := stripCodeModeExecCommandContract(description); err == nil {
+	if _, _, _, _, err := stripCodeModeExecCommandContract(description); err == nil {
 		t.Fatal("unowned exec_command reference was accepted")
 	}
 
 	description = "Run JavaScript.\n\n### `create_goal`\nKeep this."
-	stripped, definitions, found, err := stripCodeModeExecCommandContract(description)
-	if err != nil || found || len(definitions) != 0 || stripped != description {
-		t.Fatalf("absent contract = stripped %q, definitions %q, found %t, error %v", stripped, definitions, found, err)
+	stripped, section, definitions, found, err := stripCodeModeExecCommandContract(description)
+	if err != nil || found || section != "" || len(definitions) != 0 || stripped != description {
+		t.Fatalf("absent contract = stripped %q, section %q, definitions %q, found %t, error %v", stripped, section, definitions, found, err)
 	}
 }
 

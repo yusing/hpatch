@@ -74,6 +74,12 @@ describe("installable shell plugin", () => {
       name: "shell",
     });
     expect(tool.specification.format).toBeUndefined();
+    expect(tool.specification.description).toContain(
+      "The selected interpreter receives the exact script body, and frontend standard input\nremains available as program data.",
+    );
+    expect(tool.specification.description).not.toContain("direct evaluation option");
+    expect(tool.specification.description).not.toContain("anonymous descriptor");
+    expect(tool.specification.description).not.toContain("temporary file");
 
     const body = "  print(\"Hello\")  \n";
     for (const input of [
@@ -190,17 +196,36 @@ describe("installable shell plugin", () => {
     });
 
     for (const input of [
-      `#!python3\n!params ${JSON.stringify(params)}\n#!cmd=${template}\nprint('ok')`,
-      `#!python3\n#!cmd=${template}\n!params ${JSON.stringify(params)}\nprint('ok')`,
+      `#!python3\n#!params=${JSON.stringify(params)}\n#!cmd=${template}\nprint('ok')`,
+      `#!python3\n#!cmd=${template}\n#!params=${JSON.stringify(params)}\nprint('ok')`,
     ]) {
       const parsed = await tool.parse(input);
       expect(await tool.argv(parsed)).toEqual(["python3", "print('ok')"]);
       expect(await tool.translate(parsed, {exec})).toEqual({kind: "exec", template, params});
     }
 
-    const laterDirective = await tool.parse("printf 'body'\n!params {\"tty\":true}");
-    expect(await tool.argv(laterDirective)).toEqual(["bash", "printf 'body'\n!params {\"tty\":true}"]);
+    const laterDirective = await tool.parse("printf 'body'\n#!params={\"tty\":true}");
+    expect(await tool.argv(laterDirective)).toEqual(["bash", "printf 'body'\n#!params={\"tty\":true}"]);
     expect(await tool.translate(laterDirective, {exec})).toEqual({kind: "exec"});
+  });
+
+  test("recovers safe params near-misses in directive position", async () => {
+    const params = {workdir: "/tmp"};
+    const exec = (commandTemplate?: string, commandParams?: Record<string, unknown>) => ({
+      kind: "exec",
+      ...(commandTemplate === undefined ? {} : {template: commandTemplate}),
+      ...(commandParams === undefined ? {} : {params: commandParams}),
+    });
+    for (const input of [
+      `# !params ${JSON.stringify(params)}\nprintf ok`,
+      `#!params ${JSON.stringify(params)}\nprintf ok`,
+      `!params ${JSON.stringify(params)}\nprintf ok`,
+      `#!/usr/bin/env bash\n# !params ${JSON.stringify(params)}\nprintf ok`,
+    ]) {
+      const parsed = await tool.parse(input);
+      expect(await tool.argv(parsed)).toEqual(["bash", "printf ok"]);
+      expect(await tool.translate(parsed, {exec})).toEqual({kind: "exec", params});
+    }
   });
 
   test("rejects malformed or unsafe input before execution", async () => {
@@ -212,16 +237,17 @@ describe("installable shell plugin", () => {
       "#!/usr/bin/env -u python3",
       "printf '\\0'\0",
       "#!cmd=",
+      "#!cmd {.}\nprintf ok",
       "#!cmd=printf ok",
       "#!cmd={.} && {.}",
-      "!params",
-      "!params []",
-      "!params {bad}",
-      "!params {\"cmd\":\"forbidden\"}",
-      "!params {\"login\":true}",
-      "!params {\"login\":null}",
-      "!params {\"login\":1}",
-      "!params {\"tty\":true}\n!params {\"workdir\":\"/tmp\"}\nprintf ok",
+      "#!params=",
+      "#!params=[]",
+      "#!params={bad}",
+      "#!params={\"cmd\":\"forbidden\"}",
+      "#!params={\"login\":true}",
+      "#!params={\"login\":null}",
+      "#!params={\"login\":1}",
+      "#!params={\"tty\":true}\n#!params={\"workdir\":\"/tmp\"}\nprintf ok",
       "!unknown value\nprintf ok",
     ]) {
       expect(() => tool.parse(input)).toThrow();

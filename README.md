@@ -133,10 +133,13 @@ The translated Codex exec carrier shows arguments equivalent to
 script exactly, and sends that body to `python3` through standard input. It stores no
 intermediate script file.
 
-A leading `!params` line accepts a JSON object of optional outer exec arguments except `cmd`.
-The script body supplies `cmd`. If `login` is present, its value must be `false`. The router
-forwards those values without exposing the native `exec_command` description to the model; Codex
-validates the translated carrier when it executes it.
+A leading `#!params={...}` assignment accepts a JSON object of optional outer exec arguments
+except `cmd`. The script body supplies `cmd`. If `login` is present, its value must be `false`.
+Safe leading `# !params {...}`, `#!params {...}`, and legacy `!params {...}` near-misses are
+normalized through the same validation instead of entering the script body.
+appends the exact request-specific `exec_command` section to the standalone `shell` description,
+so Codex app and CLI contracts can differ without a router schema update. Codex validates the
+translated carrier when it executes it.
 
 ## Codex router (systemd user service)
 
@@ -149,10 +152,10 @@ On each eligible request, the router finds exactly one Code Mode custom `exec` t
 inside the leading `additional_tools` item for app-server traffic or inside that item's `functions`
 namespace for CLI traffic. It strips the owner's `### apply_patch` section. When the standalone
 `shell` plugin is installed, the router also removes that owner's Markdown `exec_command` section
-and introductory `tools.exec_command` example. It does not relocate either contract into another
-model-visible description. `shell` keeps its own narrow script and directive contract. Without
-`shell`, the native `exec_command` contract remains visible. Sibling direct tools, sibling tools in
-the `functions` namespace, other namespaces, and unrelated top-level tools remain unchanged. A
+and introductory `tools.exec_command` example, then appends the exact section to the request-local
+`shell` description. It does not parse or hard-code the section body. Without `shell`, the native
+`exec_command` contract remains visible. Sibling direct tools, sibling tools in the `functions`
+namespace, other namespaces, and unrelated top-level tools remain unchanged. A
 direct `additional_tools` tool named `functions.exec` and top-level `exec` or `functions.exec` tools
 are unsupported and fail before forwarding. The router installs standalone `functions.hpatch`,
 `functions.hread`, and `functions.hgrep` tools. Translated history uses the matched Code Mode `exec`

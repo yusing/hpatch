@@ -216,11 +216,10 @@ custom `exec` tool either directly inside an `additional_tools` input item's too
 app-server traffic or nested under that item's `functions` namespace for CLI traffic. The
 `apply_patch` extractor rewrites the owning description. When `shell` is installed, the router also
 removes the `exec_command` Markdown section and introductory `tools.exec_command` example from that
-description. It does not parse or hard-code the section body and does not copy the removed contract
-into another model-visible description. The installed `shell` tool owns its narrow script and
-directive contract. Without `shell`, the native command contract remains visible. Sibling direct
-tools, sibling namespaces, and nested tools remain unchanged. Direct `functions.exec` entries and
-top-level `exec` or `functions.exec` tools fail closed.
+description, then appends the exact section to the request-local `shell` description. It does not
+parse or hard-code the section body. Without `shell`, the native command contract remains visible.
+Sibling direct tools, sibling namespaces, and nested tools remain unchanged. Direct
+`functions.exec` entries and top-level `exec` or `functions.exec` tools fail closed.
 
 For every executor-backed contribution, the router wrapper owner creates a symlink inside the
 authenticated snapshot directory. The snapshot symlink has the tool-name basename and targets

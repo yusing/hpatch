@@ -332,13 +332,15 @@ the complete input is the body. The translated argv contains each normalized int
 followed by the exact body as its final value. The resulting Codex exec carrier therefore shows
 a command equivalent to `shell python3 'print("Hello")'`; the model does not author its quoting.
 
-After an optional interpreter shebang, a leading directive block can contain one `#!cmd=` line
-and one `!params JSON` line in either order. The tool trims ASCII spaces and tabs around each
-complete directive line. The nonempty command value is a shell command template containing
-exactly one `{.}` placeholder. The params value is a JSON object that cannot contain `cmd`
-because the script body supplies `cmd`. A present `login` value must be exactly `false`.
-A duplicate directive, malformed JSON, non-object JSON, unsupported leading `!` directive,
-params object containing `cmd`, or unsafe `login` value rejects.
+After an optional interpreter shebang, a leading directive block can contain one `#!cmd=`
+assignment and one `#!params=` assignment in either order. All canonical directives use
+`#!key=value`. The tool trims ASCII spaces and tabs around each complete directive line. The
+nonempty command value is a shell command template containing exactly one `{.}` placeholder.
+The params value is a JSON object that cannot contain `cmd` because the script body supplies
+`cmd`. A present `login` value must be exactly `false`. Within the leading directive block,
+the tool safely normalizes `# !params JSON`, `#!params JSON`, and legacy `!params JSON` through
+the same params validation. A duplicate directive, malformed JSON, non-object JSON, unsupported
+leading directive, params object containing `cmd`, or unsafe `login` value rejects.
 
 The tool removes recognized directive lines and their complete line terminators from the body.
 The router replaces `{.}` with the canonical independently quoted `shell` frontend command and
@@ -351,8 +353,8 @@ The executor runs the first translated argv field as the selected interpreter an
 middle fields as interpreter arguments. It supplies the final exact body through an anonymous
 script descriptor and invokes the interpreter with that descriptor's `/dev/fd` path. The
 interpreter inherits the frontend standard input as program data. The executor stores no
-intermediate script file. Without `!params`, the process inherits Codex's execution context.
-With `!params`, Codex applies the accepted outer exec arguments before it launches the frontend.
+intermediate script file. Without `#!params=`, the process inherits Codex's execution context.
+With `#!params=`, Codex applies the accepted outer exec arguments before it launches the frontend.
 The executor resolves bare interpreters through `PATH` and returns stdout, stderr, and exit
 status without copying the script body into either output stream.
 
@@ -392,16 +394,18 @@ Acceptance:
 11. A temporary installation root receives both Go binaries and `shell.mjs` from `make install`;
     the normal install target uses the Go binary destination and platform user configuration
     plugin directory.
-12. `!params {"workdir":"/tmp","tty":true}` before or after `#!cmd=` produces an exec carrier
-    containing those fields and the router-supplied `cmd`. An object containing `cmd` rejects,
-    and a present `login` value must be `false`.
+12. `#!params={"workdir":"/tmp","tty":true}` before or after `#!cmd=` produces an exec carrier
+    containing those fields and the router-supplied `cmd`. Safe leading params near-misses
+    produce the same carrier after normalization. An object containing `cmd` rejects, and a
+    present `login` value must be `false`.
 13. The authoritative Code Mode owner is exactly one custom `exec` tool. App-server requests place
     it directly in an `additional_tools` input item's tool list; CLI requests place it under that
     item's `functions` namespace. When `shell` is installed, the router removes the exact Markdown
     `exec_command` section and introductory `tools.exec_command` example from the owning
-    description. It does not copy the removed contract into another model-visible description.
-    Backtick and plain headings are accepted without depending on one Codex app or Codex CLI
-    parameter schema. Without `shell`, the router preserves the native command contract.
+    description, then appends the unchanged section to the request-local `shell` description.
+    It does not parse or hard-code one Codex app or Codex CLI parameter schema. Without `shell`,
+    the router preserves the native command contract. An eligible owner without a documented
+    command section retains the base `shell` description and does not reject.
 14. Direct `additional_tools` entries named `functions.exec` and top-level tools named `exec` or
     `functions.exec` are unsupported and fail before forwarding. Defining more than one eligible
     owner also fails before forwarding. The existing `apply_patch` section extractor remains
