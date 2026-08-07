@@ -315,13 +315,14 @@ func TestExecuteRequestForwardsRewrittenRequestAndRecordsUsage(t *testing.T) {
 	if shellIndex < 0 {
 		t.Fatalf("rewritten tools lost shell: %#v", forwardedTools)
 	}
-	_, execCommandSection, _, found, err := stripCodeModeExecCommandContract(testCodeModeDescription)
-	if err != nil || !found {
-		t.Fatalf("extract app-server exec contract: found %t, error %v", found, err)
+	shellDescription := jsonString(forwardedTools[shellIndex], "description")
+	for _, required := range []string{"shell base description", "### `#!params`", "{ workdir?: string }"} {
+		if !strings.Contains(shellDescription, required) {
+			t.Fatalf("shell description is missing %q: %q", required, shellDescription)
+		}
 	}
-	wantShellDescription := "shell base description\n\nThe script body supplies `cmd`. Put other supported execution arguments in a leading `#!params={...}` directive.\n\n" + execCommandSection
-	if shellDescription := jsonString(forwardedTools[shellIndex], "description"); shellDescription != wantShellDescription {
-		t.Fatalf("shell description = %q, want %q", shellDescription, wantShellDescription)
+	if strings.Contains(shellDescription, "exec_command") || strings.Contains(shellDescription, "cmd: string") {
+		t.Fatalf("shell description exposes nested command syntax: %q", shellDescription)
 	}
 	if string(forwarded.fields["reasoning"]) != "{\"effort\":\"high\"}" {
 		t.Fatalf("reasoning request changed: %s", forwarded.fields["reasoning"])

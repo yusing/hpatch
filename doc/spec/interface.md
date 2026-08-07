@@ -402,10 +402,12 @@ Acceptance:
     it directly in an `additional_tools` input item's tool list; CLI requests place it under that
     item's `functions` namespace. When `shell` is installed, the router removes the exact Markdown
     `exec_command` section and introductory `tools.exec_command` example from the owning
-    description, then appends the unchanged section to the request-local `shell` description.
-    It does not parse or hard-code one Codex app or Codex CLI parameter schema. Without `shell`,
-    the router preserves the native command contract. An eligible owner without a documented
-    command section retains the base `shell` description and does not reject.
+    description. It derives the request-specific argument-object shape from the app declaration or
+    parameter-list shape from the CLI description, removes `cmd`, and appends only that sanitized
+    shape under `#!params` in the `shell` description. Neither model-visible description contains
+    `tools.exec_command`. Without `shell`, the router preserves the native command contract. An
+    eligible owner without a recognizable parameter shape retains the base `shell` description and
+    does not reject.
 14. Direct `additional_tools` entries named `functions.exec` and top-level tools named `exec` or
     `functions.exec` are unsupported and fail before forwarding. Defining more than one eligible
     owner also fails before forwarding. The existing `apply_patch` section extractor remains

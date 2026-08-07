@@ -33,12 +33,11 @@ program data. A compact shebang selects the interpreter, while a missing shebang
 Optional directives use one `#!key=value` syntax: `#!cmd=` wraps that canonical shell frontend
 command in one user-supplied command template, while `#!params=` forwards a JSON object, except
 `cmd`, through the typed exec carrier. A present `login` value must be `false`. When `shell` is
-installed, the router
-rewrites the custom `exec` tool either directly inside an `additional_tools` item for app-server
-traffic or inside that item's `functions` namespace for CLI traffic. It removes that owner's
-`exec_command` section and introductory `tools.exec_command` example, then appends the exact section
-to the request-local `shell` description without parsing or hard-coding its parameter schema. Direct
-`functions.exec` and top-level exec carriers remain unsupported.
+installed, the router rewrites the custom `exec` tool either directly inside an `additional_tools`
+item for app-server traffic or inside that item's `functions` namespace for CLI traffic. It removes
+that owner's `exec_command` section and introductory `tools.exec_command` example, derives the
+request-specific parameter shape, omits `cmd`, and appends only that sanitized shape to `shell`.
+Direct `functions.exec` and top-level exec carriers remain unsupported.
 
 The historical benchmark remains the end-to-end authority: correctness must match the
 native edit path, output tokens must be lower, and input, reasoning, request count, and

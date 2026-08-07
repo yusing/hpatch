@@ -77,6 +77,8 @@ describe("installable shell plugin", () => {
     expect(tool.specification.description).toContain(
       "The selected interpreter receives the exact script body, and frontend standard input\nremains available as program data.",
     );
+    expect(tool.specification.description).toContain("#!params=<JSON object>");
+    expect(tool.specification.description).not.toContain("exec_command");
     expect(tool.specification.description).not.toContain("direct evaluation option");
     expect(tool.specification.description).not.toContain("anonymous descriptor");
     expect(tool.specification.description).not.toContain("temporary file");

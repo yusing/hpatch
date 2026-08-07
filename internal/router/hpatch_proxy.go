@@ -542,9 +542,9 @@ type additionalToolsApplyPatchOwner struct {
 	strippedDescription string
 	// baselineDefinition is the native apply_patch definition hpatch displaces.
 	// hpatch's definition cost is only meaningful net of it.
-	baselineDefinition     string
-	execCommandSection     string
-	execCommandDefinitions []string
+	baselineDefinition           string
+	execCommandParamsDescription string
+	execCommandDefinitions       []string
 }
 
 func installedToolNames(tools []map[string]json.RawMessage) map[string]struct{} {
@@ -631,11 +631,11 @@ func findAdditionalToolsApplyPatch(fields map[string]json.RawMessage, installedN
 		if !found || jsonString(tool, "type") != "custom" {
 			return nil
 		}
-		var execCommandSection string
+		var execCommandParamsDescription string
 		var execCommandDefinitions []string
 		if shellInstalled {
 			var definitions []string
-			stripped, execCommandSection, definitions, found, err = stripCodeModeExecCommandContract(stripped)
+			stripped, execCommandParamsDescription, definitions, found, err = stripCodeModeExecCommandContract(stripped)
 			if err != nil {
 				return err
 			}
@@ -644,18 +644,18 @@ func findAdditionalToolsApplyPatch(fields map[string]json.RawMessage, installedN
 			}
 		}
 		owner = &additionalToolsApplyPatchOwner{
-			item:                   item,
-			itemIndex:              itemIndex,
-			additionalTools:        additionalTools,
-			additionalToolIndex:    additionalToolIndex,
-			tools:                  tools,
-			toolIndex:              toolIndex,
-			nested:                 nested,
-			name:                   name,
-			strippedDescription:    stripped,
-			baselineDefinition:     baseline,
-			execCommandSection:     execCommandSection,
-			execCommandDefinitions: execCommandDefinitions,
+			item:                         item,
+			itemIndex:                    itemIndex,
+			additionalTools:              additionalTools,
+			additionalToolIndex:          additionalToolIndex,
+			tools:                        tools,
+			toolIndex:                    toolIndex,
+			nested:                       nested,
+			name:                         name,
+			strippedDescription:          stripped,
+			baselineDefinition:           baseline,
+			execCommandParamsDescription: execCommandParamsDescription,
+			execCommandDefinitions:       execCommandDefinitions,
 		}
 		return nil
 	}
@@ -716,14 +716,13 @@ func codeModeToolChoiceRestricted(fields map[string]json.RawMessage, codeToolNam
 
 func exposeStandaloneHPatch(fields map[string]json.RawMessage, topTools []map[string]json.RawMessage, owner *additionalToolsApplyPatchOwner, installedTools []map[string]json.RawMessage) error {
 	owner.tools[owner.toolIndex]["description"] = mustMarshalJSON(owner.strippedDescription)
-	if owner.execCommandSection != "" {
+	if owner.execCommandParamsDescription != "" {
 		for _, tool := range installedTools {
 			if jsonString(tool, "name") != "shell" {
 				continue
 			}
 			description := strings.TrimRight(jsonString(tool, "description"), "\r\n")
-			description += "\n\nThe script body supplies `cmd`. Put other supported execution arguments in a leading `#!params={...}` directive.\n\n"
-			description += owner.execCommandSection
+			description += "\n\n" + owner.execCommandParamsDescription
 			tool["description"] = mustMarshalJSON(description)
 			break
 		}
@@ -883,8 +882,76 @@ func stripCodeModeExecCommandSection(description string) (string, string, bool, 
 	)
 }
 
+func execCommandParamsDescription(section string) string {
+	const heading = "### `#!params`"
+	const appMarker = "exec_command(args:"
+
+	if marker := strings.Index(section, appMarker); marker >= 0 {
+		rest := strings.TrimLeft(section[marker+len(appMarker):], " \t")
+		end := strings.Index(rest, "}): Promise")
+		if !strings.HasPrefix(rest, "{") || end < 0 {
+			return ""
+		}
+		shape := rest[:end+1]
+		inside := shape[1 : len(shape)-1]
+		cursor := 0
+		for {
+			cursor += len(inside[cursor:]) - len(strings.TrimLeft(inside[cursor:], " \t\r\n"))
+			if !strings.HasPrefix(inside[cursor:], "//") {
+				break
+			}
+			newline := strings.IndexByte(inside[cursor:], '\n')
+			if newline < 0 {
+				return ""
+			}
+			cursor += newline + 1
+		}
+		field := inside[cursor:]
+		colon := strings.IndexByte(field, ':')
+		semicolon := strings.IndexByte(field, ';')
+		if colon < 0 || semicolon < colon || strings.TrimSpace(field[:colon]) != "cmd" {
+			return ""
+		}
+		shape = "{" + inside[cursor+semicolon+1:] + "}"
+		if strings.Contains(shape, "exec_command") {
+			return ""
+		}
+		return heading + "\nThe leading `#!params={...}` directive accepts this request-specific JSON object shape. The script body supplies `cmd`, so omit it.\n\n```ts\n" + shape + "\n```"
+	}
+
+	normalized := strings.ReplaceAll(section, "\r\n", "\n")
+	lines := strings.Split(normalized, "\n")
+	parameters := slices.IndexFunc(lines, func(line string) bool {
+		return strings.TrimSpace(line) == "Parameters:"
+	})
+	if parameters < 0 {
+		return ""
+	}
+	kept := make([]string, 0, len(lines)-parameters)
+	for _, line := range lines[parameters+1:] {
+		trimmed := strings.TrimSpace(line)
+		if !strings.HasPrefix(trimmed, "- ") {
+			continue
+		}
+		name := strings.TrimSpace(strings.TrimPrefix(trimmed, "- "))
+		if strings.HasPrefix(name, "`cmd`") || strings.HasPrefix(name, "cmd:") {
+			continue
+		}
+		kept = append(kept, trimmed)
+	}
+	if len(kept) == 0 {
+		return ""
+	}
+	fields := strings.Join(kept, "\n")
+	if strings.Contains(fields, "exec_command") {
+		return ""
+	}
+	return heading + "\nThe leading `#!params={...}` directive accepts a JSON object with these request-specific fields. The script body supplies `cmd`, so omit it.\n\n" + fields
+}
+
 // stripCodeModeExecCommandContract removes the command tool section and the
-// introductory example, returning the exact section separately for the replacement tool.
+// introductory example from the model-visible Code Mode description. It derives
+// a shell-specific parameter description without retaining the nested tool surface.
 func stripCodeModeExecCommandContract(description string) (string, string, []string, bool, error) {
 	stripped, section, found, err := stripCodeModeExecCommandSection(description)
 	if err != nil {
@@ -907,7 +974,7 @@ func stripCodeModeExecCommandContract(description string) (string, string, []str
 	if strings.Contains(stripped, "exec_command") {
 		return "", "", nil, false, errors.New("responses Code Mode tool exposes exec_command outside its owned contract")
 	}
-	return stripped, section, definitions, true, nil
+	return stripped, execCommandParamsDescription(section), definitions, true, nil
 }
 
 func mustMarshalJSON(value any) json.RawMessage {
