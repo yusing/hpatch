@@ -855,11 +855,24 @@ async function executeRead(input, maxOutputBytes) {
   }
   return { current, stock };
 }
-function hreadStockCommand(argv) {
-  if (argv.length !== 1) {
-    throw new Error("hread stock command requires one complete input");
+function hreadArguments(input) {
+  const fields = input.split(" ");
+  if (fields.length === 2 && fields.every((field) => shellQuoteArgument(field) === field) && /^[1-9][0-9]*:[1-9][0-9]*$/u.test(fields[1])) {
+    return fields;
   }
-  return parseReadSpecs(argv[0]).map((item) => {
+  return [input];
+}
+function hreadInput(argv) {
+  if (argv.length === 1) {
+    return argv[0];
+  }
+  if (argv.length === 2 && argv.every((argument) => shellQuoteArgument(argument) === argument) && /^[1-9][0-9]*:[1-9][0-9]*$/u.test(argv[1])) {
+    return argv.join(" ");
+  }
+  throw new Error("hread expected one complete input or one bare path and range");
+}
+function hreadStockCommand(argv) {
+  return parseReadSpecs(hreadInput(argv)).map((item) => {
     if (item.error !== null) {
       throw item.error;
     }
@@ -877,18 +890,11 @@ function createHReadTool(description, grammar) {
     grammar,
     stockCommand: hreadStockCommand,
     argv(input) {
-      return [input];
+      return hreadArguments(input);
     },
     async execute(argv, context) {
-      if (argv.length !== 1) {
-        return {
-          stderr: `hread: expected one complete grammar input argument
-`,
-          exitCode: 1
-        };
-      }
       try {
-        const result = await executeRead(argv[0], context.outputBudgetBytes);
+        const result = await executeRead(hreadInput(argv), context.outputBudgetBytes);
         return {
           stdout: result.current,
           stock: { stdout: result.stock, exitCode: 0 },

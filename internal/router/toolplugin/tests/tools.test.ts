@@ -84,6 +84,21 @@ describe("hread built-in plugin", () => {
     }
   });
 
+  test("splits one bare path and range into shell-safe arguments", async () => {
+    const tool = createHReadTool("description", "start: TEST");
+
+    expect(await tool.parse("plugins/shell.mjs 164:300")).toEqual([
+      "plugins/shell.mjs",
+      "164:300",
+    ]);
+    expect(await tool.parse("\"path with spaces.txt\" 2:9")).toEqual([
+      "\"path with spaces.txt\" 2:9",
+    ]);
+    expect(await tool.parse("first.txt\nsecond.txt 2:9")).toEqual([
+      "first.txt\nsecond.txt 2:9",
+    ]);
+  });
+
   test("supplies cat and cat-plus-sed stock exec commands", async () => {
     const tool = createHReadTool("description", "start: TEST");
     const translate = async (input: string) => tool.translate(await tool.parse(input), {
@@ -91,6 +106,7 @@ describe("hread built-in plugin", () => {
     });
 
     expect((await translate("plain.txt")).stockCommand).toBe("cat plain.txt");
+    expect((await translate("plain.txt 2:9")).stockCommand).toBe("cat plain.txt | sed -n '2,9p'");
     expect((await translate("\"path with spaces.txt\" 2:9\n\"quote'file.txt\"")).stockCommand).toBe(
       "cat 'path with spaces.txt' | sed -n '2,9p'; cat 'quote'\"'\"'file.txt'",
     );
@@ -112,6 +128,19 @@ describe("hread built-in plugin", () => {
       ].join(""),
       stock: {
         stdout: "alpha\nbeta\ngamma\n",
+        exitCode: 0,
+      },
+      exitCode: 0,
+    });
+
+    const range = await tool.execute(["plain.txt", "2:3"], executionContext);
+    expect(range).toEqual({
+      stdout: [
+        formatHashLine(2, "beta"),
+        formatHashLine(3, "gamma"),
+      ].join(""),
+      stock: {
+        stdout: "beta\ngamma\n",
         exitCode: 0,
       },
       exitCode: 0,

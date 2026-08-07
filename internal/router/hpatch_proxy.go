@@ -1558,6 +1558,22 @@ func hpatchDiagnosticExecInput(diagnostic string) string {
 	return "text(" + strconv.Quote(diagnostic) + ");"
 }
 
+func directBashExecCommand(arguments []string) (string, bool) {
+	if len(arguments) != 2 || arguments[0] != "bash" || arguments[1] == "" {
+		return "", false
+	}
+	command := strings.TrimSuffix(arguments[1], "\n")
+	command = strings.TrimSuffix(command, "\r")
+	for _, prefix := range []string{"set -e\n", "set -e\r\n"} {
+		if candidate, found := strings.CutPrefix(command, prefix); found &&
+			candidate != "" && !strings.ContainsAny(candidate, "\r\n;&|`(){}") {
+			command = candidate
+			break
+		}
+	}
+	return command, true
+}
+
 func workerCommand(executable string, arguments []string) string {
 	command := shellQuoteArgument(executable)
 	for _, argument := range arguments {
@@ -1567,7 +1583,13 @@ func workerCommand(executable string, arguments []string) string {
 }
 
 func workerExecInputWithParams(executable string, arguments []string, params map[string]json.RawMessage) (string, error) {
-	return workerCommandExecInputWithParams(workerCommand(executable, arguments), params)
+	command := workerCommand(executable, arguments)
+	if executable == "shell" {
+		if direct, ok := directBashExecCommand(arguments); ok {
+			command = direct
+		}
+	}
+	return workerCommandExecInputWithParams(command, params)
 }
 
 func workerTemplateExecInputWithParams(executable string, arguments []string, template string, params map[string]json.RawMessage) (string, error) {

@@ -150,10 +150,15 @@ func (hpatchResultTranslatorFunc) RecordMetrics(context.Context, hpatchMetricRec
 
 func newManagedHPatchProxy(t *testing.T, translator hpatchTranslator) *hpatchProxy {
 	t.Helper()
+	return newManagedHPatchProxyWithDataDirectory(t, translator, t.TempDir())
+}
+
+func newManagedHPatchProxyWithDataDirectory(t *testing.T, translator hpatchTranslator, dataDirectory string) *hpatchProxy {
+	t.Helper()
 	if translator == nil {
 		return nil
 	}
-	registry, err := buildToolRegistry(t.Context(), t.TempDir(), translator.ToolDescription())
+	registry, err := buildToolRegistry(t.Context(), dataDirectory, translator.ToolDescription())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -181,6 +186,11 @@ func registeredWorkerInput(t *testing.T, proxy *hpatchProxy, name string, argume
 
 func newHPatchTestTransform(t *testing.T, translator hpatchTranslator) (*hpatchResponseTransform, *hpatchProxy, *parsedResponsesRequest, string) {
 	t.Helper()
+	return newHPatchTestTransformWithProxy(t, newManagedHPatchProxy(t, translator))
+}
+
+func newHPatchTestTransformWithProxy(t *testing.T, proxy *hpatchProxy) (*hpatchResponseTransform, *hpatchProxy, *parsedResponsesRequest, string) {
+	t.Helper()
 	workspace := t.TempDir()
 	request, err := parseResponsesRequest(mustTestJSON(t, map[string]any{
 		"model": "gpt-test",
@@ -196,7 +206,6 @@ func newHPatchTestTransform(t *testing.T, translator hpatchTranslator) (*hpatchR
 	if err != nil {
 		t.Fatal(err)
 	}
-	proxy := newManagedHPatchProxy(t, translator)
 	metadata := codexTurnMetadata{RequestKind: "turn", Workspaces: map[string]json.RawMessage{workspace: nil}}
 	transform, err := proxy.prepareRequest(t.Context(), &request, "session-1", metadata, true)
 	if err != nil {
@@ -996,15 +1005,104 @@ func TestHPatchJSONWrapsPatchAndImmediateReportInCodeModeExec(t *testing.T) {
 	}
 }
 
+func TestShellJSONTranslatesBashCasesEndToEnd(t *testing.T) {
+	dataDirectory := t.TempDir()
+	pluginDirectory := filepath.Join(dataDirectory, "plugins")
+	if err := os.Mkdir(pluginDirectory, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	shellSource, err := os.ReadFile(filepath.Join("..", "..", "plugins", "shell.mjs"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(pluginDirectory, "shell.mjs"), shellSource, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	proxy := newManagedHPatchProxyWithDataDirectory(t, testTranslator(t, new(int)), dataDirectory)
+	transform, _, _, _ := newHPatchTestTransformWithProxy(t, proxy)
+
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{name: "single line", input: "foo", want: "foo"},
+		{name: "final newline", input: "foo\n", want: "foo"},
+		{name: "redundant errexit", input: "set -e\nfoo\n", want: "foo"},
+		{
+			name:  "multiline",
+			input: "printf one\nprintf two\n",
+			want:  "printf one\nprintf two",
+		},
+		{
+			name:  "meaningful options",
+			input: "set -euo pipefail\nfoo\n",
+			want:  "set -euo pipefail\nfoo",
+		},
+		{
+			name:  "multiple commands",
+			input: "set -e\nfalse; echo survived\n",
+			want:  "set -e\nfalse; echo survived",
+		},
+	}
+	output := make([]any, 0, len(tests))
+	for index, test := range tests {
+		output = append(output, map[string]any{
+			"type":    "custom_tool_call",
+			"id":      fmt.Sprintf("item-shell-%d", index),
+			"call_id": fmt.Sprintf("call-shell-%d", index),
+			"name":    "shell",
+			"input":   test.input,
+			"status":  "completed",
+		})
+	}
+	visible, err := transform.TransformJSON(mustTestJSON(t, map[string]any{
+		"status": "completed",
+		"output": output,
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var response struct {
+		Output []map[string]json.RawMessage `json:"output"`
+	}
+	if err := json.Unmarshal(visible, &response); err != nil {
+		t.Fatal(err)
+	}
+	if len(response.Output) != len(tests) {
+		t.Fatalf("translated shell output count = %d, want %d: %s", len(response.Output), len(tests), visible)
+	}
+	for index, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			item := response.Output[index]
+			if jsonString(item, "name") != "exec" {
+				t.Fatalf("translated carrier name = %q", jsonString(item, "name"))
+			}
+			carrierInput := jsonString(item, "input")
+			encodedArguments := strings.TrimPrefix(carrierInput, "const result = await tools.exec_command(")
+			encodedArguments = strings.TrimSuffix(encodedArguments, ");\nnotify(result.output);")
+			var arguments struct {
+				Command string `json:"cmd"`
+			}
+			if err := json.Unmarshal([]byte(encodedArguments), &arguments); err != nil {
+				t.Fatalf("decode translated exec arguments: %v\n%s", err, carrierInput)
+			}
+			if arguments.Command != test.want {
+				t.Fatalf("translated exec command = %q, want %q", arguments.Command, test.want)
+			}
+		})
+	}
+}
+
 func TestHReadJSONReturnsExecCommandAndRestoresReplay(t *testing.T) {
 	transform, proxy, _, _ := newHPatchTestTransform(t, testTranslator(t, new(int)))
 	readItem := map[string]any{
 		"type": "custom_tool_call", "id": "item-R", "call_id": "call-R",
-		"name": "hread", "input": `"lines.txt" 2:3`, "status": "completed",
+		"name": "hread", "input": `lines.txt 2:3`, "status": "completed",
 	}
 	missingItem := map[string]any{
 		"type": "custom_tool_call", "id": "item-M", "call_id": "call-M",
-		"name": "hread", "input": `"missing.txt"`, "status": "completed",
+		"name": "hread", "input": `"missing file.txt"`, "status": "completed",
 	}
 	visible, err := transform.TransformJSON(mustTestJSON(t, map[string]any{
 		"status": "completed",
@@ -1021,10 +1119,10 @@ func TestHReadJSONReturnsExecCommandAndRestoresReplay(t *testing.T) {
 	}
 	if len(response.Output) != 2 ||
 		jsonString(response.Output[0], "name") != "exec" ||
-		jsonString(response.Output[0], "input") != registeredWorkerInput(t, proxy, "hread", []string{`"lines.txt" 2:3`}) {
+		jsonString(response.Output[0], "input") != registeredWorkerInput(t, proxy, "hread", []string{"lines.txt", "2:3"}) {
 		t.Fatalf("translated hread response = %s", visible)
 	}
-	if missing := jsonString(response.Output[1], "input"); missing != registeredWorkerInput(t, proxy, "hread", []string{`"missing.txt"`}) {
+	if missing := jsonString(response.Output[1], "input"); missing != registeredWorkerInput(t, proxy, "hread", []string{`"missing file.txt"`}) {
 		t.Fatalf("translated missing-file response = %q", missing)
 	}
 	carrierInput := jsonString(response.Output[0], "input")
@@ -1040,7 +1138,7 @@ func TestHReadJSONReturnsExecCommandAndRestoresReplay(t *testing.T) {
 	if err := json.Unmarshal([]byte(encodedArguments), &arguments); err != nil {
 		t.Fatalf("decode translated exec arguments: %v\n%s", err, carrierInput)
 	}
-	wantCommand := `hread '"lines.txt" 2:3'`
+	wantCommand := "hread lines.txt 2:3"
 	if arguments.Command != wantCommand {
 		t.Fatalf("translated exec command = %q, want %q", arguments.Command, wantCommand)
 	}
@@ -1049,6 +1147,18 @@ func TestHReadJSONReturnsExecCommandAndRestoresReplay(t *testing.T) {
 	}
 	if len(arguments.Environment) != 0 || len(arguments.Workdir) != 0 {
 		t.Fatalf("translated hread overrides Codex environment or working directory: %s", carrierInput)
+	}
+	quotedCarrierInput := jsonString(response.Output[1], "input")
+	quotedEncodedArguments := strings.TrimPrefix(quotedCarrierInput, "const result = await tools.exec_command(")
+	quotedEncodedArguments = strings.TrimSuffix(quotedEncodedArguments, ");\nnotify(result.output);")
+	var quotedArguments struct {
+		Command string `json:"cmd"`
+	}
+	if err := json.Unmarshal([]byte(quotedEncodedArguments), &quotedArguments); err != nil {
+		t.Fatalf("decode quoted hread exec arguments: %v\n%s", err, quotedCarrierInput)
+	}
+	if want := `hread '"missing file.txt"'`; quotedArguments.Command != want {
+		t.Fatalf("quoted hread exec command = %q, want %q", quotedArguments.Command, want)
 	}
 
 	replay, err := parseResponsesRequest(mustTestJSON(t, map[string]any{
@@ -1064,7 +1174,7 @@ func TestHReadJSONReturnsExecCommandAndRestoresReplay(t *testing.T) {
 	if err := json.Unmarshal(replay.fields["input"], &replayed); err != nil {
 		t.Fatal(err)
 	}
-	if len(replayed) != 1 || jsonString(replayed[0], "name") != "hread" || jsonString(replayed[0], "input") != `"lines.txt" 2:3` {
+	if len(replayed) != 1 || jsonString(replayed[0], "name") != "hread" || jsonString(replayed[0], "input") != `lines.txt 2:3` {
 		t.Fatalf("replayed hread = %s", replay.fields["input"])
 	}
 }
@@ -1162,6 +1272,40 @@ func TestWorkerTemplateExecInputQuotesNestedShellCommand(t *testing.T) {
 	}
 }
 
+func TestDirectBashExecCommand(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		arguments []string
+		want      string
+		ok        bool
+	}{
+		{name: "single line", arguments: []string{"bash", "foo"}, want: "foo", ok: true},
+		{name: "final newline", arguments: []string{"bash", "foo\n"}, want: "foo", ok: true},
+		{name: "redundant errexit", arguments: []string{"bash", "set -e\nfoo\n"}, want: "foo", ok: true},
+		{
+			name:      "meaningful options",
+			arguments: []string{"bash", "set -euo pipefail\nfoo\n"},
+			want:      "set -euo pipefail\nfoo",
+			ok:        true,
+		},
+		{
+			name:      "multiple commands",
+			arguments: []string{"bash", "set -e\nfalse; echo survived\n"},
+			want:      "set -e\nfalse; echo survived",
+			ok:        true,
+		},
+		{name: "interpreter arguments", arguments: []string{"bash", "-x", "foo"}},
+		{name: "other interpreter", arguments: []string{"python3", "foo"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			got, ok := directBashExecCommand(test.arguments)
+			if got != test.want || ok != test.ok {
+				t.Fatalf("directBashExecCommand(%q) = %q, %t; want %q, %t", test.arguments, got, ok, test.want, test.ok)
+			}
+		})
+	}
+}
+
 func TestWorkerExecInputMergesValidatedParams(t *testing.T) {
 	carrierInput, err := workerExecInputWithParams("shell", []string{"bash", "printf ok"}, map[string]json.RawMessage{
 		"workdir": mustMarshalJSON("/tmp/example"),
@@ -1182,7 +1326,7 @@ func TestWorkerExecInputMergesValidatedParams(t *testing.T) {
 	if err := json.Unmarshal([]byte(encodedArguments), &arguments); err != nil {
 		t.Fatalf("decode translated exec arguments: %v\n%s", err, carrierInput)
 	}
-	if arguments.Command != "shell bash 'printf ok'" || arguments.Workdir != "/tmp/example" ||
+	if arguments.Command != "printf ok" || arguments.Workdir != "/tmp/example" ||
 		!arguments.TTY || arguments.Login {
 		t.Fatalf("translated exec arguments = %+v", arguments)
 	}
@@ -1195,6 +1339,24 @@ func TestWorkerExecInputMergesValidatedParams(t *testing.T) {
 		"login": mustMarshalJSON(true),
 	}); err == nil {
 		t.Fatal("exec params accepted login true")
+	}
+}
+
+func TestHReadExecInputLeavesBarePathAndRangeUnquoted(t *testing.T) {
+	carrierInput, err := workerExecInputWithParams("hread", []string{"plugins/shell.mjs", "164:300"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encodedArguments := strings.TrimPrefix(carrierInput, "const result = await tools.exec_command(")
+	encodedArguments = strings.TrimSuffix(encodedArguments, ");\nnotify(result.output);")
+	var arguments struct {
+		Command string `json:"cmd"`
+	}
+	if err := json.Unmarshal([]byte(encodedArguments), &arguments); err != nil {
+		t.Fatalf("decode translated exec arguments: %v\n%s", err, carrierInput)
+	}
+	if want := "hread plugins/shell.mjs 164:300"; arguments.Command != want {
+		t.Fatalf("translated exec command = %q, want %q", arguments.Command, want)
 	}
 }
 
