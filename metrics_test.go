@@ -49,7 +49,7 @@ func TestGainReportsPersistedTotals(t *testing.T) {
 
 	var translateStdout, translateStderr bytes.Buffer
 	exitCode := Run([]string{"translate"}, strings.NewReader(script), &translateStdout, &translateStderr, root, dataDirectory)
-	wantState := "in note.txt\nlast type note.txt 1 ranges 1:1-1:1\nfiles add=1 update=0 move=0 delete=0\n1:2cf2 hello\n"
+	wantState := "in note.txt\nlast type note.txt 1 ranges 1:1-1:1\nfiles add=1 update=0 move=0 delete=0\nrefs 2 type note.txt\n1:2cf2 hello\n"
 	if exitCode != 0 || translateStdout.String() != patch || translateStderr.String() != wantState {
 		t.Fatalf("translate = exit %d, stdout %q, stderr %q", exitCode, translateStdout.String(), translateStderr.String())
 	}

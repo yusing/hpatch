@@ -989,6 +989,7 @@ succeed, the CLI writes one final-state report to stderr. Its line forms are:
 in PATH
 last OP PATH COUNT ranges RANGE[, RANGE[, RANGE]] [ +N more]
 files add=A update=U move=M delete=D
+refs COMMAND OP PATH
 LINE:HASH TEXT
 ```
 
@@ -1001,14 +1002,39 @@ ranges. Extra ranges are summarized by `+N more`. `RANGE` is a half-open
 complete-line range includes its final terminator when present. The `files` line counts
 net original-to-final actions.
 
-Up to three rows from the active final file follow in `REQ-READ-001` format. When it owns
-the last mutation, the window is centered on the first reported range's starting line
-number, clamped into the rendered final content; otherwise it begins at line 1. `TEXT`
-contains at most the first 64 Unicode code points of rendered line content, without a line
+One `refs` block follows for every effective content-mutating command on every surviving
+edited file. `COMMAND` is the command's positive one-based nonblank script index, `OP` is
+its authored mutation operation, and `PATH` is the file's final path after pending moves.
+Blocks retain authored command order. Each block contains at most four distinct current
+rows, ordered by final line number: the rows containing the first and last endpoints of
+the command's aggregate rendered edit extent, the immediately preceding surviving row,
+and the immediately following surviving row. Missing neighbors are omitted. Coincident
+endpoint or context rows are emitted once within that block. A row may appear in separate
+blocks when it identifies the context of separate source commands.
+
+The projector derives each aggregate extent from that command's effective editor splices
+in rendered final content, then maps both endpoints through language-formatting offsets.
+A collapsed deletion endpoint maps to its surviving containing row; its available
+neighboring rows provide boundary anchors. Logical-line clamping does not invent a
+trailing empty row for a final terminator. An empty surviving file reports row `1` with
+the hash of empty content. When the active final file has no `refs` block, the report
+retains the existing fallback of up to three rows from the start of that file without a
+`refs` header, even when other surviving files have reference blocks.
+
+Every row has `REQ-READ-001` identity over the complete current final logical line.
+`TEXT` contains at most the first 64 Unicode code points of line content, without a line
 terminator or added ellipsis. Tabs are preserved and other controls are escaped so each
-preview stays on one line. An empty active file reports row `1` with the hash of empty
-content. The report describes only the completed invocation; no target or editing state
-persists into a later invocation. Active paths reflect pending moves.
+row stays on one report line. The hash still covers the complete untruncated content.
+The projection is bounded by four rows per effective command, plus the three-row fallback;
+it does not retain another original or final content copy, routed-read history, a word
+diff, or translated patch text.
+
+A successful report's `LINE:HASH` rows are current references for their named final paths
+and may be used directly in the next invocation. The projection does not guarantee that
+it contains every possible later target. When the exact target needed next is absent, the
+caller obtains it with a focused hread. Saved pre-edit rows remain stale and rejection
+context does not authorize guessing or reconstructing a row. The report describes only
+the completed invocation; no target or editing state persists into a later invocation.
 
 The complete report is rendered before commit or patch output, but it is emitted only
 after that mode-specific effect succeeds. A report-write failure after the effect is
@@ -1058,23 +1084,27 @@ Acceptance:
 1. Normal success has empty stdout and one rendered final-state report on stderr after
    commit; translate success has patch-only stdout and one pending-state report on stderr
    after the patch is completely written.
-2. Active paths, bounded last-mutation ranges, bounded `LINE:HASH` previews, net file
-   counts, Unicode columns, truncation, and control escaping produce the specified report
-   without implying cross-invocation persistence.
-3. Changed Go files are formatted with the standard library before output, and invalid Go
+2. Active paths, bounded last-mutation ranges, per-command final-reference blocks, net file
+   counts, Unicode columns, truncation, control escaping, moved files, deletions, and empty
+   files produce the specified report without implying cross-invocation persistence.
+3. One invocation editing multiple regions and files reports current final paths and rows
+   for every effective content command in authored order. A later invocation can target an
+   exact reported row without hread, while an unreported target requires a focused read and
+   a saved pre-edit row still rejects as stale.
+4. Changed Go files are formatted with the standard library before output, and invalid Go
    rejects the transaction without mutation; non-Go files receive no language validation.
-4. Malformed input, missing, stale, reversed, or incomplete targets, edit conflicts,
+5. Malformed input, missing, stale, reversed, or incomplete targets, edit conflicts,
    unknown or future commands, invalid UTF-8, missing or non-regular files, path collisions,
    staging failure, translation failure, and cancellation produce no mutation, patch
    output, or final-state report.
-5. Injected external filesystem commit and rollback failures are reported without false
+6. Injected external filesystem commit and rollback failures are reported without false
    atomicity claims and without a successful final-state report.
-6. Failure to write a fully rendered report after a successful external effect does not
+7. Failure to write a fully rendered report after a successful external effect does not
    reverse that effect or record a complete report-input token estimate.
-7. Stale rows, incomplete literal targets, and edit conflicts emit verified repair context;
+8. Stale rows, incomplete literal targets, and edit conflicts emit verified repair context;
    a missing row fails without guessing, and a failure with no active baseline emits its
    diagnostic alone.
-8. Invalid Go localized inside a fixed `<<PATCH` value reports its physical body row in
+9. Invalid Go localized inside a fixed `<<PATCH` value reports its physical body row in
    bounded repair context and structured host rejection identity without retaining body text.
 
 ## REQ-GUIDE-001 — Agent guidance
@@ -1103,16 +1133,17 @@ Both references teach this workflow:
    formatting, alignment, or indentation, do not replace surrounding lines merely to reproduce
    its output; let the formatter apply those changes. For example, add one struct field with one
    insertion rather than replacing the declaration. Preserve required indentation prefixes in
-   indentation-sensitive languages such as Python. Before a later invocation targets a file
-   changed by a successful call, discard its saved references and hread only the required region
-   again; do not reread a file that needs no further edit.
+   indentation-sensitive languages such as Python. Successful final-state `LINE:HASH` rows
+   are current references for their named final paths and may be used directly in the next
+   invocation. Use hread only when the successful report lacks the exact target needed next.
 5. Use nonempty `type` to replace, empty target-bearing `type` to delete, `type-` to insert
    before, and `type+` to insert after; do not construct a separate selection or clipboard
    program.
 6. Encode short single-line values inline. Include `\n` when a before/after insertion
    must form a complete new line; reserve `<<PATCH` for multiline or escape-heavy values.
 7. After rejection, prefer a compact indexed command or multiline-value-row correction when
-   the desired targets still belong to the same baseline; reread stale rows instead of guessing.
+   the desired targets still belong to the same baseline; reread stale rows instead of guessing
+   or reconstructing them.
 8. Do not run redundant `gofmt`; hpatch formats changed Go files before success.
 
 Guidance includes minimal examples for line replacement, range deletion, inline
@@ -1128,5 +1159,8 @@ Acceptance:
    HPATCH/1 state concepts.
 2. Examples are parseable under `REQ-SCRIPT-001` and demonstrate dependency layering
    rather than same-script editing of introduced content.
-3. Persistent guidance stays compact; correction grammar appears only with an actionable
+3. A routed success can be followed by another hpatch call using an exact row from its report
+   without an intervening hread. A required row outside the bounded projection is read narrowly,
+   and a saved pre-edit row still rejects as stale.
+4. Persistent guidance stays compact; correction grammar appears only with an actionable
    rejected-script context.

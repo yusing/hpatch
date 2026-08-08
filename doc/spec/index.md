@@ -12,10 +12,9 @@ pjdoc:
 ---
 # hpatch specification
 
-This revision specifies the incompatible HPATCH/2 increment described by
-[`doc/brief.md`](../brief.md). `doc/spec/interface.md` owns the public grammar and
-observable command semantics. The existing executable HPATCH/1 grammar remains the
-implementation baseline until a separately authorized implementation slice replaces it.
+Revision 21 specifies bounded current final references for successful HPATCH/2 edits.
+`doc/spec/interface.md` owns the public report grammar, projection rule, continuation
+semantics, and observable acceptance behavior.
 
 ## Inventory
 

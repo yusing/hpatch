@@ -126,8 +126,8 @@ func TestHPatch2ToolDescriptionCoversSafeCommandChoice(t *testing.T) {
 		"When a formatter owns formatting, alignment, or indentation",
 		"add one struct field with one insertion",
 		"indentation-sensitive languages such as Python",
-		"discard its saved references",
-		"do not reread a file that needs no further edit",
+		"Successful final-state `LINE:HASH` rows are current references",
+		"Use `hread` only when the successful report lacks the exact target",
 		"not targetable in the same call",
 		"Multiple insertions at the same boundary render in script order.",
 		"Changed Go files are parsed and formatted before success",
@@ -138,7 +138,7 @@ func TestHPatch2ToolDescriptionCoversSafeCommandChoice(t *testing.T) {
 			t.Errorf("tool description omits %q", guidance)
 		}
 	}
-	for _, excluded := range []string{"HPATCH/1", "\ntsel ", "\nrsel ", "\ncopy", "\ncut", "\npaste", "\ncommit", "<<TAG", "Usage:", "--root", "hpatch gain", "prefer one range `type`", "at most one syntax-sensitive multiline Go"} {
+	for _, excluded := range []string{"HPATCH/1", "\ntsel ", "\nrsel ", "\ncopy", "\ncut", "\npaste", "\ncommit", "<<TAG", "Usage:", "--root", "hpatch gain", "prefer one range `type`", "at most one syntax-sensitive multiline Go", "discard its saved references"} {
 		if strings.Contains(toolDescription, excluded) {
 			t.Errorf("tool description retains excluded material %q", excluded)
 		}

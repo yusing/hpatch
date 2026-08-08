@@ -20,7 +20,7 @@ import (
 const (
 	testTranslatedPatch = "*** Begin Patch\n*** Add File: created.txt\n+payload\n*** End Patch\n"
 	testHPatchScript    = "new created.txt\ntype \"payload\"\n"
-	testHPatchReport    = "in created.txt 1:8\n239f: payload\n"
+	testHPatchReport    = "in created.txt\nlast type created.txt 1 ranges 1:1-1:1\nfiles add=1 update=0 move=0 delete=0\nrefs 2 type created.txt\n1:239f payload\n"
 )
 
 const testHPatchToolDescription = "fixture hpatch description\nwith exact trailing newline\n"
@@ -2467,6 +2467,16 @@ func TestInProcessHPatchTranslatorIsRootScopedAndDoesNotMutateWorkspace(t *testi
 	}
 	if !strings.HasPrefix(translated.report, "in existing.txt\n") {
 		t.Fatalf("translation report = %q", translated.report)
+	}
+	for _, required := range []string{
+		"refs 2 type+ existing.txt\n",
+		"refs 3 type existing.txt\n",
+		"2:e8dd inserted\n",
+		"4:1186 THIRD\n",
+	} {
+		if !strings.Contains(translated.report, required) {
+			t.Fatalf("translation report %q lacks %q", translated.report, required)
+		}
 	}
 	content, err := os.ReadFile(path)
 	if err != nil {

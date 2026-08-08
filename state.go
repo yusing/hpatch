@@ -24,10 +24,10 @@ type renderedDocument struct {
 }
 
 type reportedEdit struct {
-	file          *fileState
-	operation     string
-	spans         []renderedSpan
-	previewOffset int
+	file      *fileState
+	command   int
+	operation string
+	spans     []renderedSpan
 }
 
 func (w *workspace) finalStateReport(changes []change) string {
@@ -45,8 +45,12 @@ func (w *workspace) finalStateReport(changes []change) string {
 		last.writeSummary(&report)
 	}
 	w.writeFileSummary(&report, changes)
-	if w.active != nil {
-		w.writeActivePreview(&report, last)
+	activeReferences := false
+	if len(w.reportedEdits) != 0 {
+		activeReferences = w.writeFinalReferences(&report)
+	}
+	if w.active != nil && !activeReferences {
+		w.writeFallbackPreview(&report)
 	}
 	return report.String()
 }
@@ -68,20 +72,7 @@ func (e *editor) reportedEdit(origin editOrigin) *reportedEdit {
 	if len(spans) == 0 {
 		return nil
 	}
-
-	previewOffset := 0
-	renderedOffset := 0
-	baselineOffset := 0
-	for _, edit := range e.orderedEdits() {
-		renderedOffset += edit.start - baselineOffset
-		if edit.command == origin.command {
-			previewOffset = renderedOffset
-			break
-		}
-		renderedOffset += len(edit.replacement)
-		baselineOffset = max(baselineOffset, edit.end)
-	}
-	return &reportedEdit{operation: origin.operation, spans: spans, previewOffset: previewOffset}
+	return &reportedEdit{command: origin.command, operation: origin.operation, spans: spans}
 }
 
 func (e *reportedEdit) writeSummary(report *strings.Builder) {
@@ -112,19 +103,76 @@ func writeSpanLocations(report *strings.Builder, document renderedDocument, span
 	report.WriteByte('\n')
 }
 
-func (w *workspace) writeActivePreview(report *strings.Builder, last *reportedEdit) {
-	document := renderedDocument{content: w.active.editor.content(), lines: previewLines(w.active.editor.content())}
-	line := 1
-	if last != nil && last.file == w.active && len(last.spans) != 0 {
-		offset := w.active.editor.finalOffsets.mapOffset(last.previewOffset)
-		line = renderedCoordinateAt(document.content, document.lines, offset).line
+func (w *workspace) writeFinalReferences(report *strings.Builder) bool {
+	documents := make(map[*fileState]renderedDocument)
+	extents := make(map[*fileState]map[int]renderedSpan)
+	activeReferences := false
+	for _, reported := range w.reportedEdits {
+		if reported.file == w.active {
+			activeReferences = true
+		}
+		document, ok := documents[reported.file]
+		if !ok {
+			content := reported.file.editor.content()
+			document = renderedDocument{content: content, lines: previewLines(content)}
+			documents[reported.file] = document
+			extents[reported.file] = reported.file.editor.renderedEditExtents()
+		}
+		extent, ok := extents[reported.file][reported.command]
+		if !ok {
+			panic("reported edit has no effective editor splice")
+		}
+		startOffset := reported.file.editor.finalOffsets.mapOffset(extent.start)
+		endOffset := reported.file.editor.finalOffsets.mapOffset(extent.end)
+		startLine := renderedCoordinateAt(document.content, document.lines, startOffset).line
+		endLine := renderedCoordinateAt(document.content, document.lines, endOffset).line
+		firstLine, lastLine := min(startLine, endLine), max(startLine, endLine)
+
+		fmt.Fprintf(
+			report,
+			"refs %d %s %s\n",
+			reported.command,
+			reported.operation,
+			escapeReportControls(reported.file.path),
+		)
+		indexes := []int{firstLine - 2, firstLine - 1, lastLine - 1, lastLine}
+		previous := -1
+		for _, index := range indexes {
+			if index < 0 || index >= len(document.lines) || index == previous {
+				continue
+			}
+			writePreviewLine(report, document, index)
+			previous = index
+		}
 	}
-	line = min(max(line, 1), len(document.lines))
-	start := max(0, line-2)
-	if start+3 > len(document.lines) {
-		start = max(0, len(document.lines)-3)
+	return activeReferences
+}
+
+func (e *editor) renderedEditExtents() map[int]renderedSpan {
+	result := make(map[int]renderedSpan)
+	renderedOffset := 0
+	baselineOffset := 0
+	for _, edit := range e.orderedEdits() {
+		renderedOffset += edit.start - baselineOffset
+		start := renderedOffset
+		end := start + len(edit.replacement)
+		if extent, ok := result[edit.command]; ok {
+			extent.start = min(extent.start, start)
+			extent.end = max(extent.end, end)
+			result[edit.command] = extent
+		} else {
+			result[edit.command] = renderedSpan{start: start, end: end}
+		}
+		renderedOffset = end
+		baselineOffset = max(baselineOffset, edit.end)
 	}
-	for index := start; index < min(start+3, len(document.lines)); index++ {
+	return result
+}
+
+func (w *workspace) writeFallbackPreview(report *strings.Builder) {
+	content := w.active.editor.content()
+	document := renderedDocument{content: content, lines: previewLines(content)}
+	for index := range min(3, len(document.lines)) {
 		writePreviewLine(report, document, index)
 	}
 }

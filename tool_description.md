@@ -72,9 +72,10 @@ owns formatting, alignment, or indentation, do not replace surrounding lines mer
 reproduce its output; let the formatter apply those changes. For example, add one struct
 field with one insertion rather than replacing the declaration. Preserve required
 indentation prefixes in indentation-sensitive languages such as Python.
-Content introduced by a mutation is not targetable in the same call. Before a later invocation
-targets a file changed by a successful call, discard its saved references and `hread` only the
-required region again; do not reread a file that needs no further edit.
+Content introduced by a mutation is not targetable in the same call. Successful final-state
+`LINE:HASH` rows are current references for their named final paths and may be used directly
+in the next invocation. Use `hread` only when the successful report lacks the exact target
+needed next.
 
 Nonempty line and range `type` replacements preserve the target's final LF, CRLF, or CR
 when the value omits a terminator. Explicit terminators are authoritative. An empty

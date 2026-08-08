@@ -76,7 +76,7 @@ func TestTopLevelHelpDescribesCompletePublicSurface(t *testing.T) {
 		"Split only when a later edit depends on validation",
 		"Keep unrelated large <<PATCH values",
 		"Prefer the smallest mutation that expresses the semantic change",
-		"hread only the required region",
+		"Successful final-state LINE:HASH rows are current references",
 		"Multiple insertions",
 		"Every requested match must exist",
 		"preserve the target's final LF",
@@ -122,7 +122,8 @@ func TestToolHelpGuidesAgentCommandChoice(t *testing.T) {
 		"When a formatter owns formatting, alignment, or indentation",
 		"add one struct field with one insertion",
 		"indentation-sensitive languages such as Python",
-		"`hread` only the required region",
+		"Successful final-state `LINE:HASH` rows are current references",
+		"Use `hread` only when the successful report lacks the exact target",
 		"Multiple insertions at the same boundary render in script order.",
 		"reread stale rows instead of guessing",
 	} {
@@ -142,6 +143,7 @@ func TestToolHelpGuidesAgentCommandChoice(t *testing.T) {
 		"prefer one range `type`",
 		"<<TAG",
 		"at most one syntax-sensitive multiline Go",
+		"discard its saved references",
 	} {
 		if strings.Contains(help, excluded) {
 			t.Fatalf("tool help contains unnecessary or inaccurate text %q", excluded)
@@ -175,6 +177,9 @@ func TestRootAndCWDOptionsTranslateRootRelativePath(t *testing.T) {
 		)
 		if exitCode != 0 || !strings.HasPrefix(stderr.String(), "in nested/main.go\n") {
 			t.Fatalf("run(cwd %q) = exit %d, stdout %q, stderr %q", cwd, exitCode, stdout.String(), stderr.String())
+		}
+		if !strings.Contains(stderr.String(), "refs 2 type nested/main.go\n") {
+			t.Fatalf("translation report lacks final references: %q", stderr.String())
 		}
 		if !strings.Contains(stdout.String(), "*** Update File: nested/main.go\n") {
 			t.Fatalf("translation for cwd %q is not root-relative:\n%s", cwd, stdout.String())

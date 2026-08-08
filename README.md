@@ -363,7 +363,7 @@ Rules worth remembering:
 - Submit every known related edit in one atomic script, including related multiline declarations and repeated `in PATH` sections. Split only when a later edit depends on validation or information unavailable before the current call. Keep unrelated large `<<PATCH` values in separate failure-domain calls.
 - Prefer the smallest mutation that expresses the semantic change. When a formatter owns formatting, alignment, or indentation, do not replace surrounding lines merely to reproduce its output; let the formatter apply those changes. For example, add one struct field with one insertion rather than replacing the declaration.
 - Preserve required indentation prefixes in indentation-sensitive languages such as Python.
-- Before a later invocation targets a file changed by a successful call, discard its saved references and HREAD only the required region again; do not reread a file that needs no further edit.
+- Successful final-state `LINE:HASH` rows are current references for their named final paths and may be used directly in the next invocation. Use HREAD only when the successful report lacks the exact target needed next.
 - Overlapping replacements or deletions and insertions strictly inside them fail atomically. Boundary insertions are valid.
 - Use inline quoted values for short single-line edits; include `\n` when an insertion must form a new line. Reserve fixed `<<PATCH` for multiline or escape-heavy values.
 - Rejection changes nothing. Router-owned retries can replace, delete, or insert failed commands by index; for a fixed `<<PATCH` value, they can address one physical body row as `COMMAND.ROW` without resending the large value.

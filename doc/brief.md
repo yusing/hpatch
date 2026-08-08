@@ -18,6 +18,10 @@ repeated lines, detect stale inspection, and read several already-known files or
 one ordered call without requiring old regions to be re-emitted. A routed ripgrep wrapper
 emits those same verified references for complete matching and requested context lines so an
 agent does not need to repeat an exact search result through the reader before editing it.
+A successful edit report projects compact current rows for each effective content command.
+Those reported references can be used directly in the next invocation after line shifts and
+language formatting. A focused routed read remains necessary when the report does not contain
+the exact next target.
 
 A router-local tool plugin system loads TypeScript-authored, compiled JavaScript declarations
 from the user configuration directory, exposes their OpenAI custom-tool specifications, and
@@ -64,6 +68,8 @@ wall time must remain close to control.
   mutations reject instead of rebasing or guessing.
 - Normal mode that validates and stages the complete change set before filesystem commit.
 - Translate mode that does not modify files and emits one OpenAI `apply_patch` envelope.
+- Successful normal and translate reports project bounded current references for every
+  effective content-edit command on every surviving edited file.
 - Compact indexed corrections of rejected scripts without resending unaffected commands.
 - Persistent encoding, diagnostic, command, target, and end-to-end benchmark metrics.
 - Historical-commit benchmark tasks with hidden graders, paired randomized attempts, and
@@ -115,6 +121,10 @@ wall time must remain close to control.
 - Content movement without re-emitting the moved content; `mv` moves complete files only.
 - Selecting content introduced earlier in the same script. Dependent edits use a later
   inspected invocation.
+- A guarantee that successful report references cover every possible later target, or retention
+  of prior routed-read rows so the engine can predict a later edit.
+- Word diffs, translated-patch retention in model-visible history, and caller-selected final
+  report ranges.
 - Interactive editor UI, binary files, non-UTF-8 files, remote plugin discovery, runtime
   TypeScript transpilation, hot plugin reload, or search semantics beyond the installed
   ripgrep executable.
@@ -144,6 +154,11 @@ wall time must remain close to control.
   modify files or emit a partial patch or successful final-state report.
 - Normal success writes the final-state report to stderr. Translate success writes the
   patch to stdout and the pending final-state report to stderr.
+- A successful report row is current for its named final path and may target the next
+  invocation directly. Saved pre-edit rows remain stale; when the exact next target is absent,
+  the caller performs a focused read rather than guessing or reconstructing it.
+- Final-reference projection derives from completed editor state and formatting offsets without
+  retaining another copy of original or final file content.
 - Changed Go files are parsed and formatted with Go's standard library before success.
 - Correctness is determined by required graders and path-scope checks, not reference-patch
   similarity. End-to-end Responses usage is authoritative for task-level token results.

@@ -98,9 +98,10 @@ Baselines and conflict safety:
   not replace surrounding lines merely to reproduce its output; let the formatter
   apply those changes. For example, add one struct field with one insertion rather
   than replacing the declaration. Preserve required indentation prefixes in
-  indentation-sensitive languages such as Python. Before a later invocation targets
-  a file changed by a successful call, discard its saved references and hread only
-  the required region again; do not reread a file that needs no further edit.
+  indentation-sensitive languages such as Python. Successful final-state LINE:HASH
+  rows are current references for their named final paths and may be used directly
+  in the next invocation. Use hread only when the successful report lacks the exact
+  target needed next.
 
   Replacements and deletions may not overlap. An insertion strictly inside either
   one conflicts. Insertions at a destructive span boundary are valid. Multiple
@@ -112,7 +113,8 @@ File lifecycle:
   its baseline and pending edits. new selects a pending empty file; its immediately
   following nonblank command may be one targetless type VALUE initializer. Any
   intervening command closes that opportunity. New-file content cannot be targeted
-  until a successful invocation and fresh read.
+  in the creating invocation. After success, use an exact reported current row or
+  hread when that target is absent.
 
   mv moves the active logical file and preserves its baseline and pending edits.
   rm deletes the active file and clears the active file. Removing an existing file
@@ -137,8 +139,9 @@ Agent workflow:
      to reproduce its output; let the formatter apply those changes. For example, add one
      struct field with one insertion rather than replacing the declaration. Preserve
      required indentation prefixes in indentation-sensitive languages such as Python.
-     Before a later invocation targets a changed file, discard its saved references and
-     hread only the required region; do not reread files needing no edit.
+     Successful final-state LINE:HASH rows are current references for their named final
+     paths and may be used directly in the next invocation. Use hread only when the
+     successful report lacks the exact target needed next.
   6. Prefer inline single-line values; reserve <<PATCH for multiline or escape-heavy text.
   7. After rejection, use a router indexed command or multiline-value-row correction
      only while the referenced rows still belong to the same baseline. Reread stale
@@ -150,10 +153,12 @@ Agent workflow:
 
 Final-state report:
   Success reports the active final path or "no active file", the last effective
-  mutation and at most three immutable-baseline Unicode ranges, net add/update/
-  move/delete counts, and at most three final preview rows as LINE:HASH TEXT.
-  Preview content is bounded and controls are escaped. The report describes only
-  the completed invocation and carries no target or editor state into a later call.
+  mutation and at most three immutable-baseline Unicode ranges, and net add/update/
+  move/delete counts. One refs COMMAND OP PATH block identifies each effective content
+  command on a surviving file and contains at most four current final rows as
+  LINE:HASH TEXT. Displayed content is bounded, complete-line hashes remain current,
+  and controls are escaped. An exact reported row may target the next invocation;
+  use hread when the required row is absent.
 
 Failures and repair:
   Failures use stderr, nonzero status, and no patch or final-state report. Script
