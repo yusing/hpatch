@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -19,6 +20,8 @@ import (
 	"testing/iotest"
 	"testing/synctest"
 	"time"
+
+	"github.com/yusing/hpatch/internal/patchtest"
 )
 
 type serverForwardResult struct {
@@ -333,6 +336,178 @@ func TestExecuteRequestForwardsRewrittenRequestAndRecordsUsage(t *testing.T) {
 	want := tokenCounts{InputTokens: 10, UncachedInputTokens: 6, OutputTokens: 6, ReasoningTokens: 2}
 	if got := store.snapshot().Total; got != want {
 		t.Fatalf("usage = %#v, want %#v", got, want)
+	}
+}
+
+func TestRangedHReadAfterAppliedHPatchCarrierRemainsModelVisible(t *testing.T) {
+	workspace := t.TempDir()
+	path := filepath.Join(workspace, "file.txt")
+	initial := "alpha\nbeta\ngamma\n"
+	if err := os.WriteFile(path, []byte(initial), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	hpatchScript := "in file.txt\ntype 2:f44e \"B\"\n"
+	hreadInput := "file.txt 1:3"
+	provider := &serverFakeProvider{
+		results: []serverForwardResult{
+			{response: serverHTTPResponse(string(mustTestJSON(t, map[string]any{
+				"status": "completed",
+				"output": []any{map[string]any{
+					"type": "custom_tool_call", "id": "item-H", "call_id": "call-H",
+					"name": hpatchToolName, "input": hpatchScript, "status": "completed",
+				}},
+			})))},
+			{response: serverHTTPResponse(string(mustTestJSON(t, map[string]any{
+				"status": "completed",
+				"output": []any{map[string]any{
+					"type": "custom_tool_call", "id": "item-R", "call_id": "call-R",
+					"name": "hread", "input": hreadInput, "status": "completed",
+				}},
+			})))},
+			{response: serverHTTPResponse(`{"status":"completed","output":[]}`)},
+		},
+	}
+	translator := newInProcessHPatchTranslator(t.TempDir())
+	proxy := newManagedHPatchProxy(t, translator)
+	headers := serverMetadataHeaders(t, "turn", map[string]json.RawMessage{workspace: nil})
+	const sessionID = "session-hpatch-hread"
+
+	requestWith := func(items ...any) parsedResponsesRequest {
+		return serverRequest(t, func(request map[string]any) {
+			additional := request["input"].([]any)[0]
+			request["input"] = append([]any{additional}, items...)
+		})
+	}
+	runRequest := func(request parsedResponsesRequest) []byte {
+		var output bytes.Buffer
+		if err := executeRequest(
+			t.Context(),
+			t.Context(),
+			request,
+			headers,
+			sessionID,
+			provider,
+			&output,
+			newDiagnostics(io.Discard),
+			time.Now,
+			proxy,
+			newMetricsStore(""),
+		); err != nil {
+			t.Fatal(err)
+		}
+		return output.Bytes()
+	}
+	outputItems := func(response []byte) []map[string]json.RawMessage {
+		var envelope struct {
+			Output []map[string]json.RawMessage `json:"output"`
+		}
+		if err := json.Unmarshal(response, &envelope); err != nil {
+			t.Fatal(err)
+		}
+		return envelope.Output
+	}
+
+	firstVisible := runRequest(requestWith(map[string]any{"role": "user", "content": "edit file.txt"}))
+	firstItems := outputItems(firstVisible)
+	if len(firstItems) != 1 || jsonString(firstItems[0], "name") != "exec" {
+		t.Fatalf("translated hpatch response = %s", firstVisible)
+	}
+	hpatchCarrier := firstItems[0]
+	carrierInput := jsonString(hpatchCarrier, "input")
+	program, ok := strings.CutPrefix(
+		carrierInput,
+		hpatchApplyExecMarker+"await tools.apply_patch(",
+	)
+	if !ok {
+		t.Fatalf("hpatch carrier input = %q", carrierInput)
+	}
+	encodedPatch, encodedReport, ok := strings.Cut(program, ");\ntext(")
+	if !ok {
+		t.Fatalf("hpatch carrier framing = %q", carrierInput)
+	}
+	encodedReport = strings.TrimSuffix(encodedReport, ");")
+	patch, err := strconv.Unquote(encodedPatch)
+	if err != nil {
+		t.Fatalf("decode carrier patch: %v", err)
+	}
+	report, err := strconv.Unquote(encodedReport)
+	if err != nil {
+		t.Fatalf("decode carrier report: %v", err)
+	}
+	applied, err := patchtest.Apply(map[string]string{"file.txt": initial}, patch)
+	if err != nil {
+		t.Fatalf("execute carrier patch: %v", err)
+	}
+	if err := os.WriteFile(path, []byte(applied["file.txt"]), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	hpatchOutput := map[string]any{
+		"type": "custom_tool_call_output", "call_id": "call-H", "output": report,
+	}
+	secondVisible := runRequest(requestWith(hpatchCarrier, hpatchOutput))
+	secondItems := outputItems(secondVisible)
+	if len(secondItems) != 1 ||
+		jsonString(secondItems[0], "name") != "exec" ||
+		jsonString(secondItems[0], "input") != registeredWorkerInput(t, proxy, "hread", []string{"file.txt", "1:3"}) {
+		t.Fatalf("translated hread response = %s", secondVisible)
+	}
+	hreadCarrier := secondItems[0]
+
+	wrapper, ok := proxy.registry.wrapper("hread")
+	if !ok {
+		t.Fatal("hread worker is unavailable")
+	}
+	t.Chdir(workspace)
+	var hreadStdout, hreadStderr bytes.Buffer
+	handled, exitCode := RunToolPluginWorker(
+		t.Context(),
+		wrapper,
+		[]string{"file.txt", "1:3"},
+		os.Stdin,
+		&hreadStdout,
+		&hreadStderr,
+	)
+	wantRows := "1:8ed3 alpha\n2:df7e B\n3:be9d gamma\n"
+	if !handled || exitCode != 0 || hreadStdout.String() != wantRows || hreadStderr.Len() != 0 {
+		t.Fatalf(
+			"hread worker handled %t, exit %d, stdout %q, stderr %q",
+			handled,
+			exitCode,
+			hreadStdout.String(),
+			hreadStderr.String(),
+		)
+	}
+
+	hreadOutput := map[string]any{
+		"type": "custom_tool_call_output", "call_id": "call-R", "output": hreadStdout.String(),
+	}
+	runRequest(requestWith(hpatchCarrier, hpatchOutput, hreadCarrier, hreadOutput))
+	if len(provider.forwarded) != 3 {
+		t.Fatalf("upstream requests = %d, want 3", len(provider.forwarded))
+	}
+	thirdForwarded, err := parseResponsesRequest(provider.forwarded[2])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var forwardedItems []map[string]json.RawMessage
+	if err := json.Unmarshal(thirdForwarded.fields["input"], &forwardedItems); err != nil {
+		t.Fatal(err)
+	}
+	sawHRead, sawRows := false, false
+	for _, item := range forwardedItems {
+		if jsonString(item, "name") == "hread" && jsonString(item, "input") == hreadInput {
+			sawHRead = true
+		}
+		if jsonString(item, "type") == "custom_tool_call_output" &&
+			jsonString(item, "call_id") == "call-R" &&
+			jsonString(item, "output") == wantRows {
+			sawRows = true
+		}
+	}
+	if !sawHRead || !sawRows {
+		t.Fatalf("model-visible hread history = %s", thirdForwarded.fields["input"])
 	}
 }
 
