@@ -118,8 +118,10 @@ func TestHPatch2ToolDescriptionCoversSafeCommandChoice(t *testing.T) {
 		"fixed `<<PATCH`",
 		"reserved as a nested opener",
 		"immutable baseline",
-		"batch all short supporting edits",
-		"at most one syntax-sensitive multiline Go",
+		"submit every known related edit in one atomic script",
+		"including related multiline declarations",
+		"Split only when a later edit depends on validation",
+		"Keep unrelated large `<<PATCH` values",
 		"Prefer the smallest mutation that expresses the semantic change",
 		"When a formatter owns formatting, alignment, or indentation",
 		"add one struct field with one insertion",
@@ -136,7 +138,7 @@ func TestHPatch2ToolDescriptionCoversSafeCommandChoice(t *testing.T) {
 			t.Errorf("tool description omits %q", guidance)
 		}
 	}
-	for _, excluded := range []string{"HPATCH/1", "\ntsel ", "\nrsel ", "\ncopy", "\ncut", "\npaste", "\ncommit", "<<TAG", "Usage:", "--root", "hpatch gain", "prefer one range `type`"} {
+	for _, excluded := range []string{"HPATCH/1", "\ntsel ", "\nrsel ", "\ncopy", "\ncut", "\npaste", "\ncommit", "<<TAG", "Usage:", "--root", "hpatch gain", "prefer one range `type`", "at most one syntax-sensitive multiline Go"} {
 		if strings.Contains(toolDescription, excluded) {
 			t.Errorf("tool description retains excluded material %q", excluded)
 		}

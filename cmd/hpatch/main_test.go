@@ -71,8 +71,10 @@ func TestTopLevelHelpDescribesCompletePublicSurface(t *testing.T) {
 		"Use hgrep to locate matching complete lines",
 		"Use hread for surrounding or nonmatching context",
 		"Issue every independent hread call",
-		"batch all short supporting edits",
-		"at most one syntax-sensitive multiline Go",
+		"submit every known related edit in one atomic script",
+		"including related multiline declarations",
+		"Split only when a later edit depends on validation",
+		"Keep unrelated large <<PATCH values",
 		"Prefer the smallest mutation that expresses the semantic change",
 		"hread only the required region",
 		"Multiple insertions",
@@ -92,7 +94,7 @@ func TestTopLevelHelpDescribesCompletePublicSurface(t *testing.T) {
 
 func TestHelpDoesNotAdvertiseRemovedSelectors(t *testing.T) {
 	for name, text := range map[string]string{"top-level": helpTextBase, "tool": toolHelpText(), "translate": translateHelpText} {
-		for _, removed := range []string{"bsel", "sel LINE", "`sel` columns"} {
+		for _, removed := range []string{"bsel", "sel LINE", "`sel` columns", "at most one syntax-sensitive multiline Go"} {
 			if strings.Contains(text, removed) {
 				t.Errorf("%s help still advertises removed selector %q", name, removed)
 			}
@@ -112,8 +114,10 @@ func TestToolHelpGuidesAgentCommandChoice(t *testing.T) {
 		"fixed `<<PATCH` frame",
 		"one immutable baseline",
 		"not targetable in the same call",
-		"batch all short supporting edits",
-		"at most one syntax-sensitive multiline Go",
+		"submit every known related edit in one atomic script",
+		"including related multiline declarations",
+		"Split only when a later edit depends on validation",
+		"Keep unrelated large `<<PATCH` values",
 		"Prefer the smallest mutation that expresses the semantic change",
 		"When a formatter owns formatting, alignment, or indentation",
 		"add one struct field with one insertion",
@@ -137,6 +141,7 @@ func TestToolHelpGuidesAgentCommandChoice(t *testing.T) {
 		"HPATCH/1",
 		"prefer one range `type`",
 		"<<TAG",
+		"at most one syntax-sensitive multiline Go",
 	} {
 		if strings.Contains(help, excluded) {
 			t.Fatalf("tool help contains unnecessary or inaccurate text %q", excluded)

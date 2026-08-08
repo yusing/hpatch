@@ -2,18 +2,22 @@ import type {Plugin, Tool} from "../../plugin.d.ts";
 import {createHGrepTool} from "./hgrep.ts";
 import {createHReadTool} from "./hread.ts";
 
-const hreadDescription = `Use \`hread\` as replacement of \`cat\` or \`sed\`. Read up to 6 workspace paths, optionally
-followed by an inclusive \`START:END\` line range. Use a bare path when it has no whitespace;
-otherwise use a JSON-quoted path. Unlike plain file output, every complete line is returned
-as \`LINE:HASH TEXT\`; copy the current \`LINE:HASH\` directly into an HPATCH/2 target.
+const hreadDescription = `Use \`hread\` as replacement of \`cat\` or \`sed\`. Plan related reads before calling:
+batch already-known paths or ranges in one call, and use explicit ranges after the relevant
+locations are known. A bare path intentionally reads the complete file. Read up to 6 workspace
+paths, optionally followed by an inclusive \`START:END\` line range. Use a bare path when it has
+no whitespace; otherwise use a JSON-quoted path. Unlike plain file output, every complete line
+is returned as \`LINE:HASH TEXT\`; copy the current \`LINE:HASH\` directly into an HPATCH/2 target.
 `;
 
 const hreadPath = `(?:"(?:\\\\(?:["\\\\/bfnrt]|u[0-9A-Fa-f]{4})|[^\\x00-\\x1F"\\\\]|\\t)*"|[^\\x00-\\x20"]+)`;
 const hreadReadSpec = `${hreadPath}(?: [1-9][0-9]*:[1-9][0-9]*)?`;
 const hreadRegex = `\\A${hreadReadSpec}(?:\\r?\\n${hreadReadSpec}){0,5}\\z`;
 
-const hgrepDescription = `Use \`hgrep\` as replacement of \`rg\` or \`grep\`. It is a ripgrep wrapper that accepts familiar
-arguments but returns complete matching and requested context lines as
+const hgrepDescription = `Use \`hgrep\` as replacement of \`rg\` or \`grep\`. Plan related searches before calling:
+combine known patterns and paths in one call. The input is one ripgrep argument line; use repeated
+\`-e\` for multiple patterns. For example: \`hgrep -n -e 'RangeStream' -e 'type RaftKV' path...\`.
+It accepts familiar ripgrep arguments but returns complete matching and requested context lines as
 \`"PATH":LINE:HASH TEXT\`. Copy the current \`LINE:HASH\` directly into an HPATCH/2 target.
 `;
 

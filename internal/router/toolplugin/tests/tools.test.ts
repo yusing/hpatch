@@ -48,6 +48,17 @@ afterEach(async () => {
 });
 
 describe("hread built-in plugin", () => {
+  test("describes planned batched and ranged reads", () => {
+    const description = plugin.tools[0].specification.description.replace(/\s+/g, " ");
+    for (const fragment of [
+      "batch already-known paths or ranges in one call",
+      "use explicit ranges after the relevant locations are known",
+      "A bare path intentionally reads the complete file",
+    ]) {
+      expect(description).toContain(fragment);
+    }
+  });
+
   test("declares a bounded regex grammar", () => {
     const format = plugin.tools[0].specification.format;
     expect(format?.syntax).toBe("regex");
@@ -197,6 +208,18 @@ describe("hread built-in plugin", () => {
 });
 
 describe("hgrep built-in plugin", () => {
+  test("describes combined searches and repeated patterns", () => {
+    const description = plugin.tools[1].specification.description.replace(/\s+/g, " ");
+    for (const fragment of [
+      "combine known patterns and paths in one call",
+      "input is one ripgrep argument line",
+      "use repeated `-e` for multiple patterns",
+      "hgrep -n -e 'RangeStream' -e 'type RaftKV' path...",
+    ]) {
+      expect(description).toContain(fragment);
+    }
+  });
+
   test("splits literal arguments without shell evaluation", () => {
     expect(splitArguments(
       `-F 'two words' "path with spaces.txt" semi;colon dollar$(value) back\\\\slash`,

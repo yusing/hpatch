@@ -115,6 +115,7 @@ The controlled differences are:
 | Router endpoint | `127.0.0.1:8081` | `127.0.0.1:8082` |
 | Router mode | `passthrough` | `hpatch` |
 | Base-instruction tool guidance | Stock `apply_patch` paragraph | Repository-owned edit, read, search, and shell guidance |
+| Native base-prompt preferences | Stock `rg` and `exec_command` guidance | The two displaced lines are removed; routed `hgrep` and `shell` guidance owns those operations |
 | Model tool surface | Stock Code Mode `apply_patch` and `exec_command` | Standalone `hpatch`, `hread`, `hgrep`, and configured `shell`, translated back to Code Mode operations |
 
 The control router forwards requests without tool rewriting. The treatment router removes the
@@ -138,9 +139,11 @@ $run_dir/instructions/control.md
 ```
 
 It replaces the stock file-editing heading and `apply_patch` paragraph with the
-contents of `contrib/codex/file-editing-instructions.md`. That replacement also adds
-guidance for routed reads, searches, and shell commands while preserving the stock
-dirty-worktree and non-destructive Git paragraphs. The resulting complete
+contents of `contrib/codex/file-editing-instructions.md`. From the treatment only,
+it also removes the exact stock line that prefers `rg` and the exact stock
+`exec_command` escaping line. The control retains both lines. All other stock
+base-prompt text remains byte-for-byte, and the same offline-isolation rule is
+then appended to both arms. The resulting complete
 treatment prompt is:
 
 ```text

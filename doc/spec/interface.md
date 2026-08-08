@@ -1075,17 +1075,18 @@ diagnostic of a correction chain; later rejection diagnostics in that chain do n
 
 Both references teach this workflow:
 
-1. Use hgrep to locate matching complete lines and copy its current `LINE:HASH` directly
-   when that exact row is sufficient for the edit. Use hread for surrounding or nonmatching
-   context rather than repeating an exact hgrep result. Put up to 6 already-known files or
-   ranges into one newline-delimited hread call, and copy references only from current output
-   for that exact path.
+1. Plan related searches before calling hgrep: combine known patterns and paths in one call and
+   use repeated `-e` for multiple patterns. Copy a matching current `LINE:HASH` directly when
+   that exact row is sufficient for the edit; use hread for surrounding or nonmatching context
+   rather than repeating an exact hgrep result. Plan related reads before calling hread: put up
+   to 6 already-known files or ranges into one newline-delimited call, use explicit ranges after
+   the relevant locations are known, and remember that a bare path intentionally reads the
+   complete file. Copy references only from current output for that exact path.
 2. Choose a line, inclusive range, or anchored literal target inside the mutation command.
-3. Batch all ready short supporting edits that share a failure domain into one call with
-   repeated `in PATH` sections instead of issuing one call per file. Keep unrelated large
-   `<<PATCH` values in separate failure-domain calls, with at most one syntax-sensitive
-   multiline Go declaration or function replacement per call; short supporting edits for
-   that same change may remain with it.
+3. Submit every known related edit in one atomic script, including related multiline
+   declarations and repeated `in PATH` sections. Split only when a later edit depends on
+   validation or information unavailable before the current call. Keep unrelated large
+   `<<PATCH` values in separate failure-domain calls.
 4. Prefer the smallest mutation that expresses the semantic change. When a formatter owns
    formatting, alignment, or indentation, do not replace surrounding lines merely to reproduce
    its output; let the formatter apply those changes. For example, add one struct field with one

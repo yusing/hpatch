@@ -264,14 +264,14 @@ curl -sS http://127.0.0.1:8080/api/metrics
 
 ### Override base instructions for routed tools
 
-The router exposes `functions.hpatch`, `functions.hread`, and `functions.hgrep`, and it can expose `functions.shell`. It removes native `apply_patch`; when `functions.shell` is installed, it also removes native `exec_command`. Codex's default base prompt still directs ordinary edits to `apply_patch` and does not prefer the routed read, search, and shell tools. A runtime `ALL_TOOLS` dump can also list displaced nested tools. Point Codex at a custom base-instructions file so the model consistently uses the routed tools.
+The router exposes `functions.hpatch`, `functions.hread`, and `functions.hgrep`, and it can expose `functions.shell`. It removes native `apply_patch`; when `functions.shell` is installed, it also removes native `exec_command`. Codex's default base prompt still directs ordinary edits to `apply_patch`, prefers native `rg`, and includes native `exec_command` guidance. A runtime `ALL_TOOLS` dump can also list displaced nested tools. Point Codex at a custom base-instructions file so the model consistently uses the routed tools.
 
 1. Fetch a recent copy of the Codex default base prompt. Keep the rest of the file and use its file-editing section as the replacement point:
 
    - <https://github.com/openai/codex/blob/main/codex-rs/protocol/src/prompts/base_instructions/default.md>
    - <https://github.com/asgeirtj/system_prompts_leaks/blob/main/OpenAI/Codex/gpt-5.6.md>
 
-2. Replace the stock file-editing heading and `apply_patch` paragraph with [`contrib/codex/file-editing-instructions.md`](contrib/codex/file-editing-instructions.md). The replacement also directs reads and searches to `functions.hread` and `functions.hgrep`. When `functions.shell` is installed, it directs shell commands there instead of to `tools.exec_command`. Leave dirty-worktree handling and the non-destructive Git rules unchanged; those rules are not hpatch-specific.
+2. Replace the stock file-editing heading and `apply_patch` paragraph with [`contrib/codex/file-editing-instructions.md`](contrib/codex/file-editing-instructions.md). Remove the stock line that prefers `rg` when routed `functions.hgrep` is installed. When `functions.shell` is installed, also remove the stock `exec_command` escaping line. Leave all other base-prompt text, dirty-worktree handling, and non-destructive Git rules unchanged.
 
 3. Point Codex at your file in `~/.codex/config.toml` (or a profile config):
 
@@ -357,9 +357,10 @@ and one targetless `type VALUE` immediately after `new`.
 Rules worth remembering:
 
 - Use `type` with a nonempty value to replace, `type` with an empty value to delete, `type-` to insert before, and `type+` to insert after.
-- Use HGREP to locate matching complete lines and copy its current `LINE:HASH` directly when sufficient. Use HREAD for surrounding or nonmatching context instead of repeating an exact HGREP result. Put up to 6 already-known files or ranges into one newline-delimited HREAD call, and use only current rows from the exact path.
+- Plan related reads before calling HREAD: batch up to 6 already-known paths or ranges in one newline-delimited call, use explicit ranges after relevant locations are known, and remember that a bare path intentionally reads the complete file. Use HREAD for surrounding or nonmatching context instead of repeating an exact HGREP result.
+- Plan related searches before calling HGREP: combine known patterns and paths in one call and use repeated `-e` for multiple patterns. Copy current `LINE:HASH` rows directly when sufficient.
 - First `in` of a file freezes its immutable invocation baseline. Pending edits never shift later targets.
-- Batch all ready short supporting edits that share a failure domain into one call with repeated `in PATH` sections instead of issuing one call per file. Keep unrelated large `<<PATCH` values in separate calls, with at most one syntax-sensitive multiline Go declaration or function replacement per call; short supporting edits for that same change may remain with it.
+- Submit every known related edit in one atomic script, including related multiline declarations and repeated `in PATH` sections. Split only when a later edit depends on validation or information unavailable before the current call. Keep unrelated large `<<PATCH` values in separate failure-domain calls.
 - Prefer the smallest mutation that expresses the semantic change. When a formatter owns formatting, alignment, or indentation, do not replace surrounding lines merely to reproduce its output; let the formatter apply those changes. For example, add one struct field with one insertion rather than replacing the declaration.
 - Preserve required indentation prefixes in indentation-sensitive languages such as Python.
 - Before a later invocation targets a file changed by a successful call, discard its saved references and HREAD only the required region again; do not reread a file that needs no further edit.

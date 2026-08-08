@@ -89,18 +89,18 @@ Baselines and conflict safety:
   hread call for already-known files or ranges together; do not serialize them.
   Every existing file has one immutable baseline for the complete invocation.
   Pending edits do not move later targets, and introduced content is not targetable
-  in that call. When inspected files are ready, batch all short supporting edits
-  that share a failure domain into one call with repeated in PATH sections; do not
-  issue one call per file. Keep unrelated large <<PATCH values in separate calls,
-  with at most one syntax-sensitive multiline Go declaration or function replacement
-  per call; short supporting edits for that same change may remain with it. Prefer the
-  smallest mutation that expresses the semantic change. When a formatter owns formatting,
-  alignment, or indentation, do not replace surrounding lines merely to reproduce its
-  output; let the formatter apply those changes. For example, add one struct field with one
-  insertion rather than replacing the declaration. Preserve required indentation prefixes
-  in indentation-sensitive languages such as Python. Before a later invocation targets a
-  file changed by a successful call, discard its saved references and hread only the
-  required region again; do not reread a file that needs no further edit.
+  in that call. When inspected files are ready, submit every known related edit in
+  one atomic script, including related multiline declarations and repeated in PATH
+  sections. Split only when a later edit depends on validation or information
+  unavailable before the current call. Keep unrelated large <<PATCH values in
+  separate failure-domain calls. Prefer the smallest mutation that expresses the
+  semantic change. When a formatter owns formatting, alignment, or indentation, do
+  not replace surrounding lines merely to reproduce its output; let the formatter
+  apply those changes. For example, add one struct field with one insertion rather
+  than replacing the declaration. Preserve required indentation prefixes in
+  indentation-sensitive languages such as Python. Before a later invocation targets
+  a file changed by a successful call, discard its saved references and hread only
+  the required region again; do not reread a file that needs no further edit.
 
   Replacements and deletions may not overlap. An insertion strictly inside either
   one conflicts. Insertions at a destructive span boundary are valid. Multiple
@@ -128,10 +128,10 @@ Agent workflow:
   2. Put a line, range, or anchored literal target directly in each mutation.
   3. Use type to replace or delete, type- to insert before, and type+ to insert after.
      HPATCH/1 selection, clipboard, script commit, and del commands are invalid.
-  4. Batch all ready short supporting edits that share a failure domain into one call
-     with repeated in PATH sections; do not issue one call per file. Put unrelated
-     large <<PATCH values in separate calls, with at most one syntax-sensitive multiline
-     Go declaration or function replacement in each failure-domain call.
+  4. Submit every known related edit in one atomic script, including related multiline
+     declarations and repeated in PATH sections. Split only when a later edit depends on
+     validation or information unavailable before the current call. Put unrelated large
+     <<PATCH values in separate failure-domain calls.
   5. Prefer the smallest mutation that expresses the semantic change. When a formatter
      owns formatting, alignment, or indentation, do not replace surrounding lines merely
      to reproduce its output; let the formatter apply those changes. For example, add one

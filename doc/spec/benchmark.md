@@ -34,14 +34,17 @@ default-on `apps` feature, preventing the first-party app/connector MCP transpor
 The control uses the pinned CLI's stock bundled base instructions and the
 passthrough router. At the stock file-editing section, the treatment installs the
 edit, read, search, and shell guidance from
-`contrib/codex/file-editing-instructions.md` and uses the hpatch router.
-Both generated base instructions append the same offline-isolation rule, and the
-task prompt repeats it: agents must use only the workspace, visible prompt, local
-toolchain, and visible tests, must not inspect the module cache for an implementation,
-and must not seek oracle revisions, hidden tests, other-arm artifacts, upstream material,
-or other external resources.
-The complete control and treatment instructions, their hashes, and their unified
-diff are retained in the run directory and referenced by each result.
+`contrib/codex/file-editing-instructions.md` and uses the hpatch router. The
+treatment also removes exactly one pinned stock `rg` preference line and exactly
+one pinned stock `exec_command` guidance line; the control retains both. Every
+other stock base-instruction line remains byte-for-byte. Both generated base
+instructions append the same offline-isolation rule, and the task prompt repeats
+it: agents must use only the workspace, visible prompt, local toolchain, and
+visible tests, must not inspect the module cache for an implementation, and must
+not seek oracle revisions, hidden tests, other-arm artifacts, upstream material,
+or other external resources. The complete control and treatment instructions,
+their hashes, and their unified diff are retained in the run directory and
+referenced by each result.
 
 The active etcd task exports base revision
 `84e612f39b82d1c8ee3f884a59e3f973209d8fbc` and oracle revision

@@ -63,16 +63,15 @@ PATCH
 ```
 
 Every existing file has one immutable baseline for the complete invocation. Pending edits
-do not shift later targets. When inspected files are ready, batch all short supporting edits
-that share a failure domain into one call with repeated `in PATH` sections; do not issue one
-call per file. Keep unrelated large `<<PATCH` values in separate calls, with at most one
-syntax-sensitive multiline Go declaration or function replacement per call; short supporting
-edits for that same change may remain with it. Prefer the smallest mutation that expresses
-the semantic change. When a formatter owns formatting, alignment, or indentation, do not
-replace surrounding lines merely to reproduce its output; let the formatter apply those
-changes. For example, add one struct field with one insertion rather than replacing the
-declaration. Preserve required indentation prefixes in indentation-sensitive languages
-such as Python.
+do not shift later targets. When inspected files are ready, submit every known related edit
+in one atomic script, including related multiline declarations and repeated `in PATH`
+sections. Split only when a later edit depends on validation or information unavailable
+before the current call. Keep unrelated large `<<PATCH` values in separate failure-domain
+calls. Prefer the smallest mutation that expresses the semantic change. When a formatter
+owns formatting, alignment, or indentation, do not replace surrounding lines merely to
+reproduce its output; let the formatter apply those changes. For example, add one struct
+field with one insertion rather than replacing the declaration. Preserve required
+indentation prefixes in indentation-sensitive languages such as Python.
 Content introduced by a mutation is not targetable in the same call. Before a later invocation
 targets a file changed by a successful call, discard its saved references and `hread` only the
 required region again; do not reread a file that needs no further edit.
