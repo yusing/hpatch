@@ -262,16 +262,16 @@ curl -sS http://127.0.0.1:8080/api/metrics
 # open http://127.0.0.1:8080/ for the local dashboard
 ```
 
-### Override base instructions (prefer hpatch over apply_patch)
+### Override base instructions for routed tools
 
-The router exposes `functions.hpatch` and strips `apply_patch` from the Code Mode `functions.exec` definition, but Codex’s **default base prompt** still tells the model to use `apply_patch` for local edits, and a runtime `ALL_TOOLS` dump can still list `tools.apply_patch`. Point Codex at a custom base-instructions file and replace that section so the model prefers hpatch even when it can see both.
+The router exposes `functions.hpatch`, `functions.hread`, and `functions.hgrep`, and it can expose `functions.shell`. It removes native `apply_patch`; when `functions.shell` is installed, it also removes native `exec_command`. Codex's default base prompt still directs ordinary edits to `apply_patch` and does not prefer the routed read, search, and shell tools. A runtime `ALL_TOOLS` dump can also list displaced nested tools. Point Codex at a custom base-instructions file so the model consistently uses the routed tools.
 
-1. Fetch a recent copy of the Codex default base prompt (keep the rest of the file; only replace the file-editing section):
+1. Fetch a recent copy of the Codex default base prompt. Keep the rest of the file and use its file-editing section as the replacement point:
 
    - <https://github.com/openai/codex/blob/main/codex-rs/protocol/src/prompts/base_instructions/default.md>
    - <https://github.com/asgeirtj/system_prompts_leaks/blob/main/OpenAI/Codex/gpt-5.6.md>
 
-2. In the file-editing section (often `## File editing` or `## File editing constraints`), replace only the `apply_patch` guidance with [`contrib/codex/file-editing-instructions.md`](contrib/codex/file-editing-instructions.md). Leave dirty-worktree handling and the non-destructive git rules as in the default base prompt; those are not hpatch-specific.
+2. Replace the stock file-editing heading and `apply_patch` paragraph with [`contrib/codex/file-editing-instructions.md`](contrib/codex/file-editing-instructions.md). The replacement also directs reads and searches to `functions.hread` and `functions.hgrep`. When `functions.shell` is installed, it directs shell commands there instead of to `tools.exec_command`. Leave dirty-worktree handling and the non-destructive Git rules unchanged; those rules are not hpatch-specific.
 
 3. Point Codex at your file in `~/.codex/config.toml` (or a profile config):
 
@@ -279,7 +279,7 @@ The router exposes `functions.hpatch` and strips `apply_patch` from the Code Mod
 model_instructions_file = "/absolute/path/to/your/base_instructions.md"
 ```
 
-Do **not** rely on project `AGENTS.md` alone for this: the stock base prompt still steers file edits toward `apply_patch`. Override the base prompt the same way other host tooling (for example skills) does when it must replace a default section rather than append to `AGENTS.md`.
+Do not rely on project `AGENTS.md` alone for this. The stock base prompt does not direct the model to every routed tool. Override the base prompt in the same way that other host tooling, such as skills, replaces a default section instead of appending to `AGENTS.md`.
 
 ## Standalone CLI
 
@@ -463,7 +463,7 @@ Tests live beside the packages they exercise. The root `hpatch` package is the r
 | [`doc/spec/comparison.md`](doc/spec/comparison.md) | Token comparison scenarios |
 | [`doc/architecture/index.md`](doc/architecture/index.md) | Architecture ownership |
 | [`contrib/systemd/hpatch-router.service`](contrib/systemd/hpatch-router.service) | User unit template |
-| [`contrib/codex/file-editing-instructions.md`](contrib/codex/file-editing-instructions.md) | Base-prompt replacement for file editing |
+| [`contrib/codex/file-editing-instructions.md`](contrib/codex/file-editing-instructions.md) | Base-prompt replacement for routed edit, read, search, and shell tools |
 | [`AGENTS.md`](AGENTS.md) | Codex router E2E notes for agents |
 
 Library use: module path `github.com/yusing/hpatch`. Importable as a library (`hpatch.Translate`, `hpatch.Workspace`, host metrics helpers); hosts should open an `*os.Root` capability for the workspace before calling in.

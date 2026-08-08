@@ -79,7 +79,7 @@ gain_report="$run_dir/gain.txt"
 instruction_dir="$run_dir/instructions"
 control_instruction="$instruction_dir/control.md"
 hpatch_instruction="$instruction_dir/hpatch.md"
-instruction_diff="$instruction_dir/apply-patch-to-hpatch.diff"
+instruction_diff="$instruction_dir/stock-to-hpatch-tools.diff"
 instruction_source="$benchmark_root/../contrib/codex/file-editing-instructions.md"
 benchmark_image="hpatch-bench:${HPATCH_BENCH_IMAGE_TAG:-local}"
 control_instruction_sha=
@@ -273,7 +273,7 @@ preserve_run() {
 	instruction_dir="$run_dir/instructions"
 	control_instruction="$instruction_dir/control.md"
 	hpatch_instruction="$instruction_dir/hpatch.md"
-	instruction_diff="$instruction_dir/apply-patch-to-hpatch.diff"
+	instruction_diff="$instruction_dir/stock-to-hpatch-tools.diff"
 	export BENCH_RUN_DIR=$run_dir
 
 	if ! rewrite_published_paths "$previous_run_dir"; then
@@ -439,6 +439,10 @@ INSTRUCTION
 	# Backticks are literal instruction text.
 	# shellcheck disable=SC2016
 	if ! grep -Fqx 'Use `functions.hpatch` for local file edits, not `apply_patch`.' "$hpatch_instruction" ||
+		! grep -Fqx 'Use `functions.hread` instead of `cat` or `sed` to read files.' "$hpatch_instruction" ||
+		! grep -Fqx 'Use `functions.hgrep` instead of `rg` or `grep` to search files.' "$hpatch_instruction" ||
+		! grep -Fqx '`functions.hread` and `functions.hgrep` are tools, not shell commands. Do not invoke them through `functions.shell`.' "$hpatch_instruction" ||
+		! grep -Fqx 'When `functions.shell` is available, use it instead of `tools.exec_command`.' "$hpatch_instruction" ||
 		! grep -Fqx "Follow hpatch's live tool description and rejection diagnostics." "$hpatch_instruction" ||
 		! grep -Fqx 'Formatting commands and bulk mechanical rewrites do not need `hpatch`.' "$hpatch_instruction" ||
 		[[ $(grep -Fxc '## Benchmark isolation' "$control_instruction") -ne 1 ]] ||

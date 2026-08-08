@@ -32,8 +32,9 @@ succeeds using only the read-only cache. Every measured Codex invocation also di
 default-on `apps` feature, preventing the first-party app/connector MCP transport from starting.
 
 The control uses the pinned CLI's stock bundled base instructions and the
-passthrough router. The treatment replaces only the stock file-editing guidance
-with `contrib/codex/file-editing-instructions.md` and uses the hpatch router.
+passthrough router. At the stock file-editing section, the treatment installs the
+edit, read, search, and shell guidance from
+`contrib/codex/file-editing-instructions.md` and uses the hpatch router.
 Both generated base instructions append the same offline-isolation rule, and the
 task prompt repeats it: agents must use only the workspace, visible prompt, local
 toolchain, and visible tests, must not inspect the module cache for an implementation,

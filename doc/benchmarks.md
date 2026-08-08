@@ -58,7 +58,7 @@ flowchart TD
     START["Start<br/><code>bash benchmarks/bench.sh</code>"]
     BUILD["Build the pinned agent/router image<br/><code>docker compose build control</code>"]
     STOCK["Export stock Codex base instructions<br/><code>docker run ... codex debug models --bundled | jq</code>"]
-    OVERRIDE["Replace only stock file-editing guidance<br/><code>head ...; cat contrib/codex/file-editing-instructions.md; tail ...</code>"]
+    OVERRIDE["Install the repository routed-tool override at the stock file-editing section<br/><code>head ...; cat contrib/codex/file-editing-instructions.md; tail ...</code>"]
     IDIFF["Record the exact instruction difference<br/><code>diff -u control.md hpatch.md</code>"]
     BASE["Export historical base<br/><code>git archive BASE | tar -x</code>"]
     BTEST["Inject hidden tests and require failure<br/><code>go test ./server/storage/mvcc ./server/etcdserver/txn ...</code>"]
@@ -106,7 +106,7 @@ Both arms use:
   the containment boundary;
 - `-c 'approval_policy="never"'`;
 - the same Codex-generated turn metadata and workspace launch shape;
-- the same stock base-instruction source and all non-editing instruction text.
+- the same stock base-instruction source and all text outside the repository-owned replacement;
 
 The controlled differences are:
 
@@ -114,15 +114,15 @@ The controlled differences are:
 | --- | --- | --- |
 | Router endpoint | `127.0.0.1:8081` | `127.0.0.1:8082` |
 | Router mode | `passthrough` | `hpatch` |
-| File-editing base instruction | Stock `apply_patch` paragraph | Repository-owned hpatch replacement |
-| Model editing surface | Stock Code Mode `apply_patch` | Standalone `hpatch`, translated back to Code Mode operations |
+| Base-instruction tool guidance | Stock `apply_patch` paragraph | Repository-owned edit, read, search, and shell guidance |
+| Model tool surface | Stock Code Mode `apply_patch` and `exec_command` | Standalone `hpatch`, `hread`, `hgrep`, and configured `shell`, translated back to Code Mode operations |
 
-The control router forwards requests without hpatch rewriting. The treatment
-router removes the Code Mode `apply_patch` editing surface, exposes hpatch, and
-translates successful hpatch scripts into the Code Mode carrier expected by
-Codex.
+The control router forwards requests without tool rewriting. The treatment router removes the
+Code Mode surfaces displaced by the installed standalone tools, exposes `hpatch`, `hread`,
+`hgrep`, and the configured `shell` plugin, and translates successful calls into the Code Mode
+carriers expected by Codex.
 
-## Exact overridden base instruction
+## Exact overridden tool instructions
 
 The authoritative treatment replacement is:
 
@@ -138,8 +138,9 @@ $run_dir/instructions/control.md
 ```
 
 It replaces the stock file-editing heading and `apply_patch` paragraph with the
-contents of `contrib/codex/file-editing-instructions.md`, while preserving the
-stock dirty-worktree and non-destructive Git paragraphs. The resulting complete
+contents of `contrib/codex/file-editing-instructions.md`. That replacement also adds
+guidance for routed reads, searches, and shell commands while preserving the stock
+dirty-worktree and non-destructive Git paragraphs. The resulting complete
 treatment prompt is:
 
 ```text
@@ -149,7 +150,7 @@ $run_dir/instructions/hpatch.md
 The exact replacement is retained as:
 
 ```text
-$run_dir/instructions/apply-patch-to-hpatch.diff
+$run_dir/instructions/stock-to-hpatch-tools.diff
 ```
 
 Both files are mounted read-only at `/bench-instructions`. Each arm passes its
@@ -377,7 +378,7 @@ $run_dir/hpatch-metrics.json
 $run_dir/gain.txt
 $run_dir/instructions/control.md
 $run_dir/instructions/hpatch.md
-$run_dir/instructions/apply-patch-to-hpatch.diff
+$run_dir/instructions/stock-to-hpatch-tools.diff
 ```
 
 Each concurrent attempt first writes its own `result.json`. After a complete run,

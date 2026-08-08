@@ -8,3 +8,10 @@ Do not create or edit files with shell write tricks, and do not use Python as a 
 Follow hpatch's live tool description and rejection diagnostics.
 
 Formatting commands and bulk mechanical rewrites do not need `hpatch`.
+
+## File reading, searching, and shell commands
+
+Use `functions.hread` instead of `cat` or `sed` to read files.
+Use `functions.hgrep` instead of `rg` or `grep` to search files.
+`functions.hread` and `functions.hgrep` are tools, not shell commands. Do not invoke them through `functions.shell`.
+When `functions.shell` is available, use it instead of `tools.exec_command`.
