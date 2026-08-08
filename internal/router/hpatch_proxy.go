@@ -1589,7 +1589,7 @@ func workerExecInputWithParams(executable string, arguments []string, params map
 			command = direct
 		}
 	}
-	return workerCommandExecInputWithParams(command, params)
+	return workerCommandExecInputWithResult(command, params, executable == "shell")
 }
 
 func workerTemplateExecInputWithParams(executable string, arguments []string, template string, params map[string]json.RawMessage) (string, error) {
@@ -1597,10 +1597,14 @@ func workerTemplateExecInputWithParams(executable string, arguments []string, te
 		return "", errors.New("exec command template must contain exactly one {.} placeholder")
 	}
 	command := strings.Replace(template, "{.}", workerCommand(executable, arguments), 1)
-	return workerCommandExecInputWithParams(command, params)
+	return workerCommandExecInputWithResult(command, params, executable == "shell")
 }
 
 func workerCommandExecInputWithParams(command string, params map[string]json.RawMessage) (string, error) {
+	return workerCommandExecInputWithResult(command, params, false)
+}
+
+func workerCommandExecInputWithResult(command string, params map[string]json.RawMessage, forwardNativeResult bool) (string, error) {
 	if _, exists := params["cmd"]; exists {
 		return "", errors.New("exec params must not contain cmd")
 	}
@@ -1615,8 +1619,12 @@ func workerCommandExecInputWithParams(command string, params map[string]json.Raw
 	if _, exists := arguments["login"]; !exists {
 		arguments["login"] = mustMarshalJSON(false)
 	}
+	resultOutput := "text(result.output);"
+	if forwardNativeResult {
+		resultOutput = "text(JSON.stringify(result));"
+	}
 	return "const result = await tools.exec_command(" + string(mustMarshalJSON(arguments)) + ");\n" +
-		"text(result.output);", nil
+		resultOutput, nil
 }
 
 func (h hpatchHistory) carrierInput() string {

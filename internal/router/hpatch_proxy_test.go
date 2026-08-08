@@ -1080,7 +1080,7 @@ func TestShellJSONTranslatesBashCasesEndToEnd(t *testing.T) {
 			}
 			carrierInput := jsonString(item, "input")
 			encodedArguments := strings.TrimPrefix(carrierInput, "const result = await tools.exec_command(")
-			encodedArguments = strings.TrimSuffix(encodedArguments, ");\nnotify(result.output);")
+			encodedArguments = strings.TrimSuffix(encodedArguments, ");\ntext(JSON.stringify(result));")
 			var arguments struct {
 				Command string `json:"cmd"`
 			}
@@ -1252,7 +1252,7 @@ func TestWorkerTemplateExecInputQuotesNestedShellCommand(t *testing.T) {
 		t.Fatal(err)
 	}
 	encodedArguments := strings.TrimPrefix(carrierInput, "const result = await tools.exec_command(")
-	encodedArguments = strings.TrimSuffix(encodedArguments, ");\ntext(result.output);")
+	encodedArguments = strings.TrimSuffix(encodedArguments, ");\ntext(JSON.stringify(result));")
 
 	var arguments struct {
 		Command string `json:"cmd"`
@@ -1315,8 +1315,11 @@ func TestWorkerExecInputMergesValidatedParams(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if strings.Count(carrierInput, "tools.exec_command(") != 1 || strings.Contains(carrierInput, "write_stdin") {
+		t.Fatalf("shell carrier did not preserve one yielded execution: %s", carrierInput)
+	}
 	encodedArguments := strings.TrimPrefix(carrierInput, "const result = await tools.exec_command(")
-	encodedArguments = strings.TrimSuffix(encodedArguments, ");\ntext(result.output);")
+	encodedArguments = strings.TrimSuffix(encodedArguments, ");\ntext(JSON.stringify(result));")
 	var arguments struct {
 		Command string `json:"cmd"`
 		Workdir string `json:"workdir"`
@@ -1339,6 +1342,31 @@ func TestWorkerExecInputMergesValidatedParams(t *testing.T) {
 		"login": mustMarshalJSON(true),
 	}); err == nil {
 		t.Fatal("exec params accepted login true")
+	}
+}
+
+func TestShellExecCarriersForwardNativeResultWithoutPolling(t *testing.T) {
+	carrierInput, err := workerTemplateExecInputWithParams(
+		"shell",
+		[]string{"python3", "print('ok')"},
+		"before | {.} | after",
+		nil,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Count(carrierInput, "tools.exec_command(") != 1 ||
+		!strings.HasSuffix(carrierInput, "text(JSON.stringify(result));") ||
+		strings.Contains(carrierInput, "write_stdin") {
+		t.Fatalf("shell template carrier did not forward one native result: %s", carrierInput)
+	}
+
+	plainInput, err := workerExecInputWithParams("hread", []string{"line.txt"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasSuffix(plainInput, "text(result.output);") {
+		t.Fatalf("non-shell carrier output projection changed: %s", plainInput)
 	}
 }
 

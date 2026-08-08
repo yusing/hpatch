@@ -203,6 +203,16 @@ quoted frontend command. A present `login` value must be exactly `false`, and th
 supplies `login: false` when it is absent. Plugin code can select the typed template and
 parameter variants but cannot construct the outer carrier or quote the nested frontend command.
 
+For the configured `shell` contribution, the owning Code Mode executable definition also owns
+asynchronous exec-session creation, yield timing, continuation handles, continuation input,
+cancellation, and terminal state. The exec renderer forwards the complete native nested-tool
+result through the outer carrier instead of projecting only command output. A yielded result and
+its continuation handle remain nonterminal; the renderer does not poll, resume, cancel, retry,
+replace, or persist the session, and plugin code receives no session-lifecycle capability. The
+native continuation operation resumes the same host-owned session. JSON and SSE framing, history,
+and replay preserve this distinction without defining another result envelope or continuation
+protocol. Other contributed tools retain their declared output projections.
+
 An exec translator may provide a validated nonempty stock command for output metrics. The same
 renderer applies the selected template and parameters to produce its canonical stock carrier.
 This evidence never replaces the frontend carrier used for the response, history, replay, or

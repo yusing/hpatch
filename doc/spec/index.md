@@ -4,7 +4,7 @@ pjdoc:
   kind: spec
   scope: root
   status: draft
-  revision: "20"
+  revision: "21"
   files:
     - interface.md
     - comparison.md

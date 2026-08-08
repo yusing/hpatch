@@ -358,6 +358,14 @@ With `#!params=`, Codex applies the accepted outer exec arguments before it laun
 The executor resolves bare interpreters through `PATH` and returns stdout, stderr, and exit
 status without copying the script body into either output stream.
 
+The shell carrier forwards the complete native `exec_command` result defined by the owning Code
+Mode contract rather than only its output field. A result containing the native continuation
+handle remains yielded rather than terminal, and the same host-owned continuation operation
+resumes that session. The router and shell plugin do not poll, resume, cancel, retry, replace, or
+persist the session. They do not define a second result envelope or continuation protocol. Exact
+result fields, yield timing, continuation arguments, and session lifetime remain owned by Codex's
+executable tool definitions in that request.
+
 For output metrics, the shell translator supplies a stock exec command for the normalized
 interpreter and exact body. Python-family executables pass the shell-quoted body as the `-c`
 argument, and Bun and Node-family executables pass it as the `-e` argument. Other interpreters
@@ -413,6 +421,10 @@ Acceptance:
     owner also fails before forwarding. The existing `apply_patch` section extractor remains
     independent. Every sibling direct tool, sibling namespace, unrelated top-level tool, and other
     nested section remains byte-equivalent after the request rewrite.
+15. A terminal shell carrier forwards the complete native exec result. When native execution
+    yields, the carrier forwards that same complete result, including its continuation handle,
+    without calling the continuation operation or starting the frontend again. No router session
+    record or plugin-defined continuation surface is created.
 
 ## REQ-METRICS-001 — Persistent token, command, target, and failure metrics
 

@@ -39,6 +39,11 @@ that owner's `exec_command` section and introductory `tools.exec_command` exampl
 request-specific parameter shape, omits `cmd`, and appends only that sanitized shape to `shell`.
 Direct `functions.exec` and top-level exec carriers remain unsupported.
 
+The exec carrier preserves the native executor result when a command yields instead of treating
+the initial call as terminal. Codex remains the sole owner of the yielded session and its native
+continuation operation; the router and plugins do not poll, resume, cancel, retry, replace, or
+persist that session.
+
 The historical benchmark remains the end-to-end authority: correctness must match the
 native edit path, output tokens must be lower, and input, reasoning, request count, and
 wall time must remain close to control.
