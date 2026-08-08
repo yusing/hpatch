@@ -129,8 +129,8 @@ func TestToolPluginRequestJSONAndReplay(t *testing.T) {
 	if err := json.Unmarshal(request.fields["tools"], &tools); err != nil {
 		t.Fatal(err)
 	}
-	if len(tools) != 5 || jsonString(tools[4], "name") != "plugin_tool" ||
-		jsonString(tools[4], "description") != "fixture plugin tool" {
+	if len(tools) != 4 || jsonString(tools[3], "name") != "plugin_tool" ||
+		jsonString(tools[3], "description") != "fixture plugin tool" {
 		t.Fatalf("installed tools = %#v", tools)
 	}
 
@@ -286,7 +286,7 @@ func TestToolPluginMetricsUseOriginalAndStockCarrierShapes(t *testing.T) {
 		payload == stockPayload {
 		t.Fatalf("successful plugin metric = %+v, payload %q, stock %q", successTool, payload, stockPayload)
 	}
-	if success.DefinitionRequests != 1 || len(success.ToolMetrics) != 4 {
+	if success.DefinitionRequests != 1 || len(success.ToolMetrics) != 3 {
 		t.Fatalf("installed definition breakdown = %+v", success)
 	}
 
@@ -457,62 +457,6 @@ func TestToolPluginFunctionCarrierSSE(t *testing.T) {
 	}))
 	if err != nil || len(visible) != 1 || !bytes.Contains(visible[0], []byte(`"type":"function_call"`)) {
 		t.Fatalf("function output item done = %q, error %v", visible, err)
-	}
-}
-
-func TestBuiltinHGrepInvalidInputCompletesDiagnosticExecLifecycle(t *testing.T) {
-	transform, proxy, _ := newToolPluginTestTransform(t)
-	input := "needle\n."
-	item := map[string]any{
-		"type":    "custom_tool_call",
-		"id":      "item-G",
-		"call_id": "call-G",
-		"name":    "hgrep",
-		"input":   input,
-		"status":  "completed",
-	}
-	added := maps.Clone(item)
-	added["input"] = ""
-	added["status"] = "in_progress"
-	completed := map[string]any{
-		"status":      "completed",
-		"output":      []any{item},
-		"tools":       []any{},
-		"tool_choice": "auto",
-	}
-	body := "event: response.output_item.added\n" +
-		"data: " + string(mustTestJSON(t, map[string]any{"type": "response.output_item.added", "item": added})) + "\n\n" +
-		"event: response.custom_tool_call_input.done\n" +
-		"data: " + string(mustTestJSON(t, map[string]any{"type": "response.custom_tool_call_input.done", "item_id": "item-G", "input": input})) + "\n\n" +
-		"event: response.output_item.done\n" +
-		"data: " + string(mustTestJSON(t, map[string]any{"type": "response.output_item.done", "item": item})) + "\n\n" +
-		"event: response.completed\n" +
-		"data: " + string(mustTestJSON(t, map[string]any{"type": "response.completed", "response": completed})) + "\n\n"
-
-	var output bytes.Buffer
-	terminal, err := copySSETransformed(&output, strings.NewReader(body), transform, nil)
-	if err != nil || terminal != responseTerminalCompleted {
-		t.Fatalf("hgrep input rejection stream = terminal %v, error %v, output %q", terminal, err, output.String())
-	}
-	visible := output.String()
-	for _, required := range []string{
-		"event: response.output_item.added",
-		"event: response.custom_tool_call_input.done",
-		"event: response.output_item.done",
-		"event: response.completed",
-		`"name":"exec"`,
-		"input must contain one argument line",
-	} {
-		if !strings.Contains(visible, required) {
-			t.Fatalf("hgrep rejection carrier missing %q: %q", required, visible)
-		}
-	}
-	if strings.Contains(visible, "response.failed") {
-		t.Fatalf("hgrep rejection terminated the response: %q", visible)
-	}
-	history, ok := proxy.history(transform.historySessionID, "call-G")
-	if !ok || history.toolName != "hgrep" || !strings.Contains(history.translationError, "input must contain one argument line") {
-		t.Fatalf("hgrep rejection history = %+v, available %t", history, ok)
 	}
 }
 

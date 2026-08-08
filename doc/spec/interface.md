@@ -52,96 +52,82 @@ Acceptance:
 9. A relative, absolute, or symlink path that escapes root fails without mutation,
    patch output, or final-state report.
 
-## REQ-READ-001 — Routed verified-row reader
+## REQ-READ-001 — Shell-routed verified-row reader
 
-In hpatch router mode, the model receives a read-only `hread` custom tool beside
-`hpatch`. Its grammar-constrained free-form input contains one to 6 newline-delimited
-read specifications. Each specification starts with a bare path containing no whitespace or
-a JSON-quoted path, optionally followed by a space and `START:END` for an inclusive bounded
-logical-line range, for example `editor.go 40:80`. A single specification remains valid and
-retains its existing output. Line endpoints are positive one-based base-ten integers and must
-be ordered. The start line must exist. An end line past EOF returns through the final line.
-Invalid syntax or a missing endpoint rejects the complete tool input; a reversed range or
-start past EOF fails that item.
+In hpatch router mode, the model receives `hpatch` and `shell` as standalone custom tools.
+The router appends the canonical hread and hgrep command guidance to the existing top-level
+Responses `instructions` value. It preserves the existing instruction text and separates the
+added guidance with one blank line. Hread and hgrep remain private executable contributions;
+their custom-tool specifications are not sent to the model and direct model calls to their
+names are not routed.
 
-The router requires a Code Mode `exec` carrier before forwarding an hpatch-enabled
-request. It creates or reuses one process-scoped executable shell wrapper named `hread`
-and invokes it by absolute path in the translated nested exec command, followed by the
-complete grammar input as one shell-quoted argument. The carrier sets neither an
-environment override nor a working directory. A direct `apply_patch` carrier or
-wrapper-creation failure rejects the rewrite before forwarding.
+The private `hread` command accepts exactly one file:
 
-The Codex executor must see the wrapper directory and the router executable at the same
-absolute paths as the router process. A deployment that isolates their filesystems must
-provide those runtime mounts separately from the user workspace.
+```text
+hread PATH [START:END]
+```
 
-The wrapper launches a private worker in Codex's exec context. Relative paths resolve
-from the exec process's current directory; absolute paths retain their ordinary filesystem
-meaning. Codex, not the router or hread, owns the sandbox and filesystem permissions.
-The worker accepts only regular UTF-8 files and never mutates them. A single read emits
-only its requested logical lines. A batch emits one non-row header containing the original
-read specification before each item's result, preserves input order, and reports an item's
-read error beneath that header without hiding independent successful items. Every
-successful logical line retains the single-read form:
+The shell owns quoting and argument separation. A path containing whitespace is therefore one
+ordinary quoted shell argument. `START:END`, when present, is an inclusive logical-line range
+whose positive one-based base-ten endpoints must be ordered. The start line must exist. An end
+past EOF returns through the final line. One `hread` process never accepts a second path or a
+newline-delimited batch. The model batches related reads as separate hread commands in one
+shell script.
+
+The router creates process-scoped executable frontends named `shell`, `hread`, and `hgrep`.
+The Codex executor must see the frontend directory and router executable at the same absolute
+paths as the router process, and that directory must precede unrelated commands on its trusted
+`PATH`. A deployment that isolates their filesystems must provide those runtime mounts
+separately from the user workspace.
+
+Hread runs in the shell carrier's actual working directory. Relative and absolute paths keep
+their ordinary process meaning. Codex, not the router or hread, owns sandbox and filesystem
+permissions. The worker accepts only regular UTF-8 files and never mutates them. It emits only
+the requested logical lines:
 
 ```text
 LINE:HASH TEXT
 ```
 
-`LINE` is the positive one-based logical line number. `TEXT` is exact logical-line
-content without its terminator. `HASH` is lowercase hexadecimal for the first two bytes
-of SHA-256 over that exact content, including leading spaces and tabs. A trailing file
-terminator does not create an additional empty line. The router does not execute the
-read, duplicate its filesystem rules, or encode its output in an `apply_patch`-shaped
-carrier.
+`LINE` is the positive one-based logical line number. `TEXT` is exact logical-line content
+without its terminator. `HASH` is lowercase hexadecimal for the first two bytes of SHA-256
+over that exact content, including leading spaces and tabs. A trailing file terminator does
+not create an additional empty line. Missing, inaccessible, non-regular, non-UTF-8,
+reversed-range, and start-past-EOF reads return concise stderr and nonzero status.
 
-For input metrics, hread produces its current and stock results from the same read. The stock result
-preserves batch headers, diagnostics, order, selected `TEXT`, and one LF per returned logical line.
-It omits the `LINE:HASH ` prefix from each successful row.
+For input metrics, hread produces its current and stock results from the same read. The stock
+result preserves selected `TEXT` and one LF per returned logical line while omitting the
+`LINE:HASH ` prefix. The comparison does not read a file twice.
 
 Acceptance:
 
-1. A legacy single whole-file or bounded read emits the same exact UTF-8 rows as before.
-   Equal lines at different positions have distinct row references, and indentation changes
-   the hash.
-2. Up to 6 read specifications in one call emit labeled item results in input order.
-   A missing, inaccessible, non-regular, non-UTF-8, reversed-range, or start-past-EOF
-   item reports a read diagnostic without suppressing successful siblings; an end past EOF
-   succeeds through the final line. Invalid batch syntax rejects the complete tool input.
-3. The router restores a replayed `hread` call to the original custom-tool shape just as
-   it restores routed hpatch calls, without treating reads as editable correction history.
+1. A whole-file or bounded read emits exact UTF-8 rows. Equal lines at different positions
+   have distinct row references, and indentation changes the hash.
+2. `hread PATH`, `hread PATH START:END`, and a shell-quoted path containing whitespace work.
+   Extra path or range arguments fail instead of being interpreted as a batch.
+3. Several hread commands in one shell call execute in authored shell order without an
+   hread-owned batch format, buffer, header, or partial-success policy.
 4. Reading and whole-file UTF-8 validation use bounded streaming storage and observe
-   cancellation during processing. A single formatted item rejects before exceeding 16 MiB.
-   A batch never exceeds the same complete-call bound; if another result would exceed it,
-   the batch successfully returns its existing rows followed by a diagnostic instructing the
-   agent to retry the remaining items in a narrower batch.
-5. Success returns the worker's exact stdout through a successful Code Mode exec call.
-   A failing legacy single read retains concise stderr and nonzero shell status, while a
-   syntactically valid batch returns per-item diagnostics with successful shell status and
-   does not increment hpatch edit-failure counters.
-6. Turns and retained-session eviction do not create or own wrapper state. Router
-   shutdown removes the process wrapper.
-7. Hread input metrics compare returned verified rows with the same result without each
-   `LINE:HASH ` prefix. The comparison does not read a file twice.
+   cancellation. A formatted result rejects before exceeding 16 MiB.
+5. Success and failure reach Codex through the model-visible shell carrier. Replay retains
+   the original shell call and output; it never synthesizes a model-visible hread call or
+   includes the shell call in editable correction history.
+6. Router startup fails before serving if the private hread frontend cannot be installed.
+   Passthrough mode installs and exposes none of these replacement surfaces.
 
-## REQ-GREP-001 — Routed verified-row search
+## REQ-GREP-001 — Shell-routed verified-row search
 
-In hpatch router mode, the model receives a read-only `hgrep` custom tool beside `hpatch`
-and `hread`. Its grammar-constrained free-form input is a nonempty, whitespace-separated
-ripgrep argument list. Bare arguments, single-quoted arguments, double-quoted arguments,
-and backslash-escaped characters preserve one argument each; quoting and escaping perform
-no shell expansion or execution. The tool accepts ordinary ripgrep pattern, matching, file,
-glob, type, ignore, context-selection, and resource-selection arguments.
+The private `hgrep` command is available through the model-visible shell tool. The shell owns
+quoting, redirection, pipelines, and command composition; hgrep receives the resulting ordinary
+argv. It accepts familiar ripgrep pattern, matching, file, glob, type, ignore, context, and
+resource-selection arguments. With no explicit path, search defaults to the shell process's
+current directory.
 
-The worker invokes the installed `rg` from Codex's exec context with internal
-`--json --no-config` arguments. Its process-scoped executable accepts ordinary ripgrep argv;
-the routed carrier safely quotes each free-form input argument into the basename command. It
-rejects model-supplied output, multiline,
-preprocessor, compressed-input, informational, and other modes that cannot identify one
-complete editable source row per result. With no explicit path argument, search defaults to
-the exec process's current directory. Ripgrep retains ownership of regex parsing, ignore
-rules, traversal, matching, and search diagnostics; hgrep does not implement a fallback
-search engine.
+The worker invokes installed `rg` with internal `--json --no-config` arguments. It rejects
+model-supplied output, multiline, preprocessor, compressed-input, informational, and other
+modes that cannot identify one complete editable source row. Ripgrep retains ownership of
+regex parsing, ignore rules, traversal, matching, and search diagnostics; hgrep provides no
+fallback search engine.
 
 The worker consumes ripgrep's structured match and context events and emits each first-seen
 logical row once in ripgrep result order:
@@ -150,41 +136,32 @@ logical row once in ripgrep result order:
 "PATH":LINE:HASH TEXT
 ```
 
-`PATH` is JSON-quoted. `LINE:HASH TEXT` has exactly the identity and complete UTF-8
-logical-line semantics of `REQ-READ-001`; match highlighting, match-only fragments,
-replacement output, trimming, and line truncation cannot change it. Multiple matches on one
-path and line produce one row. Ripgrep's no-match exit status is a successful empty result.
-Execution, syntax, filesystem, encoding, cancellation, and missing-executable failures remain
-concise `hgrep` diagnostics with nonzero status. Output contains only complete rows and stays
-within 16 MiB; reaching the bound preserves completed rows and adds a limit diagnostic.
+`PATH` is JSON-quoted. `LINE:HASH TEXT` has exactly the identity and complete UTF-8 semantics
+of `REQ-READ-001`. Match highlighting, match-only fragments, replacement output, trimming,
+and line truncation cannot change it. Multiple matches on one path and line produce one row.
+Ripgrep's no-match exit status is a successful empty result. Execution, filesystem, encoding,
+cancellation, invalid-pattern, and missing-executable failures return concise nonzero
+diagnostics. Output contains only complete rows and stays within 16 MiB; reaching the bound
+preserves completed rows and adds a limit diagnostic.
 
-For input metrics, hgrep produces its current and stock results from the same ripgrep event stream.
-The stock result preserves each JSON-quoted `PATH`, `TEXT`, LF, result order, and diagnostic. It
-omits the `LINE:HASH ` portion from each successful row.
-
-The router exposes, translates, and replays hgrep through the same Code Mode exec boundary
-as hread. The nested carrier invokes the worker basename and supplies neither environment nor
-working-directory overrides, so deployment must place the trusted wrapper directory first on
-the Codex executor's PATH. The router does not execute or pre-read the search, and hgrep calls
-never enter edit correction history or editing metrics.
+For input metrics, hgrep produces its current and stock results from the same ripgrep event
+stream. The stock result preserves each JSON-quoted `PATH`, `TEXT`, LF, result order, and
+diagnostic while omitting the `LINE:HASH ` portion. The comparison does not run ripgrep twice.
 
 Acceptance:
 
-1. A search using a regular expression, explicit path, and glob emits JSON-quoted paths,
-   positive line numbers, standard four-digit hashes, and exact complete matching lines that
-   can be copied directly into an hpatch target without an intervening hread.
-2. Search arguments containing whitespace or shell metacharacters reach ripgrep as literal
-   argv values and cannot execute another command. A conflicting output or transformed-input
-   mode rejects before ripgrep starts.
-3. Requested before/after context emits complete verified rows alongside matches. Repeated
-   match or context events on one row emit that row once; no matches return successful empty
-   stdout; invalid patterns and unavailable ripgrep return concise nonzero diagnostics.
-4. A replayed hgrep call is restored to its original custom-tool name and input, remains
-   scoped to its routed workspace session, and is not eligible for hpatch correction.
-5. Passthrough mode exposes neither hgrep nor the other replacement tools. Router startup
-   fails before serving if its private hgrep worker cannot be installed.
-6. Hgrep input metrics compare returned verified rows with the same result without each
-   `LINE:HASH ` portion. The comparison does not run ripgrep twice.
+1. A regular-expression search with an explicit path and glob emits JSON-quoted paths,
+   positive line numbers, four-digit hashes, and exact complete matching lines that can be
+   copied directly into an hpatch target.
+2. Shell quoting determines literal arguments, and ordinary redirection or pipelines operate
+   as shell syntax rather than becoming hgrep argv. A conflicting hgrep output or transformed
+   input mode still rejects before ripgrep starts.
+3. Requested before/after context emits complete verified rows beside matches. Repeated match
+   or context events on one row emit that row once; no matches return successful empty stdout.
+4. The model-visible shell call and output are replayed unchanged. No standalone hgrep call is
+   exposed, routed, or admitted to hpatch correction history.
+5. Router startup fails before serving if the private hgrep frontend cannot be installed.
+   Passthrough mode installs and exposes none of these replacement surfaces.
 
 ## REQ-PLUGIN-001 — Router-local tool plugins
 
@@ -399,23 +376,22 @@ Acceptance:
    nonzero status are returned without script-source duplication or an intermediate script file.
 10. Malformed selectors and input that cannot fit the bounded exec argv return a concise
     diagnostic without starting an interpreter.
-11. A temporary installation root receives both Go binaries and `shell.mjs` from `make install`;
-    the normal install target uses the Go binary destination and platform user configuration
-    plugin directory.
+11. `make install` installs both Go binaries and no configured shell declaration. The installed
+    router embeds shell and creates the shell, hread, and hgrep basename frontends beside its
+    executable at startup.
 12. `#!params={"workdir":"/tmp","tty":true}` before or after `#!cmd=` produces an exec carrier
     containing those fields and the router-supplied `cmd`. Safe leading params near-misses
     produce the same carrier after normalization. An object containing `cmd` rejects, and a
     present `login` value must be `false`.
 13. The authoritative Code Mode owner is exactly one custom `exec` tool. App-server requests place
     it directly in an `additional_tools` input item's tool list; CLI requests place it under that
-    item's `functions` namespace. When `shell` is installed, the router removes the exact Markdown
-    `exec_command` section and introductory `tools.exec_command` example from the owning
-    description. It derives the request-specific argument-object shape from the app declaration or
-    parameter-list shape from the CLI description, removes `cmd`, and appends only that sanitized
-    shape under `#!params` in the `shell` description. Neither model-visible description contains
-    `tools.exec_command`. Without `shell`, the router preserves the native command contract. An
-    eligible owner without a recognizable parameter shape retains the base `shell` description and
-    does not reject.
+    item's `functions` namespace. The router removes the exact Markdown `exec_command` section and
+    introductory `tools.exec_command` example from the owning description. It derives the
+    request-specific argument-object shape from the app declaration or parameter-list shape from
+    the CLI description, removes `cmd`, and appends only that sanitized shape under `#!params` in
+    the built-in `shell` description. Neither model-visible description contains
+    `tools.exec_command`. An eligible owner without a recognizable parameter shape retains the base
+    `shell` description and does not reject.
 14. Direct `additional_tools` entries named `functions.exec` and top-level tools named `exec` or
     `functions.exec` are unsupported and fail before forwarding. Defining more than one eligible
     owner also fails before forwarding. The existing `apply_patch` section extractor remains

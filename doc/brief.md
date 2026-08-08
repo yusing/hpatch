@@ -31,16 +31,16 @@ translated carrier under its normal sandbox and permissions. Gain reporting attr
 definitions, emitted-versus-translated output shapes, and current-versus-stock executor-result input
 shapes to each contributed tool.
 
-An installable `shell` plugin accepts one free-form script and exposes its normalized interpreter
+The mandatory built-in `shell` plugin accepts one free-form script and exposes its normalized interpreter
 and exact body in the translated Codex exec carrier. The executor preserves standard input for
 program data. A compact shebang selects the interpreter, while a missing shebang selects `bash`.
 Optional directives use one `#!key=value` syntax: `#!cmd=` wraps that canonical shell frontend
 command in one user-supplied command template, while `#!params=` forwards a JSON object, except
-`cmd`, through the typed exec carrier. A present `login` value must be `false`. When `shell` is
-installed, the router rewrites the custom `exec` tool either directly inside an `additional_tools`
-item for app-server traffic or inside that item's `functions` namespace for CLI traffic. It removes
-that owner's `exec_command` section and introductory `tools.exec_command` example, derives the
-request-specific parameter shape, omits `cmd`, and appends only that sanitized shape to `shell`.
+`cmd`, through the typed exec carrier. A present `login` value must be `false`. The router always
+rewrites the custom `exec` tool either directly inside an `additional_tools` item for app-server
+traffic or inside that item's `functions` namespace for CLI traffic. It removes that owner's
+`exec_command` section and introductory `tools.exec_command` example, derives the request-specific
+parameter shape, omits `cmd`, and appends only that sanitized shape to `shell`.
 Direct `functions.exec` and top-level exec carriers remain unsupported.
 
 The exec carrier preserves the native executor result when a command yields instead of treating
@@ -55,10 +55,10 @@ wall time must remain close to control.
 ## First-draft scope
 
 - Multiple UTF-8 files opened in sequence by `in PATH` or created by `new PATH`.
-- One routed hread call may contain an ordered newline-delimited batch of those existing
-  single-file read specifications.
-- Routed hgrep searches with familiar ripgrep matching, context, and file-selection arguments
-  and emits complete UTF-8 result rows as copyable path-and-`LINE:HASH` results.
+- Private hread commands accept one existing file and an optional range; shell scripts batch reads
+  as separate hread commands.
+- Private hgrep commands accept familiar ripgrep matching, context, and file-selection arguments
+  and emit complete UTF-8 result rows as copyable path-and-`LINE:HASH` results.
 - Mutation-owned complete-line, inclusive line-range, and anchored literal targets.
 - Replacement, insertion immediately before or after a target, and deletion without a
   separate selection, cursor, or clipboard protocol.
@@ -83,23 +83,23 @@ wall time must remain close to control.
   and optional stock-result token estimates in `hpatch gain` and the router gain page.
 - Built-in hread and hgrep stock results preserve returned content while omitting their verified
   `LINE:HASH` row identity, so gain reports the input cost of editable row references.
-- A repository `plugins/shell.mjs` example with optional interpreter, command-template, JSON
-  parameter directives, and an interpreter-specific native exec baseline for output metrics, plus
-  a `make install` path that installs both binaries and configured plugins.
+- The repository `plugins/shell.mjs` source is embedded as the mandatory built-in shell, with
+  optional interpreter, command-template, JSON parameter directives, and an interpreter-specific
+  native exec baseline for output metrics.
 
 ## Public surface
 
 - `hpatch`: evaluate one complete script and atomically update the workspace.
 - `hpatch translate`: evaluate the same script and emit its `apply_patch` representation.
 - `hpatch gain`: report persistent edit-encoding and failure metrics.
-- `hpatch-router --mode hpatch|passthrough`: expose routed hpatch, hgrep, and single- or
-  multi-item hread treatment, or the unchanged control path.
-- `hpatch/plugins` beneath the platform user configuration directory: the only tool-plugin
+- `hpatch-router --mode hpatch|passthrough`: expose model-visible hpatch and shell tools with
+  private single-file hread and hgrep commands, or the unchanged control path.
+- `hpatch/plugins` beneath the platform user configuration directory: the configured tool-plugin
   discovery surface; the router has no plugin command-line flags.
-- `shell`: an installable unconstrained custom tool whose translated exec carrier shows the
+- `shell`: a mandatory built-in unconstrained custom tool whose translated exec carrier shows the
   interpreter and exact script body, optionally with `#!cmd=` and request-specific `#!params=`
   assignments.
-- `make install`: install `hpatch`, `hpatch-router`, and repository plugin declarations.
+- `make install`: regenerate the embedded plugin bundle and install `hpatch` and `hpatch-router`.
 - `hpatch-bench validate --manifest TASK.json` and `hpatch-bench run`: validate and run
   paired historical-commit evaluations.
 - `hpatch --help`, `hpatch --tool-help`, `hpatch translate --help`, and

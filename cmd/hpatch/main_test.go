@@ -107,8 +107,6 @@ func TestToolHelpGuidesAgentCommandChoice(t *testing.T) {
 	normalized := strings.Join(strings.Fields(help), " ")
 	for _, required := range []string{
 		"HPATCH/2 applies one complete target-bearing edit script atomically.",
-		"Use `hgrep` as replacement of `rg` or `grep`",
-		"Use `hread` as replacement of `cat` or `sed`",
 		"`type-` inserts before",
 		"`type+` inserts after",
 		"fixed `<<PATCH` frame",
@@ -123,7 +121,6 @@ func TestToolHelpGuidesAgentCommandChoice(t *testing.T) {
 		"add one struct field with one insertion",
 		"indentation-sensitive languages such as Python",
 		"Successful final-state `LINE:HASH` rows are current references",
-		"Use `hread` only when the successful report lacks the exact target",
 		"Multiple insertions at the same boundary render in script order.",
 		"reread stale rows instead of guessing",
 	} {
@@ -144,6 +141,8 @@ func TestToolHelpGuidesAgentCommandChoice(t *testing.T) {
 		"<<TAG",
 		"at most one syntax-sensitive multiline Go",
 		"discard its saved references",
+		"Use `hgrep` as replacement of `rg` or `grep`",
+		"Use `hread` as replacement of `cat` or `sed`",
 	} {
 		if strings.Contains(help, excluded) {
 			t.Fatalf("tool help contains unnecessary or inaccurate text %q", excluded)

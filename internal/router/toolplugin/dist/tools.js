@@ -575,8 +575,6 @@ function createHGrepTool(description, grammar) {
 import { constants } from "node:fs";
 import { open } from "node:fs/promises";
 var READ_BUFFER_BYTES = 32 * 1024;
-var BATCH_LIMIT_MESSAGE = `hread: batch output limit reached; retry remaining items in a narrower batch
-`;
 
 class ResultTooLargeError extends Error {
 }
@@ -634,7 +632,7 @@ function parseReadSpec(input) {
     throw new Error("hread path must not be empty");
   }
   if (trailing === "") {
-    return { input, path, startLine: 0, endLine: 0 };
+    return { path, startLine: 0, endLine: 0 };
   }
   const match = trailing.match(/^ ([1-9][0-9]*):([1-9][0-9]*)$/u);
   if (match === null) {
@@ -651,29 +649,7 @@ function parseReadSpec(input) {
   if (startLine > endLine) {
     throw new Error("hread line range start exceeds end");
   }
-  return { input, path, startLine, endLine };
-}
-function parseReadSpecs(input) {
-  const rawSpecs = stripOptionalFinalNewline(input).split(`
-`);
-  const specs = rawSpecs.map((raw) => {
-    const normalized = raw.endsWith("\r") ? raw.slice(0, -1) : raw;
-    if (normalized === "") {
-      throw new Error("hread batch contains an empty read specification");
-    }
-    try {
-      return { spec: parseReadSpec(normalized), error: null };
-    } catch (error) {
-      return {
-        spec: { input: normalized, path: "", startLine: 0, endLine: 0 },
-        error
-      };
-    }
-  });
-  if (specs.length === 1 && specs[0].error !== null) {
-    throw specs[0].error;
-  }
-  return specs;
+  return { path, startLine, endLine };
 }
 async function readHashLines(spec, maxOutputBytes) {
   const handle = await open(spec.path, constants.O_RDONLY | (constants.O_NONBLOCK ?? 0));
@@ -796,92 +772,29 @@ async function readHashLines(spec, maxOutputBytes) {
     await handle.close();
   }
 }
-async function executeRead(input, maxOutputBytes) {
-  const specs = parseReadSpecs(input);
-  if (specs.length === 1) {
-    return readHashLines(specs[0].spec, maxOutputBytes);
-  }
-  const dataLimit = Math.max(0, maxOutputBytes - byteLength(BATCH_LIMIT_MESSAGE));
-  let current = "";
-  let currentBytes = 0;
-  let stock = "";
-  const appendBounded = (text) => {
-    const addedBytes = byteLength(text);
-    if (currentBytes + addedBytes > dataLimit) {
-      return false;
-    }
-    current += text;
-    stock += text;
-    currentBytes += addedBytes;
-    return true;
-  };
-  const appendLimitMessage = () => {
-    if (currentBytes + byteLength(BATCH_LIMIT_MESSAGE) <= maxOutputBytes) {
-      current += BATCH_LIMIT_MESSAGE;
-      stock += BATCH_LIMIT_MESSAGE;
-      currentBytes += byteLength(BATCH_LIMIT_MESSAGE);
-    }
-  };
-  for (const item of specs) {
-    if (!appendBounded(`==> ${item.spec.input} <==
-`)) {
-      appendLimitMessage();
-      break;
-    }
-    if (item.error !== null) {
-      if (!appendBounded(`hread: ${conciseErrorText(item.error)}
-`)) {
-        appendLimitMessage();
-        break;
-      }
-      continue;
-    }
-    try {
-      const result = await readHashLines(item.spec, dataLimit - currentBytes);
-      current += result.current;
-      stock += result.stock;
-      currentBytes += byteLength(result.current);
-    } catch (error) {
-      if (error instanceof ResultTooLargeError) {
-        appendLimitMessage();
-        break;
-      }
-      if (!appendBounded(`hread: ${conciseErrorText(error)}
-`)) {
-        appendLimitMessage();
-        break;
-      }
-    }
-  }
-  return { current, stock };
-}
 function hreadArguments(input) {
-  const fields = input.split(" ");
-  if (fields.length === 2 && fields.every((field) => shellQuoteArgument(field) === field) && /^[1-9][0-9]*:[1-9][0-9]*$/u.test(fields[1])) {
-    return fields;
+  const spec = parseReadSpec(stripOptionalFinalNewline(input));
+  if (spec.startLine === 0) {
+    return [spec.path];
   }
-  return [input];
+  return [spec.path, `${spec.startLine}:${spec.endLine}`];
 }
 function hreadInput(argv) {
-  if (argv.length === 1) {
-    return argv[0];
+  if (argv.length === 1 && argv[0] !== "") {
+    return JSON.stringify(argv[0]);
   }
-  if (argv.length === 2 && argv.every((argument) => shellQuoteArgument(argument) === argument) && /^[1-9][0-9]*:[1-9][0-9]*$/u.test(argv[1])) {
-    return argv.join(" ");
+  if (argv.length === 2 && argv[0] !== "" && /^[1-9][0-9]*:[1-9][0-9]*$/u.test(argv[1])) {
+    return `${JSON.stringify(argv[0])} ${argv[1]}`;
   }
-  throw new Error("hread expected one complete input or one bare path and range");
+  throw new Error("hread expected PATH or PATH START:END");
 }
 function hreadStockCommand(argv) {
-  return parseReadSpecs(hreadInput(argv)).map((item) => {
-    if (item.error !== null) {
-      throw item.error;
-    }
-    const command = `cat ${shellQuoteArgument(item.spec.path)}`;
-    if (item.spec.startLine === 0) {
-      return command;
-    }
-    return `${command} | sed -n '${item.spec.startLine},${item.spec.endLine}p'`;
-  }).join("; ");
+  const spec = parseReadSpec(hreadInput(argv));
+  const command = `cat ${shellQuoteArgument(spec.path)}`;
+  if (spec.startLine === 0) {
+    return command;
+  }
+  return `${command} | sed -n '${spec.startLine},${spec.endLine}p'`;
 }
 function createHReadTool(description, grammar) {
   return createExecutorTool({
@@ -894,7 +807,7 @@ function createHReadTool(description, grammar) {
     },
     async execute(argv, context) {
       try {
-        const result = await executeRead(hreadInput(argv), context.outputBudgetBytes);
+        const result = await readHashLines(parseReadSpec(stripOptionalFinalNewline(hreadInput(argv))), context.outputBudgetBytes);
         return {
           stdout: result.current,
           stock: { stdout: result.stock, exitCode: 0 },
@@ -908,31 +821,385 @@ function createHReadTool(description, grammar) {
   });
 }
 
-// src/builtin/tools.ts
-var hreadDescription = `Use \`hread\` as replacement of \`cat\` or \`sed\`. Plan related reads before calling:
-batch already-known paths or ranges in one call, and use explicit ranges after the relevant
-locations are known. A bare path intentionally reads the complete file. Read up to 6 workspace
-paths, optionally followed by an inclusive \`START:END\` line range. Use a bare path when it has
-no whitespace; otherwise use a JSON-quoted path. Unlike plain file output, every complete line
-is returned as \`LINE:HASH TEXT\`; copy the current \`LINE:HASH\` directly into an HPATCH/2 target.
+// ../../../plugins/shell.mjs
+import { spawn as spawn2, spawnSync } from "node:child_process";
+import { closeSync, writeFileSync } from "node:fs";
+function trimShebangField(value) {
+  return value.replace(/^[ \t]+|[ \t]+$/gu, "");
+}
+function splitFirstLine(input) {
+  const match = /\r\n|\n|\r/u.exec(input);
+  if (match === null) {
+    return { line: input, body: "" };
+  }
+  return {
+    line: input.slice(0, match.index),
+    body: input.slice(match.index + match[0].length)
+  };
+}
+function parseDirectiveLine(line) {
+  const assignment = /^#!([A-Za-z][A-Za-z0-9_-]*)=([\s\S]*)$/u.exec(line);
+  if (assignment !== null) {
+    return { key: assignment[1], value: assignment[2] };
+  }
+  const recoveredParams = /^(?:#[ \t]*!|!)params(?:[ \t]+([\s\S]+))?$/u.exec(line);
+  if (recoveredParams !== null) {
+    return { key: "params", value: recoveredParams[1] ?? "" };
+  }
+  return null;
+}
+function isDirectiveCandidate(line) {
+  return parseDirectiveLine(line) !== null || /^#!(?:cmd|params)(?:[ \t]|$)/u.test(line);
+}
+function parseDirectives(body) {
+  let remaining = body;
+  let commandTemplate = "";
+  let params;
+  const seen = new Set;
+  while (remaining !== "") {
+    const first = splitFirstLine(remaining);
+    const trimmedLine = trimShebangField(first.line);
+    const directive = parseDirectiveLine(trimmedLine);
+    if (directive === null) {
+      if (/^#!(?:cmd|params)(?:[ \t]|$)/u.test(trimmedLine) || trimmedLine.startsWith("!")) {
+        throw new Error("shell directive must use #!{key}={value}");
+      }
+      break;
+    }
+    const { key, value } = directive;
+    if (key !== "cmd" && key !== "params") {
+      throw new Error(`unsupported shell directive #!${key}`);
+    }
+    if (seen.has(key)) {
+      throw new Error(`shell directive #!${key} must not occur more than once`);
+    }
+    seen.add(key);
+    if (key === "cmd") {
+      if (value === "") {
+        throw new Error("command template must not be empty");
+      }
+      if (value.split("{.}").length !== 2) {
+        throw new Error("command template must contain exactly one {.} placeholder");
+      }
+      commandTemplate = value;
+    } else {
+      let parsed;
+      try {
+        parsed = JSON.parse(value);
+      } catch (error) {
+        throw new Error(`#!params must contain a JSON object: ${executionError(error)}`);
+      }
+      if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+        throw new Error("#!params must contain a JSON object");
+      }
+      if (Object.hasOwn(parsed, "cmd")) {
+        throw new Error("#!params must not contain cmd; the script body supplies it");
+      }
+      if (Object.hasOwn(parsed, "login") && parsed.login !== false) {
+        throw new Error("#!params login must be false");
+      }
+      params = parsed;
+    }
+    remaining = first.body;
+  }
+  return { commandTemplate, params, body: remaining };
+}
+function parseScript(input) {
+  if (input.includes("\x00")) {
+    throw new Error("script must not contain a NUL byte");
+  }
+  let interpreter = ["bash"];
+  let body = input;
+  const first = splitFirstLine(input);
+  const trimmedLine = trimShebangField(first.line);
+  const leadingDirective = isDirectiveCandidate(trimmedLine);
+  if (trimmedLine.startsWith("#!") && !leadingDirective) {
+    const selector = trimShebangField(trimmedLine.slice(2));
+    if (selector === "") {
+      throw new Error("shebang must select an interpreter");
+    }
+    interpreter = selector.split(/[ \t]+/u);
+    if (interpreter[0] === "env" || interpreter[0] === "/usr/bin/env") {
+      interpreter.shift();
+      if (interpreter[0] === "-S") {
+        interpreter.shift();
+      }
+      if (interpreter.length === 0 || interpreter[0].startsWith("-")) {
+        throw new Error("env shebang must select an interpreter");
+      }
+    }
+    body = first.body;
+  }
+  const directives = parseDirectives(body);
+  return {
+    interpreter,
+    body: directives.body,
+    commandTemplate: directives.commandTemplate,
+    params: directives.params
+  };
+}
+function executionError(error) {
+  return error instanceof Error ? error.message : String(error);
+}
+function interpreterBasename(interpreter) {
+  return interpreter.replaceAll("\\", "/").split("/").at(-1)?.replace(/\.exe$/iu, "") ?? "";
+}
+function scriptEvaluationFlag(interpreter) {
+  switch (interpreterBasename(interpreter).toLowerCase()) {
+    case "bun":
+    case "node":
+    case "nodejs":
+      return "-e";
+    default:
+      return null;
+  }
+}
+function shellQuoteArgument2(value) {
+  if (/^[A-Za-z0-9_@%+=:,./-]+$/u.test(value)) {
+    return value;
+  }
+  return `'${value.replaceAll("'", `'"'"'`)}'`;
+}
+function stockEvaluationFlag(interpreter) {
+  const executable = interpreterBasename(interpreter).toLowerCase();
+  if (/^(?:python(?:[0-9]+(?:\.[0-9]+)*)?|pypy[0-9]*)$/u.test(executable)) {
+    return "-c";
+  }
+  return scriptEvaluationFlag(interpreter);
+}
+function stockDelimiter(interpreter, body) {
+  const executable = interpreterBasename(interpreter).toUpperCase();
+  let delimiter;
+  if (/^PYTHON[0-9.]*$/u.test(executable) || /^PYPY[0-9]*$/u.test(executable)) {
+    delimiter = "PYTHON";
+  } else if (/^(?:NODE|NODEJS)$/u.test(executable)) {
+    delimiter = "NODE";
+  } else {
+    delimiter = executable.replace(/[^A-Z0-9_]/gu, "_") || "SCRIPT";
+  }
+  const lines = new Set(body.split(/\r\n|\n|\r/u));
+  while (lines.has(delimiter)) {
+    delimiter += "_";
+  }
+  return delimiter;
+}
+function stockCommand(input) {
+  const [interpreter, ...interpreterArguments] = input.interpreter;
+  const evaluationFlag = stockEvaluationFlag(interpreter);
+  if (evaluationFlag !== null) {
+    return [interpreter, ...interpreterArguments, evaluationFlag, input.body].map(shellQuoteArgument2).join(" ");
+  }
+  const delimiter = stockDelimiter(interpreter, input.body);
+  const bodyTerminator = input.body.endsWith(`
+`) ? "" : `
 `;
+  const command = [interpreter, ...interpreterArguments, "/dev/fd/3"].map(shellQuoteArgument2).join(" ");
+  return `${command} 3<<'${delimiter}'
+${input.body}${bodyTerminator}${delimiter}`;
+}
+function executeScriptThroughStdin(argv, maxOutputBytes) {
+  const interpreter = argv[0];
+  const interpreterArguments = argv.slice(1, -1);
+  const body = argv.at(-1);
+  try {
+    const result = spawnSync(interpreter, interpreterArguments, {
+      encoding: "utf8",
+      env: process.env,
+      input: body,
+      maxBuffer: Math.max(1, Math.floor(maxOutputBytes / 2))
+    });
+    const stdout = result.stdout ?? "";
+    let stderr = result.stderr ?? "";
+    if (result.error !== undefined) {
+      stderr += `shell: ${executionError(result.error)}
+`;
+      return {
+        stdout,
+        stderr,
+        exitCode: result.error.code === "ENOENT" ? 127 : 1
+      };
+    }
+    if (result.signal !== null) {
+      stderr += `shell: interpreter terminated by ${result.signal}
+`;
+      return { stdout, stderr, exitCode: 1 };
+    }
+    return { stdout, stderr, exitCode: result.status ?? 1 };
+  } catch (error) {
+    return { stderr: `shell: ${executionError(error)}
+`, exitCode: 1 };
+  }
+}
+function executeScriptWithProgramInput(argv, context) {
+  const interpreter = argv[0];
+  const body = argv.at(-1);
+  const evaluationFlag = scriptEvaluationFlag(interpreter);
+  const usesDescriptor = evaluationFlag === null;
+  const interpreterArguments = usesDescriptor ? [...argv.slice(1, -1), "/dev/fd/3"] : [...argv.slice(1, -1), evaluationFlag, body];
+  return new Promise((resolve) => {
+    let child;
+    try {
+      child = spawn2(interpreter, interpreterArguments, {
+        env: process.env,
+        stdio: usesDescriptor ? [context.stdinFD, "pipe", "pipe", context.scriptReadFD] : [context.stdinFD, "pipe", "pipe"]
+      });
+    } catch (error) {
+      resolve({ stderr: `shell: ${executionError(error)}
+`, exitCode: 1 });
+      return;
+    }
+    const overflowDiagnostic = `shell: interpreter output exceeds ${context.outputBudgetBytes} bytes
+`;
+    const captureBudgetBytes = Math.max(0, context.outputBudgetBytes - Buffer.byteLength(overflowDiagnostic, "utf8") - 3);
+    const stdoutChunks = [];
+    const stderrChunks = [];
+    let capturedBytes = 0;
+    let overflow = false;
+    let spawnError;
+    let scriptError;
+    const capture = (chunks, chunk) => {
+      const bytes = Buffer.from(chunk);
+      const remaining = Math.max(0, captureBudgetBytes - capturedBytes);
+      if (remaining > 0) {
+        chunks.push(bytes.subarray(0, remaining));
+      }
+      if (bytes.length > remaining && !overflow) {
+        overflow = true;
+        child.kill("SIGKILL");
+      }
+      capturedBytes += Math.min(bytes.length, remaining);
+    };
+    child.stdout.on("data", (chunk) => {
+      capture(stdoutChunks, chunk);
+    });
+    child.stderr.on("data", (chunk) => {
+      capture(stderrChunks, chunk);
+    });
+    child.on("error", (error) => {
+      spawnError = error;
+    });
+    child.on("close", (status, signal) => {
+      let stdout;
+      let stderr;
+      try {
+        stdout = new TextDecoder("utf-8", { fatal: true }).decode(Buffer.concat(stdoutChunks));
+        stderr = new TextDecoder("utf-8", { fatal: true }).decode(Buffer.concat(stderrChunks));
+      } catch {
+        resolve({ stderr: `shell: interpreter output is not UTF-8
+`, exitCode: 1 });
+        return;
+      }
+      if (spawnError !== undefined) {
+        stderr += `shell: ${executionError(spawnError)}
+`;
+        resolve({
+          stdout,
+          stderr,
+          exitCode: spawnError.code === "ENOENT" ? 127 : 1
+        });
+        return;
+      }
+      if (overflow) {
+        stderr += overflowDiagnostic;
+        resolve({ stdout, stderr, exitCode: 1 });
+        return;
+      }
+      if (scriptError !== undefined) {
+        stderr += `shell: write script body: ${executionError(scriptError)}
+`;
+        resolve({ stdout, stderr, exitCode: 1 });
+        return;
+      }
+      if (signal !== null) {
+        stderr += `shell: interpreter terminated by ${signal}
+`;
+        resolve({ stdout, stderr, exitCode: 1 });
+        return;
+      }
+      resolve({ stdout, stderr, exitCode: status ?? 1 });
+    });
+    try {
+      if (usesDescriptor) {
+        writeFileSync(context.scriptWriteFD, body);
+      }
+    } catch (error) {
+      scriptError = error;
+      child.kill("SIGKILL");
+    } finally {
+      try {
+        closeSync(context.scriptWriteFD);
+      } catch (error) {
+        if (scriptError === undefined) {
+          scriptError = error;
+          child.kill("SIGKILL");
+        }
+      }
+    }
+  });
+}
+function executeScript(argv, context) {
+  if (argv.length < 2) {
+    return { stderr: `shell: missing interpreter or script body
+`, exitCode: 1 };
+  }
+  if (![context?.stdinFD, context?.scriptReadFD, context?.scriptWriteFD].every((fileDescriptor) => Number.isSafeInteger(fileDescriptor) && fileDescriptor >= 3)) {
+    return executeScriptThroughStdin(argv, context.outputBudgetBytes);
+  }
+  return executeScriptWithProgramInput(argv, context);
+}
+var shellTool = {
+  specification: {
+    type: "custom",
+    name: "shell",
+    description: `Run one free-form script without an outer heredoc or command-string quoting.
+Use the first line as an optional shebang. A bare interpreter, a full path, and
+/usr/bin/env forms are accepted. Without a shebang, bash runs the complete input.
+Optional directive assignments use #!key=value and can follow the shebang or be first.
+#!cmd= accepts one {.} placeholder that expands to the normalized shell frontend command.
+#!params=<JSON object> supplies other supported execution arguments and can occur beside
+#!cmd= in either order. The script body supplies cmd, so #!params must not contain cmd.
+If #!params contains login, its value must be false.
+The selected interpreter receives the exact script body, and frontend standard input
+remains available as program data.`
+  },
+  parse(input) {
+    return parseScript(input);
+  },
+  argv(input) {
+    return [...input.interpreter, input.body];
+  },
+  translate(input, api) {
+    const template = input.commandTemplate === "" ? undefined : input.commandTemplate;
+    return api.exec(template, input.params, stockCommand(input));
+  },
+  execute(argv, context) {
+    return executeScript(argv, context);
+  }
+};
+
+// src/builtin/tools.ts
+var hreadDescription = `Use \`hread\` through \`shell\` instead of \`cat\` or \`sed\` when source rows may
+become HPATCH targets. Run one file per command as \`hread PATH [START:END]\`; quote paths
+with shell syntax and batch related reads as separate commands in one shell script. A bare
+path reads the complete file. Output is \`LINE:HASH TEXT\`; copy the current \`LINE:HASH\`
+directly into an HPATCH/2 target.`;
 var hreadPath = `(?:"(?:\\\\(?:["\\\\/bfnrt]|u[0-9A-Fa-f]{4})|[^\\x00-\\x1F"\\\\]|\\t)*"|[^\\x00-\\x20"]+)`;
 var hreadReadSpec = `${hreadPath}(?: [1-9][0-9]*:[1-9][0-9]*)?`;
-var hreadRegex = `\\A${hreadReadSpec}(?:\\r?\\n${hreadReadSpec}){0,5}\\z`;
-var hgrepDescription = `Use \`hgrep\` as replacement of \`rg\` or \`grep\`. Plan related searches before calling:
-combine known patterns and paths in one call. The input is one ripgrep argument line; use repeated
-\`-e\` for multiple patterns. For example: \`hgrep -n -e 'RangeStream' -e 'type RaftKV' path...\`.
-It accepts familiar ripgrep arguments but returns complete matching and requested context lines as
-\`"PATH":LINE:HASH TEXT\`. Copy the current \`LINE:HASH\` directly into an HPATCH/2 target.
-`;
+var hreadRegex = `\\A${hreadReadSpec}\\z`;
+var hgrepDescription = `Use \`hgrep\` through \`shell\` instead of \`rg\` or \`grep\` when search results may
+become HPATCH targets. It accepts familiar ripgrep arguments and ordinary shell quoting,
+redirection, and pipelines. Combine known patterns and paths in one command and use repeated
+\`-e\` for multiple patterns. Output is \`"PATH":LINE:HASH TEXT\`; copy the current
+\`LINE:HASH\` directly into an HPATCH/2 target. Never guess or reconstruct a row.`;
 var hgrepPart = `(?:'[^'\\r\\n]*'|"(?:\\\\[^\\r\\n]|[^"\\\\\\r\\n])*"|(?:\\\\[^\\r\\n]|[^\\s'"\\\\])+)`;
 var hgrepRegex = `\\A[ \\t]*${hgrepPart}+(?:[ \\t]+${hgrepPart}+)*[ \\t]*\\z`;
 var plugin = {
   apiVersion: "hpatch-tool-plugin/v1",
-  id: "builtin.hpatch",
+  id: "builtin.shell",
   tools: [
     createHReadTool(hreadDescription, hreadRegex),
-    createHGrepTool(hgrepDescription, hgrepRegex)
+    createHGrepTool(hgrepDescription, hgrepRegex),
+    shellTool
   ]
 };
 var tools_default = plugin;

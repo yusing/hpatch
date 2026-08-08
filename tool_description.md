@@ -1,10 +1,6 @@
 HPATCH/2 applies one complete target-bearing edit script atomically. Do not call this tool
 in parallel with other tools. Rejection or cancellation changes nothing.
 
-Use `hgrep` as replacement of `rg` or `grep`. Use `hread` as replacement of `cat` or `sed`.
-Both return complete lines with current `LINE:HASH` references for HPATCH/2 targets; hgrep
-prefixes each match with its quoted path. Never guess or reconstruct a row.
-
 Commands:
 
 ```text
@@ -74,8 +70,7 @@ field with one insertion rather than replacing the declaration. Preserve require
 indentation prefixes in indentation-sensitive languages such as Python.
 Content introduced by a mutation is not targetable in the same call. Successful final-state
 `LINE:HASH` rows are current references for their named final paths and may be used directly
-in the next invocation. Use `hread` only when the successful report lacks the exact target
-needed next.
+in the next invocation.
 
 Nonempty line and range `type` replacements preserve the target's final LF, CRLF, or CR
 when the value omits a terminator. Explicit terminators are authoritative. An empty

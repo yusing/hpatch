@@ -35,7 +35,7 @@ flowchart LR
     A --> D
 ```
 
-The patch is not eliminated: the router generates it after inference. Savings are the difference between the two model-output payload estimates shown above. State reports, rejection diagnostics, and the net cost of installing the hpatch, hread, and hgrep tool definitions while removing the Code Mode `apply_patch` section are tracked separately as input overhead. Hread and hgrep results are not compared with hypothetical shell commands; the dashboard's end-to-end Responses and session usage totals are authoritative for their model-input cost. Gain values remain reproducible GPT-5 estimates rather than provider billing totals.
+The patch is not eliminated: the router generates it after inference. Savings are the difference between the two model-output payload estimates shown above. State reports, rejection diagnostics, the net cost of installing the hpatch and shell tool definitions, and the appended hread/hgrep command guidance are tracked separately as input overhead. Hread and hgrep results are not compared with hypothetical shell commands; the dashboard's end-to-end Responses and session usage totals are authoritative for their model-input cost. Gain values remain reproducible GPT-5 estimates rather than provider billing totals.
 
 For an 11-line function replacement, hpatch asks the model for this:
 
@@ -99,28 +99,27 @@ The router also supplies `functions.hpatch` to the provider with a [Lark grammar
 - Go 1.26 or newer (`go install` only; no clone required for normal use)
 - For the router: Codex CLI with ChatGPT file auth (`codex login`, credentials at `~/.codex/auth.json` or `$CODEX_HOME/auth.json`)
 - For the router: Node.js 24 or newer; built-in and configured plugins use the same runtime
-- For routed hgrep: `rg` available on the Codex executor's `PATH`
-- For routed hread and hgrep: the router executable directory precedes unrelated entries on the
-  Codex executor's trusted `PATH`
-- For the installed shell plugin: `bash` for scripts without a shebang; selected interpreters
+- For private hgrep commands: `rg` available on the Codex executor's `PATH`
+- For private hread and hgrep commands: the router executable directory precedes unrelated entries
+  on the Codex executor's trusted `PATH`
+- For the built-in shell tool: `bash` for scripts without a shebang; selected interpreters
   available through the inherited `PATH`
-- For `make install`: `make` and a POSIX-compatible `install` utility
+- For `make install`: `make`
 
 ## Install from a checkout
 
-`make install` installs `hpatch` and `hpatch-router` through `go install`. It also installs each
-declaration from [`plugins/`](plugins/) into the platform user configuration
-`hpatch/plugins` directory.
+`make install` regenerates the embedded built-in plugin bundle and installs `hpatch` and
+`hpatch-router` through `go install`.
 
 ```sh
 make install
 ```
 
-On Linux, the plugin destination is `$XDG_CONFIG_HOME/hpatch/plugins` or
-`~/.config/hpatch/plugins`. Restart `hpatch-router` after installation because its plugin
-registry is immutable for the process lifetime.
+Configured plugins may be placed in `$XDG_CONFIG_HOME/hpatch/plugins` or
+`~/.config/hpatch/plugins` on Linux. Restart `hpatch-router` after changing configured plugins
+because its registry is immutable for the process lifetime.
 
-The installed `shell` custom tool accepts a free-form script. A compact shebang selects the
+The built-in `shell` custom tool accepts a free-form script. A compact shebang selects the
 interpreter through the inherited `PATH`, and a missing shebang selects `bash`:
 
 ```python
@@ -143,24 +142,23 @@ carrier when it executes it.
 
 ## Codex router (systemd user service)
 
-The router listens on HTTP, rewrites Responses traffic so Codex calls `functions.hpatch`, `functions.hread`, or `functions.hgrep`, evaluates scripts against the workspace declared in `x-codex-turn-metadata`, and returns client-executed Code Mode carriers. Hpatch produces a real `apply_patch` call, so you see the normal diff rather than a silent file rewrite. Hread and hgrep resolve stable basename frontends through the Codex executor's trusted `PATH`; the router executable directory must precede unrelated entries. Each frontend targets an authenticated process snapshot wrapper, which targets `hpatch-router`. The carrier does not override the exec environment or working directory. The workers use Codex's exec working directory under Codex's sandbox and permissions rather than receiving a router workspace capability. Hgrep invokes `rg --json --no-config` internally and emits complete matching and requested context rows as `"PATH":LINE:HASH TEXT`. When the router and Codex executor have isolated filesystems, deployment must expose the frontend directory, snapshot, and router executable at the same paths in both environments. Background Responses requests are rejected before forwarding because the router does not expose the retrieval and cancellation endpoints required to complete them.
+The router listens on HTTP, rewrites Responses traffic so Codex calls `functions.hpatch` or `functions.shell`, evaluates hpatch scripts against the workspace declared in `x-codex-turn-metadata`, and returns client-executed Code Mode carriers. Hpatch produces a real `apply_patch` call, so you see the normal diff rather than a silent file rewrite. Hread and hgrep remain private commands invoked by shell scripts. They resolve stable basename frontends through the Codex executor's trusted `PATH`; the router executable directory must precede unrelated entries. Each frontend targets an authenticated process snapshot wrapper, which targets `hpatch-router`. The carrier does not override the exec environment or working directory. The workers use Codex's exec working directory under Codex's sandbox and permissions rather than receiving a router workspace capability. Hread accepts one file and an optional range per command; batch reads use separate hread commands in one shell script. Hgrep invokes `rg --json --no-config` internally and emits complete matching and requested context rows as `"PATH":LINE:HASH TEXT`. When the router and Codex executor have isolated filesystems, deployment must expose the frontend directory, snapshot, and router executable at the same paths in both environments. Background Responses requests are rejected before forwarding because the router does not expose the retrieval and cancellation endpoints required to complete them.
 
 Only one router process can own these basename frontends. A concurrent router fails before
 listening. A restart automatically reclaims authenticated frontend links left by a crash.
 
 On each eligible request, the router finds exactly one Code Mode custom `exec` tool: either directly
 inside the leading `additional_tools` item for app-server traffic or inside that item's `functions`
-namespace for CLI traffic. It strips the owner's `### apply_patch` section. When the standalone
-`shell` plugin is installed, the router also removes that owner's Markdown `exec_command` section
-and introductory `tools.exec_command` example. It derives only the request-specific parameter
-shape, excludes `cmd`, and appends that sanitized shape under `#!params` in the `shell` description.
-Without `shell`, the native `exec_command` contract remains visible. Sibling direct tools, sibling
-tools in the `functions` namespace, other namespaces, and unrelated top-level tools remain
-unchanged. A
-direct `additional_tools` tool named `functions.exec` and top-level `exec` or `functions.exec` tools
-are unsupported and fail before forwarding. The router installs standalone `functions.hpatch`,
-`functions.hread`, and `functions.hgrep` tools. Translated history uses the matched Code Mode `exec`
-carrier that Codex runs.
+namespace for CLI traffic. It strips the owner's `### apply_patch` and Markdown `exec_command`
+sections and the introductory `tools.exec_command` example. It derives only the request-specific
+parameter shape, excludes `cmd`, and appends that sanitized shape under `#!params` in the built-in
+`shell` description. Sibling direct tools, sibling tools in the `functions` namespace, other
+namespaces, and unrelated top-level tools remain unchanged. A direct `additional_tools` tool named
+`functions.exec` and top-level `exec` or `functions.exec` tools are unsupported and fail before
+forwarding. The router installs standalone `functions.hpatch` and `functions.shell` tools. Hread
+and hgrep stay executable through private frontends, and their shell-command guidance is appended
+to the request's existing top-level instructions. Translated history uses the matched Code Mode
+`exec` carrier that Codex runs.
 
 Defaults:
 
@@ -262,16 +260,16 @@ curl -sS http://127.0.0.1:8080/api/metrics
 # open http://127.0.0.1:8080/ for the local dashboard
 ```
 
-### Override base instructions for routed tools
+### Optional base-instructions override
 
-The router exposes `functions.hpatch`, `functions.hread`, and `functions.hgrep`, and it can expose `functions.shell`. It removes native `apply_patch`; when `functions.shell` is installed, it also removes native `exec_command`. Codex's default base prompt still directs ordinary edits to `apply_patch`, prefers native `rg`, and includes native `exec_command` guidance. A runtime `ALL_TOOLS` dump can also list displaced nested tools. Point Codex at a custom base-instructions file so the model consistently uses the routed tools.
+The router exposes `functions.hpatch` and `functions.shell`, removes native `apply_patch` and `exec_command`, and appends private hread/hgrep command guidance to each eligible request's existing instructions. Codex's default base prompt can still direct ordinary edits to `apply_patch`, prefer native `rg`, and include native `exec_command` guidance. A runtime `ALL_TOOLS` dump can also list displaced nested tools. Use a custom base-instructions file when you need to remove those contradictory stock directions.
 
 1. Fetch a recent copy of the Codex default base prompt. Keep the rest of the file and use its file-editing section as the replacement point:
 
    - <https://github.com/openai/codex/blob/main/codex-rs/protocol/src/prompts/base_instructions/default.md>
    - <https://github.com/asgeirtj/system_prompts_leaks/blob/main/OpenAI/Codex/gpt-5.6.md>
 
-2. Replace the stock file-editing heading and `apply_patch` paragraph with [`contrib/codex/file-editing-instructions.md`](contrib/codex/file-editing-instructions.md). Remove the stock line that prefers `rg` when routed `functions.hgrep` is installed. When `functions.shell` is installed, also remove the stock `exec_command` escaping line. Leave all other base-prompt text, dirty-worktree handling, and non-destructive Git rules unchanged.
+2. Replace the stock file-editing heading and `apply_patch` paragraph with [`contrib/codex/file-editing-instructions.md`](contrib/codex/file-editing-instructions.md). Remove the stock line that prefers `rg` and the stock `exec_command` escaping line. Leave all other base-prompt text, dirty-worktree handling, and non-destructive Git rules unchanged.
 
 3. Point Codex at your file in `~/.codex/config.toml` (or a profile config):
 
@@ -279,7 +277,7 @@ The router exposes `functions.hpatch`, `functions.hread`, and `functions.hgrep`,
 model_instructions_file = "/absolute/path/to/your/base_instructions.md"
 ```
 
-Do not rely on project `AGENTS.md` alone for this. The stock base prompt does not direct the model to every routed tool. Override the base prompt in the same way that other host tooling, such as skills, replaces a default section instead of appending to `AGENTS.md`.
+The router already appends the exact hread/hgrep shell-command syntax. This override is optional and exists to replace contradictory stock guidance; project `AGENTS.md` is not a substitute when that replacement is required.
 
 ## Standalone CLI
 
@@ -357,8 +355,8 @@ and one targetless `type VALUE` immediately after `new`.
 Rules worth remembering:
 
 - Use `type` with a nonempty value to replace, `type` with an empty value to delete, `type-` to insert before, and `type+` to insert after.
-- Plan related reads before calling HREAD: batch up to 6 already-known paths or ranges in one newline-delimited call, use explicit ranges after relevant locations are known, and remember that a bare path intentionally reads the complete file. Use HREAD for surrounding or nonmatching context instead of repeating an exact HGREP result.
-- Plan related searches before calling HGREP: combine known patterns and paths in one call and use repeated `-e` for multiple patterns. Copy current `LINE:HASH` rows directly when sufficient.
+- Plan related reads before calling hread through shell. Hread accepts one path and optional range per command; batch known reads as separate hread commands in one shell script. Use explicit ranges after relevant locations are known, and remember that a bare path intentionally reads the complete file.
+- Plan related searches before calling hgrep through shell: combine known patterns and paths in one command and use repeated `-e` for multiple patterns. Copy current `LINE:HASH` rows directly when sufficient.
 - First `in` of a file freezes its immutable invocation baseline. Pending edits never shift later targets.
 - Submit every known related edit in one atomic script, including related multiline declarations and repeated `in PATH` sections. Split only when a later edit depends on validation or information unavailable before the current call. Keep unrelated large `<<PATCH` values in separate failure-domain calls.
 - Prefer the smallest mutation that expresses the semantic change. When a formatter owns formatting, alignment, or indentation, do not replace surrounding lines merely to reproduce its output; let the formatter apply those changes. For example, add one struct field with one insertion rather than replacing the declaration.
@@ -427,9 +425,9 @@ guarantee.
 
 **CLI:** resolve workspace (`--root` / `--cwd` or process cwd) → parse script → verify targets against immutable baselines → plan and render disjoint splices → stage the multi-file result → commit (normal mode) or emit one `apply_patch` envelope (translate).
 
-**Router:** load ChatGPT Codex auth → accept `POST /v1/responses` → require a Code Mode exec owner and expose `functions.hpatch`, `functions.hread`, and `functions.hgrep` instead of its nested `apply_patch` → translate hpatch against the single usable workspace from Codex metadata or route read/search calls through process wrappers in Codex's exec context → return an exec carrier that applies the real patch or returns the exact read/search result.
+Router: load ChatGPT Codex auth → accept `POST /v1/responses` → require a Code Mode exec owner and expose `functions.hpatch` and `functions.shell` instead of its nested `apply_patch` and `exec_command` surfaces → translate hpatch against the single usable workspace from Codex metadata or execute private hread/hgrep commands from shell in Codex's exec context → return an exec carrier that applies the real patch or returns the exact command result.
 
-Hpatch workspace selection is host-owned, and zero or multiple usable roots fail closed. Codex enforces sandbox and filesystem permissions for the client-executed hread, hgrep, and apply operations.
+Hpatch workspace selection is host-owned, and zero or multiple usable roots fail closed. Codex enforces sandbox and filesystem permissions for the client-executed shell, hread, hgrep, and apply operations.
 
 ## Project structure
 

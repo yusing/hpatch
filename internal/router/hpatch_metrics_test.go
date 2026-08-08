@@ -155,7 +155,7 @@ func TestHPatchMetricDefinitionMatchesInstalledGrammarTools(t *testing.T) {
 	if err := json.Unmarshal(request.fields["tools"], &tools); err != nil {
 		t.Fatal(err)
 	}
-	installed := make([]json.RawMessage, 0, 3)
+	installed := make([]json.RawMessage, 0, 2)
 	var installedNames []string
 	for _, raw := range tools {
 		var tool map[string]json.RawMessage
@@ -170,7 +170,7 @@ func TestHPatchMetricDefinitionMatchesInstalledGrammarTools(t *testing.T) {
 			installedNames = append(installedNames, name)
 		}
 	}
-	if want := []string{hpatchToolName, "hread", "hgrep"}; !reflect.DeepEqual(installedNames, want) {
+	if want := []string{hpatchToolName, "shell"}; !reflect.DeepEqual(installedNames, want) {
 		t.Fatalf("metered tool definitions = %v, want %v", installedNames, want)
 	}
 	encoded, err := json.Marshal(installed)
@@ -224,14 +224,6 @@ func TestHPatchMetricPersistenceFailuresDoNotChangeToolResults(t *testing.T) {
 		}
 	})
 
-	t.Run("hread call", func(t *testing.T) {
-		transform, _, _, _ := newHPatchTestTransform(t, translator)
-		history, err := transform.translateTool("hread", "call-read", `"file.txt"`, nil)
-		if err != nil || history.pluginID != "builtin.hpatch" || !strings.Contains(history.carrierInput(), "file.txt") {
-			t.Fatalf("history = %+v, error %v", history, err)
-		}
-	})
-
 	t.Run("overhead only", func(t *testing.T) {
 		transform, _, _, _ := newHPatchTestTransform(t, translator)
 		if err := transform.Finish(false); err != nil {
@@ -270,77 +262,6 @@ func TestHPatchMetricFailureStillPropagatesRequestCancellation(t *testing.T) {
 	}
 }
 
-func TestReadOnlyToolCallClaimsCombinedDefinitionAccountingOnce(t *testing.T) {
-	for _, toolName := range []string{"hread", "hgrep"} {
-		t.Run(toolName, func(t *testing.T) {
-			var records []hpatchMetricRecord
-			translator := metricsObservingTranslator{
-				translate: func(context.Context, routingWorkspace, string) ([]byte, error) {
-					t.Fatalf("%s reached hpatch translation", toolName)
-					return nil, nil
-				},
-				record: func(_ context.Context, record hpatchMetricRecord) error {
-					records = append(records, record)
-					return nil
-				},
-			}
-			transform, _, _, _ := newHPatchTestTransform(t, translator)
-			if _, err := transform.translateTool(toolName, "call-R", "input", nil); err != nil {
-				t.Fatal(err)
-			}
-			if err := transform.Finish(false); err != nil {
-				t.Fatal(err)
-			}
-			if len(records) != 1 {
-				t.Fatalf("metric records = %d, want 1", len(records))
-			}
-			record := records[0]
-			if record.DefinitionRequests != 1 || record.DefinitionInputTokens == 0 || record.RemovedDefinitionInputTokens == 0 || record.RemovedExecCommandDefinitionInputTokens != 0 {
-				t.Fatalf("%s-only accounting = %+v", toolName, record)
-			}
-			if record.HPatchTokens != 0 || record.ApplyPatchTokens != 0 ||
-				record.IneffectiveHPatchTokens != 0 || record.FailedApplyPatchTokens != 0 ||
-				record.ReportInputTokens != 0 || record.DiagnosticInputTokens != 0 {
-				t.Fatalf("%s-only accounting contains patch tokens: %+v", toolName, record)
-			}
-		})
-	}
-}
-
-func TestHReadTranslationProducesNoSyntheticResultMetrics(t *testing.T) {
-	var records []hpatchMetricRecord
-	translator := metricsObservingTranslator{
-		translate: func(context.Context, routingWorkspace, string) ([]byte, error) {
-			t.Fatal("hread reached hpatch translation")
-			return nil, nil
-		},
-		record: func(_ context.Context, record hpatchMetricRecord) error {
-			records = append(records, record)
-			return nil
-		},
-	}
-	transform, _, _, _ := newHPatchTestTransform(t, translator)
-	history, err := transform.translateTool("hread", "call-R", `"missing.txt"`, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := transform.Finish(false); err != nil {
-		t.Fatal(err)
-	}
-	if len(records) != 1 {
-		t.Fatalf("metric records = %d, want 1", len(records))
-	}
-	record := records[0]
-	if record.HPatchTokens != 0 || record.ApplyPatchTokens != 0 ||
-		record.IneffectiveHPatchTokens != 0 || record.FailedApplyPatchTokens != 0 ||
-		record.ReportInputTokens != 0 || record.DiagnosticInputTokens != 0 {
-		t.Fatalf("hread accounting contains synthetic result tokens: %+v", record)
-	}
-	if strings.Contains(history.carrierInput(), "missing.txt:") {
-		t.Fatalf("router fabricated a reader diagnostic: %q", history.carrierInput())
-	}
-}
-
 func TestHPatchRequestDefinitionAccountingIsClaimedOnce(t *testing.T) {
 	var records []hpatchMetricRecord
 	translator := metricsObservingTranslator{
@@ -362,7 +283,7 @@ func TestHPatchRequestDefinitionAccountingIsClaimedOnce(t *testing.T) {
 	if len(records) != 2 {
 		t.Fatalf("metric records = %d, want 2", len(records))
 	}
-	if records[0].DefinitionRequests != 1 || records[0].SessionID != "session-1" || records[0].DefinitionInputTokens == 0 || records[0].RemovedDefinitionInputTokens == 0 || records[0].RemovedExecCommandDefinitionInputTokens != 0 {
+	if records[0].DefinitionRequests != 1 || records[0].SessionID != "session-1" || records[0].DefinitionInputTokens == 0 || records[0].RemovedDefinitionInputTokens == 0 || records[0].RemovedExecCommandDefinitionInputTokens == 0 {
 		t.Fatalf("first request accounting = %+v", records[0])
 	}
 	if records[1].DefinitionRequests != 0 || records[1].SessionID != "session-1" || records[1].DefinitionInputTokens != 0 || records[1].RemovedDefinitionInputTokens != 0 || records[1].RemovedExecCommandDefinitionInputTokens != 0 {
@@ -393,7 +314,7 @@ func TestFinishRecordsDefinitionOverheadWithoutHPatchCall(t *testing.T) {
 		t.Fatalf("metric records = %d, want 1", len(records))
 	}
 	record := records[0]
-	if record.DefinitionRequests != 1 || record.DefinitionInputTokens == 0 || record.RemovedDefinitionInputTokens == 0 || record.RemovedExecCommandDefinitionInputTokens != 0 {
+	if record.DefinitionRequests != 1 || record.DefinitionInputTokens == 0 || record.RemovedDefinitionInputTokens == 0 || record.RemovedExecCommandDefinitionInputTokens == 0 {
 		t.Fatalf("request overhead = %+v", record)
 	}
 	if record.HPatchTokens != 0 || record.ApplyPatchTokens != 0 || record.IneffectiveHPatchTokens != 0 || record.FailedApplyPatchTokens != 0 {

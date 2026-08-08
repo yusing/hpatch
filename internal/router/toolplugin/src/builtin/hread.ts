@@ -14,7 +14,6 @@ import {
 
 // Source: hread.go:45:385 parseHReadSpec, readHashLinesForHost, and formatHashLineStream.
 const READ_BUFFER_BYTES = 32 * 1024;
-const BATCH_LIMIT_MESSAGE = "hread: batch output limit reached; retry remaining items in a narrower batch\n";
 
 class ResultTooLargeError extends Error {}
 function conciseErrorText(error: unknown): string {
@@ -27,16 +26,11 @@ function conciseErrorText(error: unknown): string {
 }
 
 type ReadSpec = {
-  input: string;
   path: string;
   startLine: number;
   endLine: number;
 };
 
-type ParsedReadSpec = {
-  spec: ReadSpec;
-  error: unknown | null;
-};
 
 function parseQuotedPath(input: string): {path: string; trailing: string} {
   let escaped = false;
@@ -85,7 +79,7 @@ function parseReadSpec(input: string): ReadSpec {
     throw new Error("hread path must not be empty");
   }
   if (trailing === "") {
-    return {input, path, startLine: 0, endLine: 0};
+    return {path, startLine: 0, endLine: 0};
   }
   const match = trailing.match(/^ ([1-9][0-9]*):([1-9][0-9]*)$/u);
   if (match === null) {
@@ -102,30 +96,9 @@ function parseReadSpec(input: string): ReadSpec {
   if (startLine > endLine) {
     throw new Error("hread line range start exceeds end");
   }
-  return {input, path, startLine, endLine};
+  return {path, startLine, endLine};
 }
 
-function parseReadSpecs(input: string): ParsedReadSpec[] {
-  const rawSpecs = stripOptionalFinalNewline(input).split("\n");
-  const specs = rawSpecs.map((raw) => {
-    const normalized = raw.endsWith("\r") ? raw.slice(0, -1) : raw;
-    if (normalized === "") {
-      throw new Error("hread batch contains an empty read specification");
-    }
-    try {
-      return {spec: parseReadSpec(normalized), error: null};
-    } catch (error) {
-      return {
-        spec: {input: normalized, path: "", startLine: 0, endLine: 0},
-        error,
-      };
-    }
-  });
-  if (specs.length === 1 && specs[0].error !== null) {
-    throw specs[0].error;
-  }
-  return specs;
-}
 
 type ComparedOutput = {
   current: string;
@@ -262,104 +235,38 @@ async function readHashLines(spec: ReadSpec, maxOutputBytes: number): Promise<Co
   }
 }
 
-async function executeRead(input: string, maxOutputBytes: number): Promise<ComparedOutput> {
-  const specs = parseReadSpecs(input);
-  if (specs.length === 1) {
-    return readHashLines(specs[0].spec, maxOutputBytes);
-  }
-
-  const dataLimit = Math.max(0, maxOutputBytes - byteLength(BATCH_LIMIT_MESSAGE));
-  let current = "";
-  let currentBytes = 0;
-  let stock = "";
-  const appendBounded = (text: string): boolean => {
-    const addedBytes = byteLength(text);
-    if (currentBytes + addedBytes > dataLimit) {
-      return false;
-    }
-    current += text;
-    stock += text;
-    currentBytes += addedBytes;
-    return true;
-  };
-  const appendLimitMessage = (): void => {
-    if (currentBytes + byteLength(BATCH_LIMIT_MESSAGE) <= maxOutputBytes) {
-      current += BATCH_LIMIT_MESSAGE;
-      stock += BATCH_LIMIT_MESSAGE;
-      currentBytes += byteLength(BATCH_LIMIT_MESSAGE);
-    }
-  };
-
-  for (const item of specs) {
-    if (!appendBounded(`==> ${item.spec.input} <==\n`)) {
-      appendLimitMessage();
-      break;
-    }
-    if (item.error !== null) {
-      if (!appendBounded(`hread: ${conciseErrorText(item.error)}\n`)) {
-        appendLimitMessage();
-        break;
-      }
-      continue;
-    }
-    try {
-      const result = await readHashLines(item.spec, dataLimit - currentBytes);
-      current += result.current;
-      stock += result.stock;
-      currentBytes += byteLength(result.current);
-    } catch (error) {
-      if (error instanceof ResultTooLargeError) {
-        appendLimitMessage();
-        break;
-      }
-      if (!appendBounded(`hread: ${conciseErrorText(error)}\n`)) {
-        appendLimitMessage();
-        break;
-      }
-    }
-  }
-  return {current, stock};
-}
 
 function hreadArguments(input: string): string[] {
-  const fields = input.split(" ");
-  if (
-    fields.length === 2 &&
-    fields.every((field) => shellQuoteArgument(field) === field) &&
-    /^[1-9][0-9]*:[1-9][0-9]*$/u.test(fields[1])
-  ) {
-    return fields;
+  const spec = parseReadSpec(stripOptionalFinalNewline(input));
+  if (spec.startLine === 0) {
+    return [spec.path];
   }
-  return [input];
+  return [spec.path, `${spec.startLine}:${spec.endLine}`];
 }
 
 
 function hreadInput(argv: string[]): string {
-  if (argv.length === 1) {
-    return argv[0];
+  if (argv.length === 1 && argv[0] !== "") {
+    return JSON.stringify(argv[0]);
   }
   if (
     argv.length === 2 &&
-    argv.every((argument) => shellQuoteArgument(argument) === argument) &&
+    argv[0] !== "" &&
     /^[1-9][0-9]*:[1-9][0-9]*$/u.test(argv[1])
   ) {
-    return argv.join(" ");
+    return `${JSON.stringify(argv[0])} ${argv[1]}`;
   }
-  throw new Error("hread expected one complete input or one bare path and range");
+  throw new Error("hread expected PATH or PATH START:END");
 }
 
 
 function hreadStockCommand(argv: string[]): string {
-  return parseReadSpecs(hreadInput(argv)).map((item) => {
-    if (item.error !== null) {
-      throw item.error;
-    }
-    const command = `cat ${shellQuoteArgument(item.spec.path)}`;
-    if (item.spec.startLine === 0) {
-      return command;
-    }
-    return `${command} | sed -n '${item.spec.startLine},${item.spec.endLine}p'`;
-  }).join("; ");
+  const spec = parseReadSpec(hreadInput(argv));
+  const command = `cat ${shellQuoteArgument(spec.path)}`;
+  if (spec.startLine === 0) {
+    return command;
+  }
+  return `${command} | sed -n '${spec.startLine},${spec.endLine}p'`;
 }
 
 export function createHReadTool(description: string, grammar: string): Tool<string[]> {
@@ -373,7 +280,7 @@ export function createHReadTool(description: string, grammar: string): Tool<stri
     },
     async execute(argv, context) {
       try {
-        const result = await executeRead(hreadInput(argv), context.outputBudgetBytes);
+        const result = await readHashLines(parseReadSpec(stripOptionalFinalNewline(hreadInput(argv))), context.outputBudgetBytes);
         return {
           stdout: result.current,
           stock: {stdout: result.stock, exitCode: 0},

@@ -107,9 +107,6 @@ func TestHPatch2ToolDescriptionCoversSafeCommandChoice(t *testing.T) {
 	for _, guidance := range []string{
 		"HPATCH/2",
 		"Do not call this tool in parallel with other tools.",
-		"Use `hgrep` as replacement of `rg` or `grep`",
-		"Use `hread` as replacement of `cat` or `sed`",
-		"current `LINE:HASH` references",
 		"Nonempty line and range `type` replacements preserve",
 		"`type` replaces",
 		"`type-` inserts before",
@@ -127,7 +124,6 @@ func TestHPatch2ToolDescriptionCoversSafeCommandChoice(t *testing.T) {
 		"add one struct field with one insertion",
 		"indentation-sensitive languages such as Python",
 		"Successful final-state `LINE:HASH` rows are current references",
-		"Use `hread` only when the successful report lacks the exact target",
 		"not targetable in the same call",
 		"Multiple insertions at the same boundary render in script order.",
 		"Changed Go files are parsed and formatted before success",
@@ -138,7 +134,7 @@ func TestHPatch2ToolDescriptionCoversSafeCommandChoice(t *testing.T) {
 			t.Errorf("tool description omits %q", guidance)
 		}
 	}
-	for _, excluded := range []string{"HPATCH/1", "\ntsel ", "\nrsel ", "\ncopy", "\ncut", "\npaste", "\ncommit", "<<TAG", "Usage:", "--root", "hpatch gain", "prefer one range `type`", "at most one syntax-sensitive multiline Go", "discard its saved references"} {
+	for _, excluded := range []string{"HPATCH/1", "\ntsel ", "\nrsel ", "\ncopy", "\ncut", "\npaste", "\ncommit", "<<TAG", "Usage:", "--root", "hpatch gain", "prefer one range `type`", "at most one syntax-sensitive multiline Go", "discard its saved references", "Use `hgrep` as replacement of `rg` or `grep`", "Use `hread` as replacement of `cat` or `sed`"} {
 		if strings.Contains(toolDescription, excluded) {
 			t.Errorf("tool description retains excluded material %q", excluded)
 		}

@@ -265,16 +265,6 @@ func TestExecuteRequestForwardsRewrittenRequestAndRecordsUsage(t *testing.T) {
 		t.Fatal("response without an hpatch call reached the translator")
 		return nil, nil
 	}))
-	shell := toolContribution{
-		PluginID: "test.shell",
-		Name:     "shell",
-		Specification: mustMarshalJSON(map[string]any{
-			"type": "custom", "name": "shell", "description": "shell base description",
-		}),
-		Executor: true,
-	}
-	proxy.registry.ordered = append(proxy.registry.ordered, shell)
-	proxy.registry.byName[shell.Name] = shell
 	store := newMetricsStore("")
 	var output bytes.Buffer
 	err := executeRequest(t.Context(), t.Context(), parsed, headers, "session", provider, &output, newDiagnostics(io.Discard), time.Now, proxy, store)
@@ -319,7 +309,7 @@ func TestExecuteRequestForwardsRewrittenRequestAndRecordsUsage(t *testing.T) {
 		t.Fatalf("rewritten tools lost shell: %#v", forwardedTools)
 	}
 	shellDescription := jsonString(forwardedTools[shellIndex], "description")
-	for _, required := range []string{"shell base description", "### `#!params`", "{ workdir?: string }"} {
+	for _, required := range []string{"Run one free-form script", "### `#!params`", "{ workdir?: string }"} {
 		if !strings.Contains(shellDescription, required) {
 			t.Fatalf("shell description is missing %q: %q", required, shellDescription)
 		}
@@ -339,7 +329,7 @@ func TestExecuteRequestForwardsRewrittenRequestAndRecordsUsage(t *testing.T) {
 	}
 }
 
-func TestRangedHReadAfterAppliedHPatchCarrierRemainsModelVisible(t *testing.T) {
+func TestShellHReadAfterAppliedHPatchCarrierRemainsModelVisible(t *testing.T) {
 	workspace := t.TempDir()
 	path := filepath.Join(workspace, "file.txt")
 	initial := "alpha\nbeta\ngamma\n"
@@ -348,7 +338,7 @@ func TestRangedHReadAfterAppliedHPatchCarrierRemainsModelVisible(t *testing.T) {
 	}
 
 	hpatchScript := "in file.txt\ntype 2:f44e \"B\"\n"
-	hreadInput := "file.txt 1:3"
+	shellInput := "hread file.txt 1:3"
 	provider := &serverFakeProvider{
 		results: []serverForwardResult{
 			{response: serverHTTPResponse(string(mustTestJSON(t, map[string]any{
@@ -362,7 +352,7 @@ func TestRangedHReadAfterAppliedHPatchCarrierRemainsModelVisible(t *testing.T) {
 				"status": "completed",
 				"output": []any{map[string]any{
 					"type": "custom_tool_call", "id": "item-R", "call_id": "call-R",
-					"name": "hread", "input": hreadInput, "status": "completed",
+					"name": "shell", "input": shellInput, "status": "completed",
 				}},
 			})))},
 			{response: serverHTTPResponse(`{"status":"completed","output":[]}`)},
@@ -371,7 +361,7 @@ func TestRangedHReadAfterAppliedHPatchCarrierRemainsModelVisible(t *testing.T) {
 	translator := newInProcessHPatchTranslator(t.TempDir())
 	proxy := newManagedHPatchProxy(t, translator)
 	headers := serverMetadataHeaders(t, "turn", map[string]json.RawMessage{workspace: nil})
-	const sessionID = "session-hpatch-hread"
+	const sessionID = "session-hpatch-shell-hread"
 
 	requestWith := func(items ...any) parsedResponsesRequest {
 		return serverRequest(t, func(request map[string]any) {
@@ -450,40 +440,40 @@ func TestRangedHReadAfterAppliedHPatchCarrierRemainsModelVisible(t *testing.T) {
 	secondItems := outputItems(secondVisible)
 	if len(secondItems) != 1 ||
 		jsonString(secondItems[0], "name") != "exec" ||
-		jsonString(secondItems[0], "input") != registeredWorkerInput(t, proxy, "hread", []string{"file.txt", "1:3"}) {
-		t.Fatalf("translated hread response = %s", secondVisible)
+		!strings.Contains(jsonString(secondItems[0], "input"), shellInput) {
+		t.Fatalf("translated shell response = %s", secondVisible)
 	}
-	hreadCarrier := secondItems[0]
+	shellCarrier := secondItems[0]
 
-	wrapper, ok := proxy.registry.wrapper("hread")
+	hreadWrapper, ok := proxy.registry.wrapper("hread")
 	if !ok {
 		t.Fatal("hread worker is unavailable")
 	}
 	t.Chdir(workspace)
-	var hreadStdout, hreadStderr bytes.Buffer
+	var shellStdout, shellStderr bytes.Buffer
 	handled, exitCode := RunToolPluginWorker(
 		t.Context(),
-		wrapper,
+		hreadWrapper,
 		[]string{"file.txt", "1:3"},
 		os.Stdin,
-		&hreadStdout,
-		&hreadStderr,
+		&shellStdout,
+		&shellStderr,
 	)
 	wantRows := "1:8ed3 alpha\n2:df7e B\n3:be9d gamma\n"
-	if !handled || exitCode != 0 || hreadStdout.String() != wantRows || hreadStderr.Len() != 0 {
+	if !handled || exitCode != 0 || shellStdout.String() != wantRows || shellStderr.Len() != 0 {
 		t.Fatalf(
 			"hread worker handled %t, exit %d, stdout %q, stderr %q",
 			handled,
 			exitCode,
-			hreadStdout.String(),
-			hreadStderr.String(),
+			shellStdout.String(),
+			shellStderr.String(),
 		)
 	}
 
-	hreadOutput := map[string]any{
-		"type": "custom_tool_call_output", "call_id": "call-R", "output": hreadStdout.String(),
+	shellOutput := map[string]any{
+		"type": "custom_tool_call_output", "call_id": "call-R", "output": shellStdout.String(),
 	}
-	runRequest(requestWith(hpatchCarrier, hpatchOutput, hreadCarrier, hreadOutput))
+	runRequest(requestWith(hpatchCarrier, hpatchOutput, shellCarrier, shellOutput))
 	if len(provider.forwarded) != 3 {
 		t.Fatalf("upstream requests = %d, want 3", len(provider.forwarded))
 	}
@@ -495,10 +485,10 @@ func TestRangedHReadAfterAppliedHPatchCarrierRemainsModelVisible(t *testing.T) {
 	if err := json.Unmarshal(thirdForwarded.fields["input"], &forwardedItems); err != nil {
 		t.Fatal(err)
 	}
-	sawHRead, sawRows := false, false
+	sawShell, sawRows := false, false
 	for _, item := range forwardedItems {
-		if jsonString(item, "name") == "hread" && jsonString(item, "input") == hreadInput {
-			sawHRead = true
+		if jsonString(item, "name") == "shell" && jsonString(item, "input") == shellInput {
+			sawShell = true
 		}
 		if jsonString(item, "type") == "custom_tool_call_output" &&
 			jsonString(item, "call_id") == "call-R" &&
@@ -506,8 +496,8 @@ func TestRangedHReadAfterAppliedHPatchCarrierRemainsModelVisible(t *testing.T) {
 			sawRows = true
 		}
 	}
-	if !sawHRead || !sawRows {
-		t.Fatalf("model-visible hread history = %s", thirdForwarded.fields["input"])
+	if !sawShell || !sawRows {
+		t.Fatalf("model-visible shell history = %s", thirdForwarded.fields["input"])
 	}
 }
 
@@ -516,7 +506,7 @@ func TestExecuteRequestRejectsDirectAdditionalApplyPatchWithoutExecCarrier(t *te
 	parsed := serverRequest(t, func(request map[string]any) {
 		additional := request["input"].([]any)[0].(map[string]any)
 		additional["tools"] = []any{
-			map[string]any{"type": "custom", "name": "shell"},
+			map[string]any{"type": "custom", "name": "unrelated"},
 			map[string]any{"type": "custom", "name": applyPatchToolName, "description": "Apply a patch."},
 		}
 	})

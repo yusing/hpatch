@@ -343,14 +343,16 @@ type hpatchResponseTransform struct {
 	historySessionID string
 	sessionActive    bool
 
-	originalTools             json.RawMessage
-	originalToolsPresent      bool
-	originalToolChoice        json.RawMessage
-	originalToolChoicePresent bool
-	pending                   map[string]hpatchPendingCall
-	local                     map[string]hpatchHistory
-	workspace                 routingWorkspace
-	carriers                  codeModeCarrierCatalog
+	originalTools               json.RawMessage
+	originalToolsPresent        bool
+	originalToolChoice          json.RawMessage
+	originalToolChoicePresent   bool
+	originalInstructions        json.RawMessage
+	originalInstructionsPresent bool
+	pending                     map[string]hpatchPendingCall
+	local                       map[string]hpatchHistory
+	workspace                   routingWorkspace
+	carriers                    codeModeCarrierCatalog
 
 	installedToolDefinition  string
 	installedToolBreakdown   []hpatch.HostToolDefinition
@@ -467,6 +469,8 @@ func (p *hpatchProxy) prepareRequest(ctx context.Context, request *parsedRespons
 	originalTools = bytes.Clone(originalTools)
 	originalToolChoice, originalToolChoicePresent := request.fields["tool_choice"]
 	originalToolChoice = bytes.Clone(originalToolChoice)
+	originalInstructions, originalInstructionsPresent := request.fields["instructions"]
+	originalInstructions = bytes.Clone(originalInstructions)
 	carriers, err := buildCodeModeCarrierCatalog(request.fields, p.registry)
 	if err != nil {
 		workspace.close()
@@ -486,8 +490,18 @@ func (p *hpatchProxy) prepareRequest(ctx context.Context, request *parsedRespons
 		workspace.close()
 		return nil, errors.New("responses request cannot satisfy the required hpatch rewrite")
 	}
-	installedToolBreakdown := make([]hpatch.HostToolDefinition, len(installedTools))
-	for index, contribution := range p.registry.ordered {
+	baseInstructions, err := p.registry.baseInstructions()
+	if err != nil {
+		workspace.close()
+		return nil, err
+	}
+	if err := appendHPatchBaseInstructions(request.fields, baseInstructions); err != nil {
+		workspace.close()
+		return nil, err
+	}
+	modelContributions := p.registry.modelContributions()
+	installedToolBreakdown := make([]hpatch.HostToolDefinition, len(modelContributions))
+	for index, contribution := range modelContributions {
 		installedToolBreakdown[index] = hpatch.HostToolDefinition{
 			PluginID:   contribution.PluginID,
 			ToolName:   contribution.Name,
@@ -511,14 +525,16 @@ func (p *hpatchProxy) prepareRequest(ctx context.Context, request *parsedRespons
 		historySessionID: historySessionID,
 		sessionActive:    true,
 
-		originalTools:             originalTools,
-		originalToolsPresent:      originalToolsPresent,
-		originalToolChoice:        originalToolChoice,
-		originalToolChoicePresent: originalToolChoicePresent,
-		pending:                   make(map[string]hpatchPendingCall),
-		local:                     make(map[string]hpatchHistory),
-		workspace:                 workspace,
-		carriers:                  carriers,
+		originalTools:               originalTools,
+		originalToolsPresent:        originalToolsPresent,
+		originalToolChoice:          originalToolChoice,
+		originalToolChoicePresent:   originalToolChoicePresent,
+		originalInstructions:        originalInstructions,
+		originalInstructionsPresent: originalInstructionsPresent,
+		pending:                     make(map[string]hpatchPendingCall),
+		local:                       make(map[string]hpatchHistory),
+		workspace:                   workspace,
+		carriers:                    carriers,
 
 		installedToolDefinition: string(mustMarshalJSON(installedTools)),
 		installedToolBreakdown:  installedToolBreakdown,
@@ -553,6 +569,34 @@ func installedToolNames(tools []map[string]json.RawMessage) map[string]struct{} 
 		names[jsonString(tool, "name")] = struct{}{}
 	}
 	return names
+}
+
+func appendHPatchBaseInstructions(fields map[string]json.RawMessage, addition string) error {
+	addition = strings.TrimSpace(addition)
+	if addition == "" {
+		return nil
+	}
+	raw, exists := fields["instructions"]
+	if !exists {
+		fields["instructions"] = mustMarshalJSON(addition)
+		return nil
+	}
+	var current string
+	if err := json.Unmarshal(raw, &current); err != nil {
+		return fmt.Errorf("decode Responses instructions: %w", err)
+	}
+	separator := ""
+	if current != "" {
+		switch {
+		case strings.HasSuffix(current, "\n\n"):
+		case strings.HasSuffix(current, "\n"):
+			separator = "\n"
+		default:
+			separator = "\n\n"
+		}
+	}
+	fields["instructions"] = mustMarshalJSON(current + separator + addition)
+	return nil
 }
 
 // replaceAdditionalToolsApplyPatch rewrites the Code Mode exec tool from an
@@ -593,7 +637,6 @@ func findAdditionalToolsApplyPatch(fields map[string]json.RawMessage, installedN
 	if json.Unmarshal(fields["input"], &items) != nil {
 		return nil, nil //nolint:nilerr // Unsupported input shapes are simply not Code Mode owners.
 	}
-	_, shellInstalled := installedNames["shell"]
 	var owner *additionalToolsApplyPatchOwner
 	claim := func(
 		item map[string]json.RawMessage,
@@ -633,15 +676,13 @@ func findAdditionalToolsApplyPatch(fields map[string]json.RawMessage, installedN
 		}
 		var execCommandParamsDescription string
 		var execCommandDefinitions []string
-		if shellInstalled {
-			var definitions []string
-			stripped, execCommandParamsDescription, definitions, found, err = stripCodeModeExecCommandContract(stripped)
-			if err != nil {
-				return err
-			}
-			if found {
-				execCommandDefinitions = append(execCommandDefinitions, definitions...)
-			}
+		var definitions []string
+		stripped, execCommandParamsDescription, definitions, found, err = stripCodeModeExecCommandContract(stripped)
+		if err != nil {
+			return err
+		}
+		if found {
+			execCommandDefinitions = append(execCommandDefinitions, definitions...)
 		}
 		owner = &additionalToolsApplyPatchOwner{
 			item:                         item,
@@ -716,16 +757,16 @@ func codeModeToolChoiceRestricted(fields map[string]json.RawMessage, codeToolNam
 
 func exposeStandaloneHPatch(fields map[string]json.RawMessage, topTools []map[string]json.RawMessage, owner *additionalToolsApplyPatchOwner, installedTools []map[string]json.RawMessage) error {
 	owner.tools[owner.toolIndex]["description"] = mustMarshalJSON(owner.strippedDescription)
+	shellIndex := slices.IndexFunc(installedTools, func(tool map[string]json.RawMessage) bool {
+		return jsonString(tool, "name") == "shell"
+	})
+	if shellIndex < 0 {
+		return errors.New("built-in shell tool is unavailable")
+	}
 	if owner.execCommandParamsDescription != "" {
-		for _, tool := range installedTools {
-			if jsonString(tool, "name") != "shell" {
-				continue
-			}
-			description := strings.TrimRight(jsonString(tool, "description"), "\r\n")
-			description += "\n\n" + owner.execCommandParamsDescription
-			tool["description"] = mustMarshalJSON(description)
-			break
-		}
+		description := strings.TrimRight(jsonString(installedTools[shellIndex], "description"), "\r\n")
+		description += "\n\n" + owner.execCommandParamsDescription
+		installedTools[shellIndex]["description"] = mustMarshalJSON(description)
 	}
 	if owner.nested {
 		encodedNestedTools, err := json.Marshal(owner.tools)
@@ -762,8 +803,8 @@ func (t *hpatchResponseTransform) routesTool(name string) bool {
 	if t == nil || t.proxy == nil {
 		return false
 	}
-	_, ok := t.proxy.registry.contribution(name)
-	return ok
+	contribution, ok := t.proxy.registry.contribution(name)
+	return ok && contribution.ModelVisible
 }
 
 func customGrammarTool(name, description, grammar string) map[string]json.RawMessage {
@@ -1944,6 +1985,13 @@ func (t *hpatchResponseTransform) restoreResponseContract(object map[string]json
 			delete(object, "tool_choice")
 		} else {
 			object["tool_choice"] = bytes.Clone(t.originalToolChoice)
+		}
+	}
+	if _, ok := object["instructions"]; ok {
+		if !t.originalInstructionsPresent {
+			delete(object, "instructions")
+		} else {
+			object["instructions"] = bytes.Clone(t.originalInstructions)
 		}
 	}
 }

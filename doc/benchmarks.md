@@ -116,12 +116,12 @@ The controlled differences are:
 | Router mode | `passthrough` | `hpatch` |
 | Base-instruction tool guidance | Stock `apply_patch` paragraph | Repository-owned edit, read, search, and shell guidance |
 | Native base-prompt preferences | Stock `rg` and `exec_command` guidance | The two displaced lines are removed; routed `hgrep` and `shell` guidance owns those operations |
-| Model tool surface | Stock Code Mode `apply_patch` and `exec_command` | Standalone `hpatch`, `hread`, `hgrep`, and configured `shell`, translated back to Code Mode operations |
+ | Model tool surface | Stock Code Mode `apply_patch` and `exec_command` | Standalone `hpatch` and built-in `shell`; private `hread` and `hgrep` commands run through shell |
 
 The control router forwards requests without tool rewriting. The treatment router removes the
-Code Mode surfaces displaced by the installed standalone tools, exposes `hpatch`, `hread`,
-`hgrep`, and the configured `shell` plugin, and translates successful calls into the Code Mode
-carriers expected by Codex.
+Code Mode surfaces displaced by the installed standalone tools, exposes `hpatch` and the built-in
+`shell`, appends private hread/hgrep command guidance, and translates successful calls into the
+Code Mode carriers expected by Codex.
 
 ## Exact overridden tool instructions
 

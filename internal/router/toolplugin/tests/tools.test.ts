@@ -48,54 +48,47 @@ afterEach(async () => {
 });
 
 describe("hread built-in plugin", () => {
-  test("describes planned batched and ranged reads", () => {
+  test("describes single-file reads batched through shell", () => {
     const description = plugin.tools[0].specification.description.replace(/\s+/g, " ");
     for (const fragment of [
-      "batch already-known paths or ranges in one call",
-      "use explicit ranges after the relevant locations are known",
-      "A bare path intentionally reads the complete file",
+      "Run one file per command as `hread PATH [START:END]`",
+      "batch related reads as separate commands in one shell script",
+      "A bare path reads the complete file",
     ]) {
       expect(description).toContain(fragment);
     }
   });
 
-  test("declares a bounded regex grammar", () => {
+  test("declares a single-file regex grammar", () => {
     const format = plugin.tools[0].specification.format;
     expect(format?.syntax).toBe("regex");
     if (format === undefined) {
       throw new Error("hread grammar format is missing");
     }
-    const sixSpecs = Array.from({length: 6}, (_, index) => `file${index}.txt`).join("\r\n");
     for (const input of [
       "plain.txt",
       "plain.txt 2:9",
       "\"second file.txt\" 2:3",
       `"quoted\\"file.txt"`,
-      sixSpecs,
     ]) {
       expect(rustRegexMatches(format.definition, input)).toBe(true);
     }
-    const sevenSpecs = Array.from({length: 7}, (_, index) => `file${index}.txt`).join("\n");
     for (const input of [
       "",
       "\nplain.txt",
       "plain.txt\n",
-      `${sixSpecs}\r\n`,
-      "plain.txt\n\n",
-      "plain.txt\r",
-      "plain.txt\n\nsecond.txt",
+      "plain.txt\nsecond.txt",
       "plain file.txt",
       "plain.txt 0:2",
       "plain.txt 2:0",
       "plain.txt 2:3 extra",
       "\"unterminated",
-      sevenSpecs,
     ]) {
       expect(rustRegexMatches(format.definition, input)).toBe(false);
     }
   });
 
-  test("splits one bare path and range into shell-safe arguments", async () => {
+  test("parses one path and optional range into shell arguments", async () => {
     const tool = createHReadTool("description", "start: TEST");
 
     expect(await tool.parse("plugins/shell.mjs 164:300")).toEqual([
@@ -103,11 +96,12 @@ describe("hread built-in plugin", () => {
       "164:300",
     ]);
     expect(await tool.parse("\"path with spaces.txt\" 2:9")).toEqual([
-      "\"path with spaces.txt\" 2:9",
+      "path with spaces.txt",
+      "2:9",
     ]);
-    expect(await tool.parse("first.txt\nsecond.txt 2:9")).toEqual([
-      "first.txt\nsecond.txt 2:9",
-    ]);
+    expect(() => tool.parse("first.txt\nsecond.txt 2:9")).toThrow(
+      "invalid bare hread path",
+    );
   });
 
   test("supplies cat and cat-plus-sed stock exec commands", async () => {
@@ -118,19 +112,19 @@ describe("hread built-in plugin", () => {
 
     expect((await translate("plain.txt")).stockCommand).toBe("cat plain.txt");
     expect((await translate("plain.txt 2:9")).stockCommand).toBe("cat plain.txt | sed -n '2,9p'");
-    expect((await translate("\"path with spaces.txt\" 2:9\n\"quote'file.txt\"")).stockCommand).toBe(
-      "cat 'path with spaces.txt' | sed -n '2,9p'; cat 'quote'\"'\"'file.txt'",
+    expect((await translate("\"path with spaces.txt\" 2:9")).stockCommand).toBe(
+      "cat 'path with spaces.txt' | sed -n '2,9p'",
     );
   });
 
-  test("reads whole files, ranges, and ordered batches", async () => {
+  test("reads one whole file or range", async () => {
     const directory = await temporaryDirectory("hread-plugin-");
     process.chdir(directory);
     await writeFile("plain.txt", "alpha\r\nbeta\rgamma\n", "utf8");
     await writeFile("second file.txt", "one\ntwo\nthree", "utf8");
 
     const tool = createHReadTool("description", "start: TEST");
-    const whole = await tool.execute(["plain.txt\n"], executionContext);
+    const whole = await tool.execute(["plain.txt"], executionContext);
     expect(whole).toEqual({
       stdout: [
         formatHashLine(1, "alpha"),
@@ -162,23 +156,6 @@ describe("hread built-in plugin", () => {
       stderr: "hread: ENOENT: no such file or directory\n",
       exitCode: 1,
     });
-
-    const batch = await tool.execute([
-      "plain.txt 2:9\n\"second file.txt\" 2:3\nmissing.txt\r\n",
-    ], executionContext);
-    expect(batch.exitCode).toBe(0);
-    expect(batch.stdout).toContain("==> plain.txt 2:9 <==\n");
-    expect(batch.stdout).toContain(formatHashLine(2, "beta"));
-    expect(batch.stdout).toContain("==> \"second file.txt\" 2:3 <==\n");
-    expect(batch.stdout).toContain(formatHashLine(3, "three"));
-    expect(batch.stdout).toContain(
-      "==> missing.txt <==\nhread: ENOENT: no such file or directory\n",
-    );
-
-    const sevenSpecs = Array.from({length: 7}, (_, index) => `missing${index}.txt`).join("\n");
-    const framedSeven = await tool.execute([`${sevenSpecs}\n`], executionContext);
-    expect(framedSeven.exitCode).toBe(0);
-    expect(framedSeven.stdout).toContain("==> missing6.txt <==\n");
   });
 
   test("rejects invalid ranges, non-regular files, and invalid UTF-8", async () => {
@@ -193,14 +170,14 @@ describe("hread built-in plugin", () => {
     }
 
     const tool = createHReadTool("description", "start: TEST");
-    for (const [input, diagnostic] of [
-      ["short.txt 2:3", "outside file with 1 lines"],
-      ["short.txt 3:2", "range start exceeds end"],
-      ["binary.txt", "not UTF-8"],
-      ["folder", "not a regular file"],
-      ...(process.platform === "win32" ? [] : [["pipe", "not a regular file"]]),
-    ]) {
-      const result = await tool.execute([input], executionContext);
+    for (const [argv, diagnostic] of [
+      [["short.txt", "2:3"], "outside file with 1 lines"],
+      [["short.txt", "3:2"], "range start exceeds end"],
+      [["binary.txt"], "not UTF-8"],
+      [["folder"], "not a regular file"],
+      ...(process.platform === "win32" ? [] : [[["pipe"], "not a regular file"]]),
+    ] as const) {
+      const result = await tool.execute([...argv], executionContext);
       expect(result.exitCode).toBe(1);
       expect(result.stderr).toContain(diagnostic);
     }
@@ -208,13 +185,12 @@ describe("hread built-in plugin", () => {
 });
 
 describe("hgrep built-in plugin", () => {
-  test("describes combined searches and repeated patterns", () => {
+  test("describes shell searches and repeated patterns", () => {
     const description = plugin.tools[1].specification.description.replace(/\s+/g, " ");
     for (const fragment of [
-      "combine known patterns and paths in one call",
-      "input is one ripgrep argument line",
+      "Use `hgrep` through `shell`",
+      "ordinary shell quoting, redirection, and pipelines",
       "use repeated `-e` for multiple patterns",
-      "hgrep -n -e 'RangeStream' -e 'type RaftKV' path...",
     ]) {
       expect(description).toContain(fragment);
     }

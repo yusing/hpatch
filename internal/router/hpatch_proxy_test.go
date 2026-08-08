@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -114,8 +113,11 @@ func testFunctionsNamespaceTools(t *testing.T, fields map[string]json.RawMessage
 func testInstalledTools() []map[string]json.RawMessage {
 	return []map[string]json.RawMessage{
 		customGrammarTool(hpatchToolName, testHPatchToolDescription, hpatch.ToolGrammar()),
-		customGrammarTool("hread", "fixture hread description", "start: TEST"),
-		customGrammarTool("hgrep", "fixture hgrep description", "start: TEST"),
+		{
+			"type":        mustMarshalJSON("custom"),
+			"name":        mustMarshalJSON("shell"),
+			"description": mustMarshalJSON("shell base description"),
+		},
 	}
 }
 
@@ -313,24 +315,15 @@ func TestBuildCodeModeCarrierCatalogRejectsDuplicateNames(t *testing.T) {
 func TestHPatchPrepareRequestRewritesNamespacedExecWithShell(t *testing.T) {
 	workspace := t.TempDir()
 	request, err := parseResponsesRequest(mustTestJSON(t, map[string]any{
-		"input":       []any{testCodeModeAdditionalTools(testCodeModeDescription)},
-		"tools":       []any{map[string]any{"type": "function", "name": "lookup", "future": true}},
-		"tool_choice": "auto",
+		"input":        []any{testCodeModeAdditionalTools(testCodeModeDescription)},
+		"tools":        []any{map[string]any{"type": "function", "name": "lookup", "future": true}},
+		"tool_choice":  "auto",
+		"instructions": "existing base\n",
 	}))
 	if err != nil {
 		t.Fatal(err)
 	}
 	proxy := newManagedHPatchProxy(t, testTranslator(t, new(int)))
-	shell := toolContribution{
-		PluginID: "test.shell",
-		Name:     "shell",
-		Specification: mustMarshalJSON(map[string]any{
-			"type": "custom", "name": "shell", "description": "shell base description",
-		}),
-		Executor: true,
-	}
-	proxy.registry.ordered = append(proxy.registry.ordered, shell)
-	proxy.registry.byName[shell.Name] = shell
 
 	metadata := codexTurnMetadata{RequestKind: "turn", Workspaces: map[string]json.RawMessage{workspace: nil}}
 	transform, err := proxy.prepareRequest(t.Context(), &request, "session-functions-exec", metadata, true)
@@ -371,9 +364,46 @@ func TestHPatchPrepareRequestRewritesNamespacedExecWithShell(t *testing.T) {
 	if len(transform.execCommandDefinitions) != 2 {
 		t.Fatalf("removed exec_command definitions = %d, want 2", len(transform.execCommandDefinitions))
 	}
+	var instructions string
+	if err := json.Unmarshal(request.fields["instructions"], &instructions); err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range []string{"existing base\n\n", "Use `hread` through `shell`", "Use `hgrep` through `shell`"} {
+		if !strings.Contains(instructions, required) {
+			t.Fatalf("rewritten instructions lack %q: %q", required, instructions)
+		}
+	}
 }
 
-func TestHPatchPrepareRequestExposesOnlyStandaloneHPatch(t *testing.T) {
+func TestHPatchResponseRestoresOriginalInstructions(t *testing.T) {
+	tests := []struct {
+		name            string
+		original        json.RawMessage
+		originalPresent bool
+	}{
+		{name: "present", original: json.RawMessage(`"existing base"`), originalPresent: true},
+		{name: "absent"},
+		{name: "null", original: json.RawMessage(`null`), originalPresent: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			transform := &hpatchResponseTransform{
+				originalInstructions:        bytes.Clone(test.original),
+				originalInstructionsPresent: test.originalPresent,
+			}
+			response := map[string]json.RawMessage{
+				"instructions": json.RawMessage(`"rewritten base"`),
+			}
+			transform.restoreResponseContract(response)
+			got, present := response["instructions"]
+			if present != test.originalPresent || !bytes.Equal(got, test.original) {
+				t.Fatalf("restored instructions = %s, present %t; want %s, present %t", got, present, test.original, test.originalPresent)
+			}
+		})
+	}
+}
+
+func TestHPatchPrepareRequestExposesOnlyHPatchAndShell(t *testing.T) {
 	transform, _, request, _ := newHPatchTestTransform(t, testTranslator(t, new(int)))
 	if !transform.originalToolsPresent || len(transform.originalTools) == 0 {
 		t.Fatal("original top-level tools were not retained")
@@ -382,7 +412,7 @@ func TestHPatchPrepareRequestExposesOnlyStandaloneHPatch(t *testing.T) {
 	if err := json.Unmarshal(request.fields["tools"], &topTools); err != nil {
 		t.Fatal(err)
 	}
-	if len(topTools) != 4 || jsonString(topTools[0], "name") != "lookup" || jsonString(topTools[1], "name") != hpatchToolName || jsonString(topTools[2], "name") != "hread" || jsonString(topTools[3], "name") != "hgrep" {
+	if len(topTools) != 3 || jsonString(topTools[0], "name") != "lookup" || jsonString(topTools[1], "name") != hpatchToolName || jsonString(topTools[2], "name") != "shell" {
 		t.Fatalf("top-level tools = %#v", topTools)
 	}
 	if jsonString(topTools[1], "type") != "custom" {
@@ -403,23 +433,17 @@ func TestHPatchPrepareRequestExposesOnlyStandaloneHPatch(t *testing.T) {
 	if exposed != testHPatchToolDescription {
 		t.Fatalf("standalone hpatch description = %q, want native tool help only", exposed)
 	}
-	if description := jsonString(topTools[2], "description"); !strings.Contains(description, "Use `hread` as replacement") {
-		t.Fatalf("standalone hread description = %q", jsonString(topTools[2], "description"))
+	if description := jsonString(topTools[2], "description"); !strings.Contains(description, "Run one free-form script") {
+		t.Fatalf("standalone shell description = %q", description)
 	}
-	if err := json.Unmarshal(topTools[2]["format"], &format); err != nil {
+	var instructions string
+	if err := json.Unmarshal(request.fields["instructions"], &instructions); err != nil {
 		t.Fatal(err)
 	}
-	if format.Type != "grammar" || format.Syntax != "regex" || !strings.HasPrefix(format.Definition, "\\A") || !strings.Contains(format.Definition, "{0,5}") || !strings.HasSuffix(format.Definition, "\\z") {
-		t.Fatalf("standalone hread format = %#v", topTools[2])
-	}
-	if description := jsonString(topTools[3], "description"); !strings.Contains(description, "Use `hgrep` as replacement") {
-		t.Fatalf("standalone hgrep description = %q", jsonString(topTools[3], "description"))
-	}
-	if err := json.Unmarshal(topTools[3]["format"], &format); err != nil {
-		t.Fatal(err)
-	}
-	if format.Type != "grammar" || format.Syntax != "regex" || !strings.HasPrefix(format.Definition, "\\A") || !strings.HasSuffix(format.Definition, "\\z") {
-		t.Fatalf("standalone hgrep format = %#v", topTools[3])
+	for _, required := range []string{"Use `hread` through `shell`", "Use `hgrep` through `shell`"} {
+		if !strings.Contains(instructions, required) {
+			t.Fatalf("base instructions lack %q: %q", required, instructions)
+		}
 	}
 	for _, correctionGuidance := range []string{
 		"Repairing a rejected script:",
@@ -460,10 +484,10 @@ func TestHPatchPrepareRequestExposesOnlyStandaloneHPatch(t *testing.T) {
 	description := jsonString(functionsTools[execIndex], "description")
 	if strings.Contains(description, codeModeApplyPatchHeading) ||
 		strings.Contains(description, "tools.apply_patch") ||
-		!strings.Contains(description, codeModeExecCommandHeading) ||
-		!strings.Contains(description, "tools.exec_command") ||
+		strings.Contains(description, codeModeExecCommandHeading) ||
+		strings.Contains(description, "tools.exec_command") ||
 		!strings.Contains(description, "### `create_goal`") {
-		t.Fatalf("native apply_patch was not hidden or native exec_command was not preserved: %q", description)
+		t.Fatalf("native apply_patch or exec_command was not hidden: %q", description)
 	}
 	if !bytes.Contains(items[0]["future"], []byte(`"kept":true`)) || !bytes.Contains(request.fields["future_request"], []byte(`"kept":true`)) {
 		t.Fatalf("future fields were not preserved: %#v", request.fields)
@@ -473,16 +497,27 @@ func TestHPatchPrepareRequestExposesOnlyStandaloneHPatch(t *testing.T) {
 	}
 }
 
+func TestHPatchRoutesOnlyModelVisibleRegistryTools(t *testing.T) {
+	transform, _, _, _ := newHPatchTestTransform(t, testTranslator(t, new(int)))
+	for name, want := range map[string]bool{
+		hpatchToolName: true,
+		"shell":        true,
+		"hread":        false,
+		"hgrep":        false,
+		"lookup":       false,
+	} {
+		if got := transform.routesTool(name); got != want {
+			t.Errorf("routesTool(%q) = %t, want %t", name, got, want)
+		}
+	}
+}
+
 func TestHPatchReplacementReplacesNamespacedExecCommandWithShellParams(t *testing.T) {
 	fields := map[string]json.RawMessage{
 		"input": mustTestJSON(t, []any{testCodeModeAdditionalTools(testCLICodeModeDescription)}),
 		"tools": mustTestJSON(t, []any{}),
 	}
-	installed := append(testInstalledTools(), map[string]json.RawMessage{
-		"type":        mustMarshalJSON("custom"),
-		"name":        mustMarshalJSON("shell"),
-		"description": mustMarshalJSON("shell base description"),
-	})
+	installed := testInstalledTools()
 	applyPatchDefinition, execCommandDefinitions, owner, replaced, err := replaceAdditionalToolsApplyPatch(fields, installed)
 	if err != nil || !replaced || owner != "exec" {
 		t.Fatalf("owner = %q, replaced %v, error %v", owner, replaced, err)
@@ -543,11 +578,7 @@ func TestHPatchReplacementReplacesFlatExecCommandWithShellParams(t *testing.T) {
 		"input": mustTestJSON(t, []any{testFlatCodeModeAdditionalTools(testCodeModeDescription)}),
 		"tools": mustTestJSON(t, []any{}),
 	}
-	installed := append(testInstalledTools(), map[string]json.RawMessage{
-		"type":        mustMarshalJSON("custom"),
-		"name":        mustMarshalJSON("shell"),
-		"description": mustMarshalJSON("shell base description"),
-	})
+	installed := testInstalledTools()
 	applyPatchDefinition, execCommandDefinitions, owner, replaced, err := replaceAdditionalToolsApplyPatch(fields, installed)
 	if err != nil || !replaced || owner != "exec" {
 		t.Fatalf("owner = %q, replaced %v, error %v", owner, replaced, err)
@@ -608,11 +639,7 @@ func TestHPatchReplacementKeepsBaseShellDescriptionWithoutExecCommandContract(t 
 		"input": mustTestJSON(t, []any{testCodeModeAdditionalTools(description)}),
 		"tools": mustTestJSON(t, []any{}),
 	}
-	installed := append(testInstalledTools(), map[string]json.RawMessage{
-		"type":        mustMarshalJSON("custom"),
-		"name":        mustMarshalJSON("shell"),
-		"description": mustMarshalJSON("shell base description"),
-	})
+	installed := testInstalledTools()
 
 	_, execCommandDefinitions, _, replaced, err := replaceAdditionalToolsApplyPatch(fields, installed)
 	if err != nil || !replaced || len(execCommandDefinitions) != 0 {
@@ -718,7 +745,7 @@ func TestHPatchDirectAdditionalApplyPatchIsRejectedWithoutExecCarrier(t *testing
 				"type": "additional_tools",
 				"role": "developer",
 				"tools": []any{
-					map[string]any{"type": "custom", "name": "shell", "future": true},
+					map[string]any{"type": "custom", "name": "unrelated", "future": true},
 					map[string]any{"type": "custom", "name": applyPatchToolName, "description": "Apply a patch.", "future": map[string]any{"kept": true}},
 				},
 				"future": map[string]any{"kept": true},
@@ -815,7 +842,7 @@ func TestHPatchAdditionalToolsReplacementRejectsDuplicateAndConflictingOwners(t 
 	}
 }
 
-func TestHPatchAdditionalToolsReplacementPreservesExecCommandWithoutShell(t *testing.T) {
+func TestHPatchAdditionalToolsReplacementAlwaysRemovesExecCommand(t *testing.T) {
 	fields := map[string]json.RawMessage{
 		"input": mustTestJSON(t, []any{testCodeModeAdditionalTools(testCodeModeDescription)}),
 		"tools": mustTestJSON(t, []any{}),
@@ -825,8 +852,8 @@ func TestHPatchAdditionalToolsReplacementPreservesExecCommandWithoutShell(t *tes
 	if err != nil || !replaced || owner != "exec" {
 		t.Fatalf("owner = %q, replaced %v, error %v", owner, replaced, err)
 	}
-	if len(removedExecCommandDefinitions) != 0 {
-		t.Fatalf("removed exec_command definitions without shell = %q", removedExecCommandDefinitions)
+	if len(removedExecCommandDefinitions) != 2 {
+		t.Fatalf("removed exec_command definitions = %q", removedExecCommandDefinitions)
 	}
 
 	functionsTools, _ := testFunctionsNamespaceTools(t, fields)
@@ -838,8 +865,8 @@ func TestHPatchAdditionalToolsReplacementPreservesExecCommandWithoutShell(t *tes
 	}
 	description := jsonString(functionsTools[execIndex], "description")
 	if strings.Contains(description, codeModeApplyPatchHeading) ||
-		!strings.Contains(description, codeModeExecCommandHeading) ||
-		!strings.Contains(description, "tools.exec_command") ||
+		strings.Contains(description, codeModeExecCommandHeading) ||
+		strings.Contains(description, "tools.exec_command") ||
 		!strings.Contains(description, "### `create_goal`") {
 		t.Fatalf("rewritten carrier description = %q", description)
 	}
@@ -1006,19 +1033,7 @@ func TestHPatchJSONWrapsPatchAndImmediateReportInCodeModeExec(t *testing.T) {
 }
 
 func TestShellJSONTranslatesBashCasesEndToEnd(t *testing.T) {
-	dataDirectory := t.TempDir()
-	pluginDirectory := filepath.Join(dataDirectory, "plugins")
-	if err := os.Mkdir(pluginDirectory, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	shellSource, err := os.ReadFile(filepath.Join("..", "..", "plugins", "shell.mjs"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(pluginDirectory, "shell.mjs"), shellSource, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	proxy := newManagedHPatchProxyWithDataDirectory(t, testTranslator(t, new(int)), dataDirectory)
+	proxy := newManagedHPatchProxy(t, testTranslator(t, new(int)))
 	transform, _, _, _ := newHPatchTestTransformWithProxy(t, proxy)
 
 	tests := []struct {
@@ -1091,153 +1106,6 @@ func TestShellJSONTranslatesBashCasesEndToEnd(t *testing.T) {
 				t.Fatalf("translated exec command = %q, want %q", arguments.Command, test.want)
 			}
 		})
-	}
-}
-
-func TestHReadJSONReturnsExecCommandAndRestoresReplay(t *testing.T) {
-	transform, proxy, _, _ := newHPatchTestTransform(t, testTranslator(t, new(int)))
-	readItem := map[string]any{
-		"type": "custom_tool_call", "id": "item-R", "call_id": "call-R",
-		"name": "hread", "input": `lines.txt 2:3`, "status": "completed",
-	}
-	missingItem := map[string]any{
-		"type": "custom_tool_call", "id": "item-M", "call_id": "call-M",
-		"name": "hread", "input": `"missing file.txt"`, "status": "completed",
-	}
-	visible, err := transform.TransformJSON(mustTestJSON(t, map[string]any{
-		"status": "completed",
-		"output": []any{readItem, missingItem},
-	}))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var response struct {
-		Output []map[string]json.RawMessage `json:"output"`
-	}
-	if err := json.Unmarshal(visible, &response); err != nil {
-		t.Fatal(err)
-	}
-	if len(response.Output) != 2 ||
-		jsonString(response.Output[0], "name") != "exec" ||
-		jsonString(response.Output[0], "input") != registeredWorkerInput(t, proxy, "hread", []string{"lines.txt", "2:3"}) {
-		t.Fatalf("translated hread response = %s", visible)
-	}
-	if missing := jsonString(response.Output[1], "input"); missing != registeredWorkerInput(t, proxy, "hread", []string{`"missing file.txt"`}) {
-		t.Fatalf("translated missing-file response = %q", missing)
-	}
-	carrierInput := jsonString(response.Output[0], "input")
-	encodedArguments := strings.TrimPrefix(carrierInput, "const result = await tools.exec_command(")
-	encodedArguments = strings.TrimSuffix(encodedArguments, ");\ntext(result.output);")
-	var arguments struct {
-		Command     string          `json:"cmd"`
-		Environment json.RawMessage `json:"env"`
-		Workdir     json.RawMessage `json:"workdir"`
-		Shell       json.RawMessage `json:"shell"`
-		Login       *bool           `json:"login"`
-	}
-	if err := json.Unmarshal([]byte(encodedArguments), &arguments); err != nil {
-		t.Fatalf("decode translated exec arguments: %v\n%s", err, carrierInput)
-	}
-	wantCommand := "hread lines.txt 2:3"
-	if arguments.Command != wantCommand {
-		t.Fatalf("translated exec command = %q, want %q", arguments.Command, wantCommand)
-	}
-	if len(arguments.Shell) != 0 || arguments.Login == nil || *arguments.Login {
-		t.Fatalf("translated exec shell = %s, login = %v", arguments.Shell, arguments.Login)
-	}
-	if len(arguments.Environment) != 0 || len(arguments.Workdir) != 0 {
-		t.Fatalf("translated hread overrides Codex environment or working directory: %s", carrierInput)
-	}
-	quotedCarrierInput := jsonString(response.Output[1], "input")
-	quotedEncodedArguments := strings.TrimPrefix(quotedCarrierInput, "const result = await tools.exec_command(")
-	quotedEncodedArguments = strings.TrimSuffix(quotedEncodedArguments, ");\nnotify(result.output);")
-	var quotedArguments struct {
-		Command string `json:"cmd"`
-	}
-	if err := json.Unmarshal([]byte(quotedEncodedArguments), &quotedArguments); err != nil {
-		t.Fatalf("decode quoted hread exec arguments: %v\n%s", err, quotedCarrierInput)
-	}
-	if want := `hread '"missing file.txt"'`; quotedArguments.Command != want {
-		t.Fatalf("quoted hread exec command = %q, want %q", quotedArguments.Command, want)
-	}
-
-	replay, err := parseResponsesRequest(mustTestJSON(t, map[string]any{
-		"input": []any{response.Output[0]},
-	}))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := proxy.restoreInputPrefix(&replay, transform.historySessionID); err != nil {
-		t.Fatal(err)
-	}
-	var replayed []map[string]json.RawMessage
-	if err := json.Unmarshal(replay.fields["input"], &replayed); err != nil {
-		t.Fatal(err)
-	}
-	if len(replayed) != 1 || jsonString(replayed[0], "name") != "hread" || jsonString(replayed[0], "input") != `lines.txt 2:3` {
-		t.Fatalf("replayed hread = %s", replay.fields["input"])
-	}
-}
-
-func TestHGrepJSONReturnsExecCommandAndRestoresReplay(t *testing.T) {
-	transform, proxy, _, _ := newHPatchTestTransform(t, testTranslator(t, new(int)))
-	searchItem := map[string]any{
-		"type": "custom_tool_call", "id": "item-G", "call_id": "call-G",
-		"name": "hgrep", "input": "-F needle internal/router\n", "status": "completed",
-	}
-	visible, err := transform.TransformJSON(mustTestJSON(t, map[string]any{
-		"status": "completed",
-		"output": []any{searchItem},
-	}))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var response struct {
-		Output []map[string]json.RawMessage `json:"output"`
-	}
-	if err := json.Unmarshal(visible, &response); err != nil {
-		t.Fatal(err)
-	}
-	if len(response.Output) != 1 || jsonString(response.Output[0], "name") != "exec" ||
-		jsonString(response.Output[0], "input") != registeredWorkerInput(t, proxy, "hgrep", []string{"-F", "needle", "internal/router"}) {
-		t.Fatalf("translated hgrep response = %s", visible)
-	}
-
-	replay, err := parseResponsesRequest(mustTestJSON(t, map[string]any{
-		"input": []any{response.Output[0]},
-	}))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := proxy.restoreInputPrefix(&replay, transform.historySessionID); err != nil {
-		t.Fatal(err)
-	}
-	var replayed []map[string]json.RawMessage
-	if err := json.Unmarshal(replay.fields["input"], &replayed); err != nil {
-		t.Fatal(err)
-	}
-	if len(replayed) != 1 || jsonString(replayed[0], "name") != "hgrep" ||
-		jsonString(replayed[0], "input") != "-F needle internal/router\n" {
-		t.Fatalf("replayed hgrep = %s", replay.fields["input"])
-	}
-}
-
-func TestHGrepExecInputUsesStableBasename(t *testing.T) {
-	carrierInput, err := workerExecInputWithParams("hgrep", []string{"-n", "-A", "80", "-B", "20"}, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	encodedArguments := strings.TrimPrefix(carrierInput, "const result = await tools.exec_command(")
-	encodedArguments = strings.TrimSuffix(encodedArguments, ");\ntext(result.output);")
-
-	var arguments struct {
-		Command string `json:"cmd"`
-	}
-	if err := json.Unmarshal([]byte(encodedArguments), &arguments); err != nil {
-		t.Fatalf("decode translated exec arguments: %v\n%s", err, carrierInput)
-	}
-	if arguments.Command != "hgrep -n -A 80 -B 20" {
-		t.Fatalf("translated exec command = %q", arguments.Command)
 	}
 }
 
@@ -1367,85 +1235,6 @@ func TestShellExecCarriersForwardNativeResultWithoutPolling(t *testing.T) {
 	}
 	if !strings.HasSuffix(plainInput, "text(result.output);") {
 		t.Fatalf("non-shell carrier output projection changed: %s", plainInput)
-	}
-}
-
-func TestHReadExecInputLeavesBarePathAndRangeUnquoted(t *testing.T) {
-	carrierInput, err := workerExecInputWithParams("hread", []string{"plugins/shell.mjs", "164:300"}, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	encodedArguments := strings.TrimPrefix(carrierInput, "const result = await tools.exec_command(")
-	encodedArguments = strings.TrimSuffix(encodedArguments, ");\nnotify(result.output);")
-	var arguments struct {
-		Command string `json:"cmd"`
-	}
-	if err := json.Unmarshal([]byte(encodedArguments), &arguments); err != nil {
-		t.Fatalf("decode translated exec arguments: %v\n%s", err, carrierInput)
-	}
-	if want := "hread plugins/shell.mjs 164:300"; arguments.Command != want {
-		t.Fatalf("translated exec command = %q, want %q", arguments.Command, want)
-	}
-}
-
-func TestHReadExecInputQuotesOnlyShellSensitiveArguments(t *testing.T) {
-	carrierInput, err := workerExecInputWithParams("hread", []string{`"line's $(echo injected).txt" 2:3`}, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	encodedArguments := strings.TrimPrefix(carrierInput, "const result = await tools.exec_command(")
-	encodedArguments = strings.TrimSuffix(encodedArguments, ");\ntext(result.output);")
-
-	var arguments struct {
-		Command string `json:"cmd"`
-	}
-	if err := json.Unmarshal([]byte(encodedArguments), &arguments); err != nil {
-		t.Fatalf("decode translated exec arguments: %v\n%s", err, carrierInput)
-	}
-	want := `hread '"line'"'"'s $(echo injected).txt" 2:3'`
-	if arguments.Command != want {
-		t.Fatalf("translated exec command = %q, want %q", arguments.Command, want)
-	}
-}
-
-func TestHReadExecInputCarriesOneNewlineDelimitedBatchArgument(t *testing.T) {
-	input := "\"alpha.txt\"\n\"beta.txt\" 2:3"
-	carrierInput, err := workerExecInputWithParams("hread", []string{input}, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	encodedArguments := strings.TrimPrefix(carrierInput, "const result = await tools.exec_command(")
-	encodedArguments = strings.TrimSuffix(encodedArguments, ");\ntext(result.output);")
-
-	var arguments struct {
-		Command string `json:"cmd"`
-	}
-	if err := json.Unmarshal([]byte(encodedArguments), &arguments); err != nil {
-		t.Fatalf("decode translated exec arguments: %v\n%s", err, carrierInput)
-	}
-	want := "hread '\"alpha.txt\"\n\"beta.txt\" 2:3'"
-	if arguments.Command != want {
-		t.Fatalf("translated batch command = %q, want %q", arguments.Command, want)
-	}
-}
-
-func TestHReadExecInputDoesNotRepairMissingRangeSeparator(t *testing.T) {
-	carrierInput, err := workerExecInputWithParams("hread", []string{`"file.txt"2:3`}, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	encodedArguments := strings.TrimPrefix(carrierInput, "const result = await tools.exec_command(")
-	encodedArguments = strings.TrimSuffix(encodedArguments, ");\ntext(result.output);")
-
-	var arguments struct {
-		Command string `json:"cmd"`
-	}
-	if err := json.Unmarshal([]byte(encodedArguments), &arguments); err != nil {
-		t.Fatalf("decode translated exec arguments: %v\n%s", err, carrierInput)
-	}
-	want := `hread '"file.txt"2:3'`
-	if arguments.Command != want {
-		t.Fatalf("translated malformed exec command = %q, want unchanged grammar input %q", arguments.Command, want)
 	}
 }
 
@@ -1677,51 +1466,16 @@ func TestHPatchStreamingReplacesLifecycleWithoutChangingCallID(t *testing.T) {
 	}
 }
 
-func TestHReadStreamingUsesTextLifecycle(t *testing.T) {
-	transform, _, _, workspace := newHPatchTestTransform(t, testTranslator(t, new(int)))
-	if err := os.WriteFile(filepath.Join(workspace, "line.txt"), []byte("alpha\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	item := map[string]any{
-		"type": "custom_tool_call", "id": "item-R", "call_id": "call-R",
-		"name": "hread", "input": `"line.txt"`, "status": "completed",
-	}
-	added := maps.Clone(item)
-	added["status"] = "in_progress"
-	added["input"] = ""
-
-	visible, err := transform.TransformSSE(mustTestJSON(t, map[string]any{"type": "response.output_item.added", "item": added}))
-	if err != nil || visible != nil {
-		t.Fatalf("buffered hread added = %q, error %v", visible, err)
-	}
-	visible, err = transform.TransformSSE(mustTestJSON(t, map[string]any{
-		"type": "response.custom_tool_call_input.done", "item_id": "item-R", "input": `"line.txt"`,
-	}))
-	if err != nil || len(visible) != 2 ||
-		!bytes.Contains(visible[0], []byte(`"name":"exec"`)) ||
-		!bytes.Contains(visible[1], []byte(jsonQuoted(registeredWorkerInput(t, transform.proxy, "hread", []string{`"line.txt"`})))) {
-		t.Fatalf("hread input.done = %q, error %v", visible, err)
-	}
-	visible, err = transform.TransformSSE(mustTestJSON(t, map[string]any{"type": "response.output_item.done", "item": item}))
-	if err != nil || len(visible) != 1 || !bytes.Contains(visible[0], []byte(`"call_id":"call-R"`)) {
-		t.Fatalf("hread item.done = %q, error %v", visible, err)
-	}
-}
-
-func TestReadOnlyHistoryIsExcludedFromCorrections(t *testing.T) {
+func TestNonHPatchHistoryIsExcludedFromCorrections(t *testing.T) {
 	proxy := newManagedHPatchProxy(t, testTranslator(t, new(int)))
 	err := proxy.rememberBatch("session", map[string]hpatchHistory{
 		"call-H": {
 			toolName: hpatchToolName, script: testHPatchScript,
 			translationError: "rejected", sequence: 1,
 		},
-		"call-R": {
-			toolName: "hread", script: `"file.txt"`,
+		"call-S": {
+			toolName: "shell", script: `hread file.txt`,
 			report: "8ed3: alpha\n", sequence: 2,
-		},
-		"call-G": {
-			toolName: "hgrep", script: `alpha .`,
-			sequence: 3,
 		},
 	})
 	if err != nil {
@@ -1741,9 +1495,9 @@ func TestReadOnlyHistoryIsExcludedFromCorrections(t *testing.T) {
 		historySessionID: "session",
 
 		local: map[string]hpatchHistory{
-			"call-local-read": {
-				toolName: "hgrep",
-				script:   `alpha .`,
+			"call-local-shell": {
+				toolName: "shell",
+				script:   `hgrep alpha .`,
 				sequence: 1,
 			},
 		},

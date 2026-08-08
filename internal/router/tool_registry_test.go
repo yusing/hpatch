@@ -108,13 +108,13 @@ func TestToolRegistryStartup(t *testing.T) {
 			t.Fatal(err)
 		}
 		snapshot := registry.SnapshotDir
-		if registry.NodeExecutable == "" || len(registry.ordered) != 3 {
+		if registry.NodeExecutable == "" || len(registry.ordered) != 4 {
 			t.Fatalf("registry = %+v", registry)
 		}
 		if err := registry.installFrontends(); err != nil {
 			t.Fatal(err)
 		}
-		for _, name := range []string{"hread", "hgrep"} {
+		for _, name := range []string{"hread", "hgrep", "shell"} {
 			_, ok := registry.contribution(name)
 			if !ok {
 				t.Fatalf("built-in %q is unavailable", name)
@@ -131,6 +131,23 @@ func TestToolRegistryStartup(t *testing.T) {
 			if err != nil || target != wrapper {
 				t.Fatalf("frontend %q targets %q, want %q: %v", frontend, target, wrapper, err)
 			}
+		}
+		specifications, err := registry.specifications()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(specifications) != 2 ||
+			jsonString(specifications[0], "name") != hpatchToolName ||
+			jsonString(specifications[1], "name") != "shell" {
+			t.Fatalf("model-visible specifications = %#v", specifications)
+		}
+		instructions, err := registry.baseInstructions()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(instructions, "Use `hread` through `shell`") ||
+			!strings.Contains(instructions, "Use `hgrep` through `shell`") {
+			t.Fatalf("base instructions = %q", instructions)
 		}
 		second, err := buildToolRegistry(t.Context(), t.TempDir(), testHPatchToolDescription)
 		if err != nil {
@@ -181,12 +198,12 @@ func TestToolRegistryStartup(t *testing.T) {
 			t.Fatal(err)
 		}
 		snapshot := registry.SnapshotDir
-		if len(registry.ordered) != 5 ||
-			registry.ordered[3].PluginID != "alpha.plugin" ||
-			registry.ordered[4].PluginID != "zeta.plugin" {
+		if len(registry.ordered) != 6 ||
+			registry.ordered[4].PluginID != "alpha.plugin" ||
+			registry.ordered[5].PluginID != "zeta.plugin" {
 			t.Fatalf("registration order = %+v", registry.ordered)
 		}
-		for _, name := range []string{"hread", "hgrep", "alpha_tool", "zeta_tool"} {
+		for _, name := range []string{"hread", "hgrep", "shell", "alpha_tool", "zeta_tool"} {
 			wrapper, ok := registry.wrapper(name)
 			if !ok {
 				t.Fatalf("wrapper %q is unavailable", name)
@@ -223,11 +240,51 @@ func TestToolRegistryStartup(t *testing.T) {
 		if err := json.Unmarshal(encodedManifest, &manifest); err != nil {
 			t.Fatal(err)
 		}
-		if manifest.RegistryID != registry.ID || len(manifest.Tools) != 5 {
+		if manifest.RegistryID != registry.ID || len(manifest.Tools) != 6 {
 			t.Fatalf("manifest = %+v, registry ID %q", manifest, registry.ID)
 		}
 		if err := registry.Close(); err != nil {
 			t.Fatal(err)
+		}
+	})
+
+	t.Run("retired configured shell does not shadow the built-in", func(t *testing.T) {
+		dataDirectory := t.TempDir()
+		pluginDirectory := filepath.Join(dataDirectory, "plugins")
+		if err := os.Mkdir(pluginDirectory, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		legacyDeclaration := strings.Replace(
+			declaration(retiredConfiguredShellPluginID, "shell", ""),
+			"  }]\n};\n",
+			`  }, {
+    specification: {type: "custom", name: "legacy_extra", description: "test tool"},
+    parse(input) { return input; },
+    argv(input) { return [input]; },
+    translate(_input, api) { return api.exec(); },
+    execute(argv) { return {stdout: argv.join(" "), exitCode: 0}; }
+  }]
+};
+`,
+			1,
+		)
+		writePlugin(t, pluginDirectory, "shell.mjs", legacyDeclaration)
+
+		registry, err := buildToolRegistry(t.Context(), dataDirectory, testHPatchToolDescription)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() {
+			if err := registry.Close(); err != nil {
+				t.Error(err)
+			}
+		})
+		shell, shellOK := registry.contribution("shell")
+		extra, extraOK := registry.contribution("legacy_extra")
+		if !shellOK || shell.PluginID != "builtin.shell" ||
+			!extraOK || extra.PluginID != retiredConfiguredShellPluginID ||
+			len(registry.ordered) != 5 {
+			t.Fatalf("registry retired the wrong contributions: %+v", registry.ordered)
 		}
 	})
 

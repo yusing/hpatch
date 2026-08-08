@@ -363,7 +363,7 @@ function executeScript(argv, context) {
   return executeScriptWithProgramInput(argv, context);
 }
 
-const shellTool = {
+export const shellTool = {
   specification: {
     type: "custom",
     name: "shell",
@@ -399,6 +399,6 @@ remains available as program data.`,
 
 export default {
   apiVersion: "hpatch-tool-plugin/v1",
-  id: "example.shell",
+  id: "builtin.shell",
   tools: [shellTool],
 };

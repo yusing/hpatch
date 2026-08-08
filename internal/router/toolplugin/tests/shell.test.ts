@@ -1,7 +1,7 @@
 import {afterEach, describe, expect, test} from "bun:test";
 import {spawn, spawnSync, type ChildProcessWithoutNullStreams} from "node:child_process";
 import {closeSync, openSync} from "node:fs";
-import {lstat, mkdtemp, mkdir, readFile, readdir, rm, stat} from "node:fs/promises";
+import {lstat, mkdtemp, mkdir, readdir, rm, stat, writeFile} from "node:fs/promises";
 import {tmpdir} from "node:os";
 import path from "node:path";
 import {fileURLToPath} from "node:url";
@@ -356,7 +356,7 @@ describe("installable shell plugin", () => {
     expect(JSON.parse(validated.stdout)).toMatchObject({
       errors: [],
       plugins: [{
-        id: "example.shell",
+        id: "builtin.shell",
         tools: [{specification: {type: "custom", name: "shell"}}],
       }],
     });
@@ -388,6 +388,7 @@ describe("installable shell plugin", () => {
     const configDirectory = path.join(installRoot, "config");
     const routerPath = path.join(binaryDirectory, "hpatch-router");
     const shellPath = path.join(binaryDirectory, "shell");
+    const hreadPath = path.join(binaryDirectory, "hread");
     const installedPlugin = path.join(configDirectory, "hpatch", "plugins", "shell.mjs");
     const installEnvironment = {
       ...process.env,
@@ -404,9 +405,7 @@ describe("installable shell plugin", () => {
     expect(installed.status).toBe(0);
     expect((await stat(path.join(binaryDirectory, "hpatch"))).mode & 0o111).not.toBe(0);
     expect((await stat(routerPath)).mode & 0o111).not.toBe(0);
-    expect(await readFile(installedPlugin, "utf8")).toBe(
-      await readFile(path.join(repositoryRoot, "plugins", "shell.mjs"), "utf8"),
-    );
+    await expect(stat(installedPlugin)).rejects.toThrow();
 
     const router = spawn(routerPath, ["--mode", "hpatch", "--listen", "127.0.0.1:0"], {
       cwd: repositoryRoot,
@@ -422,6 +421,20 @@ describe("installable shell plugin", () => {
     try {
       await waitForListening(router);
       expect((await lstat(shellPath)).isSymbolicLink()).toBe(true);
+      expect((await lstat(hreadPath)).isSymbolicLink()).toBe(true);
+      await writeFile(path.join(installRoot, "rows.txt"), "alpha\nbeta\n", "utf8");
+      const read = spawnSync(shellPath, ["bash", "hread rows.txt 1:2"], {
+        cwd: installRoot,
+        encoding: "utf8",
+        env: {
+          ...installEnvironment,
+          PATH: `${binaryDirectory}${path.delimiter}${process.env.PATH ?? ""}`,
+        },
+        input: "",
+      });
+      expect(read.status).toBe(0);
+      expect(read.stdout).toBe("1:8ed3 alpha\n2:f44e beta\n");
+      expect(read.stderr).toBe("");
 
       const executed = spawnSync(shellPath, [
         "bash",

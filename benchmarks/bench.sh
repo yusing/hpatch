@@ -444,10 +444,10 @@ INSTRUCTION
 	# Backticks are literal instruction text.
 	# shellcheck disable=SC2016
 	if ! grep -Fqx 'Use `functions.hpatch` for local file edits, not `apply_patch`.' "$hpatch_instruction" ||
-		! grep -Fqx 'Use `functions.hread` instead of `cat` or `sed` to read files.' "$hpatch_instruction" ||
-		! grep -Fqx 'Use `functions.hgrep` instead of `rg` or `grep` to search files.' "$hpatch_instruction" ||
-		! grep -Fqx '`functions.hread` and `functions.hgrep` are tools, not shell commands. Do not invoke them through `functions.shell`.' "$hpatch_instruction" ||
-		! grep -Fqx 'When `functions.shell` is available, use it instead of `tools.exec_command`.' "$hpatch_instruction" ||
+		! grep -Fqx 'Use the private `hread` command through `functions.shell` instead of `cat` or `sed`.' "$hpatch_instruction" ||
+		! grep -Fqx 'Use the private `hgrep` command through `functions.shell` instead of `rg` or `grep`.' "$hpatch_instruction" ||
+		! grep -Fqx 'Hread and hgrep are executable commands, not model-visible tools.' "$hpatch_instruction" ||
+		! grep -Fqx 'Use `functions.shell` instead of `tools.exec_command`.' "$hpatch_instruction" ||
 		! grep -Fqx "Follow hpatch's live tool description and rejection diagnostics." "$hpatch_instruction" ||
 		! grep -Fqx 'Formatting commands and bulk mechanical rewrites do not need `hpatch`.' "$hpatch_instruction" ||
 		[[ $(grep -Fxc '## Benchmark isolation' "$control_instruction") -ne 1 ]] ||
@@ -1001,7 +1001,6 @@ run_pair() {
 }
 
 mkdir -p "$run_dir/work" "$run_dir/hpatch-config" "$run_dir/hpatch-runtime" "$instruction_dir"
-install -D -m 0644 "$benchmark_root/../plugins/shell.mjs" "$run_dir/hpatch-config/hpatch/plugins/shell.mjs"
 : >"$results"
 
 "${compose[@]}" build control

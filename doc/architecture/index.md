@@ -135,42 +135,47 @@ response, while request cancellation still propagates. Definition accounting con
 exact serialized collection installed from the validated built-in and plugin registry and a
 stable per-plugin and per-tool breakdown derived from that same collection.
 
-The router boundary exposes `hread` and `hgrep` beside hpatch only when the displaced owner is a
-Code Mode `exec` carrier. Hpatch remains the native router contribution. Hread and hgrep are
-TypeScript-authored built-in plugin declarations compiled by Bun to one embedded JavaScript
-module. The plugin runtime snapshots and validates that immutable module before user
-declarations, so the built-ins use the same normalized registry, translation, carrier, wrapper,
-history, replay, and worker paths as configured plugins. Their names and `builtin.hpatch`
-identity remain reserved, and passthrough mode loads no registry.
+The router exposes only hpatch and shell beside the displaced Code Mode `exec` carrier.
+Hpatch remains the native engine contribution. Shell, hread, and hgrep are TypeScript-authored
+built-in plugin contributions compiled by Bun into one embedded JavaScript module with the
+reserved `builtin.shell` identity. Shell is model-visible; hread and hgrep retain executable
+workers and frontends but their specifications are private. Configured user tools remain
+model-visible.
 
-Each built-in wrapper launches the generic private plugin worker in Codex's exec context. The
-worker derives relative-path resolution from its actual current directory and leaves sandbox
-and permission enforcement to Codex. The carrier quotes each translated argv value
-independently and sets neither an environment override nor a working directory. A direct
-`apply_patch` owner, missing Node.js runtime, invalid embedded declaration, or wrapper failure
-rejects startup or rewriting before forwarding as required by the owning boundary.
+The plugin runtime snapshots and validates the immutable built-in module before user
+declarations, then applies the same normalized registry, wrapper, worker, and metrics paths to
+all executable contributions. The registry separately projects model-visible definitions and
+private command guidance. Request rewriting installs only the projected hpatch and shell
+definitions, appends the private hread and hgrep descriptions to the existing Responses
+instructions, and always removes the native exec-command contract. Passthrough mode loads no
+registry.
 
-The hread built-in receives the complete grammar input as one argv value. Its TypeScript
-implementation parses and reads batch items sequentially, preserves single-read output, labels
-ordered batch results, and keeps an item error from hiding successful siblings. Rendering
-streams fixed-size chunks, validates UTF-8 across each complete file, buffers only selected
-lines, and keeps the formatted call within 16 MiB. A single oversized result rejects. A batch
-reserves room for its bounded limit diagnostic and stops successfully before another result
-would cross the call-wide bound.
+Each executable wrapper launches the generic private plugin worker in Codex's exec context.
+The worker derives relative-path resolution from its actual current directory and leaves
+sandbox and permission enforcement to Codex. The shell carrier sets neither an environment
+override nor a working directory. A direct `apply_patch` owner, missing Node.js runtime,
+invalid embedded declaration, or wrapper failure rejects startup or rewriting before
+forwarding.
 
-Under `REQ-GREP-001` and `doc/brief.md` § Constraints, the hgrep built-in parses grammar input
-into literal argv without shell evaluation. Its TypeScript implementation rejects incompatible
-source and output modes and invokes installed ripgrep through `--json --no-config`. Ripgrep
-alone owns search selection. The implementation consumes match and context events, renders
-complete verified rows, deduplicates only identical path-and-line results, and provides no
-fallback search implementation.
+The hread built-in accepts one path argv and an optional separate inclusive range argv.
+Shell quoting owns whitespace and metacharacters in paths. Hread has no multi-file input or
+batch result format; the model batches reads as separate commands in one shell script.
+Rendering streams fixed-size chunks, validates UTF-8 across the complete regular file,
+buffers only selected lines, and keeps the formatted result within 16 MiB.
+
+The hgrep built-in receives ordinary shell-produced argv. Its TypeScript implementation
+rejects incompatible source and output modes and invokes installed ripgrep through
+`--json --no-config`. Ripgrep alone owns search selection. The implementation consumes match
+and context events, renders complete verified rows, deduplicates only identical path-and-line
+results, and provides no fallback search implementation. Shell, rather than hgrep, owns
+pipelines, redirection, and command composition.
 
 The generated built-in JavaScript and runtime host are materialized inside the authenticated
-process snapshot. A symlink-launched child verifies that snapshot before loading either
-built-in implementation. The router never pre-reads files and never fabricates an
-`apply_patch` result for read or search. Read and search calls remain replayable, stay outside
-edit correction ancestry, and use generalized per-tool metrics. Registry shutdown removes the
-wrappers and snapshot.
+process snapshot. A symlink-launched child verifies that snapshot before loading an
+implementation. The router never pre-reads files and never fabricates an `apply_patch` result
+for read or search. Model history retains shell calls, private commands stay outside response
+routing and edit correction ancestry, and generalized per-tool metrics record their execution.
+Registry shutdown removes the frontends and snapshot.
 
 The standalone CLI canonicalizes root and cwd, opens the root once, and keeps that
 capability open for the invocation. Library callers pass the already-authorized root and
@@ -216,7 +221,7 @@ quoted frontend command. A present `login` value must be exactly `false`, and th
 supplies `login: false` when it is absent. Plugin code can select the typed template and
 parameter variants but cannot construct the outer carrier or quote the nested frontend command.
 
-For the configured `shell` contribution, the owning Code Mode executable definition also owns
+For the built-in `shell` contribution, the owning Code Mode executable definition also owns
 asynchronous exec-session creation, yield timing, continuation handles, continuation input,
 cancellation, and terminal state. The exec renderer forwards the complete native nested-tool
 result through the outer carrier instead of projecting only command output. A yielded result and
@@ -237,11 +242,10 @@ generic interface rather than capabilities granted to ordinary plugins.
 For each eligible request, the router recognizes exactly one authoritative Code Mode owner: the
 custom `exec` tool either directly inside an `additional_tools` input item's tool list for
 app-server traffic or nested under that item's `functions` namespace for CLI traffic. The
-`apply_patch` extractor rewrites the owning description. When `shell` is installed, the router also
-removes the `exec_command` Markdown section and introductory `tools.exec_command` example from that
-description. It derives the request-specific app argument-object or CLI parameter-list shape,
-removes `cmd`, and appends only that sanitized shape under `#!params` in the standalone `shell`
-description. Without `shell`, the native command contract remains visible. Sibling direct tools,
+`apply_patch` extractor rewrites the owning description. The router also removes the `exec_command`
+Markdown section and introductory `tools.exec_command` example from that description. It derives
+the request-specific app argument-object or CLI parameter-list shape, removes `cmd`, and appends
+only that sanitized shape under `#!params` in the built-in `shell` description. Sibling direct tools,
 sibling namespaces, and nested tools remain unchanged. Direct `functions.exec` entries and
 top-level `exec` or `functions.exec` tools fail closed.
 

@@ -16,6 +16,7 @@ type (
 		ModuleIndex   int             `json:"module_index,omitempty"`
 		Executor      bool            `json:"executor"`
 		Builtin       bool            `json:"builtin"`
+		ModelVisible  bool            `json:"model_visible"`
 	}
 
 	toolRegistry struct {

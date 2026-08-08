@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 
 	"github.com/gofrs/flock"
 	"github.com/yusing/hpatch"
@@ -19,8 +20,9 @@ import (
 )
 
 const (
-	toolPluginManifestFilename = "workers.json"
-	toolFrontendLockFilename   = ".hpatch-router-tools.lock"
+	toolPluginManifestFilename     = "workers.json"
+	toolFrontendLockFilename       = ".hpatch-router-tools.lock"
+	retiredConfiguredShellPluginID = "example.shell"
 )
 
 func buildToolRegistry(ctx context.Context, dataDirectory, hpatchDescription string) (*toolRegistry, error) {
@@ -67,6 +69,7 @@ func buildToolRegistry(ctx context.Context, dataDirectory, hpatchDescription str
 		Name:          hpatchToolName,
 		Specification: mustMarshalJSON(customGrammarTool(hpatchToolName, hpatchDescription, hpatch.ToolGrammar())),
 		Builtin:       true,
+		ModelVisible:  true,
 	}}
 	var validationErrors []error
 	for _, diagnostic := range pluginSnapshot.Diagnostics {
@@ -95,6 +98,9 @@ func buildToolRegistry(ctx context.Context, dataDirectory, hpatchDescription str
 				))
 				continue
 			}
+			if plugin.ID == retiredConfiguredShellPluginID && jsonString(specification, "name") == "shell" {
+				continue
+			}
 			contribution := toolContribution{
 				PluginID:      plugin.ID,
 				Name:          jsonString(specification, "name"),
@@ -102,6 +108,7 @@ func buildToolRegistry(ctx context.Context, dataDirectory, hpatchDescription str
 				Module:        plugin.Module,
 				ModuleIndex:   toolIndex,
 				Executor:      true,
+				ModelVisible:  jsonString(specification, "name") != "hread" && jsonString(specification, "name") != "hgrep",
 			}
 			if validationErr := validateToolContribution(contribution); validationErr != nil {
 				validationErrors = append(validationErrors, validationErr)
@@ -354,12 +361,26 @@ func (registry *toolRegistry) contribution(name string) (toolContribution, bool)
 	return contribution, ok
 }
 
+func (registry *toolRegistry) modelContributions() []toolContribution {
+	if registry == nil {
+		return nil
+	}
+	contributions := make([]toolContribution, 0, len(registry.ordered))
+	for _, contribution := range registry.ordered {
+		if contribution.ModelVisible {
+			contributions = append(contributions, contribution)
+		}
+	}
+	return contributions
+}
+
 func (registry *toolRegistry) specifications() ([]map[string]json.RawMessage, error) {
 	if registry == nil {
 		return nil, errors.New("tool registry is unavailable")
 	}
-	specifications := make([]map[string]json.RawMessage, 0, len(registry.ordered))
-	for _, contribution := range registry.ordered {
+	contributions := registry.modelContributions()
+	specifications := make([]map[string]json.RawMessage, 0, len(contributions))
+	for _, contribution := range contributions {
 		var specification map[string]json.RawMessage
 		if err := json.Unmarshal(contribution.Specification, &specification); err != nil {
 			return nil, fmt.Errorf("decode registered tool %s/%s: %w", contribution.PluginID, contribution.Name, err)
@@ -367,4 +388,26 @@ func (registry *toolRegistry) specifications() ([]map[string]json.RawMessage, er
 		specifications = append(specifications, specification)
 	}
 	return specifications, nil
+}
+
+func (registry *toolRegistry) baseInstructions() (string, error) {
+	if registry == nil {
+		return "", errors.New("tool registry is unavailable")
+	}
+	var instructions []string
+	for _, contribution := range registry.ordered {
+		if contribution.ModelVisible {
+			continue
+		}
+		var specification struct {
+			Description string `json:"description"`
+		}
+		if err := json.Unmarshal(contribution.Specification, &specification); err != nil {
+			return "", fmt.Errorf("decode registered tool %s/%s instructions: %w", contribution.PluginID, contribution.Name, err)
+		}
+		if instruction := strings.TrimSpace(specification.Description); instruction != "" {
+			instructions = append(instructions, instruction)
+		}
+	}
+	return strings.Join(instructions, "\n\n"), nil
 }

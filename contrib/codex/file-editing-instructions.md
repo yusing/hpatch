@@ -11,7 +11,7 @@ Formatting commands and bulk mechanical rewrites do not need `hpatch`.
 
 ## File reading, searching, and shell commands
 
-Use `functions.hread` instead of `cat` or `sed` to read files.
-Use `functions.hgrep` instead of `rg` or `grep` to search files.
-`functions.hread` and `functions.hgrep` are tools, not shell commands. Do not invoke them through `functions.shell`.
-When `functions.shell` is available, use it instead of `tools.exec_command`.
+Use the private `hread` command through `functions.shell` instead of `cat` or `sed`.
+Use the private `hgrep` command through `functions.shell` instead of `rg` or `grep`.
+Hread and hgrep are executable commands, not model-visible tools.
+Use `functions.shell` instead of `tools.exec_command`.
