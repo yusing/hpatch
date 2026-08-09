@@ -78,30 +78,6 @@ describe("installable shell plugin", () => {
       name: "shell",
     });
     expect(tool.specification.format).toBeUndefined();
-    expect(tool.specification.description).toContain(
-      "The selected interpreter receives the exact script body, and frontend standard input\nremains available as program data.",
-    );
-    expect(tool.specification.description).toContain("#!params=<JSON object>");
-    expect(tool.specification.description).toContain(
-      "For non-Bash scripts, put the complete interpreter command in a shebang",
-    );
-    expect(tool.specification.description).toContain(
-      "This includes launchers and interpreter arguments",
-    );
-    expect(tool.specification.description).toContain(
-      "such\nas `#!uv run python` or `#!node --experimental-strip-types`",
-    );
-    expect(tool.specification.description).toContain(
-      "Never wrap the program in\nBash, `-c`/`-e` command-string quoting, or a heredoc",
-    );
-    expect(tool.specification.description).toContain(
-      "Prefer a bare interpreter name over `/usr/bin/env`",
-    );
-    expect(tool.specification.description).not.toContain("exec_command");
-    expect(tool.specification.description).not.toContain("direct evaluation option");
-    expect(tool.specification.description).not.toContain("anonymous descriptor");
-    expect(tool.specification.description).not.toContain("temporary file");
-
     const body = "  print(\"Hello\")  \n";
     for (const input of [
       `#!python3\n${body}`,

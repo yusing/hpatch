@@ -1182,25 +1182,37 @@ var shellTool = {
     type: "custom",
     name: "shell",
     description: `Run one free-form script without an outer heredoc or command-string quoting.
-For non-Bash scripts, put the complete interpreter command in a shebang on the first line and
-write the program directly below it. This includes launchers and interpreter arguments, such
-as \`#!uv run python\` or \`#!node --experimental-strip-types\`. Never wrap the program in
+The selected interpreter receives the exact script body, and frontend standard input remains available as program data.
+
+The default interpreter is Bash.
+For non-Bash scripts, put the interpreter command in a shebang on the first line, including interpreter arguments, such
+as \`#!uv run python\` or \`#!node --experimental-strip-types\`.
+Never add \`/usr/bin/env\`, Bash shebang, or wrap the program in
 Bash, \`-c\`/\`-e\` command-string quoting, or a heredoc.
-A bare interpreter and a full path are accepted.
-Prefer a bare interpreter name over \`/usr/bin/env\`. Do not add a Bash shebang; without one,
-Bash runs the complete input.
+A full path are accepted but not necessary.
+
 Optional directive assignments use #!key=value and can follow the shebang or be first.
-#!cmd= accepts one {.} placeholder that expands to the normalized shell frontend command.
-#!params=<JSON object> supplies other supported execution arguments and can occur beside
-#!cmd= in either order. The script body supplies cmd, so #!params must not contain cmd.
+#!cmd= accepts one \`{.}\` placeholder that expands to the normalized shell frontend command.
+#!params=<JSON object> supplies other supported execution arguments and can occur. The script body supplies cmd, so #!params must not contain cmd.
 If #!params contains login, its value must be false.
-Bash and sh inputs with more than three physical lines and every successfully classified
-non-Bash/sh input are retained for one hour. Every result includes retained; retained:true
-also includes script_ref. Read it with hread @shell/<reference>, edit it with hpatch, or run
+
+Script will be retained when shell returns \`retained:true\` along with \`script_ref\`. Read it with \`hread @shell/<reference>\`, edit it with hpatch, or run
 the current content with a sole #!script=@shell/<reference> directive.
 An hpatch script that uses an \`@shell/\` path must use only \`@shell/\` paths; never mix retained scripts and workspace files in one hpatch script.
-The selected interpreter receives the exact script body, and frontend standard input
-remains available as program data.`
+
+Example: keep a producer in \`#!cmd=\` and write the consumer directly as the script body:
+\`\`\`python
+#!python3
+#!cmd=curl -fsS https://example.com/data.json | {.}
+
+import json
+import sys
+
+records = json.load(sys.stdin)
+print("count", len(records))
+for record in records:
+    print(record["name"])
+\`\`\``
   },
   parse(input, context) {
     return parseScript(input, context);
