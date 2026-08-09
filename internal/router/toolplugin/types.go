@@ -20,6 +20,7 @@ type (
 		Template     string                     `json:"template"`
 		Params       map[string]json.RawMessage `json:"params"`
 		StockCommand string                     `json:"stockCommand"`
+		RetainInput  *bool                      `json:"retainInput"`
 	}
 
 	Translation struct {

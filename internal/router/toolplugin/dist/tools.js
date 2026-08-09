@@ -53,8 +53,8 @@ function createExecutorTool(options) {
       description: options.description,
       format: { type: "grammar", syntax: "regex", definition: options.grammar }
     },
-    parse(input) {
-      return options.argv(input);
+    parse(input, context) {
+      return options.argv(input, context);
     },
     argv(input) {
       return input;
@@ -802,12 +802,22 @@ function createHReadTool(description, grammar) {
     description,
     grammar,
     stockCommand: hreadStockCommand,
-    argv(input) {
-      return hreadArguments(input);
+    argv(input, context) {
+      const argumentsValue = hreadArguments(input);
+      argumentsValue[0] = context.resolvePath(argumentsValue[0]);
+      return argumentsValue;
     },
     async execute(argv, context) {
       try {
-        const result = await readHashLines(parseReadSpec(stripOptionalFinalNewline(hreadInput(argv))), context.outputBudgetBytes);
+        const executionArguments = [...argv];
+        if (executionArguments[0]?.startsWith("@shell/")) {
+          const sessionID = process.env.CODEX_THREAD_ID;
+          if (sessionID === undefined || sessionID === "") {
+            throw new Error("CODEX_THREAD_ID is unavailable");
+          }
+          executionArguments[0] = `/tmp/hpatch-${sessionID}/${executionArguments[0].slice("@shell/".length)}`;
+        }
+        const result = await readHashLines(parseReadSpec(stripOptionalFinalNewline(hreadInput(executionArguments))), context.outputBudgetBytes);
         return {
           stdout: result.current,
           ...result.warning === undefined ? {} : { stderr: result.warning },
@@ -824,7 +834,7 @@ function createHReadTool(description, grammar) {
 
 // ../../../plugins/shell.mjs
 import { spawn as spawn2, spawnSync } from "node:child_process";
-import { closeSync, writeFileSync } from "node:fs";
+import { closeSync, readFileSync, writeFileSync } from "node:fs";
 function trimShebangField(value) {
   return value.replace(/^[ \t]+|[ \t]+$/gu, "");
 }
@@ -905,11 +915,19 @@ function parseDirectives(body) {
   }
   return { commandTemplate, params, body: remaining };
 }
-function parseScript(input) {
+function parseScript(input, context) {
   if (input.includes("\x00")) {
     throw new Error("script must not contain a NUL byte");
   }
   let interpreter = ["bash"];
+  const retained = splitFirstLine(input);
+  const retainedLine = trimShebangField(retained.line);
+  if (retainedLine.startsWith("#!script=")) {
+    if (retained.body !== "") {
+      throw new Error("#!script must be the sole directive");
+    }
+    return parseScript(readFileSync(context.resolvePath(retainedLine.slice("#!script=".length)), "utf8"), context);
+  }
   let body = input;
   const first = splitFirstLine(input);
   const trimmedLine = trimShebangField(first.line);
@@ -936,8 +954,19 @@ function parseScript(input) {
     interpreter,
     body: directives.body,
     commandTemplate: directives.commandTemplate,
+    source: input,
     params: directives.params
   };
+}
+function retainInput(input) {
+  const interpreter = interpreterBasename(input.interpreter[0]).toLowerCase();
+  if (interpreter !== "bash" && interpreter !== "sh") {
+    return true;
+  }
+  const normalized = input.source.replaceAll(`\r
+`, `
+`);
+  return normalized.split(/\n|\r/u).length > 3;
 }
 function executionError(error) {
   return error instanceof Error ? error.message : String(error);
@@ -1165,18 +1194,23 @@ Optional directive assignments use #!key=value and can follow the shebang or be 
 #!params=<JSON object> supplies other supported execution arguments and can occur beside
 #!cmd= in either order. The script body supplies cmd, so #!params must not contain cmd.
 If #!params contains login, its value must be false.
+Bash and sh inputs with more than three physical lines and every successfully classified
+non-Bash/sh input are retained for one hour. Every result includes retained; retained:true
+also includes script_ref. Read it with hread @shell/<reference>, edit it with hpatch, or run
+the current content with a sole #!script=@shell/<reference> directive.
+An hpatch script that uses an \`@shell/\` path must use only \`@shell/\` paths; never mix retained scripts and workspace files in one hpatch script.
 The selected interpreter receives the exact script body, and frontend standard input
 remains available as program data.`
   },
-  parse(input) {
-    return parseScript(input);
+  parse(input, context) {
+    return parseScript(input, context);
   },
   argv(input) {
     return [...input.interpreter, input.body];
   },
   translate(input, api) {
     const template = input.commandTemplate === "" ? undefined : input.commandTemplate;
-    return api.exec(template, input.params, stockCommand(input));
+    return api.exec(template, input.params, stockCommand(input), retainInput(input));
   },
   execute(argv, context) {
     return executeScript(argv, context);

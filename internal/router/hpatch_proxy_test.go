@@ -1032,6 +1032,18 @@ func TestHPatchJSONWrapsPatchAndImmediateReportInCodeModeExec(t *testing.T) {
 	}
 }
 
+func decodeExecCarrierArguments(t *testing.T, carrierInput string, destination any) {
+	t.Helper()
+	encoded := strings.TrimPrefix(carrierInput, "const result = await tools.exec_command(")
+	end := strings.Index(encoded, ");\n")
+	if end < 0 {
+		t.Fatalf("translated exec carrier is malformed: %s", carrierInput)
+	}
+	if err := json.Unmarshal([]byte(encoded[:end]), destination); err != nil {
+		t.Fatalf("decode translated exec arguments: %v\n%s", err, carrierInput)
+	}
+}
+
 func TestShellJSONTranslatesBashCasesEndToEnd(t *testing.T) {
 	proxy := newManagedHPatchProxy(t, testTranslator(t, new(int)))
 	transform, _, _, _ := newHPatchTestTransformWithProxy(t, proxy)
@@ -1094,14 +1106,10 @@ func TestShellJSONTranslatesBashCasesEndToEnd(t *testing.T) {
 				t.Fatalf("translated carrier name = %q", jsonString(item, "name"))
 			}
 			carrierInput := jsonString(item, "input")
-			encodedArguments := strings.TrimPrefix(carrierInput, "const result = await tools.exec_command(")
-			encodedArguments = strings.TrimSuffix(encodedArguments, ");\ntext(JSON.stringify(result));")
 			var arguments struct {
 				Command string `json:"cmd"`
 			}
-			if err := json.Unmarshal([]byte(encodedArguments), &arguments); err != nil {
-				t.Fatalf("decode translated exec arguments: %v\n%s", err, carrierInput)
-			}
+			decodeExecCarrierArguments(t, carrierInput, &arguments)
 			if arguments.Command != test.want {
 				t.Fatalf("translated exec command = %q, want %q", arguments.Command, test.want)
 			}
@@ -1119,15 +1127,10 @@ func TestWorkerTemplateExecInputQuotesNestedShellCommand(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	encodedArguments := strings.TrimPrefix(carrierInput, "const result = await tools.exec_command(")
-	encodedArguments = strings.TrimSuffix(encodedArguments, ");\ntext(JSON.stringify(result));")
-
 	var arguments struct {
 		Command string `json:"cmd"`
 	}
-	if err := json.Unmarshal([]byte(encodedArguments), &arguments); err != nil {
-		t.Fatalf("decode translated exec arguments: %v\n%s", err, carrierInput)
-	}
+	decodeExecCarrierArguments(t, carrierInput, &arguments)
 	want := `curl -fsSL URL | shell python3 'print('"'"'{"hello":"world"}'"'"')' | jq`
 	if arguments.Command != want {
 		t.Fatalf("translated template command = %q, want %q", arguments.Command, want)
@@ -1186,17 +1189,13 @@ func TestWorkerExecInputMergesValidatedParams(t *testing.T) {
 	if strings.Count(carrierInput, "tools.exec_command(") != 1 || strings.Contains(carrierInput, "write_stdin") {
 		t.Fatalf("shell carrier did not preserve one yielded execution: %s", carrierInput)
 	}
-	encodedArguments := strings.TrimPrefix(carrierInput, "const result = await tools.exec_command(")
-	encodedArguments = strings.TrimSuffix(encodedArguments, ");\ntext(JSON.stringify(result));")
 	var arguments struct {
 		Command string `json:"cmd"`
 		Workdir string `json:"workdir"`
 		TTY     bool   `json:"tty"`
 		Login   bool   `json:"login"`
 	}
-	if err := json.Unmarshal([]byte(encodedArguments), &arguments); err != nil {
-		t.Fatalf("decode translated exec arguments: %v\n%s", err, carrierInput)
-	}
+	decodeExecCarrierArguments(t, carrierInput, &arguments)
 	if arguments.Command != "printf ok" || arguments.Workdir != "/tmp/example" ||
 		!arguments.TTY || arguments.Login {
 		t.Fatalf("translated exec arguments = %+v", arguments)

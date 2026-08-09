@@ -275,12 +275,22 @@ export function createHReadTool(description: string, grammar: string): Tool<stri
     description,
     grammar,
     stockCommand: hreadStockCommand,
-    argv(input) {
-      return hreadArguments(input);
+    argv(input, context) {
+      const argumentsValue = hreadArguments(input);
+      argumentsValue[0] = context.resolvePath(argumentsValue[0]);
+      return argumentsValue;
     },
     async execute(argv, context) {
       try {
-        const result = await readHashLines(parseReadSpec(stripOptionalFinalNewline(hreadInput(argv))), context.outputBudgetBytes);
+        const executionArguments = [...argv];
+        if (executionArguments[0]?.startsWith("@shell/")) {
+          const sessionID = process.env.CODEX_THREAD_ID;
+          if (sessionID === undefined || sessionID === "") {
+            throw new Error("CODEX_THREAD_ID is unavailable");
+          }
+          executionArguments[0] = `/tmp/hpatch-${sessionID}/${executionArguments[0].slice("@shell/".length)}`;
+        }
+        const result = await readHashLines(parseReadSpec(stripOptionalFinalNewline(hreadInput(executionArguments))), context.outputBudgetBytes);
         return {
           stdout: result.current,
           ...(result.warning === undefined ? {} : {stderr: result.warning}),

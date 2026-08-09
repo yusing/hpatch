@@ -13,6 +13,10 @@ const originalTMPDIR = process.env.TMPDIR;
 const originalTestValue = process.env.HPATCH_SHELL_TEST;
 const temporaryDirectories: string[] = [];
 const tool = plugin.tools[0];
+
+test("description forbids mixed retained and workspace paths", () => {
+  expect(tool.specification.description).toContain("must use only `@shell/` paths");
+});
 const hostPath = fileURLToPath(new URL("../host.mjs", import.meta.url));
 const repositoryRoot = fileURLToPath(new URL("../../../../", import.meta.url));
 
@@ -122,6 +126,31 @@ describe("installable shell plugin", () => {
     expect(await tool.argv(bash)).toEqual(["bash", withoutShebang]);
 
     expect(await tool.translate(bash, {exec: () => ({kind: "exec"})})).toEqual({kind: "exec"});
+  });
+
+  test("classifies retention and resolves retained references", async () => {
+    const context = {resolvePath: (value: string) => value};
+    const retention = async (input: string) => {
+      const parsed = await tool.parse(input, context);
+      const carrier = await tool.translate(parsed, {
+        exec: (_template, _params, _stockCommand, retainInput) => ({kind: "exec", retainInput}),
+      });
+      return carrier.retainInput;
+    };
+
+    expect(await retention("one\ntwo\nthree")).toBe(false);
+    expect(await retention("one\ntwo\nthree\nfour")).toBe(true);
+    expect(await retention("#!sh\none\ntwo")).toBe(false);
+    expect(await retention("#!sh\none\ntwo\nthree")).toBe(true);
+    expect(await retention("#!python3\npass")).toBe(true);
+
+    const directory = await temporaryDirectory("hpatch-shell-reference-");
+    const stored = path.join(directory, "call-id");
+    await writeFile(stored, "#!python3\nprint('stored')\n");
+    const parsed = await tool.parse("#!script=@shell/call-id", {
+      resolvePath: (value: string) => value === "@shell/call-id" ? stored : value,
+    });
+    expect(await tool.argv(parsed)).toEqual(["python3", "print('stored')\n"]);
   });
 
   test("supplies executable interpreter-specific stock exec commands", async () => {

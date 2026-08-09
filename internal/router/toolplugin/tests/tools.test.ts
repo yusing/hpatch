@@ -11,6 +11,7 @@ import plugin from "../src/builtin/tools.ts";
 
 const originalCWD = process.cwd();
 const originalPath = process.env.PATH;
+const originalSessionID = process.env.CODEX_THREAD_ID;
 const temporaryDirectories: string[] = [];
 const executionContext = {stdinFD: null, scriptReadFD: null, scriptWriteFD: null, outputBudgetBytes: 16 * 1024 * 1024};
 
@@ -41,6 +42,11 @@ afterEach(async () => {
     delete process.env.PATH;
   } else {
     process.env.PATH = originalPath;
+  }
+  if (originalSessionID === undefined) {
+    delete process.env.CODEX_THREAD_ID;
+  } else {
+    process.env.CODEX_THREAD_ID = originalSessionID;
   }
   await Promise.all(
     temporaryDirectories.splice(0).map((directory) => rm(directory, {recursive: true, force: true})),
@@ -95,27 +101,31 @@ describe("hread built-in plugin", () => {
 
   test("parses one path and optional range into shell arguments", async () => {
     const tool = createHReadTool("description", "start: TEST");
+    const context = {resolvePath: (path: string) => path};
+    const parse = (input: string) => tool.parse(input, context);
 
-    expect(await tool.parse("plugins/shell.mjs 164:300")).toEqual([
+
+    expect(await parse("plugins/shell.mjs 164:300")).toEqual([
       "plugins/shell.mjs",
       "164:300",
     ]);
-    expect(await tool.parse("plugins/shell.mjs 0:300")).toEqual([
+    expect(await parse("plugins/shell.mjs 0:300")).toEqual([
       "plugins/shell.mjs",
       "1:300",
     ]);
-    expect(await tool.parse("\"path with spaces.txt\" 2:9")).toEqual([
+    expect(await parse("\"path with spaces.txt\" 2:9")).toEqual([
       "path with spaces.txt",
       "2:9",
     ]);
-    expect(() => tool.parse("first.txt\nsecond.txt 2:9")).toThrow(
+    expect(() => parse("first.txt\nsecond.txt 2:9")).toThrow(
       "invalid bare hread path",
     );
   });
 
   test("supplies cat and cat-plus-sed stock exec commands", async () => {
     const tool = createHReadTool("description", "start: TEST");
-    const translate = async (input: string) => tool.translate(await tool.parse(input), {
+    const context = {resolvePath: (path: string) => path};
+    const translate = async (input: string) => tool.translate(await tool.parse(input, context), {
       exec: (_template, _params, stockCommand) => ({kind: "exec", stockCommand}),
     });
 
@@ -193,6 +203,17 @@ describe("hread built-in plugin", () => {
     expect(missing).toEqual({
       stderr: "hread: ENOENT: no such file or directory\n",
       exitCode: 1,
+    });
+
+    const retainedDirectory = await temporaryDirectory("hpatch-");
+    const sessionID = path.basename(retainedDirectory).slice("hpatch-".length);
+    await writeFile(path.join(retainedDirectory, "call-id"), "retained\n", "utf8");
+    process.env.CODEX_THREAD_ID = sessionID;
+    const retained = await tool.execute(["@shell/call-id"], executionContext);
+    expect(retained).toEqual({
+      stdout: formatHashLine(1, "retained"),
+      stock: {stdout: "retained\n", exitCode: 0},
+      exitCode: 0,
     });
   });
 

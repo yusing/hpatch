@@ -17,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/yusing/hpatch"
 	"github.com/yusing/hpatch/internal/router/toolplugin"
@@ -33,11 +34,14 @@ const (
 	maxHPatchHistoryGlobalBytes  = 128 << 20
 
 	maxHPatchPendingCalls = 128
+
+	shellArtifactPrefix = "@shell/"
 )
 
 var (
 	errHPatchCapacity         = errors.New("hpatch proxy capacity exceeded")
 	errHPatchWorkspaceChanged = errors.New("hpatch workspace changed during translation")
+	shellArtifactTTL          = time.Hour
 )
 
 type hpatchTranslationResult struct {
@@ -53,6 +57,10 @@ type hpatchTranslator interface {
 	Translate(ctx context.Context, workspace routingWorkspace, script string) (hpatchTranslationResult, error)
 	RecordMetrics(ctx context.Context, record hpatchMetricRecord) error
 	ToolDescription() string
+}
+
+type hpatchApplier interface {
+	Apply(ctx context.Context, workspace routingWorkspace, script string) (hpatchTranslationResult, error)
 }
 
 type inProcessHPatchTranslator struct {
@@ -85,6 +93,14 @@ func (t notifyingHPatchTranslator) Translate(ctx context.Context, workspace rout
 	return t.inner.Translate(ctx, workspace, script)
 }
 
+func (t notifyingHPatchTranslator) Apply(ctx context.Context, workspace routingWorkspace, script string) (hpatchTranslationResult, error) {
+	applier, ok := t.inner.(hpatchApplier)
+	if !ok {
+		return hpatchTranslationResult{}, errors.New("hpatch translator cannot apply retained shell edits")
+	}
+	return applier.Apply(ctx, workspace, script)
+}
+
 func (t notifyingHPatchTranslator) RecordMetrics(ctx context.Context, record hpatchMetricRecord) error {
 	if err := t.inner.RecordMetrics(ctx, record); err != nil {
 		return err
@@ -113,11 +129,29 @@ func (t inProcessHPatchTranslator) Translate(ctx context.Context, workspace rout
 	if len(translated.Patch) > maxHPatchPatchBytes {
 		return hpatchTranslationResult{}, fmt.Errorf("%w: hpatch translation output exceeds its configured bound", errHPatchCapacity)
 	}
+	return hpatchTranslationResultOf(translated), err
+}
+
+func (t inProcessHPatchTranslator) Apply(ctx context.Context, workspace routingWorkspace, script string) (hpatchTranslationResult, error) {
+	if !workspace.unchanged() {
+		return hpatchTranslationResult{}, errHPatchWorkspaceChanged
+	}
+	applied, err := hpatch.ApplyForHost(ctx, hpatch.Workspace{Root: workspace.root}, script, t.dataDirectory)
+	if !workspace.unchanged() {
+		return hpatchTranslationResult{}, errHPatchWorkspaceChanged
+	}
+	if contextErr := ctx.Err(); contextErr != nil {
+		return hpatchTranslationResult{}, contextErr
+	}
+	return hpatchTranslationResultOf(applied), err
+}
+
+func hpatchTranslationResultOf(translated hpatch.HostTranslation) hpatchTranslationResult {
 	corrections := make(map[int]string, len(translated.Corrections))
 	for _, correction := range translated.Corrections {
 		corrections[correction.Command] = correction.Replacement
 	}
-	result := hpatchTranslationResult{
+	return hpatchTranslationResult{
 		patch:       translated.Patch,
 		report:      translated.Report,
 		diagnostic:  translated.Diagnostic,
@@ -125,7 +159,6 @@ func (t inProcessHPatchTranslator) Translate(ctx context.Context, workspace rout
 		rejections:  slices.Clone(translated.Rejections),
 		invocation:  translated.Invocation,
 	}
-	return result, err
 }
 
 func (t inProcessHPatchTranslator) RecordMetrics(ctx context.Context, record hpatchMetricRecord) error {
@@ -147,6 +180,7 @@ type hpatchHistory struct {
 	// resolve command indices against what was evaluated.
 	evaluated      string
 	patch          string
+	applied        bool
 	carrierName    string
 	carrierKind    codeModeCarrierKind
 	carrierPayload string
@@ -178,8 +212,10 @@ type hpatchHistorySession struct {
 }
 
 type hpatchProxy struct {
-	translator hpatchTranslator
-	registry   *toolRegistry
+	translator     hpatchTranslator
+	registry       *toolRegistry
+	shellDirectory string
+	shellSessions  map[string]struct{}
 
 	mu              sync.RWMutex
 	sessions        map[string]*hpatchHistorySession
@@ -193,9 +229,12 @@ func newHPatchProxy(translator hpatchTranslator, registry *toolRegistry) *hpatch
 	if translator == nil || registry == nil {
 		return nil
 	}
+	directory := "/tmp"
 	return &hpatchProxy{
 		translator:     translator,
 		registry:       registry,
+		shellDirectory: directory,
+		shellSessions:  make(map[string]struct{}),
 		sessions:       make(map[string]*hpatchHistorySession),
 		activeSessions: make(map[string]int),
 	}
@@ -231,10 +270,15 @@ func (p *hpatchProxy) Close() error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.closed = true
+	var cleanupErr error
+	for sessionID := range p.shellSessions {
+		cleanupErr = errors.Join(cleanupErr, os.RemoveAll(p.shellSessionDirectory(sessionID)))
+	}
+	clear(p.shellSessions)
 	clear(p.sessions)
 	clear(p.activeSessions)
 	p.historyBytes = 0
-	return nil
+	return cleanupErr
 }
 
 func shellQuoteArgument(value string) string {
@@ -1359,7 +1403,25 @@ func (t *hpatchResponseTransform) translate(callID, input string, upstreamItem m
 	}
 
 	attemptContext := hpatch.WithAttemptMetadata(t.ctx, attemptMetadata)
-	translated, err := t.proxy.translator.Translate(attemptContext, t.workspace, evaluated)
+	applied := false
+	var translated hpatchTranslationResult
+	var err error
+	if t.proxy.shellDirectory != "" && strings.Contains(evaluated, shellArtifactPrefix) {
+		directory := t.proxy.shellSessionDirectory(t.sessionID)
+		root, openErr := os.OpenRoot(directory)
+		if openErr != nil {
+			return hpatchHistory{}, fmt.Errorf("open retained shell workspace: %w", openErr)
+		}
+		defer root.Close()
+		applier, ok := t.proxy.translator.(hpatchApplier)
+		if !ok {
+			return hpatchHistory{}, errors.New("hpatch translator cannot apply retained shell edits")
+		}
+		translated, err = applier.Apply(attemptContext, routingWorkspace{canonical: directory, root: root}, strings.ReplaceAll(evaluated, shellArtifactPrefix, ""))
+		applied = err == nil
+	} else {
+		translated, err = t.proxy.translator.Translate(attemptContext, t.workspace, evaluated)
+	}
 	if err != nil {
 		if contextErr := t.ctx.Err(); contextErr != nil {
 			return hpatchHistory{}, contextErr
@@ -1423,6 +1485,7 @@ func (t *hpatchResponseTransform) translate(callID, input string, upstreamItem m
 		root:          t.workspace.canonical,
 		evaluated:     retainedEvaluated(input, evaluated),
 		patch:         patchText,
+		applied:       applied,
 		carrierName:   t.codeModeToolName,
 		report:        hpatchReport(translated.report, translated.diagnostic),
 		upstreamItem:  maps.Clone(upstreamItem),
@@ -1431,6 +1494,38 @@ func (t *hpatchResponseTransform) translate(callID, input string, upstreamItem m
 	}
 	t.recordLocal(callID, &history)
 	return history, nil
+}
+
+func (p *hpatchProxy) shellSessionDirectory(sessionID string) string {
+	return filepath.Join(p.shellDirectory, "hpatch-"+sessionID)
+}
+
+func (p *hpatchProxy) retainShell(sessionID, callID, script string) (string, bool) {
+	if p.shellDirectory == "" {
+		return "", false
+	}
+	reference := shellArtifactPrefix + callID
+	path := filepath.Join(p.shellSessionDirectory(sessionID), callID)
+	p.mu.Lock()
+	if p.closed {
+		p.mu.Unlock()
+		return "", false
+	}
+	if p.shellSessions == nil {
+		p.shellSessions = make(map[string]struct{})
+	}
+	p.shellSessions[sessionID] = struct{}{}
+	p.mu.Unlock()
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return "", false
+	}
+	if err := os.WriteFile(path, []byte(script), 0o600); err != nil {
+		return "", false
+	}
+	time.AfterFunc(shellArtifactTTL, func() {
+		_ = os.Remove(path)
+	})
+	return reference, true
 }
 
 func (t *hpatchResponseTransform) translateTool(name, callID, input string, upstreamItem map[string]json.RawMessage) (hpatchHistory, error) {
@@ -1455,6 +1550,7 @@ func (t *hpatchResponseTransform) translateRegisteredTool(contribution toolContr
 		}
 		return history, nil
 	}
+	pathPrefix := t.proxy.shellSessionDirectory(t.sessionID) + string(os.PathSeparator)
 	translation, err := toolplugin.Translate(
 		t.ctx,
 		t.proxy.registry.NodeExecutable,
@@ -1462,9 +1558,21 @@ func (t *hpatchResponseTransform) translateRegisteredTool(contribution toolContr
 		contribution.Module,
 		contribution.ModuleIndex,
 		input,
+		pathPrefix,
 	)
 	if err != nil {
 		return hpatchHistory{}, fmt.Errorf("translate registered tool %s: %w", contribution.Name, err)
+	}
+	var resultMetadata map[string]json.RawMessage
+	if translation.Carrier.RetainInput != nil {
+		resultMetadata = map[string]json.RawMessage{"retained": mustMarshalJSON(false)}
+		if *translation.Carrier.RetainInput {
+			reference, retained := t.proxy.retainShell(t.sessionID, callID, input)
+			resultMetadata["retained"] = mustMarshalJSON(retained)
+			if retained {
+				resultMetadata["script_ref"] = mustMarshalJSON(reference)
+			}
+		}
 	}
 
 	kind := codeModeCarrierCustom
@@ -1494,6 +1602,7 @@ func (t *hpatchResponseTransform) translateRegisteredTool(contribution toolContr
 					contribution.Name,
 					translation.Arguments,
 					translation.Carrier.Params,
+					resultMetadata,
 				)
 			} else {
 				payload, err = workerTemplateExecInputWithParams(
@@ -1501,6 +1610,7 @@ func (t *hpatchResponseTransform) translateRegisteredTool(contribution toolContr
 					translation.Arguments,
 					translation.Carrier.Template,
 					translation.Carrier.Params,
+					resultMetadata,
 				)
 			}
 			if err != nil {
@@ -1623,29 +1733,29 @@ func workerCommand(executable string, arguments []string) string {
 	return command
 }
 
-func workerExecInputWithParams(executable string, arguments []string, params map[string]json.RawMessage) (string, error) {
+func workerExecInputWithParams(executable string, arguments []string, params map[string]json.RawMessage, resultMetadata ...map[string]json.RawMessage) (string, error) {
 	command := workerCommand(executable, arguments)
 	if executable == "shell" {
 		if direct, ok := directBashExecCommand(arguments); ok {
 			command = direct
 		}
 	}
-	return workerCommandExecInputWithResult(command, params, executable == "shell")
+	return workerCommandExecInputWithResult(command, params, executable == "shell", resultMetadata...)
 }
 
-func workerTemplateExecInputWithParams(executable string, arguments []string, template string, params map[string]json.RawMessage) (string, error) {
+func workerTemplateExecInputWithParams(executable string, arguments []string, template string, params map[string]json.RawMessage, resultMetadata ...map[string]json.RawMessage) (string, error) {
 	if strings.Count(template, "{.}") != 1 {
 		return "", errors.New("exec command template must contain exactly one {.} placeholder")
 	}
 	command := strings.Replace(template, "{.}", workerCommand(executable, arguments), 1)
-	return workerCommandExecInputWithResult(command, params, executable == "shell")
+	return workerCommandExecInputWithResult(command, params, executable == "shell", resultMetadata...)
 }
 
 func workerCommandExecInputWithParams(command string, params map[string]json.RawMessage) (string, error) {
 	return workerCommandExecInputWithResult(command, params, false)
 }
 
-func workerCommandExecInputWithResult(command string, params map[string]json.RawMessage, forwardNativeResult bool) (string, error) {
+func workerCommandExecInputWithResult(command string, params map[string]json.RawMessage, forwardNativeResult bool, resultMetadata ...map[string]json.RawMessage) (string, error) {
 	if _, exists := params["cmd"]; exists {
 		return "", errors.New("exec params must not contain cmd")
 	}
@@ -1661,8 +1771,11 @@ func workerCommandExecInputWithResult(command string, params map[string]json.Raw
 		arguments["login"] = mustMarshalJSON(false)
 	}
 	resultOutput := "text(result.output);"
-	if forwardNativeResult {
+	if forwardNativeResult || len(resultMetadata) > 0 && len(resultMetadata[0]) > 0 {
 		resultOutput = "text(JSON.stringify(result));"
+		if len(resultMetadata) > 0 && len(resultMetadata[0]) > 0 {
+			resultOutput = "text(JSON.stringify(Object.assign({}, result, " + string(mustMarshalJSON(resultMetadata[0])) + ")));"
+		}
 	}
 	return "const result = await tools.exec_command(" + string(mustMarshalJSON(arguments)) + ");\n" +
 		resultOutput, nil
@@ -1674,6 +1787,9 @@ func (h hpatchHistory) carrierInput() string {
 	}
 	if h.translationError != "" {
 		return hpatchDiagnosticExecInput(h.translationError)
+	}
+	if h.applied {
+		return hpatchDiagnosticExecInput(h.report)
 	}
 	return hpatchApplyExecInput(h.patch, h.report)
 }

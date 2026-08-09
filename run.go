@@ -175,7 +175,16 @@ type HostTranslation struct {
 // On an evaluation failure it also returns the command-line diagnostic and
 // repair context, including configured error-hook warnings.
 func TranslateForHost(ctx context.Context, workspace Workspace, script, dataDirectory string) (HostTranslation, error) {
-	result, err := translateDetailed(ctx, workspace, script)
+	return changeForHost(ctx, workspace, script, dataDirectory, false)
+}
+
+// ApplyForHost evaluates and atomically applies script while returning host diagnostics and metrics.
+func ApplyForHost(ctx context.Context, workspace Workspace, script, dataDirectory string) (HostTranslation, error) {
+	return changeForHost(ctx, workspace, script, dataDirectory, true)
+}
+
+func changeForHost(ctx context.Context, workspace Workspace, script, dataDirectory string, apply bool) (HostTranslation, error) {
+	result, err := changeDetailed(ctx, workspace, script, apply)
 	if err != nil {
 		result.Corrections = commandCorrectionsOf(err)
 		result.Rejections = hostRejectionsOf(err)
@@ -214,13 +223,23 @@ func TranslateForHost(ctx context.Context, workspace Workspace, script, dataDire
 }
 
 func translateDetailed(ctx context.Context, workspace Workspace, script string) (HostTranslation, error) {
-	changes, _, invocation, report, err := evaluateScript(ctx, workspace, script)
+	return changeDetailed(ctx, workspace, script, false)
+}
+
+func changeDetailed(ctx context.Context, workspace Workspace, script string, apply bool) (HostTranslation, error) {
+	changes, filesystem, invocation, report, err := evaluateScript(ctx, workspace, script)
 	result := HostTranslation{Report: report, Invocation: InvocationMetrics{value: invocation}}
 	if err != nil {
 		return result, err
 	}
 	if err := ctx.Err(); err != nil {
 		return result, err
+	}
+	if apply {
+		if err := commitChanges(changes, rootFileOperations{root: filesystem.root}); err != nil {
+			return result, fmt.Errorf("changing %s: %w", describePaths(changes), err)
+		}
+		return result, nil
 	}
 	patch, err := translate(changes)
 	if err != nil {

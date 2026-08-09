@@ -1,5 +1,5 @@
 import {createHash} from "node:crypto";
-import type {ExecutionContext, ExecutionResult, Tool} from "../../plugin.d.ts";
+import type {ExecutionContext, ExecutionResult, Tool, TranslationContext} from "../../plugin.d.ts";
 
 
 export function byteLength(value: string): number {
@@ -50,7 +50,7 @@ type ExecutorToolOptions = {
   name: string;
   description: string;
   grammar: string;
-  argv(input: string): string[] | Promise<string[]>;
+  argv(input: string, context: TranslationContext): string[] | Promise<string[]>;
   execute(argv: string[], context: ExecutionContext): ExecutionResult | Promise<ExecutionResult>;
   stockCommand?(input: string[]): string;
 };
@@ -63,8 +63,8 @@ export function createExecutorTool(options: ExecutorToolOptions): Tool<string[]>
       description: options.description,
       format: {type: "grammar", syntax: "regex", definition: options.grammar},
     },
-    parse(input) {
-      return options.argv(input);
+    parse(input, context) {
+      return options.argv(input, context);
     },
     argv(input) {
       return input;

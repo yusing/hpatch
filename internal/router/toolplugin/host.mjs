@@ -599,7 +599,7 @@ function validateCarrier(carrier) {
   }
   if (carrier.kind === "exec") {
     const keys = Object.keys(carrier);
-    if (!keys.every((key) => ["kind", "template", "params", "stockCommand"].includes(key))) {
+    if (!keys.every((key) => ["kind", "template", "params", "stockCommand", "retainInput"].includes(key))) {
       throw new Error("translator returned a malformed carrier");
     }
     const normalized = {kind: "exec"};
@@ -619,6 +619,12 @@ function validateCarrier(carrier) {
       }
       normalized.stockCommand = carrier.stockCommand;
     }
+    if (carrier.retainInput !== undefined) {
+      if (typeof carrier.retainInput !== "boolean") {
+        throw new Error("translator returned a malformed carrier");
+      }
+      normalized.retainInput = carrier.retainInput;
+    }
     return Object.freeze(normalized);
   }
   if ((carrier.kind === "custom" || carrier.kind === "function")
@@ -632,14 +638,21 @@ function validateCarrier(carrier) {
 }
 
 async function translateTool(request) {
+  const context = Object.freeze({
+    resolvePath(path) {
+      return request.pathPrefix !== "" && typeof path === "string" && path.startsWith("@shell/")
+        ? request.pathPrefix + path.slice("@shell/".length)
+        : path;
+    },
+  });
   const tool = await loadTool(request.snapshotRoot, request.module, request.index);
   let parsed;
   try {
-    parsed = await tool.parse(request.input);
+    parsed = await tool.parse(request.input, context);
   } catch (error) {
     return {rejected: true, diagnostic: errorText(error), arguments: [], carrier: {kind: "", name: "", payload: ""}};
   }
-  const argumentsValue = validateArguments(await tool.argv(parsed));
+  const argumentsValue = validateArguments(await tool.argv(parsed, context));
   const api = Object.freeze({
     custom(name, input) {
       return Object.freeze({kind: "custom", name, payload: input});
@@ -647,7 +660,7 @@ async function translateTool(request) {
     function(name, argumentsJSON) {
       return Object.freeze({kind: "function", name, payload: argumentsJSON});
     },
-    exec(template, params, stockCommand) {
+    exec(template, params, stockCommand, retainInput) {
       const carrier = {kind: "exec"};
       if (template !== undefined) {
         carrier.template = template;
@@ -658,10 +671,13 @@ async function translateTool(request) {
       if (stockCommand !== undefined) {
         carrier.stockCommand = stockCommand;
       }
+      if (retainInput !== undefined) {
+        carrier.retainInput = retainInput;
+      }
       return Object.freeze(carrier);
     },
   });
-  const carrier = validateCarrier(await tool.translate(parsed, api));
+  const carrier = validateCarrier(await tool.translate(parsed, api, context));
   return {rejected: false, diagnostic: "", arguments: argumentsValue, carrier};
 }
 
