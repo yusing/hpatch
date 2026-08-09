@@ -1591,7 +1591,7 @@ func (t *hpatchResponseTransform) translateRegisteredTool(contribution toolContr
 	diagnostic := translation.Diagnostic
 	misuseWarning := ""
 	if recovered {
-		warnedPayload, warningInput, _, warningErr := prependExecCommandWarning(recoveredPayload, lunaShellRecoveryWarning)
+		warnedPayload, warningInput, _, warningErr := insertExecCommandWarning(recoveredPayload, lunaShellRecoveryWarning)
 		if warningErr != nil {
 			return hpatchHistory{}, fmt.Errorf("%s Code Mode exec recovery warning: %w", contribution.Name, warningErr)
 		}
@@ -1662,12 +1662,13 @@ func (t *hpatchResponseTransform) translateRegisteredTool(contribution toolContr
 			)
 		}
 	}
-	if !translation.Rejected && shellInterpreterWrapperMisuse(contribution, input) {
-		warnedPayload, warningInput, _, warningErr := prependExecCommandWarning(payload, shellInterpreterWrapperWarning)
+	if misuse, detected := shellInterpreterWrapperMisuse(contribution, input); !translation.Rejected && detected {
+		warning := shellInterpreterWrapperWarning(misuse)
+		warnedPayload, warningInput, _, warningErr := insertExecCommandWarning(payload, warning)
 		if warningErr != nil {
 			return hpatchHistory{}, fmt.Errorf("%s interpreter-wrapper warning: %w", contribution.Name, warningErr)
 		}
-		misuseWarning = warningInput + misuseWarning
+		misuseWarning += warningInput
 		payload = warnedPayload
 	}
 
@@ -1811,37 +1812,36 @@ func workerCommandExecInputWithResult(command string, params map[string]json.Raw
 		resultOutput, nil
 }
 
-func misuseWarningCommand(warning string) string {
-	return "printf '%s\\n' " + shellQuoteArgument(warning) + " >&2\n"
+func misuseWarningProjection(warning string) string {
+	return "text(" + string(mustMarshalJSON(warning+"\n")) + ");\n"
 }
 
-func prependExecCommandWarning(input, warning string) (string, string, bool, error) {
-	call := strings.Index(input, codeModeExecToolCallPrefix)
+func insertExecCommandWarning(input, warning string) (string, string, bool, error) {
+	call := strings.Index(input, codeModeExecCallPrefix)
 	if call < 0 {
 		return input, "", false, errors.New("Code Mode input has no exec_command call")
 	}
-	argumentsStart := call + len(codeModeExecToolCallPrefix)
-	argumentsInput := input[argumentsStart:]
-	decoder := json.NewDecoder(strings.NewReader(argumentsInput))
-	var arguments map[string]json.RawMessage
-	if err := decoder.Decode(&arguments); err != nil || arguments == nil {
-		return input, "", false, errors.New("decode Code Mode exec_command arguments")
+	projectionStart := -1
+	for _, projection := range []string{
+		codeModeOutputProjection,
+		codeModeJSONProjection,
+		codeModeMetadataProjection,
+	} {
+		if index := strings.Index(input[call:], "\n"+projection); index >= 0 {
+			index += call + 1
+			if projectionStart < 0 || index < projectionStart {
+				projectionStart = index
+			}
+		}
 	}
-	argumentsEnd := int(decoder.InputOffset())
-	if suffix := strings.TrimLeft(argumentsInput[argumentsEnd:], " \t\r\n"); !strings.HasPrefix(suffix, ")") {
-		return input, "", false, errors.New("Code Mode exec_command arguments have no closing parenthesis")
+	if projectionStart < 0 {
+		return input, "", false, errors.New("Code Mode input has no result projection")
 	}
-	var command string
-	if json.Unmarshal(arguments["cmd"], &command) != nil {
-		return input, "", false, errors.New("Code Mode exec_command has no string cmd")
-	}
-	warningInput := misuseWarningCommand(warning)
-	if strings.HasPrefix(command, warningInput) {
+	warningInput := misuseWarningProjection(warning)
+	if strings.Contains(input[call:projectionStart], warningInput) {
 		return input, warningInput, false, nil
 	}
-	arguments["cmd"] = mustMarshalJSON(warningInput + command)
-	rewritten := input[:argumentsStart] + string(mustMarshalJSON(arguments)) + argumentsInput[argumentsEnd:]
-	return rewritten, warningInput, true, nil
+	return input[:projectionStart] + warningInput + input[projectionStart:], warningInput, true, nil
 }
 
 func (h hpatchHistory) carrierInput() string {
@@ -2193,33 +2193,130 @@ func (t *hpatchResponseTransform) restoreResponseContract(object map[string]json
 }
 
 const (
-	nativeExecCommandWarning       = "Use `functions.shell`"
-	lunaShellRecoveryWarning       = "Use `functions.exec` for Code Mode JavaScript"
-	shellInterpreterWrapperWarning = "functions.shell: warning: interpreter wrapper detected; follow the tool description"
+	nativeExecCommandWarning = "Warning: Use `functions.shell`"
+	lunaShellRecoveryWarning = "Warning: Use `functions.exec` for Code Mode JavaScript"
 
-	codeModeExecToolCallPrefix    = "tools.exec_command("
 	codeModeExecCallPrefix        = "const result = await tools.exec_command("
 	codeModeOutputProjection      = "text(result.output);"
 	codeModeJSONProjection        = "text(JSON.stringify(result));"
 	codeModeMetadataProjection    = "text(JSON.stringify(Object.assign({}, result, "
 	codeModeMetadataProjectionEnd = ")));"
+
+	shellInterpreterNamePattern = `python(?:[0-9]+(?:\.[0-9]+)*)?|pypy[0-9]*|node(?:js)?|bun|` +
+		`bash|dash|fish|ksh|mksh|sh|yash|zsh|perl|ruby|php|lua(?:jit)?|` +
+		`r(?:script)?|psql|mysql|sqlite3|pwsh|powershell`
 )
 
 var (
-	shellHeredocPattern            = regexp.MustCompile(`<<-?`)
-	shellInterpreterWrapperPattern = regexp.MustCompile(
-		`(?i)(?:^|[^[:alnum:]_./+-])/?(?:[[:alnum:]_.+-]+/)*` +
-			`(?:python(?:[0-9]+(?:\.[0-9]+)*)?|pypy[0-9]*|node(?:js)?|bun|` +
-			`bash|dash|fish|ksh|mksh|sh|yash|zsh|perl|ruby|php|lua(?:jit)?|` +
-			`r(?:script)?|psql|mysql|sqlite3|pwsh|powershell)` +
-			`[ \t]+(?:-[^ \t\r\n]+[ \t]+)*(?:-[[:alpha:]]*[cer](?:[^[:alpha:]]|$)|--(?:command|execute)(?:[^[:alpha:]]|$))`,
+	shellHeredocPattern                   = regexp.MustCompile(`<<-?`)
+	shellInterpreterCommandWrapperPattern = regexp.MustCompile(
+		`(?i)(?:^|[^[:alnum:]_./+-])/?(?:[[:alnum:]_.+-]+/)*(` + shellInterpreterNamePattern + `)` +
+			`((?:[ \t]+-[^ \t\r\n]+)*)[ \t]+(-[[:alpha:]]*[cer]|--(?:command|execute))(?:[^[:alpha:]]|$)`,
+	)
+	shellInterpreterHeredocPattern = regexp.MustCompile(
+		`(?i)(?:^|[^[:alnum:]_./+-])/?(?:[[:alnum:]_.+-]+/)*(` + shellInterpreterNamePattern + `)` +
+			`((?:[ \t]+-[^ \t\r\n<]+)*)[ \t]+(-?[ \t]*<<-?)`,
 	)
 )
 
-// Match the raw input intentionally: every heredoc and quoted or commented examples warn too.
-func shellInterpreterWrapperMisuse(contribution toolContribution, input string) bool {
-	return contribution.PluginID == "builtin.shell" && contribution.Name == "shell" &&
-		(shellHeredocPattern.MatchString(input) || shellInterpreterWrapperPattern.MatchString(input))
+type shellWrapperMisuse struct {
+	Kind            string
+	Interpreter     string
+	InterpreterArgs []string
+	wrapper         string
+}
+
+// Match the raw input intentionally: every heredoc and quoted or commented example warn too.
+func shellInterpreterWrapperMisuse(contribution toolContribution, input string) (shellWrapperMisuse, bool) {
+	if contribution.PluginID != "builtin.shell" || contribution.Name != "shell" {
+		return shellWrapperMisuse{}, false
+	}
+	if match := shellInterpreterCommandWrapperPattern.FindStringSubmatch(input); match != nil {
+		wrapper := match[3]
+		kind := strings.ToLower(wrapper)
+		interpreterArgs := strings.Fields(match[2])
+		if strings.HasPrefix(wrapper, "-") && !strings.HasPrefix(wrapper, "--") && len(wrapper) > 2 {
+			kind = "-" + strings.ToLower(wrapper[len(wrapper)-1:])
+			interpreterArgs = append(interpreterArgs, "-"+wrapper[1:len(wrapper)-1])
+		}
+		return shellWrapperMisuse{
+			Kind:            kind,
+			Interpreter:     match[1],
+			InterpreterArgs: interpreterArgs,
+			wrapper:         wrapper,
+		}, true
+	}
+	if match := shellInterpreterHeredocPattern.FindStringSubmatch(input); match != nil {
+		wrapper := "<<"
+		if strings.HasPrefix(strings.TrimSpace(match[3]), "-") {
+			wrapper = "- <<"
+		}
+		return shellWrapperMisuse{
+			Kind:            "heredoc",
+			Interpreter:     match[1],
+			InterpreterArgs: strings.Fields(match[2]),
+			wrapper:         wrapper,
+		}, true
+	}
+	if shellHeredocPattern.MatchString(input) {
+		return shellWrapperMisuse{Kind: "heredoc"}, true
+	}
+	return shellWrapperMisuse{}, false
+}
+
+func shellInterpreterWrapperWarning(misuse shellWrapperMisuse) string {
+	if misuse.Interpreter == "" {
+		return "functions.shell: warning: heredoc detected; submit the script body directly instead of wrapping it in a heredoc"
+	}
+
+	program := "the program"
+	interpreter := strings.ToLower(misuse.Interpreter)
+	switch {
+	case strings.HasPrefix(interpreter, "python"), strings.HasPrefix(interpreter, "pypy"):
+		program = "the Python program"
+	case interpreter == "node", interpreter == "nodejs", interpreter == "bun":
+		program = "the JavaScript program"
+	}
+
+	invocationArgs := misuse.InterpreterArgs
+	if strings.HasPrefix(misuse.wrapper, "-") && !strings.HasPrefix(misuse.wrapper, "--") &&
+		len(misuse.wrapper) > 2 && misuse.Kind != "heredoc" {
+		invocationArgs = invocationArgs[:len(invocationArgs)-1]
+	}
+	invocation := strings.Join(append([]string{misuse.Interpreter}, invocationArgs...), " ")
+	if invocation != "" {
+		invocation += " "
+	}
+	invocation += misuse.wrapper
+
+	if strings.EqualFold(misuse.Interpreter, "bash") {
+		if misuse.Kind == "heredoc" {
+			return fmt.Sprintf(
+				"functions.shell: warning: remove the `%s...` heredoc wrapper and submit the Bash script body directly without a shebang",
+				invocation,
+			)
+		}
+		return fmt.Sprintf(
+			"functions.shell: warning: remove the `%s` wrapper and submit the Bash script body directly without a shebang",
+			invocation,
+		)
+	}
+
+	shebang := strings.Join(append([]string{"#!" + misuse.Interpreter}, misuse.InterpreterArgs...), " ")
+	if misuse.Kind == "heredoc" {
+		return fmt.Sprintf(
+			"functions.shell: warning: remove the `%s...` heredoc wrapper; start the script with `%s` and put %s directly in the body",
+			invocation,
+			shebang,
+			program,
+		)
+	}
+	return fmt.Sprintf(
+		"functions.shell: warning: replace `%s ...` with `%s` on the first line and put %s directly in the body",
+		invocation,
+		shebang,
+		program,
+	)
 }
 
 // Luna occasionally confuses functions.shell with the hidden Code Mode exec
@@ -2267,10 +2364,7 @@ func lunaShellExecCarrier(contribution toolContribution, input string) (string, 
 }
 
 func nativeExecCommandInput(input string) (string, string, bool, bool) {
-	if !strings.Contains(input, codeModeExecToolCallPrefix) {
-		return input, "", false, false
-	}
-	rewritten, warningInput, changed, err := prependExecCommandWarning(input, nativeExecCommandWarning)
+	rewritten, warningInput, changed, err := insertExecCommandWarning(input, nativeExecCommandWarning)
 	if err != nil {
 		return input, "", false, false
 	}

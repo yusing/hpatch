@@ -1035,19 +1035,28 @@ func TestHPatchJSONWrapsPatchAndImmediateReportInCodeModeExec(t *testing.T) {
 func TestNativeExecCommandAddsShellWarning(t *testing.T) {
 	const nativeInput = "const result = await tools.exec_command({\"cmd\":\"printf ok\"});\ntext(result.output);"
 	const unrelatedInput = "text(\"ok\");"
-	wantInput, warningInput, changed, detected := nativeExecCommandInput(nativeInput)
-	if !changed || !detected {
-		t.Fatalf("rewrite native exec input: changed %t, detected %t", changed, detected)
+	warningInput := misuseWarningProjection(nativeExecCommandWarning)
+	wantInput := "const result = await tools.exec_command({\"cmd\":\"printf ok\"});\n" +
+		warningInput + codeModeOutputProjection
+	rewritten, gotWarning, changed, detected := nativeExecCommandInput(nativeInput)
+	if !changed || !detected || rewritten != wantInput || gotWarning != warningInput {
+		t.Fatalf(
+			"rewrite native exec input: changed %t, detected %t, warning %q\n%s",
+			changed,
+			detected,
+			gotWarning,
+			rewritten,
+		)
 	}
 	var arguments struct {
 		Command string `json:"cmd"`
 	}
-	decodeExecCarrierArguments(t, wantInput, &arguments)
-	if strings.Count(wantInput, codeModeExecToolCallPrefix) != 1 || arguments.Command != warningInput+"printf ok" {
-		t.Fatalf("native warning carrier = %q, command %q", wantInput, arguments.Command)
+	decodeExecCarrierArguments(t, rewritten, &arguments)
+	if arguments.Command != "printf ok" {
+		t.Fatalf("native warning changed command to %q", arguments.Command)
 	}
-	repeated, repeatedWarning, repeatedChange, repeatedDetection := nativeExecCommandInput(wantInput)
-	if repeatedChange || !repeatedDetection || repeated != wantInput || repeatedWarning != warningInput {
+	repeated, repeatedWarning, repeatedChange, repeatedDetection := nativeExecCommandInput(rewritten)
+	if repeatedChange || !repeatedDetection || repeated != rewritten || repeatedWarning != warningInput {
 		t.Fatalf(
 			"repeated native rewrite: changed %t, detected %t, warning %q\n%s",
 			repeatedChange,
@@ -1055,6 +1064,14 @@ func TestNativeExecCommandAddsShellWarning(t *testing.T) {
 			repeatedWarning,
 			repeated,
 		)
+	}
+	combined, _, combinedChange, err := insertExecCommandWarning(rewritten, "functions.shell: warning: secondary warning")
+	if err != nil || !combinedChange {
+		t.Fatalf("insert second warning: changed %t, error %v", combinedChange, err)
+	}
+	idempotent, _, duplicateChange, err := insertExecCommandWarning(combined, nativeExecCommandWarning)
+	if err != nil || duplicateChange || idempotent != combined {
+		t.Fatalf("reinsert first warning: changed %t, error %v\n%s", duplicateChange, err, idempotent)
 	}
 
 	transform, _, _, _ := newHPatchTestTransform(t, testTranslator(t, new(int)))
@@ -1075,7 +1092,7 @@ func TestNativeExecCommandAddsShellWarning(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(response.Output) != 2 ||
-		jsonString(response.Output[0], "input") != wantInput ||
+		jsonString(response.Output[0], "input") != rewritten ||
 		jsonString(response.Output[1], "input") != unrelatedInput {
 		t.Fatalf("native exec response = %s", visible)
 	}
@@ -1101,7 +1118,7 @@ func TestNativeExecCommandAddsShellWarning(t *testing.T) {
 	var event struct {
 		Input string `json:"input"`
 	}
-	if err := json.Unmarshal(output[0], &event); err != nil || event.Input != wantInput {
+	if err := json.Unmarshal(output[0], &event); err != nil || event.Input != rewritten {
 		t.Fatalf("native exec input.done event = %q, error %v", output, err)
 	}
 }
@@ -1194,16 +1211,18 @@ func TestShellJSONTranslatesBashCasesEndToEnd(t *testing.T) {
 func TestShellRecoversLunaCodeModeExecCarrier(t *testing.T) {
 	const input = "const result = await tools.exec_command({\"cmd\":\"git status --short\",\"login\":false,\"max_output_tokens\":24000});\n" +
 		"text(JSON.stringify(Object.assign({}, result, {\"retained\":false})));"
-	want, warningInput, changed, err := prependExecCommandWarning(input, lunaShellRecoveryWarning)
-	if err != nil || !changed {
-		t.Fatalf("rewrite Luna carrier: changed %t, error %v", changed, err)
+	warningInput := misuseWarningProjection(lunaShellRecoveryWarning)
+	want := strings.Replace(input, codeModeMetadataProjection, warningInput+codeModeMetadataProjection, 1)
+	rewritten, gotWarning, changed, err := insertExecCommandWarning(input, lunaShellRecoveryWarning)
+	if err != nil || !changed || rewritten != want || gotWarning != warningInput {
+		t.Fatalf("rewrite Luna carrier: changed %t, warning %q, error %v\n%s", changed, gotWarning, err, rewritten)
 	}
 	var arguments struct {
 		Command string `json:"cmd"`
 	}
-	decodeExecCarrierArguments(t, want, &arguments)
-	if strings.Count(want, codeModeExecToolCallPrefix) != 1 || arguments.Command != warningInput+"git status --short" {
-		t.Fatalf("Luna warning carrier = %q, command %q", want, arguments.Command)
+	decodeExecCarrierArguments(t, rewritten, &arguments)
+	if arguments.Command != "git status --short" {
+		t.Fatalf("Luna warning changed command to %q", arguments.Command)
 	}
 
 	transform, proxy, _, _ := newHPatchTestTransform(t, testTranslator(t, new(int)))
@@ -1257,6 +1276,63 @@ func TestLunaShellExecCarrierRejectsNearMisses(t *testing.T) {
 
 func TestShellInterpreterWrapperAddsWarning(t *testing.T) {
 	contribution := toolContribution{PluginID: "builtin.shell", Name: "shell"}
+	for _, test := range []struct {
+		input  string
+		want   string
+		misuse shellWrapperMisuse
+	}{
+		{
+			input:  "python3 - <<'PY'\nprint('ok')\nPY",
+			want:   "functions.shell: warning: remove the `python3 - <<...` heredoc wrapper; start the script with `#!python3` and put the Python program directly in the body",
+			misuse: shellWrapperMisuse{Kind: "heredoc", Interpreter: "python3", wrapper: "- <<"},
+		},
+		{
+			input:  "python3 -I -c 'print(1)'",
+			want:   "functions.shell: warning: replace `python3 -I -c ...` with `#!python3 -I` on the first line and put the Python program directly in the body",
+			misuse: shellWrapperMisuse{Kind: "-c", Interpreter: "python3", InterpreterArgs: []string{"-I"}, wrapper: "-c"},
+		},
+		{
+			input:  "node --input-type=module -e 'console.log(1)'",
+			want:   "functions.shell: warning: replace `node --input-type=module -e ...` with `#!node --input-type=module` on the first line and put the JavaScript program directly in the body",
+			misuse: shellWrapperMisuse{Kind: "-e", Interpreter: "node", InterpreterArgs: []string{"--input-type=module"}, wrapper: "-e"},
+		},
+		{
+			input:  "bash -c 'printf ok'",
+			want:   "functions.shell: warning: remove the `bash -c` wrapper and submit the Bash script body directly without a shebang",
+			misuse: shellWrapperMisuse{Kind: "-c", Interpreter: "bash", wrapper: "-c"},
+		},
+		{
+			input:  "sh -ec 'printf ok'",
+			want:   "functions.shell: warning: replace `sh -ec ...` with `#!sh -e` on the first line and put the program directly in the body",
+			misuse: shellWrapperMisuse{Kind: "-c", Interpreter: "sh", InterpreterArgs: []string{"-e"}, wrapper: "-ec"},
+		},
+		{
+			input:  "cat <<'EOF'\nhello\nEOF",
+			want:   "functions.shell: warning: heredoc detected; submit the script body directly instead of wrapping it in a heredoc",
+			misuse: shellWrapperMisuse{Kind: "heredoc"},
+		},
+		{
+			input:  "/usr/bin/python3 -c 'print(1)'",
+			want:   "functions.shell: warning: replace `python3 -c ...` with `#!python3` on the first line and put the Python program directly in the body",
+			misuse: shellWrapperMisuse{Kind: "-c", Interpreter: "python3", wrapper: "-c"},
+		},
+		{
+			input:  "psql --command 'select 1'",
+			want:   "functions.shell: warning: replace `psql --command ...` with `#!psql` on the first line and put the program directly in the body",
+			misuse: shellWrapperMisuse{Kind: "--command", Interpreter: "psql", wrapper: "--command"},
+		},
+	} {
+		misuse, ok := shellInterpreterWrapperMisuse(contribution, test.input)
+		if !ok || misuse.Kind != test.misuse.Kind || misuse.Interpreter != test.misuse.Interpreter ||
+			!slices.Equal(misuse.InterpreterArgs, test.misuse.InterpreterArgs) || misuse.wrapper != test.misuse.wrapper {
+			t.Errorf("misuse for %q = %#v, detected %t; want %#v", test.input, misuse, ok, test.misuse)
+			continue
+		}
+		if warning := shellInterpreterWrapperWarning(misuse); warning != test.want {
+			t.Errorf("warning for %q = %q; want %q", test.input, warning, test.want)
+		}
+	}
+
 	for _, input := range []string{
 		"python3 -c 'print(1)'",
 		"python3 -I -c 'print(1)'",
@@ -1295,7 +1371,7 @@ func TestShellInterpreterWrapperAddsWarning(t *testing.T) {
 		"printf '%s' 'normal command merely contains node -e'",
 		"# example: python3 -c 'print(1)'",
 	} {
-		if !shellInterpreterWrapperMisuse(contribution, input) {
+		if misuse, ok := shellInterpreterWrapperMisuse(contribution, input); !ok || shellInterpreterWrapperWarning(misuse) == "" {
 			t.Errorf("interpreter wrapper was not detected: %q", input)
 		}
 	}
@@ -1312,17 +1388,24 @@ func TestShellInterpreterWrapperAddsWarning(t *testing.T) {
 		"#!cat\ncat shebang executes",
 		"printf ok",
 	} {
-		if shellInterpreterWrapperMisuse(contribution, input) {
-			t.Errorf("ordinary shell input was detected as a wrapper: %q", input)
+		if misuse, ok := shellInterpreterWrapperMisuse(contribution, input); ok || misuse.Kind != "" {
+			t.Errorf("ordinary shell input misuse = %#v for %q", misuse, input)
 		}
 	}
-	if shellInterpreterWrapperMisuse(toolContribution{PluginID: "configured", Name: "shell"}, "python3 -c pass") {
+	if misuse, ok := shellInterpreterWrapperMisuse(
+		toolContribution{PluginID: "configured", Name: "shell"},
+		"python3 -c pass",
+	); ok || misuse.Kind != "" {
 		t.Error("configured shell plugin received interpreter-wrapper warning")
 	}
 
-	warningInput := misuseWarningCommand(shellInterpreterWrapperWarning)
-	transform, _, _, _ := newHPatchTestTransform(t, testTranslator(t, new(int)))
 	const input = "printf '%s' 'python3 -c'"
+	misuse, ok := shellInterpreterWrapperMisuse(contribution, input)
+	if !ok {
+		t.Fatal("quoted interpreter wrapper was not detected")
+	}
+	warningInput := misuseWarningProjection(shellInterpreterWrapperWarning(misuse))
+	transform, _, _, _ := newHPatchTestTransform(t, testTranslator(t, new(int)))
 	visible, err := transform.TransformJSON(mustTestJSON(t, map[string]any{
 		"status": "completed",
 		"output": []any{map[string]any{
@@ -1347,9 +1430,10 @@ func TestShellInterpreterWrapperAddsWarning(t *testing.T) {
 		Command string `json:"cmd"`
 	}
 	decodeExecCarrierArguments(t, carrierInput, &arguments)
-	if strings.Count(carrierInput, codeModeExecToolCallPrefix) != 1 ||
-		!strings.HasPrefix(arguments.Command, warningInput) || !strings.Contains(arguments.Command, input) {
-		t.Fatalf("warned shell command = %q, want original input %q", arguments.Command, input)
+	if arguments.Command == "" || strings.Contains(arguments.Command, warningInput) ||
+		!strings.Contains(arguments.Command, input) ||
+		!strings.Contains(carrierInput, warningInput+codeModeMetadataProjection) {
+		t.Fatalf("warned shell carrier = %q, command %q, want original input %q", carrierInput, arguments.Command, input)
 	}
 }
 
@@ -1364,9 +1448,16 @@ func TestMisuseWarningsRecordDistinctInputOverhead(t *testing.T) {
 			return nil
 		},
 	}
-	nativeWarningInput := misuseWarningCommand(nativeExecCommandWarning)
-	lunaWarningInput := misuseWarningCommand(lunaShellRecoveryWarning)
-	interpreterWarningInput := misuseWarningCommand(shellInterpreterWrapperWarning)
+	nativeWarningInput := misuseWarningProjection(nativeExecCommandWarning)
+	lunaWarningInput := misuseWarningProjection(lunaShellRecoveryWarning)
+	interpreterMisuse, ok := shellInterpreterWrapperMisuse(
+		toolContribution{PluginID: "builtin.shell", Name: "shell"},
+		"python3 -c 'print(1)'",
+	)
+	if !ok {
+		t.Fatal("interpreter-wrapper metric warning was not detected")
+	}
+	interpreterWarningInput := misuseWarningProjection(shellInterpreterWrapperWarning(interpreterMisuse))
 	cases := []struct {
 		name      string
 		toolName  string
@@ -1377,7 +1468,7 @@ func TestMisuseWarningsRecordDistinctInputOverhead(t *testing.T) {
 		{
 			name:      "native exec_command",
 			toolName:  "exec",
-			input:     `const result = await tools.exec_command({"cmd":"printf ok"});`,
+			input:     "const result = await tools.exec_command({\"cmd\":\"printf ok\"});\ntext(result.output);",
 			warning:   nativeWarningInput,
 			toolCalls: 0,
 		},
@@ -1399,7 +1490,7 @@ func TestMisuseWarningsRecordDistinctInputOverhead(t *testing.T) {
 			name:      "combined Luna carrier and interpreter wrapper",
 			toolName:  "shell",
 			input:     "const result = await tools.exec_command({\"cmd\":\"python3 -c 'print(1)'\",\"login\":false});\ntext(result.output);",
-			warning:   interpreterWarningInput + lunaWarningInput,
+			warning:   lunaWarningInput + interpreterWarningInput,
 			toolCalls: 1,
 		},
 	}
@@ -1461,7 +1552,7 @@ func TestNativeExecMisuseWarningMeteredOnceAcrossStreamLifecycle(t *testing.T) {
 	})
 	item := map[string]any{
 		"type": "custom_tool_call", "id": "item-native", "call_id": "call-native",
-		"name": "exec", "input": `const result = await tools.exec_command({"cmd":"printf ok"});`,
+		"name": "exec", "input": "const result = await tools.exec_command({\"cmd\":\"printf ok\"});\ntext(result.output);",
 	}
 	for _, event := range []map[string]any{
 		{"type": "response.output_item.added", "item": map[string]any{
@@ -1481,7 +1572,7 @@ func TestNativeExecMisuseWarningMeteredOnceAcrossStreamLifecycle(t *testing.T) {
 	if len(records) != 1 {
 		t.Fatalf("native warning metric records = %d, want 1", len(records))
 	}
-	warningInput := misuseWarningCommand(nativeExecCommandWarning)
+	warningInput := misuseWarningProjection(nativeExecCommandWarning)
 	want, err := hpatch.ClassifyHostMetrics(hpatch.HostMetricInput{MisuseWarning: warningInput})
 	if err != nil {
 		t.Fatal(err)
