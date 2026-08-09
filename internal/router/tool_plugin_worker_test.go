@@ -130,7 +130,7 @@ func TestBuiltinToolWorkersRunGeneratedTypeScriptImplementations(t *testing.T) {
 		arguments  []string
 		wantOutput string
 	}{
-		{name: "hread", arguments: []string{"file.txt", "1:1"}, wantOutput: "1:8ed3 alpha\n"},
+		{name: "hread", arguments: []string{"file.txt", "0:1"}, wantOutput: "1:8ed3 alpha\n"},
 		{name: "hgrep", arguments: []string{"-F", "alpha", "file.txt"}, wantOutput: "\"file.txt\":1:8ed3 alpha\n"},
 	} {
 		t.Run(test.name, func(t *testing.T) {

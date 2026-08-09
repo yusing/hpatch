@@ -81,28 +81,29 @@ function parseReadSpec(input: string): ReadSpec {
   if (trailing === "") {
     return {path, startLine: 0, endLine: 0};
   }
-  const match = trailing.match(/^ ([1-9][0-9]*):([1-9][0-9]*)$/u);
+  const match = trailing.match(/^ (0|[1-9][0-9]*):([1-9][0-9]*)$/u);
   if (match === null) {
     throw new Error("hread input must be PATH or PATH START:END");
   }
-  const startLine = Number(match[1]);
+  const requestedStartLine = Number(match[1]);
   const endLine = Number(match[2]);
-  if (!Number.isSafeInteger(startLine)) {
+  if (!Number.isSafeInteger(requestedStartLine)) {
     throw new Error("hread start line is out of range");
   }
   if (!Number.isSafeInteger(endLine)) {
     throw new Error("hread end line is out of range");
   }
-  if (startLine > endLine) {
+  if (requestedStartLine > endLine) {
     throw new Error("hread line range start exceeds end");
   }
-  return {path, startLine, endLine};
+  return {path, startLine: Math.max(1, requestedStartLine), endLine};
 }
 
 
 type ComparedOutput = {
   current: string;
   stock: string;
+  warning?: string;
 };
 
 
@@ -224,12 +225,11 @@ async function readHashLines(spec: ReadSpec, maxOutputBytes: number): Promise<Co
       finishLine();
     }
     const lineCount = lineNumber - 1;
-    if (!wholeFile && spec.startLine > lineCount) {
-      throw new Error(
-        `requested lines ${spec.startLine}:${spec.endLine} are outside file with ${lineCount} lines`,
-      );
-    }
-    return {current, stock};
+    const missingStartLine = Math.max(spec.startLine, lineCount + 1);
+    const warning = !wholeFile && missingStartLine <= spec.endLine
+      ? `hread: ${missingStartLine}-${spec.endLine}: [out of range]\n`
+      : undefined;
+    return {current, stock, warning};
   } finally {
     await handle.close();
   }
@@ -252,7 +252,7 @@ function hreadInput(argv: string[]): string {
   if (
     argv.length === 2 &&
     argv[0] !== "" &&
-    /^[1-9][0-9]*:[1-9][0-9]*$/u.test(argv[1])
+    /^(?:0|[1-9][0-9]*):[1-9][0-9]*$/u.test(argv[1])
   ) {
     return `${JSON.stringify(argv[0])} ${argv[1]}`;
   }
@@ -283,6 +283,7 @@ export function createHReadTool(description: string, grammar: string): Tool<stri
         const result = await readHashLines(parseReadSpec(stripOptionalFinalNewline(hreadInput(argv))), context.outputBudgetBytes);
         return {
           stdout: result.current,
+          ...(result.warning === undefined ? {} : {stderr: result.warning}),
           stock: {stdout: result.stock, exitCode: 0},
           exitCode: 0,
         };

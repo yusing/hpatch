@@ -52,6 +52,8 @@ describe("hread built-in plugin", () => {
     const description = plugin.tools[0].specification.description.replace(/\s+/g, " ");
     for (const fragment of [
       "only when you expect its returned `LINE:HASH` rows to become HPATCH targets",
+      "A start line of `0` begins at line 1 without emitting line 0",
+      "Missing lines beyond EOF produce a warning after any available rows and do not fail the command",
       "For exploration, diagnosis, or validation—including checking a named diagnostic—use ordinary read commands",
       "When target-bearing context is needed, use `hread` instead of `cat` or `sed`",
       "Run one file per command as `hread PATH [START:END]`",
@@ -71,6 +73,7 @@ describe("hread built-in plugin", () => {
     for (const input of [
       "plain.txt",
       "plain.txt 2:9",
+      "plain.txt 0:9",
       "\"second file.txt\" 2:3",
       `"quoted\\"file.txt"`,
     ]) {
@@ -82,7 +85,6 @@ describe("hread built-in plugin", () => {
       "plain.txt\n",
       "plain.txt\nsecond.txt",
       "plain file.txt",
-      "plain.txt 0:2",
       "plain.txt 2:0",
       "plain.txt 2:3 extra",
       "\"unterminated",
@@ -97,6 +99,10 @@ describe("hread built-in plugin", () => {
     expect(await tool.parse("plugins/shell.mjs 164:300")).toEqual([
       "plugins/shell.mjs",
       "164:300",
+    ]);
+    expect(await tool.parse("plugins/shell.mjs 0:300")).toEqual([
+      "plugins/shell.mjs",
+      "1:300",
     ]);
     expect(await tool.parse("\"path with spaces.txt\" 2:9")).toEqual([
       "path with spaces.txt",
@@ -115,6 +121,7 @@ describe("hread built-in plugin", () => {
 
     expect((await translate("plain.txt")).stockCommand).toBe("cat plain.txt");
     expect((await translate("plain.txt 2:9")).stockCommand).toBe("cat plain.txt | sed -n '2,9p'");
+    expect((await translate("plain.txt 0:9")).stockCommand).toBe("cat plain.txt | sed -n '1,9p'");
     expect((await translate("\"path with spaces.txt\" 2:9")).stockCommand).toBe(
       "cat 'path with spaces.txt' | sed -n '2,9p'",
     );
@@ -154,6 +161,34 @@ describe("hread built-in plugin", () => {
       exitCode: 0,
     });
 
+    const zeroRange = await tool.execute(["plain.txt", "0:3"], executionContext);
+    expect(zeroRange).toEqual(whole);
+
+    const overrun = await tool.execute(["plain.txt", "2:5"], executionContext);
+    expect(overrun).toEqual({
+      stdout: [
+        formatHashLine(2, "beta"),
+        formatHashLine(3, "gamma"),
+      ].join(""),
+      stderr: "hread: 4-5: [out of range]\n",
+      stock: {
+        stdout: "beta\ngamma\n",
+        exitCode: 0,
+      },
+      exitCode: 0,
+    });
+
+    const outside = await tool.execute(["plain.txt", "4:5"], executionContext);
+    expect(outside).toEqual({
+      stdout: "",
+      stderr: "hread: 4-5: [out of range]\n",
+      stock: {
+        stdout: "",
+        exitCode: 0,
+      },
+      exitCode: 0,
+    });
+
     const missing = await tool.execute(["missing.txt"], executionContext);
     expect(missing).toEqual({
       stderr: "hread: ENOENT: no such file or directory\n",
@@ -161,7 +196,7 @@ describe("hread built-in plugin", () => {
     });
   });
 
-  test("rejects invalid ranges, non-regular files, and invalid UTF-8", async () => {
+  test("rejects malformed ranges, non-regular files, and invalid UTF-8", async () => {
     const directory = await temporaryDirectory("hread-plugin-");
     process.chdir(directory);
     await writeFile("short.txt", "one\n", "utf8");
@@ -174,7 +209,6 @@ describe("hread built-in plugin", () => {
 
     const tool = createHReadTool("description", "start: TEST");
     for (const [argv, diagnostic] of [
-      [["short.txt", "2:3"], "outside file with 1 lines"],
       [["short.txt", "3:2"], "range start exceeds end"],
       [["binary.txt"], "not UTF-8"],
       [["folder"], "not a regular file"],

@@ -634,22 +634,22 @@ function parseReadSpec(input) {
   if (trailing === "") {
     return { path, startLine: 0, endLine: 0 };
   }
-  const match = trailing.match(/^ ([1-9][0-9]*):([1-9][0-9]*)$/u);
+  const match = trailing.match(/^ (0|[1-9][0-9]*):([1-9][0-9]*)$/u);
   if (match === null) {
     throw new Error("hread input must be PATH or PATH START:END");
   }
-  const startLine = Number(match[1]);
+  const requestedStartLine = Number(match[1]);
   const endLine = Number(match[2]);
-  if (!Number.isSafeInteger(startLine)) {
+  if (!Number.isSafeInteger(requestedStartLine)) {
     throw new Error("hread start line is out of range");
   }
   if (!Number.isSafeInteger(endLine)) {
     throw new Error("hread end line is out of range");
   }
-  if (startLine > endLine) {
+  if (requestedStartLine > endLine) {
     throw new Error("hread line range start exceeds end");
   }
-  return { path, startLine, endLine };
+  return { path, startLine: Math.max(1, requestedStartLine), endLine };
 }
 async function readHashLines(spec, maxOutputBytes) {
   const handle = await open(spec.path, constants.O_RDONLY | (constants.O_NONBLOCK ?? 0));
@@ -764,10 +764,10 @@ async function readHashLines(spec, maxOutputBytes) {
       finishLine();
     }
     const lineCount = lineNumber - 1;
-    if (!wholeFile && spec.startLine > lineCount) {
-      throw new Error(`requested lines ${spec.startLine}:${spec.endLine} are outside file with ${lineCount} lines`);
-    }
-    return { current, stock };
+    const missingStartLine = Math.max(spec.startLine, lineCount + 1);
+    const warning = !wholeFile && missingStartLine <= spec.endLine ? `hread: ${missingStartLine}-${spec.endLine}: [out of range]
+` : undefined;
+    return { current, stock, warning };
   } finally {
     await handle.close();
   }
@@ -783,7 +783,7 @@ function hreadInput(argv) {
   if (argv.length === 1 && argv[0] !== "") {
     return JSON.stringify(argv[0]);
   }
-  if (argv.length === 2 && argv[0] !== "" && /^[1-9][0-9]*:[1-9][0-9]*$/u.test(argv[1])) {
+  if (argv.length === 2 && argv[0] !== "" && /^(?:0|[1-9][0-9]*):[1-9][0-9]*$/u.test(argv[1])) {
     return `${JSON.stringify(argv[0])} ${argv[1]}`;
   }
   throw new Error("hread expected PATH or PATH START:END");
@@ -810,6 +810,7 @@ function createHReadTool(description, grammar) {
         const result = await readHashLines(parseReadSpec(stripOptionalFinalNewline(hreadInput(argv))), context.outputBudgetBytes);
         return {
           stdout: result.current,
+          ...result.warning === undefined ? {} : { stderr: result.warning },
           stock: { stdout: result.stock, exitCode: 0 },
           exitCode: 0
         };
@@ -1188,9 +1189,11 @@ become HPATCH targets. For exploration, diagnosis, or validation—including che
 diagnostic—use ordinary read commands. When target-bearing context is needed, use \`hread\`
 instead of \`cat\` or \`sed\`. Run one file per command as \`hread PATH [START:END]\`; quote paths
 with shell syntax and batch related reads as separate commands in one shell script. A bare path
-reads the complete file. Copy a current \`LINE:HASH\` directly into an HPATCH/2 target.`;
+reads the complete file. A start line of \`0\` begins at line 1 without emitting line 0. Missing
+lines beyond EOF produce a warning after any available rows and do not fail the command. Copy a
+current \`LINE:HASH\` directly into an HPATCH/2 target.`;
 var hreadPath = `(?:"(?:\\\\(?:["\\\\/bfnrt]|u[0-9A-Fa-f]{4})|[^\\x00-\\x1F"\\\\]|\\t)*"|[^\\x00-\\x20"]+)`;
-var hreadReadSpec = `${hreadPath}(?: [1-9][0-9]*:[1-9][0-9]*)?`;
+var hreadReadSpec = `${hreadPath}(?: (?:0|[1-9][0-9]*):[1-9][0-9]*)?`;
 var hreadRegex = `\\A${hreadReadSpec}\\z`;
 var hgrepDescription = `Use \`hgrep\` through \`shell\` only when you expect its returned matches to become
 HPATCH targets. For exploration, diagnosis, validation, or owner discovery, use ordinary search

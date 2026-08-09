@@ -8,10 +8,12 @@ become HPATCH targets. For exploration, diagnosis, or validation—including che
 diagnostic—use ordinary read commands. When target-bearing context is needed, use \`hread\`
 instead of \`cat\` or \`sed\`. Run one file per command as \`hread PATH [START:END]\`; quote paths
 with shell syntax and batch related reads as separate commands in one shell script. A bare path
-reads the complete file. Copy a current \`LINE:HASH\` directly into an HPATCH/2 target.`;
+reads the complete file. A start line of \`0\` begins at line 1 without emitting line 0. Missing
+lines beyond EOF produce a warning after any available rows and do not fail the command. Copy a
+current \`LINE:HASH\` directly into an HPATCH/2 target.`;
 
 const hreadPath = `(?:"(?:\\\\(?:["\\\\/bfnrt]|u[0-9A-Fa-f]{4})|[^\\x00-\\x1F"\\\\]|\\t)*"|[^\\x00-\\x20"]+)`;
-const hreadReadSpec = `${hreadPath}(?: [1-9][0-9]*:[1-9][0-9]*)?`;
+const hreadReadSpec = `${hreadPath}(?: (?:0|[1-9][0-9]*):[1-9][0-9]*)?`;
 const hreadRegex = `\\A${hreadReadSpec}\\z`;
 
 const hgrepDescription = `Use \`hgrep\` through \`shell\` only when you expect its returned matches to become
