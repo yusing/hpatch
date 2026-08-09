@@ -22,4 +22,3 @@ func configurePluginProcessGroup(command *exec.Cmd) {
 		return err
 	}
 }
-
