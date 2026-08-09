@@ -368,8 +368,13 @@ export const shellTool = {
     type: "custom",
     name: "shell",
     description: `Run one free-form script without an outer heredoc or command-string quoting.
-Use the first line as an optional shebang. A bare interpreter, a full path, and
-/usr/bin/env forms are accepted. Without a shebang, bash runs the complete input.
+For non-Bash scripts, put the complete interpreter command in a shebang on the first line and
+write the program directly below it. This includes launchers and interpreter arguments, such
+as \`#!uv run python\` or \`#!node --experimental-strip-types\`. Never wrap the program in
+Bash, \`-c\`/\`-e\` command-string quoting, or a heredoc.
+A bare interpreter and a full path are accepted.
+Prefer a bare interpreter name over \`/usr/bin/env\`. Do not add a Bash shebang; without one,
+Bash runs the complete input.
 Optional directive assignments use #!key=value and can follow the shebang or be first.
 #!cmd= accepts one {.} placeholder that expands to the normalized shell frontend command.
 #!params=<JSON object> supplies other supported execution arguments and can occur beside
