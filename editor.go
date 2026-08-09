@@ -36,16 +36,19 @@ type editor struct {
 	baseline           string
 	edits              []baselineEdit
 	lastOrigin         editOrigin
-	pendingIndentation *indentationCorrectionPending
+	pendingIndentation []indentationCorrectionPending
 	finalContent       *string
 	finalOffsets       *formattedOffsetMap
 }
 
 type indentationCorrectionPending struct {
 	correction *indentationCorrectionError
+	kind       indentationCorrectionKind
+	wrapper    indentationWrapperCandidate
 	command    instruction
 	origin     editOrigin
 	path       string
+	sequence   int
 }
 
 type logicalLine struct {
@@ -133,6 +136,16 @@ func (e *editor) applyMutation(operation string, target targetSpec, value string
 		return err
 	}
 	edits := make([]baselineEdit, len(spans))
+	var candidate indentationCandidate
+	var hasCandidate bool
+	if operation == "type" && target.kind == targetLine && len(spans) == 1 {
+		span := spans[0]
+		replacement := value
+		if replacement != "" && span.linewise && lineTerminatorSuffix(replacement) == "" {
+			replacement += lineTerminatorSuffix(e.baseline[span.start:span.end])
+		}
+		candidate, hasCandidate = detectIndentationCandidate(e.baseline, span, replacement)
+	}
 	for index, span := range spans {
 		replacement := value
 		start, end := span.start, span.end
@@ -140,11 +153,6 @@ func (e *editor) applyMutation(operation string, target targetSpec, value string
 		case "type":
 			if replacement != "" && span.linewise && lineTerminatorSuffix(replacement) == "" {
 				replacement += lineTerminatorSuffix(e.baseline[span.start:span.end])
-			}
-			if len(spans) == 1 {
-				if correction := detectIndentationCorrection(e.baseline, span, replacement); correction != nil && e.pendingIndentation == nil {
-					e.pendingIndentation = &indentationCorrectionPending{correction: correction, command: command, origin: origin}
-				}
 			}
 		case "type-":
 			end = start
@@ -162,8 +170,23 @@ func (e *editor) applyMutation(operation string, target targetSpec, value string
 			editOrigin:  origin,
 		}
 	}
+	sequence := len(e.edits) + 1
 	if err := e.recordEdits(edits); err != nil {
 		return withReason(reasonEditConflict, err)
+	}
+	if hasCandidate && len(edits) == 1 && len(e.edits) == sequence {
+		edit := e.edits[sequence-1]
+		if edit.sequence == sequence && edit.command == origin.command &&
+			edit.start == spans[0].start && edit.end == spans[0].end {
+			e.pendingIndentation = append(e.pendingIndentation, indentationCorrectionPending{
+				correction: candidate.correction,
+				kind:       candidate.kind,
+				wrapper:    candidate.wrapper,
+				command:    command,
+				origin:     origin,
+				sequence:   edit.sequence,
+			})
+		}
 	}
 	return nil
 }

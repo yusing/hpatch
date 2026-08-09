@@ -100,6 +100,9 @@ func (p *program) evaluate(ctx context.Context, resolve pathResolver, load fileL
 			return nil, events, "", failure
 		}
 	}
+	if err := w.applyLanguageIndentation(ctx); err != nil {
+		return nil, events, "", err
+	}
 	if failure := w.indentationFailure(); failure != nil {
 		events.fail(failure.Operation, failure.Attempt, failure.Reason)
 		return nil, events, "", failure
@@ -122,30 +125,31 @@ func (p *program) evaluate(ctx context.Context, resolve pathResolver, load fileL
 func (w *workspace) indentationFailure() *commandError {
 	var earliest *commandError
 	for _, file := range w.files {
-		pending := file.editor.pendingIndentation
-		if pending == nil || filepath.Ext(file.path) == ".go" {
-			continue
-		}
-		command := pending.command
-		path := pending.path
-		if path == "" {
-			path = file.path
-		}
-		failure := &commandError{
-			Attempt:    command.attempt,
-			Reason:     reasonEditConflict,
-			Command:    pending.origin.command,
-			Line:       command.line,
-			Operation:  command.operation,
-			Path:       path,
-			Category:   commandCategory(command.operation),
-			Source:     command.source,
-			Message:    pending.correction.Error(),
-			Repair:     pending.correction.diagnostic(),
-			Correction: correctedTypeCommand(command, pending.correction.correctedText),
-		}
-		if earliest == nil || failure.Command < earliest.Command {
-			earliest = failure
+		for _, pending := range file.editor.pendingIndentation {
+			if pending.kind != indentationCorrectionExact || indentationPolicy(file.path) != indentationPolicyReject {
+				continue
+			}
+			command := pending.command
+			path := pending.path
+			if path == "" {
+				path = file.path
+			}
+			failure := &commandError{
+				Attempt:    command.attempt,
+				Reason:     reasonEditConflict,
+				Command:    pending.origin.command,
+				Line:       command.line,
+				Operation:  command.operation,
+				Path:       path,
+				Category:   commandCategory(command.operation),
+				Source:     command.source,
+				Message:    pending.correction.Error(),
+				Repair:     pending.correction.diagnostic(),
+				Correction: correctedTypeCommand(command, pending.correction.correctedText),
+			}
+			if earliest == nil || failure.Command < earliest.Command {
+				earliest = failure
+			}
 		}
 	}
 	return earliest
@@ -207,9 +211,12 @@ func (w *workspace) execute(command instruction, commandIndex int) error {
 		if file.created {
 			return withReason(reasonInitialization, fmt.Errorf("new file content is not targetable before a successful invocation and hread"))
 		}
+		beforeCandidates := len(file.editor.pendingIndentation)
 		err := file.editor.applyMutation(command.operation, command.target, command.text, origin, command)
-		if pending := file.editor.pendingIndentation; pending != nil && pending.path == "" {
-			pending.path = file.path
+		for index := beforeCandidates; index < len(file.editor.pendingIndentation); index++ {
+			if file.editor.pendingIndentation[index].path == "" {
+				file.editor.pendingIndentation[index].path = file.path
+			}
 		}
 		if err != nil {
 			return err
