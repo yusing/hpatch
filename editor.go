@@ -33,11 +33,19 @@ type baselineEdit struct {
 }
 
 type editor struct {
-	baseline     string
-	edits        []baselineEdit
-	lastOrigin   editOrigin
-	finalContent *string
-	finalOffsets *formattedOffsetMap
+	baseline           string
+	edits              []baselineEdit
+	lastOrigin         editOrigin
+	pendingIndentation *indentationCorrectionPending
+	finalContent       *string
+	finalOffsets       *formattedOffsetMap
+}
+
+type indentationCorrectionPending struct {
+	correction *indentationCorrectionError
+	command    instruction
+	origin     editOrigin
+	path       string
 }
 
 type logicalLine struct {
@@ -119,7 +127,7 @@ func resolveRow(baseline string, reference rowReference) (logicalLine, error) {
 	return line, nil
 }
 
-func (e *editor) applyMutation(operation string, target targetSpec, value string, origin editOrigin) error {
+func (e *editor) applyMutation(operation string, target targetSpec, value string, origin editOrigin, command instruction) error {
 	spans, err := e.resolveTarget(target)
 	if err != nil {
 		return err
@@ -134,8 +142,8 @@ func (e *editor) applyMutation(operation string, target targetSpec, value string
 				replacement += lineTerminatorSuffix(e.baseline[span.start:span.end])
 			}
 			if len(spans) == 1 {
-				if correction := detectIndentationCorrection(e.baseline, span, replacement); correction != nil {
-					return correction
+				if correction := detectIndentationCorrection(e.baseline, span, replacement); correction != nil && e.pendingIndentation == nil {
+					e.pendingIndentation = &indentationCorrectionPending{correction: correction, command: command, origin: origin}
 				}
 			}
 		case "type-":
@@ -164,6 +172,7 @@ func (e *editor) initialize(value string, origin editOrigin) {
 	e.baseline = ""
 	e.edits = nil
 	e.finalContent = nil
+	e.pendingIndentation = nil
 	e.finalOffsets = nil
 	if value == "" {
 		return

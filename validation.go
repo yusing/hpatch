@@ -179,6 +179,7 @@ func (w *workspace) formatGoFiles() *commandError {
 			file.editor.finalOffsets = offsets
 		}
 	}
+	w.autofixWhitespace()
 	return nil
 }
 
@@ -345,6 +346,8 @@ type formattedOffsetMap struct {
 	afterLength  int
 	before       []formatToken
 	after        []formatToken
+	deletions    []whitespaceDeletion
+	subsequent   *formattedOffsetMap
 }
 
 func newFormattedOffsetMap(before, after string) (*formattedOffsetMap, error) {
@@ -414,6 +417,31 @@ func (m *formattedOffsetMap) mapOffset(offset int) int {
 	if m == nil {
 		return offset
 	}
+	var mapped int
+	if len(m.deletions) != 0 {
+		mapped = m.mapDeletedOffset(offset)
+	} else {
+		mapped = m.mapTokenOffset(offset)
+	}
+	return m.subsequent.mapOffset(mapped)
+}
+
+func (m *formattedOffsetMap) mapDeletedOffset(offset int) int {
+	offset = min(max(offset, 0), m.beforeLength)
+	removed := 0
+	for _, deletion := range m.deletions {
+		if offset <= deletion.start {
+			return offset - removed
+		}
+		if offset < deletion.end {
+			return deletion.start - removed
+		}
+		removed += deletion.end - deletion.start
+	}
+	return offset - removed
+}
+
+func (m *formattedOffsetMap) mapTokenOffset(offset int) int {
 	offset = min(max(offset, 0), m.beforeLength)
 	next := sort.Search(len(m.before), func(index int) bool {
 		return m.before[index].start >= offset

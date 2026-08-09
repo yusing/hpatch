@@ -2,7 +2,6 @@ package hpatch
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io/fs"
 	"path/filepath"
@@ -77,27 +76,35 @@ func (p *program) evaluate(ctx context.Context, resolve pathResolver, load fileL
 		if command.path != "" {
 			resolved, err := resolve(command.path)
 			if err != nil {
+				if failure := w.indentationFailure(); failure != nil {
+					events.fail(failure.Operation, failure.Attempt, failure.Reason)
+					return nil, events, "", failure
+				}
+
 				reason := reasonPath
 				events.fail(command.operation, command.attempt, reason)
 				return nil, events, "", &commandError{Attempt: command.attempt, Reason: reason, Command: commandIndex + 1, Line: command.line, Operation: command.operation, Path: diagnosticPath, Category: commandCategory(command.operation), Source: command.source, Message: err.Error()}
 			}
 			command.path = resolved
 		}
+
 		if err := w.execute(command, commandIndex+1); err != nil {
-			reason := reasonOf(err, reasonOther)
-			if _, ok := errors.AsType[*indentationCorrectionError](err); ok {
-				reason = reasonEditConflict
+			if failure := w.indentationFailure(); failure != nil {
+				events.fail(failure.Operation, failure.Attempt, failure.Reason)
+				return nil, events, "", failure
 			}
+
+			reason := reasonOf(err, reasonOther)
 			events.fail(command.operation, command.attempt, reason)
 			failure := &commandError{Attempt: command.attempt, Reason: reason, Command: commandIndex + 1, Line: command.line, Operation: command.operation, Path: w.diagnosticPath(command), Category: commandCategory(command.operation), Source: command.source, Message: err.Error(), Repair: w.repairContext(command, reason)}
-			if correction, ok := errors.AsType[*indentationCorrectionError](err); ok {
-				failure.Message = "indentation-only change to preserved text"
-				failure.Repair = correction.diagnostic()
-				failure.Correction = correctedTypeCommand(command, correction.correctedText)
-			}
 			return nil, events, "", failure
 		}
 	}
+	if failure := w.indentationFailure(); failure != nil {
+		events.fail(failure.Operation, failure.Attempt, failure.Reason)
+		return nil, events, "", failure
+	}
+
 	if err := ctx.Err(); err != nil {
 		return nil, events, "", err
 	}
@@ -110,6 +117,38 @@ func (p *program) evaluate(ctx context.Context, resolve pathResolver, load fileL
 	changes := w.changes()
 
 	return changes, events, w.finalStateReport(changes), nil
+}
+
+func (w *workspace) indentationFailure() *commandError {
+	var earliest *commandError
+	for _, file := range w.files {
+		pending := file.editor.pendingIndentation
+		if pending == nil || filepath.Ext(file.path) == ".go" {
+			continue
+		}
+		command := pending.command
+		path := pending.path
+		if path == "" {
+			path = file.path
+		}
+		failure := &commandError{
+			Attempt:    command.attempt,
+			Reason:     reasonEditConflict,
+			Command:    pending.origin.command,
+			Line:       command.line,
+			Operation:  command.operation,
+			Path:       path,
+			Category:   commandCategory(command.operation),
+			Source:     command.source,
+			Message:    pending.correction.Error(),
+			Repair:     pending.correction.diagnostic(),
+			Correction: correctedTypeCommand(command, pending.correction.correctedText),
+		}
+		if earliest == nil || failure.Command < earliest.Command {
+			earliest = failure
+		}
+	}
+	return earliest
 }
 
 func (w *workspace) diagnosticPath(command instruction) string {
@@ -168,7 +207,11 @@ func (w *workspace) execute(command instruction, commandIndex int) error {
 		if file.created {
 			return withReason(reasonInitialization, fmt.Errorf("new file content is not targetable before a successful invocation and hread"))
 		}
-		if err := file.editor.applyMutation(command.operation, command.target, command.text, origin); err != nil {
+		err := file.editor.applyMutation(command.operation, command.target, command.text, origin, command)
+		if pending := file.editor.pendingIndentation; pending != nil && pending.path == "" {
+			pending.path = file.path
+		}
+		if err != nil {
 			return err
 		}
 	}

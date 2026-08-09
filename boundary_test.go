@@ -109,12 +109,12 @@ func TestHPatch2QuotedOperandsAcceptLiteralTabs(t *testing.T) {
 
 func TestHPatch2FixedHeredocPreservesLiteralCRLFBody(t *testing.T) {
 	root := t.TempDir()
-	script := "new file.txt\r\ntype <<PATCH\r\none \"quoted\" \\ slash\t\r\ntwo\r\nPATCH\r\n"
+	script := "new file.txt\r\ntype <<PATCH\r\none \"quoted\" \\ slash\tinside\r\ntwo\r\nPATCH\r\n"
 	_, stderr, exitCode := runForTest(root, nil, script)
 	if exitCode != 0 {
 		t.Fatalf("Run() = exit %d, stderr %q", exitCode, stderr)
 	}
-	if got, want := readTestFile(t, root, "file.txt"), "one \"quoted\" \\ slash\t\r\ntwo\r\n"; got != want {
+	if got, want := readTestFile(t, root, "file.txt"), "one \"quoted\" \\ slash\tinside\r\ntwo\r\n"; got != want {
 		t.Fatalf("file.txt = %q, want %q", got, want)
 	}
 }
