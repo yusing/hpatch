@@ -1183,19 +1183,22 @@ remains available as program data.`
 };
 
 // src/builtin/tools.ts
-var hreadDescription = `Use \`hread\` through \`shell\` instead of \`cat\` or \`sed\` when source rows may
-become HPATCH targets. Run one file per command as \`hread PATH [START:END]\`; quote paths
-with shell syntax and batch related reads as separate commands in one shell script. A bare
-path reads the complete file. Output is \`LINE:HASH TEXT\`; copy the current \`LINE:HASH\`
-directly into an HPATCH/2 target.`;
+var hreadDescription = `Use \`hread\` through \`shell\` only when you expect its returned \`LINE:HASH\` rows to
+become HPATCH targets. For exploration, diagnosis, or validation—including checking a named
+diagnostic—use ordinary read commands. When target-bearing context is needed, use \`hread\`
+instead of \`cat\` or \`sed\`. Run one file per command as \`hread PATH [START:END]\`; quote paths
+with shell syntax and batch related reads as separate commands in one shell script. A bare path
+reads the complete file. Copy a current \`LINE:HASH\` directly into an HPATCH/2 target.`;
 var hreadPath = `(?:"(?:\\\\(?:["\\\\/bfnrt]|u[0-9A-Fa-f]{4})|[^\\x00-\\x1F"\\\\]|\\t)*"|[^\\x00-\\x20"]+)`;
 var hreadReadSpec = `${hreadPath}(?: [1-9][0-9]*:[1-9][0-9]*)?`;
 var hreadRegex = `\\A${hreadReadSpec}\\z`;
-var hgrepDescription = `Use \`hgrep\` through \`shell\` instead of \`rg\` or \`grep\` when search results may
-become HPATCH targets. It accepts familiar ripgrep arguments and ordinary shell quoting,
-redirection, and pipelines. Combine known patterns and paths in one command and use repeated
-\`-e\` for multiple patterns. Output is \`"PATH":LINE:HASH TEXT\`; copy the current
-\`LINE:HASH\` directly into an HPATCH/2 target. Never guess or reconstruct a row.`;
+var hgrepDescription = `Use \`hgrep\` through \`shell\` only when you expect its returned matches to become
+HPATCH targets. For exploration, diagnosis, validation, or owner discovery, use ordinary search
+commands. When target-bearing matches are needed, use \`hgrep\` instead of \`rg\` or \`grep\`. It
+accepts familiar ripgrep arguments and ordinary shell quoting, redirection, and pipelines.
+Combine known patterns and paths in one command and use repeated \`-e\` for multiple patterns.
+Output is \`"PATH":LINE:HASH TEXT\`; copy a current \`LINE:HASH\` directly into an HPATCH/2 target.
+Never guess or reconstruct a row.`;
 var hgrepPart = `(?:'[^'\\r\\n]*'|"(?:\\\\[^\\r\\n]|[^"\\\\\\r\\n])*"|(?:\\\\[^\\r\\n]|[^\\s'"\\\\])+)`;
 var hgrepRegex = `\\A[ \\t]*${hgrepPart}+(?:[ \\t]+${hgrepPart}+)*[ \\t]*\\z`;
 var plugin = {

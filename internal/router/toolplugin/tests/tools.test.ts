@@ -51,6 +51,9 @@ describe("hread built-in plugin", () => {
   test("describes single-file reads batched through shell", () => {
     const description = plugin.tools[0].specification.description.replace(/\s+/g, " ");
     for (const fragment of [
+      "only when you expect its returned `LINE:HASH` rows to become HPATCH targets",
+      "For exploration, diagnosis, or validation—including checking a named diagnostic—use ordinary read commands",
+      "When target-bearing context is needed, use `hread` instead of `cat` or `sed`",
       "Run one file per command as `hread PATH [START:END]`",
       "batch related reads as separate commands in one shell script",
       "A bare path reads the complete file",
@@ -188,6 +191,9 @@ describe("hgrep built-in plugin", () => {
   test("describes shell searches and repeated patterns", () => {
     const description = plugin.tools[1].specification.description.replace(/\s+/g, " ");
     for (const fragment of [
+      "only when you expect its returned matches to become HPATCH targets",
+      "For exploration, diagnosis, validation, or owner discovery, use ordinary search commands",
+      "When target-bearing matches are needed, use `hgrep` instead of `rg` or `grep`",
       "Use `hgrep` through `shell`",
       "ordinary shell quoting, redirection, and pipelines",
       "use repeated `-e` for multiple patterns",

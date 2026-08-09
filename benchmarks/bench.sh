@@ -603,7 +603,7 @@ qualify_agent_isolation() {
 			test "$(codex --disable apps mcp list --json)" = "[]"
 			go mod download all
 			if [ "$REQUIRE_HREAD" = 1 ]; then
-				hread "go.mod 1:1" >/dev/null
+			hread go.mod 1:1 >/dev/null
 			fi
 		'; then
 		printf 'bench.sh: agent isolation qualification failed for %s\n' "$service" >&2
