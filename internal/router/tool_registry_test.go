@@ -240,8 +240,9 @@ func TestToolRegistryStartup(t *testing.T) {
 		if err := json.Unmarshal(encodedManifest, &manifest); err != nil {
 			t.Fatal(err)
 		}
-		if manifest.RegistryID != registry.ID || len(manifest.Tools) != 6 {
-			t.Fatalf("manifest = %+v, registry ID %q", manifest, registry.ID)
+		registryID, authenticated := toolRegistryIDFromDirectory(snapshot)
+		if !authenticated || manifest.RegistryID != registryID || len(manifest.Tools) != 6 {
+			t.Fatalf("manifest = %+v, snapshot registry ID %q, authenticated %t", manifest, registryID, authenticated)
 		}
 		if err := registry.Close(); err != nil {
 			t.Fatal(err)

@@ -193,9 +193,7 @@ function splitArguments(rawInput) {
       break;
     }
     let argument = "";
-    let started = false;
     while (offset < input.length && input[offset] !== " " && input[offset] !== "\t") {
-      started = true;
       const character = input[offset];
       if (character === "\r" || character === `
 `) {
@@ -236,9 +234,7 @@ function splitArguments(rawInput) {
       argument += character;
       offset += 1;
     }
-    if (started) {
-      argumentsValue.push(argument);
-    }
+    argumentsValue.push(argument);
   }
   if (argumentsValue.length === 0) {
     throw new Error("input must contain at least one argument");
@@ -758,9 +754,7 @@ async function readHashLines(spec, maxOutputBytes) {
     } finally {
       stream.destroy();
     }
-    if (pendingCR) {
-      finishLine();
-    } else if (lineOpen) {
+    if (lineOpen) {
       finishLine();
     }
     const lineCount = lineNumber - 1;

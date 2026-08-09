@@ -12,7 +12,6 @@ import {
   stripOptionalFinalNewline,
 } from "./common.ts";
 
-// Source: hread.go:45:385 parseHReadSpec, readHashLinesForHost, and formatHashLineStream.
 const READ_BUFFER_BYTES = 32 * 1024;
 
 class ResultTooLargeError extends Error {}
@@ -219,9 +218,7 @@ async function readHashLines(spec: ReadSpec, maxOutputBytes: number): Promise<Co
       stream.destroy();
     }
 
-    if (pendingCR) {
-      finishLine();
-    } else if (lineOpen) {
+    if (lineOpen) {
       finishLine();
     }
     const lineCount = lineNumber - 1;

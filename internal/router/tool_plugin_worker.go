@@ -127,7 +127,7 @@ func RunToolPluginWorker(
 			contribution = &manifest.Tools[index]
 		}
 	}
-	if contribution == nil || contribution.Builtin || !contribution.Executor ||
+	if contribution == nil || contribution.Builtin ||
 		contribution.Module == "" || contribution.PluginID == "" {
 		return fail(fmt.Errorf("tool %q is unavailable in worker manifest", name))
 	}

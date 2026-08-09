@@ -17,21 +17,6 @@ const (
 	maxMetricToolNameBytes = 64
 )
 
-type toolMetric struct {
-	PluginID               string
-	ToolName               string
-	DefinitionInputTokens  uint64
-	Calls                  uint64
-	EmittedTokens          uint64
-	TranslatedTokens       uint64
-	FailedTranslations     uint64
-	FailedEmittedTokens    uint64
-	FailedTranslatedTokens uint64
-	Executions             uint64
-	CurrentInputTokens     uint64
-	StockInputTokens       uint64
-}
-
 // HostToolDefinition identifies one installed model-visible tool object.
 type HostToolDefinition struct {
 	PluginID   string
@@ -94,6 +79,7 @@ type ToolMetricRecord struct {
 	CurrentInputTokens     uint64
 	StockInputTokens       uint64
 }
+type toolMetric = ToolMetricRecord
 
 // ToolGainMetric is one stable output-token row in structured gain data.
 type ToolGainMetric struct {
@@ -345,13 +331,13 @@ func addToolMetricRecord(destination *ToolMetricRecord, increment ToolMetricReco
 func (m *metrics) addTool(increment toolMetric) error {
 	for index := range int(m.ToolCount) {
 		current := &m.Tools[index]
-		order := cmp.Or(cmp.Compare(current.PluginID, increment.PluginID), cmp.Compare(current.ToolName, increment.ToolName))
+		order := compareToolMetricRecords(*current, increment)
 		if order == 0 {
-			record := ToolMetricRecord(*current)
-			if !addToolMetricRecord(&record, ToolMetricRecord(increment)) {
+			record := *current
+			if !addToolMetricRecord(&record, increment) {
 				return fmt.Errorf("updating metrics: tool counter overflow")
 			}
-			*current = toolMetric(record)
+			*current = record
 			return nil
 		}
 		if order > 0 {
@@ -451,9 +437,7 @@ func (m metrics) gainToolRows() ([]ToolGainMetric, ToolGainMetric, []ToolDefinit
 			FailedTranslations:  boolCount(m.IneffectiveHPatchTokens != 0 || m.FailedApplyPatchTokens != 0),
 			FailedEmittedTokens: m.IneffectiveHPatchTokens, FailedTranslatedTokens: m.FailedApplyPatchTokens,
 		})
-		slices.SortFunc(entries, func(a, b toolMetric) int {
-			return cmp.Or(cmp.Compare(a.PluginID, b.PluginID), cmp.Compare(a.ToolName, b.ToolName))
-		})
+		slices.SortFunc(entries, compareToolMetricRecords)
 	}
 
 	tools := make([]ToolGainMetric, 0, len(entries)*2)

@@ -70,7 +70,7 @@ func (r HostMetricRecord) entry() (metrics, error) {
 		if err := validateMetricToolKey(record.PluginID, record.ToolName); err != nil {
 			return metrics{}, err
 		}
-		if err := entry.addTool(toolMetric(record)); err != nil {
+		if err := entry.addTool(record); err != nil {
 			return metrics{}, err
 		}
 	}

@@ -107,7 +107,6 @@ func buildToolRegistry(ctx context.Context, dataDirectory, hpatchDescription str
 				Specification: slices.Clone(tool.Specification),
 				Module:        plugin.Module,
 				ModuleIndex:   toolIndex,
-				Executor:      true,
 				ModelVisible:  jsonString(specification, "name") != "hread" && jsonString(specification, "name") != "hgrep",
 			}
 			if validationErr := validateToolContribution(contribution); validationErr != nil {
@@ -155,7 +154,7 @@ func buildToolRegistry(ctx context.Context, dataDirectory, hpatchDescription str
 		return fail(err)
 	}
 	for _, contribution := range contributions {
-		if !contribution.Executor {
+		if contribution.Builtin {
 			continue
 		}
 		wrapper, wrapperErr := ensureWorkerSymlinkInDirectory(executable, snapshotDirectory, contribution.Name)
@@ -169,7 +168,6 @@ func buildToolRegistry(ctx context.Context, dataDirectory, hpatchDescription str
 		return fail(errors.Join(validationErrors...))
 	}
 	return &toolRegistry{
-		ID:                registryID,
 		SnapshotDir:       snapshotDirectory,
 		RuntimeRoot:       runtimeRoot,
 		NodeExecutable:    pluginSnapshot.NodeExecutable,

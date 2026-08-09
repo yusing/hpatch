@@ -11,7 +11,6 @@ import {
   stripOptionalFinalNewline,
 } from "./common.ts";
 
-// Source: internal/router/hgrep_worker.go:119:460 argument parsing, rg transport, and row rendering.
 const MAX_STDERR_BYTES = 64 * 1024;
 const LIMIT_MESSAGE = "hgrep: output limit reached; retry with a narrower search\n";
 
@@ -159,9 +158,7 @@ export function splitArguments(rawInput: string): string[] {
     }
 
     let argument = "";
-    let started = false;
     while (offset < input.length && input[offset] !== " " && input[offset] !== "\t") {
-      started = true;
       const character = input[offset];
       if (character === "\r" || character === "\n") {
         throw new Error("input must contain one argument line");
@@ -200,9 +197,7 @@ export function splitArguments(rawInput: string): string[] {
       argument += character;
       offset += 1;
     }
-    if (started) {
-      argumentsValue.push(argument);
-    }
+    argumentsValue.push(argument);
   }
   if (argumentsValue.length === 0) {
     throw new Error("input must contain at least one argument");
