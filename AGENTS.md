@@ -7,6 +7,11 @@ Do not duplicate HPATCH syntax or tool-call mechanics here; `hpatch --help`,
 `hpatch --tool-help`, `tool_description.md`, and `tool_grammar.lark` own those
 details.
 
+## Assumptions
+
+- Router and codex executor will be on the same machine and filesystem in order to let
+  `hpatch` works
+
 ## System model
 
 The hpatch/router path uses one edit engine and two thin binaries:
