@@ -13,6 +13,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -394,6 +395,8 @@ type hpatchResponseTransform struct {
 	originalInstructions        json.RawMessage
 	originalInstructionsPresent bool
 	pending                     map[string]hpatchPendingCall
+	nativeExecItems             map[string]struct{}
+	nativeExecWarningsMetered   map[string]struct{}
 	local                       map[string]hpatchHistory
 	workspace                   routingWorkspace
 	carriers                    codeModeCarrierCatalog
@@ -576,6 +579,8 @@ func (p *hpatchProxy) prepareRequest(ctx context.Context, request *parsedRespons
 		originalInstructions:        originalInstructions,
 		originalInstructionsPresent: originalInstructionsPresent,
 		pending:                     make(map[string]hpatchPendingCall),
+		nativeExecItems:             make(map[string]struct{}),
+		nativeExecWarningsMetered:   make(map[string]struct{}),
 		local:                       make(map[string]hpatchHistory),
 		workspace:                   workspace,
 		carriers:                    carriers,
@@ -1551,17 +1556,22 @@ func (t *hpatchResponseTransform) translateRegisteredTool(contribution toolContr
 		return history, nil
 	}
 	pathPrefix := t.proxy.shellSessionDirectory(t.sessionID) + string(os.PathSeparator)
-	translation, err := toolplugin.Translate(
-		t.ctx,
-		t.proxy.registry.NodeExecutable,
-		t.proxy.registry.RuntimeRoot,
-		contribution.Module,
-		contribution.ModuleIndex,
-		input,
-		pathPrefix,
-	)
-	if err != nil {
-		return hpatchHistory{}, fmt.Errorf("translate registered tool %s: %w", contribution.Name, err)
+	recoveredPayload, recovered := lunaShellExecCarrier(contribution, input)
+	var translation toolplugin.Translation
+	var err error
+	if !recovered {
+		translation, err = toolplugin.Translate(
+			t.ctx,
+			t.proxy.registry.NodeExecutable,
+			t.proxy.registry.RuntimeRoot,
+			contribution.Module,
+			contribution.ModuleIndex,
+			input,
+			pathPrefix,
+		)
+		if err != nil {
+			return hpatchHistory{}, fmt.Errorf("translate registered tool %s: %w", contribution.Name, err)
+		}
 	}
 	var resultMetadata map[string]json.RawMessage
 	if translation.Carrier.RetainInput != nil {
@@ -1579,7 +1589,18 @@ func (t *hpatchResponseTransform) translateRegisteredTool(contribution toolContr
 	name := t.codeModeToolName
 	payload := ""
 	diagnostic := translation.Diagnostic
-	if translation.Rejected {
+	misuseWarning := ""
+	if recovered {
+		warnedPayload, warningInput, _, warningErr := prependExecCommandWarning(recoveredPayload, lunaShellRecoveryWarning)
+		if warningErr != nil {
+			return hpatchHistory{}, fmt.Errorf("%s Code Mode exec recovery warning: %w", contribution.Name, warningErr)
+		}
+		misuseWarning = warningInput
+		payload = warnedPayload
+		if err := t.carriers.require(name, kind); err != nil {
+			return hpatchHistory{}, fmt.Errorf("%s Code Mode exec recovery: %w", contribution.Name, err)
+		}
+	} else if translation.Rejected {
 		if err := t.carriers.require(name, kind); err != nil {
 			return hpatchHistory{}, fmt.Errorf("%s input rejection: %w", contribution.Name, err)
 		}
@@ -1641,6 +1662,14 @@ func (t *hpatchResponseTransform) translateRegisteredTool(contribution toolContr
 			)
 		}
 	}
+	if !translation.Rejected && shellInterpreterWrapperMisuse(contribution, input) {
+		warnedPayload, warningInput, _, warningErr := prependExecCommandWarning(payload, shellInterpreterWrapperWarning)
+		if warningErr != nil {
+			return hpatchHistory{}, fmt.Errorf("%s interpreter-wrapper warning: %w", contribution.Name, warningErr)
+		}
+		misuseWarning = warningInput + misuseWarning
+		payload = warnedPayload
+	}
 
 	metricName := name
 	metricPayload := payload
@@ -1667,9 +1696,10 @@ func (t *hpatchResponseTransform) translateRegisteredTool(contribution toolContr
 		metricCall.TranslatedPayload = metricPayload
 	}
 	if err := t.recordMetrics(hpatchMetricInputs{
-		overheadOnly: true,
-		toolCall:     metricCall,
-		diagnostic:   diagnostic,
+		overheadOnly:  true,
+		toolCall:      metricCall,
+		diagnostic:    diagnostic,
+		misuseWarning: misuseWarning,
 	}); err != nil {
 		return hpatchHistory{}, err
 	}
@@ -1779,6 +1809,39 @@ func workerCommandExecInputWithResult(command string, params map[string]json.Raw
 	}
 	return "const result = await tools.exec_command(" + string(mustMarshalJSON(arguments)) + ");\n" +
 		resultOutput, nil
+}
+
+func misuseWarningCommand(warning string) string {
+	return "printf '%s\\n' " + shellQuoteArgument(warning) + " >&2\n"
+}
+
+func prependExecCommandWarning(input, warning string) (string, string, bool, error) {
+	call := strings.Index(input, codeModeExecToolCallPrefix)
+	if call < 0 {
+		return input, "", false, errors.New("Code Mode input has no exec_command call")
+	}
+	argumentsStart := call + len(codeModeExecToolCallPrefix)
+	argumentsInput := input[argumentsStart:]
+	decoder := json.NewDecoder(strings.NewReader(argumentsInput))
+	var arguments map[string]json.RawMessage
+	if err := decoder.Decode(&arguments); err != nil || arguments == nil {
+		return input, "", false, errors.New("decode Code Mode exec_command arguments")
+	}
+	argumentsEnd := int(decoder.InputOffset())
+	if suffix := strings.TrimLeft(argumentsInput[argumentsEnd:], " \t\r\n"); !strings.HasPrefix(suffix, ")") {
+		return input, "", false, errors.New("Code Mode exec_command arguments have no closing parenthesis")
+	}
+	var command string
+	if json.Unmarshal(arguments["cmd"], &command) != nil {
+		return input, "", false, errors.New("Code Mode exec_command has no string cmd")
+	}
+	warningInput := misuseWarningCommand(warning)
+	if strings.HasPrefix(command, warningInput) {
+		return input, warningInput, false, nil
+	}
+	arguments["cmd"] = mustMarshalJSON(warningInput + command)
+	rewritten := input[:argumentsStart] + string(mustMarshalJSON(arguments)) + argumentsInput[argumentsEnd:]
+	return rewritten, warningInput, true, nil
 }
 
 func (h hpatchHistory) carrierInput() string {
@@ -1914,6 +1977,13 @@ func (t *hpatchResponseTransform) TransformSSE(payload []byte) ([][]byte, error)
 			return [][]byte{payload}, nil //nolint:nilerr // Unrelated output items pass through unchanged.
 		}
 		name := jsonString(item, "name")
+		if t.codeModeToolName != "" && name == t.codeModeToolName {
+			itemID := jsonString(item, "id")
+			if jsonString(item, "type") == "custom_tool_call" && itemID != "" {
+				t.nativeExecItems[itemID] = struct{}{}
+			}
+			return [][]byte{payload}, nil
+		}
 		if !t.routesTool(name) {
 			return [][]byte{payload}, nil
 		}
@@ -1939,6 +2009,13 @@ func (t *hpatchResponseTransform) TransformSSE(payload []byte) ([][]byte, error)
 	case "response.custom_tool_call_input.done":
 		pending, ok := t.pending[envelope.ItemID]
 		if !ok {
+			if _, nativeExec := t.nativeExecItems[envelope.ItemID]; nativeExec {
+				input, _, changed, _ := nativeExecCommandInput(envelope.Input)
+				if changed {
+					event, err := replaceRawField(payload, "input", mustMarshalJSON(input))
+					return onePayload(event, err)
+				}
+			}
 			return [][]byte{payload}, nil
 		}
 		history, err := t.translateTool(pending.toolName, pending.callID, envelope.Input, nil)
@@ -1976,6 +2053,7 @@ func (t *hpatchResponseTransform) TransformSSE(payload []byte) ([][]byte, error)
 		if json.Unmarshal(envelope.Item, &item) != nil {
 			return [][]byte{payload}, nil //nolint:nilerr // Malformed unrelated output remains the upstream's responsibility.
 		}
+		delete(t.nativeExecItems, jsonString(item, "id"))
 		changed, err := t.transformOutputItem(item)
 		if err != nil {
 			return nil, err
@@ -1992,6 +2070,7 @@ func (t *hpatchResponseTransform) TransformSSE(payload []byte) ([][]byte, error)
 		return onePayload(event, err)
 
 	case "response.completed":
+		clear(t.nativeExecItems)
 		if len(t.pending) != 0 {
 			return nil, errors.New("upstream completed with an incomplete hpatch call")
 		}
@@ -2019,6 +2098,7 @@ func (t *hpatchResponseTransform) TransformSSE(payload []byte) ([][]byte, error)
 
 	case "response.failed", "response.incomplete":
 		clear(t.pending)
+		clear(t.nativeExecItems)
 		if err := t.Finish(true); err != nil {
 			return nil, err
 		}
@@ -2112,8 +2192,116 @@ func (t *hpatchResponseTransform) restoreResponseContract(object map[string]json
 	}
 }
 
+const (
+	nativeExecCommandWarning       = "Use `functions.shell`"
+	lunaShellRecoveryWarning       = "Use `functions.exec` for Code Mode JavaScript"
+	shellInterpreterWrapperWarning = "functions.shell: warning: interpreter wrapper detected; follow the tool description"
+
+	codeModeExecToolCallPrefix    = "tools.exec_command("
+	codeModeExecCallPrefix        = "const result = await tools.exec_command("
+	codeModeOutputProjection      = "text(result.output);"
+	codeModeJSONProjection        = "text(JSON.stringify(result));"
+	codeModeMetadataProjection    = "text(JSON.stringify(Object.assign({}, result, "
+	codeModeMetadataProjectionEnd = ")));"
+)
+
+var (
+	shellHeredocPattern            = regexp.MustCompile(`<<-?`)
+	shellInterpreterWrapperPattern = regexp.MustCompile(
+		`(?i)(?:^|[^[:alnum:]_./+-])/?(?:[[:alnum:]_.+-]+/)*` +
+			`(?:python(?:[0-9]+(?:\.[0-9]+)*)?|pypy[0-9]*|node(?:js)?|bun|` +
+			`bash|dash|fish|ksh|mksh|sh|yash|zsh|perl|ruby|php|lua(?:jit)?|` +
+			`r(?:script)?|psql|mysql|sqlite3|pwsh|powershell)` +
+			`[ \t]+(?:-[^ \t\r\n]+[ \t]+)*(?:-[[:alpha:]]*[cer](?:[^[:alpha:]]|$)|--(?:command|execute)(?:[^[:alpha:]]|$))`,
+	)
+)
+
+// Match the raw input intentionally: every heredoc and quoted or commented examples warn too.
+func shellInterpreterWrapperMisuse(contribution toolContribution, input string) bool {
+	return contribution.PluginID == "builtin.shell" && contribution.Name == "shell" &&
+		(shellHeredocPattern.MatchString(input) || shellInterpreterWrapperPattern.MatchString(input))
+}
+
+// Luna occasionally confuses functions.shell with the hidden Code Mode exec
+// owner and submits a carrier generated by workerCommandExecInputWithResult as
+// a Bash script. Recover only that complete framing so ordinary no-shebang
+// shell input keeps its documented Bash semantics.
+func lunaShellExecCarrier(contribution toolContribution, input string) (string, bool) {
+	if contribution.PluginID != "builtin.shell" || contribution.Name != "shell" ||
+		!strings.HasPrefix(input, codeModeExecCallPrefix) {
+		return "", false
+	}
+	remaining := strings.TrimPrefix(input, codeModeExecCallPrefix)
+	argumentsEnd := strings.Index(remaining, ");\n")
+	if argumentsEnd < 0 {
+		return "", false
+	}
+	var arguments map[string]json.RawMessage
+	if json.Unmarshal([]byte(remaining[:argumentsEnd]), &arguments) != nil || arguments == nil {
+		return "", false
+	}
+	var command string
+	var login bool
+	if json.Unmarshal(arguments["cmd"], &command) != nil || command == "" ||
+		json.Unmarshal(arguments["login"], &login) != nil || login {
+		return "", false
+	}
+	projection := remaining[argumentsEnd+3:]
+	switch projection {
+	case codeModeOutputProjection, codeModeJSONProjection:
+		return input, true
+	}
+	metadata, ok := strings.CutPrefix(projection, codeModeMetadataProjection)
+	if !ok {
+		return "", false
+	}
+	metadata, ok = strings.CutSuffix(metadata, codeModeMetadataProjectionEnd)
+	if !ok {
+		return "", false
+	}
+	var resultMetadata map[string]json.RawMessage
+	if json.Unmarshal([]byte(metadata), &resultMetadata) != nil || resultMetadata == nil {
+		return "", false
+	}
+	return input, true
+}
+
+func nativeExecCommandInput(input string) (string, string, bool, bool) {
+	if !strings.Contains(input, codeModeExecToolCallPrefix) {
+		return input, "", false, false
+	}
+	rewritten, warningInput, changed, err := prependExecCommandWarning(input, nativeExecCommandWarning)
+	if err != nil {
+		return input, "", false, false
+	}
+	return rewritten, warningInput, changed, true
+}
+
 func (t *hpatchResponseTransform) transformOutputItem(item map[string]json.RawMessage) (bool, error) {
 	name := jsonString(item, "name")
+	if t.codeModeToolName != "" && name == t.codeModeToolName &&
+		jsonString(item, "type") == "custom_tool_call" {
+		input, misuseWarning, changed, detected := nativeExecCommandInput(jsonString(item, "input"))
+		if detected {
+			if changed {
+				item["input"] = mustMarshalJSON(input)
+			}
+			identity := jsonString(item, "call_id")
+			if identity == "" {
+				identity = jsonString(item, "id")
+			}
+			_, metered := t.nativeExecWarningsMetered[identity]
+			if identity == "" || !metered {
+				if err := t.recordMetrics(hpatchMetricInputs{overheadOnly: true, misuseWarning: misuseWarning}); err != nil {
+					return false, err
+				}
+				if identity != "" {
+					t.nativeExecWarningsMetered[identity] = struct{}{}
+				}
+			}
+		}
+		return changed, nil
+	}
 	if !t.routesTool(name) {
 		return false, nil
 	}

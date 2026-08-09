@@ -75,6 +75,7 @@ type HostMetricInput struct {
 	ToolResult                    *HostToolResult
 	StateReport                   string
 	Diagnostic                    string
+	MisuseWarning                 string
 	AuxiliaryTexts                []string
 }
 
@@ -148,6 +149,9 @@ func ClassifyHostMetrics(input HostMetricInput) (HostMetricRecord, error) {
 		return HostMetricRecord{}, err
 	}
 	if record.DiagnosticInputTokens, err = countMetricText(codec, input.Diagnostic, "diagnostic input"); err != nil {
+		return HostMetricRecord{}, err
+	}
+	if record.MisuseWarningInputTokens, err = countMetricText(codec, input.MisuseWarning, "misuse warning input"); err != nil {
 		return HostMetricRecord{}, err
 	}
 	if input.SessionID != "" && (input.InstalledDefinition != "" || input.RemovedDefinition != "" || len(input.RemovedExecCommandDefinitions) != 0) {

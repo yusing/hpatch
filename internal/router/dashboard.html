@@ -501,6 +501,7 @@ function updateGain(root,gain,gainError){
   fillRows(root.gain.overhead,[
     {key:'state',cells:['state reports',uintText(g.report_input_tokens),'final state returned after successful calls']},
     {key:'diag',cells:['failure diagnostics',uintText(g.diagnostic_input_tokens),'errors and repair context returned after failed calls']},
+    {key:'misuse',cells:['Hpatch misuse warnings',uintText(g.misuse_warning_input_tokens),'warnings returned after prohibited tool use']},
     {key:'def',cells:['installed tool definitions',uintText(g.definition_input_tokens),'exact serialized collection installed by the router']},
     {key:'apply-removed',cells:['apply_patch definition removed',applyPatchRemoved?`-${fmt.format(applyPatchRemoved)}`:'0','exact Code Mode section removed by the router']},
     {key:'exec-removed',cells:['exec_command definition removed',execCommandRemoved?`-${fmt.format(execCommandRemoved)}`:'0','exact Code Mode section removed by the router']},
@@ -547,7 +548,7 @@ function validGain(gain){
     &&typeof gain.ineffective_hpatch_tokens==='number'&&typeof gain.failed_apply_patch_tokens==='number'
     &&typeof gain.successful_reduction_percent==='string'&&typeof gain.overall_reduction_percent==='string'
     &&typeof gain.report_input_tokens==='number'&&typeof gain.diagnostic_input_tokens==='number'
-    &&typeof gain.definition_input_tokens==='number'&&typeof gain.removed_definition_input_tokens==='number'&&typeof gain.removed_exec_command_definition_input_tokens==='number'
+    &&typeof gain.definition_input_tokens==='number'&&typeof gain.removed_definition_input_tokens==='number'&&typeof gain.removed_exec_command_definition_input_tokens==='number'&&typeof gain.misuse_warning_input_tokens==='number'
     &&typeof gain.net_added_input==='string'&&typeof gain.sessions==='number'&&typeof gain.definition_requests==='number'
     &&typeof gain.definition_sources==='string'
     &&Array.isArray(gain.tools)&&gain.tools.every(validToolGain)&&validToolGain(gain.all_tools)

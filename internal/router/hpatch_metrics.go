@@ -25,6 +25,7 @@ type hpatchMetricInputs struct {
 	report        string
 	patch         string
 	diagnostic    string
+	misuseWarning string
 	sessionID     string
 	correction    hpatchCorrectionStats
 
@@ -70,6 +71,7 @@ func calculateHPatchMetricRecord(inputs hpatchMetricInputs) (hpatchMetricRecord,
 		ToolCall:                      call,
 		StateReport:                   inputs.report,
 		Diagnostic:                    inputs.diagnostic,
+		MisuseWarning:                 inputs.misuseWarning,
 		AuxiliaryTexts:                inputs.correction.baseCommands,
 	})
 	if err != nil {

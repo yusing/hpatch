@@ -26,14 +26,15 @@ const (
 	metricsLockname = "metrics.lock"
 	metricsMagic    = "HPATCH26"
 
-	metricsToolOffset       = 1280
-	metricsToolEntrySize    = 280
-	metricsChecksumOffset   = metricsToolOffset + maxMetricTools*metricsToolEntrySize
-	metricsSlotSize         = metricsChecksumOffset + sha256.Size
-	metricsFileSize         = 2 * metricsSlotSize
-	metricsDiagnosticOffset = 1248
-	metricsToolCountOffset  = 1256
-	metricsSharedOffset     = 1264
+	metricsToolOffset          = 1280
+	metricsToolEntrySize       = 280
+	metricsChecksumOffset      = metricsToolOffset + maxMetricTools*metricsToolEntrySize
+	metricsSlotSize            = metricsChecksumOffset + sha256.Size
+	metricsFileSize            = 2 * metricsSlotSize
+	metricsDiagnosticOffset    = 1248
+	metricsToolCountOffset     = 1256
+	metricsSharedOffset        = 1264
+	metricsMisuseWarningOffset = 1272
 
 	commandCount          = 7
 	metricsLockRetryDelay = 10 * time.Millisecond
@@ -109,12 +110,13 @@ type commandMetrics [commandCount]commandMetric
 type metrics struct {
 	invocationMetrics
 
-	HPatchTokens            uint64
-	ApplyPatchTokens        uint64
-	IneffectiveHPatchTokens uint64
-	FailedApplyPatchTokens  uint64
-	ReportInputTokens       uint64
-	DiagnosticInputTokens   uint64
+	HPatchTokens             uint64
+	ApplyPatchTokens         uint64
+	IneffectiveHPatchTokens  uint64
+	FailedApplyPatchTokens   uint64
+	ReportInputTokens        uint64
+	DiagnosticInputTokens    uint64
+	MisuseWarningInputTokens uint64
 
 	// Sessions counts distinct agent sessions that carried the routed definition
 	// change. DefinitionRequests counts every request carrying that context.
@@ -250,6 +252,7 @@ func (m *metrics) add(entry metrics) error {
 		{&m.FailedApplyPatchTokens, entry.FailedApplyPatchTokens},
 		{&m.ReportInputTokens, entry.ReportInputTokens},
 		{&m.DiagnosticInputTokens, entry.DiagnosticInputTokens},
+		{&m.MisuseWarningInputTokens, entry.MisuseWarningInputTokens},
 		{&m.Sessions, entry.Sessions},
 		{&m.DefinitionRequests, entry.DefinitionRequests},
 		{&m.DefinitionInputTokens, entry.DefinitionInputTokens},
@@ -506,6 +509,7 @@ func encodeMetricsSlot(value metrics, generation uint64) [metricsSlotSize]byte {
 		}
 	}
 	binary.LittleEndian.PutUint64(encoded[metricsDiagnosticOffset:metricsDiagnosticOffset+8], value.DiagnosticInputTokens)
+	binary.LittleEndian.PutUint64(encoded[metricsMisuseWarningOffset:metricsMisuseWarningOffset+8], value.MisuseWarningInputTokens)
 	encodeToolMetrics(encoded[:], value)
 
 	checksum := sha256.Sum256(encoded[:metricsChecksumOffset])
@@ -542,6 +546,7 @@ func decodeMetricsSlot(encoded [metricsSlotSize]byte) (metrics, uint64, bool) {
 		DefinitionRequests:                      binary.LittleEndian.Uint64(encoded[80:88]),
 		RemovedExecCommandDefinitionInputTokens: binary.LittleEndian.Uint64(encoded[88:96]),
 		DiagnosticInputTokens:                   binary.LittleEndian.Uint64(encoded[metricsDiagnosticOffset : metricsDiagnosticOffset+8]),
+		MisuseWarningInputTokens:                binary.LittleEndian.Uint64(encoded[metricsMisuseWarningOffset : metricsMisuseWarningOffset+8]),
 	}
 	for index := range commandCount {
 		value.Commands[index] = getCommandMetric(encoded[:], 96+index*16)
@@ -632,6 +637,7 @@ type GainMetrics struct {
 
 	ReportInputTokens                       uint64 `json:"report_input_tokens"`
 	DiagnosticInputTokens                   uint64 `json:"diagnostic_input_tokens"`
+	MisuseWarningInputTokens                uint64 `json:"misuse_warning_input_tokens"`
 	DefinitionInputTokens                   uint64 `json:"definition_input_tokens"`
 	RemovedDefinitionInputTokens            uint64 `json:"removed_definition_input_tokens"`
 	RemovedExecCommandDefinitionInputTokens uint64 `json:"removed_exec_command_definition_input_tokens"`
@@ -673,7 +679,7 @@ func LoadGainMetrics(dataDirectory string) (GainMetrics, error) {
 
 func (m metrics) netAddedInput(allToolInputs ToolInputGainMetric) *big.Int {
 	added := new(big.Int).SetUint64(m.ReportInputTokens)
-	for _, count := range []uint64{m.DiagnosticInputTokens, m.DefinitionInputTokens} {
+	for _, count := range []uint64{m.DiagnosticInputTokens, m.MisuseWarningInputTokens, m.DefinitionInputTokens} {
 		added.Add(added, new(big.Int).SetUint64(count))
 	}
 	removed := new(big.Int).SetUint64(m.RemovedDefinitionInputTokens)
@@ -741,6 +747,7 @@ func (m metrics) gainMetrics() GainMetrics {
 		OverallReduction:                        m.overallReduction(),
 		ReportInputTokens:                       m.ReportInputTokens,
 		DiagnosticInputTokens:                   m.DiagnosticInputTokens,
+		MisuseWarningInputTokens:                m.MisuseWarningInputTokens,
 		DefinitionInputTokens:                   m.DefinitionInputTokens,
 		RemovedDefinitionInputTokens:            m.RemovedDefinitionInputTokens,
 		RemovedExecCommandDefinitionInputTokens: m.RemovedExecCommandDefinitionInputTokens,
@@ -849,6 +856,7 @@ func writeInputOverheadGainTable(report *strings.Builder, m metrics, width int) 
 	rows := [][]string{
 		{"state reports", strconv.FormatUint(m.ReportInputTokens, 10), "final state returned after successful calls"},
 		{"failure diagnostics", strconv.FormatUint(m.DiagnosticInputTokens, 10), "errors and repair context returned after failed calls"},
+		{"Hpatch misuse warnings", strconv.FormatUint(m.MisuseWarningInputTokens, 10), "warnings returned after prohibited tool use"},
 		{"installed tool definitions", strconv.FormatUint(m.DefinitionInputTokens, 10), "exact serialized collection installed by the router"},
 	}
 	_, _, definitions := m.gainToolRows()

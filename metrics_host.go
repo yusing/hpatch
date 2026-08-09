@@ -28,16 +28,17 @@ func (m InvocationMetrics) EvaluatedCommandCount() uint64 {
 // Rejections and attempt identity are transient host telemetry and are not
 // written to metrics.bin.
 type HostMetricRecord struct {
-	Invocation              InvocationMetrics
-	Rejections              []HostRejection
-	Attempt                 AttemptMetadata
-	SessionID               string
-	HPatchTokens            uint64
-	ApplyPatchTokens        uint64
-	IneffectiveHPatchTokens uint64
-	FailedApplyPatchTokens  uint64
-	ReportInputTokens       uint64
-	DiagnosticInputTokens   uint64
+	Invocation               InvocationMetrics
+	Rejections               []HostRejection
+	Attempt                  AttemptMetadata
+	SessionID                string
+	HPatchTokens             uint64
+	ApplyPatchTokens         uint64
+	IneffectiveHPatchTokens  uint64
+	FailedApplyPatchTokens   uint64
+	ReportInputTokens        uint64
+	DiagnosticInputTokens    uint64
+	MisuseWarningInputTokens uint64
 
 	DefinitionRequests                      uint64
 	DefinitionInputTokens                   uint64
@@ -50,13 +51,14 @@ type HostMetricRecord struct {
 
 func (r HostMetricRecord) entry() (metrics, error) {
 	entry := metrics{
-		invocationMetrics:       r.Invocation.value,
-		HPatchTokens:            r.HPatchTokens,
-		ApplyPatchTokens:        r.ApplyPatchTokens,
-		IneffectiveHPatchTokens: r.IneffectiveHPatchTokens,
-		FailedApplyPatchTokens:  r.FailedApplyPatchTokens,
-		ReportInputTokens:       r.ReportInputTokens,
-		DiagnosticInputTokens:   r.DiagnosticInputTokens,
+		invocationMetrics:        r.Invocation.value,
+		HPatchTokens:             r.HPatchTokens,
+		ApplyPatchTokens:         r.ApplyPatchTokens,
+		IneffectiveHPatchTokens:  r.IneffectiveHPatchTokens,
+		FailedApplyPatchTokens:   r.FailedApplyPatchTokens,
+		ReportInputTokens:        r.ReportInputTokens,
+		DiagnosticInputTokens:    r.DiagnosticInputTokens,
+		MisuseWarningInputTokens: r.MisuseWarningInputTokens,
 
 		DefinitionRequests:                      r.DefinitionRequests,
 		DefinitionInputTokens:                   r.DefinitionInputTokens,

@@ -1032,6 +1032,80 @@ func TestHPatchJSONWrapsPatchAndImmediateReportInCodeModeExec(t *testing.T) {
 	}
 }
 
+func TestNativeExecCommandAddsShellWarning(t *testing.T) {
+	const nativeInput = "const result = await tools.exec_command({\"cmd\":\"printf ok\"});\ntext(result.output);"
+	const unrelatedInput = "text(\"ok\");"
+	wantInput, warningInput, changed, detected := nativeExecCommandInput(nativeInput)
+	if !changed || !detected {
+		t.Fatalf("rewrite native exec input: changed %t, detected %t", changed, detected)
+	}
+	var arguments struct {
+		Command string `json:"cmd"`
+	}
+	decodeExecCarrierArguments(t, wantInput, &arguments)
+	if strings.Count(wantInput, codeModeExecToolCallPrefix) != 1 || arguments.Command != warningInput+"printf ok" {
+		t.Fatalf("native warning carrier = %q, command %q", wantInput, arguments.Command)
+	}
+	repeated, repeatedWarning, repeatedChange, repeatedDetection := nativeExecCommandInput(wantInput)
+	if repeatedChange || !repeatedDetection || repeated != wantInput || repeatedWarning != warningInput {
+		t.Fatalf(
+			"repeated native rewrite: changed %t, detected %t, warning %q\n%s",
+			repeatedChange,
+			repeatedDetection,
+			repeatedWarning,
+			repeated,
+		)
+	}
+
+	transform, _, _, _ := newHPatchTestTransform(t, testTranslator(t, new(int)))
+	visible, err := transform.TransformJSON(mustTestJSON(t, map[string]any{
+		"status": "completed",
+		"output": []any{
+			map[string]any{"type": "custom_tool_call", "name": "exec", "call_id": "native", "input": nativeInput},
+			map[string]any{"type": "custom_tool_call", "name": "exec", "call_id": "unrelated", "input": unrelatedInput},
+		},
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var response struct {
+		Output []map[string]json.RawMessage `json:"output"`
+	}
+	if err := json.Unmarshal(visible, &response); err != nil {
+		t.Fatal(err)
+	}
+	if len(response.Output) != 2 ||
+		jsonString(response.Output[0], "input") != wantInput ||
+		jsonString(response.Output[1], "input") != unrelatedInput {
+		t.Fatalf("native exec response = %s", visible)
+	}
+
+	stream, _, _, _ := newHPatchTestTransform(t, testTranslator(t, new(int)))
+	added := mustTestJSON(t, map[string]any{
+		"type": "response.output_item.added",
+		"item": map[string]any{
+			"type": "custom_tool_call", "id": "item-native", "name": "exec",
+			"call_id": "native-stream", "input": "", "status": "in_progress",
+		},
+	})
+	if output, err := stream.TransformSSE(added); err != nil || len(output) != 1 || !bytes.Equal(output[0], added) {
+		t.Fatalf("native exec added event = %q, error %v", output, err)
+	}
+	done := mustTestJSON(t, map[string]any{
+		"type": "response.custom_tool_call_input.done", "item_id": "item-native", "input": nativeInput,
+	})
+	output, err := stream.TransformSSE(done)
+	if err != nil || len(output) != 1 {
+		t.Fatalf("native exec input.done event = %q, error %v", output, err)
+	}
+	var event struct {
+		Input string `json:"input"`
+	}
+	if err := json.Unmarshal(output[0], &event); err != nil || event.Input != wantInput {
+		t.Fatalf("native exec input.done event = %q, error %v", output, err)
+	}
+}
+
 func decodeExecCarrierArguments(t *testing.T, carrierInput string, destination any) {
 	t.Helper()
 	encoded := strings.TrimPrefix(carrierInput, "const result = await tools.exec_command(")
@@ -1114,6 +1188,306 @@ func TestShellJSONTranslatesBashCasesEndToEnd(t *testing.T) {
 				t.Fatalf("translated exec command = %q, want %q", arguments.Command, test.want)
 			}
 		})
+	}
+}
+
+func TestShellRecoversLunaCodeModeExecCarrier(t *testing.T) {
+	const input = "const result = await tools.exec_command({\"cmd\":\"git status --short\",\"login\":false,\"max_output_tokens\":24000});\n" +
+		"text(JSON.stringify(Object.assign({}, result, {\"retained\":false})));"
+	want, warningInput, changed, err := prependExecCommandWarning(input, lunaShellRecoveryWarning)
+	if err != nil || !changed {
+		t.Fatalf("rewrite Luna carrier: changed %t, error %v", changed, err)
+	}
+	var arguments struct {
+		Command string `json:"cmd"`
+	}
+	decodeExecCarrierArguments(t, want, &arguments)
+	if strings.Count(want, codeModeExecToolCallPrefix) != 1 || arguments.Command != warningInput+"git status --short" {
+		t.Fatalf("Luna warning carrier = %q, command %q", want, arguments.Command)
+	}
+
+	transform, proxy, _, _ := newHPatchTestTransform(t, testTranslator(t, new(int)))
+	visible, err := transform.TransformJSON(mustTestJSON(t, map[string]any{
+		"status": "completed",
+		"output": []any{map[string]any{
+			"type": "custom_tool_call", "id": "item-shell", "call_id": "call-shell",
+			"name": "shell", "input": input, "status": "completed",
+		}},
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var response struct {
+		Output []map[string]json.RawMessage `json:"output"`
+	}
+	if err := json.Unmarshal(visible, &response); err != nil {
+		t.Fatal(err)
+	}
+	if len(response.Output) != 1 || jsonString(response.Output[0], "name") != "exec" ||
+		jsonString(response.Output[0], "input") != want {
+		t.Fatalf("recovered shell carrier = %s", visible)
+	}
+	history, ok := proxy.history(transform.historySessionID, "call-shell")
+	if !ok || history.toolName != "shell" || history.carrierPayload != want {
+		t.Fatalf("recovered shell history = %+v, available %t", history, ok)
+	}
+}
+
+func TestLunaShellExecCarrierRejectsNearMisses(t *testing.T) {
+	contribution := toolContribution{PluginID: "builtin.shell", Name: "shell"}
+	valid := "const result = await tools.exec_command({\"cmd\":\"printf ok\",\"login\":false});\ntext(result.output);"
+	for _, input := range []string{
+		"const result = await tools.exec_command({\"login\":false});\ntext(result.output);",
+		"const result = await tools.exec_command({\"cmd\":\"printf ok\",\"login\":true});\ntext(result.output);",
+		"printf ok",
+		" " + valid,
+		"#!node\n" + valid,
+		"const result = await tools.exec_command(null);\ntext(result.output);",
+		"const result = await tools.exec_command({\"cmd\":\"printf ok\"});\nconsole.log(result);",
+		valid + "\ntext(\"extra\");",
+	} {
+		if recovered, ok := lunaShellExecCarrier(contribution, input); ok || recovered != "" {
+			t.Errorf("near-miss shell input recovered: %q", input)
+		}
+	}
+	if recovered, ok := lunaShellExecCarrier(toolContribution{PluginID: "configured", Name: "shell"}, valid); ok || recovered != "" {
+		t.Error("configured shell plugin received Luna recovery")
+	}
+}
+
+func TestShellInterpreterWrapperAddsWarning(t *testing.T) {
+	contribution := toolContribution{PluginID: "builtin.shell", Name: "shell"}
+	for _, input := range []string{
+		"python3 -c 'print(1)'",
+		"python3 -I -c 'print(1)'",
+		"node -e 'console.log(1)'",
+		"node --input-type=module -e 'console.log(1)'",
+		"bash -c 'printf ok'",
+		"bash -lc 'printf ok'",
+		"bash -x -c 'printf ok'",
+		"python3 <<'PY'\nprint('ok')\nPY",
+		"export PYTHONDONTWRITEBYTECODE=1\npython3 - <<'PY'\nprint('ok')\nPY",
+		"env PYTHONDONTWRITEBYTECODE=1 python3 - <<'PY'\nprint('ok')\nPY",
+		"PYTHONDONTWRITEBYTECODE=1 python3 - <<'PY'\nprint('ok')\nPY",
+		"printf before\npython3 - <<'PY'\nprint('ok')\nPY",
+		"/usr/bin/python3 -c 'print(1)'",
+		"pypy3 -c 'print(1)'",
+		"pypy3 - <<'PY'\nprint('ok')\nPY",
+		"nodejs - <<'JS'\nconsole.log(1)\nJS",
+		"bun -e 'console.log(1)'",
+		"bun - <<'JS'\nconsole.log(1)\nJS",
+		"env NODE_NO_WARNINGS=1 node - <<'JS'\nconsole.log(1)\nJS",
+		"bash - <<'SH'\nprintf ok\nSH",
+		"sh -ec 'printf ok'",
+		"sh - <<'SH'\nprintf ok\nSH",
+		"cat <<'EOF'\nhello\nEOF",
+		"cat input.txt <<'EOF'\nhello\nEOF",
+		"zsh -c 'printf ok'",
+		"fish -c 'printf ok'",
+		"perl -e 'print 1'",
+		"ruby -e 'puts 1'",
+		"php -r 'echo 1;'",
+		"lua -e 'print(1)'",
+		"psql -c 'select 1'",
+		"psql --command 'select 1'",
+		"mysql -e 'select 1'",
+		"mysql --execute 'select 1'",
+		"printf '%s' 'normal command merely contains node -e'",
+		"# example: python3 -c 'print(1)'",
+	} {
+		if !shellInterpreterWrapperMisuse(contribution, input) {
+			t.Errorf("interpreter wrapper was not detected: %q", input)
+		}
+	}
+	for _, input := range []string{
+		"python3 script.py",
+		"python3 -m module",
+		"python3 -I script.py",
+		"node app.js",
+		"node --trace-warnings app.js",
+		"bash script.sh",
+		"bash -x script.sh",
+		"git -c key=value status",
+		"grep -e pattern file",
+		"#!cat\ncat shebang executes",
+		"printf ok",
+	} {
+		if shellInterpreterWrapperMisuse(contribution, input) {
+			t.Errorf("ordinary shell input was detected as a wrapper: %q", input)
+		}
+	}
+	if shellInterpreterWrapperMisuse(toolContribution{PluginID: "configured", Name: "shell"}, "python3 -c pass") {
+		t.Error("configured shell plugin received interpreter-wrapper warning")
+	}
+
+	warningInput := misuseWarningCommand(shellInterpreterWrapperWarning)
+	transform, _, _, _ := newHPatchTestTransform(t, testTranslator(t, new(int)))
+	const input = "printf '%s' 'python3 -c'"
+	visible, err := transform.TransformJSON(mustTestJSON(t, map[string]any{
+		"status": "completed",
+		"output": []any{map[string]any{
+			"type": "custom_tool_call", "id": "item-shell", "call_id": "call-shell",
+			"name": "shell", "input": input, "status": "completed",
+		}},
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var response struct {
+		Output []map[string]json.RawMessage `json:"output"`
+	}
+	if err := json.Unmarshal(visible, &response); err != nil {
+		t.Fatal(err)
+	}
+	if len(response.Output) != 1 || jsonString(response.Output[0], "name") != "exec" {
+		t.Fatalf("warned shell carrier = %s", visible)
+	}
+	carrierInput := jsonString(response.Output[0], "input")
+	var arguments struct {
+		Command string `json:"cmd"`
+	}
+	decodeExecCarrierArguments(t, carrierInput, &arguments)
+	if strings.Count(carrierInput, codeModeExecToolCallPrefix) != 1 ||
+		!strings.HasPrefix(arguments.Command, warningInput) || !strings.Contains(arguments.Command, input) {
+		t.Fatalf("warned shell command = %q, want original input %q", arguments.Command, input)
+	}
+}
+
+func TestMisuseWarningsRecordDistinctInputOverhead(t *testing.T) {
+	var records []hpatchMetricRecord
+	translator := metricsObservingTranslator{
+		translate: func(context.Context, routingWorkspace, string) ([]byte, error) {
+			return []byte(testTranslatedPatch), nil
+		},
+		record: func(_ context.Context, record hpatchMetricRecord) error {
+			records = append(records, record)
+			return nil
+		},
+	}
+	nativeWarningInput := misuseWarningCommand(nativeExecCommandWarning)
+	lunaWarningInput := misuseWarningCommand(lunaShellRecoveryWarning)
+	interpreterWarningInput := misuseWarningCommand(shellInterpreterWrapperWarning)
+	cases := []struct {
+		name      string
+		toolName  string
+		input     string
+		warning   string
+		toolCalls uint64
+	}{
+		{
+			name:      "native exec_command",
+			toolName:  "exec",
+			input:     `const result = await tools.exec_command({"cmd":"printf ok"});`,
+			warning:   nativeWarningInput,
+			toolCalls: 0,
+		},
+		{
+			name:      "Luna carrier",
+			toolName:  "shell",
+			input:     "const result = await tools.exec_command({\"cmd\":\"printf ok\",\"login\":false});\ntext(result.output);",
+			warning:   lunaWarningInput,
+			toolCalls: 1,
+		},
+		{
+			name:      "interpreter wrapper",
+			toolName:  "shell",
+			input:     "python3 -c 'print(1)'",
+			warning:   interpreterWarningInput,
+			toolCalls: 1,
+		},
+		{
+			name:      "combined Luna carrier and interpreter wrapper",
+			toolName:  "shell",
+			input:     "const result = await tools.exec_command({\"cmd\":\"python3 -c 'print(1)'\",\"login\":false});\ntext(result.output);",
+			warning:   interpreterWarningInput + lunaWarningInput,
+			toolCalls: 1,
+		},
+	}
+	var gotTotal, wantTotal uint64
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			transform, _, _, _ := newHPatchTestTransform(t, translator)
+			_, err := transform.TransformJSON(mustTestJSON(t, map[string]any{
+				"status": "completed",
+				"output": []any{map[string]any{
+					"type": "custom_tool_call", "name": test.toolName, "call_id": test.name, "input": test.input,
+				}},
+			}))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(records) != 1 {
+				t.Fatalf("metric records = %d, want 1", len(records))
+			}
+			record := records[0]
+			records = nil
+			want, err := hpatch.ClassifyHostMetrics(hpatch.HostMetricInput{MisuseWarning: test.warning})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if record.MisuseWarningInputTokens != want.MisuseWarningInputTokens {
+				t.Fatalf("misuse warning tokens = %d, want %d", record.MisuseWarningInputTokens, want.MisuseWarningInputTokens)
+			}
+			var calls, translated uint64
+			for _, metric := range record.ToolMetrics {
+				calls += metric.Calls
+				translated += metric.TranslatedTokens
+			}
+			if calls != test.toolCalls {
+				t.Fatalf("translated tool calls = %d, want %d", calls, test.toolCalls)
+			}
+			if test.toolCalls != 0 && translated == 0 {
+				t.Fatal("translated tool metrics lost their translated tokens")
+			}
+			gotTotal += record.MisuseWarningInputTokens
+			wantTotal += want.MisuseWarningInputTokens
+		})
+	}
+	if gotTotal != wantTotal {
+		t.Fatalf("misuse warning total = %d, want %d", gotTotal, wantTotal)
+	}
+}
+
+func TestNativeExecMisuseWarningMeteredOnceAcrossStreamLifecycle(t *testing.T) {
+	var records []hpatchMetricRecord
+	transform, _, _, _ := newHPatchTestTransform(t, metricsObservingTranslator{
+		translate: func(context.Context, routingWorkspace, string) ([]byte, error) {
+			return []byte(testTranslatedPatch), nil
+		},
+		record: func(_ context.Context, record hpatchMetricRecord) error {
+			records = append(records, record)
+			return nil
+		},
+	})
+	item := map[string]any{
+		"type": "custom_tool_call", "id": "item-native", "call_id": "call-native",
+		"name": "exec", "input": `const result = await tools.exec_command({"cmd":"printf ok"});`,
+	}
+	for _, event := range []map[string]any{
+		{"type": "response.output_item.added", "item": map[string]any{
+			"type": "custom_tool_call", "id": "item-native", "call_id": "call-native",
+			"name": "exec", "input": "", "status": "in_progress",
+		}},
+		{"type": "response.custom_tool_call_input.done", "item_id": "item-native", "input": item["input"]},
+		{"type": "response.output_item.done", "item": item},
+		{"type": "response.completed", "response": map[string]any{
+			"status": "completed", "output": []any{item},
+		}},
+	} {
+		if _, err := transform.TransformSSE(mustTestJSON(t, event)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(records) != 1 {
+		t.Fatalf("native warning metric records = %d, want 1", len(records))
+	}
+	warningInput := misuseWarningCommand(nativeExecCommandWarning)
+	want, err := hpatch.ClassifyHostMetrics(hpatch.HostMetricInput{MisuseWarning: warningInput})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if records[0].MisuseWarningInputTokens != want.MisuseWarningInputTokens {
+		t.Fatalf("native warning tokens = %d, want %d", records[0].MisuseWarningInputTokens, want.MisuseWarningInputTokens)
 	}
 }
 

@@ -100,6 +100,7 @@ func TestGainReportReconcilesEffectiveAndIneffectiveTokens(t *testing.T) {
 		FailedApplyPatchTokens:                  300,
 		ReportInputTokens:                       11,
 		DiagnosticInputTokens:                   13,
+		MisuseWarningInputTokens:                17,
 		DefinitionInputTokens:                   100,
 		RemovedDefinitionInputTokens:            30,
 		RemovedExecCommandDefinitionInputTokens: 20,
@@ -118,6 +119,7 @@ func TestGainReportReconcilesEffectiveAndIneffectiveTokens(t *testing.T) {
 		"input token estimates:",
 		"input token overhead estimates:",
 		"installed tool definitions",
+		"Hpatch misuse warnings",
 		"apply_patch definition removed",
 		"exec_command definition removed",
 		"net added input",
@@ -132,11 +134,12 @@ func TestGainReportReconcilesEffectiveAndIneffectiveTokens(t *testing.T) {
 	for _, want := range []string{
 		"state reports 11",
 		"failure diagnostics 13",
+		"Hpatch misuse warnings 17",
 		"installed tool definitions 100",
 
 		"apply_patch definition removed -30",
 		"exec_command definition removed -20",
-		"net added input 74",
+		"net added input 91",
 	} {
 		if !strings.Contains(input, want) {
 			t.Fatalf("input report %q does not contain %q", input, want)
@@ -212,6 +215,7 @@ func TestLoadGainMetricsMatchesGainReportTotals(t *testing.T) {
 		FailedApplyPatchTokens:                  10,
 		ReportInputTokens:                       5,
 		DiagnosticInputTokens:                   7,
+		MisuseWarningInputTokens:                3,
 		DefinitionRequests:                      1,
 		DefinitionInputTokens:                   11,
 		RemovedDefinitionInputTokens:            9,
@@ -243,7 +247,7 @@ func TestLoadGainMetricsMatchesGainReportTotals(t *testing.T) {
 	if got.SuccessfulReduction != "60.0" || got.OverallReduction != "36.4" {
 		t.Fatalf("reductions = %q / %q", got.SuccessfulReduction, got.OverallReduction)
 	}
-	if got.NetAddedInput != "20" || got.DefinitionSources != "installation and removal measured" || got.RemovedDefinitionInputTokens != 9 || got.RemovedExecCommandDefinitionInputTokens != 4 {
+	if got.NetAddedInput != "23" || got.MisuseWarningInputTokens != 3 || got.DefinitionSources != "installation and removal measured" || got.RemovedDefinitionInputTokens != 9 || got.RemovedExecCommandDefinitionInputTokens != 4 {
 		t.Fatalf("input = net %q sources %q", got.NetAddedInput, got.DefinitionSources)
 	}
 	if len(got.ToolInputs) != 1 || got.ToolInputs[0].CurrentTokens != 20 ||

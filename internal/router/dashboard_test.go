@@ -59,7 +59,8 @@ func TestDashboardIsSelfContainedAndProtectedByCSP(t *testing.T) {
 	if !strings.Contains(body, "validToolGain") || !strings.Contains(body, "g.tools") || !strings.Contains(body, "all-tools") {
 		t.Fatal("dashboard does not validate and reconcile per-tool gain rows")
 	}
-	if !strings.Contains(body, "Input token overhead estimates") || !strings.Contains(body, "validToolInput") ||
+	if !strings.Contains(body, "Input token overhead estimates") || !strings.Contains(body, "Hpatch misuse warnings") ||
+		!strings.Contains(body, "misuse_warning_input_tokens") || !strings.Contains(body, "validToolInput") ||
 		!strings.Contains(body, "g.tool_inputs") || !strings.Contains(body, "all_tool_inputs") ||
 		!strings.Contains(body, "root.gain.overhead") {
 		t.Fatal("dashboard does not expose current-versus-stock input estimates and overhead")
