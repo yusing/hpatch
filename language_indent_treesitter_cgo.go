@@ -164,3 +164,56 @@ func proveWrapperMembership(root *sitter.Node, source string, probe indentationW
 	}
 	return false
 }
+
+func findLanguageSyntaxFailure(source string, language indentationWrapperLanguage) (languageSyntaxFailure, bool) {
+	tree := parseIndentationTree(source, language)
+	if tree == nil {
+		return languageSyntaxFailure{}, false
+	}
+	defer tree.Close()
+	root := tree.RootNode()
+	if root == nil || !root.HasError() {
+		return languageSyntaxFailure{}, false
+	}
+
+	var earliest *sitter.Node
+	var visit func(*sitter.Node)
+	visit = func(node *sitter.Node) {
+		if node == nil {
+			return
+		}
+		if (node.IsError() || node.IsMissing()) && syntaxNodePrecedes(node, earliest) {
+			earliest = node
+		}
+		for index := uint(0); index < node.ChildCount(); index++ {
+			visit(node.Child(index))
+		}
+	}
+	visit(root)
+	if earliest == nil {
+		return languageSyntaxFailure{}, false
+	}
+	position := earliest.StartPosition()
+	return languageSyntaxFailure{
+		line:    int(position.Row) + 1,
+		column:  int(position.Column) + 1,
+		kind:    earliest.Kind(),
+		missing: earliest.IsMissing(),
+	}, true
+}
+
+func syntaxNodePrecedes(candidate, current *sitter.Node) bool {
+	if current == nil {
+		return true
+	}
+	if candidate.StartByte() != current.StartByte() {
+		return candidate.StartByte() < current.StartByte()
+	}
+	if candidate.IsMissing() != current.IsMissing() {
+		return !candidate.IsMissing()
+	}
+	if candidate.EndByte() != current.EndByte() {
+		return candidate.EndByte() < current.EndByte()
+	}
+	return candidate.Kind() < current.Kind()
+}

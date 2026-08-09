@@ -254,17 +254,20 @@ func TestPythonWrapperShapeRejectionsRemainSubmitted(t *testing.T) {
 	}
 }
 
-func TestWrapperUnrelatedParseErrorRemainsAcceptedAndUncorrected(t *testing.T) {
+func TestWrapperUnrelatedParseErrorIsRejectedAtomically(t *testing.T) {
+	requireTreeSitterIndentation(t)
 	root := t.TempDir()
-	writeTestFile(t, root, "file.py", "def f():\n    if ready:\n        value()\n    broken = (\n", 0o644)
+	before := "def f():\n    if ready:\n        value()\n    broken = (\n"
+	writeTestFile(t, root, "file.py", before, 0o644)
 	replacement := "        if ready:\n        value()\n"
 	command := "type " + row(3, "        value()") + " " + quoteTestValue(replacement)
 	_, stderr, exitCode := runForTest(root, nil, "in file.py\n"+command)
-	if exitCode != 0 {
+	if exitCode != 1 || !strings.Contains(stderr, "language-syntax") ||
+		!strings.Contains(stderr, "parse Python source") {
 		t.Fatalf("Run() = %d, stderr %q", exitCode, stderr)
 	}
-	if got := readTestFile(t, root, "file.py"); got != "def f():\n    if ready:\n"+replacement+"    broken = (\n" {
-		t.Fatalf("content = %q", got)
+	if got := readTestFile(t, root, "file.py"); got != before {
+		t.Fatalf("content = %q, want unchanged", got)
 	}
 }
 

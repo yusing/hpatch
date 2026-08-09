@@ -11,3 +11,7 @@ func inferIndentationUnit(string, indentationWrapperLanguage) string {
 func proveWrapperMemberships(_ string, probes []indentationWrapperProbe, _ indentationWrapperLanguage) []bool {
 	return make([]bool, len(probes))
 }
+
+func findLanguageSyntaxFailure(string, indentationWrapperLanguage) (languageSyntaxFailure, bool) {
+	return languageSyntaxFailure{}, false
+}

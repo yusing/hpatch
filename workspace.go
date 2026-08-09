@@ -117,6 +117,15 @@ func (p *program) evaluate(ctx context.Context, resolve pathResolver, load fileL
 		}
 		return nil, events, "", failure
 	}
+	if failure := w.validateLanguageFiles(ctx); failure != nil {
+		if failure.Operation != "" {
+			events.fail(failure.Operation, failure.Attempt, failure.Reason)
+		}
+		return nil, events, "", failure
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, events, "", err
+	}
 	changes := w.changes()
 
 	return changes, events, w.finalStateReport(changes), nil

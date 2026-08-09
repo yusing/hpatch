@@ -102,13 +102,17 @@ func writeLineWindow(report *strings.Builder, baseline string, lines []logicalLi
 }
 
 func generatedSourceRepair(content string, line, column int) string {
+	return generatedSourceRepairForLanguage(content, line, column, "Go")
+}
+
+func generatedSourceRepairForLanguage(content string, line, column int, language string) string {
 	lines := renderedLines(content)
 	if line < 1 || line > len(lines) {
 		return ""
 	}
 
 	var report strings.Builder
-	fmt.Fprintf(&report, "generated Go near %d:%d\n", line, column)
+	fmt.Fprintf(&report, "generated %s near %d:%d\n", language, line, column)
 	start := max(1, line-repairLineWindow)
 	end := min(len(lines), line+repairLineWindow)
 	for index := start; index <= end; index++ {

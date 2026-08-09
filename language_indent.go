@@ -31,6 +31,13 @@ const (
 	indentationLanguageTypeScript
 )
 
+type languageSyntaxFailure struct {
+	line    int
+	column  int
+	kind    string
+	missing bool
+}
+
 type indentationCandidate struct {
 	kind       indentationCorrectionKind
 	correction *indentationCorrectionError
@@ -61,14 +68,13 @@ type indentationWrapperProbe struct {
 }
 
 func indentationPolicy(path string) indentationPolicyKind {
-	switch filepath.Ext(path) {
-	case ".go":
+	if filepath.Ext(path) == ".go" {
 		return indentationPolicyGo
-	case ".py", ".js", ".ts":
-		return indentationPolicyAuto
-	default:
-		return indentationPolicyReject
 	}
+	if _, _, ok := languageSyntaxForPath(path); ok {
+		return indentationPolicyAuto
+	}
+	return indentationPolicyReject
 }
 
 func detectIndentationCandidate(baseline string, selected targetSpan, replacement string) (indentationCandidate, bool) {
@@ -213,7 +219,10 @@ func (w *workspace) applyLanguageIndentation(ctx context.Context) error {
 }
 
 func (w *workspace) applySupportedIndentation(ctx context.Context, file *fileState) error {
-	language := indentationLanguageForPath(file.path)
+	language, _, ok := languageSyntaxForPath(file.path)
+	if !ok {
+		return nil
+	}
 	unit := inferIndentationUnit(file.editor.baseline, language)
 	var prepared []preparedWrapperCorrection
 	for _, candidate := range file.editor.pendingIndentation {
@@ -291,17 +300,6 @@ func (w *workspace) applySupportedIndentation(ctx context.Context, file *fileSta
 		file.editor.edits[correction.editIndex].replacement = correction.replacement
 	}
 	return nil
-}
-
-func indentationLanguageForPath(path string) indentationWrapperLanguage {
-	switch filepath.Ext(path) {
-	case ".py":
-		return indentationLanguagePython
-	case ".ts":
-		return indentationLanguageTypeScript
-	default:
-		return indentationLanguageJavaScript
-	}
 }
 
 func prepareWrapperReplacement(replacement string, candidate indentationWrapperCandidate, unit string) (corrected string, childStart, childEnd int, changed, ok bool) {

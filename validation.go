@@ -2,6 +2,7 @@ package hpatch
 
 import (
 	"cmp"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -183,6 +184,72 @@ func (w *workspace) formatGoFiles() *commandError {
 	return nil
 }
 
+func (w *workspace) validateLanguageFiles(ctx context.Context) *commandError {
+	for _, file := range w.files {
+		if err := ctx.Err(); err != nil {
+			return nil
+		}
+		language, name, ok := languageSyntaxForPath(file.path)
+		if file.deleted || !ok {
+			continue
+		}
+		content := file.editor.content()
+		if !file.created && file.originalPath == file.path && file.original == content {
+			continue
+		}
+		failure, found := findLanguageSyntaxFailure(content, language)
+		if err := ctx.Err(); err != nil {
+			return nil
+		}
+		if !found {
+			continue
+		}
+		location := file.editor.languageSyntaxFailureLocation(content, failure.line, failure.column, language)
+		if location.origin.command == 0 {
+			location.origin = file.validationOrigin()
+		}
+		repair := generatedSourceRepairForLanguage(content, failure.line, failure.column, name)
+		repair += multilineValueRepair(location.origin.command, location.replacement, location.valueLine)
+		return formatCommandError(
+			file,
+			location.origin,
+			reasonLanguageSyntax,
+			languageSyntaxFailureMessage(name, failure),
+			repair,
+			failure.line,
+			failure.column,
+			location.valueLine,
+		)
+	}
+	return nil
+}
+
+func languageSyntaxForPath(path string) (indentationWrapperLanguage, string, bool) {
+	switch filepath.Ext(path) {
+	case ".py":
+		return indentationLanguagePython, "Python", true
+	case ".js":
+		return indentationLanguageJavaScript, "JavaScript", true
+	case ".ts":
+		return indentationLanguageTypeScript, "TypeScript", true
+	default:
+		return 0, "", false
+	}
+}
+
+func languageSyntaxFailureMessage(name string, failure languageSyntaxFailure) string {
+	if failure.missing {
+		if failure.kind != "" {
+			return fmt.Sprintf("parse %s source: missing %q at %d:%d", name, failure.kind, failure.line, failure.column)
+		}
+		return fmt.Sprintf("parse %s source: missing syntax at %d:%d", name, failure.line, failure.column)
+	}
+	if failure.kind != "" {
+		return fmt.Sprintf("parse %s source: syntax error %q at %d:%d", name, failure.kind, failure.line, failure.column)
+	}
+	return fmt.Sprintf("parse %s source: syntax error at %d:%d", name, failure.line, failure.column)
+}
+
 func (f *fileState) validationOrigin() editOrigin {
 	if f.editor.lastOrigin.command != 0 {
 		return f.editor.lastOrigin
@@ -215,6 +282,20 @@ type syntaxFailureLocation struct {
 }
 
 func (e *editor) syntaxFailureLocation(content string, line, column int) syntaxFailureLocation {
+	return e.syntaxFailureLocationWith(content, line, column, func(source string) bool {
+		_, err := format.Source([]byte(source))
+		return err == nil
+	})
+}
+
+func (e *editor) languageSyntaxFailureLocation(content string, line, column int, language indentationWrapperLanguage) syntaxFailureLocation {
+	return e.syntaxFailureLocationWith(content, line, column, func(source string) bool {
+		_, found := findLanguageSyntaxFailure(source, language)
+		return !found
+	})
+}
+
+func (e *editor) syntaxFailureLocationWith(content string, line, column int, valid func(string) bool) syntaxFailureLocation {
 	generatedOffset := generatedByteOffset(content, line, column)
 	groups := e.syntaxEditGroups(generatedOffset, len(content))
 	if len(groups) == 0 {
@@ -223,7 +304,7 @@ func (e *editor) syntaxFailureLocation(content string, line, column int) syntaxF
 	if len(groups) == 1 || len(groups) > syntaxLocalizationGroupLimit {
 		return syntaxLocationOf(closestSyntaxEditGroup(groups))
 	}
-	if _, err := format.Source([]byte(e.baseline)); err != nil {
+	if !valid(e.baseline) {
 		return syntaxLocationOf(closestSyntaxEditGroup(groups))
 	}
 
@@ -237,7 +318,7 @@ func (e *editor) syntaxFailureLocation(content string, line, column int) syntaxF
 	})
 	for index := 0; index < len(groups); {
 		candidate := slices.Concat(groups[:index], groups[index+1:])
-		if _, err := format.Source([]byte(e.contentWithSyntaxGroups(candidate))); err != nil {
+		if !valid(e.contentWithSyntaxGroups(candidate)) {
 			groups = candidate
 			continue
 		}
