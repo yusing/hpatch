@@ -132,6 +132,7 @@ func TestBuiltinToolWorkersRunGeneratedTypeScriptImplementations(t *testing.T) {
 	}{
 		{name: "hread", arguments: []string{"file.txt", "0:1"}, wantOutput: "1:8ed3 alpha\n"},
 		{name: "hgrep", arguments: []string{"-F", "alpha", "file.txt"}, wantOutput: "\"file.txt\":1:8ed3 alpha\n"},
+		{name: "inspect_file", arguments: []string{"file.txt"}, wantOutput: "{\"ok\":true,\"data\":{\"path\":\"file.txt\",\"kind\":\"none\",\"language\":null,\"size_bytes\":11,\"line_count\":null,\"parse_complete\":true,\"outline\":[]},\"truncated\":false,\"truncation\":null}\n"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			wrapper, ok := registry.wrapper(test.name)
@@ -163,10 +164,16 @@ func TestBuiltinToolWorkersRunGeneratedTypeScriptImplementations(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(gain.ToolInputs) != 2 {
+	if len(gain.ToolInputs) != 3 {
 		t.Fatalf("built-in input metrics = %+v", gain)
 	}
 	for _, row := range gain.ToolInputs {
+		if row.ToolName == "inspect_file" {
+			if row.CurrentTokens != row.StockTokens || row.Reduction != "0.0" {
+				t.Fatalf("inspect_file input metric row = %+v", row)
+			}
+			continue
+		}
 		if row.CurrentTokens <= row.StockTokens || row.Reduction == "0.0" {
 			t.Fatalf("built-in input metric row = %+v", row)
 		}

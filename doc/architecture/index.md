@@ -132,19 +132,19 @@ exact serialized collection installed from the validated built-in and plugin reg
 stable per-plugin and per-tool breakdown derived from that same collection.
 
 The router exposes only hpatch and shell beside the displaced Code Mode `exec` carrier.
-Hpatch remains the native engine contribution. Shell, hread, and hgrep are TypeScript-authored
-built-in plugin contributions compiled by Bun into one embedded JavaScript module with the
-reserved `builtin.shell` identity. Shell is model-visible; hread and hgrep retain executable
-workers and frontends but their specifications are private. Configured user tools remain
-model-visible.
+Hpatch remains the native engine contribution. Shell, hread, hgrep, and inspect_file are
+TypeScript-authored built-in plugin contributions compiled by Bun into one embedded JavaScript
+module with the reserved `builtin.shell` identity. Shell is model-visible; hread, hgrep, and
+inspect_file retain executable workers and frontends but their specifications are private.
+Configured user tools remain model-visible.
 
 The plugin runtime snapshots and validates the immutable built-in module before user
 declarations, then applies the same normalized registry, wrapper, worker, and metrics paths to
 all executable contributions. The registry separately projects model-visible definitions and
 private command guidance. Request rewriting installs only the projected hpatch and shell
-definitions, appends the private hread and hgrep descriptions to the existing Responses
-instructions, and always removes the native exec-command contract. Passthrough mode loads no
-registry.
+definitions, appends the private hread, hgrep, and inspect_file descriptions to the existing
+Responses instructions, and always removes the native exec-command contract. Passthrough mode
+loads no registry.
 
 Each executable wrapper launches the generic private plugin worker in Codex's exec context.
 The worker derives relative-path resolution from its actual current directory and leaves
@@ -166,11 +166,18 @@ and context events, renders complete verified rows, deduplicates only identical 
 results, and provides no fallback search implementation. Shell, rather than hgrep, owns
 pipelines, redirection, and command composition.
 
+The inspect_file built-in owns bounded structural inspection of one workspace-relative regular
+file. It canonicalizes the executor cwd and symlink target, uses pinned Lezer parsers for the six
+contracted extensions, and projects only navigation metadata. Unsupported extensions stop after
+file metadata. A concise result shape schema supplies the embedded private guidance.
+The renderer owns the 64 KiB complete-document budget and truncates only at outline-entry
+boundaries; parser recovery remains an independent result flag.
+
 The generated built-in JavaScript and runtime host are materialized inside the authenticated
 process snapshot. A symlink-launched child verifies that snapshot before loading an
-implementation. The router never pre-reads files and never fabricates an `apply_patch` result
-for read or search. Model history retains shell calls, private commands stay outside response
-routing and edit correction ancestry, and generalized per-tool metrics record their execution.
+implementation. The router never pre-reads files and never fabricates an `apply_patch` result for
+read, search, or inspection. Model history retains shell calls, private commands stay outside
+response routing and edit correction ancestry, and generalized per-tool metrics record execution.
 Registry shutdown removes the frontends and snapshot.
 
 The standalone CLI canonicalizes root and cwd, opens the root once, and keeps that

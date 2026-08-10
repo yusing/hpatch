@@ -55,11 +55,11 @@ Acceptance:
 ## REQ-READ-001 — Shell-routed verified-row reader
 
 In hpatch router mode, the model receives `hpatch` and `shell` as standalone custom tools.
-The router appends the canonical hread and hgrep command guidance to the existing top-level
-Responses `instructions` value. It preserves the existing instruction text and separates the
-added guidance with one blank line. Hread and hgrep remain private executable contributions;
-their custom-tool specifications are not sent to the model and direct model calls to their
-names are not routed.
+The router appends the canonical hread, hgrep, and inspect_file command guidance to the existing
+top-level Responses `instructions` value. It preserves the existing instruction text and
+separates the added guidance with one blank line. Hread, hgrep, and inspect_file remain private
+executable contributions; their custom-tool specifications are not sent to the model and direct
+model calls to their names are not routed.
 
 The private `hread` command accepts exactly one file:
 
@@ -74,7 +74,7 @@ past EOF returns through the final line. One `hread` process never accepts a sec
 newline-delimited batch. The model batches related reads as separate hread commands in one
 shell script.
 
-The router creates process-scoped executable frontends named `shell`, `hread`, and `hgrep`.
+The router creates process-scoped executable frontends named `shell`, `hread`, `hgrep`, and `inspect_file`.
 The Codex executor must see the frontend directory and router executable at the same absolute
 paths as the router process, and that directory must precede unrelated commands on its trusted
 `PATH`. A deployment that isolates their filesystems must provide those runtime mounts
@@ -162,6 +162,59 @@ Acceptance:
    exposed, routed, or admitted to hpatch correction history.
 5. Router startup fails before serving if the private hgrep frontend cannot be installed.
    Passthrough mode installs and exposes none of these replacement surfaces.
+
+## REQ-INSPECT-001 — Shell-routed structural file inspection
+
+The private `inspect_file PATH` command is available only through the model-visible shell tool.
+It accepts exactly one shell-separated workspace-relative path and no options. The canonical
+workspace is `process.cwd()`. Absolute paths, lexical escapes, `@shell` paths, and symlinks whose
+canonical targets escape that workspace fail. In-workspace symlinks are allowed, and the final
+target must be a regular file.
+
+Extension matching is exact and case-sensitive. `.go`, `.js`, `.ts`, `.py`, `.md`, and `.json`
+use pinned parsers; TypeScript selects the JavaScript parser's `ts` dialect, while Markdown uses
+Lezer for headings and YAML for a closed initial frontmatter block. Every other extension returns
+`kind: "none"`, the reported regular-file byte size, `line_count: null`, `parse_complete: true`,
+and an empty outline without reading or decoding content. Supported files must be strict UTF-8.
+Their logical line count matches `REQ-READ-001`, including CRLF, lone CR, empty files, and final
+terminators.
+
+Success is one LF-terminated JSON document with `ok`, `data`, `truncated`, and `truncation`.
+`data` contains the normalized requested path, kind, language, exact inspected byte size, logical
+line count, parser-completeness flag, and a flat source-ordered outline. Code entries include only
+imports, top-level constants and variables, types, classes, functions, and direct methods.
+Markdown includes only ATX headings outside fences and top-level scalar keys parsed from a closed
+initial `---` YAML frontmatter block. JSON includes every recognized value as a depth-first RFC
+6901 pointer and value type, including the empty root pointer. No result contains raw excerpts,
+bodies, fields, comments, frontmatter values, or JSON scalar values.
+
+The complete successful stdout, including its final LF, is at most 65,536 UTF-8 bytes. When
+necessary, the worker retains the longest complete outline prefix and returns
+`truncation: {"reason":"output_bytes","after_entries":N}`. Lezer parser recovery or YAML
+frontmatter diagnostics set `parse_complete: false` independently of output truncation. There is
+no input-size or entry-count limit. If an empty-outline success envelope cannot fit, the command
+fails with `output_limit`.
+
+Command failures write one closed LF-terminated JSON envelope to stdout, leave stderr empty, and
+exit nonzero. Stable codes are `usage`, `not_found`, `not_regular`, `not_utf8`,
+`outside_workspace`, `read`, `parse`, and `output_limit`. The private guidance embeds a concise
+success, failure, and outline-entry shape schema rather than the normative specification schema.
+Shell replay keeps the original call and output; inspect_file is not model-visible, directly
+routed, or included in HPATCH correction ancestry. Passthrough mode installs and advertises none
+of these surfaces.
+
+Acceptance:
+
+1. Each supported language projection returns only its declared navigation identifiers and exact
+   inclusive one-based ranges, while malformed recoverable input remains a successful partial
+   result with `parse_complete: false`.
+2. Markdown excludes fences, Setext headings, nested YAML frontmatter keys, and all frontmatter
+   values while preserving source order for repeated top-level scalar keys; JSON escapes `~` and
+   `/`, preserves duplicate pointers, and never returns scalar values.
+3. Unsupported files are confined and checked as regular without content reads, UTF-8 validation,
+   line counting, content detection, or command-level truncation.
+4. Router startup installs an authenticated `inspect_file` frontend, appends its private guidance,
+   and exposes or routes only hpatch, shell, and configured model-visible contributions.
 
 ## REQ-PLUGIN-001 — Router-local tool plugins
 
@@ -377,7 +430,7 @@ Acceptance:
 10. Malformed selectors and input that cannot fit the bounded exec argv return a concise
     diagnostic without starting an interpreter.
 11. `make install` installs both Go binaries and no configured shell declaration. The installed
-    router embeds shell and creates the shell, hread, and hgrep basename frontends beside its
+    router embeds shell and creates the shell, hread, hgrep, and inspect_file basename frontends beside its
     executable at startup.
 12. `#!params={"workdir":"/tmp","tty":true}` before or after `#!cmd=` produces an exec carrier
     containing those fields and the router-supplied `cmd`. Safe leading params near-misses

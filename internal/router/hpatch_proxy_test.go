@@ -368,7 +368,7 @@ func TestHPatchPrepareRequestRewritesNamespacedExecWithShell(t *testing.T) {
 	if err := json.Unmarshal(request.fields["instructions"], &instructions); err != nil {
 		t.Fatal(err)
 	}
-	for _, required := range []string{"existing base\n\n", "Use `hread` through `shell`", "Use `hgrep` through `shell`"} {
+	for _, required := range []string{"existing base\n\n", "Use `hread` through `shell`", "Use `hgrep` through `shell`", "Use `inspect_file PATH` through `shell`"} {
 		if !strings.Contains(instructions, required) {
 			t.Fatalf("rewritten instructions lack %q: %q", required, instructions)
 		}
@@ -440,7 +440,7 @@ func TestHPatchPrepareRequestExposesOnlyHPatchAndShell(t *testing.T) {
 	if err := json.Unmarshal(request.fields["instructions"], &instructions); err != nil {
 		t.Fatal(err)
 	}
-	for _, required := range []string{"Use `hread` through `shell`", "Use `hgrep` through `shell`"} {
+	for _, required := range []string{"Use `hread` through `shell`", "Use `hgrep` through `shell`", "Use `inspect_file PATH` through `shell`"} {
 		if !strings.Contains(instructions, required) {
 			t.Fatalf("base instructions lack %q: %q", required, instructions)
 		}
@@ -504,6 +504,7 @@ func TestHPatchRoutesOnlyModelVisibleRegistryTools(t *testing.T) {
 		"shell":        true,
 		"hread":        false,
 		"hgrep":        false,
+		"inspect_file": false,
 		"lookup":       false,
 	} {
 		if got := transform.routesTool(name); got != want {

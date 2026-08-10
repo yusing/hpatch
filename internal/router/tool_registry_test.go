@@ -108,13 +108,13 @@ func TestToolRegistryStartup(t *testing.T) {
 			t.Fatal(err)
 		}
 		snapshot := registry.SnapshotDir
-		if registry.NodeExecutable == "" || len(registry.ordered) != 4 {
+		if registry.NodeExecutable == "" || len(registry.ordered) != 5 {
 			t.Fatalf("registry = %+v", registry)
 		}
 		if err := registry.installFrontends(); err != nil {
 			t.Fatal(err)
 		}
-		for _, name := range []string{"hread", "hgrep", "shell"} {
+		for _, name := range []string{"hread", "hgrep", "inspect_file", "shell"} {
 			_, ok := registry.contribution(name)
 			if !ok {
 				t.Fatalf("built-in %q is unavailable", name)
@@ -146,7 +146,8 @@ func TestToolRegistryStartup(t *testing.T) {
 			t.Fatal(err)
 		}
 		if !strings.Contains(instructions, "Use `hread` through `shell`") ||
-			!strings.Contains(instructions, "Use `hgrep` through `shell`") {
+			!strings.Contains(instructions, "Use `hgrep` through `shell`") ||
+			!strings.Contains(instructions, "Use `inspect_file PATH` through `shell`") {
 			t.Fatalf("base instructions = %q", instructions)
 		}
 		second, err := buildToolRegistry(t.Context(), t.TempDir(), testHPatchToolDescription)
@@ -198,12 +199,12 @@ func TestToolRegistryStartup(t *testing.T) {
 			t.Fatal(err)
 		}
 		snapshot := registry.SnapshotDir
-		if len(registry.ordered) != 6 ||
-			registry.ordered[4].PluginID != "alpha.plugin" ||
-			registry.ordered[5].PluginID != "zeta.plugin" {
+		if len(registry.ordered) != 7 ||
+			registry.ordered[5].PluginID != "alpha.plugin" ||
+			registry.ordered[6].PluginID != "zeta.plugin" {
 			t.Fatalf("registration order = %+v", registry.ordered)
 		}
-		for _, name := range []string{"hread", "hgrep", "shell", "alpha_tool", "zeta_tool"} {
+		for _, name := range []string{"hread", "hgrep", "inspect_file", "shell", "alpha_tool", "zeta_tool"} {
 			wrapper, ok := registry.wrapper(name)
 			if !ok {
 				t.Fatalf("wrapper %q is unavailable", name)
@@ -241,7 +242,7 @@ func TestToolRegistryStartup(t *testing.T) {
 			t.Fatal(err)
 		}
 		registryID, authenticated := toolRegistryIDFromDirectory(snapshot)
-		if !authenticated || manifest.RegistryID != registryID || len(manifest.Tools) != 6 {
+		if !authenticated || manifest.RegistryID != registryID || len(manifest.Tools) != 7 {
 			t.Fatalf("manifest = %+v, snapshot registry ID %q, authenticated %t", manifest, registryID, authenticated)
 		}
 		if err := registry.Close(); err != nil {
@@ -284,7 +285,7 @@ func TestToolRegistryStartup(t *testing.T) {
 		extra, extraOK := registry.contribution("legacy_extra")
 		if !shellOK || shell.PluginID != "builtin.shell" ||
 			!extraOK || extra.PluginID != retiredConfiguredShellPluginID ||
-			len(registry.ordered) != 5 {
+			len(registry.ordered) != 6 {
 			t.Fatalf("registry retired the wrong contributions: %+v", registry.ordered)
 		}
 	})

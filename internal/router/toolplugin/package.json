@@ -1,0 +1,11 @@
+{
+  "private": true,
+  "dependencies": {
+    "@lezer/go": "1.0.1",
+    "@lezer/javascript": "1.5.4",
+    "@lezer/json": "1.0.3",
+    "@lezer/markdown": "1.7.2",
+    "@lezer/python": "1.1.19",
+    "yaml": "^2.9.0"
+  }
+}

@@ -1,12 +1,13 @@
 import {afterEach, describe, expect, test} from "bun:test";
 import {spawnSync} from "node:child_process";
-import {mkdtemp, mkdir, rm, writeFile} from "node:fs/promises";
+import {mkdtemp, mkdir, rm, symlink, writeFile} from "node:fs/promises";
 import {tmpdir} from "node:os";
 import path from "node:path";
 
 import {formatHashLine} from "../src/builtin/common.ts";
 import {createHGrepTool, splitArguments} from "../src/builtin/hgrep.ts";
 import {createHReadTool} from "../src/builtin/hread.ts";
+import {createInspectFileTool, inspectFileDescription} from "../src/builtin/inspect_file.ts";
 import plugin from "../src/builtin/tools.ts";
 
 const originalCWD = process.cwd();
@@ -19,6 +20,16 @@ async function temporaryDirectory(prefix: string): Promise<string> {
   const directory = await mkdtemp(path.join(tmpdir(), prefix));
   temporaryDirectories.push(directory);
   return directory;
+}
+
+async function inspect(...argv: string[]) {
+  const tool = createInspectFileTool("description", String.raw`\A.+\z`);
+  const execution = await tool.execute(argv, executionContext);
+  return {...execution, raw: execution.stdout ?? "", result: JSON.parse(execution.stdout ?? "")};
+}
+
+async function inspectOutline(name: string): Promise<Record<string, unknown>[]> {
+  return (await inspect(name)).result.data.outline;
 }
 
 function rustRegexMatches(pattern: string, input: string): boolean {
@@ -408,5 +419,178 @@ describe("hgrep built-in plugin", () => {
     const rejected = await tool.execute(["--multiline", "needle", "file.txt"], executionContext);
     expect(rejected.exitCode).toBe(1);
     expect(rejected.stderr).toContain("--multiline is incompatible");
+  });
+});
+
+describe("inspect_file built-in plugin", () => {
+
+  test("embeds its shape schema and omits source values from structural results", async () => {
+    const marker = "Result shape schema:\n";
+    const schema = JSON.parse(inspectFileDescription.slice(
+      inspectFileDescription.indexOf(marker) + marker.length,
+    ));
+    expect(schema.success.data.outline).toBe("outline_entry[]");
+    expect(schema.failure.error.code).toContain("outside_workspace");
+
+    const directory = await temporaryDirectory("inspect-file-");
+    process.chdir(directory);
+    await writeFile("sample.go", [
+      "package p", "import alias \"example.com/a\"", "import `raw/path`",
+      "import rawalias `aliased/raw`", "import (_ `grouped/raw`)",
+      "const (A, B = 1, 2)", "var C int", "type T[P any] struct { Secret string }",
+      "func F() { local := \"body-secret\" }", "func (receiver *T[P]) M() {}", "",
+    ].join("\n"));
+    await writeFile("sample.md", [
+      "---", "title: do-not-return", "\"quoted key\": hidden-value",
+      "summary: |", "  # secret scalar", "meta:", "  nested: excluded", "---",
+      "# Main *source* #", "```", "## hidden", "```", "### Visible", "",
+    ].join("\r\n"));
+    await writeFile("sample.json", "{\"a/b\":{\"~key\":[true,null,123,\"never-return\"]}}");
+    await writeFile("recovered.json", "{\"a\" \"x\"}");
+    await writeFile("duplicate.md", "---\na: 1\na: 2\n---\n");
+
+    const go = await inspect("sample.go");
+    expect(go.result.data.outline.map((entry: Record<string, unknown>) =>
+      [entry.kind, entry.name, entry.receiver],
+    )).toEqual([
+      ["import", "example.com/a", undefined], ["import", "raw/path", undefined],
+      ["import", "aliased/raw", undefined], ["import", "grouped/raw", undefined],
+      ["constant", "A", undefined], ["constant", "B", undefined],
+      ["variable", "C", undefined], ["type", "T", undefined],
+      ["function", "F", undefined], ["method", "M", "*T[P]"],
+    ]);
+    expect(JSON.stringify(go.result)).not.toMatch(/Secret|body-secret|local/u);
+
+    const markdown = await inspect("sample.md");
+    expect(markdown.result.data.outline.map((entry: Record<string, unknown>) =>
+      [entry.kind, entry.name, entry.level],
+    )).toEqual([
+      ["frontmatter", "title", undefined], ["frontmatter", "quoted key", undefined],
+      ["frontmatter", "summary", undefined], ["frontmatter", "meta", undefined],
+      ["heading", "Main *source*", 1], ["heading", "Visible", 3],
+    ]);
+    expect(JSON.stringify(markdown.result)).not.toMatch(
+      /do-not-return|hidden-value|secret scalar|nested|excluded|hidden/u,
+    );
+    const duplicate = await inspect("duplicate.md");
+    expect(duplicate.result.data.parse_complete).toBe(false);
+    expect(duplicate.result.data.outline.map((entry: Record<string, unknown>) => entry.name)).toEqual(["a", "a"]);
+
+    const json = await inspect("sample.json");
+    expect(json.result.data.outline.map((entry: Record<string, unknown>) =>
+      [entry.pointer, entry.value_type],
+    )).toEqual([
+      ["", "object"], ["/a~1b", "object"], ["/a~1b/~0key", "array"],
+      ["/a~1b/~0key/0", "boolean"], ["/a~1b/~0key/1", "null"],
+      ["/a~1b/~0key/2", "number"], ["/a~1b/~0key/3", "string"],
+    ]);
+    expect(JSON.stringify(json.result)).not.toContain("never-return");
+    const recovered = await inspect("recovered.json");
+    expect(recovered.result.data.parse_complete).toBe(false);
+    expect(recovered.result.data.outline.map((entry: Record<string, unknown>) => entry.pointer)).toEqual([""]);
+  });
+});
+
+describe("inspect_file language projections", () => {
+
+  test("normalizes JavaScript, TypeScript, and Python declarations", async () => {
+    const directory = await temporaryDirectory("inspect-file-");
+    process.chdir(directory);
+    await writeFile("sample.js", [
+      "import primary, {remote as local} from \"pkg\"; import \"side\";",
+      "export const callable = () => 1, value = 2; let mutable = 3;",
+      "function run() { const hidden = 1; }",
+      "class Box { field = \"secret\"; method() {} #private() {} 1() {} \"quoted\"() {} [\"literal\"]() {} [name]() {} static async *gen() {} }",
+    ].join("\n"));
+    await writeFile("sample.ts", [
+      "interface Shape { field: string }", "type Name = string;",
+      "enum Choice { One }",
+      "class Typed { method(): void {} #private() {} 1() {} \"quoted\"() {} [\"literal\"]() {} [name]() {} static async *gen(): void {} }",
+    ].join("\n"));
+    await writeFile("sample.py", [
+      "import package.module, second as alias",
+      "from source.module import member as local",
+      "from pkg import (",
+      "    first, # inline",
+      "    second as second_alias,",
+      ")",
+      "value = 1", "@decorate", "def run():", "    nested = \"secret\"",
+      "@decorate", "class Box:", "    field = 1",
+      "    @decorate", "    def method(self):", "        pass", "",
+    ].join("\n"));
+    await writeFile("assignments.py", [
+      "a = b = 1",
+      "obj.attr = 2",
+      "items[0] = 3",
+      "annotated: Type = 4",
+      "left, (middle, right) = source_value",
+      "[first_item, second_item] = source_value",
+      "",
+    ].join("\n"));
+
+    expect((await inspectOutline("sample.js")).map((entry) =>
+      [entry.kind, entry.name, entry.receiver],
+    )).toEqual([
+      ["import", "primary", undefined], ["import", "local", undefined],
+      ["import", "side", undefined], ["constant", "callable", undefined],
+      ["constant", "value", undefined], ["variable", "mutable", undefined],
+      ["function", "run", undefined], ["class", "Box", undefined],
+      ["method", "method", "Box"], ["method", "#private", "Box"],
+      ["method", "1", "Box"], ["method", "\"quoted\"", "Box"],
+      ["method", "[\"literal\"]", "Box"], ["method", "[name]", "Box"],
+      ["method", "gen", "Box"],
+    ]);
+    expect((await inspectOutline("sample.ts")).map((entry) =>
+      [entry.kind, entry.name, entry.receiver],
+    )).toEqual([
+      ["type", "Shape", undefined], ["type", "Name", undefined],
+      ["type", "Choice", undefined], ["class", "Typed", undefined],
+      ["method", "method", "Typed"], ["method", "#private", "Typed"],
+      ["method", "1", "Typed"], ["method", "\"quoted\"", "Typed"],
+      ["method", "[\"literal\"]", "Typed"], ["method", "[name]", "Typed"],
+      ["method", "gen", "Typed"],
+    ]);
+    const python = await inspectOutline("sample.py");
+    expect(python.map((entry) => [entry.kind, entry.name, entry.receiver, entry.line])).toEqual([
+      ["import", "package", undefined, 1], ["import", "alias", undefined, 1],
+      ["import", "local", undefined, 2], ["import", "first", undefined, 3],
+      ["import", "second_alias", undefined, 3], ["variable", "value", undefined, 7],
+      ["function", "run", undefined, 8], ["class", "Box", undefined, 11],
+      ["method", "method", "Box", 14],
+    ]);
+    expect(JSON.stringify(python)).not.toMatch(/nested|field|secret/u);
+    const assignments = await inspectOutline("assignments.py");
+    expect(assignments.map((entry) => entry.name)).toEqual([
+      "a", "b", "annotated", "left", "middle", "right", "first_item", "second_item",
+    ]);
+    expect(JSON.stringify(assignments)).not.toMatch(/obj|items|Type|source_value/u);
+  });
+});
+
+describe("inspect_file bounds and confinement", () => {
+
+  test("reports recovery, exact line counts, and unsupported metadata", async () => {
+    const directory = await temporaryDirectory("inspect-file-");
+    process.chdir(directory);
+    await writeFile("broken.go", "package p\nfunc broken( {\n");
+    expect((await inspect("broken.go")).result.data.parse_complete).toBe(false);
+    for (const [name, content, count] of [
+      ["empty.go", "", 0], ["plain.go", "a", 1], ["lf.go", "a\n", 1],
+      ["crlf.go", "a\r\n", 1], ["cr.go", "a\rb", 2],
+      ["only.go", "\n", 1], ["twice.go", "\n\n", 2],
+    ] as const) {
+      await writeFile(name, content);
+      expect((await inspect(name)).result.data.line_count).toBe(count);
+    }
+    await writeFile("blob.bin", Uint8Array.from([0xff, 0xfe, 0xfd]));
+    expect((await inspect("blob.bin")).result).toEqual({
+      ok: true,
+      data: {
+        path: "blob.bin", kind: "none", language: null, size_bytes: 3,
+        line_count: null, parse_complete: true, outline: [],
+      },
+      truncated: false,
+      truncation: null,
+    });
   });
 });

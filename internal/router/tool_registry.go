@@ -101,13 +101,14 @@ func buildToolRegistry(ctx context.Context, dataDirectory, hpatchDescription str
 			if plugin.ID == retiredConfiguredShellPluginID && jsonString(specification, "name") == "shell" {
 				continue
 			}
+			name := jsonString(specification, "name")
 			contribution := toolContribution{
 				PluginID:      plugin.ID,
-				Name:          jsonString(specification, "name"),
+				Name:          name,
 				Specification: slices.Clone(tool.Specification),
 				Module:        plugin.Module,
 				ModuleIndex:   toolIndex,
-				ModelVisible:  jsonString(specification, "name") != "hread" && jsonString(specification, "name") != "hgrep",
+				ModelVisible:  name != "hread" && name != "hgrep" && name != "inspect_file",
 			}
 			if validationErr := validateToolContribution(contribution); validationErr != nil {
 				validationErrors = append(validationErrors, validationErr)

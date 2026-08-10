@@ -1,6 +1,7 @@
 import type {Plugin, Tool} from "../../plugin.d.ts";
 import {createHGrepTool} from "./hgrep.ts";
 import {createHReadTool} from "./hread.ts";
+import {createInspectFileTool, inspectFileDescription} from "./inspect_file.ts";
 import {shellTool} from "../../../../../plugins/shell.mjs";
 
 const hreadDescription = `Use \`hread\` through \`shell\` only when you expect its returned \`LINE:HASH\` rows to
@@ -15,6 +16,8 @@ current \`LINE:HASH\` directly into an HPATCH/2 target.`;
 const hreadPath = `(?:"(?:\\\\(?:["\\\\/bfnrt]|u[0-9A-Fa-f]{4})|[^\\x00-\\x1F"\\\\]|\\t)*"|[^\\x00-\\x20"]+)`;
 const hreadReadSpec = `${hreadPath}(?: (?:0|[1-9][0-9]*):[1-9][0-9]*)?`;
 const hreadRegex = `\\A${hreadReadSpec}\\z`;
+const inspectFileRegex = `\\A${hreadPath}\\z`;
+
 
 const hgrepDescription = `Use \`hgrep\` through \`shell\` only when you expect its returned matches to become
 HPATCH targets. For exploration, diagnosis, validation, or owner discovery, use ordinary search
@@ -28,7 +31,7 @@ const hgrepPart = `(?:'[^'\\r\\n]*'|"(?:\\\\[^\\r\\n]|[^"\\\\\\r\\n])*"|(?:\\\\[
 const hgrepRegex = `\\A[ \\t]*${hgrepPart}+(?:[ \\t]+${hgrepPart}+)*[ \\t]*\\z`;
 
 type BuiltinPlugin = Omit<Plugin, "tools"> & {
-  tools: [Tool<string[]>, Tool<string[]>, typeof shellTool];
+  tools: [Tool<string[]>, Tool<string[]>, Tool<string[]>, typeof shellTool];
 };
 
 const plugin: BuiltinPlugin = {
@@ -37,6 +40,7 @@ const plugin: BuiltinPlugin = {
   tools: [
     createHReadTool(hreadDescription, hreadRegex),
     createHGrepTool(hgrepDescription, hgrepRegex),
+    createInspectFileTool(inspectFileDescription, inspectFileRegex),
     shellTool,
   ],
 };
