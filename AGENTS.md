@@ -1,132 +1,44 @@
 # Agent guide
 
-Use this file as the short architecture and navigation guide. Read `README.md` for
-installation and user-facing behavior, `doc/spec/interface.md` for the complete
-interface contract, and `doc/architecture/index.md` for approved ownership rules.
-Do not duplicate HPATCH syntax or tool-call mechanics here; `hpatch --help`,
-`hpatch --tool-help`, `tool_description.md`, and `tool_grammar.lark` own those
-details.
+Use `README.md` for installation, deployment, user-visible hpatch and shell workflows, and requirements; open it when changing setup or model-facing behavior. Use `doc/spec/interface.md` for normative CLI, router, plugin, shell, hread/hgrep, correction, and metrics contracts; open it when behavior or acceptance criteria are in question. Use `doc/architecture/index.md` for stable ownership boundaries; open it before moving responsibilities. Use `hpatch --help`, `hpatch --tool-help`, `tool_description.md`, and `tool_grammar.lark` only when editing or validating HPATCH syntax or model guidance.
 
-## Assumptions
+## Quick workflow
 
-- Router and codex executor will be on the same machine and filesystem in order to let
-  `hpatch` works
+1. Identify the authoritative owner in the table below.
+2. Open only the contract or help surface that governs the requested behavior.
+3. Make the narrowest owner-local change; keep generated files and downstream carriers derived from their sources.
+4. Run the cheapest check covering every changed owner and report the result.
+
+Completion means every requested behavior is implemented in its authoritative owner, affected contracts agree, and one focused check has had a chance to falsify each changed boundary.
 
 ## System model
 
-The hpatch/router path uses one edit engine and two thin binaries:
+The hpatch/router path uses one reusable edit engine and two thin binaries:
 
-- The root `hpatch` package is the reusable engine. It owns HPATCH/2 parsing,
-  workspace confinement, immutable baselines, target verification, conflict
-  detection, language validation, atomic change planning and commit, patch
-  translation, reports, diagnostics, hooks, and engine metrics.
-- `cmd/hpatch` exposes that engine as the standalone `hpatch` CLI. Normal mode
-  evaluates and commits atomically; `translate` evaluates the same script without
-  mutation and emits an `apply_patch` envelope.
-- `internal/router` owns the Codex Responses integration: HTTP serving, Codex
-  authentication and upstream forwarding, request tool rewriting, response
-  transformation, built-in and configured tool plugins, bounded session/history state,
-  rebuilding, replay, router metrics, and the dashboard.
-- `cmd/hpatch-router` is only the process entry point. It installs signal
-  cancellation, dispatches the generic private plugin worker mode, calls `router.Run`,
-  and maps errors to exit codes.
+- The root `hpatch` package owns HPATCH/2 parsing, workspace handling, immutable baselines, target verification, conflict detection, language validation, atomic planning and commit, translation, reports, diagnostics, hooks, and engine metrics.
+- `cmd/hpatch` exposes that engine as the standalone CLI. Normal mode commits only after complete validation; `translate` evaluates without mutation and emits an `apply_patch` envelope.
+- `internal/router` owns Responses HTTP and authentication, Code Mode extraction and restoration, the immutable plugin registry and authenticated frontends, corrections and replay, shell and private-tool routing, router metrics, and the dashboard. Passthrough mode skips registry construction and replacement surfaces.
+- `cmd/hpatch-router` installs signal cancellation, dispatches private plugin workers, calls `router.Run`, and maps errors to exit codes.
 
-There is no second edit engine in the router and no separate top-level
-`hpatch-router` package.
+There is no second edit engine in the router and no separate top-level `hpatch-router` package.
+
+Deployment invariant: in hpatch mode, the router and Codex executor must see the frontend directory, authenticated tool snapshot, and router executable at the same absolute paths. The frontend directory must precede unrelated commands on the executor's trusted `PATH`. Isolated runtime filesystems are valid when those mounts are provided; this is separate from the declared workspace.
 
 ## Routed request flow
 
-The normal hpatch-mode path is:
+1. Codex sends `POST /v1/responses`; request parsing rejects malformed or unsupported request framing, including background Responses requests.
+2. In hpatch mode, the server derives the routing session, validates `x-codex-turn-metadata`, and requires one usable canonical base directory.
+3. The proxy finds exactly one supported Code Mode custom `exec` owner, strips native `apply_patch` and `exec_command`, preserves siblings, and installs model-visible `functions.hpatch` and `functions.shell`. Configured contributions marked model-visible join that catalog; private hread/hgrep guidance is appended to the existing instructions.
+4. `internal/router/client.go` validates Codex-managed credentials and forwards the rewritten request to the Codex backend.
+5. A terminal hpatch call is translated once against the declared directory by `TranslateForHostAt` without mutating the workspace. Retained `@shell/` edits instead use router-owned session storage and `ApplyForHostRoot`.
+6. Response transformation restores the original Code Mode carrier shape, replacing the routed call with a validated native `functions.exec` carrier and generated `apply_patch` operation while preserving model-visible history for replay.
+7. Codex executes the carrier under its own working directory, sandbox, permissions, process-session facilities, and visible diff. The router does not silently commit declared-workspace translation.
 
-1. Codex sends `POST /v1/responses` to `hpatch-router`.
-2. `internal/router/server.go` bounds and parses the request, derives the routing
-   session, and requires valid turn metadata with exactly one usable workspace.
-3. `internal/router/hpatch_proxy.go` retains the original Code Mode tool state,
-   removes the model-visible `apply_patch` surface, and installs standalone
-   grammar-constrained `hpatch`, `hread`, and `hgrep` tools.
-4. `internal/router/client.go` validates the Codex-managed bearer token and
-   account ID, then forwards the rewritten request to the ChatGPT Codex backend.
-5. When a terminal response contains an `hpatch` call, the router invokes
-   `hpatch.TranslateForHost` against the declared workspace. The engine evaluates
-   the complete script once without mutating files and returns a translated
-   patch, final-state report, diagnostics, repair context, and metrics.
-6. The router restores the response to the Code Mode shape Codex expects,
-   replacing the standalone call with a `functions.exec` carrier containing the
-   generated `apply_patch` operation and hpatch report.
-7. Codex executes that carrier under its normal sandbox and permissions and
-   presents the normal diff. The router itself does not silently write the
-   translated workspace changes.
+Shell calls use the generic plugin carrier and forward the native executor's complete result. Hread and hgrep are private authenticated frontends invoked through `functions.shell`, not standalone model-visible tools.
 
-### Codex CLI and app-server request layouts
+When changing Code Mode owner discovery or sibling preservation, open `doc/spec/interface.md` and the CLI-shape tests in `internal/router/hpatch_proxy_test.go` plus the app-server/request tests in `internal/router/server_test.go`. The supported owner is one custom `exec` under the leading `additional_tools` item: nested under `functions` for CLI traffic or direct for app-server traffic. Unsupported direct and top-level layouts fail closed.
 
-The accepted owner paths are exact:
-
-Codex CLI:
-
-```json
-{
-  "input": [
-    {
-      "type": "additional_tools",
-      "tools": [
-        {
-          "type": "namespace",
-          "name": "functions",
-          "tools": [
-            {
-              "type": "custom",
-              "name": "exec",
-              "description": "<Code Mode description>"
-            }
-          ]
-        }
-      ]
-    }
-  ]
-}
-```
-
-Codex app-server:
-
-```json
-{
-  "input": [
-    {
-      "type": "additional_tools",
-      "tools": [
-        {
-          "type": "custom",
-          "name": "exec",
-          "description": "<Code Mode description>"
-        }
-      ]
-    }
-  ]
-}
-```
-
-The router may encounter unrelated fields, input items, sibling tools, and sibling namespaces,
-but the owner path, `type` values, and `name` values above must match. The owning description
-contains the native `apply_patch` section and, when present, the native `exec_command` surface.
-The router recognizes exactly one owner, sends both layouts through the same extraction,
-standalone-tool installation, carrier catalog, response restoration, history, and metrics path,
-and preserves sibling content. A direct tool named `functions.exec` and top-level tools named
-`exec` or `functions.exec` are not owner layouts and fail before forwarding. Keep CLI-shape
-coverage in `internal/router/hpatch_proxy_test.go` and app-server-shape coverage in
-`internal/router/server_test.go`.
-
-`hread` and `hgrep` are TypeScript-authored built-in plugins. The router embeds their
-Bun-generated JavaScript module and routes both through the generic plugin registry,
-translator, wrapper, and private worker. Their exec carriers run in Codex's actual
-working directory, so Codex continues to enforce filesystem and process permissions.
-
-A rejected script changes nothing. The engine owns evaluation diagnostics and
-exact command repair context. The router owns bounded, workspace-and-session
-scoped rejected-script history and converts a later indexed correction into one
-complete script before sending it through the ordinary engine boundary. The
-core engine has no correction mode.
-
-Passthrough mode forwards Responses traffic without installing hpatch or any plugin.
+A rejected script changes nothing. The engine owns evaluation diagnostics and repair context. The router owns bounded rejected-script ancestry and indexed correction transformation; it rebuilds one complete script before ordinary engine evaluation. The core engine has no correction mode. Passthrough mode forwards Responses traffic without installing hpatch or plugins.
 
 ## Ownership and change boundaries
 
@@ -134,99 +46,59 @@ Start with the owner that matches the behavior:
 
 | Behavior | Authoritative area |
 | --- | --- |
-| Public engine entry points and workspace capability | `run.go` (`Workspace`, `RunWorkspace`, `Apply`, `Translate`, `TranslateForHost`) |
-| Script parsing, targets, edit planning, transactions, translation, reports, hooks, and engine metrics | Root-package `*.go` files and adjacent tests |
+| Public engine entry points and workspace APIs | `run.go` |
+| Parsing, targets, edit planning, transactions, translation, reports, hooks, and engine metrics | Root-package `*.go` files and adjacent tests |
 | Shared quoted-string and heredoc framing | `internal/hpatchsyntax` |
 | Standalone CLI arguments, streams, help, and exit status | `cmd/hpatch` |
-| Router lifecycle and HTTP endpoints | `internal/router/server.go` |
+| Router lifecycle, modes, and HTTP endpoints | `internal/router/server.go` |
 | Codex authentication and upstream Responses transport | `internal/router/client.go` |
-| Tool replacement, host translation, response restoration, replay, and corrections | `internal/router/hpatch_proxy.go` |
-| Built-in hread and hgrep declarations, parsing, and execution | `internal/router/toolplugin/src/builtin` |
+| Tool replacement, host translation, response restoration, replay, and corrections | `internal/router/hpatch_proxy.go`, `internal/router/hpatch_correction.go` |
+| Carrier catalog and model-visible projection | `internal/router/tool_carrier.go`, `internal/router/tool_registry.go` |
+| Built-in tool sources and private execution runtime | `internal/router/toolplugin/src/builtin`, `plugins/shell.mjs`, `internal/router/toolplugin` |
+| Configured plugin discovery, authenticated snapshots, and frontends | `internal/router/toolplugin/runtime.go`, `internal/router/tool_registry.go`, `internal/router/tool_wrapper.go` |
 | Router process signals and top-level exit behavior | `cmd/hpatch-router/main.go` |
-| Interface requirements | `doc/spec/interface.md` |
+| Normative interface requirements | `doc/spec/interface.md` |
 | Stable ownership contracts | `doc/architecture/index.md` |
 
 Preserve these boundaries:
 
-- Do not reimplement parser, evaluator, target, transaction, or patch-rendering
-  semantics in the router.
-- Do not move Codex transport, authentication, tool exposure, session, replay, or
-  correction ancestry into the root engine.
-- Corrections must rebuild a complete script before engine evaluation.
-- Router translation must remain non-mutating; Codex executes the generated
-  carrier.
-- Workspace authority is a pinned `*os.Root`. Router translation verifies that
-  the declared workspace remains unchanged around engine evaluation.
-- Keep translated history in the Code Mode carrier shape even though the model
-  sees standalone registry tools.
-- Treat metrics and hooks as auxiliary: their failures must not replace a
-  successful edit, read, translation, or rejection diagnostic.
-- Keep benchmark and dashboard concerns out of the edit-engine ownership model.
+- The root package is the only edit engine; parser, evaluator, target, transaction, and patch-rendering semantics stay there.
+- The router owns Codex transport, tool exposure, sessions, replay, and correction ancestry; corrections enter the engine only as rebuilt complete scripts.
+- Declared-workspace translation is non-mutating and currently directory-based through `TranslateForHostAt`. Retained shell application is a separate root-scoped path through `ApplyForHostRoot`.
+- Changes to workspace authority must reconcile the current translation call with `doc/architecture/index.md` rather than copying one side of that boundary into another document.
+- Routed history stays in the original Code Mode carrier shape even though the model sees standalone registry tools.
+- `functions.hpatch` and `functions.shell` are model-visible; hread and hgrep remain private shell frontends.
+- Codex owns executor cwd, sandbox, permissions, process sessions, and final patch application.
+- Metrics, hooks, dashboards, and diagnostics remain auxiliary; their failures cannot replace successful edits, reads, translations, or command results.
+- Benchmark and dashboard concerns stay outside edit-engine ownership.
 
-## Complexity and ownership gate
+## Complexity gate
 
-Before adding a limit, validation layer, compatibility path, retry, buffer, history,
-metric, or defensive branch, classify the proposed implementation with this checklist:
-
-- [ ] `N` — Not this project's responsibility. Do not implement policy owned by Codex,
-      the upstream provider, the host executor, or another external boundary. A local
-      resource guard must describe a local failure and must not redefine external validity.
-- [ ] `O` — Likely overengineering. Do not add machinery whose maintenance cost is larger
-      than the demonstrated failure it prevents.
-- [ ] `D` — Duplicated policy. Keep one authoritative owner. Add a second check only when
-      it protects a distinct boundary and derives its value from the authoritative owner.
-- [ ] `I` — Impossible or unreachable. Do not add a branch that accepted inputs cannot
-      reach. If corruption or external mutation is the threat, validate that invariant
-      directly.
-- [ ] `J` — Justified local responsibility. Identify the owned resource or invariant,
-      choose the smallest protection, and add the cheapest test that can falsify it.
-- [ ] `U` — Uncertain. Do not implement it. First establish the owner, reproducer,
-      immediate failure, violated invariant, and smallest operation-ready requirement.
-
-Complete the checklist before implementation. If any item is `N`, `O`, `D`, `I`, or `U`,
-stop and simplify or discuss it. Implement only the remaining `J` behavior.
-
-Use these mandatory rules:
-
-- Do not invent request, response, metadata, identifier, argument, or retry policy for Codex.
-- Do not treat a local memory guard as an external protocol limit.
-- Do not copy one numeric limit across Go, JavaScript, built-ins, plugins, and executors.
-- Do not add a stricter later limit when an accepted-input boundary already bounds the data.
-- Do not buffer expanded or duplicate representations when streaming, hashing, or direct
-  comparison can bound memory.
-- Do not add a count or size limit without a concrete owner and demonstrated failure.
-- Do not emulate broad compatibility when the required interface can accept a narrow subset.
-- Do not retain the same operational payload in history, telemetry, diagnostics, and caches.
-- Define one combined resource budget when several retained collections share the same process.
-- Do not add speculative validation for future formats, sizes, or configurations.
-- Keep metrics, hooks, dashboards, and diagnostics auxiliary to successful core behavior.
-- Discuss every new user-facing restriction before implementation.
-- Add a focused boundary test for each justified protection.
-- Test that duplicated boundary checks cannot drift when separate enforcement is unavoidable.
+Before adding limits, retries, compatibility, validation, buffering, history, metrics, or defensive branches, name the authoritative owner and a concrete local failure. Prefer the smallest owner-local protection and reuse an existing boundary instead of duplicating it. If the owner, reproducer, or invariant is unknown, inspect code and tests before editing. `doc/architecture/index.md` owns the complete project-specific gate.
 
 ## Focused validation
 
-Use the cheapest package-level check that covers the changed owner:
+Run the cheapest check covering every changed owner:
 
-- Root engine behavior: `go test .`
-- Standalone CLI/help contract: `go test ./cmd/hpatch`
-- Router request, response, correction, workspace, hread, or transport behavior:
-  `go test ./internal/router`
-- Plugin TypeScript behavior: `bun test ./internal/router/toolplugin/tests`
-- Router process entry point: `go test ./cmd/hpatch-router`
-- Cross-package or broad contract changes: `go test ./...`
+| Changed owner | Focused check |
+| --- | --- |
+| Root engine | `go test .` |
+| Standalone CLI/help | `go test ./cmd/hpatch` |
+| Router request, response, correction, workspace, plugin, or transport | `go test ./internal/router` |
+| TypeScript plugin source | `go generate ./internal/router/toolplugin`, then `bun test ./internal/router/toolplugin/tests` |
+| Router process entry point | `go test ./cmd/hpatch-router` |
+| Cross-package or broad contract | `go test ./...` |
+| Specification, architecture, or local documentation links | `pjdoc validate --scope root` |
 
-Important router contract tests include:
+Use `go test ./...` only when a change crosses package owners. Run `go vet ./...` for broad Go checks and `make install` when validating generation plus binary installation. Run `pjdoc validate --scope all` only before claiming project-wide documentation integrity.
 
-- `internal/router/hpatch_proxy_test.go` for tool exposure, translation, response
-  restoration, and replay.
+Targeted router falsifiers include:
+
+- `internal/router/hpatch_proxy_test.go` for tool exposure, translation, response restoration, and replay.
 - `internal/router/hpatch_correction_test.go` for rejected-script corrections.
-- `internal/router/hpatch_root_test.go` for workspace routing and confinement.
-- `internal/router/server_test.go` for server/request behavior.
-- `internal/router/codex_e2e_test.go` for the Codex-facing end-to-end carrier
-  contract.
-- `cmd/hpatch/main_test.go` for the standalone public help and CLI contract.
+- `internal/router/hpatch_root_test.go` for workspace routing and retained root application.
+- `internal/router/server_test.go` for server and request behavior.
+- `internal/router/codex_e2e_test.go` for the Codex-facing carrier contract.
+- `cmd/hpatch/main_test.go` for standalone help and CLI behavior.
 
-The project targets Go 1.26. The broad development checks documented in
-`README.md` are `go test ./...`, `go vet ./...`, and
-`go install ./cmd/hpatch ./cmd/hpatch-router`.
+The project targets Go 1.26. Broad development commands are documented in `README.md`.
