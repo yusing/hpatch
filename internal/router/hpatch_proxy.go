@@ -1693,6 +1693,9 @@ func (t *hpatchResponseTransform) translateRegisteredTool(contribution toolContr
 		EmittedInput:      input,
 		FailedTranslation: translation.Rejected,
 	}
+	if recovered {
+		metricCall.Recovery = hpatch.HostToolRecoveryCodeModeShell
+	}
 	if !translation.Rejected {
 		metricCall.TranslatedName = metricName
 		metricCall.TranslatedPayload = metricPayload

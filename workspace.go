@@ -56,17 +56,25 @@ type workspace struct {
 	reportedEdits []*reportedEdit
 	load          fileLoader
 	exists        pathProbe
+	recoveries    *invocationMetrics
+}
+
+func (w *workspace) recover(kind recoveryKind) {
+	if w.recoveries != nil {
+		w.recoveries.recover(kind)
+	}
 }
 
 func (p *program) evaluate(ctx context.Context, resolve pathResolver, load fileLoader, exists pathProbe) ([]change, invocationMetrics, string, error) {
-	w := &workspace{
-		paths:    make(map[string]*fileState),
-		blocked:  make(map[string]bool),
-		reserved: make(map[string]bool),
-		load:     load,
-		exists:   exists,
-	}
 	var events invocationMetrics
+	w := &workspace{
+		paths:      make(map[string]*fileState),
+		blocked:    make(map[string]bool),
+		reserved:   make(map[string]bool),
+		load:       load,
+		exists:     exists,
+		recoveries: &events,
+	}
 	for commandIndex, command := range p.instructions {
 		if err := ctx.Err(); err != nil {
 			return nil, events, "", err

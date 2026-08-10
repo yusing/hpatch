@@ -16,6 +16,17 @@ const targetVariantCount = 4
 
 var targetVariantNames = [targetVariantCount]string{"line", "range", "text-single", "text-multiple"}
 
+type recoveryKind uint8
+
+const (
+	recoveryWhitespace recoveryKind = iota
+	recoveryIndentation
+	recoveryCodeModeShell
+	recoveryKindCount
+)
+
+var recoveryKindNames = [recoveryKindCount]string{"white-space error", "indentation shift", "luna misuse"}
+
 type commandAttempt struct {
 	recognized bool
 	target     targetVariant
@@ -27,6 +38,11 @@ type invocationMetrics struct {
 	Reasons  [failureReasonCount]uint64        `json:"reasons"`
 	// CommandReasons attributes each error to the command that raised it.
 	CommandReasons [commandCount][failureReasonCount]uint64 `json:"command_reasons"`
+	Recoveries     [recoveryKindCount]uint64                `json:"recoveries"`
+}
+
+func (m *invocationMetrics) recover(kind recoveryKind) {
+	m.Recoveries[kind]++
 }
 
 func (m *invocationMetrics) invoke(operation string, attempt commandAttempt) {

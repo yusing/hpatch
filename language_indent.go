@@ -236,7 +236,10 @@ func (w *workspace) applySupportedIndentation(ctx context.Context, file *fileSta
 		}
 		switch candidate.kind {
 		case indentationCorrectionExact:
-			file.editor.edits[editIndex].replacement = candidate.correction.correctedText
+			if file.editor.edits[editIndex].replacement != candidate.correction.correctedText {
+				file.editor.edits[editIndex].replacement = candidate.correction.correctedText
+				w.recover(recoveryIndentation)
+			}
 		case indentationCorrectionPythonWrapper, indentationCorrectionBracedWrapper:
 			if unit == "" ||
 				(candidate.kind == indentationCorrectionPythonWrapper && language != indentationLanguagePython) ||
@@ -298,6 +301,7 @@ func (w *workspace) applySupportedIndentation(ctx context.Context, file *fileSta
 	}
 	for _, correction := range prepared {
 		file.editor.edits[correction.editIndex].replacement = correction.replacement
+		w.recover(recoveryIndentation)
 	}
 	return nil
 }

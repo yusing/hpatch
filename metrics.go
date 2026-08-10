@@ -27,6 +27,7 @@ const (
 	metricsMagic    = "HPATCH26"
 
 	metricsToolOffset          = 1280
+	metricsRecoveryOffset      = 208
 	metricsToolEntrySize       = 280
 	metricsChecksumOffset      = metricsToolOffset + maxMetricTools*metricsToolEntrySize
 	metricsSlotSize            = metricsChecksumOffset + sha256.Size
@@ -271,6 +272,11 @@ func (m *metrics) add(entry metrics) error {
 			return err
 		}
 	}
+	for index := range recoveryKindCount {
+		if !addCounter(&m.Recoveries[index], entry.Recoveries[index]) {
+			return fmt.Errorf("updating metrics: recovery count overflow")
+		}
+	}
 	for index := range commandCount {
 		if !addCommandMetric(&m.Commands[index], entry.Commands[index]) {
 			return fmt.Errorf("updating metrics: command count overflow")
@@ -508,6 +514,9 @@ func encodeMetricsSlot(value metrics, generation uint64) [metricsSlotSize]byte {
 			binary.LittleEndian.PutUint64(encoded[base+reason*8:base+reason*8+8], count)
 		}
 	}
+	for index, count := range value.Recoveries {
+		binary.LittleEndian.PutUint64(encoded[metricsRecoveryOffset+index*8:metricsRecoveryOffset+index*8+8], count)
+	}
 	binary.LittleEndian.PutUint64(encoded[metricsDiagnosticOffset:metricsDiagnosticOffset+8], value.DiagnosticInputTokens)
 	binary.LittleEndian.PutUint64(encoded[metricsMisuseWarningOffset:metricsMisuseWarningOffset+8], value.MisuseWarningInputTokens)
 	encodeToolMetrics(encoded[:], value)
@@ -547,6 +556,9 @@ func decodeMetricsSlot(encoded [metricsSlotSize]byte) (metrics, uint64, bool) {
 		RemovedExecCommandDefinitionInputTokens: binary.LittleEndian.Uint64(encoded[88:96]),
 		DiagnosticInputTokens:                   binary.LittleEndian.Uint64(encoded[metricsDiagnosticOffset : metricsDiagnosticOffset+8]),
 		MisuseWarningInputTokens:                binary.LittleEndian.Uint64(encoded[metricsMisuseWarningOffset : metricsMisuseWarningOffset+8]),
+	}
+	for index := range recoveryKindCount {
+		value.Recoveries[index] = binary.LittleEndian.Uint64(encoded[metricsRecoveryOffset+index*8 : metricsRecoveryOffset+index*8+8])
 	}
 	for index := range commandCount {
 		value.Commands[index] = getCommandMetric(encoded[:], 96+index*16)
@@ -655,6 +667,7 @@ type GainMetrics struct {
 	AllToolInputs          ToolInputGainMetric        `json:"all_tool_inputs"`
 	ToolDefinitions        []ToolDefinitionGainMetric `json:"tool_definitions"`
 	SharedDefinitionTokens int64                      `json:"shared_definition_tokens"`
+	Recoveries             []NamedCount               `json:"recoveries"`
 
 	Commands       []NamedCommandMetric  `json:"commands"`
 	Targets        []NamedCommandMetric  `json:"targets"`
@@ -696,6 +709,11 @@ func (m metrics) gainMetrics() GainMetrics {
 	tools, allTools, toolDefinitions := m.gainToolRows()
 	toolInputs, allToolInputs := m.gainToolInputRows()
 	net := m.netAddedInput(allToolInputs)
+
+	recoveries := make([]NamedCount, 0, recoveryKindCount)
+	for kind, name := range recoveryKindNames {
+		recoveries = append(recoveries, NamedCount{Name: name, Count: m.Recoveries[kind]})
+	}
 
 	commands := make([]NamedCommandMetric, 0, commandCount)
 	for index, name := range commandOperations {
@@ -762,6 +780,7 @@ func (m metrics) gainMetrics() GainMetrics {
 		AllToolInputs:          allToolInputs,
 		ToolDefinitions:        toolDefinitions,
 		SharedDefinitionTokens: m.SharedDefinitionInputTokens,
+		Recoveries:             recoveries,
 		Commands:               commands,
 		Targets:                targets,
 		Reasons:                reasons,
@@ -774,6 +793,7 @@ const defaultGainReportWidth = 80
 func gainReportAtWidth(m metrics, width int) string {
 	var report strings.Builder
 	writeOutputGainTable(&report, m)
+	writeRecoveryTable(&report, m)
 	writeInputTokenGainTable(&report, m)
 	writeInputOverheadGainTable(&report, m, width)
 
@@ -817,6 +837,18 @@ func writeOutputGainTable(report *strings.Builder, m metrics) {
 	_, _ = fmt.Fprintf(table, "all-tools\t%d\t%d\t%s\n", allTools.EmittedTokens, allTools.TranslatedTokens, allReduction)
 	_ = table.Flush()
 	report.WriteString("Failed hpatch translation uses the empty-patch semantic baseline; other router rejections have no translated carrier.\n\n")
+}
+
+func writeRecoveryTable(report *strings.Builder, m metrics) {
+	report.WriteString("recoveries:\n")
+	table := tabwriter.NewWriter(report, 0, 4, 2, ' ', 0)
+	_, _ = fmt.Fprintln(table, "recoveries\tcount")
+	_, _ = fmt.Fprintln(table, "----------\t-----")
+	for kind, name := range recoveryKindNames {
+		_, _ = fmt.Fprintf(table, "%s\t%d\n", name, m.Recoveries[kind])
+	}
+	_ = table.Flush()
+	report.WriteByte('\n')
 }
 
 func writeInputTokenGainTable(report *strings.Builder, m metrics) {

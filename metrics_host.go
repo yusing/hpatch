@@ -47,6 +47,7 @@ type HostMetricRecord struct {
 	ToolMetrics                             []ToolMetricRecord
 	SharedDefinitionInputTokens             int64
 	AuxiliaryTokens                         uint64
+	hostRecoveries                          [recoveryKindCount]uint64
 }
 
 func (r HostMetricRecord) entry() (metrics, error) {
@@ -65,6 +66,11 @@ func (r HostMetricRecord) entry() (metrics, error) {
 		RemovedDefinitionInputTokens:            r.RemovedDefinitionInputTokens,
 		RemovedExecCommandDefinitionInputTokens: r.RemovedExecCommandDefinitionInputTokens,
 		SharedDefinitionInputTokens:             r.SharedDefinitionInputTokens,
+	}
+	for index, count := range r.hostRecoveries {
+		if !addCounter(&entry.Recoveries[index], count) {
+			return metrics{}, fmt.Errorf("host recovery metrics overflow")
+		}
 	}
 	for _, record := range r.ToolMetrics {
 		if err := validateMetricToolKey(record.PluginID, record.ToolName); err != nil {

@@ -1258,7 +1258,16 @@ func TestShellRecoversLunaCodeModePrograms(t *testing.T) {
 			warningInput := misuseWarningProjection(lunaShellRecoveryWarning)
 			want := warningInput + test.input
 
-			transform, proxy, _, _ := newHPatchTestTransform(t, testTranslator(t, new(int)))
+			dataDirectory := t.TempDir()
+			translator := metricsObservingTranslator{
+				translate: func(context.Context, routingWorkspace, string) ([]byte, error) {
+					return []byte(testTranslatedPatch), nil
+				},
+				record: func(ctx context.Context, record hpatchMetricRecord) error {
+					return hpatch.RecordHostMetrics(ctx, dataDirectory, record.HostMetricRecord)
+				},
+			}
+			transform, proxy, _, _ := newHPatchTestTransform(t, translator)
 			visible, err := transform.TransformJSON(mustTestJSON(t, map[string]any{
 				"status": "completed",
 				"output": []any{map[string]any{
@@ -1313,6 +1322,19 @@ func TestShellRecoversLunaCodeModePrograms(t *testing.T) {
 				jsonString(replayed[0], "input") != want ||
 				jsonString(replayed[1], "output") != "command output" {
 				t.Fatalf("recovered carrier replay = %s", replay.fields["input"])
+			}
+			gain, err := hpatch.LoadGainMetrics(dataDirectory)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var lunaMisuse uint64
+			for _, recovery := range gain.Recoveries {
+				if recovery.Name == "luna misuse" {
+					lunaMisuse = recovery.Count
+				}
+			}
+			if lunaMisuse != 1 {
+				t.Fatalf("luna misuse recoveries after replay = %d, want 1", lunaMisuse)
 			}
 		})
 	}
@@ -1509,14 +1531,15 @@ func TestShellInterpreterWrapperAddsWarning(t *testing.T) {
 }
 
 func TestMisuseWarningsRecordDistinctInputOverhead(t *testing.T) {
+	dataDirectory := t.TempDir()
 	var records []hpatchMetricRecord
 	translator := metricsObservingTranslator{
 		translate: func(context.Context, routingWorkspace, string) ([]byte, error) {
 			return []byte(testTranslatedPatch), nil
 		},
-		record: func(_ context.Context, record hpatchMetricRecord) error {
+		record: func(ctx context.Context, record hpatchMetricRecord) error {
 			records = append(records, record)
-			return nil
+			return hpatch.RecordHostMetrics(ctx, dataDirectory, record.HostMetricRecord)
 		},
 	}
 	nativeWarningInput := misuseWarningProjection(nativeExecCommandWarning)
@@ -1530,35 +1553,39 @@ func TestMisuseWarningsRecordDistinctInputOverhead(t *testing.T) {
 	}
 	interpreterWarningInput := misuseWarningProjection(shellInterpreterWrapperWarning(interpreterMisuse))
 	cases := []struct {
-		name      string
-		toolName  string
-		input     string
-		warning   string
-		toolCalls uint64
+		name       string
+		toolName   string
+		input      string
+		warning    string
+		toolCalls  uint64
+		recoveries uint64
 	}{
 		{
-			name:      "native exec_command",
-			toolName:  "exec",
-			input:     "const result = await tools.exec_command({\"cmd\":\"printf ok\"});\ntext(result.output);",
-			warning:   nativeWarningInput,
-			toolCalls: 0,
+			name:       "native exec_command",
+			toolName:   "exec",
+			input:      "const result = await tools.exec_command({\"cmd\":\"printf ok\"});\ntext(result.output);",
+			warning:    nativeWarningInput,
+			toolCalls:  0,
+			recoveries: 0,
 		},
 		{
-			name:      "Luna carrier",
-			toolName:  "shell",
-			input:     "const result = await tools.exec_command({\"cmd\":\"printf ok\",\"login\":false});\ntext(result.output);",
-			warning:   lunaWarningInput,
-			toolCalls: 1,
+			name:       "Luna carrier",
+			toolName:   "shell",
+			input:      "const result = await tools.exec_command({\"cmd\":\"printf ok\",\"login\":false});\ntext(result.output);",
+			warning:    lunaWarningInput,
+			toolCalls:  1,
+			recoveries: 1,
 		},
 		{
-			name:      "interpreter wrapper",
-			toolName:  "shell",
-			input:     "python3 -c 'print(1)'",
-			warning:   interpreterWarningInput,
-			toolCalls: 1,
+			name:       "interpreter wrapper",
+			toolName:   "shell",
+			input:      "python3 -c 'print(1)'",
+			warning:    interpreterWarningInput,
+			toolCalls:  1,
+			recoveries: 0,
 		},
 	}
-	var gotTotal, wantTotal uint64
+	var gotTotal, wantTotal, wantRecoveryTotal uint64
 	for _, test := range cases {
 		t.Run(test.name, func(t *testing.T) {
 			transform, _, _, _ := newHPatchTestTransform(t, translator)
@@ -1593,6 +1620,20 @@ func TestMisuseWarningsRecordDistinctInputOverhead(t *testing.T) {
 			}
 			if test.toolCalls != 0 && translated == 0 {
 				t.Fatal("translated tool metrics lost their translated tokens")
+			}
+			wantRecoveryTotal += test.recoveries
+			gain, err := hpatch.LoadGainMetrics(dataDirectory)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var lunaMisuse uint64
+			for _, recovery := range gain.Recoveries {
+				if recovery.Name == "luna misuse" {
+					lunaMisuse = recovery.Count
+				}
+			}
+			if lunaMisuse != wantRecoveryTotal {
+				t.Fatalf("luna misuse recoveries = %d, want %d", lunaMisuse, wantRecoveryTotal)
 			}
 			gotTotal += record.MisuseWarningInputTokens
 			wantTotal += want.MisuseWarningInputTokens

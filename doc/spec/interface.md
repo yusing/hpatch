@@ -565,8 +565,8 @@ placing a failed-translation row immediately after its successful row when prese
 by an all-tools row. Its columns are emitted tokens, translated tokens, and reduction. The
 hpatch failed row retains the fixed direct-call program carrying the empty patch as its
 established semantic baseline and reports `n/a`; its downstream diagnostic carrier remains
-excluded. The all-tools row sums the displayed emitted and translated quantities and applies
-the same reduction formula when its translated denominator is nonzero.
+excluded. A separate recovery table has `Recoveries` and `Count` columns with stable
+`white-space error`, `indentation shift`, and `luna misuse` action rows.
 
 Gain then writes an input-token table with one stable row per executed plugin and tool, followed by
 an all-tools row. Its columns are current tokens, stock tokens, and reduction. Gain next writes the

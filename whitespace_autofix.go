@@ -28,6 +28,7 @@ func (w *workspace) autofixWhitespace() {
 		if fixed == content {
 			continue
 		}
+		w.recover(recoveryWhitespace)
 
 		cleanupOffsets := newWhitespaceOffsetMap(len(content), deletions)
 		file.editor.finalContent = &fixed

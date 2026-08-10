@@ -24,6 +24,14 @@ type HostToolDefinition struct {
 	Definition string
 }
 
+// HostToolRecovery identifies a host-owned automatic recovery.
+type HostToolRecovery uint8
+
+const (
+	HostToolRecoveryNone HostToolRecovery = iota
+	HostToolRecoveryCodeModeShell
+)
+
 // HostToolCall is one terminal router translation classification.
 // Names and payloads are the model-visible call and its validated stock carrier shape.
 type HostToolCall struct {
@@ -34,6 +42,7 @@ type HostToolCall struct {
 	TranslatedName    string
 	TranslatedPayload string
 	FailedTranslation bool
+	Recovery          HostToolRecovery
 }
 
 // HostToolResult is one completed executor result classification.
@@ -188,6 +197,16 @@ func ClassifyHostMetrics(input HostMetricInput) (HostMetricRecord, error) {
 		call := input.ToolCall
 		if err := validateMetricToolKey(call.PluginID, call.ToolName); err != nil {
 			return HostMetricRecord{}, err
+		}
+		switch call.Recovery {
+		case HostToolRecoveryNone:
+		case HostToolRecoveryCodeModeShell:
+			if call.PluginID != "builtin.shell" || call.ToolName != "shell" {
+				return HostMetricRecord{}, fmt.Errorf("Code Mode shell recovery requires builtin.shell/shell")
+			}
+			record.hostRecoveries[recoveryCodeModeShell] = 1
+		default:
+			return HostMetricRecord{}, fmt.Errorf("unknown host tool recovery %d", call.Recovery)
 		}
 		emitted, countErr := countMetricText(codec, metricCallShape(call.EmittedName, call.EmittedInput), "emitted tool call")
 		if countErr != nil {
