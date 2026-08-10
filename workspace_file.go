@@ -13,7 +13,7 @@ func (w filesystemWorkspace) readFile(ctx context.Context, path string) (loadedF
 	if err := ctx.Err(); err != nil {
 		return loadedFile{}, err
 	}
-	file, err := w.root.Open(path)
+	file, err := w.open(path)
 	if err != nil {
 		reason := reasonOther
 		if errors.Is(err, fs.ErrNotExist) {

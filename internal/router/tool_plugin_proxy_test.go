@@ -87,7 +87,7 @@ func newToolPluginTestTransform(t *testing.T) (*hpatchResponseTransform, *hpatch
 	workspace := t.TempDir()
 	metadata := codexTurnMetadata{
 		RequestKind: "turn",
-		Workspaces:  map[string]json.RawMessage{workspace: nil},
+		Directories: map[string]json.RawMessage{workspace: nil},
 	}
 	transform, err := proxy.prepareRequest(t.Context(), &request, "plugin-session", metadata, true)
 	if err != nil {
@@ -241,7 +241,7 @@ func TestToolPluginMetricsUseOriginalAndStockCarrierShapes(t *testing.T) {
 		transform, proxy, _ := newToolPluginTestTransform(t)
 		var records []hpatchMetricRecord
 		proxy.translator = metricsObservingTranslator{
-			translate: func(context.Context, routingWorkspace, string) ([]byte, error) {
+			translate: func(context.Context, string, string) ([]byte, error) {
 				t.Fatal("plugin call reached hpatch translation")
 				return nil, nil
 			},
@@ -318,7 +318,7 @@ func TestToolPluginMetricPersistenceFailuresDoNotChangeCarriers(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			transform, proxy, _ := newToolPluginTestTransform(t)
 			proxy.translator = metricsObservingTranslator{
-				translate: func(context.Context, routingWorkspace, string) ([]byte, error) {
+				translate: func(context.Context, string, string) ([]byte, error) {
 					t.Fatal("plugin call reached hpatch translation")
 					return nil, nil
 				},

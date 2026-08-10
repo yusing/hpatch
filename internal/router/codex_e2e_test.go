@@ -46,7 +46,7 @@ func (t *recordingHPatchTranslator) ToolDescription() string {
 	return t.delegate.ToolDescription()
 }
 
-func (t *recordingHPatchTranslator) Translate(ctx context.Context, workspace routingWorkspace, script string) (hpatchTranslationResult, error) {
+func (t *recordingHPatchTranslator) Translate(ctx context.Context, workspace string, script string) (hpatchTranslationResult, error) {
 	t.mu.Lock()
 	t.scripts = append(t.scripts, script)
 	t.mu.Unlock()

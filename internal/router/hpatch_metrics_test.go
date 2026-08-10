@@ -134,7 +134,7 @@ func TestCalculateHPatchMetricRecordUsesEmptyFailureBaseline(t *testing.T) {
 func TestHPatchMetricDefinitionMatchesInstalledGrammarTools(t *testing.T) {
 	var records []hpatchMetricRecord
 	translator := metricsObservingTranslator{
-		translate: func(context.Context, routingWorkspace, string) ([]byte, error) {
+		translate: func(context.Context, string, string) ([]byte, error) {
 			t.Fatal("unexpected hpatch translation")
 			return nil, nil
 		},
@@ -193,7 +193,7 @@ func TestHPatchMetricDefinitionMatchesInstalledGrammarTools(t *testing.T) {
 func TestHPatchMetricPersistenceFailuresDoNotChangeToolResults(t *testing.T) {
 	metricErr := errors.New("metrics unavailable")
 	translator := metricsObservingTranslator{
-		translate: func(context.Context, routingWorkspace, string) ([]byte, error) {
+		translate: func(context.Context, string, string) ([]byte, error) {
 			return []byte(testTranslatedPatch), nil
 		},
 		record: func(context.Context, hpatchMetricRecord) error {
@@ -214,7 +214,7 @@ func TestHPatchMetricPersistenceFailuresDoNotChangeToolResults(t *testing.T) {
 
 	t.Run("rejected call", func(t *testing.T) {
 		rejected := translator
-		rejected.translate = func(context.Context, routingWorkspace, string) ([]byte, error) {
+		rejected.translate = func(context.Context, string, string) ([]byte, error) {
 			return nil, errors.New("rejected")
 		}
 		transform, _, _, _ := newHPatchTestTransform(t, rejected)
@@ -246,7 +246,7 @@ func TestHPatchMetricPersistenceFailuresDoNotChangeToolResults(t *testing.T) {
 
 func TestHPatchMetricFailureStillPropagatesRequestCancellation(t *testing.T) {
 	translator := metricsObservingTranslator{
-		translate: func(context.Context, routingWorkspace, string) ([]byte, error) {
+		translate: func(context.Context, string, string) ([]byte, error) {
 			return nil, nil
 		},
 		record: func(context.Context, hpatchMetricRecord) error {
@@ -265,7 +265,7 @@ func TestHPatchMetricFailureStillPropagatesRequestCancellation(t *testing.T) {
 func TestHPatchRequestDefinitionAccountingIsClaimedOnce(t *testing.T) {
 	var records []hpatchMetricRecord
 	translator := metricsObservingTranslator{
-		translate: func(context.Context, routingWorkspace, string) ([]byte, error) {
+		translate: func(context.Context, string, string) ([]byte, error) {
 			return []byte(testTranslatedPatch), nil
 		},
 		record: func(_ context.Context, record hpatchMetricRecord) error {
@@ -297,7 +297,7 @@ func TestHPatchRequestDefinitionAccountingIsClaimedOnce(t *testing.T) {
 func TestFinishRecordsDefinitionOverheadWithoutHPatchCall(t *testing.T) {
 	var records []hpatchMetricRecord
 	translator := metricsObservingTranslator{
-		translate: func(context.Context, routingWorkspace, string) ([]byte, error) {
+		translate: func(context.Context, string, string) ([]byte, error) {
 			t.Fatal("unexpected hpatch translation")
 			return nil, nil
 		},

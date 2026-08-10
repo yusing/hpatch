@@ -121,9 +121,9 @@ func testInstalledTools() []map[string]json.RawMessage {
 	}
 }
 
-type hpatchTranslatorFunc func(context.Context, routingWorkspace, string) ([]byte, error)
+type hpatchTranslatorFunc func(context.Context, string, string) ([]byte, error)
 
-func (f hpatchTranslatorFunc) Translate(ctx context.Context, workspace routingWorkspace, script string) (hpatchTranslationResult, error) {
+func (f hpatchTranslatorFunc) Translate(ctx context.Context, workspace string, script string) (hpatchTranslationResult, error) {
 	patch, err := f(ctx, workspace, script)
 	return hpatchTranslationResult{patch: patch, report: testHPatchReport}, err
 }
@@ -136,9 +136,9 @@ func (hpatchTranslatorFunc) RecordMetrics(context.Context, hpatchMetricRecord) e
 	return nil
 }
 
-type hpatchResultTranslatorFunc func(context.Context, routingWorkspace, string) (hpatchTranslationResult, error)
+type hpatchResultTranslatorFunc func(context.Context, string, string) (hpatchTranslationResult, error)
 
-func (f hpatchResultTranslatorFunc) Translate(ctx context.Context, workspace routingWorkspace, script string) (hpatchTranslationResult, error) {
+func (f hpatchResultTranslatorFunc) Translate(ctx context.Context, workspace string, script string) (hpatchTranslationResult, error) {
 	return f(ctx, workspace, script)
 }
 
@@ -208,7 +208,7 @@ func newHPatchTestTransformWithProxy(t *testing.T, proxy *hpatchProxy) (*hpatchR
 	if err != nil {
 		t.Fatal(err)
 	}
-	metadata := codexTurnMetadata{RequestKind: "turn", Workspaces: map[string]json.RawMessage{workspace: nil}}
+	metadata := codexTurnMetadata{RequestKind: "turn", Directories: map[string]json.RawMessage{workspace: nil}}
 	transform, err := proxy.prepareRequest(t.Context(), &request, "session-1", metadata, true)
 	if err != nil {
 		t.Fatal(err)
@@ -224,10 +224,10 @@ func newHPatchTestTransformWithProxy(t *testing.T, proxy *hpatchProxy) (*hpatchR
 
 func testTranslator(t *testing.T, calls *int) hpatchTranslator {
 	t.Helper()
-	return hpatchTranslatorFunc(func(_ context.Context, workspace routingWorkspace, script string) ([]byte, error) {
+	return hpatchTranslatorFunc(func(_ context.Context, directory string, script string) ([]byte, error) {
 		*calls++
-		if workspace.canonical == "" || workspace.root == nil {
-			t.Fatal("translator received no trusted workspace")
+		if directory == "" {
+			t.Fatal("translator received no base directory")
 		}
 		if script != testHPatchScript {
 			t.Fatalf("script = %q", script)
@@ -325,7 +325,7 @@ func TestHPatchPrepareRequestRewritesNamespacedExecWithShell(t *testing.T) {
 	}
 	proxy := newManagedHPatchProxy(t, testTranslator(t, new(int)))
 
-	metadata := codexTurnMetadata{RequestKind: "turn", Workspaces: map[string]json.RawMessage{workspace: nil}}
+	metadata := codexTurnMetadata{RequestKind: "turn", Directories: map[string]json.RawMessage{workspace: nil}}
 	transform, err := proxy.prepareRequest(t.Context(), &request, "session-functions-exec", metadata, true)
 	if err != nil {
 		t.Fatal(err)
@@ -764,7 +764,7 @@ func TestHPatchDirectAdditionalApplyPatchIsRejectedWithoutExecCarrier(t *testing
 			t.Error(err)
 		}
 	})
-	metadata := codexTurnMetadata{RequestKind: "turn", Workspaces: map[string]json.RawMessage{workspace: nil}}
+	metadata := codexTurnMetadata{RequestKind: "turn", Directories: map[string]json.RawMessage{workspace: nil}}
 	transform, err := proxy.prepareRequest(t.Context(), &request, "session-direct", metadata, true)
 	if err == nil || transform != nil || !strings.Contains(err.Error(), "unsupported flat apply_patch") {
 		t.Fatalf("direct rewrite = transform %v, error %v", transform, err)
@@ -947,7 +947,7 @@ func TestHPatchPrepareRequestLeavesIneligibleRequestUnchanged(t *testing.T) {
 	beforeInput := bytes.Clone(request.fields["input"])
 	beforeTools := bytes.Clone(request.fields["tools"])
 	proxy := newManagedHPatchProxy(t, testTranslator(t, new(int)))
-	metadata := codexTurnMetadata{RequestKind: "turn", Workspaces: map[string]json.RawMessage{workspace: nil}}
+	metadata := codexTurnMetadata{RequestKind: "turn", Directories: map[string]json.RawMessage{workspace: nil}}
 	transform, err := proxy.prepareRequest(t.Context(), &request, "", metadata, true)
 	if err == nil || transform != nil || !strings.Contains(err.Error(), "valid session ID") || !bytes.Equal(beforeInput, request.fields["input"]) || !bytes.Equal(beforeTools, request.fields["tools"]) {
 		t.Fatalf("ineligible request = transform %v, error %v, fields %#v", transform, err, request.fields)
@@ -1260,7 +1260,7 @@ func TestShellRecoversLunaCodeModePrograms(t *testing.T) {
 
 			dataDirectory := t.TempDir()
 			translator := metricsObservingTranslator{
-				translate: func(context.Context, routingWorkspace, string) ([]byte, error) {
+				translate: func(context.Context, string, string) ([]byte, error) {
 					return []byte(testTranslatedPatch), nil
 				},
 				record: func(ctx context.Context, record hpatchMetricRecord) error {
@@ -1534,7 +1534,7 @@ func TestMisuseWarningsRecordDistinctInputOverhead(t *testing.T) {
 	dataDirectory := t.TempDir()
 	var records []hpatchMetricRecord
 	translator := metricsObservingTranslator{
-		translate: func(context.Context, routingWorkspace, string) ([]byte, error) {
+		translate: func(context.Context, string, string) ([]byte, error) {
 			return []byte(testTranslatedPatch), nil
 		},
 		record: func(ctx context.Context, record hpatchMetricRecord) error {
@@ -1647,7 +1647,7 @@ func TestMisuseWarningsRecordDistinctInputOverhead(t *testing.T) {
 func TestNativeExecMisuseWarningMeteredOnceAcrossStreamLifecycle(t *testing.T) {
 	var records []hpatchMetricRecord
 	transform, _, _, _ := newHPatchTestTransform(t, metricsObservingTranslator{
-		translate: func(context.Context, routingWorkspace, string) ([]byte, error) {
+		translate: func(context.Context, string, string) ([]byte, error) {
 			return []byte(testTranslatedPatch), nil
 		},
 		record: func(_ context.Context, record hpatchMetricRecord) error {
@@ -1827,7 +1827,7 @@ func TestHPatchHistoryDoesNotCrossWorkspacesSharingSessionIdentity(t *testing.T)
 	metadataFor := func(workspace string) codexTurnMetadata {
 		return codexTurnMetadata{
 			RequestKind: "turn",
-			Workspaces:  map[string]json.RawMessage{workspace: nil},
+			Directories: map[string]json.RawMessage{workspace: nil},
 		}
 	}
 
@@ -1949,7 +1949,7 @@ func TestHPatchExecInputQuotesPatchReportAndDiagnostic(t *testing.T) {
 func TestHPatchStreamingTerminalFinalizesRequestAccounting(t *testing.T) {
 	records := 0
 	transform, _, _, _ := newHPatchTestTransform(t, metricsObservingTranslator{
-		translate: func(context.Context, routingWorkspace, string) ([]byte, error) {
+		translate: func(context.Context, string, string) ([]byte, error) {
 			t.Fatal("terminal response without an hpatch call reached translation")
 			return nil, nil
 		},
@@ -1973,7 +1973,7 @@ func TestHPatchStreamingTerminalFinalizesRequestAccounting(t *testing.T) {
 
 func TestWriteSSEEventPreservesTerminalStateWhenHPatchFinishIsCanceled(t *testing.T) {
 	transform, _, _, _ := newHPatchTestTransform(t, metricsObservingTranslator{
-		translate: func(context.Context, routingWorkspace, string) ([]byte, error) {
+		translate: func(context.Context, string, string) ([]byte, error) {
 			t.Fatal("terminal response without an hpatch call reached translation")
 			return nil, nil
 		},
@@ -2082,7 +2082,7 @@ func TestNonHPatchHistoryIsExcludedFromCorrections(t *testing.T) {
 
 func TestHPatchCorrectionRetainsCorrelationAndIncrementsAttempt(t *testing.T) {
 	calls := 0
-	transform, proxy, _, _ := newHPatchTestTransform(t, hpatchTranslatorFunc(func(context.Context, routingWorkspace, string) ([]byte, error) {
+	transform, proxy, _, _ := newHPatchTestTransform(t, hpatchTranslatorFunc(func(context.Context, string, string) ([]byte, error) {
 		calls++
 		if calls == 1 {
 			return nil, errors.New("rejected")
@@ -2109,7 +2109,7 @@ func TestHPatchCorrectionRetainsCorrelationAndIncrementsAttempt(t *testing.T) {
 }
 
 func TestHPatchCorrectionInstructionsAppearOnlyOnInitialRejection(t *testing.T) {
-	transform, _, _, _ := newHPatchTestTransform(t, hpatchTranslatorFunc(func(context.Context, routingWorkspace, string) ([]byte, error) {
+	transform, _, _, _ := newHPatchTestTransform(t, hpatchTranslatorFunc(func(context.Context, string, string) ([]byte, error) {
 		return nil, errors.New("rejected")
 	}))
 
@@ -2141,7 +2141,7 @@ func TestHPatchDisplayedCorrectionCanBeAcceptedWithoutRepeatingSource(t *testing
 	correctedCommand := "type 1:a793..2:1636 \"\\texit \\\"$status\\\"\\n\""
 	calls := 0
 	var evaluated string
-	translator := hpatchResultTranslatorFunc(func(_ context.Context, _ routingWorkspace, script string) (hpatchTranslationResult, error) {
+	translator := hpatchResultTranslatorFunc(func(_ context.Context, _ string, script string) (hpatchTranslationResult, error) {
 		calls++
 		if calls == 1 {
 			diagnostic := "hpatch: command 2 rejected: indentation-only change to preserved text\n" +
@@ -2190,7 +2190,7 @@ func TestHPatchCompactCorrectionRebuildsScriptBeforeTranslation(t *testing.T) {
 	want := "new file.txt\ntype <<PATCH\nnew\nPATCH\nrm\nrm\n"
 	calls := 0
 	var evaluated string
-	transform, _, _, _ := newHPatchTestTransform(t, hpatchTranslatorFunc(func(_ context.Context, _ routingWorkspace, script string) ([]byte, error) {
+	transform, _, _, _ := newHPatchTestTransform(t, hpatchTranslatorFunc(func(_ context.Context, _ string, script string) ([]byte, error) {
 		calls++
 		if calls == 1 {
 			return nil, errors.New("rejected")
@@ -2218,7 +2218,7 @@ func TestHPatchMultilineValueCorrectionRebuildsOnlyAddressedRow(t *testing.T) {
 	want := "new file.go\ntype <<PATCH\npackage p\nvar fixed = 1\nvar tail = 2\nPATCH\n"
 	calls := 0
 	var evaluated string
-	transform, _, _, _ := newHPatchTestTransform(t, hpatchTranslatorFunc(func(_ context.Context, _ routingWorkspace, script string) ([]byte, error) {
+	transform, _, _, _ := newHPatchTestTransform(t, hpatchTranslatorFunc(func(_ context.Context, _ string, script string) ([]byte, error) {
 		calls++
 		if calls == 1 {
 			return nil, errors.New("rejected")
@@ -2244,7 +2244,7 @@ func TestHPatchMultilineValueCorrectionRebuildsOnlyAddressedRow(t *testing.T) {
 func TestHPatchMultilineValueCorrectionRejectsComposedDelimiterBeforeTranslation(t *testing.T) {
 	base := "new file.txt\ntype <<PATCH\nold\nPATCH\n"
 	calls := 0
-	transform, _, _, _ := newHPatchTestTransform(t, hpatchTranslatorFunc(func(_ context.Context, _ routingWorkspace, _ string) ([]byte, error) {
+	transform, _, _, _ := newHPatchTestTransform(t, hpatchTranslatorFunc(func(_ context.Context, _ string, _ string) ([]byte, error) {
 		calls++
 		if calls == 1 {
 			return nil, errors.New("rejected")
@@ -2268,7 +2268,7 @@ func TestHPatchMalformedDeletionPreservesCorrectableHistory(t *testing.T) {
 	want := "new file.txt\ntype \"fixed\"\nrm\n"
 	calls := 0
 	var evaluated string
-	transform, _, _, _ := newHPatchTestTransform(t, hpatchTranslatorFunc(func(_ context.Context, _ routingWorkspace, script string) ([]byte, error) {
+	transform, _, _, _ := newHPatchTestTransform(t, hpatchTranslatorFunc(func(_ context.Context, _ string, script string) ([]byte, error) {
 		calls++
 		if calls == 1 {
 			return nil, errors.New("rejected")
@@ -2326,7 +2326,7 @@ func TestHPatchRetainedProxyRejectionAdvancesCorrectionAttempt(t *testing.T) {
 }
 
 func TestHPatchTranslationFailureReturnsImmediateDiagnosticExec(t *testing.T) {
-	transform, proxy, _, workspace := newHPatchTestTransform(t, hpatchTranslatorFunc(func(context.Context, routingWorkspace, string) ([]byte, error) {
+	transform, proxy, _, workspace := newHPatchTestTransform(t, hpatchTranslatorFunc(func(context.Context, string, string) ([]byte, error) {
 		return nil, errors.New("selector is not unique")
 	}))
 	originalItem := mustTestJSON(t, testHPatchItem())
@@ -2377,7 +2377,7 @@ func TestHPatchTranslationFailureReturnsImmediateDiagnosticExec(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	metadata := codexTurnMetadata{RequestKind: "turn", Workspaces: map[string]json.RawMessage{workspace: nil}}
+	metadata := codexTurnMetadata{RequestKind: "turn", Directories: map[string]json.RawMessage{workspace: nil}}
 	continuation, err := proxy.prepareRequest(t.Context(), &replay, "session-1", metadata, true)
 	if err != nil || continuation == nil {
 		t.Fatalf("prepare rejection continuation = transform %v, error %v", continuation, err)
@@ -2393,7 +2393,7 @@ func TestHPatchTranslationFailureReturnsImmediateDiagnosticExec(t *testing.T) {
 }
 
 func TestHPatchStreamingTranslationFailureCompletesDiagnosticExecLifecycle(t *testing.T) {
-	transform, proxy, _, _ := newHPatchTestTransform(t, hpatchTranslatorFunc(func(context.Context, routingWorkspace, string) ([]byte, error) {
+	transform, proxy, _, _ := newHPatchTestTransform(t, hpatchTranslatorFunc(func(context.Context, string, string) ([]byte, error) {
 		return nil, errors.New("parent directory does not exist")
 	}))
 	item := testHPatchItem()
@@ -2439,7 +2439,7 @@ func TestHPatchStreamingTranslationFailureCompletesDiagnosticExecLifecycle(t *te
 }
 
 func TestHPatchStreamingTranslationFailureRejectsMalformedTerminal(t *testing.T) {
-	transform, _, _, _ := newHPatchTestTransform(t, hpatchTranslatorFunc(func(context.Context, routingWorkspace, string) ([]byte, error) {
+	transform, _, _, _ := newHPatchTestTransform(t, hpatchTranslatorFunc(func(context.Context, string, string) ([]byte, error) {
 		return nil, errors.New("selector is not unique")
 	}))
 	added := testHPatchItem()
@@ -2474,7 +2474,7 @@ func TestHPatchMalformedCallStillFailsRequest(t *testing.T) {
 }
 
 func TestHPatchTranslationCancellationRemainsRequestCancellation(t *testing.T) {
-	transform, proxy, _, _ := newHPatchTestTransform(t, hpatchTranslatorFunc(func(ctx context.Context, _ routingWorkspace, _ string) ([]byte, error) {
+	transform, proxy, _, _ := newHPatchTestTransform(t, hpatchTranslatorFunc(func(ctx context.Context, _ string, _ string) ([]byte, error) {
 		return nil, ctx.Err()
 	}))
 	ctx, cancel := context.WithCancel(t.Context())
@@ -2593,7 +2593,7 @@ func TestHPatchHistoryEvictsOldestCallsAndSessions(t *testing.T) {
 
 func TestHPatchBoundsTranslationAndHistory(t *testing.T) {
 	t.Run("translation output capacity", func(t *testing.T) {
-		transform, proxy, _, _ := newHPatchTestTransform(t, hpatchTranslatorFunc(func(context.Context, routingWorkspace, string) ([]byte, error) {
+		transform, proxy, _, _ := newHPatchTestTransform(t, hpatchTranslatorFunc(func(context.Context, string, string) ([]byte, error) {
 			return make([]byte, maxHPatchPatchBytes+1), nil
 		}))
 		payload := mustTestJSON(t, map[string]any{"status": "completed", "output": []any{testHPatchItem()}})
@@ -2607,7 +2607,7 @@ func TestHPatchBoundsTranslationAndHistory(t *testing.T) {
 	})
 
 	t.Run("script capacity", func(t *testing.T) {
-		transform, proxy, _, _ := newHPatchTestTransform(t, hpatchTranslatorFunc(func(context.Context, routingWorkspace, string) ([]byte, error) {
+		transform, proxy, _, _ := newHPatchTestTransform(t, hpatchTranslatorFunc(func(context.Context, string, string) ([]byte, error) {
 			t.Fatal("translator called for oversized script")
 			return nil, nil
 		}))
@@ -2623,7 +2623,7 @@ func TestHPatchBoundsTranslationAndHistory(t *testing.T) {
 	})
 
 	t.Run("translator capacity", func(t *testing.T) {
-		transform, proxy, _, _ := newHPatchTestTransform(t, hpatchTranslatorFunc(func(context.Context, routingWorkspace, string) ([]byte, error) {
+		transform, proxy, _, _ := newHPatchTestTransform(t, hpatchTranslatorFunc(func(context.Context, string, string) ([]byte, error) {
 			return nil, fmt.Errorf("%w: diagnostic overflow", errHPatchCapacity)
 		}))
 		visible, err := transform.TransformJSON(mustTestJSON(t, map[string]any{"status": "completed", "output": []any{testHPatchItem()}}))
@@ -2766,20 +2766,19 @@ func TestInProcessHPatchToolDescription(t *testing.T) {
 	}
 }
 
-func TestInProcessHPatchTranslatorIsRootScopedAndDoesNotMutateWorkspace(t *testing.T) {
+func TestInProcessHPatchTranslatorUsesBaseDirectoryWithoutConfinement(t *testing.T) {
 	translator := newInProcessHPatchTranslator(t.TempDir())
-	workspacePath := t.TempDir()
-	path := filepath.Join(workspacePath, "existing.txt")
+	parent := t.TempDir()
+	directory := filepath.Join(parent, "base")
+	if err := os.Mkdir(directory, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(directory, "existing.txt")
 	if err := os.WriteFile(path, []byte("first\nsecond\nthird\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	workspace, ok := usableRoutingWorkspace(map[string]json.RawMessage{workspacePath: nil})
-	if !ok {
-		t.Fatal("workspace unavailable")
-	}
-	defer workspace.close()
 
-	translated, err := translator.Translate(t.Context(), workspace, "in "+path+"\ntype+ 1:a793 \"inserted\\n\"\ntype 3:b1e9 \"THIRD\"\n")
+	translated, err := translator.Translate(t.Context(), directory, "in existing.txt\ntype+ 1:a793 \"inserted\\n\"\ntype 3:b1e9 \"THIRD\"\n")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2806,20 +2805,27 @@ func TestInProcessHPatchTranslatorIsRootScopedAndDoesNotMutateWorkspace(t *testi
 		t.Fatal(err)
 	}
 	if string(content) != "first\nsecond\nthird\n" {
-		t.Fatalf("translation mutated workspace to %q", content)
+		t.Fatalf("translation mutated file to %q", content)
 	}
 
-	conflict := "in " + path + "\ntype 1:a793..2:1636 \"replacement\"\ntype 2:1636..3:b1e9 \"overlap\"\n"
-	if translated, err := translator.Translate(t.Context(), workspace, conflict); err == nil || !strings.Contains(translated.diagnostic, "conflicts with edit") {
+	conflict := "in existing.txt\ntype 1:a793..2:1636 \"replacement\"\ntype 2:1636..3:b1e9 \"overlap\"\n"
+	if translated, err := translator.Translate(t.Context(), directory, conflict); err == nil || !strings.Contains(translated.diagnostic, "conflicts with edit") {
 		t.Fatalf("overlapping baseline translation error = %v", err)
 	}
 
-	outsidePath := filepath.Join(t.TempDir(), "outside.txt")
+	outsidePath := filepath.Join(parent, "outside.txt")
 	if err := os.WriteFile(outsidePath, []byte("outside\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := translator.Translate(t.Context(), workspace, "in "+outsidePath+"\n"); err == nil {
-		t.Fatal("translation accepted an absolute path outside the trusted root")
+	for _, target := range []string{"../outside.txt", outsidePath} {
+		translated, err := translator.Translate(t.Context(), directory, "in "+target+"\ntype 1:3120 \"changed\"\n")
+		if err != nil {
+			t.Fatalf("translate %q: %v", target, err)
+		}
+		wantPath := filepath.Clean(target)
+		if !bytes.Contains(translated.patch, []byte("*** Update File: "+wantPath)) {
+			t.Fatalf("translation for %q does not contain cleaned target %q: %s", target, wantPath, translated.patch)
+		}
 	}
 }
 

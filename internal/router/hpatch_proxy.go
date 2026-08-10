@@ -40,9 +40,8 @@ const (
 )
 
 var (
-	errHPatchCapacity         = errors.New("hpatch proxy capacity exceeded")
-	errHPatchWorkspaceChanged = errors.New("hpatch workspace changed during translation")
-	shellArtifactTTL          = time.Hour
+	errHPatchCapacity = errors.New("hpatch proxy capacity exceeded")
+	shellArtifactTTL  = time.Hour
 )
 
 type hpatchTranslationResult struct {
@@ -55,13 +54,13 @@ type hpatchTranslationResult struct {
 }
 
 type hpatchTranslator interface {
-	Translate(ctx context.Context, workspace routingWorkspace, script string) (hpatchTranslationResult, error)
+	Translate(ctx context.Context, directory, script string) (hpatchTranslationResult, error)
 	RecordMetrics(ctx context.Context, record hpatchMetricRecord) error
 	ToolDescription() string
 }
 
 type hpatchApplier interface {
-	Apply(ctx context.Context, workspace routingWorkspace, script string) (hpatchTranslationResult, error)
+	Apply(ctx context.Context, root *os.Root, script string) (hpatchTranslationResult, error)
 }
 
 type inProcessHPatchTranslator struct {
@@ -90,16 +89,16 @@ func (t notifyingHPatchTranslator) ToolDescription() string {
 	return t.inner.ToolDescription()
 }
 
-func (t notifyingHPatchTranslator) Translate(ctx context.Context, workspace routingWorkspace, script string) (hpatchTranslationResult, error) {
-	return t.inner.Translate(ctx, workspace, script)
+func (t notifyingHPatchTranslator) Translate(ctx context.Context, directory, script string) (hpatchTranslationResult, error) {
+	return t.inner.Translate(ctx, directory, script)
 }
 
-func (t notifyingHPatchTranslator) Apply(ctx context.Context, workspace routingWorkspace, script string) (hpatchTranslationResult, error) {
+func (t notifyingHPatchTranslator) Apply(ctx context.Context, root *os.Root, script string) (hpatchTranslationResult, error) {
 	applier, ok := t.inner.(hpatchApplier)
 	if !ok {
 		return hpatchTranslationResult{}, errors.New("hpatch translator cannot apply retained shell edits")
 	}
-	return applier.Apply(ctx, workspace, script)
+	return applier.Apply(ctx, root, script)
 }
 
 func (t notifyingHPatchTranslator) RecordMetrics(ctx context.Context, record hpatchMetricRecord) error {
@@ -116,14 +115,8 @@ func (inProcessHPatchTranslator) ToolDescription() string {
 	return hpatch.ToolDescription()
 }
 
-func (t inProcessHPatchTranslator) Translate(ctx context.Context, workspace routingWorkspace, script string) (hpatchTranslationResult, error) {
-	if !workspace.unchanged() {
-		return hpatchTranslationResult{}, errHPatchWorkspaceChanged
-	}
-	translated, err := hpatch.TranslateForHost(ctx, hpatch.Workspace{Root: workspace.root}, script, t.dataDirectory)
-	if !workspace.unchanged() {
-		return hpatchTranslationResult{}, errHPatchWorkspaceChanged
-	}
+func (t inProcessHPatchTranslator) Translate(ctx context.Context, directory, script string) (hpatchTranslationResult, error) {
+	translated, err := hpatch.TranslateForHostAt(ctx, directory, script, t.dataDirectory)
 	if contextErr := ctx.Err(); contextErr != nil {
 		return hpatchTranslationResult{}, contextErr
 	}
@@ -133,14 +126,8 @@ func (t inProcessHPatchTranslator) Translate(ctx context.Context, workspace rout
 	return hpatchTranslationResultOf(translated), err
 }
 
-func (t inProcessHPatchTranslator) Apply(ctx context.Context, workspace routingWorkspace, script string) (hpatchTranslationResult, error) {
-	if !workspace.unchanged() {
-		return hpatchTranslationResult{}, errHPatchWorkspaceChanged
-	}
-	applied, err := hpatch.ApplyForHost(ctx, hpatch.Workspace{Root: workspace.root}, script, t.dataDirectory)
-	if !workspace.unchanged() {
-		return hpatchTranslationResult{}, errHPatchWorkspaceChanged
-	}
+func (t inProcessHPatchTranslator) Apply(ctx context.Context, root *os.Root, script string) (hpatchTranslationResult, error) {
+	applied, err := hpatch.ApplyForHostRoot(ctx, root, script, t.dataDirectory)
 	if contextErr := ctx.Err(); contextErr != nil {
 		return hpatchTranslationResult{}, contextErr
 	}
@@ -399,7 +386,7 @@ type hpatchResponseTransform struct {
 	nativeExecItems             map[string]struct{}
 	nativeExecWarningsMetered   map[string]struct{}
 	local                       map[string]hpatchHistory
-	workspace                   routingWorkspace
+	directory                   string
 	carriers                    codeModeCarrierCatalog
 
 	installedToolDefinition  string
@@ -424,7 +411,6 @@ func (t *hpatchResponseTransform) Close() {
 		t.proxy.deactivateSession(t.historySessionID)
 		t.sessionActive = false
 	}
-	t.workspace.close()
 }
 
 // validateHPatchCompactionRequest recognizes local Codex compaction requests,
@@ -509,9 +495,9 @@ func (p *hpatchProxy) prepareRequest(ctx context.Context, request *parsedRespons
 	if !metadataValid || metadata.RequestKind != "turn" {
 		return nil, errors.New("hpatch rewrite requires valid turn metadata")
 	}
-	workspace, ok := usableRoutingWorkspace(metadata.Workspaces)
+	directory, ok := usableRoutingDirectory(metadata.Directories)
 	if !ok {
-		return nil, errors.New("hpatch rewrite requires exactly one usable workspace")
+		return nil, errors.New("hpatch rewrite requires exactly one usable base directory")
 	}
 	originalTools, originalToolsPresent := request.fields["tools"]
 	originalTools = bytes.Clone(originalTools)
@@ -521,30 +507,24 @@ func (p *hpatchProxy) prepareRequest(ctx context.Context, request *parsedRespons
 	originalInstructions = bytes.Clone(originalInstructions)
 	carriers, err := buildCodeModeCarrierCatalog(request.fields, p.registry)
 	if err != nil {
-		workspace.close()
 		return nil, err
 	}
 	installedTools, err := p.registry.specifications()
 	if err != nil {
-		workspace.close()
 		return nil, err
 	}
 	baselineDefinition, execCommandDefinitions, codeModeToolName, replaced, err := replaceAdditionalToolsApplyPatch(request.fields, installedTools)
 	if err != nil {
-		workspace.close()
 		return nil, err
 	}
 	if !replaced {
-		workspace.close()
 		return nil, errors.New("responses request cannot satisfy the required hpatch rewrite")
 	}
 	baseInstructions, err := p.registry.baseInstructions()
 	if err != nil {
-		workspace.close()
 		return nil, err
 	}
 	if err := appendHPatchBaseInstructions(request.fields, baseInstructions); err != nil {
-		workspace.close()
 		return nil, err
 	}
 	modelContributions := p.registry.modelContributions()
@@ -556,14 +536,12 @@ func (p *hpatchProxy) prepareRequest(ctx context.Context, request *parsedRespons
 			Definition: string(mustMarshalJSON(installedTools[index])),
 		}
 	}
-	historySessionID := workspace.canonical + "\x00" + sessionID
+	historySessionID := directory + "\x00" + sessionID
 	if err := p.activateSession(historySessionID); err != nil {
-		workspace.close()
 		return nil, err
 	}
 	if err := p.restoreInputPrefix(request, historySessionID); err != nil {
 		p.deactivateSession(historySessionID)
-		workspace.close()
 		return nil, err
 	}
 	return &hpatchResponseTransform{
@@ -583,7 +561,7 @@ func (p *hpatchProxy) prepareRequest(ctx context.Context, request *parsedRespons
 		nativeExecItems:             make(map[string]struct{}),
 		nativeExecWarningsMetered:   make(map[string]struct{}),
 		local:                       make(map[string]hpatchHistory),
-		workspace:                   workspace,
+		directory:                   directory,
 		carriers:                    carriers,
 
 		installedToolDefinition: string(mustMarshalJSON(installedTools)),
@@ -1393,7 +1371,7 @@ func (t *hpatchResponseTransform) translate(callID, input string, upstreamItem m
 			attemptMetadata.CorrelationID = callID
 		}
 		attemptMetadata.Attempt = t.nextCorrectionAttempt(attemptMetadata.CorrelationID, base.attempt)
-		if base.root != t.workspace.canonical {
+		if base.root != t.directory {
 			return t.rejectUnevaluated(callID, input, errors.New("the rejected script belongs to a different worktree; send a complete script"), attemptMetadata, correctionStats, upstreamItem)
 		}
 		corrections, parseErr := parseHPatchCorrections(input)
@@ -1419,23 +1397,23 @@ func (t *hpatchResponseTransform) translate(callID, input string, upstreamItem m
 		directory := t.proxy.shellSessionDirectory(t.sessionID)
 		root, openErr := os.OpenRoot(directory)
 		if openErr != nil {
-			return hpatchHistory{}, fmt.Errorf("open retained shell workspace: %w", openErr)
+			return hpatchHistory{}, fmt.Errorf("open retained shell directory: %w", openErr)
 		}
 		defer root.Close()
 		applier, ok := t.proxy.translator.(hpatchApplier)
 		if !ok {
 			return hpatchHistory{}, errors.New("hpatch translator cannot apply retained shell edits")
 		}
-		translated, err = applier.Apply(attemptContext, routingWorkspace{canonical: directory, root: root}, strings.ReplaceAll(evaluated, shellArtifactPrefix, ""))
+		translated, err = applier.Apply(attemptContext, root, strings.ReplaceAll(evaluated, shellArtifactPrefix, ""))
 		applied = err == nil
 	} else {
-		translated, err = t.proxy.translator.Translate(attemptContext, t.workspace, evaluated)
+		translated, err = t.proxy.translator.Translate(attemptContext, t.directory, evaluated)
 	}
 	if err != nil {
 		if contextErr := t.ctx.Err(); contextErr != nil {
 			return hpatchHistory{}, contextErr
 		}
-		if errors.Is(err, errHPatchCapacity) || errors.Is(err, errHPatchWorkspaceChanged) {
+		if errors.Is(err, errHPatchCapacity) {
 			return hpatchHistory{}, err
 		}
 		diagnostic := translated.diagnostic
@@ -1457,7 +1435,7 @@ func (t *hpatchResponseTransform) translate(callID, input string, upstreamItem m
 			toolName: hpatchToolName,
 			script:   input,
 
-			root:             t.workspace.canonical,
+			root:             t.directory,
 			evaluated:        retainedEvaluated(input, evaluated),
 			carrierName:      t.codeModeToolName,
 			translationError: diagnostic,
@@ -1491,7 +1469,7 @@ func (t *hpatchResponseTransform) translate(callID, input string, upstreamItem m
 		toolName: hpatchToolName,
 		script:   input,
 
-		root:          t.workspace.canonical,
+		root:          t.directory,
 		evaluated:     retainedEvaluated(input, evaluated),
 		patch:         patchText,
 		applied:       applied,
@@ -1713,7 +1691,7 @@ func (t *hpatchResponseTransform) translateRegisteredTool(contribution toolContr
 		toolName:         contribution.Name,
 		pluginID:         contribution.PluginID,
 		script:           input,
-		root:             t.workspace.canonical,
+		root:             t.directory,
 		carrierKind:      kind,
 		carrierName:      name,
 		carrierPayload:   payload,

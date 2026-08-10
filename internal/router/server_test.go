@@ -85,7 +85,7 @@ func serverRequest(t *testing.T, mutate func(map[string]any)) parsedResponsesReq
 
 func serverMetadataHeaders(t *testing.T, requestKind string, workspaces map[string]json.RawMessage) http.Header {
 	t.Helper()
-	encoded, err := json.Marshal(codexTurnMetadata{RequestKind: requestKind, Workspaces: workspaces})
+	encoded, err := json.Marshal(codexTurnMetadata{RequestKind: requestKind, Directories: workspaces})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -128,8 +128,8 @@ func TestExecuteRequestFailsClosedBeforeUpstreamWhenRewriteIsIneligible(t *testi
 			request["stream"] = true
 			request["parallel_tool_calls"] = false
 		}, want: "compaction request cannot expose tools"},
-		{name: "multiple usable workspaces", sessionID: "session", headers: serverMetadataHeaders(t, "turn", map[string]json.RawMessage{workspace: nil, otherWorkspace: nil}), want: "exactly one usable workspace"},
-		{name: "no usable workspace", sessionID: "session", headers: serverMetadataHeaders(t, "turn", map[string]json.RawMessage{t.TempDir() + "/missing": nil}), want: "usable workspace"},
+		{name: "multiple usable directories", sessionID: "session", headers: serverMetadataHeaders(t, "turn", map[string]json.RawMessage{workspace: nil, otherWorkspace: nil}), want: "exactly one usable base directory"},
+		{name: "no usable directory", sessionID: "session", headers: serverMetadataHeaders(t, "turn", map[string]json.RawMessage{t.TempDir() + "/missing": nil}), want: "usable base directory"},
 		{name: "missing apply_patch", sessionID: "session", headers: validHeaders, mutate: func(request map[string]any) {
 			input := request["input"].([]any)
 			additional := input[0].(map[string]any)
@@ -181,7 +181,7 @@ func TestExecuteRequestForwardsCompactionWithoutHPatchRewrite(t *testing.T) {
 	response := serverHTTPResponse(responseBody)
 	response.Header.Set("Content-Type", "text/event-stream")
 	provider := &serverFakeProvider{results: []serverForwardResult{{response: response}}}
-	proxy := newManagedHPatchProxy(t, hpatchTranslatorFunc(func(context.Context, routingWorkspace, string) ([]byte, error) {
+	proxy := newManagedHPatchProxy(t, hpatchTranslatorFunc(func(context.Context, string, string) ([]byte, error) {
 		t.Fatal("compaction reached the hpatch translator")
 		return nil, nil
 	}))
@@ -261,7 +261,7 @@ func TestExecuteRequestForwardsRewrittenRequestAndRecordsUsage(t *testing.T) {
 		"future": map[string]any{"kept": true},
 	}))
 	provider := &serverFakeProvider{results: []serverForwardResult{{response: serverHTTPResponse(responseBody)}}}
-	proxy := newManagedHPatchProxy(t, hpatchTranslatorFunc(func(context.Context, routingWorkspace, string) ([]byte, error) {
+	proxy := newManagedHPatchProxy(t, hpatchTranslatorFunc(func(context.Context, string, string) ([]byte, error) {
 		t.Fatal("response without an hpatch call reached the translator")
 		return nil, nil
 	}))
@@ -1670,31 +1670,6 @@ func TestCopyJSONTransformedRejectsBodyBeyondRouterBufferBudget(t *testing.T) {
 	_, err := copyJSONTransformed(io.Discard, io.LimitReader(serverRepeatingReader{}, upstreamJSONBufferBytes+1), nil, nil)
 	if err == nil || !strings.Contains(err.Error(), "router buffer budget") {
 		t.Fatalf("error = %v, want router buffer budget rejection", err)
-	}
-}
-
-func TestRoutingWorkspaceDetectsPathReplacement(t *testing.T) {
-	parent := t.TempDir()
-	path := filepath.Join(parent, "workspace")
-	if err := os.Mkdir(path, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	workspace, ok := usableRoutingWorkspace(map[string]json.RawMessage{path: nil})
-	if !ok {
-		t.Fatal("usable workspace was rejected")
-	}
-	defer workspace.close()
-	if !workspace.unchanged() {
-		t.Fatal("fresh workspace is not unchanged")
-	}
-	if err := os.Rename(path, filepath.Join(parent, "moved")); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Mkdir(path, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if workspace.unchanged() {
-		t.Fatal("replacement workspace retained the original identity")
 	}
 }
 

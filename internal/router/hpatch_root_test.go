@@ -28,7 +28,7 @@ func TestHPatchTranslationStillHonorsPatchLimit(t *testing.T) {
 	prefix := "*** Begin Patch\n*** Add File: a\n"
 	suffix := "\n*** End Patch\n"
 	patch := prefix + strings.Repeat("x", maxHPatchPatchBytes-len(prefix)-len(suffix)+1) + suffix
-	translator := hpatchTranslatorFunc(func(context.Context, routingWorkspace, string) ([]byte, error) {
+	translator := hpatchTranslatorFunc(func(context.Context, string, string) ([]byte, error) {
 		return []byte(patch), nil
 	})
 	transform, _, _, _ := newHPatchTestTransform(t, translator)

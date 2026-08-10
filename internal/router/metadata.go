@@ -1,6 +1,6 @@
 package router
 
-// Source: routing_context.go:18:219 Codex metadata and usable workspace handling.
+// Source: routing_context.go:18:219 Codex metadata and base-directory handling.
 
 import (
 	"encoding/json"
@@ -18,13 +18,8 @@ const codexTurnMetadataHeader = "x-codex-turn-metadata"
 type codexTurnMetadata struct {
 	RequestKind string                     `json:"request_kind"`
 	TurnID      string                     `json:"turn_id"`
-	Workspaces  map[string]json.RawMessage `json:"workspaces"`
+	Directories map[string]json.RawMessage `json:"workspaces"`
 	Compaction  json.RawMessage            `json:"compaction"`
-}
-
-type routingWorkspace struct {
-	canonical string
-	root      *os.Root
 }
 
 func decodeCodexTurnMetadata(headers http.Header) (codexTurnMetadata, bool) {
@@ -71,8 +66,8 @@ func isASCII(value string) bool {
 	return true
 }
 
-func usableRoutingWorkspace(declared map[string]json.RawMessage) (routingWorkspace, bool) {
-	var result routingWorkspace
+func usableRoutingDirectory(declared map[string]json.RawMessage) (string, bool) {
+	var result string
 	for path := range declared {
 		if !filepath.IsAbs(path) || filepath.Clean(path) != path {
 			continue
@@ -85,41 +80,10 @@ func usableRoutingWorkspace(declared map[string]json.RawMessage) (routingWorkspa
 		if err != nil || !filepath.IsAbs(canonical) {
 			continue
 		}
-		root, err := os.OpenRoot(canonical)
-		if err != nil {
-			continue
+		if result != "" && result != canonical {
+			return "", false
 		}
-		rootInfo, err := root.Stat(".")
-		if err != nil || !os.SameFile(info, rootInfo) {
-			root.Close()
-			continue
-		}
-		if result.root != nil {
-			root.Close()
-			if result.canonical == canonical {
-				continue
-			}
-			result.close()
-			return routingWorkspace{}, false
-		}
-		result = routingWorkspace{canonical: canonical, root: root}
+		result = canonical
 	}
-	return result, result.root != nil
-}
-
-func (workspace *routingWorkspace) unchanged() bool {
-	pathInfo, err := os.Stat(workspace.canonical)
-	if err != nil {
-		return false
-	}
-	rootInfo, err := workspace.root.Stat(".")
-	return err == nil && os.SameFile(pathInfo, rootInfo)
-}
-
-func (workspace *routingWorkspace) close() {
-	if workspace.root == nil {
-		return
-	}
-	workspace.root.Close()
-	workspace.root = nil
+	return result, result != ""
 }

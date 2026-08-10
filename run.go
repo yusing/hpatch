@@ -178,13 +178,31 @@ func TranslateForHost(ctx context.Context, workspace Workspace, script, dataDire
 	return changeForHost(ctx, workspace, script, dataDirectory, false)
 }
 
+// TranslateForHostAt evaluates a host script relative to directory without
+// imposing filesystem confinement. The host executor remains responsible for
+// authorizing the translated patch.
+func TranslateForHostAt(ctx context.Context, directory, script, dataDirectory string) (HostTranslation, error) {
+	result, err := translateDetailedAt(ctx, directory, script)
+	return finishHostChange(ctx, dataDirectory, result, err)
+}
+
 // ApplyForHost evaluates and atomically applies script while returning host diagnostics and metrics.
 func ApplyForHost(ctx context.Context, workspace Workspace, script, dataDirectory string) (HostTranslation, error) {
 	return changeForHost(ctx, workspace, script, dataDirectory, true)
 }
 
+// ApplyForHostRoot evaluates and applies a script within root. It is intended
+// for hosts that own a confined private filesystem.
+func ApplyForHostRoot(ctx context.Context, root *os.Root, script, dataDirectory string) (HostTranslation, error) {
+	return ApplyForHost(ctx, Workspace{Root: root}, script, dataDirectory)
+}
+
 func changeForHost(ctx context.Context, workspace Workspace, script, dataDirectory string, apply bool) (HostTranslation, error) {
 	result, err := changeDetailed(ctx, workspace, script, apply)
+	return finishHostChange(ctx, dataDirectory, result, err)
+}
+
+func finishHostChange(ctx context.Context, dataDirectory string, result HostTranslation, err error) (HostTranslation, error) {
 	if err != nil {
 		result.Corrections = commandCorrectionsOf(err)
 		result.Rejections = hostRejectionsOf(err)
@@ -228,6 +246,9 @@ func translateDetailed(ctx context.Context, workspace Workspace, script string) 
 
 func changeDetailed(ctx context.Context, workspace Workspace, script string, apply bool) (HostTranslation, error) {
 	changes, filesystem, invocation, report, err := evaluateScript(ctx, workspace, script)
+	if !apply {
+		return translatedEvaluation(ctx, changes, invocation, report, err)
+	}
 	result := HostTranslation{Report: report, Invocation: InvocationMetrics{value: invocation}}
 	if err != nil {
 		return result, err
@@ -235,11 +256,24 @@ func changeDetailed(ctx context.Context, workspace Workspace, script string, app
 	if err := ctx.Err(); err != nil {
 		return result, err
 	}
-	if apply {
-		if err := commitChanges(changes, rootFileOperations{root: filesystem.root}); err != nil {
-			return result, fmt.Errorf("changing %s: %w", describePaths(changes), err)
-		}
-		return result, nil
+	if err := commitChanges(changes, rootFileOperations{root: filesystem.root}); err != nil {
+		return result, fmt.Errorf("changing %s: %w", describePaths(changes), err)
+	}
+	return result, nil
+}
+
+func translateDetailedAt(ctx context.Context, directory, script string) (HostTranslation, error) {
+	changes, _, invocation, report, err := evaluateScriptAt(ctx, directory, script)
+	return translatedEvaluation(ctx, changes, invocation, report, err)
+}
+
+func translatedEvaluation(ctx context.Context, changes []change, invocation invocationMetrics, report string, evaluationErr error) (HostTranslation, error) {
+	result := HostTranslation{Report: report, Invocation: InvocationMetrics{value: invocation}}
+	if evaluationErr != nil {
+		return result, evaluationErr
+	}
+	if err := ctx.Err(); err != nil {
+		return result, err
 	}
 	patch, err := translate(changes)
 	if err != nil {
@@ -259,6 +293,18 @@ func evaluateScript(ctx context.Context, workspace Workspace, script string) ([]
 	if err != nil {
 		return nil, filesystemWorkspace{}, invocationMetrics{}, "", err
 	}
+	return evaluateScriptInFilesystem(ctx, filesystem, script)
+}
+
+func evaluateScriptAt(ctx context.Context, directory, script string) ([]change, filesystemWorkspace, invocationMetrics, string, error) {
+	filesystem, err := validateHostDirectory(ctx, directory)
+	if err != nil {
+		return nil, filesystemWorkspace{}, invocationMetrics{}, "", err
+	}
+	return evaluateScriptInFilesystem(ctx, filesystem, script)
+}
+
+func evaluateScriptInFilesystem(ctx context.Context, filesystem filesystemWorkspace, script string) ([]change, filesystemWorkspace, invocationMetrics, string, error) {
 	program, err := parse(script)
 	if err != nil {
 		var events invocationMetrics
@@ -274,7 +320,7 @@ func evaluateScript(ctx context.Context, workspace Workspace, script string) ([]
 		if err := ctx.Err(); err != nil {
 			return 0, false, err
 		}
-		info, err := filesystem.root.Stat(path)
+		info, err := filesystem.stat(path)
 		if err == nil {
 			return info.Mode(), true, nil
 		}
@@ -318,7 +364,32 @@ func validateWorkspace(ctx context.Context, workspace Workspace) (filesystemWork
 	return filesystemWorkspace{root: workspace.Root, cwd: cwd}, nil
 }
 
+func validateHostDirectory(ctx context.Context, directory string) (filesystemWorkspace, error) {
+	if ctx == nil {
+		return filesystemWorkspace{}, fmt.Errorf("context is nil")
+	}
+	if err := ctx.Err(); err != nil {
+		return filesystemWorkspace{}, err
+	}
+	directory, err := filepath.Abs(directory)
+	if err != nil {
+		return filesystemWorkspace{}, fmt.Errorf("resolving host directory: %w", err)
+	}
+	directory = filepath.Clean(directory)
+	info, err := os.Stat(directory)
+	if err != nil {
+		return filesystemWorkspace{}, fmt.Errorf("validating host directory %q: %w", directory, err)
+	}
+	if !info.IsDir() {
+		return filesystemWorkspace{}, fmt.Errorf("host directory %q is not a directory", directory)
+	}
+	return filesystemWorkspace{cwd: directory}, nil
+}
+
 func (w filesystemWorkspace) resolvePath(path string) (string, error) {
+	if w.root == nil {
+		return filepath.Clean(path), nil
+	}
 	if filepath.IsAbs(path) {
 		if !filepath.IsAbs(w.root.Name()) {
 			return "", fmt.Errorf("absolute path requires an absolute workspace root")
@@ -336,6 +407,27 @@ func (w filesystemWorkspace) resolvePath(path string) (string, error) {
 		return "", fmt.Errorf("path resolves outside workspace root")
 	}
 	return path, nil
+}
+
+func (w filesystemWorkspace) hostPath(path string) string {
+	if filepath.IsAbs(path) {
+		return path
+	}
+	return filepath.Join(w.cwd, path)
+}
+
+func (w filesystemWorkspace) stat(path string) (fs.FileInfo, error) {
+	if w.root == nil {
+		return os.Stat(w.hostPath(path))
+	}
+	return w.root.Stat(path)
+}
+
+func (w filesystemWorkspace) open(path string) (*os.File, error) {
+	if w.root == nil {
+		return os.Open(w.hostPath(path))
+	}
+	return w.root.Open(path)
 }
 
 func sanitizeDiagnostic(message string) string {
