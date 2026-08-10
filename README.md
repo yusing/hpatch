@@ -216,7 +216,7 @@ In hpatch mode, the router validates authentication and turn metadata, construct
 
 For each eligible request, the router finds exactly one Code Mode custom `exec` owner: either directly inside the leading `additional_tools` item for app-server traffic or inside that item's `functions` namespace for CLI traffic. It removes the owner's native `apply_patch` and `exec_command` sections, preserves unrelated tools and namespaces, and appends only the request-specific execution parameter shape to the shell contract. Unsupported direct or top-level owner layouts fail before forwarding.
 
-Hpatch translation receives one validated canonical base directory and evaluates the complete script without mutating files or imposing filesystem confinement. Codex executes the returned `apply_patch` carrier and owns the sandbox, permissions, and visible diff. Shell, hread, and hgrep execute in Codex's actual working directory and environment; the router does not give their workers a router-owned filesystem capability. Background Responses requests are rejected before forwarding because the router does not expose the retrieval and cancellation endpoints needed to complete them.
+Hpatch translation uses the canonical directory hint from turn metadata when available. Metadata without a usable directory still forwards: absolute operands translate without a base, while relative operands reject rather than resolving from the router process cwd. Codex executes the returned `apply_patch` carrier and owns the sandbox, permissions, and visible diff. Shell, hread, and hgrep execute in Codex's actual working directory and environment; the router does not give their workers a router-owned filesystem capability. Background Responses requests are rejected before forwarding because the router does not expose the retrieval and cancellation endpoints needed to complete them.
 
 The frontend directory, authenticated snapshot, and router executable must be visible at the same paths to the router and executor. Only one router process can own the stable basename frontends. A concurrent process fails before listening, while a restart can reclaim authenticated links left by a crash.
 
@@ -310,7 +310,7 @@ codex --local-provider hpatch --oss
 
 Profiles use the same provider block. Exact profile and `--local-provider` selection syntax is Codex-version-dependent; verify it against the installed Codex CLI.
 
-Start sessions from a Git worktree. Hpatch mode requires valid turn metadata containing exactly one distinct usable absolute base directory; zero or multiple usable base directories fail closed. The wire metadata key remains `workspaces`.
+Hpatch mode requires valid turn metadata, but its wire `workspaces` member is optional. Current Codex emits zero or one entry. No usable directory does not block the turn, never falls back to router cwd, and permits only absolute hpatch operands.
 
 Useful checks:
 
@@ -372,7 +372,7 @@ Relative standalone CLI operands resolve from the selected cwd inside the worksp
 | Surface | Evaluation base | Path behavior |
 | --- | --- | --- |
 | Standalone CLI | Process current directory, or absolute `--root` | Relative to `.` or `--cwd`; operands remain confined beneath the root |
-| Codex router | The single usable canonical base directory from `x-codex-turn-metadata` | Ordinary host path resolution relative to that directory, without router filesystem confinement |
+| Codex router | Optional canonical directory hint from `x-codex-turn-metadata`; no router-cwd fallback | Relative to the selected hint when present; without one only absolute operands are valid; no router filesystem confinement |
 
 Standalone CLI and root-scoped `Translate` or `TranslateForHost` patches use root-relative paths. Router `TranslateForHostAt` output retains cleaned host path identities for Codex to authorize. Details: `hpatch --help` and [`doc/spec/interface.md`](doc/spec/interface.md).
 
@@ -512,7 +512,7 @@ guarantee.
 
 CLI path: select a pinned workspace root and cwd → parse the complete script → verify immutable baselines → render and validate disjoint changes → stage all files → commit atomically, or emit one non-mutating translated patch.
 
-Router hpatch path: validate auth and metadata → load the immutable tool registry → replace the eligible Code Mode surfaces → evaluate hpatch against one validated canonical base directory without router filesystem confinement → return a client-executed `apply_patch` carrier.
+Router hpatch path: validate auth and metadata → load the immutable tool registry → replace the eligible Code Mode surfaces → select an optional canonical directory hint → evaluate hpatch without router filesystem confinement or router-cwd fallback → return a client-executed `apply_patch` carrier.
 
 Router shell path: translate the free-form tool call into one native executor call → run in Codex's working directory, environment, sandbox, and permissions → forward the complete native result. Private hread and hgrep use the same executor boundary. Passthrough mode skips registry construction and request rewriting.
 

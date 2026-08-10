@@ -67,7 +67,6 @@ func isASCII(value string) bool {
 }
 
 func usableRoutingDirectory(declared map[string]json.RawMessage) (string, bool) {
-	var result string
 	for path := range declared {
 		if !filepath.IsAbs(path) || filepath.Clean(path) != path {
 			continue
@@ -80,10 +79,7 @@ func usableRoutingDirectory(declared map[string]json.RawMessage) (string, bool) 
 		if err != nil || !filepath.IsAbs(canonical) {
 			continue
 		}
-		if result != "" && result != canonical {
-			return "", false
-		}
-		result = canonical
+		return canonical, true
 	}
-	return result, result != ""
+	return "", false
 }

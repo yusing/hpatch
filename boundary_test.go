@@ -1,6 +1,7 @@
 package hpatch
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -243,6 +244,25 @@ func TestHPatch2WorkspaceRejectsPathsOutsideRoot(t *testing.T) {
 	}
 	if got := readTestFile(t, outside, "outside.txt"); got != "old\n" {
 		t.Fatalf("outside file mutated: %q", got)
+	}
+}
+
+func TestTranslateForHostAtWithoutDirectoryNeverUsesProcessCWD(t *testing.T) {
+	directory := t.TempDir()
+	writeTestFile(t, directory, "existing.txt", "old\n", 0o644)
+	t.Chdir(directory)
+
+	absolute := filepath.Join(directory, "existing.txt")
+	result, err := TranslateForHostAt(t.Context(), "", "in "+absolute+"\ntype "+row(1, "old")+` "new"`+"\n", t.TempDir())
+	if err != nil {
+		t.Fatalf("absolute host translation: %v", err)
+	}
+	if !bytes.Contains(result.Patch, []byte("*** Update File: "+absolute)) {
+		t.Fatalf("absolute patch = %q", result.Patch)
+	}
+
+	if _, err := TranslateForHostAt(t.Context(), "", "in existing.txt\n", t.TempDir()); err == nil || !strings.Contains(err.Error(), "relative path requires a host directory") {
+		t.Fatalf("relative host translation error = %v", err)
 	}
 }
 

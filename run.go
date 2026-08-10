@@ -371,6 +371,9 @@ func validateHostDirectory(ctx context.Context, directory string) (filesystemWor
 	if err := ctx.Err(); err != nil {
 		return filesystemWorkspace{}, err
 	}
+	if directory == "" {
+		return filesystemWorkspace{}, nil
+	}
 	directory, err := filepath.Abs(directory)
 	if err != nil {
 		return filesystemWorkspace{}, fmt.Errorf("resolving host directory: %w", err)
@@ -388,7 +391,11 @@ func validateHostDirectory(ctx context.Context, directory string) (filesystemWor
 
 func (w filesystemWorkspace) resolvePath(path string) (string, error) {
 	if w.root == nil {
-		return filepath.Clean(path), nil
+		path = filepath.Clean(path)
+		if w.cwd == "" && !filepath.IsAbs(path) {
+			return "", fmt.Errorf("relative path requires a host directory")
+		}
+		return path, nil
 	}
 	if filepath.IsAbs(path) {
 		if !filepath.IsAbs(w.root.Name()) {

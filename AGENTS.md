@@ -27,10 +27,10 @@ Deployment invariant: in hpatch mode, the router and Codex executor must see the
 ## Routed request flow
 
 1. Codex sends `POST /v1/responses`; request parsing rejects malformed or unsupported request framing, including background Responses requests.
-2. In hpatch mode, the server derives the routing session, validates `x-codex-turn-metadata`, and requires one usable canonical base directory.
+2. In hpatch mode, the server derives the routing session and validates `x-codex-turn-metadata`; its `workspaces` member is an optional directory hint rather than a request requirement.
 3. The proxy finds exactly one supported Code Mode custom `exec` owner, strips native `apply_patch` and `exec_command`, preserves siblings, and installs model-visible `functions.hpatch` and `functions.shell`. Configured contributions marked model-visible join that catalog; private hread/hgrep guidance is appended to the existing instructions.
 4. `internal/router/client.go` validates Codex-managed credentials and forwards the rewritten request to the Codex backend.
-5. A terminal hpatch call is translated once against the declared directory by `TranslateForHostAt` without mutating the workspace. Retained `@shell/` edits instead use router-owned session storage and `ApplyForHostRoot`.
+5. A terminal hpatch call is translated once by `TranslateForHostAt` without mutating files. A selected metadata directory resolves relative operands; without one, only absolute operands are valid and router cwd is never used. Retained `@shell/` edits instead use router-owned session storage and `ApplyForHostRoot`.
 6. Response transformation restores the original Code Mode carrier shape, replacing the routed call with a validated native `functions.exec` carrier and generated `apply_patch` operation while preserving model-visible history for replay.
 7. Codex executes the carrier under its own working directory, sandbox, permissions, process-session facilities, and visible diff. The router does not silently commit declared-workspace translation.
 

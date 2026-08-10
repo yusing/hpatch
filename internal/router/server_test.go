@@ -110,7 +110,6 @@ func serverCompactionMetadataHeaders(t *testing.T) http.Header {
 
 func TestExecuteRequestFailsClosedBeforeUpstreamWhenRewriteIsIneligible(t *testing.T) {
 	workspace := t.TempDir()
-	otherWorkspace := t.TempDir()
 	validHeaders := serverMetadataHeaders(t, "turn", map[string]json.RawMessage{workspace: nil})
 	tests := []struct {
 		name      string
@@ -128,8 +127,6 @@ func TestExecuteRequestFailsClosedBeforeUpstreamWhenRewriteIsIneligible(t *testi
 			request["stream"] = true
 			request["parallel_tool_calls"] = false
 		}, want: "compaction request cannot expose tools"},
-		{name: "multiple usable directories", sessionID: "session", headers: serverMetadataHeaders(t, "turn", map[string]json.RawMessage{workspace: nil, otherWorkspace: nil}), want: "exactly one usable base directory"},
-		{name: "no usable directory", sessionID: "session", headers: serverMetadataHeaders(t, "turn", map[string]json.RawMessage{t.TempDir() + "/missing": nil}), want: "usable base directory"},
 		{name: "missing apply_patch", sessionID: "session", headers: validHeaders, mutate: func(request map[string]any) {
 			input := request["input"].([]any)
 			additional := input[0].(map[string]any)
@@ -149,6 +146,47 @@ func TestExecuteRequestFailsClosedBeforeUpstreamWhenRewriteIsIneligible(t *testi
 			}
 			if len(provider.forwarded) != 0 {
 				t.Fatalf("ineligible request reached upstream: %s", provider.forwarded[0])
+			}
+		})
+	}
+}
+
+func TestExecuteRequestDoesNotRequireWorkspaceMetadata(t *testing.T) {
+	tests := []struct {
+		name        string
+		directories map[string]json.RawMessage
+	}{
+		{name: "omitted"},
+		{name: "empty", directories: map[string]json.RawMessage{}},
+		{name: "unusable", directories: map[string]json.RawMessage{"/missing": nil}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			responseBody := string(mustTestJSON(t, map[string]any{"status": "completed"}))
+			provider := &serverFakeProvider{results: []serverForwardResult{{response: serverHTTPResponse(responseBody)}}}
+			proxy := newManagedHPatchProxy(t, hpatchTranslatorFunc(func(context.Context, string, string) ([]byte, error) {
+				t.Fatal("response without an hpatch call reached the translator")
+				return nil, nil
+			}))
+			var output bytes.Buffer
+			err := executeRequest(
+				t.Context(),
+				t.Context(),
+				serverRequest(t, nil),
+				serverMetadataHeaders(t, "turn", test.directories),
+				"session",
+				provider,
+				&output,
+				newDiagnostics(io.Discard),
+				time.Now,
+				proxy,
+				newMetricsStore(""),
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(provider.forwarded) != 1 {
+				t.Fatalf("upstream requests = %d, want 1", len(provider.forwarded))
 			}
 		})
 	}

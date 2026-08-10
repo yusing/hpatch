@@ -970,6 +970,49 @@ func TestHPatchIneligibleContinuationDoesNotRestoreHistory(t *testing.T) {
 	}
 }
 
+func TestHPatchTranslationWithoutWorkspaceUsesNoBaseDirectory(t *testing.T) {
+	request, err := parseResponsesRequest(mustTestJSON(t, map[string]any{
+		"input": []any{testCodeModeAdditionalTools(testCodeModeDescription)},
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	calls := 0
+	translator := hpatchTranslatorFunc(func(_ context.Context, directory, script string) ([]byte, error) {
+		calls++
+		if directory != "" {
+			t.Fatalf("directory = %q, want no base directory", directory)
+		}
+		if script != testHPatchScript {
+			t.Fatalf("script = %q", script)
+		}
+		return []byte(testTranslatedPatch), nil
+	})
+	proxy := newManagedHPatchProxy(t, translator)
+	transform, err := proxy.prepareRequest(
+		t.Context(),
+		&request,
+		"session-without-workspace",
+		codexTurnMetadata{RequestKind: "turn"},
+		true,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer transform.Close()
+
+	if _, err := transform.TransformJSON(mustTestJSON(t, map[string]any{
+		"status": "completed",
+		"output": []any{testHPatchItem()},
+	})); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 1 {
+		t.Fatalf("translations = %d, want 1", calls)
+	}
+}
+
 func TestHPatchJSONWrapsPatchAndImmediateReportInCodeModeExec(t *testing.T) {
 	calls := 0
 	transform, proxy, _, _ := newHPatchTestTransform(t, testTranslator(t, &calls))

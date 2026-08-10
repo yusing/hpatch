@@ -495,10 +495,7 @@ func (p *hpatchProxy) prepareRequest(ctx context.Context, request *parsedRespons
 	if !metadataValid || metadata.RequestKind != "turn" {
 		return nil, errors.New("hpatch rewrite requires valid turn metadata")
 	}
-	directory, ok := usableRoutingDirectory(metadata.Directories)
-	if !ok {
-		return nil, errors.New("hpatch rewrite requires exactly one usable base directory")
-	}
+	directory, _ := usableRoutingDirectory(metadata.Directories)
 	originalTools, originalToolsPresent := request.fields["tools"]
 	originalTools = bytes.Clone(originalTools)
 	originalToolChoice, originalToolChoicePresent := request.fields["tool_choice"]

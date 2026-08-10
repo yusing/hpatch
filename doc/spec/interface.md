@@ -712,7 +712,7 @@ inserted after the range
 PATCH
 ```
 
-Paths are nonempty and consume the remainder of their command line. For root-scoped CLI and library evaluation through `hpatch`, `Translate`, or `TranslateForHost`, relative paths resolve from cwd, absolute paths must remain beneath the canonical root, lexical and symlink escapes fail, and translation emits root-relative paths. Router host evaluation through `TranslateForHostAt` instead resolves ordinary host paths from its validated canonical base directory without filesystem confinement; emitted patch paths retain cleaned host identities for Codex to authorize.
+Paths are nonempty and consume the remainder of their command line. For root-scoped CLI and library evaluation through `hpatch`, `Translate`, or `TranslateForHost`, relative paths resolve from cwd, absolute paths must remain beneath the canonical root, lexical and symlink escapes fail, and translation emits root-relative paths. Router host evaluation through `TranslateForHostAt` instead uses an optional canonical metadata directory without filesystem confinement. With a directory, relative operands resolve from it; without one, relative operands reject and absolute operands remain valid. Router process cwd is never an implicit base. Emitted patch paths retain cleaned host identities for Codex to authorize.
 Trailing operands, malformed rows, forbidden controls, missing values, and unknown
 commands are invalid.
 
@@ -770,7 +770,7 @@ command; multiple insertions at one body-row anchor retain payload order. Diagno
 numbers use the same LF/CRLF physical framing as correction indices, so an embedded standalone
 carriage return remains within one escaped display row.
 
-The router validates all operations, retained acceptances, and referenced indices before rebuilding the script. It then reparses and reevaluates the complete transformed script against the same declared canonical base directory and a fresh immutable invocation baseline. A correction failure changes nothing. A successful transformation becomes the base for a later correction, whose command and body-row indices resolve against that latest evaluated script. The chain retains the correction-chain correlation ID, increments the attempt for every evaluated or proxy-rejected correction, and charges metrics for only the compact payload the agent emitted. A proxy-rejected correction leaves the last evaluated script as the repair base. The core evaluator has no correction mode. Root-scoped callers instead reevaluate against their same authorized root and cwd.
+The router validates all operations, retained acceptances, and referenced indices before rebuilding the script. It then reparses and reevaluates the complete transformed script against the same selected canonical metadata directory, or the same no-directory state, and a fresh immutable invocation baseline. A correction failure changes nothing. A successful transformation becomes the base for a later correction, whose command and body-row indices resolve against that latest evaluated script. The chain retains the correction-chain correlation ID, increments the attempt for every evaluated or proxy-rejected correction, and charges metrics for only the compact payload the agent emitted. A proxy-rejected correction leaves the last evaluated script as the repair base. The core evaluator has no correction mode. Root-scoped callers instead reevaluate against their same authorized root and cwd.
 
 Acceptance:
 
@@ -784,7 +784,7 @@ Acceptance:
    the complete correction.
 5. A correction heredoc is one operation; an invalid or unterminated correction heredoc
    produces one bounded diagnostic and does not reinterpret its body as operations.
-6. Every corrected script is revalidated atomically against the same declared canonical base directory and a fresh immutable invocation baseline, while retaining the established correlation and emitted-payload metrics behavior.
+6. Every corrected script is revalidated atomically against the same selected canonical metadata directory, or the same no-directory state, and a fresh immutable invocation baseline, while retaining the established correlation and emitted-payload metrics behavior.
 7. `N.R` operations address only a complete fixed-heredoc body, obey physical terminator
    ownership, reject absent rows and mixed whole-command/body-row mutation, and reindex
    against the latest evaluated rejected script in a chained correction. They cannot create
