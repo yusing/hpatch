@@ -64,8 +64,8 @@ Preserve these boundaries:
 
 - The root package is the only edit engine; parser, evaluator, target, transaction, and patch-rendering semantics stay there.
 - The router owns Codex transport, tool exposure, sessions, replay, and correction ancestry; corrections enter the engine only as rebuilt complete scripts.
-- Declared-workspace translation is non-mutating and currently directory-based through `TranslateForHostAt`. Retained shell application is a separate root-scoped path through `ApplyForHostRoot`.
-- Changes to workspace authority must reconcile the current translation call with `doc/architecture/index.md` rather than copying one side of that boundary into another document.
+- Normal router translation is non-mutating and directory-based through `TranslateForHostAt`. Retained shell application is a separate root-scoped path through `ApplyForHostRoot`.
+- Workspace authority changes must preserve this directory-based versus root-scoped split across code, `doc/spec/interface.md`, and `doc/architecture/index.md`.
 - Routed history stays in the original Code Mode carrier shape even though the model sees standalone registry tools.
 - `functions.hpatch` and `functions.shell` are model-visible; hread and hgrep remain private shell frontends.
 - Codex owns executor cwd, sandbox, permissions, process sessions, and final patch application.

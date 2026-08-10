@@ -109,18 +109,15 @@ model-facing summary of target choice, mutation choice, baseline rules, and safe
 teaches inline single-line values before heredocs; the router supplies the compact correction
 protocol once with the first actionable rejection in a correction chain. Tool help excludes
 CLI mode sections, options, metrics, and version material, and includes its bounded path
-guidance. The
-workspace boundary owns a pinned
-`*os.Root`, a root-relative cwd, root-scoped filesystem reads, staging, commit, and
-rollback. Relative script paths resolve from cwd; absolute script paths become
-root-relative identities only when within root. Lexical and symlink escapes fail. Initial
-inputs cross into the engine only after a regular-file check and strict UTF-8 decoding.
-Informational forms are resolved before stdin, working-directory, configuration-directory,
-metrics, or filesystem access.
+The root-scoped workspace boundary used by the standalone CLI and authorized library callers owns a pinned `*os.Root`, a root-relative cwd, root-scoped reads, staging, commit, and rollback. Relative script paths resolve from cwd; absolute paths become root-relative identities only when within root. Lexical and symlink escapes fail. Initial inputs cross into that boundary only after a regular-file check and strict UTF-8 decoding.
+
+Normal router translation is outside that confinement boundary. It supplies one validated canonical directory to `TranslateForHostAt`, performs ordinary host path resolution without a router-owned filesystem capability, and leaves authorization to Codex when it executes the returned carrier. Retained private `@shell` application is the confined router exception and uses `ApplyForHostRoot`.
+
+Informational CLI forms are resolved before stdin, working-directory, configuration-directory, metrics, or filesystem access.
 
 The router chooses retained-state identity from an explicit `session-id`, then a stable
 `prompt_cache_key`, and only then a request-scoped client request ID. Retained history is
-additionally scoped to the canonical workspace, preventing a reused cache key from exposing
+additionally scoped to the canonical declared base directory, preventing a reused cache key from exposing
 correction or replay state across worktrees. Retained correction and replay history is
 bounded: the oldest calls within a session and the least-recently used inactive sessions are
 evicted before capacity can reject new completed work. An
@@ -326,16 +323,9 @@ usage remains authoritative for provider-consumed model input.
 
 ## CTR-TRANSLATE-001 — Patch rendering
 
-One translation renderer owns all OpenAI `apply_patch` syntax. It receives the engine's
-ordered net change set and emits one envelope containing the required `Add File`,
-`Update File`, `Move to`, and `Delete File` actions. It finishes the complete string
-before stdout is written so evaluation or rendering failures cannot expose a partial
-patch. Every emitted path is relative to the workspace root, independent of cwd. It
-owns the minimal nonempty verification hunk required by OpenAI `apply_patch` when a move
-has no content change, and the renderer-only LF normalization required by the
-line-oriented output format. For changed content it expands context until every bare
-hunk's old-side sequence is unique, failing instead of emitting an ambiguous patch. The
-engine's normal-mode contents remain unchanged.
+One translation renderer owns all OpenAI `apply_patch` syntax. It receives the engine's ordered net change set and emits one envelope containing the required `Add File`, `Update File`, `Move to`, and `Delete File` actions. It finishes the complete string before stdout is written so evaluation or rendering failures cannot expose a partial patch.
+
+For root-scoped engine translation, every emitted path is relative to the workspace root, independent of cwd. The router's normal host adapter uses `TranslateForHostAt`; it evaluates against the validated canonical base directory without confinement and preserves cleaned host path identities for Codex's carrier. The renderer owns the minimal nonempty verification hunk required by OpenAI `apply_patch` when a move has no content change, and the renderer-only LF normalization required by the line-oriented output format. For changed content it expands context until every bare hunk's old-side sequence is unique, failing instead of emitting an ambiguous patch. The engine's normal-mode contents remain unchanged.
 
 ## CTR-COMPARE-001 — Independent comparison cases
 
