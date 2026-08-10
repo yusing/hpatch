@@ -1208,68 +1208,139 @@ func TestShellJSONTranslatesBashCasesEndToEnd(t *testing.T) {
 	}
 }
 
-func TestShellRecoversLunaCodeModeExecCarrier(t *testing.T) {
-	const input = "const result = await tools.exec_command({\"cmd\":\"git status --short\",\"login\":false,\"max_output_tokens\":24000});\n" +
+func TestShellRecoversLunaCodeModePrograms(t *testing.T) {
+	const legacy = "const result = await tools.exec_command({\"cmd\":\"git status --short\",\"login\":false,\"max_output_tokens\":24000});\n" +
 		"text(JSON.stringify(Object.assign({}, result, {\"retained\":false})));"
-	warningInput := misuseWarningProjection(lunaShellRecoveryWarning)
-	want := strings.Replace(input, codeModeMetadataProjection, warningInput+codeModeMetadataProjection, 1)
-	rewritten, gotWarning, changed, err := insertExecCommandWarning(input, lunaShellRecoveryWarning)
-	if err != nil || !changed || rewritten != want || gotWarning != warningInput {
-		t.Fatalf("rewrite Luna carrier: changed %t, warning %q, error %v\n%s", changed, gotWarning, err, rewritten)
-	}
-	var arguments struct {
-		Command string `json:"cmd"`
-	}
-	decodeExecCarrierArguments(t, rewritten, &arguments)
-	if arguments.Command != "git status --short" {
-		t.Fatalf("Luna warning changed command to %q", arguments.Command)
+	tests := []struct {
+		name  string
+		input string
+	}{
+		{
+			name:  "legacy exec_command carrier",
+			input: legacy,
+		},
+		{
+			name:  "exec program",
+			input: "const r = await tools.exec({command:\"git show --stat\",workdir:\"/workspace\"});\ntext(r);",
+		},
+		{
+			name:  "write_stdin program",
+			input: "const r = await tools.write_stdin({chars:\"\",session_id:83733,yield_time_ms:30000});\ntext(r.output);",
+		},
+		{
+			name:  "same-line exec projection",
+			input: "const r = await tools.exec({command:\"printf ok\"}); text(r);",
+		},
+		{
+			name:  "same-line write_stdin projection",
+			input: "const r = await tools.write_stdin({chars:\"\",session_id:83733}); text(r.output);",
+		},
+		{
+			name: "multiple tool calls remain unchanged",
+			input: "const r = await tools.exec({command:\"git show --stat\"});\n" +
+				"text(r);\nconst r = await tools.write_stdin({chars:\"\",session_id:83733});\ntext(r.output);",
+		},
+		{
+			name:  "leading whitespace",
+			input: "\n \tconst r = await tools.exec({command:\"printf ok\"});\ntext(r);",
+		},
 	}
 
-	transform, proxy, _, _ := newHPatchTestTransform(t, testTranslator(t, new(int)))
-	visible, err := transform.TransformJSON(mustTestJSON(t, map[string]any{
-		"status": "completed",
-		"output": []any{map[string]any{
-			"type": "custom_tool_call", "id": "item-shell", "call_id": "call-shell",
-			"name": "shell", "input": input, "status": "completed",
-		}},
-	}))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var response struct {
-		Output []map[string]json.RawMessage `json:"output"`
-	}
-	if err := json.Unmarshal(visible, &response); err != nil {
-		t.Fatal(err)
-	}
-	if len(response.Output) != 1 || jsonString(response.Output[0], "name") != "exec" ||
-		jsonString(response.Output[0], "input") != want {
-		t.Fatalf("recovered shell carrier = %s", visible)
-	}
-	history, ok := proxy.history(transform.historySessionID, "call-shell")
-	if !ok || history.toolName != "shell" || history.carrierPayload != want {
-		t.Fatalf("recovered shell history = %+v, available %t", history, ok)
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			recovered := lunaShellCodeModeProgram(
+				toolContribution{PluginID: "builtin.shell", Name: "shell"},
+				test.input,
+			)
+			if !recovered {
+				t.Fatal("Code Mode program was not recovered")
+			}
+			warningInput := misuseWarningProjection(lunaShellRecoveryWarning)
+			want := warningInput + test.input
+
+			transform, proxy, _, _ := newHPatchTestTransform(t, testTranslator(t, new(int)))
+			visible, err := transform.TransformJSON(mustTestJSON(t, map[string]any{
+				"status": "completed",
+				"output": []any{map[string]any{
+					"type": "custom_tool_call", "id": "item-shell", "call_id": "call-shell",
+					"name": "shell", "input": test.input, "status": "completed",
+				}},
+			}))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var response struct {
+				Output []map[string]json.RawMessage `json:"output"`
+			}
+			if err := json.Unmarshal(visible, &response); err != nil {
+				t.Fatal(err)
+			}
+			if len(response.Output) != 1 || jsonString(response.Output[0], "name") != "exec" ||
+				jsonString(response.Output[0], "input") != want {
+				t.Fatalf("recovered shell carrier = %s", visible)
+			}
+			history, ok := proxy.history(transform.historySessionID, "call-shell")
+			if !ok || history.toolName != "shell" || history.carrierPayload != want || !history.replayCarrier {
+				t.Fatalf("recovered shell history = %+v, available %t", history, ok)
+			}
+
+			replay, err := parseResponsesRequest(mustTestJSON(t, map[string]any{
+				"input": []any{
+					response.Output[0],
+					map[string]any{
+						"type": "custom_tool_call_output", "call_id": "call-shell", "output": "command output",
+					},
+				},
+			}))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := proxy.restoreInputPrefix(&replay, transform.historySessionID); err != nil {
+				t.Fatal(err)
+			}
+			firstReplay := bytes.Clone(replay.fields["input"])
+			if err := proxy.restoreInputPrefix(&replay, transform.historySessionID); err != nil {
+				t.Fatal(err)
+			}
+			if !bytes.Equal(replay.fields["input"], firstReplay) {
+				t.Fatalf("recovered carrier replay was not idempotent: %s", replay.fields["input"])
+			}
+			var replayed []map[string]json.RawMessage
+			if err := json.Unmarshal(replay.fields["input"], &replayed); err != nil {
+				t.Fatal(err)
+			}
+			if len(replayed) != 2 || jsonString(replayed[0], "name") != "exec" ||
+				jsonString(replayed[0], "input") != want ||
+				jsonString(replayed[1], "output") != "command output" {
+				t.Fatalf("recovered carrier replay = %s", replay.fields["input"])
+			}
+		})
 	}
 }
 
-func TestLunaShellExecCarrierRejectsNearMisses(t *testing.T) {
+func TestLunaShellCodeModeProgramRejectsNearMisses(t *testing.T) {
 	contribution := toolContribution{PluginID: "builtin.shell", Name: "shell"}
-	valid := "const result = await tools.exec_command({\"cmd\":\"printf ok\",\"login\":false});\ntext(result.output);"
+	valid := "const r = await tools.exec({command:\"printf ok\"});\ntext(r);"
 	for _, input := range []string{
-		"const result = await tools.exec_command({\"login\":false});\ntext(result.output);",
-		"const result = await tools.exec_command({\"cmd\":\"printf ok\",\"login\":true});\ntext(result.output);",
 		"printf ok",
-		" " + valid,
 		"#!node\n" + valid,
-		"const result = await tools.exec_command(null);\ntext(result.output);",
-		"const result = await tools.exec_command({\"cmd\":\"printf ok\"});\nconsole.log(result);",
-		valid + "\ntext(\"extra\");",
+		"#!params={}\n" + valid,
+		"# const r = await tools.exec({command:\"printf ok\"});\ntext(r);",
+		"// comment\n" + valid,
+		"const r = tools.exec({command:\"printf ok\"});\ntext(r);",
+		"const r = await other.exec({command:\"printf ok\"});\ntext(r);",
+		"const r = await tools.exec({command:\"printf ok\"});\nconsole.log(r);",
+		"printf '%s' 'const r = await tools.exec({command:\"printf ok\"}); text(r);'",
+		"text(\"before\");\n" + valid,
 	} {
-		if recovered, ok := lunaShellExecCarrier(contribution, input); ok || recovered != "" {
+		if lunaShellCodeModeProgram(contribution, input) {
 			t.Errorf("near-miss shell input recovered: %q", input)
 		}
 	}
-	if recovered, ok := lunaShellExecCarrier(toolContribution{PluginID: "configured", Name: "shell"}, valid); ok || recovered != "" {
+	if lunaShellCodeModeProgram(
+		toolContribution{PluginID: "configured", Name: "shell"},
+		valid,
+	) {
 		t.Error("configured shell plugin received Luna recovery")
 	}
 }
@@ -1484,13 +1555,6 @@ func TestMisuseWarningsRecordDistinctInputOverhead(t *testing.T) {
 			toolName:  "shell",
 			input:     "python3 -c 'print(1)'",
 			warning:   interpreterWarningInput,
-			toolCalls: 1,
-		},
-		{
-			name:      "combined Luna carrier and interpreter wrapper",
-			toolName:  "shell",
-			input:     "const result = await tools.exec_command({\"cmd\":\"python3 -c 'print(1)'\",\"login\":false});\ntext(result.output);",
-			warning:   lunaWarningInput + interpreterWarningInput,
 			toolCalls: 1,
 		},
 	}
