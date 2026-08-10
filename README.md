@@ -1,18 +1,20 @@
 # hpatch
 
-A Codex Responses router that lets agents edit with verified target-bearing mutations instead of emitting full patches.
+A Codex Responses router that gives agents verified atomic edits and direct script execution without Code Mode wrapper ceremony.
 
-`hpatch-router` sits between Codex and the Responses API. It replaces the Code Mode `apply_patch` surface with constrained `functions.hpatch`, resolves successful scripts against the declared workspace, and hands Codex a real `apply_patch` carrier so sandbox checks and the normal diff UI remain intact. The repository also includes the standalone `hpatch` CLI and reusable Go engine used by the router.
+`hpatch-router` sits between Codex and the Responses API. It replaces the model-facing Code Mode `apply_patch` and `exec_command` surfaces with constrained `functions.hpatch` and free-form `functions.shell`. Successful calls still return native Codex carriers, so sandbox checks, permissions, command sessions, and the normal diff UI remain intact. The repository also includes the standalone `hpatch` CLI and reusable Go engine used by the router.
 
 TL;DR:
 
 | Goal | Start here |
 | --- | --- |
 | Route Codex edits through hpatch | [Install and configure the Codex router](#codex-router-systemd-user-service) |
-| Make Codex prefer hpatch | [Override the base instructions](#override-base-instructions-prefer-hpatch-over-apply_patch) |
-| Inspect measured token savings | [Metrics](#metrics), then run `hpatch gain` |
+| Understand verified editing | [Why hpatch?](#why-hpatch) |
+| Run commands without Code Mode wrapper syntax | [Why shell?](#why-shell) |
+| Remove contradictory stock editing guidance | [Optional base-instructions override](#optional-base-instructions-override) |
+| Inspect measured token usage | [Metrics](#metrics), then run `hpatch gain` |
 | Use the engine without Codex | [Standalone CLI](#standalone-cli) |
-| Read the full editing contract | `hpatch --help`, `hpatch --tool-help`, [`doc/spec/interface.md`](doc/spec/interface.md) |
+| Read the complete contract | `hpatch --help`, `hpatch --tool-help`, [`doc/spec/interface.md`](doc/spec/interface.md) |
 
 ## Why hpatch?
 
@@ -94,84 +96,145 @@ text(result);
 The direct call repeats all 11 old lines, then writes the same 11 new lines plus patch framing and the JavaScript carrier. Hpatch writes the new function once and identifies the old region with two verified rows.
 The router also supplies `functions.hpatch` to the provider with a [Lark grammar](https://developers.openai.com/api/docs/guides/function-calling#context-free-grammars). As the model writes the tool call, only tokens that can still lead to a valid script are allowed. Bad syntax never becomes a finished tool call, so there is no generate-reject-retry cycle for it. Grammar is syntax only: a valid script can still fail for missing files, missing or stale rows, incomplete literal targets, or conflicting edits, and those failures stay atomic.
 
+The smaller payload is only one benefit. Hpatch turns editing into a verified transaction:
+
+| Direct-edit failure mode | Hpatch behavior |
+| --- | --- |
+| Repeated or stale context selects the wrong text | A `LINE:HASH` target names one logical line and rejects changed content. |
+| Earlier edits shift the location of later edits | Every target is checked against one immutable invocation baseline. |
+| One command in a multi-file change is invalid | The complete script is rejected and changes nothing. |
+| Formatting or cleanup changes the final offsets | The report returns post-format final references for the next invocation. |
+| Generated code is syntactically invalid | Supported language validation rejects the transaction before Codex applies it. |
+
+Hpatch does not bypass Codex to obtain these guarantees. The router evaluates the complete script without mutating the workspace, generates the ordinary `apply_patch` carrier, and lets Codex enforce the sandbox, permissions, and visible diff.
+
+## Why shell?
+
+Native `tools.exec_command` is Codex's execution backend. It is powerful, but calling it from Code Mode makes the model generate a JavaScript program, a JSON argument object, a quoted command, and an output projection:
+
+```javascript
+const result = await tools.exec_command({
+  cmd: "python3 -c 'print(\"hello\")'"
+});
+text(result.output);
+```
+
+`functions.shell` is a model-facing adapter to that executor, not a replacement for it. The model sends the program body directly in its native syntax:
+
+```python
+#!python3
+print("hello")
+```
+
+| Concern | Code Mode `tools.exec_command` call | `functions.shell` |
+| --- | --- | --- |
+| Model output | JavaScript wrapper, argument object, quoted command, and output projection | Exact script body |
+| Quoting | Program text can cross JavaScript, JSON, and shell quoting layers | No outer heredoc or command-string wrapper |
+| Interpreter | Encoded in the command construction | Selected by a compact shebang; Bash is the default |
+| Standard input | Must be arranged through the wrapper and command | Remains available to the program |
+| Correction | The model must emit the program again | Eligible programs can be retained, inspected, edited, and rerun |
+| Execution policy | Codex native executor | The same Codex native executor, sandbox, permissions, and result |
+
+This is better for the harness because it removes syntax that exists only to reach the executor. Fewer wrapper and quoting layers mean fewer malformed calls and simpler recovery; it is not a claim that the underlying process runs faster.
+
+`shell` can start PTY-backed, interactive, and long-running programs and forwards the native executor's complete result. If execution yields a session handle, use Codex's native session facilities to send further input, poll output, resize the PTY, or terminate the process; each shell call starts a new execution and does not reimplement session control.
+
+For native executor background and interactive behavior, see [OpenAI's Codex prompting guide](https://developers.openai.com/cookbook/examples/gpt-5/codex_prompting_guide#shell_command).
+
 ## Requirements
 
-- Go 1.26 or newer (`go install` only; no clone required for normal use)
-- For the router: Codex CLI with ChatGPT file auth (`codex login`, credentials at `~/.codex/auth.json` or `$CODEX_HOME/auth.json`)
-- For the router: Node.js 24 or newer; built-in and configured plugins use the same runtime
-- For private hgrep commands: `rg` available on the Codex executor's `PATH`
-- For private hread and hgrep commands: the router executable directory precedes unrelated entries
-  on the Codex executor's trusted `PATH`
-- For the built-in shell tool: `bash` for scripts without a shebang; selected interpreters
-  available through the inherited `PATH`
-- For `make install`: `make`
+- Go 1.26 or newer. Normal `go install` does not require a checkout.
+- Hpatch router mode requires Codex CLI with ChatGPT file auth from `codex login`, normally at `~/.codex/auth.json` or `$CODEX_HOME/auth.json`.
+- Hpatch router mode resolves Node.js 24 or newer as `node`; passthrough mode does not load the plugin registry.
+- Private hgrep requires `rg` on the Codex executor's `PATH`.
+- Private hread and hgrep require the router executable directory to precede unrelated entries on the executor's trusted `PATH`.
+- The built-in shell uses `bash` when no shebang is present; every selected interpreter must be available through the inherited `PATH`.
+- Router and executor deployments with isolated filesystems must expose the frontend directory, authenticated snapshot, and router executable at the same absolute paths.
+- Source builds that regenerate the embedded plugin with `make install` or `go generate` require Bun. `make install` additionally requires `make`.
 
 ## Install from a checkout
 
-`make install` regenerates the embedded built-in plugin bundle and installs `hpatch` and
-`hpatch-router` through `go install`.
+`make install` regenerates the embedded built-in plugin bundle, then installs `hpatch` and `hpatch-router` through `go install`:
 
 ```sh
 make install
 ```
 
-Configured plugins may be placed in `$XDG_CONFIG_HOME/hpatch/plugins` or
-`~/.config/hpatch/plugins` on Linux. Restart `hpatch-router` after changing configured plugins
-because its registry is immutable for the process lifetime.
+### Configured plugins
 
-The built-in `shell` custom tool accepts a free-form script. A compact shebang selects the
-interpreter through the inherited `PATH`, and a missing shebang selects `bash`:
+The mandatory `builtin.shell` implementation comes from `plugins/shell.mjs` and is embedded during generation; `make install` does not copy it into user configuration.
+
+Configured plugins are direct regular `.js` or `.mjs` files in `$XDG_CONFIG_HOME/hpatch/plugins` or `~/.config/hpatch/plugins` on Linux. The router loads them in lexical order into one immutable process snapshot. It does not discover workspace-local or remote plugins and does not hot-reload files. Restart `hpatch-router` after any plugin change. Invalid modules, duplicate identities, or an unusable built-in registry fail startup before the router listens. The full module contract is in [`doc/spec/interface.md`](doc/spec/interface.md).
+
+## Shell tool
+
+The model-visible `functions.shell` tool accepts one free-form program. A compact shebang selects an interpreter through the inherited `PATH`; a missing shebang selects Bash:
 
 ```python
 #!/usr/bin/env python3
 print("Hello")
 ```
 
-The translated Codex exec carrier shows arguments equivalent to
-`shell python3 'print("Hello")'`. The executor removes the shebang, preserves the remaining
-script exactly, and sends that body to `python3` through standard input. It stores no
-intermediate script file.
+The executor removes the shebang and supplies the exact remaining program through an anonymous script descriptor such as `/dev/fd/3`. It does not create an intermediate script file, and frontend standard input remains available as program data.
 
-A leading `#!params={...}` assignment accepts a JSON object of optional outer exec arguments
-except `cmd`. The script body supplies `cmd`. If `login` is present, its value must be `false`.
-Safe leading `# !params {...}`, `#!params {...}`, and legacy `!params {...}` near-misses are
-normalized through the same validation instead of entering the script body. The router augments
-this base contract with the request-specific app or CLI parameter shape, omitting `cmd`, but never
-exposes the native `tools.exec_command` declaration through `shell`. Codex validates the translated
-carrier when it executes it.
+A leading `#!cmd=` assignment accepts one command template containing exactly one `{.}` frontend placeholder. A leading `#!params=` assignment accepts a JSON object of request-specific outer execution arguments, cannot contain `cmd`, and permits `login` only when it is `false`. The router normalizes safe leading near-misses through the same validation rather than treating them as program text.
+
+`shell` can start PTY-backed, interactive, and long-running programs and forwards the native executor's complete result. If execution yields a session handle, use Codex's native session facilities to send further input, poll output, resize the PTY, or terminate the process; each shell call starts a new execution and does not reimplement session control.
+
+### Retain, inspect, and rerun a program
+
+Retention is temporary script state, not process-session state or workspace history. Non-Bash/sh programs and Bash/sh programs longer than three normalized lines are eligible. A retained result includes `retained: true` and a `script_ref` such as `@shell/<call-id>`. The artifact is scoped to the routing session, expires after one hour by default, is removed when the session closes, and is not a workspace file.
+
+Inspect retained source through the private frontend:
+
+```sh
+hread @shell/<call-id>
+```
+
+Copy an emitted `LINE:HASH` row into a complete hpatch script whose paths are all under `@shell/`. One script cannot mix retained and workspace paths. Rerun the current retained body with a shell call containing only:
+
+```text
+#!script=@shell/<call-id>
+```
+
+Retained edits use the router-owned artifact path rather than the normal workspace `apply_patch` carrier.
+
+### Private target-oriented reads and searches
+
+Hread and hgrep are private shell frontends, not model-visible tools. Use them when their verified rows will become hpatch targets; use ordinary read and search commands for exploration or validation. Batch known reads as separate commands and combine known searches with repeated `-e` arguments:
+
+```sh
+hread parser.go 20:40
+hgrep -e 'TranslateForHost' .
+```
+
+Hread emits `LINE:HASH TEXT`. Hgrep emits `"PATH":LINE:HASH TEXT`. Copy the current row verbatim into an hpatch target. See the [interface contract](doc/spec/interface.md) for complete inputs and failure behavior.
 
 ## Codex router (systemd user service)
 
-The router listens on HTTP, rewrites Responses traffic so Codex calls `functions.hpatch` or `functions.shell`, evaluates hpatch scripts against the workspace declared in `x-codex-turn-metadata`, and returns client-executed Code Mode carriers. Hpatch produces a real `apply_patch` call, so you see the normal diff rather than a silent file rewrite. Hread and hgrep remain private commands invoked by shell scripts. They resolve stable basename frontends through the Codex executor's trusted `PATH`; the router executable directory must precede unrelated entries. Each frontend targets an authenticated process snapshot wrapper, which targets `hpatch-router`. The carrier does not override the exec environment or working directory. The workers use Codex's exec working directory under Codex's sandbox and permissions rather than receiving a router workspace capability. Hread accepts one file and an optional range per command; batch reads use separate hread commands in one shell script. Hgrep invokes `rg --json --no-config` internally and emits complete matching and requested context rows as `"PATH":LINE:HASH TEXT`. When the router and Codex executor have isolated filesystems, deployment must expose the frontend directory, snapshot, and router executable at the same paths in both environments. Background Responses requests are rejected before forwarding because the router does not expose the retrieval and cancellation endpoints required to complete them.
+In hpatch mode, the router validates authentication and turn metadata, constructs the complete plugin registry, and installs standalone `functions.hpatch` and `functions.shell` tools. The model also sees configured contributions marked model-visible. Hread and hgrep remain private instructions and authenticated shell frontends.
 
-Only one router process can own these basename frontends. A concurrent router fails before
-listening. A restart automatically reclaims authenticated frontend links left by a crash.
+For each eligible request, the router finds exactly one Code Mode custom `exec` owner: either directly inside the leading `additional_tools` item for app-server traffic or inside that item's `functions` namespace for CLI traffic. It removes the owner's native `apply_patch` and `exec_command` sections, preserves unrelated tools and namespaces, and appends only the request-specific execution parameter shape to the shell contract. Unsupported direct or top-level owner layouts fail before forwarding.
 
-On each eligible request, the router finds exactly one Code Mode custom `exec` tool: either directly
-inside the leading `additional_tools` item for app-server traffic or inside that item's `functions`
-namespace for CLI traffic. It strips the owner's `### apply_patch` and Markdown `exec_command`
-sections and the introductory `tools.exec_command` example. It derives only the request-specific
-parameter shape, excludes `cmd`, and appends that sanitized shape under `#!params` in the built-in
-`shell` description. Sibling direct tools, sibling tools in the `functions` namespace, other
-namespaces, and unrelated top-level tools remain unchanged. A direct `additional_tools` tool named
-`functions.exec` and top-level `exec` or `functions.exec` tools are unsupported and fail before
-forwarding. The router installs standalone `functions.hpatch` and `functions.shell` tools. Hread
-and hgrep stay executable through private frontends, and their shell-command guidance is appended
-to the request's existing top-level instructions. Translated history uses the matched Code Mode
-`exec` carrier that Codex runs.
+Hpatch translation receives the one declared workspace capability but does not mutate it. Codex executes the returned `apply_patch` carrier and owns the sandbox, permissions, and visible diff. Shell, hread, and hgrep execute in Codex's actual working directory and environment; the router does not give their workers a workspace capability. Background Responses requests are rejected before forwarding because the router does not expose the retrieval and cancellation endpoints needed to complete them.
+
+The frontend directory, authenticated snapshot, and router executable must be visible at the same paths to the router and executor. Only one router process can own the stable basename frontends. A concurrent process fails before listening, while a restart can reclaim authenticated links left by a crash.
 
 Defaults:
 
 | Setting | Default |
 | --- | --- |
+| Mode | `hpatch` (`--mode`); `passthrough` forwards Responses traffic without loading the tool registry |
 | Listen | `127.0.0.1:8080` (`--listen`) |
-| Upstream start timeout | `10m` (`--timeout`) |
+| Upstream response-start timeout | `10m` (`--timeout`) |
 | Upstream stream idle timeout | `4m` per blocked upstream read (`--stream-idle-timeout`); resets on byte progress, pauses during downstream processing, and imposes no total-duration limit |
-| Auth | `~/.codex/auth.json`, or `$CODEX_HOME/auth.json` |
+| Auth | `~/.codex/auth.json`, or `$CODEX_HOME/auth.json`; Codex owns login and refresh |
 | Metrics / hooks | `$XDG_CONFIG_HOME/hpatch` or `~/.config/hpatch` |
-| Endpoints | `POST /v1/responses`, `GET /` (dashboard), `GET /api/metrics` |
+| Endpoints | `POST /v1/responses`, `GET /v1/models`, `GET /` (dashboard), `GET /api/metrics` |
 
-The process must run as your login user so it can open the absolute workspace paths Codex sends and read your Codex credentials. A user systemd unit is the intended long-running setup.
+In hpatch mode, run the router as the same login user as Codex so it can open the absolute workspace paths Codex sends and read the same credentials. A user systemd unit is the intended long-running setup.
+
+Use `--mode passthrough` when the router should forward Responses traffic without installing hpatch, shell, private frontends, corrections, or plugin metrics.
 
 ### Install the binary
 
@@ -179,13 +242,11 @@ The process must run as your login user so it can open the absolute workspace pa
 go install github.com/yusing/hpatch/cmd/hpatch-router@latest
 ```
 
-Default install path is `~/go/bin/hpatch-router` (or `$GOBIN/hpatch-router` if `GOBIN` is set). Ensure that directory is on your `PATH`.
+The binary is installed under `$GOBIN`, or under `$(go env GOPATH)/bin` when `GOBIN` is unset. Ensure that directory is on `PATH`.
 
 ### Install and start the unit
 
-The unit template is published at  
-[`contrib/systemd/hpatch-router.service`](contrib/systemd/hpatch-router.service)  
-(raw URL works after the repo is on GitHub):
+Install the published user-unit template:
 
 ```sh
 mkdir -p ~/.config/systemd/user
@@ -217,8 +278,8 @@ systemctl --user edit hpatch-router.service
 ```ini
 [Service]
 Environment=CODEX_HOME=%h/.codex
-# ExecStart=
-# ExecStart=%h/.local/bin/hpatch-router --listen 127.0.0.1:9090
+ExecStart=
+ExecStart=%h/.local/bin/hpatch-router --listen 127.0.0.1:9090
 ```
 
 Then `systemctl --user daemon-reload && systemctl --user restart hpatch-router.service`.
@@ -247,9 +308,9 @@ Or pick it per invocation (same pattern as other local providers):
 codex --local-provider hpatch --oss
 ```
 
-Profiles work the same way: put the `[model_providers.*]` block in the profile config (or the main config), then run with `--profile <name> --local-provider <provider> --oss`.
+Profiles use the same provider block. Exact profile and `--local-provider` selection syntax is Codex-version-dependent; verify it against the installed Codex CLI.
 
-Start sessions from a git worktree: the router requires exactly one usable absolute workspace root in turn metadata.
+Start sessions from a Git worktree. Hpatch mode requires valid turn metadata containing exactly one distinct usable absolute workspace directory; zero or multiple roots fail closed.
 
 Useful checks:
 
@@ -257,6 +318,7 @@ Useful checks:
 systemctl --user status hpatch-router.service
 journalctl --user -u hpatch-router.service -f
 curl -sS http://127.0.0.1:8080/api/metrics
+curl -sS http://127.0.0.1:8080/v1/models
 # open http://127.0.0.1:8080/ for the local dashboard
 ```
 
@@ -264,10 +326,9 @@ curl -sS http://127.0.0.1:8080/api/metrics
 
 The router exposes `functions.hpatch` and `functions.shell`, removes native `apply_patch` and `exec_command`, and appends private hread/hgrep command guidance to each eligible request's existing instructions. Codex's default base prompt can still direct ordinary edits to `apply_patch`, prefer native `rg`, and include native `exec_command` guidance. A runtime `ALL_TOOLS` dump can also list displaced nested tools. Use a custom base-instructions file when you need to remove those contradictory stock directions.
 
-1. Fetch a recent copy of the Codex default base prompt. Keep the rest of the file and use its file-editing section as the replacement point:
+1. Start from the current Codex default base instructions. Keep the rest of the file and use its file-editing section as the replacement point:
 
    - <https://github.com/openai/codex/blob/main/codex-rs/protocol/src/prompts/base_instructions/default.md>
-   - <https://github.com/asgeirtj/system_prompts_leaks/blob/main/OpenAI/Codex/gpt-5.6.md>
 
 2. Replace the stock file-editing heading and `apply_patch` paragraph with [`contrib/codex/file-editing-instructions.md`](contrib/codex/file-editing-instructions.md). Remove the stock line that prefers `rg` and the stock `exec_command` escaping line. Leave all other base-prompt text, dirty-worktree handling, and non-destructive Git rules unchanged.
 
@@ -306,7 +367,7 @@ type "hello world\n"
 EOF
 ```
 
-Script paths are workspace-relative.
+Relative CLI operands resolve from the selected cwd inside the workspace root. Translated patch paths are always root-relative.
 
 | Surface | Workspace root | Path base inside root |
 | --- | --- | --- |
@@ -361,10 +422,29 @@ Rules worth remembering:
 - Submit every known related edit in one atomic script, including related multiline declarations and repeated `in PATH` sections. Split only when a later edit depends on validation or information unavailable before the current call. Keep unrelated large `<<PATCH` values in separate failure-domain calls.
 - Prefer the smallest mutation that expresses the semantic change. When a formatter owns formatting, alignment, or indentation, do not replace surrounding lines merely to reproduce its output; let the formatter apply those changes. For example, add one struct field with one insertion rather than replacing the declaration.
 - Preserve required indentation prefixes in indentation-sensitive languages such as Python.
-- Successful final-state `LINE:HASH` rows are current references for their named final paths and may be used directly in the next invocation. Use HREAD only when the successful report lacks the exact target needed next.
+- Successful final-state `LINE:HASH` rows are post-format and post-cleanup references for their named final paths and may be used directly in the next invocation. Reports are bounded, so use hread when the successful report lacks the exact target needed next.
 - Overlapping replacements or deletions and insertions strictly inside them fail atomically. Boundary insertions are valid.
 - Use inline quoted values for short single-line edits; include `\n` when an insertion must form a new line. Reserve fixed `<<PATCH` for multiline or escape-heavy values.
-- Rejection changes nothing. Router-owned retries can replace, delete, or insert failed commands by index; for a fixed `<<PATCH` value, they can address one physical body row as `COMMAND.ROW` without resending the large value.
+- Rejection changes nothing. Router-owned indexed corrections can replace, delete, or insert failed commands by index; fixed `<<PATCH` values also expose physical body rows as `COMMAND.ROW`. The router rebuilds one complete script before ordinary engine evaluation; the core engine has no correction mode.
+
+Additional boundaries:
+
+- Parent directories for `new` and `mv` must already exist.
+- `new` accepts at most one immediately following targetless initializer.
+- Content introduced by one mutation is not targetable until a later invocation.
+- Hgrep paths are JSON-quoted in output; copy the complete current row rather than reconstructing it.
+
+### Automatic cleanup and validation
+
+Hpatch validates the rendered final state before committing or producing a carrier:
+
+- Changed Go files are formatted with `go/format`; formatting failures reject the complete transaction.
+- When Tree-sitter language support is available, changed `.py`, `.js`, and `.ts` files are syntax-checked. Diagnostics identify the responsible command and generated line and column. Unchanged invalid files are not rejected.
+- Supported linewise Python, JavaScript, and TypeScript indentation edits receive narrow baseline-aware correction. Ambiguous structure, comments, unsupported extensions, and mixed indentation units remain byte-exact or reject rather than being broadly rewritten.
+- Git-default trailing whitespace, spaces before indentation tabs, and edit-attributed blank lines at EOF are cleaned only on changed lines. Untouched content and binary-looking files are preserved.
+- Any syntax, indentation, target, or conflict failure remains atomic and leaves files unchanged.
+
+Exact language and correction behavior is part of the [interface contract](doc/spec/interface.md); this is not a general-purpose formatter for every file type.
 
 Multiline example:
 
@@ -387,18 +467,19 @@ PATCH
 
 ## Metrics
 
-Successful CLI and router edits record paired GPT-5 **output-token** estimates for:
+Metrics separate three different layers:
 
-- hpatch: `functions.hpatch` + the model-emitted script
-- baseline: `functions.exec` + a fixed program that calls `tools.apply_patch` with the translated envelope
+1. The root engine records invocation results and paired hpatch-versus-translated-patch GPT-5 output-token estimates.
+2. The router records per-tool definitions, emitted and translated carriers, current-versus-stock execution evidence, reports, diagnostics, and shell misuse or recovery overhead.
+3. The router dashboard and `/api/metrics` expose provider Responses lifecycle and usage totals alongside those estimates.
 
-Failed calls charge the full rejected hpatch payload against an empty-patch baseline. Final-state reports, diagnostics, and once-per-session tool definitions are tracked as **input** overhead separately.
+`hpatch gain` reads persistent metrics without opening a workspace:
 
 ```sh
 hpatch gain
 ```
 
-These are reproducible payload estimates, not provider billing totals. They omit reasoning tokens, commentary, and host-specific framing.
+These are reproducible payload estimates, not provider billing totals. They omit reasoning tokens, commentary, and host-specific framing. Provider Responses usage is authoritative for end-to-end input and output totals. Metrics are auxiliary and never replace a successful edit, command result, or rejection diagnostic. Passthrough mode does not install hpatch or plugin gain accounting.
 
 Hand-authored scenario comparison (does not update `hpatch gain`):
 
@@ -407,6 +488,12 @@ go run ./compare
 ```
 
 ### End-to-end benchmark
+
+The executable benchmark requires Docker, Codex authentication, and a local etcd checkout. It retains run artifacts for inspection; read the [benchmark methodology](doc/benchmarks.md) before running:
+
+```sh
+bash benchmarks/bench.sh
+```
 
 The paired benchmark runs one stock Codex control attempt and one Hpatch attempt
 from independent copies of the same historical etcd base revision, alternating
@@ -423,58 +510,65 @@ guarantee.
 
 ## How it works
 
-**CLI:** resolve workspace (`--root` / `--cwd` or process cwd) → parse script → verify targets against immutable baselines → plan and render disjoint splices → stage the multi-file result → commit (normal mode) or emit one `apply_patch` envelope (translate).
+CLI path: select a pinned workspace root and cwd → parse the complete script → verify immutable baselines → render and validate disjoint changes → stage all files → commit atomically, or emit one non-mutating translated patch.
 
-Router: load ChatGPT Codex auth → accept `POST /v1/responses` → require a Code Mode exec owner and expose `functions.hpatch` and `functions.shell` instead of its nested `apply_patch` and `exec_command` surfaces → translate hpatch against the single usable workspace from Codex metadata or execute private hread/hgrep commands from shell in Codex's exec context → return an exec carrier that applies the real patch or returns the exact command result.
+Router hpatch path: validate auth and metadata → load the immutable tool registry → replace the eligible Code Mode surfaces → evaluate hpatch against the pinned workspace → return a client-executed `apply_patch` carrier.
 
-Hpatch workspace selection is host-owned, and zero or multiple usable roots fail closed. Codex enforces sandbox and filesystem permissions for the client-executed shell, hread, hgrep, and apply operations.
+Router shell path: translate the free-form tool call into one native executor call → run in Codex's working directory, environment, sandbox, and permissions → forward the complete native result. Private hread and hgrep use the same executor boundary. Passthrough mode skips registry construction and request rewriting.
 
 ## Project structure
 
 ```text
 .
 ├── cmd/
-│   ├── hpatch/           # CLI entry point and command-line contract
-│   └── hpatch-router/    # Router process entry point
+│   ├── hpatch/                   # Standalone CLI
+│   └── hpatch-router/            # Router process entry point
 ├── internal/
-│   ├── router/           # Responses proxy, hpatch translation, auth, metrics, and dashboard
-│   ├── hpatchsyntax/     # Shared quoted-string and heredoc parsing
-│   └── patchtest/        # Test helper for applying translated patch envelopes
-├── compare/              # Hand-authored hpatch vs. apply_patch token scenarios
-├── contrib/              # Codex prompt guidance and systemd service template
-├── doc/                  # Product brief, interface specification, and architecture index
-├── *.go                  # Core parser, editor, workspace, transaction, translation, hooks, and metrics
-├── plugins/              # Installable configured tool declarations
-├── Makefile              # Binary and plugin installation
-├── tool_description.md   # Embedded function-tool instructions
-└── tool_grammar.lark     # Embedded constrained-decoding grammar
+│   ├── hpatchsyntax/             # Shared quoted-string and heredoc framing
+│   ├── patchtest/                # Translated-patch test helper
+│   └── router/
+│       └── toolplugin/
+│           └── src/builtin/      # Built-in shell, hread, and hgrep declarations
+├── plugins/
+│   └── shell.mjs                 # Built-in shell source embedded during generation
+├── benchmarks/                   # Runner, tasks, containers, and checked-in results
+├── compare/                      # Hand-authored payload scenarios
+├── contrib/                      # Codex guidance and systemd unit
+├── doc/                          # Specifications, architecture, and benchmark manuals
+├── *.go                          # Reusable edit engine, validation, transactions, and metrics
+├── Makefile                      # Plugin generation and binary installation
+├── tool_description.md           # Embedded hpatch instructions
+└── tool_grammar.lark             # Embedded constrained-decoding grammar
 ```
 
-Tests live beside the packages they exercise. The root `hpatch` package is the reusable engine; `cmd/hpatch` and `internal/router` call it rather than maintaining separate editing implementations. The router dashboard is embedded from `internal/router/dashboard.html`.
+Tests live beside the owners they exercise. The root `hpatch` package is the reusable engine; `cmd/hpatch` and `internal/router` call it rather than maintaining separate editing implementations. The router embeds its dashboard and generated built-in plugin bundle.
 
 ## Documentation
 
 | Doc | Contents |
 | --- | --- |
 | [`doc/brief.md`](doc/brief.md) | Product brief and scope |
-| [`doc/spec/index.md`](doc/spec/index.md) | Spec inventory |
-| [`doc/spec/interface.md`](doc/spec/interface.md) | CLI, script, correction, metrics contracts |
-| [`doc/spec/comparison.md`](doc/spec/comparison.md) | Token comparison scenarios |
-| [`doc/architecture/index.md`](doc/architecture/index.md) | Architecture ownership |
-| [`contrib/systemd/hpatch-router.service`](contrib/systemd/hpatch-router.service) | User unit template |
-| [`contrib/codex/file-editing-instructions.md`](contrib/codex/file-editing-instructions.md) | Base-prompt replacement for routed edit, read, search, and shell tools |
-| [`AGENTS.md`](AGENTS.md) | Codex router E2E notes for agents |
+| [`doc/spec/index.md`](doc/spec/index.md) | Specification inventory |
+| [`doc/spec/interface.md`](doc/spec/interface.md) | CLI, router, plugin, shell, correction, and metrics contracts |
+| [`doc/spec/comparison.md`](doc/spec/comparison.md) | Payload comparison scenarios |
+| [`doc/spec/benchmark.md`](doc/spec/benchmark.md) | Benchmark requirements |
+| [`doc/architecture/index.md`](doc/architecture/index.md) | Stable ownership boundaries |
+| [`doc/benchmarks.md`](doc/benchmarks.md) | Benchmark operation and interpretation |
+| [`doc/codex-router-e2e.md`](doc/codex-router-e2e.md) | Codex-facing end-to-end procedure |
+| [`contrib/systemd/hpatch-router.service`](contrib/systemd/hpatch-router.service) | User service template |
+| [`contrib/codex/file-editing-instructions.md`](contrib/codex/file-editing-instructions.md) | Optional routed edit, read, search, and shell guidance |
+| [`AGENTS.md`](AGENTS.md) | Architecture and repository navigation for agents |
 
 Library use: module path `github.com/yusing/hpatch`. Importable as a library (`hpatch.Translate`, `hpatch.Workspace`, host metrics helpers); hosts should open an `*os.Root` capability for the workspace before calling in.
 
 ## Development
 
 ```sh
-git clone https://github.com/yusing/hpatch.git
-cd hpatch
 go generate ./internal/router/toolplugin
 bun test ./internal/router/toolplugin/tests
 go test ./...
 go vet ./...
-go install ./cmd/hpatch ./cmd/hpatch-router
+make install
 ```
+
+Focused checks are `go test .` for the engine, `go test ./cmd/hpatch` for the CLI, `go test ./internal/router` for routing and plugins, and `go test ./cmd/hpatch-router` for the process entry point.
