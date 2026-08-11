@@ -118,29 +118,25 @@ type commandError struct {
 	// Repair is multi-line baseline context that a retry needs in order to
 	// correct this command. It is excluded from Error, whose result is
 	// sanitized onto one line, and is emitted separately.
-	Repair     string
-	Correction string
+	Repair string
 }
 
 func (e *commandError) Error() string {
+	prefix := e.Operation
+	if prefix == "" {
+		prefix = "command"
+	}
 	var context []string
 	if e.Command != 0 {
 		context = append(context, fmt.Sprintf("command %d", e.Command))
 	}
-	context = append(context, fmt.Sprintf("source line %d", e.Line))
-	if e.Operation != "" {
-		context = append(context, fmt.Sprintf("operation %q", e.Operation))
-	}
 	if e.Path != "" {
 		context = append(context, fmt.Sprintf("path %q", e.Path))
-	}
-	if e.Category != "" {
-		context = append(context, "category "+e.Category)
 	}
 	if int(e.Reason) < len(failureReasonNames) {
 		context = append(context, "reason "+failureReasonNames[e.Reason])
 	}
-	return fmt.Sprintf("%s: %s", strings.Join(context, ", "), e.Message)
+	return fmt.Sprintf("%s: %s: %s", prefix, strings.Join(context, ", "), e.Message)
 }
 
 func parse(source string) (*program, error) {

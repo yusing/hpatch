@@ -235,7 +235,7 @@ func TestHPatch2RejectsRemovedGrammar(t *testing.T) {
 			root := t.TempDir()
 			writeTestFile(t, root, "file.txt", "x\n", 0o644)
 			_, stderr, exitCode := runForTest(root, nil, "in file.txt\n"+command)
-			if exitCode != 1 || !strings.Contains(stderr, "category syntax") {
+			if exitCode != 1 || !strings.Contains(stderr, "reason script-syntax") {
 				t.Fatalf("Run() = exit %d, stderr %q", exitCode, stderr)
 			}
 		})
@@ -351,7 +351,7 @@ func TestHPatch2InvalidHeredocIsOneHeaderOwnedFailure(t *testing.T) {
 	if exitCode != 1 || stdout != "" {
 		t.Fatalf("Run() = exit %d, stdout %q, stderr %q", exitCode, stdout, stderr)
 	}
-	if strings.Count(stderr, "hpatch: command") != 1 ||
+	if strings.Count(stderr, ": command") != 1 ||
 		!strings.Contains(stderr, "command 2") ||
 		!strings.Contains(stderr, "requires an unquoted <<PATCH") {
 		t.Fatalf("diagnostic = %q", stderr)

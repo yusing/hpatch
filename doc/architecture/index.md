@@ -15,10 +15,11 @@ pjdoc:
 One internal lexical owner implements the inline quoted-operand and fixed `<<PATCH`
 heredoc framing required by `REQ-SCRIPT-001`. The root parser consumes decoded operands
 and command frames from that owner and constructs file commands or target-bearing
-mutations. The router correction parser consumes the same frame boundaries for inserted
-and replaced commands under `REQ-CORRECT-001`; it does not duplicate heredoc recognition.
+mutations. The root text editor reuses those parsed target-bearing mutations for
+rejected-script recovery. The router uses the lexical owner only to find physical command
+frames for recovery detection and bounded guidance; it does not interpret target semantics.
 The lexical owner performs no filesystem access, target resolution, command evaluation,
-correction ancestry, or output rendering.
+rejected-script ancestry, or output rendering.
 
 ## CTR-CORE-001 — Virtual workspace and immutable-baseline edit planning
 
@@ -63,16 +64,15 @@ metadata, effective per-command editor splices with authored command provenance,
 final content already owned by each editor, and language-formatting offset maps needed for
 bounded state reporting.
 
-## CTR-CORRECT-001 — Router correction transformation
+## CTR-CORRECT-001 — Rejected-script recovery
 
-The router owns correction detection, index validation, replacement/deletion/insertion
-ordering, rejected-script ancestry, correlation metadata, emitted-payload metrics, and
-rebuilding the complete script for `REQ-CORRECT-001`. Correction indices and insertion
-anchors resolve against the rejected script before transformation. The router validates
-the complete operation set before producing a rebuilt script and passes only that complete
-script to the ordinary hpatch host boundary; the core evaluator has no correction mode.
-Malformed correction framing or transformation remains a router rejection and cannot
-change retained correctable history or workspace state.
+The root text editor owns ordinary line, range, and text target resolution, mutation
+ordering, and the immutable in-memory baseline for `REQ-CORRECT-001`. The router owns
+recovery detection, rejected-script ancestry, correlation metadata, emitted-payload
+metrics, and complete-script reevaluation. It sends the recovery payload to the root text
+editor, then passes only the rebuilt complete script to the ordinary hpatch host boundary;
+the core evaluator has no recovery mode. Malformed, stale, or conflicting recovery remains
+a router rejection and cannot change the latest evaluated baseline or workspace state.
 
 ## CTR-STATE-001 — Bounded final-state projection
 
@@ -106,9 +106,10 @@ configuration, diagnostics, stdout, stderr, exit status, and help composition fo
 `REQ-CLI-001`, `REQ-GUIDE-001`, and `REQ-OUTPUT-001`. Top-level help owns the complete
 agent-workflow-through-metrics reference. Tool help is an independently maintained concise
 model-facing summary of target choice, mutation choice, baseline rules, and safety. It
-teaches inline single-line values before heredocs; the router supplies the compact correction
-protocol once with the first actionable rejection in a correction chain. Tool help excludes
-CLI mode sections, options, metrics, and version material, and includes its bounded path
+teaches inline single-line values before heredocs. Tool help excludes CLI mode sections,
+options, metrics, and version material. The router appends current rejected-script references
+and the recovery instruction only to actionable evaluator rejection diagnostics.
+
 The root-scoped workspace boundary used by the standalone CLI and authorized library callers owns a pinned `*os.Root`, a root-relative cwd, root-scoped reads, staging, commit, and rollback. Relative script paths resolve from cwd; absolute paths become root-relative identities only when within root. Lexical and symlink escapes fail. Initial inputs cross into that boundary only after a regular-file check and strict UTF-8 decoding.
 
 Normal router translation is outside that confinement boundary. It supplies an optional canonical metadata directory to `TranslateForHostAt`, performs ordinary host path resolution without a router-owned filesystem capability, and never falls back to router cwd. Without a selected directory, only absolute operands are valid. Retained private `@shell` application is the confined router exception and uses `ApplyForHostRoot`.
@@ -117,11 +118,12 @@ Informational CLI forms are resolved before stdin, working-directory, configurat
 
 The router chooses retained-state identity from an explicit `session-id`, then a stable
 `prompt_cache_key`, and only then a request-scoped client request ID. Retained history is
-additionally scoped to the selected canonical metadata directory, or to the explicit no-directory state, preventing a reused cache key from exposing correction or replay state across worktrees. Retained correction and replay history is
-bounded: the oldest calls within a session and the least-recently used inactive sessions are
-evicted before capacity can reject new completed work. An
-active request protects its session throughout replay restoration and response
-transformation. Background Responses requests reject before upstream forwarding because
+additionally scoped to the selected canonical metadata directory, or to the explicit no-directory
+state, preventing a reused cache key from exposing recovery or replay state across worktrees.
+Retained recovery and replay history is bounded: the oldest calls within a session and the
+least-recently used inactive sessions are evicted before capacity can reject new completed work.
+An active request protects its session throughout replay restoration and response transformation.
+Background Responses requests reject before upstream forwarding because
 the router has no retrieval boundary for their eventual result. Malformed SSE state is
 sticky and cannot be overwritten by a later terminal event.
 
@@ -177,7 +179,7 @@ The generated built-in JavaScript and runtime host are materialized inside the a
 process snapshot. A symlink-launched child verifies that snapshot before loading an
 implementation. The router never pre-reads files and never fabricates an `apply_patch` result for
 read, search, or inspection. Model history retains shell calls, private commands stay outside
-response routing and edit correction ancestry, and generalized per-tool metrics record execution.
+response routing and edit recovery ancestry, and generalized per-tool metrics record execution.
 Registry shutdown removes the frontends and snapshot.
 
 The standalone CLI canonicalizes root and cwd, opens the root once, and keeps that
@@ -238,7 +240,7 @@ An exec translator may provide a validated nonempty stock command for output met
 renderer applies the selected template and parameters to produce its canonical stock carrier.
 This evidence never replaces the frontend carrier used for the response, history, replay, or
 execution. An implementation needing another executable Code Mode carrier uses the generic path
-rather than encoding an exec surrogate. Hpatch's native workspace translation, correction
+rather than encoding an exec surrogate. Hpatch's native workspace translation, recovery
 ancestry, patch renderer, and semantic failure baseline remain adapter extensions beside this
 generic interface rather than capabilities granted to ordinary plugins.
 
@@ -289,8 +291,8 @@ child honestly. Shutdown cleanup owns the stable frontends, snapshot wrappers, a
 The response transformer uses registry membership instead of hardcoded tool-name predicates for
 JSON, SSE, and replay. Retained history stores the original contribution identity and input plus
 the exact validated carrier kind, name, and payload. Replay verifies the carrier byte-for-byte
-before restoring the model-visible call. Generic history cannot enter correction ancestry;
-hpatch alone attaches its existing correction state. A plugin input rejection may become a
+before restoring the model-visible call. Generic history cannot enter recovery ancestry;
+hpatch alone attaches its existing recovery state. A plugin input rejection may become a
 bounded diagnostic carrier, while a runtime-adapter failure, malformed translator result, or
 unavailable carrier fails routing and cannot be represented as successful translation.
 

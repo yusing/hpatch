@@ -445,17 +445,18 @@ func TestHPatchPrepareRequestExposesOnlyHPatchAndShell(t *testing.T) {
 			t.Fatalf("base instructions lack %q: %q", required, instructions)
 		}
 	}
-	for _, correctionGuidance := range []string{
+	for _, obsoleteGuidance := range []string{
 		"Repairing a rejected script:",
 		"INDEX: COMMAND",
 		`INDEX.ROW: "VALUE"`,
+		": accept",
 	} {
-		if strings.Contains(exposed, correctionGuidance) {
-			t.Fatalf("standalone hpatch description includes rejection-only guidance %q: %q", correctionGuidance, exposed)
+		if strings.Contains(exposed, obsoleteGuidance) {
+			t.Fatalf("standalone hpatch description includes obsolete recovery guidance %q: %q", obsoleteGuidance, exposed)
 		}
 	}
 	if strings.Contains(exposed, "type <<PATCH replacement or insertion consumes") {
-		t.Fatalf("standalone hpatch description retains grammar-enforced correction framing: %q", exposed)
+		t.Fatalf("standalone hpatch description retains obsolete indexed recovery framing: %q", exposed)
 	}
 	if strings.Contains(exposed, "workspace_id") {
 		t.Fatalf("standalone hpatch description retains workspace selection: %q", exposed)
@@ -1985,12 +1986,12 @@ func TestHPatchHistoryDoesNotCrossWorkspacesSharingSessionIdentity(t *testing.T)
 		t.Fatalf("cross-workspace replay restored input %q", input)
 	}
 
-	history, err := second.translate("call-correction", "1: accept\n", nil)
+	history, err := second.translate("call-recovery", `type 1:ffff "repaired"`+"\n", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(history.translationError, "no hpatch call to correct") {
-		t.Fatalf("cross-workspace correction history = %+v", history)
+	if !strings.Contains(history.translationError, "no rejected hpatch script to recover") {
+		t.Fatalf("cross-workspace recovery history = %+v", history)
 	}
 }
 
@@ -2143,12 +2144,12 @@ func TestHPatchStreamingReplacesLifecycleWithoutChangingCallID(t *testing.T) {
 	}
 }
 
-func TestNonHPatchHistoryIsExcludedFromCorrections(t *testing.T) {
+func TestNonHPatchHistoryIsExcludedFromRecovery(t *testing.T) {
 	proxy := newManagedHPatchProxy(t, testTranslator(t, new(int)))
 	err := proxy.rememberBatch("session", map[string]hpatchHistory{
 		"call-H": {
 			toolName: hpatchToolName, script: testHPatchScript,
-			translationError: "rejected", sequence: 1,
+			translationError: "rejected", evaluatorRejected: true, sequence: 1,
 		},
 		"call-S": {
 			toolName: "shell", script: `hread file.txt`,
@@ -2158,19 +2159,18 @@ func TestNonHPatchHistoryIsExcludedFromCorrections(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	history, err := proxy.correctableHistory("session")
+	history, err := proxy.recoverableHistory("session")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if history.toolName != hpatchToolName || history.script != testHPatchScript {
-		t.Fatalf("correctable history = %+v", history)
+		t.Fatalf("recoverable history = %+v", history)
 	}
 
 	transform := &hpatchResponseTransform{
 		proxy:            proxy,
 		sessionID:        "session",
 		historySessionID: "session",
-
 		local: map[string]hpatchHistory{
 			"call-local-shell": {
 				toolName: "shell",
@@ -2179,256 +2179,208 @@ func TestNonHPatchHistoryIsExcludedFromCorrections(t *testing.T) {
 			},
 		},
 	}
-	history, err = transform.correctionHistory()
+	history, err = transform.recoveryHistory()
 	if err != nil {
 		t.Fatal(err)
 	}
 	if history.toolName != hpatchToolName || history.script != testHPatchScript {
-		t.Fatalf("correction after local read-only call = %+v", history)
+		t.Fatalf("recovery after local read-only call = %+v", history)
 	}
 }
 
-func TestHPatchCorrectionRetainsCorrelationAndIncrementsAttempt(t *testing.T) {
+func TestHPatchNonEvaluatorFailureDoesNotBecomeRecoveryBaseline(t *testing.T) {
 	calls := 0
-	transform, proxy, _, _ := newHPatchTestTransform(t, hpatchTranslatorFunc(func(context.Context, string, string) ([]byte, error) {
+	transform, _, _, _ := newHPatchTestTransform(t, hpatchTranslatorFunc(func(context.Context, string, string) ([]byte, error) {
 		calls++
-		if calls == 1 {
-			return nil, errors.New("rejected")
-		}
-		return []byte(testTranslatedPatch), nil
+		return nil, errors.New("translator failed")
 	}))
 	first, err := transform.translate("call-1", testHPatchScript, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if first.correlationID != "call-1" || first.attempt != 1 {
-		t.Fatalf("first attempt metadata = %+v", first)
+	if first.evaluatorRejected || strings.Contains(first.translationError, "Use hpatch without `in`") {
+		t.Fatalf("non-evaluator failure exposed recovery guidance: %+v", first)
 	}
-	second, err := transform.translate("call-2", "2: type \"changed\"\n", nil)
+	second, err := transform.translate("call-2", `type 2:ffff "repaired"`+"\n", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if second.translationError != "" || second.correlationID != "call-1" || second.attempt != 2 {
-		t.Fatalf("correction metadata = %+v", second)
+	if !second.unevaluated ||
+		!strings.Contains(second.translationError, "did not produce an evaluator rejection") ||
+		calls != 1 {
+		t.Fatalf("recovery after non-evaluator failure = %+v, translator calls %d", second, calls)
+	}
+}
+
+func testRecoveryRow(t *testing.T, text string, row int) string {
+	t.Helper()
+	reference := hpatch.TextReferences(text, row)
+	fields := strings.Fields(reference)
+	if len(fields) == 0 {
+		t.Fatalf("no row %d reference in %q", row, text)
+	}
+	return fields[0]
+}
+
+func TestHPatchRecoveryRetainsCorrelationAndRebuildsBeforeTranslation(t *testing.T) {
+	base := "new created.txt\ntype \"bad\"\n"
+	want := "new created.txt\ntype \"payload\"\n"
+	calls := 0
+	var evaluated string
+	translator := hpatchResultTranslatorFunc(func(_ context.Context, _ string, script string) (hpatchTranslationResult, error) {
+		calls++
+		if calls == 1 {
+			return hpatchTranslationResult{
+				diagnostic: "type: command 2, reason rejected: bad value\n",
+				rejections: []hpatch.HostRejection{{Command: 2, SourceLine: 2, Operation: "type"}},
+			}, errors.New("rejected")
+		}
+		evaluated = script
+		return hpatchTranslationResult{patch: []byte(testTranslatedPatch)}, nil
+	})
+	transform, proxy, _, _ := newHPatchTestTransform(t, translator)
+	first, err := transform.translate("call-1", base, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload := "type " + testRecoveryRow(t, base, 2) + " " + strconv.Quote(`type "payload"`) + "\n"
+	second, err := transform.translate("call-2", payload, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.correlationID != "call-1" || first.attempt != 1 ||
+		second.translationError != "" || second.correlationID != "call-1" || second.attempt != 2 {
+		t.Fatalf("recovery metadata: first=%+v second=%+v", first, second)
+	}
+	if calls != 2 || evaluated != want {
+		t.Fatalf("translations = %d, evaluated script = %q, want %q", calls, evaluated, want)
 	}
 	if _, ok := proxy.history(transform.historySessionID, "call-1"); ok {
 		t.Fatal("local history committed before response completion")
 	}
 }
 
-func TestHPatchCorrectionInstructionsAppearOnlyOnInitialRejection(t *testing.T) {
-	transform, _, _, _ := newHPatchTestTransform(t, hpatchTranslatorFunc(func(context.Context, string, string) ([]byte, error) {
-		return nil, errors.New("rejected")
-	}))
-
-	first, err := transform.translate("call-1", testHPatchScript, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := strings.Count(first.translationError, "Repairing a rejected script:"); got != 1 {
-		t.Fatalf("initial rejection correction instruction count = %d, want 1:\n%s", got, first.translationError)
-	}
-	if !strings.Contains(first.translationError, `INDEX.ROW: "VALUE"`) {
-		t.Fatalf("initial rejection lacks multiline correction instructions:\n%s", first.translationError)
-	}
-
-	second, err := transform.translate("call-2", "2: type \"changed\"\n", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if second.correlationID != "call-1" || second.attempt != 2 {
-		t.Fatalf("correction rejection metadata = %+v", second)
-	}
-	if strings.Contains(second.translationError, "Repairing a rejected script:") {
-		t.Fatalf("correction rejection repeats correction instructions:\n%s", second.translationError)
-	}
-}
-
-func TestHPatchDisplayedCorrectionCanBeAcceptedWithoutRepeatingSource(t *testing.T) {
-	base := "in script.sh\ntype 1:a793..2:1636 \"exit \\\"$status\\\"\\n\"\n"
-	correctedCommand := "type 1:a793..2:1636 \"\\texit \\\"$status\\\"\\n\""
-	calls := 0
-	var evaluated string
-	translator := hpatchResultTranslatorFunc(func(_ context.Context, _ string, script string) (hpatchTranslationResult, error) {
-		calls++
-		if calls == 1 {
-			diagnostic := "hpatch: command 2 rejected: indentation-only change to preserved text\n" +
-				"1:2a44 exit \"$status\"\n" +
-				"indentation: proposed=\"\" correction=\"\\t\"\n"
-			return hpatchTranslationResult{
-				diagnostic:  diagnostic,
-				corrections: map[int]string{2: correctedCommand},
-			}, errors.New("indentation-only change")
-		}
-		evaluated = script
-		return hpatchTranslationResult{patch: []byte(testTranslatedPatch)}, nil
+func TestHPatchRecoveryRerejectionExposesCurrentScriptRows(t *testing.T) {
+	base := "new created.txt\ntype \"bad\"\n"
+	rebuilt := "new created.txt\ntype \"worse\"\n"
+	translator := hpatchResultTranslatorFunc(func(_ context.Context, _ string, _ string) (hpatchTranslationResult, error) {
+		return hpatchTranslationResult{
+			diagnostic: "type: command 2, reason rejected: bad value\n",
+			rejections: []hpatch.HostRejection{{Command: 2, SourceLine: 2, Operation: "type"}},
+		}, errors.New("rejected")
 	})
 	transform, _, _, _ := newHPatchTestTransform(t, translator)
-
 	first, err := transform.translate("call-1", base, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Count(first.translationError, "1:2a44 exit \"$status\"\n") != 1 {
-		t.Fatalf("first diagnostic repeats proposed source:\n%s", first.translationError)
-	}
-	if strings.Count(first.translationError, "Repairing a rejected script:") != 1 {
-		t.Fatalf("first diagnostic does not contain one correction protocol:\n%s", first.translationError)
-	}
-	if !strings.Contains(first.translationError, "Apply the displayed correction with:\n2: accept\n") {
-		t.Fatalf("first diagnostic lacks acceptance command:\n%s", first.translationError)
-	}
-
-	second, err := transform.translate("call-2", "2: accept\n", nil)
+	payload := "type " + testRecoveryRow(t, base, 2) + " " + strconv.Quote(`type "worse"`) + "\n"
+	second, err := transform.translate("call-2", payload, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if second.translationError != "" || calls != 2 {
-		t.Fatalf("accepted correction = %+v, translations %d", second, calls)
-	}
-	want := "in script.sh\n" + correctedCommand + "\n"
-	if evaluated != want {
-		t.Fatalf("evaluated script = %q, want %q", evaluated, want)
-	}
-}
-
-func TestHPatchCompactCorrectionRebuildsScriptBeforeTranslation(t *testing.T) {
-	base := "new file.txt\ntype \"old\"\nrm\n"
-	payload := "-2\n+2: type <<PATCH\nnew\nPATCH\n2+: rm\n"
-	want := "new file.txt\ntype <<PATCH\nnew\nPATCH\nrm\nrm\n"
-	calls := 0
-	var evaluated string
-	transform, _, _, _ := newHPatchTestTransform(t, hpatchTranslatorFunc(func(_ context.Context, _ string, script string) ([]byte, error) {
-		calls++
-		if calls == 1 {
-			return nil, errors.New("rejected")
+	for _, history := range []hpatchHistory{first, second} {
+		if strings.Count(history.translationError, "Use hpatch without `in` to patch the rejected script.") != 1 ||
+			strings.Contains(history.translationError, "INDEX:") ||
+			strings.Contains(history.translationError, ": accept") {
+			t.Fatalf("recovery guidance = %q", history.translationError)
 		}
-		evaluated = script
-		return []byte(testTranslatedPatch), nil
-	}))
-	if _, err := transform.translate("call-1", base, nil); err != nil {
-		t.Fatal(err)
 	}
-	result, err := transform.translate("call-2", payload, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if result.translationError != "" || calls != 2 {
-		t.Fatalf("correction result = %+v, calls %d", result, calls)
-	}
-	if evaluated != want {
-		t.Fatalf("evaluated script = %q, want %q", evaluated, want)
+	if want := hpatch.TextReferences(rebuilt, 2); !strings.Contains(second.translationError, want) {
+		t.Fatalf("re-rejection lacks current reference %q:\n%s", want, second.translationError)
 	}
 }
 
-func TestHPatchMultilineValueCorrectionRebuildsOnlyAddressedRow(t *testing.T) {
+func TestHPatchRecoveryMutatesHeredocBodyByOrdinaryRow(t *testing.T) {
 	base := "new file.go\ntype <<PATCH\npackage p\nvar =\nvar tail = 2\nPATCH\n"
 	want := "new file.go\ntype <<PATCH\npackage p\nvar fixed = 1\nvar tail = 2\nPATCH\n"
 	calls := 0
 	var evaluated string
-	transform, _, _, _ := newHPatchTestTransform(t, hpatchTranslatorFunc(func(_ context.Context, _ string, script string) ([]byte, error) {
+	transform, _, _, _ := newHPatchTestTransform(t, hpatchResultTranslatorFunc(func(_ context.Context, _ string, script string) (hpatchTranslationResult, error) {
 		calls++
 		if calls == 1 {
-			return nil, errors.New("rejected")
+			return hpatchTranslationResult{
+				diagnostic: "type: command 2, reason rejected: bad value\n",
+				rejections: []hpatch.HostRejection{{Command: 2, SourceLine: 2, Operation: "type"}},
+			}, errors.New("rejected")
 		}
 		evaluated = script
-		return []byte(testTranslatedPatch), nil
+		return hpatchTranslationResult{patch: []byte(testTranslatedPatch)}, nil
 	}))
 	if _, err := transform.translate("call-1", base, nil); err != nil {
 		t.Fatal(err)
 	}
-	result, err := transform.translate("call-2", "2.2: \"var fixed = 1\"\n", nil)
+	payload := "type " + testRecoveryRow(t, base, 4) + " " + strconv.Quote("var fixed = 1") + "\n"
+	result, err := transform.translate("call-2", payload, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.translationError != "" || calls != 2 {
-		t.Fatalf("correction result = %+v, calls %d", result, calls)
-	}
-	if evaluated != want {
-		t.Fatalf("evaluated script = %q, want %q", evaluated, want)
+	if result.translationError != "" || calls != 2 || evaluated != want {
+		t.Fatalf("recovery = %+v, translations %d, evaluated %q", result, calls, evaluated)
 	}
 }
 
-func TestHPatchMultilineValueCorrectionRejectsComposedDelimiterBeforeTranslation(t *testing.T) {
-	base := "new file.txt\ntype <<PATCH\nold\nPATCH\n"
-	calls := 0
-	transform, _, _, _ := newHPatchTestTransform(t, hpatchTranslatorFunc(func(_ context.Context, _ string, _ string) ([]byte, error) {
-		calls++
-		if calls == 1 {
-			return nil, errors.New("rejected")
-		}
-		return []byte(testTranslatedPatch), nil
-	}))
-	if _, err := transform.translate("call-1", base, nil); err != nil {
-		t.Fatal(err)
-	}
-	result, err := transform.translate("call-2", "+2.1: \"PA\"\n+2.1: \"TCH\\n\"\n", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !result.unevaluated || !strings.Contains(result.translationError, "cannot materialize the fixed PATCH delimiter") || calls != 1 {
-		t.Fatalf("composed delimiter correction = %+v, translations %d", result, calls)
-	}
-}
-
-func TestHPatchMalformedDeletionPreservesCorrectableHistory(t *testing.T) {
-	base := "new file.txt\ntype \"old\"\nrm\n"
-	want := "new file.txt\ntype \"fixed\"\nrm\n"
+func TestHPatchFailedRecoveryPreservesEvaluatedBaseline(t *testing.T) {
+	base := "new file.txt\ntype \"old\"\n"
+	want := "new file.txt\ntype \"fixed\"\n"
 	calls := 0
 	var evaluated string
-	transform, _, _, _ := newHPatchTestTransform(t, hpatchTranslatorFunc(func(_ context.Context, _ string, script string) ([]byte, error) {
+	transform, _, _, _ := newHPatchTestTransform(t, hpatchResultTranslatorFunc(func(_ context.Context, _ string, script string) (hpatchTranslationResult, error) {
 		calls++
 		if calls == 1 {
-			return nil, errors.New("rejected")
+			return hpatchTranslationResult{
+				diagnostic: "type: command 2, reason rejected: bad value\n",
+				rejections: []hpatch.HostRejection{{Command: 2, SourceLine: 2, Operation: "type"}},
+			}, errors.New("rejected")
 		}
 		evaluated = script
-		return []byte(testTranslatedPatch), nil
+		return hpatchTranslationResult{patch: []byte(testTranslatedPatch)}, nil
 	}))
 	if _, err := transform.translate("call-1", base, nil); err != nil {
 		t.Fatal(err)
 	}
-	malformed, err := transform.translate("call-2", "-2: rm\n", nil)
+	failed, err := transform.translate("call-2", `type 2:ffff "type \"wrong\""`+"\n", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !malformed.unevaluated || malformed.correlationID != "call-1" || malformed.attempt != 2 ||
-		!strings.Contains(malformed.translationError, "is not `INDEX: COMMAND`") || calls != 1 {
-		t.Fatalf("malformed correction = %+v, calls %d", malformed, calls)
+	if !failed.unevaluated || failed.correlationID != "call-1" || failed.attempt != 2 ||
+		!strings.Contains(failed.translationError, "reason row-stale") || calls != 1 {
+		t.Fatalf("failed recovery = %+v, translations %d", failed, calls)
 	}
-	corrected, err := transform.translate("call-3", "2: type \"fixed\"\n", nil)
+	payload := "type " + testRecoveryRow(t, base, 2) + " " + strconv.Quote(`type "fixed"`) + "\n"
+	recovered, err := transform.translate("call-3", payload, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if corrected.translationError != "" || corrected.correlationID != "call-1" || corrected.attempt != 3 || calls != 2 {
-		t.Fatalf("corrected result = %+v, calls %d", corrected, calls)
-	}
-	if evaluated != want {
-		t.Fatalf("evaluated script = %q, want %q", evaluated, want)
+	if recovered.translationError != "" || recovered.correlationID != "call-1" ||
+		recovered.attempt != 3 || calls != 2 || evaluated != want {
+		t.Fatalf("recovered = %+v, translations %d, evaluated %q", recovered, calls, evaluated)
 	}
 }
 
-func TestHPatchRetainedProxyRejectionAdvancesCorrectionAttempt(t *testing.T) {
+func TestHPatchRetainedProxyRejectionAdvancesRecoveryAttempt(t *testing.T) {
 	proxy := newManagedHPatchProxy(t, testTranslator(t, new(int)))
 	if err := proxy.rememberBatch("session", map[string]hpatchHistory{
 		"call-1": {
 			toolName: hpatchToolName, script: testHPatchScript, translationError: "rejected",
-			correlationID: "call-1", attempt: 1, sequence: 1,
+			evaluatorRejected: true, correlationID: "call-1", attempt: 1, sequence: 1,
 		},
 		"call-2": {
-			toolName: hpatchToolName, script: "-2: rm\n", translationError: "malformed", unevaluated: true,
+			toolName: hpatchToolName, script: `type 2:ffff "bad"` + "\n",
+			translationError: "stale", unevaluated: true,
 			correlationID: "call-1", attempt: 2, sequence: 2,
 		},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	base, err := proxy.correctableHistory("session")
+	base, err := proxy.recoverableHistory("session")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if base.attempt != 1 {
-		t.Fatalf("correctable base attempt = %d, want 1", base.attempt)
+		t.Fatalf("recoverable base attempt = %d, want 1", base.attempt)
 	}
-	if got := proxy.latestCorrectionAttempt("session", "call-1"); got != 2 {
+	if got := proxy.latestRecoveryAttempt("session", "call-1"); got != 2 {
 		t.Fatalf("latest retained chain attempt = %d, want 2", got)
 	}
 }
@@ -2674,7 +2626,7 @@ func TestHPatchHistoryEvictsOldestCallsAndSessions(t *testing.T) {
 	if _, ok := session.calls[fmt.Sprintf("call-%03d", maxSessionTurns)]; !ok {
 		t.Fatal("newest call was not retained")
 	}
-	latest, err := proxy.correctableHistory("session")
+	latest, err := proxy.recoverableHistory("session")
 	if err != nil || latest.script != fmt.Sprintf("call-%03d", maxSessionTurns) {
 		t.Fatalf("latest history = %+v, error %v", latest, err)
 	}

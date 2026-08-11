@@ -145,7 +145,7 @@ func multilineValueRepair(command int, value string, line int) string {
 			marker = ">"
 		}
 		text := lineContent(value, lines[index-1])
-		fmt.Fprintf(&report, "%s %d.%d | %s\n", marker, command, index, previewTextLimit(text, repairPreviewLimit))
+		fmt.Fprintf(&report, "%s value row %d | %s\n", marker, index, previewTextLimit(text, repairPreviewLimit))
 	}
 	return report.String()
 }

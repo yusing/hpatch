@@ -82,6 +82,10 @@ func TestTopLevelHelpDescribesCompletePublicSurface(t *testing.T) {
 		"preserve the target's final LF",
 		"Translation always",
 		"stable failure reasons",
+		"When routed recovery emits script LINE:HASH rows",
+		"syntax-checked when Tree-sitter support is available",
+		"Supported indentation corrections are automatic",
+		"diagnostics begin with the operation",
 		"hooks.error",
 		"format_markdown",
 		"shellquote",
@@ -122,7 +126,10 @@ func TestToolHelpGuidesAgentCommandChoice(t *testing.T) {
 		"indentation-sensitive languages such as Python",
 		"Successful final-state `LINE:HASH` rows are current references",
 		"Multiple insertions at the same boundary render in script order.",
-		"reread stale rows instead of guessing",
+		"use hpatch without `in` to patch the rejected script",
+		"syntax-checked when Tree-sitter support is available",
+		"supported indentation corrections are automatic",
+		"reread them when a later attempt reports staleness",
 	} {
 		if !strings.Contains(normalized, required) {
 			t.Fatalf("tool help does not contain %q", required)
@@ -135,6 +142,8 @@ func TestToolHelpGuidesAgentCommandChoice(t *testing.T) {
 		"--cwd",
 		"Metrics:",
 		"INDEX: COMMAND",
+		": accept",
+		"COMMAND.ROW",
 		"matches literals only",
 		"HPATCH/1",
 		"prefer one range `type`",

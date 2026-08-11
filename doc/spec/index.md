@@ -25,7 +25,7 @@ semantics, and observable acceptance behavior.
 - [`REQ-SHELL-001`](interface.md): installable free-form script tool and interpreter selection
 - [`REQ-METRICS-001`](interface.md): persistent encoding, command, target, and failure metrics
 - [`REQ-SCRIPT-001`](interface.md): HPATCH/2 grammar and target forms
-- [`REQ-CORRECT-001`](interface.md): compact rejected-script corrections
+- [`REQ-CORRECT-001`](interface.md): rejected-script recovery with ordinary verified-row edits
 - [`REQ-FILE-001`](interface.md): file scope and lifecycle
 - [`REQ-SELECT-001`](interface.md): immutable-baseline target resolution
 - [`REQ-EDIT-001`](interface.md): target-bearing mutation behavior

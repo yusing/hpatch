@@ -46,7 +46,6 @@ type HostMetricRecord struct {
 	RemovedExecCommandDefinitionInputTokens uint64
 	ToolMetrics                             []ToolMetricRecord
 	SharedDefinitionInputTokens             int64
-	AuxiliaryTokens                         uint64
 	hostRecoveries                          [recoveryKindCount]uint64
 }
 

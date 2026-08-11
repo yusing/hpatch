@@ -37,7 +37,7 @@ func TestGoIndentationOnlyReplacementFormatsAfterMove(t *testing.T) {
 	}
 }
 
-func TestNonGoIndentationOnlyReplacementRetainsExactCorrection(t *testing.T) {
+func TestNonGoIndentationOnlyReplacementRejectsWithoutSuggestion(t *testing.T) {
 	rootPath := t.TempDir()
 	writeTestFile(t, rootPath, "script.sh", "header\n\texit \"$status\"\n", 0o644)
 	root, err := os.OpenRoot(rootPath)
@@ -50,11 +50,6 @@ func TestNonGoIndentationOnlyReplacementRetainsExactCorrection(t *testing.T) {
 	result, err := TranslateForHost(t.Context(), Workspace{Root: root}, "in script.sh\n"+command, t.TempDir())
 	if err == nil {
 		t.Fatal("indentation-only replacement unexpectedly succeeded")
-	}
-	wantCommand := "type " + row(2, "\texit \"$status\"") + ` "\texit \"$status\"\n"`
-	if len(result.Corrections) != 1 || result.Corrections[0].Command != 2 ||
-		result.Corrections[0].Replacement != wantCommand {
-		t.Fatalf("corrections = %#v, want %#v", result.Corrections, wantCommand)
 	}
 	if !strings.Contains(result.Diagnostic, "indentation-only change to preserved text") {
 		t.Fatalf("diagnostic = %q", result.Diagnostic)
@@ -77,8 +72,8 @@ func TestIndentationCorrectionUsesEarliestCommandAcrossFiles(t *testing.T) {
 	if err == nil {
 		t.Fatal("indentation-only replacements unexpectedly succeeded")
 	}
-	if len(result.Corrections) != 1 || result.Corrections[0].Command != 3 {
-		t.Fatalf("corrections = %#v, want earliest command 3", result.Corrections)
+	if len(result.Rejections) != 1 || result.Rejections[0].Command != 3 {
+		t.Fatalf("rejections = %#v, want earliest command 3", result.Rejections)
 	}
 }
 
@@ -96,8 +91,8 @@ func TestIndentationCorrectionPrecedesLaterPathResolutionFailure(t *testing.T) {
 	if err == nil {
 		t.Fatal("path failure unexpectedly succeeded")
 	}
-	if len(result.Corrections) != 1 || result.Corrections[0].Command != 2 {
-		t.Fatalf("corrections = %#v, want pending command 2", result.Corrections)
+	if len(result.Rejections) != 1 || result.Rejections[0].Command != 2 {
+		t.Fatalf("rejections = %#v, want pending command 2", result.Rejections)
 	}
 }
 
@@ -114,9 +109,6 @@ func TestNonGoIndentationCorrectionKeepsMutationPathAfterMove(t *testing.T) {
 	result, err := TranslateForHost(t.Context(), Workspace{Root: root}, script, t.TempDir())
 	if err == nil {
 		t.Fatal("indentation-only replacement unexpectedly succeeded")
-	}
-	if len(result.Corrections) != 1 || result.Corrections[0].Command != 2 {
-		t.Fatalf("corrections = %#v, want command 2", result.Corrections)
 	}
 	if len(result.Rejections) != 1 || result.Rejections[0].Command != 2 ||
 		result.Rejections[0].Path != "source.sh" {

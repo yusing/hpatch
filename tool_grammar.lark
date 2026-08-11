@@ -1,7 +1,6 @@
-start: _blank_line* (script | corrections) _blank_line*
+start: _blank_line* script _blank_line*
 
 script: command (_separator command)*
-corrections: correction (_separator correction)*
 
 ?command: path_command
         | "rm"
@@ -20,17 +19,6 @@ heredoc_initializer: "type" SP "<<PATCH" NL _patch_body "PATCH"
        | ROW ".." ROW
        | ROW SP TARGET_QUOTED (SP POSINT)?
 
-?correction: replacement
-           | acceptance
-           | deletion
-           | insertion_before
-           | insertion_after
-
-replacement: POSINT ":" SP? command
-acceptance: POSINT ":" SP "accept"
-deletion: "-" POSINT
-insertion_before: "+" POSINT ":" SP? command
-insertion_after: POSINT "+:" SP? command
 
 _separator: NL _blank_line*
 _blank_line: HSPACE? NL

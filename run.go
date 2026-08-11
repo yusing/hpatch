@@ -23,6 +23,86 @@ type Workspace struct {
 	CWD  string
 }
 
+// EditText applies target-bearing HPATCH mutations to an in-memory immutable
+// baseline. It performs no filesystem access, language validation, formatting,
+// indentation correction, or whitespace cleanup.
+func EditText(ctx context.Context, baseline, script string) (string, error) {
+	if ctx == nil {
+		return "", fmt.Errorf("context is nil")
+	}
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	program, err := parse(script)
+	if err != nil {
+		return "", err
+	}
+	target := &editor{baseline: baseline}
+	for index, command := range program.instructions {
+		if err := ctx.Err(); err != nil {
+			return "", err
+		}
+		if command.target.kind == targetNone ||
+			(command.operation != "type" && command.operation != "type-" && command.operation != "type+") {
+			return "", textEditCommandError(
+				command,
+				index+1,
+				reasonSyntax,
+				"text edit accepts only target-bearing type, type-, or type+",
+			)
+		}
+		origin := editOrigin{
+			command:        index + 1,
+			line:           command.line,
+			operation:      command.operation,
+			target:         command.target.variant(),
+			multilineValue: command.delimiter != "",
+		}
+		if err := target.applyMutation(command.operation, command.target, command.text, origin, command); err != nil {
+			return "", textEditCommandError(command, index+1, reasonOf(err, reasonOther), err.Error())
+		}
+	}
+	return target.content(), nil
+}
+
+func textEditCommandError(command instruction, index int, reason failureReason, message string) *commandError {
+	return &commandError{
+		Attempt:   command.attempt,
+		Reason:    reason,
+		Command:   index,
+		Line:      command.line,
+		Operation: command.operation,
+		Category:  "edit",
+		Source:    command.source,
+		Message:   message,
+	}
+}
+
+// TextLineCount returns the number of targetable logical rows in text.
+func TextLineCount(text string) int {
+	return len(logicalLines(text))
+}
+
+// TextReferences renders current LINE:HASH references for valid requested rows.
+// Repeated and out-of-range row numbers are omitted.
+func TextReferences(text string, rows ...int) string {
+	lines := logicalLines(text)
+	seen := make(map[int]struct{}, len(rows))
+	var output strings.Builder
+	for _, number := range rows {
+		if number < 1 || number > len(lines) {
+			continue
+		}
+		if _, exists := seen[number]; exists {
+			continue
+		}
+		seen[number] = struct{}{}
+		content := lineContent(text, lines[number-1])
+		writeHashLine(&output, number, content, previewTextLimit(content, repairPreviewLimit))
+	}
+	return output.String()
+}
+
 // Run executes the hpatch command-line contract with workingDirectory as the
 // workspace root. New callers that already own a root capability should use
 // RunWorkspace, Apply, or Translate.
@@ -138,12 +218,6 @@ func Translate(ctx context.Context, workspace Workspace, script string) ([]byte,
 	return result.Patch, nil
 }
 
-// CommandCorrection is an exact replacement for one rejected script command.
-type CommandCorrection struct {
-	Command     int
-	Replacement string
-}
-
 // HostRejection is the non-sensitive, structured identity of one rejected
 // command. It intentionally excludes source text, diagnostics, and repair
 // context so hosts can retain it as telemetry without retaining edit content.
@@ -162,12 +236,11 @@ type HostRejection struct {
 // HostTranslation contains the complete result needed by an in-process host.
 // Diagnostic contains a rejection diagnostic or non-fatal hook warnings.
 type HostTranslation struct {
-	Patch       []byte
-	Report      string
-	Diagnostic  string
-	Corrections []CommandCorrection
-	Rejections  []HostRejection
-	Invocation  InvocationMetrics
+	Patch      []byte
+	Report     string
+	Diagnostic string
+	Rejections []HostRejection
+	Invocation InvocationMetrics
 }
 
 // TranslateForHost evaluates script once without mutation and returns the
@@ -204,7 +277,6 @@ func changeForHost(ctx context.Context, workspace Workspace, script, dataDirecto
 
 func finishHostChange(ctx context.Context, dataDirectory string, result HostTranslation, err error) (HostTranslation, error) {
 	if err != nil {
-		result.Corrections = commandCorrectionsOf(err)
 		result.Rejections = hostRejectionsOf(err)
 
 		if ctx.Err() == nil {
@@ -476,7 +548,8 @@ func evaluationDiagnostic(ctx context.Context, err error, dataDirectory string) 
 	var output strings.Builder
 	var diagnostic strings.Builder
 	for _, command := range commands {
-		diagnostic.WriteString(failureDiagnostic(command.Error()))
+		diagnostic.WriteString(sanitizeDiagnostic(command.Error()))
+		diagnostic.WriteByte('\n')
 		diagnostic.WriteString(command.Repair)
 	}
 	output.WriteString(diagnostic.String())

@@ -10,11 +10,6 @@ const failedApplyPatch = "*** Begin Patch\n*** End Patch\n"
 
 type hpatchMetricRecord struct {
 	hpatch.HostMetricRecord
-
-	correctionScope    string
-	valueRowOperations uint64
-	baseValueRows      uint64
-	baseCommandTokens  uint64
 }
 
 type hpatchMetricInputs struct {
@@ -27,7 +22,6 @@ type hpatchMetricInputs struct {
 	diagnostic    string
 	misuseWarning string
 	sessionID     string
-	correction    hpatchCorrectionStats
 
 	definition             string
 	baselineDefinition     string
@@ -72,16 +66,9 @@ func calculateHPatchMetricRecord(inputs hpatchMetricInputs) (hpatchMetricRecord,
 		StateReport:                   inputs.report,
 		Diagnostic:                    inputs.diagnostic,
 		MisuseWarning:                 inputs.misuseWarning,
-		AuxiliaryTexts:                inputs.correction.baseCommands,
 	})
 	if err != nil {
 		return hpatchMetricRecord{}, err
 	}
-	return hpatchMetricRecord{
-		HostMetricRecord:   classified,
-		correctionScope:    inputs.correction.scope,
-		valueRowOperations: inputs.correction.valueRowOperations,
-		baseValueRows:      inputs.correction.baseValueRows,
-		baseCommandTokens:  classified.AuxiliaryTokens,
-	}, nil
+	return hpatchMetricRecord{HostMetricRecord: classified}, nil
 }

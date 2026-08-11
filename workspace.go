@@ -152,17 +152,16 @@ func (w *workspace) indentationFailure() *commandError {
 				path = file.path
 			}
 			failure := &commandError{
-				Attempt:    command.attempt,
-				Reason:     reasonEditConflict,
-				Command:    pending.origin.command,
-				Line:       command.line,
-				Operation:  command.operation,
-				Path:       path,
-				Category:   commandCategory(command.operation),
-				Source:     command.source,
-				Message:    pending.correction.Error(),
-				Repair:     pending.correction.diagnostic(),
-				Correction: correctedTypeCommand(command, pending.correction.correctedText),
+				Attempt:   command.attempt,
+				Reason:    reasonEditConflict,
+				Command:   pending.origin.command,
+				Line:      command.line,
+				Operation: command.operation,
+				Path:      path,
+				Category:  commandCategory(command.operation),
+				Source:    command.source,
+				Message:   pending.correction.Error(),
+				Repair:    pending.correction.diagnostic(),
 			}
 			if earliest == nil || failure.Command < earliest.Command {
 				earliest = failure

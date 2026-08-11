@@ -1,6 +1,6 @@
 # Agent guide
 
-Use `README.md` for installation, deployment, user-visible hpatch and shell workflows, and requirements; open it when changing setup or model-facing behavior. Use `doc/spec/interface.md` for normative CLI, router, plugin, shell, hread/hgrep, correction, and metrics contracts; open it when behavior or acceptance criteria are in question. Use `doc/architecture/index.md` for stable ownership boundaries; open it before moving responsibilities. Use `hpatch --help`, `hpatch --tool-help`, `tool_description.md`, and `tool_grammar.lark` only when editing or validating HPATCH syntax or model guidance.
+Use `README.md` for installation, deployment, user-visible hpatch and shell workflows, and requirements; open it when changing setup or model-facing behavior. Use `doc/spec/interface.md` for normative CLI, router, plugin, shell, hread/hgrep, recovery, and metrics contracts; open it when behavior or acceptance criteria are in question. Use `doc/architecture/index.md` for stable ownership boundaries; open it before moving responsibilities. Use `hpatch --help`, `hpatch --tool-help`, `tool_description.md`, and `tool_grammar.lark` only when editing or validating HPATCH syntax or model guidance.
 
 ## Quick workflow
 
@@ -17,7 +17,7 @@ The hpatch/router path uses one reusable edit engine and two thin binaries:
 
 - The root `hpatch` package owns HPATCH/2 parsing, workspace handling, immutable baselines, target verification, conflict detection, language validation, atomic planning and commit, translation, reports, diagnostics, hooks, and engine metrics.
 - `cmd/hpatch` exposes that engine as the standalone CLI. Normal mode commits only after complete validation; `translate` evaluates without mutation and emits an `apply_patch` envelope.
-- `internal/router` owns Responses HTTP and authentication, Code Mode extraction and restoration, the immutable plugin registry and authenticated frontends, corrections and replay, shell and private-tool routing, router metrics, and the dashboard. Passthrough mode skips registry construction and replacement surfaces.
+- `internal/router` owns Responses HTTP and authentication, Code Mode extraction and restoration, the immutable plugin registry and authenticated frontends, recovery and replay, shell and private-tool routing, router metrics, and the dashboard. Passthrough mode skips registry construction and replacement surfaces.
 - `cmd/hpatch-router` installs signal cancellation, dispatches private plugin workers, calls `router.Run`, and maps errors to exit codes.
 
 There is no second edit engine in the router and no separate top-level `hpatch-router` package.
@@ -38,7 +38,7 @@ Shell calls use the generic plugin carrier and forward the native executor's com
 
 When changing Code Mode owner discovery or sibling preservation, open `doc/spec/interface.md` and the CLI-shape tests in `internal/router/hpatch_proxy_test.go` plus the app-server/request tests in `internal/router/server_test.go`. The supported owner is one custom `exec` under the leading `additional_tools` item: nested under `functions` for CLI traffic or direct for app-server traffic. Unsupported direct and top-level layouts fail closed.
 
-A rejected script changes nothing. The engine owns evaluation diagnostics and repair context. The router owns bounded rejected-script ancestry and indexed correction transformation; it rebuilds one complete script before ordinary engine evaluation. The core engine has no correction mode. Passthrough mode forwards Responses traffic without installing hpatch or plugins.
+A rejected script changes nothing. The engine owns evaluation diagnostics and repair context. The root text editor owns ordinary target semantics against an in-memory rejected-script baseline. The router owns bounded rejected-script ancestry, recovery detection, and complete-script reevaluation. Passthrough mode forwards Responses traffic without installing hpatch or plugins.
 
 ## Ownership and change boundaries
 
@@ -52,7 +52,7 @@ Start with the owner that matches the behavior:
 | Standalone CLI arguments, streams, help, and exit status | `cmd/hpatch` |
 | Router lifecycle, modes, and HTTP endpoints | `internal/router/server.go` |
 | Codex authentication and upstream Responses transport | `internal/router/client.go` |
-| Tool replacement, host translation, response restoration, replay, and corrections | `internal/router/hpatch_proxy.go`, `internal/router/hpatch_correction.go` |
+| Tool replacement, host translation, response restoration, replay, and rejected-script recovery | `internal/router/hpatch_proxy.go`, `internal/router/hpatch_recovery.go` |
 | Carrier catalog and model-visible projection | `internal/router/tool_carrier.go`, `internal/router/tool_registry.go` |
 | Built-in tool sources and private execution runtime | `plugins`, `internal/router/toolplugin` |
 | Configured plugin discovery, authenticated snapshots, and frontends | `internal/router/toolplugin/runtime.go`, `internal/router/tool_registry.go`, `internal/router/tool_wrapper.go` |
@@ -63,7 +63,7 @@ Start with the owner that matches the behavior:
 Preserve these boundaries:
 
 - The root package is the only edit engine; parser, evaluator, target, transaction, and patch-rendering semantics stay there.
-- The router owns Codex transport, tool exposure, sessions, replay, and correction ancestry; corrections enter the engine only as rebuilt complete scripts.
+- The router owns Codex transport, tool exposure, sessions, replay, and rejected-script ancestry; recovery mutations rebuild one complete script through the root text editor.
 - Normal router translation is non-mutating and directory-based through `TranslateForHostAt`. Retained shell application is a separate root-scoped path through `ApplyForHostRoot`.
 - Workspace authority changes must preserve this directory-based versus root-scoped split across code, `doc/spec/interface.md`, and `doc/architecture/index.md`.
 - Routed history stays in the original Code Mode carrier shape even though the model sees standalone registry tools.
@@ -84,7 +84,7 @@ Run the cheapest check covering every changed owner:
 | --- | --- |
 | Root engine | `go test .` |
 | Standalone CLI/help | `go test ./cmd/hpatch` |
-| Router request, response, correction, workspace, plugin, or transport | `go test ./internal/router` |
+| Router request, response, recovery, workspace, plugin, or transport | `go test ./internal/router` |
 | TypeScript plugin source | `go generate ./internal/router/toolplugin`, then `bun test ./internal/router/toolplugin/tests` |
 | Router process entry point | `go test ./cmd/hpatch-router` |
 | Cross-package or broad contract | `go test ./...` |
@@ -95,7 +95,7 @@ Use `go test ./...` only when a change crosses package owners. Run `go vet ./...
 Targeted router falsifiers include:
 
 - `internal/router/hpatch_proxy_test.go` for tool exposure, translation, response restoration, and replay.
-- `internal/router/hpatch_correction_test.go` for rejected-script corrections.
+- `internal/router/hpatch_recovery_test.go` for rejected-script recovery.
 - `internal/router/hpatch_root_test.go` for workspace routing and retained root application.
 - `internal/router/server_test.go` for server and request behavior.
 - `internal/router/codex_e2e_test.go` for the Codex-facing carrier contract.

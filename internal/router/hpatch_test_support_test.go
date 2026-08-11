@@ -2,7 +2,7 @@ package router
 
 import "context"
 
-// Source: hpatch_correction_flow_test.go:15:31 metricsObservingTranslator.
+// Source: hpatch_metrics_test.go metricsObservingTranslator.
 type metricsObservingTranslator struct {
 	translate func(context.Context, string, string) ([]byte, error)
 	record    func(context.Context, hpatchMetricRecord) error

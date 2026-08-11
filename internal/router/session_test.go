@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-func TestRoutingSessionIDKeepsCorrectionHistoryAcrossRequestIDs(t *testing.T) {
+func TestRoutingSessionIDKeepsRecoveryHistoryAcrossRequestIDs(t *testing.T) {
 	request := parsedResponsesRequest{fields: map[string]json.RawMessage{
 		"prompt_cache_key": json.RawMessage(`"prompt-cache"`),
 	}}
@@ -23,16 +23,17 @@ func TestRoutingSessionIDKeepsCorrectionHistoryAcrossRequestIDs(t *testing.T) {
 	proxy := newManagedHPatchProxy(t, testTranslator(t, new(int)))
 	if err := proxy.rememberBatch(firstSession, map[string]hpatchHistory{
 		"call": {
-			toolName:         hpatchToolName,
-			script:           testHPatchScript,
-			translationError: "rejected",
+			toolName:          hpatchToolName,
+			script:            testHPatchScript,
+			translationError:  "rejected",
+			evaluatorRejected: true,
 		},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	history, err := proxy.correctableHistory(secondSession)
+	history, err := proxy.recoverableHistory(secondSession)
 	if err != nil || history.script != testHPatchScript {
-		t.Fatalf("correction history = %+v, error %v", history, err)
+		t.Fatalf("recovery history = %+v, error %v", history, err)
 	}
 }
 

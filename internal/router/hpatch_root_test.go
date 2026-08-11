@@ -6,21 +6,22 @@ import (
 	"testing"
 )
 
-func TestHPatchCorrectionRejectsDifferentWorktree(t *testing.T) {
+func TestHPatchRecoveryRejectsDifferentWorktree(t *testing.T) {
 	calls := 0
 	transform, proxy, _, workspace := newHPatchTestTransform(t, testTranslator(t, &calls))
 	if err := proxy.rememberBatch(transform.historySessionID, map[string]hpatchHistory{"call-old": {
 		toolName: hpatchToolName, script: testHPatchScript, root: workspace + "-other", carrierName: "exec",
 		translationError: "rejected", sequence: 1,
+		evaluatorRejected: true,
 	}}); err != nil {
 		t.Fatal(err)
 	}
-	history, err := transform.translate("call-new", "1: new repaired.txt\n", nil)
+	history, err := transform.translate("call-new", `type 2:ffff "repaired"`+"\n", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !history.unevaluated || !strings.Contains(history.translationError, "different worktree") || calls != 0 {
-		t.Fatalf("cross-worktree correction = %+v, translator calls %d", history, calls)
+		t.Fatalf("cross-worktree recovery = %+v, translator calls %d", history, calls)
 	}
 }
 

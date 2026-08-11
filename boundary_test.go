@@ -138,7 +138,7 @@ func TestHPatch2HeredocFailuresAreHeaderOwnedAndAtomic(t *testing.T) {
 			if exitCode != 1 || stdout != "" || !strings.Contains(stderr, test.want) {
 				t.Fatalf("Run() = exit %d, stdout %q, stderr %q", exitCode, stdout, stderr)
 			}
-			if strings.Count(stderr, "hpatch: command") != 1 || len(readTree(t, root)) != 0 {
+			if strings.Count(stderr, ": command") != 1 || len(readTree(t, root)) != 0 {
 				t.Fatalf("failure was not one header-owned atomic rejection: %q", stderr)
 			}
 		})
@@ -151,7 +151,7 @@ func TestHPatch2PhysicalNewlineInQuotedOperandIsHeaderOwned(t *testing.T) {
 	script := "in file.txt\ntype " + row(1, "original") + " \"replacement\ntext\"\nrm\n"
 	stdout, stderr, exitCode := runForTest(root, []string{"translate"}, script)
 	if exitCode != 1 || stdout != "" ||
-		strings.Count(stderr, "hpatch: command") != 1 ||
+		strings.Count(stderr, ": command") != 1 ||
 		!strings.Contains(stderr, `physical newline inside quoted operand; encode line terminators as \n or \r`) {
 		t.Fatalf("Run() = exit %d, stdout %q, stderr %q", exitCode, stdout, stderr)
 	}
@@ -165,7 +165,7 @@ func TestHPatch2ParserReportsIndependentSyntaxErrors(t *testing.T) {
 		"type 0:0123 \"value\"\n" +
 		"del 1:abcd trailing\n"
 	stdout, stderr, exitCode := runForTest(root, []string{"translate"}, script)
-	if exitCode != 1 || stdout != "" || strings.Count(stderr, "hpatch: command") != 3 {
+	if exitCode != 1 || stdout != "" || strings.Count(stderr, ": command") != 3 {
 		t.Fatalf("Run() = exit %d, stdout %q, stderr %q", exitCode, stdout, stderr)
 	}
 	if got := readTestFile(t, root, "file.txt"); got != "unchanged\n" {

@@ -45,12 +45,11 @@ var (
 )
 
 type hpatchTranslationResult struct {
-	patch       []byte
-	report      string
-	diagnostic  string
-	corrections map[int]string
-	rejections  []hpatch.HostRejection
-	invocation  hpatch.InvocationMetrics
+	patch      []byte
+	report     string
+	diagnostic string
+	rejections []hpatch.HostRejection
+	invocation hpatch.InvocationMetrics
 }
 
 type hpatchTranslator interface {
@@ -135,17 +134,12 @@ func (t inProcessHPatchTranslator) Apply(ctx context.Context, root *os.Root, scr
 }
 
 func hpatchTranslationResultOf(translated hpatch.HostTranslation) hpatchTranslationResult {
-	corrections := make(map[int]string, len(translated.Corrections))
-	for _, correction := range translated.Corrections {
-		corrections[correction.Command] = correction.Replacement
-	}
 	return hpatchTranslationResult{
-		patch:       translated.Patch,
-		report:      translated.Report,
-		diagnostic:  translated.Diagnostic,
-		corrections: corrections,
-		rejections:  slices.Clone(translated.Rejections),
-		invocation:  translated.Invocation,
+		patch:      translated.Patch,
+		report:     translated.Report,
+		diagnostic: translated.Diagnostic,
+		rejections: slices.Clone(translated.Rejections),
+		invocation: translated.Invocation,
 	}
 }
 
@@ -163,9 +157,9 @@ type hpatchHistory struct {
 	script string
 	root   string
 	// evaluated is the script hpatch actually received when it differs from the
-	// model's payload, which happens when the payload was a correction. Replay
-	// must restore what the model emitted, while a following correction must
-	// resolve command indices against what was evaluated.
+	// model's payload, which happens when the payload was a recovery edit. Replay
+	// must restore what the model emitted, while a following recovery must target
+	// the script that produced the latest diagnostic.
 	evaluated      string
 	patch          string
 	applied        bool
@@ -173,22 +167,22 @@ type hpatchHistory struct {
 	carrierKind    codeModeCarrierKind
 	carrierPayload string
 
-	report           string
-	translationError string
-	corrections      map[int]string
-	correlationID    string
-	attempt          int
-	upstreamItem     map[string]json.RawMessage
-	replayCarrier    bool
-	bytes            int
-	// unevaluated marks a call the proxy rejected before hpatch saw it, which
-	// happens when a correction payload names no usable script. Such a call
-	// changed nothing and has no script of its own, so a following correction
-	// looks past it to the rejection it was trying to repair.
+	report            string
+	translationError  string
+	evaluatorRejected bool
+	rejections        []hpatch.HostRejection
+	correlationID     string
+	attempt           int
+	upstreamItem      map[string]json.RawMessage
+	replayCarrier     bool
+	bytes             int
+	// unevaluated marks a call the proxy rejected before hpatch saw it. Such a
+	// recovery changed nothing and has no script of its own, so another recovery
+	// looks past it to the rejected script it was trying to repair.
 	unevaluated bool
 	// sequence orders retained calls within a session. Calls are keyed by ID in
-	// an unordered map, so a correction that must resolve "the script that was
-	// just rejected" needs an explicit order.
+	// an unordered map, so recovery needs an explicit order to identify the
+	// latest rejected script.
 	sequence uint64
 }
 
@@ -298,70 +292,6 @@ func (p *hpatchProxy) touchSession(session *hpatchHistorySession) {
 	session.lastUsed = p.sessionSequence
 }
 
-// hpatchCorrectionInstructions documents the correction payload the proxy accepts
-// in place of a complete script. It is returned with the first rejection in a
-// correction chain, when the protocol is actionable, rather than installed in
-// every request's tool definition.
-const hpatchCorrectionInstructions = `
-Repairing a rejected script:
-  When the latest hpatch evaluation was rejected, you may send indexed operations
-  instead of the complete script:
-
-    INDEX: COMMAND
-    INDEX: accept
-    -INDEX
-    +INDEX: COMMAND
-    INDEX+: COMMAND
-
-  A command whose value uses the fixed <<PATCH frame also exposes its physical
-  value rows as INDEX.ROW. Repair only the malformed row without resending the
-  unaffected multiline value with:
-
-    INDEX.ROW: "VALUE"
-    -INDEX.ROW
-    +INDEX.ROW: "VALUE"
-    INDEX.ROW+: "VALUE"
-
-  Command operations replace, accept a displayed safe correction for, delete, insert
-  before, or insert after a command. Indices count the nonblank command headers in the
-  complete script evaluated for the latest rejection; they are not source-line numbers,
-  indices into the first attempt, or indices into a compact correction payload. A fixed
-  <<PATCH heredoc and its body count as one command. When an edit diagnostic reflects a
-  bad span, correct the target in that mutation.
-
-  ROW counts physical body rows between that command's fixed <<PATCH opener and closing
-  PATCH line in the latest evaluated script; decoded inline multiline strings expose no
-  rows. VALUE is one JSON-compatible quoted physical row. A value-row replacement
-  preserves the original row terminator when VALUE omits one, while an explicit
-  terminator wins. Insertions never synthesize a terminator, and deletion removes the
-  row's terminator. A value-row replacement or insertion cannot materialize the exact
-  PATCH delimiter row. Value rows cannot use accept. A whole-command replacement,
-  acceptance, or deletion cannot be combined with a value-row mutation of the same command.
-  Replace, accept, or delete an index at most once; repeated insertions retain payload order
-  even if the anchor is deleted. If the mapping is uncertain, replace the complete command
-  or resend the complete script. The rebuilt script is revalidated atomically.
-`
-
-func hpatchCorrectionGuidance(correction bool, corrections map[int]string) string {
-	if correction {
-		return ""
-	}
-	if len(corrections) == 0 {
-		return hpatchCorrectionInstructions
-	}
-	return hpatchCorrectionInstructions + hpatchAcceptHint(corrections)
-}
-
-func hpatchAcceptHint(corrections map[int]string) string {
-	commands := slices.Sorted(maps.Keys(corrections))
-	var hint strings.Builder
-	hint.WriteString("\nApply the displayed correction with:\n")
-	for _, command := range commands {
-		fmt.Fprintf(&hint, "%d: accept\n", command)
-	}
-	return hint.String()
-}
-
 type hpatchPendingCall struct {
 	callID   string
 	toolName string
@@ -397,7 +327,7 @@ type hpatchResponseTransform struct {
 	requestAccountingClaimed bool
 
 	// localSequence orders the calls translated during this turn, so a
-	// correction resolves against the newest rejection rather than an arbitrary
+	// recovery resolves against the newest rejection rather than an arbitrary
 	// map entry. Retained order is reassigned when the turn commits.
 	localSequence    uint64
 	historyCommitted bool
@@ -845,9 +775,11 @@ func customGrammarTool(name, description, grammar string) map[string]json.RawMes
 	}
 }
 
-const codeModeApplyPatchHeading = "### `apply_patch`"
-const codeModeExecCommandHeading = "### `exec_command`"
-const codeModeExecCommandPlainHeading = "### exec_command"
+const (
+	codeModeApplyPatchHeading       = "### `apply_patch`"
+	codeModeExecCommandHeading      = "### `exec_command`"
+	codeModeExecCommandPlainHeading = "### exec_command"
+)
 
 type codeModeSectionMatcher func(string) (int, string)
 
@@ -1068,8 +1000,8 @@ func (p *hpatchProxy) rememberBatch(sessionID string, histories map[string]hpatc
 			return fmt.Errorf("encode hpatch history item: %w", err)
 		}
 		history.bytes = len(sessionID) + len(callID) + len(history.toolName) + len(history.pluginID) + len(history.script) + len(history.root) + len(history.evaluated) + len(history.patch) + len(history.carrierKind) + len(history.carrierName) + len(history.carrierPayload) + len(history.report) + len(history.translationError) + len(history.correlationID) + len(encodedItem)
-		for _, correction := range history.corrections {
-			history.bytes += len(correction)
+		for _, rejection := range history.rejections {
+			history.bytes += hpatchRejectionTextBytes(rejection)
 		}
 		prepared[callID] = history
 	}
@@ -1195,21 +1127,20 @@ func oldestHistoryCall(histories map[string]hpatchHistory, protected map[string]
 	return oldestID, found
 }
 
-func (p *hpatchProxy) correctableHistory(sessionID string) (hpatchHistory, error) {
+func (p *hpatchProxy) recoverableHistory(sessionID string) (hpatchHistory, error) {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 	session := p.sessions[sessionID]
 	if session == nil {
-		return hpatchHistory{}, errors.New("no hpatch call to correct; send a complete script")
+		return hpatchHistory{}, errors.New("no rejected hpatch script to recover; send a complete script")
 	}
-	return correctionHistoryOf(maps.Values(session.calls))
+	return recoveryHistoryOf(maps.Values(session.calls))
 }
 
-// correctionHistoryOf picks the call a correction repairs: the newest call
-// that hpatch actually evaluated. Proxy-rejected calls are skipped because they
-// changed nothing. A successful newest call makes correction indices invalid,
-// since they only address the script from the latest rejection diagnostic.
-func correctionHistoryOf(histories iter.Seq[hpatchHistory]) (hpatchHistory, error) {
+// recoveryHistoryOf picks the newest call that hpatch actually evaluated.
+// Proxy-rejected calls are skipped because they changed nothing. A successful
+// newest call blocks recovery of an older rejection.
+func recoveryHistoryOf(histories iter.Seq[hpatchHistory]) (hpatchHistory, error) {
 	var latest hpatchHistory
 	found := false
 	for history := range histories {
@@ -1222,15 +1153,18 @@ func correctionHistoryOf(histories iter.Seq[hpatchHistory]) (hpatchHistory, erro
 		}
 	}
 	if !found {
-		return hpatchHistory{}, errors.New("no hpatch call to correct; send a complete script")
+		return hpatchHistory{}, errors.New("no rejected hpatch script to recover; send a complete script")
 	}
 	if latest.translationError == "" {
-		return hpatchHistory{}, errors.New("the most recent hpatch call succeeded; corrections repair a rejected script, so send a complete script")
+		return hpatchHistory{}, errors.New("the most recent hpatch call succeeded; recovery edits require a rejected script, so send a complete script")
+	}
+	if !latest.evaluatorRejected {
+		return hpatchHistory{}, errors.New("the most recent hpatch call did not produce an evaluator rejection; send a complete script")
 	}
 	return latest, nil
 }
 
-func latestCorrectionAttempt(histories iter.Seq[hpatchHistory], correlationID string) int {
+func latestRecoveryAttempt(histories iter.Seq[hpatchHistory], correlationID string) int {
 	latest := 0
 	for history := range histories {
 		if history.toolName == hpatchToolName && history.correlationID == correlationID {
@@ -1240,20 +1174,18 @@ func latestCorrectionAttempt(histories iter.Seq[hpatchHistory], correlationID st
 	return latest
 }
 
-func (p *hpatchProxy) latestCorrectionAttempt(sessionID, correlationID string) int {
+func (p *hpatchProxy) latestRecoveryAttempt(sessionID, correlationID string) int {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 	session := p.sessions[sessionID]
 	if session == nil {
 		return 0
 	}
-	return latestCorrectionAttempt(maps.Values(session.calls), correlationID)
+	return latestRecoveryAttempt(maps.Values(session.calls), correlationID)
 }
 
-// correctable is the script a following correction addresses: what hpatch
-// evaluated, so that a chain of corrections keeps resolving indices against the
-// script the latest diagnostic described.
-func (h hpatchHistory) correctable() string {
+// recoveryBaseline is the complete rejected script a following recovery edits.
+func (h hpatchHistory) recoveryBaseline() string {
 	if h.evaluated != "" {
 		return h.evaluated
 	}
@@ -1348,41 +1280,51 @@ func (t *hpatchResponseTransform) translate(callID, input string, upstreamItem m
 	}
 
 	evaluated := input
-	correction := isHPatchCorrection(input)
-	correctionStats := hpatchCorrectionStats{}
+	recovery := isHPatchRecoveryCandidate(input)
 	attemptMetadata := hpatch.AttemptMetadata{
 		SessionID:     t.sessionID,
 		CorrelationID: callID,
 		CallID:        callID,
 		Attempt:       1,
-		Correction:    correction,
+		Correction:    recovery,
 	}
-	if correction {
-		correctionStats.scope = hpatchCorrectionScope(input)
-		base, baseErr := t.correctionHistory()
+	if recovery {
+		base, baseErr := t.recoveryHistory()
 		if baseErr != nil {
-			return t.rejectUnevaluated(callID, input, baseErr, attemptMetadata, correctionStats, upstreamItem)
+			return t.rejectUnevaluated(callID, input, baseErr, attemptMetadata, "", nil, upstreamItem)
 		}
 		attemptMetadata.CorrelationID = base.correlationID
 		if attemptMetadata.CorrelationID == "" {
 			attemptMetadata.CorrelationID = callID
 		}
-		attemptMetadata.Attempt = t.nextCorrectionAttempt(attemptMetadata.CorrelationID, base.attempt)
+		attemptMetadata.Attempt = t.nextRecoveryAttempt(attemptMetadata.CorrelationID, base.attempt)
 		if base.root != t.directory {
-			return t.rejectUnevaluated(callID, input, errors.New("the rejected script belongs to a different worktree; send a complete script"), attemptMetadata, correctionStats, upstreamItem)
+			return t.rejectUnevaluated(
+				callID,
+				input,
+				errors.New("the rejected script belongs to a different worktree; send a complete script"),
+				attemptMetadata,
+				"",
+				nil,
+				upstreamItem,
+			)
 		}
-		corrections, parseErr := parseHPatchCorrections(input)
-		if parseErr != nil {
-			return t.rejectUnevaluated(callID, input, parseErr, attemptMetadata, correctionStats, upstreamItem)
+		baseline := base.recoveryBaseline()
+		rebuilt, recoveryErr := hpatch.EditText(t.ctx, baseline, input)
+		if recoveryErr != nil {
+			return t.rejectUnevaluated(
+				callID,
+				input,
+				recoveryErr,
+				attemptMetadata,
+				baseline,
+				base.rejections,
+				upstreamItem,
+			)
 		}
-		correctionStats = hpatchCorrectionStatsOf(corrections).withBase(base.correctable(), corrections)
-		corrected, correctionErr := applyHPatchCorrections(base.correctable(), corrections, base.corrections)
-		if correctionErr != nil {
-			return t.rejectUnevaluated(callID, input, correctionErr, attemptMetadata, correctionStats, upstreamItem)
-		}
-		evaluated = corrected
+		evaluated = rebuilt
 		if len(evaluated) > maxHPatchScriptBytes {
-			return hpatchHistory{}, fmt.Errorf("hpatch call %q corrected script exceeds %d bytes", callID, maxHPatchScriptBytes)
+			return hpatchHistory{}, fmt.Errorf("hpatch call %q recovered script exceeds %d bytes", callID, maxHPatchScriptBytes)
 		}
 	}
 
@@ -1419,16 +1361,18 @@ func (t *hpatchResponseTransform) translate(callID, input string, upstreamItem m
 		if errors.Is(err, errHPatchCapacity) {
 			return hpatchHistory{}, err
 		}
+		evaluatorRejected := len(translated.rejections) != 0
 		diagnostic := translated.diagnostic
 		if diagnostic == "" {
 			diagnostic = err.Error()
 		}
-		diagnostic += hpatchCorrectionGuidance(correction, translated.corrections)
+		if evaluatorRejected {
+			diagnostic += hpatchRecoveryGuidance(evaluated, translated.rejections)
+		}
 		if err := t.recordMetrics(hpatchMetricInputs{
 			invocation:    translated.invocation,
 			rejections:    translated.rejections,
 			attempt:       attemptMetadata,
-			correction:    correctionStats,
 			emittedScript: input,
 			diagnostic:    diagnostic,
 		}); err != nil {
@@ -1438,11 +1382,12 @@ func (t *hpatchResponseTransform) translate(callID, input string, upstreamItem m
 			toolName: hpatchToolName,
 			script:   input,
 
-			root:             t.directory,
-			evaluated:        retainedEvaluated(input, evaluated),
-			carrierName:      t.codeModeToolName,
-			translationError: diagnostic,
-			corrections:      maps.Clone(translated.corrections),
+			root:              t.directory,
+			evaluated:         retainedEvaluated(input, evaluated),
+			carrierName:       t.codeModeToolName,
+			translationError:  diagnostic,
+			evaluatorRejected: evaluatorRejected,
+			rejections:        slices.Clone(translated.rejections),
 
 			upstreamItem:  maps.Clone(upstreamItem),
 			correlationID: attemptMetadata.CorrelationID,
@@ -1459,7 +1404,6 @@ func (t *hpatchResponseTransform) translate(callID, input string, upstreamItem m
 	if err := t.recordMetrics(hpatchMetricInputs{
 		invocation:    translated.invocation,
 		attempt:       attemptMetadata,
-		correction:    correctionStats,
 		emittedScript: input,
 		report:        translated.report,
 		patch:         patchText,
@@ -1861,9 +1805,19 @@ func (h hpatchHistory) effectiveCarrierKind() codeModeCarrierKind {
 	return codeModeCarrierCustom
 }
 
-func (t *hpatchResponseTransform) rejectUnevaluated(callID, input string, rejection error, attempt hpatch.AttemptMetadata, correction hpatchCorrectionStats, upstreamItem map[string]json.RawMessage) (hpatchHistory, error) {
+func (t *hpatchResponseTransform) rejectUnevaluated(
+	callID, input string,
+	rejection error,
+	attempt hpatch.AttemptMetadata,
+	referenceScript string,
+	rejections []hpatch.HostRejection,
+	upstreamItem map[string]json.RawMessage,
+) (hpatchHistory, error) {
 	diagnostic := rejection.Error()
-	if err := t.recordMetrics(hpatchMetricInputs{attempt: attempt, correction: correction, emittedScript: input, diagnostic: diagnostic}); err != nil {
+	if referenceScript != "" {
+		diagnostic += hpatchRecoveryGuidance(referenceScript, rejections)
+	}
+	if err := t.recordMetrics(hpatchMetricInputs{attempt: attempt, emittedScript: input, diagnostic: diagnostic}); err != nil {
 		return hpatchHistory{}, err
 	}
 	history := hpatchHistory{
@@ -1919,21 +1873,21 @@ func (t *hpatchResponseTransform) recordLocal(callID string, history *hpatchHist
 	t.local[callID] = *history
 }
 
-// correctionHistory is the rejected call a correction in this turn repairs. A
+// recoveryHistory is the rejected call a recovery in this turn edits. A
 // rejection this turn is newer than retained history, which commits only after
 // the response completes.
-func (t *hpatchResponseTransform) correctionHistory() (hpatchHistory, error) {
+func (t *hpatchResponseTransform) recoveryHistory() (hpatchHistory, error) {
 	for _, history := range t.local {
 		if !history.unevaluated && history.toolName == hpatchToolName {
-			return correctionHistoryOf(maps.Values(t.local))
+			return recoveryHistoryOf(maps.Values(t.local))
 		}
 	}
-	return t.proxy.correctableHistory(t.historySessionID)
+	return t.proxy.recoverableHistory(t.historySessionID)
 }
 
-func (t *hpatchResponseTransform) nextCorrectionAttempt(correlationID string, baseAttempt int) int {
-	latest := max(baseAttempt, t.proxy.latestCorrectionAttempt(t.historySessionID, correlationID))
-	latest = max(latest, latestCorrectionAttempt(maps.Values(t.local), correlationID))
+func (t *hpatchResponseTransform) nextRecoveryAttempt(correlationID string, baseAttempt int) int {
+	latest := max(baseAttempt, t.proxy.latestRecoveryAttempt(t.historySessionID, correlationID))
+	latest = max(latest, latestRecoveryAttempt(maps.Values(t.local), correlationID))
 	return max(latest+1, 2)
 }
 

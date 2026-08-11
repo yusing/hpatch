@@ -143,13 +143,14 @@ Agent workflow:
      paths and may be used directly in the next invocation. Use hread only when the
      successful report lacks the exact target needed next.
   6. Prefer inline single-line values; reserve <<PATCH for multiline or escape-heavy text.
-  7. After rejection, use a router indexed command or multiline-value-row correction
-     only while the referenced rows still belong to the same baseline. Reread stale
-     rows instead of guessing.
+  7. A rejected invocation changes nothing. When routed recovery emits script
+     LINE:HASH rows, use hpatch without in to patch that rejected script; reread
+     those rows if a later attempt reports staleness.
   8. Changed Go files are parsed and formatted with Go's standard library before
-     success. Syntax rejection identifies the implicated command and shows at most
-     five generated-source lines. Do not run redundant gofmt. Other languages receive
-     no validation.
+     success. Supported Python, JavaScript, and TypeScript files are syntax-checked when
+     Tree-sitter support is available. Supported indentation corrections are automatic.
+     implicated command and shows bounded generated-source context. Do not run redundant
+     gofmt.
 
 Final-state report:
   Success reports the active final path or "no active file", the last effective
@@ -161,10 +162,12 @@ Final-state report:
   use hread when the required row is absent.
 
 Failures and repair:
-  Failures use stderr, nonzero status, and no patch or final-state report. Script
-  diagnostics identify command index, source line, operation, path when known,
-  category, and stable reason. Stale rows show verified current rows; incomplete
-  literal targets show anchor context; conflicts identify the prior mutation.
+  Failures use stderr, nonzero status, and no patch or final-state report. Command
+  diagnostics begin with the operation, then identify command index, path when known,
+  stable reason, and the failure message. Structured host rejection data retain source
+  line, operation, and generated-source positions; hook data also retain category.
+  Stale rows show verified current rows; incomplete literal targets show anchor context;
+  conflicts identify the prior mutation.
   Missing rows do not guess. A malformed heredoc is one header-owned failure.
 
 Metrics:

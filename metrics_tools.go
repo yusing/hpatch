@@ -70,7 +70,6 @@ type HostMetricInput struct {
 	StateReport                   string
 	Diagnostic                    string
 	MisuseWarning                 string
-	AuxiliaryTexts                []string
 }
 
 // ToolMetricRecord is one classified plugin-and-tool increment.
@@ -130,15 +129,6 @@ func ClassifyHostMetrics(input HostMetricInput) (HostMetricRecord, error) {
 		Rejections: slices.Clone(input.Rejections),
 		Attempt:    input.Attempt,
 		SessionID:  input.SessionID,
-	}
-	for _, text := range input.AuxiliaryTexts {
-		count, countErr := countMetricText(codec, text, "auxiliary input")
-		if countErr != nil {
-			return HostMetricRecord{}, countErr
-		}
-		if !addCounter(&record.AuxiliaryTokens, count) {
-			return HostMetricRecord{}, fmt.Errorf("classifying metrics: auxiliary token count overflow")
-		}
 	}
 	if record.ReportInputTokens, err = countMetricText(codec, input.StateReport, "state report input"); err != nil {
 		return HostMetricRecord{}, err

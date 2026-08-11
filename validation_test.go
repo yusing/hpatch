@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-func TestHPatch2IndentationOnlyReplacementOffersExactCorrection(t *testing.T) {
+func TestHPatch2IndentationOnlyReplacementRejectsWithoutSuggestion(t *testing.T) {
 	rootPath := t.TempDir()
 	writeTestFile(t, rootPath, "script.sh", "header\n\texit \"$status\"\n", 0o644)
 	root, err := os.OpenRoot(rootPath)
@@ -21,11 +21,6 @@ func TestHPatch2IndentationOnlyReplacementOffersExactCorrection(t *testing.T) {
 	result, err := TranslateForHost(t.Context(), Workspace{Root: root}, script, t.TempDir())
 	if err == nil {
 		t.Fatal("indentation-only replacement unexpectedly succeeded")
-	}
-	wantCommand := "type " + row(2, "\texit \"$status\"") + ` "\texit \"$status\"\n"`
-	want := []CommandCorrection{{Command: 2, Replacement: wantCommand}}
-	if !reflect.DeepEqual(result.Corrections, want) {
-		t.Fatalf("corrections = %#v, want %#v", result.Corrections, want)
 	}
 	wantRejections := []HostRejection{{
 		Command: 2, SourceLine: 2, Operation: "type", Target: "line",
@@ -95,9 +90,8 @@ mv moved.go`,
 			test.setup(t, root)
 			stdout, stderr, exitCode := runForTest(root, nil, test.script)
 			if exitCode != 1 || stdout != "" ||
-				!strings.Contains(stderr, `operation "type"`) ||
-				!strings.Contains(stderr, `path "moved.go"`) ||
-				strings.Contains(stderr, `operation "mv"`) {
+				!strings.HasPrefix(stderr, "type: command") ||
+				!strings.Contains(stderr, `path "moved.go"`) {
 				t.Fatalf("Run() = exit %d, stdout %q, stderr %q", exitCode, stdout, stderr)
 			}
 		})
@@ -109,7 +103,7 @@ func TestHPatch2MoveOnlyGoValidationUsesMoveOrigin(t *testing.T) {
 	writeTestFile(t, root, "source.txt", "not Go\n", 0o644)
 	stdout, stderr, exitCode := runForTest(root, nil, "in source.txt\nmv moved.go")
 	if exitCode != 1 || stdout != "" ||
-		!strings.Contains(stderr, `operation "mv"`) ||
+		!strings.HasPrefix(stderr, "mv: command") ||
 		!strings.Contains(stderr, `path "moved.go"`) {
 		t.Fatalf("Run() = exit %d, stdout %q, stderr %q", exitCode, stdout, stderr)
 	}
@@ -226,9 +220,9 @@ func TestHPatch2InvalidGoReportsMultilineValueRow(t *testing.T) {
 	}
 	for _, fragment := range []string{
 		"command 2 multiline value near row 2\n",
-		"  2.1 | var first = 1\n",
-		"> 2.2 | var =\n",
-		"  2.3 | var third = 3\n",
+		"  value row 1 | var first = 1\n",
+		"> value row 2 | var =\n",
+		"  value row 3 | var third = 3\n",
 	} {
 		if !strings.Contains(stderr, fragment) {
 			t.Fatalf("diagnostic lacks %q:\n%s", fragment, stderr)
@@ -262,13 +256,13 @@ func TestHPatch2MultilineValueRowsUsePhysicalFraming(t *testing.T) {
 	}
 	for _, fragment := range []string{
 		"command 2 multiline value near row 1\n",
-		"> 2.1 | package p\\rvar =\n",
+		"> value row 1 | package p\\rvar =\n",
 	} {
 		if !strings.Contains(stderr, fragment) {
 			t.Fatalf("diagnostic lacks %q:\n%s", fragment, stderr)
 		}
 	}
-	if strings.Contains(stderr, "2.2 |") {
+	if strings.Contains(stderr, "value row 2 |") {
 		t.Fatalf("diagnostic split an embedded carriage return into another value row:\n%s", stderr)
 	}
 	if _, err := os.Stat(rootPath + "/file.go"); !os.IsNotExist(err) {

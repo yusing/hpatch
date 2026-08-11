@@ -2,7 +2,7 @@ package hpatch
 
 import "context"
 
-// AttemptMetadata identifies one router-owned hpatch attempt and its correction chain.
+// AttemptMetadata identifies one router-owned hpatch attempt and its recovery chain.
 type AttemptMetadata struct {
 	SessionID     string
 	CorrelationID string

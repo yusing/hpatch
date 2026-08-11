@@ -17,7 +17,7 @@ func TestCalculateHPatchMetricRecordUsesExactCallerPayloads(t *testing.T) {
 	patch := "*** Begin Patch\n*** Update File: /workspace/calc.go\n@@\n-old\n+new\n*** End Patch\n"
 	inputs := hpatchMetricInputs{
 		attempt:                hpatch.AttemptMetadata{SessionID: "session", CorrelationID: "chain", CallID: "call", Attempt: 2, Correction: true},
-		emittedScript:          "2: type 12:9645..18:4b7b \"replacement\"\n",
+		emittedScript:          "type 12:9645..18:4b7b \"replacement\"\n",
 		report:                 "in calc.go 2:9\n9645: return new\n",
 		patch:                  patch,
 		sessionID:              "session",
@@ -25,13 +25,6 @@ func TestCalculateHPatchMetricRecordUsesExactCallerPayloads(t *testing.T) {
 		baselineDefinition:     "apply_patch definition\n",
 		execCommandDefinitions: []string{"exec_command definition\n", "second exec definition\n"},
 		successful:             true,
-		correction: hpatchCorrectionStats{
-			scope: "value-row", valueRowOperations: 1, baseValueRows: 24,
-			baseCommands: []string{
-				"type 1:a793..24:b1e9 <<PATCH\nlarge body\nPATCH\n",
-				"type 30:cafe..31:beef <<PATCH\nsecond body\nPATCH\n",
-			},
-		},
 	}
 	record, err := calculateHPatchMetricRecord(inputs)
 	if err != nil {
@@ -65,12 +58,6 @@ func TestCalculateHPatchMetricRecordUsesExactCallerPayloads(t *testing.T) {
 	if record.Attempt != inputs.attempt {
 		t.Fatalf("attempt metadata = %+v, want %+v", record.Attempt, inputs.attempt)
 	}
-	if record.correctionScope != "value-row" || record.valueRowOperations != 1 || record.baseValueRows != 24 {
-		t.Fatalf("correction telemetry = %+v", record)
-	}
-	if got, want := record.baseCommandTokens, count(inputs.correction.baseCommands[0])+count(inputs.correction.baseCommands[1]); got != want {
-		t.Fatalf("base command tokens = %d, want %d", got, want)
-	}
 	if got, want := record.DefinitionInputTokens, count(inputs.definition); got != want {
 		t.Fatalf("definition tokens = %d, want %d", got, want)
 	}
@@ -87,8 +74,8 @@ func TestCalculateHPatchMetricRecordUsesExactCallerPayloads(t *testing.T) {
 
 func TestCalculateHPatchMetricRecordUsesEmptyFailureBaseline(t *testing.T) {
 	inputs := hpatchMetricInputs{
-		emittedScript: "2: type 12:9645..18:4b7b \"replacement\"\n",
-		diagnostic:    "hpatch: command 2 rejected\nrepair context\n" + hpatchCorrectionInstructions,
+		emittedScript: "type 12:9645..18:4b7b \"replacement\"\n",
+		diagnostic:    "type: command 2, reason language-syntax: rejected\nrepair context\n\nUse hpatch without `in` to patch the rejected script.\n",
 		rejections: []hpatch.HostRejection{{
 			Command: 2, SourceLine: 2, Operation: "type", Target: "range",
 			Reason: "language-syntax", Path: "calc.go", GeneratedLine: 8, GeneratedColumn: 3,

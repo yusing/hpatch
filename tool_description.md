@@ -82,6 +82,7 @@ Overlapping replacements/deletions and insertions strictly inside them reject. B
 insertions are valid. Multiple insertions at the same boundary render in script order.
 
 Changed Go files are parsed and formatted before success; do not run redundant `gofmt`.
+Supported Python, JavaScript, and TypeScript files are syntax-checked when Tree-sitter support is available; supported indentation corrections are automatic.
 Relative paths use the selected base directory when available; without one, relative paths reject; parents for `new` or `mv` must exist.
-After rejection, use the router's indexed command or multiline-value-row correction only
-when the rows still belong to the same baseline; reread stale rows instead of guessing.
+After rejection, use hpatch without `in` to patch the rejected script; target the emitted
+script `LINE:HASH` rows and reread them when a later attempt reports staleness.

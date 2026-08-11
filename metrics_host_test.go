@@ -48,7 +48,7 @@ func TestTranslateForHostReturnsCompleteSuccessAndFailureAccounting(t *testing.T
 	if got := rejected.Invocation.EvaluatedCommandCount(); got != 2 {
 		t.Fatalf("rejected evaluated commands = %d, want 2", got)
 	}
-	if !strings.HasPrefix(rejected.Diagnostic, "hpatch: ") || !strings.Contains(rejected.Diagnostic, "operation \"type\"") {
+	if !strings.HasPrefix(rejected.Diagnostic, "type: command 2, path \"note.txt\", reason row-stale:") {
 		t.Fatalf("rejected diagnostic = %q", rejected.Diagnostic)
 	}
 }

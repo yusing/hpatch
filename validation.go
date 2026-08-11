@@ -3,7 +3,6 @@ package hpatch
 import (
 	"cmp"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"go/format"
@@ -84,35 +83,6 @@ func splitIndent(line string) (string, string) {
 	return line[:end], line[end:]
 }
 
-func correctedTypeCommand(command instruction, correctedText string) string {
-	if command.delimiter != "" {
-		return command.source + command.lineTerminator + correctedText + command.delimiter
-	}
-	encoded, err := json.Marshal(correctedText)
-	if err != nil {
-		panic("encoding a Go string as JSON cannot fail: " + err.Error())
-	}
-	if command.valueStart <= 0 || command.valueStart > len(command.source) {
-		return command.source
-	}
-	return command.source[:command.valueStart] + string(encoded)
-}
-
-func commandCorrectionsOf(err error) []CommandCorrection {
-	commands := commandsOf(err)
-	corrections := make([]CommandCorrection, 0, len(commands))
-	for _, command := range commands {
-		if command.Correction == "" {
-			continue
-		}
-		corrections = append(corrections, CommandCorrection{
-			Command:     command.Command,
-			Replacement: command.Correction,
-		})
-	}
-	return corrections
-}
-
 func hostRejectionsOf(err error) []HostRejection {
 	commands := commandsOf(err)
 	rejections := make([]HostRejection, 0, len(commands))
@@ -166,7 +136,7 @@ func (w *workspace) formatGoFiles() *commandError {
 			repair := generatedSourceRepair(content, line, column)
 			repair += multilineValueRepair(location.origin.command, location.replacement, location.valueLine)
 			return formatCommandError(
-				file, location.origin, reasonLanguageSyntax, fmt.Sprintf("format Go source: %v", err),
+				file, location.origin, reasonLanguageSyntax, goSyntaxFailureMessage(err),
 				repair, line, column, location.valueLine,
 			)
 		}
@@ -262,6 +232,17 @@ func generatedPositionOf(err error) (int, int) {
 		return failures[0].Pos.Line, failures[0].Pos.Column
 	}
 	return 0, 0
+}
+
+func goSyntaxFailureMessage(err error) string {
+	if failures, ok := errors.AsType[scanner.ErrorList](err); ok && len(failures) != 0 && failures[0] != nil {
+		message := failures[0].Msg
+		if omitted := len(failures) - 1; omitted > 0 {
+			return fmt.Sprintf("%s (and %d more errors)", message, omitted)
+		}
+		return message
+	}
+	return err.Error()
 }
 
 const syntaxLocalizationGroupLimit = 32

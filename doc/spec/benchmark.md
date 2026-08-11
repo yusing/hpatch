@@ -84,14 +84,13 @@ hpatch translations and rejections, and rejected-call diagnostic tokens. It sepa
 semantic edit-payload reduction, end-to-end agent output change, and estimated non-edit
 output so payload savings cannot be mistaken for whole-agent savings. A client stderr
 translation envelope is labeled separately from an hpatch command rejection. When the router
-artifact supports it, the summary lists bounded attempt sequences including correction scope,
-value-row operation count, base-body rows, and base-command tokens. It lists evaluator
-rejection evidence by repetition, command, physical source line, operation, target kind,
-multiline value row, stable reason, path, and generated Go line and column when applicable.
-An older artifact without either bounded collection is labeled unavailable rather than
-reported as zero activity. When lifetime routed-call counters exceed retained attempts,
-retention-dependent correction-adoption and recovery measures are labeled unavailable rather
-than reported as full-run rates.
+artifact supports it, the summary lists bounded attempt sequences with payload mode
+(`complete` or `recovery`). It lists evaluator rejection evidence by repetition, command,
+physical source line, operation, target kind, multiline value row, stable reason, path,
+and generated Go line and column when applicable. An older artifact without either bounded
+collection is labeled unavailable rather than reported as zero activity. When lifetime
+routed-call counters exceed retained attempts, retention-dependent rejected-script recovery
+adoption measures are labeled unavailable rather than reported as full-run rates.
 
 Acceptance:
 
@@ -111,7 +110,7 @@ Acceptance:
 7. The summary attributes routed hpatch outcomes to their originating repetitions,
    distinguishes client file-change items from routed calls, and separates semantic
    edit-payload estimates from end-to-end output usage. It reports structured evaluator
-   rejection evidence and correction-scope attempt telemetry when present, and identifies
+   rejection evidence and payload-mode attempt telemetry when present, and identifies
    artifacts that predate those bounded records.
 8. Agents cannot retrieve upstream implementation or oracle material at runtime: per-arm
    internal networks expose only the assigned router, while the setup-only dependency loader

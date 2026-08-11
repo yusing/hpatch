@@ -443,7 +443,6 @@ func TestNotifyingTranslatorAttributesHPatchCallsToSession(t *testing.T) {
 				Attempt:   hpatch.AttemptMetadata{SessionID: "session", CorrelationID: "chain", CallID: "call-2", Attempt: 2, Correction: true},
 				SessionID: "session", HPatchTokens: 4, ApplyPatchTokens: 8,
 			},
-			correctionScope: "value-row", valueRowOperations: 1, baseValueRows: 20, baseCommandTokens: 30,
 		},
 	} {
 		if err := translator.RecordMetrics(t.Context(), record); err != nil {
@@ -468,7 +467,7 @@ func TestNotifyingTranslatorAttributesHPatchCallsToSession(t *testing.T) {
 	}
 	wantAttempts := []hpatchAttemptMetrics{
 		{Sequence: 1, CorrelationID: "chain", CallID: "call-1", Attempt: 1, Outcome: "rejected", EmittedHPatchTokens: 5, ApplyPatchTokens: 2, DiagnosticInputTokens: 3, Rejections: []hpatch.HostRejection{wantRejection}},
-		{Sequence: 2, CorrelationID: "chain", CallID: "call-2", Attempt: 2, Correction: true, CorrectionScope: "value-row", ValueRowOperations: 1, BaseValueRows: 20, BaseCommandTokens: 30, Outcome: "successful", EmittedHPatchTokens: 4, ApplyPatchTokens: 8},
+		{Sequence: 2, CorrelationID: "chain", CallID: "call-2", Attempt: 2, Correction: true, Outcome: "successful", EmittedHPatchTokens: 4, ApplyPatchTokens: 8},
 	}
 	if got := snapshot.Sessions[0].HPatchAttempts; !reflect.DeepEqual(got, wantAttempts) {
 		t.Fatalf("session hpatch attempts = %+v, want %+v", got, wantAttempts)
@@ -602,7 +601,7 @@ func TestRoutedEvaluatorRejectionReachesSessionEvidence(t *testing.T) {
 	proxyAttempt := hpatch.AttemptMetadata{
 		SessionID: transform.sessionID, CorrelationID: "call-evaluator", CallID: "call-proxy", Attempt: 2, Correction: true,
 	}
-	if _, err := transform.rejectUnevaluated("call-proxy", "1: accept", fmt.Errorf("proxy rejection"), proxyAttempt, hpatchCorrectionStats{scope: "command"}, nil); err != nil {
+	if _, err := transform.rejectUnevaluated("call-proxy", `type 1:ffff "bad"`, fmt.Errorf("proxy rejection"), proxyAttempt, "", nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	snapshot = store.snapshot()

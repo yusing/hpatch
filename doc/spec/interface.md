@@ -111,7 +111,7 @@ Acceptance:
    cancellation. A formatted result rejects before exceeding 16 MiB.
 5. Success and failure reach Codex through the model-visible shell carrier. Replay retains
    the original shell call and output; it never synthesizes a model-visible hread call or
-   includes the shell call in editable correction history.
+   includes the shell call in editable rejected-script recovery history.
 6. Router startup fails before serving if the private hread frontend cannot be installed.
    Passthrough mode installs and exposes none of these replacement surfaces.
 
@@ -159,7 +159,7 @@ Acceptance:
 3. Requested before/after context emits complete verified rows beside matches. Repeated match
    or context events on one row emit that row once; no matches return successful empty stdout.
 4. The model-visible shell call and output are replayed unchanged. No standalone hgrep call is
-   exposed, routed, or admitted to hpatch correction history.
+   exposed, routed, or admitted to hpatch recovery history.
 5. Router startup fails before serving if the private hgrep frontend cannot be installed.
    Passthrough mode installs and exposes none of these replacement surfaces.
 
@@ -200,7 +200,7 @@ exit nonzero. Stable codes are `usage`, `not_found`, `not_regular`, `not_utf8`,
 `outside_workspace`, `read`, `parse`, and `output_limit`. The private guidance embeds a concise
 success, failure, and outline-entry shape schema rather than the normative specification schema.
 Shell replay keeps the original call and output; inspect_file is not model-visible, directly
-routed, or included in HPATCH correction ancestry. Passthrough mode installs and advertises none
+routed, or included in hpatch recovery ancestry. Passthrough mode installs and advertises none
 of these surfaces.
 
 Acceptance:
@@ -298,7 +298,7 @@ frontends even when the prior process snapshot remains.
 Translated history retains the plugin identity, original tool name and input, and exact carrier
 kind, name, and payload. Replay accepts only the byte-identical retained carrier and restores
 the original model-visible call before upstream forwarding. Ordinary plugins do not enter
-hpatch correction ancestry. Runtime model-input rejection returns a bounded diagnostic
+hpatch recovery ancestry. Runtime model-input rejection returns a bounded diagnostic
 through an available Code Mode carrier; a translator protocol violation, unavailable carrier,
 or malformed carrier is a routing failure rather than a successful approximation.
 
@@ -490,8 +490,8 @@ with `n/a` reduction. Executor failures after Codex accepts the execution carrie
 retroactively become router translation failures.
 
 For hpatch, both effective and ineffective emitted estimates count the `functions.hpatch` tool
-name followed by the editing payload the model emitted. When a correction names commands of a
-rejected script, the shorter correction is charged while the rebuilt complete script is used
+name followed by the editing payload the model emitted. When a recovery mutates rows of a
+rejected script, the shorter recovery payload is charged while the rebuilt complete script is used
 only for evaluation. The successful translated side counts the Code Mode carrier name and a
 fixed free-form program that passes the complete translated patch envelope, serialized as one
 string argument, to `tools.apply_patch`, then returns that nested tool's result. The router-only
@@ -536,13 +536,13 @@ retains the latest 32 evaluator rejection identities: command index, physical so
 operation, target kind when known, stable reason, affected path when known, the physical
 multiline value row when localized, and the generated line and column reported by Go syntax
 validation when applicable. Each session also retains the latest 128 routed attempt identities:
-chain/call identity, attempt and outcome, correction scope (`command` or `value-row`), value-row
-operation count, affected base-body row count, affected base-command token count, emitted and
-comparison token counts, evaluated command count, and its bounded rejection identities. These
-count limits are reinforced by per-session text-byte limits, so an oversized rejection identity
-is not retained. Session records use the same session identity as request lifecycle metrics and are not written
+chain/call identity, attempt, recovery marker, and outcome, emitted and comparison token
+counts, evaluated command count, and its bounded rejection identities. These count limits
+are reinforced by per-session text-byte limits, so an oversized rejection identity is not
+retained. Session records use the same session identity as request lifecycle metrics and are
+not written
 to `metrics.bin`. They retain neither scripts, replacement text, diagnostics, nor repair
-context. Base-command text exists only long enough to count it and is not retained. Proxy
+context. Proxy
 failures that occur before evaluator invocation do not fabricate evaluator rejection identities.
 The snapshot also exposes aggregate counters so a benchmark can reconcile routed calls with
 client-visible file-change items without inferring failures from stderr envelopes.
@@ -680,7 +680,7 @@ Acceptance:
 8. Failed hpatch invocations contribute their complete output to the ineffective counter; the
    failed translated counter receives the fixed direct-call program carrying the empty patch
    envelope, while the downstream diagnostic carrier is excluded.
-9. A correction is charged as the shorter payload the model emitted for both effective and
+9. A recovery is charged as the shorter payload the model emitted for both effective and
    ineffective invocations while evaluation uses the rebuilt complete script.
 10. Tool inputs and translated payloads containing quotes or program-like text remain data and
    cannot alter the canonical programs used for counting.
@@ -692,7 +692,7 @@ Acceptance:
 13. Metrics collection failure warns without changing the success or failure of the requested
     edit, translated carrier, executor result, or final-state report.
 14. Router snapshots attribute successful and rejected hpatch translations, diagnostic token
-    totals, at most the latest 128 correction-aware attempt identities, and at most the latest
+    totals, at most the latest 128 recovery-aware attempt identities, and at most the latest
     32 structured evaluator rejection identities to their request sessions without persisting
     scripts, replacement text, diagnostics, repair context, or new per-session records in
     `metrics.bin`; per-session text-byte limits may retain fewer identities.
@@ -754,7 +754,7 @@ PATCH
 No escape, interpolation, dedent, or delimiter substitution occurs. Payload bytes begin
 after the header terminator and end before the closing delimiter. A nonempty final body
 line therefore contributes its physical terminator. The header, body, and delimiter are
-one command indexed at the header. An exact `PATCH` payload line must use inline escaped
+one command attributed to the header. An exact `PATCH` payload line must use inline escaped
 text instead. Unterminated or oversized heredocs fail as one bounded header-owned syntax
 error.
 
@@ -788,65 +788,65 @@ Acceptance:
    baseline meaning defined by `REQ-SELECT-001`.
 6. For root-scoped evaluation with root `/workspace` and cwd `bin/worktree`, path `main.go` denotes `/workspace/bin/worktree/main.go` and translates as `bin/worktree/main.go`.
 
-## REQ-CORRECT-001 — Compact rejected-script correction
+## REQ-CORRECT-001 — Rejected-script recovery
 
-After a routed hpatch script is rejected, a correction payload may transform the rejected
-script with one operation per nonblank command header:
+After a routed hpatch script is rejected, its latest evaluated complete script becomes an
+implicit immutable text baseline for a recovery call. A recovery payload begins with
+target-bearing `type`, `type-`, or `type+`, omits `in`, and contains only target-bearing
+ordinary mutations:
 
 ```text
-N: COMMAND     replace command N
-N: accept      apply hpatch's displayed safe correction for command N
--N             delete command N
-+N: COMMAND    insert before command N
-N+: COMMAND    insert after command N
-N.R: "VALUE"   replace physical body row R of command N
--N.R            delete physical body row R of command N
-+N.R: "VALUE"  insert before physical body row R of command N
-N.R+: "VALUE"  insert after physical body row R of command N
+type LINE:HASH VALUE
+type- LINE:HASH VALUE
+type+ LINE:HASH VALUE
 ```
 
-A replacement or insertion whose command ends in `<<PATCH` consumes its heredoc body and
-closing delimiter as part of that one correction operation. All indices refer to the
-original rejected script before any correction operation is applied. Replacements,
-acceptances, and deletions may name an index at most once and conflict with each other for
-the same index. An acceptance is valid only when the immediately repairable rejected
-script retained an exact correction for that command; it never approves the rejected
-mutation itself. Multiple insertions at one anchor are allowed and retain payload order;
-their position is relative to the original anchor even when that anchor is deleted. Every
-nonblank line outside a correction heredoc must be a correction operation.
+Line, range, and text targets, quoted values, the fixed `<<PATCH` frame, terminator
+ownership, same-boundary insertion order, stale-row rejection, and edit-conflict behavior
+are exactly the ordinary HPATCH/2 semantics from `REQ-SYNTAX-001` and `REQ-EDIT-001`.
+The root package applies those mutations to the rejected-script text without filesystem
+access, language validation, formatting, indentation policy, whitespace cleanup, hooks,
+or evaluator metrics. Every recovery mutation must succeed before the rebuilt script is
+returned.
 
-Body-row addressing is available only for the physical rows between the opener and closing
-delimiter of a complete fixed `<<PATCH` value. It does not address decoded inline-string
-lines. `VALUE` is one JSON-compatible quoted physical row, optionally including its own
-terminator. Replacement preserves the addressed row's terminator when `VALUE` omits one;
-an explicit terminator is authoritative. Insertions are byte-exact and synthesize no
-terminator. Deletion removes the addressed row and its terminator. A replacement or
-insertion cannot materialize an exact `PATCH` delimiter row; replace the complete command
-with an inline-escaped value instead. Body-row `accept` is not supported. A complete-command
-replacement, acceptance, or deletion conflicts with any body-row mutation of the same
-command; multiple insertions at one body-row anchor retain payload order. Diagnostic row
-numbers use the same LF/CRLF physical framing as correction indices, so an embedded standalone
-carriage return remains within one escaped display row.
+The router recognizes recovery payloads, selects the latest evaluated rejected hpatch
+script in the same routing session and selected canonical metadata directory or no-directory
+state, and calls the root text editor. It then reparses and reevaluates the complete rebuilt
+script normally. A malformed, stale, conflicting, cross-worktree, or otherwise invalid
+recovery changes neither retained ancestry nor workspace state. Proxy-rejected attempts
+leave the last evaluated script as the next recovery baseline. Non-hpatch plugin and shell
+failures never enter this ancestry.
 
-The router validates all operations, retained acceptances, and referenced indices before rebuilding the script. It then reparses and reevaluates the complete transformed script against the same selected canonical metadata directory, or the same no-directory state, and a fresh immutable invocation baseline. A correction failure changes nothing. A successful transformation becomes the base for a later correction, whose command and body-row indices resolve against that latest evaluated script. The chain retains the correction-chain correlation ID, increments the attempt for every evaluated or proxy-rejected correction, and charges metrics for only the compact payload the agent emitted. A proxy-rejected correction leaves the last evaluated script as the repair base. The core evaluator has no correction mode. Root-scoped callers instead reevaluate against their same authorized root and cwd.
+Every evaluator rejection exposes current targetable rejected-script `LINE:HASH` rows and
+the instruction to use hpatch without `in`. Command-header rows use structured rejection
+source lines. Complete heredocs also expose the closing delimiter and bounded context around
+a localized value row. Malformed frames expose their last targetable attributable row rather
+than an invented trailing row. A rebuilt script that is reevaluated and rejected becomes the
+next baseline, so later recovery hashes always address the latest evaluated script.
+
+The chain retains its correlation ID and increments the attempt for evaluated and
+proxy-rejected recovery calls. Replay restores the exact short payload emitted by the model,
+while retained `evaluated` state stores the complete rebuilt script needed by the next
+recovery. Metrics charge emitted hpatch tokens to the recovery payload rather than the
+rebuilt script. `AttemptMetadata.Correction` remains the recovery-attempt marker for hooks
+and retained telemetry.
 
 Acceptance:
 
-1. `N: COMMAND` remains compatible with existing replacement corrections.
-2. `N: accept` substitutes exactly the safe correction displayed for command N; an absent
-   or stale suggestion rejects without evaluating or mutating the workspace.
-3. `-N`, `+N: COMMAND`, and `N+: COMMAND` can remove obsolete commands and insert new
-   commands without resending the complete script.
-4. Multiple same-anchor insertions preserve payload order, including when the anchor is
-   deleted, while duplicate replacement/acceptance/deletion or an absent index rejects
-   the complete correction.
-5. A correction heredoc is one operation; an invalid or unterminated correction heredoc
-   produces one bounded diagnostic and does not reinterpret its body as operations.
-6. Every corrected script is revalidated atomically against the same selected canonical metadata directory, or the same no-directory state, and a fresh immutable invocation baseline, while retaining the established correlation and emitted-payload metrics behavior.
-7. `N.R` operations address only a complete fixed-heredoc body, obey physical terminator
-   ownership, reject absent rows and mixed whole-command/body-row mutation, and reindex
-   against the latest evaluated rejected script in a chained correction. They cannot create
-   an exact fixed delimiter row.
+1. A target-bearing `type`, `type-`, or `type+` payload without `in` edits the latest
+   rejected script with ordinary verified-row semantics.
+2. A successful text edit is reevaluated as one complete ordinary hpatch script; success or
+   rejection remains atomic.
+3. A re-rejected recovery exposes references from the current rebuilt script, not the
+   previous baseline.
+4. A malformed, stale, or conflicting recovery leaves the latest evaluated script usable by
+   a later attempt.
+5. Recovery cannot cross routing sessions or selected worktrees, and unrelated plugin or
+   shell failures cannot become recovery bases.
+6. Correlation, attempt sequencing, replay shape, retained-root behavior, and emitted-payload
+   token accounting remain stable across the chain.
+7. Indexed forms such as `N: COMMAND`, `N: accept`, `-N`, `+N: COMMAND`, `N+: COMMAND`, and
+   dotted value-row operations are ordinary script syntax errors, not compatibility paths.
 
 ## REQ-FILE-001 — File scope and lifecycle
 
@@ -977,7 +977,10 @@ one-minimal syntax-failing set, then attributes the failure to the retained edit
 generated parser position. Larger groups or an invalid baseline use nearest-edit attribution
 without subset replay. The rejection includes at most two generated lines before and after
 the failing line; neighboring lines are capped at 64 runes and the failing line at 200.
-Non-Go files receive no language validation. An unchanged normal-mode change set performs no
+Supported changed `.py`, `.js`, and `.ts` files are syntax-checked when Tree-sitter
+language support is available. Supported baseline-aware indentation corrections are applied
+before validation; unsupported extensions remain byte-exact or reject under indentation policy.
+An unchanged normal-mode change set performs no
 filesystem operation but still reports final state.
 An unchanged translate result emits no patch and fails because it cannot represent an
 update; it emits no final-state report.
@@ -1080,14 +1083,21 @@ not modify source files. Normal mode continues to preserve existing line endings
 explicitly inserted strings. Applying translated output to a non-LF file may normalize
 that file to LF; this is a declared format limitation, not byte equivalence.
 
-Failures emit concise diagnostics to stderr, prefixed with `hpatch:`. Independently
-parseable syntax failures may be reported together before evaluation. Script diagnostics
-identify the one-based nonblank command index, one-based source line, operation, relevant
-operand or active path when one exists, and the stable reason defined by
-`REQ-METRICS-001`. A heredoc failure is owned by its header and may additionally report
-its physical source-line span. Control bytes in every diagnostic are escaped and embedded
-newlines are folded so one failure remains one logical line. Failures return nonzero and
-emit no stdout or final-state report. Malformed row syntax receives a syntax diagnostic.
+Generic non-command failures emit concise diagnostics to stderr prefixed with `hpatch:`.
+Command failures instead have the stable form:
+
+```text
+OP: command N[, path "PATH"], reason REASON: MESSAGE
+```
+
+The visible command line omits source line, a repeated operation field, and category.
+Structured host rejection data retain command index, source line, operation, path, generated
+position, and localized value row when applicable; hook data also retain category. Independently
+parseable syntax failures may be reported together before evaluation. A heredoc failure is
+owned by its header and may additionally report its attributable source span. Control bytes
+are escaped and embedded newlines are folded so one failure remains one logical line.
+Failures return nonzero and emit no stdout or final-state report. Malformed row syntax
+receives a syntax diagnostic.
 
 A stale row reports the actual `LINE:HASH TEXT` at that line and up to two neighboring
 baseline rows. A missing literal occurrence reports the verified anchor context. An edit
@@ -1097,8 +1107,10 @@ apply the prerequisite independently, reread, and submit a later invocation. A m
 row or failure without a verified baseline does not choose repair context. Repair context
 is supplementary: it never changes exit status, stdout, mutation, or metrics classification.
 When invalid generated Go is localized to a fixed-heredoc mutation, its rejection identity
-includes the non-sensitive `value_line`, and the transient diagnostic displays that
-`COMMAND.ROW` plus at most two neighboring physical body rows on each side. Inline decoded
+includes the non-sensitive `value_line`. Transient root diagnostics describe bounded value
+rows as context rather than mutation addresses. Routed diagnostics add current targetable
+rejected-script `LINE:HASH` rows for the command header, localized body context, and closing
+delimiter under `REQ-CORRECT-001`. Inline decoded
 multiline values and failures outside a multiline replacement do not fabricate a value row.
 
 Acceptance:
@@ -1114,7 +1126,7 @@ Acceptance:
    exact reported row without hread, while an unreported target requires a focused read and
    a saved pre-edit row still rejects as stale.
 4. Changed Go files are formatted with the standard library before output, and invalid Go
-   rejects the transaction without mutation; non-Go files receive no language validation.
+   rejects the transaction without mutation; supported changed Python, JavaScript, and TypeScript files are syntax-checked and receive supported automatic indentation correction.
 5. Malformed input, missing, stale, reversed, or incomplete targets, edit conflicts,
    unknown or future commands, invalid UTF-8, missing or non-regular files, path collisions,
    staging failure, translation failure, and cancellation produce no mutation, patch
@@ -1133,9 +1145,10 @@ Acceptance:
 
 Top-level help owns the complete CLI, editing, validation, trust-boundary, report, and
 metrics reference. Tool help is a separately maintained concise model-facing summary. It
-excludes CLI modes, options, metrics, version material, and the full correction DSL.
-The router supplies indexed correction syntax once in the first correctable rejection
-diagnostic of a correction chain; later rejection diagnostics in that chain do not repeat it.
+excludes CLI modes, options, metrics, version material, and rejected-script ancestry details.
+The router appends current rejected-script `LINE:HASH` rows and one instruction to use hpatch
+without `in` after each actionable structured evaluator rejection. A re-rejected recovery
+refreshes those rows from the latest evaluated script.
 
 Both references teach this workflow:
 
@@ -1163,10 +1176,10 @@ Both references teach this workflow:
    program.
 6. Encode short single-line values inline. Include `\n` when a before/after insertion
    must form a complete new line; reserve `<<PATCH` for multiline or escape-heavy values.
-7. After rejection, prefer a compact indexed command or multiline-value-row correction when
-   the desired targets still belong to the same baseline; reread stale rows instead of guessing
-   or reconstructing them.
-8. Do not run redundant `gofmt`; hpatch formats changed Go files before success.
+7. After rejection, use hpatch without `in` to patch the rejected script through its current
+   emitted `LINE:HASH` rows. Reread them if a later attempt reports staleness instead of guessing
+   or reconstructing a target.
+8. Do not run redundant `gofmt`; hpatch formats changed Go files and syntax-checks supported changed Python, JavaScript, and TypeScript files before success. Supported indentation corrections are automatic.
 
 Guidance includes minimal examples for line replacement, range deletion, inline
 single-line before/after insertion, multiline insertion, text multiplicity, new-file
@@ -1184,5 +1197,4 @@ Acceptance:
 3. A routed success can be followed by another hpatch call using an exact row from its report
    without an intervening hread. A required row outside the bounded projection is read narrowly,
    and a saved pre-edit row still rejects as stale.
-4. Persistent guidance stays compact; correction grammar appears only with an actionable
-   rejected-script context.
+4. Persistent guidance stays compact; dynamic rejected-script references and recovery instructions appear only with actionable rejected-script context.

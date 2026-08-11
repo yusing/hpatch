@@ -54,7 +54,12 @@ func TestHPatch2ToolGrammarMatchesPublicCommands(t *testing.T) {
 			t.Errorf("tool grammar omits %q", rule)
 		}
 	}
-	for _, removed := range []string{"tsel_command", "rsel_command", "delete_command", `"del"`, `"copy"`, `"cut"`, `"paste"`, `"commit"`, "<<TAG"} {
+	for _, removed := range []string{
+		"corrections:", "correction:", "replacement:", "acceptance:", "deletion:",
+		"insertion_before:", "insertion_after:", `"accept"`,
+		"tsel_command", "rsel_command", "delete_command", `"del"`, `"copy"`,
+		`"cut"`, `"paste"`, `"commit"`, "<<TAG",
+	} {
 		if strings.Contains(toolGrammar, removed) {
 			t.Errorf("tool grammar retains HPATCH/1 form %q", removed)
 		}
@@ -117,14 +122,16 @@ func TestHPatch2ToolDescriptionCoversSafeCommandChoice(t *testing.T) {
 		"not targetable in the same call",
 		"Multiple insertions at the same boundary render in script order.",
 		"Changed Go files are parsed and formatted before success",
-		"parents for `new` or `mv` must exist",
-		"reread stale rows instead of guessing",
+		"syntax-checked when Tree-sitter support is available",
+		"supported indentation corrections are automatic",
+		"use hpatch without `in` to patch the rejected script",
+		"reread them when a later attempt reports staleness",
 	} {
 		if !strings.Contains(normalized, guidance) {
 			t.Errorf("tool description omits %q", guidance)
 		}
 	}
-	for _, excluded := range []string{"HPATCH/1", "\ntsel ", "\nrsel ", "\ncopy", "\ncut", "\npaste", "\ncommit", "<<TAG", "Usage:", "--root", "hpatch gain", "prefer one range `type`", "at most one syntax-sensitive multiline Go", "discard its saved references", "Use `hgrep` as replacement of `rg` or `grep`", "Use `hread` as replacement of `cat` or `sed`"} {
+	for _, excluded := range []string{"INDEX:", ": accept", "COMMAND.ROW", "HPATCH/1", "\ntsel ", "\nrsel ", "\ncopy", "\ncut", "\npaste", "\ncommit", "<<TAG", "Usage:", "--root", "hpatch gain", "prefer one range `type`", "at most one syntax-sensitive multiline Go", "discard its saved references", "Use `hgrep` as replacement of `rg` or `grep`", "Use `hread` as replacement of `cat` or `sed`"} {
 		if strings.Contains(toolDescription, excluded) {
 			t.Errorf("tool description retains excluded material %q", excluded)
 		}

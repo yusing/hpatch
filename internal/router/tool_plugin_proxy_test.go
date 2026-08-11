@@ -460,7 +460,7 @@ func TestToolPluginFunctionCarrierSSE(t *testing.T) {
 	}
 }
 
-func TestToolPluginFailuresStayOutsideHPatchCorrections(t *testing.T) {
+func TestToolPluginFailuresStayOutsideHPatchRecovery(t *testing.T) {
 	t.Run("parser rejection is recoverable", func(t *testing.T) {
 		transform, proxy, _ := newToolPluginTestTransform(t)
 		response, err := transform.TransformJSON(mustTestJSON(t, map[string]any{
@@ -475,9 +475,9 @@ func TestToolPluginFailuresStayOutsideHPatchCorrections(t *testing.T) {
 			!strings.Contains(jsonString(visible, "input"), "fixture input rejected") {
 			t.Fatalf("rejection carrier = %#v", visible)
 		}
-		if _, err := proxy.correctableHistory(transform.historySessionID); err == nil ||
-			!strings.Contains(err.Error(), "no hpatch call") {
-			t.Fatalf("plugin entered correction ancestry: %v", err)
+		if _, err := proxy.recoverableHistory(transform.historySessionID); err == nil ||
+			!strings.Contains(err.Error(), "no rejected hpatch script") {
+			t.Fatalf("plugin entered recovery ancestry: %v", err)
 		}
 	})
 

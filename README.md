@@ -235,7 +235,7 @@ Defaults:
 
 In hpatch mode, run the router as the same login user as Codex so it can open the absolute workspace paths Codex sends and read the same credentials. A user systemd unit is the intended long-running setup.
 
-Use `--mode passthrough` when the router should forward Responses traffic without installing hpatch, shell, private frontends, corrections, or plugin metrics.
+Use `--mode passthrough` when the router should forward Responses traffic without installing hpatch, shell, private frontends, rejected-script recovery, or plugin metrics.
 
 ### Install the binary
 
@@ -426,7 +426,7 @@ Rules worth remembering:
 - Successful final-state `LINE:HASH` rows are post-format and post-cleanup references for their named final paths and may be used directly in the next invocation. Reports are bounded, so use hread when the successful report lacks the exact target needed next.
 - Overlapping replacements or deletions and insertions strictly inside them fail atomically. Boundary insertions are valid.
 - Use inline quoted values for short single-line edits; include `\n` when an insertion must form a new line. Reserve fixed `<<PATCH` for multiline or escape-heavy values.
-- Rejection changes nothing. Router-owned indexed corrections can replace, delete, or insert failed commands by index; fixed `<<PATCH` values also expose physical body rows as `COMMAND.ROW`. The router rebuilds one complete script before ordinary engine evaluation; the core engine has no correction mode.
+- Rejection changes nothing. The latest evaluated rejected script becomes an implicit immutable text baseline. A follow-up hpatch call can begin with target-bearing `type`, `type-`, or `type+` and omit `in`; the root editor rebuilds the complete script with ordinary `LINE:HASH` semantics before the router reevaluates it.
 
 Additional boundaries:
 
@@ -548,7 +548,7 @@ Tests live beside the owners they exercise. The root `hpatch` package is the reu
 | --- | --- |
 | [`doc/brief.md`](doc/brief.md) | Product brief and scope |
 | [`doc/spec/index.md`](doc/spec/index.md) | Specification inventory |
-| [`doc/spec/interface.md`](doc/spec/interface.md) | CLI, router, plugin, shell, correction, and metrics contracts |
+| [`doc/spec/interface.md`](doc/spec/interface.md) | CLI, router, plugin, shell, rejected-script recovery, and metrics contracts |
 | [`doc/spec/comparison.md`](doc/spec/comparison.md) | Payload comparison scenarios |
 | [`doc/spec/benchmark.md`](doc/spec/benchmark.md) | Benchmark requirements |
 | [`doc/architecture/index.md`](doc/architecture/index.md) | Stable ownership boundaries |

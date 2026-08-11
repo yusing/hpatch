@@ -45,15 +45,13 @@ func SplitPhysicalLines(source string) []PhysicalLine {
 }
 
 // FrameCommand returns the complete physical-line span and decoded body for the
-// command at headerIndex. Malformed heredocs retain their attributable bodies;
-// quoted operands containing physical newlines retain lines through the closing
-// quote so one indexed correction can replace the malformed command.
+// command at headerIndex. Malformed frames retain their attributable lines so
+// parsers and diagnostics do not reinterpret payload-shaped data as commands.
 func FrameCommand(lines []PhysicalLine, headerIndex int, command string) (CommandFrame, error) {
 	frame := CommandFrame{Next: headerIndex + 1}
 	delimiter, err := heredocDelimiter(command)
 	if err != nil {
-		// An invalid heredoc header owns the remaining physical lines. They are
-		// payload-shaped data, not independent commands or correction entries.
+		// An invalid heredoc header owns the remaining physical lines.
 		frame.Next = len(lines)
 		return frame, err
 	}

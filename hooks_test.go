@@ -42,7 +42,7 @@ func TestErrorHookReceivesFailureAndRepairContext(t *testing.T) {
 		"- Path: `note.txt`",
 		"## Failed command\n\n    type 1:" + hashLine("present words") + " \"missing\" \"replacement\"",
 		"## Failure\n\n    found 0 of 1 requested matches of \"missing\" at or after line 1",
-		"## Diagnostic\n\n    hpatch: command 2, source line 2",
+		"## Diagnostic\n\n    type: command 2, path \"note.txt\", reason occurrence-missing",
 		"## Repair context",
 		"found 0 of 1 requested matches at or after line 1",
 		"1:" + hashLine("present words") + " present words",
@@ -96,7 +96,7 @@ func TestErrorHookFailureDoesNotReplaceDiagnostic(t *testing.T) {
 	if exitCode != 1 || stdout.Len() != 0 {
 		t.Fatalf("Run() = exit %d, stdout %q, stderr %q", exitCode, stdout.String(), stderr.String())
 	}
-	if !strings.HasPrefix(stderr.String(), "hpatch: command 1, source line 1, operation \"del\", category syntax, reason script-syntax: unknown or malformed command\n") {
+	if !strings.HasPrefix(stderr.String(), "del: command 1, reason script-syntax: unknown or malformed command\n") {
 		t.Fatalf("original diagnostic was not preserved: %q", stderr.String())
 	}
 	if !strings.Contains(stderr.String(), "hpatch: warning: running error hook 1: exit status 7\n") {
