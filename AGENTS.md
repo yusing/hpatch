@@ -1,6 +1,12 @@
-# Agent guide
+AGENTS.md
 
 Use `README.md` for installation, deployment, user-visible hpatch and shell workflows, and requirements; open it when changing setup or model-facing behavior. Use `doc/spec/interface.md` for normative CLI, router, plugin, shell, hread/hgrep, recovery, and metrics contracts; open it when behavior or acceptance criteria are in question. Use `doc/architecture/index.md` for stable ownership boundaries; open it before moving responsibilities. Use `hpatch --help`, `hpatch --tool-help`, `tool_description.md`, and `tool_grammar.lark` only when editing or validating HPATCH syntax or model guidance.
+
+## Hpatch's target guidance
+
+Who is hpatch for?
+
+The agent, YOU. Think from your perspective, not user's.
 
 ## Quick workflow
 
