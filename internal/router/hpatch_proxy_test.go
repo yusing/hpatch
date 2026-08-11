@@ -1459,10 +1459,15 @@ func TestShellInterpreterWrapperAddsWarning(t *testing.T) {
 			misuse: shellWrapperMisuse{Kind: "--command", Interpreter: "psql", wrapper: "--command"},
 		},
 	} {
-		misuse, ok := shellInterpreterWrapperMisuse(contribution, test.input)
-		if !ok || misuse.Kind != test.misuse.Kind || misuse.Interpreter != test.misuse.Interpreter ||
+		misuses := shellInterpreterWrapperMisuses(contribution, test.input)
+		if len(misuses) != 1 {
+			t.Errorf("misuses for %q = %#v; want %#v", test.input, misuses, test.misuse)
+			continue
+		}
+		misuse := misuses[0]
+		if misuse.Kind != test.misuse.Kind || misuse.Interpreter != test.misuse.Interpreter ||
 			!slices.Equal(misuse.InterpreterArgs, test.misuse.InterpreterArgs) || misuse.wrapper != test.misuse.wrapper {
-			t.Errorf("misuse for %q = %#v, detected %t; want %#v", test.input, misuse, ok, test.misuse)
+			t.Errorf("misuse for %q = %#v; want %#v", test.input, misuse, test.misuse)
 			continue
 		}
 		if warning := shellInterpreterWrapperWarning(misuse); warning != test.want {
@@ -1508,7 +1513,8 @@ func TestShellInterpreterWrapperAddsWarning(t *testing.T) {
 		"printf '%s' 'normal command merely contains node -e'",
 		"# example: python3 -c 'print(1)'",
 	} {
-		if misuse, ok := shellInterpreterWrapperMisuse(contribution, input); !ok || shellInterpreterWrapperWarning(misuse) == "" {
+		misuses := shellInterpreterWrapperMisuses(contribution, input)
+		if len(misuses) == 0 || shellInterpreterWrapperWarning(misuses[0]) == "" {
 			t.Errorf("interpreter wrapper was not detected: %q", input)
 		}
 	}
@@ -1525,23 +1531,23 @@ func TestShellInterpreterWrapperAddsWarning(t *testing.T) {
 		"#!cat\ncat shebang executes",
 		"printf ok",
 	} {
-		if misuse, ok := shellInterpreterWrapperMisuse(contribution, input); ok || misuse.Kind != "" {
-			t.Errorf("ordinary shell input misuse = %#v for %q", misuse, input)
+		if misuses := shellInterpreterWrapperMisuses(contribution, input); len(misuses) != 0 {
+			t.Errorf("ordinary shell input misuses = %#v for %q", misuses, input)
 		}
 	}
-	if misuse, ok := shellInterpreterWrapperMisuse(
+	if misuses := shellInterpreterWrapperMisuses(
 		toolContribution{PluginID: "configured", Name: "shell"},
 		"python3 -c pass",
-	); ok || misuse.Kind != "" {
+	); len(misuses) != 0 {
 		t.Error("configured shell plugin received interpreter-wrapper warning")
 	}
 
 	const input = "printf '%s' 'python3 -c'"
-	misuse, ok := shellInterpreterWrapperMisuse(contribution, input)
-	if !ok {
+	misuses := shellInterpreterWrapperMisuses(contribution, input)
+	if len(misuses) == 0 {
 		t.Fatal("quoted interpreter wrapper was not detected")
 	}
-	warningInput := misuseWarningProjection(shellInterpreterWrapperWarning(misuse))
+	warningInput := misuseWarningProjection(shellInterpreterWrapperWarning(misuses[0]))
 	transform, _, _, _ := newHPatchTestTransform(t, testTranslator(t, new(int)))
 	visible, err := transform.TransformJSON(mustTestJSON(t, map[string]any{
 		"status": "completed",
@@ -1574,6 +1580,64 @@ func TestShellInterpreterWrapperAddsWarning(t *testing.T) {
 	}
 }
 
+func TestShellStacksDistinctMisuseWarnings(t *testing.T) {
+	contribution := toolContribution{PluginID: "builtin.shell", Name: "shell"}
+	wrapperMisuses := shellInterpreterWrapperMisuses(
+		contribution,
+		"python3 -c 'print(1)'\nnode -e 'console.log(1)'\nruby -e 'puts 1'",
+	)
+	if len(wrapperMisuses) != 2 || wrapperMisuses[0].Kind != "-c" || wrapperMisuses[1].Kind != "-e" {
+		t.Fatalf("distinct wrapper misuses = %#v, want -c then -e", wrapperMisuses)
+	}
+	const script = "bun -e <<'JS'\nconsole.log('ok')\nJS"
+	misuses := shellInterpreterWrapperMisuses(contribution, script)
+	if len(misuses) != 2 || misuses[0].Kind != "-e" || misuses[1].Kind != "heredoc" {
+		t.Fatalf("stacked shell misuses = %#v, want -e then heredoc", misuses)
+	}
+	wrapperInput := misuseWarningProjection(shellInterpreterWrapperWarning(misuses[0]))
+	heredocInput := misuseWarningProjection(shellInterpreterWrapperWarning(misuses[1]))
+
+	call := func(t *testing.T, input string) string {
+		t.Helper()
+		transform, _, _, _ := newHPatchTestTransform(t, testTranslator(t, new(int)))
+		visible, err := transform.TransformJSON(mustTestJSON(t, map[string]any{
+			"status": "completed",
+			"output": []any{map[string]any{
+				"type": "custom_tool_call", "id": "item-shell", "call_id": "call-shell",
+				"name": "shell", "input": input, "status": "completed",
+			}},
+		}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var response struct {
+			Output []map[string]json.RawMessage `json:"output"`
+		}
+		if err := json.Unmarshal(visible, &response); err != nil {
+			t.Fatal(err)
+		}
+		if len(response.Output) != 1 || jsonString(response.Output[0], "name") != "exec" {
+			t.Fatalf("stacked shell carrier = %s", visible)
+		}
+		return jsonString(response.Output[0], "input")
+	}
+
+	direct := call(t, script)
+	if !strings.Contains(direct, wrapperInput+heredocInput+codeModeMetadataProjection) {
+		t.Fatalf("direct shell warnings did not stack in order: %q", direct)
+	}
+
+	command := "curl -fsSL 'https://example.com' |\n" + script
+	recoveredInput := "const result = await tools.exec_command({\"cmd\":" +
+		jsonQuoted(command) +
+		",\"login\":false});\ntext(JSON.stringify(result));"
+	recovered := call(t, recoveredInput)
+	wantPrefix := misuseWarningProjection(lunaShellRecoveryWarning) + wrapperInput + heredocInput
+	if recovered != wantPrefix+recoveredInput {
+		t.Fatalf("recovered shell warnings did not stack in order:\n%s", recovered)
+	}
+}
+
 func TestMisuseWarningsRecordDistinctInputOverhead(t *testing.T) {
 	dataDirectory := t.TempDir()
 	var records []hpatchMetricRecord
@@ -1588,14 +1652,14 @@ func TestMisuseWarningsRecordDistinctInputOverhead(t *testing.T) {
 	}
 	nativeWarningInput := misuseWarningProjection(nativeExecCommandWarning)
 	lunaWarningInput := misuseWarningProjection(lunaShellRecoveryWarning)
-	interpreterMisuse, ok := shellInterpreterWrapperMisuse(
+	interpreterMisuses := shellInterpreterWrapperMisuses(
 		toolContribution{PluginID: "builtin.shell", Name: "shell"},
 		"python3 -c 'print(1)'",
 	)
-	if !ok {
+	if len(interpreterMisuses) == 0 {
 		t.Fatal("interpreter-wrapper metric warning was not detected")
 	}
-	interpreterWarningInput := misuseWarningProjection(shellInterpreterWrapperWarning(interpreterMisuse))
+	interpreterWarningInput := misuseWarningProjection(shellInterpreterWrapperWarning(interpreterMisuses[0]))
 	cases := []struct {
 		name       string
 		toolName   string

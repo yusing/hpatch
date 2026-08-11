@@ -454,6 +454,11 @@ Acceptance:
     yields, the carrier forwards that same complete result, including its continuation handle,
     without calling the continuation operation or starting the frontend again. No router session
     record or plugin-defined continuation surface is created.
+16. For one built-in shell input, the router emits one warning for every distinct detected
+    interpreter-wrapper or heredoc kind rather than stopping after the first. Recovered Code Mode
+    JavaScript emits its recovery warning first and then every detected nested shell warning.
+    Warning insertion preserves the exact submitted command, carrier result, replay behavior, and
+    metric classification.
 
 ## REQ-METRICS-001 — Persistent token, command, target, and failure metrics
 

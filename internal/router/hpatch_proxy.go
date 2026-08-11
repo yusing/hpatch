@@ -1568,11 +1568,10 @@ func (t *hpatchResponseTransform) translateRegisteredTool(contribution toolContr
 	name := t.codeModeToolName
 	payload := ""
 	diagnostic := translation.Diagnostic
-	misuseWarning := ""
+	var misuseWarnings []string
 	if recovered {
-		warningInput := misuseWarningProjection(lunaShellRecoveryWarning)
-		misuseWarning = warningInput
-		payload = warningInput + input
+		misuseWarnings = append(misuseWarnings, lunaShellRecoveryWarning)
+		payload = input
 		if err := t.carriers.require(name, kind); err != nil {
 			return hpatchHistory{}, fmt.Errorf("%s Code Mode exec recovery: %w", contribution.Name, err)
 		}
@@ -1638,14 +1637,26 @@ func (t *hpatchResponseTransform) translateRegisteredTool(contribution toolContr
 			)
 		}
 	}
-	if misuse, detected := shellInterpreterWrapperMisuse(contribution, input); !recovered && !translation.Rejected && detected {
-		warning := shellInterpreterWrapperWarning(misuse)
-		warnedPayload, warningInput, _, warningErr := insertExecCommandWarning(payload, warning)
-		if warningErr != nil {
-			return hpatchHistory{}, fmt.Errorf("%s interpreter-wrapper warning: %w", contribution.Name, warningErr)
+	if !translation.Rejected {
+		for _, misuse := range shellInterpreterWrapperMisuses(contribution, input) {
+			misuseWarnings = append(misuseWarnings, shellInterpreterWrapperWarning(misuse))
 		}
-		misuseWarning += warningInput
-		payload = warnedPayload
+	}
+	misuseWarning := ""
+	if recovered {
+		for _, warning := range misuseWarnings {
+			misuseWarning += misuseWarningProjection(warning)
+		}
+		payload = misuseWarning + payload
+	} else {
+		for _, warning := range misuseWarnings {
+			warnedPayload, warningInput, _, warningErr := insertExecCommandWarning(payload, warning)
+			if warningErr != nil {
+				return hpatchHistory{}, fmt.Errorf("%s interpreter-wrapper warning: %w", contribution.Name, warningErr)
+			}
+			misuseWarning += warningInput
+			payload = warnedPayload
+		}
 	}
 
 	metricName := name
@@ -2194,11 +2205,11 @@ var (
 	codeModeProjectionPattern             = regexp.MustCompile(`(?m)(?:^|;)[ \t]*(?:text|image|audio|generatedImage)[ \t]*\(`)
 	shellHeredocPattern                   = regexp.MustCompile(`<<-?`)
 	shellInterpreterCommandWrapperPattern = regexp.MustCompile(
-		`(?i)(?:^|[^[:alnum:]_./+-])/?(?:[[:alnum:]_.+-]+/)*(` + shellInterpreterNamePattern + `)` +
+		`(?i)(?:^|\\[nrt]|[^[:alnum:]_./+-])/?(?:[[:alnum:]_.+-]+/)*(` + shellInterpreterNamePattern + `)` +
 			`((?:[ \t]+-[^ \t\r\n]+)*)[ \t]+(-[[:alpha:]]*[cer]|--(?:command|execute))(?:[^[:alpha:]]|$)`,
 	)
 	shellInterpreterHeredocPattern = regexp.MustCompile(
-		`(?i)(?:^|[^[:alnum:]_./+-])/?(?:[[:alnum:]_.+-]+/)*(` + shellInterpreterNamePattern + `)` +
+		`(?i)(?:^|\\[nrt]|[^[:alnum:]_./+-])/?(?:[[:alnum:]_.+-]+/)*(` + shellInterpreterNamePattern + `)` +
 			`((?:[ \t]+-[^ \t\r\n<]+)*)[ \t]+(-?[ \t]*<<-?)`,
 	)
 )
@@ -2210,12 +2221,15 @@ type shellWrapperMisuse struct {
 	wrapper         string
 }
 
-// Match the raw input intentionally: every heredoc and quoted or commented example warn too.
-func shellInterpreterWrapperMisuse(contribution toolContribution, input string) (shellWrapperMisuse, bool) {
+// Match the raw input intentionally: every heredoc and quoted or commented example warns too.
+func shellInterpreterWrapperMisuses(contribution toolContribution, input string) []shellWrapperMisuse {
 	if contribution.PluginID != "builtin.shell" || contribution.Name != "shell" {
-		return shellWrapperMisuse{}, false
+		return nil
 	}
-	if match := shellInterpreterCommandWrapperPattern.FindStringSubmatch(input); match != nil {
+
+	var misuses []shellWrapperMisuse
+	seenKinds := make(map[string]bool)
+	for _, match := range shellInterpreterCommandWrapperPattern.FindAllStringSubmatch(input, -1) {
 		wrapper := match[3]
 		kind := strings.ToLower(wrapper)
 		interpreterArgs := strings.Fields(match[2])
@@ -2223,29 +2237,34 @@ func shellInterpreterWrapperMisuse(contribution toolContribution, input string) 
 			kind = "-" + strings.ToLower(wrapper[len(wrapper)-1:])
 			interpreterArgs = append(interpreterArgs, "-"+wrapper[1:len(wrapper)-1])
 		}
-		return shellWrapperMisuse{
+		if seenKinds[kind] {
+			continue
+		}
+		seenKinds[kind] = true
+		misuses = append(misuses, shellWrapperMisuse{
 			Kind:            kind,
 			Interpreter:     match[1],
 			InterpreterArgs: interpreterArgs,
 			wrapper:         wrapper,
-		}, true
+		})
 	}
+
 	if match := shellInterpreterHeredocPattern.FindStringSubmatch(input); match != nil {
-		wrapper := "<<"
-		if strings.HasPrefix(strings.TrimSpace(match[3]), "-") {
-			wrapper = "- <<"
+		misuse := shellWrapperMisuse{Kind: "heredoc"}
+		if !shellInterpreterCommandWrapperPattern.MatchString(match[0]) {
+			wrapper := "<<"
+			if strings.HasPrefix(strings.TrimSpace(match[3]), "-") {
+				wrapper = "- <<"
+			}
+			misuse.Interpreter = match[1]
+			misuse.InterpreterArgs = strings.Fields(match[2])
+			misuse.wrapper = wrapper
 		}
-		return shellWrapperMisuse{
-			Kind:            "heredoc",
-			Interpreter:     match[1],
-			InterpreterArgs: strings.Fields(match[2]),
-			wrapper:         wrapper,
-		}, true
+		misuses = append(misuses, misuse)
+	} else if shellHeredocPattern.MatchString(input) {
+		misuses = append(misuses, shellWrapperMisuse{Kind: "heredoc"})
 	}
-	if shellHeredocPattern.MatchString(input) {
-		return shellWrapperMisuse{Kind: "heredoc"}, true
-	}
-	return shellWrapperMisuse{}, false
+	return misuses
 }
 
 func shellInterpreterWrapperWarning(misuse shellWrapperMisuse) string {
