@@ -4,11 +4,11 @@ import {mkdtemp, mkdir, rm, symlink, writeFile} from "node:fs/promises";
 import {tmpdir} from "node:os";
 import path from "node:path";
 
-import {formatHashLine} from "../src/builtin/common.ts";
-import {createHGrepTool, splitArguments} from "../src/builtin/hgrep.ts";
-import {createHReadTool} from "../src/builtin/hread.ts";
-import {createInspectFileTool, inspectFileDescription} from "../src/builtin/inspect_file.ts";
-import plugin from "../src/builtin/tools.ts";
+import {formatHashLine} from "../../../../plugins/common.ts";
+import {createHGrepTool, splitArguments} from "../../../../plugins/hgrep.ts";
+import {createHReadTool} from "../../../../plugins/hread.ts";
+import {createInspectFileTool, inspectFileDescription} from "../../../../plugins/inspect_file.ts";
+import plugin from "../../../../plugins/tools.ts";
 
 const originalCWD = process.cwd();
 const originalPath = process.env.PATH;
@@ -76,6 +76,7 @@ describe("hread built-in plugin", () => {
       "Run one file per command as `hread PATH [START:END]`",
       "batch related reads as separate commands in one shell script",
       "A bare path reads the complete file",
+      "Reason carefully about the command and make sure it matches the `hread PATH [START:END]` syntax",
     ]) {
       expect(description).toContain(fragment);
     }
@@ -263,6 +264,7 @@ describe("hgrep built-in plugin", () => {
       "Use `hgrep` through `shell`",
       "ordinary shell quoting, redirection, and pipelines",
       "use repeated `-e` for multiple patterns",
+      "Reason carefully about the command and make sure it matches hgrep's stated syntax",
     ]) {
       expect(description).toContain(fragment);
     }
@@ -431,6 +433,7 @@ describe("inspect_file built-in plugin", () => {
     ));
     expect(schema.success.data.outline).toBe("outline_entry[]");
     expect(schema.failure.error.code).toContain("outside_workspace");
+    expect(inspectFileDescription).toContain("Reason carefully about the path");
 
     const directory = await temporaryDirectory("inspect-file-");
     process.chdir(directory);

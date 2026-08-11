@@ -388,6 +388,7 @@ export const shellTool = {
     name: "shell",
     description: `Run one free-form script without an outer heredoc or command-string quoting.
 The selected interpreter receives the exact script body, and frontend standard input remains available as program data.
+Reason carefully about the script and make sure it follows the syntax below before calling the tool.
 
 The default interpreter is Bash.
 For non-Bash scripts, put the interpreter command in a shebang on the first line, including interpreter arguments, such

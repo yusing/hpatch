@@ -133,8 +133,8 @@ stable per-plugin and per-tool breakdown derived from that same collection.
 
 The router exposes only hpatch and shell beside the displaced Code Mode `exec` carrier.
 Hpatch remains the native engine contribution. Shell, hread, hgrep, and inspect_file are
-TypeScript-authored built-in plugin contributions compiled by Bun into one embedded JavaScript
-module with the reserved `builtin.shell` identity. Shell is model-visible; hread, hgrep, and
+JavaScript- and TypeScript-authored built-in plugin contributions compiled by Bun into one
+embedded JavaScript module with the reserved `builtin.shell` identity. Shell is model-visible; hread, hgrep, and
 inspect_file retain executable workers and frontends but their specifications are private.
 Configured user tools remain model-visible.
 

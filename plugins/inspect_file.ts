@@ -9,7 +9,7 @@ import {parser as markdownParser} from "@lezer/markdown";
 import {parser as pythonParser} from "@lezer/python";
 import {isMap, isScalar, parseDocument} from "yaml";
 
-import type {Tool} from "../../plugin.d.ts";
+import type {Tool} from "../internal/router/toolplugin/plugin.d.ts";
 import {byteLength, createExecutorTool, errorText, stripOptionalFinalNewline} from "./common.ts";
 import {inspectFileShapeSchemaJSON} from "./inspect_file_schema.ts";
 
@@ -956,6 +956,7 @@ function inspectFileInput(input: string): string[] {
 export const inspectFileDescription = `Use \`inspect_file PATH\` through \`shell\` for bounded file metadata and structural outlines.
 It returns exact JSON for jq and never raw excerpts, bodies, field definitions, frontmatter values, or JSON scalar values.
 Use \`hread\` before editing because inspect_file line numbers are not HPATCH targets.
+Reason carefully about the path and make sure the command matches the \`inspect_file PATH\` syntax.
 
 Result shape schema:
 ${inspectFileShapeSchemaJSON}`;

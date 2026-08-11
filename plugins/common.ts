@@ -1,5 +1,5 @@
 import {createHash} from "node:crypto";
-import type {ExecutionContext, ExecutionResult, Tool, TranslationContext} from "../../plugin.d.ts";
+import type {ExecutionContext, ExecutionResult, Tool, TranslationContext} from "../internal/router/toolplugin/plugin.d.ts";
 
 
 export function byteLength(value: string): number {

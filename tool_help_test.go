@@ -69,19 +69,8 @@ func TestHPatch2ToolGrammarLineTerminators(t *testing.T) {
 		}
 	}
 
-	bodyLines := []*regexp.Regexp{
-		grammarTerminalRegexp(t, "PATCH_BODY_LINE"),
-		grammarTerminalRegexp(t, "PATCH_TYPE_PREFIX_LINE"),
-		grammarTerminalRegexp(t, "PATCH_TYPE_VALUE_LINE"),
-	}
-	matchesBodyLine := func(value string) bool {
-		for _, bodyLine := range bodyLines {
-			if bodyLine.MatchString(value) {
-				return true
-			}
-		}
-		return false
-	}
+	bodyLine := grammarTerminalRegexp(t, "PATCH_BODY_LINE")
+	matchesBodyLine := bodyLine.MatchString
 	for value, want := range map[string]bool{
 		"body\n":                               true,
 		"body\r\n":                             true,
@@ -107,6 +96,7 @@ func TestHPatch2ToolDescriptionCoversSafeCommandChoice(t *testing.T) {
 	for _, guidance := range []string{
 		"HPATCH/2",
 		"Do not call this tool in parallel with other tools.",
+		"Reason carefully about the complete script",
 		"Nonempty line and range `type` replacements preserve",
 		"`type` replaces",
 		"`type-` inserts before",

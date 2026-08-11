@@ -528,10 +528,8 @@ Router shell path: translate the free-form tool call into one native executor ca
 │   ├── hpatchsyntax/             # Shared quoted-string and heredoc framing
 │   ├── patchtest/                # Translated-patch test helper
 │   └── router/
-│       └── toolplugin/
-│           └── src/builtin/      # Built-in shell, hread, hgrep, and inspect_file declarations
-├── plugins/
-│   └── shell.mjs                 # Built-in shell source embedded during generation
+│       └── toolplugin/            # Plugin host, generation, snapshots, and tests
+├── plugins/                       # Built-in shell, hread, hgrep, and inspect_file sources
 ├── benchmarks/                   # Runner, tasks, containers, and checked-in results
 ├── compare/                      # Hand-authored payload scenarios
 ├── contrib/                      # Codex guidance and systemd unit

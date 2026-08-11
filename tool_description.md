@@ -1,5 +1,6 @@
 HPATCH/2 applies one complete target-bearing edit script atomically. Do not call this tool
 in parallel with other tools. Rejection or cancellation changes nothing.
+Reason carefully about the complete script and make sure it obeys the grammar before calling this tool.
 
 Commands:
 
@@ -81,6 +82,6 @@ Overlapping replacements/deletions and insertions strictly inside them reject. B
 insertions are valid. Multiple insertions at the same boundary render in script order.
 
 Changed Go files are parsed and formatted before success; do not run redundant `gofmt`.
-Paths remain within the routed workspace root, and parents for `new` or `mv` must exist.
+Relative paths use the selected base directory when available; without one, relative paths reject; parents for `new` or `mv` must exist.
 After rejection, use the router's indexed command or multiline-value-row correction only
 when the rows still belong to the same baseline; reread stale rows instead of guessing.

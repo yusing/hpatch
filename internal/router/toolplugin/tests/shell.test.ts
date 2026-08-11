@@ -14,8 +14,9 @@ const originalTestValue = process.env.HPATCH_SHELL_TEST;
 const temporaryDirectories: string[] = [];
 const tool = plugin.tools[0];
 
-test("description forbids mixed retained and workspace paths", () => {
+test("description covers syntax and retained path isolation", () => {
   expect(tool.specification.description).toContain("must use only `@shell/` paths");
+  expect(tool.specification.description).toContain("Reason carefully about the script");
 });
 const hostPath = fileURLToPath(new URL("../host.mjs", import.meta.url));
 const repositoryRoot = fileURLToPath(new URL("../../../../", import.meta.url));

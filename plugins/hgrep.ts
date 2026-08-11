@@ -1,6 +1,6 @@
 import {spawn} from "node:child_process";
 
-import type {Tool} from "../../plugin.d.ts";
+import type {Tool} from "../internal/router/toolplugin/plugin.d.ts";
 import {
   byteLength,
   decodeUTF8,

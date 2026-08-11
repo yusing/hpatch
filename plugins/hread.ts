@@ -1,7 +1,7 @@
 import {constants} from "node:fs";
 import {open} from "node:fs/promises";
 
-import type {Tool} from "../../plugin.d.ts";
+import type {Tool} from "../internal/router/toolplugin/plugin.d.ts";
 
 import {
   byteLength,

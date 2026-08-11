@@ -54,7 +54,7 @@ Start with the owner that matches the behavior:
 | Codex authentication and upstream Responses transport | `internal/router/client.go` |
 | Tool replacement, host translation, response restoration, replay, and corrections | `internal/router/hpatch_proxy.go`, `internal/router/hpatch_correction.go` |
 | Carrier catalog and model-visible projection | `internal/router/tool_carrier.go`, `internal/router/tool_registry.go` |
-| Built-in tool sources and private execution runtime | `internal/router/toolplugin/src/builtin`, `plugins/shell.mjs`, `internal/router/toolplugin` |
+| Built-in tool sources and private execution runtime | `plugins`, `internal/router/toolplugin` |
 | Configured plugin discovery, authenticated snapshots, and frontends | `internal/router/toolplugin/runtime.go`, `internal/router/tool_registry.go`, `internal/router/tool_wrapper.go` |
 | Router process signals and top-level exit behavior | `cmd/hpatch-router/main.go` |
 | Normative interface requirements | `doc/spec/interface.md` |
