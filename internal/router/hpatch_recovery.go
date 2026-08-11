@@ -58,8 +58,11 @@ func hpatchRecoveryRows(script string, rejections []hpatch.HostRejection) []int 
 
 		frame, err := hpatchsyntax.FrameCommand(lines, header-1, lines[header-1].Text)
 		if err != nil {
-			if frame.Next > header {
-				appendPhysicalRows(frame.Next)
+			for row := min(frame.Next, len(logicalRows)); row > header; row-- {
+				if len(logicalRows[row-1]) != 0 {
+					appendPhysicalRows(row)
+					break
+				}
 			}
 			continue
 		}

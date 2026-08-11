@@ -439,8 +439,13 @@ Additional boundaries:
 
 Hpatch validates the rendered final state before committing or producing a carrier:
 
-- Changed Go files are formatted with `go/format`; formatting failures reject the complete transaction.
-- When Tree-sitter language support is available, changed `.py`, `.js`, and `.ts` files are syntax-checked. Diagnostics identify the responsible command and generated line and column. Unchanged invalid files are not rejected.
+- Changed Go files are formatted with `go/format`; validation reports every distinct actionable
+  syntax-repair location from all changed Go files before rejecting the complete transaction.
+  Parser cascades that resolve to the same command row are shown once.
+- When Tree-sitter language support is available, changed `.py`, `.js`, and `.ts` files are
+  syntax-checked with the same all-files aggregation. Diagnostics group locations once per
+  responsible command and identify each generated line, column, and heredoc value row.
+  Unchanged invalid files are not rejected.
 - Supported linewise Python, JavaScript, and TypeScript indentation edits receive narrow baseline-aware correction. Ambiguous structure, comments, unsupported extensions, and mixed indentation units remain byte-exact or reject rather than being broadly rewritten.
 - Git-default trailing whitespace, spaces before indentation tabs, and edit-attributed blank lines at EOF are cleaned only on changed lines. Untouched content and binary-looking files are preserved.
 - Any syntax, indentation, target, or conflict failure remains atomic and leaves files unchanged.

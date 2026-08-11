@@ -2320,6 +2320,103 @@ func TestHPatchRecoveryMutatesHeredocBodyByOrdinaryRow(t *testing.T) {
 	}
 }
 
+func TestHPatchRecoveryFixesAllEmittedTargetsAtomically(t *testing.T) {
+	base := "new first.go\n" +
+		"type <<PATCH\n" +
+		"package p\n" +
+		"var =\n" +
+		"var middle = 2\n" +
+		"var =\n" +
+		"PATCH\n" +
+		"new second.go\n" +
+		"type <<PATCH\n" +
+		"package p\n" +
+		"var =\n" +
+		"PATCH\n"
+	want := strings.ReplaceAll(base, "var =", "var fixed = 1")
+	rejections := []hpatch.HostRejection{
+		{Command: 2, SourceLine: 2, Operation: "type", ValueLine: 2},
+		{Command: 2, SourceLine: 2, Operation: "type", ValueLine: 4},
+		{Command: 4, SourceLine: 9, Operation: "type", ValueLine: 2},
+	}
+
+	calls := 0
+	var evaluated string
+	transform, _, _, _ := newHPatchTestTransform(t, hpatchResultTranslatorFunc(func(_ context.Context, _ string, script string) (hpatchTranslationResult, error) {
+		calls++
+		if calls == 1 {
+			return hpatchTranslationResult{
+				diagnostic: "type: command 2, reason language-syntax: 2 distinct syntax failures\n" +
+					"type: command 4, reason language-syntax: expected declaration\n",
+				rejections: rejections,
+			}, errors.New("rejected")
+		}
+		evaluated = script
+		return hpatchTranslationResult{patch: []byte(testTranslatedPatch)}, nil
+	}))
+	first, err := transform.translate("call-1", base, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, row := range []int{4, 6, 11} {
+		if reference := hpatch.TextReferences(base, row); !strings.Contains(first.translationError, reference) {
+			t.Fatalf("guidance lacks row %d reference %q:\n%s", row, reference, first.translationError)
+		}
+	}
+
+	payload := strings.Join([]string{
+		"type " + testRecoveryRow(t, base, 4) + " " + strconv.Quote("var fixed = 1"),
+		"type " + testRecoveryRow(t, base, 6) + " " + strconv.Quote("var fixed = 1"),
+		"type " + testRecoveryRow(t, base, 11) + " " + strconv.Quote("var fixed = 1"),
+	}, "\n") + "\n"
+	result, err := transform.translate("call-2", payload, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.translationError != "" || calls != 2 || evaluated != want {
+		t.Fatalf("recovery = %+v, translations %d, evaluated %q, want %q", result, calls, evaluated, want)
+	}
+}
+
+func TestHPatchRecoveryIntegratesAggregatedEngineRejections(t *testing.T) {
+	base := "new first.go\n" +
+		"type <<PATCH\n" +
+		"package p\n" +
+		"var =\n" +
+		"var middle = 2\n" +
+		"var =\n" +
+		"PATCH\n" +
+		"new second.go\n" +
+		"type <<PATCH\n" +
+		"package p\n" +
+		"var =\n" +
+		"PATCH\n"
+	transform, _, _, _ := newHPatchTestTransform(t, inProcessHPatchTranslator{dataDirectory: t.TempDir()})
+	first, err := transform.translate("call-1", base, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, row := range []int{4, 6, 11} {
+		if reference := hpatch.TextReferences(base, row); !strings.Contains(first.translationError, reference) {
+			t.Fatalf("guidance lacks row %d reference %q:\n%s", row, reference, first.translationError)
+		}
+	}
+
+	payload := strings.Join([]string{
+		"type " + testRecoveryRow(t, base, 4) + " " + strconv.Quote("var fixed = 1"),
+		"type " + testRecoveryRow(t, base, 6) + " " + strconv.Quote("var fixed = 1"),
+		"type " + testRecoveryRow(t, base, 11) + " " + strconv.Quote("var fixed = 1"),
+	}, "\n") + "\n"
+	recovered, err := transform.translate("call-2", payload, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if recovered.translationError != "" || len(recovered.patch) == 0 ||
+		strings.Count(string(recovered.patch), "+var fixed = 1") != 3 {
+		t.Fatalf("recovered translation = %+v", recovered)
+	}
+}
+
 func TestHPatchFailedRecoveryPreservesEvaluatedBaseline(t *testing.T) {
 	base := "new file.txt\ntype \"old\"\n"
 	want := "new file.txt\ntype \"fixed\"\n"
@@ -2607,9 +2704,10 @@ func TestHPatchHistoryEvictsOldestCallsAndSessions(t *testing.T) {
 		callID := fmt.Sprintf("call-%03d", index)
 		err := proxy.rememberBatch("session", map[string]hpatchHistory{
 			callID: {
-				toolName:         hpatchToolName,
-				script:           callID,
-				translationError: "rejected",
+				toolName:          hpatchToolName,
+				script:            callID,
+				translationError:  "rejected",
+				evaluatorRejected: true,
 			},
 		})
 		if err != nil {

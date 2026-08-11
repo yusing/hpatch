@@ -90,6 +90,88 @@ func TestSupportedLanguageSyntaxDiagnostics(t *testing.T) {
 	}
 }
 
+func TestLanguageSyntaxDiagnosticsCollectDistinctCommandsAndFiles(t *testing.T) {
+	requireTreeSitterIndentation(t)
+	rootPath := t.TempDir()
+	javaScript := "const first = 1;\nconst second = 2;\n"
+	typeScript := "const third: number = 3;\n"
+	writeTestFile(t, rootPath, "first.js", javaScript, 0o644)
+	writeTestFile(t, rootPath, "second.ts", typeScript, 0o644)
+	script := strings.Join([]string{
+		"in first.js",
+		"type " + row(1, "const first = 1;") + ` "const first = ;"`,
+		"type " + row(2, "const second = 2;") + ` "const second = ;"`,
+		"in second.ts",
+		"type " + row(1, "const third: number = 3;") + ` "const third: number = ;"`,
+	}, "\n")
+
+	root, err := os.OpenRoot(rootPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := TranslateForHost(t.Context(), Workspace{Root: root}, script, t.TempDir())
+	root.Close()
+	if err == nil {
+		t.Fatal("invalid sources unexpectedly translated")
+	}
+	if got := result.Rejections; len(got) != 3 ||
+		got[0].Command != 2 || got[0].Path != "first.js" ||
+		got[1].Command != 3 || got[1].Path != "first.js" ||
+		got[2].Command != 5 || got[2].Path != "second.ts" {
+		t.Fatalf("rejections = %#v, want all three syntax failures", got)
+	}
+	if got := readTestFile(t, rootPath, "first.js"); got != javaScript {
+		t.Fatalf("first.js = %q, want unchanged", got)
+	}
+	if got := readTestFile(t, rootPath, "second.ts"); got != typeScript {
+		t.Fatalf("second.ts = %q, want unchanged", got)
+	}
+}
+
+func TestLanguageCascadeCollapsePreservesSameLineColumns(t *testing.T) {
+	requireTreeSitterIndentation(t)
+	failures := []languageSyntaxFailure{
+		{line: 1, column: 7, kind: "first"},
+		{line: 1, column: 20, kind: "second"},
+	}
+	got := collapseLanguageSyntaxCascades(
+		t.Context(),
+		"const first = ; const second = ;\n",
+		indentationLanguageJavaScript,
+		failures,
+	)
+	if len(got) != 2 || got[0].column != 7 || got[1].column != 20 {
+		t.Fatalf("collapsed failures = %#v, want both same-line columns", got)
+	}
+}
+
+func TestLanguageSyntaxDiagnosticsCollectHeredocLocationsAndCascades(t *testing.T) {
+	requireTreeSitterIndentation(t)
+	body := "const first = ;\n" +
+		strings.Repeat("const filler = 1;\n", 50) +
+		"const second = ;\n"
+	script := "new file.js\ntype <<PATCH\n" + body + "PATCH\n"
+
+	rootPath := t.TempDir()
+	root, err := os.OpenRoot(rootPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := TranslateForHost(t.Context(), Workspace{Root: root}, script, t.TempDir())
+	root.Close()
+	if err == nil {
+		t.Fatal("invalid JavaScript unexpectedly translated")
+	}
+	if got := result.Rejections; len(got) != 2 ||
+		got[0].Command != 2 || got[0].ValueLine != 1 ||
+		got[1].Command != 2 || got[1].ValueLine != 52 {
+		t.Fatalf("rejections = %#v, want heredoc value rows 1 and 52", got)
+	}
+	if count := strings.Count(result.Diagnostic, `type: command 2, path "file.js", reason language-syntax: 2 distinct syntax failures`); count != 1 {
+		t.Fatalf("diagnostic command groups = %d, want 1:\n%s", count, result.Diagnostic)
+	}
+}
+
 func TestLanguageSyntaxDiagnosticRepairsMultilineValue(t *testing.T) {
 	requireTreeSitterIndentation(t)
 	rootPath := t.TempDir()

@@ -119,15 +119,11 @@ func (p *program) evaluate(ctx context.Context, resolve pathResolver, load fileL
 	if err := ctx.Err(); err != nil {
 		return nil, events, "", err
 	}
-	if failure := w.formatGoFiles(); failure != nil {
-		if failure.Operation != "" {
-			events.fail(failure.Operation, failure.Attempt, failure.Reason)
-		}
-		return nil, events, "", failure
-	}
-	if failure := w.validateLanguageFiles(ctx); failure != nil {
-		if failure.Operation != "" {
-			events.fail(failure.Operation, failure.Attempt, failure.Reason)
+	if failure := w.validationFailure(ctx); failure != nil {
+		for _, command := range commandsOf(failure) {
+			if command.Operation != "" {
+				events.fail(command.Operation, command.Attempt, command.Reason)
+			}
 		}
 		return nil, events, "", failure
 	}

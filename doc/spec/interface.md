@@ -819,10 +819,13 @@ failures never enter this ancestry.
 
 Every evaluator rejection exposes current targetable rejected-script `LINE:HASH` rows and
 the instruction to use hpatch without `in`. Command-header rows use structured rejection
-source lines. Complete heredocs also expose the closing delimiter and bounded context around
-a localized value row. Malformed frames expose their last targetable attributable row rather
-than an invented trailing row. A rebuilt script that is reevaluated and rejected becomes the
-next baseline, so later recovery hashes always address the latest evaluated script.
+source lines. Syntax validation supplies one structured rejection entry for every distinct
+actionable repair location from every changed file, ordered by originating command and then
+localized value row. Complete heredocs expose the closing delimiter and bounded context around
+every localized value row, so one atomic recovery payload can repair all emitted targets.
+Malformed frames expose their last targetable attributable row rather than an invented trailing
+row. A rebuilt script that is reevaluated and rejected becomes the next baseline, so later
+recovery hashes always address the latest evaluated script.
 
 The chain retains its correlation ID and increments the attempt for evaluated and
 proxy-rejected recovery calls. Replay restores the exact short payload emitted by the model,
@@ -970,16 +973,21 @@ Acceptance:
 
 Input is read completely and the entire script is evaluated before an external filesystem
 commit or stdout. Before finalization, every changed file whose final path ends in `.go`
-is parsed and formatted with Go's standard-library `go/format`; a parse failure rejects
-the complete transaction. For at most 32 content-mutating commands in one invalid Go file,
-the evaluator replays command-group subsets against the immutable baseline to select a
-one-minimal syntax-failing set, then attributes the failure to the retained edit nearest the
-generated parser position. Larger groups or an invalid baseline use nearest-edit attribution
-without subset replay. The rejection includes at most two generated lines before and after
-the failing line; neighboring lines are capped at 64 runes and the failing line at 200.
-Supported changed `.py`, `.js`, and `.ts` files are syntax-checked when Tree-sitter
-language support is available. Supported baseline-aware indentation corrections are applied
-before validation; unsupported extensions remain byte-exact or reject under indentation policy.
+is parsed and formatted with Go's standard-library `go/format`; parse failures are collected
+from every changed Go file before the complete transaction rejects. For at most 32
+content-mutating commands in one invalid Go file, the evaluator replays command-group subsets
+against the immutable baseline to select a one-minimal syntax-failing set, then attributes
+each useful parser failure to the retained edit nearest its generated parser position. Larger
+groups or an invalid baseline use nearest-edit attribution without subset replay. Supported
+changed `.py`, `.js`, and `.ts` files are syntax-checked when Tree-sitter language support is
+available and contribute all discovered failures to the same validation result. Parser
+cascades are collapsed when blanking an earlier repair line removes a later parser failure.
+Failures are deduplicated by originating command and physical heredoc value row, or by the
+command's script row when no physical value row exists. Each retained location includes at
+most two generated lines before and after the failing line; neighboring lines are capped at
+64 runes and the failing line at 200. Supported baseline-aware indentation corrections are
+applied before validation; unsupported extensions remain byte-exact or reject under
+indentation policy.
 An unchanged normal-mode change set performs no
 filesystem operation but still reports final state.
 An unchanged translate result emits no patch and fails because it cannot represent an
@@ -1092,10 +1100,16 @@ OP: command N[, path "PATH"], reason REASON: MESSAGE
 
 The visible command line omits source line, a repeated operation field, and category.
 Structured host rejection data retain command index, source line, operation, path, generated
-position, and localized value row when applicable; hook data also retain category. Independently
-parseable syntax failures may be reported together before evaluation. A heredoc failure is
-owned by its header and may additionally report its attributable source span. Control bytes
-are escaped and embedded newlines are folded so one failure remains one logical line.
+position, and localized value row when applicable; hook data also retain category. Validation
+orders failures by command index and then localized value row. It emits one visible command
+line per originating command and path. A command with several distinct repair locations uses
+the message `N distinct syntax failures`, followed by bounded repair context for every
+location; structured host data contain one rejection entry per location. Duplicate parser
+messages that resolve to the same command and physical value row, or to the same inline script
+row, remain one visible location. Independently parseable syntax failures may be reported
+together before evaluation. A heredoc failure is owned by its header and may additionally
+report its attributable source span. Control bytes are escaped and embedded newlines are
+folded so one command failure remains one logical line.
 Failures return nonzero and emit no stdout or final-state report. Malformed row syntax
 receives a syntax diagnostic.
 
@@ -1106,12 +1120,12 @@ depends on content introduced by another command, the diagnostic directs the age
 apply the prerequisite independently, reread, and submit a later invocation. A missing
 row or failure without a verified baseline does not choose repair context. Repair context
 is supplementary: it never changes exit status, stdout, mutation, or metrics classification.
-When invalid generated Go is localized to a fixed-heredoc mutation, its rejection identity
-includes the non-sensitive `value_line`. Transient root diagnostics describe bounded value
-rows as context rather than mutation addresses. Routed diagnostics add current targetable
-rejected-script `LINE:HASH` rows for the command header, localized body context, and closing
-delimiter under `REQ-CORRECT-001`. Inline decoded
-multiline values and failures outside a multiline replacement do not fabricate a value row.
+When invalid generated source is localized to a fixed-heredoc mutation, each distinct rejection
+identity includes the non-sensitive `value_line`. Transient root diagnostics describe every
+bounded value-row context rather than mutation addresses. Routed diagnostics add current
+targetable rejected-script `LINE:HASH` rows for the command header, every localized body
+context, and the closing delimiter under `REQ-CORRECT-001`. Inline decoded multiline values
+and failures outside a multiline replacement do not fabricate a value row.
 
 Acceptance:
 
@@ -1140,6 +1154,10 @@ Acceptance:
    diagnostic alone.
 9. Invalid Go localized inside a fixed `<<PATCH` value reports its physical body row in
    bounded repair context and structured host rejection identity without retaining body text.
+10. One syntax-validation rejection includes every distinct actionable repair location from
+    all changed files, groups visible diagnostics once per originating command and path,
+    deduplicates parser cascades by repair row, and exposes enough current rejected-script rows
+    for one atomic recovery payload to repair all locations.
 
 ## REQ-GUIDE-001 — Agent guidance
 

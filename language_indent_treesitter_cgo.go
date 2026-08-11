@@ -3,6 +3,7 @@
 package hpatch
 
 import (
+	"slices"
 	"strings"
 
 	sitter "github.com/tree-sitter/go-tree-sitter"
@@ -165,41 +166,52 @@ func proveWrapperMembership(root *sitter.Node, source string, probe indentationW
 	return false
 }
 
-func findLanguageSyntaxFailure(source string, language indentationWrapperLanguage) (languageSyntaxFailure, bool) {
+func findLanguageSyntaxFailures(source string, language indentationWrapperLanguage) []languageSyntaxFailure {
 	tree := parseIndentationTree(source, language)
 	if tree == nil {
-		return languageSyntaxFailure{}, false
+		return nil
 	}
 	defer tree.Close()
 	root := tree.RootNode()
 	if root == nil || !root.HasError() {
-		return languageSyntaxFailure{}, false
+		return nil
 	}
 
-	var earliest *sitter.Node
+	var nodes []*sitter.Node
 	var visit func(*sitter.Node)
 	visit = func(node *sitter.Node) {
 		if node == nil {
 			return
 		}
-		if (node.IsError() || node.IsMissing()) && syntaxNodePrecedes(node, earliest) {
-			earliest = node
+		if node.IsError() || node.IsMissing() {
+			nodes = append(nodes, node)
 		}
 		for index := uint(0); index < node.ChildCount(); index++ {
 			visit(node.Child(index))
 		}
 	}
 	visit(root)
-	if earliest == nil {
-		return languageSyntaxFailure{}, false
+	slices.SortFunc(nodes, func(first, second *sitter.Node) int {
+		if syntaxNodePrecedes(first, second) {
+			return -1
+		}
+		if syntaxNodePrecedes(second, first) {
+			return 1
+		}
+		return 0
+	})
+
+	failures := make([]languageSyntaxFailure, 0, len(nodes))
+	for _, node := range nodes {
+		position := node.StartPosition()
+		failures = append(failures, languageSyntaxFailure{
+			line:    int(position.Row) + 1,
+			column:  int(position.Column) + 1,
+			kind:    node.Kind(),
+			missing: node.IsMissing(),
+		})
 	}
-	position := earliest.StartPosition()
-	return languageSyntaxFailure{
-		line:    int(position.Row) + 1,
-		column:  int(position.Column) + 1,
-		kind:    earliest.Kind(),
-		missing: earliest.IsMissing(),
-	}, true
+	return failures
 }
 
 func syntaxNodePrecedes(candidate, current *sitter.Node) bool {

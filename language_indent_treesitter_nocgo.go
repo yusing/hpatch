@@ -12,6 +12,6 @@ func proveWrapperMemberships(_ string, probes []indentationWrapperProbe, _ inden
 	return make([]bool, len(probes))
 }
 
-func findLanguageSyntaxFailure(string, indentationWrapperLanguage) (languageSyntaxFailure, bool) {
-	return languageSyntaxFailure{}, false
+func findLanguageSyntaxFailures(string, indentationWrapperLanguage) []languageSyntaxFailure {
+	return nil
 }

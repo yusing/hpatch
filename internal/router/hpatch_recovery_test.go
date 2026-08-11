@@ -60,14 +60,18 @@ func TestHPatchRecoveryGuidanceUsesOrdinaryScriptRows(t *testing.T) {
 }
 
 func TestHPatchRecoveryRowsExposeMalformedFrameEnd(t *testing.T) {
-	script := "in file.go\ntype 1:ffff <<PATCH\nbad\n"
-	rejections := []hpatch.HostRejection{{
-		Command: 2, SourceLine: 2, Operation: "type",
-	}}
-	got := hpatch.TextReferences(script, hpatchRecoveryRows(script, rejections)...)
-	for _, row := range []int{2, 3} {
-		if want := hpatch.TextReferences(script, row); !strings.Contains(got, want) {
-			t.Fatalf("references do not contain row %d:\n%s", row, got)
+	for _, script := range []string{
+		"in file.go\ntype 1:ffff <<PATCH\nbad\n",
+		"in file.go\ntype 1:ffff <<PATCH\nbad",
+	} {
+		rejections := []hpatch.HostRejection{{
+			Command: 2, SourceLine: 2, Operation: "type",
+		}}
+		got := hpatch.TextReferences(script, hpatchRecoveryRows(script, rejections)...)
+		for _, row := range []int{2, 3} {
+			if want := hpatch.TextReferences(script, row); !strings.Contains(got, want) {
+				t.Fatalf("references do not contain row %d:\n%s", row, got)
+			}
 		}
 	}
 }

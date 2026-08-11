@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"go/format"
+	"go/parser"
 	"go/scanner"
 	"go/token"
 	"path/filepath"
@@ -87,17 +88,27 @@ func hostRejectionsOf(err error) []HostRejection {
 	commands := commandsOf(err)
 	rejections := make([]HostRejection, 0, len(commands))
 	for _, command := range commands {
-		rejections = append(rejections, HostRejection{
-			Command:         command.Command,
-			SourceLine:      command.Line,
-			Operation:       command.Operation,
-			Target:          hostTargetName(command.Attempt.target),
-			Reason:          hostReasonName(command.Reason),
-			Path:            command.Path,
-			GeneratedLine:   command.GeneratedLine,
-			GeneratedColumn: command.GeneratedColumn,
-			ValueLine:       command.ValueLine,
-		})
+		locations := command.Locations
+		if len(locations) == 0 {
+			locations = []commandErrorLocation{{
+				GeneratedLine:   command.GeneratedLine,
+				GeneratedColumn: command.GeneratedColumn,
+				ValueLine:       command.ValueLine,
+			}}
+		}
+		for _, location := range locations {
+			rejections = append(rejections, HostRejection{
+				Command:         command.Command,
+				SourceLine:      command.Line,
+				Operation:       command.Operation,
+				Target:          hostTargetName(command.Attempt.target),
+				Reason:          hostReasonName(command.Reason),
+				Path:            command.Path,
+				GeneratedLine:   location.GeneratedLine,
+				GeneratedColumn: location.GeneratedColumn,
+				ValueLine:       location.ValueLine,
+			})
+		}
 	}
 	return rejections
 }
@@ -117,8 +128,24 @@ func hostReasonName(reason failureReason) string {
 	return failureReasonNames[reason]
 }
 
-func (w *workspace) formatGoFiles() *commandError {
+func (w *workspace) validationFailure(ctx context.Context) error {
+	failures := w.formatGoFiles(ctx)
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	failures = append(failures, w.validateLanguageFiles(ctx)...)
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return groupValidationFailures(failures)
+}
+
+func (w *workspace) formatGoFiles(ctx context.Context) []*commandError {
+	var failures []*commandError
 	for _, file := range w.files {
+		if ctx.Err() != nil {
+			return failures
+		}
 		if file.deleted || filepath.Ext(file.path) != ".go" {
 			continue
 		}
@@ -128,33 +155,41 @@ func (w *workspace) formatGoFiles() *commandError {
 		}
 		formatted, err := format.Source([]byte(content))
 		if err != nil {
-			line, column := generatedPositionOf(err)
-			location := file.editor.syntaxFailureLocation(content, line, column)
-			if location.origin.command == 0 {
-				location.origin = file.validationOrigin()
+			for _, failure := range discoverGoSyntaxFailures(ctx, content, err) {
+				location := file.editor.syntaxFailureLocation(content, failure.line, failure.column)
+				if location.origin.command == 0 {
+					location.origin = file.validationOrigin()
+				}
+				repair := generatedSourceRepair(content, failure.line, failure.column)
+				repair += multilineValueRepair(location.origin.command, location.replacement, location.valueLine)
+				commandFailure := formatCommandError(
+					file, location.origin, reasonLanguageSyntax, failure.message,
+					repair, failure.line, failure.column, location.valueLine,
+				)
+				if !failure.counted {
+					commandFailure.Occurrences = 0
+				}
+				failures = append(failures, commandFailure)
 			}
-			repair := generatedSourceRepair(content, line, column)
-			repair += multilineValueRepair(location.origin.command, location.replacement, location.valueLine)
-			return formatCommandError(
-				file, location.origin, reasonLanguageSyntax, goSyntaxFailureMessage(err),
-				repair, line, column, location.valueLine,
-			)
+			continue
 		}
 		if string(formatted) != content {
 			final := string(formatted)
 			offsets, err := newFormattedOffsetMap(content, final)
 			if err != nil {
-				return formatCommandError(file, file.validationOrigin(), reasonOther, fmt.Sprintf("map formatted Go source: %v", err), "", 0, 0, 0)
+				failures = append(failures, formatCommandError(file, file.validationOrigin(), reasonOther, fmt.Sprintf("map formatted Go source: %v", err), "", 0, 0, 0))
+				continue
 			}
 			file.editor.finalContent = &final
 			file.editor.finalOffsets = offsets
 		}
 	}
 	w.autofixWhitespace()
-	return nil
+	return failures
 }
 
-func (w *workspace) validateLanguageFiles(ctx context.Context) *commandError {
+func (w *workspace) validateLanguageFiles(ctx context.Context) []*commandError {
+	var failures []*commandError
 	for _, file := range w.files {
 		if err := ctx.Err(); err != nil {
 			return nil
@@ -167,31 +202,30 @@ func (w *workspace) validateLanguageFiles(ctx context.Context) *commandError {
 		if !file.created && file.originalPath == file.path && file.original == content {
 			continue
 		}
-		failure, found := findLanguageSyntaxFailure(content, language)
+		syntaxFailures := collapseLanguageSyntaxCascades(ctx, content, language, findLanguageSyntaxFailures(content, language))
 		if err := ctx.Err(); err != nil {
 			return nil
 		}
-		if !found {
-			continue
+		for _, failure := range syntaxFailures {
+			location := file.editor.languageSyntaxFailureLocation(content, failure.line, failure.column, language)
+			if location.origin.command == 0 {
+				location.origin = file.validationOrigin()
+			}
+			repair := generatedSourceRepairForLanguage(content, failure.line, failure.column, name)
+			repair += multilineValueRepair(location.origin.command, location.replacement, location.valueLine)
+			failures = append(failures, formatCommandError(
+				file,
+				location.origin,
+				reasonLanguageSyntax,
+				languageSyntaxFailureMessage(name, failure),
+				repair,
+				failure.line,
+				failure.column,
+				location.valueLine,
+			))
 		}
-		location := file.editor.languageSyntaxFailureLocation(content, failure.line, failure.column, language)
-		if location.origin.command == 0 {
-			location.origin = file.validationOrigin()
-		}
-		repair := generatedSourceRepairForLanguage(content, failure.line, failure.column, name)
-		repair += multilineValueRepair(location.origin.command, location.replacement, location.valueLine)
-		return formatCommandError(
-			file,
-			location.origin,
-			reasonLanguageSyntax,
-			languageSyntaxFailureMessage(name, failure),
-			repair,
-			failure.line,
-			failure.column,
-			location.valueLine,
-		)
 	}
-	return nil
+	return failures
 }
 
 func languageSyntaxForPath(path string) (indentationWrapperLanguage, string, bool) {
@@ -227,22 +261,320 @@ func (f *fileState) validationOrigin() editOrigin {
 	return f.mutationOrigin
 }
 
-func generatedPositionOf(err error) (int, int) {
-	if failures, ok := errors.AsType[scanner.ErrorList](err); ok && len(failures) != 0 && failures[0] != nil {
-		return failures[0].Pos.Line, failures[0].Pos.Column
-	}
-	return 0, 0
+type goSyntaxFailure struct {
+	line    int
+	column  int
+	message string
+	counted bool
 }
 
-func goSyntaxFailureMessage(err error) string {
-	if failures, ok := errors.AsType[scanner.ErrorList](err); ok && len(failures) != 0 && failures[0] != nil {
-		message := failures[0].Msg
-		if omitted := len(failures) - 1; omitted > 0 {
-			return fmt.Sprintf("%s (and %d more errors)", message, omitted)
+func goSyntaxFailures(err error) []goSyntaxFailure {
+	if scannerFailures, ok := errors.AsType[scanner.ErrorList](err); ok && len(scannerFailures) != 0 {
+		failures := make([]goSyntaxFailure, 0, len(scannerFailures))
+		for _, failure := range scannerFailures {
+			if failure == nil {
+				continue
+			}
+			failures = append(failures, goSyntaxFailure{
+				line:    failure.Pos.Line,
+				column:  failure.Pos.Column,
+				message: failure.Msg,
+				counted: true,
+			})
 		}
-		return message
+		if len(failures) != 0 {
+			return failures
+		}
 	}
-	return err.Error()
+	return []goSyntaxFailure{{message: err.Error(), counted: true}}
+}
+
+func parseGoSyntaxFailures(source string) []goSyntaxFailure {
+	_, err := parser.ParseFile(
+		token.NewFileSet(),
+		"",
+		source,
+		parser.AllErrors|parser.ParseComments|parser.SkipObjectResolution,
+	)
+	if err == nil {
+		return nil
+	}
+	return goSyntaxFailures(err)
+}
+
+func goSyntaxFailuresForSource(source string, fallback error) []goSyntaxFailure {
+	failures := parseGoSyntaxFailures(source)
+	if len(failures) == 0 {
+		if fallback == nil {
+			return nil
+		}
+		return goSyntaxFailures(fallback)
+	}
+	if fallback == nil {
+		return failures
+	}
+
+	type position struct {
+		line   int
+		column int
+	}
+	counted := make(map[position]int)
+	for _, failure := range goSyntaxFailures(fallback) {
+		counted[position{line: failure.line, column: failure.column}]++
+	}
+	for index := range failures {
+		key := position{line: failures[index].line, column: failures[index].column}
+		failures[index].counted = counted[key] > 0
+		if failures[index].counted {
+			counted[key]--
+		}
+	}
+	return failures
+}
+
+func discoverGoSyntaxFailures(ctx context.Context, content string, initial error) []goSyntaxFailure {
+	candidate := content
+	fallback := initial
+	seenLines := make(map[int]bool)
+	var discovered []goSyntaxFailure
+	for {
+		if ctx.Err() != nil {
+			return discovered
+		}
+		failures := goSyntaxFailuresForSource(candidate, fallback)
+		fallback = nil
+		if len(failures) == 0 {
+			return discovered
+		}
+		collapsed := collapseGoSyntaxCascades(ctx, candidate, failures)
+		newLines := make(map[int]bool)
+		for _, failure := range collapsed {
+			if failure.line > 0 && !seenLines[failure.line] {
+				newLines[failure.line] = true
+			}
+		}
+		if len(newLines) == 0 {
+			if len(discovered) == 0 {
+				discovered = append(discovered, collapsed...)
+			}
+			return discovered
+		}
+		for _, failure := range collapsed {
+			if newLines[failure.line] {
+				discovered = append(discovered, failure)
+			}
+		}
+		for line := range newLines {
+			seenLines[line] = true
+			var ok bool
+			candidate, ok = blankGeneratedLine(candidate, line)
+			if !ok {
+				return discovered
+			}
+		}
+	}
+}
+
+func collapseGoSyntaxCascades(ctx context.Context, content string, failures []goSyntaxFailure) []goSyntaxFailure {
+	locations := make([]goSyntaxFailure, 0, len(failures))
+	collapsed := make([]goSyntaxFailure, 0, len(failures))
+	remainingByRepairLine := make(map[int]map[int]struct{})
+	for _, failure := range failures {
+		if ctx.Err() != nil {
+			return collapsed
+		}
+		mapped := false
+		for _, location := range locations {
+			if failure.line == location.line {
+				mapped = true
+				break
+			}
+			if location.line < 1 {
+				continue
+			}
+			remaining, ok := remainingByRepairLine[location.line]
+			if !ok {
+				if ctx.Err() != nil {
+					return collapsed
+				}
+				remaining = goSyntaxFailureLinesAfterBlank(content, location.line)
+				remainingByRepairLine[location.line] = remaining
+			}
+			if _, remains := remaining[failure.line]; !remains {
+				counted := failure.counted
+				failure = location
+				failure.counted = counted
+				mapped = true
+				break
+			}
+		}
+		if !mapped {
+			locations = append(locations, failure)
+		}
+		collapsed = append(collapsed, failure)
+	}
+	return collapsed
+}
+
+func goSyntaxFailureLinesAfterBlank(content string, repairLine int) map[int]struct{} {
+	candidate, ok := blankGeneratedLine(content, repairLine)
+	if !ok {
+		return nil
+	}
+	lines := make(map[int]struct{})
+	for _, failure := range parseGoSyntaxFailures(candidate) {
+		lines[failure.line] = struct{}{}
+	}
+	return lines
+}
+
+func collapseLanguageSyntaxCascades(ctx context.Context, content string, language indentationWrapperLanguage, failures []languageSyntaxFailure) []languageSyntaxFailure {
+	locations := make([]languageSyntaxFailure, 0, len(failures))
+	collapsed := make([]languageSyntaxFailure, 0, len(failures))
+	remainingByRepairLine := make(map[int]map[int]struct{})
+	for _, failure := range failures {
+		if ctx.Err() != nil {
+			return collapsed
+		}
+		mapped := false
+		for _, location := range locations {
+			if failure.line == location.line {
+				mapped = true
+				break
+			}
+			if location.line < 1 {
+				continue
+			}
+			remaining, ok := remainingByRepairLine[location.line]
+			if !ok {
+				if ctx.Err() != nil {
+					return collapsed
+				}
+				remaining = languageSyntaxFailureLinesAfterBlank(content, language, location.line)
+				remainingByRepairLine[location.line] = remaining
+			}
+			if _, remains := remaining[failure.line]; !remains {
+				failure = location
+				mapped = true
+				break
+			}
+		}
+		if !mapped {
+			locations = append(locations, failure)
+		}
+		collapsed = append(collapsed, failure)
+	}
+	return collapsed
+}
+
+func languageSyntaxFailureLinesAfterBlank(content string, language indentationWrapperLanguage, repairLine int) map[int]struct{} {
+	candidate, ok := blankGeneratedLine(content, repairLine)
+	if !ok {
+		return nil
+	}
+	lines := make(map[int]struct{})
+	for _, failure := range findLanguageSyntaxFailures(candidate, language) {
+		lines[failure.line] = struct{}{}
+	}
+	return lines
+}
+
+func blankGeneratedLine(content string, line int) (string, bool) {
+	lines := renderedLines(content)
+	if line < 1 || line > len(lines) {
+		return "", false
+	}
+	current := lines[line-1]
+	candidate := []byte(content)
+	for index := current.start; index < current.contentEnd; index++ {
+		candidate[index] = ' '
+	}
+	return string(candidate), true
+}
+
+type validationFailureGroupKey struct {
+	command int
+	path    string
+}
+
+func groupValidationFailures(failures []*commandError) error {
+	if len(failures) == 0 {
+		return nil
+	}
+	slices.SortFunc(failures, func(first, second *commandError) int {
+		if order := cmp.Compare(first.Command, second.Command); order != 0 {
+			return order
+		}
+		if order := cmp.Compare(first.Path, second.Path); order != 0 {
+			return order
+		}
+		if order := cmp.Compare(first.ValueLine, second.ValueLine); order != 0 {
+			return order
+		}
+		if order := cmp.Compare(first.GeneratedLine, second.GeneratedLine); order != 0 {
+			return order
+		}
+		return cmp.Compare(first.GeneratedColumn, second.GeneratedColumn)
+	})
+
+	indices := make(map[validationFailureGroupKey]int)
+	groups := make([]*commandError, 0, len(failures))
+	for _, failure := range failures {
+		key := validationFailureGroupKey{command: failure.Command, path: failure.Path}
+		index, ok := indices[key]
+		if !ok {
+			index = len(groups)
+			indices[key] = index
+			group := *failure
+			group.Repair = ""
+			group.Locations = nil
+			groups = append(groups, &group)
+		}
+		group := groups[index]
+		locationIndex := slices.IndexFunc(group.Locations, func(location commandErrorLocation) bool {
+			return location.ValueLine == failure.ValueLine
+		})
+		if locationIndex >= 0 {
+			group.Locations[locationIndex].Occurrences += failure.Occurrences
+			continue
+		}
+		group.Locations = append(group.Locations, commandErrorLocation{
+			Message:         failure.Message,
+			Repair:          failure.Repair,
+			GeneratedLine:   failure.GeneratedLine,
+			GeneratedColumn: failure.GeneratedColumn,
+			ValueLine:       failure.ValueLine,
+			Occurrences:     max(failure.Occurrences, 1),
+		})
+	}
+
+	for _, group := range groups {
+		first := group.Locations[0]
+		group.GeneratedLine = first.GeneratedLine
+		group.GeneratedColumn = first.GeneratedColumn
+		group.ValueLine = first.ValueLine
+		if len(group.Locations) == 1 {
+			group.Message = first.Message
+			if first.Occurrences > 1 {
+				group.Message = fmt.Sprintf("%s (and %d more errors)", group.Message, first.Occurrences-1)
+			}
+		} else {
+			group.Message = fmt.Sprintf("%d distinct syntax failures", len(group.Locations))
+		}
+		for _, location := range group.Locations {
+			if location.Repair == "" {
+				continue
+			}
+			if group.Repair != "" {
+				group.Repair += "\n"
+			}
+			group.Repair += location.Repair
+		}
+	}
+	if len(groups) == 1 {
+		return groups[0]
+	}
+	return &commandGroupError{commands: groups}
 }
 
 const syntaxLocalizationGroupLimit = 32
@@ -271,8 +603,7 @@ func (e *editor) syntaxFailureLocation(content string, line, column int) syntaxF
 
 func (e *editor) languageSyntaxFailureLocation(content string, line, column int, language indentationWrapperLanguage) syntaxFailureLocation {
 	return e.syntaxFailureLocationWith(content, line, column, func(source string) bool {
-		_, found := findLanguageSyntaxFailure(source, language)
-		return !found
+		return len(findLanguageSyntaxFailures(source, language)) == 0
 	})
 }
 
@@ -551,6 +882,7 @@ func formatCommandError(file *fileState, origin editOrigin, reason failureReason
 		Path:            file.path,
 		Category:        category,
 		Message:         message,
+		Occurrences:     1,
 		Repair:          repair,
 		GeneratedLine:   generatedLine,
 		GeneratedColumn: generatedColumn,

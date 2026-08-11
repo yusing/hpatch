@@ -102,6 +102,15 @@ func commandsOf(err error) []*commandError {
 	return nil
 }
 
+type commandErrorLocation struct {
+	Message         string
+	Repair          string
+	GeneratedLine   int
+	GeneratedColumn int
+	ValueLine       int
+	Occurrences     int
+}
+
 type commandError struct {
 	Attempt         commandAttempt
 	Reason          failureReason
@@ -115,10 +124,12 @@ type commandError struct {
 	GeneratedLine   int
 	GeneratedColumn int
 	ValueLine       int
+	Occurrences     int
 	// Repair is multi-line baseline context that a retry needs in order to
 	// correct this command. It is excluded from Error, whose result is
 	// sanitized onto one line, and is emitted separately.
-	Repair string
+	Repair    string
+	Locations []commandErrorLocation
 }
 
 func (e *commandError) Error() string {
