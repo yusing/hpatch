@@ -1,6 +1,7 @@
 package router
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"os"
@@ -61,18 +62,39 @@ func TestHPatchAppliesRetainedShellArtifactDirectly(t *testing.T) {
 	if !retained {
 		t.Fatal("shell script was not retained")
 	}
-	history, err := transform.translate("call-edit", "in "+reference+"\ntype 1:ef86 \"printf fixed\"\n", nil)
+	history, err := transform.translate("call-edit", "in "+reference+"\ntype 1:ef86 \"printf @shell/fixed\"\n", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	path := filepath.Join(proxy.shellSessionDirectory(transform.sessionID), "call-shell")
-	if content, err := os.ReadFile(path); err != nil || string(content) != "printf fixed\n" {
+	if content, err := os.ReadFile(path); err != nil || string(content) != "printf @shell/fixed\n" {
 		t.Fatalf("applied content = %q, %v", content, err)
 	}
 	if !history.applied || history.patch != "" || strings.Contains(history.carrierInput(), "apply_patch") || strings.Contains(history.carrierInput(), "exec_command") {
 		t.Fatalf("retained edit used host patch carrier: %+v, %s", history, history.carrierInput())
 	}
 }
+
+func TestHPatchTreatsShellArtifactLiteralAsContent(t *testing.T) {
+	const script = "in /tmp/repro.txt\ntype 1:6db7 \"literal @shell/ marker\"\n"
+	calls := 0
+	translator := hpatchTranslatorFunc(func(_ context.Context, _ string, gotScript string) ([]byte, error) {
+		calls++
+		if gotScript != script {
+			t.Fatalf("script = %q", gotScript)
+		}
+		return []byte(testTranslatedPatch), nil
+	})
+	transform, _, _, _ := newHPatchTestTransform(t, translator)
+	history, err := transform.translate("call-edit", script, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if calls != 1 || history.applied {
+		t.Fatalf("translations = %d, applied = %v", calls, history.applied)
+	}
+}
+
 func TestShellResultMetadata(t *testing.T) {
 	carrier, err := workerExecInputWithParams(
 		"shell",

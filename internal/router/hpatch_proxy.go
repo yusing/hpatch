@@ -1390,7 +1390,13 @@ func (t *hpatchResponseTransform) translate(callID, input string, upstreamItem m
 	applied := false
 	var translated hpatchTranslationResult
 	var err error
-	if t.proxy.shellDirectory != "" && strings.Contains(evaluated, shellArtifactPrefix) {
+	retainedStart := len(evaluated) - len(strings.TrimLeft(evaluated, "\r\n"))
+	retainedScript := evaluated
+	retainedBody, retained := strings.CutPrefix(evaluated[retainedStart:], "in "+shellArtifactPrefix)
+	if retained {
+		retainedScript = evaluated[:retainedStart] + "in " + retainedBody
+	}
+	if t.proxy.shellDirectory != "" && retained {
 		directory := t.proxy.shellSessionDirectory(t.sessionID)
 		root, openErr := os.OpenRoot(directory)
 		if openErr != nil {
@@ -1401,7 +1407,7 @@ func (t *hpatchResponseTransform) translate(callID, input string, upstreamItem m
 		if !ok {
 			return hpatchHistory{}, errors.New("hpatch translator cannot apply retained shell edits")
 		}
-		translated, err = applier.Apply(attemptContext, root, strings.ReplaceAll(evaluated, shellArtifactPrefix, ""))
+		translated, err = applier.Apply(attemptContext, root, retainedScript)
 		applied = err == nil
 	} else {
 		translated, err = t.proxy.translator.Translate(attemptContext, t.directory, evaluated)
