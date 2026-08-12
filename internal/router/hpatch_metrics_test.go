@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -176,10 +177,13 @@ func TestHPatchRecoveryChargesEmittedPayloadNotRebuiltScript(t *testing.T) {
 	if records[0].DiagnosticInputTokens == 0 {
 		t.Fatal("rejection diagnostic carrying recovery guidance was not charged as model input")
 	}
-	if got, want := records[1].HPatchTokens, count("functions.hpatch_recover\n"+payload); got != want {
-		t.Fatalf("recovery charge = %d, want %d for the emitted payload", got, want)
+	if got, want := records[1].attemptHPatchTokens, count("functions.hpatch_recover\n"+payload); got != want {
+		t.Fatalf("recovery attempt charge = %d, want %d for the emitted payload", got, want)
 	}
-	if got := records[1].HPatchTokens; got == count("functions.hpatch_recover\n"+rebuilt) {
+	if got, want := records[1].HPatchTokens, count("functions.hpatch\n"+base)+count("functions.hpatch_recover\n"+payload); got != want {
+		t.Fatalf("settled recovery chain = %d, want combined payloads %d", got, want)
+	}
+	if got := records[1].attemptHPatchTokens; got == count("functions.hpatch_recover\n"+rebuilt) {
 		t.Fatalf("recovery charged the rebuilt script (%d) instead of the emitted payload", got)
 	}
 	if got, want := records[1].ApplyPatchTokens, count("functions.exec\n"+applyPatchMetricProgram(testTranslatedPatch)); got != want {
@@ -205,6 +209,76 @@ func TestHPatchRecoveryChargesEmittedPayloadNotRebuiltScript(t *testing.T) {
 	}
 	if rejected.CorrelationID != recovered.CorrelationID || rejected.Attempt != 1 || recovered.Attempt != 2 {
 		t.Fatalf("recovery chain = %+v and %+v", rejected, recovered)
+	}
+}
+
+func TestEvictedRecoveryAttemptsRemainInChainSettlement(t *testing.T) {
+	proxy := newManagedHPatchProxy(t, testTranslator(t, new(int)))
+	const correlationID = "chain"
+	for attempt := 1; attempt <= maxSessionTurns+2; attempt++ {
+		toolName := hpatchRecoveryToolName
+		if attempt == 1 {
+			toolName = hpatchToolName
+		}
+		history := hpatchHistory{
+			toolName: toolName, script: "payload-" + strconv.Itoa(attempt),
+			translationError: "rejected", evaluatorRejected: true,
+			correlationID: correlationID, attempt: attempt,
+		}
+		if err := proxy.rememberBatch("session", map[string]hpatchHistory{
+			"call-" + strconv.Itoa(attempt): history,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	settled := proxy.recoverySettlement("session", correlationID)
+	survivors := proxy.recoveryChain("session", correlationID)
+	record, err := calculateHPatchMetricRecord(hpatchMetricInputs{
+		attempt: hpatch.AttemptMetadata{
+			SessionID: "session", CorrelationID: correlationID,
+			CallID: "success", Attempt: maxSessionTurns + 3, Correction: true,
+		},
+		emittedScript:   "successful-recovery",
+		emittedTool:     hpatchRecoveryToolName,
+		successful:      true,
+		patch:           testTranslatedPatch,
+		priorSettlement: settled,
+		priorAttempts:   survivors,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wantEmitted uint64
+	for attempt := 1; attempt <= maxSessionTurns+2; attempt++ {
+		toolName := hpatchRecoveryToolName
+		if attempt == 1 {
+			toolName = hpatchToolName
+		}
+		prior, err := calculateHPatchMetricRecord(hpatchMetricInputs{
+			emittedScript: "payload-" + strconv.Itoa(attempt),
+			emittedTool:   toolName,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		wantEmitted += prior.IneffectiveHPatchTokens
+	}
+	success, err := calculateHPatchMetricRecord(hpatchMetricInputs{
+		emittedScript: "successful-recovery",
+		emittedTool:   hpatchRecoveryToolName,
+		successful:    true,
+		patch:         testTranslatedPatch,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantEmitted += success.HPatchTokens
+	if record.HPatchTokens != wantEmitted || record.IneffectiveHPatchTokens != 0 ||
+		record.FailedApplyPatchTokens != 0 || record.ApplyPatchTokens != success.ApplyPatchTokens {
+		t.Fatalf("settled evicted chain = %+v; want emitted %d and comparator %d", record, wantEmitted, success.ApplyPatchTokens)
+	}
+	if record.Compensation.FailedApplyPatchTokens == 0 {
+		t.Fatal("settlement did not compensate the initial failed comparator")
 	}
 }
 

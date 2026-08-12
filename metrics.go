@@ -133,6 +133,7 @@ type metrics struct {
 	SharedDefinitionInputTokens             int64
 	ToolCount                               uint16
 	Tools                                   [maxMetricTools]toolMetric
+	compensation                            HostMetricCompensation
 }
 
 func commandOperationIndex(operation string) int {
@@ -227,6 +228,10 @@ func updateMetricsForSessionContext(ctx context.Context, dataDirectory string, e
 			entry.clearDefinitionMetrics()
 		}
 	}
+	if err := total.subtract(entry.compensation); err != nil {
+		return err
+	}
+	entry.compensation = HostMetricCompensation{}
 	if err := total.add(entry); err != nil {
 		return err
 	}
@@ -301,6 +306,41 @@ func (m *metrics) add(entry metrics) error {
 	}
 	if !validInvocationMetrics(m.invocationMetrics) || !validToolMetrics(*m) {
 		return fmt.Errorf("updating metrics: aggregate command, feature, or tool counters are inconsistent")
+	}
+	return nil
+}
+
+func (m *metrics) subtract(removal HostMetricCompensation) error {
+	for _, counter := range []struct {
+		destination *uint64
+		decrement   uint64
+	}{
+		{&m.HPatchTokens, removal.HPatchTokens},
+		{&m.ApplyPatchTokens, removal.ApplyPatchTokens},
+		{&m.IneffectiveHPatchTokens, removal.IneffectiveHPatchTokens},
+		{&m.FailedApplyPatchTokens, removal.FailedApplyPatchTokens},
+	} {
+		if counter.decrement > *counter.destination {
+			return fmt.Errorf("updating metrics: compensation exceeds recorded token count")
+		}
+		*counter.destination -= counter.decrement
+	}
+	for _, removed := range removal.ToolMetrics[:removal.ToolCount] {
+		found := false
+		for index := range m.ToolCount {
+			current := &m.Tools[index]
+			if current.PluginID != removed.PluginID || current.ToolName != removed.ToolName {
+				continue
+			}
+			if !subtractToolMetricRecord(current, removed) {
+				return fmt.Errorf("updating metrics: tool compensation exceeds recorded counters")
+			}
+			found = true
+			break
+		}
+		if !found {
+			return fmt.Errorf("updating metrics: compensated tool is not recorded")
+		}
 	}
 	return nil
 }

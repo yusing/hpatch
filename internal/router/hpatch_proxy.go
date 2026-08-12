@@ -188,8 +188,9 @@ type hpatchHistory struct {
 }
 
 type hpatchHistorySession struct {
-	calls map[string]hpatchHistory
-	bytes int
+	calls       map[string]hpatchHistory
+	bytes       int
+	settlements map[string]hpatchChainSettlement
 	// nextSequence is the order to assign the session's next retained call.
 	nextSequence uint64
 	lastUsed     uint64
@@ -999,6 +1000,9 @@ func (p *hpatchProxy) rememberBatch(sessionID string, histories map[string]hpatc
 		oldSessionBytes = existing.bytes
 		sessionBytes = existing.bytes
 	}
+	if existing != nil && existing.settlements == nil {
+		existing.settlements = make(map[string]hpatchChainSettlement)
+	}
 
 	callIDs := slices.Collect(maps.Keys(prepared))
 	slices.SortFunc(callIDs, func(first, second string) int {
@@ -1030,7 +1034,15 @@ func (p *hpatchProxy) rememberBatch(sessionID string, histories map[string]hpatc
 			}
 			return errors.New("hpatch history byte capacity reached")
 		}
-		sessionBytes -= calls[oldest].bytes
+		evicted := calls[oldest]
+		if evicted.correlationID != "" {
+			settlement := existing.settlements[evicted.correlationID]
+			if err := settlement.add(evicted); err != nil {
+				return err
+			}
+			existing.settlements[evicted.correlationID] = settlement
+		}
+		sessionBytes -= evicted.bytes
 		delete(calls, oldest)
 	}
 
@@ -1075,8 +1087,13 @@ func (p *hpatchProxy) rememberBatch(sessionID string, histories map[string]hpatc
 	}
 
 	if existing == nil {
-		existing = &hpatchHistorySession{}
+		existing = &hpatchHistorySession{settlements: make(map[string]hpatchChainSettlement)}
 		p.sessions[sessionID] = existing
+	}
+	for _, history := range prepared {
+		if history.correlationID != "" && history.translationError == "" {
+			delete(existing.settlements, history.correlationID)
+		}
 	}
 	existing.calls = calls
 	existing.bytes = sessionBytes
@@ -1158,6 +1175,33 @@ func (p *hpatchProxy) latestRecoveryAttempt(sessionID, correlationID string) int
 		return 0
 	}
 	return latestRecoveryAttempt(maps.Values(session.calls), correlationID)
+}
+
+func (p *hpatchProxy) recoveryChain(sessionID, correlationID string) []hpatchHistory {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	session := p.sessions[sessionID]
+	if session == nil {
+		return nil
+	}
+	chain := make([]hpatchHistory, 0)
+	for _, history := range session.calls {
+		if history.correlationID == correlationID &&
+			(history.toolName == hpatchToolName || history.toolName == hpatchRecoveryToolName) {
+			chain = append(chain, history)
+		}
+	}
+	return chain
+}
+
+func (p *hpatchProxy) recoverySettlement(sessionID, correlationID string) hpatchChainSettlement {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	session := p.sessions[sessionID]
+	if session == nil {
+		return hpatchChainSettlement{}
+	}
+	return session.settlements[correlationID]
 }
 
 // recoveryBaseline is the complete rejected script a following recovery edits.
@@ -1469,7 +1513,7 @@ func (t *hpatchResponseTransform) translateRecovery(
 			upstreamItem,
 		)
 	}
-	history, err := t.translateRecovered(callID, input, rebuilt, attemptMetadata, upstreamItem)
+	history, err := t.translateRecovered(callID, input, rebuilt, attemptMetadata, t.recoveryChain(attemptMetadata.CorrelationID), upstreamItem)
 	if err == nil {
 		history.toolName = hpatchRecoveryToolName
 		t.local[callID] = history
@@ -1480,6 +1524,7 @@ func (t *hpatchResponseTransform) translateRecovery(
 func (t *hpatchResponseTransform) translateRecovered(
 	callID, emitted, evaluated string,
 	attemptMetadata hpatch.AttemptMetadata,
+	priorAttempts []hpatchHistory,
 	upstreamItem map[string]json.RawMessage,
 ) (hpatchHistory, error) {
 	attemptContext := hpatch.WithAttemptMetadata(t.ctx, attemptMetadata)
@@ -1527,14 +1572,16 @@ func (t *hpatchResponseTransform) translateRecovered(
 	}
 	patchText := string(translated.patch)
 	if err := t.recordMetrics(hpatchMetricInputs{
-		invocation:    translated.invocation,
-		attempt:       attemptMetadata,
-		emittedScript: emitted,
-		emittedTool:   hpatchRecoveryToolName,
-		report:        translated.report,
-		patch:         patchText,
-		successful:    true,
-		diagnostic:    translated.diagnostic,
+		invocation:      translated.invocation,
+		attempt:         attemptMetadata,
+		emittedScript:   emitted,
+		emittedTool:     hpatchRecoveryToolName,
+		report:          translated.report,
+		patch:           patchText,
+		successful:      true,
+		diagnostic:      translated.diagnostic,
+		priorAttempts:   priorAttempts,
+		priorSettlement: t.recoverySettlement(attemptMetadata.CorrelationID),
 	}); err != nil {
 		return hpatchHistory{}, err
 	}
@@ -2039,6 +2086,21 @@ func (t *hpatchResponseTransform) recoveryHistory() (hpatchHistory, error) {
 		}
 	}
 	return t.proxy.recoverableHistory(t.historySessionID)
+}
+
+func (t *hpatchResponseTransform) recoveryChain(correlationID string) []hpatchHistory {
+	chain := t.proxy.recoveryChain(t.historySessionID, correlationID)
+	for _, history := range t.local {
+		if history.correlationID == correlationID &&
+			(history.toolName == hpatchToolName || history.toolName == hpatchRecoveryToolName) {
+			chain = append(chain, history)
+		}
+	}
+	return chain
+}
+
+func (t *hpatchResponseTransform) recoverySettlement(correlationID string) hpatchChainSettlement {
+	return t.proxy.recoverySettlement(t.historySessionID, correlationID)
 }
 
 func (t *hpatchResponseTransform) nextRecoveryAttempt(correlationID string, baseAttempt int) int {

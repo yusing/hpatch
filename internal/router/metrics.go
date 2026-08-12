@@ -201,12 +201,20 @@ func hpatchAttemptMetricsOf(record hpatchMetricRecord) (hpatchAttemptMetrics, bo
 	switch {
 	case record.HPatchTokens != 0 && record.IneffectiveHPatchTokens == 0:
 		attempt.Outcome = "successful"
-		attempt.EmittedHPatchTokens = record.HPatchTokens
-		attempt.ApplyPatchTokens = record.ApplyPatchTokens
+		attempt.EmittedHPatchTokens = record.attemptHPatchTokens
+		attempt.ApplyPatchTokens = record.attemptApplyPatchTokens
+		if attempt.EmittedHPatchTokens == 0 {
+			attempt.EmittedHPatchTokens = record.HPatchTokens
+			attempt.ApplyPatchTokens = record.ApplyPatchTokens
+		}
 	case record.HPatchTokens == 0 && record.IneffectiveHPatchTokens != 0:
 		attempt.Outcome = "rejected"
-		attempt.EmittedHPatchTokens = record.IneffectiveHPatchTokens
-		attempt.ApplyPatchTokens = record.FailedApplyPatchTokens
+		attempt.EmittedHPatchTokens = record.attemptHPatchTokens
+		attempt.ApplyPatchTokens = record.attemptApplyPatchTokens
+		if attempt.EmittedHPatchTokens == 0 {
+			attempt.EmittedHPatchTokens = record.IneffectiveHPatchTokens
+			attempt.ApplyPatchTokens = record.FailedApplyPatchTokens
+		}
 	default:
 		return hpatchAttemptMetrics{}, false
 	}

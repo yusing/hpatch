@@ -47,6 +47,19 @@ type HostMetricRecord struct {
 	ToolMetrics                             []ToolMetricRecord
 	SharedDefinitionInputTokens             int64
 	hostRecoveries                          [recoveryKindCount]uint64
+
+	Compensation HostMetricCompensation
+}
+
+// HostMetricCompensation removes an earlier provisional failed-chain
+// classification in the same atomic metrics update that records its settlement.
+type HostMetricCompensation struct {
+	HPatchTokens            uint64
+	ApplyPatchTokens        uint64
+	IneffectiveHPatchTokens uint64
+	FailedApplyPatchTokens  uint64
+	ToolMetrics             [2]ToolMetricRecord
+	ToolCount               uint8
 }
 
 func (r HostMetricRecord) entry() (metrics, error) {
@@ -65,6 +78,7 @@ func (r HostMetricRecord) entry() (metrics, error) {
 		RemovedDefinitionInputTokens:            r.RemovedDefinitionInputTokens,
 		RemovedExecCommandDefinitionInputTokens: r.RemovedExecCommandDefinitionInputTokens,
 		SharedDefinitionInputTokens:             r.SharedDefinitionInputTokens,
+		compensation:                            r.Compensation,
 	}
 	for index, count := range r.hostRecoveries {
 		if !addCounter(&entry.Recoveries[index], count) {
@@ -92,6 +106,9 @@ func RecordHostMetrics(ctx context.Context, dataDirectory string, record HostMet
 	}
 	if err := ctx.Err(); err != nil {
 		return err
+	}
+	if int(record.Compensation.ToolCount) > len(record.Compensation.ToolMetrics) {
+		return fmt.Errorf("host metrics compensation contains too many tools")
 	}
 	if record.DefinitionRequests > 1 {
 		return fmt.Errorf("host metrics contain more than one definition request")

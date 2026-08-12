@@ -337,6 +337,33 @@ func addToolMetricRecord(destination *ToolMetricRecord, increment ToolMetricReco
 		addCounter(&destination.StockInputTokens, increment.StockInputTokens)
 }
 
+func subtractToolMetricRecord(destination *ToolMetricRecord, removal ToolMetricRecord) bool {
+	pairs := []struct {
+		destination *uint64
+		decrement   uint64
+	}{
+		{&destination.DefinitionInputTokens, removal.DefinitionInputTokens},
+		{&destination.Calls, removal.Calls},
+		{&destination.EmittedTokens, removal.EmittedTokens},
+		{&destination.TranslatedTokens, removal.TranslatedTokens},
+		{&destination.FailedTranslations, removal.FailedTranslations},
+		{&destination.FailedEmittedTokens, removal.FailedEmittedTokens},
+		{&destination.FailedTranslatedTokens, removal.FailedTranslatedTokens},
+		{&destination.Executions, removal.Executions},
+		{&destination.CurrentInputTokens, removal.CurrentInputTokens},
+		{&destination.StockInputTokens, removal.StockInputTokens},
+	}
+	for _, pair := range pairs {
+		if pair.decrement > *pair.destination {
+			return false
+		}
+	}
+	for _, pair := range pairs {
+		*pair.destination -= pair.decrement
+	}
+	return true
+}
+
 func (m *metrics) addTool(increment toolMetric) error {
 	for index := range int(m.ToolCount) {
 		current := &m.Tools[index]

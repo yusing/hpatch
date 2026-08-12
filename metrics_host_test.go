@@ -164,6 +164,59 @@ func TestHostMetricRecordPersistsCompleteCallerEntry(t *testing.T) {
 	}
 }
 
+func TestRecordHostMetricsSettlesProvisionalFailedChainAtomically(t *testing.T) {
+	dataDirectory := t.TempDir()
+	failedHPatch := ToolMetricRecord{
+		PluginID: "builtin.hpatch", ToolName: "hpatch",
+		FailedTranslations: 1, FailedEmittedTokens: 5, FailedTranslatedTokens: 2,
+	}
+	failedRecovery := ToolMetricRecord{
+		PluginID: "builtin.hpatch", ToolName: "hpatch_recover",
+		FailedTranslations: 1, FailedEmittedTokens: 3,
+	}
+	for _, record := range []HostMetricRecord{
+		{
+			IneffectiveHPatchTokens: 5, FailedApplyPatchTokens: 2,
+			ToolMetrics: []ToolMetricRecord{failedHPatch},
+		},
+		{
+			IneffectiveHPatchTokens: 3,
+			ToolMetrics:             []ToolMetricRecord{failedRecovery},
+		},
+	} {
+		if err := RecordHostMetrics(t.Context(), dataDirectory, record); err != nil {
+			t.Fatal(err)
+		}
+	}
+	settled := HostMetricRecord{
+		HPatchTokens: 11, ApplyPatchTokens: 13,
+		ToolMetrics: []ToolMetricRecord{
+			{PluginID: "builtin.hpatch", ToolName: "hpatch", Calls: 1, EmittedTokens: 5},
+			{PluginID: "builtin.hpatch", ToolName: "hpatch_recover", Calls: 2, EmittedTokens: 6, TranslatedTokens: 13},
+		},
+		Compensation: HostMetricCompensation{
+			IneffectiveHPatchTokens: 8, FailedApplyPatchTokens: 2,
+			ToolMetrics: [2]ToolMetricRecord{failedHPatch, failedRecovery},
+			ToolCount:   2,
+		},
+	}
+	if err := RecordHostMetrics(t.Context(), dataDirectory, settled); err != nil {
+		t.Fatal(err)
+	}
+	got, err := LoadGainMetrics(dataDirectory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.HPatchTokens != 11 || got.ApplyPatchTokens != 13 ||
+		got.IneffectiveHPatchTokens != 0 || got.FailedApplyPatchTokens != 0 {
+		t.Fatalf("settled chain gain = %+v", got)
+	}
+	if len(got.Tools) != 2 || got.Tools[0].Failed || got.Tools[1].Failed ||
+		got.Tools[0].Calls+got.Tools[1].Calls != 3 {
+		t.Fatalf("settled tool rows = %+v", got.Tools)
+	}
+}
+
 func TestRecordHostMetricsRejectsInvalidDefinitionAttribution(t *testing.T) {
 	tests := []struct {
 		name   string
