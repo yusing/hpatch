@@ -28,7 +28,7 @@ func TestKnownReplayCarrierRejectsTamperedIdentity(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			err = proxy.restoreInputPrefix(&request, "session")
+			err = proxy.reconcileInputPrefix(&request, "session")
 			if err == nil || !strings.Contains(err.Error(), test.want) {
 				t.Fatalf("error = %v, want containing %q", err, test.want)
 			}
@@ -47,7 +47,7 @@ func TestKnownReplayOutputRemainsValid(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := proxy.restoreInputPrefix(&request, "session"); err != nil {
+	if err := proxy.reconcileInputPrefix(&request, "session"); err != nil {
 		t.Fatal(err)
 	}
 }

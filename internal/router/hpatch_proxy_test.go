@@ -1095,7 +1095,7 @@ func TestHPatchJSONWrapsPatchAndImmediateReportInCodeModeExec(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := proxy.restoreInputPrefix(&replay, transform.historySessionID); err != nil {
+	if err := proxy.reconcileInputPrefix(&replay, transform.historySessionID); err != nil {
 		t.Fatal(err)
 	}
 	var items []json.RawMessage
@@ -1382,11 +1382,11 @@ func TestShellRecoversLunaCodeModePrograms(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := proxy.restoreInputPrefix(&replay, transform.historySessionID); err != nil {
+			if err := proxy.reconcileInputPrefix(&replay, transform.historySessionID); err != nil {
 				t.Fatal(err)
 			}
 			firstReplay := bytes.Clone(replay.fields["input"])
-			if err := proxy.restoreInputPrefix(&replay, transform.historySessionID); err != nil {
+			if err := proxy.reconcileInputPrefix(&replay, transform.historySessionID); err != nil {
 				t.Fatal(err)
 			}
 			if !bytes.Equal(replay.fields["input"], firstReplay) {
@@ -2042,7 +2042,7 @@ func TestHPatchReplayPreservesImmediateApplyFailure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := proxy.restoreInputPrefix(&request, "session"); err != nil {
+	if err := proxy.reconcileInputPrefix(&request, "session"); err != nil {
 		t.Fatal(err)
 	}
 	if !bytes.Contains(request.fields["input"], []byte(jsonQuoted(applyFailure))) || bytes.Contains(request.fields["input"], []byte(jsonQuoted(testHPatchReport))) {
@@ -2059,12 +2059,12 @@ func TestHPatchReplayRejectsChangedExecCarrierAndIgnoresUnrelatedCalls(t *testin
 	changed, _ := parseResponsesRequest(mustTestJSON(t, map[string]any{"input": []any{map[string]any{
 		"type": "custom_tool_call", "name": "exec", "call_id": "call-H", "input": "changed",
 	}}}))
-	if err := proxy.restoreInputPrefix(&changed, "session"); err == nil {
+	if err := proxy.reconcileInputPrefix(&changed, "session"); err == nil {
 		t.Fatal("changed replay was accepted")
 	}
 	unrelated, _ := parseResponsesRequest([]byte(`{"input":[{"type":"custom_tool_call","name":"exec","call_id":"native","input":"unchanged"}]}`))
 	before := bytes.Clone(unrelated.fields["input"])
-	if err := proxy.restoreInputPrefix(&unrelated, "session"); err != nil || !bytes.Equal(before, unrelated.fields["input"]) {
+	if err := proxy.reconcileInputPrefix(&unrelated, "session"); err != nil || !bytes.Equal(before, unrelated.fields["input"]) {
 		t.Fatalf("unrelated call changed to %s, error %v", unrelated.fields["input"], err)
 	}
 }

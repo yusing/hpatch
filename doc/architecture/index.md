@@ -123,6 +123,11 @@ additionally scoped to the selected canonical metadata directory, or to the expl
 state, preventing a reused cache key from exposing recovery or replay state across worktrees.
 Retained recovery and replay history is bounded: the oldest calls within a session and the
 least-recently used inactive sessions are evicted before capacity can reject new completed work.
+Retained history is also reconciled against each request: because truncation only removes a
+suffix of a conversation, every retained call newer than the newest one the request's input still
+shows belongs to a discarded turn and is dropped, releasing its call and byte budget. A request
+the router rejects mutates no retained state, and a session with a second in-flight turn is not
+reconciled because that turn's calls are committed only at response completion.
 An active request protects its session throughout replay restoration and response transformation.
 Background Responses requests reject before upstream forwarding because
 the router has no retrieval boundary for their eventual result. Malformed SSE state is

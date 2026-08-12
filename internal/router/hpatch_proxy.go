@@ -456,7 +456,7 @@ func (p *hpatchProxy) prepareRequest(ctx context.Context, request *parsedRespons
 	if err := p.activateSession(historySessionID); err != nil {
 		return nil, err
 	}
-	if err := p.restoreInputPrefix(request, historySessionID); err != nil {
+	if err := p.reconcileInputPrefix(request, historySessionID); err != nil {
 		p.deactivateSession(historySessionID)
 		return nil, err
 	}
@@ -1170,7 +1170,9 @@ func (p *hpatchProxy) history(sessionID, callID string) (hpatchHistory, bool) {
 	return history, ok
 }
 
-func (p *hpatchProxy) restoreInputPrefix(request *parsedResponsesRequest, sessionID string) error {
+// reconcileInputPrefix replays retained hpatch calls into the request's input
+// and prunes the retained calls the conversation no longer shows.
+func (p *hpatchProxy) reconcileInputPrefix(request *parsedResponsesRequest, sessionID string) error {
 	raw, ok := request.fields["input"]
 	if !ok {
 		return nil
@@ -1180,6 +1182,7 @@ func (p *hpatchProxy) restoreInputPrefix(request *parsedResponsesRequest, sessio
 		return nil //nolint:nilerr // Non-array input cannot contain replayable hpatch calls.
 	}
 	changed := false
+	newestRetained := uint64(0)
 	validatedCarriers := make(map[string]bool)
 	for index, item := range items {
 		itemType := jsonString(item, "type")
@@ -1188,6 +1191,9 @@ func (p *hpatchProxy) restoreInputPrefix(request *parsedResponsesRequest, sessio
 		if !known {
 			continue
 		}
+		// Record before the output-item skip below, so a call the input shows
+		// only as its output sibling still counts as surviving.
+		newestRetained = max(newestRetained, history.sequence)
 		carrierKind := history.effectiveCarrierKind()
 		if itemType == carrierOutputItemType(carrierKind) {
 			continue
@@ -1228,7 +1234,41 @@ func (p *hpatchProxy) restoreInputPrefix(request *parsedResponsesRequest, sessio
 		}
 		request.fields["input"] = encoded
 	}
+	p.pruneSessionAfter(sessionID, newestRetained)
 	return nil
+}
+
+// pruneSessionAfter drops every retained call newer than the newest one the
+// current request's input still shows. Truncation only ever removes a suffix of
+// the conversation, so the newer calls belong to turns the model no longer
+// sees: keeping them would let recovery edit a discarded script, and would let
+// them consume the history budget that a surviving call needs to replay.
+func (p *hpatchProxy) pruneSessionAfter(sessionID string, newest uint64) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	// A second in-flight turn commits its calls only at response completion, so
+	// this request's input cannot show them and pruning would discard them.
+	if p.activeSessions[sessionID] > 1 {
+		return
+	}
+	session := p.sessions[sessionID]
+	if session == nil {
+		return
+	}
+	pruned := 0
+	for callID, history := range session.calls {
+		if history.sequence > newest {
+			pruned += history.bytes
+			delete(session.calls, callID)
+		}
+	}
+	if pruned == 0 {
+		return
+	}
+	// nextSequence stays monotonic so a later call still outranks every
+	// survivor and recovery keeps resolving "newest" correctly.
+	session.bytes -= pruned
+	p.historyBytes -= pruned
 }
 
 func (t *hpatchResponseTransform) translate(callID, input string, upstreamItem map[string]json.RawMessage) (hpatchHistory, error) {

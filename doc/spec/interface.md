@@ -852,7 +852,10 @@ state, and calls the root text editor. It then reparses and reevaluates the comp
 script normally. A malformed, stale, conflicting, cross-worktree, or otherwise invalid
 recovery changes neither retained ancestry nor workspace state. Proxy-rejected attempts
 leave the last evaluated script as the next recovery baseline. Non-hpatch plugin and shell
-failures never enter this ancestry.
+failures never enter this ancestry. A rejected script is recoverable only while the
+conversation still shows its call: when a request's input no longer carries a retained call,
+that call and every later one leave the ancestry, so an edited or truncated conversation
+cannot recover a script the model can no longer see.
 
 Every evaluator rejection exposes current targetable rejected-script `LINE:HASH` rows and
 the instruction to use hpatch without `in`. Command-header rows use structured rejection
@@ -883,9 +886,11 @@ Acceptance:
    a later attempt.
 5. Recovery cannot cross routing sessions or selected worktrees, and unrelated plugin or
    shell failures cannot become recovery bases.
-6. Correlation, attempt sequencing, replay shape, retained-root behavior, and emitted-payload
+6. A rejection whose call the current input no longer shows is not a recovery base, while an
+   older call the input still shows keeps replaying and remains recoverable.
+7. Correlation, attempt sequencing, replay shape, retained-root behavior, and emitted-payload
    token accounting remain stable across the chain.
-7. Indexed forms such as `N: COMMAND`, `N: accept`, `-N`, `+N: COMMAND`, `N+: COMMAND`, and
+8. Indexed forms such as `N: COMMAND`, `N: accept`, `-N`, `+N: COMMAND`, `N+: COMMAND`, and
    dotted value-row operations are ordinary script syntax errors, not compatibility paths.
 
 ## REQ-FILE-001 — File scope and lifecycle

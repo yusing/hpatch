@@ -167,7 +167,7 @@ func TestToolPluginRequestJSONAndReplay(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := proxy.restoreInputPrefix(&replay, transform.historySessionID); err != nil {
+	if err := proxy.reconcileInputPrefix(&replay, transform.historySessionID); err != nil {
 		t.Fatal(err)
 	}
 	var replayed []map[string]json.RawMessage
@@ -186,7 +186,7 @@ func TestToolPluginRequestJSONAndReplay(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := proxy.restoreInputPrefix(&replay, transform.historySessionID); err == nil ||
+	if err := proxy.reconcileInputPrefix(&replay, transform.historySessionID); err == nil ||
 		!strings.Contains(err.Error(), "changed translated payload") {
 		t.Fatalf("tampered replay error = %v", err)
 	}
@@ -394,7 +394,7 @@ func TestToolPluginGenericCarriers(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				if err := proxy.restoreInputPrefix(&replay, transform.historySessionID); err != nil {
+				if err := proxy.reconcileInputPrefix(&replay, transform.historySessionID); err != nil {
 					t.Fatal(err)
 				}
 				var restored []map[string]json.RawMessage
