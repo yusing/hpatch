@@ -12,6 +12,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"os"
 	"sync/atomic"
 	"time"
 )
@@ -74,7 +75,7 @@ func Run(ctx context.Context, args []string, stderr io.Writer) (runErr error) {
 			inner:   newInProcessHPatchTranslator(gainDirectory),
 			metrics: metrics,
 		}
-		registry, err := buildToolRegistry(ctx, gainDirectory, translator.ToolDescription())
+		registry, err := buildToolRegistry(ctx, gainDirectory, translator.ToolDescription(), os.Getenv("HPATCH_DIAGNOSE") == "1")
 		if err != nil {
 			return fmt.Errorf("initialize tool registry: %w", err)
 		}

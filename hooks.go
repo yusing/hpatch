@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"text/template"
@@ -27,8 +28,9 @@ type settings struct {
 }
 
 type hooks struct {
-	Error   []string `json:"error"`
-	Outcome []string `json:"outcome"`
+	Error    []string `json:"error"`
+	Diagnose []string `json:"diagnose"`
+	Outcome  []string `json:"outcome"`
 }
 
 type attemptHookFields struct {
@@ -95,17 +97,56 @@ func runCommandErrorHooks(ctx context.Context, dataDirectory string, sourceError
 			continue
 		}
 		event := newErrorHookEvent(ctx, sourceError, diagnostic)
-		for index, source := range configured.Hooks.Error {
-			command, err := renderHook(source, event, event.Body)
-			if err != nil {
-				hookErrors = append(hookErrors, fmt.Errorf("rendering error hook %d: %w", index+1, err))
-				continue
-			}
-			if err := executeErrorHook(ctx, command); err != nil {
-				hookErrors = append(hookErrors, fmt.Errorf("running error hook %d: %w", index+1, err))
-				if ctx.Err() != nil {
-					return hookErrors
-				}
+		hookErrors = append(hookErrors, runRenderedHooks(ctx, "error", configured.Hooks.Error, event, event.Body)...)
+		if ctx.Err() != nil {
+			return hookErrors
+		}
+	}
+	return hookErrors
+}
+
+// DiagnoseHooks is a snapshot of configured agent-report commands.
+type DiagnoseHooks []string
+
+// LoadDiagnoseHooks reads the configured agent-report commands.
+func LoadDiagnoseHooks(dataDirectory string) (DiagnoseHooks, error) {
+	if dataDirectory == "" {
+		return nil, nil
+	}
+	configured, err := readSettings(dataDirectory)
+	if err != nil {
+		return nil, err
+	}
+	return slices.Clone(configured.Hooks.Diagnose), nil
+}
+
+// Report sends agent-authored Markdown to the snapshotted diagnose hooks.
+func (hooks DiagnoseHooks) Report(ctx context.Context, markdown string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if len(hooks) == 0 {
+		return nil
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, errorHooksTimeout)
+	defer cancel()
+	event := struct{ Body string }{Body: markdown}
+	return errors.Join(runRenderedHooks(ctx, "diagnose", hooks, event, event.Body)...)
+}
+
+func runRenderedHooks(ctx context.Context, hookType string, configured []string, event any, body string) []error {
+	var hookErrors []error
+	for index, source := range configured {
+		command, err := renderHook(source, event, body)
+		if err != nil {
+			hookErrors = append(hookErrors, fmt.Errorf("rendering %s hook %d: %w", hookType, index+1, err))
+			continue
+		}
+		if err := executeErrorHook(ctx, command); err != nil {
+			hookErrors = append(hookErrors, fmt.Errorf("running %s hook %d: %w", hookType, index+1, err))
+			if ctx.Err() != nil {
+				return hookErrors
 			}
 		}
 	}
@@ -285,21 +326,7 @@ func runOutcomeHooks(ctx context.Context, dataDirectory, outcome string, timeout
 	event.Body = formatOutcomeHookMarkdown(event)
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	var hookErrors []error
-	for index, source := range configured.Hooks.Outcome {
-		command, err := renderHook(source, event, event.Body)
-		if err != nil {
-			hookErrors = append(hookErrors, fmt.Errorf("rendering outcome hook %d: %w", index+1, err))
-			continue
-		}
-		if err := executeErrorHook(ctx, command); err != nil {
-			hookErrors = append(hookErrors, fmt.Errorf("running outcome hook %d: %w", index+1, err))
-			if ctx.Err() != nil {
-				break
-			}
-		}
-	}
-	return hookErrors
+	return runRenderedHooks(ctx, "outcome", configured.Hooks.Outcome, event, event.Body)
 }
 
 func formatOutcomeHookMarkdown(event outcomeHookEvent) string {

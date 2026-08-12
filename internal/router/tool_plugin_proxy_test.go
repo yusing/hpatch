@@ -58,7 +58,7 @@ func newToolPluginTestTransform(t *testing.T) (*hpatchResponseTransform, *hpatch
 	if err := os.WriteFile(filepath.Join(pluginDirectory, "proxy.mjs"), []byte(testToolPluginDeclaration), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	registry, err := buildToolRegistry(t.Context(), dataDirectory, testHPatchToolDescription)
+	registry, err := buildToolRegistry(t.Context(), dataDirectory, testHPatchToolDescription, false)
 	if err != nil {
 		t.Fatal(err)
 	}

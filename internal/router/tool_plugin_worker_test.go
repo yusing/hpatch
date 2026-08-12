@@ -21,7 +21,7 @@ func newToolPluginTestRegistry(t *testing.T) (*toolRegistry, string) {
 	if err := os.WriteFile(liveModule, []byte(testToolPluginDeclaration), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	registry, err := buildToolRegistry(t.Context(), dataDirectory, testHPatchToolDescription)
+	registry, err := buildToolRegistry(t.Context(), dataDirectory, testHPatchToolDescription, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -110,7 +110,7 @@ func TestToolPluginWorkerResolvesBasenameFromPath(t *testing.T) {
 
 func TestBuiltinToolWorkersRunGeneratedTypeScriptImplementations(t *testing.T) {
 	dataDirectory := t.TempDir()
-	registry, err := buildToolRegistry(t.Context(), dataDirectory, testHPatchToolDescription)
+	registry, err := buildToolRegistry(t.Context(), dataDirectory, testHPatchToolDescription, false)
 	if err != nil {
 		t.Fatal(err)
 	}

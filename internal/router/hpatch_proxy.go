@@ -734,6 +734,14 @@ func customGrammarTool(name, description, grammar string) map[string]json.RawMes
 	}
 }
 
+func customFreeformTool(name, description string) map[string]json.RawMessage {
+	return map[string]json.RawMessage{
+		"type":        mustMarshalJSON("custom"),
+		"name":        mustMarshalJSON(name),
+		"description": mustMarshalJSON(description),
+	}
+}
+
 const (
 	codeModeApplyPatchHeading       = "### `apply_patch`"
 	codeModeExecCommandHeading      = "### `exec_command`"
@@ -1225,7 +1233,7 @@ func (p *hpatchProxy) restoreInputPrefix(request *parsedResponsesRequest, sessio
 
 func (t *hpatchResponseTransform) translate(callID, input string, upstreamItem map[string]json.RawMessage) (hpatchHistory, error) {
 	if history, ok := t.local[callID]; ok {
-		if history.pluginID != "" || history.script != input {
+		if history.toolName != hpatchToolName || history.pluginID != "" || history.script != input {
 			return hpatchHistory{}, fmt.Errorf("hpatch call %q changed input", callID)
 		}
 		if len(upstreamItem) != 0 {
@@ -1422,14 +1430,43 @@ func (p *hpatchProxy) retainShell(sessionID, callID, script string) (string, boo
 }
 
 func (t *hpatchResponseTransform) translateTool(name, callID, input string, upstreamItem map[string]json.RawMessage) (hpatchHistory, error) {
-	if name == hpatchToolName {
+	switch name {
+	case hpatchToolName:
 		return t.translate(callID, input, upstreamItem)
+	case reportIssueToolName:
+		return t.translateReportIssue(callID, input, upstreamItem)
 	}
 	contribution, ok := t.proxy.registry.contribution(name)
 	if !ok || contribution.Builtin {
 		return hpatchHistory{}, fmt.Errorf("registered tool %q is unavailable", name)
 	}
 	return t.translateRegisteredTool(contribution, callID, input, upstreamItem)
+}
+
+func (t *hpatchResponseTransform) translateReportIssue(callID, input string, upstreamItem map[string]json.RawMessage) (hpatchHistory, error) {
+	if history, ok := t.local[callID]; ok {
+		if history.toolName != reportIssueToolName || history.script != input {
+			return hpatchHistory{}, fmt.Errorf("report_issue call %q changed input", callID)
+		}
+		if len(upstreamItem) != 0 {
+			history.upstreamItem = maps.Clone(upstreamItem)
+			t.local[callID] = history
+		}
+		return history, nil
+	}
+	if err := t.proxy.registry.DiagnoseHooks.Report(t.ctx, input); err != nil {
+		return hpatchHistory{}, fmt.Errorf("report issue: %w", err)
+	}
+	history := hpatchHistory{
+		toolName:     reportIssueToolName,
+		script:       input,
+		carrierName:  t.codeModeToolName,
+		report:       "Issue reported.",
+		applied:      true,
+		upstreamItem: maps.Clone(upstreamItem),
+	}
+	t.recordLocal(callID, &history)
+	return history, nil
 }
 
 func (t *hpatchResponseTransform) translateRegisteredTool(contribution toolContribution, callID, input string, upstreamItem map[string]json.RawMessage) (hpatchHistory, error) {
@@ -2135,7 +2172,7 @@ type shellWrapperMisuse struct {
 
 // Match the raw input intentionally: every heredoc and quoted or commented example warns too.
 func shellInterpreterWrapperMisuses(contribution toolContribution, input string) []shellWrapperMisuse {
-	if contribution.PluginID != "builtin.shell" || contribution.Name != "shell" {
+	if contribution.PluginID != builtinToolsPluginID || contribution.Name != "shell" {
 		return nil
 	}
 
@@ -2240,7 +2277,7 @@ func shellInterpreterWrapperWarning(misuse shellWrapperMisuse) string {
 // directive, comment, or ordinary shell statement at the start keeps the
 // documented shell semantics.
 func lunaShellCodeModeProgram(contribution toolContribution, input string) bool {
-	if contribution.PluginID != "builtin.shell" || contribution.Name != "shell" {
+	if contribution.PluginID != builtinToolsPluginID || contribution.Name != "shell" {
 		return false
 	}
 	program := strings.TrimLeft(input, " \t\r\n")

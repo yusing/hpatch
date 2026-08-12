@@ -160,7 +160,7 @@ func newManagedHPatchProxyWithDataDirectory(t *testing.T, translator hpatchTrans
 	if translator == nil {
 		return nil
 	}
-	registry, err := buildToolRegistry(t.Context(), dataDirectory, translator.ToolDescription())
+	registry, err := buildToolRegistry(t.Context(), dataDirectory, translator.ToolDescription(), false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -473,6 +473,77 @@ func TestHPatchRoutesOnlyModelVisibleRegistryTools(t *testing.T) {
 		if got := transform.routesTool(name); got != want {
 			t.Errorf("routesTool(%q) = %t, want %t", name, got, want)
 		}
+	}
+}
+
+func TestReportIssueRunsRouterHookWithoutWorker(t *testing.T) {
+	dataDirectory := t.TempDir()
+	bodyPath := filepath.Join(t.TempDir(), "body.md")
+	settings := fmt.Sprintf(
+		`{"hooks":{"diagnose":[%q]}}`,
+		"printf '%s' {{shellquote (format_markdown .)}} > "+bodyPath,
+	)
+	if err := os.WriteFile(filepath.Join(dataDirectory, "settings.json"), []byte(settings), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	registry, err := buildToolRegistry(t.Context(), dataDirectory, testHPatchToolDescription, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	proxy := newHPatchProxy(testTranslator(t, new(int)), registry)
+	t.Cleanup(func() {
+		if err := errors.Join(proxy.Close(), registry.Close()); err != nil {
+			t.Error(err)
+		}
+	})
+	transform, _, _, _ := newHPatchTestTransformWithProxy(t, proxy)
+	markdown := "# hpatch issue\n\nRepair context did not identify the stale row."
+	history, err := transform.translateTool(reportIssueToolName, "call-report", markdown, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if history.toolName != reportIssueToolName ||
+		history.carrierName != transform.codeModeToolName ||
+		history.report != "Issue reported." ||
+		history.carrierInput() != hpatchDiagnosticExecInput("Issue reported.") {
+		t.Fatalf("report issue history = %+v", history)
+	}
+	body, err := os.ReadFile(bodyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(body) != markdown {
+		t.Fatalf("diagnose hook body = %q, want %q", body, markdown)
+	}
+	if _, ok := registry.wrapper(reportIssueToolName); ok {
+		t.Fatal("report issue unexpectedly installed a worker wrapper")
+	}
+}
+
+func TestReportIssueCallIDCannotBeReusedByHPatch(t *testing.T) {
+	dataDirectory := t.TempDir()
+	registry, err := buildToolRegistry(t.Context(), dataDirectory, testHPatchToolDescription, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	calls := 0
+	proxy := newHPatchProxy(testTranslator(t, &calls), registry)
+	t.Cleanup(func() {
+		if err := errors.Join(proxy.Close(), registry.Close()); err != nil {
+			t.Error(err)
+		}
+	})
+	transform, _, _, _ := newHPatchTestTransformWithProxy(t, proxy)
+	input := "same input"
+	if _, err := transform.translateTool(reportIssueToolName, "shared-call", input, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := transform.translateTool(hpatchToolName, "shared-call", input, nil); err == nil ||
+		!strings.Contains(err.Error(), "hpatch call \"shared-call\" changed input") {
+		t.Fatalf("reused cross-tool call error = %v", err)
+	}
+	if calls != 0 {
+		t.Fatalf("hpatch translations = %d, want 0", calls)
 	}
 }
 

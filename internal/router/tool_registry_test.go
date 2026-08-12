@@ -103,7 +103,7 @@ func TestToolRegistryStartup(t *testing.T) {
 	}
 
 	t.Run("missing directory loads embedded built-ins", func(t *testing.T) {
-		registry, err := buildToolRegistry(t.Context(), t.TempDir(), testHPatchToolDescription)
+		registry, err := buildToolRegistry(t.Context(), t.TempDir(), testHPatchToolDescription, false)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -141,7 +141,7 @@ func TestToolRegistryStartup(t *testing.T) {
 			jsonString(specifications[1], "name") != "shell" {
 			t.Fatalf("model-visible specifications = %#v", specifications)
 		}
-		second, err := buildToolRegistry(t.Context(), t.TempDir(), testHPatchToolDescription)
+		second, err := buildToolRegistry(t.Context(), t.TempDir(), testHPatchToolDescription, false)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -165,6 +165,43 @@ func TestToolRegistryStartup(t *testing.T) {
 		}
 	})
 
+	t.Run("diagnose mode adds router-native report issue", func(t *testing.T) {
+		registry, err := buildToolRegistry(t.Context(), t.TempDir(), testHPatchToolDescription, true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() {
+			if err := registry.Close(); err != nil {
+				t.Error(err)
+			}
+		}()
+
+		contribution, ok := registry.contribution(reportIssueToolName)
+		if !ok || contribution.PluginID != "builtin.hpatch" || !contribution.Builtin || !contribution.ModelVisible {
+			t.Fatalf("report issue contribution = %+v, available %t", contribution, ok)
+		}
+		var specification map[string]json.RawMessage
+		if err := json.Unmarshal(contribution.Specification, &specification); err != nil {
+			t.Fatal(err)
+		}
+		if _, formatted := specification["format"]; formatted {
+			t.Fatalf("report issue specification is not freeform: %s", contribution.Specification)
+		}
+		if _, ok := registry.wrapper(reportIssueToolName); ok {
+			t.Fatal("router-native report issue unexpectedly has a worker wrapper")
+		}
+		specifications, err := registry.specifications()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(specifications) != 3 ||
+			jsonString(specifications[0], "name") != hpatchToolName ||
+			jsonString(specifications[1], "name") != reportIssueToolName ||
+			jsonString(specifications[2], "name") != "shell" {
+			t.Fatalf("model-visible specifications = %#v", specifications)
+		}
+	})
+
 	t.Run("lexical declarations are pinned and wrapped", func(t *testing.T) {
 		dataDirectory := t.TempDir()
 		pluginDirectory := filepath.Join(dataDirectory, "plugins")
@@ -185,7 +222,7 @@ func TestToolRegistryStartup(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		registry, err := buildToolRegistry(t.Context(), dataDirectory, testHPatchToolDescription)
+		registry, err := buildToolRegistry(t.Context(), dataDirectory, testHPatchToolDescription, false)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -263,7 +300,7 @@ func TestToolRegistryStartup(t *testing.T) {
 		)
 		writePlugin(t, pluginDirectory, "shell.mjs", legacyDeclaration)
 
-		registry, err := buildToolRegistry(t.Context(), dataDirectory, testHPatchToolDescription)
+		registry, err := buildToolRegistry(t.Context(), dataDirectory, testHPatchToolDescription, false)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -291,7 +328,7 @@ func TestToolRegistryStartup(t *testing.T) {
 		writePlugin(t, pluginDirectory, "duplicate-a.mjs", declaration("duplicate.plugin", hpatchToolName, ""))
 		writePlugin(t, pluginDirectory, "duplicate-b.mjs", declaration("duplicate.plugin", "other_tool", ""))
 		writePlugin(t, pluginDirectory, "shell.mjs", declaration("shell.plugin", "eval", ""))
-		registry, err := buildToolRegistry(t.Context(), dataDirectory, testHPatchToolDescription)
+		registry, err := buildToolRegistry(t.Context(), dataDirectory, testHPatchToolDescription, false)
 		if registry != nil || err == nil {
 			t.Fatalf("registry = %+v, error = %v", registry, err)
 		}

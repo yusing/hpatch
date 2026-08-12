@@ -338,6 +338,36 @@ Acceptance:
 11. An executor can return one validated current result with or without a validated stock result.
     The worker returns only the current result and does not run a second comparison execution.
 
+## REQ-DIAGNOSE-001 — Agent issue reports
+
+When hpatch mode starts with the inherited environment variable `HPATCH_DIAGNOSE` exactly
+equal to `1`, the immutable built-in registry contributes a model-visible unconstrained custom
+tool named `report_issue`. Any other value, including an unset variable, omits that contribution.
+Passthrough mode remains unchanged because it does not construct the registry.
+
+The tool accepts agent-authored Markdown for problems encountered while using hpatch and its
+related tools. The router snapshots `hooks.diagnose` from the existing `settings.json` hook
+configuration at startup and invokes those commands directly when the model calls `report_issue`.
+It does not install an executable wrapper or frontend and does not route the report through the
+executor plugin worker.
+
+Each command is rendered against an event whose `Body` is the exact Markdown.
+`format_markdown` returns that same body, and `shellquote` retains its existing behavior. All
+configured diagnose commands share the existing 10-second error-hook timeout. A missing or empty
+diagnose list is a successful no-op. Successful dispatch returns `Issue reported.` through the
+existing Code Mode result carrier; settings or registry initialization failures prevent startup,
+while rendering, execution, cancellation, or timeout failures fail the tool call.
+
+Acceptance:
+
+1. Exactly `HPATCH_DIAGNOSE=1` in hpatch mode exposes the free-form `report_issue` specification;
+   all other values and passthrough mode expose none of it.
+2. One report reaches each configured `hooks.diagnose` command byte-for-byte through `.Body` and
+   `format_markdown`, without running `hooks.error`.
+3. No configured diagnose hook succeeds without side effects, while hook failures fail the
+   translated tool call.
+4. `report_issue` has no executable wrapper, stable frontend, or plugin-worker implementation.
+
 ## REQ-SHELL-001 — Installable free-form script tool
 
 The first working path in `doc/brief.md` § Outcome supplies the built-in declaration at

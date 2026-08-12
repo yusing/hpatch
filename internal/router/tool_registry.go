@@ -22,9 +22,14 @@ const (
 	toolPluginManifestFilename     = "workers.json"
 	toolFrontendLockFilename       = ".hpatch-router-tools.lock"
 	retiredConfiguredShellPluginID = "example.shell"
+	builtinToolsPluginID           = "builtin.shell"
+	reportIssueToolName            = "report_issue"
+	reportIssueToolDescription     = `Report an issue encountered while using hpatch or its related tools.
+Submit free-form Markdown describing the observed agent experience, such as misleading instructions or unhelpful diagnostic or repair context.
+Use this only for problems in hpatch, hread, hgrep, shell, inspect_file, or routed recovery, not for issues in the user's project.`
 )
 
-func buildToolRegistry(ctx context.Context, dataDirectory, hpatchDescription string) (*toolRegistry, error) {
+func buildToolRegistry(ctx context.Context, dataDirectory, hpatchDescription string, diagnose bool) (*toolRegistry, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -54,6 +59,13 @@ func buildToolRegistry(ctx context.Context, dataDirectory, hpatchDescription str
 			os.RemoveAll(snapshotDirectory),
 		)
 	}
+	var diagnoseHooks hpatch.DiagnoseHooks
+	if diagnose {
+		diagnoseHooks, err = hpatch.LoadDiagnoseHooks(dataDirectory)
+		if err != nil {
+			return fail(fmt.Errorf("load diagnose hooks: %w", err))
+		}
+	}
 
 	pluginSnapshot, err := toolplugin.Load(
 		ctx,
@@ -70,6 +82,15 @@ func buildToolRegistry(ctx context.Context, dataDirectory, hpatchDescription str
 		Builtin:       true,
 		ModelVisible:  true,
 	}}
+	if diagnose {
+		contributions = append(contributions, toolContribution{
+			PluginID:      "builtin.hpatch",
+			Name:          reportIssueToolName,
+			Specification: mustMarshalJSON(customFreeformTool(reportIssueToolName, reportIssueToolDescription)),
+			Builtin:       true,
+			ModelVisible:  true,
+		})
+	}
 	var validationErrors []error
 	for _, diagnostic := range pluginSnapshot.Diagnostics {
 		validationErrors = append(validationErrors, errors.New(diagnostic))
@@ -177,6 +198,7 @@ func buildToolRegistry(ctx context.Context, dataDirectory, hpatchDescription str
 		byName:            byName,
 		wrappers:          wrappers,
 		frontends:         frontends,
+		DiagnoseHooks:     diagnoseHooks,
 	}, nil
 }
 

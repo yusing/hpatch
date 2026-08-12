@@ -87,6 +87,7 @@ func TestTopLevelHelpDescribesCompletePublicSurface(t *testing.T) {
 		"Supported indentation corrections are automatic",
 		"diagnostics begin with the operation",
 		"hooks.error",
+		"hooks.diagnose",
 		"format_markdown",
 		"shellquote",
 	} {

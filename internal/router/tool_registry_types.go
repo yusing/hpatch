@@ -5,6 +5,7 @@ import (
 	"sync"
 
 	"github.com/gofrs/flock"
+	"github.com/yusing/hpatch"
 )
 
 type (
@@ -22,6 +23,7 @@ type (
 		SnapshotDir    string
 		RuntimeRoot    string
 		NodeExecutable string
+		DiagnoseHooks  hpatch.DiagnoseHooks
 
 		executable        string
 		frontendDirectory string

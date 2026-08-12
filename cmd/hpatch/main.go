@@ -178,10 +178,11 @@ Metrics:
 
 Hooks:
   Agent-correctable evaluation failures run commands configured under hooks.error
-  in <user-config-directory>/hpatch/settings.json. Router attempts also run
-  hooks.outcome. Templates receive structured command, diagnostic, repair, attempt,
-  and outcome data; format_markdown renders the Markdown body and shellquote quotes
-  shell data. Hook failures are warnings and do not replace the hpatch result.
+  in <user-config-directory>/hpatch/settings.json. Agent reports submitted through
+  the router's report_issue tool run hooks.diagnose, and router attempts run
+  hooks.outcome. Templates receive their hook's structured event; format_markdown
+  renders the Markdown body and shellquote quotes shell data. Hook failures are
+  warnings for hpatch results and failures for report_issue calls.
 
 Workspace boundary:
   --root selects the trusted workspace and defaults to the current directory.

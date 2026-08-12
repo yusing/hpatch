@@ -175,6 +175,7 @@ The mandatory `builtin.shell` implementation comes from `plugins/shell.mjs` and 
 
 Configured plugins are direct regular `.js` or `.mjs` files in `$XDG_CONFIG_HOME/hpatch/plugins` or `~/.config/hpatch/plugins` on Linux. The router loads them in lexical order into one immutable process snapshot. It does not discover workspace-local or remote plugins and does not hot-reload files. Restart `hpatch-router` after any plugin change. Invalid modules, duplicate identities, or an unusable built-in registry fail startup before the router listens. The full module contract is in [`doc/spec/interface.md`](doc/spec/interface.md).
 
+
 ## Shell tool
 
 The model-visible `functions.shell` tool accepts one free-form program. A compact shebang selects an interpreter through the inherited `PATH`; a missing shebang selects Bash:
@@ -593,6 +594,32 @@ Tests live beside the owners they exercise. The root `hpatch` package is the reu
 Library use: module path `github.com/yusing/hpatch`. Importable as a library (`hpatch.Translate`, `hpatch.Workspace`, host metrics helpers); hosts should open an `*os.Root` capability for the workspace before calling in.
 
 ## Development
+
+### Agent issue reports
+
+Starting the router in hpatch mode with `HPATCH_DIAGNOSE=1` adds the model-visible,
+free-form `report_issue` tool. The tool is intended for agent-experience problems in hpatch
+and its related tools, such as misleading instructions or unhelpful diagnostic and repair
+context. It is absent when the variable has any other value and in passthrough mode.
+
+A report runs every `hooks.diagnose` command in
+`$XDG_CONFIG_HOME/hpatch/settings.json` or `~/.config/hpatch/settings.json` on Linux:
+
+```json
+{
+  "hooks": {
+    "diagnose": [
+      "your-command {{shellquote (format_markdown .)}}"
+    ]
+  }
+}
+```
+
+`format_markdown` and `.Body` both contain the agent's exact Markdown. Diagnose hooks share
+a 10-second timeout. A missing hook list is a successful no-op; rendering, execution, and timeout
+failures make the tool call fail. The router snapshots this list at startup, so restart it after
+changing `hooks.diagnose`. `report_issue` is handled directly by the router; it does not install
+an executable wrapper, frontend, or tool binary.
 
 ```sh
 go generate ./internal/router/toolplugin
