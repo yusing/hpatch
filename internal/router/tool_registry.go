@@ -59,12 +59,9 @@ func buildToolRegistry(ctx context.Context, dataDirectory, hpatchDescription str
 			os.RemoveAll(snapshotDirectory),
 		)
 	}
-	var diagnoseHooks hpatch.DiagnoseHooks
+	diagnoseHooks := hpatch.NewDiagnoseHooks("")
 	if diagnose {
-		diagnoseHooks, err = hpatch.LoadDiagnoseHooks(dataDirectory)
-		if err != nil {
-			return fail(fmt.Errorf("load diagnose hooks: %w", err))
-		}
+		diagnoseHooks = hpatch.NewDiagnoseHooks(dataDirectory)
 	}
 
 	pluginSnapshot, err := toolplugin.Load(

@@ -54,6 +54,7 @@ func TestErrorHookReceivesFailureAndRepairContext(t *testing.T) {
 func TestReportIssueRunsDiagnoseHooksWithExactMarkdown(t *testing.T) {
 	dataDirectory := t.TempDir()
 	bodyPath := filepath.Join(t.TempDir(), "body.md")
+	diagnoseHooks := NewDiagnoseHooks(dataDirectory)
 	content, err := json.Marshal(settings{Hooks: hooks{
 		Error: []string{"exit 9"},
 		Diagnose: []string{
@@ -68,10 +69,6 @@ func TestReportIssueRunsDiagnoseHooksWithExactMarkdown(t *testing.T) {
 	}
 
 	markdown := "# Misleading repair context\n\nThe suggested target cannot match."
-	diagnoseHooks, err := LoadDiagnoseHooks(dataDirectory)
-	if err != nil {
-		t.Fatal(err)
-	}
 	if err := diagnoseHooks.Report(t.Context(), markdown); err != nil {
 		t.Fatal(err)
 	}
@@ -86,6 +83,7 @@ func TestReportIssueRunsDiagnoseHooksWithExactMarkdown(t *testing.T) {
 
 func TestReportIssueReturnsDiagnoseHookFailure(t *testing.T) {
 	dataDirectory := t.TempDir()
+	diagnoseHooks := NewDiagnoseHooks(dataDirectory)
 	content, err := json.Marshal(settings{Hooks: hooks{Diagnose: []string{"exit 9"}}})
 	if err != nil {
 		t.Fatal(err)
@@ -94,10 +92,6 @@ func TestReportIssueReturnsDiagnoseHookFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	diagnoseHooks, err := LoadDiagnoseHooks(dataDirectory)
-	if err != nil {
-		t.Fatal(err)
-	}
 	err = diagnoseHooks.Report(t.Context(), "diagnostic")
 	if err == nil || !strings.Contains(err.Error(), "running diagnose hook 1: exit status 9") {
 		t.Fatalf("ReportIssue() error = %v", err)

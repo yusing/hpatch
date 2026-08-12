@@ -496,6 +496,14 @@ func TestReportIssueRunsRouterHookWithoutWorker(t *testing.T) {
 			t.Error(err)
 		}
 	})
+	updatedBodyPath := filepath.Join(t.TempDir(), "updated-body.md")
+	updatedSettings := fmt.Sprintf(
+		`{"hooks":{"diagnose":[%q]}}`,
+		"printf '%s' {{shellquote (format_markdown .)}} > "+updatedBodyPath,
+	)
+	if err := os.WriteFile(filepath.Join(dataDirectory, "settings.json"), []byte(updatedSettings), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	transform, _, _, _ := newHPatchTestTransformWithProxy(t, proxy)
 	markdown := "# hpatch issue\n\nRepair context did not identify the stale row."
 	history, err := transform.translateTool(reportIssueToolName, "call-report", markdown, nil)
@@ -508,7 +516,7 @@ func TestReportIssueRunsRouterHookWithoutWorker(t *testing.T) {
 		history.carrierInput() != hpatchDiagnosticExecInput("Issue reported.") {
 		t.Fatalf("report issue history = %+v", history)
 	}
-	body, err := os.ReadFile(bodyPath)
+	body, err := os.ReadFile(updatedBodyPath)
 	if err != nil {
 		t.Fatal(err)
 	}

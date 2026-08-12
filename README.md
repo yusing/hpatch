@@ -621,9 +621,9 @@ A report runs every `hooks.diagnose` command in
 
 `format_markdown` and `.Body` both contain the agent's exact Markdown. Diagnose hooks share
 a 10-second timeout. A missing hook list is a successful no-op; rendering, execution, and timeout
-failures make the tool call fail. The router snapshots this list at startup, so restart it after
-changing `hooks.diagnose`. `report_issue` is handled directly by the router; it does not install
-an executable wrapper, frontend, or tool binary.
+failures make the tool call fail. The router reads the list before each `report_issue` invocation,
+so changes to `hooks.diagnose` take effect without a restart. `report_issue` is handled directly
+by the router; it does not install an executable wrapper, frontend, or tool binary.
 
 ```sh
 go generate ./internal/router/toolplugin

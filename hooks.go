@@ -10,7 +10,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"slices"
 	"strconv"
 	"strings"
 	"text/template"
@@ -109,34 +108,34 @@ func runCommandErrorHooks(ctx context.Context, dataDirectory string, sourceError
 	return hookErrors
 }
 
-// DiagnoseHooks is a snapshot of configured agent-report commands.
-type DiagnoseHooks []string
+// DiagnoseHooks reads and runs agent-report commands from a settings directory.
+type DiagnoseHooks string
 
-// LoadDiagnoseHooks reads the configured agent-report commands.
-func LoadDiagnoseHooks(dataDirectory string) (DiagnoseHooks, error) {
-	if dataDirectory == "" {
-		return nil, nil
-	}
-	configured, err := readSettings(dataDirectory)
-	if err != nil {
-		return nil, err
-	}
-	return slices.Clone(configured.Hooks.Diagnose), nil
+// NewDiagnoseHooks returns diagnose hooks backed by dataDirectory.
+func NewDiagnoseHooks(dataDirectory string) DiagnoseHooks {
+	return DiagnoseHooks(dataDirectory)
 }
 
-// Report sends agent-authored Markdown to the snapshotted diagnose hooks.
+// Report reads the current settings and sends agent-authored Markdown to its diagnose hooks.
 func (hooks DiagnoseHooks) Report(ctx context.Context, markdown string) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if len(hooks) == 0 {
+	if hooks == "" {
+		return nil
+	}
+	configured, err := readSettings(string(hooks))
+	if err != nil {
+		return err
+	}
+	if len(configured.Hooks.Diagnose) == 0 {
 		return nil
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, errorHooksTimeout)
 	defer cancel()
 	event := struct{ Body string }{Body: markdown}
-	return errors.Join(runRenderedHooks(ctx, "diagnose", hooks, event, event.Body)...)
+	return errors.Join(runRenderedHooks(ctx, "diagnose", configured.Hooks.Diagnose, event, event.Body)...)
 }
 
 func runRenderedHooks(ctx context.Context, hookType string, configured []string, event any, body string) []error {
