@@ -1,8 +1,13 @@
 #!/bin/sh
 set -eu
 
+append_if_missing=false
+if [ "$#" -eq 2 ] && [ "$1" = "--append-if-missing" ]; then
+	append_if_missing=true
+	shift
+fi
 if [ "$#" -ne 1 ]; then
-	printf 'usage: %s MODEL_INSTRUCTIONS\n' "$0" >&2
+	printf 'usage: %s [--append-if-missing] MODEL_INSTRUCTIONS\n' "$0" >&2
 	exit 2
 fi
 
@@ -110,6 +115,24 @@ if [ "$(count_exact "$stock_heading" "$input")" -ne 1 ] ||
 	[ "$(count_exact "$stock_instruction" "$input")" -ne 1 ] ||
 	[ "$(count_exact "$stock_rg_instruction" "$input")" -ne 1 ] ||
 	[ "$(count_exact "$stock_exec_instruction" "$input")" -ne 1 ]; then
+	if [ "$append_if_missing" = true ] &&
+		[ "$(count_exact "$legacy_heading" "$input")" -eq 0 ] &&
+		[ "$(count_exact "$legacy_instruction" "$input")" -eq 0 ] &&
+		[ "$(count_exact "$legacy_read_heading" "$input")" -eq 0 ] &&
+		[ "$(count_exact "$stock_heading" "$input")" -eq 0 ] &&
+		[ "$(count_exact "$stock_instruction" "$input")" -eq 0 ] &&
+		[ "$(count_exact "$stock_rg_instruction" "$input")" -eq 0 ] &&
+		[ "$(count_exact "$stock_exec_instruction" "$input")" -eq 0 ]; then
+		cat "$input"
+		if [ -s "$input" ]; then
+			if [ -n "$(tail -c 1 "$input")" ]; then
+				printf '\n'
+			fi
+			printf '\n'
+		fi
+		cat "$source_file"
+		exit 0
+	fi
 	printf 'model instructions match neither stock, legacy hpatch, nor marked hpatch guidance\n' >&2
 	exit 1
 fi

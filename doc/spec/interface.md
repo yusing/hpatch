@@ -459,11 +459,14 @@ Acceptance:
    nonzero status are returned without script-source duplication or an intermediate script file.
 10. Malformed selectors and input that cannot fit the bounded exec argv return a concise
     diagnostic without starting an interpreter.
-11. `make install` installs both Go binaries, no configured shell declaration, and a complete
-    Codex `model_instructions_file`. If the config key is absent, it renders the selected bundled
-    model instructions, installs the default file, and adds the key. If the key exists, it remains
-    byte-equivalent and the referenced customized file is updated only when its owned section is
-    stock, legacy hpatch, or marked hpatch guidance; content outside that section is preserved.
+11. `make install` installs both Go binaries, no configured shell declaration, and complete
+    Codex model instructions. If the top-level config key is absent, it renders the selected
+    bundled model instructions, installs the default file, and adds the key. If the key exists,
+    it remains byte-equivalent and the referenced customized file is updated only when its
+    owned section is stock, legacy hpatch, or marked hpatch guidance; content outside that
+    section is preserved. Every `model_instructions_file` declared by a personal agent TOML
+    under the adjacent `agents` directory is updated under the same preservation rules;
+    relative values resolve from the declaring agent TOML and the TOML files remain unchanged.
     The installed router embeds shell and creates shell, hread, hgrep, and inspect_file basename
     frontends beside its executable at startup.
 12. `#!params={"workdir":"/tmp","tty":true}` before or after `#!cmd=` produces an exec carrier
@@ -1202,10 +1205,12 @@ HPATCH/2 section returned by tool help. Model-visible tool descriptions contain 
 call-local contracts and request-specific schemas. The router does not use private tool
 descriptions as prompt text and does not mutate Responses instructions.
 
-`make install` renders the central source into Codex's configured `model_instructions_file`.
-An existing setting and all customized content outside the owned guidance section remain
-byte-equivalent. A file with current markers is refreshed idempotently; a legacy hpatch section
-or the pinned stock Codex file-editing section is migrated once. Without a setting, the installer
+`make install` renders the central source into Codex's configured `model_instructions_file`
+and every instruction file selected by a personal agent TOML under the adjacent `agents`
+directory. Relative agent values resolve from the declaring TOML. Existing settings, agent
+TOMLs, and all customized content outside the owned guidance section remain byte-equivalent.
+A file with current markers is refreshed idempotently; a legacy hpatch section or the pinned
+stock Codex file-editing section is migrated once. Without a top-level setting, the installer
 uses `CODEX_MODEL` or the lowest-priority bundled model, writes the default file, and adds the
 setting. An unrecognized customized file fails instead of being overwritten.
 

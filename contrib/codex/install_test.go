@@ -155,6 +155,72 @@ func TestMakeInstallInstructionsPreservesQuotedPaths(t *testing.T) {
 	}
 }
 
+func TestInstallerPatchesAgentModelInstructionFiles(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath := filepath.Join(tempDir, "config.toml")
+	mainTarget := filepath.Join(tempDir, "main.instructions.md")
+	if err := os.WriteFile(mainTarget, []byte("main prefix\n"+Instructions()+"main suffix\n"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	encodedMainTarget, err := json.Marshal(mainTarget)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mainConfig := "model_instructions_file = " + string(encodedMainTarget) + "\n"
+	if err := os.WriteFile(configPath, []byte(mainConfig), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	agentsDirectory := filepath.Join(tempDir, "agents")
+	if err := os.MkdirAll(agentsDirectory, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	agentTarget := filepath.Join(agentsDirectory, "fast.instructions.md")
+	if err := os.WriteFile(agentTarget, []byte("agent custom instructions\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	agentConfigPath := filepath.Join(agentsDirectory, "fast.toml")
+	agentConfig := "name = \"fast\"\nmodel_instructions_file = './fast.instructions.md'\n"
+	if err := os.WriteFile(agentConfigPath, []byte(agentConfig), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(agentsDirectory, "without-override.toml"), []byte("name = \"plain\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	runInstaller(t, configPath)
+
+	for path, want := range map[string]string{
+		configPath:      mainConfig,
+		agentConfigPath: agentConfig,
+	} {
+		got, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(got) != want {
+			t.Fatalf("%s changed\n got: %q\nwant: %q", path, got, want)
+		}
+	}
+	gotMain, err := os.ReadFile(mainTarget)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(string(gotMain), "main prefix\n") || !strings.HasSuffix(string(gotMain), "main suffix\n") {
+		t.Fatalf("%s customized text was not preserved: %q", mainTarget, gotMain)
+	}
+	requireShellWorkflow(t, string(gotMain))
+	gotAgent, err := os.ReadFile(agentTarget)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(string(gotAgent), "agent custom instructions\n\n") ||
+		!strings.HasSuffix(string(gotAgent), Instructions()) {
+		t.Fatalf("%s custom instructions or appended hpatch section were not preserved: %q", agentTarget, gotAgent)
+	}
+	requireShellWorkflow(t, string(gotAgent))
+}
+
 func requireShellWorkflow(t *testing.T, instructions string) {
 	t.Helper()
 	for _, required := range []string{

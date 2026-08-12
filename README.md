@@ -165,9 +165,11 @@ If `model_instructions_file` is absent from `$CODEX_HOME/config.toml` or
 `~/.codex/config.toml`, installation selects `CODEX_MODEL` or the bundled model with the
 lowest priority value, writes `hpatch-model-instructions.md`, and adds the setting. If the
 setting already exists, its value is unchanged and the referenced customized file is patched
-in place. Stock Codex guidance, the earlier unmarked hpatch guidance, and current marked
-guidance are supported. Content outside the owned section is preserved; an unrecognized file
-fails instead of being overwritten.
+in place. The installer also patches every `model_instructions_file` declared by personal
+agent TOMLs under the adjacent `agents` directory; relative paths resolve from each agent
+TOML. Config and agent TOML files remain unchanged. Stock Codex guidance, the earlier
+unmarked hpatch guidance, and current marked guidance are supported. Content outside the
+owned section is preserved; an unrecognized file fails instead of being overwritten.
 
 ### Configured plugins
 

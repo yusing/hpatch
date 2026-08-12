@@ -17,6 +17,8 @@ default_target=$(dirname -- "$config_file")/hpatch-model-instructions.md
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 renderer=$script_dir/render-model-instructions.sh
 model=${CODEX_MODEL:-}
+agents_directory=$(dirname -- "$config_file")/agents
+agent_count=0
 
 tmp=$(mktemp -d)
 config_tmp=
@@ -31,6 +33,26 @@ cleanup() {
 	fi
 }
 trap cleanup EXIT HUP INT TERM
+
+install_customized() {
+	rendered=$1
+	configured_target=$2
+	write_target=$configured_target
+	if [ -L "$configured_target" ]; then
+		write_target=$(readlink -f -- "$configured_target")
+		if [ -z "$write_target" ] || [ ! -f "$write_target" ]; then
+			printf 'configured model_instructions_file symlink has no regular-file referent: %s\n' "$configured_target" >&2
+			exit 1
+		fi
+	fi
+	target_directory=$(dirname -- "$write_target")
+	install -d "$target_directory"
+	target_tmp=$(mktemp "$target_directory/.hpatch-instructions-XXXXXX")
+	cp -p "$write_target" "$target_tmp"
+	cat "$rendered" >"$target_tmp"
+	mv "$target_tmp" "$write_target"
+	target_tmp=
+}
 
 configured=false
 if [ -f "$config_file" ]; then
@@ -69,23 +91,35 @@ else
 fi
 
 sh "$renderer" "$input" >"$tmp/hpatch.md"
-write_target=$target
-if [ "$configure" = false ] && [ -L "$target" ]; then
-	write_target=$(readlink -f -- "$target")
-	if [ -z "$write_target" ] || [ ! -f "$write_target" ]; then
-		printf 'configured model_instructions_file symlink has no regular-file referent: %s\n' "$target" >&2
-		exit 1
-	fi
+
+if [ -d "$agents_directory" ]; then
+	for agent_config in "$agents_directory"/*.toml; do
+		[ -f "$agent_config" ] || continue
+		go run "$script_dir/configvalue" "$agent_config" >"$tmp/agent-config.json"
+		if [ "$(jq -er '.found' "$tmp/agent-config.json")" != true ]; then
+			continue
+		fi
+		agent_target=$(jq -er '.path' "$tmp/agent-config.json")
+		case $agent_target in
+			/*) ;;
+			*) agent_target=$(dirname -- "$agent_config")/$agent_target ;;
+		esac
+		if [ ! -f "$agent_target" ]; then
+			printf 'agent model_instructions_file does not exist: %s\n' "$agent_target" >&2
+			exit 1
+		fi
+		agent_count=$((agent_count + 1))
+		printf '%s' "$agent_target" >"$tmp/agent-$agent_count.path"
+				sh "$renderer" --append-if-missing "$agent_target" >"$tmp/agent-$agent_count.md"
+
+	done
 fi
-target_directory=$(dirname -- "$write_target")
-install -d "$target_directory"
+
 if [ "$configure" = false ]; then
-	target_tmp=$(mktemp "$target_directory/.hpatch-instructions-XXXXXX")
-	cp -p "$write_target" "$target_tmp"
-	cat "$tmp/hpatch.md" >"$target_tmp"
-	mv "$target_tmp" "$write_target"
-	target_tmp=
+	install_customized "$tmp/hpatch.md" "$target"
 else
+	target_directory=$(dirname -- "$target")
+	install -d "$target_directory"
 	install -m 0644 "$tmp/hpatch.md" "$target"
 fi
 
@@ -117,5 +151,13 @@ if [ "$configure" = true ]; then
 	mv "$config_tmp" "$config_file"
 	config_tmp=
 fi
+
+agent_index=1
+while [ "$agent_index" -le "$agent_count" ]; do
+	agent_target=$(cat "$tmp/agent-$agent_index.path")
+	install_customized "$tmp/agent-$agent_index.md" "$agent_target"
+	printf 'installed Codex agent model instructions at %s\n' "$agent_target"
+	agent_index=$((agent_index + 1))
+done
 
 printf 'installed Codex model instructions from %s at %s\n' "$selected" "$target"
