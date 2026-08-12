@@ -28,6 +28,17 @@ func (r parsedResponsesRequest) model() string {
 	return strings.TrimSpace(model)
 }
 
+func (r parsedResponsesRequest) modelDescription() string {
+	model := r.model()
+	var reasoning struct {
+		Effort string `json:"effort"`
+	}
+	if raw, ok := r.fields["reasoning"]; ok {
+		_ = json.Unmarshal(raw, &reasoning)
+	}
+	return strings.TrimSpace(model + " " + strings.TrimSpace(reasoning.Effort))
+}
+
 func (r parsedResponsesRequest) promptCacheKey() string {
 	raw, ok := r.fields["prompt_cache_key"]
 	if !ok {

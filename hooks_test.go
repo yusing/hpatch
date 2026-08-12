@@ -34,21 +34,16 @@ func TestErrorHookReceivesFailureAndRepairContext(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, fragment := range []string{
-		"# hpatch command failed",
-		"- Command: `2`",
-		"- Source line: `2`",
-		"- Operation: `type`",
-		"- Category: `edit`",
-		"- Path: `note.txt`",
-		"## Failed command\n\n    type 1:" + hashLine("present words") + " \"missing\" \"replacement\"",
-		"## Failure\n\n    found 0 of 1 requested matches of \"missing\" at or after line 1",
-		"## Diagnostic\n\n    type: command 2, path \"note.txt\", reason occurrence-missing",
-		"## Repair context",
-		"found 0 of 1 requested matches at or after line 1",
-		"1:" + hashLine("present words") + " present words",
+		"Command: 2 `type`",
+		"Source: note.txt:2",
 	} {
 		if !strings.Contains(string(body), fragment) {
 			t.Fatalf("hook body does not contain %q:\n%s", fragment, body)
+		}
+	}
+	for _, omitted := range []string{"# hpatch command failed", "Description:", "Outcome:", "Category:", "Failed command", "Failure", "Diagnostic", "Repair context"} {
+		if strings.Contains(string(body), omitted) {
+			t.Fatalf("hook body unexpectedly contains %q:\n%s", omitted, body)
 		}
 	}
 	if strings.Contains(stderr.String(), "warning:") {
@@ -126,16 +121,11 @@ func TestErrorHookReceivesMalformedCommand(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, fragment := range []string{
-		"- Command: `1`",
-		"- Operation: `select`",
-		"- Category: `syntax`",
-		"## Failed command\n\n    select the file",
-		"unknown or malformed command",
-	} {
-		if !strings.Contains(string(body), fragment) {
-			t.Fatalf("hook body does not contain %q:\n%s", fragment, body)
-		}
+	if !strings.Contains(string(body), "Command: 1 `select`") {
+		t.Fatalf("hook body does not contain command:\n%s", body)
+	}
+	if strings.Contains(string(body), "Description:") || strings.HasPrefix(string(body), "#") {
+		t.Fatalf("error hook body unexpectedly contains title or description:\n%s", body)
 	}
 }
 
@@ -255,9 +245,27 @@ func TestReadSettingsRejectsOversizeContent(t *testing.T) {
 }
 
 func TestMarkdownCodeSpanHandlesBackticks(t *testing.T) {
-	body := formatErrorHookMarkdown(errorHookEvent{Path: "dir/`quoted`/file.md"})
-	if !strings.Contains(body, "- Path: `` dir/`quoted`/file.md ``") {
+	body := formatErrorHookMarkdown(errorHookEvent{Command: 1, Operation: "type`quoted"})
+	if !strings.Contains(body, "Command: 1 `` type`quoted ``") {
 		t.Fatalf("formatErrorHookMarkdown() = %q", body)
+	}
+}
+
+func TestOutcomeHookMarkdownUsesSafeFence(t *testing.T) {
+	event := outcomeHookEvent{
+		attemptHookFields: attemptHookFields{Outcome: "succeeded"},
+		Title:             "hpatch attempt succeeded",
+		Script:            "type <<PATCH\n```\nPATCH\n",
+	}
+	body := formatOutcomeHookMarkdown(event)
+	if event.Title != "hpatch attempt succeeded" {
+		t.Fatalf("outcome title = %q", event.Title)
+	}
+	if !strings.Contains(body, "````hpatch\ntype <<PATCH\n```\nPATCH\n````") {
+		t.Fatalf("formatOutcomeHookMarkdown() = %q", body)
+	}
+	if strings.HasPrefix(body, "#") {
+		t.Fatalf("outcome hook body unexpectedly contains title: %q", body)
 	}
 }
 
@@ -318,10 +326,14 @@ func TestErrorAndOutcomeHooksReceiveAttemptMetadata(t *testing.T) {
 	outcomePath := filepath.Join(t.TempDir(), "outcome.md")
 	metadataPath := filepath.Join(t.TempDir(), "metadata.txt")
 	content, err := json.Marshal(settings{Hooks: hooks{
-		Error: []string{"printf '%s' {{shellquote (format_markdown .)}} > " + shellQuote(errorPath)},
+		Error: []string{
+			"printf '%s' {{shellquote (format_markdown .)}} > " + shellQuote(errorPath),
+			"printf '%s' {{shellquote .Title}} > " + shellQuote(filepath.Join(filepath.Dir(metadataPath), "error-title.txt")),
+		},
 		Outcome: []string{
 			"printf '%s' {{shellquote (format_markdown .)}} > " + shellQuote(outcomePath),
 			"printf '%s' {{shellquote .CorrelationID}}'|'{{shellquote .CallID}}'|'{{.Attempt}}'|'{{.Correction}}'|'{{shellquote .Outcome}} > " + shellQuote(metadataPath),
+			"printf '%s' {{shellquote .Title}} > " + shellQuote(filepath.Join(filepath.Dir(metadataPath), "outcome-title.txt")),
 		},
 	}})
 	if err != nil {
@@ -330,7 +342,7 @@ func TestErrorAndOutcomeHooksReceiveAttemptMetadata(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dataDirectory, settingsFilename), content, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	metadata := AttemptMetadata{SessionID: "session-1", CorrelationID: "chain-1", CallID: "call-2", Attempt: 2, Correction: true}
+	metadata := AttemptMetadata{SessionID: "session-1", CorrelationID: "chain-1", CallID: "call-2", Attempt: 2, Correction: true, Model: "gpt-5.6-sol medium"}
 	ctx := WithAttemptMetadata(t.Context(), metadata)
 
 	failed, err := TranslateForHost(ctx, Workspace{Root: root}, "del\n", dataDirectory)
@@ -341,16 +353,30 @@ func TestErrorAndOutcomeHooksReceiveAttemptMetadata(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"- Session ID: `session-1`", "- Correlation ID: `chain-1`", "- Call ID: `call-2`", "- Attempt: `2`", "- Correction: `true`", "- Outcome: `rejected`"} {
+	for _, want := range []string{"Model: gpt-5.6-sol medium", "Session ID: session-1", "Call ID: call-2", "Attempt: 2", "Correction: true"} {
 		if !strings.Contains(string(body), want) {
 			t.Fatalf("error hook lacks %q:\n%s", want, body)
 		}
+	}
+	if strings.Contains(string(body), "Correlation ID:") {
+		t.Fatalf("error hook unexpectedly exposes correlation ID:\n%s", body)
+	}
+	if strings.Contains(string(body), "Outcome:") {
+		t.Fatalf("error hook unexpectedly exposes outcome:\n%s", body)
+	}
+	titleBody, err := os.ReadFile(filepath.Join(filepath.Dir(metadataPath), "error-title.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(titleBody) != "hpatch command failed" {
+		t.Fatalf("error hook title = %q", titleBody)
 	}
 	outcome, err := os.ReadFile(outcomePath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(outcome), "# hpatch attempt rejected") {
+	if !strings.Contains(string(outcome), "```hpatch\ndel\n```") ||
+		strings.Contains(string(outcome), "# hpatch attempt rejected") {
 		t.Fatalf("rejected outcome hook = %q", outcome)
 	}
 
@@ -358,11 +384,19 @@ func TestErrorAndOutcomeHooksReceiveAttemptMetadata(t *testing.T) {
 	if err != nil || translated.Diagnostic != "" {
 		t.Fatalf("successful translation = %+v, error %v", translated, err)
 	}
+	outcomeTitle, err := os.ReadFile(filepath.Join(filepath.Dir(metadataPath), "outcome-title.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(outcomeTitle) != "hpatch attempt corrected" {
+		t.Fatalf("outcome hook title = %q", outcomeTitle)
+	}
 	outcome, err = os.ReadFile(outcomePath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(outcome), "# hpatch attempt corrected") {
+	if !strings.Contains(string(outcome), "```hpatch\nnew note.txt\ntype \"ok\"\n```") ||
+		strings.Contains(string(outcome), "# hpatch attempt corrected") {
 		t.Fatalf("corrected outcome hook = %q", outcome)
 	}
 	metadataBody, err := os.ReadFile(metadataPath)

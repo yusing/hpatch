@@ -198,6 +198,7 @@ type hpatchProxy struct {
 	translator     hpatchTranslator
 	registry       *toolRegistry
 	shellDirectory string
+	titles         *sessionTitleCache
 	shellSessions  map[string]struct{}
 
 	mu              sync.RWMutex
@@ -208,15 +209,20 @@ type hpatchProxy struct {
 	closed          bool
 }
 
-func newHPatchProxy(translator hpatchTranslator, registry *toolRegistry) *hpatchProxy {
+func newHPatchProxy(translator hpatchTranslator, registry *toolRegistry, titleCaches ...*sessionTitleCache) *hpatchProxy {
 	if translator == nil || registry == nil {
 		return nil
+	}
+	titles := newSessionTitleCache()
+	if len(titleCaches) != 0 && titleCaches[0] != nil {
+		titles = titleCaches[0]
 	}
 	directory := "/tmp"
 	return &hpatchProxy{
 		translator:     translator,
 		registry:       registry,
 		shellDirectory: directory,
+		titles:         titles,
 		shellSessions:  make(map[string]struct{}),
 		sessions:       make(map[string]*hpatchHistorySession),
 		activeSessions: make(map[string]int),
@@ -303,6 +309,7 @@ type hpatchResponseTransform struct {
 	ctx              context.Context
 	proxy            *hpatchProxy
 	sessionID        string
+	model            string
 	historySessionID string
 	sessionActive    bool
 
@@ -464,6 +471,7 @@ func (p *hpatchProxy) prepareRequest(ctx context.Context, request *parsedRespons
 		ctx:              ctx,
 		proxy:            p,
 		sessionID:        sessionID,
+		model:            request.modelDescription(),
 		historySessionID: historySessionID,
 		sessionActive:    true,
 
@@ -1290,10 +1298,12 @@ func (t *hpatchResponseTransform) translate(callID, input string, upstreamItem m
 	recovery := isHPatchRecoveryCandidate(input)
 	attemptMetadata := hpatch.AttemptMetadata{
 		SessionID:     t.sessionID,
+		Title:         t.proxy.titles.title(t.sessionID),
 		CorrelationID: callID,
 		CallID:        callID,
 		Attempt:       1,
 		Correction:    recovery,
+		Model:         t.model,
 	}
 	if recovery {
 		base, baseErr := t.recoveryHistory()

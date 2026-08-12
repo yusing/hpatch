@@ -160,6 +160,7 @@ type sessionMetrics struct {
 	HPatchAttempts   []hpatchAttemptMetrics  `json:"hpatch_attempts"`
 	HPatchRejections []hpatch.HostRejection  `json:"hpatch_rejections"`
 	SessionID        string                  `json:"session_id"`
+	Title            string                  `json:"title"`
 	Model            string                  `json:"model"`
 }
 
@@ -296,6 +297,7 @@ type metricsStore struct {
 	subscribers     map[uint64]chan struct{}
 	subscriberSeq   uint64
 	gainDirectory   string
+	titles          *sessionTitleCache
 	mode            string
 }
 
@@ -324,7 +326,11 @@ type activeRequestHandle struct {
 	finished  bool
 }
 
-func newMetricsStore(gainDirectory string) *metricsStore {
+func newMetricsStore(gainDirectory string, titleCaches ...*sessionTitleCache) *metricsStore {
+	titles := newSessionTitleCache()
+	if len(titleCaches) != 0 && titleCaches[0] != nil {
+		titles = titleCaches[0]
+	}
 	return &metricsStore{
 		all:              newMetricGroup(),
 		retainedSessions: map[string]retainedSessionMetrics{},
@@ -332,6 +338,7 @@ func newMetricsStore(gainDirectory string) *metricsStore {
 		sessionUsed:      map[string]uint64{},
 		subscribers:      map[uint64]chan struct{}{},
 		gainDirectory:    gainDirectory,
+		titles:           titles,
 	}
 }
 
@@ -525,9 +532,12 @@ func (m *metricsStore) snapshot() metricsSnapshot {
 	})
 	gainDirectory := m.gainDirectory
 	m.mu.RUnlock()
+	for index := range snapshot.Sessions {
+		snapshot.Sessions[index].Title = m.titles.title(snapshot.Sessions[index].SessionID)
+	}
 
-	// Durable gain metrics use their own file lock; keep that I/O off the
-	// in-memory telemetry mutex so request lifecycle writers are not blocked.
+	// Durable title and gain lookups use their own synchronization; keep that I/O
+	// off the in-memory telemetry mutex so request lifecycle writers are not blocked.
 	snapshot.Gain, snapshot.GainError = loadGainMetrics(gainDirectory)
 	return snapshot
 }

@@ -256,7 +256,7 @@ func TranslateForHost(ctx context.Context, workspace Workspace, script, dataDire
 // authorizing the translated patch.
 func TranslateForHostAt(ctx context.Context, directory, script, dataDirectory string) (HostTranslation, error) {
 	result, err := translateDetailedAt(ctx, directory, script)
-	return finishHostChange(ctx, dataDirectory, result, err)
+	return finishHostChange(ctx, dataDirectory, script, result, err)
 }
 
 // ApplyForHost evaluates and atomically applies script while returning host diagnostics and metrics.
@@ -272,10 +272,10 @@ func ApplyForHostRoot(ctx context.Context, root *os.Root, script, dataDirectory 
 
 func changeForHost(ctx context.Context, workspace Workspace, script, dataDirectory string, apply bool) (HostTranslation, error) {
 	result, err := changeDetailed(ctx, workspace, script, apply)
-	return finishHostChange(ctx, dataDirectory, result, err)
+	return finishHostChange(ctx, dataDirectory, script, result, err)
 }
 
-func finishHostChange(ctx context.Context, dataDirectory string, result HostTranslation, err error) (HostTranslation, error) {
+func finishHostChange(ctx context.Context, dataDirectory, script string, result HostTranslation, err error) (HostTranslation, error) {
 	if err != nil {
 		result.Rejections = hostRejectionsOf(err)
 
@@ -285,7 +285,7 @@ func finishHostChange(ctx context.Context, dataDirectory string, result HostTran
 				result.Diagnostic = ""
 				return result, contextErr
 			}
-			for _, hookErr := range runOutcomeHooks(ctx, dataDirectory, "rejected", errorHooksTimeout) {
+			for _, hookErr := range runOutcomeHooks(ctx, dataDirectory, "rejected", script, errorHooksTimeout) {
 				warning := warningDiagnostic(hookErr.Error())
 				if !strings.Contains(result.Diagnostic, warning) {
 					result.Diagnostic += warning
@@ -302,7 +302,7 @@ func finishHostChange(ctx context.Context, dataDirectory string, result HostTran
 	if metadata, ok := attemptMetadataFromContext(ctx); ok && metadata.Correction {
 		outcome = "corrected"
 	}
-	for _, hookErr := range runOutcomeHooks(ctx, dataDirectory, outcome, errorHooksTimeout) {
+	for _, hookErr := range runOutcomeHooks(ctx, dataDirectory, outcome, script, errorHooksTimeout) {
 		result.Diagnostic += warningDiagnostic(hookErr.Error())
 	}
 	if err := ctx.Err(); err != nil {

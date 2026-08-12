@@ -39,6 +39,7 @@ type attemptHookFields struct {
 	CallID        string
 	Attempt       int
 	Correction    bool
+	Model         string
 	Outcome       string
 }
 
@@ -46,6 +47,7 @@ type errorHookEvent struct {
 	attemptHookFields
 
 	Body          string
+	Title         string
 	Diagnostic    string
 	Repair        string
 	Command       int
@@ -60,7 +62,9 @@ type errorHookEvent struct {
 type outcomeHookEvent struct {
 	attemptHookFields
 
-	Body string
+	Body   string
+	Title  string
+	Script string
 }
 
 func runCommandErrorHooks(ctx context.Context, dataDirectory string, sourceErrors []*commandError, diagnostic string, timeout time.Duration) []error {
@@ -199,8 +203,12 @@ func newErrorHookEvent(ctx context.Context, sourceError *commandError, diagnosti
 		FailedCommand: sourceError.Source,
 		Failure:       sourceError.Message,
 	}
+	event.Title = "hpatch command failed"
 	if metadata, ok := attemptMetadataFromContext(ctx); ok {
 		event.attemptHookFields = newAttemptHookFields(metadata, "rejected")
+		if metadata.Title != "" {
+			event.Title = metadata.Title
+		}
 	}
 	event.Body = formatErrorHookMarkdown(event)
 	return event
@@ -208,18 +216,34 @@ func newErrorHookEvent(ctx context.Context, sourceError *commandError, diagnosti
 
 func formatErrorHookMarkdown(event errorHookEvent) string {
 	var body strings.Builder
-	body.WriteString("# hpatch command failed\n\n")
-	writeHookField(&body, "Command", strconv.Itoa(event.Command))
-	writeHookField(&body, "Source line", strconv.Itoa(event.SourceLine))
-	writeHookField(&body, "Operation", event.Operation)
-	writeHookField(&body, "Category", event.Category)
-	writeHookField(&body, "Path", event.Path)
-	writeAttemptHookFields(&body, event.attemptHookFields)
-	writeHookBlock(&body, "Failed command", event.FailedCommand)
-	writeHookBlock(&body, "Failure", event.Failure)
-	writeHookBlock(&body, "Diagnostic", event.Diagnostic)
-	if event.Repair != "" {
-		writeHookBlock(&body, "Repair context", event.Repair)
+	if event.Command != 0 {
+		fmt.Fprintf(&body, "Command: %d", event.Command)
+		if event.Operation != "" {
+			fmt.Fprintf(&body, " %s", markdownCodeSpan(event.Operation))
+		}
+		body.WriteString("\n\n")
+	}
+	if event.Path != "" {
+		fmt.Fprintf(&body, "Source: %s", event.Path)
+		if event.SourceLine != 0 {
+			fmt.Fprintf(&body, ":%d", event.SourceLine)
+		}
+		body.WriteString("\n\n")
+	}
+	if event.Model != "" {
+		fmt.Fprintf(&body, "Model: %s\n\n", event.Model)
+	}
+	if event.SessionID != "" {
+		fmt.Fprintf(&body, "Session ID: %s\n\n", event.SessionID)
+	}
+	if event.CallID != "" {
+		fmt.Fprintf(&body, "Call ID: %s\n\n\n", event.CallID)
+	}
+	if event.Attempt != 0 {
+		fmt.Fprintf(&body, "Attempt: %d\n\n", event.Attempt)
+	}
+	if event.SessionID != "" {
+		fmt.Fprintf(&body, "Correction: %t\n\n", event.Correction)
 	}
 	return strings.TrimSuffix(body.String(), "\n")
 }
@@ -294,6 +318,7 @@ func newAttemptHookFields(metadata AttemptMetadata, outcome string) attemptHookF
 		CallID:        metadata.CallID,
 		Attempt:       metadata.Attempt,
 		Correction:    metadata.Correction,
+		Model:         metadata.Model,
 		Outcome:       outcome,
 	}
 }
@@ -310,7 +335,7 @@ func writeAttemptHookFields(body *strings.Builder, fields attemptHookFields) {
 	writeHookField(body, "Outcome", fields.Outcome)
 }
 
-func runOutcomeHooks(ctx context.Context, dataDirectory, outcome string, timeout time.Duration) []error {
+func runOutcomeHooks(ctx context.Context, dataDirectory, outcome, script string, timeout time.Duration) []error {
 	metadata, ok := attemptMetadataFromContext(ctx)
 	if !ok || dataDirectory == "" {
 		return nil
@@ -322,7 +347,10 @@ func runOutcomeHooks(ctx context.Context, dataDirectory, outcome string, timeout
 	if len(configured.Hooks.Outcome) == 0 {
 		return nil
 	}
-	event := outcomeHookEvent{attemptHookFields: newAttemptHookFields(metadata, outcome)}
+	event := outcomeHookEvent{attemptHookFields: newAttemptHookFields(metadata, outcome), Title: "hpatch attempt " + outcome, Script: script}
+	if metadata.Title != "" {
+		event.Title = metadata.Title
+	}
 	event.Body = formatOutcomeHookMarkdown(event)
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
@@ -331,9 +359,25 @@ func runOutcomeHooks(ctx context.Context, dataDirectory, outcome string, timeout
 
 func formatOutcomeHookMarkdown(event outcomeHookEvent) string {
 	var body strings.Builder
-	body.WriteString("# hpatch attempt " + event.Outcome + "\n\n")
 	writeAttemptHookFields(&body, event.attemptHookFields)
+	if event.Script != "" {
+		fence := markdownFence(event.Script)
+		fmt.Fprintf(&body, "\n%shpatch\n%s", fence, event.Script)
+		if !strings.HasSuffix(event.Script, "\n") {
+			body.WriteByte('\n')
+		}
+		body.WriteString(fence)
+	}
 	return strings.TrimSuffix(body.String(), "\n")
+}
+
+func markdownFence(value string) string {
+	longestRun := 0
+	for line := range strings.Lines(value) {
+		run := len(line) - len(strings.TrimLeft(line, "`"))
+		longestRun = max(longestRun, run)
+	}
+	return strings.Repeat("`", max(3, longestRun+1))
 }
 
 func executeErrorHook(ctx context.Context, command string) error {

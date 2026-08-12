@@ -26,8 +26,8 @@ func TestDashboardIsSelfContainedAndProtectedByCSP(t *testing.T) {
 	if strings.Contains(body, "fonts.googleapis.com") || strings.Contains(body, "fonts.gstatic.com") {
 		t.Fatal("dashboard contains a remote resource")
 	}
-	if !strings.Contains(body, "details.route.textContent=session.model") {
-		t.Fatal("collapsed session model is missing")
+	if !strings.Contains(body, "details.name.textContent=session.title||session.session_id") {
+		t.Fatal("collapsed session title is missing")
 	}
 	if !strings.Contains(body, "By model") || strings.Contains(body, "reasoning_effort") {
 		t.Fatal("dashboard retains reasoning-route telemetry")

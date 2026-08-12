@@ -342,6 +342,8 @@ curl -sS http://127.0.0.1:8080/v1/models
 # open http://127.0.0.1:8080/ for the local dashboard
 ```
 
+The dashboard labels each collapsible session with the task title found for its UUID in `$CODEX_HOME/session_index.jsonl` (normally `~/.codex/session_index.jsonl`) and falls back to the UUID. The router resolves each session UUID once and shares that cached title with hpatch hook events.
+
 ### Codex model instructions
 
 [`contrib/codex/file-editing-instructions.md`](contrib/codex/file-editing-instructions.md)

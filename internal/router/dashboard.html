@@ -570,16 +570,16 @@ function validRequests(requests){return validUints(requests,lifecycleKeys)}
 function validCalls(calls){return validUints(calls,callKeys)}
 function validCounts(counts){return validUints(counts,order)}
 function validGroup(data){return data&&typeof data==='object'&&!Array.isArray(data)&&validCounts(data.total)&&data.by_model&&typeof data.by_model==='object'&&!Array.isArray(data.by_model)&&Object.values(data.by_model).every(validCounts)&&validRequests(data.requests)&&validCalls(data.hpatch_calls)}
-function validSnapshot(data){return validGroup(data)&&Array.isArray(data.sessions)&&data.sessions.every(session=>validGroup(session)&&typeof session.session_id==='string'&&typeof session.model==='string')&&validGain(data.gain)&&(data.gain_error===undefined||typeof data.gain_error==='string')&&(data.mode===undefined||typeof data.mode==='string')}
+function validSnapshot(data){return validGroup(data)&&Array.isArray(data.sessions)&&data.sessions.every(session=>validGroup(session)&&typeof session.session_id==='string'&&typeof session.title==='string'&&typeof session.model==='string')&&validGain(data.gain)&&(data.gain_error===undefined||typeof data.gain_error==='string')&&(data.mode===undefined||typeof data.mode==='string')}
 const sessionElements=new Map();
-function createSession(id){
-  const details=element('details');details.dataset.sessionId=id;
+function createSession(session){
+  const id=session.session_id,details=element('details');details.dataset.sessionId=id;
   const summary=element('summary'),name=element('span','session-id'),route=element('small'),total=element('span','session-total');
-  name.append(document.createTextNode(id),element('br'),route);summary.append(element('span','chev'),name,total);
+  name.append(document.createTextNode(session.title||id),element('br'),route);summary.append(element('span','chev'),name,total);
   summary.querySelector('.chev').setAttribute('aria-hidden','true');
   const body=element('div','session-body'),group=element('div'),facts=element('ul','facts');
   body.append(group,facts);
-  details.append(summary,body);details.route=route;details.sessionTotal=total;details.sessionBody=group;details.sessionFacts=facts;return details
+  details.append(summary,body);details.name=name.firstChild;details.route=route;details.sessionTotal=total;details.sessionBody=group;details.sessionFacts=facts;return details
 }
 function sessionFacts(session){
   const requests=session.requests,calls=session.hpatch_calls;
@@ -603,7 +603,7 @@ function render(data){
   updateGain(document.querySelector('#gain'),data.gain,data.gain_error);
   document.querySelector('#mast-mode').textContent=`Hpatch router — ${data.mode||'unknown'} mode — process ledger`;
   const container=document.querySelector('#sessions'),seen=new Set();
-  data.sessions.forEach(session=>{let details=sessionElements.get(session.session_id);if(!details){details=createSession(session.session_id);sessionElements.set(session.session_id,details)}details.route.textContent=session.model;details.sessionTotal.textContent=`${fmt.format(metricValue(session.total,'input_tokens'))} in`;updateGroup(details.sessionBody,session,false);setFacts(details.sessionFacts,sessionFacts(session));container.append(details);seen.add(session.session_id)});
+  data.sessions.forEach(session=>{let details=sessionElements.get(session.session_id);if(!details){details=createSession(session);sessionElements.set(session.session_id,details)}details.name.textContent=session.title||session.session_id;details.route.textContent=session.model;details.sessionTotal.textContent=`${fmt.format(metricValue(session.total,'input_tokens'))} in`;updateGroup(details.sessionBody,session,false);setFacts(details.sessionFacts,sessionFacts(session));container.append(details);seen.add(session.session_id)});
   sessionElements.forEach((details,id)=>{if(!seen.has(id)){details.remove();sessionElements.delete(id)}});
   let empty=container.querySelector(':scope>.empty');if(data.sessions.length===0){if(!empty){empty=element('div','empty');const title=element('strong','','No sessions yet');empty.append(title,document.createTextNode('No identified sessions have recorded usage.'));container.append(empty)}else{empty.replaceChildren(element('strong','','No sessions yet'),document.createTextNode('No identified sessions have recorded usage.'))}}else if(empty){empty.remove()}
   document.querySelector('#session-count').textContent=`${data.sessions.length} ${data.sessions.length===1?'session':'sessions'}`

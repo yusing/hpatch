@@ -68,7 +68,8 @@ func Run(ctx context.Context, args []string, stderr io.Writer) (runErr error) {
 			return fmt.Errorf("initialize hpatch response proxy: %w", err)
 		}
 	}
-	metrics := newMetricsStore(gainDirectory)
+	titles := newSessionTitleCache()
+	metrics := newMetricsStore(gainDirectory, titles)
 	metrics.mode = *mode
 	if *mode == "hpatch" {
 		translator := notifyingHPatchTranslator{
@@ -88,7 +89,7 @@ func Run(ctx context.Context, args []string, stderr io.Writer) (runErr error) {
 		defer func() {
 			runErr = errors.Join(runErr, registry.Close())
 		}()
-		hpatchCalls = newHPatchProxy(translator, registry)
+		hpatchCalls = newHPatchProxy(translator, registry, titles)
 		defer func() {
 			runErr = errors.Join(runErr, hpatchCalls.Close())
 		}()

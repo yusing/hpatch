@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -59,6 +61,19 @@ func finishMetricsTestRequest(store *metricsStore, sessionID, model string, coun
 		usageCounts:   counts,
 		usageObserved: counts != (tokenCounts{}),
 	})
+}
+
+func TestMetricsSnapshotUsesCachedSessionTitle(t *testing.T) {
+	indexPath := filepath.Join(t.TempDir(), "session_index.jsonl")
+	if err := os.WriteFile(indexPath, []byte(`{"id":"session","thread_name":"Named task"}`+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	store := newMetricsStore("", newSessionTitleCacheAt(indexPath))
+	finishMetricsTestRequest(store, "session", "model", tokenCounts{InputTokens: 1})
+	snapshot := store.snapshot()
+	if len(snapshot.Sessions) != 1 || snapshot.Sessions[0].Title != "Named task" {
+		t.Fatalf("sessions = %#v", snapshot.Sessions)
+	}
 }
 
 func TestMetricsStoreSnapshotAndAPI(t *testing.T) {
