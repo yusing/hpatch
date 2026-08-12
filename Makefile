@@ -8,6 +8,7 @@ CODEX_MODEL ?=
 install: install-binaries install-instructions
 
 install-binaries:
+	bun install --cwd plugins --frozen-lockfile
 	go generate ./internal/router/toolplugin
 	$(GO) install ./cmd/hpatch ./cmd/hpatch-router
 
