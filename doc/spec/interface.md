@@ -571,16 +571,18 @@ The router's in-memory metrics snapshot also attributes successful and rejected 
 translations and rejected-call diagnostic input tokens to the request session. Each session
 retains the latest 32 evaluator rejection identities: command index, physical source line,
 operation, target kind when known, stable reason, affected path when known, the physical
-multiline value row when localized, and the generated line and column reported by Go syntax
-validation when applicable. Each session also retains the latest 128 routed attempt identities:
-chain/call identity, attempt, recovery marker, and outcome, emitted and comparison token
-counts, evaluated command count, and its bounded rejection identities. These count limits
-are reinforced by per-session text-byte limits, so an oversized rejection identity is not
-retained. Session records use the same session identity as request lifecycle metrics and are
-not written
-to `metrics.bin`. They retain neither scripts, replacement text, diagnostics, nor repair
-context. Proxy
-failures that occur before evaluator invocation do not fabricate evaluator rejection identities.
+multiline value row when localized, and the generated line and column reported by language
+syntax validation when applicable. A command with several distinct repair locations retains one
+identity per location as defined by `REQ-OUTPUT-001`. Each session also retains the latest
+128 routed attempt identities: chain/call identity, attempt, recovery marker, and outcome,
+emitted and comparison token counts, evaluated command count, and its bounded rejection
+identities. These count limits are reinforced by per-session text-byte limits, so an oversized
+rejection identity is not retained. Session records use the same session identity as request
+lifecycle metrics and are not written to `metrics.bin`. Each record also carries the client's
+own display title for that session when the client exposes one, resolved once per session and
+treated as an optional label rather than a counter. They retain neither scripts, replacement
+text, diagnostics, nor repair context. Proxy failures that occur before evaluator invocation do
+not fabricate evaluator rejection identities.
 The snapshot also exposes aggregate counters so a benchmark can reconcile routed calls with
 client-visible file-change items without inferring failures from stderr envelopes.
 

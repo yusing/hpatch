@@ -149,8 +149,8 @@ Agent workflow:
   8. Changed Go files are parsed and formatted with Go's standard library before
      success. Supported Python, JavaScript, and TypeScript files are syntax-checked when
      Tree-sitter support is available. Supported indentation corrections are automatic.
-     implicated command and shows bounded generated-source context. Do not run redundant
-     gofmt.
+     Syntax rejection identifies the implicated command and shows bounded
+     generated-source context. Do not run redundant gofmt.
 
 Final-state report:
   Success reports the active final path or "no active file", the last effective

@@ -50,4 +50,3 @@ func writeResult(value result) {
 		os.Exit(1)
 	}
 }
-

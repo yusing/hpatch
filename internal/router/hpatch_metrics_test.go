@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -115,6 +116,96 @@ func TestCalculateHPatchMetricRecordUsesEmptyFailureBaseline(t *testing.T) {
 	}
 	if record.HPatchTokens != 0 || record.ApplyPatchTokens != 0 || record.ReportInputTokens != 0 {
 		t.Fatalf("failure record = %+v", record)
+	}
+}
+
+// A recovery is charged the short payload the model emitted, never the complete
+// script the router rebuilt from the rejected baseline. The comparison baseline
+// stays the rebuilt script's full apply_patch program, so a recovered chain
+// reports the real payload saving rather than the baseline's size twice.
+func TestHPatchRecoveryChargesEmittedPayloadNotRebuiltScript(t *testing.T) {
+	base := "new created.txt\ntype \"bad\"\n"
+	rebuilt := "new created.txt\ntype \"payload\"\n"
+	var records []hpatchMetricRecord
+	calls := 0
+	translator := hpatchResultObservingTranslator{
+		translate: func(_ context.Context, _ string, script string) (hpatchTranslationResult, error) {
+			calls++
+			if calls == 1 {
+				return hpatchTranslationResult{
+					diagnostic: "type: command 2, reason rejected: bad value\n",
+					rejections: []hpatch.HostRejection{{Command: 2, SourceLine: 2, Operation: "type"}},
+				}, errors.New("rejected")
+			}
+			if script != rebuilt {
+				t.Fatalf("evaluated script = %q, want %q", script, rebuilt)
+			}
+			return hpatchTranslationResult{patch: []byte(testTranslatedPatch)}, nil
+		},
+		record: func(_ context.Context, record hpatchMetricRecord) error {
+			records = append(records, record)
+			return nil
+		},
+	}
+	transform, _, _, _ := newHPatchTestTransformWithProxy(t, newManagedHPatchProxy(t, translator))
+	if _, err := transform.translate("call-1", base, nil); err != nil {
+		t.Fatal(err)
+	}
+	payload := "type " + testRecoveryRow(t, base, 2) + " " + strconv.Quote(`type "payload"`) + "\n"
+	if _, err := transform.translate("call-2", payload, nil); err != nil {
+		t.Fatal(err)
+	}
+	if len(records) != 2 {
+		t.Fatalf("recorded attempts = %d, want 2", len(records))
+	}
+
+	codec, err := tokenizer.ForModel(tokenizer.GPT5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	count := func(value string) uint64 {
+		valueCount, countErr := codec.Count(value)
+		if countErr != nil {
+			t.Fatal(countErr)
+		}
+		return uint64(valueCount)
+	}
+
+	if got, want := records[0].IneffectiveHPatchTokens, count("functions.hpatch\n"+base); got != want {
+		t.Fatalf("rejected attempt charge = %d, want %d", got, want)
+	}
+	if records[0].DiagnosticInputTokens == 0 {
+		t.Fatal("rejection diagnostic carrying recovery guidance was not charged as model input")
+	}
+	if got, want := records[1].HPatchTokens, count("functions.hpatch\n"+payload); got != want {
+		t.Fatalf("recovery charge = %d, want %d for the emitted payload", got, want)
+	}
+	if got := records[1].HPatchTokens; got == count("functions.hpatch\n"+rebuilt) {
+		t.Fatalf("recovery charged the rebuilt script (%d) instead of the emitted payload", got)
+	}
+	if got, want := records[1].ApplyPatchTokens, count("functions.exec\n"+applyPatchMetricProgram(testTranslatedPatch)); got != want {
+		t.Fatalf("recovery apply_patch baseline = %d, want %d", got, want)
+	}
+	if records[1].IneffectiveHPatchTokens != 0 || records[1].FailedApplyPatchTokens != 0 {
+		t.Fatalf("successful recovery reported failure counters: %+v", records[1])
+	}
+
+	rejected, ok := hpatchAttemptMetricsOf(records[0])
+	if !ok {
+		t.Fatal("rejected attempt produced no session telemetry")
+	}
+	recovered, ok := hpatchAttemptMetricsOf(records[1])
+	if !ok {
+		t.Fatal("recovery attempt produced no session telemetry")
+	}
+	if rejected.Outcome != "rejected" || recovered.Outcome != "successful" {
+		t.Fatalf("outcomes = %q and %q", rejected.Outcome, recovered.Outcome)
+	}
+	if rejected.Correction || !recovered.Correction {
+		t.Fatalf("recovery markers = %v and %v", rejected.Correction, recovered.Correction)
+	}
+	if rejected.CorrelationID != recovered.CorrelationID || rejected.Attempt != 1 || recovered.Attempt != 2 {
+		t.Fatalf("recovery chain = %+v and %+v", rejected, recovered)
 	}
 }
 
