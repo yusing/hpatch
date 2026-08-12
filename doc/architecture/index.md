@@ -14,11 +14,10 @@ pjdoc:
 
 One internal lexical owner implements the inline quoted-operand and fixed `<<PATCH`
 heredoc framing required by `REQ-SCRIPT-001`. The root parser consumes decoded operands
-and command frames from that owner and constructs file commands or target-bearing
-mutations. The root text editor reuses those parsed target-bearing mutations for
-rejected-script recovery. The router uses the lexical owner only to find physical command
-frames for recovery detection and bounded guidance; it does not interpret target semantics.
-The lexical owner performs no filesystem access, target resolution, command evaluation,
+and command frames for ordinary HPATCH/2. The router reuses the lexical owner for its
+separate recovery grammar's embedded command/value framing and for bounded diagnostic
+guidance. The root `EditText` primitive owns only immutable text-target mutation. The
+lexical owner performs no filesystem access, target resolution, command evaluation,
 rejected-script ancestry, or output rendering.
 
 ## CTR-CORE-001 — Virtual workspace and immutable-baseline edit planning
@@ -64,15 +63,15 @@ metadata, effective per-command editor splices with authored command provenance,
 final content already owned by each editor, and language-formatting offset maps needed for
 bounded state reporting.
 
-## CTR-CORRECT-001 — Rejected-script recovery
+## CTR-CORRECT-001 — Router-only rejected-script recovery
 
-The root text editor owns ordinary line, range, and text target resolution, mutation
-ordering, and the immutable in-memory baseline for `REQ-CORRECT-001`. The router owns
-recovery detection, rejected-script ancestry, correlation metadata, emitted-payload
-metrics, and complete-script reevaluation. It sends the recovery payload to the root text
-editor, then passes only the rebuilt complete script to the ordinary hpatch host boundary;
-the core evaluator has no recovery mode. Malformed, stale, or conflicting recovery remains
-a router rejection and cannot change the latest evaluated baseline or workspace state.
+The router owns the dedicated recovery grammar, parsing, command and value-row handles,
+rejected-script ancestry, worktree isolation, correlation, replay, diagnostics, chain metrics,
+and complete-script reevaluation. It resolves every recovery operation against one immutable
+latest evaluated script and uses the root `EditText` primitive only to apply the planned text
+mutations. The core evaluator, root public API, root grammar, and standalone CLI have no
+recovery mode. Malformed, stale, conflicting, or incomplete recovery changes neither the
+workspace nor the retained evaluated baseline.
 
 ## CTR-STATE-001 — Bounded final-state projection
 
@@ -139,8 +138,8 @@ response, while request cancellation still propagates. Definition accounting con
 exact serialized collection installed from the validated built-in and plugin registry and a
 stable per-plugin and per-tool breakdown derived from that same collection.
 
-The router exposes only hpatch and shell beside the displaced Code Mode `exec` carrier.
-Hpatch remains the native engine contribution. Shell, hread, hgrep, and inspect_file are
+The router exposes only hpatch, hpatch_recover, and shell beside the displaced Code Mode `exec` carrier.
+Hpatch remains the native engine contribution. Hpatch_recover is a router-owned recovery contribution. Shell, hread, hgrep, and inspect_file are
 JavaScript- and TypeScript-authored built-in plugin contributions compiled by Bun into one
 embedded JavaScript module with the reserved `builtin.shell` identity. Shell is model-visible; hread, hgrep, and
 inspect_file retain executable workers and frontends but their specifications are private.
@@ -149,7 +148,7 @@ Configured user tools remain model-visible.
 The plugin runtime snapshots and validates the immutable built-in module before user
 declarations, then applies the same normalized registry, wrapper, worker, and metrics paths to
 all executable contributions. The registry projects only model-visible tool definitions.
-Request rewriting installs the projected hpatch and shell definitions, removes the native
+Request rewriting installs the projected hpatch, hpatch_recover, and shell definitions, removes the native
 exec-command contract, and leaves the Responses `instructions` field byte-equivalent.
 Private contribution descriptions are execution contracts, not a prompt source. Passthrough
 mode loads no registry.

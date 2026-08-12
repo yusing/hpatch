@@ -143,9 +143,8 @@ Agent workflow:
      paths and may be used directly in the next invocation. Use hread only when the
      successful report lacks the exact target needed next.
   6. Prefer inline single-line values; reserve <<PATCH for multiline or escape-heavy text.
-  7. A rejected invocation changes nothing. When routed recovery emits script
-     LINE:HASH rows, use hpatch without in to patch that rejected script; reread
-     those rows if a later attempt reports staleness.
+  7. A rejected invocation changes nothing. Recovery is a router-only tool and is not
+     part of the standalone hpatch grammar or CLI.
   8. Changed Go files are parsed and formatted with Go's standard library before
      success. Supported Python, JavaScript, and TypeScript files are syntax-checked when
      Tree-sitter support is available. Supported indentation corrections are automatic.

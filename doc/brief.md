@@ -70,7 +70,7 @@ wall time must remain close to control.
 - Translate mode that does not modify files and emits one OpenAI `apply_patch` envelope.
 - Successful normal and translate reports project bounded current references for every
   effective content-edit command on every surviving edited file.
-- Ordinary `type`, `type-`, and `type+` recovery mutations against the latest rejected script without resending unaffected rows.
+- Router-only `functions.hpatch_recover` with hashed command and value-row handles; standalone hpatch has no recovery mode.
 - Persistent encoding, diagnostic, command, target, and end-to-end benchmark metrics.
 - Historical-commit benchmark tasks with hidden graders, paired randomized attempts, and
   structured artifacts.

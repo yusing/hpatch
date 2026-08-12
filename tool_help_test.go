@@ -117,7 +117,7 @@ func TestHPatchToolHelpCoversSafeCommandChoice(t *testing.T) {
 		"not targetable in the same call",
 		"Changed Go files are parsed and formatted before success",
 		"syntax-checked when Tree-sitter support is available",
-		"use hpatch without `in` to patch the rejected script",
+		"standalone CLI and ordinary hpatch grammar have no recovery mode",
 	} {
 		if !strings.Contains(normalized, guidance) {
 			t.Errorf("tool help omits %q", guidance)

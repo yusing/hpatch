@@ -454,7 +454,7 @@ Rules worth remembering:
 - Successful final-state `LINE:HASH` rows are post-format and post-cleanup references for their named final paths and may be used directly in the next invocation. Reports are bounded, so use hread when the successful report lacks the exact target needed next.
 - Overlapping replacements or deletions and insertions strictly inside them fail atomically. Boundary insertions are valid.
 - Use inline quoted values for short single-line edits; include `\n` when an insertion must form a new line. Reserve fixed `<<PATCH` for multiline or escape-heavy values.
-- Rejection changes nothing. The latest evaluated rejected script becomes an implicit immutable text baseline. A follow-up hpatch call can begin with target-bearing `type`, `type-`, or `type+` and omit `in`; the root editor rebuilds the complete script with ordinary `LINE:HASH` semantics before the router reevaluates it.
+- A rejected routed script changes nothing. The router exposes `functions.hpatch_recover`, a separate custom-grammar tool that repairs the latest evaluated rejected script by hashed `C...` command and `V...` value-row handles. All operations resolve against one immutable script before the router rebuilds it through the root text editor and reevaluates it. Recovery is not part of the standalone CLI or ordinary `functions.hpatch` grammar.
 
 Additional boundaries:
 

@@ -526,13 +526,15 @@ is `n/a` when translated tokens are zero. Router-side input rejection uses a sep
 with `n/a` reduction. Executor failures after Codex accepts the execution carrier do not
 retroactively become router translation failures.
 
-For hpatch, both effective and ineffective emitted estimates count the `functions.hpatch` tool
-name followed by the editing payload the model emitted. When a recovery mutates rows of a
-rejected script, the shorter recovery payload is charged while the rebuilt complete script is used
-only for evaluation. The successful translated side counts the Code Mode carrier name and a
-fixed free-form program that passes the complete translated patch envelope, serialized as one
-string argument, to `tools.apply_patch`, then returns that nested tool's result. The router-only
-marker and hpatch final-state report are excluded from this established semantic baseline.
+For hpatch, emitted estimates count the model-visible tool name followed by the exact payload.
+A correlated routed recovery chain settles once: its hpatch side is the encoded initial
+`functions.hpatch` call plus every encoded `functions.hpatch_recover` call, while its comparator
+side is exactly one final `functions.exec` carrier containing the generated `apply_patch` program.
+Rejected recovery attempts add their emitted payload but no additional comparator. A successful
+recovery atomically compensates every provisional failed row and records the combined chain
+against the final comparator. An abandoned chain retains the combined ineffective tokens and
+the initial failed comparator. Per-attempt router telemetry remains individual, and the
+`hpatch_recover` definition remains ordinary definition overhead.
 All estimates use the tokenizer library's GPT-5 model mapping. Tool inputs and translated
 payloads remain data and cannot alter the fixed programs used for counting.
 
@@ -829,71 +831,48 @@ Acceptance:
 
 ## REQ-CORRECT-001 — Rejected-script recovery
 
-After a routed hpatch script is rejected, its latest evaluated complete script becomes an
-implicit immutable text baseline for a recovery call. A recovery payload begins with
-target-bearing `type`, `type-`, or `type+`, omits `in`, and contains only target-bearing
-ordinary mutations:
+The router exposes a separate model-visible `functions.hpatch_recover` custom tool with an
+independent embedded Lark grammar. Recovery is unavailable from the standalone CLI, root public
+API, root `tool_grammar.lark`, and ordinary `functions.hpatch`. A payload beginning with `type`,
+`type-`, or `type+` is therefore always an ordinary complete HPATCH/2 script.
 
-```text
-type LINE:HASH VALUE
-type- LINE:HASH VALUE
-type+ LINE:HASH VALUE
-```
+Each rejected-script command has a `C<number>:<hash>` handle covering its complete attributable
+command frame. Complete heredocs may expose `V<physical-row>:<hash>` value-row handles. The
+recovery operations are `drop`, field-level `target`, `operation`, and `value`, value-row
+`value` / `value-` / `value+`, and structural `replace` / `before` / `after`. Inline quoted and
+fixed `<<PATCH` values use the shared hpatch syntax framing. There is no sentinel line and no
+`accept` operation.
 
-Line, range, and text targets, quoted values, the fixed `<<PATCH` frame, terminator
-ownership, same-boundary insertion order, stale-row rejection, and edit-conflict behavior
-are exactly the ordinary HPATCH/2 semantics from `REQ-SYNTAX-001` and `REQ-EDIT-001`.
-The root package applies those mutations to the rejected-script text without filesystem
-access, language validation, formatting, indentation policy, whitespace cleanup, hooks,
-or evaluator metrics. Every recovery mutation must succeed before the rebuilt script is
-returned.
+The router owns recovery grammar, parsing, handle resolution, ancestry, worktree isolation,
+dispatch, replay, diagnostics, and reevaluation. Every operation resolves against the latest
+visible evaluated rejected script as one immutable baseline. The router rebuilds the complete
+script through the root `EditText` primitive, then evaluates that script normally.
 
-The router recognizes recovery payloads, selects the latest evaluated rejected hpatch
-script in the same routing session and selected canonical metadata directory or no-directory
-state, and calls the root text editor. It then reparses and reevaluates the complete rebuilt
-script normally. A malformed, stale, conflicting, cross-worktree, or otherwise invalid
-recovery changes neither retained ancestry nor workspace state. Proxy-rejected attempts
-leave the last evaluated script as the next recovery baseline. Non-hpatch plugin and shell
-failures never enter this ancestry. A rejected script is recoverable only while the
-conversation still shows its call: when a request's input no longer carries a retained call,
-that call and every later one leave the ancestry, so an edited or truncated conversation
-cannot recover a script the model can no longer see.
+A malformed, stale, conflicting, incomplete, cross-worktree, or otherwise invalid recovery
+changes neither workspace state nor retained rejected ancestry. Proxy-rejected attempts keep
+the last evaluated script as the next baseline. A re-rejected recovery becomes the next
+baseline, and replay restores the exact `functions.hpatch_recover` payload while retaining its
+rebuilt script for later recovery. Non-hpatch plugin and shell failures never enter this
+ancestry. Input truncation removes calls the conversation no longer shows.
 
-Every evaluator rejection exposes current targetable rejected-script `LINE:HASH` rows and
-the instruction to use hpatch without `in`. Command-header rows use structured rejection
-source lines. Syntax validation supplies one structured rejection entry for every distinct
-actionable repair location from every changed file, ordered by originating command and then
-localized value row. Complete heredocs expose the closing delimiter and bounded context around
-every localized value row, so one atomic recovery payload can repair all emitted targets.
-Malformed frames expose their last targetable attributable row rather than an invented trailing
-row. A rebuilt script that is reevaluated and rejected becomes the next baseline, so later
-recovery hashes always address the latest evaluated script.
-
-The chain retains its correlation ID and increments the attempt for evaluated and
-proxy-rejected recovery calls. Replay restores the exact short payload emitted by the model,
-while retained `evaluated` state stores the complete rebuilt script needed by the next
-recovery. Metrics charge emitted hpatch tokens to the recovery payload rather than the
-rebuilt script. `AttemptMetadata.Correction` remains the recovery-attempt marker for hooks
-and retained telemetry.
+Every evaluator rejection renders the relevant command handles and bounded heredoc value-row
+context. A handle from an older baseline is stale. Correlation IDs remain stable and attempt
+numbers increase across evaluated and proxy-rejected calls. Per-attempt telemetry preserves
+the emitted tool identity and outcome. Gain metrics settle the correlated hpatch/recovery chain
+once according to the combined-payload and single-comparator rules above.
 
 Acceptance:
 
-1. A target-bearing `type`, `type-`, or `type+` payload without `in` edits the latest
-   rejected script with ordinary verified-row semantics.
-2. A successful text edit is reevaluated as one complete ordinary hpatch script; success or
-   rejection remains atomic.
-3. A re-rejected recovery exposes references from the current rebuilt script, not the
-   previous baseline.
-4. A malformed, stale, or conflicting recovery leaves the latest evaluated script usable by
-   a later attempt.
-5. Recovery cannot cross routing sessions or selected worktrees, and unrelated plugin or
-   shell failures cannot become recovery bases.
-6. A rejection whose call the current input no longer shows is not a recovery base, while an
-   older call the input still shows keeps replaying and remains recoverable.
-7. Correlation, attempt sequencing, replay shape, retained-root behavior, and emitted-payload
-   token accounting remain stable across the chain.
-8. Indexed forms such as `N: COMMAND`, `N: accept`, `-N`, `+N: COMMAND`, `N+: COMMAND`, and
-   dotted value-row operations are ordinary script syntax errors, not compatibility paths.
+1. `functions.hpatch_recover` has a dedicated grammar, is router-only, and omits `accept`.
+2. Every recovery operation resolves against one immutable latest evaluated rejected script.
+3. A successful rebuild is reevaluated as one complete ordinary HPATCH/2 script.
+4. Re-rejection advances the baseline; proxy rejection leaves it unchanged.
+5. Recovery cannot cross sessions or selected worktrees, and unrelated tools cannot become bases.
+6. Replay restores `hpatch_recover` identity and the exact emitted short payload.
+7. Ordinary mutation-leading hpatch scripts are never detected as recovery.
+8. Per-attempt telemetry remains individual, while gain counts every chain payload and one
+   final or failed comparator.
+9. The removed no-`in`, indexed, and dotted value-row recovery forms are ordinary script syntax errors, not compatibility paths.
 
 ## REQ-FILE-001 — File scope and lifecycle
 
@@ -1166,10 +1145,10 @@ row or failure without a verified baseline does not choose repair context. Repai
 is supplementary: it never changes exit status, stdout, mutation, or metrics classification.
 When invalid generated source is localized to a fixed-heredoc mutation, each distinct rejection
 identity includes the non-sensitive `value_line`. Transient root diagnostics describe every
-bounded value-row context rather than mutation addresses. Routed diagnostics add current
-targetable rejected-script `LINE:HASH` rows for the command header, every localized body
-context, and the closing delimiter under `REQ-CORRECT-001`. Inline decoded multiline values
-and failures outside a multiline replacement do not fabricate a value row.
+bounded value-row context rather than mutation addresses. Routed diagnostics add the current
+hashed `C...` handle for each attributable command and bounded `V...` handles around localized
+body failures under `REQ-CORRECT-001`. Inline decoded multiline values and failures outside a
+multiline replacement do not fabricate a value-row handle.
 
 Acceptance:
 
@@ -1222,9 +1201,9 @@ uses `CODEX_MODEL` or the lowest-priority bundled model, writes the default file
 setting. An unrecognized customized file fails instead of being overwritten.
 
 The recovery template adjacent to the central source owns dynamic recovery prose. After each
-actionable structured evaluator rejection, the router supplies current rejected-script
-`LINE:HASH` rows to that template. A re-rejected recovery refreshes the rows from the latest
-evaluated script.
+actionable structured evaluator rejection, the router supplies current rejected-script `C...`
+command handles and any localized `V...` value-row handles to that template. A re-rejected
+recovery refreshes the handles from the latest evaluated script.
 
 Persistent guidance teaches this workflow:
 
@@ -1250,8 +1229,8 @@ Persistent guidance teaches this workflow:
 8. Use nonempty `type` to replace, empty target-bearing `type` to delete, `type-` to insert
    before, and `type+` to insert after. Use inline values for short text and `<<PATCH` for
    multiline or escape-heavy values.
-9. After rejection, use hpatch without `in` against the emitted rejected-script rows. Reread
-   those rows after a stale attempt rather than reconstructing them.
+9. After a routed rejection, use `functions.hpatch_recover` with the emitted `C...` and `V...`
+   handles. The standalone CLI has no recovery mode.
 10. Let hpatch format changed Go files and syntax-check supported changed Python, JavaScript, and
     TypeScript files.
 

@@ -139,8 +139,10 @@ Changed Go files are parsed and formatted before success; do not run redundant `
 Supported Python, JavaScript, and TypeScript files are syntax-checked when Tree-sitter support
 is available; supported indentation corrections are automatic. Relative paths use the selected
 base directory when available; without one, relative paths reject; parents for `new` or `mv`
-must exist. After rejection, use hpatch without `in` to patch the rejected script; target the
-emitted script `LINE:HASH` rows and reread them when a later attempt reports staleness.
+must exist. Routed rejection diagnostics may expose `C...` command and `V...` value-row handles.
+Use `functions.hpatch_recover` to repair that immutable rejected script. A malformed, stale,
+conflicting, or incomplete recovery changes neither the workspace nor the retained rejected
+script. The standalone CLI and ordinary hpatch grammar have no recovery mode.
 
 ## File reading, searching, inspection, and shell commands
 
