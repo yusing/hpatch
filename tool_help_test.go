@@ -96,12 +96,11 @@ func TestHPatch2ToolGrammarLineTerminators(t *testing.T) {
 	}
 }
 
-func TestHPatch2ToolDescriptionCoversSafeCommandChoice(t *testing.T) {
-	normalized := strings.Join(strings.Fields(toolDescription), " ")
+func TestHPatchToolHelpCoversSafeCommandChoice(t *testing.T) {
+	normalized := strings.Join(strings.Fields(ToolHelp()), " ")
 	for _, guidance := range []string{
-		"HPATCH/2",
+		"HPATCH/2 applies one complete target-bearing edit script atomically.",
 		"Do not call this tool in parallel with other tools.",
-		"Reason carefully about the complete script",
 		"Nonempty line and range `type` replacements preserve",
 		"`type` replaces",
 		"`type-` inserts before",
@@ -110,30 +109,41 @@ func TestHPatch2ToolDescriptionCoversSafeCommandChoice(t *testing.T) {
 		"fixed `<<PATCH`",
 		"reserved as a nested opener",
 		"immutable baseline",
+		"`rm` deletes the active file and clears the selection",
 		"submit every known related edit in one atomic script",
-		"including related multiline declarations",
 		"Split only when a later edit depends on validation",
-		"Keep unrelated large `<<PATCH` values",
 		"Prefer the smallest mutation that expresses the semantic change",
-		"When a formatter owns formatting, alignment, or indentation",
-		"add one struct field with one insertion",
-		"indentation-sensitive languages such as Python",
 		"Successful final-state `LINE:HASH` rows are current references",
 		"not targetable in the same call",
-		"Multiple insertions at the same boundary render in script order.",
 		"Changed Go files are parsed and formatted before success",
 		"syntax-checked when Tree-sitter support is available",
-		"supported indentation corrections are automatic",
 		"use hpatch without `in` to patch the rejected script",
-		"reread them when a later attempt reports staleness",
 	} {
 		if !strings.Contains(normalized, guidance) {
-			t.Errorf("tool description omits %q", guidance)
+			t.Errorf("tool help omits %q", guidance)
 		}
 	}
-	for _, excluded := range []string{"INDEX:", ": accept", "COMMAND.ROW", "HPATCH/1", "\ntsel ", "\nrsel ", "\ncopy", "\ncut", "\npaste", "\ncommit", "<<TAG", "Usage:", "--root", "hpatch gain", "prefer one range `type`", "at most one syntax-sensitive multiline Go", "discard its saved references", "Use `hgrep` as replacement of `rg` or `grep`", "Use `hread` as replacement of `cat` or `sed`"} {
-		if strings.Contains(toolDescription, excluded) {
-			t.Errorf("tool description retains excluded material %q", excluded)
+	for _, excluded := range []string{
+		"INDEX:", ": accept", "COMMAND.ROW", "HPATCH/1", "\ntsel ", "\nrsel ",
+		"\ncopy", "\ncut", "\npaste", "\ncommit", "<<TAG", "Usage:", "--root",
+		"hpatch gain", "Use `hgrep`", "Use `hread`",
+	} {
+		if strings.Contains(ToolHelp(), excluded) {
+			t.Errorf("tool help retains excluded material %q", excluded)
+		}
+	}
+}
+
+func TestToolDescriptionIsCallLocal(t *testing.T) {
+	description := ToolDescription()
+	for _, required := range []string{"Apply one complete HPATCH/2 edit script atomically.", "rejection or cancellation changes nothing"} {
+		if !strings.Contains(description, required) {
+			t.Errorf("tool description omits %q", required)
+		}
+	}
+	for _, persistent := range []string{"hread", "hgrep", "Submit every known", "After rejection", "gofmt"} {
+		if strings.Contains(description, persistent) {
+			t.Errorf("tool description contains persistent guidance %q", persistent)
 		}
 	}
 }
@@ -154,7 +164,7 @@ func TestHPatch2ToolDescriptionExamplesExecute(t *testing.T) {
 }
 
 func TestHPatch2ToolDescriptionUsesInlineForSingleLineInsertion(t *testing.T) {
-	if !strings.Contains(toolDescription, `type- 37:8c2f "// parseCommand parses one physical script line.\n"`) {
+	if !strings.Contains(ToolHelp(), `type- 37:8c2f "// parseCommand parses one physical script line.\n"`) {
 		t.Fatal("tool description lacks the approved non-heredoc single-line insertion")
 	}
 }

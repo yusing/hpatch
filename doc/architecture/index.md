@@ -104,11 +104,12 @@ hashes, command extents, or formatting adjustments.
 The CLI boundary owns arguments, stdin, workspace selection, environment-derived metrics
 configuration, diagnostics, stdout, stderr, exit status, and help composition for
 `REQ-CLI-001`, `REQ-GUIDE-001`, and `REQ-OUTPUT-001`. Top-level help owns the complete
-agent-workflow-through-metrics reference. Tool help is an independently maintained concise
-model-facing summary of target choice, mutation choice, baseline rules, and safety. It
-teaches inline single-line values before heredocs. Tool help excludes CLI mode sections,
-options, metrics, and version material. The router appends current rejected-script references
-and the recovery instruction only to actionable evaluator rejection diagnostics.
+agent-workflow-through-metrics reference. All persistent Codex edit, shell, read, search, and
+inspection workflow and the model-facing HPATCH/2 reference share
+`contrib/codex/file-editing-instructions.md` as their source. Tool descriptions retain only
+call-local contracts and request-specific schemas. The router renders dynamic rejected-script
+references and the recovery instruction from the adjacent recovery template only for actionable
+evaluator rejection diagnostics.
 
 The root-scoped workspace boundary used by the standalone CLI and authorized library callers owns a pinned `*os.Root`, a root-relative cwd, root-scoped reads, staging, commit, and rollback. Relative script paths resolve from cwd; absolute paths become root-relative identities only when within root. Lexical and symlink escapes fail. Initial inputs cross into that boundary only after a regular-file check and strict UTF-8 decoding.
 
@@ -142,11 +143,11 @@ Configured user tools remain model-visible.
 
 The plugin runtime snapshots and validates the immutable built-in module before user
 declarations, then applies the same normalized registry, wrapper, worker, and metrics paths to
-all executable contributions. The registry separately projects model-visible definitions and
-private command guidance. Request rewriting installs only the projected hpatch and shell
-definitions, appends the private hread, hgrep, and inspect_file descriptions to the existing
-Responses instructions, and always removes the native exec-command contract. Passthrough mode
-loads no registry.
+all executable contributions. The registry projects only model-visible tool definitions.
+Request rewriting installs the projected hpatch and shell definitions, removes the native
+exec-command contract, and leaves the Responses `instructions` field byte-equivalent.
+Private contribution descriptions are execution contracts, not a prompt source. Passthrough
+mode loads no registry.
 
 Each executable wrapper launches the generic private plugin worker in Codex's exec context.
 The worker derives relative-path resolution from its actual current directory and leaves
@@ -253,6 +254,11 @@ the request-specific app argument-object or CLI parameter-list shape, removes `c
 only that sanitized shape under `#!params` in the built-in `shell` description. Sibling direct tools,
 sibling namespaces, and nested tools remain unchanged. Direct `functions.exec` entries and
 top-level `exec` or `functions.exec` tools fail closed.
+
+Codex owns persistent prompt delivery through `model_instructions_file`. The checkout installer
+renders the centralized guidance into either the configured custom file or a new file derived
+from bundled model instructions. It preserves content outside the owned marked section. The
+router does not duplicate this responsibility on each eligible request.
 
 For every executor-backed contribution, the router wrapper owner creates a symlink inside the
 authenticated snapshot directory. The snapshot symlink has the tool-name basename and targets

@@ -55,11 +55,12 @@ Acceptance:
 ## REQ-READ-001 — Shell-routed verified-row reader
 
 In hpatch router mode, the model receives `hpatch` and `shell` as standalone custom tools.
-The router appends the canonical hread, hgrep, and inspect_file command guidance to the existing
-top-level Responses `instructions` value. It preserves the existing instruction text and
-separates the added guidance with one blank line. Hread, hgrep, and inspect_file remain private
-executable contributions; their custom-tool specifications are not sent to the model and direct
-model calls to their names are not routed.
+All persistent hread, hgrep, inspect_file, shell-execution, and HPATCH workflow guidance comes
+from the Codex `model_instructions_file` installed from
+`contrib/codex/file-editing-instructions.md`. The router never creates, changes, or removes the
+top-level Responses `instructions` value.
+Hread, hgrep, and inspect_file remain private executable contributions; their custom-tool
+specifications are not sent to the model and direct model calls to their names are not routed.
 
 The private `hread` command accepts exactly one file:
 
@@ -197,11 +198,11 @@ fails with `output_limit`.
 
 Command failures write one closed LF-terminated JSON envelope to stdout, leave stderr empty, and
 exit nonzero. Stable codes are `usage`, `not_found`, `not_regular`, `not_utf8`,
-`outside_workspace`, `read`, `parse`, and `output_limit`. The private guidance embeds a concise
-success, failure, and outline-entry shape schema rather than the normative specification schema.
-Shell replay keeps the original call and output; inspect_file is not model-visible, directly
-routed, or included in hpatch recovery ancestry. Passthrough mode installs and advertises none
-of these surfaces.
+`outside_workspace`, `read`, `parse`, and `output_limit`. The centralized Codex guidance and
+private call contract embed a concise success, failure, and outline-entry shape rather than the
+normative specification schema. Shell replay keeps the original call and output; inspect_file is
+not model-visible, directly routed, or included in hpatch recovery ancestry. Passthrough mode
+installs and advertises none of these surfaces.
 
 Acceptance:
 
@@ -213,8 +214,8 @@ Acceptance:
    `/`, preserves duplicate pointers, and never returns scalar values.
 3. Unsupported files are confined and checked as regular without content reads, UTF-8 validation,
    line counting, content detection, or command-level truncation.
-4. Router startup installs an authenticated `inspect_file` frontend, appends its private guidance,
-   and exposes or routes only hpatch, shell, and configured model-visible contributions.
+4. Router startup installs an authenticated `inspect_file` frontend and exposes or routes only
+   hpatch, shell, and configured model-visible contributions. Request instructions remain unchanged.
 
 ## REQ-PLUGIN-001 — Router-local tool plugins
 
@@ -339,13 +340,12 @@ Acceptance:
 
 ## REQ-SHELL-001 — Installable free-form script tool
 
-The first working path in `doc/brief.md` § Outcome supplies a repository
-plugin declaration at `plugins/shell.mjs`. The declaration contributes an unconstrained custom
-tool named `shell`, limits its UTF-8 input to the executor argv limit, and translates successful
-input through the canonical exec carrier from `REQ-PLUGIN-001`. The repository `make install`
-target installs `hpatch`, `hpatch-router`, and each repository plugin declaration into the
-platform user configuration `hpatch/plugins` directory. The plugin remains configured rather
-than built in.
+The first working path in `doc/brief.md` § Outcome supplies the built-in declaration at
+`plugins/shell.mjs`. The generated plugin bundle contributes an unconstrained custom tool named
+`shell`, limits its UTF-8 input to the executor argv limit, and translates successful input
+through the canonical exec carrier from `REQ-PLUGIN-001`. The repository `make install` target
+regenerates that bundle and installs `hpatch`, `hpatch-router`, and the centralized Codex model
+instructions. It does not copy a configured shell declaration.
 
 The tool treats the first logical line as a shebang when that line, after trimming only its
 leading and trailing ASCII spaces and tabs, starts with `#!`. It removes `#!`, trims the
@@ -429,9 +429,13 @@ Acceptance:
    nonzero status are returned without script-source duplication or an intermediate script file.
 10. Malformed selectors and input that cannot fit the bounded exec argv return a concise
     diagnostic without starting an interpreter.
-11. `make install` installs both Go binaries and no configured shell declaration. The installed
-    router embeds shell and creates the shell, hread, hgrep, and inspect_file basename frontends beside its
-    executable at startup.
+11. `make install` installs both Go binaries, no configured shell declaration, and a complete
+    Codex `model_instructions_file`. If the config key is absent, it renders the selected bundled
+    model instructions, installs the default file, and adds the key. If the key exists, it remains
+    byte-equivalent and the referenced customized file is updated only when its owned section is
+    stock, legacy hpatch, or marked hpatch guidance; content outside that section is preserved.
+    The installed router embeds shell and creates shell, hread, hgrep, and inspect_file basename
+    frontends beside its executable at startup.
 12. `#!params={"workdir":"/tmp","tty":true}` before or after `#!cmd=` produces an exec carrier
     containing those fields and the router-supplied `cmd`. Safe leading params near-misses
     produce the same carrier after normalization. An object containing `cmd` rejects, and a
@@ -1161,58 +1165,63 @@ Acceptance:
 
 ## REQ-GUIDE-001 — Agent guidance
 
-Top-level help owns the complete CLI, editing, validation, trust-boundary, report, and
-metrics reference. Tool help is a separately maintained concise model-facing summary. It
-excludes CLI modes, options, metrics, version material, and rejected-script ancestry details.
-The router appends current rejected-script `LINE:HASH` rows and one instruction to use hpatch
-without `in` after each actionable structured evaluator rejection. A re-rejected recovery
-refreshes those rows from the latest evaluated script.
+Top-level help owns the complete CLI, editing, validation, trust-boundary, report, and metrics
+reference. `contrib/codex/file-editing-instructions.md` is the single persistent Codex workflow
+source for all durable edit, shell, read, search, and inspection guidance and the source of the
+HPATCH/2 section returned by tool help. Model-visible tool descriptions contain only concise
+call-local contracts and request-specific schemas. The router does not use private tool
+descriptions as prompt text and does not mutate Responses instructions.
 
-Both references teach this workflow:
+`make install` renders the central source into Codex's configured `model_instructions_file`.
+An existing setting and all customized content outside the owned guidance section remain
+byte-equivalent. A file with current markers is refreshed idempotently; a legacy hpatch section
+or the pinned stock Codex file-editing section is migrated once. Without a setting, the installer
+uses `CODEX_MODEL` or the lowest-priority bundled model, writes the default file, and adds the
+setting. An unrecognized customized file fails instead of being overwritten.
 
-1. Plan related searches before calling hgrep: combine known patterns and paths in one call and
-   use repeated `-e` for multiple patterns. Copy a matching current `LINE:HASH` directly when
-   that exact row is sufficient for the edit; use hread for surrounding or nonmatching context
-   rather than repeating an exact hgrep result. Plan related reads before calling hread: put up
-   to 6 already-known files or ranges into one newline-delimited call, use explicit ranges after
-   the relevant locations are known, and remember that a bare path intentionally reads the
-   complete file. Copy references only from current output for that exact path.
-2. Choose a line, inclusive range, or anchored literal target inside the mutation command.
-3. Submit every known related edit in one atomic script, including related multiline
-   declarations and repeated `in PATH` sections. Split only when a later edit depends on
-   validation or information unavailable before the current call. Keep unrelated large
-   `<<PATCH` values in separate failure-domain calls.
-4. Prefer the smallest mutation that expresses the semantic change. When a formatter owns
-   formatting, alignment, or indentation, do not replace surrounding lines merely to reproduce
-   its output; let the formatter apply those changes. For example, add one struct field with one
-   insertion rather than replacing the declaration. Preserve required indentation prefixes in
-   indentation-sensitive languages such as Python. Successful final-state `LINE:HASH` rows
-   are current references for their named final paths and may be used directly in the next
-   invocation. Use hread only when the successful report lacks the exact target needed next.
-5. Use nonempty `type` to replace, empty target-bearing `type` to delete, `type-` to insert
-   before, and `type+` to insert after; do not construct a separate selection or clipboard
-   program.
-6. Encode short single-line values inline. Include `\n` when a before/after insertion
-   must form a complete new line; reserve `<<PATCH` for multiline or escape-heavy values.
-7. After rejection, use hpatch without `in` to patch the rejected script through its current
-   emitted `LINE:HASH` rows. Reread them if a later attempt reports staleness instead of guessing
-   or reconstructing a target.
-8. Do not run redundant `gofmt`; hpatch formats changed Go files and syntax-checks supported changed Python, JavaScript, and TypeScript files before success. Supported indentation corrections are automatic.
+The recovery template adjacent to the central source owns dynamic recovery prose. After each
+actionable structured evaluator rejection, the router supplies current rejected-script
+`LINE:HASH` rows to that template. A re-rejected recovery refreshes the rows from the latest
+evaluated script.
 
-Guidance includes minimal examples for line replacement, range deletion, inline
-single-line before/after insertion, multiline insertion, text multiplicity, new-file
-initialization, stale-row recovery, and a dependent edit split across two inspected
-invocations. It states that HPATCH/1 commands are invalid rather than documenting aliases.
-Host base-prompt overrides may steer tool choice without duplicating the language;
-complete semantics remain in top-level help and this contract.
+Persistent guidance teaches this workflow:
+
+1. Submit a shell call as one free-form script without an outer wrapper. Use Bash by default or
+   select another interpreter with a direct compact shebang. Keep program input on standard input,
+   use exactly one `{.}` in `#!cmd=`, place request-specific outer arguments in `#!params=`, and
+   use native session facilities for PTY-backed or long-running executions.
+2. Inspect, edit, or rerun a retained shell script through its `@shell/` reference, and never mix
+   retained and workspace paths in one hpatch script.
+3. For an authorized edit, use hread as the initial source read when the named or likely owner is
+   known. Use hgrep as the initial search when a known identifier or literal is likely to become
+   a target. Use ordinary reads and searches for read-only work or while the owner is unknown;
+   after discovery, hread only the smallest target-bearing range.
+4. Run one hread command per file and batch related commands in one shell script. Combine known
+   hgrep patterns and paths with repeated `-e`. Copy only current emitted references. A matching
+   hgrep row needs no hread unless surrounding or nonmatching context is required.
+5. Choose a line, inclusive range, or anchored literal target inside the mutation command.
+6. Submit every known related edit in one atomic script. Split only when a later edit depends on
+   validation or information unavailable before the current call. Keep unrelated large values
+   in separate failure-domain calls.
+7. Prefer the smallest semantic mutation and let formatters own formatting. Successful
+   final-state `LINE:HASH` rows can be used directly in the next invocation.
+8. Use nonempty `type` to replace, empty target-bearing `type` to delete, `type-` to insert
+   before, and `type+` to insert after. Use inline values for short text and `<<PATCH` for
+   multiline or escape-heavy values.
+9. After rejection, use hpatch without `in` against the emitted rejected-script rows. Reread
+   those rows after a stale attempt rather than reconstructing them.
+10. Let hpatch format changed Go files and syntax-check supported changed Python, JavaScript, and
+    TypeScript files.
 
 Acceptance:
 
 1. A model can choose and encode every HPATCH/2 operation from tool help without learning
    HPATCH/1 state concepts.
-2. Examples are parseable under `REQ-SCRIPT-001` and demonstrate dependency layering
-   rather than same-script editing of introduced content.
-3. A routed success can be followed by another hpatch call using an exact row from its report
-   without an intervening hread. A required row outside the bounded projection is read narrowly,
-   and a saved pre-edit row still rejects as stale.
-4. Persistent guidance stays compact; dynamic rejected-script references and recovery instructions appear only with actionable rejected-script context.
+2. The installed prompt contains the central guidance exactly once and omits the pinned stock
+   apply_patch, rg, and exec_command instructions.
+3. A configured legacy or marked customized prompt retains content before and after the owned
+   section, and repeated installation is idempotent.
+4. A routed request's existing instructions remain byte-equivalent, including absence or null.
+5. Dynamic rejected-script references and recovery prose appear only with actionable context.
+6. A routed success can be followed by another hpatch call using an exact row from its report
+   without an intervening hread; a saved pre-edit row still rejects as stale.

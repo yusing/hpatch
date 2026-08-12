@@ -58,7 +58,7 @@ flowchart TD
     START["Start<br/><code>bash benchmarks/bench.sh</code>"]
     BUILD["Build the pinned agent/router image<br/><code>docker compose build control</code>"]
     STOCK["Export stock Codex base instructions<br/><code>docker run ... codex debug models --bundled | jq</code>"]
-    OVERRIDE["Install the repository routed-tool override at the stock file-editing section<br/><code>head ...; cat contrib/codex/file-editing-instructions.md; tail ...</code>"]
+    OVERRIDE["Render the repository guidance with the shared installer transform<br/><code>sh contrib/codex/render-model-instructions.sh control.md</code>"]
     IDIFF["Record the exact instruction difference<br/><code>diff -u control.md hpatch.md</code>"]
     BASE["Export historical base<br/><code>git archive BASE | tar -x</code>"]
     BTEST["Inject hidden tests and require failure<br/><code>go test ./server/storage/mvcc ./server/etcdserver/txn ...</code>"]
@@ -120,8 +120,8 @@ The controlled differences are:
 
 The control router forwards requests without tool rewriting. The treatment router removes the
 Code Mode surfaces displaced by the installed standalone tools, exposes `hpatch` and the built-in
-`shell`, appends private hread/hgrep command guidance, and translates successful calls into the
-Code Mode carriers expected by Codex.
+`shell`, and translates successful calls into the Code Mode carriers expected by Codex. Both
+routers leave the already-selected complete model instructions unchanged.
 
 ## Exact overridden tool instructions
 
@@ -131,20 +131,19 @@ The authoritative treatment replacement is:
 contrib/codex/file-editing-instructions.md
 ```
 
-The benchmark does not duplicate that text. For every run it extracts the pinned
-CLI's bundled stock `base_instructions` and writes:
+The benchmark does not duplicate that text or its replacement logic. For every run it extracts
+the pinned CLI's bundled stock `base_instructions` into:
 
 ```text
 $run_dir/instructions/control.md
 ```
 
-It replaces the stock file-editing heading and `apply_patch` paragraph with the
-contents of `contrib/codex/file-editing-instructions.md`. From the treatment only,
-it also removes the exact stock line that prefers `rg` and the exact stock
-`exec_command` escaping line. The control retains both lines. All other stock
-base-prompt text remains byte-for-byte, and the same offline-isolation rule is
-then appended to both arms. The resulting complete
-treatment prompt is:
+It calls `contrib/codex/render-model-instructions.sh` to replace the pinned stock file-editing
+section with the central source and remove the displaced stock rg and exec_command lines. The
+renderer validates every pinned source line exactly once and is the same renderer used by
+`make install`. The control retains those lines. All other stock base-prompt text remains
+byte-for-byte, and the benchmark then appends the same offline-isolation rule to both arms.
+The resulting complete treatment prompt is:
 
 ```text
 $run_dir/instructions/hpatch.md

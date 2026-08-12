@@ -12,7 +12,6 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"strings"
 
 	"github.com/gofrs/flock"
 	"github.com/yusing/hpatch"
@@ -387,26 +386,4 @@ func (registry *toolRegistry) specifications() ([]map[string]json.RawMessage, er
 		specifications = append(specifications, specification)
 	}
 	return specifications, nil
-}
-
-func (registry *toolRegistry) baseInstructions() (string, error) {
-	if registry == nil {
-		return "", errors.New("tool registry is unavailable")
-	}
-	var instructions []string
-	for _, contribution := range registry.ordered {
-		if contribution.ModelVisible {
-			continue
-		}
-		var specification struct {
-			Description string `json:"description"`
-		}
-		if err := json.Unmarshal(contribution.Specification, &specification); err != nil {
-			return "", fmt.Errorf("decode registered tool %s/%s instructions: %w", contribution.PluginID, contribution.Name, err)
-		}
-		if instruction := strings.TrimSpace(specification.Description); instruction != "" {
-			instructions = append(instructions, instruction)
-		}
-	}
-	return strings.Join(instructions, "\n\n"), nil
 }

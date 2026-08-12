@@ -81,6 +81,7 @@ control_instruction="$instruction_dir/control.md"
 hpatch_instruction="$instruction_dir/hpatch.md"
 instruction_diff="$instruction_dir/stock-to-hpatch-tools.diff"
 instruction_source="$benchmark_root/../contrib/codex/file-editing-instructions.md"
+instruction_renderer="$benchmark_root/../contrib/codex/render-model-instructions.sh"
 benchmark_image="hpatch-bench:${HPATCH_BENCH_IMAGE_TAG:-local}"
 control_instruction_sha=
 hpatch_instruction_sha=
@@ -393,14 +394,6 @@ if [[ ! -d $source_repo/.git ]]; then
 fi
 
 prepare_instructions() {
-	# Backticks are literal instruction text.
-	# shellcheck disable=SC2016
-	local stock_instruction='Use `apply_patch` for local file edits. Do not create or edit files with `cat` or other shell write tricks. Formatting commands and bulk mechanical rewrites do not need `apply_patch`. Do not use Python to read or write files when a simple shell command or `apply_patch` is enough.'
-	local stock_rg_instruction='- When you search for text or files, you reach first for `rg` or `rg --files`; they are much faster than alternatives like `grep`. If `rg` is unavailable, you use the next best tool without fuss.'
-	local stock_exec_instruction='- Exercise caution when escaping text for exec_command calls - backticks and `$()` passed to the `cmd` argument will still execute. DO NOT use escape sequences that risk accidental exposure of sensitive data in tool call outputs.'
-	local stock_heading='## File editing constraints'
-	local heading_line
-	local instruction_line
 	local diff_status=0
 	local offline_instruction
 	offline_instruction=$(cat <<'INSTRUCTION'
@@ -415,47 +408,13 @@ INSTRUCTION
 			'.models[] | select(.slug == $model) | .base_instructions' \
 			>"$control_instruction"
 
-	if [[ $(grep -Fxc -- "$stock_heading" "$control_instruction") -ne 1 ]] ||
-		[[ $(grep -Fxc -- "$stock_instruction" "$control_instruction") -ne 1 ]] ||
-		[[ $(grep -Fxc -- "$stock_rg_instruction" "$control_instruction") -ne 1 ]] ||
-		[[ $(grep -Fxc -- "$stock_exec_instruction" "$control_instruction") -ne 1 ]]; then
-		printf 'bench.sh: stock %s base instructions do not contain each pinned tool instruction exactly once\n' "$model" >&2
-		return 1
-	fi
-
-	heading_line=$(grep -nFx -- "$stock_heading" "$control_instruction")
-	heading_line=${heading_line%%:*}
-	instruction_line=$(grep -nFx -- "$stock_instruction" "$control_instruction")
-	instruction_line=${instruction_line%%:*}
-	if ((instruction_line != heading_line + 2)); then
-		printf 'bench.sh: stock %s file-editing heading and instruction are not one section\n' "$model" >&2
-		return 1
-	fi
-
-	{
-		head -n "$((heading_line - 1))" "$control_instruction"
-		cat "$instruction_source"
-		tail -n "+$((instruction_line + 1))" "$control_instruction"
-	} |
-		grep -Fvx -e "$stock_rg_instruction" -e "$stock_exec_instruction" >"$hpatch_instruction"
+	sh "$instruction_renderer" "$control_instruction" >"$hpatch_instruction"
 	printf '\n%s\n' "$offline_instruction" >>"$control_instruction"
 	printf '\n%s\n' "$offline_instruction" >>"$hpatch_instruction"
 
-	# Backticks are literal instruction text.
-	# shellcheck disable=SC2016
-	if ! grep -Fqx 'Use `functions.hpatch` for local file edits, not `apply_patch`.' "$hpatch_instruction" ||
-		! grep -Fqx 'Use the private `hread` command through `functions.shell` instead of `cat` or `sed`.' "$hpatch_instruction" ||
-		! grep -Fqx 'Use the private `hgrep` command through `functions.shell` instead of `rg` or `grep`.' "$hpatch_instruction" ||
-		! grep -Fqx 'Hread and hgrep are executable commands, not model-visible tools.' "$hpatch_instruction" ||
-		! grep -Fqx 'Use `functions.shell` instead of `tools.exec_command`.' "$hpatch_instruction" ||
-		! grep -Fqx "Follow hpatch's live tool description and rejection diagnostics." "$hpatch_instruction" ||
-		! grep -Fqx 'Formatting commands and bulk mechanical rewrites do not need `hpatch`.' "$hpatch_instruction" ||
-		[[ $(grep -Fxc '## Benchmark isolation' "$control_instruction") -ne 1 ]] ||
-		[[ $(grep -Fxc '## Benchmark isolation' "$hpatch_instruction") -ne 1 ]] ||
-		grep -Fqx -- "$stock_instruction" "$hpatch_instruction" ||
-		grep -Fqx -- "$stock_rg_instruction" "$hpatch_instruction" ||
-		grep -Fqx -- "$stock_exec_instruction" "$hpatch_instruction"; then
-		printf 'bench.sh: hpatch base-instruction override was not exact\n' >&2
+	if [[ $(grep -Fxc '## Benchmark isolation' "$control_instruction") -ne 1 ]] ||
+		[[ $(grep -Fxc '## Benchmark isolation' "$hpatch_instruction") -ne 1 ]]; then
+		printf 'bench.sh: benchmark isolation instructions were not installed exactly once\n' >&2
 		return 1
 	fi
 

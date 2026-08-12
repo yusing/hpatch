@@ -953,10 +953,7 @@ function inspectFileInput(input: string): string[] {
   return [value];
 }
 
-export const inspectFileDescription = `Use \`inspect_file PATH\` through \`shell\` for bounded file metadata and structural outlines.
-It returns exact JSON for jq and never raw excerpts, bodies, field definitions, frontmatter values, or JSON scalar values.
-Use \`hread\` before editing because inspect_file line numbers are not HPATCH targets.
-Reason carefully about the path and make sure the command matches the \`inspect_file PATH\` syntax.
+export const inspectFileDescription = `Inspect one workspace-relative file and return bounded JSON metadata and a structural outline.
 
 Result shape schema:
 ${inspectFileShapeSchemaJSON}`;

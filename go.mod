@@ -3,6 +3,7 @@ module github.com/yusing/hpatch
 go 1.26
 
 require (
+	github.com/BurntSushi/toml v1.6.0
 	github.com/gofrs/flock v0.13.0
 	github.com/pmezard/go-difflib v1.0.0
 	github.com/tiktoken-go/tokenizer v0.8.1

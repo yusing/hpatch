@@ -11,7 +11,7 @@ TL;DR:
 | Route Codex edits through hpatch | [Install and configure the Codex router](#codex-router-systemd-user-service) |
 | Understand verified editing | [Why hpatch?](#why-hpatch) |
 | Run commands without Code Mode wrapper syntax | [Why shell?](#why-shell) |
-| Remove contradictory stock editing guidance | [Optional base-instructions override](#optional-base-instructions-override) |
+| Remove contradictory stock editing guidance | [Codex model instructions](#codex-model-instructions) |
 | Inspect measured token usage | [Metrics](#metrics), then run `hpatch gain` |
 | Use the engine without Codex | [Standalone CLI](#standalone-cli) |
 | Read the complete contract | `hpatch --help`, `hpatch --tool-help`, [`doc/spec/interface.md`](doc/spec/interface.md) |
@@ -37,7 +37,7 @@ flowchart LR
     A --> D
 ```
 
-The patch is not eliminated: the router generates it after inference. Savings are the difference between the two model-output payload estimates shown above. State reports, rejection diagnostics, the net cost of installing the hpatch and shell tool definitions, and the appended private-command guidance are tracked separately as input overhead. Hread, hgrep, and inspect_file results are not compared with hypothetical shell commands; the dashboard's end-to-end Responses and session usage totals are authoritative for their model-input cost. Gain values remain reproducible GPT-5 estimates rather than provider billing totals.
+The patch is not eliminated: the router generates it after inference. Savings are the difference between the two model-output payload estimates shown above. State reports, rejection diagnostics, and the net input cost of the hpatch and shell tool definitions plus persistent workflow guidance are tracked separately. Hread, hgrep, and inspect_file results are not compared with hypothetical shell commands; the dashboard's end-to-end Responses and session usage totals are authoritative for their model-input cost. Gain values remain reproducible GPT-5 estimates rather than provider billing totals.
 
 For an 11-line function replacement, hpatch asks the model for this:
 
@@ -144,21 +144,30 @@ For native executor background and interactive behavior, see [OpenAI's Codex pro
 ## Requirements
 
 - Go 1.26 or newer. Normal `go install` does not require a checkout.
-- Hpatch router mode requires Codex CLI with ChatGPT file auth from `codex login`, normally at `~/.codex/auth.json` or `$CODEX_HOME/auth.json`.
+- Hpatch router mode requires Codex CLI with ChatGPT file auth from `codex login`, normally at `~/.codex/auth.json` or `$CODEX_HOME/auth.json`. Checkout installation also uses `codex debug models --bundled` when no `model_instructions_file` is configured.
 - Hpatch router mode resolves Node.js 24 or newer as `node`; passthrough mode does not load the plugin registry.
 - Private hgrep requires `rg` on the Codex executor's `PATH`.
 - Private hread, hgrep, and inspect_file require the router executable directory to precede unrelated entries on the executor's trusted `PATH`.
 - The built-in shell uses `bash` when no shebang is present; every selected interpreter must be available through the inherited `PATH`.
 - Router and executor deployments with isolated filesystems must expose the frontend directory, authenticated snapshot, and router executable at the same absolute paths.
-- Source builds that regenerate the embedded plugin with `make install` or `go generate` require Bun. `make install` additionally requires `make`.
+- Source builds that regenerate the embedded plugin with `make install` or `go generate` require Bun. `make install` additionally requires `make` and `jq`.
 
 ## Install from a checkout
 
-`make install` regenerates the embedded built-in plugin bundle, then installs `hpatch` and `hpatch-router` through `go install`:
+`make install` regenerates the embedded built-in plugin bundle, installs `hpatch` and
+`hpatch-router` through `go install`, and updates Codex's complete model-instructions file:
 
 ```sh
 make install
 ```
+
+If `model_instructions_file` is absent from `$CODEX_HOME/config.toml` or
+`~/.codex/config.toml`, installation selects `CODEX_MODEL` or the bundled model with the
+lowest priority value, writes `hpatch-model-instructions.md`, and adds the setting. If the
+setting already exists, its value is unchanged and the referenced customized file is patched
+in place. Stock Codex guidance, the earlier unmarked hpatch guidance, and current marked
+guidance are supported. Content outside the owned section is preserved; an unrecognized file
+fails instead of being overwritten.
 
 ### Configured plugins
 
@@ -171,7 +180,7 @@ Configured plugins are direct regular `.js` or `.mjs` files in `$XDG_CONFIG_HOME
 The model-visible `functions.shell` tool accepts one free-form program. A compact shebang selects an interpreter through the inherited `PATH`; a missing shebang selects Bash:
 
 ```python
-#!/usr/bin/env python3
+#!python3
 print("Hello")
 ```
 
@@ -213,9 +222,16 @@ Inspect_file emits one exact JSON envelope with metadata, parser completeness, a
 
 ## Codex router (systemd user service)
 
-In hpatch mode, the router validates authentication and turn metadata, constructs the complete plugin registry, and installs standalone `functions.hpatch` and `functions.shell` tools. The model also sees configured contributions marked model-visible. Hread, hgrep, and inspect_file remain private instructions and authenticated shell frontends.
+In hpatch mode, the router validates authentication and turn metadata, constructs the complete
+plugin registry, and installs standalone `functions.hpatch` and `functions.shell` tools. The
+model also sees configured contributions marked model-visible. Hread, hgrep, and inspect_file
+remain authenticated shell frontends; Codex supplies their workflow guidance and the durable
+shell workflow through the installed model-instructions file.
 
 For each eligible request, the router finds exactly one Code Mode custom `exec` owner: either directly inside the leading `additional_tools` item for app-server traffic or inside that item's `functions` namespace for CLI traffic. It removes the owner's native `apply_patch` and `exec_command` sections, preserves unrelated tools and namespaces, and appends only the request-specific execution parameter shape to the shell contract. Unsupported direct or top-level owner layouts fail before forwarding.
+
+The router leaves the request's existing Responses `instructions` value byte-equivalent.
+Tool descriptions contain only call-local contracts; they are not a fallback prompt channel.
 
 Hpatch translation uses the canonical directory hint from turn metadata when available. Metadata without a usable directory still forwards: absolute operands translate without a base, while relative operands reject rather than resolving from the router process cwd. Codex executes the returned `apply_patch` carrier and owns the sandbox, permissions, and visible diff. Shell, hread, hgrep, and inspect_file execute in Codex's actual working directory and environment; the router does not give their workers a router-owned filesystem capability. Background Responses requests are rejected before forwarding because the router does not expose the retrieval and cancellation endpoints needed to complete them.
 
@@ -323,23 +339,30 @@ curl -sS http://127.0.0.1:8080/v1/models
 # open http://127.0.0.1:8080/ for the local dashboard
 ```
 
-### Optional base-instructions override
+### Codex model instructions
 
-The router exposes `functions.hpatch` and `functions.shell`, removes native `apply_patch` and `exec_command`, and appends private hread, hgrep, and inspect_file command guidance to each eligible request's existing instructions. Codex's default base prompt can still direct ordinary edits to `apply_patch`, prefer native `rg`, and include native `exec_command` guidance. A runtime `ALL_TOOLS` dump can also list displaced nested tools. Use a custom base-instructions file when you need to remove those contradictory stock directions.
+[`contrib/codex/file-editing-instructions.md`](contrib/codex/file-editing-instructions.md)
+is the single persistent source for all durable HPATCH, shell, hread, hgrep, and inspect_file
+workflow guidance. `make install` applies it to the complete file selected by Codex's
+`model_instructions_file` setting and every personal-agent instruction file.
 
-1. Start from the current Codex default base instructions. Keep the rest of the file and use its file-editing section as the replacement point:
+For an existing customized file, the installer preserves the config value and all text before
+and after the owned section. It migrates the earlier hpatch section used by this project and
+adds markers so later installations refresh only that section. The same renderer is used by
+the benchmark. Tool help derives its HPATCH/2 section from this source, while dynamic rejected
+script guidance uses the adjacent template.
 
-   - <https://github.com/openai/codex/blob/main/codex-rs/protocol/src/prompts/base_instructions/default.md>
+To select a model explicitly when no instructions file is configured:
 
-2. Replace the stock file-editing heading and `apply_patch` paragraph with [`contrib/codex/file-editing-instructions.md`](contrib/codex/file-editing-instructions.md). Remove the stock line that prefers `rg` and the stock `exec_command` escaping line. Leave all other base-prompt text, dirty-worktree handling, and non-destructive Git rules unchanged.
-
-3. Point Codex at your file in `~/.codex/config.toml` (or a profile config):
-
-```toml
-model_instructions_file = "/absolute/path/to/your/base_instructions.md"
+```sh
+make install CODEX_MODEL=gpt-5.6-sol
 ```
 
-The router already appends the exact private shell-command syntax. This override is optional and exists to replace contradictory stock guidance; project `AGENTS.md` is not a substitute when that replacement is required.
+The default installed setting is equivalent to:
+
+```toml
+model_instructions_file = "/absolute/path/to/.codex/hpatch-model-instructions.md"
+```
 
 ## Standalone CLI
 
@@ -518,7 +541,10 @@ guarantee.
 
 CLI path: select a pinned workspace root and cwd → parse the complete script → verify immutable baselines → render and validate disjoint changes → stage all files → commit atomically, or emit one non-mutating translated patch.
 
-Router hpatch path: validate auth and metadata → load the immutable tool registry → replace the eligible Code Mode surfaces → select an optional canonical directory hint → evaluate hpatch without router filesystem confinement or router-cwd fallback → return a client-executed `apply_patch` carrier.
+Router hpatch path: validate auth and metadata → load the immutable tool registry → replace the
+eligible Code Mode tool surfaces without changing Responses instructions → select an optional
+canonical directory hint → evaluate hpatch without router filesystem confinement or router-cwd
+fallback → return a client-executed `apply_patch` carrier.
 
 Router shell path: translate the free-form tool call into one native executor call → run in Codex's working directory, environment, sandbox, and permissions → forward the complete native result. Private hread, hgrep, and inspect_file use the same executor boundary. Passthrough mode skips registry construction and request rewriting.
 
@@ -537,11 +563,12 @@ Router shell path: translate the free-form tool call into one native executor ca
 ├── plugins/                       # Built-in shell, hread, hgrep, and inspect_file sources
 ├── benchmarks/                   # Runner, tasks, containers, and checked-in results
 ├── compare/                      # Hand-authored payload scenarios
-├── contrib/                      # Codex guidance and systemd unit
+├── contrib/
+│   ├── codex/                    # Central guidance, recovery template, renderer, and installer
+│   └── systemd/                  # User service unit
 ├── doc/                          # Specifications, architecture, and benchmark manuals
 ├── *.go                          # Reusable edit engine, validation, transactions, and metrics
-├── Makefile                      # Plugin generation and binary installation
-├── tool_description.md           # Embedded hpatch instructions
+├── Makefile                      # Plugin generation, binary installation, and Codex setup
 └── tool_grammar.lark             # Embedded constrained-decoding grammar
 ```
 
@@ -560,7 +587,7 @@ Tests live beside the owners they exercise. The root `hpatch` package is the reu
 | [`doc/benchmarks.md`](doc/benchmarks.md) | Benchmark operation and interpretation |
 | [`doc/codex-router-e2e.md`](doc/codex-router-e2e.md) | Codex-facing end-to-end procedure |
 | [`contrib/systemd/hpatch-router.service`](contrib/systemd/hpatch-router.service) | User service template |
-| [`contrib/codex/file-editing-instructions.md`](contrib/codex/file-editing-instructions.md) | Optional routed edit, read, search, and shell guidance |
+| [`contrib/codex/file-editing-instructions.md`](contrib/codex/file-editing-instructions.md) | All persistent Codex edit, shell, read, search, and inspection workflow guidance |
 | [`AGENTS.md`](AGENTS.md) | Architecture and repository navigation for agents |
 
 Library use: module path `github.com/yusing/hpatch`. Importable as a library (`hpatch.Translate`, `hpatch.Workspace`, host metrics helpers); hosts should open an `*os.Root` capability for the workspace before calling in.

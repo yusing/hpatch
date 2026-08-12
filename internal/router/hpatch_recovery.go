@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"github.com/yusing/hpatch"
+	codexinstructions "github.com/yusing/hpatch/contrib/codex"
 	"github.com/yusing/hpatch/internal/hpatchsyntax"
 )
 
@@ -30,13 +31,7 @@ func isHPatchRecoveryCandidate(script string) bool {
 
 func hpatchRecoveryGuidance(script string, rejections []hpatch.HostRejection) string {
 	references := hpatch.TextReferences(script, hpatchRecoveryRows(script, rejections)...)
-	var guidance strings.Builder
-	if references != "" {
-		guidance.WriteString("\nRejected script `LINE:HASH` rows:\n")
-		guidance.WriteString(references)
-	}
-	guidance.WriteString("\nUse hpatch without `in` to patch the rejected script.\n")
-	return guidance.String()
+	return codexinstructions.RecoveryGuidance(references)
 }
 
 func hpatchRecoveryRows(script string, rejections []hpatch.HostRejection) []int {

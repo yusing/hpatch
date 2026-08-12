@@ -65,20 +65,13 @@ afterEach(async () => {
 });
 
 describe("hread built-in plugin", () => {
-  test("describes single-file reads batched through shell", () => {
+  test("keeps the private description call-local", () => {
     const description = plugin.tools[0].specification.description.replace(/\s+/g, " ");
-    for (const fragment of [
-      "only when you expect its returned `LINE:HASH` rows to become HPATCH targets",
-      "A start line of `0` begins at line 1 without emitting line 0",
-      "Missing lines beyond EOF produce a warning after any available rows and do not fail the command",
-      "For exploration, diagnosis, or validation—including checking a named diagnostic—use ordinary read commands",
-      "When target-bearing context is needed, use `hread` instead of `cat` or `sed`",
-      "Run one file per command as `hread PATH [START:END]`",
-      "batch related reads as separate commands in one shell script",
-      "A bare path reads the complete file",
-      "Reason carefully about the command and make sure it matches the `hread PATH [START:END]` syntax",
-    ]) {
-      expect(description).toContain(fragment);
+    expect(description).toContain("Read one UTF-8 file or inclusive logical-line range");
+    expect(description).toContain("`LINE:HASH TEXT`");
+    expect(description).toContain("`hread PATH [START:END]`");
+    for (const persistent of ["authorized edit", "ordinary read", "HPATCH targets", "through `shell`"]) {
+      expect(description).not.toContain(persistent);
     }
   });
 
@@ -255,18 +248,12 @@ describe("hread built-in plugin", () => {
 });
 
 describe("hgrep built-in plugin", () => {
-  test("describes shell searches and repeated patterns", () => {
+  test("keeps the private description call-local", () => {
     const description = plugin.tools[1].specification.description.replace(/\s+/g, " ");
-    for (const fragment of [
-      "only when you expect its returned matches to become HPATCH targets",
-      "For exploration, diagnosis, validation, or owner discovery, use ordinary search commands",
-      "When target-bearing matches are needed, use `hgrep` instead of `rg` or `grep`",
-      "Use `hgrep` through `shell`",
-      "ordinary shell quoting, redirection, and pipelines",
-      "use repeated `-e` for multiple patterns",
-      "Reason carefully about the command and make sure it matches hgrep's stated syntax",
-    ]) {
-      expect(description).toContain(fragment);
+    expect(description).toContain("Search files with supported ripgrep arguments");
+    expect(description).toContain("`\"PATH\":LINE:HASH TEXT`");
+    for (const persistent of ["authorized edit", "ordinary search", "HPATCH targets", "through `shell`"]) {
+      expect(description).not.toContain(persistent);
     }
   });
 
@@ -433,7 +420,9 @@ describe("inspect_file built-in plugin", () => {
     ));
     expect(schema.success.data.outline).toBe("outline_entry[]");
     expect(schema.failure.error.code).toContain("outside_workspace");
-    expect(inspectFileDescription).toContain("Reason carefully about the path");
+    for (const persistent of ["hread", "before editing", "Reason carefully"]) {
+      expect(inspectFileDescription).not.toContain(persistent);
+    }
 
     const directory = await temporaryDirectory("inspect-file-");
     process.chdir(directory);

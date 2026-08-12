@@ -306,18 +306,16 @@ type hpatchResponseTransform struct {
 	historySessionID string
 	sessionActive    bool
 
-	originalTools               json.RawMessage
-	originalToolsPresent        bool
-	originalToolChoice          json.RawMessage
-	originalToolChoicePresent   bool
-	originalInstructions        json.RawMessage
-	originalInstructionsPresent bool
-	pending                     map[string]hpatchPendingCall
-	nativeExecItems             map[string]struct{}
-	nativeExecWarningsMetered   map[string]struct{}
-	local                       map[string]hpatchHistory
-	directory                   string
-	carriers                    codeModeCarrierCatalog
+	originalTools             json.RawMessage
+	originalToolsPresent      bool
+	originalToolChoice        json.RawMessage
+	originalToolChoicePresent bool
+	pending                   map[string]hpatchPendingCall
+	nativeExecItems           map[string]struct{}
+	nativeExecWarningsMetered map[string]struct{}
+	local                     map[string]hpatchHistory
+	directory                 string
+	carriers                  codeModeCarrierCatalog
 
 	installedToolDefinition  string
 	installedToolBreakdown   []hpatch.HostToolDefinition
@@ -430,8 +428,6 @@ func (p *hpatchProxy) prepareRequest(ctx context.Context, request *parsedRespons
 	originalTools = bytes.Clone(originalTools)
 	originalToolChoice, originalToolChoicePresent := request.fields["tool_choice"]
 	originalToolChoice = bytes.Clone(originalToolChoice)
-	originalInstructions, originalInstructionsPresent := request.fields["instructions"]
-	originalInstructions = bytes.Clone(originalInstructions)
 	carriers, err := buildCodeModeCarrierCatalog(request.fields, p.registry)
 	if err != nil {
 		return nil, err
@@ -446,13 +442,6 @@ func (p *hpatchProxy) prepareRequest(ctx context.Context, request *parsedRespons
 	}
 	if !replaced {
 		return nil, errors.New("responses request cannot satisfy the required hpatch rewrite")
-	}
-	baseInstructions, err := p.registry.baseInstructions()
-	if err != nil {
-		return nil, err
-	}
-	if err := appendHPatchBaseInstructions(request.fields, baseInstructions); err != nil {
-		return nil, err
 	}
 	modelContributions := p.registry.modelContributions()
 	installedToolBreakdown := make([]hpatch.HostToolDefinition, len(modelContributions))
@@ -478,18 +467,16 @@ func (p *hpatchProxy) prepareRequest(ctx context.Context, request *parsedRespons
 		historySessionID: historySessionID,
 		sessionActive:    true,
 
-		originalTools:               originalTools,
-		originalToolsPresent:        originalToolsPresent,
-		originalToolChoice:          originalToolChoice,
-		originalToolChoicePresent:   originalToolChoicePresent,
-		originalInstructions:        originalInstructions,
-		originalInstructionsPresent: originalInstructionsPresent,
-		pending:                     make(map[string]hpatchPendingCall),
-		nativeExecItems:             make(map[string]struct{}),
-		nativeExecWarningsMetered:   make(map[string]struct{}),
-		local:                       make(map[string]hpatchHistory),
-		directory:                   directory,
-		carriers:                    carriers,
+		originalTools:             originalTools,
+		originalToolsPresent:      originalToolsPresent,
+		originalToolChoice:        originalToolChoice,
+		originalToolChoicePresent: originalToolChoicePresent,
+		pending:                   make(map[string]hpatchPendingCall),
+		nativeExecItems:           make(map[string]struct{}),
+		nativeExecWarningsMetered: make(map[string]struct{}),
+		local:                     make(map[string]hpatchHistory),
+		directory:                 directory,
+		carriers:                  carriers,
 
 		installedToolDefinition: string(mustMarshalJSON(installedTools)),
 		installedToolBreakdown:  installedToolBreakdown,
@@ -524,34 +511,6 @@ func installedToolNames(tools []map[string]json.RawMessage) map[string]struct{} 
 		names[jsonString(tool, "name")] = struct{}{}
 	}
 	return names
-}
-
-func appendHPatchBaseInstructions(fields map[string]json.RawMessage, addition string) error {
-	addition = strings.TrimSpace(addition)
-	if addition == "" {
-		return nil
-	}
-	raw, exists := fields["instructions"]
-	if !exists {
-		fields["instructions"] = mustMarshalJSON(addition)
-		return nil
-	}
-	var current string
-	if err := json.Unmarshal(raw, &current); err != nil {
-		return fmt.Errorf("decode Responses instructions: %w", err)
-	}
-	separator := ""
-	if current != "" {
-		switch {
-		case strings.HasSuffix(current, "\n\n"):
-		case strings.HasSuffix(current, "\n"):
-			separator = "\n"
-		default:
-			separator = "\n\n"
-		}
-	}
-	fields["instructions"] = mustMarshalJSON(current + separator + addition)
-	return nil
 }
 
 // replaceAdditionalToolsApplyPatch rewrites the Code Mode exec tool from an
@@ -2132,13 +2091,6 @@ func (t *hpatchResponseTransform) restoreResponseContract(object map[string]json
 			delete(object, "tool_choice")
 		} else {
 			object["tool_choice"] = bytes.Clone(t.originalToolChoice)
-		}
-	}
-	if _, ok := object["instructions"]; ok {
-		if !t.originalInstructionsPresent {
-			delete(object, "instructions")
-		} else {
-			object["instructions"] = bytes.Clone(t.originalInstructions)
 		}
 	}
 }

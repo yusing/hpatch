@@ -355,6 +355,9 @@ func TestExecuteRequestForwardsRewrittenRequestAndRecordsUsage(t *testing.T) {
 	if strings.Contains(shellDescription, "exec_command") || strings.Contains(shellDescription, "cmd: string") {
 		t.Fatalf("shell description exposes nested command syntax: %q", shellDescription)
 	}
+	if strings.Contains(shellDescription, "#!cmd=") || strings.Contains(shellDescription, "@shell/") {
+		t.Fatalf("shell description duplicates persistent workflow: %q", shellDescription)
+	}
 	if string(forwarded.fields["reasoning"]) != "{\"effort\":\"high\"}" {
 		t.Fatalf("reasoning request changed: %s", forwarded.fields["reasoning"])
 	}

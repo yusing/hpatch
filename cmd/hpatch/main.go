@@ -192,7 +192,7 @@ Workspace boundary:
 `
 
 func toolHelpText() string {
-	return hpatch.ToolDescription()
+	return hpatch.ToolHelp()
 }
 
 const translateHelpText = `Usage:

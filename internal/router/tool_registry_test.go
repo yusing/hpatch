@@ -141,15 +141,6 @@ func TestToolRegistryStartup(t *testing.T) {
 			jsonString(specifications[1], "name") != "shell" {
 			t.Fatalf("model-visible specifications = %#v", specifications)
 		}
-		instructions, err := registry.baseInstructions()
-		if err != nil {
-			t.Fatal(err)
-		}
-		if !strings.Contains(instructions, "Use `hread` through `shell`") ||
-			!strings.Contains(instructions, "Use `hgrep` through `shell`") ||
-			!strings.Contains(instructions, "Use `inspect_file PATH` through `shell`") {
-			t.Fatalf("base instructions = %q", instructions)
-		}
 		second, err := buildToolRegistry(t.Context(), t.TempDir(), testHPatchToolDescription)
 		if err != nil {
 			t.Fatal(err)

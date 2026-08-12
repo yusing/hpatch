@@ -323,6 +323,7 @@ func TestHPatchPrepareRequestRewritesNamespacedExecWithShell(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	originalInstructions := bytes.Clone(request.fields["instructions"])
 	proxy := newManagedHPatchProxy(t, testTranslator(t, new(int)))
 
 	metadata := codexTurnMetadata{RequestKind: "turn", Directories: map[string]json.RawMessage{workspace: nil}}
@@ -364,42 +365,8 @@ func TestHPatchPrepareRequestRewritesNamespacedExecWithShell(t *testing.T) {
 	if len(transform.execCommandDefinitions) != 2 {
 		t.Fatalf("removed exec_command definitions = %d, want 2", len(transform.execCommandDefinitions))
 	}
-	var instructions string
-	if err := json.Unmarshal(request.fields["instructions"], &instructions); err != nil {
-		t.Fatal(err)
-	}
-	for _, required := range []string{"existing base\n\n", "Use `hread` through `shell`", "Use `hgrep` through `shell`", "Use `inspect_file PATH` through `shell`"} {
-		if !strings.Contains(instructions, required) {
-			t.Fatalf("rewritten instructions lack %q: %q", required, instructions)
-		}
-	}
-}
-
-func TestHPatchResponseRestoresOriginalInstructions(t *testing.T) {
-	tests := []struct {
-		name            string
-		original        json.RawMessage
-		originalPresent bool
-	}{
-		{name: "present", original: json.RawMessage(`"existing base"`), originalPresent: true},
-		{name: "absent"},
-		{name: "null", original: json.RawMessage(`null`), originalPresent: true},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			transform := &hpatchResponseTransform{
-				originalInstructions:        bytes.Clone(test.original),
-				originalInstructionsPresent: test.originalPresent,
-			}
-			response := map[string]json.RawMessage{
-				"instructions": json.RawMessage(`"rewritten base"`),
-			}
-			transform.restoreResponseContract(response)
-			got, present := response["instructions"]
-			if present != test.originalPresent || !bytes.Equal(got, test.original) {
-				t.Fatalf("restored instructions = %s, present %t; want %s, present %t", got, present, test.original, test.originalPresent)
-			}
-		})
+	if got := request.fields["instructions"]; !bytes.Equal(got, originalInstructions) {
+		t.Fatalf("request instructions = %s, want byte-equivalent %s", got, originalInstructions)
 	}
 }
 
@@ -433,17 +400,12 @@ func TestHPatchPrepareRequestExposesOnlyHPatchAndShell(t *testing.T) {
 	if exposed != testHPatchToolDescription {
 		t.Fatalf("standalone hpatch description = %q, want native tool help only", exposed)
 	}
-	if description := jsonString(topTools[2], "description"); !strings.Contains(description, "Run one free-form script") {
+	if description := jsonString(topTools[2], "description"); !strings.HasPrefix(description, "Run one free-form script. The selected interpreter receives the exact script body, and frontend standard input remains available as program data.\n\n### `#!params`") ||
+		strings.Contains(description, "#!cmd=") || strings.Contains(description, "@shell/") {
 		t.Fatalf("standalone shell description = %q", description)
 	}
-	var instructions string
-	if err := json.Unmarshal(request.fields["instructions"], &instructions); err != nil {
-		t.Fatal(err)
-	}
-	for _, required := range []string{"Use `hread` through `shell`", "Use `hgrep` through `shell`", "Use `inspect_file PATH` through `shell`"} {
-		if !strings.Contains(instructions, required) {
-			t.Fatalf("base instructions lack %q: %q", required, instructions)
-		}
+	if _, exists := request.fields["instructions"]; exists {
+		t.Fatalf("prepareRequest added instructions: %s", request.fields["instructions"])
 	}
 	for _, obsoleteGuidance := range []string{
 		"Repairing a rejected script:",

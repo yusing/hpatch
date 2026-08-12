@@ -1,6 +1,6 @@
 AGENTS.md
 
-Use `README.md` for installation, deployment, user-visible hpatch and shell workflows, and requirements; open it when changing setup or model-facing behavior. Use `doc/spec/interface.md` for normative CLI, router, plugin, shell, hread/hgrep, recovery, and metrics contracts; open it when behavior or acceptance criteria are in question. Use `doc/architecture/index.md` for stable ownership boundaries; open it before moving responsibilities. Use `hpatch --help`, `hpatch --tool-help`, `tool_description.md`, and `tool_grammar.lark` only when editing or validating HPATCH syntax or model guidance.
+`README.md` owns installation, deployment, user-visible hpatch and shell workflows, and requirements. When changing setup or model-facing behavior, open it for context; update it when the requested change alters one of those user-visible surfaces. Use `doc/spec/interface.md` for normative CLI, router, plugin, shell, hread/hgrep, recovery, and metrics contracts; open it when behavior or acceptance criteria are in question. Use `doc/architecture/index.md` for stable ownership boundaries; open it before moving responsibilities. Use `contrib/codex/file-editing-instructions.md`, `hpatch --help`, `hpatch --tool-help`, and `tool_grammar.lark` only when editing or validating HPATCH syntax or Codex model guidance.
 
 ## Hpatch's target guidance
 
@@ -34,7 +34,7 @@ Deployment invariant: in hpatch mode, the router and Codex executor must see the
 
 1. Codex sends `POST /v1/responses`; request parsing rejects malformed or unsupported request framing, including background Responses requests.
 2. In hpatch mode, the server derives the routing session and validates `x-codex-turn-metadata`; its `workspaces` member is an optional directory hint rather than a request requirement.
-3. The proxy finds exactly one supported Code Mode custom `exec` owner, strips native `apply_patch` and `exec_command`, preserves siblings, and installs model-visible `functions.hpatch` and `functions.shell`. Configured contributions marked model-visible join that catalog; private hread/hgrep guidance is appended to the existing instructions.
+3. The proxy finds exactly one supported Code Mode custom `exec` owner, strips native `apply_patch` and `exec_command`, preserves siblings, and installs model-visible `functions.hpatch` and `functions.shell`. Configured contributions marked model-visible join that catalog; the existing Responses instructions remain byte-equivalent.
 4. `internal/router/client.go` validates Codex-managed credentials and forwards the rewritten request to the Codex backend.
 5. A terminal hpatch call is translated once by `TranslateForHostAt` without mutating files. A selected metadata directory resolves relative operands; without one, only absolute operands are valid and router cwd is never used. Retained `@shell/` edits instead use router-owned session storage and `ApplyForHostRoot`.
 6. Response transformation restores the original Code Mode carrier shape, replacing the routed call with a validated native `functions.exec` carrier and generated `apply_patch` operation while preserving model-visible history for replay.
