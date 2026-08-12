@@ -1,6 +1,6 @@
 AGENTS.md
 
-`README.md` owns installation, deployment, user-visible hpatch and shell workflows, and requirements. When changing setup or model-facing behavior, open it for context; update it when the requested change alters one of those user-visible surfaces. Use `doc/spec/interface.md` for normative CLI, router, plugin, shell, hread/hgrep, recovery, and metrics contracts; open it when behavior or acceptance criteria are in question. Use `doc/architecture/index.md` for stable ownership boundaries; open it before moving responsibilities. Use `contrib/codex/file-editing-instructions.md`, `hpatch --help`, `hpatch --tool-help`, and `tool_grammar.lark` only when editing or validating HPATCH syntax or Codex model guidance.
+`README.md` is the source of truth for installation, deployment, user-visible hpatch and shell workflows, and requirements. For those tasks, open its relevant section before inspecting implementation; this documentation-owner rule overrides any general preference to inspect code first. Update it when the requested change alters one of those user-visible surfaces. Use `doc/spec/interface.md` for normative CLI, router, plugin, shell, hread/hgrep, recovery, and metrics contracts; open it when behavior or acceptance criteria are in question. Use `doc/architecture/index.md` for stable ownership boundaries; open it before moving responsibilities. Use `contrib/codex/file-editing-instructions.md`, `hpatch --help`, `hpatch --tool-help`, and `tool_grammar.lark` only when editing or validating HPATCH syntax or Codex model guidance.
 
 ## Hpatch's target guidance
 
@@ -12,8 +12,10 @@ The agent, YOU. Think from your perspective, not user's.
 
 1. Identify the authoritative owner in the table below.
 2. Open only the contract or help surface that governs the requested behavior.
-3. Make the narrowest owner-local change; keep generated files and downstream carriers derived from their sources.
-4. Run the cheapest check covering every changed owner and report the result.
+
+3. Resolve unknown paths with one scoped search before reading; do not probe guessed conventional locations.
+4. Make the narrowest owner-local change; keep generated files and downstream carriers derived from their sources.
+5. Run the cheapest check covering every changed owner and report the result.
 
 Completion means every requested behavior is implemented in its authoritative owner, affected contracts agree, and one focused check has had a chance to falsify each changed boundary.
 
