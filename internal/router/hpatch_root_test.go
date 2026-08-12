@@ -16,7 +16,7 @@ func TestHPatchRecoveryRejectsDifferentWorktree(t *testing.T) {
 	}}); err != nil {
 		t.Fatal(err)
 	}
-	history, err := transform.translate("call-new", `type 2:ffff "repaired"`+"\n", nil)
+	history, err := transform.translateRecovery("call-new", recoveryCommands(testHPatchScript)[0].handle+" drop", nil)
 	if err != nil {
 		t.Fatal(err)
 	}

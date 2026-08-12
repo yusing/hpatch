@@ -35,15 +35,14 @@ func TestInstructionsOwnCompleteShellWorkflow(t *testing.T) {
 
 func TestRecoveryGuidanceRendersDynamicReferences(t *testing.T) {
 	const references = "2:abcd type 1:ffff \"fixed\"\n"
-	const want = "\nRejected script `LINE:HASH` rows:\n" + references +
-		"Use hpatch without `in` to patch the rejected script.\n"
+	const want = "\n" + references
 	if got := RecoveryGuidance(references); got != want {
 		t.Fatalf("RecoveryGuidance() = %q, want %q", got, want)
 	}
 }
 
 func TestRecoveryGuidanceWithoutReferences(t *testing.T) {
-	const want = "\nUse hpatch without `in` to patch the rejected script.\n"
+	const want = "\n"
 	if got := RecoveryGuidance(""); got != want {
 		t.Fatalf("RecoveryGuidance() = %q, want %q", got, want)
 	}

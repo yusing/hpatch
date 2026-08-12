@@ -72,13 +72,22 @@ func buildToolRegistry(ctx context.Context, dataDirectory, hpatchDescription str
 	if err != nil {
 		return fail(err)
 	}
-	contributions := []toolContribution{{
-		PluginID:      "builtin.hpatch",
-		Name:          hpatchToolName,
-		Specification: mustMarshalJSON(customGrammarTool(hpatchToolName, hpatchDescription, hpatch.ToolGrammar())),
-		Builtin:       true,
-		ModelVisible:  true,
-	}}
+	contributions := []toolContribution{
+		{
+			PluginID:      "builtin.hpatch",
+			Name:          hpatchToolName,
+			Specification: mustMarshalJSON(customGrammarTool(hpatchToolName, hpatchDescription, hpatch.ToolGrammar())),
+			Builtin:       true,
+			ModelVisible:  true,
+		},
+		{
+			PluginID:      "builtin.hpatch",
+			Name:          hpatchRecoveryToolName,
+			Specification: mustMarshalJSON(customGrammarTool(hpatchRecoveryToolName, hpatchRecoveryDescription, hpatchRecoveryGrammar)),
+			Builtin:       true,
+			ModelVisible:  true,
+		},
+	}
 	if diagnose {
 		contributions = append(contributions, toolContribution{
 			PluginID:      "builtin.hpatch",

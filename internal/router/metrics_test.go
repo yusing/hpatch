@@ -616,7 +616,7 @@ func TestRoutedEvaluatorRejectionReachesSessionEvidence(t *testing.T) {
 	proxyAttempt := hpatch.AttemptMetadata{
 		SessionID: transform.sessionID, CorrelationID: "call-evaluator", CallID: "call-proxy", Attempt: 2, Correction: true,
 	}
-	if _, err := transform.rejectUnevaluated("call-proxy", `type 1:ffff "bad"`, fmt.Errorf("proxy rejection"), proxyAttempt, "", nil, nil); err != nil {
+	if _, err := transform.rejectUnevaluated(hpatchRecoveryToolName, "call-proxy", `type 1:ffff \"bad\"`, fmt.Errorf("proxy rejection"), proxyAttempt, "", nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	snapshot = store.snapshot()

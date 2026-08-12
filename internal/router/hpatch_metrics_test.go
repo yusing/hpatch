@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"reflect"
-	"strconv"
 	"strings"
 	"testing"
 
@@ -151,8 +150,8 @@ func TestHPatchRecoveryChargesEmittedPayloadNotRebuiltScript(t *testing.T) {
 	if _, err := transform.translate("call-1", base, nil); err != nil {
 		t.Fatal(err)
 	}
-	payload := "type " + testRecoveryRow(t, base, 2) + " " + strconv.Quote(`type "payload"`) + "\n"
-	if _, err := transform.translate("call-2", payload, nil); err != nil {
+	payload := recoveryCommands(base)[1].handle + ` value "payload"` + "\n"
+	if _, err := transform.translateRecovery("call-2", payload, nil); err != nil {
 		t.Fatal(err)
 	}
 	if len(records) != 2 {
@@ -177,10 +176,10 @@ func TestHPatchRecoveryChargesEmittedPayloadNotRebuiltScript(t *testing.T) {
 	if records[0].DiagnosticInputTokens == 0 {
 		t.Fatal("rejection diagnostic carrying recovery guidance was not charged as model input")
 	}
-	if got, want := records[1].HPatchTokens, count("functions.hpatch\n"+payload); got != want {
+	if got, want := records[1].HPatchTokens, count("functions.hpatch_recover\n"+payload); got != want {
 		t.Fatalf("recovery charge = %d, want %d for the emitted payload", got, want)
 	}
-	if got := records[1].HPatchTokens; got == count("functions.hpatch\n"+rebuilt) {
+	if got := records[1].HPatchTokens; got == count("functions.hpatch_recover\n"+rebuilt) {
 		t.Fatalf("recovery charged the rebuilt script (%d) instead of the emitted payload", got)
 	}
 	if got, want := records[1].ApplyPatchTokens, count("functions.exec\n"+applyPatchMetricProgram(testTranslatedPatch)); got != want {
@@ -233,7 +232,7 @@ func TestHPatchMetricDefinitionMatchesInstalledGrammarTools(t *testing.T) {
 	if err := json.Unmarshal(request.fields["tools"], &tools); err != nil {
 		t.Fatal(err)
 	}
-	installed := make([]json.RawMessage, 0, 2)
+	installed := make([]json.RawMessage, 0, 3)
 	var installedNames []string
 	for _, raw := range tools {
 		var tool map[string]json.RawMessage
@@ -248,7 +247,7 @@ func TestHPatchMetricDefinitionMatchesInstalledGrammarTools(t *testing.T) {
 			installedNames = append(installedNames, name)
 		}
 	}
-	if want := []string{hpatchToolName, "shell"}; !reflect.DeepEqual(installedNames, want) {
+	if want := []string{hpatchToolName, hpatchRecoveryToolName, "shell"}; !reflect.DeepEqual(installedNames, want) {
 		t.Fatalf("metered tool definitions = %v, want %v", installedNames, want)
 	}
 	encoded, err := json.Marshal(installed)

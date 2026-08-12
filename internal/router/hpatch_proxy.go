@@ -25,7 +25,8 @@ import (
 )
 
 const (
-	hpatchToolName = "hpatch"
+	hpatchToolName         = "hpatch"
+	hpatchRecoveryToolName = "hpatch_recover"
 
 	applyPatchToolName           = "apply_patch"
 	hpatchApplyExecMarker        = "// hpatch-proxy: apply translated patch\n"
@@ -1119,7 +1120,7 @@ func recoveryHistoryOf(histories iter.Seq[hpatchHistory]) (hpatchHistory, error)
 	var latest hpatchHistory
 	found := false
 	for history := range histories {
-		if history.unevaluated || history.toolName != hpatchToolName {
+		if history.unevaluated || (history.toolName != hpatchToolName && history.toolName != hpatchRecoveryToolName) {
 			continue
 		}
 		if !found || history.sequence > latest.sequence {
@@ -1142,7 +1143,7 @@ func recoveryHistoryOf(histories iter.Seq[hpatchHistory]) (hpatchHistory, error)
 func latestRecoveryAttempt(histories iter.Seq[hpatchHistory], correlationID string) int {
 	latest := 0
 	for history := range histories {
-		if history.toolName == hpatchToolName && history.correlationID == correlationID {
+		if (history.toolName == hpatchToolName || history.toolName == hpatchRecoveryToolName) && history.correlationID == correlationID {
 			latest = max(latest, history.attempt)
 		}
 	}
@@ -1295,54 +1296,14 @@ func (t *hpatchResponseTransform) translate(callID, input string, upstreamItem m
 	}
 
 	evaluated := input
-	recovery := isHPatchRecoveryCandidate(input)
 	attemptMetadata := hpatch.AttemptMetadata{
 		SessionID:     t.sessionID,
 		Title:         t.proxy.titles.title(t.sessionID),
 		CorrelationID: callID,
 		CallID:        callID,
 		Attempt:       1,
-		Correction:    recovery,
+		Correction:    false,
 		Model:         t.model,
-	}
-	if recovery {
-		base, baseErr := t.recoveryHistory()
-		if baseErr != nil {
-			return t.rejectUnevaluated(callID, input, baseErr, attemptMetadata, "", nil, upstreamItem)
-		}
-		attemptMetadata.CorrelationID = base.correlationID
-		if attemptMetadata.CorrelationID == "" {
-			attemptMetadata.CorrelationID = callID
-		}
-		attemptMetadata.Attempt = t.nextRecoveryAttempt(attemptMetadata.CorrelationID, base.attempt)
-		if base.root != t.directory {
-			return t.rejectUnevaluated(
-				callID,
-				input,
-				errors.New("the rejected script belongs to a different worktree; send a complete script"),
-				attemptMetadata,
-				"",
-				nil,
-				upstreamItem,
-			)
-		}
-		baseline := base.recoveryBaseline()
-		rebuilt, recoveryErr := hpatch.EditText(t.ctx, baseline, input)
-		if recoveryErr != nil {
-			return t.rejectUnevaluated(
-				callID,
-				input,
-				recoveryErr,
-				attemptMetadata,
-				baseline,
-				base.rejections,
-				upstreamItem,
-			)
-		}
-		evaluated = rebuilt
-		if len(evaluated) > maxHPatchScriptBytes {
-			return hpatchHistory{}, fmt.Errorf("hpatch call %q recovered script exceeds %d bytes", callID, maxHPatchScriptBytes)
-		}
 	}
 
 	attemptContext := hpatch.WithAttemptMetadata(t.ctx, attemptMetadata)
@@ -1447,6 +1408,152 @@ func (t *hpatchResponseTransform) translate(callID, input string, upstreamItem m
 	return history, nil
 }
 
+func (t *hpatchResponseTransform) translateRecovery(
+	callID, input string,
+	upstreamItem map[string]json.RawMessage,
+) (hpatchHistory, error) {
+	if history, ok := t.local[callID]; ok {
+		if history.toolName != hpatchRecoveryToolName || history.pluginID != "" || history.script != input {
+			return hpatchHistory{}, fmt.Errorf("hpatch recovery call %q changed input", callID)
+		}
+		if len(upstreamItem) != 0 {
+			history.upstreamItem = maps.Clone(upstreamItem)
+			t.local[callID] = history
+		}
+		return history, nil
+	}
+	if len(input) > maxHPatchScriptBytes {
+		return hpatchHistory{}, fmt.Errorf("hpatch recovery call %q payload exceeds %d bytes", callID, maxHPatchScriptBytes)
+	}
+	base, baseErr := t.recoveryHistory()
+	attemptMetadata := hpatch.AttemptMetadata{
+		SessionID:     t.sessionID,
+		Title:         t.proxy.titles.title(t.sessionID),
+		CorrelationID: callID,
+		CallID:        callID,
+		Attempt:       1,
+		Correction:    true,
+		Model:         t.model,
+	}
+	if baseErr != nil {
+		return t.rejectUnevaluated(hpatchRecoveryToolName, callID, input, baseErr, attemptMetadata, "", nil, upstreamItem)
+	}
+	attemptMetadata.CorrelationID = base.correlationID
+	if attemptMetadata.CorrelationID == "" {
+		attemptMetadata.CorrelationID = callID
+	}
+	attemptMetadata.Attempt = t.nextRecoveryAttempt(attemptMetadata.CorrelationID, base.attempt)
+	if base.root != t.directory {
+		return t.rejectUnevaluated(
+			hpatchRecoveryToolName,
+			callID,
+			input,
+			errors.New("the rejected script belongs to a different worktree; send a complete script"),
+			attemptMetadata,
+			"",
+			nil,
+			upstreamItem,
+		)
+	}
+	baseline := base.recoveryBaseline()
+	rebuilt, err := recoverScript(t.ctx, baseline, input)
+	if err != nil {
+		return t.rejectUnevaluated(
+			hpatchRecoveryToolName,
+			callID,
+			input,
+			err,
+			attemptMetadata,
+			baseline,
+			base.rejections,
+			upstreamItem,
+		)
+	}
+	history, err := t.translateRecovered(callID, input, rebuilt, attemptMetadata, upstreamItem)
+	if err == nil {
+		history.toolName = hpatchRecoveryToolName
+		t.local[callID] = history
+	}
+	return history, err
+}
+
+func (t *hpatchResponseTransform) translateRecovered(
+	callID, emitted, evaluated string,
+	attemptMetadata hpatch.AttemptMetadata,
+	upstreamItem map[string]json.RawMessage,
+) (hpatchHistory, error) {
+	attemptContext := hpatch.WithAttemptMetadata(t.ctx, attemptMetadata)
+	translated, err := t.proxy.translator.Translate(attemptContext, t.directory, evaluated)
+	if err != nil {
+		if contextErr := t.ctx.Err(); contextErr != nil {
+			return hpatchHistory{}, contextErr
+		}
+		if errors.Is(err, errHPatchCapacity) {
+			return hpatchHistory{}, err
+		}
+		evaluatorRejected := len(translated.rejections) != 0
+		diagnostic := translated.diagnostic
+		if diagnostic == "" {
+			diagnostic = err.Error()
+		}
+		if evaluatorRejected {
+			diagnostic += hpatchRecoveryGuidance(evaluated, translated.rejections)
+		}
+		if err := t.recordMetrics(hpatchMetricInputs{
+			invocation:    translated.invocation,
+			rejections:    translated.rejections,
+			attempt:       attemptMetadata,
+			emittedScript: emitted,
+			emittedTool:   hpatchRecoveryToolName,
+			diagnostic:    diagnostic,
+		}); err != nil {
+			return hpatchHistory{}, err
+		}
+		history := hpatchHistory{
+			toolName:          hpatchRecoveryToolName,
+			script:            emitted,
+			root:              t.directory,
+			evaluated:         evaluated,
+			carrierName:       t.codeModeToolName,
+			translationError:  diagnostic,
+			evaluatorRejected: evaluatorRejected,
+			rejections:        slices.Clone(translated.rejections),
+			upstreamItem:      maps.Clone(upstreamItem),
+			correlationID:     attemptMetadata.CorrelationID,
+			attempt:           attemptMetadata.Attempt,
+		}
+		t.recordLocal(callID, &history)
+		return history, nil
+	}
+	patchText := string(translated.patch)
+	if err := t.recordMetrics(hpatchMetricInputs{
+		invocation:    translated.invocation,
+		attempt:       attemptMetadata,
+		emittedScript: emitted,
+		emittedTool:   hpatchRecoveryToolName,
+		report:        translated.report,
+		patch:         patchText,
+		successful:    true,
+		diagnostic:    translated.diagnostic,
+	}); err != nil {
+		return hpatchHistory{}, err
+	}
+	history := hpatchHistory{
+		toolName:      hpatchRecoveryToolName,
+		script:        emitted,
+		root:          t.directory,
+		evaluated:     evaluated,
+		patch:         patchText,
+		carrierName:   t.codeModeToolName,
+		report:        hpatchReport(translated.report, translated.diagnostic),
+		upstreamItem:  maps.Clone(upstreamItem),
+		correlationID: attemptMetadata.CorrelationID,
+		attempt:       attemptMetadata.Attempt,
+	}
+	t.recordLocal(callID, &history)
+	return history, nil
+}
+
 func (p *hpatchProxy) shellSessionDirectory(sessionID string) string {
 	return filepath.Join(p.shellDirectory, "hpatch-"+sessionID)
 }
@@ -1483,6 +1590,8 @@ func (t *hpatchResponseTransform) translateTool(name, callID, input string, upst
 	switch name {
 	case hpatchToolName:
 		return t.translate(callID, input, upstreamItem)
+	case hpatchRecoveryToolName:
+		return t.translateRecovery(callID, input, upstreamItem)
 	case reportIssueToolName:
 		return t.translateReportIssue(callID, input, upstreamItem)
 	}
@@ -1852,7 +1961,7 @@ func (h hpatchHistory) effectiveCarrierKind() codeModeCarrierKind {
 }
 
 func (t *hpatchResponseTransform) rejectUnevaluated(
-	callID, input string,
+	toolName, callID, input string,
 	rejection error,
 	attempt hpatch.AttemptMetadata,
 	referenceScript string,
@@ -1863,11 +1972,11 @@ func (t *hpatchResponseTransform) rejectUnevaluated(
 	if referenceScript != "" {
 		diagnostic += hpatchRecoveryGuidance(referenceScript, rejections)
 	}
-	if err := t.recordMetrics(hpatchMetricInputs{attempt: attempt, emittedScript: input, diagnostic: diagnostic}); err != nil {
+	if err := t.recordMetrics(hpatchMetricInputs{attempt: attempt, emittedScript: input, emittedTool: toolName, diagnostic: diagnostic}); err != nil {
 		return hpatchHistory{}, err
 	}
 	history := hpatchHistory{
-		toolName: hpatchToolName,
+		toolName: toolName,
 		script:   input,
 
 		carrierName:      t.codeModeToolName,
@@ -1924,7 +2033,8 @@ func (t *hpatchResponseTransform) recordLocal(callID string, history *hpatchHist
 // the response completes.
 func (t *hpatchResponseTransform) recoveryHistory() (hpatchHistory, error) {
 	for _, history := range t.local {
-		if !history.unevaluated && history.toolName == hpatchToolName {
+		if !history.unevaluated &&
+			(history.toolName == hpatchToolName || history.toolName == hpatchRecoveryToolName) {
 			return recoveryHistoryOf(maps.Values(t.local))
 		}
 	}

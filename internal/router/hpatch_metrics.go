@@ -17,6 +17,7 @@ type hpatchMetricInputs struct {
 	rejections    []hpatch.HostRejection
 	attempt       hpatch.AttemptMetadata
 	emittedScript string
+	emittedTool   string
 	report        string
 	patch         string
 	diagnostic    string
@@ -43,10 +44,14 @@ func calculateHPatchMetricRecord(inputs hpatchMetricInputs) (hpatchMetricRecord,
 		if !inputs.successful {
 			patch = failedApplyPatch
 		}
+		toolName := inputs.emittedTool
+		if toolName == "" {
+			toolName = hpatchToolName
+		}
 		call = &hpatch.HostToolCall{
 			PluginID:          "builtin.hpatch",
-			ToolName:          hpatchToolName,
-			EmittedName:       "functions.hpatch",
+			ToolName:          toolName,
+			EmittedName:       "functions." + toolName,
 			EmittedInput:      inputs.emittedScript,
 			TranslatedName:    "functions.exec",
 			TranslatedPayload: applyPatchMetricProgram(patch),
@@ -69,6 +74,21 @@ func calculateHPatchMetricRecord(inputs hpatchMetricInputs) (hpatchMetricRecord,
 	})
 	if err != nil {
 		return hpatchMetricRecord{}, err
+	}
+	if inputs.emittedTool == hpatchRecoveryToolName && call != nil {
+		for _, metric := range classified.ToolMetrics {
+			if metric.PluginID != call.PluginID || metric.ToolName != call.ToolName {
+				continue
+			}
+			if call.FailedTranslation {
+				classified.IneffectiveHPatchTokens = metric.FailedEmittedTokens
+				classified.FailedApplyPatchTokens = metric.FailedTranslatedTokens
+			} else {
+				classified.HPatchTokens = metric.EmittedTokens
+				classified.ApplyPatchTokens = metric.TranslatedTokens
+			}
+			break
+		}
 	}
 	return hpatchMetricRecord{HostMetricRecord: classified}, nil
 }

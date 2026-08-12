@@ -129,8 +129,8 @@ func TestToolPluginRequestJSONAndReplay(t *testing.T) {
 	if err := json.Unmarshal(request.fields["tools"], &tools); err != nil {
 		t.Fatal(err)
 	}
-	if len(tools) != 4 || jsonString(tools[3], "name") != "plugin_tool" ||
-		jsonString(tools[3], "description") != "fixture plugin tool" {
+	if len(tools) != 5 || jsonString(tools[4], "name") != "plugin_tool" ||
+		jsonString(tools[4], "description") != "fixture plugin tool" {
 		t.Fatalf("installed tools = %#v", tools)
 	}
 
@@ -286,7 +286,7 @@ func TestToolPluginMetricsUseOriginalAndStockCarrierShapes(t *testing.T) {
 		payload == stockPayload {
 		t.Fatalf("successful plugin metric = %+v, payload %q, stock %q", successTool, payload, stockPayload)
 	}
-	if success.DefinitionRequests != 1 || len(success.ToolMetrics) != 3 {
+	if success.DefinitionRequests != 1 || len(success.ToolMetrics) != 4 {
 		t.Fatalf("installed definition breakdown = %+v", success)
 	}
 

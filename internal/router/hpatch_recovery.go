@@ -1,6 +1,7 @@
 package router
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/yusing/hpatch"
@@ -10,71 +11,66 @@ import (
 
 const hpatchRecoveryContextLines = 2
 
-// isHPatchRecoveryCandidate reserves mutation-leading payloads for restricted
-// root text editing. The root editor decides whether the complete candidate is
-// a valid recovery, so a malformed attempt cannot replace its rejected baseline.
-func isHPatchRecoveryCandidate(script string) bool {
-	for _, line := range hpatchsyntax.SplitPhysicalLines(script) {
-		fields := strings.Fields(line.Text)
-		if len(fields) == 0 {
+func hpatchRecoveryGuidance(script string, rejections []hpatch.HostRejection) string {
+	return codexinstructions.RecoveryGuidance(hpatchRecoveryReferences(script, rejections))
+}
+
+func hpatchRecoveryReferences(script string, rejections []hpatch.HostRejection) string {
+	commands := recoveryCommands(script)
+	relevant := make(map[int][]hpatch.HostRejection)
+	for _, rejection := range rejections {
+		if rejection.Command > 0 {
+			relevant[rejection.Command] = append(relevant[rejection.Command], rejection)
+		}
+	}
+	var output strings.Builder
+	output.WriteString("Recoverable rejected-script commands:\n")
+	for _, command := range commands {
+		if len(relevant) != 0 {
+			if _, ok := relevant[command.index]; !ok {
+				continue
+			}
+		}
+		fmt.Fprintf(&output, "\n%s\n", command.handle)
+		for line := range strings.SplitSeq(command.command, "\n") {
+			fmt.Fprintf(&output, "    %s\n", line)
+		}
+		rejected, selected := relevant[command.index]
+		if !selected || len(command.valueRows) == 0 {
 			continue
 		}
-		switch fields[0] {
-		case "type", "type-", "type+":
+		output.WriteString("    value rows:\n")
+		valuePhysicalRows := hpatchRecoveryValueRows(command, rejected)
+		for index, row := range command.valueRows {
+			physicalRow := command.header + index + 1
+			if !hpatchRecoveryRowVisible(physicalRow, valuePhysicalRows) {
+				continue
+			}
+			fmt.Fprintf(&output, "        %s %s\n", row.handle, row.value)
+		}
+	}
+	output.WriteString("\nUse functions.hpatch_recover with these handles.\n")
+	return output.String()
+}
+
+func hpatchRecoveryValueRows(command recoveryCommandReference, rejections []hpatch.HostRejection) []int {
+	rows := make([]int, 0, len(rejections))
+	for _, rejection := range rejections {
+		if rejection.ValueLine > 0 {
+			rows = append(rows, command.header+rejection.ValueLine+1)
+		}
+	}
+	return rows
+}
+
+func hpatchRecoveryRowVisible(physicalRow int, rejectedRows []int) bool {
+	for _, rejectedRow := range rejectedRows {
+		if physicalRow >= rejectedRow-hpatchRecoveryContextLines &&
+			physicalRow <= rejectedRow+hpatchRecoveryContextLines {
 			return true
-		default:
-			return false
 		}
 	}
 	return false
-}
-
-func hpatchRecoveryGuidance(script string, rejections []hpatch.HostRejection) string {
-	references := hpatch.TextReferences(script, hpatchRecoveryRows(script, rejections)...)
-	return codexinstructions.RecoveryGuidance(references)
-}
-
-func hpatchRecoveryRows(script string, rejections []hpatch.HostRejection) []int {
-	lines := hpatchsyntax.SplitPhysicalLines(script)
-	logicalRows := hpatchLogicalRowsByPhysicalLine(script, lines)
-	rows := make([]int, 0, len(rejections)*4)
-	appendPhysicalRows := func(physicalRow int) {
-		if physicalRow < 1 || physicalRow > len(logicalRows) {
-			return
-		}
-		rows = append(rows, logicalRows[physicalRow-1]...)
-	}
-	for _, rejection := range rejections {
-		header := rejection.SourceLine
-		if header < 1 || header > len(lines) || len(logicalRows[header-1]) == 0 {
-			continue
-		}
-		appendPhysicalRows(header)
-
-		frame, err := hpatchsyntax.FrameCommand(lines, header-1, lines[header-1].Text)
-		if err != nil {
-			for row := min(frame.Next, len(logicalRows)); row > header; row-- {
-				if len(logicalRows[row-1]) != 0 {
-					appendPhysicalRows(row)
-					break
-				}
-			}
-			continue
-		}
-		if frame.Delimiter == "" {
-			continue
-		}
-		if rejection.ValueLine > 0 {
-			valueRow := header + rejection.ValueLine
-			bodyStart := header + 1
-			bodyEnd := min(frame.Next-1, len(lines))
-			for row := max(bodyStart, valueRow-hpatchRecoveryContextLines); row <= min(bodyEnd, valueRow+hpatchRecoveryContextLines); row++ {
-				appendPhysicalRows(row)
-			}
-		}
-		appendPhysicalRows(frame.Next)
-	}
-	return rows
 }
 
 func hpatchLogicalRowsByPhysicalLine(script string, lines []hpatchsyntax.PhysicalLine) [][]int {
