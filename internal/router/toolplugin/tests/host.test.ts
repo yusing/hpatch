@@ -1,6 +1,6 @@
 import {afterEach, describe, expect, test} from "bun:test";
 import {spawnSync} from "node:child_process";
-import {mkdtemp, rm, writeFile} from "node:fs/promises";
+import {mkdir, mkdtemp, rm, symlink, writeFile} from "node:fs/promises";
 import {tmpdir} from "node:os";
 import path from "node:path";
 import {fileURLToPath} from "node:url";
@@ -87,6 +87,27 @@ async function validateDeclaration(
     response: JSON.parse(result.stdout) as HostResponse,
   };
 }
+
+describe("plugin snapshot paths", () => {
+  test("accepts a snapshot root reached through a symlink", async () => {
+    const parent = await temporaryDirectory();
+    const directory = path.join(parent, "canonical");
+    const alias = path.join(parent, "alias");
+    await mkdir(directory);
+    await writeFile(path.join(directory, "plugin.mjs"), pluginDeclaration(), "utf8");
+    await symlink(directory, alias, "dir");
+
+    const result = invokeHost(alias, {
+      operation: "validate",
+      modules: ["plugin.mjs"],
+    });
+
+    expect(result.status).toBe(0);
+    const response = JSON.parse(result.stdout) as HostResponse;
+    expect(response.errors).toEqual([]);
+    expect(response.plugins).toHaveLength(1);
+  });
+});
 
 describe("plugin declaration validation", () => {
   test.each([

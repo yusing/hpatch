@@ -1,3 +1,4 @@
+import { realpath } from "node:fs/promises";
 import { registerHooks } from "node:module";
 import path from "node:path";
 import process from "node:process";
@@ -744,7 +745,7 @@ async function main() {
     process.stdin.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
     process.stdin.on("error", reject);
   }));
-  const snapshotRoot = path.resolve(request.snapshotRoot);
+  const snapshotRoot = await realpath(path.resolve(request.snapshotRoot));
   registerHooks({
     resolve(specifier, context, nextResolve) {
       const resolved = nextResolve(specifier, context);
