@@ -3,6 +3,7 @@ package router
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -44,3 +45,18 @@ func TestSessionTitleCacheCachesMissingSession(t *testing.T) {
 	}
 }
 
+// A record longer than bufio.Scanner's default token must not end the scan
+// early, which would resolve an older title than the newest matching record.
+func TestSessionTitleCacheReadsRecordsBeyondTheDefaultScanToken(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "session_index.jsonl")
+	padding := strings.Repeat("p", 128*1024)
+	content := "" +
+		`{"id":"session-1","thread_name":"First title","note":"` + padding + `"}` + "\n" +
+		`{"id":"session-1","thread_name":"Latest title"}` + "\n"
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := newSessionTitleCacheAt(path).title("session-1"); got != "Latest title" {
+		t.Fatalf("title = %q, want %q", got, "Latest title")
+	}
+}

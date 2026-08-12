@@ -9,6 +9,9 @@ import (
 	"sync"
 )
 
+// sessionTitleScanBuffer bounds one client session-index record.
+const sessionTitleScanBuffer = 1 << 20
+
 type cachedSessionTitle struct {
 	once  sync.Once
 	title string
@@ -70,6 +73,10 @@ func scanSessionTitle(path, sessionID string) string {
 	idNeedle := `"id":` + strconv.Quote(sessionID)
 	var title string
 	scanner := bufio.NewScanner(file)
+	// Index records are whole JSON lines that can exceed the default 64 KiB
+	// token, which would otherwise end the scan early and silently resolve an
+	// older title than the newest matching record.
+	scanner.Buffer(make([]byte, 0, sessionTitleScanBuffer), sessionTitleScanBuffer)
 	for scanner.Scan() {
 		line := scanner.Text()
 		if !strings.Contains(line, idNeedle) {
@@ -79,6 +86,9 @@ func scanSessionTitle(path, sessionID string) string {
 			title = candidate
 		}
 	}
+	// The title is an optional display label, so an unreadable tail keeps the
+	// newest title already resolved rather than failing the snapshot.
+	_ = scanner.Err()
 	return title
 }
 
