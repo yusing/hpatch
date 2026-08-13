@@ -74,6 +74,11 @@ type outcomeHookEvent struct {
 	Patch           string
 }
 
+type diagnoseHookEvent struct {
+	Body  string
+	Title string
+}
+
 func runCommandErrorHooks(ctx context.Context, dataDirectory string, sourceErrors []*commandError, diagnostic string, timeout time.Duration) []error {
 	if dataDirectory == "" {
 		return nil
@@ -142,7 +147,13 @@ func (hooks DiagnoseHooks) Report(ctx context.Context, markdown string) error {
 
 	ctx, cancel := context.WithTimeout(ctx, errorHooksTimeout)
 	defer cancel()
-	event := struct{ Body string }{Body: markdown}
+	event := diagnoseHookEvent{
+		Body:  markdown,
+		Title: "hpatch diagnostic",
+	}
+	if metadata, ok := attemptMetadataFromContext(ctx); ok && metadata.Title != "" {
+		event.Title = metadata.Title
+	}
 	return errors.Join(runRenderedHooks(ctx, "diagnose", configured.Hooks.Diagnose, event, event.Body)...)
 }
 

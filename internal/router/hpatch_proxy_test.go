@@ -481,7 +481,7 @@ func TestReportIssueRunsRouterHookWithoutWorker(t *testing.T) {
 	bodyPath := filepath.Join(t.TempDir(), "body.md")
 	settings := fmt.Sprintf(
 		`{"hooks":{"diagnose":[%q]}}`,
-		"printf '%s' {{shellquote (format_markdown .)}} > "+bodyPath,
+		"printf '%s\n%s' {{shellquote .Title}} {{shellquote (format_markdown .)}} > "+bodyPath,
 	)
 	if err := os.WriteFile(filepath.Join(dataDirectory, "settings.json"), []byte(settings), 0o600); err != nil {
 		t.Fatal(err)
@@ -490,7 +490,15 @@ func TestReportIssueRunsRouterHookWithoutWorker(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	proxy := newHPatchProxy(testTranslator(t, new(int)), registry)
+	indexPath := filepath.Join(t.TempDir(), "session_index.jsonl")
+	if err := os.WriteFile(indexPath, []byte(`{"id":"session-1","thread_name":"Fix loop flaws"}`+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	proxy := newHPatchProxy(
+		testTranslator(t, new(int)),
+		registry,
+		newSessionTitleCacheAt(indexPath),
+	)
 	t.Cleanup(func() {
 		if err := errors.Join(proxy.Close(), registry.Close()); err != nil {
 			t.Error(err)
@@ -499,7 +507,7 @@ func TestReportIssueRunsRouterHookWithoutWorker(t *testing.T) {
 	updatedBodyPath := filepath.Join(t.TempDir(), "updated-body.md")
 	updatedSettings := fmt.Sprintf(
 		`{"hooks":{"diagnose":[%q]}}`,
-		"printf '%s' {{shellquote (format_markdown .)}} > "+updatedBodyPath,
+		"printf '%s\n%s' {{shellquote .Title}} {{shellquote (format_markdown .)}} > "+updatedBodyPath,
 	)
 	if err := os.WriteFile(filepath.Join(dataDirectory, "settings.json"), []byte(updatedSettings), 0o600); err != nil {
 		t.Fatal(err)
@@ -520,11 +528,43 @@ func TestReportIssueRunsRouterHookWithoutWorker(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(body) != markdown {
-		t.Fatalf("diagnose hook body = %q, want %q", body, markdown)
+	want := "Fix loop flaws\n" + markdown
+	if string(body) != want {
+		t.Fatalf("diagnose hook output = %q, want %q", body, want)
 	}
 	if _, ok := registry.wrapper(reportIssueToolName); ok {
 		t.Fatal("report issue unexpectedly installed a worker wrapper")
+	}
+}
+
+func TestReportIssueHookFailureDoesNotFailRouting(t *testing.T) {
+	dataDirectory := t.TempDir()
+	if err := os.WriteFile(
+		filepath.Join(dataDirectory, "settings.json"),
+		[]byte(`{"hooks":{"diagnose":["exit 9"]}}`),
+		0o600,
+	); err != nil {
+		t.Fatal(err)
+	}
+	registry, err := buildToolRegistry(t.Context(), dataDirectory, testHPatchToolDescription, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	proxy := newHPatchProxy(testTranslator(t, new(int)), registry)
+	t.Cleanup(func() {
+		if err := errors.Join(proxy.Close(), registry.Close()); err != nil {
+			t.Error(err)
+		}
+	})
+	transform, _, _, _ := newHPatchTestTransformWithProxy(t, proxy)
+
+	history, err := transform.translateTool(reportIssueToolName, "call-report", "diagnostic", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "Issue report was not delivered.\nhpatch: warning: running diagnose hook 1: exit status 9\n"
+	if history.report != want || history.carrierInput() != hpatchDiagnosticExecInput(want) {
+		t.Fatalf("report issue history = %+v, want report %q", history, want)
 	}
 }
 

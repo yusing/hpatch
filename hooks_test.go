@@ -59,7 +59,7 @@ func TestReportIssueRunsDiagnoseHooksWithExactMarkdown(t *testing.T) {
 	content, err := json.Marshal(settings{Hooks: hooks{
 		Error: []string{"exit 9"},
 		Diagnose: []string{
-			"printf '%s' {{shellquote (format_markdown .)}} > " + shellQuote(bodyPath),
+			"printf '%s\n%s' {{shellquote .Title}} {{shellquote (format_markdown .)}} > " + shellQuote(bodyPath),
 		},
 	}})
 	if err != nil {
@@ -77,8 +77,9 @@ func TestReportIssueRunsDiagnoseHooksWithExactMarkdown(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(body) != markdown {
-		t.Fatalf("diagnose hook body = %q, want %q", body, markdown)
+	want := "hpatch diagnostic\n" + markdown
+	if string(body) != want {
+		t.Fatalf("diagnose hook output = %q, want %q", body, want)
 	}
 }
 

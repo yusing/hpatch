@@ -1696,14 +1696,26 @@ func (t *hpatchResponseTransform) translateReportIssue(callID, input string, ups
 		}
 		return history, nil
 	}
-	if err := t.proxy.registry.DiagnoseHooks.Report(t.ctx, input); err != nil {
-		return hpatchHistory{}, fmt.Errorf("report issue: %w", err)
+	attemptContext := hpatch.WithAttemptMetadata(t.ctx, hpatch.AttemptMetadata{
+		SessionID:       t.sessionID,
+		Title:           t.proxy.titles.title(t.sessionID),
+		CorrelationID:   callID,
+		CallID:          callID,
+		Attempt:         1,
+		Model:           t.model,
+		ToolName:        reportIssueToolName,
+		EmittedPayload:  input,
+		EvaluatedScript: input,
+	})
+	report := "Issue reported."
+	if err := t.proxy.registry.DiagnoseHooks.Report(attemptContext, input); err != nil {
+		report = "Issue report was not delivered.\nhpatch: warning: " + strings.TrimSpace(err.Error()) + "\n"
 	}
 	history := hpatchHistory{
 		toolName:     reportIssueToolName,
 		script:       input,
 		carrierName:  t.codeModeToolName,
-		report:       "Issue reported.",
+		report:       report,
 		applied:      true,
 		upstreamItem: maps.Clone(upstreamItem),
 	}
