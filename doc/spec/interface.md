@@ -861,6 +861,18 @@ numbers increase across evaluated and proxy-rejected calls. Per-attempt telemetr
 the emitted tool identity and outcome. Gain metrics settle the correlated hpatch/recovery chain
 once according to the combined-payload and single-comparator rules above.
 
+Outcome hooks report one routed attempt once. Their structured event includes tool identity,
+chain and call identity, attempt number, correction marker, lifecycle stage, outcome, and
+emitted, evaluated, and translated-patch byte counts. `unevaluated/rejected` means the router
+rejected the request before engine evaluation. `evaluated/rejected` means engine evaluation
+failed without host mutation; `translated/succeeded` means a host patch was produced but does
+not claim Codex applied it; `applied/succeeded` means root-owned application completed, while
+`applied/failed` means root-owned commit or cleanup failed. Recovery hook Markdown treats the
+exact short recovery payload as model-emitted, renders its compact resolved-operation delta,
+and identifies any larger complete script as router-rebuilt. Routed evaluator rejection invokes
+the outcome hook, not a second per-command error hook. Standalone per-command error hooks are
+unchanged.
+
 Acceptance:
 
 1. `functions.hpatch_recover` has a dedicated grammar, is router-only, and omits `accept`.

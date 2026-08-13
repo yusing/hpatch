@@ -2253,6 +2253,38 @@ func TestHPatchNonEvaluatorFailureDoesNotBecomeRecoveryBaseline(t *testing.T) {
 	}
 }
 
+func TestHPatchUnevaluatedRecoveryRunsOutcomeHookOnce(t *testing.T) {
+	dataDirectory := t.TempDir()
+	outcomePath := filepath.Join(t.TempDir(), "outcome.txt")
+	settings := fmt.Sprintf(
+		`{"hooks":{"outcome":["printf '%%s' {{shellquote .Stage}}'|'{{shellquote .Outcome}}'|'{{shellquote .ToolName}}'|'{{.EmittedBytes}}'|'{{.EvaluatedBytes}} > %s"]}}`,
+		shellQuoteArgument(outcomePath),
+	)
+	if err := os.WriteFile(filepath.Join(dataDirectory, "settings.json"), []byte(settings), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	transform, _, _, _ := newHPatchTestTransformWithProxy(
+		t,
+		newManagedHPatchProxyWithDataDirectory(t, newInProcessHPatchTranslator(dataDirectory), dataDirectory),
+	)
+	payload := "C1:ffff drop"
+	history, err := transform.translateRecovery("call-recovery", payload, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !history.unevaluated {
+		t.Fatalf("recovery history = %+v", history)
+	}
+	got, err := os.ReadFile(outcomePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := fmt.Sprintf("unevaluated|rejected|hpatch_recover|%d|0", len(payload))
+	if string(got) != want {
+		t.Fatalf("outcome hook = %q, want %q", got, want)
+	}
+}
+
 func testRecoveryRow(t *testing.T, text string, row int) string {
 	t.Helper()
 	reference := hpatch.TextReferences(text, row)

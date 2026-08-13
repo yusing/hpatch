@@ -50,6 +50,32 @@ func TestRecoverScriptComposesFieldsAndValueRows(t *testing.T) {
 	}
 }
 
+func TestRecoverScriptDetailedReportsExactCompactDelta(t *testing.T) {
+	script := "in file.go\n" +
+		"type- 1:aaaa <<PATCH\n" +
+		"first\n" +
+		"second\n" +
+		"PATCH\n"
+	command := recoveryCommands(script)[1]
+	payload := strings.Join([]string{
+		command.handle + " target 2:bbbb..3:cccc",
+		command.handle + " operation type",
+		command.handle + " " + command.valueRows[1].handle + ` value "SECOND"`,
+	}, "\n")
+	recovered, err := recoverScriptDetailed(t.Context(), script, payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantDelta := strings.Join([]string{
+		command.handle + " target: 1:aaaa -> 2:bbbb..3:cccc",
+		command.handle + " operation: type- -> type",
+		command.handle + " value: value row 2 replaced",
+	}, "\n")
+	if recovered.delta != wantDelta {
+		t.Fatalf("recovery delta = %q, want %q", recovered.delta, wantDelta)
+	}
+}
+
 func TestRecoverScriptResolvesValueRowsAgainstImmutableValue(t *testing.T) {
 	script := "in file.go\n" +
 		"type 1:aaaa <<PATCH\n" +

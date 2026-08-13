@@ -63,6 +63,10 @@ type hpatchApplier interface {
 	Apply(ctx context.Context, root *os.Root, script string) (hpatchTranslationResult, error)
 }
 
+type hpatchOutcomeReporter interface {
+	ReportOutcome(ctx context.Context, stage, outcome string) error
+}
+
 type inProcessHPatchTranslator struct {
 	dataDirectory string
 }
@@ -101,6 +105,14 @@ func (t notifyingHPatchTranslator) Apply(ctx context.Context, root *os.Root, scr
 	return applier.Apply(ctx, root, script)
 }
 
+func (t notifyingHPatchTranslator) ReportOutcome(ctx context.Context, stage, outcome string) error {
+	reporter, ok := t.inner.(hpatchOutcomeReporter)
+	if !ok {
+		return nil
+	}
+	return reporter.ReportOutcome(ctx, stage, outcome)
+}
+
 func (t notifyingHPatchTranslator) RecordMetrics(ctx context.Context, record hpatchMetricRecord) error {
 	if err := t.inner.RecordMetrics(ctx, record); err != nil {
 		return err
@@ -132,6 +144,10 @@ func (t inProcessHPatchTranslator) Apply(ctx context.Context, root *os.Root, scr
 		return hpatchTranslationResult{}, contextErr
 	}
 	return hpatchTranslationResultOf(applied), err
+}
+
+func (t inProcessHPatchTranslator) ReportOutcome(ctx context.Context, stage, outcome string) error {
+	return hpatch.ReportHostOutcome(ctx, t.dataDirectory, stage, outcome)
 }
 
 func hpatchTranslationResultOf(translated hpatch.HostTranslation) hpatchTranslationResult {
@@ -1341,16 +1357,18 @@ func (t *hpatchResponseTransform) translate(callID, input string, upstreamItem m
 
 	evaluated := input
 	attemptMetadata := hpatch.AttemptMetadata{
-		SessionID:     t.sessionID,
-		Title:         t.proxy.titles.title(t.sessionID),
-		CorrelationID: callID,
-		CallID:        callID,
-		Attempt:       1,
-		Correction:    false,
-		Model:         t.model,
+		SessionID:       t.sessionID,
+		Title:           t.proxy.titles.title(t.sessionID),
+		CorrelationID:   callID,
+		CallID:          callID,
+		Attempt:         1,
+		Correction:      false,
+		Model:           t.model,
+		ToolName:        hpatchToolName,
+		EmittedPayload:  input,
+		EvaluatedScript: evaluated,
 	}
 
-	attemptContext := hpatch.WithAttemptMetadata(t.ctx, attemptMetadata)
 	applied := false
 	var translated hpatchTranslationResult
 	var err error
@@ -1360,7 +1378,12 @@ func (t *hpatchResponseTransform) translate(callID, input string, upstreamItem m
 	if retained {
 		retainedScript = evaluated[:retainedStart] + "in " + retainedBody
 	}
-	if t.proxy.shellDirectory != "" && retained {
+	retainedApply := t.proxy.shellDirectory != "" && retained
+	if retainedApply {
+		attemptMetadata.EvaluatedScript = retainedScript
+	}
+	attemptContext := hpatch.WithAttemptMetadata(t.ctx, attemptMetadata)
+	if retainedApply {
 		directory := t.proxy.shellSessionDirectory(t.sessionID)
 		root, openErr := os.OpenRoot(directory)
 		if openErr != nil {
@@ -1471,13 +1494,15 @@ func (t *hpatchResponseTransform) translateRecovery(
 	}
 	base, baseErr := t.recoveryHistory()
 	attemptMetadata := hpatch.AttemptMetadata{
-		SessionID:     t.sessionID,
-		Title:         t.proxy.titles.title(t.sessionID),
-		CorrelationID: callID,
-		CallID:        callID,
-		Attempt:       1,
-		Correction:    true,
-		Model:         t.model,
+		SessionID:      t.sessionID,
+		Title:          t.proxy.titles.title(t.sessionID),
+		CorrelationID:  callID,
+		CallID:         callID,
+		Attempt:        1,
+		Correction:     true,
+		Model:          t.model,
+		ToolName:       hpatchRecoveryToolName,
+		EmittedPayload: input,
 	}
 	if baseErr != nil {
 		return t.rejectUnevaluated(hpatchRecoveryToolName, callID, input, baseErr, attemptMetadata, "", nil, upstreamItem)
@@ -1500,7 +1525,7 @@ func (t *hpatchResponseTransform) translateRecovery(
 		)
 	}
 	baseline := base.recoveryBaseline()
-	rebuilt, err := recoverScript(t.ctx, baseline, input)
+	recovered, err := recoverScriptDetailed(t.ctx, baseline, input)
 	if err != nil {
 		return t.rejectUnevaluated(
 			hpatchRecoveryToolName,
@@ -1513,7 +1538,9 @@ func (t *hpatchResponseTransform) translateRecovery(
 			upstreamItem,
 		)
 	}
-	history, err := t.translateRecovered(callID, input, rebuilt, attemptMetadata, t.recoveryChain(attemptMetadata.CorrelationID), upstreamItem)
+	attemptMetadata.EvaluatedScript = recovered.script
+	attemptMetadata.RecoveryDelta = recovered.delta
+	history, err := t.translateRecovered(callID, input, recovered.script, attemptMetadata, t.recoveryChain(attemptMetadata.CorrelationID), upstreamItem)
 	if err == nil {
 		history.toolName = hpatchRecoveryToolName
 		t.local[callID] = history
@@ -2018,6 +2045,12 @@ func (t *hpatchResponseTransform) rejectUnevaluated(
 	diagnostic := rejection.Error()
 	if referenceScript != "" {
 		diagnostic += hpatchRecoveryGuidance(referenceScript, rejections)
+	}
+	if reporter, ok := t.proxy.translator.(hpatchOutcomeReporter); ok {
+		attemptContext := hpatch.WithAttemptMetadata(t.ctx, attempt)
+		if hookErr := reporter.ReportOutcome(attemptContext, "unevaluated", "rejected"); hookErr != nil {
+			diagnostic += "\nhpatch: warning: " + strings.TrimSpace(hookErr.Error()) + "\n"
+		}
 	}
 	if err := t.recordMetrics(hpatchMetricInputs{attempt: attempt, emittedScript: input, emittedTool: toolName, diagnostic: diagnostic}); err != nil {
 		return hpatchHistory{}, err

@@ -255,8 +255,8 @@ func TranslateForHost(ctx context.Context, workspace Workspace, script, dataDire
 // imposing filesystem confinement. The host executor remains responsible for
 // authorizing the translated patch.
 func TranslateForHostAt(ctx context.Context, directory, script, dataDirectory string) (HostTranslation, error) {
-	result, err := translateDetailedAt(ctx, directory, script)
-	return finishHostChange(ctx, dataDirectory, script, result, err)
+	result, failureStage, err := translateDetailedAt(ctx, directory, script)
+	return finishHostChange(ctx, dataDirectory, script, result, failureStage, err, false)
 }
 
 // ApplyForHost evaluates and atomically applies script while returning host diagnostics and metrics.
@@ -271,11 +271,11 @@ func ApplyForHostRoot(ctx context.Context, root *os.Root, script, dataDirectory 
 }
 
 func changeForHost(ctx context.Context, workspace Workspace, script, dataDirectory string, apply bool) (HostTranslation, error) {
-	result, err := changeDetailed(ctx, workspace, script, apply)
-	return finishHostChange(ctx, dataDirectory, script, result, err)
+	result, failureStage, err := changeDetailed(ctx, workspace, script, apply)
+	return finishHostChange(ctx, dataDirectory, script, result, failureStage, err, apply)
 }
 
-func finishHostChange(ctx context.Context, dataDirectory, script string, result HostTranslation, err error) (HostTranslation, error) {
+func finishHostChange(ctx context.Context, dataDirectory, script string, result HostTranslation, failureStage string, err error, applied bool) (HostTranslation, error) {
 	if err != nil {
 		result.Rejections = hostRejectionsOf(err)
 
@@ -285,7 +285,11 @@ func finishHostChange(ctx context.Context, dataDirectory, script string, result 
 				result.Diagnostic = ""
 				return result, contextErr
 			}
-			for _, hookErr := range runOutcomeHooks(ctx, dataDirectory, "rejected", script, errorHooksTimeout) {
+			outcome := "failed"
+			if failureStage == "evaluated" {
+				outcome = "rejected"
+			}
+			for _, hookErr := range runOutcomeHooks(ctx, dataDirectory, failureStage, outcome, script, nil, errorHooksTimeout) {
 				warning := warningDiagnostic(hookErr.Error())
 				if !strings.Contains(result.Diagnostic, warning) {
 					result.Diagnostic += warning
@@ -298,11 +302,11 @@ func finishHostChange(ctx context.Context, dataDirectory, script string, result 
 		}
 		return result, err
 	}
-	outcome := "succeeded"
-	if metadata, ok := attemptMetadataFromContext(ctx); ok && metadata.Correction {
-		outcome = "corrected"
+	stage, outcome := "translated", "succeeded"
+	if applied {
+		stage, outcome = "applied", "succeeded"
 	}
-	for _, hookErr := range runOutcomeHooks(ctx, dataDirectory, outcome, script, errorHooksTimeout) {
+	for _, hookErr := range runOutcomeHooks(ctx, dataDirectory, stage, outcome, script, result.Patch, errorHooksTimeout) {
 		result.Diagnostic += warningDiagnostic(hookErr.Error())
 	}
 	if err := ctx.Err(); err != nil {
@@ -313,30 +317,44 @@ func finishHostChange(ctx context.Context, dataDirectory, script string, result 
 }
 
 func translateDetailed(ctx context.Context, workspace Workspace, script string) (HostTranslation, error) {
-	return changeDetailed(ctx, workspace, script, false)
+	result, _, err := changeDetailed(ctx, workspace, script, false)
+	return result, err
 }
 
-func changeDetailed(ctx context.Context, workspace Workspace, script string, apply bool) (HostTranslation, error) {
+func changeDetailed(ctx context.Context, workspace Workspace, script string, apply bool) (HostTranslation, string, error) {
 	changes, filesystem, invocation, report, err := evaluateScript(ctx, workspace, script)
+	if err != nil {
+		result := HostTranslation{Report: report, Invocation: InvocationMetrics{value: invocation}}
+		return result, "evaluated", err
+	}
 	if !apply {
-		return translatedEvaluation(ctx, changes, invocation, report, err)
+		result, err := translatedEvaluation(ctx, changes, invocation, report, nil)
+		if err != nil {
+			return result, "translated", err
+		}
+		return result, "", nil
 	}
 	result := HostTranslation{Report: report, Invocation: InvocationMetrics{value: invocation}}
-	if err != nil {
-		return result, err
-	}
 	if err := ctx.Err(); err != nil {
-		return result, err
+		return result, "", err
 	}
 	if err := commitChanges(changes, rootFileOperations{root: filesystem.root}); err != nil {
-		return result, fmt.Errorf("changing %s: %w", describePaths(changes), err)
+		return result, "applied", fmt.Errorf("changing %s: %w", describePaths(changes), err)
 	}
-	return result, nil
+	return result, "", nil
 }
 
-func translateDetailedAt(ctx context.Context, directory, script string) (HostTranslation, error) {
+func translateDetailedAt(ctx context.Context, directory, script string) (HostTranslation, string, error) {
 	changes, _, invocation, report, err := evaluateScriptAt(ctx, directory, script)
-	return translatedEvaluation(ctx, changes, invocation, report, err)
+	if err != nil {
+		result := HostTranslation{Report: report, Invocation: InvocationMetrics{value: invocation}}
+		return result, "evaluated", err
+	}
+	result, err := translatedEvaluation(ctx, changes, invocation, report, nil)
+	if err != nil {
+		return result, "translated", err
+	}
+	return result, "", nil
 }
 
 func translatedEvaluation(ctx context.Context, changes []change, invocation invocationMetrics, report string, evaluationErr error) (HostTranslation, error) {
@@ -553,8 +571,10 @@ func evaluationDiagnostic(ctx context.Context, err error, dataDirectory string) 
 		diagnostic.WriteString(command.Repair)
 	}
 	output.WriteString(diagnostic.String())
-	for _, hookErr := range runCommandErrorHooks(ctx, dataDirectory, commands, diagnostic.String(), errorHooksTimeout) {
-		warn(&output, hookErr.Error())
+	if _, routed := attemptMetadataFromContext(ctx); !routed {
+		for _, hookErr := range runCommandErrorHooks(ctx, dataDirectory, commands, diagnostic.String(), errorHooksTimeout) {
+			warn(&output, hookErr.Error())
+		}
 	}
 	return output.String()
 }

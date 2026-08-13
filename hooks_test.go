@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -249,7 +250,7 @@ func TestOutcomeHookMarkdownUsesSafeFence(t *testing.T) {
 	event := outcomeHookEvent{
 		attemptHookFields: attemptHookFields{Outcome: "succeeded"},
 		Title:             "hpatch attempt succeeded",
-		Script:            "type <<PATCH\n```\nPATCH\n",
+		EmittedPayload:    "type <<PATCH\n```\nPATCH\n",
 	}
 	body := formatOutcomeHookMarkdown(event)
 	if event.Title != "hpatch attempt succeeded" {
@@ -319,15 +320,15 @@ func TestErrorAndOutcomeHooksReceiveAttemptMetadata(t *testing.T) {
 	errorPath := filepath.Join(t.TempDir(), "error.md")
 	outcomePath := filepath.Join(t.TempDir(), "outcome.md")
 	metadataPath := filepath.Join(t.TempDir(), "metadata.txt")
+	titlePath := filepath.Join(filepath.Dir(metadataPath), "outcome-title.txt")
 	content, err := json.Marshal(settings{Hooks: hooks{
 		Error: []string{
 			"printf '%s' {{shellquote (format_markdown .)}} > " + shellQuote(errorPath),
-			"printf '%s' {{shellquote .Title}} > " + shellQuote(filepath.Join(filepath.Dir(metadataPath), "error-title.txt")),
 		},
 		Outcome: []string{
 			"printf '%s' {{shellquote (format_markdown .)}} > " + shellQuote(outcomePath),
-			"printf '%s' {{shellquote .CorrelationID}}'|'{{shellquote .CallID}}'|'{{.Attempt}}'|'{{.Correction}}'|'{{shellquote .Outcome}} > " + shellQuote(metadataPath),
-			"printf '%s' {{shellquote .Title}} > " + shellQuote(filepath.Join(filepath.Dir(metadataPath), "outcome-title.txt")),
+			"printf '%s' {{shellquote .CorrelationID}}'|'{{shellquote .CallID}}'|'{{.Attempt}}'|'{{.Correction}}'|'{{shellquote .ToolName}}'|'{{shellquote .Stage}}'|'{{shellquote .Outcome}}'|'{{.EmittedBytes}}'|'{{.EvaluatedBytes}}'|'{{.PatchBytes}} > " + shellQuote(metadataPath),
+			"printf '%s' {{shellquote .Title}} > " + shellQuote(titlePath),
 		},
 	}})
 	if err != nil {
@@ -336,69 +337,153 @@ func TestErrorAndOutcomeHooksReceiveAttemptMetadata(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dataDirectory, settingsFilename), content, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	metadata := AttemptMetadata{SessionID: "session-1", CorrelationID: "chain-1", CallID: "call-2", Attempt: 2, Correction: true, Model: "gpt-5.6-sol medium"}
-	ctx := WithAttemptMetadata(t.Context(), metadata)
 
-	failed, err := TranslateForHost(ctx, Workspace{Root: root}, "del\n", dataDirectory)
+	rejectedScript := "del\n"
+	rejectedMetadata := AttemptMetadata{
+		SessionID:       "session-1",
+		CorrelationID:   "chain-1",
+		CallID:          "call-1",
+		Attempt:         1,
+		Model:           "gpt-5.6-sol medium",
+		ToolName:        "functions.hpatch",
+		EmittedPayload:  rejectedScript,
+		EvaluatedScript: rejectedScript,
+	}
+	failed, err := TranslateForHost(
+		WithAttemptMetadata(t.Context(), rejectedMetadata),
+		Workspace{Root: root},
+		rejectedScript,
+		dataDirectory,
+	)
 	if err == nil || failed.Diagnostic == "" {
 		t.Fatalf("failed translation = %+v, error %v", failed, err)
 	}
-	body, err := os.ReadFile(errorPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, want := range []string{"Model: gpt-5.6-sol medium", "Session ID: session-1", "Call ID: call-2", "Attempt: 2", "Correction: true"} {
-		if !strings.Contains(string(body), want) {
-			t.Fatalf("error hook lacks %q:\n%s", want, body)
-		}
-	}
-	if strings.Contains(string(body), "Correlation ID:") {
-		t.Fatalf("error hook unexpectedly exposes correlation ID:\n%s", body)
-	}
-	if strings.Contains(string(body), "Outcome:") {
-		t.Fatalf("error hook unexpectedly exposes outcome:\n%s", body)
-	}
-	titleBody, err := os.ReadFile(filepath.Join(filepath.Dir(metadataPath), "error-title.txt"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(titleBody) != "hpatch command failed" {
-		t.Fatalf("error hook title = %q", titleBody)
+	if _, err := os.Stat(errorPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("routed rejection invoked command-error hook: %v", err)
 	}
 	outcome, err := os.ReadFile(outcomePath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(outcome), "```hpatch\ndel\n```") ||
-		strings.Contains(string(outcome), "# hpatch attempt rejected") {
-		t.Fatalf("rejected outcome hook = %q", outcome)
+	for _, want := range []string{
+		"Tool: `functions.hpatch`",
+		"Stage: `evaluated`",
+		"Outcome: `rejected`",
+		"## Emitted hpatch script",
+		"```hpatch\ndel\n```",
+	} {
+		if !strings.Contains(string(outcome), want) {
+			t.Fatalf("rejected outcome hook lacks %q:\n%s", want, outcome)
+		}
 	}
 
-	translated, err := TranslateForHost(ctx, Workspace{Root: root}, "new note.txt\ntype \"ok\"\n", dataDirectory)
+	evaluatedScript := "new note.txt\ntype \"ok\"\n"
+	recoveryPayload := "C2:abcd target 2:bbbb"
+	delta := "C2:abcd target: 1:aaaa -> 2:bbbb"
+	recoveryMetadata := AttemptMetadata{
+		SessionID:       "session-1",
+		CorrelationID:   "chain-1",
+		CallID:          "call-2",
+		Attempt:         2,
+		Correction:      true,
+		Model:           "gpt-5.6-sol medium",
+		ToolName:        "functions.hpatch_recover",
+		EmittedPayload:  recoveryPayload,
+		EvaluatedScript: evaluatedScript,
+		RecoveryDelta:   delta,
+		Title:           "Update note",
+	}
+	translated, err := TranslateForHost(
+		WithAttemptMetadata(t.Context(), recoveryMetadata),
+		Workspace{Root: root},
+		evaluatedScript,
+		dataDirectory,
+	)
 	if err != nil || translated.Diagnostic != "" {
 		t.Fatalf("successful translation = %+v, error %v", translated, err)
 	}
-	outcomeTitle, err := os.ReadFile(filepath.Join(filepath.Dir(metadataPath), "outcome-title.txt"))
+	outcomeTitle, err := os.ReadFile(titlePath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(outcomeTitle) != "hpatch attempt corrected" {
+	if string(outcomeTitle) != "hpatch recovery attempt succeeded: Update note" {
 		t.Fatalf("outcome hook title = %q", outcomeTitle)
 	}
 	outcome, err = os.ReadFile(outcomePath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(outcome), "```hpatch\nnew note.txt\ntype \"ok\"\n```") ||
-		strings.Contains(string(outcome), "# hpatch attempt corrected") {
-		t.Fatalf("corrected outcome hook = %q", outcome)
+	for _, want := range []string{
+		"Tool: `functions.hpatch_recover`",
+		"Stage: `translated`",
+		"Outcome: `succeeded`",
+		"## Emitted recovery payload",
+		"```hpatch-recover\n" + recoveryPayload + "\n```",
+		"## Resolved recovery delta",
+		"    " + delta,
+		fmt.Sprintf("Router rebuilt a %d-byte complete HPATCH script; it was not model-emitted.", len(evaluatedScript)),
+	} {
+		if !strings.Contains(string(outcome), want) {
+			t.Fatalf("recovery outcome hook lacks %q:\n%s", want, outcome)
+		}
+	}
+	if strings.Contains(string(outcome), "```hpatch\n"+evaluatedScript) {
+		t.Fatalf("recovery outcome presents rebuilt script as emitted:\n%s", outcome)
 	}
 	metadataBody, err := os.ReadFile(metadataPath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(metadataBody) != "chain-1|call-2|2|true|corrected" {
-		t.Fatalf("outcome metadata = %q", metadataBody)
+	wantMetadata := fmt.Sprintf(
+		"chain-1|call-2|2|true|functions.hpatch_recover|translated|succeeded|%d|%d|%d",
+		len(recoveryPayload),
+		len(evaluatedScript),
+		len(translated.Patch),
+	)
+	if string(metadataBody) != wantMetadata {
+		t.Fatalf("outcome metadata = %q, want %q", metadataBody, wantMetadata)
+	}
+}
+
+func TestApplicationFailureReportsAppliedStage(t *testing.T) {
+	dataDirectory := t.TempDir()
+	metadataPath := filepath.Join(t.TempDir(), "metadata.txt")
+	content, err := json.Marshal(settings{Hooks: hooks{Outcome: []string{
+		"printf '%s' {{shellquote .Stage}}'|'{{shellquote .Outcome}} > " + shellQuote(metadataPath),
+	}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dataDirectory, settingsFilename), content, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	metadata := AttemptMetadata{
+		SessionID:       "session",
+		CorrelationID:   "chain",
+		CallID:          "call",
+		Attempt:         1,
+		ToolName:        "functions.hpatch",
+		EmittedPayload:  "new note.txt\ntype \"ok\"\n",
+		EvaluatedScript: "new note.txt\ntype \"ok\"\n",
+	}
+	_, err = finishHostChange(
+		WithAttemptMetadata(t.Context(), metadata),
+		dataDirectory,
+		metadata.EvaluatedScript,
+		HostTranslation{},
+		"applied",
+		errors.New("changing note.txt: permission denied"),
+		true,
+	)
+	if err == nil {
+		t.Fatal("application failure succeeded")
+	}
+	got, err := os.ReadFile(metadataPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "applied|failed" {
+		t.Fatalf("outcome metadata = %q", got)
 	}
 }
 

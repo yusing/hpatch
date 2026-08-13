@@ -4,13 +4,17 @@ import "context"
 
 // AttemptMetadata identifies one router-owned hpatch attempt and its recovery chain.
 type AttemptMetadata struct {
-	SessionID     string
-	Title         string
-	CorrelationID string
-	CallID        string
-	Attempt       int
-	Model         string
-	Correction    bool
+	SessionID       string
+	Title           string
+	CorrelationID   string
+	CallID          string
+	Attempt         int
+	Model           string
+	ToolName        string
+	EmittedPayload  string
+	EvaluatedScript string
+	RecoveryDelta   string
+	Correction      bool
 }
 
 type attemptMetadataContextKey struct{}

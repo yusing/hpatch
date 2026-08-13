@@ -179,28 +179,67 @@ func recoveryInlineMutation(operands string) (string, string, bool) {
 	return row + " " + strconv.Quote(first) + " " + count, value, true
 }
 
+type recoveredScript struct {
+	script string
+	delta  string
+}
+
 func recoverScript(ctx context.Context, rejectedScript, payload string) (string, error) {
+	recovered, err := recoverScriptDetailed(ctx, rejectedScript, payload)
+	return recovered.script, err
+}
+
+func recoverScriptDetailed(ctx context.Context, rejectedScript, payload string) (recoveredScript, error) {
 	if ctx == nil {
-		return "", fmt.Errorf("context is nil")
+		return recoveredScript{}, fmt.Errorf("context is nil")
 	}
 	if err := ctx.Err(); err != nil {
-		return "", err
+		return recoveredScript{}, err
 	}
 	commands := recoveryCommands(rejectedScript)
 	operations, err := parseRecoveryPayload(commands, payload)
 	if err != nil {
-		return "", err
+		return recoveredScript{}, err
 	}
 	edits, err := planRecoveryEdits(ctx, rejectedScript, operations)
 	if err != nil {
-		return "", err
+		return recoveredScript{}, err
 	}
 	var editScript strings.Builder
 	for _, edit := range edits {
 		editScript.WriteString(edit.script)
 		editScript.WriteByte('\n')
 	}
-	return hpatch.EditText(ctx, rejectedScript, editScript.String())
+	rebuilt, err := hpatch.EditText(ctx, rejectedScript, editScript.String())
+	if err != nil {
+		return recoveredScript{}, err
+	}
+	return recoveredScript{script: rebuilt, delta: formatRecoveryDelta(operations)}, nil
+}
+
+func formatRecoveryDelta(operations []recoveryOperation) string {
+	var delta strings.Builder
+	for _, operation := range operations {
+		fmt.Fprintf(&delta, "%s %s", operation.command.handle, operation.kind)
+		switch operation.kind {
+		case "target":
+			fmt.Fprintf(&delta, ": %s -> %s", operation.command.parts.target, operation.target)
+		case "operation":
+			fmt.Fprintf(&delta, ": %s -> %s", operation.command.parts.operation, operation.operation)
+		case "value":
+			if operation.valueRow == 0 {
+				fmt.Fprintf(&delta, ": %d bytes -> %d bytes", len(operation.command.parts.value), len(operation.value))
+			} else {
+				fmt.Fprintf(&delta, ": value row %d replaced", operation.valueRow)
+			}
+		case "value-", "value+":
+			fmt.Fprintf(&delta, ": value row %d, %d bytes", operation.valueRow, len(operation.value))
+		case "replace", "before", "after":
+			fmt.Fprintf(&delta, ": %d-byte command", len(operation.embedded))
+		}
+		delta.WriteByte('\n')
+	}
+	return strings.TrimSuffix(delta.String(), "\n")
 }
 
 func parseRecoveryPayload(

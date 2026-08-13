@@ -33,13 +33,18 @@ type hooks struct {
 }
 
 type attemptHookFields struct {
-	SessionID     string
-	CorrelationID string
-	CallID        string
-	Attempt       int
-	Correction    bool
-	Model         string
-	Outcome       string
+	SessionID      string
+	CorrelationID  string
+	CallID         string
+	Attempt        int
+	Correction     bool
+	Model          string
+	ToolName       string
+	Stage          string
+	Outcome        string
+	EmittedBytes   int
+	EvaluatedBytes int
+	PatchBytes     int
 }
 
 type errorHookEvent struct {
@@ -61,9 +66,12 @@ type errorHookEvent struct {
 type outcomeHookEvent struct {
 	attemptHookFields
 
-	Body   string
-	Title  string
-	Script string
+	Body            string
+	Title           string
+	EmittedPayload  string
+	EvaluatedScript string
+	RecoveryDelta   string
+	Patch           string
 }
 
 func runCommandErrorHooks(ctx context.Context, dataDirectory string, sourceErrors []*commandError, diagnostic string, timeout time.Duration) []error {
@@ -204,7 +212,7 @@ func newErrorHookEvent(ctx context.Context, sourceError *commandError, diagnosti
 	}
 	event.Title = "hpatch command failed"
 	if metadata, ok := attemptMetadataFromContext(ctx); ok {
-		event.attemptHookFields = newAttemptHookFields(metadata, "rejected")
+		event.attemptHookFields = newAttemptHookFields(metadata, "evaluated", "rejected", 0)
 		if metadata.Title != "" {
 			event.Title = metadata.Title
 		}
@@ -310,15 +318,20 @@ func shellQuote(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
 }
 
-func newAttemptHookFields(metadata AttemptMetadata, outcome string) attemptHookFields {
+func newAttemptHookFields(metadata AttemptMetadata, stage, outcome string, patchBytes int) attemptHookFields {
 	return attemptHookFields{
-		SessionID:     metadata.SessionID,
-		CorrelationID: metadata.CorrelationID,
-		CallID:        metadata.CallID,
-		Attempt:       metadata.Attempt,
-		Correction:    metadata.Correction,
-		Model:         metadata.Model,
-		Outcome:       outcome,
+		SessionID:      metadata.SessionID,
+		CorrelationID:  metadata.CorrelationID,
+		CallID:         metadata.CallID,
+		Attempt:        metadata.Attempt,
+		Correction:     metadata.Correction,
+		Model:          metadata.Model,
+		ToolName:       metadata.ToolName,
+		Stage:          stage,
+		Outcome:        outcome,
+		EmittedBytes:   len(metadata.EmittedPayload),
+		EvaluatedBytes: len(metadata.EvaluatedScript),
+		PatchBytes:     patchBytes,
 	}
 }
 
@@ -330,11 +343,21 @@ func writeAttemptHookFields(body *strings.Builder, fields attemptHookFields) {
 	writeHookField(body, "Correlation ID", fields.CorrelationID)
 	writeHookField(body, "Call ID", fields.CallID)
 	writeHookField(body, "Attempt", strconv.Itoa(fields.Attempt))
+	writeHookField(body, "Tool", fields.ToolName)
 	writeHookField(body, "Correction", strconv.FormatBool(fields.Correction))
+	writeHookField(body, "Stage", fields.Stage)
 	writeHookField(body, "Outcome", fields.Outcome)
+	writeHookField(body, "Emitted bytes", strconv.Itoa(fields.EmittedBytes))
+	writeHookField(body, "Evaluated bytes", strconv.Itoa(fields.EvaluatedBytes))
+	writeHookField(body, "Patch bytes", strconv.Itoa(fields.PatchBytes))
 }
 
-func runOutcomeHooks(ctx context.Context, dataDirectory, outcome, script string, timeout time.Duration) []error {
+func runOutcomeHooks(
+	ctx context.Context,
+	dataDirectory, stage, outcome, evaluatedScript string,
+	patch []byte,
+	timeout time.Duration,
+) []error {
 	metadata, ok := attemptMetadataFromContext(ctx)
 	if !ok || dataDirectory == "" {
 		return nil
@@ -346,9 +369,28 @@ func runOutcomeHooks(ctx context.Context, dataDirectory, outcome, script string,
 	if len(configured.Hooks.Outcome) == 0 {
 		return nil
 	}
-	event := outcomeHookEvent{attemptHookFields: newAttemptHookFields(metadata, outcome), Title: "hpatch attempt " + outcome, Script: script}
+	if metadata.ToolName == "" {
+		metadata.ToolName = "functions.hpatch"
+	}
+	if metadata.EmittedPayload == "" {
+		metadata.EmittedPayload = evaluatedScript
+	}
+	if metadata.EvaluatedScript == "" {
+		metadata.EvaluatedScript = evaluatedScript
+	}
+	event := outcomeHookEvent{
+		attemptHookFields: newAttemptHookFields(metadata, stage, outcome, len(patch)),
+		Title:             "hpatch attempt " + outcome,
+		EmittedPayload:    metadata.EmittedPayload,
+		EvaluatedScript:   metadata.EvaluatedScript,
+		RecoveryDelta:     metadata.RecoveryDelta,
+		Patch:             string(patch),
+	}
+	if metadata.Correction {
+		event.Title = "hpatch recovery attempt " + outcome
+	}
 	if metadata.Title != "" {
-		event.Title = metadata.Title
+		event.Title += ": " + metadata.Title
 	}
 	event.Body = formatOutcomeHookMarkdown(event)
 	ctx, cancel := context.WithTimeout(ctx, timeout)
@@ -359,15 +401,39 @@ func runOutcomeHooks(ctx context.Context, dataDirectory, outcome, script string,
 func formatOutcomeHookMarkdown(event outcomeHookEvent) string {
 	var body strings.Builder
 	writeAttemptHookFields(&body, event.attemptHookFields)
-	if event.Script != "" {
-		fence := markdownFence(event.Script)
-		fmt.Fprintf(&body, "\n%shpatch\n%s", fence, event.Script)
-		if !strings.HasSuffix(event.Script, "\n") {
-			body.WriteByte('\n')
+	if event.EmittedPayload != "" {
+		label := "Emitted hpatch script"
+		language := "hpatch"
+		if event.Correction {
+			label = "Emitted recovery payload"
+			language = "hpatch-recover"
 		}
-		body.WriteString(fence)
+		writeHookFencedBlock(&body, label, language, event.EmittedPayload)
+	}
+	writeHookBlock(&body, "Resolved recovery delta", event.RecoveryDelta)
+	if event.Correction && event.EvaluatedScript != "" && event.EvaluatedScript != event.EmittedPayload {
+		fmt.Fprintf(&body, "\nRouter rebuilt a %d-byte complete HPATCH script; it was not model-emitted.\n", len(event.EvaluatedScript))
 	}
 	return strings.TrimSuffix(body.String(), "\n")
+}
+
+func writeHookFencedBlock(body *strings.Builder, label, language, value string) {
+	if value == "" {
+		return
+	}
+	fence := markdownFence(value)
+	fmt.Fprintf(body, "\n## %s\n\n%s%s\n%s", label, fence, language, value)
+	if !strings.HasSuffix(value, "\n") {
+		body.WriteByte('\n')
+	}
+	body.WriteString(fence)
+	body.WriteByte('\n')
+}
+
+// ReportHostOutcome runs configured outcome hooks for a host-owned lifecycle result.
+// The attempt metadata in ctx supplies tool identity and emitted payload attribution.
+func ReportHostOutcome(ctx context.Context, dataDirectory, stage, outcome string) error {
+	return errors.Join(runOutcomeHooks(ctx, dataDirectory, stage, outcome, "", nil, errorHooksTimeout)...)
 }
 
 func markdownFence(value string) string {

@@ -252,6 +252,15 @@ Defaults:
 | Metrics / hooks | `$XDG_CONFIG_HOME/hpatch` or `~/.config/hpatch` |
 | Endpoints | `POST /v1/responses`, `GET /v1/models`, `GET /` (dashboard), `GET /api/metrics` |
 
+Outcome hooks receive one event for each routed hpatch or recovery result. The event identifies
+the emitted tool and exact model-emitted payload, the evaluated lifecycle stage, the outcome,
+and emitted, evaluated, and translated-patch byte counts. Recovery Markdown labels the short
+recovery payload as model-emitted, shows a compact resolved-operation delta, and states when
+the router rebuilt a larger complete script. A routed evaluator failure invokes `hooks.outcome`
+instead of also invoking `hooks.error`; a router-owned rejection that occurs before evaluation
+reports `unevaluated/rejected`. Root commit failures report `applied/failed`. Standalone command
+failures continue to invoke `hooks.error`.
+
 In hpatch mode, run the router as the same login user as Codex so it can open the absolute workspace paths Codex sends and read the same credentials. A user systemd unit is the intended long-running setup.
 
 Use `--mode passthrough` when the router should forward Responses traffic without installing hpatch, shell, private frontends, rejected-script recovery, or plugin metrics.
