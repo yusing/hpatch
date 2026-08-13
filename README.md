@@ -171,6 +171,12 @@ TOML. Config and agent TOML files remain unchanged. Stock Codex guidance, the ea
 unmarked hpatch guidance, and current marked guidance are supported. Content outside the
 owned section is preserved; an unrecognized file fails instead of being overwritten.
 
+`make uninstall` removes the installed `hpatch` and `hpatch-router` binaries and reverses
+the model-instructions changes. It deletes the installer-created instructions file and its
+config entry, or removes only the marked hpatch section from pre-existing customized main and
+agent instruction files. Other custom content, agent TOMLs, generated source, and plugin
+dependencies are preserved.
+
 ### Configured plugins
 
 The mandatory `builtin.shell` implementation comes from `plugins/shell.mjs` and is embedded during generation; `make install` does not copy it into user configuration.

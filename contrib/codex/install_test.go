@@ -221,6 +221,109 @@ func TestInstallerPatchesAgentModelInstructionFiles(t *testing.T) {
 	requireShellWorkflow(t, string(gotAgent))
 }
 
+func TestMakeUninstallRemovesDefaultInstructionsAndConfigEntry(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath := filepath.Join(tempDir, "config.toml")
+	target := filepath.Join(tempDir, "hpatch-model-instructions.md")
+	encodedTarget, err := json.Marshal(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	config := "custom = true\nmodel_instructions_file = " + string(encodedTarget) + "\n[features]\nresponses = true\n"
+	if err := os.WriteFile(configPath, []byte(config), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(target, []byte(Instructions()), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	runUninstaller(t, configPath)
+
+	if _, err := os.Stat(target); !os.IsNotExist(err) {
+		t.Fatalf("default instructions still exist or cannot be inspected: %v", err)
+	}
+	gotConfig, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantConfig := "custom = true\n[features]\nresponses = true\n"
+	if string(gotConfig) != wantConfig {
+		t.Fatalf("config after uninstall\n got: %q\nwant: %q", gotConfig, wantConfig)
+	}
+}
+
+func TestMakeUninstallStripsCustomizedMainAndAgentInstructions(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath := filepath.Join(tempDir, "config.toml")
+	mainTarget := filepath.Join(tempDir, "main.instructions.md")
+	encodedMainTarget, err := json.Marshal(mainTarget)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(configPath, []byte("model_instructions_file = "+string(encodedMainTarget)+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(mainTarget, []byte("main prefix\n"+Instructions()+"main suffix\n"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+
+	agentsDirectory := filepath.Join(tempDir, "agents")
+	if err := os.MkdirAll(agentsDirectory, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	agentTarget := filepath.Join(agentsDirectory, "fast.instructions.md")
+	if err := os.WriteFile(agentTarget, []byte("agent prefix\n"+Instructions()+"agent suffix\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(agentsDirectory, "fast.toml"), []byte("model_instructions_file = './fast.instructions.md'\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	runUninstaller(t, configPath)
+
+	for path, want := range map[string]string{
+		mainTarget:  "main prefix\nmain suffix\n",
+		agentTarget: "agent prefix\nagent suffix\n",
+	} {
+		got, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(got) != want {
+			t.Fatalf("%s after uninstall\n got: %q\nwant: %q", path, got, want)
+		}
+	}
+}
+
+func TestMakeUninstallRejectsIncompleteMarkers(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath := filepath.Join(tempDir, "config.toml")
+	target := filepath.Join(tempDir, "custom.instructions.md")
+	encodedTarget, err := json.Marshal(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(configPath, []byte("model_instructions_file = "+string(encodedTarget)+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	contents := "prefix\n<!-- hpatch-model-instructions:start -->\nincomplete\n"
+	if err := os.WriteFile(target, []byte(contents), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	output, err := runUninstallerCommand(t, configPath).CombinedOutput()
+	if err == nil {
+		t.Fatalf("make uninstall-instructions succeeded for incomplete markers\n%s", output)
+	}
+	got, readErr := os.ReadFile(target)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if string(got) != contents {
+		t.Fatalf("instructions changed after rejected uninstall\n got: %q\nwant: %q", got, contents)
+	}
+}
+
 func requireShellWorkflow(t *testing.T, instructions string) {
 	t.Helper()
 	for _, required := range []string{
@@ -237,6 +340,25 @@ func requireShellWorkflow(t *testing.T, instructions string) {
 func runInstaller(t *testing.T, configPath string) {
 	t.Helper()
 	runCommand(t, []string{"CODEX_CONFIG_FILE=" + configPath}, "sh", "install-model-instructions.sh")
+}
+
+func runUninstaller(t *testing.T, configPath string) {
+	t.Helper()
+	command := runUninstallerCommand(t, configPath)
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("make uninstall-instructions: %v\n%s", err, output)
+	}
+}
+
+func runUninstallerCommand(t *testing.T, configPath string) *exec.Cmd {
+	t.Helper()
+	root, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	command := exec.Command("make", "uninstall-instructions", "CODEX_CONFIG_FILE="+configPath)
+	command.Dir = root
+	return command
 }
 
 func runCommand(t *testing.T, environment []string, name string, arguments ...string) string {
