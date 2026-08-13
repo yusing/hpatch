@@ -502,8 +502,14 @@ func planRecoveryEdits(
 	var edits []recoveryEdit
 	for _, change := range changes {
 		command := change.command
-		startTarget := recoveryPhysicalTarget(script, logicalRows, command.header, command.header)
-		commandTarget := recoveryPhysicalTarget(script, logicalRows, command.header, command.end-1)
+		startTarget, err := recoveryPhysicalTarget(script, logicalRows, command.header, command.header)
+		if err != nil {
+			return nil, recoveryError(change.first, err.Error())
+		}
+		commandTarget, err := recoveryPhysicalTarget(script, logicalRows, command.header, command.end-1)
+		if err != nil {
+			return nil, recoveryError(change.first, err.Error())
+		}
 		for _, operation := range change.before {
 			value := operation.embedded
 			if recoveryTerminatorSuffix(value) == "" {
@@ -550,12 +556,15 @@ func planRecoveryEdits(
 					if row.valueRow < 1 || row.valueRow > len(valueLines) {
 						return nil, recoveryError(row.sequence, "value-row handle is stale or unavailable")
 					}
-					valueTarget := recoveryPhysicalTarget(
+					valueTarget, err := recoveryPhysicalTarget(
 						value,
 						logicalValueRows,
 						row.valueRow-1,
 						row.valueRow-1,
 					)
+					if err != nil {
+						return nil, recoveryError(row.sequence, err.Error())
+					}
 					mutation := map[string]string{"value": "type", "value-": "type-", "value+": "type+"}[row.kind]
 					fmt.Fprintf(&rowEdits, "%s %s %s\n", mutation, valueTarget, strconv.Quote(row.value))
 					sequence = min(sequence, row.sequence)
@@ -608,13 +617,25 @@ func renderRecoveryMutation(
 	return header + " " + strconv.Quote(value) + finalTerminator
 }
 
-func recoveryPhysicalTarget(script string, logicalRows [][]int, start, end int) string {
+func recoveryPhysicalTarget(script string, logicalRows [][]int, start, end int) (string, error) {
+	if start < 0 || end >= len(logicalRows) || start > end {
+		return "", fmt.Errorf("physical target is unavailable")
+	}
+	for start <= end && len(logicalRows[start]) == 0 {
+		start++
+	}
+	for end >= start && len(logicalRows[end]) == 0 {
+		end--
+	}
+	if start > end {
+		return "", fmt.Errorf("physical target has no logical row")
+	}
 	first := recoveryLogicalHandle(script, logicalRows[start][0])
 	if start == end && len(logicalRows[start]) == 1 {
-		return first
+		return first, nil
 	}
 	lastRows := logicalRows[end]
-	return first + ".." + recoveryLogicalHandle(script, lastRows[len(lastRows)-1])
+	return first + ".." + recoveryLogicalHandle(script, lastRows[len(lastRows)-1]), nil
 }
 
 func recoveryLogicalHandle(script string, row int) string {

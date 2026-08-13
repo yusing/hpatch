@@ -135,6 +135,25 @@ func TestRecoverScriptStructuralOperations(t *testing.T) {
 		t.Fatalf("recoverScript() = %q, want %q", got, want)
 	}
 }
+
+func TestRecoverScriptDropsMalformedFrameEndingAtTerminalEmptyRow(t *testing.T) {
+	script := "in file.go\n" +
+		"type 1:aaaa <<PATCH\n" +
+		"unterminated\n"
+	commands := recoveryCommands(script)
+	if len(commands) != 2 {
+		t.Fatalf("commands = %+v", commands)
+	}
+
+	got, err := recoverScript(t.Context(), script, commands[1].handle+" drop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "in file.go\n"; got != want {
+		t.Fatalf("recoverScript() = %q, want %q", got, want)
+	}
+}
+
 func TestRecoverScriptRejectsStaleConflictingAndExcludedPayloads(t *testing.T) {
 	script := "in file.go\n" +
 		"type 1:aaaa \"bad\"\n"
