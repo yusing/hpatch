@@ -337,22 +337,23 @@ aggregate_agent_interactions() {
 			"Unavailable for this artifact."
 		else
 			([$joined[] | .run.repetition as $repetition | .session.hpatch_attempts[] | . + {repetition: $repetition}]) as $attempts |
+			($attempts | group_by([.repetition, .correlation_id])) as $chains |
 			([$joined[] | .session.hpatch_calls.successful + .session.hpatch_calls.rejected] | add // 0) as $routed |
 			([$joined[] | .session.hpatch_calls.rejected] | add // 0) as $rejected |
 			(($attempts | length) < $routed) as $truncated |
-			([$attempts[] | select(.correction and .attempt > 1)] | length) as $recoveries |
-			($attempts | group_by([.repetition, .correlation_id])) as $chains |
+			([$chains[] | select(any(.[]; .correction and .attempt > 1))] | length) as $recovered_chains |
 			([$chains[] | select(any(.[]; .outcome == "rejected"))]) as $rejected_chains |
-			([$rejected_chains[] | select(any(.[]; .outcome == "successful"))] | length) as $recovered_chains |
+			([$rejected_chains[] | select(any(.[]; .outcome == "successful"))] | length) as $settled_rejected_chains |
 			$metrics.gain as $gain |
 			($gain.hpatch_tokens + $gain.ineffective_hpatch_tokens) as $all_hpatch |
 			($gain.apply_patch_tokens + $gain.failed_apply_patch_tokens - $gain.hpatch_tokens) as $break_even_budget |
 			($break_even_budget - $gain.ineffective_hpatch_tokens) as $headroom |
 			[
-				["Retained attempts", "\($attempts | length)/\($routed) routed calls"],
+				["Retained calls", "\($attempts | length)/\($routed) routed calls"],
+				["Retained logical edit chains", "\($chains | length)"],
 				["Call rejection rate", "\($rejected)/\($routed) (\(percent($rejected; $routed)))"],
-				["Rejected-script recovery adoption", (if $truncated then "unavailable (attempt telemetry truncated)" else "\($recoveries)/\($rejected) rejected calls (\(percent($recoveries; $rejected)))" end)],
-				["Recovered rejection chains", (if $truncated then "unavailable (attempt telemetry truncated)" else "\($recovered_chains)/\($rejected_chains | length)" end)],
+				["Chains using correction", (if $truncated then "unavailable (attempt telemetry truncated)" else "\($recovered_chains)/\($chains | length) (\(percent($recovered_chains; $chains | length)))" end)],
+				["Recovered rejection chains", (if $truncated then "unavailable (attempt telemetry truncated)" else "\($settled_rejected_chains)/\($rejected_chains | length)" end)],
 				["Failed-payload share", "\($gain.ineffective_hpatch_tokens)/\($all_hpatch) tokens (\(percent($gain.ineffective_hpatch_tokens; $all_hpatch)))"],
 				["Break-even failed-payload budget", "\($break_even_budget) tokens"],
 				["Current failed payload", "\($gain.ineffective_hpatch_tokens) tokens (\(if $headroom >= 0 then "\($headroom) under budget" else "\(-$headroom) over budget" end))"]
@@ -396,27 +397,39 @@ aggregate_agent_interactions() {
 		else
 			[$joined[] |
 				.run.repetition as $repetition |
-				.session.hpatch_attempts[] |
+				.session.hpatch_attempts |
+				group_by(.correlation_id)[] |
+				sort_by(.attempt) |
+				. as $chain |
+				($chain | last) as $final |
+				($chain | map(.apply_patch_tokens) | map(select(. != 0)) | last // 0) as $comparator |
+				($chain | map(.rejections // []) | add) as $rejections |
 				[
-					$repetition, .sequence, .correlation_id, .call_id, .attempt,
-					(if .correction then "recovery" else "complete" end), .outcome,
-					.evaluated_commands, .emitted_hpatch_tokens, .apply_patch_tokens,
-					.diagnostic_input_tokens, rejection_evidence
+					$repetition,
+					($chain | map(.sequence) | min),
+					$final.correlation_id,
+					($chain | length),
+					($chain | map(.emitted_hpatch_tokens) | add),
+					$comparator,
+					$final.outcome,
+					($chain | map(.evaluated_commands) | max),
+					($chain | map(.diagnostic_input_tokens) | add),
+					({rejections: $rejections} | rejection_evidence)
 				] |
 				map(cell) |
 				"| " + join(" | ") + " |"
 			] as $rows |
-			if ($rows | length) == 0 then "No Hpatch attempts."
+			if ($rows | length) == 0 then "No Hpatch edit chains."
 			else $rows | join("\n")
 			end
 		end
 	')
 	if [[ $attempt_sequence == \|* ]]; then
-		printf '| Rep | Sequence | Chain | Call | Attempt | Payload | Outcome | Evaluated commands | Hpatch tokens | Apply-patch baseline | Diagnostic tokens | Rejection evidence |\n'
-		printf '|---:|---:|---|---|---:|---|---|---:|---:|---:|---:|---|\n'
+		printf '| Rep | Sequence | Chain | Calls | Hpatch tokens | Apply-patch baseline | Final outcome | Evaluated commands | Diagnostic tokens | Rejection evidence |\n'
+		printf '|---:|---:|---|---:|---:|---:|---|---:|---:|---|\n'
 	fi
 	printf '%s\n' "$attempt_sequence"
-	printf '\nAttempt telemetry is bounded and contains no script, replacement text, diagnostic body, or repair context.\n'
+printf '\nLogical-chain telemetry combines the initial hpatch payload and every correction payload against one final apply_patch baseline. It is bounded and contains no script, replacement text, diagnostic body, or repair context.\n'
 
 	printf '\n## Hpatch rejection evidence\n\n'
 	rejection_evidence=$(jq -nr --slurpfile runs "$results" --slurpfile metrics "$hpatch_metrics" '

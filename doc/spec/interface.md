@@ -534,10 +534,11 @@ A correlated routed recovery chain settles once: its hpatch side is the encoded 
 `functions.hpatch` call plus every encoded `functions.hpatch_recover` call, while its comparator
 side is exactly one final `functions.exec` carrier containing the generated `apply_patch` program.
 Rejected recovery attempts add their emitted payload but no additional comparator. A successful
-recovery atomically compensates every provisional failed row and records the combined chain
-against the final comparator. An abandoned chain retains the combined ineffective tokens and
-the initial failed comparator. Per-attempt router telemetry remains individual, and the
-`hpatch_recover` definition remains ordinary definition overhead.
+recovery atomically compensates every provisional failed row and records one combined `hpatch`
+output row against the final comparator; it never records a separate `hpatch_recover` output row.
+An abandoned chain retains the combined ineffective tokens and the initial failed comparator.
+Per-attempt router telemetry remains individual, and the `hpatch_recover` definition remains
+ordinary definition input overhead.
 All estimates use the tokenizer library's GPT-5 model mapping. Tool inputs and translated
 payloads remain data and cannot alter the fixed programs used for counting.
 
@@ -662,9 +663,11 @@ Metrics writes use normal operating-system page-cache writeback and do not reque
 per-invocation filesystem sync; sudden power loss may lose increments that the operating
 system had not yet flushed.
 
-`hpatch gain` first writes an output-token table with one stable row per plugin and tool,
-placing a failed-translation row immediately after its successful row when present, followed
-by an all-tools row. Its columns are emitted tokens, translated tokens, and reduction. The
+`hpatch gain` first writes an output-token table with one stable row per plugin and tool that
+has output-call activity, placing a failed-translation row immediately after its successful
+row when present, followed by an all-tools row. Definition-only tools remain visible in the
+definition-input breakdown without creating a zero-valued output row. Output-table columns are
+emitted tokens, translated tokens, and reduction. The
 hpatch failed row retains the fixed direct-call program carrying the empty patch as its
 established semantic baseline and reports `n/a`; its downstream diagnostic carrier remains
 excluded. A separate recovery table has `Recoveries` and `Count` columns with stable

@@ -182,17 +182,15 @@ func TestValidToolMetricsRejectsCombinedCounterOverflow(t *testing.T) {
 	}
 }
 
-func TestGainIncludesSuccessfulRowForInstalledToolWithoutCalls(t *testing.T) {
+func TestGainOmitsOutputRowForInstalledToolWithoutCalls(t *testing.T) {
 	t.Parallel()
 	value := metrics{DefinitionRequests: 1, DefinitionInputTokens: 7, ToolCount: 1}
 	value.Tools[0] = toolMetric{
 		PluginID: "example.plugin", ToolName: "unused_tool", DefinitionInputTokens: 7,
 	}
 	tools, all, definitions := value.gainToolRows()
-	if len(tools) != 1 || tools[0].PluginID != "example.plugin" || tools[0].ToolName != "unused_tool" ||
-		tools[0].Failed || tools[0].Calls != 0 || tools[0].EmittedTokens != 0 ||
-		tools[0].TranslatedTokens != 0 || tools[0].Reduction != "n/a" {
-		t.Fatalf("successful rows = %+v", tools)
+	if len(tools) != 0 {
+		t.Fatalf("successful rows = %+v, want none for an unused tool", tools)
 	}
 	if all.Calls != 0 || all.EmittedTokens != 0 || all.TranslatedTokens != 0 || all.Reduction != "n/a" {
 		t.Fatalf("all-tools = %+v", all)

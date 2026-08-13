@@ -47,14 +47,31 @@ grep -Fq '| 1 | 3 | 5 | 2 | 1 | 4 | 2 | 1 | 2 | 2 | 1 | 7 |' "$fixture/summary.m
 grep -Fq '| 0 | 0 | 1 | 0 | 0 |' "$fixture/summary.md"
 grep -Fq '| Hpatch | 5 | 4 | 2 | 2 | 2 | 1 | 7 |' "$fixture/summary.md"
 grep -Fq '| Call rejection rate | 1/3 (33.3%) |' "$fixture/summary.md"
-grep -Fq '| Rejected-script recovery adoption | 1/1 rejected calls (100%) |' "$fixture/summary.md"
+grep -Fq '| Retained calls | 3/3 routed calls |' "$fixture/summary.md"
+grep -Fq '| Retained logical edit chains | 2 |' "$fixture/summary.md"
+grep -Fq '| Chains using correction | 1/2 (50%) |' "$fixture/summary.md"
 grep -Fq '| Recovered rejection chains | 1/1 |' "$fixture/summary.md"
 grep -Fq '| Failed-payload share | 10/30 tokens (33.3%) |' "$fixture/summary.md"
 grep -Fq '| Break-even failed-payload budget | 32 tokens |' "$fixture/summary.md"
 grep -Fq '| Current failed payload | 10 tokens (22 under budget) |' "$fixture/summary.md"
-grep -Fq '| 1 | 1 | chain-a | call-1 | 1 | complete | rejected | 2 | 10 | 2 | 7 | command 2' "$fixture/summary.md"
-grep -Fq '| 1 | 2 | chain-a | call-2 | 2 | recovery | successful | 2 | 8 | 20 | 0 | — |' "$fixture/summary.md"
+grep -Fq '| 1 | 1 | chain-a | 2 | 18 | 20 | successful | 2 | 7 | command 2' "$fixture/summary.md"
+grep -Fq '| 1 | 3 | chain-b | 1 | 12 | 30 | successful | 1 | 0 | — |' "$fixture/summary.md"
+if grep -Fq '| recovery |' "$fixture/summary.md"; then
+	echo "report retained a separate recovery row" >&2
+	exit 1
+fi
 grep -Fq '| 1 | 2 | 3 | type | line | 2 | language-syntax | file.go | 8 | 3 |' "$fixture/summary.md"
+cp "$fixture/hpatch-metrics.json" "$fixture/hpatch-metrics.backup"
+jq '
+	.sessions[0].hpatch_calls.rejected += 2 |
+	.sessions[0].hpatch_attempts += [
+		{"sequence":4,"correlation_id":"chain-c","call_id":"call-4","attempt":1,"correction":false,"outcome":"rejected","emitted_hpatch_tokens":6,"apply_patch_tokens":4,"evaluated_commands":1,"diagnostic_input_tokens":2,"rejections":[]},
+		{"sequence":5,"correlation_id":"chain-c","call_id":"call-5","attempt":2,"correction":true,"outcome":"rejected","emitted_hpatch_tokens":3,"apply_patch_tokens":0,"evaluated_commands":1,"diagnostic_input_tokens":1,"rejections":[]}
+	]
+' "$fixture/hpatch-metrics.backup" >"$fixture/hpatch-metrics.json"
+"$benchmark_root/report.sh" "$fixture" >/dev/null
+grep -Fq '| 1 | 4 | chain-c | 2 | 9 | 4 | rejected | 1 | 3 | — |' "$fixture/summary.md"
+mv -f -- "$fixture/hpatch-metrics.backup" "$fixture/hpatch-metrics.json"
 grep -Fq '| 1 | 3 | 4 | type+ | line | — | row-stale | other.go | — | — |' "$fixture/summary.md"
 grep -Fq '| End-to-end agent output | 100 | 80 | -20% |' "$fixture/summary.md"
 grep -Fq '| Estimated non-edit output | 48 | 50 | +4.2% |' "$fixture/summary.md"
@@ -63,8 +80,8 @@ grep -Fq 'Translation envelope errors' "$fixture/summary.md"
 jq '.sessions[0].hpatch_calls.successful = 3' "$fixture/hpatch-metrics.json" >"$fixture/hpatch-metrics.tmp"
 mv -f -- "$fixture/hpatch-metrics.tmp" "$fixture/hpatch-metrics.json"
 "$benchmark_root/report.sh" "$fixture" >/dev/null
-grep -Fq '| Retained attempts | 3/4 routed calls |' "$fixture/summary.md"
-grep -Fq '| Rejected-script recovery adoption | unavailable (attempt telemetry truncated) |' "$fixture/summary.md"
+grep -Fq '| Retained calls | 3/4 routed calls |' "$fixture/summary.md"
+grep -Fq '| Chains using correction | unavailable (attempt telemetry truncated) |' "$fixture/summary.md"
 grep -Fq '| Recovered rejection chains | unavailable (attempt telemetry truncated) |' "$fixture/summary.md"
 grep -Fq 'Attempt telemetry is truncated; the bounded session snapshot retained 3 of 4 calls.' "$fixture/summary.md"
 

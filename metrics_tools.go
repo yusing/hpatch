@@ -480,15 +480,17 @@ func (m metrics) gainToolRows() ([]ToolGainMetric, ToolGainMetric, []ToolDefinit
 	definitions := make([]ToolDefinitionGainMetric, 0, len(entries))
 	all := ToolGainMetric{ToolName: "all-tools"}
 	for _, entry := range entries {
-		row := ToolGainMetric{
-			PluginID: entry.PluginID, ToolName: entry.ToolName, Calls: entry.Calls,
-			EmittedTokens: entry.EmittedTokens, TranslatedTokens: entry.TranslatedTokens,
-			Reduction: metricReduction(entry.EmittedTokens, entry.TranslatedTokens),
+		if entry.Calls != 0 || entry.EmittedTokens != 0 || entry.TranslatedTokens != 0 {
+			row := ToolGainMetric{
+				PluginID: entry.PluginID, ToolName: entry.ToolName, Calls: entry.Calls,
+				EmittedTokens: entry.EmittedTokens, TranslatedTokens: entry.TranslatedTokens,
+				Reduction: metricReduction(entry.EmittedTokens, entry.TranslatedTokens),
+			}
+			tools = append(tools, row)
+			all.Calls += row.Calls
+			all.EmittedTokens += row.EmittedTokens
+			all.TranslatedTokens += row.TranslatedTokens
 		}
-		tools = append(tools, row)
-		all.Calls += row.Calls
-		all.EmittedTokens += row.EmittedTokens
-		all.TranslatedTokens += row.TranslatedTokens
 		if entry.FailedTranslations != 0 {
 			row := ToolGainMetric{
 				PluginID: entry.PluginID, ToolName: entry.ToolName, Failed: true, Calls: entry.FailedTranslations,

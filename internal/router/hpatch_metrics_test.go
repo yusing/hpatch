@@ -183,6 +183,12 @@ func TestHPatchRecoveryChargesEmittedPayloadNotRebuiltScript(t *testing.T) {
 	if got, want := records[1].HPatchTokens, count("functions.hpatch\n"+base)+count("functions.hpatch_recover\n"+payload); got != want {
 		t.Fatalf("settled recovery chain = %d, want combined payloads %d", got, want)
 	}
+	for _, metric := range records[1].ToolMetrics {
+		if metric.PluginID == "builtin.hpatch" && metric.ToolName == hpatchRecoveryToolName &&
+			(metric.Calls != 0 || metric.EmittedTokens != 0 || metric.TranslatedTokens != 0) {
+			t.Fatalf("recovery produced a separate output metric row: %+v", metric)
+		}
+	}
 	if got := records[1].attemptHPatchTokens; got == count("functions.hpatch_recover\n"+rebuilt) {
 		t.Fatalf("recovery charged the rebuilt script (%d) instead of the emitted payload", got)
 	}
