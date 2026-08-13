@@ -126,6 +126,28 @@ func TestRecoverScriptResolvesValueRowsAgainstImmutableValue(t *testing.T) {
 	}
 }
 
+func TestRecoverScriptValueRowAppendKeepsHeredocDelimiterSeparate(t *testing.T) {
+	script := "in file.go\n" +
+		"type 1:aaaa <<PATCH\n" +
+		"return value\n" +
+		"PATCH\n"
+	command := recoveryCommands(script)[1]
+	payload := command.handle + " " + command.valueRows[0].handle + ` value+ "}\n"`
+
+	got, err := recoverScript(t.Context(), script, payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "in file.go\n" +
+		"type 1:aaaa <<PATCH\n" +
+		"return value\n" +
+		"}\n" +
+		"PATCH\n"
+	if got != want {
+		t.Fatalf("recoverScript() = %q, want %q", got, want)
+	}
+}
+
 func TestRecoverScriptStructuralOperations(t *testing.T) {
 	script := "in one.go\n" +
 		"type 1:aaaa \"one\"\n" +

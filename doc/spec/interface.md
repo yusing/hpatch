@@ -876,7 +876,9 @@ Every evaluator rejection renders a complete compact manifest of current command
 copying mutation values, marks attributable commands, reports their structured correction scope,
 and adds bounded heredoc value-row context. Recovery guidance directs the model to submit every
 known independent handle-local operation in one atomic payload instead of resubmitting the
-complete rejected script. A handle from an older baseline is stale. A re-rejection explicitly
+complete rejected script. It includes a byte-exact `value+` example whose trailing line
+terminator keeps a final inserted heredoc row separate from the closing delimiter. A handle
+from an older baseline is stale. A re-rejection explicitly
 states that no workspace file changed, successful corrections survive only in the new rejected-
 script baseline, and every earlier handle is invalid. Correlation IDs remain stable and attempt
 numbers increase across evaluated and proxy-rejected calls. Per-attempt telemetry preserves
