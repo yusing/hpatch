@@ -2377,7 +2377,8 @@ func TestHPatchRecoveryRerejectionExposesCurrentHandles(t *testing.T) {
 			t.Fatalf("recovery guidance = %q", history.translationError)
 		}
 	}
-	if !strings.Contains(second.translationError, "Every C... and V... handle from earlier diagnostics is stale") {
+	if !strings.Contains(second.translationError, "This re-rejection changed no workspace file") ||
+		!strings.Contains(second.translationError, "Every C... and V... handle from earlier diagnostics is stale") {
 		t.Fatalf("re-rejection lacks stale-handle guidance:\n%s", second.translationError)
 	}
 	if want := recoveryCommands(rebuilt)[1].handle; !strings.Contains(second.translationError, want) {

@@ -860,9 +860,10 @@ copying mutation values, marks attributable commands, reports their structured c
 and adds bounded heredoc value-row context. Recovery guidance directs the model to submit every
 known independent handle-local operation in one atomic payload instead of resubmitting the
 complete rejected script. A handle from an older baseline is stale. A re-rejection explicitly
-states that it replaced the baseline and that every earlier handle is invalid. Correlation IDs
-remain stable and attempt numbers increase across evaluated and proxy-rejected calls. Per-attempt
-telemetry preserves the emitted tool identity and outcome. Gain metrics settle the correlated hpatch/recovery chain
+states that no workspace file changed, successful corrections survive only in the new rejected-
+script baseline, and every earlier handle is invalid. Correlation IDs remain stable and attempt
+numbers increase across evaluated and proxy-rejected calls. Per-attempt telemetry preserves
+the emitted tool identity and outcome. Gain metrics settle the correlated hpatch/recovery chain
 once according to the combined-payload and single-comparator rules above.
 
 Outcome hooks report one routed attempt once. Their structured event includes tool identity,
@@ -1102,8 +1103,9 @@ retains the existing fallback of up to three rows from the start of that file wi
 
 Every row has `REQ-READ-001` identity over the complete current final logical line.
 `TEXT` contains at most the first 64 Unicode code points of line content, without a line
-terminator or added ellipsis. Tabs are preserved and other controls are escaped so each
-row stays on one report line. The hash still covers the complete untruncated content.
+terminator or added ellipsis. Leading spaces are escaped as `\x20`, leading tabs as `\t`, and
+all controls use their Go quoted form so indentation is visible and each row stays on one
+report line. The hash still covers the complete untruncated content.
 The projection is bounded by four rows per effective command, plus the three-row fallback;
 it does not retain another original or final content copy, routed-read history, a word
 diff, or translated patch text.

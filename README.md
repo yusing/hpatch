@@ -488,6 +488,7 @@ Hpatch validates the rendered final state before committing or producing a carri
 - Any syntax, indentation, target, or conflict failure remains atomic and leaves files unchanged.
 - Valid scripts whose requested final state is already present succeed as `already-satisfied`,
   return no patch, and keep the rendered state report. Routed calls use a diagnostic-only carrier.
+- Final-state and diagnostic previews escape leading spaces as `\x20` and leading tabs as `\t`, so indentation is visible without changing the hashed row reference.
 - Independently detectable stale, missing, incomplete-literal, and reversed-range targets are
   collected before rejection. Stale repair context distinguishes current-line candidates,
   relocated matching hashes, absent hashes, and both range endpoints without choosing a target.

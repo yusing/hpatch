@@ -198,7 +198,7 @@ func TestLanguageSyntaxDiagnosticRepairsMultilineValue(t *testing.T) {
 	for _, fragment := range []string{
 		"generated Python near 2:5",
 		"command 2 multiline value near row 1",
-		"> value row 1 |     value =",
+		`> value row 1 | \x20\x20\x20\x20value =`,
 	} {
 		if !strings.Contains(result.Diagnostic, fragment) {
 			t.Fatalf("diagnostic %q lacks %q", result.Diagnostic, fragment)

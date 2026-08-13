@@ -239,11 +239,24 @@ func previewText(text string) string {
 func previewTextLimit(text string, limit int) string {
 	var preview strings.Builder
 	count := 0
+	leading := true
 	for _, character := range text {
 		if count == limit {
 			break
 		}
 		count++
+		if leading {
+			switch character {
+			case ' ':
+				preview.WriteString(`\x20`)
+				continue
+			case '\t':
+				preview.WriteString(`\t`)
+				continue
+			default:
+				leading = false
+			}
+		}
 		if unicode.IsControl(character) && character != '\t' {
 			quoted := strconv.QuoteRune(character)
 			preview.WriteString(quoted[1 : len(quoted)-1])

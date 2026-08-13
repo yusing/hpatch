@@ -42,7 +42,7 @@ func hpatchRecoveryReferences(
 
 	var output strings.Builder
 	if refreshed {
-		output.WriteString("This re-rejection replaced the recovery baseline. Every C... and V... handle from earlier diagnostics is stale; use only the current handles below.\n\n")
+		output.WriteString("This re-rejection changed no workspace file. Every C... and V... handle from earlier diagnostics is stale; use only the current handles.\n\n")
 	}
 	output.WriteString("Current rejected-script command manifest (complete):\n")
 	for _, command := range commands {

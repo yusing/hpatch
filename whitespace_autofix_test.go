@@ -194,7 +194,7 @@ func TestWhitespaceAutofixFinalReferencesUseCleanedContent(t *testing.T) {
 	if exitCode != 0 {
 		t.Fatalf("Run() = exit %d, report %q", exitCode, report)
 	}
-	want := "2:" + hashLine("\tnew") + " \tnew\n"
+	want := "2:" + hashLine("\tnew") + ` \tnew` + "\n"
 	if !strings.Contains(report, want) {
 		t.Fatalf("report %q lacks cleaned final reference %q", report, want)
 	}

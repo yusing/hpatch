@@ -26,7 +26,7 @@ func TestHPatchRecoveryGuidanceUsesCommandAndValueHandles(t *testing.T) {
 		command.handle,
 		command.valueRows[1].handle,
 		"correction scope: field-local",
-		"Every C... and V... handle from earlier diagnostics is stale",
+		"This re-rejection changed no workspace file",
 		"do not resubmit the complete rejected script",
 	} {
 		if !strings.Contains(guidance, want) {

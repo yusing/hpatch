@@ -269,3 +269,9 @@ func TestHPatch2FinalReferencesPreserveUneditedActiveEmptyFile(t *testing.T) {
 		}
 	}
 }
+
+func TestPreviewTextMakesLeadingWhitespaceVisible(t *testing.T) {
+	if got, want := previewText("  \tindented value"), `\x20\x20\tindented value`; got != want {
+		t.Fatalf("previewText() = %q, want %q", got, want)
+	}
+}

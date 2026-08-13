@@ -313,7 +313,7 @@ func TestWrapperCorrectionFinalReferencesUseCorrectedContent(t *testing.T) {
 		t.Fatalf("Run() = %d, report %q", exitCode, report)
 	}
 	if !strings.Contains(report, "refs 2 type file.py\n") ||
-		!strings.Contains(report, "3:"+hashLine("        if ready:")+"         if ready:\n") {
+		!strings.Contains(report, "3:"+hashLine("        if ready:")+` \x20\x20\x20\x20\x20\x20\x20\x20if ready:`+"\n") {
 		t.Fatalf("report = %q", report)
 	}
 }
