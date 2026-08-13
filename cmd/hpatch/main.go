@@ -104,7 +104,11 @@ Baselines and conflict safety:
   indentation-sensitive languages such as Python. Successful final-state LINE:HASH
   rows are current references for their named final paths and may be used directly
   in the next invocation. Use hread only when the successful report lacks the exact
-  target needed next.
+  target needed next. For exact content just authored in a new file, use an
+  unanchored literal target in the next invocation instead of inventing a row hash
+  or rereading the file. After a behavioral check fails, reuse the exact authored
+  value and successful report rather than rereading the changed line. Use <<PATCH
+  for regular expressions and other escape-heavy source, even when it is one line.
 
   Replacements and deletions may not overlap. An insertion strictly inside either
   one conflicts. Insertions at a destructive span boundary are valid. Multiple
@@ -144,7 +148,11 @@ Agent workflow:
      required indentation prefixes in indentation-sensitive languages such as Python.
      Successful final-state LINE:HASH rows are current references for their named final
      paths and may be used directly in the next invocation. Use hread only when the
-     successful report lacks the exact target needed next.
+     successful report lacks the exact target needed next. For exact content just
+     authored in a new file, use an unanchored literal target in the next invocation
+     instead of inventing a row hash or rereading the file. After a behavioral check
+     fails, reuse the exact authored value and successful report instead of rereading
+     the changed line. Use <<PATCH for escape-heavy source, including one-line regexes.
   6. Prefer inline single-line values; reserve <<PATCH for multiline or escape-heavy text.
   7. A rejected invocation changes nothing. Recovery is a router-only tool and is not
      part of the standalone hpatch grammar or CLI.

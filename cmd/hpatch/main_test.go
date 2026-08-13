@@ -125,7 +125,7 @@ func TestToolHelpGuidesAgentCommandChoice(t *testing.T) {
 		"When a formatter owns formatting, alignment, or indentation",
 		"add one struct field with one insertion",
 		"indentation-sensitive languages such as Python",
-		"target exact known current text without a row",
+		"an unanchored literal can target it",
 		"Multiple insertions at the same boundary render in script order.",
 		"standalone CLI and ordinary hpatch grammar have no recovery mode",
 		"syntax-checked when Tree-sitter support is available",

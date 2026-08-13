@@ -35,12 +35,15 @@ func TestInstructionsOwnCompleteShellWorkflow(t *testing.T) {
 
 func TestInstructionsAcquireTargetContextOnce(t *testing.T) {
 	for _, required := range []string{
-		"Acquire target-bearing context once before editing.",
+		"Acquire target-bearing context and the behavior-defining helper or callee semantics needed for\nthe planned implementation once before editing.",
+		"behavior-defining helper or callee semantics needed for\nthe planned implementation once before editing",
 		"use hgrep first; use `-F` with repeated `-e` literals",
 		"Avoid bare whole-file hread unless the complete file",
-		"do not hread changed\npaths merely to verify the edit",
-		"Run the focused behavioral check instead.",
-		"Never submit a pre-edit row for\nrecovery to refresh.",
+		"after a successful\nhpatch, do not use hread, hgrep, or `git diff` on a changed file, or on a directory containing a\nchanged file",
+		"A directory search covers\nall descendant changed paths.",
+		"When targeting the declaration's closing `)`, use `type-`; `type+`\ninserts outside the declaration.",
+		"behavioral check instead.",
+		"unchanged saved rows remain valid even when edits shifted their line numbers",
 		`type "return oldResult, nil" "return newResult, nil"`,
 		`target "return oldResult, nil"`,
 		"imports inside the existing import declaration",

@@ -82,6 +82,9 @@ LINE:HASH "TEXT" [N]              first N exact matches from that row through EO
 terminators owned by line and range targets. `type-` inserts before while preserving the
 target; `type+` inserts after while preserving it. A text target defaults to one match;
 every requested non-overlapping match must exist or the script rejects.
+Before writing `N > 1`, count the exact literal occurrences in the acquired immutable baseline;
+never infer `N` from the number of intended replacements. If the count is not already visible,
+use hgrep or separate verified row anchors instead of guessing it.
 
 Use inline JSON-compatible strings for short or single-line values. Include `\n` when a
 before/after insertion must form a complete new line:
@@ -125,19 +128,22 @@ reproduce its output; let the formatter apply those changes. For example, add on
 field with one insertion rather than replacing the declaration. Preserve required
 indentation prefixes in indentation-sensitive languages such as Python.
 
-When an exact current literal is already known but its row is absent or stale, target the literal
-without a row to verify it against the complete immutable baseline. This avoids a read solely to
-refresh location. Use a row anchor when repeated text makes the intended position significant.
+When an exact current literal is already known, an unanchored literal can target it against the
+complete immutable baseline. Use a row anchor when repeated text makes the intended position
+significant.
 
 Content introduced by a mutation is not targetable in the same call. After every successful
-invocation, discard every saved row for each changed path. For a follow-up edit, use a returned
-final-state row or target exact known current text without a row. Never submit a pre-edit row for
-recovery to refresh. Use focused hread or hgrep only when neither form identifies the target, and
-never reconstruct a row or range endpoint.
+invocation, unchanged saved rows remain valid even when edits shifted their line numbers: hpatch
+relocates an exact hash only when it identifies one row. For a routed whole-line or range
+replacement, the router resolves that exact pre-edit target after the executor confirms
+application. For exact content you just authored in a new file, use an unanchored literal target
+in the later invocation instead of inventing a row hash or rereading the file. Use returned final-state rows for other changed content and
+exact known current text without a row when appropriate. Use focused hread or hgrep only when
+neither form identifies the target, and never reconstruct a row or range endpoint.
 
-A successful hpatch report and its language validation are authoritative: do not hread changed
-paths merely to verify the edit. Run the focused behavioral check instead. If another edit is
-needed, use returned final-state rows directly and acquire only an exact missing target.
+A successful hpatch report and its language validation are authoritative. Use a fixed heredoc for regular expressions and other escape-heavy source so
+HPATCH quoted-string escaping does not become part of the code you are reasoning about. Acquire
+only an exact missing target.
 
 Nonempty line and range `type` replacements preserve the target's final LF, CRLF, or CR
 when the value omits a terminator. Explicit terminators are authoritative. An empty
@@ -149,7 +155,8 @@ insertions are valid. Multiple insertions at the same boundary render in script 
 
 Changed Go files are parsed and formatted before success; do not run redundant `gofmt`. Add Go
 imports inside the existing import declaration, not adjacent to it; formatting cannot repair an
-invalid import placement.
+invalid import placement. When targeting the declaration's closing `)`, use `type-`; `type+`
+inserts outside the declaration.
 Supported Python, JavaScript, and TypeScript files are syntax-checked when Tree-sitter support
 is available; supported indentation corrections are automatic. Relative paths use the selected
 base directory when available; without one, relative paths reject; parents for `new` or `mv`
@@ -176,9 +183,17 @@ hpatch grammar have no recovery mode.
 
 ## File reading, searching, inspection, and shell commands
 
-Acquire target-bearing context once before editing. When a known identifier or literal is likely
-to become a target, use hgrep first; use `-F` with repeated `-e` literals so punctuation cannot
-create a regex error, and add `-A` or `-B` when a small amount of surrounding code is needed.
+Acquire target-bearing context and the behavior-defining helper or callee semantics needed for
+the planned implementation once before editing. This is a pre-edit step: after a successful
+hpatch, do not use hread, hgrep, or `git diff` on a changed file, or on a directory containing a
+changed file, merely to inspect, verify, or locate a follow-up target. A directory search covers
+all descendant changed paths. Run the focused behavioral check instead. Even when that check
+fails, reuse the exact value you authored plus returned final-state rows or confirmed mappings.
+Only an exact target or behavior-defining dependency that is still unknown or ambiguous justifies
+a focused read, and acquire it before the first edit whenever it can affect the planned code.
+
+When a known identifier or literal is likely to become a target, use hgrep first; use `-F` with repeated `-e` literals
+so punctuation cannot create a regex error, and add `-A` or `-B` when a small amount of surrounding code is needed.
 Every emitted match or context row is target-bearing. When the owner is known but the location
 is not, use inspect_file for structure or hgrep for a symbol, then hread only the smallest range
 needed to understand or replace the code. Avoid bare whole-file hread unless the complete file

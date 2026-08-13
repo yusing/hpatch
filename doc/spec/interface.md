@@ -1294,13 +1294,13 @@ Persistent guidance teaches this workflow:
    use native session facilities for PTY-backed or long-running executions.
 2. Inspect, edit, or rerun a retained shell script through its `@shell/` reference, and never mix
    retained and workspace paths in one hpatch script.
-3. Acquire target-bearing context once before editing. When a known identifier or literal is
-   likely to become a target, use hgrep first with repeated fixed-string patterns, adding bounded
-   context options when surrounding code is needed. Every emitted match or context row is
-   target-bearing. When the owner is known but the location is not, use inspect_file for structure
-   or hgrep for a symbol, then hread only the smallest range needed to understand or replace the
-   code. Avoid whole-file hread unless the complete file is necessary. Use ordinary reads and
-   searches only for read-only work or while the owner is unknown.
+3. Acquire target-bearing context and behavior-defining helper or callee semantics once before
+   editing. When a known identifier or literal is likely to become a target, use hgrep first with
+   repeated fixed-string patterns, adding bounded context options when surrounding code is needed.
+   Every emitted match or context row is target-bearing. When the owner is known but the location
+   is not, use inspect_file for structure or hgrep for a symbol, then hread only the smallest range
+   needed to understand or replace the code. Avoid whole-file hread unless the complete file is
+   necessary. Use ordinary reads and searches only for read-only work or while the owner is unknown.
 4. Run one hread command per file and batch only already-known reads in one shell script. Copy
    only current emitted references. Do not follow target-bearing hgrep output with hread unless
    nonmatching context outside the requested bounds is needed.
@@ -1310,14 +1310,16 @@ Persistent guidance teaches this workflow:
    in separate failure-domain calls.
 7. Prefer the smallest semantic mutation and let formatters own formatting. A successful report
    and its language validation are authoritative, so do not hread, hgrep, or run `git diff` on
-   changed paths merely to inspect or verify an edit. Run the focused behavioral check instead.
+   a changed file or a directory containing one merely to inspect or verify an edit. A directory
+   operand covers its descendant changed paths. Run the focused behavioral check instead.
    If it fails, reuse the exact authored value and successful report rather than rereading the
    changed line. Use a fixed heredoc for regular
    expressions and other escape-heavy source. After success, reuse unchanged rows and any
    exact pre-edit row or range covered by a confirmed routed `reuse` mapping. Use a returned
    final-state row or exact unanchored current text for other changed content; acquire only a
    target that none of these forms identifies. Add Go imports inside the existing import
-   declaration because formatting cannot repair invalid placement.
+   declaration because formatting cannot repair invalid placement. When targeting the
+   declaration's closing `)`, use `type-`; `type+` inserts outside the declaration.
 8. Use nonempty `type` to replace, empty target-bearing `type` to delete, `type-` to insert
    before, and `type+` to insert after. Use inline values for short text and `<<PATCH` for
    multiline or escape-heavy values.

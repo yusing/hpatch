@@ -114,7 +114,7 @@ func TestHPatchToolHelpCoversSafeCommandChoice(t *testing.T) {
 		"submit every known related edit in one atomic script",
 		"Split only when a later edit depends on validation",
 		"Prefer the smallest mutation that expresses the semantic change",
-		"target exact known current text without a row",
+		"an unanchored literal can target it",
 		"not targetable in the same call",
 		"Changed Go files are parsed and formatted before success",
 		"syntax-checked when Tree-sitter support is available",
