@@ -51,6 +51,7 @@ type hpatchTranslationResult struct {
 	diagnostic string
 	rejections []hpatch.HostRejection
 	invocation hpatch.InvocationMetrics
+	change     hpatch.HostChange
 }
 
 type hpatchTranslator interface {
@@ -157,6 +158,7 @@ func hpatchTranslationResultOf(translated hpatch.HostTranslation) hpatchTranslat
 		diagnostic: translated.Diagnostic,
 		rejections: slices.Clone(translated.Rejections),
 		invocation: translated.Invocation,
+		change:     translated.Change,
 	}
 }
 
@@ -196,7 +198,8 @@ type hpatchHistory struct {
 	// unevaluated marks a call the proxy rejected before hpatch saw it. Such a
 	// recovery changed nothing and has no script of its own, so another recovery
 	// looks past it to the rejected script it was trying to repair.
-	unevaluated bool
+	unevaluated      bool
+	alreadySatisfied bool
 	// sequence orders retained calls within a session. Calls are keyed by ID in
 	// an unordered map, so recovery needs an explicit order to identify the
 	// latest rejected script.
@@ -1446,6 +1449,7 @@ func (t *hpatchResponseTransform) translate(callID, input string, upstreamItem m
 		return hpatchHistory{}, fmt.Errorf("hpatch call %q translation exceeds %d bytes", callID, maxHPatchPatchBytes)
 	}
 	patchText := string(patch)
+	alreadySatisfied := translated.change.AlreadySatisfied
 	if err := t.recordMetrics(hpatchMetricInputs{
 		invocation:    translated.invocation,
 		attempt:       attemptMetadata,
@@ -1461,15 +1465,16 @@ func (t *hpatchResponseTransform) translate(callID, input string, upstreamItem m
 		toolName: hpatchToolName,
 		script:   input,
 
-		root:          t.directory,
-		evaluated:     retainedEvaluated(input, evaluated),
-		patch:         patchText,
-		applied:       applied,
-		carrierName:   t.codeModeToolName,
-		report:        hpatchReport(translated.report, translated.diagnostic),
-		upstreamItem:  maps.Clone(upstreamItem),
-		correlationID: attemptMetadata.CorrelationID,
-		attempt:       attemptMetadata.Attempt,
+		root:             t.directory,
+		evaluated:        retainedEvaluated(input, evaluated),
+		patch:            patchText,
+		applied:          applied,
+		alreadySatisfied: alreadySatisfied,
+		carrierName:      t.codeModeToolName,
+		report:           hpatchReport(translated.report, translated.diagnostic),
+		upstreamItem:     maps.Clone(upstreamItem),
+		correlationID:    attemptMetadata.CorrelationID,
+		attempt:          attemptMetadata.Attempt,
 	}
 	t.recordLocal(callID, &history)
 	return history, nil
@@ -1598,6 +1603,7 @@ func (t *hpatchResponseTransform) translateRecovered(
 		return history, nil
 	}
 	patchText := string(translated.patch)
+	alreadySatisfied := translated.change.AlreadySatisfied
 	if err := t.recordMetrics(hpatchMetricInputs{
 		invocation:      translated.invocation,
 		attempt:         attemptMetadata,
@@ -1613,16 +1619,17 @@ func (t *hpatchResponseTransform) translateRecovered(
 		return hpatchHistory{}, err
 	}
 	history := hpatchHistory{
-		toolName:      hpatchRecoveryToolName,
-		script:        emitted,
-		root:          t.directory,
-		evaluated:     evaluated,
-		patch:         patchText,
-		carrierName:   t.codeModeToolName,
-		report:        hpatchReport(translated.report, translated.diagnostic),
-		upstreamItem:  maps.Clone(upstreamItem),
-		correlationID: attemptMetadata.CorrelationID,
-		attempt:       attemptMetadata.Attempt,
+		toolName:         hpatchRecoveryToolName,
+		script:           emitted,
+		root:             t.directory,
+		evaluated:        evaluated,
+		patch:            patchText,
+		alreadySatisfied: alreadySatisfied,
+		carrierName:      t.codeModeToolName,
+		report:           hpatchReport(translated.report, translated.diagnostic),
+		upstreamItem:     maps.Clone(upstreamItem),
+		correlationID:    attemptMetadata.CorrelationID,
+		attempt:          attemptMetadata.Attempt,
 	}
 	t.recordLocal(callID, &history)
 	return history, nil
@@ -2021,7 +2028,7 @@ func (h hpatchHistory) carrierInput() string {
 	if h.translationError != "" {
 		return hpatchDiagnosticExecInput(h.translationError)
 	}
-	if h.applied {
+	if h.applied || h.alreadySatisfied {
 		return hpatchDiagnosticExecInput(h.report)
 	}
 	return hpatchApplyExecInput(h.patch, h.report)

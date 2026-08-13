@@ -936,9 +936,10 @@ Every explicit target resolves against the active existing file's immutable invo
 baseline. A row resolves by locating its one-based logical line and comparing its four
 digit hash with the hash of the exact current baseline line content. An absent or
 out-of-bounds line is `row-missing`; a present line with a different hash is `row-stale`.
-Hpatch never scans for another line with the supplied hash and never chooses nearby or
-duplicate content. Line number disambiguates equal lines; the 16-bit hash retains an
-accepted approximately 1-in-65,536 random false-acceptance residual.
+Hpatch never silently substitutes another line with the supplied hash and never chooses nearby
+or duplicate content. Repair diagnostics may list current-line and relocated-hash candidates,
+but the caller must verify and choose the target. Line number disambiguates equal lines; the
+16-bit hash retains an accepted approximately 1-in-65,536 random false-acceptance residual.
 
 Both endpoints of a range must verify independently and remain ordered. A text target
 then searches the verified baseline suffix exactly as defined by `REQ-SCRIPT-001`.
@@ -946,6 +947,11 @@ Pending edits never alter row verification, literal search, matches, or position
 Content introduced by any command is not targetable in that script. Dependent edits
 require successful application, hread inspection of the new content, and a later
 invocation with fresh references.
+
+Independently detectable row-missing, row-stale, occurrence-missing, and target-order failures
+are collected across later commands whose active baselines can still be evaluated safely. The
+transaction remains atomic. Dependency-sensitive lifecycle, conflict, and language failures
+still stop at their authoritative boundary.
 
 Resolution produces one nonempty baseline span for a line or range and one or more
 nonempty spans for a text target. A mutation over multiple spans validates and registers
@@ -1148,13 +1154,15 @@ folded so one command failure remains one logical line.
 Failures return nonzero and emit no stdout or final-state report. Malformed row syntax
 receives a syntax diagnostic.
 
-A stale row reports the actual `LINE:HASH TEXT` at that line and up to two neighboring
-baseline rows. A missing literal occurrence reports the verified anchor context. An edit
-conflict identifies the prior command and affected immutable-baseline lines. If a command
-depends on content introduced by another command, the diagnostic directs the agent to
-apply the prerequisite independently, reread, and submit a later invocation. A missing
-row or failure without a verified baseline does not choose repair context. Repair context
-is supplementary: it never changes exit status, stdout, mutation, or metrics classification.
+A stale row reports the actual current-line candidate and up to two neighboring baseline rows.
+It also reports every other baseline line whose hash matches the stale reference as a relocation
+candidate, or states that the hash is absent. Range repair reports start and end independently.
+No candidate is selected automatically. A missing literal occurrence reports the verified anchor
+context. An edit conflict identifies the prior command and affected immutable-baseline lines. If
+a command depends on content introduced by another command, the diagnostic directs the agent to
+apply the prerequisite independently, reread, and submit a later invocation. A missing row or
+failure without a verified baseline does not choose repair context. Repair context is
+supplementary: it never changes exit status, stdout, mutation, or metrics classification.
 When invalid generated source is localized to a fixed-heredoc mutation, each distinct rejection
 identity includes the non-sensitive `value_line`. Transient root diagnostics describe every
 bounded value-row context rather than mutation addresses. Routed diagnostics add the current
@@ -1162,11 +1170,18 @@ hashed `C...` handle for each attributable command and bounded `V...` handles ar
 body failures under `REQ-CORRECT-001`. Inline decoded multiline values and failures outside a
 multiline replacement do not fabricate a value-row handle.
 
+The public host result separates lifecycle `Outcome`, requested `Change`, routed `Attempt`,
+actionable `Failures`, durable-safe `Rejections`, and `PatchSummary`. A valid no-op returns
+`evaluated/already-satisfied`, sets `Change.AlreadySatisfied`, and has an empty patch. Failure
+scope is `field-local`, `multi-command`, `new-script`, or `new-transaction`; suggestions contain
+bounded existing repair context rather than inventing new validation rules.
+
 Acceptance:
 
 1. Normal success has empty stdout and one rendered final-state report on stderr after
    commit; translate success has patch-only stdout and one pending-state report on stderr
-   after the patch is completely written.
+   after the patch is completely written. An already-satisfied translate succeeds with empty
+   stdout and the rendered state report on stderr.
 2. Active paths, bounded last-mutation ranges, per-command final-reference blocks, net file
    counts, Unicode columns, truncation, control escaping, moved files, deletions, and empty
    files produce the specified report without implying cross-invocation persistence.

@@ -64,6 +64,112 @@ func TestHostRejectionsPreserveGroupedCommandIdentityWithoutSourceText(t *testin
 	}
 }
 
+func TestHostTranslationReportsAlreadySatisfiedOutcome(t *testing.T) {
+	rootPath := t.TempDir()
+	writeTestFile(t, rootPath, "file.txt", "same\n", 0o644)
+	root := openTestRoot(t, rootPath)
+
+	result, err := TranslateForHost(
+		t.Context(),
+		Workspace{Root: root},
+		"in file.txt\n",
+		t.TempDir(),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Outcome != (HostOutcome{Stage: "evaluated", Status: "already-satisfied"}) {
+		t.Fatalf("outcome = %+v", result.Outcome)
+	}
+	if result.Change != (HostChange{AlreadySatisfied: true}) {
+		t.Fatalf("change = %+v", result.Change)
+	}
+	if len(result.Patch) != 0 || result.PatchSummary != (HostPatchSummary{}) {
+		t.Fatalf("patch = %q, summary = %+v", result.Patch, result.PatchSummary)
+	}
+}
+
+func TestHostTranslationAggregatesIndependentStaleTargets(t *testing.T) {
+	rootPath := t.TempDir()
+	writeTestFile(t, rootPath, "first.txt", "first current\n", 0o644)
+	writeTestFile(t, rootPath, "second.txt", "second current\n", 0o644)
+	root := openTestRoot(t, rootPath)
+
+	script := strings.Join([]string{
+		"in first.txt",
+		`type 1:aaaa "first"`,
+		"in second.txt",
+		`type 1:bbbb "second"`,
+	}, "\n")
+	result, err := TranslateForHost(t.Context(), Workspace{Root: root}, script, t.TempDir())
+	if err == nil {
+		t.Fatal("stale targets unexpectedly translated")
+	}
+	if len(result.Rejections) != 2 || result.Rejections[0].Command != 2 || result.Rejections[1].Command != 4 {
+		t.Fatalf("rejections = %#v", result.Rejections)
+	}
+	if result.Change.AlreadySatisfied {
+		t.Fatalf("rejected change marked already satisfied: %+v", result.Change)
+	}
+	if strings.Count(result.Diagnostic, "reason row-stale") != 2 ||
+		!strings.Contains(result.Diagnostic, "current-line candidate (verify text)") ||
+		!strings.Contains(result.Diagnostic, "hash is absent elsewhere") {
+		t.Fatalf("diagnostic = %q", result.Diagnostic)
+	}
+}
+
+func TestRangeStaleRepairIdentifiesEndpoint(t *testing.T) {
+	rootPath := t.TempDir()
+	writeTestFile(t, rootPath, "file.txt", "start\nend changed\n", 0o644)
+	root := openTestRoot(t, rootPath)
+	script := "in file.txt\ntype " + row(1, "start") + `..2:bbbb "replacement"`
+
+	result, err := TranslateForHost(t.Context(), Workspace{Root: root}, script, t.TempDir())
+	if err == nil {
+		t.Fatal("stale range unexpectedly translated")
+	}
+	if !strings.Contains(result.Diagnostic, "range start verified at "+row(1, "start")) ||
+		!strings.Contains(result.Diagnostic, "range end expected 2:bbbb") ||
+		!strings.Contains(result.Diagnostic, "current-line candidate (verify text): 2:") {
+		t.Fatalf("diagnostic = %q", result.Diagnostic)
+	}
+}
+
+func TestHostFailuresClassifyLanguageAndConflictScopes(t *testing.T) {
+	singleCommand := &commandError{
+		Reason: reasonLanguageSyntax, Command: 2, Path: "file.go",
+		Repair: "generated Go near 3:5", Locations: []commandErrorLocation{{}, {}},
+	}
+	failures := hostFailuresOf(singleCommand, "evaluated")
+	if len(failures) != 1 || failures[0].Scope != "field-local" ||
+		failures[0].Suggestion != "generated Go near 3:5" {
+		t.Fatalf("single-command language failures = %+v", failures)
+	}
+
+	multipleCommands := &commandGroupError{commands: []*commandError{
+		{Reason: reasonLanguageSyntax, Command: 2, Path: "file.go"},
+		{Reason: reasonLanguageSyntax, Command: 4, Path: "file.go"},
+	}}
+	failures = hostFailuresOf(multipleCommands, "evaluated")
+	if len(failures) != 2 || failures[0].Scope != "multi-command" || failures[1].Scope != "multi-command" {
+		t.Fatalf("multi-command language failures = %+v", failures)
+	}
+
+	indentation := &commandError{
+		Reason: reasonEditConflict, Command: 3, Path: "file.go", CorrectionScope: "field-local",
+	}
+	failures = hostFailuresOf(indentation, "evaluated")
+	if len(failures) != 1 || failures[0].Scope != "field-local" {
+		t.Fatalf("indentation failure = %+v", failures)
+	}
+
+	conflict := &commandError{Reason: reasonEditConflict, Command: 3, Path: "file.go"}
+	failures = hostFailuresOf(conflict, "evaluated")
+	if len(failures) != 1 || failures[0].Scope != "multi-command" {
+		t.Fatalf("conflict failures = %+v", failures)
+	}
+}
+
 func TestHPatch2InvalidGoAfterMoveUsesContentOrigin(t *testing.T) {
 	tests := []struct {
 		name   string

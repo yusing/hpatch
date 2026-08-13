@@ -26,13 +26,7 @@ func (w *workspace) repairContext(command instruction, reason failureReason) str
 	var report strings.Builder
 	switch reason {
 	case reasonRowStale:
-		stale := command.target.start
-		if command.target.kind == targetRange {
-			if _, err := resolveRow(editor.baseline, command.target.start); err == nil {
-				stale = command.target.end
-			}
-		}
-		writeLineWindow(&report, editor.baseline, lines, stale.line)
+		writeStaleTargetRepair(&report, editor.baseline, lines, command.target)
 	case reasonOccurrenceMissing:
 		writeTextTargetRepair(&report, editor, lines, command.target)
 	case reasonTargetOrder:
@@ -46,6 +40,53 @@ func (w *workspace) repairContext(command instruction, reason failureReason) str
 		writeLineWindow(&report, editor.baseline, lines, command.target.start.line)
 	}
 	return report.String()
+}
+
+func writeStaleTargetRepair(report *strings.Builder, baseline string, lines []logicalLine, target targetSpec) {
+	references := []struct {
+		name string
+		row  rowReference
+	}{{name: "target", row: target.start}}
+	if target.kind == targetRange {
+		references[0].name = "range start"
+		references = append(references, struct {
+			name string
+			row  rowReference
+		}{name: "range end", row: target.end})
+	}
+	for _, reference := range references {
+		if reference.row.line < 1 || reference.row.line > len(lines) {
+			fmt.Fprintf(report, "%s row %d is absent from the current baseline\n", reference.name, reference.row.line)
+			continue
+		}
+		current := lineContent(baseline, lines[reference.row.line-1])
+		actual := hashLine(current)
+		if actual == reference.row.hash {
+			fmt.Fprintf(report, "%s verified at %d:%s\n", reference.name, reference.row.line, reference.row.hash)
+			continue
+		}
+		fmt.Fprintf(
+			report,
+			"%s expected %d:%s; current-line candidate (verify text): %d:%s\n",
+			reference.name,
+			reference.row.line,
+			reference.row.hash,
+			reference.row.line,
+			actual,
+		)
+		var relocated []int
+		for index, line := range lines {
+			if index+1 != reference.row.line && hashLine(lineContent(baseline, line)) == reference.row.hash {
+				relocated = append(relocated, index+1)
+			}
+		}
+		if len(relocated) != 0 {
+			fmt.Fprintf(report, "%s hash also occurs at lines %s; verify whether the target moved\n", reference.name, joinLineNumbers(relocated[:min(len(relocated), repairListLimit)], len(relocated)))
+		} else {
+			fmt.Fprintf(report, "%s hash is absent elsewhere; reread before choosing a replacement target\n", reference.name)
+		}
+		writeLineWindow(report, baseline, lines, reference.row.line)
+	}
 }
 
 func writeTextTargetRepair(report *strings.Builder, editor *editor, lines []logicalLine, target targetSpec) {

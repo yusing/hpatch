@@ -113,6 +113,47 @@ func hostRejectionsOf(err error) []HostRejection {
 	return rejections
 }
 
+func hostFailuresOf(err error, failureStage string) []HostFailure {
+	commands := commandsOf(err)
+	if len(commands) == 0 {
+		if failureStage == "" {
+			return nil
+		}
+		return []HostFailure{{Reason: failureStage + "-failure", Scope: "new-transaction"}}
+	}
+	languageCommands := make(map[int]struct{})
+	for _, command := range commands {
+		if command.Reason == reasonLanguageSyntax {
+			languageCommands[command.Command] = struct{}{}
+		}
+	}
+	failures := make([]HostFailure, 0, len(commands))
+	for _, command := range commands {
+		scope := "field-local"
+		switch command.Reason {
+		case reasonEditConflict:
+			scope = "multi-command"
+			if command.CorrectionScope != "" {
+				scope = command.CorrectionScope
+			}
+		case reasonActiveFile, reasonInitialization, reasonFilePath:
+			scope = "new-script"
+		case reasonLanguageSyntax:
+			if len(languageCommands) > 1 {
+				scope = "multi-command"
+			}
+		}
+		failures = append(failures, HostFailure{
+			Command:    command.Command,
+			Path:       command.Path,
+			Reason:     hostReasonName(command.Reason),
+			Scope:      scope,
+			Suggestion: strings.TrimSpace(command.Repair),
+		})
+	}
+	return failures
+}
+
 func hostTargetName(target targetVariant) string {
 	index := int(target) - 1
 	if index < 0 || index >= len(targetVariantNames) {

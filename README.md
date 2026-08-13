@@ -486,6 +486,14 @@ Hpatch validates the rendered final state before committing or producing a carri
 - Supported linewise Python, JavaScript, and TypeScript indentation edits receive narrow baseline-aware correction. Ambiguous structure, comments, unsupported extensions, and mixed indentation units remain byte-exact or reject rather than being broadly rewritten.
 - Git-default trailing whitespace, spaces before indentation tabs, and edit-attributed blank lines at EOF are cleaned only on changed lines. Untouched content and binary-looking files are preserved.
 - Any syntax, indentation, target, or conflict failure remains atomic and leaves files unchanged.
+- Valid scripts whose requested final state is already present succeed as `already-satisfied`,
+  return no patch, and keep the rendered state report. Routed calls use a diagnostic-only carrier.
+- Independently detectable stale, missing, incomplete-literal, and reversed-range targets are
+  collected before rejection. Stale repair context distinguishes current-line candidates,
+  relocated matching hashes, absent hashes, and both range endpoints without choosing a target.
+- Host results expose structured outcome, change, attempt, failure scope, suggestion, rejection,
+  and patch-summary data. Language and edit-conflict failures state whether correction is
+  field-local, multi-command, a new script, or a later transaction.
 
 Exact language and correction behavior is part of the [interface contract](doc/spec/interface.md); this is not a general-purpose formatter for every file type.
 

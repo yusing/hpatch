@@ -233,14 +233,48 @@ type HostRejection struct {
 	ValueLine       int    `json:"value_line,omitempty"`
 }
 
+// HostOutcome identifies the furthest lifecycle stage reached by one host request.
+type HostOutcome struct {
+	Stage  string `json:"stage"`
+	Status string `json:"status"`
+}
+
+// HostChange summarizes the requested workspace effect.
+type HostChange struct {
+	Files            int  `json:"files"`
+	AlreadySatisfied bool `json:"already_satisfied"`
+	Applied          bool `json:"applied"`
+}
+
+// HostFailure is actionable host-facing failure context. Unlike HostRejection,
+// it may contain bounded repair text and is not suitable for durable telemetry.
+type HostFailure struct {
+	Command    int    `json:"command,omitempty"`
+	Path       string `json:"path,omitempty"`
+	Reason     string `json:"reason"`
+	Scope      string `json:"scope"`
+	Suggestion string `json:"suggestion,omitempty"`
+}
+
+// HostPatchSummary describes a translated patch without duplicating its content.
+type HostPatchSummary struct {
+	Files int `json:"files"`
+	Bytes int `json:"bytes"`
+}
+
 // HostTranslation contains the complete result needed by an in-process host.
 // Diagnostic contains a rejection diagnostic or non-fatal hook warnings.
 type HostTranslation struct {
-	Patch      []byte
-	Report     string
-	Diagnostic string
-	Rejections []HostRejection
-	Invocation InvocationMetrics
+	Patch        []byte
+	Report       string
+	Diagnostic   string
+	Outcome      HostOutcome
+	Change       HostChange
+	Attempt      AttemptMetadata
+	Failures     []HostFailure
+	PatchSummary HostPatchSummary
+	Rejections   []HostRejection
+	Invocation   InvocationMetrics
 }
 
 // TranslateForHost evaluates script once without mutation and returns the
@@ -276,8 +310,15 @@ func changeForHost(ctx context.Context, workspace Workspace, script, dataDirecto
 }
 
 func finishHostChange(ctx context.Context, dataDirectory, script string, result HostTranslation, failureStage string, err error, applied bool) (HostTranslation, error) {
+	result.Attempt, _ = attemptMetadataFromContext(ctx)
 	if err != nil {
 		result.Rejections = hostRejectionsOf(err)
+		result.Failures = hostFailuresOf(err, failureStage)
+		status := "failed"
+		if failureStage == "evaluated" {
+			status = "rejected"
+		}
+		result.Outcome = HostOutcome{Stage: failureStage, Status: status}
 
 		if ctx.Err() == nil {
 			result.Diagnostic = evaluationDiagnostic(ctx, err, dataDirectory)
@@ -285,11 +326,7 @@ func finishHostChange(ctx context.Context, dataDirectory, script string, result 
 				result.Diagnostic = ""
 				return result, contextErr
 			}
-			outcome := "failed"
-			if failureStage == "evaluated" {
-				outcome = "rejected"
-			}
-			for _, hookErr := range runOutcomeHooks(ctx, dataDirectory, failureStage, outcome, script, nil, errorHooksTimeout) {
+			for _, hookErr := range runOutcomeHooks(ctx, dataDirectory, failureStage, status, script, nil, errorHooksTimeout) {
 				warning := warningDiagnostic(hookErr.Error())
 				if !strings.Contains(result.Diagnostic, warning) {
 					result.Diagnostic += warning
@@ -302,11 +339,15 @@ func finishHostChange(ctx context.Context, dataDirectory, script string, result 
 		}
 		return result, err
 	}
-	stage, outcome := "translated", "succeeded"
-	if applied {
-		stage, outcome = "applied", "succeeded"
+	stage, status := "translated", "succeeded"
+	if result.Change.AlreadySatisfied {
+		stage, status = "evaluated", "already-satisfied"
+	} else if applied {
+		stage, status = "applied", "succeeded"
+		result.Change.Applied = true
 	}
-	for _, hookErr := range runOutcomeHooks(ctx, dataDirectory, stage, outcome, script, result.Patch, errorHooksTimeout) {
+	result.Outcome = HostOutcome{Stage: stage, Status: status}
+	for _, hookErr := range runOutcomeHooks(ctx, dataDirectory, stage, status, script, result.Patch, errorHooksTimeout) {
 		result.Diagnostic += warningDiagnostic(hookErr.Error())
 	}
 	if err := ctx.Err(); err != nil {
@@ -323,54 +364,59 @@ func translateDetailed(ctx context.Context, workspace Workspace, script string) 
 
 func changeDetailed(ctx context.Context, workspace Workspace, script string, apply bool) (HostTranslation, string, error) {
 	changes, filesystem, invocation, report, err := evaluateScript(ctx, workspace, script)
+	result := hostTranslationResult(changes, invocation, report, err == nil)
 	if err != nil {
-		result := HostTranslation{Report: report, Invocation: InvocationMetrics{value: invocation}}
 		return result, "evaluated", err
 	}
 	if !apply {
-		result, err := translatedEvaluation(ctx, changes, invocation, report, nil)
-		if err != nil {
+		if err := translateHostResult(ctx, changes, &result); err != nil {
 			return result, "translated", err
 		}
 		return result, "", nil
 	}
-	result := HostTranslation{Report: report, Invocation: InvocationMetrics{value: invocation}}
 	if err := ctx.Err(); err != nil {
 		return result, "", err
 	}
-	if err := commitChanges(changes, rootFileOperations{root: filesystem.root}); err != nil {
-		return result, "applied", fmt.Errorf("changing %s: %w", describePaths(changes), err)
+	if len(changes) != 0 {
+		if err := commitChanges(changes, rootFileOperations{root: filesystem.root}); err != nil {
+			return result, "applied", fmt.Errorf("changing %s: %w", describePaths(changes), err)
+		}
 	}
 	return result, "", nil
 }
 
 func translateDetailedAt(ctx context.Context, directory, script string) (HostTranslation, string, error) {
 	changes, _, invocation, report, err := evaluateScriptAt(ctx, directory, script)
+	result := hostTranslationResult(changes, invocation, report, err == nil)
 	if err != nil {
-		result := HostTranslation{Report: report, Invocation: InvocationMetrics{value: invocation}}
 		return result, "evaluated", err
 	}
-	result, err := translatedEvaluation(ctx, changes, invocation, report, nil)
-	if err != nil {
+	if err := translateHostResult(ctx, changes, &result); err != nil {
 		return result, "translated", err
 	}
 	return result, "", nil
 }
 
-func translatedEvaluation(ctx context.Context, changes []change, invocation invocationMetrics, report string, evaluationErr error) (HostTranslation, error) {
-	result := HostTranslation{Report: report, Invocation: InvocationMetrics{value: invocation}}
-	if evaluationErr != nil {
-		return result, evaluationErr
+func hostTranslationResult(changes []change, invocation invocationMetrics, report string, evaluated bool) HostTranslation {
+	files := len(changes)
+	return HostTranslation{
+		Report:     report,
+		Change:     HostChange{Files: files, AlreadySatisfied: evaluated && files == 0},
+		Invocation: InvocationMetrics{value: invocation},
 	}
+}
+
+func translateHostResult(ctx context.Context, changes []change, result *HostTranslation) error {
 	if err := ctx.Err(); err != nil {
-		return result, err
+		return err
 	}
 	patch, err := translate(changes)
 	if err != nil {
-		return result, err
+		return err
 	}
 	result.Patch = []byte(patch)
-	return result, nil
+	result.PatchSummary = HostPatchSummary{Files: len(changes), Bytes: len(patch)}
+	return nil
 }
 
 type filesystemWorkspace struct {

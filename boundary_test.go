@@ -191,9 +191,9 @@ func TestHPatch2NoopModeBoundaries(t *testing.T) {
 	if exitCode != 0 || stdout != "" || !strings.HasPrefix(report, "in file.txt\nlast none\n") {
 		t.Fatalf("normal no-op = exit %d, stdout %q, report %q", exitCode, stdout, report)
 	}
-	stdout, stderr, exitCode := runForTest(root, []string{"translate"}, "in file.txt")
-	if exitCode != 1 || stdout != "" || !strings.Contains(stderr, "does not change") || strings.Contains(stderr, "last none") {
-		t.Fatalf("translate no-op = exit %d, stdout %q, stderr %q", exitCode, stdout, stderr)
+	stdout, report, exitCode = runForTest(root, []string{"translate"}, "in file.txt")
+	if exitCode != 0 || stdout != "" || !strings.HasPrefix(report, "in file.txt\nlast none\n") {
+		t.Fatalf("translate no-op = exit %d, stdout %q, report %q", exitCode, stdout, report)
 	}
 }
 

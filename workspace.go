@@ -75,6 +75,7 @@ func (p *program) evaluate(ctx context.Context, resolve pathResolver, load fileL
 		exists:     exists,
 		recoveries: &events,
 	}
+	var baselineFailures []*commandError
 	for commandIndex, command := range p.instructions {
 		if err := ctx.Err(); err != nil {
 			return nil, events, "", err
@@ -105,8 +106,15 @@ func (p *program) evaluate(ctx context.Context, resolve pathResolver, load fileL
 			reason := reasonOf(err, reasonOther)
 			events.fail(command.operation, command.attempt, reason)
 			failure := &commandError{Attempt: command.attempt, Reason: reason, Command: commandIndex + 1, Line: command.line, Operation: command.operation, Path: w.diagnosticPath(command), Category: commandCategory(command.operation), Source: command.source, Message: err.Error(), Repair: w.repairContext(command, reason)}
+			if independentlyDetectableBaselineFailure(reason) {
+				baselineFailures = append(baselineFailures, failure)
+				continue
+			}
 			return nil, events, "", failure
 		}
+	}
+	if len(baselineFailures) != 0 {
+		return nil, events, "", commandFailures(baselineFailures)
 	}
 	if err := w.applyLanguageIndentation(ctx); err != nil {
 		return nil, events, "", err
@@ -135,6 +143,22 @@ func (p *program) evaluate(ctx context.Context, resolve pathResolver, load fileL
 	return changes, events, w.finalStateReport(changes), nil
 }
 
+func independentlyDetectableBaselineFailure(reason failureReason) bool {
+	switch reason {
+	case reasonRowMissing, reasonRowStale, reasonOccurrenceMissing, reasonTargetOrder:
+		return true
+	default:
+		return false
+	}
+}
+
+func commandFailures(failures []*commandError) error {
+	if len(failures) == 1 {
+		return failures[0]
+	}
+	return &commandGroupError{commands: failures}
+}
+
 func (w *workspace) indentationFailure() *commandError {
 	var earliest *commandError
 	for _, file := range w.files {
@@ -148,16 +172,17 @@ func (w *workspace) indentationFailure() *commandError {
 				path = file.path
 			}
 			failure := &commandError{
-				Attempt:   command.attempt,
-				Reason:    reasonEditConflict,
-				Command:   pending.origin.command,
-				Line:      command.line,
-				Operation: command.operation,
-				Path:      path,
-				Category:  commandCategory(command.operation),
-				Source:    command.source,
-				Message:   pending.correction.Error(),
-				Repair:    pending.correction.diagnostic(),
+				Attempt:         command.attempt,
+				Reason:          reasonEditConflict,
+				Command:         pending.origin.command,
+				Line:            command.line,
+				Operation:       command.operation,
+				Path:            path,
+				Category:        commandCategory(command.operation),
+				Source:          command.source,
+				Message:         pending.correction.Error(),
+				Repair:          pending.correction.diagnostic(),
+				CorrectionScope: "field-local",
 			}
 			if earliest == nil || failure.Command < earliest.Command {
 				earliest = failure

@@ -10,7 +10,7 @@ import (
 
 func translate(changes []change) (string, error) {
 	if len(changes) == 0 {
-		return "", fmt.Errorf("script does not change the workspace")
+		return "", nil
 	}
 
 	var patch strings.Builder

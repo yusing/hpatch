@@ -2096,6 +2096,24 @@ func TestHPatchExecInputQuotesPatchReportAndDiagnostic(t *testing.T) {
 	}
 }
 
+func TestHPatchAlreadySatisfiedUsesDiagnosticCarrier(t *testing.T) {
+	translator := hpatchResultTranslatorFunc(func(context.Context, string, string) (hpatchTranslationResult, error) {
+		return hpatchTranslationResult{
+			report: "in file.txt\nlast none\n",
+			change: hpatch.HostChange{AlreadySatisfied: true},
+		}, nil
+	})
+	transform, _, _, _ := newHPatchTestTransform(t, translator)
+	history, err := transform.translate("call-noop", "in file.txt\n", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !history.alreadySatisfied || strings.Contains(history.carrierInput(), "apply_patch") ||
+		history.carrierInput() != hpatchDiagnosticExecInput("in file.txt\nlast none\n") {
+		t.Fatalf("already-satisfied history = %+v, carrier = %s", history, history.carrierInput())
+	}
+}
+
 func TestHPatchStreamingTerminalFinalizesRequestAccounting(t *testing.T) {
 	records := 0
 	transform, _, _, _ := newHPatchTestTransform(t, metricsObservingTranslator{
