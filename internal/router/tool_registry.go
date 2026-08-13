@@ -24,9 +24,7 @@ const (
 	retiredConfiguredShellPluginID = "example.shell"
 	builtinToolsPluginID           = "builtin.shell"
 	reportIssueToolName            = "report_issue"
-	reportIssueToolDescription     = `Report an issue encountered while using hpatch or its related tools.
-Submit free-form Markdown describing the observed agent experience, such as misleading instructions or unhelpful diagnostic or repair context.
-Use this only for problems in hpatch, hread, hgrep, shell, inspect_file, or routed recovery, not for issues in the user's project.`
+	reportIssueToolDescription     = `Free-form Markdown issue report for an observed hpatch-related tool interaction.`
 )
 
 func buildToolRegistry(ctx context.Context, dataDirectory, hpatchDescription string, diagnose bool) (*toolRegistry, error) {

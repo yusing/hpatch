@@ -8,6 +8,13 @@ import (
 	"github.com/yusing/hpatch/internal/hpatchsyntax"
 )
 
+func TestHPatchRecoveryDescriptionIsNonInstructional(t *testing.T) {
+	const want = "Handle-local mutation of the latest rejected HPATCH/2 script. Invalid recovery leaves the retained script and workspace unchanged."
+	if hpatchRecoveryDescription != want {
+		t.Fatalf("hpatchRecoveryDescription = %q, want %q", hpatchRecoveryDescription, want)
+	}
+}
+
 func TestRecoveryCommandsHashCompleteFramesAndPhysicalValueRows(t *testing.T) {
 	script := "in file.go\n" +
 		"type 1:ffff <<PATCH\n" +

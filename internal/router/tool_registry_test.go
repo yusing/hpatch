@@ -9,6 +9,13 @@ import (
 	"testing"
 )
 
+func TestReportIssueDescriptionIsNonInstructional(t *testing.T) {
+	const want = "Free-form Markdown issue report for an observed hpatch-related tool interaction."
+	if reportIssueToolDescription != want {
+		t.Fatalf("reportIssueToolDescription = %q, want %q", reportIssueToolDescription, want)
+	}
+}
+
 func TestWorkerFrontendSymlinkLifecycle(t *testing.T) {
 	directory := t.TempDir()
 	executable := filepath.Join(directory, "hpatch-router")
