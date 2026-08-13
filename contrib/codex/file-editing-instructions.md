@@ -110,7 +110,8 @@ An unindented heredoc body line that begins with `type `, `type- `, or `type+ ` 
 contains only `<<PATCH` or ends with ` <<PATCH` is reserved as a nested opener. Close the
 current frame first; use an inline value or indent literal HPATCH examples.
 
-Create a file with at most one immediately following targetless initializer:
+Existing-file edits require a target. Targetless `type VALUE` is valid only immediately after
+`new`; create a file with at most one such initializer:
 
 ```text
 new internal/target.go
@@ -136,14 +137,21 @@ Content introduced by a mutation is not targetable in the same call. After every
 invocation, unchanged saved rows remain valid even when edits shifted their line numbers: hpatch
 relocates an exact hash only when it identifies one row. For a routed whole-line or range
 replacement, the router resolves that exact pre-edit target after the executor confirms
-application. For exact content you just authored in a new file, use an unanchored literal target
-in the later invocation instead of inventing a row hash or rereading the file. Use returned final-state rows for other changed content and
-exact known current text without a row when appropriate. Use focused hread or hgrep only when
-neither form identifies the target, and never reconstruct a row or range endpoint.
+application. On later calls, target previously changed content with a returned final-state row, a
+confirmed mapping, or exact unanchored current text; never reconstruct a row or range endpoint.
+For exact content you just authored in a new file, use an unanchored literal target in the later
+invocation instead of inventing a row hash or rereading the file. Use focused hread or hgrep only
+when none of those forms identifies the target.
 
-A successful hpatch report and its language validation are authoritative. Use a fixed heredoc for regular expressions and other escape-heavy source so
-HPATCH quoted-string escaping does not become part of the code you are reasoning about. Acquire
-only an exact missing target.
+A successful hpatch report proves that the edit applied and passed language validation; it does
+not prove requested behavior. Before finalizing, identify a check that exercises each requested
+behavior. A compile or package test with no exercising case is not behavioral validation. If
+visible tests do not exercise the behavior and tests may not be added, trace one concrete boundary
+or state-transition case through the authored code; do not claim behavior from compilation alone.
+
+Use a fixed heredoc for regular expressions and other escape-heavy source so HPATCH quoted-string
+escaping does not become part of the code you are reasoning about. Acquire only an exact missing
+target.
 
 Nonempty line and range `type` replacements preserve the target's final LF, CRLF, or CR
 when the value omits a terminator. Explicit terminators are authoritative. An empty

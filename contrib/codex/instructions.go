@@ -6,7 +6,7 @@ import (
 	"text/template"
 )
 
-const HPatchToolDescription = "Apply one complete HPATCH/2 edit script atomically. The input must match the supplied grammar; rejection or cancellation changes nothing."
+const HPatchToolDescription = "Atomic HPATCH/2 edit-script application. Rejection or cancellation leaves the workspace unchanged."
 
 //go:embed file-editing-instructions.md
 var instructions string

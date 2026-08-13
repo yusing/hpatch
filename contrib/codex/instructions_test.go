@@ -15,6 +15,13 @@ func TestHPatchToolHelpComesFromCentralInstructions(t *testing.T) {
 	}
 }
 
+func TestHPatchToolDescriptionStaysNonInstructional(t *testing.T) {
+	const want = "Atomic HPATCH/2 edit-script application. Rejection or cancellation leaves the workspace unchanged."
+	if HPatchToolDescription != want {
+		t.Fatalf("HPatchToolDescription = %q, want %q", HPatchToolDescription, want)
+	}
+}
+
 func TestInstructionsOwnCompleteShellWorkflow(t *testing.T) {
 	for _, required := range []string{
 		"Submit one free-form script without an outer heredoc",
@@ -43,7 +50,13 @@ func TestInstructionsAcquireTargetContextOnce(t *testing.T) {
 		"A directory search covers\nall descendant changed paths.",
 		"When targeting the declaration's closing `)`, use `type-`; `type+`\ninserts outside the declaration.",
 		"behavioral check instead.",
+		"Existing-file edits require a target.",
+		"Targetless `type VALUE` is valid only immediately after",
 		"unchanged saved rows remain valid even when edits shifted their line numbers",
+		"On later calls, target previously changed content with a returned final-state row, a\nconfirmed mapping, or exact unanchored current text; never reconstruct a row or range endpoint.",
+		"A successful hpatch report proves that the edit applied and passed language validation; it does\nnot prove requested behavior.",
+		"A compile or package test with no exercising case is not behavioral validation.",
+		"trace one concrete boundary\nor state-transition case through the authored code",
 		`type "return oldResult, nil" "return newResult, nil"`,
 		`target "return oldResult, nil"`,
 		"imports inside the existing import declaration",

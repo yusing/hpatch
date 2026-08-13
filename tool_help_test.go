@@ -135,17 +135,10 @@ func TestHPatchToolHelpCoversSafeCommandChoice(t *testing.T) {
 	}
 }
 
-func TestToolDescriptionIsCallLocal(t *testing.T) {
-	description := ToolDescription()
-	for _, required := range []string{"Apply one complete HPATCH/2 edit script atomically.", "rejection or cancellation changes nothing"} {
-		if !strings.Contains(description, required) {
-			t.Errorf("tool description omits %q", required)
-		}
-	}
-	for _, persistent := range []string{"hread", "hgrep", "Submit every known", "After rejection", "gofmt"} {
-		if strings.Contains(description, persistent) {
-			t.Errorf("tool description contains persistent guidance %q", persistent)
-		}
+func TestToolDescriptionIsNonInstructional(t *testing.T) {
+	const want = "Atomic HPATCH/2 edit-script application. Rejection or cancellation leaves the workspace unchanged."
+	if got := ToolDescription(); got != want {
+		t.Fatalf("ToolDescription() = %q, want %q", got, want)
 	}
 }
 
