@@ -93,6 +93,6 @@ func evaluateInvocationForTest(t *testing.T, rootPath, script string) (invocatio
 			t.Errorf("closing workspace root: %v", err)
 		}
 	}()
-	_, _, invocation, _, err := evaluateScript(context.Background(), Workspace{Root: root, CWD: "."}, script)
+	_, _, invocation, _, _, err := evaluateScript(context.Background(), Workspace{Root: root, CWD: "."}, script)
 	return invocation, err
 }

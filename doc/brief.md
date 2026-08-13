@@ -140,9 +140,9 @@ wall time must remain close to control.
 ## Constraints
 
 - The HPATCH/2 grammar replaces HPATCH/1; compatibility is not required.
-- A routed row reference combines a positive one-based logical line with a lowercase
-  four-digit content hash. The line disambiguates repeated content; the hash verifies the
-  complete logical-line bytes, including indentation and excluding its terminator.
+- A routed row reference combines a positive one-based logical-line hint with a lowercase
+  four-digit content hash. The hash verifies complete logical-line bytes, including
+  indentation and excluding its terminator. A shifted row resolves only when the hash is unique.
 - Routed hgrep accepts familiar ripgrep search arguments, invokes the installed `rg` with
   internal `--json --no-config` transport, and exposes only complete current logical lines
   with the same routed row identity. Shell syntax in an argument is data, never execution.

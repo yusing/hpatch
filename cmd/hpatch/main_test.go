@@ -220,14 +220,18 @@ func TestWorkspaceOptionsRejectInvalidBoundaries(t *testing.T) {
 func TestTopLevelHelpDescribesTargetOperandConstraints(t *testing.T) {
 	normalized := strings.Join(strings.Fields(helpTextBase), " ")
 	for _, fragment := range []string{
-		"line number chooses the line; the hash rejects stale content",
-		"never searches for a nearby hash",
+		"verifies the named row first",
+		"location changed while the referenced row remained unchanged",
+		"exactly one matching baseline hash relocates it",
+		"an absent or ambiguous hash rejects",
 		"COUNT defaults to one",
 		"non-overlapping",
 		"Every requested match must exist",
 		"anchored text target verifies its row",
 		"unanchored text target searches the complete immutable baseline",
 		"complete immutable baseline",
+		"exact authored unanchored text",
+		"use hread only when the target remains unknown",
 	} {
 		if !strings.Contains(normalized, fragment) {
 			t.Fatalf("help does not contain %q", fragment)

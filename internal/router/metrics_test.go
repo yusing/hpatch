@@ -445,11 +445,12 @@ func TestNotifyingTranslatorAttributesHPatchCallsToSession(t *testing.T) {
 		{
 			HostMetricRecord: hpatch.HostMetricRecord{
 				Attempt:   hpatch.AttemptMetadata{SessionID: "session", CorrelationID: "chain", CallID: "call-1", Attempt: 1},
-				SessionID: "session", IneffectiveHPatchTokens: 5,
+				SessionID: "session", IneffectiveHPatchTokens: 5, ConfirmedAliasRewrite: true,
 				FailedApplyPatchTokens: 2, DiagnosticInputTokens: 3,
 				Rejections: []hpatch.HostRejection{{
 					Command: 2, SourceLine: 3, Operation: "type", Target: "line",
-					Reason: "language-syntax", Path: "file.go", GeneratedLine: 8, GeneratedColumn: 3, ValueLine: 2,
+					TargetAliasRelation: hpatch.TargetAliasRelationContained,
+					Reason:              "language-syntax", Path: "file.go", GeneratedLine: 8, GeneratedColumn: 3, ValueLine: 2,
 				}},
 			},
 		},
@@ -475,13 +476,14 @@ func TestNotifyingTranslatorAttributesHPatchCallsToSession(t *testing.T) {
 	}
 	wantRejection := hpatch.HostRejection{
 		Command: 2, SourceLine: 3, Operation: "type", Target: "line",
-		Reason: "language-syntax", Path: "file.go", GeneratedLine: 8, GeneratedColumn: 3, ValueLine: 2,
+		TargetAliasRelation: hpatch.TargetAliasRelationContained,
+		Reason:              "language-syntax", Path: "file.go", GeneratedLine: 8, GeneratedColumn: 3, ValueLine: 2,
 	}
 	if got := snapshot.Sessions[0].HPatchRejections; len(got) != 1 || got[0] != wantRejection {
 		t.Fatalf("session hpatch rejections = %+v, want %+v", got, wantRejection)
 	}
 	wantAttempts := []hpatchAttemptMetrics{
-		{Sequence: 1, CorrelationID: "chain", CallID: "call-1", Attempt: 1, Outcome: "rejected", EmittedHPatchTokens: 5, ApplyPatchTokens: 2, DiagnosticInputTokens: 3, Rejections: []hpatch.HostRejection{wantRejection}},
+		{Sequence: 1, CorrelationID: "chain", CallID: "call-1", Attempt: 1, Outcome: "rejected", EmittedHPatchTokens: 5, ApplyPatchTokens: 2, DiagnosticInputTokens: 3, ConfirmedAliasRewrite: true, Rejections: []hpatch.HostRejection{wantRejection}},
 		{Sequence: 2, CorrelationID: "chain", CallID: "call-2", Attempt: 2, Correction: true, Outcome: "successful", EmittedHPatchTokens: 4, ApplyPatchTokens: 8},
 	}
 	if got := snapshot.Sessions[0].HPatchAttempts; !reflect.DeepEqual(got, wantAttempts) {

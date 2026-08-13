@@ -65,7 +65,7 @@ func (w *workspace) recover(kind recoveryKind) {
 	}
 }
 
-func (p *program) evaluate(ctx context.Context, resolve pathResolver, load fileLoader, exists pathProbe) ([]change, invocationMetrics, string, error) {
+func (p *program) evaluate(ctx context.Context, resolve pathResolver, load fileLoader, exists pathProbe) ([]change, invocationMetrics, string, []TargetAlias, error) {
 	var events invocationMetrics
 	w := &workspace{
 		paths:      make(map[string]*fileState),
@@ -78,7 +78,7 @@ func (p *program) evaluate(ctx context.Context, resolve pathResolver, load fileL
 	var baselineFailures []*commandError
 	for commandIndex, command := range p.instructions {
 		if err := ctx.Err(); err != nil {
-			return nil, events, "", err
+			return nil, events, "", nil, err
 		}
 		events.invoke(command.operation, command.attempt)
 		diagnosticPath := command.path
@@ -87,12 +87,12 @@ func (p *program) evaluate(ctx context.Context, resolve pathResolver, load fileL
 			if err != nil {
 				if failure := w.indentationFailure(); failure != nil {
 					events.fail(failure.Operation, failure.Attempt, failure.Reason)
-					return nil, events, "", failure
+					return nil, events, "", nil, failure
 				}
 
 				reason := reasonPath
 				events.fail(command.operation, command.attempt, reason)
-				return nil, events, "", &commandError{Attempt: command.attempt, Reason: reason, Command: commandIndex + 1, Line: command.line, Operation: command.operation, Path: diagnosticPath, Category: commandCategory(command.operation), Source: command.source, Message: err.Error()}
+				return nil, events, "", nil, &commandError{Attempt: command.attempt, Reason: reason, Command: commandIndex + 1, Line: command.line, Operation: command.operation, Path: diagnosticPath, Category: commandCategory(command.operation), Source: command.source, Message: err.Error()}
 			}
 			command.path = resolved
 		}
@@ -100,7 +100,7 @@ func (p *program) evaluate(ctx context.Context, resolve pathResolver, load fileL
 		if err := w.execute(command, commandIndex+1); err != nil {
 			if failure := w.indentationFailure(); failure != nil {
 				events.fail(failure.Operation, failure.Attempt, failure.Reason)
-				return nil, events, "", failure
+				return nil, events, "", nil, failure
 			}
 
 			reason := reasonOf(err, reasonOther)
@@ -110,22 +110,22 @@ func (p *program) evaluate(ctx context.Context, resolve pathResolver, load fileL
 				baselineFailures = append(baselineFailures, failure)
 				continue
 			}
-			return nil, events, "", failure
+			return nil, events, "", nil, failure
 		}
 	}
 	if len(baselineFailures) != 0 {
-		return nil, events, "", commandFailures(baselineFailures)
+		return nil, events, "", nil, commandFailures(baselineFailures)
 	}
 	if err := w.applyLanguageIndentation(ctx); err != nil {
-		return nil, events, "", err
+		return nil, events, "", nil, err
 	}
 	if failure := w.indentationFailure(); failure != nil {
 		events.fail(failure.Operation, failure.Attempt, failure.Reason)
-		return nil, events, "", failure
+		return nil, events, "", nil, failure
 	}
 
 	if err := ctx.Err(); err != nil {
-		return nil, events, "", err
+		return nil, events, "", nil, err
 	}
 	if failure := w.validationFailure(ctx); failure != nil {
 		for _, command := range commandsOf(failure) {
@@ -133,14 +133,15 @@ func (p *program) evaluate(ctx context.Context, resolve pathResolver, load fileL
 				events.fail(command.Operation, command.Attempt, command.Reason)
 			}
 		}
-		return nil, events, "", failure
+		return nil, events, "", nil, failure
 	}
 	if err := ctx.Err(); err != nil {
-		return nil, events, "", err
+		return nil, events, "", nil, err
 	}
 	changes := w.changes()
 
-	return changes, events, w.finalStateReport(changes), nil
+	report, aliases := w.finalStateReport(changes)
+	return changes, events, report, aliases, nil
 }
 
 func independentlyDetectableBaselineFailure(reason failureReason) bool {
@@ -216,7 +217,7 @@ func commandCategory(operation string) string {
 func (w *workspace) execute(command instruction, commandIndex int) error {
 	origin := editOrigin{
 		command: commandIndex, line: command.line,
-		operation: command.operation, target: command.attempt.target,
+		operation: command.operation, target: command.attempt.target, targetSpec: command.target,
 		multilineValue: command.delimiter != "",
 	}
 	initializing := command.operation == "type" && command.target.kind == targetNone && w.initializable == w.active
@@ -240,7 +241,7 @@ func (w *workspace) execute(command instruction, commandIndex int) error {
 	file := w.active
 	if command.target.kind == targetNone {
 		if !initializing || !file.created {
-			return withReason(reasonInitialization, fmt.Errorf("targetless type is valid only immediately after new"))
+			return withReason(reasonInitialization, fmt.Errorf("bare type VALUE only initializes the immediately preceding new; editing an existing file requires a line, range, or text target"))
 		}
 		file.editor.initialize(command.text, origin)
 		w.initializable = nil

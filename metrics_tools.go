@@ -56,10 +56,11 @@ type HostToolResult struct {
 
 // HostMetricInput is the structured host evidence consumed by the metrics classifier.
 type HostMetricInput struct {
-	Invocation InvocationMetrics
-	Rejections []HostRejection
-	Attempt    AttemptMetadata
-	SessionID  string
+	Invocation            InvocationMetrics
+	Rejections            []HostRejection
+	Attempt               AttemptMetadata
+	SessionID             string
+	ConfirmedAliasRewrite bool
 
 	InstalledDefinition           string
 	ToolDefinitions               []HostToolDefinition
@@ -125,10 +126,11 @@ func ClassifyHostMetrics(input HostMetricInput) (HostMetricRecord, error) {
 		return HostMetricRecord{}, fmt.Errorf("load GPT-5 tokenizer: %w", err)
 	}
 	record := HostMetricRecord{
-		Invocation: input.Invocation,
-		Rejections: slices.Clone(input.Rejections),
-		Attempt:    input.Attempt,
-		SessionID:  input.SessionID,
+		Invocation:            input.Invocation,
+		Rejections:            slices.Clone(input.Rejections),
+		Attempt:               input.Attempt,
+		SessionID:             input.SessionID,
+		ConfirmedAliasRewrite: input.ConfirmedAliasRewrite,
 	}
 	if record.ReportInputTokens, err = countMetricText(codec, input.StateReport, "state report input"); err != nil {
 		return HostMetricRecord{}, err

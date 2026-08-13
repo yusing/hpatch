@@ -22,16 +22,17 @@ type hpatchChainSettlement struct {
 }
 
 type hpatchMetricInputs struct {
-	invocation    hpatch.InvocationMetrics
-	rejections    []hpatch.HostRejection
-	attempt       hpatch.AttemptMetadata
-	emittedScript string
-	emittedTool   string
-	report        string
-	patch         string
-	diagnostic    string
-	misuseWarning string
-	sessionID     string
+	invocation            hpatch.InvocationMetrics
+	rejections            []hpatch.HostRejection
+	attempt               hpatch.AttemptMetadata
+	emittedScript         string
+	emittedTool           string
+	report                string
+	patch                 string
+	diagnostic            string
+	misuseWarning         string
+	sessionID             string
+	confirmedAliasRewrite bool
 
 	definition             string
 	baselineDefinition     string
@@ -84,6 +85,7 @@ func calculateHPatchMetricRecord(inputs hpatchMetricInputs) (hpatchMetricRecord,
 		Rejections:                    inputs.rejections,
 		Attempt:                       inputs.attempt,
 		SessionID:                     inputs.sessionID,
+		ConfirmedAliasRewrite:         inputs.confirmedAliasRewrite,
 		InstalledDefinition:           inputs.definition,
 		ToolDefinitions:               inputs.definitions,
 		RemovedDefinition:             inputs.baselineDefinition,

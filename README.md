@@ -100,10 +100,10 @@ The smaller payload is only one benefit. Hpatch turns editing into a verified tr
 
 | Direct-edit failure mode | Hpatch behavior |
 | --- | --- |
-| Repeated or stale context selects the wrong text | A `LINE:HASH` target names one logical line and rejects changed content. |
+| Repeated or stale context selects the wrong text | A `LINE:HASH` target verifies unchanged content and follows it only when its hash is unique. |
 | Earlier edits shift the location of later edits | Every target is checked against one immutable invocation baseline. |
 | One command in a multi-file change is invalid | The complete script is rejected and changes nothing. |
-| Formatting or cleanup changes the final offsets | The report returns post-format final references for the next invocation. |
+| Formatting or cleanup changes the final offsets | The report returns post-format final references, and the routed host preserves replacement-target mappings. |
 | Generated code is syntactically invalid | Supported language validation rejects the transaction before Codex applies it. |
 
 Hpatch does not bypass Codex to obtain these guarantees. The router evaluates the complete script without mutating the workspace, generates the ordinary `apply_patch` carrier, and lets Codex enforce the sandbox, permissions, and visible diff.
@@ -441,8 +441,9 @@ hpatch --version
 Authoritative guidance: `hpatch --help` and `hpatch --tool-help`. Contract: [`doc/spec/interface.md`](doc/spec/interface.md).
 
 Hread and hpatch preview/context rows have the shape `LINE:HASH TEXT`. Copy the complete
-`LINE:HASH` reference into a mutation target. The one-based line selects the exact logical
-line; the four-digit lowercase hash rejects stale content, including changed indentation.
+`LINE:HASH` reference into a mutation target. The one-based line is a location hint. The
+four-digit lowercase hash verifies exact content, including indentation, and follows an
+unchanged row after intervening edits only when that hash identifies one row in the file.
 
 Targets:
 
@@ -451,11 +452,16 @@ Targets:
 3. Exact literal occurrence(s) from a verified row through EOF: `LINE:HASH "TEXT" [COUNT]`
 4. Exact literal occurrence(s) in the complete immutable baseline: `"TEXT" [COUNT]`
 
-Rows verify only their named immutable-baseline line. Hpatch does not scan for a matching
-hash elsewhere, so equal lines at different positions are unambiguous. An anchored text target
-starts at its verified row; an unanchored text target starts at byte zero. Every requested
-non-overlapping match must exist. Use the unanchored form when exact current text is already
-known and a fresh row would add no disambiguation.
+Rows first verify their named immutable-baseline line. When that location changed, hpatch
+relocates an unchanged row only if its hash occurs once in the file; absent or duplicate
+matches reject instead of choosing a target. After earlier commands shift a duplicate row, a
+post-edit coordinate is also accepted only when it points to that exact pending row and maps
+back to one unchanged baseline line. Introduced or modified content remains untargetable in the
+same call. An anchored text target starts at its resolved row. If that anchor is stale but the
+literal has exactly the requested number of matches in the complete baseline, the redundant
+anchor is ignored; extra matches still reject. An unanchored text target starts at byte zero.
+Every requested non-overlapping match must exist. Use the unanchored form when
+exact current text is already known and a row would add no disambiguation.
 
 Commands are `in` / `new` / `mv` / `rm`, target-bearing `type` / `type-` / `type+`,
 and one targetless `type VALUE` immediately after `new`.
@@ -469,9 +475,11 @@ Rules worth remembering:
 - Submit every known related edit in one atomic script, including related multiline declarations and repeated `in PATH` sections. Split only when a later edit depends on validation or information unavailable before the current call. Keep unrelated large `<<PATCH` values in separate failure-domain calls.
 - Prefer the smallest mutation that expresses the semantic change. When a formatter owns formatting, alignment, or indentation, do not replace surrounding lines merely to reproduce its output; let the formatter apply those changes. For example, add one struct field with one insertion rather than replacing the declaration.
 - Preserve required indentation prefixes in indentation-sensitive languages such as Python.
-- After every successful invocation, discard saved rows for each changed path. Use returned final-state `LINE:HASH` rows directly in the next invocation. Reports are bounded, so use focused hread or hgrep only when the exact target is absent; never reconstruct a row or range endpoint.
+- Before using a text-target count greater than one, count exact literal occurrences in the acquired immutable baseline. Never infer the count from the intended replacements; use hgrep or separate verified row anchors when it is not already visible.
+- After a successful invocation, reuse saved rows whose content is unchanged; hpatch follows a shifted row only when its hash is unique. For a routed whole-line or range replacement, the router resolves the exact pre-edit target after the executor confirms application. Use returned final-state `LINE:HASH` rows for other changed content. For exact content you just authored in a new file, use an unanchored literal target instead of inventing a row hash or rereading the file. Reports are bounded, so use focused hread or hgrep only when the exact target is absent or ambiguous; never reconstruct a row or range endpoint.
 - Overlapping replacements or deletions and insertions strictly inside them fail atomically. Boundary insertions are valid.
 - Use inline quoted values for short single-line edits; include `\n` when an insertion must form a new line. Reserve fixed `<<PATCH` for multiline or escape-heavy values.
+- For regular expressions and other escape-heavy source, use fixed `<<PATCH` even for one line. After a behavioral check fails, reuse the exact value you authored plus the successful report or confirmed target mapping; do not hread the changed line merely to prepare the correction.
 - A rejected routed script changes nothing. Its diagnostic includes a complete compact command manifest, marks rejected commands with their correction scope, and gives bounded value-row context. The router exposes `functions.hpatch_recover`, a separate custom-grammar tool that repairs the latest evaluated rejected script by hashed `C...` command and `V...` value-row handles. Submit all known independent handle-local corrections in one payload rather than resubmitting the complete script. All operations resolve against one immutable script before the router rebuilds it through the root text editor and reevaluates it. A re-rejection replaces the recovery baseline and explicitly invalidates every earlier handle. Recovery is not part of the standalone CLI or ordinary `functions.hpatch` grammar.
 
 Additional boundaries:

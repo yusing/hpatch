@@ -27,10 +27,11 @@ type reportedEdit struct {
 	file      *fileState
 	command   int
 	operation string
+	target    targetSpec
 	spans     []renderedSpan
 }
 
-func (w *workspace) finalStateReport(changes []change) string {
+func (w *workspace) finalStateReport(changes []change) (string, []TargetAlias) {
 	var report strings.Builder
 	if w.active == nil {
 		report.WriteString("no active file\n")
@@ -52,7 +53,7 @@ func (w *workspace) finalStateReport(changes []change) string {
 	if w.active != nil && !activeReferences {
 		w.writeFallbackPreview(&report)
 	}
-	return report.String()
+	return report.String(), w.targetAliases()
 }
 
 func (w *workspace) lastReportedEdit() *reportedEdit {
@@ -72,7 +73,56 @@ func (e *editor) reportedEdit(origin editOrigin) *reportedEdit {
 	if len(spans) == 0 {
 		return nil
 	}
-	return &reportedEdit{command: origin.command, operation: origin.operation, spans: spans}
+	return &reportedEdit{command: origin.command, operation: origin.operation, target: origin.targetSpec, spans: spans}
+}
+
+func (w *workspace) targetAliases() []TargetAlias {
+	documents := make(map[*fileState]renderedDocument)
+	extents := make(map[*fileState]map[int]renderedSpan)
+	var aliases []TargetAlias
+	for _, reported := range w.reportedEdits {
+		if reported.operation != "type" ||
+			(reported.target.kind != targetLine && reported.target.kind != targetRange) {
+			continue
+		}
+		document, ok := documents[reported.file]
+		if !ok {
+			content := reported.file.editor.content()
+			document = renderedDocument{content: content, lines: previewLines(content)}
+			documents[reported.file] = document
+			extents[reported.file] = reported.file.editor.renderedEditExtents()
+		}
+		extent, ok := extents[reported.file][reported.command]
+		if !ok || extent.start == extent.end {
+			continue
+		}
+		startOffset := reported.file.editor.finalOffsets.mapOffset(extent.start)
+		endOffset := reported.file.editor.finalOffsets.mapOffset(extent.end)
+		startLine := renderedCoordinateAt(document.content, document.lines, startOffset).line
+		endLine := renderedCoordinateAt(document.content, document.lines, max(startOffset, endOffset-1)).line
+		before := renderRowTarget(reported.target)
+		after := renderDocumentRange(document, startLine, endLine)
+		aliases = append(aliases, TargetAlias{Path: reported.file.path, Before: before, After: after})
+	}
+	return aliases
+}
+
+func renderRowTarget(target targetSpec) string {
+	start := fmt.Sprintf("%d:%s", target.start.line, target.start.hash)
+	if target.kind == targetRange {
+		return fmt.Sprintf("%s..%d:%s", start, target.end.line, target.end.hash)
+	}
+	return start
+}
+
+func renderDocumentRange(document renderedDocument, startLine, endLine int) string {
+	start := document.lines[startLine-1]
+	first := fmt.Sprintf("%d:%s", startLine, hashLine(lineContent(document.content, start)))
+	if startLine == endLine {
+		return first
+	}
+	end := document.lines[endLine-1]
+	return fmt.Sprintf("%s..%d:%s", first, endLine, hashLine(lineContent(document.content, end)))
 }
 
 func (e *reportedEdit) writeSummary(report *strings.Builder) {

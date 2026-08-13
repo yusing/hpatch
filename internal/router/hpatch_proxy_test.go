@@ -2098,6 +2098,156 @@ func TestHPatchReplayPreservesImmediateApplyFailure(t *testing.T) {
 	}
 }
 
+func TestHPatchReplayConfirmsTargetAliasesOnlyAfterSuccessfulApply(t *testing.T) {
+	proxy := newManagedHPatchProxy(t, testTranslator(t, new(int)))
+	alias := hpatch.TargetAlias{Path: "file.txt", Before: "2:1111", After: "2:2222"}
+	history := hpatchHistory{
+		script:      testHPatchScript,
+		patch:       testTranslatedPatch,
+		root:        "/workspace",
+		carrierName: "exec",
+		report:      testHPatchReport,
+		aliases:     []hpatch.TargetAlias{alias},
+	}
+	if err := proxy.rememberBatch("session", map[string]hpatchHistory{"call-H": history}); err != nil {
+		t.Fatal(err)
+	}
+	if aliases := proxy.targetAliases("session", "/workspace"); len(aliases) != 0 {
+		t.Fatalf("aliases before apply confirmation = %+v", aliases)
+	}
+
+	failed, err := parseResponsesRequest(mustTestJSON(t, map[string]any{"input": []any{
+		map[string]any{"type": "custom_tool_call_output", "call_id": "call-H", "output": "apply failed"},
+	}}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := proxy.reconcileInputPrefix(&failed, "session"); err != nil {
+		t.Fatal(err)
+	}
+	if aliases := proxy.targetAliases("session", "/workspace"); len(aliases) != 0 {
+		t.Fatalf("aliases after failed apply = %+v", aliases)
+	}
+
+	succeeded, err := parseResponsesRequest(mustTestJSON(t, map[string]any{"input": []any{
+		map[string]any{"type": "custom_tool_call_output", "call_id": "call-H", "output": testHPatchReport},
+	}}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := proxy.reconcileInputPrefix(&succeeded, "session"); err != nil {
+		t.Fatal(err)
+	}
+	aliases := proxy.targetAliases("session", "/workspace")
+	if len(aliases) != 1 || aliases[0] != alias {
+		t.Fatalf("confirmed aliases = %+v, want %+v", aliases, alias)
+	}
+	if aliases := proxy.targetAliases("session", "/other"); len(aliases) != 0 {
+		t.Fatalf("cross-workspace aliases = %+v", aliases)
+	}
+}
+
+func TestHPatchTranslationRewritesConfirmedTargetAlias(t *testing.T) {
+	var translatedScript string
+	translator := hpatchResultTranslatorFunc(func(_ context.Context, _ string, script string) (hpatchTranslationResult, error) {
+		translatedScript = script
+		return hpatchTranslationResult{patch: []byte(testTranslatedPatch), report: testHPatchReport}, nil
+	})
+	transform, proxy, _, workspace := newHPatchTestTransform(t, translator)
+	alias := hpatch.TargetAlias{Path: "file.txt", Before: "2:1111", After: "3:2222"}
+	if err := proxy.rememberBatch(transform.historySessionID, map[string]hpatchHistory{
+		"call-first": {
+			root:      workspace,
+			report:    testHPatchReport,
+			confirmed: true,
+			aliases:   []hpatch.TargetAlias{alias},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	emitted := "in file.txt\ntype 2:1111 \"replacement\""
+	if _, err := transform.translate("call-next", emitted, nil); err != nil {
+		t.Fatal(err)
+	}
+	if want := "in file.txt\ntype 3:2222 \"replacement\""; translatedScript != want {
+		t.Fatalf("translated script = %q, want %q", translatedScript, want)
+	}
+
+	malformed := "in file.txt\ntype 2:1111 \"unterminated"
+	if _, err := transform.translate("call-malformed", malformed, nil); err != nil {
+		t.Fatal(err)
+	}
+	if translatedScript != malformed {
+		t.Fatalf("malformed script = %q, want evaluator input %q", translatedScript, malformed)
+	}
+}
+
+func TestHPatchRejectionMetricsAttributeConfirmedAliasRewrite(t *testing.T) {
+	var records []hpatchMetricRecord
+	var evaluatedScripts []string
+	translator := hpatchResultObservingTranslator{
+		translate: func(_ context.Context, _ string, script string) (hpatchTranslationResult, error) {
+			evaluatedScripts = append(evaluatedScripts, script)
+			return hpatchTranslationResult{
+				diagnostic: "type: command 2, reason row-stale: rejected\n",
+				rejections: []hpatch.HostRejection{{Command: 2, SourceLine: 2, Operation: "type", Target: "range", Reason: "row-stale"}},
+			}, errors.New("rejected")
+		},
+		record: func(_ context.Context, record hpatchMetricRecord) error {
+			records = append(records, record)
+			return nil
+		},
+	}
+	transform, proxy, _, workspace := newHPatchTestTransform(t, translator)
+	alias := hpatch.TargetAlias{Path: "file.txt", Before: "10:aaaa..20:bbbb", After: "30:cccc..40:dddd"}
+	if err := proxy.rememberBatch(transform.historySessionID, map[string]hpatchHistory{
+		"call-first": {root: workspace, confirmed: true, aliases: []hpatch.TargetAlias{alias}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	calls := []struct {
+		id        string
+		target    string
+		path      string
+		relation  hpatch.TargetAliasRelation
+		rewritten bool
+	}{
+		{"call-rewritten", "10:aaaa..20:bbbb", "file.txt", hpatch.TargetAliasRelationExact, true},
+		{"call-exact-coordinates", "10:1111..20:2222", "file.txt", hpatch.TargetAliasRelationExact, false},
+		{"call-contains", "5:1111..25:2222", "file.txt", hpatch.TargetAliasRelationContains, false},
+		{"call-contained", "12:1111..18:2222", "file.txt", hpatch.TargetAliasRelationContained, false},
+		{"call-overlap", "18:1111..25:2222", "file.txt", hpatch.TargetAliasRelationOverlap, false},
+		{"call-unmatched", "10:1111..20:2222", "other.txt", hpatch.TargetAliasRelationNone, false},
+	}
+	for _, call := range calls {
+		if _, err := transform.translate(call.id, "in "+call.path+"\ntype "+call.target+" \"replacement\"", nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if want := []string{
+		"in file.txt\ntype 30:cccc..40:dddd \"replacement\"",
+		"in file.txt\ntype 10:1111..20:2222 \"replacement\"",
+		"in file.txt\ntype 5:1111..25:2222 \"replacement\"",
+		"in file.txt\ntype 12:1111..18:2222 \"replacement\"",
+		"in file.txt\ntype 18:1111..25:2222 \"replacement\"",
+		"in other.txt\ntype 10:1111..20:2222 \"replacement\"",
+	}; !slices.Equal(evaluatedScripts, want) {
+		t.Fatalf("evaluated scripts = %q, want %q", evaluatedScripts, want)
+	}
+	if len(records) != len(calls) {
+		t.Fatalf("confirmed alias rewrite metrics = %+v", records)
+	}
+	for index, call := range calls {
+		attempt, ok := hpatchAttemptMetricsOf(records[index])
+		if !ok || attempt.ConfirmedAliasRewrite != call.rewritten || len(attempt.Rejections) != 1 ||
+			attempt.Rejections[0].TargetAliasRelation != call.relation {
+			t.Fatalf("%s rejection attempt = %+v, retained %t", call.id, attempt, ok)
+		}
+	}
+}
+
 func TestHPatchReplayRejectsChangedExecCarrierAndIgnoresUnrelatedCalls(t *testing.T) {
 	proxy := newManagedHPatchProxy(t, testTranslator(t, new(int)))
 	history := hpatchHistory{script: testHPatchScript, patch: testTranslatedPatch, carrierName: "exec", report: testHPatchReport}

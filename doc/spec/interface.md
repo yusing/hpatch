@@ -578,7 +578,11 @@ translations and rejected-call diagnostic input tokens to the request session. E
 retains the latest 32 evaluator rejection identities: command index, physical source line,
 operation, target kind when known, stable reason, affected path when known, the physical
 multiline value row when localized, and the generated line and column reported by language
-syntax validation when applicable. A command with several distinct repair locations retains one
+syntax validation when applicable. For a rejected line or range target that the router could
+parse before evaluation, the identity also carries `none`, `exact`, `contains`, `contained`, or
+`overlap` for its inclusive row-coordinate span relative to confirmed same-path prior replacement
+targets. The relation is derived without retaining row hashes or target content. A command with
+several distinct repair locations retains one
 identity per location as defined by `REQ-OUTPUT-001`. Each session also retains the latest
 128 routed attempt identities: chain/call identity, attempt, recovery marker, and outcome,
 emitted and comparison token counts, evaluated command count, and its bounded rejection
@@ -741,8 +745,9 @@ Acceptance:
     edit, translated carrier, executor result, or final-state report.
 14. Router snapshots attribute successful and rejected hpatch translations, diagnostic token
     totals, at most the latest 128 recovery-aware attempt identities, and at most the latest
-    32 structured evaluator rejection identities to their request sessions without persisting
-    scripts, replacement text, diagnostics, repair context, or new per-session records in
+    32 structured evaluator rejection identities, including parseable same-path row-span relation
+    to confirmed prior replacement targets, to their request sessions without persisting scripts,
+    row hashes, replacement text, diagnostics, repair context, or new per-session records in
     `metrics.bin`; per-session text-byte limits may retain fewer identities.
 
 ## REQ-SCRIPT-001 — HPATCH/2 script grammar
@@ -914,9 +919,10 @@ content as a new target baseline inside the script.
 exists in the invocation workspace or pending state. Its immediately following nonblank
 command may be one targetless `type VALUE` initializer; any intervening command closes
 that initialization opportunity. The initializer is consumed even when its value is
-empty. No target-bearing mutation is valid on a new file because hread could not have
-produced a baseline reference for it. Further or dependent content changes require a
-successful invocation followed by a fresh read.
+empty. No target-bearing mutation is valid on a new file because no invocation baseline exists
+for it. Further or dependent content changes require a successful invocation. A later invocation
+may use exact authored current text as an unanchored literal target; a fresh read is required only
+when exact current content is unknown or ambiguous.
 
 `mv PATH` moves the active logical file to an unoccupied pending path. The destination
 becomes active; its original baseline and pending edits move with it. Later `in` resolves
@@ -949,21 +955,32 @@ Acceptance:
 ## REQ-SELECT-001 — Verified immutable-baseline targets
 
 Every explicit target resolves against the active existing file's immutable invocation
-baseline. A row resolves by locating its one-based logical line and comparing its four
-digit hash with the hash of the exact current baseline line content. An absent or
-out-of-bounds line is `row-missing`; a present line with a different hash is `row-stale`.
-Hpatch never silently substitutes another line with the supplied hash and never chooses nearby
-or duplicate content. Repair diagnostics may list current-line and relocated-hash candidates,
-but the caller must verify and choose the target. Line number disambiguates equal lines; the
-16-bit hash retains an accepted approximately 1-in-65,536 random false-acceptance residual.
+baseline. A row first compares its four-digit hash with the exact content at its one-based
+logical-line hint. If they differ or the hint is out of bounds, hpatch scans the same immutable
+baseline and resolves the row only when exactly one line has that hash. No match is
+`row-missing` when the hint is out of bounds and `row-stale` otherwise. Multiple matches are
+`row-stale`; hpatch never chooses among duplicate content. The 16-bit hash retains an accepted
+approximately 1-in-65,536 random false-acceptance residual for a candidate line.
+
+If baseline resolution fails after earlier commands have pending edits, the evaluator may treat
+the line number as a pending-content coordinate. This succeeds only when the pending line has the
+supplied hash and its complete span maps back to exactly one unchanged immutable-baseline line.
+Insertions at that baseline line's boundaries may shift the coordinate; an insertion or
+replacement inside the line makes it ineligible. Content introduced or modified by a pending edit
+does not become targetable. The resolved target remains the mapped baseline line, so conflict and
+transaction semantics do not acquire a second editing baseline.
 
 Both endpoints of a range must verify independently and remain ordered. An anchored text target
-searches the verified baseline suffix; an unanchored text target searches the complete baseline,
-exactly as defined by `REQ-SCRIPT-001`.
-Pending edits never alter row verification, literal search, matches, or positions.
-Content introduced by any command is not targetable in that script. Dependent edits
-require successful application, hread inspection of the new content, and a later
-invocation with fresh references.
+searches the verified baseline suffix. If its row is missing or stale, the row is redundant only
+when the complete immutable baseline contains exactly the requested number of non-overlapping
+literal matches; that exact set is selected. Extra or missing global matches preserve the row
+failure. An unanchored text target searches the complete baseline, exactly as defined by
+`REQ-SCRIPT-001`.
+Pending edits never alter the baseline identity, literal search, matches, or target positions.
+They may supply only the verified coordinate fallback above. Content introduced or modified by
+any command is not targetable in that script. Dependent edits require successful application and
+a later invocation. Exact authored current text may be used as an unanchored literal target
+without hread; other introduced content requires fresh references.
 
 Independently detectable row-missing, row-stale, occurrence-missing, and target-order failures
 are collected across later commands whose active baselines can still be evaluated safely. The
@@ -977,14 +994,18 @@ generation, or resume state.
 
 Acceptance:
 
-1. A copied hread row verifies only the same line with the same complete content,
-   including indentation; duplicate content at other line numbers is irrelevant.
-2. Missing and stale rows are distinct failures and neither searches for a substitute.
-3. Inclusive ranges verify both endpoints and reject reversed order.
+1. A copied hread row verifies complete content, including indentation, at its line hint or at
+   one uniquely matching relocated row.
+2. Missing and changed rows reject without choosing an unverified substitute. Duplicate baseline
+   rows reject unless the supplied pending coordinate maps to one unchanged baseline row.
+3. Inclusive ranges resolve both endpoints independently and reject reversed resolved order.
 4. Text targets select the requested first N non-overlapping matches from the verified
-   anchor or byte zero through EOF and reject incomplete multiplicity.
-5. Independent targets retain their original meaning after pending edits; introduced
-   content cannot be addressed without a later hread. A whole-file move preserves the
+   anchor or byte zero through EOF and reject incomplete multiplicity. A missing or stale anchor
+   is ignored only when the literal's complete-baseline multiplicity equals N exactly.
+5. Independent targets retain their original meaning after pending edits; introduced or modified
+   content cannot be addressed within the same invocation. A later invocation may target exact
+   known current text without a row. A post-edit coordinate may identify one
+   unchanged baseline row shifted by earlier boundary insertions. A whole-file move preserves the
    moved file's existing baseline under its new logical path.
 
 ## REQ-EDIT-001 — Target-bearing mutations
@@ -1122,12 +1143,24 @@ it does not retain another original or final content copy, routed-read history, 
 diff, or translated patch text.
 
 A successful report's `LINE:HASH` rows are current references for their named final paths
-and may be used directly in the next invocation. After every successful invocation, a caller
-discards saved rows for every changed path and uses the returned final-state row. The projection
-does not guarantee every possible later target; when the exact target needed next is absent,
-the caller obtains it with a focused hread. A row or range endpoint is never guessed or
-reconstructed. The report describes only the completed invocation; no target or editing state
-persists into a later invocation.
+and may be used directly in the next invocation. An earlier row whose content is unchanged may
+also be reused: its line is a hint and its hash relocates only when unique. The projection does
+not guarantee every possible later target; when the exact target needed next is absent or
+ambiguous, the caller obtains it with a focused hread. A row or range endpoint is never guessed
+or reconstructed. An in-process successful host result also carries one structured target alias
+for every effective nonempty `type` command whose authored target is a row or inclusive row range.
+The alias maps that exact target and final path to the final rendered replacement extent after
+language formatting. Deletions, insertions, text-occurrence targets, targetless initialization,
+and ineffective commands produce no alias. The standalone CLI retains no target or editing state
+between invocations.
+
+In routed mode, the router retains those aliases within the same session and workspace only after
+a replayed carrier output exactly confirms the successful report. Before translating a later
+script, it follows the aliases in retained call order. A failed, missing, or altered carrier
+output confirms nothing. For rejected parseable line and inclusive-range commands, the same
+rewrite boundary classifies only the emitted row-coordinate span relative to confirmed same-path
+alias targets as `none`, `exact`, `contains`, `contained`, or `overlap`; it does not change target
+rewriting or evaluation.
 
 The complete report is rendered before commit or patch output, but it is emitted only
 after that mode-specific effect succeeds. A report-write failure after the effect is
@@ -1174,10 +1207,11 @@ Failures return nonzero and emit no stdout or final-state report. Malformed row 
 receives a syntax diagnostic.
 
 A stale row reports the actual current-line candidate and up to two neighboring baseline rows.
-It also reports every other baseline line whose hash matches the stale reference as a relocation
-candidate, or states that the hash is absent. Range repair reports start and end independently.
-No candidate is selected automatically. A missing literal occurrence reports the verified anchor
-context. An edit conflict identifies the prior command and affected immutable-baseline lines. If
+It also reports every baseline line whose hash makes the stale reference ambiguous, or states
+that the hash is absent. A unique relocated hash resolves during evaluation and does not produce
+a diagnostic. Range repair reports start and end independently. A missing literal occurrence
+reports the verified anchor context. An edit conflict identifies the prior command and affected
+immutable-baseline lines. If
 a command depends on content introduced by another command, the diagnostic directs the agent to
 apply the prerequisite independently, reread, and submit a later invocation. A missing row or
 failure without a verified baseline does not choose repair context. Repair context is
@@ -1275,11 +1309,15 @@ Persistent guidance teaches this workflow:
    validation or information unavailable before the current call. Keep unrelated large values
    in separate failure-domain calls.
 7. Prefer the smallest semantic mutation and let formatters own formatting. A successful report
-   and its language validation are authoritative, so do not hread changed paths merely to verify
-   an edit. Run the focused behavioral check instead. After success, discard every pre-edit row
-   for each changed path. Use a returned final-state row or exact unanchored current text for a
-   follow-up; acquire only a target that neither form identifies. Add Go imports inside the
-   existing import declaration because formatting cannot repair invalid placement.
+   and its language validation are authoritative, so do not hread, hgrep, or run `git diff` on
+   changed paths merely to inspect or verify an edit. Run the focused behavioral check instead.
+   If it fails, reuse the exact authored value and successful report rather than rereading the
+   changed line. Use a fixed heredoc for regular
+   expressions and other escape-heavy source. After success, reuse unchanged rows and any
+   exact pre-edit row or range covered by a confirmed routed `reuse` mapping. Use a returned
+   final-state row or exact unanchored current text for other changed content; acquire only a
+   target that none of these forms identifies. Add Go imports inside the existing import
+   declaration because formatting cannot repair invalid placement.
 8. Use nonempty `type` to replace, empty target-bearing `type` to delete, `type-` to insert
    before, and `type+` to insert after. Use inline values for short text and `<<PATCH` for
    multiline or escape-heavy values.

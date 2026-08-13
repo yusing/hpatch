@@ -76,7 +76,8 @@ func TestToolMetricsClassifyPersistAndReportCanonicalShapes(t *testing.T) {
 	}
 
 	rejected, err := ClassifyHostMetrics(HostMetricInput{
-		SessionID: "session",
+		SessionID:             "session",
+		ConfirmedAliasRewrite: true,
 		ToolCall: &HostToolCall{
 			PluginID: pluginID, ToolName: toolName,
 			EmittedName: toolName, EmittedInput: "bad input",
@@ -86,6 +87,9 @@ func TestToolMetricsClassifyPersistAndReportCanonicalShapes(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatal(err)
+	}
+	if !rejected.ConfirmedAliasRewrite {
+		t.Fatal("classified rejection lost confirmed alias rewrite attribution")
 	}
 	dataDirectory := t.TempDir()
 	if err := RecordHostMetrics(t.Context(), dataDirectory, success); err != nil {

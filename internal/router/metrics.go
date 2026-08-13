@@ -175,6 +175,7 @@ type hpatchAttemptMetrics struct {
 	ApplyPatchTokens      uint64                 `json:"apply_patch_tokens"`
 	EvaluatedCommands     uint64                 `json:"evaluated_commands"`
 	DiagnosticInputTokens uint64                 `json:"diagnostic_input_tokens"`
+	ConfirmedAliasRewrite bool                   `json:"confirmed_alias_rewrite"`
 	Rejections            []hpatch.HostRejection `json:"rejections"`
 }
 
@@ -196,6 +197,7 @@ func hpatchAttemptMetricsOf(record hpatchMetricRecord) (hpatchAttemptMetrics, bo
 		Correction:            metadata.Correction,
 		EvaluatedCommands:     record.Invocation.EvaluatedCommandCount(),
 		DiagnosticInputTokens: record.DiagnosticInputTokens,
+		ConfirmedAliasRewrite: record.ConfirmedAliasRewrite,
 		Rejections:            slices.Clone(rejections),
 	}
 	switch {
@@ -222,7 +224,8 @@ func hpatchAttemptMetricsOf(record hpatchMetricRecord) (hpatchAttemptMetrics, bo
 }
 
 func hpatchRejectionTextBytes(rejection hpatch.HostRejection) int {
-	return len(rejection.Operation) + len(rejection.Target) + len(rejection.Reason) + len(rejection.Path)
+	return len(rejection.Operation) + len(rejection.Target) + len(rejection.TargetAliasRelation) +
+		len(rejection.Reason) + len(rejection.Path)
 }
 
 func hpatchAttemptTextBytes(attempt hpatchAttemptMetrics) int {

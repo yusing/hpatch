@@ -18,6 +18,7 @@ type editOrigin struct {
 	line           int
 	operation      string
 	target         targetVariant
+	targetSpec     targetSpec
 	multilineValue bool
 }
 
@@ -60,25 +61,25 @@ type logicalLine struct {
 func (e *editor) resolveTarget(target targetSpec) ([]targetSpan, error) {
 	switch target.kind {
 	case targetLine:
-		line, err := resolveRow(e.baseline, target.start)
+		line, err := e.resolveRow(target.start)
 		if err != nil {
 			return nil, err
 		}
 		return []targetSpan{{start: line.start, end: line.fullEnd, linewise: true}}, nil
 	case targetRange:
-		start, err := resolveRow(e.baseline, target.start)
+		start, err := e.resolveRow(target.start)
 		if err != nil {
 			return nil, err
 		}
-		end, err := resolveRow(e.baseline, target.end)
+		end, err := e.resolveRow(target.end)
 		if err != nil {
 			return nil, err
 		}
-		if target.start.line > target.end.line {
+		if start.start > end.start {
 			return nil, withReason(reasonTargetOrder, fmt.Errorf(
-				"row range start %d exceeds end %d",
-				target.start.line,
-				target.end.line,
+				"resolved row range start %d exceeds end %d",
+				lineNumberAt(logicalLines(e.baseline), start.start),
+				lineNumberAt(logicalLines(e.baseline), end.start),
 			))
 		}
 		return []targetSpan{{start: start.start, end: end.fullEnd, linewise: true}}, nil
@@ -86,9 +87,21 @@ func (e *editor) resolveTarget(target targetSpec) ([]targetSpan, error) {
 		search := e.baseline
 		baseOffset := 0
 		if target.kind == targetText {
-			anchor, err := resolveRow(e.baseline, target.start)
+			anchor, err := e.resolveRow(target.start)
 			if err != nil {
-				return nil, err
+				globalOffsets := nonOverlappingLiteralOffsets(e.baseline, target.literal, target.count)
+				if len(globalOffsets) != target.count {
+					return nil, err
+				}
+				afterLast := globalOffsets[len(globalOffsets)-1] + len(target.literal)
+				if len(nonOverlappingLiteralOffsets(e.baseline[afterLast:], target.literal, 1)) != 0 {
+					return nil, err
+				}
+				spans := make([]targetSpan, len(globalOffsets))
+				for index, offset := range globalOffsets {
+					spans[index] = targetSpan{start: offset, end: offset + len(target.literal)}
+				}
+				return spans, nil
 			}
 			search = e.baseline[anchor.start:]
 			baseOffset = anchor.start
@@ -120,26 +133,128 @@ func (e *editor) resolveTarget(target targetSpec) ([]targetSpan, error) {
 	}
 }
 
+func (e *editor) resolveRow(reference rowReference) (logicalLine, error) {
+	resolved, baselineErr := resolveRow(e.baseline, reference)
+	if baselineErr == nil || len(e.edits) == 0 {
+		return resolved, baselineErr
+	}
+
+	pending := e.content()
+	pendingLines := logicalLines(pending)
+	if reference.line < 1 || reference.line > len(pendingLines) {
+		return logicalLine{}, baselineErr
+	}
+	pendingLine := pendingLines[reference.line-1]
+	if hashLine(lineContent(pending, pendingLine)) != reference.hash {
+		return logicalLine{}, baselineErr
+	}
+
+	var match logicalLine
+	matches := 0
+	for _, baselineLine := range logicalLines(e.baseline) {
+		if hashLine(lineContent(e.baseline, baselineLine)) != reference.hash {
+			continue
+		}
+		start, end, ok := e.renderedBaselineLine(baselineLine)
+		if !ok || start != pendingLine.start || end != pendingLine.fullEnd {
+			continue
+		}
+		match = baselineLine
+		matches++
+	}
+	if matches == 1 {
+		return match, nil
+	}
+	return logicalLine{}, baselineErr
+}
+
+func (e *editor) renderedBaselineLine(line logicalLine) (int, int, bool) {
+	for _, edit := range e.orderedEdits() {
+		if edit.start == edit.end {
+			if edit.start > line.start && edit.start < line.fullEnd {
+				return 0, 0, false
+			}
+			continue
+		}
+		if edit.start < line.fullEnd && edit.end > line.start {
+			return 0, 0, false
+		}
+	}
+	start := e.renderedBaselineBoundary(line.start, true)
+	end := e.renderedBaselineBoundary(line.fullEnd, false)
+	return start, end, true
+}
+
+func (e *editor) renderedBaselineBoundary(offset int, includeInsertions bool) int {
+	rendered := offset
+	for _, edit := range e.orderedEdits() {
+		if edit.start == edit.end {
+			if edit.start < offset || (includeInsertions && edit.start == offset) {
+				rendered += len(edit.replacement)
+			}
+			continue
+		}
+		if edit.end <= offset {
+			rendered += len(edit.replacement) - (edit.end - edit.start)
+		}
+	}
+	return rendered
+}
+
 func resolveRow(baseline string, reference rowReference) (logicalLine, error) {
 	lines := logicalLines(baseline)
+	if reference.line >= 1 && reference.line <= len(lines) {
+		line := lines[reference.line-1]
+		if hashLine(lineContent(baseline, line)) == reference.hash {
+			return line, nil
+		}
+	}
+
+	var match logicalLine
+	matches := 0
+	for _, line := range lines {
+		if hashLine(lineContent(baseline, line)) != reference.hash {
+			continue
+		}
+		match = line
+		matches++
+	}
+	if matches == 1 {
+		return match, nil
+	}
 	if reference.line < 1 || reference.line > len(lines) {
-		return logicalLine{}, withReason(reasonRowMissing, fmt.Errorf(
-			"row %d is outside immutable baseline with %d lines",
+		if matches == 0 {
+			return logicalLine{}, withReason(reasonRowMissing, fmt.Errorf(
+				"row %d is outside immutable baseline with %d lines and hash %s is absent",
+				reference.line,
+				len(lines),
+				reference.hash,
+			))
+		}
+		return logicalLine{}, withReason(reasonRowStale, fmt.Errorf(
+			"row %d is outside immutable baseline with %d lines and hash %s is ambiguous across %d rows",
 			reference.line,
 			len(lines),
+			reference.hash,
+			matches,
 		))
 	}
-	line := lines[reference.line-1]
-	actual := hashLine(lineContent(baseline, line))
-	if actual != reference.hash {
+	actual := hashLine(lineContent(baseline, lines[reference.line-1]))
+	if matches == 0 {
 		return logicalLine{}, withReason(reasonRowStale, fmt.Errorf(
-			"row %d is stale: expected hash %s, actual %s",
+			"row %d is stale: expected hash %s, actual %s, expected hash is absent",
 			reference.line,
 			reference.hash,
 			actual,
 		))
 	}
-	return line, nil
+	return logicalLine{}, withReason(reasonRowStale, fmt.Errorf(
+		"row %d is stale: expected hash %s, actual %s, expected hash is ambiguous across %d rows",
+		reference.line,
+		reference.hash,
+		actual,
+		matches,
+	))
 }
 
 func (e *editor) applyMutation(operation string, target targetSpec, value string, origin editOrigin, command instruction) error {

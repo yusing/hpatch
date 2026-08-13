@@ -47,9 +47,10 @@ Targets:
 
   Copy complete LINE:HASH references from hgrep or hread output. LINE is a positive
   one-based logical line and HASH is exactly four lowercase hexadecimal digits
-  over that line's exact content, including indentation. The line number chooses
-  the line; the hash rejects stale content. Hpatch never searches for a nearby
-  hash or substitutes another matching line.
+  over that line's exact content, including indentation. Hpatch verifies the named
+  row first. If that location changed while the referenced row remained unchanged,
+  exactly one matching baseline hash relocates it; an absent or ambiguous hash
+  rejects.
 
   An anchored text target verifies its row and searches from that row's column 1.
   An unanchored text target searches the complete immutable baseline. Both find the
@@ -116,7 +117,7 @@ File lifecycle:
   following nonblank command may be one targetless type VALUE initializer. Any
   intervening command closes that opportunity. New-file content cannot be targeted
   in the creating invocation. After success, use an exact reported current row or
-  hread when that target is absent.
+  exact authored unanchored text; use hread only when the target remains unknown.
 
   mv moves the active logical file and preserves its baseline and pending edits.
   rm deletes the active file and clears the active file. Removing an existing file

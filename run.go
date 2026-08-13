@@ -8,10 +8,12 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"unicode"
 
+	"github.com/yusing/hpatch/internal/hpatchsyntax"
 	"golang.org/x/term"
 )
 
@@ -56,6 +58,7 @@ func EditText(ctx context.Context, baseline, script string) (string, error) {
 			line:           command.line,
 			operation:      command.operation,
 			target:         command.target.variant(),
+			targetSpec:     command.target,
 			multilineValue: command.delimiter != "",
 		}
 		if err := target.applyMutation(command.operation, command.target, command.text, origin, command); err != nil {
@@ -101,6 +104,193 @@ func TextReferences(text string, rows ...int) string {
 		writeHashLine(&output, number, content, previewTextLimit(content, repairPreviewLimit))
 	}
 	return output.String()
+}
+
+// TargetAlias maps a target from one successful script to the rendered region
+// that replaced it. Hosts may retain aliases only after the translated patch
+// was applied successfully.
+type TargetAlias struct {
+	Path   string
+	Before string
+	After  string
+}
+
+// TargetAliasRelation describes an emitted row target's coordinate relation to
+// a confirmed prior replacement target on the same path. It contains no row
+// hashes or target text.
+type TargetAliasRelation string
+
+const (
+	TargetAliasRelationNone      TargetAliasRelation = "none"
+	TargetAliasRelationExact     TargetAliasRelation = "exact"
+	TargetAliasRelationContains  TargetAliasRelation = "contains"
+	TargetAliasRelationContained TargetAliasRelation = "contained"
+	TargetAliasRelationOverlap   TargetAliasRelation = "overlap"
+)
+
+// TargetAliasDiagnostic is transient alias-rewrite evidence for one row-target
+// command. Rewritten is true only when the complete target, including hashes,
+// followed a confirmed alias. Relation compares inclusive row coordinates only.
+type TargetAliasDiagnostic struct {
+	Command   int
+	Rewritten bool
+	Relation  TargetAliasRelation
+}
+
+// RewriteTargetAliases updates exact line and range targets through successful
+// prior replacements. It preserves values and framing and performs no filesystem access.
+func RewriteTargetAliases(script string, aliases []TargetAlias) (string, error) {
+	rewritten, _, err := RewriteTargetAliasesWithCommands(script, aliases)
+	return rewritten, err
+}
+
+// RewriteTargetAliasesWithCommands also returns the 1-based command numbers
+// whose targets changed. The command numbers let hosts attribute evaluator
+// rejections without retaining target content.
+func RewriteTargetAliasesWithCommands(script string, aliases []TargetAlias) (string, []int, error) {
+	rewritten, diagnostics, err := RewriteTargetAliasesWithDiagnostics(script, aliases)
+	if err != nil {
+		return "", nil, err
+	}
+	commands := make([]int, 0, len(diagnostics))
+	for _, diagnostic := range diagnostics {
+		if diagnostic.Rewritten {
+			commands = append(commands, diagnostic.Command)
+		}
+	}
+	return rewritten, commands, nil
+}
+
+// RewriteTargetAliasesWithDiagnostics also returns privacy-safe, transient
+// coordinate relations for row-target commands. It does not retain paths,
+// targets, hashes, values, or other script content.
+func RewriteTargetAliasesWithDiagnostics(script string, aliases []TargetAlias) (string, []TargetAliasDiagnostic, error) {
+	if len(aliases) == 0 {
+		return script, nil, nil
+	}
+	program, err := parse(script)
+	if err != nil {
+		return "", nil, err
+	}
+	lines := hpatchsyntax.SplitPhysicalLines(script)
+	activePath := ""
+	var diagnostics []TargetAliasDiagnostic
+	for commandIndex, command := range program.instructions {
+		switch command.operation {
+		case "in", "new":
+			activePath = command.path
+		case "mv":
+			activePath = command.path
+		case "rm":
+			activePath = ""
+		case "type", "type-", "type+":
+			if command.target.kind != targetLine && command.target.kind != targetRange {
+				continue
+			}
+			diagnostic := TargetAliasDiagnostic{
+				Command:  commandIndex + 1,
+				Relation: targetAliasRelation(activePath, command.target, aliases),
+			}
+			before := renderRowTarget(command.target)
+			after := before
+			for _, alias := range aliases {
+				if alias.Path == activePath && alias.Before == after {
+					after = alias.After
+				}
+			}
+			if after == before {
+				diagnostics = append(diagnostics, diagnostic)
+				continue
+			}
+			diagnostic.Rewritten = true
+			lineIndex := command.line - 1
+			if lineIndex < 0 || lineIndex >= len(lines) {
+				return "", nil, fmt.Errorf("command source line %d is outside script", command.line)
+			}
+			header := lines[lineIndex].Text
+			operationEnd := len(command.operation)
+			if len(header) <= operationEnd || header[operationEnd] != ' ' {
+				return "", nil, fmt.Errorf("command source line %d has unexpected framing", command.line)
+			}
+			operand := operationEnd + 1
+			if !strings.HasPrefix(header[operand:], before) {
+				return "", nil, fmt.Errorf("command source line %d target changed during parsing", command.line)
+			}
+			boundary := operand + len(before)
+			if boundary < len(header) && header[boundary] != ' ' && header[boundary] != '\t' {
+				return "", nil, fmt.Errorf("command source line %d target boundary is invalid", command.line)
+			}
+			lines[lineIndex].Text = header[:operand] + after + header[boundary:]
+			diagnostics = append(diagnostics, diagnostic)
+		}
+	}
+	var rewritten strings.Builder
+	for _, line := range lines {
+		rewritten.WriteString(line.Text)
+		rewritten.WriteString(line.Terminator)
+	}
+	if _, err := parse(rewritten.String()); err != nil {
+		return "", nil, fmt.Errorf("rewriting target aliases: %w", err)
+	}
+	return rewritten.String(), diagnostics, nil
+}
+
+func targetAliasRelation(path string, target targetSpec, aliases []TargetAlias) TargetAliasRelation {
+	relation := TargetAliasRelationNone
+	for _, alias := range aliases {
+		if alias.Path != path {
+			continue
+		}
+		prior, trailing, err := parseTarget(1, alias.Before, false)
+		if err != nil || strings.TrimSpace(trailing) != "" ||
+			(prior.kind != targetLine && prior.kind != targetRange) {
+			continue
+		}
+		candidate := rowSpanRelation(target, prior)
+		if targetAliasRelationRank(candidate) > targetAliasRelationRank(relation) {
+			relation = candidate
+		}
+	}
+	return relation
+}
+
+func rowSpanRelation(target, prior targetSpec) TargetAliasRelation {
+	targetStart, targetEnd := target.start.line, target.start.line
+	if target.kind == targetRange {
+		targetEnd = target.end.line
+	}
+	priorStart, priorEnd := prior.start.line, prior.start.line
+	if prior.kind == targetRange {
+		priorEnd = prior.end.line
+	}
+	if targetEnd < targetStart || priorEnd < priorStart || targetEnd < priorStart || priorEnd < targetStart {
+		return TargetAliasRelationNone
+	}
+	switch {
+	case targetStart == priorStart && targetEnd == priorEnd:
+		return TargetAliasRelationExact
+	case targetStart >= priorStart && targetEnd <= priorEnd:
+		return TargetAliasRelationContained
+	case targetStart <= priorStart && targetEnd >= priorEnd:
+		return TargetAliasRelationContains
+	default:
+		return TargetAliasRelationOverlap
+	}
+}
+
+func targetAliasRelationRank(relation TargetAliasRelation) int {
+	switch relation {
+	case TargetAliasRelationExact:
+		return 4
+	case TargetAliasRelationContained:
+		return 3
+	case TargetAliasRelationContains:
+		return 2
+	case TargetAliasRelationOverlap:
+		return 1
+	default:
+		return 0
+	}
 }
 
 // Run executes the hpatch command-line contract with workingDirectory as the
@@ -162,7 +352,7 @@ func RunWorkspace(args []string, stdin io.Reader, stdout, stderr io.Writer, work
 	if err != nil {
 		return fail(stderr, fmt.Sprintf("reading script: %v", err))
 	}
-	changes, filesystem, commands, report, err := evaluateScript(context.TODO(), workspace, string(script))
+	changes, filesystem, commands, report, _, err := evaluateScript(context.TODO(), workspace, string(script))
 	if dataDirectory != "" {
 		if metricsErr := updateMetrics(dataDirectory, metrics{invocationMetrics: commands}); metricsErr != nil {
 			warn(stderr, metricsErr.Error())
@@ -195,7 +385,7 @@ func RunWorkspace(args []string, stdin io.Reader, stdout, stderr io.Writer, work
 
 // Apply evaluates and atomically applies script within workspace.
 func Apply(ctx context.Context, workspace Workspace, script string) error {
-	changes, filesystem, _, _, err := evaluateScript(ctx, workspace, script)
+	changes, filesystem, _, _, _, err := evaluateScript(ctx, workspace, script)
 	if err != nil {
 		return err
 	}
@@ -222,15 +412,16 @@ func Translate(ctx context.Context, workspace Workspace, script string) ([]byte,
 // command. It intentionally excludes source text, diagnostics, and repair
 // context so hosts can retain it as telemetry without retaining edit content.
 type HostRejection struct {
-	Command         int    `json:"command"`
-	SourceLine      int    `json:"source_line"`
-	Operation       string `json:"operation"`
-	Target          string `json:"target,omitempty"`
-	Reason          string `json:"reason"`
-	Path            string `json:"path,omitempty"`
-	GeneratedLine   int    `json:"generated_line,omitempty"`
-	GeneratedColumn int    `json:"generated_column,omitempty"`
-	ValueLine       int    `json:"value_line,omitempty"`
+	Command             int                 `json:"command"`
+	SourceLine          int                 `json:"source_line"`
+	Operation           string              `json:"operation"`
+	Target              string              `json:"target,omitempty"`
+	TargetAliasRelation TargetAliasRelation `json:"target_alias_relation,omitempty"`
+	Reason              string              `json:"reason"`
+	Path                string              `json:"path,omitempty"`
+	GeneratedLine       int                 `json:"generated_line,omitempty"`
+	GeneratedColumn     int                 `json:"generated_column,omitempty"`
+	ValueLine           int                 `json:"value_line,omitempty"`
 }
 
 // HostOutcome identifies the furthest lifecycle stage reached by one host request.
@@ -265,16 +456,17 @@ type HostPatchSummary struct {
 // HostTranslation contains the complete result needed by an in-process host.
 // Diagnostic contains a rejection diagnostic or non-fatal hook warnings.
 type HostTranslation struct {
-	Patch        []byte
-	Report       string
-	Diagnostic   string
-	Outcome      HostOutcome
-	Change       HostChange
-	Attempt      AttemptMetadata
-	Failures     []HostFailure
-	PatchSummary HostPatchSummary
-	Rejections   []HostRejection
-	Invocation   InvocationMetrics
+	Patch         []byte
+	Report        string
+	TargetAliases []TargetAlias
+	Diagnostic    string
+	Outcome       HostOutcome
+	Change        HostChange
+	Attempt       AttemptMetadata
+	Failures      []HostFailure
+	PatchSummary  HostPatchSummary
+	Rejections    []HostRejection
+	Invocation    InvocationMetrics
 }
 
 // TranslateForHost evaluates script once without mutation and returns the
@@ -363,8 +555,8 @@ func translateDetailed(ctx context.Context, workspace Workspace, script string) 
 }
 
 func changeDetailed(ctx context.Context, workspace Workspace, script string, apply bool) (HostTranslation, string, error) {
-	changes, filesystem, invocation, report, err := evaluateScript(ctx, workspace, script)
-	result := hostTranslationResult(changes, invocation, report, err == nil)
+	changes, filesystem, invocation, report, aliases, err := evaluateScript(ctx, workspace, script)
+	result := hostTranslationResult(changes, invocation, report, aliases, err == nil)
 	if err != nil {
 		return result, "evaluated", err
 	}
@@ -386,8 +578,8 @@ func changeDetailed(ctx context.Context, workspace Workspace, script string, app
 }
 
 func translateDetailedAt(ctx context.Context, directory, script string) (HostTranslation, string, error) {
-	changes, _, invocation, report, err := evaluateScriptAt(ctx, directory, script)
-	result := hostTranslationResult(changes, invocation, report, err == nil)
+	changes, _, invocation, report, aliases, err := evaluateScriptAt(ctx, directory, script)
+	result := hostTranslationResult(changes, invocation, report, aliases, err == nil)
 	if err != nil {
 		return result, "evaluated", err
 	}
@@ -397,12 +589,13 @@ func translateDetailedAt(ctx context.Context, directory, script string) (HostTra
 	return result, "", nil
 }
 
-func hostTranslationResult(changes []change, invocation invocationMetrics, report string, evaluated bool) HostTranslation {
+func hostTranslationResult(changes []change, invocation invocationMetrics, report string, aliases []TargetAlias, evaluated bool) HostTranslation {
 	files := len(changes)
 	return HostTranslation{
-		Report:     report,
-		Change:     HostChange{Files: files, AlreadySatisfied: evaluated && files == 0},
-		Invocation: InvocationMetrics{value: invocation},
+		Report:        report,
+		TargetAliases: slices.Clone(aliases),
+		Change:        HostChange{Files: files, AlreadySatisfied: evaluated && files == 0},
+		Invocation:    InvocationMetrics{value: invocation},
 	}
 }
 
@@ -424,30 +617,30 @@ type filesystemWorkspace struct {
 	cwd  string
 }
 
-func evaluateScript(ctx context.Context, workspace Workspace, script string) ([]change, filesystemWorkspace, invocationMetrics, string, error) {
+func evaluateScript(ctx context.Context, workspace Workspace, script string) ([]change, filesystemWorkspace, invocationMetrics, string, []TargetAlias, error) {
 	filesystem, err := validateWorkspace(ctx, workspace)
 	if err != nil {
-		return nil, filesystemWorkspace{}, invocationMetrics{}, "", err
+		return nil, filesystemWorkspace{}, invocationMetrics{}, "", nil, err
 	}
 	return evaluateScriptInFilesystem(ctx, filesystem, script)
 }
 
-func evaluateScriptAt(ctx context.Context, directory, script string) ([]change, filesystemWorkspace, invocationMetrics, string, error) {
+func evaluateScriptAt(ctx context.Context, directory, script string) ([]change, filesystemWorkspace, invocationMetrics, string, []TargetAlias, error) {
 	filesystem, err := validateHostDirectory(ctx, directory)
 	if err != nil {
-		return nil, filesystemWorkspace{}, invocationMetrics{}, "", err
+		return nil, filesystemWorkspace{}, invocationMetrics{}, "", nil, err
 	}
 	return evaluateScriptInFilesystem(ctx, filesystem, script)
 }
 
-func evaluateScriptInFilesystem(ctx context.Context, filesystem filesystemWorkspace, script string) ([]change, filesystemWorkspace, invocationMetrics, string, error) {
+func evaluateScriptInFilesystem(ctx context.Context, filesystem filesystemWorkspace, script string) ([]change, filesystemWorkspace, invocationMetrics, string, []TargetAlias, error) {
 	program, err := parse(script)
 	if err != nil {
 		var events invocationMetrics
 		for _, sourceError := range commandsOf(err) {
 			events.invokeFailure(sourceError.Operation, sourceError.Attempt, sourceError.Reason)
 		}
-		return nil, filesystemWorkspace{}, events, "", err
+		return nil, filesystemWorkspace{}, events, "", nil, err
 	}
 	load := func(path string) (loadedFile, error) {
 		return filesystem.readFile(ctx, path)
@@ -465,11 +658,11 @@ func evaluateScriptInFilesystem(ctx context.Context, filesystem filesystemWorksp
 		}
 		return 0, false, err
 	}
-	changes, commands, report, err := program.evaluate(ctx, filesystem.resolvePath, load, exists)
+	changes, commands, report, aliases, err := program.evaluate(ctx, filesystem.resolvePath, load, exists)
 	if err != nil {
-		return nil, filesystemWorkspace{}, commands, "", err
+		return nil, filesystemWorkspace{}, commands, "", nil, err
 	}
-	return changes, filesystem, commands, report, nil
+	return changes, filesystem, commands, report, aliases, nil
 }
 
 func validateWorkspace(ctx context.Context, workspace Workspace) (filesystemWorkspace, error) {

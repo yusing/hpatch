@@ -207,12 +207,136 @@ func TestHPatch2RejectsInvalidTargetsAtomically(t *testing.T) {
 	}
 }
 
+func TestHPatch2RelocatesUniqueRowsAfterPriorEdits(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+		script  string
+		want    string
+	}{
+		{
+			name:    "line shifted down",
+			content: "inserted\nalpha\nbeta\n",
+			script:  "in file.txt\ntype " + row(1, "alpha") + ` "ALPHA"`,
+			want:    "inserted\nALPHA\nbeta\n",
+		},
+		{
+			name:    "line shifted above prior eof",
+			content: "alpha\n",
+			script:  "in file.txt\ntype " + row(2, "alpha") + ` "ALPHA"`,
+			want:    "ALPHA\n",
+		},
+		{
+			name:    "range endpoints shifted down",
+			content: "inserted\nalpha\nbeta\ngamma\n",
+			script:  "in file.txt\ntype " + row(1, "alpha") + ".." + row(2, "beta") + ` "AB"`,
+			want:    "inserted\nAB\ngamma\n",
+		},
+		{
+			name:    "text anchor shifted down",
+			content: "inserted\nalpha old\nbeta\n",
+			script:  "in file.txt\ntype " + row(1, "alpha old") + ` "old" "new"`,
+			want:    "inserted\nalpha new\nbeta\n",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			writeTestFile(t, root, "file.txt", test.content, 0o644)
+			_, stderr, exitCode := runForTest(root, nil, test.script)
+			if exitCode != 0 {
+				t.Fatalf("Run() = exit %d, stderr %q", exitCode, stderr)
+			}
+			if got := readTestFile(t, root, "file.txt"); got != test.want {
+				t.Fatalf("file = %q, want %q", got, test.want)
+			}
+		})
+	}
+}
+
+func TestHPatch2ResolvesPostEditCoordinateForUnchangedBaselineRow(t *testing.T) {
+	root := t.TempDir()
+	writeTestFile(t, root, "file.txt", "alpha\n}\nbeta\n}\n", 0o644)
+	script := "in file.txt\n" +
+		"type- " + row(1, "alpha") + ` "one\ntwo\n"` + "\n" +
+		"type+ " + row(6, "}") + ` "tail\n"`
+	_, stderr, exitCode := runForTest(root, nil, script)
+	if exitCode != 0 {
+		t.Fatalf("Run() = exit %d, stderr %q", exitCode, stderr)
+	}
+	want := "one\ntwo\nalpha\n}\nbeta\n}\ntail\n"
+	if got := readTestFile(t, root, "file.txt"); got != want {
+		t.Fatalf("file = %q, want %q", got, want)
+	}
+}
+
+func TestHPatch2DoesNotResolvePostEditCoordinateForIntroducedRow(t *testing.T) {
+	root := t.TempDir()
+	writeTestFile(t, root, "file.txt", "alpha\nbeta\n", 0o644)
+	script := "in file.txt\n" +
+		"type+ " + row(1, "alpha") + ` "new\n"` + "\n" +
+		"type " + row(2, "new") + ` "NEW"`
+	_, stderr, exitCode := runForTest(root, nil, script)
+	if exitCode != 1 || !strings.Contains(stderr, "row-stale") {
+		t.Fatalf("Run() = exit %d, stderr %q", exitCode, stderr)
+	}
+	if got := readTestFile(t, root, "file.txt"); got != "alpha\nbeta\n" {
+		t.Fatalf("rejection changed file to %q", got)
+	}
+}
+
+func TestHPatch2RejectsAmbiguousRelocatedRow(t *testing.T) {
+	root := t.TempDir()
+	writeTestFile(t, root, "file.txt", "other\nalpha\nalpha\n", 0o644)
+	before := readTestFile(t, root, "file.txt")
+	script := "in file.txt\ntype " + row(1, "alpha") + ` "ALPHA"`
+	_, stderr, exitCode := runForTest(root, nil, script)
+	if exitCode != 1 || !strings.Contains(stderr, "row-stale") || !strings.Contains(stderr, "ambiguous across 2 rows") {
+		t.Fatalf("Run() = exit %d, stderr %q", exitCode, stderr)
+	}
+	if got := readTestFile(t, root, "file.txt"); got != before {
+		t.Fatalf("rejection changed file to %q", got)
+	}
+}
+
+func TestHPatch2IgnoresRedundantStaleLiteralAnchor(t *testing.T) {
+	root := t.TempDir()
+	writeTestFile(t, root, "file.txt", "alpha\nunique target\nomega\n", 0o644)
+	script := `in file.txt
+type 1:ffff "unique target" "replacement"`
+	_, stderr, exitCode := runForTest(root, nil, script)
+	if exitCode != 0 {
+		t.Fatalf("Run() = exit %d, stderr %q", exitCode, stderr)
+	}
+	if content := readTestFile(t, root, "file.txt"); content != "alpha\nreplacement\nomega\n" {
+		t.Fatalf("content = %q", content)
+	}
+}
+
+func TestHPatch2RejectsStaleLiteralAnchorWhenLiteralIsAmbiguous(t *testing.T) {
+	root := t.TempDir()
+	before := "target\nanchor\ntarget\n"
+	writeTestFile(t, root, "file.txt", before, 0o644)
+	script := `in file.txt
+type 2:ffff "target" "replacement"`
+	_, stderr, exitCode := runForTest(root, nil, script)
+	if exitCode == 0 {
+		t.Fatalf("Run() succeeded, stderr %q", stderr)
+	}
+	if !strings.Contains(stderr, "reason row-stale") {
+		t.Fatalf("stderr = %q", stderr)
+	}
+	if content := readTestFile(t, root, "file.txt"); content != before {
+		t.Fatalf("content = %q, want unchanged %q", content, before)
+	}
+}
+
 func TestHPatch2NewFileInitializerIsImmediate(t *testing.T) {
-	tests := []struct{ name, script string }{
-		{"existing", "in existing.txt\ntype \"new\""},
-		{"intervening", "new new.txt\nin existing.txt\nin new.txt\ntype \"new\""},
-		{"second", "new new.txt\ntype \"one\"\ntype \"two\""},
-		{"target new", "new new.txt\ntype \"one\\n\"\ntype " + row(1, "one") + ` "ONE"`},
+	tests := []struct{ name, script, wantMessage string }{
+		{"existing", "in existing.txt\ntype \"new\"", "bare type VALUE only initializes the immediately preceding new; editing an existing file requires a line, range, or text target"},
+		{"intervening", "new new.txt\nin existing.txt\nin new.txt\ntype \"new\"", ""},
+		{"second", "new new.txt\ntype \"one\"\ntype \"two\"", ""},
+		{"target new", "new new.txt\ntype \"one\\n\"\ntype " + row(1, "one") + ` "ONE"`, ""},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -221,6 +345,9 @@ func TestHPatch2NewFileInitializerIsImmediate(t *testing.T) {
 			_, stderr, exitCode := runForTest(root, nil, test.script)
 			if exitCode != 1 || !strings.Contains(stderr, "initialization") {
 				t.Fatalf("Run() = exit %d, stderr %q", exitCode, stderr)
+			}
+			if test.wantMessage != "" && !strings.Contains(stderr, test.wantMessage) {
+				t.Fatalf("stderr = %q, want message %q", stderr, test.wantMessage)
 			}
 			if got := readTree(t, root); !reflect.DeepEqual(got, map[string]string{"existing.txt": "old\n"}) {
 				t.Fatalf("rejection changed tree: %#v", got)

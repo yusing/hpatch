@@ -75,8 +75,9 @@ func TestCalculateHPatchMetricRecordUsesExactCallerPayloads(t *testing.T) {
 
 func TestCalculateHPatchMetricRecordUsesEmptyFailureBaseline(t *testing.T) {
 	inputs := hpatchMetricInputs{
-		emittedScript: "type 12:9645..18:4b7b \"replacement\"\n",
-		diagnostic:    "type: command 2, reason language-syntax: rejected\nrepair context\n\nUse hpatch without `in` to patch the rejected script.\n",
+		emittedScript:         "type 12:9645..18:4b7b \"replacement\"\n",
+		diagnostic:            "type: command 2, reason language-syntax: rejected\nrepair context\n\nUse hpatch without `in` to patch the rejected script.\n",
+		confirmedAliasRewrite: true,
 		rejections: []hpatch.HostRejection{{
 			Command: 2, SourceLine: 2, Operation: "type", Target: "range",
 			Reason: "language-syntax", Path: "calc.go", GeneratedLine: 8, GeneratedColumn: 3,
@@ -113,6 +114,9 @@ func TestCalculateHPatchMetricRecordUsesEmptyFailureBaseline(t *testing.T) {
 	}
 	if !reflect.DeepEqual(record.Rejections, inputs.rejections) {
 		t.Fatalf("rejections = %#v, want %#v", record.Rejections, inputs.rejections)
+	}
+	if !record.ConfirmedAliasRewrite {
+		t.Fatal("failure record lost confirmed alias rewrite attribution")
 	}
 	if record.HPatchTokens != 0 || record.ApplyPatchTokens != 0 || record.ReportInputTokens != 0 {
 		t.Fatalf("failure record = %+v", record)

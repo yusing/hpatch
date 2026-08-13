@@ -25,13 +25,15 @@ func (m InvocationMetrics) EvaluatedCommandCount() uint64 {
 // HostMetricRecord is the complete accounting entry calculated by the host.
 // Invocation counters originate in hpatch; every token count and the session
 // attribution originate at the host seam where the visible payload is known.
-// Rejections and attempt identity are transient host telemetry and are not
-// written to metrics.bin.
+// Rejections, their target-alias relations, attempt identity, and confirmed
+// alias rewrite attribution are transient host telemetry and are not written
+// to metrics.bin.
 type HostMetricRecord struct {
 	Invocation               InvocationMetrics
 	Rejections               []HostRejection
 	Attempt                  AttemptMetadata
 	SessionID                string
+	ConfirmedAliasRewrite    bool
 	HPatchTokens             uint64
 	ApplyPatchTokens         uint64
 	IneffectiveHPatchTokens  uint64

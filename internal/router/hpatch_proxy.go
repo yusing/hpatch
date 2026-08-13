@@ -53,6 +53,7 @@ type hpatchTranslationResult struct {
 	failures   []hpatch.HostFailure
 	invocation hpatch.InvocationMetrics
 	change     hpatch.HostChange
+	aliases    []hpatch.TargetAlias
 }
 
 type hpatchTranslator interface {
@@ -161,6 +162,7 @@ func hpatchTranslationResultOf(translated hpatch.HostTranslation) hpatchTranslat
 		failures:   slices.Clone(translated.Failures),
 		invocation: translated.Invocation,
 		change:     translated.Change,
+		aliases:    slices.Clone(translated.TargetAliases),
 	}
 }
 
@@ -202,6 +204,8 @@ type hpatchHistory struct {
 	// looks past it to the rejected script it was trying to repair.
 	unevaluated      bool
 	alreadySatisfied bool
+	confirmed        bool
+	aliases          []hpatch.TargetAlias
 	// sequence orders retained calls within a session. Calls are keyed by ID in
 	// an unordered map, so recovery needs an explicit order to identify the
 	// latest rejected script.
@@ -1001,6 +1005,9 @@ func (p *hpatchProxy) rememberBatch(sessionID string, histories map[string]hpatc
 		for _, rejection := range history.rejections {
 			history.bytes += hpatchRejectionTextBytes(rejection)
 		}
+		for _, alias := range history.aliases {
+			history.bytes += len(alias.Path) + len(alias.Before) + len(alias.After)
+		}
 		prepared[callID] = history
 	}
 	if len(prepared) > maxSessionTurns {
@@ -1244,6 +1251,44 @@ func (p *hpatchProxy) history(sessionID, callID string) (hpatchHistory, bool) {
 	return history, ok
 }
 
+func (p *hpatchProxy) confirmHistory(sessionID, callID, output string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	session := p.sessions[sessionID]
+	if session == nil {
+		return
+	}
+	history, ok := session.calls[callID]
+	if !ok || history.translationError != "" || output != history.report {
+		return
+	}
+	history.confirmed = true
+	session.calls[callID] = history
+}
+
+func (p *hpatchProxy) targetAliases(sessionID, root string) []hpatch.TargetAlias {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	session := p.sessions[sessionID]
+	if session == nil {
+		return nil
+	}
+	histories := make([]hpatchHistory, 0, len(session.calls))
+	for _, history := range session.calls {
+		if history.root == root && (history.confirmed || history.applied) && len(history.aliases) != 0 {
+			histories = append(histories, history)
+		}
+	}
+	slices.SortFunc(histories, func(first, second hpatchHistory) int {
+		return cmp.Compare(first.sequence, second.sequence)
+	})
+	var aliases []hpatch.TargetAlias
+	for _, history := range histories {
+		aliases = append(aliases, history.aliases...)
+	}
+	return aliases
+}
+
 // reconcileInputPrefix replays retained hpatch calls into the request's input
 // and prunes the retained calls the conversation no longer shows.
 func (p *hpatchProxy) reconcileInputPrefix(request *parsedResponsesRequest, sessionID string) error {
@@ -1270,6 +1315,7 @@ func (p *hpatchProxy) reconcileInputPrefix(request *parsedResponsesRequest, sess
 		newestRetained = max(newestRetained, history.sequence)
 		carrierKind := history.effectiveCarrierKind()
 		if itemType == carrierOutputItemType(carrierKind) {
+			p.confirmHistory(sessionID, callID, jsonString(item, "output"))
 			continue
 		}
 		if itemType != carrierItemType(carrierKind) {
@@ -1360,7 +1406,13 @@ func (t *hpatchResponseTransform) translate(callID, input string, upstreamItem m
 		return hpatchHistory{}, fmt.Errorf("hpatch call %q script exceeds %d bytes", callID, maxHPatchScriptBytes)
 	}
 
-	evaluated := input
+	evaluated, aliasDiagnostics, err := hpatch.RewriteTargetAliasesWithDiagnostics(input, t.proxy.targetAliases(t.historySessionID, t.directory))
+	aliasRelationsKnown := err == nil
+	if err != nil {
+		// Preserve evaluator-owned syntax diagnostics for malformed scripts.
+		evaluated = input
+		aliasDiagnostics = nil
+	}
 	attemptMetadata := hpatch.AttemptMetadata{
 		SessionID:       t.sessionID,
 		Title:           t.proxy.titles.title(t.sessionID),
@@ -1376,7 +1428,6 @@ func (t *hpatchResponseTransform) translate(callID, input string, upstreamItem m
 
 	applied := false
 	var translated hpatchTranslationResult
-	var err error
 	retainedStart := len(evaluated) - len(strings.TrimLeft(evaluated, "\r\n"))
 	retainedScript := evaluated
 	retainedBody, retained := strings.CutPrefix(evaluated[retainedStart:], "in "+shellArtifactPrefix)
@@ -1419,12 +1470,16 @@ func (t *hpatchResponseTransform) translate(callID, input string, upstreamItem m
 		if evaluatorRejected {
 			diagnostic += hpatchRecoveryGuidance(evaluated, translated.rejections, translated.failures, false)
 		}
+		metricRejections, confirmedAliasRewrite := rejectedAliasDiagnostics(
+			translated.rejections, aliasDiagnostics, aliasRelationsKnown,
+		)
 		if err := t.recordMetrics(hpatchMetricInputs{
-			invocation:    translated.invocation,
-			rejections:    translated.rejections,
-			attempt:       attemptMetadata,
-			emittedScript: input,
-			diagnostic:    diagnostic,
+			invocation:            translated.invocation,
+			rejections:            metricRejections,
+			attempt:               attemptMetadata,
+			emittedScript:         input,
+			diagnostic:            diagnostic,
+			confirmedAliasRewrite: confirmedAliasRewrite,
 		}); err != nil {
 			return hpatchHistory{}, err
 		}
@@ -1472,6 +1527,8 @@ func (t *hpatchResponseTransform) translate(callID, input string, upstreamItem m
 		patch:            patchText,
 		applied:          applied,
 		alreadySatisfied: alreadySatisfied,
+		confirmed:        applied,
+		aliases:          slices.Clone(translated.aliases),
 		carrierName:      t.codeModeToolName,
 		report:           hpatchReport(translated.report, translated.diagnostic),
 		upstreamItem:     maps.Clone(upstreamItem),
@@ -1480,6 +1537,31 @@ func (t *hpatchResponseTransform) translate(callID, input string, upstreamItem m
 	}
 	t.recordLocal(callID, &history)
 	return history, nil
+}
+
+func rejectedAliasDiagnostics(
+	rejections []hpatch.HostRejection,
+	diagnostics []hpatch.TargetAliasDiagnostic,
+	relationsKnown bool,
+) ([]hpatch.HostRejection, bool) {
+	classified := slices.Clone(rejections)
+	confirmedRewrite := false
+	for index := range classified {
+		rejection := &classified[index]
+		if !relationsKnown || (rejection.Target != "line" && rejection.Target != "range") {
+			continue
+		}
+		rejection.TargetAliasRelation = hpatch.TargetAliasRelationNone
+		for _, diagnostic := range diagnostics {
+			if diagnostic.Command != rejection.Command {
+				continue
+			}
+			rejection.TargetAliasRelation = diagnostic.Relation
+			confirmedRewrite = confirmedRewrite || diagnostic.Rewritten
+			break
+		}
+	}
+	return classified, confirmedRewrite
 }
 
 func (t *hpatchResponseTransform) translateRecovery(
@@ -1561,6 +1643,9 @@ func (t *hpatchResponseTransform) translateRecovered(
 	priorAttempts []hpatchHistory,
 	upstreamItem map[string]json.RawMessage,
 ) (hpatchHistory, error) {
+	_, aliasDiagnostics, aliasErr := hpatch.RewriteTargetAliasesWithDiagnostics(
+		evaluated, t.proxy.targetAliases(t.historySessionID, t.directory),
+	)
 	attemptContext := hpatch.WithAttemptMetadata(t.ctx, attemptMetadata)
 	translated, err := t.proxy.translator.Translate(attemptContext, t.directory, evaluated)
 	if err != nil {
@@ -1578,9 +1663,12 @@ func (t *hpatchResponseTransform) translateRecovered(
 		if evaluatorRejected {
 			diagnostic += hpatchRecoveryGuidance(evaluated, translated.rejections, translated.failures, true)
 		}
+		metricRejections, _ := rejectedAliasDiagnostics(
+			translated.rejections, aliasDiagnostics, aliasErr == nil,
+		)
 		if err := t.recordMetrics(hpatchMetricInputs{
 			invocation:    translated.invocation,
-			rejections:    translated.rejections,
+			rejections:    metricRejections,
 			attempt:       attemptMetadata,
 			emittedScript: emitted,
 			emittedTool:   hpatchRecoveryToolName,
@@ -1627,6 +1715,7 @@ func (t *hpatchResponseTransform) translateRecovered(
 		evaluated:        evaluated,
 		patch:            patchText,
 		alreadySatisfied: alreadySatisfied,
+		aliases:          slices.Clone(translated.aliases),
 		carrierName:      t.codeModeToolName,
 		report:           hpatchReport(translated.report, translated.diagnostic),
 		upstreamItem:     maps.Clone(upstreamItem),
