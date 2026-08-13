@@ -5,6 +5,21 @@ benchmark_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 model=${MODEL:-gpt-5.6-sol}
 reasoning_effort=${REASONING_EFFORT:-medium}
 repetitions=${REPETITIONS:-4}
+benchmark_mode=${BENCHMARK_MODE:-paired}
+control_baseline_dir=${CONTROL_BASELINE_DIR:-}
+case "$benchmark_mode" in
+	paired) ;;
+	hpatch-only)
+		if ((repetitions != 1)); then
+			printf 'bench.sh: hpatch-only mode requires REPETITIONS=1; run separate trials against the same baseline\n' >&2
+			exit 2
+		fi
+		;;
+	*)
+		printf 'bench.sh: BENCHMARK_MODE must be paired or hpatch-only, got %s\n' "$benchmark_mode" >&2
+		exit 2
+		;;
+esac
 task_id=etcd-range-stream
 task="$benchmark_root/tasks/$task_id"
 task_manifest="$task/task.json"
@@ -66,6 +81,9 @@ baseline_output_contains=$(jq -er '.graders[0].baseline_output_contains' "$task_
 }
 results_root="$benchmark_root/results"
 mkdir -p "$results_root"
+if [[ -z $control_baseline_dir ]]; then
+	control_baseline_dir="$results_root/c07600a74ac93d1ac6c38c47b80d85519458bc9f-1"
+fi
 run_dir=$(mktemp -d "$results_root/.staging-XXXXXX")
 dependency_cache=$(mktemp -d "$results_root/.dependency-cache-XXXXXX")
 dependency_workspace=
@@ -119,14 +137,48 @@ collect_artifacts() {
 	if [[ $started != true || $collected == true ]]; then
 		return
 	fi
-	"${compose[@]}" logs --no-color control >"$control_log" 2>&1 || true
+	if [[ $benchmark_mode == paired ]]; then
+		"${compose[@]}" logs --no-color control >"$control_log" 2>&1 || true
+		collect_router_metrics http://127.0.0.1:8081/api/metrics "$control_metrics" ||
+			metrics_collected=false
+	fi
 	"${compose[@]}" logs --no-color hpatch >"$hpatch_log" 2>&1 || true
-	collect_router_metrics http://127.0.0.1:8081/api/metrics "$control_metrics" ||
-		metrics_collected=false
 	collect_router_metrics http://127.0.0.1:8082/api/metrics "$hpatch_metrics" ||
 		metrics_collected=false
 	"${compose[@]}" exec -T hpatch hpatch gain >"$gain_report" 2>&1 || true
 	collected=$metrics_collected
+}
+
+import_control_baseline() {
+	local baseline_result="$control_baseline_dir/artifacts/$task_id/${task_id}-control-r001/result.json"
+	local destination="$run_dir/artifacts/$task_id/${task_id}-control-r001"
+	local temporary="$destination/result.json.tmp"
+
+	for path in "$control_baseline_dir/summary.md" "$control_baseline_dir/control-metrics.json" "$baseline_result"; do
+		if [[ ! -s $path ]]; then
+			printf "bench.sh: control baseline artifact is missing or empty: %s\n" "$path" >&2
+			return 1
+		fi
+	done
+	if ! jq -e --arg task "$task_id" --arg model "$model" --arg effort "$reasoning_effort" \
+		".task_id == \$task and .arm == \"control\" and .model == \$model and .reasoning_effort == \$effort and .task_pass == true" \
+		"$baseline_result" >/dev/null; then
+		printf "bench.sh: control baseline does not match the task, model, reasoning, and passing-result contract: %s\n" "$baseline_result" >&2
+		return 1
+	fi
+	mkdir -p "$destination"
+	cp -a -- "$control_baseline_dir/artifacts/$task_id/${task_id}-control-r001/." "$destination/"
+	cp -- "$control_baseline_dir/control-metrics.json" "$control_metrics"
+	if [[ -f $control_baseline_dir/control-router.log ]]; then
+		cp -- "$control_baseline_dir/control-router.log" "$control_log"
+	else
+		: >"$control_log"
+	fi
+	jq --arg previous "$control_baseline_dir/" --arg current "$run_dir/" \
+		--arg summary "$control_baseline_dir/summary.md" \
+		"walk(if type == \"string\" and startswith(\$previous) then \$current + ltrimstr(\$previous) else . end) | .imported_control_baseline = {summary: \$summary}" \
+		"$baseline_result" >"$temporary"
+	mv -f -- "$temporary" "$destination/result.json"
 }
 
 normalize_hpatch_config_ownership() {
@@ -375,7 +427,7 @@ trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
-for executable in chmod curl date diff docker git go grep id jq mv sha256sum sort tar timeout; do
+for executable in chmod cp curl date diff docker git go grep id jq mv sha256sum sort tar timeout; do
 	if ! command -v "$executable" >/dev/null; then
 		printf 'bench.sh: %s is required\n' "$executable" >&2
 		exit 1
@@ -959,6 +1011,19 @@ run_pair() {
 	return "$pair_status"
 }
 
+run_hpatch_only() {
+	local repetition=$1
+	local pair_canceled=false
+	local pair_cancel_status=143
+	local active_agent_pid=
+
+	trap - EXIT
+	trap 'cancel_pair 130' INT
+	trap 'cancel_pair 143' TERM
+	run_agent hpatch "$repetition" 2
+}
+
+
 mkdir -p "$run_dir/work" "$run_dir/hpatch-config" "$run_dir/hpatch-runtime" "$instruction_dir"
 : >"$results"
 
@@ -974,9 +1039,16 @@ validate_revision base "$base_commit" fail
 validate_revision oracle "$oracle_commit" pass
 
 started=true
-"${compose[@]}" up --detach --wait control hpatch
+if [[ $benchmark_mode == paired ]]; then
+	"${compose[@]}" up --detach --wait control hpatch
+else
+	import_control_baseline
+	"${compose[@]}" up --detach --wait hpatch
+fi
 configure_hpatch_agent_path
-qualify_agent_isolation control-agent control 8081 hpatch 8082
+if [[ $benchmark_mode == paired ]]; then
+	qualify_agent_isolation control-agent control 8081 hpatch 8082
+fi
 qualify_agent_isolation hpatch-agent hpatch 8082 control 8081
 if [[ $dependency_workspace == "$run_dir"/dependency-source-* ]]; then
 	rm -rf -- "$dependency_workspace"
@@ -988,7 +1060,11 @@ fi
 
 benchmark_status=0
 for ((repetition = 1; repetition <= repetitions; repetition += 1)); do
-	run_pair "$repetition" &
+	if [[ $benchmark_mode == paired ]]; then
+		run_pair "$repetition" &
+	else
+		run_hpatch_only "$repetition" &
+	fi
 	worker_pids+=("$!")
 done
 for pid in "${worker_pids[@]}"; do
@@ -999,9 +1075,13 @@ done
 worker_pids=()
 
 merge_results
-if ((${#result_files[@]} != repetitions * 2)); then
+expected_results=$((repetitions * 2))
+if [[ $benchmark_mode == hpatch-only ]]; then
+	expected_results=$((repetitions + 1))
+fi
+if ((${#result_files[@]} != expected_results)); then
 	printf 'bench.sh: found %d result records, want %d\n' \
-		"${#result_files[@]}" "$((repetitions * 2))" >&2
+		"${#result_files[@]}" "$expected_results" >&2
 	benchmark_status=1
 fi
 

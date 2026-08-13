@@ -8,12 +8,14 @@ Docker, Codex, Git, the Go test grader, metrics endpoints, and `hpatch gain`.
 No Go or Python benchmark runner or process-execution abstraction is part of the
 benchmark.
 
-All configured repetitions run concurrently; the default is four. Within each
-repetition, one control and one hpatch attempt run sequentially, with odd and
-even repetitions alternating which arm runs first. Both attempts use
-the same pinned Codex image, model, prompt, historical etcd base, full-access
-Codex sandbox setting, approval policy, timeout, authentication mount,
-Codex-owned workspace metadata, and disposable-container setup.
+The default paired mode runs all configured repetitions concurrently; the default is four.
+Within each repetition, one control and one hpatch attempt run sequentially, with odd and even
+repetitions alternating which arm runs first. Hpatch-only mode accepts exactly one repetition,
+runs only the treatment model attempt, and imports one matching passing control record and
+control metrics from a complete published baseline. The imported record is labeled with its
+source summary and is never counted as a new model attempt. Both modes use the same pinned Codex
+image, model, prompt, historical etcd base, full-access Codex sandbox setting, approval policy,
+timeout, authentication mount, and disposable-container setup.
 
 Before either arm starts, a setup-only container downloads Go dependencies from a
 history-free base snapshot into a temporary module cache. The workflow rejects the cache if
@@ -68,29 +70,31 @@ exits nonzero after collecting their evidence. User cancellation still terminate
 active workers through the evidence-preserving cleanup path. Failures retain the
 available diff, Codex diagnostics, grader diagnostics, and router evidence.
 
-Each concurrent attempt writes one private JSON object containing arm and pair
-order, selected base instruction artifact and digest, elapsed time, token usage,
-Codex item counts and terminal error, changed and unauthorized paths, literal
-diff and diff path, grader outcome, and the final pass decision. The parent
-deterministically merges all `2 * repetitions` objects after a complete run, or
-all retained objects after external cancellation, into `results.jsonl`.
+Each measured attempt writes one private JSON object containing arm and pair order, selected
+base instruction artifact and digest, elapsed time, token usage, Codex item counts and terminal
+error, changed and unauthorized paths, literal diff and diff path, grader outcome, and final
+pass decision. The paired parent deterministically merges all `2 * repetitions` objects.
+Hpatch-only mode merges its one measured treatment object with the labeled imported control
+object. External cancellation merges all retained objects.
 
-After the paired attempts, the shell retains control and treatment router
-metrics and an isolated treatment `hpatch gain` report. A gain of zero is not an
-editing-performance result when no treatment request reached hpatch.
+After measured attempts, the shell retains treatment router metrics and an isolated treatment
+`hpatch gain` report. Paired mode also records fresh control router metrics; Hpatch-only mode
+copies the matching baseline control metrics. A gain of zero is not an editing-performance
+result when no treatment request reached hpatch.
 The generated summary joins each attempt's thread ID to router session metrics and reports
 model requests, command executions, hread calls, client-visible file-change items, routed
 hpatch translations and rejections, and rejected-call diagnostic tokens. It separately shows
 semantic edit-payload reduction, end-to-end agent output change, and estimated non-edit
 output so payload savings cannot be mistaken for whole-agent savings. A client stderr
 translation envelope is labeled separately from an hpatch command rejection. When the router
-artifact supports it, the summary lists bounded attempt sequences with payload mode
-(`complete` or `recovery`). It lists evaluator rejection evidence by repetition, command,
-physical source line, operation, target kind, multiline value row, stable reason, path,
-and generated Go line and column when applicable. An older artifact without either bounded
-collection is labeled unavailable rather than reported as zero activity. When lifetime
-routed-call counters exceed retained attempts, retention-dependent rejected-script recovery
-adoption measures are labeled unavailable rather than reported as full-run rates.
+artifact supports it, the summary groups bounded attempts into logical edit chains. Each chain
+combines the initial hpatch payload and all corrections against one final or retained failed
+`apply_patch` comparator; it never renders a separate recovery row. The report lists evaluator
+rejection evidence by repetition, command, physical source line, operation, target kind,
+multiline value row, stable reason, path, and generated Go line and column. An older artifact
+without either bounded collection is labeled unavailable rather than reported as zero activity.
+When lifetime routed-call counters exceed retained attempts, retention-dependent chain measures
+are labeled unavailable rather than reported as full-run rates.
 
 Acceptance:
 

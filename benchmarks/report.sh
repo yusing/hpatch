@@ -187,8 +187,11 @@ aggregate_agent_interactions() {
 {
 	printf '# Benchmark report — commit `%s`\n\n' "$commit"
 	printf 'Task: `%s`  \n' "$task_id"
-	printf 'Configuration: `%s`, %s reasoning, %s repetitions.\n\n' \
-		"$model" "$reasoning_effort" "$repetitions"
+	printf 'Configuration: `%s`, %s reasoning, %s measured Hpatch repetition(s).\n\n' \
+		"$model" "$reasoning_effort" "$(jq -sr '[.[] | select(.arm == "hpatch") | .repetition] | unique | length' "$results")"
+if baseline_summary=$(jq -sr '[.[] | select(.arm == "control") | .imported_control_baseline.summary][0] // empty' "$results") && [[ -n $baseline_summary ]]; then
+	printf 'Control values are imported from the fixed published baseline `%s`; this run executed only Hpatch.\n\n' "$baseline_summary"
+fi
 
 	printf '## Per repetition\n\n'
 	printf '| Rep | Order | Control result | Hpatch result | Control search errors | Hpatch search errors | Hread errors | Translation envelope errors | Wrapper errors |\n'

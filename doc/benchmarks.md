@@ -11,23 +11,24 @@ never available to an agent.
 
 ## Run it
 
-From the repository root:
+From the repository root, run one Hpatch attempt against the fixed published control:
 
 ```sh
-bash benchmarks/bench.sh
+BENCHMARK_MODE=hpatch-only REPETITIONS=1 bash benchmarks/bench.sh
 ```
 
-The default model is `gpt-5.6-sol` with medium reasoning. Override the model with:
+The mode imports the passing control record and control-router metrics from
+`benchmarks/results/c07600a74ac93d1ac6c38c47b80d85519458bc9f-1`, runs no control model
+attempt, and labels the imported summary path in the new report. `CONTROL_BASELINE_DIR` may
+select another complete matching passing baseline. The baseline must match the task, model, and
+reasoning effort. Hpatch-only mode requires one repetition; run separate invocations to collect
+independent treatment trials against the same baseline.
 
-```sh
-MODEL=gpt-5.6-sol bash benchmarks/bench.sh
-```
-
-The script runs four pairs, eight model attempts in total. `REPETITIONS` and
-`REASONING_EFFORT` override those defaults. The script prints the retained
-temporary run directory and every agent patch when the run finishes. A nonzero
-exit means at least one attempt or infrastructure check failed; artifacts are
-still retained.
+Without `BENCHMARK_MODE`, the script runs the paired experiment: four pairs and eight model
+attempts. The default model is `gpt-5.6-sol` with medium reasoning. `MODEL`,
+`REASONING_EFFORT`, and paired-mode `REPETITIONS` override those defaults. The script prints the
+retained run directory and every agent patch. A nonzero exit means an attempt or infrastructure
+check failed; artifacts are still retained.
 
 Requirements on the host are checked before the run:
 
