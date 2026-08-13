@@ -11,11 +11,21 @@ import (
 
 const hpatchRecoveryContextLines = 2
 
-func hpatchRecoveryGuidance(script string, rejections []hpatch.HostRejection) string {
-	return codexinstructions.RecoveryGuidance(hpatchRecoveryReferences(script, rejections))
+func hpatchRecoveryGuidance(
+	script string,
+	rejections []hpatch.HostRejection,
+	failures []hpatch.HostFailure,
+	refreshed bool,
+) string {
+	return codexinstructions.RecoveryGuidance(hpatchRecoveryReferences(script, rejections, failures, refreshed))
 }
 
-func hpatchRecoveryReferences(script string, rejections []hpatch.HostRejection) string {
+func hpatchRecoveryReferences(
+	script string,
+	rejections []hpatch.HostRejection,
+	failures []hpatch.HostFailure,
+	refreshed bool,
+) string {
 	commands := recoveryCommands(script)
 	relevant := make(map[int][]hpatch.HostRejection)
 	for _, rejection := range rejections {
@@ -23,20 +33,42 @@ func hpatchRecoveryReferences(script string, rejections []hpatch.HostRejection) 
 			relevant[rejection.Command] = append(relevant[rejection.Command], rejection)
 		}
 	}
+	scopes := make(map[int]string)
+	for _, failure := range failures {
+		if failure.Command > 0 && failure.Scope != "" {
+			scopes[failure.Command] = failure.Scope
+		}
+	}
+
 	var output strings.Builder
-	output.WriteString("Recoverable rejected-script commands:\n")
+	if refreshed {
+		output.WriteString("This re-rejection replaced the recovery baseline. Every C... and V... handle from earlier diagnostics is stale; use only the current handles below.\n\n")
+	}
+	output.WriteString("Current rejected-script command manifest (complete):\n")
 	for _, command := range commands {
-		if len(relevant) != 0 {
-			if _, ok := relevant[command.index]; !ok {
-				continue
-			}
+		fmt.Fprintf(&output, "    %s %s", command.handle, hpatchRecoveryCommandSummary(command))
+		if scope := scopes[command.index]; scope != "" {
+			fmt.Fprintf(&output, " [correction scope: %s]", scope)
 		}
-		fmt.Fprintf(&output, "\n%s\n", command.handle)
-		for line := range strings.SplitSeq(command.command, "\n") {
-			fmt.Fprintf(&output, "    %s\n", line)
+		if _, ok := relevant[command.index]; ok {
+			output.WriteString(" [rejected]")
 		}
+		output.WriteByte('\n')
+	}
+
+	if len(relevant) != 0 {
+		output.WriteString("\nLocalized recovery context:\n")
+	}
+	for _, command := range commands {
 		rejected, selected := relevant[command.index]
-		if !selected || len(command.valueRows) == 0 {
+		if !selected {
+			continue
+		}
+		fmt.Fprintf(&output, "\n%s %s\n", command.handle, hpatchRecoveryCommandSummary(command))
+		if scope := scopes[command.index]; scope != "" {
+			fmt.Fprintf(&output, "    correction scope: %s\n", scope)
+		}
+		if len(command.valueRows) == 0 {
 			continue
 		}
 		output.WriteString("    value rows:\n")
@@ -49,8 +81,31 @@ func hpatchRecoveryReferences(script string, rejections []hpatch.HostRejection) 
 			fmt.Fprintf(&output, "        %s %s\n", row.handle, row.value)
 		}
 	}
-	output.WriteString("\nUse functions.hpatch_recover with these handles.\n")
+	output.WriteString("\nSend only handle-based corrections to functions.hpatch_recover. Put every known independent correction in one payload; do not resubmit the complete rejected script.\n")
 	return output.String()
+}
+
+func hpatchRecoveryCommandSummary(command recoveryCommandReference) string {
+	if command.parts.parsed {
+		summary := command.parts.operation
+		if command.parts.target != "" {
+			summary += " " + command.parts.target
+		}
+		if len(command.valueRows) != 0 {
+			return fmt.Sprintf("%s [%d value rows]", summary, len(command.valueRows))
+		}
+		return summary + " [inline value]"
+	}
+	header, _, _ := strings.Cut(command.command, "\n")
+	operation, operands := recoveryToken(header)
+	if operation == "type" || operation == "type-" || operation == "type+" {
+		target, _ := recoveryToken(operands)
+		if recoveryRowOrRange(target) {
+			return operation + " " + target + " [malformed value]"
+		}
+		return operation + " [malformed operands]"
+	}
+	return header
 }
 
 func hpatchRecoveryValueRows(command recoveryCommandReference, rejections []hpatch.HostRejection) []int {

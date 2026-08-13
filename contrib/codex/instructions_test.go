@@ -34,15 +34,15 @@ func TestInstructionsOwnCompleteShellWorkflow(t *testing.T) {
 }
 
 func TestRecoveryGuidanceRendersDynamicReferences(t *testing.T) {
-	const references = "2:abcd type 1:ffff \"fixed\"\n"
-	const want = "\n" + references
+	const references = "Current rejected-script command manifest (complete):\n"
+	const want = "\nRepair the retained rejected script with the smallest handle-local operations. Submit every known independent correction in one atomic recovery payload, one operation per line. A re-rejection emits a new authoritative manifest; use only its handles. Resubmit a complete script through functions.hpatch only when the diagnostic requires a new script or transaction.\n\n" + references
 	if got := RecoveryGuidance(references); got != want {
 		t.Fatalf("RecoveryGuidance() = %q, want %q", got, want)
 	}
 }
 
 func TestRecoveryGuidanceWithoutReferences(t *testing.T) {
-	const want = "\n"
+	const want = "\nRepair the retained rejected script with the smallest handle-local operations. Submit every known independent correction in one atomic recovery payload, one operation per line. A re-rejection emits a new authoritative manifest; use only its handles. Resubmit a complete script through functions.hpatch only when the diagnostic requires a new script or transaction.\n\n"
 	if got := RecoveryGuidance(""); got != want {
 		t.Fatalf("RecoveryGuidance() = %q, want %q", got, want)
 	}

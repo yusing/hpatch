@@ -139,10 +139,25 @@ Changed Go files are parsed and formatted before success; do not run redundant `
 Supported Python, JavaScript, and TypeScript files are syntax-checked when Tree-sitter support
 is available; supported indentation corrections are automatic. Relative paths use the selected
 base directory when available; without one, relative paths reject; parents for `new` or `mv`
-must exist. Routed rejection diagnostics may expose `C...` command and `V...` value-row handles.
-Use `functions.hpatch_recover` to repair that immutable rejected script. A malformed, stale,
-conflicting, or incomplete recovery changes neither the workspace nor the retained rejected
-script. The standalone CLI and ordinary hpatch grammar have no recovery mode.
+must exist. Routed rejection diagnostics expose a complete current `C...` command manifest and
+bounded `V...` value-row context. Use `functions.hpatch_recover` for the smallest correction
+against that immutable rejected script. Put every known independent correction in one recovery
+payload, one operation per line:
+
+```text
+C2:abcd target 37:8c2f
+C4:ef01 operation type+
+C4:ef01 value "// inserted\n"
+C7:2345 V9:6789 value "corrected body row"
+C8:aaaa replace type 41:bbbb "replacement"
+C3:cccc before in another.go
+```
+
+Use the current handles exactly. A re-rejection replaces the baseline and makes every handle
+from the prior diagnostic stale. Resubmit a complete HPATCH/2 script only when the diagnostic
+requires a new script or transaction. A malformed, stale, conflicting, or incomplete recovery
+changes neither the workspace nor the retained rejected script. The standalone CLI and ordinary
+hpatch grammar have no recovery mode.
 
 ## File reading, searching, inspection, and shell commands
 

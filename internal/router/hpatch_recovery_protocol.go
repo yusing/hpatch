@@ -15,8 +15,8 @@ import (
 	"github.com/yusing/hpatch/internal/hpatchsyntax"
 )
 
-const hpatchRecoveryDescription = `Repair the latest rejected hpatch script using its emitted C... and V... handles.
-Every operation resolves against that immutable rejected script. A malformed, stale, conflicting, or incomplete call changes nothing.`
+const hpatchRecoveryDescription = `Repair the latest rejected hpatch script with handle-local operations.
+Submit every known correction in one payload. Every operation resolves against the immutable rejected script; invalid recovery changes nothing.`
 
 //go:embed hpatch_recovery_grammar.lark
 var hpatchRecoveryGrammar string

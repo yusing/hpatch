@@ -50,6 +50,7 @@ type hpatchTranslationResult struct {
 	report     string
 	diagnostic string
 	rejections []hpatch.HostRejection
+	failures   []hpatch.HostFailure
 	invocation hpatch.InvocationMetrics
 	change     hpatch.HostChange
 }
@@ -157,6 +158,7 @@ func hpatchTranslationResultOf(translated hpatch.HostTranslation) hpatchTranslat
 		report:     translated.Report,
 		diagnostic: translated.Diagnostic,
 		rejections: slices.Clone(translated.Rejections),
+		failures:   slices.Clone(translated.Failures),
 		invocation: translated.Invocation,
 		change:     translated.Change,
 	}
@@ -1415,7 +1417,7 @@ func (t *hpatchResponseTransform) translate(callID, input string, upstreamItem m
 			diagnostic = err.Error()
 		}
 		if evaluatorRejected {
-			diagnostic += hpatchRecoveryGuidance(evaluated, translated.rejections)
+			diagnostic += hpatchRecoveryGuidance(evaluated, translated.rejections, translated.failures, false)
 		}
 		if err := t.recordMetrics(hpatchMetricInputs{
 			invocation:    translated.invocation,
@@ -1574,7 +1576,7 @@ func (t *hpatchResponseTransform) translateRecovered(
 			diagnostic = err.Error()
 		}
 		if evaluatorRejected {
-			diagnostic += hpatchRecoveryGuidance(evaluated, translated.rejections)
+			diagnostic += hpatchRecoveryGuidance(evaluated, translated.rejections, translated.failures, true)
 		}
 		if err := t.recordMetrics(hpatchMetricInputs{
 			invocation:    translated.invocation,
@@ -2051,7 +2053,7 @@ func (t *hpatchResponseTransform) rejectUnevaluated(
 ) (hpatchHistory, error) {
 	diagnostic := rejection.Error()
 	if referenceScript != "" {
-		diagnostic += hpatchRecoveryGuidance(referenceScript, rejections)
+		diagnostic += hpatchRecoveryGuidance(referenceScript, rejections, nil, false)
 	}
 	if reporter, ok := t.proxy.translator.(hpatchOutcomeReporter); ok {
 		attemptContext := hpatch.WithAttemptMetadata(t.ctx, attempt)

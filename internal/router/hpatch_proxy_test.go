@@ -2371,11 +2371,14 @@ func TestHPatchRecoveryRerejectionExposesCurrentHandles(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, history := range []hpatchHistory{first, second} {
-		if strings.Count(history.translationError, "Use functions.hpatch_recover with these handles.") != 1 ||
+		if strings.Count(history.translationError, "Current rejected-script command manifest (complete):") != 1 ||
 			strings.Contains(history.translationError, "Use hpatch without `in`") ||
 			strings.Contains(history.translationError, "accept") {
 			t.Fatalf("recovery guidance = %q", history.translationError)
 		}
+	}
+	if !strings.Contains(second.translationError, "Every C... and V... handle from earlier diagnostics is stale") {
+		t.Fatalf("re-rejection lacks stale-handle guidance:\n%s", second.translationError)
 	}
 	if want := recoveryCommands(rebuilt)[1].handle; !strings.Contains(second.translationError, want) {
 		t.Fatalf("re-rejection lacks current command handle %q:\n%s", want, second.translationError)

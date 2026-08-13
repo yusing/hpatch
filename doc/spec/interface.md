@@ -855,10 +855,14 @@ baseline, and replay restores the exact `functions.hpatch_recover` payload while
 rebuilt script for later recovery. Non-hpatch plugin and shell failures never enter this
 ancestry. Input truncation removes calls the conversation no longer shows.
 
-Every evaluator rejection renders the relevant command handles and bounded heredoc value-row
-context. A handle from an older baseline is stale. Correlation IDs remain stable and attempt
-numbers increase across evaluated and proxy-rejected calls. Per-attempt telemetry preserves
-the emitted tool identity and outcome. Gain metrics settle the correlated hpatch/recovery chain
+Every evaluator rejection renders a complete compact manifest of current command handles without
+copying mutation values, marks attributable commands, reports their structured correction scope,
+and adds bounded heredoc value-row context. Recovery guidance directs the model to submit every
+known independent handle-local operation in one atomic payload instead of resubmitting the
+complete rejected script. A handle from an older baseline is stale. A re-rejection explicitly
+states that it replaced the baseline and that every earlier handle is invalid. Correlation IDs
+remain stable and attempt numbers increase across evaluated and proxy-rejected calls. Per-attempt
+telemetry preserves the emitted tool identity and outcome. Gain metrics settle the correlated hpatch/recovery chain
 once according to the combined-payload and single-comparator rules above.
 
 Outcome hooks report one routed attempt once. Their structured event includes tool identity,
@@ -878,13 +882,14 @@ Acceptance:
 1. `functions.hpatch_recover` has a dedicated grammar, is router-only, and omits `accept`.
 2. Every recovery operation resolves against one immutable latest evaluated rejected script.
 3. A successful rebuild is reevaluated as one complete ordinary HPATCH/2 script.
-4. Re-rejection advances the baseline; proxy rejection leaves it unchanged.
+4. Re-rejection advances the baseline, emits a complete refreshed manifest, and invalidates every prior handle; proxy rejection leaves the baseline unchanged.
 5. Recovery cannot cross sessions or selected worktrees, and unrelated tools cannot become bases.
 6. Replay restores `hpatch_recover` identity and the exact emitted short payload.
 7. Ordinary mutation-leading hpatch scripts are never detected as recovery.
 8. Per-attempt telemetry remains individual, while gain counts every chain payload and one
    final or failed comparator.
 9. The removed no-`in`, indexed, and dotted value-row recovery forms are ordinary script syntax errors, not compatibility paths.
+10. One recovery payload can combine field, value-row, and structural operations against multiple command handles atomically.
 
 ## REQ-FILE-001 — File scope and lifecycle
 
@@ -1228,9 +1233,10 @@ uses `CODEX_MODEL` or the lowest-priority bundled model, writes the default file
 setting. An unrecognized customized file fails instead of being overwritten.
 
 The recovery template adjacent to the central source owns dynamic recovery prose. After each
-actionable structured evaluator rejection, the router supplies current rejected-script `C...`
-command handles and any localized `V...` value-row handles to that template. A re-rejected
-recovery refreshes the handles from the latest evaluated script.
+actionable structured evaluator rejection, the router supplies a complete compact current
+command manifest, marks attributable commands with correction scope, and adds localized `V...`
+value-row context. A re-rejected recovery states that prior handles are stale and refreshes the
+manifest from the latest evaluated script.
 
 Persistent guidance teaches this workflow:
 
@@ -1256,8 +1262,10 @@ Persistent guidance teaches this workflow:
 8. Use nonempty `type` to replace, empty target-bearing `type` to delete, `type-` to insert
    before, and `type+` to insert after. Use inline values for short text and `<<PATCH` for
    multiline or escape-heavy values.
-9. After a routed rejection, use `functions.hpatch_recover` with the emitted `C...` and `V...`
-   handles. The standalone CLI has no recovery mode.
+9. After a routed rejection, use `functions.hpatch_recover` with the current `C...` and `V...`
+   handles. Submit every known independent correction in one atomic payload rather than
+   resubmitting the complete rejected script. After re-rejection, discard all prior handles.
+   The standalone CLI has no recovery mode.
 10. Let hpatch format changed Go files and syntax-check supported changed Python, JavaScript, and
     TypeScript files.
 
@@ -1271,5 +1279,8 @@ Acceptance:
    section, and repeated installation is idempotent.
 4. A routed request's existing instructions remain byte-equivalent, including absence or null.
 5. Dynamic rejected-script references and recovery prose appear only with actionable context.
-6. A routed success can be followed by another hpatch call using an exact row from its report
+6. Every actionable evaluator rejection includes a complete compact current command manifest,
+   correction scope for attributable commands, and exact guidance for atomic multi-operation
+   recovery; re-rejection explicitly invalidates prior handles.
+7. A routed success can be followed by another hpatch call using an exact row from its report
    without an intervening hread; a saved pre-edit row still rejects as stale.

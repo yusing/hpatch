@@ -18,20 +18,42 @@ func TestHPatchRecoveryGuidanceUsesCommandAndValueHandles(t *testing.T) {
 	rejections := []hpatch.HostRejection{{
 		Command: 2, SourceLine: 2, Operation: "type", ValueLine: 2,
 	}}
-	guidance := hpatchRecoveryGuidance(script, rejections)
+	guidance := hpatchRecoveryGuidance(script, rejections, []hpatch.HostFailure{{Command: 2, Scope: "field-local"}}, true)
 	command := recoveryCommands(script)[1]
 	for _, want := range []string{
-		"Recoverable rejected-script commands:",
+		"Current rejected-script command manifest (complete):",
+		recoveryCommands(script)[0].handle,
 		command.handle,
 		command.valueRows[1].handle,
-		"Use functions.hpatch_recover with these handles.",
+		"correction scope: field-local",
+		"Every C... and V... handle from earlier diagnostics is stale",
+		"do not resubmit the complete rejected script",
 	} {
 		if !strings.Contains(guidance, want) {
 			t.Fatalf("guidance does not contain %q:\n%s", want, guidance)
 		}
 	}
+	manifest, _, _ := strings.Cut(guidance, "\nLocalized recovery context:")
+	if strings.Contains(manifest, "replacement") || strings.Contains(manifest, "broken") {
+		t.Fatalf("complete manifest copied value content:\n%s", manifest)
+	}
 	if strings.Contains(guidance, "Use hpatch without `in`") || strings.Contains(guidance, "accept") {
 		t.Fatalf("guidance retains obsolete recovery language:\n%s", guidance)
+	}
+}
+
+func TestHPatchRecoveryManifestRedactsMalformedMutationValue(t *testing.T) {
+	script := "in file.go\n" + `type 1:abcd "sensitive replacement" trailing` + "\n"
+	guidance := hpatchRecoveryGuidance(
+		script,
+		[]hpatch.HostRejection{{Command: 2, SourceLine: 2, Operation: "type"}},
+		nil,
+		false,
+	)
+	manifest, _, _ := strings.Cut(guidance, "\nLocalized recovery context:")
+	if strings.Contains(manifest, "sensitive replacement") ||
+		!strings.Contains(manifest, "type 1:abcd [malformed value]") {
+		t.Fatalf("malformed mutation manifest = %q", manifest)
 	}
 }
 
