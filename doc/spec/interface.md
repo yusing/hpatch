@@ -122,7 +122,8 @@ The private `hgrep` command is available through the model-visible shell tool. T
 quoting, redirection, pipelines, and command composition; hgrep receives the resulting ordinary
 argv. It accepts familiar ripgrep pattern, matching, file, glob, type, ignore, context, and
 resource-selection arguments. With no explicit path, search defaults to the shell process's
-current directory.
+current directory. GNU grep's `-R` is accepted and removed because traversal is already
+recursive by default.
 
 The worker invokes installed `rg` with internal `--json --no-config` arguments. It rejects
 model-supplied output, multiline, preprocessor, compressed-input, informational, and other
@@ -156,7 +157,8 @@ Acceptance:
    copied directly into an hpatch target.
 2. Shell quoting determines literal arguments, and ordinary redirection or pipelines operate
    as shell syntax rather than becoming hgrep argv. A conflicting hgrep output or transformed
-   input mode still rejects before ripgrep starts.
+   input mode still rejects before ripgrep starts. The `-R` compatibility flag does not reach
+   ripgrep or produce a warning.
 3. Requested before/after context emits complete verified rows beside matches. Repeated match
    or context events on one row emit that row once; no matches return successful empty stdout.
 4. The model-visible shell call and output are replayed unchanged. No standalone hgrep call is

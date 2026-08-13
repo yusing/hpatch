@@ -105,7 +105,7 @@ const longOptionsWithValue = new Set([
   "type-clear",
   "type-not",
 ]);
-const silentShortOptions = new Set("Hn");
+const silentShortOptions = new Set("HnR");
 const warnedShortOptions = new Map<string, boolean>([
   ["0", false],
   ["I", false],

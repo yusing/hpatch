@@ -390,12 +390,17 @@ describe("hgrep built-in plugin", () => {
     }
   });
 
-  test("normalizes presentation options and rejects incompatible modes", async () => {
+  test("accepts GNU grep and ripgrep search options while rejecting incompatible modes", async () => {
     const directory = await temporaryDirectory("hgrep-plugin-");
     process.chdir(directory);
     await writeFile("file.txt", "needle\n", "utf8");
 
     const tool = createHGrepTool("description", "start: TEST");
+    const gnuGrep = await tool.execute(["-R", "-n", "-F", "needle", "file.txt"], executionContext);
+    const ripgrep = await tool.execute(["--glob", "*.txt", "-F", "needle", "file.txt"], executionContext);
+    expect(gnuGrep).toEqual(ripgrep);
+    expect(gnuGrep.stderr).toBe("");
+
     const ignored = await tool.execute(["--color", "always", "-F", "needle", "file.txt"], executionContext);
     expect(ignored.exitCode).toBe(0);
     expect(ignored.stderr).toContain("ignoring ripgrep options --color");
