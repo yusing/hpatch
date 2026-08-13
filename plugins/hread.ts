@@ -222,6 +222,9 @@ async function readHashLines(spec: ReadSpec, maxOutputBytes: number): Promise<Co
       finishLine();
     }
     const lineCount = lineNumber - 1;
+    if (spec.startLine > lineCount) {
+      throw new Error(`start line ${spec.startLine} is past EOF (${lineCount} lines)`);
+    }
     const missingStartLine = Math.max(spec.startLine, lineCount + 1);
     const warning = !wholeFile && missingStartLine <= spec.endLine
       ? `hread: ${missingStartLine}-${spec.endLine}: [out of range]\n`

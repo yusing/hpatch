@@ -195,13 +195,8 @@ describe("hread built-in plugin", () => {
 
     const outside = await tool.execute(["plain.txt", "4:5"], executionContext);
     expect(outside).toEqual({
-      stdout: "",
-      stderr: "hread: 4-5: [out of range]\n",
-      stock: {
-        stdout: "",
-        exitCode: 0,
-      },
-      exitCode: 0,
+      stderr: "hread: start line 4 is past EOF (3 lines)\n",
+      exitCode: 1,
     });
 
     const missing = await tool.execute(["missing.txt"], executionContext);

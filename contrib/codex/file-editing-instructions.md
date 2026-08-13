@@ -123,9 +123,10 @@ reproduce its output; let the formatter apply those changes. For example, add on
 field with one insertion rather than replacing the declaration. Preserve required
 indentation prefixes in indentation-sensitive languages such as Python.
 
-Content introduced by a mutation is not targetable in the same call. Successful final-state
-`LINE:HASH` rows are current references for their named final paths and may be used directly
-in the next invocation.
+Content introduced by a mutation is not targetable in the same call. After every successful
+invocation, discard every saved row for each changed path. Use the returned final-state
+`LINE:HASH` rows directly in the next invocation; use focused hread or hgrep only when the
+successful report lacks the exact target. Never reconstruct a row or range endpoint.
 
 Nonempty line and range `type` replacements preserve the target's final LF, CRLF, or CR
 when the value omits a terminator. Explicit terminators are authoritative. An empty
@@ -169,8 +170,9 @@ target-bearing range.
 
 Run one file per command as `hread PATH [START:END]`. Quote paths with shell syntax and batch
 related reads as separate commands in one shell script. A bare path reads the complete file.
-A start line of `0` begins at line 1 without emitting line 0. Missing lines beyond EOF warn
-after returning available rows. Copy a current `LINE:HASH` directly into an HPATCH/2 target.
+A start line of `0` begins at line 1 without emitting line 0. An end past EOF warns after
+returning available rows; a start past EOF fails. Copy a current `LINE:HASH` directly into an
+HPATCH/2 target.
 
 Run hgrep with familiar ripgrep arguments and ordinary shell quoting, redirection, and
 pipelines. Combine known patterns and paths with repeated `-e` arguments. Its output is

@@ -1117,11 +1117,12 @@ it does not retain another original or final content copy, routed-read history, 
 diff, or translated patch text.
 
 A successful report's `LINE:HASH` rows are current references for their named final paths
-and may be used directly in the next invocation. The projection does not guarantee that
-it contains every possible later target. When the exact target needed next is absent, the
-caller obtains it with a focused hread. Saved pre-edit rows remain stale and rejection
-context does not authorize guessing or reconstructing a row. The report describes only
-the completed invocation; no target or editing state persists into a later invocation.
+and may be used directly in the next invocation. After every successful invocation, a caller
+discards saved rows for every changed path and uses the returned final-state row. The projection
+does not guarantee every possible later target; when the exact target needed next is absent,
+the caller obtains it with a focused hread. A row or range endpoint is never guessed or
+reconstructed. The report describes only the completed invocation; no target or editing state
+persists into a later invocation.
 
 The complete report is rendered before commit or patch output, but it is emitted only
 after that mode-specific effect succeeds. A report-write failure after the effect is
