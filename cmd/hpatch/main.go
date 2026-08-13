@@ -55,8 +55,10 @@ Targets:
   An anchored text target verifies its row and searches from that row's column 1.
   An unanchored text target searches the complete immutable baseline. Both find the
   first COUNT non-overlapping exact matches; COUNT defaults to one.
-  TEXT must be nonempty and remain within one logical line. Every requested match
-  must exist.
+  TEXT must be nonempty. JSON-escaped \n or an equivalent \u000A escape may match
+  exact text across logical lines or include a trailing LF. Keep the quoted target
+  on one physical command line. Carriage returns and other controls except tab are
+  forbidden. Every requested match must exist.
 
 Mutations:
   type replaces every target span. An empty target-bearing type value deletes every

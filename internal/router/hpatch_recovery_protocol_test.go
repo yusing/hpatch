@@ -3,6 +3,9 @@ package router
 import (
 	"strings"
 	"testing"
+
+	"github.com/yusing/hpatch"
+	"github.com/yusing/hpatch/internal/hpatchsyntax"
 )
 
 func TestRecoveryCommandsHashCompleteFramesAndPhysicalValueRows(t *testing.T) {
@@ -63,6 +66,56 @@ func TestRecoverScriptParsesAndRetargetsUnanchoredLiteralMutation(t *testing.T) 
 	want := "in file.go\n" + `type "current text" 2 "new text"` + "\n"
 	if got != want {
 		t.Fatalf("recoverScript() = %q, want %q", got, want)
+	}
+}
+
+func TestRecoverScriptRetargetsMultilineLiteralMutation(t *testing.T) {
+	script := "in file.go\n" + `type 2:bbbb "old\ntext" "new text"` + "\n"
+	command := recoveryCommands(script)[1]
+	if !command.parts.parsed || command.parts.target != `2:bbbb "old\ntext"` || command.parts.value != "new text" {
+		t.Fatalf("command parts = %+v", command.parts)
+	}
+	got, err := recoverScript(t.Context(), script, command.handle+` target "current\u000Atext"`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "in file.go\n" + `type "current\u000Atext" "new text"` + "\n"
+	if got != want {
+		t.Fatalf("recoverScript() = %q, want %q", got, want)
+	}
+}
+
+func TestRecoverScriptPreservesMultilineTargetSpellingWhenChangingValue(t *testing.T) {
+	script := "in file.go\n" + `type "old\u000Atext" "new text"` + "\n"
+	command := recoveryCommands(script)[1]
+	got, err := recoverScript(t.Context(), script, command.handle+` value "newer text"`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "in file.go\n" + `type "old\u000Atext" "newer text"` + "\n"
+	if got != want {
+		t.Fatalf("recoverScript() = %q, want %q", got, want)
+	}
+}
+
+func TestRecoveryMultilineLiteralTargetsMirrorPublicControls(t *testing.T) {
+	for _, target := range []string{`"line\ntext"`, `"line\u000Atext"`, `1:aaaa "line\ntext"`, `"tab\ttext"`} {
+		if !recoveryTarget(target) {
+			t.Errorf("recoveryTarget(%q) = false", target)
+		}
+	}
+	for _, target := range []string{`""`, "\"raw\nnewline\"", `"return\r"`, `"return\u000D"`, `"control\u0001"`} {
+		if recoveryTarget(target) {
+			t.Errorf("recoveryTarget(%q) = true", target)
+		}
+	}
+	for _, command := range []string{
+		`type 1:aaaa "return\rtext" "value"`,
+		`type 1:aaaa "control\u0001text" "value"`,
+	} {
+		if parts := recoveryCommandPartsOf(command, hpatchsyntax.CommandFrame{}); parts.parsed {
+			t.Errorf("recoveryCommandPartsOf(%q) = %+v, want unparsed", command, parts)
+		}
 	}
 }
 
@@ -224,4 +277,24 @@ func TestRecoveryGrammarAllowsTrailingBlankLinesAndOmitsAccept(t *testing.T) {
 	if strings.Contains(hpatchRecoveryGrammar, "accept") || strings.Contains(hpatchRecoveryGrammar, `"recover"`) {
 		t.Fatal("recovery grammar contains an excluded operation or sentinel")
 	}
+}
+
+func TestRecoveryGrammarMirrorsPublicMultilineTargetTerminal(t *testing.T) {
+	public := grammarTerminalLine(t, hpatch.ToolGrammar(), "TARGET_QUOTED")
+	recovery := grammarTerminalLine(t, hpatchRecoveryGrammar, "TARGET_QUOTED")
+	if recovery != public {
+		t.Fatalf("recovery TARGET_QUOTED = %q, public = %q", recovery, public)
+	}
+}
+
+func grammarTerminalLine(t *testing.T, grammar, name string) string {
+	t.Helper()
+	prefix := name + ": "
+	for line := range strings.SplitSeq(grammar, "\n") {
+		if strings.HasPrefix(line, prefix) {
+			return line
+		}
+	}
+	t.Fatalf("%s terminal not found", name)
+	return ""
 }

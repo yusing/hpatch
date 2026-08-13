@@ -413,11 +413,11 @@ func validateTargetLiteral(sourceLine int, literal string) error {
 	if literal == "" {
 		return scriptError(sourceLine, "target literal must not be empty")
 	}
-	if strings.ContainsAny(literal, "\r\n") {
-		return scriptError(sourceLine, "target literal must stay on one line")
+	if strings.ContainsRune(literal, '\r') {
+		return scriptError(sourceLine, "target literal contains a forbidden carriage return")
 	}
 	for _, character := range literal {
-		if character < 0x20 && character != '\t' {
+		if character < 0x20 && character != '\t' && character != '\n' {
 			return scriptError(sourceLine, "target literal contains a forbidden control character")
 		}
 	}

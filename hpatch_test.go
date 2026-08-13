@@ -545,6 +545,127 @@ func TestHPatch2TargetLiteralRejectsC0ControlsExceptTab(t *testing.T) {
 	}
 }
 
+func TestHPatch2MultilineLiteralTargets(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+		script  string
+		want    string
+	}{
+		{
+			name:    "unanchored replacement",
+			content: "before\nfirst\nsecond\nafter\n",
+			script:  `in file.txt` + "\n" + `type "first\nsecond" "replacement"`,
+			want:    "before\nreplacement\nafter\n",
+		},
+		{
+			name:    "row anchored replacement",
+			content: "skip first\nfirst\nsecond\nafter\n",
+			script:  "in file.txt\ntype " + row(2, "first") + ` "first\nsecond" "replacement"`,
+			want:    "skip first\nreplacement\nafter\n",
+		},
+		{
+			name:    "unicode escaped line feed",
+			content: "first\nsecond\n",
+			script:  `in file.txt` + "\n" + `type "first\u000Asecond" "replacement"`,
+			want:    "replacement\n",
+		},
+		{
+			name:    "occurrence count",
+			content: "first\nsecond\nfirst\nsecond\n",
+			script:  `in file.txt` + "\n" + `type "first\nsecond" 2 "replacement"`,
+			want:    "replacement\nreplacement\n",
+		},
+		{
+			name:    "target includes trailing LF",
+			content: "first\nsecond\n",
+			script:  `in file.txt` + "\n" + `type "first\n" "FIRST\n"`,
+			want:    "FIRST\nsecond\n",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			writeTestFile(t, root, "file.txt", test.content, 0o644)
+			_, stderr, exitCode := runForTest(root, nil, test.script)
+			if exitCode != 0 {
+				t.Fatalf("Run() = exit %d, stderr %q", exitCode, stderr)
+			}
+			if got := readTestFile(t, root, "file.txt"); got != test.want {
+				t.Fatalf("file = %q, want %q", got, test.want)
+			}
+		})
+	}
+}
+
+func TestHPatch2MultilineLiteralTargetRejectionsAreAtomic(t *testing.T) {
+	tests := []struct {
+		name, content, script, diagnostic string
+	}{
+		{
+			name:       "missing exact multiline text",
+			content:    "first\nchanged\n",
+			script:     `in file.txt` + "\n" + `type "first\nsecond" "replacement"`,
+			diagnostic: "occurrence-missing",
+		},
+		{
+			name:       "missing trailing LF",
+			content:    "first",
+			script:     `in file.txt` + "\n" + `type "first\n" "replacement"`,
+			diagnostic: "occurrence-missing",
+		},
+		{
+			name:       "ambiguous stale anchor",
+			content:    "first\nsecond\nfirst\nsecond\n",
+			script:     `in file.txt` + "\n" + `type 1:ffff "first\nsecond" "replacement"`,
+			diagnostic: "row-stale",
+		},
+		{
+			name:       "raw physical newline",
+			content:    "first\nsecond\n",
+			script:     "in file.txt\ntype \"first\nsecond\" \"replacement\"",
+			diagnostic: "script-syntax",
+		},
+		{
+			name:       "escaped carriage return",
+			content:    "first\rsecond\n",
+			script:     `in file.txt` + "\n" + `type "first\rsecond" "replacement"`,
+			diagnostic: "forbidden carriage return",
+		},
+		{
+			name:       "unicode carriage return",
+			content:    "first\rsecond\n",
+			script:     `in file.txt` + "\n" + `type "first\u000Dsecond" "replacement"`,
+			diagnostic: "forbidden carriage return",
+		},
+		{
+			name:       "forbidden control",
+			content:    "first\x01second\n",
+			script:     `in file.txt` + "\n" + `type "first\u0001second" "replacement"`,
+			diagnostic: "forbidden control character",
+		},
+		{
+			name:       "empty target",
+			content:    "first\n",
+			script:     `in file.txt` + "\n" + `type "" "replacement"`,
+			diagnostic: "target literal must not be empty",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			writeTestFile(t, root, "file.txt", test.content, 0o644)
+			_, stderr, exitCode := runForTest(root, nil, test.script)
+			if exitCode != 1 || !strings.Contains(stderr, test.diagnostic) {
+				t.Fatalf("Run() = exit %d, stderr %q; want %q", exitCode, stderr, test.diagnostic)
+			}
+			if got := readTestFile(t, root, "file.txt"); got != test.content {
+				t.Fatalf("rejection changed file to %q", got)
+			}
+		})
+	}
+}
+
 func row(line int, content string) string {
 	return fmt.Sprintf("%d:%s", line, hashLine(content))
 }

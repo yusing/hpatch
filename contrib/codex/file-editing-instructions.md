@@ -82,6 +82,10 @@ LINE:HASH "TEXT" [N]              first N exact matches from that row through EO
 terminators owned by line and range targets. `type-` inserts before while preserving the
 target; `type+` inserts after while preserving it. A text target defaults to one match;
 every requested non-overlapping match must exist or the script rejects.
+When exact known target text spans logical lines or includes a trailing LF, encode that LF as
+`\n` (or an equivalent `\u000A`) inside the quoted anchored or unanchored target. Keep the target
+on one physical command line. Literal tab is accepted; carriage returns and other controls are
+not.
 Before writing `N > 1`, count the exact literal occurrences in the acquired immutable baseline;
 never infer `N` from the number of intended replacements. If the count is not already visible,
 use hgrep or separate verified row anchors instead of guessing it.

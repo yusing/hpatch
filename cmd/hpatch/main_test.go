@@ -79,6 +79,8 @@ func TestTopLevelHelpDescribesCompletePublicSurface(t *testing.T) {
 		"Successful final-state LINE:HASH rows are current references",
 		"Multiple insertions",
 		"Every requested match must exist",
+		"JSON-escaped \\n or an equivalent \\u000A escape",
+		"exact text across logical lines or include a trailing LF",
 		"preserve the target's final LF",
 		"Translation always",
 		"stable failure reasons",
@@ -230,6 +232,7 @@ func TestTopLevelHelpDescribesTargetOperandConstraints(t *testing.T) {
 		"anchored text target verifies its row",
 		"unanchored text target searches the complete immutable baseline",
 		"complete immutable baseline",
+		"JSON-escaped \\n or an equivalent \\u000A escape",
 		"exact authored unanchored text",
 		"use hread only when the target remains unknown",
 	} {

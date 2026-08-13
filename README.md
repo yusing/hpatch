@@ -457,7 +457,10 @@ relocates an unchanged row only if its hash occurs once in the file; absent or d
 matches reject instead of choosing a target. After earlier commands shift a duplicate row, a
 post-edit coordinate is also accepted only when it points to that exact pending row and maps
 back to one unchanged baseline line. Introduced or modified content remains untargetable in the
-same call. An anchored text target starts at its resolved row. If that anchor is stale but the
+same call. An anchored text target starts at its resolved row. Its quoted target may use
+JSON-escaped `\n` (or equivalent `\u000A`) to match exact text across logical lines or through
+a trailing LF; the quoted command itself must remain on one physical line. Raw newlines,
+carriage returns, and other C0 controls except tab are invalid. If that anchor is stale but the
 literal has exactly the requested number of matches in the complete baseline, the redundant
 anchor is ignored; extra matches still reject. An unanchored text target starts at byte zero.
 Every requested non-overlapping match must exist. Use the unanchored form when
@@ -478,6 +481,8 @@ Rules worth remembering:
 - Prefer the smallest mutation that expresses the semantic change. When a formatter owns formatting, alignment, or indentation, do not replace surrounding lines merely to reproduce its output; let the formatter apply those changes. For example, add one struct field with one insertion rather than replacing the declaration.
 - Preserve required indentation prefixes in indentation-sensitive languages such as Python.
 - Before using a text-target count greater than one, count exact literal occurrences in the acquired immutable baseline. Never infer the count from the intended replacements; use hgrep or separate verified row anchors when it is not already visible.
+- Use escaped `\n` in an anchored or unanchored quoted target when the exact known text spans
+  logical lines or includes a trailing LF. Keep the target on one physical command line.
 - After a successful invocation, reuse saved rows whose content is unchanged; hpatch follows a shifted row only when its hash is unique. For a routed whole-line or range replacement, the router resolves the exact pre-edit target after the executor confirms application. Use returned final-state `LINE:HASH` rows for other changed content. For exact content you just authored in a new file, use an unanchored literal target instead of inventing a row hash or rereading the file. Reports are bounded, so use focused hread or hgrep only when the exact target is absent or ambiguous; never reconstruct a row or range endpoint.
 - Overlapping replacements or deletions and insertions strictly inside them fail atomically. Boundary insertions are valid.
 - Use inline quoted values for short single-line edits; include `\n` when an insertion must form a new line. Reserve fixed `<<PATCH` for multiline or escape-heavy values.

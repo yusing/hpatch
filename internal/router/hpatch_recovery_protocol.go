@@ -159,21 +159,26 @@ func recoveryInlineMutation(operands string) (string, string, bool) {
 		if strings.TrimSpace(afterFirst) == "" {
 			return row, first, true
 		}
-		return recoveryTargetAndValue(row, first, afterFirst)
+		if !recoveryValidTargetLiteral(first) {
+			return "", "", false
+		}
+		literalSource := trailing[:len(trailing)-len(afterFirst)]
+		return recoveryTargetAndValue(row, literalSource, afterFirst)
 	}
 	operands = strings.TrimLeft(operands, " \t")
 	if !strings.HasPrefix(operands, `"`) {
 		return "", "", false
 	}
 	literal, afterLiteral, err := hpatchsyntax.DecodeQuoted(operands)
-	if err != nil || literal == "" || strings.ContainsAny(literal, "\r\n") {
+	if err != nil || !recoveryValidTargetLiteral(literal) {
 		return "", "", false
 	}
-	return recoveryTargetAndValue("", literal, afterLiteral)
+	literalSource := operands[:len(operands)-len(afterLiteral)]
+	return recoveryTargetAndValue("", literalSource, afterLiteral)
 }
 
-func recoveryTargetAndValue(row, literal, trailing string) (string, string, bool) {
-	target := strconv.Quote(literal)
+func recoveryTargetAndValue(row, literalSource, trailing string) (string, string, bool) {
+	target := literalSource
 	if row != "" {
 		target = row + " " + target
 	}
@@ -708,11 +713,23 @@ func recoveryTarget(target string) bool {
 
 func recoveryLiteralTarget(target string) bool {
 	literal, rest, err := hpatchsyntax.DecodeQuoted(target)
-	if err != nil || literal == "" || strings.ContainsAny(literal, "\r\n") {
+	if err != nil || !recoveryValidTargetLiteral(literal) {
 		return false
 	}
 	rest = strings.TrimSpace(rest)
 	return rest == "" || recoveryPositiveDecimal(rest)
+}
+
+func recoveryValidTargetLiteral(literal string) bool {
+	if literal == "" || strings.ContainsRune(literal, '\r') {
+		return false
+	}
+	for _, character := range literal {
+		if character < 0x20 && character != '\t' && character != '\n' {
+			return false
+		}
+	}
+	return true
 }
 
 func recoveryRowOrRange(value string) bool {

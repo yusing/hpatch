@@ -59,6 +59,7 @@ func TestInstructionsAcquireTargetContextOnce(t *testing.T) {
 		"trace one concrete boundary\nor state-transition case through the authored code",
 		`type "return oldResult, nil" "return newResult, nil"`,
 		`target "return oldResult, nil"`,
+		"exact known target text spans logical lines or includes a trailing LF",
 		"imports inside the existing import declaration",
 	} {
 		if !strings.Contains(Instructions(), required) {

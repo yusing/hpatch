@@ -12,6 +12,9 @@ func TestHPatch2ToolGrammarQuotedOperands(t *testing.T) {
 	for _, value := range []string{
 		`"text"`,
 		`"quote\"slash\\solidus\/"`,
+		`"line\ntext"`,
+		`"line\u000Atext"`,
+		`"line\u000atext"`,
 		`"tab\ttext"`,
 		`"tab\u0009text"`,
 		"\"literal\ttext\"",
@@ -22,11 +25,19 @@ func TestHPatch2ToolGrammarQuotedOperands(t *testing.T) {
 	}
 	for control := range 0x20 {
 		encoded := fmt.Sprintf(`"before\u%04Xafter"`, control)
-		if got, want := target.MatchString(encoded), control == '\t'; got != want {
+		if got, want := target.MatchString(encoded), control == '\t' || control == '\n'; got != want {
 			t.Errorf("TARGET_QUOTED matches encoded U+%04X = %v, want %v", control, got, want)
 		}
 	}
-	for _, value := range []string{`""`, `"newline\n"`, `"return\r"`, `"vertical\u000btab"`} {
+	for _, value := range []string{
+		`""`,
+		"\"raw\nnewline\"",
+		"\"raw\rreturn\"",
+		"\"raw\x01control\"",
+		`"return\r"`,
+		`"return\u000D"`,
+		`"vertical\u000btab"`,
+	} {
 		if target.MatchString(value) {
 			t.Errorf("TARGET_QUOTED accepts invalid value %q", value)
 		}
@@ -115,6 +126,7 @@ func TestHPatchToolHelpCoversSafeCommandChoice(t *testing.T) {
 		"Split only when a later edit depends on validation",
 		"Prefer the smallest mutation that expresses the semantic change",
 		"an unanchored literal can target it",
+		"exact known target text spans logical lines or includes a trailing LF",
 		"not targetable in the same call",
 		"Changed Go files are parsed and formatted before success",
 		"syntax-checked when Tree-sitter support is available",

@@ -790,10 +790,12 @@ complete logical lines between its endpoints, inclusively.
 
 A text target either verifies its anchor row and starts at that row's column 1 or, without a
 row, starts at byte zero. It searches exact literal content forward through EOF. `TEXT` is
-nonempty and cannot contain a logical-line
-terminator. Matching is left-to-right and resumes after each complete match. The target
-contains the first `COUNT` non-overlapping matches and rejects if fewer exist. Matches
-may occur on different lines even though each match stays within one logical line.
+nonempty. Its quoted source remains on one physical command line, but JSON-escaped LF (`\n`
+or an equivalent `\u000A` escape) decodes into the exact target literal and may make one match
+span logical lines or include a trailing LF. Literal horizontal tab is also accepted. Raw
+physical newlines, CR in every representation, and every other C0 control are forbidden.
+Matching is left-to-right and resumes after each complete match. The target contains the first
+`COUNT` non-overlapping matches and rejects if fewer exist.
 
 `VALUE` is either a JSON-compatible quoted string or the fixed heredoc header `<<PATCH`.
 Inline strings decode JSON escapes and Unicode escapes and additionally accept literal
@@ -838,13 +840,16 @@ Acceptance:
    `copy`, `cut`, `paste`, `del`, and script-level `commit` are syntax errors.
 2. Line, range, anchored text, and unanchored text targets parse without a separate selection command, and inline
    replacement values remain distinguishable from a text target's quoted literal.
-3. JSON-compatible values and the fixed `<<PATCH` heredoc reproduce their exact decoded
+3. Anchored and unanchored text targets accept JSON-escaped LF and exact multiline or
+   trailing-LF matches while raw physical newlines, CR, empty literals, and other forbidden
+   controls reject.
+4. JSON-compatible values and the fixed `<<PATCH` heredoc reproduce their exact decoded
    payloads without parsing body lines as commands.
-4. Invalid rows, ranges, counts, strings, heredocs, operands, and commands fail before
+5. Invalid rows, ranges, counts, strings, heredocs, operands, and commands fail before
    filesystem mutation, patch output, or final-state reporting.
-5. File and mutation commands may be interleaved while all targets retain the immutable
+6. File and mutation commands may be interleaved while all targets retain the immutable
    baseline meaning defined by `REQ-SELECT-001`.
-6. For root-scoped evaluation with root `/workspace` and cwd `bin/worktree`, path `main.go` denotes `/workspace/bin/worktree/main.go` and translates as `bin/worktree/main.go`.
+7. For root-scoped evaluation with root `/workspace` and cwd `bin/worktree`, path `main.go` denotes `/workspace/bin/worktree/main.go` and translates as `bin/worktree/main.go`.
 
 ## REQ-CORRECT-001 — Rejected-script recovery
 
@@ -857,8 +862,10 @@ Each rejected-script command has a `C<number>:<hash>` handle covering its comple
 command frame. Complete heredocs may expose `V<physical-row>:<hash>` value-row handles. The
 recovery operations are `drop`, field-level `target`, `operation`, and `value`, value-row
 `value` / `value-` / `value+`, and structural `replace` / `before` / `after`. Inline quoted and
-fixed `<<PATCH` values use the shared hpatch syntax framing. There is no sentinel line and no
-`accept` operation.
+fixed `<<PATCH` values use the shared hpatch syntax framing. Recovery target parsing and script
+rebuilding preserve the public target literal's exact decoded bytes, including escaped LF, and
+enforce the same empty, CR, and control exclusions. There is no sentinel line and no `accept`
+operation.
 
 The router owns recovery grammar, parsing, handle resolution, ancestry, worktree isolation,
 dispatch, replay, diagnostics, and reevaluation. Every operation resolves against the latest
@@ -910,6 +917,8 @@ Acceptance:
    final or failed comparator.
 9. The removed no-`in`, indexed, and dotted value-row recovery forms are ordinary script syntax errors, not compatibility paths.
 10. One recovery payload can combine field, value-row, and structural operations against multiple command handles atomically.
+11. A target correction can retarget an anchored or unanchored mutation to exact multiline
+    text with escaped LF; rebuilding preserves the target bytes and public control exclusions.
 
 ## REQ-FILE-001 — File scope and lifecycle
 
@@ -1003,7 +1012,8 @@ Acceptance:
 2. Missing and changed rows reject without choosing an unverified substitute. Duplicate baseline
    rows reject unless the supplied pending coordinate maps to one unchanged baseline row.
 3. Inclusive ranges resolve both endpoints independently and reject reversed resolved order.
-4. Text targets select the requested first N non-overlapping matches from the verified
+4. Text targets select the requested first N non-overlapping matches, including matches that
+   span logical lines or end in LF, from the verified
    anchor or byte zero through EOF and reject incomplete multiplicity. A missing or stale anchor
    is ignored only when the literal's complete-baseline multiplicity equals N exactly.
 5. Independent targets retain their original meaning after pending edits; introduced or modified
