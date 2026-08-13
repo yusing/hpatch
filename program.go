@@ -23,6 +23,7 @@ const (
 	targetLine
 	targetRange
 	targetText
+	targetLiteral
 )
 
 type rowReference struct {
@@ -44,7 +45,7 @@ func (t targetSpec) variant() targetVariant {
 		return targetVariantLine
 	case targetRange:
 		return targetVariantRange
-	case targetText:
+	case targetText, targetLiteral:
 		if t.count > 1 {
 			return targetVariantTextMultiple
 		}
@@ -237,6 +238,18 @@ func recognizeCommandAttempt(line string) commandAttempt {
 }
 
 func recognizeTargetVariant(operands string) targetVariant {
+	trimmed := strings.TrimLeft(operands, " \t")
+	if strings.HasPrefix(trimmed, `"`) {
+		_, rest, err := hpatchsyntax.DecodeQuoted(trimmed)
+		if err != nil || strings.TrimSpace(rest) == "" {
+			return targetVariantNone
+		}
+		rest = strings.TrimSpace(rest)
+		if strings.HasPrefix(rest, `"`) || strings.HasPrefix(rest, "<<PATCH") {
+			return targetVariantTextSingle
+		}
+		return targetVariantTextMultiple
+	}
 	token, trailing := firstToken(operands)
 	if strings.Contains(token, "..") {
 		return targetVariantRange
@@ -293,18 +306,14 @@ func parseInstructionWithValue(sourceLine int, line, heredocValue string, heredo
 	if !ok || (operation != "type" && operation != "type-" && operation != "type+") {
 		return instruction{}, scriptError(sourceLine, "heredoc is valid only for type, type-, or type+")
 	}
-	if operation == "type" && strings.HasPrefix(operands, `"`) {
-		if heredoc {
-			return instruction{}, scriptError(sourceLine, "targetless heredoc type must not have an inline operand")
-		}
+	if operation == "type" && !heredoc && strings.HasPrefix(operands, `"`) {
 		value, trailing, err := hpatchsyntax.DecodeQuoted(operands)
 		if err != nil {
 			return instruction{}, scriptError(sourceLine, "invalid quoted string for type: "+err.Error())
 		}
-		if !onlyOperandWhitespace(trailing) {
-			return instruction{}, scriptError(sourceLine, "trailing text after type initializer")
+		if onlyOperandWhitespace(trailing) {
+			return instruction{line: sourceLine, operation: operation, text: value, valueStart: len(line) - len(operands)}, nil
 		}
-		return instruction{line: sourceLine, operation: operation, text: value, valueStart: len(line) - len(operands)}, nil
 	}
 	if heredoc && operation == "type" && strings.TrimSpace(operands) == "" {
 		return instruction{line: sourceLine, operation: operation, text: heredocValue}, nil
@@ -341,6 +350,21 @@ func parseInstructionWithValue(sourceLine int, line, heredocValue string, heredo
 // operand after ROW is the target literal. When true, a lone quoted operand is
 // the mutation value and therefore leaves a line target.
 func parseTarget(sourceLine int, operands string, finalValueFollows bool) (targetSpec, string, error) {
+	trimmedOperands := strings.TrimLeft(operands, " \t")
+	if strings.HasPrefix(trimmedOperands, `"`) {
+		literal, rest, err := hpatchsyntax.DecodeQuoted(trimmedOperands)
+		if err != nil {
+			return targetSpec{}, "", scriptError(sourceLine, "invalid quoted target literal: "+err.Error())
+		}
+		if err := validateTargetLiteral(sourceLine, literal); err != nil {
+			return targetSpec{}, "", err
+		}
+		count, trailing, err := parseTargetCount(sourceLine, rest, finalValueFollows)
+		if err != nil {
+			return targetSpec{}, "", err
+		}
+		return targetSpec{kind: targetLiteral, literal: literal, count: count}, trailing, nil
+	}
 	token, trailing := firstToken(operands)
 	if token == "" {
 		return targetSpec{}, "", scriptError(sourceLine, "target must not be empty")
@@ -375,31 +399,45 @@ func parseTarget(sourceLine int, operands string, finalValueFollows bool) (targe
 	if finalValueFollows && strings.TrimSpace(rest) == "" {
 		return targetSpec{kind: targetLine, start: row}, trimmed, nil
 	}
+	if err := validateTargetLiteral(sourceLine, literal); err != nil {
+		return targetSpec{}, "", err
+	}
+	count, rest, err := parseTargetCount(sourceLine, rest, finalValueFollows)
+	if err != nil {
+		return targetSpec{}, "", err
+	}
+	return targetSpec{kind: targetText, start: row, literal: literal, count: count}, rest, nil
+}
+
+func validateTargetLiteral(sourceLine int, literal string) error {
 	if literal == "" {
-		return targetSpec{}, "", scriptError(sourceLine, "target literal must not be empty")
+		return scriptError(sourceLine, "target literal must not be empty")
 	}
 	if strings.ContainsAny(literal, "\r\n") {
-		return targetSpec{}, "", scriptError(sourceLine, "target literal must stay on one line")
+		return scriptError(sourceLine, "target literal must stay on one line")
 	}
 	for _, character := range literal {
 		if character < 0x20 && character != '\t' {
-			return targetSpec{}, "", scriptError(sourceLine, "target literal contains a forbidden control character")
+			return scriptError(sourceLine, "target literal contains a forbidden control character")
 		}
 	}
-	count := 1
+	return nil
+}
+
+func parseTargetCount(sourceLine int, rest string, finalValueFollows bool) (int, string, error) {
 	rest = strings.TrimLeft(rest, " \t")
-	if rest != "" && !strings.HasPrefix(rest, `"`) {
-		countText, afterCount := firstToken(rest)
-		if !positiveDecimalPattern.MatchString(countText) {
-			return targetSpec{}, "", scriptFailure(sourceLine, reasonInvalidCount, "invalid target count")
-		}
-		count, err = strconv.Atoi(countText)
-		if err != nil {
-			return targetSpec{}, "", scriptFailure(sourceLine, reasonInvalidCount, "target count is out of range")
-		}
-		rest = afterCount
+	if rest == "" || finalValueFollows && strings.HasPrefix(rest, `"`) {
+		return 1, rest, nil
 	}
-	return targetSpec{kind: targetText, start: row, literal: literal, count: count}, rest, nil
+	countText, trailing := firstToken(rest)
+	if !positiveDecimalPattern.MatchString(countText) {
+		return 0, "", scriptFailure(sourceLine, reasonInvalidCount, "invalid target count")
+	}
+	count, err := strconv.Atoi(countText)
+	if err != nil {
+		return 0, "", scriptFailure(sourceLine, reasonInvalidCount, "target count is out of range")
+	}
+	return count, trailing, nil
 }
 
 func firstToken(value string) (string, string) {

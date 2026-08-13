@@ -82,24 +82,36 @@ func (e *editor) resolveTarget(target targetSpec) ([]targetSpan, error) {
 			))
 		}
 		return []targetSpan{{start: start.start, end: end.fullEnd, linewise: true}}, nil
-	case targetText:
-		anchor, err := resolveRow(e.baseline, target.start)
-		if err != nil {
-			return nil, err
+	case targetText, targetLiteral:
+		search := e.baseline
+		baseOffset := 0
+		if target.kind == targetText {
+			anchor, err := resolveRow(e.baseline, target.start)
+			if err != nil {
+				return nil, err
+			}
+			search = e.baseline[anchor.start:]
+			baseOffset = anchor.start
 		}
-		offsets := nonOverlappingLiteralOffsets(e.baseline[anchor.start:], target.literal, target.count)
+		offsets := nonOverlappingLiteralOffsets(search, target.literal, target.count)
 		if len(offsets) != target.count {
+			if target.kind == targetText {
+				return nil, withReason(reasonOccurrenceMissing, fmt.Errorf(
+					"found %d of %d requested matches of %q at or after line %d",
+					len(offsets),
+					target.count,
+					target.literal,
+					target.start.line,
+				))
+			}
 			return nil, withReason(reasonOccurrenceMissing, fmt.Errorf(
-				"found %d of %d requested matches of %q at or after line %d",
-				len(offsets),
-				target.count,
-				target.literal,
-				target.start.line,
+				"found %d of %d requested matches of %q in immutable baseline",
+				len(offsets), target.count, target.literal,
 			))
 		}
 		spans := make([]targetSpan, len(offsets))
 		for index, offset := range offsets {
-			start := anchor.start + offset
+			start := baseOffset + offset
 			spans[index] = targetSpan{start: start, end: start + len(target.literal)}
 		}
 		return spans, nil

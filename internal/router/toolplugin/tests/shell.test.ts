@@ -481,8 +481,8 @@ ${installed.stderr}`);
       "The default interpreter is Bash.",
       "accepts exactly one `{.}` placeholder",
       "`hread @shell/<reference>`",
-      "For an authorized edit, make hread the initial source read",
-      "When a known identifier or literal is likely to become an edit target, make hgrep the initial",
+      "Acquire target-bearing context once before editing.",
+      "use hgrep first; use `-F` with repeated `-e` literals",
       "Use `inspect_file PATH` for bounded metadata and structural outlines.",
     ]) {
       expect(installedInstructions).toContain(expected);
@@ -545,7 +545,7 @@ ${installed.stderr}`);
     expect((await stat(customInstructionsPath)).mode & 0o777).toBe(0o600);
     expect(patchedCustomInstructions).toContain("Preserve this prefix.");
     expect(patchedCustomInstructions).toContain("Use `functions.hpatch` for local file edits");
-    expect(patchedCustomInstructions).toContain("For an authorized edit, make hread the initial source read");
+    expect(patchedCustomInstructions).toContain("Acquire target-bearing context once before editing.");
     expect(patchedCustomInstructions).toContain("Preserve this suffix.");
     expect(patchedCustomInstructions).not.toContain("Legacy hpatch guidance.");
     expect(patchedCustomInstructions).not.toContain("Legacy private-tool guidance.");

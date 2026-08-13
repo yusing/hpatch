@@ -46,7 +46,7 @@ func TestHPatch2TextTargetMetricsDistinguishMultiplicity(t *testing.T) {
 	writeTestFile(t, root, "file.txt", "x x\n", 0o644)
 	script := "in file.txt\n" +
 		"type " + row(1, "x x") + " \"x\" \"y\"\n" +
-		"type+ " + row(1, "x x") + " \"x\" 2 \"!\""
+		"type+ \"x\" 2 \"!\""
 	invocation, err := evaluateInvocationForTest(t, root, script)
 	if err != nil {
 		t.Fatal(err)

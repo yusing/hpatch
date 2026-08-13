@@ -449,10 +449,13 @@ Targets:
 1. Complete logical line: `LINE:HASH`
 2. Inclusive complete-line range: `LINE:HASH..LINE:HASH`
 3. Exact literal occurrence(s) from a verified row through EOF: `LINE:HASH "TEXT" [COUNT]`
+4. Exact literal occurrence(s) in the complete immutable baseline: `"TEXT" [COUNT]`
 
 Rows verify only their named immutable-baseline line. Hpatch does not scan for a matching
-hash elsewhere, so equal lines at different positions are unambiguous. A text target starts
-at its verified row and every requested non-overlapping match must exist.
+hash elsewhere, so equal lines at different positions are unambiguous. An anchored text target
+starts at its verified row; an unanchored text target starts at byte zero. Every requested
+non-overlapping match must exist. Use the unanchored form when exact current text is already
+known and a fresh row would add no disambiguation.
 
 Commands are `in` / `new` / `mv` / `rm`, target-bearing `type` / `type-` / `type+`,
 and one targetless `type VALUE` immediately after `new`.
@@ -558,13 +561,14 @@ from independent copies of the same historical etcd base revision, alternating
 which arm runs first. Hidden executable tests and an allowed-path boundary grade
 correctness before timing or token-efficiency differences are considered. The
 active task, `etcd-range-stream`, reconstructs etcd's cross-layer server-side
-RangeStream behavior. See the [benchmark methodology](doc/benchmarks.md) and the
-[latest published result](benchmarks/results/c07600a74ac93d1ac6c38c47b80d85519458bc9f-1/summary.md).
+RangeStream behavior. See the [benchmark methodology](doc/benchmarks.md), the
+[fixed control baseline](benchmarks/results/c07600a74ac93d1ac6c38c47b80d85519458bc9f-1/summary.md),
+and locally retained Hpatch-only trial reports.
 
-That one-repetition `gpt-5.6-sol` run passed both arms 1/1 and reported 48.2%
-lower successful edit payload for Hpatch (2,138 tokens versus 4,127 control-equivalent
-tokens). It is one observed run, not a general performance
-guarantee.
+The one-repetition `gpt-5.6-sol` Hpatch baseline passed and reported 45.2% lower
+successful edit payload (2,096 tokens versus 3,825 control-equivalent tokens). It used
+25 model requests, one once-recovered rejection chain, and no changed-file read → edit →
+read loop. It is one observed run, not a general performance guarantee.
 
 ## How it works
 

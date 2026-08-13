@@ -125,7 +125,7 @@ func TestToolHelpGuidesAgentCommandChoice(t *testing.T) {
 		"When a formatter owns formatting, alignment, or indentation",
 		"add one struct field with one insertion",
 		"indentation-sensitive languages such as Python",
-		"Successful final-state `LINE:HASH` rows are current references",
+		"target exact known current text without a row",
 		"Multiple insertions at the same boundary render in script order.",
 		"standalone CLI and ordinary hpatch grammar have no recovery mode",
 		"syntax-checked when Tree-sitter support is available",
@@ -225,8 +225,9 @@ func TestTopLevelHelpDescribesTargetOperandConstraints(t *testing.T) {
 		"COUNT defaults to one",
 		"non-overlapping",
 		"Every requested match must exist",
-		"text target verifies its anchor row",
-		"through EOF",
+		"anchored text target verifies its row",
+		"unanchored text target searches the complete immutable baseline",
+		"complete immutable baseline",
 	} {
 		if !strings.Contains(normalized, fragment) {
 			t.Fatalf("help does not contain %q", fragment)

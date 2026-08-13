@@ -49,6 +49,7 @@ func TestHPatch2ToolGrammarMatchesPublicCommands(t *testing.T) {
 		`heredoc_initializer: "type" SP "<<PATCH" NL _patch_body "PATCH"`,
 		`ROW: /[1-9][0-9]*:[0-9a-f]{4}/`,
 		`TYPE_OP: "type" | "type-" | "type+"`,
+		`| TARGET_QUOTED (SP POSINT)?`,
 	} {
 		if !strings.Contains(toolGrammar, rule) {
 			t.Errorf("tool grammar omits %q", rule)
@@ -113,7 +114,7 @@ func TestHPatchToolHelpCoversSafeCommandChoice(t *testing.T) {
 		"submit every known related edit in one atomic script",
 		"Split only when a later edit depends on validation",
 		"Prefer the smallest mutation that expresses the semantic change",
-		"Successful final-state `LINE:HASH` rows are current references",
+		"target exact known current text without a row",
 		"not targetable in the same call",
 		"Changed Go files are parsed and formatted before success",
 		"syntax-checked when Tree-sitter support is available",

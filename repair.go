@@ -90,21 +90,31 @@ func writeStaleTargetRepair(report *strings.Builder, baseline string, lines []lo
 }
 
 func writeTextTargetRepair(report *strings.Builder, editor *editor, lines []logicalLine, target targetSpec) {
-	anchor, err := resolveRow(editor.baseline, target.start)
-	if err != nil {
-		return
+	search := editor.baseline
+	anchorOffset := 0
+	location := "in immutable baseline"
+	if target.kind == targetText {
+		anchor, err := resolveRow(editor.baseline, target.start)
+		if err != nil {
+			return
+		}
+		anchorOffset = anchor.start
+		search = editor.baseline[anchor.start:]
+		location = fmt.Sprintf("at or after line %d", target.start.line)
 	}
-	offsets := nonOverlappingLiteralOffsets(editor.baseline[anchor.start:], target.literal, target.count)
-	fmt.Fprintf(report, "found %d of %d requested matches at or after line %d\n", len(offsets), target.count, target.start.line)
+	offsets := nonOverlappingLiteralOffsets(search, target.literal, target.count)
+	fmt.Fprintf(report, "found %d of %d requested matches %s\n", len(offsets), target.count, location)
 	report.WriteString("if an earlier mutation introduces the target, apply that prerequisite, reread, and submit a later invocation\n")
 	if len(offsets) != 0 {
 		matchLines := make([]int, 0, min(len(offsets), repairListLimit))
 		for _, offset := range offsets[:min(len(offsets), repairListLimit)] {
-			matchLines = append(matchLines, lineNumberAt(lines, anchor.start+offset))
+			matchLines = append(matchLines, lineNumberAt(lines, anchorOffset+offset))
 		}
 		fmt.Fprintf(report, "matching lines: %s\n", joinLineNumbers(matchLines, len(offsets)))
 	}
-	writeLineWindow(report, editor.baseline, lines, target.start.line)
+	if target.kind == targetText {
+		writeLineWindow(report, editor.baseline, lines, target.start.line)
+	}
 }
 
 func (e *editor) claimedLineSpans(lines []logicalLine) string {

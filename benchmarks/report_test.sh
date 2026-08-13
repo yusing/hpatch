@@ -35,6 +35,8 @@ cat >"$artifact_root/task-hpatch-r001/codex.jsonl" <<'JSON'
 {"type":"item.completed","item":{"type":"command_execution","command":"/tmp/hpatch-hread-fixture/hread \"file.go\"","exit_code":0,"status":"completed"}}
 {"type":"item.completed","item":{"type":"command_execution","command":"/bin/bash -c 'hread other.go 1:20'","exit_code":1,"status":"failed"}}
 {"type":"item.completed","item":{"type":"command_execution","command":"printf 'hread not-a-command'","exit_code":0,"status":"completed"}}
+{"type":"item.completed","item":{"type":"command_execution","command":"hgrep target file.go\nhread file.go 1:20\nhread other.go 1:20","exit_code":0,"status":"completed"}}
+{"type":"item.completed","item":{"type":"command_execution","command":"hread file.go 1:20\nrg missing other.go","exit_code":1,"status":"failed"}}
 {"type":"item.completed","item":{"type":"command_execution","command":"go test ./...","exit_code":0,"status":"completed"}}
 {"type":"item.completed","item":{"type":"file_change","status":"completed"}}
 {"type":"item.completed","item":{"type":"file_change","status":"completed"}}
@@ -43,9 +45,11 @@ JSON
 
 "$benchmark_root/report.sh" "$fixture" >/dev/null
 
-grep -Fq '| 1 | 3 | 5 | 2 | 1 | 4 | 2 | 1 | 2 | 2 | 1 | 7 |' "$fixture/summary.md"
-grep -Fq '| 0 | 0 | 1 | 0 | 0 |' "$fixture/summary.md"
-grep -Fq '| Hpatch | 5 | 4 | 2 | 2 | 2 | 1 | 7 |' "$fixture/summary.md"
+grep -Fq '| 1 | 3 | 5 | 2 | 1 | 6 | 5 | 1 | 2 | 2 | 1 | 7 |' "$fixture/summary.md"
+grep -Fq '| 0 | 0 | 2 | 0 | 0 |' "$fixture/summary.md"
+grep -Fq '| Hpatch | 5 | 6 | 5 | 2 | 2 | 1 | 7 |' "$fixture/summary.md"
+grep -Fq '| Hread invocations |' "$fixture/summary.md"
+grep -Fq '| Failed hread-bearing shell executions |' "$fixture/summary.md"
 grep -Fq '| Call rejection rate | 1/3 (33.3%) |' "$fixture/summary.md"
 grep -Fq '| Retained calls | 3/3 routed calls |' "$fixture/summary.md"
 grep -Fq '| Retained logical edit chains | 2 |' "$fixture/summary.md"

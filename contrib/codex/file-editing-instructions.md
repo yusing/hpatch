@@ -75,6 +75,7 @@ Targets:
 LINE:HASH                         complete logical line
 LINE:HASH..LINE:HASH              inclusive complete-line range
 LINE:HASH "TEXT" [N]              first N exact matches from that row through EOF
+"TEXT" [N]                        first N exact matches in the immutable baseline
 ```
 
 `type` replaces. An empty target-bearing `type` value deletes every target span, including
@@ -88,6 +89,7 @@ before/after insertion must form a complete new line:
 ```text
 in parser.go
 type- 37:8c2f "// parseCommand parses one physical script line.\n"
+type "return oldResult, nil" "return newResult, nil"
 ```
 
 Use the fixed `<<PATCH` frame for multiline or escape-heavy values:
@@ -123,10 +125,19 @@ reproduce its output; let the formatter apply those changes. For example, add on
 field with one insertion rather than replacing the declaration. Preserve required
 indentation prefixes in indentation-sensitive languages such as Python.
 
+When an exact current literal is already known but its row is absent or stale, target the literal
+without a row to verify it against the complete immutable baseline. This avoids a read solely to
+refresh location. Use a row anchor when repeated text makes the intended position significant.
+
 Content introduced by a mutation is not targetable in the same call. After every successful
-invocation, discard every saved row for each changed path. Use the returned final-state
-`LINE:HASH` rows directly in the next invocation; use focused hread or hgrep only when the
-successful report lacks the exact target. Never reconstruct a row or range endpoint.
+invocation, discard every saved row for each changed path. For a follow-up edit, use a returned
+final-state row or target exact known current text without a row. Never submit a pre-edit row for
+recovery to refresh. Use focused hread or hgrep only when neither form identifies the target, and
+never reconstruct a row or range endpoint.
+
+A successful hpatch report and its language validation are authoritative: do not hread changed
+paths merely to verify the edit. Run the focused behavioral check instead. If another edit is
+needed, use returned final-state rows directly and acquire only an exact missing target.
 
 Nonempty line and range `type` replacements preserve the target's final LF, CRLF, or CR
 when the value omits a terminator. Explicit terminators are authoritative. An empty
@@ -136,7 +147,9 @@ byte-exact values and do not synthesize newlines.
 Overlapping replacements or deletions and insertions strictly inside them reject. Boundary
 insertions are valid. Multiple insertions at the same boundary render in script order.
 
-Changed Go files are parsed and formatted before success; do not run redundant `gofmt`.
+Changed Go files are parsed and formatted before success; do not run redundant `gofmt`. Add Go
+imports inside the existing import declaration, not adjacent to it; formatting cannot repair an
+invalid import placement.
 Supported Python, JavaScript, and TypeScript files are syntax-checked when Tree-sitter support
 is available; supported indentation corrections are automatic. Relative paths use the selected
 base directory when available; without one, relative paths reject; parents for `new` or `mv`
@@ -147,6 +160,7 @@ payload, one operation per line:
 
 ```text
 C2:abcd target 37:8c2f
+C3:bcde target "return oldResult, nil"
 C4:ef01 operation type+
 C4:ef01 value "// inserted\n"
 C7:2345 V9:6789 value "corrected body row"
@@ -162,23 +176,26 @@ hpatch grammar have no recovery mode.
 
 ## File reading, searching, inspection, and shell commands
 
-For an authorized edit, make hread the initial source read of a named or likely edit owner.
-When a known identifier or literal is likely to become an edit target, make hgrep the initial
-search. Use ordinary reads and searches for read-only work and for discovery while the edit
-owner is unknown. If ordinary discovery identifies an edit, hread only the smallest
-target-bearing range.
+Acquire target-bearing context once before editing. When a known identifier or literal is likely
+to become a target, use hgrep first; use `-F` with repeated `-e` literals so punctuation cannot
+create a regex error, and add `-A` or `-B` when a small amount of surrounding code is needed.
+Every emitted match or context row is target-bearing. When the owner is known but the location
+is not, use inspect_file for structure or hgrep for a symbol, then hread only the smallest range
+needed to understand or replace the code. Avoid bare whole-file hread unless the complete file
+is necessary. Use ordinary reads and searches only for read-only work or while the edit owner is
+unknown.
 
 Run one file per command as `hread PATH [START:END]`. Quote paths with shell syntax and batch
-related reads as separate commands in one shell script. A bare path reads the complete file.
-A start line of `0` begins at line 1 without emitting line 0. An end past EOF warns after
+already-known reads as separate commands in one shell script. A bare path reads the complete
+file. A start line of `0` begins at line 1 without emitting line 0. An end past EOF warns after
 returning available rows; a start past EOF fails. Copy a current `LINE:HASH` directly into an
 HPATCH/2 target.
 
 Run hgrep with familiar ripgrep arguments and ordinary shell quoting, redirection, and
 pipelines. Combine known patterns and paths with repeated `-e` arguments. Its output is
 `"PATH":LINE:HASH TEXT`; copy a current target directly and never reconstruct a row.
-A matching hgrep row is already target-bearing; use hread only for surrounding or
-nonmatching context.
+Do not follow target-bearing hgrep output with hread unless nonmatching context outside the
+requested bounds is needed.
 
 Use `inspect_file PATH` for bounded metadata and structural outlines. Its line numbers are
 metadata, not HPATCH targets; use hread when source text or target references are needed.

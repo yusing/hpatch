@@ -43,6 +43,7 @@ Targets:
   LINE:HASH                         complete logical line
   LINE:HASH..LINE:HASH              inclusive complete-line range
   LINE:HASH "TEXT" [COUNT]          anchored exact literal occurrence(s)
+  "TEXT" [COUNT]                    whole-baseline exact literal occurrence(s)
 
   Copy complete LINE:HASH references from hgrep or hread output. LINE is a positive
   one-based logical line and HASH is exactly four lowercase hexadecimal digits
@@ -50,8 +51,9 @@ Targets:
   the line; the hash rejects stale content. Hpatch never searches for a nearby
   hash or substitutes another matching line.
 
-  A text target verifies its anchor row, then finds the first COUNT non-overlapping
-  exact matches from that row's column 1 through EOF. COUNT defaults to one.
+  An anchored text target verifies its row and searches from that row's column 1.
+  An unanchored text target searches the complete immutable baseline. Both find the
+  first COUNT non-overlapping exact matches; COUNT defaults to one.
   TEXT must be nonempty and remain within one logical line. Every requested match
   must exist.
 

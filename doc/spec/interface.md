@@ -620,8 +620,9 @@ Every structurally recognized explicit target attempt increments one target coun
 line  range  text-single  text-multiple
 ```
 
-Targetless `type VALUE` initialization has no target counter. A text target with omitted
-count or count one is `text-single`; an explicit count intended to exceed one is
+Targetless `type VALUE` initialization has no target counter. Anchored and unanchored text
+targets use the same counters. A text target with omitted count or count one is
+`text-single`; an explicit count intended to exceed one is
 `text-multiple`, including an invalid multiple count. Unsupported HPATCH/1 commands and
 unknown future commands are syntax failures but do not receive supported-command or
 target attribution.
@@ -768,6 +769,7 @@ Targets are:
 ROW                         complete logical line
 ROW..ROW                    inclusive complete-line range
 ROW "TEXT" [COUNT]          anchored exact literal occurrence(s)
+"TEXT" [COUNT]              whole-baseline exact literal occurrence(s)
 
 ROW   := LINE:HASH
 LINE  := positive one-based decimal logical line
@@ -779,8 +781,9 @@ No whitespace is permitted inside `ROW..ROW`. A line target owns the complete lo
 line, including its terminator when one exists. A range owns all
 complete logical lines between its endpoints, inclusively.
 
-A text target verifies its anchor row, starts at that row's column 1, and searches exact
-literal content forward through EOF. `TEXT` is nonempty and cannot contain a logical-line
+A text target either verifies its anchor row and starts at that row's column 1 or, without a
+row, starts at byte zero. It searches exact literal content forward through EOF. `TEXT` is
+nonempty and cannot contain a logical-line
 terminator. Matching is left-to-right and resumes after each complete match. The target
 contains the first `COUNT` non-overlapping matches and rejects if fewer exist. Matches
 may occur on different lines even though each match stays within one logical line.
@@ -812,6 +815,7 @@ type 12:a1b2 "line replacement"
 type- 37:8c2f "// parseCommand parses one physical script line.\n"
 type 12:a1b2 "needle" "replacement"
 type 12:a1b2 "needle" 3 "replacement"
+type "known current text" "replacement"
 type+ 12:a1b2..15:c3d4 <<PATCH
 inserted after the range
 PATCH
@@ -825,7 +829,7 @@ Acceptance:
 
 1. Every accepted nonblank command is one of the seven public commands; `tsel`, `rsel`,
    `copy`, `cut`, `paste`, `del`, and script-level `commit` are syntax errors.
-2. Line, range, and text targets parse without a separate selection command, and inline
+2. Line, range, anchored text, and unanchored text targets parse without a separate selection command, and inline
    replacement values remain distinguishable from a text target's quoted literal.
 3. JSON-compatible values and the fixed `<<PATCH` heredoc reproduce their exact decoded
    payloads without parsing body lines as commands.
@@ -953,8 +957,9 @@ or duplicate content. Repair diagnostics may list current-line and relocated-has
 but the caller must verify and choose the target. Line number disambiguates equal lines; the
 16-bit hash retains an accepted approximately 1-in-65,536 random false-acceptance residual.
 
-Both endpoints of a range must verify independently and remain ordered. A text target
-then searches the verified baseline suffix exactly as defined by `REQ-SCRIPT-001`.
+Both endpoints of a range must verify independently and remain ordered. An anchored text target
+searches the verified baseline suffix; an unanchored text target searches the complete baseline,
+exactly as defined by `REQ-SCRIPT-001`.
 Pending edits never alter row verification, literal search, matches, or positions.
 Content introduced by any command is not targetable in that script. Dependent edits
 require successful application, hread inspection of the new content, and a later
@@ -977,7 +982,7 @@ Acceptance:
 2. Missing and stale rows are distinct failures and neither searches for a substitute.
 3. Inclusive ranges verify both endpoints and reject reversed order.
 4. Text targets select the requested first N non-overlapping matches from the verified
-   anchor through EOF and reject incomplete multiplicity.
+   anchor or byte zero through EOF and reject incomplete multiplicity.
 5. Independent targets retain their original meaning after pending edits; introduced
    content cannot be addressed without a later hread. A whole-file move preserves the
    moved file's existing baseline under its new logical path.
@@ -1255,19 +1260,26 @@ Persistent guidance teaches this workflow:
    use native session facilities for PTY-backed or long-running executions.
 2. Inspect, edit, or rerun a retained shell script through its `@shell/` reference, and never mix
    retained and workspace paths in one hpatch script.
-3. For an authorized edit, use hread as the initial source read when the named or likely owner is
-   known. Use hgrep as the initial search when a known identifier or literal is likely to become
-   a target. Use ordinary reads and searches for read-only work or while the owner is unknown;
-   after discovery, hread only the smallest target-bearing range.
-4. Run one hread command per file and batch related commands in one shell script. Combine known
-   hgrep patterns and paths with repeated `-e`. Copy only current emitted references. A matching
-   hgrep row needs no hread unless surrounding or nonmatching context is required.
+3. Acquire target-bearing context once before editing. When a known identifier or literal is
+   likely to become a target, use hgrep first with repeated fixed-string patterns, adding bounded
+   context options when surrounding code is needed. Every emitted match or context row is
+   target-bearing. When the owner is known but the location is not, use inspect_file for structure
+   or hgrep for a symbol, then hread only the smallest range needed to understand or replace the
+   code. Avoid whole-file hread unless the complete file is necessary. Use ordinary reads and
+   searches only for read-only work or while the owner is unknown.
+4. Run one hread command per file and batch only already-known reads in one shell script. Copy
+   only current emitted references. Do not follow target-bearing hgrep output with hread unless
+   nonmatching context outside the requested bounds is needed.
 5. Choose a line, inclusive range, or anchored literal target inside the mutation command.
 6. Submit every known related edit in one atomic script. Split only when a later edit depends on
    validation or information unavailable before the current call. Keep unrelated large values
    in separate failure-domain calls.
-7. Prefer the smallest semantic mutation and let formatters own formatting. Successful
-   final-state `LINE:HASH` rows can be used directly in the next invocation.
+7. Prefer the smallest semantic mutation and let formatters own formatting. A successful report
+   and its language validation are authoritative, so do not hread changed paths merely to verify
+   an edit. Run the focused behavioral check instead. After success, discard every pre-edit row
+   for each changed path. Use a returned final-state row or exact unanchored current text for a
+   follow-up; acquire only a target that neither form identifies. Add Go imports inside the
+   existing import declaration because formatting cannot repair invalid placement.
 8. Use nonempty `type` to replace, empty target-bearing `type` to delete, `type-` to insert
    before, and `type+` to insert after. Use inline values for short text and `<<PATCH` for
    multiline or escape-heavy values.

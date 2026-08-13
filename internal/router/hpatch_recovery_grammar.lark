@@ -23,6 +23,7 @@ heredoc_initializer: "type" SP "<<PATCH" NL _patch_body "PATCH"
 ?target: ROW
        | ROW ".." ROW
        | ROW SP TARGET_QUOTED (SP POSINT)?
+       | TARGET_QUOTED (SP POSINT)?
 
 ?value: QUOTED
       | "<<PATCH" NL _patch_body "PATCH"

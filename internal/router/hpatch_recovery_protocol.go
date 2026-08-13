@@ -132,11 +132,13 @@ func recoveryCommandPartsOf(header string, frame hpatchsyntax.CommandFrame) reco
 		}
 	}
 	if operation == "type" && strings.HasPrefix(strings.TrimSpace(operands), `"`) {
-		value, trailing, err := hpatchsyntax.DecodeQuoted(operands)
-		return recoveryCommandParts{
-			operation: operation,
-			value:     value,
-			parsed:    err == nil && strings.TrimSpace(trailing) == "",
+		value, trailing, err := hpatchsyntax.DecodeQuoted(strings.TrimSpace(operands))
+		if err == nil && strings.TrimSpace(trailing) == "" {
+			return recoveryCommandParts{
+				operation: operation,
+				value:     value,
+				parsed:    true,
+			}
 		}
 	}
 	target, value, ok := recoveryInlineMutation(operands)
@@ -145,29 +147,48 @@ func recoveryCommandPartsOf(header string, frame hpatchsyntax.CommandFrame) reco
 
 func recoveryInlineMutation(operands string) (string, string, bool) {
 	row, trailing := recoveryToken(operands)
-	if !recoveryRowOrRange(row) {
+	if recoveryRowOrRange(row) {
+		trailing = strings.TrimLeft(trailing, " \t")
+		if !strings.HasPrefix(trailing, `"`) {
+			return "", "", false
+		}
+		first, afterFirst, err := hpatchsyntax.DecodeQuoted(trailing)
+		if err != nil {
+			return "", "", false
+		}
+		if strings.TrimSpace(afterFirst) == "" {
+			return row, first, true
+		}
+		return recoveryTargetAndValue(row, first, afterFirst)
+	}
+	operands = strings.TrimLeft(operands, " \t")
+	if !strings.HasPrefix(operands, `"`) {
 		return "", "", false
+	}
+	literal, afterLiteral, err := hpatchsyntax.DecodeQuoted(operands)
+	if err != nil || literal == "" || strings.ContainsAny(literal, "\r\n") {
+		return "", "", false
+	}
+	return recoveryTargetAndValue("", literal, afterLiteral)
+}
+
+func recoveryTargetAndValue(row, literal, trailing string) (string, string, bool) {
+	target := strconv.Quote(literal)
+	if row != "" {
+		target = row + " " + target
 	}
 	trailing = strings.TrimLeft(trailing, " \t")
-	if !strings.HasPrefix(trailing, `"`) {
+	if trailing == "" {
 		return "", "", false
 	}
-	first, afterFirst, err := hpatchsyntax.DecodeQuoted(trailing)
-	if err != nil {
-		return "", "", false
-	}
-	afterFirst = strings.TrimLeft(afterFirst, " \t")
-	if afterFirst == "" {
-		return row, first, true
-	}
-	if strings.HasPrefix(afterFirst, `"`) {
-		value, rest, err := hpatchsyntax.DecodeQuoted(afterFirst)
+	if strings.HasPrefix(trailing, `"`) {
+		value, rest, err := hpatchsyntax.DecodeQuoted(trailing)
 		if err != nil || strings.TrimSpace(rest) != "" {
 			return "", "", false
 		}
-		return row + " " + strconv.Quote(first), value, true
+		return target, value, true
 	}
-	count, afterCount := recoveryToken(afterFirst)
+	count, afterCount := recoveryToken(trailing)
 	if !recoveryPositiveDecimal(count) {
 		return "", "", false
 	}
@@ -176,7 +197,7 @@ func recoveryInlineMutation(operands string) (string, string, bool) {
 	if err != nil || strings.TrimSpace(rest) != "" {
 		return "", "", false
 	}
-	return row + " " + strconv.Quote(first) + " " + count, value, true
+	return target + " " + count, value, true
 }
 
 type recoveredScript struct {
@@ -665,10 +686,6 @@ func recoveryCompleteCommand(command string) bool {
 				return operation == "type" && strings.TrimSpace(strings.TrimSuffix(operands, "<<PATCH")) == "" ||
 					recoveryCommandPartsOf(line.Text, frame).parsed
 			}
-			if operation == "type" && strings.HasPrefix(strings.TrimSpace(operands), `"`) {
-				_, trailing, err := hpatchsyntax.DecodeQuoted(operands)
-				return err == nil && strings.TrimSpace(trailing) == ""
-			}
 			return recoveryCommandPartsOf(line.Text, frame).parsed
 		default:
 			return false
@@ -679,14 +696,18 @@ func recoveryCompleteCommand(command string) bool {
 
 func recoveryTarget(target string) bool {
 	row, trailing := recoveryToken(target)
-	if !recoveryRowOrRange(row) {
-		return false
+	if recoveryRowOrRange(row) {
+		trailing = strings.TrimLeft(trailing, " \t")
+		if trailing == "" {
+			return true
+		}
+		return recoveryLiteralTarget(trailing)
 	}
-	trailing = strings.TrimLeft(trailing, " \t")
-	if trailing == "" {
-		return true
-	}
-	literal, rest, err := hpatchsyntax.DecodeQuoted(trailing)
+	return recoveryLiteralTarget(strings.TrimLeft(target, " \t"))
+}
+
+func recoveryLiteralTarget(target string) bool {
+	literal, rest, err := hpatchsyntax.DecodeQuoted(target)
 	if err != nil || literal == "" || strings.ContainsAny(literal, "\r\n") {
 		return false
 	}

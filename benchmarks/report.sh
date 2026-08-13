@@ -85,6 +85,9 @@ agent_command_errors() {
 		return
 	fi
 	jq -sr --arg kind "$kind" '
+		def hread_invocations:
+			[scan("(/hpatch-hread-[^/]+/hread)(?=[[:space:]]|$)|((^|[\\n;&|()]|-[lc]+[[:space:]]+[^[:alnum:]_./-]?)[[:space:]]*([^[:space:];|&()]+/)?hread)(?=[[:space:]]|$)")] |
+			length;
 		[
 			.[] |
 			select(
@@ -98,7 +101,7 @@ agent_command_errors() {
 						"(^|[[:space:];|&()])([^[:space:];|&()]+/)?(rg|grep|find|fd|search_code)([[:space:];|&()]|$)"
 					)
 				else
-					(.item.command // "") | test("(/hpatch-hread-[^/]+/hread([[:space:]]|$))|((^|[;&|][[:space:]]*|-[lc]+[[:space:]]+[^[:alnum:]_./-]?)([^[:space:];|&()]+/)?hread[[:space:]])")
+					((.item.command // "") | hread_invocations) > 0
 				end
 			)
 		] | length
@@ -120,13 +123,15 @@ agent_interactions() {
 
 agent_interactions_from() {
 	jq -sr '
+		def hread_invocations:
+			[scan("(/hpatch-hread-[^/]+/hread)(?=[[:space:]]|$)|((^|[\\n;&|()]|-[lc]+[[:space:]]+[^[:alnum:]_./-]?)[[:space:]]*([^[:space:];|&()]+/)?hread)(?=[[:space:]]|$)")] |
+			length;
 		[
 			([.[] | select(.type == "item.completed" and .item.type == "command_execution")] | length),
 			([.[] | select(
 				.type == "item.completed" and
-				.item.type == "command_execution" and
-				((.item.command // "") | test("(/hpatch-hread-[^/]+/hread([[:space:]]|$))|((^|[;&|][[:space:]]*|-[lc]+[[:space:]]+[^[:alnum:]_./-]?)([^[:space:];|&()]+/)?hread[[:space:]])"))
-			)] | length),
+				.item.type == "command_execution"
+			) | (.item.command // "") | hread_invocations] | add // 0),
 			([.[] | select(
 				.type == "item.completed" and
 				.item.type == "file_change" and
@@ -194,7 +199,7 @@ if baseline_summary=$(jq -sr '[.[] | select(.arm == "control") | .imported_contr
 fi
 
 	printf '## Per repetition\n\n'
-	printf '| Rep | Order | Control result | Hpatch result | Control search errors | Hpatch search errors | Hread errors | Translation envelope errors | Wrapper errors |\n'
+	printf '| Rep | Order | Control result | Hpatch result | Control search errors | Hpatch search errors | Failed hread-bearing shell executions | Translation envelope errors | Wrapper errors |\n'
 	printf '|---:|---|---|---|---:|---:|---:|---:|---:|\n'
 	while IFS=$'\t' read -r repetition order control_pass control_duration control_uncached control_output control_reasoning control_grader hpatch_pass hpatch_duration hpatch_uncached hpatch_output hpatch_reasoning hpatch_grader; do
 		printf '| %s | %s | %s — %d.%03d s; %s uncached input; %s output; %s reasoning; grader %d.%03d s | %s — %d.%03d s; %s uncached input; %s output; %s reasoning; grader %d.%03d s | %s | %s | %s | %s | %s |\n' \
@@ -235,7 +240,7 @@ fi
 	)
 
 	printf '\n## Per-repetition interactions\n\n'
-	printf '| Rep | Control requests | Hpatch requests | Excess requests | Control command execs | Hpatch command execs | Hread calls | Control file changes | Hpatch file changes | Hpatch translations | Hpatch rejections | Diagnostic tokens |\n'
+	printf '| Rep | Control requests | Hpatch requests | Excess requests | Control command execs | Hpatch command execs | Hread invocations | Control file changes | Hpatch file changes | Hpatch translations | Hpatch rejections | Diagnostic tokens |\n'
 	printf '|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n'
 	while IFS= read -r repetition; do
 		IFS=$'\t' read -r control_commands control_hreads control_changes < <(agent_interactions "$repetition" control)
@@ -311,14 +316,14 @@ fi
 	control_requests=$(jq -r '.requests.started' "$control_metrics")
 	hpatch_requests=$(jq -r '.requests.started' "$hpatch_metrics")
 	printf '\n## Agent interaction metrics\n\n'
-	printf '| Arm | Model requests | Command executions | Hread calls | Client file-change items | Routed Hpatch translations | Routed Hpatch rejections | Diagnostic tokens |\n'
+	printf '| Arm | Model requests | Command executions | Hread invocations | Client file-change items | Routed Hpatch translations | Routed Hpatch rejections | Diagnostic tokens |\n'
 	printf '|---|---:|---:|---:|---:|---:|---:|---:|\n'
 	printf '| Control | %s | %s | %s | %s | — | — | — |\n' \
 		"$control_requests" "$control_commands" "$control_hreads" "$control_changes"
 	printf '| Hpatch | %s | %s | %s | %s | %s | %s | %s |\n' \
 		"$hpatch_requests" "$hpatch_commands" "$hpatch_hreads" "$hpatch_changes" \
 		"$hpatch_successes" "$hpatch_rejections" "$hpatch_diagnostics"
-	printf '\nHread calls are a subset of command executions. Client file-change items are completed Codex events; '
+	printf '\nHread invocations count each hread in a shell command. Client file-change items are completed Codex events; '
 	printf 'routed translations and rejections are server-side HPATCH outcomes.\n'
 
 	printf '\n## Hpatch attempt analysis\n\n'

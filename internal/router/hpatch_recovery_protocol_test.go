@@ -50,6 +50,22 @@ func TestRecoverScriptComposesFieldsAndValueRows(t *testing.T) {
 	}
 }
 
+func TestRecoverScriptParsesAndRetargetsUnanchoredLiteralMutation(t *testing.T) {
+	script := "in file.go\n" + `type "old text" "new text"` + "\n"
+	command := recoveryCommands(script)[1]
+	if !command.parts.parsed || command.parts.target != `"old text"` || command.parts.value != "new text" {
+		t.Fatalf("command parts = %+v", command.parts)
+	}
+	got, err := recoverScript(t.Context(), script, command.handle+` target "current text" 2`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "in file.go\n" + `type "current text" 2 "new text"` + "\n"
+	if got != want {
+		t.Fatalf("recoverScript() = %q, want %q", got, want)
+	}
+}
+
 func TestRecoverScriptDetailedReportsExactCompactDelta(t *testing.T) {
 	script := "in file.go\n" +
 		"type- 1:aaaa <<PATCH\n" +

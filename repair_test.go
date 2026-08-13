@@ -33,6 +33,19 @@ func TestHPatch2RepairContextForIncompleteTextTarget(t *testing.T) {
 	}
 }
 
+func TestHPatch2RepairContextForIncompleteUnanchoredTextTarget(t *testing.T) {
+	repair := repairFor(t, "none\ntarget\nnone\n", `in file.txt
+type "target" 2 "replacement"`)
+	for _, want := range []string{
+		"found 1 of 2 requested matches in immutable baseline",
+		"matching lines: 2",
+	} {
+		if !strings.Contains(repair, want) {
+			t.Fatalf("repair lacks %q:\n%s", want, repair)
+		}
+	}
+}
+
 func TestHPatch2RepairContextForStaleRow(t *testing.T) {
 	repair := repairFor(t, "alpha\nbeta\n", "in file.txt\ntype 2:0000 \"B\"")
 	if !strings.Contains(repair, "2:"+hashLine("beta")+" beta") {

@@ -273,6 +273,46 @@ func TestHPatch2HeredocValueSupportsTextTarget(t *testing.T) {
 	}
 }
 
+func TestHPatch2UnanchoredLiteralTargetsUseImmutableBaseline(t *testing.T) {
+	root := t.TempDir()
+	writeTestFile(t, root, "file.txt", "alpha x\nbeta x\n", 0o644)
+	script := strings.Join([]string{
+		"in file.txt",
+		`type "alpha" "ALPHA"`,
+		`type+ "x" 2 "!"`,
+	}, "\n")
+	_, stderr, exitCode := runForTest(root, nil, script)
+	if exitCode != 0 {
+		t.Fatalf("Run() = exit %d, stderr %q", exitCode, stderr)
+	}
+	if got, want := readTestFile(t, root, "file.txt"), "ALPHA x!\nbeta x!\n"; got != want {
+		t.Fatalf("file = %q, want %q", got, want)
+	}
+}
+
+func TestHPatch2UnanchoredLiteralHeredocAndMissingOccurrence(t *testing.T) {
+	root := t.TempDir()
+	writeTestFile(t, root, "file.txt", "before needle after\n", 0o644)
+	script := "in file.txt\ntype \"needle\" <<PATCH\nmultiline\nvalue\nPATCH\n"
+	_, stderr, exitCode := runForTest(root, nil, script)
+	if exitCode != 0 {
+		t.Fatalf("Run() = exit %d, stderr %q", exitCode, stderr)
+	}
+	if got, want := readTestFile(t, root, "file.txt"), "before multiline\nvalue\n after\n"; got != want {
+		t.Fatalf("file = %q, want %q", got, want)
+	}
+
+	writeTestFile(t, root, "missing.txt", "one x\n", 0o644)
+	before := readTestFile(t, root, "missing.txt")
+	_, stderr, exitCode = runForTest(root, nil, "in missing.txt\ntype \"x\" 2 \"y\"")
+	if exitCode != 1 || !strings.Contains(stderr, "occurrence-missing") {
+		t.Fatalf("Run() = exit %d, stderr %q", exitCode, stderr)
+	}
+	if got := readTestFile(t, root, "missing.txt"); got != before {
+		t.Fatalf("rejection changed file to %q", got)
+	}
+}
+
 func TestHPatch2QuotedDoubleLessRemainsInlineText(t *testing.T) {
 	tests := []struct {
 		name    string

@@ -33,6 +33,24 @@ func TestInstructionsOwnCompleteShellWorkflow(t *testing.T) {
 	}
 }
 
+func TestInstructionsAcquireTargetContextOnce(t *testing.T) {
+	for _, required := range []string{
+		"Acquire target-bearing context once before editing.",
+		"use hgrep first; use `-F` with repeated `-e` literals",
+		"Avoid bare whole-file hread unless the complete file",
+		"do not hread changed\npaths merely to verify the edit",
+		"Run the focused behavioral check instead.",
+		"Never submit a pre-edit row for\nrecovery to refresh.",
+		`type "return oldResult, nil" "return newResult, nil"`,
+		`target "return oldResult, nil"`,
+		"imports inside the existing import declaration",
+	} {
+		if !strings.Contains(Instructions(), required) {
+			t.Errorf("Instructions() omits target acquisition rule %q", required)
+		}
+	}
+}
+
 func TestRecoveryGuidanceRendersDynamicReferences(t *testing.T) {
 	const references = "Current rejected-script command manifest (complete):\n"
 	const want = "\nRepair the retained rejected script with the smallest handle-local operations. Submit every known independent correction in one atomic recovery payload, one operation per line. A re-rejection changes no workspace file: it retains successful corrections only in a new rejected-script baseline, emits that baseline's authoritative manifest, and makes every earlier handle stale. Resubmit a complete script through functions.hpatch only when the diagnostic requires a new script or transaction.\n\n" + references
