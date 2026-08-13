@@ -90,6 +90,32 @@ recovering agent cannot silently omit the evidence the diagnostic run exists to 
 Concurrent attempts and benchmark invocations MUST NOT share report destinations. The summary
 MUST report the toggle state and collected count but MUST leave report bodies in the retained
 machine-readable artifact.
+Hpatch-only and hpatch-diagnostic runs MUST accept an explicit, default-disabled exact-evidence
+toggle. When enabled, the treatment router MUST retain only completed `hpatch` and
+`hpatch_recover` attempts, with the exact decoded model payload, exact successful report, and
+exact final rendered diagnostic returned to the model. Records MUST include session, chain, call, attempt,
+tool, correction, model, and outcome identity plus byte lengths and SHA-256 digests for each
+exact string. They MUST exclude request headers, credentials, shell and plugin traffic,
+router-rebuilt scripts, and translated patches. Normal routing MUST allocate or
+write no exact-evidence record when the toggle is disabled.
+
+Each completed attempt MUST publish one mode-0600 JSON object through a unique same-directory
+temporary file and atomic rename inside a run-local mode-0700 directory. Concurrent benchmark
+invocations and attempts MUST NOT share that directory. After routing stops, the runner MUST
+validate the schema, exact UTF-8 byte lengths and digests, and unique session/call identities,
+then deterministically consolidate the records into `hpatch-exact-evidence.jsonl`. Recorder
+failures remain auxiliary to tool behavior, while missing or invalid enabled benchmark evidence
+fails evidence collection. Cancellation may retain fewer recorded attempts than routed calls;
+the summary MUST label both retained fractions instead of fabricating completeness. Payloads,
+reports, diagnostics, and their private identities MUST remain outside `summary.md`.
+When exact evidence is enabled, `report.sh` MUST join the retained records to Hpatch attempt
+telemetry by session and call identity, order them by telemetry sequence, and emit deterministic
+aggregate reliability and byte-cost rows. Those rows include initial, rejected, and correction
+payload bytes, rendered diagnostic and report bytes, chain recovery on the first correction, and
+conservative counts of correction target/value fragments that exactly occur in the immediately
+preceding diagnostic. Fragment counts MUST NOT retain or expose the fragments themselves and
+MUST NOT be described as evidence of model cognition. A record whose identity does not exactly
+match telemetry MUST fail analysis rather than being silently attributed.
 The generated summary MUST report model requests, correctness and token deltas, parsed command
 invocations, edit-round structure, routed Hpatch success/rejection/correction totals, grouped
 rejection causes, and semantic edit-payload reduction. Command categories MUST distinguish file

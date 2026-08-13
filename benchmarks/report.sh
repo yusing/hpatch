@@ -14,6 +14,8 @@ hpatch_metrics="$run_dir/hpatch-metrics.json"
 benchmark_config="$run_dir/benchmark-config.json"
 issue_reports="$run_dir/agent-issue-reports.jsonl"
 issue_reports_directory="$run_dir/agent-issue-reports"
+exact_evidence="$run_dir/hpatch-exact-evidence.jsonl"
+exact_evidence_directory="$run_dir/hpatch-exact-evidence"
 summary="$run_dir/summary.md"
 temporary="$summary.tmp"
 analysis_dir=$(mktemp -d)
@@ -40,6 +42,20 @@ if [[ -d $issue_reports_directory ]]; then
 	bash "$benchmark_root/collect-agent-issue-reports.sh" \
 		"$issue_reports_directory" "$issue_reports"
 fi
+exact_evidence_enabled=false
+exact_evidence_schema=
+if [[ -s $benchmark_config ]]; then
+	exact_evidence_enabled=$(jq -r '.exact_hpatch_evidence_enabled // false' "$benchmark_config")
+	exact_evidence_schema=$(jq -r '.exact_hpatch_evidence_schema // empty' "$benchmark_config")
+fi
+if [[ $exact_evidence_enabled == true && -d $exact_evidence_directory ]]; then
+	bash "$benchmark_root/collect-hpatch-exact-evidence.sh" \
+		"$exact_evidence_directory" "$exact_evidence" "$hpatch_metrics"
+fi
+if [[ $exact_evidence_enabled == true && ! -f $exact_evidence ]]; then
+	printf 'report.sh: exact Hpatch evidence is enabled but missing: %s\n' "$exact_evidence" >&2
+	exit 1
+fi
 
 task_id=$(jq -sr '.[0].task_id' "$results")
 model=$(jq -sr '.[0].model' "$results")
@@ -59,6 +75,10 @@ if [[ $has_control == true ]]; then
 	python3 "$benchmark_root/analyze_commands.py" "${control_events[@]}" >"$analysis_dir/control.json"
 fi
 python3 "$benchmark_root/analyze_commands.py" "${hpatch_events[@]}" >"$analysis_dir/hpatch.json"
+if [[ $exact_evidence_enabled == true ]]; then
+	python3 "$benchmark_root/analyze_hpatch_evidence.py" \
+		"$exact_evidence" "$hpatch_metrics" >"$analysis_dir/exact-evidence.json"
+fi
 
 read -r correction_calls corrected_chains recovered_chains repeated_rejections repeated_targets max_attempt_depth retained_attempts routed_calls < <(
 	jq -r '
@@ -100,6 +120,10 @@ read -r correction_calls corrected_chains recovered_chains repeated_rejections r
 		] | @tsv
 	' "$hpatch_metrics"
 )
+exact_evidence_count=0
+if [[ $exact_evidence_enabled == true ]]; then
+	exact_evidence_count=$(jq -s 'length' "$exact_evidence")
+fi
 
 read -r top_rejection_count top_rejection_reason top_rejection_operation top_rejection_target top_rejection_relation < <(
 	jq -r '
@@ -315,6 +339,29 @@ category_label() {
 	printf '| Maximum attempts in one chain | %s |\n' "$max_attempt_depth"
 	printf '| Diagnostic input tokens | %s |\n' "$diagnostic_tokens"
 	printf '| Retained attempt telemetry | %s/%s calls |\n' "$retained_attempts" "$routed_calls"
+	if [[ $exact_evidence_enabled == true ]]; then
+		printf '| Exact attempt evidence | %s/%s calls (`%s`, `%s`) |\n' \
+			"$exact_evidence_count" "$retained_attempts" "${exact_evidence##*/}" "$exact_evidence_schema"
+		printf '| Exact attempts analyzed | %s |\n' "$(jq -r '.exact_attempts' "$analysis_dir/exact-evidence.json")"
+		printf '| Exact rejected attempts | %s |\n' "$(jq -r '.rejected_attempts' "$analysis_dir/exact-evidence.json")"
+		printf '| Exact correction attempts | %s |\n' "$(jq -r '.correction_attempts' "$analysis_dir/exact-evidence.json")"
+		printf '| Exact chains | %s |\n' "$(jq -r '.chains' "$analysis_dir/exact-evidence.json")"
+		printf '| Chains recovered in first correction | %s |\n' "$(jq -r '.chains_recovered_in_first_correction' "$analysis_dir/exact-evidence.json")"
+		printf '| Maximum correction attempts per chain | %s |\n' "$(jq -r '.max_correction_attempts_per_chain' "$analysis_dir/exact-evidence.json")"
+		printf '| Initial emitted payload bytes | %s |\n' "$(jq -r '.emitted_payload_bytes.initial' "$analysis_dir/exact-evidence.json")"
+		printf '| Rejected emitted payload bytes | %s |\n' "$(jq -r '.emitted_payload_bytes.rejected' "$analysis_dir/exact-evidence.json")"
+		printf '| Correction emitted payload bytes | %s |\n' "$(jq -r '.emitted_payload_bytes.correction' "$analysis_dir/exact-evidence.json")"
+		printf '| Rendered diagnostic bytes | %s |\n' "$(jq -r '.rendered_diagnostic_bytes' "$analysis_dir/exact-evidence.json")"
+		printf '| Rendered report bytes | %s |\n' "$(jq -r '.rendered_report_bytes' "$analysis_dir/exact-evidence.json")"
+		printf '| Correction target fragments overlapping prior diagnostic | %s/%s |\n' \
+			"$(jq -r '.correction_fragment_overlap.target.overlap' "$analysis_dir/exact-evidence.json")" \
+			"$(jq -r '.correction_fragment_overlap.target.fragments' "$analysis_dir/exact-evidence.json")"
+		printf '| Correction value fragments overlapping prior diagnostic | %s/%s |\n' \
+			"$(jq -r '.correction_fragment_overlap.value.overlap' "$analysis_dir/exact-evidence.json")" \
+			"$(jq -r '.correction_fragment_overlap.value.fragments' "$analysis_dir/exact-evidence.json")"
+	else
+		printf '| Exact attempt evidence | disabled |\n'
+	fi
 	if [[ $report_issue_recorded == true ]]; then
 		printf '| Agent issue reporting | %s |\n' "$report_issue_enabled"
 		printf '| Agent issue reports collected | %s |\n' "$issue_report_count"
@@ -380,6 +427,13 @@ category_label() {
 		printf -- '- The hpatch-only diagnostic used %s model request(s), %s input tokens, and %s output tokens.\n' \
 			"$hpatch_requests" "$hpatch_input" "$hpatch_output"
 	fi
+	if [[ $exact_evidence_enabled == true ]]; then
+		printf -- '- Exact evidence retained %s attempt(s): %s correction attempt(s), with %s chain(s) recovered in the first correction; correction payloads totaled %s bytes.\n' \
+			"$(jq -r '.exact_attempts' "$analysis_dir/exact-evidence.json")" \
+			"$(jq -r '.correction_attempts' "$analysis_dir/exact-evidence.json")" \
+			"$(jq -r '.chains_recovered_in_first_correction' "$analysis_dir/exact-evidence.json")" \
+			"$(jq -r '.emitted_payload_bytes.correction' "$analysis_dir/exact-evidence.json")"
+	fi
 	if [[ $report_issue_recorded == true && $issue_report_count -gt 0 ]]; then
 		printf -- '- Agents submitted %s concrete hpatch issue report(s); exact Markdown is retained in `agent-issue-reports.jsonl`.\n' "$issue_report_count"
 	elif [[ $report_issue_enabled == true && $hpatch_rejections -gt 0 ]]; then
@@ -402,6 +456,9 @@ category_label() {
 	fi
 	if [[ $report_issue_recorded == true ]]; then
 		printf ', with diagnostic configuration and reports in `benchmark-config.json` and `agent-issue-reports.jsonl`'
+	fi
+	if [[ $exact_evidence_enabled == true ]]; then
+		printf ', and exact Hpatch attempt payloads, reports, and diagnostics in `hpatch-exact-evidence.jsonl`'
 	fi
 	printf ', plus detailed `artifacts/`. '
 	if [[ $has_control != true ]]; then

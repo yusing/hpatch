@@ -67,6 +67,7 @@ services:
     <<: *bench-image
     environment:
       HPATCH_BENCH_ISSUE_DIR: /benchmark-agent-issue-reports
+      HPATCH_BENCH_EXACT_EVIDENCE_DIR: ${HPATCH_BENCH_EXACT_EVIDENCE_DIR:-}
       HPATCH_DIAGNOSE: ${HPATCH_BENCH_DIAGNOSE:-0}
       TMPDIR: ${BENCH_RUN_DIR:?BENCH_RUN_DIR must be set}/hpatch-runtime
     command:
@@ -92,6 +93,9 @@ services:
       - type: bind
         source: ${BENCH_RUN_DIR:?BENCH_RUN_DIR must be set}/agent-issue-reports
         target: /benchmark-agent-issue-reports
+      - type: bind
+        source: ${BENCH_RUN_DIR:?BENCH_RUN_DIR must be set}/hpatch-exact-evidence
+        target: /benchmark-hpatch-exact-evidence
     healthcheck:
       test: [CMD, curl, --fail, --silent, http://127.0.0.1:8082/api/metrics]
       interval: 250ms

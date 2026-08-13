@@ -566,6 +566,12 @@ The executable benchmark requires Docker, Codex authentication, and a local etcd
 bash benchmarks/bench.sh
 ```
 
+For an evidence-collection treatment run, set
+`BENCHMARK_RETAIN_EXACT_HPATCH_EVIDENCE=true` with `BENCHMARK_MODE=hpatch-only` or
+`hpatch-diagnostic`. This default-disabled option retains only exact hpatch/recovery payloads and
+their final model-visible reports or diagnostics in the private run artifact; it does not capture
+shell traffic, credentials, rebuilt scripts, or patches.
+
 The paired benchmark runs one stock Codex control attempt and one Hpatch attempt
 from independent copies of the same historical etcd base revision, alternating
 which arm runs first. Hidden executable tests and an allowed-path boundary grade

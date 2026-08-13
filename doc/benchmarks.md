@@ -30,6 +30,14 @@ unique atomic destinations.
 Issue reporting adds tool interaction when an agent finds a problem. Disable it for a pure
 performance confirmation after diagnostic collection is complete.
 
+Set `BENCHMARK_RETAIN_EXACT_HPATCH_EVIDENCE=true` on an Hpatch-only or Hpatch-diagnostic run when
+exact recovery forensics are required. The default is false. The treatment router then retains
+only exact `hpatch` and `hpatch_recover` payloads and final model-visible reports or diagnostics
+in private, atomic run-local records. After router teardown, the runner validates their lengths and SHA-256
+digests and consolidates them into `hpatch-exact-evidence.jsonl`. Shell traffic, credentials,
+rebuilt scripts and translated patches are not captured. The summary reports only
+the retained/expected count, artifact name, and schema.
+
 `BENCHMARK_MODE=hpatch-diagnostic` also generates `summary.md`. Because that mode has no control
 record, its outcome and command tables show Hpatch values only and state that no control arm ran.
 
@@ -399,6 +407,7 @@ $run_dir/control-router.log
 $run_dir/hpatch-router.log
 $run_dir/control-metrics.json
 $run_dir/hpatch-metrics.json
+$run_dir/hpatch-exact-evidence.jsonl  # only when explicitly enabled
 $run_dir/gain.txt
 $run_dir/instructions/control.md
 $run_dir/instructions/hpatch.md

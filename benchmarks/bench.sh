@@ -8,8 +8,8 @@ repetitions=${REPETITIONS:-4}
 benchmark_mode=${BENCHMARK_MODE:-paired}
 prepare_only=${BENCHMARK_PREPARE_ONLY:-false}
 report_issues=${BENCHMARK_REPORT_ISSUES:-true}
-	retain_exact_hpatch_evidence=${BENCHMARK_RETAIN_EXACT_HPATCH_EVIDENCE:-false}
-	enforce_no_edit_loops=${BENCHMARK_ENFORCE_NO_EDIT_LOOPS:-true}
+retain_exact_hpatch_evidence=${BENCHMARK_RETAIN_EXACT_HPATCH_EVIDENCE:-false}
+enforce_no_edit_loops=${BENCHMARK_ENFORCE_NO_EDIT_LOOPS:-true}
 control_baseline_dir=${CONTROL_BASELINE_DIR:-}
 case $prepare_only in
 true|false) ;;
@@ -42,6 +42,10 @@ false) export HPATCH_BENCH_DIAGNOSE=0 ;;
 	exit 2
 	;;
 esac
+if [[ $retain_exact_hpatch_evidence == true && $benchmark_mode == paired ]]; then
+	printf 'bench.sh: exact Hpatch evidence is available only in hpatch-only or hpatch-diagnostic mode\n' >&2
+	exit 2
+fi
 case "$benchmark_mode" in
 	paired) ;;
 	hpatch-only|hpatch-diagnostic)
@@ -184,6 +188,8 @@ hpatch_metrics="$run_dir/hpatch-metrics.json"
 gain_report="$run_dir/gain.txt"
 issue_reports_directory="$run_dir/agent-issue-reports"
 issue_reports="$run_dir/agent-issue-reports.jsonl"
+exact_evidence_directory="$run_dir/hpatch-exact-evidence"
+exact_evidence="$run_dir/hpatch-exact-evidence.jsonl"
 benchmark_config="$run_dir/benchmark-config.json"
 instruction_dir="$run_dir/instructions"
 control_instruction="$instruction_dir/control.md"
@@ -209,6 +215,11 @@ export CODEX_AUTH_PATH=${CODEX_AUTH_PATH:-${CODEX_HOME:-$HOME/.codex}/auth.json}
 compose_project_name="hpatch_bench_$(basename "$run_dir" | tr '[:upper:]' '[:lower:]' | tr -cd '[:alnum:]_')"
 export COMPOSE_PROJECT_NAME=$compose_project_name
 export HPATCH_BENCH_COMPOSE_FILE="$benchmark_root/compose.yaml"
+if [[ $retain_exact_hpatch_evidence == true ]]; then
+	export HPATCH_BENCH_EXACT_EVIDENCE_DIR=/benchmark-hpatch-exact-evidence
+else
+	export HPATCH_BENCH_EXACT_EVIDENCE_DIR=
+fi
 
 compose=(docker compose -f "$HPATCH_BENCH_COMPOSE_FILE")
 
@@ -252,6 +263,16 @@ collect_agent_issue_reports() {
 		"$issue_reports_directory" "$issue_reports"
 }
 
+# Invoked indirectly by cleanup from the EXIT trap.
+# shellcheck disable=SC2329
+collect_exact_hpatch_evidence() {
+	if [[ $retain_exact_hpatch_evidence != true || $started != true ]]; then
+		return
+	fi
+	bash "$benchmark_root/collect-hpatch-exact-evidence.sh" \
+		"$exact_evidence_directory" "$exact_evidence" "$hpatch_metrics"
+}
+
 import_control_baseline() {
 	local baseline_result="$control_baseline_dir/artifacts/$task_id/${task_id}-control-r001/result.json"
 	local destination="$run_dir/artifacts/$task_id/${task_id}-control-r001"
@@ -288,6 +309,7 @@ normalize_hpatch_artifact_permissions() {
 	local config="$run_dir/hpatch-config"
 	local runtime="$run_dir/hpatch-runtime"
 	local reports_path=$issue_reports_directory
+	local exact_path=$exact_evidence_directory
 	local owner
 
 	if docker info --format '{{json .SecurityOptions}}' | grep -Fq '"name=rootless"'; then
@@ -300,8 +322,9 @@ normalize_hpatch_artifact_permissions() {
 		--mount type=bind,source="$config",target=/hpatch-config \
 		--mount type=bind,source="$runtime",target=/hpatch-runtime \
 		--mount type=bind,source="$reports_path",target=/agent-issue-reports \
+		--mount type=bind,source="$exact_path",target=/hpatch-exact-evidence \
 		"$benchmark_image" \
-		sh -euc 'chown -R "$1" /hpatch-config /hpatch-runtime /agent-issue-reports; chmod -R u+rwX,go+rX /hpatch-config /hpatch-runtime /agent-issue-reports' \
+		sh -euc 'chown -R "$1" /hpatch-config /hpatch-runtime /agent-issue-reports /hpatch-exact-evidence; chmod -R u+rwX,go+rX /hpatch-config /hpatch-runtime /agent-issue-reports; find /hpatch-exact-evidence -type d -exec chmod 0700 {} +; find /hpatch-exact-evidence -type f -exec chmod 0600 {} +' \
 		sh "$owner"; then
 		printf 'bench.sh: cannot normalize hpatch artifact permissions under %s\n' "$run_dir" >&2
 		return 1
@@ -453,6 +476,8 @@ preserve_run() {
 	gain_report="$run_dir/gain.txt"
 	issue_reports_directory="$run_dir/agent-issue-reports"
 	issue_reports="$run_dir/agent-issue-reports.jsonl"
+	exact_evidence_directory="$run_dir/hpatch-exact-evidence"
+	exact_evidence="$run_dir/hpatch-exact-evidence.jsonl"
 	benchmark_config="$run_dir/benchmark-config.json"
 	instruction_dir="$run_dir/instructions"
 	control_instruction="$instruction_dir/control.md"
@@ -545,6 +570,11 @@ cleanup() {
 			status=1
 		fi
 	fi
+	if ! collect_exact_hpatch_evidence; then
+		if ((status == 0)); then
+			status=1
+		fi
+	fi
 	if [[ -n $dependency_workspace && -d $dependency_workspace ]]; then
 		rm -rf -- "$dependency_workspace"
 		dependency_workspace=
@@ -585,7 +615,7 @@ trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
-for executable in chmod cp curl date diff docker git go grep id jq mv sha256sum sort tar timeout; do
+for executable in chmod cp curl date diff docker git go grep id jq mv sha256sum sort tar timeout wc; do
 	if ! command -v "$executable" >/dev/null; then
 		printf 'bench.sh: %s is required\n' "$executable" >&2
 		exit 1
@@ -657,7 +687,8 @@ INSTRUCTION
 configure_issue_reporting() {
 	local settings_directory="$run_dir/hpatch-config/hpatch"
 
-	mkdir -p "$settings_directory" "$issue_reports_directory"
+	mkdir -p "$settings_directory" "$issue_reports_directory" "$exact_evidence_directory"
+	chmod 0700 "$exact_evidence_directory"
 	cat >"$settings_directory/settings.json" <<'JSON'
 {"hooks":{"diagnose":["hpatch-benchmark-report-issue {{shellquote .Title}} {{shellquote (format_markdown .)}}"]}}
 JSON
@@ -673,8 +704,8 @@ JSON
 			enforce_no_edit_loops: $enforce_no_edit_loops,
 			exact_hpatch_evidence_enabled: $exact_hpatch_evidence_enabled,
 			exact_hpatch_evidence: $exact_evidence,
-				exact_hpatch_evidence_schema: "hpatch.benchmark.exact-attempt.v1"
-			}' \
+			exact_hpatch_evidence_schema: "hpatch.benchmark.exact-attempt.v1"
+		}' \
 		>"$benchmark_config"
 }
 

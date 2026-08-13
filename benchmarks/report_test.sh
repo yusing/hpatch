@@ -8,7 +8,7 @@ artifact_root="$fixture/artifacts/task"
 mkdir -p "$artifact_root/task-control-r001" "$artifact_root/task-hpatch-r001"
 
 cat >"$fixture/benchmark-config.json" <<'JSON'
-{"report_issue_enabled":true,"agent_issue_reports":"agent-issue-reports.jsonl"}
+{"report_issue_enabled":true,"agent_issue_reports":"agent-issue-reports.jsonl","exact_hpatch_evidence_enabled":true,"exact_hpatch_evidence":"hpatch-exact-evidence.jsonl","exact_hpatch_evidence_schema":"hpatch.benchmark.exact-attempt.v1"}
 JSON
 cat >"$fixture/agent-issue-reports.jsonl" <<'JSON'
 {"title":"Improve recovery","body":"The stale-row diagnostic did not identify the changed target."}
@@ -23,8 +23,75 @@ cat >"$fixture/control-metrics.json" <<'JSON'
 {"requests":{"started":3},"hpatch_calls":{"successful":0,"rejected":0,"diagnostic_input_tokens":0},"sessions":[{"session_id":"control-session","hpatch_calls":{"successful":0,"rejected":0,"diagnostic_input_tokens":0}}]}
 JSON
 cat >"$fixture/hpatch-metrics.json" <<'JSON'
-{"requests":{"started":5},"hpatch_calls":{"successful":2,"rejected":2,"diagnostic_input_tokens":9},"sessions":[{"session_id":"hpatch-session","hpatch_calls":{"successful":2,"rejected":2,"diagnostic_input_tokens":9},"hpatch_attempts":[{"sequence":1,"correlation_id":"private-chain-a","attempt":1,"correction":false,"outcome":"rejected","rejections":[{"command":2,"operation":"type","target":"line","target_alias_relation":"contained","reason":"row-stale","path":"file.go"}]},{"sequence":2,"correlation_id":"private-chain-a","attempt":2,"correction":true,"outcome":"rejected","rejections":[{"command":2,"operation":"type","target":"line","target_alias_relation":"contained","reason":"row-stale","path":"file.go"}]},{"sequence":3,"correlation_id":"private-chain-a","attempt":3,"correction":true,"outcome":"successful","rejections":[]},{"sequence":4,"correlation_id":"private-chain-b","attempt":1,"correction":false,"outcome":"successful","rejections":[]}],"hpatch_rejections":[{"command":2,"operation":"type","target":"line","target_alias_relation":"contained","reason":"row-stale","path":"file.go"},{"command":2,"operation":"type","target":"line","target_alias_relation":"contained","reason":"row-stale","path":"file.go"}]}],"gain":{"hpatch_tokens":20,"apply_patch_tokens":50,"ineffective_hpatch_tokens":10,"failed_apply_patch_tokens":2,"successful_reduction_percent":"60.0","overall_reduction_percent":"42.3"}}
+{"requests":{"started":5},"hpatch_calls":{"successful":2,"rejected":2,"diagnostic_input_tokens":9},"sessions":[{"session_id":"hpatch-session","hpatch_calls":{"successful":2,"rejected":2,"diagnostic_input_tokens":9},"hpatch_attempts":[{"sequence":1,"correlation_id":"private-chain-a","call_id":"private-call-a1","attempt":1,"correction":false,"outcome":"rejected","rejections":[{"command":2,"operation":"type","target":"line","target_alias_relation":"contained","reason":"row-stale","path":"file.go"}]},{"sequence":2,"correlation_id":"private-chain-a","call_id":"private-call-a2","attempt":2,"correction":true,"outcome":"rejected","rejections":[{"command":2,"operation":"type","target":"line","target_alias_relation":"contained","reason":"row-stale","path":"file.go"}]},{"sequence":3,"correlation_id":"private-chain-a","call_id":"private-call-a3","attempt":3,"correction":true,"outcome":"successful","rejections":[]},{"sequence":4,"correlation_id":"private-chain-b","call_id":"private-call-b1","attempt":1,"correction":false,"outcome":"successful","rejections":[]}],"hpatch_rejections":[{"command":2,"operation":"type","target":"line","target_alias_relation":"contained","reason":"row-stale","path":"file.go"},{"command":2,"operation":"type","target":"line","target_alias_relation":"contained","reason":"row-stale","path":"file.go"}]}],"gain":{"hpatch_tokens":20,"apply_patch_tokens":50,"ineffective_hpatch_tokens":10,"failed_apply_patch_tokens":2,"successful_reduction_percent":"60.0","overall_reduction_percent":"42.3"}}
 JSON
+
+exact_records="$fixture/hpatch-exact-evidence"
+mkdir -m 0700 "$exact_records"
+make_exact_record() {
+	local name=$1
+	local correlation=$2
+	local call=$3
+	local attempt=$4
+	local correction=$5
+	local tool=$6
+	local outcome=$7
+	local payload=$8
+	local diagnostic=$9
+	local report=
+	local payload_file="$fixture/$name.payload"
+	local diagnostic_file="$fixture/$name.diagnostic"
+	local report_file="$fixture/$name.report"
+	local payload_sha
+	local diagnostic_sha
+	local report_sha
+	printf %s "$payload" >"$payload_file"
+	printf %s "$diagnostic" >"$diagnostic_file"
+	if [[ $outcome == successful ]]; then
+		report=$'done\nrefs:\n  1:aaaa final row\n'
+	fi
+	printf %s "$report" >"$report_file"
+	read -r payload_sha _ < <(sha256sum "$payload_file")
+	read -r diagnostic_sha _ < <(sha256sum "$diagnostic_file")
+	read -r report_sha _ < <(sha256sum "$report_file")
+	jq -cn \
+		--arg correlation "$correlation" --arg call "$call" --argjson attempt "$attempt" \
+		--argjson correction "$correction" --arg tool "$tool" --arg outcome "$outcome" \
+		--arg payload "$payload" --argjson payload_bytes "$(wc -c <"$payload_file")" \
+		--arg payload_sha "$payload_sha" --arg diagnostic "$diagnostic" \
+		--argjson diagnostic_bytes "$(wc -c <"$diagnostic_file")" \
+		--arg diagnostic_sha "$diagnostic_sha" --arg report "$report" \
+		--argjson report_bytes "$(wc -c <"$report_file")" --arg report_sha "$report_sha" '
+		{
+			schema: "hpatch.benchmark.exact-attempt.v1",
+			session_id: "hpatch-session",
+			correlation_id: $correlation,
+			call_id: $call,
+			attempt: $attempt,
+			correction: $correction,
+			model: "model",
+			tool_name: $tool,
+			outcome: $outcome,
+			emitted_payload: $payload,
+			emitted_payload_bytes: $payload_bytes,
+			emitted_payload_sha256: $payload_sha,
+			rendered_diagnostic: $diagnostic,
+			rendered_diagnostic_bytes: $diagnostic_bytes,
+			rendered_diagnostic_sha256: $diagnostic_sha,
+			rendered_report: $report,
+			rendered_report_bytes: $report_bytes,
+			rendered_report_sha256: $report_sha
+		}' >"$exact_records/$name.json"
+	chmod 0600 "$exact_records/$name.json"
+}
+make_exact_record a1 private-chain-a private-call-a1 1 false hpatch evaluator_rejected \
+	$'in file.go\ntype 1:aaaa "bad"\n' $'row-stale: expected 1:aaaa, current 1:bbbb\n'
+make_exact_record a2 private-chain-a private-call-a2 2 true hpatch_recover evaluator_rejected \
+	'C2:aaaa target 1:bbbb' $'language-syntax at value row 1\n'
+make_exact_record a3 private-chain-a private-call-a3 3 true hpatch_recover successful \
+	'C2:bbbb V3:cccc value+ "}\n"' ''
+make_exact_record b1 private-chain-b private-call-b1 1 false hpatch successful \
+	$'in second.go\ntype "old" "new"\n' ''
 
 cat >"$artifact_root/task-control-r001/codex.jsonl" <<'JSON'
 {"type":"item.completed","item":{"type":"command_execution","command":"sed -n '1,20p' file.go; rg target file.go; git status --short","exit_code":0,"status":"completed"}}
@@ -71,6 +138,14 @@ grep -Fq '| Repeated rejection signature in a later attempt | 1 |' "$fixture/sum
 grep -Fq '| Later rejected attempt on the same command, operation, target kind, and path | 1 |' "$fixture/summary.md"
 grep -Fq '| Agent issue reporting | true |' "$fixture/summary.md"
 grep -Fq '| Agent issue reports collected | 1 |' "$fixture/summary.md"
+grep -Fq '| Exact attempt evidence | 4/4 calls (`hpatch-exact-evidence.jsonl`, `hpatch.benchmark.exact-attempt.v1`) |' "$fixture/summary.md"
+grep -Fq '| Exact attempts analyzed | 4 |' "$fixture/summary.md"
+grep -Fq '| Exact rejected attempts | 2 |' "$fixture/summary.md"
+grep -Fq '| Exact correction attempts | 2 |' "$fixture/summary.md"
+grep -Fq '| Chains recovered in first correction | 0 |' "$fixture/summary.md"
+grep -Fq '| Correction emitted payload bytes | 49 |' "$fixture/summary.md"
+grep -Fq '| Rendered diagnostic bytes | 74 |' "$fixture/summary.md"
+grep -Fq '| Rendered report bytes | 60 |' "$fixture/summary.md"
 grep -Fq '| row-stale | type | line | contained | 2 |' "$fixture/summary.md"
 grep -Fq 'Same-path structural loops remain: 1 file-read, 2 search, and 2 content-diff invocation(s), versus control at 0, 0, and 0.' "$fixture/summary.md"
 grep -Fq 'Most frequent retained rejection: row-stale `type` with line target and contained prior-target relation, 2 location(s).' "$fixture/summary.md"
@@ -256,12 +331,26 @@ if bash "$benchmark_root/collect-agent-issue-reports.sh" \
 fi
 test "$(jq -s 'length' "$fixture/collected-reports.jsonl")" = 2
 
-for forbidden in private-chain-a private-chain-b control-session hpatch-session 'Estimated non-edit output' 'Router metrics' 'Hpatch gain and patch errors' 'Attempt sequence'; do
+for forbidden in private-chain-a private-chain-b private-call-a1 control-session hpatch-session \
+	'row-stale: expected 1:aaaa' 'C2:bbbb V3:cccc' 'Estimated non-edit output' \
+	'Router metrics' 'Hpatch gain and patch errors' 'Attempt sequence'; do
 	if grep -Fq "$forbidden" "$fixture/summary.md"; then
 		printf 'summary retained forbidden or redundant detail: %s\n' "$forbidden" >&2
 		exit 1
 	fi
 done
+
+disabled="$fixture/disabled"
+mkdir -p "$disabled"
+cp "$fixture/results.jsonl" "$fixture/hpatch-metrics.json" "$fixture/control-metrics.json" "$disabled/"
+cp -a "$fixture/artifacts" "$disabled/"
+jq '.exact_hpatch_evidence_enabled = false' "$fixture/benchmark-config.json" >"$disabled/benchmark-config.json"
+bash "$benchmark_root/report.sh" "$disabled" >/dev/null
+grep -Fq '| Exact attempt evidence | disabled |' "$disabled/summary.md"
+if grep -Fq 'Exact attempts analyzed' "$disabled/summary.md"; then
+	printf 'disabled exact evidence unexpectedly changed report rows\n' >&2
+	exit 1
+fi
 
 diagnostic="$fixture/diagnostic"
 mkdir -p "$diagnostic/artifacts/task/task-hpatch-r001"
@@ -269,6 +358,7 @@ jq -c 'select(.arm == "hpatch")' "$fixture/results.jsonl" >"$diagnostic/results.
 cp "$fixture/hpatch-metrics.json" "$diagnostic/hpatch-metrics.json"
 cp "$fixture/benchmark-config.json" "$diagnostic/benchmark-config.json"
 cp "$fixture/agent-issue-reports.jsonl" "$diagnostic/agent-issue-reports.jsonl"
+cp "$fixture/hpatch-exact-evidence.jsonl" "$diagnostic/hpatch-exact-evidence.jsonl"
 cp "$artifact_root/task-hpatch-r001/codex.jsonl" "$diagnostic/artifacts/task/task-hpatch-r001/codex.jsonl"
 bash "$benchmark_root/report.sh" "$diagnostic" >/dev/null
 

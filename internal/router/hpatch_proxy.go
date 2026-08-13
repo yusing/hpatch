@@ -224,6 +224,7 @@ type hpatchHistorySession struct {
 type hpatchProxy struct {
 	translator     hpatchTranslator
 	registry       *toolRegistry
+	exactEvidence  *hpatchExactEvidenceRecorder
 	shellDirectory string
 	titles         *sessionTitleCache
 	shellSessions  map[string]struct{}
@@ -248,6 +249,7 @@ func newHPatchProxy(translator hpatchTranslator, registry *toolRegistry, titleCa
 	return &hpatchProxy{
 		translator:     translator,
 		registry:       registry,
+		exactEvidence:  newHPatchExactEvidenceRecorder(),
 		shellDirectory: directory,
 		titles:         titles,
 		shellSessions:  make(map[string]struct{}),
@@ -2198,6 +2200,9 @@ func (t *hpatchResponseTransform) claimRequestAccounting() (string, []hpatch.Hos
 func (t *hpatchResponseTransform) recordMetrics(inputs hpatchMetricInputs) error {
 	inputs.definition, inputs.definitions, inputs.baselineDefinition, inputs.execCommandDefinitions = t.claimRequestAccounting()
 	inputs.sessionID = t.sessionID
+	// Exact benchmark evidence is opt-in auxiliary telemetry. Its failures, like
+	// gain metric failures below, cannot change the completed tool result.
+	_ = t.proxy.exactEvidence.record(inputs)
 	record, err := calculateHPatchMetricRecord(inputs)
 	if err == nil {
 		err = t.proxy.translator.RecordMetrics(t.ctx, record)
