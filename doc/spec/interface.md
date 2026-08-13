@@ -1209,7 +1209,10 @@ receives a syntax diagnostic.
 A stale row reports the actual current-line candidate and up to two neighboring baseline rows.
 It also reports every baseline line whose hash makes the stale reference ambiguous, or states
 that the hash is absent. A unique relocated hash resolves during evaluation and does not produce
-a diagnostic. Range repair reports start and end independently. A missing literal occurrence
+a diagnostic. Range repair reports start and end independently. When both requested coordinates
+are in bounds and ordered, it also renders one explicitly unverified current-coordinate range
+candidate in exact target syntax with its inclusive span length; normal endpoint verification
+remains authoritative. A missing literal occurrence
 reports the verified anchor context. An edit conflict identifies the prior command and affected
 immutable-baseline lines. If
 a command depends on content introduced by another command, the diagnostic directs the agent to

@@ -43,6 +43,7 @@ func (w *workspace) repairContext(command instruction, reason failureReason) str
 }
 
 func writeStaleTargetRepair(report *strings.Builder, baseline string, lines []logicalLine, target targetSpec) {
+	writeRangeCandidateRepair(report, baseline, lines, target)
 	references := []struct {
 		name string
 		row  rowReference
@@ -87,6 +88,25 @@ func writeStaleTargetRepair(report *strings.Builder, baseline string, lines []lo
 		}
 		writeLineWindow(report, baseline, lines, reference.row.line)
 	}
+}
+
+func writeRangeCandidateRepair(report *strings.Builder, baseline string, lines []logicalLine, target targetSpec) {
+	if target.kind != targetRange ||
+		target.start.line < 1 || target.end.line > len(lines) ||
+		target.start.line > target.end.line {
+		return
+	}
+	start := hashLine(lineContent(baseline, lines[target.start.line-1]))
+	end := hashLine(lineContent(baseline, lines[target.end.line-1]))
+	fmt.Fprintf(
+		report,
+		"range candidate at requested coordinates (verify both endpoint texts and complete %d-line span): %d:%s..%d:%s\n",
+		target.end.line-target.start.line+1,
+		target.start.line,
+		start,
+		target.end.line,
+		end,
+	)
 }
 
 func writeTextTargetRepair(report *strings.Builder, editor *editor, lines []logicalLine, target targetSpec) {

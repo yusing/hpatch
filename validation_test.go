@@ -118,19 +118,21 @@ func TestHostTranslationAggregatesIndependentStaleTargets(t *testing.T) {
 	}
 }
 
-func TestRangeStaleRepairIdentifiesEndpoint(t *testing.T) {
+func TestRangeStaleRepairIdentifiesCompleteCurrentCoordinateSpan(t *testing.T) {
 	rootPath := t.TempDir()
-	writeTestFile(t, rootPath, "file.txt", "start\nend changed\n", 0o644)
+	writeTestFile(t, rootPath, "file.txt", "start\nnear start\nstart edge\nmiddle hidden\nend edge\nnear end\nend changed\n", 0o644)
 	root := openTestRoot(t, rootPath)
-	script := "in file.txt\ntype " + row(1, "start") + `..2:bbbb "replacement"`
+	script := "in file.txt\ntype " + row(1, "start") + `..7:bbbb "replacement"`
 
 	result, err := TranslateForHost(t.Context(), Workspace{Root: root}, script, t.TempDir())
 	if err == nil {
 		t.Fatal("stale range unexpectedly translated")
 	}
-	if !strings.Contains(result.Diagnostic, "range start verified at "+row(1, "start")) ||
-		!strings.Contains(result.Diagnostic, "range end expected 2:bbbb") ||
-		!strings.Contains(result.Diagnostic, "current-line candidate (verify text): 2:") {
+	if !strings.Contains(result.Diagnostic, "range candidate at requested coordinates (verify both endpoint texts and complete 7-line span): "+row(1, "start")+".."+row(7, "end changed")) ||
+		!strings.Contains(result.Diagnostic, "range start verified at "+row(1, "start")) ||
+		!strings.Contains(result.Diagnostic, "range end expected 7:bbbb") ||
+		!strings.Contains(result.Diagnostic, "current-line candidate (verify text): 7:") ||
+		strings.Contains(result.Diagnostic, "middle hidden") {
 		t.Fatalf("diagnostic = %q", result.Diagnostic)
 	}
 }
