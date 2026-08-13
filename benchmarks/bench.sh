@@ -6,25 +6,64 @@ model=${MODEL:-gpt-5.6-sol}
 reasoning_effort=${REASONING_EFFORT:-medium}
 repetitions=${REPETITIONS:-4}
 benchmark_mode=${BENCHMARK_MODE:-paired}
+prepare_only=${BENCHMARK_PREPARE_ONLY:-false}
+report_issues=${BENCHMARK_REPORT_ISSUES:-true}
+	retain_exact_hpatch_evidence=${BENCHMARK_RETAIN_EXACT_HPATCH_EVIDENCE:-false}
+	enforce_no_edit_loops=${BENCHMARK_ENFORCE_NO_EDIT_LOOPS:-true}
 control_baseline_dir=${CONTROL_BASELINE_DIR:-}
+case $prepare_only in
+true|false) ;;
+*)
+	printf 'bench.sh: BENCHMARK_PREPARE_ONLY must be true or false, got %s\n' "$prepare_only" >&2
+	exit 2
+	;;
+esac
+case $retain_exact_hpatch_evidence in
+true|false) ;;
+*)
+	printf 'bench.sh: BENCHMARK_RETAIN_EXACT_HPATCH_EVIDENCE must be true or false, got %s\n' \
+		"$retain_exact_hpatch_evidence" >&2
+	exit 2
+	;;
+esac
+case $enforce_no_edit_loops in
+true|false) ;;
+*)
+	printf 'bench.sh: BENCHMARK_ENFORCE_NO_EDIT_LOOPS must be true or false, got %s\n' \
+		"$enforce_no_edit_loops" >&2
+	exit 2
+	;;
+esac
+case $report_issues in
+true) export HPATCH_BENCH_DIAGNOSE=1 ;;
+false) export HPATCH_BENCH_DIAGNOSE=0 ;;
+*)
+	printf 'bench.sh: BENCHMARK_REPORT_ISSUES must be true or false, got %s\n' "$report_issues" >&2
+	exit 2
+	;;
+esac
 case "$benchmark_mode" in
 	paired) ;;
-	hpatch-only)
+	hpatch-only|hpatch-diagnostic)
 		if ((repetitions != 1)); then
-			printf 'bench.sh: hpatch-only mode requires REPETITIONS=1; run separate trials against the same baseline\n' >&2
+			printf 'bench.sh: %s mode requires REPETITIONS=1; run separate trials for independent evidence\n' "$benchmark_mode" >&2
 			exit 2
 		fi
 		;;
 	*)
-		printf 'bench.sh: BENCHMARK_MODE must be paired or hpatch-only, got %s\n' "$benchmark_mode" >&2
+		printf 'bench.sh: BENCHMARK_MODE must be paired, hpatch-only, or hpatch-diagnostic, got %s\n' "$benchmark_mode" >&2
 		exit 2
 		;;
 esac
-task_id=etcd-range-stream
-task="$benchmark_root/tasks/$task_id"
-task_manifest="$task/task.json"
+task_id=${TASK_ID:-etcd-range-stream}
+suite_manifest="$benchmark_root/diverse-suite.json"
+task=
+task_manifest=
 prompt_file=
 source_repo=
+source_repository=
+source_is_public=false
+source_kind=git
 base_commit=
 oracle_commit=
 allowed_paths=()
@@ -33,6 +72,8 @@ hidden_paths=()
 grader_command=()
 grader_name=
 baseline_output_contains=
+dependency_kind=none
+read_probe=
 
 agent_timeout=
 grader_timeout=
@@ -40,6 +81,11 @@ is_allowed_path() {
 	local candidate=$1
 	local allowed
 	for allowed in "${allowed_paths[@]}"; do
+		if [[ $allowed == . && -n $candidate && $candidate != . &&
+			$candidate != /* && $candidate != .. && $candidate != ../* &&
+			$candidate != */../* && $candidate != */.. ]]; then
+			return 0
+		fi
 		if [[ $candidate == "$allowed" ]]; then
 			return 0
 		fi
@@ -48,28 +94,70 @@ is_allowed_path() {
 }
 load_task_manifest() {
 	local repository
+	local manifest_relative
+	if [[ $task_id == etcd-range-stream ]]; then
+		task="$benchmark_root/tasks/$task_id"
+		task_manifest="$task/task.json"
+	elif manifest_relative=$(jq -er --arg id "$task_id" \
+		'.tasks[] | select(.id == $id) | .manifest' "$suite_manifest"); then
+		task_manifest="$benchmark_root/$manifest_relative"
+		task=$(dirname "$task_manifest")
+	else
+		printf 'bench.sh: unknown TASK_ID: %s\n' "$task_id" >&2
+		return 1
+	fi
 	if ! jq -e --arg id "$task_id" '.id == $id' "$task_manifest" >/dev/null; then
 		printf 'bench.sh: task manifest id mismatch: %s\n' "$task_manifest" >&2
 		return 1
 	fi
-	repository=$(jq -er '.source.repository' "$task_manifest")
+	source_kind=$(jq -r '.source.kind // "git"' "$task_manifest")
 	prompt_file=$(jq -er '.prompt_file' "$task_manifest")
-	source_repo=$(cd "$task/$repository" && pwd)
+	case $source_kind in
+	git)
+		repository=$(jq -er '.source.repository' "$task_manifest")
+		source_repository=$repository
+		case $repository in
+		https://github.com/*.git)
+			source_is_public=true
+			source_repo="$run_dir/source.git"
+			;;
+		*)
+			source_repo=$(cd "$task/$repository" && pwd)
+			;;
+		esac
+		base_commit=$(jq -er '.source.base_commit' "$task_manifest")
+		oracle_commit=$(jq -er '.source.oracle_commit' "$task_manifest")
+		;;
+	empty_fixture)
+		base_commit=$(jq -er '.source.base_revision' "$task_manifest")
+		;;
+	*)
+		printf 'bench.sh: unsupported source kind for %s: %s\n' "$task_id" "$source_kind" >&2
+		return 1
+		;;
+	esac
 	if [[ ! -f "$task/$prompt_file" ]]; then
 		printf 'bench.sh: prompt file not found: %s\n' "$task/$prompt_file" >&2
 		return 1
 	fi
-	base_commit=$(jq -er '.source.base_commit' "$task_manifest")
-	oracle_commit=$(jq -er '.source.oracle_commit' "$task_manifest")
 	mapfile -t allowed_paths < <(jq -er '.allowed_path_prefixes[]' "$task_manifest")
 	mapfile -t hidden_sources < <(jq -er '.hidden_files[].source' "$task_manifest")
 	mapfile -t hidden_paths < <(jq -er '.hidden_files[].destination' "$task_manifest")
 	mapfile -t grader_command < <(jq -er '.graders[0].command[]' "$task_manifest")
 	grader_name=$(jq -er '.graders[0].name' "$task_manifest")
-baseline_output_contains=$(jq -er '.graders[0].baseline_output_contains' "$task_manifest")
+	baseline_output_contains=$(jq -er '.graders[0].baseline_output_contains' "$task_manifest")
 
 	agent_timeout=$(jq -er '.agent_timeout_seconds' "$task_manifest")
 	grader_timeout=$(jq -er '.graders[0].timeout_seconds' "$task_manifest")
+	dependency_kind=$(jq -er '.runtime.dependency_kind // "go"' "$task_manifest")
+	read_probe=$(jq -er '.runtime.read_probe // "go.mod"' "$task_manifest")
+	case $dependency_kind in
+	go|node|none) ;;
+	*)
+		printf 'bench.sh: unsupported dependency kind for %s: %s\n' "$task_id" "$dependency_kind" >&2
+		return 1
+		;;
+	esac
 	if ((${#hidden_sources[@]} == 0 || ${#hidden_sources[@]} != ${#hidden_paths[@]})); then
 		printf 'bench.sh: hidden file mappings are empty or unbalanced\n' >&2
 		return 1
@@ -94,13 +182,19 @@ hpatch_log="$run_dir/hpatch-router.log"
 control_metrics="$run_dir/control-metrics.json"
 hpatch_metrics="$run_dir/hpatch-metrics.json"
 gain_report="$run_dir/gain.txt"
+issue_reports_directory="$run_dir/agent-issue-reports"
+issue_reports="$run_dir/agent-issue-reports.jsonl"
+benchmark_config="$run_dir/benchmark-config.json"
 instruction_dir="$run_dir/instructions"
 control_instruction="$instruction_dir/control.md"
 hpatch_instruction="$instruction_dir/hpatch.md"
 instruction_diff="$instruction_dir/stock-to-hpatch-tools.diff"
 instruction_source="$benchmark_root/../contrib/codex/file-editing-instructions.md"
 instruction_renderer="$benchmark_root/../contrib/codex/render-model-instructions.sh"
-benchmark_image="hpatch-bench:${HPATCH_BENCH_IMAGE_TAG:-local}"
+run_suffix=$(basename "$run_dir")
+image_tag_prefix=${HPATCH_BENCH_IMAGE_TAG:-run}
+export HPATCH_BENCH_IMAGE_TAG="$image_tag_prefix-${run_suffix#.staging-}"
+benchmark_image="hpatch-bench:$HPATCH_BENCH_IMAGE_TAG"
 control_instruction_sha=
 hpatch_instruction_sha=
 result_files=()
@@ -119,11 +213,13 @@ export HPATCH_BENCH_COMPOSE_FILE="$benchmark_root/compose.yaml"
 compose=(docker compose -f "$HPATCH_BENCH_COMPOSE_FILE")
 
 collect_router_metrics() {
-	local url=$1
-	local destination=$2
+	local service=$1
+	local port=$2
+	local destination=$3
 	local temporary="$destination.tmp"
 
-	if curl --fail --silent --show-error "$url" >"$temporary"; then
+	if "${compose[@]}" exec -T "$service" curl --fail --silent --show-error \
+		"http://127.0.0.1:$port/api/metrics" >"$temporary"; then
 		mv -f -- "$temporary" "$destination"
 		return
 	fi
@@ -139,14 +235,21 @@ collect_artifacts() {
 	fi
 	if [[ $benchmark_mode == paired ]]; then
 		"${compose[@]}" logs --no-color control >"$control_log" 2>&1 || true
-		collect_router_metrics http://127.0.0.1:8081/api/metrics "$control_metrics" ||
+		collect_router_metrics control 8081 "$control_metrics" ||
 			metrics_collected=false
 	fi
 	"${compose[@]}" logs --no-color hpatch >"$hpatch_log" 2>&1 || true
-	collect_router_metrics http://127.0.0.1:8082/api/metrics "$hpatch_metrics" ||
+	collect_router_metrics hpatch 8082 "$hpatch_metrics" ||
 		metrics_collected=false
 	"${compose[@]}" exec -T hpatch hpatch gain >"$gain_report" 2>&1 || true
 	collected=$metrics_collected
+}
+
+# Invoked indirectly by cleanup from the EXIT trap.
+# shellcheck disable=SC2329
+collect_agent_issue_reports() {
+	bash "$benchmark_root/collect-agent-issue-reports.sh" \
+		"$issue_reports_directory" "$issue_reports"
 }
 
 import_control_baseline() {
@@ -181,8 +284,10 @@ import_control_baseline() {
 	mv -f -- "$temporary" "$destination/result.json"
 }
 
-normalize_hpatch_config_ownership() {
-	local directory="$run_dir/hpatch-config"
+normalize_hpatch_artifact_permissions() {
+	local config="$run_dir/hpatch-config"
+	local runtime="$run_dir/hpatch-runtime"
+	local reports_path=$issue_reports_directory
 	local owner
 
 	if docker info --format '{{json .SecurityOptions}}' | grep -Fq '"name=rootless"'; then
@@ -192,10 +297,33 @@ normalize_hpatch_config_ownership() {
 	fi
 
 	if ! docker run --rm \
-		--mount type=bind,source="$directory",target=/hpatch-config \
+		--mount type=bind,source="$config",target=/hpatch-config \
+		--mount type=bind,source="$runtime",target=/hpatch-runtime \
+		--mount type=bind,source="$reports_path",target=/agent-issue-reports \
 		"$benchmark_image" \
-		chown -R "$owner" /hpatch-config; then
-		printf 'bench.sh: cannot normalize hpatch metric artifact ownership at %s\n' "$directory" >&2
+		sh -euc 'chown -R "$1" /hpatch-config /hpatch-runtime /agent-issue-reports; chmod -R u+rwX,go+rX /hpatch-config /hpatch-runtime /agent-issue-reports' \
+		sh "$owner"; then
+		printf 'bench.sh: cannot normalize hpatch artifact permissions under %s\n' "$run_dir" >&2
+		return 1
+	fi
+}
+
+normalize_repository_permissions() {
+	local repository=$1
+	local owner
+
+	if docker info --format '{{json .SecurityOptions}}' | grep -Fq '"name=rootless"'; then
+		owner=0:0
+	else
+		owner="$(id -u):$(id -g)"
+	fi
+
+	if ! docker run --rm \
+		--mount type=bind,source="$repository",target=/repository \
+		"$benchmark_image" \
+		sh -euc 'chown -R "$1" /repository; chmod -R u+rwX,go+rwX /repository' \
+		sh "$owner"; then
+		printf 'bench.sh: cannot normalize benchmark repository permissions at %s\n' "$repository" >&2
 		return 1
 	fi
 }
@@ -214,6 +342,9 @@ print_lifecycle_summary() {
 	local arm
 	local metrics
 	local -a arms=(control hpatch)
+	if [[ $benchmark_mode == hpatch-diagnostic ]]; then
+		arms=(hpatch)
+	fi
 
 	printf '\nRouter lifecycle by benchmark session:\n'
 	printf 'arm\tsession_id\tstarted\tactive\tcompleted\tfailed\tcanceled_before_response\tcanceled_after_response\ttimed_out\tbackground_pending\tusage_observed\tusage_missing\ttotal_duration_ms\tupstream_duration_ms\n'
@@ -293,7 +424,6 @@ preserve_run() {
 	local previous_run_dir=$run_dir
 
 	local commit_sha
-	local sequence=1
 	local destination
 
 	if ! commit_sha=$(git -C "$benchmark_root/.." rev-parse HEAD); then
@@ -304,13 +434,11 @@ preserve_run() {
 		printf 'bench.sh: refusing to publish unexpected staging path: %s\n' "$previous_run_dir" >&2
 		return 1
 	fi
-	while :; do
-		destination="$results_root/$commit_sha-$sequence"
-		if [[ ! -e $destination && ! -L $destination ]]; then
-			break
-		fi
-		((sequence += 1))
-	done
+	destination="$results_root/$commit_sha-$task_id-${previous_run_dir##*/.staging-}"
+	if [[ -e $destination || -L $destination ]]; then
+		printf 'bench.sh: collision at unique result destination: %s\n' "$destination" >&2
+		return 1
+	fi
 	if ! mv -T -- "$previous_run_dir" "$destination"; then
 		printf 'bench.sh: cannot preserve benchmark run at %s\n' "$destination" >&2
 		return 1
@@ -323,6 +451,9 @@ preserve_run() {
 	control_metrics="$run_dir/control-metrics.json"
 	hpatch_metrics="$run_dir/hpatch-metrics.json"
 	gain_report="$run_dir/gain.txt"
+	issue_reports_directory="$run_dir/agent-issue-reports"
+	issue_reports="$run_dir/agent-issue-reports.jsonl"
+	benchmark_config="$run_dir/benchmark-config.json"
 	instruction_dir="$run_dir/instructions"
 	control_instruction="$instruction_dir/control.md"
 	hpatch_instruction="$instruction_dir/hpatch.md"
@@ -338,20 +469,36 @@ preserve_run() {
 # Invoked indirectly by cleanup from the EXIT trap.
 # shellcheck disable=SC2329
 generate_summary() {
-	if [[ ! -x $benchmark_root/report.sh ]]; then
-		printf 'bench.sh: report generator is not executable: %s\n' "$benchmark_root/report.sh" >&2
+	if [[ ! -f $benchmark_root/report.sh ]]; then
+		printf 'bench.sh: report generator is missing: %s\n' "$benchmark_root/report.sh" >&2
 		return 1
 	fi
-	"$benchmark_root/report.sh" "$run_dir"
+	bash "$benchmark_root/report.sh" "$run_dir"
+}
+
+# Invoked indirectly by cleanup from the EXIT trap.
+# shellcheck disable=SC2329
+enforce_edit_loop_acceptance() {
+	local -a hpatch_events=()
+	mapfile -t hpatch_events < <(
+		find "$run_dir/artifacts" -type f -path '*-hpatch-r*/codex.jsonl' -print | sort
+	)
+	bash "$benchmark_root/check-edit-loops.sh" "$benchmark_root" "${hpatch_events[@]}"
 }
 
 print_result_paths() {
 	printf 'Results: %s\n' "$results"
 	printf 'Artifacts: %s\n' "$run_dir/artifacts"
-	printf 'Control metrics: %s\n' "$control_metrics"
+	if [[ $benchmark_mode != hpatch-diagnostic ]]; then
+		printf 'Control metrics: %s\n' "$control_metrics"
+	fi
 	printf 'Hpatch metrics (including gain): %s\n' "$hpatch_metrics"
 	printf 'Gain report: %s\n' "$gain_report"
-	printf 'Router logs: %s, %s\n' "$control_log" "$hpatch_log"
+	if [[ $benchmark_mode == hpatch-diagnostic ]]; then
+		printf 'Router log: %s\n' "$hpatch_log"
+	else
+		printf 'Router logs: %s, %s\n' "$control_log" "$hpatch_log"
+	fi
 }
 
 # Invoked indirectly by the EXIT trap.
@@ -387,10 +534,15 @@ cleanup() {
 			docker rm --force "${agent_containers[@]}" >/dev/null 2>&1 || true
 		fi
 		"${compose[@]}" down --volumes --remove-orphans >/dev/null 2>&1 || true
-		if [[ $started == true ]] && ! normalize_hpatch_config_ownership; then
+		if [[ $started == true ]] && ! normalize_hpatch_artifact_permissions; then
 			if ((status == 0)); then
 				status=1
 			fi
+		fi
+	fi
+	if ! collect_agent_issue_reports; then
+		if ((status == 0)); then
+			status=1
 		fi
 	fi
 	if [[ -n $dependency_workspace && -d $dependency_workspace ]]; then
@@ -415,9 +567,15 @@ cleanup() {
 			status=1
 		fi
 	fi
-	if ! generate_summary; then
-		if ((status == 0)); then
-			status=1
+	if [[ $prepare_only == false ]]; then
+		if ! generate_summary; then
+			if ((status == 0)); then
+				status=1
+			fi
+		elif [[ $enforce_no_edit_loops == true ]] && ! enforce_edit_loop_acceptance; then
+			if ((status == 0)); then
+				status=1
+			fi
 		fi
 	fi
 	print_result_paths
@@ -433,25 +591,36 @@ for executable in chmod cp curl date diff docker git go grep id jq mv sha256sum 
 		exit 1
 	fi
 done
-if [[ ! -f $CODEX_AUTH_PATH ]]; then
+if [[ $prepare_only == false && ! -f $CODEX_AUTH_PATH ]]; then
 	printf 'bench.sh: Codex auth file not found: %s\n' "$CODEX_AUTH_PATH" >&2
 	exit 1
 fi
 if ! load_task_manifest; then
 	exit 1
 fi
-if [[ ! -d $source_repo/.git ]]; then
-	printf 'bench.sh: etcd clone not found: %s\n' "$source_repo" >&2
+if [[ $source_is_public == true ]]; then
+	git init --bare --quiet "$source_repo"
+	git --git-dir="$source_repo" fetch --quiet --depth=1 "$source_repository" "$base_commit"
+	git --git-dir="$source_repo" fetch --quiet --depth=1 "$source_repository" "$oracle_commit"
+elif [[ $source_kind == git && ! -d $source_repo/.git ]]; then
+	printf 'bench.sh: source clone not found: %s\n' "$source_repo" >&2
 	exit 1
 fi
 
 prepare_instructions() {
 	local diff_status=0
+	local diagnostic_instruction
 	local offline_instruction
+	diagnostic_instruction=$(cat <<'INSTRUCTION'
+## Benchmark diagnostic reporting
+
+If any hpatch call is rejected or `hpatch_recover` is invoked, call `report_issue` exactly once after that recovery chain ends, then continue the task. Also report any distinct misleading or unnecessarily costly hpatch-related interaction once you have concrete evidence. State the intended action, the observed tool result or behavior, its impact, and the smallest useful improvement. Do not report project bugs, and do not speculate.
+INSTRUCTION
+	)
 	offline_instruction=$(cat <<'INSTRUCTION'
 ## Benchmark isolation
 
-This benchmark is intentionally offline. Use only the supplied workspace, visible task prompt, local toolchain, and visible tests. Do not seek or use oracle revisions, hidden tests, another arm's artifacts, upstream source, commit history, patches, documentation, package networks, or any other external resource. The read-only Go module cache is for compilation only; do not inspect it for task implementation.
+This benchmark is intentionally offline. Use only the supplied workspace, visible task prompt, local toolchain, visible tests, and read-only dependency cache. Do not seek or use oracle revisions, hidden tests, another arm's artifacts, upstream source, commit history, patches, documentation, package networks, or any other external resource. The dependency cache is for compilation and test execution only; do not inspect it for task implementation.
 INSTRUCTION
 	)
 
@@ -461,6 +630,9 @@ INSTRUCTION
 			>"$control_instruction"
 
 	sh "$instruction_renderer" "$control_instruction" >"$hpatch_instruction"
+	if [[ $report_issues == true ]]; then
+		printf '\n%s\n' "$diagnostic_instruction" >>"$hpatch_instruction"
+	fi
 	printf '\n%s\n' "$offline_instruction" >>"$control_instruction"
 	printf '\n%s\n' "$offline_instruction" >>"$hpatch_instruction"
 
@@ -482,12 +654,40 @@ INSTRUCTION
 	read -r hpatch_instruction_sha _ < <(sha256sum "$hpatch_instruction")
 }
 
+configure_issue_reporting() {
+	local settings_directory="$run_dir/hpatch-config/hpatch"
+
+	mkdir -p "$settings_directory" "$issue_reports_directory"
+	cat >"$settings_directory/settings.json" <<'JSON'
+{"hooks":{"diagnose":["hpatch-benchmark-report-issue {{shellquote .Title}} {{shellquote (format_markdown .)}}"]}}
+JSON
+	jq -cn \
+		--argjson report_issue_enabled "$report_issues" \
+		--argjson exact_hpatch_evidence_enabled "$retain_exact_hpatch_evidence" \
+		--argjson enforce_no_edit_loops "$enforce_no_edit_loops" \
+		--arg reports "${issue_reports##*/}" \
+		--arg exact_evidence "${exact_evidence##*/}" \
+		'{
+			report_issue_enabled: $report_issue_enabled,
+			agent_issue_reports: $reports,
+			enforce_no_edit_loops: $enforce_no_edit_loops,
+			exact_hpatch_evidence_enabled: $exact_hpatch_evidence_enabled,
+			exact_hpatch_evidence: $exact_evidence,
+				exact_hpatch_evidence_schema: "hpatch.benchmark.exact-attempt.v1"
+			}' \
+		>"$benchmark_config"
+}
+
 snapshot() {
 	local revision=$1
 	local destination=$2
 
 	mkdir -p "$destination"
-	git -C "$source_repo" archive --format=tar "$revision" | tar -x -C "$destination"
+	if [[ $source_is_public == true ]]; then
+		git --git-dir="$source_repo" archive --format=tar "$revision" | tar -x -C "$destination"
+	elif [[ $source_kind == git ]]; then
+		git -C "$source_repo" archive --format=tar "$revision" | tar -x -C "$destination"
+	fi
 	git -C "$destination" init --quiet
 	git -C "$destination" config user.name "hpatch benchmark"
 	git -C "$destination" config user.email "benchmark@invalid"
@@ -496,7 +696,14 @@ snapshot() {
 	git -C "$destination" add --all --force
 	GIT_AUTHOR_DATE=2000-01-01T00:00:00Z \
 		GIT_COMMITTER_DATE=2000-01-01T00:00:00Z \
-	git -C "$destination" commit --quiet -m "benchmark baseline"
+	git -C "$destination" commit --quiet --allow-empty -m "benchmark baseline"
+}
+
+link_task_dependencies() {
+	local repository=$1
+	if [[ $dependency_kind == node ]]; then
+		ln -s "$dependency_cache/node_modules" "$repository/node_modules"
+	fi
 }
 
 prepare_dependency_cache() {
@@ -517,6 +724,27 @@ prepare_dependency_cache() {
 
 	dependency_workspace=$(mktemp -d "$run_dir/dependency-source-XXXXXX")
 	snapshot "$base_commit" "$dependency_workspace/repo"
+	if [[ $dependency_kind == none ]]; then
+		return
+	fi
+	if [[ $dependency_kind == node ]]; then
+		if ! command -v corepack >/dev/null; then
+			printf 'bench.sh: corepack is required for task %s\n' "$task_id" >&2
+			return 1
+		fi
+		if ! (
+			cd "$dependency_workspace/repo"
+			COREPACK_HOME="$dependency_cache/corepack" \
+			YARN_CACHE_FOLDER="$dependency_cache/yarn" \
+				corepack yarn@1.22.22 install --frozen-lockfile --non-interactive
+		); then
+			printf 'bench.sh: cannot preload Node dependencies for %s\n' "$task_id" >&2
+			return 1
+		fi
+		mv "$dependency_workspace/repo/node_modules" "$dependency_cache/node_modules"
+		link_task_dependencies "$dependency_workspace/repo"
+		return
+	fi
 	compose_used=true
 	if ! "${compose[@]}" run \
 		--interactive=false \
@@ -525,7 +753,7 @@ prepare_dependency_cache() {
 		--no-deps \
 		--user "$(id -u):$(id -g)" \
 		--env HOME=/tmp \
-		--volume "$dependency_workspace/repo:$dependency_workspace/repo:ro" \
+		--volume "$dependency_workspace/repo:$dependency_workspace/repo" \
 		--workdir "$dependency_workspace/repo" \
 		dependency-loader \
 		go mod download all; then
@@ -533,6 +761,9 @@ prepare_dependency_cache() {
 		return 1
 	fi
 
+	if [[ $task_id != etcd-range-stream ]]; then
+		return
+	fi
 	# Workspace replacements own these modules. Their source must never appear
 	# in the agent-visible dependency cache as a downloadable implementation.
 	shopt -s nullglob
@@ -597,6 +828,8 @@ qualify_agent_isolation() {
 		--env "ASSIGNED_ROUTER=http://$assigned_router:$assigned_port/api/metrics" \
 		--env "FORBIDDEN_ROUTER=http://$forbidden_router:$forbidden_port/api/metrics" \
 		--env "REQUIRE_HREAD=$require_hread" \
+		--env "DEPENDENCY_KIND=$dependency_kind" \
+		--env "READ_PROBE=$read_probe" \
 		"${agent_environment[@]}" \
 		--volume "$dependency_workspace/repo:$dependency_workspace/repo:ro" \
 		--workdir "$dependency_workspace/repo" \
@@ -612,9 +845,21 @@ qualify_agent_isolation() {
 				exit 1
 			fi
 			test "$(codex --disable apps mcp list --json)" = "[]"
-			go mod download all
+			case "$DEPENDENCY_KIND" in
+			go) go mod download all ;;
+			node) test -x node_modules/.bin/tsc; node --version >/dev/null ;;
+			none)
+				python3 --version >/dev/null
+				printf "value = 1\n" >/tmp/hpatch-benchmark-probe.py
+				python3 -m py_compile /tmp/hpatch-benchmark-probe.py
+				test ! -e /tmp/__pycache__/hpatch-benchmark-probe.cpython-*.pyc
+				;;
+			esac
 			if [ "$REQUIRE_HREAD" = 1 ]; then
-			hread go.mod 1:1 >/dev/null
+				command -v hread >/dev/null
+			fi
+			if [ "$REQUIRE_HREAD" = 1 ] && [ -n "$READ_PROBE" ]; then
+				hread "$READ_PROBE" 1:1 >/dev/null
 			fi
 		'; then
 		printf 'bench.sh: agent isolation qualification failed for %s\n' "$service" >&2
@@ -634,14 +879,20 @@ inject_hidden_tests() {
 		source="$task/${hidden_sources[$index]}"
 		destination="$repository/${hidden_paths[$index]}"
 		parent=$(dirname "$destination")
-		resolved_parent=$(realpath -e "$parent")
+		resolved_parent=$(realpath -m "$parent")
 		case "$resolved_parent/" in
-			"$repository/"*) ;;
+		"$repository/"*) ;;
 			*)
 				printf 'hidden grader parent escapes workspace: %s\n' "$resolved_parent" >&2
-				return 1
-				;;
+			return 1
+			;;
 		esac
+		mkdir -p "$parent"
+		resolved_parent=$(realpath -e "$parent")
+		if [[ $resolved_parent != "$repository" && $resolved_parent != "$repository"/* ]]; then
+			printf 'hidden grader parent escapes workspace: %s\n' "$resolved_parent" >&2
+			return 1
+		fi
 		if [[ -e $destination || -L $destination ]]; then
 			printf 'hidden grader destination already exists: %s\n' "$destination" >&2
 			return 1
@@ -655,11 +906,32 @@ grade() {
 	local stdout=$2
 	local stderr=$3
 
-	(
-		cd "$repository"
-		timeout --signal=TERM --kill-after=10s "${grader_timeout}s" \
-			"${grader_command[@]}"
-	) >"$stdout" 2>"$stderr"
+	case $dependency_kind in
+	go)
+		(
+			cd "$repository"
+			GOMODCACHE="$dependency_cache" GOCACHE="$dependency_cache/go-build" \
+			GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local \
+				timeout --signal=TERM --kill-after=10s "${grader_timeout}s" \
+				"${grader_command[@]}"
+		) >"$stdout" 2>"$stderr"
+		;;
+	node)
+		(
+			cd "$repository"
+			PATH="$dependency_cache/node_modules/.bin:$PATH" \
+				timeout --signal=TERM --kill-after=10s "${grader_timeout}s" \
+				"${grader_command[@]}"
+		) >"$stdout" 2>"$stderr"
+		;;
+	none)
+		(
+			cd "$repository"
+			timeout --signal=TERM --kill-after=10s "${grader_timeout}s" \
+				"${grader_command[@]}"
+		) >"$stdout" 2>"$stderr"
+		;;
+	esac
 }
 
 validate_revision() {
@@ -672,6 +944,7 @@ validate_revision() {
 	printf 'validate %s: exporting %s\n' "$task_id" "$name"
 	workspace=$(mktemp -d "$run_dir/validate-$name-XXXXXX")
 	snapshot "$revision" "$workspace/repo"
+	link_task_dependencies "$workspace/repo"
 	inject_hidden_tests "$workspace/repo"
 	if grade "$workspace/repo" "$workspace/grader.stdout" "$workspace/grader.stderr"; then
 		actual=pass
@@ -761,6 +1034,11 @@ run_agent() {
 	repository="$workspace/repo"
 	mkdir -p "$artifact_dir"
 	snapshot "$base_commit" "$repository"
+	link_task_dependencies "$repository"
+	if [[ $dependency_kind == node ]]; then
+		git -C "$repository" add --force -- node_modules
+		git -C "$repository" commit --quiet --amend --no-edit
+	fi
 
 	provider_config="model_providers.bench={ name = \"bench\", base_url = \"$base_url\", wire_api = \"responses\", requires_openai_auth = true }"
 	started_at=$(date --utc --iso-8601=ns)
@@ -801,11 +1079,14 @@ run_agent() {
 	if [[ $exit_code -ne 0 || $canceled == true ]]; then
 		task_pass=false
 	fi
+	if ! normalize_repository_permissions "$repository"; then
+		task_pass=false
+	fi
 
 	mapfile -d '' changed < <(
 		{
 			git -C "$repository" diff --name-only -z HEAD
-			git -C "$repository" ls-files --others -z
+			git -C "$repository" ls-files --others --exclude-standard -z
 		} | sort -zu
 	)
 	for path in "${changed[@]}"; do
@@ -823,7 +1104,7 @@ run_agent() {
 		unauthorized_json=$(printf '%s\0' "${unauthorized[@]}" | jq -Rs 'split("\u0000")[:-1]')
 	fi
 
-	git -C "$repository" add --intent-to-add --force --all -- .
+	git -C "$repository" add --intent-to-add --all -- .
 	git -C "$repository" diff --binary HEAD >"$diff_path"
 
 	if [[ $canceled == true ]]; then
@@ -1028,6 +1309,7 @@ mkdir -p "$run_dir/work" "$run_dir/hpatch-config" "$run_dir/hpatch-runtime" "$in
 : >"$results"
 
 "${compose[@]}" build control
+configure_issue_reporting
 prepare_instructions
 prepare_dependency_cache
 printf 'Control base instructions: %s\n' "$control_instruction"
@@ -1036,13 +1318,23 @@ printf 'Base instruction override source: %s\n' "$instruction_source"
 printf 'Base instruction diff: %s\n' "$instruction_diff"
 
 validate_revision base "$base_commit" fail
-validate_revision oracle "$oracle_commit" pass
+if [[ $source_kind == git ]]; then
+	validate_revision oracle "$oracle_commit" pass
+fi
+
+if [[ $prepare_only == true ]]; then
+	printf 'Preparation and qualification passed for %s; model benchmark was not started.\n' "$task_id"
+	exit 0
+fi
 
 started=true
+compose_used=true
 if [[ $benchmark_mode == paired ]]; then
 	"${compose[@]}" up --detach --wait control hpatch
 else
-	import_control_baseline
+	if [[ $benchmark_mode == hpatch-only ]]; then
+		import_control_baseline
+	fi
 	"${compose[@]}" up --detach --wait hpatch
 fi
 configure_hpatch_agent_path
@@ -1078,6 +1370,8 @@ merge_results
 expected_results=$((repetitions * 2))
 if [[ $benchmark_mode == hpatch-only ]]; then
 	expected_results=$((repetitions + 1))
+elif [[ $benchmark_mode == hpatch-diagnostic ]]; then
+	expected_results=$repetitions
 fi
 if ((${#result_files[@]} != expected_results)); then
 	printf 'bench.sh: found %d result records, want %d\n' \

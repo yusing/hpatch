@@ -81,20 +81,44 @@ After measured attempts, the shell retains treatment router metrics and an isola
 `hpatch gain` report. Paired mode also records fresh control router metrics; Hpatch-only mode
 copies the matching baseline control metrics. A gain of zero is not an editing-performance
 result when no treatment request reached hpatch.
-The generated summary joins each attempt's thread ID to router session metrics and reports
-model requests, command executions, hread calls, client-visible file-change items, routed
-hpatch translations and rejections, and rejected-call diagnostic tokens. It separately shows
-semantic edit-payload reduction, end-to-end agent output change, and estimated non-edit
-output so payload savings cannot be mistaken for whole-agent savings. A client stderr
-translation envelope is labeled separately from an hpatch command rejection. When the router
-artifact supports it, the summary groups bounded attempts into logical edit chains. Each chain
-combines the initial hpatch payload and all corrections against one final or retained failed
-`apply_patch` comparator; it never renders a separate recovery row. The report lists evaluator
-rejection evidence by repetition, command, physical source line, operation, target kind,
-multiline value row, stable reason, path, and generated Go line and column. An older artifact
-without either bounded collection is labeled unavailable rather than reported as zero activity.
-When lifetime routed-call counters exceed retained attempts, retention-dependent chain measures
-are labeled unavailable rather than reported as full-run rates.
+Treatment runs expose `report_issue` by default and MUST accept an explicit boolean environment
+toggle that removes the tool. When enabled, the benchmark MUST install one diagnose hook in the
+treatment router container, retain each completed report in a unique run-local atomic destination,
+and consolidate exact report titles and Markdown without adding agent or transport identity.
+Treatment instructions MUST require one report after each rejected-call recovery chain so a
+recovering agent cannot silently omit the evidence the diagnostic run exists to collect.
+Concurrent attempts and benchmark invocations MUST NOT share report destinations. The summary
+MUST report the toggle state and collected count but MUST leave report bodies in the retained
+machine-readable artifact.
+The generated summary MUST report model requests, correctness and token deltas, parsed command
+invocations, edit-round structure, routed Hpatch success/rejection/correction totals, grouped
+rejection causes, and semantic edit-payload reduction. Command categories MUST distinguish file
+reads, search, discovery, content `git diff`, `git diff --check`, diff metadata, `git status`,
+tests/builds, formatters, and upstream fetches. Counts after an edit MUST be separate. For file
+reads, searches, and content `git diff` commands, the
+summary MUST parse concrete path operands separately from patterns and option values. Supported
+positive basename `--glob` filters on hgrep and ripgrep MUST narrow directory coverage equally;
+unsupported glob forms MUST remain conservative. The summary MUST otherwise interpret a directory
+operand as covering its descendant paths and report a same-path structural loop when a concrete
+file or directory operand covers a path in completed file-change events both before and after the
+command. It MUST keep prior-changed paths with no
+later change separate so terminal validation does not count as a loop. Unresolved operands MUST
+remain ambiguous instead of being inferred. A bare worktree `git diff` has workspace-wide scope;
+it MUST count as a structural loop when any path has completed file changes both before and after
+the command, and MUST be reported separately from explicit path operands. Compound shell items MUST contribute each parsed
+invocation rather than one event-row count. The summary MUST automate findings for same-path
+edit-read/search/content-diff-edit structural loops, recovery, repeated rejection signatures,
+repeated rejected attempts on the same command, operation, target kind, and path, task success,
+and request/input/output deltas. It MUST NOT emit
+session, thread, tool-call, or correlation identifiers. Detailed transport metrics, raw attempts,
+paths, and gain output remain available in retained machine-readable artifacts instead of being
+duplicated in the primary summary. When bounded attempt retention is incomplete, the summary MUST
+label the retained fraction rather than infer full-run rates.
+Unless `BENCHMARK_ENFORCE_NO_EDIT_LOOPS=false`, a measured run with any same-path file-read,
+search, or content-diff loop MUST retain its artifacts and exit unsuccessfully after report
+generation.
+Hpatch-diagnostic mode MUST generate the same Hpatch reliability and command analysis without
+inventing control values; its summary MUST label that no control arm ran.
 
 Acceptance:
 

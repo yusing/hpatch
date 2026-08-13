@@ -17,6 +17,22 @@ From the repository root, run one Hpatch attempt against the fixed published con
 BENCHMARK_MODE=hpatch-only REPETITIONS=1 bash benchmarks/bench.sh
 ```
 
+Treatment runs enable the model-visible `report_issue` tool by default. Set
+`BENCHMARK_REPORT_ISSUES=false` to omit it. When enabled, the treatment instructions require one
+report after every rejected-call recovery chain and one evidence-based report per other distinct
+hpatch interaction problem. A container-installed diagnose hook writes each report atomically
+into the run-local collection. The runner consolidates the
+exact title and Markdown into `agent-issue-reports.jsonl`; the summary reports only the enablement
+state and count so diagnostic bodies do not obscure performance results. Concurrent attempts and
+concurrent benchmark invocations use separate run directories, while reports within one run use
+unique atomic destinations.
+
+Issue reporting adds tool interaction when an agent finds a problem. Disable it for a pure
+performance confirmation after diagnostic collection is complete.
+
+`BENCHMARK_MODE=hpatch-diagnostic` also generates `summary.md`. Because that mode has no control
+record, its outcome and command tables show Hpatch values only and state that no control arm ran.
+
 The mode imports the passing control record and control-router metrics from
 `benchmarks/results/c07600a74ac93d1ac6c38c47b80d85519458bc9f-1`, runs no control model
 attempt, and labels the imported summary path in the new report. `CONTROL_BASELINE_DIR` may
@@ -44,11 +60,16 @@ Hpatch router's temporary directory, and mounts it at the same absolute path in 
 disposable Codex container. This exposes the private Hread wrapper to the client
 executor without placing it in the task workspace.
 
-The generated per-repetition table counts failed search command executions separately
-for the control and Hpatch arms and counts failed routed Hread executions for the Hpatch
-arm. Search commands are `rg`, `grep`, `find`, `fd`, and `search_code` found in
-completed Codex command items; Hread errors are failed executions of the private
-process wrapper.
+The generated summary parses invocations inside completed compound shell items so one
+`hread; git diff --check; go test` item counts as three operations rather than one. It reports
+ordinary and private file reads together, search, discovery, content diffs, `git diff --check`,
+diff metadata, status, tests/builds, formatters, upstream fetches, and other commands. For every
+category it separately counts operations after the first edit and the conservative subset whose
+concrete path operand names a path from an earlier file-change event. File reads, searches, and
+content `git diff` commands also report whether that same path changed again later, which is the
+structural edit-read/search/content-diff-edit loop signal. Pattern-only text matches and terminal
+validation reads do not count as loops. A bare worktree `git diff` is reported as workspace-wide
+and counts as a loop only when a prior-changed path changes again afterward.
 
 ## Procedure
 

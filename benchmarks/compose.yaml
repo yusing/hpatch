@@ -11,6 +11,8 @@ x-agent: &agent
     GOSUMDB: "off"
     GOTOOLCHAIN: "local"
     GOVCS: "*:off"
+    PYTHONDONTWRITEBYTECODE: "1"
+    PYTHONPYCACHEPREFIX: "/tmp/hpatch-benchmark-pycache"
   labels:
     hpatch.benchmark.role: agent
   volumes:
@@ -25,6 +27,10 @@ x-agent: &agent
     - type: bind
       source: ${BENCH_DEPENDENCY_CACHE:?BENCH_DEPENDENCY_CACHE must be set}
       target: /go/pkg/mod
+      read_only: true
+    - type: bind
+      source: ${BENCH_DEPENDENCY_CACHE:?BENCH_DEPENDENCY_CACHE must be set}
+      target: ${BENCH_DEPENDENCY_CACHE:?BENCH_DEPENDENCY_CACHE must be set}
       read_only: true
     - type: bind
       source: ${CODEX_AUTH_PATH:?CODEX_AUTH_PATH must be set}
@@ -43,8 +49,6 @@ services:
       - 0.0.0.0:8081
       - --mode
       - passthrough
-    ports:
-      - 127.0.0.1:8081:8081
     networks:
       control-agent: {}
       egress:
@@ -62,6 +66,8 @@ services:
   hpatch:
     <<: *bench-image
     environment:
+      HPATCH_BENCH_ISSUE_DIR: /benchmark-agent-issue-reports
+      HPATCH_DIAGNOSE: ${HPATCH_BENCH_DIAGNOSE:-0}
       TMPDIR: ${BENCH_RUN_DIR:?BENCH_RUN_DIR must be set}/hpatch-runtime
     command:
       - hpatch-router
@@ -69,8 +75,6 @@ services:
       - 0.0.0.0:8082
       - --mode
       - hpatch
-    ports:
-      - 127.0.0.1:8082:8082
     networks:
       hpatch-agent: {}
       egress:
@@ -85,6 +89,9 @@ services:
       - type: bind
         source: ${BENCH_RUN_DIR:?BENCH_RUN_DIR must be set}/hpatch-runtime
         target: ${BENCH_RUN_DIR:?BENCH_RUN_DIR must be set}/hpatch-runtime
+      - type: bind
+        source: ${BENCH_RUN_DIR:?BENCH_RUN_DIR must be set}/agent-issue-reports
+        target: /benchmark-agent-issue-reports
     healthcheck:
       test: [CMD, curl, --fail, --silent, http://127.0.0.1:8082/api/metrics]
       interval: 250ms
@@ -95,6 +102,7 @@ services:
     <<: *bench-image
     profiles: [setup]
     environment:
+      GOSUMDB: "off"
       GOTOOLCHAIN: local
     networks:
       egress: {}
