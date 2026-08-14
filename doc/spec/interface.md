@@ -1,57 +1,5 @@
 # Interface contract
 
-## REQ-CLI-001 — Modes and informational output
-
-`hpatch [--root ROOT] [--cwd CWD]` reads a complete HPATCH/2 script from standard input,
-evaluates its complete change set in memory, stages required filesystem content, and
-then commits it. After a successful commit it writes the final active-file state report
-defined by `REQ-OUTPUT-001` to stderr. Stdout remains empty.
-
-`hpatch translate [--root ROOT] [--cwd CWD]` performs the same parsing, filesystem
-reads, target verification, and in-memory evaluation but never modifies a file. It writes
-one OpenAI `apply_patch` envelope that represents the same net change set to stdout, then
-writes the pending final active-file state report to stderr.
-
-For normal and translate modes, omitted `--root` means the process current directory
-and omitted `--cwd` means `.`. An explicit root must be absolute and is canonicalized
-before it is opened. A relative cwd resolves beneath root. An absolute cwd is accepted
-only when its canonical location is beneath root. Cwd must identify an existing
-directory. The CLI opens root once and uses that pinned capability for the invocation.
-
-`hpatch gain` reads no script and reports the persistent aggregate defined by
-`REQ-METRICS-001`. `hpatch --help` is the complete built-in agent reference for
-stdin usage, process and editing commands, orchestration, trust boundaries, and
-validation. `hpatch --tool-help` emits a separate, shorter model-facing summary of
-target choice, baseline rules, and safety. It omits CLI usage and mode descriptions,
-root and cwd options, metrics, and version material, and includes workspace-relative path
-and parent-directory preparation guidance. It is not a generated slice of top-level help.
-`hpatch translate --help` summarizes translate-mode I/O and points to top-level help.
-`hpatch --version` writes the module build version, or `devel` for an unversioned build.
-Informational commands do not read stdin, resolve a working or configuration directory,
-access metrics, or inspect project files. Any other argument list is invalid.
-
-Acceptance:
-
-1. Given valid edits spanning multiple files, normal mode produces the specified final
-   paths and contents, empty stdout, and one final-state report on stderr.
-2. For LF inputs, applying translate mode's patch-only stdout produces the same final
-   paths and UTF-8 contents as normal mode. For other line endings, it represents the
-   same logical-line edits subject to the normalization rule in `REQ-OUTPUT-001`.
-3. Translate mode leaves the source tree unchanged and reports the pending result rather
-   than the unchanged source tree.
-4. Gain mode leaves the source tree and metrics unchanged.
-5. Each supported informational form writes its complete result to stdout with status
-   zero and empty stderr without reading stdin or requiring a valid current directory.
-6. Tool help remains a concise model-facing summary of target choice, baseline rules,
-   safety, and tool-path guidance while excluding CLI-only material; top-level help remains
-   the complete agent reference.
-7. Unsupported aliases, trailing arguments, and unknown or future options fail with no
-   stdout or final-state report.
-8. A nested cwd changes relative path resolution while normal mutations and translated
-   patch paths retain the same root-relative file identity.
-9. A relative, absolute, or symlink path that escapes root fails without mutation,
-   patch output, or final-state report.
-
 ## REQ-READ-001 — Shell-routed verified-row reader
 
 In hpatch router mode, the model receives `hpatch` and `shell` as standalone custom tools.
@@ -378,9 +326,7 @@ Acceptance:
 The first working path in `doc/brief.md` § Outcome supplies the built-in declaration at
 `plugins/shell.mjs`. The generated plugin bundle contributes an unconstrained custom tool named
 `shell`, limits its UTF-8 input to the executor argv limit, and translates successful input
-through the canonical exec carrier from `REQ-PLUGIN-001`. The repository `make install` target
-regenerates that bundle and installs `hpatch`, `hpatch-router`, and the centralized Codex model
-instructions. It does not copy a configured shell declaration.
+through the canonical exec carrier from `REQ-PLUGIN-001`. The repository `make install` target regenerates that bundle, installs `hpatch-router`, and installs the centralized Codex model instructions. It does not copy a configured shell declaration.
 
 The tool treats the first logical line as a shebang when that line, after trimming only its
 leading and trailing ASCII spaces and tabs, starts with `#!`. It removes `#!`, trims the
@@ -464,7 +410,7 @@ Acceptance:
    nonzero status are returned without script-source duplication or an intermediate script file.
 10. Malformed selectors and input that cannot fit the bounded exec argv return a concise
     diagnostic without starting an interpreter.
-11. `make install` installs both Go binaries, no configured shell declaration, and complete
+11. `make install` installs `hpatch-router`, no configured shell declaration, and complete
     Codex model instructions. If the top-level config key is absent, it renders the selected
     bundled model instructions, installs the default file, and adds the key. If the key exists,
     it remains byte-equivalent and the referenced customized file is updated only when its
@@ -504,18 +450,21 @@ Acceptance:
 
 ## REQ-METRICS-001 — Persistent token, command, target, and failure metrics
 
-Every recognized normal or translate invocation is classified after its terminal outcome.
-A successful nonempty change set that parses, evaluates, translates, and completes its
-requested output or mutation contributes paired estimates for two semantically equivalent
-tool calls. A failed invocation contributes only its generated `hpatch` call estimate to
-the ineffective-output counter; it contributes nothing to the effective `hpatch` counter.
-A failed routed invocation is represented downstream by a Code Mode carrier that returns its
+Each host API invocation returns evaluator counters in the metrics fields of `HostTranslation`; obtaining that result does not persist them. The host supplies the visible
+hpatch payload, comparison carrier, rendered report visibility, session attribution, and other
+transport evidence to `RecordHostMetrics`, which is the only root persistence boundary. The router
+calls `RecordHostMetrics` after the routed outcome is known. Basic `Apply` and `Translate` neither
+return `HostTranslation` nor automatically persist metrics.
+
+A successfully recorded nonempty change set contributes paired estimates for two semantically
+equivalent tool calls. A recorded failed invocation contributes only its host-supplied generated
+`hpatch` call estimate to the ineffective-output counter; it contributes nothing to the effective
+`hpatch` counter. A failed routed invocation is represented downstream by a Code Mode carrier that returns its
 diagnostic and repair context. Its comparison baseline is the fixed direct-call program
 carrying `*** Begin Patch\n*** End Patch\n`; that tokenized semantic baseline contributes
 to the failed translated counter. The diagnostic carrier itself never counts as translated
 hpatch output. The complete failed hpatch call remains in the ineffective-output counter and
-reduces the overall output savings. `gain`, informational commands, and unsupported argument
-forms do not contribute metrics.
+reduces the overall output savings. Metrics reads and unsupported host calls do not contribute metrics.
 
 Every routed contributed-tool call classified by `REQ-PLUGIN-001` contributes a row keyed by
 plugin identity and tool name. Its emitted estimate counts the model-visible tool name followed
@@ -544,8 +493,8 @@ ordinary definition input overhead.
 All estimates use the tokenizer library's GPT-5 model mapping. Tool inputs and translated
 payloads remain data and cannot alter the fixed programs used for counting.
 
-A final-state report successfully emitted by normal or translate mode contributes its exact
-rendered text to a separate estimated state-report input-token counter. This is model-input
+A final-state report contributes its exact rendered text to the state-report input-token counter
+only when the host supplies evidence that the report became model-visible. This is model-input
 overhead because the tool result becomes subsequent model context; it is not added to either
 model-output counter.
 
@@ -558,11 +507,9 @@ without synthetic separator text. Subsequent requests in the same session add no
 the resent definition is served from the provider's prompt cache. The two removed-definition
 counters remain separate. The installed-definition total is authoritative; per-tool rows and a
 shared framing row reconcile it without being added again when computing net input. A host that
-supplies no session or definition leaves these counters at zero, and gain states which inputs
-were measured so a zero is not read as a free tool.
+supplies no session or definition leaves these counters at zero, and the structured metrics presentation states which inputs were measured so a zero is not read as a free tool.
 
-A failed or cancelled invocation emits no report and contributes zero report-input tokens. A partial
-or failed report write does not count as a complete emitted report. For each completed contributed
+A failed or cancelled invocation emits no report and contributes zero report-input tokens. A partial or failed routed report emission does not count as a complete emitted report. For each completed contributed
 tool execution, the current input estimate tokenizes the current stdout followed by current stderr.
 The stock estimate tokenizes the optional stock stdout followed by stock stderr. The current result
 is also the stock result when the executor omits the optional result. Exit status, provider-hidden
@@ -598,15 +545,15 @@ not fabricate evaluator rejection identities.
 The snapshot also exposes aggregate counters so a benchmark can reconcile routed calls with
 client-visible file-change items without inferring failures from stderr envelopes.
 
-Classification is persisted only after the invocation's outcome is known. Translate mode
-records a paired effective estimate after its complete patch reaches stdout; normal mode
-records one after the staged changes commit. Each records report-input tokens only after
-the complete final-state report is emitted. Stdin-read, parse, evaluation, translation,
-stdout-write, and commit failures record only the canonical hpatch estimate as ineffective.
-Successful no-op scripts contribute command counts and an emitted report estimate without
-paired effective token estimates. In normal mode, failure to render the equivalent patch
-after a successful commit emits a warning and records neither paired token classification,
-but retains command and fully emitted report metrics.
+`RecordHostMetrics` persists classification only after the host supplies the terminal outcome and
+visible carrier evidence. For router translation it records a paired effective estimate after the
+complete patch is available; for host application it records one only after the staged changes
+commit. The router records report-input tokens only after the complete final-state report is
+emitted. Parse, evaluation, translation, carrier, and commit failures record only the supplied
+hpatch estimate as ineffective. Successful no-op host results contribute evaluator command counts
+and, when model-visible, a report estimate without paired effective token estimates. Failure to
+render an equivalent patch after a successful host commit records no paired token classification,
+but retains the supplied evaluator counters and completed visible-report metrics.
 
 Every supported command reached by evaluation contributes one invocation. A supported
 operation rejected by syntax parsing contributes one invocation and one error when its
@@ -652,7 +599,7 @@ other
 
 The aggregate is stored in `hpatch/metrics.bin` beneath the platform user configuration
 directory returned by Go's `os.UserConfigDir`. Updates hold an exclusive interprocess lock at
-`hpatch/metrics.lock`; gain reads hold a shared lock. The current-version metrics format uses
+`hpatch/metrics.lock`; structured metrics reads hold a shared lock. The current-version metrics format uses
 two alternating bounded slots holding global hpatch counters and a keyed collection of
 plugin-and-tool definition, call, emitted, translated, failed-translation, current-result, and
 stock-result counters, plus a persistence generation and checksum. A reader uses the valid
@@ -670,48 +617,26 @@ Metrics writes use normal operating-system page-cache writeback and do not reque
 per-invocation filesystem sync; sudden power loss may lose increments that the operating
 system had not yet flushed.
 
-`hpatch gain` first writes an output-token table with one stable row per plugin and tool that
-has output-call activity, placing a failed-translation row immediately after its successful
-row when present, followed by an all-tools row. Definition-only tools remain visible in the
-definition-input breakdown without creating a zero-valued output row. Output-table columns are
-emitted tokens, translated tokens, and reduction. The
-hpatch failed row retains the fixed direct-call program carrying the empty patch as its
-established semantic baseline and reports `n/a`; its downstream diagnostic carrier remains
-excluded. A separate recovery table has `Recoveries` and `Count` columns with stable
-`white-space error`, `indentation shift`, and `luna misuse` action rows.
+The router dashboard and `GET /api/metrics` expose the persisted aggregate as structured output.
+They include one stable output-token row per plugin and tool with activity, optional adjacent
+failed-translation rows, an all-tools row, installed-definition reconciliation, and the hpatch
+failed semantic baseline. A separate recovery table has stable `white-space error`,
+`indentation shift`, and `luna misuse` rows.
 
-Gain then writes an input-token table with one stable row per executed plugin and tool, followed by
-an all-tools row. Its columns are current tokens, stock tokens, and reduction. Gain next writes the
-input-token overhead table for final-state reports, failure diagnostics, the exact displaced
-`apply_patch` definition credit, the displaced `exec_command` section credit, and the aggregate
-installed tool-definition total. Indented stable plugin-and-tool rows and any shared
-serialization-framing row reconcile the installed-definition total and are descriptive children
-rather than additional input. Net added input is reports plus diagnostics plus installed
-definitions minus both removed definitions plus the signed sum of current tool-result tokens minus
-stock tool-result tokens. Gain does not subtract definitions from output, convert input to output,
-or calculate a combined input/output percentage. Unmeasured definition sources are labeled
-`not measured`.
-
-The router gain page places the input-token and input-token overhead tables below the output-token
-table in left and right columns. It uses the headings `Input token estimates` and
-`Input token overhead estimates`.
-
-Gain then writes stable-order compact tables for aggregate command invocation and error
-rates; line, range, text-single, and text-multiple target counters; error reasons; and
-each error attributed to the command that raised it. The last table lists only nonzero
-command-and-reason pairs and renders one `none` row when no errors are recorded. Every
-error appears in both the aggregate reason table and the attributed table, so the two
-reconcile. Percentages are rounded to one decimal place and are zero when their denominator
-is zero. With no metrics file or only an obsolete record, all totals and percentages are
-zero. Gain reads no stdin and does not create or rewrite a metrics file. Failure to
-tokenize, lock, read, write, or close metrics emits a concise `hpatch: warning:` diagnostic
-but does not change the success or failure of the requested effect.
+The same surfaces expose current-versus-stock input-token rows, final-state report and failure
+diagnostic overhead, displaced native-definition credits, installed-definition totals, net added
+input, command invocation and error rates, target counters, terminal reasons, and nonzero
+command-and-reason pairs. Percentages are rounded to one decimal place and are zero when their
+denominator is zero. With no metrics file or only an obsolete record, all totals and percentages
+are zero. A metrics read does not create or rewrite the file. Tokenization, locking, persistence,
+or presentation failure remains auxiliary and cannot change the requested effect.
 
 Acceptance:
 
-1. Repeated successful normal and translate invocations persist cumulative paired
-   hpatch estimates and fully emitted report-input estimates; failed invocations persist only
-   ineffective hpatch estimates and zero report-input tokens.
+1. Host variants expose evaluator counters in `HostTranslation` without persistence. Repeated
+   router calls to `RecordHostMetrics` persist cumulative paired hpatch estimates and completed
+   visible-report input estimates; failed recorded invocations persist only ineffective hpatch
+   estimates and zero report-input tokens.
 2. Every successfully translated contributed-tool call persists a plugin-and-tool output row whose
    emitted count uses the exact model-visible call shape. Its translated count uses the validated
    stock carrier when supplied and otherwise the validated execution carrier. A stock carrier does
@@ -719,8 +644,8 @@ Acceptance:
 3. Every completed executor result persists current and stock input estimates for its plugin and
    tool. An omitted stock result produces equal estimates and zero reduction without a second
    execution. A zero-token stock result reports `n/a`.
-4. Gain reports stable per-plugin and per-tool output rows, optional adjacent failed rows, and one
-   all-tools output row. It reports a separate input table with current, stock, reduction, and one
+4. Structured router metrics report stable per-plugin and per-tool output rows, optional adjacent failed rows, and one
+   all-tools output row. They report a separate input table with current, stock, reduction, and one
    all-tools row.
 5. The input-overhead table has no plugin child rows. Net added input includes the signed difference
    between current and stock tool-result estimates.
@@ -738,13 +663,14 @@ Acceptance:
    ineffective invocations while evaluation uses the rebuilt complete script.
 10. Tool inputs and translated payloads containing quotes or program-like text remain data and
    cannot alter the canonical programs used for counting.
-11. Concurrent writers lose no records, concurrent gain reads never observe a partial
+11. Concurrent writers lose no records, concurrent structured metrics reads never observe a partial
    aggregate, and an interrupted or damaged latest state falls back to the preceding valid
    aggregate.
 12. A valid mismatched `HPATCH` version resets totals when no current state exists; malformed
     data does not count as a version mismatch, and current state takes precedence.
-13. Metrics collection failure warns without changing the success or failure of the requested
-    edit, translated carrier, executor result, or final-state report.
+13. `RecordHostMetrics` failure warns without changing the success or failure of the requested
+    edit, translated carrier, executor result, or final-state report; omitting the call leaves
+    persistence unchanged.
 14. Router snapshots attribute successful and rejected hpatch translations, diagnostic token
     totals, at most the latest 128 recovery-aware attempt identities, and at most the latest
     32 structured evaluator rejection identities, including parseable same-path row-span relation
@@ -830,7 +756,7 @@ inserted after the range
 PATCH
 ```
 
-Paths are nonempty and consume the remainder of their command line. For root-scoped CLI and library evaluation through `hpatch`, `Translate`, or `TranslateForHost`, relative paths resolve from cwd, absolute paths must remain beneath the canonical root, lexical and symlink escapes fail, and translation emits root-relative paths. Router host evaluation through `TranslateForHostAt` instead uses an optional canonical metadata directory without filesystem confinement. With a directory, relative operands resolve from it; without one, relative operands reject and absolute operands remain valid. Router process cwd is never an implicit base. Emitted patch paths retain cleaned host identities for Codex to authorize.
+Paths are nonempty and consume the remainder of their command line. For root-scoped library evaluation through `Translate` or `TranslateForHost`, relative paths resolve from cwd, absolute paths must remain beneath the canonical root, lexical and symlink escapes fail, and translation emits root-relative paths. Router host evaluation through `TranslateForHostAt` instead uses an optional canonical metadata directory without filesystem confinement. With a directory, relative operands resolve from it; without one, relative operands reject and absolute operands remain valid. Router process cwd is never an implicit base. Emitted patch paths retain cleaned host identities for Codex to authorize.
 Trailing operands, malformed rows, forbidden controls, missing values, and unknown
 commands are invalid.
 
@@ -854,8 +780,7 @@ Acceptance:
 ## REQ-CORRECT-001 — Rejected-script recovery
 
 The router exposes a separate model-visible `functions.hpatch_recover` custom tool with an
-independent embedded Lark grammar. Recovery is unavailable from the standalone CLI, root public
-API, root `tool_grammar.lark`, and ordinary `functions.hpatch`. A payload beginning with `type`,
+independent embedded Lark grammar. Recovery is unavailable from root public APIs, root `tool_grammar.lark`, and ordinary `functions.hpatch`. A payload beginning with `type`,
 `type-`, or `type+` is therefore always an ordinary complete HPATCH/2 script.
 
 Each rejected-script command has a `C<number>:<hash>` handle covering its complete attributable
@@ -889,7 +814,7 @@ from an older baseline is stale. A re-rejection explicitly
 states that no workspace file changed, successful corrections survive only in the new rejected-
 script baseline, and every earlier handle is invalid. Correlation IDs remain stable and attempt
 numbers increase across evaluated and proxy-rejected calls. Per-attempt telemetry preserves
-the emitted tool identity and outcome. Gain metrics settle the correlated hpatch/recovery chain
+the emitted tool identity and outcome. Persistent metrics settle the correlated hpatch/recovery chain
 once according to the combined-payload and single-comparator rules above.
 
 Outcome hooks report one routed attempt once. Their structured event includes tool identity,
@@ -901,8 +826,7 @@ not claim Codex applied it; `applied/succeeded` means root-owned application com
 `applied/failed` means root-owned commit or cleanup failed. Recovery hook Markdown treats the
 exact short recovery payload as model-emitted, renders its compact resolved-operation delta,
 and identifies any larger complete script as router-rebuilt. Routed evaluator rejection invokes
-the outcome hook, not a second per-command error hook. Standalone per-command error hooks are
-unchanged.
+the outcome hook, not a second per-command error hook. Root error hooks remain separate from routed outcome hooks.
 
 Acceptance:
 
@@ -913,7 +837,7 @@ Acceptance:
 5. Recovery cannot cross sessions or selected worktrees, and unrelated tools cannot become bases.
 6. Replay restores `hpatch_recover` identity and the exact emitted short payload.
 7. Ordinary mutation-leading hpatch scripts are never detected as recovery.
-8. Per-attempt telemetry remains individual, while gain counts every chain payload and one
+8. Per-attempt telemetry remains individual, while persistent metrics count every chain payload and one
    final or failed comparator.
 9. The removed no-`in`, indexed, and dotted value-row recovery forms are ordinary script syntax errors, not compatibility paths.
 10. One recovery payload can combine field, value-row, and structural operations against multiple command handles atomically.
@@ -950,7 +874,7 @@ cancels that creation, including an empty initializer.
 `in` fails for missing or deleted paths. `mv` and `rm` fail without an active file.
 `new` and `mv` fail on destination collision. Parents of `new` and `mv` destinations must
 already exist. Hpatch does not create directories. All file and content changes remain
-in memory until the complete invocation crosses the normal or translate boundary.
+in memory until the complete invocation crosses the apply or translation boundary.
 
 Acceptance:
 
@@ -1064,8 +988,12 @@ Acceptance:
 
 ## REQ-OUTPUT-001 — Output, final state, and failure behavior
 
-Input is read completely and the entire script is evaluated before an external filesystem
-commit or stdout. Before finalization, every changed file whose final path ends in `.go`
+Every root entry point accepts one complete input and evaluates the entire script before an
+external filesystem commit or translated patch is returned. Basic `Apply` returns only an error;
+basic `Translate` returns only patch bytes and an error. `ApplyForHost`, `ApplyForHostRoot`,
+`TranslateForHost`, and `TranslateForHostAt` return `HostTranslation`, which carries the rendered
+report, final state, diagnostics, patch summary, target aliases, and evaluator metrics. Before
+finalization, every changed file whose final path ends in `.go`
 is parsed and formatted with Go's standard-library `go/format`; parse failures are collected
 from every changed Go file before the complete transaction rejects. For at most 32
 content-mutating commands in one invalid Go file, the evaluator replays command-group subsets
@@ -1081,12 +1009,11 @@ most two generated lines before and after the failing line; neighboring lines ar
 64 runes and the failing line at 200. Supported baseline-aware indentation corrections are
 applied before validation; unsupported extensions remain byte-exact or reject under
 indentation policy.
-An unchanged normal-mode change set performs no
-filesystem operation but still reports final state.
-An unchanged translate result emits no patch and fails because it cannot represent an
-update; it emits no final-state report.
+An unchanged apply change set performs no filesystem operation and succeeds. An unchanged basic
+translation returns an empty patch. A host variant additionally reports the already-satisfied
+final state in `HostTranslation`.
 
-Translate output contains file actions in deterministic first-touch order:
+Translation output contains file actions in deterministic first-touch order:
 
 ```text
 *** Begin Patch
@@ -1105,11 +1032,12 @@ use `Update File` hunks. A moved and edited file combines its content hunks and 
 one update action, with `Move to` immediately after `Update File`. Because OpenAI
 `apply_patch` rejects an empty update action, a move with unchanged contents includes
 a minimal verification hunk: one unchanged context line for a nonempty file, or an
-equal remove/add of the empty line representation for an empty file. Translation is
-fully rendered before stdout is written.
+equal remove/add of the empty line representation for an empty file. Translation is fully rendered before it is returned.
 
-After every command and the requested normal filesystem commit or translated patch write
-succeed, the CLI writes one final-state report to stderr. Its line forms are:
+After evaluation succeeds, host variants carry one fully rendered final-state report in
+`HostTranslation`. Apply host variants return it only after commit succeeds; translation host
+variants return it with the complete patch; routed `functions.hpatch` emits it through the
+restored carrier. Basic `Apply` and `Translate` do not return the report. Its line forms are:
 
 ```text
 in PATH
@@ -1165,8 +1093,7 @@ or reconstructed. An in-process successful host result also carries one structur
 for every effective nonempty `type` command whose authored target is a row or inclusive row range.
 The alias maps that exact target and final path to the final rendered replacement extent after
 language formatting. Deletions, insertions, text-occurrence targets, targetless initialization,
-and ineffective commands produce no alias. The standalone CLI retains no target or editing state
-between invocations.
+and ineffective commands produce no alias. Root APIs retain no target or editing state between invocations.
 
 In routed mode, the router retains those aliases within the same session and workspace only after
 a replayed carrier output exactly confirms the successful report. Before translating a later
@@ -1176,12 +1103,12 @@ rewrite boundary classifies only the emitted row-coordinate span relative to con
 alias targets as `none`, `exact`, `contains`, `contained`, or `overlap`; it does not change target
 rewriting or evaluation.
 
-The complete report is rendered before commit or patch output, but it is emitted only
-after that mode-specific effect succeeds. A report-write failure after the effect is
-best-effort and cannot retroactively change the successful effect or claim rollback.
+For host variants, the complete report is rendered before commit or patch return. Apply host
+variants return it only after the external effect succeeds; router emission is auxiliary and
+cannot retroactively change or roll back a successful effect. Basic `Apply` and `Translate`
+discard the host-only report and structured state at their public boundary.
 
-Normal mode stages new contents in same-directory temporary files before starting the
-commit. Parse, validation, read, and evaluation failures leave the initial tree unchanged.
+Root application stages new contents in same-directory temporary files before starting the commit. Parse, validation, read, and evaluation failures leave the initial tree unchanged.
 A staging failure attempts to remove all temporary artifacts; cleanup failure returns
 nonzero and identifies every artifact it could not remove. Commit-time filesystem failures
 trigger rollback attempts using staged backups. Ordinary filesystems cannot provide a
@@ -1192,14 +1119,12 @@ succeeded when it did not. Existing file permission bits are preserved; files cr
 `new` use mode `0644`.
 
 OpenAI `apply_patch` is a logical-line format and cannot preserve CRLF or standalone-CR
-bytes when its output is applied by the tool. Translate mode therefore emits LF-only
-patch text and normalizes line endings only in its displayed before/after lines. It does
-not modify source files. Normal mode continues to preserve existing line endings outside
-explicitly inserted strings. Applying translated output to a non-LF file may normalize
+bytes when its output is applied by the tool. Translation therefore returns LF-only patch text and normalizes line endings only in its displayed before/after lines. It does not modify source files. Root application continues to preserve existing line endings outside explicitly inserted strings. Applying translated output to a non-LF file may normalize
 that file to LF; this is a declared format limitation, not byte equivalence.
 
-Generic non-command failures emit concise diagnostics to stderr prefixed with `hpatch:`.
-Command failures instead have the stable form:
+Basic `Apply` and `Translate` return errors for failures. Host variants place generic diagnostics
+and structured failure data in `HostTranslation`; rendered generic diagnostics use the `hpatch:`
+prefix. Command failures have the stable rendered form:
 
 ```text
 OP: command N[, path "PATH"], reason REASON: MESSAGE
@@ -1217,7 +1142,8 @@ row, remain one visible location. Independently parseable syntax failures may be
 together before evaluation. A heredoc failure is owned by its header and may additionally
 report its attributable source span. Control bytes are escaped and embedded newlines are
 folded so one command failure remains one logical line.
-Failures return nonzero and emit no stdout or final-state report. Malformed row syntax
+Failures return no completed patch. Basic entry points return an error; host variants return
+`HostTranslation` diagnostics without a successful final-state report. Malformed row syntax
 receives a syntax diagnostic.
 
 A stale row reports the actual current-line candidate and up to two neighboring baseline rows.
@@ -1232,7 +1158,7 @@ immutable-baseline lines. If
 a command depends on content introduced by another command, the diagnostic directs the agent to
 apply the prerequisite independently, reread, and submit a later invocation. A missing row or
 failure without a verified baseline does not choose repair context. Repair context is
-supplementary: it never changes exit status, stdout, mutation, or metrics classification.
+supplementary: it never changes the host outcome, mutation, returned patch, or metrics classification.
 When invalid generated source is localized to a fixed-heredoc mutation, each distinct rejection
 identity includes the non-sensitive `value_line`. Transient root diagnostics describe every
 bounded value-row context rather than mutation addresses. Routed diagnostics add the current
@@ -1248,10 +1174,10 @@ bounded existing repair context rather than inventing new validation rules.
 
 Acceptance:
 
-1. Normal success has empty stdout and one rendered final-state report on stderr after
-   commit; translate success has patch-only stdout and one pending-state report on stderr
-   after the patch is completely written. An already-satisfied translate succeeds with empty
-   stdout and the rendered state report on stderr.
+1. Basic `Apply` returns only an error after commit and basic `Translate` returns only the complete
+   patch bytes or an error without mutation. Their host variants return `HostTranslation`, including
+   the rendered final- or pending-state report. An already-satisfied translation succeeds with an
+   empty patch; the host variant also returns the rendered already-satisfied state.
 2. Active paths, bounded last-mutation ranges, per-command final-reference blocks, net file
    counts, Unicode columns, truncation, control escaping, moved files, deletions, and empty
    files produce the specified report without implying cross-invocation persistence.
@@ -1263,12 +1189,10 @@ Acceptance:
    rejects the transaction without mutation; supported changed Python, JavaScript, and TypeScript files are syntax-checked and receive supported automatic indentation correction.
 5. Malformed input, missing, stale, reversed, or incomplete targets, edit conflicts,
    unknown or future commands, invalid UTF-8, missing or non-regular files, path collisions,
-   staging failure, translation failure, and cancellation produce no mutation, patch
-   output, or final-state report.
+   staging failure, translation failure, and cancellation produce no mutation, returned patch, or final-state report.
 6. Injected external filesystem commit and rollback failures are reported without false
    atomicity claims and without a successful final-state report.
-7. Failure to write a fully rendered report after a successful external effect does not
-   reverse that effect or record a complete report-input token estimate.
+7. Failure to emit a fully rendered routed report after a successful external effect does not reverse that effect or record a complete report-input token estimate.
 8. Stale rows, incomplete literal targets, and edit conflicts emit verified repair context;
    a missing row fails without guessing, and a failure with no active baseline emits its
    diagnostic alone.
@@ -1281,10 +1205,7 @@ Acceptance:
 
 ## REQ-GUIDE-001 — Agent guidance
 
-Top-level help owns the complete CLI, editing, validation, trust-boundary, report, and metrics
-reference. `contrib/codex/file-editing-instructions.md` is the single persistent Codex workflow
-source for all durable edit, shell, read, search, and inspection guidance and the source of the
-HPATCH/2 section returned by tool help. Model-visible tool descriptions contain only concise
+`contrib/codex/file-editing-instructions.md` is the single persistent Codex workflow source for all durable edit, shell, read, search, and inspection guidance. `doc/spec/interface.md` owns the normative engine and router contract. Model-visible tool descriptions contain only concise
 call-local contracts and request-specific schemas. The router does not use private tool
 descriptions as prompt text and does not mutate Responses instructions.
 
@@ -1343,13 +1264,13 @@ Persistent guidance teaches this workflow:
 9. After a routed rejection, use `functions.hpatch_recover` with the current `C...` and `V...`
    handles. Submit every known independent correction in one atomic payload rather than
    resubmitting the complete rejected script. After re-rejection, discard all prior handles.
-   The standalone CLI has no recovery mode.
+   Ordinary `functions.hpatch` and root APIs have no recovery mode.
 10. Let hpatch format changed Go files and syntax-check supported changed Python, JavaScript, and
     TypeScript files.
 
 Acceptance:
 
-1. A model can choose and encode every HPATCH/2 operation from tool help without learning
+1. A model can choose and encode every HPATCH/2 operation from the persistent guidance without learning
    HPATCH/1 state concepts.
 2. The installed prompt contains the central guidance exactly once and omits the pinned stock
    apply_patch, rg, and exec_command instructions.

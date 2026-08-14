@@ -21,19 +21,6 @@ func Instructions() string {
 	return instructions
 }
 
-// HPatchToolHelp returns the HPATCH/2 section without its heading.
-func HPatchToolHelp() string {
-	const heading = "## HPATCH/2\n\n"
-	_, section, ok := strings.Cut(instructions, heading)
-	if !ok {
-		panic("Codex instructions omit HPATCH/2 section")
-	}
-	if section, _, ok = strings.Cut(section, "\n## "); ok {
-		return strings.TrimSpace(section) + "\n"
-	}
-	return strings.TrimSpace(section) + "\n"
-}
-
 // RecoveryGuidance renders dynamic rejected-script guidance.
 func RecoveryGuidance(references string) string {
 	var rendered strings.Builder

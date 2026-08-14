@@ -5,16 +5,6 @@ import (
 	"testing"
 )
 
-func TestHPatchToolHelpComesFromCentralInstructions(t *testing.T) {
-	help := HPatchToolHelp()
-	if !strings.HasPrefix(help, "HPATCH/2 applies one complete target-bearing edit script atomically.") {
-		t.Fatalf("HPatchToolHelp() starts with %q", help)
-	}
-	if strings.Contains(help, "## File reading") {
-		t.Fatalf("HPatchToolHelp() includes the next instruction section:\n%s", help)
-	}
-}
-
 func TestHPatchToolDescriptionStaysNonInstructional(t *testing.T) {
 	const want = "Atomic HPATCH/2 edit-script application. Rejection or cancellation leaves the workspace unchanged."
 	if HPatchToolDescription != want {

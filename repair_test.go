@@ -9,11 +9,11 @@ func repairFor(t *testing.T, content, script string) string {
 	t.Helper()
 	root := t.TempDir()
 	writeTestFile(t, root, "file.txt", content, 0o644)
-	_, stderr, exitCode := runForTest(root, []string{"translate"}, script)
-	if exitCode == 0 {
+	result, err := translateForHostAtTest(t, root, script, "")
+	if err == nil {
 		t.Fatalf("script unexpectedly succeeded: %q", script)
 	}
-	_, repair, _ := strings.Cut(stderr, "\n")
+	_, repair, _ := strings.Cut(result.Diagnostic, "\n")
 	return repair
 }
 
@@ -64,12 +64,12 @@ func TestHPatch2RepairContextForStaleRangeEnd(t *testing.T) {
 func TestHPatch2MissingRowDoesNotGuessRepairContext(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, root, "file.txt", "alpha\n", 0o644)
-	_, stderr, exitCode := runForTest(root, []string{"translate"}, "in file.txt\ntype 9:0000 \"B\"")
-	if exitCode != 1 || !strings.Contains(stderr, "row-missing") {
-		t.Fatalf("Run() = exit %d, stderr %q", exitCode, stderr)
+	result, err := translateForHostAtTest(t, root, "in file.txt\ntype 9:0000 \"B\"", "")
+	if err == nil || !strings.Contains(result.Diagnostic, "row-missing") {
+		t.Fatalf("TranslateForHost() error = %v, diagnostic %q", err, result.Diagnostic)
 	}
-	if strings.Count(stderr, "\n") != 1 {
-		t.Fatalf("missing row emitted guessed repair context: %q", stderr)
+	if strings.Count(result.Diagnostic, "\n") != 1 {
+		t.Fatalf("missing row emitted guessed repair context: %q", result.Diagnostic)
 	}
 }
 

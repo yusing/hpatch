@@ -2,10 +2,10 @@ package hpatch
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/binary"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -13,11 +13,10 @@ import (
 	"strings"
 	"sync"
 	"testing"
-	"unicode/utf8"
 )
 
-func gainReport(m metrics) string {
-	return gainReportAtWidth(m, defaultGainReportWidth)
+func updateMetrics(dataDirectory string, entry metrics) error {
+	return updateMetricsForSessionContext(context.TODO(), dataDirectory, entry, "")
 }
 
 func toolPersistenceFixture() metrics {
@@ -41,23 +40,26 @@ func TestMetricsRejectInvalidToolCollectionBeforeCreatingStore(t *testing.T) {
 	}
 }
 
-func TestGainReportsPersistedTotals(t *testing.T) {
+func TestHostOperationsPersistInvocationTotals(t *testing.T) {
 	root := t.TempDir()
 	dataDirectory := t.TempDir()
 	script := "new note.txt\ntype \"hello\"\n"
-	patch := "*** Begin Patch\n*** Add File: note.txt\n+hello\n*** End Patch\n"
-
-	var translateStdout, translateStderr bytes.Buffer
-	exitCode := Run([]string{"translate"}, strings.NewReader(script), &translateStdout, &translateStderr, root, dataDirectory)
-	wantState := "in note.txt\nlast type note.txt 1 ranges 1:1-1:1\nfiles add=1 update=0 move=0 delete=0\nrefs 2 type note.txt\n1:2cf2 hello\n"
-	if exitCode != 0 || translateStdout.String() != patch || translateStderr.String() != wantState {
-		t.Fatalf("translate = exit %d, stdout %q, stderr %q", exitCode, translateStdout.String(), translateStderr.String())
+	translated, err := translateForHostAtTest(t, root, script, dataDirectory)
+	if err != nil {
+		t.Fatal(err)
 	}
-
-	var normalStdout, normalStderr bytes.Buffer
-	exitCode = Run(nil, strings.NewReader(script), &normalStdout, &normalStderr, root, dataDirectory)
-	if exitCode != 0 || normalStdout.Len() != 0 || normalStderr.String() != wantState {
-		t.Fatalf("normal = exit %d, stdout %q, stderr %q", exitCode, normalStdout.String(), normalStderr.String())
+	if string(translated.Patch) != "*** Begin Patch\n*** Add File: note.txt\n+hello\n*** End Patch\n" {
+		t.Fatalf("patch = %q", translated.Patch)
+	}
+	if err := RecordHostMetrics(t.Context(), dataDirectory, HostMetricRecord{Invocation: translated.Invocation}); err != nil {
+		t.Fatal(err)
+	}
+	applied, err := applyForHostAtTest(t, root, script, dataDirectory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := RecordHostMetrics(t.Context(), dataDirectory, HostMetricRecord{Invocation: applied.Invocation}); err != nil {
+		t.Fatal(err)
 	}
 
 	invocation := invocationMetrics{}
@@ -68,142 +70,47 @@ func TestGainReportsPersistedTotals(t *testing.T) {
 		ReportInputTokens: 6,
 	})
 
-	var stdout, stderr bytes.Buffer
-	exitCode = Run([]string{"gain"}, strings.NewReader("not a script"), &stdout, &stderr, root, dataDirectory)
-	wantMetrics := metrics{HPatchTokens: 20, ApplyPatchTokens: 40, ReportInputTokens: 6}
-	wantMetrics.Commands[commandOperationIndex("new")].Invocations = 2
-	wantMetrics.Commands[commandOperationIndex("type")].Invocations = 2
-	want := gainReport(wantMetrics)
-	if exitCode != 0 || stdout.String() != want || stderr.Len() != 0 {
-		t.Fatalf("gain = exit %d, stdout %q, stderr %q; want stdout %q", exitCode, stdout.String(), stderr.String(), want)
+	gain, err := LoadGainMetrics(dataDirectory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gain.HPatchTokens != 20 || gain.ApplyPatchTokens != 40 || gain.ReportInputTokens != 6 ||
+		gain.Commands[commandOperationIndex("new")].Invocations != 2 ||
+		gain.Commands[commandOperationIndex("type")].Invocations != 2 {
+		t.Fatalf("gain = %+v", gain)
 	}
 }
 
-func TestGainWithoutMetricsReportsZero(t *testing.T) {
+func TestLoadGainMetricsWithoutStoreDoesNotCreateDirectory(t *testing.T) {
 	dataDirectory := filepath.Join(t.TempDir(), "absent")
-	var stdout, stderr bytes.Buffer
-	exitCode := Run([]string{"gain"}, strings.NewReader("ignored"), &stdout, &stderr, t.TempDir(), dataDirectory)
-	want := gainReport(metrics{})
-	if exitCode != 0 || stdout.String() != want || stderr.Len() != 0 {
-		t.Fatalf("gain = exit %d, stdout %q, stderr %q; want stdout %q", exitCode, stdout.String(), stderr.String(), want)
+	got, err := LoadGainMetrics(dataDirectory)
+	if err != nil || got.HPatchTokens != 0 {
+		t.Fatalf("LoadGainMetrics() = %+v, %v", got, err)
 	}
 	if _, err := os.Stat(dataDirectory); !os.IsNotExist(err) {
 		t.Fatalf("gain created an empty metrics directory: %v", err)
 	}
 }
 
-func TestGainReportReconcilesEffectiveAndIneffectiveTokens(t *testing.T) {
-	metricValues := metrics{
-		HPatchTokens:                            2404,
-		ApplyPatchTokens:                        4764,
-		IneffectiveHPatchTokens:                 2172,
-		FailedApplyPatchTokens:                  300,
-		ReportInputTokens:                       11,
-		DiagnosticInputTokens:                   13,
-		MisuseWarningInputTokens:                17,
-		DefinitionInputTokens:                   100,
-		RemovedDefinitionInputTokens:            30,
-		RemovedExecCommandDefinitionInputTokens: 20,
-
-		Sessions:                    2,
-		DefinitionRequests:          3,
-		SharedDefinitionInputTokens: 100,
-	}
-	report := gainReport(metricValues)
-	compactReport := strings.Join(strings.Fields(report), " ")
-	for _, want := range []string{
-		"output token estimates:",
-		"builtin.hpatch/hpatch 2404 4764 49.5%",
-		"builtin.hpatch/hpatch failed 2172 300 n/a",
-		"all-tools 4576 5064 9.6%",
-		"input token estimates:",
-		"input token overhead estimates:",
-		"installed tool definitions",
-		"Hpatch misuse warnings",
-		"apply_patch definition removed",
-		"exec_command definition removed",
-		"net added input",
-		"Definition routing covers 3 accounted request(s)",
-		"installation and removal measured",
-	} {
-		if !strings.Contains(compactReport, want) {
-			t.Fatalf("gain report %q does not contain %q", report, want)
-		}
-	}
-	input := strings.Join(strings.Fields(gainInputSection(t, report)), " ")
-	for _, want := range []string{
-		"state reports 11",
-		"failure diagnostics 13",
-		"Hpatch misuse warnings 17",
-		"installed tool definitions 100",
-
-		"apply_patch definition removed -30",
-		"exec_command definition removed -20",
-		"net added input 91",
-	} {
-		if !strings.Contains(input, want) {
-			t.Fatalf("input report %q does not contain %q", input, want)
-		}
-	}
-	for _, nextTable := range []string{
-		"input token estimates:",
-		"input token overhead estimates:",
-		"command metrics:",
-		"target metrics:",
-		"failure reasons:",
-		"command failure reasons:",
-	} {
-		if !strings.Contains(report, "\n\n"+nextTable+"\n") {
-			t.Fatalf("gain report has no blank line before %q: %q", nextTable, report)
-		}
+func TestStructuredGainPreservesLargeAndSignedArithmetic(t *testing.T) {
+	precise := metrics{HPatchTokens: 9214148664817921031, ApplyPatchTokens: ^uint64(0)}
+	if got := precise.gainMetrics().SuccessfulReduction; got != "50.1" {
+		t.Fatalf("large-counter successful reduction = %s, want 50.1", got)
 	}
 
-	for _, width := range []int{64, 80, 117} {
-		t.Run(fmt.Sprintf("width_%d", width), func(t *testing.T) {
-			section := gainInputSection(t, gainReportAtWidth(metricValues, width))
-			for line := range strings.SplitSeq(strings.TrimSuffix(section, "\n"), "\n") {
-				if utf8.RuneCountInString(line) > width {
-					t.Fatalf("line exceeds width %d: %q", width, line)
-				}
-			}
-			for _, text := range []string{
-				"final state returned after successful calls",
-				"errors and repair context returned after failed calls",
-				"exact serialized collection installed by the router",
-
-				"exact Code Mode section removed by the router",
-				"actual measured input overhead after stock-result and definition credits",
-			} {
-				if !strings.Contains(strings.Join(strings.Fields(section), " "), text) {
-					t.Fatalf("width %d report lost description %q: %q", width, text, section)
-				}
-			}
-		})
+	credited := metrics{DefinitionInputTokens: 5, RemovedDefinitionInputTokens: 9}
+	if got := credited.gainMetrics().NetAddedInput; got != "-4" {
+		t.Fatalf("credited net added input = %s, want -4", got)
 	}
+}
+
+func TestUpdateMetricsRejectsAggregateOverflowAcrossDistinctTools(t *testing.T) {
 	overflow := metrics{ToolCount: 2}
 	overflow.Tools[0] = toolMetric{PluginID: "a", ToolName: "one", EmittedTokens: ^uint64(0)}
 	overflow.Tools[1] = toolMetric{PluginID: "b", ToolName: "two", EmittedTokens: 1}
 	if err := updateMetrics(t.TempDir(), overflow); err == nil || !strings.Contains(err.Error(), "invalid command, feature, or tool counters") {
 		t.Fatalf("aggregate tool overflow error = %v", err)
 	}
-	precise := metrics{HPatchTokens: 9214148664817921031, ApplyPatchTokens: ^uint64(0)}
-	if got := precise.reduction(); got != "50.1" {
-		t.Fatalf("large-counter reduction = %s, want 50.1", got)
-	}
-	creditCanExceedAdded := strings.Join(strings.Fields(gainInputSection(t, gainReport(metrics{DefinitionInputTokens: 5, RemovedDefinitionInputTokens: 9}))), " ")
-	if !strings.Contains(creditCanExceedAdded, "net added input -4") {
-		t.Fatalf("signed definition credit report = %q", creditCanExceedAdded)
-	}
-}
-
-func gainInputSection(t *testing.T, report string) string {
-	t.Helper()
-	start := strings.Index(report, "input token overhead estimates:\n")
-	end := strings.Index(report, "command metrics:\n")
-	if start < 0 || end < start {
-		t.Fatalf("gain report has no bounded input section: %q", report)
-	}
-	return report[start:end]
 }
 
 func TestLoadGainMetricsMatchesGainReportTotals(t *testing.T) {
@@ -298,10 +205,18 @@ func TestGainReportsCommandInvocationsErrorsAndRates(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			var stdout, stderr bytes.Buffer
-			exitCode := Run(test.args, strings.NewReader(test.script), &stdout, &stderr, root, dataDirectory)
-			if (exitCode == 0) != test.success {
-				t.Fatalf("Run() = exit %d, stdout %q, stderr %q", exitCode, stdout.String(), stderr.String())
+			var result HostTranslation
+			var err error
+			if len(test.args) == 0 {
+				result, err = applyForHostAtTest(t, root, test.script, dataDirectory)
+			} else {
+				result, err = translateForHostAtTest(t, root, test.script, dataDirectory)
+			}
+			if (err == nil) != test.success {
+				t.Fatalf("host operation error = %v", err)
+			}
+			if err := RecordHostMetrics(t.Context(), dataDirectory, HostMetricRecord{Invocation: result.Invocation}); err != nil {
+				t.Fatal(err)
 			}
 		})
 	}
@@ -318,33 +233,9 @@ func TestGainReportsCommandInvocationsErrorsAndRates(t *testing.T) {
 	if got.Commands != wantCommands {
 		t.Fatalf("command metrics = %+v, want %+v", got.Commands, wantCommands)
 	}
-
-	var stdout, stderr bytes.Buffer
-	if exitCode := Run([]string{"gain"}, strings.NewReader("ignored"), &stdout, &stderr, root, dataDirectory); exitCode != 0 || stderr.Len() != 0 {
-		t.Fatalf("gain = exit %d, stdout %q, stderr %q", exitCode, stdout.String(), stderr.String())
-	}
-	start := strings.Index(stdout.String(), "command metrics:\n")
-	if start < 0 {
-		t.Fatalf("gain report has no command metrics: %q", stdout.String())
-	}
-	want := "command metrics:\n" +
-		"command  invocations  errors  error rate\n" +
-		"-------  -----------  ------  ----------\n" +
-		"in       0            0       0.0%\n" +
-		"new      3            0       0.0%\n" +
-		"mv       0            0       0.0%\n" +
-		"rm       1            0       0.0%\n" +
-
-		"type     3            1       33.3%\n" +
-		"type-    0            0       0.0%\n" +
-		"type+    0            0       0.0%\n" +
-		"total    7            1       14.3%\n\n"
-	end := strings.Index(stdout.String()[start:], "target metrics:\n")
-	if end < 0 {
-		t.Fatalf("gain report has no target metrics: %q", stdout.String())
-	}
-	if got := stdout.String()[start : start+end]; got != want {
-		t.Fatalf("command report = %q, want %q", got, want)
+	projected := got.gainMetrics()
+	if projected.Commands[commandOperationIndex("type")].ErrorRate != "33.3" {
+		t.Fatalf("projected command metrics = %+v", projected.Commands)
 	}
 }
 
@@ -378,50 +269,25 @@ func TestHostRecordCombinesEffectiveAndIneffectiveOutput(t *testing.T) {
 	if got != want {
 		t.Fatalf("host metrics = %+v, want %+v", got, want)
 	}
-	if report := strings.Join(strings.Fields(gainReport(got)), " "); !strings.Contains(report, "builtin.hpatch/hpatch failed 30 10 n/a") || !strings.Contains(report, "all-tools 70 110 36.4%") {
-		t.Fatalf("gain report does not include host-accounted outcomes: %q", report)
+	projected := got.gainMetrics()
+	if projected.AllTools.EmittedTokens != 70 || projected.AllTools.TranslatedTokens != 110 || projected.AllTools.Reduction != "36.4" {
+		t.Fatalf("structured gain does not include host-accounted outcomes: %+v", projected.AllTools)
 	}
 }
 
-func TestTranslateOutputFailureCountsEvaluatorCommandsOnly(t *testing.T) {
-	root := t.TempDir()
-	dataDirectory := t.TempDir()
-	script := "new note.txt\ntype \"hello\"\n"
-
-	var stderr bytes.Buffer
-	exitCode := Run([]string{"translate"}, strings.NewReader(script), metricsErrorWriter{}, &stderr, root, dataDirectory)
-	if exitCode == 0 || !strings.Contains(stderr.String(), "writing patch") {
-		t.Fatalf("translate = exit %d, stderr %q", exitCode, stderr.String())
-	}
-	got, err := readMetrics(dataDirectory)
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := metrics{}
-	want.Commands[commandOperationIndex("new")].Invocations = 1
-	want.Commands[commandOperationIndex("type")].Invocations = 1
-	if got != want {
-		t.Fatalf("metrics = %+v, want evaluator commands only %+v", got, want)
-	}
-}
-
-type metricsErrorWriter struct{}
-
-func (metricsErrorWriter) Write([]byte) (int, error) {
-	return 0, io.ErrClosedPipe
-}
-
-func TestMetricsPersistenceFailureWarnsWithoutPreventingMutation(t *testing.T) {
+func TestMetricsPersistenceFailureDoesNotPreventCompletedMutation(t *testing.T) {
 	root := t.TempDir()
 	dataPath := filepath.Join(t.TempDir(), "not-a-directory")
 	if err := os.WriteFile(dataPath, []byte("occupied"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
-	var stdout, stderr bytes.Buffer
-	exitCode := Run(nil, strings.NewReader("new note.txt\ntype \"hello\"\n"), &stdout, &stderr, root, dataPath)
-	if exitCode != 0 || stdout.Len() != 0 || !strings.Contains(stderr.String(), "warning: creating metrics directory") {
-		t.Fatalf("Run() = exit %d, stdout %q, stderr %q", exitCode, stdout.String(), stderr.String())
+	result, err := applyForHostAtTest(t, root, "new note.txt\ntype \"hello\"\n", dataPath)
+	if err != nil || result.Diagnostic != "" {
+		t.Fatalf("ApplyForHost() error = %v, diagnostic %q", err, result.Diagnostic)
+	}
+	if err := RecordHostMetrics(t.Context(), dataPath, HostMetricRecord{Invocation: result.Invocation}); err == nil || !strings.Contains(err.Error(), "creating metrics directory") {
+		t.Fatalf("RecordHostMetrics() error = %v", err)
 	}
 	content, err := os.ReadFile(filepath.Join(root, "note.txt"))
 	if err != nil || string(content) != "hello" {
@@ -429,7 +295,7 @@ func TestMetricsPersistenceFailureWarnsWithoutPreventingMutation(t *testing.T) {
 	}
 }
 
-func TestMetricsPersistenceFailureWarnsWithoutPreventingTranslation(t *testing.T) {
+func TestMetricsPersistenceFailureDoesNotPreventCompletedTranslation(t *testing.T) {
 	root := t.TempDir()
 	dataPath := filepath.Join(t.TempDir(), "not-a-directory")
 	if err := os.WriteFile(dataPath, []byte("occupied"), 0o600); err != nil {
@@ -438,10 +304,12 @@ func TestMetricsPersistenceFailureWarnsWithoutPreventingTranslation(t *testing.T
 	script := "new note.txt\ntype \"hello\"\n"
 	wantPatch := "*** Begin Patch\n*** Add File: note.txt\n+hello\n*** End Patch\n"
 
-	var stdout, stderr bytes.Buffer
-	exitCode := Run([]string{"translate"}, strings.NewReader(script), &stdout, &stderr, root, dataPath)
-	if exitCode != 0 || stdout.String() != wantPatch || !strings.Contains(stderr.String(), "warning: creating metrics directory") {
-		t.Fatalf("translate = exit %d, stdout %q, stderr %q", exitCode, stdout.String(), stderr.String())
+	result, err := translateForHostAtTest(t, root, script, dataPath)
+	if err != nil || string(result.Patch) != wantPatch || result.Diagnostic != "" {
+		t.Fatalf("TranslateForHost() error = %v, patch %q, diagnostic %q", err, result.Patch, result.Diagnostic)
+	}
+	if err := RecordHostMetrics(t.Context(), dataPath, HostMetricRecord{Invocation: result.Invocation}); err == nil || !strings.Contains(err.Error(), "creating metrics directory") {
+		t.Fatalf("RecordHostMetrics() error = %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(root, "note.txt")); !os.IsNotExist(err) {
 		t.Fatalf("translate created note.txt: %v", err)
@@ -464,10 +332,8 @@ func TestGainRejectsCorruptMetrics(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			var stdout, stderr bytes.Buffer
-			exitCode := Run([]string{"gain"}, strings.NewReader("ignored"), &stdout, &stderr, t.TempDir(), dataDirectory)
-			if exitCode == 0 || stdout.Len() != 0 || !strings.Contains(stderr.String(), "reading metrics") {
-				t.Fatalf("gain = exit %d, stdout %q, stderr %q", exitCode, stdout.String(), stderr.String())
+			if _, err := LoadGainMetrics(dataDirectory); err == nil || !strings.Contains(err.Error(), "reading metrics") {
+				t.Fatalf("LoadGainMetrics() error = %v", err)
 			}
 		})
 	}

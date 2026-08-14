@@ -4,7 +4,7 @@ pjdoc:
   kind: spec
   scope: root
   status: draft
-  revision: "21"
+  revision: "22"
   files:
     - interface.md
     - comparison.md
@@ -12,13 +12,13 @@ pjdoc:
 ---
 # hpatch specification
 
-Revision 21 specifies bounded current final references for successful HPATCH/2 edits.
+Revision 22 removes the standalone command contract while preserving the root engine, router,
+Codex carriers, recovery, and structured metrics contracts.
 `doc/spec/interface.md` owns the public report grammar, projection rule, continuation
 semantics, and observable acceptance behavior.
 
 ## Inventory
 
-- [`REQ-CLI-001`](interface.md): invocation modes and final-state reporting
 - [`REQ-READ-001`](interface.md): routed verified-row reading and bounded ranges
 - [`REQ-GREP-001`](interface.md): routed ripgrep search with directly editable verified rows
 - [`REQ-PLUGIN-001`](interface.md): router-local custom tools and Code Mode carrier translation

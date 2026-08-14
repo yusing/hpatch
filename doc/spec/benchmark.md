@@ -4,7 +4,7 @@
 
 `benchmarks/bench.sh` owns the executable benchmark workflow. Dockerfile and
 Docker Compose own the agent and router topology; the shell directly invokes
-Docker, Codex, Git, the Go test grader, metrics endpoints, and `hpatch gain`.
+Docker, Codex, Git, the Go test grader, and metrics endpoints.
 No Go or Python benchmark runner or process-execution abstraction is part of the
 benchmark.
 
@@ -77,8 +77,8 @@ pass decision. The paired parent deterministically merges all `2 * repetitions` 
 Hpatch-only mode merges its one measured treatment object with the labeled imported control
 object. External cancellation merges all retained objects.
 
-After measured attempts, the shell retains treatment router metrics and an isolated treatment
-`hpatch gain` report. Paired mode also records fresh control router metrics; Hpatch-only mode
+After measured attempts, the shell retains treatment router metrics, including structured gain.
+Paired mode also records fresh control router metrics; Hpatch-only mode
 copies the matching baseline control metrics. A gain of zero is not an editing-performance
 result when no treatment request reached hpatch.
 Treatment runs expose `report_issue` by default and MUST accept an explicit boolean environment
@@ -160,7 +160,7 @@ Acceptance:
 5. A timeout, Codex failure, invalid JSONL, unauthorized path, or hidden-grader
    failure makes the attempt fail without deleting its evidence.
 6. Results retain elapsed/token metrics and the actual agent diff; treatment
-   artifacts retain structured router gain metrics and textual `hpatch gain`.
+   artifacts retain structured router gain metrics.
 7. The summary attributes routed hpatch outcomes to their originating repetitions,
    distinguishes client file-change items from routed calls, and separates semantic
    edit-payload estimates from end-to-end output usage. It reports structured evaluator

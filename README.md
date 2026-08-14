@@ -2,7 +2,7 @@
 
 A Codex Responses router that gives agents verified atomic edits and direct script execution without Code Mode wrapper ceremony.
 
-`hpatch-router` sits between Codex and the Responses API. It replaces the model-facing Code Mode `apply_patch` and `exec_command` surfaces with constrained `functions.hpatch` and free-form `functions.shell`. Successful calls still return native Codex carriers, so sandbox checks, permissions, command sessions, and the normal diff UI remain intact. The repository also includes the standalone `hpatch` CLI and reusable Go engine used by the router.
+`hpatch-router` sits between Codex and the Responses API. It replaces the model-facing Code Mode `apply_patch` and `exec_command` surfaces with constrained `functions.hpatch` and free-form `functions.shell`. Successful calls still return native Codex carriers, so sandbox checks, permissions, command sessions, and the normal diff UI remain intact. The repository also exposes the reusable Go edit engine used by the router.
 
 TL;DR:
 
@@ -12,9 +12,9 @@ TL;DR:
 | Understand verified editing | [Why hpatch?](#why-hpatch) |
 | Run commands without Code Mode wrapper syntax | [Why shell?](#why-shell) |
 | Remove contradictory stock editing guidance | [Codex model instructions](#codex-model-instructions) |
-| Inspect measured token usage | [Metrics](#metrics), then run `hpatch gain` |
-| Use the engine without Codex | [Standalone CLI](#standalone-cli) |
-| Read the complete contract | `hpatch --help`, `hpatch --tool-help`, [`doc/spec/interface.md`](doc/spec/interface.md) |
+| Inspect measured token usage | [Metrics](#metrics), the dashboard, or `/api/metrics` |
+| Use the engine without Codex | [Go library](#go-library) |
+| Read the complete contract | [`doc/spec/interface.md`](doc/spec/interface.md) |
 
 ## Why hpatch?
 
@@ -37,7 +37,7 @@ flowchart LR
     A --> D
 ```
 
-The patch is not eliminated: the router generates it after inference. Savings are the difference between the two model-output payload estimates shown above. State reports, rejection diagnostics, and the net input cost of the hpatch and shell tool definitions plus persistent workflow guidance are tracked separately. Hread, hgrep, and inspect_file results are not compared with hypothetical shell commands; the dashboard's end-to-end Responses and session usage totals are authoritative for their model-input cost. Gain values remain reproducible GPT-5 estimates rather than provider billing totals.
+The patch is not eliminated: the router generates it after inference. Savings are the difference between the two model-output payload estimates shown above. State reports, rejection diagnostics, and the net input cost of the hpatch and shell tool definitions plus persistent workflow guidance are tracked separately. Hread, hgrep, and inspect_file results are not compared with hypothetical shell commands; the dashboard's end-to-end Responses and session usage totals are authoritative for their model-input cost. Payload estimates remain reproducible GPT-5 estimates rather than provider billing totals.
 
 For an 11-line function replacement, hpatch asks the model for this:
 
@@ -150,12 +150,12 @@ For native executor background and interactive behavior, see [OpenAI's Codex pro
 - Private hread, hgrep, and inspect_file require the router executable directory to precede unrelated entries on the executor's trusted `PATH`.
 - The built-in shell uses `bash` when no shebang is present; every selected interpreter must be available through the inherited `PATH`.
 - Router and executor deployments with isolated filesystems must expose the frontend directory, authenticated snapshot, and router executable at the same absolute paths.
-- Source builds that regenerate the embedded plugin with `make install` or `go generate` require Bun. `make install` additionally requires `make` and `jq`.
+- Source builds that regenerate the embedded plugin with `make install` or `go generate` require Bun. `make install`, which installs `hpatch-router` and Codex instructions, additionally requires `make` and `jq`.
 
 ## Install from a checkout
 
-`make install` regenerates the embedded built-in plugin bundle, installs `hpatch` and
-`hpatch-router` through `go install`, and updates Codex's complete model-instructions file:
+`make install` regenerates the embedded built-in plugin bundle, installs `hpatch-router` through
+`go install`, and updates Codex's complete model-instructions file:
 
 ```sh
 make install
@@ -171,8 +171,8 @@ TOML. Config and agent TOML files remain unchanged. Stock Codex guidance, the ea
 unmarked hpatch guidance, and current marked guidance are supported. Content outside the
 owned section is preserved; an unrecognized file fails instead of being overwritten.
 
-`make uninstall` removes the installed `hpatch` and `hpatch-router` binaries and reverses
-the model-instructions changes. It deletes the installer-created instructions file and its
+`make uninstall` removes the installed `hpatch-router` binary and reverses the
+model-instructions changes. It deletes the installer-created instructions file and its
 config entry, or removes only the marked hpatch section from pre-existing customized main and
 agent instruction files. Other custom content, agent TOMLs, generated source, and plugin
 dependencies are preserved.
@@ -264,8 +264,7 @@ and emitted, evaluated, and translated-patch byte counts. Recovery Markdown labe
 recovery payload as model-emitted, shows a compact resolved-operation delta, and states when
 the router rebuilt a larger complete script. A routed evaluator failure invokes `hooks.outcome`
 instead of also invoking `hooks.error`; a router-owned rejection that occurs before evaluation
-reports `unevaluated/rejected`. Root commit failures report `applied/failed`. Standalone command
-failures continue to invoke `hooks.error`.
+reports `unevaluated/rejected`. Root commit failures report `applied/failed`.
 
 In hpatch mode, run the router as the same login user as Codex so it can open the absolute workspace paths Codex sends and read the same credentials. A user systemd unit is the intended long-running setup.
 
@@ -368,9 +367,7 @@ workflow guidance. `make install` applies it to the complete file selected by Co
 
 For an existing customized file, the installer preserves the config value and all text before
 and after the owned section. It migrates the earlier hpatch section used by this project and
-adds markers so later installations refresh only that section. The same renderer is used by
-the benchmark. Tool help derives its HPATCH/2 section from this source, while dynamic rejected
-script guidance uses the adjacent template.
+adds markers so later installations refresh only that section. The same renderer is used by the benchmark, while dynamic rejected-script guidance uses the adjacent template.
 
 To select a model explicitly when no instructions file is configured:
 
@@ -384,61 +381,17 @@ The default installed setting is equivalent to:
 model_instructions_file = "/absolute/path/to/.codex/hpatch-model-instructions.md"
 ```
 
-## Standalone CLI
+## Go library
 
-Install the CLI (requires Go 1.26+; binary lands in `$(go env GOPATH)/bin` or `$GOBIN`):
-
-```sh
-go install github.com/yusing/hpatch/cmd/hpatch@latest
-```
-
-Apply a script using a hash copied from hread or an earlier hpatch report (writes only
-after the full script validates and stages; success report on stderr):
-
-```sh
-hpatch <<'EOF'
-in src/app.go
-type 12:55af "oldName" "newName"
-EOF
-```
-
-Translate to an OpenAI `apply_patch` envelope without touching files (patch on stdout, pending report on stderr):
-
-```sh
-hpatch translate <<'EOF'
-new message.txt
-type "hello world\n"
-EOF
-```
-
-Relative standalone CLI operands resolve from the selected cwd inside the workspace root.
-
-| Surface | Evaluation base | Path behavior |
-| --- | --- | --- |
-| Standalone CLI | Process current directory, or absolute `--root` | Relative to `.` or `--cwd`; operands remain confined beneath the root |
-| Codex router | Optional canonical directory hint from `x-codex-turn-metadata`; no router-cwd fallback | Relative to the selected hint when present; without one only absolute operands are valid; no router filesystem confinement |
-
-Standalone CLI and root-scoped `Translate` or `TranslateForHost` patches use root-relative paths. Router `TranslateForHostAt` output retains cleaned host path identities for Codex to authorize. Details: `hpatch --help` and [`doc/spec/interface.md`](doc/spec/interface.md).
-
-| Mode | Mutates files? | stdout | stderr |
-| --- | --- | --- | --- |
-| `hpatch` | Yes, after full validation | empty on success | final-state report |
-| `hpatch translate` | No | `apply_patch` envelope | pending final-state report |
-| `hpatch gain` | No | metrics report | empty on success |
-| `--help` / `--tool-help` / `--version` | No | help or version | empty |
-
-Built-in references:
-
-```sh
-hpatch --help
-hpatch --tool-help
-hpatch translate --help
-hpatch --version
-```
+The module path is `github.com/yusing/hpatch`. The root package exposes workspace,
+evaluation, translation, reporting, and host-metrics APIs as a Go library. Root-scoped workspace APIs use a caller-authorized `*os.Root` and root-relative cwd;
+`Translate` and `TranslateForHost` emit root-relative patch paths. Router translation uses
+`TranslateForHostAt`, retains cleaned host path identities for Codex to authorize, and never
+uses router cwd as a fallback. See [`doc/spec/interface.md`](doc/spec/interface.md).
 
 ## Editing language (summary)
 
-Authoritative guidance: `hpatch --help` and `hpatch --tool-help`. Contract: [`doc/spec/interface.md`](doc/spec/interface.md).
+Authoritative guidance: [`contrib/codex/file-editing-instructions.md`](contrib/codex/file-editing-instructions.md). Contract: [`doc/spec/interface.md`](doc/spec/interface.md).
 
 Hread and hpatch preview/context rows have the shape `LINE:HASH TEXT`. Copy the complete
 `LINE:HASH` reference into a mutation target. The one-based line is a location hint. The
@@ -487,7 +440,7 @@ Rules worth remembering:
 - Overlapping replacements or deletions and insertions strictly inside them fail atomically. Boundary insertions are valid.
 - Use inline quoted values for short single-line edits; include `\n` when an insertion must form a new line. Reserve fixed `<<PATCH` for multiline or escape-heavy values.
 - For regular expressions and other escape-heavy source, use fixed `<<PATCH` even for one line. After a behavioral check fails, reuse the exact value you authored plus the successful report or confirmed target mapping; do not hread the changed line merely to prepare the correction.
-- A rejected routed script changes nothing. Its diagnostic includes a complete compact command manifest, marks rejected commands with their correction scope, and gives bounded value-row context. The router exposes `functions.hpatch_recover`, a separate custom-grammar tool that repairs the latest evaluated rejected script by hashed `C...` command and `V...` value-row handles. Submit all known independent handle-local corrections in one payload rather than resubmitting the complete script. All operations resolve against one immutable script before the router rebuilds it through the root text editor and reevaluates it. A re-rejection replaces the recovery baseline and explicitly invalidates every earlier handle. Recovery is not part of the standalone CLI or ordinary `functions.hpatch` grammar.
+- A rejected routed script changes nothing. Its diagnostic includes a complete compact command manifest, marks rejected commands with their correction scope, and gives bounded value-row context. The router exposes `functions.hpatch_recover`, a separate custom-grammar tool that repairs the latest evaluated rejected script by hashed `C...` command and `V...` value-row handles. Submit all known independent handle-local corrections in one payload rather than resubmitting the complete script. All operations resolve against one immutable script before the router rebuilds it through the root text editor and reevaluates it. A re-rejection replaces the recovery baseline and explicitly invalidates every earlier handle. Recovery is separate from ordinary `functions.hpatch` and the root public APIs.
 
 Additional boundaries:
 
@@ -545,19 +498,15 @@ PATCH
 
 Metrics separate three different layers:
 
-1. The root engine records invocation results and paired hpatch-versus-translated-patch GPT-5 output-token estimates.
-2. The router records per-tool definitions, emitted and translated carriers, current-versus-stock execution evidence, reports, diagnostics, and shell misuse or recovery overhead.
-3. The router dashboard and `/api/metrics` expose provider Responses lifecycle and usage totals alongside those estimates.
+1. The host variants return `HostTranslation` with evaluator counters; basic `Apply` and `Translate` do not persist metrics.
+2. A host supplies visible payload and session attribution to `RecordHostMetrics`, the only root persistence boundary. The router does this after routed outcomes and also records per-tool definitions, carriers, executor evidence, reports, diagnostics, and shell misuse or recovery overhead.
+3. The router dashboard and `/api/metrics` expose provider Responses lifecycle and usage totals alongside those persisted estimates.
 
-`hpatch gain` reads persistent metrics without opening a workspace:
+The router dashboard and `GET /api/metrics` expose the structured persistent aggregate without opening an engine workspace.
 
-```sh
-hpatch gain
-```
+These are reproducible payload estimates, not provider billing totals. They omit reasoning tokens, commentary, and host-specific framing. Provider Responses usage is authoritative for end-to-end input and output totals. Metrics are auxiliary and never replace a successful edit, command result, or rejection diagnostic. Passthrough mode does not install hpatch or plugin metric accounting.
 
-These are reproducible payload estimates, not provider billing totals. They omit reasoning tokens, commentary, and host-specific framing. Provider Responses usage is authoritative for end-to-end input and output totals. Metrics are auxiliary and never replace a successful edit, command result, or rejection diagnostic. Passthrough mode does not install hpatch or plugin gain accounting.
-
-Hand-authored scenario comparison (does not update `hpatch gain`):
+Hand-authored scenario comparison (does not update persistent router metrics):
 
 ```sh
 go run ./compare
@@ -593,7 +542,7 @@ read loop. It is one observed run, not a general performance guarantee.
 
 ## How it works
 
-CLI path: select a pinned workspace root and cwd → parse the complete script → verify immutable baselines → render and validate disjoint changes → stage all files → commit atomically, or emit one non-mutating translated patch.
+Root library path: accept a caller-authorized workspace root and cwd → parse the complete script → verify immutable baselines → render and validate disjoint changes → return a completed result for atomic commit or one non-mutating translated patch.
 
 Router hpatch path: validate auth and metadata → load the immutable tool registry → replace the
 eligible Code Mode tool surfaces without changing Responses instructions → select an optional
@@ -607,7 +556,6 @@ Router shell path: translate the free-form tool call into one native executor ca
 ```text
 .
 ├── cmd/
-│   ├── hpatch/                   # Standalone CLI
 │   └── hpatch-router/            # Router process entry point
 ├── internal/
 │   ├── hpatchsyntax/             # Shared quoted-string and heredoc framing
@@ -626,7 +574,7 @@ Router shell path: translate the free-form tool call into one native executor ca
 └── tool_grammar.lark             # Embedded constrained-decoding grammar
 ```
 
-Tests live beside the owners they exercise. The root `hpatch` package is the reusable engine; `cmd/hpatch` and `internal/router` call it rather than maintaining separate editing implementations. The router embeds its dashboard and generated built-in plugin bundle.
+Tests live beside the owners they exercise. The root `hpatch` package is the reusable engine; `internal/router` calls it rather than maintaining a separate editing implementation. The router embeds its dashboard and generated built-in plugin bundle.
 
 ## Documentation
 
@@ -634,7 +582,7 @@ Tests live beside the owners they exercise. The root `hpatch` package is the reu
 | --- | --- |
 | [`doc/brief.md`](doc/brief.md) | Product brief and scope |
 | [`doc/spec/index.md`](doc/spec/index.md) | Specification inventory |
-| [`doc/spec/interface.md`](doc/spec/interface.md) | CLI, router, plugin, shell, rejected-script recovery, and metrics contracts |
+| [`doc/spec/interface.md`](doc/spec/interface.md) | Engine, router, plugin, shell, rejected-script recovery, and metrics contracts |
 | [`doc/spec/comparison.md`](doc/spec/comparison.md) | Payload comparison scenarios |
 | [`doc/spec/benchmark.md`](doc/spec/benchmark.md) | Benchmark requirements |
 | [`doc/architecture/index.md`](doc/architecture/index.md) | Stable ownership boundaries |
@@ -644,7 +592,7 @@ Tests live beside the owners they exercise. The root `hpatch` package is the reu
 | [`contrib/codex/file-editing-instructions.md`](contrib/codex/file-editing-instructions.md) | All persistent Codex edit, shell, read, search, and inspection workflow guidance |
 | [`AGENTS.md`](AGENTS.md) | Architecture and repository navigation for agents |
 
-Library use: module path `github.com/yusing/hpatch`. Importable as a library (`hpatch.Translate`, `hpatch.Workspace`, host metrics helpers); hosts should open an `*os.Root` capability for the workspace before calling in.
+Library use: module path `github.com/yusing/hpatch`. Importable as a library (`hpatch.Translate`, `hpatch.Workspace`, structured host metrics helpers); hosts should open an `*os.Root` capability for the workspace before calling in.
 
 ## Development
 
@@ -682,4 +630,4 @@ go vet ./...
 make install
 ```
 
-Focused checks are `go test .` for the engine, `go test ./cmd/hpatch` for the CLI, `go test ./internal/router` for routing and plugins, and `go test ./cmd/hpatch-router` for the process entry point.
+Focused checks are `go test .` for the engine, `go test ./internal/router` for routing and plugins, and `go test ./cmd/hpatch-router` for the process entry point.

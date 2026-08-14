@@ -24,4 +24,4 @@ library's GPT-5 model mapping and reports, for each scenario and in total:
 - percentage reduction, where positive values mean hpatch uses fewer tokens.
 
 The report names the encoding returned for GPT-5. The comparison is an executable
-project artifact, not another `hpatch` CLI mode.
+project artifact, not an installed runtime surface.

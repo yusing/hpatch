@@ -27,8 +27,8 @@ A router-local tool plugin system loads TypeScript-authored, compiled JavaScript
 from the user configuration directory, exposes their OpenAI custom-tool specifications, and
 translates model calls into ordinary Code Mode tool-call carriers. Common exec translations
 use a router-owned wrapper, while tool implementations run only when Codex executes the
-translated carrier under its normal sandbox and permissions. Gain reporting attributes installed
-definitions, emitted-versus-translated output shapes, and current-versus-stock executor-result input
+translated carrier under its normal sandbox and permissions. Structured router metrics attribute
+installed definitions, emitted-versus-translated output shapes, and current-versus-stock executor-result input
 shapes to each contributed tool.
 
 The mandatory built-in `shell` plugin accepts one free-form script and exposes its normalized interpreter
@@ -66,11 +66,11 @@ wall time must remain close to control.
 - File creation, movement, and deletion.
 - One immutable baseline per touched existing file for the complete script; overlapping
   mutations reject instead of rebasing or guessing.
-- Normal mode that validates and stages the complete change set before filesystem commit.
-- Translate mode that does not modify files and emits one OpenAI `apply_patch` envelope.
-- Successful normal and translate reports project bounded current references for every
-  effective content-edit command on every surviving edited file.
-- Router-only `functions.hpatch_recover` with hashed command and value-row handles; standalone hpatch has no recovery mode.
+- Basic `Apply` validates, stages, and commits a complete change set, returning only an error.
+- Basic `Translate` does not modify files and returns only the OpenAI `apply_patch` bytes or an error.
+- `ApplyForHost`, `ApplyForHostRoot`, `TranslateForHost`, and `TranslateForHostAt` return
+  `HostTranslation` with the rendered report, final state, diagnostics, and evaluator metrics.
+- Router-only `functions.hpatch_recover` with hashed command and value-row handles; ordinary `functions.hpatch` and root APIs have no recovery mode.
 - Persistent encoding, diagnostic, command, target, and end-to-end benchmark metrics.
 - Historical-commit benchmark tasks with hidden graders, paired randomized attempts, and
   structured artifacts.
@@ -80,18 +80,19 @@ wall time must remain close to control.
   Lark and regex grammars, typed translation into Code Mode carriers, and executor-side tool
   implementations.
 - Per-plugin and per-tool installed-definition, emitted-call, validated stock-carrier, current-result,
-  and optional stock-result token estimates in `hpatch gain` and the router gain page.
+  and optional stock-result token estimates in the router dashboard and structured metrics endpoint.
 - Built-in hread and hgrep stock results preserve returned content while omitting their verified
-  `LINE:HASH` row identity, so gain reports the input cost of editable row references.
+  `LINE:HASH` row identity, so structured router metrics report the input cost of editable row references.
 - The repository `plugins/shell.mjs` source is embedded as the mandatory built-in shell, with
   optional interpreter, command-template, JSON parameter directives, and an interpreter-specific
   native exec baseline for output metrics.
 
 ## Public surface
 
-- `hpatch`: evaluate one complete script and atomically update the workspace.
-- `hpatch translate`: evaluate the same script and emit its `apply_patch` representation.
-- `hpatch gain`: report persistent edit-encoding and failure metrics.
+- Basic root Go APIs: `Apply` atomically updates an authorized workspace and returns an error;
+  `Translate` returns `apply_patch` bytes and an error.
+- Host root APIs: `ApplyForHost`, `ApplyForHostRoot`, `TranslateForHost`, and
+  `TranslateForHostAt` return `HostTranslation` for report, state, diagnostics, and metrics.
 - `hpatch-router --mode hpatch|passthrough`: expose model-visible hpatch and shell tools with
   private single-file hread and hgrep commands, or the unchanged control path.
 - `hpatch/plugins` beneath the platform user configuration directory: the configured tool-plugin
@@ -99,11 +100,10 @@ wall time must remain close to control.
 - `shell`: a mandatory built-in unconstrained custom tool whose translated exec carrier shows the
   interpreter and exact script body, optionally with `#!cmd=` and request-specific `#!params=`
   assignments.
-- `make install`: regenerate the embedded plugin bundle and install `hpatch` and `hpatch-router`.
+- `make install`: regenerate the embedded plugin bundle, install `hpatch-router`, and install
+  Codex instructions.
 - `hpatch-bench validate --manifest TASK.json` and `hpatch-bench run`: validate and run
   paired historical-commit evaluations.
-- `hpatch --help`, `hpatch --tool-help`, `hpatch translate --help`, and
-  `hpatch --version`: informational output.
 - Script commands: `in`, `new`, `mv`, `rm`, `type`, `type-`, and `type+`.
 - `type` replaces its explicit target; an empty target-bearing value deletes the target,
   including an owned line or range terminator. `type-` and `type+` insert before and after
@@ -152,8 +152,9 @@ wall time must remain close to control.
   multiline values use the grammar-constrained `<<PATCH` frame.
 - Parsing, target resolution, validation, and in-memory evaluation failures must not
   modify files or emit a partial patch or successful final-state report.
-- Normal success writes the final-state report to stderr. Translate success writes the
-  patch to stdout and the pending final-state report to stderr.
+- Basic `Apply` returns only an error and basic `Translate` returns only patch bytes and an
+  error. Host variants return completed state, the rendered report, diagnostics, and evaluator
+  metrics through `HostTranslation`.
 - A successful report row is current for its named final path and may target the next
   invocation directly. Saved pre-edit rows remain stale; when the exact next target is absent,
   the caller performs a focused read rather than guessing or reconstructing it.
@@ -162,7 +163,6 @@ wall time must remain close to control.
 - Changed Go files are parsed and formatted with Go's standard library before success.
 - Correctness is determined by required graders and path-scope checks, not reference-patch
   similarity. End-to-end Responses usage is authoritative for task-level token results.
-- Diagnostics use stderr and a nonzero exit status for standalone CLI failures.
 - In hpatch mode the router validates the complete discovered plugin registry before opening
   its listener or installing tool wrappers; any schema, identity, implementation, or wrapper
   mismatch reports diagnostics and stops startup without exposing a partial registry.

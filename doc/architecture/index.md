@@ -4,7 +4,7 @@ pjdoc:
   kind: architecture
   scope: root
   status: draft
-  revision: "22"
+  revision: "23"
   files:
     []
 ---
@@ -26,8 +26,7 @@ One engine owns parsed command evaluation, logical path resolution, first-touch 
 one immutable invocation baseline per touched existing file, target resolution, ordered
 baseline-coordinate splice registration, atomic edit-conflict validation, new-file
 initialization state, and original-to-final net file actions for `REQ-SCRIPT-001`,
-`REQ-FILE-001`, `REQ-SELECT-001`, and `REQ-EDIT-001`. Normal and translate modes consume
-the same completed result; neither mode reimplements command semantics. HPATCH/2 reduces
+`REQ-FILE-001`, `REQ-SELECT-001`, and `REQ-EDIT-001`. Apply and translation callers consume the same completed result; neither path reimplements command semantics. HPATCH/2 reduces
 this existing owner rather than adding an editor, AST layer, or parallel patch engine.
 
 The workspace owner retains each touched file's invocation-original identity and content,
@@ -69,8 +68,7 @@ The router owns the dedicated recovery grammar, parsing, command and value-row h
 rejected-script ancestry, worktree isolation, correlation, replay, diagnostics, chain metrics,
 and complete-script reevaluation. It resolves every recovery operation against one immutable
 latest evaluated script and uses the root `EditText` primitive only to apply the planned text
-mutations. The core evaluator, root public API, root grammar, and standalone CLI have no
-recovery mode. Malformed, stale, conflicting, or incomplete recovery changes neither the
+mutations. The core evaluator, root public APIs, root grammar, and ordinary `functions.hpatch` have no recovery mode. Malformed, stale, conflicting, or incomplete recovery changes neither the
 workspace nor the retained evaluated baseline.
 
 ## CTR-STATE-001 — Bounded final-state projection
@@ -90,7 +88,7 @@ at most four rows per effective command and retains the existing three-row activ
 fallback whenever that active file has no reference block. It truncates displayed row text
 to 64 Unicode code points while hashing complete final line content. It preserves active
 and moved paths, last-edit summaries, net file counts, empty-file rows, and control escaping
-before any external effect. Normal and translate modes share this path.
+before any external effect. Apply and translation paths share this projection.
 
 The projection borrows completed editor content during rendering and retains no additional
 original or final content copy, routed-read history, translated patch, word diff, selection,
@@ -100,21 +98,25 @@ hashes, command extents, or formatting adjustments.
 
 ## CTR-BOUNDARY-001 — Filesystem and output boundary
 
-The CLI boundary owns arguments, stdin, workspace selection, environment-derived metrics
-configuration, diagnostics, stdout, stderr, exit status, and help composition for
-`REQ-CLI-001`, `REQ-GUIDE-001`, and `REQ-OUTPUT-001`. Top-level help owns the complete
-agent-workflow-through-metrics reference. All persistent Codex edit, shell, read, search, and
-inspection workflow and the model-facing HPATCH/2 reference share
-`contrib/codex/file-editing-instructions.md` as their source. Tool descriptions retain only
-call-local contracts and request-specific schemas. The router renders dynamic rejected-script
-references and the recovery instruction from the adjacent recovery template only for actionable
-evaluator rejection diagnostics.
+The root library boundary owns workspace authorization, evaluation diagnostics, completed
+results, atomic commit coordination, translation, and structured host metrics for
+`REQ-GUIDE-001` and `REQ-OUTPUT-001`. All persistent Codex edit, shell, read, search, and
+inspection workflow guidance shares `contrib/codex/file-editing-instructions.md` as its source.
+Tool descriptions retain only call-local contracts and request-specific schemas. The router
+renders dynamic rejected-script references and the recovery instruction from the adjacent
+recovery template only for actionable evaluator rejection diagnostics.
 
-The root-scoped workspace boundary used by the standalone CLI and authorized library callers owns a pinned `*os.Root`, a root-relative cwd, root-scoped reads, staging, commit, and rollback. Relative script paths resolve from cwd; absolute paths become root-relative identities only when within root. Lexical and symlink escapes fail. Initial inputs cross into that boundary only after a regular-file check and strict UTF-8 decoding.
+The root-scoped workspace boundary used by authorized library callers owns a pinned `*os.Root`,
+a root-relative cwd, root-scoped reads, staging, commit, and rollback. Relative script paths
+resolve from cwd; absolute paths become root-relative identities only when within root. Lexical
+and symlink escapes fail. Initial inputs cross into that boundary only after a regular-file check
+and strict UTF-8 decoding.
 
-Normal router translation is outside that confinement boundary. It supplies an optional canonical metadata directory to `TranslateForHostAt`, performs ordinary host path resolution without a router-owned filesystem capability, and never falls back to router cwd. Without a selected directory, only absolute operands are valid. Retained private `@shell` application is the confined router exception and uses `ApplyForHostRoot`.
-
-Informational CLI forms are resolved before stdin, working-directory, configuration-directory, metrics, or filesystem access.
+Normal router translation is outside that confinement boundary. It supplies an optional canonical
+metadata directory to `TranslateForHostAt`, performs ordinary host path resolution without a
+router-owned filesystem capability, and never falls back to router cwd. Without a selected
+directory, only absolute operands are valid. Retained private `@shell` application is the confined
+router exception and uses `ApplyForHostRoot`.
 
 The router chooses retained-state identity from an explicit `session-id`, then a stable
 `prompt_cache_key`, and only then a request-scoped client request ID. Retained history is
@@ -187,21 +189,16 @@ read, search, or inspection. Model history retains shell calls, private commands
 response routing and edit recovery ancestry, and generalized per-tool metrics record execution.
 Registry shutdown removes the frontends and snapshot.
 
-The standalone CLI canonicalizes root and cwd, opens the root once, and keeps that
-capability open for the invocation. Library callers pass the already-authorized root and
-a root-relative cwd. Absolute operands are matched against the canonical root name;
-equivalent aliases are not resolved outside the capability. Translation and normal
-commit consume the same identities, so cwd affects relative operands without changing
-the workspace boundary.
+Library callers pass an already-authorized root and a root-relative cwd. Absolute operands
+are matched against the canonical root name; equivalent aliases are not resolved outside the
+capability. Translation and commit consume the same identities, so cwd affects relative operands
+without changing the workspace boundary.
 
-Normal mode validates and formats the state report, stages the complete engine result,
-performs the external filesystem commit, and only then emits the report to stderr.
-Translate mode validates and formats the same pending-state report, completely renders
-and writes the patch to stdout, and only then emits the report. No script command crosses
-the external commit boundary. No failure before the external effect emits a final-state
-report. A report-write failure after a successful effect is best-effort and cannot be
-represented as rollback. The transaction coordinator owns backups, ordered operations,
-rollback attempts, and honest reporting of external commit or rollback failure.
+The root library validates and formats the state report before an external effect. Apply stages
+the complete engine result and commits atomically; translation completely renders the patch
+without mutation. No script command crosses the external commit boundary. The transaction
+coordinator owns backups, ordered operations, rollback attempts, and honest reporting of external
+commit or rollback failure.
 
 ## CTR-PLUGIN-001 — Tool registry and Code Mode carrier boundary
 
@@ -307,7 +304,7 @@ bounded diagnostic carrier, while a runtime-adapter failure, malformed translato
 unavailable carrier fails routing and cannot be represented as successful translation.
 
 For hpatch, the immediate Code Mode carrier contains the root engine's translated patch and
-already-rendered final-state report. Response restoration retains the original standalone
+already-rendered final-state report. Response restoration retains the original model-visible
 hpatch call and normal executor result for later model-visible history; it does not expose
 the translated patch as later model input or derive another report representation. A later
 model inference can therefore reuse an exact current row present in the retained successful
@@ -341,17 +338,16 @@ usage remains authoritative for provider-consumed model input.
 
 ## CTR-TRANSLATE-001 — Patch rendering
 
-One translation renderer owns all OpenAI `apply_patch` syntax. It receives the engine's ordered net change set and emits one envelope containing the required `Add File`, `Update File`, `Move to`, and `Delete File` actions. It finishes the complete string before stdout is written so evaluation or rendering failures cannot expose a partial patch.
+One translation renderer owns all OpenAI `apply_patch` syntax. It receives the engine's ordered net change set and emits one envelope containing the required `Add File`, `Update File`, `Move to`, and `Delete File` actions. It finishes the complete string before returning so evaluation or rendering failures cannot expose a partial patch.
 
-For root-scoped engine translation, every emitted path is relative to the workspace root, independent of cwd. The router's normal host adapter uses `TranslateForHostAt`; it evaluates against an optional canonical metadata directory without confinement, rejects relative operands when no directory is selected, never falls back to router cwd, and preserves cleaned host path identities for Codex's carrier. The renderer owns the minimal nonempty verification hunk required by OpenAI `apply_patch` when a move has no content change, and the renderer-only LF normalization required by the line-oriented output format. For changed content it expands context until every bare hunk's old-side sequence is unique, failing instead of emitting an ambiguous patch. The engine's normal-mode contents remain unchanged.
+For root-scoped engine translation, every emitted path is relative to the workspace root, independent of cwd. The router's normal host adapter uses `TranslateForHostAt`; it evaluates against an optional canonical metadata directory without confinement, rejects relative operands when no directory is selected, never falls back to router cwd, and preserves cleaned host path identities for Codex's carrier. The renderer owns the minimal nonempty verification hunk required by OpenAI `apply_patch` when a move has no content change, and the renderer-only LF normalization required by the line-oriented output format. For changed content it expands context until every bare hunk's old-side sequence is unique, failing instead of emitting an ambiguous patch. The engine's evaluated contents remain unchanged.
 
 ## CTR-COMPARE-001 — Independent comparison cases
 
 The comparison artifact may call the engine as test support, but every equivalent
 `apply_patch` input is independently authored scenario data. A clearly test-only patch
 applier verifies both representations reach the same final path-to-content map before
-token counts are reported. Neither the applier nor the comparison is part of the
-installed `hpatch` CLI.
+token counts are reported. Neither the applier nor the comparison is part of an installed runtime surface.
 
 ## CTR-BENCH-001 — Benchmark trust and execution boundary
 

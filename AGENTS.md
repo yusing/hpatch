@@ -1,6 +1,6 @@
 AGENTS.md
 
-`README.md` is the source of truth for installation, deployment, user-visible hpatch and shell workflows, and requirements. For those tasks, open its relevant section before inspecting implementation; this documentation-owner rule overrides any general preference to inspect code first. Update it when the requested change alters one of those user-visible surfaces. Use `doc/spec/interface.md` for normative CLI, router, plugin, shell, hread/hgrep, recovery, and metrics contracts; open it when behavior or acceptance criteria are in question. Use `doc/architecture/index.md` for stable ownership boundaries; open it before moving responsibilities. Use `contrib/codex/file-editing-instructions.md`, `hpatch --help`, `hpatch --tool-help`, and `tool_grammar.lark` only when editing or validating HPATCH syntax or Codex model guidance.
+`README.md` is the source of truth for installation, deployment, user-visible router and shell workflows, and requirements. For those tasks, open its relevant section before inspecting implementation; this documentation-owner rule overrides any general preference to inspect code first. Update it when the requested change alters one of those user-visible surfaces. Use `doc/spec/interface.md` for normative engine, router, plugin, shell, hread/hgrep, recovery, and metrics contracts; open it when behavior or acceptance criteria are in question. Use `doc/architecture/index.md` for stable ownership boundaries; open it before moving responsibilities. Use `contrib/codex/file-editing-instructions.md` and `tool_grammar.lark` only when editing or validating HPATCH syntax or Codex model guidance.
 
 ## Hpatch's target guidance
 
@@ -21,10 +21,9 @@ Completion means every requested behavior is implemented in its authoritative ow
 
 ## System model
 
-The hpatch/router path uses one reusable edit engine and two thin binaries:
+The hpatch/router path uses one reusable edit engine and one thin router binary:
 
 - The root `hpatch` package owns HPATCH/2 parsing, workspace handling, immutable baselines, target verification, conflict detection, language validation, atomic planning and commit, translation, reports, diagnostics, hooks, and engine metrics.
-- `cmd/hpatch` exposes that engine as the standalone CLI. Normal mode commits only after complete validation; `translate` evaluates without mutation and emits an `apply_patch` envelope.
 - `internal/router` owns Responses HTTP and authentication, Code Mode extraction and restoration, the immutable plugin registry and authenticated frontends, recovery and replay, shell and private-tool routing, router metrics, and the dashboard. Passthrough mode skips registry construction and replacement surfaces.
 - `cmd/hpatch-router` installs signal cancellation, dispatches private plugin workers, calls `router.Run`, and maps errors to exit codes.
 
@@ -57,7 +56,6 @@ Start with the owner that matches the behavior:
 | Public engine entry points and workspace APIs | `run.go` |
 | Parsing, targets, edit planning, transactions, translation, reports, hooks, and engine metrics | Root-package `*.go` files and adjacent tests |
 | Shared quoted-string and heredoc framing | `internal/hpatchsyntax` |
-| Standalone CLI arguments, streams, help, and exit status | `cmd/hpatch` |
 | Router lifecycle, modes, and HTTP endpoints | `internal/router/server.go` |
 | Codex authentication and upstream Responses transport | `internal/router/client.go` |
 | Tool replacement, host translation, response restoration, replay, and rejected-script recovery | `internal/router/hpatch_proxy.go`, `internal/router/hpatch_recovery.go` |
@@ -71,7 +69,7 @@ Start with the owner that matches the behavior:
 Preserve these boundaries:
 
 - The root package is the only edit engine; parser, evaluator, target, transaction, and patch-rendering semantics stay there.
-- The router owns Codex transport, tool exposure, sessions, replay, and rejected-script ancestry; recovery mutations rebuild one complete script through the root text editor.
+- The router owns Codex transport, tool exposure, sessions, replay, and rejected-script ancestry; recovery mutations rebuild one complete script through ordinary root APIs.
 - Normal router translation is non-mutating and directory-based through `TranslateForHostAt`. Retained shell application is a separate root-scoped path through `ApplyForHostRoot`.
 - Workspace authority changes must preserve this directory-based versus root-scoped split across code, `doc/spec/interface.md`, and `doc/architecture/index.md`.
 - Routed history stays in the original Code Mode carrier shape even though the model sees standalone registry tools.
@@ -91,14 +89,13 @@ Run the cheapest check covering every changed owner:
 | Changed owner | Focused check |
 | --- | --- |
 | Root engine | `go test .` |
-| Standalone CLI/help | `go test ./cmd/hpatch` |
 | Router request, response, recovery, workspace, plugin, or transport | `go test ./internal/router` |
 | TypeScript plugin source | `go generate ./internal/router/toolplugin`, then `bun test ./internal/router/toolplugin/tests` |
 | Router process entry point | `go test ./cmd/hpatch-router` |
 | Cross-package or broad contract | `go test ./...` |
 | Specification, architecture, or local documentation links | `pjdoc validate --scope root` |
 
-Use `go test ./...` only when a change crosses package owners. Run `go vet ./...` for broad Go checks and `make install` when validating generation plus binary installation. Run `pjdoc validate --scope all` only before claiming project-wide documentation integrity.
+Use `go test ./...` only when a change crosses package owners. Run `go vet ./...` for broad Go checks and `make install` when validating generation, `hpatch-router` installation, and Codex instructions. Run `pjdoc validate --scope all` only before claiming project-wide documentation integrity.
 
 Targeted router falsifiers include:
 
@@ -107,6 +104,5 @@ Targeted router falsifiers include:
 - `internal/router/hpatch_root_test.go` for workspace routing and retained root application.
 - `internal/router/server_test.go` for server and request behavior.
 - `internal/router/codex_e2e_test.go` for the Codex-facing carrier contract.
-- `cmd/hpatch/main_test.go` for standalone help and CLI behavior.
 
 The project targets Go 1.26. Broad development commands are documented in `README.md`.

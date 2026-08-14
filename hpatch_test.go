@@ -1,7 +1,6 @@
 package hpatch
 
 import (
-	"bytes"
 	"fmt"
 	"io/fs"
 	"os"
@@ -36,12 +35,12 @@ func TestHPatch2NormalMultiFileWorkflow(t *testing.T) {
 		"rm",
 	}, "\n")
 
-	stdout, stderr, exitCode := runForTest(root, nil, script)
-	if exitCode != 0 || stdout != "" {
-		t.Fatalf("Run() = exit %d, stdout %q, stderr %q", exitCode, stdout, stderr)
+	result, err := applyForHostAtTest(t, root, script, "")
+	if err != nil {
+		t.Fatalf("ApplyForHost() error = %v, diagnostic %q", err, result.Diagnostic)
 	}
-	if !strings.Contains(stderr, "files add=1 update=2 move=0 delete=1\n") {
-		t.Fatalf("report = %q", stderr)
+	if !strings.Contains(result.Report, "files add=1 update=2 move=0 delete=1\n") {
+		t.Fatalf("report = %q", result.Report)
 	}
 	want := map[string]string{
 		"a.txt":     "alpha new\n// note\nkeep\n",
@@ -75,26 +74,26 @@ func TestHPatch2TranslateMatchesNormalMode(t *testing.T) {
 		"rm",
 	}, "\n")
 
-	stdout, stderr, exitCode := runForTest(root, []string{"translate"}, script)
-	if exitCode != 0 {
-		t.Fatalf("translate = exit %d, stderr %q", exitCode, stderr)
+	result, err := translateForHostAtTest(t, root, script, "")
+	if err != nil {
+		t.Fatalf("TranslateForHost() error = %v, diagnostic %q", err, result.Diagnostic)
 	}
-	if !strings.Contains(stderr, "files add=1 update=1 move=1 delete=1\n") {
-		t.Fatalf("report = %q", stderr)
+	if !strings.Contains(result.Report, "files add=1 update=1 move=1 delete=1\n") {
+		t.Fatalf("report = %q", result.Report)
 	}
 	if got := readTree(t, root); !reflect.DeepEqual(got, initial) {
 		t.Fatalf("translate mutated tree: %#v", got)
 	}
-	translated, err := patchtest.Apply(initial, stdout)
+	translated, err := patchtest.Apply(initial, string(result.Patch))
 	if err != nil {
-		t.Fatalf("applying translated patch: %v\n%s", err, stdout)
+		t.Fatalf("applying translated patch: %v\n%s", err, string(result.Patch))
 	}
 	want := map[string]string{
 		"current.go": "package sample\n\nvar value = current\n",
 		"note.txt":   "hello world\n",
 	}
 	if !reflect.DeepEqual(translated, want) {
-		t.Fatalf("translated tree = %#v, want %#v\n%s", translated, want, stdout)
+		t.Fatalf("translated tree = %#v, want %#v\n%s", translated, want, string(result.Patch))
 	}
 }
 
@@ -118,9 +117,9 @@ func TestHPatch2LineAndRangeTerminatorSemantics(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			root := t.TempDir()
 			writeTestFile(t, root, "file.txt", test.content, 0o644)
-			_, stderr, exitCode := runForTest(root, nil, test.script)
-			if exitCode != 0 {
-				t.Fatalf("Run() = exit %d, stderr %q", exitCode, stderr)
+			result, err := applyForHostAtTest(t, root, test.script, "")
+			if err != nil {
+				t.Fatalf("ApplyForHost() error = %v, diagnostic %q", err, result.Diagnostic)
 			}
 			if got := readTestFile(t, root, "file.txt"); got != test.want {
 				t.Fatalf("file = %q, want %q", got, test.want)
@@ -131,9 +130,9 @@ func TestHPatch2LineAndRangeTerminatorSemantics(t *testing.T) {
 
 func TestHPatch2EmptyInitializerRemainsEmptyFile(t *testing.T) {
 	root := t.TempDir()
-	_, stderr, exitCode := runForTest(root, nil, "new empty.txt\ntype \"\"\n")
-	if exitCode != 0 {
-		t.Fatalf("Run() = exit %d, stderr %q", exitCode, stderr)
+	result, err := applyForHostAtTest(t, root, "new empty.txt\ntype \"\"\n", "")
+	if err != nil {
+		t.Fatalf("ApplyForHost() error = %v, diagnostic %q", err, result.Diagnostic)
 	}
 	if got := readTestFile(t, root, "empty.txt"); got != "" {
 		t.Fatalf("file = %q, want empty", got)
@@ -151,9 +150,9 @@ func TestHPatch2SameBoundaryInsertionsKeepScriptOrder(t *testing.T) {
 		`type+ ` + target + ` "after-one\n"`,
 		`type+ ` + target + ` "after-two\n"`,
 	}, "\n")
-	_, stderr, exitCode := runForTest(root, nil, script)
-	if exitCode != 0 {
-		t.Fatalf("Run() = exit %d, stderr %q", exitCode, stderr)
+	result, err := applyForHostAtTest(t, root, script, "")
+	if err != nil {
+		t.Fatalf("ApplyForHost() error = %v, diagnostic %q", err, result.Diagnostic)
 	}
 	want := "first\nsecond\ntarget\nafter-one\nafter-two\n"
 	if got := readTestFile(t, root, "file.txt"); got != want {
@@ -171,9 +170,9 @@ func TestHPatch2InsertionsAtReplacementBoundariesAreAllowed(t *testing.T) {
 		`type- ` + target + ` "before\n"`,
 		`type+ ` + target + ` "after\n"`,
 	}, "\n")
-	_, stderr, exitCode := runForTest(root, nil, script)
-	if exitCode != 0 {
-		t.Fatalf("Run() = exit %d, stderr %q", exitCode, stderr)
+	result, err := applyForHostAtTest(t, root, script, "")
+	if err != nil {
+		t.Fatalf("ApplyForHost() error = %v, diagnostic %q", err, result.Diagnostic)
 	}
 	if got, want := readTestFile(t, root, "file.txt"), "before\nreplacement\nafter\n"; got != want {
 		t.Fatalf("file = %q, want %q", got, want)
@@ -196,9 +195,9 @@ func TestHPatch2RejectsInvalidTargetsAtomically(t *testing.T) {
 			root := t.TempDir()
 			writeTestFile(t, root, "file.txt", "alpha\nbeta\n", 0o644)
 			before := readTestFile(t, root, "file.txt")
-			stdout, stderr, exitCode := runForTest(root, nil, test.script)
-			if exitCode != 1 || stdout != "" || !strings.Contains(stderr, test.reason) {
-				t.Fatalf("Run() = exit %d, stdout %q, stderr %q; want %q", exitCode, stdout, stderr, test.reason)
+			result, err := applyForHostAtTest(t, root, test.script, "")
+			if err == nil || !strings.Contains(result.Diagnostic, test.reason) {
+				t.Fatalf("ApplyForHost() error = %v, diagnostic %q; want %q", err, result.Diagnostic, test.reason)
 			}
 			if got := readTestFile(t, root, "file.txt"); got != before {
 				t.Fatalf("rejection changed file to %q", got)
@@ -243,9 +242,9 @@ func TestHPatch2RelocatesUniqueRowsAfterPriorEdits(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			root := t.TempDir()
 			writeTestFile(t, root, "file.txt", test.content, 0o644)
-			_, stderr, exitCode := runForTest(root, nil, test.script)
-			if exitCode != 0 {
-				t.Fatalf("Run() = exit %d, stderr %q", exitCode, stderr)
+			result, err := applyForHostAtTest(t, root, test.script, "")
+			if err != nil {
+				t.Fatalf("ApplyForHost() error = %v, diagnostic %q", err, result.Diagnostic)
 			}
 			if got := readTestFile(t, root, "file.txt"); got != test.want {
 				t.Fatalf("file = %q, want %q", got, test.want)
@@ -260,9 +259,9 @@ func TestHPatch2ResolvesPostEditCoordinateForUnchangedBaselineRow(t *testing.T) 
 	script := "in file.txt\n" +
 		"type- " + row(1, "alpha") + ` "one\ntwo\n"` + "\n" +
 		"type+ " + row(6, "}") + ` "tail\n"`
-	_, stderr, exitCode := runForTest(root, nil, script)
-	if exitCode != 0 {
-		t.Fatalf("Run() = exit %d, stderr %q", exitCode, stderr)
+	result, err := applyForHostAtTest(t, root, script, "")
+	if err != nil {
+		t.Fatalf("ApplyForHost() error = %v, diagnostic %q", err, result.Diagnostic)
 	}
 	want := "one\ntwo\nalpha\n}\nbeta\n}\ntail\n"
 	if got := readTestFile(t, root, "file.txt"); got != want {
@@ -276,9 +275,9 @@ func TestHPatch2DoesNotResolvePostEditCoordinateForIntroducedRow(t *testing.T) {
 	script := "in file.txt\n" +
 		"type+ " + row(1, "alpha") + ` "new\n"` + "\n" +
 		"type " + row(2, "new") + ` "NEW"`
-	_, stderr, exitCode := runForTest(root, nil, script)
-	if exitCode != 1 || !strings.Contains(stderr, "row-stale") {
-		t.Fatalf("Run() = exit %d, stderr %q", exitCode, stderr)
+	result, err := applyForHostAtTest(t, root, script, "")
+	if err == nil || !strings.Contains(result.Diagnostic, "row-stale") {
+		t.Fatalf("ApplyForHost() error = %v, diagnostic %q", err, result.Diagnostic)
 	}
 	if got := readTestFile(t, root, "file.txt"); got != "alpha\nbeta\n" {
 		t.Fatalf("rejection changed file to %q", got)
@@ -290,9 +289,9 @@ func TestHPatch2RejectsAmbiguousRelocatedRow(t *testing.T) {
 	writeTestFile(t, root, "file.txt", "other\nalpha\nalpha\n", 0o644)
 	before := readTestFile(t, root, "file.txt")
 	script := "in file.txt\ntype " + row(1, "alpha") + ` "ALPHA"`
-	_, stderr, exitCode := runForTest(root, nil, script)
-	if exitCode != 1 || !strings.Contains(stderr, "row-stale") || !strings.Contains(stderr, "ambiguous across 2 rows") {
-		t.Fatalf("Run() = exit %d, stderr %q", exitCode, stderr)
+	result, err := applyForHostAtTest(t, root, script, "")
+	if err == nil || !strings.Contains(result.Diagnostic, "row-stale") || !strings.Contains(result.Diagnostic, "ambiguous across 2 rows") {
+		t.Fatalf("ApplyForHost() error = %v, diagnostic %q", err, result.Diagnostic)
 	}
 	if got := readTestFile(t, root, "file.txt"); got != before {
 		t.Fatalf("rejection changed file to %q", got)
@@ -304,9 +303,9 @@ func TestHPatch2IgnoresRedundantStaleLiteralAnchor(t *testing.T) {
 	writeTestFile(t, root, "file.txt", "alpha\nunique target\nomega\n", 0o644)
 	script := `in file.txt
 type 1:ffff "unique target" "replacement"`
-	_, stderr, exitCode := runForTest(root, nil, script)
-	if exitCode != 0 {
-		t.Fatalf("Run() = exit %d, stderr %q", exitCode, stderr)
+	result, err := applyForHostAtTest(t, root, script, "")
+	if err != nil {
+		t.Fatalf("ApplyForHost() error = %v, diagnostic %q", err, result.Diagnostic)
 	}
 	if content := readTestFile(t, root, "file.txt"); content != "alpha\nreplacement\nomega\n" {
 		t.Fatalf("content = %q", content)
@@ -319,12 +318,12 @@ func TestHPatch2RejectsStaleLiteralAnchorWhenLiteralIsAmbiguous(t *testing.T) {
 	writeTestFile(t, root, "file.txt", before, 0o644)
 	script := `in file.txt
 type 2:ffff "target" "replacement"`
-	_, stderr, exitCode := runForTest(root, nil, script)
-	if exitCode == 0 {
-		t.Fatalf("Run() succeeded, stderr %q", stderr)
+	result, err := applyForHostAtTest(t, root, script, "")
+	if err == nil {
+		t.Fatalf("ApplyForHost() unexpectedly succeeded, diagnostic %q", result.Diagnostic)
 	}
-	if !strings.Contains(stderr, "reason row-stale") {
-		t.Fatalf("stderr = %q", stderr)
+	if !strings.Contains(result.Diagnostic, "reason row-stale") {
+		t.Fatalf("diagnostic = %q", result.Diagnostic)
 	}
 	if content := readTestFile(t, root, "file.txt"); content != before {
 		t.Fatalf("content = %q, want unchanged %q", content, before)
@@ -342,12 +341,12 @@ func TestHPatch2NewFileInitializerIsImmediate(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			root := t.TempDir()
 			writeTestFile(t, root, "existing.txt", "old\n", 0o644)
-			_, stderr, exitCode := runForTest(root, nil, test.script)
-			if exitCode != 1 || !strings.Contains(stderr, "initialization") {
-				t.Fatalf("Run() = exit %d, stderr %q", exitCode, stderr)
+			result, err := applyForHostAtTest(t, root, test.script, "")
+			if err == nil || !strings.Contains(result.Diagnostic, "initialization") {
+				t.Fatalf("ApplyForHost() error = %v, diagnostic %q", err, result.Diagnostic)
 			}
-			if test.wantMessage != "" && !strings.Contains(stderr, test.wantMessage) {
-				t.Fatalf("stderr = %q, want message %q", stderr, test.wantMessage)
+			if test.wantMessage != "" && !strings.Contains(result.Diagnostic, test.wantMessage) {
+				t.Fatalf("diagnostic = %q, want message %q", result.Diagnostic, test.wantMessage)
 			}
 			if got := readTree(t, root); !reflect.DeepEqual(got, map[string]string{"existing.txt": "old\n"}) {
 				t.Fatalf("rejection changed tree: %#v", got)
@@ -361,9 +360,9 @@ func TestHPatch2RejectsRemovedGrammar(t *testing.T) {
 		t.Run(strings.Fields(command)[0], func(t *testing.T) {
 			root := t.TempDir()
 			writeTestFile(t, root, "file.txt", "x\n", 0o644)
-			_, stderr, exitCode := runForTest(root, nil, "in file.txt\n"+command)
-			if exitCode != 1 || !strings.Contains(stderr, "reason script-syntax") {
-				t.Fatalf("Run() = exit %d, stderr %q", exitCode, stderr)
+			result, err := applyForHostAtTest(t, root, "in file.txt\n"+command, "")
+			if err == nil || !strings.Contains(result.Diagnostic, "reason script-syntax") {
+				t.Fatalf("ApplyForHost() error = %v, diagnostic %q", err, result.Diagnostic)
 			}
 		})
 	}
@@ -375,9 +374,9 @@ func TestHPatch2FixedHeredocAndInlineInsertion(t *testing.T) {
 	script := "in file.txt\n" +
 		"type- " + row(1, "target") + ` "// comment\n"` + "\n" +
 		"type+ " + row(1, "target") + " <<PATCH\nmultiline\nvalue\nPATCH\n"
-	_, stderr, exitCode := runForTest(root, nil, script)
-	if exitCode != 0 {
-		t.Fatalf("Run() = exit %d, stderr %q", exitCode, stderr)
+	result, err := applyForHostAtTest(t, root, script, "")
+	if err != nil {
+		t.Fatalf("ApplyForHost() error = %v, diagnostic %q", err, result.Diagnostic)
 	}
 	want := "// comment\ntarget\nmultiline\nvalue\n"
 	if got := readTestFile(t, root, "file.txt"); got != want {
@@ -390,9 +389,9 @@ func TestHPatch2HeredocValueSupportsTextTarget(t *testing.T) {
 	writeTestFile(t, root, "file.txt", "prefix needle suffix\n", 0o644)
 	script := "in file.txt\ntype " + row(1, "prefix needle suffix") + " \"needle\" <<PATCH\n" +
 		"multiline\nvalue\nPATCH\n"
-	_, stderr, exitCode := runForTest(root, nil, script)
-	if exitCode != 0 {
-		t.Fatalf("Run() = exit %d, stderr %q", exitCode, stderr)
+	result, err := applyForHostAtTest(t, root, script, "")
+	if err != nil {
+		t.Fatalf("ApplyForHost() error = %v, diagnostic %q", err, result.Diagnostic)
 	}
 	want := "prefix multiline\nvalue\n suffix\n"
 	if got := readTestFile(t, root, "file.txt"); got != want {
@@ -408,9 +407,9 @@ func TestHPatch2UnanchoredLiteralTargetsUseImmutableBaseline(t *testing.T) {
 		`type "alpha" "ALPHA"`,
 		`type+ "x" 2 "!"`,
 	}, "\n")
-	_, stderr, exitCode := runForTest(root, nil, script)
-	if exitCode != 0 {
-		t.Fatalf("Run() = exit %d, stderr %q", exitCode, stderr)
+	result, err := applyForHostAtTest(t, root, script, "")
+	if err != nil {
+		t.Fatalf("ApplyForHost() error = %v, diagnostic %q", err, result.Diagnostic)
 	}
 	if got, want := readTestFile(t, root, "file.txt"), "ALPHA x!\nbeta x!\n"; got != want {
 		t.Fatalf("file = %q, want %q", got, want)
@@ -421,9 +420,9 @@ func TestHPatch2UnanchoredLiteralHeredocAndMissingOccurrence(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, root, "file.txt", "before needle after\n", 0o644)
 	script := "in file.txt\ntype \"needle\" <<PATCH\nmultiline\nvalue\nPATCH\n"
-	_, stderr, exitCode := runForTest(root, nil, script)
-	if exitCode != 0 {
-		t.Fatalf("Run() = exit %d, stderr %q", exitCode, stderr)
+	result, err := applyForHostAtTest(t, root, script, "")
+	if err != nil {
+		t.Fatalf("ApplyForHost() error = %v, diagnostic %q", err, result.Diagnostic)
 	}
 	if got, want := readTestFile(t, root, "file.txt"), "before multiline\nvalue\n after\n"; got != want {
 		t.Fatalf("file = %q, want %q", got, want)
@@ -431,9 +430,9 @@ func TestHPatch2UnanchoredLiteralHeredocAndMissingOccurrence(t *testing.T) {
 
 	writeTestFile(t, root, "missing.txt", "one x\n", 0o644)
 	before := readTestFile(t, root, "missing.txt")
-	_, stderr, exitCode = runForTest(root, nil, "in missing.txt\ntype \"x\" 2 \"y\"")
-	if exitCode != 1 || !strings.Contains(stderr, "occurrence-missing") {
-		t.Fatalf("Run() = exit %d, stderr %q", exitCode, stderr)
+	result, err = applyForHostAtTest(t, root, "in missing.txt\ntype \"x\" 2 \"y\"", "")
+	if err == nil || !strings.Contains(result.Diagnostic, "occurrence-missing") {
+		t.Fatalf("ApplyForHost() error = %v, diagnostic %q", err, result.Diagnostic)
 	}
 	if got := readTestFile(t, root, "missing.txt"); got != before {
 		t.Fatalf("rejection changed file to %q", got)
@@ -498,9 +497,9 @@ func TestHPatch2QuotedDoubleLessRemainsInlineText(t *testing.T) {
 			if test.initial != "" {
 				writeTestFile(t, root, test.path, test.initial, 0o644)
 			}
-			_, stderr, exitCode := runForTest(root, nil, test.script(test.path))
-			if exitCode != 0 {
-				t.Fatalf("Run() = exit %d, stderr %q", exitCode, stderr)
+			result, err := applyForHostAtTest(t, root, test.script(test.path), "")
+			if err != nil {
+				t.Fatalf("ApplyForHost() error = %v, diagnostic %q", err, result.Diagnostic)
 			}
 			if got := readTestFile(t, root, test.path); got != test.want {
 				t.Fatalf("file = %q, want %q", got, test.want)
@@ -514,14 +513,14 @@ func TestHPatch2InvalidHeredocIsOneHeaderOwnedFailure(t *testing.T) {
 	writeTestFile(t, root, "file.txt", "unchanged\n", 0o644)
 	script := "in file.txt\ntype " + row(1, "unchanged") + " <<BODY\n" +
 		"rm\nBODY\n"
-	stdout, stderr, exitCode := runForTest(root, nil, script)
-	if exitCode != 1 || stdout != "" {
-		t.Fatalf("Run() = exit %d, stdout %q, stderr %q", exitCode, stdout, stderr)
+	result, err := applyForHostAtTest(t, root, script, "")
+	if err == nil {
+		t.Fatalf("ApplyForHost() error = %v, diagnostic %q", err, result.Diagnostic)
 	}
-	if strings.Count(stderr, ": command") != 1 ||
-		!strings.Contains(stderr, "command 2") ||
-		!strings.Contains(stderr, "requires an unquoted <<PATCH") {
-		t.Fatalf("diagnostic = %q", stderr)
+	if strings.Count(result.Diagnostic, ": command") != 1 ||
+		!strings.Contains(result.Diagnostic, "command 2") ||
+		!strings.Contains(result.Diagnostic, "requires an unquoted <<PATCH") {
+		t.Fatalf("diagnostic = %q", result.Diagnostic)
 	}
 	if got := readTestFile(t, root, "file.txt"); got != "unchanged\n" {
 		t.Fatalf("rejection changed file to %q", got)
@@ -532,16 +531,16 @@ func TestHPatch2TargetLiteralRejectsC0ControlsExceptTab(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, root, "file.txt", "a\tb\n", 0o644)
 	valid := "in file.txt\ntype " + row(1, "a\tb") + ` "a\tb" "ok"`
-	_, stderr, exitCode := runForTest(root, nil, valid)
-	if exitCode != 0 {
-		t.Fatalf("tab target = exit %d, stderr %q", exitCode, stderr)
+	result, err := applyForHostAtTest(t, root, valid, "")
+	if err != nil {
+		t.Fatalf("tab target error = %v, diagnostic %q", err, result.Diagnostic)
 	}
 
 	writeTestFile(t, root, "file.txt", "a\x01b\n", 0o644)
 	invalid := "in file.txt\ntype " + row(1, "a\x01b") + ` "a\u0001b" "bad"`
-	_, stderr, exitCode = runForTest(root, nil, invalid)
-	if exitCode != 1 || !strings.Contains(stderr, "forbidden control character") {
-		t.Fatalf("control target = exit %d, stderr %q", exitCode, stderr)
+	result, err = applyForHostAtTest(t, root, invalid, "")
+	if err == nil || !strings.Contains(result.Diagnostic, "forbidden control character") {
+		t.Fatalf("control target error = %v, diagnostic %q", err, result.Diagnostic)
 	}
 }
 
@@ -587,9 +586,9 @@ func TestHPatch2MultilineLiteralTargets(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			root := t.TempDir()
 			writeTestFile(t, root, "file.txt", test.content, 0o644)
-			_, stderr, exitCode := runForTest(root, nil, test.script)
-			if exitCode != 0 {
-				t.Fatalf("Run() = exit %d, stderr %q", exitCode, stderr)
+			result, err := applyForHostAtTest(t, root, test.script, "")
+			if err != nil {
+				t.Fatalf("ApplyForHost() error = %v, diagnostic %q", err, result.Diagnostic)
 			}
 			if got := readTestFile(t, root, "file.txt"); got != test.want {
 				t.Fatalf("file = %q, want %q", got, test.want)
@@ -655,9 +654,9 @@ func TestHPatch2MultilineLiteralTargetRejectionsAreAtomic(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			root := t.TempDir()
 			writeTestFile(t, root, "file.txt", test.content, 0o644)
-			_, stderr, exitCode := runForTest(root, nil, test.script)
-			if exitCode != 1 || !strings.Contains(stderr, test.diagnostic) {
-				t.Fatalf("Run() = exit %d, stderr %q; want %q", exitCode, stderr, test.diagnostic)
+			result, err := applyForHostAtTest(t, root, test.script, "")
+			if err == nil || !strings.Contains(result.Diagnostic, test.diagnostic) {
+				t.Fatalf("ApplyForHost() error = %v, diagnostic %q; want %q", err, result.Diagnostic, test.diagnostic)
 			}
 			if got := readTestFile(t, root, "file.txt"); got != test.content {
 				t.Fatalf("rejection changed file to %q", got)
@@ -670,10 +669,24 @@ func row(line int, content string) string {
 	return fmt.Sprintf("%d:%s", line, hashLine(content))
 }
 
-func runForTest(root string, args []string, script string) (string, string, int) {
-	var stdout, stderr bytes.Buffer
-	exitCode := Run(args, strings.NewReader(script), &stdout, &stderr, root, "")
-	return stdout.String(), stderr.String(), exitCode
+func applyForHostAtTest(t *testing.T, rootPath, script, dataDirectory string) (HostTranslation, error) {
+	t.Helper()
+	root, err := os.OpenRoot(rootPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+	return ApplyForHost(t.Context(), Workspace{Root: root}, script, dataDirectory)
+}
+
+func translateForHostAtTest(t *testing.T, rootPath, script, dataDirectory string) (HostTranslation, error) {
+	t.Helper()
+	root, err := os.OpenRoot(rootPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+	return TranslateForHost(t.Context(), Workspace{Root: root}, script, dataDirectory)
 }
 
 func writeTestFile(t *testing.T, root, path, content string, mode fs.FileMode) {

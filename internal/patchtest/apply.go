@@ -1,5 +1,5 @@
 // Package patchtest applies the OpenAI apply_patch subset emitted and compared by
-// this project. It is test and benchmark support, not part of the hpatch CLI.
+// this project. It is test and benchmark support, not an installed runtime surface.
 package patchtest
 
 import (

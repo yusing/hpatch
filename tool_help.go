@@ -11,11 +11,6 @@ func ToolDescription() string {
 	return codexinstructions.HPatchToolDescription
 }
 
-// ToolHelp returns the complete model-facing HPATCH/2 reference.
-func ToolHelp() string {
-	return codexinstructions.HPatchToolHelp()
-}
-
 //go:embed tool_grammar.lark
 var toolGrammar string
 

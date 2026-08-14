@@ -185,7 +185,6 @@ control_log="$run_dir/control-router.log"
 hpatch_log="$run_dir/hpatch-router.log"
 control_metrics="$run_dir/control-metrics.json"
 hpatch_metrics="$run_dir/hpatch-metrics.json"
-gain_report="$run_dir/gain.txt"
 issue_reports_directory="$run_dir/agent-issue-reports"
 issue_reports="$run_dir/agent-issue-reports.jsonl"
 exact_evidence_directory="$run_dir/hpatch-exact-evidence"
@@ -252,7 +251,6 @@ collect_artifacts() {
 	"${compose[@]}" logs --no-color hpatch >"$hpatch_log" 2>&1 || true
 	collect_router_metrics hpatch 8082 "$hpatch_metrics" ||
 		metrics_collected=false
-	"${compose[@]}" exec -T hpatch hpatch gain >"$gain_report" 2>&1 || true
 	collected=$metrics_collected
 }
 
@@ -473,7 +471,6 @@ preserve_run() {
 	hpatch_log="$run_dir/hpatch-router.log"
 	control_metrics="$run_dir/control-metrics.json"
 	hpatch_metrics="$run_dir/hpatch-metrics.json"
-	gain_report="$run_dir/gain.txt"
 	issue_reports_directory="$run_dir/agent-issue-reports"
 	issue_reports="$run_dir/agent-issue-reports.jsonl"
 	exact_evidence_directory="$run_dir/hpatch-exact-evidence"
@@ -518,7 +515,6 @@ print_result_paths() {
 		printf 'Control metrics: %s\n' "$control_metrics"
 	fi
 	printf 'Hpatch metrics (including gain): %s\n' "$hpatch_metrics"
-	printf 'Gain report: %s\n' "$gain_report"
 	if [[ $benchmark_mode == hpatch-diagnostic ]]; then
 		printf 'Router log: %s\n' "$hpatch_log"
 	else

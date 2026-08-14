@@ -108,45 +108,6 @@ func TestHPatch2ToolGrammarLineTerminators(t *testing.T) {
 	}
 }
 
-func TestHPatchToolHelpCoversSafeCommandChoice(t *testing.T) {
-	normalized := strings.Join(strings.Fields(ToolHelp()), " ")
-	for _, guidance := range []string{
-		"HPATCH/2 applies one complete target-bearing edit script atomically.",
-		"Do not call this tool in parallel with other tools.",
-		"Nonempty line and range `type` replacements preserve",
-		"`type` replaces",
-		"`type-` inserts before",
-		"`type+` inserts after",
-		"An empty target-bearing `type` value deletes",
-		"fixed `<<PATCH`",
-		"reserved as a nested opener",
-		"immutable baseline",
-		"`rm` deletes the active file and clears the selection",
-		"submit every known related edit in one atomic script",
-		"Split only when a later edit depends on validation",
-		"Prefer the smallest mutation that expresses the semantic change",
-		"an unanchored literal can target it",
-		"exact known target text spans logical lines or includes a trailing LF",
-		"not targetable in the same call",
-		"Changed Go files are parsed and formatted before success",
-		"syntax-checked when Tree-sitter support is available",
-		"standalone CLI and ordinary hpatch grammar have no recovery mode",
-	} {
-		if !strings.Contains(normalized, guidance) {
-			t.Errorf("tool help omits %q", guidance)
-		}
-	}
-	for _, excluded := range []string{
-		"INDEX:", ": accept", "COMMAND.ROW", "HPATCH/1", "\ntsel ", "\nrsel ",
-		"\ncopy", "\ncut", "\npaste", "\ncommit", "<<TAG", "Usage:", "--root",
-		"hpatch gain", "Use `hgrep`", "Use `hread`",
-	} {
-		if strings.Contains(ToolHelp(), excluded) {
-			t.Errorf("tool help retains excluded material %q", excluded)
-		}
-	}
-}
-
 func TestToolDescriptionIsNonInstructional(t *testing.T) {
 	const want = "Atomic HPATCH/2 edit-script application. Rejection or cancellation leaves the workspace unchanged."
 	if got := ToolDescription(); got != want {
@@ -159,19 +120,13 @@ func TestHPatch2ToolDescriptionExamplesExecute(t *testing.T) {
 	writeTestFile(t, root, "parser.go", "package parser\n\nfunc parse() {}\n", 0o644)
 	script := "in parser.go\n" +
 		"type- " + row(3, "func parse() {}") + ` "// parse converts one command.\n"`
-	_, stderr, exitCode := runForTest(root, nil, script)
-	if exitCode != 0 {
-		t.Fatalf("Run() = exit %d, stderr %q", exitCode, stderr)
+	result, err := applyForHostAtTest(t, root, script, "")
+	if err != nil {
+		t.Fatalf("ApplyForHost() error = %v, diagnostic %q", err, result.Diagnostic)
 	}
 	want := "package parser\n\n// parse converts one command.\nfunc parse() {}\n"
 	if got := readTestFile(t, root, "parser.go"); got != want {
 		t.Fatalf("parser.go = %q, want %q", got, want)
-	}
-}
-
-func TestHPatch2ToolDescriptionUsesInlineForSingleLineInsertion(t *testing.T) {
-	if !strings.Contains(ToolHelp(), `type- 37:8c2f "// parseCommand parses one physical script line.\n"`) {
-		t.Fatal("tool description lacks the approved non-heredoc single-line insertion")
 	}
 }
 

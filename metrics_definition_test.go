@@ -1,12 +1,10 @@
 package hpatch
 
 import (
-	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
@@ -106,9 +104,8 @@ func TestHPATCH25DefinitionMetricsResetBeforeNewCounter(t *testing.T) {
 }
 
 func TestDefinitionReportDisclosesMissingCallerSession(t *testing.T) {
-	report := strings.Join(strings.Fields(gainReport(metrics{})), " ")
-	if !strings.Contains(report, "not measured (missing caller session)") {
-		t.Fatalf("gain does not disclose unmeasured definitions: %q", report)
+	if got := (metrics{}).gainMetrics().DefinitionSources; got != "not measured (missing caller session)" {
+		t.Fatalf("definition sources = %q", got)
 	}
 }
 
@@ -123,15 +120,10 @@ func TestFailedOutputBelongsOnlyToHPatch(t *testing.T) {
 	if got := value.overallReduction(); got != "36.4" {
 		t.Fatalf("overall reduction = %s, want 36.4", got)
 	}
-	report := strings.Join(strings.Fields(gainReport(value)), " ")
-	for _, want := range []string{
-		"builtin.hpatch/hpatch failed 30 10 n/a",
-		"all-tools 70 110 36.4%",
-		"Failed hpatch translation uses the empty-patch semantic baseline",
-	} {
-		if !strings.Contains(report, want) {
-			t.Fatalf("gain report %q does not contain %q", report, want)
-		}
+	gain := value.gainMetrics()
+	if len(gain.Tools) != 2 || !gain.Tools[1].Failed || gain.Tools[1].EmittedTokens != 30 ||
+		gain.Tools[1].TranslatedTokens != 10 || gain.AllTools.Reduction != "36.4" {
+		t.Fatalf("structured gain = %+v", gain)
 	}
 }
 
@@ -141,8 +133,12 @@ func TestCommandReasonsAttributeErrorsToCommands(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "note.txt"), []byte("alpha\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if exitCode := Run(nil, strings.NewReader("in note.txt\ntype 1:ffff \"x\"\n"), &bytes.Buffer{}, &bytes.Buffer{}, root, dataDirectory); exitCode == 0 {
+	result, applyErr := applyForHostAtTest(t, root, "in note.txt\ntype 1:ffff \"x\"\n", dataDirectory)
+	if applyErr == nil {
 		t.Fatal("stale row unexpectedly succeeded")
+	}
+	if err := RecordHostMetrics(t.Context(), dataDirectory, HostMetricRecord{Invocation: result.Invocation}); err != nil {
+		t.Fatal(err)
 	}
 	got, err := readMetrics(dataDirectory)
 	if err != nil {
@@ -151,11 +147,11 @@ func TestCommandReasonsAttributeErrorsToCommands(t *testing.T) {
 	if got.CommandReasons[commandOperationIndex("type")][reasonRowStale] != 1 {
 		t.Fatalf("type row-stale = %d, want 1", got.CommandReasons[commandOperationIndex("type")][reasonRowStale])
 	}
-	report := gainReport(got)
-	if !strings.Contains(report, "type     row-stale  1") {
-		t.Fatalf("gain report lacks attributed error row: %q", report)
+	projected := got.gainMetrics()
+	if len(projected.CommandReasons) != 1 || projected.CommandReasons[0] != (CommandReasonMetric{Command: "type", Reason: "row-stale", Errors: 1}) {
+		t.Fatalf("command reason rows = %+v", projected.CommandReasons)
 	}
-	if !strings.Contains(gainReport(metrics{}), "none     none    0") { //nolint:dupword // Both empty-state columns read "none".
-		t.Fatalf("empty gain report lacks none row: %q", gainReport(metrics{}))
+	if empty := (metrics{}).gainMetrics().CommandReasons; len(empty) != 1 || empty[0] != (CommandReasonMetric{Command: "none", Reason: "none"}) {
+		t.Fatalf("empty command reason rows = %+v", empty)
 	}
 }

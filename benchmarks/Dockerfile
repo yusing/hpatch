@@ -8,8 +8,7 @@ WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN go build -trimpath -o /out/hpatch ./cmd/hpatch \
-	&& go build -trimpath -o /out/hpatch-router ./cmd/hpatch-router
+RUN go build -trimpath -o /out/hpatch-router ./cmd/hpatch-router
 
 FROM golang:1.26-bookworm
 

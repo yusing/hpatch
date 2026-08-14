@@ -108,7 +108,7 @@ flowchart TD
     NEXT{"Second arm in this repetition?"}
     JOIN["Wait for all four repetition workers<br/><code>wait worker_pid</code>"]
     MERGE["Merge retained records deterministically<br/><code>jq -sc 'sort_by(.repetition, .order_in_block)[]' ... &gt; results.jsonl</code>"]
-    METRICS["Collect router metrics and gain<br/><code>curl /api/metrics</code><br/><code>docker compose exec hpatch hpatch gain</code>"]
+    METRICS["Collect router metrics and structured gain<br/><code>curl /api/metrics</code>"]
     CLEAN["Stop disposable infrastructure<br/><code>docker compose down --volumes --remove-orphans</code>"]
 
     START --> BUILD --> STOCK --> OVERRIDE --> IDIFF
@@ -146,11 +146,11 @@ The controlled differences are:
 | Router mode | `passthrough` | `hpatch` |
 | Base-instruction tool guidance | Stock `apply_patch` paragraph | Repository-owned edit, read, search, and shell guidance |
 | Native base-prompt preferences | Stock `rg` and `exec_command` guidance | The two displaced lines are removed; routed `hgrep` and `shell` guidance owns those operations |
- | Model tool surface | Stock Code Mode `apply_patch` and `exec_command` | Standalone `hpatch` and built-in `shell`; private `hread` and `hgrep` commands run through shell |
+ | Model tool surface | Stock Code Mode `apply_patch` and `exec_command` | `functions.hpatch` and `functions.shell`; private `hread` and `hgrep` commands run through shell |
 
 The control router forwards requests without tool rewriting. The treatment router removes the
-Code Mode surfaces displaced by the installed standalone tools, exposes `hpatch` and the built-in
-`shell`, and translates successful calls into the Code Mode carriers expected by Codex. Both
+Code Mode surfaces displaced by the routed tools, exposes `functions.hpatch` and
+`functions.shell`, and translates successful calls into the Code Mode carriers expected by Codex. Both
 routers leave the already-selected complete model instructions unchanged.
 
 ## Exact overridden tool instructions
@@ -206,7 +206,7 @@ does not remove it exactly.
 
 ## Docker topology
 
-`benchmarks/Dockerfile` builds `hpatch` and `hpatch-router`, then installs the
+`benchmarks/Dockerfile` builds `hpatch-router`, then installs the
 standalone Codex CLI with the official installer:
 
 ```dockerfile
@@ -408,7 +408,6 @@ $run_dir/hpatch-router.log
 $run_dir/control-metrics.json
 $run_dir/hpatch-metrics.json
 $run_dir/hpatch-exact-evidence.jsonl  # only when explicitly enabled
-$run_dir/gain.txt
 $run_dir/instructions/control.md
 $run_dir/instructions/hpatch.md
 $run_dir/instructions/stock-to-hpatch-tools.diff
@@ -465,7 +464,7 @@ Codex stdout and stderr paths
 Grader duration is recorded separately so test compilation and execution do not
 inflate agent wall time.
 
-## Router metrics and gain
+## Router metrics and structured gain
 
 At shutdown the shell records both router snapshots:
 
@@ -479,20 +478,12 @@ curl --fail --silent --show-error \
   > "$run_dir/hpatch-metrics.json"
 ```
 
-It also captures the treatment's isolated textual report:
-
-```sh
-docker compose -f benchmarks/compose.yaml \
-  exec -T hpatch hpatch gain \
-  > "$run_dir/gain.txt"
-```
-
 `hpatch-metrics.json` contains structured gain data, including successful and
 failed hpatch calls, hpatch token estimates, equivalent translated
 `apply_patch` token estimates, definition input tokens, removed stock-definition
 tokens, reports, and diagnostics.
 
-A zero gain report is meaningful only if treatment requests reached hpatch. If
+A zero structured gain value is meaningful only if treatment requests reached hpatch. If
 the treatment failed before a successful or rejected hpatch call, zero calls and
 zero gain describe an infrastructure failure, not editing efficiency.
 
@@ -523,9 +514,8 @@ delta = hpatch - control
 
 Negative duration or token deltas favor hpatch. Report medians and individual
 pairs for small samples; four pairs are too few for a strong statistical claim.
-Keep infrastructure failures separate from correctness failures, and use
-`gain.txt` plus the structured gain object only for treatment requests that
-actually invoked hpatch.
+Keep infrastructure failures separate from correctness failures, and use the
+structured gain object only for treatment requests that actually invoked hpatch.
 
 ## Latest published result
 

@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -14,7 +13,6 @@ import (
 	"unicode"
 
 	"github.com/yusing/hpatch/internal/hpatchsyntax"
-	"golang.org/x/term"
 )
 
 // Workspace is the filesystem authority for one hpatch operation. Root should
@@ -291,96 +289,6 @@ func targetAliasRelationRank(relation TargetAliasRelation) int {
 	default:
 		return 0
 	}
-}
-
-// Run executes the hpatch command-line contract with workingDirectory as the
-// workspace root. New callers that already own a root capability should use
-// RunWorkspace, Apply, or Translate.
-func Run(args []string, stdin io.Reader, stdout, stderr io.Writer, workingDirectory, dataDirectory string) int {
-	if len(args) == 1 && args[0] == "gain" {
-		return RunWorkspace(args, stdin, stdout, stderr, Workspace{}, dataDirectory)
-	}
-	rootPath, err := filepath.Abs(workingDirectory)
-	if err != nil {
-		return fail(stderr, fmt.Sprintf("canonicalizing workspace root: %v", err))
-	}
-	rootPath, err = filepath.EvalSymlinks(rootPath)
-	if err != nil {
-		return fail(stderr, fmt.Sprintf("canonicalizing workspace root: %v", err))
-	}
-	root, err := os.OpenRoot(rootPath)
-	if err != nil {
-		return fail(stderr, fmt.Sprintf("opening workspace root: %v", err))
-	}
-	defer root.Close()
-	return RunWorkspace(args, stdin, stdout, stderr, Workspace{Root: root, CWD: "."}, dataDirectory)
-}
-
-func gainReportWidth(output io.Writer) int {
-	file, ok := output.(interface{ Fd() uintptr })
-	if !ok {
-		return defaultGainReportWidth
-	}
-	width, _, err := term.GetSize(int(file.Fd()))
-	if err != nil || width <= 0 {
-		return defaultGainReportWidth
-	}
-	return width
-}
-
-// RunWorkspace executes the command-line contract within workspace.
-func RunWorkspace(args []string, stdin io.Reader, stdout, stderr io.Writer, workspace Workspace, dataDirectory string) int {
-	translateMode := false
-	switch {
-	case len(args) == 0:
-	case len(args) == 1 && args[0] == "translate":
-		translateMode = true
-	case len(args) == 1 && args[0] == "gain":
-		metrics, err := readMetrics(dataDirectory)
-		if err != nil {
-			return fail(stderr, err.Error())
-		}
-		if _, err := io.WriteString(stdout, gainReportAtWidth(metrics, gainReportWidth(stdout))); err != nil {
-			return fail(stderr, fmt.Sprintf("writing gain report: %v", err))
-		}
-		return 0
-	default:
-		return fail(stderr, "expected no arguments or exactly: translate or gain")
-	}
-
-	script, err := io.ReadAll(stdin)
-	if err != nil {
-		return fail(stderr, fmt.Sprintf("reading script: %v", err))
-	}
-	changes, filesystem, commands, report, _, err := evaluateScript(context.TODO(), workspace, string(script))
-	if dataDirectory != "" {
-		if metricsErr := updateMetrics(dataDirectory, metrics{invocationMetrics: commands}); metricsErr != nil {
-			warn(stderr, metricsErr.Error())
-		}
-	}
-	if err != nil {
-		return failEvaluation(stderr, err, dataDirectory)
-	}
-	if !translateMode && len(changes) == 0 {
-		_, _ = io.WriteString(stderr, report)
-		return 0
-	}
-	if translateMode {
-		patch, err := translate(changes)
-		if err != nil {
-			return fail(stderr, err.Error())
-		}
-		if _, err := io.WriteString(stdout, patch); err != nil {
-			return fail(stderr, fmt.Sprintf("writing patch: %v", err))
-		}
-		_, _ = io.WriteString(stderr, report)
-		return 0
-	}
-	if err := commitChanges(changes, rootFileOperations{root: filesystem.root}); err != nil {
-		return fail(stderr, fmt.Sprintf("changing %s: %v", describePaths(changes), err))
-	}
-	_, _ = io.WriteString(stderr, report)
-	return 0
 }
 
 // Apply evaluates and atomically applies script within workspace.
@@ -786,16 +694,6 @@ func failureDiagnostic(message string) string {
 	return fmt.Sprintf("hpatch: %s\n", sanitizeDiagnostic(message))
 }
 
-func fail(stderr io.Writer, message string) int {
-	_, _ = io.WriteString(stderr, failureDiagnostic(message))
-	return 1
-}
-
-func failEvaluation(stderr io.Writer, err error, dataDirectory string) int {
-	_, _ = io.WriteString(stderr, evaluationDiagnostic(context.TODO(), err, dataDirectory))
-	return 1
-}
-
 func evaluationDiagnostic(ctx context.Context, err error, dataDirectory string) string {
 	commands := commandsOf(err)
 	if len(commands) == 0 {
@@ -812,7 +710,7 @@ func evaluationDiagnostic(ctx context.Context, err error, dataDirectory string) 
 	output.WriteString(diagnostic.String())
 	if _, routed := attemptMetadataFromContext(ctx); !routed {
 		for _, hookErr := range runCommandErrorHooks(ctx, dataDirectory, commands, diagnostic.String(), errorHooksTimeout) {
-			warn(&output, hookErr.Error())
+			output.WriteString(warningDiagnostic(hookErr.Error()))
 		}
 	}
 	return output.String()
@@ -821,8 +719,4 @@ func evaluationDiagnostic(ctx context.Context, err error, dataDirectory string) 
 func warningDiagnostic(message string) string {
 	message = sanitizeDiagnostic(message)
 	return fmt.Sprintf("hpatch: warning: %s\n", message)
-}
-
-func warn(stderr io.Writer, message string) {
-	_, _ = io.WriteString(stderr, warningDiagnostic(message))
 }

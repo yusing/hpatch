@@ -32,7 +32,7 @@ func TestRunHPatchRejectsMalformedAndFutureCommands(t *testing.T) {
 	} {
 		t.Run(strings.TrimSpace(script), func(t *testing.T) {
 			_, err := runHPatch(scenario{initial: map[string]string{"target.txt": "old\n"}, script: script})
-			if err == nil || !strings.Contains(err.Error(), "hpatch exited 1") {
+			if err == nil || !strings.Contains(err.Error(), "applying hpatch script") {
 				t.Fatalf("runHPatch() error = %v", err)
 			}
 		})

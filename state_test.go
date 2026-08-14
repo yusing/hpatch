@@ -10,9 +10,9 @@ func TestHPatch2FinalStateReport(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, root, "file.txt", "alpha\nbeta\ngamma\n", 0o644)
 	script := "in file.txt\ntype " + row(2, "beta") + ` "B"`
-	_, report, exitCode := runForTest(root, nil, script)
-	if exitCode != 0 {
-		t.Fatalf("Run() = exit %d, report %q", exitCode, report)
+	result, err := applyForHostAtTest(t, root, script, "")
+	if err != nil {
+		t.Fatalf("ApplyForHost() error = %v, report %q", err, result.Report)
 	}
 	for _, fragment := range []string{
 		"in file.txt\n",
@@ -23,8 +23,8 @@ func TestHPatch2FinalStateReport(t *testing.T) {
 		"2:" + hashLine("B") + " B\n",
 		"3:" + hashLine("gamma") + " gamma\n",
 	} {
-		if !strings.Contains(report, fragment) {
-			t.Fatalf("report %q lacks %q", report, fragment)
+		if !strings.Contains(result.Report, fragment) {
+			t.Fatalf("report %q lacks %q", result.Report, fragment)
 		}
 	}
 }
@@ -43,9 +43,9 @@ func TestHPatch2FinalStateReportProvidesReusableReplacementTarget(t *testing.T) 
 	if len(translated.TargetAliases) != 1 || translated.TargetAliases[0] != wantAlias {
 		t.Fatalf("target aliases = %+v, want %+v", translated.TargetAliases, wantAlias)
 	}
-	_, report, exitCode := runForTest(root, nil, firstScript)
-	if exitCode != 0 {
-		t.Fatalf("Run() = exit %d, report %q", exitCode, report)
+	result, err := applyForHostAtTest(t, root, firstScript, "")
+	if err != nil {
+		t.Fatalf("ApplyForHost() error = %v, report %q", err, result.Report)
 	}
 
 	rewritten, err := RewriteTargetAliases(
@@ -58,8 +58,8 @@ func TestHPatch2FinalStateReportProvidesReusableReplacementTarget(t *testing.T) 
 	if want := "in file.txt\ntype " + after + ` "C"`; rewritten != want {
 		t.Fatalf("rewritten script = %q, want %q", rewritten, want)
 	}
-	if _, report, exitCode := runForTest(root, nil, rewritten); exitCode != 0 {
-		t.Fatalf("rewritten Run() = exit %d, report %q", exitCode, report)
+	if result, err := applyForHostAtTest(t, root, rewritten, ""); err != nil {
+		t.Fatalf("rewritten ApplyForHost() error = %v, report %q", err, result.Report)
 	}
 	if content := readTestFile(t, root, "file.txt"); content != "alpha\nC\ngamma\n" {
 		t.Fatalf("rewritten content = %q", content)
@@ -139,16 +139,16 @@ func TestHPatch2FormattedReferencesTrackEditedContent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, report, exitCode := runForTest(root, nil, script)
-	if exitCode != 0 {
-		t.Fatalf("Run() = exit %d, report %q", exitCode, report)
+	result, err := applyForHostAtTest(t, root, script, "")
+	if err != nil {
+		t.Fatalf("ApplyForHost() error = %v, report %q", err, result.Report)
 	}
-	if !strings.Contains(report, "refs 2 type file.go\n") {
-		t.Fatalf("formatted references %q lack command header", report)
+	if !strings.Contains(result.Report, "refs 2 type file.go\n") {
+		t.Fatalf("formatted references %q lack command header", result.Report)
 	}
 	want := "12:" + hashLine("var target = 2") + " var target = 2\n"
-	if !strings.Contains(report, want) {
-		t.Fatalf("formatted references %q lack edited row %q", report, want)
+	if !strings.Contains(result.Report, want) {
+		t.Fatalf("formatted references %q lack edited row %q", result.Report, want)
 	}
 	wantAlias := TargetAlias{Path: "file.go", Before: row(7, "var target=1"), After: row(12, "var target = 2")}
 	if len(translated.TargetAliases) != 1 || translated.TargetAliases[0] != wantAlias {
@@ -160,12 +160,12 @@ func TestHPatch2FinalStateReportIsBounded(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, root, "file.txt", "x x x x\n", 0o644)
 	script := "in file.txt\ntype " + row(1, "x x x x") + ` "x" 4 "y"`
-	_, report, exitCode := runForTest(root, nil, script)
-	if exitCode != 0 {
-		t.Fatalf("Run() = exit %d, report %q", exitCode, report)
+	result, err := applyForHostAtTest(t, root, script, "")
+	if err != nil {
+		t.Fatalf("ApplyForHost() error = %v, report %q", err, result.Report)
 	}
-	if !strings.Contains(report, "last type file.txt 4 ranges ") || !strings.Contains(report, " +1 more\n") {
-		t.Fatalf("report = %q", report)
+	if !strings.Contains(result.Report, "last type file.txt 4 ranges ") || !strings.Contains(result.Report, " +1 more\n") {
+		t.Fatalf("report = %q", result.Report)
 	}
 }
 
@@ -173,40 +173,40 @@ func TestHPatch2InsertionReportNamesTargetRange(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, root, "file.txt", "alpha\nbeta\n", 0o644)
 	script := "in file.txt\ntype+ " + row(1, "alpha") + ` "inserted\n"`
-	_, report, exitCode := runForTest(root, nil, script)
-	if exitCode != 0 {
-		t.Fatalf("Run() = exit %d, report %q", exitCode, report)
+	result, err := applyForHostAtTest(t, root, script, "")
+	if err != nil {
+		t.Fatalf("ApplyForHost() error = %v, report %q", err, result.Report)
 	}
-	if !strings.Contains(report, "last type+ file.txt 1 ranges 1:1-2:1\n") {
-		t.Fatalf("report = %q", report)
+	if !strings.Contains(result.Report, "last type+ file.txt 1 ranges 1:1-2:1\n") {
+		t.Fatalf("report = %q", result.Report)
 	}
-	if !strings.Contains(report, "refs 2 type+ file.txt\n") {
-		t.Fatalf("report = %q", report)
+	if !strings.Contains(result.Report, "refs 2 type+ file.txt\n") {
+		t.Fatalf("report = %q", result.Report)
 	}
 }
 
 func TestHPatch2PreviewDoesNotInventTrailingEmptyLine(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, root, "file.txt", "alpha\n", 0o644)
-	_, report, exitCode := runForTest(root, nil, "in file.txt")
-	if exitCode != 0 {
-		t.Fatalf("Run() = exit %d, report %q", exitCode, report)
+	result, err := applyForHostAtTest(t, root, "in file.txt", "")
+	if err != nil {
+		t.Fatalf("ApplyForHost() error = %v, report %q", err, result.Report)
 	}
 	want := "in file.txt\nlast none\nfiles add=0 update=0 move=0 delete=0\n1:" + hashLine("alpha") + " alpha\n"
-	if report != want {
-		t.Fatalf("report = %q, want %q", report, want)
+	if result.Report != want {
+		t.Fatalf("report = %q, want %q", result.Report, want)
 	}
 }
 
 func TestHPatch2EmptyNewFileReport(t *testing.T) {
 	root := t.TempDir()
-	_, report, exitCode := runForTest(root, nil, "new empty.txt")
-	if exitCode != 0 {
-		t.Fatalf("Run() = exit %d, report %q", exitCode, report)
+	result, err := applyForHostAtTest(t, root, "new empty.txt", "")
+	if err != nil {
+		t.Fatalf("ApplyForHost() error = %v, report %q", err, result.Report)
 	}
 	want := "in empty.txt\nlast none\nfiles add=1 update=0 move=0 delete=0\n1:" + hashLine("") + " \n"
-	if report != want {
-		t.Fatalf("report = %q, want %q", report, want)
+	if result.Report != want {
+		t.Fatalf("report = %q, want %q", result.Report, want)
 	}
 }
 
@@ -214,9 +214,9 @@ func TestHPatch2MovedMutationReportUsesFinalPath(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, root, "old.txt", "alpha\n", 0o644)
 	script := "in old.txt\ntype " + row(1, "alpha") + ` "beta"` + "\nmv new.txt"
-	_, report, exitCode := runForTest(root, nil, script)
-	if exitCode != 0 {
-		t.Fatalf("Run() = exit %d, report %q", exitCode, report)
+	result, err := applyForHostAtTest(t, root, script, "")
+	if err != nil {
+		t.Fatalf("ApplyForHost() error = %v, report %q", err, result.Report)
 	}
 	for _, want := range []string{
 		"in new.txt\n",
@@ -225,8 +225,8 @@ func TestHPatch2MovedMutationReportUsesFinalPath(t *testing.T) {
 		"refs 2 type new.txt\n",
 		"1:" + hashLine("beta") + " beta\n",
 	} {
-		if !strings.Contains(report, want) {
-			t.Fatalf("report %q lacks %q", report, want)
+		if !strings.Contains(result.Report, want) {
+			t.Fatalf("report %q lacks %q", result.Report, want)
 		}
 	}
 }
@@ -235,11 +235,11 @@ func TestHPatch2PreviewBoundsContent(t *testing.T) {
 	root := t.TempDir()
 	content := strings.Repeat("界", 70) + "tail\n"
 	writeTestFile(t, root, "file.txt", content, 0o644)
-	_, report, exitCode := runForTest(root, nil, "in file.txt")
-	if exitCode != 0 {
-		t.Fatalf("Run() = exit %d, report %q", exitCode, report)
+	result, err := applyForHostAtTest(t, root, "in file.txt", "")
+	if err != nil {
+		t.Fatalf("ApplyForHost() error = %v, report %q", err, result.Report)
 	}
-	rowText := strings.Split(strings.TrimSuffix(report, "\n"), "\n")[3]
+	rowText := strings.Split(strings.TrimSuffix(result.Report, "\n"), "\n")[3]
 	if strings.Count(rowText, "界") != 64 || strings.Contains(rowText, "tail") {
 		t.Fatalf("bounded preview row = %q", rowText)
 	}
@@ -248,25 +248,25 @@ func TestHPatch2PreviewBoundsContent(t *testing.T) {
 func TestHPatch2PreviewEscapesControls(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, root, "file.txt", "a\x01b\n", 0o644)
-	_, report, exitCode := runForTest(root, nil, "in file.txt")
-	if exitCode != 0 {
-		t.Fatalf("Run() = exit %d, report %q", exitCode, report)
+	result, err := applyForHostAtTest(t, root, "in file.txt", "")
+	if err != nil {
+		t.Fatalf("ApplyForHost() error = %v, report %q", err, result.Report)
 	}
-	if strings.ContainsRune(report, '\x01') || !strings.Contains(report, `a\x01b`) {
-		t.Fatalf("escaped report = %q", report)
+	if strings.ContainsRune(result.Report, '\x01') || !strings.Contains(result.Report, `a\x01b`) {
+		t.Fatalf("escaped report = %q", result.Report)
 	}
 }
 
 func TestHPatch2FinalStateNoActiveFile(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, root, "file.txt", "alpha\n", 0o644)
-	_, report, exitCode := runForTest(root, nil, "in file.txt\nrm")
-	if exitCode != 0 {
-		t.Fatalf("Run() = exit %d, report %q", exitCode, report)
+	result, err := applyForHostAtTest(t, root, "in file.txt\nrm", "")
+	if err != nil {
+		t.Fatalf("ApplyForHost() error = %v, report %q", err, result.Report)
 	}
 	want := "no active file\nlast none\nfiles add=0 update=0 move=0 delete=1\n"
-	if report != want {
-		t.Fatalf("report = %q, want %q", report, want)
+	if result.Report != want {
+		t.Fatalf("report = %q, want %q", result.Report, want)
 	}
 }
 
@@ -279,19 +279,19 @@ func TestHPatch2FinalReferencesCoverCommandsFilesAndContinuation(t *testing.T) {
 		"type " + row(4, "a3") + " \"A3\"\n" +
 		"in second.txt\n" +
 		"type+ " + row(2, "b1") + " \"inserted\\n\""
-	_, report, exitCode := runForTest(root, nil, script)
-	if exitCode != 0 {
-		t.Fatalf("Run() = exit %d, report %q", exitCode, report)
+	result, err := applyForHostAtTest(t, root, script, "")
+	if err != nil {
+		t.Fatalf("ApplyForHost() error = %v, report %q", err, result.Report)
 	}
 
 	firstHeader := "refs 2 type first.txt\n"
 	secondHeader := "refs 3 type first.txt\n"
 	thirdHeader := "refs 5 type+ second.txt\n"
-	firstIndex := strings.Index(report, firstHeader)
-	secondIndex := strings.Index(report, secondHeader)
-	thirdIndex := strings.Index(report, thirdHeader)
+	firstIndex := strings.Index(result.Report, firstHeader)
+	secondIndex := strings.Index(result.Report, secondHeader)
+	thirdIndex := strings.Index(result.Report, thirdHeader)
 	if firstIndex < 0 || secondIndex <= firstIndex || thirdIndex <= secondIndex {
-		t.Fatalf("reference block order in report %q", report)
+		t.Fatalf("reference block order in report %q", result.Report)
 	}
 	for _, current := range []string{
 		"2:" + hashLine("A1") + " A1\n",
@@ -299,46 +299,38 @@ func TestHPatch2FinalReferencesCoverCommandsFilesAndContinuation(t *testing.T) {
 		"3:" + hashLine("inserted") + " inserted\n",
 		"4:" + hashLine("b2") + " b2\n",
 	} {
-		if !strings.Contains(report, current) {
-			t.Fatalf("report %q lacks current row %q", report, current)
+		if !strings.Contains(result.Report, current) {
+			t.Fatalf("report %q lacks current row %q", result.Report, current)
 		}
 	}
 
 	reportedTarget := row(4, "b2")
-	if !strings.Contains(report, reportedTarget+" b2\n") {
-		t.Fatalf("report %q lacks reusable target %q", report, reportedTarget)
+	if !strings.Contains(result.Report, reportedTarget+" b2\n") {
+		t.Fatalf("report %q lacks reusable target %q", result.Report, reportedTarget)
 	}
-	_, continuationReport, continuationExit := runForTest(
-		root,
-		nil,
-		"in second.txt\ntype "+reportedTarget+" \"B2\"",
-	)
-	if continuationExit != 0 {
-		t.Fatalf("reported-row continuation = exit %d, report %q", continuationExit, continuationReport)
+	continuation, continuationErr := applyForHostAtTest(t, root, "in second.txt\ntype "+reportedTarget+" \"B2\"", "")
+	if continuationErr != nil {
+		t.Fatalf("reported-row continuation error = %v, report %q", continuationErr, continuation.Report)
 	}
 
-	_, staleReport, staleExit := runForTest(
-		root,
-		nil,
-		"in first.txt\ntype "+row(2, "a1")+" \"stale\"",
-	)
-	if staleExit == 0 || !strings.Contains(staleReport, "row 2 is stale") {
-		t.Fatalf("saved pre-edit row = exit %d, report %q", staleExit, staleReport)
+	stale, staleErr := applyForHostAtTest(t, root, "in first.txt\ntype "+row(2, "a1")+" \"stale\"", "")
+	if staleErr == nil || !strings.Contains(stale.Diagnostic, "row 2 is stale") {
+		t.Fatalf("saved pre-edit row error = %v, diagnostic %q", staleErr, stale.Diagnostic)
 	}
 }
 
 func TestHPatch2FinalReferencesProjectCollapsedDeletion(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, root, "file.txt", "alpha\nbeta\ngamma\n", 0o644)
-	_, report, exitCode := runForTest(root, nil, "in file.txt\ntype "+row(2, "beta")+` ""`)
-	if exitCode != 0 {
-		t.Fatalf("Run() = exit %d, report %q", exitCode, report)
+	result, err := applyForHostAtTest(t, root, "in file.txt\ntype "+row(2, "beta")+` ""`, "")
+	if err != nil {
+		t.Fatalf("ApplyForHost() error = %v, report %q", err, result.Report)
 	}
 	want := "refs 2 type file.txt\n" +
 		"1:" + hashLine("alpha") + " alpha\n" +
 		"2:" + hashLine("gamma") + " gamma\n"
-	if !strings.Contains(report, want) {
-		t.Fatalf("deletion references %q lack %q", report, want)
+	if !strings.Contains(result.Report, want) {
+		t.Fatalf("deletion references %q lack %q", result.Report, want)
 	}
 }
 
@@ -346,17 +338,17 @@ func TestHPatch2FinalReferencesAreBoundedAndDeduplicated(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, root, "file.txt", "zero\nx\none\ntwo\nx\nend\n", 0o644)
 	script := "in file.txt\ntype " + row(2, "x") + ` "x" 2 "y"`
-	_, report, exitCode := runForTest(root, nil, script)
-	if exitCode != 0 {
-		t.Fatalf("Run() = exit %d, report %q", exitCode, report)
+	result, err := applyForHostAtTest(t, root, script, "")
+	if err != nil {
+		t.Fatalf("ApplyForHost() error = %v, report %q", err, result.Report)
 	}
 	want := "refs 2 type file.txt\n" +
 		"1:" + hashLine("zero") + " zero\n" +
 		"2:" + hashLine("y") + " y\n" +
 		"5:" + hashLine("y") + " y\n" +
 		"6:" + hashLine("end") + " end\n"
-	if !strings.Contains(report, want) {
-		t.Fatalf("bounded references %q lack %q", report, want)
+	if !strings.Contains(result.Report, want) {
+		t.Fatalf("bounded references %q lack %q", result.Report, want)
 	}
 }
 
@@ -364,9 +356,9 @@ func TestHPatch2FinalReferencesPreserveUneditedActiveEmptyFile(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, root, "edited.txt", "old\n", 0o644)
 	script := "in edited.txt\ntype " + row(1, "old") + " \"new\"\nnew empty.txt"
-	_, report, exitCode := runForTest(root, nil, script)
-	if exitCode != 0 {
-		t.Fatalf("Run() = exit %d, report %q", exitCode, report)
+	result, err := applyForHostAtTest(t, root, script, "")
+	if err != nil {
+		t.Fatalf("ApplyForHost() error = %v, report %q", err, result.Report)
 	}
 	for _, want := range []string{
 		"in empty.txt\n",
@@ -374,8 +366,8 @@ func TestHPatch2FinalReferencesPreserveUneditedActiveEmptyFile(t *testing.T) {
 		"1:" + hashLine("new") + " new\n",
 		"1:" + hashLine("") + " \n",
 	} {
-		if !strings.Contains(report, want) {
-			t.Fatalf("report %q lacks %q", report, want)
+		if !strings.Contains(result.Report, want) {
+			t.Fatalf("report %q lacks %q", result.Report, want)
 		}
 	}
 }

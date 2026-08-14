@@ -4,7 +4,6 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"os"
-	"strings"
 	"testing"
 )
 
@@ -56,17 +55,6 @@ func TestRecoveryCountersPersistAggregateAndProject(t *testing.T) {
 	for index, want := range wantRecoveries {
 		if recoveries[index] != want {
 			t.Fatalf("projected recoveries = %+v", recoveries)
-		}
-	}
-	compactReport := strings.Join(strings.Fields(gainReport(aggregate)), " ")
-	for _, want := range []string{
-		"recoveries: recoveries count",
-		"white-space error 5",
-		"indentation shift 7",
-		"luna misuse 9",
-	} {
-		if !strings.Contains(compactReport, want) {
-			t.Fatalf("gain report has no per-action recovery table: %q", compactReport)
 		}
 	}
 	overflow := metrics{invocationMetrics: invocationMetrics{Recoveries: [recoveryKindCount]uint64{^uint64(0), 0, 0}}}

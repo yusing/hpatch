@@ -4,7 +4,6 @@ import (
 	"context"
 	"os"
 	"reflect"
-	"strings"
 	"testing"
 )
 
@@ -70,15 +69,16 @@ func TestHPatch2MetricsSlotRoundTrip(t *testing.T) {
 	}
 }
 
-func TestHPatch2GainReportNamesTargets(t *testing.T) {
+func TestHPatch2StructuredGainNamesTargets(t *testing.T) {
 	value := metrics{}
 	value.Commands[commandOperationIndex("type")] = commandMetric{Invocations: 1}
 	value.Targets[targetVariantLine-1] = commandMetric{Invocations: 1}
-	report := gainReportAtWidth(value, 100)
-	for _, want := range []string{"target metrics:", "line", "text-single", "type+"} {
-		if !strings.Contains(report, want) {
-			t.Fatalf("report lacks %q:\n%s", want, report)
-		}
+	gain := value.gainMetrics()
+	if gain.Commands[commandOperationIndex("type")].Name != "type" ||
+		gain.Targets[targetVariantLine-1].Name != "line" ||
+		gain.Targets[targetVariantTextSingle-1].Name != "text-single" ||
+		gain.Commands[commandOperationIndex("type+")].Name != "type+" {
+		t.Fatalf("structured gain names = commands %+v, targets %+v", gain.Commands, gain.Targets)
 	}
 }
 

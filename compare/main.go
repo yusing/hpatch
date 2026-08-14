@@ -1,13 +1,12 @@
 package main
 
 import (
-	"bytes"
+	"context"
 	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"reflect"
-	"strings"
 
 	"github.com/tiktoken-go/tokenizer"
 	"github.com/yusing/hpatch"
@@ -120,15 +119,13 @@ func runHPatch(scenario scenario) (map[string]string, error) {
 			return nil, err
 		}
 	}
-	var stdout, stderr bytes.Buffer
-	if exitCode := hpatch.Run(nil, strings.NewReader(scenario.script), &stdout, &stderr, root, ""); exitCode != 0 {
-		return nil, fmt.Errorf("hpatch exited %d: %s", exitCode, stderr.String())
+	workspaceRoot, err := os.OpenRoot(root)
+	if err != nil {
+		return nil, err
 	}
-	if stdout.Len() != 0 {
-		return nil, fmt.Errorf("unexpected stdout %q", stdout.String())
-	}
-	if stderr.Len() == 0 {
-		return nil, fmt.Errorf("missing final-state report")
+	defer workspaceRoot.Close()
+	if err := hpatch.Apply(context.TODO(), hpatch.Workspace{Root: workspaceRoot}, scenario.script); err != nil {
+		return nil, fmt.Errorf("applying hpatch script: %w", err)
 	}
 	return readTree(root)
 }

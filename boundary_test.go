@@ -23,13 +23,13 @@ func TestHPatch2MoveOnlyTranslationUsesVerificationHunk(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			root := t.TempDir()
 			writeTestFile(t, root, "old.txt", test.content, 0o644)
-			stdout, stderr, exitCode := runForTest(root, []string{"translate"}, "in old.txt\nmv new.txt\n")
-			if exitCode != 0 {
-				t.Fatalf("translate = exit %d, stderr %q", exitCode, stderr)
-			}
-			got, err := patchtest.Apply(map[string]string{"old.txt": test.content}, stdout)
+			result, err := translateForHostAtTest(t, root, "in old.txt\nmv new.txt\n", "")
 			if err != nil {
-				t.Fatalf("applying move patch: %v\n%s", err, stdout)
+				t.Fatalf("TranslateForHost() error = %v, diagnostic %q", err, result.Diagnostic)
+			}
+			got, err := patchtest.Apply(map[string]string{"old.txt": test.content}, string(result.Patch))
+			if err != nil {
+				t.Fatalf("applying move patch: %v\n%s", err, string(result.Patch))
 			}
 			if want := map[string]string{"new.txt": test.content}; !reflect.DeepEqual(got, want) {
 				t.Fatalf("tree = %#v, want %#v", got, want)
@@ -49,14 +49,14 @@ func TestHPatch2NetActionsCollapseMovesAndCanceledCreation(t *testing.T) {
 		`type "discarded"`,
 		"rm",
 	}, "\n")
-	stdout, stderr, exitCode := runForTest(root, []string{"translate"}, script)
-	if exitCode != 0 {
-		t.Fatalf("translate = exit %d, stderr %q", exitCode, stderr)
+	result, err := translateForHostAtTest(t, root, script, "")
+	if err != nil {
+		t.Fatalf("TranslateForHost() error = %v, diagnostic %q", err, result.Diagnostic)
 	}
-	if !strings.Contains(stdout, "*** Update File: start.txt\n*** Move to: final.txt\n") ||
-		strings.Contains(stdout, "intermediate.txt") ||
-		strings.Contains(stdout, "temporary.txt") {
-		t.Fatalf("translation did not collapse net actions:\n%s", stdout)
+	if !strings.Contains(string(result.Patch), "*** Update File: start.txt\n*** Move to: final.txt\n") ||
+		strings.Contains(string(result.Patch), "intermediate.txt") ||
+		strings.Contains(string(result.Patch), "temporary.txt") {
+		t.Fatalf("translation did not collapse net actions:\n%s", string(result.Patch))
 	}
 }
 
@@ -64,12 +64,12 @@ func TestHPatch2TranslateNormalizesCRLFDisplay(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, root, "text.txt", "old\r\nkeep\r\n", 0o644)
 	script := "in text.txt\ntype " + row(1, "old") + ` "new"`
-	stdout, stderr, exitCode := runForTest(root, []string{"translate"}, script)
-	if exitCode != 0 {
-		t.Fatalf("translate = exit %d, stderr %q", exitCode, stderr)
+	result, err := translateForHostAtTest(t, root, script, "")
+	if err != nil {
+		t.Fatalf("TranslateForHost() error = %v, diagnostic %q", err, result.Diagnostic)
 	}
-	if strings.Contains(stdout, "\r") || !strings.Contains(stdout, "-old\n+new\n keep\n") {
-		t.Fatalf("translation does not describe LF logical-line edit:\n%s", stdout)
+	if strings.Contains(string(result.Patch), "\r") || !strings.Contains(string(result.Patch), "-old\n+new\n keep\n") {
+		t.Fatalf("translation does not describe LF logical-line edit:\n%s", string(result.Patch))
 	}
 	if got := readTestFile(t, root, "text.txt"); got != "old\r\nkeep\r\n" {
 		t.Fatalf("translate mutated CRLF input: %q", got)
@@ -81,17 +81,17 @@ func TestHPatch2TranslateDisambiguatesRepeatedBlocks(t *testing.T) {
 	content := "first\nrepeat\nvalue=old\nend\nmiddle\nrepeat\nvalue=old\nend\nlast\n"
 	writeTestFile(t, root, "text.txt", content, 0o644)
 	script := "in text.txt\ntype " + row(5, "middle") + ` "old" "new"`
-	stdout, stderr, exitCode := runForTest(root, []string{"translate"}, script)
-	if exitCode != 0 {
-		t.Fatalf("translate = exit %d, stderr %q", exitCode, stderr)
-	}
-	got, err := patchtest.Apply(map[string]string{"text.txt": content}, stdout)
+	result, err := translateForHostAtTest(t, root, script, "")
 	if err != nil {
-		t.Fatalf("applying translation: %v\n%s", err, stdout)
+		t.Fatalf("TranslateForHost() error = %v, diagnostic %q", err, result.Diagnostic)
+	}
+	got, err := patchtest.Apply(map[string]string{"text.txt": content}, string(result.Patch))
+	if err != nil {
+		t.Fatalf("applying translation: %v\n%s", err, string(result.Patch))
 	}
 	want := map[string]string{"text.txt": "first\nrepeat\nvalue=old\nend\nmiddle\nrepeat\nvalue=new\nend\nlast\n"}
 	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("tree = %#v, want %#v\n%s", got, want, stdout)
+		t.Fatalf("tree = %#v, want %#v\n%s", got, want, string(result.Patch))
 	}
 }
 
@@ -99,9 +99,9 @@ func TestHPatch2QuotedOperandsAcceptLiteralTabs(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, root, "text.txt", "old\tvalue\n", 0o644)
 	script := "in text.txt\ntype " + row(1, "old\tvalue") + " \"old\tvalue\" \"new\tvalue\""
-	_, stderr, exitCode := runForTest(root, nil, script)
-	if exitCode != 0 {
-		t.Fatalf("Run() = exit %d, stderr %q", exitCode, stderr)
+	result, err := applyForHostAtTest(t, root, script, "")
+	if err != nil {
+		t.Fatalf("ApplyForHost() error = %v, diagnostic %q", err, result.Diagnostic)
 	}
 	if got := readTestFile(t, root, "text.txt"); got != "new\tvalue\n" {
 		t.Fatalf("text.txt = %q", got)
@@ -111,9 +111,9 @@ func TestHPatch2QuotedOperandsAcceptLiteralTabs(t *testing.T) {
 func TestHPatch2FixedHeredocPreservesLiteralCRLFBody(t *testing.T) {
 	root := t.TempDir()
 	script := "new file.txt\r\ntype <<PATCH\r\none \"quoted\" \\ slash\tinside\r\ntwo\r\nPATCH\r\n"
-	_, stderr, exitCode := runForTest(root, nil, script)
-	if exitCode != 0 {
-		t.Fatalf("Run() = exit %d, stderr %q", exitCode, stderr)
+	result, err := applyForHostAtTest(t, root, script, "")
+	if err != nil {
+		t.Fatalf("ApplyForHost() error = %v, diagnostic %q", err, result.Diagnostic)
 	}
 	if got, want := readTestFile(t, root, "file.txt"), "one \"quoted\" \\ slash\tinside\r\ntwo\r\n"; got != want {
 		t.Fatalf("file.txt = %q, want %q", got, want)
@@ -134,12 +134,12 @@ func TestHPatch2HeredocFailuresAreHeaderOwnedAndAtomic(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			root := t.TempDir()
-			stdout, stderr, exitCode := runForTest(root, []string{"translate"}, test.script)
-			if exitCode != 1 || stdout != "" || !strings.Contains(stderr, test.want) {
-				t.Fatalf("Run() = exit %d, stdout %q, stderr %q", exitCode, stdout, stderr)
+			result, err := translateForHostAtTest(t, root, test.script, "")
+			if err == nil || !strings.Contains(result.Diagnostic, test.want) {
+				t.Fatalf("TranslateForHost() error = %v, diagnostic %q", err, result.Diagnostic)
 			}
-			if strings.Count(stderr, ": command") != 1 || len(readTree(t, root)) != 0 {
-				t.Fatalf("failure was not one header-owned atomic rejection: %q", stderr)
+			if strings.Count(result.Diagnostic, ": command") != 1 || len(readTree(t, root)) != 0 {
+				t.Fatalf("failure was not one header-owned atomic rejection: %q", result.Diagnostic)
 			}
 		})
 	}
@@ -149,11 +149,11 @@ func TestHPatch2PhysicalNewlineInQuotedOperandIsHeaderOwned(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, root, "file.txt", "original\n", 0o644)
 	script := "in file.txt\ntype " + row(1, "original") + " \"replacement\ntext\"\nrm\n"
-	stdout, stderr, exitCode := runForTest(root, []string{"translate"}, script)
-	if exitCode != 1 || stdout != "" ||
-		strings.Count(stderr, ": command") != 1 ||
-		!strings.Contains(stderr, `physical newline inside quoted operand; encode line terminators as \n or \r`) {
-		t.Fatalf("Run() = exit %d, stdout %q, stderr %q", exitCode, stdout, stderr)
+	result, err := translateForHostAtTest(t, root, script, "")
+	if err == nil ||
+		strings.Count(result.Diagnostic, ": command") != 1 ||
+		!strings.Contains(result.Diagnostic, `physical newline inside quoted operand; encode line terminators as \n or \r`) {
+		t.Fatalf("TranslateForHost() error = %v, diagnostic %q", err, result.Diagnostic)
 	}
 }
 
@@ -164,9 +164,9 @@ func TestHPatch2ParserReportsIndependentSyntaxErrors(t *testing.T) {
 		"type 1:0000 \"literal\x01control\"\n" +
 		"type 0:0123 \"value\"\n" +
 		"del 1:abcd trailing\n"
-	stdout, stderr, exitCode := runForTest(root, []string{"translate"}, script)
-	if exitCode != 1 || stdout != "" || strings.Count(stderr, ": command") != 3 {
-		t.Fatalf("Run() = exit %d, stdout %q, stderr %q", exitCode, stdout, stderr)
+	result, err := translateForHostAtTest(t, root, script, "")
+	if err == nil || strings.Count(result.Diagnostic, ": command") != 3 {
+		t.Fatalf("TranslateForHost() error = %v, diagnostic %q", err, result.Diagnostic)
 	}
 	if got := readTestFile(t, root, "file.txt"); got != "unchanged\n" {
 		t.Fatalf("syntax rejection mutated file: %q", got)
@@ -178,22 +178,22 @@ func TestHPatch2InvalidUTF8IsRejected(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "binary.txt"), []byte{0xff}, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	stdout, stderr, exitCode := runForTest(root, []string{"translate"}, "in binary.txt")
-	if exitCode != 1 || stdout != "" || !strings.Contains(stderr, "not UTF-8") {
-		t.Fatalf("Run() = exit %d, stdout %q, stderr %q", exitCode, stdout, stderr)
+	result, err := translateForHostAtTest(t, root, "in binary.txt", "")
+	if err == nil || !strings.Contains(result.Diagnostic, "not UTF-8") {
+		t.Fatalf("TranslateForHost() error = %v, diagnostic %q", err, result.Diagnostic)
 	}
 }
 
 func TestHPatch2NoopModeBoundaries(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, root, "file.txt", "same\n", 0o644)
-	stdout, report, exitCode := runForTest(root, nil, "in file.txt")
-	if exitCode != 0 || stdout != "" || !strings.HasPrefix(report, "in file.txt\nlast none\n") {
-		t.Fatalf("normal no-op = exit %d, stdout %q, report %q", exitCode, stdout, report)
+	applied, err := applyForHostAtTest(t, root, "in file.txt", "")
+	if err != nil || !strings.HasPrefix(applied.Report, "in file.txt\nlast none\n") {
+		t.Fatalf("ApplyForHost() error = %v, report %q", err, applied.Report)
 	}
-	stdout, report, exitCode = runForTest(root, []string{"translate"}, "in file.txt")
-	if exitCode != 0 || stdout != "" || !strings.HasPrefix(report, "in file.txt\nlast none\n") {
-		t.Fatalf("translate no-op = exit %d, stdout %q, report %q", exitCode, stdout, report)
+	translated, err := translateForHostAtTest(t, root, "in file.txt", "")
+	if err != nil || len(translated.Patch) != 0 || !strings.HasPrefix(translated.Report, "in file.txt\nlast none\n") {
+		t.Fatalf("TranslateForHost() error = %v, patch %q, report %q", err, translated.Patch, translated.Report)
 	}
 }
 
@@ -289,9 +289,9 @@ func TestHPatch2LifecycleFailuresAreAtomic(t *testing.T) {
 			writeTestFile(t, root, "existing.txt", "old\n", 0o644)
 			writeTestFile(t, root, "occupied.txt", "occupied\n", 0o644)
 			before := readTree(t, root)
-			stdout, stderr, exitCode := runForTest(root, []string{"translate"}, test.script)
-			if exitCode != 1 || stdout != "" || !strings.Contains(stderr, test.want) {
-				t.Fatalf("Run() = exit %d, stdout %q, stderr %q", exitCode, stdout, stderr)
+			result, err := translateForHostAtTest(t, root, test.script, "")
+			if err == nil || !strings.Contains(result.Diagnostic, test.want) {
+				t.Fatalf("TranslateForHost() error = %v, diagnostic %q", err, result.Diagnostic)
 			}
 			if after := readTree(t, root); !reflect.DeepEqual(after, before) {
 				t.Fatalf("rejection changed tree: before %#v, after %#v", before, after)

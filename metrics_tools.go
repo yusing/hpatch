@@ -545,14 +545,6 @@ func boolCount(value bool) uint64 {
 	return 0
 }
 
-func toolMetricLabel(pluginID, toolName string, failed bool) string {
-	label := pluginID + "/" + toolName
-	if failed {
-		return label + " failed"
-	}
-	return label
-}
-
 func encodeToolMetrics(encoded []byte, value metrics) {
 	binary.LittleEndian.PutUint16(encoded[metricsToolCountOffset:metricsToolCountOffset+2], value.ToolCount)
 	binary.LittleEndian.PutUint64(encoded[metricsSharedOffset:metricsSharedOffset+8], uint64(value.SharedDefinitionInputTokens))

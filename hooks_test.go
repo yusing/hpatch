@@ -25,10 +25,9 @@ func TestErrorHookReceivesFailureAndRepairContext(t *testing.T) {
 	})
 
 	script := "in note.txt\ntype 1:" + hashLine("present words") + " \"missing\" \"replacement\"\n"
-	var stdout, stderr bytes.Buffer
-	exitCode := Run(nil, strings.NewReader(script), &stdout, &stderr, root, dataDirectory)
-	if exitCode != 1 || stdout.Len() != 0 {
-		t.Fatalf("Run() = exit %d, stdout %q, stderr %q", exitCode, stdout.String(), stderr.String())
+	result, applyErr := applyForHostAtTest(t, root, script, dataDirectory)
+	if applyErr == nil {
+		t.Fatal("ApplyForHost() unexpectedly succeeded")
 	}
 	body, err := os.ReadFile(bodyPath)
 	if err != nil {
@@ -47,8 +46,8 @@ func TestErrorHookReceivesFailureAndRepairContext(t *testing.T) {
 			t.Fatalf("hook body unexpectedly contains %q:\n%s", omitted, body)
 		}
 	}
-	if strings.Contains(stderr.String(), "warning:") {
-		t.Fatalf("successful hook produced warning: %q", stderr.String())
+	if strings.Contains(result.Diagnostic, "warning:") {
+		t.Fatalf("successful hook produced warning: %q", result.Diagnostic)
 	}
 }
 
@@ -108,10 +107,8 @@ func TestErrorHookReceivesMalformedCommand(t *testing.T) {
 		"printf '%s' {{shellquote .Body}} > " + shellQuote(bodyPath),
 	})
 
-	var stdout, stderr bytes.Buffer
-	exitCode := Run(nil, strings.NewReader("select the file\n"), &stdout, &stderr, root, dataDirectory)
-	if exitCode != 1 {
-		t.Fatalf("Run() = exit %d, stdout %q, stderr %q", exitCode, stdout.String(), stderr.String())
+	if _, err := applyForHostAtTest(t, root, "select the file\n", dataDirectory); err == nil {
+		t.Fatal("ApplyForHost() unexpectedly succeeded")
 	}
 	body, err := os.ReadFile(bodyPath)
 	if err != nil {
@@ -130,16 +127,15 @@ func TestErrorHookFailureDoesNotReplaceDiagnostic(t *testing.T) {
 	dataDirectory := t.TempDir()
 	writeSettingsForTest(t, dataDirectory, []string{"exit 7"})
 
-	var stdout, stderr bytes.Buffer
-	exitCode := Run(nil, strings.NewReader("del\n"), &stdout, &stderr, root, dataDirectory)
-	if exitCode != 1 || stdout.Len() != 0 {
-		t.Fatalf("Run() = exit %d, stdout %q, stderr %q", exitCode, stdout.String(), stderr.String())
+	result, err := applyForHostAtTest(t, root, "del\n", dataDirectory)
+	if err == nil {
+		t.Fatal("ApplyForHost() unexpectedly succeeded")
 	}
-	if !strings.HasPrefix(stderr.String(), "del: command 1, reason script-syntax: unknown or malformed command\n") {
-		t.Fatalf("original diagnostic was not preserved: %q", stderr.String())
+	if !strings.HasPrefix(result.Diagnostic, "del: command 1, reason script-syntax: unknown or malformed command\n") {
+		t.Fatalf("original diagnostic was not preserved: %q", result.Diagnostic)
 	}
-	if !strings.Contains(stderr.String(), "hpatch: warning: running error hook 1: exit status 7\n") {
-		t.Fatalf("hook failure was not reported: %q", stderr.String())
+	if !strings.Contains(result.Diagnostic, "hpatch: warning: running error hook 1: exit status 7\n") {
+		t.Fatalf("hook failure was not reported: %q", result.Diagnostic)
 	}
 }
 
@@ -150,16 +146,12 @@ func TestSettingsAreReadOnlyForEvaluationFailures(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	var stdout, stderr bytes.Buffer
-	if exitCode := Run(nil, strings.NewReader("new note.txt\ntype \"ok\"\n"), &stdout, &stderr, root, dataDirectory); exitCode != 0 {
-		t.Fatalf("successful Run() = exit %d, stdout %q, stderr %q", exitCode, stdout.String(), stderr.String())
+	if _, err := applyForHostAtTest(t, root, "new note.txt\ntype \"ok\"\n", dataDirectory); err != nil {
+		t.Fatalf("successful ApplyForHost() error = %v", err)
 	}
-
-	stdout.Reset()
-	stderr.Reset()
-	exitCode := Run(nil, strings.NewReader("del\n"), &stdout, &stderr, root, dataDirectory)
-	if exitCode != 1 || !strings.Contains(stderr.String(), "hpatch: warning: decoding settings:") {
-		t.Fatalf("failed Run() = exit %d, stdout %q, stderr %q", exitCode, stdout.String(), stderr.String())
+	result, err := applyForHostAtTest(t, root, "del\n", dataDirectory)
+	if err == nil || !strings.Contains(result.Diagnostic, "hpatch: warning: decoding settings:") {
+		t.Fatalf("failed ApplyForHost() error = %v, diagnostic %q", err, result.Diagnostic)
 	}
 }
 
@@ -172,10 +164,9 @@ func TestEnvironmentalCommandFailureDoesNotRunErrorHook(t *testing.T) {
 	bodyPath := filepath.Join(t.TempDir(), "body.md")
 	writeSettingsForTest(t, dataDirectory, []string{"touch " + shellQuote(bodyPath)})
 
-	var stdout, stderr bytes.Buffer
-	exitCode := Run(nil, strings.NewReader("in folder\n"), &stdout, &stderr, root, dataDirectory)
-	if exitCode != 1 || !strings.Contains(stderr.String(), "folder is not a regular file") {
-		t.Fatalf("Run() = exit %d, stdout %q, stderr %q", exitCode, stdout.String(), stderr.String())
+	result, err := applyForHostAtTest(t, root, "in folder\n", dataDirectory)
+	if err == nil || !strings.Contains(result.Diagnostic, "folder is not a regular file") {
+		t.Fatalf("ApplyForHost() error = %v, diagnostic %q", err, result.Diagnostic)
 	}
 	if _, err := os.Stat(bodyPath); !os.IsNotExist(err) {
 		t.Fatalf("environmental failure ran hook: stat error %v", err)

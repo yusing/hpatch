@@ -11,12 +11,8 @@ import (
 	"math/big"
 	"os"
 	"path/filepath"
-	"strconv"
-	"strings"
 	"sync"
-	"text/tabwriter"
 	"time"
-	"unicode/utf8"
 
 	"github.com/gofrs/flock"
 )
@@ -157,10 +153,6 @@ func (m *commandMetrics) total() (commandMetric, bool) {
 
 func (m commandMetric) errorRate() string {
 	return percentage(new(big.Int).SetUint64(m.Errors), new(big.Int).SetUint64(m.Invocations))
-}
-
-func updateMetrics(dataDirectory string, entry metrics) error {
-	return updateMetricsForSessionContext(context.TODO(), dataDirectory, entry, "")
 }
 
 func updateMetricsForSessionContext(ctx context.Context, dataDirectory string, entry metrics, session string) (err error) {
@@ -677,8 +669,7 @@ type CommandReasonMetric struct {
 	Errors  uint64 `json:"errors"`
 }
 
-// GainMetrics is the durable aggregate reported by `hpatch gain`.
-// Percentages and net input use the same formatting as the CLI report.
+// GainMetrics is the durable aggregate exposed to hosts.
 type GainMetrics struct {
 	HPatchTokens            uint64 `json:"hpatch_tokens"`
 	ApplyPatchTokens        uint64 `json:"apply_patch_tokens"`
@@ -715,13 +706,13 @@ type GainMetrics struct {
 	CommandReasons []CommandReasonMetric `json:"command_reasons"`
 }
 
-// EmptyGainMetrics returns the zero aggregate printed by `hpatch gain` with no metrics file.
+// EmptyGainMetrics returns the zero aggregate used when no metrics file exists.
 func EmptyGainMetrics() GainMetrics {
 	return metrics{}.gainMetrics()
 }
 
-// LoadGainMetrics reads the durable metrics aggregate reported by `hpatch gain`.
-// Missing metrics yield a zero value with the same empty tables as gain.
+// LoadGainMetrics reads the durable metrics aggregate.
+// Missing metrics yield a zero value with populated empty metric rows.
 func LoadGainMetrics(dataDirectory string) (GainMetrics, error) {
 	total, err := readMetrics(dataDirectory)
 	if err != nil {
@@ -743,8 +734,7 @@ func (m metrics) netAddedInput(allToolInputs ToolInputGainMetric) *big.Int {
 	return net
 }
 
-// gainMetrics projects the same aggregate gainReportAtWidth formats for hosts
-// that need structured fields (dashboard JSON) instead of terminal text.
+// gainMetrics projects the durable aggregate into structured host fields.
 func (m metrics) gainMetrics() GainMetrics {
 	tools, allTools, toolDefinitions := m.gainToolRows()
 	toolInputs, allToolInputs := m.gainToolInputRows()
@@ -826,284 +816,4 @@ func (m metrics) gainMetrics() GainMetrics {
 		Reasons:                reasons,
 		CommandReasons:         commandReasons,
 	}
-}
-
-const defaultGainReportWidth = 80
-
-func gainReportAtWidth(m metrics, width int) string {
-	var report strings.Builder
-	writeOutputGainTable(&report, m)
-	writeRecoveryTable(&report, m)
-	writeInputTokenGainTable(&report, m)
-	writeInputOverheadGainTable(&report, m, width)
-
-	writeCommandTable(&report, "command metrics:", "command", commandOperations[:], m.Commands[:], true)
-	writeCommandTable(&report, "target metrics:", "target", targetVariantNames[:], m.Targets[:], false)
-
-	report.WriteString("failure reasons:\n")
-	table := tabwriter.NewWriter(&report, 0, 4, 2, ' ', 0)
-	_, _ = fmt.Fprintln(table, "reason\terrors")
-	_, _ = fmt.Fprintln(table, "------\t------")
-	var totalReasons uint64
-	for index, name := range failureReasonNames {
-		_, _ = fmt.Fprintf(table, "%s\t%d\n", name, m.Reasons[index])
-		totalReasons += m.Reasons[index]
-	}
-	_, _ = fmt.Fprintf(table, "total\t%d\n", totalReasons)
-	_ = table.Flush()
-	report.WriteByte('\n')
-
-	writeCommandReasonTable(&report, m.CommandReasons)
-	return report.String()
-}
-
-func writeOutputGainTable(report *strings.Builder, m metrics) {
-	tools, allTools, _ := m.gainToolRows()
-	report.WriteString("output token estimates:\n")
-	table := tabwriter.NewWriter(report, 0, 4, 2, ' ', 0)
-	_, _ = fmt.Fprintln(table, "tool\temitted\ttranslated\treduction")
-	_, _ = fmt.Fprintln(table, "----\t-------\t----------\t---------")
-	for _, row := range tools {
-		reduction := row.Reduction
-		if reduction != "n/a" {
-			reduction += "%"
-		}
-		_, _ = fmt.Fprintf(table, "%s\t%d\t%d\t%s\n", toolMetricLabel(row.PluginID, row.ToolName, row.Failed), row.EmittedTokens, row.TranslatedTokens, reduction)
-	}
-	allReduction := allTools.Reduction
-	if allReduction != "n/a" {
-		allReduction += "%"
-	}
-	_, _ = fmt.Fprintf(table, "all-tools\t%d\t%d\t%s\n", allTools.EmittedTokens, allTools.TranslatedTokens, allReduction)
-	_ = table.Flush()
-	report.WriteString("Failed hpatch translation uses the empty-patch semantic baseline; other router rejections have no translated carrier.\n\n")
-}
-
-func writeRecoveryTable(report *strings.Builder, m metrics) {
-	report.WriteString("recoveries:\n")
-	table := tabwriter.NewWriter(report, 0, 4, 2, ' ', 0)
-	_, _ = fmt.Fprintln(table, "recoveries\tcount")
-	_, _ = fmt.Fprintln(table, "----------\t-----")
-	for kind, name := range recoveryKindNames {
-		_, _ = fmt.Fprintf(table, "%s\t%d\n", name, m.Recoveries[kind])
-	}
-	_ = table.Flush()
-	report.WriteByte('\n')
-}
-
-func writeInputTokenGainTable(report *strings.Builder, m metrics) {
-	tools, allTools := m.gainToolInputRows()
-	report.WriteString("input token estimates:\n")
-	table := tabwriter.NewWriter(report, 0, 4, 2, ' ', 0)
-	_, _ = fmt.Fprintln(table, "tool\tcurrent\tstock\treduction")
-	_, _ = fmt.Fprintln(table, "----\t-------\t-----\t---------")
-	for _, row := range tools {
-		reduction := row.Reduction
-		if reduction != "n/a" {
-			reduction += "%"
-		}
-		_, _ = fmt.Fprintf(table, "%s\t%d\t%d\t%s\n", toolMetricLabel(row.PluginID, row.ToolName, false), row.CurrentTokens, row.StockTokens, reduction)
-	}
-	allReduction := allTools.Reduction
-	if allReduction != "n/a" {
-		allReduction += "%"
-	}
-	_, _ = fmt.Fprintf(table, "all-tools\t%d\t%d\t%s\n", allTools.CurrentTokens, allTools.StockTokens, allReduction)
-	_ = table.Flush()
-	report.WriteByte('\n')
-}
-
-func writeInputOverheadGainTable(report *strings.Builder, m metrics, width int) {
-	_, allToolInputs := m.gainToolInputRows()
-	net := m.netAddedInput(allToolInputs)
-
-	applyPatchRemovedText := "0"
-	if m.RemovedDefinitionInputTokens != 0 {
-		applyPatchRemovedText = "-" + strconv.FormatUint(m.RemovedDefinitionInputTokens, 10)
-	}
-	execCommandRemovedText := "0"
-	if m.RemovedExecCommandDefinitionInputTokens != 0 {
-		execCommandRemovedText = "-" + strconv.FormatUint(m.RemovedExecCommandDefinitionInputTokens, 10)
-	}
-	rows := [][]string{
-		{"state reports", strconv.FormatUint(m.ReportInputTokens, 10), "final state returned after successful calls"},
-		{"failure diagnostics", strconv.FormatUint(m.DiagnosticInputTokens, 10), "errors and repair context returned after failed calls"},
-		{"Hpatch misuse warnings", strconv.FormatUint(m.MisuseWarningInputTokens, 10), "warnings returned after prohibited tool use"},
-		{"installed tool definitions", strconv.FormatUint(m.DefinitionInputTokens, 10), "exact serialized collection installed by the router"},
-	}
-	_, _, definitions := m.gainToolRows()
-	for _, definition := range definitions {
-		rows = append(rows, []string{
-			"  " + toolMetricLabel(definition.PluginID, definition.ToolName, false),
-			strconv.FormatUint(definition.Tokens, 10),
-			"descriptive child of the installed-definition total",
-		})
-	}
-	if m.DefinitionRequests != 0 {
-		rows = append(rows, []string{
-			"  shared framing",
-			strconv.FormatInt(m.SharedDefinitionInputTokens, 10),
-			"shared collection serialization needed to reconcile installed definitions",
-		})
-	}
-	rows = append(rows,
-		[]string{"apply_patch definition removed", applyPatchRemovedText, "exact Code Mode section removed by the router"},
-		[]string{"exec_command definition removed", execCommandRemovedText, "exact Code Mode section removed by the router"},
-		[]string{"net added input", net.String(), "actual measured input overhead after stock-result and definition credits"},
-	)
-	report.WriteString("input token overhead estimates:\n")
-	writeWrappedTable(report, width, []string{"source", "tokens", "description"}, rows)
-	writeWrappedText(report, width, fmt.Sprintf("Definition routing covers %d accounted request(s) in %d distinct session(s) (%s).", m.DefinitionRequests, m.Sessions, describeDefinitionSources(m)))
-	report.WriteByte('\n')
-}
-
-const gainTableGap = 2
-
-func writeWrappedTable(report *strings.Builder, width int, headers []string, rows [][]string) {
-	widths := gainTableWidths(width, headers, rows)
-	writeWrappedRow(report, headers, widths)
-	separator := make([]string, len(widths))
-	for index, columnWidth := range widths {
-		separator[index] = strings.Repeat("-", columnWidth)
-	}
-	writeWrappedRow(report, separator, widths)
-	for _, row := range rows {
-		writeWrappedRow(report, row, widths)
-	}
-}
-
-func gainTableWidths(width int, headers []string, rows [][]string) []int {
-	widths := make([]int, len(headers))
-	for index, header := range headers {
-		widths[index] = utf8.RuneCountInString(header)
-	}
-	for _, row := range rows {
-		for index, cell := range row {
-			widths[index] = max(widths[index], utf8.RuneCountInString(cell))
-		}
-	}
-
-	available := max(len(widths), width-gainTableGap*(len(widths)-1))
-	fixed := 0
-	for _, columnWidth := range widths[:len(widths)-1] {
-		fixed += columnWidth
-	}
-	widths[len(widths)-1] = max(1, available-fixed)
-	for sum(widths) > available {
-		widest := 0
-		for index := range len(widths) - 1 {
-			if widths[index] > widths[widest] {
-				widest = index
-			}
-		}
-		if widths[widest] == 1 {
-			break
-		}
-		widths[widest]--
-	}
-	return widths
-}
-
-func sum(values []int) int {
-	var total int
-	for _, value := range values {
-		total += value
-	}
-	return total
-}
-
-func writeWrappedRow(report *strings.Builder, cells []string, widths []int) {
-	wrapped := make([][]string, len(cells))
-	height := 1
-	for index, cell := range cells {
-		wrapped[index] = wrapCell(cell, widths[index])
-		height = max(height, len(wrapped[index]))
-	}
-	for line := range height {
-		for column, columnWidth := range widths {
-			var cell string
-			if line < len(wrapped[column]) {
-				cell = wrapped[column][line]
-			}
-			report.WriteString(cell)
-			if column < len(widths)-1 {
-				report.WriteString(strings.Repeat(" ", columnWidth-utf8.RuneCountInString(cell)+gainTableGap))
-			}
-		}
-		report.WriteByte('\n')
-	}
-}
-
-func wrapCell(value string, width int) []string {
-	var lines []string
-	for word := range strings.FieldsSeq(value) {
-		wordRunes := []rune(word)
-		if len(lines) > 0 && utf8.RuneCountInString(lines[len(lines)-1])+1+len(wordRunes) <= width {
-			lines[len(lines)-1] += " " + word
-			continue
-		}
-		for len(wordRunes) > width {
-			lines = append(lines, string(wordRunes[:width]))
-			wordRunes = wordRunes[width:]
-		}
-		if len(wordRunes) > 0 {
-			lines = append(lines, string(wordRunes))
-		}
-	}
-	if len(lines) == 0 {
-		return []string{""}
-	}
-	return lines
-}
-
-func writeWrappedText(report *strings.Builder, width int, value string) {
-	for _, line := range wrapCell(value, max(1, width)) {
-		report.WriteString(line)
-		report.WriteByte('\n')
-	}
-}
-
-// writeCommandReasonTable attributes each error to the command that raised it.
-// Only nonzero pairs appear, because the full command-by-reason grid is mostly empty and
-// the useful reading is which primitive fails and how.
-func writeCommandReasonTable(report *strings.Builder, commandReasons [commandCount][failureReasonCount]uint64) {
-	report.WriteString("command failure reasons:\n")
-	table := tabwriter.NewWriter(report, 0, 4, 2, ' ', 0)
-	_, _ = fmt.Fprintln(table, "command\treason\terrors")
-	_, _ = fmt.Fprintln(table, "-------\t------\t------")
-	var rows int
-	for command, reasons := range commandReasons {
-		for reason, count := range reasons {
-			if count == 0 {
-				continue
-			}
-			_, _ = fmt.Fprintf(table, "%s\t%s\t%d\n", commandOperations[command], failureReasonNames[reason], count)
-			rows++
-		}
-	}
-	if rows == 0 {
-		_, _ = fmt.Fprintln(table, "none\tnone\t0") //nolint:dupword // Both columns intentionally report the empty state.
-	}
-	_ = table.Flush()
-}
-
-func writeCommandTable(report *strings.Builder, title, firstHeader string, names []string, values []commandMetric, includeTotal bool) {
-	report.WriteString(title + "\n")
-	table := tabwriter.NewWriter(report, 0, 4, 2, ' ', 0)
-	_, _ = fmt.Fprintf(table, "%s\tinvocations\terrors\terror rate\n", firstHeader)
-	_, _ = fmt.Fprintln(table, "-------\t-----------\t------\t----------")
-	var total commandMetric
-	for index, name := range names {
-		entry := values[index]
-		_, _ = fmt.Fprintf(table, "%s\t%d\t%d\t%s%%\n", name, entry.Invocations, entry.Errors, entry.errorRate())
-		if includeTotal {
-			total.Invocations += entry.Invocations
-			total.Errors += entry.Errors
-		}
-	}
-	if includeTotal {
-		_, _ = fmt.Fprintf(table, "total\t%d\t%d\t%s%%\n", total.Invocations, total.Errors, total.errorRate())
-	}
-	_ = table.Flush()
-	report.WriteByte('\n')
 }

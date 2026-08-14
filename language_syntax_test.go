@@ -237,9 +237,9 @@ func TestUnchangedInvalidSupportedLanguageIsNotValidated(t *testing.T) {
 	rootPath := t.TempDir()
 	source := "def f(:\n    pass\n"
 	writeTestFile(t, rootPath, "file.py", source, 0o644)
-	stdout, stderr, exitCode := runForTest(rootPath, nil, "in file.py")
-	if exitCode != 0 || stdout != "" || !strings.Contains(stderr, "last none") || strings.Contains(stderr, "language-syntax") {
-		t.Fatalf("Run() = %d, stdout %q, stderr %q", exitCode, stdout, stderr)
+	result, err := applyForHostAtTest(t, rootPath, "in file.py", "")
+	if err != nil || !strings.Contains(result.Report, "last none") || strings.Contains(result.Report, "language-syntax") {
+		t.Fatalf("ApplyForHost() error = %v, report %q", err, result.Report)
 	}
 	if got := readTestFile(t, rootPath, "file.py"); got != source {
 		t.Fatalf("file = %q, want unchanged source", got)

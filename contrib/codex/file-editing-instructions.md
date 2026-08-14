@@ -190,8 +190,7 @@ C3:cccc before in another.go
 Use the current handles exactly. A re-rejection replaces the baseline and makes every handle
 from the prior diagnostic stale. Resubmit a complete HPATCH/2 script only when the diagnostic
 requires a new script or transaction. A malformed, stale, conflicting, or incomplete recovery
-changes neither the workspace nor the retained rejected script. The standalone CLI and ordinary
-hpatch grammar have no recovery mode.
+changes neither the workspace nor the retained rejected script. Ordinary `functions.hpatch` and root APIs have no recovery mode.
 
 ## File reading, searching, inspection, and shell commands
 

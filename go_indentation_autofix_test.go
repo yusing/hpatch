@@ -10,10 +10,10 @@ func TestGoIndentationOnlyReplacementIsFormatted(t *testing.T) {
 	rootPath := t.TempDir()
 	writeTestFile(t, rootPath, "file.go", "package p\n\nfunc f() {\n    return\n}\n", 0o644)
 
-	_, stderr, exitCode := runForTest(rootPath, nil,
-		"in file.go\ntype "+row(4, "    return")+" \"  return\\n\"")
-	if exitCode != 0 {
-		t.Fatalf("Run() = %d, stderr %q", exitCode, stderr)
+	result, err := applyForHostAtTest(t, rootPath,
+		"in file.go\ntype "+row(4, "    return")+" \"  return\\n\"", "")
+	if err != nil {
+		t.Fatalf("ApplyForHost() error = %v, diagnostic %q", err, result.Diagnostic)
 	}
 	if got, want := readTestFile(t, rootPath, "file.go"), "package p\n\nfunc f() {\n\treturn\n}\n"; got != want {
 		t.Fatalf("file = %q, want %q", got, want)
@@ -24,10 +24,10 @@ func TestGoIndentationOnlyReplacementFormatsAfterMove(t *testing.T) {
 	rootPath := t.TempDir()
 	writeTestFile(t, rootPath, "source.txt", "package p\n\nfunc f() {\n    return\n}\n", 0o644)
 
-	_, stderr, exitCode := runForTest(rootPath, nil,
-		"in source.txt\ntype "+row(4, "    return")+" \"  return\\n\"\nmv moved.go")
-	if exitCode != 0 {
-		t.Fatalf("Run() = %d, stderr %q", exitCode, stderr)
+	result, err := applyForHostAtTest(t, rootPath,
+		"in source.txt\ntype "+row(4, "    return")+" \"  return\\n\"\nmv moved.go", "")
+	if err != nil {
+		t.Fatalf("ApplyForHost() error = %v, diagnostic %q", err, result.Diagnostic)
 	}
 	if got, want := readTestFile(t, rootPath, "moved.go"), "package p\n\nfunc f() {\n\treturn\n}\n"; got != want {
 		t.Fatalf("moved file = %q, want %q", got, want)

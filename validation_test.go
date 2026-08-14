@@ -197,11 +197,11 @@ mv moved.go`,
 		t.Run(test.name, func(t *testing.T) {
 			root := t.TempDir()
 			test.setup(t, root)
-			stdout, stderr, exitCode := runForTest(root, nil, test.script)
-			if exitCode != 1 || stdout != "" ||
-				!strings.HasPrefix(stderr, "type: command") ||
-				!strings.Contains(stderr, `path "moved.go"`) {
-				t.Fatalf("Run() = exit %d, stdout %q, stderr %q", exitCode, stdout, stderr)
+			result, err := applyForHostAtTest(t, root, test.script, "")
+			if err == nil ||
+				!strings.HasPrefix(result.Diagnostic, "type: command") ||
+				!strings.Contains(result.Diagnostic, `path "moved.go"`) {
+				t.Fatalf("ApplyForHost() error = %v, diagnostic %q", err, result.Diagnostic)
 			}
 		})
 	}
@@ -210,11 +210,11 @@ mv moved.go`,
 func TestHPatch2MoveOnlyGoValidationUsesMoveOrigin(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, root, "source.txt", "not Go\n", 0o644)
-	stdout, stderr, exitCode := runForTest(root, nil, "in source.txt\nmv moved.go")
-	if exitCode != 1 || stdout != "" ||
-		!strings.HasPrefix(stderr, "mv: command") ||
-		!strings.Contains(stderr, `path "moved.go"`) {
-		t.Fatalf("Run() = exit %d, stdout %q, stderr %q", exitCode, stdout, stderr)
+	result, err := applyForHostAtTest(t, root, "in source.txt\nmv moved.go", "")
+	if err == nil ||
+		!strings.HasPrefix(result.Diagnostic, "mv: command") ||
+		!strings.Contains(result.Diagnostic, `path "moved.go"`) {
+		t.Fatalf("ApplyForHost() error = %v, diagnostic %q", err, result.Diagnostic)
 	}
 }
 
@@ -222,9 +222,9 @@ func TestHPatch2ChangedGoFilesAreFormatted(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, root, "file.go", "package p\n\nvar value=1\n", 0o644)
 	script := "in file.go\ntype " + row(3, "var value=1") + ` "var value=2"`
-	_, stderr, exitCode := runForTest(root, nil, script)
-	if exitCode != 0 {
-		t.Fatalf("Run() = exit %d, stderr %q", exitCode, stderr)
+	result, err := applyForHostAtTest(t, root, script, "")
+	if err != nil {
+		t.Fatalf("ApplyForHost() error = %v, diagnostic %q", err, result.Diagnostic)
 	}
 	if got, want := readTestFile(t, root, "file.go"), "package p\n\nvar value = 2\n"; got != want {
 		t.Fatalf("file = %q, want %q", got, want)
@@ -253,12 +253,12 @@ func TestHPatch2InvalidGoRejectsAtomically(t *testing.T) {
 		t.Fatalf("rejections = %#v, want %#v", result.Rejections, want)
 	}
 
-	stdout, stderr, exitCode := runForTest(rootPath, nil, script)
-	if exitCode != 1 || stdout != "" || !strings.Contains(stderr, "language-syntax") {
-		t.Fatalf("Run() = exit %d, stdout %q, stderr %q", exitCode, stdout, stderr)
+	result, err = applyForHostAtTest(t, rootPath, script, "")
+	if err == nil || !strings.Contains(result.Diagnostic, "language-syntax") {
+		t.Fatalf("ApplyForHost() error = %v, diagnostic %q", err, result.Diagnostic)
 	}
-	if !strings.Contains(stderr, "generated Go near 3:5\n") || !strings.Contains(stderr, "> 3 | var =\n") {
-		t.Fatalf("diagnostic lacks generated-source context: %q", stderr)
+	if !strings.Contains(result.Diagnostic, "generated Go near 3:5\n") || !strings.Contains(result.Diagnostic, "> 3 | var =\n") {
+		t.Fatalf("diagnostic lacks generated-source context: %q", result.Diagnostic)
 	}
 	if got := readTestFile(t, rootPath, "file.go"); got != before {
 		t.Fatalf("file = %q, want unchanged", got)
@@ -412,9 +412,9 @@ func TestHPatch2InvalidGoReportsMultilineValueRow(t *testing.T) {
 		t.Fatalf("rejections = %#v, want %#v", result.Rejections, want)
 	}
 
-	_, stderr, exitCode := runForTest(rootPath, nil, script)
-	if exitCode != 1 {
-		t.Fatalf("Run() = exit %d, stderr %q", exitCode, stderr)
+	result, err = applyForHostAtTest(t, rootPath, script, "")
+	if err == nil {
+		t.Fatalf("ApplyForHost() error = %v, diagnostic %q", err, result.Diagnostic)
 	}
 	for _, fragment := range []string{
 		"command 2 multiline value near row 2\n",
@@ -422,8 +422,8 @@ func TestHPatch2InvalidGoReportsMultilineValueRow(t *testing.T) {
 		"> value row 2 | var =\n",
 		"  value row 3 | var third = 3\n",
 	} {
-		if !strings.Contains(stderr, fragment) {
-			t.Fatalf("diagnostic lacks %q:\n%s", fragment, stderr)
+		if !strings.Contains(result.Diagnostic, fragment) {
+			t.Fatalf("diagnostic lacks %q:\n%s", fragment, result.Diagnostic)
 		}
 	}
 	if got := readTestFile(t, rootPath, "file.go"); got != before {
@@ -529,20 +529,20 @@ func TestHPatch2MultilineValueRowsUsePhysicalFraming(t *testing.T) {
 		t.Fatalf("rejections = %#v, want command 2 physical value row 1", result.Rejections)
 	}
 
-	_, stderr, exitCode := runForTest(rootPath, nil, script)
-	if exitCode != 1 {
-		t.Fatalf("Run() = exit %d, stderr %q", exitCode, stderr)
+	result, err = applyForHostAtTest(t, rootPath, script, "")
+	if err == nil {
+		t.Fatalf("ApplyForHost() error = %v, diagnostic %q", err, result.Diagnostic)
 	}
 	for _, fragment := range []string{
 		"command 2 multiline value near row 1\n",
 		"> value row 1 | package p\\rvar =\n",
 	} {
-		if !strings.Contains(stderr, fragment) {
-			t.Fatalf("diagnostic lacks %q:\n%s", fragment, stderr)
+		if !strings.Contains(result.Diagnostic, fragment) {
+			t.Fatalf("diagnostic lacks %q:\n%s", fragment, result.Diagnostic)
 		}
 	}
-	if strings.Contains(stderr, "value row 2 |") {
-		t.Fatalf("diagnostic split an embedded carriage return into another value row:\n%s", stderr)
+	if strings.Contains(result.Diagnostic, "value row 2 |") {
+		t.Fatalf("diagnostic split an embedded carriage return into another value row:\n%s", result.Diagnostic)
 	}
 	if _, err := os.Stat(rootPath + "/file.go"); !os.IsNotExist(err) {
 		t.Fatalf("rejected translation created file.go: %v", err)
