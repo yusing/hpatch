@@ -239,7 +239,7 @@ else
 	export HPATCH_BENCH_EXACT_EVIDENCE_DIR=
 fi
 
-compose=(docker compose -f "$HPATCH_BENCH_COMPOSE_FILE")
+compose=(docker compose --progress quiet -f "$HPATCH_BENCH_COMPOSE_FILE")
 
 collect_router_metrics() {
 	local service=$1
@@ -803,7 +803,7 @@ prepare_dependency_cache() {
 		--volume "$dependency_workspace/repo:$dependency_workspace/repo" \
 		--workdir "$dependency_workspace/repo" \
 		dependency-loader \
-		go mod download all; then
+		go mod download all >/dev/null 2>&1; then
 		printf 'bench.sh: cannot preload benchmark dependencies\n' >&2
 		return 1
 	fi
@@ -818,7 +818,7 @@ prepare_dependency_cache() {
 			--volume "$dependency_workspace/repo:$dependency_workspace/repo" \
 			--workdir "$dependency_workspace/repo" \
 			dependency-loader \
-			"${grader_command[@]}" >/dev/null; then
+			"${grader_command[@]}" >/dev/null 2>&1; then
 		printf 'bench.sh: cannot preload Go grader dependencies for %s\n' "$task_id" >&2
 		return 1
 	fi
@@ -835,7 +835,7 @@ prepare_dependency_cache() {
 			--volume "$oracle_dependency_repository:$oracle_dependency_repository" \
 			--workdir "$oracle_dependency_repository" \
 			dependency-loader \
-			"${grader_command[@]}" >/dev/null; then
+			"${grader_command[@]}" >/dev/null 2>&1; then
 			printf 'bench.sh: cannot preload oracle Go grader dependencies for %s\n' "$task_id" >&2
 			return 1
 		fi
@@ -1388,7 +1388,7 @@ run_hpatch_only() {
 mkdir -p "$run_dir/work" "$run_dir/hpatch-config" "$run_dir/hpatch-runtime" "$instruction_dir"
 : >"$results"
 
-"${compose[@]}" build control
+"${compose[@]}" build --quiet control
 configure_issue_reporting
 prepare_instructions
 prepare_dependency_cache
@@ -1466,7 +1466,6 @@ shopt -s nullglob
 diffs=("$run_dir"/artifacts/*/*/changes.patch)
 for diff in "${diffs[@]}"; do
 	printf '\nAgent diff: %s\n' "$diff"
-	cat "$diff"
 done
 
 exit "$benchmark_status"
