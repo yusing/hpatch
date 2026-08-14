@@ -7,6 +7,10 @@
     "oracle_commit": "dd57ad39fa4eb1afcd9abdadf75354bca0600d9f"
   },
   "prompt_file": "prompt.md",
+  "runtime": {
+    "dependency_kind": "go",
+    "preload_go_qualification_grader": true
+  },
   "hidden_files": [
     {
       "source": "hidden_mvcc_test.go.txt",

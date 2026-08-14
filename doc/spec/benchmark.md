@@ -23,6 +23,13 @@ it contains downloadable copies of benchmark-owned etcd modules, then mounts it 
 into both agent environments with
 `GOPROXY=off`, `GOSUMDB=off`, `GOTOOLCHAIN=local`, and `GOVCS=*:off`. A missing dependency
 therefore fails locally instead of reopening network access or exposing another etcd revision.
+A Git-backed task whose hidden grader exercises test-only dependencies may set
+`runtime.preload_go_qualification_grader` to compile its declared `go test` grader in
+setup-only base and oracle snapshots before hidden tests are injected. The runner rejects that
+option for other source or grader kinds. This task-owned opt-in populates the exact qualification
+dependency graph without exposing hidden test source or adding a second package list. Only the
+base source snapshot is mounted into agent environments, and the cache rejection for
+benchmark-owned etcd modules applies after both preloads.
 
 Control and hpatch agents run on distinct internal Docker networks. Each network contains only
 its agent and assigned router; the routers separately attach to an egress network for model API

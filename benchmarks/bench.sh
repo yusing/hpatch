@@ -77,6 +77,7 @@ grader_command=()
 grader_name=
 baseline_output_contains=
 dependency_kind=none
+preload_go_qualification_grader=false
 read_probe=
 
 agent_timeout=
@@ -154,11 +155,29 @@ load_task_manifest() {
 	agent_timeout=$(jq -er '.agent_timeout_seconds' "$task_manifest")
 	grader_timeout=$(jq -er '.graders[0].timeout_seconds' "$task_manifest")
 	dependency_kind=$(jq -er '.runtime.dependency_kind // "go"' "$task_manifest")
+	preload_go_qualification_grader=$(jq -er \
+		'.runtime.preload_go_qualification_grader // false' "$task_manifest")
 	read_probe=$(jq -er '.runtime.read_probe // "go.mod"' "$task_manifest")
 	case $dependency_kind in
 	go|node|none) ;;
 	*)
 		printf 'bench.sh: unsupported dependency kind for %s: %s\n' "$task_id" "$dependency_kind" >&2
+		return 1
+		;;
+	esac
+	case $preload_go_qualification_grader in
+	true)
+		if [[ $source_kind != git || $dependency_kind != go ||
+			${grader_command[0]-} != go || ${grader_command[1]-} != test ]]; then
+			printf 'bench.sh: preload_go_qualification_grader requires Git source and a Go test grader for %s\n' \
+				"$task_id" >&2
+			return 1
+		fi
+		;;
+	false) ;;
+	*)
+		printf 'bench.sh: runtime.preload_go_qualification_grader must be true or false for %s\n' \
+			"$task_id" >&2
 		return 1
 		;;
 	esac
@@ -735,6 +754,7 @@ link_task_dependencies() {
 
 prepare_dependency_cache() {
 	local module
+	local oracle_dependency_repository
 	local -a project_modules=(
 		v3
 		api/v3
@@ -787,8 +807,41 @@ prepare_dependency_cache() {
 		printf 'bench.sh: cannot preload benchmark dependencies\n' >&2
 		return 1
 	fi
+	if [[ $preload_go_qualification_grader == true ]] &&
+		! "${compose[@]}" run \
+			--interactive=false \
+			--no-tty \
+			--rm \
+			--no-deps \
+			--user "$(id -u):$(id -g)" \
+			--env HOME=/tmp \
+			--volume "$dependency_workspace/repo:$dependency_workspace/repo" \
+			--workdir "$dependency_workspace/repo" \
+			dependency-loader \
+			"${grader_command[@]}" >/dev/null; then
+		printf 'bench.sh: cannot preload Go grader dependencies for %s\n' "$task_id" >&2
+		return 1
+	fi
+	if [[ $preload_go_qualification_grader == true ]]; then
+		oracle_dependency_repository="$dependency_workspace/oracle-repo"
+		snapshot "$oracle_commit" "$oracle_dependency_repository"
+		if ! "${compose[@]}" run \
+			--interactive=false \
+			--no-tty \
+			--rm \
+			--no-deps \
+			--user "$(id -u):$(id -g)" \
+			--env HOME=/tmp \
+			--volume "$oracle_dependency_repository:$oracle_dependency_repository" \
+			--workdir "$oracle_dependency_repository" \
+			dependency-loader \
+			"${grader_command[@]}" >/dev/null; then
+			printf 'bench.sh: cannot preload oracle Go grader dependencies for %s\n' "$task_id" >&2
+			return 1
+		fi
+	fi
 
-	if [[ $task_id != etcd-range-stream ]]; then
+	if [[ $task_id != etcd-range-stream && $task_id != etcd-fast-keys-range ]]; then
 		return
 	fi
 	# Workspace replacements own these modules. Their source must never appear
