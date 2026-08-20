@@ -39,7 +39,7 @@ func TestTranslateForHostReturnsCompleteSuccessAndFailureAccounting(t *testing.T
 
 	rejected, err := TranslateForHost(t.Context(), workspace, "in note.txt\ntype 1:ffff \"x\"\n", t.TempDir())
 	if err == nil {
-		t.Fatal("missing-hash selector unexpectedly succeeded")
+		t.Fatal("missing-hash target unexpectedly succeeded")
 	}
 	mutation := rejected.Invocation.value.Commands[commandOperationIndex("type")]
 	if mutation.Invocations != 1 || mutation.Errors != 1 || rejected.Invocation.value.Reasons[reasonRowStale] != 1 {

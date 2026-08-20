@@ -407,22 +407,6 @@ func TestHPatchPrepareRequestExposesEditToolsAndShell(t *testing.T) {
 	if _, exists := request.fields["instructions"]; exists {
 		t.Fatalf("prepareRequest added instructions: %s", request.fields["instructions"])
 	}
-	for _, obsoleteGuidance := range []string{
-		"Repairing a rejected script:",
-		"INDEX: COMMAND",
-		`INDEX.ROW: "VALUE"`,
-		": accept",
-	} {
-		if strings.Contains(exposed, obsoleteGuidance) {
-			t.Fatalf("standalone hpatch description includes obsolete recovery guidance %q: %q", obsoleteGuidance, exposed)
-		}
-	}
-	if strings.Contains(exposed, "type <<PATCH replacement or insertion consumes") {
-		t.Fatalf("standalone hpatch description retains obsolete indexed recovery framing: %q", exposed)
-	}
-	if strings.Contains(exposed, "workspace_id") {
-		t.Fatalf("standalone hpatch description retains workspace selection: %q", exposed)
-	}
 	if string(topTools[0]["future"]) != "true" {
 		t.Fatalf("unrelated top-level tool changed: %#v", topTools[0])
 	}
@@ -2067,7 +2051,7 @@ func TestHPatchHistoryDoesNotCrossWorkspacesSharingSessionIdentity(t *testing.T)
 		t.Fatalf("cross-workspace replay restored input %q", input)
 	}
 
-	history, err := second.translateRecovery("call-recovery", "C1:ffff drop", nil)
+	history, err := second.translateRecovery("call-recovery", "C1:ffff not-a-target", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2450,7 +2434,7 @@ func TestHPatchNonEvaluatorFailureDoesNotBecomeRecoveryBaseline(t *testing.T) {
 	if first.evaluatorRejected || strings.Contains(first.translationError, "Use hpatch without `in`") {
 		t.Fatalf("non-evaluator failure exposed recovery guidance: %+v", first)
 	}
-	second, err := transform.translateRecovery("call-2", "C1:ffff drop", nil)
+	second, err := transform.translateRecovery("call-2", "C1:ffff not-a-target", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2475,7 +2459,7 @@ func TestHPatchUnevaluatedRecoveryRunsOutcomeHookOnce(t *testing.T) {
 		t,
 		newManagedHPatchProxyWithDataDirectory(t, newInProcessHPatchTranslator(dataDirectory), dataDirectory),
 	)
-	payload := "C1:ffff drop"
+	payload := "C1:ffff not-a-target"
 	history, err := transform.translateRecovery("call-recovery", payload, nil)
 	if err != nil {
 		t.Fatal(err)

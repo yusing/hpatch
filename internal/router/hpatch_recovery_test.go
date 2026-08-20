@@ -35,12 +35,9 @@ func TestHPatchRecoveryGuidanceListsOnlyRowStaleTargetCommands(t *testing.T) {
 		recoveryCommands(script)[0].handle,
 		"replacement",
 		"broken",
-		"V4:",
-		"correction scope",
-		" target 37:8c2f",
 	} {
 		if strings.Contains(guidance, absent) {
-			t.Fatalf("guidance contains obsolete or unrelated %q:\n%s", absent, guidance)
+			t.Fatalf("guidance contains unrelated %q:\n%s", absent, guidance)
 		}
 	}
 }

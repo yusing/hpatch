@@ -576,9 +576,8 @@ line  range  text-single  text-multiple
 Targetless `type VALUE` initialization has no target counter. Anchored and unanchored text
 targets use the same counters. A text target with omitted count or count one is
 `text-single`; an explicit count intended to exceed one is
-`text-multiple`, including an invalid multiple count. Unsupported HPATCH/1 commands and
-unknown future commands are syntax failures but do not receive supported-command or
-target attribution.
+`text-multiple`, including an invalid multiple count. Unknown commands are syntax failures
+but do not receive supported-command or target attribution.
 
 Terminal command errors carry stable internal reason identifiers grouped as:
 
@@ -650,8 +649,7 @@ Acceptance:
 5. The input-overhead table has no plugin child rows. Net added input includes the signed difference
    between current and stock tool-result estimates.
 6. The six supported hpatch command counters and four target counters reconcile with
-   aggregate command attempts and errors. No selector, clipboard, editor-generation, or
-   script-level commit counter remains.
+   aggregate command attempts and errors.
 7. Every definition-bearing request increments the definition-request counter, while the exact
    installed tool collection, its reconciling per-tool breakdown, and the displaced baseline
    definition accumulate only once per distinct session. An absent session or definition
@@ -680,8 +678,8 @@ Acceptance:
 
 ## REQ-SCRIPT-001 — HPATCH/2 script grammar
 
-HPATCH/2 replaces HPATCH/1. There are no compatibility aliases. Outside a heredoc body,
-blank lines are ignored and every other physical line begins exactly one command:
+Outside a heredoc body, blank lines are ignored and every other physical line begins exactly
+one command:
 
 ```text
 in PATH
@@ -765,8 +763,7 @@ commands are invalid.
 
 Acceptance:
 
-1. Every accepted nonblank command is one of the six public commands; `type-`, `type+`,
-   `tsel`, `rsel`, `copy`, `cut`, `paste`, `del`, and script-level `commit` are syntax errors.
+1. Every accepted nonblank command is one of the six public commands.
 2. Line, range, anchored text, and unanchored text targets parse without a separate selection command, and inline
    replacement values remain distinguishable from a text target's quoted literal.
 3. Anchored and unanchored text targets accept JSON-escaped LF and exact multiline or
@@ -794,7 +791,7 @@ denote a different target from the retained command. Recovery
 has no operation keyword and cannot change operations, values, heredoc bodies, command count or
 order, or file context. Target parsing and script rebuilding preserve the public target literal's
 exact decoded bytes, including escaped LF, and enforce the same empty, CR, and control
-exclusions. There are no compatibility aliases, sentinel lines, or `accept` operation.
+exclusions.
 
 The router owns recovery grammar, parsing, handle resolution, ancestry, worktree isolation,
 dispatch, replay, diagnostics, and reevaluation. Every command handle resolves against the latest
@@ -842,11 +839,10 @@ Acceptance:
 7. Ordinary mutation-leading hpatch scripts are never detected as recovery.
 8. Per-attempt telemetry remains individual, while persistent metrics count every chain payload and one
    final or failed comparator.
-9. Removed `target`, `drop`, operation, value, value-row, and structural forms are syntax errors, not compatibility paths.
-10. One payload can correct multiple distinct command targets atomically without changing any other command field.
-11. A target correction can retarget an anchored or unanchored mutation to exact multiline
+9. One payload can correct multiple distinct command targets atomically without changing any other command field.
+10. A target correction can retarget an anchored or unanchored mutation to exact multiline
     text with escaped LF; rebuilding preserves the target bytes and public control exclusions.
-12. A target correction that denotes the retained target rejects before root reevaluation,
+11. A target correction that denotes the retained target rejects before root reevaluation,
     including an explicit default occurrence count, an equivalent quoted escape spelling, or a
     range whose two endpoints are the retained single row; the retained baseline and handles remain usable.
 
@@ -932,8 +928,7 @@ still stop at their authoritative boundary.
 
 Resolution produces one nonempty baseline span for a line or range and one or more
 nonempty spans for a text target. A mutation over multiple spans validates and registers
-all of them or none. There is no persistent selection, cursor, clipboard, shadow buffer,
-generation, or resume state.
+all of them or none.
 
 Acceptance:
 
@@ -981,8 +976,8 @@ Content movement requires emitting the destination content; `mv` moves whole fil
 
 Acceptance:
 
-1. Replacement, before insertion, after insertion, and deletion produce the specified
-   result directly from their targets without a selection command.
+1. Replacement, deletion, insertion before a line or text destination, and EOF append
+   produce the specified result directly from their targets or destination.
 2. Multi-match text mutation applies the same action to every requested match or none.
 3. Disjoint edits are script-order independent except for deliberate insertions at the
    same boundary, which retain script order.
@@ -1271,8 +1266,7 @@ Persistent guidance teaches this workflow:
 
 Acceptance:
 
-1. A model can choose and encode every HPATCH/2 operation from the persistent guidance without learning
-   HPATCH/1 state concepts.
+1. A model can choose and encode every HPATCH/2 operation from the persistent guidance.
 2. The installed prompt contains the central guidance exactly once and omits the pinned stock
    apply_patch, rg, and exec_command instructions.
 3. A configured legacy or marked customized prompt retains content before and after the owned

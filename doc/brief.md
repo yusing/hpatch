@@ -3,10 +3,8 @@
 ## Problem
 
 Agents describe edits with line-oriented diffs that repeat old content and unchanged
-context. HPATCH/1 reduces that repetition, but its separate selector, cursor, clipboard,
-and generation state makes simple mutations multi-command programs. A failed selector or
-state precondition discards the complete atomic script and can consume more output and
-model turns than the successful encoding saves.
+context. Repeating that context increases output, while ambiguous mutation boundaries can
+discard a complete atomic script and consume extra model turns.
 
 ## Outcome
 
@@ -60,8 +58,8 @@ wall time must remain close to control.
 - Private hgrep commands accept familiar ripgrep matching, context, and file-selection arguments
   and emit complete UTF-8 result rows as copyable path-and-`LINE:HASH` results.
 - Mutation-owned complete-line, inclusive line-range, and anchored literal targets.
-- Replacement, insertion immediately before or after a target, and deletion without a
-  separate selection, cursor, or clipboard protocol.
+- Replacement, insertion immediately before a line or text destination, EOF append, and
+  deletion.
 - Optional positive multiplicity for repeated anchored literal mutations.
 - File creation, movement, and deletion.
 - One immutable baseline per touched existing file for the complete script; overlapping
@@ -114,10 +112,6 @@ wall time must remain close to control.
 
 ## Non-goals
 
-- Compatibility aliases or legacy support for `tsel`, `rsel`, `copy`, `cut`, `paste`, or
-  script-level `commit`.
-- A persistent selection, cursor, clipboard, mutable shadow buffer, undo history, or
-  resume protocol.
 - Content movement without re-emitting the moved content; `mv` moves complete files only.
 - Selecting content introduced earlier in the same script. Dependent edits use a later
   inspected invocation.
@@ -139,7 +133,6 @@ wall time must remain close to control.
 
 ## Constraints
 
-- The HPATCH/2 grammar replaces HPATCH/1; compatibility is not required.
 - A routed row reference combines a positive one-based logical-line hint with a lowercase
   four-digit content hash. The hash verifies complete logical-line bytes, including
   indentation and excluding its terminator. A shifted row resolves only when the hash is unique.

@@ -33,8 +33,7 @@ The workspace owner retains each touched file's invocation-original identity and
 current logical path, pending lifecycle action, and ordered pending splices. Returning to
 a file reuses those values. A successful script orders the splices once and renders one
 original-to-final content value. No command materializes an intermediate baseline, and
-the engine owns no selection, cursor, clipboard, generation, mutable shadow buffer, or
-script-level commit state.
+all targets continue to resolve against the invocation-original content.
 
 One shared pure verified-row owner computes and renders `LINE:HASH` identity for routed
 reads under `REQ-READ-001`, target validation, repair context, and final-state previews.
@@ -97,10 +96,9 @@ and moved paths, last-edit summaries, net file counts, empty-file rows, and cont
 before any external effect. Apply and translation paths share this projection.
 
 The projection borrows completed editor content during rendering and retains no additional
-original or final content copy, routed-read history, translated patch, word diff, selection,
-cursor, clipboard, target, generation, or resume state. Its rows describe only successful
-completed state. The router consumes the rendered report and does not compute coordinates,
-hashes, command extents, or formatting adjustments.
+original or final content copy. Its rows describe only successful completed state. The router
+consumes the rendered report and does not compute coordinates, hashes, command extents, or
+formatting adjustments.
 
 ## CTR-BOUNDARY-001 — Filesystem and output boundary
 

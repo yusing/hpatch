@@ -107,7 +107,7 @@ func TestRecoverScriptRetargetsMultilineLiteral(t *testing.T) {
 	}
 }
 
-func TestRecoverScriptRejectsNonTargetDuplicateStaleAndRemovedForms(t *testing.T) {
+func TestRecoverScriptRejectsNonTargetDuplicateStaleAndMalformedPayloads(t *testing.T) {
 	script := "in file.go\n" + `type 1:aaaa "bad"` + "\n"
 	commands := recoveryCommands(script)
 	handle := commands[1].handle
@@ -115,9 +115,8 @@ func TestRecoverScriptRejectsNonTargetDuplicateStaleAndRemovedForms(t *testing.T
 		commands[0].handle + " 2:bbbb",
 		"C2:ffff 2:bbbb",
 		handle + " 2:bbbb\n" + handle + " 3:cccc",
-		handle + " target 2:bbbb",
-		handle + ` value "fixed"`,
-		handle + " drop",
+		handle + " not-a-target",
+		handle + " 2:bbbb trailing",
 		handle + "  2:bbbb",
 		handle + "\t2:bbbb",
 		handle + ` 2:bbbb  "literal"`,

@@ -7,7 +7,7 @@ import (
 
 // InvocationMetrics is evaluator-owned accounting returned by TranslateForHost.
 // Its representation remains private so hosts cannot construct inconsistent
-// command, selector, outcome, and reason totals.
+// command, target, outcome, and reason totals.
 type InvocationMetrics struct {
 	value invocationMetrics
 }

@@ -7,9 +7,9 @@ import (
 	"testing"
 )
 
-func TestDashboardGainStateHasNoRemovedBlockTableReference(t *testing.T) {
+func TestDashboardGainStateHasNoBlockTableReference(t *testing.T) {
 	if strings.Contains(string(dashboardHTML), "blocks:blocks.tbody") {
-		t.Fatal("dashboard gain state references the removed block selector table")
+		t.Fatal("dashboard gain state references an unsupported block table")
 	}
 }
 

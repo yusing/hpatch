@@ -120,7 +120,7 @@ func TestHPatchExactEvidenceMalformedRecoveryIsRouterRejected(t *testing.T) {
 	directory := t.TempDir()
 	t.Setenv(hpatchExactEvidenceEnvironment, directory)
 	transform, _, _, _ := newHPatchTestTransform(t, testTranslator(t, new(int)))
-	payload := "C1:ffff drop\n"
+	payload := "C1:ffff not-a-target\n"
 	history, err := transform.translateRecovery("call-malformed", payload, nil)
 	if err != nil {
 		t.Fatal(err)

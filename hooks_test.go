@@ -370,8 +370,8 @@ func TestErrorAndOutcomeHooksReceiveAttemptMetadata(t *testing.T) {
 	}
 
 	evaluatedScript := "new note.txt\ntype \"ok\"\n"
-	recoveryPayload := "C2:abcd target 2:bbbb"
-	delta := "C2:abcd target: 1:aaaa -> 2:bbbb"
+	recoveryPayload := "C2:abcd 2:bbbb"
+	delta := "C2:abcd: 1:aaaa -> 2:bbbb"
 	recoveryMetadata := AttemptMetadata{
 		SessionID:       "session-1",
 		CorrelationID:   "chain-1",
