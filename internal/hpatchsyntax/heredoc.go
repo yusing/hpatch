@@ -80,8 +80,7 @@ func FrameCommand(lines []PhysicalLine, headerIndex int, command string) (Comman
 
 func isInlineQuotedCommand(command string) bool {
 	return strings.HasPrefix(command, "type ") ||
-		strings.HasPrefix(command, "type- ") ||
-		strings.HasPrefix(command, "type+ ")
+		strings.HasPrefix(command, "add ")
 }
 
 func scanQuotedOperand(text string, quoteOpen bool) bool {
@@ -107,7 +106,7 @@ func scanQuotedOperand(text string, quoteOpen bool) bool {
 
 func heredocDelimiter(command string) (string, error) {
 	operation, _, _ := strings.Cut(command, " ")
-	if operation != "type" && operation != "type-" && operation != "type+" {
+	if operation != "type" && operation != "add" {
 		return "", nil
 	}
 	marker := unquotedDoubleLess(command)

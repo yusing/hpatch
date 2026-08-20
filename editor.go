@@ -128,6 +128,8 @@ func (e *editor) resolveTarget(target targetSpec) ([]targetSpan, error) {
 			spans[index] = targetSpan{start: start, end: start + len(target.literal)}
 		}
 		return spans, nil
+	case targetEOF:
+		return []targetSpan{{start: len(e.baseline), end: len(e.baseline)}}, nil
 	default:
 		return nil, withReason(reasonInitialization, fmt.Errorf("mutation requires an explicit target"))
 	}
@@ -281,10 +283,8 @@ func (e *editor) applyMutation(operation string, target targetSpec, value string
 			if replacement != "" && span.linewise && lineTerminatorSuffix(replacement) == "" {
 				replacement += lineTerminatorSuffix(e.baseline[span.start:span.end])
 			}
-		case "type-":
+		case "add":
 			end = start
-		case "type+":
-			start = end
 		default:
 			panic("parsed instruction has no mutation executor: " + operation)
 		}

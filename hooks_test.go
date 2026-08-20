@@ -127,11 +127,11 @@ func TestErrorHookFailureDoesNotReplaceDiagnostic(t *testing.T) {
 	dataDirectory := t.TempDir()
 	writeSettingsForTest(t, dataDirectory, []string{"exit 7"})
 
-	result, err := applyForHostAtTest(t, root, "del\n", dataDirectory)
+	result, err := applyForHostAtTest(t, root, "unknown-command\n", dataDirectory)
 	if err == nil {
 		t.Fatal("ApplyForHost() unexpectedly succeeded")
 	}
-	if !strings.HasPrefix(result.Diagnostic, "del: command 1, reason script-syntax: unknown or malformed command\n") {
+	if !strings.HasPrefix(result.Diagnostic, "unknown-command: command 1, reason script-syntax: unknown or malformed command\n") {
 		t.Fatalf("original diagnostic was not preserved: %q", result.Diagnostic)
 	}
 	if !strings.Contains(result.Diagnostic, "hpatch: warning: running error hook 1: exit status 7\n") {
@@ -149,7 +149,7 @@ func TestSettingsAreReadOnlyForEvaluationFailures(t *testing.T) {
 	if _, err := applyForHostAtTest(t, root, "new note.txt\ntype \"ok\"\n", dataDirectory); err != nil {
 		t.Fatalf("successful ApplyForHost() error = %v", err)
 	}
-	result, err := applyForHostAtTest(t, root, "del\n", dataDirectory)
+	result, err := applyForHostAtTest(t, root, "unknown-command\n", dataDirectory)
 	if err == nil || !strings.Contains(result.Diagnostic, "hpatch: warning: decoding settings:") {
 		t.Fatalf("failed ApplyForHost() error = %v, diagnostic %q", err, result.Diagnostic)
 	}
@@ -292,7 +292,7 @@ func TestRejectedAttemptReportsSettingsFailureOnce(t *testing.T) {
 	}
 	ctx := WithAttemptMetadata(t.Context(), AttemptMetadata{SessionID: "session", CorrelationID: "chain", CallID: "call", Attempt: 1})
 
-	translated, err := TranslateForHost(ctx, Workspace{Root: root}, "del\n", dataDirectory)
+	translated, err := TranslateForHost(ctx, Workspace{Root: root}, "unknown-command\n", dataDirectory)
 	if err == nil {
 		t.Fatalf("TranslateForHost() translation = %+v, want rejection", translated)
 	}
@@ -330,7 +330,7 @@ func TestErrorAndOutcomeHooksReceiveAttemptMetadata(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	rejectedScript := "del\n"
+	rejectedScript := "unknown-command\n"
 	rejectedMetadata := AttemptMetadata{
 		SessionID:       "session-1",
 		CorrelationID:   "chain-1",
@@ -362,7 +362,7 @@ func TestErrorAndOutcomeHooksReceiveAttemptMetadata(t *testing.T) {
 		"Stage: `evaluated`",
 		"Outcome: `rejected`",
 		"## Emitted hpatch script",
-		"```hpatch\ndel\n```",
+		"```hpatch\nunknown-command\n```",
 	} {
 		if !strings.Contains(string(outcome), want) {
 			t.Fatalf("rejected outcome hook lacks %q:\n%s", want, outcome)

@@ -172,15 +172,15 @@ func TestHPatch2FinalStateReportIsBounded(t *testing.T) {
 func TestHPatch2InsertionReportNamesTargetRange(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, root, "file.txt", "alpha\nbeta\n", 0o644)
-	script := "in file.txt\ntype+ " + row(1, "alpha") + ` "inserted\n"`
+	script := "in file.txt\nadd " + row(2, "beta") + ` "inserted\n"`
 	result, err := applyForHostAtTest(t, root, script, "")
 	if err != nil {
 		t.Fatalf("ApplyForHost() error = %v, report %q", err, result.Report)
 	}
-	if !strings.Contains(result.Report, "last type+ file.txt 1 ranges 1:1-2:1\n") {
+	if !strings.Contains(result.Report, "last add file.txt 1 ranges 2:1-3:1\n") {
 		t.Fatalf("report = %q", result.Report)
 	}
-	if !strings.Contains(result.Report, "refs 2 type+ file.txt\n") {
+	if !strings.Contains(result.Report, "refs 2 add file.txt\n") {
 		t.Fatalf("report = %q", result.Report)
 	}
 }
@@ -278,7 +278,7 @@ func TestHPatch2FinalReferencesCoverCommandsFilesAndContinuation(t *testing.T) {
 		"type " + row(2, "a1") + " \"A1\"\n" +
 		"type " + row(4, "a3") + " \"A3\"\n" +
 		"in second.txt\n" +
-		"type+ " + row(2, "b1") + " \"inserted\\n\""
+		"add " + row(3, "b2") + " \"inserted\\n\""
 	result, err := applyForHostAtTest(t, root, script, "")
 	if err != nil {
 		t.Fatalf("ApplyForHost() error = %v, report %q", err, result.Report)
@@ -286,7 +286,7 @@ func TestHPatch2FinalReferencesCoverCommandsFilesAndContinuation(t *testing.T) {
 
 	firstHeader := "refs 2 type first.txt\n"
 	secondHeader := "refs 3 type first.txt\n"
-	thirdHeader := "refs 5 type+ second.txt\n"
+	thirdHeader := "refs 5 add second.txt\n"
 	firstIndex := strings.Index(result.Report, firstHeader)
 	secondIndex := strings.Index(result.Report, secondHeader)
 	thirdIndex := strings.Index(result.Report, thirdHeader)

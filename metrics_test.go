@@ -135,11 +135,11 @@ func TestLoadGainMetricsMatchesGainReportTotals(t *testing.T) {
 		}},
 	})
 	entry := metrics{}
-	entry.Commands[commandOperationIndex("type+")].Invocations = 1
-	entry.Commands[commandOperationIndex("type+")].Errors = 1
+	entry.Commands[commandOperationIndex("add")].Invocations = 1
+	entry.Commands[commandOperationIndex("add")].Errors = 1
 	entry.Targets[targetVariantLine-1] = commandMetric{Invocations: 1, Errors: 1}
 	entry.Reasons[reasonRowStale] = 1
-	entry.CommandReasons[commandOperationIndex("type+")][reasonRowStale] = 1
+	entry.CommandReasons[commandOperationIndex("add")][reasonRowStale] = 1
 	if err := updateMetrics(dataDirectory, entry); err != nil {
 		t.Fatal(err)
 	}
@@ -161,10 +161,10 @@ func TestLoadGainMetricsMatchesGainReportTotals(t *testing.T) {
 		got.ToolInputs[0].StockTokens != 10 || got.ToolInputs[0].Reduction != "-100.0" {
 		t.Fatalf("tool input estimates = %#v", got.ToolInputs)
 	}
-	if len(got.Commands) != commandCount || got.Commands[commandOperationIndex("type+")].Errors != 1 {
+	if len(got.Commands) != commandCount || got.Commands[commandOperationIndex("add")].Errors != 1 {
 		t.Fatalf("commands = %#v", got.Commands)
 	}
-	if len(got.CommandReasons) != 1 || got.CommandReasons[0].Command != "type+" || got.CommandReasons[0].Reason != "row-stale" {
+	if len(got.CommandReasons) != 1 || got.CommandReasons[0].Command != "add" || got.CommandReasons[0].Reason != "row-stale" {
 		t.Fatalf("command reasons = %#v", got.CommandReasons)
 	}
 }
@@ -197,9 +197,9 @@ func TestGainReportsCommandInvocationsErrorsAndRates(t *testing.T) {
 		script  string
 		success bool
 	}{
-		{name: "success with unrelated command-name text", args: []string{"translate"}, script: "new note.txt\ntype \"type+ future-command\"\n", success: true},
+		{name: "success with unrelated command-name text", args: []string{"translate"}, script: "new note.txt\ntype \"future-command data\"\n", success: true},
 		{name: "execution error", args: []string{"translate"}, script: "new failed.txt\ntype \"ignored\"\ntype 1:ffff \"x\"\n"},
-		{name: "removed numeric selector", args: []string{"translate"}, script: "sel 0 1:1\n"},
+		{name: "unknown command", args: []string{"translate"}, script: "unknown-command 0 1:1\n"},
 		{name: "unknown future command", args: []string{"translate"}, script: "future-command\n"},
 		{name: "successful no-op", script: "new transient.txt\nrm\n", success: true},
 	}

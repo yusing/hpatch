@@ -8,9 +8,9 @@ import (
 func TestEditTextAppliesOrdinaryMutationsToImmutableBaseline(t *testing.T) {
 	baseline := "one\ntwo\n"
 	script := strings.Join([]string{
-		`type- ` + row(1, "one") + ` "zero\n"`,
+		`add ` + row(1, "one") + ` "zero\n"`,
 		`type ` + row(2, "two") + ` "TWO"`,
-		`type+ ` + row(2, "two") + ` "tail\n"`,
+		`add EOF "tail\n"`,
 	}, "\n")
 	got, err := EditText(t.Context(), baseline, script)
 	if err != nil {

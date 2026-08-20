@@ -81,7 +81,7 @@ func scenarios() []scenario {
 			initial: map[string]string{
 				"service.go": "func run() {\n\tprepare()\n\texecute()\n}\n",
 			},
-			script: "in service.go\ntype+ 2:83b5..3:a42e \"\\tprepare()\\n\\texecute()\\n\"\n",
+			script: "in service.go\nadd 4:d10b \"\\tprepare()\\n\\texecute()\\n\"\n",
 			patch:  "*** Begin Patch\n*** Update File: service.go\n@@\n \tprepare()\n \texecute()\n+\tprepare()\n+\texecute()\n*** End Patch\n",
 		},
 		{

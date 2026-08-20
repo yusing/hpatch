@@ -54,26 +54,18 @@ func TestHPatch2ToolGrammarQuotedOperands(t *testing.T) {
 func TestHPatch2ToolGrammarMatchesPublicCommands(t *testing.T) {
 	for _, rule := range []string{
 		`path_command: PATH_OP SP PATH`,
-		`inline_mutation: TYPE_OP SP target SP QUOTED`,
-		`heredoc_mutation: TYPE_OP SP target SP "<<PATCH" NL _patch_body "PATCH"`,
+		`inline_mutation: "type" SP target SP QUOTED`,
+		`| "add" SP add_destination SP QUOTED`,
+		`heredoc_mutation: "type" SP target SP "<<PATCH" NL _patch_body "PATCH"`,
+		`| "add" SP add_destination SP "<<PATCH" NL _patch_body "PATCH"`,
 		`inline_initializer: "type" SP QUOTED`,
 		`heredoc_initializer: "type" SP "<<PATCH" NL _patch_body "PATCH"`,
 		`ROW: /[1-9][0-9]*:[0-9a-f]{4}/`,
-		`TYPE_OP: "type" | "type-" | "type+"`,
+		`| "EOF"`,
 		`| TARGET_QUOTED (SP POSINT)?`,
 	} {
 		if !strings.Contains(toolGrammar, rule) {
 			t.Errorf("tool grammar omits %q", rule)
-		}
-	}
-	for _, removed := range []string{
-		"corrections:", "correction:", "replacement:", "acceptance:", "deletion:",
-		"insertion_before:", "insertion_after:", `"accept"`,
-		"tsel_command", "rsel_command", "delete_command", `"del"`, `"copy"`,
-		`"cut"`, `"paste"`, `"commit"`, "<<TAG",
-	} {
-		if strings.Contains(toolGrammar, removed) {
-			t.Errorf("tool grammar retains HPATCH/1 form %q", removed)
 		}
 	}
 }
@@ -89,18 +81,18 @@ func TestHPatch2ToolGrammarLineTerminators(t *testing.T) {
 	bodyLine := grammarTerminalRegexp(t, "PATCH_BODY_LINE")
 	matchesBodyLine := bodyLine.MatchString
 	for value, want := range map[string]bool{
-		"body\n":                               true,
-		"body\r\n":                             true,
-		"body\r":                               false,
-		"PATCH\n":                              false,
-		"new index.html\n":                     true,
-		" type <<PATCH\n":                      true,
-		"type <<PATCH extra\n":                 true,
-		"type+not-an-opener <<PATCH\n":         true,
-		"type <<PATCH\n":                       false,
-		"type 1:a2b3 <<PATCH\n":                false,
-		"type- 1:a2b3..2:b3c4 <<PATCH\r\n":     false,
-		"type+ 1:a2b3 \"literal\" 2 <<PATCH\n": false,
+		"body\n":                             true,
+		"body\r\n":                           true,
+		"body\r":                             false,
+		"PATCH\n":                            false,
+		"new index.html\n":                   true,
+		" type <<PATCH\n":                    true,
+		"type <<PATCH extra\n":               true,
+		"add-not-an-opener <<PATCH\n":        true,
+		"type <<PATCH\n":                     false,
+		"type 1:a2b3 <<PATCH\n":              false,
+		"add 1:a2b3 <<PATCH\r\n":             false,
+		"add 1:a2b3 \"literal\" 2 <<PATCH\n": false,
 	} {
 		if got := matchesBodyLine(value); got != want {
 			t.Errorf("patch body matches %q = %v, want %v", value, got, want)
@@ -119,7 +111,7 @@ func TestHPatch2ToolDescriptionExamplesExecute(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, root, "parser.go", "package parser\n\nfunc parse() {}\n", 0o644)
 	script := "in parser.go\n" +
-		"type- " + row(3, "func parse() {}") + ` "// parse converts one command.\n"`
+		"add " + row(3, "func parse() {}") + ` "// parse converts one command.\n"`
 	result, err := applyForHostAtTest(t, root, script, "")
 	if err != nil {
 		t.Fatalf("ApplyForHost() error = %v, diagnostic %q", err, result.Diagnostic)

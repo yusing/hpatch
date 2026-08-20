@@ -207,7 +207,7 @@ func commandCategory(operation string) string {
 	switch operation {
 	case "in", "new", "mv", "rm":
 		return "file"
-	case "type", "type-", "type+":
+	case "type", "add":
 		return "edit"
 	default:
 		panic("parsed instruction has no diagnostic category: " + operation)

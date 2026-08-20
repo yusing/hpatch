@@ -419,12 +419,12 @@ anchor is ignored; extra matches still reject. An unanchored text target starts 
 Every requested non-overlapping match must exist. Use the unanchored form when
 exact current text is already known and a row would add no disambiguation.
 
-Commands are `in` / `new` / `mv` / `rm`, target-bearing `type` / `type-` / `type+`,
-and one targetless `type VALUE` immediately after `new`.
+Commands are `in` / `new` / `mv` / `rm`, target-bearing `type`, destination-bearing
+`add`, and one targetless `type VALUE` immediately after `new`.
 
 Rules worth remembering:
 
-- Use `type` with a nonempty value to replace, `type` with an empty value to delete, `type-` to insert before, and `type+` to insert after.
+- Use `type` with a nonempty value to replace and `type` with an empty value to delete. Use `add LINE VALUE` or `add TEXT VALUE` to insert immediately before that destination, and `add EOF VALUE` to append. Ranges are not add destinations.
 - Plan related reads before calling hread through shell. Hread accepts one path and optional range per command; batch known reads as separate hread commands in one shell script. Use explicit ranges after relevant locations are known, and remember that a bare path intentionally reads the complete file. A start past EOF fails; only an end past EOF returns available rows with a warning.
 - Plan related searches before calling hgrep through shell: combine known patterns and paths in one command and use repeated `-e` for multiple patterns. Copy current `LINE:HASH` rows directly when sufficient.
 - After an edit, do not read or search a changed file or a directory containing one merely to inspect, verify, or locate a follow-up target. Reuse the exact authored value, final-state row, or confirmed target mapping when available.

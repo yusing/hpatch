@@ -61,8 +61,7 @@ new PATH
 mv PATH
 rm
 type TARGET VALUE
-type- TARGET VALUE
-type+ TARGET VALUE
+add DESTINATION VALUE
 ```
 
 `in` selects an existing file. `new` selects a pending empty file. `mv` moves the active
@@ -79,9 +78,9 @@ LINE:HASH "TEXT" [N]              first N exact matches from that row through EO
 ```
 
 `type` replaces. An empty target-bearing `type` value deletes every target span, including
-terminators owned by line and range targets. `type-` inserts before while preserving the
-target; `type+` inserts after while preserving it. A text target defaults to one match;
-every requested non-overlapping match must exist or the script rejects.
+terminators owned by line and range targets. `add` inserts before a line or text destination;
+`add EOF` appends. Ranges are not add destinations. A text target defaults to one match; every
+requested non-overlapping match must exist or the script rejects.
 When exact known target text spans logical lines or includes a trailing LF, encode that LF as
 `\n` (or an equivalent `\u000A`) inside the quoted anchored or unanchored target. Keep the target
 on one physical command line. Literal tab is accepted; carriage returns and other controls are
@@ -90,12 +89,12 @@ Before writing `N > 1`, count the exact literal occurrences in the acquired immu
 never infer `N` from the number of intended replacements. If the count is not already visible,
 use hgrep or separate verified row anchors instead of guessing it.
 
-Use inline JSON-compatible strings for short or single-line values. Include `\n` when a
-before/after insertion must form a complete new line:
+Use inline JSON-compatible strings for short or single-line values. Include `\n` when an
+insertion must form a complete new line:
 
 ```text
 in parser.go
-type- 37:8c2f "// parseCommand parses one physical script line.\n"
+add 37:8c2f "// parseCommand parses one physical script line.\n"
 type "return oldResult, nil" "return newResult, nil"
 ```
 
@@ -110,7 +109,7 @@ func calculateResult(input Input) (Result, error) {
 PATCH
 ```
 
-An unindented heredoc body line that begins with `type `, `type- `, or `type+ ` and then
+An unindented heredoc body line that begins with `type ` or `add ` and then
 contains only `<<PATCH` or ends with ` <<PATCH` is reserved as a nested opener. Close the
 current frame first; use an inline value or indent literal HPATCH examples.
 
@@ -153,8 +152,8 @@ target.
 
 Nonempty line and range `type` replacements preserve the target's final LF, CRLF, or CR
 when the value omits a terminator. Explicit terminators are authoritative. An empty
-target-bearing `type` value removes owned terminators. `type-` and `type+` insert
-byte-exact values and do not synthesize newlines.
+target-bearing `type` value removes owned terminators. `add` inserts byte-exact values and
+does not synthesize newlines.
 
 Overlapping replacements or deletions and insertions strictly inside them reject. Boundary
 insertions are valid. Multiple insertions at the same boundary render in script order.

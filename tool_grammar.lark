@@ -10,8 +10,10 @@ script: command (_separator command)*
         | heredoc_initializer
 
 path_command: PATH_OP SP PATH
-inline_mutation: TYPE_OP SP target SP QUOTED
-heredoc_mutation: TYPE_OP SP target SP "<<PATCH" NL _patch_body "PATCH"
+inline_mutation: "type" SP target SP QUOTED
+               | "add" SP add_destination SP QUOTED
+heredoc_mutation: "type" SP target SP "<<PATCH" NL _patch_body "PATCH"
+                | "add" SP add_destination SP "<<PATCH" NL _patch_body "PATCH"
 inline_initializer: "type" SP QUOTED
 heredoc_initializer: "type" SP "<<PATCH" NL _patch_body "PATCH"
 
@@ -20,13 +22,17 @@ heredoc_initializer: "type" SP "<<PATCH" NL _patch_body "PATCH"
        | ROW SP TARGET_QUOTED (SP POSINT)?
        | TARGET_QUOTED (SP POSINT)?
 
+?add_destination: ROW
+                | ROW SP TARGET_QUOTED (SP POSINT)?
+                | TARGET_QUOTED (SP POSINT)?
+                | "EOF"
+
 
 _separator: NL _blank_line*
 _blank_line: HSPACE? NL
 _patch_body: (PATCH_BODY_LINE | NL)*
 
 PATH_OP: "in" | "new" | "mv"
-TYPE_OP: "type" | "type-" | "type+"
 ROW: /[1-9][0-9]*:[0-9a-f]{4}/
 POSINT: /[1-9][0-9]*/
 
@@ -36,4 +42,4 @@ PATH: /[^\r\n]+/
 NL: /\r?\n/
 QUOTED: /"(?:\\(?:["\\\/bfnrt]|u[0-9A-Fa-f]{4})|[^\x00-\x1F"\\]|\t)*"/
 TARGET_QUOTED: /"(?:\\(?:["\\\/nt]|u(?:000[9Aa]|00[2-9A-Fa-f][0-9A-Fa-f]|0[1-9A-Fa-f][0-9A-Fa-f]{2}|[1-9A-Fa-f][0-9A-Fa-f]{3}))|[^\x00-\x1F"\\]|\t)+"/
-PATCH_BODY_LINE: /(?:(?:PATCH[^\r\n]+|PATC[^H\r\n][^\r\n]*|PAT[^C\r\n][^\r\n]*|PA[^T\r\n][^\r\n]*|P[^A\r\n][^\r\n]*|PATC|PAT|PA|P|[^Pt\r\n][^\r\n]*)|(?:t|t[^y\r\n][^\r\n]*|ty|ty[^p\r\n][^\r\n]*|typ|typ[^e\r\n][^\r\n]*|type|type[^ +\r\n-][^\r\n]*|type[+-]|type[+-][^ \r\n][^\r\n]*)|type(?:[+-])? (?:[^\r\n]{0,6}|[^<\r\n][^\r\n]{6}|<[^<\r\n][^\r\n]{5}|<<[^P\r\n][^\r\n]{4}|<<P[^A\r\n][^\r\n]{3}|<<PA[^T\r\n][^\r\n]{2}|<<PAT[^C\r\n][^\r\n]|<<PATC[^H\r\n]|[^\r\n]*[^ \r\n][^\r\n]{7}|[^\r\n]* [^<\r\n][^\r\n]{6}|[^\r\n]* <[^<\r\n][^\r\n]{5}|[^\r\n]* <<[^P\r\n][^\r\n]{4}|[^\r\n]* <<P[^A\r\n][^\r\n]{3}|[^\r\n]* <<PA[^T\r\n][^\r\n]{2}|[^\r\n]* <<PAT[^C\r\n][^\r\n]|[^\r\n]* <<PATC[^H\r\n]))(?:\r\n|\n)/
+PATCH_BODY_LINE: /(?:(?:PATCH[^\r\n]+|PATC[^H\r\n][^\r\n]*|PAT[^C\r\n][^\r\n]*|PA[^T\r\n][^\r\n]*|P[^A\r\n][^\r\n]*|PATC|PAT|PA|P|[^Pat\r\n][^\r\n]*)|(?:t|t[^y\r\n][^\r\n]*|ty|ty[^p\r\n][^\r\n]*|typ|typ[^e\r\n][^\r\n]*|type|type[^ \r\n][^\r\n]*|a|a[^d\r\n][^\r\n]*|ad|ad[^d\r\n][^\r\n]*|add|add[^ \r\n][^\r\n]*)|(?:type|add) (?:[^\r\n]{0,6}|[^<\r\n][^\r\n]{6}|<[^<\r\n][^\r\n]{5}|<<[^P\r\n][^\r\n]{4}|<<P[^A\r\n][^\r\n]{3}|<<PA[^T\r\n][^\r\n]{2}|<<PAT[^C\r\n][^\r\n]|<<PATC[^H\r\n]|[^\r\n]*[^ \r\n][^\r\n]{7}|[^\r\n]* [^<\r\n][^\r\n]{6}|[^\r\n]* <[^<\r\n][^\r\n]{5}|[^\r\n]* <<[^P\r\n][^\r\n]{4}|[^\r\n]* <<P[^A\r\n][^\r\n]{3}|[^\r\n]* <<PA[^T\r\n][^\r\n]{2}|[^\r\n]* <<PAT[^C\r\n][^\r\n]|[^\r\n]* <<PATC[^H\r\n]))(?:\r\n|\n)/

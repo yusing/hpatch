@@ -43,12 +43,12 @@ func EditText(ctx context.Context, baseline, script string) (string, error) {
 			return "", err
 		}
 		if command.target.kind == targetNone ||
-			(command.operation != "type" && command.operation != "type-" && command.operation != "type+") {
+			(command.operation != "type" && command.operation != "add") {
 			return "", textEditCommandError(
 				command,
 				index+1,
 				reasonSyntax,
-				"text edit accepts only target-bearing type, type-, or type+",
+				"text edit accepts only target-bearing type or add",
 			)
 		}
 		origin := editOrigin{
@@ -181,7 +181,7 @@ func RewriteTargetAliasesWithDiagnostics(script string, aliases []TargetAlias) (
 			activePath = command.path
 		case "rm":
 			activePath = ""
-		case "type", "type-", "type+":
+		case "type", "add":
 			if command.target.kind != targetLine && command.target.kind != targetRange {
 				continue
 			}

@@ -74,7 +74,7 @@ func hpatchRecoveryCommandSummary(command recoveryCommandReference) string {
 	}
 	header, _, _ := strings.Cut(command.command, "\n")
 	operation, operands := recoveryToken(header)
-	if operation == "type" || operation == "type-" || operation == "type+" {
+	if operation == "type" || operation == "add" {
 		target, _ := recoveryToken(operands)
 		if recoveryRowOrRange(target) {
 			return operation + " " + target + " [malformed value]"

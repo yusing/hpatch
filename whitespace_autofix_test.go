@@ -74,7 +74,7 @@ func TestWhitespaceAutofixCleansInsertedDuplicateOnly(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, root, "file.txt", "X  \n", 0o644)
 
-	script := "in file.txt\ntype- " + row(1, "X  ") + " " + strconv.Quote("A\nX  \n")
+	script := "in file.txt\nadd " + row(1, "X  ") + " " + strconv.Quote("A\nX  \n")
 	result, err := applyForHostAtTest(t, root, script, "")
 	if err != nil {
 		t.Fatalf("ApplyForHost() error = %v, report %q", err, result.Report)
@@ -144,7 +144,7 @@ func TestWhitespaceAutofixRemovesNewBlankLinesAtEOF(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, root, "file.txt", "alpha\n", 0o644)
 
-	script := "in file.txt\ntype+ " + row(1, "alpha") + " " + strconv.Quote("beta\n \t\n")
+	script := "in file.txt\nadd EOF " + strconv.Quote("beta\n \t\n")
 	result, err := applyForHostAtTest(t, root, script, "")
 	if err != nil {
 		t.Fatalf("ApplyForHost() error = %v, report %q", err, result.Report)

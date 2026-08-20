@@ -3219,7 +3219,7 @@ func TestInProcessHPatchTranslatorUsesBaseDirectoryWithoutConfinement(t *testing
 		t.Fatal(err)
 	}
 
-	translated, err := translator.Translate(t.Context(), directory, "in existing.txt\ntype+ 1:a793 \"inserted\\n\"\ntype 3:b1e9 \"THIRD\"\n")
+	translated, err := translator.Translate(t.Context(), directory, "in existing.txt\nadd 2:1636 \"inserted\\n\"\ntype 3:b1e9 \"THIRD\"\n")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -3232,7 +3232,7 @@ func TestInProcessHPatchTranslatorUsesBaseDirectoryWithoutConfinement(t *testing
 		t.Fatalf("translation report = %q", translated.report)
 	}
 	for _, required := range []string{
-		"refs 2 type+ existing.txt\n",
+		"refs 2 add existing.txt\n",
 		"refs 3 type existing.txt\n",
 		"2:e8dd inserted\n",
 		"4:1186 THIRD\n",

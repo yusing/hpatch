@@ -564,7 +564,7 @@ supported command. Successfully evaluated commands retain their invocation count
 later output or filesystem-commit boundary fails. Supported command counters are:
 
 ```text
-in  new  mv  rm  type  type-  type+
+in  new  mv  rm  type  add
 ```
 
 Every structurally recognized explicit target attempt increments one target counter:
@@ -649,7 +649,7 @@ Acceptance:
    all-tools row.
 5. The input-overhead table has no plugin child rows. Net added input includes the signed difference
    between current and stock tool-result estimates.
-6. The seven supported hpatch command counters and four target counters reconcile with
+6. The six supported hpatch command counters and four target counters reconcile with
    aggregate command attempts and errors. No selector, clipboard, editor-generation, or
    script-level commit counter remains.
 7. Every definition-bearing request increments the definition-request counter, while the exact
@@ -689,8 +689,7 @@ new PATH
 mv PATH
 rm
 type TARGET VALUE
-type- TARGET VALUE
-type+ TARGET VALUE
+add DESTINATION VALUE
 type VALUE
 ```
 
@@ -709,6 +708,10 @@ LINE  := positive one-based decimal logical line
 HASH  := exactly four lowercase hexadecimal digits
 COUNT := positive decimal integer; default 1
 ```
+
+An add destination is a single `ROW`, an anchored or unanchored text target, or the literal
+`EOF`. `add` does not accept a range. `EOF` is a destination sentinel rather than a target
+and contributes no target metric.
 
 No whitespace is permitted inside `ROW..ROW`. A line target owns the complete logical
 line, including its terminator when one exists. A range owns all
@@ -747,12 +750,12 @@ The grammar is unambiguous by operand shape. For example:
 
 ```text
 type 12:a1b2 "line replacement"
-type- 37:8c2f "// parseCommand parses one physical script line.\n"
+add 37:8c2f "// parseCommand parses one physical script line.\n"
 type 12:a1b2 "needle" "replacement"
 type 12:a1b2 "needle" 3 "replacement"
 type "known current text" "replacement"
-type+ 12:a1b2..15:c3d4 <<PATCH
-inserted after the range
+add EOF <<PATCH
+appended text
 PATCH
 ```
 
@@ -762,8 +765,8 @@ commands are invalid.
 
 Acceptance:
 
-1. Every accepted nonblank command is one of the seven public commands; `tsel`, `rsel`,
-   `copy`, `cut`, `paste`, `del`, and script-level `commit` are syntax errors.
+1. Every accepted nonblank command is one of the six public commands; `type-`, `type+`,
+   `tsel`, `rsel`, `copy`, `cut`, `paste`, `del`, and script-level `commit` are syntax errors.
 2. Line, range, anchored text, and unanchored text targets parse without a separate selection command, and inline
    replacement values remain distinguishable from a text target's quoted literal.
 3. Anchored and unanchored text targets accept JSON-escaped LF and exact multiline or
@@ -780,8 +783,9 @@ Acceptance:
 ## REQ-CORRECT-001 — Rejected-script recovery
 
 The router exposes a separate model-visible `functions.hpatch_recover` custom tool with an
-independent embedded Lark grammar. Recovery is unavailable from root public APIs, root `tool_grammar.lark`, and ordinary `functions.hpatch`. A payload beginning with `type`,
-`type-`, or `type+` is therefore always an ordinary complete HPATCH/2 script.
+independent embedded Lark grammar. Recovery is unavailable from root public APIs, root
+`tool_grammar.lark`, and ordinary `functions.hpatch`. A payload beginning with `type` or
+`add` is therefore always an ordinary complete HPATCH/2 script.
 
 Each rejected-script command has a `C<number>:<hash>` handle covering its complete attributable
 command frame. Recovery has exactly one form per line: `C<number>:<hash> TARGET`. `TARGET` uses
@@ -952,10 +956,10 @@ Acceptance:
 
 `type TARGET VALUE` replaces every target span with the decoded value. An empty target-bearing
 value deletes every target span, including a terminator owned by a complete-line or range
-target. `type- TARGET VALUE` inserts the value immediately before every span and preserves
-the target. `type+ TARGET VALUE` inserts immediately after every span and preserves the
-target. A command with multiple text matches is atomic: resolution or conflict at any match
-records none of its mutations.
+target. `add DESTINATION VALUE` inserts the value immediately before every line or text
+destination span and preserves the destination. `add EOF VALUE` inserts once at the immutable
+baseline EOF. A command with multiple text matches is atomic: resolution or conflict at any
+match records none of its mutations.
 
 Replacements and deletions must have disjoint baseline interiors. An insertion strictly
 inside a replacement or deletion conflicts. Insertions exactly at either boundary are
@@ -1254,9 +1258,9 @@ Persistent guidance teaches this workflow:
    final-state row or exact unanchored current text for other changed content; acquire only a
    target that none of these forms identifies. Use a fixed heredoc for regular expressions and
    other escape-heavy source.
-8. Use nonempty `type` to replace, empty target-bearing `type` to delete, `type-` to insert
-   before, and `type+` to insert after. Use inline values for short text and `<<PATCH` for
-   multiline or escape-heavy values.
+8. Use nonempty `type` to replace and empty target-bearing `type` to delete. Use `add` to
+   insert before a line or text destination and `add EOF` to append. Use inline values for
+   short text and `<<PATCH` for multiline or escape-heavy values.
 9. After a wholly row-stale routed rejection, use `functions.hpatch_recover` with one current
    `C... TARGET` line per listed command. Submit every listed target correction in one atomic
    payload. Use one complete ordinary script for non-target or mixed corrections. After

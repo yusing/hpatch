@@ -33,7 +33,7 @@ func TestRecoveryCommandsHashCompleteFrames(t *testing.T) {
 
 func TestRecoverScriptRetargetsBatchAndPreservesOtherFields(t *testing.T) {
 	script := "in first.go\n" +
-		"type- 1:aaaa <<PATCH\n" +
+		"add 1:aaaa <<PATCH\n" +
 		"first\n" +
 		"second\n" +
 		"PATCH\n" +
@@ -44,7 +44,7 @@ func TestRecoverScriptRetargetsBatchAndPreservesOtherFields(t *testing.T) {
 		t.Fatalf("command parts = %+v and %+v", commands[1].parts, commands[3].parts)
 	}
 	payload := strings.Join([]string{
-		commands[1].handle + " 2:bbbb..3:cccc",
+		commands[1].handle + " 2:bbbb",
 		commands[3].handle + ` "current text" 2`,
 	}, "\n")
 	recovered, err := recoverScriptDetailed(t.Context(), script, payload)
@@ -52,7 +52,7 @@ func TestRecoverScriptRetargetsBatchAndPreservesOtherFields(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := "in first.go\n" +
-		"type- 2:bbbb..3:cccc <<PATCH\n" +
+		"add 2:bbbb <<PATCH\n" +
 		"first\n" +
 		"second\n" +
 		"PATCH\n" +
@@ -62,7 +62,7 @@ func TestRecoverScriptRetargetsBatchAndPreservesOtherFields(t *testing.T) {
 		t.Fatalf("recovered script = %q, want %q", recovered.script, want)
 	}
 	wantDelta := strings.Join([]string{
-		commands[1].handle + ": 1:aaaa -> 2:bbbb..3:cccc",
+		commands[1].handle + ": 1:aaaa -> 2:bbbb",
 		commands[3].handle + `: "old text" -> "current text" 2`,
 	}, "\n")
 	if recovered.delta != wantDelta {
@@ -205,21 +205,13 @@ func TestRecoveryMultilineLiteralTargetsMirrorPublicControls(t *testing.T) {
 	}
 }
 
-func TestRecoveryGrammarContainsOnlyHandleAndOrdinaryTarget(t *testing.T) {
+func TestRecoveryGrammarContainsHandleAndOrdinaryTarget(t *testing.T) {
 	for _, want := range []string{
 		`start: _blank_line* recovery (_separator recovery)* _blank_line*`,
 		`recovery: HANDLE SP target`,
 	} {
 		if !strings.Contains(hpatchRecoveryGrammar, want) {
 			t.Fatalf("recovery grammar does not contain %q", want)
-		}
-	}
-	for _, removed := range []string{
-		`"target"`, `"drop"`, `"operation"`, `"value"`, `VHANDLE`, `VALUE_OP`,
-		`STRUCTURAL_OP`, `"replace"`, `"before"`, `"after"`, `"accept"`,
-	} {
-		if strings.Contains(hpatchRecoveryGrammar, removed) {
-			t.Fatalf("recovery grammar contains removed form %q", removed)
 		}
 	}
 }

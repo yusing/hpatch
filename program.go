@@ -24,6 +24,7 @@ const (
 	targetRange
 	targetText
 	targetLiteral
+	targetEOF
 )
 
 type rowReference struct {
@@ -226,7 +227,7 @@ func recognizeCommandAttempt(line string) commandAttempt {
 	switch fields[0] {
 	case "in", "new", "mv", "rm":
 		return commandAttempt{recognized: true}
-	case "type", "type-", "type+":
+	case "type", "add":
 		attempt := commandAttempt{recognized: true}
 		if len(fields) > 1 {
 			attempt.target = recognizeTargetVariant(strings.TrimPrefix(line, fields[0]+" "))
@@ -294,7 +295,7 @@ func parseInstruction(sourceLine int, line string) (instruction, error) {
 		return instruction{}, scriptError(sourceLine, "unknown or malformed command")
 	}
 	switch operation {
-	case "type", "type-", "type+":
+	case "type", "add":
 		return parseInstructionWithValue(sourceLine, line, "", false)
 	default:
 		return instruction{}, scriptError(sourceLine, "unknown or malformed command")
@@ -303,8 +304,8 @@ func parseInstruction(sourceLine int, line string) (instruction, error) {
 
 func parseInstructionWithValue(sourceLine int, line, heredocValue string, heredoc bool) (instruction, error) {
 	operation, operands, ok := strings.Cut(line, " ")
-	if !ok || (operation != "type" && operation != "type-" && operation != "type+") {
-		return instruction{}, scriptError(sourceLine, "heredoc is valid only for type, type-, or type+")
+	if !ok || (operation != "type" && operation != "add") {
+		return instruction{}, scriptError(sourceLine, "heredoc is valid only for type or add")
 	}
 	if operation == "type" && !heredoc && strings.HasPrefix(operands, `"`) {
 		value, trailing, err := hpatchsyntax.DecodeQuoted(operands)
@@ -322,6 +323,12 @@ func parseInstructionWithValue(sourceLine int, line, heredocValue string, heredo
 	target, trailing, err := parseTarget(sourceLine, operands, !heredoc)
 	if err != nil {
 		return instruction{}, err
+	}
+	if operation == "type" && target.kind == targetEOF {
+		return instruction{}, scriptError(sourceLine, "EOF is valid only as an add destination")
+	}
+	if operation == "add" && target.kind == targetRange {
+		return instruction{}, scriptError(sourceLine, "add requires a line, text, or EOF destination")
 	}
 	value := heredocValue
 	valueStart := 0
@@ -368,6 +375,9 @@ func parseTarget(sourceLine int, operands string, finalValueFollows bool) (targe
 	token, trailing := firstToken(operands)
 	if token == "" {
 		return targetSpec{}, "", scriptError(sourceLine, "target must not be empty")
+	}
+	if token == "EOF" {
+		return targetSpec{kind: targetEOF}, trailing, nil
 	}
 	if startText, endText, rangeTarget := strings.Cut(token, ".."); rangeTarget {
 		if strings.Contains(endText, "..") {

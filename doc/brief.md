@@ -104,10 +104,10 @@ wall time must remain close to control.
   Codex instructions.
 - `hpatch-bench validate --manifest TASK.json` and `hpatch-bench run`: validate and run
   paired historical-commit evaluations.
-- Script commands: `in`, `new`, `mv`, `rm`, `type`, `type-`, and `type+`.
+- Script commands: `in`, `new`, `mv`, `rm`, `type`, and `add`.
 - `type` replaces its explicit target; an empty target-bearing value deletes the target,
-  including an owned line or range terminator. `type-` and `type+` insert before and after
-  their explicit target while preserving it.
+  including an owned line or range terminator. `add` inserts before a line or text
+  destination; `add EOF` appends.
 - Immediately after `new`, targetless `type` may initialize the empty file once.
 - A target is a copyable hread row, an inclusive pair of rows, or a row-anchored literal
   with optional multiplicity, as specified by `REQ-SCRIPT-001`.

@@ -12,14 +12,14 @@ func TestHPatch2InvocationMetricsCountCommandsTargetsAndReasons(t *testing.T) {
 	writeTestFile(t, root, "file.txt", "alpha\nbeta\n", 0o644)
 	script := "in file.txt\n" +
 		"type " + row(1, "alpha") + " \"A\"\n" +
-		"type+ " + row(2, "beta") + " \"B\"\n" +
+		"add " + row(2, "beta") + " \"B\"\n" +
 		"type 9:0000 \"\"\n"
 
 	invocation, err := evaluateInvocationForTest(t, root, script)
 	if err == nil {
 		t.Fatal("missing row unexpectedly succeeded")
 	}
-	for _, operation := range []string{"in", "type", "type+"} {
+	for _, operation := range []string{"in", "type", "add"} {
 		entry := invocation.Commands[commandOperationIndex(operation)]
 		wantInvocations := uint64(1)
 		if operation == "type" {
@@ -45,7 +45,7 @@ func TestHPatch2TextTargetMetricsDistinguishMultiplicity(t *testing.T) {
 	writeTestFile(t, root, "file.txt", "x x\n", 0o644)
 	script := "in file.txt\n" +
 		"type " + row(1, "x x") + " \"x\" \"y\"\n" +
-		"type+ \"x\" 2 \"!\""
+		"add \"x\" 2 \"!\""
 	invocation, err := evaluateInvocationForTest(t, root, script)
 	if err != nil {
 		t.Fatal(err)
@@ -58,10 +58,10 @@ func TestHPatch2TextTargetMetricsDistinguishMultiplicity(t *testing.T) {
 
 func TestHPatch2MetricsSlotRoundTrip(t *testing.T) {
 	value := metrics{}
-	value.Commands[commandOperationIndex("type+")] = commandMetric{Invocations: 3, Errors: 1}
+	value.Commands[commandOperationIndex("add")] = commandMetric{Invocations: 3, Errors: 1}
 	value.Targets[targetVariantRange-1] = commandMetric{Invocations: 3, Errors: 1}
 	value.Reasons[reasonEditConflict] = 1
-	value.CommandReasons[commandOperationIndex("type+")][reasonEditConflict] = 1
+	value.CommandReasons[commandOperationIndex("add")][reasonEditConflict] = 1
 	encoded := encodeMetricsSlot(value, 7)
 	got, generation, ok := decodeMetricsSlot(encoded)
 	if !ok || generation != 7 || !reflect.DeepEqual(got, value) {
@@ -77,7 +77,7 @@ func TestHPatch2StructuredGainNamesTargets(t *testing.T) {
 	if gain.Commands[commandOperationIndex("type")].Name != "type" ||
 		gain.Targets[targetVariantLine-1].Name != "line" ||
 		gain.Targets[targetVariantTextSingle-1].Name != "text-single" ||
-		gain.Commands[commandOperationIndex("type+")].Name != "type+" {
+		gain.Commands[commandOperationIndex("add")].Name != "add" {
 		t.Fatalf("structured gain names = commands %+v, targets %+v", gain.Commands, gain.Targets)
 	}
 }

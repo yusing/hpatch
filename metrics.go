@@ -20,7 +20,7 @@ import (
 const (
 	metricsFilename = "metrics.bin"
 	metricsLockname = "metrics.lock"
-	metricsMagic    = "HPATCH26"
+	metricsMagic    = "HPATCH27"
 
 	metricsToolOffset          = 1280
 	metricsRecoveryOffset      = 208
@@ -33,12 +33,12 @@ const (
 	metricsSharedOffset        = 1264
 	metricsMisuseWarningOffset = 1272
 
-	commandCount          = 7
+	commandCount          = 6
 	metricsLockRetryDelay = 10 * time.Millisecond
 )
 
 var commandOperations = [commandCount]string{
-	"in", "new", "mv", "rm", "type", "type-", "type+",
+	"in", "new", "mv", "rm", "type", "add",
 }
 
 type pendingMetricsWriterState struct {

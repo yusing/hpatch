@@ -24,7 +24,7 @@ func TestHPatch2NormalMultiFileWorkflow(t *testing.T) {
 	script := strings.Join([]string{
 		"in a.txt",
 		"type " + row(1, "alpha old") + ` "old" "new"`,
-		"type- " + row(2, "keep") + ` "// note\n"`,
+		"add " + row(2, "keep") + ` "// note\n"`,
 		"type " + row(3, "end") + ` ""`,
 		"in b.txt",
 		"type " + row(1, "x x x") + ` "x" 2 "y"`,
@@ -145,10 +145,10 @@ func TestHPatch2SameBoundaryInsertionsKeepScriptOrder(t *testing.T) {
 	target := row(1, "target")
 	script := strings.Join([]string{
 		"in file.txt",
-		`type- ` + target + ` "first\n"`,
-		`type- ` + target + ` "second\n"`,
-		`type+ ` + target + ` "after-one\n"`,
-		`type+ ` + target + ` "after-two\n"`,
+		`add ` + target + ` "first\n"`,
+		`add ` + target + ` "second\n"`,
+		`add EOF "after-one\n"`,
+		`add EOF "after-two\n"`,
 	}, "\n")
 	result, err := applyForHostAtTest(t, root, script, "")
 	if err != nil {
@@ -167,8 +167,8 @@ func TestHPatch2InsertionsAtReplacementBoundariesAreAllowed(t *testing.T) {
 	script := strings.Join([]string{
 		"in file.txt",
 		`type ` + target + ` "replacement"`,
-		`type- ` + target + ` "before\n"`,
-		`type+ ` + target + ` "after\n"`,
+		`add ` + target + ` "before\n"`,
+		`add EOF "after\n"`,
 	}, "\n")
 	result, err := applyForHostAtTest(t, root, script, "")
 	if err != nil {
@@ -187,8 +187,8 @@ func TestHPatch2RejectsInvalidTargetsAtomically(t *testing.T) {
 		{"invalid count", "in file.txt\ntype " + row(1, "alpha") + ` "alpha" 0 "A"`, "invalid-count"},
 		{"reversed", "in file.txt\ntype " + row(2, "beta") + ".." + row(1, "alpha") + ` ""`, "target-order"},
 		{"overlap", "in file.txt\ntype " + row(1, "alpha") + ` "A"` + "\ntype " + row(1, "alpha") + ` ""`, "edit-conflict"},
-		{"insertion inside replacement", "in file.txt\ntype " + row(1, "alpha") + ` "A"` + "\ntype- " + row(1, "alpha") + ` "ph" "x"`, "edit-conflict"},
-		{"introduced", "in file.txt\ntype+ " + row(1, "alpha") + ` "new\n"` + "\ntype " + row(1, "alpha") + ` "new" "NEW"`, "occurrence-missing"},
+		{"insertion inside replacement", "in file.txt\ntype " + row(1, "alpha") + ` "A"` + "\nadd " + row(1, "alpha") + ` "ph" "x"`, "edit-conflict"},
+		{"introduced", "in file.txt\nadd " + row(2, "beta") + ` "new\n"` + "\ntype " + row(1, "alpha") + ` "new" "NEW"`, "occurrence-missing"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -257,13 +257,13 @@ func TestHPatch2ResolvesPostEditCoordinateForUnchangedBaselineRow(t *testing.T) 
 	root := t.TempDir()
 	writeTestFile(t, root, "file.txt", "alpha\n}\nbeta\n}\n", 0o644)
 	script := "in file.txt\n" +
-		"type- " + row(1, "alpha") + ` "one\ntwo\n"` + "\n" +
-		"type+ " + row(6, "}") + ` "tail\n"`
+		"add " + row(1, "alpha") + ` "one\ntwo\n"` + "\n" +
+		"add " + row(6, "}") + ` "tail\n"`
 	result, err := applyForHostAtTest(t, root, script, "")
 	if err != nil {
 		t.Fatalf("ApplyForHost() error = %v, diagnostic %q", err, result.Diagnostic)
 	}
-	want := "one\ntwo\nalpha\n}\nbeta\n}\ntail\n"
+	want := "one\ntwo\nalpha\n}\nbeta\ntail\n}\n"
 	if got := readTestFile(t, root, "file.txt"); got != want {
 		t.Fatalf("file = %q, want %q", got, want)
 	}
@@ -273,7 +273,7 @@ func TestHPatch2DoesNotResolvePostEditCoordinateForIntroducedRow(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, root, "file.txt", "alpha\nbeta\n", 0o644)
 	script := "in file.txt\n" +
-		"type+ " + row(1, "alpha") + ` "new\n"` + "\n" +
+		"add " + row(2, "beta") + ` "new\n"` + "\n" +
 		"type " + row(2, "new") + ` "NEW"`
 	result, err := applyForHostAtTest(t, root, script, "")
 	if err == nil || !strings.Contains(result.Diagnostic, "row-stale") {
@@ -336,6 +336,7 @@ func TestHPatch2NewFileInitializerIsImmediate(t *testing.T) {
 		{"intervening", "new new.txt\nin existing.txt\nin new.txt\ntype \"new\"", ""},
 		{"second", "new new.txt\ntype \"one\"\ntype \"two\"", ""},
 		{"target new", "new new.txt\ntype \"one\\n\"\ntype " + row(1, "one") + ` "ONE"`, ""},
+		{"append new", "new new.txt\nadd EOF \"one\\n\"", ""},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -355,8 +356,12 @@ func TestHPatch2NewFileInitializerIsImmediate(t *testing.T) {
 	}
 }
 
-func TestHPatch2RejectsRemovedGrammar(t *testing.T) {
-	for _, command := range []string{`tsel 0000 "x"`, `rsel 0000 0000`, "copy", "cut", "paste", "commit", "del " + row(1, "x"), "type <<BODY\nx\nBODY"} {
+func TestHPatch2RejectsInvalidMutationForms(t *testing.T) {
+	for _, command := range []string{
+		"add " + row(1, "x") + ".." + row(1, "x") + ` "value"`,
+		`type EOF "value"`,
+		"type <<BODY\nx\nBODY",
+	} {
 		t.Run(strings.Fields(command)[0], func(t *testing.T) {
 			root := t.TempDir()
 			writeTestFile(t, root, "file.txt", "x\n", 0o644)
@@ -372,8 +377,8 @@ func TestHPatch2FixedHeredocAndInlineInsertion(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, root, "file.txt", "target\n", 0o644)
 	script := "in file.txt\n" +
-		"type- " + row(1, "target") + ` "// comment\n"` + "\n" +
-		"type+ " + row(1, "target") + " <<PATCH\nmultiline\nvalue\nPATCH\n"
+		"add " + row(1, "target") + ` "// comment\n"` + "\n" +
+		"add EOF <<PATCH\nmultiline\nvalue\nPATCH\n"
 	result, err := applyForHostAtTest(t, root, script, "")
 	if err != nil {
 		t.Fatalf("ApplyForHost() error = %v, diagnostic %q", err, result.Diagnostic)
@@ -405,13 +410,13 @@ func TestHPatch2UnanchoredLiteralTargetsUseImmutableBaseline(t *testing.T) {
 	script := strings.Join([]string{
 		"in file.txt",
 		`type "alpha" "ALPHA"`,
-		`type+ "x" 2 "!"`,
+		`add "x" 2 "!"`,
 	}, "\n")
 	result, err := applyForHostAtTest(t, root, script, "")
 	if err != nil {
 		t.Fatalf("ApplyForHost() error = %v, diagnostic %q", err, result.Diagnostic)
 	}
-	if got, want := readTestFile(t, root, "file.txt"), "ALPHA x!\nbeta x!\n"; got != want {
+	if got, want := readTestFile(t, root, "file.txt"), "ALPHA !x\nbeta !x\n"; got != want {
 		t.Fatalf("file = %q, want %q", got, want)
 	}
 }

@@ -104,7 +104,7 @@ func TestTranslateForHostCancellationStopsErrorHook(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond)
 	defer cancel()
 	started := time.Now()
-	result, err := TranslateForHost(ctx, Workspace{Root: root}, "del\n", dataDirectory)
+	result, err := TranslateForHost(ctx, Workspace{Root: root}, "unknown-command\n", dataDirectory)
 	if !errors.Is(err, context.DeadlineExceeded) || result.Diagnostic != "" {
 		t.Fatalf("canceled hook translation = %+v, error %v", result, err)
 	}

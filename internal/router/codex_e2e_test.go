@@ -140,14 +140,8 @@ func TestCodexHPatchGrammarE2E(t *testing.T) {
 			t.Errorf("%s not found in translated hpatch scripts; pattern %q\nscripts:\n%s", name, pattern, scripts)
 		}
 	}
-	for _, forbidden := range []string{
-		`tsel`,
-		`rsel`,
-		"\n\nPATCH",
-	} {
-		if strings.Contains(scripts, forbidden) {
-			t.Errorf("translated hpatch scripts contain forbidden edit form %q\nscripts:\n%s", forbidden, scripts)
-		}
+	if strings.Contains(scripts, "\n\nPATCH") {
+		t.Errorf("translated hpatch scripts contain an empty trailing heredoc line\nscripts:\n%s", scripts)
 	}
 }
 

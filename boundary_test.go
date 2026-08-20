@@ -163,7 +163,7 @@ func TestHPatch2ParserReportsIndependentSyntaxErrors(t *testing.T) {
 	script := "in file.txt\n" +
 		"type 1:0000 \"literal\x01control\"\n" +
 		"type 0:0123 \"value\"\n" +
-		"del 1:abcd trailing\n"
+		"unknown-command 1:abcd trailing\n"
 	result, err := translateForHostAtTest(t, root, script, "")
 	if err == nil || strings.Count(result.Diagnostic, ": command") != 3 {
 		t.Fatalf("TranslateForHost() error = %v, diagnostic %q", err, result.Diagnostic)

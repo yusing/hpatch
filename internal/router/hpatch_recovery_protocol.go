@@ -88,7 +88,7 @@ func recoveryCommands(script string) []recoveryCommandReference {
 
 func recoveryCommandPartsOf(header string, frame hpatchsyntax.CommandFrame) recoveryCommandParts {
 	operation, operands := recoveryToken(header)
-	if operation != "type" && operation != "type-" && operation != "type+" {
+	if operation != "type" && operation != "add" {
 		return recoveryCommandParts{}
 	}
 	if frame.Delimiter != "" {
@@ -98,7 +98,7 @@ func recoveryCommandPartsOf(header string, frame hpatchsyntax.CommandFrame) reco
 			target:    target,
 			value:     frame.Body,
 			multiline: true,
-			parsed:    operation == "type" && target == "" || recoveryTarget(target),
+			parsed:    operation == "type" && target == "" || operation == "add" && target == "EOF" || recoveryTarget(target),
 		}
 	}
 	if operation == "type" && strings.HasPrefix(strings.TrimSpace(operands), `"`) {
