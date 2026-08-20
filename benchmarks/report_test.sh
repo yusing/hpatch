@@ -87,9 +87,9 @@ make_exact_record() {
 make_exact_record a1 private-chain-a private-call-a1 1 false hpatch evaluator_rejected \
 	$'in file.go\ntype 1:aaaa "bad"\n' $'row-stale: expected 1:aaaa, current 1:bbbb\n'
 make_exact_record a2 private-chain-a private-call-a2 2 true hpatch_recover evaluator_rejected \
-	'C2:aaaa target 1:bbbb' $'language-syntax at value row 1\n'
+	'C2:aaaa 1:bbbb' $'row-stale: expected 1:bbbb, current 1:cccc\n'
 make_exact_record a3 private-chain-a private-call-a3 3 true hpatch_recover successful \
-	'C2:bbbb V3:cccc value+ "}\n"' ''
+	'C2:bbbb 1:cccc' ''
 make_exact_record b1 private-chain-b private-call-b1 1 false hpatch successful \
 	$'in second.go\ntype "old" "new"\n' ''
 
@@ -143,8 +143,8 @@ grep -Fq '| Exact attempts analyzed | 4 |' "$fixture/summary.md"
 grep -Fq '| Exact rejected attempts | 2 |' "$fixture/summary.md"
 grep -Fq '| Exact correction attempts | 2 |' "$fixture/summary.md"
 grep -Fq '| Chains recovered in first correction | 0 |' "$fixture/summary.md"
-grep -Fq '| Correction emitted payload bytes | 49 |' "$fixture/summary.md"
-grep -Fq '| Rendered diagnostic bytes | 74 |' "$fixture/summary.md"
+grep -Fq '| Correction emitted payload bytes | 28 |' "$fixture/summary.md"
+grep -Fq '| Rendered diagnostic bytes | 96 |' "$fixture/summary.md"
 grep -Fq '| Rendered report bytes | 60 |' "$fixture/summary.md"
 grep -Fq '| row-stale | type | line | contained | 2 |' "$fixture/summary.md"
 grep -Fq 'Same-path structural loops remain: 1 file-read, 2 search, and 2 content-diff invocation(s), versus control at 0, 0, and 0.' "$fixture/summary.md"
@@ -155,7 +155,7 @@ grep -Fq 'Agents submitted 1 concrete hpatch issue report' "$fixture/summary.md"
 grep -Fq '| Successful edits | 50 | 20 | 60.0% |' "$fixture/summary.md"
 jq -e -s '
 	length == 4 and
-	.[2].emitted_payload == "C2:bbbb V3:cccc value+ \"}\\n\"" and
+	.[2].emitted_payload == "C2:bbbb 1:cccc" and
 	.[0].rendered_diagnostic == "row-stale: expected 1:aaaa, current 1:bbbb\n" and
 	.[2].rendered_report == "done\nrefs:\n  1:aaaa final row\n"
 ' "$fixture/hpatch-exact-evidence.jsonl" >/dev/null
@@ -212,9 +212,9 @@ import sys
 root = pathlib.Path(sys.argv[1])
 attempts = [
     ("chain-a", "call-a1", 1, False, "hpatch", "evaluator_rejected", "initial-a", "stale target 1:aaaa new value"),
-    ("chain-a", "call-a2", 2, True, "hpatch_recover", "successful", "C1 target 1:aaaa\nC1 value+ new value", ""),
+    ("chain-a", "call-a2", 2, True, "hpatch_recover", "successful", "C1:aaaa 1:bbbb", ""),
     ("chain-b", "call-b1", 1, False, "hpatch", "evaluator_rejected", "initial-bb", "stale target 2:bbbb"),
-    ("chain-b", "call-b2", 2, True, "hpatch_recover", "successful", "C2 target 2:bbbb\nC2 value+ absent", ""),
+    ("chain-b", "call-b2", 2, True, "hpatch_recover", "successful", "C2:bbbb 2:cccc", ""),
 ]
 records = []
 for chain, call, attempt, correction, tool, outcome, payload, diagnostic in attempts:
@@ -332,7 +332,7 @@ fi
 test "$(jq -s 'length' "$fixture/collected-reports.jsonl")" = 2
 
 for forbidden in private-chain-a private-chain-b private-call-a1 control-session hpatch-session \
-	'row-stale: expected 1:aaaa' 'C2:bbbb V3:cccc' 'Estimated non-edit output' \
+	'row-stale: expected 1:aaaa' 'C2:bbbb 1:cccc' 'Estimated non-edit output' \
 	'Router metrics' 'Hpatch gain and patch errors' 'Attempt sequence'; do
 	if grep -Fq "$forbidden" "$fixture/summary.md"; then
 		printf 'summary retained forbidden or redundant detail: %s\n' "$forbidden" >&2

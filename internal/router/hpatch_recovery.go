@@ -2,6 +2,7 @@ package router
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/yusing/hpatch"
@@ -9,80 +10,55 @@ import (
 	"github.com/yusing/hpatch/internal/hpatchsyntax"
 )
 
-const hpatchRecoveryContextLines = 2
-
 func hpatchRecoveryGuidance(
 	script string,
 	rejections []hpatch.HostRejection,
-	failures []hpatch.HostFailure,
 	refreshed bool,
 ) string {
-	return codexinstructions.RecoveryGuidance(hpatchRecoveryReferences(script, rejections, failures, refreshed))
+	references, eligible := hpatchRecoveryReferences(script, rejections, refreshed)
+	if !eligible {
+		return "\nThis rejection requires one complete corrected HPATCH/2 script through functions.hpatch; functions.hpatch_recover changes stale targets only.\n"
+	}
+	return codexinstructions.RecoveryGuidance(references)
 }
 
 func hpatchRecoveryReferences(
 	script string,
 	rejections []hpatch.HostRejection,
-	failures []hpatch.HostFailure,
 	refreshed bool,
-) string {
+) (string, bool) {
 	commands := recoveryCommands(script)
-	relevant := make(map[int][]hpatch.HostRejection)
+	relevant := make(map[int]struct{})
 	for _, rejection := range rejections {
-		if rejection.Command > 0 {
-			relevant[rejection.Command] = append(relevant[rejection.Command], rejection)
+		if rejection.Reason != "row-stale" || rejection.Command < 1 || rejection.Command > len(commands) {
+			return "", false
 		}
+		command := commands[rejection.Command-1]
+		if !command.parts.parsed || command.parts.target == "" {
+			return "", false
+		}
+		relevant[rejection.Command] = struct{}{}
 	}
-	scopes := make(map[int]string)
-	for _, failure := range failures {
-		if failure.Command > 0 && failure.Scope != "" {
-			scopes[failure.Command] = failure.Scope
-		}
+	if len(relevant) == 0 {
+		return "", false
 	}
 
 	var output strings.Builder
 	if refreshed {
-		output.WriteString("This re-rejection changed no workspace file. Every C... and V... handle from earlier diagnostics is stale; use only the current handles.\n\n")
+		output.WriteString("This re-rejection changed no workspace file. Earlier C... handles are stale; use only the current handles below.\n\n")
 	}
-	output.WriteString("Current rejected-script command manifest (complete):\n")
-	for _, command := range commands {
-		fmt.Fprintf(&output, "    %s %s", command.handle, hpatchRecoveryCommandSummary(command))
-		if scope := scopes[command.index]; scope != "" {
-			fmt.Fprintf(&output, " [correction scope: %s]", scope)
-		}
-		if _, ok := relevant[command.index]; ok {
-			output.WriteString(" [rejected]")
-		}
-		output.WriteByte('\n')
+	output.WriteString("Rejected target commands:\n")
+	indices := make([]int, 0, len(relevant))
+	for index := range relevant {
+		indices = append(indices, index)
 	}
-
-	if len(relevant) != 0 {
-		output.WriteString("\nLocalized recovery context:\n")
+	slices.Sort(indices)
+	for _, index := range indices {
+		command := commands[index-1]
+		fmt.Fprintf(&output, "    %s %s\n", command.handle, hpatchRecoveryCommandSummary(command))
 	}
-	for _, command := range commands {
-		rejected, selected := relevant[command.index]
-		if !selected {
-			continue
-		}
-		fmt.Fprintf(&output, "\n%s %s\n", command.handle, hpatchRecoveryCommandSummary(command))
-		if scope := scopes[command.index]; scope != "" {
-			fmt.Fprintf(&output, "    correction scope: %s\n", scope)
-		}
-		if len(command.valueRows) == 0 {
-			continue
-		}
-		output.WriteString("    value rows:\n")
-		valuePhysicalRows := hpatchRecoveryValueRows(command, rejected)
-		for index, row := range command.valueRows {
-			physicalRow := command.header + index + 1
-			if !hpatchRecoveryRowVisible(physicalRow, valuePhysicalRows) {
-				continue
-			}
-			fmt.Fprintf(&output, "        %s %s\n", row.handle, row.value)
-		}
-	}
-	output.WriteString("\nSend only handle-based corrections to functions.hpatch_recover. Put every known independent correction in one payload; do not resubmit the complete rejected script.\n")
-	return output.String()
+	output.WriteString("\nSend one line per listed command as C... CURRENT_TARGET. Put all corrections in one functions.hpatch_recover payload; the router preserves every operation and value and reevaluates the complete script.\n")
+	return output.String(), true
 }
 
 func hpatchRecoveryCommandSummary(command recoveryCommandReference) string {
@@ -91,8 +67,8 @@ func hpatchRecoveryCommandSummary(command recoveryCommandReference) string {
 		if command.parts.target != "" {
 			summary += " " + command.parts.target
 		}
-		if len(command.valueRows) != 0 {
-			return fmt.Sprintf("%s [%d value rows]", summary, len(command.valueRows))
+		if command.parts.multiline {
+			return summary + " [heredoc value]"
 		}
 		return summary + " [inline value]"
 	}
@@ -106,26 +82,6 @@ func hpatchRecoveryCommandSummary(command recoveryCommandReference) string {
 		return operation + " [malformed operands]"
 	}
 	return header
-}
-
-func hpatchRecoveryValueRows(command recoveryCommandReference, rejections []hpatch.HostRejection) []int {
-	rows := make([]int, 0, len(rejections))
-	for _, rejection := range rejections {
-		if rejection.ValueLine > 0 {
-			rows = append(rows, command.header+rejection.ValueLine+1)
-		}
-	}
-	return rows
-}
-
-func hpatchRecoveryRowVisible(physicalRow int, rejectedRows []int) bool {
-	for _, rejectedRow := range rejectedRows {
-		if physicalRow >= rejectedRow-hpatchRecoveryContextLines &&
-			physicalRow <= rejectedRow+hpatchRecoveryContextLines {
-			return true
-		}
-	}
-	return false
 }
 
 func hpatchLogicalRowsByPhysicalLine(script string, lines []hpatchsyntax.PhysicalLine) [][]int {

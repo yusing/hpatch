@@ -2504,16 +2504,16 @@ func testRecoveryRow(t *testing.T, text string, row int) string {
 }
 
 func TestHPatchRecoveryRetainsCorrelationAndRebuildsBeforeTranslation(t *testing.T) {
-	base := "new created.txt\ntype \"bad\"\n"
-	want := "new created.txt\ntype \"payload\"\n"
+	base := "in file.txt\ntype 1:aaaa \"payload\"\n"
+	want := "in file.txt\ntype 2:bbbb \"payload\"\n"
 	calls := 0
 	var evaluated string
 	translator := hpatchResultTranslatorFunc(func(_ context.Context, _ string, script string) (hpatchTranslationResult, error) {
 		calls++
 		if calls == 1 {
 			return hpatchTranslationResult{
-				diagnostic: "type: command 2, reason rejected: bad value\n",
-				rejections: []hpatch.HostRejection{{Command: 2, SourceLine: 2, Operation: "type"}},
+				diagnostic: "type: command 2, reason row-stale: rejected\n",
+				rejections: []hpatch.HostRejection{{Command: 2, SourceLine: 2, Operation: "type", Target: "line", Reason: "row-stale"}},
 			}, errors.New("rejected")
 		}
 		evaluated = script
@@ -2524,7 +2524,7 @@ func TestHPatchRecoveryRetainsCorrelationAndRebuildsBeforeTranslation(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	payload := recoveryCommands(base)[1].handle + ` value "payload"` + "\n"
+	payload := recoveryCommands(base)[1].handle + " 2:bbbb\n"
 	second, err := transform.translateRecovery("call-2", payload, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -2542,12 +2542,12 @@ func TestHPatchRecoveryRetainsCorrelationAndRebuildsBeforeTranslation(t *testing
 }
 
 func TestHPatchRecoveryRerejectionExposesCurrentHandles(t *testing.T) {
-	base := "new created.txt\ntype \"bad\"\n"
-	rebuilt := "new created.txt\ntype \"worse\"\n"
+	base := "in file.txt\ntype 1:aaaa \"value\"\n"
+	rebuilt := "in file.txt\ntype 2:bbbb \"value\"\n"
 	translator := hpatchResultTranslatorFunc(func(_ context.Context, _ string, _ string) (hpatchTranslationResult, error) {
 		return hpatchTranslationResult{
-			diagnostic: "type: command 2, reason rejected: bad value\n",
-			rejections: []hpatch.HostRejection{{Command: 2, SourceLine: 2, Operation: "type"}},
+			diagnostic: "type: command 2, reason row-stale: rejected\n",
+			rejections: []hpatch.HostRejection{{Command: 2, SourceLine: 2, Operation: "type", Target: "line", Reason: "row-stale"}},
 		}, errors.New("rejected")
 	})
 	transform, _, _, _ := newHPatchTestTransform(t, translator)
@@ -2555,20 +2555,20 @@ func TestHPatchRecoveryRerejectionExposesCurrentHandles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	payload := recoveryCommands(base)[1].handle + ` value "worse"` + "\n"
+	payload := recoveryCommands(base)[1].handle + " 2:bbbb\n"
 	second, err := transform.translateRecovery("call-2", payload, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, history := range []hpatchHistory{first, second} {
-		if strings.Count(history.translationError, "Current rejected-script command manifest (complete):") != 1 ||
+		if strings.Count(history.translationError, "Rejected target commands:") != 1 ||
 			strings.Contains(history.translationError, "Use hpatch without `in`") ||
 			strings.Contains(history.translationError, "accept") {
 			t.Fatalf("recovery guidance = %q", history.translationError)
 		}
 	}
 	if !strings.Contains(second.translationError, "This re-rejection changed no workspace file") ||
-		!strings.Contains(second.translationError, "Every C... and V... handle from earlier diagnostics is stale") {
+		!strings.Contains(second.translationError, "Earlier C... handles are stale") {
 		t.Fatalf("re-rejection lacks stale-handle guidance:\n%s", second.translationError)
 	}
 	if want := recoveryCommands(rebuilt)[1].handle; !strings.Contains(second.translationError, want) {
@@ -2576,53 +2576,18 @@ func TestHPatchRecoveryRerejectionExposesCurrentHandles(t *testing.T) {
 	}
 }
 
-func TestHPatchRecoveryMutatesHeredocBodyByOrdinaryRow(t *testing.T) {
-	base := "new file.go\ntype <<PATCH\npackage p\nvar =\nvar tail = 2\nPATCH\n"
-	want := "new file.go\ntype <<PATCH\npackage p\nvar fixed = 1\nvar tail = 2\nPATCH\n"
-	calls := 0
-	var evaluated string
-	transform, _, _, _ := newHPatchTestTransform(t, hpatchResultTranslatorFunc(func(_ context.Context, _ string, script string) (hpatchTranslationResult, error) {
-		calls++
-		if calls == 1 {
-			return hpatchTranslationResult{
-				diagnostic: "type: command 2, reason rejected: bad value\n",
-				rejections: []hpatch.HostRejection{{Command: 2, SourceLine: 2, Operation: "type"}},
-			}, errors.New("rejected")
-		}
-		evaluated = script
-		return hpatchTranslationResult{patch: []byte(testTranslatedPatch)}, nil
-	}))
-	if _, err := transform.translate("call-1", base, nil); err != nil {
-		t.Fatal(err)
-	}
-	payload := recoveryCommands(base)[1].handle + " " + recoveryCommands(base)[1].valueRows[1].handle + ` value "var fixed = 1"` + "\n"
-	result, err := transform.translateRecovery("call-2", payload, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if result.translationError != "" || calls != 2 || evaluated != want {
-		t.Fatalf("recovery = %+v, translations %d, evaluated %q", result, calls, evaluated)
-	}
-}
-
 func TestHPatchRecoveryFixesAllEmittedTargetsAtomically(t *testing.T) {
-	base := "new first.go\n" +
-		"type <<PATCH\n" +
-		"package p\n" +
-		"var =\n" +
-		"var middle = 2\n" +
-		"var =\n" +
-		"PATCH\n" +
-		"new second.go\n" +
-		"type <<PATCH\n" +
-		"package p\n" +
-		"var =\n" +
-		"PATCH\n"
-	want := strings.ReplaceAll(base, "var =", "var fixed = 1")
+	base := "in first.go\n" +
+		"type 1:aaaa \"first\"\n" +
+		"in second.go\n" +
+		"type 2:bbbb..4:cccc \"second\"\n"
+	want := "in first.go\n" +
+		"type 3:dddd \"first\"\n" +
+		"in second.go\n" +
+		"type 5:eeee..7:ffff \"second\"\n"
 	rejections := []hpatch.HostRejection{
-		{Command: 2, SourceLine: 2, Operation: "type", ValueLine: 2},
-		{Command: 2, SourceLine: 2, Operation: "type", ValueLine: 4},
-		{Command: 4, SourceLine: 9, Operation: "type", ValueLine: 2},
+		{Command: 2, SourceLine: 2, Operation: "type", Target: "line", Reason: "row-stale"},
+		{Command: 4, SourceLine: 4, Operation: "type", Target: "range", Reason: "row-stale"},
 	}
 
 	calls := 0
@@ -2631,8 +2596,8 @@ func TestHPatchRecoveryFixesAllEmittedTargetsAtomically(t *testing.T) {
 		calls++
 		if calls == 1 {
 			return hpatchTranslationResult{
-				diagnostic: "type: command 2, reason language-syntax: 2 distinct syntax failures\n" +
-					"type: command 4, reason language-syntax: expected declaration\n",
+				diagnostic: "type: command 2, reason row-stale: rejected\n" +
+					"type: command 4, reason row-stale: rejected\n",
 				rejections: rejections,
 			}, errors.New("rejected")
 		}
@@ -2644,20 +2609,15 @@ func TestHPatchRecoveryFixesAllEmittedTargetsAtomically(t *testing.T) {
 		t.Fatal(err)
 	}
 	firstCommands := recoveryCommands(base)
-	for _, want := range []string{
-		firstCommands[1].valueRows[1].handle,
-		firstCommands[1].valueRows[3].handle,
-		firstCommands[3].valueRows[1].handle,
-	} {
+	for _, want := range []string{firstCommands[1].handle, firstCommands[3].handle} {
 		if !strings.Contains(first.translationError, want) {
-			t.Fatalf("guidance lacks value handle %q:\n%s", want, first.translationError)
+			t.Fatalf("guidance lacks command handle %q:\n%s", want, first.translationError)
 		}
 	}
 
 	payload := strings.Join([]string{
-		firstCommands[1].handle + " " + firstCommands[1].valueRows[1].handle + ` value "var fixed = 1"`,
-		firstCommands[1].handle + " " + firstCommands[1].valueRows[3].handle + ` value "var fixed = 1"`,
-		firstCommands[3].handle + " " + firstCommands[3].valueRows[1].handle + ` value "var fixed = 1"`,
+		firstCommands[1].handle + " 3:dddd",
+		firstCommands[3].handle + " 5:eeee..7:ffff",
 	}, "\n") + "\n"
 	result, err := transform.translateRecovery("call-2", payload, nil)
 	if err != nil {
@@ -2668,61 +2628,17 @@ func TestHPatchRecoveryFixesAllEmittedTargetsAtomically(t *testing.T) {
 	}
 }
 
-func TestHPatchRecoveryIntegratesAggregatedEngineRejections(t *testing.T) {
-	base := "new first.go\n" +
-		"type <<PATCH\n" +
-		"package p\n" +
-		"var =\n" +
-		"var middle = 2\n" +
-		"var =\n" +
-		"PATCH\n" +
-		"new second.go\n" +
-		"type <<PATCH\n" +
-		"package p\n" +
-		"var =\n" +
-		"PATCH\n"
-	transform, _, _, _ := newHPatchTestTransform(t, inProcessHPatchTranslator{dataDirectory: t.TempDir()})
-	first, err := transform.translate("call-1", base, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	firstCommands := recoveryCommands(base)
-	for _, want := range []string{
-		firstCommands[1].valueRows[1].handle,
-		firstCommands[1].valueRows[3].handle,
-		firstCommands[3].valueRows[1].handle,
-	} {
-		if !strings.Contains(first.translationError, want) {
-			t.Fatalf("guidance lacks value handle %q:\n%s", want, first.translationError)
-		}
-	}
-
-	payload := strings.Join([]string{
-		firstCommands[1].handle + " " + firstCommands[1].valueRows[1].handle + ` value "var fixed = 1"`,
-		firstCommands[1].handle + " " + firstCommands[1].valueRows[3].handle + ` value "var fixed = 1"`,
-		firstCommands[3].handle + " " + firstCommands[3].valueRows[1].handle + ` value "var fixed = 1"`,
-	}, "\n") + "\n"
-	recovered, err := transform.translateRecovery("call-2", payload, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if recovered.translationError != "" || len(recovered.patch) == 0 ||
-		strings.Count(string(recovered.patch), "+var fixed = 1") != 3 {
-		t.Fatalf("recovered translation = %+v", recovered)
-	}
-}
-
 func TestHPatchFailedRecoveryPreservesEvaluatedBaseline(t *testing.T) {
-	base := "new file.txt\ntype \"old\"\n"
-	want := "new file.txt\ntype \"fixed\"\n"
+	base := "in file.txt\ntype 1:aaaa \"value\"\n"
+	want := "in file.txt\ntype 2:bbbb \"value\"\n"
 	calls := 0
 	var evaluated string
 	transform, _, _, _ := newHPatchTestTransform(t, hpatchResultTranslatorFunc(func(_ context.Context, _ string, script string) (hpatchTranslationResult, error) {
 		calls++
 		if calls == 1 {
 			return hpatchTranslationResult{
-				diagnostic: "type: command 2, reason rejected: bad value\n",
-				rejections: []hpatch.HostRejection{{Command: 2, SourceLine: 2, Operation: "type"}},
+				diagnostic: "type: command 2, reason row-stale: rejected\n",
+				rejections: []hpatch.HostRejection{{Command: 2, SourceLine: 2, Operation: "type", Target: "line", Reason: "row-stale"}},
 			}, errors.New("rejected")
 		}
 		evaluated = script
@@ -2731,7 +2647,7 @@ func TestHPatchFailedRecoveryPreservesEvaluatedBaseline(t *testing.T) {
 	if _, err := transform.translate("call-1", base, nil); err != nil {
 		t.Fatal(err)
 	}
-	failed, err := transform.translateRecovery("call-2", "C2:ffff drop\n", nil)
+	failed, err := transform.translateRecovery("call-2", "C2:ffff 2:bbbb\n", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2739,7 +2655,7 @@ func TestHPatchFailedRecoveryPreservesEvaluatedBaseline(t *testing.T) {
 		!strings.Contains(failed.translationError, `command handle "C2:ffff" is stale`) || calls != 1 {
 		t.Fatalf("failed recovery = %+v, translations %d", failed, calls)
 	}
-	payload := recoveryCommands(base)[1].handle + ` value "fixed"` + "\n"
+	payload := recoveryCommands(base)[1].handle + " 2:bbbb\n"
 	recovered, err := transform.translateRecovery("call-3", payload, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -2750,28 +2666,66 @@ func TestHPatchFailedRecoveryPreservesEvaluatedBaseline(t *testing.T) {
 	}
 }
 
+func TestHPatchUnchangedTargetRecoveryPreservesEvaluatedBaseline(t *testing.T) {
+	base := "in file.txt\ntype 1:aaaa \"value\"\n"
+	want := "in file.txt\ntype 2:bbbb \"value\"\n"
+	calls := 0
+	var evaluated string
+	transform, _, _, _ := newHPatchTestTransform(t, hpatchResultTranslatorFunc(func(_ context.Context, _ string, script string) (hpatchTranslationResult, error) {
+		calls++
+		if calls == 1 {
+			return hpatchTranslationResult{
+				diagnostic: "type: command 2, reason row-stale: rejected\n",
+				rejections: []hpatch.HostRejection{{Command: 2, SourceLine: 2, Operation: "type", Target: "line", Reason: "row-stale"}},
+			}, errors.New("rejected")
+		}
+		evaluated = script
+		return hpatchTranslationResult{patch: []byte(testTranslatedPatch)}, nil
+	}))
+	if _, err := transform.translate("call-1", base, nil); err != nil {
+		t.Fatal(err)
+	}
+	command := recoveryCommands(base)[1]
+	failed, err := transform.translateRecovery("call-2", command.handle+" 1:aaaa..1:aaaa\n", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !failed.unevaluated || failed.correlationID != "call-1" || failed.attempt != 2 ||
+		!strings.Contains(failed.translationError, "replacement target must differ") || calls != 1 {
+		t.Fatalf("unchanged recovery = %+v, translations %d", failed, calls)
+	}
+	recovered, err := transform.translateRecovery("call-3", command.handle+" 2:bbbb\n", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if recovered.translationError != "" || recovered.correlationID != "call-1" ||
+		recovered.attempt != 3 || calls != 2 || evaluated != want {
+		t.Fatalf("recovered = %+v, translations %d, evaluated %q", recovered, calls, evaluated)
+	}
+}
+
 func TestHPatchRecoveryUsesLatestRejectedRecoveryInSameResponse(t *testing.T) {
-	base := "new file.txt\ntype \"old\"\n"
-	firstRebuilt := "new file.txt\ntype \"first\"\n"
-	secondRebuilt := "new file.txt\ntype \"second\"\n"
+	base := "in file.txt\ntype 1:aaaa \"value\"\n"
+	firstRebuilt := "in file.txt\ntype 2:bbbb \"value\"\n"
+	secondRebuilt := "in file.txt\ntype 3:cccc \"value\"\n"
 	var evaluated []string
 	transform, _, _, _ := newHPatchTestTransform(t, hpatchResultTranslatorFunc(func(_ context.Context, _ string, script string) (hpatchTranslationResult, error) {
 		evaluated = append(evaluated, script)
 		return hpatchTranslationResult{
-			diagnostic: "type: command 2, reason rejected: bad value\n",
-			rejections: []hpatch.HostRejection{{Command: 2, SourceLine: 2, Operation: "type"}},
+			diagnostic: "type: command 2, reason row-stale: rejected\n",
+			rejections: []hpatch.HostRejection{{Command: 2, SourceLine: 2, Operation: "type", Target: "line", Reason: "row-stale"}},
 		}, errors.New("rejected")
 	}))
 	if _, err := transform.translate("call-1", base, nil); err != nil {
 		t.Fatal(err)
 	}
 	baseCommand := recoveryCommands(base)[1]
-	first, err := transform.translateRecovery("call-2", baseCommand.handle+` value "first"`+"\n", nil)
+	first, err := transform.translateRecovery("call-2", baseCommand.handle+" 2:bbbb\n", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	firstCommand := recoveryCommands(firstRebuilt)[1]
-	second, err := transform.translateRecovery("call-3", firstCommand.handle+` value "second"`+"\n", nil)
+	second, err := transform.translateRecovery("call-3", firstCommand.handle+" 3:cccc\n", nil)
 	if err != nil {
 		t.Fatal(err)
 	}

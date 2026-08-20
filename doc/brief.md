@@ -70,7 +70,7 @@ wall time must remain close to control.
 - Basic `Translate` does not modify files and returns only the OpenAI `apply_patch` bytes or an error.
 - `ApplyForHost`, `ApplyForHostRoot`, `TranslateForHost`, and `TranslateForHostAt` return
   `HostTranslation` with the rendered report, final state, diagnostics, and evaluator metrics.
-- Router-only `functions.hpatch_recover` with hashed command and value-row handles; ordinary `functions.hpatch` and root APIs have no recovery mode.
+- Router-only target correction through `functions.hpatch_recover` with hashed command handles; an unchanged target rejects before reevaluation, and ordinary `functions.hpatch` and root APIs have no recovery mode.
 - Persistent encoding, diagnostic, command, target, and end-to-end benchmark metrics.
 - Historical-commit benchmark tasks with hidden graders, paired randomized attempts, and
   structured artifacts.

@@ -4,7 +4,7 @@ pjdoc:
   kind: spec
   scope: root
   status: draft
-  revision: "22"
+  revision: "24"
   files:
     - interface.md
     - comparison.md
@@ -12,8 +12,8 @@ pjdoc:
 ---
 # hpatch specification
 
-Revision 22 removes the standalone command contract while preserving the root engine, router,
-Codex carriers, recovery, and structured metrics contracts.
+Revision 24 prevents an unchanged target correction from repeating root evaluation while retaining
+the same recovery baseline for a later different target.
 `doc/spec/interface.md` owns the public report grammar, projection rule, continuation
 semantics, and observable acceptance behavior.
 

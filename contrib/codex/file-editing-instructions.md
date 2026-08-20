@@ -147,12 +147,6 @@ For exact content you just authored in a new file, use an unanchored literal tar
 invocation instead of inventing a row hash or rereading the file. Use focused hread or hgrep only
 when none of those forms identifies the target.
 
-A successful hpatch report proves that the edit applied and passed language validation; it does
-not prove requested behavior. Before finalizing, identify a check that exercises each requested
-behavior. A compile or package test with no exercising case is not behavioral validation. If
-visible tests do not exercise the behavior and tests may not be added, trace one concrete boundary
-or state-transition case through the authored code; do not claim behavior from compilation alone.
-
 Use a fixed heredoc for regular expressions and other escape-heavy source so HPATCH quoted-string
 escaping does not become part of the code you are reasoning about. Acquire only an exact missing
 target.
@@ -165,43 +159,34 @@ byte-exact values and do not synthesize newlines.
 Overlapping replacements or deletions and insertions strictly inside them reject. Boundary
 insertions are valid. Multiple insertions at the same boundary render in script order.
 
-Changed Go files are parsed and formatted before success; do not run redundant `gofmt`. Add Go
-imports inside the existing import declaration, not adjacent to it; formatting cannot repair an
-invalid import placement. When targeting the declaration's closing `)`, use `type-`; `type+`
-inserts outside the declaration.
-Supported Python, JavaScript, and TypeScript files are syntax-checked when Tree-sitter support
-is available; supported indentation corrections are automatic. Relative paths use the selected
-base directory when available; without one, relative paths reject; parents for `new` or `mv`
-must exist. Routed rejection diagnostics expose a complete current `C...` command manifest and
-bounded `V...` value-row context. Use `functions.hpatch_recover` for the smallest correction
-against that immutable rejected script. Put every known independent correction in one recovery
-payload, one operation per line:
+Changed Go files are parsed and formatted before success. Supported Python, JavaScript, and
+TypeScript files are syntax-checked when Tree-sitter support is available; supported indentation
+corrections are automatic. Relative paths use the selected base directory when available; without
+one, relative paths reject; parents for `new` or `mv` must exist. A wholly row-stale routed
+rejection lists current `C...` command handles. Correct
+only those targets with `functions.hpatch_recover`, one handle and ordinary HPATCH/2 target per
+line:
 
 ```text
-C2:abcd target 37:8c2f
-C3:bcde target "return oldResult, nil"
-C4:ef01 operation type+
-C4:ef01 value "// inserted\n"
-C7:2345 V9:6789 value "corrected body row"
-C8:aaaa replace type 41:bbbb "replacement"
-C3:cccc before in another.go
+C2:abcd 37:8c2f
+C3:bcde "return oldResult, nil"
 ```
 
-Use the current handles exactly. A re-rejection replaces the baseline and makes every handle
-from the prior diagnostic stale. Resubmit a complete HPATCH/2 script only when the diagnostic
-requires a new script or transaction. A malformed, stale, conflicting, or incomplete recovery
-changes neither the workspace nor the retained rejected script. Ordinary `functions.hpatch` and root APIs have no recovery mode.
+Put every listed correction in one payload and use the current handles exactly. Recovery changes
+targets only; it preserves operations, values, command order, and file context before reevaluating
+the complete script. Each corrected target must differ from its rejected target; equivalent
+spellings of the same target reject before reevaluation. A re-rejection replaces the baseline and makes every earlier handle stale.
+Use one complete HPATCH/2 script for every non-target or mixed correction. A malformed, stale,
+conflicting, or incomplete recovery changes neither the workspace nor the retained rejected
+script. Ordinary `functions.hpatch` and root APIs have no recovery mode.
 
 ## File reading, searching, inspection, and shell commands
 
-Acquire target-bearing context and the behavior-defining helper or callee semantics needed for
-the planned implementation once before editing. This is a pre-edit step: after a successful
-hpatch, do not use hread, hgrep, or `git diff` on a changed file, or on a directory containing a
-changed file, merely to inspect, verify, or locate a follow-up target. A directory search covers
-all descendant changed paths. Run the focused behavioral check instead. Even when that check
-fails, reuse the exact value you authored plus returned final-state rows or confirmed mappings.
-Only an exact target or behavior-defining dependency that is still unknown or ambiguous justifies
-a focused read, and acquire it before the first edit whenever it can affect the planned code.
+Acquire target-bearing context once before editing. After a successful hpatch, do not use hread,
+hgrep, or `git diff` on a changed file, or on a directory containing a changed file, merely to
+inspect, verify, or locate a follow-up target. Reuse the exact value you authored plus returned
+final-state rows or confirmed mappings. Only an exact target that is still unknown or ambiguous
+in an unchanged file justifies a focused read.
 
 When a known identifier or literal is likely to become a target, use hgrep first; use `-F` with repeated `-e` literals
 so punctuation cannot create a regex error, and add `-A` or `-B` when a small amount of surrounding code is needed.

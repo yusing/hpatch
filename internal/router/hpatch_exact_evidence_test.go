@@ -63,15 +63,15 @@ func TestHPatchExactEvidenceInitialRejection(t *testing.T) {
 func TestHPatchExactEvidenceRecoveryPayloadAndBytes(t *testing.T) {
 	directory := t.TempDir()
 	t.Setenv(hpatchExactEvidenceEnvironment, directory)
-	base := "new created.txt\ntype \"bad\"\n"
+	base := "in file.txt\ntype 1:aaaa \"value\"\n"
 	report := "final rows: 1:a793..2:π\n"
 	calls := 0
 	translator := hpatchResultTranslatorFunc(func(_ context.Context, _, _ string) (hpatchTranslationResult, error) {
 		calls++
 		if calls == 1 {
 			return hpatchTranslationResult{
-				diagnostic: "bad value\n",
-				rejections: []hpatch.HostRejection{{Command: 2, SourceLine: 2, Operation: "type"}},
+				diagnostic: "stale target\n",
+				rejections: []hpatch.HostRejection{{Command: 2, SourceLine: 2, Operation: "type", Target: "line", Reason: "row-stale"}},
 			}, errors.New("rejected")
 		}
 		return hpatchTranslationResult{patch: []byte(testTranslatedPatch), report: report}, nil
@@ -80,7 +80,7 @@ func TestHPatchExactEvidenceRecoveryPayloadAndBytes(t *testing.T) {
 	if _, err := transform.translate("call-first", base, nil); err != nil {
 		t.Fatal(err)
 	}
-	payload := recoveryCommands(base)[1].handle + " value <<PATCH\nπ-value\nPATCH\n"
+	payload := recoveryCommands(base)[1].handle + " 2:bbbb\n"
 	if _, err := transform.translateRecovery("call-recovery", payload, nil); err != nil {
 		t.Fatal(err)
 	}

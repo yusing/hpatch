@@ -32,25 +32,19 @@ func TestInstructionsOwnCompleteShellWorkflow(t *testing.T) {
 
 func TestInstructionsAcquireTargetContextOnce(t *testing.T) {
 	for _, required := range []string{
-		"Acquire target-bearing context and the behavior-defining helper or callee semantics needed for\nthe planned implementation once before editing.",
-		"behavior-defining helper or callee semantics needed for\nthe planned implementation once before editing",
+		"Acquire target-bearing context once before editing.",
 		"use hgrep first; use `-F` with repeated `-e` literals",
 		"Avoid bare whole-file hread unless the complete file",
-		"after a successful\nhpatch, do not use hread, hgrep, or `git diff` on a changed file, or on a directory containing a\nchanged file",
-		"A directory search covers\nall descendant changed paths.",
-		"When targeting the declaration's closing `)`, use `type-`; `type+`\ninserts outside the declaration.",
-		"behavioral check instead.",
+		"After a successful hpatch, do not use hread,\nhgrep, or `git diff` on a changed file",
+		"inspect, verify, or locate a follow-up target",
+		"unknown or ambiguous\nin an unchanged file justifies a focused read",
 		"Existing-file edits require a target.",
 		"Targetless `type VALUE` is valid only immediately after",
 		"unchanged saved rows remain valid even when edits shifted their line numbers",
 		"On later calls, target previously changed content with a returned final-state row, a\nconfirmed mapping, or exact unanchored current text; never reconstruct a row or range endpoint.",
-		"A successful hpatch report proves that the edit applied and passed language validation; it does\nnot prove requested behavior.",
-		"A compile or package test with no exercising case is not behavioral validation.",
-		"trace one concrete boundary\nor state-transition case through the authored code",
 		`type "return oldResult, nil" "return newResult, nil"`,
-		`target "return oldResult, nil"`,
+		`C3:bcde "return oldResult, nil"`,
 		"exact known target text spans logical lines or includes a trailing LF",
-		"imports inside the existing import declaration",
 	} {
 		if !strings.Contains(Instructions(), required) {
 			t.Errorf("Instructions() omits target acquisition rule %q", required)
@@ -58,16 +52,29 @@ func TestInstructionsAcquireTargetContextOnce(t *testing.T) {
 	}
 }
 
+func TestInstructionsStayWithinHPatchAndPrivateTools(t *testing.T) {
+	for _, excluded := range []string{
+		"behavioral validation",
+		"behavior-defining helper or callee semantics",
+		"trace one concrete boundary",
+		"imports inside the existing import declaration",
+	} {
+		if strings.Contains(Instructions(), excluded) {
+			t.Errorf("Instructions() contains general project guidance %q", excluded)
+		}
+	}
+}
+
 func TestRecoveryGuidanceRendersDynamicReferences(t *testing.T) {
-	const references = "Current rejected-script command manifest (complete):\n"
-	const want = "\nRepair the retained rejected script with the smallest handle-local operations. Submit every known independent correction in one atomic recovery payload, one operation per line. A value-row `value+` insertion is byte-exact; when adding the final heredoc row, include its trailing line terminator, for example `C4:ef01 V9:6789 value+ \"}\\n\"`, so `PATCH` remains on its own line. A re-rejection changes no workspace file: it retains successful corrections only in a new rejected-script baseline, emits that baseline's authoritative manifest, and makes every earlier handle stale. Resubmit a complete script through functions.hpatch only when the diagnostic requires a new script or transaction.\n\n" + references
+	const references = "Rejected target commands:\n"
+	const want = "\nRepair only the stale targets in the retained rejected script. Each line is a current `C...` command handle followed directly by one different ordinary HPATCH/2 target. Submit every listed correction in one atomic payload. Recovery preserves operations, values, command order, and file context. A re-rejection changes no workspace file and makes every earlier handle stale. Use a complete script through functions.hpatch for every other correction.\n\n" + references
 	if got := RecoveryGuidance(references); got != want {
 		t.Fatalf("RecoveryGuidance() = %q, want %q", got, want)
 	}
 }
 
 func TestRecoveryGuidanceWithoutReferences(t *testing.T) {
-	const want = "\nRepair the retained rejected script with the smallest handle-local operations. Submit every known independent correction in one atomic recovery payload, one operation per line. A value-row `value+` insertion is byte-exact; when adding the final heredoc row, include its trailing line terminator, for example `C4:ef01 V9:6789 value+ \"}\\n\"`, so `PATCH` remains on its own line. A re-rejection changes no workspace file: it retains successful corrections only in a new rejected-script baseline, emits that baseline's authoritative manifest, and makes every earlier handle stale. Resubmit a complete script through functions.hpatch only when the diagnostic requires a new script or transaction.\n\n"
+	const want = "\nRepair only the stale targets in the retained rejected script. Each line is a current `C...` command handle followed directly by one different ordinary HPATCH/2 target. Submit every listed correction in one atomic payload. Recovery preserves operations, values, command order, and file context. A re-rejection changes no workspace file and makes every earlier handle stale. Use a complete script through functions.hpatch for every other correction.\n\n"
 	if got := RecoveryGuidance(""); got != want {
 		t.Fatalf("RecoveryGuidance() = %q, want %q", got, want)
 	}

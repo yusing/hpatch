@@ -1470,7 +1470,7 @@ func (t *hpatchResponseTransform) translate(callID, input string, upstreamItem m
 			diagnostic = err.Error()
 		}
 		if evaluatorRejected {
-			diagnostic += hpatchRecoveryGuidance(evaluated, translated.rejections, translated.failures, false)
+			diagnostic += hpatchRecoveryGuidance(evaluated, translated.rejections, false)
 		}
 		metricRejections, confirmedAliasRewrite := rejectedAliasDiagnostics(
 			translated.rejections, aliasDiagnostics, aliasRelationsKnown,
@@ -1663,7 +1663,7 @@ func (t *hpatchResponseTransform) translateRecovered(
 			diagnostic = err.Error()
 		}
 		if evaluatorRejected {
-			diagnostic += hpatchRecoveryGuidance(evaluated, translated.rejections, translated.failures, true)
+			diagnostic += hpatchRecoveryGuidance(evaluated, translated.rejections, true)
 		}
 		metricRejections, _ := rejectedAliasDiagnostics(
 			translated.rejections, aliasDiagnostics, aliasErr == nil,
@@ -2156,7 +2156,7 @@ func (t *hpatchResponseTransform) rejectUnevaluated(
 ) (hpatchHistory, error) {
 	diagnostic := rejection.Error()
 	if referenceScript != "" {
-		diagnostic += hpatchRecoveryGuidance(referenceScript, rejections, nil, false)
+		diagnostic += hpatchRecoveryGuidance(referenceScript, rejections, false)
 	}
 	if reporter, ok := t.proxy.translator.(hpatchOutcomeReporter); ok {
 		attemptContext := hpatch.WithAttemptMetadata(t.ctx, attempt)

@@ -9,51 +9,53 @@ import (
 	"github.com/yusing/hpatch"
 )
 
-func TestHPatchRecoveryGuidanceUsesCommandAndValueHandles(t *testing.T) {
+func TestHPatchRecoveryGuidanceListsOnlyRowStaleTargetCommands(t *testing.T) {
 	script := "in file.go\n" +
 		"type 13:974b..16:d10b <<PATCH\n" +
 		"replacement\n" +
 		"broken\n" +
 		"PATCH\n"
 	rejections := []hpatch.HostRejection{{
-		Command: 2, SourceLine: 2, Operation: "type", ValueLine: 2,
+		Command: 2, SourceLine: 2, Operation: "type", Target: "range", Reason: "row-stale",
 	}}
-	guidance := hpatchRecoveryGuidance(script, rejections, []hpatch.HostFailure{{Command: 2, Scope: "field-local"}}, true)
+	guidance := hpatchRecoveryGuidance(script, rejections, true)
 	command := recoveryCommands(script)[1]
 	for _, want := range []string{
-		"Current rejected-script command manifest (complete):",
-		recoveryCommands(script)[0].handle,
+		"Rejected target commands:",
 		command.handle,
-		command.valueRows[1].handle,
-		"correction scope: field-local",
 		"This re-rejection changed no workspace file",
-		"do not resubmit the complete rejected script",
+		"C... CURRENT_TARGET",
+		"preserves every operation and value",
 	} {
 		if !strings.Contains(guidance, want) {
 			t.Fatalf("guidance does not contain %q:\n%s", want, guidance)
 		}
 	}
-	manifest, _, _ := strings.Cut(guidance, "\nLocalized recovery context:")
-	if strings.Contains(manifest, "replacement") || strings.Contains(manifest, "broken") {
-		t.Fatalf("complete manifest copied value content:\n%s", manifest)
-	}
-	if strings.Contains(guidance, "Use hpatch without `in`") || strings.Contains(guidance, "accept") {
-		t.Fatalf("guidance retains obsolete recovery language:\n%s", guidance)
+	for _, absent := range []string{
+		recoveryCommands(script)[0].handle,
+		"replacement",
+		"broken",
+		"V4:",
+		"correction scope",
+		" target 37:8c2f",
+	} {
+		if strings.Contains(guidance, absent) {
+			t.Fatalf("guidance contains obsolete or unrelated %q:\n%s", absent, guidance)
+		}
 	}
 }
 
-func TestHPatchRecoveryManifestRedactsMalformedMutationValue(t *testing.T) {
+func TestHPatchRecoveryGuidanceRequiresCompleteScriptForNonTargetFailure(t *testing.T) {
 	script := "in file.go\n" + `type 1:abcd "sensitive replacement" trailing` + "\n"
 	guidance := hpatchRecoveryGuidance(
 		script,
-		[]hpatch.HostRejection{{Command: 2, SourceLine: 2, Operation: "type"}},
-		nil,
+		[]hpatch.HostRejection{{Command: 2, SourceLine: 2, Operation: "type", Reason: "language-syntax"}},
 		false,
 	)
-	manifest, _, _ := strings.Cut(guidance, "\nLocalized recovery context:")
-	if strings.Contains(manifest, "sensitive replacement") ||
-		!strings.Contains(manifest, "type 1:abcd [malformed value]") {
-		t.Fatalf("malformed mutation manifest = %q", manifest)
+	if strings.Contains(guidance, "sensitive replacement") ||
+		!strings.Contains(guidance, "requires one complete corrected HPATCH/2 script") ||
+		!strings.Contains(guidance, "hpatch_recover changes stale targets only") {
+		t.Fatalf("non-target guidance = %q", guidance)
 	}
 }
 

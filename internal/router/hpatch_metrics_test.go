@@ -128,8 +128,8 @@ func TestCalculateHPatchMetricRecordUsesEmptyFailureBaseline(t *testing.T) {
 // stays the rebuilt script's full apply_patch program, so a recovered chain
 // reports the real payload saving rather than the baseline's size twice.
 func TestHPatchRecoveryChargesEmittedPayloadNotRebuiltScript(t *testing.T) {
-	base := "new created.txt\ntype \"bad\"\n"
-	rebuilt := "new created.txt\ntype \"payload\"\n"
+	base := "in file.txt\ntype 1:aaaa \"value\"\n"
+	rebuilt := "in file.txt\ntype 2:bbbb \"value\"\n"
 	var records []hpatchMetricRecord
 	calls := 0
 	translator := hpatchResultObservingTranslator{
@@ -137,8 +137,8 @@ func TestHPatchRecoveryChargesEmittedPayloadNotRebuiltScript(t *testing.T) {
 			calls++
 			if calls == 1 {
 				return hpatchTranslationResult{
-					diagnostic: "type: command 2, reason rejected: bad value\n",
-					rejections: []hpatch.HostRejection{{Command: 2, SourceLine: 2, Operation: "type"}},
+					diagnostic: "type: command 2, reason row-stale: rejected\n",
+					rejections: []hpatch.HostRejection{{Command: 2, SourceLine: 2, Operation: "type", Target: "line", Reason: "row-stale"}},
 				}, errors.New("rejected")
 			}
 			if script != rebuilt {
@@ -155,7 +155,7 @@ func TestHPatchRecoveryChargesEmittedPayloadNotRebuiltScript(t *testing.T) {
 	if _, err := transform.translate("call-1", base, nil); err != nil {
 		t.Fatal(err)
 	}
-	payload := recoveryCommands(base)[1].handle + ` value "payload"` + "\n"
+	payload := recoveryCommands(base)[1].handle + " 2:bbbb\n"
 	if _, err := transform.translateRecovery("call-2", payload, nil); err != nil {
 		t.Fatal(err)
 	}

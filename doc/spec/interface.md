@@ -784,35 +784,34 @@ independent embedded Lark grammar. Recovery is unavailable from root public APIs
 `type-`, or `type+` is therefore always an ordinary complete HPATCH/2 script.
 
 Each rejected-script command has a `C<number>:<hash>` handle covering its complete attributable
-command frame. Complete heredocs may expose `V<physical-row>:<hash>` value-row handles. The
-recovery operations are `drop`, field-level `target`, `operation`, and `value`, value-row
-`value` / `value-` / `value+`, and structural `replace` / `before` / `after`. Inline quoted and
-fixed `<<PATCH` values use the shared hpatch syntax framing. Recovery target parsing and script
-rebuilding preserve the public target literal's exact decoded bytes, including escaped LF, and
-enforce the same empty, CR, and control exclusions. There is no sentinel line and no `accept`
-operation.
+command frame. Recovery has exactly one form per line: `C<number>:<hash> TARGET`. `TARGET` uses
+the ordinary HPATCH/2 row, range, anchored-literal, or unanchored-literal target syntax and must
+denote a different target from the retained command. Recovery
+has no operation keyword and cannot change operations, values, heredoc bodies, command count or
+order, or file context. Target parsing and script rebuilding preserve the public target literal's
+exact decoded bytes, including escaped LF, and enforce the same empty, CR, and control
+exclusions. There are no compatibility aliases, sentinel lines, or `accept` operation.
 
 The router owns recovery grammar, parsing, handle resolution, ancestry, worktree isolation,
-dispatch, replay, diagnostics, and reevaluation. Every operation resolves against the latest
-visible evaluated rejected script as one immutable baseline. The router rebuilds the complete
-script through the root `EditText` primitive, then evaluates that script normally.
+dispatch, replay, diagnostics, and reevaluation. Every command handle resolves against the latest
+visible evaluated rejected script as one immutable baseline. Each handled command may appear at
+most once in a payload. The router changes only its target, rebuilds the complete script through
+the root `EditText` primitive, then evaluates that script normally.
 
-A malformed, stale, conflicting, incomplete, cross-worktree, or otherwise invalid recovery
+A malformed, stale, unchanged, conflicting, incomplete, cross-worktree, or otherwise invalid recovery
 changes neither workspace state nor retained rejected ancestry. Proxy-rejected attempts keep
 the last evaluated script as the next baseline. A re-rejected recovery becomes the next
 baseline, and replay restores the exact `functions.hpatch_recover` payload while retaining its
 rebuilt script for later recovery. Non-hpatch plugin and shell failures never enter this
 ancestry. Input truncation removes calls the conversation no longer shows.
 
-Every evaluator rejection renders a complete compact manifest of current command handles without
-copying mutation values, marks attributable commands, reports their structured correction scope,
-and adds bounded heredoc value-row context. Recovery guidance directs the model to submit every
-known independent handle-local operation in one atomic payload instead of resubmitting the
-complete rejected script. It includes a byte-exact `value+` example whose trailing line
-terminator keeps a final inserted heredoc row separate from the closing delimiter. A handle
-from an older baseline is stale. A re-rejection explicitly
-states that no workspace file changed, successful corrections survive only in the new rejected-
-script baseline, and every earlier handle is invalid. Correlation IDs remain stable and attempt
+When every structured rejection is `row-stale`, the routed diagnostic lists only the rejected
+target-bearing commands and their current `C...` handles. Recovery guidance directs the model to
+submit one `C... TARGET` line per listed command in one atomic payload. Every non-target or mixed
+failure instead directs the model to submit one complete corrected ordinary HPATCH/2 script. A
+handle from an older baseline is stale. A re-rejection explicitly states that no workspace file
+changed, target corrections survive only in the new rejected-script baseline, and every earlier
+handle is invalid. Correlation IDs remain stable and attempt
 numbers increase across evaluated and proxy-rejected calls. Per-attempt telemetry preserves
 the emitted tool identity and outcome. Persistent metrics settle the correlated hpatch/recovery chain
 once according to the combined-payload and single-comparator rules above.
@@ -830,19 +829,22 @@ the outcome hook, not a second per-command error hook. Root error hooks remain s
 
 Acceptance:
 
-1. `functions.hpatch_recover` has a dedicated grammar, is router-only, and omits `accept`.
-2. Every recovery operation resolves against one immutable latest evaluated rejected script.
+1. `functions.hpatch_recover` has a dedicated grammar, is router-only, and accepts only `C... TARGET` lines.
+2. Every command handle resolves against one immutable latest evaluated rejected script, and a command appears at most once per payload.
 3. A successful rebuild is reevaluated as one complete ordinary HPATCH/2 script.
-4. Re-rejection advances the baseline, emits a complete refreshed manifest, and invalidates every prior handle; proxy rejection leaves the baseline unchanged.
+4. Re-rejection advances the baseline, emits refreshed target-command handles, and invalidates every prior handle; proxy rejection leaves the baseline unchanged.
 5. Recovery cannot cross sessions or selected worktrees, and unrelated tools cannot become bases.
 6. Replay restores `hpatch_recover` identity and the exact emitted short payload.
 7. Ordinary mutation-leading hpatch scripts are never detected as recovery.
 8. Per-attempt telemetry remains individual, while persistent metrics count every chain payload and one
    final or failed comparator.
-9. The removed no-`in`, indexed, and dotted value-row recovery forms are ordinary script syntax errors, not compatibility paths.
-10. One recovery payload can combine field, value-row, and structural operations against multiple command handles atomically.
+9. Removed `target`, `drop`, operation, value, value-row, and structural forms are syntax errors, not compatibility paths.
+10. One payload can correct multiple distinct command targets atomically without changing any other command field.
 11. A target correction can retarget an anchored or unanchored mutation to exact multiline
     text with escaped LF; rebuilding preserves the target bytes and public control exclusions.
+12. A target correction that denotes the retained target rejects before root reevaluation,
+    including an explicit default occurrence count, an equivalent quoted escape spelling, or a
+    range whose two endpoints are the retained single row; the retained baseline and handles remain usable.
 
 ## REQ-FILE-001 — File scope and lifecycle
 
@@ -1161,10 +1163,9 @@ failure without a verified baseline does not choose repair context. Repair conte
 supplementary: it never changes the host outcome, mutation, returned patch, or metrics classification.
 When invalid generated source is localized to a fixed-heredoc mutation, each distinct rejection
 identity includes the non-sensitive `value_line`. Transient root diagnostics describe every
-bounded value-row context rather than mutation addresses. Routed diagnostics add the current
-hashed `C...` handle for each attributable command and bounded `V...` handles around localized
-body failures under `REQ-CORRECT-001`. Inline decoded multiline values and failures outside a
-multiline replacement do not fabricate a value-row handle.
+bounded value-row context rather than mutation addresses. Routed target-only recovery diagnostics
+add current hashed `C...` handles only when every rejection is `row-stale`; other failures expose
+no recovery handle under `REQ-CORRECT-001`.
 
 The public host result separates lifecycle `Outcome`, requested `Change`, routed `Attempt`,
 actionable `Failures`, durable-safe `Rejections`, and `PatchSummary`. A valid no-op returns
@@ -1219,10 +1220,10 @@ uses `CODEX_MODEL` or the lowest-priority bundled model, writes the default file
 setting. An unrecognized customized file fails instead of being overwritten.
 
 The recovery template adjacent to the central source owns dynamic recovery prose. After each
-actionable structured evaluator rejection, the router supplies a complete compact current
-command manifest, marks attributable commands with correction scope, and adds localized `V...`
-value-row context. A re-rejected recovery states that prior handles are stale and refreshes the
-manifest from the latest evaluated script.
+wholly row-stale evaluator rejection, the router supplies only the current handles and summaries
+for rejected target-bearing commands. Other evaluator rejections direct the model to one complete
+ordinary script. A re-rejected recovery states that prior handles are stale and refreshes the
+listed commands from the latest evaluated script.
 
 Persistent guidance teaches this workflow:
 
@@ -1232,13 +1233,12 @@ Persistent guidance teaches this workflow:
    use native session facilities for PTY-backed or long-running executions.
 2. Inspect, edit, or rerun a retained shell script through its `@shell/` reference, and never mix
    retained and workspace paths in one hpatch script.
-3. Acquire target-bearing context and behavior-defining helper or callee semantics once before
-   editing. When a known identifier or literal is likely to become a target, use hgrep first with
+3. Acquire target-bearing context once before editing. When a known identifier or literal is
+   likely to become a target, use hgrep first with
    repeated fixed-string patterns, adding bounded context options when surrounding code is needed.
    Every emitted match or context row is target-bearing. When the owner is known but the location
    is not, use inspect_file for structure or hgrep for a symbol, then hread only the smallest range
-   needed to understand or replace the code. Avoid whole-file hread unless the complete file is
-   necessary. Use ordinary reads and searches only for read-only work or while the owner is unknown.
+   needed to obtain the target. Avoid whole-file hread unless the complete file is necessary.
 4. Run one hread command per file and batch only already-known reads in one shell script. Copy
    only current emitted references. Do not follow target-bearing hgrep output with hread unless
    nonmatching context outside the requested bounds is needed.
@@ -1246,25 +1246,22 @@ Persistent guidance teaches this workflow:
 6. Submit every known related edit in one atomic script. Split only when a later edit depends on
    validation or information unavailable before the current call. Keep unrelated large values
    in separate failure-domain calls.
-7. Prefer the smallest semantic mutation and let formatters own formatting. A successful report
-   and its language validation are authoritative, so do not hread, hgrep, or run `git diff` on
-   a changed file or a directory containing one merely to inspect or verify an edit. A directory
-   operand covers its descendant changed paths. Run the focused behavioral check instead.
-   If it fails, reuse the exact authored value and successful report rather than rereading the
-   changed line. Use a fixed heredoc for regular
-   expressions and other escape-heavy source. After success, reuse unchanged rows and any
+7. Prefer the smallest mutation and let hpatch formatting own formatting. After success, do not
+   hread, hgrep, or run `git diff` on a changed file or a directory containing one merely to
+   inspect, verify, or locate a follow-up target. Reuse the exact authored value, unchanged rows,
+   and any
    exact pre-edit row or range covered by a confirmed routed `reuse` mapping. Use a returned
    final-state row or exact unanchored current text for other changed content; acquire only a
-   target that none of these forms identifies. Add Go imports inside the existing import
-   declaration because formatting cannot repair invalid placement. When targeting the
-   declaration's closing `)`, use `type-`; `type+` inserts outside the declaration.
+   target that none of these forms identifies. Use a fixed heredoc for regular expressions and
+   other escape-heavy source.
 8. Use nonempty `type` to replace, empty target-bearing `type` to delete, `type-` to insert
    before, and `type+` to insert after. Use inline values for short text and `<<PATCH` for
    multiline or escape-heavy values.
-9. After a routed rejection, use `functions.hpatch_recover` with the current `C...` and `V...`
-   handles. Submit every known independent correction in one atomic payload rather than
-   resubmitting the complete rejected script. After re-rejection, discard all prior handles.
-   Ordinary `functions.hpatch` and root APIs have no recovery mode.
+9. After a wholly row-stale routed rejection, use `functions.hpatch_recover` with one current
+   `C... TARGET` line per listed command. Submit every listed target correction in one atomic
+   payload. Use one complete ordinary script for non-target or mixed corrections. After
+   re-rejection, discard all prior handles. Ordinary `functions.hpatch` and root APIs have no
+   recovery mode.
 10. Let hpatch format changed Go files and syntax-check supported changed Python, JavaScript, and
     TypeScript files.
 
@@ -1278,8 +1275,8 @@ Acceptance:
    section, and repeated installation is idempotent.
 4. A routed request's existing instructions remain byte-equivalent, including absence or null.
 5. Dynamic rejected-script references and recovery prose appear only with actionable context.
-6. Every actionable evaluator rejection includes a complete compact current command manifest,
-   correction scope for attributable commands, and exact guidance for atomic multi-operation
-   recovery; re-rejection explicitly invalidates prior handles.
+6. A wholly row-stale evaluator rejection lists only the rejected target-bearing command handles
+   and exact guidance for one atomic target-correction payload. Other failures direct one complete
+   ordinary script; re-rejection explicitly invalidates prior handles.
 7. A routed success can be followed by another hpatch call using an exact row from its report
    without an intervening hread; a saved pre-edit row still rejects as stale.
