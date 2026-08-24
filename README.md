@@ -395,7 +395,7 @@ uses router cwd as a fallback. See [`doc/spec/interface.md`](doc/spec/interface.
 
 ## Editing language (summary)
 
-Authoritative guidance: [`contrib/codex/model-instructions.md`](contrib/codex/model-instructions.md). Contract: [`doc/spec/interface.md`](doc/spec/interface.md).
+Authoritative guidance: [`contrib/codex/file-editing-instructions.md`](contrib/codex/file-editing-instructions.md). Contract: [`doc/spec/interface.md`](doc/spec/interface.md).
 
 Hread and hpatch preview/context rows have the shape `LINE:HASH TEXT`. Copy the complete
 `LINE:HASH` reference into a mutation target. The one-based line is a location hint. The
@@ -616,7 +616,7 @@ Tests live beside the owners they exercise. The root `hpatch` package is the reu
 | [`doc/benchmarks.md`](doc/benchmarks.md) | Benchmark operation and interpretation |
 | [`doc/codex-router-e2e.md`](doc/codex-router-e2e.md) | Codex-facing end-to-end procedure |
 | [`contrib/systemd/hpatch-router.service`](contrib/systemd/hpatch-router.service) | User service template |
-| [`contrib/codex/model-instructions.md`](contrib/codex/model-instructions.md) | Persistent CTP/1, edit, shell, read, search, and inspection guidance for Codex |
+| [`contrib/codex/file-editing-instructions.md`](contrib/codex/file-editing-instructions.md) | Persistent CTP/1, edit, shell, read, search, and inspection guidance for Codex |
 | [`AGENTS.md`](AGENTS.md) | Architecture and repository navigation for agents |
 
 Library use: module path `github.com/yusing/hpatch`. Importable as a library (`hpatch.Translate`, `hpatch.Workspace`, structured host metrics helpers); hosts should open an `*os.Root` capability for the workspace before calling in.

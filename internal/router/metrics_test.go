@@ -78,6 +78,12 @@ func TestMetricsSnapshotUsesCachedSessionTitle(t *testing.T) {
 
 func TestMetricsStoreSnapshotAndAPI(t *testing.T) {
 	store := newMetricsStore("")
+	store.recordCTPAdmission(ctpAdmissionAdmitted, 120, 80)
+	store.recordCTPAdmission(ctpAdmissionAdmitted, 60, 50)
+	store.recordCTPAdmission(ctpAdmissionMissingCarrier, 0, 0)
+	store.recordCTPAdmission(ctpAdmissionNoDefinitions, 0, 0)
+	store.recordCTPAdmission(ctpAdmissionUnprofitable, 0, 0)
+	store.recordCTPOutput(30, 18)
 	finishMetricsTestRequest(store, "session-b", "model-b", tokenCounts{InputTokens: 4, UncachedInputTokens: 3, OutputTokens: 2, ReasoningTokens: 1})
 	finishMetricsTestRequest(store, "session-a", "model-a", tokenCounts{InputTokens: 10, UncachedInputTokens: 8, OutputTokens: 6, ReasoningTokens: 2})
 	finishMetricsTestRequest(store, "", "model-a", tokenCounts{InputTokens: 1})
@@ -98,6 +104,19 @@ func TestMetricsStoreSnapshotAndAPI(t *testing.T) {
 	if snapshot.ByModel["model-a"].InputTokens != 11 || snapshot.ByModel["model-b"].OutputTokens != 2 {
 		t.Fatalf("breakdowns = %#v", snapshot)
 	}
+	wantCTP := ctpCompressionMetrics{
+		ConsideredRequests: 5,
+		EncodedRequests:    2,
+		MissingCarrier:     1,
+		NoDefinitions:      1,
+		Unprofitable:       1,
+		AssistantTexts:     1,
+		Input:              ctpCompressionTokens{NativeTokens: 180, CompactTokens: 130},
+		Output:             ctpCompressionTokens{NativeTokens: 30, CompactTokens: 18},
+	}
+	if snapshot.CTP != wantCTP {
+		t.Fatalf("CTP metrics = %#v, want %#v", snapshot.CTP, wantCTP)
+	}
 	if snapshot.GainError != "" || len(snapshot.Gain.Commands) == 0 || snapshot.Gain.SuccessfulReduction != "0.0" {
 		t.Fatalf("empty gain = %#v error %q", snapshot.Gain, snapshot.GainError)
 	}
@@ -116,6 +135,9 @@ func TestMetricsStoreSnapshotAndAPI(t *testing.T) {
 	}
 	if decoded.Requests != snapshot.Requests {
 		t.Fatalf("decoded lifecycle = %#v, want %#v", decoded.Requests, snapshot.Requests)
+	}
+	if decoded.CTP != wantCTP {
+		t.Fatalf("decoded CTP metrics = %#v, want %#v", decoded.CTP, wantCTP)
 	}
 	if len(decoded.Sessions) != len(snapshot.Sessions) || decoded.Sessions[0].Requests != snapshot.Sessions[0].Requests {
 		t.Fatalf("decoded session lifecycle = %#v, want %#v", decoded.Sessions, snapshot.Sessions)
@@ -142,6 +164,12 @@ func TestMetricsAPIStreamsInitialAndChangedSnapshots(t *testing.T) {
 	case <-updates:
 	default:
 		t.Fatal("coalesced current-state update is missing")
+	}
+	store.recordCTPOutput(10, 6)
+	select {
+	case <-updates:
+	default:
+		t.Fatal("CTP metric update is missing")
 	}
 	unsubscribe()
 

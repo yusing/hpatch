@@ -24,7 +24,7 @@ REF(scope, id)             an exact reference to a prior definition
 TABLE(fields, rows)        a header followed by uniform pipe-delimited rows
 ```
 
-`contrib/codex/model-instructions.md` owns the durable interpretation and emission rules for these
+`contrib/codex/file-editing-instructions.md` owns the durable interpretation and emission rules for these
 primitives. The router selects the native Codex instruction carrier: a nonempty string-valued
 top-level Responses `instructions` field when present, otherwise the first textual developer
 message in `input`. It appends only request-scoped dictionary data to that carrier. The original

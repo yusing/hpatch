@@ -34,6 +34,22 @@ type tokenCounts struct {
 	ReasoningTokens     uint64 `json:"reasoning_tokens"`
 }
 
+type ctpCompressionTokens struct {
+	NativeTokens  uint64 `json:"native_tokens"`
+	CompactTokens uint64 `json:"compact_tokens"`
+}
+
+type ctpCompressionMetrics struct {
+	ConsideredRequests uint64               `json:"considered_requests"`
+	EncodedRequests    uint64               `json:"encoded_requests"`
+	MissingCarrier     uint64               `json:"missing_carrier"`
+	NoDefinitions      uint64               `json:"no_definitions"`
+	Unprofitable       uint64               `json:"unprofitable"`
+	AssistantTexts     uint64               `json:"assistant_texts"`
+	Input              ctpCompressionTokens `json:"input"`
+	Output             ctpCompressionTokens `json:"output"`
+}
+
 func (c *tokenCounts) add(other tokenCounts) {
 	c.InputTokens += other.InputTokens
 	c.UncachedInputTokens += other.UncachedInputTokens
@@ -289,6 +305,7 @@ type metricsSnapshot struct {
 
 	Requests    requestLifecycleMetrics `json:"requests"`
 	HPatchCalls hpatchCallMetrics       `json:"hpatch_calls"`
+	CTP         ctpCompressionMetrics   `json:"ctp"`
 	Sessions    []sessionMetrics        `json:"sessions"`
 	Gain        hpatch.GainMetrics      `json:"gain"`
 	GainError   string                  `json:"gain_error,omitempty"`
@@ -300,6 +317,7 @@ type metricsStore struct {
 	all              metricGroup
 	requests         requestLifecycleMetrics
 	hpatchCalls      hpatchCallMetrics
+	ctp              ctpCompressionMetrics
 	retainedSessions map[string]retainedSessionMetrics
 	activeSessions   map[string]map[uint64]activeRequest
 
@@ -370,6 +388,40 @@ func (m *metricsStore) recordHPatch(record hpatchMetricRecord) {
 		retained.hpatchRejections = boundedHPatchRejections(retained.hpatchRejections)
 		m.retainedSessions[record.SessionID] = retained
 	}
+	m.notifyLocked()
+}
+
+func (m *metricsStore) recordCTPAdmission(decision ctpAdmissionDecision, nativeTokens, compactTokens uint64) {
+	if m == nil || decision == ctpAdmissionDisabled {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.ctp.ConsideredRequests++
+	switch decision {
+	case ctpAdmissionMissingCarrier:
+		m.ctp.MissingCarrier++
+	case ctpAdmissionNoDefinitions:
+		m.ctp.NoDefinitions++
+	case ctpAdmissionUnprofitable:
+		m.ctp.Unprofitable++
+	case ctpAdmissionAdmitted:
+		m.ctp.EncodedRequests++
+		m.ctp.Input.NativeTokens += nativeTokens
+		m.ctp.Input.CompactTokens += compactTokens
+	}
+	m.notifyLocked()
+}
+
+func (m *metricsStore) recordCTPOutput(nativeTokens, compactTokens uint64) {
+	if m == nil {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.ctp.AssistantTexts++
+	m.ctp.Output.NativeTokens += nativeTokens
+	m.ctp.Output.CompactTokens += compactTokens
 	m.notifyLocked()
 }
 
@@ -526,6 +578,7 @@ func (m *metricsStore) snapshot() metricsSnapshot {
 		metricGroup: cloneMetricGroup(m.all),
 		Requests:    m.requests,
 		HPatchCalls: m.hpatchCalls,
+		CTP:         m.ctp,
 		Sessions:    make([]sessionMetrics, 0, len(sessions)),
 		Mode:        m.mode,
 	}

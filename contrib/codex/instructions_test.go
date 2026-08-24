@@ -12,6 +12,22 @@ func TestHPatchToolDescriptionStaysNonInstructional(t *testing.T) {
 	}
 }
 
+func TestInstructionsOwnCTPRepresentation(t *testing.T) {
+	for _, required := range []string{
+		"A request may append a `CTP/1` block after these model instructions",
+		"`D|ID|VALUE` rows define exact",
+		"expand each `@ID;`",
+		"read `@@` as one literal `@`",
+		"In assistant response text, reuse an exact defined value",
+		"If literal assistant text begins with `!ctp1 R` or `!ctp1 L`",
+		"Emit other novel prose, tool names, tool inputs, and",
+	} {
+		if !strings.Contains(Instructions(), required) {
+			t.Errorf("Instructions() omits CTP representation rule %q", required)
+		}
+	}
+}
+
 func TestInstructionsOwnCompleteShellWorkflow(t *testing.T) {
 	for _, required := range []string{
 		"Submit one free-form script without an outer heredoc",

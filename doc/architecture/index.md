@@ -19,7 +19,7 @@ encoded request is token-positive, and returns a response
 transformer for that admitted representation. It does not parse HPATCH/2, change the tool registry,
 own provider usage, retain session history, define model instructions, or define another executor
 carrier. Persistent CTP interpretation and emission guidance belongs to
-`contrib/codex/model-instructions.md`; the router emits only request-local dictionary data.
+`contrib/codex/file-editing-instructions.md`; the router emits only request-local dictionary data.
 
 On responses, the CTP transformer runs before the existing Hpatch transformer. It restores compact
 references only in assistant text for complete JSON output and SSE terminal text, while tool names,
@@ -132,7 +132,7 @@ formatting adjustments.
 The root library boundary owns workspace authorization, evaluation diagnostics, completed
 results, atomic commit coordination, translation, and structured host metrics for
 `REQ-GUIDE-001` and `REQ-OUTPUT-001`. All persistent Codex edit, shell, read, search, and
-inspection and CTP representation guidance shares `contrib/codex/model-instructions.md` as its source.
+inspection and CTP representation guidance shares `contrib/codex/file-editing-instructions.md` as its source.
 Tool descriptions retain only call-local contracts and request-specific schemas. The router
 renders dynamic rejected-script references and the recovery instruction from the adjacent
 recovery template only for actionable evaluator rejection diagnostics.

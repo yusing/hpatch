@@ -16,7 +16,7 @@ var recoverySource string
 
 var recoveryTemplate = template.Must(template.New("hpatch-recovery").Parse(recoverySource))
 
-// Instructions returns the authoritative Codex file-editing instructions.
+// Instructions returns the authoritative persistent Codex model instructions.
 func Instructions() string {
 	return instructions
 }

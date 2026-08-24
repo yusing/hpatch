@@ -1,4 +1,21 @@
 <!-- hpatch-model-instructions:start -->
+## CTP/1 transport
+
+A request may append a `CTP/1` block after these model instructions.
+Its `D|ID|VALUE` rows define exact request-local strings; `VALUE` is JSON encoded. The block ends
+at `END`.
+
+In any model-visible input string beginning with `!ctp1 R` and a line feed, expand each `@ID;`
+from the current definitions and read `@@` as one literal `@`. In a string beginning with
+`!ctp1 L` and a line feed, remove that tag and read the remaining bytes literally. Other strings
+are already native.
+
+In assistant response text, reuse an exact defined value by emitting `!ctp1 R`, a line feed, and
+the corresponding references; escape a literal `@` as `@@`. Use this representation only for
+exact reuse. If literal assistant text begins with `!ctp1 R` or `!ctp1 L` followed by a line feed,
+prefix it with `!ctp1 L` and a line feed. Emit other novel prose, tool names, tool inputs, and
+function arguments natively.
+
 ## File editing
 
 Use `functions.hpatch` for local file edits, not `apply_patch`.
