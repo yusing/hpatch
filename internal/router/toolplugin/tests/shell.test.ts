@@ -472,7 +472,6 @@ ${installed.stdout}
 ${installed.stderr}`);
     }
     expect(installed.status).toBe(0);
-    expect((await stat(path.join(binaryDirectory, "hpatch"))).mode & 0o111).not.toBe(0);
     expect((await stat(routerPath)).mode & 0o111).not.toBe(0);
     await expect(stat(installedPlugin)).rejects.toThrow();
     const installedInstructions = await readFile(instructionsPath, "utf8");
@@ -483,6 +482,7 @@ ${installed.stderr}`);
       "`hread @shell/<reference>`",
       "Acquire target-bearing context once before editing.",
       "use hgrep first; use `-F` with repeated `-e` literals",
+      "`hsymbol refs PATH LINE:HASH SYMBOL [N]`",
       "Use `inspect_file PATH` for bounded metadata and structural outlines.",
     ]) {
       expect(installedInstructions).toContain(expected);

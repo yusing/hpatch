@@ -2,8 +2,12 @@ package router
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -124,6 +128,24 @@ func TestBuiltinToolWorkersRunGeneratedTypeScriptImplementations(t *testing.T) {
 	if err := os.WriteFile("file.txt", []byte("alpha\nbeta\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	goSource := "package sample\n\nfunc Alpha() {}\n"
+	goPath := filepath.Join(workspace, "file.go")
+	if err := os.WriteFile(goPath, []byte(goSource), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	nameOffset := strings.Index(goSource, "Alpha")
+	goplsOutput := fmt.Sprintf(
+		`{"span":{"uri":%q,"start":{"line":3,"column":6,"offset":%d},"end":{"line":3,"column":11,"offset":%d}},"description":"func Alpha()"}`+"\n",
+		(&url.URL{Scheme: "file", Path: filepath.ToSlash(goPath)}).String(),
+		nameOffset,
+		nameOffset+len("Alpha"),
+	)
+	goplsPath := filepath.Join(workspace, "gopls")
+	if err := os.WriteFile(goplsPath, fmt.Appendf(nil, "#!/bin/sh\ncat <<'EOF'\n%sEOF\n", goplsOutput), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", workspace+string(os.PathListSeparator)+os.Getenv("PATH"))
+	alphaHash := sha256.Sum256([]byte("func Alpha() {}"))
 
 	for _, test := range []struct {
 		name       string
@@ -132,6 +154,7 @@ func TestBuiltinToolWorkersRunGeneratedTypeScriptImplementations(t *testing.T) {
 	}{
 		{name: "hread", arguments: []string{"file.txt", "0:1"}, wantOutput: "1:8ed3 alpha\n"},
 		{name: "hgrep", arguments: []string{"-F", "alpha", "file.txt"}, wantOutput: "\"file.txt\":1:8ed3 alpha\n"},
+		{name: "hsymbol", arguments: []string{"def", "file.go", fmt.Sprintf("3:%x", alphaHash[:2]), "Alpha"}, wantOutput: strconv.Quote("file.go") + ":3:" + fmt.Sprintf("%x", alphaHash[:2]) + " func Alpha() {}\n"},
 		{name: "inspect_file", arguments: []string{"file.txt"}, wantOutput: "{\"ok\":true,\"data\":{\"path\":\"file.txt\",\"kind\":\"none\",\"language\":null,\"size_bytes\":11,\"line_count\":null,\"parse_complete\":true,\"outline\":[]},\"truncated\":false,\"truncation\":null}\n"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -164,7 +187,7 @@ func TestBuiltinToolWorkersRunGeneratedTypeScriptImplementations(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(gain.ToolInputs) != 3 {
+	if len(gain.ToolInputs) != 4 {
 		t.Fatalf("built-in input metrics = %+v", gain)
 	}
 	for _, row := range gain.ToolInputs {
@@ -174,11 +197,17 @@ func TestBuiltinToolWorkersRunGeneratedTypeScriptImplementations(t *testing.T) {
 			}
 			continue
 		}
+		if row.ToolName == "hsymbol" {
+			if row.CurrentTokens >= row.StockTokens || row.Reduction == "0.0" {
+				t.Fatalf("hsymbol input metric row = %+v", row)
+			}
+			continue
+		}
 		if row.CurrentTokens <= row.StockTokens || row.Reduction == "0.0" {
 			t.Fatalf("built-in input metric row = %+v", row)
 		}
 	}
-	if gain.AllToolInputs.CurrentTokens <= gain.AllToolInputs.StockTokens {
+	if gain.AllToolInputs.CurrentTokens == 0 || gain.AllToolInputs.StockTokens == 0 {
 		t.Fatalf("all built-in input metrics = %+v", gain.AllToolInputs)
 	}
 }

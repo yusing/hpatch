@@ -10,7 +10,13 @@ import {parser as pythonParser} from "@lezer/python";
 import {isMap, isScalar, parseDocument} from "yaml";
 
 import type {Tool} from "../internal/router/toolplugin/plugin.d.ts";
-import {byteLength, createExecutorTool, errorText, stripOptionalFinalNewline} from "./common.ts";
+import {
+  byteLength,
+  createExecutorTool,
+  errorText,
+  isOutsideWorkspace,
+  stripOptionalFinalNewline,
+} from "./common.ts";
 import {inspectFileShapeSchemaJSON} from "./inspect_file_schema.ts";
 
 const OUTPUT_BYTES = 64 * 1024;
@@ -68,9 +74,36 @@ type JSONEntry = {
 };
 
 type OutlineEntry = CodeEntry | MethodEntry | HeadingEntry | FrontmatterEntry | JSONEntry;
-type LocatedEntry = {entry: OutlineEntry; offset: number; order: number};
+type LocatedEntry = {
+  entry: OutlineEntry;
+  offset: number;
+  order: number;
+  nameFrom?: number;
+  nameTo?: number;
+};
 
+export type SourceFormat = {
+  kind: Exclude<FileKind, "none">;
+  language: Language | null;
+  jsx?: true;
+};
+
+const jsxParser = javascriptParser.configure({dialect: "jsx"});
 const typescriptParser = javascriptParser.configure({dialect: "ts"});
+const typescriptJSXParser = javascriptParser.configure({dialect: "ts jsx"});
+
+const goIdentifierNodes = new Set(["DefName", "FieldName", "PackageName", "TypeName", "VariableName"]);
+const javascriptIdentifierNodes = new Set([
+  "JSXIdentifier",
+  "PrivatePropertyName",
+  "PropertyDefinition",
+  "PropertyName",
+  "TypeDefinition",
+  "TypeName",
+  "VariableDefinition",
+  "VariableName",
+]);
+const pythonIdentifierNodes = new Set(["PropertyName", "VariableName"]);
 
 const goDeclarationProjections: Record<string, {node: string; name: string; kind: CodeEntry["kind"]}> = {
   ConstDecl: {node: "ConstSpec", name: "DefName", kind: "constant"},
@@ -79,6 +112,7 @@ const goDeclarationProjections: Record<string, {node: string; name: string; kind
 };
 
 const javascriptDeclarationProjections: Record<string, {name: string; kind: CodeEntry["kind"]}> = {
+  AmbientFunctionDeclaration: {name: "VariableDefinition", kind: "function"},
   FunctionDeclaration: {name: "VariableDefinition", kind: "function"},
   ClassDeclaration: {name: "VariableDefinition", kind: "class"},
   TypeAliasDeclaration: {name: "TypeDefinition", kind: "type"},
@@ -93,6 +127,22 @@ const javascriptMethodNameNodes = new Set([
   "PropertyDefinition",
   "PropertyName",
 ]);
+
+function codeTree(source: string, format: SourceFormat): Tree {
+  if (format.language === "go") {
+    return goParser.parse(source);
+  }
+  if (format.language === "typescript") {
+    return (format.jsx === true ? typescriptJSXParser : typescriptParser).parse(source);
+  }
+  if (format.language === "javascript") {
+    return (format.jsx === true ? jsxParser : javascriptParser).parse(source);
+  }
+  if (format.language === "python") {
+    return pythonParser.parse(source);
+  }
+  return jsonParser.parse(source);
+}
 
 type InspectionData = {
   path: string;
@@ -110,7 +160,7 @@ class InspectFailure extends Error {
   }
 }
 
-class LineMap {
+export class LineMap {
   readonly starts = [0];
 
   constructor(readonly source: string) {
@@ -145,6 +195,21 @@ class LineMap {
       }
     }
     return low + 1;
+  }
+
+  logicalLine(line: number): {from: number; to: number; text: string} | null {
+    if (!Number.isSafeInteger(line) || line < 1 || line > this.count) {
+      return null;
+    }
+    const from = this.starts[line - 1];
+    let to = line < this.count ? this.starts[line] : this.source.length;
+    if (this.source[to - 1] === "\n") {
+      to -= 1;
+    }
+    if (this.source[to - 1] === "\r") {
+      to -= 1;
+    }
+    return {from, to, text: this.source.slice(from, to)};
   }
 
   range(node: SyntaxNode): {line: number; line_end: number} {
@@ -223,6 +288,8 @@ function addNamedEntries(
         entry: {kind, name, ...lines.range(rangeNode)},
         offset: rangeNode.from,
         order: output.length,
+        nameFrom: nameNode.from,
+        nameTo: nameNode.to,
       });
     }
   }
@@ -307,6 +374,8 @@ function goOutline(source: string, lines: LineMap, tree: Tree): LocatedEntry[] {
             },
             offset: declaration.from,
             order: output.length,
+            nameFrom: name.from,
+            nameTo: name.to,
           });
         }
       }
@@ -315,11 +384,43 @@ function goOutline(source: string, lines: LineMap, tree: Tree): LocatedEntry[] {
   return output;
 }
 
-function unwrapExport(node: SyntaxNode): SyntaxNode {
-  if (node.name !== "ExportDeclaration") {
-    return node;
+export function goDeclarationRange(
+  source: string,
+  definitionStartByte: number,
+  definitionEndByte: number,
+): {line: number; line_end: number} | null {
+  const lines = new LineMap(source);
+  const tree = goParser.parse(source);
+  if (hasParseError(tree)) {
+    return null;
   }
-  return children(node).find((child) => /Declaration$/u.test(child.name)) ?? node;
+  for (const located of goOutline(source, lines, tree)) {
+    if (
+      located.nameFrom === undefined
+      || located.nameTo === undefined
+      || located.entry.kind === "import"
+    ) {
+      continue;
+    }
+    const nameStartByte = byteLength(source.slice(0, located.nameFrom));
+    const nameEndByte = nameStartByte + byteLength(source.slice(located.nameFrom, located.nameTo));
+    if (nameStartByte === definitionStartByte && nameEndByte === definitionEndByte) {
+      return {line: located.entry.line, line_end: located.entry.line_end};
+    }
+  }
+  return null;
+}
+
+function javascriptDeclaration(node: SyntaxNode): SyntaxNode {
+  let declaration = node;
+  while (declaration.name === "ExportDeclaration" || declaration.name === "AmbientDeclaration") {
+    const nested = children(declaration).find((child) => /Declaration$/u.test(child.name));
+    if (nested === undefined) {
+      break;
+    }
+    declaration = nested;
+  }
+  return declaration;
 }
 
 function bindingNamesBeforeInitializers(declaration: SyntaxNode): SyntaxNode[] {
@@ -341,7 +442,7 @@ function bindingNamesBeforeInitializers(declaration: SyntaxNode): SyntaxNode[] {
   return names;
 }
 
-function javascriptMethodName(source: string, method: SyntaxNode): string | null {
+function javascriptMethodName(source: string, method: SyntaxNode): {name: string; from: number; to: number} | null {
   const parts = children(method);
   const parametersIndex = parts.findIndex((child) => child.name === "ParamList");
   if (parametersIndex < 0) {
@@ -354,18 +455,24 @@ function javascriptMethodName(source: string, method: SyntaxNode): string | null
     }
     for (let open = index - 1; open >= 0; open -= 1) {
       if (beforeParameters[open].name === "[") {
-        return source.slice(beforeParameters[open].from, beforeParameters[index].to);
+        return {
+          name: source.slice(beforeParameters[open].from, beforeParameters[index].to),
+          from: beforeParameters[open].from,
+          to: beforeParameters[index].to,
+        };
       }
     }
   }
   const nameNode = beforeParameters.findLast((child) => javascriptMethodNameNodes.has(child.name));
-  return nameNode === undefined ? null : nodeText(source, nameNode);
+  return nameNode === undefined
+    ? null
+    : {name: nodeText(source, nameNode), from: nameNode.from, to: nameNode.to};
 }
 
 function javascriptOutline(source: string, lines: LineMap, tree: Tree): LocatedEntry[] {
   const output: LocatedEntry[] = [];
   for (const topLevel of children(tree.topNode)) {
-    const declaration = unwrapExport(topLevel);
+    const declaration = javascriptDeclaration(topLevel);
     if (declaration.name === "ImportDeclaration") {
       const bindings = descendants(declaration, "VariableDefinition");
       if (bindings.length > 0) {
@@ -399,6 +506,7 @@ function javascriptOutline(source: string, lines: LineMap, tree: Tree): LocatedE
         declaration,
         bindingNamesBeforeInitializers(declaration),
         declarationKind,
+        topLevel,
       );
       continue;
     }
@@ -422,16 +530,18 @@ function javascriptOutline(source: string, lines: LineMap, tree: Tree): LocatedE
     }
     for (const method of children(body).filter((child) => child.name === "MethodDeclaration")) {
       const methodName = javascriptMethodName(source, method);
-      if (methodName !== null && methodName !== "") {
+      if (methodName !== null && methodName.name !== "") {
         output.push({
           entry: {
             kind: "method",
-            name: methodName,
+            name: methodName.name,
             receiver: className,
             ...lines.range(method),
           },
           offset: method.from,
           order: output.length,
+          nameFrom: methodName.from,
+          nameTo: methodName.to,
         });
       }
     }
@@ -482,12 +592,20 @@ function pythonBindingNames(node: SyntaxNode): SyntaxNode[] {
 function pythonAssignmentNames(declaration: SyntaxNode): SyntaxNode[] {
   const names: SyntaxNode[] = [];
   let segment: SyntaxNode[] = [];
+  let assigned = false;
   for (const child of children(declaration)) {
     if (child.name === "AssignOp") {
       names.push(...segment.flatMap(pythonBindingNames));
       segment = [];
+      assigned = true;
     } else {
       segment.push(child);
+    }
+  }
+  if (!assigned) {
+    const annotation = segment.findIndex((child) => child.name === "TypeDef");
+    if (annotation >= 0) {
+      names.push(...segment.slice(0, annotation).flatMap(pythonBindingNames));
     }
   }
   return names;
@@ -560,11 +678,105 @@ function pythonOutline(source: string, lines: LineMap, tree: Tree): LocatedEntry
           },
           offset: candidate.from,
           order: output.length,
+          nameFrom: methodName.from,
+          nameTo: methodName.to,
         });
       }
     }
   }
   return output;
+}
+
+function codeOutline(source: string, lines: LineMap, format: SourceFormat, tree: Tree): LocatedEntry[] {
+  if (format.language === "go") {
+    return goOutline(source, lines, tree);
+  }
+  if (format.language === "javascript" || format.language === "typescript") {
+    return javascriptOutline(source, lines, tree);
+  }
+  if (format.language === "python") {
+    return pythonOutline(source, lines, tree);
+  }
+  return [];
+}
+
+export function declarationRange(
+  source: string,
+  lines: LineMap,
+  format: SourceFormat,
+  definitionFrom: number,
+  definitionTo: number,
+): {line: number; line_end: number} | null {
+  if (format.kind !== "code") {
+    return null;
+  }
+  const tree = codeTree(source, format);
+  if (hasParseError(tree)) {
+    return null;
+  }
+  for (const located of codeOutline(source, lines, format, tree)) {
+    if (
+      located.nameFrom === definitionFrom
+      && located.nameTo === definitionTo
+      && located.entry.kind !== "import"
+    ) {
+      return {line: located.entry.line, line_end: located.entry.line_end};
+    }
+  }
+  return null;
+}
+
+export function symbolOffsets(
+  source: string,
+  lines: LineMap,
+  format: SourceFormat,
+  line: number,
+  symbol: string,
+): number[] {
+  const logicalLine = lines.logicalLine(line);
+  if (logicalLine === null) {
+    return [];
+  }
+  const tree = format.kind === "json" ? jsonParser.parse(source) : codeTree(source, format);
+  const offsets: number[] = [];
+  const visit = (node: SyntaxNode): void => {
+    if (node.to <= logicalLine.from || node.from >= logicalLine.to) {
+      return;
+    }
+    if (node.firstChild !== null) {
+      for (let child = node.firstChild; child !== null; child = child.nextSibling) {
+        visit(child);
+      }
+      return;
+    }
+    if (node.type.isError || node.from < logicalLine.from || node.to > logicalLine.to) {
+      return;
+    }
+    const text = source.slice(node.from, node.to);
+    if (format.kind === "json") {
+      if (node.name !== "PropertyName" && node.name !== "String") {
+        return;
+      }
+      try {
+        if (JSON.parse(text) === symbol) {
+          offsets.push(node.from + 1);
+        }
+      } catch {
+        // A recovered invalid JSON string is not a selectable symbol.
+      }
+      return;
+    }
+    const allowed = format.language === "go"
+      ? goIdentifierNodes
+      : format.language === "python"
+        ? pythonIdentifierNodes
+        : javascriptIdentifierNodes;
+    if (allowed.has(node.name) && text === symbol) {
+      offsets.push(node.from);
+    }
+  };
+  visit(tree.topNode);
+  return offsets;
 }
 
 function markdownFrontmatter(
@@ -749,43 +961,47 @@ function ordered(entries: LocatedEntry[]): OutlineEntry[] {
     .map(({entry}) => entry);
 }
 
-function supportedFormat(extension: string): {kind: Exclude<FileKind, "none">; language: Language | null} | null {
-  switch (extension) {
-    case ".go":
-      return {kind: "code", language: "go"};
-    case ".js":
-      return {kind: "code", language: "javascript"};
-    case ".ts":
-      return {kind: "code", language: "typescript"};
-    case ".py":
-      return {kind: "code", language: "python"};
-    case ".md":
-      return {kind: "markdown", language: null};
-    case ".json":
-      return {kind: "json", language: null};
-    default:
-      return null;
+export function sourceFormat(filePath: string): SourceFormat | null {
+  if (filePath.endsWith(".go")) {
+    return {kind: "code", language: "go"};
   }
+  if (filePath.endsWith(".tsx")) {
+    return {kind: "code", language: "typescript", jsx: true};
+  }
+  if (filePath.endsWith(".ts") || filePath.endsWith(".mts") || filePath.endsWith(".cts")) {
+    return {kind: "code", language: "typescript"};
+  }
+  if (filePath.endsWith(".jsx")) {
+    return {kind: "code", language: "javascript", jsx: true};
+  }
+  if (filePath.endsWith(".js") || filePath.endsWith(".mjs") || filePath.endsWith(".cjs")) {
+    return {kind: "code", language: "javascript"};
+  }
+  if (filePath.endsWith(".py") || filePath.endsWith(".pyi")) {
+    return {kind: "code", language: "python"};
+  }
+  if (filePath.endsWith(".md")) {
+    return {kind: "markdown", language: null};
+  }
+  if (filePath.endsWith(".json")) {
+    return {kind: "json", language: null};
+  }
+  return null;
 }
 
 function parseContent(
   source: string,
-  format: {kind: Exclude<FileKind, "none">; language: Language | null},
+  format: SourceFormat,
 ): {parseComplete: boolean; outline: OutlineEntry[]; lineCount: number} {
   const lines = new LineMap(source);
   try {
-    if (format.language === "go") {
-      const tree = goParser.parse(source);
-      return {parseComplete: !hasParseError(tree), outline: ordered(goOutline(source, lines, tree)), lineCount: lines.count};
-    }
-    if (format.language === "javascript" || format.language === "typescript") {
-      const parser = format.language === "typescript" ? typescriptParser : javascriptParser;
-      const tree = parser.parse(source);
-      return {parseComplete: !hasParseError(tree), outline: ordered(javascriptOutline(source, lines, tree)), lineCount: lines.count};
-    }
-    if (format.language === "python") {
-      const tree = pythonParser.parse(source);
-      return {parseComplete: !hasParseError(tree), outline: ordered(pythonOutline(source, lines, tree)), lineCount: lines.count};
+    if (format.kind === "code") {
+      const tree = codeTree(source, format);
+      return {
+        parseComplete: !hasParseError(tree),
+        outline: ordered(codeOutline(source, lines, format, tree)),
+        lineCount: lines.count,
+      };
     }
     if (format.kind === "markdown") {
       const tree = markdownParser.parse(source);
@@ -860,11 +1076,6 @@ function normalizeInputPath(input: string): string {
   return normalized;
 }
 
-function isOutside(root: string, target: string): boolean {
-  const relative = path.relative(root, target);
-  return relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative);
-}
-
 function filesystemFailure(error: unknown): InspectFailure {
   if (error instanceof InspectFailure) {
     return error;
@@ -885,7 +1096,7 @@ async function inspect(input: string): Promise<InspectionData> {
   } catch (error) {
     throw filesystemFailure(error);
   }
-  if (isOutside(workspace, canonicalTarget)) {
+  if (isOutsideWorkspace(workspace, canonicalTarget)) {
     throw new InspectFailure("outside_workspace", "path resolves outside the workspace");
   }
 
@@ -900,7 +1111,7 @@ async function inspect(input: string): Promise<InspectionData> {
   }
 
   const resultPath = normalized.split(path.sep).join("/");
-  const format = supportedFormat(path.extname(normalized));
+  const format = sourceFormat(normalized);
   if (format === null) {
     return {
       path: resultPath,

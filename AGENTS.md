@@ -1,6 +1,6 @@
 AGENTS.md
 
-`README.md` is the source of truth for installation, deployment, user-visible router and shell workflows, and requirements. For those tasks, open its relevant section before inspecting implementation; this documentation-owner rule overrides any general preference to inspect code first. Update it when the requested change alters one of those user-visible surfaces. Use `doc/spec/interface.md` for normative engine, router, plugin, shell, hread/hgrep, recovery, and metrics contracts; open it when behavior or acceptance criteria are in question. Use `doc/architecture/index.md` for stable ownership boundaries; open it before moving responsibilities. Use `contrib/codex/file-editing-instructions.md` and `tool_grammar.lark` only when editing or validating HPATCH syntax or Codex model guidance.
+`README.md` is the source of truth for installation, deployment, user-visible router and shell workflows, and requirements. For those tasks, open its relevant section before inspecting implementation; this documentation-owner rule overrides any general preference to inspect code first. Update it when the requested change alters one of those user-visible surfaces. Use `doc/spec/interface.md` for normative engine, router, plugin, shell, hread/hgrep/hsymbol, recovery, and metrics contracts; open it when behavior or acceptance criteria are in question. Use `doc/architecture/index.md` for stable ownership boundaries; open it before moving responsibilities. Use `contrib/codex/file-editing-instructions.md` and `tool_grammar.lark` only when editing or validating HPATCH syntax or Codex model guidance.
 
 ## Hpatch's target guidance
 
@@ -41,7 +41,7 @@ Deployment invariant: in hpatch mode, the router and Codex executor must see the
 6. Response transformation restores the original Code Mode carrier shape, replacing the routed call with a validated native `functions.exec` carrier and generated `apply_patch` operation while preserving model-visible history for replay.
 7. Codex executes the carrier under its own working directory, sandbox, permissions, process-session facilities, and visible diff. The router does not silently commit declared-workspace translation.
 
-Shell calls use the generic plugin carrier and forward the native executor's complete result. Hread and hgrep are private authenticated frontends invoked through `functions.shell`, not standalone model-visible tools.
+Shell calls use the generic plugin carrier and forward the native executor's complete result. Hread, hgrep, and hsymbol are private authenticated frontends invoked through `functions.shell`, not standalone model-visible tools.
 
 When changing Code Mode owner discovery or sibling preservation, open `doc/spec/interface.md` and the CLI-shape tests in `internal/router/hpatch_proxy_test.go` plus the app-server/request tests in `internal/router/server_test.go`. The supported owner is one custom `exec` under the leading `additional_tools` item: nested under `functions` for CLI traffic or direct for app-server traffic. Unsupported direct and top-level layouts fail closed.
 
@@ -73,7 +73,7 @@ Preserve these boundaries:
 - Normal router translation is non-mutating and directory-based through `TranslateForHostAt`. Retained shell application is a separate root-scoped path through `ApplyForHostRoot`.
 - Workspace authority changes must preserve this directory-based versus root-scoped split across code, `doc/spec/interface.md`, and `doc/architecture/index.md`.
 - Routed history stays in the original Code Mode carrier shape even though the model sees standalone registry tools.
-- `functions.hpatch` and `functions.shell` are model-visible; hread and hgrep remain private shell frontends.
+- `functions.hpatch` and `functions.shell` are model-visible; hread, hgrep, and hsymbol remain private shell frontends.
 - Codex owns executor cwd, sandbox, permissions, process sessions, and final patch application.
 - Metrics, hooks, dashboards, and diagnostics remain auxiliary; their failures cannot replace successful edits, reads, translations, or command results.
 - Benchmark and dashboard concerns stay outside edit-engine ownership.

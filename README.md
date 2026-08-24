@@ -37,7 +37,7 @@ flowchart LR
     A --> D
 ```
 
-The patch is not eliminated: the router generates it after inference. Savings are the difference between the two model-output payload estimates shown above. State reports, rejection diagnostics, and the net input cost of the hpatch and shell tool definitions plus persistent workflow guidance are tracked separately. Hread, hgrep, and inspect_file results are not compared with hypothetical shell commands; the dashboard's end-to-end Responses and session usage totals are authoritative for their model-input cost. Payload estimates remain reproducible GPT-5 estimates rather than provider billing totals.
+The patch is not eliminated: the router generates it after inference. Savings are the difference between the two model-output payload estimates shown above. State reports, rejection diagnostics, and the net input cost of the hpatch and shell tool definitions plus persistent workflow guidance are tracked separately. Hread, hgrep, hsymbol, and inspect_file results are not compared with hypothetical shell commands; the dashboard's end-to-end Responses and session usage totals are authoritative for their model-input cost. Payload estimates remain reproducible GPT-5 estimates rather than provider billing totals.
 
 For an 11-line function replacement, hpatch asks the model for this:
 
@@ -147,7 +147,10 @@ For native executor background and interactive behavior, see [OpenAI's Codex pro
 - Hpatch router mode requires Codex CLI with ChatGPT file auth from `codex login`, normally at `~/.codex/auth.json` or `$CODEX_HOME/auth.json`. Checkout installation also uses `codex debug models --bundled` when no `model_instructions_file` is configured.
 - Hpatch router mode resolves Node.js 24 or newer as `node`; passthrough mode does not load the plugin registry.
 - Private hgrep requires `rg` on the Codex executor's `PATH`.
-- Private hread, hgrep, and inspect_file require the router executable directory to precede unrelated entries on the executor's trusted `PATH`.
+- Private hsymbol requires the resolver for the queried language on the Codex executor's `PATH`:
+  `gopls` for Go, TypeScript 7.0.2 or newer as `tsc` for JavaScript, TypeScript, and JSON,
+  and `pyright-langserver` for Python `.py` and `.pyi` sources.
+- Private hread, hgrep, hsymbol, and inspect_file require the router executable directory to precede unrelated entries on the executor's trusted `PATH`.
 - The built-in shell uses `bash` when no shebang is present; every selected interpreter must be available through the inherited `PATH`.
 - Router and executor deployments with isolated filesystems must expose the frontend directory, authenticated snapshot, and router executable at the same absolute paths.
 - Source builds that regenerate the embedded plugin with `make install` or `go generate` require Bun. `make install`, which installs `hpatch-router` and Codex instructions, additionally requires `make` and `jq`.
@@ -219,26 +222,28 @@ Retained edits use the router-owned artifact path rather than the normal workspa
 
 ### Private filesystem frontends
 
-Hread, hgrep, and inspect_file are private shell frontends, not model-visible tools. Use inspect_file for bounded metadata and structure, hread for current target-bearing rows, and hgrep for current cross-file matches. Batch known reads as separate commands and combine known searches with repeated `-e` arguments:
+Hread, hgrep, hsymbol, and inspect_file are private shell frontends, not model-visible tools. Use inspect_file for bounded metadata and structure, hread for current target-bearing rows, hgrep for current cross-file text matches, and hsymbol for exact Go, JavaScript, TypeScript, JSON, or Python definitions and references. Batch known reads as separate commands and combine known searches with repeated `-e` arguments:
 
 ```sh
 hread parser.go 20:40
 hgrep -e 'TranslateForHost' .
+hsymbol refs internal/router/server.go 42:abcd Run 2
 inspect_file internal/router/server.go | jq -c '.data.outline[]'
 ```
 
-Inspect_file emits one exact JSON envelope with metadata, parser completeness, and a bounded structural outline; its private guidance includes a concise result shape rather than the specification schema. Markdown frontmatter is parsed as YAML, but only top-level scalar keys are returned. It never emits source bodies or scalar values. Hread emits `LINE:HASH TEXT`. Hgrep emits `"PATH":LINE:HASH TEXT`, searches recursively by default, and accepts GNU grep's `-R` as a no-op. Use hread before editing because inspect_file lines are not HPATCH targets. See the [interface contract](doc/spec/interface.md) for complete inputs and failure behavior.
+Inspect_file emits one exact JSON envelope with metadata, parser completeness, and a bounded structural outline; its private guidance includes a concise result shape rather than the specification schema. Its code formats are Go, Python `.py` and `.pyi`, and every stable TypeScript 7 source format: `.ts`, `.tsx`, `.d.ts`, `.mts`, `.d.mts`, `.cts`, `.d.cts`, `.js`, `.jsx`, `.mjs`, and `.cjs`. JSON remains a structural format. Markdown frontmatter is parsed as YAML, but only top-level scalar keys are returned. It never emits source bodies or scalar values. Hread emits `LINE:HASH TEXT`. Hgrep and hsymbol emit `"PATH":LINE:HASH TEXT`; hgrep searches text recursively and accepts GNU grep's `-R` as a no-op, while hsymbol runs one exact language-server query and emits canonical workspace-relative paths without a leading `./`. Use hread before editing because inspect_file lines are not HPATCH targets. See the [interface contract](doc/spec/interface.md) for complete inputs and failure behavior.
 
-Hread and hgrep share a 15,000 GPT-5-token soft output limit. One complete row may extend the
+Hread, hgrep, and hsymbol share a 15,000 GPT-5-token soft output limit. One complete row may extend the
 result through 15,500 tokens. If another row cannot be admitted, stdout retains only complete
 verified rows, stderr reports that the result is incomplete, and the command exits nonzero.
-Retry hread with a smaller range or narrow the hgrep search.
+Retry hread with a smaller range or narrow the hgrep search. An incomplete hsymbol result is not
+a complete definition or reference set.
 
 ## Codex router (systemd user service)
 
 In hpatch mode, the router validates authentication and turn metadata, constructs the complete
 plugin registry, and installs standalone `functions.hpatch` and `functions.shell` tools. The
-model also sees configured contributions marked model-visible. Hread, hgrep, and inspect_file
+model also sees configured contributions marked model-visible. Hread, hgrep, hsymbol, and inspect_file
 remain authenticated shell frontends; Codex supplies their workflow guidance and the durable
 shell workflow through the installed model-instructions file.
 
@@ -247,7 +252,7 @@ For each eligible request, the router finds exactly one Code Mode custom `exec` 
 The router leaves the request's existing Responses `instructions` value byte-equivalent.
 Tool descriptions contain only call-local contracts; they are not a fallback prompt channel.
 
-Hpatch translation uses the canonical directory hint from turn metadata when available. Metadata without a usable directory still forwards: absolute operands translate without a base, while relative operands reject rather than resolving from the router process cwd. Codex executes the returned `apply_patch` carrier and owns the sandbox, permissions, and visible diff. Shell, hread, hgrep, and inspect_file execute in Codex's actual working directory and environment; the router does not give their workers a router-owned filesystem capability. Background Responses requests are rejected before forwarding because the router does not expose the retrieval and cancellation endpoints needed to complete them.
+Hpatch translation uses the canonical directory hint from turn metadata when available. Metadata without a usable directory still forwards: absolute operands translate without a base, while relative operands reject rather than resolving from the router process cwd. Codex executes the returned `apply_patch` carrier and owns the sandbox, permissions, and visible diff. Shell, hread, hgrep, hsymbol, and inspect_file execute in Codex's actual working directory and environment; the router does not give their workers a router-owned filesystem capability. Background Responses requests are rejected before forwarding because the router does not expose the retrieval and cancellation endpoints needed to complete them.
 
 The frontend directory, authenticated snapshot, and router executable must be visible at the same paths to the router and executor. Only one router process can own the stable basename frontends. A concurrent process fails before listening, while a restart can reclaim authenticated links left by a crash.
 
@@ -366,7 +371,7 @@ The dashboard labels each collapsible session with the task title found for its 
 ### Codex model instructions
 
 [`contrib/codex/file-editing-instructions.md`](contrib/codex/file-editing-instructions.md)
-is the single persistent source for all durable HPATCH, shell, hread, hgrep, and inspect_file
+is the single persistent source for all durable HPATCH, shell, hread, hgrep, hsymbol, and inspect_file
 workflow guidance. `make install` applies it to the complete file selected by Codex's
 `model_instructions_file` setting and every personal-agent instruction file.
 
@@ -553,7 +558,7 @@ eligible Code Mode tool surfaces without changing Responses instructions → sel
 canonical directory hint → evaluate hpatch without router filesystem confinement or router-cwd
 fallback → return a client-executed `apply_patch` carrier.
 
-Router shell path: translate the free-form tool call into one native executor call → run in Codex's working directory, environment, sandbox, and permissions → forward the complete native result. Private hread, hgrep, and inspect_file use the same executor boundary. Passthrough mode skips registry construction and request rewriting.
+Router shell path: translate the free-form tool call into one native executor call → run in Codex's working directory, environment, sandbox, and permissions → forward the complete native result. Private hread, hgrep, hsymbol, and inspect_file use the same executor boundary. Passthrough mode skips registry construction and request rewriting.
 
 ## Project structure
 
@@ -566,7 +571,7 @@ Router shell path: translate the free-form tool call into one native executor ca
 │   ├── patchtest/                # Translated-patch test helper
 │   └── router/
 │       └── toolplugin/            # Plugin host, generation, snapshots, and tests
-├── plugins/                       # Built-in shell, hread, hgrep, and inspect_file sources
+├── plugins/                       # Built-in shell, hread, hgrep, hsymbol, and inspect_file sources
 ├── benchmarks/                   # Runner, tasks, containers, and checked-in results
 ├── compare/                      # Hand-authored payload scenarios
 ├── contrib/

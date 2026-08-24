@@ -182,7 +182,7 @@ script. Ordinary `functions.hpatch` and root APIs have no recovery mode.
 ## File reading, searching, inspection, and shell commands
 
 Acquire target-bearing context once before editing. After a successful hpatch, do not use hread,
-hgrep, or `git diff` on a changed file, or on a directory containing a changed file, merely to
+hgrep, hsymbol, or `git diff` on a changed file, or on a directory containing a changed file, merely to
 inspect, verify, or locate a follow-up target. Reuse the exact value you authored plus returned
 final-state rows or confirmed mappings. Only an exact target that is still unknown or ambiguous
 in an unchanged file justifies a focused read.
@@ -208,6 +208,15 @@ pipelines. Combine known patterns and paths with repeated `-e` arguments. Its ou
 Do not follow target-bearing hgrep output with hread unless nonmatching context outside the
 requested bounds is needed. If hgrep reports an incomplete token-limited result, retain the
 emitted rows and narrow the patterns, paths, context, or file selection.
+
+For Go, JavaScript, TypeScript, JSON, and Python, use
+`hsymbol refs PATH LINE:HASH SYMBOL [N]` when an exact symbol must be renamed, audited, or changed
+at every reference. Use `hsymbol def PATH LINE:HASH SYMBOL [N]` when the next edit is the symbol's
+declaration. `N` counts exact language tokens on the verified input line and may be omitted only
+when one exists. Copy emitted `"PATH":LINE:HASH TEXT` rows directly
+into HPATCH/2 targets. Do not follow a complete hsymbol definition with hread of the same span
+unless non-declaration context is needed. Never treat an incomplete token-limited hsymbol result
+as a complete definition or reference set.
 
 Use `inspect_file PATH` for bounded metadata and structural outlines. Its line numbers are
 metadata, not HPATCH targets; use hread when source text or target references are needed.
