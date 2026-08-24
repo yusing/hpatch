@@ -4,16 +4,19 @@ pjdoc:
   kind: spec
   scope: root
   status: draft
-  revision: "24"
+  revision: "29"
   files:
     - interface.md
     - comparison.md
     - benchmark.md
+    - ctp.md
 ---
 # hpatch specification
 
-Revision 24 prevents an unchanged target correction from repeating root evaluation while retaining
-the same recovery baseline for a later different target.
+Revision 29 keeps durable CTP/1 rules in the renamed Codex model-instruction source and appends
+request-local dictionary data to Codex's actual top-level or developer-message instruction carrier.
+It accounts for every admission fallback and retains separate internal input and assistant-output
+compression counters for the measured CTP/1 treatment against an imported native-Hpatch baseline.
 `doc/spec/interface.md` owns the public report grammar, projection rule, continuation
 semantics, and observable acceptance behavior.
 
@@ -32,6 +35,7 @@ semantics, and observable acceptance behavior.
 - [`REQ-OUTPUT-001`](interface.md): output, validation, and failure behavior
 - [`REQ-COMPARE-001`](comparison.md): token comparison scenarios
 - [`REQ-BENCH-001`](benchmark.md): historical-commit correctness and paired model evaluation
+- [`REQ-CTP-001`](ctp.md): lossless token-positive model-visible data-plane encoding
 - [`REQ-GUIDE-001`](interface.md): concise agent guidance
 
 All listed requirements are must-haves for this increment.

@@ -6,6 +6,9 @@ In hpatch router mode, the model receives `hpatch` and `shell` as standalone cus
 All persistent hread, hgrep, hsymbol, inspect_file, shell-execution, and HPATCH workflow guidance comes
 from `contrib/codex/file-editing-instructions.md`. The router injects that source into the
 top-level Responses `instructions` value in memory and never changes an instruction file.
+Native model protocol stops after the ordinary guidance and tool rewrite. CTP/1 may append
+dictionary data to the resulting top-level or first textual developer-message carrier under
+`REQ-CTP-001`.
 Hread, hgrep, hsymbol, and inspect_file remain private executor contributions inside the
 authenticated shell worker; their custom-tool specifications are not sent to the model, direct
 model calls to their names are not routed, and no executable frontend is installed for them.
@@ -263,7 +266,7 @@ Acceptance:
 4. Router startup validates `inspect_file` inside the immutable built-in snapshot without an
    executable frontend and exposes or routes only hpatch, shell, and configured model-visible
    contributions. Eligible request instructions use the central guidance while unrelated
-   content remains unchanged.
+   content remains unchanged; CTP/1 follows `REQ-CTP-001`.
 
 ## REQ-PLUGIN-001 — Router-local tool plugins
 
@@ -1340,9 +1343,12 @@ Acceptance:
 
 ## REQ-GUIDE-001 — Agent guidance
 
-`contrib/codex/file-editing-instructions.md` is the single persistent Codex workflow source for all durable edit, shell, read, search, and inspection guidance. `doc/spec/interface.md` owns the normative engine and router contract. Model-visible tool descriptions contain only concise
+`contrib/codex/file-editing-instructions.md` is the single Codex source for CTP representation
+rules and all durable edit, shell, read, search, and inspection guidance.
+`doc/spec/interface.md` owns the normative engine and router contract. Model-visible tool descriptions contain only concise
 call-local contracts and request-specific schemas. The router does not use private tool
-descriptions as prompt text.
+descriptions as prompt text. Native model protocol stops after the ordinary guidance rewrite;
+CTP/1 may then append only its request-local dictionary data under `REQ-CTP-001`.
 
 For each eligible turn carrying a non-null Responses `instructions` string, the router refreshes
 one current marked hpatch section or replaces the pinned stock Codex file-editing section and its
@@ -1412,7 +1418,8 @@ Acceptance:
 3. A marked prompt retains content before and after the owned section and refreshes idempotently;
    a configured custom prompt without a recognized section retains its content before the append.
 4. Missing and null request instructions remain byte-equivalent. An unconfigured, unrecognized
-   non-null instruction string fails before forwarding.
+   non-null instruction string fails before forwarding. CTP/1 never creates a carrier and restores
+   an echoed encoded instruction carrier exactly under its representation contract.
 5. Dynamic rejected-script references and recovery prose appear only with actionable context.
 6. A wholly row-stale evaluator rejection lists only the rejected target-bearing command handles
    and exact guidance for one atomic target-correction payload. Other failures direct one complete

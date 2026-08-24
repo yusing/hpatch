@@ -239,13 +239,24 @@ setting, a missing section is treated as an upstream model-instruction change an
 fails before forwarding. Requests without `instructions`, including compaction requests, remain
 unchanged. Codex resends instructions at session start, after compaction, at subagent start, and
 after subagent compaction; inherited side conversations already carry the marked section and are
-refreshed idempotently. Tool descriptions contain only call-local contracts.
+refreshed idempotently. Tool descriptions contain only call-local contracts and are not a fallback
+prompt channel.
+
+Under the default `--model-protocol native`, the ordinary guidance and tool rewrite is the complete
+model-visible transformation. Opt-in `--model-protocol ctp1` additionally applies the lossless
+Compact Token Protocol to token-positive eligible model-visible request strings and exact-reuse
+assistant text. It appends request-local dictionary data to the rewritten top-level instructions
+or first textual developer-message carrier.
+Responses roles, instruction priority, identifiers, reasoning, status, usage, schemas,
+grammars, streaming, and compaction control remain native. Model-emitted tool names and call
+payloads also remain native, so CTP does not compose with Hpatch, shell, or function execution.
 
 Defaults:
 
 | Setting | Default |
 | --- | --- |
 | Mode | `hpatch` (`--mode`); `passthrough` forwards Responses traffic without loading the tool registry |
+| Model protocol | `native` (`--model-protocol`); `ctp1` is an opt-in Hpatch-mode experiment and is rejected with `--mode passthrough` |
 | Listen | `127.0.0.1:8080` (`--listen`) |
 | Upstream response-start timeout | `10m` (`--timeout`) |
 | Upstream stream idle timeout | `4m` per blocked upstream read (`--stream-idle-timeout`); resets on byte progress, pauses during downstream processing, and imposes no total-duration limit |
@@ -265,6 +276,10 @@ reports `unevaluated/rejected`. Root commit failures report `applied/failed`.
 In hpatch mode, run the router as the same login user as Codex so it can open the absolute workspace paths Codex sends and read the same credentials. A user systemd unit is the intended long-running setup.
 
 Use `--mode passthrough` when the router should forward Responses traffic without installing hpatch or shell, loading private commands, enabling rejected-script recovery, or recording plugin metrics.
+
+Use `--model-protocol ctp1` to enable the compact provider representation. See the
+[CTP/1 contract](doc/spec/ctp.md) for its exact wire form, token-positive admission, literal
+fallback, restoration, and failure behavior.
 
 ### Install the binary
 
@@ -358,7 +373,8 @@ The dashboard labels each collapsible session with the task title found for its 
 ### Codex model instructions
 
 [`contrib/codex/file-editing-instructions.md`](contrib/codex/file-editing-instructions.md)
-is the single source for all durable HPATCH, shell, hread, hgrep, hsymbol, and inspect_file
+is the single source for CTP/1 representation rules and all durable HPATCH, shell, hread, hgrep,
+hsymbol, and inspect_file
 workflow guidance. The router applies it only to the in-memory `instructions` value of eligible
 Responses requests. It never reads or writes the configured instruction file itself.
 
@@ -379,7 +395,7 @@ uses router cwd as a fallback. See [`doc/spec/interface.md`](doc/spec/interface.
 
 ## Editing language (summary)
 
-Authoritative guidance: [`contrib/codex/file-editing-instructions.md`](contrib/codex/file-editing-instructions.md). Contract: [`doc/spec/interface.md`](doc/spec/interface.md).
+Authoritative guidance: [`contrib/codex/model-instructions.md`](contrib/codex/model-instructions.md). Contract: [`doc/spec/interface.md`](doc/spec/interface.md).
 
 Hread and hpatch preview/context rows have the shape `LINE:HASH TEXT`. Copy the complete
 `LINE:HASH` reference into a mutation target. The one-based line is a location hint. The
@@ -489,6 +505,12 @@ Metrics separate three different layers:
 2. A host supplies visible payload and session attribution to `RecordHostMetrics`, the only root persistence boundary. The router does this after routed outcomes and also records per-tool definitions, carriers, executor evidence, reports, diagnostics, and shell misuse or recovery overhead.
 3. The router dashboard and `/api/metrics` expose provider Responses lifecycle and usage totals alongside those persisted estimates.
 
+With CTP/1 enabled, `/api/metrics` also exposes auxiliary native and compact token estimates for
+admitted whole requests and assistant text from completed responses. These internal compression
+counters are separate from authoritative provider usage and never include model-emitted tool
+payloads. Admission counters distinguish a missing instruction carrier, no positive definition
+candidate, and a complete compact representation that was not smaller.
+
 The router dashboard and `GET /api/metrics` expose the structured persistent aggregate without opening an engine workspace.
 Each terminal Responses log record also carries that logical request's provider token counts.
 
@@ -523,6 +545,22 @@ RangeStream behavior. See the [benchmark methodology](doc/benchmarks.md), the
 [fixed control baseline](benchmarks/results/c07600a74ac93d1ac6c38c47b80d85519458bc9f-1/summary.md),
 and locally retained Hpatch-only trial reports.
 
+To measure the compact treatment without repeating an existing native-Hpatch run,
+run one CTP/1 attempt against the published native baseline:
+
+```sh
+BENCHMARK_MODE=ctp-only BENCHMARK_REPORT_ISSUES=false REPETITIONS=1 bash benchmarks/bench.sh
+```
+
+The CTP report compares router-observed provider totals for cached and uncached input tokens,
+output and reasoning-output tokens, model requests, wall time, hidden-grader correctness,
+and overall attempt acceptance. It rejects incomplete provider-usage evidence and records
+the imported baseline source. Because historical instruction digests may differ, the report
+labels that confound rather than presenting the token delta as an isolated protocol effect. A
+separate CTP compression table reports native and compact token estimates, compact/native ratio,
+and saving for input and assistant output without using the baseline totals. A run with no admitted
+CTP representation reports both ratios as unavailable.
+
 The one-repetition `gpt-5.6-sol` Hpatch baseline passed and reported 45.2% lower
 successful edit payload (2,096 tokens versus 3,825 control-equivalent tokens). It used
 25 model requests, one once-recovered rejection chain, and no changed-file read → edit →
@@ -533,9 +571,10 @@ read loop. It is one observed run, not a general performance guarantee.
 Root library path: accept a caller-authorized workspace root and cwd → parse the complete script → verify immutable baselines → render and validate disjoint changes → return a completed result for atomic commit or one non-mutating translated patch.
 
 Router hpatch path: validate auth and metadata → load the immutable tool registry → inject the
-central guidance into received Responses instructions → replace the eligible Code Mode tool surfaces → select an optional
-canonical directory hint → evaluate hpatch without router filesystem confinement or router-cwd
-fallback → return a client-executed `apply_patch` carrier.
+central guidance into received Responses instructions → replace the eligible Code Mode tool
+surfaces → optionally encode the token-positive model-visible data plane with CTP/1 → select an
+optional canonical directory hint → decode the provider response → evaluate hpatch without router
+filesystem confinement or router-cwd fallback → return a client-executed `apply_patch` carrier.
 
 Router shell path: translate the free-form tool call into one native executor call → invoke the authenticated router worker in Codex's working directory, environment, sandbox, and permissions → evaluate Bash or POSIX shell with `mvdan/sh`, dispatch private commands directly, or run another selected interpreter → forward the complete native result. Passthrough mode skips registry construction and request rewriting.
 
@@ -577,7 +616,7 @@ Tests live beside the owners they exercise. The root `hpatch` package is the reu
 | [`doc/benchmarks.md`](doc/benchmarks.md) | Benchmark operation and interpretation |
 | [`doc/codex-router-e2e.md`](doc/codex-router-e2e.md) | Codex-facing end-to-end procedure |
 | [`contrib/systemd/hpatch-router.service`](contrib/systemd/hpatch-router.service) | User service template |
-| [`contrib/codex/file-editing-instructions.md`](contrib/codex/file-editing-instructions.md) | All persistent Codex edit, shell, read, search, and inspection workflow guidance |
+| [`contrib/codex/model-instructions.md`](contrib/codex/model-instructions.md) | Persistent CTP/1, edit, shell, read, search, and inspection guidance for Codex |
 | [`AGENTS.md`](AGENTS.md) | Architecture and repository navigation for agents |
 
 Library use: module path `github.com/yusing/hpatch`. Importable as a library (`hpatch.Translate`, `hpatch.Workspace`, structured host metrics helpers); hosts should open an `*os.Root` capability for the workspace before calling in.
