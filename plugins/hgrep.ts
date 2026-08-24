@@ -2,17 +2,17 @@ import {spawn} from "node:child_process";
 
 import type {Tool} from "../internal/router/toolplugin/plugin.d.ts";
 import {
-  byteLength,
   decodeUTF8,
   errorText,
   createExecutorTool,
   formatHashLine,
   shellQuoteArgument,
   stripOptionalFinalNewline,
+  VERIFIED_ROW_LIMIT_DIAGNOSTIC,
+  VerifiedRowOutput,
 } from "./common.ts";
 
 const MAX_STDERR_BYTES = 64 * 1024;
-const LIMIT_MESSAGE = "hgrep: output limit reached; retry with a narrower search\n";
 
 const silentLongOptions = new Set([
   "line-number",
@@ -385,9 +385,10 @@ function conciseDiagnostic(diagnostic: string): string {
 type ComparedOutput = {
   current: string;
   stock: string;
+  incomplete: boolean;
 };
 
-async function runRipgrep(argumentsValue: string[], maxOutputBytes: number): Promise<ComparedOutput> {
+async function runRipgrep(argumentsValue: string[]): Promise<ComparedOutput> {
   const child = spawn("rg", ["--json", "--no-config", ...argumentsValue], {
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -397,12 +398,9 @@ async function runRipgrep(argumentsValue: string[], maxOutputBytes: number): Pro
   });
   const stderrPromise = collectStderr(child.stderr);
 
-  let current = "";
-  let currentBytes = 0;
-  let stock = "";
+  const output = new VerifiedRowOutput();
   let pending: Buffer[] = [];
   let pendingBytes = 0;
-  let truncated = false;
   const seen = new Set<string>();
   const processEvent = (raw: Buffer): boolean => {
     let event: JSONEvent;
@@ -434,16 +432,8 @@ async function runRipgrep(argumentsValue: string[], maxOutputBytes: number): Pro
     seen.add(key);
     const prefix = `${JSON.stringify(path)}:`;
     const row = `${prefix}${formatHashLine(lineNumber, line)}`;
-    const rowBytes = byteLength(row);
-    if (currentBytes + rowBytes + byteLength(LIMIT_MESSAGE) > maxOutputBytes) {
-      return false;
-    }
-    current += row;
-    stock += `${prefix}${line}\n`;
-    currentBytes += rowBytes;
-    return true;
+    return output.append(row, `${prefix}${line}\n`);
   };
-const eventLimit = (): number => Math.max(0, maxOutputBytes - currentBytes - byteLength(LIMIT_MESSAGE));
   const takePending = (): Buffer => {
     const raw = pending.length === 1 ? pending[0] : Buffer.concat(pending, pendingBytes);
     pending = [];
@@ -461,11 +451,6 @@ const eventLimit = (): number => Math.max(0, maxOutputBytes - currentBytes - byt
         const newline = chunk.indexOf(0x0a, offset);
         const end = newline < 0 ? chunk.length : newline + 1;
         const fragment = chunk.subarray(offset, end);
-        if (pendingBytes + fragment.length > eventLimit()) {
-          truncated = true;
-          child.kill("SIGKILL");
-          break outer;
-        }
         pending.push(fragment);
         pendingBytes += fragment.length;
         offset = end;
@@ -473,15 +458,12 @@ const eventLimit = (): number => Math.max(0, maxOutputBytes - currentBytes - byt
           break;
         }
         if (!processEvent(takePending())) {
-          truncated = true;
           child.kill("SIGKILL");
           break outer;
         }
       }
     }
-    if (!truncated && pendingBytes !== 0
-        && (pendingBytes > eventLimit() || !processEvent(takePending()))) {
-      truncated = true;
+    if (!output.incomplete && pendingBytes !== 0 && !processEvent(takePending())) {
       child.kill("SIGKILL");
     }
     exitCode = await completion;
@@ -493,13 +475,11 @@ const eventLimit = (): number => Math.max(0, maxOutputBytes - currentBytes - byt
     throw error;
   }
 
-  if (truncated) {
-    current += LIMIT_MESSAGE;
-    stock += LIMIT_MESSAGE;
-    return {current, stock};
+  if (output.incomplete) {
+    return {current: output.current, stock: output.stock, incomplete: true};
   }
   if (exitCode === 0 || exitCode === 1) {
-    return {current, stock};
+    return {current: output.current, stock: output.stock, incomplete: false};
   }
   const diagnostic = conciseDiagnostic(stderr.trim());
   if (diagnostic !== "") {
@@ -517,7 +497,7 @@ export function createHGrepTool(description: string, grammar: string): Tool<stri
     argv(input) {
       return splitArguments(input);
     },
-    async execute(argv, context) {
+    async execute(argv) {
       let normalized: NormalizedArguments;
       try {
         normalized = normalizeArguments(argv);
@@ -528,13 +508,16 @@ export function createHGrepTool(description: string, grammar: string): Tool<stri
         ? ""
         : `hgrep: warning: ignoring ripgrep options ${normalized.warnings.join(", ")}; output remains verified rows\n`;
       try {
-        const maxOutputBytes = context.outputBudgetBytes - byteLength(warning);
-        const result = await runRipgrep(normalized.arguments, maxOutputBytes);
+        const result = await runRipgrep(normalized.arguments);
+        const limitDiagnostic = result.incomplete
+          ? `hgrep: ${VERIFIED_ROW_LIMIT_DIAGNOSTIC}`
+          : "";
+        const stderr = `${warning}${limitDiagnostic}`;
         return {
           stdout: result.current,
-          stderr: warning,
-          stock: {stdout: result.stock, stderr: warning, exitCode: 0},
-          exitCode: 0,
+          stderr,
+          stock: {stdout: result.stock, stderr, exitCode: result.incomplete ? 1 : 0},
+          exitCode: result.incomplete ? 1 : 0,
         };
       } catch (error) {
         return {stderr: `${warning}hgrep: ${errorText(error)}\n`, exitCode: 1};

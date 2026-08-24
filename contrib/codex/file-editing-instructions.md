@@ -199,13 +199,15 @@ Run one file per command as `hread PATH [START:END]`. Quote paths with shell syn
 already-known reads as separate commands in one shell script. A bare path reads the complete
 file. A start line of `0` begins at line 1 without emitting line 0. An end past EOF warns after
 returning available rows; a start past EOF fails. Copy a current `LINE:HASH` directly into an
-HPATCH/2 target.
+HPATCH/2 target. If hread reports an incomplete token-limited result, retain the emitted rows and
+request a smaller range for the missing context.
 
 Run hgrep with familiar ripgrep arguments and ordinary shell quoting, redirection, and
 pipelines. Combine known patterns and paths with repeated `-e` arguments. Its output is
 `"PATH":LINE:HASH TEXT`; copy a current target directly and never reconstruct a row.
 Do not follow target-bearing hgrep output with hread unless nonmatching context outside the
-requested bounds is needed.
+requested bounds is needed. If hgrep reports an incomplete token-limited result, retain the
+emitted rows and narrow the patterns, paths, context, or file selection.
 
 Use `inspect_file PATH` for bounded metadata and structural outlines. Its line numbers are
 metadata, not HPATCH targets; use hread when source text or target references are needed.

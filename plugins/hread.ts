@@ -8,13 +8,16 @@ import {
   errorText,
   createExecutorTool,
   formatHashLine,
+  MAX_POSSIBLE_GPT5_TOKEN_BYTES,
   shellQuoteArgument,
   stripOptionalFinalNewline,
+  VERIFIED_ROW_LIMIT_DIAGNOSTIC,
+  VERIFIED_ROW_MAX_TOKENS,
+  VerifiedRowOutput,
 } from "./common.ts";
 
 const READ_BUFFER_BYTES = 32 * 1024;
 
-class ResultTooLargeError extends Error {}
 function conciseErrorText(error: unknown): string {
   const message = errorText(error);
   if (!(error instanceof Error) || !("syscall" in error) || typeof error.syscall !== "string") {
@@ -102,11 +105,12 @@ function parseReadSpec(input: string): ReadSpec {
 type ComparedOutput = {
   current: string;
   stock: string;
+  incomplete: boolean;
   warning?: string;
 };
 
 
-async function readHashLines(spec: ReadSpec, maxOutputBytes: number): Promise<ComparedOutput> {
+async function readHashLines(spec: ReadSpec): Promise<ComparedOutput> {
   const handle = await open(spec.path, constants.O_RDONLY | (constants.O_NONBLOCK ?? 0));
 
   try {
@@ -121,41 +125,31 @@ async function readHashLines(spec: ReadSpec, maxOutputBytes: number): Promise<Co
     let pendingCR = false;
     let content = "";
     let contentBytes = 0;
-    let current = "";
-    let currentBytes = 0;
-    let stock = "";
+    const output = new VerifiedRowOutput();
 
     const selected = () => wholeFile
       || (lineNumber >= spec.startLine && lineNumber <= spec.endLine);
-    const capacityError = () => new ResultTooLargeError(
-      `hread result exceeds its configured bound of ${maxOutputBytes} bytes`,
-    );
     const appendContent = (text: string): void => {
       if (text === "") {
         return;
       }
       lineOpen = true;
-      if (!selected()) {
+      if (!selected() || output.incomplete) {
         return;
       }
-      const addedBytes = byteLength(text);
-      const rowFramingBytes = byteLength(String(lineNumber)) + 7;
-      if (currentBytes + rowFramingBytes + contentBytes + addedBytes > maxOutputBytes) {
-        throw capacityError();
+      contentBytes += byteLength(text);
+      if (contentBytes > VERIFIED_ROW_MAX_TOKENS * MAX_POSSIBLE_GPT5_TOKEN_BYTES) {
+        // Such a row must exceed the token ceiling, regardless of tokenization.
+        content = "";
+        output.incomplete = true;
+        return;
       }
       content += text;
-      contentBytes += addedBytes;
     };
     const finishLine = (): void => {
-      if (selected()) {
+      if (selected() && !output.incomplete) {
         const row = formatHashLine(lineNumber, content);
-        const rowBytes = byteLength(row);
-        if (currentBytes + rowBytes > maxOutputBytes) {
-          throw capacityError();
-        }
-        current += row;
-        currentBytes += rowBytes;
-        stock += `${content}\n`;
+        output.append(row, `${content}\n`);
       }
       content = "";
       contentBytes = 0;
@@ -207,9 +201,6 @@ async function readHashLines(spec: ReadSpec, maxOutputBytes: number): Promise<Co
       }
       consume(decoder.decode());
     } catch (error) {
-      if (error instanceof ResultTooLargeError) {
-        throw error;
-      }
       if (error instanceof TypeError) {
         throw new Error("not UTF-8");
       }
@@ -229,7 +220,7 @@ async function readHashLines(spec: ReadSpec, maxOutputBytes: number): Promise<Co
     const warning = !wholeFile && missingStartLine <= spec.endLine
       ? `hread: ${missingStartLine}-${spec.endLine}: [out of range]\n`
       : undefined;
-    return {current, stock, warning};
+    return {current: output.current, stock: output.stock, incomplete: output.incomplete, warning};
   } finally {
     await handle.close();
   }
@@ -280,7 +271,7 @@ export function createHReadTool(description: string, grammar: string): Tool<stri
       argumentsValue[0] = context.resolvePath(argumentsValue[0]);
       return argumentsValue;
     },
-    async execute(argv, context) {
+    async execute(argv) {
       try {
         const executionArguments = [...argv];
         if (executionArguments[0]?.startsWith("@shell/")) {
@@ -290,12 +281,20 @@ export function createHReadTool(description: string, grammar: string): Tool<stri
           }
           executionArguments[0] = `/tmp/hpatch-${sessionID}/${executionArguments[0].slice("@shell/".length)}`;
         }
-        const result = await readHashLines(parseReadSpec(stripOptionalFinalNewline(hreadInput(executionArguments))), context.outputBudgetBytes);
+        const result = await readHashLines(parseReadSpec(stripOptionalFinalNewline(hreadInput(executionArguments))));
+        const limitDiagnostic = result.incomplete
+          ? `hread: ${VERIFIED_ROW_LIMIT_DIAGNOSTIC}`
+          : "";
+        const stderr = `${result.warning ?? ""}${limitDiagnostic}`;
         return {
           stdout: result.current,
-          ...(result.warning === undefined ? {} : {stderr: result.warning}),
-          stock: {stdout: result.stock, exitCode: 0},
-          exitCode: 0,
+          ...(stderr === "" ? {} : {stderr}),
+          stock: {
+            stdout: result.stock,
+            ...(limitDiagnostic === "" ? {} : {stderr: limitDiagnostic}),
+            exitCode: result.incomplete ? 1 : 0,
+          },
+          exitCode: result.incomplete ? 1 : 0,
         };
       } catch (error) {
         return {stderr: `hread: ${conciseErrorText(error)}\n`, exitCode: 1};

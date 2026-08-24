@@ -44,6 +44,13 @@ over that exact content, including leading spaces and tabs. A trailing file term
 not create an additional empty line. Missing, inaccessible, non-regular, non-UTF-8,
 reversed-range, and start-past-EOF reads return concise stderr and nonzero status.
 
+Verified-row frontends count exact formatted current stdout with the GPT-5 tokenizer. They admit
+rows through 15,000 tokens. One next complete row may raise the result to at most 15,500 tokens;
+admitting that row seals the result. EOF at that point is complete. A later row, or any row that
+would exceed 15,500 tokens, is omitted together with every later row. Omission preserves already
+admitted complete rows on stdout, writes an incomplete-result diagnostic to stderr, and returns
+nonzero. It never cuts a row.
+
 For input metrics, hread produces its current and stock results from the same read. The stock
 result preserves selected `TEXT` and one LF per returned logical line while omitting the
 `LINE:HASH ` prefix. The comparison does not read a file twice.
@@ -57,7 +64,8 @@ Acceptance:
 3. Several hread commands in one shell call execute in authored shell order without an
    hread-owned batch format, buffer, header, or partial-success policy.
 4. Reading and whole-file UTF-8 validation use bounded streaming storage and observe
-   cancellation. A formatted result rejects before exceeding 16 MiB.
+   cancellation. Token-limited output retains only admitted complete rows, and current and stock
+   results retain the same source rows without a second read.
 5. Success and failure reach Codex through the model-visible shell carrier. Replay retains
    the original shell call and output; it never synthesizes a model-visible hread call or
    includes the shell call in editable rejected-script recovery history.
@@ -91,8 +99,8 @@ of `REQ-READ-001`. Match highlighting, match-only fragments, replacement output,
 and line truncation cannot change it. Multiple matches on one path and line produce one row.
 Ripgrep's no-match exit status is a successful empty result. Execution, filesystem, encoding,
 cancellation, invalid-pattern, and missing-executable failures return concise nonzero
-diagnostics. Output contains only complete rows and stays within 16 MiB; reaching the bound
-preserves completed rows and adds a limit diagnostic.
+diagnostics. Output contains only complete rows and uses the shared verified-row token admission
+rule in `REQ-READ-001`. On the first omitted distinct result, hgrep terminates and reaps ripgrep.
 
 For input metrics, hgrep produces its current and stock results from the same ripgrep event
 stream. The stock result preserves each JSON-quoted `PATH`, `TEXT`, LF, result order, and
@@ -109,6 +117,8 @@ Acceptance:
    ripgrep or produce a warning.
 3. Requested before/after context emits complete verified rows beside matches. Repeated match
    or context events on one row emit that row once; no matches return successful empty stdout.
+   Token admission occurs after this deduplication, and an incomplete result retains paired
+   current and stock rows, writes its diagnostic to stderr, and returns nonzero.
 4. The model-visible shell call and output are replayed unchanged. No standalone hgrep call is
    exposed, routed, or admitted to hpatch recovery history.
 5. Router startup fails before serving if the private hgrep frontend cannot be installed.

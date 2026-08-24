@@ -4,14 +4,15 @@ import {createHReadTool} from "./hread.ts";
 import {createInspectFileTool, inspectFileDescription} from "./inspect_file.ts";
 import {shellTool} from "./shell.mjs";
 
-const hreadDescription = `Read one UTF-8 file or inclusive logical-line range and emit verified \`LINE:HASH TEXT\` rows. Usage: \`hread PATH [START:END]\`.`;
+const verifiedRowLimitDescription = "An incomplete token-limited result retains complete rows, writes stderr, and exits nonzero.";
+const hreadDescription = `Read one UTF-8 file or inclusive logical-line range and emit verified \`LINE:HASH TEXT\` rows. Usage: \`hread PATH [START:END]\`. ${verifiedRowLimitDescription}`;
 
 const hreadPath = `(?:"(?:\\\\(?:["\\\\/bfnrt]|u[0-9A-Fa-f]{4})|[^\\x00-\\x1F"\\\\]|\\t)*"|[^\\x00-\\x20"]+)`;
 const hreadReadSpec = `${hreadPath}(?: (?:0|[1-9][0-9]*):[1-9][0-9]*)?`;
 const hreadRegex = `\\A${hreadReadSpec}\\z`;
 const inspectFileRegex = `\\A${hreadPath}\\z`;
 
-const hgrepDescription = `Search files with supported ripgrep arguments and emit verified complete rows as \`"PATH":LINE:HASH TEXT\`.`;
+const hgrepDescription = `Search files with supported ripgrep arguments and emit verified complete rows as \`"PATH":LINE:HASH TEXT\`. ${verifiedRowLimitDescription}`;
 
 const hgrepPart = `(?:'[^'\\r\\n]*'|"(?:\\\\[^\\r\\n]|[^"\\\\\\r\\n])*"|(?:\\\\[^\\r\\n]|[^\\s'"\\\\])+)`;
 const hgrepRegex = `\\A[ \\t]*${hgrepPart}+(?:[ \\t]+${hgrepPart}+)*[ \\t]*\\z`;

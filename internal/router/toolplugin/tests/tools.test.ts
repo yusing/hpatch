@@ -1,10 +1,10 @@
 import {afterEach, describe, expect, test} from "bun:test";
 import {spawnSync} from "node:child_process";
-import {mkdtemp, mkdir, rm, symlink, writeFile} from "node:fs/promises";
+import {mkdtemp, mkdir, readFile, rm, symlink, writeFile} from "node:fs/promises";
 import {tmpdir} from "node:os";
 import path from "node:path";
 
-import {formatHashLine} from "../../../../plugins/common.ts";
+import {countGPT5Tokens, formatHashLine, VerifiedRowOutput} from "../../../../plugins/common.ts";
 import {createHGrepTool, splitArguments} from "../../../../plugins/hgrep.ts";
 import {createHReadTool} from "../../../../plugins/hread.ts";
 import {createInspectFileTool, inspectFileDescription} from "../../../../plugins/inspect_file.ts";
@@ -47,6 +47,28 @@ function rustRegexMatches(pattern: string, input: string): boolean {
   return result.status === 0;
 }
 
+function contentWithFormattedTokenCount(
+  tokens: number,
+  format: (content: string) => string,
+): string {
+  let low = 0;
+  let high = tokens + 1;
+  while (low <= high) {
+    const repetitions = Math.floor((low + high) / 2);
+    const content = `row${" x".repeat(repetitions)}`;
+    const count = countGPT5Tokens(format(content));
+    if (count === tokens) {
+      return content;
+    }
+    if (count < tokens) {
+      low = repetitions + 1;
+    } else {
+      high = repetitions - 1;
+    }
+  }
+  throw new Error(`cannot construct ${tokens}-token formatted row fixture`);
+}
+
 afterEach(async () => {
   process.chdir(originalCWD);
   if (originalPath === undefined) {
@@ -62,6 +84,45 @@ afterEach(async () => {
   await Promise.all(
     temporaryDirectories.splice(0).map((directory) => rm(directory, {recursive: true, force: true})),
   );
+});
+
+describe("verified-row output", () => {
+  test("matches the shared Go GPT-5 token fixtures", async () => {
+    const fixtures = JSON.parse(await readFile(
+      new URL("./testdata/gpt5_tokens.json", import.meta.url),
+      "utf8",
+    )) as {text: string; tokens: number}[];
+    for (const fixture of fixtures) {
+      expect(countGPT5Tokens(fixture.text)).toBe(fixture.tokens);
+    }
+  });
+
+  test("uses GPT-5 tokens with one bounded whole-row overshoot", () => {
+    const exact = new VerifiedRowOutput();
+    const atSoftLimit = contentWithFormattedTokenCount(15_000, (content) => `${content}\n`);
+    expect(exact.append(atSoftLimit, "stock-one\n")).toBe(true);
+    expect(exact.incomplete).toBe(false);
+
+    const overshootContent = contentWithFormattedTokenCount(
+      15_500,
+      (content) => `${atSoftLimit}${content}\n`,
+    );
+    const overshootRow = `${overshootContent}\n`;
+    expect(countGPT5Tokens(atSoftLimit + overshootRow)).toBe(15_500);
+    expect(exact.append(overshootRow, "stock-two\n")).toBe(true);
+    expect(exact.incomplete).toBe(false);
+    expect(exact.append("later\n", "stock-three\n")).toBe(false);
+    expect(exact.incomplete).toBe(true);
+    expect(exact.current).toBe(atSoftLimit + overshootRow);
+    expect(exact.stock).toBe("stock-one\nstock-two\n");
+
+    const tooLarge = new VerifiedRowOutput();
+    const aboveMaximum = contentWithFormattedTokenCount(15_501, (content) => `${content}\n`);
+    expect(tooLarge.append(`${aboveMaximum}\n`, "stock\n")).toBe(false);
+    expect(tooLarge.current).toBe("");
+    expect(tooLarge.stock).toBe("");
+    expect(tooLarge.incomplete).toBe(true);
+  });
 });
 
 describe("hread built-in plugin", () => {
@@ -147,6 +208,7 @@ describe("hread built-in plugin", () => {
     process.chdir(directory);
     await writeFile("plain.txt", "alpha\r\nbeta\rgamma\n", "utf8");
     await writeFile("second file.txt", "one\ntwo\nthree", "utf8");
+    await writeFile("token-spellings.txt", "<|endoftext|> <|im_start|> <|fim_prefix|>\n", "utf8");
 
     const tool = createHReadTool("description", "start: TEST");
     const whole = await tool.execute(["plain.txt"], executionContext);
@@ -190,6 +252,13 @@ describe("hread built-in plugin", () => {
         stdout: "beta\ngamma\n",
         exitCode: 0,
       },
+      exitCode: 0,
+    });
+
+    const tokenSpellings = await tool.execute(["token-spellings.txt"], executionContext);
+    expect(tokenSpellings).toEqual({
+      stdout: formatHashLine(1, "<|endoftext|> <|im_start|> <|fim_prefix|>"),
+      stock: {stdout: "<|endoftext|> <|im_start|> <|fim_prefix|>\n", exitCode: 0},
       exitCode: 0,
     });
 
@@ -240,6 +309,46 @@ describe("hread built-in plugin", () => {
       expect(result.stderr).toContain(diagnostic);
     }
   });
+
+  test("retains whole admitted rows and fails when later rows exceed the token limit", async () => {
+    const directory = await temporaryDirectory("hread-limit-");
+    process.chdir(directory);
+    const first = contentWithFormattedTokenCount(15_000, (content) => formatHashLine(1, content));
+    await writeFile("large.txt", `${first}\nsecond\nthird\n`, "utf8");
+
+    const tool = createHReadTool("description", "start: TEST");
+    const result = await tool.execute(["large.txt"], executionContext);
+    expect(result).toEqual({
+      stdout: formatHashLine(1, first) + formatHashLine(2, "second"),
+      stderr: "hread: output incomplete: 15,000-token limit reached\n",
+      stock: {
+        stdout: `${first}\nsecond\n`,
+        stderr: "hread: output incomplete: 15,000-token limit reached\n",
+        exitCode: 1,
+      },
+      exitCode: 1,
+    });
+  });
+
+  test("discards an unavoidably over-limit row while streaming", async () => {
+    const directory = await temporaryDirectory("hread-oversized-row-");
+    process.chdir(directory);
+    await writeFile("large.txt", " ".repeat(15_500 * 128 + 1), "utf8");
+
+    const tool = createHReadTool("description", "start: TEST");
+    const result = await tool.execute(["large.txt"], executionContext);
+    expect(result).toEqual({
+      stdout: "",
+      stderr: "hread: output incomplete: 15,000-token limit reached\n",
+      stock: {
+        stdout: "",
+        stderr: "hread: output incomplete: 15,000-token limit reached\n",
+        exitCode: 1,
+      },
+      exitCode: 1,
+    });
+  });
+
 });
 
 describe("hgrep built-in plugin", () => {
@@ -321,6 +430,7 @@ describe("hgrep built-in plugin", () => {
     const directory = await temporaryDirectory("hgrep-plugin-");
     process.chdir(directory);
     await writeFile("path with spaces.txt", "before\nneedle\nafter\n", "utf8");
+    await writeFile("token-spellings.txt", "<|endoftext|> <|im_start|> <|fim_prefix|>\n", "utf8");
 
     const tool = createHGrepTool("description", "start: TEST");
     const result = await tool.execute(["-A1", "-F", "needle", "path with spaces.txt"], executionContext);
@@ -349,6 +459,21 @@ describe("hgrep built-in plugin", () => {
       exitCode: 0,
     });
 
+    const tokenSpellings = await tool.execute(["-F", "<|im_start|>", "token-spellings.txt"], executionContext);
+    expect(tokenSpellings).toEqual({
+      stdout: `${JSON.stringify("token-spellings.txt")}:${formatHashLine(
+        1,
+        "<|endoftext|> <|im_start|> <|fim_prefix|>",
+      )}`,
+      stock: {
+        stdout: '"token-spellings.txt":<|endoftext|> <|im_start|> <|fim_prefix|>\n',
+        stderr: "",
+        exitCode: 0,
+      },
+      stderr: "",
+      exitCode: 0,
+    });
+
     const missing = await tool.execute(["-F", "needle", "missing.txt"], executionContext);
     expect(missing.exitCode).toBe(1);
     expect(missing.stderr).toMatch(
@@ -356,38 +481,38 @@ describe("hgrep built-in plugin", () => {
     );
   });
 
-  test("stops immediately on an oversized unterminated rg event", async () => {
-    const directory = await temporaryDirectory("hgrep-plugin-");
-    const fakeRG = path.join(directory, "rg");
-    await writeFile(
-      fakeRG,
-      "#!/usr/bin/env bun\n"
-        + "process.stdout.write(\"x\".repeat(17 * 1024 * 1024));\n"
-        + "setInterval(() => {}, 1000);\n",
-      {mode: 0o700},
+  test("retains whole admitted matches and fails when later matches exceed the token limit", async () => {
+    const directory = await temporaryDirectory("hgrep-limit-");
+    process.chdir(directory);
+    const prefix = `${JSON.stringify("large.txt")}:`;
+    const first = contentWithFormattedTokenCount(
+      15_000,
+      (content) => `${prefix}${formatHashLine(1, content)}`,
     );
-    process.env.PATH = `${directory}${path.delimiter}${originalPath ?? ""}`;
+    await writeFile("large.txt", `${first}\nneedle second\nneedle third\n`, "utf8");
 
     const tool = createHGrepTool("description", "start: TEST");
-    let timer: ReturnType<typeof setTimeout>;
-    const timeout = new Promise<never>((_resolve, reject) => {
-      timer = setTimeout(() => reject(new Error("hgrep did not stop after its event limit")), 3000);
-    });
-    try {
-      const result = await Promise.race([tool.execute(["needle", "."], executionContext), timeout]);
-      expect(result).toEqual({
-        stdout: "hgrep: output limit reached; retry with a narrower search\n",
-        stock: {
-          stdout: "hgrep: output limit reached; retry with a narrower search\n",
-          stderr: "",
-          exitCode: 0,
-        },
+    const result = await tool.execute(["-F", "needle", "large.txt"], executionContext);
+    expect(result).toEqual({
+      stdout: `${prefix}${formatHashLine(2, "needle second")}`
+        + `${prefix}${formatHashLine(3, "needle third")}`,
+      stderr: "",
+      stock: {
+        stdout: `${prefix}needle second\n${prefix}needle third\n`,
         stderr: "",
         exitCode: 0,
-      });
-    } finally {
-      clearTimeout(timer!);
-    }
+      },
+      exitCode: 0,
+    });
+
+    await writeFile("large.txt", `needle ${first}\nneedle second\nneedle third\n`, "utf8");
+    const limited = await tool.execute(["-F", "needle", "large.txt"], executionContext);
+    expect(limited.exitCode).toBe(1);
+    expect(limited.stderr).toBe("hgrep: output incomplete: 15,000-token limit reached\n");
+    expect(limited.stdout).toContain(`needle ${first}`);
+    expect(limited.stdout).not.toContain("needle second");
+    expect(limited.stdout).not.toContain("needle third");
+    expect(limited.stock?.exitCode).toBe(1);
   });
 
   test("accepts GNU grep and ripgrep search options while rejecting incompatible modes", async () => {

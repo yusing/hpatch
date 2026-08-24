@@ -1,0 +1,17 @@
+[
+  {"text": "", "tokens": 0},
+  {"text": "hello", "tokens": 1},
+  {"text": "\"/tmp/資料.go\":42:abcd 名稱()", "tokens": 12},
+  {"text": "1:abcd alpha beta\n", "tokens": 6},
+  {"text": "é", "tokens": 1},
+  {"text": "é", "tokens": 2},
+  {"text": " \t  spaced\r\n", "tokens": 3},
+  {"text": "🙂🚀🧪", "tokens": 6},
+  {"text": "{}[]():;,.!?", "tokens": 6},
+  {"text": "1:aaaa one\n2:bbbb two\n", "tokens": 10},
+  {"text": "\"/workspace/pkg/file.go\":123:0f0f\tvalue := call()\n", "tokens": 16},
+  {"text": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "tokens": 8},
+  {"text": "<|endoftext|>", "tokens": 7},
+  {"text": "<|im_start|>", "tokens": 6},
+  {"text": "<|fim_prefix|>", "tokens": 6}
+]

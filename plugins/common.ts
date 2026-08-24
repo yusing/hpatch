@@ -1,6 +1,15 @@
 import {createHash} from "node:crypto";
+import {countTokens as countGPT5TokensWithModel} from "gpt-tokenizer/model/gpt-5";
 import type {ExecutionContext, ExecutionResult, Tool, TranslationContext} from "../internal/router/toolplugin/plugin.d.ts";
 
+const VERIFIED_ROW_SOFT_TOKENS = 15_000;
+export const VERIFIED_ROW_MAX_TOKENS = 15_500;
+// The pinned GPT-5 vocabulary's longest token is 128 UTF-8 bytes. This bounds
+// retained candidate storage without introducing a separate admission policy.
+export const MAX_POSSIBLE_GPT5_TOKEN_BYTES = 128;
+export const VERIFIED_ROW_LIMIT_DIAGNOSTIC = "output incomplete: 15,000-token limit reached\n";
+// Source rows may contain tokenizer control spellings; they remain ordinary source text.
+const sourceTokenOptions = {disallowedSpecial: new Set<string>()};
 
 export function byteLength(value: string): number {
   return Buffer.byteLength(value, "utf8");
@@ -12,6 +21,34 @@ export function hashLine(content: string): string {
 
 export function formatHashLine(number: number, content: string): string {
   return `${number}:${hashLine(content)} ${content}\n`;
+}
+
+export function countGPT5Tokens(value: string): number {
+  return countGPT5TokensWithModel(value, sourceTokenOptions);
+}
+
+export class VerifiedRowOutput {
+  current = "";
+  stock = "";
+  incomplete = false;
+  #sealed = false;
+
+  append(currentRow: string, stockRow: string): boolean {
+    if (this.#sealed) {
+      this.incomplete = true;
+      return false;
+    }
+    const candidate = this.current + currentRow;
+    const tokens = countGPT5Tokens(candidate);
+    if (tokens > VERIFIED_ROW_MAX_TOKENS) {
+      this.incomplete = true;
+      return false;
+    }
+    this.current = candidate;
+    this.stock += stockRow;
+    this.#sealed = tokens > VERIFIED_ROW_SOFT_TOKENS;
+    return true;
+  }
 }
 
 export function errorText(error: unknown): string {

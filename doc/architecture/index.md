@@ -170,14 +170,19 @@ The hread built-in accepts one path argv and an optional separate inclusive rang
 Shell quoting owns whitespace and metacharacters in paths. Hread has no multi-file input or
 batch result format; the model batches reads as separate commands in one shell script.
 Rendering streams fixed-size chunks, validates UTF-8 across the complete regular file,
-buffers only selected lines, and keeps the formatted result within 16 MiB.
+and buffers only selected lines. The shared verified-row accumulator counts exact formatted
+current output with the pinned GPT-5 tokenizer, admits through the 15,000-token soft limit with
+one complete-row overshoot through 15,500, and retains current and stock rows as one pair.
+An omitted row seals output growth while hread continues the existing stream for file and range
+validation.
 
 The hgrep built-in receives ordinary shell-produced argv. Its TypeScript implementation
 rejects incompatible source and output modes and invokes installed ripgrep through
 `--json --no-config`. Ripgrep alone owns search selection. The implementation consumes match
 and context events, renders complete verified rows, deduplicates only identical path-and-line
 results, and provides no fallback search implementation. Shell, rather than hgrep, owns
-pipelines, redirection, and command composition.
+pipelines, redirection, and command composition. Hgrep uses the same verified-row accumulator
+after result deduplication and terminates ripgrep when the accumulator rejects a row.
 
 The inspect_file built-in owns bounded structural inspection of one workspace-relative regular
 file. It canonicalizes the executor cwd and symlink target, uses pinned Lezer parsers for the six
@@ -322,8 +327,9 @@ and completed executor-result events for `REQ-METRICS-001`. It does not re-parse
 diagnostics, or rendered responses. The translation path owns per-plugin and per-tool definition,
 call, emitted-shape, translated-shape, and failed-translation counters. The execution path owns
 current and stock result-shape counters from the private worker's validated evidence. Both paths
-derive token counts and stable identity inside the metrics owner; plugin code may supply validated
-content evidence but never token counts or outer carrier serialization. Hpatch's adapter additionally
+derive persisted metric token counts and stable identity inside the metrics owner; plugin code
+independently counts formatted verified rows only to enforce its output-admission contract and
+never supplies those counts as metric evidence or outer carrier serialization. Hpatch's adapter additionally
 owns its effective, ineffective, fixed failed semantic baseline, report, command, target, and stable
 terminal-reason classifications. The report formatter's exact emitted string is the only source
 for report-input token counting. Reduction ratios and signed net input are presentation-time

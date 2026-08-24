@@ -6,6 +6,7 @@
     "@lezer/json": "1.0.3",
     "@lezer/markdown": "1.7.2",
     "@lezer/python": "1.1.19",
+    "gpt-tokenizer": "4.0.0",
     "yaml": "^2.9.0"
   }
 }
