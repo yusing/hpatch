@@ -209,10 +209,11 @@ Do not follow target-bearing hgrep output with hread unless nonmatching context 
 requested bounds is needed. If hgrep reports an incomplete token-limited result, retain the
 emitted rows and narrow the patterns, paths, context, or file selection.
 
-For Go, use `hsymbol refs PATH LINE:HASH IDENT [N]` when an exact identifier must be renamed,
-audited, or changed at every reference. Use `hsymbol def PATH LINE:HASH IDENT [N]` when the next
-edit is the identifier's declaration. `N` counts exact identifier tokens on the verified input
-line and may be omitted only when one exists. Copy emitted `"PATH":LINE:HASH TEXT` rows directly
+For Go, JavaScript, TypeScript, JSON, and Python, use
+`hsymbol refs PATH LINE:HASH SYMBOL [N]` when an exact symbol must be renamed, audited, or changed
+at every reference. Use `hsymbol def PATH LINE:HASH SYMBOL [N]` when the next edit is the symbol's
+declaration. `N` counts exact language tokens on the verified input line and may be omitted only
+when one exists. Copy emitted `"PATH":LINE:HASH TEXT` rows directly
 into HPATCH/2 targets. Do not follow a complete hsymbol definition with hread of the same span
 unless non-declaration context is needed. Never treat an incomplete token-limited hsymbol result
 as a complete definition or reference set.

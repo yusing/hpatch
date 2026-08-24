@@ -44,13 +44,13 @@ Builtin private frontend, same family as `hread` / `hgrep` / `inspect_file`.
 | Declaration, argv, executor | `plugins/` (`hsymbol.ts` plus `tools.ts`) |
 | Bundle and frontend symlink | `internal/router/toolplugin` and router startup |
 | Verified-row identity | Existing `LINE:HASH` helper used by `hread` / `hgrep` |
-| Language resolution | Installed `gopls` on the Codex executor `PATH` |
+| Language resolution | Installed `gopls`, TypeScript 7 `tsc`, or `pyright-langserver` on the Codex executor `PATH` |
 | Model-visible catalog | Unchanged: still `functions.hpatch` and `functions.shell` |
 | Guidance | `contrib/codex/file-editing-instructions.md` |
 | Recovery ancestry | None. Ordinary plugins do not enter `REQ-CORRECT-001` |
 
-Passthrough mode installs nothing. Hsymbol is Go-only because gopls exposes the one-shot
-definition and reference queries used by the observed workflow.
+Passthrough mode installs nothing. Hsymbol selects gopls for Go, the native TypeScript 7 LSP for
+JavaScript, TypeScript, and JSON, and Pyright for Python.
 
 ## Command
 
@@ -59,26 +59,26 @@ query. Shell quoting owns path whitespace. Batch several queries as separate `hs
 commands in one shell script, the same way `hread` batches.
 
 ```text
-hsymbol def PATH LINE:HASH IDENT [N]
-hsymbol refs PATH LINE:HASH IDENT [N]
+hsymbol def PATH LINE:HASH SYMBOL [N]
+hsymbol refs PATH LINE:HASH SYMBOL [N]
 ```
 
-`PATH` is one existing regular UTF-8 Go file. Relative and absolute inputs resolve from the
+`PATH` is one existing regular UTF-8 supported source file. Relative and absolute inputs resolve from the
 canonical shell process cwd, and their canonical target must remain inside that workspace.
 `LINE:HASH` is `REQ-READ-001` identity for one current logical line of that file. Lookup is
-exact: a stale or missing hash fails and does not search for another match. `IDENT` is a valid
-non-keyword Go identifier and matches only exact Go identifier tokens on that verified line;
-comments, strings, and larger identifiers do not count. `N` is a positive token-occurrence
+exact: a stale or missing hash fails and does not search for another match. `SYMBOL` matches one
+exact language token on that verified line; comments, unrelated literal text, and larger
+identifiers do not count. `N` is a positive token-occurrence
 count. It may be omitted only when exactly one matching token exists. Multiple matches without
-`N` fail as ambiguous before gopls starts.
+`N` fail as ambiguous before the resolver starts.
 
 This selector is intentionally stricter than `hgrep`. Text search is allowed to return comments,
 strings, and substrings because its result is a set of textual matches. A language-server query
 must identify one token. Refusing an ambiguous omitted `N` prevents the frontend from silently
-asking gopls about a different same-spelled identifier on the line.
+asking the resolver about a different same-spelled symbol on the line.
 
 `def` and `refs` are the only modes. Extra arguments, missing arguments, unknown modes, and
-a zero, leading-zero, or non-decimal `N` fail before `gopls` starts.
+a zero, leading-zero, or non-decimal `N` fail before the resolver starts.
 
 ## Output
 
@@ -100,37 +100,38 @@ Row shape is the `hgrep` row:
 without a leading `./`. `LINE:HASH TEXT` has the identity and complete-line semantics of
 `REQ-READ-001`. No match highlighting or identifier-only fragments.
 
-`def` expands only when the definition token returned by gopls is the declared name of an
-existing complete inspect_file Go outline entry. Package constants, variables, types, functions,
-and direct methods emit that individual entry's inclusive range. Imports, package clauses,
-fields, interface methods, parameters, locals, and uncertain parses emit only the definition
-line.
+`def` expands only when the definition selection returned by the resolver is the declared name of
+an existing complete inspect_file outline entry. Supported variables, types, classes, functions,
+and direct methods emit that individual entry's inclusive range. Imports, fields, parameters,
+locals, JSON, and uncertain parses emit only the definition line.
 
-`refs` asks gopls to include the declaration and emits one row per returned reference location.
+`refs` asks the resolver to include declarations and emits one row per returned reference location.
 Several references on one canonical path and line emit that row once.
 
-Rows whose canonical file escapes the workspace, is not a regular UTF-8 file, or is not Go are
+Rows whose canonical file escapes the workspace, is not a regular UTF-8 file, or is not owned by
+the selected resolver are
 omitted from stdout. Stderr reports how many locations were skipped and why. A `def` without an
 editable workspace location fails.
 
 Empty `refs` is a successful empty stdout, matching `hgrep` with no matches.
 
-Stderr may include `gopls` diagnostics and skip counts. It never carries substitute rows.
-Progress is not required: one `gopls` query is short.
+Stderr may include resolver diagnostics and skip counts. It never carries substitute rows.
+Progress is not required: one semantic query is short.
 
 Exit status is zero when the query ran and stdout holds the rows described above, including
 the empty-`refs` case. Nonzero status is for usage, missing file, stale hash, missing
-`IDENT` occurrence, missing `gopls`, cancellation, and workspace-escaping `def`.
+`SYMBOL` occurrence, missing resolver, cancellation, and workspace-escaping `def`.
 
 ## Stock metrics
 
-The executor runs `gopls` once. The current result is the verified-row stdout. The stock result
-is the gopls CLI stdout and stderr from the same position. Metrics do not start a second query.
+The executor runs one resolver query. The current result is the verified-row stdout. The stock
+result is gopls output or the LSP semantic response and resolver stderr from the same position.
+Metrics do not start a second query.
 
 ## Non-goals
 
 - Model-visible `functions.hsymbol`. Keep it private, like `hgrep`.
-- A grep fallback when `gopls` is missing. That is `hgrep`.
+- A grep fallback when a resolver is missing. That is `hgrep`.
 - Workspace-wide search by name alone. Start from a verified row.
 - Implementations, hover, rename, or completion.
 - Rewriting `inspect_file` to emit hashes. Its outline remains metadata.
@@ -154,12 +155,12 @@ workflow instructions in the specification string.
 
 ## Acceptance
 
-1. `hsymbol def` on a verified use-site row of a top-level Go function emits the complete
+1. `hsymbol def` on a verified use-site row of a supported top-level declaration emits the complete
    current declaration as `hgrep`-shaped rows whose hashes match `hread` of that span.
-2. `hsymbol refs` on a verified identifier row emits each workspace reference once as a
+2. `hsymbol refs` on a verified language-token row emits each workspace reference once as a
    complete current line. A textual `hgrep` of the same name may return additional
    non-identifier hits; those extra hits are not a `refs` failure.
-3. A stale `LINE:HASH`, a missing occurrence `N`, or a missing `gopls` fails before any
+3. A stale `LINE:HASH`, a missing occurrence `N`, or a missing resolver fails before any
    stdout rows. The command does not search for another hash.
 4. Standard-library or module-cache locations are skipped with a stderr count. A `def`
    that resolves only there is nonzero and emits no rows.
@@ -168,8 +169,9 @@ workflow instructions in the specification string.
 
 ## Validation
 
-- Plugin unit tests next to `plugins/hsymbol.ts` for argv, stale-hash, occurrence, skip,
-  and token-admission behavior, using a fake `gopls` in `PATH`.
+- Plugin unit tests next to `plugins/hsymbol.ts` for argv, stale-hash, occurrence, protocol,
+  format coverage, skip, and token-admission behavior, using fake resolvers plus pinned real
+  TypeScript and Pyright integration fixtures.
 - Router registry tests that the builtin bundle exposes the private frontend and does not
   add a model-visible tool.
 - One focused `go test ./internal/router` plus `bun test` for the plugin package after
@@ -179,6 +181,6 @@ workflow instructions in the specification string.
 
 The owner is the builtin private-tool bundle. The local failure is a precise identifier
 query whose stock CLI result cannot be copied into HPATCH/2, which then causes repeated
-`hread` of the same files. The protection is one `gopls`-backed frontend that reuses
+`hread` of the same files. The protection is one resolver-backed frontend that reuses
 `REQ-READ-001` row identity. It does not add a second edit engine, a model-visible tool, or
 a search fallback.

@@ -184,19 +184,23 @@ results, and provides no fallback search implementation. Shell, rather than hgre
 pipelines, redirection, and command composition. Hgrep uses the same verified-row accumulator
 after result deduplication and terminates ripgrep when the accumulator rejects a row.
 
-The hsymbol built-in owns verified Go identifier selection and verified-row rendering around one
-installed gopls query. It canonicalizes the executor cwd as its workspace, confines input and
-returned files to that workspace, and counts exact Lezer Go identifier tokens before invoking
-gopls at the selected UTF-8 byte offset. Gopls owns definition and reference resolution. Hsymbol
-deduplicates returned references by canonical path and line and renders canonical targets relative
-to the workspace before applying the shared verified-row accumulator. It provides the same query's
-gopls output as stock metric evidence. Definition
-expansion reuses inspect_file's Go outline projection and requires the returned definition span
-to match an exact supported declared-name token; every other definition remains one line.
+The hsymbol built-in owns verified language-token selection and verified-row rendering around one
+installed semantic query. It canonicalizes the executor cwd as its workspace, confines input and
+returned files to that workspace, and uses the same pinned parsers as inspect_file to select an
+exact token before invoking the resolver. Gopls owns Go resolution at a UTF-8 byte offset;
+TypeScript 7's `tsc --lsp --stdio` owns JavaScript, TypeScript, and JSON resolution; and
+`pyright-langserver --stdio` owns Python resolution. The shared LSP client owns one process-scoped
+initialize, document-open, query, and cleanup lifecycle with UTF-16 positions. Hsymbol deduplicates
+returned rows by canonical path and line and renders canonical targets relative to the workspace
+before applying the shared verified-row accumulator. It provides the same query's semantic response
+as stock metric evidence. Definition expansion reuses inspect_file's language outline projection
+and requires the returned definition selection to match an exact supported declared-name token;
+every other definition remains one line.
 
 The inspect_file built-in owns bounded structural inspection of one workspace-relative regular
-file. It canonicalizes the executor cwd and symlink target, uses pinned Lezer parsers for the six
-contracted extensions, and projects only navigation metadata. Unsupported extensions stop after
+file. It canonicalizes the executor cwd and symlink target, uses pinned Lezer parsers for Go,
+Python, Markdown, JSON, and every stable TypeScript 7 source format, and projects only navigation
+metadata. Unsupported extensions stop after
 file metadata. A concise result shape schema supplies the embedded private guidance.
 The renderer owns the 64 KiB complete-document budget and truncates only at outline-entry
 boundaries; parser recovery remains an independent result flag.

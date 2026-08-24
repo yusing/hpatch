@@ -9,6 +9,7 @@ import {countGPT5Tokens, formatHashLine, hashLine, VerifiedRowOutput} from "../.
 import {createHGrepTool, splitArguments} from "../../../../plugins/hgrep.ts";
 import {createHReadTool} from "../../../../plugins/hread.ts";
 import {createHSymbolTool} from "../../../../plugins/hsymbol.ts";
+import {runLSPQuery} from "../../../../plugins/lsp.ts";
 import {
   createInspectFileTool,
   goDeclarationRange,
@@ -20,6 +21,7 @@ import plugin from "../../../../plugins/tools.ts";
 const originalCWD = process.cwd();
 const originalPath = process.env.PATH;
 const originalSessionID = process.env.CODEX_THREAD_ID;
+const pluginBin = path.resolve(import.meta.dir, "../../../../plugins/node_modules/.bin");
 const temporaryDirectories: string[] = [];
 const executionContext = {stdinFD: null, scriptReadFD: null, scriptWriteFD: null, outputBudgetBytes: 16 * 1024 * 1024};
 
@@ -628,7 +630,7 @@ describe("hgrep built-in plugin", () => {
 describe("hsymbol built-in plugin", () => {
   test("keeps its private contract behavioral", () => {
     const description = plugin.tools[2].specification.description.replace(/\s+/g, " ");
-    expect(description).toContain("hsymbol (def|refs) PATH LINE:HASH IDENT [N]");
+    expect(description).toContain("hsymbol (def|refs) PATH LINE:HASH SYMBOL [N]");
     expect(description).toContain('"PATH":LINE:HASH TEXT');
     expect(description).toContain("ambiguous selectors");
     for (const persistent of ["rename", "audit", "before editing", "functions.hpatch"]) {
@@ -683,6 +685,22 @@ describe("hsymbol built-in plugin", () => {
     expect(calls).toContain("references -d");
     expect(calls).toContain(`:#${Buffer.byteLength(source.slice(0, selectedOffset), "utf8")}`);
     expect(calls.trim().split("\n")).toHaveLength(1);
+  });
+
+  test("rejects JavaScript labels before starting TypeScript", async () => {
+    const directory = await temporaryDirectory("hsymbol-label-");
+    process.chdir(directory);
+    const source = "target: while (false) break target;\n";
+    await writeFile("input.js", source);
+    process.env.PATH = await temporaryDirectory("hsymbol-label-empty-path-");
+    const result = await createHSymbolTool("description", "start: TEST").execute(
+      ["refs", "input.js", `1:${hashLine(source.trimEnd())}`, "target"],
+      executionContext,
+    );
+    expect(result).toEqual({
+      stderr: "hsymbol: target is not a symbol token on the verified line\n",
+      exitCode: 1,
+    });
   });
 
   test("accepts canonical in-workspace paths and rejects workspace escapes before gopls", async () => {
@@ -970,6 +988,184 @@ describe("hsymbol built-in plugin", () => {
       exitCode: 1,
     });
   });
+
+  test("resolves TypeScript 7 and Python definitions through their LSP servers", async () => {
+    const directory = await temporaryDirectory("hsymbol-lsp-");
+    process.chdir(directory);
+    process.env.PATH = `${pluginBin}${path.delimiter}${originalPath ?? ""}`;
+    const typescriptTarget = [
+      "export function target(value: number) {",
+      "  return value + 1;",
+      "}",
+      "",
+    ].join("\n");
+    const typescriptInput = [
+      'import {target} from "./target";',
+      'export const emoji = "😀"; export const answer = target(1);',
+      "",
+    ].join("\n");
+    const pythonTarget = [
+      "def target(value: int) -> int:",
+      "    return value + 1",
+      "",
+    ].join("\n");
+    const pythonInput = [
+      "from target import target",
+      "answer = target(1)",
+      "",
+    ].join("\n");
+    const pythonStub = "def stub_target(value: int) -> int: ...\n";
+    const ambientTarget = [
+      "export declare function ambientTarget(",
+      "  value: number,",
+      "): number;",
+      "",
+    ].join("\n");
+    const ambientInput = [
+      'import {ambientTarget} from "./ambient";',
+      "export const ambientAnswer = ambientTarget(1);",
+      "",
+    ].join("\n");
+    await Promise.all([
+      writeFile("tsconfig.json", JSON.stringify({compilerOptions: {allowJs: true, jsx: "react-jsx"}})),
+      writeFile("target.ts", typescriptTarget),
+      writeFile("input.ts", typescriptInput),
+      writeFile("target.py", pythonTarget),
+      writeFile("input.py", pythonInput),
+      writeFile("sample.pyi", pythonStub),
+      writeFile("ambient.d.ts", ambientTarget),
+      writeFile("ambient_input.ts", ambientInput),
+    ]);
+    const tool = createHSymbolTool("description", "start: TEST");
+    const typescriptLine = new LineMap(typescriptInput).logicalLine(2)?.text;
+    const pythonLine = new LineMap(pythonInput).logicalLine(2)?.text;
+    if (typescriptLine === undefined || pythonLine === undefined) {
+      throw new Error("LSP fixture line is missing");
+    }
+
+    const typescript = await tool.execute(
+      ["def", "input.ts", `2:${hashLine(typescriptLine)}`, "target"],
+      executionContext,
+    );
+    expect(typescript).toMatchObject({exitCode: 0});
+    expect(typescript.stdout).toContain(`${JSON.stringify("target.ts")}:${formatHashLine(1, "export function target(value: number) {")}`);
+    expect(typescript.stdout).toContain(`${JSON.stringify("target.ts")}:${formatHashLine(3, "}")}`);
+    expect(typescript.stock?.stdout).toContain("target.ts");
+
+    const ambient = await tool.execute(
+      ["def", "ambient_input.ts", `2:${hashLine(ambientInput.split("\n")[1])}`, "ambientTarget"],
+      executionContext,
+    );
+    expect(ambient).toMatchObject({exitCode: 0});
+    for (const [line, text] of ambientTarget.trimEnd().split("\n").entries()) {
+      expect(ambient.stdout).toContain(`${JSON.stringify("ambient.d.ts")}:${formatHashLine(line + 1, text)}`);
+    }
+
+    const python = await tool.execute(
+      ["def", "input.py", `2:${hashLine(pythonLine)}`, "target"],
+      executionContext,
+    );
+    expect(python).toMatchObject({exitCode: 0});
+    expect(python.stdout).toContain(`${JSON.stringify("target.py")}:${formatHashLine(1, "def target(value: int) -> int:")}`);
+    expect(python.stdout).toContain(`${JSON.stringify("target.py")}:${formatHashLine(2, "    return value + 1")}`);
+    expect(python.stock?.stdout).toContain("target.py");
+    const stub = await tool.execute(
+      ["refs", "sample.pyi", `1:${hashLine(pythonStub.trimEnd())}`, "stub_target"],
+      executionContext,
+    );
+    expect(stub).toMatchObject({exitCode: 0});
+
+    process.env.PATH = await temporaryDirectory("hsymbol-empty-lsp-path-");
+    expect(await tool.execute(
+      ["refs", "input.ts", `2:${hashLine(typescriptLine)}`, "target"],
+      executionContext,
+    )).toEqual({stderr: "hsymbol: tsc is unavailable\n", exitCode: 1});
+    expect(await tool.execute(
+      ["refs", "input.py", `2:${hashLine(pythonLine)}`, "target"],
+      executionContext,
+    )).toEqual({stderr: "hsymbol: pyright-langserver is unavailable\n", exitCode: 1});
+  });
+
+  test("reaps a language server that ignores shutdown", async () => {
+    const directory = await temporaryDirectory("hsymbol-lsp-shutdown-");
+    const server = path.join(directory, "server.mjs");
+    await writeFile(server, String.raw`
+let input = Buffer.alloc(0);
+function respond(id, result) {
+  const body = JSON.stringify({jsonrpc: "2.0", id, result});
+  process.stdout.write("Content-Length: " + Buffer.byteLength(body) + "\r\n\r\n" + body);
+}
+function receive(message) {
+  if (message.method === "initialize") {
+    respond(message.id, {capabilities: {positionEncoding: "utf-16"}});
+  } else if (message.method === "textDocument/definition") {
+    respond(message.id, []);
+  }
+}
+process.stdin.on("data", (chunk) => {
+  input = Buffer.concat([input, chunk]);
+  while (true) {
+    const headerEnd = input.indexOf("\r\n\r\n");
+    if (headerEnd < 0) break;
+    const header = input.subarray(0, headerEnd).toString();
+    const length = Number(/Content-Length: ([0-9]+)/iu.exec(header)?.[1]);
+    if (input.length < headerEnd + 4 + length) break;
+    const bodyStart = headerEnd + 4;
+    receive(JSON.parse(input.subarray(bodyStart, bodyStart + length).toString()));
+    input = input.subarray(bodyStart + length);
+  }
+});
+`);
+    const started = performance.now();
+    const result = await runLSPQuery({
+      command: process.execPath,
+      args: [server],
+      workspace: directory,
+      path: path.join(directory, "input.ts"),
+      languageID: "typescript",
+      source: "const value = 1;\n",
+      position: {line: 0, character: 6},
+      mode: "def",
+    });
+    expect(result.locations).toEqual([]);
+    expect(performance.now() - started).toBeLessThan(3_000);
+  });
+
+  test("accepts every stable TypeScript 7 source format", async () => {
+    const directory = await temporaryDirectory("hsymbol-typescript-formats-");
+    process.chdir(directory);
+    process.env.PATH = `${pluginBin}${path.delimiter}${originalPath ?? ""}`;
+    await writeFile("tsconfig.json", JSON.stringify({
+      compilerOptions: {allowJs: true, checkJs: true, jsx: "react-jsx"},
+      include: ["*"],
+    }));
+    const fixtures = [
+      ["sample.ts", "export const target = 1; console.log(target);"],
+      ["sample.tsx", "export const target = 1; const view = <div>{target}</div>;"],
+      ["sample.d.ts", "export declare const target: number;"],
+      ["sample.mts", "export const target = 1; console.log(target);"],
+      ["sample.d.mts", "export declare const target: number;"],
+      ["sample.cts", "export const target = 1; console.log(target);"],
+      ["sample.d.cts", "export declare const target: number;"],
+      ["sample.js", "export const target = 1; console.log(target);"],
+      ["sample.jsx", "export const target = 1; const view = <div>{target}</div>;"],
+      ["sample.mjs", "export const target = 1; console.log(target);"],
+      ["sample.cjs", "const target = 1; module.exports = target;"],
+      ["sample.json", '{"target": 1}'],
+    ] as const;
+    await Promise.all(fixtures.map(([name, source]) => writeFile(name, `${source}\n`)));
+    const tool = createHSymbolTool("description", "start: TEST");
+
+    for (const [name, source] of fixtures) {
+      const result = await tool.execute(
+        ["refs", name, `1:${hashLine(source)}`, "target", "1"],
+        executionContext,
+      );
+      expect(result).toMatchObject({exitCode: 0});
+      expect(result.stock?.stdout).toBeDefined();
+      expect(result.stderr).toBeUndefined();
+    }
+  });
 });
 
 describe("inspect_file built-in plugin", () => {
@@ -1117,6 +1313,39 @@ describe("inspect_file language projections", () => {
       "a", "b", "annotated", "left", "middle", "right", "first_item", "second_item",
     ]);
     expect(JSON.stringify(assignments)).not.toMatch(/obj|items|Type|source_value/u);
+  });
+
+  test("recognizes every stable TypeScript 7 source format", async () => {
+    const directory = await temporaryDirectory("inspect-typescript-formats-");
+    process.chdir(directory);
+    const fixtures = [
+      ["sample.ts", "typescript", "export const value = 1;"],
+      ["sample.tsx", "typescript", "export const value = <div />;"],
+      ["sample.d.ts", "typescript", "export declare function value(\n  input: number,\n): number;"],
+      ["sample.mts", "typescript", "export const value = 1;"],
+      ["sample.d.mts", "typescript", "export declare function value(\n  input: number,\n): number;"],
+      ["sample.cts", "typescript", "export const value = 1;"],
+      ["sample.d.cts", "typescript", "export declare function value(\n  input: number,\n): number;"],
+      ["sample.js", "javascript", "export const value = 1;"],
+      ["sample.jsx", "javascript", "export const value = <div />;"],
+      ["sample.mjs", "javascript", "export const value = 1;"],
+      ["sample.cjs", "javascript", "exports.value = 1;"],
+      ["sample.pyi", "python", "value: int"],
+    ] as const;
+    await Promise.all(fixtures.map(([name, , source]) => writeFile(name, `${source}\n`)));
+
+    for (const [name, language] of fixtures) {
+      const result = (await inspect(name)).result;
+      expect(result.data.kind).toBe("code");
+      expect(result.data.language).toBe(language);
+      expect(result.data.parse_complete).toBe(true);
+    }
+    for (const name of ["sample.d.ts", "sample.d.mts", "sample.d.cts"]) {
+      expect((await inspectOutline(name)).map((entry) => [entry.kind, entry.name, entry.line, entry.line_end]))
+        .toEqual([["function", "value", 1, 3]]);
+    }
+    expect((await inspectOutline("sample.pyi")).map((entry) => [entry.kind, entry.name]))
+      .toEqual([["variable", "value"]]);
   });
 });
 

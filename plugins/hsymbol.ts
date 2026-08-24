@@ -3,9 +3,6 @@ import {readFile, realpath, stat} from "node:fs/promises";
 import path from "node:path";
 import {fileURLToPath} from "node:url";
 
-import type {SyntaxNode} from "@lezer/common";
-import {parser as goParser} from "@lezer/go";
-
 import type {ExecutionResult, Tool} from "../internal/router/toolplugin/plugin.d.ts";
 import {
   byteLength,
@@ -19,9 +16,19 @@ import {
   VERIFIED_ROW_LIMIT_DIAGNOSTIC,
   VerifiedRowOutput,
 } from "./common.ts";
-import {goDeclarationRange, LineMap} from "./inspect_file.ts";
+import {
+  declarationRange,
+  goDeclarationRange,
+  LineMap,
+  sourceFormat,
+  symbolOffsets,
+} from "./inspect_file.ts";
+import type {SourceFormat} from "./inspect_file.ts";
+import {runLSPQuery} from "./lsp.ts";
+import type {LSPLocation} from "./lsp.ts";
 
 type QueryMode = "def" | "refs";
+type Resolver = "gopls" | "typescript" | "python";
 
 type Query = {
   mode: QueryMode;
@@ -36,20 +43,44 @@ type SourceFile = {
   path: string;
   source: string;
   lines: LineMap;
+  format: SourceFormat;
 };
 
-type SourceFailureReason = "outside workspace" | "unavailable" | "not regular" | "not Go" | "not UTF-8";
+type SourceFailureReason =
+  | "outside workspace"
+  | "unavailable"
+  | "not regular"
+  | "not Go"
+  | "not TypeScript"
+  | "not Python"
+  | "not UTF-8";
 
-type DefinitionLocation = {
+type GoplsDefinition = {
+  kind: "gopls-definition";
   path: string;
   line: number;
   startOffset: number;
   endOffset: number;
 };
 
-type ReferenceLocation = {
+type LineLocation = {
+  kind: "line";
   path: string;
   line: number;
+};
+
+type LanguageServerLocation = {
+  kind: "lsp";
+  location: LSPLocation;
+};
+
+type BackendLocation = GoplsDefinition | LineLocation | LanguageServerLocation;
+
+type BackendResult = {
+  resolver: Resolver;
+  locations: BackendLocation[];
+  stdout: string;
+  stderr: string;
 };
 
 type GoplsResult = {
@@ -90,7 +121,7 @@ function validGoIdentifier(value: string): boolean {
 
 function parseQuery(argv: string[]): Query {
   if (argv.length !== 4 && argv.length !== 5) {
-    throw new HSymbolFailure("usage: hsymbol (def|refs) PATH LINE:HASH IDENT [N]");
+    throw new HSymbolFailure("usage: hsymbol (def|refs) PATH LINE:HASH SYMBOL [N]");
   }
   const [mode, inputPath, row, identifier, occurrenceText] = argv;
   if (mode !== "def" && mode !== "refs") {
@@ -103,9 +134,6 @@ function parseQuery(argv: string[]): Query {
   if (rowMatch === null) {
     throw new HSymbolFailure("row must be LINE:HASH with a positive line and lowercase four-digit hash");
   }
-  if (!validGoIdentifier(identifier)) {
-    throw new HSymbolFailure("IDENT must be a non-keyword Go identifier");
-  }
   return {
     mode,
     path: inputPath,
@@ -114,6 +142,23 @@ function parseQuery(argv: string[]): Query {
     identifier,
     occurrence: occurrenceText === undefined ? null : parsePositiveInteger(occurrenceText, "N"),
   };
+}
+
+function resolverFor(format: SourceFormat): Resolver | null {
+  if (format.language === "go") {
+    return "gopls";
+  }
+  if (format.language === "python") {
+    return "python";
+  }
+  if (format.language === "javascript" || format.language === "typescript" || format.kind === "json") {
+    return "typescript";
+  }
+  return null;
+}
+
+function unsupportedReason(resolver: Resolver): SourceFailureReason {
+  return resolver === "gopls" ? "not Go" : resolver === "python" ? "not Python" : "not TypeScript";
 }
 
 function sourceFailure(error: unknown): SourceFailure {
@@ -130,6 +175,7 @@ async function loadSource(
   workspace: string,
   inputPath: string,
   cache: Map<string, SourceFile>,
+  expectedResolver?: Resolver,
 ): Promise<SourceFile> {
   const resolved = path.resolve(workspace, inputPath);
   if (isOutsideWorkspace(workspace, resolved)) {
@@ -146,10 +192,19 @@ async function loadSource(
   }
   const cached = cache.get(canonicalPath);
   if (cached !== undefined) {
+    if (expectedResolver !== undefined && resolverFor(cached.format) !== expectedResolver) {
+      throw new SourceFailure(unsupportedReason(expectedResolver), "path has an unsupported source format");
+    }
     return cached;
   }
-  if (path.extname(canonicalPath) !== ".go") {
-    throw new SourceFailure("not Go", "path is not a Go source file");
+  const format = sourceFormat(canonicalPath);
+  const resolver = format === null ? null : resolverFor(format);
+  if (format === null || resolver === null) {
+    const reason = expectedResolver === undefined ? "not TypeScript" : unsupportedReason(expectedResolver);
+    throw new SourceFailure(reason, "path has an unsupported hsymbol source format");
+  }
+  if (expectedResolver !== undefined && resolver !== expectedResolver) {
+    throw new SourceFailure(unsupportedReason(expectedResolver), "path has an unsupported source format");
   }
   let info;
   try {
@@ -172,42 +227,12 @@ async function loadSource(
   } catch {
     throw new SourceFailure("not UTF-8", "path is not UTF-8");
   }
-  const loaded = {path: canonicalPath, source, lines: new LineMap(source)};
-  cache.clear();
+  const loaded = {path: canonicalPath, source, lines: new LineMap(source), format};
   cache.set(canonicalPath, loaded);
   return loaded;
 }
 
-function identifierOffsets(file: SourceFile, line: number, identifier: string): number[] {
-  const logicalLine = file.lines.logicalLine(line);
-  if (logicalLine === null) {
-    return [];
-  }
-  const offsets: number[] = [];
-  const visit = (node: SyntaxNode): void => {
-    if (node.to <= logicalLine.from || node.from >= logicalLine.to) {
-      return;
-    }
-    if (node.firstChild === null) {
-      if (
-        !node.type.isError
-        && node.from >= logicalLine.from
-        && node.to <= logicalLine.to
-        && file.source.slice(node.from, node.to) === identifier
-      ) {
-        offsets.push(node.from);
-      }
-      return;
-    }
-    for (let child = node.firstChild; child !== null; child = child.nextSibling) {
-      visit(child);
-    }
-  };
-  visit(goParser.parse(file.source).topNode);
-  return offsets;
-}
-
-function selectIdentifier(file: SourceFile, query: Query): number {
+function selectSymbol(file: SourceFile, query: Query): number {
   const logicalLine = file.lines.logicalLine(query.line);
   if (logicalLine === null) {
     throw new HSymbolFailure(`line ${query.line} is past EOF`);
@@ -215,9 +240,12 @@ function selectIdentifier(file: SourceFile, query: Query): number {
   if (hashLine(logicalLine.text) !== query.hash) {
     throw new HSymbolFailure(`stale row ${query.line}:${query.hash}`);
   }
-  const offsets = identifierOffsets(file, query.line, query.identifier);
+  if (file.format.language === "go" && !validGoIdentifier(query.identifier)) {
+    throw new HSymbolFailure("SYMBOL must be a non-keyword Go identifier");
+  }
+  const offsets = symbolOffsets(file.source, file.lines, file.format, query.line, query.identifier);
   if (offsets.length === 0) {
-    throw new HSymbolFailure(`${query.identifier} is not an identifier token on the verified line`);
+    throw new HSymbolFailure(`${query.identifier} is not a symbol token on the verified line`);
   }
   if (query.occurrence === null) {
     if (offsets.length !== 1) {
@@ -227,7 +255,7 @@ function selectIdentifier(file: SourceFile, query: Query): number {
   }
   const selected = offsets[query.occurrence - 1];
   if (selected === undefined) {
-    throw new HSymbolFailure(`identifier occurrence ${query.occurrence} is missing`);
+    throw new HSymbolFailure(`symbol occurrence ${query.occurrence} is missing`);
   }
   return selected;
 }
@@ -284,7 +312,7 @@ async function runGopls(mode: QueryMode, position: string): Promise<GoplsResult>
   }
 }
 
-function parseDefinition(stdout: string): DefinitionLocation {
+function parseDefinition(stdout: string): GoplsDefinition {
   let value: unknown;
   try {
     value = JSON.parse(stdout);
@@ -310,11 +338,11 @@ function parseDefinition(stdout: string): DefinitionLocation {
   }
   const line = (start as {line?: unknown}).line;
   const startOffset = (start as {offset?: unknown}).offset;
-  const endOffset = (end as {offset?: unknown}).offset;
+  const endByte = (end as {offset?: unknown}).offset;
   if (
     !Number.isSafeInteger(line) || (line as number) < 1
     || !Number.isSafeInteger(startOffset) || (startOffset as number) < 0
-    || !Number.isSafeInteger(endOffset) || (endOffset as number) < (startOffset as number)
+    || !Number.isSafeInteger(endByte) || (endByte as number) < (startOffset as number)
   ) {
     throw new HSymbolFailure("invalid gopls definition span");
   }
@@ -325,15 +353,16 @@ function parseDefinition(stdout: string): DefinitionLocation {
     throw new SourceFailure("outside workspace", "definition is not a workspace file");
   }
   return {
+    kind: "gopls-definition",
     path: definitionPath,
     line: line as number,
     startOffset: startOffset as number,
-    endOffset: endOffset as number,
+    endOffset: endByte as number,
   };
 }
 
-function parseReferences(stdout: string): ReferenceLocation[] {
-  const locations: ReferenceLocation[] = [];
+function parseReferences(stdout: string): LineLocation[] {
+  const locations: LineLocation[] = [];
   for (const rawLine of stdout.split("\n")) {
     const line = rawLine.endsWith("\r") ? rawLine.slice(0, -1) : rawLine;
     if (line === "") {
@@ -343,9 +372,114 @@ function parseReferences(stdout: string): ReferenceLocation[] {
     if (match === null) {
       throw new HSymbolFailure("invalid gopls references output");
     }
-    locations.push({path: match[1], line: parsePositiveInteger(match[2], "reference line")});
+    locations.push({kind: "line", path: match[1], line: parsePositiveInteger(match[2], "reference line")});
   }
   return locations;
+}
+
+function lspLanguageID(format: SourceFormat): string {
+  if (format.kind === "json") {
+    return "json";
+  }
+  if (format.language === "python") {
+    return "python";
+  }
+  if (format.language === "typescript") {
+    return format.jsx === true ? "typescriptreact" : "typescript";
+  }
+  return format.jsx === true ? "javascriptreact" : "javascript";
+}
+
+async function queryBackend(
+  workspace: string,
+  file: SourceFile,
+  query: Query,
+  selectedOffset: number,
+): Promise<BackendResult> {
+  const resolver = resolverFor(file.format);
+  if (resolver === null) {
+    throw new HSymbolFailure("path has an unsupported hsymbol source format");
+  }
+  if (resolver === "gopls") {
+    const position = `${file.path}:#${byteLength(file.source.slice(0, selectedOffset))}`;
+    const result = await runGopls(query.mode, position);
+    return {
+      resolver,
+      locations: query.mode === "def" ? [parseDefinition(result.stdout)] : parseReferences(result.stdout),
+      stdout: result.stdout,
+      stderr: result.stderr,
+    };
+  }
+  const logicalLine = file.lines.logicalLine(query.line);
+  if (logicalLine === null) {
+    throw new HSymbolFailure(`line ${query.line} is past EOF`);
+  }
+  const command = resolver === "typescript" ? "tsc" : "pyright-langserver";
+  const result = await runLSPQuery({
+    command,
+    args: resolver === "typescript" ? ["--lsp", "--stdio"] : ["--stdio"],
+    workspace,
+    path: file.path,
+    languageID: lspLanguageID(file.format),
+    source: file.source,
+    position: {line: query.line - 1, character: selectedOffset - logicalLine.from},
+    mode: query.mode,
+  });
+  return {
+    resolver,
+    locations: result.locations.map((location) => ({kind: "lsp", location})),
+    stdout: result.stock,
+    stderr: result.stderr,
+  };
+}
+
+function lspOffset(file: SourceFile, line: number, character: number): number | null {
+  const logicalLine = file.lines.logicalLine(line + 1);
+  return logicalLine === null || character > logicalLine.text.length
+    ? null
+    : logicalLine.from + character;
+}
+
+async function materializeLocation(
+  workspace: string,
+  cache: Map<string, SourceFile>,
+  resolver: Resolver,
+  location: BackendLocation,
+): Promise<{file: SourceFile; line: number; definitionFrom?: number; definitionTo?: number; goDefinition?: GoplsDefinition}> {
+  if (location.kind === "gopls-definition") {
+    const file = await loadSource(workspace, location.path, cache, resolver);
+    return {file, line: location.line, goDefinition: location};
+  }
+  if (location.kind === "line") {
+    const file = await loadSource(workspace, location.path, cache, resolver);
+    return {file, line: location.line};
+  }
+  let locationPath: string;
+  try {
+    locationPath = fileURLToPath(location.location.uri);
+  } catch {
+    throw new SourceFailure("outside workspace", "location is not a workspace file");
+  }
+  const file = await loadSource(workspace, locationPath, cache, resolver);
+  const definitionFrom = lspOffset(
+    file,
+    location.location.range.start.line,
+    location.location.range.start.character,
+  );
+  const definitionTo = lspOffset(
+    file,
+    location.location.range.end.line,
+    location.location.range.end.character,
+  );
+  if (definitionFrom === null || definitionTo === null || definitionTo < definitionFrom) {
+    throw new SourceFailure("unavailable", "location range is unavailable");
+  }
+  return {
+    file,
+    line: location.location.range.start.line + 1,
+    definitionFrom,
+    definitionTo,
+  };
 }
 
 function verifiedSourceRow(workspace: string, file: SourceFile, line: number): string | null {
@@ -372,12 +506,10 @@ async function executeQuery(query: Query): Promise<ExecutionResult> {
   try {
     inputFile = await loadSource(workspace, query.path, cache);
   } catch (error) {
-    const failure = sourceFailure(error);
-    throw new HSymbolFailure(failure.message);
+    throw new HSymbolFailure(sourceFailure(error).message);
   }
-  const identifierOffset = selectIdentifier(inputFile, query);
-  const position = `${inputFile.path}:#${byteLength(inputFile.source.slice(0, identifierOffset))}`;
-  const gopls = await runGopls(query.mode, position);
+  const selectedOffset = selectSymbol(inputFile, query);
+  const backend = await queryBackend(workspace, inputFile, query, selectedOffset);
   cache.clear();
   let currentInput: SourceFile;
   try {
@@ -389,8 +521,8 @@ async function executeQuery(query: Query): Promise<ExecutionResult> {
     throw new HSymbolFailure("input changed during query");
   }
   const stock = {
-    stdout: gopls.stdout,
-    ...(gopls.stderr === "" ? {} : {stderr: gopls.stderr}),
+    stdout: backend.stdout,
+    ...(backend.stderr === "" ? {} : {stderr: backend.stderr}),
     exitCode: 0,
   };
   const output = new VerifiedRowOutput();
@@ -398,21 +530,44 @@ async function executeQuery(query: Query): Promise<ExecutionResult> {
   const skip = (reason: SourceFailureReason): void => {
     skipped.set(reason, (skipped.get(reason) ?? 0) + 1);
   };
+  const seen = new Set<string>();
 
-  if (query.mode === "def") {
+  for (const location of backend.locations) {
     try {
-      const location = parseDefinition(gopls.stdout);
-      const file = await loadSource(workspace, location.path, cache);
-      const declaration = goDeclarationRange(file.source, location.startOffset, location.endOffset);
-      const startLine = declaration?.line ?? location.line;
-      const endLine = declaration?.line_end ?? location.line;
+      const materialized = await materializeLocation(workspace, cache, backend.resolver, location);
+      let startLine = materialized.line;
+      let endLine = materialized.line;
+      if (query.mode === "def") {
+        const expanded = materialized.goDefinition === undefined
+          ? materialized.definitionFrom === undefined || materialized.definitionTo === undefined
+            ? null
+            : declarationRange(
+              materialized.file.source,
+              materialized.file.lines,
+              materialized.file.format,
+              materialized.definitionFrom,
+              materialized.definitionTo,
+            )
+          : goDeclarationRange(
+            materialized.file.source,
+            materialized.goDefinition.startOffset,
+            materialized.goDefinition.endOffset,
+          );
+        startLine = expanded?.line ?? materialized.line;
+        endLine = expanded?.line_end ?? materialized.line;
+      }
       for (let line = startLine; line <= endLine; line += 1) {
-        const row = verifiedSourceRow(workspace, file, line);
+        const row = verifiedSourceRow(workspace, materialized.file, line);
         if (row === null) {
           skip("unavailable");
           break;
         }
-        if (!output.append(row, "")) {
+        const key = `${materialized.file.path}\0${line}`;
+        if (seen.has(key)) {
+          continue;
+        }
+        seen.add(key);
+        if (!output.incomplete && !output.append(row, "")) {
           break;
         }
       }
@@ -422,31 +577,9 @@ async function executeQuery(query: Query): Promise<ExecutionResult> {
       }
       skip(error.reason);
     }
-  } else {
-    const seen = new Set<string>();
-    for (const location of parseReferences(gopls.stdout)) {
-      try {
-        const file = await loadSource(workspace, location.path, cache);
-        const row = verifiedSourceRow(workspace, file, location.line);
-        if (row === null) {
-          throw new SourceFailure("unavailable", "reference line is unavailable");
-        }
-        const key = `${file.path}\0${location.line}`;
-        if (seen.has(key)) {
-          continue;
-        }
-        seen.add(key);
-        if (!output.incomplete) {
-          output.append(row, "");
-        }
-      } catch (error) {
-        const failure = sourceFailure(error);
-        skip(failure.reason);
-      }
-    }
   }
 
-  let stderr = gopls.stderr;
+  let stderr = backend.stderr;
   if (stderr !== "" && !stderr.endsWith("\n")) {
     stderr += "\n";
   }

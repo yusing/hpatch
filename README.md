@@ -147,7 +147,9 @@ For native executor background and interactive behavior, see [OpenAI's Codex pro
 - Hpatch router mode requires Codex CLI with ChatGPT file auth from `codex login`, normally at `~/.codex/auth.json` or `$CODEX_HOME/auth.json`. Checkout installation also uses `codex debug models --bundled` when no `model_instructions_file` is configured.
 - Hpatch router mode resolves Node.js 24 or newer as `node`; passthrough mode does not load the plugin registry.
 - Private hgrep requires `rg` on the Codex executor's `PATH`.
-- Private hsymbol requires `gopls` on the Codex executor's `PATH`.
+- Private hsymbol requires the resolver for the queried language on the Codex executor's `PATH`:
+  `gopls` for Go, TypeScript 7.0.2 or newer as `tsc` for JavaScript, TypeScript, and JSON,
+  and `pyright-langserver` for Python `.py` and `.pyi` sources.
 - Private hread, hgrep, hsymbol, and inspect_file require the router executable directory to precede unrelated entries on the executor's trusted `PATH`.
 - The built-in shell uses `bash` when no shebang is present; every selected interpreter must be available through the inherited `PATH`.
 - Router and executor deployments with isolated filesystems must expose the frontend directory, authenticated snapshot, and router executable at the same absolute paths.
@@ -220,7 +222,7 @@ Retained edits use the router-owned artifact path rather than the normal workspa
 
 ### Private filesystem frontends
 
-Hread, hgrep, hsymbol, and inspect_file are private shell frontends, not model-visible tools. Use inspect_file for bounded metadata and structure, hread for current target-bearing rows, hgrep for current cross-file text matches, and hsymbol for exact Go definitions or references. Batch known reads as separate commands and combine known searches with repeated `-e` arguments:
+Hread, hgrep, hsymbol, and inspect_file are private shell frontends, not model-visible tools. Use inspect_file for bounded metadata and structure, hread for current target-bearing rows, hgrep for current cross-file text matches, and hsymbol for exact Go, JavaScript, TypeScript, JSON, or Python definitions and references. Batch known reads as separate commands and combine known searches with repeated `-e` arguments:
 
 ```sh
 hread parser.go 20:40
@@ -229,7 +231,7 @@ hsymbol refs internal/router/server.go 42:abcd Run 2
 inspect_file internal/router/server.go | jq -c '.data.outline[]'
 ```
 
-Inspect_file emits one exact JSON envelope with metadata, parser completeness, and a bounded structural outline; its private guidance includes a concise result shape rather than the specification schema. Markdown frontmatter is parsed as YAML, but only top-level scalar keys are returned. It never emits source bodies or scalar values. Hread emits `LINE:HASH TEXT`. Hgrep and hsymbol emit `"PATH":LINE:HASH TEXT`; hgrep searches text recursively and accepts GNU grep's `-R` as a no-op, while hsymbol runs one exact Go identifier query through gopls and emits canonical workspace-relative paths without a leading `./`. Use hread before editing because inspect_file lines are not HPATCH targets. See the [interface contract](doc/spec/interface.md) for complete inputs and failure behavior.
+Inspect_file emits one exact JSON envelope with metadata, parser completeness, and a bounded structural outline; its private guidance includes a concise result shape rather than the specification schema. Its code formats are Go, Python `.py` and `.pyi`, and every stable TypeScript 7 source format: `.ts`, `.tsx`, `.d.ts`, `.mts`, `.d.mts`, `.cts`, `.d.cts`, `.js`, `.jsx`, `.mjs`, and `.cjs`. JSON remains a structural format. Markdown frontmatter is parsed as YAML, but only top-level scalar keys are returned. It never emits source bodies or scalar values. Hread emits `LINE:HASH TEXT`. Hgrep and hsymbol emit `"PATH":LINE:HASH TEXT`; hgrep searches text recursively and accepts GNU grep's `-R` as a no-op, while hsymbol runs one exact language-server query and emits canonical workspace-relative paths without a leading `./`. Use hread before editing because inspect_file lines are not HPATCH targets. See the [interface contract](doc/spec/interface.md) for complete inputs and failure behavior.
 
 Hread, hgrep, and hsymbol share a 15,000 GPT-5-token soft output limit. One complete row may extend the
 result through 15,500 tokens. If another row cannot be admitted, stdout retains only complete
