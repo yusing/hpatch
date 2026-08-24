@@ -451,6 +451,7 @@ func TestHPatchRoutesOnlyModelVisibleRegistryTools(t *testing.T) {
 		"shell":        true,
 		"hread":        false,
 		"hgrep":        false,
+		"hsymbol":      false,
 		"inspect_file": false,
 		"lookup":       false,
 	} {
@@ -2387,6 +2388,10 @@ func TestNonHPatchHistoryIsExcludedFromRecovery(t *testing.T) {
 		"call-S": {
 			toolName: "shell", script: `hread file.txt`,
 			report: "8ed3: alpha\n", sequence: 2,
+		},
+		"call-S2": {
+			toolName: "shell", script: `hsymbol refs file.go 1:8ed3 Alpha`,
+			sequence: 3,
 		},
 	})
 	if err != nil {

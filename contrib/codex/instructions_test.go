@@ -34,8 +34,10 @@ func TestInstructionsAcquireTargetContextOnce(t *testing.T) {
 	for _, required := range []string{
 		"Acquire target-bearing context once before editing.",
 		"use hgrep first; use `-F` with repeated `-e` literals",
+		"use `hsymbol refs PATH LINE:HASH IDENT [N]`",
+		"Use `hsymbol def PATH LINE:HASH IDENT [N]`",
 		"Avoid bare whole-file hread unless the complete file",
-		"After a successful hpatch, do not use hread,\nhgrep, or `git diff` on a changed file",
+		"After a successful hpatch, do not use hread,\nhgrep, hsymbol, or `git diff` on a changed file",
 		"inspect, verify, or locate a follow-up target",
 		"unknown or ambiguous\nin an unchanged file justifies a focused read",
 		"Existing-file edits require a target.",

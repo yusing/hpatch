@@ -10,7 +10,13 @@ import {parser as pythonParser} from "@lezer/python";
 import {isMap, isScalar, parseDocument} from "yaml";
 
 import type {Tool} from "../internal/router/toolplugin/plugin.d.ts";
-import {byteLength, createExecutorTool, errorText, stripOptionalFinalNewline} from "./common.ts";
+import {
+  byteLength,
+  createExecutorTool,
+  errorText,
+  isOutsideWorkspace,
+  stripOptionalFinalNewline,
+} from "./common.ts";
 import {inspectFileShapeSchemaJSON} from "./inspect_file_schema.ts";
 
 const OUTPUT_BYTES = 64 * 1024;
@@ -68,7 +74,13 @@ type JSONEntry = {
 };
 
 type OutlineEntry = CodeEntry | MethodEntry | HeadingEntry | FrontmatterEntry | JSONEntry;
-type LocatedEntry = {entry: OutlineEntry; offset: number; order: number};
+type LocatedEntry = {
+  entry: OutlineEntry;
+  offset: number;
+  order: number;
+  nameFrom?: number;
+  nameTo?: number;
+};
 
 const typescriptParser = javascriptParser.configure({dialect: "ts"});
 
@@ -110,7 +122,7 @@ class InspectFailure extends Error {
   }
 }
 
-class LineMap {
+export class LineMap {
   readonly starts = [0];
 
   constructor(readonly source: string) {
@@ -145,6 +157,21 @@ class LineMap {
       }
     }
     return low + 1;
+  }
+
+  logicalLine(line: number): {from: number; to: number; text: string} | null {
+    if (!Number.isSafeInteger(line) || line < 1 || line > this.count) {
+      return null;
+    }
+    const from = this.starts[line - 1];
+    let to = line < this.count ? this.starts[line] : this.source.length;
+    if (this.source[to - 1] === "\n") {
+      to -= 1;
+    }
+    if (this.source[to - 1] === "\r") {
+      to -= 1;
+    }
+    return {from, to, text: this.source.slice(from, to)};
   }
 
   range(node: SyntaxNode): {line: number; line_end: number} {
@@ -223,6 +250,8 @@ function addNamedEntries(
         entry: {kind, name, ...lines.range(rangeNode)},
         offset: rangeNode.from,
         order: output.length,
+        nameFrom: nameNode.from,
+        nameTo: nameNode.to,
       });
     }
   }
@@ -307,12 +336,41 @@ function goOutline(source: string, lines: LineMap, tree: Tree): LocatedEntry[] {
             },
             offset: declaration.from,
             order: output.length,
+            nameFrom: name.from,
+            nameTo: name.to,
           });
         }
       }
     }
   }
   return output;
+}
+
+export function goDeclarationRange(
+  source: string,
+  definitionStartByte: number,
+  definitionEndByte: number,
+): {line: number; line_end: number} | null {
+  const lines = new LineMap(source);
+  const tree = goParser.parse(source);
+  if (hasParseError(tree)) {
+    return null;
+  }
+  for (const located of goOutline(source, lines, tree)) {
+    if (
+      located.nameFrom === undefined
+      || located.nameTo === undefined
+      || located.entry.kind === "import"
+    ) {
+      continue;
+    }
+    const nameStartByte = byteLength(source.slice(0, located.nameFrom));
+    const nameEndByte = nameStartByte + byteLength(source.slice(located.nameFrom, located.nameTo));
+    if (nameStartByte === definitionStartByte && nameEndByte === definitionEndByte) {
+      return {line: located.entry.line, line_end: located.entry.line_end};
+    }
+  }
+  return null;
 }
 
 function unwrapExport(node: SyntaxNode): SyntaxNode {
@@ -860,11 +918,6 @@ function normalizeInputPath(input: string): string {
   return normalized;
 }
 
-function isOutside(root: string, target: string): boolean {
-  const relative = path.relative(root, target);
-  return relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative);
-}
-
 function filesystemFailure(error: unknown): InspectFailure {
   if (error instanceof InspectFailure) {
     return error;
@@ -885,7 +938,7 @@ async function inspect(input: string): Promise<InspectionData> {
   } catch (error) {
     throw filesystemFailure(error);
   }
-  if (isOutside(workspace, canonicalTarget)) {
+  if (isOutsideWorkspace(workspace, canonicalTarget)) {
     throw new InspectFailure("outside_workspace", "path resolves outside the workspace");
   }
 

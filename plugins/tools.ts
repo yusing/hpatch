@@ -1,6 +1,7 @@
 import type {Plugin, Tool} from "../internal/router/toolplugin/plugin.d.ts";
 import {createHGrepTool} from "./hgrep.ts";
 import {createHReadTool} from "./hread.ts";
+import {createHSymbolTool} from "./hsymbol.ts";
 import {createInspectFileTool, inspectFileDescription} from "./inspect_file.ts";
 import {shellTool} from "./shell.mjs";
 
@@ -17,8 +18,11 @@ const hgrepDescription = `Search files with supported ripgrep arguments and emit
 const hgrepPart = `(?:'[^'\\r\\n]*'|"(?:\\\\[^\\r\\n]|[^"\\\\\\r\\n])*"|(?:\\\\[^\\r\\n]|[^\\s'"\\\\])+)`;
 const hgrepRegex = `\\A[ \\t]*${hgrepPart}+(?:[ \\t]+${hgrepPart}+)*[ \\t]*\\z`;
 
+const hsymbolDescription = `Resolve one verified Go identifier with gopls and emit complete rows as \`"PATH":LINE:HASH TEXT\`. Usage: \`hsymbol (def|refs) PATH LINE:HASH IDENT [N]\`. N selects an exact identifier-token occurrence. Stale rows, ambiguous selectors, unavailable gopls, and definitions without an editable workspace location fail without stdout rows. ${verifiedRowLimitDescription}`;
+const hsymbolRegex = `\\A(?:def|refs) ${hreadPath} [1-9][0-9]*:[0-9a-f]{4} [^\\x00-\\x20]+(?: [1-9][0-9]*)?\\z`;
+
 type BuiltinPlugin = Omit<Plugin, "tools"> & {
-  tools: [Tool<string[]>, Tool<string[]>, Tool<string[]>, typeof shellTool];
+  tools: [Tool<string[]>, Tool<string[]>, Tool<string[]>, Tool<string[]>, typeof shellTool];
 };
 
 const plugin: BuiltinPlugin = {
@@ -27,6 +31,7 @@ const plugin: BuiltinPlugin = {
   tools: [
     createHReadTool(hreadDescription, hreadRegex),
     createHGrepTool(hgrepDescription, hgrepRegex),
+    createHSymbolTool(hsymbolDescription, hsymbolRegex),
     createInspectFileTool(inspectFileDescription, inspectFileRegex),
     shellTool,
   ],

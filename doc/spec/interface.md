@@ -3,11 +3,11 @@
 ## REQ-READ-001 — Shell-routed verified-row reader
 
 In hpatch router mode, the model receives `hpatch` and `shell` as standalone custom tools.
-All persistent hread, hgrep, inspect_file, shell-execution, and HPATCH workflow guidance comes
+All persistent hread, hgrep, hsymbol, inspect_file, shell-execution, and HPATCH workflow guidance comes
 from the Codex `model_instructions_file` installed from
 `contrib/codex/file-editing-instructions.md`. The router never creates, changes, or removes the
 top-level Responses `instructions` value.
-Hread, hgrep, and inspect_file remain private executable contributions; their custom-tool
+Hread, hgrep, hsymbol, and inspect_file remain private executable contributions; their custom-tool
 specifications are not sent to the model and direct model calls to their names are not routed.
 
 The private `hread` command accepts exactly one file:
@@ -23,7 +23,7 @@ past EOF returns through the final line. One `hread` process never accepts a sec
 newline-delimited batch. The model batches related reads as separate hread commands in one
 shell script.
 
-The router creates process-scoped executable frontends named `shell`, `hread`, `hgrep`, and `inspect_file`.
+The router creates process-scoped executable frontends named `shell`, `hread`, `hgrep`, `hsymbol`, and `inspect_file`.
 The Codex executor must see the frontend directory and router executable at the same absolute
 paths as the router process, and that directory must precede unrelated commands on its trusted
 `PATH`. A deployment that isolates their filesystems must provide those runtime mounts
@@ -123,6 +123,73 @@ Acceptance:
    exposed, routed, or admitted to hpatch recovery history.
 5. Router startup fails before serving if the private hgrep frontend cannot be installed.
    Passthrough mode installs and exposes none of these replacement surfaces.
+
+## REQ-SYMBOL-001 — Shell-routed Go symbol lookup
+
+The private `hsymbol` command is available only through the model-visible shell tool:
+
+```text
+hsymbol def PATH LINE:HASH IDENT [N]
+hsymbol refs PATH LINE:HASH IDENT [N]
+```
+
+The canonical workspace is `realpath(process.cwd())`. `PATH` may be relative or absolute, but
+its canonical target must remain within that workspace and be a regular UTF-8 `.go` file.
+`LINE:HASH` identifies one current logical line under `REQ-READ-001`. Hsymbol verifies the line
+and hash before starting gopls and never searches for another matching hash.
+
+`IDENT` must be a valid non-keyword Go identifier. Selection counts only exact Go identifier
+tokens on the verified line; comments, strings, and larger identifiers do not count. `N`, when
+present, is a positive base-ten occurrence without leading zeroes. When `N` is absent, exactly
+one matching token must exist; multiple matches fail as ambiguous before gopls starts. This is
+intentionally stricter than hgrep's textual matching because gopls requires one token position.
+
+Each invocation starts exactly one gopls query at the selected UTF-8 byte offset. `def` uses
+`gopls definition -json`. `refs` uses `gopls references -d`, so a returned declaration is handled
+with the other references. There is no text-search fallback. Missing gopls, invalid arguments,
+stale rows, invalid selectors, and a failed gopls query return concise stderr and nonzero status
+without useful stdout.
+
+Successful stdout contains first-seen complete verified rows:
+
+```text
+"PATH":LINE:HASH TEXT
+```
+
+`PATH` is the JSON-quoted path from the canonical workspace root to the canonical result file,
+without a leading `./`. Each result file is canonical, in-workspace, regular, UTF-8, and `.go`;
+other returned locations are omitted and counted by reason on stderr.
+References are deduplicated by canonical path and logical line. Empty `refs` is successful.
+A `def` without an editable workspace location is nonzero. An incomplete token-limited result is
+not resumable and does not establish a complete definition or reference set. Location skip counts
+still cover the complete gopls result.
+
+Definition expansion occurs only when the gopls definition span exactly matches the declared
+name of a complete inspect_file Go outline entry. Package constants, variables, types, functions,
+and direct methods emit the entry's inclusive logical-line range. Package clauses, imports,
+fields, interface methods, parameters, locals, and files with uncertain parsing emit only the
+definition line. Hsymbol uses the shared verified-row token admission rule in `REQ-READ-001` and
+never emits a partial row.
+
+The stock result is stdout and stderr from that same gopls query; metrics do not run a second
+query. Shell replay retains the original shell call and output. Hsymbol remains private, is not
+routed as a standalone model-visible tool, and never enters editable rejected-script recovery.
+
+Acceptance:
+
+1. A verified use-site token resolves through one gopls query, and emitted hashes equal hread for
+   the same current lines.
+2. Omitting `N` selects one unique exact identifier token and rejects an ambiguous line before
+   gopls starts; comments, strings, keywords, and larger identifiers do not affect the count.
+3. `def` expands only the supported exact outline declaration; every other valid definition
+   emits its one current logical line.
+4. `refs` includes the declaration returned by `-d`, preserves first-seen order, deduplicates one
+   canonical path and line, reports skipped locations, and accepts an empty result.
+5. Relative and absolute in-workspace paths work. Lexical escapes, escaping symlinks, stale rows,
+   missing gopls, and uneditable definitions fail without useful stdout.
+6. Router startup installs an authenticated hsymbol frontend without adding a model-visible tool.
+   Passthrough mode installs no frontend, and shell history containing hsymbol is not recovery
+   ancestry.
 
 ## REQ-INSPECT-001 — Shell-routed structural file inspection
 
@@ -428,7 +495,7 @@ Acceptance:
     section is preserved. Every `model_instructions_file` declared by a personal agent TOML
     under the adjacent `agents` directory is updated under the same preservation rules;
     relative values resolve from the declaring agent TOML and the TOML files remain unchanged.
-    The installed router embeds shell and creates shell, hread, hgrep, and inspect_file basename
+    The installed router embeds shell and creates shell, hread, hgrep, hsymbol, and inspect_file basename
     frontends beside its executable at startup.
 12. `#!params={"workdir":"/tmp","tty":true}` before or after `#!cmd=` produces an exec carrier
     containing those fields and the router-supplied `cmd`. Safe leading params near-misses
@@ -1247,7 +1314,9 @@ Persistent guidance teaches this workflow:
    repeated fixed-string patterns, adding bounded context options when surrounding code is needed.
    Every emitted match or context row is target-bearing. When the owner is known but the location
    is not, use inspect_file for structure or hgrep for a symbol, then hread only the smallest range
-   needed to obtain the target. Avoid whole-file hread unless the complete file is necessary.
+   needed to obtain the target. Use hsymbol refs for exact Go references and hsymbol def for an
+   editable Go declaration after obtaining a verified selector row. Avoid whole-file hread unless
+   the complete file is necessary.
 4. Run one hread command per file and batch only already-known reads in one shell script. Copy
    only current emitted references. Do not follow target-bearing hgrep output with hread unless
    nonmatching context outside the requested bounds is needed.
@@ -1256,7 +1325,7 @@ Persistent guidance teaches this workflow:
    validation or information unavailable before the current call. Keep unrelated large values
    in separate failure-domain calls.
 7. Prefer the smallest mutation and let hpatch formatting own formatting. After success, do not
-   hread, hgrep, or run `git diff` on a changed file or a directory containing one merely to
+   hread, hgrep, hsymbol, or run `git diff` on a changed file or a directory containing one merely to
    inspect, verify, or locate a follow-up target. Reuse the exact authored value, unchanged rows,
    and any
    exact pre-edit row or range covered by a confirmed routed `reuse` mapping. Use a returned

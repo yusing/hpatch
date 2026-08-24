@@ -145,10 +145,10 @@ exact serialized collection installed from the validated built-in and plugin reg
 stable per-plugin and per-tool breakdown derived from that same collection.
 
 The router exposes only hpatch, hpatch_recover, and shell beside the displaced Code Mode `exec` carrier.
-Hpatch remains the native engine contribution. Hpatch_recover is a router-owned recovery contribution. Shell, hread, hgrep, and inspect_file are
+Hpatch remains the native engine contribution. Hpatch_recover is a router-owned recovery contribution. Shell, hread, hgrep, hsymbol, and inspect_file are
 JavaScript- and TypeScript-authored built-in plugin contributions compiled by Bun into one
-embedded JavaScript module with the reserved `builtin.shell` identity. Shell is model-visible; hread, hgrep, and
-inspect_file retain executable workers and frontends but their specifications are private.
+embedded JavaScript module with the reserved `builtin.shell` identity. Shell is model-visible; hread, hgrep,
+hsymbol, and inspect_file retain executable workers and frontends but their specifications are private.
 Configured user tools remain model-visible.
 
 The plugin runtime snapshots and validates the immutable built-in module before user
@@ -184,6 +184,16 @@ results, and provides no fallback search implementation. Shell, rather than hgre
 pipelines, redirection, and command composition. Hgrep uses the same verified-row accumulator
 after result deduplication and terminates ripgrep when the accumulator rejects a row.
 
+The hsymbol built-in owns verified Go identifier selection and verified-row rendering around one
+installed gopls query. It canonicalizes the executor cwd as its workspace, confines input and
+returned files to that workspace, and counts exact Lezer Go identifier tokens before invoking
+gopls at the selected UTF-8 byte offset. Gopls owns definition and reference resolution. Hsymbol
+deduplicates returned references by canonical path and line and renders canonical targets relative
+to the workspace before applying the shared verified-row accumulator. It provides the same query's
+gopls output as stock metric evidence. Definition
+expansion reuses inspect_file's Go outline projection and requires the returned definition span
+to match an exact supported declared-name token; every other definition remains one line.
+
 The inspect_file built-in owns bounded structural inspection of one workspace-relative regular
 file. It canonicalizes the executor cwd and symlink target, uses pinned Lezer parsers for the six
 contracted extensions, and projects only navigation metadata. Unsupported extensions stop after
@@ -194,7 +204,7 @@ boundaries; parser recovery remains an independent result flag.
 The generated built-in JavaScript and runtime host are materialized inside the authenticated
 process snapshot. A symlink-launched child verifies that snapshot before loading an
 implementation. The router never pre-reads files and never fabricates an `apply_patch` result for
-read, search, or inspection. Model history retains shell calls, private commands stay outside
+read, search, symbol lookup, or inspection. Model history retains shell calls, private commands stay outside
 response routing and edit recovery ancestry, and generalized per-tool metrics record execution.
 Registry shutdown removes the frontends and snapshot.
 

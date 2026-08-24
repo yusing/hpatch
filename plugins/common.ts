@@ -1,4 +1,5 @@
 import {createHash} from "node:crypto";
+import path from "node:path";
 import {countTokens as countGPT5TokensWithModel} from "gpt-tokenizer/model/gpt-5";
 import type {ExecutionContext, ExecutionResult, Tool, TranslationContext} from "../internal/router/toolplugin/plugin.d.ts";
 
@@ -21,6 +22,11 @@ export function hashLine(content: string): string {
 
 export function formatHashLine(number: number, content: string): string {
   return `${number}:${hashLine(content)} ${content}\n`;
+}
+
+export function isOutsideWorkspace(root: string, target: string): boolean {
+  const relative = path.relative(root, target);
+  return relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative);
 }
 
 export function countGPT5Tokens(value: string): number {
