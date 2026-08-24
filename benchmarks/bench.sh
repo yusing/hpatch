@@ -11,6 +11,7 @@ report_issues=${BENCHMARK_REPORT_ISSUES:-true}
 retain_exact_hpatch_evidence=${BENCHMARK_RETAIN_EXACT_HPATCH_EVIDENCE:-false}
 enforce_no_edit_loops=${BENCHMARK_ENFORCE_NO_EDIT_LOOPS:-true}
 control_baseline_dir=${CONTROL_BASELINE_DIR:-}
+ctp_native_baseline_dir=${CTP_NATIVE_BASELINE_DIR:-}
 case $prepare_only in
 true|false) ;;
 *)
@@ -42,23 +43,28 @@ false) export HPATCH_BENCH_DIAGNOSE=0 ;;
 	exit 2
 	;;
 esac
-if [[ $retain_exact_hpatch_evidence == true && $benchmark_mode == paired ]]; then
+if [[ $retain_exact_hpatch_evidence == true &&
+	($benchmark_mode == paired || $benchmark_mode == ctp-only) ]]; then
 	printf 'bench.sh: exact Hpatch evidence is available only in hpatch-only or hpatch-diagnostic mode\n' >&2
 	exit 2
 fi
 case "$benchmark_mode" in
 	paired) ;;
-	hpatch-only|hpatch-diagnostic)
+	hpatch-only|hpatch-diagnostic|ctp-only)
 		if ((repetitions != 1)); then
 			printf 'bench.sh: %s mode requires REPETITIONS=1; run separate trials for independent evidence\n' "$benchmark_mode" >&2
 			exit 2
 		fi
 		;;
 	*)
-		printf 'bench.sh: BENCHMARK_MODE must be paired, hpatch-only, or hpatch-diagnostic, got %s\n' "$benchmark_mode" >&2
+		printf 'bench.sh: BENCHMARK_MODE must be paired, ctp-only, hpatch-only, or hpatch-diagnostic, got %s\n' "$benchmark_mode" >&2
 		exit 2
 		;;
 esac
+if [[ $benchmark_mode == ctp-only && $report_issues != false ]]; then
+	printf 'bench.sh: ctp-only mode requires BENCHMARK_REPORT_ISSUES=false so diagnostic reporting does not confound the treatment\n' >&2
+	exit 2
+fi
 task_id=${TASK_ID:-etcd-range-stream}
 suite_manifest="$benchmark_root/diverse-suite.json"
 task=
@@ -193,6 +199,9 @@ mkdir -p "$results_root"
 if [[ -z $control_baseline_dir ]]; then
 	control_baseline_dir="$results_root/c07600a74ac93d1ac6c38c47b80d85519458bc9f-1"
 fi
+if [[ -z $ctp_native_baseline_dir ]]; then
+	ctp_native_baseline_dir="$results_root/c07600a74ac93d1ac6c38c47b80d85519458bc9f-1"
+fi
 run_dir=$(mktemp -d "$results_root/.staging-XXXXXX")
 dependency_cache=$(mktemp -d "$results_root/.dependency-cache-XXXXXX")
 dependency_workspace=
@@ -230,6 +239,10 @@ export CODEX_AUTH_PATH=${CODEX_AUTH_PATH:-${CODEX_HOME:-$HOME/.codex}/auth.json}
 compose_project_name="hpatch_bench_$(basename "$run_dir" | tr '[:upper:]' '[:lower:]' | tr -cd '[:alnum:]_')"
 export COMPOSE_PROJECT_NAME=$compose_project_name
 export HPATCH_BENCH_COMPOSE_FILE="$benchmark_root/compose.yaml"
+export HPATCH_BENCH_HPATCH_MODEL_PROTOCOL=native
+if [[ $benchmark_mode == ctp-only ]]; then
+	export HPATCH_BENCH_HPATCH_MODEL_PROTOCOL=ctp1
+fi
 if [[ $retain_exact_hpatch_evidence == true ]]; then
 	export HPATCH_BENCH_EXACT_EVIDENCE_DIR=/benchmark-hpatch-exact-evidence
 else
@@ -316,6 +329,72 @@ import_control_baseline() {
 		--arg summary "$control_baseline_dir/summary.md" \
 		"walk(if type == \"string\" and startswith(\$previous) then \$current + ltrimstr(\$previous) else . end) | .imported_control_baseline = {summary: \$summary}" \
 		"$baseline_result" >"$temporary"
+	mv -f -- "$temporary" "$destination/result.json"
+}
+
+import_native_hpatch_baseline() {
+	local baseline_result="$ctp_native_baseline_dir/artifacts/$task_id/${task_id}-hpatch-r001/result.json"
+	local baseline_metrics="$ctp_native_baseline_dir/hpatch-metrics.json"
+	local baseline_instruction="$ctp_native_baseline_dir/instructions/hpatch.md"
+	local run_id="${task_id}-control-r001"
+	local destination="$run_dir/artifacts/$task_id/$run_id"
+	local imported_instruction="$instruction_dir/native-baseline.md"
+	local temporary="$destination/result.json.tmp"
+
+	for path in "$ctp_native_baseline_dir/summary.md" "$baseline_metrics" "$baseline_instruction" "$baseline_result"; do
+		if [[ ! -s $path ]]; then
+			printf 'bench.sh: native Hpatch baseline artifact is missing or empty: %s\n' "$path" >&2
+			return 1
+		fi
+	done
+	if ! jq -e --arg task "$task_id" --arg model "$model" --arg effort "$reasoning_effort" '
+		.task_id == $task and .arm == "hpatch" and .model == $model and
+		.reasoning_effort == $effort and .task_pass == true
+	' "$baseline_result" >/dev/null; then
+		printf 'bench.sh: native Hpatch baseline does not match the task, model, reasoning, and passing-result contract: %s\n' "$baseline_result" >&2
+		return 1
+	fi
+	if ! jq -e '
+		.mode == "hpatch" and .requests.usage_missing == 0 and
+		.requests.usage_observed == .requests.started
+	' "$baseline_metrics" >/dev/null; then
+		printf 'bench.sh: native Hpatch baseline has incomplete provider usage: %s\n' "$baseline_metrics" >&2
+		return 1
+	fi
+	mkdir -p "$destination"
+	cp -a -- "$ctp_native_baseline_dir/artifacts/$task_id/${task_id}-hpatch-r001/." "$destination/"
+	cp -- "$baseline_metrics" "$control_metrics"
+	cp -- "$baseline_instruction" "$imported_instruction"
+	if [[ -f $ctp_native_baseline_dir/hpatch-router.log ]]; then
+		cp -- "$ctp_native_baseline_dir/hpatch-router.log" "$control_log"
+	else
+		: >"$control_log"
+	fi
+	jq \
+		--arg run_id "$run_id" \
+		--arg artifact "$destination" \
+		--arg instruction "$imported_instruction" \
+		--arg summary "$ctp_native_baseline_dir/summary.md" \
+		--arg source_result "$baseline_result" '
+		.run_id = $run_id |
+		.arm = "control" |
+		.order_in_block = 1 |
+		.router_mode = "hpatch" |
+		.model_protocol = "native" |
+		.base_instructions.path = $instruction |
+		.base_instructions.container_path = null |
+		.base_instructions.stock_path = null |
+		.base_instructions.override_diff_path = null |
+		.base_instructions.override_source_path = null |
+		.agent.stdout_path = ($artifact + "/codex.jsonl") |
+		.agent.stderr_path = ($artifact + "/codex.stderr") |
+		.diff_path = ($artifact + "/changes.patch") |
+		.graders |= map(
+			.stdout_path = ($artifact + "/" + (.stdout_path | split("/")[-1])) |
+			.stderr_path = ($artifact + "/" + (.stderr_path | split("/")[-1]))
+		) |
+		.imported_native_baseline = {summary: $summary, result: $source_result}
+	' "$baseline_result" >"$temporary"
 	mv -f -- "$temporary" "$destination/result.json"
 }
 
@@ -1055,6 +1134,8 @@ run_agent() {
 	local instruction_name=control.md
 	local instruction_path=$control_instruction
 	local instruction_sha=$control_instruction_sha
+	local model_protocol=native
+	local router_mode=passthrough
 
 	local path
 	local input_tokens
@@ -1070,6 +1151,8 @@ run_agent() {
 		instruction_name=hpatch.md
 		instruction_path=$hpatch_instruction
 		instruction_sha=$hpatch_instruction_sha
+		model_protocol=$HPATCH_BENCH_HPATCH_MODEL_PROTOCOL
+		router_mode=hpatch
 	fi
 	printf 'run %s: repetition %d %s (%d/2)\n' "$task_id" "$repetition" "$arm" "$order"
 	workspace=$(mktemp -d "$run_dir/work/$run_id-XXXXXX")
@@ -1253,6 +1336,8 @@ run_agent() {
 		--argjson order "$order" \
 		--arg model "$model" \
 		--arg reasoning_effort "$reasoning_effort" \
+		--arg model_protocol "$model_protocol" \
+		--arg router_mode "$router_mode" \
 		--arg started_at "$started_at" \
 		--arg task_id "$task_id" \
 		--arg base_instructions_path "$instruction_path" \
@@ -1276,14 +1361,16 @@ run_agent() {
 			order_in_block: $order,
 			model: $model,
 			reasoning_effort: $reasoning_effort,
+			model_protocol: $model_protocol,
+			router_mode: $router_mode,
 			started_at: $started_at,
 			base_instructions: {
 				path: $base_instructions_path,
 				container_path: $base_instructions_container_path,
 				sha256: $base_instructions_sha256,
 				stock_path: $stock_base_instructions_path,
-				override_diff_path: (if $arm == "hpatch" then $override_diff_path else null end),
-				override_source_path: (if $arm == "hpatch" then $override_source_path else null end)
+				override_diff_path: (if $base_instructions_container_path == "/bench-instructions/hpatch.md" then $override_diff_path else null end),
+				override_source_path: (if $base_instructions_container_path == "/bench-instructions/hpatch.md" then $override_source_path else null end)
 			},
 			agent: $agent,
 			changed_paths: $changed_paths,
@@ -1376,6 +1463,8 @@ if [[ $benchmark_mode == paired ]]; then
 else
 	if [[ $benchmark_mode == hpatch-only ]]; then
 		import_control_baseline
+	elif [[ $benchmark_mode == ctp-only ]]; then
+		import_native_hpatch_baseline
 	fi
 	"${compose[@]}" up --detach --wait hpatch
 fi
@@ -1409,7 +1498,7 @@ worker_pids=()
 
 merge_results
 expected_results=$((repetitions * 2))
-if [[ $benchmark_mode == hpatch-only ]]; then
+if [[ $benchmark_mode == hpatch-only || $benchmark_mode == ctp-only ]]; then
 	expected_results=$((repetitions + 1))
 elif [[ $benchmark_mode == hpatch-diagnostic ]]; then
 	expected_results=$repetitions

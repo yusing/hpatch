@@ -9,6 +9,11 @@ Correctness is decided by hidden executable tests plus a changed-path boundary.
 The historical oracle qualifies the grader, but its Git history and patch are
 never available to an agent.
 
+The same runner also owns a CTP-only comparison. It imports one passing native-Hpatch
+result and its router metrics, then runs one Hpatch treatment with CTP/1. The report
+retains both instruction digests and explicitly labels a mismatch, because an historical
+baseline with different instructions is not an isolated protocol experiment.
+
 ## Run it
 
 From the repository root, run one Hpatch attempt against the fixed published control:
@@ -16,6 +21,20 @@ From the repository root, run one Hpatch attempt against the fixed published con
 ```sh
 BENCHMARK_MODE=hpatch-only REPETITIONS=1 bash benchmarks/bench.sh
 ```
+
+Run exactly one Hpatch-CTP/1 treatment against the published native-Hpatch result with:
+
+```sh
+BENCHMARK_MODE=ctp-only BENCHMARK_REPORT_ISSUES=false REPETITIONS=1 bash benchmarks/bench.sh
+```
+
+This schedules one paid model attempt. CTP-only mode requires issue reporting to be
+disabled so the treatment does not add the diagnostic reporting surface. It imports the
+passing Hpatch record and Hpatch router metrics from the fixed published baseline by default;
+`CTP_NATIVE_BASELINE_DIR` may select another complete matching result. The baseline must
+match the task, model, and reasoning effort and contain complete provider usage. The report
+labels the imported `control` storage arm as **Hpatch native** and the measured `hpatch`
+storage arm as **Hpatch CTP/1**.
 
 Treatment runs enable the model-visible `report_issue` tool by default. Set
 `BENCHMARK_REPORT_ISSUES=false` to omit it. When enabled, the treatment instructions require one
@@ -48,7 +67,7 @@ select another complete matching passing baseline. The baseline must match the t
 reasoning effort. Hpatch-only mode requires one repetition; run separate invocations to collect
 independent treatment trials against the same baseline.
 
-Without `BENCHMARK_MODE`, the script runs the paired experiment: four pairs and eight model
+Without `BENCHMARK_MODE`, the script runs the stock-versus-Hpatch paired experiment: four pairs and eight model
 attempts. The default model is `gpt-5.6-sol` with medium reasoning. `MODEL`,
 `REASONING_EFFORT`, and paired-mode `REPETITIONS` override those defaults. The script prints the
 retained run directory and every agent patch. A nonzero exit means an attempt or infrastructure
@@ -156,14 +175,15 @@ The control router forwards requests without tool rewriting. The treatment route
 Code Mode surfaces displaced by the routed tools, exposes `functions.hpatch` and
 `functions.shell`, and translates successful calls into the Code Mode carriers expected by Codex. Both
 arms select their complete request instructions before routing; the treatment router replaces
-the stock editing guidance in memory before forwarding.
+the stock editing guidance in memory before forwarding. Native runs stop after that ordinary
+rewrite; CTP/1 appends only its request-local dictionary data to the resulting instruction carrier.
 
 ## Router-injected tool instructions
 
 The authoritative treatment replacement is:
 
 ```text
-contrib/codex/file-editing-instructions.md
+contrib/codex/model-instructions.md
 ```
 
 The benchmark does not duplicate that text or its replacement logic. For every run it extracts
@@ -424,7 +444,7 @@ within the immediately preceding request's eligible prefix. Historical imported 
 logs predate request-level token attribution show these derived values as unavailable.
 
 Each concurrent attempt first writes its own `result.json`. After a complete run,
-the parent shell sorts and merges all six files into `results.jsonl`. After a
+the parent shell sorts and merges all `2 * repetitions` files into `results.jsonl`. After a
 fatal hpatch failure or user cancellation, it instead merges every result
 captured before teardown. Private files avoid concurrent writes to one JSONL
 file in both cases.
@@ -438,6 +458,9 @@ arm
 repetition
 order_in_block
 model
+reasoning_effort
+router_mode
+model_protocol
 started_at
 base_instructions
 agent
@@ -471,6 +494,9 @@ completed item counts
 Codex stdout and stderr paths
 ```
 
+CTP-only comparison records use `hpatch` for both router modes, `native` for the
+imported native arm, and `ctp1` for the measured compact arm.
+
 Grader duration is recorded separately so test compilation and execution do not
 inflate agent wall time.
 
@@ -491,7 +517,10 @@ curl --fail --silent --show-error \
 `hpatch-metrics.json` contains structured gain data, including successful and
 failed hpatch calls, hpatch token estimates, equivalent translated
 `apply_patch` token estimates, definition input tokens, removed stock-definition
-tokens, reports, and diagnostics.
+tokens, reports, and diagnostics. In CTP/1 mode it also contains `ctp` counters
+for admitted representations: whole-request native and compact input estimates; fallbacks for
+a missing instruction carrier, no positive definition, and an unprofitable complete representation; plus
+native and compact assistant-output estimates taken from each completed response.
 
 A zero structured gain value is meaningful only if treatment requests reached hpatch. If
 the treatment failed before a successful or rejected hpatch call, zero calls and
@@ -531,6 +560,22 @@ eligible-prefix hits. The remainder of that eligible prefix is a miss; all other
 are cold or newly appended input. The two attribution buckets exactly reconcile to provider
 uncached input. This avoids treating a large new command result as though an existing prompt
 prefix had fallen out of cache.
+
+The CTP report uses the same arithmetic but labels it explicitly as CTP/1 minus the imported native result.
+It reports total, cached, and uncached input tokens separately, plus output and
+reasoning-output tokens. Negative token deltas favor CTP/1. Provider Responses usage,
+observed by each router before local response decoding, is the authoritative end-to-end
+measure; missing usage makes the report fail rather than silently substituting the Codex
+client's possibly incomplete terminal events. Hidden-grader pass rate and overall task
+acceptance are separate rows.
+
+The same report separately shows CTP's internal input and assistant-output compression. For
+each direction it reports native tokens, compact tokens, `compact / native`, and
+`(native - compact) / native`. Input counts complete admitted post-Hpatch requests. Output
+counts assistant text once per logical content item and excludes tool calls; streaming counts come
+from the terminal `response.completed` object rather than intermediate event copies. These use the
+repository GPT-5 estimator and are not derived from the imported native baseline. If no request
+admits CTP, the report shows the admission count and marks both ratios unavailable.
 
 Negative duration or token deltas favor hpatch. Report medians and individual
 pairs for small samples; four pairs are too few for a strong statistical claim.

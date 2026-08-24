@@ -78,6 +78,8 @@ services:
       - 0.0.0.0:8082
       - --mode
       - hpatch
+      - --model-protocol
+      - ${HPATCH_BENCH_HPATCH_MODEL_PROTOCOL:-native}
     networks:
       hpatch-agent: {}
       egress:
