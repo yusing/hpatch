@@ -6,6 +6,7 @@ import {fileURLToPath} from "node:url";
 import type {ExecutionResult, Tool} from "../internal/router/toolplugin/plugin.d.ts";
 import {
   byteLength,
+  collect,
   createExecutorTool,
   decodeUTF8,
   errorText,
@@ -260,16 +261,6 @@ function selectSymbol(file: SourceFile, query: Query): number {
   return selected;
 }
 
-async function collect(stream: AsyncIterable<Uint8Array>): Promise<Uint8Array> {
-  const chunks: Uint8Array[] = [];
-  let length = 0;
-  for await (const chunk of stream) {
-    chunks.push(chunk);
-    length += chunk.byteLength;
-  }
-  return Buffer.concat(chunks, length);
-}
-
 function conciseGoplsError(stderr: string, exitCode: number | null): string {
   const line = stderr.trim().split(/\r?\n/u).find((candidate) => candidate.trim() !== "");
   return line === undefined ? `gopls exited with status ${exitCode ?? "unknown"}` : line.trim();
@@ -284,10 +275,13 @@ async function runGopls(mode: QueryMode, position: string): Promise<GoplsResult>
     child.once("error", (error) => resolve({exitCode: null, error}));
     child.once("close", (exitCode) => resolve({exitCode}));
   });
+  const deadline = new Promise<never>((_, reject) => {
+    setTimeout(() => reject(new Error("deadline exceeded")), 30_000);
+  });
   const stdoutPromise = collect(child.stdout);
   const stderrPromise = collect(child.stderr);
   try {
-    const completed = await completion;
+    const completed = await Promise.race([completion, deadline]);
     if (completed.error !== undefined) {
       await Promise.allSettled([stdoutPromise, stderrPromise]);
       if ("code" in completed.error && completed.error.code === "ENOENT") {
@@ -603,14 +597,72 @@ async function executeQuery(query: Query): Promise<ExecutionResult> {
   };
 }
 
+function parseQuotedToken(input: string): {token: string; trailing: string} {
+  let escaped = false;
+  for (let index = 1; index < input.length; index += 1) {
+    const character = input[index];
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (character === "\\") {
+      escaped = true;
+      continue;
+    }
+    if (character !== "\"") {
+      continue;
+    }
+    const encoded = input.slice(0, index + 1);
+    let token;
+    try {
+      token = JSON.parse(encoded);
+    } catch (error) {
+      throw new Error(`invalid quoted token: ${errorText(error)}`);
+    }
+    if (typeof token !== "string") {
+      throw new Error("invalid quoted token");
+    }
+    return {token, trailing: input.slice(index + 1)};
+  }
+  throw new Error("invalid quoted token: unterminated quoted string");
+}
+
+function parseHSymbolArguments(input: string): string[] {
+  const value = stripOptionalFinalNewline(input).trim();
+  if (value === "") {
+    return [];
+  }
+  const argv: string[] = [];
+  let remaining = value;
+  while (remaining !== "") {
+    remaining = remaining.replace(/^[ \t]+/u, "");
+    if (remaining === "") {
+      break;
+    }
+    if (remaining.startsWith("\"")) {
+      const {token, trailing} = parseQuotedToken(remaining);
+      argv.push(token);
+      remaining = trailing;
+    } else {
+      const separator = remaining.search(/[ \t]/u);
+      if (separator < 0) {
+        argv.push(remaining);
+        break;
+      }
+      argv.push(remaining.slice(0, separator));
+      remaining = remaining.slice(separator);
+    }
+  }
+  return argv;
+}
+
 export function createHSymbolTool(description: string, grammar: string): Tool<string[]> {
   return createExecutorTool({
     name: "hsymbol",
     description,
     grammar,
     argv(input) {
-      const value = stripOptionalFinalNewline(input).trim();
-      return value === "" ? [] : value.split(/[ \t]+/u);
+      return parseHSymbolArguments(input);
     },
     async execute(argv) {
       try {

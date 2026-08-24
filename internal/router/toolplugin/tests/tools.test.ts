@@ -993,6 +993,15 @@ describe("hsymbol built-in plugin", () => {
     const directory = await temporaryDirectory("hsymbol-lsp-");
     process.chdir(directory);
     process.env.PATH = `${pluginBin}${path.delimiter}${originalPath ?? ""}`;
+    // Validate language server binaries are available before running tests
+    const tscCheck = spawnSync("tsc", ["--version"], {encoding: "utf8"});
+    const pyrightCheck = spawnSync("pyright-langserver", ["--version"], {encoding: "utf8"});
+    if (tscCheck.status !== 0) {
+      throw new Error(`tsc is not available: ${tscCheck.error?.message ?? tscCheck.stderr}`);
+    }
+    if (pyrightCheck.status !== 0) {
+      throw new Error(`pyright-langserver is not available: ${pyrightCheck.error?.message ?? pyrightCheck.stderr}`);
+    }
     const typescriptTarget = [
       "export function target(value: number) {",
       "  return value + 1;",

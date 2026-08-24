@@ -118,3 +118,19 @@ export function createExecutorTool(options: ExecutorToolOptions): Tool<string[]>
     execute: options.execute,
   };
 }
+
+export async function collect(stream: AsyncIterable<Uint8Array>): Promise<Uint8Array> {
+  const chunks: Uint8Array[] = [];
+  let length = 0;
+  try {
+    for await (const chunk of stream) {
+      chunks.push(chunk);
+      length += chunk.byteLength;
+    }
+  } catch (error) {
+    if (!(error instanceof Error) || !("code" in error) || error.code !== "ERR_STREAM_PREMATURE_CLOSE") {
+      throw error;
+    }
+  }
+  return Buffer.concat(chunks, length);
+}

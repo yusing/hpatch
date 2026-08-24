@@ -3,7 +3,7 @@ import {pathToFileURL} from "node:url";
 
 import {createMessageConnection} from "vscode-jsonrpc/node";
 
-import {decodeUTF8, errorText} from "./common.ts";
+import {collect, decodeUTF8, errorText} from "./common.ts";
 
 type LSPPosition = {
   line: number;
@@ -36,22 +36,6 @@ type LSPQueryOptions = {
   position: LSPPosition;
   mode: "def" | "refs";
 };
-
-async function collect(stream: AsyncIterable<Uint8Array>): Promise<Uint8Array> {
-  const chunks: Uint8Array[] = [];
-  let length = 0;
-  try {
-    for await (const chunk of stream) {
-      chunks.push(chunk);
-      length += chunk.byteLength;
-    }
-  } catch (error) {
-    if (!(error instanceof Error) || !("code" in error) || error.code !== "ERR_STREAM_PREMATURE_CLOSE") {
-      throw error;
-    }
-  }
-  return Buffer.concat(chunks, length);
-}
 
 function position(value: unknown): LSPPosition | null {
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
@@ -138,6 +122,9 @@ export async function runLSPQuery(options: LSPQueryOptions): Promise<LSPQueryRes
     child.once("error", (error) => resolve(error));
     child.once("close", () => resolve(null));
   });
+  const deadline = new Promise<never>((_, reject) => {
+    setTimeout(() => reject(new Error("deadline exceeded")), 30_000);
+  });
   const stderrPromise = collect(child.stderr);
   const startError = await started;
   if (startError !== null) {
@@ -167,21 +154,24 @@ export async function runLSPQuery(options: LSPQueryOptions): Promise<LSPQueryRes
 
   let phase = "initialize";
   try {
-    const initialized = await connection.sendRequest("initialize", {
-      processId: process.pid,
-      clientInfo: {name: "hpatch", version: "1"},
-      rootUri: workspaceURI,
-      workspaceFolders: [{uri: workspaceURI, name: workspaceName}],
-      capabilities: {
-        general: {positionEncodings: ["utf-16"]},
-        workspace: {configuration: true, workspaceFolders: true},
-        textDocument: {
-          definition: {linkSupport: true},
-          references: {},
-          synchronization: {},
+    const initialized = await Promise.race([
+      connection.sendRequest("initialize", {
+        processId: process.pid,
+        clientInfo: {name: "hpatch", version: "1"},
+        rootUri: workspaceURI,
+        workspaceFolders: [{uri: workspaceURI, name: workspaceName}],
+        capabilities: {
+          general: {positionEncodings: ["utf-16"]},
+          workspace: {configuration: true, workspaceFolders: true},
+          textDocument: {
+            definition: {linkSupport: true},
+            references: {},
+            synchronization: {},
+          },
         },
-      },
-    });
+      }),
+      deadline,
+    ]);
     const positionEncoding = initialized !== null && typeof initialized === "object"
       ? (initialized as {capabilities?: {positionEncoding?: unknown}}).capabilities?.positionEncoding
       : undefined;
@@ -201,20 +191,27 @@ export async function runLSPQuery(options: LSPQueryOptions): Promise<LSPQueryRes
     });
     phase = options.mode === "def" ? "definition" : "references";
     const response = options.mode === "def"
-      ? await connection.sendRequest("textDocument/definition", {
-        textDocument: {uri},
-        position: options.position,
-      })
-      : await connection.sendRequest("textDocument/references", {
-        textDocument: {uri},
-        position: options.position,
-        context: {includeDeclaration: true},
-      });
+      ? await Promise.race([
+        connection.sendRequest("textDocument/definition", {
+          textDocument: {uri},
+          position: options.position,
+        }),
+        deadline,
+      ])
+      : await Promise.race([
+        connection.sendRequest("textDocument/references", {
+          textDocument: {uri},
+          position: options.position,
+          context: {includeDeclaration: true},
+        }),
+        deadline,
+      ]);
     const parsedLocations = locations(response, options.mode);
     phase = "shutdown";
     // Cleanup is auxiliary once the semantic response is complete. Bound the
     // child lifetime even when a server ignores shutdown or exit.
     const cleanupTimeout = setTimeout(() => child.kill("SIGKILL"), 1_000);
+    let cleanupError: Error | null = null;
     try {
       const shutdownCompleted = await Promise.race([
         connection.sendRequest("shutdown").then(() => true, () => false),
@@ -233,14 +230,14 @@ export async function runLSPQuery(options: LSPQueryOptions): Promise<LSPQueryRes
     }
     const completionError = await completion;
     clearTimeout(cleanupTimeout);
-    const stderr = semanticStderr(decodeUTF8(await stderrPromise, "language server stderr"));
     if (completionError !== null) {
-      throw processFailure(options.command, completionError);
+      cleanupError = completionError;
     }
+    const stderr = semanticStderr(decodeUTF8(await stderrPromise, "language server stderr"));
     return {
       locations: parsedLocations,
       stock: `${JSON.stringify(response)}\n`,
-      stderr,
+      stderr: cleanupError !== null && stderr === "" ? semanticStderr(`child error: ${errorText(cleanupError)}`) : stderr,
     };
   } catch (error) {
     child.kill("SIGKILL");
