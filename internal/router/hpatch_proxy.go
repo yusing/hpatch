@@ -222,12 +222,13 @@ type hpatchHistorySession struct {
 }
 
 type hpatchProxy struct {
-	translator     hpatchTranslator
-	registry       *toolRegistry
-	exactEvidence  *hpatchExactEvidenceRecorder
-	shellDirectory string
-	titles         *sessionTitleCache
-	shellSessions  map[string]struct{}
+	translator             hpatchTranslator
+	registry               *toolRegistry
+	customizedInstructions bool
+	exactEvidence          *hpatchExactEvidenceRecorder
+	shellDirectory         string
+	titles                 *sessionTitleCache
+	shellSessions          map[string]struct{}
 
 	mu              sync.RWMutex
 	sessions        map[string]*hpatchHistorySession
@@ -237,7 +238,7 @@ type hpatchProxy struct {
 	closed          bool
 }
 
-func newHPatchProxy(translator hpatchTranslator, registry *toolRegistry, titleCaches ...*sessionTitleCache) *hpatchProxy {
+func newHPatchProxy(translator hpatchTranslator, registry *toolRegistry, customizedInstructions bool, titleCaches ...*sessionTitleCache) *hpatchProxy {
 	if translator == nil || registry == nil {
 		return nil
 	}
@@ -247,14 +248,15 @@ func newHPatchProxy(translator hpatchTranslator, registry *toolRegistry, titleCa
 	}
 	directory := "/tmp"
 	return &hpatchProxy{
-		translator:     translator,
-		registry:       registry,
-		exactEvidence:  newHPatchExactEvidenceRecorder(),
-		shellDirectory: directory,
-		titles:         titles,
-		shellSessions:  make(map[string]struct{}),
-		sessions:       make(map[string]*hpatchHistorySession),
-		activeSessions: make(map[string]int),
+		translator:             translator,
+		registry:               registry,
+		customizedInstructions: customizedInstructions,
+		exactEvidence:          newHPatchExactEvidenceRecorder(),
+		shellDirectory:         directory,
+		titles:                 titles,
+		shellSessions:          make(map[string]struct{}),
+		sessions:               make(map[string]*hpatchHistorySession),
+		activeSessions:         make(map[string]int),
 	}
 }
 
@@ -458,6 +460,9 @@ func (p *hpatchProxy) prepareRequest(ctx context.Context, request *parsedRespons
 	}
 	if !metadataValid || metadata.RequestKind != "turn" {
 		return nil, errors.New("hpatch rewrite requires valid turn metadata")
+	}
+	if err := rewriteReceivedModelInstructions(request, p.customizedInstructions); err != nil {
+		return nil, err
 	}
 	directory, _ := usableRoutingDirectory(metadata.Directories)
 	originalTools, originalToolsPresent := request.fields["tools"]

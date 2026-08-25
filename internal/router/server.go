@@ -76,6 +76,10 @@ func Run(ctx context.Context, args []string, stderr io.Writer) (runErr error) {
 			inner:   newInProcessHPatchTranslator(gainDirectory),
 			metrics: metrics,
 		}
+		customizedInstructions, err := codexModelInstructionFileConfigured()
+		if err != nil {
+			return fmt.Errorf("initialize model instruction rewriting: %w", err)
+		}
 		registry, err := buildToolRegistry(ctx, gainDirectory, translator.ToolDescription(), os.Getenv("HPATCH_DIAGNOSE") == "1")
 		if err != nil {
 			return fmt.Errorf("initialize tool registry: %w", err)
@@ -89,7 +93,7 @@ func Run(ctx context.Context, args []string, stderr io.Writer) (runErr error) {
 		defer func() {
 			runErr = errors.Join(runErr, registry.Close())
 		}()
-		hpatchCalls = newHPatchProxy(translator, registry, titles)
+		hpatchCalls = newHPatchProxy(translator, registry, customizedInstructions, titles)
 		defer func() {
 			runErr = errors.Join(runErr, hpatchCalls.Close())
 		}()

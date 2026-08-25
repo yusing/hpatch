@@ -212,9 +212,8 @@ benchmark_config="$run_dir/benchmark-config.json"
 instruction_dir="$run_dir/instructions"
 control_instruction="$instruction_dir/control.md"
 hpatch_instruction="$instruction_dir/hpatch.md"
-instruction_diff="$instruction_dir/stock-to-hpatch-tools.diff"
+instruction_diff="$instruction_dir/control-to-hpatch-request.diff"
 instruction_source="$benchmark_root/../contrib/codex/file-editing-instructions.md"
-instruction_renderer="$benchmark_root/../contrib/codex/render-model-instructions.sh"
 run_suffix=$(basename "$run_dir")
 image_tag_prefix=${HPATCH_BENCH_IMAGE_TAG:-run}
 export HPATCH_BENCH_IMAGE_TAG="$image_tag_prefix-${run_suffix#.staging-}"
@@ -498,7 +497,7 @@ preserve_run() {
 	instruction_dir="$run_dir/instructions"
 	control_instruction="$instruction_dir/control.md"
 	hpatch_instruction="$instruction_dir/hpatch.md"
-	instruction_diff="$instruction_dir/stock-to-hpatch-tools.diff"
+	instruction_diff="$instruction_dir/control-to-hpatch-request.diff"
 	export BENCH_RUN_DIR=$run_dir
 
 	if ! rewrite_published_paths "$previous_run_dir"; then
@@ -674,7 +673,7 @@ INSTRUCTION
 			'.models[] | select(.slug == $model) | .base_instructions' \
 			>"$control_instruction"
 
-	sh "$instruction_renderer" "$control_instruction" >"$hpatch_instruction"
+	cp "$control_instruction" "$hpatch_instruction"
 	if [[ $report_issues == true ]]; then
 		printf '\n%s\n' "$diagnostic_instruction" >>"$hpatch_instruction"
 	fi
@@ -683,15 +682,15 @@ INSTRUCTION
 
 	if [[ $(grep -Fxc '## Benchmark isolation' "$control_instruction") -ne 1 ]] ||
 		[[ $(grep -Fxc '## Benchmark isolation' "$hpatch_instruction") -ne 1 ]]; then
-		printf 'bench.sh: benchmark isolation instructions were not installed exactly once\n' >&2
+		printf 'bench.sh: benchmark isolation instructions were not included exactly once\n' >&2
 		return 1
 	fi
 
 	diff -u --label control.md --label hpatch.md \
 		"$control_instruction" "$hpatch_instruction" >"$instruction_diff" ||
 		diff_status=$?
-	if [[ $diff_status -ne 1 ]]; then
-		printf 'bench.sh: base-instruction diff exited %d, want 1\n' "$diff_status" >&2
+	if [[ $diff_status -gt 1 ]]; then
+		printf 'bench.sh: base-instruction diff failed with status %d\n' "$diff_status" >&2
 		return 1
 	fi
 

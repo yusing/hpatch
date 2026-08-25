@@ -24,20 +24,6 @@ test("description stays call-local", () => {
 });
 const hostPath = fileURLToPath(new URL("../host.mjs", import.meta.url));
 const repositoryRoot = fileURLToPath(new URL("../../../../", import.meta.url));
-const stockBaseInstructions = [
-  "# Codex base",
-  "- When you search for text or files, you reach first for `rg` or `rg --files`; they are much faster than alternatives like `grep`. If `rg` is unavailable, you use the next best tool without fuss.",
-  "- Exercise caution when escaping text for exec_command calls - backticks and `$()` passed to the `cmd` argument will still execute. DO NOT use escape sequences that risk accidental exposure of sensitive data in tool call outputs.",
-  "## File editing constraints",
-  "",
-  "Use `apply_patch` for local file edits. Do not create or edit files with `cat` or other shell write tricks. Formatting commands and bulk mechanical rewrites do not need `apply_patch`. Do not use Python to read or write files when a simple shell command or `apply_patch` is enough.",
-  "",
-  "## Remaining instructions",
-  "",
-  "Preserve unrelated behavior.",
-  "",
-].join("\n");
-
 async function temporaryDirectory(prefix: string): Promise<string> {
   const directory = await mkdtemp(path.join(tmpdir(), prefix));
   temporaryDirectories.push(directory);
@@ -420,7 +406,7 @@ describe("installable shell plugin", () => {
     });
   });
 
-  test("make install provides frontends and Codex model instructions", async () => {
+  test("make install provides frontends without changing Codex instructions", async () => {
     const installRoot = await temporaryDirectory("shell-plugin-install-");
     const binaryDirectory = path.join(installRoot, "bin");
     const configDirectory = path.join(installRoot, "config");
@@ -430,36 +416,28 @@ describe("installable shell plugin", () => {
     const installedPlugin = path.join(configDirectory, "hpatch", "plugins", "shell.mjs");
     const codexHome = path.join(installRoot, "codex-home");
     const configPath = path.join(codexHome, "config.toml");
-    const instructionsPath = path.join(codexHome, "hpatch-model-instructions.md");
-    const fakeCodex = path.join(installRoot, "codex");
+    const instructionsPath = path.join(codexHome, "custom-instructions.md");
+    const defaultInstructionsPath = path.join(codexHome, "hpatch-model-instructions.md");
     await mkdir(binaryDirectory, {recursive: true});
-    await writeFile(
-      fakeCodex,
-      `#!/bin/sh\nprintf '%s\\n' '${JSON.stringify({models: [{
-        slug: "test-model",
-        priority: 1,
-        base_instructions: stockBaseInstructions,
-      }]})}'\n`,
-      {mode: 0o700},
-    );
     const installEnvironment = {
       ...process.env,
       GOBIN: binaryDirectory,
       GOTELEMETRY: "off",
       XDG_CONFIG_HOME: configDirectory,
-      CODEX: fakeCodex,
-      PATH: `${installRoot}${path.delimiter}${process.env.PATH ?? ""}`,
       CODEX_HOME: codexHome,
     };
     await mkdir(codexHome, {recursive: true});
     const initialConfig = [
       "model = \"test-model\"",
+      `model_instructions_file = ${JSON.stringify(instructionsPath)}`,
       "",
       "[model_providers.custom]",
       "name = \"custom\"",
       "",
     ].join("\n");
+    const initialInstructions = "# User-customized instructions\n\nPreserve this file byte-for-byte.\n";
     await writeFile(configPath, initialConfig);
+    await writeFile(instructionsPath, initialInstructions, {mode: 0o600});
     const installed = spawnSync("make", ["install"], {
       cwd: repositoryRoot,
       encoding: "utf8",
@@ -474,81 +452,10 @@ ${installed.stderr}`);
     expect(installed.status).toBe(0);
     expect((await stat(routerPath)).mode & 0o111).not.toBe(0);
     await expect(stat(installedPlugin)).rejects.toThrow();
-    const installedInstructions = await readFile(instructionsPath, "utf8");
-    for (const expected of [
-      "Use `functions.hpatch` for local file edits, not `apply_patch`.",
-      "The default interpreter is Bash.",
-      "accepts exactly one `{.}` placeholder",
-      "`hread @shell/<reference>`",
-      "Acquire target-bearing context once before editing.",
-      "use hgrep first; use `-F` with repeated `-e` literals",
-      "`hsymbol refs PATH LINE:HASH SYMBOL [N]`",
-      "Use `inspect_file PATH` for bounded metadata and structural outlines.",
-    ]) {
-      expect(installedInstructions).toContain(expected);
-    }
-    for (const removed of [
-      "Use `apply_patch` for local file edits.",
-      "you reach first for `rg` or `rg --files`",
-      "escaping text for exec_command calls",
-    ]) {
-      expect(installedInstructions).not.toContain(removed);
-    }
-    expect(await readFile(configPath, "utf8")).toBe([
-      "model = \"test-model\"",
-      "",
-      `model_instructions_file = ${JSON.stringify(instructionsPath)}`,
-      "",
-      "[model_providers.custom]",
-      "name = \"custom\"",
-      "",
-    ].join("\n"));
-    const repeatedInstall = spawnSync("make", ["install-instructions"], {
-      cwd: repositoryRoot,
-      encoding: "utf8",
-      env: installEnvironment,
-    });
-    expect(repeatedInstall.status).toBe(0);
-    expect(await readFile(instructionsPath, "utf8")).toBe(installedInstructions);
-
-    const customInstructionsPath = path.join(codexHome, "custom-instructions.md");
-    const customized = [
-      "# Customized base",
-      "",
-      "Preserve this prefix.",
-      "",
-      "## File editing",
-      "",
-      "Use `functions.hpatch` for local file edits, not `apply_patch`.",
-      "Legacy hpatch guidance.",
-      "",
-      "## File reading, searching, and shell commands",
-      "",
-      "Legacy private-tool guidance.",
-      "",
-      "## Customized remainder",
-      "",
-      "Preserve this suffix.",
-      "",
-    ].join("\n");
-    await writeFile(customInstructionsPath, customized, {mode: 0o600});
-    const configured = `model_instructions_file = ${JSON.stringify(customInstructionsPath)}\n`;
-    await writeFile(configPath, configured);
-    const reinstalled = spawnSync("make", ["install-instructions"], {
-      cwd: repositoryRoot,
-      encoding: "utf8",
-      env: installEnvironment,
-    });
-    expect(reinstalled.status).toBe(0);
-    expect(await readFile(configPath, "utf8")).toBe(configured);
-    const patchedCustomInstructions = await readFile(customInstructionsPath, "utf8");
-    expect((await stat(customInstructionsPath)).mode & 0o777).toBe(0o600);
-    expect(patchedCustomInstructions).toContain("Preserve this prefix.");
-    expect(patchedCustomInstructions).toContain("Use `functions.hpatch` for local file edits");
-    expect(patchedCustomInstructions).toContain("Acquire target-bearing context once before editing.");
-    expect(patchedCustomInstructions).toContain("Preserve this suffix.");
-    expect(patchedCustomInstructions).not.toContain("Legacy hpatch guidance.");
-    expect(patchedCustomInstructions).not.toContain("Legacy private-tool guidance.");
+    expect(await readFile(configPath, "utf8")).toBe(initialConfig);
+    expect(await readFile(instructionsPath, "utf8")).toBe(initialInstructions);
+    expect((await stat(instructionsPath)).mode & 0o777).toBe(0o600);
+    await expect(stat(defaultInstructionsPath)).rejects.toThrow();
 
     const router = spawn(routerPath, ["--mode", "hpatch", "--listen", "127.0.0.1:0"], {
       cwd: repositoryRoot,

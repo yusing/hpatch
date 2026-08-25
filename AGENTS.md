@@ -35,7 +35,7 @@ Deployment invariant: in hpatch mode, the router and Codex executor must see the
 
 1. Codex sends `POST /v1/responses`; request parsing rejects malformed or unsupported request framing, including background Responses requests.
 2. In hpatch mode, the server derives the routing session and validates `x-codex-turn-metadata`; its `workspaces` member is an optional directory hint rather than a request requirement.
-3. The proxy finds exactly one supported Code Mode custom `exec` owner, strips native `apply_patch` and `exec_command`, preserves siblings, and installs model-visible `functions.hpatch` and `functions.shell`. Configured contributions marked model-visible join that catalog; the existing Responses instructions remain byte-equivalent.
+3. The proxy injects the central hpatch guidance into received Responses instructions, finds exactly one supported Code Mode custom `exec` owner, strips native `apply_patch` and `exec_command`, preserves siblings, and installs model-visible `functions.hpatch` and `functions.shell`. Configured contributions marked model-visible join that catalog.
 4. `internal/router/client.go` validates Codex-managed credentials and forwards the rewritten request to the Codex backend.
 5. A terminal hpatch call is translated once by `TranslateForHostAt` without mutating files. A selected metadata directory resolves relative operands; without one, only absolute operands are valid and router cwd is never used. Retained `@shell/` edits instead use router-owned session storage and `ApplyForHostRoot`.
 6. Response transformation restores the original Code Mode carrier shape, replacing the routed call with a validated native `functions.exec` carrier and generated `apply_patch` operation while preserving model-visible history for replay.
@@ -95,7 +95,7 @@ Run the cheapest check covering every changed owner:
 | Cross-package or broad contract | `go test ./...` |
 | Specification, architecture, or local documentation links | `pjdoc validate --scope root` |
 
-Use `go test ./...` only when a change crosses package owners. Run `go vet ./...` for broad Go checks and `make install` when validating generation, `hpatch-router` installation, and Codex instructions. Run `pjdoc validate --scope all` only before claiming project-wide documentation integrity.
+Use `go test ./...` only when a change crosses package owners. Run `go vet ./...` for broad Go checks and `make install` when validating generation and `hpatch-router` installation. Run `pjdoc validate --scope all` only before claiming project-wide documentation integrity.
 
 Targeted router falsifiers include:
 

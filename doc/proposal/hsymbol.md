@@ -139,7 +139,7 @@ Metrics do not start a second query.
 
 ## Guidance
 
-The installed `contrib/codex/file-editing-instructions.md` guidance teaches agents to:
+The router-injected `contrib/codex/file-editing-instructions.md` guidance teaches agents to:
 
 - After `hgrep` has a current row for an identifier that must be renamed, audited, or
   replaced at every call site, use `hsymbol refs` on that row instead of repeating `hgrep`

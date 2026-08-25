@@ -88,7 +88,7 @@ flowchart TD
     START["Start<br/><code>bash benchmarks/bench.sh</code>"]
     BUILD["Build the pinned agent/router image<br/><code>docker compose build control</code>"]
     STOCK["Export stock Codex base instructions<br/><code>docker run ... codex debug models --bundled | jq</code>"]
-    OVERRIDE["Render the repository guidance with the shared installer transform<br/><code>sh contrib/codex/render-model-instructions.sh control.md</code>"]
+    OVERRIDE["Prepare the Hpatch request instructions<br/><code>cp control.md hpatch.md</code>"]
     IDIFF["Record the exact instruction difference<br/><code>diff -u control.md hpatch.md</code>"]
     BASE["Export historical base<br/><code>git archive BASE | tar -x</code>"]
     BTEST["Inject hidden tests and require failure<br/><code>go test ./server/storage/mvcc ./server/etcdserver/txn ...</code>"]
@@ -151,9 +151,10 @@ The controlled differences are:
 The control router forwards requests without tool rewriting. The treatment router removes the
 Code Mode surfaces displaced by the routed tools, exposes `functions.hpatch` and
 `functions.shell`, and translates successful calls into the Code Mode carriers expected by Codex. Both
-routers leave the already-selected complete model instructions unchanged.
+arms select their complete request instructions before routing; the treatment router replaces
+the stock editing guidance in memory before forwarding.
 
-## Exact overridden tool instructions
+## Router-injected tool instructions
 
 The authoritative treatment replacement is:
 
@@ -168,21 +169,20 @@ the pinned CLI's bundled stock `base_instructions` into:
 $run_dir/instructions/control.md
 ```
 
-It calls `contrib/codex/render-model-instructions.sh` to replace the pinned stock file-editing
-section with the central source and remove the displaced stock rg and exec_command lines. The
-renderer validates every pinned source line exactly once and is the same renderer used by
-`make install`. The control retains those lines. All other stock base-prompt text remains
-byte-for-byte, and the benchmark then appends the same offline-isolation rule to both arms.
-The resulting complete treatment prompt is:
+The Hpatch arm starts from the same stock instructions. It adds diagnostic-reporting guidance
+when requested, and the benchmark appends the same offline-isolation rule to both arms. During
+each Hpatch request, the router replaces the pinned stock file-editing section with the central
+source and removes the displaced stock rg and exec_command lines before forwarding. The request
+instructions supplied to the Hpatch arm are retained as:
 
 ```text
 $run_dir/instructions/hpatch.md
 ```
 
-The exact replacement is retained as:
+The pre-router difference between the two arms is retained as:
 
 ```text
-$run_dir/instructions/stock-to-hpatch-tools.diff
+$run_dir/instructions/control-to-hpatch-request.diff
 ```
 
 Both files are mounted read-only at `/bench-instructions`. Each arm passes its
@@ -199,10 +199,9 @@ or:
 ```
 
 Each result record contains the selected path, container path, SHA-256 digest,
-stock instruction path, and—for hpatch—the override source and unified diff
-path. The script fails before model execution if the pinned stock prompt no
-longer contains the expected stock section exactly once or if the replacement
-does not remove it exactly.
+stock instruction path, and—for hpatch—the injected source and pre-router unified diff path.
+The router fails the affected request before upstream forwarding when an uncustomized received
+prompt no longer contains the expected stock section exactly once.
 
 ## Docker topology
 
@@ -410,7 +409,7 @@ $run_dir/hpatch-metrics.json
 $run_dir/hpatch-exact-evidence.jsonl  # only when explicitly enabled
 $run_dir/instructions/control.md
 $run_dir/instructions/hpatch.md
-$run_dir/instructions/stock-to-hpatch-tools.diff
+$run_dir/instructions/control-to-hpatch-request.diff
 ```
 
 Each concurrent attempt first writes its own `result.json`. After a complete run,

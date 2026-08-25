@@ -155,7 +155,7 @@ The plugin runtime snapshots and validates the immutable built-in module before 
 declarations, then applies the same normalized registry, wrapper, worker, and metrics paths to
 all executable contributions. The registry projects only model-visible tool definitions.
 Request rewriting installs the projected hpatch, hpatch_recover, and shell definitions, removes the native
-exec-command contract, and leaves the Responses `instructions` field byte-equivalent.
+exec-command contract, and rewrites received Responses instructions from the central guidance source.
 Private contribution descriptions are execution contracts, not a prompt source. Passthrough
 mode loads no registry.
 
@@ -279,10 +279,11 @@ only that sanitized shape under `#!params` in the built-in `shell` description. 
 sibling namespaces, and nested tools remain unchanged. Direct `functions.exec` entries and
 top-level `exec` or `functions.exec` tools fail closed.
 
-Codex owns persistent prompt delivery through `model_instructions_file`. The checkout installer
-renders the centralized guidance into either the configured custom file or a new file derived
-from bundled model instructions. It preserves content outside the owned marked section. The
-router does not duplicate this responsibility on each eligible request.
+Codex owns base prompt delivery. The router owns request-local hpatch guidance injection: it
+refreshes a marked section, replaces the pinned stock editing section, or appends only when the
+top-level Codex config declares `model_instructions_file`. An unconfigured unknown section fails
+closed as upstream drift. This policy runs in memory and never changes Codex configuration or
+instruction files.
 
 For every executor-backed contribution, the router wrapper owner creates a symlink inside the
 authenticated snapshot directory. The snapshot symlink has the tool-name basename and targets

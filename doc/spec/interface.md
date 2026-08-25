@@ -4,9 +4,8 @@
 
 In hpatch router mode, the model receives `hpatch` and `shell` as standalone custom tools.
 All persistent hread, hgrep, hsymbol, inspect_file, shell-execution, and HPATCH workflow guidance comes
-from the Codex `model_instructions_file` installed from
-`contrib/codex/file-editing-instructions.md`. The router never creates, changes, or removes the
-top-level Responses `instructions` value.
+from `contrib/codex/file-editing-instructions.md`. The router injects that source into the
+top-level Responses `instructions` value in memory and never changes an instruction file.
 Hread, hgrep, hsymbol, and inspect_file remain private executable contributions; their custom-tool
 specifications are not sent to the model and direct model calls to their names are not routed.
 
@@ -256,7 +255,8 @@ Acceptance:
 3. Unsupported files are confined and checked as regular without content reads, UTF-8 validation,
    line counting, content detection, or command-level truncation.
 4. Router startup installs an authenticated `inspect_file` frontend and exposes or routes only
-   hpatch, shell, and configured model-visible contributions. Request instructions remain unchanged.
+   hpatch, shell, and configured model-visible contributions. Eligible request instructions use
+   the central guidance while unrelated content remains unchanged.
 
 ## REQ-PLUGIN-001 — Router-local tool plugins
 
@@ -417,7 +417,9 @@ Acceptance:
 The first working path in `doc/brief.md` § Outcome supplies the built-in declaration at
 `plugins/shell.mjs`. The generated plugin bundle contributes an unconstrained custom tool named
 `shell`, limits its UTF-8 input to the executor argv limit, and translates successful input
-through the canonical exec carrier from `REQ-PLUGIN-001`. The repository `make install` target regenerates that bundle, installs `hpatch-router`, and installs the centralized Codex model instructions. It does not copy a configured shell declaration.
+through the canonical exec carrier from `REQ-PLUGIN-001`. The repository `make install` target
+regenerates that bundle and installs `hpatch-router`. It changes no Codex configuration,
+instruction file, or configured shell declaration.
 
 The tool treats the first logical line as a shebang when that line, after trimming only its
 leading and trailing ASCII spaces and tabs, starts with `#!`. It removes `#!`, trims the
@@ -501,16 +503,9 @@ Acceptance:
    nonzero status are returned without script-source duplication or an intermediate script file.
 10. Malformed selectors and input that cannot fit the bounded exec argv return a concise
     diagnostic without starting an interpreter.
-11. `make install` installs `hpatch-router`, no configured shell declaration, and complete
-    Codex model instructions. If the top-level config key is absent, it renders the selected
-    bundled model instructions, installs the default file, and adds the key. If the key exists,
-    it remains byte-equivalent and the referenced customized file is updated only when its
-    owned section is stock, legacy hpatch, or marked hpatch guidance; content outside that
-    section is preserved. Every `model_instructions_file` declared by a personal agent TOML
-    under the adjacent `agents` directory is updated under the same preservation rules;
-    relative values resolve from the declaring agent TOML and the TOML files remain unchanged.
-    The installed router embeds shell and creates shell, hread, hgrep, hsymbol, and inspect_file basename
-    frontends beside its executable at startup.
+11. `make install` installs `hpatch-router` without changing Codex configuration or instruction
+    files. The installed router embeds shell and creates shell, hread, hgrep, hsymbol, and
+    inspect_file basename frontends beside its executable at startup.
 12. `#!params={"workdir":"/tmp","tty":true}` before or after `#!cmd=` produces an exec carrier
     containing those fields and the router-supplied `cmd`. Safe leading params near-misses
     produce the same carrier after normalization. An object containing `cmd` rejects, and a
@@ -1298,16 +1293,19 @@ Acceptance:
 
 `contrib/codex/file-editing-instructions.md` is the single persistent Codex workflow source for all durable edit, shell, read, search, and inspection guidance. `doc/spec/interface.md` owns the normative engine and router contract. Model-visible tool descriptions contain only concise
 call-local contracts and request-specific schemas. The router does not use private tool
-descriptions as prompt text and does not mutate Responses instructions.
+descriptions as prompt text.
 
-`make install` renders the central source into Codex's configured `model_instructions_file`
-and every instruction file selected by a personal agent TOML under the adjacent `agents`
-directory. Relative agent values resolve from the declaring TOML. Existing settings, agent
-TOMLs, and all customized content outside the owned guidance section remain byte-equivalent.
-A file with current markers is refreshed idempotently; a legacy hpatch section or the pinned
-stock Codex file-editing section is migrated once. Without a top-level setting, the installer
-uses `CODEX_MODEL` or the lowest-priority bundled model, writes the default file, and adds the
-setting. An unrecognized customized file fails instead of being overwritten.
+For each eligible turn carrying a non-null Responses `instructions` string, the router refreshes
+one current marked hpatch section or replaces the pinned stock Codex file-editing section and its
+displaced rg and exec-command lines. It preserves all unrelated instruction content. At startup,
+the router reads `$CODEX_HOME/config.toml`, falling back to `~/.codex/config.toml`, only to
+snapshot whether the top-level `model_instructions_file` key is set. A configured custom prompt
+without either recognized section receives the central guidance by append; without that setting,
+the request fails before upstream forwarding as an unsupported upstream instruction change.
+Missing and null `instructions` values remain unchanged. This request-local behavior covers
+session start, post-compaction, subagent start, and subagent post-compaction instruction delivery;
+an inherited side conversation refreshes the marked section already in its prompt. Neither
+`make install`, `make uninstall`, nor the router creates, changes, or removes an instruction file.
 
 The recovery template adjacent to the central source owns dynamic recovery prose. After each
 wholly row-stale evaluator rejection, the router supplies only the current handles and summaries
@@ -1360,11 +1358,12 @@ Persistent guidance teaches this workflow:
 Acceptance:
 
 1. A model can choose and encode every HPATCH/2 operation from the persistent guidance.
-2. The installed prompt contains the central guidance exactly once and omits the pinned stock
+2. The forwarded prompt contains the central guidance exactly once and omits the pinned stock
    apply_patch, rg, and exec_command instructions.
-3. A configured legacy or marked customized prompt retains content before and after the owned
-   section, and repeated installation is idempotent.
-4. A routed request's existing instructions remain byte-equivalent, including absence or null.
+3. A marked prompt retains content before and after the owned section and refreshes idempotently;
+   a configured custom prompt without a recognized section retains its content before the append.
+4. Missing and null request instructions remain byte-equivalent. An unconfigured, unrecognized
+   non-null instruction string fails before forwarding.
 5. Dynamic rejected-script references and recovery prose appear only with actionable context.
 6. A wholly row-stale evaluator rejection lists only the rejected target-bearing command handles
    and exact guidance for one atomic target-correction payload. Other failures direct one complete

@@ -62,7 +62,7 @@ func newToolPluginTestTransform(t *testing.T) (*hpatchResponseTransform, *hpatch
 	if err != nil {
 		t.Fatal(err)
 	}
-	proxy := newHPatchProxy(testTranslator(t, new(int)), registry)
+	proxy := newHPatchProxy(testTranslator(t, new(int)), registry, false)
 	t.Cleanup(func() {
 		if err := errors.Join(proxy.Close(), registry.Close()); err != nil {
 			t.Error(err)

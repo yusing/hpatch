@@ -14,6 +14,7 @@ import (
 	"testing"
 
 	"github.com/yusing/hpatch"
+	codexinstructions "github.com/yusing/hpatch/contrib/codex"
 )
 
 const (
@@ -164,7 +165,7 @@ func newManagedHPatchProxyWithDataDirectory(t *testing.T, translator hpatchTrans
 	if err != nil {
 		t.Fatal(err)
 	}
-	proxy := newHPatchProxy(translator, registry)
+	proxy := newHPatchProxy(translator, registry, false)
 	t.Cleanup(func() {
 		if err := errors.Join(proxy.Close(), registry.Close()); err != nil {
 			t.Error(err)
@@ -318,12 +319,11 @@ func TestHPatchPrepareRequestRewritesNamespacedExecWithShell(t *testing.T) {
 		"input":        []any{testCodeModeAdditionalTools(testCodeModeDescription)},
 		"tools":        []any{map[string]any{"type": "function", "name": "lookup", "future": true}},
 		"tool_choice":  "auto",
-		"instructions": "existing base\n",
+		"instructions": stockModelInstructionsForTest("existing base\n", "existing suffix\n"),
 	}))
 	if err != nil {
 		t.Fatal(err)
 	}
-	originalInstructions := bytes.Clone(request.fields["instructions"])
 	proxy := newManagedHPatchProxy(t, testTranslator(t, new(int)))
 
 	metadata := codexTurnMetadata{RequestKind: "turn", Directories: map[string]json.RawMessage{workspace: nil}}
@@ -365,9 +365,63 @@ func TestHPatchPrepareRequestRewritesNamespacedExecWithShell(t *testing.T) {
 	if len(transform.execCommandDefinitions) != 2 {
 		t.Fatalf("removed exec_command definitions = %d, want 2", len(transform.execCommandDefinitions))
 	}
-	if got := request.fields["instructions"]; !bytes.Equal(got, originalInstructions) {
-		t.Fatalf("request instructions = %s, want byte-equivalent %s", got, originalInstructions)
+	var rewrittenInstructions string
+	if err := json.Unmarshal(request.fields["instructions"], &rewrittenInstructions); err != nil {
+		t.Fatal(err)
 	}
+	wantInstructions := "existing base\n" + codexinstructions.Instructions() + "existing suffix\n"
+	if rewrittenInstructions != wantInstructions {
+		t.Fatalf("request instructions = %q, want %q", rewrittenInstructions, wantInstructions)
+	}
+}
+
+func TestHPatchPrepareRequestUsesCustomizedModelInstructions(t *testing.T) {
+	workspace := t.TempDir()
+	newRequest := func(t *testing.T) parsedResponsesRequest {
+		t.Helper()
+		request, err := parseResponsesRequest(mustTestJSON(t, map[string]any{
+			"input":        []any{testCodeModeAdditionalTools(testCodeModeDescription)},
+			"tool_choice":  "auto",
+			"instructions": "custom instructions\n",
+		}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return request
+	}
+	metadata := codexTurnMetadata{RequestKind: "turn", Directories: map[string]json.RawMessage{workspace: nil}}
+
+	t.Run("configured file appends", func(t *testing.T) {
+		proxy := newManagedHPatchProxy(t, testTranslator(t, new(int)))
+		proxy.customizedInstructions = true
+		request := newRequest(t)
+		transform, err := proxy.prepareRequest(t.Context(), &request, "custom-session", metadata, true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer transform.Close()
+		var instructions string
+		if err := json.Unmarshal(request.fields["instructions"], &instructions); err != nil {
+			t.Fatal(err)
+		}
+		want := "custom instructions\n\n" + codexinstructions.Instructions()
+		if instructions != want {
+			t.Fatalf("instructions = %q, want %q", instructions, want)
+		}
+	})
+
+	t.Run("unconfigured prompt fails before tool rewrite", func(t *testing.T) {
+		proxy := newManagedHPatchProxy(t, testTranslator(t, new(int)))
+		request := newRequest(t)
+		originalInput := bytes.Clone(request.fields["input"])
+		if _, err := proxy.prepareRequest(t.Context(), &request, "stock-session", metadata, true); err == nil ||
+			!strings.Contains(err.Error(), "neither stock nor marked") {
+			t.Fatalf("error = %v", err)
+		}
+		if !bytes.Equal(request.fields["input"], originalInput) {
+			t.Fatal("failed instruction rewrite changed Code Mode tools")
+		}
+	})
 }
 
 func TestHPatchPrepareRequestExposesEditToolsAndShell(t *testing.T) {
@@ -482,6 +536,7 @@ func TestReportIssueRunsRouterHookWithoutWorker(t *testing.T) {
 	proxy := newHPatchProxy(
 		testTranslator(t, new(int)),
 		registry,
+		false,
 		newSessionTitleCacheAt(indexPath),
 	)
 	t.Cleanup(func() {
@@ -535,7 +590,7 @@ func TestReportIssueHookFailureDoesNotFailRouting(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	proxy := newHPatchProxy(testTranslator(t, new(int)), registry)
+	proxy := newHPatchProxy(testTranslator(t, new(int)), registry, false)
 	t.Cleanup(func() {
 		if err := errors.Join(proxy.Close(), registry.Close()); err != nil {
 			t.Error(err)
@@ -560,7 +615,7 @@ func TestReportIssueCallIDCannotBeReusedByHPatch(t *testing.T) {
 		t.Fatal(err)
 	}
 	calls := 0
-	proxy := newHPatchProxy(testTranslator(t, &calls), registry)
+	proxy := newHPatchProxy(testTranslator(t, &calls), registry, false)
 	t.Cleanup(func() {
 		if err := errors.Join(proxy.Close(), registry.Close()); err != nil {
 			t.Error(err)

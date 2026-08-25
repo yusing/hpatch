@@ -144,7 +144,7 @@ For native executor background and interactive behavior, see [OpenAI's Codex pro
 ## Requirements
 
 - Go 1.26 or newer. Normal `go install` does not require a checkout.
-- Hpatch router mode requires Codex CLI with ChatGPT file auth from `codex login`, normally at `~/.codex/auth.json` or `$CODEX_HOME/auth.json`. Checkout installation also uses `codex debug models --bundled` when no `model_instructions_file` is configured.
+- Hpatch router mode requires Codex CLI with ChatGPT file auth from `codex login`, normally at `~/.codex/auth.json` or `$CODEX_HOME/auth.json`. At startup, the router reads the adjacent `config.toml` only to determine whether `model_instructions_file` is configured.
 - Hpatch router mode resolves Node.js 24 or newer as `node`; passthrough mode does not load the plugin registry.
 - Private hgrep requires `rg` on the Codex executor's `PATH`.
 - Private hsymbol requires the resolver for the queried language on the Codex executor's `PATH`:
@@ -153,32 +153,19 @@ For native executor background and interactive behavior, see [OpenAI's Codex pro
 - Private hread, hgrep, hsymbol, and inspect_file require the router executable directory to precede unrelated entries on the executor's trusted `PATH`.
 - The built-in shell uses `bash` when no shebang is present; every selected interpreter must be available through the inherited `PATH`.
 - Router and executor deployments with isolated filesystems must expose the frontend directory, authenticated snapshot, and router executable at the same absolute paths.
-- Source builds that regenerate the embedded plugin with `make install` or `go generate` require Bun. `make install`, which installs `hpatch-router` and Codex instructions, additionally requires `make` and `jq`.
+- Source builds that regenerate the embedded plugin with `make install` or `go generate` require Bun. `make install` additionally requires Make.
 
 ## Install from a checkout
 
-`make install` regenerates the embedded built-in plugin bundle, installs `hpatch-router` through
-`go install`, and updates Codex's complete model-instructions file:
+`make install` regenerates the embedded built-in plugin bundle and installs `hpatch-router`
+through `go install`:
 
 ```sh
 make install
 ```
 
-If `model_instructions_file` is absent from `$CODEX_HOME/config.toml` or
-`~/.codex/config.toml`, installation selects `CODEX_MODEL` or the bundled model with the
-lowest priority value, writes `hpatch-model-instructions.md`, and adds the setting. If the
-setting already exists, its value is unchanged and the referenced customized file is patched
-in place. The installer also patches every `model_instructions_file` declared by personal
-agent TOMLs under the adjacent `agents` directory; relative paths resolve from each agent
-TOML. Config and agent TOML files remain unchanged. Stock Codex guidance, the earlier
-unmarked hpatch guidance, and current marked guidance are supported. Content outside the
-owned section is preserved; an unrecognized file fails instead of being overwritten.
-
-`make uninstall` removes the installed `hpatch-router` binary and reverses the
-model-instructions changes. It deletes the installer-created instructions file and its
-config entry, or removes only the marked hpatch section from pre-existing customized main and
-agent instruction files. Other custom content, agent TOMLs, generated source, and plugin
-dependencies are preserved.
+Installation and uninstallation never create, edit, or remove Codex configuration or instruction
+files. `make uninstall` removes only the installed `hpatch-router` binary.
 
 ### Configured plugins
 
@@ -244,13 +231,20 @@ a complete definition or reference set.
 In hpatch mode, the router validates authentication and turn metadata, constructs the complete
 plugin registry, and installs standalone `functions.hpatch` and `functions.shell` tools. The
 model also sees configured contributions marked model-visible. Hread, hgrep, hsymbol, and inspect_file
-remain authenticated shell frontends; Codex supplies their workflow guidance and the durable
-shell workflow through the installed model-instructions file.
+remain authenticated shell frontends; the router injects their workflow guidance and the durable
+shell workflow into received Responses instructions.
 
 For each eligible request, the router finds exactly one Code Mode custom `exec` owner: either directly inside the leading `additional_tools` item for app-server traffic or inside that item's `functions` namespace for CLI traffic. It removes the owner's native `apply_patch` and `exec_command` sections, preserves unrelated tools and namespaces, and appends only the request-specific execution parameter shape to the shell contract. Unsupported direct or top-level owner layouts fail before forwarding.
 
-The router leaves the request's existing Responses `instructions` value byte-equivalent.
-Tool descriptions contain only call-local contracts; they are not a fallback prompt channel.
+When a request carries Responses `instructions`, the router replaces the pinned stock file-editing
+section or refreshes an existing marked hpatch section. If neither section exists and
+`model_instructions_file` is configured in `$CODEX_HOME/config.toml` (or `~/.codex/config.toml`),
+the router preserves the customized instructions and appends the hpatch section. Without that
+setting, a missing section is treated as an upstream model-instruction change and the request
+fails before forwarding. Requests without `instructions`, including compaction requests, remain
+unchanged. Codex resends instructions at session start, after compaction, at subagent start, and
+after subagent compaction; inherited side conversations already carry the marked section and are
+refreshed idempotently. Tool descriptions contain only call-local contracts.
 
 Hpatch translation uses the canonical directory hint from turn metadata when available. Metadata without a usable directory still forwards: absolute operands translate without a base, while relative operands reject rather than resolving from the router process cwd. Codex executes the returned `apply_patch` carrier and owns the sandbox, permissions, and visible diff. Shell, hread, hgrep, hsymbol, and inspect_file execute in Codex's actual working directory and environment; the router does not give their workers a router-owned filesystem capability. Background Responses requests are rejected before forwarding because the router does not expose the retrieval and cancellation endpoints needed to complete them.
 
@@ -371,25 +365,16 @@ The dashboard labels each collapsible session with the task title found for its 
 ### Codex model instructions
 
 [`contrib/codex/file-editing-instructions.md`](contrib/codex/file-editing-instructions.md)
-is the single persistent source for all durable HPATCH, shell, hread, hgrep, hsymbol, and inspect_file
-workflow guidance. `make install` applies it to the complete file selected by Codex's
-`model_instructions_file` setting and every personal-agent instruction file.
+is the single source for all durable HPATCH, shell, hread, hgrep, hsymbol, and inspect_file
+workflow guidance. The router applies it only to the in-memory `instructions` value of eligible
+Responses requests. It never reads or writes the configured instruction file itself.
 
-For an existing customized file, the installer preserves the config value and all text before
-and after the owned section. It migrates the earlier hpatch section used by this project and
-adds markers so later installations refresh only that section. The same renderer is used by the benchmark, while dynamic rejected-script guidance uses the adjacent template.
-
-To select a model explicitly when no instructions file is configured:
-
-```sh
-make install CODEX_MODEL=gpt-5.6-sol
-```
-
-The default installed setting is equivalent to:
-
-```toml
-model_instructions_file = "/absolute/path/to/.codex/hpatch-model-instructions.md"
-```
+The marked section is refreshed idempotently. A recognized stock Codex file-editing section is
+replaced together with its displaced rg and exec-command guidance. A customized prompt without
+either recognized section receives the hpatch section only when the top-level
+`model_instructions_file` setting exists in Codex's `config.toml`. Dynamic rejected-script
+guidance continues to use the adjacent template. The router snapshots the setting at startup;
+restart it after adding or removing the key.
 
 ## Go library
 
@@ -553,8 +538,8 @@ read loop. It is one observed run, not a general performance guarantee.
 
 Root library path: accept a caller-authorized workspace root and cwd → parse the complete script → verify immutable baselines → render and validate disjoint changes → return a completed result for atomic commit or one non-mutating translated patch.
 
-Router hpatch path: validate auth and metadata → load the immutable tool registry → replace the
-eligible Code Mode tool surfaces without changing Responses instructions → select an optional
+Router hpatch path: validate auth and metadata → load the immutable tool registry → inject the
+central guidance into received Responses instructions → replace the eligible Code Mode tool surfaces → select an optional
 canonical directory hint → evaluate hpatch without router filesystem confinement or router-cwd
 fallback → return a client-executed `apply_patch` carrier.
 
@@ -575,11 +560,11 @@ Router shell path: translate the free-form tool call into one native executor ca
 ├── benchmarks/                   # Runner, tasks, containers, and checked-in results
 ├── compare/                      # Hand-authored payload scenarios
 ├── contrib/
-│   ├── codex/                    # Central guidance, recovery template, renderer, and installer
+│   ├── codex/                    # Central model guidance and recovery template
 │   └── systemd/                  # User service unit
 ├── doc/                          # Specifications, architecture, and benchmark manuals
 ├── *.go                          # Reusable edit engine, validation, transactions, and metrics
-├── Makefile                      # Plugin generation, binary installation, and Codex setup
+├── Makefile                      # Plugin generation and binary installation
 └── tool_grammar.lark             # Embedded constrained-decoding grammar
 ```
 
