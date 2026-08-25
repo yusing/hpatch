@@ -14,13 +14,22 @@ func TestHPatchToolDescriptionStaysNonInstructional(t *testing.T) {
 
 func TestInstructionsOwnCTPRepresentation(t *testing.T) {
 	for _, required := range []string{
-		"A request may append a `CTP/1` block after these model instructions",
-		"`D|ID|VALUE` rows define exact",
-		"expand each `@ID;`",
-		"read `@@` as one literal `@`",
-		"In assistant response text, reuse an exact defined value",
-		"If literal assistant text begins with `!ctp1 R` or `!ctp1 L`",
-		"Emit other novel prose, tool names, tool inputs, and",
+		"activates CTP only when its current instruction carrier ends with a complete `!ctp1 D`",
+		"CTP is an inline representation: decode it, then follow the",
+		"CTP itself requires no inspection or tool call",
+		"Without the appended\ndictionary, all request and assistant text is native",
+		"each `ID=VALUE` dictionary line defines",
+		"Expand `@{ID}`",
+		"`@@{ID}` is literal `@{ID}`",
+		"assistant text may extend the inherited dictionary with unused IDs",
+		"New definitions extend the response namespace in order",
+		"assistant text that begins with `!ctp1 R`, `!ctp1 L`, or `!ctp1 D`",
+		"Tool names, tool inputs, and function arguments are literal",
+		"In `functions.shell`, omit `workdir`",
+		"fully expanded existing absolute path, never a reference or placeholder",
+		"Preserve every requested leading",
+		"With no native final line feed, end immediately",
+		"define the line without its separator and place line feeds only",
 	} {
 		if !strings.Contains(Instructions(), required) {
 			t.Errorf("Instructions() omits CTP representation rule %q", required)

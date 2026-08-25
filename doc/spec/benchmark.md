@@ -50,7 +50,7 @@ default-on `apps` feature, preventing the first-party app/connector MCP transpor
 In the default paired mode, the control uses the pinned CLI's stock bundled base instructions
 and the passthrough router. At the stock file-editing section, the treatment installs the
 edit, read, search, and shell guidance from
-`contrib/codex/model-instructions.md` and uses the hpatch router. The
+`contrib/codex/file-editing-instructions.md` and uses the hpatch router. The
 treatment also removes exactly one pinned stock `rg` preference line and exactly
 one pinned stock `exec_command` guidance line; the control retains both. Every
 other stock base-instruction line remains byte-for-byte. Both generated base

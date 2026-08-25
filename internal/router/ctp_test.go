@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -33,15 +34,15 @@ func ctpRequestTokenCount(t *testing.T, codec *ctpCodec, fields map[string]json.
 	return count
 }
 
-func TestCTPRepeatedLineGoldenRequest(t *testing.T) {
+func TestCTPRepeatedSubstringGoldenRequest(t *testing.T) {
 	codec := newTestCTPCodec(t)
-	repeated := "preserve this exact repeated physical line because it is long enough to save model input tokens\n"
+	repeated := "preserve this exact repeated substring because it is useful inside ordinary message text"
 	request, err := parseResponsesRequest(mustTestJSON(t, map[string]any{
 		"model":        "gpt-5.6-sol",
 		"instructions": "keep the original instruction priority\n",
 		"input": []any{
-			map[string]any{"type": "message", "role": "developer", "content": strings.Repeat(repeated, 8)},
-			map[string]any{"type": "message", "role": "user", "content": strings.Repeat(repeated, 8)},
+			map[string]any{"type": "message", "role": "developer", "content": "developer prefix: " + strings.Repeat(repeated+" / ", 8)},
+			map[string]any{"type": "message", "role": "user", "content": "user prefix: " + strings.Repeat(repeated+" | ", 8)},
 		},
 	}))
 	if err != nil {
@@ -49,36 +50,211 @@ func TestCTPRepeatedLineGoldenRequest(t *testing.T) {
 	}
 	nativeFields := cloneRawFields(request.fields)
 	nativeTokens := ctpRequestTokenCount(t, codec, nativeFields)
-	transform, decision, err := codec.prepareRequest(&request)
+	transform, decision, metrics, err := codec.prepareRequest(&request)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if decision != ctpAdmissionAdmitted || transform == nil || len(transform.definitions) == 0 {
-		t.Fatal("profitable repeated-line request was not encoded")
+	if decision != ctpAdmissionAdmitted || transform == nil || len(transform.requestDefinitions) == 0 {
+		t.Fatal("profitable repeated-substring request was not encoded")
 	}
 	compactTokens := ctpRequestTokenCount(t, codec, request.fields)
-	if nativeTokens != 334 || compactTokens != 145 {
-		t.Fatalf("golden token counts native=%d compact=%d, want 334/145", nativeTokens, compactTokens)
-	}
 	if compactTokens >= nativeTokens {
 		t.Fatalf("compact tokens = %d, native = %d", compactTokens, nativeTokens)
+	}
+	if metrics.Representation.NativeTokens != uint64(nativeTokens) ||
+		metrics.Representation.CompactTokens != uint64(compactTokens) ||
+		metrics.Representation.NativeBytes == 0 || metrics.Representation.CompactBytes == 0 ||
+		metrics.Definitions != uint64(len(transform.requestDefinitions)) || metrics.DictionaryBytes == 0 {
+		t.Fatalf("request metrics = %#v", metrics)
 	}
 
 	var instructions string
 	if err := json.Unmarshal(request.fields["instructions"], &instructions); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasPrefix(instructions, "keep the original instruction priority\nCTP/1\nT|D|id|value\n") ||
-		!strings.Contains(instructions, "D|0|") ||
-		strings.Contains(instructions, "Rule|") || strings.Contains(instructions, "R|\"") || strings.Contains(instructions, "L|\"") {
+	if !strings.HasPrefix(instructions, "keep the original instruction priority\n!ctp1 D\n") ||
+		!strings.Contains(instructions, "0=") {
 		t.Fatalf("compact instructions = %q", instructions)
 	}
 	var input []map[string]json.RawMessage
 	if err := json.Unmarshal(request.fields["input"], &input); err != nil {
 		t.Fatal(err)
 	}
-	if got := jsonString(input[0], "content"); !strings.HasPrefix(got, ctpReferenceTag) || !strings.Contains(got, "@0;") {
+	if got := jsonString(input[0], "content"); !strings.HasPrefix(got, ctpReferenceTag) || !strings.Contains(got, "@{0}") {
 		t.Fatalf("compact message = %q", got)
+	}
+}
+
+func TestCTPRequestDictionaryIgnoresAppendedModelHistory(t *testing.T) {
+	codec := newTestCTPCodec(t)
+	stable := "stable readable repeated diagnostic phrase with exact bytes and clear boundaries\n"
+	added := "new history-only phrase whose repetitions must not change the request dictionary\n"
+	baseInput := []any{
+		map[string]any{"type": "message", "role": "user", "content": strings.Repeat(stable, 16)},
+	}
+	prepare := func(input []any) (string, json.RawMessage) {
+		t.Helper()
+		request, err := parseResponsesRequest(mustTestJSON(t, map[string]any{
+			"model":        "gpt-5.6-sol",
+			"instructions": "persistent CTP guidance",
+			"input":        input,
+			"tools": []any{map[string]any{
+				"type": "function", "name": "probe", "description": strings.Repeat(stable, 16),
+			}},
+		}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		transform, decision, _, err := codec.prepareRequest(&request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if transform == nil || decision != ctpAdmissionAdmitted {
+			t.Fatalf("CTP transform = %#v, decision = %v", transform, decision)
+		}
+		return jsonString(request.fields, "instructions"), request.fields["input"]
+	}
+
+	firstInstructions, firstInput := prepare(baseInput)
+	extendedInput := append(slices.Clone(baseInput),
+		map[string]any{"type": "message", "role": "assistant", "content": strings.Repeat(added, 32)},
+		map[string]any{
+			"type": "function_call_output", "call_id": "call-1",
+			"output": strings.Repeat(added, 32) + strings.Repeat(stable, 16),
+		},
+	)
+	secondInstructions, secondInput := prepare(extendedInput)
+	if firstInstructions != secondInstructions {
+		t.Fatal("appended model history changed the request dictionary")
+	}
+
+	var firstItems, secondItems []json.RawMessage
+	if err := json.Unmarshal(firstInput, &firstItems); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(secondInput, &secondItems); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(firstItems[0], secondItems[0]) {
+		t.Fatal("appended model history changed the compact request prefix")
+	}
+	var output map[string]json.RawMessage
+	if err := json.Unmarshal(secondItems[2], &output); err != nil {
+		t.Fatal(err)
+	}
+	if got := jsonString(output, "output"); !strings.HasPrefix(got, ctpReferenceTag) || !strings.Contains(got, "@{") {
+		t.Fatalf("appended history did not reuse stable dictionary = %q", got)
+	}
+}
+
+func TestCTPAdmissionIgnoresNewlyProfitableAppendedHistory(t *testing.T) {
+	codec := newTestCTPCodec(t)
+	repeated := "this marginal exact substring is just long enough\n"
+	baseInput := []any{
+		map[string]any{"type": "message", "role": "developer", "content": strings.Repeat(repeated, 3)},
+		map[string]any{"type": "message", "role": "user", "content": strings.Repeat(repeated, 3)},
+		map[string]any{"type": "message", "role": "user", "content": ctpReferenceTag + "literal @{0}"},
+	}
+	prepare := func(input []any) ctpAdmissionDecision {
+		t.Helper()
+		request, err := parseResponsesRequest(mustTestJSON(t, map[string]any{
+			"model": "gpt-5.6-sol", "instructions": "persistent model guidance", "input": input,
+		}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		nativeFields := cloneRawFields(request.fields)
+		transform, decision, _, err := codec.prepareRequest(&request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if transform != nil || !rawFieldsEqual(request.fields, nativeFields) {
+			t.Fatal("unprofitable request changed fields")
+		}
+		return decision
+	}
+	if decision := prepare(baseInput); decision != ctpAdmissionUnprofitable {
+		t.Fatalf("base admission = %v, want unprofitable", decision)
+	}
+	extendedInput := append(slices.Clone(baseInput), map[string]any{
+		"type": "message", "role": "assistant", "content": strings.Repeat(repeated, 64),
+	})
+	if decision := prepare(extendedInput); decision != ctpAdmissionUnprofitable {
+		t.Fatalf("extended admission = %v, want stable unprofitable", decision)
+	}
+}
+
+func TestCTPAdmissionIgnoresNewlyUnprofitableAppendedHistory(t *testing.T) {
+	codec := newTestCTPCodec(t)
+	repeated := "stable exact request phrase that remains profitable and readable\n"
+	baseInput := []any{
+		map[string]any{"type": "message", "role": "developer", "content": strings.Repeat(repeated, 12)},
+		map[string]any{"type": "message", "role": "user", "content": strings.Repeat(repeated, 12)},
+	}
+	prepare := func(input []any) (string, int, int) {
+		t.Helper()
+		request, err := parseResponsesRequest(mustTestJSON(t, map[string]any{
+			"model": "gpt-5.6-sol", "instructions": "persistent model guidance", "input": input,
+		}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		nativeTokens := ctpRequestTokenCount(t, codec, request.fields)
+		transform, decision, _, err := codec.prepareRequest(&request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if transform == nil || decision != ctpAdmissionAdmitted {
+			t.Fatalf("CTP transform = %#v, admission = %v", transform, decision)
+		}
+		return jsonString(request.fields, "instructions"), nativeTokens, ctpRequestTokenCount(t, codec, request.fields)
+	}
+
+	baseInstructions, _, _ := prepare(baseInput)
+	extendedInput := slices.Clone(baseInput)
+	for index := range 400 {
+		extendedInput = append(extendedInput, map[string]any{
+			"type": "message", "role": "assistant", "content": ctpReferenceTag + "literal-" + base36(index),
+		})
+	}
+	extendedInstructions, nativeTokens, compactTokens := prepare(extendedInput)
+	if extendedInstructions != baseInstructions {
+		t.Fatal("newly unprofitable history changed the admitted dictionary")
+	}
+	if compactTokens < nativeTokens {
+		t.Fatalf("extended compact tokens = %d, native = %d; test did not exercise whole-request loss", compactTokens, nativeTokens)
+	}
+}
+
+func TestCTPStableProjectionRetainsLateDeveloperCarrier(t *testing.T) {
+	codec := newTestCTPCodec(t)
+	repeated := "stable tool description text repeated for cache-safe admission\n"
+	request, err := parseResponsesRequest(mustTestJSON(t, map[string]any{
+		"model": "gpt-5.6-sol",
+		"input": []any{
+			map[string]any{"type": "message", "role": "assistant", "content": strings.Repeat("excluded history\n", 32)},
+			map[string]any{"type": "message", "role": "developer", "content": "persistent model guidance"},
+		},
+		"tools": []any{map[string]any{
+			"type": "function", "name": "probe", "description": strings.Repeat(repeated, 16),
+		}},
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	transform, decision, _, err := codec.prepareRequest(&request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if transform == nil || decision != ctpAdmissionAdmitted {
+		t.Fatalf("late developer carrier transform = %#v, admission = %v", transform, decision)
+	}
+	var input []map[string]json.RawMessage
+	if err := json.Unmarshal(request.fields["input"], &input); err != nil {
+		t.Fatal(err)
+	}
+	if carrier := jsonString(input[1], "content"); !strings.Contains(carrier, ctpDictionaryTag) {
+		t.Fatalf("late developer carrier = %q", carrier)
 	}
 }
 
@@ -104,7 +280,7 @@ func TestCTPDeveloperMessageInstructionCarrier(t *testing.T) {
 		t.Fatal(err)
 	}
 	nativeTokens := ctpRequestTokenCount(t, codec, request.fields)
-	transform, decision, err := codec.prepareRequest(&request)
+	transform, decision, _, err := codec.prepareRequest(&request)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -124,11 +300,11 @@ func TestCTPDeveloperMessageInstructionCarrier(t *testing.T) {
 	}
 	content := input[1]["content"].([]any)
 	carrier := content[0].(map[string]any)["text"].(string)
-	if !strings.HasPrefix(carrier, instructions+"\nCTP/1\nT|D|id|value\n") ||
+	if !strings.HasPrefix(carrier, instructions+"\n!ctp1 D\n") ||
 		strings.HasPrefix(carrier, ctpReferenceTag) {
 		t.Fatalf("developer instruction carrier = %q", carrier)
 	}
-	if got := input[2]["content"].(string); !strings.HasPrefix(got, ctpReferenceTag) || !strings.Contains(got, "@0;") {
+	if got := input[2]["content"].(string); !strings.HasPrefix(got, ctpReferenceTag) || !strings.Contains(got, "@{0}") {
 		t.Fatalf("compact user message = %q", got)
 	}
 }
@@ -174,7 +350,7 @@ func TestCTPDoesNotAliasTools(t *testing.T) {
 		t.Fatal(err)
 	}
 	nativeFields := cloneRawFields(request.fields)
-	transform, decision, err := codec.prepareRequest(&request)
+	transform, decision, _, err := codec.prepareRequest(&request)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -197,7 +373,7 @@ func TestCTPNativeFallbackGoldenRequest(t *testing.T) {
 	}
 	nativeFields := cloneRawFields(request.fields)
 	nativeTokens := ctpRequestTokenCount(t, codec, nativeFields)
-	transform, decision, err := codec.prepareRequest(&request)
+	transform, decision, _, err := codec.prepareRequest(&request)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -216,51 +392,93 @@ func TestCTPNativeFallbackGoldenRequest(t *testing.T) {
 	}
 }
 
+func TestCTPReservedPrefixesStayNativeWithoutDefinitions(t *testing.T) {
+	codec := newTestCTPCodec(t)
+	for name, value := range map[string]string{
+		"reference":  ctpReferenceTag + "literal @{0}",
+		"literal":    ctpLiteralTag + "literal body",
+		"dictionary": ctpDictionaryTag + "literal body",
+	} {
+		t.Run(name, func(t *testing.T) {
+			request, err := parseResponsesRequest(mustTestJSON(t, map[string]any{
+				"instructions": "persistent model guidance",
+				"input":        value,
+			}))
+			if err != nil {
+				t.Fatal(err)
+			}
+			nativeFields := cloneRawFields(request.fields)
+			transform, decision, _, err := codec.prepareRequest(&request)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if transform != nil || decision != ctpAdmissionNoDefinitions {
+				t.Fatalf("inactive CTP transform = %#v, decision = %v", transform, decision)
+			}
+			if !rawFieldsEqual(request.fields, nativeFields) {
+				t.Fatalf("inactive CTP changed reserved literal: %#v", request.fields)
+			}
+		})
+	}
+}
+
 func TestCTPUnprofitableDictionaryFallback(t *testing.T) {
 	codec := newTestCTPCodec(t)
-	repeated := "this repeated physical segment is just long enough\n"
-	request, err := parseResponsesRequest(mustTestJSON(t, map[string]any{
-		"model":        "gpt-5.6-sol",
-		"instructions": "persistent model guidance",
-		"input": []any{
-			map[string]any{"type": "message", "role": "developer", "content": strings.Repeat(repeated, 3)},
-			map[string]any{"type": "message", "role": "user", "content": strings.Repeat(repeated, 3)},
-		},
-	}))
-	if err != nil {
-		t.Fatal(err)
-	}
-	nativeFields := cloneRawFields(request.fields)
-	transform, decision, err := codec.prepareRequest(&request)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if transform != nil || decision != ctpAdmissionUnprofitable {
-		t.Fatalf("marginal CTP transform = %#v, decision = %v", transform, decision)
-	}
-	if !rawFieldsEqual(request.fields, nativeFields) {
-		t.Fatalf("unprofitable dictionary changed request: %#v", request.fields)
+	repeated := "this marginal exact substring is just long enough\n"
+	for name, reserved := range map[string]string{
+		"reference":  ctpReferenceTag + "literal @{0}",
+		"literal":    ctpLiteralTag + "literal body",
+		"dictionary": ctpDictionaryTag + "literal body",
+	} {
+		t.Run(name, func(t *testing.T) {
+			request, err := parseResponsesRequest(mustTestJSON(t, map[string]any{
+				"model":        "gpt-5.6-sol",
+				"instructions": "persistent model guidance",
+				"input": []any{
+					map[string]any{"type": "message", "role": "developer", "content": strings.Repeat(repeated, 3)},
+					map[string]any{"type": "message", "role": "user", "content": strings.Repeat(repeated, 3)},
+					map[string]any{"type": "message", "role": "user", "content": reserved},
+				},
+			}))
+			if err != nil {
+				t.Fatal(err)
+			}
+			nativeFields := cloneRawFields(request.fields)
+			transform, decision, _, err := codec.prepareRequest(&request)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if transform != nil || decision != ctpAdmissionUnprofitable {
+				t.Fatalf("marginal CTP transform = %#v, decision = %v", transform, decision)
+			}
+			if !rawFieldsEqual(request.fields, nativeFields) {
+				t.Fatalf("unprofitable dictionary changed request: %#v", request.fields)
+			}
+		})
 	}
 }
 
 func TestCTPStringRoundTripAndMalformedOutput(t *testing.T) {
-	transform := &ctpResponseTransform{definitions: map[string]string{
+	definitions := map[string]string{
 		"0": "exact\r\nbytes without a final newline",
-	}}
+	}
 	tests := []struct {
 		name  string
 		input string
 		want  string
 	}{
-		{name: "literal", input: "ordinary @0; is literal without a tag", want: "ordinary @0; is literal without a tag"},
-		{name: "reference and escape", input: ctpReferenceTag + "head @@ @0;", want: "head @ exact\r\nbytes without a final newline"},
-		{name: "reserved reference literal", input: ctpLiteralTag + ctpReferenceTag + "@bad;", want: ctpReferenceTag + "@bad;"},
+		{name: "literal", input: "ordinary @{0} is literal without a tag", want: "ordinary @{0} is literal without a tag"},
+		{name: "reference and ordinary at", input: ctpReferenceTag + "mail alice@example.com @{0}", want: "mail alice@example.com exact\r\nbytes without a final newline"},
+		{name: "escaped reference lookalike", input: ctpReferenceTag + "literal @@{0}", want: "literal @{0}"},
+		{name: "reserved reference literal", input: ctpLiteralTag + ctpReferenceTag + "@{bad}", want: ctpReferenceTag + "@{bad}"},
 		{name: "reserved literal literal", input: ctpLiteralTag + ctpLiteralTag + "body", want: ctpLiteralTag + "body"},
-		{name: "lookalike", input: "!ctp1 X\n@BAD;", want: "!ctp1 X\n@BAD;"},
+		{name: "lookalike", input: "!ctp1 X\n@{BAD}", want: "!ctp1 X\n@{BAD}"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			got, err := transform.decodeString(test.input)
+			got, err := decodeCTPString(
+				test.input, cloneCTPDefinitions(definitions), upstreamJSONBufferBytes,
+			)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -270,28 +488,137 @@ func TestCTPStringRoundTripAndMalformedOutput(t *testing.T) {
 		})
 	}
 	for _, malformed := range []string{
-		ctpReferenceTag + "@",
-		ctpReferenceTag + "@BAD;",
-		ctpReferenceTag + "@missing;",
-		ctpReferenceTag + "literal @ text",
+		ctpReferenceTag + "@{missing}",
+		ctpDictionaryTag + "0=\"replacement\"\nEND\n" + ctpReferenceTag + "@{0}",
+		ctpDictionaryTag + "new=not-json\nEND\n" + ctpReferenceTag + "@{new}",
 	} {
-		if _, err := transform.decodeString(malformed); err == nil {
+		if _, err := decodeCTPString(
+			malformed, cloneCTPDefinitions(definitions), upstreamJSONBufferBytes,
+		); err == nil {
 			t.Fatalf("malformed value decoded: %q", malformed)
 		}
+	}
+}
+
+func TestCTPInputEscapesOnlyReferenceLookalikes(t *testing.T) {
+	const repeated = "exact repeated substring"
+	definitions := []ctpDefinition{{id: "0", value: repeated}}
+	value := "alice@example.com literal @{0}; " + repeated + " and " + repeated
+	encoded, references := newCTPStringEncoder(definitions).encode(value)
+	if references["0"] != 2 || !strings.Contains(encoded, "alice@example.com") ||
+		!strings.Contains(encoded, "@@{0}") || !strings.Contains(encoded, "@{0}") {
+		t.Fatalf("encoded input = %q, references = %#v", encoded, references)
+	}
+	decoded, err := decodeCTPString(encoded, map[string]string{"0": repeated}, upstreamJSONBufferBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if decoded != value {
+		t.Fatalf("decoded input = %q, want %q", decoded, value)
+	}
+}
+
+func TestCTPAssistantExtendsRequestDictionary(t *testing.T) {
+	transform := &ctpResponseTransform{
+		requestDefinitions: map[string]string{"0": "inherited request text"},
+	}
+	extension := ctpDictionaryTag + "1=\"novel repeated output @{0}\"\n" + ctpDictionaryEnd +
+		ctpReferenceTag + "@{0} then @{1}"
+	response, err := transform.TransformJSON(mustTestJSON(t, map[string]any{
+		"status": "completed",
+		"output": []any{map[string]any{
+			"type": "message", "role": "assistant",
+			"content": []any{
+				map[string]any{"type": "output_text", "text": extension},
+				map[string]any{"type": "output_text", "text": ctpReferenceTag + "again @{1}"},
+			},
+		}},
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var visible struct {
+		Output []struct {
+			Content []struct {
+				Text string `json:"text"`
+			} `json:"content"`
+		} `json:"output"`
+	}
+	if err := json.Unmarshal(response, &visible); err != nil {
+		t.Fatal(err)
+	}
+	if got := visible.Output[0].Content[0].Text; got != "inherited request text then novel repeated output @{0}" {
+		t.Fatalf("extended assistant text = %q", got)
+	}
+	if got := visible.Output[0].Content[1].Text; got != "again novel repeated output @{0}" {
+		t.Fatalf("later assistant reference = %q", got)
+	}
+	if _, exists := transform.requestDefinitions["1"]; exists {
+		t.Fatal("response-local definition escaped into request scope")
+	}
+
+	_, err = transform.TransformJSON(mustTestJSON(t, map[string]any{
+		"status": "completed",
+		"output": []any{map[string]any{
+			"type": "message", "role": "assistant",
+			"content": []any{
+				map[string]any{"type": "output_text", "text": ctpReferenceTag + "@{1}"},
+				map[string]any{"type": "output_text", "text": extension},
+			},
+		}},
+	}))
+	if err == nil || !strings.Contains(err.Error(), "unknown reference") {
+		t.Fatalf("forward reference error = %v", err)
+	}
+}
+
+func TestCTPResponseDictionaryMetrics(t *testing.T) {
+	dictionary := ctpDictionaryTag + "1=\"first\"\n2=\"second\"\n" + ctpDictionaryEnd
+	definitions, dictionaryBytes := ctpResponseDictionaryMetrics(dictionary + ctpReferenceTag + "@{1}")
+	if definitions != 2 || dictionaryBytes != uint64(len(dictionary)) {
+		t.Fatalf("dictionary metrics = %d definitions, %d bytes", definitions, dictionaryBytes)
+	}
+	if definitions, dictionaryBytes := ctpResponseDictionaryMetrics(ctpReferenceTag + "@{0}"); definitions != 0 || dictionaryBytes != 0 {
+		t.Fatalf("reference-only dictionary metrics = %d definitions, %d bytes", definitions, dictionaryBytes)
+	}
+}
+
+func TestCTPDecodeFailureMetrics(t *testing.T) {
+	store := newMetricsStore("")
+	transform := &ctpResponseTransform{
+		requestDefinitions: map[string]string{"0": "known"},
+		recordDecode: func(duration time.Duration, failed bool) {
+			store.recordCTPDecode("session", duration, failed)
+		},
+	}
+	_, err := transform.TransformJSON(mustTestJSON(t, map[string]any{
+		"output": []any{map[string]any{
+			"type": "message", "role": "assistant",
+			"content": []any{map[string]any{"type": "output_text", "text": ctpReferenceTag + "@{missing}"}},
+		}},
+	}))
+	if err == nil {
+		t.Fatal("unknown response reference was accepted")
+	}
+	metrics := store.snapshot().CTP.Codec
+	if metrics.DecodeOperations != 1 || metrics.DecodeFailures != 1 || metrics.DecodeNanoseconds == 0 {
+		t.Fatalf("decode metrics = %#v", metrics)
 	}
 }
 
 func TestCTPRestoresEchoedInstructionsAndAssistantText(t *testing.T) {
 	codec := newTestCTPCodec(t)
 	store := newMetricsStore("")
-	compactText := ctpReferenceTag + "@0; @@ done"
+	compactText := ctpReferenceTag + "@{0} @ done"
 	transform := &ctpResponseTransform{
-		definitions:            map[string]string{"0": "exact reused text"},
+		requestDefinitions:     map[string]string{"0": "exact reused text"},
 		originalInstructions:   json.RawMessage(`"original instructions"`),
 		compactInstructions:    "CTP/1 prelude and compact instructions",
 		hasCompactInstructions: true,
 		tokens:                 codec.tokens,
-		recordOutput:           store.recordCTPOutput,
+		recordOutput: func(representation ctpRepresentationMetrics, definitions, dictionaryBytes uint64) {
+			store.recordCTPOutput("", 0, representation, definitions, dictionaryBytes)
+		},
 	}
 	response, err := transform.TransformJSON(mustTestJSON(t, map[string]any{
 		"status":       "completed",
@@ -367,11 +694,11 @@ func TestCTPStructuredToolOutputTextEncoding(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	transform, decision, err := codec.prepareRequest(&request)
+	transform, decision, _, err := codec.prepareRequest(&request)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if decision != ctpAdmissionAdmitted || transform == nil || len(transform.definitions) == 0 {
+	if decision != ctpAdmissionAdmitted || transform == nil || len(transform.requestDefinitions) == 0 {
 		t.Fatal("profitable structured output was not encoded")
 	}
 	var items []map[string]json.RawMessage
@@ -403,7 +730,7 @@ func TestCTPStructuredToolOutputTextEncoding(t *testing.T) {
 		t.Fatal(err)
 	}
 	original := cloneRawFields(fallback.fields)
-	if transform, decision, err := codec.prepareRequest(&fallback); err != nil || transform != nil || decision != ctpAdmissionNoDefinitions {
+	if transform, decision, _, err := codec.prepareRequest(&fallback); err != nil || transform != nil || decision != ctpAdmissionNoDefinitions {
 		t.Fatalf("structured fallback transform = %#v, decision = %v, error = %v", transform, decision, err)
 	}
 	if !rawFieldsEqual(fallback.fields, original) {
@@ -413,12 +740,12 @@ func TestCTPStructuredToolOutputTextEncoding(t *testing.T) {
 
 func TestCTPDecodedStringBudget(t *testing.T) {
 	definitions := map[string]string{"0": "12345678"}
-	got, err := decodeCTPString(ctpReferenceTag+"@0;", definitions, 8)
+	got, err := decodeCTPString(ctpReferenceTag+"@{0}", definitions, 8)
 	if err != nil || got != "12345678" {
 		t.Fatalf("at-budget decode = %q, %v", got, err)
 	}
 	for _, value := range []string{
-		ctpReferenceTag + "@0;x",
+		ctpReferenceTag + "@{0}x",
 		ctpLiteralTag + "123456789",
 		"123456789",
 	} {
@@ -430,9 +757,9 @@ func TestCTPDecodedStringBudget(t *testing.T) {
 
 func TestCTPOutputDecodingIsLimitedToAssistantText(t *testing.T) {
 	transform := &ctpResponseTransform{
-		definitions: map[string]string{"0": "new created.txt\n"},
+		requestDefinitions: map[string]string{"0": "new created.txt\n"},
 	}
-	compact := ctpReferenceTag + "@0;type \"payload@@value\"\n"
+	compact := ctpReferenceTag + "@{0}type \"payload@value\"\n"
 	response, err := transform.TransformJSON(mustTestJSON(t, map[string]any{
 		"status": "completed",
 		"output": []any{
@@ -520,7 +847,7 @@ func TestCTPOutputDecodingIsLimitedToAssistantText(t *testing.T) {
 	}
 	textDone := mustTestJSON(t, map[string]any{
 		"type": "response.output_text.done", "item_id": "message-1", "content_index": 0,
-		"text": ctpReferenceTag + "@0;@@assistant",
+		"text": ctpReferenceTag + "@{0}@assistant",
 	})
 	streamed, err = transform.TransformSSE(textDone)
 	if err != nil {
@@ -531,15 +858,17 @@ func TestCTPOutputDecodingIsLimitedToAssistantText(t *testing.T) {
 	}
 }
 
-func TestCTPStreamingCompressionMetricsObserveCompletedResponse(t *testing.T) {
+func TestCTPStreamingCompressionMetricsObserveTerminalText(t *testing.T) {
 	codec := newTestCTPCodec(t)
 	store := newMetricsStore("")
 	transform := &ctpResponseTransform{
-		definitions:  map[string]string{"0": "exact reused assistant text"},
-		tokens:       codec.tokens,
-		recordOutput: store.recordCTPOutput,
+		requestDefinitions: map[string]string{"0": "exact reused assistant text"},
+		tokens:             codec.tokens,
+		recordOutput: func(representation ctpRepresentationMetrics, definitions, dictionaryBytes uint64) {
+			store.recordCTPOutput("", 0, representation, definitions, dictionaryBytes)
+		},
 	}
-	compact := ctpReferenceTag + "@0;"
+	compact := ctpReferenceTag + "@{0}"
 	native := "exact reused assistant text"
 	message := map[string]any{
 		"type": "message", "role": "assistant",
@@ -547,11 +876,11 @@ func TestCTPStreamingCompressionMetricsObserveCompletedResponse(t *testing.T) {
 	}
 	events := [][]byte{
 		mustTestJSON(t, map[string]any{
-			"type": "response.content_part.done", "item_id": "message-1", "content_index": 0,
-			"part": map[string]any{"type": "output_text", "text": compact},
+			"type": "response.output_text.done", "item_id": "message-1", "content_index": 0, "text": compact,
 		}),
 		mustTestJSON(t, map[string]any{
-			"type": "response.output_text.done", "item_id": "message-1", "content_index": 0, "text": compact,
+			"type": "response.content_part.done", "item_id": "message-1", "content_index": 0,
+			"part": map[string]any{"type": "output_text", "text": compact},
 		}),
 		mustTestJSON(t, map[string]any{"type": "response.output_item.done", "item": message}),
 		mustTestJSON(t, map[string]any{
@@ -562,18 +891,10 @@ func TestCTPStreamingCompressionMetricsObserveCompletedResponse(t *testing.T) {
 		}),
 		mustTestJSON(t, map[string]any{
 			"type":     "response.completed",
-			"response": map[string]any{"status": "completed", "output": []any{message}},
+			"response": map[string]any{"status": "completed", "output": []any{}},
 		}),
 	}
-	for _, event := range events[:len(events)-1] {
-		if _, err := transform.TransformSSE(event); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if got := store.snapshot().CTP; got != (ctpCompressionMetrics{}) {
-		t.Fatalf("CTP metrics before response.completed = %#v", got)
-	}
-	if _, err := transform.TransformSSE(events[len(events)-1]); err != nil {
+	if _, err := transform.TransformSSE(events[0]); err != nil {
 		t.Fatal(err)
 	}
 	compactTokens, err := codec.tokens.Count(compact)
@@ -589,9 +910,100 @@ func TestCTPStreamingCompressionMetricsObserveCompletedResponse(t *testing.T) {
 		Output: ctpCompressionTokens{
 			NativeTokens: uint64(nativeTokens), CompactTokens: uint64(compactTokens),
 		},
+		OutputBytes: ctpCompressionBytes{
+			NativeBytes: uint64(len(native)), CompactBytes: uint64(len(compact)),
+		},
 	}
 	if got := store.snapshot().CTP; got != want {
-		t.Fatalf("streaming CTP metrics = %#v, want %#v", got, want)
+		t.Fatalf("terminal-text CTP metrics = %#v, want %#v", got, want)
+	}
+	for _, event := range events[1:] {
+		if _, err := transform.TransformSSE(event); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := store.snapshot().CTP; got != want {
+		t.Fatalf("duplicated streaming projections changed CTP metrics = %#v, want %#v", got, want)
+	}
+}
+
+func TestCTPStreamingAssistantDictionaryExtension(t *testing.T) {
+	transform := &ctpResponseTransform{
+		requestDefinitions: map[string]string{"0": "inherited"},
+	}
+	extension := ctpDictionaryTag + "1=\"response-local\"\n" + ctpDictionaryEnd +
+		ctpReferenceTag + "@{0} @{1}"
+	item := map[string]any{"type": "message", "id": "message-1", "role": "assistant", "content": []any{}}
+	if _, err := transform.TransformSSE(mustTestJSON(t, map[string]any{
+		"type": "response.output_item.added",
+		"item": item,
+	})); err != nil {
+		t.Fatal(err)
+	}
+	first, err := transform.TransformSSE(mustTestJSON(t, map[string]any{
+		"type":    "response.output_text.done",
+		"item_id": "message-1", "content_index": 0,
+		"text": extension,
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(first) != 1 || !bytes.Contains(first[0], []byte(`"text":"inherited response-local"`)) {
+		t.Fatalf("first terminal text = %s", first)
+	}
+	partDone, err := transform.TransformSSE(mustTestJSON(t, map[string]any{
+		"type":    "response.content_part.done",
+		"item_id": "message-1", "content_index": 0,
+		"part": map[string]any{"type": "output_text", "text": extension},
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(partDone) != 1 || !bytes.Contains(partDone[0], []byte(`"text":"inherited response-local"`)) {
+		t.Fatalf("completed first content part = %s", partDone)
+	}
+	second, err := transform.TransformSSE(mustTestJSON(t, map[string]any{
+		"type":    "response.output_text.done",
+		"item_id": "message-1", "content_index": 1,
+		"text": ctpReferenceTag + "@{1}",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(second) != 1 || !bytes.Contains(second[0], []byte(`"text":"response-local"`)) {
+		t.Fatalf("later terminal text = %s", second)
+	}
+
+	message := map[string]any{
+		"type": "message", "id": "message-1", "role": "assistant",
+		"content": []any{
+			map[string]any{"type": "output_text", "text": extension},
+			map[string]any{"type": "output_text", "text": ctpReferenceTag + "@{1}"},
+		},
+	}
+	itemDone, err := transform.TransformSSE(mustTestJSON(t, map[string]any{
+		"type": "response.output_item.done",
+		"item": message,
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(itemDone) != 1 || !bytes.Contains(itemDone[0], []byte("inherited response-local")) {
+		t.Fatalf("completed output item = %s", itemDone)
+	}
+	completed, err := transform.TransformSSE(mustTestJSON(t, map[string]any{
+		"type": "response.completed",
+		"response": map[string]any{
+			"status": "completed",
+			"output": []any{message},
+		},
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(completed) != 1 || bytes.Contains(completed[0], []byte("already exists")) ||
+		!bytes.Contains(completed[0], []byte("inherited response-local")) {
+		t.Fatalf("completed response = %s", completed)
 	}
 }
 
@@ -631,7 +1043,7 @@ func TestCTPExecuteRequestKeepsHPatchCallsNative(t *testing.T) {
 		if err := json.Unmarshal(body, &request); err != nil {
 			t.Fatal(err)
 		}
-		if instructions := jsonString(request, "instructions"); !strings.Contains(instructions, "\nCTP/1\n") {
+		if instructions := jsonString(request, "instructions"); !strings.Contains(instructions, "\n!ctp1 D\n") {
 			t.Fatalf("request did not admit CTP input encoding: %s", body)
 		}
 		var tools []map[string]json.RawMessage

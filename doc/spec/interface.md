@@ -683,6 +683,22 @@ not fabricate evaluator rejection identities.
 The snapshot also exposes aggregate counters so a benchmark can reconcile routed calls with
 client-visible file-change items without inferring failures from stderr envelopes.
 
+Each session retains the latest 128 completed Responses request observations. An observation carries
+only its router request sequence, terminal lifecycle outcome, total and upstream duration, whether
+provider usage was observed, and the provider input, uncached-input, output, and reasoning-token
+counts. A separate dropped-observation counter exposes retention truncation. Request bodies,
+response bodies, credentials, and provider identifiers are never retained by this telemetry.
+
+With CTP/1 enabled, aggregate and per-session metrics record every admission decision and sum native
+and compact tokens and UTF-8 bytes for admitted requests and decoded assistant text. They also sum
+request and response dictionary definition counts and framing bytes, encode and decode operations and
+nanoseconds, and response-decode failures. Each session retains the latest 128 input observations and
+128 assistant-output observations with their request sequence, representation sizes, dictionary
+sizes, and input admission or encode timing. Independent dropped counters expose truncation. These
+observations retain sizes and decisions only, never dictionary values or assistant text. Streaming
+decode timing counts each transformed upstream event, while assistant-output observations still count
+each logical terminal text exactly once under `REQ-CTP-001`.
+
 `RecordHostMetrics` persists classification only after the host supplies the terminal outcome and
 visible carrier evidence. For router translation it records a paired effective estimate after the
 complete patch is available; for host application it records one only after the staged changes

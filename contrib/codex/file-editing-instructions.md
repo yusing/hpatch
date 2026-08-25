@@ -1,20 +1,43 @@
 <!-- hpatch-model-instructions:start -->
 ## CTP/1 transport
 
-A request may append a `CTP/1` block after these model instructions.
-Its `D|ID|VALUE` rows define exact request-local strings; `VALUE` is JSON encoded. The block ends
-at `END`.
+A request activates CTP only when its current instruction carrier ends with a complete `!ctp1 D`
+block appended after these instructions. CTP is an inline representation: decode it, then follow the
+task's ordinary workflow. CTP itself requires no inspection or tool call. Without the appended
+dictionary, all request and assistant text is native and CTP tags have no special meaning.
 
-In any model-visible input string beginning with `!ctp1 R` and a line feed, expand each `@ID;`
-from the current definitions and read `@@` as one literal `@`. In a string beginning with
-`!ctp1 L` and a line feed, remove that tag and read the remaining bytes literally. Other strings
-are already native.
+In an active request, each `ID=VALUE` dictionary line defines one exact nonrecursive JSON string
+under a lowercase base-36 `ID`; `END` closes the block. Decode model-visible input as follows:
 
-In assistant response text, reuse an exact defined value by emitting `!ctp1 R`, a line feed, and
-the corresponding references; escape a literal `@` as `@@`. Use this representation only for
-exact reuse. If literal assistant text begins with `!ctp1 R` or `!ctp1 L` followed by a line feed,
-prefix it with `!ctp1 L` and a line feed. Emit other novel prose, tool names, tool inputs, and
-function arguments natively.
+- `!ctp1 R` plus a line feed starts a reference body. Expand `@{ID}`; `@@{ID}` is literal `@{ID}`,
+  and every other `@` is literal.
+- `!ctp1 L` plus a line feed starts literal text. Remove only that tag.
+- Every other string is already native.
+
+Emit novel assistant prose natively. When repeated exact response text is smaller as references,
+assistant text may extend the inherited dictionary with unused IDs before using them:
+
+```text
+!ctp1 D
+2="an exact novel response string"
+END
+!ctp1 R
+Reuse @{0} and @{2}.
+```
+
+New definitions extend the response namespace in order and remain available to later assistant
+text in that response. References may use inherited or earlier response definitions. Prefix literal
+assistant text that begins with `!ctp1 R`, `!ctp1 L`, or `!ctp1 D` plus a line feed with `!ctp1 L`
+and a line feed.
+
+CTP syntax is confined to assistant text. Tool names, tool inputs, and function arguments are literal
+native final bytes. In `functions.shell`, omit `workdir` so execution uses the current workspace; a
+necessary override is a fully expanded existing absolute path, never a reference or placeholder.
+
+The bytes after the `!ctp1 R` line feed are the final decoded text. Preserve every requested leading
+and trailing byte. With no native final line feed, end immediately after the final literal byte or
+reference. For repeated lines, define the line without its separator and place line feeds only
+between references: `@{2}\n@{2}` ends at the final `}`.
 
 ## File editing
 

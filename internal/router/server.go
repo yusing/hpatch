@@ -422,18 +422,39 @@ func executeRequest(
 	if hpatchTransform != nil {
 		defer hpatchTransform.Close()
 	}
-	compactTransform, compactAdmission, err := compactTokens.prepareRequest(&parsedRequest)
+	compactStarted := time.Now()
+	compactTransform, compactAdmission, compactRequestMetrics, err := compactTokens.prepareRequest(&parsedRequest)
+	compactDuration := time.Since(compactStarted)
+	metricSessionID, requestSequence := activeRequest.metricIdentity()
+	if metricSessionID == "" {
+		metricSessionID = sessionID
+	}
 	if err != nil {
 		return fmt.Errorf("prepare compact token protocol: %w", err)
 	}
 	if metrics != nil {
-		var nativeTokens, compactTokens uint64
 		if compactTransform != nil {
-			nativeTokens = compactTransform.inputNativeTokens
-			compactTokens = compactTransform.inputCompactTokens
-			compactTransform.recordOutput = metrics.recordCTPOutput
+			compactTransform.recordOutput = func(
+				representation ctpRepresentationMetrics,
+				definitions, dictionaryBytes uint64,
+			) {
+				metrics.recordCTPOutput(
+					metricSessionID, requestSequence, representation, definitions, dictionaryBytes,
+				)
+			}
+			compactTransform.recordDecode = func(duration time.Duration, failed bool) {
+				metrics.recordCTPDecode(metricSessionID, duration, failed)
+			}
 		}
-		metrics.recordCTPAdmission(compactAdmission, nativeTokens, compactTokens)
+		metrics.recordCTPAdmission(
+			metricSessionID,
+			requestSequence,
+			compactAdmission,
+			compactRequestMetrics.Representation,
+			compactRequestMetrics.Definitions,
+			compactRequestMetrics.DictionaryBytes,
+			compactDuration,
+		)
 	}
 	forwardBody, err := json.Marshal(parsedRequest.fields)
 	if err != nil {

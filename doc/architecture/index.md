@@ -14,12 +14,15 @@ pjdoc:
 
 One CTP owner in `internal/router` sits after Hpatch request projection and before provider
 serialization. It receives ordinary parsed Responses fields, appends one request-local exact
-dictionary to the existing top-level or developer-message instruction carrier only when the whole
-encoded request is token-positive, and returns a response
+dictionary to the existing top-level or developer-message instruction carrier only when the stable
+admission projection is token-positive, and returns a response
 transformer for that admitted representation. It does not parse HPATCH/2, change the tool registry,
 own provider usage, retain session history, define model instructions, or define another executor
 carrier. Persistent CTP interpretation and emission guidance belongs to
 `contrib/codex/file-editing-instructions.md`; the router emits only request-local dictionary data.
+Request-local discovery uses the current tool descriptions and immutable pre-model input prefix so
+appended model history cannot churn the provider-cache prefix; applying the resulting definitions
+to later eligible history remains part of the same stateless representation step.
 
 On responses, the CTP transformer runs before the existing Hpatch transformer. It restores compact
 references only in assistant text for complete JSON output and SSE terminal text, while tool names,
@@ -29,10 +32,12 @@ preserve that order and to finish or discard both request-local states on every 
 
 The CTP owner derives auxiliary native-versus-compact token pairs from the same tokenizer used for
 admission. Input counts cover each admitted whole request after Hpatch projection; output counts
-cover decoded assistant text once per logical content item and use only the terminal completed
-response for streams. The in-memory router metrics store only aggregates these pairs. Counting
-failure cannot replace a successful request, response, or provider usage record. Aggregate
-admission decisions expose why a request stayed native without retaining candidate or prompt text.
+cover decoded assistant text once per logical content item, using each terminal
+`response.output_text.done` event for streams while excluding repeated projections. The in-memory
+router metrics retain aggregates plus bounded per-session request and CTP input/output observations,
+including bytes, dictionary size, codec timing, and dropped-observation counters. Counting failure
+cannot replace a successful request, response, or provider usage record. Aggregate admission
+decisions expose why a request stayed native without retaining candidate or prompt text.
 
 CTP operates inside native Responses envelopes and may rewrite only the representation identified
 by `REQ-CTP-001`; that requirement retains the provider-owned fields and native fallback contract.

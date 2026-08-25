@@ -183,7 +183,7 @@ rewrite; CTP/1 appends only its request-local dictionary data to the resulting i
 The authoritative treatment replacement is:
 
 ```text
-contrib/codex/model-instructions.md
+contrib/codex/file-editing-instructions.md
 ```
 
 The benchmark does not duplicate that text or its replacement logic. For every run it extracts

@@ -4,7 +4,7 @@ pjdoc:
   kind: spec
   scope: root
   status: draft
-  revision: "29"
+  revision: "33"
   files:
     - interface.md
     - comparison.md
@@ -13,10 +13,11 @@ pjdoc:
 ---
 # hpatch specification
 
-Revision 29 keeps durable CTP/1 rules in the renamed Codex model-instruction source and appends
-request-local dictionary data to Codex's actual top-level or developer-message instruction carrier.
-It accounts for every admission fallback and retains separate internal input and assistant-output
-compression counters for the measured CTP/1 treatment against an imported native-Hpatch baseline.
+Revision 33 measures CTP/1 through fresh native and CTP-active Hpatch arms with the same
+decoded-response contract. It separates model behavior, per-request protocol representations and
+codec cost, and provider-observed operational usage; bounded session telemetry exposes request and
+CTP observation truncation instead of inferring missing values. Protocol-focused tasks can require
+strictly smaller compact input and assistant-output representations.
 `doc/spec/interface.md` owns the public report grammar, projection rule, continuation
 semantics, and observable acceptance behavior.
 

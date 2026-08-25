@@ -7,14 +7,18 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/tiktoken-go/tokenizer"
 )
 
 const (
-	ctpReferenceTag      = "!ctp1 R\n"
-	ctpLiteralTag        = "!ctp1 L\n"
-	ctpMinimumSegmentLen = 24
+	ctpReferenceTag  = "!ctp1 R\n"
+	ctpLiteralTag    = "!ctp1 L\n"
+	ctpDictionaryTag = "!ctp1 D\n"
+	ctpDictionaryEnd = "END\n"
 )
 
 type ctpCodec struct {
@@ -54,14 +58,21 @@ type ctpDefinition struct {
 }
 
 type ctpResponseTransform struct {
-	definitions            map[string]string
+	requestDefinitions     map[string]string
+	streamDefinitions      map[string]string
+	streamItemDefinitions  map[string]map[string]string
 	originalInstructions   json.RawMessage
 	compactInstructions    string
 	hasCompactInstructions bool
 	tokens                 tokenizer.Codec
-	inputNativeTokens      uint64
-	inputCompactTokens     uint64
-	recordOutput           func(nativeTokens, compactTokens uint64)
+	recordOutput           func(ctpRepresentationMetrics, uint64, uint64)
+	recordDecode           func(time.Duration, bool)
+}
+
+type ctpRequestMetrics struct {
+	Representation  ctpRepresentationMetrics
+	Definitions     uint64
+	DictionaryBytes uint64
 }
 
 func newCTPCodec() (*ctpCodec, error) {
@@ -72,48 +83,100 @@ func newCTPCodec() (*ctpCodec, error) {
 	return &ctpCodec{tokens: tokens}, nil
 }
 
-func (c *ctpCodec) prepareRequest(request *parsedResponsesRequest) (*ctpResponseTransform, ctpAdmissionDecision, error) {
+func (c *ctpCodec) prepareRequest(request *parsedResponsesRequest) (*ctpResponseTransform, ctpAdmissionDecision, ctpRequestMetrics, error) {
 	if c == nil {
-		return nil, ctpAdmissionDisabled, nil
+		return nil, ctpAdmissionDisabled, ctpRequestMetrics{}, nil
 	}
 	nativeBody, err := json.Marshal(request.fields)
 	if err != nil {
-		return nil, ctpAdmissionDisabled, fmt.Errorf("encode native CTP comparison request: %w", err)
+		return nil, ctpAdmissionDisabled, ctpRequestMetrics{}, fmt.Errorf("encode native CTP comparison request: %w", err)
 	}
 	nativeTokens, err := c.count(nativeBody)
 	if err != nil {
-		return nil, ctpAdmissionDisabled, err
+		return nil, ctpAdmissionDisabled, ctpRequestMetrics{}, err
 	}
+	requestMetrics := ctpRequestMetrics{Representation: ctpRepresentationMetrics{
+		NativeTokens: uint64(nativeTokens),
+		NativeBytes:  uint64(len(nativeBody)),
+	}}
 	view, err := decodeCTPRequestView(request.fields)
 	if err != nil {
-		return nil, ctpAdmissionDisabled, err
+		return nil, ctpAdmissionDisabled, requestMetrics, err
 	}
 	if view.carrier == ctpCarrierNone {
-		return nil, ctpAdmissionMissingCarrier, nil
+		return nil, ctpAdmissionMissingCarrier, requestMetrics, nil
 	}
 
 	definitions, err := c.requestDefinitions(&view)
 	if err != nil {
-		return nil, ctpAdmissionDisabled, err
+		return nil, ctpAdmissionDisabled, requestMetrics, err
 	}
 
 	if len(definitions) == 0 {
-		return nil, ctpAdmissionNoDefinitions, nil
+		return nil, ctpAdmissionNoDefinitions, requestMetrics, nil
 	}
-	compactFields, err := transformCTPRequest(request.fields, &view, definitions)
+
+	// Freeze admission on the same immutable projection that owns dictionary discovery. Whole
+	// appended history is still encoded and measured below, but it cannot toggle CTP for an
+	// otherwise unchanged prompt prefix.
+	admissionFields := make(map[string]json.RawMessage, 3)
+	if instructions, ok := request.fields["instructions"]; ok {
+		admissionFields["instructions"] = bytes.Clone(instructions)
+	}
+	if view.hasInput {
+		input, err := json.Marshal(ctpStableRequestInput(&view))
+		if err != nil {
+			return nil, ctpAdmissionDisabled, requestMetrics, fmt.Errorf("encode CTP/1 admission input: %w", err)
+		}
+		admissionFields["input"] = input
+	}
+	if tools, ok := request.fields["tools"]; ok {
+		admissionFields["tools"] = bytes.Clone(tools)
+	}
+	admissionNativeBody, err := json.Marshal(admissionFields)
 	if err != nil {
-		return nil, ctpAdmissionDisabled, err
+		return nil, ctpAdmissionDisabled, requestMetrics, fmt.Errorf("encode native CTP/1 admission projection: %w", err)
+	}
+	admissionNativeTokens, err := c.count(admissionNativeBody)
+	if err != nil {
+		return nil, ctpAdmissionDisabled, requestMetrics, err
+	}
+	admissionCompactFields, definitions, err := transformCTPRequest(admissionFields, definitions)
+	if err != nil {
+		return nil, ctpAdmissionDisabled, requestMetrics, err
+	}
+	admissionCompactBody, err := json.Marshal(admissionCompactFields)
+	if err != nil {
+		return nil, ctpAdmissionDisabled, requestMetrics, fmt.Errorf("encode compact CTP/1 admission projection: %w", err)
+	}
+	admissionCompactTokens, err := c.count(admissionCompactBody)
+	if err != nil {
+		return nil, ctpAdmissionDisabled, requestMetrics, err
+	}
+
+	compactFields, appliedDefinitions, err := transformCTPRequest(request.fields, definitions)
+	if err != nil {
+		return nil, ctpAdmissionDisabled, requestMetrics, err
+	}
+	if !slices.Equal(appliedDefinitions, definitions) {
+		return nil, ctpAdmissionDisabled, requestMetrics, errors.New("CTP/1 definitions changed outside the stable admission projection")
 	}
 	compactBody, err := json.Marshal(compactFields)
 	if err != nil {
-		return nil, ctpAdmissionDisabled, err
+		return nil, ctpAdmissionDisabled, requestMetrics, err
 	}
 	compactTokens, err := c.count(compactBody)
 	if err != nil {
-		return nil, ctpAdmissionDisabled, err
+		return nil, ctpAdmissionDisabled, requestMetrics, err
 	}
-	if compactTokens >= nativeTokens {
-		return nil, ctpAdmissionUnprofitable, nil
+	requestMetrics.Representation.CompactTokens = uint64(compactTokens)
+	requestMetrics.Representation.CompactBytes = uint64(len(compactBody))
+	requestMetrics.Definitions = uint64(len(definitions))
+	if len(definitions) > 0 {
+		requestMetrics.DictionaryBytes = uint64(len(renderCTPDictionary(definitions)))
+	}
+	if admissionCompactTokens >= admissionNativeTokens {
+		return nil, ctpAdmissionUnprofitable, requestMetrics, nil
 	}
 
 	originalInstructions := bytes.Clone(request.fields["instructions"])
@@ -125,14 +188,12 @@ func (c *ctpCodec) prepareRequest(request *parsedResponsesRequest) (*ctpResponse
 		definitionValues[definition.id] = definition.value
 	}
 	return &ctpResponseTransform{
-		definitions:            definitionValues,
+		requestDefinitions:     definitionValues,
 		originalInstructions:   originalInstructions,
 		compactInstructions:    compactInstructions,
 		hasCompactInstructions: hasCompactInstructions,
 		tokens:                 c.tokens,
-		inputNativeTokens:      uint64(nativeTokens),
-		inputCompactTokens:     uint64(compactTokens),
-	}, ctpAdmissionAdmitted, nil
+	}, ctpAdmissionAdmitted, requestMetrics, nil
 }
 
 func (c *ctpCodec) count(value []byte) (int, error) {
@@ -146,67 +207,141 @@ func (c *ctpCodec) count(value []byte) (int, error) {
 	return count, nil
 }
 
-type ctpSegmentCandidate struct {
-	value  string
-	saving int
+type ctpTokenizedString struct {
+	value   string
+	tokens  []uint
+	offsets []int
+}
+
+type ctpSeedKey struct {
+	hash   uint64
+	length int
+}
+
+type ctpSeedOccurrence struct {
+	stringIndex int
+	start       int
+}
+
+type ctpSubstringOccurrence struct {
+	stringIndex int
+	start       int
+	end         int
+}
+
+type ctpSubstringCandidate struct {
+	value       string
+	tokens      int
+	boundary    int
+	occurrences map[ctpSubstringOccurrence]struct{}
+	saving      int
 }
 
 func (c *ctpCodec) requestDefinitions(view *ctpRequestView) ([]ctpDefinition, error) {
-	values := collectCTPRequestStrings(view)
-	type segmentCount struct {
-		occurrences int
-		strings     int
+	values, err := c.tokenizeRequestStrings(collectCTPRequestStrings(view))
+	if err != nil {
+		return nil, err
 	}
-	counts := make(map[string]segmentCount)
-	for _, value := range values {
-		seen := make(map[string]struct{})
-		for _, segment := range splitCTPPhysicalSegments(value) {
-			if len(segment) < ctpMinimumSegmentLen {
+	refTokens, err := c.tokens.Count("@{0}")
+	if err != nil {
+		return nil, fmt.Errorf("estimate CTP/1 reference: %w", err)
+	}
+	seedLength := refTokens + 1
+	seeds := make(map[ctpSeedKey]ctpSeedOccurrence)
+	candidatesByValue := make(map[string]*ctpSubstringCandidate)
+	for stringIndex, value := range values {
+		for start := 0; start+seedLength <= len(value.tokens); {
+			key := ctpTokenSeedKey(value.tokens[start : start+seedLength])
+			first, found := seeds[key]
+			if !found {
+				seeds[key] = ctpSeedOccurrence{stringIndex: stringIndex, start: start}
+				start++
 				continue
 			}
-			count := counts[segment]
-			count.occurrences++
-			if _, ok := seen[segment]; !ok {
-				count.strings++
-				seen[segment] = struct{}{}
+			firstValue := values[first.stringIndex]
+			if !slices.Equal(
+				firstValue.tokens[first.start:first.start+seedLength],
+				value.tokens[start:start+seedLength],
+			) {
+				start++
+				continue
 			}
-			counts[segment] = count
+			firstStart, currentStart := first.start, start
+			firstEnd, currentEnd := firstStart+seedLength, currentStart+seedLength
+			for firstStart > 0 && currentStart > 0 &&
+				firstValue.tokens[firstStart-1] == value.tokens[currentStart-1] &&
+				(first.stringIndex != stringIndex || firstEnd <= currentStart-1) {
+				firstStart--
+				currentStart--
+			}
+			for firstEnd < len(firstValue.tokens) && currentEnd < len(value.tokens) &&
+				firstValue.tokens[firstEnd] == value.tokens[currentEnd] &&
+				(first.stringIndex != stringIndex || firstEnd < currentStart) {
+				firstEnd++
+				currentEnd++
+			}
+			firstStart, firstEnd, currentStart, currentEnd = trimCTPMatchToReadableBoundaries(
+				firstValue, value, firstStart, firstEnd, currentStart, currentEnd,
+			)
+			if firstEnd-firstStart < seedLength {
+				start++
+				continue
+			}
+			candidateValue := firstValue.value[firstValue.offsets[firstStart]:firstValue.offsets[firstEnd]]
+			candidate := candidatesByValue[candidateValue]
+			if candidate == nil {
+				candidate = &ctpSubstringCandidate{
+					value:       candidateValue,
+					tokens:      firstEnd - firstStart,
+					boundary:    ctpBoundaryScore(firstValue.value, firstValue.offsets[firstStart], firstValue.offsets[firstEnd]),
+					occurrences: make(map[ctpSubstringOccurrence]struct{}),
+				}
+				candidatesByValue[candidateValue] = candidate
+			}
+			candidate.occurrences[ctpSubstringOccurrence{
+				stringIndex: first.stringIndex,
+				start:       firstValue.offsets[firstStart],
+				end:         firstValue.offsets[firstEnd],
+			}] = struct{}{}
+			candidate.occurrences[ctpSubstringOccurrence{
+				stringIndex: stringIndex,
+				start:       value.offsets[currentStart],
+				end:         value.offsets[currentEnd],
+			}] = struct{}{}
+			start = max(start+1, currentEnd)
 		}
 	}
 
-	candidates := make([]ctpSegmentCandidate, 0, len(counts))
-	refTokens, tagTokens := -1, -1
-	for value, count := range counts {
-		if count.occurrences < 2 {
+	tagTokens, err := c.tokens.Count(ctpReferenceTag)
+	if err != nil {
+		return nil, fmt.Errorf("estimate CTP/1 reference tag: %w", err)
+	}
+	candidates := make([]ctpSubstringCandidate, 0, len(candidatesByValue))
+	for _, candidate := range candidatesByValue {
+		occurrences, stringsCount := countCTPNonoverlappingOccurrences(candidate.occurrences)
+		if occurrences < 2 {
 			continue
 		}
-		plainTokens, err := c.tokens.Count(value)
+		quoted, _ := json.Marshal(candidate.value)
+		definitionTokens, err := c.tokens.Count("0=" + string(quoted) + "\n")
 		if err != nil {
-			return nil, fmt.Errorf("estimate CTP/1 definition source: %w", err)
+			return nil, fmt.Errorf("estimate CTP/1 definition: %w", err)
 		}
-		quoted, _ := json.Marshal(value)
-		encodedTokens, err := c.tokens.Count("D|0|" + string(quoted) + "\n")
-		if err != nil {
-			return nil, fmt.Errorf("estimate CTP/1 definition row: %w", err)
-		}
-		if refTokens < 0 {
-			refTokens, err = c.tokens.Count("@0;")
-			if err != nil {
-				return nil, fmt.Errorf("estimate CTP/1 reference: %w", err)
-			}
-			tagTokens, err = c.tokens.Count(ctpReferenceTag)
-			if err != nil {
-				return nil, fmt.Errorf("estimate CTP/1 reference tag: %w", err)
-			}
-		}
-		saving := plainTokens*count.occurrences - encodedTokens - refTokens*count.occurrences - tagTokens*count.strings
-		if saving > 0 {
-			candidates = append(candidates, ctpSegmentCandidate{value: value, saving: saving})
+		// Each definition and reference is an extra lookup for the model. Charging one virtual
+		// token per indirection keeps marginal byte savings from overwhelming readability.
+		indirectionCost := 1 + occurrences
+		candidate.saving = candidate.tokens*occurrences - definitionTokens -
+			refTokens*occurrences - tagTokens*stringsCount - indirectionCost
+		if candidate.saving > 0 {
+			candidates = append(candidates, *candidate)
 		}
 	}
-	slices.SortFunc(candidates, func(left, right ctpSegmentCandidate) int {
+	slices.SortFunc(candidates, func(left, right ctpSubstringCandidate) int {
 		if left.saving != right.saving {
 			return right.saving - left.saving
+		}
+		if left.boundary != right.boundary {
+			return right.boundary - left.boundary
 		}
 		if len(left.value) != len(right.value) {
 			return len(right.value) - len(left.value)
@@ -220,12 +355,103 @@ func (c *ctpCodec) requestDefinitions(view *ctpRequestView) ([]ctpDefinition, er
 	return definitions, nil
 }
 
-func splitCTPPhysicalSegments(value string) []string {
-	segments := strings.SplitAfter(value, "\n")
-	if len(segments) != 0 && segments[len(segments)-1] == "" {
-		segments = segments[:len(segments)-1]
+func (c *ctpCodec) tokenizeRequestStrings(values []string) ([]ctpTokenizedString, error) {
+	tokenized := make([]ctpTokenizedString, 0, len(values))
+	for _, value := range values {
+		tokens, pieces, err := c.tokens.Encode(value)
+		if err != nil {
+			return nil, fmt.Errorf("tokenize CTP/1 request string: %w", err)
+		}
+		if len(tokens) != len(pieces) || strings.Join(pieces, "") != value {
+			return nil, errors.New("tokenize CTP/1 request string: non-lossless token pieces")
+		}
+		offsets := make([]int, len(pieces)+1)
+		for index, piece := range pieces {
+			offsets[index+1] = offsets[index] + len(piece)
+		}
+		tokenized = append(tokenized, ctpTokenizedString{value: value, tokens: tokens, offsets: offsets})
 	}
-	return segments
+	return tokenized, nil
+}
+
+func ctpTokenSeedKey(tokens []uint) ctpSeedKey {
+	const multiplier = uint64(1099511628211)
+	var hash uint64 = 1469598103934665603
+	for _, token := range tokens {
+		hash = (hash ^ (uint64(token) + 1)) * multiplier
+	}
+	return ctpSeedKey{hash: hash, length: len(tokens)}
+}
+
+func trimCTPMatchToReadableBoundaries(
+	left, right ctpTokenizedString,
+	leftStart, leftEnd, rightStart, rightEnd int,
+) (int, int, int, int) {
+	for leftEnd-leftStart > 0 &&
+		(!ctpTextBoundary(left.value, left.offsets[leftStart]) || !ctpTextBoundary(right.value, right.offsets[rightStart])) {
+		leftStart++
+		rightStart++
+	}
+	for leftEnd-leftStart > 0 &&
+		(!ctpTextBoundary(left.value, left.offsets[leftEnd]) || !ctpTextBoundary(right.value, right.offsets[rightEnd])) {
+		leftEnd--
+		rightEnd--
+	}
+	return leftStart, leftEnd, rightStart, rightEnd
+}
+
+func ctpTextBoundary(value string, offset int) bool {
+	if offset == 0 || offset == len(value) {
+		return true
+	}
+	previous, _ := utf8.DecodeLastRuneInString(value[:offset])
+	next, _ := utf8.DecodeRuneInString(value[offset:])
+	return unicode.IsSpace(previous) || unicode.IsPunct(previous) ||
+		unicode.IsSpace(next) || unicode.IsPunct(next)
+}
+
+func ctpBoundaryScore(value string, start, end int) int {
+	score := 0
+	if ctpTextBoundary(value, start) {
+		score++
+	}
+	if ctpTextBoundary(value, end) {
+		score++
+	}
+	return score
+}
+
+func countCTPNonoverlappingOccurrences(occurrences map[ctpSubstringOccurrence]struct{}) (int, int) {
+	ordered := slices.Collect(func(yield func(ctpSubstringOccurrence) bool) {
+		for occurrence := range occurrences {
+			if !yield(occurrence) {
+				return
+			}
+		}
+	})
+	slices.SortFunc(ordered, func(left, right ctpSubstringOccurrence) int {
+		if left.stringIndex != right.stringIndex {
+			return left.stringIndex - right.stringIndex
+		}
+		if left.start != right.start {
+			return left.start - right.start
+		}
+		return left.end - right.end
+	})
+	count, stringsCount := 0, 0
+	lastString, lastEnd := -1, -1
+	for _, occurrence := range ordered {
+		if occurrence.stringIndex != lastString {
+			lastString, lastEnd = occurrence.stringIndex, -1
+			stringsCount++
+		}
+		if occurrence.start < lastEnd {
+			continue
+		}
+		count++
+		lastEnd = occurrence.end
+	}
+	return count, stringsCount
 }
 
 func base36(value int) string {
@@ -250,15 +476,15 @@ func collectCTPRequestStrings(view *ctpRequestView) []string {
 		return value
 	}
 	if view.hasInput {
-		value := view.input
+		value := ctpStableRequestInput(view)
 		if text, ok := value.(string); ok {
 			collect(text)
-		} else {
+		} else if items, ok := value.([]any); ok {
 			var preserveDeveloper func(string) string
 			if view.carrier == ctpCarrierDeveloperMessage {
 				preserveDeveloper = func(value string) string { return value }
 			}
-			transformCTPInput(value, collect, preserveDeveloper)
+			transformCTPInput(items, collect, preserveDeveloper)
 		}
 	}
 	if view.hasTools {
@@ -267,43 +493,98 @@ func collectCTPRequestStrings(view *ctpRequestView) []string {
 	return values
 }
 
+// ctpStableRequestInput owns the request prefix that may influence both definitions and admission.
+// A developer carrier after the first model item is retained only as framing, without admitting the
+// intervening model history into that stable projection.
+func ctpStableRequestInput(view *ctpRequestView) any {
+	items, ok := view.input.([]any)
+	if !ok {
+		return view.input
+	}
+	prefixEnd := len(items)
+	for index, item := range items {
+		object, ok := item.(map[string]any)
+		if !ok {
+			prefixEnd = index
+			break
+		}
+		typeName, _ := object["type"].(string)
+		if typeName == "additional_tools" {
+			continue
+		}
+		role, _ := object["role"].(string)
+		if (typeName == "message" || typeName == "") &&
+			(role == "developer" || role == "system" || role == "user") {
+			continue
+		}
+		if typeName == "custom_tool_call_output" || typeName == "function_call_output" {
+			continue
+		}
+		prefixEnd = index
+		break
+	}
+	prefix := items[:prefixEnd]
+	if view.carrier != ctpCarrierDeveloperMessage ||
+		transformCTPInput(prefix, nil, func(value string) string { return value }) {
+		return prefix
+	}
+	for _, item := range items[prefixEnd:] {
+		if transformCTPInput([]any{item}, nil, func(value string) string { return value }) {
+			return append(slices.Clone(prefix), item)
+		}
+	}
+	return prefix
+}
+
 func transformCTPRequest(
 	fields map[string]json.RawMessage,
-	view *ctpRequestView,
 	definitions []ctpDefinition,
-) (map[string]json.RawMessage, error) {
+) (map[string]json.RawMessage, []ctpDefinition, error) {
+	for {
+		transformed, retained, err := transformCTPRequestOnce(fields, definitions)
+		if err != nil || len(retained) == len(definitions) {
+			return transformed, retained, err
+		}
+		definitions = retained
+	}
+}
+
+func transformCTPRequestOnce(
+	fields map[string]json.RawMessage,
+	definitions []ctpDefinition,
+) (map[string]json.RawMessage, []ctpDefinition, error) {
 	transformed := make(map[string]json.RawMessage, len(fields))
 	for name, value := range fields {
 		transformed[name] = bytes.Clone(value)
 	}
-	definitionByValue := make(map[string]string, len(definitions))
-	for _, definition := range definitions {
-		definitionByValue[definition.value] = definition.id
+	view, err := decodeCTPRequestView(transformed)
+	if err != nil {
+		return nil, nil, err
 	}
-	dictionary := renderCTPDictionary(definitions)
+	encoder := newCTPStringEncoder(definitions)
+	used := make(map[string]int, len(definitions))
 	encodeString := func(value string) string {
-		return encodeCTPString(value, definitionByValue)
-	}
-	if view.carrier == ctpCarrierTopLevel {
-		transformed["instructions"] = mustMarshalJSON(appendCTPDictionary(view.instructions, dictionary))
+		encoded, references := encoder.encode(value)
+		for id, count := range references {
+			used[id] += count
+		}
+		return encoded
 	}
 	if view.hasInput {
 		if text, ok := view.input.(string); ok {
 			view.input = encodeString(text)
 		} else {
-			var appendDeveloper func(string) string
+			var preserveDeveloper func(string) string
 			if view.carrier == ctpCarrierDeveloperMessage {
-				appendDeveloper = func(value string) string {
-					return appendCTPDictionary(value, dictionary)
-				}
+				preserveDeveloper = func(value string) string { return value }
 			}
-			if found := transformCTPInput(view.input, encodeString, appendDeveloper); appendDeveloper != nil && !found {
-				return nil, errors.New("locate CTP/1 developer instruction carrier")
+			if found := transformCTPInput(view.input, encodeString, preserveDeveloper); preserveDeveloper != nil && !found {
+				return nil, nil, errors.New("locate CTP/1 developer instruction carrier")
 			}
 		}
 		encoded, err := json.Marshal(view.input)
 		if err != nil {
-			return nil, fmt.Errorf("encode CTP/1 input: %w", err)
+			return nil, nil, fmt.Errorf("encode CTP/1 input: %w", err)
 		}
 		transformed["input"] = encoded
 	}
@@ -311,11 +592,39 @@ func transformCTPRequest(
 		transformCTPTools(view.tools, encodeString)
 		encoded, err := json.Marshal(view.tools)
 		if err != nil {
-			return nil, fmt.Errorf("encode CTP/1 tools: %w", err)
+			return nil, nil, fmt.Errorf("encode CTP/1 tools: %w", err)
 		}
 		transformed["tools"] = encoded
 	}
-	return transformed, nil
+	retained := make([]ctpDefinition, 0, len(definitions))
+	for _, definition := range definitions {
+		if used[definition.id] >= 2 {
+			retained = append(retained, definition)
+		}
+	}
+	if len(retained) != len(definitions) {
+		return transformed, retained, nil
+	}
+	if len(retained) == 0 {
+		return transformed, nil, nil
+	}
+	dictionary := renderCTPDictionary(retained)
+	if view.carrier == ctpCarrierTopLevel {
+		transformed["instructions"] = mustMarshalJSON(appendCTPDictionary(view.instructions, dictionary))
+	} else {
+		appendDeveloper := func(value string) string {
+			return appendCTPDictionary(value, dictionary)
+		}
+		if !transformCTPInput(view.input, nil, appendDeveloper) {
+			return nil, nil, errors.New("locate CTP/1 developer instruction carrier")
+		}
+		encoded, err := json.Marshal(view.input)
+		if err != nil {
+			return nil, nil, fmt.Errorf("encode CTP/1 developer carrier: %w", err)
+		}
+		transformed["input"] = encoded
+	}
+	return transformed, retained, nil
 }
 
 func decodeCTPRequestView(fields map[string]json.RawMessage) (ctpRequestView, error) {
@@ -489,26 +798,69 @@ func transformCTPStringField(object map[string]any, field string, transform func
 	}
 }
 
-func encodeCTPString(value string, definitions map[string]string) string {
-	if len(definitions) == 0 {
-		return value
-	}
-	var body strings.Builder
-	referenced := false
-	for _, segment := range splitCTPPhysicalSegments(value) {
-		if id, ok := definitions[segment]; ok {
-			body.WriteByte('@')
-			body.WriteString(id)
-			body.WriteByte(';')
-			referenced = true
+type ctpStringEncoder struct {
+	byFirstByte map[byte][]ctpDefinition
+}
+
+func newCTPStringEncoder(definitions []ctpDefinition) ctpStringEncoder {
+	encoder := ctpStringEncoder{byFirstByte: make(map[byte][]ctpDefinition)}
+	for _, definition := range definitions {
+		if definition.value == "" {
 			continue
 		}
-		body.WriteString(strings.ReplaceAll(segment, "@", "@@"))
+		first := definition.value[0]
+		encoder.byFirstByte[first] = append(encoder.byFirstByte[first], definition)
 	}
-	if referenced {
-		return ctpReferenceTag + body.String()
+	for first, candidates := range encoder.byFirstByte {
+		slices.SortFunc(candidates, func(left, right ctpDefinition) int {
+			if len(left.value) != len(right.value) {
+				return len(right.value) - len(left.value)
+			}
+			return strings.Compare(left.id, right.id)
+		})
+		encoder.byFirstByte[first] = candidates
 	}
-	if strings.HasPrefix(value, ctpReferenceTag) || strings.HasPrefix(value, ctpLiteralTag) {
+	return encoder
+}
+
+func (e ctpStringEncoder) encode(value string) (string, map[string]int) {
+	references := make(map[string]int)
+	if len(e.byFirstByte) == 0 {
+		return encodeCTPLiteralString(value), references
+	}
+	var body strings.Builder
+	for index := 0; index < len(value); {
+		matched := false
+		for _, definition := range e.byFirstByte[value[index]] {
+			if strings.HasPrefix(value[index:], definition.value) {
+				fmt.Fprintf(&body, "@{%s}", definition.id)
+				references[definition.id]++
+				index += len(definition.value)
+				matched = true
+				break
+			}
+		}
+		if matched {
+			continue
+		}
+		if _, length, ok := parseCTPReference(value[index:]); ok {
+			body.WriteByte('@')
+			body.WriteString(value[index : index+length])
+			index += length
+			continue
+		}
+		body.WriteByte(value[index])
+		index++
+	}
+	if len(references) != 0 {
+		return ctpReferenceTag + body.String(), references
+	}
+	return encodeCTPLiteralString(value), references
+}
+
+func encodeCTPLiteralString(value string) string {
+	if strings.HasPrefix(value, ctpReferenceTag) || strings.HasPrefix(value, ctpLiteralTag) ||
+		strings.HasPrefix(value, ctpDictionaryTag) {
 		return ctpLiteralTag + value
 	}
 	return value
@@ -516,20 +868,31 @@ func encodeCTPString(value string, definitions map[string]string) string {
 
 func renderCTPDictionary(definitions []ctpDefinition) string {
 	var dictionary strings.Builder
-	dictionary.WriteString("CTP/1\nT|D|id|value\n")
+	dictionary.WriteString(ctpDictionaryTag)
 	for _, definition := range definitions {
 		encoded, _ := json.Marshal(definition.value)
-		fmt.Fprintf(&dictionary, "D|%s|%s\n", definition.id, encoded)
+		fmt.Fprintf(&dictionary, "%s=%s\n", definition.id, encoded)
 	}
-	dictionary.WriteString("END\n")
+	dictionary.WriteString(ctpDictionaryEnd)
 	return dictionary.String()
 }
 
-func (t *ctpResponseTransform) TransformJSON(payload []byte) ([]byte, error) {
-	return t.transformJSON(payload, true)
+func (t *ctpResponseTransform) TransformJSON(payload []byte) (transformed []byte, err error) {
+	started := time.Time{}
+	if t.recordDecode != nil {
+		started = time.Now()
+		defer func() {
+			t.recordDecode(time.Since(started), err != nil)
+		}()
+	}
+	return t.transformJSON(payload, true, cloneCTPDefinitions(t.requestDefinitions))
 }
 
-func (t *ctpResponseTransform) transformJSON(payload []byte, observeOutput bool) ([]byte, error) {
+func (t *ctpResponseTransform) transformJSON(
+	payload []byte,
+	observeOutput bool,
+	definitions map[string]string,
+) ([]byte, error) {
 	var response map[string]json.RawMessage
 	if err := json.Unmarshal(payload, &response); err != nil || response == nil {
 		return nil, errors.New("decode CTP/1 response")
@@ -540,7 +903,7 @@ func (t *ctpResponseTransform) transformJSON(payload []byte, observeOutput bool)
 			return nil, errors.New("decode CTP/1 response output")
 		}
 		for _, item := range output {
-			if err := t.transformOutputItem(item, observeOutput); err != nil {
+			if err := t.transformOutputItem(item, observeOutput, definitions); err != nil {
 				return nil, err
 			}
 		}
@@ -557,7 +920,14 @@ func (t *ctpResponseTransform) transformJSON(payload []byte, observeOutput bool)
 	return encoded, nil
 }
 
-func (t *ctpResponseTransform) TransformSSE(payload []byte) ([][]byte, error) {
+func (t *ctpResponseTransform) TransformSSE(payload []byte) (transformed [][]byte, err error) {
+	started := time.Time{}
+	if t.recordDecode != nil {
+		started = time.Now()
+		defer func() {
+			t.recordDecode(time.Since(started), err != nil)
+		}()
+	}
 	var event map[string]json.RawMessage
 	if err := json.Unmarshal(payload, &event); err != nil || event == nil {
 		return [][]byte{payload}, nil
@@ -567,22 +937,39 @@ func (t *ctpResponseTransform) TransformSSE(payload []byte) ([][]byte, error) {
 	case "response.output_item.added", "response.output_item.done":
 		var item map[string]json.RawMessage
 		if json.Unmarshal(event["item"], &item) == nil && item != nil {
-			if err := t.transformOutputItem(item, false); err != nil {
+			definitions := cloneCTPDefinitions(t.streamingDefinitions())
+			itemID := jsonString(item, "id")
+			if typeName == "response.output_item.added" && itemID != "" {
+				if t.streamItemDefinitions == nil {
+					t.streamItemDefinitions = make(map[string]map[string]string)
+				}
+				t.streamItemDefinitions[itemID] = cloneCTPDefinitions(definitions)
+			} else if itemBase, ok := t.streamItemDefinitions[itemID]; ok {
+				definitions = cloneCTPDefinitions(itemBase)
+				delete(t.streamItemDefinitions, itemID)
+			}
+			if err := t.transformOutputItem(item, false, definitions); err != nil {
 				return nil, err
 			}
 			event["item"] = mustMarshalJSON(item)
 		}
 	case "response.output_text.done":
 		compact := jsonString(event, "text")
-		decoded, err := t.decodeString(compact)
+		definitions := cloneCTPDefinitions(t.streamingDefinitions())
+		decoded, err := decodeCTPString(compact, definitions, upstreamJSONBufferBytes)
 		if err != nil {
 			return nil, err
 		}
 		event["text"] = mustMarshalJSON(decoded)
+		t.observeAssistantText(compact, decoded)
 	case "response.content_part.added", "response.content_part.done":
 		var part map[string]json.RawMessage
 		if json.Unmarshal(event["part"], &part) == nil && part != nil {
-			if err := t.transformTextPart(part); err != nil {
+			definitions := t.streamingDefinitions()
+			if typeName == "response.content_part.added" {
+				definitions = cloneCTPDefinitions(definitions)
+			}
+			if err := t.transformTextPart(part, definitions); err != nil {
 				return nil, err
 			}
 			event["part"] = mustMarshalJSON(part)
@@ -591,7 +978,11 @@ func (t *ctpResponseTransform) TransformSSE(payload []byte) ([][]byte, error) {
 	if rawResponse, ok := event["response"]; ok {
 		trimmed := bytes.TrimSpace(rawResponse)
 		if len(trimmed) != 0 && trimmed[0] == '{' {
-			decoded, err := t.transformJSON(rawResponse, typeName == "response.completed")
+			decoded, err := t.transformJSON(
+				rawResponse,
+				false,
+				cloneCTPDefinitions(t.requestDefinitions),
+			)
 			if err != nil {
 				return nil, err
 			}
@@ -612,7 +1003,11 @@ func (t *ctpResponseTransform) Finish(bool) error {
 	return nil
 }
 
-func (t *ctpResponseTransform) transformOutputItem(item map[string]json.RawMessage, observeOutput bool) error {
+func (t *ctpResponseTransform) transformOutputItem(
+	item map[string]json.RawMessage,
+	observeOutput bool,
+	definitions map[string]string,
+) error {
 	typeName := jsonString(item, "type")
 	switch typeName {
 	case "message":
@@ -620,7 +1015,7 @@ func (t *ctpResponseTransform) transformOutputItem(item map[string]json.RawMessa
 			return nil
 		}
 		if raw, ok := item["content"]; ok {
-			decoded, err := t.transformMessageContent(raw, observeOutput)
+			decoded, err := t.transformMessageContent(raw, observeOutput, definitions)
 			if err != nil {
 				return err
 			}
@@ -630,13 +1025,17 @@ func (t *ctpResponseTransform) transformOutputItem(item map[string]json.RawMessa
 	return nil
 }
 
-func (t *ctpResponseTransform) transformMessageContent(raw json.RawMessage, observeOutput bool) (json.RawMessage, error) {
+func (t *ctpResponseTransform) transformMessageContent(
+	raw json.RawMessage,
+	observeOutput bool,
+	definitions map[string]string,
+) (json.RawMessage, error) {
 	value, err := decodeCTPJSON(raw)
 	if err != nil {
 		return nil, errors.New("decode CTP/1 message content")
 	}
 	if text, ok := value.(string); ok {
-		decoded, err := t.decodeString(text)
+		decoded, err := decodeCTPString(text, definitions, upstreamJSONBufferBytes)
 		if err != nil {
 			return nil, err
 		}
@@ -662,7 +1061,7 @@ func (t *ctpResponseTransform) transformMessageContent(raw json.RawMessage, obse
 		if !ok {
 			continue
 		}
-		decoded, err := t.decodeString(text)
+		decoded, err := decodeCTPString(text, definitions, upstreamJSONBufferBytes)
 		if err != nil {
 			return nil, err
 		}
@@ -674,13 +1073,16 @@ func (t *ctpResponseTransform) transformMessageContent(raw json.RawMessage, obse
 	return mustMarshalJSON(parts), nil
 }
 
-func (t *ctpResponseTransform) transformTextPart(part map[string]json.RawMessage) error {
+func (t *ctpResponseTransform) transformTextPart(
+	part map[string]json.RawMessage,
+	definitions map[string]string,
+) error {
 	typeName := jsonString(part, "type")
 	if typeName != "output_text" && typeName != "text" {
 		return nil
 	}
 	compact := jsonString(part, "text")
-	decoded, err := t.decodeString(compact)
+	decoded, err := decodeCTPString(compact, definitions, upstreamJSONBufferBytes)
 	if err != nil {
 		return err
 	}
@@ -697,7 +1099,35 @@ func (t *ctpResponseTransform) observeAssistantText(compact, native string) {
 	if compactErr != nil || nativeErr != nil || compactTokens < 0 || nativeTokens < 0 {
 		return
 	}
-	t.recordOutput(uint64(nativeTokens), uint64(compactTokens))
+	definitions, dictionaryBytes := ctpResponseDictionaryMetrics(compact)
+	t.recordOutput(ctpRepresentationMetrics{
+		NativeTokens:  uint64(nativeTokens),
+		CompactTokens: uint64(compactTokens),
+		NativeBytes:   uint64(len(native)),
+		CompactBytes:  uint64(len(compact)),
+	}, definitions, dictionaryBytes)
+}
+
+// The decoder has already validated this dictionary. This pass only measures its framing.
+func ctpResponseDictionaryMetrics(value string) (definitions, dictionaryBytes uint64) {
+	if !strings.HasPrefix(value, ctpDictionaryTag) {
+		return 0, 0
+	}
+	dictionaryBytes = uint64(len(ctpDictionaryTag))
+	value = value[len(ctpDictionaryTag):]
+	for {
+		newline := strings.IndexByte(value, '\n')
+		if newline < 0 {
+			return 0, 0
+		}
+		line := value[:newline]
+		value = value[newline+1:]
+		dictionaryBytes += uint64(newline + 1)
+		if line == "END" {
+			return definitions, dictionaryBytes
+		}
+		definitions++
+	}
 }
 
 func (t *ctpResponseTransform) restoreInstructions(response map[string]json.RawMessage) {
@@ -710,8 +1140,19 @@ func (t *ctpResponseTransform) restoreInstructions(response map[string]json.RawM
 	}
 }
 
-func (t *ctpResponseTransform) decodeString(value string) (string, error) {
-	return decodeCTPString(value, t.definitions, upstreamJSONBufferBytes)
+func (t *ctpResponseTransform) streamingDefinitions() map[string]string {
+	if t.streamDefinitions == nil {
+		t.streamDefinitions = cloneCTPDefinitions(t.requestDefinitions)
+	}
+	return t.streamDefinitions
+}
+
+func cloneCTPDefinitions(definitions map[string]string) map[string]string {
+	cloned := make(map[string]string, len(definitions))
+	for id, value := range definitions {
+		cloned[id] = value
+	}
+	return cloned
 }
 
 func decodeCTPString(value string, definitions map[string]string, limit int) (string, error) {
@@ -721,6 +1162,13 @@ func decodeCTPString(value string, definitions map[string]string, limit int) (st
 			return "", errors.New("decoded CTP/1 string exceeds the router buffer budget")
 		}
 		return literal, nil
+	}
+	if strings.HasPrefix(value, ctpDictionaryTag) {
+		body, err := extendCTPDefinitions(value[len(ctpDictionaryTag):], definitions)
+		if err != nil {
+			return "", err
+		}
+		value = body
 	}
 	if !strings.HasPrefix(value, ctpReferenceTag) {
 		if len(value) > limit {
@@ -741,32 +1189,83 @@ func decodeCTPString(value string, definitions map[string]string, limit int) (st
 		if err := appendCTPDecoded(&decoded, encoded[:at], limit); err != nil {
 			return "", err
 		}
-		encoded = encoded[at+1:]
-		if strings.HasPrefix(encoded, "@") {
+		encoded = encoded[at:]
+		if strings.HasPrefix(encoded, "@@{") {
+			if _, length, ok := parseCTPReference(encoded[1:]); ok {
+				if err := appendCTPDecoded(&decoded, encoded[1:1+length], limit); err != nil {
+					return "", err
+				}
+				encoded = encoded[1+length:]
+				continue
+			}
+		}
+		id, length, ok := parseCTPReference(encoded)
+		if !ok {
 			if err := appendCTPDecoded(&decoded, "@", limit); err != nil {
 				return "", err
 			}
 			encoded = encoded[1:]
 			continue
 		}
-		end := strings.IndexByte(encoded, ';')
-		if end <= 0 {
-			return "", errors.New("decode CTP/1 string: malformed reference")
-		}
-		id := encoded[:end]
-		if !validCTPReferenceID(id) {
-			return "", errors.New("decode CTP/1 string: malformed reference identifier")
-		}
-		definition, ok := definitions[id]
-		if !ok {
+		definition, exists := definitions[id]
+		if !exists {
 			return "", fmt.Errorf("decode CTP/1 string: unknown reference %q", id)
 		}
 		if err := appendCTPDecoded(&decoded, definition, limit); err != nil {
 			return "", err
 		}
-		encoded = encoded[end+1:]
+		encoded = encoded[length:]
 	}
 	return decoded.String(), nil
+}
+
+func extendCTPDefinitions(value string, definitions map[string]string) (string, error) {
+	added := 0
+	for {
+		newline := strings.IndexByte(value, '\n')
+		if newline < 0 {
+			return "", errors.New("decode CTP/1 dictionary: missing END")
+		}
+		line := value[:newline]
+		value = value[newline+1:]
+		if line == "END" {
+			if added == 0 {
+				return "", errors.New("decode CTP/1 dictionary: empty extension")
+			}
+			if !strings.HasPrefix(value, ctpReferenceTag) {
+				return "", errors.New("decode CTP/1 dictionary: missing reference body")
+			}
+			return value, nil
+		}
+		id, encoded, ok := strings.Cut(line, "=")
+		if !ok || !validCTPReferenceID(id) {
+			return "", errors.New("decode CTP/1 dictionary: malformed definition")
+		}
+		if _, exists := definitions[id]; exists {
+			return "", fmt.Errorf("decode CTP/1 dictionary: definition %q already exists", id)
+		}
+		var definition string
+		if err := json.Unmarshal([]byte(encoded), &definition); err != nil {
+			return "", fmt.Errorf("decode CTP/1 dictionary definition %q: %w", id, err)
+		}
+		definitions[id] = definition
+		added++
+	}
+}
+
+func parseCTPReference(value string) (string, int, bool) {
+	if !strings.HasPrefix(value, "@{") {
+		return "", 0, false
+	}
+	end := strings.IndexByte(value[2:], '}')
+	if end < 0 {
+		return "", 0, false
+	}
+	id := value[2 : 2+end]
+	if !validCTPReferenceID(id) {
+		return "", 0, false
+	}
+	return id, 3 + end, true
 }
 
 func appendCTPDecoded(output *strings.Builder, value string, limit int) error {

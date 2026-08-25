@@ -244,9 +244,16 @@ prompt channel.
 
 Under the default `--model-protocol native`, the ordinary guidance and tool rewrite is the complete
 model-visible transformation. Opt-in `--model-protocol ctp1` additionally applies the lossless
-Compact Token Protocol to token-positive eligible model-visible request strings and exact-reuse
-assistant text. It appends request-local dictionary data to the rewritten top-level instructions
-or first textual developer-message carrier.
+Compact Token Protocol to readable repeated
+token substrings after the ordinary Hpatch rewrite. It appends an exact-string request dictionary
+to the rewritten top-level instructions or first textual developer-message carrier. Assistant
+text can extend that dictionary with exact response-local strings before reusing them.
+The request dictionary is discovered from the current tool descriptions and immutable pre-model
+input prefix, then applied to eligible later history. Rebuilding an unchanged prefix produces the
+same dictionary and admission decision, so appended model output does not churn the provider-cache
+prefix.
+CTP decoding is inline representation work, not an additional inspection or tool workflow.
+When no dictionary is admitted, CTP guidance stays inactive and all request and response text is native.
 Responses roles, instruction priority, identifiers, reasoning, status, usage, schemas,
 grammars, streaming, and compaction control remain native. Model-emitted tool names and call
 payloads also remain native, so CTP does not compose with Hpatch, shell, or function execution.
@@ -506,10 +513,14 @@ Metrics separate three different layers:
 3. The router dashboard and `/api/metrics` expose provider Responses lifecycle and usage totals alongside those persisted estimates.
 
 With CTP/1 enabled, `/api/metrics` also exposes auxiliary native and compact token estimates for
-admitted whole requests and assistant text from completed responses. These internal compression
-counters are separate from authoritative provider usage and never include model-emitted tool
-payloads. Admission counters distinguish a missing instruction carrier, no positive definition
-candidate, and a complete compact representation that was not smaller.
+admitted whole requests and assistant text from completed responses. It retains bounded per-session
+request observations with provider usage and lifecycle timing, plus bounded CTP input and output
+observations with native and compact tokens and bytes, dictionary size, and codec timing. Dropped
+observation counters make truncation explicit. These internal compression counters are separate
+from authoritative provider usage and never include model-emitted tool payloads. Admission counters
+distinguish a missing instruction carrier, no positive definition candidate, and a stable compact
+admission projection that was not smaller. Complete-request observations may show a local loss on a
+later admitted request because preserving the provider-cache prefix owns that request's admission.
 
 The router dashboard and `GET /api/metrics` expose the structured persistent aggregate without opening an engine workspace.
 Each terminal Responses log record also carries that logical request's provider token counts.
@@ -545,21 +556,25 @@ RangeStream behavior. See the [benchmark methodology](doc/benchmarks.md), the
 [fixed control baseline](benchmarks/results/c07600a74ac93d1ac6c38c47b80d85519458bc9f-1/summary.md),
 and locally retained Hpatch-only trial reports.
 
-To measure the compact treatment without repeating an existing native-Hpatch run,
-run one CTP/1 attempt against the published native baseline:
+To measure deployable model behavior, CTP efficiency, and their net operational result, run
+the fresh native-versus-CTP-active benchmark:
 
 ```sh
-BENCHMARK_MODE=ctp-only BENCHMARK_REPORT_ISSUES=false REPETITIONS=1 bash benchmarks/bench.sh
+TASK_ID=batch-diagnostic-collapse BENCHMARK_MODE=ctp-only \
+  BENCHMARK_REPORT_ISSUES=false REPETITIONS=4 bash benchmarks/bench.sh
 ```
 
-The CTP report compares router-observed provider totals for cached and uncached input tokens,
-output and reasoning-output tokens, model requests, wall time, hidden-grader correctness,
-and overall attempt acceptance. It rejects incomplete provider-usage evidence and records
-the imported baseline source. Because historical instruction digests may differ, the report
-labels that confound rather than presenting the token delta as an isolated protocol effect. A
-separate CTP compression table reports native and compact token estimates, compact/native ratio,
-and saving for input and assistant output without using the baseline totals. A run with no admitted
-CTP representation reports both ratios as unavailable.
+Each repetition runs native Hpatch without CTP guidance and CTP-active Hpatch with the guidance and
+CTP/1 enabled. Their order rotates across repetitions, and each starts from an independent task
+snapshot. The report separates
+model correctness, turns, tool behavior, and latency; same-request CTP token, byte, dictionary, and
+codec measurements; and provider-observed input, output, reasoning, requests, and wall time. It also
+retains per-request usage and classifies executor, router, Hpatch, and CTP failures without removing
+them from the operational outcome. The task grades the same exact decoded final response in both
+arms and requires strictly smaller compact input and assistant-output representations. Four
+repetitions schedule eight paid model attempts.
+
+Benchmark Codex processes disable `apps` identically in both arms.
 
 The one-repetition `gpt-5.6-sol` Hpatch baseline passed and reported 45.2% lower
 successful edit payload (2,096 tokens versus 3,825 control-equivalent tokens). It used

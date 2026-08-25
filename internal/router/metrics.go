@@ -22,6 +22,8 @@ const (
 	maxMetricSubscribers               = 128
 	maxSessionHPatchRejections         = 32
 	maxSessionHPatchAttempts           = 128
+	maxSessionRequestObservations      = 128
+	maxSessionCTPObservations          = 128
 	maxSessionHPatchRejectionTextBytes = 16 << 10
 	maxSessionHPatchAttemptTextBytes   = 48 << 10
 	otherMetricModelKey                = "other"
@@ -39,6 +41,24 @@ type ctpCompressionTokens struct {
 	CompactTokens uint64 `json:"compact_tokens"`
 }
 
+type ctpCompressionBytes struct {
+	NativeBytes  uint64 `json:"native_bytes"`
+	CompactBytes uint64 `json:"compact_bytes"`
+}
+
+type ctpDictionaryMetrics struct {
+	Definitions uint64 `json:"definitions"`
+	Bytes       uint64 `json:"bytes"`
+}
+
+type ctpCodecMetrics struct {
+	EncodeOperations  uint64 `json:"encode_operations"`
+	EncodeNanoseconds uint64 `json:"encode_nanoseconds"`
+	DecodeOperations  uint64 `json:"decode_operations"`
+	DecodeNanoseconds uint64 `json:"decode_nanoseconds"`
+	DecodeFailures    uint64 `json:"decode_failures"`
+}
+
 type ctpCompressionMetrics struct {
 	ConsideredRequests uint64               `json:"considered_requests"`
 	EncodedRequests    uint64               `json:"encoded_requests"`
@@ -48,6 +68,45 @@ type ctpCompressionMetrics struct {
 	AssistantTexts     uint64               `json:"assistant_texts"`
 	Input              ctpCompressionTokens `json:"input"`
 	Output             ctpCompressionTokens `json:"output"`
+	InputBytes         ctpCompressionBytes  `json:"input_bytes"`
+	OutputBytes        ctpCompressionBytes  `json:"output_bytes"`
+	RequestDictionary  ctpDictionaryMetrics `json:"request_dictionary"`
+	ResponseDictionary ctpDictionaryMetrics `json:"response_dictionary"`
+	Codec              ctpCodecMetrics      `json:"codec"`
+}
+
+type ctpRepresentationMetrics struct {
+	NativeTokens  uint64 `json:"native_tokens"`
+	CompactTokens uint64 `json:"compact_tokens"`
+	NativeBytes   uint64 `json:"native_bytes"`
+	CompactBytes  uint64 `json:"compact_bytes"`
+}
+
+type ctpInputObservation struct {
+	ctpRepresentationMetrics
+
+	RequestSequence   uint64 `json:"request_sequence"`
+	Decision          string `json:"decision"`
+	Definitions       uint64 `json:"definitions"`
+	DictionaryBytes   uint64 `json:"dictionary_bytes"`
+	EncodeNanoseconds uint64 `json:"encode_nanoseconds"`
+}
+
+type ctpOutputObservation struct {
+	ctpRepresentationMetrics
+
+	RequestSequence uint64 `json:"request_sequence"`
+	Definitions     uint64 `json:"definitions"`
+	DictionaryBytes uint64 `json:"dictionary_bytes"`
+}
+
+type ctpSessionMetrics struct {
+	ctpCompressionMetrics
+
+	InputObservations         []ctpInputObservation  `json:"input_observations"`
+	OutputObservations        []ctpOutputObservation `json:"output_observations"`
+	InputObservationsDropped  uint64                 `json:"input_observations_dropped"`
+	OutputObservationsDropped uint64                 `json:"output_observations_dropped"`
 }
 
 func (c *tokenCounts) add(other tokenCounts) {
@@ -98,6 +157,15 @@ type requestObservation struct {
 	upstreamDuration time.Duration
 	usageCounts      tokenCounts
 	usageObserved    bool
+}
+
+type requestMetricObservation struct {
+	Sequence                     uint64      `json:"sequence"`
+	Outcome                      string      `json:"outcome"`
+	TotalDurationMilliseconds    uint64      `json:"total_duration_ms"`
+	UpstreamDurationMilliseconds uint64      `json:"upstream_duration_ms"`
+	Usage                        tokenCounts `json:"usage"`
+	UsageObserved                bool        `json:"usage_observed"`
 }
 
 type requestLifecycleMetrics struct {
@@ -171,13 +239,16 @@ func (g *metricGroup) add(model string, counts tokenCounts) {
 type sessionMetrics struct {
 	metricGroup
 
-	Requests         requestLifecycleMetrics `json:"requests"`
-	HPatchCalls      hpatchCallMetrics       `json:"hpatch_calls"`
-	HPatchAttempts   []hpatchAttemptMetrics  `json:"hpatch_attempts"`
-	HPatchRejections []hpatch.HostRejection  `json:"hpatch_rejections"`
-	SessionID        string                  `json:"session_id"`
-	Title            string                  `json:"title"`
-	Model            string                  `json:"model"`
+	Requests                   requestLifecycleMetrics    `json:"requests"`
+	RequestObservations        []requestMetricObservation `json:"request_observations"`
+	RequestObservationsDropped uint64                     `json:"request_observations_dropped"`
+	HPatchCalls                hpatchCallMetrics          `json:"hpatch_calls"`
+	HPatchAttempts             []hpatchAttemptMetrics     `json:"hpatch_attempts"`
+	HPatchRejections           []hpatch.HostRejection     `json:"hpatch_rejections"`
+	CTP                        ctpSessionMetrics          `json:"ctp"`
+	SessionID                  string                     `json:"session_id"`
+	Title                      string                     `json:"title"`
+	Model                      string                     `json:"model"`
 }
 
 type hpatchAttemptMetrics struct {
@@ -333,13 +404,16 @@ type metricsStore struct {
 type retainedSessionMetrics struct {
 	metricGroup
 
-	requests         requestLifecycleMetrics
-	hpatchCalls      hpatchCallMetrics
-	hpatchAttempts   []hpatchAttemptMetrics
-	hpatchRejections []hpatch.HostRejection
-	hpatchSequence   uint64
-	model            string
-	modelOrder       uint64
+	requests                   requestLifecycleMetrics
+	requestObservations        []requestMetricObservation
+	requestObservationsDropped uint64
+	hpatchCalls                hpatchCallMetrics
+	hpatchAttempts             []hpatchAttemptMetrics
+	hpatchRejections           []hpatch.HostRejection
+	hpatchSequence             uint64
+	ctp                        ctpSessionMetrics
+	model                      string
+	modelOrder                 uint64
 }
 
 type activeRequest struct {
@@ -391,37 +465,160 @@ func (m *metricsStore) recordHPatch(record hpatchMetricRecord) {
 	m.notifyLocked()
 }
 
-func (m *metricsStore) recordCTPAdmission(decision ctpAdmissionDecision, nativeTokens, compactTokens uint64) {
+func ctpAdmissionMetricName(decision ctpAdmissionDecision) string {
+	switch decision {
+	case ctpAdmissionMissingCarrier:
+		return "missing_instruction_carrier"
+	case ctpAdmissionNoDefinitions:
+		return "no_definitions"
+	case ctpAdmissionUnprofitable:
+		return "unprofitable"
+	case ctpAdmissionAdmitted:
+		return "admitted"
+	default:
+		return "disabled"
+	}
+}
+
+func (c *ctpCompressionMetrics) recordAdmission(
+	decision ctpAdmissionDecision,
+	representation ctpRepresentationMetrics,
+	definitions, dictionaryBytes uint64,
+	encodeDuration time.Duration,
+) {
+	c.ConsideredRequests++
+	c.Codec.EncodeOperations++
+	c.Codec.EncodeNanoseconds += uint64(max(encodeDuration, 0))
+	switch decision {
+	case ctpAdmissionMissingCarrier:
+		c.MissingCarrier++
+	case ctpAdmissionNoDefinitions:
+		c.NoDefinitions++
+	case ctpAdmissionUnprofitable:
+		c.Unprofitable++
+	case ctpAdmissionAdmitted:
+		c.EncodedRequests++
+		c.Input.NativeTokens += representation.NativeTokens
+		c.Input.CompactTokens += representation.CompactTokens
+		c.InputBytes.NativeBytes += representation.NativeBytes
+		c.InputBytes.CompactBytes += representation.CompactBytes
+		c.RequestDictionary.Definitions += definitions
+		c.RequestDictionary.Bytes += dictionaryBytes
+	}
+}
+
+func (c *ctpCompressionMetrics) recordOutput(
+	representation ctpRepresentationMetrics,
+	definitions, dictionaryBytes uint64,
+) {
+	c.AssistantTexts++
+	c.Output.NativeTokens += representation.NativeTokens
+	c.Output.CompactTokens += representation.CompactTokens
+	c.OutputBytes.NativeBytes += representation.NativeBytes
+	c.OutputBytes.CompactBytes += representation.CompactBytes
+	c.ResponseDictionary.Definitions += definitions
+	c.ResponseDictionary.Bytes += dictionaryBytes
+}
+
+func (c *ctpCompressionMetrics) recordDecode(duration time.Duration, failed bool) {
+	c.Codec.DecodeOperations++
+	c.Codec.DecodeNanoseconds += uint64(max(duration, 0))
+	if failed {
+		c.Codec.DecodeFailures++
+	}
+}
+
+func appendLatestMetricObservation[T any](observations []T, observation T, limit int) ([]T, bool) {
+	if len(observations) < limit {
+		return append(observations, observation), false
+	}
+	copy(observations, observations[1:])
+	observations[len(observations)-1] = observation
+	return observations, true
+}
+
+func (m *metricsStore) recordCTPAdmission(
+	sessionID string,
+	requestSequence uint64,
+	decision ctpAdmissionDecision,
+	representation ctpRepresentationMetrics,
+	definitions, dictionaryBytes uint64,
+	encodeDuration time.Duration,
+) {
 	if m == nil || decision == ctpAdmissionDisabled {
 		return
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.ctp.ConsideredRequests++
-	switch decision {
-	case ctpAdmissionMissingCarrier:
-		m.ctp.MissingCarrier++
-	case ctpAdmissionNoDefinitions:
-		m.ctp.NoDefinitions++
-	case ctpAdmissionUnprofitable:
-		m.ctp.Unprofitable++
-	case ctpAdmissionAdmitted:
-		m.ctp.EncodedRequests++
-		m.ctp.Input.NativeTokens += nativeTokens
-		m.ctp.Input.CompactTokens += compactTokens
+	m.ctp.recordAdmission(decision, representation, definitions, dictionaryBytes, encodeDuration)
+	if validMetricSessionID(sessionID) {
+		retained := m.retainedSessionLocked(sessionID)
+		retained.ctp.recordAdmission(decision, representation, definitions, dictionaryBytes, encodeDuration)
+		observation := ctpInputObservation{
+			ctpRepresentationMetrics: representation,
+			RequestSequence:          requestSequence,
+			Decision:                 ctpAdmissionMetricName(decision),
+			Definitions:              definitions,
+			DictionaryBytes:          dictionaryBytes,
+			EncodeNanoseconds:        uint64(max(encodeDuration, 0)),
+		}
+		var dropped bool
+		retained.ctp.InputObservations, dropped = appendLatestMetricObservation(
+			retained.ctp.InputObservations, observation, maxSessionCTPObservations,
+		)
+		if dropped {
+			retained.ctp.InputObservationsDropped++
+		}
+		m.retainedSessions[sessionID] = retained
 	}
 	m.notifyLocked()
 }
 
-func (m *metricsStore) recordCTPOutput(nativeTokens, compactTokens uint64) {
+func (m *metricsStore) recordCTPOutput(
+	sessionID string,
+	requestSequence uint64,
+	representation ctpRepresentationMetrics,
+	definitions, dictionaryBytes uint64,
+) {
 	if m == nil {
 		return
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.ctp.AssistantTexts++
-	m.ctp.Output.NativeTokens += nativeTokens
-	m.ctp.Output.CompactTokens += compactTokens
+	m.ctp.recordOutput(representation, definitions, dictionaryBytes)
+	if validMetricSessionID(sessionID) {
+		retained := m.retainedSessionLocked(sessionID)
+		retained.ctp.recordOutput(representation, definitions, dictionaryBytes)
+		observation := ctpOutputObservation{
+			ctpRepresentationMetrics: representation,
+			RequestSequence:          requestSequence,
+			Definitions:              definitions,
+			DictionaryBytes:          dictionaryBytes,
+		}
+		var dropped bool
+		retained.ctp.OutputObservations, dropped = appendLatestMetricObservation(
+			retained.ctp.OutputObservations, observation, maxSessionCTPObservations,
+		)
+		if dropped {
+			retained.ctp.OutputObservationsDropped++
+		}
+		m.retainedSessions[sessionID] = retained
+	}
+	m.notifyLocked()
+}
+
+func (m *metricsStore) recordCTPDecode(sessionID string, duration time.Duration, failed bool) {
+	if m == nil {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.ctp.recordDecode(duration, failed)
+	if validMetricSessionID(sessionID) {
+		retained := m.retainedSessionLocked(sessionID)
+		retained.ctp.recordDecode(duration, failed)
+		m.retainedSessions[sessionID] = retained
+	}
 	m.notifyLocked()
 }
 
@@ -453,6 +650,13 @@ func (m *metricsStore) beginRequest(sessionID, model string) *activeRequestHandl
 
 func validMetricSessionID(sessionID string) bool {
 	return strings.TrimSpace(sessionID) != ""
+}
+
+func (h *activeRequestHandle) metricIdentity() (string, uint64) {
+	if h == nil {
+		return "", 0
+	}
+	return h.sessionID, h.requestID
 }
 
 func (h *activeRequestHandle) finish(observation requestObservation) {
@@ -487,6 +691,21 @@ func (h *activeRequestHandle) finish(observation requestObservation) {
 		retained.requests.addFinished(observation)
 		if observation.usageObserved && observation.usageCounts != (tokenCounts{}) {
 			retained.add(h.model, observation.usageCounts)
+		}
+		requestMetric := requestMetricObservation{
+			Sequence:                     h.requestID,
+			Outcome:                      observation.outcome.String(),
+			TotalDurationMilliseconds:    durationMilliseconds(observation.totalDuration),
+			UpstreamDurationMilliseconds: durationMilliseconds(observation.upstreamDuration),
+			Usage:                        observation.usageCounts,
+			UsageObserved:                observation.usageObserved,
+		}
+		var dropped bool
+		retained.requestObservations, dropped = appendLatestMetricObservation(
+			retained.requestObservations, requestMetric, maxSessionRequestObservations,
+		)
+		if dropped {
+			retained.requestObservationsDropped++
 		}
 		h.store.retainedSessions[h.sessionID] = retained
 	}
@@ -549,8 +768,11 @@ func (m *metricsStore) snapshot() metricsSnapshot {
 	for id, retained := range m.retainedSessions {
 		sessions[id] = sessionMetrics{
 			SessionID: id, Model: retained.model, Requests: retained.requests,
-			HPatchCalls: retained.hpatchCalls, HPatchAttempts: cloneHPatchAttempts(retained.hpatchAttempts),
+			RequestObservations:        slices.Clone(retained.requestObservations),
+			RequestObservationsDropped: retained.requestObservationsDropped,
+			HPatchCalls:                retained.hpatchCalls, HPatchAttempts: cloneHPatchAttempts(retained.hpatchAttempts),
 			HPatchRejections: slices.Clone(retained.hpatchRejections),
+			CTP:              cloneCTPSessionMetrics(retained.ctp),
 			metricGroup:      cloneMetricGroup(retained.metricGroup),
 		}
 	}
@@ -604,6 +826,12 @@ func (m *metricsStore) snapshot() metricsSnapshot {
 	// off the in-memory telemetry mutex so request lifecycle writers are not blocked.
 	snapshot.Gain, snapshot.GainError = loadGainMetrics(gainDirectory)
 	return snapshot
+}
+
+func cloneCTPSessionMetrics(metrics ctpSessionMetrics) ctpSessionMetrics {
+	metrics.InputObservations = slices.Clone(metrics.InputObservations)
+	metrics.OutputObservations = slices.Clone(metrics.OutputObservations)
+	return metrics
 }
 
 func cloneHPatchAttempts(attempts []hpatchAttemptMetrics) []hpatchAttemptMetrics {
