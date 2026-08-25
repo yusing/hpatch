@@ -9,10 +9,11 @@ Correctness is decided by hidden executable tests plus a changed-path boundary.
 The historical oracle qualifies the grader, but its Git history and patch are
 never available to an agent.
 
-The same runner also owns a CTP-only comparison. It imports one passing native-Hpatch
-result and its router metrics, then runs one Hpatch treatment with CTP/1. The report
-retains both instruction digests and explicitly labels a mismatch, because an historical
-baseline with different instructions is not an isolated protocol experiment.
+The same runner also owns a fresh native-versus-CTP-active comparison. Every repetition runs native
+Hpatch without CTP guidance and CTP-active Hpatch with the guidance and CTP/1 enabled. Every arm gets
+an independent task snapshot, and order rotates across repetitions. The report separates model
+behavior, protocol-local
+compression and codec work, and provider-observed operational usage.
 
 ## Run it
 
@@ -22,19 +23,17 @@ From the repository root, run one Hpatch attempt against the fixed published con
 BENCHMARK_MODE=hpatch-only REPETITIONS=1 bash benchmarks/bench.sh
 ```
 
-Run exactly one Hpatch-CTP/1 treatment against the published native-Hpatch result with:
+Run the specialized native-versus-CTP-active task with:
 
 ```sh
-BENCHMARK_MODE=ctp-only BENCHMARK_REPORT_ISSUES=false REPETITIONS=1 bash benchmarks/bench.sh
+TASK_ID=batch-diagnostic-collapse BENCHMARK_MODE=ctp-only \
+  BENCHMARK_REPORT_ISSUES=false REPETITIONS=4 bash benchmarks/bench.sh
 ```
 
-This schedules one paid model attempt. CTP-only mode requires issue reporting to be
-disabled so the treatment does not add the diagnostic reporting surface. It imports the
-passing Hpatch record and Hpatch router metrics from the fixed published baseline by default;
-`CTP_NATIVE_BASELINE_DIR` may select another complete matching result. The baseline must
-match the task, model, and reasoning effort and contain complete provider usage. The report
-labels the imported `control` storage arm as **Hpatch native** and the measured `hpatch`
-storage arm as **Hpatch CTP/1**.
+This schedules two paid model attempts per repetition, eight with the command above. CTP-only
+mode requires issue reporting to be disabled so no arm adds the diagnostic reporting surface.
+Native uses a native-protocol Hpatch router; active uses a separate CTP/1 Hpatch router. The task
+requires the same exact decoded final response in both arms.
 
 Treatment runs enable the model-visible `report_issue` tool by default. Set
 `BENCHMARK_REPORT_ISSUES=false` to omit it. When enabled, the treatment instructions require one
@@ -158,6 +157,7 @@ Both arms use:
 - `-c 'sandbox_mode="danger-full-access"'`, because the disposable container is
   the containment boundary;
 - `-c 'approval_policy="never"'`;
+- the `apps` Codex feature disabled;
 - the same Codex-generated turn metadata and workspace launch shape;
 - the same stock base-instruction source and all text outside the repository-owned replacement;
 
@@ -177,6 +177,16 @@ Code Mode surfaces displaced by the routed tools, exposes `functions.hpatch` and
 arms select their complete request instructions before routing; the treatment router replaces
 the stock editing guidance in memory before forwarding. Native runs stop after that ordinary
 rewrite; CTP/1 appends only its request-local dictionary data to the resulting instruction carrier.
+
+The CTP-only comparison measures the complete deployable conditions:
+
+| Condition | Persistent CTP guidance | Router protocol | Model-visible content |
+| --- | --- | --- | --- |
+| Native | Removed | `native` | Native strings |
+| CTP-active | Present and active | `ctp1` | Token-positive request representations; decoded tool payloads and responses |
+
+The router derives both conditions from the same central guidance: native omits the leading
+`## CTP/1 transport` section, while active retains it and appends request-local dictionary data.
 
 ## Router-injected tool instructions
 
@@ -209,7 +219,7 @@ The pre-router difference between the two arms is retained as:
 $run_dir/instructions/control-to-hpatch-request.diff
 ```
 
-Both files are mounted read-only at `/bench-instructions`. Each arm passes its
+The instruction directory is mounted read-only at `/bench-instructions`. Each arm passes its
 selected complete file through Codex's supported configuration:
 
 ```sh
@@ -221,6 +231,9 @@ or:
 ```sh
 -c 'model_instructions_file="/bench-instructions/hpatch.md"'
 ```
+
+In CTP-only mode both arms select the same `hpatch.md` pre-router instructions. The native router
+injects the central guidance without its CTP section; the active router injects the complete source.
 
 Each result record contains the selected path, container path, SHA-256 digest,
 stock instruction path, and—for hpatch—the injected source and pre-router unified diff path.
@@ -240,11 +253,13 @@ RUN curl -fsSL https://chatgpt.com/codex/install.sh \
 `CODEX_RELEASE` defaults to `0.146.0`, pinning the executable and bundled stock
 base prompt used by the comparison.
 
-`benchmarks/compose.yaml` owns three services:
+`benchmarks/compose.yaml` owns five services:
 
-- `control`: passthrough router on host port 8081;
-- `hpatch`: treatment router on host port 8082 with isolated gain storage;
-- `agent`: disposable Codex execution container using host networking.
+- `control`: passthrough router for paired runs, or native-protocol Hpatch router for CTP-only runs;
+- `hpatch`: Hpatch treatment router, using CTP/1 for the active CTP condition;
+- `dependency-loader`: setup-only dependency cache population with egress;
+- `control-agent`: disposable Codex environment isolated with the control router;
+- `hpatch-agent`: disposable Codex environment isolated with the Hpatch router.
 
 Every attempt is launched through:
 
@@ -256,16 +271,16 @@ docker compose -f benchmarks/compose.yaml run \
   --no-deps \
   --volume "$PWD:$PWD" \
   --workdir "$PWD" \
-  agent \
+  control-agent \
   codex ...
 ```
 
-Only the current attempt workspace, the two generated instruction files, and the
+Only the current attempt workspace, generated instruction directory, and the
 Codex authentication file are mounted into an agent container. The source etcd
 clone, hidden graders, oracle workspace, router gain storage, and other attempt
 workspaces are not mounted.
 
-The treatment router sees the run's `work` directory at the same absolute path
+Each Hpatch router sees the run's `work` directory at the same absolute path
 that Codex declares for its routed workspace. This is required for server-side
 hpatch translation. The benchmark does not set the reserved
 `x-codex-turn-metadata` header: Codex owns that protocol metadata.
@@ -404,6 +419,7 @@ the Codex process did not time out
 every changed or untracked path is allowed
 the hidden grader passed
 Codex JSONL was valid enough to extract the attempt record
+the exact decoded final response matched when the task declares one
 ```
 
 Timeouts, infrastructure failures, incorrect changes, hidden-test failures, and
@@ -416,6 +432,10 @@ active arm, starts no additional arm, waits for partial evidence capture, merges
 the retained result files, collects available router metrics and gain, and
 brings down Compose. This prevents control work from continuing after the
 treatment can no longer produce a valid comparison.
+
+CTP-only mode instead completes every scheduled native and active attempt so model
+correctness and recovery remain benchmark data. It exits nonzero after evidence collection when any
+attempt or required compression direction fails.
 
 SIGINT and SIGTERM use the same evidence-preserving cancellation path.
 
@@ -444,7 +464,8 @@ within the immediately preceding request's eligible prefix. Historical imported 
 logs predate request-level token attribution show these derived values as unavailable.
 
 Each concurrent attempt first writes its own `result.json`. After a complete run,
-the parent shell sorts and merges all `2 * repetitions` files into `results.jsonl`. After a
+the parent shell sorts and merges `2 * repetitions` paired or CTP
+records into `results.jsonl`. After a
 fatal hpatch failure or user cancellation, it instead merges every result
 captured before teardown. Private files avoid concurrent writes to one JSONL
 file in both cases.
@@ -491,11 +512,14 @@ output_tokens
 reasoning_output_tokens
 turn count
 completed item counts
+model-turn failure count
+unified-exec process-creation error count
 Codex stdout and stderr paths
 ```
 
-CTP-only comparison records use `hpatch` for both router modes, `native` for the
-imported native arm, and `ctp1` for the measured compact arm.
+CTP-only comparison records use the `native` and `ctp` arms, `hpatch` router mode for
+both, and the `native` and `ctp1` model protocols respectively. Every record contains
+both the hidden grader and a required `decoded-final-response` grader.
 
 Grader duration is recorded separately so test compilation and execution do not
 inflate agent wall time.
@@ -518,9 +542,16 @@ curl --fail --silent --show-error \
 failed hpatch calls, hpatch token estimates, equivalent translated
 `apply_patch` token estimates, definition input tokens, removed stock-definition
 tokens, reports, and diagnostics. In CTP/1 mode it also contains `ctp` counters
-for admitted representations: whole-request native and compact input estimates; fallbacks for
-a missing instruction carrier, no positive definition, and an unprofitable complete representation; plus
-native and compact assistant-output estimates taken from each completed response.
+for admitted representations: whole-request native and compact token and byte estimates; fallbacks
+for a missing instruction carrier, no positive definition, and an unprofitable stable admission
+projection; request and response dictionary sizes; codec operations, time, and decode failures;
+plus native and compact assistant-output estimates taken from each completed response. Session
+records retain bounded individual provider requests and CTP input/output observations. A dropped
+counter makes retention truncation fail the CTP report instead of silently changing an aggregate.
+
+In CTP-only mode `control-metrics.json` contains the fresh native sessions from the native-protocol
+Hpatch router. `hpatch-metrics.json` contains the fresh active sessions. The report
+joins each result's thread to its exact session before aggregating an arm.
 
 A zero structured gain value is meaningful only if treatment requests reached hpatch. If
 the treatment failed before a successful or rejected hpatch call, zero calls and
@@ -561,21 +592,38 @@ are cold or newly appended input. The two attribution buckets exactly reconcile 
 uncached input. This avoids treating a large new command result as though an existing prompt
 prefix had fallen out of cache.
 
-The CTP report uses the same arithmetic but labels it explicitly as CTP/1 minus the imported native result.
-It reports total, cached, and uncached input tokens separately, plus output and
-reasoning-output tokens. Negative token deltas favor CTP/1. Provider Responses usage,
-observed by each router before local response decoding, is the authoritative end-to-end
-measure; missing usage makes the report fail rather than silently substituting the Codex
-client's possibly incomplete terminal events. Hidden-grader pass rate and overall task
-acceptance are separate rows.
+The CTP report uses the deployable comparison:
 
-The same report separately shows CTP's internal input and assistant-output compression. For
-each direction it reports native tokens, compact tokens, `compact / native`, and
-`(native - compact) / native`. Input counts complete admitted post-Hpatch requests. Output
-counts assistant text once per logical content item and excludes tool calls; streaming counts come
-from the terminal `response.completed` object rather than intermediate event copies. These use the
-repository GPT-5 estimator and are not derived from the imported native baseline. If no request
-admits CTP, the report shows the admission count and marks both ratios unavailable.
+```text
+active - native = deployable end-to-end effect
+```
+
+Its model-performance section reports hidden correctness, exact decoded-response correctness,
+overall task acceptance, median wall time, requests, agent turns, reasoning, and completed shell and
+file-change items. A separate ownership table preserves model-turn, Codex executor, router, Hpatch rejection,
+and CTP decode failures as operational outcomes without conflating their sources.
+
+The protocol section reports native and compact tokens and UTF-8 bytes for every active request and
+logical assistant text, dictionary definitions and bytes, admission decisions, and aggregate codec
+operations and time. Input counts complete admitted post-Hpatch requests. Output excludes tool calls;
+streaming counts come from terminal `response.output_text.done` events rather than repeated aggregate
+projections. These same-request estimates use the repository GPT-5 estimator.
+
+The operational section reports total, cached, and uncached input, output and reasoning output,
+requests, and wall time from router-observed provider usage. It includes every individual attempt and
+provider request. Missing usage, a dropped bounded observation, or a per-request provider total that
+does not exactly reconcile with its session aggregate fails the report. A correctness-first Pareto
+label is `better` or `worse` only when one condition dominates wall time,
+input, output, and requests; tradeoffs are `mixed`. Token components are the cost basis, but the
+repository has no authoritative pricing table, so the report does not fabricate dollar cost.
+
+A protocol-focused task can require either direction by setting
+`ctp.require_input_compression` or `ctp.require_output_compression` in its task manifest. The
+`batch-diagnostic-collapse` task requires both. Its assistant-output check passes only when the
+model emits response-dictionary references and the compact text is strictly smaller than the exact
+restored final response. Its `expected_final_response` manifest field makes that same restored text a
+required grader in native and active attempts. A failed requirement remains visible in
+`summary.md` and makes the retained benchmark run unsuccessful.
 
 Negative duration or token deltas favor hpatch. Report medians and individual
 pairs for small samples; four pairs are too few for a strong statistical claim.

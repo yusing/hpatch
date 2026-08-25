@@ -108,7 +108,7 @@ func Run(ctx context.Context, args []string, stderr io.Writer) (runErr error) {
 		defer func() {
 			runErr = errors.Join(runErr, registry.Close())
 		}()
-		hpatchCalls = newHPatchProxy(translator, registry, customizedInstructions, titles)
+		hpatchCalls = newHPatchProxy(translator, registry, customizedInstructions, compactTokens != nil, titles)
 		defer func() {
 			runErr = errors.Join(runErr, hpatchCalls.Close())
 		}()

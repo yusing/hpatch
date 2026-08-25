@@ -242,9 +242,10 @@ after subagent compaction; inherited side conversations already carry the marked
 refreshed idempotently. Tool descriptions contain only call-local contracts and are not a fallback
 prompt channel.
 
-Under the default `--model-protocol native`, the ordinary guidance and tool rewrite is the complete
-model-visible transformation. Opt-in `--model-protocol ctp1` additionally applies the lossless
-Compact Token Protocol to readable repeated
+Under the default `--model-protocol native`, the router omits the leading `## CTP/1 transport`
+section from the central guidance and the ordinary guidance and tool rewrite is the complete
+model-visible transformation. Opt-in `--model-protocol ctp1` injects the complete source and
+additionally applies the lossless Compact Token Protocol to readable repeated
 token substrings after the ordinary Hpatch rewrite. It appends an exact-string request dictionary
 to the rewritten top-level instructions or first textual developer-message carrier. Assistant
 text can extend that dictionary with exact response-local strings before reusing them.

@@ -46,9 +46,26 @@ if [[ -d $issue_reports_directory ]]; then
 fi
 exact_evidence_enabled=false
 exact_evidence_schema=
+require_ctp_input_compression=false
+require_ctp_output_compression=false
 if [[ -s $benchmark_config ]]; then
 	exact_evidence_enabled=$(jq -r '.exact_hpatch_evidence_enabled // false' "$benchmark_config")
 	exact_evidence_schema=$(jq -r '.exact_hpatch_evidence_schema // empty' "$benchmark_config")
+	if ! ctp_requirements=$(jq -r '
+		[(.ctp.require_input_compression // false),
+		 (.ctp.require_output_compression // false)] as $requirements |
+		if all($requirements[]; type == "boolean") then
+			$requirements | @tsv
+		else
+			error("CTP compression requirements must be boolean")
+		end
+	' "$benchmark_config"); then
+		printf 'report.sh: benchmark configuration has invalid CTP compression requirements: %s\n' \
+			"$benchmark_config" >&2
+		exit 1
+	fi
+	IFS=$'\t' read -r require_ctp_input_compression require_ctp_output_compression \
+		<<<"$ctp_requirements"
 fi
 if [[ $exact_evidence_enabled == true && -d $exact_evidence_directory ]]; then
 	bash "$benchmark_root/collect-hpatch-exact-evidence.sh" \
@@ -67,144 +84,8 @@ commit=${commit%-*}
 ctp_comparison=$(jq -s 'any(.model_protocol == "ctp1")' "$results")
 
 if [[ $ctp_comparison == true ]]; then
-	if [[ $has_control != true ]] || ! jq -se '
-		length == 2 and
-		(map(.task_id) | unique | length) == 1 and
-		(map(.model) | unique | length) == 1 and
-		(map(.reasoning_effort) | unique | length) == 1 and
-		(group_by(.repetition) | all(.[];
-			length == 2 and
-			(map(select(.arm == "control" and .router_mode == "hpatch" and .model_protocol == "native" and
-				(.imported_native_baseline.summary | type) == "string")) | length) == 1 and
-			(map(select(.arm == "hpatch" and .router_mode == "hpatch" and .model_protocol == "ctp1")) | length) == 1 and
-			all(.[]; any(.graders[]; .required == true))
-		))
-	' "$results" >/dev/null; then
-		printf 'report.sh: CTP comparison records violate the imported-native baseline contract\n' >&2
-		exit 1
-	fi
-	for metrics in "$control_metrics" "$hpatch_metrics"; do
-		if ! jq -e '
-			.mode == "hpatch" and
-			.requests.started > 0 and
-			.requests.usage_missing == 0 and
-			.requests.usage_observed == .requests.started and
-			([.total.input_tokens, .total.uncached_input_tokens, .total.output_tokens, .total.reasoning_tokens] |
-				all(type == "number"))
-		' "$metrics" >/dev/null; then
-			printf 'report.sh: CTP comparison has incomplete provider usage: %s\n' "$metrics" >&2
-			exit 1
-		fi
-	done
-	if ! jq -e '
-		([.ctp.considered_requests, .ctp.encoded_requests, .ctp.missing_carrier,
-		  .ctp.no_definitions, .ctp.unprofitable] | all(type == "number" and . >= 0)) and
-		.ctp.considered_requests == .requests.started and
-		(.ctp.encoded_requests + .ctp.missing_carrier + .ctp.no_definitions +
-		 .ctp.unprofitable) == .ctp.considered_requests and
-		([.ctp.input.native_tokens, .ctp.input.compact_tokens,
-		  .ctp.output.native_tokens, .ctp.output.compact_tokens, .ctp.assistant_texts] |
-			all(type == "number" and . >= 0)) and
-		(if .ctp.encoded_requests == 0 then
-			.ctp.input.native_tokens == 0 and .ctp.input.compact_tokens == 0
-		else
-			.ctp.input.native_tokens > .ctp.input.compact_tokens
-		end)
-	' "$hpatch_metrics" >/dev/null; then
-		printf 'report.sh: CTP comparison has incomplete compression metrics: %s\n' "$hpatch_metrics" >&2
-		exit 1
-	fi
-	baseline_summary=$(jq -sr '[.[] | select(.arm == "control") | .imported_native_baseline.summary][0]' "$results")
-	native_instruction_sha=$(jq -sr '[.[] | select(.arm == "control") | .base_instructions.sha256][0]' "$results")
-	ctp_instruction_sha=$(jq -sr '[.[] | select(.arm == "hpatch") | .base_instructions.sha256][0]' "$results")
-	{
-		printf '# CTP benchmark report — `%s`\n\n' "$commit"
-		printf 'Task: `%s`  \n' "$task_id"
-		printf 'Configuration: `%s`, %s reasoning. One current CTP/1 treatment is compared with the passing native-Hpatch result imported from `%s`.\n\n' \
-			"$model" "$reasoning_effort" "$baseline_summary"
-		if [[ $native_instruction_sha == "$ctp_instruction_sha" ]]; then
-			printf 'Instruction digests match: `%s`.\n\n' "$ctp_instruction_sha"
-		else
-			printf 'Instruction digests differ (native `%s`, CTP/1 `%s`), so token deltas include this historical-run confound and are not an isolated protocol effect.\n\n' \
-				"$native_instruction_sha" "$ctp_instruction_sha"
-		fi
-		printf '## Outcome\n\n'
-		printf '| Measure | Hpatch native | Hpatch CTP/1 | Difference |\n'
-		printf '|---|---:|---:|---:|\n'
-		jq -sr --slurpfile native_metrics "$control_metrics" --slurpfile ctp_metrics "$hpatch_metrics" '
-			def runs($arm): [.[] | select(.arm == $arm)];
-			(runs("control")) as $native |
-			(runs("hpatch")) as $ctp |
-			($native_metrics[0].total) as $native_usage |
-			($ctp_metrics[0].total) as $ctp_usage |
-			def total($runs; $path): $runs | map(getpath($path)) | add;
-			def task_passes($runs): $runs | map(select(.task_pass)) | length;
-			def grader_passes($runs): $runs | map(select(all(.graders[] | select(.required); .passed))) | length;
-			[
-				["Hidden grader pass rate", "\(grader_passes($native))/\($native | length)", "\(grader_passes($ctp))/\($ctp | length)",
-					(if grader_passes($ctp) == grader_passes($native) then "equal" elif grader_passes($ctp) > grader_passes($native) then "better" else "worse" end)],
-				["Task acceptance rate", "\(task_passes($native))/\($native | length)", "\(task_passes($ctp))/\($ctp | length)",
-					(if task_passes($ctp) == task_passes($native) then "equal" elif task_passes($ctp) > task_passes($native) then "better" else "worse" end)],
-				["Agent wall time (s)", total($native; ["agent", "duration_ms"]) / 1000, total($ctp; ["agent", "duration_ms"]) / 1000,
-					(total($ctp; ["agent", "duration_ms"]) - total($native; ["agent", "duration_ms"])) / 1000],
-				["Total input tokens", $native_usage.input_tokens, $ctp_usage.input_tokens, $ctp_usage.input_tokens - $native_usage.input_tokens],
-				["Cached input tokens", $native_usage.input_tokens - $native_usage.uncached_input_tokens,
-					$ctp_usage.input_tokens - $ctp_usage.uncached_input_tokens,
-					($ctp_usage.input_tokens - $ctp_usage.uncached_input_tokens) - ($native_usage.input_tokens - $native_usage.uncached_input_tokens)],
-				["Uncached input tokens", $native_usage.uncached_input_tokens, $ctp_usage.uncached_input_tokens,
-					$ctp_usage.uncached_input_tokens - $native_usage.uncached_input_tokens],
-				["Output tokens", $native_usage.output_tokens, $ctp_usage.output_tokens, $ctp_usage.output_tokens - $native_usage.output_tokens],
-				["Reasoning output tokens", $native_usage.reasoning_tokens, $ctp_usage.reasoning_tokens,
-					$ctp_usage.reasoning_tokens - $native_usage.reasoning_tokens],
-				["Model requests", $native_metrics[0].requests.started, $ctp_metrics[0].requests.started,
-					$ctp_metrics[0].requests.started - $native_metrics[0].requests.started]
-			][] | "| " + (map(tostring) | join(" | ")) + " |"
-		' "$results"
-		printf '\nDifferences are CTP/1 minus the imported native result; negative token values favor CTP/1 only after correctness and comparability are established. Usage is provider-reported and was observed before local response decoding.\n\n'
-		printf '## CTP compression\n\n'
-		jq -r '"Admitted CTP representations: **\(.ctp.encoded_requests)/\(.requests.started)** requests.\n"' "$hpatch_metrics"
-		printf '| Admission decision | Requests |\n'
-		printf '|---|---:|\n'
-		jq -r '
-			.ctp |
-			[
-				["Admitted", .encoded_requests],
-				["Missing instruction carrier", .missing_carrier],
-				["No positive definition", .no_definitions],
-				["Complete representation not smaller", .unprofitable]
-			][] | "| " + (map(tostring) | join(" | ")) + " |"
-		' "$hpatch_metrics"
-		printf '\n'
-		printf '| Direction | Native representation | Compact representation | Compact/native | Saved |\n'
-		printf '|---|---:|---:|---:|---:|\n'
-		jq -r '
-			def percent($value): (($value * 100 | round) / 100 | tostring) + "%";
-			def ratio($compact; $native): if $native == 0 then "n/a" else percent($compact * 100 / $native) end;
-			def saving($compact; $native): if $native == 0 then "n/a" else percent(($native - $compact) * 100 / $native) end;
-			.ctp as $ctp |
-			[
-				["Input", $ctp.input.native_tokens, $ctp.input.compact_tokens,
-					ratio($ctp.input.compact_tokens; $ctp.input.native_tokens),
-					saving($ctp.input.compact_tokens; $ctp.input.native_tokens)],
-				["Assistant output", $ctp.output.native_tokens, $ctp.output.compact_tokens,
-					ratio($ctp.output.compact_tokens; $ctp.output.native_tokens),
-					saving($ctp.output.compact_tokens; $ctp.output.native_tokens)]
-			][] | "| " + (map(tostring) | join(" | ")) + " |"
-		' "$hpatch_metrics"
-		printf '\nThese ratios are internal CTP measurements, not CTP-versus-baseline usage ratios. Input compares each admitted post-Hpatch native request with its compact upstream representation. Output compares compact and decoded assistant text once per logical content item. Both use the repository GPT-5 token estimator.\n\n'
-		ctp_grader_passes=$(jq -sr '[.[] | select(.arm == "hpatch" and all(.graders[] | select(.required); .passed))] | length' "$results")
-		ctp_runs=$(jq -sr '[.[] | select(.arm == "hpatch")] | length' "$results")
-		if ((ctp_grader_passes != ctp_runs)); then
-			printf '**Correctness gate failed:** CTP/1 passed %s/%s hidden graders. Its token deltas are not an efficiency result.\n\n' \
-				"$ctp_grader_passes" "$ctp_runs"
-		fi
-		printf 'The machine-readable evidence remains in `results.jsonl`, `control-metrics.json`, and `hpatch-metrics.json`, plus detailed `artifacts/`. This comparison intentionally omits stock-Codex-versus-Hpatch findings because both arms use Hpatch.\n'
-	} >"$temporary"
-	mv -f -- "$temporary" "$summary"
-	printf 'Benchmark summary: %s\n' "$summary"
-	exit 0
+	exec bash "$benchmark_root/report-ctp.sh" "$run_dir"
 fi
-
 shopt -s nullglob
 control_events=("$run_dir/artifacts/$task_id"/"$task_id-control-r"*/codex.jsonl)
 hpatch_events=("$run_dir/artifacts/$task_id"/"$task_id-hpatch-r"*/codex.jsonl)

@@ -4,11 +4,11 @@
 
 In hpatch router mode, the model receives `hpatch` and `shell` as standalone custom tools.
 All persistent hread, hgrep, hsymbol, inspect_file, shell-execution, and HPATCH workflow guidance comes
-from `contrib/codex/file-editing-instructions.md`. The router injects that source into the
-top-level Responses `instructions` value in memory and never changes an instruction file.
-Native model protocol stops after the ordinary guidance and tool rewrite. CTP/1 may append
-dictionary data to the resulting top-level or first textual developer-message carrier under
-`REQ-CTP-001`.
+from `contrib/codex/file-editing-instructions.md`. The router injects a protocol-specific projection
+of that source into the top-level Responses `instructions` value in memory and never changes an
+instruction file. Native model protocol omits the leading CTP section and stops after the ordinary
+guidance and tool rewrite. CTP/1 injects the complete source and may append dictionary data to the
+resulting top-level or first textual developer-message carrier under `REQ-CTP-001`.
 Hread, hgrep, hsymbol, and inspect_file remain private executor contributions inside the
 authenticated shell worker; their custom-tool specifications are not sent to the model, direct
 model calls to their names are not routed, and no executable frontend is installed for them.
@@ -1363,8 +1363,9 @@ Acceptance:
 rules and all durable edit, shell, read, search, and inspection guidance.
 `doc/spec/interface.md` owns the normative engine and router contract. Model-visible tool descriptions contain only concise
 call-local contracts and request-specific schemas. The router does not use private tool
-descriptions as prompt text. Native model protocol stops after the ordinary guidance rewrite;
-CTP/1 may then append only its request-local dictionary data under `REQ-CTP-001`.
+descriptions as prompt text. Native model protocol injects the central source without its leading
+CTP section and stops after the ordinary guidance rewrite; CTP/1 injects the complete source and may
+then append only its request-local dictionary data under `REQ-CTP-001`.
 
 For each eligible turn carrying a non-null Responses `instructions` string, the router refreshes
 one current marked hpatch section or replaces the pinned stock Codex file-editing section and its
@@ -1429,8 +1430,9 @@ Persistent guidance teaches this workflow:
 Acceptance:
 
 1. A model can choose and encode every HPATCH/2 operation from the persistent guidance.
-2. The forwarded prompt contains the central guidance exactly once and omits the pinned stock
-   apply_patch, rg, and exec_command instructions.
+2. The forwarded prompt contains the selected central guidance exactly once and omits the pinned
+   stock apply_patch, rg, and exec_command instructions. Native omits the CTP section; CTP/1 retains
+   it.
 3. A marked prompt retains content before and after the owned section and refreshes idempotently;
    a configured custom prompt without a recognized section retains its content before the append.
 4. Missing and null request instructions remain byte-equivalent. An unconfigured, unrecognized

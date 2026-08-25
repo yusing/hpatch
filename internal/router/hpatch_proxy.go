@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/yusing/hpatch"
+	codexinstructions "github.com/yusing/hpatch/contrib/codex"
 	"github.com/yusing/hpatch/internal/router/toolplugin"
 )
 
@@ -225,6 +226,7 @@ type hpatchProxy struct {
 	translator             hpatchTranslator
 	registry               *toolRegistry
 	customizedInstructions bool
+	modelInstructions      string
 	exactEvidence          *hpatchExactEvidenceRecorder
 	shellDirectory         string
 	titles                 *sessionTitleCache
@@ -238,7 +240,7 @@ type hpatchProxy struct {
 	closed          bool
 }
 
-func newHPatchProxy(translator hpatchTranslator, registry *toolRegistry, customizedInstructions bool, titleCaches ...*sessionTitleCache) *hpatchProxy {
+func newHPatchProxy(translator hpatchTranslator, registry *toolRegistry, customizedInstructions, compactModelProtocol bool, titleCaches ...*sessionTitleCache) *hpatchProxy {
 	if translator == nil || registry == nil {
 		return nil
 	}
@@ -247,10 +249,15 @@ func newHPatchProxy(translator hpatchTranslator, registry *toolRegistry, customi
 		titles = titleCaches[0]
 	}
 	directory := registry.runtimeDirectory
+	modelInstructions := codexinstructions.NativeInstructions()
+	if compactModelProtocol {
+		modelInstructions = codexinstructions.Instructions()
+	}
 	return &hpatchProxy{
 		translator:             translator,
 		registry:               registry,
 		customizedInstructions: customizedInstructions,
+		modelInstructions:      modelInstructions,
 		exactEvidence:          newHPatchExactEvidenceRecorder(),
 		shellDirectory:         directory,
 		titles:                 titles,
@@ -462,7 +469,7 @@ func (p *hpatchProxy) prepareRequest(ctx context.Context, request *parsedRespons
 	if !metadataValid || metadata.RequestKind != "turn" {
 		return nil, errors.New("hpatch rewrite requires valid turn metadata")
 	}
-	if err := rewriteReceivedModelInstructions(request, p.customizedInstructions); err != nil {
+	if err := rewriteReceivedModelInstructions(request, p.customizedInstructions, p.modelInstructions); err != nil {
 		return nil, err
 	}
 	directory, _ := usableRoutingDirectory(metadata.Directories)

@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	codexinstructions "github.com/yusing/hpatch/contrib/codex"
 )
 
 func newTestCTPCodec(t *testing.T) *ctpCodec {
@@ -1082,12 +1084,13 @@ func TestCTPExecuteRequestKeepsHPatchCallsNative(t *testing.T) {
 		}))), nil
 	})
 	proxy := newManagedHPatchProxy(t, testTranslator(t, new(int)))
+	proxy.modelInstructions = codexinstructions.Instructions()
 	metrics := newMetricsStore("")
 	var output bytes.Buffer
 	repeated := "repeat this request context line enough times to admit CTP input encoding\n"
 	err := executeRequest(
 		t.Context(), t.Context(), serverRequest(t, func(request map[string]any) {
-			request["instructions"] = "keep native tool calls"
+			request["instructions"] = stockModelInstructionsForTest("", "")
 			request["input"] = append(request["input"].([]any),
 				map[string]any{"type": "message", "role": "developer", "content": strings.Repeat(repeated, 8)},
 				map[string]any{"type": "message", "role": "user", "content": strings.Repeat(repeated, 8)},

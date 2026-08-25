@@ -12,7 +12,7 @@ import (
 
 func TestRenderModelInstructionsAtInstructionLifecycles(t *testing.T) {
 	stock := stockModelInstructionsForTest("custom prefix\n", "custom suffix\n")
-	want := "custom prefix\n" + codexinstructions.Instructions() + "custom suffix\n"
+	want := "custom prefix\n" + codexinstructions.NativeInstructions() + "custom suffix\n"
 	for _, lifecycle := range []string{
 		"session start",
 		"post compaction",
@@ -20,7 +20,7 @@ func TestRenderModelInstructionsAtInstructionLifecycles(t *testing.T) {
 		"subagent post compaction",
 	} {
 		t.Run(lifecycle, func(t *testing.T) {
-			got, err := renderModelInstructions(stock, false)
+			got, err := renderModelInstructions(stock, false, codexinstructions.NativeInstructions())
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -43,8 +43,8 @@ func TestCentralModelInstructionsHaveOneMarkerPair(t *testing.T) {
 }
 
 func TestRenderModelInstructionsRefreshesInheritedConversation(t *testing.T) {
-	input := "custom prefix\n" + codexinstructions.Instructions() + "custom suffix\n"
-	got, err := renderModelInstructions(input, false)
+	input := "custom prefix\n" + codexinstructions.NativeInstructions() + "custom suffix\n"
+	got, err := renderModelInstructions(input, false, codexinstructions.NativeInstructions())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -63,11 +63,11 @@ func TestRenderModelInstructionsAppendsForCustomizedModelInstructions(t *testing
 		{name: "malformed stock", input: strings.Replace(stockModelInstructionsForTest("", ""), stockEditHeading+"\n\n", stockEditHeading+"\ncustom guidance\n", 1)},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			got, err := renderModelInstructions(test.input, true)
+			got, err := renderModelInstructions(test.input, true, codexinstructions.NativeInstructions())
 			if err != nil {
 				t.Fatal(err)
 			}
-			want := test.input + "\n" + codexinstructions.Instructions()
+			want := test.input + "\n" + codexinstructions.NativeInstructions()
 			if got != want {
 				t.Fatalf("renderModelInstructions() = %q, want %q", got, want)
 			}
@@ -87,7 +87,7 @@ func TestRenderModelInstructionsFailsClosedForChangedUpstreamInstructions(t *tes
 		{name: "reversed markers", input: hpatchInstructionsEndMarker + "\n" + hpatchInstructionsStartMarker + "\n", customized: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			if _, err := renderModelInstructions(test.input, test.customized); err == nil {
+			if _, err := renderModelInstructions(test.input, test.customized, codexinstructions.NativeInstructions()); err == nil {
 				t.Fatal("renderModelInstructions() succeeded")
 			}
 		})
@@ -105,7 +105,7 @@ func TestRewriteReceivedModelInstructionsLeavesMissingAndNullValues(t *testing.T
 		t.Run(test.name, func(t *testing.T) {
 			before := string(test.fields["instructions"])
 			request := parsedResponsesRequest{fields: test.fields}
-			if err := rewriteReceivedModelInstructions(&request, false); err != nil {
+			if err := rewriteReceivedModelInstructions(&request, false, codexinstructions.NativeInstructions()); err != nil {
 				t.Fatal(err)
 			}
 			if got := string(request.fields["instructions"]); got != before {

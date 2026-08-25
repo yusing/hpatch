@@ -192,8 +192,9 @@ executor-side locator and a direct per-thread runtime path; its private commands
 that worker.
 Request rewriting installs the projected hpatch, hpatch_recover, and shell definitions, removes the native
 exec-command contract, and rewrites received Responses instructions from the central guidance
-source. Native model protocol stops after that ordinary rewrite; CTP/1 may append dictionary data
-to the resulting instruction carrier under `REQ-CTP-001`.
+source. Native model protocol omits its leading CTP section and stops after that ordinary rewrite;
+CTP/1 injects the complete source and may append dictionary data to the resulting instruction
+carrier under `REQ-CTP-001`.
 Private contribution descriptions are execution contracts, not a prompt source. Passthrough
 mode loads no registry.
 

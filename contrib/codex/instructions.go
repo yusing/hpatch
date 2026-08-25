@@ -21,6 +21,25 @@ func Instructions() string {
 	return instructions
 }
 
+// NativeInstructions returns the central guidance without the CTP section. Deriving it from the
+// active source keeps every non-CTP workflow byte-identical across the two model protocols.
+func NativeInstructions() string {
+	const (
+		ctpHeading         = "## CTP/1 transport\n"
+		fileEditingHeading = "## File editing\n"
+	)
+	start := strings.Index(instructions, ctpHeading)
+	if start < 0 {
+		panic("central model instructions omit the CTP heading")
+	}
+	remainder := instructions[start:]
+	end := strings.Index(remainder, fileEditingHeading)
+	if end < 0 {
+		panic("central model instructions omit the file-editing heading after CTP")
+	}
+	return instructions[:start] + remainder[end:]
+}
+
 // RecoveryGuidance renders dynamic rejected-script guidance.
 func RecoveryGuidance(references string) string {
 	var rendered strings.Builder

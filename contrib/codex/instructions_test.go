@@ -37,6 +37,23 @@ func TestInstructionsOwnCTPRepresentation(t *testing.T) {
 	}
 }
 
+func TestNativeInstructionsOmitOnlyCTPRepresentation(t *testing.T) {
+	native := NativeInstructions()
+	if strings.Contains(native, "## CTP/1 transport") || strings.Contains(native, "!ctp1") {
+		t.Fatal("native instructions contain CTP guidance")
+	}
+	for _, required := range []string{
+		"<!-- hpatch-model-instructions:start -->",
+		"## File editing",
+		"## Shell execution",
+		"<!-- hpatch-model-instructions:end -->",
+	} {
+		if !strings.Contains(native, required) {
+			t.Errorf("NativeInstructions() omits %q", required)
+		}
+	}
+}
+
 func TestInstructionsOwnCompleteShellWorkflow(t *testing.T) {
 	for _, required := range []string{
 		"Submit one free-form script without an outer heredoc",

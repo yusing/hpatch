@@ -11,7 +11,6 @@ report_issues=${BENCHMARK_REPORT_ISSUES:-true}
 retain_exact_hpatch_evidence=${BENCHMARK_RETAIN_EXACT_HPATCH_EVIDENCE:-false}
 enforce_no_edit_loops=${BENCHMARK_ENFORCE_NO_EDIT_LOOPS:-true}
 control_baseline_dir=${CONTROL_BASELINE_DIR:-}
-ctp_native_baseline_dir=${CTP_NATIVE_BASELINE_DIR:-}
 case $prepare_only in
 true|false) ;;
 *)
@@ -49,8 +48,8 @@ if [[ $retain_exact_hpatch_evidence == true &&
 	exit 2
 fi
 case "$benchmark_mode" in
-	paired) ;;
-	hpatch-only|hpatch-diagnostic|ctp-only)
+	paired|ctp-only) ;;
+	hpatch-only|hpatch-diagnostic)
 		if ((repetitions != 1)); then
 			printf 'bench.sh: %s mode requires REPETITIONS=1; run separate trials for independent evidence\n' "$benchmark_mode" >&2
 			exit 2
@@ -84,6 +83,10 @@ grader_name=
 baseline_output_contains=
 dependency_kind=none
 preload_go_qualification_grader=false
+read_probe=
+require_ctp_input_compression=false
+require_ctp_output_compression=false
+expected_final_response=
 
 agent_timeout=
 grader_timeout=
@@ -162,6 +165,14 @@ load_task_manifest() {
 	dependency_kind=$(jq -er '.runtime.dependency_kind // "go"' "$task_manifest")
 	preload_go_qualification_grader=$(jq -er \
 		'.runtime.preload_go_qualification_grader // false' "$task_manifest")
+	read_probe=$(jq -er '.runtime.read_probe // "go.mod"' "$task_manifest")
+	require_ctp_input_compression=$(jq -r '.ctp.require_input_compression // false' "$task_manifest")
+	require_ctp_output_compression=$(jq -r '.ctp.require_output_compression // false' "$task_manifest")
+	if ! jq -e '(.expected_final_response // "") | type == "string"' "$task_manifest" >/dev/null; then
+		printf 'bench.sh: expected_final_response must be a string for %s\n' "$task_id" >&2
+		return 1
+	fi
+	expected_final_response=$(jq -r '.expected_final_response // ""' "$task_manifest")
 	case $dependency_kind in
 	go|node|none) ;;
 	*)
@@ -185,6 +196,22 @@ load_task_manifest() {
 		return 1
 		;;
 	esac
+	case $require_ctp_input_compression in
+	true|false) ;;
+	*)
+		printf 'bench.sh: ctp.require_input_compression must be true or false for %s\n' \
+			"$task_id" >&2
+		return 1
+		;;
+	esac
+	case $require_ctp_output_compression in
+	true|false) ;;
+	*)
+		printf 'bench.sh: ctp.require_output_compression must be true or false for %s\n' \
+			"$task_id" >&2
+		return 1
+		;;
+	esac
 	if ((${#hidden_sources[@]} == 0 || ${#hidden_sources[@]} != ${#hidden_paths[@]})); then
 		printf 'bench.sh: hidden file mappings are empty or unbalanced\n' >&2
 		return 1
@@ -198,9 +225,6 @@ results_root="$benchmark_root/results"
 mkdir -p "$results_root"
 if [[ -z $control_baseline_dir ]]; then
 	control_baseline_dir="$results_root/c07600a74ac93d1ac6c38c47b80d85519458bc9f-1"
-fi
-if [[ -z $ctp_native_baseline_dir ]]; then
-	ctp_native_baseline_dir="$results_root/c07600a74ac93d1ac6c38c47b80d85519458bc9f-1"
 fi
 run_dir=$(mktemp -d "$results_root/.staging-XXXXXX")
 dependency_cache=$(mktemp -d "$results_root/.dependency-cache-XXXXXX")
@@ -240,8 +264,10 @@ compose_project_name="hpatch_bench_$(basename "$run_dir" | tr '[:upper:]' '[:low
 export COMPOSE_PROJECT_NAME=$compose_project_name
 export HPATCH_BENCH_COMPOSE_FILE="$benchmark_root/compose.yaml"
 export HPATCH_BENCH_HPATCH_MODEL_PROTOCOL=native
+export HPATCH_BENCH_CONTROL_MODE=passthrough
 if [[ $benchmark_mode == ctp-only ]]; then
 	export HPATCH_BENCH_HPATCH_MODEL_PROTOCOL=ctp1
+	export HPATCH_BENCH_CONTROL_MODE=hpatch
 fi
 if [[ $retain_exact_hpatch_evidence == true ]]; then
 	export HPATCH_BENCH_EXACT_EVIDENCE_DIR=/benchmark-hpatch-exact-evidence
@@ -272,7 +298,7 @@ collect_artifacts() {
 	if [[ $started != true || $collected == true ]]; then
 		return
 	fi
-	if [[ $benchmark_mode == paired ]]; then
+	if [[ $benchmark_mode == paired || $benchmark_mode == ctp-only ]]; then
 		"${compose[@]}" logs --no-color control >"$control_log" 2>&1 || true
 		collect_router_metrics control 8081 "$control_metrics" ||
 			metrics_collected=false
@@ -329,72 +355,6 @@ import_control_baseline() {
 		--arg summary "$control_baseline_dir/summary.md" \
 		"walk(if type == \"string\" and startswith(\$previous) then \$current + ltrimstr(\$previous) else . end) | .imported_control_baseline = {summary: \$summary}" \
 		"$baseline_result" >"$temporary"
-	mv -f -- "$temporary" "$destination/result.json"
-}
-
-import_native_hpatch_baseline() {
-	local baseline_result="$ctp_native_baseline_dir/artifacts/$task_id/${task_id}-hpatch-r001/result.json"
-	local baseline_metrics="$ctp_native_baseline_dir/hpatch-metrics.json"
-	local baseline_instruction="$ctp_native_baseline_dir/instructions/hpatch.md"
-	local run_id="${task_id}-control-r001"
-	local destination="$run_dir/artifacts/$task_id/$run_id"
-	local imported_instruction="$instruction_dir/native-baseline.md"
-	local temporary="$destination/result.json.tmp"
-
-	for path in "$ctp_native_baseline_dir/summary.md" "$baseline_metrics" "$baseline_instruction" "$baseline_result"; do
-		if [[ ! -s $path ]]; then
-			printf 'bench.sh: native Hpatch baseline artifact is missing or empty: %s\n' "$path" >&2
-			return 1
-		fi
-	done
-	if ! jq -e --arg task "$task_id" --arg model "$model" --arg effort "$reasoning_effort" '
-		.task_id == $task and .arm == "hpatch" and .model == $model and
-		.reasoning_effort == $effort and .task_pass == true
-	' "$baseline_result" >/dev/null; then
-		printf 'bench.sh: native Hpatch baseline does not match the task, model, reasoning, and passing-result contract: %s\n' "$baseline_result" >&2
-		return 1
-	fi
-	if ! jq -e '
-		.mode == "hpatch" and .requests.usage_missing == 0 and
-		.requests.usage_observed == .requests.started
-	' "$baseline_metrics" >/dev/null; then
-		printf 'bench.sh: native Hpatch baseline has incomplete provider usage: %s\n' "$baseline_metrics" >&2
-		return 1
-	fi
-	mkdir -p "$destination"
-	cp -a -- "$ctp_native_baseline_dir/artifacts/$task_id/${task_id}-hpatch-r001/." "$destination/"
-	cp -- "$baseline_metrics" "$control_metrics"
-	cp -- "$baseline_instruction" "$imported_instruction"
-	if [[ -f $ctp_native_baseline_dir/hpatch-router.log ]]; then
-		cp -- "$ctp_native_baseline_dir/hpatch-router.log" "$control_log"
-	else
-		: >"$control_log"
-	fi
-	jq \
-		--arg run_id "$run_id" \
-		--arg artifact "$destination" \
-		--arg instruction "$imported_instruction" \
-		--arg summary "$ctp_native_baseline_dir/summary.md" \
-		--arg source_result "$baseline_result" '
-		.run_id = $run_id |
-		.arm = "control" |
-		.order_in_block = 1 |
-		.router_mode = "hpatch" |
-		.model_protocol = "native" |
-		.base_instructions.path = $instruction |
-		.base_instructions.container_path = null |
-		.base_instructions.stock_path = null |
-		.base_instructions.override_diff_path = null |
-		.base_instructions.override_source_path = null |
-		.agent.stdout_path = ($artifact + "/codex.jsonl") |
-		.agent.stderr_path = ($artifact + "/codex.stderr") |
-		.diff_path = ($artifact + "/changes.patch") |
-		.graders |= map(
-			.stdout_path = ($artifact + "/" + (.stdout_path | split("/")[-1])) |
-			.stderr_path = ($artifact + "/" + (.stderr_path | split("/")[-1]))
-		) |
-		.imported_native_baseline = {summary: $summary, result: $source_result}
-	' "$baseline_result" >"$temporary"
 	mv -f -- "$temporary" "$destination/result.json"
 }
 
@@ -460,14 +420,16 @@ print_lifecycle_summary() {
 	local -a arms=(control hpatch)
 	if [[ $benchmark_mode == hpatch-diagnostic ]]; then
 		arms=(hpatch)
+	elif [[ $benchmark_mode == ctp-only ]]; then
+		arms=(native ctp)
 	fi
 
 	printf '\nRouter lifecycle by benchmark session:\n'
 	printf 'arm\tsession_id\tstarted\tactive\tcompleted\tfailed\tcanceled_before_response\tcanceled_after_response\ttimed_out\tbackground_pending\tusage_observed\tusage_missing\ttotal_duration_ms\tupstream_duration_ms\n'
 	for arm in "${arms[@]}"; do
 		case "$arm" in
-			control) metrics=$control_metrics ;;
-			hpatch) metrics=$hpatch_metrics ;;
+			control|native) metrics=$control_metrics ;;
+			hpatch|ctp) metrics=$hpatch_metrics ;;
 		esac
 		if [[ ! -s $results || ! -s $metrics ]] ||
 			! jq -e '
@@ -597,9 +559,15 @@ generate_summary() {
 # shellcheck disable=SC2329
 enforce_edit_loop_acceptance() {
 	local -a hpatch_events=()
-	mapfile -t hpatch_events < <(
-		find "$run_dir/artifacts" -type f -path '*-hpatch-r*/codex.jsonl' -print | sort
-	)
+	if [[ $benchmark_mode == ctp-only ]]; then
+		mapfile -t hpatch_events < <(
+			find "$run_dir/artifacts" -type f -name codex.jsonl -print | sort
+		)
+	else
+		mapfile -t hpatch_events < <(
+			find "$run_dir/artifacts" -type f -path '*-hpatch-r*/codex.jsonl' -print | sort
+		)
+	fi
 	bash "$benchmark_root/check-edit-loops.sh" "$benchmark_root" "${hpatch_events[@]}"
 }
 
@@ -706,7 +674,7 @@ trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
-for executable in chmod cp curl date diff docker git go grep id jq mv sha256sum sort tar timeout wc; do
+for executable in awk chmod cp curl date diff docker git go grep id jq mv sha256sum sort tar timeout wc; do
 	if ! command -v "$executable" >/dev/null; then
 		printf 'bench.sh: %s is required\n' "$executable" >&2
 		exit 1
@@ -718,6 +686,10 @@ if [[ $prepare_only == false && ! -f $CODEX_AUTH_PATH ]]; then
 fi
 if ! load_task_manifest; then
 	exit 1
+fi
+if [[ $benchmark_mode == ctp-only && -z $expected_final_response ]]; then
+	printf 'bench.sh: ctp-only mode requires task expected_final_response for decoded-output parity\n' >&2
+	exit 2
 fi
 if [[ $source_is_public == true ]]; then
 	git init --bare --quiet "$source_repo"
@@ -756,10 +728,9 @@ INSTRUCTION
 	fi
 	printf '\n%s\n' "$offline_instruction" >>"$control_instruction"
 	printf '\n%s\n' "$offline_instruction" >>"$hpatch_instruction"
-
 	if [[ $(grep -Fxc '## Benchmark isolation' "$control_instruction") -ne 1 ]] ||
 		[[ $(grep -Fxc '## Benchmark isolation' "$hpatch_instruction") -ne 1 ]]; then
-		printf 'bench.sh: benchmark isolation instructions were not included exactly once\n' >&2
+		printf 'bench.sh: benchmark isolation instructions were not installed exactly once\n' >&2
 		return 1
 	fi
 
@@ -770,7 +741,6 @@ INSTRUCTION
 		printf 'bench.sh: base-instruction diff failed with status %d\n' "$diff_status" >&2
 		return 1
 	fi
-
 	read -r control_instruction_sha _ < <(sha256sum "$control_instruction")
 	read -r hpatch_instruction_sha _ < <(sha256sum "$hpatch_instruction")
 }
@@ -787,15 +757,23 @@ JSON
 		--argjson report_issue_enabled "$report_issues" \
 		--argjson exact_hpatch_evidence_enabled "$retain_exact_hpatch_evidence" \
 		--argjson enforce_no_edit_loops "$enforce_no_edit_loops" \
+		--argjson require_ctp_input_compression "$require_ctp_input_compression" \
+		--argjson require_ctp_output_compression "$require_ctp_output_compression" \
+		--arg benchmark_mode "$benchmark_mode" \
 		--arg reports "${issue_reports##*/}" \
 		--arg exact_evidence "${exact_evidence##*/}" \
 		'{
+			benchmark_mode: $benchmark_mode,
 			report_issue_enabled: $report_issue_enabled,
 			agent_issue_reports: $reports,
 			enforce_no_edit_loops: $enforce_no_edit_loops,
 			exact_hpatch_evidence_enabled: $exact_hpatch_evidence_enabled,
 			exact_hpatch_evidence: $exact_evidence,
-			exact_hpatch_evidence_schema: "hpatch.benchmark.exact-attempt.v1"
+			exact_hpatch_evidence_schema: "hpatch.benchmark.exact-attempt.v1",
+			ctp: {
+				require_input_compression: $require_ctp_input_compression,
+				require_output_compression: $require_ctp_output_compression
+			}
 		}' \
 		>"$benchmark_config"
 }
@@ -1134,8 +1112,13 @@ run_agent() {
 	local instruction_name=control.md
 	local instruction_path=$control_instruction
 	local instruction_sha=$control_instruction_sha
+	local instruction_diff_for_arm=
 	local model_protocol=native
 	local router_mode=passthrough
+	local attempts_per_repetition=2
+	local executor_process_creation_errors=0
+	local expected_response_required=false
+	local expected_response_passed=true
 
 	local path
 	local input_tokens
@@ -1151,10 +1134,35 @@ run_agent() {
 		instruction_name=hpatch.md
 		instruction_path=$hpatch_instruction
 		instruction_sha=$hpatch_instruction_sha
+		instruction_diff_for_arm=$instruction_diff
 		model_protocol=$HPATCH_BENCH_HPATCH_MODEL_PROTOCOL
 		router_mode=hpatch
+	elif [[ $benchmark_mode == ctp-only ]]; then
+		router_mode=hpatch
+		case $arm in
+		native)
+			instruction_name=hpatch.md
+			instruction_path=$hpatch_instruction
+			instruction_sha=$hpatch_instruction_sha
+			instruction_diff_for_arm=$instruction_diff
+			;;
+		ctp)
+			base_url=http://hpatch:8082/v1
+			agent_service=hpatch-agent
+			instruction_name=hpatch.md
+			instruction_path=$hpatch_instruction
+			instruction_sha=$hpatch_instruction_sha
+			instruction_diff_for_arm=$instruction_diff
+			model_protocol=ctp1
+			;;
+		*)
+			printf 'bench.sh: unsupported CTP benchmark arm: %s\n' "$arm" >&2
+			return 1
+			;;
+		esac
 	fi
-	printf 'run %s: repetition %d %s (%d/2)\n' "$task_id" "$repetition" "$arm" "$order"
+	printf 'run %s: repetition %d %s (%d/%d)\n' \
+		"$task_id" "$repetition" "$arm" "$order" "$attempts_per_repetition"
 	workspace=$(mktemp -d "$run_dir/work/$run_id-XXXXXX")
 	repository="$workspace/repo"
 	mkdir -p "$artifact_dir"
@@ -1198,6 +1206,8 @@ run_agent() {
 	set -e
 	canceled=$pair_canceled
 	duration_ms=$(($(date +%s%3N) - started_ms))
+	executor_process_creation_errors=$(grep -Fc 'Failed to create unified exec process:' "$codex_stderr" || true)
+	executor_process_creation_errors=${executor_process_creation_errors:-0}
 	if [[ $exit_code -eq 124 || $exit_code -eq 137 ]]; then
 		timed_out=true
 	fi
@@ -1255,6 +1265,7 @@ run_agent() {
 		--argjson canceled "$canceled" \
 		--argjson timed_out "$timed_out" \
 		--argjson duration_ms "$duration_ms" \
+		--argjson executor_process_creation_errors "$executor_process_creation_errors" \
 		--arg stdout_path "$codex_stdout" \
 		--arg stderr_path "$codex_stderr" '
 		{
@@ -1276,6 +1287,10 @@ run_agent() {
 				reasoning_output_tokens: ([.[] | select(.type == "turn.completed") | (.usage.reasoning_output_tokens // 0)] | add // 0)
 			},
 			turns: ([.[] | select(.type == "turn.completed")] | length),
+			failure_counts: {
+				turn_failures: ([.[] | select(.type == "turn.failed" or .type == "error")] | length),
+				executor_process_creation: $executor_process_creation_errors
+			},
 			item_counts: (
 				reduce (.[] | select(.type == "item.completed") | .item.type) as $type
 				({}; .[$type] = ((.[$type] // 0) + 1))
@@ -1289,6 +1304,7 @@ run_agent() {
 			--argjson canceled "$canceled" \
 			--argjson timed_out "$timed_out" \
 			--argjson duration_ms "$duration_ms" \
+			--argjson executor_process_creation_errors "$executor_process_creation_errors" \
 			--arg stdout_path "$codex_stdout" \
 			--arg stderr_path "$codex_stderr" '
 			{
@@ -1303,10 +1319,26 @@ run_agent() {
 					reasoning_output_tokens: 0
 				},
 				turns: 0,
+				failure_counts: {
+					turn_failures: 1,
+					executor_process_creation: $executor_process_creation_errors
+				},
 				error: "invalid Codex JSONL",
 				stdout_path: $stdout_path,
 				stderr_path: $stderr_path
 			}')
+	fi
+	if [[ -n $expected_final_response ]]; then
+		expected_response_required=true
+		if ! jq -se --arg expected "$expected_final_response" '
+			[.[] |
+				select(.type == "item.completed" and .item.type == "agent_message") |
+				.item.text
+			][-1] == $expected
+		' "$codex_stdout" >/dev/null; then
+			expected_response_passed=false
+			task_pass=false
+		fi
 	fi
 
 	grader_json=$(jq -cn \
@@ -1315,7 +1347,9 @@ run_agent() {
 		--argjson duration_ms "$grader_duration_ms" \
 		--arg stdout_path "$artifact_dir/grader-$task_id.stdout" \
 		--arg stderr_path "$artifact_dir/grader-$task_id.stderr" \
-		--arg grader_name "$grader_name" '
+		--arg grader_name "$grader_name" \
+		--argjson expected_response_required "$expected_response_required" \
+		--argjson expected_response_passed "$expected_response_passed" '
 		[{
 			name: $grader_name,
 			required: true,
@@ -1325,7 +1359,15 @@ run_agent() {
 			duration_ms: $duration_ms,
 			stdout_path: $stdout_path,
 			stderr_path: $stderr_path
-		}]')
+		}] +
+		(if $expected_response_required then [{
+			name: "decoded-final-response",
+			required: true,
+			passed: $expected_response_passed,
+			exit_code: (if $expected_response_passed then 0 else 1 end),
+			timed_out: false,
+			duration_ms: 0
+		}] else [] end)')
 
 	# jq variables are supplied by the arguments below.
 	# shellcheck disable=SC2016
@@ -1344,7 +1386,7 @@ run_agent() {
 		--arg base_instructions_container_path "/bench-instructions/$instruction_name" \
 		--arg base_instructions_sha256 "$instruction_sha" \
 		--arg stock_base_instructions_path "$control_instruction" \
-		--arg override_diff_path "$instruction_diff" \
+		--arg override_diff_path "$instruction_diff_for_arm" \
 		--arg override_source_path "$instruction_source" \
 		--argjson agent "$agent_json" \
 		--argjson changed_paths "$changed_json" \
@@ -1369,8 +1411,8 @@ run_agent() {
 				container_path: $base_instructions_container_path,
 				sha256: $base_instructions_sha256,
 				stock_path: $stock_base_instructions_path,
-				override_diff_path: (if $base_instructions_container_path == "/bench-instructions/hpatch.md" then $override_diff_path else null end),
-				override_source_path: (if $base_instructions_container_path == "/bench-instructions/hpatch.md" then $override_source_path else null end)
+				override_diff_path: (if $override_diff_path == "" then null else $override_diff_path end),
+				override_source_path: (if $override_diff_path == "" then null else $override_source_path end)
 			},
 			agent: $agent,
 			changed_paths: $changed_paths,
@@ -1421,6 +1463,31 @@ run_pair() {
 	return "$pair_status"
 }
 
+run_ctp_block() {
+	local repetition=$1
+	local pair_canceled=false
+	local pair_cancel_status=143
+	local block_status=0
+	local active_agent_pid=
+	local index
+	local -a arms=(native ctp)
+
+	trap - EXIT
+	trap 'cancel_pair 130' INT
+	trap 'cancel_pair 143' TERM
+	if ((repetition % 2)); then
+		arms=(ctp native)
+	fi
+	for index in 0 1; do
+		run_agent "${arms[$index]}" "$repetition" "$((index + 1))" || block_status=1
+		if [[ $pair_canceled == true ]]; then
+			return "$pair_cancel_status"
+		fi
+	done
+	trap - INT TERM
+	return "$block_status"
+}
+
 run_hpatch_only() {
 	local repetition=$1
 	local pair_canceled=false
@@ -1434,7 +1501,8 @@ run_hpatch_only() {
 }
 
 
-mkdir -p "$run_dir/work" "$run_dir/hpatch-config" "$run_dir/hpatch-runtime" "$instruction_dir"
+mkdir -p "$run_dir/work" "$run_dir/hpatch-config" \
+	"$run_dir/hpatch-runtime/control" "$run_dir/hpatch-runtime/hpatch" "$instruction_dir"
 : >"$results"
 
 "${compose[@]}" build --quiet control
@@ -1443,6 +1511,9 @@ prepare_instructions
 prepare_dependency_cache
 printf 'Control base instructions: %s\n' "$control_instruction"
 printf 'Hpatch base instructions: %s\n' "$hpatch_instruction"
+if [[ $benchmark_mode == ctp-only ]]; then
+	printf 'Native and CTP-active receive the same pre-router instructions; the router selects protocol guidance.\n'
+fi
 printf 'Base instruction override source: %s\n' "$instruction_source"
 printf 'Base instruction diff: %s\n' "$instruction_diff"
 
@@ -1458,17 +1529,17 @@ fi
 
 started=true
 compose_used=true
-if [[ $benchmark_mode == paired ]]; then
+if [[ $benchmark_mode == paired || $benchmark_mode == ctp-only ]]; then
 	"${compose[@]}" up --detach --wait control hpatch
 else
 	if [[ $benchmark_mode == hpatch-only ]]; then
 		import_control_baseline
-	elif [[ $benchmark_mode == ctp-only ]]; then
-		import_native_hpatch_baseline
 	fi
 	"${compose[@]}" up --detach --wait hpatch
 fi
 if [[ $benchmark_mode == paired ]]; then
+	qualify_agent_isolation control-agent control 8081 hpatch 8082
+elif [[ $benchmark_mode == ctp-only ]]; then
 	qualify_agent_isolation control-agent control 8081 hpatch 8082
 fi
 qualify_agent_isolation hpatch-agent hpatch 8082 control 8081
@@ -1484,6 +1555,8 @@ benchmark_status=0
 for ((repetition = 1; repetition <= repetitions; repetition += 1)); do
 	if [[ $benchmark_mode == paired ]]; then
 		run_pair "$repetition" &
+	elif [[ $benchmark_mode == ctp-only ]]; then
+		run_ctp_block "$repetition" &
 	else
 		run_hpatch_only "$repetition" &
 	fi
@@ -1498,7 +1571,7 @@ worker_pids=()
 
 merge_results
 expected_results=$((repetitions * 2))
-if [[ $benchmark_mode == hpatch-only || $benchmark_mode == ctp-only ]]; then
+if [[ $benchmark_mode == hpatch-only ]]; then
 	expected_results=$((repetitions + 1))
 elif [[ $benchmark_mode == hpatch-diagnostic ]]; then
 	expected_results=$repetitions

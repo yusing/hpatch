@@ -26,3 +26,10 @@ Only these production files may be changed:
 - `server/proxy/grpcproxy/kv.go`
 
 Do not modify or add tests, documentation, generated files, dependencies, or any other production paths. Run the focused RangeStream package tests and keep the implementation confined to the listed files.
+
+After the focused tests pass, make the final assistant response exactly this one line, with no code
+fence, surrounding text, or leading or trailing whitespace:
+
+```text
+verification: etcd RangeStream implementation passed focused package tests
+```

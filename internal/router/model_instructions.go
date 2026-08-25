@@ -9,7 +9,6 @@ import (
 	"strings"
 
 	"github.com/BurntSushi/toml"
-	codexinstructions "github.com/yusing/hpatch/contrib/codex"
 )
 
 const (
@@ -60,7 +59,7 @@ func modelInstructionFileConfiguredAt(path string) (bool, error) {
 	return config.ModelInstructionFile != nil, nil
 }
 
-func rewriteReceivedModelInstructions(request *parsedResponsesRequest, customized bool) error {
+func rewriteReceivedModelInstructions(request *parsedResponsesRequest, customized bool, modelInstructions string) error {
 	raw, present := request.fields["instructions"]
 	if !present {
 		return nil
@@ -72,7 +71,7 @@ func rewriteReceivedModelInstructions(request *parsedResponsesRequest, customize
 	if received == nil {
 		return nil
 	}
-	rendered, err := renderModelInstructions(*received, customized)
+	rendered, err := renderModelInstructions(*received, customized, modelInstructions)
 	if err != nil {
 		return err
 	}
@@ -80,7 +79,7 @@ func rewriteReceivedModelInstructions(request *parsedResponsesRequest, customize
 	return nil
 }
 
-func renderModelInstructions(input string, appendIfMissing bool) (string, error) {
+func renderModelInstructions(input string, appendIfMissing bool, modelInstructions string) (string, error) {
 	lines := instructionLines(input)
 	starts := matchingInstructionLines(lines, hpatchInstructionsStartMarker)
 	ends := matchingInstructionLines(lines, hpatchInstructionsEndMarker)
@@ -91,7 +90,7 @@ func renderModelInstructions(input string, appendIfMissing bool) (string, error)
 		if starts[0].number >= ends[0].number {
 			return "", errors.New("responses instructions contain reversed hpatch markers")
 		}
-		return input[:starts[0].start] + codexinstructions.Instructions() + input[ends[0].end:], nil
+		return input[:starts[0].start] + modelInstructions + input[ends[0].end:], nil
 	}
 
 	stockHeadings := matchingInstructionLines(lines, stockEditHeading)
@@ -100,7 +99,7 @@ func renderModelInstructions(input string, appendIfMissing bool) (string, error)
 	stockExecInstructions := matchingInstructionLines(lines, stockExecInstruction)
 	if len(stockHeadings) == 1 && len(stockInstructions) == 1 && len(stockRGInstructions) == 1 && len(stockExecInstructions) == 1 {
 		if stockInstructions[0].number == stockHeadings[0].number+2 && lines[stockHeadings[0].number].text == "" {
-			return renderStockModelInstructions(lines, stockHeadings[0], stockInstructions[0], stockRGInstructions[0], stockExecInstructions[0]), nil
+			return renderStockModelInstructions(lines, stockHeadings[0], stockInstructions[0], stockRGInstructions[0], stockExecInstructions[0], modelInstructions), nil
 		}
 		if !appendIfMissing {
 			return "", errors.New("stock file-editing heading, separator, and instruction are not one section")
@@ -109,22 +108,22 @@ func renderModelInstructions(input string, appendIfMissing bool) (string, error)
 
 	if appendIfMissing {
 		if input == "" {
-			return codexinstructions.Instructions(), nil
+			return modelInstructions, nil
 		}
 		separator := "\n\n"
 		if strings.HasSuffix(input, "\n") {
 			separator = "\n"
 		}
-		return input + separator + codexinstructions.Instructions(), nil
+		return input + separator + modelInstructions, nil
 	}
 	return "", errors.New("responses instructions match neither stock nor marked hpatch guidance")
 }
 
-func renderStockModelInstructions(lines []instructionLine, heading, instruction, rgInstruction, execInstruction instructionLine) string {
+func renderStockModelInstructions(lines []instructionLine, heading, instruction, rgInstruction, execInstruction instructionLine, modelInstructions string) string {
 	var rendered strings.Builder
 	for _, line := range lines {
 		if line.number == heading.number {
-			rendered.WriteString(codexinstructions.Instructions())
+			rendered.WriteString(modelInstructions)
 		}
 		if line.number >= heading.number && line.number <= instruction.number ||
 			line.number == rgInstruction.number || line.number == execInstruction.number {
