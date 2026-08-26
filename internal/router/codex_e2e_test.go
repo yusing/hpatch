@@ -80,7 +80,7 @@ func TestCodexHPatchGrammarE2E(t *testing.T) {
 		newProviderClient(codexBaseURL, nil),
 		newDiagnostics(io.Discard),
 		newManagedHPatchProxy(t, recorder),
-		newMetricsStore(""),
+		nil, newMetricsStore(""),
 		&requestSequence,
 	))
 	defer server.Close()

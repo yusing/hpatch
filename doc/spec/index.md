@@ -4,16 +4,20 @@ pjdoc:
   kind: spec
   scope: root
   status: draft
-  revision: "24"
+  revision: "33"
   files:
     - interface.md
     - comparison.md
     - benchmark.md
+    - ctp.md
 ---
 # hpatch specification
 
-Revision 24 prevents an unchanged target correction from repeating root evaluation while retaining
-the same recovery baseline for a later different target.
+Revision 33 measures CTP/1 through fresh native and CTP-active Hpatch arms with the same
+decoded-response contract. It separates model behavior, per-request protocol representations and
+codec cost, and provider-observed operational usage; bounded session telemetry exposes request and
+CTP observation truncation instead of inferring missing values. Protocol-focused tasks can require
+strictly smaller compact input and assistant-output representations.
 `doc/spec/interface.md` owns the public report grammar, projection rule, continuation
 semantics, and observable acceptance behavior.
 
@@ -32,6 +36,7 @@ semantics, and observable acceptance behavior.
 - [`REQ-OUTPUT-001`](interface.md): output, validation, and failure behavior
 - [`REQ-COMPARE-001`](comparison.md): token comparison scenarios
 - [`REQ-BENCH-001`](benchmark.md): historical-commit correctness and paired model evaluation
+- [`REQ-CTP-001`](ctp.md): lossless token-positive model-visible data-plane encoding
 - [`REQ-GUIDE-001`](interface.md): concise agent guidance
 
 All listed requirements are must-haves for this increment.

@@ -12,6 +12,48 @@ func TestHPatchToolDescriptionStaysNonInstructional(t *testing.T) {
 	}
 }
 
+func TestInstructionsOwnCTPRepresentation(t *testing.T) {
+	for _, required := range []string{
+		"activates CTP only when its current instruction carrier ends with a complete `!ctp1 D`",
+		"CTP is an inline representation: decode it, then follow the",
+		"CTP itself requires no inspection or tool call",
+		"Without the appended\ndictionary, all request and assistant text is native",
+		"each `ID=VALUE` dictionary line defines",
+		"Expand `@{ID}`",
+		"`@@{ID}` is literal `@{ID}`",
+		"assistant text may extend the inherited dictionary with unused IDs",
+		"New definitions extend the response namespace in order",
+		"assistant text that begins with `!ctp1 R`, `!ctp1 L`, or `!ctp1 D`",
+		"Tool names, tool inputs, and function arguments are literal",
+		"In `functions.shell`, omit `workdir`",
+		"fully expanded existing absolute path, never a reference or placeholder",
+		"Preserve every requested leading",
+		"With no native final line feed, end immediately",
+		"define the line without its separator and place line feeds only",
+	} {
+		if !strings.Contains(Instructions(), required) {
+			t.Errorf("Instructions() omits CTP representation rule %q", required)
+		}
+	}
+}
+
+func TestNativeInstructionsOmitOnlyCTPRepresentation(t *testing.T) {
+	native := NativeInstructions()
+	if strings.Contains(native, "## CTP/1 transport") || strings.Contains(native, "!ctp1") {
+		t.Fatal("native instructions contain CTP guidance")
+	}
+	for _, required := range []string{
+		"<!-- hpatch-model-instructions:start -->",
+		"## File editing",
+		"## Shell execution",
+		"<!-- hpatch-model-instructions:end -->",
+	} {
+		if !strings.Contains(native, required) {
+			t.Errorf("NativeInstructions() omits %q", required)
+		}
+	}
+}
+
 func TestInstructionsOwnCompleteShellWorkflow(t *testing.T) {
 	for _, required := range []string{
 		"Submit one free-form script without an outer heredoc",

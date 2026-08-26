@@ -6,6 +6,7 @@
     "base_commit": "84e612f39b82d1c8ee3f884a59e3f973209d8fbc",
     "oracle_commit": "fd2cc937c9d4413a410d36eb340d83981535b00f"
   },
+  "expected_final_response": "verification: etcd RangeStream implementation passed focused package tests",
   "prompt_file": "prompt.md",
   "hidden_files": [
     {

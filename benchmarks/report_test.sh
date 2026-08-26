@@ -153,7 +153,7 @@ grep -Fq '| Rejected calls | 2 |' "$fixture/summary.md"
 grep -Fq '| Correction calls | 2 |' "$fixture/summary.md"
 grep -Fq '| Repeated rejection signature in a later attempt | 1 |' "$fixture/summary.md"
 grep -Fq '| Later rejected attempt on the same command, operation, target kind, and path | 1 |' "$fixture/summary.md"
-grep -Fq '| Agent issue reporting | true |' "$fixture/summary.md"
+grep -Fq '| Agent issue reporting | enabled |' "$fixture/summary.md"
 grep -Fq '| Agent issue reports collected | 1 |' "$fixture/summary.md"
 grep -Fq '| Exact attempt evidence | 4/4 calls (`hpatch-exact-evidence.jsonl`, `hpatch.benchmark.exact-attempt.v1`) |' "$fixture/summary.md"
 grep -Fq '| Exact attempts analyzed | 4 |' "$fixture/summary.md"
@@ -489,9 +489,11 @@ mkdir -p "$disabled"
 cp "$fixture/results.jsonl" "$fixture/hpatch-metrics.json" "$fixture/control-metrics.json" "$disabled/"
 cp "$fixture/hpatch-router.log" "$fixture/control-router.log" "$disabled/"
 cp -a "$fixture/artifacts" "$disabled/"
-jq '.exact_hpatch_evidence_enabled = false' "$fixture/benchmark-config.json" >"$disabled/benchmark-config.json"
+jq '.exact_hpatch_evidence_enabled = false | .report_issue_enabled = false' \
+	"$fixture/benchmark-config.json" >"$disabled/benchmark-config.json"
 bash "$benchmark_root/report.sh" "$disabled" >/dev/null
 grep -Fq '| Exact attempt evidence | disabled |' "$disabled/summary.md"
+grep -Fq '| Agent issue reporting | disabled |' "$disabled/summary.md"
 if grep -Fq 'Exact attempts analyzed' "$disabled/summary.md"; then
 	printf 'disabled exact evidence unexpectedly changed report rows\n' >&2
 	exit 1

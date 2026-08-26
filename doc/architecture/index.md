@@ -4,11 +4,43 @@ pjdoc:
   kind: architecture
   scope: root
   status: draft
-  revision: "25"
+  revision: "29"
   files:
     []
 ---
 # hpatch architecture contract
+
+## CTR-CTP-001 — Router-owned compact provider representation
+
+One CTP owner in `internal/router` sits after Hpatch request projection and before provider
+serialization. It receives ordinary parsed Responses fields, appends one request-local exact
+dictionary to the existing top-level or developer-message instruction carrier only when the stable
+admission projection is token-positive, and returns a response
+transformer for that admitted representation. It does not parse HPATCH/2, change the tool registry,
+own provider usage, retain session history, define model instructions, or define another executor
+carrier. Persistent CTP interpretation and emission guidance belongs to
+`contrib/codex/file-editing-instructions.md`; the router emits only request-local dictionary data.
+Request-local discovery uses the current tool descriptions and immutable pre-model input prefix so
+appended model history cannot churn the provider-cache prefix; applying the resulting definitions
+to later eligible history remains part of the same stateless representation step.
+
+On responses, the CTP transformer runs before the existing Hpatch transformer. It restores compact
+references only in assistant text for complete JSON output and SSE terminal text, while tool names,
+inputs, and arguments remain native for ordinary registry routing, translation, history, recovery,
+and carrier rendering. The transport owns the minimal response-transformer composition needed to
+preserve that order and to finish or discard both request-local states on every terminal path.
+
+The CTP owner derives auxiliary native-versus-compact token pairs from the same tokenizer used for
+admission. Input counts cover each admitted whole request after Hpatch projection; output counts
+cover decoded assistant text once per logical content item, using each terminal
+`response.output_text.done` event for streams while excluding repeated projections. The in-memory
+router metrics retain aggregates plus bounded per-session request and CTP input/output observations,
+including bytes, dictionary size, codec timing, and dropped-observation counters. Counting failure
+cannot replace a successful request, response, or provider usage record. Aggregate admission
+decisions expose why a request stayed native without retaining candidate or prompt text.
+
+CTP operates inside native Responses envelopes and may rewrite only the representation identified
+by `REQ-CTP-001`; that requirement retains the provider-owned fields and native fallback contract.
 
 ## CTR-SYNTAX-001 — Shared compact-script framing
 
@@ -105,7 +137,7 @@ formatting adjustments.
 The root library boundary owns workspace authorization, evaluation diagnostics, completed
 results, atomic commit coordination, translation, and structured host metrics for
 `REQ-GUIDE-001` and `REQ-OUTPUT-001`. All persistent Codex edit, shell, read, search, and
-inspection workflow guidance shares `contrib/codex/file-editing-instructions.md` as its source.
+inspection and CTP representation guidance shares `contrib/codex/file-editing-instructions.md` as its source.
 Tool descriptions retain only call-local contracts and request-specific schemas. The router
 renders dynamic rejected-script references and the recovery instruction from the adjacent
 recovery template only for actionable evaluator rejection diagnostics.
@@ -159,7 +191,10 @@ executor-backed plugins retain wrapper and frontend dispatch. Built-in shell use
 executor-side locator and a direct per-thread runtime path; its private commands execute from
 that worker.
 Request rewriting installs the projected hpatch, hpatch_recover, and shell definitions, removes the native
-exec-command contract, and rewrites received Responses instructions from the central guidance source.
+exec-command contract, and rewrites received Responses instructions from the central guidance
+source. Native model protocol omits its leading CTP section and stops after that ordinary rewrite;
+CTP/1 injects the complete source and may append dictionary data to the resulting instruction
+carrier under `REQ-CTP-001`.
 Private contribution descriptions are execution contracts, not a prompt source. Passthrough
 mode loads no registry.
 

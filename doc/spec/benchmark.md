@@ -17,6 +17,15 @@ source summary and is never counted as a new model attempt. Both modes use the s
 image, model, prompt, historical etcd base, full-access Codex sandbox setting, approval policy,
 timeout, authentication mount, and disposable-container setup.
 
+CTP-only mode runs configured repetitions of two fresh Hpatch attempts: `native` and `ctp`. Each
+repetition MUST use independent copies of the same task base and MUST run its attempts
+sequentially, rotating their order across repetitions. Repetitions MAY run concurrently. The native
+arm uses Hpatch guidance with the complete CTP section removed and a native router. The ctp arm uses
+the complete CTP guidance and an Hpatch router with `--model-protocol ctp1`. Issue
+reporting MUST be disabled in this mode. Every task used by this mode MUST declare one exact decoded
+final response, and both arms MUST be graded against it in addition to the hidden executable
+grader. No historical result is imported.
+
 Before either arm starts, a setup-only container downloads Go dependencies from a
 history-free base snapshot into a temporary module cache. The workflow rejects the cache if
 it contains downloadable copies of benchmark-owned etcd modules, then mounts it read-only
@@ -40,8 +49,8 @@ are unreachable, no conventional MCP server is configured, and `go mod download 
 succeeds using only the read-only cache. Every measured Codex invocation also disables the
 default-on `apps` feature, preventing the first-party app/connector MCP transport from starting.
 
-The control uses the pinned CLI's stock bundled base instructions and the
-passthrough router. At the stock file-editing section, the treatment installs the
+In the default paired mode, the control uses the pinned CLI's stock bundled base instructions
+and the passthrough router. At the stock file-editing section, the treatment installs the
 edit, read, search, and shell guidance from
 `contrib/codex/file-editing-instructions.md` and uses the hpatch router. The
 treatment also removes exactly one pinned stock `rg` preference line and exactly
@@ -54,6 +63,12 @@ not seek oracle revisions, hidden tests, other-arm artifacts, upstream material,
 or other external resources. The complete control and treatment instructions,
 their hashes, and their unified diff are retained in the run directory and
 referenced by each result.
+
+For CTP-only mode both arms MUST receive the same pre-router instructions and retain the same
+instruction digest. The native-protocol Hpatch router MUST inject the central guidance without its
+`## CTP/1 transport` section; the separate CTP/1 Hpatch router MUST inject the complete source.
+Both agent environments MUST share the router-owned shell runtime with their assigned router and
+remain isolated from the other router and external networks.
 
 The active etcd task exports base revision
 `84e612f39b82d1c8ee3f884a59e3f973209d8fbc` and oracle revision
@@ -71,23 +86,32 @@ by the task manifest may change.
 
 An attempt passes only when Codex exits successfully without timeout, all
 changed paths are allowed, Codex JSONL can be recorded, and the hidden grader
-passes. A failed task attempt is recorded as benchmark data and does not cancel
+passes. When the task declares `expected_final_response`, the last completed decoded assistant
+message MUST equal that string byte-for-byte and contributes a separate required grader result.
+A failed task attempt is recorded as benchmark data and does not cancel
 the other arm or other repetitions; the run completes all scheduled attempts and
 exits nonzero after collecting their evidence. User cancellation still terminates
 active workers through the evidence-preserving cleanup path. Failures retain the
 available diff, Codex diagnostics, grader diagnostics, and router evidence.
 
-Each measured attempt writes one private JSON object containing arm and pair order, selected
+Each measured attempt writes one private JSON object containing arm and repetition order, selected
 base instruction artifact and digest, elapsed time, token usage, Codex item counts and terminal
-error, changed and unauthorized paths, literal diff and diff path, grader outcome, and final
-pass decision. The paired parent deterministically merges all `2 * repetitions` objects.
+error, model-turn and unified-exec process-creation failure counts, changed and unauthorized paths,
+literal diff and diff path, grader outcome, and final
+pass decision. Newly measured records also identify the router mode and model protocol. The
+paired parent deterministically merges all `2 * repetitions` objects.
 Hpatch-only mode merges its one measured treatment object with the labeled imported control
-object. External cancellation merges all retained objects.
+object. CTP-only mode merges all `2 * repetitions` fresh objects. External cancellation merges all
+retained objects.
 
 After measured attempts, the shell retains treatment router metrics, including structured gain.
 Paired mode also records fresh control router metrics; Hpatch-only mode
 copies the matching baseline control metrics. A gain of zero is not an editing-performance
 result when no treatment request reached hpatch.
+In CTP-only mode both metric files describe fresh Hpatch routers. Control metrics contain the
+native sessions from the native-protocol router; treatment metrics contain active CTP/1
+sessions. The report MUST join each record to its exact router session instead of using the
+multi-session router aggregate as one arm.
 Treatment runs expose `report_issue` by default and MUST accept an explicit boolean environment
 toggle that removes the tool. When enabled, the benchmark MUST install one diagnose hook in the
 treatment router container, retain each completed report in a unique run-local atomic destination,
@@ -156,9 +180,51 @@ exactly to provider uncached input, and the report MUST render their aggregate e
 cache rate. An imported historical control whose retained log predates request-level token
 attribution MUST show the derived values as unavailable rather than fabricate them. Missing or
 partial attribution for a newly measured session MUST fail report generation.
+
+For CTP-only results, the summary MUST verify exactly one fresh native and active record per
+repetition, unique order values, the native protocol for native, CTP/1 for active, and identical
+pre-router instruction digests. Every arm MUST contain a
+hidden required grader and the exact decoded-response grader. Imported-baseline provenance is not a
+valid substitute for any arm.
+
+The report MUST join each attempt to its router session and reject missing sessions, missing provider
+usage, dropped request or CTP observations, or per-request usage totals that do not exactly reconcile
+with their session aggregate. It MUST separate three evidence layers:
+
+1. Model performance reports hidden correctness, exact decoded-response correctness, overall task
+   acceptance, median wall time, model requests, agent turns, reasoning tokens, and completed shell
+   and file-change items for both arms. It separately attributes model-turn, Codex executor process-creation,
+   router failure and timeout, Hpatch rejection, and CTP decode-failure counters without removing any
+   of them from the operational outcome.
+2. CTP performance reports every active admission decision and each active request's native and
+   compact tokens and UTF-8 bytes, request dictionary definitions and bytes, and encode time. It also
+   reports each logical assistant text's native and compact tokens and bytes and response dictionary
+   size, plus aggregate encode/decode operations, time, and decode failures. Input covers complete
+   post-Hpatch requests; output excludes tools and uses terminal `response.output_text.done` events for
+   streaming responses.
+3. Operational provider usage reports total, cached, and uncached input, output and reasoning output,
+   requests, and wall time for both arms. It MUST show active-minus-native deltas, individual attempt
+   rows, and individual provider request rows. Provider
+   usage observed before response transformation is authoritative. The report MAY label Pareto
+   dominance only after correctness, and MUST label tradeoffs as mixed. Token components are a cost
+   basis; the report MUST NOT invent dollar pricing without an authoritative configured price source.
+
+Missing or inconsistent CTP counters MUST fail the report. The report MUST account for every
+considered CTP request as admitted, missing an instruction carrier, having no positive definition, or
+having a complete representation that was not smaller. When no request admits CTP, ratios are
+unavailable rather than zero or baseline-derived. The summary MUST use local request ordinals and MUST
+NOT emit session, thread, tool-call, correlation, or global router request identifiers. It MUST not
+present stock-control or Hpatch-editing findings for this CTP comparison.
+A task manifest MAY set the boolean fields `ctp.require_input_compression` and
+`ctp.require_output_compression`. The runner MUST record those requirements in
+`benchmark-config.json`. An enabled input requirement passes only when at least one request is
+admitted and its compact token estimate is smaller than its native estimate. An enabled output
+requirement passes only when at least one assistant text is observed and the provider-emitted compact
+text is smaller than the restored native text. The report MUST retain and label a failed requirement,
+and the benchmark MUST exit unsuccessfully after preserving its evidence.
 Unless `BENCHMARK_ENFORCE_NO_EDIT_LOOPS=false`, a measured run with any same-path file-read,
 search, or content-diff loop MUST retain its artifacts and exit unsuccessfully after report
-generation.
+generation. CTP-only mode applies this acceptance check to both measured Hpatch arms.
 Hpatch-diagnostic mode MUST generate the same Hpatch reliability and command analysis without
 inventing control values; its summary MUST label that no control arm ran.
 
@@ -166,7 +232,7 @@ Acceptance:
 
 1. Base qualification fails with `missing method RangeStream`; oracle
    qualification passes the identical hidden grader.
-2. Both arms receive independent byte-equivalent base snapshots and exactly the
+2. Every arm in a comparison receives an independent byte-equivalent base snapshot and exactly the
    same non-editing setup.
 3. The treatment base instruction is derived from the stock prompt using the
    repository-owned replacement, and the retained diff contains no unrelated
@@ -185,6 +251,12 @@ Acceptance:
 8. Agents cannot retrieve upstream implementation or oracle material at runtime: per-arm
    internal networks expose only the assigned router, while the setup-only dependency loader
    is the sole benchmark component allowed to populate the sanitized read-only module cache.
-9. Isolation qualification fails the run before either arm starts unless both agents can reach
-   only their assigned router and compile-time module resolution succeeds with network-backed
-   Go resolution disabled.
+9. Isolation qualification fails the run before model execution unless each agent environment can reach
+   only their assigned router, compile-time module resolution succeeds with network-backed Go
+   resolution disabled, and every measured Codex invocation disables `apps`.
+10. CTP-only mode runs fresh native and active Hpatch attempts; native omits only CTP guidance,
+    active enables CTP/1, and both arms satisfy the same decoded final response contract.
+11. A task that opts into CTP input or assistant-output compression fails unless every required
+    direction has observed text and a strictly smaller compact representation.
+12. Each CTP attempt joins to complete per-request provider and CTP observations, and the report
+    separates model behavior, protocol mechanics, and end-to-end operational usage.

@@ -146,7 +146,7 @@ func TestExecuteRequestFailsClosedBeforeUpstreamWhenRewriteIsIneligible(t *testi
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			provider := &serverFakeProvider{}
-			err := executeRequest(t.Context(), t.Context(), serverRequest(t, test.mutate), test.headers, test.sessionID, provider, io.Discard, newDiagnostics(io.Discard), time.Now, newManagedHPatchProxy(t, testTranslator(t, new(int))), newMetricsStore(""))
+			err := executeRequest(t.Context(), t.Context(), serverRequest(t, test.mutate), test.headers, test.sessionID, provider, io.Discard, newDiagnostics(io.Discard), time.Now, newManagedHPatchProxy(t, testTranslator(t, new(int))), nil, newMetricsStore(""))
 			if err == nil || !strings.Contains(err.Error(), test.want) {
 				t.Fatalf("error = %v, want containing %q", err, test.want)
 			}
@@ -186,7 +186,7 @@ func TestExecuteRequestDoesNotRequireWorkspaceMetadata(t *testing.T) {
 				newDiagnostics(io.Discard),
 				time.Now,
 				proxy,
-				newMetricsStore(""),
+				nil, newMetricsStore(""),
 			)
 			if err != nil {
 				t.Fatal(err)
@@ -230,7 +230,7 @@ func TestExecuteRequestForwardsCompactionWithoutHPatchRewrite(t *testing.T) {
 		return nil, nil
 	}))
 	var output bytes.Buffer
-	err = executeRequest(t.Context(), t.Context(), parsed, serverCompactionMetadataHeaders(t), "session", provider, &output, newDiagnostics(io.Discard), time.Now, proxy, newMetricsStore(""))
+	err = executeRequest(t.Context(), t.Context(), parsed, serverCompactionMetadataHeaders(t), "session", provider, &output, newDiagnostics(io.Discard), time.Now, proxy, nil, newMetricsStore(""))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -263,7 +263,7 @@ func TestExecuteRequestPassesThroughOriginalRequestAndRecordsUsage(t *testing.T)
 	provider := &serverFakeProvider{results: []serverForwardResult{{response: serverHTTPResponse(responseBody)}}}
 	store := newMetricsStore("")
 	var output, logOutput bytes.Buffer
-	if err := executeRequest(t.Context(), t.Context(), parsed, http.Header{}, "session", provider, &output, newDiagnostics(&logOutput), time.Now, nil, store); err != nil {
+	if err := executeRequest(t.Context(), t.Context(), parsed, http.Header{}, "session", provider, &output, newDiagnostics(&logOutput), time.Now, nil, nil, store); err != nil {
 		t.Fatal(err)
 	}
 	if len(provider.forwarded) != 1 || !bytes.Equal(provider.forwarded[0], originalBody) {
@@ -323,7 +323,7 @@ func TestExecuteRequestForwardsRewrittenRequestAndRecordsUsage(t *testing.T) {
 	}))
 	store := newMetricsStore("")
 	var output bytes.Buffer
-	err := executeRequest(t.Context(), t.Context(), parsed, headers, "session", provider, &output, newDiagnostics(io.Discard), time.Now, proxy, store)
+	err := executeRequest(t.Context(), t.Context(), parsed, headers, "session", provider, &output, newDiagnostics(io.Discard), time.Now, proxy, nil, store)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -441,7 +441,7 @@ func TestShellHReadAfterAppliedHPatchCarrierRemainsModelVisible(t *testing.T) {
 			newDiagnostics(io.Discard),
 			time.Now,
 			proxy,
-			newMetricsStore(""),
+			nil, newMetricsStore(""),
 		); err != nil {
 			t.Fatal(err)
 		}
@@ -586,7 +586,7 @@ func TestExecuteRequestRejectsDirectAdditionalApplyPatchWithoutExecCarrier(t *te
 		newDiagnostics(io.Discard),
 		time.Now,
 		proxy,
-		newMetricsStore(""),
+		nil, newMetricsStore(""),
 	)
 	if err == nil || !strings.Contains(err.Error(), "unsupported flat apply_patch") {
 		t.Fatalf("direct request error = %v", err)
@@ -609,7 +609,7 @@ func TestExecuteRequestRecordsUsageAndFailureWhenDeliveryFails(t *testing.T) {
 	provider := &serverFakeProvider{results: []serverForwardResult{{response: serverHTTPResponse(responseBody)}}}
 	store := newMetricsStore("")
 	var logOutput bytes.Buffer
-	err := executeRequest(t.Context(), t.Context(), serverRequest(t, nil), serverMetadataHeaders(t, "turn", map[string]json.RawMessage{workspace: nil}), "session", provider, serverErrorWriter{err: io.ErrClosedPipe}, newDiagnostics(&logOutput), serverLifecycleClock(0, 10*time.Millisecond, 30*time.Millisecond), newManagedHPatchProxy(t, testTranslator(t, new(int))), store)
+	err := executeRequest(t.Context(), t.Context(), serverRequest(t, nil), serverMetadataHeaders(t, "turn", map[string]json.RawMessage{workspace: nil}), "session", provider, serverErrorWriter{err: io.ErrClosedPipe}, newDiagnostics(&logOutput), serverLifecycleClock(0, 10*time.Millisecond, 30*time.Millisecond), newManagedHPatchProxy(t, testTranslator(t, new(int))), nil, store)
 	if err == nil {
 		t.Fatal("delivery failure returned no error")
 	}
@@ -643,7 +643,7 @@ func TestResponsesHandlerRejectsBackgroundBeforeUpstream(t *testing.T) {
 	)
 	recorder := httptest.NewRecorder()
 	provider := &serverFakeProvider{}
-	responsesHandler(t.Context(), time.Minute, provider, newDiagnostics(io.Discard), nil, nil, new(atomic.Uint64))(recorder, request)
+	responsesHandler(t.Context(), time.Minute, provider, newDiagnostics(io.Discard), nil, nil, nil, new(atomic.Uint64))(recorder, request)
 	if recorder.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusBadRequest)
 	}
@@ -660,7 +660,7 @@ func TestResponsesHandlerRejectsBodyBeyondRouterBufferBudget(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	provider := &serverFakeProvider{}
 
-	responsesHandler(t.Context(), time.Minute, provider, newDiagnostics(io.Discard), nil, nil, new(atomic.Uint64))(recorder, request)
+	responsesHandler(t.Context(), time.Minute, provider, newDiagnostics(io.Discard), nil, nil, nil, new(atomic.Uint64))(recorder, request)
 
 	if recorder.Code != http.StatusRequestEntityTooLarge {
 		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusRequestEntityTooLarge)
@@ -708,7 +708,7 @@ func TestResponsesHandlerDoesNotLogClientCancellationAsOperationalEvent(t *testi
 		}, nil
 	})
 	var logOutput bytes.Buffer
-	handler := responsesHandler(t.Context(), time.Minute, provider, newDiagnostics(&logOutput), newManagedHPatchProxy(t, nil), newMetricsStore(""), new(atomic.Uint64))
+	handler := responsesHandler(t.Context(), time.Minute, provider, newDiagnostics(&logOutput), newManagedHPatchProxy(t, nil), nil, newMetricsStore(""), new(atomic.Uint64))
 	handled := make(chan struct{})
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		handler(writer, request)
@@ -816,7 +816,7 @@ func TestExecuteRequestSuccessfulStreamLifecycle(t *testing.T) {
 		t.Context(), t.Context(),
 		serverRequest(t, func(request map[string]any) { request["stream"] = true }),
 		http.Header{}, "stream-session", provider, writer, newDiagnostics(&logOutput),
-		serverLifecycleClock(0, 10*time.Millisecond, 40*time.Millisecond), nil, store,
+		serverLifecycleClock(0, 10*time.Millisecond, 40*time.Millisecond), nil, nil, store,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -891,7 +891,7 @@ func TestExecuteRequestTerminalOutcomes(t *testing.T) {
 			err := executeRequest(
 				t.Context(), t.Context(), serverRequest(t, test.mutate), http.Header{}, "session",
 				provider, io.Discard, newDiagnostics(&logOutput),
-				serverLifecycleClock(0, 5*time.Millisecond, 25*time.Millisecond), nil, store,
+				serverLifecycleClock(0, 5*time.Millisecond, 25*time.Millisecond), nil, nil, store,
 			)
 			if err != nil {
 				t.Fatal(err)
@@ -934,7 +934,7 @@ func TestExecuteRequestCancellationBeforeResponseLifecycle(t *testing.T) {
 	go func() {
 		result <- executeRequest(
 			ctx, ctx, serverRequest(t, nil), http.Header{}, "session", provider, io.Discard,
-			newDiagnostics(&logOutput), serverLifecycleClock(0, 10*time.Millisecond, 30*time.Millisecond), nil, store,
+			newDiagnostics(&logOutput), serverLifecycleClock(0, 10*time.Millisecond, 30*time.Millisecond), nil, nil, store,
 		)
 	}()
 	<-started
@@ -1097,7 +1097,7 @@ func TestExecuteRequestStreamIdleTimeoutLifecycle(t *testing.T) {
 				t.Context(), t.Context(),
 				serverRequest(t, func(request map[string]any) { request["stream"] = true }),
 				http.Header{}, "idle-session", provider, writer, newDiagnostics(&logOutput),
-				serverLifecycleClock(0, 5*time.Millisecond, 35*time.Millisecond), nil, store,
+				serverLifecycleClock(0, 5*time.Millisecond, 35*time.Millisecond), nil, nil, store,
 			)
 		}()
 
@@ -1185,7 +1185,7 @@ func TestExecuteRequestCancellationAfterResponseLifecycle(t *testing.T) {
 			ctx, ctx,
 			serverRequest(t, func(request map[string]any) { request["stream"] = true }),
 			http.Header{}, "session", provider, writer, newDiagnostics(&logOutput),
-			serverLifecycleClock(0, 5*time.Millisecond, 35*time.Millisecond), nil, store,
+			serverLifecycleClock(0, 5*time.Millisecond, 35*time.Millisecond), nil, nil, store,
 		)
 	}()
 	<-blocked
@@ -1258,7 +1258,7 @@ func TestExecuteRequestCompletesAtTerminalEventBeforeStreamEOF(t *testing.T) {
 		ctx, ctx,
 		serverRequest(t, func(request map[string]any) { request["stream"] = true }),
 		http.Header{}, "session", provider, writer, newDiagnostics(&logOutput),
-		serverLifecycleClock(0, 5*time.Millisecond, 35*time.Millisecond), nil, store,
+		serverLifecycleClock(0, 5*time.Millisecond, 35*time.Millisecond), nil, nil, store,
 	)
 	if err != nil {
 		t.Fatalf("terminal response returned error: %v", err)
@@ -1294,7 +1294,7 @@ func TestExecuteRequestResponseStartDeadlineLifecycle(t *testing.T) {
 	go func() {
 		result <- executeRequest(
 			ctx, t.Context(), serverRequest(t, nil), http.Header{}, "session", provider, io.Discard,
-			newDiagnostics(io.Discard), serverLifecycleClock(0, 5*time.Millisecond, 25*time.Millisecond), nil, store,
+			newDiagnostics(io.Discard), serverLifecycleClock(0, 5*time.Millisecond, 25*time.Millisecond), nil, nil, store,
 		)
 	}()
 	<-started
@@ -1319,7 +1319,7 @@ func TestExecuteRequestIndependentUpstreamCancellationIsFailure(t *testing.T) {
 	err := executeRequest(
 		t.Context(), t.Context(), serverRequest(t, nil), http.Header{}, "session",
 		provider, io.Discard, newDiagnostics(&logOutput),
-		serverLifecycleClock(0, 5*time.Millisecond, 25*time.Millisecond), nil, store,
+		serverLifecycleClock(0, 5*time.Millisecond, 25*time.Millisecond), nil, nil, store,
 	)
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("error = %v, want wrapped upstream cancellation", err)
@@ -1353,7 +1353,7 @@ func TestExecuteRequestReturnsTerminalLogFailure(t *testing.T) {
 	err := executeRequest(
 		t.Context(), t.Context(), serverRequest(t, nil), http.Header{}, "session",
 		provider, io.Discard, newDiagnostics(logOutput),
-		serverLifecycleClock(0, 5*time.Millisecond, 25*time.Millisecond), nil, store,
+		serverLifecycleClock(0, 5*time.Millisecond, 25*time.Millisecond), nil, nil, store,
 	)
 	if !errors.Is(err, io.ErrClosedPipe) || !strings.Contains(err.Error(), "write terminal log") {
 		t.Fatalf("error = %v, want terminal log failure", err)
@@ -1381,7 +1381,7 @@ func TestExecuteRequestTransformFailureLifecycle(t *testing.T) {
 		serverMetadataHeaders(t, "turn", map[string]json.RawMessage{workspace: nil}),
 		"session", provider, io.Discard, newDiagnostics(&logOutput),
 		serverLifecycleClock(0, 5*time.Millisecond, 25*time.Millisecond),
-		newManagedHPatchProxy(t, testTranslator(t, new(int))), store,
+		newManagedHPatchProxy(t, testTranslator(t, new(int))), nil, store,
 	)
 	if err == nil {
 		t.Fatal("transform failure returned no error")
@@ -1750,6 +1750,20 @@ func (writer *cancelOnWrite) Write(content []byte) (int, error) {
 func TestRunRejectsUnknownModeBeforeListening(t *testing.T) {
 	err := Run(t.Context(), []string{"--mode", "unknown"}, io.Discard)
 	if err == nil || !strings.Contains(err.Error(), "--mode must be hpatch or passthrough") {
+		t.Fatalf("Run error = %v", err)
+	}
+}
+
+func TestRunRejectsUnknownModelProtocolBeforeListening(t *testing.T) {
+	err := Run(t.Context(), []string{"--model-protocol", "unknown"}, io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "--model-protocol must be native or ctp1") {
+		t.Fatalf("Run error = %v", err)
+	}
+}
+
+func TestRunRejectsCTPWithPassthroughBeforeListening(t *testing.T) {
+	err := Run(t.Context(), []string{"--mode", "passthrough", "--model-protocol", "ctp1"}, io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "--model-protocol ctp1 requires --mode hpatch") {
 		t.Fatalf("Run error = %v", err)
 	}
 }

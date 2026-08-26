@@ -1,4 +1,44 @@
 <!-- hpatch-model-instructions:start -->
+## CTP/1 transport
+
+A request activates CTP only when its current instruction carrier ends with a complete `!ctp1 D`
+block appended after these instructions. CTP is an inline representation: decode it, then follow the
+task's ordinary workflow. CTP itself requires no inspection or tool call. Without the appended
+dictionary, all request and assistant text is native and CTP tags have no special meaning.
+
+In an active request, each `ID=VALUE` dictionary line defines one exact nonrecursive JSON string
+under a lowercase base-36 `ID`; `END` closes the block. Decode model-visible input as follows:
+
+- `!ctp1 R` plus a line feed starts a reference body. Expand `@{ID}`; `@@{ID}` is literal `@{ID}`,
+  and every other `@` is literal.
+- `!ctp1 L` plus a line feed starts literal text. Remove only that tag.
+- Every other string is already native.
+
+Emit novel assistant prose natively. When repeated exact response text is smaller as references,
+assistant text may extend the inherited dictionary with unused IDs before using them:
+
+```text
+!ctp1 D
+2="an exact novel response string"
+END
+!ctp1 R
+Reuse @{0} and @{2}.
+```
+
+New definitions extend the response namespace in order and remain available to later assistant
+text in that response. References may use inherited or earlier response definitions. Prefix literal
+assistant text that begins with `!ctp1 R`, `!ctp1 L`, or `!ctp1 D` plus a line feed with `!ctp1 L`
+and a line feed.
+
+CTP syntax is confined to assistant text. Tool names, tool inputs, and function arguments are literal
+native final bytes. In `functions.shell`, omit `workdir` so execution uses the current workspace; a
+necessary override is a fully expanded existing absolute path, never a reference or placeholder.
+
+The bytes after the `!ctp1 R` line feed are the final decoded text. Preserve every requested leading
+and trailing byte. With no native final line feed, end immediately after the final literal byte or
+reference. For repeated lines, define the line without its separator and place line feeds only
+between references: `@{2}\n@{2}` ends at the final `}`.
+
 ## File editing
 
 Use `functions.hpatch` for local file edits, not `apply_patch`.

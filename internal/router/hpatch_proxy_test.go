@@ -167,7 +167,7 @@ func newManagedHPatchProxyWithDataDirectory(t *testing.T, translator hpatchTrans
 	if err != nil {
 		t.Fatal(err)
 	}
-	proxy := newHPatchProxy(translator, registry, false)
+	proxy := newHPatchProxy(translator, registry, false, false)
 	t.Cleanup(func() {
 		if err := errors.Join(proxy.Close(), registry.Close()); err != nil {
 			t.Error(err)
@@ -371,7 +371,7 @@ func TestHPatchPrepareRequestRewritesNamespacedExecWithShell(t *testing.T) {
 	if err := json.Unmarshal(request.fields["instructions"], &rewrittenInstructions); err != nil {
 		t.Fatal(err)
 	}
-	wantInstructions := "existing base\n" + codexinstructions.Instructions() + "existing suffix\n"
+	wantInstructions := "existing base\n" + codexinstructions.NativeInstructions() + "existing suffix\n"
 	if rewrittenInstructions != wantInstructions {
 		t.Fatalf("request instructions = %q, want %q", rewrittenInstructions, wantInstructions)
 	}
@@ -406,7 +406,7 @@ func TestHPatchPrepareRequestUsesCustomizedModelInstructions(t *testing.T) {
 		if err := json.Unmarshal(request.fields["instructions"], &instructions); err != nil {
 			t.Fatal(err)
 		}
-		want := "custom instructions\n\n" + codexinstructions.Instructions()
+		want := "custom instructions\n\n" + codexinstructions.NativeInstructions()
 		if instructions != want {
 			t.Fatalf("instructions = %q, want %q", instructions, want)
 		}
@@ -539,6 +539,7 @@ func TestReportIssueRunsRouterHookWithoutWorker(t *testing.T) {
 		testTranslator(t, new(int)),
 		registry,
 		false,
+		false,
 		newSessionTitleCacheAt(indexPath),
 	)
 	t.Cleanup(func() {
@@ -592,7 +593,7 @@ func TestReportIssueHookFailureDoesNotFailRouting(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	proxy := newHPatchProxy(testTranslator(t, new(int)), registry, false)
+	proxy := newHPatchProxy(testTranslator(t, new(int)), registry, false, false)
 	t.Cleanup(func() {
 		if err := errors.Join(proxy.Close(), registry.Close()); err != nil {
 			t.Error(err)
@@ -617,7 +618,7 @@ func TestReportIssueCallIDCannotBeReusedByHPatch(t *testing.T) {
 		t.Fatal(err)
 	}
 	calls := 0
-	proxy := newHPatchProxy(testTranslator(t, &calls), registry, false)
+	proxy := newHPatchProxy(testTranslator(t, &calls), registry, false, false)
 	t.Cleanup(func() {
 		if err := errors.Join(proxy.Close(), registry.Close()); err != nil {
 			t.Error(err)

@@ -20,6 +20,7 @@ import (
 const (
 	defaultListenAddress        = "127.0.0.1:8080"
 	defaultRewriteMode          = "hpatch"
+	defaultModelProtocol        = "native"
 	defaultRequestTimeout       = 10 * time.Minute
 	defaultStreamIdleTimeout    = 4 * time.Minute
 	requestBodyReadTimeout      = 30 * time.Second
@@ -37,6 +38,7 @@ func Run(ctx context.Context, args []string, stderr io.Writer) (runErr error) {
 	timeout := flags.Duration("timeout", defaultRequestTimeout, "upstream response-start timeout")
 	streamIdleTimeout := flags.Duration("stream-idle-timeout", defaultStreamIdleTimeout, "maximum upstream response-stream inactivity between bytes")
 	mode := flags.String("mode", defaultRewriteMode, "response mode: hpatch or passthrough")
+	modelProtocol := flags.String("model-protocol", defaultModelProtocol, "model protocol: native or ctp1")
 	if err := flags.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return nil
@@ -48,6 +50,12 @@ func Run(ctx context.Context, args []string, stderr io.Writer) (runErr error) {
 	}
 	if *mode != "hpatch" && *mode != "passthrough" {
 		return errors.New("--mode must be hpatch or passthrough")
+	}
+	if *modelProtocol != "native" && *modelProtocol != "ctp1" {
+		return errors.New("--model-protocol must be native or ctp1")
+	}
+	if *mode == "passthrough" && *modelProtocol != "native" {
+		return errors.New("--model-protocol ctp1 requires --mode hpatch")
 	}
 	if *timeout <= 0 {
 		return errors.New("--timeout must be positive")
@@ -61,11 +69,18 @@ func Run(ctx context.Context, args []string, stderr io.Writer) (runErr error) {
 	provider.streamIdleTimeout = *streamIdleTimeout
 	var gainDirectory string
 	var hpatchCalls *hpatchProxy
+	var compactTokens *ctpCodec
 	if *mode == "hpatch" {
 		var err error
 		gainDirectory, err = hpatchMetricsDirectory()
 		if err != nil {
 			return fmt.Errorf("initialize hpatch response proxy: %w", err)
+		}
+		if *modelProtocol == "ctp1" {
+			compactTokens, err = newCTPCodec()
+			if err != nil {
+				return fmt.Errorf("initialize compact token protocol: %w", err)
+			}
 		}
 	}
 	titles := newSessionTitleCache()
@@ -93,7 +108,7 @@ func Run(ctx context.Context, args []string, stderr io.Writer) (runErr error) {
 		defer func() {
 			runErr = errors.Join(runErr, registry.Close())
 		}()
-		hpatchCalls = newHPatchProxy(translator, registry, customizedInstructions, titles)
+		hpatchCalls = newHPatchProxy(translator, registry, customizedInstructions, compactTokens != nil, titles)
 		defer func() {
 			runErr = errors.Join(runErr, hpatchCalls.Close())
 		}()
@@ -104,7 +119,7 @@ func Run(ctx context.Context, args []string, stderr io.Writer) (runErr error) {
 	mux.HandleFunc("GET /api/metrics", metrics.serveAPI)
 	mux.HandleFunc("GET /", serveDashboard)
 	mux.HandleFunc("GET /v1/models", modelsHandler(provider))
-	mux.HandleFunc("POST /v1/responses", responsesHandler(ctx, *timeout, provider, log, hpatchCalls, metrics, &requestSequence))
+	mux.HandleFunc("POST /v1/responses", responsesHandler(ctx, *timeout, provider, log, hpatchCalls, compactTokens, metrics, &requestSequence))
 
 	server := &http.Server{
 		Addr:              *listenAddress,
@@ -113,7 +128,7 @@ func Run(ctx context.Context, args []string, stderr io.Writer) (runErr error) {
 		ReadTimeout:       requestBodyReadTimeout,
 		IdleTimeout:       2 * time.Minute,
 	}
-	if err := log.log(ctx, slog.LevelInfo, "listening", "url", fmt.Sprintf("http://%s/v1/responses", *listenAddress), "mode", *mode); err != nil {
+	if err := log.log(ctx, slog.LevelInfo, "listening", "url", fmt.Sprintf("http://%s/v1/responses", *listenAddress), "mode", *mode, "model_protocol", *modelProtocol); err != nil {
 		return fmt.Errorf("write listening log: %w", err)
 	}
 	serverError := make(chan error, 1)
@@ -171,6 +186,7 @@ func responsesHandler(
 	provider responseProvider,
 	log diagnostics,
 	hpatchCalls *hpatchProxy,
+	compactTokens *ctpCodec,
 	metrics *metricsStore,
 	requestSequence *atomic.Uint64,
 ) http.HandlerFunc {
@@ -194,7 +210,7 @@ func responsesHandler(
 		startCtx, executionCtx, cancelRequest := requestContexts(request.Context(), lifecycle, responseStartTimeout)
 		defer cancelRequest()
 		sessionID := routingSessionID(request.Header, parsedRequest)
-		if err := executeRequest(startCtx, executionCtx, parsedRequest, request.Header, sessionID, provider, trackedWriter, requestLog, time.Now, hpatchCalls, metrics); err != nil {
+		if err := executeRequest(startCtx, executionCtx, parsedRequest, request.Header, sessionID, provider, trackedWriter, requestLog, time.Now, hpatchCalls, compactTokens, metrics); err != nil {
 			writeRequestError(trackedWriter, err)
 		}
 	}
@@ -365,6 +381,7 @@ func executeRequest(
 	log diagnostics,
 	now func() time.Time,
 	hpatchCalls *hpatchProxy,
+	compactTokens *ctpCodec,
 	metrics *metricsStore,
 ) (requestErr error) {
 	totalStarted := now()
@@ -405,6 +422,40 @@ func executeRequest(
 	if hpatchTransform != nil {
 		defer hpatchTransform.Close()
 	}
+	compactStarted := time.Now()
+	compactTransform, compactAdmission, compactRequestMetrics, err := compactTokens.prepareRequest(&parsedRequest)
+	compactDuration := time.Since(compactStarted)
+	metricSessionID, requestSequence := activeRequest.metricIdentity()
+	if metricSessionID == "" {
+		metricSessionID = sessionID
+	}
+	if err != nil {
+		return fmt.Errorf("prepare compact token protocol: %w", err)
+	}
+	if metrics != nil {
+		if compactTransform != nil {
+			compactTransform.recordOutput = func(
+				representation ctpRepresentationMetrics,
+				definitions, dictionaryBytes uint64,
+			) {
+				metrics.recordCTPOutput(
+					metricSessionID, requestSequence, representation, definitions, dictionaryBytes,
+				)
+			}
+			compactTransform.recordDecode = func(duration time.Duration, failed bool) {
+				metrics.recordCTPDecode(metricSessionID, duration, failed)
+			}
+		}
+		metrics.recordCTPAdmission(
+			metricSessionID,
+			requestSequence,
+			compactAdmission,
+			compactRequestMetrics.Representation,
+			compactRequestMetrics.Definitions,
+			compactRequestMetrics.DictionaryBytes,
+			compactDuration,
+		)
+	}
 	forwardBody, err := json.Marshal(parsedRequest.fields)
 	if err != nil {
 		return fmt.Errorf("encode Responses request: %w", err)
@@ -433,11 +484,16 @@ func executeRequest(
 		response.Body.Close()
 		return fmt.Errorf("execute request: inspect upstream response: %w", err)
 	}
-	var responseTransformer *hpatchResponseTransform
+	var responseTransform responseTransformer
 	if response.StatusCode >= http.StatusOK && response.StatusCode < http.StatusMultipleChoices {
-		responseTransformer = hpatchTransform
+		if compactTransform != nil {
+			responseTransform = compactTransform
+		}
+		if hpatchTransform != nil {
+			responseTransform = composeResponseTransformers(responseTransform, hpatchTransform)
+		}
 	}
-	if hpatchTransform != nil && responseTransformer == nil {
+	if hpatchTransform != nil && responseTransform == nil {
 		finalization.failurePhase = requestFailureTransform
 		if err := hpatchTransform.Finish(false); err != nil {
 			response.Body.Close()
@@ -452,7 +508,7 @@ func executeRequest(
 	var stagedBody []byte
 	if !streamResponse {
 		var staged bytes.Buffer
-		finalization.upstreamTerminalState, err = copyUpstreamBodyTransformed(&staged, response, false, responseTransformer, observeUsage)
+		finalization.upstreamTerminalState, err = copyUpstreamBodyTransformed(&staged, response, false, responseTransform, observeUsage)
 		if err != nil {
 			finalization.classifyCopyError(err)
 			return fmt.Errorf("execute request: %w", err)
@@ -487,7 +543,7 @@ func executeRequest(
 		}
 	} else {
 		finalization.failurePhase = requestFailureInspectResponse
-		finalization.upstreamTerminalState, err = copyUpstreamBodyTransformed(output, response, streamResponse, responseTransformer, observeUsage)
+		finalization.upstreamTerminalState, err = copyUpstreamBodyTransformed(output, response, streamResponse, responseTransform, observeUsage)
 		if err != nil {
 			finalization.classifyCopyError(err)
 			return fmt.Errorf("execute request: %w", err)

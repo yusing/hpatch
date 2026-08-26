@@ -44,12 +44,17 @@ services:
       context: ..
       dockerfile: benchmarks/Dockerfile
     <<: *bench-image
+    environment:
+      HPATCH_RUNTIME_DIR: ${BENCH_RUN_DIR:?BENCH_RUN_DIR must be set}/hpatch-runtime
+      TMPDIR: ${BENCH_RUN_DIR:?BENCH_RUN_DIR must be set}/hpatch-runtime/control
     command:
       - hpatch-router
       - --listen
       - 0.0.0.0:8081
       - --mode
-      - passthrough
+      - ${HPATCH_BENCH_CONTROL_MODE:-passthrough}
+      - --model-protocol
+      - native
     networks:
       control-agent: {}
       egress:
@@ -58,6 +63,12 @@ services:
       - type: bind
         source: ${BENCH_RUN_DIR:?BENCH_RUN_DIR must be set}/work
         target: ${BENCH_RUN_DIR:?BENCH_RUN_DIR must be set}/work
+      - type: bind
+        source: ${BENCH_RUN_DIR:?BENCH_RUN_DIR must be set}/hpatch-config
+        target: /root/.config
+      - type: bind
+        source: ${BENCH_RUN_DIR:?BENCH_RUN_DIR must be set}/hpatch-runtime
+        target: ${BENCH_RUN_DIR:?BENCH_RUN_DIR must be set}/hpatch-runtime
     healthcheck:
       test: [CMD, curl, --fail, --silent, http://127.0.0.1:8081/api/metrics]
       interval: 250ms
@@ -78,6 +89,8 @@ services:
       - 0.0.0.0:8082
       - --mode
       - hpatch
+      - --model-protocol
+      - ${HPATCH_BENCH_HPATCH_MODEL_PROTOCOL:-native}
     networks:
       hpatch-agent: {}
       egress:

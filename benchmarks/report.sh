@@ -46,9 +46,26 @@ if [[ -d $issue_reports_directory ]]; then
 fi
 exact_evidence_enabled=false
 exact_evidence_schema=
+require_ctp_input_compression=false
+require_ctp_output_compression=false
 if [[ -s $benchmark_config ]]; then
 	exact_evidence_enabled=$(jq -r '.exact_hpatch_evidence_enabled // false' "$benchmark_config")
 	exact_evidence_schema=$(jq -r '.exact_hpatch_evidence_schema // empty' "$benchmark_config")
+	if ! ctp_requirements=$(jq -r '
+		[(.ctp.require_input_compression // false),
+		 (.ctp.require_output_compression // false)] as $requirements |
+		if all($requirements[]; type == "boolean") then
+			$requirements | @tsv
+		else
+			error("CTP compression requirements must be boolean")
+		end
+	' "$benchmark_config"); then
+		printf 'report.sh: benchmark configuration has invalid CTP compression requirements: %s\n' \
+			"$benchmark_config" >&2
+		exit 1
+	fi
+	IFS=$'\t' read -r require_ctp_input_compression require_ctp_output_compression \
+		<<<"$ctp_requirements"
 fi
 if [[ $exact_evidence_enabled == true && -d $exact_evidence_directory ]]; then
 	bash "$benchmark_root/collect-hpatch-exact-evidence.sh" \
@@ -64,7 +81,11 @@ model=$(jq -sr '.[0].model' "$results")
 reasoning_effort=$(jq -sr '.[0].reasoning_effort' "$results")
 commit=$(basename -- "$run_dir")
 commit=${commit%-*}
+ctp_comparison=$(jq -s 'any(.model_protocol == "ctp1")' "$results")
 
+if [[ $ctp_comparison == true ]]; then
+	exec bash "$benchmark_root/report-ctp.sh" "$run_dir"
+fi
 shopt -s nullglob
 control_events=("$run_dir/artifacts/$task_id"/"$task_id-control-r"*/codex.jsonl)
 hpatch_events=("$run_dir/artifacts/$task_id"/"$task_id-hpatch-r"*/codex.jsonl)
@@ -175,7 +196,10 @@ hpatch_runs=$(jq -sr '[.[] | select(.arm == "hpatch")] | length' "$results")
 report_issue_enabled=unknown
 report_issue_recorded=false
 if [[ -s $benchmark_config ]]; then
-	report_issue_enabled=$(jq -er '.report_issue_enabled' "$benchmark_config")
+	report_issue_enabled=$(jq -r '
+		if (.report_issue_enabled | type) == "boolean" then .report_issue_enabled
+		else error("report_issue_enabled must be boolean") end
+	' "$benchmark_config")
 	report_issue_recorded=true
 fi
 issue_report_count=0
@@ -437,7 +461,11 @@ cache_rate_delta() {
 		printf '| Exact attempt evidence | disabled |\n'
 	fi
 	if [[ $report_issue_recorded == true ]]; then
-		printf '| Agent issue reporting | %s |\n' "$report_issue_enabled"
+		if [[ $report_issue_enabled == true ]]; then
+			printf '| Agent issue reporting | enabled |\n'
+		else
+			printf '| Agent issue reporting | disabled |\n'
+		fi
 		printf '| Agent issue reports collected | %s |\n' "$issue_report_count"
 	fi
 
