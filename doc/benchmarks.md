@@ -416,6 +416,13 @@ $run_dir/instructions/hpatch.md
 $run_dir/instructions/control-to-hpatch-request.diff
 ```
 
+The retained router logs include per-logical-request provider token counts. They support
+cache-miss attribution without retaining prompts, tool definitions, input history, or cache keys.
+The report joins those request records to each measured session. It preserves the provider's
+aggregate uncached-input total, then attributes it between cold or newly appended input and misses
+within the immediately preceding request's eligible prefix. Historical imported controls whose
+logs predate request-level token attribution show these derived values as unavailable.
+
 Each concurrent attempt first writes its own `result.json`. After a complete run,
 the parent shell sorts and merges all six files into `results.jsonl`. After a
 fatal hpatch failure or user cancellation, it instead merges every result
@@ -503,6 +510,9 @@ agent.duration_ms
 input_tokens
 cached_input_tokens
 uncached input = input_tokens - cached_input_tokens
+cold/new uncached input
+eligible-prefix miss tokens
+eligible-prefix cache rate
 output_tokens
 reasoning_output_tokens
 diff size and hunk count
@@ -514,6 +524,13 @@ Paired deltas use:
 ```text
 delta = hpatch - control
 ```
+
+For every request after the first in a measured session, the eligible prefix is the smaller of
+the current and immediately preceding input-token counts. Cached tokens up to that size are
+eligible-prefix hits. The remainder of that eligible prefix is a miss; all other uncached tokens
+are cold or newly appended input. The two attribution buckets exactly reconcile to provider
+uncached input. This avoids treating a large new command result as though an existing prompt
+prefix had fallen out of cache.
 
 Negative duration or token deltas favor hpatch. Report medians and individual
 pairs for small samples; four pairs are too few for a strong statistical claim.

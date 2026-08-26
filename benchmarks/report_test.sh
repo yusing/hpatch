@@ -15,9 +15,22 @@ cat >"$fixture/agent-issue-reports.jsonl" <<'JSON'
 JSON
 
 cat >"$fixture/results.jsonl" <<'JSON'
-{"task_id":"task","arm":"control","repetition":1,"order_in_block":1,"model":"model","reasoning_effort":"medium","task_pass":true,"agent":{"thread_id":"control-session","duration_ms":1000,"usage":{"input_tokens":1000,"cached_input_tokens":800,"output_tokens":100,"reasoning_output_tokens":10}},"graders":[{"duration_ms":10}]}
-{"task_id":"task","arm":"hpatch","repetition":1,"order_in_block":2,"model":"model","reasoning_effort":"medium","task_pass":true,"agent":{"thread_id":"hpatch-session","duration_ms":1200,"usage":{"input_tokens":1100,"cached_input_tokens":850,"output_tokens":80,"reasoning_output_tokens":12}},"graders":[{"duration_ms":11}]}
+{"task_id":"task","arm":"control","repetition":1,"order_in_block":1,"model":"model","reasoning_effort":"medium","task_pass":true,"agent":{"thread_id":"control-session","duration_ms":1000,"usage":{"input_tokens":2100,"cached_input_tokens":896,"output_tokens":100,"reasoning_output_tokens":10}},"graders":[{"duration_ms":10}]}
+{"task_id":"task","arm":"hpatch","repetition":1,"order_in_block":2,"model":"model","reasoning_effort":"medium","task_pass":true,"agent":{"thread_id":"hpatch-session","duration_ms":1200,"usage":{"input_tokens":5500,"cached_input_tokens":3456,"output_tokens":80,"reasoning_output_tokens":12}},"graders":[{"duration_ms":11}]}
 JSON
+
+cat >"$fixture/control-router.log" <<'LOG'
+control-1 | msg="Responses request finished" request_id=1 session_id=control-session usage_observed=true input_tokens=400 cached_input_tokens=0 uncached_input_tokens=400
+control-1 | msg="Responses request finished" request_id=2 session_id=control-session usage_observed=true input_tokens=700 cached_input_tokens=256 uncached_input_tokens=444
+control-1 | msg="Responses request finished" request_id=3 session_id=control-session usage_observed=true input_tokens=1000 cached_input_tokens=640 uncached_input_tokens=360
+LOG
+cat >"$fixture/hpatch-router.log" <<'LOG'
+hpatch-1 | msg="Responses request finished" request_id=1 session_id=hpatch-session usage_observed=true input_tokens=500 cached_input_tokens=0 uncached_input_tokens=500
+hpatch-1 | msg="Responses request finished" request_id=2 session_id=hpatch-session usage_observed=true input_tokens=800 cached_input_tokens=384 uncached_input_tokens=416
+hpatch-1 | msg="Responses request finished" request_id=3 session_id=hpatch-session usage_observed=true input_tokens=1100 cached_input_tokens=768 uncached_input_tokens=332
+hpatch-1 | msg="Responses request finished" request_id=4 session_id=hpatch-session usage_observed=true input_tokens=1400 cached_input_tokens=1024 uncached_input_tokens=376
+hpatch-1 | msg="Responses request finished" request_id=5 session_id=hpatch-session usage_observed=true input_tokens=1700 cached_input_tokens=1280 uncached_input_tokens=420
+LOG
 
 cat >"$fixture/control-metrics.json" <<'JSON'
 {"requests":{"started":3},"hpatch_calls":{"successful":0,"rejected":0,"diagnostic_input_tokens":0},"sessions":[{"session_id":"control-session","hpatch_calls":{"successful":0,"rejected":0,"diagnostic_input_tokens":0}}]}
@@ -112,6 +125,10 @@ JSON
 bash "$benchmark_root/report.sh" "$fixture" >/dev/null
 
 grep -Fq '| Model requests | 3 | 5 | 2 |' "$fixture/summary.md"
+grep -Fq '| Uncached input tokens | 1204 | 2044 | 840 |' "$fixture/summary.md"
+grep -Fq '| Cold/new uncached input tokens | 1000 | 1700 | 700 |' "$fixture/summary.md"
+grep -Fq '| Eligible-prefix miss tokens | 204 | 344 | 140 |' "$fixture/summary.md"
+grep -Fq '| Eligible-prefix cache rate | 81.45% | 90.95% | 9.49 pp |' "$fixture/summary.md"
 grep -Fq '| File reads | 1 | 3 | 0 | 2 |' "$fixture/summary.md"
 grep -Fq '| Search / grep | 1 | 4 | 0 | 3 |' "$fixture/summary.md"
 grep -Fq '| Discovery / find | 0 | 1 | 0 | 0 |' "$fixture/summary.md"
@@ -159,6 +176,35 @@ jq -e -s '
 	.[0].rendered_diagnostic == "row-stale: expected 1:aaaa, current 1:bbbb\n" and
 	.[2].rendered_report == "done\nrefs:\n  1:aaaa final row\n"
 ' "$fixture/hpatch-exact-evidence.jsonl" >/dev/null
+
+python3 "$benchmark_root/analyze_cache.py" \
+	"$fixture/results.jsonl" hpatch "$fixture/hpatch-router.log" |
+	jq -e '
+		.available and .request_count == 5 and
+		.uncached_input_tokens == 2044 and
+		.cold_or_new_uncached_input_tokens == 1700 and
+		.eligible_prefix_miss_tokens == 344 and
+		(.per_run[0].requests[1].eligible_prefix_miss_tokens == 116)
+	' >/dev/null
+
+cat >"$fixture/imported-results.jsonl" <<'JSON'
+{"arm":"control","imported_control_baseline":{"summary":"old/summary.md"},"agent":{"thread_id":"legacy-control","usage":{"input_tokens":100,"cached_input_tokens":0}}}
+JSON
+cat >"$fixture/legacy-router.log" <<'LOG'
+control-1 | msg="Responses request finished" request_id=1 session_id=legacy-control usage_observed=true
+LOG
+python3 "$benchmark_root/analyze_cache.py" \
+	"$fixture/imported-results.jsonl" control "$fixture/legacy-router.log" |
+	jq -e '.available == false and .runs == 1' >/dev/null
+
+cat >"$fixture/incomplete-router.log" <<'LOG'
+hpatch-1 | msg="Responses request finished" request_id=1 session_id=hpatch-session usage_observed=true input_tokens=500 cached_input_tokens=0
+LOG
+if python3 "$benchmark_root/analyze_cache.py" \
+	"$fixture/results.jsonl" hpatch "$fixture/incomplete-router.log" 2>/dev/null; then
+	printf 'cache analysis accepted incomplete current router attribution\n' >&2
+	exit 1
+fi
 
 glob_analysis="$fixture/glob-analysis"
 mkdir "$glob_analysis"
@@ -441,6 +487,7 @@ done
 disabled="$fixture/disabled"
 mkdir -p "$disabled"
 cp "$fixture/results.jsonl" "$fixture/hpatch-metrics.json" "$fixture/control-metrics.json" "$disabled/"
+cp "$fixture/hpatch-router.log" "$fixture/control-router.log" "$disabled/"
 cp -a "$fixture/artifacts" "$disabled/"
 jq '.exact_hpatch_evidence_enabled = false' "$fixture/benchmark-config.json" >"$disabled/benchmark-config.json"
 bash "$benchmark_root/report.sh" "$disabled" >/dev/null
@@ -457,6 +504,7 @@ cp "$fixture/hpatch-metrics.json" "$diagnostic/hpatch-metrics.json"
 cp "$fixture/benchmark-config.json" "$diagnostic/benchmark-config.json"
 cp "$fixture/agent-issue-reports.jsonl" "$diagnostic/agent-issue-reports.jsonl"
 cp "$fixture/hpatch-exact-evidence.jsonl" "$diagnostic/hpatch-exact-evidence.jsonl"
+cp "$fixture/hpatch-router.log" "$diagnostic/hpatch-router.log"
 cp "$artifact_root/task-hpatch-r001/codex.jsonl" "$diagnostic/artifacts/task/task-hpatch-r001/codex.jsonl"
 bash "$benchmark_root/report.sh" "$diagnostic" >/dev/null
 
@@ -468,7 +516,7 @@ grep -Fq '| File reads in a same-path edit → command → edit loop | 1 |' "$di
 grep -Fq '| git diff content in a same-path edit → command → edit loop | 2 |' "$diagnostic/summary.md"
 grep -Fq '| Workspace-wide bare git diff after an edit | 1 |' "$diagnostic/summary.md"
 grep -Fq 'Hpatch passed every measured task attempt: 1/1.' "$diagnostic/summary.md"
-grep -Fq 'The hpatch-only diagnostic used 5 model request(s), 1100 input tokens, and 80 output tokens.' "$diagnostic/summary.md"
+grep -Fq 'The hpatch-only diagnostic used 5 model request(s), 5500 input tokens, and 80 output tokens.' "$diagnostic/summary.md"
 grep -Fq 'This diagnostic run has no control arm.' "$diagnostic/summary.md"
 for forbidden in '| Measure | Control |' 'relative to control' 'control-metrics.json'; do
 	if grep -Fq "$forbidden" "$diagnostic/summary.md"; then

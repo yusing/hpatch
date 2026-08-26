@@ -11,6 +11,8 @@ benchmark_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 results="$run_dir/results.jsonl"
 control_metrics="$run_dir/control-metrics.json"
 hpatch_metrics="$run_dir/hpatch-metrics.json"
+control_log="$run_dir/control-router.log"
+hpatch_log="$run_dir/hpatch-router.log"
 benchmark_config="$run_dir/benchmark-config.json"
 issue_reports="$run_dir/agent-issue-reports.jsonl"
 issue_reports_directory="$run_dir/agent-issue-reports"
@@ -73,8 +75,12 @@ if ((${#hpatch_events[@]} == 0)) || [[ $has_control == true && ${#control_events
 fi
 if [[ $has_control == true ]]; then
 	python3 "$benchmark_root/analyze_commands.py" "${control_events[@]}" >"$analysis_dir/control.json"
+	python3 "$benchmark_root/analyze_cache.py" \
+		"$results" control "$control_log" >"$analysis_dir/control-cache.json"
 fi
 python3 "$benchmark_root/analyze_commands.py" "${hpatch_events[@]}" >"$analysis_dir/hpatch.json"
+python3 "$benchmark_root/analyze_cache.py" \
+	"$results" hpatch "$hpatch_log" >"$analysis_dir/hpatch-cache.json"
 if [[ $exact_evidence_enabled == true ]]; then
 	python3 "$benchmark_root/analyze_hpatch_evidence.py" \
 		"$exact_evidence" "$hpatch_metrics" >"$analysis_dir/exact-evidence.json"
@@ -197,11 +203,61 @@ category_label() {
 	esac
 }
 
+cache_field() {
+	local analysis=$1
+	local field=$2
+
+	jq -r --arg field "$field" 'if .available then .[$field] else "—" end' "$analysis"
+}
+
+cache_delta() {
+	local field=$1
+
+	jq -nr \
+		--slurpfile control "$analysis_dir/control-cache.json" \
+		--slurpfile hpatch "$analysis_dir/hpatch-cache.json" \
+		--arg field "$field" '
+		if $control[0].available and $hpatch[0].available then
+			$hpatch[0][$field] - $control[0][$field]
+		else
+			"—"
+		end
+	'
+}
+
+cache_rate() {
+	local analysis=$1
+
+	jq -r '
+		if .available and .eligible_prefix_cache_rate != null then
+			(((.eligible_prefix_cache_rate * 10000) | round) / 100 | tostring) + "%"
+		else
+			"—"
+		end
+	' "$analysis"
+}
+
+cache_rate_delta() {
+	jq -nr \
+		--slurpfile control "$analysis_dir/control-cache.json" \
+		--slurpfile hpatch "$analysis_dir/hpatch-cache.json" '
+		if $control[0].available and $hpatch[0].available and
+			$control[0].eligible_prefix_cache_rate != null and
+			$hpatch[0].eligible_prefix_cache_rate != null
+		then
+			((((($hpatch[0].eligible_prefix_cache_rate - $control[0].eligible_prefix_cache_rate) * 10000) | round) / 100) | tostring) + " pp"
+		else
+			"—"
+		end
+	'
+}
+
 {
 	printf '# Benchmark report — `%s`\n\n' "$commit"
 	printf 'Task: `%s`  \n' "$task_id"
 	printf 'Configuration: `%s`, %s reasoning, %s measured Hpatch run(s).\n\n' \
 		"$model" "$reasoning_effort" "$hpatch_runs"
+	printf 'Uncached input is provider usage. Cache attribution splits it into cold or newly appended input and misses within the immediately preceding request prefix.\n\n'
 	if baseline_summary=$(jq -sr '[.[] | select(.arm == "control") | .imported_control_baseline.summary][0] // empty' "$results") && [[ -n $baseline_summary ]]; then
 		printf 'Control values are imported from `%s`; this run executed only Hpatch.\n\n' "$baseline_summary"
 	fi
@@ -228,6 +284,18 @@ category_label() {
 				["Output tokens", $arms.control.output, $arms.hpatch.output, ($arms.hpatch.output - $arms.control.output)]
 			][] | "| " + (map(tostring) | join(" | ")) + " |"
 		' "$results"
+		printf '| Cold/new uncached input tokens | %s | %s | %s |\n' \
+			"$(cache_field "$analysis_dir/control-cache.json" cold_or_new_uncached_input_tokens)" \
+			"$(cache_field "$analysis_dir/hpatch-cache.json" cold_or_new_uncached_input_tokens)" \
+			"$(cache_delta cold_or_new_uncached_input_tokens)"
+		printf '| Eligible-prefix miss tokens | %s | %s | %s |\n' \
+			"$(cache_field "$analysis_dir/control-cache.json" eligible_prefix_miss_tokens)" \
+			"$(cache_field "$analysis_dir/hpatch-cache.json" eligible_prefix_miss_tokens)" \
+			"$(cache_delta eligible_prefix_miss_tokens)"
+		printf '| Eligible-prefix cache rate | %s | %s | %s |\n' \
+			"$(cache_rate "$analysis_dir/control-cache.json")" \
+			"$(cache_rate "$analysis_dir/hpatch-cache.json")" \
+			"$(cache_rate_delta)"
 		printf '| Model requests | %s | %s | %s |\n' "$control_requests" "$hpatch_requests" "$(delta "$control_requests" "$hpatch_requests")"
 	else
 		printf '| Measure | Hpatch |\n'
@@ -242,6 +310,12 @@ category_label() {
 				["Output tokens", ($runs | map(.agent.usage.output_tokens) | add)]
 			][] | "| " + (map(tostring) | join(" | ")) + " |"
 		' "$results"
+		printf '| Cold/new uncached input tokens | %s |\n' \
+			"$(cache_field "$analysis_dir/hpatch-cache.json" cold_or_new_uncached_input_tokens)"
+		printf '| Eligible-prefix miss tokens | %s |\n' \
+			"$(cache_field "$analysis_dir/hpatch-cache.json" eligible_prefix_miss_tokens)"
+		printf '| Eligible-prefix cache rate | %s |\n' \
+			"$(cache_rate "$analysis_dir/hpatch-cache.json")"
 		printf '| Model requests | %s |\n' "$hpatch_requests"
 	fi
 

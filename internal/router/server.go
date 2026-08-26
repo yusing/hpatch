@@ -317,6 +317,16 @@ func (f *requestFinalization) finish(
 		"upstream_execution_duration", f.observation.upstreamDuration,
 		"usage_observed", f.observation.usageObserved,
 	}
+	if f.observation.usageObserved {
+		counts := f.observation.usageCounts
+		args = append(args,
+			"input_tokens", counts.InputTokens,
+			"cached_input_tokens", counts.InputTokens-min(counts.InputTokens, counts.UncachedInputTokens),
+			"uncached_input_tokens", counts.UncachedInputTokens,
+			"output_tokens", counts.OutputTokens,
+			"reasoning_tokens", counts.ReasoningTokens,
+		)
+	}
 	if requestErr != nil {
 		args = append(args, "err", requestErr)
 	}

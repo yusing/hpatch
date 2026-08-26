@@ -652,6 +652,11 @@ input-overhead source table. The router's end-to-end Responses and per-session u
 authoritative for provider-consumed model input. These token counts are reproducible estimates rather
 than provider billing totals.
 
+Each terminal Responses lifecycle log attributes the observed provider input, cached input,
+uncached input, output, and reasoning counts to one logical router request. It never logs the
+cache key, authorization material, prompt body, instructions, tool definitions, or input history.
+Requests without terminal usage omit token-count fields rather than reporting zero usage.
+
 The router's in-memory metrics snapshot also attributes successful and rejected hpatch
 translations and rejected-call diagnostic input tokens to the request session. Each session
 retains the latest 32 evaluator rejection identities: command index, physical source line,

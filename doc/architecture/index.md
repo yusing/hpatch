@@ -420,6 +420,9 @@ keys, response delivery, and provider usage. Its selected mode determines whethe
 existing hpatch transformer participates. Pass-through does not duplicate forwarding or
 introduce another provider client. The metrics endpoint is the executable mode-label
 boundary used to prevent arm misconfiguration.
+The terminal request log is the request-level cache-attribution boundary: it combines the one
+terminal provider usage observation with the request and session already owned by that lifecycle.
+Aggregate metrics remain unchanged.
 
 Hidden destinations cross into an agent-mutated workspace only through a pinned `*os.Root`
 after change capture. A pre-existing destination, lexical escape, or symlink escape fails

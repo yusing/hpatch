@@ -262,8 +262,8 @@ func TestExecuteRequestPassesThroughOriginalRequestAndRecordsUsage(t *testing.T)
 	}))
 	provider := &serverFakeProvider{results: []serverForwardResult{{response: serverHTTPResponse(responseBody)}}}
 	store := newMetricsStore("")
-	var output bytes.Buffer
-	if err := executeRequest(t.Context(), t.Context(), parsed, http.Header{}, "session", provider, &output, newDiagnostics(io.Discard), time.Now, nil, store); err != nil {
+	var output, logOutput bytes.Buffer
+	if err := executeRequest(t.Context(), t.Context(), parsed, http.Header{}, "session", provider, &output, newDiagnostics(&logOutput), time.Now, nil, store); err != nil {
 		t.Fatal(err)
 	}
 	if len(provider.forwarded) != 1 || !bytes.Equal(provider.forwarded[0], originalBody) {
@@ -278,6 +278,18 @@ func TestExecuteRequestPassesThroughOriginalRequestAndRecordsUsage(t *testing.T)
 	want := tokenCounts{InputTokens: 12, UncachedInputTokens: 7, OutputTokens: 7, ReasoningTokens: 3}
 	if got := store.snapshot().Total; got != want {
 		t.Fatalf("usage = %#v, want %#v", got, want)
+	}
+	logs := logOutput.String()
+	for _, field := range []string{
+		"input_tokens=12",
+		"cached_input_tokens=5",
+		"uncached_input_tokens=7",
+		"output_tokens=7",
+		"reasoning_tokens=3",
+	} {
+		if !strings.Contains(logs, field) {
+			t.Fatalf("terminal log lacks %q: %s", field, logs)
+		}
 	}
 }
 
@@ -900,6 +912,9 @@ func TestExecuteRequestTerminalOutcomes(t *testing.T) {
 				!strings.Contains(logs, "outcome="+test.wantOutcome.String()) ||
 				!strings.Contains(logs, "failure_phase="+string(test.wantFailurePhase)) {
 				t.Fatalf("terminal log = %q", logs)
+			}
+			if (test.wantUsage == 0) == strings.Contains(logs, "input_tokens=") {
+				t.Fatalf("terminal usage fields do not match observed usage: %q", logs)
 			}
 		})
 	}

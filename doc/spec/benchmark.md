@@ -147,6 +147,15 @@ session, thread, tool-call, or correlation identifiers. Detailed transport metri
 paths, and gain output remain available in retained machine-readable artifacts instead of being
 duplicated in the primary summary. When bounded attempt retention is incomplete, the summary MUST
 label the retained fraction rather than infer full-run rates.
+The summary MUST preserve provider input and cached-input totals. When terminal router logs contain
+request-level token attribution, it MUST also split provider uncached input into cold or newly
+appended input and misses within the immediately preceding request's eligible prefix. For a warm
+request, that eligible prefix is the smaller of its input-token count and the preceding request's
+input-token count; cached tokens up to that size are hits. The derived buckets MUST reconcile
+exactly to provider uncached input, and the report MUST render their aggregate eligible-prefix
+cache rate. An imported historical control whose retained log predates request-level token
+attribution MUST show the derived values as unavailable rather than fabricate them. Missing or
+partial attribution for a newly measured session MUST fail report generation.
 Unless `BENCHMARK_ENFORCE_NO_EDIT_LOOPS=false`, a measured run with any same-path file-read,
 search, or content-diff loop MUST retain its artifacts and exit unsuccessfully after report
 generation.

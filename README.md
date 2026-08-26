@@ -490,6 +490,7 @@ Metrics separate three different layers:
 3. The router dashboard and `/api/metrics` expose provider Responses lifecycle and usage totals alongside those persisted estimates.
 
 The router dashboard and `GET /api/metrics` expose the structured persistent aggregate without opening an engine workspace.
+Each terminal Responses log record also carries that logical request's provider token counts.
 
 These are reproducible payload estimates, not provider billing totals. They omit reasoning tokens, commentary, and host-specific framing. Provider Responses usage is authoritative for end-to-end input and output totals. Metrics are auxiliary and never replace a successful edit, command result, or rejection diagnostic. Passthrough mode does not install hpatch or plugin metric accounting.
 
