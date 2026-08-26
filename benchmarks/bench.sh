@@ -1539,7 +1539,8 @@ else
 fi
 if [[ $benchmark_mode == paired ]]; then
 	qualify_agent_isolation control-agent control 8081 hpatch 8082
-elif [[ $benchmark_mode == ctp-only ]]; then
+fi
+if [[ $benchmark_mode == ctp-only ]]; then
 	qualify_agent_isolation control-agent control 8081 hpatch 8082
 fi
 qualify_agent_isolation hpatch-agent hpatch 8082 control 8081

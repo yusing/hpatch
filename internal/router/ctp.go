@@ -93,7 +93,11 @@ func (c *ctpCodec) prepareRequest(request *parsedResponsesRequest) (*ctpResponse
 	}
 	nativeTokens, err := c.count(nativeBody)
 	if err != nil {
-		return nil, ctpAdmissionDisabled, ctpRequestMetrics{}, err
+		return nil, ctpAdmissionDisabled, ctpRequestMetrics{
+			Representation: ctpRepresentationMetrics{
+				NativeBytes: uint64(len(nativeBody)),
+			},
+		}, nil
 	}
 	requestMetrics := ctpRequestMetrics{Representation: ctpRepresentationMetrics{
 		NativeTokens: uint64(nativeTokens),
@@ -139,7 +143,7 @@ func (c *ctpCodec) prepareRequest(request *parsedResponsesRequest) (*ctpResponse
 	}
 	admissionNativeTokens, err := c.count(admissionNativeBody)
 	if err != nil {
-		return nil, ctpAdmissionDisabled, requestMetrics, err
+		return nil, ctpAdmissionDisabled, requestMetrics, nil
 	}
 	admissionCompactFields, definitions, err := transformCTPRequest(admissionFields, definitions)
 	if err != nil {
@@ -151,7 +155,7 @@ func (c *ctpCodec) prepareRequest(request *parsedResponsesRequest) (*ctpResponse
 	}
 	admissionCompactTokens, err := c.count(admissionCompactBody)
 	if err != nil {
-		return nil, ctpAdmissionDisabled, requestMetrics, err
+		return nil, ctpAdmissionDisabled, requestMetrics, nil
 	}
 
 	compactFields, appliedDefinitions, err := transformCTPRequest(request.fields, definitions)
@@ -167,7 +171,7 @@ func (c *ctpCodec) prepareRequest(request *parsedResponsesRequest) (*ctpResponse
 	}
 	compactTokens, err := c.count(compactBody)
 	if err != nil {
-		return nil, ctpAdmissionDisabled, requestMetrics, err
+		return nil, ctpAdmissionDisabled, requestMetrics, nil
 	}
 	requestMetrics.Representation.CompactTokens = uint64(compactTokens)
 	requestMetrics.Representation.CompactBytes = uint64(len(compactBody))
