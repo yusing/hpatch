@@ -14,8 +14,7 @@
     "difficulty": "hard"
   },
   "runtime": {
-    "dependency_kind": "none",
-    "read_probe": ""
+    "dependency_kind": "none"
   },
   "prompt_file": "prompt.md",
   "hidden_files": [

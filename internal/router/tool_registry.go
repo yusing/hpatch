@@ -16,6 +16,7 @@ import (
 	"github.com/gofrs/flock"
 	"github.com/yusing/hpatch"
 	"github.com/yusing/hpatch/internal/router/toolplugin"
+	"github.com/yusing/hpatch/internal/shellruntime"
 )
 
 const (
@@ -44,7 +45,14 @@ func buildToolRegistry(ctx context.Context, dataDirectory, hpatchDescription str
 	if err != nil {
 		return nil, fmt.Errorf("resolve hpatch-router executable: %w", err)
 	}
-	snapshotDirectory, err := os.MkdirTemp("", "hpatch-router-tools-")
+	runtimeDirectory, err := shellruntime.Directory()
+	if err != nil {
+		return nil, fmt.Errorf("locate shell runtime directory: %w", err)
+	}
+	if err := os.MkdirAll(runtimeDirectory, 0o700); err != nil {
+		return nil, fmt.Errorf("create shell runtime directory: %w", err)
+	}
+	snapshotDirectory, err := os.MkdirTemp(runtimeDirectory, "hpatch-router-tools-")
 	if err != nil {
 		return nil, fmt.Errorf("create tool registry snapshot: %w", err)
 	}
@@ -178,8 +186,21 @@ func buildToolRegistry(ctx context.Context, dataDirectory, hpatchDescription str
 	if err := writeToolWorkerManifest(snapshotDirectory, manifest); err != nil {
 		return fail(err)
 	}
+	var shellRuntime string
 	for _, contribution := range contributions {
 		if contribution.Builtin {
+			continue
+		}
+		if contribution.PluginID == builtinToolsPluginID {
+			if contribution.Name != "shell" {
+				continue
+			}
+			worker, workerErr := ensureWorkerSymlinkInDirectory(executable, snapshotDirectory, contribution.Name)
+			if workerErr != nil {
+				validationErrors = append(validationErrors, workerErr)
+			} else {
+				shellRuntime = worker
+			}
 			continue
 		}
 		wrapper, wrapperErr := ensureWorkerSymlinkInDirectory(executable, snapshotDirectory, contribution.Name)
@@ -192,12 +213,17 @@ func buildToolRegistry(ctx context.Context, dataDirectory, hpatchDescription str
 	if len(validationErrors) != 0 {
 		return fail(errors.Join(validationErrors...))
 	}
+	if shellRuntime == "" {
+		return fail(errors.New("built-in shell runtime is unavailable"))
+	}
 	return &toolRegistry{
 		SnapshotDir:       snapshotDirectory,
 		RuntimeRoot:       runtimeRoot,
 		NodeExecutable:    pluginSnapshot.NodeExecutable,
 		executable:        executable,
 		frontendDirectory: frontendDirectory,
+		runtimeDirectory:  runtimeDirectory,
+		shellRuntime:      shellRuntime,
 		ordered:           contributions,
 		byName:            byName,
 		wrappers:          wrappers,
@@ -313,6 +339,28 @@ func (registry *toolRegistry) installFrontends() error {
 	if registry == nil {
 		return errors.New("tool registry is unavailable")
 	}
+	var retiredBuiltinNames []string
+	for _, contribution := range registry.ordered {
+		if contribution.PluginID == builtinToolsPluginID {
+			retiredBuiltinNames = append(retiredBuiltinNames, contribution.Name)
+		}
+	}
+	needsLock := len(registry.wrappers) > 0
+	if !needsLock {
+		for _, name := range retiredBuiltinNames {
+			if _, authenticated := authenticatedSnapshotFrontend(
+				registry.executable,
+				registry.frontendDirectory,
+				name,
+			); authenticated {
+				needsLock = true
+				break
+			}
+		}
+	}
+	if !needsLock {
+		return nil
+	}
 	if registry.frontendLock != nil {
 		return errors.New("tool registry frontends are already installed")
 	}
@@ -331,6 +379,19 @@ func (registry *toolRegistry) installFrontends() error {
 		unlockErr := lock.Unlock()
 		registry.frontendLock = nil
 		return errors.Join(cause, cleanupErr, unlockErr)
+	}
+	for _, name := range retiredBuiltinNames {
+		if err := removeAuthenticatedSnapshotFrontend(
+			registry.executable,
+			registry.frontendDirectory,
+			name,
+		); err != nil {
+			return fail(err)
+		}
+	}
+	if len(registry.wrappers) == 0 {
+		registry.frontendLock = nil
+		return lock.Unlock()
 	}
 
 	for _, contribution := range registry.ordered {

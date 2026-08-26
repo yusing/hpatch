@@ -9,6 +9,7 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
 RUN go build -trimpath -o /out/hpatch-router ./cmd/hpatch-router
+RUN go build -trimpath -o /out/shell ./cmd/shell
 
 FROM golang:1.26-bookworm
 

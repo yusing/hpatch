@@ -85,6 +85,11 @@ func TestToolPluginWorkerResolvesBasenameFromPath(t *testing.T) {
 	if err := registry.installFrontends(); err != nil {
 		t.Fatal(err)
 	}
+	second, _ := newToolPluginTestRegistry(t)
+	if err := second.installFrontends(); err == nil ||
+		!strings.Contains(err.Error(), "another hpatch-router process owns the tool frontends") {
+		t.Fatalf("second configured registry frontend installation error = %v", err)
+	}
 	frontend, ok := registry.frontends["plugin_tool"]
 	if !ok {
 		t.Fatal("plugin frontend is unavailable")
@@ -158,15 +163,14 @@ func TestBuiltinToolWorkersRunGeneratedTypeScriptImplementations(t *testing.T) {
 		{name: "inspect_file", arguments: []string{"file.txt"}, wantOutput: "{\"ok\":true,\"data\":{\"path\":\"file.txt\",\"kind\":\"none\",\"language\":null,\"size_bytes\":11,\"line_count\":null,\"parse_complete\":true,\"outline\":[]},\"truncated\":false,\"truncation\":null}\n"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			wrapper, ok := registry.wrapper(test.name)
-			if !ok {
-				t.Fatalf("%s wrapper is unavailable", test.name)
+			if wrapper, ok := registry.wrapper(test.name); ok {
+				t.Fatalf("%s unexpectedly has wrapper %q", test.name, wrapper)
 			}
 			var stdout, stderr bytes.Buffer
 			handled, exitCode := RunToolPluginWorker(
 				t.Context(),
-				wrapper,
-				test.arguments,
+				registry.shellRuntime,
+				[]string{"bash", workerCommand(test.name, test.arguments)},
 				os.Stdin,
 				&stdout,
 				&stderr,
@@ -187,10 +191,16 @@ func TestBuiltinToolWorkersRunGeneratedTypeScriptImplementations(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(gain.ToolInputs) != 4 {
+	if len(gain.ToolInputs) != 5 {
 		t.Fatalf("built-in input metrics = %+v", gain)
 	}
 	for _, row := range gain.ToolInputs {
+		if row.ToolName == "shell" {
+			if row.Executions != 4 || row.CurrentTokens != row.StockTokens {
+				t.Fatalf("shell input metric row = %+v", row)
+			}
+			continue
+		}
 		if row.ToolName == "inspect_file" {
 			if row.CurrentTokens != row.StockTokens || row.Reduction != "0.0" {
 				t.Fatalf("inspect_file input metric row = %+v", row)

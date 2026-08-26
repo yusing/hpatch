@@ -20,7 +20,8 @@ import plugin from "../../../../plugins/tools.ts";
 
 const originalCWD = process.cwd();
 const originalPath = process.env.PATH;
-const originalSessionID = process.env.CODEX_THREAD_ID;
+const originalRuntimeDirectory = process.env.HPATCH_RUNTIME_DIR;
+const originalThreadID = process.env.CODEX_THREAD_ID;
 const pluginBin = path.resolve(import.meta.dir, "../../../../plugins/node_modules/.bin");
 const temporaryDirectories: string[] = [];
 const executionContext = {stdinFD: null, scriptReadFD: null, scriptWriteFD: null, outputBudgetBytes: 16 * 1024 * 1024};
@@ -167,10 +168,15 @@ afterEach(async () => {
   } else {
     process.env.PATH = originalPath;
   }
-  if (originalSessionID === undefined) {
+  if (originalRuntimeDirectory === undefined) {
+    delete process.env.HPATCH_RUNTIME_DIR;
+  } else {
+    process.env.HPATCH_RUNTIME_DIR = originalRuntimeDirectory;
+  }
+  if (originalThreadID === undefined) {
     delete process.env.CODEX_THREAD_ID;
   } else {
-    process.env.CODEX_THREAD_ID = originalSessionID;
+    process.env.CODEX_THREAD_ID = originalThreadID;
   }
   await Promise.all(
     temporaryDirectories.splice(0).map((directory) => rm(directory, {recursive: true, force: true})),
@@ -365,10 +371,12 @@ describe("hread built-in plugin", () => {
       exitCode: 1,
     });
 
-    const retainedDirectory = await temporaryDirectory("hpatch-");
-    const sessionID = path.basename(retainedDirectory).slice("hpatch-".length);
+    const runtimeDirectory = await temporaryDirectory("hpatch-runtime-");
+    const retainedDirectory = path.join(runtimeDirectory, "hpatch-thread-id");
+    await mkdir(retainedDirectory);
     await writeFile(path.join(retainedDirectory, "call-id"), "retained\n", "utf8");
-    process.env.CODEX_THREAD_ID = sessionID;
+    process.env.HPATCH_RUNTIME_DIR = runtimeDirectory;
+    process.env.CODEX_THREAD_ID = "thread-id";
     const retained = await tool.execute(["@shell/call-id"], executionContext);
     expect(retained).toEqual({
       stdout: formatHashLine(1, "retained"),
@@ -993,14 +1001,10 @@ describe("hsymbol built-in plugin", () => {
     const directory = await temporaryDirectory("hsymbol-lsp-");
     process.chdir(directory);
     process.env.PATH = `${pluginBin}${path.delimiter}${originalPath ?? ""}`;
-    // Validate language server binaries are available before running tests
+    // TypeScript supports a version probe; Pyright is validated by the LSP query below.
     const tscCheck = spawnSync("tsc", ["--version"], {encoding: "utf8"});
-    const pyrightCheck = spawnSync("pyright-langserver", ["--version"], {encoding: "utf8"});
     if (tscCheck.status !== 0) {
       throw new Error(`tsc is not available: ${tscCheck.error?.message ?? tscCheck.stderr}`);
-    }
-    if (pyrightCheck.status !== 0) {
-      throw new Error(`pyright-langserver is not available: ${pyrightCheck.error?.message ?? pyrightCheck.stderr}`);
     }
     const typescriptTarget = [
       "export function target(value: number) {",

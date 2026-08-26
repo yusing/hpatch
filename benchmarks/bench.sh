@@ -78,7 +78,6 @@ grader_name=
 baseline_output_contains=
 dependency_kind=none
 preload_go_qualification_grader=false
-read_probe=
 
 agent_timeout=
 grader_timeout=
@@ -157,7 +156,6 @@ load_task_manifest() {
 	dependency_kind=$(jq -er '.runtime.dependency_kind // "go"' "$task_manifest")
 	preload_go_qualification_grader=$(jq -er \
 		'.runtime.preload_go_qualification_grader // false' "$task_manifest")
-	read_probe=$(jq -er '.runtime.read_probe // "go.mod"' "$task_manifest")
 	case $dependency_kind in
 	go|node|none) ;;
 	*)
@@ -858,45 +856,12 @@ prepare_dependency_cache() {
 	shopt -u nullglob
 }
 
-configure_hpatch_agent_path() {
-	local snapshot
-
-	if ! snapshot=$("${compose[@]}" exec -T hpatch sh -euc '
-		count=0
-		snapshot=
-		for candidate in "$TMPDIR"/hpatch-router-tools-*; do
-			if [ -f "$candidate/workers.json" ] &&
-				[ -L "$candidate/hread" ] &&
-				[ -L "$candidate/hgrep" ] &&
-				[ -L "$candidate/shell" ]; then
-				count=$((count + 1))
-				snapshot=$candidate
-			fi
-		done
-		if [ "$count" -ne 1 ]; then
-			printf "bench.sh: found %d authenticated hpatch tool snapshots, want 1\n" "$count" >&2
-			exit 1
-		fi
-		printf "%s\n" "$snapshot"
-	'); then
-		return 1
-	fi
-	export HPATCH_BENCH_HPATCH_AGENT_PATH="$snapshot:/usr/local/go/bin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin"
-}
-
 qualify_agent_isolation() {
 	local service=$1
 	local assigned_router=$2
 	local assigned_port=$3
 	local forbidden_router=$4
 	local forbidden_port=$5
-	local require_hread=0
-	local -a agent_environment=()
-	if [[ $service == hpatch-agent ]]; then
-		require_hread=1
-		agent_environment=(--env "PATH=$HPATCH_BENCH_HPATCH_AGENT_PATH")
-	fi
-
 	printf 'validate agent isolation: %s may reach only %s:%s\n' \
 		"$service" "$assigned_router" "$assigned_port"
 	if ! "${compose[@]}" run \
@@ -906,10 +871,7 @@ qualify_agent_isolation() {
 		--no-deps \
 		--env "ASSIGNED_ROUTER=http://$assigned_router:$assigned_port/api/metrics" \
 		--env "FORBIDDEN_ROUTER=http://$forbidden_router:$forbidden_port/api/metrics" \
-		--env "REQUIRE_HREAD=$require_hread" \
 		--env "DEPENDENCY_KIND=$dependency_kind" \
-		--env "READ_PROBE=$read_probe" \
-		"${agent_environment[@]}" \
 		--volume "$dependency_workspace/repo:$dependency_workspace/repo:ro" \
 		--workdir "$dependency_workspace/repo" \
 		"$service" \
@@ -923,6 +885,13 @@ qualify_agent_isolation() {
 				echo "unexpected external network access" >&2
 				exit 1
 			fi
+			command -v shell >/dev/null
+			for private_tool in hread hgrep hsymbol inspect_file; do
+				if command -v "$private_tool" >/dev/null; then
+					echo "private tool unexpectedly installed on PATH: $private_tool" >&2
+					exit 1
+				fi
+			done
 			test "$(codex --disable apps mcp list --json)" = "[]"
 			case "$DEPENDENCY_KIND" in
 			go) go mod download all ;;
@@ -934,12 +903,6 @@ qualify_agent_isolation() {
 				test ! -e /tmp/__pycache__/hpatch-benchmark-probe.cpython-*.pyc
 				;;
 			esac
-			if [ "$REQUIRE_HREAD" = 1 ]; then
-				command -v hread >/dev/null
-			fi
-			if [ "$REQUIRE_HREAD" = 1 ] && [ -n "$READ_PROBE" ]; then
-				hread "$READ_PROBE" 1:1 >/dev/null
-			fi
 		'; then
 		printf 'bench.sh: agent isolation qualification failed for %s\n' "$service" >&2
 		return 1
@@ -1416,7 +1379,6 @@ else
 	fi
 	"${compose[@]}" up --detach --wait hpatch
 fi
-configure_hpatch_agent_path
 if [[ $benchmark_mode == paired ]]; then
 	qualify_agent_isolation control-agent control 8081 hpatch 8082
 fi

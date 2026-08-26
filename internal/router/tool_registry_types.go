@@ -28,6 +28,8 @@ type (
 		executable        string
 		frontendDirectory string
 		frontendLock      *flock.Flock
+		runtimeDirectory  string
+		shellRuntime      string
 		ordered           []toolContribution
 		byName            map[string]toolContribution
 		wrappers          map[string]string

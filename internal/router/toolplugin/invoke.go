@@ -15,7 +15,8 @@ import (
 
 func invoke(
 	ctx context.Context,
-	node, hostPath, isolatedCWD string,
+	node, hostPath, isolatedCWD, processDirectory string,
+	processEnvironment []string,
 	outputLimit int64,
 	inheritedInput *os.File,
 	transientExtraFiles []*os.File,
@@ -26,7 +27,7 @@ func invoke(
 		return fmt.Errorf("encode plugin runtime request: %w", err)
 	}
 	command := exec.CommandContext(ctx, node, hostPath)
-	configurePluginProcessGroup(command)
+	ConfigureProcessGroup(command)
 	if inheritedInput != nil {
 		command.ExtraFiles = append([]*os.File{inheritedInput}, transientExtraFiles...)
 	}
@@ -37,6 +38,9 @@ func invoke(
 			"NODE_NO_WARNINGS=1",
 			"PATH=" + filepath.Dir(node),
 		}
+	} else {
+		command.Dir = processDirectory
+		command.Env = processEnvironment
 	}
 	command.Stdin = bytes.NewReader(encoded)
 	stdoutPipe, err := command.StdoutPipe()

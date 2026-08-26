@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/yusing/hpatch/internal/shellruntime"
 )
 
 func TestShellRetentionLifecycle(t *testing.T) {
@@ -19,15 +21,16 @@ func TestShellRetentionLifecycle(t *testing.T) {
 	}
 	proxy := &hpatchProxy{shellDirectory: directory, shellSessions: make(map[string]struct{})}
 	const sessionID = "019fe9b0-c75b-7f92-9ce0-1580bca5e4ab"
+	sessionDirectory := filepath.Dir(shellruntime.Path(directory, sessionID))
 	originalTTL := shellArtifactTTL
 	shellArtifactTTL = 10 * time.Millisecond
 	t.Cleanup(func() { shellArtifactTTL = originalTTL })
 
-	reference, retained := proxy.retainShell(sessionID, "call-id", "printf ok\n")
+	reference, retained := proxy.retainShell(sessionDirectory, "call-id", "printf ok\n")
 	if !retained || reference != "@shell/call-id" {
 		t.Fatalf("retention = %q, %v", reference, retained)
 	}
-	path := filepath.Join(proxy.shellSessionDirectory(sessionID), "call-id")
+	path := filepath.Join(sessionDirectory, "call-id")
 	if content, err := os.ReadFile(path); err != nil || string(content) != "printf ok\n" {
 		t.Fatalf("retained content = %q, %v", content, err)
 	}
@@ -46,13 +49,13 @@ func TestShellRetentionLifecycle(t *testing.T) {
 		time.Sleep(time.Millisecond)
 	}
 
-	if _, retained := proxy.retainShell(sessionID, "call-next", "printf next\n"); !retained {
+	if _, retained := proxy.retainShell(sessionDirectory, "call-next", "printf next\n"); !retained {
 		t.Fatal("second script was not retained")
 	}
 	if err := proxy.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(proxy.shellSessionDirectory(sessionID)); !errors.Is(err, os.ErrNotExist) {
+	if _, err := os.Stat(sessionDirectory); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("session directory survived close: %v", err)
 	}
 }
@@ -68,7 +71,7 @@ func TestHPatchAppliesRetainedShellArtifactDirectly(t *testing.T) {
 		t,
 		newInProcessHPatchTranslator(dataDirectory),
 	)
-	reference, retained := proxy.retainShell(transform.sessionID, "call-shell", "printf ok\n")
+	reference, retained := proxy.retainShell(transform.shellDirectory, "call-shell", "printf ok\n")
 	if !retained {
 		t.Fatal("shell script was not retained")
 	}
@@ -78,7 +81,7 @@ func TestHPatchAppliesRetainedShellArtifactDirectly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	path := filepath.Join(proxy.shellSessionDirectory(transform.sessionID), "call-shell")
+	path := filepath.Join(transform.shellDirectory, "call-shell")
 	if content, err := os.ReadFile(path); err != nil || string(content) != "printf @shell/fixed\n" {
 		t.Fatalf("applied content = %q, %v", content, err)
 	}
@@ -116,9 +119,15 @@ func TestHPatchTreatsShellArtifactLiteralAsContent(t *testing.T) {
 }
 
 func TestShellResultMetadata(t *testing.T) {
-	carrier, err := workerExecInputWithParams(
-		"shell",
+	proxy := newManagedHPatchProxy(t, testTranslator(t, new(int)))
+	shell, ok := proxy.registry.contribution("shell")
+	if !ok {
+		t.Fatal("shell contribution is unavailable")
+	}
+	carrier, err := proxy.registry.execCarrierInput(
+		shell,
 		[]string{"bash", "printf ok"},
+		"",
 		nil,
 		map[string]json.RawMessage{"retained": mustMarshalJSON(false)},
 	)

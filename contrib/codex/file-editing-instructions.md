@@ -9,17 +9,19 @@ with shell write tricks or Python when hpatch is sufficient.
 ## Shell execution
 
 Use `functions.shell` for shell commands. Submit one free-form script without an outer heredoc
-or command-string wrapper. The selected interpreter receives the exact script body, and frontend
-standard input remains available as program data.
+or command-string wrapper. The selected evaluator receives the exact script body, and standard
+input remains available as program data.
 
 The default interpreter is Bash. For another interpreter, put its command and arguments in a
 compact shebang on the first line, such as `#!uv run python` or
 `#!node --experimental-strip-types`. Use a direct command or path rather than `/usr/bin/env`.
+Selectors named `bash` or ending in `/bash` use the embedded Bash evaluator; selectors named
+`sh` or ending in `/sh` use its POSIX evaluator.
 Omit Bash shebangs, and pass the script directly instead of wrapping it in Bash, `-c` or `-e`
 command-string quoting, or a heredoc.
 
 Optional `#!key=value` directives follow the interpreter shebang or appear first. `#!cmd=`
-accepts exactly one `{.}` placeholder, which expands to the normalized shell frontend command
+accepts exactly one `{.}` placeholder, which expands to the normalized shell helper command
 while leaving standard input available to the script. `#!params=<JSON object>` supplies
 request-specific outer execution arguments and may appear before or after `#!cmd=`. The body
 supplies `cmd`, so omit it from params; when `login` is present, it must be `false`.

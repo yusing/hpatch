@@ -13,6 +13,7 @@ import (
 
 	"github.com/tiktoken-go/tokenizer"
 	"github.com/yusing/hpatch"
+	"github.com/yusing/hpatch/internal/shellruntime"
 )
 
 const testToolPluginDeclaration = `export default {
@@ -50,6 +51,7 @@ const testToolPluginDeclaration = `export default {
 
 func newToolPluginTestTransform(t *testing.T) (*hpatchResponseTransform, *hpatchProxy, *parsedResponsesRequest) {
 	t.Helper()
+	t.Setenv(shellruntime.RuntimeDirectoryEnvironment, t.TempDir())
 	dataDirectory := t.TempDir()
 	pluginDirectory := filepath.Join(dataDirectory, "plugins")
 	if err := os.Mkdir(pluginDirectory, 0o700); err != nil {
@@ -89,7 +91,7 @@ func newToolPluginTestTransform(t *testing.T) (*hpatchResponseTransform, *hpatch
 		RequestKind: "turn",
 		Directories: map[string]json.RawMessage{workspace: nil},
 	}
-	transform, err := proxy.prepareRequest(t.Context(), &request, "plugin-session", metadata, true)
+	transform, err := proxy.prepareRequest(t.Context(), &request, "plugin-session", "plugin-thread", metadata, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -205,8 +207,12 @@ func TestToolPluginExecTemplateUsesCanonicalWorkerCommand(t *testing.T) {
 	}
 
 	visible := decodeResponseItem(t, response)
-	payload, err := workerTemplateExecInputWithParams(
-		"plugin_tool",
+	contribution, ok := proxy.registry.contribution("plugin_tool")
+	if !ok {
+		t.Fatal("plugin contribution is unavailable")
+	}
+	payload, err := proxy.registry.execCarrierInput(
+		contribution,
 		[]string{"--fixed", "template"},
 		"before | {.} | after",
 		nil,

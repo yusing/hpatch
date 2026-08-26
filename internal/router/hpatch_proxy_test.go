@@ -15,6 +15,7 @@ import (
 
 	"github.com/yusing/hpatch"
 	codexinstructions "github.com/yusing/hpatch/contrib/codex"
+	"github.com/yusing/hpatch/internal/shellruntime"
 )
 
 const (
@@ -161,6 +162,7 @@ func newManagedHPatchProxyWithDataDirectory(t *testing.T, translator hpatchTrans
 	if translator == nil {
 		return nil
 	}
+	t.Setenv(shellruntime.RuntimeDirectoryEnvironment, t.TempDir())
 	registry, err := buildToolRegistry(t.Context(), dataDirectory, translator.ToolDescription(), false)
 	if err != nil {
 		t.Fatal(err)
@@ -176,11 +178,11 @@ func newManagedHPatchProxyWithDataDirectory(t *testing.T, translator hpatchTrans
 
 func registeredWorkerInput(t *testing.T, proxy *hpatchProxy, name string, arguments []string) string {
 	t.Helper()
-	_, ok := proxy.registry.wrapper(name)
+	contribution, ok := proxy.registry.contribution(name)
 	if !ok {
 		t.Fatalf("registered worker %q is unavailable", name)
 	}
-	input, err := workerExecInputWithParams(name, arguments, nil)
+	input, err := proxy.registry.execCarrierInput(contribution, arguments, "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -210,7 +212,7 @@ func newHPatchTestTransformWithProxy(t *testing.T, proxy *hpatchProxy) (*hpatchR
 		t.Fatal(err)
 	}
 	metadata := codexTurnMetadata{RequestKind: "turn", Directories: map[string]json.RawMessage{workspace: nil}}
-	transform, err := proxy.prepareRequest(t.Context(), &request, "session-1", metadata, true)
+	transform, err := proxy.prepareRequest(t.Context(), &request, "session-1", "thread-1", metadata, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -327,7 +329,7 @@ func TestHPatchPrepareRequestRewritesNamespacedExecWithShell(t *testing.T) {
 	proxy := newManagedHPatchProxy(t, testTranslator(t, new(int)))
 
 	metadata := codexTurnMetadata{RequestKind: "turn", Directories: map[string]json.RawMessage{workspace: nil}}
-	transform, err := proxy.prepareRequest(t.Context(), &request, "session-functions-exec", metadata, true)
+	transform, err := proxy.prepareRequest(t.Context(), &request, "session-functions-exec", "thread-functions-exec", metadata, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -395,7 +397,7 @@ func TestHPatchPrepareRequestUsesCustomizedModelInstructions(t *testing.T) {
 		proxy := newManagedHPatchProxy(t, testTranslator(t, new(int)))
 		proxy.customizedInstructions = true
 		request := newRequest(t)
-		transform, err := proxy.prepareRequest(t.Context(), &request, "custom-session", metadata, true)
+		transform, err := proxy.prepareRequest(t.Context(), &request, "custom-session", "custom-thread", metadata, true)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -414,7 +416,7 @@ func TestHPatchPrepareRequestUsesCustomizedModelInstructions(t *testing.T) {
 		proxy := newManagedHPatchProxy(t, testTranslator(t, new(int)))
 		request := newRequest(t)
 		originalInput := bytes.Clone(request.fields["input"])
-		if _, err := proxy.prepareRequest(t.Context(), &request, "stock-session", metadata, true); err == nil ||
+		if _, err := proxy.prepareRequest(t.Context(), &request, "stock-session", "stock-thread", metadata, true); err == nil ||
 			!strings.Contains(err.Error(), "neither stock nor marked") {
 			t.Fatalf("error = %v", err)
 		}
@@ -888,7 +890,7 @@ func TestHPatchDirectAdditionalApplyPatchIsRejectedWithoutExecCarrier(t *testing
 		}
 	})
 	metadata := codexTurnMetadata{RequestKind: "turn", Directories: map[string]json.RawMessage{workspace: nil}}
-	transform, err := proxy.prepareRequest(t.Context(), &request, "session-direct", metadata, true)
+	transform, err := proxy.prepareRequest(t.Context(), &request, "session-direct", "thread-direct", metadata, true)
 	if err == nil || transform != nil || !strings.Contains(err.Error(), "unsupported flat apply_patch") {
 		t.Fatalf("direct rewrite = transform %v, error %v", transform, err)
 	}
@@ -1071,7 +1073,7 @@ func TestHPatchPrepareRequestLeavesIneligibleRequestUnchanged(t *testing.T) {
 	beforeTools := bytes.Clone(request.fields["tools"])
 	proxy := newManagedHPatchProxy(t, testTranslator(t, new(int)))
 	metadata := codexTurnMetadata{RequestKind: "turn", Directories: map[string]json.RawMessage{workspace: nil}}
-	transform, err := proxy.prepareRequest(t.Context(), &request, "", metadata, true)
+	transform, err := proxy.prepareRequest(t.Context(), &request, "", "thread", metadata, true)
 	if err == nil || transform != nil || !strings.Contains(err.Error(), "valid session ID") || !bytes.Equal(beforeInput, request.fields["input"]) || !bytes.Equal(beforeTools, request.fields["tools"]) {
 		t.Fatalf("ineligible request = transform %v, error %v, fields %#v", transform, err, request.fields)
 	}
@@ -1087,7 +1089,7 @@ func TestHPatchIneligibleContinuationDoesNotRestoreHistory(t *testing.T) {
 		t.Fatal(err)
 	}
 	before := bytes.Clone(request.fields["input"])
-	transform, err := proxy.prepareRequest(t.Context(), &request, "session", codexTurnMetadata{}, false)
+	transform, err := proxy.prepareRequest(t.Context(), &request, "session", "thread", codexTurnMetadata{}, false)
 	if err == nil || transform != nil || !strings.Contains(err.Error(), "valid turn metadata") || !bytes.Equal(before, request.fields["input"]) {
 		t.Fatalf("ineligible continuation = transform %v, error %v, input %s", transform, err, request.fields["input"])
 	}
@@ -1117,6 +1119,7 @@ func TestHPatchTranslationWithoutWorkspaceUsesNoBaseDirectory(t *testing.T) {
 		t.Context(),
 		&request,
 		"session-without-workspace",
+		"thread-without-workspace",
 		codexTurnMetadata{RequestKind: "turn"},
 		true,
 	)
@@ -1308,25 +1311,21 @@ func TestShellJSONTranslatesBashCasesEndToEnd(t *testing.T) {
 	tests := []struct {
 		name  string
 		input string
-		want  string
 	}{
-		{name: "single line", input: "foo", want: "foo"},
-		{name: "final newline", input: "foo\n", want: "foo"},
-		{name: "redundant errexit", input: "set -e\nfoo\n", want: "foo"},
+		{name: "single line", input: "foo"},
+		{name: "final newline", input: "foo\n"},
+		{name: "redundant errexit", input: "set -e\nfoo\n"},
 		{
 			name:  "multiline",
 			input: "printf one\nprintf two\n",
-			want:  "printf one\nprintf two",
 		},
 		{
 			name:  "meaningful options",
 			input: "set -euo pipefail\nfoo\n",
-			want:  "set -euo pipefail\nfoo",
 		},
 		{
 			name:  "multiple commands",
 			input: "set -e\nfalse; echo survived\n",
-			want:  "set -e\nfalse; echo survived",
 		},
 	}
 	output := make([]any, 0, len(tests))
@@ -1367,8 +1366,9 @@ func TestShellJSONTranslatesBashCasesEndToEnd(t *testing.T) {
 				Command string `json:"cmd"`
 			}
 			decodeExecCarrierArguments(t, carrierInput, &arguments)
-			if arguments.Command != test.want {
-				t.Fatalf("translated exec command = %q, want %q", arguments.Command, test.want)
+			want := workerCommand("shell", []string{"bash", test.input})
+			if arguments.Command != want {
+				t.Fatalf("translated exec command = %q, want %q", arguments.Command, want)
 			}
 		})
 	}
@@ -1695,8 +1695,8 @@ func TestShellInterpreterWrapperAddsWarning(t *testing.T) {
 		Command string `json:"cmd"`
 	}
 	decodeExecCarrierArguments(t, carrierInput, &arguments)
-	if arguments.Command == "" || strings.Contains(arguments.Command, warningInput) ||
-		!strings.Contains(arguments.Command, input) ||
+	wantCommand := workerCommand("shell", []string{"bash", input})
+	if arguments.Command != wantCommand || strings.Contains(arguments.Command, warningInput) ||
 		!strings.Contains(carrierInput, warningInput+codeModeMetadataProjection) {
 		t.Fatalf("warned shell carrier = %q, command %q, want original input %q", carrierInput, arguments.Command, input)
 	}
@@ -1918,12 +1918,44 @@ func TestNativeExecMisuseWarningMeteredOnceAcrossStreamLifecycle(t *testing.T) {
 }
 
 func TestWorkerTemplateExecInputQuotesNestedShellCommand(t *testing.T) {
-	carrierInput, err := workerTemplateExecInputWithParams(
-		"shell",
-		[]string{"python3", `print('{"hello":"world"}')`},
+	proxy := newManagedHPatchProxy(t, testTranslator(t, new(int)))
+	shell, ok := proxy.registry.contribution("shell")
+	if !ok {
+		t.Fatal("shell contribution is unavailable")
+	}
+	shellArguments := []string{"python3", `print('{"hello":"world"}')`}
+	carrierInput, err := proxy.registry.execCarrierInput(
+		shell,
+		shellArguments,
 		"curl -fsSL URL | {.} | jq",
 		nil,
 	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var carrierArguments struct {
+		Command string `json:"cmd"`
+	}
+	decodeExecCarrierArguments(t, carrierInput, &carrierArguments)
+	want := "curl -fsSL URL | " + workerCommand("shell", shellArguments) + " | jq"
+	if carrierArguments.Command != want {
+		t.Fatalf("translated template command = %q, want %q", carrierArguments.Command, want)
+	}
+
+	for _, template := range []string{"missing", "{.} then {.}"} {
+		if _, err := proxy.registry.execCarrierInput(shell, []string{"bash", ""}, template, nil); err == nil {
+			t.Fatalf("worker template %q did not reject", template)
+		}
+	}
+}
+
+func TestShellCarrierAlwaysUsesFixedHelper(t *testing.T) {
+	proxy := newManagedHPatchProxy(t, testTranslator(t, new(int)))
+	shell, ok := proxy.registry.contribution("shell")
+	if !ok {
+		t.Fatal("shell contribution is unavailable")
+	}
+	carrierInput, err := proxy.registry.execCarrierInput(shell, []string{"bash", "printf ok"}, "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1931,54 +1963,19 @@ func TestWorkerTemplateExecInputQuotesNestedShellCommand(t *testing.T) {
 		Command string `json:"cmd"`
 	}
 	decodeExecCarrierArguments(t, carrierInput, &arguments)
-	want := `curl -fsSL URL | shell python3 'print('"'"'{"hello":"world"}'"'"')' | jq`
+	want := workerCommand("shell", []string{"bash", "printf ok"})
 	if arguments.Command != want {
-		t.Fatalf("translated template command = %q, want %q", arguments.Command, want)
-	}
-
-	for _, template := range []string{"missing", "{.} then {.}"} {
-		if _, err := workerTemplateExecInputWithParams("shell", []string{"bash", ""}, template, nil); err == nil {
-			t.Fatalf("worker template %q did not reject", template)
-		}
-	}
-}
-
-func TestDirectBashExecCommand(t *testing.T) {
-	for _, test := range []struct {
-		name      string
-		arguments []string
-		want      string
-		ok        bool
-	}{
-		{name: "single line", arguments: []string{"bash", "foo"}, want: "foo", ok: true},
-		{name: "final newline", arguments: []string{"bash", "foo\n"}, want: "foo", ok: true},
-		{name: "redundant errexit", arguments: []string{"bash", "set -e\nfoo\n"}, want: "foo", ok: true},
-		{
-			name:      "meaningful options",
-			arguments: []string{"bash", "set -euo pipefail\nfoo\n"},
-			want:      "set -euo pipefail\nfoo",
-			ok:        true,
-		},
-		{
-			name:      "multiple commands",
-			arguments: []string{"bash", "set -e\nfalse; echo survived\n"},
-			want:      "set -e\nfalse; echo survived",
-			ok:        true,
-		},
-		{name: "interpreter arguments", arguments: []string{"bash", "-x", "foo"}},
-		{name: "other interpreter", arguments: []string{"python3", "foo"}},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			got, ok := directBashExecCommand(test.arguments)
-			if got != test.want || ok != test.ok {
-				t.Fatalf("directBashExecCommand(%q) = %q, %t; want %q, %t", test.arguments, got, ok, test.want, test.ok)
-			}
-		})
+		t.Fatalf("shell helper command = %q, want %q", arguments.Command, want)
 	}
 }
 
 func TestWorkerExecInputMergesValidatedParams(t *testing.T) {
-	carrierInput, err := workerExecInputWithParams("shell", []string{"bash", "printf ok"}, map[string]json.RawMessage{
+	proxy := newManagedHPatchProxy(t, testTranslator(t, new(int)))
+	shell, ok := proxy.registry.contribution("shell")
+	if !ok {
+		t.Fatal("shell contribution is unavailable")
+	}
+	carrierInput, err := proxy.registry.execCarrierInput(shell, []string{"bash", "printf ok"}, "", map[string]json.RawMessage{
 		"workdir": mustMarshalJSON("/tmp/example"),
 		"tty":     mustMarshalJSON(true),
 		"login":   mustMarshalJSON(false),
@@ -1996,16 +1993,16 @@ func TestWorkerExecInputMergesValidatedParams(t *testing.T) {
 		Login   bool   `json:"login"`
 	}
 	decodeExecCarrierArguments(t, carrierInput, &arguments)
-	if arguments.Command != "printf ok" || arguments.Workdir != "/tmp/example" ||
+	if arguments.Command != workerCommand("shell", []string{"bash", "printf ok"}) || arguments.Workdir != "/tmp/example" ||
 		!arguments.TTY || arguments.Login {
 		t.Fatalf("translated exec arguments = %+v", arguments)
 	}
-	if _, err := workerExecInputWithParams("shell", []string{"bash", ""}, map[string]json.RawMessage{
+	if _, err := proxy.registry.execCarrierInput(shell, []string{"bash", ""}, "", map[string]json.RawMessage{
 		"cmd": mustMarshalJSON("forbidden"),
 	}); err == nil {
 		t.Fatal("exec params accepted cmd")
 	}
-	if _, err := workerExecInputWithParams("shell", []string{"bash", ""}, map[string]json.RawMessage{
+	if _, err := proxy.registry.execCarrierInput(shell, []string{"bash", ""}, "", map[string]json.RawMessage{
 		"login": mustMarshalJSON(true),
 	}); err == nil {
 		t.Fatal("exec params accepted login true")
@@ -2013,8 +2010,13 @@ func TestWorkerExecInputMergesValidatedParams(t *testing.T) {
 }
 
 func TestShellExecCarriersForwardNativeResultWithoutPolling(t *testing.T) {
-	carrierInput, err := workerTemplateExecInputWithParams(
-		"shell",
+	proxy := newManagedHPatchProxy(t, testTranslator(t, new(int)))
+	shell, ok := proxy.registry.contribution("shell")
+	if !ok {
+		t.Fatal("shell contribution is unavailable")
+	}
+	carrierInput, err := proxy.registry.execCarrierInput(
+		shell,
 		[]string{"python3", "print('ok')"},
 		"before | {.} | after",
 		nil,
@@ -2028,7 +2030,12 @@ func TestShellExecCarriersForwardNativeResultWithoutPolling(t *testing.T) {
 		t.Fatalf("shell template carrier did not forward one native result: %s", carrierInput)
 	}
 
-	plainInput, err := workerExecInputWithParams("hread", []string{"line.txt"}, nil)
+	registry, _ := newToolPluginTestRegistry(t)
+	plugin, ok := registry.contribution("plugin_tool")
+	if !ok {
+		t.Fatal("configured contribution is unavailable")
+	}
+	plainInput, err := registry.execCarrierInput(plugin, []string{"line.txt"}, "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2063,7 +2070,7 @@ func TestHPatchHistoryDoesNotCrossWorkspacesSharingSessionIdentity(t *testing.T)
 
 	firstWorkspace := t.TempDir()
 	firstRequest := requestFor(t)
-	first, err := proxy.prepareRequest(t.Context(), &firstRequest, "shared-cache-key", metadataFor(firstWorkspace), true)
+	first, err := proxy.prepareRequest(t.Context(), &firstRequest, "shared-cache-key", "shared-thread", metadataFor(firstWorkspace), true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2087,7 +2094,7 @@ func TestHPatchHistoryDoesNotCrossWorkspacesSharingSessionIdentity(t *testing.T)
 
 	secondWorkspace := t.TempDir()
 	secondRequest := requestFor(t, response.Output[0])
-	second, err := proxy.prepareRequest(t.Context(), &secondRequest, "shared-cache-key", metadataFor(secondWorkspace), true)
+	second, err := proxy.prepareRequest(t.Context(), &secondRequest, "shared-cache-key", "shared-thread", metadataFor(secondWorkspace), true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2862,7 +2869,7 @@ func TestHPatchTranslationFailureReturnsImmediateDiagnosticExec(t *testing.T) {
 		t.Fatal(err)
 	}
 	metadata := codexTurnMetadata{RequestKind: "turn", Directories: map[string]json.RawMessage{workspace: nil}}
-	continuation, err := proxy.prepareRequest(t.Context(), &replay, "session-1", metadata, true)
+	continuation, err := proxy.prepareRequest(t.Context(), &replay, "session-1", "thread-1", metadata, true)
 	if err != nil || continuation == nil {
 		t.Fatalf("prepare rejection continuation = transform %v, error %v", continuation, err)
 	}

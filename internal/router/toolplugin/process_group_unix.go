@@ -9,7 +9,9 @@ import (
 	"syscall"
 )
 
-func configurePluginProcessGroup(command *exec.Cmd) {
+// ConfigureProcessGroup makes command cancellation terminate descendants that
+// inherited the command's standard streams instead of leaving Wait blocked.
+func ConfigureProcessGroup(command *exec.Cmd) {
 	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	command.Cancel = func() error {
 		if command.Process == nil {

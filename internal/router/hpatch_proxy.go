@@ -246,7 +246,7 @@ func newHPatchProxy(translator hpatchTranslator, registry *toolRegistry, customi
 	if len(titleCaches) != 0 && titleCaches[0] != nil {
 		titles = titleCaches[0]
 	}
-	directory := "/tmp"
+	directory := registry.runtimeDirectory
 	return &hpatchProxy{
 		translator:             translator,
 		registry:               registry,
@@ -291,8 +291,8 @@ func (p *hpatchProxy) Close() error {
 	defer p.mu.Unlock()
 	p.closed = true
 	var cleanupErr error
-	for sessionID := range p.shellSessions {
-		cleanupErr = errors.Join(cleanupErr, os.RemoveAll(p.shellSessionDirectory(sessionID)))
+	for directory := range p.shellSessions {
+		cleanupErr = errors.Join(cleanupErr, os.RemoveAll(directory))
 	}
 	clear(p.shellSessions)
 	clear(p.sessions)
@@ -340,6 +340,7 @@ type hpatchResponseTransform struct {
 	ctx              context.Context
 	proxy            *hpatchProxy
 	sessionID        string
+	shellDirectory   string
 	model            string
 	historySessionID string
 	sessionActive    bool
@@ -445,7 +446,7 @@ func validateHPatchCompactionRequest(request *parsedResponsesRequest, metadata c
 	return nil
 }
 
-func (p *hpatchProxy) prepareRequest(ctx context.Context, request *parsedResponsesRequest, sessionID string, metadata codexTurnMetadata, metadataValid bool) (*hpatchResponseTransform, error) {
+func (p *hpatchProxy) prepareRequest(ctx context.Context, request *parsedResponsesRequest, sessionID, threadID string, metadata codexTurnMetadata, metadataValid bool) (*hpatchResponseTransform, error) {
 	if metadataValid && metadata.RequestKind == "compaction" {
 		if err := validateHPatchCompactionRequest(request, metadata); err != nil {
 			return nil, err
@@ -493,6 +494,13 @@ func (p *hpatchProxy) prepareRequest(ctx context.Context, request *parsedRespons
 			Definition: string(mustMarshalJSON(installedTools[index])),
 		}
 	}
+	if strings.TrimSpace(threadID) == "" {
+		return nil, errors.New("hpatch rewrite requires a valid Codex thread ID")
+	}
+	shellDirectory, err := p.storeShellRuntime(threadID)
+	if err != nil {
+		return nil, fmt.Errorf("store shell runtime: %w", err)
+	}
 	historySessionID := directory + "\x00" + sessionID
 	if err := p.activateSession(historySessionID); err != nil {
 		return nil, err
@@ -505,6 +513,7 @@ func (p *hpatchProxy) prepareRequest(ctx context.Context, request *parsedRespons
 		ctx:              ctx,
 		proxy:            p,
 		sessionID:        sessionID,
+		shellDirectory:   shellDirectory,
 		model:            request.modelDescription(),
 		historySessionID: historySessionID,
 		sessionActive:    true,
@@ -1447,8 +1456,7 @@ func (t *hpatchResponseTransform) translate(callID, input string, upstreamItem m
 	}
 	attemptContext := hpatch.WithAttemptMetadata(t.ctx, attemptMetadata)
 	if retainedApply {
-		directory := t.proxy.shellSessionDirectory(t.sessionID)
-		root, openErr := os.OpenRoot(directory)
+		root, openErr := os.OpenRoot(t.shellDirectory)
 		if openErr != nil {
 			return hpatchHistory{}, fmt.Errorf("open retained shell directory: %w", openErr)
 		}
@@ -1733,16 +1741,12 @@ func (t *hpatchResponseTransform) translateRecovered(
 	return history, nil
 }
 
-func (p *hpatchProxy) shellSessionDirectory(sessionID string) string {
-	return filepath.Join(p.shellDirectory, "hpatch-"+sessionID)
-}
-
-func (p *hpatchProxy) retainShell(sessionID, callID, script string) (string, bool) {
-	if p.shellDirectory == "" {
+func (p *hpatchProxy) retainShell(directory, callID, script string) (string, bool) {
+	if directory == "" {
 		return "", false
 	}
 	reference := shellArtifactPrefix + callID
-	path := filepath.Join(p.shellSessionDirectory(sessionID), callID)
+	path := filepath.Join(directory, callID)
 	p.mu.Lock()
 	if p.closed {
 		p.mu.Unlock()
@@ -1751,7 +1755,7 @@ func (p *hpatchProxy) retainShell(sessionID, callID, script string) (string, boo
 	if p.shellSessions == nil {
 		p.shellSessions = make(map[string]struct{})
 	}
-	p.shellSessions[sessionID] = struct{}{}
+	p.shellSessions[directory] = struct{}{}
 	p.mu.Unlock()
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return "", false
@@ -1830,7 +1834,7 @@ func (t *hpatchResponseTransform) translateRegisteredTool(contribution toolContr
 		}
 		return history, nil
 	}
-	pathPrefix := t.proxy.shellSessionDirectory(t.sessionID) + string(os.PathSeparator)
+	pathPrefix := t.shellDirectory + string(os.PathSeparator)
 	recovered := lunaShellCodeModeProgram(contribution, input)
 	var translation toolplugin.Translation
 	var err error
@@ -1852,7 +1856,7 @@ func (t *hpatchResponseTransform) translateRegisteredTool(contribution toolContr
 	if translation.Carrier.RetainInput != nil {
 		resultMetadata = map[string]json.RawMessage{"retained": mustMarshalJSON(false)}
 		if *translation.Carrier.RetainInput {
-			reference, retained := t.proxy.retainShell(t.sessionID, callID, input)
+			reference, retained := t.proxy.retainShell(t.shellDirectory, callID, input)
 			resultMetadata["retained"] = mustMarshalJSON(retained)
 			if retained {
 				resultMetadata["script_ref"] = mustMarshalJSON(reference)
@@ -1885,26 +1889,13 @@ func (t *hpatchResponseTransform) translateRegisteredTool(contribution toolContr
 			if err := t.carriers.require(name, kind); err != nil {
 				return hpatchHistory{}, fmt.Errorf("%s exec carrier: %w", contribution.Name, err)
 			}
-			_, ok := t.proxy.registry.wrapper(contribution.Name)
-			if !ok {
-				return hpatchHistory{}, fmt.Errorf("%s worker is unavailable", contribution.Name)
-			}
-			if translation.Carrier.Template == "" {
-				payload, err = workerExecInputWithParams(
-					contribution.Name,
-					translation.Arguments,
-					translation.Carrier.Params,
-					resultMetadata,
-				)
-			} else {
-				payload, err = workerTemplateExecInputWithParams(
-					contribution.Name,
-					translation.Arguments,
-					translation.Carrier.Template,
-					translation.Carrier.Params,
-					resultMetadata,
-				)
-			}
+			payload, err = t.proxy.registry.execCarrierInput(
+				contribution,
+				translation.Arguments,
+				translation.Carrier.Template,
+				translation.Carrier.Params,
+				resultMetadata,
+			)
 			if err != nil {
 				return hpatchHistory{}, fmt.Errorf("%s exec carrier: %w", contribution.Name, err)
 			}
@@ -2027,22 +2018,6 @@ func hpatchDiagnosticExecInput(diagnostic string) string {
 	return "text(" + strconv.Quote(diagnostic) + ");"
 }
 
-func directBashExecCommand(arguments []string) (string, bool) {
-	if len(arguments) != 2 || arguments[0] != "bash" || arguments[1] == "" {
-		return "", false
-	}
-	command := strings.TrimSuffix(arguments[1], "\n")
-	command = strings.TrimSuffix(command, "\r")
-	for _, prefix := range []string{"set -e\n", "set -e\r\n"} {
-		if candidate, found := strings.CutPrefix(command, prefix); found &&
-			candidate != "" && !strings.ContainsAny(candidate, "\r\n;&|`(){}") {
-			command = candidate
-			break
-		}
-	}
-	return command, true
-}
-
 func workerCommand(executable string, arguments []string) string {
 	command := shellQuoteArgument(executable)
 	for _, argument := range arguments {
@@ -2051,22 +2026,35 @@ func workerCommand(executable string, arguments []string) string {
 	return command
 }
 
-func workerExecInputWithParams(executable string, arguments []string, params map[string]json.RawMessage, resultMetadata ...map[string]json.RawMessage) (string, error) {
-	command := workerCommand(executable, arguments)
-	if executable == "shell" {
-		if direct, ok := directBashExecCommand(arguments); ok {
-			command = direct
+func (registry *toolRegistry) execCarrierInput(
+	contribution toolContribution,
+	arguments []string,
+	template string,
+	params map[string]json.RawMessage,
+	resultMetadata ...map[string]json.RawMessage,
+) (string, error) {
+	if registry == nil {
+		return "", errors.New("tool registry is unavailable")
+	}
+	builtinShell := contribution.PluginID == builtinToolsPluginID && contribution.Name == "shell"
+	if !builtinShell {
+		if _, ok := registry.wrapper(contribution.Name); !ok {
+			return "", fmt.Errorf("%s worker is unavailable", contribution.Name)
 		}
 	}
-	return workerCommandExecInputWithResult(command, params, executable == "shell", resultMetadata...)
-}
-
-func workerTemplateExecInputWithParams(executable string, arguments []string, template string, params map[string]json.RawMessage, resultMetadata ...map[string]json.RawMessage) (string, error) {
-	if strings.Count(template, "{.}") != 1 {
-		return "", errors.New("exec command template must contain exactly one {.} placeholder")
+	command := workerCommand(contribution.Name, arguments)
+	if template != "" {
+		if strings.Count(template, "{.}") != 1 {
+			return "", errors.New("exec command template must contain exactly one {.} placeholder")
+		}
+		command = strings.Replace(template, "{.}", command, 1)
 	}
-	command := strings.Replace(template, "{.}", workerCommand(executable, arguments), 1)
-	return workerCommandExecInputWithResult(command, params, executable == "shell", resultMetadata...)
+	return workerCommandExecInputWithResult(
+		command,
+		params,
+		builtinShell,
+		resultMetadata...,
+	)
 }
 
 func workerCommandExecInputWithParams(command string, params map[string]json.RawMessage) (string, error) {

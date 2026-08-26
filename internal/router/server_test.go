@@ -89,7 +89,10 @@ func serverMetadataHeaders(t *testing.T, requestKind string, workspaces map[stri
 	if err != nil {
 		t.Fatal(err)
 	}
-	return http.Header{codexTurnMetadataHeader: []string{string(encoded)}}
+	headers := make(http.Header)
+	headers.Set(codexTurnMetadataHeader, string(encoded))
+	headers.Set(threadIDHeader, "thread-1")
+	return headers
 }
 
 func serverCompactionMetadataHeaders(t *testing.T) http.Header {
@@ -111,6 +114,8 @@ func serverCompactionMetadataHeaders(t *testing.T) http.Header {
 func TestExecuteRequestFailsClosedBeforeUpstreamWhenRewriteIsIneligible(t *testing.T) {
 	workspace := t.TempDir()
 	validHeaders := serverMetadataHeaders(t, "turn", map[string]json.RawMessage{workspace: nil})
+	missingThreadHeaders := validHeaders.Clone()
+	missingThreadHeaders.Del(threadIDHeader)
 	tests := []struct {
 		name      string
 		sessionID string
@@ -119,6 +124,7 @@ func TestExecuteRequestFailsClosedBeforeUpstreamWhenRewriteIsIneligible(t *testi
 		want      string
 	}{
 		{name: "missing session", headers: validHeaders, want: "valid session ID"},
+		{name: "missing thread", sessionID: "session", headers: missingThreadHeaders, want: "valid Codex thread ID"},
 		{name: "invalid metadata", sessionID: "session", headers: http.Header{}, want: "valid turn metadata"},
 		{name: "unknown request kind", sessionID: "session", headers: serverMetadataHeaders(t, "other", nil), want: "valid turn metadata"},
 		{name: "legacy compact request kind", sessionID: "session", headers: serverMetadataHeaders(t, "compact", nil), want: "valid turn metadata"},
@@ -486,16 +492,18 @@ func TestShellHReadAfterAppliedHPatchCarrierRemainsModelVisible(t *testing.T) {
 	}
 	shellCarrier := secondItems[0]
 
-	hreadWrapper, ok := proxy.registry.wrapper("hread")
-	if !ok {
-		t.Fatal("hread worker is unavailable")
+	if _, exists := proxy.registry.contribution("shell"); !exists {
+		t.Fatal("shell worker is unavailable")
 	}
 	t.Chdir(workspace)
 	var shellStdout, shellStderr bytes.Buffer
 	handled, exitCode := RunToolPluginWorker(
 		t.Context(),
-		hreadWrapper,
-		[]string{"file.txt", "1:3"},
+		proxy.registry.shellRuntime,
+		[]string{
+			"bash",
+			"hread file.txt 1:3",
+		},
 		os.Stdin,
 		&shellStdout,
 		&shellStderr,

@@ -34,7 +34,7 @@ export default {
 }
 
 func TestExecutionHostOutputBoundCoversJSONExpansion(t *testing.T) {
-	const minimum = 6*maxHostOutputBytes + 1024
+	const minimum = 6*ExecutionOutputBudgetBytes + 1024
 	if maxEncodedExecutionHostOutputBytes < minimum {
 		t.Fatalf("execution output bound = %d, want at least %d", maxEncodedExecutionHostOutputBytes, minimum)
 	}

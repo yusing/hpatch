@@ -86,7 +86,7 @@ func Run(ctx context.Context, args []string, stderr io.Writer) (runErr error) {
 		}
 		if err := registry.installFrontends(); err != nil {
 			return errors.Join(
-				fmt.Errorf("initialize tool registry frontends: %w", err),
+				fmt.Errorf("initialize configured tool frontends: %w", err),
 				registry.Close(),
 			)
 		}
@@ -380,7 +380,14 @@ func executeRequest(
 	)
 	if hpatchCalls != nil {
 		metadata, metadataValid := decodeCodexTurnMetadata(headers)
-		hpatchTransform, err = hpatchCalls.prepareRequest(ctx, &parsedRequest, sessionID, metadata, metadataValid)
+		hpatchTransform, err = hpatchCalls.prepareRequest(
+			ctx,
+			&parsedRequest,
+			sessionID,
+			codexThreadID(headers),
+			metadata,
+			metadataValid,
+		)
 		if err != nil {
 			return fmt.Errorf("prepare hpatch response proxy: %w", err)
 		}

@@ -195,6 +195,28 @@ def command_words(segment: str) -> list[str]:
     return words
 
 
+def shell_helper_body(segment: str) -> str | None:
+    words = command_words(segment)
+    if (
+        len(words) < 3
+        or os.path.basename(words[0]) != "shell"
+        or not words[1]
+    ):
+        return None
+
+    # Codex retains the fixed helper carrier, while command behavior belongs to the
+    # program it carries. A failed executor-style call may retain that program as its
+    # original JSON request, so recover only the established string cmd field.
+    body = words[-1]
+    try:
+        request = json.loads(body)
+    except json.JSONDecodeError:
+        return body
+    if isinstance(request, dict) and isinstance(request.get("cmd"), str):
+        return request["cmd"]
+    return body
+
+
 def git_subcommand(words: list[str]) -> tuple[str, list[str]]:
     index = 1
     while index < len(words):
@@ -506,56 +528,59 @@ def analyze(paths: list[Path]) -> dict[str, object]:
             if failed:
                 failed_items += 1
             item_categories: set[str] = set()
-            for segment in split_segments(str(item.get("command") or "")):
-                words = command_words(segment)
-                if not words:
-                    continue
-                category = classify(words)
-                invocations += 1
-                categories[category]["invocations"] += 1
-                if edited_paths:
-                    categories[category]["post_edit"] += 1
-                    text_intersection = intersects_path(segment, edited_paths)
-                    if text_intersection:
-                        categories[category]["path_intersecting_post_edit"] += 1
-                    operands, ambiguous = concrete_path_operands(category, words)
-                    if ambiguous:
-                        categories[category]["ambiguous_path_operand"] += 1
-                    prior_paths = paths_covered_by_operands(operands, edited_paths)
-                    if category == "search":
-                        include_globs = supported_search_include_globs(words)
-                        if include_globs:
-                            prior_paths = {
+            for retained_segment in split_segments(str(item.get("command") or "")):
+                body = shell_helper_body(retained_segment)
+                segments = split_segments(body) if body is not None else [retained_segment]
+                for segment in segments:
+                    words = command_words(segment)
+                    if not words:
+                        continue
+                    category = classify(words)
+                    invocations += 1
+                    categories[category]["invocations"] += 1
+                    if edited_paths:
+                        categories[category]["post_edit"] += 1
+                        text_intersection = intersects_path(segment, edited_paths)
+                        if text_intersection:
+                            categories[category]["path_intersecting_post_edit"] += 1
+                        operands, ambiguous = concrete_path_operands(category, words)
+                        if ambiguous:
+                            categories[category]["ambiguous_path_operand"] += 1
+                        prior_paths = paths_covered_by_operands(operands, edited_paths)
+                        if category == "search":
+                            include_globs = supported_search_include_globs(words)
+                            if include_globs:
+                                prior_paths = {
+                                    path
+                                    for path in prior_paths
+                                    if any(
+                                        fnmatch.fnmatchcase(PurePosixPath(path).name, pattern)
+                                        for pattern in include_globs
+                                    )
+                                }
+                        if category == "git_diff_content" and is_bare_worktree_diff(words):
+                            categories[category]["workspace_wide_post_edit"] += 1
+                            later_operands = {
+                                operand
+                                for operand in edited_paths
+                                if any(index > event_index for index in change_indexes.get(operand, []))
+                            }
+                            if later_operands:
+                                categories[category]["same_path_edit_read_edit"] += 1
+                        elif prior_paths:
+                            categories[category]["path_scope_operand_post_edit"] += 1
+                            later_paths = {
                                 path
                                 for path in prior_paths
-                                if any(
-                                    fnmatch.fnmatchcase(PurePosixPath(path).name, pattern)
-                                    for pattern in include_globs
-                                )
+                                if any(index > event_index for index in change_indexes.get(path, []))
                             }
-                    if category == "git_diff_content" and is_bare_worktree_diff(words):
-                        categories[category]["workspace_wide_post_edit"] += 1
-                        later_operands = {
-                            operand
-                            for operand in edited_paths
-                            if any(index > event_index for index in change_indexes.get(operand, []))
-                        }
-                        if later_operands:
-                            categories[category]["same_path_edit_read_edit"] += 1
-                    elif prior_paths:
-                        categories[category]["path_scope_operand_post_edit"] += 1
-                        later_paths = {
-                            path
-                            for path in prior_paths
-                            if any(index > event_index for index in change_indexes.get(path, []))
-                        }
-                        if later_paths:
-                            categories[category]["same_path_edit_read_edit"] += 1
-                        else:
-                            categories[category]["path_scope_operand_without_later_change"] += 1
-                    elif text_intersection and category in {"file_read", "search"}:
-                        categories[category]["changed_path_in_non_path_operand_only"] += 1
-                item_categories.add(category)
+                            if later_paths:
+                                categories[category]["same_path_edit_read_edit"] += 1
+                            else:
+                                categories[category]["path_scope_operand_without_later_change"] += 1
+                        elif text_intersection and category in {"file_read", "search"}:
+                            categories[category]["changed_path_in_non_path_operand_only"] += 1
+                    item_categories.add(category)
             if failed:
                 for category in item_categories:
                     categories[category]["failed_items"] += 1

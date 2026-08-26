@@ -2,6 +2,7 @@ package router
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -82,6 +83,76 @@ func TestWorkerFrontendSymlinkLifecycle(t *testing.T) {
 	}
 }
 
+func TestToolRegistryRemovesRetiredBuiltinFrontends(t *testing.T) {
+	registry, err := buildToolRegistry(t.Context(), t.TempDir(), testHPatchToolDescription, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := registry.Close(); err != nil {
+			t.Error(err)
+		}
+	})
+	registry.frontendDirectory = t.TempDir()
+
+	staleWrapper := filepath.Join(registry.SnapshotDir, "hread")
+	if err := os.Symlink(registry.executable, staleWrapper); err != nil {
+		t.Fatal(err)
+	}
+	staleFrontend := filepath.Join(registry.frontendDirectory, "hread")
+	if err := os.Symlink(staleWrapper, staleFrontend); err != nil {
+		t.Fatal(err)
+	}
+
+	unrelatedTarget := filepath.Join(t.TempDir(), "shell")
+	unrelatedFrontend := filepath.Join(registry.frontendDirectory, "shell")
+	if err := os.Symlink(unrelatedTarget, unrelatedFrontend); err != nil {
+		t.Fatal(err)
+	}
+	forgedRegistryID := strings.Repeat("a", 64)
+	forgedDirectory := filepath.Join(t.TempDir(), "hpatch-router-tools-fixture-"+forgedRegistryID)
+	if err := os.Mkdir(forgedDirectory, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeToolWorkerManifest(forgedDirectory, toolWorkerManifest{
+		Version:     1,
+		RegistryID:  forgedRegistryID,
+		RuntimeRoot: "runtime",
+		Tools: []toolContribution{{
+			PluginID: builtinToolsPluginID,
+			Name:     "hgrep",
+		}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	forgedWrapper := filepath.Join(forgedDirectory, "hgrep")
+	if err := os.Symlink(registry.executable, forgedWrapper); err != nil {
+		t.Fatal(err)
+	}
+	forgedFrontend := filepath.Join(registry.frontendDirectory, "hgrep")
+	if err := os.Symlink(forgedWrapper, forgedFrontend); err != nil {
+		t.Fatal(err)
+	}
+	if err := registry.installFrontends(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Lstat(staleFrontend); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("retired hread frontend remains: %v", err)
+	}
+	if target, err := os.Readlink(unrelatedFrontend); err != nil || target != unrelatedTarget {
+		t.Fatalf("unrelated shell frontend target = %q: %v", target, err)
+	}
+	if target, err := os.Readlink(forgedFrontend); err != nil || target != forgedWrapper {
+		t.Fatalf("forged hgrep frontend target = %q: %v", target, err)
+	}
+	if registry.frontendLock != nil {
+		t.Fatal("retired frontend cleanup retained a process-lifetime lock")
+	}
+	if err := registry.installFrontends(); err != nil {
+		t.Fatalf("clean built-in-only registry acquired global state: %v", err)
+	}
+}
+
 func TestToolRegistryStartup(t *testing.T) {
 	declaration := func(pluginID, toolName, format string) string {
 		t.Helper()
@@ -126,17 +197,11 @@ func TestToolRegistryStartup(t *testing.T) {
 			if !ok {
 				t.Fatalf("built-in %q is unavailable", name)
 			}
-			wrapper, ok := registry.wrapper(name)
-			if !ok || filepath.Dir(wrapper) != snapshot {
-				t.Fatalf("wrapper %q = %q, available %t", name, wrapper, ok)
+			if wrapper, ok := registry.wrapper(name); ok {
+				t.Fatalf("built-in %q unexpectedly has wrapper %q", name, wrapper)
 			}
-			frontend, ok := registry.frontends[name]
-			if !ok {
-				t.Fatalf("frontend %q is unavailable", name)
-			}
-			target, err := os.Readlink(frontend)
-			if err != nil || target != wrapper {
-				t.Fatalf("frontend %q targets %q, want %q: %v", frontend, target, wrapper, err)
+			if frontend, ok := registry.frontends[name]; ok {
+				t.Fatalf("built-in %q unexpectedly has frontend %q", name, frontend)
 			}
 		}
 		specifications, err := registry.specifications()
@@ -153,9 +218,8 @@ func TestToolRegistryStartup(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := second.installFrontends(); err == nil ||
-			!strings.Contains(err.Error(), "another hpatch-router process owns") {
-			t.Fatalf("concurrent frontend installation error = %v", err)
+		if err := second.installFrontends(); err != nil {
+			t.Fatalf("second built-in-only registry installed global state: %v", err)
 		}
 		if err := second.Close(); err != nil {
 			t.Fatal(err)
@@ -241,7 +305,7 @@ func TestToolRegistryStartup(t *testing.T) {
 			registry.ordered[8].PluginID != "zeta.plugin" {
 			t.Fatalf("registration order = %+v", registry.ordered)
 		}
-		for _, name := range []string{"hread", "hgrep", "hsymbol", "inspect_file", "shell", "alpha_tool", "zeta_tool"} {
+		for _, name := range []string{"alpha_tool", "zeta_tool"} {
 			wrapper, ok := registry.wrapper(name)
 			if !ok {
 				t.Fatalf("wrapper %q is unavailable", name)
@@ -254,8 +318,10 @@ func TestToolRegistryStartup(t *testing.T) {
 				t.Fatalf("wrapper %q targets %q", wrapper, target)
 			}
 		}
-		if _, ok := registry.wrapper(hpatchToolName); ok {
-			t.Fatal("hpatch unexpectedly has an executor wrapper")
+		for _, name := range []string{hpatchToolName, "hread", "hgrep", "hsymbol", "inspect_file", "shell"} {
+			if _, ok := registry.wrapper(name); ok {
+				t.Fatalf("built-in %q unexpectedly has an executor wrapper", name)
+			}
 		}
 		snapshotModule := filepath.Join(snapshot, "runtime", "plugins", "user", "alpha.js")
 		pinned, err := os.ReadFile(snapshotModule)

@@ -374,6 +374,12 @@ function executeScript(argv, context) {
   if (argv.length < 2) {
     return {stderr: "shell: missing interpreter or script body\n", exitCode: 1};
   }
+  const interpreter = interpreterBasename(argv[0]).toLowerCase();
+  // Bash and POSIX shell programs must pass through the router's mvdan/sh
+  // runner so private commands cannot fall back to executable frontends.
+  if (interpreter === "bash" || interpreter === "sh") {
+    return {stderr: "shell: bash and sh require the router shell runner\n", exitCode: 1};
+  }
   if (![context?.stdinFD, context?.scriptReadFD, context?.scriptWriteFD].every(
     (fileDescriptor) => Number.isSafeInteger(fileDescriptor) && fileDescriptor >= 3,
   )) {

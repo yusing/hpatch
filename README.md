@@ -150,22 +150,21 @@ For native executor background and interactive behavior, see [OpenAI's Codex pro
 - Private hsymbol requires the resolver for the queried language on the Codex executor's `PATH`:
   `gopls` for Go, TypeScript 7.0.2 or newer as `tsc` for JavaScript, TypeScript, and JSON,
   and `pyright-langserver` for Python `.py` and `.pyi` sources.
-- Private hread, hgrep, hsymbol, and inspect_file require the router executable directory to precede unrelated entries on the executor's trusted `PATH`.
-- The built-in shell uses `bash` when no shebang is present; every selected interpreter must be available through the inherited `PATH`.
-- Router and executor deployments with isolated filesystems must expose the frontend directory, authenticated snapshot, and router executable at the same absolute paths.
+- Private hread, hgrep, hsymbol, and inspect_file are evaluated inside Bash or POSIX shell programs. The separately installed, fixed `shell` helper must be on the Codex executor's trusted `PATH`.
+- The built-in shell uses the embedded `mvdan/sh`, including bash and sh shebangs; other selected interpreters must be available through the inherited `PATH` or a direct path.
 - Source builds that regenerate the embedded plugin with `make install` or `go generate` require Bun. `make install` additionally requires Make.
 
 ## Install from a checkout
 
-`make install` regenerates the embedded built-in plugin bundle and installs `hpatch-router`
-through `go install`:
+`make install` regenerates the embedded built-in plugin bundle and installs `hpatch-router` plus
+the fixed `shell` helper through `go install`:
 
 ```sh
 make install
 ```
 
 Installation and uninstallation never create, edit, or remove Codex configuration or instruction
-files. `make uninstall` removes only the installed `hpatch-router` binary.
+files. `make uninstall` removes only the installed `hpatch-router` and `shell` binaries.
 
 ### Configured plugins
 
@@ -176,24 +175,20 @@ Configured plugins are direct regular `.js` or `.mjs` files in `$XDG_CONFIG_HOME
 
 ## Shell tool
 
-The model-visible `functions.shell` tool accepts one free-form program. A compact shebang selects an interpreter through the inherited `PATH`; a missing shebang selects Bash:
+The model-visible `functions.shell` tool accepts one free-form program. A compact shebang selects its evaluator; a missing shebang selects Bash:
 
 ```python
 #!python3
 print("Hello")
 ```
 
-The executor removes the shebang and supplies the exact remaining program through an anonymous script descriptor such as `/dev/fd/3`. It does not create an intermediate script file, and frontend standard input remains available as program data.
-
-A leading `#!cmd=` assignment accepts one command template containing exactly one `{.}` frontend placeholder. A leading `#!params=` assignment accepts a JSON object of request-specific outer execution arguments, cannot contain `cmd`, and permits `login` only when it is `false`. The router normalizes safe leading near-misses through the same validation rather than treating them as program text.
-
 `shell` can start PTY-backed, interactive, and long-running programs and forwards the native executor's complete result. If execution yields a session handle, use Codex's native session facilities to send further input, poll output, resize the PTY, or terminate the process; each shell call starts a new execution and does not reimplement session control.
 
 ### Retain, inspect, and rerun a program
 
-Retention is temporary script state, not process-session state or workspace history. Non-Bash/sh programs and Bash/sh programs longer than three normalized lines are eligible. A retained result includes `retained: true` and a `script_ref` such as `@shell/<call-id>`. The artifact is scoped to the routing session, expires after one hour by default, is removed when the session closes, and is not a workspace file.
+Retention is temporary script state. A retained result includes `retained: true` and a `script_ref` such as `@shell/<call-id>`. The artifact is scoped to the Codex thread, expires after one hour by default, and is not a workspace file. Its thread directory is removed when the router shuts down.
 
-Inspect retained source through the private frontend:
+Inspect retained source through the private shell command:
 
 ```sh
 hread @shell/<call-id>
@@ -207,9 +202,9 @@ Copy an emitted `LINE:HASH` row into a complete hpatch script whose paths are al
 
 Retained edits use the router-owned artifact path rather than the normal workspace `apply_patch` carrier.
 
-### Private filesystem frontends
+### Private shell commands
 
-Hread, hgrep, hsymbol, and inspect_file are private shell frontends, not model-visible tools. Use inspect_file for bounded metadata and structure, hread for current target-bearing rows, hgrep for current cross-file text matches, and hsymbol for exact Go, JavaScript, TypeScript, JSON, or Python definitions and references. Batch known reads as separate commands and combine known searches with repeated `-e` arguments:
+Hread, hgrep, hsymbol, and inspect_file are private commands recognized only by the Bash and POSIX shell evaluators.
 
 ```sh
 hread parser.go 20:40
@@ -231,7 +226,7 @@ a complete definition or reference set.
 In hpatch mode, the router validates authentication and turn metadata, constructs the complete
 plugin registry, and installs standalone `functions.hpatch` and `functions.shell` tools. The
 model also sees configured contributions marked model-visible. Hread, hgrep, hsymbol, and inspect_file
-remain authenticated shell frontends; the router injects their workflow guidance and the durable
+remain authenticated shell-internal commands; the router injects their workflow guidance and the durable
 shell workflow into received Responses instructions.
 
 For each eligible request, the router finds exactly one Code Mode custom `exec` owner: either directly inside the leading `additional_tools` item for app-server traffic or inside that item's `functions` namespace for CLI traffic. It removes the owner's native `apply_patch` and `exec_command` sections, preserves unrelated tools and namespaces, and appends only the request-specific execution parameter shape to the shell contract. Unsupported direct or top-level owner layouts fail before forwarding.
@@ -246,10 +241,6 @@ unchanged. Codex resends instructions at session start, after compaction, at sub
 after subagent compaction; inherited side conversations already carry the marked section and are
 refreshed idempotently. Tool descriptions contain only call-local contracts.
 
-Hpatch translation uses the canonical directory hint from turn metadata when available. Metadata without a usable directory still forwards: absolute operands translate without a base, while relative operands reject rather than resolving from the router process cwd. Codex executes the returned `apply_patch` carrier and owns the sandbox, permissions, and visible diff. Shell, hread, hgrep, hsymbol, and inspect_file execute in Codex's actual working directory and environment; the router does not give their workers a router-owned filesystem capability. Background Responses requests are rejected before forwarding because the router does not expose the retrieval and cancellation endpoints needed to complete them.
-
-The frontend directory, authenticated snapshot, and router executable must be visible at the same paths to the router and executor. Only one router process can own the stable basename frontends. A concurrent process fails before listening, while a restart can reclaim authenticated links left by a crash.
-
 Defaults:
 
 | Setting | Default |
@@ -259,6 +250,7 @@ Defaults:
 | Upstream response-start timeout | `10m` (`--timeout`) |
 | Upstream stream idle timeout | `4m` per blocked upstream read (`--stream-idle-timeout`); resets on byte progress, pauses during downstream processing, and imposes no total-duration limit |
 | Auth | `~/.codex/auth.json`, or `$CODEX_HOME/auth.json`; Codex owns login and refresh |
+| Shell runtime directory | `$HPATCH_RUNTIME_DIR`, or the operating-system temporary directory when unset; router and executor must resolve the same absolute path |
 | Metrics / hooks | `$XDG_CONFIG_HOME/hpatch` or `~/.config/hpatch` |
 | Endpoints | `POST /v1/responses`, `GET /v1/models`, `GET /` (dashboard), `GET /api/metrics` |
 
@@ -272,15 +264,16 @@ reports `unevaluated/rejected`. Root commit failures report `applied/failed`.
 
 In hpatch mode, run the router as the same login user as Codex so it can open the absolute workspace paths Codex sends and read the same credentials. A user systemd unit is the intended long-running setup.
 
-Use `--mode passthrough` when the router should forward Responses traffic without installing hpatch, shell, private frontends, rejected-script recovery, or plugin metrics.
+Use `--mode passthrough` when the router should forward Responses traffic without installing hpatch or shell, loading private commands, enabling rejected-script recovery, or recording plugin metrics.
 
 ### Install the binary
 
 ```sh
-go install github.com/yusing/hpatch/cmd/hpatch-router@latest
+go install github.com/yusing/hpatch/cmd/hpatch-router@latest \
+  github.com/yusing/hpatch/cmd/shell@latest
 ```
 
-The binary is installed under `$GOBIN`, or under `$(go env GOPATH)/bin` when `GOBIN` is unset. Ensure that directory is on `PATH`.
+The binaries are installed under `$GOBIN`, or under `$(go env GOPATH)/bin` when `GOBIN` is unset. Ensure that directory is on the router and Codex executor `PATH`.
 
 ### Install and start the unit
 
@@ -543,7 +536,7 @@ central guidance into received Responses instructions → replace the eligible C
 canonical directory hint → evaluate hpatch without router filesystem confinement or router-cwd
 fallback → return a client-executed `apply_patch` carrier.
 
-Router shell path: translate the free-form tool call into one native executor call → run in Codex's working directory, environment, sandbox, and permissions → forward the complete native result. Private hread, hgrep, hsymbol, and inspect_file use the same executor boundary. Passthrough mode skips registry construction and request rewriting.
+Router shell path: translate the free-form tool call into one native executor call → invoke the authenticated router worker in Codex's working directory, environment, sandbox, and permissions → evaluate Bash or POSIX shell with `mvdan/sh`, dispatch private commands directly, or run another selected interpreter → forward the complete native result. Passthrough mode skips registry construction and request rewriting.
 
 ## Project structure
 
@@ -624,4 +617,4 @@ go vet ./...
 make install
 ```
 
-Focused checks are `go test .` for the engine, `go test ./internal/router` for routing and plugins, and `go test ./cmd/hpatch-router` for the process entry point.
+Focused checks are `go test .` for the engine, `go test ./internal/router` for routing and plugins, and `go test ./cmd/hpatch-router ./cmd/shell` for the process entry points.

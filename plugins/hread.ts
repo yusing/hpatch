@@ -1,5 +1,6 @@
 import {constants} from "node:fs";
 import {open} from "node:fs/promises";
+import {tmpdir} from "node:os";
 
 import type {Tool} from "../internal/router/toolplugin/plugin.d.ts";
 
@@ -279,7 +280,8 @@ export function createHReadTool(description: string, grammar: string): Tool<stri
           if (sessionID === undefined || sessionID === "") {
             throw new Error("CODEX_THREAD_ID is unavailable");
           }
-          executionArguments[0] = `/tmp/hpatch-${sessionID}/${executionArguments[0].slice("@shell/".length)}`;
+          const runtimeDirectory = process.env.HPATCH_RUNTIME_DIR || tmpdir();
+          executionArguments[0] = `${runtimeDirectory}/hpatch-${sessionID}/${executionArguments[0].slice("@shell/".length)}`;
         }
         const result = await readHashLines(parseReadSpec(stripOptionalFinalNewline(hreadInput(executionArguments))));
         const limitDiagnostic = result.incomplete

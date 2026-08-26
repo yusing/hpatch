@@ -7,9 +7,9 @@ install: install-binaries
 install-binaries:
 	bun install --cwd plugins --frozen-lockfile
 	go generate ./internal/router/toolplugin
-	$(GO) install ./cmd/hpatch-router
+	$(GO) install ./cmd/hpatch-router ./cmd/shell
 
 uninstall: uninstall-binaries
 
 uninstall-binaries:
-	$(GO) clean -i ./cmd/hpatch-router
+	$(GO) clean -i ./cmd/hpatch-router ./cmd/shell

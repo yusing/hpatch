@@ -18,7 +18,7 @@ import (
 )
 
 // RunToolPluginWorker handles the private child-process mode used by a
-// stable contributed-tool frontend and its process-scoped snapshot wrapper.
+// stable contributed-tool frontend or the current thread's shell runtime.
 func RunToolPluginWorker(
 	ctx context.Context,
 	argv0 string,
@@ -63,7 +63,7 @@ func RunToolPluginWorker(
 
 	wrapper := candidate
 	directory := filepath.Dir(wrapper)
-	expectedRegistryID, snapshotWrapper := toolRegistryIDFromDirectory(directory)
+	_, snapshotWrapper := toolRegistryIDFromDirectory(directory)
 	if !snapshotWrapper {
 		if filepath.Dir(candidate) != filepath.Dir(executableLocation) {
 			return false, 0
@@ -81,7 +81,7 @@ func RunToolPluginWorker(
 		}
 		wrapperInfo, wrapperErr := os.Lstat(wrapper)
 		directory = filepath.Dir(wrapper)
-		expectedRegistryID, snapshotWrapper = toolRegistryIDFromDirectory(directory)
+		_, snapshotWrapper = toolRegistryIDFromDirectory(directory)
 		if wrapperErr != nil || wrapperInfo.Mode()&os.ModeSymlink == 0 || !snapshotWrapper {
 			return fail(errors.New("tool frontend does not target an authenticated snapshot wrapper"))
 		}
@@ -98,6 +98,24 @@ func RunToolPluginWorker(
 		return fail(errors.New("tool wrapper does not target the running hpatch-router executable"))
 	}
 
+	return runAuthenticatedToolWorker(ctx, directory, filepath.Base(wrapper), args, stdin, stdout, stderr)
+}
+
+func runAuthenticatedToolWorker(
+	ctx context.Context,
+	directory, name string,
+	args []string,
+	stdin *os.File,
+	stdout, stderr io.Writer,
+) (bool, int) {
+	fail := func(err error) (bool, int) {
+		_, _ = fmt.Fprintf(stderr, "%s: %v\n", name, err)
+		return true, 1
+	}
+	expectedRegistryID, authenticated := toolRegistryIDFromDirectory(directory)
+	if !authenticated {
+		return fail(errors.New("tool worker snapshot is not authenticated"))
+	}
 	manifest, err := readToolWorkerManifest(filepath.Join(directory, toolPluginManifestFilename))
 	if err != nil {
 		return fail(err)
@@ -117,7 +135,6 @@ func RunToolPluginWorker(
 		return fail(errors.New("tool worker registry identity mismatch"))
 	}
 
-	name := filepath.Base(wrapper)
 	var contribution *toolContribution
 	for index := range manifest.Tools {
 		if manifest.Tools[index].Name == name {
@@ -127,23 +144,29 @@ func RunToolPluginWorker(
 			contribution = &manifest.Tools[index]
 		}
 	}
-	if contribution == nil || contribution.Builtin ||
-		contribution.Module == "" || contribution.PluginID == "" {
+	if contribution == nil || contribution.Builtin || contribution.Module == "" || contribution.PluginID == "" {
 		return fail(fmt.Errorf("tool %q is unavailable in worker manifest", name))
 	}
 	if err := validateToolContribution(*contribution); err != nil {
 		return fail(err)
 	}
 
-	execution, err := toolplugin.Execute(
-		ctx,
-		manifest.NodeExecutable,
-		runtimeRoot,
-		contribution.Module,
-		contribution.ModuleIndex,
-		args,
-		stdin,
-	)
+	var execution toolplugin.ExecutionOutput
+	if contribution.PluginID == builtinToolsPluginID && contribution.Name == "shell" {
+		execution, err = executeShellTool(ctx, manifest, runtimeRoot, contribution, args, stdin)
+	} else {
+		execution, err = toolplugin.Execute(
+			ctx,
+			manifest.NodeExecutable,
+			runtimeRoot,
+			contribution.Module,
+			contribution.ModuleIndex,
+			args,
+			stdin,
+			"",
+			nil,
+		)
+	}
 	if err != nil {
 		return fail(fmt.Errorf("execute tool plugin: %w", err))
 	}
@@ -153,6 +176,16 @@ func RunToolPluginWorker(
 	if _, err := io.WriteString(stderr, execution.Stderr); err != nil {
 		return fail(fmt.Errorf("write plugin stderr: %w", err))
 	}
+	recordToolExecutionMetrics(ctx, manifest.MetricsDir, *contribution, execution)
+	return true, execution.ExitCode
+}
+
+func recordToolExecutionMetrics(
+	ctx context.Context,
+	metricsDirectory string,
+	contribution toolContribution,
+	execution toolplugin.ExecutionOutput,
+) {
 	stockOutput := execution.Stdout + execution.Stderr
 	if execution.Stock != nil {
 		stockOutput = execution.Stock.Stdout + execution.Stock.Stderr
@@ -166,9 +199,8 @@ func RunToolPluginWorker(
 		},
 	})
 	if metricsErr == nil {
-		_ = hpatch.RecordHostMetrics(ctx, manifest.MetricsDir, record)
+		_ = hpatch.RecordHostMetrics(ctx, metricsDirectory, record)
 	}
-	return true, execution.ExitCode
 }
 
 func toolRegistryIDFromDirectory(directory string) (string, bool) {

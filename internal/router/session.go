@@ -33,3 +33,12 @@ func routingSessionID(headers http.Header, request parsedResponsesRequest) strin
 	}
 	return ""
 }
+
+func codexThreadID(headers http.Header) string {
+	for _, value := range headers.Values(threadIDHeader) {
+		if value = strings.TrimSpace(value); value != "" {
+			return value
+		}
+	}
+	return ""
+}

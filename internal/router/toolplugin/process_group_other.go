@@ -4,4 +4,5 @@ package toolplugin
 
 import "os/exec"
 
-func configurePluginProcessGroup(_ *exec.Cmd) {}
+// ConfigureProcessGroup uses the platform's ordinary command cancellation.
+func ConfigureProcessGroup(_ *exec.Cmd) {}

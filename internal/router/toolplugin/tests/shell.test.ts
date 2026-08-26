@@ -290,9 +290,9 @@ describe("installable shell plugin", () => {
     process.chdir(workingDirectory);
 
     const input = [
-      "#!/usr/bin/env -S bash -eu",
-      "printf '%s|%s' \"$PWD\" \"$HPATCH_SHELL_TEST\"",
-      "exit 7",
+      "#!node",
+      "process.stdout.write(`${process.cwd()}|${process.env.HPATCH_SHELL_TEST}`);",
+      "process.exit(7);",
       "",
     ].join("\n");
     const parsed = await tool.parse(input);
@@ -304,6 +304,19 @@ describe("installable shell plugin", () => {
       exitCode: 7,
     });
     expect(await readdir(temporaryRoot)).toEqual([]);
+  });
+
+  test("leaves every bash and sh path to the router shell runner", async () => {
+    for (const interpreter of ["bash", "/usr/bin/bash", "sh", "/bin/sh"]) {
+      const result = await tool.execute(
+        [interpreter, "printf unreachable"],
+        {stdinFD: null, scriptReadFD: null, scriptWriteFD: null, outputBudgetBytes: 16 * 1024 * 1024},
+      );
+      expect(result).toEqual({
+        stderr: "shell: bash and sh require the router shell runner\n",
+        exitCode: 1,
+      });
+    }
   });
 
   test("reports an unavailable interpreter", async () => {
@@ -394,7 +407,7 @@ describe("installable shell plugin", () => {
         snapshotRoot: repositoryRoot,
         module: "plugins/shell.mjs",
         index: 0,
-        arguments: ["bash", "printf 'host:%s' \"$HPATCH_SHELL_HOST_TEST\""],
+        arguments: ["node", "process.stdout.write(`host:${process.env.HPATCH_SHELL_HOST_TEST}`)"],
       }),
     });
 
@@ -406,13 +419,12 @@ describe("installable shell plugin", () => {
     });
   });
 
-  test("make install provides frontends without changing Codex instructions", async () => {
+  test("make install adds only the fixed helper and preserves Codex instructions", async () => {
     const installRoot = await temporaryDirectory("shell-plugin-install-");
     const binaryDirectory = path.join(installRoot, "bin");
     const configDirectory = path.join(installRoot, "config");
     const routerPath = path.join(binaryDirectory, "hpatch-router");
-    const shellPath = path.join(binaryDirectory, "shell");
-    const hreadPath = path.join(binaryDirectory, "hread");
+    const shellHelperPath = path.join(binaryDirectory, "shell");
     const installedPlugin = path.join(configDirectory, "hpatch", "plugins", "shell.mjs");
     const codexHome = path.join(installRoot, "codex-home");
     const configPath = path.join(codexHome, "config.toml");
@@ -451,6 +463,7 @@ ${installed.stderr}`);
     }
     expect(installed.status).toBe(0);
     expect((await stat(routerPath)).mode & 0o111).not.toBe(0);
+    expect((await stat(shellHelperPath)).mode & 0o111).not.toBe(0);
     await expect(stat(installedPlugin)).rejects.toThrow();
     expect(await readFile(configPath, "utf8")).toBe(initialConfig);
     expect(await readFile(instructionsPath, "utf8")).toBe(initialInstructions);
@@ -470,97 +483,15 @@ ${installed.stderr}`);
 
     try {
       await waitForListening(router);
-      expect((await lstat(shellPath)).isSymbolicLink()).toBe(true);
-      expect((await lstat(hreadPath)).isSymbolicLink()).toBe(true);
-      await writeFile(path.join(installRoot, "rows.txt"), "alpha\nbeta\n", "utf8");
-      const read = spawnSync(shellPath, ["bash", "hread rows.txt 1:2"], {
-        cwd: installRoot,
-        encoding: "utf8",
-        env: {
-          ...installEnvironment,
-          PATH: `${binaryDirectory}${path.delimiter}${process.env.PATH ?? ""}`,
-        },
-        input: "",
-      });
-      expect(read.status).toBe(0);
-      expect(read.stdout).toBe("1:8ed3 alpha\n2:f44e beta\n");
-      expect(read.stderr).toBe("");
-
-      const executed = spawnSync(shellPath, [
-        "bash",
-        "printf 'frontend:%s' \"$HPATCH_SHELL_E2E\"",
-      ], {
-        cwd: repositoryRoot,
-        encoding: "utf8",
-        env: {
-          ...installEnvironment,
-          HPATCH_SHELL_E2E: "stdin",
-          PATH: `${binaryDirectory}${path.delimiter}${process.env.PATH ?? ""}`,
-        },
-      });
-      expect(executed.status).toBe(0);
-      expect(executed.stdout).toBe("frontend:stdin");
-      expect(executed.stderr).toBe("");
-
-      const piped = spawnSync(shellPath, [
-        "bash",
-        "IFS= read -r value; printf 'piped:%s' \"$value\"",
-      ], {
-        cwd: repositoryRoot,
-        encoding: "utf8",
-        env: {
-          ...installEnvironment,
-          PATH: `${binaryDirectory}${path.delimiter}${process.env.PATH ?? ""}`,
-        },
-        input: "program-input\n",
-      });
-      expect(piped.status).toBe(0);
-      expect(piped.stdout).toBe("piped:program-input");
-      expect(piped.stderr).toBe("");
-
-      const bunBody = [
-        "import {basename} from \"node:path\";",
-        "const input = await Bun.stdin.text();",
-        "process.stdout.write(`${basename(process.cwd())}|${input.trim()}`);",
-      ].join("\n");
-      const bunExecuted = spawnSync(shellPath, [process.execPath, bunBody], {
-        cwd: repositoryRoot,
-        encoding: "utf8",
-        env: {
-          ...installEnvironment,
-          PATH: `${binaryDirectory}${path.delimiter}${process.env.PATH ?? ""}`,
-        },
-        input: "bun-input\n",
-      });
-      expect(bunExecuted.status).toBe(0);
-      expect(bunExecuted.stdout).toBe(`${path.basename(repositoryRoot)}|bun-input`);
-      expect(bunExecuted.stderr).toBe("");
-
-      const nodeBody = [
-        "process.stdin.setEncoding(\"utf8\");",
-        "let input = \"\";",
-        "process.stdin.on(\"data\", (chunk) => { input += chunk; });",
-        "process.stdin.on(\"end\", () => process.stdout.write(`node|${input.trim()}`));",
-      ].join("\n");
-      const nodeExecuted = spawnSync(shellPath, ["node", "--no-warnings", nodeBody], {
-        cwd: repositoryRoot,
-        encoding: "utf8",
-        env: {
-          ...installEnvironment,
-          PATH: `${binaryDirectory}${path.delimiter}${process.env.PATH ?? ""}`,
-        },
-        input: "node-input\n",
-      });
-      expect(nodeExecuted.status).toBe(0);
-      expect(nodeExecuted.stdout).toBe("node|node-input");
-      expect(nodeExecuted.stderr).toBe("");
+      expect((await stat(shellHelperPath)).mode & 0o111).not.toBe(0);
+      for (const name of ["hread", "hgrep", "hsymbol", "inspect_file"]) {
+        await expect(lstat(path.join(binaryDirectory, name))).rejects.toThrow();
+      }
     } finally {
       if (router.exitCode === null && router.signalCode === null) {
         router.kill("SIGTERM");
       }
       expect(await routerExit).toEqual({code: 130, signal: null});
     }
-
-    await expect(lstat(shellPath)).rejects.toThrow();
   }, 15000);
 });

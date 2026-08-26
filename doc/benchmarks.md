@@ -63,21 +63,25 @@ Codex authentication at $CODEX_AUTH_PATH or $CODEX_HOME/auth.json
 the local etcd clone at benchmarks/repos/etcd
 ```
 
-The runner creates `hpatch-runtime` inside the retained run directory, sets it as the
-Hpatch router's temporary directory, and mounts it at the same absolute path in the
-disposable Codex container. This exposes the private Hread wrapper to the client
-executor without placing it in the task workspace.
+The runner creates `hpatch-runtime` inside the retained run directory, exposes it as the same
+absolute `HPATCH_RUNTIME_DIR` in the router and disposable Codex containers, and installs the
+fixed `shell` helper in the shared image. The runtime path carries authenticated snapshots and
+the direct per-thread links to their current shell workers. Configured executor-backed plugin frontends remain available
+through the image's trusted `PATH`. Built-in private commands are dispatched by the shell
+evaluator and have no executable frontend or `PATH` entry.
 
-The generated summary parses invocations inside completed compound shell items so one
-`hread; git diff --check; go test` item counts as three operations rather than one. It reports
-ordinary and private file reads together, search, discovery, content diffs, `git diff --check`,
-diff metadata, status, tests/builds, formatters, upstream fetches, and other commands. For every
-category it separately counts operations after the first edit and the conservative subset whose
-concrete path operand names a path from an earlier file-change event. File reads, searches, and
-content `git diff` commands also report whether that same path changed again later, which is the
-structural edit-read/search/content-diff-edit loop signal. Pattern-only text matches and terminal
-validation reads do not count as loops. A bare worktree `git diff` is reported as workspace-wide
-and counts as a loop only when a prior-changed path changes again afterward.
+The generated summary normalizes retained `shell <interpreter> <program>` helper envelopes and
+executor JSON `cmd` bodies, then parses invocations inside completed compound shell items. One
+`hread; git diff --check; go test` item therefore counts as three operations rather than one. It
+reports ordinary and private file reads together, search, discovery, content diffs,
+`git diff --check`, diff metadata, status, tests/builds, formatters, upstream fetches, and other
+commands. For every category it separately counts operations after the first edit and the
+conservative subset whose concrete path operand names a path from an earlier file-change event.
+File reads, searches, and content `git diff` commands also report whether that same path changed
+again later, which is the structural edit-read/search/content-diff-edit loop signal. Pattern-only
+text matches and terminal validation reads do not count as loops. A bare worktree `git diff` is
+reported as workspace-wide and counts as a loop only when a prior-changed path changes again
+afterward.
 
 ## Procedure
 

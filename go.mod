@@ -4,6 +4,7 @@ go 1.26
 
 require (
 	github.com/BurntSushi/toml v1.6.0
+	github.com/creack/pty v1.1.24
 	github.com/gofrs/flock v0.13.0
 	github.com/pmezard/go-difflib v1.0.0
 	github.com/tiktoken-go/tokenizer v0.8.1
@@ -11,6 +12,8 @@ require (
 	github.com/tree-sitter/tree-sitter-javascript v0.25.0
 	github.com/tree-sitter/tree-sitter-python v0.25.0
 	github.com/tree-sitter/tree-sitter-typescript v0.23.2
+	golang.org/x/term v0.41.0
+	mvdan.cc/sh/v3 v3.13.1
 )
 
 require (

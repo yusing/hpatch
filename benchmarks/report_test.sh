@@ -144,7 +144,7 @@ grep -Fq '| Exact rejected attempts | 2 |' "$fixture/summary.md"
 grep -Fq '| Exact correction attempts | 2 |' "$fixture/summary.md"
 grep -Fq '| Chains recovered in first correction | 0 |' "$fixture/summary.md"
 grep -Fq '| Correction emitted payload bytes | 28 |' "$fixture/summary.md"
-grep -Fq '| Rendered diagnostic bytes | 96 |' "$fixture/summary.md"
+grep -Fq '| Rendered diagnostic bytes | 86 |' "$fixture/summary.md"
 grep -Fq '| Rendered report bytes | 60 |' "$fixture/summary.md"
 grep -Fq '| row-stale | type | line | contained | 2 |' "$fixture/summary.md"
 grep -Fq 'Same-path structural loops remain: 1 file-read, 2 search, and 2 content-diff invocation(s), versus control at 0, 0, and 0.' "$fixture/summary.md"
@@ -201,6 +201,104 @@ if bash "$benchmark_root/check-edit-loops.sh" \
 	exit 1
 fi
 
+helper_analysis="$fixture/helper-analysis"
+mkdir "$helper_analysis"
+python3 - "$helper_analysis/events.jsonl" <<'PY'
+import json
+import pathlib
+import shlex
+import sys
+
+
+def helper(body: str, interpreter: str = "bash", fields: tuple[str, ...] = ()) -> str:
+    return shlex.join(["shell", interpreter, *fields, body])
+
+
+def carrier(body: str) -> str:
+    return shlex.join(["/bin/bash", "-c", body])
+
+
+def command(body: str, exit_code: int = 0) -> dict[str, object]:
+    return {
+        "type": "item.completed",
+        "item": {
+            "type": "command_execution",
+            "command": body,
+            "exit_code": exit_code,
+            "status": "failed" if exit_code else "completed",
+        },
+    }
+
+
+events = [
+    command(carrier(helper(
+        "hread file.go 1:20; hgrep target file.go; git status --short",
+        interpreter="/usr/bin/bash",
+        fields=("-u", "--", "zero"),
+    ))),
+    {
+        "type": "item.completed",
+        "item": {
+            "type": "file_change",
+            "changes": [{"path": "/workspace/repo/file.go", "kind": "update"}],
+            "status": "completed",
+        },
+    },
+    command(carrier(
+        "printf ready | "
+        + helper(
+            "git diff --check; git diff -- file.go; go test ./...",
+            interpreter="/bin/sh",
+            fields=("-eu",),
+        )
+    )),
+    command(
+        carrier(helper(json.dumps({
+            "cmd": "sed -n '1,20p' file.go; rg target file.go",
+            "workdir": "/workspace/repo",
+        }), "bash", ("-eu",))),
+        exit_code=127,
+    ),
+]
+pathlib.Path(sys.argv[1]).write_text(
+    "".join(json.dumps(event) + "\n" for event in events), encoding="utf-8"
+)
+PY
+python3 "$benchmark_root/analyze_commands.py" \
+	"$helper_analysis/events.jsonl" >"$helper_analysis/analysis.json"
+jq -e '
+	.command_execution_items == 3 and
+	.failed_command_execution_items == 1 and
+	.parsed_command_invocations == 9 and
+	(.categories.file_read |
+		.invocations == 2 and .post_edit == 1 and .failed_items == 1 and
+		.path_scope_operand_post_edit == 1 and
+		.path_scope_operand_without_later_change == 1)
+' "$helper_analysis/analysis.json" >/dev/null
+jq -e '
+	(.categories.search |
+		.invocations == 2 and .post_edit == 1 and .failed_items == 1 and
+		.path_scope_operand_post_edit == 1) and
+	.categories.git_diff_check == {
+		"ambiguous_path_operand": 0,
+		"changed_path_in_non_path_operand_only": 0,
+		"failed_items": 0,
+		"invocations": 1,
+		"path_intersecting_post_edit": 0,
+		"path_scope_operand_post_edit": 0,
+		"path_scope_operand_without_later_change": 0,
+		"post_edit": 1,
+		"same_path_edit_read_edit": 0,
+		"workspace_wide_post_edit": 0
+	} and
+	.categories.git_diff_content.invocations == 1 and
+	.categories.git_diff_content.path_scope_operand_post_edit == 1 and
+	.categories.git_diff_content.path_scope_operand_without_later_change == 1 and
+	.categories.git_status.invocations == 1 and
+	.categories.test_or_build.invocations == 1 and
+	.categories.other.invocations == 1
+' "$helper_analysis/analysis.json" >/dev/null
+
 analysis_fixture="$fixture/exact-analysis"
 mkdir "$analysis_fixture"
 python3 - "$analysis_fixture" <<'PY'
@@ -246,11 +344,11 @@ jq -e '
 	.max_correction_attempts_per_chain == 1 and
 	.emitted_payload_bytes.initial == 19 and
 	.emitted_payload_bytes.rejected == 19 and
-	.emitted_payload_bytes.correction == 69 and
-	.emitted_payload_bytes.total == 88 and
+	.emitted_payload_bytes.correction == 28 and
+	.emitted_payload_bytes.total == 47 and
 	.rendered_diagnostic_bytes == 48 and .rendered_report_bytes == 0 and
-	.correction_fragment_overlap.target == {overlap: 2, fragments: 2} and
-	.correction_fragment_overlap.value == {overlap: 1, fragments: 2}
+	.correction_fragment_overlap.target == {overlap: 0, fragments: 0} and
+	.correction_fragment_overlap.value == {overlap: 0, fragments: 0}
 ' "$analysis_fixture/analysis.json" >/dev/null
 
 jq -c 'select(.call_id == "call-a1") |

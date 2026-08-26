@@ -147,24 +147,33 @@ stable per-plugin and per-tool breakdown derived from that same collection.
 The router exposes only hpatch, hpatch_recover, and shell beside the displaced Code Mode `exec` carrier.
 Hpatch remains the native engine contribution. Hpatch_recover is a router-owned recovery contribution. Shell, hread, hgrep, hsymbol, and inspect_file are
 JavaScript- and TypeScript-authored built-in plugin contributions compiled by Bun into one
-embedded JavaScript module with the reserved `builtin.shell` identity. Shell is model-visible; hread, hgrep,
-hsymbol, and inspect_file retain executable workers and frontends but their specifications are private.
-Configured user tools remain model-visible.
+embedded JavaScript module with the reserved `builtin.shell` identity. Shell is model-visible;
+hread, hgrep, hsymbol, and inspect_file retain snapshot-backed implementations but their
+specifications are private and they have no executable frontends. Configured user tools remain
+model-visible.
 
 The plugin runtime snapshots and validates the immutable built-in module before user
-declarations, then applies the same normalized registry, wrapper, worker, and metrics paths to
-all executable contributions. The registry projects only model-visible tool definitions.
+declarations, then applies one normalized registry and metrics path to all executable
+contributions. The registry projects only model-visible tool definitions. Configured
+executor-backed plugins retain wrapper and frontend dispatch. Built-in shell uses the fixed
+executor-side locator and a direct per-thread runtime path; its private commands execute from
+that worker.
 Request rewriting installs the projected hpatch, hpatch_recover, and shell definitions, removes the native
 exec-command contract, and rewrites received Responses instructions from the central guidance source.
 Private contribution descriptions are execution contracts, not a prompt source. Passthrough
 mode loads no registry.
 
-Each executable wrapper launches the generic private plugin worker in Codex's exec context.
-The worker derives relative-path resolution from its actual current directory and leaves
-sandbox and permission enforcement to Codex. The shell carrier sets neither an environment
-override nor a working directory. A direct `apply_patch` owner, missing Node.js runtime,
-invalid embedded declaration, or wrapper failure rejects startup or rewriting before
-forwarding.
+The shell carrier emits `shell <interpreter> <program>` in Codex's exec context. The fixed
+`cmd/shell` locator reads the path `$HPATCH_RUNTIME_DIR/hpatch-$CODEX_THREAD_ID/.runtime` and
+replaces itself with the authenticated snapshot worker stored there by the router. For Bash and
+sh selectors, a router-owned `mvdan/sh` runner
+parses `LangBash` or `LangPOSIX`, preserves shell-owned expansion and composition, and intercepts
+private command argv without launching another router worker. Other interpreters retain the
+plugin executor path. The worker derives relative-path resolution from its actual current
+directory and leaves sandbox and permission enforcement to Codex. Absent request-specific exec
+parameters, the shell carrier sets neither an environment override nor a working directory. A
+direct `apply_patch` owner, missing Node.js runtime, invalid embedded declaration, or configured
+wrapper failure rejects startup or rewriting before forwarding.
 
 The hread built-in accepts one path argv and an optional separate inclusive range argv.
 Shell quoting owns whitespace and metacharacters in paths. Hread has no multi-file input or
@@ -206,11 +215,12 @@ The renderer owns the 64 KiB complete-document budget and truncates only at outl
 boundaries; parser recovery remains an independent result flag.
 
 The generated built-in JavaScript and runtime host are materialized inside the authenticated
-process snapshot. A symlink-launched child verifies that snapshot before loading an
-implementation. The router never pre-reads files and never fabricates an `apply_patch` result for
+process snapshot. The directly launched shell child verifies that snapshot before loading an
+implementation; configured plugin children retain symlink-based verification. The router never
+pre-reads files and never fabricates an `apply_patch` result for
 read, search, symbol lookup, or inspection. Model history retains shell calls, private commands stay outside
 response routing and edit recovery ancestry, and generalized per-tool metrics record execution.
-Registry shutdown removes the frontends and snapshot.
+Registry shutdown removes configured frontends and the snapshot.
 
 Library callers pass an already-authorized root and a root-relative cwd. Absolute operands
 are matched against the canonical root name; equivalent aliases are not resolved outside the
@@ -247,9 +257,9 @@ normal Code Mode tool name and payload. The exec helper is a renderer over that 
 owns the outer exec program, nested invocation, serialization, independent argv quoting, optional
 single-placeholder command-template expansion, optional JSON parameters, and result forwarding.
 The parameter object cannot contain `cmd`; the renderer supplies `cmd` from the independently
-quoted frontend command. A present `login` value must be exactly `false`, and the renderer
+quoted worker command. A present `login` value must be exactly `false`, and the renderer
 supplies `login: false` when it is absent. Plugin code can select the typed template and
-parameter variants but cannot construct the outer carrier or quote the nested frontend command.
+parameter variants but cannot construct the outer carrier or quote the nested worker command.
 
 For the built-in `shell` contribution, the owning Code Mode executable definition also owns
 asynchronous exec-session creation, yield timing, continuation handles, continuation input,
@@ -263,7 +273,7 @@ protocol. Other contributed tools retain their declared output projections.
 
 An exec translator may provide a validated nonempty stock command for output metrics. The same
 renderer applies the selected template and parameters to produce its canonical stock carrier.
-This evidence never replaces the frontend carrier used for the response, history, replay, or
+This evidence never replaces the worker carrier used for the response, history, replay, or
 execution. An implementation needing another executable Code Mode carrier uses the generic path
 rather than encoding an exec surrogate. Hpatch's native workspace translation, recovery
 ancestry, patch renderer, and semantic failure baseline remain adapter extensions beside this
@@ -285,39 +295,60 @@ top-level Codex config declares `model_instructions_file`. An unconfigured unkno
 closed as upstream drift. This policy runs in memory and never changes Codex configuration or
 instruction files.
 
-For every executor-backed contribution, the router wrapper owner creates a symlink inside the
-authenticated snapshot directory. The snapshot symlink has the tool-name basename and targets
+For every configured executor-backed contribution, the router wrapper owner creates a symlink
+inside the authenticated snapshot directory. The snapshot symlink has the tool-name basename and targets
 the running router executable. After complete-registry validation, the owner creates or verifies
 a stable same-basename frontend beside the router executable. The frontend targets the snapshot
-wrapper. Private child dispatch resolves the frontend once, validates the snapshot wrapper and
+wrapper. Configured child dispatch resolves the frontend once, validates the snapshot wrapper and
 registry identity, and gives the implementation the remaining argv without inventing a cwd or
 environment. The worker passes frontend standard input to the JavaScript host on a dedicated
 inherited descriptor while the host retains descriptor zero for its bounded JSON control request.
-For execution, the worker also owns an anonymous script pipe pair and closes its copies after host
-startup. The typed execution context identifies the pipeline descriptor and both script-pipe
-descriptors. The shell executor writes the body to the pipe and maps its read end to the
-interpreter's script descriptor. The child executes only because Codex ran the returned basename
-carrier, so Codex continues to own sandbox and permission enforcement.
+The child executes only because Codex ran the returned basename carrier, so Codex continues to
+own sandbox and permission enforcement.
+
+Built-in shell uses one private `shell` wrapper inside the authenticated snapshot but no stable
+frontend. Its carrier independently quotes the stable `shell` basename, normalized interpreter
+fields, and exact body. The locator
+never contains tool-specific state; the router updates the direct thread runtime path to the
+current snapshot worker instead. The worker verifies the manifest and registry identity. For Bash and sh
+basenames, `mvdan/sh` owns parsing, built-ins, functions, expansion, redirections, pipelines,
+working-directory changes, exported environment, and fallback external commands. Its exec
+middleware recognizes only hread, hgrep, hsymbol, and inspect_file, invokes the matching
+snapshot implementation once with expanded argv and the current handler context, writes results
+through the handler streams, records the same-execution stock evidence, and returns its status to
+the shell. Non-terminal fallback commands use cancellable process groups so descendants cannot
+keep the worker alive by retaining inherited streams after cancellation or output overflow.
+Every command in a PTY-backed shell remains in the worker's foreground group because `mvdan/sh`
+does not coordinate job-control handoff across pipelines; cancellation uses a bounded
+inherited-pipe wait.
+Other interpreter basenames retain the JavaScript executor's anonymous script descriptor path.
 
 `internal/router/toolplugin/plugin.d.ts` owns the executable result schema. The runtime adapter
-validates the current result independently from its optional stock metric evidence. The private
-worker writes only the current result to the frontend streams and sends structured current and
+validates the current result independently from its optional stock metric evidence. The worker
+writes only the current result to Codex-facing streams and sends structured current and
 validated stock evidence, with the pinned plugin and tool identity, to the root metrics owner.
 The executor is the only content producer for both shapes; no metrics owner invokes it again.
-Frontend and wrapper creation is all-or-nothing for startup. The router
-holds one exclusive frontend lock for its process lifetime. Another router using that frontend
-directory fails startup. A later process can replace an authenticated prior frontend after a
-crash releases the lock. Shutdown removes owned frontends before removing the snapshot and
-releasing the lock. An isolated executor deployment must make the router executable, frontend
-directory, plugin runtime, and implementation resources visible independently of workspace
-selection.
+Configured frontend and wrapper creation is all-or-nothing for startup. When those frontends
+exist, the router holds one exclusive frontend lock for its process lifetime, and another router
+using that frontend directory fails startup. A built-in-only registry creates no frontend or
+frontend lock. Each eligible thread instead gets one direct `.runtime` link under its
+`hpatch-$CODEX_THREAD_ID` directory. During upgrade the registry briefly takes the frontend lock
+only when an authenticated
+pre-revamp shell/private frontend exists, removes those retired links, and leaves unrelated paths
+unchanged. A later process can replace an authenticated prior configured frontend after a crash
+releases the lock. Shutdown removes thread runtime directories and owned configured frontends before
+removing the snapshot and releasing the frontend lock. An isolated executor deployment must use
+the same absolute `HPATCH_RUNTIME_DIR` and make the thread runtime link, router executable, plugin runtime,
+and implementation resources visible independently of workspace selection; the fixed helper and
+configured frontends additionally require their shared directory on the executor `PATH`.
 
 Startup materializes the validated implementation modules and dispatch metadata into an
-immutable process-scoped worker snapshot. A symlink-launched child reads that snapshot and
-verifies its registry identity before loading an implementation. The child never rediscovers or
+immutable process-scoped worker snapshot. Locator-launched shell and symlink-launched configured
+children read that snapshot and verify its registry identity before loading an implementation. A child never rediscovers or
 executes the live configuration directory. Changing a configured module therefore cannot alter
 served tool behavior before restart. Missing, corrupted, or mismatched snapshot state fails the
-child honestly. Shutdown cleanup owns the stable frontends, snapshot wrappers, and snapshot.
+child honestly. Shutdown cleanup owns thread runtime directories, configured stable frontends,
+snapshot wrappers, and the shared snapshot.
 
 The response transformer uses registry membership instead of hardcoded tool-name predicates for
 JSON, SSE, and replay. Retained history stores the original contribution identity and input plus

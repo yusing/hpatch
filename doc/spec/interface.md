@@ -6,8 +6,9 @@ In hpatch router mode, the model receives `hpatch` and `shell` as standalone cus
 All persistent hread, hgrep, hsymbol, inspect_file, shell-execution, and HPATCH workflow guidance comes
 from `contrib/codex/file-editing-instructions.md`. The router injects that source into the
 top-level Responses `instructions` value in memory and never changes an instruction file.
-Hread, hgrep, hsymbol, and inspect_file remain private executable contributions; their custom-tool
-specifications are not sent to the model and direct model calls to their names are not routed.
+Hread, hgrep, hsymbol, and inspect_file remain private executor contributions inside the
+authenticated shell worker; their custom-tool specifications are not sent to the model, direct
+model calls to their names are not routed, and no executable frontend is installed for them.
 
 The private `hread` command accepts exactly one file:
 
@@ -18,15 +19,19 @@ hread PATH [START:END]
 The shell owns quoting and argument separation. A path containing whitespace is therefore one
 ordinary quoted shell argument. `START:END`, when present, is an inclusive logical-line range
 whose positive one-based base-ten endpoints must be ordered. The start line must exist. An end
-past EOF returns through the final line. One `hread` process never accepts a second path or a
+past EOF returns through the final line. One `hread` invocation never accepts a second path or a
 newline-delimited batch. The model batches related reads as separate hread commands in one
 shell script.
 
-The router creates process-scoped executable frontends named `shell`, `hread`, `hgrep`, `hsymbol`, and `inspect_file`.
-The Codex executor must see the frontend directory and router executable at the same absolute
-paths as the router process, and that directory must precede unrelated commands on its trusted
-`PATH`. A deployment that isolates their filesystems must provide those runtime mounts
-separately from the user workspace.
+The shell carrier invokes the fixed `shell` helper from the executor's trusted `PATH`. The
+router stores the current authenticated shell worker at
+`$HPATCH_RUNTIME_DIR/hpatch-$CODEX_THREAD_ID/.runtime`; the helper reads that path and replaces
+itself with the worker. Its `mvdan/sh` Bash and POSIX evaluators intercept the exact command
+names `hread`, `hgrep`, `hsymbol`, and `inspect_file` after ordinary shell expansion, then call the matching
+immutable snapshot implementation directly. These private names are not filesystem entries and
+do not use `PATH`. A deployment that isolates router and executor filesystems must expose the
+thread runtime path, router executable, and authenticated snapshot at the same
+absolute paths, separately from the user workspace.
 
 Hread runs in the shell carrier's actual working directory. Relative and absolute paths keep
 their ordinary process meaning. Codex, not the router or hread, owns sandbox and filesystem
@@ -43,7 +48,7 @@ over that exact content, including leading spaces and tabs. A trailing file term
 not create an additional empty line. Missing, inaccessible, non-regular, non-UTF-8,
 reversed-range, and start-past-EOF reads return concise stderr and nonzero status.
 
-Verified-row frontends count exact formatted current stdout with the GPT-5 tokenizer. They admit
+Verified-row commands count exact formatted current stdout with the GPT-5 tokenizer. They admit
 rows through 15,000 tokens. One next complete row may raise the result to at most 15,500 tokens;
 admitting that row seals the result. EOF at that point is complete. A later row, or any row that
 would exceed 15,500 tokens, is omitted together with every later row. Omission preserves already
@@ -68,8 +73,8 @@ Acceptance:
 5. Success and failure reach Codex through the model-visible shell carrier. Replay retains
    the original shell call and output; it never synthesizes a model-visible hread call or
    includes the shell call in editable rejected-script recovery history.
-6. Router startup fails before serving if the private hread frontend cannot be installed.
-   Passthrough mode installs and exposes none of these replacement surfaces.
+6. Router startup validates hread inside the immutable built-in snapshot without installing a
+   frontend. Passthrough mode loads and exposes none of these replacement surfaces.
 
 ## REQ-GREP-001 — Shell-routed verified-row search
 
@@ -120,8 +125,8 @@ Acceptance:
    current and stock rows, writes its diagnostic to stderr, and returns nonzero.
 4. The model-visible shell call and output are replayed unchanged. No standalone hgrep call is
    exposed, routed, or admitted to hpatch recovery history.
-5. Router startup fails before serving if the private hgrep frontend cannot be installed.
-   Passthrough mode installs and exposes none of these replacement surfaces.
+5. Router startup validates hgrep inside the immutable built-in snapshot without installing a
+   frontend. Passthrough mode loads and exposes none of these replacement surfaces.
 
 ## REQ-SYMBOL-001 — Shell-routed semantic symbol lookup
 
@@ -198,8 +203,9 @@ Acceptance:
 5. Relative and absolute in-workspace paths work. Lexical escapes, escaping symlinks, stale rows,
    missing resolvers, malformed protocol results, and uneditable definitions fail without useful
    stdout.
-6. Router startup installs an authenticated hsymbol frontend without adding a model-visible tool.
-   Passthrough mode installs no frontend, and shell history containing hsymbol is not recovery
+6. Router startup validates hsymbol inside the immutable built-in snapshot without adding a
+   model-visible tool or executable frontend. Passthrough mode loads no private command, and
+   shell history containing hsymbol is not recovery
    ancestry.
 
 ## REQ-INSPECT-001 — Shell-routed structural file inspection
@@ -254,9 +260,10 @@ Acceptance:
    `/`, preserves duplicate pointers, and never returns scalar values.
 3. Unsupported files are confined and checked as regular without content reads, UTF-8 validation,
    line counting, content detection, or command-level truncation.
-4. Router startup installs an authenticated `inspect_file` frontend and exposes or routes only
-   hpatch, shell, and configured model-visible contributions. Eligible request instructions use
-   the central guidance while unrelated content remains unchanged.
+4. Router startup validates `inspect_file` inside the immutable built-in snapshot without an
+   executable frontend and exposes or routes only hpatch, shell, and configured model-visible
+   contributions. Eligible request instructions use the central guidance while unrelated
+   content remains unchanged.
 
 ## REQ-PLUGIN-001 — Router-local tool plugins
 
@@ -277,11 +284,12 @@ model-visible name, description, format, grammar definition, input limit, transl
 implementation are part of the validated declaration. Standard JSON-schema function tools,
 runtime TypeScript transpilation, and arbitrary undocumented specification fields are not
 supported by this increment.
-Executor-backed names must also differ from shell keywords and built-ins. This rule ensures that
-the basename carrier selects an executable frontend instead of shell-owned behavior.
+Configured executor-backed names must also differ from shell keywords and built-ins. This rule
+ensures that their basename carrier selects an executable frontend instead of shell-owned
+behavior.
 
-Before opening its listener or installing any contributed-tool wrapper, the router loads every
-discovered declaration and validates the complete registry. It reports all detected plugin
+Before opening its listener or installing any configured contributed-tool wrapper, the router
+loads every discovered declaration and validates the complete registry. It reports all detected plugin
 schema, API-version, identity, duplicate-name, input, translator, implementation, and wrapper
 conflicts, then exits nonzero if any declaration is invalid. Failure exposes no
 partial registry, forwards no Responses request, starts no executor implementation, and
@@ -296,18 +304,20 @@ history, and replay. A plugin cannot invent an unavailable carrier or return a r
 envelope. The plugin API provides a canonical exec wrapper for tools that need one. The wrapper
 owns the repeated outer Code Mode exec program, nested tool invocation, serialization, argument
 quoting, and result forwarding. The optional exec command template contains exactly one `{.}`
-placeholder, which the router replaces with the complete quoted frontend command. An optional
-JSON parameter object cannot contain `cmd`. The router supplies `cmd` from that frontend
-command. If the parameter object contains `login`, its value must be exactly `false`.
+placeholder, which the router replaces with the complete quoted worker command. For configured
+tools this is their frontend command; for built-in shell it is the fixed
+`shell <interpreter> <program>` helper command. An optional JSON parameter object cannot contain `cmd`. The router
+supplies `cmd` from that worker command. If the parameter object contains `login`, its value
+must be exactly `false`.
 
 An exec translator may also return one nonempty stock command for output metrics. The router
 applies the same optional command template and JSON parameters, then renders the stock command
 through the canonical exec wrapper. This stock carrier is metric evidence only: the response,
-history, replay, and execution paths retain the validated frontend carrier. Without a stock
-command, output metrics use that frontend carrier as before.
+history, replay, and execution paths retain the validated worker carrier. Without a stock
+command, output metrics use that worker carrier as before.
 
-For each executor-backed contributed tool, startup creates or verifies a stable executable
-symlink beside the running `hpatch-router`. Its basename is exactly the contributed tool name,
+For each configured executor-backed contributed tool, startup creates or verifies a stable
+executable symlink beside the running `hpatch-router`. Its basename is exactly the contributed tool name,
 and its target is the authenticated process-scoped snapshot wrapper with the same basename.
 The snapshot wrapper targets the running `hpatch-router` executable. Without a command template,
 the exec wrapper invokes only the basename and represents the parsed model input as its ordered
@@ -315,9 +325,19 @@ argv. With a command template, the router replaces `{.}` with that same independ
 basename and argv. When launched through both symlinks, the router verifies the stable frontend
 location, snapshot identity, wrapper target, and registered implementation before passing the
 remaining argv unchanged.
-The private worker keeps the frontend standard input separate from the JavaScript host's JSON
-control stream. The host exposes that input only as a dedicated inherited descriptor during
+The configured-plugin worker keeps the frontend standard input separate from the JavaScript
+host's JSON control stream. The host exposes that input only as a dedicated inherited descriptor during
 executor calls.
+
+Built-in shell and its private hread, hgrep, hsymbol, and inspect_file commands are the exception
+to that frontend path. The PATH-installed `shell` name is a fixed shared locator, not a snapshot
+wrapper or plugin implementation. For each eligible thread, the router writes one direct
+`.runtime` link under `hpatch-$CODEX_THREAD_ID` to the current private `shell` wrapper in the
+authenticated snapshot. The locator reads that link and replaces itself with its target. Bash
+and POSIX evaluation dispatch private commands from the resolved worker after shell expansion, so none of the four
+private names creates a snapshot wrapper, stable frontend, or `PATH` dependency.
+Startup removes an authenticated frontend for one of the retired built-in names when it was left
+by a crashed pre-revamp router, without removing an unrelated file or link.
 
 An executor returns its current stdout, stderr, and exit status once. It may also return one
 optional stock result with the same fields. The stock result represents the output that the
@@ -332,10 +352,11 @@ Without exec parameters, the carrier supplies no working-directory or environmen
 With exec parameters, the router forwards the JSON values without replacing the request-specific
 Codex contract. Codex validates those values and remains the owner of working directory, sandbox,
 filesystem, process, network, terminal, and permission enforcement. Missing, conflicting,
-incorrectly targeted, or unusable symlinks fail startup before the listener opens.
-The router holds one exclusive frontend lock for its process lifetime. A concurrent router fails
-startup. After a crash releases the lock, a later router can replace authenticated prior
-frontends even when the prior process snapshot remains.
+incorrectly targeted, or unusable configured-tool symlinks fail startup before the listener
+opens. When configured frontends exist, the router holds one exclusive frontend lock for its
+process lifetime and a concurrent router fails startup. A built-in-only registry takes no
+frontend lock. After a crash releases a configured frontend lock, a later router can replace
+authenticated prior frontends even when the prior process snapshot remains.
 
 Translated history retains the plugin identity, original tool name and input, and exact carrier
 kind, name, and payload. Replay accepts only the byte-identical retained carrier and restores
@@ -357,16 +378,16 @@ Acceptance:
    regex custom-tool object to hpatch-mode Responses requests without a plugin flag.
 2. A missing or empty plugin directory preserves the built-in hpatch-mode behavior, while
    passthrough mode loads and exposes no contributed tools.
-3. One invalid declaration or tool symlink prevents the listener from opening; independent
-   startup mismatches are reported together and no valid subset is exposed.
+3. One invalid declaration or configured-tool symlink prevents the listener from opening;
+   independent startup mismatches are reported together and no valid subset is exposed.
 4. Duplicate tool names across plugins or built-ins fail startup, and the registry does not
    change until process restart.
 5. A plugin may translate to any compatible Code Mode tool call available in the current
    request; an unavailable or wrong-kind carrier rejects before upstream execution.
 6. The exec wrapper renders the canonical outer exec shape and independently quotes every argv
-   value. An optional template contains exactly one `{.}`, which expands to the complete frontend
+   value. An optional template contains exactly one `{.}`, which expands to the complete worker
    command. The plugin declaration does not contain or generate the outer carrier shape.
-7. Invoking an executor-backed tool resolves its stable basename frontend through the
+7. Invoking a configured executor-backed tool resolves its stable basename frontend through the
    authenticated snapshot wrapper to `hpatch-router`, verifies the pinned registry, dispatches
    by `argv[0]`, and delivers the declared argv under Codex's cwd, sandbox, and permissions.
 8. JSON and SSE responses preserve call identity while replacing a contributed call with its
@@ -418,14 +439,17 @@ The first working path in `doc/brief.md` § Outcome supplies the built-in declar
 `plugins/shell.mjs`. The generated plugin bundle contributes an unconstrained custom tool named
 `shell`, limits its UTF-8 input to the executor argv limit, and translates successful input
 through the canonical exec carrier from `REQ-PLUGIN-001`. The repository `make install` target
-regenerates that bundle and installs `hpatch-router`. It changes no Codex configuration,
+regenerates that bundle and installs `hpatch-router` plus the fixed `shell` helper. It changes no Codex configuration,
 instruction file, or configured shell declaration.
 
 The tool treats the first logical line as a shebang when that line, after trimming only its
 leading and trailing ASCII spaces and tabs, starts with `#!`. It removes `#!`, trims the
 remaining selector, and separates the selector at ASCII spaces or tabs. A bare executable name
 is valid. A direct executable path remains unchanged. A leading `env` or `/usr/bin/env` and an
-optional following `-S` are removed so the inherited `PATH` selects the next executable.
+optional following `-S` are removed. A selector whose case-insensitive basename is `bash` or
+`bash.exe` selects `mvdan/sh` Bash evaluation; `sh` or `sh.exe` selects its POSIX evaluation.
+This basename rule also applies to direct paths such as `/usr/bin/bash` and `/bin/sh`. Every
+other bare selector resolves through the inherited `PATH`.
 An empty selector, an `env` selector without an executable, a NUL byte, or too many or oversized
 argv values rejects before execution. Without a shebang, the selected interpreter is `bash`.
 
@@ -434,7 +458,7 @@ terminator. The tool removes only the shebang line and its terminator. It preser
 and trailing body whitespace, including an absent or final line terminator. Without a shebang,
 the complete input is the body. The translated argv contains each normalized interpreter field
 followed by the exact body as its final value. The resulting Codex exec carrier therefore shows
-a command equivalent to `shell python3 'print("Hello")'`; the model does not author its quoting.
+`shell python3 <quoted-body>`; the model does not author that command or its quoting.
 
 After an optional interpreter shebang, a leading directive block can contain one `#!cmd=`
 assignment and one `#!params=` assignment in either order. All canonical directives use
@@ -447,20 +471,34 @@ the same params validation. A duplicate directive, malformed JSON, non-object JS
 leading directive, params object containing `cmd`, or unsafe `login` value rejects.
 
 The tool removes recognized directive lines and their complete line terminators from the body.
-The router replaces `{.}` with the canonical independently quoted `shell` frontend command and
-argv. The command template then runs through the normal exec carrier shell. Without an
-interpreter shebang, the nested frontend command selects `bash`. Without either directive,
-current direct execution behavior remains unchanged. After the first body line, directive-like
-lines remain ordinary body data.
+The router replaces `{.}` with the canonical independently quoted shell-helper command and argv.
+The command template then runs through the normal exec carrier shell. Without an interpreter
+shebang, the nested worker selects `bash`. Without either directive, the worker command remains
+the complete outer command. After the first body line, directive-like lines remain ordinary body
+data.
 
-The executor runs the first translated argv field as the selected interpreter and passes any
-middle fields as interpreter arguments. It supplies the final exact body through an anonymous
-script descriptor and invokes the interpreter with that descriptor's `/dev/fd` path. The
-interpreter inherits the frontend standard input as program data. The executor stores no
-intermediate script file. Without `#!params=`, the process inherits Codex's execution context.
-With `#!params=`, Codex applies the accepted outer exec arguments before it launches the frontend.
-The executor resolves bare interpreters through `PATH` and returns stdout, stderr, and exit
-status without copying the script body into either output stream.
+The executor starts the fixed helper once with the normalized interpreter fields and exact body.
+The helper reads the current thread runtime path and replaces itself with the authenticated
+router worker, without a second Codex executor call. For Bash and sh basenames,
+the worker parses the body with `mvdan/sh` using
+`LangBash` or `LangPOSIX`, applies supported middle fields as shell options or parameters, and
+executes the syntax in-process. Its exec handler receives expanded argv, invokes hread, hgrep,
+hsymbol, and inspect_file directly from the authenticated snapshot, and delegates every other
+external command to the inherited environment. Private command stdout, stderr, status,
+redirections, pipelines, cwd, exported environment, and cancellation remain part of the same
+shell evaluation; no private command launches another router worker. Each non-terminal fallback
+external command owns a cancellable process group so its descendants cannot retain shell streams
+past cancellation or the output limit. Every external command in a PTY-backed shell remains in
+the worker's foreground process group and uses a bounded inherited-pipe wait on cancellation,
+preserving terminal input for direct commands and piped stages that read `/dev/tty`.
+
+Other interpreters retain the plugin executor path. It passes middle fields as interpreter
+arguments, supplies the final exact body through an anonymous script descriptor such as
+`/dev/fd/3`, and leaves standard input available as program data. Neither path stores an
+intermediate script file. Without `#!params=`, the worker inherits Codex's execution context.
+With `#!params=`, Codex applies the accepted outer exec arguments before launching the worker.
+The worker returns stdout, stderr, and exit status without copying the script body into either
+output stream.
 
 The shell carrier forwards the complete native `exec_command` result defined by the owning Code
 Mode contract rather than only its output field. A result containing the native continuation
@@ -476,36 +514,42 @@ argument, and Bun and Node-family executables pass it as the `-e` argument. Othe
 receive `/dev/fd/3`; a quoted heredoc supplies that descriptor while leaving program stdin
 available. Its interpreter-derived delimiter changes when the body contains that delimiter as a
 complete line. The router applies any command template and parameters and counts the complete
-canonical Code Mode exec shape. It still executes and replays only the authenticated `shell`
-frontend carrier.
+canonical Code Mode exec shape. It still executes and replays only the fixed shell-helper
+carrier.
 
 Acceptance:
 
 1. A free-form call containing `#!/usr/bin/env python3` translates to an exec carrier whose
-   visible command arguments are `shell`, `python3`, and the exact body; execution runs
-   `python3` with that body as its anonymous script source.
+   visible command is `shell python3 <body>`; execution resolves the current thread-bound runtime
+   and runs `python3` with that body as its anonymous script source.
 2. `#!python3`, `#! python3`, and `#!/usr/bin/env python3` select `python3`. A directly supplied
    path such as `#!/opt/python/bin/python3` remains unchanged.
 3. `#!/usr/bin/env -S python3 -u` runs `python3` with `-u` and the exact body as its anonymous
    script source.
 4. `#!cmd=curl -fsSL URL | {.} | jq` without an interpreter shebang expands `{.}` to the
-   independently quoted `shell bash` frontend command. The curl response becomes Bash standard
-   input while the exact remaining body remains the script source.
+   independently quoted fixed helper selecting Bash. The curl response becomes Bash
+   standard input while the exact remaining body remains the script source.
 5. When `#!python3` precedes that command directive, `{.}` expands to the independently quoted
-   `shell python3` frontend command. The command-template input becomes Python standard input.
+   fixed helper selecting Python. The command-template input becomes Python standard input.
 6. A missing, empty, or repeated `{.}` placeholder rejects before execution. A command directive
    in any later body line remains ordinary body text.
-7. Input without a shebang or command directive selects `bash` and uses the complete input as the
-   script source.
+7. Input without a shebang or command directive selects `mvdan/sh` Bash evaluation and uses the
+   complete input as the script source. `bash` and `/usr/bin/bash` have the same Bash semantics;
+   `sh` and `/bin/sh` have the same POSIX semantics and reject Bash-only syntax.
 8. Python indentation and all other body-leading or body-trailing whitespace remain byte-exact
    after recognized directive removal.
-9. The child inherits cwd, environment, and frontend standard input. Its stdout, stderr, and
+9. The worker inherits cwd, environment, and standard input. Its stdout, stderr, and
    nonzero status are returned without script-source duplication or an intermediate script file.
+   Cancellation and output overflow terminate non-terminal fallback-command descendants that
+   retain inherited streams. PTY-backed external commands, including piped stages that read
+   `/dev/tty`, accept interactive input without a background-process-group stop.
 10. Malformed selectors and input that cannot fit the bounded exec argv return a concise
     diagnostic without starting an interpreter.
-11. `make install` installs `hpatch-router` without changing Codex configuration or instruction
-    files. The installed router embeds shell and creates shell, hread, hgrep, hsymbol, and
-    inspect_file basename frontends beside its executable at startup.
+11. `make install` installs `hpatch-router` and the fixed `shell` helper without changing Codex
+    configuration or instruction files. Startup and tool-snapshot changes do not rewrite that
+    helper and create no hread, hgrep, hsymbol, or inspect_file basename frontend. An authenticated
+    pre-revamp frontend for one of those private names is removed during upgrade; unrelated paths
+    remain unchanged.
 12. `#!params={"workdir":"/tmp","tty":true}` before or after `#!cmd=` produces an exec carrier
     containing those fields and the router-supplied `cmd`. Safe leading params near-misses
     produce the same carrier after normalization. An object containing `cmd` rejects, and a
@@ -526,7 +570,7 @@ Acceptance:
     nested section remains byte-equivalent after the request rewrite.
 15. A terminal shell carrier forwards the complete native exec result. When native execution
     yields, the carrier forwards that same complete result, including its continuation handle,
-    without calling the continuation operation or starting the frontend again. No router session
+    without calling the continuation operation or starting the worker again. No router session
     record or plugin-defined continuation surface is created.
 16. For one built-in shell input, the router emits one warning for every distinct detected
     interpreter-wrapper or heredoc kind rather than stopping after the first. Recovered Code Mode

@@ -77,3 +77,11 @@ func TestRoutingSessionIDPrefersStableIdentity(t *testing.T) {
 		})
 	}
 }
+
+func TestCodexThreadIDUsesFirstNonblankHeader(t *testing.T) {
+	headers := make(http.Header)
+	headers[http.CanonicalHeaderKey(threadIDHeader)] = []string{"  ", " thread-1 ", "thread-2"}
+	if got := codexThreadID(headers); got != "thread-1" {
+		t.Fatalf("codexThreadID() = %q, want %q", got, "thread-1")
+	}
+}

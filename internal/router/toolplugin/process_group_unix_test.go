@@ -36,7 +36,7 @@ setInterval(() => {}, 1000);
 	result := make(chan error, 1)
 	go func() {
 		var response map[string]any
-		result <- invoke(ctx, node, hostPath, "", 1024, nil, nil, map[string]any{}, &response)
+		result <- invoke(ctx, node, hostPath, "", "", nil, 1024, nil, nil, map[string]any{}, &response)
 	}()
 
 	var childPID int

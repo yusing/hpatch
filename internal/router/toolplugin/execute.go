@@ -9,7 +9,7 @@ import (
 
 // JSON can encode each byte as a six-byte Unicode escape. The additional
 // allowance covers the execution envelope.
-const maxEncodedExecutionHostOutputBytes = 6*maxHostOutputBytes + 1<<20
+const maxEncodedExecutionHostOutputBytes = 6*ExecutionOutputBudgetBytes + 1<<20
 
 func Execute(
 	ctx context.Context,
@@ -17,6 +17,8 @@ func Execute(
 	index int,
 	arguments []string,
 	stdin *os.File,
+	directory string,
+	environment []string,
 ) (ExecutionOutput, error) {
 	request := struct {
 		Operation         string   `json:"operation"`
@@ -33,7 +35,7 @@ func Execute(
 		Index:             index,
 		Arguments:         arguments,
 		InputFD:           stdin != nil,
-		OutputBudgetBytes: maxHostOutputBytes,
+		OutputBudgetBytes: ExecutionOutputBudgetBytes,
 	}
 	var result ExecutionOutput
 	var scriptFiles []*os.File
@@ -53,6 +55,8 @@ func Execute(
 		node,
 		filepath.Join(runtimeRoot, hostFilename),
 		"",
+		directory,
+		environment,
 		maxEncodedExecutionHostOutputBytes,
 		stdin,
 		scriptFiles,

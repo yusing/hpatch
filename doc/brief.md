@@ -30,9 +30,14 @@ installed definitions, emitted-versus-translated output shapes, and current-vers
 shapes to each contributed tool.
 
 The mandatory built-in `shell` plugin accepts one free-form script and exposes its normalized interpreter
-and exact body in the translated Codex exec carrier. The executor preserves standard input for
-program data. A compact shebang selects the interpreter, while a missing shebang selects `bash`.
-Optional directives use one `#!key=value` syntax: `#!cmd=` wraps that canonical shell frontend
+and exact body as `shell <interpreter> <program>` in the translated Codex exec carrier. The fixed,
+shared `shell` helper uses `CODEX_THREAD_ID` to read the current router runtime path, then replaces
+itself with that authenticated worker. The executor preserves standard input for program
+data. A compact shebang selects the interpreter, while a missing shebang selects `bash`.
+Bash and sh basenames, including direct paths, use the router worker's `mvdan/sh` Bash or POSIX
+evaluator. That evaluator dispatches hread, hgrep, hsymbol, and inspect_file directly from the
+authenticated snapshot without executable frontends or another router worker. Optional directives
+use one `#!key=value` syntax: `#!cmd=` wraps that canonical shell helper
 command in one user-supplied command template, while `#!params=` forwards a JSON object, except
 `cmd`, through the typed exec carrier. A present `login` value must be `false`. The router always
 rewrites the custom `exec` tool either directly inside an `additional_tools` item for app-server
@@ -92,14 +97,16 @@ wall time must remain close to control.
 - Host root APIs: `ApplyForHost`, `ApplyForHostRoot`, `TranslateForHost`, and
   `TranslateForHostAt` return `HostTranslation` for report, state, diagnostics, and metrics.
 - `hpatch-router --mode hpatch|passthrough`: expose model-visible hpatch and shell tools with
-  private single-file hread and hgrep commands, or the unchanged control path.
+  private shell-internal hread, hgrep, hsymbol, and inspect_file commands, or the unchanged
+  control path.
 - `hpatch/plugins` beneath the platform user configuration directory: the configured tool-plugin
   discovery surface; the router has no plugin command-line flags.
 - `shell`: a mandatory built-in unconstrained custom tool whose translated exec carrier shows the
   interpreter and exact script body, optionally with `#!cmd=` and request-specific `#!params=`
   assignments.
-- `make install`: regenerate the embedded plugin bundle, install `hpatch-router`, and install
-  Codex instructions.
+- `make install`: regenerate the embedded plugin bundle and install `hpatch-router` plus the fixed
+  `shell` helper without installing private command files or changing Codex configuration and
+  instructions.
 - `hpatch-bench validate --manifest TASK.json` and `hpatch-bench run`: validate and run
   paired historical-commit evaluations.
 - Script commands: `in`, `new`, `mv`, `rm`, `type`, and `add`.
@@ -122,9 +129,9 @@ wall time must remain close to control.
 - Interactive editor UI, binary files, non-UTF-8 files, remote plugin discovery, runtime
   TypeScript transpilation, hot plugin reload, or search semantics beyond the installed
   ripgrep executable.
-- Bundling configured example plugins into the router, parsing the script body as shell syntax,
-  storing the body in an intermediate file, overriding the executor working directory or
-  environment, or printing script source into program output.
+- Bundling configured example plugins into the router, storing the body in an intermediate file,
+  overriding the executor working directory or environment, or printing script source into
+  program output.
 - A new patch interchange format beyond the compact command script and translated
   `apply_patch` output.
 - AST-specific mutation commands or language-specific editing frameworks.
@@ -159,13 +166,15 @@ wall time must remain close to control.
 - In hpatch mode the router validates the complete discovered plugin registry before opening
   its listener or installing tool wrappers; any schema, identity, implementation, or wrapper
   mismatch reports diagnostics and stops startup without exposing a partial registry.
-- Each executor-backed contributed tool uses a stable basename symlink beside `hpatch-router`.
+- Each configured executor-backed contributed tool uses a stable basename symlink beside `hpatch-router`.
   The stable symlink targets an authenticated snapshot wrapper with the same basename, and the
   snapshot wrapper targets `hpatch-router`. A translated exec carrier invokes only the basename;
-  private child dispatch validates both links and selects the pinned implementation from the
+  configured child dispatch validates both links and selects the pinned implementation from the
   snapshot, so Codex remains the owner of working directory, sandbox, and permissions.
-  One process-lifetime lock owns the frontend set. A restart can reclaim authenticated links
-  after a crash, while a concurrent router fails startup.
+  One process-lifetime lock owns a nonempty configured frontend set. A restart can reclaim
+  authenticated links after a crash, while a concurrent router using those names fails startup.
+  Built-in shell instead uses the fixed PATH-installed `shell` locator and a direct per-thread
+  runtime path selected by `CODEX_THREAD_ID`. Its private commands create no wrapper or frontend.
 - A plugin translator returns a normal Code Mode tool-call carrier rather than an exec-specific
   envelope. The plugin API may provide an exec wrapper that alone owns the repeated outer exec
   shape.

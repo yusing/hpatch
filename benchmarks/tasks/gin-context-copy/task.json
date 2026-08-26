@@ -13,8 +13,7 @@
     "difficulty": "easy"
   },
   "runtime": {
-    "dependency_kind": "go",
-    "read_probe": "go.mod"
+    "dependency_kind": "go"
   },
   "prompt_file": "prompt.md",
   "hidden_files": [

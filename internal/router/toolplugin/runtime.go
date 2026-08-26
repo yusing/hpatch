@@ -27,7 +27,7 @@ const (
 	maxDeclarationFiles         = 64
 	maxSnapshotBytes            = 32 << 20
 	maxSnapshotFileBytes        = 8 << 20
-	maxHostOutputBytes          = 16 << 20
+	ExecutionOutputBudgetBytes  = 16 << 20
 	maxExecutionHostOutputBytes = 100 << 20
 )
 
@@ -225,7 +225,7 @@ func validateSnapshot(ctx context.Context, node, hostPath, pluginRoot string, mo
 		Plugins []Plugin `json:"plugins"`
 		Errors  []string `json:"errors"`
 	}
-	err := invoke(ctx, node, hostPath, pluginRoot, maxHostOutputBytes, nil, nil, request, &response)
+	err := invoke(ctx, node, hostPath, pluginRoot, "", nil, ExecutionOutputBudgetBytes, nil, nil, request, &response)
 	if errors.Is(err, context.DeadlineExceeded) {
 		return nil, nil, fmt.Errorf("plugin validation exceeded %s", pluginInvocationTimeout)
 	}
