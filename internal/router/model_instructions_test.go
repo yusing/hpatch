@@ -115,6 +115,35 @@ func TestRewriteReceivedModelInstructionsLeavesMissingAndNullValues(t *testing.T
 	}
 }
 
+func TestRewriteReceivedModelInstructionsUsesDeveloperCarrierWhenTopLevelIsEmpty(t *testing.T) {
+	developerInstructions := stockModelInstructionsForTest("developer prefix\n", "developer suffix\n")
+	request := parsedResponsesRequest{fields: map[string]json.RawMessage{
+		"instructions": json.RawMessage(`""`),
+		"input": mustTestJSON(t, []any{
+			map[string]any{"type": "message", "role": "developer", "content": developerInstructions},
+			map[string]any{"type": "message", "role": "user", "content": "keep this unchanged"},
+		}),
+	}}
+
+	if err := rewriteReceivedModelInstructions(&request, false, codexinstructions.NativeInstructions()); err != nil {
+		t.Fatal(err)
+	}
+	if got := string(request.fields["instructions"]); got != `""` {
+		t.Fatalf("top-level instructions = %s, want empty string", got)
+	}
+	var input []map[string]any
+	if err := json.Unmarshal(request.fields["input"], &input); err != nil {
+		t.Fatal(err)
+	}
+	want := "developer prefix\n" + codexinstructions.NativeInstructions() + "developer suffix\n"
+	if got := input[0]["content"]; got != want {
+		t.Fatalf("developer instructions = %q, want %q", got, want)
+	}
+	if got := input[1]["content"]; got != "keep this unchanged" {
+		t.Fatalf("user content = %q", got)
+	}
+}
+
 func TestModelInstructionFileConfiguredAt(t *testing.T) {
 	directory := t.TempDir()
 	for _, test := range []struct {

@@ -61,14 +61,23 @@ func modelInstructionFileConfiguredAt(path string) (bool, error) {
 
 func rewriteReceivedModelInstructions(request *parsedResponsesRequest, customized bool, modelInstructions string) error {
 	raw, present := request.fields["instructions"]
-	if !present {
-		return nil
-	}
 	var received *string
-	if err := json.Unmarshal(raw, &received); err != nil {
-		return errors.New("responses instructions must be a string or null")
+	if present {
+		if err := json.Unmarshal(raw, &received); err != nil {
+			return errors.New("responses instructions must be a string or null")
+		}
 	}
-	if received == nil {
+	if received == nil || *received == "" {
+		rewritten, found, err := rewriteDeveloperModelInstructions(request.fields["input"], customized, modelInstructions)
+		if err != nil {
+			return err
+		}
+		if found {
+			request.fields["input"] = rewritten
+			return nil
+		}
+	}
+	if !present || received == nil {
 		return nil
 	}
 	rendered, err := renderModelInstructions(*received, customized, modelInstructions)
@@ -77,6 +86,36 @@ func rewriteReceivedModelInstructions(request *parsedResponsesRequest, customize
 	}
 	request.fields["instructions"] = mustMarshalJSON(rendered)
 	return nil
+}
+
+func rewriteDeveloperModelInstructions(raw json.RawMessage, customized bool, modelInstructions string) (json.RawMessage, bool, error) {
+	if len(raw) == 0 {
+		return nil, false, nil
+	}
+	input, err := decodeCTPJSON(raw)
+	if err != nil {
+		return nil, false, fmt.Errorf("decode responses input instructions: %w", err)
+	}
+	var rewriteErr error
+	found := transformCTPInput(input, nil, func(received string) string {
+		rendered, err := renderModelInstructions(received, customized, modelInstructions)
+		if err != nil {
+			rewriteErr = err
+			return received
+		}
+		return rendered
+	})
+	if rewriteErr != nil {
+		return nil, false, rewriteErr
+	}
+	if !found {
+		return nil, false, nil
+	}
+	rewritten, err := json.Marshal(input)
+	if err != nil {
+		return nil, false, fmt.Errorf("encode responses input instructions: %w", err)
+	}
+	return rewritten, true, nil
 }
 
 func renderModelInstructions(input string, appendIfMissing bool, modelInstructions string) (string, error) {
