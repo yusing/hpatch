@@ -60,19 +60,21 @@ type ctpCodecMetrics struct {
 }
 
 type ctpCompressionMetrics struct {
-	ConsideredRequests uint64               `json:"considered_requests"`
-	EncodedRequests    uint64               `json:"encoded_requests"`
-	MissingCarrier     uint64               `json:"missing_carrier"`
-	NoDefinitions      uint64               `json:"no_definitions"`
-	Unprofitable       uint64               `json:"unprofitable"`
-	AssistantTexts     uint64               `json:"assistant_texts"`
-	Input              ctpCompressionTokens `json:"input"`
-	Output             ctpCompressionTokens `json:"output"`
-	InputBytes         ctpCompressionBytes  `json:"input_bytes"`
-	OutputBytes        ctpCompressionBytes  `json:"output_bytes"`
-	RequestDictionary  ctpDictionaryMetrics `json:"request_dictionary"`
-	ResponseDictionary ctpDictionaryMetrics `json:"response_dictionary"`
-	Codec              ctpCodecMetrics      `json:"codec"`
+	ConsideredRequests        uint64               `json:"considered_requests"`
+	ActiveRequests            uint64               `json:"active_requests"`
+	MissingCarrier            uint64               `json:"missing_carrier"`
+	RequestStrings            uint64               `json:"request_strings"`
+	RequestVisibleReferences  uint64               `json:"request_visible_references"`
+	AssistantTexts            uint64               `json:"assistant_texts"`
+	ResponseStrings           uint64               `json:"response_strings"`
+	ResponseVisibleReferences uint64               `json:"response_visible_references"`
+	Input                     ctpCompressionTokens `json:"input"`
+	Output                    ctpCompressionTokens `json:"output"`
+	InputBytes                ctpCompressionBytes  `json:"input_bytes"`
+	OutputBytes               ctpCompressionBytes  `json:"output_bytes"`
+	RequestDictionary         ctpDictionaryMetrics `json:"request_dictionary"`
+	ResponseDictionary        ctpDictionaryMetrics `json:"response_dictionary"`
+	Codec                     ctpCodecMetrics      `json:"codec"`
 }
 
 type ctpRepresentationMetrics struct {
@@ -89,15 +91,19 @@ type ctpInputObservation struct {
 	Decision          string `json:"decision"`
 	Definitions       uint64 `json:"definitions"`
 	DictionaryBytes   uint64 `json:"dictionary_bytes"`
+	Strings           uint64 `json:"strings"`
+	VisibleReferences uint64 `json:"visible_references"`
 	EncodeNanoseconds uint64 `json:"encode_nanoseconds"`
 }
 
 type ctpOutputObservation struct {
 	ctpRepresentationMetrics
 
-	RequestSequence uint64 `json:"request_sequence"`
-	Definitions     uint64 `json:"definitions"`
-	DictionaryBytes uint64 `json:"dictionary_bytes"`
+	RequestSequence   uint64 `json:"request_sequence"`
+	Definitions       uint64 `json:"definitions"`
+	DictionaryBytes   uint64 `json:"dictionary_bytes"`
+	Strings           uint64 `json:"strings"`
+	VisibleReferences uint64 `json:"visible_references"`
 }
 
 type ctpSessionMetrics struct {
@@ -465,61 +471,55 @@ func (m *metricsStore) recordHPatch(record hpatchMetricRecord) {
 	m.notifyLocked()
 }
 
-func ctpAdmissionMetricName(decision ctpAdmissionDecision) string {
+func ctpRequestMetricName(decision ctp2RequestDecision) string {
 	switch decision {
-	case ctpAdmissionMissingCarrier:
+	case ctp2RequestMissingCarrier:
 		return "missing_instruction_carrier"
-	case ctpAdmissionNoDefinitions:
-		return "no_definitions"
-	case ctpAdmissionUnprofitable:
-		return "unprofitable"
-	case ctpAdmissionAdmitted:
-		return "admitted"
+	case ctp2RequestActive:
+		return "active"
 	default:
 		return "disabled"
 	}
 }
 
-func (c *ctpCompressionMetrics) recordAdmission(
-	decision ctpAdmissionDecision,
+func (c *ctpCompressionMetrics) recordRequest(
+	decision ctp2RequestDecision,
 	representation ctpRepresentationMetrics,
-	definitions, dictionaryBytes uint64,
+	details ctp2RepresentationMetrics,
 	encodeDuration time.Duration,
 ) {
 	c.ConsideredRequests++
-	// Every non-disabled decision completes one prepareRequest codec operation,
-	// including requests that remain native after admission.
 	c.Codec.EncodeOperations++
 	c.Codec.EncodeNanoseconds += uint64(max(encodeDuration, 0))
 	switch decision {
-	case ctpAdmissionMissingCarrier:
+	case ctp2RequestMissingCarrier:
 		c.MissingCarrier++
-	case ctpAdmissionNoDefinitions:
-		c.NoDefinitions++
-	case ctpAdmissionUnprofitable:
-		c.Unprofitable++
-	case ctpAdmissionAdmitted:
-		c.EncodedRequests++
+	case ctp2RequestActive:
+		c.ActiveRequests++
 		c.Input.NativeTokens += representation.NativeTokens
 		c.Input.CompactTokens += representation.CompactTokens
 		c.InputBytes.NativeBytes += representation.NativeBytes
 		c.InputBytes.CompactBytes += representation.CompactBytes
-		c.RequestDictionary.Definitions += definitions
-		c.RequestDictionary.Bytes += dictionaryBytes
+		c.RequestDictionary.Definitions += details.Definitions
+		c.RequestDictionary.Bytes += details.DictionaryBytes
+		c.RequestStrings += details.Strings
+		c.RequestVisibleReferences += details.VisibleReferences
 	}
 }
 
 func (c *ctpCompressionMetrics) recordOutput(
 	representation ctpRepresentationMetrics,
-	definitions, dictionaryBytes uint64,
+	details ctp2RepresentationMetrics,
 ) {
 	c.AssistantTexts++
 	c.Output.NativeTokens += representation.NativeTokens
 	c.Output.CompactTokens += representation.CompactTokens
 	c.OutputBytes.NativeBytes += representation.NativeBytes
 	c.OutputBytes.CompactBytes += representation.CompactBytes
-	c.ResponseDictionary.Definitions += definitions
-	c.ResponseDictionary.Bytes += dictionaryBytes
+	c.ResponseDictionary.Definitions += details.Definitions
+	c.ResponseDictionary.Bytes += details.DictionaryBytes
+	c.ResponseStrings += details.Strings
+	c.ResponseVisibleReferences += details.VisibleReferences
 }
 
 func (c *ctpCompressionMetrics) recordDecode(duration time.Duration, failed bool) {
@@ -539,29 +539,31 @@ func appendLatestMetricObservation[T any](observations []T, observation T, limit
 	return observations, true
 }
 
-func (m *metricsStore) recordCTPAdmission(
+func (m *metricsStore) recordCTPRequest(
 	sessionID string,
 	requestSequence uint64,
-	decision ctpAdmissionDecision,
+	decision ctp2RequestDecision,
 	representation ctpRepresentationMetrics,
-	definitions, dictionaryBytes uint64,
+	details ctp2RepresentationMetrics,
 	encodeDuration time.Duration,
 ) {
-	if m == nil || decision == ctpAdmissionDisabled {
+	if m == nil || decision == ctp2RequestDisabled {
 		return
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.ctp.recordAdmission(decision, representation, definitions, dictionaryBytes, encodeDuration)
+	m.ctp.recordRequest(decision, representation, details, encodeDuration)
 	if validMetricSessionID(sessionID) {
 		retained := m.retainedSessionLocked(sessionID)
-		retained.ctp.recordAdmission(decision, representation, definitions, dictionaryBytes, encodeDuration)
+		retained.ctp.recordRequest(decision, representation, details, encodeDuration)
 		observation := ctpInputObservation{
 			ctpRepresentationMetrics: representation,
 			RequestSequence:          requestSequence,
-			Decision:                 ctpAdmissionMetricName(decision),
-			Definitions:              definitions,
-			DictionaryBytes:          dictionaryBytes,
+			Decision:                 ctpRequestMetricName(decision),
+			Definitions:              details.Definitions,
+			DictionaryBytes:          details.DictionaryBytes,
+			Strings:                  details.Strings,
+			VisibleReferences:        details.VisibleReferences,
 			EncodeNanoseconds:        uint64(max(encodeDuration, 0)),
 		}
 		var dropped bool
@@ -580,22 +582,24 @@ func (m *metricsStore) recordCTPOutput(
 	sessionID string,
 	requestSequence uint64,
 	representation ctpRepresentationMetrics,
-	definitions, dictionaryBytes uint64,
+	details ctp2RepresentationMetrics,
 ) {
 	if m == nil {
 		return
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.ctp.recordOutput(representation, definitions, dictionaryBytes)
+	m.ctp.recordOutput(representation, details)
 	if validMetricSessionID(sessionID) {
 		retained := m.retainedSessionLocked(sessionID)
-		retained.ctp.recordOutput(representation, definitions, dictionaryBytes)
+		retained.ctp.recordOutput(representation, details)
 		observation := ctpOutputObservation{
 			ctpRepresentationMetrics: representation,
 			RequestSequence:          requestSequence,
-			Definitions:              definitions,
-			DictionaryBytes:          dictionaryBytes,
+			Definitions:              details.Definitions,
+			DictionaryBytes:          details.DictionaryBytes,
+			Strings:                  details.Strings,
+			VisibleReferences:        details.VisibleReferences,
 		}
 		var dropped bool
 		retained.ctp.OutputObservations, dropped = appendLatestMetricObservation(

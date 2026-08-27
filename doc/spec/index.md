@@ -4,7 +4,7 @@ pjdoc:
   kind: spec
   scope: root
   status: draft
-  revision: "33"
+  revision: "34"
   files:
     - interface.md
     - comparison.md
@@ -13,10 +13,11 @@ pjdoc:
 ---
 # hpatch specification
 
-Revision 33 measures CTP/1 through fresh native and CTP-active Hpatch arms with the same
+Revision 34 supersedes CTP/1 with content-local and visible-line CTP/2 and measures it through
+fresh native and CTP/2-active Hpatch arms with the same
 decoded-response contract. It separates model behavior, per-request protocol representations and
-codec cost, and provider-observed operational usage; bounded session telemetry exposes request and
-CTP observation truncation instead of inferring missing values. Protocol-focused tasks can require
+codec cost, and provider-observed operational usage. Bounded session telemetry exposes request and
+CTP/2 observation truncation instead of inferring missing values. Protocol-focused tasks can require
 strictly smaller compact input and assistant-output representations.
 `doc/spec/interface.md` owns the public report grammar, projection rule, continuation
 semantics, and observable acceptance behavior.

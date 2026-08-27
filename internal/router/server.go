@@ -38,7 +38,7 @@ func Run(ctx context.Context, args []string, stderr io.Writer) (runErr error) {
 	timeout := flags.Duration("timeout", defaultRequestTimeout, "upstream response-start timeout")
 	streamIdleTimeout := flags.Duration("stream-idle-timeout", defaultStreamIdleTimeout, "maximum upstream response-stream inactivity between bytes")
 	mode := flags.String("mode", defaultRewriteMode, "response mode: hpatch or passthrough")
-	modelProtocol := flags.String("model-protocol", defaultModelProtocol, "model protocol: native or ctp1")
+	modelProtocol := flags.String("model-protocol", defaultModelProtocol, "model protocol: native or ctp2")
 	if err := flags.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return nil
@@ -51,11 +51,11 @@ func Run(ctx context.Context, args []string, stderr io.Writer) (runErr error) {
 	if *mode != "hpatch" && *mode != "passthrough" {
 		return errors.New("--mode must be hpatch or passthrough")
 	}
-	if *modelProtocol != "native" && *modelProtocol != "ctp1" {
-		return errors.New("--model-protocol must be native or ctp1")
+	if *modelProtocol != "native" && *modelProtocol != "ctp2" {
+		return errors.New("--model-protocol must be native or ctp2")
 	}
 	if *mode == "passthrough" && *modelProtocol != "native" {
-		return errors.New("--model-protocol ctp1 requires --mode hpatch")
+		return errors.New("--model-protocol ctp2 requires --mode hpatch")
 	}
 	if *timeout <= 0 {
 		return errors.New("--timeout must be positive")
@@ -69,15 +69,15 @@ func Run(ctx context.Context, args []string, stderr io.Writer) (runErr error) {
 	provider.streamIdleTimeout = *streamIdleTimeout
 	var gainDirectory string
 	var hpatchCalls *hpatchProxy
-	var compactTokens *ctpCodec
+	var compactTokens *ctp2Codec
 	if *mode == "hpatch" {
 		var err error
 		gainDirectory, err = hpatchMetricsDirectory()
 		if err != nil {
 			return fmt.Errorf("initialize hpatch response proxy: %w", err)
 		}
-		if *modelProtocol == "ctp1" {
-			compactTokens, err = newCTPCodec()
+		if *modelProtocol == "ctp2" {
+			compactTokens, err = newCTP2Codec()
 			if err != nil {
 				return fmt.Errorf("initialize compact token protocol: %w", err)
 			}
@@ -186,7 +186,7 @@ func responsesHandler(
 	provider responseProvider,
 	log diagnostics,
 	hpatchCalls *hpatchProxy,
-	compactTokens *ctpCodec,
+	compactTokens *ctp2Codec,
 	metrics *metricsStore,
 	requestSequence *atomic.Uint64,
 ) http.HandlerFunc {
@@ -381,7 +381,7 @@ func executeRequest(
 	log diagnostics,
 	now func() time.Time,
 	hpatchCalls *hpatchProxy,
-	compactTokens *ctpCodec,
+	compactTokens *ctp2Codec,
 	metrics *metricsStore,
 ) (requestErr error) {
 	totalStarted := now()
@@ -418,12 +418,15 @@ func executeRequest(
 		if err != nil {
 			return fmt.Errorf("prepare hpatch response proxy: %w", err)
 		}
+		if metadataValid && metadata.RequestKind == "compaction" {
+			compactTokens = nil
+		}
 	}
 	if hpatchTransform != nil {
 		defer hpatchTransform.Close()
 	}
 	compactStarted := time.Now()
-	compactTransform, compactAdmission, compactRequestMetrics, err := compactTokens.prepareRequest(&parsedRequest)
+	compactTransform, compactAdmission, compactRequestMetrics, forwardBody, err := compactTokens.prepareRequest(&parsedRequest)
 	compactDuration := time.Since(compactStarted)
 	metricSessionID, requestSequence := activeRequest.metricIdentity()
 	if metricSessionID == "" {
@@ -434,31 +437,29 @@ func executeRequest(
 	}
 	if metrics != nil {
 		if compactTransform != nil {
-			compactTransform.recordOutput = func(
-				representation ctpRepresentationMetrics,
-				definitions, dictionaryBytes uint64,
-			) {
+			compactTransform.recordOutput = func(representation ctpRepresentationMetrics, details ctp2RepresentationMetrics) {
 				metrics.recordCTPOutput(
-					metricSessionID, requestSequence, representation, definitions, dictionaryBytes,
+					metricSessionID, requestSequence, representation, details,
 				)
 			}
 			compactTransform.recordDecode = func(duration time.Duration, failed bool) {
 				metrics.recordCTPDecode(metricSessionID, duration, failed)
 			}
 		}
-		metrics.recordCTPAdmission(
+		metrics.recordCTPRequest(
 			metricSessionID,
 			requestSequence,
 			compactAdmission,
 			compactRequestMetrics.Representation,
-			compactRequestMetrics.Definitions,
-			compactRequestMetrics.DictionaryBytes,
+			compactRequestMetrics.ctp2RepresentationMetrics,
 			compactDuration,
 		)
 	}
-	forwardBody, err := json.Marshal(parsedRequest.fields)
-	if err != nil {
-		return fmt.Errorf("encode Responses request: %w", err)
+	if forwardBody == nil {
+		forwardBody, err = json.Marshal(parsedRequest.fields)
+		if err != nil {
+			return fmt.Errorf("encode Responses request: %w", err)
+		}
 	}
 	finalization.failurePhase = requestFailureForward
 	if err := log.log(ctx, slog.LevelInfo, "forwarding Responses request"); err != nil {

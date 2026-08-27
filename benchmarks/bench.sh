@@ -266,7 +266,7 @@ export HPATCH_BENCH_COMPOSE_FILE="$benchmark_root/compose.yaml"
 export HPATCH_BENCH_HPATCH_MODEL_PROTOCOL=native
 export HPATCH_BENCH_CONTROL_MODE=passthrough
 if [[ $benchmark_mode == ctp-only ]]; then
-	export HPATCH_BENCH_HPATCH_MODEL_PROTOCOL=ctp1
+	export HPATCH_BENCH_HPATCH_MODEL_PROTOCOL=ctp2
 	export HPATCH_BENCH_CONTROL_MODE=hpatch
 fi
 if [[ $retain_exact_hpatch_evidence == true ]]; then
@@ -1153,7 +1153,7 @@ run_agent() {
 			instruction_path=$hpatch_instruction
 			instruction_sha=$hpatch_instruction_sha
 			instruction_diff_for_arm=$instruction_diff
-			model_protocol=ctp1
+			model_protocol=ctp2
 			;;
 		*)
 			printf 'bench.sh: unsupported CTP benchmark arm: %s\n' "$arm" >&2
@@ -1512,7 +1512,7 @@ prepare_dependency_cache
 printf 'Control base instructions: %s\n' "$control_instruction"
 printf 'Hpatch base instructions: %s\n' "$hpatch_instruction"
 if [[ $benchmark_mode == ctp-only ]]; then
-	printf 'Native and CTP-active receive the same pre-router instructions; the router selects protocol guidance.\n'
+	printf 'Native and CTP/2-active receive the same pre-router instructions; the router selects protocol guidance.\n'
 fi
 printf 'Base instruction override source: %s\n' "$instruction_source"
 printf 'Base instruction diff: %s\n' "$instruction_diff"

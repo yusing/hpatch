@@ -81,7 +81,7 @@ model=$(jq -sr '.[0].model' "$results")
 reasoning_effort=$(jq -sr '.[0].reasoning_effort' "$results")
 commit=$(basename -- "$run_dir")
 commit=${commit%-*}
-ctp_comparison=$(jq -s 'any(.model_protocol == "ctp1")' "$results")
+ctp_comparison=$(jq -s 'any(.model_protocol == "ctp2")' "$results")
 
 if [[ $ctp_comparison == true ]]; then
 	exec bash "$benchmark_root/report-ctp.sh" "$run_dir"

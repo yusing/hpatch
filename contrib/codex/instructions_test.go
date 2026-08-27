@@ -12,24 +12,27 @@ func TestHPatchToolDescriptionStaysNonInstructional(t *testing.T) {
 	}
 }
 
-func TestInstructionsOwnCTPRepresentation(t *testing.T) {
+func TestInstructionsOwnCTP2Representation(t *testing.T) {
 	for _, required := range []string{
-		"activates CTP only when its current instruction carrier ends with a complete `!ctp1 D`",
-		"CTP is an inline representation: decode it, then follow the",
+		"## CTP/2 transport",
+		"CTP/2 is an inline representation used in some model-visible strings",
 		"CTP itself requires no inspection or tool call",
-		"Without the appended\ndictionary, all request and assistant text is native",
-		"each `ID=VALUE` dictionary line defines",
+		"including all CTP/1 text",
+		"A content-local dictionary and its reference body occupy one string",
+		"Each `ID=VALUE` line defines",
 		"Expand `@{ID}`",
-		"`@@{ID}` is literal `@{ID}`",
-		"assistant text may extend the inherited dictionary with unused IDs",
-		"New definitions extend the response namespace in order",
-		"assistant text that begins with `!ctp1 R`, `!ctp1 L`, or `!ctp1 D`",
-		"Tool names, tool inputs, and function arguments are literal",
-		"In `functions.shell`, omit `workdir`",
+		"`@@{ID}` is literal",
+		"`@{ID}`, and every other `@` is literal",
+		"The dictionary is local to that one string",
+		"A visible-line representation may reuse exact lines",
+		"`=SUFFIX,START,COUNT`",
+		"`+JSON_STRING`",
+		"compaction removes sources that are no longer visible",
+		"`!ctp2 L` plus a line feed starts literal text",
+		"Newly emitted tool names, tool inputs, and function arguments are literal",
+		"`functions.shell`, omit `workdir`",
 		"fully expanded existing absolute path, never a reference or placeholder",
-		"Preserve every requested leading",
-		"With no native final line feed, end immediately",
-		"define the line without its separator and place line feeds only",
+		"Every decoded byte is final text",
 	} {
 		if !strings.Contains(Instructions(), required) {
 			t.Errorf("Instructions() omits CTP representation rule %q", required)
@@ -39,7 +42,7 @@ func TestInstructionsOwnCTPRepresentation(t *testing.T) {
 
 func TestNativeInstructionsOmitOnlyCTPRepresentation(t *testing.T) {
 	native := NativeInstructions()
-	if strings.Contains(native, "## CTP/1 transport") || strings.Contains(native, "!ctp1") {
+	if strings.Contains(native, "## CTP/2 transport") || strings.Contains(native, "!ctp2") || strings.Contains(native, "!V=") {
 		t.Fatal("native instructions contain CTP guidance")
 	}
 	for _, required := range []string{

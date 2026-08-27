@@ -1,43 +1,48 @@
 <!-- hpatch-model-instructions:start -->
-## CTP/1 transport
+## CTP/2 transport
 
-A request activates CTP only when its current instruction carrier ends with a complete `!ctp1 D`
-block appended after these instructions. CTP is an inline representation: decode it, then follow the
-task's ordinary workflow. CTP itself requires no inspection or tool call. Without the appended
-dictionary, all request and assistant text is native and CTP tags have no special meaning.
+CTP/2 is an inline representation used in some model-visible strings. Decode it while reading, then
+continue the task's ordinary workflow. CTP itself requires no inspection or tool call. Strings
+without one of the exact prefixes below are already native, including all CTP/1 text.
 
-In an active request, each `ID=VALUE` dictionary line defines one exact nonrecursive JSON string
-under a lowercase base-36 `ID`; `END` closes the block. Decode model-visible input as follows:
-
-- `!ctp1 R` plus a line feed starts a reference body. Expand `@{ID}`; `@@{ID}` is literal `@{ID}`,
-  and every other `@` is literal.
-- `!ctp1 L` plus a line feed starts literal text. Remove only that tag.
-- Every other string is already native.
-
-Emit novel assistant prose natively. When repeated exact response text is smaller as references,
-assistant text may extend the inherited dictionary with unused IDs before using them:
+A content-local dictionary and its reference body occupy one string:
 
 ```text
-!ctp1 D
-2="an exact novel response string"
+!ctp2 D
+0="an exact repeated string"
 END
-!ctp1 R
-Reuse @{0} and @{2}.
+!ctp2 R
+Reuse @{0} and @{0}.
 ```
 
-New definitions extend the response namespace in order and remain available to later assistant
-text in that response. References may use inherited or earlier response definitions. Prefix literal
-assistant text that begins with `!ctp1 R`, `!ctp1 L`, or `!ctp1 D` plus a line feed with `!ctp1 L`
-and a line feed.
+Each `ID=VALUE` line defines one exact nonrecursive JSON string under a lowercase base-36 `ID`.
+`END` closes the dictionary. Expand `@{ID}` in the following `!ctp2 R` body; `@@{ID}` is literal
+`@{ID}`, and every other `@` is literal. The dictionary is local to that one string and is not
+inherited by another string.
 
-CTP syntax is confined to assistant text. Tool names, tool inputs, and function arguments are literal
-native final bytes. In `functions.shell`, omit `workdir` so execution uses the current workspace; a
-necessary override is a fully expanded existing absolute path, never a reference or placeholder.
+A visible-line representation may reuse exact lines from preceding custom-tool or function outputs
+in the current request:
 
-The bytes after the `!ctp1 R` line feed are the final decoded text. Preserve every requested leading
-and trailing byte. With no native final line feed, end immediately after the final literal byte or
-reference. For repeated lines, define the line without its separator and place line feeds only
-between references: `@{2}\n@{2}` ends at the final `}`.
+```text
+!V=7fa,12,3
++"literal tail"
+```
+
+Each newline-terminated operation after `!V` appends text in order. `=SUFFIX,START,COUNT` appends
+`COUNT` exact lines beginning at one-based line `START` from the one preceding tool output whose
+call ID, or `call-ID/part-index` for multipart output, uniquely ends with `SUFFIX` at that point.
+`+JSON_STRING` appends its exact JSON string value. Resolve references only against earlier visible
+tool outputs; compaction removes sources that are no longer visible.
+
+`!ctp2 L` plus a line feed starts literal text and removes only that tag. Use it when native text
+begins with `!ctp2 D`, `!ctp2 R`, `!ctp2 L`, or `!V`. Every decoded byte is final text, including
+leading, trailing, and final line feeds.
+
+Emit novel assistant prose natively. When clearly smaller, assistant text may use one content-local
+dictionary or visible-line references to preceding tool outputs. Emit CTP syntax only in assistant
+text. Newly emitted tool names, tool inputs, and function arguments are literal native final bytes. In
+`functions.shell`, omit `workdir` so execution uses the current workspace; a necessary override is
+a fully expanded existing absolute path, never a reference or placeholder.
 
 ## File editing
 

@@ -92,12 +92,12 @@ func rewriteDeveloperModelInstructions(raw json.RawMessage, customized bool, mod
 	if len(raw) == 0 {
 		return nil, false, nil
 	}
-	input, err := decodeCTPJSON(raw)
+	input, err := decodeJSONValue(raw)
 	if err != nil {
 		return nil, false, fmt.Errorf("decode responses input instructions: %w", err)
 	}
 	var rewriteErr error
-	found := transformCTPInput(input, nil, func(received string) string {
+	found := transformFirstDeveloperText(input, func(received string) string {
 		rendered, err := renderModelInstructions(received, customized, modelInstructions)
 		if err != nil {
 			rewriteErr = err
