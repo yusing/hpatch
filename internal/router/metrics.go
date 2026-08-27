@@ -487,6 +487,10 @@ func (c *ctpCompressionMetrics) recordAdmission(
 	encodeDuration time.Duration,
 ) {
 	c.ConsideredRequests++
+	// Every non-disabled decision completes one prepareRequest codec operation,
+	// including requests that remain native after admission.
+	c.Codec.EncodeOperations++
+	c.Codec.EncodeNanoseconds += uint64(max(encodeDuration, 0))
 	switch decision {
 	case ctpAdmissionMissingCarrier:
 		c.MissingCarrier++
@@ -495,8 +499,6 @@ func (c *ctpCompressionMetrics) recordAdmission(
 	case ctpAdmissionUnprofitable:
 		c.Unprofitable++
 	case ctpAdmissionAdmitted:
-		c.Codec.EncodeOperations++
-		c.Codec.EncodeNanoseconds += uint64(max(encodeDuration, 0))
 		c.EncodedRequests++
 		c.Input.NativeTokens += representation.NativeTokens
 		c.Input.CompactTokens += representation.CompactTokens

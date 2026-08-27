@@ -113,6 +113,23 @@ func TestDashboardFormatsSignedTokenTotals(t *testing.T) {
 	}
 }
 
+func TestDashboardRendersCTPTelemetry(t *testing.T) {
+	body := string(dashboardHTML)
+	for _, fragment := range []string{
+		`id="ctp"`, "updateCTP(", "data.ctp", "validCTP(data.ctp)",
+		"CTP/1 compression", "Admission decisions", "Representation savings",
+		"Dictionary and codec", "input_observations", "output_observations",
+		"input_observations_dropped", "output_observations_dropped",
+	} {
+		if !strings.Contains(body, fragment) {
+			t.Fatalf("dashboard does not surface CTP telemetry: missing %q", fragment)
+		}
+	}
+	if !strings.Contains(body, `data-tab="ctp"`) || !strings.Contains(body, `id="panel-ctp"`) {
+		t.Fatal("dashboard does not place CTP telemetry in a dedicated view")
+	}
+}
+
 // fillRows must re-append every row in payload order. Reconciling by key alone
 // let a newly reported tool or command land after the total row.
 func TestDashboardReordersReconciledRows(t *testing.T) {

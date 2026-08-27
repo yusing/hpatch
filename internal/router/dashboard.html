@@ -129,6 +129,7 @@
     .metric-table td .meter{margin-top:5px;min-width:56px}
     .note{margin:var(--space-3) 0 0;color:var(--muted);font-size:13px;line-height:1.5;max-width:72ch}
     .gain-error{margin-top:var(--space-4)}
+    .session-ctp{margin-top:var(--space-6);padding-top:var(--space-5);border-top:1px solid var(--border)}
 
     .stack{margin-top:var(--space-5)}
     .stack-bar{display:flex;height:10px;border-radius:5px;overflow:hidden;background:var(--surface-2);gap:2px}
@@ -202,6 +203,7 @@
   <nav class="tabs" role="tablist" aria-label="Telemetry views">
     <button type="button" class="tab" role="tab" id="tab-usage" aria-controls="panel-usage" aria-selected="true" tabindex="0" data-tab="usage">Usage</button>
     <button type="button" class="tab" role="tab" id="tab-gain" aria-controls="panel-gain" aria-selected="false" tabindex="-1" data-tab="gain">Gain</button>
+    <button type="button" class="tab" role="tab" id="tab-ctp" aria-controls="panel-ctp" aria-selected="false" tabindex="-1" data-tab="ctp">CTP</button>
   </nav>
   <div class="panel active" role="tabpanel" id="panel-usage" aria-labelledby="tab-usage" tabindex="0">
     <div class="panel-stack">
@@ -213,11 +215,15 @@
   <div class="panel" role="tabpanel" id="panel-gain" aria-labelledby="tab-gain" hidden tabindex="0">
     <section class="visible"><div class="section-head"><h2>Gain</h2><span id="gain-subtitle">Durable aggregate from router metrics</span></div><div id="gain"><div class="empty"><strong>Connecting</strong>Reduction and command metrics appear with the first snapshot.</div></div></section>
   </div>
+  <div class="panel" role="tabpanel" id="panel-ctp" aria-labelledby="tab-ctp" hidden tabindex="0">
+    <section class="visible"><div class="section-head"><h2>CTP/1 compression</h2><span>Auxiliary representation estimates</span></div><div id="ctp"><div class="empty"><strong>Connecting</strong>Admission, compression, dictionary, and codec metrics appear with the first snapshot.</div></div></section>
+  </div>
 </main><script>
 const labels={input_tokens:'Input tokens',uncached_input_tokens:'Uncached input',output_tokens:'Output tokens',reasoning_tokens:'Reasoning tokens'};
 const order=Object.keys(labels), fmt=new Intl.NumberFormat();
 const lifecycleKeys=['started','active','completed','failed','canceled_before_response','canceled_after_response','timed_out','stream_idle_timed_out','background_pending','usage_observed','usage_missing','total_duration_ms','upstream_duration_ms'];
 const callKeys=['successful','rejected','diagnostic_input_tokens'];
+const ctpKeys=['considered_requests','encoded_requests','missing_carrier','no_definitions','unprofitable','assistant_texts'];
 function element(tag,className,text){const node=document.createElement(tag);if(className)node.className=className;if(text!==undefined)node.textContent=text;return node}
 function metricValue(counts,key){const value=counts&&counts[key];return typeof value==='number'&&Number.isFinite(value)&&value>=0?value:0}
 function nonNeg(value){return typeof value==='number'&&Number.isFinite(value)&&value>=0?value:0}
@@ -226,6 +232,8 @@ function uintText(value){return fmt.format(nonNeg(value))}
 function signedText(text){const value=decimal(text);if(value===null)return typeof text==='string'?text:'0';return value>0?`+${fmt.format(value)}`:fmt.format(value)}
 function percentText(text){return typeof text==='string'&&text!==''?`${text}%`:'0.0%'}
 function ratio(part,whole){const total=nonNeg(whole);return total?(nonNeg(part)*100)/total:0}
+function savingPercent(nativeValue,compactValue){const native=nonNeg(nativeValue);return native?((native-nonNeg(compactValue))*100)/native:null}
+function savingText(value){return value===null?'n/a':`${value.toFixed(1)}%`}
 function durationText(ms){
   const value=nonNeg(ms);
   if(value<1000)return `${fmt.format(Math.round(value))} ms`;
@@ -541,6 +549,58 @@ function updateGain(root,gain,gainError){
   fillRows(root.gain.commandReasons,(g.command_reasons||[]).map(entry=>({key:`${entry.command}\0${entry.reason}`,cells:[entry.command,entry.reason,uintText(entry.errors)]})));
   if(gainError){root.gain.err.hidden=false;root.gain.err.textContent=gainError}else{root.gain.err.hidden=true;root.gain.err.textContent=''}
 }
+function createCTP(root){
+  root.replaceChildren();
+  const cards=cardRow([['input_saving','Input token saving'],['output_saving','Output token saving'],['admitted','Admitted requests'],['decode_failures','Decode failures']],'input_saving');
+  const representations=tableWrap('Representation savings',['Direction','Native tokens','Compact tokens','Token saving','Native bytes','Compact bytes','Byte saving']);
+  const admissions=tableWrap('Admission decisions',['Decision','Requests','Share of considered']);
+  const codec=tableWrap('Dictionary and codec',['Measure','Value']);
+  const grid=element('div','table-grid');grid.append(admissions.wrap,codec.wrap);
+  const note=element('p','note','');
+  root.append(cards,representations.wrap,grid,note);
+  root.ctp={representations:representations.tbody,admissions:admissions.tbody,codec:codec.tbody,note}
+}
+function updateCTP(root,ctp){
+  if(!root.querySelector('.cards'))createCTP(root);
+  const inputSaving=savingPercent(ctp.input.native_tokens,ctp.input.compact_tokens);
+  const outputSaving=savingPercent(ctp.output.native_tokens,ctp.output.compact_tokens);
+  const admittedShare=ratio(ctp.encoded_requests,ctp.considered_requests);
+  setCard(root,'input_saving',savingText(inputSaving));
+  setCard(root,'output_saving',savingText(outputSaving));
+  setCard(root,'admitted',`${uintText(ctp.encoded_requests)} / ${uintText(ctp.considered_requests)}`);
+  setCard(root,'decode_failures',uintText(ctp.codec.decode_failures));
+  setCardNote(root,'input_saving',`${uintText(ctp.input.native_tokens)} native · ${uintText(ctp.input.compact_tokens)} compact`);
+  setCardNote(root,'output_saving',`${uintText(ctp.output.native_tokens)} native · ${uintText(ctp.output.compact_tokens)} compact`);
+  setCardNote(root,'admitted',`${admittedShare.toFixed(1)}% of considered requests`);
+  setCardNote(root,'decode_failures',`${uintText(ctp.codec.decode_operations)} decode operation(s)`);
+  setCardMeter(root,'input_saving',inputSaving||0,'cool','signed');
+  setCardMeter(root,'output_saving',outputSaving||0,'cool','signed');
+  setCardMeter(root,'admitted',admittedShare,'cool');
+  setCardMeter(root,'decode_failures',ratio(ctp.codec.decode_failures,ctp.codec.decode_operations),'warm');
+  fillRows(root.ctp.representations,[
+    {key:'input',cells:['Input',uintText(ctp.input.native_tokens),uintText(ctp.input.compact_tokens),savingText(inputSaving),uintText(ctp.input_bytes.native_bytes),uintText(ctp.input_bytes.compact_bytes),savingText(savingPercent(ctp.input_bytes.native_bytes,ctp.input_bytes.compact_bytes))]},
+    {key:'output',cells:['Assistant output',uintText(ctp.output.native_tokens),uintText(ctp.output.compact_tokens),savingText(outputSaving),uintText(ctp.output_bytes.native_bytes),uintText(ctp.output_bytes.compact_bytes),savingText(savingPercent(ctp.output_bytes.native_bytes,ctp.output_bytes.compact_bytes))]}
+  ]);
+  fillRows(root.ctp.admissions,[
+    {key:'admitted',cells:['Admitted',uintText(ctp.encoded_requests),magnitude(`${ratio(ctp.encoded_requests,ctp.considered_requests).toFixed(1)}%`,ratio(ctp.encoded_requests,ctp.considered_requests),'cool')]},
+    {key:'missing',className:idleClass(ctp.missing_carrier),cells:['Missing instruction carrier',uintText(ctp.missing_carrier),magnitude(`${ratio(ctp.missing_carrier,ctp.considered_requests).toFixed(1)}%`,ratio(ctp.missing_carrier,ctp.considered_requests),'warm')]},
+    {key:'definitions',className:idleClass(ctp.no_definitions),cells:['No positive definition',uintText(ctp.no_definitions),magnitude(`${ratio(ctp.no_definitions,ctp.considered_requests).toFixed(1)}%`,ratio(ctp.no_definitions,ctp.considered_requests),'flat')]},
+    {key:'unprofitable',className:idleClass(ctp.unprofitable),cells:['Stable projection not smaller',uintText(ctp.unprofitable),magnitude(`${ratio(ctp.unprofitable,ctp.considered_requests).toFixed(1)}%`,ratio(ctp.unprofitable,ctp.considered_requests),'flat')]},
+    {key:'total',className:'total',cells:['Considered',uintText(ctp.considered_requests),ctp.considered_requests?'100.0%':'0.0%']}
+  ]);
+  fillRows(root.ctp.codec,[
+    {key:'request-definitions',cells:['Request dictionary definitions',uintText(ctp.request_dictionary.definitions)]},
+    {key:'request-bytes',cells:['Request dictionary bytes',uintText(ctp.request_dictionary.bytes)]},
+    {key:'response-definitions',cells:['Response dictionary definitions',uintText(ctp.response_dictionary.definitions)]},
+    {key:'response-bytes',cells:['Response dictionary bytes',uintText(ctp.response_dictionary.bytes)]},
+    {key:'encode-operations',cells:['Encode operations',uintText(ctp.codec.encode_operations)]},
+    {key:'encode-time',cells:['Encode time',`${(nonNeg(ctp.codec.encode_nanoseconds)/1000000).toFixed(3)} ms`]},
+    {key:'decode-operations',cells:['Decode operations',uintText(ctp.codec.decode_operations)]},
+    {key:'decode-time',cells:['Decode time',`${(nonNeg(ctp.codec.decode_nanoseconds)/1000000).toFixed(3)} ms`]},
+    {key:'decode-failures',className:idleClass(ctp.codec.decode_failures),cells:['Decode failures',uintText(ctp.codec.decode_failures)]}
+  ]);
+  root.ctp.note.textContent=`${uintText(ctp.assistant_texts)} assistant text observation(s). These same-request estimates are auxiliary and do not replace provider usage.`
+}
 function validNamedCommand(entry){return entry&&typeof entry==='object'&&typeof entry.name==='string'&&typeof entry.invocations==='number'&&typeof entry.errors==='number'&&typeof entry.error_rate_percent==='string'}
 function validNamedCount(entry){return entry&&typeof entry==='object'&&typeof entry.name==='string'&&typeof entry.count==='number'}
 function validCommandReason(entry){return entry&&typeof entry==='object'&&typeof entry.command==='string'&&typeof entry.reason==='string'&&typeof entry.errors==='number'}
@@ -569,17 +629,38 @@ function validUints(source,keys){return source&&typeof source==='object'&&!Array
 function validRequests(requests){return validUints(requests,lifecycleKeys)}
 function validCalls(calls){return validUints(calls,callKeys)}
 function validCounts(counts){return validUints(counts,order)}
+function validRepresentation(representation){return validUints(representation,['native_tokens','compact_tokens','native_bytes','compact_bytes'])}
+function validCTP(ctp){
+  return validUints(ctp,ctpKeys)
+    &&validUints(ctp.input,['native_tokens','compact_tokens'])&&validUints(ctp.output,['native_tokens','compact_tokens'])
+    &&validUints(ctp.input_bytes,['native_bytes','compact_bytes'])&&validUints(ctp.output_bytes,['native_bytes','compact_bytes'])
+    &&validUints(ctp.request_dictionary,['definitions','bytes'])&&validUints(ctp.response_dictionary,['definitions','bytes'])
+    &&validUints(ctp.codec,['encode_operations','encode_nanoseconds','decode_operations','decode_nanoseconds','decode_failures'])
+}
+function validInputObservation(observation){return validRepresentation(observation)&&validUints(observation,['request_sequence','definitions','dictionary_bytes','encode_nanoseconds'])&&typeof observation.decision==='string'}
+function validOutputObservation(observation){return validRepresentation(observation)&&validUints(observation,['request_sequence','definitions','dictionary_bytes'])}
+function validObservations(observations,validate){return observations===null||(Array.isArray(observations)&&observations.every(validate))}
+function validSessionCTP(ctp){return validCTP(ctp)&&validObservations(ctp.input_observations,validInputObservation)&&validObservations(ctp.output_observations,validOutputObservation)&&validUints(ctp,['input_observations_dropped','output_observations_dropped'])}
 function validGroup(data){return data&&typeof data==='object'&&!Array.isArray(data)&&validCounts(data.total)&&data.by_model&&typeof data.by_model==='object'&&!Array.isArray(data.by_model)&&Object.values(data.by_model).every(validCounts)&&validRequests(data.requests)&&validCalls(data.hpatch_calls)}
-function validSnapshot(data){return validGroup(data)&&Array.isArray(data.sessions)&&data.sessions.every(session=>validGroup(session)&&typeof session.session_id==='string'&&typeof session.title==='string'&&typeof session.model==='string')&&validGain(data.gain)&&(data.gain_error===undefined||typeof data.gain_error==='string')&&(data.mode===undefined||typeof data.mode==='string')}
+function validSnapshot(data){return validGroup(data)&&validCTP(data.ctp)&&Array.isArray(data.sessions)&&data.sessions.every(session=>validGroup(session)&&validSessionCTP(session.ctp)&&typeof session.session_id==='string'&&typeof session.title==='string'&&typeof session.model==='string')&&validGain(data.gain)&&(data.gain_error===undefined||typeof data.gain_error==='string')&&(data.mode===undefined||typeof data.mode==='string')}
 const sessionElements=new Map();
+function createSessionCTP(){
+  const root=element('div','session-ctp');
+  root.append(element('h3','','CTP/1 session compression'));
+  const facts=element('ul','facts');
+  const input=tableWrap('Input representations',['Request','Decision','Native tokens','Compact tokens','Token saving','Native bytes','Compact bytes','Byte saving','Definitions','Dictionary bytes','Encode time']);
+  const output=tableWrap('Assistant output representations',['Request','Native tokens','Compact tokens','Token saving','Native bytes','Compact bytes','Byte saving','Definitions','Dictionary bytes']);
+  root.append(facts,input.wrap,output.wrap);
+  root.ctp={facts,input:input.tbody,inputWrap:input.wrap,output:output.tbody,outputWrap:output.wrap};return root
+}
 function createSession(session){
   const id=session.session_id,details=element('details');details.dataset.sessionId=id;
   const summary=element('summary'),name=element('span','session-id'),route=element('small'),total=element('span','session-total');
   name.append(document.createTextNode(session.title||id),element('br'),route);summary.append(element('span','chev'),name,total);
   summary.querySelector('.chev').setAttribute('aria-hidden','true');
-  const body=element('div','session-body'),group=element('div'),facts=element('ul','facts');
-  body.append(group,facts);
-  details.append(summary,body);details.name=name.firstChild;details.route=route;details.sessionTotal=total;details.sessionBody=group;details.sessionFacts=facts;return details
+  const body=element('div','session-body'),group=element('div'),facts=element('ul','facts'),ctp=createSessionCTP();
+  body.append(group,facts,ctp);
+  details.append(summary,body);details.name=name.firstChild;details.route=route;details.sessionTotal=total;details.sessionBody=group;details.sessionFacts=facts;details.sessionCTP=ctp;return details
 }
 function sessionFacts(session){
   const requests=session.requests,calls=session.hpatch_calls;
@@ -596,14 +677,40 @@ function sessionFacts(session){
     {key:'rejections',label:'recorded rejections',value:uintText(rejections),tone:rejections?'warm':'flat'}
   ]
 }
+function updateSessionCTP(root,ctp){
+  const inputs=ctp.input_observations||[],outputs=ctp.output_observations||[];
+  const active=ctp.considered_requests||ctp.assistant_texts||ctp.codec.decode_operations||inputs.length||outputs.length||ctp.input_observations_dropped||ctp.output_observations_dropped;
+  root.hidden=!active;
+  if(!active)return;
+  setFacts(root.ctp.facts,[
+    {key:'admitted',label:'admitted requests',value:`${uintText(ctp.encoded_requests)} / ${uintText(ctp.considered_requests)}`},
+    {key:'input',label:'input token saving',value:savingText(savingPercent(ctp.input.native_tokens,ctp.input.compact_tokens))},
+    {key:'output',label:'output token saving',value:savingText(savingPercent(ctp.output.native_tokens,ctp.output.compact_tokens))},
+    {key:'texts',label:'assistant texts',value:uintText(ctp.assistant_texts)},
+    {key:'decode-failures',label:'decode failures',value:uintText(ctp.codec.decode_failures),tone:ctp.codec.decode_failures?'warm':'flat'},
+    {key:'dropped-input',label:'input observations dropped',value:uintText(ctp.input_observations_dropped),tone:ctp.input_observations_dropped?'warm':'flat'},
+    {key:'dropped-output',label:'output observations dropped',value:uintText(ctp.output_observations_dropped),tone:ctp.output_observations_dropped?'warm':'flat'}
+  ]);
+  fillRows(root.ctp.input,inputs.map(observation=>({
+    key:String(observation.request_sequence),
+    cells:[uintText(observation.request_sequence),observation.decision,uintText(observation.native_tokens),uintText(observation.compact_tokens),savingText(savingPercent(observation.native_tokens,observation.compact_tokens)),uintText(observation.native_bytes),uintText(observation.compact_bytes),savingText(savingPercent(observation.native_bytes,observation.compact_bytes)),uintText(observation.definitions),uintText(observation.dictionary_bytes),`${(nonNeg(observation.encode_nanoseconds)/1000000).toFixed(3)} ms`]
+  })));
+  fillRows(root.ctp.output,outputs.map(observation=>({
+    key:String(observation.request_sequence),
+    cells:[uintText(observation.request_sequence),uintText(observation.native_tokens),uintText(observation.compact_tokens),savingText(savingPercent(observation.native_tokens,observation.compact_tokens)),uintText(observation.native_bytes),uintText(observation.compact_bytes),savingText(savingPercent(observation.native_bytes,observation.compact_bytes)),uintText(observation.definitions),uintText(observation.dictionary_bytes)]
+  })));
+  root.ctp.inputWrap.hidden=inputs.length===0;
+  root.ctp.outputWrap.hidden=outputs.length===0
+}
 function render(data){
   if(!validSnapshot(data))throw new Error('invalid metrics snapshot');
   updateGroup(document.querySelector('#overview'),data,true);
   updateRequests(document.querySelector('#requests'),data.requests,data.hpatch_calls);
   updateGain(document.querySelector('#gain'),data.gain,data.gain_error);
+  updateCTP(document.querySelector('#ctp'),data.ctp);
   document.querySelector('#mast-mode').textContent=`Hpatch router — ${data.mode||'unknown'} mode — process ledger`;
   const container=document.querySelector('#sessions'),seen=new Set();
-  data.sessions.forEach(session=>{let details=sessionElements.get(session.session_id);if(!details){details=createSession(session);sessionElements.set(session.session_id,details)}details.name.textContent=session.title||session.session_id;details.route.textContent=session.model;details.sessionTotal.textContent=`${fmt.format(metricValue(session.total,'input_tokens'))} in`;updateGroup(details.sessionBody,session,false);setFacts(details.sessionFacts,sessionFacts(session));container.append(details);seen.add(session.session_id)});
+  data.sessions.forEach(session=>{let details=sessionElements.get(session.session_id);if(!details){details=createSession(session);sessionElements.set(session.session_id,details)}details.name.textContent=session.title||session.session_id;details.route.textContent=session.model;details.sessionTotal.textContent=`${fmt.format(metricValue(session.total,'input_tokens'))} in`;updateGroup(details.sessionBody,session,false);setFacts(details.sessionFacts,sessionFacts(session));updateSessionCTP(details.sessionCTP,session.ctp);container.append(details);seen.add(session.session_id)});
   sessionElements.forEach((details,id)=>{if(!seen.has(id)){details.remove();sessionElements.delete(id)}});
   let empty=container.querySelector(':scope>.empty');if(data.sessions.length===0){if(!empty){empty=element('div','empty');const title=element('strong','','No sessions yet');empty.append(title,document.createTextNode('No identified sessions have recorded usage.'));container.append(empty)}else{empty.replaceChildren(element('strong','','No sessions yet'),document.createTextNode('No identified sessions have recorded usage.'))}}else if(empty){empty.remove()}
   document.querySelector('#session-count').textContent=`${data.sessions.length} ${data.sessions.length===1?'session':'sessions'}`

@@ -515,13 +515,14 @@ Metrics separate three different layers:
 2. A host supplies visible payload and session attribution to `RecordHostMetrics`, the only root persistence boundary. The router does this after routed outcomes and also records per-tool definitions, carriers, executor evidence, reports, diagnostics, and shell misuse or recovery overhead.
 3. The router dashboard and `/api/metrics` expose provider Responses lifecycle and usage totals alongside those persisted estimates.
 
-With CTP/1 enabled, `/api/metrics` also exposes auxiliary native and compact token estimates for
-admitted whole requests and assistant text from completed responses. It retains bounded per-session
-request observations with provider usage and lifecycle timing, plus bounded CTP input and output
-observations with native and compact tokens and bytes, dictionary size, and codec timing. Dropped
-observation counters make truncation explicit. These internal compression counters are separate
-from authoritative provider usage and never include model-emitted tool payloads. Admission counters
-distinguish a missing instruction carrier, no positive definition candidate, and a stable compact
+With CTP/1 enabled, the dashboard's CTP view and `/api/metrics` also expose auxiliary native and
+compact token estimates for admitted whole requests and assistant text from completed responses.
+They expose admission decisions, representation savings, dictionary and codec totals, and bounded
+per-session CTP input and output observations with native and compact tokens and bytes, dictionary
+size, and codec timing. Dropped observation counters make truncation explicit. These internal
+compression counters are separate from authoritative provider usage and never include model-emitted
+tool payloads. Admission counters distinguish a missing instruction carrier, no positive definition
+candidate, and a stable compact
 admission projection that was not smaller. Complete-request observations may show a local loss on a
 later admitted request because preserving the provider-cache prefix owns that request's admission.
 
