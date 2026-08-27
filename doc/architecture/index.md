@@ -198,10 +198,12 @@ carrier under `REQ-CTP-001`.
 Private contribution descriptions are execution contracts, not a prompt source. Passthrough
 mode loads no registry.
 
-The shell carrier emits `shell <interpreter> <program>` in Codex's exec context. The fixed
-`cmd/shell` locator reads the path `$HPATCH_RUNTIME_DIR/hpatch-$CODEX_THREAD_ID/.runtime` and
-replaces itself with the authenticated snapshot worker stored there by the router. For Bash and
-sh selectors, a router-owned `mvdan/sh` runner
+The shell carrier preserves one physical line containing one static external implicit-default-Bash
+command, with no shebang or directive, as the direct Codex exec command. Every other program emits
+`shell <interpreter> <program>` in Codex's exec context. The fixed `cmd/shell` locator reads the path
+`$HPATCH_RUNTIME_DIR/hpatch-$CODEX_THREAD_ID/.runtime` and replaces itself with the authenticated
+snapshot worker stored there by the router. For Bash and sh selectors, a router-owned `mvdan/sh`
+runner
 parses `LangBash` or `LangPOSIX`, preserves shell-owned expansion and composition, and intercepts
 private command argv without launching another router worker. Other interpreters retain the
 plugin executor path. The worker derives relative-path resolution from its actual current
@@ -291,9 +293,9 @@ One carrier renderer owns each supported carrier shape. The generic path preserv
 normal Code Mode tool name and payload. The exec helper is a renderer over that path. It alone
 owns the outer exec program, nested invocation, serialization, independent argv quoting, optional
 single-placeholder command-template expansion, optional JSON parameters, and result forwarding.
-The parameter object cannot contain `cmd`; the renderer supplies `cmd` from the independently
-quoted worker command. A present `login` value must be exactly `false`, and the renderer
-supplies `login: false` when it is absent. Plugin code can select the typed template and
+The parameter object cannot contain `cmd`; the renderer supplies `cmd` from the selected direct or
+independently quoted worker command. A present `login` value must be exactly `false`, and the
+renderer supplies `login: false` when it is absent. Plugin code can select the typed template and
 parameter variants but cannot construct the outer carrier or quote the nested worker command.
 
 For the built-in `shell` contribution, the owning Code Mode executable definition also owns
@@ -308,9 +310,9 @@ protocol. Other contributed tools retain their declared output projections.
 
 An exec translator may provide a validated nonempty stock command for output metrics. The same
 renderer applies the selected template and parameters to produce its canonical stock carrier.
-This evidence never replaces the worker carrier used for the response, history, replay, or
-execution. An implementation needing another executable Code Mode carrier uses the generic path
-rather than encoding an exec surrogate. Hpatch's native workspace translation, recovery
+This evidence never replaces the selected direct-command or worker carrier used for the response,
+history, replay, or execution. An implementation needing another executable Code Mode carrier uses
+the generic path rather than encoding an exec surrogate. Hpatch's native workspace translation, recovery
 ancestry, patch renderer, and semantic failure baseline remain adapter extensions beside this
 generic interface rather than capabilities granted to ordinary plugins.
 

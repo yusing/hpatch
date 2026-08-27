@@ -213,6 +213,7 @@ func TestToolPluginExecTemplateUsesCanonicalWorkerCommand(t *testing.T) {
 	}
 	payload, err := proxy.registry.execCarrierInput(
 		contribution,
+		"",
 		[]string{"--fixed", "template"},
 		"before | {.} | after",
 		nil,

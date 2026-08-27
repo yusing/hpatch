@@ -126,6 +126,7 @@ func TestShellResultMetadata(t *testing.T) {
 	}
 	carrier, err := proxy.registry.execCarrierInput(
 		shell,
+		"printf ok",
 		[]string{"bash", "printf ok"},
 		"",
 		nil,

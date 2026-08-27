@@ -23,6 +23,8 @@ import (
 	"github.com/yusing/hpatch"
 	codexinstructions "github.com/yusing/hpatch/contrib/codex"
 	"github.com/yusing/hpatch/internal/router/toolplugin"
+	"mvdan.cc/sh/v3/expand"
+	"mvdan.cc/sh/v3/interp"
 	"mvdan.cc/sh/v3/syntax"
 )
 
@@ -1886,6 +1888,7 @@ func (t *hpatchResponseTransform) translateRegisteredTool(contribution toolContr
 			}
 			payload, err = t.proxy.registry.execCarrierInput(
 				contribution,
+				input,
 				translation.Arguments,
 				translation.Carrier.Template,
 				translation.Carrier.Params,
@@ -2021,8 +2024,66 @@ func workerCommand(executable string, arguments []string) string {
 	return command
 }
 
+func (registry *toolRegistry) directBashExecCommand(arguments []string) (string, bool) {
+	if len(arguments) != 2 || arguments[0] != "bash" || arguments[1] == "" {
+		return "", false
+	}
+	command := strings.TrimSuffix(arguments[1], "\n")
+	command = strings.TrimSuffix(command, "\r")
+	if command == "" || strings.ContainsAny(command, "\r\n") {
+		return "", false
+	}
+	program, err := syntax.NewParser(syntax.Variant(syntax.LangBash)).Parse(strings.NewReader(command), "")
+	if err != nil || len(program.Stmts) != 1 {
+		return "", false
+	}
+	statement := program.Stmts[0]
+	call, ok := statement.Cmd.(*syntax.CallExpr)
+	if !ok || len(call.Args) == 0 || statement.Semicolon.IsValid() || statement.Negated ||
+		statement.Background || statement.Coprocess || statement.Disown {
+		return "", false
+	}
+	staticCommand := true
+	syntax.Walk(call.Args[0], func(node syntax.Node) bool {
+		// Walk reports nil after visiting each node's children.
+		if node == nil {
+			return true
+		}
+		switch node.(type) {
+		case *syntax.Word, *syntax.Lit, *syntax.SglQuoted, *syntax.DblQuoted:
+			return true
+		default:
+			staticCommand = false
+			return false
+		}
+	})
+	commandName, err := expand.Literal(nil, call.Args[0])
+	if err != nil || !staticCommand || commandName == "" || interp.IsBuiltin(commandName) {
+		return "", false
+	}
+	if contribution, exists := registry.contribution(commandName); exists &&
+		contribution.PluginID == builtinToolsPluginID && !contribution.ModelVisible {
+		return "", false
+	}
+	nestedCommand := false
+	syntax.Walk(statement, func(node syntax.Node) bool {
+		switch node.(type) {
+		case *syntax.CmdSubst, *syntax.ProcSubst:
+			nestedCommand = true
+			return false
+		default:
+			return true
+		}
+	})
+	if nestedCommand {
+		return "", false
+	}
+	return command, true
+}
+
 func (registry *toolRegistry) execCarrierInput(
 	contribution toolContribution,
+	sourceInput string,
 	arguments []string,
 	template string,
 	params map[string]json.RawMessage,
@@ -2038,6 +2099,11 @@ func (registry *toolRegistry) execCarrierInput(
 		}
 	}
 	command := workerCommand(contribution.Name, arguments)
+	if builtinShell && template == "" && len(arguments) > 0 && arguments[len(arguments)-1] == sourceInput {
+		if direct, ok := registry.directBashExecCommand(arguments); ok {
+			command = direct
+		}
+	}
 	if template != "" {
 		if strings.Count(template, "{.}") != 1 {
 			return "", errors.New("exec command template must contain exactly one {.} placeholder")

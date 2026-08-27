@@ -310,10 +310,11 @@ quoting, and result forwarding. Its canonical Bash quoting keeps the worker comm
 physical line, escaping embedded line terminators while reconstructing each exact argv value.
 The optional exec command template contains exactly one `{.}`
 placeholder, which the router replaces with the complete quoted worker command. For configured
-tools this is their frontend command; for built-in shell it is the fixed
-`shell <interpreter> <program>` helper command. An optional JSON parameter object cannot contain `cmd`. The router
-supplies `cmd` from that worker command. If the parameter object contains `login`, its value
-must be exactly `false`.
+tools this is their frontend command. For built-in shell it is normally the fixed
+`shell <interpreter> <program>` helper command; without a shebang, directive, or template, one
+physical line containing one static external Bash command instead remains the complete outer
+command. An optional JSON parameter object cannot contain `cmd`. The router supplies `cmd` from
+the selected command. If the parameter object contains `login`, its value must be exactly `false`.
 
 An exec translator may also return one nonempty stock command for output metrics. The router
 applies the same optional command template and JSON parameters, then renders the stock command
@@ -466,7 +467,11 @@ and trailing body whitespace, including an absent or final line terminator. With
 the complete input is the body. The translated argv contains each normalized interpreter field
 followed by the exact body as its final value. The resulting Codex exec carrier therefore shows
 `shell python3 <quoted-body>` on one physical command line; the model does not author that command
-or its quoting.
+or its quoting. For implicit default Bash without a directive, a body with at most one final line
+terminator remains direct when it parses as one non-background, non-negated simple call whose
+static command is neither a shell built-in nor a private contribution and whose statement contains
+no command or process substitution. The direct carrier removes that optional final line terminator
+and otherwise preserves the command text.
 
 After an optional interpreter shebang, a leading directive block can contain one `#!cmd=`
 assignment and one `#!params=` assignment in either order. All canonical directives use
@@ -481,11 +486,12 @@ leading directive, params object containing `cmd`, or unsafe `login` value rejec
 The tool removes recognized directive lines and their complete line terminators from the body.
 The router replaces `{.}` with the canonical independently quoted shell-helper command and argv.
 The command template then runs through the normal exec carrier shell. Without an interpreter
-shebang, the nested worker selects `bash`. Without either directive, the worker command remains
-the complete outer command. After the first body line, directive-like lines remain ordinary body
-data.
+shebang, the nested worker selects `bash`. Without either directive, an eligible simple external
+Bash command remains direct; every other body uses the worker command as the complete outer
+command. After the first body line, directive-like lines remain ordinary body data.
 
-The executor starts the fixed helper once with the normalized interpreter fields and exact body.
+When the worker carrier is selected, the executor starts the fixed helper once with the normalized
+interpreter fields and exact body.
 The helper reads the current thread runtime path and replaces itself with the authenticated
 router worker, without a second Codex executor call. For Bash and sh basenames,
 the worker parses the body with `mvdan/sh` using
@@ -522,8 +528,8 @@ argument, and Bun and Node-family executables pass it as the `-e` argument. Othe
 receive `/dev/fd/3`; a quoted heredoc supplies that descriptor while leaving program stdin
 available. Its interpreter-derived delimiter changes when the body contains that delimiter as a
 complete line. The router applies any command template and parameters and counts the complete
-canonical Code Mode exec shape. It still executes and replays only the fixed shell-helper
-carrier.
+canonical Code Mode exec shape. Execution and replay retain the selected direct-command or
+shell-helper carrier.
 
 Acceptance:
 
@@ -542,9 +548,13 @@ Acceptance:
    fixed helper selecting Python. The command-template input becomes Python standard input.
 6. A missing, empty, or repeated `{.}` placeholder rejects before execution. A command directive
    in any later body line remains ordinary body text.
-7. Input without a shebang or command directive selects `mvdan/sh` Bash evaluation and uses the
-   complete input as the script source. `bash` and `/usr/bin/bash` have the same Bash semantics;
-   `sh` and `/bin/sh` have the same POSIX semantics and reject Bash-only syntax.
+7. Input without a shebang or command directive selects Bash semantics. One physical line
+   containing the static external command `rtk shadowtree test . -run='^$'` and one optional final
+   line terminator produces that direct native command without `shell bash`; shell built-ins,
+   private commands, nested command or process substitutions, composed statements, and malformed
+   syntax retain the fixed helper. Explicit `bash` and `/usr/bin/bash` selectors have the same
+   `mvdan/sh` Bash semantics; `sh` and `/bin/sh` have the same POSIX semantics and reject Bash-only
+   syntax.
 8. Python indentation and all other body-leading or body-trailing whitespace remain byte-exact
    after recognized directive removal.
 9. The worker inherits cwd, environment, and standard input. Its stdout, stderr, and

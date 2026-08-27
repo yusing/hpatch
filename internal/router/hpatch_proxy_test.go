@@ -182,7 +182,7 @@ func registeredWorkerInput(t *testing.T, proxy *hpatchProxy, name string, argume
 	if !ok {
 		t.Fatalf("registered worker %q is unavailable", name)
 	}
-	input, err := proxy.registry.execCarrierInput(contribution, arguments, "", nil)
+	input, err := proxy.registry.execCarrierInput(contribution, "", arguments, "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1314,8 +1314,31 @@ func TestShellJSONTranslatesBashCasesEndToEnd(t *testing.T) {
 		input       string
 		wantCommand string
 	}{
-		{name: "single line", input: "foo", wantCommand: "shell bash foo"},
-		{name: "final newline", input: "foo\n", wantCommand: `shell bash $'foo\n'`},
+		{name: "single external command", input: "foo", wantCommand: "foo"},
+		{name: "single external command final newline", input: "foo\n", wantCommand: "foo"},
+		{
+			name:        "reported external command",
+			input:       "rtk shadowtree test . -run='^$'\n",
+			wantCommand: "rtk shadowtree test . -run='^$'",
+		},
+		{
+			name:        "explicit bash selector",
+			input:       "#!bash\nrtk ok\n",
+			wantCommand: `shell bash $'rtk ok\n'`,
+		},
+		{
+			name:        "explicit env bash selector",
+			input:       "#!/usr/bin/env bash\nrtk ok\n",
+			wantCommand: `shell bash $'rtk ok\n'`,
+		},
+		{
+			name:        "params directive",
+			input:       "#!params={\"workdir\":\"/tmp\"}\nrtk ok\n",
+			wantCommand: `shell bash $'rtk ok\n'`,
+		},
+		{name: "single private command", input: "hread file.txt\n"},
+		{name: "single shell builtin", input: "printf ok\n"},
+		{name: "nested private command", input: "rtk \"$(hread file.txt)\"\n"},
 		{
 			name:        "quotes and final newline",
 			input:       `printf '"%s\n"' ./* | sed 's#^\./##'` + "\n",
@@ -1379,6 +1402,40 @@ func TestShellJSONTranslatesBashCasesEndToEnd(t *testing.T) {
 			}
 			if arguments.Command != want {
 				t.Fatalf("translated exec command = %q, want %q", arguments.Command, want)
+			}
+		})
+	}
+}
+
+func TestDirectBashExecCommand(t *testing.T) {
+	proxy := newManagedHPatchProxy(t, testTranslator(t, new(int)))
+	for _, test := range []struct {
+		name      string
+		arguments []string
+		want      string
+		ok        bool
+	}{
+		{name: "external", arguments: []string{"bash", "rtk ok\n"}, want: "rtk ok", ok: true},
+		{name: "quoted external", arguments: []string{"bash", "'rtk' ok\n"}, want: "'rtk' ok", ok: true},
+		{name: "external redirection", arguments: []string{"bash", "rtk ok >out\n"}, want: "rtk ok >out", ok: true},
+		{name: "private", arguments: []string{"bash", "hread file.txt\n"}},
+		{name: "builtin", arguments: []string{"bash", "printf ok\n"}},
+		{name: "dynamic command", arguments: []string{"bash", "$command ok\n"}},
+		{name: "command substitution", arguments: []string{"bash", "rtk \"$(hread file.txt)\"\n"}},
+		{name: "process substitution", arguments: []string{"bash", "rtk <(hread file.txt)\n"}},
+		{name: "negated", arguments: []string{"bash", "! rtk ok\n"}},
+		{name: "background", arguments: []string{"bash", "rtk ok &\n"}},
+		{name: "semicolon", arguments: []string{"bash", "rtk ok;\n"}},
+		{name: "pipeline", arguments: []string{"bash", "rtk ok | cat\n"}},
+		{name: "multiple lines", arguments: []string{"bash", "rtk one\nrtk two\n"}},
+		{name: "malformed", arguments: []string{"bash", "if\n"}},
+		{name: "interpreter arguments", arguments: []string{"bash", "-x", "rtk ok\n"}},
+		{name: "other interpreter", arguments: []string{"sh", "rtk ok\n"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			got, ok := proxy.registry.directBashExecCommand(test.arguments)
+			if got != test.want || ok != test.ok {
+				t.Fatalf("directBashExecCommand(%q) = %q, %t; want %q, %t", test.arguments, got, ok, test.want, test.ok)
 			}
 		})
 	}
@@ -1961,6 +2018,7 @@ func TestWorkerTemplateExecInputQuotesNestedShellCommand(t *testing.T) {
 	shellArguments := []string{"python3", `print('{"hello":"world"}')`}
 	carrierInput, err := proxy.registry.execCarrierInput(
 		shell,
+		"",
 		shellArguments,
 		"curl -fsSL URL | {.} | jq",
 		nil,
@@ -1978,19 +2036,19 @@ func TestWorkerTemplateExecInputQuotesNestedShellCommand(t *testing.T) {
 	}
 
 	for _, template := range []string{"missing", "{.} then {.}"} {
-		if _, err := proxy.registry.execCarrierInput(shell, []string{"bash", ""}, template, nil); err == nil {
+		if _, err := proxy.registry.execCarrierInput(shell, "", []string{"bash", ""}, template, nil); err == nil {
 			t.Fatalf("worker template %q did not reject", template)
 		}
 	}
 }
 
-func TestShellCarrierAlwaysUsesFixedHelper(t *testing.T) {
+func TestShellCarrierUsesFixedHelperForBuiltin(t *testing.T) {
 	proxy := newManagedHPatchProxy(t, testTranslator(t, new(int)))
 	shell, ok := proxy.registry.contribution("shell")
 	if !ok {
 		t.Fatal("shell contribution is unavailable")
 	}
-	carrierInput, err := proxy.registry.execCarrierInput(shell, []string{"bash", "printf ok"}, "", nil)
+	carrierInput, err := proxy.registry.execCarrierInput(shell, "printf ok", []string{"bash", "printf ok"}, "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2010,7 +2068,8 @@ func TestWorkerExecInputMergesValidatedParams(t *testing.T) {
 	if !ok {
 		t.Fatal("shell contribution is unavailable")
 	}
-	carrierInput, err := proxy.registry.execCarrierInput(shell, []string{"bash", "printf ok"}, "", map[string]json.RawMessage{
+	const sourceInput = "#!params={\"workdir\":\"/tmp/example\",\"tty\":true,\"login\":false}\nrtk ok\n"
+	carrierInput, err := proxy.registry.execCarrierInput(shell, sourceInput, []string{"bash", "rtk ok\n"}, "", map[string]json.RawMessage{
 		"workdir": mustMarshalJSON("/tmp/example"),
 		"tty":     mustMarshalJSON(true),
 		"login":   mustMarshalJSON(false),
@@ -2028,16 +2087,16 @@ func TestWorkerExecInputMergesValidatedParams(t *testing.T) {
 		Login   bool   `json:"login"`
 	}
 	decodeExecCarrierArguments(t, carrierInput, &arguments)
-	if arguments.Command != workerCommand("shell", []string{"bash", "printf ok"}) || arguments.Workdir != "/tmp/example" ||
+	if arguments.Command != workerCommand("shell", []string{"bash", "rtk ok\n"}) || arguments.Workdir != "/tmp/example" ||
 		!arguments.TTY || arguments.Login {
 		t.Fatalf("translated exec arguments = %+v", arguments)
 	}
-	if _, err := proxy.registry.execCarrierInput(shell, []string{"bash", ""}, "", map[string]json.RawMessage{
+	if _, err := proxy.registry.execCarrierInput(shell, "", []string{"bash", ""}, "", map[string]json.RawMessage{
 		"cmd": mustMarshalJSON("forbidden"),
 	}); err == nil {
 		t.Fatal("exec params accepted cmd")
 	}
-	if _, err := proxy.registry.execCarrierInput(shell, []string{"bash", ""}, "", map[string]json.RawMessage{
+	if _, err := proxy.registry.execCarrierInput(shell, "", []string{"bash", ""}, "", map[string]json.RawMessage{
 		"login": mustMarshalJSON(true),
 	}); err == nil {
 		t.Fatal("exec params accepted login true")
@@ -2052,6 +2111,7 @@ func TestShellExecCarriersForwardNativeResultWithoutPolling(t *testing.T) {
 	}
 	carrierInput, err := proxy.registry.execCarrierInput(
 		shell,
+		"",
 		[]string{"python3", "print('ok')"},
 		"before | {.} | after",
 		nil,
@@ -2070,7 +2130,7 @@ func TestShellExecCarriersForwardNativeResultWithoutPolling(t *testing.T) {
 	if !ok {
 		t.Fatal("configured contribution is unavailable")
 	}
-	plainInput, err := registry.execCarrierInput(plugin, []string{"line.txt"}, "", nil)
+	plainInput, err := registry.execCarrierInput(plugin, "", []string{"line.txt"}, "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}

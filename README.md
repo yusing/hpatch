@@ -137,7 +137,7 @@ print("hello")
 
 This is better for the harness because it removes syntax that exists only to reach the executor. Fewer wrapper and quoting layers mean fewer malformed calls and simpler recovery; it is not a claim that the underlying process runs faster.
 
-The translated native carrier keeps its generated `shell <interpreter> <program>` command on one physical line. Bash-safe escapes represent embedded quotes and line breaks while evaluation still reconstructs the exact program body.
+A one-line Bash program with no shebang or directive and containing one external command is sent directly to the native executor, so a call such as `rtk shadowtree test .` remains that command. Shell built-ins, private commands, composed scripts, command substitutions, explicit interpreter selection, directives, and other interpreters use the generated `shell <interpreter> <program>` carrier. Bash-safe escapes keep that generated carrier on one physical line while evaluation still reconstructs the exact program body.
 
 `shell` can start PTY-backed, interactive, and long-running programs and forwards the native executor's complete result. If execution yields a session handle, use Codex's native session facilities to send further input, poll output, resize the PTY, or terminate the process; each shell call starts a new execution and does not reimplement session control.
 
