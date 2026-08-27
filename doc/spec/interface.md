@@ -396,8 +396,10 @@ Acceptance:
    authenticated snapshot wrapper to `hpatch-router`, verifies the pinned registry, dispatches
    by `argv[0]`, and delivers the declared argv under Codex's cwd, sandbox, and permissions.
 8. JSON and SSE responses preserve call identity while replacing a contributed call with its
-   validated carrier, and replay restores the exact original contributed call after verifying
-   the retained carrier.
+   validated carrier. While the complete streaming input is buffered for validation, each withheld
+   input delta becomes a content-free native `response.in_progress` event so downstream SSE remains
+   active without exposing untranslated content. Replay restores the exact original contributed
+   call after verifying the retained carrier.
 9. A model-input diagnostic is bounded and recoverable, while an invalid translator result
    cannot be returned or counted as a successful tool call.
 10. Startup validation and tool-call metrics failures cannot replace an otherwise successful

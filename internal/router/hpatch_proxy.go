@@ -2307,7 +2307,10 @@ func (t *hpatchResponseTransform) TransformSSE(payload []byte) ([][]byte, error)
 
 	case "response.custom_tool_call_input.delta":
 		if _, ok := t.pending[envelope.ItemID]; ok {
-			return nil, nil
+			// Translation needs the complete input, but Codex's SSE idle timer only
+			// observes dispatched events. Preserve liveness without exposing the
+			// untranslated input fragment.
+			return [][]byte{[]byte(`{"type":"response.in_progress"}`)}, nil
 		}
 		return [][]byte{payload}, nil
 

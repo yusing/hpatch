@@ -2457,7 +2457,7 @@ func TestHPatchStreamingReplacesLifecycleWithoutChangingCallID(t *testing.T) {
 		t.Fatalf("buffered added = %q, error %v", visible, err)
 	}
 	visible, err = transform.TransformSSE(mustTestJSON(t, map[string]any{"type": "response.custom_tool_call_input.delta", "item_id": "item-H", "delta": "secret"}))
-	if err != nil || visible != nil {
+	if err != nil || len(visible) != 1 || string(visible[0]) != `{"type":"response.in_progress"}` {
 		t.Fatalf("delta = %q, error %v", visible, err)
 	}
 	visible, err = transform.TransformSSE(mustTestJSON(t, map[string]any{"type": "response.custom_tool_call_input.done", "item_id": "item-H", "input": testHPatchScript}))
@@ -2472,6 +2472,36 @@ func TestHPatchStreamingReplacesLifecycleWithoutChangingCallID(t *testing.T) {
 	visible, err = transform.TransformSSE(mustTestJSON(t, map[string]any{"type": "response.completed", "response": completed}))
 	if err != nil || len(visible) != 1 || calls != 1 {
 		t.Fatalf("completed = %q, translations %d, error %v", visible, calls, err)
+	}
+}
+
+func TestHPatchBufferedDeltaKeepsDownstreamSSEActiveWithoutLeakingInput(t *testing.T) {
+	transform, _, _, _ := newHPatchTestTransform(t, testTranslator(t, new(int)))
+	added := testHPatchItem()
+	added["status"] = "in_progress"
+	added["input"] = ""
+	if visible, err := transform.TransformSSE(mustTestJSON(t, map[string]any{
+		"type": "response.output_item.added", "item": added,
+	})); err != nil || visible != nil {
+		t.Fatalf("buffered added = %q, error %v", visible, err)
+	}
+
+	delta := mustTestJSON(t, map[string]any{
+		"type": "response.custom_tool_call_input.delta", "item_id": "item-H", "delta": "secret",
+	})
+	var output bytes.Buffer
+	state, err := writeSSEEvent(
+		&output,
+		[]string{"event: response.custom_tool_call_input.delta\n", "data: " + string(delta) + "\n"},
+		"\n",
+		transform,
+		nil,
+	)
+	if err != nil || state != responseTerminalPending {
+		t.Fatalf("terminal state = %v, error %v", state, err)
+	}
+	if got := output.String(); got != "event: response.in_progress\ndata: {\"type\":\"response.in_progress\"}\n\n" {
+		t.Fatalf("downstream progress event = %q", got)
 	}
 }
 

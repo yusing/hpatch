@@ -233,6 +233,11 @@ shell workflow into received Responses instructions.
 
 For each eligible request, the router finds exactly one Code Mode custom `exec` owner: either directly inside the leading `additional_tools` item for app-server traffic or inside that item's `functions` namespace for CLI traffic. It removes the owner's native `apply_patch` and `exec_command` sections, preserves unrelated tools and namespaces, and appends only the request-specific execution parameter shape to the shell contract. Unsupported direct or top-level owner layouts fail before forwarding.
 
+While a routed tool input is streaming, the router keeps its untranslated content private until
+the complete input can be validated. Each withheld input delta produces a content-free native
+`response.in_progress` event so Codex continues to observe downstream SSE activity. The validated
+execution carrier is still emitted atomically when the complete input arrives.
+
 When a request carries Responses `instructions`, the router replaces the pinned stock file-editing
 section or refreshes an existing marked hpatch section. If neither section exists and
 `model_instructions_file` is configured in `$CODEX_HOME/config.toml` (or `~/.codex/config.toml`),
@@ -536,6 +541,31 @@ Hand-authored scenario comparison (does not update persistent router metrics):
 ```sh
 go run ./compare
 ```
+
+### Historical CTP replay diagnostic
+
+To inspect CTP admission and input representation savings on a previous long Codex session without
+calling a model provider, run the package-local benchmark once:
+
+```sh
+go test ./internal/router -run '^$' -bench '^BenchmarkCTPLongSessionReplay$' -benchtime=1x
+```
+
+The benchmark reads `$CODEX_HOME` (normally `~/.codex`) and excludes `CODEX_THREAD_ID`. It requires
+at least one string-valued Code Mode `exec` call and stock `apply_patch` plus `exec_command` base
+instructions, rejects known Hpatch instruction fingerprints, and selects the matching completed
+transcript with the highest recorded cumulative token usage. It applies recorded compactions and
+replays one captured request snapshot per turn through the router's CTP codec. The result reports
+admission reasons, native and compact input estimates, dictionary counts, and local representation
+savings. It does not modify the transcript or contact the provider.
+
+Codex transcripts retain base instructions, dynamic tools, response items, and compaction history,
+but not the exact original Code Mode tool envelope or provider-emitted compact assistant text. This
+diagnostic therefore cannot establish provider usage, prompt-cache behavior, or assistant-output
+savings. Hpatch restores routed calls to the same Code Mode carrier, so transcripts do not retain a
+definitive router-mode field. The stock-instruction requirement and known-Hpatch rejection are a
+conservative historical fingerprint, not proof against custom instructions or unknown older router
+versions.
 
 ### End-to-end benchmark
 
