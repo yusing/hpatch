@@ -99,7 +99,8 @@ if ! jq -se --slurpfile native_router "$native_router_metrics" \
 		  .visible_references, .encode_nanoseconds] | all(nonnegative_number)) and
 		(.decision == "active" or .decision == "missing_instruction_carrier") and
 		(if .decision == "missing_instruction_carrier" then
-			.native_tokens == .compact_tokens and .native_bytes == .compact_bytes and
+			.native_tokens == 0 and .compact_tokens == 0 and
+			.native_bytes == 0 and .compact_bytes == 0 and
 			.definitions == 0 and .dictionary_bytes == 0 and .strings == 0 and
 			.visible_references == 0
 		else

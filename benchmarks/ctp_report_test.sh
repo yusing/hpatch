@@ -177,6 +177,29 @@ if bash "$benchmark_root/report.sh" "$inconsistent_ctp_observation" >/dev/null 2
 	exit 1
 fi
 
+nonzero_missing_carrier="$fixture/nonzero-missing-carrier"
+cp -a "$ctp" "$nonzero_missing_carrier"
+jq '
+	.sessions[0].ctp.active_requests = 1 |
+	.sessions[0].ctp.missing_carrier = 1 |
+	.sessions[0].ctp.request_strings = 3 |
+	.sessions[0].ctp.request_visible_references = 1 |
+	.sessions[0].ctp.input = {native_tokens: 550, compact_tokens: 380} |
+	.sessions[0].ctp.input_bytes = {native_bytes: 2200, compact_bytes: 1520} |
+	.sessions[0].ctp.request_dictionary = {definitions: 2, bytes: 110} |
+	.sessions[0].ctp.input_observations[0] = {
+		request_sequence: 1, decision: "missing_instruction_carrier",
+		native_tokens: 450, compact_tokens: 450,
+		native_bytes: 1800, compact_bytes: 1800,
+		strings: 0, definitions: 0, dictionary_bytes: 0,
+		visible_references: 0, encode_nanoseconds: 900000
+	}
+' "$ctp/hpatch-metrics.json" >"$nonzero_missing_carrier/hpatch-metrics.json"
+if bash "$benchmark_root/report.sh" "$nonzero_missing_carrier" >/dev/null 2>&1; then
+	printf 'CTP report accepted nonzero representation values for a missing instruction carrier\n' >&2
+	exit 1
+fi
+
 missing_response_grader="$fixture/missing-response-grader"
 cp -a "$ctp" "$missing_response_grader"
 jq -c 'if .arm == "native" then .graders |= map(select(.name != "decoded-final-response")) else . end' \

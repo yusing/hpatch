@@ -99,10 +99,11 @@ type ctp2VisibleLineSource struct {
 }
 
 type ctp2VisibleLineEncoder struct {
-	codec   *ctp2Codec
-	sources []ctp2VisibleLineSource
-	pairs   map[ctp2VisibleLineSeed][]ctp2VisibleLineLocation
-	long    map[string][]ctp2VisibleLineLocation
+	codec    *ctp2Codec
+	locators []string
+	sources  []ctp2VisibleLineSource
+	pairs    map[ctp2VisibleLineSeed][]ctp2VisibleLineLocation
+	long     map[string][]ctp2VisibleLineLocation
 }
 
 func newCTP2Codec() (*ctp2Codec, error) {
@@ -123,7 +124,7 @@ func (c *ctp2Codec) prepareRequest(request *parsedResponsesRequest) (*ctp2Respon
 	}
 	nativeTokens, err := c.count(nativeBody)
 	if err != nil {
-		return nil, ctp2RequestDisabled, ctp2RequestMetrics{}, nil, err
+		return nil, ctp2RequestDisabled, ctp2RequestMetrics{}, nativeBody, nil
 	}
 	metrics := ctp2RequestMetrics{Representation: ctpRepresentationMetrics{
 		NativeTokens: uint64(nativeTokens),
@@ -133,12 +134,10 @@ func (c *ctp2Codec) prepareRequest(request *parsedResponsesRequest) (*ctp2Respon
 	transformed := maps.Clone(request.fields)
 	view, err := decodeCTP2RequestView(transformed)
 	if err != nil {
-		return nil, ctp2RequestDisabled, metrics, nil, err
+		return nil, ctp2RequestDisabled, ctp2RequestMetrics{}, nativeBody, nil
 	}
 	if view.carrier == ctp2CarrierNone {
-		metrics.Representation.CompactTokens = metrics.Representation.NativeTokens
-		metrics.Representation.CompactBytes = metrics.Representation.NativeBytes
-		return nil, ctp2RequestMissingCarrier, metrics, nativeBody, nil
+		return nil, ctp2RequestMissingCarrier, ctp2RequestMetrics{}, nativeBody, nil
 	}
 
 	visible := newCTP2VisibleLineEncoder(c)
@@ -161,7 +160,7 @@ func (c *ctp2Codec) prepareRequest(request *parsedResponsesRequest) (*ctp2Respon
 			}
 			found := transformCTP2Input(view.input, encodeLocal, preserveDeveloper, visible, &metrics, &err)
 			if preserveDeveloper != nil && !found {
-				return nil, ctp2RequestDisabled, metrics, nil, errors.New("locate CTP/2 developer instruction carrier")
+				return nil, ctp2RequestDisabled, ctp2RequestMetrics{}, nativeBody, nil
 			}
 		}
 		transformed["input"], err = marshalCTP2Field(transformed["input"], view.input, err)
@@ -171,16 +170,16 @@ func (c *ctp2Codec) prepareRequest(request *parsedResponsesRequest) (*ctp2Respon
 		transformed["tools"], err = marshalCTP2Field(transformed["tools"], view.tools, err)
 	}
 	if err != nil {
-		return nil, ctp2RequestDisabled, metrics, nil, err
+		return nil, ctp2RequestDisabled, ctp2RequestMetrics{}, nativeBody, nil
 	}
 
 	compactBody, err := json.Marshal(transformed)
 	if err != nil {
-		return nil, ctp2RequestDisabled, metrics, nil, fmt.Errorf("encode compact CTP/2 request: %w", err)
+		return nil, ctp2RequestDisabled, ctp2RequestMetrics{}, nativeBody, nil
 	}
 	compactTokens, err := c.count(compactBody)
 	if err != nil {
-		return nil, ctp2RequestDisabled, metrics, nil, err
+		return nil, ctp2RequestDisabled, ctp2RequestMetrics{}, nativeBody, nil
 	}
 	metrics.Representation.CompactTokens = uint64(compactTokens)
 	metrics.Representation.CompactBytes = uint64(len(compactBody))
@@ -796,23 +795,21 @@ func (c *ctp2Codec) encodeContentLocalString(value string) (string, ctp2StringMe
 	if err != nil {
 		return "", ctp2StringMetrics{}, err
 	}
-	var encoded string
-	for len(definitions) != 0 {
-		var references map[string]int
-		encoded, references = newCTP2StringEncoder(definitions).encode(value)
-		retained := make([]ctp2Definition, 0, len(definitions))
-		for _, definition := range definitions {
-			if references[definition.id] >= 2 {
-				retained = append(retained, definition)
-			}
+	encoded, references := newCTP2StringEncoder(definitions).encode(value)
+	retained := make([]ctp2Definition, 0, len(definitions))
+	for _, definition := range definitions {
+		if references[definition.id] >= 2 {
+			retained = append(retained, definition)
 		}
-		if len(retained) == len(definitions) {
-			break
-		}
+	}
+	if len(retained) != len(definitions) {
 		for index := range retained {
 			retained[index].id = ctp2Base36(index)
 		}
 		definitions = retained
+		// Removing a competing greedy match can only expose more matches for a
+		// retained definition, so one final encoding reaches the required fixed point.
+		encoded, _ = newCTP2StringEncoder(definitions).encode(value)
 	}
 	if len(definitions) == 0 || !strings.HasPrefix(encoded, ctp2ReferenceTag) {
 		return literal, metrics, nil
@@ -863,6 +860,9 @@ func newCTP2VisibleLineEncoder(codec *ctp2Codec) *ctp2VisibleLineEncoder {
 func (e *ctp2VisibleLineEncoder) encodeString(locator, value string) (string, ctp2StringMetrics, error) {
 	lines := slices.Collect(strings.Lines(value))
 	if validCTP2VisibleLocator(locator) {
+		// The current output becomes a response-visible source after encoding, so
+		// earlier-source suffixes must already be unique against its locator.
+		e.locators = append(e.locators, locator)
 		defer e.addSource(locator, lines)
 	}
 	local, metrics, err := e.codec.encodeContentLocalString(value)
@@ -906,12 +906,12 @@ func (e *ctp2VisibleLineEncoder) encode(lines []string) (string, int, error) {
 	literalStart := 0
 	references := 0
 	for index := 0; index < len(lines); {
-		location, count := e.longestMatch(lines, index)
+		location, count, suffix := e.longestMatch(lines, index)
 		if count == 0 {
 			index++
 			continue
 		}
-		reference := fmt.Sprintf("=%s,%d,%d\n", e.sourceSuffix(location.source), location.line+1, count)
+		reference := fmt.Sprintf("=%s,%d,%d\n", suffix, location.line+1, count)
 		profitable, err := e.visibleReferenceProfitable(reference, lines[index:index+count])
 		if err != nil {
 			return "", 0, err
@@ -954,21 +954,20 @@ func (e *ctp2VisibleLineEncoder) sourceSuffix(source int) string {
 		if !utf8.ValidString(suffix) {
 			continue
 		}
-		unique := true
-		for index, candidate := range e.sources {
-			if index != source && strings.HasSuffix(candidate.locator, suffix) {
-				unique = false
-				break
+		matches := 0
+		for _, candidate := range e.locators {
+			if strings.HasSuffix(candidate, suffix) {
+				matches++
 			}
 		}
-		if unique {
+		if matches == 1 {
 			return suffix
 		}
 	}
-	return locator
+	return ""
 }
 
-func (e *ctp2VisibleLineEncoder) longestMatch(lines []string, index int) (ctp2VisibleLineLocation, int) {
+func (e *ctp2VisibleLineEncoder) longestMatch(lines []string, index int) (ctp2VisibleLineLocation, int, string) {
 	var candidates []ctp2VisibleLineLocation
 	if index+1 < len(lines) {
 		candidates = append(candidates, e.pairs[ctp2VisibleLineSeed{first: lines[index], second: lines[index+1]}]...)
@@ -978,17 +977,22 @@ func (e *ctp2VisibleLineEncoder) longestMatch(lines []string, index int) (ctp2Vi
 	}
 	var best ctp2VisibleLineLocation
 	bestCount := 0
+	bestSuffix := ""
 	for _, candidate := range candidates {
+		suffix := e.sourceSuffix(candidate.source)
+		if suffix == "" {
+			continue
+		}
 		source := e.sources[candidate.source].lines
 		count := 0
 		for index+count < len(lines) && candidate.line+count < len(source) && lines[index+count] == source[candidate.line+count] {
 			count++
 		}
 		if count > bestCount {
-			best, bestCount = candidate, count
+			best, bestCount, bestSuffix = candidate, count, suffix
 		}
 	}
-	return best, bestCount
+	return best, bestCount, bestSuffix
 }
 
 func (e *ctp2VisibleLineEncoder) addSource(locator string, lines []string) {
@@ -1021,6 +1025,9 @@ func decodeCTP2VisibleLines(value string, sources []ctp2VisibleLineSource, limit
 	if !ok {
 		return value, nil
 	}
+	if operations == "" {
+		return "", errors.New("decode CTP/2 visible lines: empty operation")
+	}
 	var decoded strings.Builder
 	for operations != "" {
 		line, rest, ok := strings.Cut(operations, "\n")
@@ -1029,7 +1036,7 @@ func decodeCTP2VisibleLines(value string, sources []ctp2VisibleLineSource, limit
 		}
 		operations = rest
 		if line == "" {
-			continue
+			return "", errors.New("decode CTP/2 visible lines: empty operation")
 		}
 		switch line[0] {
 		case '=':

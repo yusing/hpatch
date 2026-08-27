@@ -142,8 +142,8 @@ formatting adjustments.
 
 The root library boundary owns workspace authorization, evaluation diagnostics, completed
 results, atomic commit coordination, translation, and structured host metrics for
-`REQ-GUIDE-001` and `REQ-OUTPUT-001`. All persistent Codex edit, shell, read, search, and
-inspection and CTP/2 representation guidance shares `contrib/codex/file-editing-instructions.md` as its source.
+`REQ-GUIDE-001` and `REQ-OUTPUT-001`. Persistent Codex edit, shell, read, search, and inspection
+guidance and CTP/2 representation guidance share `contrib/codex/file-editing-instructions.md` as their source.
 Tool descriptions retain only call-local contracts and request-specific schemas. The router
 renders dynamic rejected-script references and the recovery instruction from the adjacent
 recovery template only for actionable evaluator rejection diagnostics.

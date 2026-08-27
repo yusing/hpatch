@@ -137,7 +137,12 @@ func BenchmarkCTPCorpusReplay(b *testing.B) {
 	b.ReportMetric(float64(len(candidates)), "sessions")
 	slices.Sort(savings)
 	if len(savings) != 0 {
-		b.ReportMetric(savings[len(savings)/2], "median_new_content_savings_pct")
+		middle := len(savings) / 2
+		median := savings[middle]
+		if len(savings)%2 == 0 {
+			median = (savings[middle-1] + savings[middle]) / 2
+		}
+		b.ReportMetric(median, "median_new_content_savings_pct")
 	}
 	gateSessions := 0
 	for _, saving := range savings {

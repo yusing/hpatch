@@ -3,10 +3,13 @@ package router
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"slices"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/tiktoken-go/tokenizer"
 )
 
 func TestCTP2RequestUsesContentLocalDictionaries(t *testing.T) {
@@ -96,6 +99,33 @@ func TestCTP2RequestUsesVisiblePriorToolOutputLines(t *testing.T) {
 	}
 }
 
+func TestCTP2VisibleReferencesStayUniqueAfterRegisteringLaterSources(t *testing.T) {
+	codec := mustCTP2Codec(t)
+	output := "first exact diagnostic line with enough content to make the reference worthwhile\n" +
+		"second exact diagnostic line with enough content to make the reference worthwhile\n"
+	request := parsedResponsesRequest{fields: map[string]json.RawMessage{
+		"instructions": mustTestJSON(t, "decode CTP/2 here"),
+		"input": mustTestJSON(t, []any{
+			map[string]any{"type": "custom_tool_call_output", "call_id": "call_abc", "output": output},
+			map[string]any{"type": "custom_tool_call_output", "call_id": "call_xyzc", "output": output},
+		}),
+	}}
+
+	transform, decision, metrics, _, err := codec.prepareRequest(&request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if transform == nil || decision != ctp2RequestActive || metrics.VisibleReferences == 0 {
+		t.Fatalf("transform = %#v, decision = %v, metrics = %#v", transform, decision, metrics)
+	}
+	input := decodeCTP2TestValue(t, request.fields["input"]).([]any)
+	compact := input[1].(map[string]any)["output"].(string)
+	decoded, err := decodeCTP2String(compact, transform.sources, upstreamJSONBufferBytes)
+	if err != nil || decoded != output {
+		t.Fatalf("decoded output = %q, err = %v, compact = %q", decoded, err, compact)
+	}
+}
+
 func TestCTP2VisiblePrefixIsStableWhenHistoryAppends(t *testing.T) {
 	codec := mustCTP2Codec(t)
 	source := strings.Repeat("stable source line with enough repeated content for compression\n", 6)
@@ -144,8 +174,8 @@ func TestCTP2MissingInstructionCarrierStaysNative(t *testing.T) {
 	if transform != nil || decision != ctp2RequestMissingCarrier || string(request.fields["input"]) != string(native) {
 		t.Fatalf("transform = %#v, decision = %v, input = %s", transform, decision, request.fields["input"])
 	}
-	if metrics.Representation.NativeTokens != metrics.Representation.CompactTokens ||
-		metrics.Representation.NativeBytes != metrics.Representation.CompactBytes {
+	if metrics.Representation.NativeTokens != 0 || metrics.Representation.CompactTokens != 0 ||
+		metrics.Representation.NativeBytes != 0 || metrics.Representation.CompactBytes != 0 {
 		t.Fatalf("missing-carrier metrics = %#v", metrics)
 	}
 }
@@ -279,6 +309,8 @@ func TestCTP2ResponseRejectsInvalidRepresentations(t *testing.T) {
 		{name: "reference without dictionary", text: ctp2ReferenceTag + "@{0}", want: "no dictionary"},
 		{name: "unknown local reference", text: ctp2DictionaryTag + "0=\"known\"\nEND\n" + ctp2ReferenceTag + "@{1}", want: "unknown reference"},
 		{name: "duplicate local definition", text: ctp2DictionaryTag + "0=\"one\"\n0=\"two\"\nEND\n" + ctp2ReferenceTag + "@{0}", want: "duplicate definition"},
+		{name: "empty visible payload", text: "!V", want: "empty operation"},
+		{name: "blank visible operation", text: "!V\n", want: "empty operation"},
 		{name: "ambiguous visible source", text: "!V=alpha,1,1\n", want: "out of range"},
 		{name: "invalid visible range", text: "!V=call_alpha,2,1\n", want: "out of range"},
 	}
@@ -292,6 +324,49 @@ func TestCTP2ResponseRejectsInvalidRepresentations(t *testing.T) {
 			}))
 			if err == nil || !strings.Contains(err.Error(), test.want) {
 				t.Fatalf("error = %v, want %q", err, test.want)
+			}
+		})
+	}
+}
+
+func TestCTP2ExecuteRequestFallsBackToNativeOnCodecFailure(t *testing.T) {
+	nativeText := strings.Repeat("alpha beta gamma delta epsilon; ", 12)
+	for _, test := range []struct {
+		name       string
+		failCount  bool
+		failEncode bool
+	}{
+		{name: "count", failCount: true},
+		{name: "encode", failEncode: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			request := parsedResponsesRequest{fields: map[string]json.RawMessage{
+				"model":        mustTestJSON(t, "gpt-test"),
+				"instructions": mustTestJSON(t, "decode CTP/2 here"),
+				"input": mustTestJSON(t, []any{
+					map[string]any{"type": "message", "role": "user", "content": nativeText},
+				}),
+			}}
+			nativeBody, err := json.Marshal(request.fields)
+			if err != nil {
+				t.Fatal(err)
+			}
+			provider := &serverFakeProvider{results: []serverForwardResult{{response: serverHTTPResponse(`{"status":"completed","output":[]}`)}}}
+			base := mustCTP2Codec(t)
+			codec := &ctp2Codec{tokens: failingCTP2Tokenizer{
+				Codec:      base.tokens,
+				failCount:  test.failCount,
+				failEncode: test.failEncode,
+			}}
+
+			if err := executeRequest(
+				t.Context(), t.Context(), request, nil, "session", provider, &bytes.Buffer{},
+				newDiagnostics(&bytes.Buffer{}), time.Now, nil, codec, newMetricsStore(""),
+			); err != nil {
+				t.Fatal(err)
+			}
+			if len(provider.forwarded) != 1 || !bytes.Equal(provider.forwarded[0], nativeBody) {
+				t.Fatalf("forwarded request = %s, want %s", provider.forwarded[0], nativeBody)
 			}
 		})
 	}
@@ -421,4 +496,24 @@ func decodeCTP2TestValue(t *testing.T, raw json.RawMessage) any {
 
 func slicesOfLines(value string) []string {
 	return slices.Collect(strings.Lines(value))
+}
+
+type failingCTP2Tokenizer struct {
+	tokenizer.Codec
+	failCount  bool
+	failEncode bool
+}
+
+func (c failingCTP2Tokenizer) Count(value string) (int, error) {
+	if c.failCount {
+		return 0, errors.New("injected count failure")
+	}
+	return c.Codec.Count(value)
+}
+
+func (c failingCTP2Tokenizer) Encode(value string) ([]uint, []string, error) {
+	if c.failEncode {
+		return nil, nil, errors.New("injected encode failure")
+	}
+	return c.Codec.Encode(value)
 }
