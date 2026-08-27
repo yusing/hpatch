@@ -137,6 +137,8 @@ print("hello")
 
 This is better for the harness because it removes syntax that exists only to reach the executor. Fewer wrapper and quoting layers mean fewer malformed calls and simpler recovery; it is not a claim that the underlying process runs faster.
 
+The translated native carrier keeps its generated `shell <interpreter> <program>` command on one physical line. Bash-safe escapes represent embedded quotes and line breaks while evaluation still reconstructs the exact program body.
+
 `shell` can start PTY-backed, interactive, and long-running programs and forwards the native executor's complete result. If execution yields a session handle, use Codex's native session facilities to send further input, poll output, resize the PTY, or terminate the process; each shell call starts a new execution and does not reimplement session control.
 
 For native executor background and interactive behavior, see [OpenAI's Codex prompting guide](https://developers.openai.com/cookbook/examples/gpt-5/codex_prompting_guide#shell_command).

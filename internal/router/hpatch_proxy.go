@@ -23,6 +23,7 @@ import (
 	"github.com/yusing/hpatch"
 	codexinstructions "github.com/yusing/hpatch/contrib/codex"
 	"github.com/yusing/hpatch/internal/router/toolplugin"
+	"mvdan.cc/sh/v3/syntax"
 )
 
 const (
@@ -309,25 +310,12 @@ func (p *hpatchProxy) Close() error {
 }
 
 func shellQuoteArgument(value string) string {
-	if value != "" {
-		safe := true
-		for _, char := range value {
-			switch {
-			case 'a' <= char && char <= 'z',
-				'A' <= char && char <= 'Z',
-				'0' <= char && char <= '9',
-				strings.ContainsRune("_@%+=:,./-", char):
-			default:
-				safe = false
-			}
-			if !safe {
-				break
-			}
-		}
-		if safe {
-			return value
-		}
+	quoted, err := syntax.Quote(value, syntax.LangBash)
+	if err == nil {
+		return quoted
 	}
+	// NUL cannot be represented in an argv value. Preserve the prior carrier
+	// construction so the native executor remains the owner of that rejection.
 	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
 }
 

@@ -1310,11 +1310,17 @@ func TestShellJSONTranslatesBashCasesEndToEnd(t *testing.T) {
 	transform, _, _, _ := newHPatchTestTransformWithProxy(t, proxy)
 
 	tests := []struct {
-		name  string
-		input string
+		name        string
+		input       string
+		wantCommand string
 	}{
-		{name: "single line", input: "foo"},
-		{name: "final newline", input: "foo\n"},
+		{name: "single line", input: "foo", wantCommand: "shell bash foo"},
+		{name: "final newline", input: "foo\n", wantCommand: `shell bash $'foo\n'`},
+		{
+			name:        "quotes and final newline",
+			input:       `printf '"%s\n"' ./* | sed 's#^\./##'` + "\n",
+			wantCommand: `shell bash $'printf \'"%s\\n"\' ./* | sed \'s#^\\./##\'\n'`,
+		},
 		{name: "redundant errexit", input: "set -e\nfoo\n"},
 		{
 			name:  "multiline",
@@ -1367,11 +1373,39 @@ func TestShellJSONTranslatesBashCasesEndToEnd(t *testing.T) {
 				Command string `json:"cmd"`
 			}
 			decodeExecCarrierArguments(t, carrierInput, &arguments)
-			want := workerCommand("shell", []string{"bash", test.input})
+			want := test.wantCommand
+			if want == "" {
+				want = workerCommand("shell", []string{"bash", test.input})
+			}
 			if arguments.Command != want {
 				t.Fatalf("translated exec command = %q, want %q", arguments.Command, want)
 			}
 		})
+	}
+}
+
+func TestWorkerCommandBashRoundTripsQuotedArgument(t *testing.T) {
+	registry, err := buildToolRegistry(t.Context(), t.TempDir(), testHPatchToolDescription, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := registry.Close(); err != nil {
+			t.Error(err)
+		}
+	})
+
+	argument := "printf '\"%s\\n\"' ./* | sed 's#^\\./##'\n"
+	stdout, stderr, exitCode := runShellWorkerTest(
+		t,
+		registry,
+		"bash",
+		nil,
+		workerCommand("printf", []string{"%s", argument}),
+		nil,
+	)
+	if exitCode != 0 || stdout != argument || stderr != "" {
+		t.Fatalf("exit %d, stdout %q, stderr %q", exitCode, stdout, stderr)
 	}
 }
 

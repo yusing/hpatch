@@ -306,7 +306,9 @@ request and retains ownership of response item IDs, call IDs, status, JSON and S
 history, and replay. A plugin cannot invent an unavailable carrier or return a raw Responses
 envelope. The plugin API provides a canonical exec wrapper for tools that need one. The wrapper
 owns the repeated outer Code Mode exec program, nested tool invocation, serialization, argument
-quoting, and result forwarding. The optional exec command template contains exactly one `{.}`
+quoting, and result forwarding. Its canonical Bash quoting keeps the worker command on one
+physical line, escaping embedded line terminators while reconstructing each exact argv value.
+The optional exec command template contains exactly one `{.}`
 placeholder, which the router replaces with the complete quoted worker command. For configured
 tools this is their frontend command; for built-in shell it is the fixed
 `shell <interpreter> <program>` helper command. An optional JSON parameter object cannot contain `cmd`. The router
@@ -461,7 +463,8 @@ terminator. The tool removes only the shebang line and its terminator. It preser
 and trailing body whitespace, including an absent or final line terminator. Without a shebang,
 the complete input is the body. The translated argv contains each normalized interpreter field
 followed by the exact body as its final value. The resulting Codex exec carrier therefore shows
-`shell python3 <quoted-body>`; the model does not author that command or its quoting.
+`shell python3 <quoted-body>` on one physical command line; the model does not author that command
+or its quoting.
 
 After an optional interpreter shebang, a leading directive block can contain one `#!cmd=`
 assignment and one `#!params=` assignment in either order. All canonical directives use
@@ -523,8 +526,9 @@ carrier.
 Acceptance:
 
 1. A free-form call containing `#!/usr/bin/env python3` translates to an exec carrier whose
-   visible command is `shell python3 <body>`; execution resolves the current thread-bound runtime
-   and runs `python3` with that body as its anonymous script source.
+   visible command is one physical `shell python3 <body>` line with embedded body line terminators
+   escaped; execution resolves the current thread-bound runtime and runs `python3` with that exact
+   body as its anonymous script source.
 2. `#!python3`, `#! python3`, and `#!/usr/bin/env python3` select `python3`. A directly supplied
    path such as `#!/opt/python/bin/python3` remains unchanged.
 3. `#!/usr/bin/env -S python3 -u` runs `python3` with `-u` and the exact body as its anonymous
