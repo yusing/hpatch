@@ -65,7 +65,7 @@
       "source_kind": "task-owned empty fixture",
       "popularity_policy": "not applicable to a protocol-focused greenfield task",
       "language": "Go",
-      "task_type": "CTP bidirectional-compression microbenchmark",
+      "task_type": "CTP/2 bidirectional-compression microbenchmark",
       "difficulty": "easy"
     }
   ]

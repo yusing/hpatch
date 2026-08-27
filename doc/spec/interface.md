@@ -6,9 +6,9 @@ In hpatch router mode, the model receives `hpatch` and `shell` as standalone cus
 All persistent hread, hgrep, hsymbol, inspect_file, shell-execution, and HPATCH workflow guidance comes
 from `contrib/codex/file-editing-instructions.md`. The router injects a protocol-specific projection
 of that source into the top-level Responses `instructions` value in memory and never changes an
-instruction file. Native model protocol omits the leading CTP section and stops after the ordinary
-guidance and tool rewrite. CTP/1 injects the complete source and may append dictionary data to the
-resulting top-level or first textual developer-message carrier under `REQ-CTP-001`.
+instruction file. Native model protocol omits the leading CTP/2 section and stops after the ordinary
+guidance and tool rewrite. CTP/2 injects the complete source, preserves the selected top-level or
+first textual developer-message carrier, and transforms eligible strings under `REQ-CTP-001`.
 Hread, hgrep, hsymbol, and inspect_file remain private executor contributions inside the
 authenticated shell worker; their custom-tool specifications are not sent to the model, direct
 model calls to their names are not routed, and no executable frontend is installed for them.
@@ -266,7 +266,7 @@ Acceptance:
 4. Router startup validates `inspect_file` inside the immutable built-in snapshot without an
    executable frontend and exposes or routes only hpatch, shell, and configured model-visible
    contributions. Eligible request instructions use the central guidance while unrelated
-   content remains unchanged; CTP/1 follows `REQ-CTP-001`.
+   content remains unchanged; CTP/2 follows `REQ-CTP-001`.
 
 ## REQ-PLUGIN-001 — Router-local tool plugins
 
@@ -705,15 +705,18 @@ provider usage was observed, and the provider input, uncached-input, output, and
 counts. A separate dropped-observation counter exposes retention truncation. Request bodies,
 response bodies, credentials, and provider identifiers are never retained by this telemetry.
 
-With CTP/1 enabled, aggregate and per-session metrics record every admission decision and sum native
-and compact tokens and UTF-8 bytes for admitted requests and decoded assistant text. They also sum
-request and response dictionary definition counts and framing bytes, encode and decode operations and
-nanoseconds, and response-decode failures. Each session retains the latest 128 input observations and
-128 assistant-output observations with their request sequence, representation sizes, dictionary
-sizes, and input admission or encode timing. Independent dropped counters expose truncation. These
-observations retain sizes and decisions only, never dictionary values or assistant text. Streaming
-decode timing counts each transformed upstream event, while assistant-output observations still count
-each logical terminal text exactly once under `REQ-CTP-001`.
+With CTP/2 enabled, aggregate and per-session metrics record considered, active, and missing-carrier
+requests and sum native and compact tokens and UTF-8 bytes for active requests and decoded assistant
+text. They also sum encoded strings, visible-line references, content-local dictionary definitions
+and framing bytes, encode and decode operations and nanoseconds, and response-decode failures. Each
+session retains the latest 128 input observations and 128 assistant-output observations with their
+request sequence, representation sizes, framing counts, activation decision, and encode timing.
+Independent dropped counters expose truncation. These observations retain sizes and decisions only,
+never dictionary values, locators, or text. Streaming decode timing counts each transformed upstream
+event, while assistant-output observations still count each logical terminal text exactly once under
+`REQ-CTP-001`.
+
+Validated compaction requests bypass CTP/2 and therefore add no considered-request observation.
 
 `RecordHostMetrics` persists classification only after the host supplies the terminal outcome and
 visible carrier evidence. For router translation it records a paired effective estimate after the
@@ -1375,13 +1378,13 @@ Acceptance:
 
 ## REQ-GUIDE-001 — Agent guidance
 
-`contrib/codex/file-editing-instructions.md` is the single Codex source for CTP representation
+`contrib/codex/file-editing-instructions.md` is the single Codex source for CTP/2 representation
 rules and all durable edit, shell, read, search, and inspection guidance.
 `doc/spec/interface.md` owns the normative engine and router contract. Model-visible tool descriptions contain only concise
 call-local contracts and request-specific schemas. The router does not use private tool
 descriptions as prompt text. Native model protocol injects the central source without its leading
-CTP section and stops after the ordinary guidance rewrite; CTP/1 injects the complete source and may
-then append only its request-local dictionary data under `REQ-CTP-001`.
+CTP/2 section and stops after the ordinary guidance rewrite; CTP/2 injects the complete source and
+then transforms only eligible model-visible strings under `REQ-CTP-001`.
 
 For each eligible turn carrying a non-null Responses `instructions` string, the router refreshes
 one current marked hpatch section or replaces the pinned stock Codex file-editing section and its
@@ -1447,13 +1450,13 @@ Acceptance:
 
 1. A model can choose and encode every HPATCH/2 operation from the persistent guidance.
 2. The forwarded prompt contains the selected central guidance exactly once and omits the pinned
-   stock apply_patch, rg, and exec_command instructions. Native omits the CTP section; CTP/1 retains
+   stock apply_patch, rg, and exec_command instructions. Native omits the CTP/2 section; CTP/2 retains
    it.
 3. A marked prompt retains content before and after the owned section and refreshes idempotently;
    a configured custom prompt without a recognized section retains its content before the append.
 4. Missing and null request instructions remain byte-equivalent. An unconfigured, unrecognized
-   non-null instruction string fails before forwarding. CTP/1 never creates a carrier and restores
-   an echoed encoded instruction carrier exactly under its representation contract.
+   non-null instruction string fails before forwarding. CTP/2 never creates or encodes its selected
+   instruction carrier, and `ctp1` fails before router startup.
 5. Dynamic rejected-script references and recovery prose appear only with actionable context.
 6. A wholly row-stale evaluator rejection lists only the rejected target-bearing command handles
    and exact guidance for one atomic target-correction payload. Other failures direct one complete

@@ -113,12 +113,13 @@ func TestDashboardFormatsSignedTokenTotals(t *testing.T) {
 	}
 }
 
-func TestDashboardRendersCTPTelemetry(t *testing.T) {
+func TestDashboardRendersCTP2Telemetry(t *testing.T) {
 	body := string(dashboardHTML)
 	for _, fragment := range []string{
 		`id="ctp"`, "updateCTP(", "data.ctp", "validCTP(data.ctp)",
-		"CTP/1 compression", "Admission decisions", "Representation savings",
-		"Dictionary and codec", "input_observations", "output_observations",
+		"CTP/2 compression", "Request activation", "Representation savings",
+		"Representation and codec", "request_visible_references", "response_visible_references",
+		"input_observations", "output_observations", "visible_references",
 		"input_observations_dropped", "output_observations_dropped",
 	} {
 		if !strings.Contains(body, fragment) {
@@ -127,6 +128,13 @@ func TestDashboardRendersCTPTelemetry(t *testing.T) {
 	}
 	if !strings.Contains(body, `data-tab="ctp"`) || !strings.Contains(body, `id="panel-ctp"`) {
 		t.Fatal("dashboard does not place CTP telemetry in a dedicated view")
+	}
+	if !strings.Contains(body, "hasConsidered=considered>0") ||
+		!strings.Contains(body, "hasConsidered?'100.0%':'n/a'") {
+		t.Fatal("dashboard presents an activation rate without considered requests")
+	}
+	if !strings.Contains(body, ".metric-table tbody tr.idle td{color:var(--muted)}") {
+		t.Fatal("dashboard renders meaningful zero counters with faint low-contrast text")
 	}
 }
 

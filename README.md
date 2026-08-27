@@ -249,29 +249,29 @@ after subagent compaction; inherited side conversations already carry the marked
 refreshed idempotently. Tool descriptions contain only call-local contracts and are not a fallback
 prompt channel.
 
-Under the default `--model-protocol native`, the router omits the leading `## CTP/1 transport`
+Under the default `--model-protocol native`, the router omits the leading `## CTP/2 transport`
 section from the central guidance and the ordinary guidance and tool rewrite is the complete
-model-visible transformation. Opt-in `--model-protocol ctp1` injects the complete source and
-additionally applies the lossless Compact Token Protocol to readable repeated
-token substrings after the ordinary Hpatch rewrite. It appends an exact-string request dictionary
-to the rewritten top-level instructions or first textual developer-message carrier. Assistant
-text can extend that dictionary with exact response-local strings before reusing them.
-The request dictionary is discovered from the current tool descriptions and immutable pre-model
-input prefix, then applied to eligible later history. Rebuilding an unchanged prefix produces the
-same dictionary and admission decision, so appended model output does not churn the provider-cache
-prefix.
+model-visible transformation. Opt-in `--model-protocol ctp2` injects the complete source and
+additionally applies the lossless Compact Token Protocol after the ordinary Hpatch rewrite.
+Each eligible string independently chooses a token-positive exact dictionary for readable repeated
+substrings. Tool outputs may instead use token-positive references to exact line ranges from earlier
+visible tool outputs in the same request. CTP/2 keeps no hidden dictionary state: rebuilding visible
+history reproduces the same representation, appending history cannot change earlier encoded bytes,
+and compaction removes reference sources with the compacted history.
 CTP decoding is inline representation work, not an additional inspection or tool workflow.
-When no dictionary is admitted, CTP guidance stays inactive and all request and response text is native.
+Strings without a profitable representation stay native, except that a native reserved CTP/2 prefix
+uses the required literal escape. Validated compaction requests bypass CTP/2 entirely.
 Responses roles, instruction priority, identifiers, reasoning, status, usage, schemas,
 grammars, streaming, and compaction control remain native. Model-emitted tool names and call
 payloads also remain native, so CTP does not compose with Hpatch, shell, or function execution.
+The superseded `--model-protocol ctp1` selector is rejected.
 
 Defaults:
 
 | Setting | Default |
 | --- | --- |
 | Mode | `hpatch` (`--mode`); `passthrough` forwards Responses traffic without loading the tool registry |
-| Model protocol | `native` (`--model-protocol`); `ctp1` is an opt-in Hpatch-mode experiment and is rejected with `--mode passthrough` |
+| Model protocol | `native` (`--model-protocol`); `ctp2` is opt-in and Hpatch-only, while `ctp1` and `ctp2` with `--mode passthrough` are rejected |
 | Listen | `127.0.0.1:8080` (`--listen`) |
 | Upstream response-start timeout | `10m` (`--timeout`) |
 | Upstream stream idle timeout | `4m` per blocked upstream read (`--stream-idle-timeout`); resets on byte progress, pauses during downstream processing, and imposes no total-duration limit |
@@ -292,8 +292,8 @@ In hpatch mode, run the router as the same login user as Codex so it can open th
 
 Use `--mode passthrough` when the router should forward Responses traffic without installing hpatch or shell, loading private commands, enabling rejected-script recovery, or recording plugin metrics.
 
-Use `--model-protocol ctp1` to enable the compact provider representation. See the
-[CTP/1 contract](doc/spec/ctp.md) for its exact wire form, token-positive admission, literal
+Use `--model-protocol ctp2` to enable the compact provider representation. See the
+[CTP/2 contract](doc/spec/ctp.md) for its exact wire forms, token-positive selection, literal
 fallback, restoration, and failure behavior.
 
 ### Install the binary
@@ -388,7 +388,7 @@ The dashboard labels each collapsible session with the task title found for its 
 ### Codex model instructions
 
 [`contrib/codex/file-editing-instructions.md`](contrib/codex/file-editing-instructions.md)
-is the single source for CTP/1 representation rules and all durable HPATCH, shell, hread, hgrep,
+is the single source for CTP/2 representation rules and all durable HPATCH, shell, hread, hgrep,
 hsymbol, and inspect_file
 workflow guidance. The router applies it only to the in-memory `instructions` value of eligible
 Responses requests. It never reads or writes the configured instruction file itself.
@@ -520,16 +520,14 @@ Metrics separate three different layers:
 2. A host supplies visible payload and session attribution to `RecordHostMetrics`, the only root persistence boundary. The router does this after routed outcomes and also records per-tool definitions, carriers, executor evidence, reports, diagnostics, and shell misuse or recovery overhead.
 3. The router dashboard and `/api/metrics` expose provider Responses lifecycle and usage totals alongside those persisted estimates.
 
-With CTP/1 enabled, the dashboard's CTP view and `/api/metrics` also expose auxiliary native and
-compact token estimates for admitted whole requests and assistant text from completed responses.
-They expose admission decisions, representation savings, dictionary and codec totals, and bounded
-per-session CTP input and output observations with native and compact tokens and bytes, dictionary
-size, and codec timing. Dropped observation counters make truncation explicit. These internal
-compression counters are separate from authoritative provider usage and never include model-emitted
-tool payloads. Admission counters distinguish a missing instruction carrier, no positive definition
-candidate, and a stable compact
-admission projection that was not smaller. Complete-request observations may show a local loss on a
-later admitted request because preserving the provider-cache prefix owns that request's admission.
+With CTP/2 enabled, the dashboard's CTP view and `/api/metrics` also expose auxiliary native and
+compact token estimates for whole requests and assistant text from completed responses. They expose
+active requests or missing instruction carriers, representation savings, encoded-string, local
+dictionary, visible-line-reference, and codec totals, and bounded per-session CTP input and output
+observations with native and compact tokens and bytes. Dropped observation counters make truncation
+explicit. These internal compression counters are separate from authoritative provider usage and
+never include model-emitted tool payloads. A request remains active even when no individual string
+has a profitable compact form; those strings stay native.
 
 The router dashboard and `GET /api/metrics` expose the structured persistent aggregate without opening an engine workspace.
 Each terminal Responses log record also carries that logical request's provider token counts.
@@ -544,7 +542,7 @@ go run ./compare
 
 ### Historical CTP replay diagnostic
 
-To inspect CTP admission and input representation savings on a previous long Codex session without
+To inspect CTP/2 input representation savings on a previous long Codex session without
 calling a model provider, run the package-local benchmark once:
 
 ```sh
@@ -555,9 +553,23 @@ The benchmark reads `$CODEX_HOME` (normally `~/.codex`) and excludes `CODEX_THRE
 at least one string-valued Code Mode `exec` call and stock `apply_patch` plus `exec_command` base
 instructions, rejects known Hpatch instruction fingerprints, and selects the matching completed
 transcript with the highest recorded cumulative token usage. It applies recorded compactions and
-replays one captured request snapshot per turn through the router's CTP codec. The result reports
-admission reasons, native and compact input estimates, dictionary counts, and local representation
-savings. It does not modify the transcript or contact the provider.
+replays one captured request snapshot per turn through the production CTP/2 codec. The result reports
+native and compact input estimates, encoded strings, local dictionaries, visible-line references,
+and whole-request and new-content savings. It does not modify the transcript or contact the provider.
+
+For a broader one-shot comparison, replay the 50 longest matching sessions:
+
+```sh
+go test ./internal/router -run '^$' -bench '^BenchmarkCTPCorpusReplay$' -benchtime=1x -count=1
+```
+
+The corpus benchmark runs the production CTP/2 codec and reports ordinary whole-request savings and
+`new_content_*` savings. The latter
+counts the first request in full, then counts only changed non-input fields and input items after the
+previous exact item prefix. A compaction therefore counts its replacement history again. This
+separates repeated unchanged history from newly introduced representation cost without assuming a
+provider cache granularity, hit rate, or billing discount. Median and `*_gate_sessions` metrics show
+how many individual sessions meet the benchmark's 5% comparison threshold.
 
 Codex transcripts retain base instructions, dynamic tools, response items, and compaction history,
 but not the exact original Code Mode tool envelope or provider-emitted compact assistant text. This
@@ -591,15 +603,15 @@ RangeStream behavior. See the [benchmark methodology](doc/benchmarks.md), the
 and locally retained Hpatch-only trial reports.
 
 To measure deployable model behavior, CTP efficiency, and their net operational result, run
-the fresh native-versus-CTP-active benchmark:
+the fresh native-versus-CTP/2-active benchmark:
 
 ```sh
 TASK_ID=batch-diagnostic-collapse BENCHMARK_MODE=ctp-only \
   BENCHMARK_REPORT_ISSUES=false REPETITIONS=4 bash benchmarks/bench.sh
 ```
 
-Each repetition runs native Hpatch without CTP guidance and CTP-active Hpatch with the guidance and
-CTP/1 enabled. Their order rotates across repetitions, and each starts from an independent task
+Each repetition runs native Hpatch without CTP guidance and CTP/2-active Hpatch with the guidance and
+CTP/2 enabled. Their order rotates across repetitions, and each starts from an independent task
 snapshot. The report separates
 model correctness, turns, tool behavior, and latency; same-request CTP token, byte, dictionary, and
 codec measurements; and provider-observed input, output, reasoning, requests, and wall time. It also
@@ -621,7 +633,7 @@ Root library path: accept a caller-authorized workspace root and cwd → parse t
 
 Router hpatch path: validate auth and metadata → load the immutable tool registry → inject the
 central guidance into received Responses instructions → replace the eligible Code Mode tool
-surfaces → optionally encode the token-positive model-visible data plane with CTP/1 → select an
+surfaces → optionally encode the token-positive model-visible data plane with CTP/2 → select an
 optional canonical directory hint → decode the provider response → evaluate hpatch without router
 filesystem confinement or router-cwd fallback → return a client-executed `apply_patch` carrier.
 
@@ -665,7 +677,7 @@ Tests live beside the owners they exercise. The root `hpatch` package is the reu
 | [`doc/benchmarks.md`](doc/benchmarks.md) | Benchmark operation and interpretation |
 | [`doc/codex-router-e2e.md`](doc/codex-router-e2e.md) | Codex-facing end-to-end procedure |
 | [`contrib/systemd/hpatch-router.service`](contrib/systemd/hpatch-router.service) | User service template |
-| [`contrib/codex/file-editing-instructions.md`](contrib/codex/file-editing-instructions.md) | Persistent CTP/1, edit, shell, read, search, and inspection guidance for Codex |
+| [`contrib/codex/file-editing-instructions.md`](contrib/codex/file-editing-instructions.md) | Persistent CTP/2, edit, shell, read, search, and inspection guidance for Codex |
 | [`AGENTS.md`](AGENTS.md) | Architecture and repository navigation for agents |
 
 Library use: module path `github.com/yusing/hpatch`. Importable as a library (`hpatch.Translate`, `hpatch.Workspace`, structured host metrics helpers); hosts should open an `*os.Root` capability for the workspace before calling in.

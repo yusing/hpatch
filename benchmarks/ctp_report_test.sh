@@ -9,7 +9,7 @@ ctp="$fixture/ctp"
 mkdir -p "$ctp"
 cat >"$ctp/results.jsonl" <<'JSON'
 {"task_id":"task","arm":"native","repetition":1,"order_in_block":1,"model":"model","reasoning_effort":"medium","model_protocol":"native","router_mode":"hpatch","task_pass":true,"base_instructions":{"sha256":"native-sha"},"agent":{"thread_id":"native-session","duration_ms":1000,"turns":2,"item_counts":{"command_execution":1,"file_change":1},"failure_counts":{"turn_failures":0,"executor_process_creation":0}},"graders":[{"name":"hidden","required":true,"passed":true},{"name":"decoded-final-response","required":true,"passed":true}]}
-{"task_id":"task","arm":"ctp","repetition":1,"order_in_block":2,"model":"model","reasoning_effort":"medium","model_protocol":"ctp1","router_mode":"hpatch","task_pass":true,"base_instructions":{"sha256":"native-sha"},"agent":{"thread_id":"ctp-session","duration_ms":900,"turns":2,"item_counts":{"command_execution":1,"file_change":1},"failure_counts":{"turn_failures":0,"executor_process_creation":2}},"graders":[{"name":"hidden","required":true,"passed":true},{"name":"decoded-final-response","required":true,"passed":true}]}
+{"task_id":"task","arm":"ctp","repetition":1,"order_in_block":2,"model":"model","reasoning_effort":"medium","model_protocol":"ctp2","router_mode":"hpatch","task_pass":true,"base_instructions":{"sha256":"native-sha"},"agent":{"thread_id":"ctp-session","duration_ms":900,"turns":2,"item_counts":{"command_execution":1,"file_change":1},"failure_counts":{"turn_failures":0,"executor_process_creation":2}},"graders":[{"name":"hidden","required":true,"passed":true},{"name":"decoded-final-response","required":true,"passed":true}]}
 JSON
 
 jq -n '
@@ -27,8 +27,9 @@ jq -n '
 		total_duration_ms: 100, upstream_duration_ms: 80
 	};
 	def inactive_ctp: {
-		considered_requests: 0, encoded_requests: 0, missing_carrier: 0,
-		no_definitions: 0, unprofitable: 0, assistant_texts: 0,
+		considered_requests: 0, active_requests: 0, missing_carrier: 0,
+		request_strings: 0, request_visible_references: 0,
+		assistant_texts: 0, response_strings: 0, response_visible_references: 0,
 		input: {native_tokens: 0, compact_tokens: 0},
 		output: {native_tokens: 0, compact_tokens: 0},
 		input_bytes: {native_bytes: 0, compact_bytes: 0},
@@ -73,8 +74,9 @@ jq -n '
 		total_duration_ms: 80, upstream_duration_ms: 60
 	};
 	def ctp: {
-		considered_requests: 2, encoded_requests: 2, missing_carrier: 0,
-		no_definitions: 0, unprofitable: 0, assistant_texts: 1,
+		considered_requests: 2, active_requests: 2, missing_carrier: 0,
+		request_strings: 5, request_visible_references: 2,
+		assistant_texts: 1, response_strings: 1, response_visible_references: 1,
 		input: {native_tokens: 1000, compact_tokens: 700},
 		output: {native_tokens: 100, compact_tokens: 80},
 		input_bytes: {native_bytes: 4000, compact_bytes: 2800},
@@ -84,14 +86,14 @@ jq -n '
 		codec: {encode_operations: 2, encode_nanoseconds: 2000000,
 			decode_operations: 3, decode_nanoseconds: 3000000, decode_failures: 0},
 		input_observations: [
-			{request_sequence: 1, decision: "admitted", native_tokens: 450, compact_tokens: 320,
-				native_bytes: 1800, compact_bytes: 1280, definitions: 2, dictionary_bytes: 90, encode_nanoseconds: 900000},
-			{request_sequence: 2, decision: "admitted", native_tokens: 550, compact_tokens: 380,
-				native_bytes: 2200, compact_bytes: 1520, definitions: 2, dictionary_bytes: 110, encode_nanoseconds: 1100000}
+			{request_sequence: 1, decision: "active", native_tokens: 450, compact_tokens: 320,
+				native_bytes: 1800, compact_bytes: 1280, strings: 2, definitions: 2, dictionary_bytes: 90, visible_references: 1, encode_nanoseconds: 900000},
+			{request_sequence: 2, decision: "active", native_tokens: 550, compact_tokens: 380,
+				native_bytes: 2200, compact_bytes: 1520, strings: 3, definitions: 2, dictionary_bytes: 110, visible_references: 1, encode_nanoseconds: 1100000}
 		],
 		output_observations: [
 			{request_sequence: 2, native_tokens: 100, compact_tokens: 80,
-				native_bytes: 400, compact_bytes: 320, definitions: 1, dictionary_bytes: 50}
+				native_bytes: 400, compact_bytes: 320, strings: 1, definitions: 1, dictionary_bytes: 50, visible_references: 1}
 		],
 		input_observations_dropped: 0, output_observations_dropped: 0
 	};
@@ -115,7 +117,7 @@ printf '%s\n' '{"benchmark_mode":"ctp-only","ctp":{"require_input_compression":t
 	>"$ctp/benchmark-config.json"
 
 bash "$benchmark_root/report.sh" "$ctp" >/dev/null
-grep -Fq '# Native versus CTP-active benchmark report:' "$ctp/summary.md"
+grep -Fq '# Native versus CTP/2-active benchmark report:' "$ctp/summary.md"
 grep -Fq 'Deployable end-to-end effect, active versus native: **better**' "$ctp/summary.md"
 grep -Fq '| Hidden grader pass rate | 1/1 | 1/1 | 0 |' "$ctp/summary.md"
 grep -Fq '| Exact decoded response rate | 1/1 | 1/1 | 0 |' "$ctp/summary.md"
@@ -124,7 +126,7 @@ grep -Fq '| Total input tokens | 1000 | 900 | -100 |' "$ctp/summary.md"
 grep -Fq '| Input | 1000 | 700 | 30% | 4000 | 2800 | 30% |' "$ctp/summary.md"
 grep -Fq '| Assistant output | 100 | 80 | 20% | 400 | 320 | 20% |' "$ctp/summary.md"
 grep -Fq '| Request dictionary definitions | 4 |' "$ctp/summary.md"
-grep -Fq '| 1 | 1 | admitted | 450 | 320 | 1800 | 1280 | 2 | 90 | 0.9 |' "$ctp/summary.md"
+grep -Fq '| 1 | 1 | active | 450 | 320 | 1800 | 1280 | 2 | 2 | 90 | 1 | 0.9 |' "$ctp/summary.md"
 grep -Fq '| Unified-exec process creation errors | 0 | 2 | Codex executor |' "$ctp/summary.md"
 grep -Fq '**CTP compression gate passed:**' "$ctp/summary.md"
 grep -Fq 'does not invent dollar pricing' "$ctp/summary.md"
@@ -157,6 +159,24 @@ if bash "$benchmark_root/report.sh" "$inconsistent_usage" >/dev/null 2>&1; then
 	exit 1
 fi
 
+missing_ctp_observation="$fixture/missing-ctp-observation"
+cp -a "$ctp" "$missing_ctp_observation"
+jq 'del(.sessions[0].ctp.input_observations[0].strings)' \
+	"$ctp/hpatch-metrics.json" >"$missing_ctp_observation/hpatch-metrics.json"
+if bash "$benchmark_root/report.sh" "$missing_ctp_observation" >/dev/null 2>&1; then
+	printf 'CTP report accepted an observation with a missing CTP/2 field\n' >&2
+	exit 1
+fi
+
+inconsistent_ctp_observation="$fixture/inconsistent-ctp-observation"
+cp -a "$ctp" "$inconsistent_ctp_observation"
+jq '.sessions[0].ctp.input_observations[0].visible_references += 1' \
+	"$ctp/hpatch-metrics.json" >"$inconsistent_ctp_observation/hpatch-metrics.json"
+if bash "$benchmark_root/report.sh" "$inconsistent_ctp_observation" >/dev/null 2>&1; then
+	printf 'CTP report accepted CTP/2 observation totals inconsistent with the session aggregate\n' >&2
+	exit 1
+fi
+
 missing_response_grader="$fixture/missing-response-grader"
 cp -a "$ctp" "$missing_response_grader"
 jq -c 'if .arm == "native" then .graders |= map(select(.name != "decoded-final-response")) else . end' \
@@ -170,7 +190,9 @@ missing_required_output="$fixture/missing-required-output"
 cp -a "$ctp" "$missing_required_output"
 jq '
 	.ctp.output.compact_tokens = .ctp.output.native_tokens |
-	.sessions[0].ctp.output.compact_tokens = .sessions[0].ctp.output.native_tokens
+	.sessions[0].ctp.output.compact_tokens = .sessions[0].ctp.output.native_tokens |
+	.sessions[0].ctp.output_observations[0].compact_tokens =
+		.sessions[0].ctp.output_observations[0].native_tokens
 ' "$ctp/hpatch-metrics.json" >"$missing_required_output/hpatch-metrics.json"
 if bash "$benchmark_root/report.sh" "$missing_required_output" >/dev/null 2>&1; then
 	printf 'CTP report accepted missing task-required output compression\n' >&2

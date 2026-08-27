@@ -59,7 +59,7 @@ if ! jq -se '
 			.arm == "native" and .router_mode == "hpatch" and .model_protocol == "native"
 		)) | length) == 1 and
 		(map(select(
-			.arm == "ctp" and .router_mode == "hpatch" and .model_protocol == "ctp1"
+			.arm == "ctp" and .router_mode == "hpatch" and .model_protocol == "ctp2"
 		)) | length) == 1 and
 		([.[] | select(.arm == "native") | .base_instructions.sha256][0] ==
 		 [.[] | select(.arm == "ctp") | .base_instructions.sha256][0]) and
@@ -88,6 +88,27 @@ done
 
 if ! jq -se --slurpfile native_router "$native_router_metrics" \
 	--slurpfile active_router "$active_router_metrics" '
+	def nonnegative_number: type == "number" and . >= 0;
+	def valid_representation:
+		([.native_tokens, .compact_tokens, .native_bytes, .compact_bytes] |
+		 all(nonnegative_number));
+	def valid_input_observation:
+		valid_representation and
+		.request_sequence > 0 and
+		([.request_sequence, .definitions, .dictionary_bytes, .strings,
+		  .visible_references, .encode_nanoseconds] | all(nonnegative_number)) and
+		(.decision == "active" or .decision == "missing_instruction_carrier") and
+		(if .decision == "missing_instruction_carrier" then
+			.native_tokens == .compact_tokens and .native_bytes == .compact_bytes and
+			.definitions == 0 and .dictionary_bytes == 0 and .strings == 0 and
+			.visible_references == 0
+		else
+			.native_tokens > 0 and .compact_tokens > 0
+		end);
+	def valid_output_observation:
+		valid_representation and .request_sequence > 0 and
+		([.request_sequence, .definitions, .dictionary_bytes, .strings,
+		  .visible_references] | all(nonnegative_number));
 	def router($arm): if $arm == "ctp" then $active_router[0] else $native_router[0] end;
 	def session($run):
 		(router($run.arm).sessions | map(select(.session_id == $run.agent.thread_id))[0]);
@@ -118,14 +139,38 @@ if ! jq -se --slurpfile native_router "$native_router_metrics" \
 		([$session.request_observations[].usage.reasoning_tokens] | add) ==
 			$session.total.reasoning_tokens and
 		(if .arm == "ctp" then
-			$session.ctp.considered_requests == $session.requests.started and
-			($session.ctp.encoded_requests + $session.ctp.missing_carrier +
-			 $session.ctp.no_definitions + $session.ctp.unprofitable) ==
+			($session.ctp.input_observations // []) as $ctp_inputs |
+			($session.ctp.output_observations // []) as $ctp_outputs |
+			([$ctp_inputs[] | select(.decision == "active")]) as $active_inputs |
+			$session.ctp.considered_requests <= $session.requests.started and
+			($session.ctp.active_requests + $session.ctp.missing_carrier) ==
 				$session.ctp.considered_requests and
+			$session.ctp.codec.encode_operations == $session.ctp.considered_requests and
 			$session.ctp.input_observations_dropped == 0 and
 			$session.ctp.output_observations_dropped == 0 and
-			($session.ctp.input_observations | length) == $session.ctp.considered_requests and
-			($session.ctp.output_observations | length) == $session.ctp.assistant_texts
+			($ctp_inputs | length) == $session.ctp.considered_requests and
+			($ctp_outputs | length) == $session.ctp.assistant_texts and
+			all($ctp_inputs[]; valid_input_observation) and
+			all($ctp_outputs[]; valid_output_observation) and
+			([$ctp_inputs[] | select(.decision == "active")] | length) == $session.ctp.active_requests and
+			([$ctp_inputs[] | select(.decision == "missing_instruction_carrier")] | length) == $session.ctp.missing_carrier and
+			([$active_inputs[].native_tokens] | add // 0) == $session.ctp.input.native_tokens and
+			([$active_inputs[].compact_tokens] | add // 0) == $session.ctp.input.compact_tokens and
+			([$active_inputs[].native_bytes] | add // 0) == $session.ctp.input_bytes.native_bytes and
+			([$active_inputs[].compact_bytes] | add // 0) == $session.ctp.input_bytes.compact_bytes and
+			([$active_inputs[].definitions] | add // 0) == $session.ctp.request_dictionary.definitions and
+			([$active_inputs[].dictionary_bytes] | add // 0) == $session.ctp.request_dictionary.bytes and
+			([$active_inputs[].strings] | add // 0) == $session.ctp.request_strings and
+			([$active_inputs[].visible_references] | add // 0) == $session.ctp.request_visible_references and
+			([$ctp_inputs[].encode_nanoseconds] | add // 0) == $session.ctp.codec.encode_nanoseconds and
+			([$ctp_outputs[].native_tokens] | add // 0) == $session.ctp.output.native_tokens and
+			([$ctp_outputs[].compact_tokens] | add // 0) == $session.ctp.output.compact_tokens and
+			([$ctp_outputs[].native_bytes] | add // 0) == $session.ctp.output_bytes.native_bytes and
+			([$ctp_outputs[].compact_bytes] | add // 0) == $session.ctp.output_bytes.compact_bytes and
+			([$ctp_outputs[].definitions] | add // 0) == $session.ctp.response_dictionary.definitions and
+			([$ctp_outputs[].dictionary_bytes] | add // 0) == $session.ctp.response_dictionary.bytes and
+			([$ctp_outputs[].strings] | add // 0) == $session.ctp.response_strings and
+			([$ctp_outputs[].visible_references] | add // 0) == $session.ctp.response_visible_references
 		else
 			$session.ctp.considered_requests == 0 and $session.ctp.assistant_texts == 0
 		end)
@@ -136,8 +181,9 @@ if ! jq -se --slurpfile native_router "$native_router_metrics" \
 fi
 
 if ! jq -e '
-	([.ctp.considered_requests, .ctp.encoded_requests, .ctp.missing_carrier,
-	  .ctp.no_definitions, .ctp.unprofitable, .ctp.assistant_texts,
+	([.ctp.considered_requests, .ctp.active_requests, .ctp.missing_carrier,
+	  .ctp.request_strings, .ctp.request_visible_references,
+	  .ctp.assistant_texts, .ctp.response_strings, .ctp.response_visible_references,
 	  .ctp.input.native_tokens, .ctp.input.compact_tokens,
 	  .ctp.output.native_tokens, .ctp.output.compact_tokens,
 	  .ctp.input_bytes.native_bytes, .ctp.input_bytes.compact_bytes,
@@ -147,14 +193,14 @@ if ! jq -e '
 	  .ctp.codec.encode_operations, .ctp.codec.encode_nanoseconds,
 	  .ctp.codec.decode_operations, .ctp.codec.decode_nanoseconds,
 	  .ctp.codec.decode_failures] | all(type == "number" and . >= 0)) and
-	.ctp.considered_requests == .requests.started and
-	(.ctp.encoded_requests + .ctp.missing_carrier + .ctp.no_definitions + .ctp.unprofitable) ==
+	.ctp.considered_requests <= .requests.started and
+	(.ctp.active_requests + .ctp.missing_carrier) ==
 		.ctp.considered_requests and
 	.ctp.codec.encode_operations == .ctp.considered_requests and
-	(if .ctp.encoded_requests == 0 then
+	(if .ctp.active_requests == 0 then
 		.ctp.input.native_tokens == 0 and .ctp.input.compact_tokens == 0
 	else
-		.ctp.input.native_tokens > .ctp.input.compact_tokens
+		.ctp.input.native_tokens > 0 and .ctp.input.compact_tokens > 0
 	end)
 ' "$active_router_metrics" >/dev/null; then
 	printf 'report-ctp.sh: aggregate CTP evidence is incomplete or inconsistent: %s\n' \
@@ -240,7 +286,7 @@ commit=${commit%-*}
 
 compression_failures=()
 if [[ $require_input_compression == true ]] && ! jq -e '
-	.ctp.encoded_requests > 0 and .ctp.input.native_tokens > .ctp.input.compact_tokens
+	.ctp.active_requests > 0 and .ctp.input.native_tokens > .ctp.input.compact_tokens
 ' "$active_router_metrics" >/dev/null; then
 	compression_failures+=(input)
 fi
@@ -255,11 +301,11 @@ if ((${#compression_failures[@]} == 2)); then
 fi
 
 {
-	printf '# Native versus CTP-active benchmark report: `%s`\n\n' "$commit"
+	printf '# Native versus CTP/2-active benchmark report: `%s`\n\n' "$commit"
 	printf 'Task: `%s`  \n' "$task_id"
-	printf 'Configuration: `%s`, %s reasoning, %s fresh repetition(s). Each repetition ran native Hpatch and CTP-active Hpatch from independent copies of the same task base. Order rotates across repetitions.\n\n' \
+	printf 'Configuration: `%s`, %s reasoning, %s fresh repetition(s). Each repetition ran native Hpatch and CTP/2-active Hpatch from independent copies of the same task base. Order rotates across repetitions.\n\n' \
 		"$model" "$reasoning_effort" "$repetitions"
-	printf 'Both arms receive the same pre-router instructions (`%s`). The native router injects CTP-free central guidance; the CTP-active router injects CTP guidance and enables CTP/1.\n\n' \
+	printf 'Both arms receive the same pre-router instructions (`%s`). The native router injects CTP-free central guidance; the active router injects CTP/2 guidance and enables CTP/2.\n\n' \
 		"$instruction_sha"
 
 	printf '## Outcome\n\n'
@@ -294,7 +340,7 @@ fi
 	printf '\n\nThe classification is correctness-first Pareto dominance over total wall time, provider input, provider output, and model requests. A tradeoff is reported as mixed.\n\n'
 
 	printf '## Model performance\n\n'
-	printf '| Measure | Native | CTP-active | Active - native |\n'
+	printf '| Measure | Native | CTP/2-active | Active - native |\n'
 	printf '|---|---:|---:|---:|\n'
 	jq -r '
 		def delta($before; $after): $after - $before;
@@ -317,16 +363,14 @@ fi
 	' "$stats"
 	printf '\nBoth arms are graded against the same exact decoded final response. Tool payloads and the final active response are measured after router restoration.\n\n'
 
-	printf '## CTP performance\n\n'
-	jq -r '"Admitted CTP representations: **\(.ctp.encoded_requests)/\(.ctp.considered_requests)** requests. Assistant text observations: **\(.ctp.assistant_texts)**."' "$active_router_metrics"
-	printf '\n\n| Admission decision | Requests |\n'
+	printf '## CTP/2 performance\n\n'
+	jq -r '"Active CTP/2 representations: **\(.ctp.active_requests)/\(.ctp.considered_requests)** requests. Assistant text observations: **\(.ctp.assistant_texts)**."' "$active_router_metrics"
+	printf '\n\n| Activation decision | Requests |\n'
 	printf '|---|---:|\n'
 	jq -r '
 		.ctp | [
-			["Admitted", .encoded_requests],
-			["Missing instruction carrier", .missing_carrier],
-			["No positive definition", .no_definitions],
-			["Stable admission projection not smaller", .unprofitable]
+			["Active", .active_requests],
+			["Missing instruction carrier", .missing_carrier]
 		][] | "| " + (map(tostring) | join(" | ")) + " |"
 	' "$active_router_metrics"
 	printf '\n| Direction | Native tokens | Compact tokens | Token saving | Native bytes | Compact bytes | Byte saving |\n'
@@ -351,8 +395,12 @@ fi
 	printf '|---|---:|\n'
 	jq -r '
 		.ctp as $ctp | [
+			["Request encoded strings", $ctp.request_strings],
+			["Request visible-line references", $ctp.request_visible_references],
 			["Request dictionary definitions", $ctp.request_dictionary.definitions],
 			["Request dictionary bytes", $ctp.request_dictionary.bytes],
+			["Response encoded strings", $ctp.response_strings],
+			["Response visible-line references", $ctp.response_visible_references],
 			["Response dictionary definitions", $ctp.response_dictionary.definitions],
 			["Response dictionary bytes", $ctp.response_dictionary.bytes],
 			["Encode operations", $ctp.codec.encode_operations],
@@ -364,8 +412,8 @@ fi
 	' "$active_router_metrics"
 
 	printf '\n### Active request representations\n\n'
-	printf '| Repetition | Request | Admission | Native tokens | Compact tokens | Native bytes | Compact bytes | Definitions | Dictionary bytes | Encode ms |\n'
-	printf '|---:|---:|---|---:|---:|---:|---:|---:|---:|---:|\n'
+	printf '| Repetition | Request | Activation | Native tokens | Compact tokens | Native bytes | Compact bytes | Strings | Definitions | Dictionary bytes | Visible references | Encode ms |\n'
+	printf '|---:|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n'
 	jq -r '
 		[.[] | select(.arm == "ctp")] | sort_by(.repetition)[] as $run |
 		($run.ctp.input_observations | sort_by(.request_sequence) | to_entries[]) as $entry |
@@ -373,14 +421,15 @@ fi
 		[$run.repetition, ($entry.key + 1), $observation.decision,
 		 $observation.native_tokens, $observation.compact_tokens,
 		 $observation.native_bytes, $observation.compact_bytes,
-		 $observation.definitions, $observation.dictionary_bytes,
+		 $observation.strings, $observation.definitions, $observation.dictionary_bytes,
+		 $observation.visible_references,
 		 (($observation.encode_nanoseconds / 1000000 * 1000 | round) / 1000)] |
 		"| " + (map(tostring) | join(" | ")) + " |"
 	' "$attempts"
 
 	printf '\n### Active assistant-output representations\n\n'
-	printf '| Repetition | Output | Native tokens | Compact tokens | Native bytes | Compact bytes | Definitions | Dictionary bytes |\n'
-	printf '|---:|---:|---:|---:|---:|---:|---:|---:|\n'
+	printf '| Repetition | Output | Native tokens | Compact tokens | Native bytes | Compact bytes | Strings | Definitions | Dictionary bytes | Visible references |\n'
+	printf '|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n'
 	jq -r '
 		[.[] | select(.arm == "ctp")] | sort_by(.repetition)[] as $run |
 		($run.ctp.output_observations | sort_by(.request_sequence) | to_entries[]) as $entry |
@@ -388,7 +437,8 @@ fi
 		[$run.repetition, ($entry.key + 1),
 		 $observation.native_tokens, $observation.compact_tokens,
 		 $observation.native_bytes, $observation.compact_bytes,
-		 $observation.definitions, $observation.dictionary_bytes] |
+		 $observation.strings, $observation.definitions, $observation.dictionary_bytes,
+		 $observation.visible_references] |
 		"| " + (map(tostring) | join(" | ")) + " |"
 	' "$attempts"
 	printf '\nThese are same-request protocol measurements. They do not substitute for provider usage or model behavior.\n\n'
@@ -402,7 +452,7 @@ fi
 	fi
 
 	printf '## Operational provider usage\n\n'
-	printf '| Measure | Native | CTP-active | Active - native |\n'
+	printf '| Measure | Native | CTP/2-active | Active - native |\n'
 	printf '|---|---:|---:|---:|\n'
 	jq -r '
 		def delta($before; $after): $after - $before;
@@ -455,7 +505,7 @@ fi
 	' "$attempts"
 
 	printf '\n## Failure ownership\n\n'
-	printf '| Evidence | Native | CTP-active | Owner represented by the counter |\n'
+	printf '| Evidence | Native | CTP/2-active | Owner represented by the counter |\n'
 	printf '|---|---:|---:|---|\n'
 	jq -r '
 		.native as $native | .ctp as $active | [
@@ -464,7 +514,7 @@ fi
 			["Router request failures", $native.router_failures, $active.router_failures, "Router/provider boundary"],
 			["Router request timeouts", $native.router_timeouts, $active.router_timeouts, "Router/provider boundary"],
 			["Hpatch rejected calls", $native.hpatch_rejections, $active.hpatch_rejections, "Model/edit-engine interaction"],
-			["CTP decode failures", $native.ctp_decode_failures, $active.ctp_decode_failures, "CTP response decoder"]
+			["CTP/2 decode failures", $native.ctp_decode_failures, $active.ctp_decode_failures, "CTP/2 response decoder"]
 		][] | "| " + (map(tostring) | join(" | ")) + " |"
 	' "$stats"
 	printf '\nCounters remain part of the operational outcome. Ownership labels prevent an infrastructure retry from being silently attributed to model reasoning or compression.\n\n'

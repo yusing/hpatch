@@ -78,19 +78,6 @@ func TestMetricsSnapshotUsesCachedSessionTitle(t *testing.T) {
 
 func TestMetricsStoreSnapshotAndAPI(t *testing.T) {
 	store := newMetricsStore("")
-	store.recordCTPAdmission("", 0, ctpAdmissionAdmitted,
-		ctpRepresentationMetrics{NativeTokens: 120, CompactTokens: 80, NativeBytes: 240, CompactBytes: 160},
-		2, 40, 10*time.Nanosecond)
-	store.recordCTPAdmission("", 0, ctpAdmissionAdmitted,
-		ctpRepresentationMetrics{NativeTokens: 60, CompactTokens: 50, NativeBytes: 120, CompactBytes: 100},
-		1, 20, 10*time.Nanosecond)
-	store.recordCTPAdmission("", 0, ctpAdmissionMissingCarrier, ctpRepresentationMetrics{}, 0, 0, 10*time.Nanosecond)
-	store.recordCTPAdmission("", 0, ctpAdmissionNoDefinitions, ctpRepresentationMetrics{}, 0, 0, 10*time.Nanosecond)
-	store.recordCTPAdmission("", 0, ctpAdmissionUnprofitable, ctpRepresentationMetrics{}, 0, 0, 10*time.Nanosecond)
-	store.recordCTPOutput("", 0,
-		ctpRepresentationMetrics{NativeTokens: 30, CompactTokens: 18, NativeBytes: 60, CompactBytes: 36},
-		1, 20)
-	store.recordCTPDecode("", 7*time.Nanosecond, false)
 	finishMetricsTestRequest(store, "session-b", "model-b", tokenCounts{InputTokens: 4, UncachedInputTokens: 3, OutputTokens: 2, ReasoningTokens: 1})
 	finishMetricsTestRequest(store, "session-a", "model-a", tokenCounts{InputTokens: 10, UncachedInputTokens: 8, OutputTokens: 6, ReasoningTokens: 2})
 	finishMetricsTestRequest(store, "", "model-a", tokenCounts{InputTokens: 1})
@@ -111,27 +98,6 @@ func TestMetricsStoreSnapshotAndAPI(t *testing.T) {
 	if snapshot.ByModel["model-a"].InputTokens != 11 || snapshot.ByModel["model-b"].OutputTokens != 2 {
 		t.Fatalf("breakdowns = %#v", snapshot)
 	}
-	wantCTP := ctpCompressionMetrics{
-		ConsideredRequests: 5,
-		EncodedRequests:    2,
-		MissingCarrier:     1,
-		NoDefinitions:      1,
-		Unprofitable:       1,
-		AssistantTexts:     1,
-		Input:              ctpCompressionTokens{NativeTokens: 180, CompactTokens: 130},
-		Output:             ctpCompressionTokens{NativeTokens: 30, CompactTokens: 18},
-		InputBytes:         ctpCompressionBytes{NativeBytes: 360, CompactBytes: 260},
-		OutputBytes:        ctpCompressionBytes{NativeBytes: 60, CompactBytes: 36},
-		RequestDictionary:  ctpDictionaryMetrics{Definitions: 3, Bytes: 60},
-		ResponseDictionary: ctpDictionaryMetrics{Definitions: 1, Bytes: 20},
-		Codec: ctpCodecMetrics{
-			EncodeOperations: 5, EncodeNanoseconds: 50,
-			DecodeOperations: 1, DecodeNanoseconds: 7,
-		},
-	}
-	if snapshot.CTP != wantCTP {
-		t.Fatalf("CTP metrics = %#v, want %#v", snapshot.CTP, wantCTP)
-	}
 	if snapshot.GainError != "" || len(snapshot.Gain.Commands) == 0 || snapshot.Gain.SuccessfulReduction != "0.0" {
 		t.Fatalf("empty gain = %#v error %q", snapshot.Gain, snapshot.GainError)
 	}
@@ -151,9 +117,6 @@ func TestMetricsStoreSnapshotAndAPI(t *testing.T) {
 	if decoded.Requests != snapshot.Requests {
 		t.Fatalf("decoded lifecycle = %#v, want %#v", decoded.Requests, snapshot.Requests)
 	}
-	if decoded.CTP != wantCTP {
-		t.Fatalf("decoded CTP metrics = %#v, want %#v", decoded.CTP, wantCTP)
-	}
 	if len(decoded.Sessions) != len(snapshot.Sessions) || decoded.Sessions[0].Requests != snapshot.Sessions[0].Requests {
 		t.Fatalf("decoded session lifecycle = %#v, want %#v", decoded.Sessions, snapshot.Sessions)
 	}
@@ -162,7 +125,7 @@ func TestMetricsStoreSnapshotAndAPI(t *testing.T) {
 	}
 }
 
-func TestMetricsSessionRetainsRequestAndCTPObservations(t *testing.T) {
+func TestMetricsSessionRetainsRequestAndCTP2Observations(t *testing.T) {
 	store := newMetricsStore("")
 	handle := store.beginRequest("session", "model")
 	sessionID, requestSequence := handle.metricIdentity()
@@ -172,8 +135,10 @@ func TestMetricsSessionRetainsRequestAndCTPObservations(t *testing.T) {
 	output := ctpRepresentationMetrics{
 		NativeTokens: 20, CompactTokens: 12, NativeBytes: 80, CompactBytes: 48,
 	}
-	store.recordCTPAdmission(sessionID, requestSequence, ctpAdmissionAdmitted, input, 2, 40, 11*time.Nanosecond)
-	store.recordCTPOutput(sessionID, requestSequence, output, 1, 20)
+	inputDetails := ctp2RepresentationMetrics{Definitions: 2, DictionaryBytes: 40, Strings: 3, VisibleReferences: 1}
+	outputDetails := ctp2RepresentationMetrics{Definitions: 1, DictionaryBytes: 20, Strings: 1, VisibleReferences: 2}
+	store.recordCTPRequest(sessionID, requestSequence, ctp2RequestActive, input, inputDetails, 11*time.Nanosecond)
+	store.recordCTPOutput(sessionID, requestSequence, output, outputDetails)
 	store.recordCTPDecode(sessionID, 7*time.Nanosecond, true)
 	handle.finish(requestObservation{
 		outcome: requestOutcomeCompleted, totalDuration: 5 * time.Millisecond,
@@ -191,17 +156,21 @@ func TestMetricsSessionRetainsRequestAndCTPObservations(t *testing.T) {
 		session.RequestObservations[0].Usage.InputTokens != 9 {
 		t.Fatalf("request observations = %#v", session.RequestObservations)
 	}
-	if len(session.CTP.InputObservations) != 1 || session.CTP.InputObservations[0].Decision != "admitted" ||
-		session.CTP.InputObservations[0].ctpRepresentationMetrics != input {
+	if len(session.CTP.InputObservations) != 1 || session.CTP.InputObservations[0].Decision != "active" ||
+		session.CTP.InputObservations[0].ctpRepresentationMetrics != input ||
+		session.CTP.InputObservations[0].VisibleReferences != 1 {
 		t.Fatalf("CTP input observations = %#v", session.CTP.InputObservations)
 	}
 	if len(session.CTP.OutputObservations) != 1 ||
-		session.CTP.OutputObservations[0].ctpRepresentationMetrics != output {
+		session.CTP.OutputObservations[0].ctpRepresentationMetrics != output ||
+		session.CTP.OutputObservations[0].VisibleReferences != 2 {
 		t.Fatalf("CTP output observations = %#v", session.CTP.OutputObservations)
 	}
 	if session.CTP.Codec.DecodeOperations != 1 || session.CTP.Codec.DecodeFailures != 1 ||
 		session.CTP.RequestDictionary.Definitions != 2 ||
-		session.CTP.ResponseDictionary.Definitions != 1 {
+		session.CTP.ResponseDictionary.Definitions != 1 ||
+		session.CTP.RequestStrings != 3 || session.CTP.ResponseStrings != 1 ||
+		session.CTP.RequestVisibleReferences != 1 || session.CTP.ResponseVisibleReferences != 2 {
 		t.Fatalf("session CTP metrics = %#v", session.CTP)
 	}
 }
@@ -209,9 +178,9 @@ func TestMetricsSessionRetainsRequestAndCTPObservations(t *testing.T) {
 func TestMetricsSessionObservationRetentionIsBounded(t *testing.T) {
 	store := newMetricsStore("")
 	for sequence := uint64(1); sequence <= maxSessionCTPObservations+1; sequence++ {
-		store.recordCTPAdmission("session", sequence, ctpAdmissionMissingCarrier,
-			ctpRepresentationMetrics{}, 0, 0, 0)
-		store.recordCTPOutput("session", sequence, ctpRepresentationMetrics{}, 0, 0)
+		store.recordCTPRequest("session", sequence, ctp2RequestMissingCarrier,
+			ctpRepresentationMetrics{}, ctp2RepresentationMetrics{}, 0)
+		store.recordCTPOutput("session", sequence, ctpRepresentationMetrics{}, ctp2RepresentationMetrics{})
 	}
 	var firstRetainedRequestSequence, lastRequestSequence uint64
 	for index := range maxSessionRequestObservations + 1 {
@@ -266,7 +235,7 @@ func TestMetricsAPIStreamsInitialAndChangedSnapshots(t *testing.T) {
 		t.Fatal("coalesced current-state update is missing")
 	}
 	store.recordCTPOutput("", 0,
-		ctpRepresentationMetrics{NativeTokens: 10, CompactTokens: 6}, 0, 0)
+		ctpRepresentationMetrics{NativeTokens: 10, CompactTokens: 6}, ctp2RepresentationMetrics{})
 	select {
 	case <-updates:
 	default:

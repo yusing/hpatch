@@ -198,13 +198,14 @@ func TestExecuteRequestDoesNotRequireWorkspaceMetadata(t *testing.T) {
 	}
 }
 
-func TestExecuteRequestForwardsCompactionWithoutHPatchRewrite(t *testing.T) {
+func TestExecuteRequestForwardsCompactionWithoutRouterRewrite(t *testing.T) {
+	repeated := strings.Repeat("exact compaction text with a reserved !V prefix and repeated content; ", 20)
 	parsed, err := parseResponsesRequest(mustTestJSON(t, map[string]any{
 		"model": "gpt-test",
 		"input": []any{
 			map[string]any{"type": "additional_tools", "role": "developer", "tools": []any{}},
 			map[string]any{"type": "message", "role": "developer", "content": "instructions"},
-			map[string]any{"type": "message", "role": "user", "content": "summarize the conversation"},
+			map[string]any{"type": "message", "role": "user", "content": repeated},
 		},
 		"tool_choice":         "auto",
 		"parallel_tool_calls": false,
@@ -218,8 +219,12 @@ func TestExecuteRequestForwardsCompactionWithoutHPatchRewrite(t *testing.T) {
 		t.Fatal(err)
 	}
 	completed := mustTestJSON(t, map[string]any{
-		"type":     "response.completed",
-		"response": map[string]any{"status": "completed", "output": []any{}},
+		"type": "response.completed",
+		"response": map[string]any{"status": "completed", "output": []any{
+			map[string]any{"type": "message", "role": "assistant", "content": []any{
+				map[string]any{"type": "output_text", "text": "!ctp2 R\n@{0}"},
+			}},
+		}},
 	})
 	responseBody := "event: response.completed\ndata: " + string(completed) + "\n\n"
 	response := serverHTTPResponse(responseBody)
@@ -229,8 +234,10 @@ func TestExecuteRequestForwardsCompactionWithoutHPatchRewrite(t *testing.T) {
 		t.Fatal("compaction reached the hpatch translator")
 		return nil, nil
 	}))
+	codec := mustCTP2Codec(t)
+	metrics := newMetricsStore("")
 	var output bytes.Buffer
-	err = executeRequest(t.Context(), t.Context(), parsed, serverCompactionMetadataHeaders(t), "session", provider, &output, newDiagnostics(io.Discard), time.Now, proxy, nil, newMetricsStore(""))
+	err = executeRequest(t.Context(), t.Context(), parsed, serverCompactionMetadataHeaders(t), "session", provider, &output, newDiagnostics(io.Discard), time.Now, proxy, codec, metrics)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -242,6 +249,9 @@ func TestExecuteRequestForwardsCompactionWithoutHPatchRewrite(t *testing.T) {
 	}
 	if output.String() != responseBody {
 		t.Fatalf("visible response = %s, want %s", output.String(), responseBody)
+	}
+	if snapshot := metrics.snapshot(); snapshot.CTP.ConsideredRequests != 0 {
+		t.Fatalf("compaction CTP requests = %d, want 0", snapshot.CTP.ConsideredRequests)
 	}
 }
 
@@ -1756,14 +1766,21 @@ func TestRunRejectsUnknownModeBeforeListening(t *testing.T) {
 
 func TestRunRejectsUnknownModelProtocolBeforeListening(t *testing.T) {
 	err := Run(t.Context(), []string{"--model-protocol", "unknown"}, io.Discard)
-	if err == nil || !strings.Contains(err.Error(), "--model-protocol must be native or ctp1") {
+	if err == nil || !strings.Contains(err.Error(), "--model-protocol must be native or ctp2") {
 		t.Fatalf("Run error = %v", err)
 	}
 }
 
-func TestRunRejectsCTPWithPassthroughBeforeListening(t *testing.T) {
-	err := Run(t.Context(), []string{"--mode", "passthrough", "--model-protocol", "ctp1"}, io.Discard)
-	if err == nil || !strings.Contains(err.Error(), "--model-protocol ctp1 requires --mode hpatch") {
+func TestRunRejectsCTP1BeforeListening(t *testing.T) {
+	err := Run(t.Context(), []string{"--model-protocol", "ctp1"}, io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "--model-protocol must be native or ctp2") {
+		t.Fatalf("Run error = %v", err)
+	}
+}
+
+func TestRunRejectsCTP2WithPassthroughBeforeListening(t *testing.T) {
+	err := Run(t.Context(), []string{"--mode", "passthrough", "--model-protocol", "ctp2"}, io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "--model-protocol ctp2 requires --mode hpatch") {
 		t.Fatalf("Run error = %v", err)
 	}
 }

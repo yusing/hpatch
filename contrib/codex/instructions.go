@@ -21,11 +21,11 @@ func Instructions() string {
 	return instructions
 }
 
-// NativeInstructions returns the central guidance without the CTP section. Deriving it from the
+// NativeInstructions returns the central guidance without the CTP/2 section. Deriving it from the
 // active source keeps every non-CTP workflow byte-identical across the two model protocols.
 func NativeInstructions() string {
 	const (
-		ctpHeading         = "## CTP/1 transport\n"
+		ctpHeading         = "## CTP/2 transport\n"
 		fileEditingHeading = "## File editing\n"
 	)
 	start := strings.Index(instructions, ctpHeading)

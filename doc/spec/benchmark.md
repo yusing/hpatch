@@ -20,8 +20,8 @@ timeout, authentication mount, and disposable-container setup.
 CTP-only mode runs configured repetitions of two fresh Hpatch attempts: `native` and `ctp`. Each
 repetition MUST use independent copies of the same task base and MUST run its attempts
 sequentially, rotating their order across repetitions. Repetitions MAY run concurrently. The native
-arm uses Hpatch guidance with the complete CTP section removed and a native router. The ctp arm uses
-the complete CTP guidance and an Hpatch router with `--model-protocol ctp1`. Issue
+arm uses Hpatch guidance with the complete CTP/2 section removed and a native router. The ctp arm uses
+the complete CTP/2 guidance and an Hpatch router with `--model-protocol ctp2`. Issue
 reporting MUST be disabled in this mode. Every task used by this mode MUST declare one exact decoded
 final response, and both arms MUST be graded against it in addition to the hidden executable
 grader. No historical result is imported.
@@ -66,7 +66,7 @@ referenced by each result.
 
 For CTP-only mode both arms MUST receive the same pre-router instructions and retain the same
 instruction digest. The native-protocol Hpatch router MUST inject the central guidance without its
-`## CTP/1 transport` section; the separate CTP/1 Hpatch router MUST inject the complete source.
+`## CTP/2 transport` section; the separate CTP/2 Hpatch router MUST inject the complete source.
 Both agent environments MUST share the router-owned shell runtime with their assigned router and
 remain isolated from the other router and external networks.
 
@@ -109,7 +109,7 @@ Paired mode also records fresh control router metrics; Hpatch-only mode
 copies the matching baseline control metrics. A gain of zero is not an editing-performance
 result when no treatment request reached hpatch.
 In CTP-only mode both metric files describe fresh Hpatch routers. Control metrics contain the
-native sessions from the native-protocol router; treatment metrics contain active CTP/1
+native sessions from the native-protocol router; treatment metrics contain active CTP/2
 sessions. The report MUST join each record to its exact router session instead of using the
 multi-session router aggregate as one arm.
 Treatment runs expose `report_issue` by default and MUST accept an explicit boolean environment
@@ -182,7 +182,7 @@ attribution MUST show the derived values as unavailable rather than fabricate th
 partial attribution for a newly measured session MUST fail report generation.
 
 For CTP-only results, the summary MUST verify exactly one fresh native and active record per
-repetition, unique order values, the native protocol for native, CTP/1 for active, and identical
+repetition, unique order values, the native protocol for native, CTP/2 for active, and identical
 pre-router instruction digests. Every arm MUST contain a
 hidden required grader and the exact decoded-response grader. Imported-baseline provenance is not a
 valid substitute for any arm.
@@ -194,12 +194,13 @@ with their session aggregate. It MUST separate three evidence layers:
 1. Model performance reports hidden correctness, exact decoded-response correctness, overall task
    acceptance, median wall time, model requests, agent turns, reasoning tokens, and completed shell
    and file-change items for both arms. It separately attributes model-turn, Codex executor process-creation,
-   router failure and timeout, Hpatch rejection, and CTP decode-failure counters without removing any
+   router failure and timeout, Hpatch rejection, and CTP/2 decode-failure counters without removing any
    of them from the operational outcome.
-2. CTP performance reports every active admission decision and each active request's native and
-   compact tokens and UTF-8 bytes, request dictionary definitions and bytes, and encode time. It also
-   reports each logical assistant text's native and compact tokens and bytes and response dictionary
-   size, plus aggregate encode/decode operations, time, and decode failures. Input covers complete
+2. CTP/2 performance reports every request activation and each active request's native and compact
+   tokens and UTF-8 bytes, encoded strings, visible-line references, content-local dictionary
+   definitions and bytes, and encode time. It also reports each logical assistant text's native and
+   compact tokens and bytes with the same framing counts, plus aggregate encode/decode operations,
+   time, and decode failures. Input covers complete
    post-Hpatch requests; output excludes tools and uses terminal `response.output_text.done` events for
    streaming responses.
 3. Operational provider usage reports total, cached, and uncached input, output and reasoning output,
@@ -209,16 +210,15 @@ with their session aggregate. It MUST separate three evidence layers:
    dominance only after correctness, and MUST label tradeoffs as mixed. Token components are a cost
    basis; the report MUST NOT invent dollar pricing without an authoritative configured price source.
 
-Missing or inconsistent CTP counters MUST fail the report. The report MUST account for every
-considered CTP request as admitted, missing an instruction carrier, having no positive definition, or
-having a complete representation that was not smaller. When no request admits CTP, ratios are
-unavailable rather than zero or baseline-derived. The summary MUST use local request ordinals and MUST
+Missing or inconsistent CTP/2 counters MUST fail the report. The report MUST account for every
+considered request as active or missing an instruction carrier. When no request activates CTP/2,
+ratios are unavailable rather than zero or baseline-derived. The summary MUST use local request ordinals and MUST
 NOT emit session, thread, tool-call, correlation, or global router request identifiers. It MUST not
 present stock-control or Hpatch-editing findings for this CTP comparison.
 A task manifest MAY set the boolean fields `ctp.require_input_compression` and
 `ctp.require_output_compression`. The runner MUST record those requirements in
 `benchmark-config.json`. An enabled input requirement passes only when at least one request is
-admitted and its compact token estimate is smaller than its native estimate. An enabled output
+active and the aggregate compact token estimate is smaller than its native estimate. An enabled output
 requirement passes only when at least one assistant text is observed and the provider-emitted compact
 text is smaller than the restored native text. The report MUST retain and label a failed requirement,
 and the benchmark MUST exit unsuccessfully after preserving its evidence.
@@ -254,8 +254,8 @@ Acceptance:
 9. Isolation qualification fails the run before model execution unless each agent environment can reach
    only their assigned router, compile-time module resolution succeeds with network-backed Go
    resolution disabled, and every measured Codex invocation disables `apps`.
-10. CTP-only mode runs fresh native and active Hpatch attempts; native omits only CTP guidance,
-    active enables CTP/1, and both arms satisfy the same decoded final response contract.
+10. CTP-only mode runs fresh native and active Hpatch attempts; native omits only CTP/2 guidance,
+    active enables CTP/2, and both arms satisfy the same decoded final response contract.
 11. A task that opts into CTP input or assistant-output compression fails unless every required
     direction has observed text and a strictly smaller compact representation.
 12. Each CTP attempt joins to complete per-request provider and CTP observations, and the report
