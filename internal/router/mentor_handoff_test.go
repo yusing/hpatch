@@ -226,12 +226,11 @@ func TestExecuteRequestMentorHandoffPreservesHistoryAndRestoresRequestedModel(t 
 	}}
 	mentor := newMentorHandoff()
 	headers := mentorTestHeaders(t, "child")
-	store := newMetricsStore("")
 	for range 4 {
 		request := mentorTestRequest(t, "gpt-5.6-luna")
 		if err := executeRequest(
 			t.Context(), t.Context(), request, headers, "session", provider, io.Discard,
-			newDiagnostics(io.Discard), time.Now, nil, nil, mentor, store,
+			newDiagnostics(io.Discard), time.Now, nil, nil, mentor,
 		); err != nil {
 			t.Fatal(err)
 		}
@@ -252,10 +251,6 @@ func TestExecuteRequestMentorHandoffPreservesHistoryAndRestoresRequestedModel(t 
 			t.Errorf("request %d lost inherited input: %s", index+1, request.fields["input"])
 		}
 	}
-	snapshot := store.snapshot()
-	if snapshot.ByModel[mentorLeaderModel].InputTokens != 30_000 || snapshot.ByModel["gpt-5.6-luna"].InputTokens != 10_000 {
-		t.Fatalf("usage by actual model = %#v", snapshot.ByModel)
-	}
 }
 
 func TestExecuteRequestMentorHandoffCountsFailedResponseInput(t *testing.T) {
@@ -274,7 +269,7 @@ func TestExecuteRequestMentorHandoffCountsFailedResponseInput(t *testing.T) {
 		request := mentorTestRequest(t, "gpt-5.6-luna")
 		if err := executeRequest(
 			t.Context(), t.Context(), request, headers, "session", provider, io.Discard,
-			newDiagnostics(io.Discard), time.Now, nil, nil, mentor, newMetricsStore(""),
+			newDiagnostics(io.Discard), time.Now, nil, nil, mentor,
 		); err != nil {
 			t.Fatal(err)
 		}
@@ -292,7 +287,7 @@ func TestExecuteRequestMentorHandoffCountsFailedResponseInput(t *testing.T) {
 	}
 }
 
-func TestMentorHandoffRejectsInvalidReasoningWithoutSharingMetricsCapacity(t *testing.T) {
+func TestMentorHandoffRejectsInvalidReasoningWithoutSharingSessionCapacity(t *testing.T) {
 	mentor := newMentorHandoff()
 	headers := mentorTestHeaders(t, "child")
 	metadata, valid := decodeCodexTurnMetadata(headers)
@@ -309,6 +304,6 @@ func TestMentorHandoffRejectsInvalidReasoningWithoutSharingMetricsCapacity(t *te
 	request = mentorTestRequest(t, "gpt-5.6-luna")
 	prepared, err := mentor.prepare(headers, metadata, valid, &request)
 	if err != nil || prepared == nil {
-		t.Fatalf("new child at metrics history limit = %#v, %v", prepared, err)
+		t.Fatalf("new child at session history limit = %#v, %v", prepared, err)
 	}
 }

@@ -6,7 +6,6 @@ import {
   errorText,
   createExecutorTool,
   formatHashLine,
-  shellQuoteArgument,
   stripOptionalFinalNewline,
   VERIFIED_ROW_LIMIT_DIAGNOSTIC,
   VerifiedRowOutput,
@@ -384,7 +383,6 @@ function conciseDiagnostic(diagnostic: string): string {
 
 type ComparedOutput = {
   current: string;
-  stock: string;
   incomplete: boolean;
 };
 
@@ -432,7 +430,7 @@ async function runRipgrep(argumentsValue: string[]): Promise<ComparedOutput> {
     seen.add(key);
     const prefix = `${JSON.stringify(path)}:`;
     const row = `${prefix}${formatHashLine(lineNumber, line)}`;
-    return output.append(row, `${prefix}${line}\n`);
+    return output.append(row);
   };
   const takePending = (): Buffer => {
     const raw = pending.length === 1 ? pending[0] : Buffer.concat(pending, pendingBytes);
@@ -476,10 +474,10 @@ async function runRipgrep(argumentsValue: string[]): Promise<ComparedOutput> {
   }
 
   if (output.incomplete) {
-    return {current: output.current, stock: output.stock, incomplete: true};
+    return {current: output.current, incomplete: true};
   }
   if (exitCode === 0 || exitCode === 1) {
-    return {current: output.current, stock: output.stock, incomplete: false};
+    return {current: output.current, incomplete: false};
   }
   const diagnostic = conciseDiagnostic(stderr.trim());
   if (diagnostic !== "") {
@@ -493,7 +491,6 @@ export function createHGrepTool(description: string, grammar: string): Tool<stri
     name: "hgrep",
     description,
     grammar,
-    stockCommand: (argv) => ["rg", ...argv].map(shellQuoteArgument).join(" "),
     argv(input) {
       return splitArguments(input);
     },
@@ -516,7 +513,6 @@ export function createHGrepTool(description: string, grammar: string): Tool<stri
         return {
           stdout: result.current,
           stderr,
-          stock: {stdout: result.stock, stderr, exitCode: result.incomplete ? 1 : 0},
           exitCode: result.incomplete ? 1 : 0,
         };
       } catch (error) {

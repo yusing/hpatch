@@ -364,39 +364,125 @@ func replayCTP2Snapshots(codec *ctp2Codec, snapshots []ctpReplaySnapshot) (ctpRe
 	for _, snapshot := range snapshots {
 		native := snapshot.Fields
 		request := parsedResponsesRequest{fields: snapshot.Fields}
-		_, decision, metrics, _, err := codec.prepareRequest(&request)
+		transform, _, err := codec.prepareRequest(&request)
 		if err != nil {
 			return ctpReplayTotals{}, err
 		}
-		if decision == ctp2RequestMissingCarrier {
+		if transform == nil {
 			totals.MissingCarrierRequest++
 		}
 		totals.Requests++
-		totals.NativeTokens += metrics.Representation.NativeTokens
-		totals.CompactTokens += metrics.Representation.CompactTokens
-		totals.NativeBytes += metrics.Representation.NativeBytes
-		totals.CompactBytes += metrics.Representation.CompactBytes
-		totals.Definitions += metrics.Definitions
-		totals.DictionaryBytes += metrics.DictionaryBytes
-		totals.Strings += metrics.Strings
-		totals.VisibleReferences += metrics.VisibleReferences
+		nativeBody, err := json.Marshal(native)
+		if err != nil {
+			return ctpReplayTotals{}, err
+		}
+		compactBody, err := json.Marshal(request.fields)
+		if err != nil {
+			return ctpReplayTotals{}, err
+		}
+		nativeTokens, err := codec.count(nativeBody)
+		if err != nil {
+			return ctpReplayTotals{}, err
+		}
+		compactTokens, err := codec.count(compactBody)
+		if err != nil {
+			return ctpReplayTotals{}, err
+		}
+		totals.NativeTokens += uint64(nativeTokens)
+		totals.CompactTokens += uint64(compactTokens)
+		totals.NativeBytes += uint64(len(nativeBody))
+		totals.CompactBytes += uint64(len(compactBody))
+		representation := measureCTP2Fields(request.fields)
+		totals.Definitions += representation.Definitions
+		totals.DictionaryBytes += representation.DictionaryBytes
+		totals.Strings += representation.Strings
+		totals.VisibleReferences += representation.VisibleReferences
 
 		nativeProjection := ctpReplayNewContent(previousNative, native, snapshot.ResetInputPrefix)
 		compactProjection := ctpReplayNewContent(previousCompact, request.fields, snapshot.ResetInputPrefix)
-		nativeTokens, err := countCTPReplayFields(codec, nativeProjection)
+		newNativeTokens, err := countCTPReplayFields(codec, nativeProjection)
 		if err != nil {
 			return ctpReplayTotals{}, err
 		}
-		compactTokens, err := countCTPReplayFields(codec, compactProjection)
+		newCompactTokens, err := countCTPReplayFields(codec, compactProjection)
 		if err != nil {
 			return ctpReplayTotals{}, err
 		}
-		totals.NewNativeTokens += uint64(nativeTokens)
-		totals.NewCompactTokens += uint64(compactTokens)
+		totals.NewNativeTokens += uint64(newNativeTokens)
+		totals.NewCompactTokens += uint64(newCompactTokens)
 		previousNative = native
 		previousCompact = request.fields
 	}
 	return totals, nil
+}
+
+type ctp2RepresentationStats struct {
+	Definitions       uint64
+	DictionaryBytes   uint64
+	Strings           uint64
+	VisibleReferences uint64
+}
+
+func measureCTP2Fields(fields map[string]json.RawMessage) ctp2RepresentationStats {
+	var total ctp2RepresentationStats
+	var visit func(any)
+	visit = func(value any) {
+		switch value := value.(type) {
+		case string:
+			measured := measureCTP2String(value)
+			total.Definitions += measured.Definitions
+			total.DictionaryBytes += measured.DictionaryBytes
+			total.Strings += measured.Strings
+			total.VisibleReferences += measured.VisibleReferences
+		case []any:
+			for _, item := range value {
+				visit(item)
+			}
+		case map[string]any:
+			for _, item := range value {
+				visit(item)
+			}
+		}
+	}
+	for _, raw := range fields {
+		var value any
+		if json.Unmarshal(raw, &value) == nil {
+			visit(value)
+		}
+	}
+	return total
+}
+
+func measureCTP2String(value string) ctp2RepresentationStats {
+	var measured ctp2RepresentationStats
+	if strings.HasPrefix(value, ctp2DictionaryTag) {
+		measured.Strings = 1
+		measured.DictionaryBytes = uint64(len(ctp2DictionaryTag))
+		remaining := value[len(ctp2DictionaryTag):]
+		for {
+			line, rest, ok := strings.Cut(remaining, "\n")
+			if !ok {
+				return ctp2RepresentationStats{}
+			}
+			measured.DictionaryBytes += uint64(len(line) + 1)
+			remaining = rest
+			if line == "END" {
+				return measured
+			}
+			measured.Definitions++
+		}
+	}
+	if strings.HasPrefix(value, ctp2VisibleLinesTag) {
+		measured.Strings = 1
+		for line := range strings.Lines(value[len(ctp2VisibleLinesTag):]) {
+			if strings.HasPrefix(line, "=") {
+				measured.VisibleReferences++
+			}
+		}
+	} else if strings.HasPrefix(value, ctp2LiteralTag) {
+		measured.Strings = 1
+	}
+	return measured
 }
 
 func ctpReplayNewContent(previous, current map[string]json.RawMessage, resetInputPrefix bool) map[string]json.RawMessage {

@@ -197,7 +197,7 @@ describe("verified-row output", () => {
   test("uses GPT-5 tokens with one bounded whole-row overshoot", () => {
     const exact = new VerifiedRowOutput();
     const atSoftLimit = contentWithFormattedTokenCount(15_000, (content) => `${content}\n`);
-    expect(exact.append(atSoftLimit, "stock-one\n")).toBe(true);
+    expect(exact.append(atSoftLimit)).toBe(true);
     expect(exact.incomplete).toBe(false);
 
     const overshootContent = contentWithFormattedTokenCount(
@@ -206,18 +206,16 @@ describe("verified-row output", () => {
     );
     const overshootRow = `${overshootContent}\n`;
     expect(countGPT5Tokens(atSoftLimit + overshootRow)).toBe(15_500);
-    expect(exact.append(overshootRow, "stock-two\n")).toBe(true);
+    expect(exact.append(overshootRow)).toBe(true);
     expect(exact.incomplete).toBe(false);
-    expect(exact.append("later\n", "stock-three\n")).toBe(false);
+    expect(exact.append("later\n")).toBe(false);
     expect(exact.incomplete).toBe(true);
     expect(exact.current).toBe(atSoftLimit + overshootRow);
-    expect(exact.stock).toBe("stock-one\nstock-two\n");
 
     const tooLarge = new VerifiedRowOutput();
     const aboveMaximum = contentWithFormattedTokenCount(15_501, (content) => `${content}\n`);
-    expect(tooLarge.append(`${aboveMaximum}\n`, "stock\n")).toBe(false);
+    expect(tooLarge.append(`${aboveMaximum}\n`)).toBe(false);
     expect(tooLarge.current).toBe("");
-    expect(tooLarge.stock).toBe("");
     expect(tooLarge.incomplete).toBe(true);
   });
 });
@@ -285,20 +283,6 @@ describe("hread built-in plugin", () => {
     );
   });
 
-  test("supplies cat and cat-plus-sed stock exec commands", async () => {
-    const tool = createHReadTool("description", "start: TEST");
-    const context = {resolvePath: (path: string) => path};
-    const translate = async (input: string) => tool.translate(await tool.parse(input, context), {
-      exec: (_template, _params, stockCommand) => ({kind: "exec", stockCommand}),
-    });
-
-    expect((await translate("plain.txt")).stockCommand).toBe("cat plain.txt");
-    expect((await translate("plain.txt 2:9")).stockCommand).toBe("cat plain.txt | sed -n '2,9p'");
-    expect((await translate("plain.txt 0:9")).stockCommand).toBe("cat plain.txt | sed -n '1,9p'");
-    expect((await translate("\"path with spaces.txt\" 2:9")).stockCommand).toBe(
-      "cat 'path with spaces.txt' | sed -n '2,9p'",
-    );
-  });
 
   test("reads one whole file or range", async () => {
     const directory = await temporaryDirectory("hread-plugin-");
@@ -315,10 +299,6 @@ describe("hread built-in plugin", () => {
         formatHashLine(2, "beta"),
         formatHashLine(3, "gamma"),
       ].join(""),
-      stock: {
-        stdout: "alpha\nbeta\ngamma\n",
-        exitCode: 0,
-      },
       exitCode: 0,
     });
 
@@ -328,10 +308,6 @@ describe("hread built-in plugin", () => {
         formatHashLine(2, "beta"),
         formatHashLine(3, "gamma"),
       ].join(""),
-      stock: {
-        stdout: "beta\ngamma\n",
-        exitCode: 0,
-      },
       exitCode: 0,
     });
 
@@ -345,17 +321,12 @@ describe("hread built-in plugin", () => {
         formatHashLine(3, "gamma"),
       ].join(""),
       stderr: "hread: 4-5: [out of range]\n",
-      stock: {
-        stdout: "beta\ngamma\n",
-        exitCode: 0,
-      },
       exitCode: 0,
     });
 
     const tokenSpellings = await tool.execute(["token-spellings.txt"], executionContext);
     expect(tokenSpellings).toEqual({
       stdout: formatHashLine(1, "<|endoftext|> <|im_start|> <|fim_prefix|>"),
-      stock: {stdout: "<|endoftext|> <|im_start|> <|fim_prefix|>\n", exitCode: 0},
       exitCode: 0,
     });
 
@@ -380,7 +351,6 @@ describe("hread built-in plugin", () => {
     const retained = await tool.execute(["@shell/call-id"], executionContext);
     expect(retained).toEqual({
       stdout: formatHashLine(1, "retained"),
-      stock: {stdout: "retained\n", exitCode: 0},
       exitCode: 0,
     });
   });
@@ -420,11 +390,6 @@ describe("hread built-in plugin", () => {
     expect(result).toEqual({
       stdout: formatHashLine(1, first) + formatHashLine(2, "second"),
       stderr: "hread: output incomplete: 15,000-token limit reached\n",
-      stock: {
-        stdout: `${first}\nsecond\n`,
-        stderr: "hread: output incomplete: 15,000-token limit reached\n",
-        exitCode: 1,
-      },
       exitCode: 1,
     });
   });
@@ -439,11 +404,6 @@ describe("hread built-in plugin", () => {
     expect(result).toEqual({
       stdout: "",
       stderr: "hread: output incomplete: 15,000-token limit reached\n",
-      stock: {
-        stdout: "",
-        stderr: "hread: output incomplete: 15,000-token limit reached\n",
-        exitCode: 1,
-      },
       exitCode: 1,
     });
   });
@@ -516,14 +476,6 @@ describe("hgrep built-in plugin", () => {
     }
   });
 
-  test("supplies an rg stock exec command", async () => {
-    const tool = createHGrepTool("description", "start: TEST");
-    const parsed = await tool.parse("-F 'two words' \"path with spaces.txt\" semi;colon");
-    const translated = await tool.translate(parsed, {
-      exec: (_template, _params, stockCommand) => ({kind: "exec", stockCommand}),
-    });
-    expect(translated.stockCommand).toBe("rg -F 'two words' 'path with spaces.txt' 'semi;colon'");
-  });
 
   test("runs ripgrep and emits verified complete rows", async () => {
     const directory = await temporaryDirectory("hgrep-plugin-");
@@ -536,11 +488,6 @@ describe("hgrep built-in plugin", () => {
     expect(result).toEqual({
       stdout: `${JSON.stringify("path with spaces.txt")}:${formatHashLine(2, "needle")}`
         + `${JSON.stringify("path with spaces.txt")}:${formatHashLine(3, "after")}`,
-      stock: {
-        stdout: "\"path with spaces.txt\":needle\n\"path with spaces.txt\":after\n",
-        stderr: "",
-        exitCode: 0,
-      },
       stderr: "",
       exitCode: 0,
     });
@@ -549,11 +496,6 @@ describe("hgrep built-in plugin", () => {
     const carriage = await tool.execute(["-F", "needle", "carriage.txt"], executionContext);
     expect(carriage).toEqual({
       stdout: `${JSON.stringify("carriage.txt")}:${formatHashLine(1, "needle")}`,
-      stock: {
-        stdout: "\"carriage.txt\":needle\n",
-        stderr: "",
-        exitCode: 0,
-      },
       stderr: "",
       exitCode: 0,
     });
@@ -564,11 +506,6 @@ describe("hgrep built-in plugin", () => {
         1,
         "<|endoftext|> <|im_start|> <|fim_prefix|>",
       )}`,
-      stock: {
-        stdout: '"token-spellings.txt":<|endoftext|> <|im_start|> <|fim_prefix|>\n',
-        stderr: "",
-        exitCode: 0,
-      },
       stderr: "",
       exitCode: 0,
     });
@@ -596,11 +533,6 @@ describe("hgrep built-in plugin", () => {
       stdout: `${prefix}${formatHashLine(2, "needle second")}`
         + `${prefix}${formatHashLine(3, "needle third")}`,
       stderr: "",
-      stock: {
-        stdout: `${prefix}needle second\n${prefix}needle third\n`,
-        stderr: "",
-        exitCode: 0,
-      },
       exitCode: 0,
     });
 
@@ -611,7 +543,6 @@ describe("hgrep built-in plugin", () => {
     expect(limited.stdout).toContain(`needle ${first}`);
     expect(limited.stdout).not.toContain("needle second");
     expect(limited.stdout).not.toContain("needle third");
-    expect(limited.stock?.exitCode).toBe(1);
   });
 
   test("accepts GNU grep and ripgrep search options while rejecting incompatible modes", async () => {
@@ -685,7 +616,6 @@ describe("hsymbol built-in plugin", () => {
     );
     expect(selected).toEqual({
       stdout: "",
-      stock: {stdout: "", exitCode: 0},
       exitCode: 0,
     });
     const selectedOffset = source.indexOf("名稱", source.indexOf("名稱") + 1);
@@ -726,7 +656,6 @@ describe("hsymbol built-in plugin", () => {
     const tool = createHSymbolTool("description", "start: TEST");
     expect(await tool.execute(["refs", inputPath, reference, "Target"], executionContext)).toEqual({
       stdout: "",
-      stock: {stdout: "", exitCode: 0},
       exitCode: 0,
     });
 
@@ -803,7 +732,6 @@ describe("hsymbol built-in plugin", () => {
       }
       expect(result).toEqual({
         stdout: expected,
-        stock: {stdout: response, exitCode: 0},
         exitCode: 0,
       });
     }
@@ -849,7 +777,6 @@ describe("hsymbol built-in plugin", () => {
     );
     expect(result).toEqual({
       stdout: `${JSON.stringify("field.go")}:${formatHashLine(3, "  Field int")}`,
-      stock: {stdout: response, exitCode: 0},
       exitCode: 0,
     });
   });
@@ -897,7 +824,6 @@ describe("hsymbol built-in plugin", () => {
       stdout: `${JSON.stringify("result.go")}:${formatHashLine(2, "func Target() {}")}`
         + `${JSON.stringify("input.go")}:${formatHashLine(2, "func Use() { Target() }")}`,
       stderr: "gopls note\nhsymbol: skipped 1 location outside workspace, 1 location not Go, 1 location not regular, 1 location not UTF-8, 1 location unavailable\n",
-      stock: {stdout: goplsStdout, stderr: "gopls note\n", exitCode: 0},
       exitCode: 0,
     });
     expect(await readFile(fake.callsPath, "utf8")).toContain("references -d");
@@ -924,7 +850,6 @@ describe("hsymbol built-in plugin", () => {
     const external = await tool.execute(["def", "input.go", reference, "Target"], executionContext);
     expect(external).toEqual({
       stderr: "hsymbol: skipped 1 location outside workspace\nhsymbol: definition has no editable workspace location\n",
-      stock: {stdout: response, exitCode: 0},
       exitCode: 1,
     });
 
@@ -992,7 +917,6 @@ describe("hsymbol built-in plugin", () => {
       stdout: `${prefix}${formatHashLine(1, first)}${prefix}${formatHashLine(2, "second")}`,
       stderr: "hsymbol: skipped 1 location outside workspace\n"
         + "hsymbol: output incomplete: 15,000-token limit reached\n",
-      stock: {stdout: goplsStdout, exitCode: 0},
       exitCode: 1,
     });
   });
@@ -1063,7 +987,6 @@ describe("hsymbol built-in plugin", () => {
     expect(typescript).toMatchObject({exitCode: 0});
     expect(typescript.stdout).toContain(`${JSON.stringify("target.ts")}:${formatHashLine(1, "export function target(value: number) {")}`);
     expect(typescript.stdout).toContain(`${JSON.stringify("target.ts")}:${formatHashLine(3, "}")}`);
-    expect(typescript.stock?.stdout).toContain("target.ts");
 
     const ambient = await tool.execute(
       ["def", "ambient_input.ts", `2:${hashLine(ambientInput.split("\n")[1])}`, "ambientTarget"],
@@ -1081,7 +1004,6 @@ describe("hsymbol built-in plugin", () => {
     expect(python).toMatchObject({exitCode: 0});
     expect(python.stdout).toContain(`${JSON.stringify("target.py")}:${formatHashLine(1, "def target(value: int) -> int:")}`);
     expect(python.stdout).toContain(`${JSON.stringify("target.py")}:${formatHashLine(2, "    return value + 1")}`);
-    expect(python.stock?.stdout).toContain("target.py");
     const stub = await tool.execute(
       ["refs", "sample.pyi", `1:${hashLine(pythonStub.trimEnd())}`, "stub_target"],
       executionContext,
@@ -1175,7 +1097,6 @@ process.stdin.on("data", (chunk) => {
         executionContext,
       );
       expect(result).toMatchObject({exitCode: 0});
-      expect(result.stock?.stdout).toBeDefined();
       expect(result.stderr).toBeUndefined();
     }
   });

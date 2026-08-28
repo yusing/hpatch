@@ -14,7 +14,6 @@ export type ExecCarrier = {
   kind: "exec";
   template?: string;
   params?: Record<string, unknown>;
-  stockCommand?: string;
   retainInput?: boolean;
 };
 
@@ -26,8 +25,7 @@ export type TranslationAPI = {
   exec(
     template?: string,
     params?: Record<string, unknown>,
-    stockCommand?: string,
-    retainInput?: boolean,
+	retainInput?: boolean,
   ): ExecCarrier;
 };
 
@@ -37,7 +35,7 @@ export type ExecutionOutput = {
   exitCode: number;
 };
 
-export type ExecutionResult = ExecutionOutput & {stock?: ExecutionOutput};
+export type ExecutionResult = ExecutionOutput;
 
 export type ExecutionContext = {
   stdinFD: number | null;

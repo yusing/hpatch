@@ -13,7 +13,7 @@ For a recognized child request whose configured model is exactly `gpt-5.6-luna` 
 `gpt-5.6-terra`, the router replaces only the top-level request model with `gpt-5.6-sol` and the
 reasoning effort with `high`, preserving other reasoning members, input history, tools, metadata,
 and request fields. This happens before Hpatch projection, CTP preparation, provider serialization,
-and actual-model metrics attribution. Codex continues to construct later requests from its session
+and transport capture. Codex continues to construct later requests from its session
 settings; the router never rewrites response model metadata.
 
 The router retains one bounded schedule per child thread. Completed provider responses contribute
@@ -32,4 +32,4 @@ are never summed. The completed request may overshoot the token limit.
 The next request from that child uses the model and reasoning supplied by Codex without a compatibility
 rewrite. Child schedules are retained for the router lifetime so a completed schedule is never
 silently forgotten and restarted. State and progress logs retain counts and identifiers only, not
-prompt or response content. Metrics charge every request to the model actually sent upstream.
+prompt or response content. The capturer attributes each request to the model actually sent upstream.

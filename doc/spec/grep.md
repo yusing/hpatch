@@ -30,10 +30,6 @@ cancellation, invalid-pattern, and missing-executable failures return concise no
 diagnostics. Output contains only complete rows and uses the shared verified-row token admission
 rule in `REQ-READ-001`. On the first omitted distinct result, hgrep terminates and reaps ripgrep.
 
-For input metrics, hgrep produces its current and stock results from the same ripgrep event
-stream. The stock result preserves each JSON-quoted `PATH`, `TEXT`, LF, result order, and
-diagnostic while omitting the `LINE:HASH ` portion. The comparison does not run ripgrep twice.
-
 Acceptance:
 
 1. A regular-expression search with an explicit path and glob emits JSON-quoted paths,
@@ -45,8 +41,8 @@ Acceptance:
    ripgrep or produce a warning.
 3. Requested before/after context emits complete verified rows beside matches. Repeated match
    or context events on one row emit that row once; no matches return successful empty stdout.
-   Token admission occurs after this deduplication, and an incomplete result retains paired
-   current and stock rows, writes its diagnostic to stderr, and returns nonzero.
+   Token admission occurs after this deduplication, and an incomplete result retains admitted
+   rows, writes its diagnostic to stderr, and returns nonzero.
 4. The model-visible shell call and output are replayed unchanged. No standalone hgrep call is
    exposed, routed, or admitted to hpatch recovery history.
 5. Router startup validates hgrep inside the immutable built-in snapshot without installing a

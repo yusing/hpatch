@@ -55,14 +55,12 @@ type hpatchTranslationResult struct {
 	diagnostic string
 	rejections []hpatch.HostRejection
 	failures   []hpatch.HostFailure
-	invocation hpatch.InvocationMetrics
 	change     hpatch.HostChange
 	aliases    []hpatch.TargetAlias
 }
 
 type hpatchTranslator interface {
 	Translate(ctx context.Context, directory, script string) (hpatchTranslationResult, error)
-	RecordMetrics(ctx context.Context, record hpatchMetricRecord) error
 	ToolDescription() string
 }
 
@@ -78,56 +76,16 @@ type inProcessHPatchTranslator struct {
 	dataDirectory string
 }
 
-func hpatchMetricsDirectory() (string, error) {
+func hpatchDataDirectory() (string, error) {
 	configDirectory, err := os.UserConfigDir()
 	if err != nil {
-		return "", fmt.Errorf("determine hpatch metrics directory: %w", err)
+		return "", fmt.Errorf("determine hpatch data directory: %w", err)
 	}
 	return filepath.Join(configDirectory, "hpatch"), nil
 }
 
 func newInProcessHPatchTranslator(dataDirectory string) hpatchTranslator {
 	return inProcessHPatchTranslator{dataDirectory: dataDirectory}
-}
-
-// notifyingHPatchTranslator refreshes dashboard subscribers after durable gain metrics change.
-type notifyingHPatchTranslator struct {
-	inner   hpatchTranslator
-	metrics *metricsStore
-}
-
-func (t notifyingHPatchTranslator) ToolDescription() string {
-	return t.inner.ToolDescription()
-}
-
-func (t notifyingHPatchTranslator) Translate(ctx context.Context, directory, script string) (hpatchTranslationResult, error) {
-	return t.inner.Translate(ctx, directory, script)
-}
-
-func (t notifyingHPatchTranslator) Apply(ctx context.Context, root *os.Root, script string) (hpatchTranslationResult, error) {
-	applier, ok := t.inner.(hpatchApplier)
-	if !ok {
-		return hpatchTranslationResult{}, errors.New("hpatch translator cannot apply retained shell edits")
-	}
-	return applier.Apply(ctx, root, script)
-}
-
-func (t notifyingHPatchTranslator) ReportOutcome(ctx context.Context, stage, outcome string) error {
-	reporter, ok := t.inner.(hpatchOutcomeReporter)
-	if !ok {
-		return nil
-	}
-	return reporter.ReportOutcome(ctx, stage, outcome)
-}
-
-func (t notifyingHPatchTranslator) RecordMetrics(ctx context.Context, record hpatchMetricRecord) error {
-	if err := t.inner.RecordMetrics(ctx, record); err != nil {
-		return err
-	}
-	if t.metrics != nil {
-		t.metrics.recordHPatch(record)
-	}
-	return nil
 }
 
 func (inProcessHPatchTranslator) ToolDescription() string {
@@ -164,17 +122,9 @@ func hpatchTranslationResultOf(translated hpatch.HostTranslation) hpatchTranslat
 		diagnostic: translated.Diagnostic,
 		rejections: slices.Clone(translated.Rejections),
 		failures:   slices.Clone(translated.Failures),
-		invocation: translated.Invocation,
 		change:     translated.Change,
 		aliases:    slices.Clone(translated.TargetAliases),
 	}
-}
-
-func (t inProcessHPatchTranslator) RecordMetrics(ctx context.Context, record hpatchMetricRecord) error {
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	return hpatch.RecordHostMetrics(ctx, t.dataDirectory, record.HostMetricRecord)
 }
 
 type hpatchHistory struct {
@@ -217,9 +167,8 @@ type hpatchHistory struct {
 }
 
 type hpatchHistorySession struct {
-	calls       map[string]hpatchHistory
-	bytes       int
-	settlements map[string]hpatchChainSettlement
+	calls map[string]hpatchHistory
+	bytes int
 	// nextSequence is the order to assign the session's next retained call.
 	nextSequence uint64
 	lastUsed     uint64
@@ -230,7 +179,6 @@ type hpatchProxy struct {
 	registry               *toolRegistry
 	customizedInstructions bool
 	modelInstructions      string
-	exactEvidence          *hpatchExactEvidenceRecorder
 	shellDirectory         string
 	titles                 *sessionTitleCache
 	shellSessions          map[string]struct{}
@@ -261,7 +209,6 @@ func newHPatchProxy(translator hpatchTranslator, registry *toolRegistry, customi
 		registry:               registry,
 		customizedInstructions: customizedInstructions,
 		modelInstructions:      modelInstructions,
-		exactEvidence:          newHPatchExactEvidenceRecorder(),
 		shellDirectory:         directory,
 		titles:                 titles,
 		shellSessions:          make(map[string]struct{}),
@@ -348,17 +295,11 @@ type hpatchResponseTransform struct {
 	originalToolChoicePresent bool
 	pending                   map[string]hpatchPendingCall
 	nativeExecItems           map[string]struct{}
-	nativeExecWarningsMetered map[string]struct{}
 	local                     map[string]hpatchHistory
 	directory                 string
 	carriers                  codeModeCarrierCatalog
 
-	installedToolDefinition  string
-	installedToolBreakdown   []hpatch.HostToolDefinition
-	codeModeToolName         string
-	baselineDefinition       string
-	execCommandDefinitions   []string
-	requestAccountingClaimed bool
+	codeModeToolName string
 
 	// localSequence orders the calls translated during this turn, so a
 	// recovery resolves against the newest rejection rather than an arbitrary
@@ -475,21 +416,12 @@ func (p *hpatchProxy) prepareRequest(ctx context.Context, request *parsedRespons
 	if err != nil {
 		return nil, err
 	}
-	baselineDefinition, execCommandDefinitions, codeModeToolName, replaced, err := replaceAdditionalToolsApplyPatch(request.fields, installedTools)
+	codeModeToolName, replaced, err := replaceAdditionalToolsApplyPatch(request.fields, installedTools)
 	if err != nil {
 		return nil, err
 	}
 	if !replaced {
 		return nil, errors.New("responses request cannot satisfy the required hpatch rewrite")
-	}
-	modelContributions := p.registry.modelContributions()
-	installedToolBreakdown := make([]hpatch.HostToolDefinition, len(modelContributions))
-	for index, contribution := range modelContributions {
-		installedToolBreakdown[index] = hpatch.HostToolDefinition{
-			PluginID:   contribution.PluginID,
-			ToolName:   contribution.Name,
-			Definition: string(mustMarshalJSON(installedTools[index])),
-		}
 	}
 	if strings.TrimSpace(threadID) == "" {
 		return nil, errors.New("hpatch rewrite requires a valid Codex thread ID")
@@ -521,16 +453,11 @@ func (p *hpatchProxy) prepareRequest(ctx context.Context, request *parsedRespons
 		originalToolChoicePresent: originalToolChoicePresent,
 		pending:                   make(map[string]hpatchPendingCall),
 		nativeExecItems:           make(map[string]struct{}),
-		nativeExecWarningsMetered: make(map[string]struct{}),
 		local:                     make(map[string]hpatchHistory),
 		directory:                 directory,
 		carriers:                  carriers,
 
-		installedToolDefinition: string(mustMarshalJSON(installedTools)),
-		installedToolBreakdown:  installedToolBreakdown,
-		codeModeToolName:        codeModeToolName,
-		baselineDefinition:      baselineDefinition,
-		execCommandDefinitions:  execCommandDefinitions,
+		codeModeToolName: codeModeToolName,
 	}, nil
 }
 
@@ -545,12 +472,8 @@ type additionalToolsApplyPatchOwner struct {
 	nested              bool
 	name                string
 
-	strippedDescription string
-	// baselineDefinition is the native apply_patch definition hpatch displaces.
-	// hpatch's definition cost is only meaningful net of it.
-	baselineDefinition           string
+	strippedDescription          string
 	execCommandParamsDescription string
-	execCommandDefinitions       []string
 }
 
 func installedToolNames(tools []map[string]json.RawMessage) map[string]struct{} {
@@ -563,35 +486,35 @@ func installedToolNames(tools []map[string]json.RawMessage) map[string]struct{} 
 
 // replaceAdditionalToolsApplyPatch rewrites the Code Mode exec tool from an
 // app or CLI additional_tools owner and exposes the router's standalone tools.
-func replaceAdditionalToolsApplyPatch(fields map[string]json.RawMessage, installedTools []map[string]json.RawMessage) (string, []string, string, bool, error) {
+func replaceAdditionalToolsApplyPatch(fields map[string]json.RawMessage, installedTools []map[string]json.RawMessage) (string, bool, error) {
 	var topTools []map[string]json.RawMessage
 	if rawTools, exists := fields["tools"]; exists {
 		if err := json.Unmarshal(rawTools, &topTools); err != nil {
-			return "", nil, "", false, fmt.Errorf("decode responses tools: %w", err)
+			return "", false, fmt.Errorf("decode responses tools: %w", err)
 		}
 	}
 	installedNames := installedToolNames(installedTools)
 	for _, tool := range topTools {
 		name := jsonString(tool, "name")
 		if _, exists := installedNames[name]; exists {
-			return "", nil, "", false, fmt.Errorf("responses request already defines %s", name)
+			return "", false, fmt.Errorf("responses request already defines %s", name)
 		}
 		if name == applyPatchToolName || name == "exec" || name == "functions.exec" {
-			return "", nil, "", false, fmt.Errorf("responses request exposes unsupported top-level %s", name)
+			return "", false, fmt.Errorf("responses request exposes unsupported top-level %s", name)
 		}
 	}
 
 	owner, err := findAdditionalToolsApplyPatch(fields, installedNames)
 	if err != nil || owner == nil {
-		return "", nil, "", false, err
+		return "", false, err
 	}
 	if codeModeToolChoiceRestricted(fields, owner.name) {
-		return "", nil, "", false, nil
+		return "", false, nil
 	}
 	if err := exposeStandaloneHPatch(fields, topTools, owner, installedTools); err != nil {
-		return "", nil, "", false, err
+		return "", false, err
 	}
-	return owner.baselineDefinition, owner.execCommandDefinitions, owner.name, true, nil
+	return owner.name, true, nil
 }
 
 func findAdditionalToolsApplyPatch(fields map[string]json.RawMessage, installedNames map[string]struct{}) (*additionalToolsApplyPatchOwner, error) {
@@ -629,7 +552,7 @@ func findAdditionalToolsApplyPatch(fields map[string]json.RawMessage, installedN
 		if owner != nil {
 			return errors.New("responses request defines Code Mode exec more than once")
 		}
-		stripped, baseline, found, err := stripCodeModeApplyPatchSection(jsonString(tool, "description"))
+		stripped, found, err := stripCodeModeApplyPatchSection(jsonString(tool, "description"))
 		if err != nil {
 			return err
 		}
@@ -637,14 +560,9 @@ func findAdditionalToolsApplyPatch(fields map[string]json.RawMessage, installedN
 			return nil
 		}
 		var execCommandParamsDescription string
-		var execCommandDefinitions []string
-		var definitions []string
-		stripped, execCommandParamsDescription, definitions, found, err = stripCodeModeExecCommandContract(stripped)
+		stripped, execCommandParamsDescription, _, err = stripCodeModeExecCommandContract(stripped)
 		if err != nil {
 			return err
-		}
-		if found {
-			execCommandDefinitions = append(execCommandDefinitions, definitions...)
 		}
 		owner = &additionalToolsApplyPatchOwner{
 			item:                         item,
@@ -656,9 +574,7 @@ func findAdditionalToolsApplyPatch(fields map[string]json.RawMessage, installedN
 			nested:                       nested,
 			name:                         name,
 			strippedDescription:          stripped,
-			baselineDefinition:           baseline,
 			execCommandParamsDescription: execCommandParamsDescription,
-			execCommandDefinitions:       execCommandDefinitions,
 		}
 		return nil
 	}
@@ -834,7 +750,7 @@ func stripCodeModeSection(description string, findHeading codeModeSectionMatcher
 // tool description. It also returns that removed section, which is the native
 // patch tool definition hpatch displaces: the host pays for one or the other as
 // request input, so measuring hpatch's definition cost requires the text it replaced.
-func stripCodeModeApplyPatchSection(description string) (string, string, bool, error) {
+func stripCodeModeApplyPatchSection(description string) (string, bool, error) {
 	findHeading := func(text string) (int, string) {
 		start := strings.Index(text, codeModeApplyPatchHeading)
 		if start < 0 || start > 0 && text[start-1] != '\n' {
@@ -846,12 +762,13 @@ func stripCodeModeApplyPatchSection(description string) (string, string, bool, e
 	valid := func(section string) bool {
 		return strings.Contains(section, "exec tool declaration:") && strings.Contains(section, declaration)
 	}
-	return stripCodeModeSection(
+	stripped, _, found, err := stripCodeModeSection(
 		description,
 		findHeading,
 		valid,
 		"responses Code Mode tool defines nested apply_patch more than once",
 	)
+	return stripped, found, err
 }
 
 // stripCodeModeExecCommandSection removes only the nested command-execution
@@ -965,29 +882,27 @@ func execCommandParamsDescription(section string) string {
 // stripCodeModeExecCommandContract removes the command tool section and the
 // introductory example from the model-visible Code Mode description. It derives
 // a shell-specific parameter description without retaining the nested tool surface.
-func stripCodeModeExecCommandContract(description string) (string, string, []string, bool, error) {
+func stripCodeModeExecCommandContract(description string) (string, string, bool, error) {
 	stripped, section, found, err := stripCodeModeExecCommandSection(description)
 	if err != nil {
-		return "", "", nil, false, err
+		return "", "", false, err
 	}
 	if !found {
 		if strings.Contains(description, "exec_command") {
-			return "", "", nil, false, errors.New("responses Code Mode tool exposes exec_command without an owned section")
+			return "", "", false, errors.New("responses Code Mode tool exposes exec_command without an owned section")
 		}
-		return description, "", nil, false, nil
+		return description, "", false, nil
 	}
-	definitions := []string{section}
 	const example = " for example `await tools.exec_command(...)`."
 	if count := strings.Count(stripped, example); count > 1 {
-		return "", "", nil, false, errors.New("responses Code Mode tool references tools.exec_command more than once outside its section")
+		return "", "", false, errors.New("responses Code Mode tool references tools.exec_command more than once outside its section")
 	} else if count == 1 {
 		stripped = strings.Replace(stripped, example, "", 1)
-		definitions = append([]string{example}, definitions...)
 	}
 	if strings.Contains(stripped, "exec_command") {
-		return "", "", nil, false, errors.New("responses Code Mode tool exposes exec_command outside its owned contract")
+		return "", "", false, errors.New("responses Code Mode tool exposes exec_command outside its owned contract")
 	}
-	return stripped, execCommandParamsDescription(section), definitions, true, nil
+	return stripped, execCommandParamsDescription(section), true, nil
 }
 
 func mustMarshalJSON(value any) json.RawMessage {
@@ -1041,10 +956,6 @@ func (p *hpatchProxy) rememberBatch(sessionID string, histories map[string]hpatc
 		oldSessionBytes = existing.bytes
 		sessionBytes = existing.bytes
 	}
-	if existing != nil && existing.settlements == nil {
-		existing.settlements = make(map[string]hpatchChainSettlement)
-	}
-
 	callIDs := slices.Collect(maps.Keys(prepared))
 	slices.SortFunc(callIDs, func(first, second string) int {
 		if order := cmp.Compare(prepared[first].sequence, prepared[second].sequence); order != 0 {
@@ -1075,15 +986,7 @@ func (p *hpatchProxy) rememberBatch(sessionID string, histories map[string]hpatc
 			}
 			return errors.New("hpatch history byte capacity reached")
 		}
-		evicted := calls[oldest]
-		if evicted.correlationID != "" {
-			settlement := existing.settlements[evicted.correlationID]
-			if err := settlement.add(evicted); err != nil {
-				return err
-			}
-			existing.settlements[evicted.correlationID] = settlement
-		}
-		sessionBytes -= evicted.bytes
+		sessionBytes -= calls[oldest].bytes
 		delete(calls, oldest)
 	}
 
@@ -1128,13 +1031,8 @@ func (p *hpatchProxy) rememberBatch(sessionID string, histories map[string]hpatc
 	}
 
 	if existing == nil {
-		existing = &hpatchHistorySession{settlements: make(map[string]hpatchChainSettlement)}
+		existing = &hpatchHistorySession{}
 		p.sessions[sessionID] = existing
-	}
-	for _, history := range prepared {
-		if history.correlationID != "" && history.translationError == "" {
-			delete(existing.settlements, history.correlationID)
-		}
 	}
 	existing.calls = calls
 	existing.bytes = sessionBytes
@@ -1142,6 +1040,11 @@ func (p *hpatchProxy) rememberBatch(sessionID string, histories map[string]hpatc
 	p.touchSession(existing)
 	p.historyBytes = totalBytes
 	return nil
+}
+
+func hpatchRejectionTextBytes(rejection hpatch.HostRejection) int {
+	return len(rejection.Operation) + len(rejection.Target) + len(rejection.TargetAliasRelation) +
+		len(rejection.Reason) + len(rejection.Path)
 }
 
 func oldestHistoryCall(histories map[string]hpatchHistory, protected map[string]bool) (string, bool) {
@@ -1216,33 +1119,6 @@ func (p *hpatchProxy) latestRecoveryAttempt(sessionID, correlationID string) int
 		return 0
 	}
 	return latestRecoveryAttempt(maps.Values(session.calls), correlationID)
-}
-
-func (p *hpatchProxy) recoveryChain(sessionID, correlationID string) []hpatchHistory {
-	p.mu.RLock()
-	defer p.mu.RUnlock()
-	session := p.sessions[sessionID]
-	if session == nil {
-		return nil
-	}
-	chain := make([]hpatchHistory, 0)
-	for _, history := range session.calls {
-		if history.correlationID == correlationID &&
-			(history.toolName == hpatchToolName || history.toolName == hpatchRecoveryToolName) {
-			chain = append(chain, history)
-		}
-	}
-	return chain
-}
-
-func (p *hpatchProxy) recoverySettlement(sessionID, correlationID string) hpatchChainSettlement {
-	p.mu.RLock()
-	defer p.mu.RUnlock()
-	session := p.sessions[sessionID]
-	if session == nil {
-		return hpatchChainSettlement{}
-	}
-	return session.settlements[correlationID]
 }
 
 // recoveryBaseline is the complete rejected script a following recovery edits.
@@ -1419,12 +1295,10 @@ func (t *hpatchResponseTransform) translate(callID, input string, upstreamItem m
 		return hpatchHistory{}, fmt.Errorf("hpatch call %q script exceeds %d bytes", callID, maxHPatchScriptBytes)
 	}
 
-	evaluated, aliasDiagnostics, err := hpatch.RewriteTargetAliasesWithDiagnostics(input, t.proxy.targetAliases(t.historySessionID, t.directory))
-	aliasRelationsKnown := err == nil
+	evaluated, err := hpatch.RewriteTargetAliases(input, t.proxy.targetAliases(t.historySessionID, t.directory))
 	if err != nil {
 		// Preserve evaluator-owned syntax diagnostics for malformed scripts.
 		evaluated = input
-		aliasDiagnostics = nil
 	}
 	attemptMetadata := hpatch.AttemptMetadata{
 		SessionID:       t.sessionID,
@@ -1482,19 +1356,6 @@ func (t *hpatchResponseTransform) translate(callID, input string, upstreamItem m
 		if evaluatorRejected {
 			diagnostic += hpatchRecoveryGuidance(evaluated, translated.rejections, false)
 		}
-		metricRejections, confirmedAliasRewrite := rejectedAliasDiagnostics(
-			translated.rejections, aliasDiagnostics, aliasRelationsKnown,
-		)
-		if err := t.recordMetrics(hpatchMetricInputs{
-			invocation:            translated.invocation,
-			rejections:            metricRejections,
-			attempt:               attemptMetadata,
-			emittedScript:         input,
-			diagnostic:            diagnostic,
-			confirmedAliasRewrite: confirmedAliasRewrite,
-		}); err != nil {
-			return hpatchHistory{}, err
-		}
 		history := hpatchHistory{
 			toolName: hpatchToolName,
 			script:   input,
@@ -1519,17 +1380,6 @@ func (t *hpatchResponseTransform) translate(callID, input string, upstreamItem m
 	}
 	patchText := string(patch)
 	alreadySatisfied := translated.change.AlreadySatisfied
-	if err := t.recordMetrics(hpatchMetricInputs{
-		invocation:    translated.invocation,
-		attempt:       attemptMetadata,
-		emittedScript: input,
-		report:        translated.report,
-		patch:         patchText,
-		successful:    true,
-		diagnostic:    translated.diagnostic,
-	}); err != nil {
-		return hpatchHistory{}, err
-	}
 	history := hpatchHistory{
 		toolName: hpatchToolName,
 		script:   input,
@@ -1549,31 +1399,6 @@ func (t *hpatchResponseTransform) translate(callID, input string, upstreamItem m
 	}
 	t.recordLocal(callID, &history)
 	return history, nil
-}
-
-func rejectedAliasDiagnostics(
-	rejections []hpatch.HostRejection,
-	diagnostics []hpatch.TargetAliasDiagnostic,
-	relationsKnown bool,
-) ([]hpatch.HostRejection, bool) {
-	classified := slices.Clone(rejections)
-	confirmedRewrite := false
-	for index := range classified {
-		rejection := &classified[index]
-		if !relationsKnown || (rejection.Target != "line" && rejection.Target != "range") {
-			continue
-		}
-		rejection.TargetAliasRelation = hpatch.TargetAliasRelationNone
-		for _, diagnostic := range diagnostics {
-			if diagnostic.Command != rejection.Command {
-				continue
-			}
-			rejection.TargetAliasRelation = diagnostic.Relation
-			confirmedRewrite = confirmedRewrite || diagnostic.Rewritten
-			break
-		}
-	}
-	return classified, confirmedRewrite
 }
 
 func (t *hpatchResponseTransform) translateRecovery(
@@ -1641,7 +1466,7 @@ func (t *hpatchResponseTransform) translateRecovery(
 	}
 	attemptMetadata.EvaluatedScript = recovered.script
 	attemptMetadata.RecoveryDelta = recovered.delta
-	history, err := t.translateRecovered(callID, input, recovered.script, attemptMetadata, t.recoveryChain(attemptMetadata.CorrelationID), upstreamItem)
+	history, err := t.translateRecovered(callID, input, recovered.script, attemptMetadata, upstreamItem)
 	if err == nil {
 		history.toolName = hpatchRecoveryToolName
 		t.local[callID] = history
@@ -1652,12 +1477,8 @@ func (t *hpatchResponseTransform) translateRecovery(
 func (t *hpatchResponseTransform) translateRecovered(
 	callID, emitted, evaluated string,
 	attemptMetadata hpatch.AttemptMetadata,
-	priorAttempts []hpatchHistory,
 	upstreamItem map[string]json.RawMessage,
 ) (hpatchHistory, error) {
-	_, aliasDiagnostics, aliasErr := hpatch.RewriteTargetAliasesWithDiagnostics(
-		evaluated, t.proxy.targetAliases(t.historySessionID, t.directory),
-	)
 	attemptContext := hpatch.WithAttemptMetadata(t.ctx, attemptMetadata)
 	translated, err := t.proxy.translator.Translate(attemptContext, t.directory, evaluated)
 	if err != nil {
@@ -1674,19 +1495,6 @@ func (t *hpatchResponseTransform) translateRecovered(
 		}
 		if evaluatorRejected {
 			diagnostic += hpatchRecoveryGuidance(evaluated, translated.rejections, true)
-		}
-		metricRejections, _ := rejectedAliasDiagnostics(
-			translated.rejections, aliasDiagnostics, aliasErr == nil,
-		)
-		if err := t.recordMetrics(hpatchMetricInputs{
-			invocation:    translated.invocation,
-			rejections:    metricRejections,
-			attempt:       attemptMetadata,
-			emittedScript: emitted,
-			emittedTool:   hpatchRecoveryToolName,
-			diagnostic:    diagnostic,
-		}); err != nil {
-			return hpatchHistory{}, err
 		}
 		history := hpatchHistory{
 			toolName:          hpatchRecoveryToolName,
@@ -1706,20 +1514,6 @@ func (t *hpatchResponseTransform) translateRecovered(
 	}
 	patchText := string(translated.patch)
 	alreadySatisfied := translated.change.AlreadySatisfied
-	if err := t.recordMetrics(hpatchMetricInputs{
-		invocation:      translated.invocation,
-		attempt:         attemptMetadata,
-		emittedScript:   emitted,
-		emittedTool:     hpatchRecoveryToolName,
-		report:          translated.report,
-		patch:           patchText,
-		successful:      true,
-		diagnostic:      translated.diagnostic,
-		priorAttempts:   priorAttempts,
-		priorSettlement: t.recoverySettlement(attemptMetadata.CorrelationID),
-	}); err != nil {
-		return hpatchHistory{}, err
-	}
 	history := hpatchHistory{
 		toolName:         hpatchRecoveryToolName,
 		script:           emitted,
@@ -1944,42 +1738,6 @@ func (t *hpatchResponseTransform) translateRegisteredTool(contribution toolContr
 		}
 	}
 
-	metricName := name
-	metricPayload := payload
-	if !translation.Rejected && translation.Carrier.Kind == "exec" && translation.Carrier.StockCommand != "" {
-		stockCommand := translation.Carrier.StockCommand
-		if translation.Carrier.Template != "" {
-			stockCommand = strings.Replace(translation.Carrier.Template, "{.}", stockCommand, 1)
-		}
-		if stockPayload, stockErr := workerCommandExecInputWithParams(stockCommand, translation.Carrier.Params); stockErr == nil {
-			metricName = "functions.exec"
-			metricPayload = stockPayload
-		}
-	}
-
-	metricCall := &hpatch.HostToolCall{
-		PluginID:          contribution.PluginID,
-		ToolName:          contribution.Name,
-		EmittedName:       contribution.Name,
-		EmittedInput:      input,
-		FailedTranslation: translation.Rejected,
-	}
-	if recovered {
-		metricCall.Recovery = hpatch.HostToolRecoveryCodeModeShell
-	}
-	if !translation.Rejected {
-		metricCall.TranslatedName = metricName
-		metricCall.TranslatedPayload = metricPayload
-	}
-	if err := t.recordMetrics(hpatchMetricInputs{
-		overheadOnly:  true,
-		toolCall:      metricCall,
-		diagnostic:    diagnostic,
-		misuseWarning: misuseWarning,
-	}); err != nil {
-		return hpatchHistory{}, err
-	}
-
 	history := hpatchHistory{
 		toolName:         contribution.Name,
 		pluginID:         contribution.PluginID,
@@ -2118,10 +1876,6 @@ func (registry *toolRegistry) execCarrierInput(
 	)
 }
 
-func workerCommandExecInputWithParams(command string, params map[string]json.RawMessage) (string, error) {
-	return workerCommandExecInputWithResult(command, params, false)
-}
-
 func workerCommandExecInputWithResult(command string, params map[string]json.RawMessage, forwardNativeResult bool, resultMetadata ...map[string]json.RawMessage) (string, error) {
 	if _, exists := params["cmd"]; exists {
 		return "", errors.New("exec params must not contain cmd")
@@ -2218,9 +1972,6 @@ func (t *hpatchResponseTransform) rejectUnevaluated(
 			diagnostic += "\nhpatch: warning: " + strings.TrimSpace(hookErr.Error()) + "\n"
 		}
 	}
-	if err := t.recordMetrics(hpatchMetricInputs{attempt: attempt, emittedScript: input, emittedTool: toolName, diagnostic: diagnostic}); err != nil {
-		return hpatchHistory{}, err
-	}
 	history := hpatchHistory{
 		toolName: toolName,
 		script:   input,
@@ -2243,34 +1994,6 @@ func retainedEvaluated(emitted, evaluated string) string {
 	return evaluated
 }
 
-func (t *hpatchResponseTransform) claimRequestAccounting() (string, []hpatch.HostToolDefinition, string, []string) {
-	if t.requestAccountingClaimed {
-		return "", nil, "", nil
-	}
-	t.requestAccountingClaimed = true
-	return t.installedToolDefinition, slices.Clone(t.installedToolBreakdown), t.baselineDefinition, slices.Clone(t.execCommandDefinitions)
-}
-
-func (t *hpatchResponseTransform) recordMetrics(inputs hpatchMetricInputs) error {
-	inputs.definition, inputs.definitions, inputs.baselineDefinition, inputs.execCommandDefinitions = t.claimRequestAccounting()
-	inputs.sessionID = t.sessionID
-	// Exact benchmark evidence is opt-in auxiliary telemetry. Its failures, like
-	// gain metric failures below, cannot change the completed tool result.
-	_ = t.proxy.exactEvidence.record(inputs)
-	record, err := calculateHPatchMetricRecord(inputs)
-	if err == nil {
-		err = t.proxy.translator.RecordMetrics(t.ctx, record)
-	}
-	if err != nil {
-		if contextErr := t.ctx.Err(); contextErr != nil {
-			return contextErr
-		}
-		// Gain metrics are auxiliary telemetry and cannot change a tool result.
-		return nil
-	}
-	return nil
-}
-
 func (t *hpatchResponseTransform) recordLocal(callID string, history *hpatchHistory) {
 	t.localSequence++
 	history.sequence = t.localSequence
@@ -2290,21 +2013,6 @@ func (t *hpatchResponseTransform) recoveryHistory() (hpatchHistory, error) {
 	return t.proxy.recoverableHistory(t.historySessionID)
 }
 
-func (t *hpatchResponseTransform) recoveryChain(correlationID string) []hpatchHistory {
-	chain := t.proxy.recoveryChain(t.historySessionID, correlationID)
-	for _, history := range t.local {
-		if history.correlationID == correlationID &&
-			(history.toolName == hpatchToolName || history.toolName == hpatchRecoveryToolName) {
-			chain = append(chain, history)
-		}
-	}
-	return chain
-}
-
-func (t *hpatchResponseTransform) recoverySettlement(correlationID string) hpatchChainSettlement {
-	return t.proxy.recoverySettlement(t.historySessionID, correlationID)
-}
-
 func (t *hpatchResponseTransform) nextRecoveryAttempt(correlationID string, baseAttempt int) int {
 	latest := max(baseAttempt, t.proxy.latestRecoveryAttempt(t.historySessionID, correlationID))
 	latest = max(latest, latestRecoveryAttempt(maps.Values(t.local), correlationID))
@@ -2318,9 +2026,6 @@ func (t *hpatchResponseTransform) TransformJSON(payload []byte) ([]byte, error) 
 func (t *hpatchResponseTransform) Finish(streamEvent bool) error {
 	if streamEvent && len(t.pending) != 0 {
 		return errors.New("upstream stream ended with an incomplete hpatch call")
-	}
-	if !t.requestAccountingClaimed {
-		return t.recordMetrics(hpatchMetricInputs{overheadOnly: true})
 	}
 	return nil
 }
@@ -2724,23 +2429,10 @@ func (t *hpatchResponseTransform) transformOutputItem(item map[string]json.RawMe
 	name := jsonString(item, "name")
 	if t.codeModeToolName != "" && name == t.codeModeToolName &&
 		jsonString(item, "type") == "custom_tool_call" {
-		input, misuseWarning, changed, detected := nativeExecCommandInput(jsonString(item, "input"))
+		input, _, changed, detected := nativeExecCommandInput(jsonString(item, "input"))
 		if detected {
 			if changed {
 				item["input"] = mustMarshalJSON(input)
-			}
-			identity := jsonString(item, "call_id")
-			if identity == "" {
-				identity = jsonString(item, "id")
-			}
-			_, metered := t.nativeExecWarningsMetered[identity]
-			if identity == "" || !metered {
-				if err := t.recordMetrics(hpatchMetricInputs{overheadOnly: true, misuseWarning: misuseWarning}); err != nil {
-					return false, err
-				}
-				if identity != "" {
-					t.nativeExecWarningsMetered[identity] = struct{}{}
-				}
 			}
 		}
 		return changed, nil

@@ -19,7 +19,7 @@ func TestHPatch2IndentationOnlyReplacementRejectsWithoutSuggestion(t *testing.T)
 
 	command := "type " + row(2, "\texit \"$status\"") + ` "exit \"$status\"\n"`
 	script := "in script.sh\n" + command
-	result, err := TranslateForHost(t.Context(), Workspace{Root: root}, script, t.TempDir())
+	result, err := translateForHostForTest(t.Context(), Workspace{Root: root}, script, t.TempDir())
 	if err == nil {
 		t.Fatal("indentation-only replacement unexpectedly succeeded")
 	}
@@ -36,11 +36,6 @@ func TestHPatch2IndentationOnlyReplacementRejectsWithoutSuggestion(t *testing.T)
 	if strings.Contains(result.Diagnostic, "1:"+hashLine(`exit "$status"`)) {
 		t.Fatalf("diagnostic contains fabricated target row: %q", result.Diagnostic)
 	}
-	metrics := result.Invocation.value
-	if metrics.Reasons[reasonEditConflict] != 1 ||
-		metrics.CommandReasons[commandOperationIndex("type")][reasonEditConflict] != 1 {
-		t.Fatalf("indentation correction metrics = %+v", metrics)
-	}
 }
 
 func TestHostRejectionsPreserveGroupedCommandIdentityWithoutSourceText(t *testing.T) {
@@ -51,7 +46,7 @@ func TestHostRejectionsPreserveGroupedCommandIdentityWithoutSourceText(t *testin
 	}
 	defer root.Close()
 
-	result, err := TranslateForHost(t.Context(), Workspace{Root: root}, "bad\nworse\n", t.TempDir())
+	result, err := translateForHostForTest(t.Context(), Workspace{Root: root}, "bad\nworse\n", t.TempDir())
 	if err == nil {
 		t.Fatal("invalid commands unexpectedly succeeded")
 	}
@@ -69,7 +64,7 @@ func TestHostTranslationReportsAlreadySatisfiedOutcome(t *testing.T) {
 	writeTestFile(t, rootPath, "file.txt", "same\n", 0o644)
 	root := openTestRoot(t, rootPath)
 
-	result, err := TranslateForHost(
+	result, err := translateForHostForTest(
 		t.Context(),
 		Workspace{Root: root},
 		"in file.txt\n",
@@ -101,7 +96,7 @@ func TestHostTranslationAggregatesIndependentStaleTargets(t *testing.T) {
 		"in second.txt",
 		`type 1:bbbb "second"`,
 	}, "\n")
-	result, err := TranslateForHost(t.Context(), Workspace{Root: root}, script, t.TempDir())
+	result, err := translateForHostForTest(t.Context(), Workspace{Root: root}, script, t.TempDir())
 	if err == nil {
 		t.Fatal("stale targets unexpectedly translated")
 	}
@@ -124,7 +119,7 @@ func TestRangeStaleRepairIdentifiesCompleteCurrentCoordinateSpan(t *testing.T) {
 	root := openTestRoot(t, rootPath)
 	script := "in file.txt\ntype " + row(1, "start") + `..7:bbbb "replacement"`
 
-	result, err := TranslateForHost(t.Context(), Workspace{Root: root}, script, t.TempDir())
+	result, err := translateForHostForTest(t.Context(), Workspace{Root: root}, script, t.TempDir())
 	if err == nil {
 		t.Fatal("stale range unexpectedly translated")
 	}
@@ -240,7 +235,7 @@ func TestHPatch2InvalidGoRejectsAtomically(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := TranslateForHost(t.Context(), Workspace{Root: root}, script, t.TempDir())
+	result, err := translateForHostForTest(t.Context(), Workspace{Root: root}, script, t.TempDir())
 	root.Close()
 	if err == nil {
 		t.Fatal("invalid Go unexpectedly translated")
@@ -279,7 +274,7 @@ func TestHPatch2InvalidGoAttributesCausativeMutation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := TranslateForHost(t.Context(), Workspace{Root: root}, script, t.TempDir())
+	result, err := translateForHostForTest(t.Context(), Workspace{Root: root}, script, t.TempDir())
 	root.Close()
 	if err == nil {
 		t.Fatal("invalid Go unexpectedly translated")
@@ -310,7 +305,7 @@ func TestHPatch2InvalidGoCollectsDistinctCommandsInOneFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := TranslateForHost(t.Context(), Workspace{Root: root}, script, t.TempDir())
+	result, err := translateForHostForTest(t.Context(), Workspace{Root: root}, script, t.TempDir())
 	root.Close()
 	if err == nil {
 		t.Fatal("invalid Go unexpectedly translated")
@@ -340,7 +335,7 @@ func TestHPatch2InvalidGoPreservesSameLineCommandLocations(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := TranslateForHost(t.Context(), Workspace{Root: root}, script, t.TempDir())
+	result, err := translateForHostForTest(t.Context(), Workspace{Root: root}, script, t.TempDir())
 	root.Close()
 	if err == nil {
 		t.Fatal("invalid Go unexpectedly translated")
@@ -368,7 +363,7 @@ func TestHPatch2InvalidGoCollectsDistinctFiles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := TranslateForHost(t.Context(), Workspace{Root: root}, script, t.TempDir())
+	result, err := translateForHostForTest(t.Context(), Workspace{Root: root}, script, t.TempDir())
 	root.Close()
 	if err == nil {
 		t.Fatal("invalid Go unexpectedly translated")
@@ -399,7 +394,7 @@ func TestHPatch2InvalidGoReportsMultilineValueRow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := TranslateForHost(t.Context(), Workspace{Root: root}, script, t.TempDir())
+	result, err := translateForHostForTest(t.Context(), Workspace{Root: root}, script, t.TempDir())
 	root.Close()
 	if err == nil {
 		t.Fatal("invalid Go unexpectedly translated")
@@ -440,7 +435,7 @@ func TestHPatch2InvalidGoCollectsFarApartHeredocLocations(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := TranslateForHost(t.Context(), Workspace{Root: root}, script, t.TempDir())
+	result, err := translateForHostForTest(t.Context(), Workspace{Root: root}, script, t.TempDir())
 	root.Close()
 	if err == nil {
 		t.Fatal("invalid Go unexpectedly translated")
@@ -468,7 +463,7 @@ func TestHPatch2InvalidGoCollectsBeyondFormatterErrorCutoff(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := TranslateForHost(t.Context(), Workspace{Root: root}, script, t.TempDir())
+	result, err := translateForHostForTest(t.Context(), Workspace{Root: root}, script, t.TempDir())
 	root.Close()
 	if err == nil {
 		t.Fatal("invalid Go unexpectedly translated")
@@ -520,7 +515,7 @@ func TestHPatch2MultilineValueRowsUsePhysicalFraming(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := TranslateForHost(t.Context(), Workspace{Root: root}, script, t.TempDir())
+	result, err := translateForHostForTest(t.Context(), Workspace{Root: root}, script, t.TempDir())
 	root.Close()
 	if err == nil {
 		t.Fatal("invalid Go unexpectedly translated")

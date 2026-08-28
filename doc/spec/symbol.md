@@ -55,11 +55,8 @@ range. JSON, imports, fields, parameters, locals, and files with uncertain parsi
 definition line. Hsymbol uses the shared verified-row token admission rule in `REQ-READ-001` and
 never emits a partial row.
 
-The stock result is stdout and stderr from the same semantic query. For LSP resolvers, stdout is
-the JSON serialization of the definition or references result without initialization and shutdown
-traffic. Metrics do not run a second query. Shell replay retains the original shell call and
-output. Hsymbol remains private, is not routed as a standalone model-visible tool, and never enters
-editable rejected-script recovery.
+Shell replay retains the original shell call and output. Hsymbol remains private, is not routed as
+a standalone model-visible tool, and never enters editable rejected-script recovery.
 
 Acceptance:
 

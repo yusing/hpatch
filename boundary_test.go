@@ -25,7 +25,7 @@ func TestHPatch2MoveOnlyTranslationUsesVerificationHunk(t *testing.T) {
 			writeTestFile(t, root, "old.txt", test.content, 0o644)
 			result, err := translateForHostAtTest(t, root, "in old.txt\nmv new.txt\n", "")
 			if err != nil {
-				t.Fatalf("TranslateForHost() error = %v, diagnostic %q", err, result.Diagnostic)
+				t.Fatalf("translateForHostForTest() error = %v, diagnostic %q", err, result.Diagnostic)
 			}
 			got, err := patchtest.Apply(map[string]string{"old.txt": test.content}, string(result.Patch))
 			if err != nil {
@@ -51,7 +51,7 @@ func TestHPatch2NetActionsCollapseMovesAndCanceledCreation(t *testing.T) {
 	}, "\n")
 	result, err := translateForHostAtTest(t, root, script, "")
 	if err != nil {
-		t.Fatalf("TranslateForHost() error = %v, diagnostic %q", err, result.Diagnostic)
+		t.Fatalf("translateForHostForTest() error = %v, diagnostic %q", err, result.Diagnostic)
 	}
 	if !strings.Contains(string(result.Patch), "*** Update File: start.txt\n*** Move to: final.txt\n") ||
 		strings.Contains(string(result.Patch), "intermediate.txt") ||
@@ -66,7 +66,7 @@ func TestHPatch2TranslateNormalizesCRLFDisplay(t *testing.T) {
 	script := "in text.txt\ntype " + row(1, "old") + ` "new"`
 	result, err := translateForHostAtTest(t, root, script, "")
 	if err != nil {
-		t.Fatalf("TranslateForHost() error = %v, diagnostic %q", err, result.Diagnostic)
+		t.Fatalf("translateForHostForTest() error = %v, diagnostic %q", err, result.Diagnostic)
 	}
 	if strings.Contains(string(result.Patch), "\r") || !strings.Contains(string(result.Patch), "-old\n+new\n keep\n") {
 		t.Fatalf("translation does not describe LF logical-line edit:\n%s", string(result.Patch))
@@ -83,7 +83,7 @@ func TestHPatch2TranslateDisambiguatesRepeatedBlocks(t *testing.T) {
 	script := "in text.txt\ntype " + row(5, "middle") + ` "old" "new"`
 	result, err := translateForHostAtTest(t, root, script, "")
 	if err != nil {
-		t.Fatalf("TranslateForHost() error = %v, diagnostic %q", err, result.Diagnostic)
+		t.Fatalf("translateForHostForTest() error = %v, diagnostic %q", err, result.Diagnostic)
 	}
 	got, err := patchtest.Apply(map[string]string{"text.txt": content}, string(result.Patch))
 	if err != nil {
@@ -136,7 +136,7 @@ func TestHPatch2HeredocFailuresAreHeaderOwnedAndAtomic(t *testing.T) {
 			root := t.TempDir()
 			result, err := translateForHostAtTest(t, root, test.script, "")
 			if err == nil || !strings.Contains(result.Diagnostic, test.want) {
-				t.Fatalf("TranslateForHost() error = %v, diagnostic %q", err, result.Diagnostic)
+				t.Fatalf("translateForHostForTest() error = %v, diagnostic %q", err, result.Diagnostic)
 			}
 			if strings.Count(result.Diagnostic, ": command") != 1 || len(readTree(t, root)) != 0 {
 				t.Fatalf("failure was not one header-owned atomic rejection: %q", result.Diagnostic)
@@ -153,7 +153,7 @@ func TestHPatch2PhysicalNewlineInQuotedOperandIsHeaderOwned(t *testing.T) {
 	if err == nil ||
 		strings.Count(result.Diagnostic, ": command") != 1 ||
 		!strings.Contains(result.Diagnostic, `physical newline inside quoted operand; encode line terminators as \n or \r`) {
-		t.Fatalf("TranslateForHost() error = %v, diagnostic %q", err, result.Diagnostic)
+		t.Fatalf("translateForHostForTest() error = %v, diagnostic %q", err, result.Diagnostic)
 	}
 }
 
@@ -166,7 +166,7 @@ func TestHPatch2ParserReportsIndependentSyntaxErrors(t *testing.T) {
 		"unknown-command 1:abcd trailing\n"
 	result, err := translateForHostAtTest(t, root, script, "")
 	if err == nil || strings.Count(result.Diagnostic, ": command") != 3 {
-		t.Fatalf("TranslateForHost() error = %v, diagnostic %q", err, result.Diagnostic)
+		t.Fatalf("translateForHostForTest() error = %v, diagnostic %q", err, result.Diagnostic)
 	}
 	if got := readTestFile(t, root, "file.txt"); got != "unchanged\n" {
 		t.Fatalf("syntax rejection mutated file: %q", got)
@@ -180,7 +180,7 @@ func TestHPatch2InvalidUTF8IsRejected(t *testing.T) {
 	}
 	result, err := translateForHostAtTest(t, root, "in binary.txt", "")
 	if err == nil || !strings.Contains(result.Diagnostic, "not UTF-8") {
-		t.Fatalf("TranslateForHost() error = %v, diagnostic %q", err, result.Diagnostic)
+		t.Fatalf("translateForHostForTest() error = %v, diagnostic %q", err, result.Diagnostic)
 	}
 }
 
@@ -193,7 +193,7 @@ func TestHPatch2NoopModeBoundaries(t *testing.T) {
 	}
 	translated, err := translateForHostAtTest(t, root, "in file.txt", "")
 	if err != nil || len(translated.Patch) != 0 || !strings.HasPrefix(translated.Report, "in file.txt\nlast none\n") {
-		t.Fatalf("TranslateForHost() error = %v, patch %q, report %q", err, translated.Patch, translated.Report)
+		t.Fatalf("translateForHostForTest() error = %v, patch %q, report %q", err, translated.Patch, translated.Report)
 	}
 }
 
@@ -206,7 +206,7 @@ func TestHPatch2AbsoluteNormalizedAndCWDPaths(t *testing.T) {
 	root := openTestRoot(t, rootPath)
 	workspace := Workspace{Root: root, CWD: "bin"}
 	script := "in ./main.go\ntype " + row(1, "package main") + ` "package graph"`
-	patch, err := Translate(t.Context(), workspace, script)
+	patch, err := translateForTest(t.Context(), workspace, script)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -235,8 +235,8 @@ func TestHPatch2WorkspaceRejectsPathsOutsideRoot(t *testing.T) {
 		"in " + filepath.Join(outside, "outside.txt") + "\n",
 		"in escape/outside.txt\n",
 	} {
-		if _, err := Translate(t.Context(), workspace, script); err == nil {
-			t.Fatalf("Translate(%q) succeeded", script)
+		if _, err := translateForTest(t.Context(), workspace, script); err == nil {
+			t.Fatalf("translateForTest(%q) succeeded", script)
 		}
 	}
 	if err := Apply(t.Context(), workspace, "new escape/new.txt\ntype \"bad\"\n"); err == nil {
@@ -291,7 +291,7 @@ func TestHPatch2LifecycleFailuresAreAtomic(t *testing.T) {
 			before := readTree(t, root)
 			result, err := translateForHostAtTest(t, root, test.script, "")
 			if err == nil || !strings.Contains(result.Diagnostic, test.want) {
-				t.Fatalf("TranslateForHost() error = %v, diagnostic %q", err, result.Diagnostic)
+				t.Fatalf("translateForHostForTest() error = %v, diagnostic %q", err, result.Diagnostic)
 			}
 			if after := readTree(t, root); !reflect.DeepEqual(after, before) {
 				t.Fatalf("rejection changed tree: before %#v, after %#v", before, after)

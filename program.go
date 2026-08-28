@@ -57,7 +57,6 @@ func (t targetSpec) variant() targetVariant {
 }
 
 type instruction struct {
-	attempt    commandAttempt
 	source     string
 	line       int
 	operation  string
@@ -114,7 +113,7 @@ type commandErrorLocation struct {
 }
 
 type commandError struct {
-	Attempt         commandAttempt
+	Target          targetVariant
 	Reason          failureReason
 	Command         int
 	Line            int
@@ -167,7 +166,7 @@ func parse(source string) (*program, error) {
 		}
 		commandIndex++
 		sourceLine := headerIndex + 1
-		attempt := recognizeCommandAttempt(line)
+		attemptedTarget := recognizeAttemptedTarget(line)
 
 		frame, frameErr := hpatchsyntax.FrameCommand(lines, headerIndex, line)
 		index = frame.Next
@@ -196,7 +195,7 @@ func parse(source string) (*program, error) {
 				operation = fields[0]
 			}
 			failures = append(failures, &commandError{
-				Attempt:   attempt,
+				Target:    attemptedTarget,
 				Reason:    reasonOf(err, reasonSyntax),
 				Command:   commandIndex,
 				Line:      sourceLine,
@@ -210,7 +209,6 @@ func parse(source string) (*program, error) {
 		command.source = line
 		command.delimiter = frame.Delimiter
 		command.lineTerminator = lines[headerIndex].Terminator
-		command.attempt = attemptForInstruction(command)
 		program.instructions = append(program.instructions, command)
 	}
 	if len(failures) != 0 {
@@ -219,22 +217,21 @@ func parse(source string) (*program, error) {
 	return program, nil
 }
 
-func recognizeCommandAttempt(line string) commandAttempt {
+func recognizeAttemptedTarget(line string) targetVariant {
 	fields := strings.Fields(line)
 	if len(fields) == 0 {
-		return commandAttempt{}
+		return targetVariantNone
 	}
 	switch fields[0] {
 	case "in", "new", "mv", "rm":
-		return commandAttempt{recognized: true}
+		return targetVariantNone
 	case "type", "add":
-		attempt := commandAttempt{recognized: true}
 		if len(fields) > 1 {
-			attempt.target = recognizeTargetVariant(strings.TrimPrefix(line, fields[0]+" "))
+			return recognizeTargetVariant(strings.TrimPrefix(line, fields[0]+" "))
 		}
-		return attempt
+		return targetVariantNone
 	default:
-		return commandAttempt{}
+		return targetVariantNone
 	}
 }
 
@@ -271,10 +268,6 @@ func recognizeTargetVariant(operands string) targetVariant {
 		return targetVariantTextSingle
 	}
 	return targetVariantTextMultiple
-}
-
-func attemptForInstruction(command instruction) commandAttempt {
-	return commandAttempt{recognized: true, target: command.target.variant()}
 }
 
 func parseInstruction(sourceLine int, line string) (instruction, error) {

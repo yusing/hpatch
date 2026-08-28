@@ -1,27 +1,53 @@
-# Metrics classification and persistence
+# Capture-owned metrics
 
-## CTR-METRICS-001 — Metrics classification and persistence
+## CTR-METRICS-001 — Capture-owned metrics
 
-One metrics classifier consumes structured parser, evaluator, registry, carrier, stock-carrier,
-and completed executor-result events for `REQ-METRICS-001`. It does not re-parse tool inputs,
-diagnostics, or rendered responses. The translation path owns per-plugin and per-tool definition,
-call, emitted-shape, translated-shape, and failed-translation counters. The execution path owns
-current and stock result-shape counters from the private worker's validated evidence. Both paths
-derive persisted metric token counts and stable identity inside the metrics owner; plugin code
-independently counts formatted verified rows only to enforce its output-admission contract and
-never supplies those counts as metric evidence or outer carrier serialization. Hpatch's adapter additionally
-owns its effective, ineffective, fixed failed semantic baseline, report, command, target, and stable
-terminal-reason classifications. The report formatter's exact emitted string is the only source
-for report-input token counting. Reduction ratios and signed net input are presentation-time
-calculations from
-persisted counters.
+The root `capturer` subpackage is the sole owner of request correlation, payload measurement,
+provider usage, cache attribution, protocol savings, transported-tool accounting, Hpatch delivery
+accounting, capture health, durable capture records, and the structured metrics snapshot.
 
-The metrics store owns tokenizer use, stable tool identity keys, exact installed-definition
-totals, executor-result totals, overflow checks, interprocess locking, alternating checksummed
-bounded slots, persistence-generation selection, current-version decoding, obsolete-version reset,
-and page-cache writeback policy. Translation classification occurs after the router validates a
-carrier. Executor-result classification occurs in the private worker after one completed execution
-and does not rewrite translation classification. Missing or invalid stock evidence uses the current
-shape under `REQ-METRICS-001`. Metrics failure remains auxiliary and cannot change the requested
-edit, translated carrier, executor result, state report, or exit status. Router end-to-end Responses
-usage remains authoritative for provider-consumed model input.
+The capturer is in-process. `hpatch-router` wraps its existing `POST /v1/responses` handler and
+its existing provider `http.RoundTripper`; it does not start a second HTTP server, open another
+listener, or require another process. `GET /api/metrics` serves the capturer snapshot from the same
+router listener as Responses and models traffic. The embedded `GET /` dashboard is a presentation
+view of that snapshot on the same listener and owns no metric state or calculation.
+
+The client and provider wrappers share a request-scoped, process-private correlation value through
+Go context. No correlation header crosses either HTTP boundary. Provider retries receive consecutive
+attempt numbers under the same logical request. The wrappers preserve request bytes, response bytes,
+stream flushing, cancellation, status, headers, and response-body ownership.
+
+Raw request and response bodies exist only while one boundary is being measured. Durable schema-3
+JSONL records contain lengths, GPT-5 token estimates, statuses, duration, request identity fields
+needed for benchmark reconciliation, provider usage, tool names, tool-call identities, and sanitized
+Hpatch outcome kinds and allowlisted diagnostic reason codes parsed from the router-owned envelope.
+They never retain credentials, prompts, instructions, tool arguments, command output, response text,
+translated patches, or reports. Each response boundary retains at most 8 MiB for parsing while
+forwarding and byte-counting the complete stream; overflow becomes explicit incomplete health.
+
+The snapshot derives:
+
+- logical requests, provider attempts, completion and failure counts;
+- provider input, cached input, uncached input, output, and reasoning usage;
+- cold/new input and immediately preceding logical-request eligible-prefix cache attribution from
+  the final provider attempt by nonempty thread, ordered when requests enter the handler and
+  invalidated when that final attempt has no usage;
+- client and provider payload bytes and GPT-5 token estimates;
+- signed client-versus-final-provider payload savings for input and output;
+- provider-emitted and client-delivered tool shapes;
+- correlated Hpatch calls, corrections, successful and rejected deliveries, unmatched calls,
+  diagnostic codes, and signed Hpatch-versus-delivered-carrier input savings;
+- a bounded recent window of per-exchange provider attempts and usage, with complete cumulative
+  process totals and explicit dropped-detail health; and
+- capture, completeness, boundary, sequence, write, and skipped-request health.
+
+Router, edit-engine, CTP, registry, and plugin production code implement behavior only. They do not
+maintain benchmark baselines, synthetic stock commands or results, gain counters, metric callbacks,
+persistence slots, session metric histories, dashboard-owned calculations, or metric-only
+classifier events.
+Provider usage parsing may remain where an operational behavior, such as Mentor Handoff, needs it;
+that behavior state is not a metrics source.
+
+Capture failure is auxiliary after startup: it cannot alter an edit, command, translated response,
+or provider result. Failure to initialize an explicitly requested capture output prevents startup,
+because silently omitting requested evidence would make a benchmark invalid.

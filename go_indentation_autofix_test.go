@@ -47,7 +47,7 @@ func TestNonGoIndentationOnlyReplacementRejectsWithoutSuggestion(t *testing.T) {
 	defer root.Close()
 
 	command := "type " + row(2, "\texit \"$status\"") + ` "exit \"$status\"\n"`
-	result, err := TranslateForHost(t.Context(), Workspace{Root: root}, "in script.sh\n"+command, t.TempDir())
+	result, err := translateForHostForTest(t.Context(), Workspace{Root: root}, "in script.sh\n"+command, t.TempDir())
 	if err == nil {
 		t.Fatal("indentation-only replacement unexpectedly succeeded")
 	}
@@ -68,7 +68,7 @@ func TestIndentationCorrectionUsesEarliestCommandAcrossFiles(t *testing.T) {
 
 	script := "in first.txt\nin second.sh\ntype " + row(2, "\tsecond") + ` "second\n"` +
 		"\nin first.txt\ntype " + row(2, "\tfirst") + ` "first\n"`
-	result, err := TranslateForHost(t.Context(), Workspace{Root: root}, script, t.TempDir())
+	result, err := translateForHostForTest(t.Context(), Workspace{Root: root}, script, t.TempDir())
 	if err == nil {
 		t.Fatal("indentation-only replacements unexpectedly succeeded")
 	}
@@ -87,7 +87,7 @@ func TestIndentationCorrectionPrecedesLaterPathResolutionFailure(t *testing.T) {
 	defer root.Close()
 
 	script := "in script.sh\ntype " + row(2, "\texit") + ` "exit\n"` + "\nin missing.sh"
-	result, err := TranslateForHost(t.Context(), Workspace{Root: root}, script, t.TempDir())
+	result, err := translateForHostForTest(t.Context(), Workspace{Root: root}, script, t.TempDir())
 	if err == nil {
 		t.Fatal("path failure unexpectedly succeeded")
 	}
@@ -106,7 +106,7 @@ func TestNonGoIndentationCorrectionKeepsMutationPathAfterMove(t *testing.T) {
 	defer root.Close()
 
 	script := "in source.sh\ntype " + row(2, "\texit") + ` "exit\n"` + "\nmv moved.sh"
-	result, err := TranslateForHost(t.Context(), Workspace{Root: root}, script, t.TempDir())
+	result, err := translateForHostForTest(t.Context(), Workspace{Root: root}, script, t.TempDir())
 	if err == nil {
 		t.Fatal("indentation-only replacement unexpectedly succeeded")
 	}

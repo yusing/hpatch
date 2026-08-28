@@ -198,7 +198,6 @@ describe("plugin translation and execution", () => {
       if (input === "function") return api.function("lookup", "{\\"value\\":1}");
       if (input === "template") return api.exec("before | {.} | after");
       if (input === "params") return api.exec(undefined, {workdir: "/tmp"});
-      if (input === "stock") return api.exec(undefined, undefined, "python3 -c 'print(1)'");
       if (input === "invalid-params") return api.exec(undefined, {cmd: "forbidden"});
       if (input === "invalid-login") return api.exec(undefined, {login: true});
       if (input === "invalid-undefined") return api.exec(undefined, {workdir: undefined});
@@ -206,12 +205,11 @@ describe("plugin translation and execution", () => {
       if (input === "invalid-symbol") return api.exec(undefined, {tty: Symbol("tty")});
       if (input === "invalid-nan") return api.exec(undefined, {tty: Number.NaN});
       if (input === "invalid-template") return api.exec("missing placeholder");
-      if (input === "invalid-stock") return api.exec(undefined, undefined, "");
       if (input === "malformed") return {kind: "exec", payload: "unexpected"};
       return api.exec();
     },
     execute(argv) {
-      return {stdout: argv.join("|"), stderr: "fixture stderr", stock: {stdout: "stock output", exitCode: 0}, exitCode: 7};
+      return {stdout: argv.join("|"), stderr: "fixture stderr", exitCode: 7};
     }
   }]
 };
@@ -223,7 +221,6 @@ describe("plugin translation and execution", () => {
       ["exec", {kind: "exec"}],
       ["template", {kind: "exec", template: "before | {.} | after"}],
       ["params", {kind: "exec", params: {workdir: "/tmp"}}],
-      ["stock", {kind: "exec", stockCommand: "python3 -c 'print(1)'"}],
       ["custom", {kind: "custom", name: "exec", payload: "custom payload"}],
       ["function", {kind: "function", name: "lookup", payload: "{\"value\":1}"}],
     ] as const) {
@@ -273,15 +270,6 @@ describe("plugin translation and execution", () => {
     expect(invalidTemplate.status).toBe(1);
     expect(invalidTemplate.stderr).toContain("translator returned a malformed carrier");
 
-    const invalidStock = invokeHost(directory, {
-      operation: "translate",
-      module: "plugin.mjs",
-      index: 0,
-      input: "invalid-stock",
-    });
-    expect(invalidStock.status).toBe(1);
-    expect(invalidStock.stderr).toContain("translator returned a malformed carrier");
-
     const invalidParams = invokeHost(directory, {
       operation: "translate",
       module: "plugin.mjs",
@@ -322,7 +310,6 @@ describe("plugin translation and execution", () => {
     expect(JSON.parse(executed.stdout)).toEqual({
       stdout: "one|two words",
       stderr: "fixture stderr",
-      stock: {stdout: "stock output", stderr: "", exitCode: 0},
       exitCode: 7,
     });
   });
@@ -350,35 +337,4 @@ describe("plugin translation and execution", () => {
     );
   });
 
-  test("ignores invalid or throwing optional stock evidence", async () => {
-    for (const execute of [
-      'execute() { return {stdout: "current", stock: {stdout: 1}, exitCode: 0}; }',
-      'execute() { return {stdout: "current", get stock() { throw new Error("stock"); }, exitCode: 0}; }',
-      'execute() { return {stdout: "current", stock: {get stdout() { throw new Error("stdout"); }, exitCode: 0}, exitCode: 0}; }',
-      'execute() { return {stdout: "current", stock: {stdout: "stock", exitCode: 0}, exitCode: 0}; }',
-    ]) {
-      const directory = await temporaryDirectory();
-      await writeFile(
-        path.join(directory, "plugin.mjs"),
-        pluginDeclaration().replace(
-          'execute() { return {stdout: "", exitCode: 0}; }',
-          execute,
-        ),
-        "utf8",
-      );
-      const result = invokeHost(directory, {
-        operation: "execute",
-        outputBudgetBytes: Buffer.byteLength("current", "utf8"),
-        module: "plugin.mjs",
-        index: 0,
-        arguments: [],
-      });
-      expect(result.status).toBe(0);
-      expect(JSON.parse(result.stdout)).toEqual({
-        stdout: "current",
-        stderr: "",
-        exitCode: 0,
-      });
-    }
-  });
 });

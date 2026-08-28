@@ -68,7 +68,7 @@ func EditText(ctx context.Context, baseline, script string) (string, error) {
 
 func textEditCommandError(command instruction, index int, reason failureReason, message string) *commandError {
 	return &commandError{
-		Attempt:   command.attempt,
+		Target:    command.target.variant(),
 		Reason:    reason,
 		Command:   index,
 		Line:      command.line,
@@ -293,7 +293,7 @@ func targetAliasRelationRank(relation TargetAliasRelation) int {
 
 // Apply evaluates and atomically applies script within workspace.
 func Apply(ctx context.Context, workspace Workspace, script string) error {
-	changes, filesystem, _, _, _, err := evaluateScript(ctx, workspace, script)
+	changes, filesystem, _, _, err := evaluateScript(ctx, workspace, script)
 	if err != nil {
 		return err
 	}
@@ -304,16 +304,6 @@ func Apply(ctx context.Context, workspace Workspace, script string) error {
 		return err
 	}
 	return commitChanges(changes, rootFileOperations{root: filesystem.root})
-}
-
-// Translate evaluates script without mutation and returns an apply_patch envelope
-// whose paths are relative to workspace.Root.
-func Translate(ctx context.Context, workspace Workspace, script string) ([]byte, error) {
-	result, err := translateDetailed(ctx, workspace, script)
-	if err != nil {
-		return nil, err
-	}
-	return result.Patch, nil
 }
 
 // HostRejection is the non-sensitive, structured identity of one rejected
@@ -374,39 +364,43 @@ type HostTranslation struct {
 	Failures      []HostFailure
 	PatchSummary  HostPatchSummary
 	Rejections    []HostRejection
-	Invocation    InvocationMetrics
-}
-
-// TranslateForHost evaluates script once without mutation and returns the
-// translated patch, final-state report, and evaluator-owned invocation metrics.
-// On an evaluation failure it also returns the command-line diagnostic and
-// repair context, including configured error-hook warnings.
-func TranslateForHost(ctx context.Context, workspace Workspace, script, dataDirectory string) (HostTranslation, error) {
-	return changeForHost(ctx, workspace, script, dataDirectory, false)
 }
 
 // TranslateForHostAt evaluates a host script relative to directory without
 // imposing filesystem confinement. The host executor remains responsible for
 // authorizing the translated patch.
 func TranslateForHostAt(ctx context.Context, directory, script, dataDirectory string) (HostTranslation, error) {
-	result, failureStage, err := translateDetailedAt(ctx, directory, script)
+	changes, _, report, aliases, err := evaluateScriptAt(ctx, directory, script)
+	result := hostTranslationResult(changes, report, aliases, err == nil)
+	failureStage := ""
+	if err != nil {
+		failureStage = "evaluated"
+	} else if err = translateHostResult(ctx, changes, &result); err != nil {
+		failureStage = "translated"
+	}
 	return finishHostChange(ctx, dataDirectory, script, result, failureStage, err, false)
 }
 
-// ApplyForHost evaluates and atomically applies script while returning host diagnostics and metrics.
+// ApplyForHost evaluates and atomically applies script while returning host diagnostics.
 func ApplyForHost(ctx context.Context, workspace Workspace, script, dataDirectory string) (HostTranslation, error) {
-	return changeForHost(ctx, workspace, script, dataDirectory, true)
+	changes, filesystem, report, aliases, err := evaluateScript(ctx, workspace, script)
+	result := hostTranslationResult(changes, report, aliases, err == nil)
+	failureStage := ""
+	if err != nil {
+		failureStage = "evaluated"
+	} else if err = ctx.Err(); err == nil && len(changes) != 0 {
+		if err = commitChanges(changes, rootFileOperations{root: filesystem.root}); err != nil {
+			err = fmt.Errorf("changing %s: %w", describePaths(changes), err)
+			failureStage = "applied"
+		}
+	}
+	return finishHostChange(ctx, dataDirectory, script, result, failureStage, err, true)
 }
 
 // ApplyForHostRoot evaluates and applies a script within root. It is intended
 // for hosts that own a confined private filesystem.
 func ApplyForHostRoot(ctx context.Context, root *os.Root, script, dataDirectory string) (HostTranslation, error) {
 	return ApplyForHost(ctx, Workspace{Root: root}, script, dataDirectory)
-}
-
-func changeForHost(ctx context.Context, workspace Workspace, script, dataDirectory string, apply bool) (HostTranslation, error) {
-	result, failureStage, err := changeDetailed(ctx, workspace, script, apply)
-	return finishHostChange(ctx, dataDirectory, script, result, failureStage, err, apply)
 }
 
 func finishHostChange(ctx context.Context, dataDirectory, script string, result HostTranslation, failureStage string, err error, applied bool) (HostTranslation, error) {
@@ -457,53 +451,12 @@ func finishHostChange(ctx context.Context, dataDirectory, script string, result 
 	return result, nil
 }
 
-func translateDetailed(ctx context.Context, workspace Workspace, script string) (HostTranslation, error) {
-	result, _, err := changeDetailed(ctx, workspace, script, false)
-	return result, err
-}
-
-func changeDetailed(ctx context.Context, workspace Workspace, script string, apply bool) (HostTranslation, string, error) {
-	changes, filesystem, invocation, report, aliases, err := evaluateScript(ctx, workspace, script)
-	result := hostTranslationResult(changes, invocation, report, aliases, err == nil)
-	if err != nil {
-		return result, "evaluated", err
-	}
-	if !apply {
-		if err := translateHostResult(ctx, changes, &result); err != nil {
-			return result, "translated", err
-		}
-		return result, "", nil
-	}
-	if err := ctx.Err(); err != nil {
-		return result, "", err
-	}
-	if len(changes) != 0 {
-		if err := commitChanges(changes, rootFileOperations{root: filesystem.root}); err != nil {
-			return result, "applied", fmt.Errorf("changing %s: %w", describePaths(changes), err)
-		}
-	}
-	return result, "", nil
-}
-
-func translateDetailedAt(ctx context.Context, directory, script string) (HostTranslation, string, error) {
-	changes, _, invocation, report, aliases, err := evaluateScriptAt(ctx, directory, script)
-	result := hostTranslationResult(changes, invocation, report, aliases, err == nil)
-	if err != nil {
-		return result, "evaluated", err
-	}
-	if err := translateHostResult(ctx, changes, &result); err != nil {
-		return result, "translated", err
-	}
-	return result, "", nil
-}
-
-func hostTranslationResult(changes []change, invocation invocationMetrics, report string, aliases []TargetAlias, evaluated bool) HostTranslation {
+func hostTranslationResult(changes []change, report string, aliases []TargetAlias, evaluated bool) HostTranslation {
 	files := len(changes)
 	return HostTranslation{
 		Report:        report,
 		TargetAliases: slices.Clone(aliases),
 		Change:        HostChange{Files: files, AlreadySatisfied: evaluated && files == 0},
-		Invocation:    InvocationMetrics{value: invocation},
 	}
 }
 
@@ -525,30 +478,26 @@ type filesystemWorkspace struct {
 	cwd  string
 }
 
-func evaluateScript(ctx context.Context, workspace Workspace, script string) ([]change, filesystemWorkspace, invocationMetrics, string, []TargetAlias, error) {
+func evaluateScript(ctx context.Context, workspace Workspace, script string) ([]change, filesystemWorkspace, string, []TargetAlias, error) {
 	filesystem, err := validateWorkspace(ctx, workspace)
 	if err != nil {
-		return nil, filesystemWorkspace{}, invocationMetrics{}, "", nil, err
+		return nil, filesystemWorkspace{}, "", nil, err
 	}
 	return evaluateScriptInFilesystem(ctx, filesystem, script)
 }
 
-func evaluateScriptAt(ctx context.Context, directory, script string) ([]change, filesystemWorkspace, invocationMetrics, string, []TargetAlias, error) {
+func evaluateScriptAt(ctx context.Context, directory, script string) ([]change, filesystemWorkspace, string, []TargetAlias, error) {
 	filesystem, err := validateHostDirectory(ctx, directory)
 	if err != nil {
-		return nil, filesystemWorkspace{}, invocationMetrics{}, "", nil, err
+		return nil, filesystemWorkspace{}, "", nil, err
 	}
 	return evaluateScriptInFilesystem(ctx, filesystem, script)
 }
 
-func evaluateScriptInFilesystem(ctx context.Context, filesystem filesystemWorkspace, script string) ([]change, filesystemWorkspace, invocationMetrics, string, []TargetAlias, error) {
+func evaluateScriptInFilesystem(ctx context.Context, filesystem filesystemWorkspace, script string) ([]change, filesystemWorkspace, string, []TargetAlias, error) {
 	program, err := parse(script)
 	if err != nil {
-		var events invocationMetrics
-		for _, sourceError := range commandsOf(err) {
-			events.invokeFailure(sourceError.Operation, sourceError.Attempt, sourceError.Reason)
-		}
-		return nil, filesystemWorkspace{}, events, "", nil, err
+		return nil, filesystemWorkspace{}, "", nil, err
 	}
 	load := func(path string) (loadedFile, error) {
 		return filesystem.readFile(ctx, path)
@@ -566,11 +515,11 @@ func evaluateScriptInFilesystem(ctx context.Context, filesystem filesystemWorksp
 		}
 		return 0, false, err
 	}
-	changes, commands, report, aliases, err := program.evaluate(ctx, filesystem.resolvePath, load, exists)
+	changes, report, aliases, err := program.evaluate(ctx, filesystem.resolvePath, load, exists)
 	if err != nil {
-		return nil, filesystemWorkspace{}, commands, "", nil, err
+		return nil, filesystemWorkspace{}, "", nil, err
 	}
-	return changes, filesystem, commands, report, aliases, nil
+	return changes, filesystem, report, aliases, nil
 }
 
 func validateWorkspace(ctx context.Context, workspace Workspace) (filesystemWorkspace, error) {

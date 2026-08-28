@@ -105,7 +105,6 @@ func executeShellTool(
 			if _, writeErr := io.WriteString(handler.Stderr, execution.Stderr); writeErr != nil {
 				return fmt.Errorf("write %s stderr: %w", command[0], writeErr)
 			}
-			recordToolExecutionMetrics(handlerCtx, manifest.MetricsDir, contribution, execution)
 			if execution.ExitCode != 0 {
 				return interp.ExitStatus(execution.ExitCode)
 			}

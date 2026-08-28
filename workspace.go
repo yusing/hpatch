@@ -56,92 +56,72 @@ type workspace struct {
 	reportedEdits []*reportedEdit
 	load          fileLoader
 	exists        pathProbe
-	recoveries    *invocationMetrics
 }
 
-func (w *workspace) recover(kind recoveryKind) {
-	if w.recoveries != nil {
-		w.recoveries.recover(kind)
-	}
-}
-
-func (p *program) evaluate(ctx context.Context, resolve pathResolver, load fileLoader, exists pathProbe) ([]change, invocationMetrics, string, []TargetAlias, error) {
-	var events invocationMetrics
+func (p *program) evaluate(ctx context.Context, resolve pathResolver, load fileLoader, exists pathProbe) ([]change, string, []TargetAlias, error) {
 	w := &workspace{
-		paths:      make(map[string]*fileState),
-		blocked:    make(map[string]bool),
-		reserved:   make(map[string]bool),
-		load:       load,
-		exists:     exists,
-		recoveries: &events,
+		paths:    make(map[string]*fileState),
+		blocked:  make(map[string]bool),
+		reserved: make(map[string]bool),
+		load:     load,
+		exists:   exists,
 	}
 	var baselineFailures []*commandError
 	for commandIndex, command := range p.instructions {
 		if err := ctx.Err(); err != nil {
-			return nil, events, "", nil, err
+			return nil, "", nil, err
 		}
-		events.invoke(command.operation, command.attempt)
 		diagnosticPath := command.path
 		if command.path != "" {
 			resolved, err := resolve(command.path)
 			if err != nil {
 				if failure := w.indentationFailure(); failure != nil {
-					events.fail(failure.Operation, failure.Attempt, failure.Reason)
-					return nil, events, "", nil, failure
+					return nil, "", nil, failure
 				}
 
 				reason := reasonPath
-				events.fail(command.operation, command.attempt, reason)
-				return nil, events, "", nil, &commandError{Attempt: command.attempt, Reason: reason, Command: commandIndex + 1, Line: command.line, Operation: command.operation, Path: diagnosticPath, Category: commandCategory(command.operation), Source: command.source, Message: err.Error()}
+				return nil, "", nil, &commandError{Target: command.target.variant(), Reason: reason, Command: commandIndex + 1, Line: command.line, Operation: command.operation, Path: diagnosticPath, Category: commandCategory(command.operation), Source: command.source, Message: err.Error()}
 			}
 			command.path = resolved
 		}
 
 		if err := w.execute(command, commandIndex+1); err != nil {
 			if failure := w.indentationFailure(); failure != nil {
-				events.fail(failure.Operation, failure.Attempt, failure.Reason)
-				return nil, events, "", nil, failure
+				return nil, "", nil, failure
 			}
 
 			reason := reasonOf(err, reasonOther)
-			events.fail(command.operation, command.attempt, reason)
-			failure := &commandError{Attempt: command.attempt, Reason: reason, Command: commandIndex + 1, Line: command.line, Operation: command.operation, Path: w.diagnosticPath(command), Category: commandCategory(command.operation), Source: command.source, Message: err.Error(), Repair: w.repairContext(command, reason)}
+			failure := &commandError{Target: command.target.variant(), Reason: reason, Command: commandIndex + 1, Line: command.line, Operation: command.operation, Path: w.diagnosticPath(command), Category: commandCategory(command.operation), Source: command.source, Message: err.Error(), Repair: w.repairContext(command, reason)}
 			if independentlyDetectableBaselineFailure(reason) {
 				baselineFailures = append(baselineFailures, failure)
 				continue
 			}
-			return nil, events, "", nil, failure
+			return nil, "", nil, failure
 		}
 	}
 	if len(baselineFailures) != 0 {
-		return nil, events, "", nil, commandFailures(baselineFailures)
+		return nil, "", nil, commandFailures(baselineFailures)
 	}
 	if err := w.applyLanguageIndentation(ctx); err != nil {
-		return nil, events, "", nil, err
+		return nil, "", nil, err
 	}
 	if failure := w.indentationFailure(); failure != nil {
-		events.fail(failure.Operation, failure.Attempt, failure.Reason)
-		return nil, events, "", nil, failure
+		return nil, "", nil, failure
 	}
 
 	if err := ctx.Err(); err != nil {
-		return nil, events, "", nil, err
+		return nil, "", nil, err
 	}
 	if failure := w.validationFailure(ctx); failure != nil {
-		for _, command := range commandsOf(failure) {
-			if command.Operation != "" {
-				events.fail(command.Operation, command.Attempt, command.Reason)
-			}
-		}
-		return nil, events, "", nil, failure
+		return nil, "", nil, failure
 	}
 	if err := ctx.Err(); err != nil {
-		return nil, events, "", nil, err
+		return nil, "", nil, err
 	}
 	changes := w.changes()
 
 	report, aliases := w.finalStateReport(changes)
-	return changes, events, report, aliases, nil
+	return changes, report, aliases, nil
 }
 
 func independentlyDetectableBaselineFailure(reason failureReason) bool {
@@ -173,7 +153,7 @@ func (w *workspace) indentationFailure() *commandError {
 				path = file.path
 			}
 			failure := &commandError{
-				Attempt:         command.attempt,
+				Target:          command.target.variant(),
 				Reason:          reasonEditConflict,
 				Command:         pending.origin.command,
 				Line:            command.line,
@@ -217,7 +197,7 @@ func commandCategory(operation string) string {
 func (w *workspace) execute(command instruction, commandIndex int) error {
 	origin := editOrigin{
 		command: commandIndex, line: command.line,
-		operation: command.operation, target: command.attempt.target, targetSpec: command.target,
+		operation: command.operation, target: command.target.variant(), targetSpec: command.target,
 		multilineValue: command.delimiter != "",
 	}
 	initializing := command.operation == "type" && command.target.kind == targetNone && w.initializable == w.active

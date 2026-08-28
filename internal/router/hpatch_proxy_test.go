@@ -134,10 +134,6 @@ func (hpatchTranslatorFunc) ToolDescription() string {
 	return testHPatchToolDescription
 }
 
-func (hpatchTranslatorFunc) RecordMetrics(context.Context, hpatchMetricRecord) error {
-	return nil
-}
-
 type hpatchResultTranslatorFunc func(context.Context, string, string) (hpatchTranslationResult, error)
 
 func (f hpatchResultTranslatorFunc) Translate(ctx context.Context, workspace string, script string) (hpatchTranslationResult, error) {
@@ -146,10 +142,6 @@ func (f hpatchResultTranslatorFunc) Translate(ctx context.Context, workspace str
 
 func (hpatchResultTranslatorFunc) ToolDescription() string {
 	return testHPatchToolDescription
-}
-
-func (hpatchResultTranslatorFunc) RecordMetrics(context.Context, hpatchMetricRecord) error {
-	return nil
 }
 
 func newManagedHPatchProxy(t *testing.T, translator hpatchTranslator) *hpatchProxy {
@@ -363,9 +355,6 @@ func TestHPatchPrepareRequestRewritesNamespacedExecWithShell(t *testing.T) {
 		return jsonString(tool, "name") == "collaboration" && string(tool["future"]) == "true"
 	}) {
 		t.Fatalf("additional_tools lost sibling namespace: %#v", namespaces)
-	}
-	if len(transform.execCommandDefinitions) != 2 {
-		t.Fatalf("removed exec_command definitions = %d, want 2", len(transform.execCommandDefinitions))
 	}
 	var rewrittenInstructions string
 	if err := json.Unmarshal(request.fields["instructions"], &rewrittenInstructions); err != nil {
@@ -644,21 +633,10 @@ func TestHPatchReplacementReplacesNamespacedExecCommandWithShellParams(t *testin
 		"tools": mustTestJSON(t, []any{}),
 	}
 	installed := testInstalledTools()
-	applyPatchDefinition, execCommandDefinitions, owner, replaced, err := replaceAdditionalToolsApplyPatch(fields, installed)
+	owner, replaced, err := replaceAdditionalToolsApplyPatch(fields, installed)
 	if err != nil || !replaced || owner != "exec" {
 		t.Fatalf("owner = %q, replaced %v, error %v", owner, replaced, err)
 	}
-	if !strings.HasPrefix(applyPatchDefinition, codeModeApplyPatchHeading) || len(execCommandDefinitions) != 2 {
-		t.Fatalf("removed definitions = apply %q, exec %q", applyPatchDefinition, execCommandDefinitions)
-	}
-	if !slices.ContainsFunc(execCommandDefinitions, func(definition string) bool {
-		return strings.Contains(definition, codeModeExecCommandPlainHeading)
-	}) || !slices.ContainsFunc(execCommandDefinitions, func(definition string) bool {
-		return strings.Contains(definition, "tools.exec_command")
-	}) {
-		t.Fatalf("removed exec definitions = %q", execCommandDefinitions)
-	}
-
 	functionsTools, namespaces := testFunctionsNamespaceTools(t, fields)
 	if len(namespaces) != 2 || jsonString(namespaces[1], "name") != "collaboration" {
 		t.Fatalf("sibling namespace changed: %#v", namespaces)
@@ -705,14 +683,10 @@ func TestHPatchReplacementReplacesFlatExecCommandWithShellParams(t *testing.T) {
 		"tools": mustTestJSON(t, []any{}),
 	}
 	installed := testInstalledTools()
-	applyPatchDefinition, execCommandDefinitions, owner, replaced, err := replaceAdditionalToolsApplyPatch(fields, installed)
+	owner, replaced, err := replaceAdditionalToolsApplyPatch(fields, installed)
 	if err != nil || !replaced || owner != "exec" {
 		t.Fatalf("owner = %q, replaced %v, error %v", owner, replaced, err)
 	}
-	if !strings.HasPrefix(applyPatchDefinition, codeModeApplyPatchHeading) || len(execCommandDefinitions) != 2 {
-		t.Fatalf("removed definitions = apply %q, exec %q", applyPatchDefinition, execCommandDefinitions)
-	}
-
 	var items []map[string]json.RawMessage
 	if err := json.Unmarshal(fields["input"], &items); err != nil {
 		t.Fatal(err)
@@ -767,9 +741,9 @@ func TestHPatchReplacementKeepsBaseShellDescriptionWithoutExecCommandContract(t 
 	}
 	installed := testInstalledTools()
 
-	_, execCommandDefinitions, _, replaced, err := replaceAdditionalToolsApplyPatch(fields, installed)
-	if err != nil || !replaced || len(execCommandDefinitions) != 0 {
-		t.Fatalf("replacement = %t, definitions %q, error %v", replaced, execCommandDefinitions, err)
+	_, replaced, err := replaceAdditionalToolsApplyPatch(fields, installed)
+	if err != nil || !replaced {
+		t.Fatalf("replacement = %t, error %v", replaced, err)
 	}
 	var tools []map[string]json.RawMessage
 	if err := json.Unmarshal(fields["tools"], &tools); err != nil {
@@ -817,7 +791,7 @@ func TestHPatchReplacementRejectsUnsupportedAndTopLevelExecCarriers(t *testing.T
 			}
 			beforeInput := bytes.Clone(fields["input"])
 			beforeTools := bytes.Clone(fields["tools"])
-			_, _, _, replaced, err := replaceAdditionalToolsApplyPatch(fields, testInstalledTools())
+			_, replaced, err := replaceAdditionalToolsApplyPatch(fields, testInstalledTools())
 			if err == nil || replaced {
 				t.Fatalf("replacement = %t, error %v", replaced, err)
 			}
@@ -852,14 +826,14 @@ func TestStripCodeModeExecCommandSectionAcceptsAppAndCLISchemas(t *testing.T) {
 
 func TestStripCodeModeExecCommandContractRejectsUnownedReference(t *testing.T) {
 	description := "Run JavaScript with `tools.exec_command(...)`.\n\n### `create_goal`\nKeep this."
-	if _, _, _, _, err := stripCodeModeExecCommandContract(description); err == nil {
+	if _, _, _, err := stripCodeModeExecCommandContract(description); err == nil {
 		t.Fatal("unowned exec_command reference was accepted")
 	}
 
 	description = "Run JavaScript.\n\n### `create_goal`\nKeep this."
-	stripped, paramsDescription, definitions, found, err := stripCodeModeExecCommandContract(description)
-	if err != nil || found || paramsDescription != "" || len(definitions) != 0 || stripped != description {
-		t.Fatalf("absent contract = stripped %q, params %q, definitions %q, found %t, error %v", stripped, paramsDescription, definitions, found, err)
+	stripped, paramsDescription, found, err := stripCodeModeExecCommandContract(description)
+	if err != nil || found || paramsDescription != "" || stripped != description {
+		t.Fatalf("absent contract = stripped %q, params %q, found %t, error %v", stripped, paramsDescription, found, err)
 	}
 }
 
@@ -957,7 +931,7 @@ func TestHPatchAdditionalToolsReplacementRejectsDuplicateAndConflictingOwners(t 
 			}
 			beforeInput := bytes.Clone(fields["input"])
 			beforeTools := bytes.Clone(fields["tools"])
-			_, _, _, replaced, err := replaceAdditionalToolsApplyPatch(fields, testInstalledTools())
+			_, replaced, err := replaceAdditionalToolsApplyPatch(fields, testInstalledTools())
 			if err == nil || replaced {
 				t.Fatalf("replacement = %v, error %v", replaced, err)
 			}
@@ -974,14 +948,10 @@ func TestHPatchAdditionalToolsReplacementAlwaysRemovesExecCommand(t *testing.T) 
 		"tools": mustTestJSON(t, []any{}),
 	}
 
-	_, removedExecCommandDefinitions, owner, replaced, err := replaceAdditionalToolsApplyPatch(fields, testInstalledTools())
+	owner, replaced, err := replaceAdditionalToolsApplyPatch(fields, testInstalledTools())
 	if err != nil || !replaced || owner != "exec" {
 		t.Fatalf("owner = %q, replaced %v, error %v", owner, replaced, err)
 	}
-	if len(removedExecCommandDefinitions) != 2 {
-		t.Fatalf("removed exec_command definitions = %q", removedExecCommandDefinitions)
-	}
-
 	functionsTools, _ := testFunctionsNamespaceTools(t, fields)
 	execIndex := slices.IndexFunc(functionsTools, func(tool map[string]json.RawMessage) bool {
 		return jsonString(tool, "name") == "exec"
@@ -1036,7 +1006,7 @@ func TestHPatchAdditionalToolsReplacementLeavesUnsupportedAndMalformedRequestsUn
 			beforeInput := bytes.Clone(fields["input"])
 			beforeTools := bytes.Clone(fields["tools"])
 			beforeChoice := bytes.Clone(fields["tool_choice"])
-			_, _, _, replaced, err := replaceAdditionalToolsApplyPatch(fields, testInstalledTools())
+			_, replaced, err := replaceAdditionalToolsApplyPatch(fields, testInstalledTools())
 			if err != nil || replaced {
 				t.Fatalf("replacement = %v, error %v", replaced, err)
 			}
@@ -1052,7 +1022,7 @@ func TestHPatchReplacementRetainsNamespacedExecOwnerName(t *testing.T) {
 		"input": mustTestJSON(t, []any{testCodeModeAdditionalTools(testCodeModeDescription)}),
 		"tools": mustTestJSON(t, []any{}),
 	}
-	_, _, got, replaced, err := replaceAdditionalToolsApplyPatch(fields, testInstalledTools())
+	got, replaced, err := replaceAdditionalToolsApplyPatch(fields, testInstalledTools())
 	if err != nil || !replaced || got != "exec" {
 		t.Fatalf("owner = %q, replaced %v, error %v", got, replaced, err)
 	}
@@ -1516,15 +1486,9 @@ func TestShellRecoversLunaCodeModePrograms(t *testing.T) {
 			warningInput := misuseWarningProjection(lunaShellRecoveryWarning)
 			want := warningInput + test.input
 
-			dataDirectory := t.TempDir()
-			translator := metricsObservingTranslator{
-				translate: func(context.Context, string, string) ([]byte, error) {
-					return []byte(testTranslatedPatch), nil
-				},
-				record: func(ctx context.Context, record hpatchMetricRecord) error {
-					return hpatch.RecordHostMetrics(ctx, dataDirectory, record.HostMetricRecord)
-				},
-			}
+			translator := hpatchTranslatorFunc(func(context.Context, string, string) ([]byte, error) {
+				return []byte(testTranslatedPatch), nil
+			})
 			transform, proxy, _, _ := newHPatchTestTransform(t, translator)
 			visible, err := transform.TransformJSON(mustTestJSON(t, map[string]any{
 				"status": "completed",
@@ -1580,19 +1544,6 @@ func TestShellRecoversLunaCodeModePrograms(t *testing.T) {
 				jsonString(replayed[0], "input") != want ||
 				jsonString(replayed[1], "output") != "command output" {
 				t.Fatalf("recovered carrier replay = %s", replay.fields["input"])
-			}
-			gain, err := hpatch.LoadGainMetrics(dataDirectory)
-			if err != nil {
-				t.Fatal(err)
-			}
-			var lunaMisuse uint64
-			for _, recovery := range gain.Recoveries {
-				if recovery.Name == "luna misuse" {
-					lunaMisuse = recovery.Count
-				}
-			}
-			if lunaMisuse != 1 {
-				t.Fatalf("luna misuse recoveries after replay = %d, want 1", lunaMisuse)
 			}
 		})
 	}
@@ -1849,163 +1800,6 @@ func TestShellStacksDistinctMisuseWarnings(t *testing.T) {
 	wantPrefix := misuseWarningProjection(lunaShellRecoveryWarning) + wrapperInput + heredocInput
 	if recovered != wantPrefix+recoveredInput {
 		t.Fatalf("recovered shell warnings did not stack in order:\n%s", recovered)
-	}
-}
-
-func TestMisuseWarningsRecordDistinctInputOverhead(t *testing.T) {
-	dataDirectory := t.TempDir()
-	var records []hpatchMetricRecord
-	translator := metricsObservingTranslator{
-		translate: func(context.Context, string, string) ([]byte, error) {
-			return []byte(testTranslatedPatch), nil
-		},
-		record: func(ctx context.Context, record hpatchMetricRecord) error {
-			records = append(records, record)
-			return hpatch.RecordHostMetrics(ctx, dataDirectory, record.HostMetricRecord)
-		},
-	}
-	nativeWarningInput := misuseWarningProjection(nativeExecCommandWarning)
-	lunaWarningInput := misuseWarningProjection(lunaShellRecoveryWarning)
-	interpreterMisuses := shellInterpreterWrapperMisuses(
-		toolContribution{PluginID: "builtin.shell", Name: "shell"},
-		"python3 -c 'print(1)'",
-	)
-	if len(interpreterMisuses) == 0 {
-		t.Fatal("interpreter-wrapper metric warning was not detected")
-	}
-	interpreterWarningInput := misuseWarningProjection(shellInterpreterWrapperWarning(interpreterMisuses[0]))
-	cases := []struct {
-		name       string
-		toolName   string
-		input      string
-		warning    string
-		toolCalls  uint64
-		recoveries uint64
-	}{
-		{
-			name:       "native exec_command",
-			toolName:   "exec",
-			input:      "const result = await tools.exec_command({\"cmd\":\"printf ok\"});\ntext(result.output);",
-			warning:    nativeWarningInput,
-			toolCalls:  0,
-			recoveries: 0,
-		},
-		{
-			name:       "Luna carrier",
-			toolName:   "shell",
-			input:      "const result = await tools.exec_command({\"cmd\":\"printf ok\",\"login\":false});\ntext(result.output);",
-			warning:    lunaWarningInput,
-			toolCalls:  1,
-			recoveries: 1,
-		},
-		{
-			name:       "interpreter wrapper",
-			toolName:   "shell",
-			input:      "python3 -c 'print(1)'",
-			warning:    interpreterWarningInput,
-			toolCalls:  1,
-			recoveries: 0,
-		},
-	}
-	var gotTotal, wantTotal, wantRecoveryTotal uint64
-	for _, test := range cases {
-		t.Run(test.name, func(t *testing.T) {
-			transform, _, _, _ := newHPatchTestTransform(t, translator)
-			_, err := transform.TransformJSON(mustTestJSON(t, map[string]any{
-				"status": "completed",
-				"output": []any{map[string]any{
-					"type": "custom_tool_call", "name": test.toolName, "call_id": test.name, "input": test.input,
-				}},
-			}))
-			if err != nil {
-				t.Fatal(err)
-			}
-			if len(records) != 1 {
-				t.Fatalf("metric records = %d, want 1", len(records))
-			}
-			record := records[0]
-			records = nil
-			want, err := hpatch.ClassifyHostMetrics(hpatch.HostMetricInput{MisuseWarning: test.warning})
-			if err != nil {
-				t.Fatal(err)
-			}
-			if record.MisuseWarningInputTokens != want.MisuseWarningInputTokens {
-				t.Fatalf("misuse warning tokens = %d, want %d", record.MisuseWarningInputTokens, want.MisuseWarningInputTokens)
-			}
-			var calls, translated uint64
-			for _, metric := range record.ToolMetrics {
-				calls += metric.Calls
-				translated += metric.TranslatedTokens
-			}
-			if calls != test.toolCalls {
-				t.Fatalf("translated tool calls = %d, want %d", calls, test.toolCalls)
-			}
-			if test.toolCalls != 0 && translated == 0 {
-				t.Fatal("translated tool metrics lost their translated tokens")
-			}
-			wantRecoveryTotal += test.recoveries
-			gain, err := hpatch.LoadGainMetrics(dataDirectory)
-			if err != nil {
-				t.Fatal(err)
-			}
-			var lunaMisuse uint64
-			for _, recovery := range gain.Recoveries {
-				if recovery.Name == "luna misuse" {
-					lunaMisuse = recovery.Count
-				}
-			}
-			if lunaMisuse != wantRecoveryTotal {
-				t.Fatalf("luna misuse recoveries = %d, want %d", lunaMisuse, wantRecoveryTotal)
-			}
-			gotTotal += record.MisuseWarningInputTokens
-			wantTotal += want.MisuseWarningInputTokens
-		})
-	}
-	if gotTotal != wantTotal {
-		t.Fatalf("misuse warning total = %d, want %d", gotTotal, wantTotal)
-	}
-}
-
-func TestNativeExecMisuseWarningMeteredOnceAcrossStreamLifecycle(t *testing.T) {
-	var records []hpatchMetricRecord
-	transform, _, _, _ := newHPatchTestTransform(t, metricsObservingTranslator{
-		translate: func(context.Context, string, string) ([]byte, error) {
-			return []byte(testTranslatedPatch), nil
-		},
-		record: func(_ context.Context, record hpatchMetricRecord) error {
-			records = append(records, record)
-			return nil
-		},
-	})
-	item := map[string]any{
-		"type": "custom_tool_call", "id": "item-native", "call_id": "call-native",
-		"name": "exec", "input": "const result = await tools.exec_command({\"cmd\":\"printf ok\"});\ntext(result.output);",
-	}
-	for _, event := range []map[string]any{
-		{"type": "response.output_item.added", "item": map[string]any{
-			"type": "custom_tool_call", "id": "item-native", "call_id": "call-native",
-			"name": "exec", "input": "", "status": "in_progress",
-		}},
-		{"type": "response.custom_tool_call_input.done", "item_id": "item-native", "input": item["input"]},
-		{"type": "response.output_item.done", "item": item},
-		{"type": "response.completed", "response": map[string]any{
-			"status": "completed", "output": []any{item},
-		}},
-	} {
-		if _, err := transform.TransformSSE(mustTestJSON(t, event)); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if len(records) != 1 {
-		t.Fatalf("native warning metric records = %d, want 1", len(records))
-	}
-	warningInput := misuseWarningProjection(nativeExecCommandWarning)
-	want, err := hpatch.ClassifyHostMetrics(hpatch.HostMetricInput{MisuseWarning: warningInput})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if records[0].MisuseWarningInputTokens != want.MisuseWarningInputTokens {
-		t.Fatalf("native warning tokens = %d, want %d", records[0].MisuseWarningInputTokens, want.MisuseWarningInputTokens)
 	}
 }
 
@@ -2325,71 +2119,6 @@ func TestHPatchTranslationRewritesConfirmedTargetAlias(t *testing.T) {
 	}
 }
 
-func TestHPatchRejectionMetricsAttributeConfirmedAliasRewrite(t *testing.T) {
-	var records []hpatchMetricRecord
-	var evaluatedScripts []string
-	translator := hpatchResultObservingTranslator{
-		translate: func(_ context.Context, _ string, script string) (hpatchTranslationResult, error) {
-			evaluatedScripts = append(evaluatedScripts, script)
-			return hpatchTranslationResult{
-				diagnostic: "type: command 2, reason row-stale: rejected\n",
-				rejections: []hpatch.HostRejection{{Command: 2, SourceLine: 2, Operation: "type", Target: "range", Reason: "row-stale"}},
-			}, errors.New("rejected")
-		},
-		record: func(_ context.Context, record hpatchMetricRecord) error {
-			records = append(records, record)
-			return nil
-		},
-	}
-	transform, proxy, _, workspace := newHPatchTestTransform(t, translator)
-	alias := hpatch.TargetAlias{Path: "file.txt", Before: "10:aaaa..20:bbbb", After: "30:cccc..40:dddd"}
-	if err := proxy.rememberBatch(transform.historySessionID, map[string]hpatchHistory{
-		"call-first": {root: workspace, confirmed: true, aliases: []hpatch.TargetAlias{alias}},
-	}); err != nil {
-		t.Fatal(err)
-	}
-
-	calls := []struct {
-		id        string
-		target    string
-		path      string
-		relation  hpatch.TargetAliasRelation
-		rewritten bool
-	}{
-		{"call-rewritten", "10:aaaa..20:bbbb", "file.txt", hpatch.TargetAliasRelationExact, true},
-		{"call-exact-coordinates", "10:1111..20:2222", "file.txt", hpatch.TargetAliasRelationExact, false},
-		{"call-contains", "5:1111..25:2222", "file.txt", hpatch.TargetAliasRelationContains, false},
-		{"call-contained", "12:1111..18:2222", "file.txt", hpatch.TargetAliasRelationContained, false},
-		{"call-overlap", "18:1111..25:2222", "file.txt", hpatch.TargetAliasRelationOverlap, false},
-		{"call-unmatched", "10:1111..20:2222", "other.txt", hpatch.TargetAliasRelationNone, false},
-	}
-	for _, call := range calls {
-		if _, err := transform.translate(call.id, "in "+call.path+"\ntype "+call.target+" \"replacement\"", nil); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if want := []string{
-		"in file.txt\ntype 30:cccc..40:dddd \"replacement\"",
-		"in file.txt\ntype 10:1111..20:2222 \"replacement\"",
-		"in file.txt\ntype 5:1111..25:2222 \"replacement\"",
-		"in file.txt\ntype 12:1111..18:2222 \"replacement\"",
-		"in file.txt\ntype 18:1111..25:2222 \"replacement\"",
-		"in other.txt\ntype 10:1111..20:2222 \"replacement\"",
-	}; !slices.Equal(evaluatedScripts, want) {
-		t.Fatalf("evaluated scripts = %q, want %q", evaluatedScripts, want)
-	}
-	if len(records) != len(calls) {
-		t.Fatalf("confirmed alias rewrite metrics = %+v", records)
-	}
-	for index, call := range calls {
-		attempt, ok := hpatchAttemptMetricsOf(records[index])
-		if !ok || attempt.ConfirmedAliasRewrite != call.rewritten || len(attempt.Rejections) != 1 ||
-			attempt.Rejections[0].TargetAliasRelation != call.relation {
-			t.Fatalf("%s rejection attempt = %+v, retained %t", call.id, attempt, ok)
-		}
-	}
-}
-
 func TestHPatchReplayRejectsChangedExecCarrierAndIgnoresUnrelatedCalls(t *testing.T) {
 	proxy := newManagedHPatchProxy(t, testTranslator(t, new(int)))
 	history := hpatchHistory{script: testHPatchScript, patch: testTranslatedPatch, carrierName: "exec", report: testHPatchReport}
@@ -2443,64 +2172,6 @@ func TestHPatchAlreadySatisfiedUsesDiagnosticCarrier(t *testing.T) {
 	if !history.alreadySatisfied || strings.Contains(history.carrierInput(), "apply_patch") ||
 		history.carrierInput() != hpatchDiagnosticExecInput("in file.txt\nlast none\n") {
 		t.Fatalf("already-satisfied history = %+v, carrier = %s", history, history.carrierInput())
-	}
-}
-
-func TestHPatchStreamingTerminalFinalizesRequestAccounting(t *testing.T) {
-	records := 0
-	transform, _, _, _ := newHPatchTestTransform(t, metricsObservingTranslator{
-		translate: func(context.Context, string, string) ([]byte, error) {
-			t.Fatal("terminal response without an hpatch call reached translation")
-			return nil, nil
-		},
-		record: func(context.Context, hpatchMetricRecord) error {
-			records++
-			return nil
-		},
-	})
-	completed := mustTestJSON(t, map[string]any{
-		"type":     "response.completed",
-		"response": map[string]any{"status": "completed", "output": []any{}},
-	})
-	visible, err := transform.TransformSSE(completed)
-	if err != nil || len(visible) != 1 || records != 1 {
-		t.Fatalf("completed = %q, metric records %d, error %v", visible, records, err)
-	}
-	if err := transform.Finish(true); err != nil || records != 1 {
-		t.Fatalf("repeated finish = metric records %d, error %v", records, err)
-	}
-}
-
-func TestWriteSSEEventPreservesTerminalStateWhenHPatchFinishIsCanceled(t *testing.T) {
-	transform, _, _, _ := newHPatchTestTransform(t, metricsObservingTranslator{
-		translate: func(context.Context, string, string) ([]byte, error) {
-			t.Fatal("terminal response without an hpatch call reached translation")
-			return nil, nil
-		},
-		record: func(ctx context.Context, _ hpatchMetricRecord) error {
-			return ctx.Err()
-		},
-	})
-	ctx, cancel := context.WithCancel(t.Context())
-	cancel()
-	transform.ctx = ctx
-	completed := mustTestJSON(t, map[string]any{
-		"type":     "response.completed",
-		"response": map[string]any{"status": "completed", "output": []any{}},
-	})
-	var output bytes.Buffer
-	state, err := writeSSEEvent(
-		&output,
-		[]string{"event: response.completed\n", "data: " + string(completed) + "\n"},
-		"\n",
-		transform,
-		nil,
-	)
-	if state != responseTerminalCompleted || !errors.Is(err, context.Canceled) {
-		t.Fatalf("terminal state = %v, error %v", state, err)
-	}
-	if output.Len() != 0 {
-		t.Fatalf("canceled terminal event was written: %q", output.String())
 	}
 }
 
@@ -2667,16 +2338,6 @@ func TestHPatchUnevaluatedRecoveryRunsOutcomeHookOnce(t *testing.T) {
 	if string(got) != want {
 		t.Fatalf("outcome hook = %q, want %q", got, want)
 	}
-}
-
-func testRecoveryRow(t *testing.T, text string, row int) string {
-	t.Helper()
-	reference := hpatch.TextReferences(text, row)
-	fields := strings.Fields(reference)
-	if len(fields) == 0 {
-		t.Fatalf("no row %d reference in %q", row, text)
-	}
-	return fields[0]
 }
 
 func TestHPatchRecoveryRetainsCorrelationAndRebuildsBeforeTranslation(t *testing.T) {

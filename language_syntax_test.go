@@ -59,7 +59,7 @@ func TestSupportedLanguageSyntaxDiagnostics(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			result, err := TranslateForHost(t.Context(), Workspace{Root: root}, script, t.TempDir())
+			result, err := translateForHostForTest(t.Context(), Workspace{Root: root}, script, t.TempDir())
 			root.Close()
 			if err == nil {
 				t.Fatal("invalid source unexpectedly translated")
@@ -109,7 +109,7 @@ func TestLanguageSyntaxDiagnosticsCollectDistinctCommandsAndFiles(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := TranslateForHost(t.Context(), Workspace{Root: root}, script, t.TempDir())
+	result, err := translateForHostForTest(t.Context(), Workspace{Root: root}, script, t.TempDir())
 	root.Close()
 	if err == nil {
 		t.Fatal("invalid sources unexpectedly translated")
@@ -157,7 +157,7 @@ func TestLanguageSyntaxDiagnosticsCollectHeredocLocationsAndCascades(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := TranslateForHost(t.Context(), Workspace{Root: root}, script, t.TempDir())
+	result, err := translateForHostForTest(t.Context(), Workspace{Root: root}, script, t.TempDir())
 	root.Close()
 	if err == nil {
 		t.Fatal("invalid JavaScript unexpectedly translated")
@@ -185,7 +185,7 @@ func TestLanguageSyntaxDiagnosticRepairsMultilineValue(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := TranslateForHost(t.Context(), Workspace{Root: root}, script, t.TempDir())
+	result, err := translateForHostForTest(t.Context(), Workspace{Root: root}, script, t.TempDir())
 	root.Close()
 	if err == nil {
 		t.Fatal("invalid source unexpectedly translated")
@@ -221,7 +221,7 @@ func TestLanguageSyntaxDiagnosticAttributesUnterminatedEdit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := TranslateForHost(t.Context(), Workspace{Root: root}, script, t.TempDir())
+	result, err := translateForHostForTest(t.Context(), Workspace{Root: root}, script, t.TempDir())
 	root.Close()
 	if err == nil {
 		t.Fatal("invalid source unexpectedly translated")

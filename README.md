@@ -12,7 +12,7 @@ TL;DR:
 | Understand verified editing | [Why hpatch?](#why-hpatch) |
 | Run commands without Code Mode wrapper syntax | [Why shell?](#why-shell) |
 | Remove contradictory stock editing guidance | [Codex model instructions](#codex-model-instructions) |
-| Inspect measured token usage | [Metrics](#metrics), the dashboard, or `/api/metrics` |
+| Inspect measured token usage | [Metrics](#metrics) or `/api/metrics` |
 | Use the engine without Codex | [Go library](#go-library) |
 | Read the complete contract | [`doc/spec/index.md`](doc/spec/index.md) |
 
@@ -37,7 +37,10 @@ flowchart LR
     A --> D
 ```
 
-The patch is not eliminated: the router generates it after inference. Savings are the difference between the two model-output payload estimates shown above. State reports, rejection diagnostics, and the net input cost of the hpatch and shell tool definitions plus persistent workflow guidance are tracked separately. Hread, hgrep, hsymbol, and inspect_file results are not compared with hypothetical shell commands; the dashboard's end-to-end Responses and session usage totals are authoritative for their model-input cost. Payload estimates remain reproducible GPT-5 estimates rather than provider billing totals.
+The patch is not eliminated: the router generates it after inference. The in-process capturer measures
+the Hpatch call emitted by the provider and the native carrier actually delivered to Codex, so it
+does not invent a comparison patch or hypothetical shell command. Provider Responses usage remains
+authoritative for end-to-end model consumption; payload sizes use reproducible GPT-5 estimates.
 
 For an 11-line function replacement, hpatch asks the model for this:
 
@@ -210,7 +213,7 @@ Hread, hgrep, hsymbol, and inspect_file are private commands recognized only by 
 
 ```sh
 hread parser.go 20:40
-hgrep -e 'TranslateForHost' .
+hgrep -e 'TranslateForHostAt' .
 hsymbol refs internal/router/server.go 42:abcd Run 2
 inspect_file internal/router/server.go | jq -c '.data.outline[]'
 ```
@@ -279,8 +282,9 @@ Defaults:
 | Upstream stream idle timeout | `4m` per blocked upstream read (`--stream-idle-timeout`); resets on byte progress, pauses during downstream processing, and imposes no total-duration limit |
 | Auth | `~/.codex/auth.json`, or `$CODEX_HOME/auth.json`; Codex owns login and refresh |
 | Shell runtime directory | `$HPATCH_RUNTIME_DIR`, or the operating-system temporary directory when unset; router and executor must resolve the same absolute path |
-| Metrics / hooks | `$XDG_CONFIG_HOME/hpatch` or `~/.config/hpatch` |
-| Endpoints | `POST /v1/responses`, `GET /v1/models`, `GET /` (dashboard), `GET /api/metrics` |
+| Capture output | Disabled; `--capture-output PATH` appends sanitized JSONL without adding a listener |
+| Hooks | `$XDG_CONFIG_HOME/hpatch` or `~/.config/hpatch` |
+| Endpoints | `GET /` dashboard, `POST /v1/responses`, `GET /v1/models`, and `GET /api/metrics`, all on one listener |
 
 ### Mentor Handoff experiment
 
@@ -304,8 +308,8 @@ actually used. It retains process-lifetime state for each eligible spawned threa
 child cannot re-enter mentoring on a later request. Passthrough mode rejects the flag.
 
 `--provider-base-url` changes where the router sends Codex-managed credentials and Responses
-traffic. Use it only with a trusted endpoint. The benchmark uses it to place a content-free capture
-proxy between the router and the normal provider; ordinary deployments should keep the default.
+traffic. Use it only with a trusted endpoint. The benchmark keeps the normal provider URL and uses
+the router's in-process capturer; ordinary deployments should keep the default.
 
 Outcome hooks receive one event for each routed hpatch or recovery result. The event identifies
 the emitted tool and exact model-emitted payload, the evaluated lifecycle stage, the outcome,
@@ -317,7 +321,9 @@ reports `unevaluated/rejected`. Root commit failures report `applied/failed`.
 
 In hpatch mode, run the router as the same login user as Codex so it can open the absolute workspace paths Codex sends and read the same credentials. A user systemd unit is the intended long-running setup.
 
-Use `--mode passthrough` when the router should forward Responses traffic without installing hpatch or shell, loading private commands, enabling rejected-script recovery, or recording plugin metrics.
+Use `--mode passthrough` when the router should forward Responses traffic without installing hpatch
+or shell, loading private commands, or enabling rejected-script recovery. Capture remains available
+because it observes the transport rather than plugin behavior.
 
 Use `--model-protocol ctp2` to enable the compact provider representation. See the
 [CTP/2 contract](doc/spec/ctp.md) for its exact wire forms, token-positive selection, literal
@@ -407,10 +413,7 @@ systemctl --user status hpatch-router.service
 journalctl --user -u hpatch-router.service -f
 curl -sS http://127.0.0.1:8080/api/metrics
 curl -sS http://127.0.0.1:8080/v1/models
-# open http://127.0.0.1:8080/ for the local dashboard
 ```
-
-The dashboard labels each collapsible session with the task title found for its UUID in `$CODEX_HOME/session_index.jsonl` (normally `~/.codex/session_index.jsonl`) and falls back to the UUID. The router resolves each session UUID once and shares that cached title with hpatch hook events.
 
 ### Codex model instructions
 
@@ -429,11 +432,12 @@ restart it after adding or removing the key.
 
 ## Go library
 
-The module path is `github.com/yusing/hpatch`. The root package exposes workspace,
-evaluation, translation, reporting, and host-metrics APIs as a Go library. Root-scoped workspace APIs use a caller-authorized `*os.Root` and root-relative cwd;
-`Translate` and `TranslateForHost` emit root-relative patch paths. Router translation uses
-`TranslateForHostAt`, retains cleaned host path identities for Codex to authorize, and never
-uses router cwd as a fallback. See [`doc/spec/file.md`](doc/spec/file.md) and [`doc/architecture/translate.md`](doc/architecture/translate.md).
+The module path is `github.com/yusing/hpatch`. The root package exposes workspace evaluation,
+application, reporting, and host translation APIs as a Go library. Root-scoped application APIs use
+a caller-authorized `*os.Root` and root-relative cwd. Host translation uses `TranslateForHostAt`,
+retains cleaned host path identities for Codex to authorize, and never uses router cwd as a
+fallback. See [`doc/spec/file.md`](doc/spec/file.md) and
+[`doc/architecture/translate.md`](doc/architecture/translate.md).
 
 ## Editing language (summary)
 
@@ -541,31 +545,52 @@ PATCH
 
 ## Metrics
 
-Metrics separate three different layers:
+The root `capturer` subpackage owns all metrics calculation. `hpatch-router` embeds one recorder,
+wraps its existing Responses handler and provider transport, and serves `GET /api/metrics` from the
+same listener. Capture does not require another proxy, process, or port.
 
-1. The host variants return `HostTranslation` with evaluator counters; basic `Apply` and `Translate` do not persist metrics.
-2. A host supplies visible payload and session attribution to `RecordHostMetrics`, the only root persistence boundary. The router does this after routed outcomes and also records per-tool definitions, carriers, executor evidence, reports, diagnostics, and shell misuse or recovery overhead.
-3. The router dashboard and `/api/metrics` expose provider Responses lifecycle and usage totals alongside those persisted estimates.
+Open the router root URL, such as `http://127.0.0.1:8080/`, for the human-readable dashboard. The
+page is a same-listener view over `/api/metrics`; it owns no counters, histories, or calculations.
+It shows request and usage totals, cache attribution, all four transport boundaries, signed protocol
+savings, Hpatch delivery and diagnostics, capture health, complete tool aggregates, recent logical
+exchanges, every provider attempt, and delivered tool-call detail.
 
-With CTP/2 enabled, the dashboard's CTP view and `/api/metrics` also expose auxiliary native and
-compact token estimates for whole requests and assistant text from completed responses. They expose
-active requests or missing instruction carriers, representation savings, encoded-string, local
-dictionary, visible-line-reference, and codec totals, and bounded per-session CTP input and output
-observations with native and compact tokens and bytes. Dropped observation counters make truncation
-explicit. These internal compression counters are separate from authoritative provider usage and
-never include model-emitted tool payloads. A request remains active even when no individual string
-has a profitable compact form; those strings stay native.
+Use `--capture-output PATH` when durable evidence is needed. The file contains sanitized schema-3
+JSONL with payload sizes, statuses, provider usage, tool identities, and bounded outcome kinds. Raw
+prompts, instructions, tool arguments, command output, response text, scripts, patches, reports,
+credentials, and full diagnostics are discarded after measurement. Correlation stays in process and
+is never forwarded as a private header.
 
-The router dashboard and `GET /api/metrics` expose the structured persistent aggregate without opening an engine workspace.
-Each terminal Responses log record also carries that logical request's provider token counts.
+Streaming remains byte-for-byte forwarded and flushable. Capture retains at most 8 MiB of each
+response boundary for parsing while continuing to count and forward the full stream; larger
+responses produce explicit incomplete capture health instead of unbounded memory growth. Only
+allowlisted reason codes from the complete router-owned diagnostic envelope can be retained.
 
-These are reproducible payload estimates, not provider billing totals. They omit reasoning tokens, commentary, and host-specific framing. Provider Responses usage is authoritative for end-to-end input and output totals. Metrics are auxiliary and never replace a successful edit, command result, or rejection diagnostic. Passthrough mode does not install hpatch or plugin metric accounting.
+`GET /api/metrics` returns the process-lifetime `hpatch.capture.metrics.v1` snapshot:
 
-Hand-authored scenario comparison (does not update persistent router metrics):
+- logical requests and every provider retry attempt;
+- provider input, cached input, uncached input, output, and reasoning tokens;
+- cold/new and eligible-prefix cache attribution between logical requests, using only the final
+  provider attempt for each nonempty thread;
+- exact observed client/provider payload bytes and GPT-5 token estimates;
+- signed protocol input and output savings, including negative expansion;
+- provider-emitted and client-delivered tool aggregates;
+- correlated Hpatch calls, corrections, successful or rejected deliveries, diagnostics, and actual
+  delivered-carrier savings;
+- actual provider model and usage per exchange; and
+- capture completeness, boundary, sequence, skipped-request, and durable-write health.
 
-```sh
-go run ./compare
-```
+Cumulative totals cover the router process lifetime. The snapshot retains the latest 4,096 detailed
+exchanges for diagnostics while keeping those totals intact. If older detail is dropped, capture
+health records it; benchmark validation rejects that run rather than treating partial detail as
+complete evidence.
+
+Provider usage is authoritative for model consumption. Payload tokens compare only bytes that were
+actually observed. The engine, router, CTP codec, registry, and plugins contain no benchmark
+baselines, synthetic stock commands or results, gain persistence, or metric callbacks. Metrics are
+auxiliary and cannot replace a successful edit, command result, or rejection diagnostic. Failure to
+open an explicitly requested capture file stops startup rather than silently producing incomplete
+evidence.
 
 ### Historical CTP replay diagnostic
 
@@ -614,11 +639,16 @@ The executable benchmark requires Docker, Codex authentication, and a local etcd
 bash benchmarks/bench.sh
 ```
 
-For an evidence-collection treatment run, set
-`BENCHMARK_RETAIN_EXACT_HPATCH_EVIDENCE=true` with `BENCHMARK_MODE=hpatch-only` or
-`hpatch-diagnostic`. This default-disabled option retains only exact hpatch/recovery payloads and
-their final model-visible reports or diagnostics in the private run artifact; it does not capture
-shell traffic, credentials, rebuilt scripts, or patches.
+Every freshly measured arm uses one router process and one listener:
+Codex → router → provider. The router's in-process capturer observes both boundaries and writes the
+arm's sanitized JSONL through `--capture-output`; there is no standalone capturer service or extra
+port. Reports reject capture-health or reconciliation errors, then format the capturer snapshot's
+provider usage, cache attribution, signed protocol savings, actual provider and delivered tool
+shapes, Hpatch delivery, and model attribution. Every fresh two-arm mode requires current evidence
+for both arms. Provider models must match each root's configured model and every Mentor child must
+match its retained lineage proof and allowed schedule. Configured CTP/2 compression requirements
+fail the run when the capturer's end-to-end protocol totals do not show positive savings. A
+historical control without the current capture schema is not combined with fresh metrics.
 
 The paired benchmark runs one stock Codex control attempt and one Hpatch attempt
 from independent copies of the same historical etcd base revision, alternating
@@ -639,12 +669,9 @@ TASK_ID=batch-diagnostic-collapse BENCHMARK_MODE=ctp-only \
 
 Each repetition runs native Hpatch without CTP guidance and CTP/2-active Hpatch with the guidance and
 CTP/2 enabled. Their order rotates across repetitions, and each starts from an independent task
-snapshot. The report separates
-model correctness, turns, tool behavior, and latency; same-request CTP token, byte, dictionary, and
-codec measurements; and provider-observed input, output, reasoning, requests, and wall time. It also
-retains per-request usage and classifies executor, router, Hpatch, and CTP failures without removing
-them from the operational outcome. The task grades the same exact decoded final response in both
-arms and requires strictly smaller compact input and assistant-output representations. Four
+snapshot. The report separates model correctness, actual provider usage and retries,
+client-versus-provider payload sizes, tool transport, and latency. The task grades the same exact
+decoded final response in both arms and requires the intended compact representation behavior. Four
 repetitions schedule eight paid model attempts.
 
 Benchmark Codex processes disable `apps` identically in both arms.
@@ -662,16 +689,12 @@ and static child role and prompt. In both arms a `gpt-5.6-sol` high parent spawn
 whose locked configured model and reasoning are selected by `MODEL` and `REASONING_EFFORT`. The
 `hpatch` child uses that configured model throughout. The `hpatch-mentor` child temporarily uses
 `gpt-5.6-sol` high and must demonstrate a later request from the same child using its configured
-model. Reports separate parent, mentor, and actual-child input, cached-input, output, and reasoning
-tokens, while the A/B comparison uses their combined provider-facing capture totals.
+model. Reports group actual provider input, cached-input, output, and reasoning tokens by model,
+while the A/B comparison uses complete capture totals including parent and subagent requests.
 
-For this experiment, each arm runs through a transparent two-sided capturer:
-Codex → capturer → Hpatch router → capturer → provider. The provider-facing side records the actual
-model and usage, while the Codex-facing side records restored tool-call identities. The front adds a
-private per-request correlation header that the back removes before provider forwarding. The report joins
-the two records by that identity, attributes every measured same-path loop
-to exactly one actual provider model, and fails rather than guessing when the join is missing or
-ambiguous. Captures omit credentials, prompts, tool arguments, command output, and response text.
+For this experiment, the same capturer proves model attribution from each exchange and fails rather
+than guessing when provider evidence is missing. Captures omit credentials, prompts, tool arguments,
+command output, and response text.
 
 The benchmark also retains a normalized `child-events.jsonl` per attempt from a host-owned, isolated
 Codex home. It includes completed child command and file-change items but excludes command output and
@@ -680,11 +703,6 @@ raw rollout content, allowing command-loop comparisons across both arms. A conte
 developer prompt across arms even though Codex 0.150.1 omits the completed spawn from root `--json`
 output. It retains only the child thread correlation needed to join the capturer. Missing or ambiguous child telemetry, including an unobserved nested spawn, fails the attempt
 instead of being reported as zero.
-
-The one-repetition `gpt-5.6-sol` Hpatch baseline passed and reported 45.2% lower
-successful edit payload (2,096 tokens versus 3,825 control-equivalent tokens). It used
-25 model requests, one once-recovered rejection chain, and no changed-file read → edit →
-read loop. It is one observed run, not a general performance guarantee.
 
 ## How it works
 
@@ -716,12 +734,15 @@ Router shell path: translate the free-form tool call into one native executor ca
 │   ├── codex/                    # Central model guidance and recovery template
 │   └── systemd/                  # User service unit
 ├── doc/                          # Specifications, architecture, and benchmark manuals
-├── *.go                          # Reusable edit engine, validation, transactions, and metrics
+├── *.go                          # Reusable edit engine, validation, and transactions
+├── capturer/                     # In-process transport observation and metrics
 ├── Makefile                      # Plugin generation and binary installation
 └── tool_grammar.lark             # Embedded constrained-decoding grammar
 ```
 
-Tests live beside the owners they exercise. The root `hpatch` package is the reusable engine; `internal/router` calls it rather than maintaining a separate editing implementation. The router embeds its dashboard and generated built-in plugin bundle.
+Tests live beside the owners they exercise. The root `hpatch` package is the reusable engine;
+`capturer` owns metrics; `internal/router` calls both rather than maintaining a second engine or
+capture service. The router embeds the generated built-in plugin bundle.
 
 ## Documentation
 
@@ -738,7 +759,8 @@ Tests live beside the owners they exercise. The root `hpatch` package is the reu
 | [`contrib/codex/file-editing-instructions.md`](contrib/codex/file-editing-instructions.md) | Persistent CTP/2, edit, shell, read, search, and inspection guidance for Codex |
 | [`AGENTS.md`](AGENTS.md) | Agent workflow and repository navigation |
 
-Library use: module path `github.com/yusing/hpatch`. Importable as a library (`hpatch.Translate`, `hpatch.Workspace`, structured host metrics helpers); hosts should open an `*os.Root` capability for the workspace before calling in.
+Library use: module path `github.com/yusing/hpatch`. Importable as a library (`hpatch.Apply`,
+`hpatch.Workspace`); hosts should open an `*os.Root` capability for the workspace before calling in.
 
 ## Development
 

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -146,7 +147,7 @@ func TestExecuteRequestFailsClosedBeforeUpstreamWhenRewriteIsIneligible(t *testi
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			provider := &serverFakeProvider{}
-			err := executeRequest(t.Context(), t.Context(), serverRequest(t, test.mutate), test.headers, test.sessionID, provider, io.Discard, newDiagnostics(io.Discard), time.Now, newManagedHPatchProxy(t, testTranslator(t, new(int))), nil, nil, newMetricsStore(""))
+			err := executeRequest(t.Context(), t.Context(), serverRequest(t, test.mutate), test.headers, test.sessionID, provider, io.Discard, newDiagnostics(io.Discard), time.Now, newManagedHPatchProxy(t, testTranslator(t, new(int))), nil, nil)
 			if err == nil || !strings.Contains(err.Error(), test.want) {
 				t.Fatalf("error = %v, want containing %q", err, test.want)
 			}
@@ -186,7 +187,7 @@ func TestExecuteRequestDoesNotRequireWorkspaceMetadata(t *testing.T) {
 				newDiagnostics(io.Discard),
 				time.Now,
 				proxy,
-				nil, nil, newMetricsStore(""),
+				nil, nil,
 			)
 			if err != nil {
 				t.Fatal(err)
@@ -235,9 +236,8 @@ func TestExecuteRequestForwardsCompactionWithoutRouterRewrite(t *testing.T) {
 		return nil, nil
 	}))
 	codec := mustCTP2Codec(t)
-	metrics := newMetricsStore("")
 	var output bytes.Buffer
-	err = executeRequest(t.Context(), t.Context(), parsed, serverCompactionMetadataHeaders(t), "session", provider, &output, newDiagnostics(io.Discard), time.Now, proxy, codec, nil, metrics)
+	err = executeRequest(t.Context(), t.Context(), parsed, serverCompactionMetadataHeaders(t), "session", provider, &output, newDiagnostics(io.Discard), time.Now, proxy, codec, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -249,9 +249,6 @@ func TestExecuteRequestForwardsCompactionWithoutRouterRewrite(t *testing.T) {
 	}
 	if output.String() != responseBody {
 		t.Fatalf("visible response = %s, want %s", output.String(), responseBody)
-	}
-	if snapshot := metrics.snapshot(); snapshot.CTP.ConsideredRequests != 0 {
-		t.Fatalf("compaction CTP requests = %d, want 0", snapshot.CTP.ConsideredRequests)
 	}
 }
 
@@ -271,9 +268,8 @@ func TestExecuteRequestPassesThroughOriginalRequestAndRecordsUsage(t *testing.T)
 		},
 	}))
 	provider := &serverFakeProvider{results: []serverForwardResult{{response: serverHTTPResponse(responseBody)}}}
-	store := newMetricsStore("")
 	var output, logOutput bytes.Buffer
-	if err := executeRequest(t.Context(), t.Context(), parsed, http.Header{}, "session", provider, &output, newDiagnostics(&logOutput), time.Now, nil, nil, nil, store); err != nil {
+	if err := executeRequest(t.Context(), t.Context(), parsed, http.Header{}, "session", provider, &output, newDiagnostics(&logOutput), time.Now, nil, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	if len(provider.forwarded) != 1 || !bytes.Equal(provider.forwarded[0], originalBody) {
@@ -285,20 +281,13 @@ func TestExecuteRequestPassesThroughOriginalRequestAndRecordsUsage(t *testing.T)
 	if output.String() != responseBody {
 		t.Fatalf("visible response = %q, want %q", output.String(), responseBody)
 	}
-	want := tokenCounts{InputTokens: 12, UncachedInputTokens: 7, OutputTokens: 7, ReasoningTokens: 3}
-	if got := store.snapshot().Total; got != want {
-		t.Fatalf("usage = %#v, want %#v", got, want)
-	}
 	logs := logOutput.String()
-	for _, field := range []string{
-		"input_tokens=12",
-		"cached_input_tokens=5",
-		"uncached_input_tokens=7",
-		"output_tokens=7",
-		"reasoning_tokens=3",
-	} {
-		if !strings.Contains(logs, field) {
-			t.Fatalf("terminal log lacks %q: %s", field, logs)
+	if !strings.Contains(logs, "usage_observed=true") {
+		t.Fatalf("terminal log lacks usage state: %s", logs)
+	}
+	for _, field := range []string{"input_tokens=", "cached_input_tokens=", "output_tokens=", "reasoning_tokens="} {
+		if strings.Contains(logs, field) {
+			t.Fatalf("terminal log retained benchmark-only field %q: %s", field, logs)
 		}
 	}
 }
@@ -332,9 +321,8 @@ func TestExecuteRequestForwardsRewrittenRequestAndRecordsUsage(t *testing.T) {
 		t.Fatal("response without an hpatch call reached the translator")
 		return nil, nil
 	}))
-	store := newMetricsStore("")
 	var output bytes.Buffer
-	err := executeRequest(t.Context(), t.Context(), parsed, headers, "session", provider, &output, newDiagnostics(io.Discard), time.Now, proxy, nil, nil, store)
+	err := executeRequest(t.Context(), t.Context(), parsed, headers, "session", provider, &output, newDiagnostics(io.Discard), time.Now, proxy, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -393,10 +381,6 @@ func TestExecuteRequestForwardsRewrittenRequestAndRecordsUsage(t *testing.T) {
 	if strings.Contains(output.String(), "selected_reasoning_effort") || !strings.Contains(output.String(), "\"future\":{\"kept\":true}") {
 		t.Fatalf("visible response changed unexpectedly: %s", output.String())
 	}
-	want := tokenCounts{InputTokens: 10, UncachedInputTokens: 6, OutputTokens: 6, ReasoningTokens: 2}
-	if got := store.snapshot().Total; got != want {
-		t.Fatalf("usage = %#v, want %#v", got, want)
-	}
 }
 
 func TestShellHReadAfterAppliedHPatchCarrierRemainsModelVisible(t *testing.T) {
@@ -452,7 +436,7 @@ func TestShellHReadAfterAppliedHPatchCarrierRemainsModelVisible(t *testing.T) {
 			newDiagnostics(io.Discard),
 			time.Now,
 			proxy,
-			nil, nil, newMetricsStore(""),
+			nil, nil,
 		); err != nil {
 			t.Fatal(err)
 		}
@@ -597,7 +581,7 @@ func TestExecuteRequestRejectsDirectAdditionalApplyPatchWithoutExecCarrier(t *te
 		newDiagnostics(io.Discard),
 		time.Now,
 		proxy,
-		nil, nil, newMetricsStore(""),
+		nil, nil,
 	)
 	if err == nil || !strings.Contains(err.Error(), "unsupported flat apply_patch") {
 		t.Fatalf("direct request error = %v", err)
@@ -618,19 +602,10 @@ func TestExecuteRequestRecordsUsageAndFailureWhenDeliveryFails(t *testing.T) {
 		"usage":  map[string]any{"input_tokens": 10},
 	}))
 	provider := &serverFakeProvider{results: []serverForwardResult{{response: serverHTTPResponse(responseBody)}}}
-	store := newMetricsStore("")
 	var logOutput bytes.Buffer
-	err := executeRequest(t.Context(), t.Context(), serverRequest(t, nil), serverMetadataHeaders(t, "turn", map[string]json.RawMessage{workspace: nil}), "session", provider, serverErrorWriter{err: io.ErrClosedPipe}, newDiagnostics(&logOutput), serverLifecycleClock(0, 10*time.Millisecond, 30*time.Millisecond), newManagedHPatchProxy(t, testTranslator(t, new(int))), nil, nil, store)
+	err := executeRequest(t.Context(), t.Context(), serverRequest(t, nil), serverMetadataHeaders(t, "turn", map[string]json.RawMessage{workspace: nil}), "session", provider, serverErrorWriter{err: io.ErrClosedPipe}, newDiagnostics(&logOutput), serverLifecycleClock(0, 10*time.Millisecond, 30*time.Millisecond), newManagedHPatchProxy(t, testTranslator(t, new(int))), nil, nil)
 	if err == nil {
 		t.Fatal("delivery failure returned no error")
-	}
-	snapshot := store.snapshot()
-	if got := snapshot.Total.InputTokens; got != 10 {
-		t.Fatalf("observed usage after delivery failure = %d, want 10", got)
-	}
-	assertServerLifecycleFinished(t, snapshot.Requests)
-	if snapshot.Requests.Failed != 1 || snapshot.Requests.UsageObserved != 1 {
-		t.Fatalf("delivery lifecycle = %#v", snapshot.Requests)
 	}
 	if logs := logOutput.String(); strings.Count(logs, "Responses request finished") != 1 || !strings.Contains(logs, "failure_phase=write_response") {
 		t.Fatalf("delivery terminal log = %q", logs)
@@ -654,7 +629,7 @@ func TestResponsesHandlerRejectsBackgroundBeforeUpstream(t *testing.T) {
 	)
 	recorder := httptest.NewRecorder()
 	provider := &serverFakeProvider{}
-	responsesHandler(t.Context(), time.Minute, provider, newDiagnostics(io.Discard), nil, nil, nil, nil, new(atomic.Uint64))(recorder, request)
+	responsesHandler(t.Context(), time.Minute, provider, newDiagnostics(io.Discard), nil, nil, nil, new(atomic.Uint64))(recorder, request)
 	if recorder.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusBadRequest)
 	}
@@ -671,7 +646,7 @@ func TestResponsesHandlerRejectsBodyBeyondRouterBufferBudget(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	provider := &serverFakeProvider{}
 
-	responsesHandler(t.Context(), time.Minute, provider, newDiagnostics(io.Discard), nil, nil, nil, nil, new(atomic.Uint64))(recorder, request)
+	responsesHandler(t.Context(), time.Minute, provider, newDiagnostics(io.Discard), nil, nil, nil, new(atomic.Uint64))(recorder, request)
 
 	if recorder.Code != http.StatusRequestEntityTooLarge {
 		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusRequestEntityTooLarge)
@@ -719,7 +694,7 @@ func TestResponsesHandlerDoesNotLogClientCancellationAsOperationalEvent(t *testi
 		}, nil
 	})
 	var logOutput bytes.Buffer
-	handler := responsesHandler(t.Context(), time.Minute, provider, newDiagnostics(&logOutput), newManagedHPatchProxy(t, nil), nil, nil, newMetricsStore(""), new(atomic.Uint64))
+	handler := responsesHandler(t.Context(), time.Minute, provider, newDiagnostics(&logOutput), newManagedHPatchProxy(t, nil), nil, nil, new(atomic.Uint64))
 	handled := make(chan struct{})
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		handler(writer, request)
@@ -780,31 +755,6 @@ func serverLifecycleClock(offsets ...time.Duration) func() time.Time {
 	}
 }
 
-func assertServerLifecycleFinished(t *testing.T, requests requestLifecycleMetrics) {
-	t.Helper()
-	terminal := requests.Completed +
-		requests.Failed +
-		requests.CanceledBeforeResponse +
-		requests.CanceledAfterResponse +
-		requests.TimedOut +
-		requests.StreamIdleTimedOut +
-		requests.BackgroundPending
-	if requests.Active != 0 || terminal != requests.Started {
-		t.Fatalf("lifecycle invariant failed: %#v", requests)
-	}
-}
-
-func serverSessionLifecycle(t *testing.T, store *metricsStore, sessionID string) requestLifecycleMetrics {
-	t.Helper()
-	for _, session := range store.snapshot().Sessions {
-		if session.SessionID == sessionID {
-			return session.Requests
-		}
-	}
-	t.Fatalf("session %q not retained", sessionID)
-	return requestLifecycleMetrics{}
-}
-
 func TestExecuteRequestSuccessfulStreamLifecycle(t *testing.T) {
 	completed := mustTestJSON(t, map[string]any{
 		"type": "response.completed",
@@ -819,7 +769,6 @@ func TestExecuteRequestSuccessfulStreamLifecycle(t *testing.T) {
 	response := serverHTTPResponse("event: response.completed\ndata: " + string(completed) + "\n\n")
 	response.Header.Set("Content-Type", "text/event-stream")
 	provider := &serverFakeProvider{results: []serverForwardResult{{response: response}}}
-	store := newMetricsStore("")
 	recorder := httptest.NewRecorder()
 	writer := &trackedResponseWriter{ResponseWriter: recorder}
 	var logOutput bytes.Buffer
@@ -827,28 +776,12 @@ func TestExecuteRequestSuccessfulStreamLifecycle(t *testing.T) {
 		t.Context(), t.Context(),
 		serverRequest(t, func(request map[string]any) { request["stream"] = true }),
 		http.Header{}, "stream-session", provider, writer, newDiagnostics(&logOutput),
-		serverLifecycleClock(0, 10*time.Millisecond, 40*time.Millisecond), nil, nil, nil, store,
+		serverLifecycleClock(0, 10*time.Millisecond, 40*time.Millisecond), nil, nil, nil,
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	snapshot := store.snapshot()
-	assertServerLifecycleFinished(t, snapshot.Requests)
-	if snapshot.Requests.Completed != 1 ||
-		snapshot.Requests.TotalDurationMilliseconds != 40 ||
-		snapshot.Requests.UpstreamDurationMilliseconds != 30 ||
-		snapshot.Requests.UsageObserved != 1 {
-		t.Fatalf("stream lifecycle = %#v", snapshot.Requests)
-	}
-	wantUsage := tokenCounts{InputTokens: 11, UncachedInputTokens: 7, OutputTokens: 5, ReasoningTokens: 2}
-	if snapshot.Total != wantUsage {
-		t.Fatalf("stream usage = %#v, want %#v", snapshot.Total, wantUsage)
-	}
-	session := serverSessionLifecycle(t, store, "stream-session")
-	if session != snapshot.Requests {
-		t.Fatalf("session lifecycle = %#v, global %#v", session, snapshot.Requests)
-	}
 	if logs := logOutput.String(); strings.Count(logs, "Responses request finished") != 1 ||
 		!strings.Contains(logs, "outcome=completed") ||
 		!strings.Contains(logs, "response_started=true") {
@@ -897,26 +830,14 @@ func TestExecuteRequestTerminalOutcomes(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			provider := &serverFakeProvider{results: []serverForwardResult{{response: test.response}}}
-			store := newMetricsStore("")
 			var logOutput bytes.Buffer
 			err := executeRequest(
 				t.Context(), t.Context(), serverRequest(t, test.mutate), http.Header{}, "session",
 				provider, io.Discard, newDiagnostics(&logOutput),
-				serverLifecycleClock(0, 5*time.Millisecond, 25*time.Millisecond), nil, nil, nil, store,
+				serverLifecycleClock(0, 5*time.Millisecond, 25*time.Millisecond), nil, nil, nil,
 			)
 			if err != nil {
 				t.Fatal(err)
-			}
-			snapshot := store.snapshot()
-			assertServerLifecycleFinished(t, snapshot.Requests)
-			if got := snapshot.Total.InputTokens; got != test.wantUsage {
-				t.Fatalf("usage = %d, want %d", got, test.wantUsage)
-			}
-			switch test.wantOutcome {
-			case requestOutcomeFailed:
-				if snapshot.Requests.Failed != 1 {
-					t.Fatalf("lifecycle = %#v", snapshot.Requests)
-				}
 			}
 			logs := logOutput.String()
 			if strings.Count(logs, "Responses request finished") != 1 ||
@@ -924,8 +845,12 @@ func TestExecuteRequestTerminalOutcomes(t *testing.T) {
 				!strings.Contains(logs, "failure_phase="+string(test.wantFailurePhase)) {
 				t.Fatalf("terminal log = %q", logs)
 			}
-			if (test.wantUsage == 0) == strings.Contains(logs, "input_tokens=") {
-				t.Fatalf("terminal usage fields do not match observed usage: %q", logs)
+			if strings.Contains(logs, "input_tokens=") {
+				t.Fatalf("terminal log retained provider token counts: %q", logs)
+			}
+			wantUsageState := "usage_observed=" + strconv.FormatBool(test.wantUsage != 0)
+			if !strings.Contains(logs, wantUsageState) {
+				t.Fatalf("terminal usage state does not match observed usage: %q", logs)
 			}
 		})
 	}
@@ -939,13 +864,12 @@ func TestExecuteRequestCancellationBeforeResponseLifecycle(t *testing.T) {
 		return nil, startCtx.Err()
 	})
 	ctx, cancel := context.WithCancel(t.Context())
-	store := newMetricsStore("")
 	var logOutput bytes.Buffer
 	result := make(chan error, 1)
 	go func() {
 		result <- executeRequest(
 			ctx, ctx, serverRequest(t, nil), http.Header{}, "session", provider, io.Discard,
-			newDiagnostics(&logOutput), serverLifecycleClock(0, 10*time.Millisecond, 30*time.Millisecond), nil, nil, nil, store,
+			newDiagnostics(&logOutput), serverLifecycleClock(0, 10*time.Millisecond, 30*time.Millisecond), nil, nil, nil,
 		)
 	}()
 	<-started
@@ -955,13 +879,6 @@ func TestExecuteRequestCancellationBeforeResponseLifecycle(t *testing.T) {
 		t.Fatalf("error = %v, want cancellation", err)
 	}
 
-	requests := store.snapshot().Requests
-	assertServerLifecycleFinished(t, requests)
-	if requests.CanceledBeforeResponse != 1 ||
-		requests.TotalDurationMilliseconds != 30 ||
-		requests.UpstreamDurationMilliseconds != 20 {
-		t.Fatalf("cancellation lifecycle = %#v", requests)
-	}
 	if logs := logOutput.String(); strings.Count(logs, "Responses request finished") != 1 ||
 		!strings.Contains(logs, "outcome=canceled_before_response") ||
 		!strings.Contains(logs, "response_started=false") {
@@ -1098,7 +1015,6 @@ func TestExecuteRequestStreamIdleTimeoutLifecycle(t *testing.T) {
 			Body:       newStreamIdleReadCloser(t.Context(), upstreamReader, time.Minute),
 		}
 		provider := &serverFakeProvider{results: []serverForwardResult{{response: response}}}
-		store := newMetricsStore("")
 		recorder := httptest.NewRecorder()
 		writer := &trackedResponseWriter{ResponseWriter: recorder}
 		var logOutput bytes.Buffer
@@ -1108,7 +1024,7 @@ func TestExecuteRequestStreamIdleTimeoutLifecycle(t *testing.T) {
 				t.Context(), t.Context(),
 				serverRequest(t, func(request map[string]any) { request["stream"] = true }),
 				http.Header{}, "idle-session", provider, writer, newDiagnostics(&logOutput),
-				serverLifecycleClock(0, 5*time.Millisecond, 35*time.Millisecond), nil, nil, nil, store,
+				serverLifecycleClock(0, 5*time.Millisecond, 35*time.Millisecond), nil, nil, nil,
 			)
 		}()
 
@@ -1124,15 +1040,6 @@ func TestExecuteRequestStreamIdleTimeoutLifecycle(t *testing.T) {
 			t.Fatalf("error = %v, want stream idle timeout", err)
 		}
 
-		requests := store.snapshot().Requests
-		assertServerLifecycleFinished(t, requests)
-		if requests.StreamIdleTimedOut != 1 || requests.Failed != 0 ||
-			requests.TimedOut != 0 || requests.CanceledAfterResponse != 0 {
-			t.Fatalf("stream idle lifecycle = %#v", requests)
-		}
-		if session := serverSessionLifecycle(t, store, "idle-session"); session.StreamIdleTimedOut != 1 {
-			t.Fatalf("session stream idle lifecycle = %#v", session)
-		}
 		if logs := logOutput.String(); !strings.Contains(logs, "outcome=stream_idle_timed_out") ||
 			!strings.Contains(logs, "failure_phase=stream_idle_timeout") ||
 			!strings.Contains(logs, "response_started=true") {
@@ -1186,7 +1093,6 @@ func TestExecuteRequestCancellationAfterResponseLifecycle(t *testing.T) {
 		}, nil
 	})
 	ctx, cancel := context.WithCancel(t.Context())
-	store := newMetricsStore("")
 	recorder := httptest.NewRecorder()
 	writer := &trackedResponseWriter{ResponseWriter: recorder}
 	var logOutput bytes.Buffer
@@ -1196,7 +1102,7 @@ func TestExecuteRequestCancellationAfterResponseLifecycle(t *testing.T) {
 			ctx, ctx,
 			serverRequest(t, func(request map[string]any) { request["stream"] = true }),
 			http.Header{}, "session", provider, writer, newDiagnostics(&logOutput),
-			serverLifecycleClock(0, 5*time.Millisecond, 35*time.Millisecond), nil, nil, nil, store,
+			serverLifecycleClock(0, 5*time.Millisecond, 35*time.Millisecond), nil, nil, nil,
 		)
 	}()
 	<-blocked
@@ -1206,13 +1112,6 @@ func TestExecuteRequestCancellationAfterResponseLifecycle(t *testing.T) {
 		t.Fatalf("error = %v, want cancellation", err)
 	}
 
-	requests := store.snapshot().Requests
-	assertServerLifecycleFinished(t, requests)
-	if requests.CanceledAfterResponse != 1 ||
-		requests.TotalDurationMilliseconds != 35 ||
-		requests.UpstreamDurationMilliseconds != 30 {
-		t.Fatalf("cancellation lifecycle = %#v", requests)
-	}
 	if logs := logOutput.String(); strings.Count(logs, "Responses request finished") != 1 ||
 		!strings.Contains(logs, "outcome=canceled_after_response") ||
 		!strings.Contains(logs, "response_started=true") {
@@ -1262,14 +1161,13 @@ func TestExecuteRequestCompletesAtTerminalEventBeforeStreamEOF(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	downstream := &serverCancelAfterTerminalResponseWriter{ResponseWriter: recorder, cancel: cancel}
 	writer := &trackedResponseWriter{ResponseWriter: downstream}
-	store := newMetricsStore("")
 	var logOutput bytes.Buffer
 
 	err := executeRequest(
 		ctx, ctx,
 		serverRequest(t, func(request map[string]any) { request["stream"] = true }),
 		http.Header{}, "session", provider, writer, newDiagnostics(&logOutput),
-		serverLifecycleClock(0, 5*time.Millisecond, 35*time.Millisecond), nil, nil, nil, store,
+		serverLifecycleClock(0, 5*time.Millisecond, 35*time.Millisecond), nil, nil, nil,
 	)
 	if err != nil {
 		t.Fatalf("terminal response returned error: %v", err)
@@ -1280,11 +1178,6 @@ func TestExecuteRequestCompletesAtTerminalEventBeforeStreamEOF(t *testing.T) {
 	default:
 	}
 
-	requests := store.snapshot().Requests
-	assertServerLifecycleFinished(t, requests)
-	if requests.Completed != 1 || requests.CanceledAfterResponse != 0 || requests.UsageObserved != 1 {
-		t.Fatalf("terminal response lifecycle = %#v", requests)
-	}
 	if logs := logOutput.String(); !strings.Contains(logs, "outcome=completed") ||
 		!strings.Contains(logs, "upstream_terminal_state=completed") {
 		t.Fatalf("terminal response log = %q", logs)
@@ -1300,12 +1193,11 @@ func TestExecuteRequestResponseStartDeadlineLifecycle(t *testing.T) {
 	})
 	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond)
 	defer cancel()
-	store := newMetricsStore("")
 	result := make(chan error, 1)
 	go func() {
 		result <- executeRequest(
 			ctx, t.Context(), serverRequest(t, nil), http.Header{}, "session", provider, io.Discard,
-			newDiagnostics(io.Discard), serverLifecycleClock(0, 5*time.Millisecond, 25*time.Millisecond), nil, nil, nil, store,
+			newDiagnostics(io.Discard), serverLifecycleClock(0, 5*time.Millisecond, 25*time.Millisecond), nil, nil, nil,
 		)
 	}()
 	<-started
@@ -1313,32 +1205,20 @@ func TestExecuteRequestResponseStartDeadlineLifecycle(t *testing.T) {
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("error = %v, want deadline", err)
 	}
-	requests := store.snapshot().Requests
-	assertServerLifecycleFinished(t, requests)
-	if requests.TimedOut != 1 || requests.Failed != 0 ||
-		requests.CanceledBeforeResponse != 0 || requests.CanceledAfterResponse != 0 {
-		t.Fatalf("deadline lifecycle = %#v", requests)
-	}
 }
 
 func TestExecuteRequestIndependentUpstreamCancellationIsFailure(t *testing.T) {
 	provider := serverProviderFunc(func(context.Context, context.Context, []byte, http.Header, string) (*http.Response, error) {
 		return nil, context.Canceled
 	})
-	store := newMetricsStore("")
 	var logOutput bytes.Buffer
 	err := executeRequest(
 		t.Context(), t.Context(), serverRequest(t, nil), http.Header{}, "session",
 		provider, io.Discard, newDiagnostics(&logOutput),
-		serverLifecycleClock(0, 5*time.Millisecond, 25*time.Millisecond), nil, nil, nil, store,
+		serverLifecycleClock(0, 5*time.Millisecond, 25*time.Millisecond), nil, nil, nil,
 	)
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("error = %v, want wrapped upstream cancellation", err)
-	}
-	requests := store.snapshot().Requests
-	assertServerLifecycleFinished(t, requests)
-	if requests.Failed != 1 || requests.CanceledBeforeResponse != 0 || requests.CanceledAfterResponse != 0 {
-		t.Fatalf("independent upstream cancellation lifecycle = %#v", requests)
 	}
 	if logs := logOutput.String(); !strings.Contains(logs, "outcome=failed") {
 		t.Fatalf("terminal log = %q", logs)
@@ -1359,20 +1239,14 @@ func (writer *serverFailTerminalLogWriter) Write(content []byte) (int, error) {
 
 func TestExecuteRequestReturnsTerminalLogFailure(t *testing.T) {
 	provider := &serverFakeProvider{results: []serverForwardResult{{response: serverHTTPResponse(`{"status":"completed"}`)}}}
-	store := newMetricsStore("")
 	logOutput := new(serverFailTerminalLogWriter)
 	err := executeRequest(
 		t.Context(), t.Context(), serverRequest(t, nil), http.Header{}, "session",
 		provider, io.Discard, newDiagnostics(logOutput),
-		serverLifecycleClock(0, 5*time.Millisecond, 25*time.Millisecond), nil, nil, nil, store,
+		serverLifecycleClock(0, 5*time.Millisecond, 25*time.Millisecond), nil, nil, nil,
 	)
 	if !errors.Is(err, io.ErrClosedPipe) || !strings.Contains(err.Error(), "write terminal log") {
 		t.Fatalf("error = %v, want terminal log failure", err)
-	}
-	requests := store.snapshot().Requests
-	assertServerLifecycleFinished(t, requests)
-	if requests.Completed != 1 {
-		t.Fatalf("request outcome changed by logging failure: %#v", requests)
 	}
 }
 
@@ -1385,22 +1259,16 @@ func TestExecuteRequestTransformFailureLifecycle(t *testing.T) {
 		"output": []any{item},
 	}))
 	provider := &serverFakeProvider{results: []serverForwardResult{{response: serverHTTPResponse(responseBody)}}}
-	store := newMetricsStore("")
 	var logOutput bytes.Buffer
 	err := executeRequest(
 		t.Context(), t.Context(), serverRequest(t, nil),
 		serverMetadataHeaders(t, "turn", map[string]json.RawMessage{workspace: nil}),
 		"session", provider, io.Discard, newDiagnostics(&logOutput),
 		serverLifecycleClock(0, 5*time.Millisecond, 25*time.Millisecond),
-		newManagedHPatchProxy(t, testTranslator(t, new(int))), nil, nil, store,
+		newManagedHPatchProxy(t, testTranslator(t, new(int))), nil, nil,
 	)
 	if err == nil {
 		t.Fatal("transform failure returned no error")
-	}
-	requests := store.snapshot().Requests
-	assertServerLifecycleFinished(t, requests)
-	if requests.Failed != 1 || requests.Active != 0 {
-		t.Fatalf("transform lifecycle = %#v", requests)
 	}
 	if logs := logOutput.String(); strings.Count(logs, "Responses request finished") != 1 ||
 		!strings.Contains(logs, "failure_phase=transform") {
@@ -1808,6 +1676,81 @@ func TestRunRejectsInvalidProviderBaseURLBeforeListening(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), "--provider-base-url must be an absolute HTTP(S) URL") {
 			t.Errorf("Run(%q) error = %v", value, err)
 		}
+	}
+}
+
+func TestRunServesCaptureMetricsOnTheResponsesListener(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	address := listener.Addr().String()
+	if err := listener.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan error, 1)
+	capturePath := filepath.Join(t.TempDir(), "capture.jsonl")
+	go func() {
+		done <- Run(ctx, []string{
+			"--listen", address,
+			"--mode", "passthrough",
+			"--capture-output", capturePath,
+		}, io.Discard)
+	}()
+	t.Cleanup(cancel)
+
+	var response *http.Response
+	for range 100 {
+		response, err = http.Get("http://" + address + "/api/metrics")
+		if err == nil {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if err != nil {
+		cancel()
+		<-done
+		t.Fatalf("same-listener metrics endpoint unavailable: %v", err)
+	}
+	defer response.Body.Close()
+	var metrics map[string]any
+	if err := json.NewDecoder(response.Body).Decode(&metrics); err != nil {
+		t.Fatal(err)
+	}
+	if response.StatusCode != http.StatusOK || metrics["schema"] != "hpatch.capture.metrics.v1" {
+		t.Fatalf("metrics response = %d, %#v", response.StatusCode, metrics)
+	}
+	response, err = http.Get("http://" + address + "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dashboard, err := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.StatusCode != http.StatusOK || !bytes.Contains(dashboard, []byte("fetch('/api/metrics'")) {
+		t.Fatalf("dashboard response = %d, %q", response.StatusCode, dashboard)
+	}
+
+	request, err := http.NewRequestWithContext(t.Context(), http.MethodPost, "http://"+address+"/v1/responses", strings.NewReader("{"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	response, err = http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusBadRequest {
+		t.Fatalf("Responses endpoint status = %d", response.StatusCode)
+	}
+
+	cancel()
+	if err := <-done; !errors.Is(err, context.Canceled) {
+		t.Fatalf("Run error = %v, want context cancellation", err)
 	}
 }
 

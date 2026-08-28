@@ -44,7 +44,6 @@ type (
 		RegistryID     string             `json:"registry_id"`
 		NodeExecutable string             `json:"node_executable,omitempty"`
 		RuntimeRoot    string             `json:"runtime_root"`
-		MetricsDir     string             `json:"metrics_directory"`
 		Tools          []toolContribution `json:"tools"`
 	}
 )

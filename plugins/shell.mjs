@@ -172,58 +172,6 @@ function scriptEvaluationFlag(interpreter) {
 }
 
 
-function shellQuoteArgument(value) {
-  if (/^[A-Za-z0-9_@%+=:,./-]+$/u.test(value)) {
-    return value;
-  }
-  return `'${value.replaceAll("'", "'\"'\"'")}'`;
-}
-
-
-function stockEvaluationFlag(interpreter) {
-  const executable = interpreterBasename(interpreter).toLowerCase();
-  if (/^(?:python(?:[0-9]+(?:\.[0-9]+)*)?|pypy[0-9]*)$/u.test(executable)) {
-    return "-c";
-  }
-  return scriptEvaluationFlag(interpreter);
-}
-
-
-function stockDelimiter(interpreter, body) {
-  const executable = interpreterBasename(interpreter).toUpperCase();
-  let delimiter;
-  if (/^PYTHON[0-9.]*$/u.test(executable) || /^PYPY[0-9]*$/u.test(executable)) {
-    delimiter = "PYTHON";
-  } else if (/^(?:NODE|NODEJS)$/u.test(executable)) {
-    delimiter = "NODE";
-  } else {
-    delimiter = executable.replace(/[^A-Z0-9_]/gu, "_") || "SCRIPT";
-  }
-  const lines = new Set(body.split(/\r\n|\n|\r/u));
-  while (lines.has(delimiter)) {
-    delimiter += "_";
-  }
-  return delimiter;
-}
-
-
-function stockCommand(input) {
-  const [interpreter, ...interpreterArguments] = input.interpreter;
-  const evaluationFlag = stockEvaluationFlag(interpreter);
-  if (evaluationFlag !== null) {
-    return [interpreter, ...interpreterArguments, evaluationFlag, input.body]
-      .map(shellQuoteArgument)
-      .join(" ");
-  }
-
-  const delimiter = stockDelimiter(interpreter, input.body);
-  const bodyTerminator = input.body.endsWith("\n") ? "" : "\n";
-  const command = [interpreter, ...interpreterArguments, "/dev/fd/3"]
-    .map(shellQuoteArgument)
-    .join(" ");
-  return `${command} 3<<'${delimiter}'\n${input.body}${bodyTerminator}${delimiter}`;
-}
-
 function executeScriptThroughStdin(argv, maxOutputBytes) {
   const interpreter = argv[0];
   const interpreterArguments = argv.slice(1, -1);
@@ -405,7 +353,7 @@ export const shellTool = {
 
   translate(input, api) {
     const template = input.commandTemplate === "" ? undefined : input.commandTemplate;
-    return api.exec(template, input.params, stockCommand(input), retainInput(input));
+    return api.exec(template, input.params, retainInput(input));
   },
 
   execute(argv, context) {

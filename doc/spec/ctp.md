@@ -105,21 +105,11 @@ native assistant text.
 Decoded strings and serialized JSON or SSE remain within the existing 64 MiB upstream JSON buffer
 budget. Expansion fails before an oversized value reaches Hpatch or another downstream consumer.
 
-### Metrics
+### Observation
 
-Router metrics expose considered, active, and missing-carrier requests. Active input totals compare
-the complete post-Hpatch native request with the forwarded CTP/2 request. Assistant-output totals
-compare each terminal provider-emitted text with its decoded native value. Both sides use the
-repository GPT-5 token estimator and also report UTF-8 bytes.
-
-Aggregate and per-session metrics count encoded strings, content-local dictionary definitions and
-bytes, visible-line references, codec operations and nanoseconds, and decode failures. Sessions
-retain bounded request and assistant-output observations with sequence, representation sizes, and
-these framing counts. Dropped counters expose truncation. No metric retains dictionary values,
-locators, or text.
-
-These estimates are auxiliary. They do not replace provider usage, establish prompt-cache behavior,
-or claim billing savings.
+The CTP/2 codec emits no metric callbacks or retained observations. The in-process transport
+capturer measures the actual client/provider request and response payloads and provider usage. Its
+signed protocol savings include expansion and do not claim provider cache or billing behavior.
 
 ### Acceptance
 

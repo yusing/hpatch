@@ -13,6 +13,6 @@ items without depending on Hpatch carrier restoration or CTP decoding. The lates
 usage is the authoritative current-context input count; usage from separate requests is not summed.
 The schedule commits completed output counts only after a
 completed terminal response, but records observed input usage on later delivery or terminal failure
-paths. Router metrics use the provider-bound model and expose their existing global and per-session
-model split. This owner is separate from Hpatch recovery history, tool metrics, and provider-client
-transport retries.
+paths. This parsing exists only because the schedule behavior depends on the latest context size.
+The transport capturer independently records the provider-bound model and usage. This owner is
+separate from Hpatch recovery history and provider-client transport retries.

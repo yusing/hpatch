@@ -139,7 +139,6 @@ func TestCodexCacheAffinityE2E(t *testing.T) {
 	transport := &cacheAffinityE2ETransport{delegate: upstreamTransport}
 
 	httpClient := &http.Client{Transport: transport}
-	metrics := newMetricsStore("")
 	translator := newInProcessHPatchTranslator(t.TempDir())
 	var requestSequence atomic.Uint64
 	handler := responsesHandler(
@@ -148,7 +147,7 @@ func TestCodexCacheAffinityE2E(t *testing.T) {
 		newProviderClient(codexBaseURL, httpClient),
 		newDiagnostics(io.Discard),
 		newManagedHPatchProxy(t, translator),
-		nil, nil, metrics,
+		nil, nil,
 		&requestSequence,
 	)
 	var (

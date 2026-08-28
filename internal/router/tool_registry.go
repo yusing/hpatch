@@ -169,7 +169,6 @@ func buildToolRegistry(ctx context.Context, dataDirectory, hpatchDescription str
 		Version:        1,
 		NodeExecutable: pluginSnapshot.NodeExecutable,
 		RuntimeRoot:    "runtime",
-		MetricsDir:     dataDirectory,
 		Tools:          slices.Clone(contributions),
 	}
 	registryID, err := toolRegistryIdentity(manifest, pluginSnapshot.Root)

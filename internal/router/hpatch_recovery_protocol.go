@@ -176,11 +176,6 @@ type recoveredScript struct {
 	delta  string
 }
 
-func recoverScript(ctx context.Context, rejectedScript, payload string) (string, error) {
-	recovered, err := recoverScriptDetailed(ctx, rejectedScript, payload)
-	return recovered.script, err
-}
-
 func recoverScriptDetailed(ctx context.Context, rejectedScript, payload string) (recoveredScript, error) {
 	if ctx == nil {
 		return recoveredScript{}, fmt.Errorf("context is nil")

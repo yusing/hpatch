@@ -76,7 +76,7 @@ func TestHPatch2TranslateMatchesNormalMode(t *testing.T) {
 
 	result, err := translateForHostAtTest(t, root, script, "")
 	if err != nil {
-		t.Fatalf("TranslateForHost() error = %v, diagnostic %q", err, result.Diagnostic)
+		t.Fatalf("translateForHostForTest() error = %v, diagnostic %q", err, result.Diagnostic)
 	}
 	if !strings.Contains(result.Report, "files add=1 update=1 move=1 delete=1\n") {
 		t.Fatalf("report = %q", result.Report)
@@ -691,7 +691,7 @@ func translateForHostAtTest(t *testing.T, rootPath, script, dataDirectory string
 		t.Fatal(err)
 	}
 	defer root.Close()
-	return TranslateForHost(t.Context(), Workspace{Root: root}, script, dataDirectory)
+	return translateForHostForTest(t.Context(), Workspace{Root: root}, script, dataDirectory)
 }
 
 func writeTestFile(t *testing.T, root, path, content string, mode fs.FileMode) {

@@ -101,7 +101,7 @@ func hostRejectionsOf(err error) []HostRejection {
 				Command:         command.Command,
 				SourceLine:      command.Line,
 				Operation:       command.Operation,
-				Target:          hostTargetName(command.Attempt.target),
+				Target:          hostTargetName(command.Target),
 				Reason:          hostReasonName(command.Reason),
 				Path:            command.Path,
 				GeneratedLine:   location.GeneratedLine,
@@ -915,7 +915,7 @@ func formatCommandError(file *fileState, origin editOrigin, reason failureReason
 		category = commandCategory(origin.operation)
 	}
 	return &commandError{
-		Attempt:         commandAttempt{recognized: origin.operation != "", target: origin.target},
+		Target:          origin.target,
 		Reason:          reason,
 		Command:         origin.command,
 		Line:            origin.line,
