@@ -2135,6 +2135,9 @@ func (t *hpatchResponseTransform) TransformSSE(payload []byte) ([][]byte, error)
 		if _, pending := t.subagentPending[envelope.ItemID]; pending {
 			return [][]byte{[]byte(`{"type":"response.in_progress"}`)}, nil
 		}
+		if _, pending := t.pending[envelope.ItemID]; pending {
+			return nil, fmt.Errorf("unsupported hpatch-related stream event %q", envelope.Type)
+		}
 		return [][]byte{payload}, nil
 
 	case "response.custom_tool_call_input.done":
@@ -2182,6 +2185,9 @@ func (t *hpatchResponseTransform) TransformSSE(payload []byte) ([][]byte, error)
 	case "response.function_call_arguments.done":
 		pending, exists := t.subagentPending[envelope.ItemID]
 		if !exists {
+			if _, hpatchPending := t.pending[envelope.ItemID]; hpatchPending {
+				return nil, fmt.Errorf("unsupported hpatch-related stream event %q", envelope.Type)
+			}
 			return [][]byte{payload}, nil
 		}
 		if len(pending.argumentsDone) != 0 {
@@ -2232,6 +2238,9 @@ func (t *hpatchResponseTransform) TransformSSE(payload []byte) ([][]byte, error)
 		clear(t.nativeExecItems)
 		if len(t.pending) != 0 {
 			return nil, errors.New("upstream completed with an incomplete hpatch call")
+		}
+		if len(t.subagentPending) != 0 {
+			return nil, errors.New("upstream completed with an incomplete subagent call")
 		}
 		transformed, err := t.transformResponse(envelope.Response)
 		if err != nil {

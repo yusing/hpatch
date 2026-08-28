@@ -19,7 +19,7 @@ func TestSubagentCommentaryJSONIsVisibleAndRemovedFromReplay(t *testing.T) {
 	}
 	transform, _, request := newSubagentCommentaryTestTransform(t, []any{agentMessage})
 
-	spawnArguments := `{"task_name":"inspect","message":"first line\nsecond line","agent_type":"explorer","model":"gpt-requested","reasoning_effort":"low"}`
+	spawnArguments := `{"task_name":"inspect","message":"first line\nsecond line","agent_type":" explorer ","model":"gpt-requested","reasoning_effort":"low"}`
 	followupArguments := `{"target":"/root/explorer","message":"check the exact edge case"}`
 	payload := mustTestJSON(t, map[string]any{
 		"status": "completed",
@@ -165,6 +165,44 @@ func TestSubagentCommentaryBuffersStreamingCall(t *testing.T) {
 		bytes.Count(events[0], []byte("Starting subagent.")) != 1 ||
 		jsonString(terminal.Response.Output[1], "arguments") != arguments {
 		t.Fatalf("completed event = %s", events[0])
+	}
+}
+
+func TestSubagentCommentaryRejectsIncompleteCallBeforeHistoryCommit(t *testing.T) {
+	transform, _, _ := newSubagentCommentaryTestTransform(t, nil)
+	transform.subagentPending["item-spawn"] = subagentPendingCall{callID: "call-spawn"}
+	completed := mustTestJSON(t, map[string]any{
+		"type": "response.completed",
+		"response": map[string]any{
+			"status": "completed",
+			"output": []any{},
+		},
+	})
+
+	events, err := transform.TransformSSE(completed)
+	if err == nil || err.Error() != "upstream completed with an incomplete subagent call" || len(events) != 0 {
+		t.Fatalf("events = %q, error = %v", events, err)
+	}
+	if transform.historyCommitted {
+		t.Fatal("incomplete subagent call committed turn history")
+	}
+}
+
+func TestSubagentCommentaryPreservesPendingHPatchEventRejection(t *testing.T) {
+	transform, _, _ := newSubagentCommentaryTestTransform(t, nil)
+	transform.pending["item-hpatch"] = hpatchPendingCall{callID: "call-hpatch"}
+
+	for _, eventType := range []string{
+		"response.function_call_arguments.delta",
+		"response.function_call_arguments.done",
+	} {
+		t.Run(eventType, func(t *testing.T) {
+			payload := mustTestJSON(t, map[string]any{"type": eventType, "item_id": "item-hpatch"})
+			events, err := transform.TransformSSE(payload)
+			if err == nil || !strings.Contains(err.Error(), "unsupported hpatch-related stream event") || len(events) != 0 {
+				t.Fatalf("events = %q, error = %v", events, err)
+			}
+		})
 	}
 }
 

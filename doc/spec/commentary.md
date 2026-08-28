@@ -5,8 +5,8 @@
 In Hpatch router mode, a namespaced Codex `spawn_agent` function call produces one assistant
 commentary message immediately before the unchanged call. It shows the exact spawn message and the
 model and reasoning effort from explicit call arguments, falling back to the parent request when an
-argument is absent. It shows the exact `agent_type` value as the role when that argument is present.
-The router does not read Codex configuration files to produce commentary.
+argument is absent. It shows `agent_type` as the role when present, using Codex's trimmed role-name
+semantics. The router does not read Codex configuration files to produce commentary.
 
 A namespaced `followup_task` call produces one commentary message immediately before the unchanged
 call. It identifies the target and preserves the exact follow-up message. Other collaboration calls
