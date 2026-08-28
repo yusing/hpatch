@@ -641,19 +641,20 @@ containing `commentary` instead of applying a heuristic rewrite.
 For Bash and POSIX shell programs, `commentary ...` is a private reserved builtin evaluated by the
 thread-bound shell worker. It expands and space-joins arguments, writes no standard output or
 standard error, ignores redirection, returns zero, and cannot be replaced by a function or executable. Each call emits
-its original text immediately and labels the next complete executable statement-list unit. The
+its original text immediately and labels the next complete executable statement-list unit. A shell
+call without an authored builtin emits no start message. The
 latest consecutive label replaces earlier pending labels; a trailing label remains unbound.
 Pipelines enable `pipefail`; lists, functions, compound commands, loops, branches, subshells, and
 command substitutions retain their shell-defined execution and final-status behavior. A labelled
 standalone nonzero unit terminates evaluation without requiring `set -e`, while a label on a
-function or compound command observes that unit's ordinary final status. Other interpreters are
-default-only.
+function or compound command observes that unit's ordinary final status. Other interpreters emit
+no start message and can only produce an unlabelled terminal event.
 
 A successful labelled action emits no terminal message. Failure, cancellation, and timeout emit
 `Failed:`, `Cancelled:`, or `Timed out:` followed by the original text and an available safe
 structured reason. Output and error streams are never copied into that reason. An unlabelled shell
-failure falls back to the shell default. Commentary publication is auxiliary and cannot change the
-operation's exit status.
+terminal event uses `Failed.`, `Cancelled.`, or `Timed out.` plus the available safe structured
+reason. Commentary publication is auxiliary and cannot change the operation's exit status.
 
 Publisher requests use a per-call random bearer capability and a bounded JSON body on the router's
 HTTP server. A live stream drains events already ready before `response.completed` and never waits
@@ -705,7 +706,8 @@ Acceptance:
 4. Replay removes the generated message and restores exact original arguments without removing an
    unrelated assistant message.
 5. Code Mode expressions and repeated shell control flow publish evaluated runtime text without
-   stdout/stderr payloads or a second IPC service; omitted forms receive router defaults.
+   stdout/stderr payloads or a second IPC service; omitted Code Mode forms receive router defaults,
+   while shell calls without an authored builtin emit no start message.
 6. A nonzero pipeline, early shell exit, cancellation, timeout, or determinable native failure
    produces one safe terminal message without changing the underlying status.
 7. Live-ready events precede response completion; late events are delivered on the next request,

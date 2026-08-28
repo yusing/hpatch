@@ -2324,12 +2324,6 @@ func (t *hpatchResponseTransform) translateRegisteredTool(contribution toolContr
 	}
 	if contribution.PluginID == builtinToolsPluginID && contribution.Name == "shell" && t.proxy.commentaryEndpoint != "" {
 		history.commentarySuppressed = shellCommentarySuppressed
-		if !shellCommentarySuppressed {
-			history.commentaryText = "Running the requested commands."
-		}
-		if !shellCommentaryExplicit && !shellCommentarySuppressed {
-			history.commentaryMessageIDs = []string{commentaryMessageID(callID)}
-		}
 	}
 	t.recordLocal(callID, &history)
 	return history, nil
@@ -3473,7 +3467,8 @@ func (t *hpatchResponseTransform) transformOutputItem(item map[string]json.RawMe
 	if err != nil {
 		return false, err
 	}
-	if history.commentaryText == "" && !history.commentarySuppressed && t.proxy.commentaryEndpoint != "" {
+	isBuiltinShell := history.pluginID == builtinToolsPluginID && history.toolName == "shell"
+	if history.commentaryText == "" && !history.commentarySuppressed && !isBuiltinShell && t.proxy.commentaryEndpoint != "" {
 		history.commentaryText = commentaryDefault(commentaryTool{name: history.toolName, display: history.toolName}, nil)
 		history.commentaryMessageIDs = []string{commentaryMessageID(callID)}
 		t.local[callID] = history

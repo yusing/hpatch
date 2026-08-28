@@ -41,7 +41,7 @@ func runShellWorkerTest(
 }
 
 func TestNonBashOutputTruncationPreservesExitStatus(t *testing.T) {
-	commentaryBytes := len("Running the requested commands.")
+	commentaryBytes := len(shellCommentaryVisibleText(shellCommentaryEvent{Text: "Failed.", Reason: "exit status 1"}))
 	execution := toolplugin.ExecutionOutput{
 		Stdout: strings.Repeat("x", toolplugin.ExecutionOutputBudgetBytes), ExitCode: 0,
 	}
@@ -238,8 +238,8 @@ func TestShellRunnerBoundsAndValidatesOutput(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	commentaryBytes := len("Running the requested commands.") + len(shellCommentaryVisibleText(shellCommentaryEvent{
-		Text: "Failed: Running the requested commands.", Reason: "shell evaluation failed",
+	commentaryBytes := len(shellCommentaryVisibleText(shellCommentaryEvent{
+		Text: "Failed.", Reason: "shell evaluation failed",
 	}))
 	if execution.ExitCode != 1 || !strings.Contains(execution.Stderr, "interpreter output exceeds") ||
 		!utf8.ValidString(execution.Stdout) ||

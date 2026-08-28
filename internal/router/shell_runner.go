@@ -47,13 +47,11 @@ func executeShellTool(
 	}()
 	commentary := newShellCommentaryRuntime(commentarySink)
 	if len(arguments) < 2 {
-		commentary.startDefault(ctx)
 		_ = commentary.terminal(ctx, "failure", "missing interpreter or script body")
 		return toolplugin.ExecutionOutput{Stderr: "shell: missing interpreter or script body\n", ExitCode: 1}, nil
 	}
 	interpreter := shellInterpreterName(arguments[0])
 	if interpreter != "bash" && interpreter != "sh" {
-		commentary.startDefault(ctx)
 		execution, executeErr := toolplugin.Execute(
 			ctx,
 			manifest.NodeExecutable,
@@ -73,14 +71,8 @@ func executeShellTool(
 			reason := fmt.Sprintf("exit status %d", execution.ExitCode)
 			_ = commentary.terminal(ctx, "failure", reason)
 			execution = truncateShellExecutionForCommentary(execution,
-				len("Running the requested commands.")+
-					len(shellCommentaryVisibleText(shellCommentaryEvent{
-						Text: "Failed: Running the requested commands.", Reason: reason,
-					})),
+				len(shellCommentaryVisibleText(shellCommentaryEvent{Text: "Failed.", Reason: reason})),
 			)
-		} else {
-			commentary.complete()
-			execution = truncateShellExecutionForCommentary(execution, len("Running the requested commands."))
 		}
 		return execution, nil
 	}
@@ -94,13 +86,11 @@ func executeShellTool(
 		"",
 	)
 	if err != nil {
-		commentary.startDefault(ctx)
 		_ = commentary.terminal(ctx, "failure", "shell syntax error")
 		return toolplugin.ExecutionOutput{Stderr: fmt.Sprintf("shell: %v\n", err), ExitCode: 2}, nil
 	}
 	commentaryPresent, err := instrumentShellCommentary(program, arguments[len(arguments)-1])
 	if err != nil {
-		commentary.startDefault(ctx)
 		_ = commentary.terminal(ctx, "failure", "shell commentary instrumentation failed")
 		return toolplugin.ExecutionOutput{Stderr: fmt.Sprintf("shell: %v\n", err), ExitCode: 2}, nil
 	}
@@ -110,7 +100,6 @@ func executeShellTool(
 	}
 	if !commentaryPresent {
 		commentary.sink = &budgetedShellCommentarySink{next: commentary.sink, budget: budget}
-		commentary.startDefault(ctx)
 	}
 
 	privateTools := make(map[string]toolContribution)

@@ -265,7 +265,7 @@ func TestShellCommentaryBlankExpansionIsMeteredAndGetsFailureFallback(t *testing
 		t.Fatal(err)
 	}
 	if len(sink.events) != 2 || sink.events[0].Text != "" || sink.events[0].Form != `commentary "$EMPTY"` ||
-		sink.events[1].Text != "Failed: Running the requested commands." || sink.events[1].Outcome != "failure" {
+		sink.events[1].Text != "Failed." || sink.events[1].Outcome != "failure" {
 		t.Fatalf("events = %+v", sink.events)
 	}
 }

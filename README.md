@@ -191,12 +191,15 @@ done
 commentary Done running items
 ```
 
-The original text appears before its action. Success adds nothing; failure, cancellation, and
-timeout add `Failed:`, `Cancelled:`, or `Timed out:` plus a safe structured reason when available.
+The original text appears before its action. A shell call without an authored `commentary` builtin
+emits no start message. Success adds nothing; failure, cancellation, and timeout add `Failed:`,
+`Cancelled:`, or `Timed out:` plus a safe structured reason when available. An unlabelled terminal
+event uses `Failed.`, `Cancelled.`, or `Timed out.` instead.
 Pipelines use `pipefail`. Consecutive commentary leaves only the latest label bound to the next
 unit, while trailing commentary is an unbound status message. A labelled standalone nonzero unit
 stops evaluation without requiring `set -e`; labelled functions and compound commands use their
-ordinary final status. Non-Bash interpreters receive the shell default only.
+ordinary final status. Non-Bash interpreters emit no start message and can only produce an
+unlabelled terminal event.
 
 Streaming responses drain worker events already ready before releasing `response.completed`; they
 never wait for a missing worker completion. Later events, JSON responses, approvals, startup

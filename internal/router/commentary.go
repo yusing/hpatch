@@ -131,15 +131,7 @@ func qualifiedToolName(namespace, name string) string {
 
 func commentaryExcluded(namespace, name string) bool {
 	qualified := qualifiedToolName(namespace, name)
-	switch qualified {
-	case "functions.send_user_message_async", "send_user_message_async",
-		"functions.commentary", "commentary",
-		"functions.hread", "functions.hgrep", "functions.hsymbol", "functions.inspect_file",
-		"hread", "hgrep", "hsymbol", "inspect_file":
-		return true
-	default:
-		return false
-	}
+	return qualified == "functions.send_user_message_async" || qualified == "send_user_message_async"
 }
 
 func commentaryDefault(tool commentaryTool, arguments map[string]json.RawMessage) string {
@@ -157,8 +149,6 @@ func commentaryDefault(tool commentaryTool, arguments map[string]json.RawMessage
 		return "Waiting for command output."
 	case "functions.apply_patch", "apply_patch", "functions.hpatch", "hpatch":
 		return "Applying the requested changes."
-	case "functions.shell", "shell":
-		return "Running the requested commands."
 	case "functions.hpatch_recover", "hpatch_recover":
 		return "Repairing the rejected edit."
 	case "functions.view_image", "view_image":

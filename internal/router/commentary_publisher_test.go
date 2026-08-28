@@ -202,13 +202,12 @@ func TestShellOutputTruncatesAfterCommentaryWithoutChangingStatusAllowance(t *te
 	}
 }
 
-func TestShellDefaultTerminalCommentaryReclaimsPresentationWithoutOverflow(t *testing.T) {
+func TestShellUnlabelledTerminalCommentaryReclaimsPresentationWithoutOverflow(t *testing.T) {
 	budget := newShellOutputBudget()
 	recorder := new(recordingShellCommentarySink)
 	runtime := newShellCommentaryRuntime(&budgetedShellCommentarySink{next: recorder, budget: budget})
-	runtime.startDefault(t.Context())
 	capture := newShellOutputCapture(func() {}, budget)
-	nativeAllowance := toolplugin.ExecutionOutputBudgetBytes - len("Running the requested commands.") -
+	nativeAllowance := toolplugin.ExecutionOutputBudgetBytes -
 		max(len(shellOverflowDiagnostic), len(shellCommentaryTruncationDiagnostic)) - 3
 	if _, err := capture.stdout.Write(bytes.Repeat([]byte{'x'}, nativeAllowance)); err != nil {
 		t.Fatal(err)
@@ -217,7 +216,7 @@ func TestShellDefaultTerminalCommentaryReclaimsPresentationWithoutOverflow(t *te
 		t.Fatal(err)
 	}
 	stdout, stderr, overflow, truncated := capture.result()
-	if overflow || !truncated || len(recorder.events) != 2 {
+	if overflow || !truncated || len(recorder.events) != 1 || recorder.events[0].Text != "Failed." {
 		t.Fatalf("overflow = %v, truncated = %v, events = %+v", overflow, truncated, recorder.events)
 	}
 	stderr += shellCommentaryTruncationDiagnostic
@@ -947,7 +946,7 @@ func TestShellWorkerPublishesPipelineFailureWithoutChangingOutput(t *testing.T) 
 	}
 }
 
-func TestShellDefaultPreservesDirectNativeCommand(t *testing.T) {
+func TestShellWithoutCommentaryPreservesDirectNativeCommand(t *testing.T) {
 	transform, proxy, _ := newToolPluginTestTransform(t)
 	proxy.commentaryEndpoint = "http://127.0.0.1:8080" + commentaryPublisherPath
 	response, err := transform.TransformJSON(mustTestJSON(t, map[string]any{
@@ -962,16 +961,16 @@ func TestShellDefaultPreservesDirectNativeCommand(t *testing.T) {
 	var decoded struct {
 		Output []map[string]json.RawMessage `json:"output"`
 	}
-	if json.Unmarshal(response, &decoded) != nil || len(decoded.Output) != 2 {
+	if json.Unmarshal(response, &decoded) != nil || len(decoded.Output) != 1 {
 		t.Fatalf("shell response = %s", response)
 	}
-	if jsonString(decoded.Output[0], "phase") != "commentary" ||
-		!strings.Contains(string(decoded.Output[0]["content"]), "Running the requested commands.") {
-		t.Fatalf("shell default = %s", decoded.Output[0]["content"])
-	}
-	carrier := jsonString(decoded.Output[1], "input")
+	carrier := jsonString(decoded.Output[0], "input")
 	if !strings.Contains(carrier, `"cmd":"rtk ok"`) || strings.Contains(carrier, commentaryEndpointArgument) {
 		t.Fatalf("direct shell carrier = %s", carrier)
+	}
+	history := transform.local["call-shell"]
+	if history.commentaryText != "" || len(history.commentaryMessageIDs) != 0 {
+		t.Fatalf("shell commentary history = %+v", history)
 	}
 }
 

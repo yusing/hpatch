@@ -158,27 +158,19 @@ func (r *shellCommentaryRuntime) terminal(ctx context.Context, outcome, reason s
 		terminalPublished = true
 	}
 	if !terminalPublished {
-		text := "Failed: Running the requested commands."
+		text := "Failed."
 		terminalOutcome := "failure"
 		switch outcome {
 		case "cancelled":
-			text = "Cancelled: Running the requested commands."
+			text = "Cancelled."
 			terminalOutcome = outcome
 		case "timeout":
-			text = "Timed out: Running the requested commands."
+			text = "Timed out."
 			terminalOutcome = outcome
 		}
 		_ = r.sink.Publish(ctx, shellCommentaryEvent{Text: text, Outcome: terminalOutcome, Reason: reason})
 	}
 	return nil
-}
-
-func (r *shellCommentaryRuntime) startDefault(ctx context.Context) {
-	event := shellCommentaryEvent{Text: "Running the requested commands."}
-	_ = r.sink.Publish(ctx, event)
-	r.mu.Lock()
-	r.active["default"] = event
-	r.mu.Unlock()
 }
 
 func (r *shellCommentaryRuntime) complete() {
