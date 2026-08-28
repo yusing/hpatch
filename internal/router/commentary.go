@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"slices"
 	"strings"
 )
 
@@ -219,6 +220,62 @@ type structuredCommentary struct {
 	text              string
 	originalArguments string
 	arguments         string
+	authored          bool
+	explicit          bool
+}
+
+func commentaryFailureEvent(text string, item map[string]json.RawMessage) (shellCommentaryEvent, bool) {
+	values := []map[string]json.RawMessage{item}
+	if raw, exists := item["output"]; exists {
+		var decoded map[string]json.RawMessage
+		if json.Unmarshal(raw, &decoded) != nil {
+			var encoded string
+			if json.Unmarshal(raw, &encoded) == nil {
+				_ = json.Unmarshal([]byte(encoded), &decoded)
+			}
+		}
+		if decoded != nil {
+			values = append(values, decoded)
+		}
+	}
+	for _, value := range values {
+		if jsonBool(value, "timed_out") || jsonBool(value, "timeout") {
+			return shellCommentaryEvent{Text: "Timed out: " + text, Outcome: "timeout", Reason: "operation timed out"}, true
+		}
+		if jsonBool(value, "cancelled") || jsonBool(value, "canceled") {
+			return shellCommentaryEvent{Text: "Cancelled: " + text, Outcome: "cancelled", Reason: "operation was cancelled"}, true
+		}
+		status := strings.ToLower(jsonString(value, "status"))
+		switch status {
+		case "timed_out", "timeout":
+			return shellCommentaryEvent{Text: "Timed out: " + text, Outcome: "timeout", Reason: "operation timed out"}, true
+		case "cancelled", "canceled", "denied", "declined":
+			return shellCommentaryEvent{Text: "Cancelled: " + text, Outcome: "cancelled", Reason: "status " + status}, true
+		case "failed", "failure", "error", "incomplete":
+			return shellCommentaryEvent{Text: "Failed: " + text, Outcome: "failure", Reason: "status " + status}, true
+		}
+		if exitCode, ok := jsonInteger(value, "exit_code"); ok && exitCode != 0 {
+			return shellCommentaryEvent{Text: "Failed: " + text, Outcome: "failure", Reason: fmt.Sprintf("exit status %d", exitCode)}, true
+		}
+		if jsonBool(value, "is_error") || jsonBool(value, "isError") {
+			return shellCommentaryEvent{Text: "Failed: " + text, Outcome: "failure", Reason: "tool reported an error"}, true
+		}
+	}
+	return shellCommentaryEvent{}, false
+}
+
+func jsonBool(object map[string]json.RawMessage, name string) bool {
+	var value bool
+	_ = json.Unmarshal(object[name], &value)
+	return value
+}
+
+func jsonInteger(object map[string]json.RawMessage, name string) (int64, bool) {
+	var value int64
+	if err := json.Unmarshal(object[name], &value); err != nil {
+		return 0, false
+	}
+	return value, true
 }
 
 func commentaryMessageID(callID string) string {
@@ -259,7 +316,7 @@ func (t *hpatchResponseTransform) transformStructuredCommentary(item map[string]
 	}
 	messageID := commentaryMessageID(callID)
 	if retained, exists := t.local[callID]; exists {
-		if retained.commentaryMessageID != messageID || retained.script != extracted.originalArguments ||
+		if !slices.Equal(retained.commentaryMessageIDs, []string{messageID}) || retained.script != extracted.originalArguments ||
 			retained.carrierPayload != extracted.arguments {
 			return nil, false, fmt.Errorf("commentary call %q changed arguments", callID)
 		}
@@ -267,14 +324,29 @@ func (t *hpatchResponseTransform) transformStructuredCommentary(item map[string]
 		return commentaryMessage(messageID, extracted.text), extracted.arguments != extracted.originalArguments, nil
 	}
 	original := maps.Clone(item)
+	kind := "default"
+	var formTokens uint64
+	if extracted.authored {
+		if extracted.explicit {
+			kind = "explicit"
+		}
+		stripped := maps.Clone(item)
+		stripped["arguments"] = mustMarshalJSON(extracted.arguments)
+		originalTokens := t.proxy.metrics.countCommentaryTokens(string(mustMarshalJSON(original)))
+		strippedTokens := t.proxy.metrics.countCommentaryTokens(string(mustMarshalJSON(stripped)))
+		formTokens = originalTokens - min(originalTokens, strippedTokens)
+	}
 	history := hpatchHistory{
-		toolName:            qualifiedToolName(jsonString(item, "namespace"), jsonString(item, "name")),
-		script:              extracted.originalArguments,
-		carrierKind:         codeModeCarrierFunction,
-		carrierName:         jsonString(item, "name"),
-		carrierPayload:      extracted.arguments,
-		upstreamItem:        original,
-		commentaryMessageID: messageID,
+		toolName:             qualifiedToolName(jsonString(item, "namespace"), jsonString(item, "name")),
+		script:               extracted.originalArguments,
+		carrierKind:          codeModeCarrierFunction,
+		carrierName:          jsonString(item, "name"),
+		carrierPayload:       extracted.arguments,
+		upstreamItem:         original,
+		commentaryMessageIDs: []string{messageID},
+		commentaryText:       extracted.text,
+		commentaryMetricKind: kind,
+		commentaryFormTokens: formTokens,
 	}
 	t.recordLocal(callID, &history)
 	item["arguments"] = mustMarshalJSON(extracted.arguments)
@@ -297,6 +369,7 @@ func extractStructuredCommentary(item map[string]json.RawMessage, catalog commen
 	result := structuredCommentary{originalArguments: original, arguments: original}
 	if tool.explicit {
 		if raw, present := arguments[commentaryArgumentName]; present {
+			result.authored = true
 			var value string
 			if err := json.Unmarshal(raw, &value); err != nil {
 				return structuredCommentary{}, false, fmt.Errorf("%s commentary must be a string", qualifiedToolName(tool.namespace, tool.name))
@@ -309,6 +382,7 @@ func extractStructuredCommentary(item map[string]json.RawMessage, catalog commen
 			result.arguments = string(encoded)
 			if strings.TrimSpace(value) != "" {
 				result.text = value
+				result.explicit = true
 				return result, true, nil
 			}
 		}

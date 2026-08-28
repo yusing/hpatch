@@ -597,7 +597,7 @@ Acceptance:
     Warning insertion preserves the exact submitted command, carrier result, replay behavior, and
     metric classification.
 
-## REQ-COMMENTARY-001 — Inline structured-tool commentary
+## REQ-COMMENTARY-001 — Inline operation commentary
 
 In hpatch router mode, every non-strict function tool with an object parameter schema receives one
 optional string property named `commentary`. The property describes concise progress text shown to
@@ -627,6 +627,70 @@ only the retained generated message, validates the locally visible stripped call
 restores the exact original item before provider forwarding. Provider tool definitions and response
 contract fields remain the originals visible to Codex.
 
+The custom Code Mode owner reserves `await commentary(value)` as hpatch syntax. Translation keeps
+the value as a runtime JavaScript expression and lowers the statement to the existing native
+execution carrier. That carrier invokes the authenticated shell worker in private one-shot
+publisher mode, returns no projected commentary payload, and posts the evaluated text to the
+router's existing HTTP server. A Code Mode call with no explicit statement receives a router
+default. Replay restores the exact authored input and removes only message IDs retained for that
+call. Lowering requires the exact JavaScript parser; a CGO-disabled build rejects Code Mode input
+containing `commentary` instead of applying a heuristic rewrite.
+
+For Bash and POSIX shell programs, `commentary ...` is a private reserved builtin evaluated by the
+thread-bound shell worker. It expands and space-joins arguments, writes no standard output or
+standard error, ignores redirection, returns zero, and cannot be replaced by a function or executable. Each call emits
+its original text immediately and labels the next complete executable statement-list unit. The
+latest consecutive label replaces earlier pending labels; a trailing label remains unbound.
+Pipelines enable `pipefail`; lists, functions, compound commands, loops, branches, subshells, and
+command substitutions retain their shell-defined execution and final-status behavior. A labelled
+standalone nonzero unit terminates evaluation without requiring `set -e`, while a label on a
+function or compound command observes that unit's ordinary final status. Other interpreters are
+default-only.
+
+A successful labelled action emits no terminal message. Failure, cancellation, and timeout emit
+`Failed:`, `Cancelled:`, or `Timed out:` followed by the original text and an available safe
+structured reason. Output and error streams are never copied into that reason. An unlabelled shell
+failure falls back to the shell default. Commentary publication is auxiliary and cannot change the
+operation's exit status.
+
+Publisher requests use a per-call random bearer capability and a bounded JSON body on the router's
+HTTP server. A live stream drains events already ready before `response.completed` and never waits
+for a missing completion publication. Later delivery switches to bounded in-memory deferral rather
+than blocking completion. JSON, approval-delayed, startup, interruption, and native-result outcomes
+are emitted on the next routed request when one exists. Publisher routes and deferred events have
+per-session and global count and byte bounds plus a bounded lifetime; capabilities are also revoked
+when the matching native result settles. At route capacity, a signed, expiring, per-call capability
+retains no route or event state and records each runtime publication only as suppressed metrics with
+zero visible bytes. Capacity exhaustion therefore emits no default and never fails the action. No
+socket, FIFO, journal, or second service is introduced.
+
+Live message IDs reserve against the existing history byte limits before response history commits.
+Commit transfers those reservations into the retained call before any live-ready message is emitted;
+rejection, expiry, cancellation, or transform abandonment releases reservations for messages that
+were not shown.
+
+Streaming translation retains each complete replay record before exposing its generated commentary
+and translated call. A later failed or incomplete response keeps records for items already exposed,
+so the next request can remove generated messages and restore exact provider-authored calls even
+without a successful response-completion event. Item and call identities are unique before exposure,
+and buffered custom input completion retains the fully composed provider item rather than a
+reconstructed carrier.
+
+Visibility metrics and terminal settlement are acknowledged only after the complete downstream JSON
+body or SSE item write succeeds. A failed write leaves deferred commentary available for requeue and
+does not count or settle text that the client did not receive. Dequeued live reservations become
+in-flight atomically, so concurrent cancellation cannot release an ID for a message being written.
+
+Commentary consumes the existing tool-output byte budget. Later events are suppressed after the
+budget is exhausted and one bounded warning is emitted when it fits. Router metrics count explicit,
+default, failure, cancelled, timeout, and suppressed events. Native tokens cover only user-visible
+text. Shell and Code Mode form tokens cover the exact authored command or statement per runtime
+invocation; structured form tokens are the exact token delta between the full call and the same call
+with only the router-owned member removed. Defaults generated for omitted commentary and generated
+terminal messages contribute zero form tokens. An authored blank structured member uses the default
+visible text but retains its exact removal delta as form tokens. Provider usage remains authoritative
+and provider framing is excluded.
+
 Acceptance:
 
 1. A non-strict object-schema function accepts an omitted or explicit `commentary` member without
@@ -638,6 +702,14 @@ Acceptance:
    never expose the router-owned member, and changed or repeated buffered identities fail closed.
 4. Replay removes the generated message and restores exact original arguments without removing an
    unrelated assistant message.
+5. Code Mode expressions and repeated shell control flow publish evaluated runtime text without
+   stdout/stderr payloads or a second IPC service; omitted forms receive router defaults.
+6. A nonzero pipeline, early shell exit, cancellation, timeout, or determinable native failure
+   produces one safe terminal message without changing the underlying status.
+7. Live-ready events precede response completion; late events are delivered on the next request,
+   and output-budget exhaustion suppresses further events without failing the action.
+8. Metrics distinguish every accepted lifecycle category and compare only user-visible native text
+   with the exact authored form defined above.
 
 ## REQ-METRICS-001 — Persistent token, command, target, and failure metrics
 

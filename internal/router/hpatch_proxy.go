@@ -194,16 +194,22 @@ type hpatchHistory struct {
 	carrierKind    codeModeCarrierKind
 	carrierPayload string
 
-	report              string
-	translationError    string
-	evaluatorRejected   bool
-	rejections          []hpatch.HostRejection
-	correlationID       string
-	attempt             int
-	upstreamItem        map[string]json.RawMessage
-	replayCarrier       bool
-	commentaryMessageID string
-	bytes               int
+	report               string
+	translationError     string
+	evaluatorRejected    bool
+	rejections           []hpatch.HostRejection
+	correlationID        string
+	attempt              int
+	upstreamItem         map[string]json.RawMessage
+	replayCarrier        bool
+	commentaryMessageIDs []string
+	commentaryText       string
+	commentaryMetricKind string
+	commentaryFormTokens uint64
+	commentaryMetricDone bool
+	commentarySuppressed bool
+	commentarySettled    bool
+	bytes                int
 	// unevaluated marks a call the proxy rejected before hpatch saw it. Such a
 	// recovery changed nothing and has no script of its own, so another recovery
 	// looks past it to the rejected script it was trying to repair.
@@ -235,16 +241,22 @@ type hpatchProxy struct {
 	shellDirectory         string
 	titles                 *sessionTitleCache
 	shellSessions          map[string]struct{}
+	commentary             *commentaryBroker
+	commentaryEndpoint     string
+	metrics                *metricsStore
 
-	mu              sync.RWMutex
-	sessions        map[string]*hpatchHistorySession
-	activeSessions  map[string]int
-	historyBytes    int
-	sessionSequence uint64
-	closed          bool
+	mu                                sync.RWMutex
+	sessions                          map[string]*hpatchHistorySession
+	activeSessions                    map[string]int
+	historyBytes                      int
+	provisionalCommentaryBytes        int
+	provisionalCommentarySessionBytes map[string]int
+	provisionalCommentaryIDs          map[string]map[string]map[string]struct{}
+	sessionSequence                   uint64
+	closed                            bool
 }
 
-func newHPatchProxy(translator hpatchTranslator, registry *toolRegistry, customizedInstructions, compactModelProtocol bool, titleCaches ...*sessionTitleCache) *hpatchProxy {
+func newHPatchProxy(translator hpatchTranslator, registry *toolRegistry, customizedInstructions, compactModelProtocol bool, commentaryEndpoint string, titleCaches ...*sessionTitleCache) *hpatchProxy {
 	if translator == nil || registry == nil {
 		return nil
 	}
@@ -257,17 +269,32 @@ func newHPatchProxy(translator hpatchTranslator, registry *toolRegistry, customi
 	if compactModelProtocol {
 		modelInstructions = codexinstructions.Instructions()
 	}
-	return &hpatchProxy{
-		translator:             translator,
-		registry:               registry,
-		customizedInstructions: customizedInstructions,
-		modelInstructions:      modelInstructions,
-		exactEvidence:          newHPatchExactEvidenceRecorder(),
-		shellDirectory:         directory,
-		titles:                 titles,
-		shellSessions:          make(map[string]struct{}),
-		sessions:               make(map[string]*hpatchHistorySession),
-		activeSessions:         make(map[string]int),
+	proxy := &hpatchProxy{
+		translator:                        translator,
+		registry:                          registry,
+		customizedInstructions:            customizedInstructions,
+		modelInstructions:                 modelInstructions,
+		exactEvidence:                     newHPatchExactEvidenceRecorder(),
+		shellDirectory:                    directory,
+		titles:                            titles,
+		shellSessions:                     make(map[string]struct{}),
+		commentary:                        newCommentaryBroker(),
+		commentaryEndpoint:                commentaryEndpoint,
+		sessions:                          make(map[string]*hpatchHistorySession),
+		activeSessions:                    make(map[string]int),
+		provisionalCommentarySessionBytes: make(map[string]int),
+		provisionalCommentaryIDs:          make(map[string]map[string]map[string]struct{}),
+	}
+	proxy.commentary.reserveMessageID = proxy.reserveCommentaryMessageID
+	proxy.commentary.reserveLiveMessageID = proxy.reserveLiveCommentaryMessageID
+	proxy.commentary.releaseMessageID = proxy.releaseCommentaryMessageID
+	return proxy
+}
+
+func (p *hpatchProxy) setMetrics(metrics *metricsStore) {
+	p.metrics = metrics
+	p.commentary.recordSuppressed = func(metricSessionID string, event shellCommentaryEvent, warning string) {
+		metrics.recordCommentary(metricSessionID, "suppressed", warning, event.Form, nil)
 	}
 }
 
@@ -299,7 +326,6 @@ func (p *hpatchProxy) Close() error {
 		return nil
 	}
 	p.mu.Lock()
-	defer p.mu.Unlock()
 	p.closed = true
 	var cleanupErr error
 	for directory := range p.shellSessions {
@@ -308,7 +334,15 @@ func (p *hpatchProxy) Close() error {
 	clear(p.shellSessions)
 	clear(p.sessions)
 	clear(p.activeSessions)
+	clear(p.provisionalCommentarySessionBytes)
+	clear(p.provisionalCommentaryIDs)
+	commentary := p.commentary
 	p.historyBytes = 0
+	p.provisionalCommentaryBytes = 0
+	p.mu.Unlock()
+	if commentary != nil {
+		commentary.close()
+	}
 	return cleanupErr
 }
 
@@ -347,17 +381,23 @@ type hpatchResponseTransform struct {
 	historySessionID string
 	sessionActive    bool
 
-	originalTools             json.RawMessage
-	originalToolsPresent      bool
-	originalToolChoice        json.RawMessage
-	originalToolChoicePresent bool
-	pending                   map[string]hpatchPendingCall
-	nativeExecItems           map[string]struct{}
-	nativeExecWarningsMetered map[string]struct{}
-	local                     map[string]hpatchHistory
-	directory                 string
-	carriers                  codeModeCarrierCatalog
-	commentaryTools           commentaryToolCatalog
+	originalTools               json.RawMessage
+	originalToolsPresent        bool
+	originalToolChoice          json.RawMessage
+	originalToolChoicePresent   bool
+	pending                     map[string]hpatchPendingCall
+	nativeExecItems             map[string]struct{}
+	nativeExecWarningsMetered   map[string]struct{}
+	local                       map[string]hpatchHistory
+	directory                   string
+	carriers                    codeModeCarrierCatalog
+	commentaryTools             commentaryToolCatalog
+	commentaryLive              bool
+	commentarySubscriptions     []*commentarySubscription
+	deferredCommentary          []publishedCommentary
+	jsonCommentaryToAcknowledge []publishedCommentary
+	commentaryLifecycleStarted  bool
+	commentaryMessagesEmitted   map[string]struct{}
 
 	installedToolDefinition  string
 	installedToolBreakdown   []hpatch.HostToolDefinition
@@ -377,9 +417,19 @@ func (t *hpatchResponseTransform) Close() {
 	if t == nil {
 		return
 	}
+	if !t.historyCommitted || t.commentaryLive {
+		for _, subscription := range t.commentarySubscriptions {
+			subscription.abandon()
+		}
+		t.commentarySubscriptions = nil
+	}
 	if t.sessionActive {
 		t.proxy.deactivateSession(t.historySessionID)
 		t.sessionActive = false
+	}
+	if len(t.deferredCommentary) != 0 && t.proxy.commentary != nil {
+		t.proxy.commentary.requeue(t.historySessionID, t.deferredCommentary)
+		t.deferredCommentary = nil
 	}
 }
 
@@ -516,6 +566,14 @@ func (p *hpatchProxy) prepareRequest(ctx context.Context, request *parsedRespons
 		p.deactivateSession(historySessionID)
 		return nil, err
 	}
+	deferredCommentary := p.commentary.drain(historySessionID)
+	deferredCommentary = slices.DeleteFunc(deferredCommentary, func(publication publishedCommentary) bool {
+		if _, retained := p.history(historySessionID, publication.callID); retained {
+			return false
+		}
+		p.releaseCommentaryMessageID(historySessionID, publication.callID, publication.messageID)
+		return true
+	})
 	return &hpatchResponseTransform{
 		ctx:              ctx,
 		proxy:            p,
@@ -536,6 +594,9 @@ func (p *hpatchProxy) prepareRequest(ctx context.Context, request *parsedRespons
 		directory:                 directory,
 		carriers:                  carriers,
 		commentaryTools:           commentaryTools,
+		commentaryLive:            request.streamResponse,
+		deferredCommentary:        deferredCommentary,
+		commentaryMessagesEmitted: make(map[string]struct{}),
 
 		installedToolDefinition: string(mustMarshalJSON(installedTools)),
 		installedToolBreakdown:  installedToolBreakdown,
@@ -1019,13 +1080,40 @@ func (p *hpatchProxy) rememberBatch(sessionID string, histories map[string]hpatc
 	if len(histories) == 0 {
 		return nil
 	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	transferredCommentaryBytes := 0
+	provisionalCalls := p.provisionalCommentaryIDs[sessionID]
+	retainedSession := p.sessions[sessionID]
 	prepared := make(map[string]hpatchHistory, len(histories))
 	for callID, history := range histories {
+		history.commentaryMetricKind = ""
+		history.commentaryFormTokens = 0
+		history.commentaryMetricDone = false
+		if retainedSession != nil {
+			if retained, exists := retainedSession.calls[callID]; exists {
+				for _, messageID := range retained.commentaryMessageIDs {
+					if !slices.Contains(history.commentaryMessageIDs, messageID) {
+						history.commentaryMessageIDs = append(history.commentaryMessageIDs, messageID)
+					}
+				}
+			}
+		}
+		for messageID := range provisionalCalls[callID] {
+			transferredCommentaryBytes += len(messageID)
+			if !slices.Contains(history.commentaryMessageIDs, messageID) {
+				history.commentaryMessageIDs = append(history.commentaryMessageIDs, messageID)
+			}
+		}
 		encodedItem, err := json.Marshal(history.upstreamItem)
 		if err != nil {
 			return fmt.Errorf("encode hpatch history item: %w", err)
 		}
-		history.bytes = len(sessionID) + len(callID) + len(history.toolName) + len(history.pluginID) + len(history.script) + len(history.root) + len(history.evaluated) + len(history.patch) + len(history.carrierKind) + len(history.carrierName) + len(history.carrierPayload) + len(history.report) + len(history.translationError) + len(history.correlationID) + len(history.commentaryMessageID) + len(encodedItem)
+		history.bytes = len(sessionID) + len(callID) + len(history.toolName) + len(history.pluginID) + len(history.script) + len(history.root) + len(history.evaluated) + len(history.patch) + len(history.carrierKind) + len(history.carrierName) + len(history.carrierPayload) + len(history.report) + len(history.translationError) + len(history.correlationID) + len(history.commentaryText) + len(encodedItem)
+		for _, messageID := range history.commentaryMessageIDs {
+			history.bytes += len(messageID)
+		}
 		for _, rejection := range history.rejections {
 			history.bytes += hpatchRejectionTextBytes(rejection)
 		}
@@ -1037,9 +1125,6 @@ func (p *hpatchProxy) rememberBatch(sessionID string, histories map[string]hpatc
 	if len(prepared) > maxSessionTurns {
 		return errors.New("hpatch history batch exceeds call capacity")
 	}
-
-	p.mu.Lock()
-	defer p.mu.Unlock()
 
 	existing := p.sessions[sessionID]
 	calls := make(map[string]hpatchHistory, len(prepared))
@@ -1078,7 +1163,8 @@ func (p *hpatchProxy) rememberBatch(sessionID string, histories map[string]hpatc
 		protected[callID] = true
 	}
 
-	for len(calls) > maxSessionTurns || sessionBytes > maxHPatchHistorySessionBytes {
+	remainingProvisionalSessionBytes := p.provisionalCommentarySessionBytes[sessionID] - transferredCommentaryBytes
+	for len(calls) > maxSessionTurns || sessionBytes+remainingProvisionalSessionBytes > maxHPatchHistorySessionBytes {
 		oldest, ok := oldestHistoryCall(calls, protected)
 		if !ok {
 			if len(calls) > maxSessionTurns {
@@ -1099,6 +1185,7 @@ func (p *hpatchProxy) rememberBatch(sessionID string, histories map[string]hpatc
 	}
 
 	totalBytes := p.historyBytes - oldSessionBytes + sessionBytes
+	remainingProvisionalBytes := p.provisionalCommentaryBytes - transferredCommentaryBytes
 	sessionCount := len(p.sessions)
 	if existing == nil {
 		sessionCount++
@@ -1122,7 +1209,7 @@ func (p *hpatchProxy) rememberBatch(sessionID string, histories map[string]hpatc
 	})
 
 	evicted := make([]string, 0)
-	for sessionCount > maxSessionHistories || totalBytes > maxHPatchHistoryGlobalBytes {
+	for sessionCount > maxSessionHistories || totalBytes+remainingProvisionalBytes > maxHPatchHistoryGlobalBytes {
 		if len(evicted) == len(candidates) {
 			if sessionCount > maxSessionHistories {
 				return errors.New("hpatch history session capacity reached")
@@ -1152,6 +1239,18 @@ func (p *hpatchProxy) rememberBatch(sessionID string, histories map[string]hpatc
 	existing.nextSequence = nextSequence
 	p.touchSession(existing)
 	p.historyBytes = totalBytes
+	for callID := range histories {
+		delete(provisionalCalls, callID)
+	}
+	if len(provisionalCalls) == 0 {
+		delete(p.provisionalCommentaryIDs, sessionID)
+	}
+	p.provisionalCommentaryBytes = remainingProvisionalBytes
+	if remainingProvisionalSessionBytes == 0 {
+		delete(p.provisionalCommentarySessionBytes, sessionID)
+	} else {
+		p.provisionalCommentarySessionBytes[sessionID] = remainingProvisionalSessionBytes
+	}
 	return nil
 }
 
@@ -1281,8 +1380,8 @@ func (p *hpatchProxy) commentaryMessageIDs(sessionID string) map[string]struct{}
 	result := make(map[string]struct{})
 	if session := p.sessions[sessionID]; session != nil {
 		for _, history := range session.calls {
-			if history.commentaryMessageID != "" {
-				result[history.commentaryMessageID] = struct{}{}
+			for _, messageID := range history.commentaryMessageIDs {
+				result[messageID] = struct{}{}
 			}
 		}
 	}
@@ -1302,6 +1401,163 @@ func (p *hpatchProxy) confirmHistory(sessionID, callID, output string) {
 	}
 	history.confirmed = true
 	session.calls[callID] = history
+}
+
+func (p *hpatchProxy) reserveCommentaryMessageID(sessionID, callID, messageID string) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.reserveCommittedCommentaryMessageIDLocked(sessionID, callID, messageID)
+}
+
+func (p *hpatchProxy) reserveLiveCommentaryMessageID(sessionID, callID, messageID string) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if session := p.sessions[sessionID]; session != nil {
+		if _, committed := session.calls[callID]; committed {
+			return p.reserveCommittedCommentaryMessageIDLocked(sessionID, callID, messageID)
+		}
+	}
+	if p.activeSessions[sessionID] == 0 {
+		return false
+	}
+	callIDs := p.provisionalCommentaryIDs[sessionID]
+	if callIDs != nil {
+		if messageIDs := callIDs[callID]; messageIDs != nil {
+			if _, exists := messageIDs[messageID]; exists {
+				return true
+			}
+		}
+	}
+	additionalBytes := len(messageID)
+	sessionBytes := p.provisionalCommentarySessionBytes[sessionID]
+	if session := p.sessions[sessionID]; session != nil {
+		sessionBytes += session.bytes
+	}
+	if sessionBytes+additionalBytes > maxHPatchHistorySessionBytes ||
+		p.historyBytes+p.provisionalCommentaryBytes+additionalBytes > maxHPatchHistoryGlobalBytes {
+		return false
+	}
+	if callIDs == nil {
+		callIDs = make(map[string]map[string]struct{})
+		p.provisionalCommentaryIDs[sessionID] = callIDs
+	}
+	messageIDs := callIDs[callID]
+	if messageIDs == nil {
+		messageIDs = make(map[string]struct{})
+		callIDs[callID] = messageIDs
+	}
+	messageIDs[messageID] = struct{}{}
+	p.provisionalCommentaryBytes += additionalBytes
+	p.provisionalCommentarySessionBytes[sessionID] += additionalBytes
+	return true
+}
+
+func (p *hpatchProxy) reserveCommittedCommentaryMessageIDLocked(sessionID, callID, messageID string) bool {
+	session := p.sessions[sessionID]
+	if session == nil {
+		return false
+	}
+	history, ok := session.calls[callID]
+	if !ok || slices.Contains(history.commentaryMessageIDs, messageID) {
+		return ok
+	}
+	additionalBytes := len(messageID)
+	if session.bytes+additionalBytes > maxHPatchHistorySessionBytes || p.historyBytes+additionalBytes > maxHPatchHistoryGlobalBytes {
+		return false
+	}
+	history.commentaryMessageIDs = append(history.commentaryMessageIDs, messageID)
+	history.bytes += additionalBytes
+	session.bytes += additionalBytes
+	p.historyBytes += additionalBytes
+	session.calls[callID] = history
+	return true
+}
+
+func (p *hpatchProxy) releaseCommentaryMessageID(sessionID, callID, messageID string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	session := p.sessions[sessionID]
+	if session != nil {
+		history, ok := session.calls[callID]
+		if ok {
+			index := slices.Index(history.commentaryMessageIDs, messageID)
+			if index >= 0 {
+				history.commentaryMessageIDs = slices.Delete(history.commentaryMessageIDs, index, index+1)
+				releasedBytes := len(messageID)
+				history.bytes -= releasedBytes
+				session.bytes -= releasedBytes
+				p.historyBytes -= releasedBytes
+				session.calls[callID] = history
+				return
+			}
+		}
+	}
+	callIDs := p.provisionalCommentaryIDs[sessionID]
+	messageIDs := callIDs[callID]
+	if _, exists := messageIDs[messageID]; !exists {
+		return
+	}
+	delete(messageIDs, messageID)
+	if len(messageIDs) == 0 {
+		delete(callIDs, callID)
+	}
+	if len(callIDs) == 0 {
+		delete(p.provisionalCommentaryIDs, sessionID)
+	}
+	releasedBytes := len(messageID)
+	p.provisionalCommentaryBytes -= releasedBytes
+	p.provisionalCommentarySessionBytes[sessionID] -= releasedBytes
+	if p.provisionalCommentarySessionBytes[sessionID] == 0 {
+		delete(p.provisionalCommentarySessionBytes, sessionID)
+	}
+}
+
+func (p *hpatchProxy) settleCommentaryResult(sessionID, callID string, item map[string]json.RawMessage) {
+	p.commentary.cancelCall(sessionID, callID)
+	if p.commentary.hasDeferredTerminal(sessionID, callID) {
+		return
+	}
+	p.mu.Lock()
+	session := p.sessions[sessionID]
+	if session == nil {
+		p.mu.Unlock()
+		return
+	}
+	history, ok := session.calls[callID]
+	if !ok || history.commentaryText == "" || history.commentarySettled {
+		p.mu.Unlock()
+		return
+	}
+	history.commentarySettled = true
+	session.calls[callID] = history
+	p.mu.Unlock()
+	event, failed := commentaryFailureEvent(history.commentaryText, item)
+	if failed {
+		p.commentary.deferEvent(sessionID, publishedCommentary{
+			callID: callID, metricSessionID: commentaryMetricsSessionID(sessionID), event: event,
+		})
+	}
+}
+
+func commentaryMetricsSessionID(historySessionID string) string {
+	_, sessionID, ok := strings.Cut(historySessionID, "\x00")
+	if ok {
+		return sessionID
+	}
+	return historySessionID
+}
+
+func (p *hpatchProxy) markCommentarySettled(sessionID, callID string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if session := p.sessions[sessionID]; session != nil {
+		history, exists := session.calls[callID]
+		if !exists {
+			return
+		}
+		history.commentarySettled = true
+		session.calls[callID] = history
+	}
 }
 
 func (p *hpatchProxy) targetAliases(sessionID, root string) []hpatch.TargetAlias {
@@ -1358,6 +1614,9 @@ func (p *hpatchProxy) reconcileInputPrefix(request *parsedResponsesRequest, sess
 	for index, item := range items {
 		itemType := jsonString(item, "type")
 		callID := jsonString(item, "call_id")
+		if itemType == "function_call_output" || itemType == "custom_tool_call_output" {
+			p.settleCommentaryResult(sessionID, callID, item)
+		}
 		history, known := p.history(sessionID, callID)
 		if !known {
 			continue
@@ -1899,6 +2158,9 @@ func (t *hpatchResponseTransform) translateRegisteredTool(contribution toolContr
 			}
 		}
 	}
+	shellCommentaryExplicit := contribution.PluginID == builtinToolsPluginID && contribution.Name == "shell" &&
+		shellArgumentsHaveCommentary(translation.Arguments)
+	shellCommentarySuppressed := false
 
 	kind := codeModeCarrierCustom
 	name := t.codeModeToolName
@@ -1925,16 +2187,45 @@ func (t *hpatchResponseTransform) translateRegisteredTool(contribution toolContr
 			if err := t.carriers.require(name, kind); err != nil {
 				return hpatchHistory{}, fmt.Errorf("%s exec carrier: %w", contribution.Name, err)
 			}
+			arguments := translation.Arguments
+			var commentarySubscription *commentarySubscription
+			commentaryToken := ""
+			if shellCommentaryExplicit && t.proxy.commentaryEndpoint != "" {
+				commentarySubscription, err = t.proxy.commentary.subscribe(t.historySessionID, t.sessionID, callID, t.commentaryLive, false)
+				if err != nil {
+					if errors.Is(err, errCommentaryCapacity) {
+						shellCommentarySuppressed = true
+						commentarySubscription = nil
+						commentaryToken, _ = t.proxy.commentary.suppressionCapability(t.sessionID)
+					} else {
+						return hpatchHistory{}, fmt.Errorf("prepare shell commentary publisher: %w", err)
+					}
+				} else {
+					commentaryToken = commentarySubscription.token
+				}
+				if commentaryToken != "" {
+					arguments = append([]string{
+						commentaryEndpointArgument, t.proxy.commentaryEndpoint,
+						commentaryTokenArgument, commentaryToken,
+					}, arguments...)
+				}
+			}
 			payload, err = t.proxy.registry.execCarrierInput(
 				contribution,
 				input,
-				translation.Arguments,
+				arguments,
 				translation.Carrier.Template,
 				translation.Carrier.Params,
 				resultMetadata,
 			)
 			if err != nil {
+				if commentarySubscription != nil {
+					commentarySubscription.cancel()
+				}
 				return hpatchHistory{}, fmt.Errorf("%s exec carrier: %w", contribution.Name, err)
+			}
+			if commentarySubscription != nil {
+				t.commentarySubscriptions = append(t.commentarySubscriptions, commentarySubscription)
 			}
 		case "custom":
 			name = translation.Carrier.Name
@@ -2030,6 +2321,15 @@ func (t *hpatchResponseTransform) translateRegisteredTool(contribution toolContr
 		translationError: diagnostic,
 		upstreamItem:     maps.Clone(upstreamItem),
 		replayCarrier:    recovered,
+	}
+	if contribution.PluginID == builtinToolsPluginID && contribution.Name == "shell" && t.proxy.commentaryEndpoint != "" {
+		history.commentarySuppressed = shellCommentarySuppressed
+		if !shellCommentarySuppressed {
+			history.commentaryText = "Running the requested commands."
+		}
+		if !shellCommentaryExplicit && !shellCommentarySuppressed {
+			history.commentaryMessageIDs = []string{commentaryMessageID(callID)}
+		}
 	}
 	t.recordLocal(callID, &history)
 	return history, nil
@@ -2351,7 +2651,30 @@ func (t *hpatchResponseTransform) nextRecoveryAttempt(correlationID string, base
 }
 
 func (t *hpatchResponseTransform) TransformJSON(payload []byte) ([]byte, error) {
-	return t.transformResponse(payload)
+	transformed, err := t.transformResponse(payload)
+	if err != nil || len(t.deferredCommentary) == 0 {
+		return transformed, err
+	}
+	var response map[string]json.RawMessage
+	var output []map[string]json.RawMessage
+	if json.Unmarshal(transformed, &response) != nil || json.Unmarshal(response["output"], &output) != nil {
+		return nil, errors.New("decode deferred commentary response")
+	}
+	messages := make([]map[string]json.RawMessage, 0, len(t.deferredCommentary)+len(output))
+	published := make([]publishedCommentary, 0, len(t.deferredCommentary))
+	for _, publication := range t.deferredCommentary {
+		if message, visible := commentaryMessageForPublication(publication); visible {
+			messages = append(messages, message)
+		}
+		published = append(published, publication)
+	}
+	messages = append(messages, output...)
+	response["output"] = mustMarshalJSON(messages)
+	transformed, err = json.Marshal(response)
+	if err == nil {
+		t.jsonCommentaryToAcknowledge = append(t.jsonCommentaryToAcknowledge[:0], published...)
+	}
+	return transformed, err
 }
 
 func (t *hpatchResponseTransform) Finish(streamEvent bool) error {
@@ -2408,6 +2731,12 @@ func (t *hpatchResponseTransform) TransformSSE(payload []byte) ([][]byte, error)
 				if _, exists := t.pending[itemID]; exists {
 					return nil, errors.New("upstream reused commentary item ID")
 				}
+				if t.pendingCallKnown(callID) {
+					return nil, errors.New("upstream reused commentary call ID")
+				}
+				if _, exists := t.local[callID]; exists {
+					return nil, errors.New("upstream reused completed commentary call ID")
+				}
 				t.pending[itemID] = hpatchPendingCall{
 					callID: callID, toolName: name, structured: true, added: bytes.Clone(payload),
 				}
@@ -2426,6 +2755,12 @@ func (t *hpatchResponseTransform) TransformSSE(payload []byte) ([][]byte, error)
 		}
 		if _, exists := t.pending[itemID]; exists {
 			return nil, errors.New("upstream reused hpatch item ID")
+		}
+		if t.pendingCallKnown(callID) {
+			return nil, errors.New("upstream reused hpatch call ID")
+		}
+		if _, exists := t.local[callID]; exists {
+			return nil, errors.New("upstream reused completed hpatch call ID")
 		}
 		t.pending[itemID] = hpatchPendingCall{callID: callID, toolName: name, added: bytes.Clone(payload)}
 		return nil, nil
@@ -2457,10 +2792,6 @@ func (t *hpatchResponseTransform) TransformSSE(payload []byte) ([][]byte, error)
 			}
 			return [][]byte{payload}, nil
 		}
-		history, err := t.translateTool(pending.toolName, pending.callID, envelope.Input, nil)
-		if err != nil {
-			return nil, err
-		}
 		var addedEnvelope struct {
 			Item json.RawMessage `json:"item"`
 		}
@@ -2470,6 +2801,11 @@ func (t *hpatchResponseTransform) TransformSSE(payload []byte) ([][]byte, error)
 		var addedItem map[string]json.RawMessage
 		if json.Unmarshal(addedEnvelope.Item, &addedItem) != nil {
 			return nil, errors.New("decode buffered hpatch call")
+		}
+		addedItem["input"] = mustMarshalJSON(envelope.Input)
+		history, err := t.translateTool(pending.toolName, pending.callID, envelope.Input, maps.Clone(addedItem))
+		if err != nil {
+			return nil, err
 		}
 		kind := history.effectiveCarrierKind()
 		renderCarrierItem(addedItem, kind, history.carrierName, "")
@@ -2483,6 +2819,9 @@ func (t *hpatchResponseTransform) TransformSSE(payload []byte) ([][]byte, error)
 		}
 		doneEvent, err := renderCarrierDoneEvent(payload, kind, history.carrierInput())
 		if err != nil {
+			return nil, err
+		}
+		if err := t.commitLocalCall(pending.callID); err != nil {
 			return nil, err
 		}
 		return [][]byte{addedEvent, doneEvent}, nil
@@ -2608,6 +2947,12 @@ func (t *hpatchResponseTransform) TransformSSE(payload []byte) ([][]byte, error)
 		if err != nil {
 			return nil, err
 		}
+		if message == nil {
+			message = t.localStartCommentary(item)
+		}
+		if err := t.commitLocalCall(callID); err != nil {
+			return nil, err
+		}
 		if !changed && !commentaryChanged {
 			if message == nil {
 				return [][]byte{payload}, nil
@@ -2657,6 +3002,9 @@ func (t *hpatchResponseTransform) TransformSSE(payload []byte) ([][]byte, error)
 	case "response.failed", "response.incomplete":
 		clear(t.pending)
 		clear(t.nativeExecItems)
+		if err := t.commitHistory(); err != nil {
+			return nil, err
+		}
 		if err := t.Finish(true); err != nil {
 			return nil, err
 		}
@@ -2666,6 +3014,94 @@ func (t *hpatchResponseTransform) TransformSSE(payload []byte) ([][]byte, error)
 			return nil, fmt.Errorf("unsupported hpatch-related stream event %q", envelope.Type)
 		}
 		return [][]byte{payload}, nil
+	}
+}
+
+func (t *hpatchResponseTransform) TransformSSEWithEmitter(payload []byte, emit func([]byte) error) ([][]byte, error) {
+	var envelope struct {
+		Type string `json:"type"`
+	}
+	if json.Unmarshal(payload, &envelope) != nil {
+		return t.TransformSSE(payload)
+	}
+	if envelope.Type == "response.created" {
+		visible, err := t.TransformSSE(payload)
+		if err == nil {
+			t.commentaryLifecycleStarted = true
+		}
+		return visible, err
+	}
+	if t.commentaryLifecycleStarted {
+		for len(t.deferredCommentary) != 0 {
+			publication := t.deferredCommentary[0]
+			if message, visible := commentaryMessageForPublication(publication); visible {
+				if err := emit(commentaryDoneEvent(message)); err != nil {
+					return nil, err
+				}
+			}
+			t.recordPublishedCommentary(publication)
+			t.deferredCommentary = t.deferredCommentary[1:]
+		}
+	}
+	if envelope.Type != "response.completed" {
+		return t.TransformSSE(payload)
+	}
+	visible, err := t.TransformSSE(payload)
+	if err != nil {
+		return nil, err
+	}
+	for _, subscription := range t.commentarySubscriptions {
+		first, ready := subscription.beginForward()
+		if !ready {
+			continue
+		}
+		if err := subscription.forward(t.ctx, first, func(publication publishedCommentary) error {
+			message, visible := commentaryMessageForPublication(publication)
+			if visible {
+				if err := emit(commentaryDoneEvent(message)); err != nil {
+					return err
+				}
+			}
+			t.recordPublishedCommentary(publication)
+			return nil
+		}); err != nil {
+			return nil, err
+		}
+	}
+	t.commentarySubscriptions = nil
+	return visible, nil
+}
+
+func commentaryMessageForPublication(publication publishedCommentary) (map[string]json.RawMessage, bool) {
+	text := shellCommentaryVisibleText(publication.event)
+	id := publication.messageID
+	if id == "" {
+		id = commentaryMessageID("runtime-fallback:" + publication.callID + ":" + text)
+	}
+	if text == "" {
+		return nil, false
+	}
+	return commentaryMessage(id, text), true
+}
+
+func (t *hpatchResponseTransform) recordPublishedCommentary(publication publishedCommentary) {
+	text := shellCommentaryVisibleText(publication.event)
+	if publication.event.Outcome != "" && publication.event.Outcome != "suppressed" {
+		t.proxy.markCommentarySettled(t.historySessionID, publication.callID)
+	}
+	if publication.event.Outcome != "suppressed" {
+		kind := publication.event.Outcome
+		if kind == "" {
+			kind = "default"
+			if publication.event.Form != "" {
+				kind = "explicit"
+			}
+		}
+		metricSessionID := publication.metricSessionID
+		if metricSessionID == "" {
+			metricSessionID = t.sessionID
+		}
+		t.proxy.metrics.recordCommentary(metricSessionID, kind, text, publication.event.Form, nil)
 	}
 }
 
@@ -2701,11 +3137,14 @@ func (t *hpatchResponseTransform) transformResponse(payload []byte) ([]byte, err
 			if err != nil {
 				return nil, err
 			}
+			if _, err := t.transformOutputItem(item); err != nil {
+				return nil, err
+			}
 			if message != nil {
 				transformedOutput = append(transformedOutput, message)
 			}
-			if _, err := t.transformOutputItem(item); err != nil {
-				return nil, err
+			if localMessage := t.localStartCommentary(item); localMessage != nil {
+				transformedOutput = append(transformedOutput, localMessage)
 			}
 			transformedOutput = append(transformedOutput, item)
 		}
@@ -2734,6 +3173,56 @@ func (t *hpatchResponseTransform) commitHistory() error {
 	}
 	t.historyCommitted = true
 	return nil
+}
+
+func (t *hpatchResponseTransform) commitLocalCall(callID string) error {
+	history, exists := t.local[callID]
+	if !exists {
+		return nil
+	}
+	return t.proxy.rememberBatch(t.historySessionID, map[string]hpatchHistory{callID: history})
+}
+
+func (t *hpatchResponseTransform) recordLocalCommentaryMetric(callID string) {
+	history, exists := t.local[callID]
+	if !exists || history.commentaryMetricDone || history.commentaryMetricKind == "" {
+		return
+	}
+	t.proxy.metrics.recordCommentary(
+		t.sessionID, history.commentaryMetricKind, history.commentaryText, "", &history.commentaryFormTokens,
+	)
+	history.commentaryMetricDone = true
+	t.local[callID] = history
+}
+
+func (t *hpatchResponseTransform) AcknowledgeJSON() {
+	for _, publication := range t.jsonCommentaryToAcknowledge {
+		t.recordPublishedCommentary(publication)
+	}
+	t.jsonCommentaryToAcknowledge = nil
+	t.deferredCommentary = nil
+	for callID := range t.local {
+		t.recordLocalCommentaryMetric(callID)
+	}
+}
+
+func (t *hpatchResponseTransform) AcknowledgeSSE(payload []byte) {
+	var envelope struct {
+		Item map[string]json.RawMessage `json:"item"`
+	}
+	if json.Unmarshal(payload, &envelope) != nil {
+		return
+	}
+	messageID := jsonString(envelope.Item, "id")
+	if messageID == "" {
+		return
+	}
+	for callID, history := range t.local {
+		if slices.Contains(history.commentaryMessageIDs, messageID) {
+			t.recordLocalCommentaryMetric(callID)
+			return
+		}
+	}
 }
 
 func (t *hpatchResponseTransform) restoreResponseContract(object map[string]json.RawMessage) {
@@ -2918,12 +3407,18 @@ func (t *hpatchResponseTransform) transformOutputItem(item map[string]json.RawMe
 	name := jsonString(item, "name")
 	if t.codeModeToolName != "" && name == t.codeModeToolName &&
 		jsonString(item, "type") == "custom_tool_call" {
-		input, misuseWarning, changed, detected := nativeExecCommandInput(jsonString(item, "input"))
-		if detected {
-			if changed {
-				item["input"] = mustMarshalJSON(input)
+		callID := jsonString(item, "call_id")
+		originalInput := jsonString(item, "input")
+		if retained, exists := t.local[callID]; exists && retained.toolName == codeModeCommentaryHistoryTool {
+			if retained.script != originalInput {
+				return false, fmt.Errorf("Code Mode commentary call %q changed input", callID)
 			}
-			identity := jsonString(item, "call_id")
+			item["input"] = mustMarshalJSON(retained.carrierPayload)
+			return retained.carrierPayload != originalInput, nil
+		}
+		input, misuseWarning, changed, detected := nativeExecCommandInput(originalInput)
+		if detected {
+			identity := callID
 			if identity == "" {
 				identity = jsonString(item, "id")
 			}
@@ -2936,6 +3431,34 @@ func (t *hpatchResponseTransform) transformOutputItem(item map[string]json.RawMe
 					t.nativeExecWarningsMetered[identity] = struct{}{}
 				}
 			}
+		}
+		input, commentaryChanged, commentaryDelivery, err := t.lowerCodeModeCommentary(callID, input)
+		if err != nil {
+			return false, err
+		}
+		changed = changed || commentaryChanged
+		if commentaryChanged || t.proxy.commentaryEndpoint != "" {
+			if callID == "" {
+				return false, errors.New("Code Mode call has no call ID")
+			}
+			history := hpatchHistory{
+				toolName: codeModeCommentaryHistoryTool, script: originalInput,
+				carrierKind: codeModeCarrierCustom, carrierName: name, carrierPayload: input,
+				upstreamItem: maps.Clone(item), commentaryText: "Running the requested operation.",
+			}
+			if commentaryDelivery == codeModeCommentarySuppressed {
+				history.commentaryText = ""
+				history.commentarySuppressed = true
+			} else if commentaryDelivery == codeModeCommentaryNone {
+				history.commentaryMessageIDs = []string{commentaryMessageID(callID)}
+			}
+			if !commentaryChanged {
+				history.replayCarrier = true
+			}
+			t.recordLocal(callID, &history)
+		}
+		if changed {
+			item["input"] = mustMarshalJSON(input)
 		}
 		return changed, nil
 	}
@@ -2950,8 +3473,30 @@ func (t *hpatchResponseTransform) transformOutputItem(item map[string]json.RawMe
 	if err != nil {
 		return false, err
 	}
+	if history.commentaryText == "" && !history.commentarySuppressed && t.proxy.commentaryEndpoint != "" {
+		history.commentaryText = commentaryDefault(commentaryTool{name: history.toolName, display: history.toolName}, nil)
+		history.commentaryMessageIDs = []string{commentaryMessageID(callID)}
+		t.local[callID] = history
+	}
 	renderCarrierItem(item, history.effectiveCarrierKind(), history.carrierName, history.carrierInput())
 	return true, nil
+}
+
+func (t *hpatchResponseTransform) localStartCommentary(item map[string]json.RawMessage) map[string]json.RawMessage {
+	history, exists := t.local[jsonString(item, "call_id")]
+	if !exists || jsonString(history.upstreamItem, "type") == "function_call" || history.commentaryText == "" || len(history.commentaryMessageIDs) == 0 {
+		return nil
+	}
+	messageID := history.commentaryMessageIDs[0]
+	if _, emitted := t.commentaryMessagesEmitted[messageID]; emitted {
+		return nil
+	}
+	t.commentaryMessagesEmitted[messageID] = struct{}{}
+	if history.commentaryMetricKind == "" {
+		history.commentaryMetricKind = "default"
+		t.local[jsonString(item, "call_id")] = history
+	}
+	return commentaryMessage(messageID, history.commentaryText)
 }
 
 func replaceRawField(payload []byte, name string, value json.RawMessage) ([]byte, error) {

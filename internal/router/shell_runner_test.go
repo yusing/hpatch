@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 	"unicode/utf8"
+
+	"github.com/yusing/hpatch/internal/router/toolplugin"
 )
 
 func runShellWorkerTest(
@@ -36,6 +38,23 @@ func runShellWorkerTest(
 		t.Fatal("direct shell worker was not handled")
 	}
 	return stdoutBuffer.String(), stderrBuffer.String(), exitCode
+}
+
+func TestNonBashOutputTruncationPreservesExitStatus(t *testing.T) {
+	commentaryBytes := len("Running the requested commands.")
+	execution := toolplugin.ExecutionOutput{
+		Stdout: strings.Repeat("x", toolplugin.ExecutionOutputBudgetBytes), ExitCode: 0,
+	}
+	got := truncateShellExecutionForCommentary(execution, commentaryBytes)
+	if got.ExitCode != 0 {
+		t.Fatalf("exit code = %d", got.ExitCode)
+	}
+	if !strings.HasSuffix(got.Stderr, shellCommentaryTruncationDiagnostic) {
+		t.Fatalf("stderr = %q", got.Stderr)
+	}
+	if visible := len(got.Stdout) + len(got.Stderr) + commentaryBytes; visible > toolplugin.ExecutionOutputBudgetBytes {
+		t.Fatalf("combined visible bytes = %d", visible)
+	}
 }
 
 func TestShellRunnerUsesInterpreterBasenameForLanguageVariant(t *testing.T) {
@@ -203,7 +222,7 @@ func TestShellRunnerBoundsAndValidatesOutput(t *testing.T) {
 	runtimeRoot := filepath.Join(registry.SnapshotDir, manifest.RuntimeRoot)
 
 	started := time.Now()
-	captureBudget := 16<<20 - len(shellOverflowDiagnostic) - 3
+	captureBudget := 16<<20 - max(len(shellOverflowDiagnostic), len(shellCommentaryTruncationDiagnostic)) - 3
 	execution, err := executeShellTool(
 		t.Context(),
 		manifest,
@@ -214,13 +233,17 @@ func TestShellRunnerBoundsAndValidatesOutput(t *testing.T) {
 			captureBudget-1,
 		)},
 		nil,
+		nil,
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
+	commentaryBytes := len("Running the requested commands.") + len(shellCommentaryVisibleText(shellCommentaryEvent{
+		Text: "Failed: Running the requested commands.", Reason: "shell evaluation failed",
+	}))
 	if execution.ExitCode != 1 || !strings.Contains(execution.Stderr, "interpreter output exceeds") ||
-		len(execution.Stdout) != captureBudget-1 || !utf8.ValidString(execution.Stdout) ||
-		len(execution.Stdout)+len(execution.Stderr) > 16<<20 || time.Since(started) >= 5*time.Second {
+		!utf8.ValidString(execution.Stdout) ||
+		len(execution.Stdout)+len(execution.Stderr)+commentaryBytes > 16<<20 || time.Since(started) >= 5*time.Second {
 		t.Fatalf(
 			"overflow: exit %d, stdout bytes %d, stderr %q",
 			execution.ExitCode,
@@ -235,6 +258,7 @@ func TestShellRunnerBoundsAndValidatesOutput(t *testing.T) {
 		runtimeRoot,
 		&shell,
 		[]string{"bash", `python3 -c 'import os; os.write(1, b"\xff")'`},
+		nil,
 		nil,
 	)
 	if err != nil {

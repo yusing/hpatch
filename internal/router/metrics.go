@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/tiktoken-go/tokenizer"
 	"github.com/yusing/hpatch"
 )
 
@@ -252,6 +253,7 @@ type sessionMetrics struct {
 	HPatchAttempts             []hpatchAttemptMetrics     `json:"hpatch_attempts"`
 	HPatchRejections           []hpatch.HostRejection     `json:"hpatch_rejections"`
 	CTP                        ctpSessionMetrics          `json:"ctp"`
+	Commentary                 commentaryMetrics          `json:"commentary"`
 	SessionID                  string                     `json:"session_id"`
 	Title                      string                     `json:"title"`
 	Model                      string                     `json:"model"`
@@ -367,6 +369,50 @@ type hpatchCallMetrics struct {
 	DiagnosticInputTokens uint64 `json:"diagnostic_input_tokens"`
 }
 
+type commentaryMetric struct {
+	Count        uint64 `json:"count"`
+	NativeTokens uint64 `json:"native_tokens"`
+	FormTokens   uint64 `json:"form_tokens"`
+}
+
+type commentaryMetrics struct {
+	Explicit   commentaryMetric `json:"explicit"`
+	Default    commentaryMetric `json:"default"`
+	Failure    commentaryMetric `json:"failure"`
+	Cancelled  commentaryMetric `json:"cancelled"`
+	Timeout    commentaryMetric `json:"timeout"`
+	Suppressed commentaryMetric `json:"suppressed"`
+}
+
+func (m *commentaryMetrics) metric(kind string) *commentaryMetric {
+	switch kind {
+	case "explicit":
+		return &m.Explicit
+	case "default":
+		return &m.Default
+	case "failure":
+		return &m.Failure
+	case "cancelled":
+		return &m.Cancelled
+	case "timeout":
+		return &m.Timeout
+	case "suppressed":
+		return &m.Suppressed
+	default:
+		return nil
+	}
+}
+
+func (m *commentaryMetrics) add(kind string, nativeTokens, formTokens uint64) {
+	metric := m.metric(kind)
+	if metric == nil {
+		return
+	}
+	metric.Count++
+	metric.NativeTokens += nativeTokens
+	metric.FormTokens += formTokens
+}
+
 func (m *hpatchCallMetrics) add(record hpatchMetricRecord) {
 	if record.HPatchTokens != 0 {
 		m.Successful++
@@ -383,6 +429,7 @@ type metricsSnapshot struct {
 	Requests    requestLifecycleMetrics `json:"requests"`
 	HPatchCalls hpatchCallMetrics       `json:"hpatch_calls"`
 	CTP         ctpCompressionMetrics   `json:"ctp"`
+	Commentary  commentaryMetrics       `json:"commentary"`
 	Sessions    []sessionMetrics        `json:"sessions"`
 	Gain        hpatch.GainMetrics      `json:"gain"`
 	GainError   string                  `json:"gain_error,omitempty"`
@@ -395,6 +442,8 @@ type metricsStore struct {
 	requests         requestLifecycleMetrics
 	hpatchCalls      hpatchCallMetrics
 	ctp              ctpCompressionMetrics
+	commentary       commentaryMetrics
+	commentaryTokens tokenizer.Codec
 	retainedSessions map[string]retainedSessionMetrics
 	activeSessions   map[string]map[uint64]activeRequest
 
@@ -418,6 +467,7 @@ type retainedSessionMetrics struct {
 	hpatchRejections           []hpatch.HostRejection
 	hpatchSequence             uint64
 	ctp                        ctpSessionMetrics
+	commentary                 commentaryMetrics
 	model                      string
 	modelOrder                 uint64
 }
@@ -440,6 +490,7 @@ func newMetricsStore(gainDirectory string, titleCaches ...*sessionTitleCache) *m
 	if len(titleCaches) != 0 && titleCaches[0] != nil {
 		titles = titleCaches[0]
 	}
+	tokens, _ := tokenizer.ForModel(tokenizer.GPT5)
 	return &metricsStore{
 		all:              newMetricGroup(),
 		retainedSessions: map[string]retainedSessionMetrics{},
@@ -448,7 +499,39 @@ func newMetricsStore(gainDirectory string, titleCaches ...*sessionTitleCache) *m
 		subscribers:      map[uint64]chan struct{}{},
 		gainDirectory:    gainDirectory,
 		titles:           titles,
+		commentaryTokens: tokens,
 	}
+}
+
+func (m *metricsStore) countCommentaryTokens(value string) uint64 {
+	if m == nil || m.commentaryTokens == nil || value == "" {
+		return 0
+	}
+	count, err := m.commentaryTokens.Count(value)
+	if err != nil || count < 0 {
+		return 0
+	}
+	return uint64(count)
+}
+
+func (m *metricsStore) recordCommentary(sessionID, kind, visibleText, form string, formTokensOverride *uint64) {
+	if m == nil {
+		return
+	}
+	nativeTokens := m.countCommentaryTokens(visibleText)
+	formTokens := m.countCommentaryTokens(form)
+	if formTokensOverride != nil {
+		formTokens = *formTokensOverride
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.commentary.add(kind, nativeTokens, formTokens)
+	if validMetricSessionID(sessionID) {
+		retained := m.retainedSessionLocked(sessionID)
+		retained.commentary.add(kind, nativeTokens, formTokens)
+		m.retainedSessions[sessionID] = retained
+	}
+	m.notifyLocked()
 }
 
 func (m *metricsStore) recordHPatch(record hpatchMetricRecord) {
@@ -779,6 +862,7 @@ func (m *metricsStore) snapshot() metricsSnapshot {
 			HPatchCalls:                retained.hpatchCalls, HPatchAttempts: cloneHPatchAttempts(retained.hpatchAttempts),
 			HPatchRejections: slices.Clone(retained.hpatchRejections),
 			CTP:              cloneCTPSessionMetrics(retained.ctp),
+			Commentary:       retained.commentary,
 			metricGroup:      cloneMetricGroup(retained.metricGroup),
 		}
 	}
@@ -807,6 +891,7 @@ func (m *metricsStore) snapshot() metricsSnapshot {
 		Requests:    m.requests,
 		HPatchCalls: m.hpatchCalls,
 		CTP:         m.ctp,
+		Commentary:  m.commentary,
 		Sessions:    make([]sessionMetrics, 0, len(sessions)),
 		Mode:        m.mode,
 	}

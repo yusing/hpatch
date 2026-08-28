@@ -4,7 +4,7 @@ pjdoc:
   kind: architecture
   scope: root
   status: draft
-  revision: "30"
+  revision: "31"
   files:
     []
 ---
@@ -409,7 +409,7 @@ model inference can therefore reuse an exact current row present in the retained
 report. Router history does not retain hread rows on behalf of the engine, predict later
 targets, or move final-reference projection across the root boundary.
 
-## CTR-COMMENTARY-001 — Router-owned structured commentary projection
+## CTR-COMMENTARY-001 — Router-owned operation commentary
 
 The Responses router owns optional commentary schema projection, per-request tool identity and
 default selection, structured argument removal, user-visible message synthesis, and exact replay
@@ -418,11 +418,33 @@ and before Codex dispatch. Strict validation remains owned by the original tool 
 router does not relax strict tools or take ownership of an existing `commentary` parameter.
 
 One retained call record joins the original provider item, stripped local carrier, and generated
-message ID. The existing bounded per-session history owner stores that record and removes only a
-known generated message during replay. Stream buffering reuses the router's existing bounded
-pending-call lifecycle and validates identity before exposing a call. Commentary projection does
-not parse tool output, change tool success, define executor behavior, or add another persistence
-store.
+message IDs. The existing bounded per-session history owner stores that record and removes only
+known generated messages during replay. Stream buffering reuses the router's existing bounded
+pending-call lifecycle and validates identity before exposing a call.
+
+The same router owner reserves and lowers Code Mode commentary, installs shell commentary
+instrumentation, issues per-call HTTP publisher capabilities, and brokers live or next-request
+delivery. The authenticated shell worker owns runtime expression expansion and shell logical-unit
+status because only that executor observes those values. It publishes to the existing router HTTP
+server and never writes commentary to its execution result. The router remains the sole subscriber
+and message renderer; there is no side socket, journal, FIFO, or second service. Code Mode lowering
+uses the existing exact JavaScript parser and fails closed when that parser is unavailable.
+The broker reuses one capability across one Code Mode carrier, bounds routes and deferred state per
+session and process, expires both, and drains only immediately ready stream events so commentary
+cannot hold response completion. A route-capacity fallback uses a signed, expiring, stateless
+capability to meter each suppressed runtime publication without retaining or rendering an event.
+Live message IDs use bounded provisional history reservations until response completion commits the
+owning call; every path that abandons an unpublished event releases its reservation.
+Structured and default stream projection commits each complete replay record before exposure, so a
+failed or incomplete terminal cannot strand translated calls or generated messages outside history.
+The downstream writer acknowledges completed JSON bodies and SSE items back to the transform;
+visibility metrics, settlement, and deferred removal occur only at that acknowledgement boundary.
+
+Native results remain owned by Codex and first become router-visible in the following request. The
+router classifies only structured terminal fields and never promotes stdout or stderr to a reason.
+Commentary remains auxiliary: publisher, renderer, budget, or metrics failure cannot alter the
+action result. The existing bounded tool-output budget owns suppression, and router telemetry owns
+the explicit/default and terminal counts plus native-versus-form estimates.
 
 ## CTR-METRICS-001 — Metrics classification and persistence
 

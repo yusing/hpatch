@@ -56,6 +56,15 @@ type responseTransformer interface {
 	Finish(bool) error
 }
 
+type emittingSSETransformer interface {
+	TransformSSEWithEmitter([]byte, func([]byte) error) ([][]byte, error)
+}
+
+type responseWriteAcknowledger interface {
+	AcknowledgeJSON()
+	AcknowledgeSSE([]byte)
+}
+
 type responseTransformerChain struct {
 	first  responseTransformer
 	second responseTransformer
@@ -85,8 +94,64 @@ func (chain responseTransformerChain) TransformSSE(payload []byte) ([][]byte, er
 	return transformed, nil
 }
 
+func (chain responseTransformerChain) TransformSSEWithEmitter(payload []byte, emit func([]byte) error) ([][]byte, error) {
+	first, err := transformSSEWithEmitter(chain.first, payload, func(emitted []byte) error {
+		visible, transformErr := transformSSEWithEmitter(chain.second, emitted, emit)
+		if transformErr != nil {
+			return transformErr
+		}
+		for _, current := range visible {
+			if err := emit(current); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	var transformed [][]byte
+	for _, current := range first {
+		visible, err := transformSSEWithEmitter(chain.second, current, emit)
+		if err != nil {
+			return nil, err
+		}
+		transformed = append(transformed, visible...)
+	}
+	return transformed, nil
+}
+
+func transformSSEWithEmitter(transformer responseTransformer, payload []byte, emit func([]byte) error) ([][]byte, error) {
+	if transformer, ok := transformer.(emittingSSETransformer); ok {
+		return transformer.TransformSSEWithEmitter(payload, emit)
+	}
+	return transformer.TransformSSE(payload)
+}
+
 func (chain responseTransformerChain) Finish(streamEvent bool) error {
 	return errors.Join(chain.first.Finish(streamEvent), chain.second.Finish(streamEvent))
+}
+
+func (chain responseTransformerChain) AcknowledgeJSON() {
+	acknowledgeJSONWrite(chain.first)
+	acknowledgeJSONWrite(chain.second)
+}
+
+func (chain responseTransformerChain) AcknowledgeSSE(payload []byte) {
+	acknowledgeSSEWrite(chain.first, payload)
+	acknowledgeSSEWrite(chain.second, payload)
+}
+
+func acknowledgeJSONWrite(transformer responseTransformer) {
+	if acknowledger, ok := transformer.(responseWriteAcknowledger); ok {
+		acknowledger.AcknowledgeJSON()
+	}
+}
+
+func acknowledgeSSEWrite(transformer responseTransformer, payload []byte) {
+	if acknowledger, ok := transformer.(responseWriteAcknowledger); ok {
+		acknowledger.AcknowledgeSSE(payload)
+	}
 }
 
 func composeResponseTransformers(first, second responseTransformer) responseTransformer {
@@ -502,6 +567,7 @@ func copyJSONTransformed(writer io.Writer, reader io.Reader, transformer respons
 	if _, err = writer.Write(visible); err != nil {
 		return responseTerminalUnknown, fmt.Errorf("%w: %w", errResponseWrite, err)
 	}
+	acknowledgeJSONWrite(transformer)
 	return terminalState, nil
 }
 
@@ -588,8 +654,14 @@ func writeSSEEvent(writer io.Writer, lines []string, separator string, transform
 	visible := [][]byte{payload}
 	if transformer != nil && len(payload) > 0 {
 		var err error
-		visible, err = transformer.TransformSSE(payload)
+		emit := func(eventPayload []byte) error {
+			return writeSyntheticSSEEvent(writer, eventPayload, separator)
+		}
+		visible, err = transformSSEWithEmitter(transformer, payload, emit)
 		if err != nil {
+			if errors.Is(err, errResponseWrite) {
+				return terminalState, err
+			}
 			return terminalState, fmt.Errorf("%w: %w", errResponseTransform, err)
 		}
 	}
@@ -601,6 +673,8 @@ func writeSSEEvent(writer io.Writer, lines []string, separator string, transform
 		Type string `json:"type"`
 	}
 	_ = json.Unmarshal(payload, &originalEnvelope)
+	responseWriter, flushResponse := writer.(http.ResponseWriter)
+	var pendingAcknowledgements [][]byte
 	for index, eventPayload := range visible {
 		eventLines := lines
 		eventSeparator := separator
@@ -631,13 +705,38 @@ func writeSSEEvent(writer io.Writer, lines []string, separator string, transform
 				return terminalState, fmt.Errorf("%w: %w", errResponseWrite, err)
 			}
 		}
+		if flushResponse {
+			pendingAcknowledgements = append(pendingAcknowledgements, eventPayload)
+		} else {
+			acknowledgeSSEWrite(transformer, eventPayload)
+		}
 	}
-	if responseWriter, ok := writer.(http.ResponseWriter); ok {
+	if flushResponse {
 		if err := http.NewResponseController(responseWriter).Flush(); err != nil {
 			return terminalState, fmt.Errorf("%w: %w", errResponseWrite, err)
 		}
+		for _, eventPayload := range pendingAcknowledgements {
+			acknowledgeSSEWrite(transformer, eventPayload)
+		}
 	}
 	return terminalState, nil
+}
+
+func writeSyntheticSSEEvent(writer io.Writer, payload []byte, separator string) error {
+	lineEnding := "\n"
+	if separator == "\r\n" {
+		lineEnding = "\r\n"
+	}
+	var envelope struct {
+		Type string `json:"type"`
+	}
+	_ = json.Unmarshal(payload, &envelope)
+	lines := []string{"data: " + string(payload) + lineEnding}
+	if envelope.Type != "" {
+		lines = append([]string{"event: " + envelope.Type + lineEnding}, lines...)
+	}
+	_, err := writeSSEEvent(writer, lines, lineEnding, nil, nil)
+	return err
 }
 
 func ssePayload(lines []string) []byte {
