@@ -11,8 +11,6 @@ import (
 
 var codeModeJavaScriptLanguage = sitter.NewLanguage(treeSitterJavaScript.Language())
 
-const codeModeCommentaryParserAvailable = true
-
 func findCodeModeCommentaryCalls(source string) ([]codeModeCommentaryCall, error) {
 	sourceBytes := []byte(source)
 	parser := sitter.NewParser()
@@ -37,19 +35,20 @@ func findCodeModeCommentaryCalls(source string) ([]codeModeCommentaryCall, error
 			if call != nil && call.Kind() == "call_expression" {
 				callee := call.ChildByFieldName("function")
 				arguments := call.ChildByFieldName("arguments")
-				if callee != nil && callee.Kind() == "identifier" && callee.Utf8Text(sourceBytes) == "commentary" &&
+				if callee != nil && callee.Kind() == "identifier" && callee.Utf8Text(sourceBytes) == commentaryArgumentName &&
 					arguments != nil && arguments.NamedChildCount() == 1 {
 					argument := arguments.NamedChild(0)
-					start, end := int(node.StartByte()), int(node.EndByte())
 					calls = append(calls, codeModeCommentaryCall{
-						start: start, end: end, argumentStart: int(argument.StartByte()), argumentEnd: int(argument.EndByte()),
-						form: codeModeCommentaryForm(source, start, end),
+						start:         int(node.StartByte()),
+						end:           int(node.EndByte()),
+						argumentStart: int(argument.StartByte()),
+						argumentEnd:   int(argument.EndByte()),
 					})
 				}
 			}
 		}
-		for index := uint(0); index < node.NamedChildCount(); index++ {
-			if child := node.NamedChild(index); child != nil {
+		for index := range node.NamedChildCount() {
+			if child := node.NamedChild(uint(index)); child != nil {
 				walk(child)
 			}
 		}

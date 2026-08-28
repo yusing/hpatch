@@ -209,7 +209,6 @@
     <div class="panel-stack">
       <section><div class="section-head"><h2>Tokens</h2><span>Cumulative since process start</span></div><div id="overview"><div class="empty"><strong>Connecting</strong>Live metrics stream will populate totals and model breakdowns.</div></div></section>
       <section><div class="section-head"><h2>Requests</h2><span>Upstream Responses lifecycle</span></div><div id="requests"><div class="empty"><strong>Connecting</strong>Request outcomes and durations appear with the first snapshot.</div></div></section>
-      <section><div class="section-head"><h2>Operation commentary</h2><span>Visible text compared with authored forms</span></div><div id="commentary"><div class="empty"><strong>Connecting</strong>Commentary counts and token estimates appear with the first snapshot.</div></div></section>
       <section><div class="section-head"><h2>Sessions</h2><span id="session-count">0 sessions</span></div><div id="sessions"><div class="empty"><strong>No sessions yet</strong>Waiting for identified usage-bearing responses.</div></div></section>
     </div>
   </div>
@@ -225,7 +224,6 @@ const order=Object.keys(labels), fmt=new Intl.NumberFormat();
 const lifecycleKeys=['started','active','completed','failed','canceled_before_response','canceled_after_response','timed_out','stream_idle_timed_out','background_pending','usage_observed','usage_missing','total_duration_ms','upstream_duration_ms'];
 const callKeys=['successful','rejected','diagnostic_input_tokens'];
 const ctpKeys=['considered_requests','active_requests','missing_carrier','request_strings','request_visible_references','assistant_texts','response_strings','response_visible_references'];
-const commentaryKinds=['explicit','default','failure','cancelled','timeout','suppressed'];
 function element(tag,className,text){const node=document.createElement(tag);if(className)node.className=className;if(text!==undefined)node.textContent=text;return node}
 function metricValue(counts,key){const value=counts&&counts[key];return typeof value==='number'&&Number.isFinite(value)&&value>=0?value:0}
 function nonNeg(value){return typeof value==='number'&&Number.isFinite(value)&&value>=0?value:0}
@@ -320,17 +318,6 @@ function updateGroup(root,data,lead){
   })));
   root.querySelector('.metric-table').hidden=rows.length===0;root.querySelector('.table-wrap>.empty').hidden=rows.length!==0
 }
-function updateCommentary(root,commentary){
-  if(!root.querySelector('table')){
-    root.replaceChildren();
-    const table=tableWrap('Commentary accounting',['Kind','Count','Visible tokens','Form tokens','Form vs visible']);
-    root.append(table.wrap);root.commentaryBody=table.tbody
-  }
-  fillRows(root.commentaryBody,commentaryKinds.map(kind=>{
-    const metric=commentary[kind],difference=nonNeg(metric.form_tokens)-nonNeg(metric.native_tokens);
-    return {key:kind,rowHeader:true,className:idleClass(metric.count),cells:[kind,uintText(metric.count),uintText(metric.native_tokens),uintText(metric.form_tokens),signedText(difference)]}
-  }))
-}
 function tableWrap(title,headers,className){
   const wrap=element('div','table-wrap');wrap.append(element('h3','',title));
   const scroll=element('div','table-scroll');
@@ -343,14 +330,7 @@ function fillRows(tbody,rows){
   const existing=new Map(Array.from(tbody.children,row=>[row.dataset.key,row]));
   rows.forEach(entry=>{
     let row=existing.get(entry.key);
-    if(!row){
-      row=element('tr');row.dataset.key=entry.key;
-      entry.cells.forEach((_,index)=>{
-        const cell=element(entry.rowHeader&&index===0?'th':'td');
-        if(entry.rowHeader&&index===0)cell.setAttribute('scope','row');
-        row.append(cell)
-      })
-    }
+    if(!row){row=element('tr');row.dataset.key=entry.key;entry.cells.forEach(()=>row.append(element('td')))}
     while(row.children.length<entry.cells.length)row.append(element('td'));
     row.className=entry.className||'';
     entry.cells.forEach((cell,index)=>setCell(row.children[index],cell));
@@ -653,8 +633,6 @@ function validUints(source,keys){return source&&typeof source==='object'&&!Array
 function validRequests(requests){return validUints(requests,lifecycleKeys)}
 function validCalls(calls){return validUints(calls,callKeys)}
 function validCounts(counts){return validUints(counts,order)}
-function validCommentaryMetric(metric){return validUints(metric,['count','native_tokens','form_tokens'])}
-function validCommentary(commentary){return commentary&&typeof commentary==='object'&&!Array.isArray(commentary)&&commentaryKinds.every(kind=>validCommentaryMetric(commentary[kind]))}
 function validRepresentation(representation){return validUints(representation,['native_tokens','compact_tokens','native_bytes','compact_bytes'])}
 function validCTP(ctp){
   return validUints(ctp,ctpKeys)
@@ -668,7 +646,7 @@ function validOutputObservation(observation){return validRepresentation(observat
 function validObservations(observations,validate){return observations===null||(Array.isArray(observations)&&observations.every(validate))}
 function validSessionCTP(ctp){return validCTP(ctp)&&validObservations(ctp.input_observations,validInputObservation)&&validObservations(ctp.output_observations,validOutputObservation)&&validUints(ctp,['input_observations_dropped','output_observations_dropped'])}
 function validGroup(data){return data&&typeof data==='object'&&!Array.isArray(data)&&validCounts(data.total)&&data.by_model&&typeof data.by_model==='object'&&!Array.isArray(data.by_model)&&Object.values(data.by_model).every(validCounts)&&validRequests(data.requests)&&validCalls(data.hpatch_calls)}
-function validSnapshot(data){return validGroup(data)&&validCTP(data.ctp)&&validCommentary(data.commentary)&&Array.isArray(data.sessions)&&data.sessions.every(session=>validGroup(session)&&validSessionCTP(session.ctp)&&validCommentary(session.commentary)&&typeof session.session_id==='string'&&typeof session.title==='string'&&typeof session.model==='string')&&validGain(data.gain)&&(data.gain_error===undefined||typeof data.gain_error==='string')&&(data.mode===undefined||typeof data.mode==='string')}
+function validSnapshot(data){return validGroup(data)&&validCTP(data.ctp)&&Array.isArray(data.sessions)&&data.sessions.every(session=>validGroup(session)&&validSessionCTP(session.ctp)&&typeof session.session_id==='string'&&typeof session.title==='string'&&typeof session.model==='string')&&validGain(data.gain)&&(data.gain_error===undefined||typeof data.gain_error==='string')&&(data.mode===undefined||typeof data.mode==='string')}
 const sessionElements=new Map();
 function createSessionCTP(){
   const root=element('div','session-ctp');
@@ -732,7 +710,6 @@ function render(data){
   if(!validSnapshot(data))throw new Error('invalid metrics snapshot');
   updateGroup(document.querySelector('#overview'),data,true);
   updateRequests(document.querySelector('#requests'),data.requests,data.hpatch_calls);
-  updateCommentary(document.querySelector('#commentary'),data.commentary);
   updateGain(document.querySelector('#gain'),data.gain,data.gain_error);
   updateCTP(document.querySelector('#ctp'),data.ctp);
   document.querySelector('#mast-mode').textContent=`Hpatch router — ${data.mode||'unknown'} mode — process ledger`;

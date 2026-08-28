@@ -28,8 +28,6 @@ var shellOverflowDiagnostic = fmt.Sprintf(
 	toolplugin.ExecutionOutputBudgetBytes,
 )
 
-const shellCommentaryTruncationDiagnostic = "shell: output truncated by commentary budget\n"
-
 func executeShellTool(
 	ctx context.Context,
 	manifest toolWorkerManifest,
@@ -37,22 +35,21 @@ func executeShellTool(
 	shellContribution *toolContribution,
 	arguments []string,
 	stdin *os.File,
-	commentarySink shellCommentarySink,
+	commentary shellCommentarySink,
 ) (toolplugin.ExecutionOutput, error) {
-	if commentarySink == nil {
-		commentarySink = discardShellCommentarySink{}
+	if commentary != nil {
+		defer func() {
+			completionContext, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
+			defer cancel()
+			_ = commentary.Complete(completionContext)
+		}()
 	}
-	defer func() {
-		_ = commentarySink.Complete(context.WithoutCancel(ctx))
-	}()
-	commentary := newShellCommentaryRuntime(commentarySink)
 	if len(arguments) < 2 {
-		_ = commentary.terminal(ctx, "failure", "missing interpreter or script body")
 		return toolplugin.ExecutionOutput{Stderr: "shell: missing interpreter or script body\n", ExitCode: 1}, nil
 	}
 	interpreter := shellInterpreterName(arguments[0])
 	if interpreter != "bash" && interpreter != "sh" {
-		execution, executeErr := toolplugin.Execute(
+		return toolplugin.Execute(
 			ctx,
 			manifest.NodeExecutable,
 			runtimeRoot,
@@ -63,18 +60,6 @@ func executeShellTool(
 			"",
 			nil,
 		)
-		if executeErr != nil {
-			_ = commentary.terminal(ctx, "failure", "tool execution failed")
-			return execution, executeErr
-		}
-		if execution.ExitCode != 0 {
-			reason := fmt.Sprintf("exit status %d", execution.ExitCode)
-			_ = commentary.terminal(ctx, "failure", reason)
-			execution = truncateShellExecutionForCommentary(execution,
-				len(shellCommentaryVisibleText(shellCommentaryEvent{Text: "Failed.", Reason: reason})),
-			)
-		}
-		return execution, nil
 	}
 
 	variant := syntax.LangBash
@@ -86,20 +71,7 @@ func executeShellTool(
 		"",
 	)
 	if err != nil {
-		_ = commentary.terminal(ctx, "failure", "shell syntax error")
 		return toolplugin.ExecutionOutput{Stderr: fmt.Sprintf("shell: %v\n", err), ExitCode: 2}, nil
-	}
-	commentaryPresent, err := instrumentShellCommentary(program, arguments[len(arguments)-1])
-	if err != nil {
-		_ = commentary.terminal(ctx, "failure", "shell commentary instrumentation failed")
-		return toolplugin.ExecutionOutput{Stderr: fmt.Sprintf("shell: %v\n", err), ExitCode: 2}, nil
-	}
-	budget := newShellOutputBudget()
-	if sink, ok := commentarySink.(*httpShellCommentarySink); ok && sink.budget != nil {
-		budget = sink.budget
-	}
-	if !commentaryPresent {
-		commentary.sink = &budgetedShellCommentarySink{next: commentary.sink, budget: budget}
 	}
 
 	privateTools := make(map[string]toolContribution)
@@ -111,7 +83,7 @@ func executeShellTool(
 
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	capture := newShellOutputCapture(cancel, budget)
+	capture := newShellOutputCapture(cancel)
 	middleware := func(next interp.ExecHandlerFunc) interp.ExecHandlerFunc {
 		return func(handlerCtx context.Context, command []string) error {
 			contribution, private := privateTools[command[0]]
@@ -151,7 +123,6 @@ func executeShellTool(
 
 	workingDirectory, err := os.Getwd()
 	if err != nil {
-		_ = commentary.terminal(ctx, "failure", "working directory is unavailable")
 		return toolplugin.ExecutionOutput{}, fmt.Errorf("resolve shell working directory: %w", err)
 	}
 	terminalShell := stdin != nil && term.IsTerminal(int(stdin.Fd()))
@@ -160,45 +131,20 @@ func executeShellTool(
 		interp.Dir(workingDirectory),
 		interp.Params(arguments[1:len(arguments)-1]...),
 		interp.StdIO(stdin, &capture.stdout, &capture.stderr),
-		interp.CallHandler(shellCommentaryCallHandler(commentary)),
 		interp.ExecHandler(middleware(func(ctx context.Context, arguments []string) error {
 			return executeExternalShellCommand(ctx, arguments, terminalShell)
 		})),
+		interp.CallHandler(shellCommentaryCallHandler(commentary)),
 	)
 	if err != nil {
-		_ = commentary.terminal(ctx, "failure", "shell interpreter setup failed")
 		return toolplugin.ExecutionOutput{Stderr: fmt.Sprintf("shell: %v\n", err), ExitCode: 1}, nil
-	}
-	pipefail, err := syntax.NewParser(syntax.Variant(variant)).Parse(strings.NewReader("set -o pipefail"), "")
-	if err != nil {
-		_ = commentary.terminal(ctx, "failure", "shell pipefail setup failed")
-		return toolplugin.ExecutionOutput{}, fmt.Errorf("prepare shell pipefail: %w", err)
-	}
-	if err := runner.Run(runCtx, pipefail); err != nil {
-		_ = commentary.terminal(ctx, "failure", "shell pipefail setup failed")
-		return toolplugin.ExecutionOutput{}, fmt.Errorf("enable shell pipefail: %w", err)
 	}
 	runErr := runner.Run(runCtx, program)
 	if ctx.Err() != nil {
-		outcome := "cancelled"
-		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			outcome = "timeout"
-		}
-		_ = commentary.terminal(context.WithoutCancel(ctx), outcome, ctx.Err().Error())
 		return toolplugin.ExecutionOutput{}, ctx.Err()
 	}
-	if runErr != nil {
-		reason := "shell evaluation failed"
-		if status, ok := errors.AsType[interp.ExitStatus](runErr); ok {
-			reason = fmt.Sprintf("exit status %d", status)
-		}
-		_ = commentary.terminal(ctx, "failure", reason)
-	}
-	stdout, stderr, overflow, commentaryTruncated := capture.result()
+	stdout, stderr, overflow := capture.result()
 	if overflow {
-		if runErr == nil {
-			_ = commentary.terminal(ctx, "failure", "shell output exceeds the tool output budget")
-		}
 		var stdoutValid, stderrValid bool
 		stdout, stdoutValid = trimIncompleteUTF8Tail(stdout)
 		stderr, stderrValid = trimIncompleteUTF8Tail(stderr)
@@ -208,16 +154,9 @@ func executeShellTool(
 		return toolplugin.ExecutionOutput{Stdout: stdout, Stderr: stderr + shellOverflowDiagnostic, ExitCode: 1}, nil
 	}
 	if !utf8.ValidString(stdout) || !utf8.ValidString(stderr) {
-		if runErr == nil {
-			_ = commentary.terminal(ctx, "failure", "shell output is not UTF-8")
-		}
 		return toolplugin.ExecutionOutput{Stderr: "shell: interpreter output is not UTF-8\n", ExitCode: 1}, nil
 	}
-	if commentaryTruncated {
-		stderr += shellCommentaryTruncationDiagnostic
-	}
 	if runErr == nil {
-		commentary.complete()
 		return toolplugin.ExecutionOutput{Stdout: stdout, Stderr: stderr, ExitCode: 0}, nil
 	}
 	if status, ok := errors.AsType[interp.ExitStatus](runErr); ok {
@@ -308,25 +247,12 @@ func shellEnvironment(environment expand.Environ) []string {
 }
 
 type shellOutputCapture struct {
-	mu                  sync.Mutex
-	stdout              shellOutputWriter
-	stderr              shellOutputWriter
-	budget              *shellOutputBudget
-	nativeRemaining     int
-	overflow            bool
-	commentaryTruncated bool
-	cancel              context.CancelFunc
-}
-
-type shellOutputBudget struct {
 	mu        sync.Mutex
+	stdout    shellOutputWriter
+	stderr    shellOutputWriter
 	remaining int
-	overdraw  int
-}
-
-type budgetedShellCommentarySink struct {
-	next   shellCommentarySink
-	budget *shellOutputBudget
+	overflow  bool
+	cancel    context.CancelFunc
 }
 
 type shellOutputWriter struct {
@@ -334,65 +260,12 @@ type shellOutputWriter struct {
 	buffer  bytes.Buffer
 }
 
-func newShellOutputBudget() *shellOutputBudget {
-	return &shellOutputBudget{remaining: toolplugin.ExecutionOutputBudgetBytes}
-}
-
-func (b *shellOutputBudget) charge(publish func(int) (int, error)) error {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	charged, err := publish(b.remaining)
-	if err != nil {
-		return err
-	}
-	if charged < 0 || charged > b.remaining {
-		return errors.New("commentary publisher exceeded the shared output budget")
-	}
-	b.remaining -= charged
-	return nil
-}
-
-func (b *shellOutputBudget) reserve(size int) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	accepted := min(size, b.remaining)
-	b.remaining -= accepted
-	b.overdraw += size - accepted
-}
-
-func (b *shellOutputBudget) take(size int) int {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	accepted := min(size, b.remaining)
-	b.remaining -= accepted
-	return accepted
-}
-
-func (b *shellOutputBudget) overdrawn() int {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return b.overdraw
-}
-
-func (s *budgetedShellCommentarySink) Publish(ctx context.Context, event shellCommentaryEvent) error {
-	if err := s.next.Publish(ctx, event); err != nil {
-		return err
-	}
-	s.budget.reserve(len(shellCommentaryVisibleText(event)))
-	return nil
-}
-
-func (s *budgetedShellCommentarySink) Complete(ctx context.Context) error {
-	return s.next.Complete(ctx)
-}
-
-func newShellOutputCapture(cancel context.CancelFunc, budget *shellOutputBudget) *shellOutputCapture {
+func newShellOutputCapture(cancel context.CancelFunc) *shellOutputCapture {
 	// Match the JavaScript executor's three-byte UTF-8 boundary reserve so both
 	// interpreter paths keep the overflow diagnostic inside the shared budget.
-	diagnosticReserve := max(len(shellOverflowDiagnostic), len(shellCommentaryTruncationDiagnostic)) + 3
-	budget.reserve(diagnosticReserve)
 	capture := &shellOutputCapture{
-		budget: budget, nativeRemaining: max(0, toolplugin.ExecutionOutputBudgetBytes-diagnosticReserve), cancel: cancel,
+		remaining: max(0, toolplugin.ExecutionOutputBudgetBytes-len(shellOverflowDiagnostic)-3),
+		cancel:    cancel,
 	}
 	capture.stdout.capture = capture
 	capture.stderr.capture = capture
@@ -407,48 +280,18 @@ func (writer *shellOutputWriter) Write(value []byte) (int, error) {
 	if capture.overflow {
 		return written, nil
 	}
-	nativeAccepted := min(len(value), capture.nativeRemaining)
-	capture.nativeRemaining -= nativeAccepted
-	accepted := capture.budget.take(nativeAccepted)
+	accepted := min(len(value), capture.remaining)
 	_, _ = writer.buffer.Write(value[:accepted])
-	if accepted != nativeAccepted {
-		capture.commentaryTruncated = true
-	}
-	if nativeAccepted != len(value) {
+	capture.remaining -= accepted
+	if accepted != len(value) {
 		capture.overflow = true
 		capture.cancel()
 	}
 	return written, nil
 }
 
-func (capture *shellOutputCapture) result() (stdout, stderr string, overflow, commentaryTruncated bool) {
+func (capture *shellOutputCapture) result() (stdout, stderr string, overflow bool) {
 	capture.mu.Lock()
 	defer capture.mu.Unlock()
-	if trim := capture.budget.overdrawn(); trim != 0 {
-		trim = trimShellOutputBuffer(&capture.stderr.buffer, trim)
-		_ = trimShellOutputBuffer(&capture.stdout.buffer, trim)
-		capture.commentaryTruncated = true
-	}
-	return capture.stdout.buffer.String(), capture.stderr.buffer.String(), capture.overflow, capture.commentaryTruncated
-}
-
-func trimShellOutputBuffer(buffer *bytes.Buffer, size int) int {
-	removed := min(buffer.Len(), size)
-	buffer.Truncate(buffer.Len() - removed)
-	return size - removed
-}
-
-func truncateShellExecutionForCommentary(execution toolplugin.ExecutionOutput, commentaryBytes int) toolplugin.ExecutionOutput {
-	limit := max(0, toolplugin.ExecutionOutputBudgetBytes-commentaryBytes-len(shellCommentaryTruncationDiagnostic))
-	if len(execution.Stdout)+len(execution.Stderr) <= limit {
-		return execution
-	}
-	stdoutBytes := min(len(execution.Stdout), limit)
-	execution.Stdout = execution.Stdout[:stdoutBytes]
-	remaining := limit - stdoutBytes
-	execution.Stderr = execution.Stderr[:min(len(execution.Stderr), remaining)]
-	execution.Stdout, _ = trimIncompleteUTF8Tail(execution.Stdout)
-	execution.Stderr, _ = trimIncompleteUTF8Tail(execution.Stderr)
-	execution.Stderr += shellCommentaryTruncationDiagnostic
-	return execution
+	return capture.stdout.buffer.String(), capture.stderr.buffer.String(), capture.overflow
 }

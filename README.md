@@ -145,26 +145,14 @@ For native executor background and interactive behavior, see [OpenAI's Codex pro
 
 ## Inline operation commentary
 
-In router mode, extensible non-strict structured tools in the ordinary Responses tool catalog
-receive an optional `commentary` string. When present, the router shows that text as ordinary
-assistant commentary immediately before the tool call and removes the field before Codex executes
-the tool. When omitted, the router supplies a concise tool-specific default instead.
+In router mode, extensible non-strict function tools receive an optional `commentary` string.
+The router shows explicit text, or a concise default when it is omitted, immediately before the
+tool call. It removes only the router-owned field before execution and restores the provider's
+exact call when replaying history. Strict tools, provider-configured `additional_tools`, and tools
+that already own a `commentary` parameter keep their schemas and arguments unchanged and receive
+defaults only.
 
-Tools whose purpose is already commentary or user messaging, Codex context/compaction/result
-carriers, and private shell-internal tools are excluded. Instrumenting those surfaces would
-duplicate user communication or expose a private carrier as a model tool.
-
-Strict tools and provider-configured `additional_tools`, including Codex-reserved collaboration
-functions, retain their original schemas and receive defaults only. This preserves provider-side
-schema validation without requiring the model to emit an unsupported member. A tool that already
-owns a parameter named `commentary` is treated the same way: hpatch neither changes nor consumes
-that parameter.
-
-Generated commentary remains visible in Codex history, but the next routed request removes the
-generated message and restores the model's exact original function arguments before forwarding
-history to the provider. The displayed commentary therefore does not become repeated model input.
-
-Code Mode can publish runtime commentary with reserved hpatch syntax:
+Code Mode can publish evaluated progress while it runs:
 
 ```js
 for (let index = 1; index <= total; index++) {
@@ -173,55 +161,30 @@ for (let index = 1; index <= total; index++) {
 }
 ```
 
-The router lowers each statement to the existing native execution carrier. Its private publisher
-posts the evaluated text back to the router's HTTP server; there is no additional socket, journal,
-or user-visible publisher output. A Code Mode operation without an explicit statement receives
-`Running the requested operation.` instead. Runtime lowering uses the repository's exact
-JavaScript parser; a source build with CGO disabled rejects Code Mode containing `commentary`
-rather than rewriting it heuristically.
-
-Bash and POSIX shell scripts use the reserved `commentary` builtin. It expands its arguments,
-joins them with spaces, writes nothing, ignores redirection, and labels the next complete shell unit:
+Bash and POSIX shell programs use the reserved `commentary` command:
 
 ```sh
 for item in "$@"; do
   commentary "Running $item"
   process "$item"
 done
-commentary Done running items
 ```
 
-The original text appears before its action. A shell call without an authored `commentary` builtin
-emits no start message. Success adds nothing; failure, cancellation, and timeout add `Failed:`,
-`Cancelled:`, or `Timed out:` plus a safe structured reason when available. An unlabelled terminal
-event uses `Failed.`, `Cancelled.`, or `Timed out.` instead.
-Pipelines use `pipefail`. Consecutive commentary leaves only the latest label bound to the next
-unit, while trailing commentary is an unbound status message. A labelled standalone nonzero unit
-stops evaluation without requiring `set -e`; labelled functions and compound commands use their
-ordinary final status. Non-Bash interpreters emit no start message and can only produce an
-unlabelled terminal event.
+Both forms publish through an authenticated per-call route on the router's existing HTTP server.
+They write nothing to the tool result. Shell commentary expands its arguments and otherwise leaves
+normal shell control flow, redirections, output, and exit status alone. A shell call without an
+authored `commentary` command emits no default.
 
-Streaming responses drain worker events already ready before releasing `response.completed`; they
-never wait for a missing worker completion. Later events, JSON responses, approvals, startup
-failures, and other outcomes that first become known through a native result publish on the next
-routed request. If there is no next request, that terminal commentary cannot be displayed.
-Capabilities, deferred event counts, retained bytes, and retention time are bounded. Commentary
-shares the normal tool-output budget. Further messages are suppressed after it is exhausted, with
-one bounded warning when space remains.
-
-The metrics API and dashboard report explicit, default, failure, cancelled, timeout, and suppressed
-counts with two estimates: `native_tokens` counts only text shown to the user, and `form_tokens`
-counts the authored form. Structured forms use the token delta between the complete call with and
-without the router-owned member; Code Mode and shell use the exact authored statement or command.
-Defaults generated for omitted commentary and generated terminal messages have zero form tokens.
-An authored blank structured member uses the default visible text but retains its exact removal
-delta as form tokens. Provider usage remains the authoritative billable total.
+Events ready when a streaming response completes are shown in that response. Later events, and
+events from JSON responses, are shown at the start of the next response for the same session.
+Routes, queued events, request bodies, and retention time are bounded; commentary is auxiliary, so
+capacity or publication failure never changes the operation result.
 
 ## Requirements
 
 - Go 1.26 or newer. Normal `go install` does not require a checkout.
-- Code Mode runtime commentary requires a CGO-enabled source build so the exact JavaScript parser
-  is available. CGO-disabled builds fail closed for Code Mode containing `commentary`.
+- Code Mode runtime commentary requires a CGO-enabled source build for exact JavaScript parsing.
+  A CGO-disabled build rejects Code Mode input containing `commentary`.
 - Hpatch router mode requires Codex CLI with ChatGPT file auth from `codex login`, normally at `~/.codex/auth.json` or `$CODEX_HOME/auth.json`. At startup, the router reads the adjacent `config.toml` only to determine whether `model_instructions_file` is configured.
 - Hpatch router mode resolves Node.js 24 or newer as `node`; passthrough mode does not load the plugin registry.
 - Private hgrep requires `rg` on the Codex executor's `PATH`.

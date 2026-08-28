@@ -4,7 +4,7 @@ pjdoc:
   kind: spec
   scope: root
   status: draft
-  revision: "36"
+  revision: "35"
   files:
     - interface.md
     - comparison.md
@@ -13,17 +13,14 @@ pjdoc:
 ---
 # hpatch specification
 
-Revision 36 completes router-owned inline operation commentary across structured tools, Code Mode,
-and shell execution. It defines authenticated runtime publication, exact replay, safe terminal
-messages, bounded live and deferred delivery, shared output accounting, and native-versus-authored
-form metrics. The CTP/2 contract introduced in revision 34 remains unchanged: it separates model
-behavior, per-request protocol representations and codec cost, and provider-observed operational
-usage while exposing bounded session telemetry.
+Revision 35 adds router-owned inline commentary for structured tools, Code Mode, and shell
+programs. Revision 34's CTP/2 representation and measurement contracts remain unchanged.
 `doc/spec/interface.md` owns the public report grammar, projection rule, continuation
 semantics, and observable acceptance behavior.
 
 ## Inventory
 
+- [`REQ-COMMENTARY-001`](interface.md): inline structured and runtime operation commentary
 - [`REQ-READ-001`](interface.md): routed verified-row reading and bounded ranges
 - [`REQ-GREP-001`](interface.md): routed ripgrep search with directly editable verified rows
 - [`REQ-PLUGIN-001`](interface.md): router-local custom tools and Code Mode carrier translation

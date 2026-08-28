@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"maps"
-	"slices"
 	"strings"
 )
 
@@ -27,7 +26,7 @@ func commentaryToolKey(namespace, name string) string {
 
 func prepareCommentaryTools(fields map[string]json.RawMessage) (commentaryToolCatalog, error) {
 	catalog := make(commentaryToolCatalog)
-	instrument := func(namespace string, tool map[string]json.RawMessage, allowExplicit bool) error {
+	instrument := func(namespace string, tool map[string]json.RawMessage, addParameter bool) error {
 		if jsonString(tool, "type") != "function" {
 			return nil
 		}
@@ -39,33 +38,30 @@ func prepareCommentaryTools(fields map[string]json.RawMessage) (commentaryToolCa
 		if _, exists := catalog[key]; exists {
 			return fmt.Errorf("commentary tool %q is defined more than once", qualifiedToolName(namespace, name))
 		}
-		display := jsonString(tool, "title")
-		if display == "" {
-			display = name
+		entry := commentaryTool{namespace: namespace, name: name, display: jsonString(tool, "title")}
+		if entry.display == "" {
+			entry.display = name
 		}
-		entry := commentaryTool{namespace: namespace, name: name, display: display}
 		var strict bool
 		_ = json.Unmarshal(tool["strict"], &strict)
-		if allowExplicit && !strict {
+		if addParameter && !strict {
 			var parameters map[string]json.RawMessage
-			if json.Unmarshal(tool["parameters"], &parameters) == nil && parameters != nil && jsonString(parameters, "type") == "object" {
+			if json.Unmarshal(tool["parameters"], &parameters) == nil && jsonString(parameters, "type") == "object" {
 				var properties map[string]json.RawMessage
 				if raw, exists := parameters["properties"]; !exists {
 					properties = make(map[string]json.RawMessage)
 				} else if json.Unmarshal(raw, &properties) != nil || properties == nil {
 					return fmt.Errorf("%s parameters properties must be an object", qualifiedToolName(namespace, name))
 				}
-				if _, exists := properties[commentaryArgumentName]; exists {
-					catalog[key] = entry
-					return nil
+				if _, owned := properties[commentaryArgumentName]; !owned {
+					properties[commentaryArgumentName] = mustMarshalJSON(map[string]string{
+						"type":        "string",
+						"description": "Optional concise progress commentary shown before this operation.",
+					})
+					parameters["properties"] = mustMarshalJSON(properties)
+					tool["parameters"] = mustMarshalJSON(parameters)
+					entry.explicit = true
 				}
-				properties[commentaryArgumentName] = mustMarshalJSON(map[string]string{
-					"type":        "string",
-					"description": "Optional concise progress commentary shown to the user before this operation. Omit it to use the operation default.",
-				})
-				parameters["properties"] = mustMarshalJSON(properties)
-				tool["parameters"] = mustMarshalJSON(parameters)
-				entry.explicit = true
 			}
 		}
 		catalog[key] = entry
@@ -89,9 +85,8 @@ func prepareCommentaryTools(fields map[string]json.RawMessage) (commentaryToolCa
 	if json.Unmarshal(fields["input"], &items) != nil {
 		return catalog, nil
 	}
-	// The provider validates configured additional_tools against its own
-	// catalog even when a function is non-strict. Register defaults without
-	// rewriting those schemas.
+	// The provider owns configured additional_tools schemas. They receive
+	// defaults, but the router never adds a parameter to them.
 	for _, item := range items {
 		if jsonString(item, "type") != "additional_tools" {
 			continue
@@ -138,65 +133,21 @@ func commentaryDefault(tool commentaryTool, arguments map[string]json.RawMessage
 	switch qualifiedToolName(tool.namespace, tool.name) {
 	case "functions.wait", "wait":
 		return "Waiting for the running operation."
-	case "functions.exec_command", "exec_command":
-		return "Running the requested command."
 	case "functions.write_stdin", "write_stdin":
 		var input string
 		_ = json.Unmarshal(arguments["chars"], &input)
-		if input != "" {
-			return "Sending input to the running command."
+		if input == "" {
+			return "Waiting for command output."
 		}
-		return "Waiting for command output."
+		return "Sending input to the running command."
 	case "functions.apply_patch", "apply_patch", "functions.hpatch", "hpatch":
 		return "Applying the requested changes."
-	case "functions.hpatch_recover", "hpatch_recover":
-		return "Repairing the rejected edit."
-	case "functions.view_image", "view_image":
-		return "Opening the requested image."
 	case "functions.request_user_input", "request_user_input":
 		return "Waiting for your input."
-	case "functions.request_permissions", "request_permissions":
-		return "Requesting permission to continue."
-	case "functions.update_plan", "update_plan":
-		return "Updating the task plan."
-	case "functions.get_goal", "get_goal":
-		return "Checking the active task goal."
-	case "functions.create_goal", "create_goal":
-		return "Creating the task goal."
-	case "functions.update_goal", "update_goal":
-		return "Updating the task goal."
-	case "functions.list_mcp_resources", "list_mcp_resources":
-		return "Listing available MCP resources."
-	case "functions.list_mcp_resource_templates", "list_mcp_resource_templates":
-		return "Listing available MCP resource templates."
-	case "functions.read_mcp_resource", "read_mcp_resource":
-		return "Reading the requested MCP resource."
-	case "collaboration.spawn_agent":
-		return "Starting an agent."
-	case "collaboration.send_message":
-		return "Sending a message to the agent."
-	case "collaboration.followup_task":
-		return "Sending a follow-up task to the agent."
-	case "collaboration.wait_agent":
-		return "Waiting for agent results."
-	case "collaboration.interrupt_agent":
-		return "Interrupting the agent."
-	case "collaboration.list_agents":
-		return "Checking agent status."
-	case "image_gen.imagegen":
-		return "Generating the requested image."
 	case "web.run":
 		return "Looking up current information."
-	case "functions.wait_for_environment", "wait_for_environment":
-		return "Waiting for the environment."
-	case "clock.curr_time":
-		return "Checking the current time."
-	case "clock.sleep":
-		return "Waiting for the requested time."
-	case "functions.tool_search", "tool_search":
-		return "Finding the appropriate tool."
-	case "functions.report_issue", "report_issue":
-		return "Reporting the issue."
+	case "image_gen.imagegen":
+		return "Generating the requested image."
 	default:
 		return "Using " + tool.display + "."
 	}
@@ -206,137 +157,6 @@ type structuredCommentary struct {
 	text              string
 	originalArguments string
 	arguments         string
-	authored          bool
-	explicit          bool
-}
-
-func commentaryFailureEvent(text string, item map[string]json.RawMessage) (shellCommentaryEvent, bool) {
-	values := []map[string]json.RawMessage{item}
-	if raw, exists := item["output"]; exists {
-		var decoded map[string]json.RawMessage
-		if json.Unmarshal(raw, &decoded) != nil {
-			var encoded string
-			if json.Unmarshal(raw, &encoded) == nil {
-				_ = json.Unmarshal([]byte(encoded), &decoded)
-			}
-		}
-		if decoded != nil {
-			values = append(values, decoded)
-		}
-	}
-	for _, value := range values {
-		if jsonBool(value, "timed_out") || jsonBool(value, "timeout") {
-			return shellCommentaryEvent{Text: "Timed out: " + text, Outcome: "timeout", Reason: "operation timed out"}, true
-		}
-		if jsonBool(value, "cancelled") || jsonBool(value, "canceled") {
-			return shellCommentaryEvent{Text: "Cancelled: " + text, Outcome: "cancelled", Reason: "operation was cancelled"}, true
-		}
-		status := strings.ToLower(jsonString(value, "status"))
-		switch status {
-		case "timed_out", "timeout":
-			return shellCommentaryEvent{Text: "Timed out: " + text, Outcome: "timeout", Reason: "operation timed out"}, true
-		case "cancelled", "canceled", "denied", "declined":
-			return shellCommentaryEvent{Text: "Cancelled: " + text, Outcome: "cancelled", Reason: "status " + status}, true
-		case "failed", "failure", "error", "incomplete":
-			return shellCommentaryEvent{Text: "Failed: " + text, Outcome: "failure", Reason: "status " + status}, true
-		}
-		if exitCode, ok := jsonInteger(value, "exit_code"); ok && exitCode != 0 {
-			return shellCommentaryEvent{Text: "Failed: " + text, Outcome: "failure", Reason: fmt.Sprintf("exit status %d", exitCode)}, true
-		}
-		if jsonBool(value, "is_error") || jsonBool(value, "isError") {
-			return shellCommentaryEvent{Text: "Failed: " + text, Outcome: "failure", Reason: "tool reported an error"}, true
-		}
-	}
-	return shellCommentaryEvent{}, false
-}
-
-func jsonBool(object map[string]json.RawMessage, name string) bool {
-	var value bool
-	_ = json.Unmarshal(object[name], &value)
-	return value
-}
-
-func jsonInteger(object map[string]json.RawMessage, name string) (int64, bool) {
-	var value int64
-	if err := json.Unmarshal(object[name], &value); err != nil {
-		return 0, false
-	}
-	return value, true
-}
-
-func commentaryMessageID(callID string) string {
-	digest := sha256.Sum256([]byte(callID))
-	return fmt.Sprintf("msg_hpatch_commentary_%x", digest[:12])
-}
-
-func commentaryMessage(id, text string) map[string]json.RawMessage {
-	return map[string]json.RawMessage{
-		"type":   mustMarshalJSON("message"),
-		"id":     mustMarshalJSON(id),
-		"status": mustMarshalJSON("completed"),
-		"role":   mustMarshalJSON("assistant"),
-		"phase":  mustMarshalJSON("commentary"),
-		"content": mustMarshalJSON([]any{map[string]any{
-			"type": "output_text", "text": text, "annotations": []any{},
-		}}),
-	}
-}
-
-func commentaryDoneEvent(message map[string]json.RawMessage) []byte {
-	// Codex accepts terminal assistant-message items without a synthetic
-	// content lifecycle; using that native path keeps commentary atomic.
-	return mustMarshalJSON(map[string]any{
-		"type": "response.output_item.done",
-		"item": message,
-	})
-}
-
-func (t *hpatchResponseTransform) transformStructuredCommentary(item map[string]json.RawMessage) (map[string]json.RawMessage, bool, error) {
-	extracted, matched, err := extractStructuredCommentary(item, t.commentaryTools)
-	if err != nil || !matched {
-		return nil, false, err
-	}
-	callID := jsonString(item, "call_id")
-	if callID == "" {
-		return nil, false, errors.New("upstream emitted commentary function call without a call ID")
-	}
-	messageID := commentaryMessageID(callID)
-	if retained, exists := t.local[callID]; exists {
-		if !slices.Equal(retained.commentaryMessageIDs, []string{messageID}) || retained.script != extracted.originalArguments ||
-			retained.carrierPayload != extracted.arguments {
-			return nil, false, fmt.Errorf("commentary call %q changed arguments", callID)
-		}
-		item["arguments"] = mustMarshalJSON(extracted.arguments)
-		return commentaryMessage(messageID, extracted.text), extracted.arguments != extracted.originalArguments, nil
-	}
-	original := maps.Clone(item)
-	kind := "default"
-	var formTokens uint64
-	if extracted.authored {
-		if extracted.explicit {
-			kind = "explicit"
-		}
-		stripped := maps.Clone(item)
-		stripped["arguments"] = mustMarshalJSON(extracted.arguments)
-		originalTokens := t.proxy.metrics.countCommentaryTokens(string(mustMarshalJSON(original)))
-		strippedTokens := t.proxy.metrics.countCommentaryTokens(string(mustMarshalJSON(stripped)))
-		formTokens = originalTokens - min(originalTokens, strippedTokens)
-	}
-	history := hpatchHistory{
-		toolName:             qualifiedToolName(jsonString(item, "namespace"), jsonString(item, "name")),
-		script:               extracted.originalArguments,
-		carrierKind:          codeModeCarrierFunction,
-		carrierName:          jsonString(item, "name"),
-		carrierPayload:       extracted.arguments,
-		upstreamItem:         original,
-		commentaryMessageIDs: []string{messageID},
-		commentaryText:       extracted.text,
-		commentaryMetricKind: kind,
-		commentaryFormTokens: formTokens,
-	}
-	t.recordLocal(callID, &history)
-	item["arguments"] = mustMarshalJSON(extracted.arguments)
-	return commentaryMessage(messageID, extracted.text), extracted.arguments != extracted.originalArguments, nil
 }
 
 func extractStructuredCommentary(item map[string]json.RawMessage, catalog commentaryToolCatalog) (structuredCommentary, bool, error) {
@@ -355,24 +175,71 @@ func extractStructuredCommentary(item map[string]json.RawMessage, catalog commen
 	result := structuredCommentary{originalArguments: original, arguments: original}
 	if tool.explicit {
 		if raw, present := arguments[commentaryArgumentName]; present {
-			result.authored = true
-			var value string
-			if err := json.Unmarshal(raw, &value); err != nil {
+			var text string
+			if err := json.Unmarshal(raw, &text); err != nil {
 				return structuredCommentary{}, false, fmt.Errorf("%s commentary must be a string", qualifiedToolName(tool.namespace, tool.name))
 			}
 			delete(arguments, commentaryArgumentName)
-			encoded, err := json.Marshal(arguments)
-			if err != nil {
-				return structuredCommentary{}, false, err
-			}
-			result.arguments = string(encoded)
-			if strings.TrimSpace(value) != "" {
-				result.text = value
-				result.explicit = true
+			result.arguments = string(mustMarshalJSON(arguments))
+			if strings.TrimSpace(text) != "" {
+				result.text = text
 				return result, true, nil
 			}
 		}
 	}
 	result.text = commentaryDefault(tool, arguments)
 	return result, true, nil
+}
+
+func commentaryMessageID(seed string) string {
+	digest := sha256.Sum256([]byte(seed))
+	return fmt.Sprintf("msg_hpatch_commentary_%x", digest[:12])
+}
+
+func commentaryMessage(id, text string) map[string]json.RawMessage {
+	return map[string]json.RawMessage{
+		"type":   mustMarshalJSON("message"),
+		"id":     mustMarshalJSON(id),
+		"status": mustMarshalJSON("completed"),
+		"role":   mustMarshalJSON("assistant"),
+		"phase":  mustMarshalJSON("commentary"),
+		"content": mustMarshalJSON([]any{map[string]any{
+			"type": "output_text", "text": text, "annotations": []any{},
+		}}),
+	}
+}
+
+func commentaryDoneEvent(message map[string]json.RawMessage) []byte {
+	return mustMarshalJSON(map[string]any{"type": "response.output_item.done", "item": message})
+}
+
+func (t *hpatchResponseTransform) transformStructuredCommentary(item map[string]json.RawMessage) (map[string]json.RawMessage, error) {
+	extracted, matched, err := extractStructuredCommentary(item, t.commentaryTools)
+	if err != nil || !matched {
+		return nil, err
+	}
+	callID := jsonString(item, "call_id")
+	if callID == "" {
+		return nil, errors.New("upstream emitted commentary function call without a call ID")
+	}
+	messageID := commentaryMessageID(callID)
+	if retained, exists := t.local[callID]; exists {
+		if retained.script != extracted.originalArguments || retained.carrierPayload != extracted.arguments {
+			return nil, fmt.Errorf("commentary call %q changed arguments", callID)
+		}
+		item["arguments"] = mustMarshalJSON(extracted.arguments)
+		return commentaryMessage(messageID, extracted.text), nil
+	}
+	original := maps.Clone(item)
+	t.recordLocal(callID, &hpatchHistory{
+		toolName:             qualifiedToolName(jsonString(item, "namespace"), jsonString(item, "name")),
+		script:               extracted.originalArguments,
+		carrierKind:          codeModeCarrierFunction,
+		carrierName:          jsonString(item, "name"),
+		carrierPayload:       extracted.arguments,
+		upstreamItem:         original,
+		commentaryMessageIDs: []string{messageID},
+	})
+	item["arguments"] = mustMarshalJSON(extracted.arguments)
+	return commentaryMessage(messageID, extracted.text), nil
 }

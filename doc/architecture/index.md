@@ -4,7 +4,7 @@ pjdoc:
   kind: architecture
   scope: root
   status: draft
-  revision: "31"
+  revision: "30"
   files:
     []
 ---
@@ -411,40 +411,15 @@ targets, or move final-reference projection across the root boundary.
 
 ## CTR-COMMENTARY-001 — Router-owned operation commentary
 
-The Responses router owns optional commentary schema projection, per-request tool identity and
-default selection, structured argument removal, user-visible message synthesis, and exact replay
-collapse. It operates on ordinary function schemas and function-call items after request parsing
-and before Codex dispatch. Strict validation remains owned by the original tool schema, so the
-router does not relax strict tools or take ownership of an existing `commentary` parameter.
+The Responses router owns commentary schema projection, default selection, structured argument
+removal, message rendering, and exact replay collapse. The existing bounded history record retains
+the provider item and the IDs of messages the router generated for it.
 
-One retained call record joins the original provider item, stripped local carrier, and generated
-message IDs. The existing bounded per-session history owner stores that record and removes only
-known generated messages during replay. Stream buffering reuses the router's existing bounded
-pending-call lifecycle and validates identity before exposing a call.
-
-The same router owner reserves and lowers Code Mode commentary, installs shell commentary
-instrumentation, issues per-call HTTP publisher capabilities, and brokers live or next-request
-delivery. The authenticated shell worker owns runtime expression expansion and shell logical-unit
-status because only that executor observes those values. It publishes to the existing router HTTP
-server and never writes commentary to its execution result. The router remains the sole subscriber
-and message renderer; there is no side socket, journal, FIFO, or second service. Code Mode lowering
-uses the existing exact JavaScript parser and fails closed when that parser is unavailable.
-The broker reuses one capability across one Code Mode carrier, bounds routes and deferred state per
-session and process, expires both, and drains only immediately ready stream events so commentary
-cannot hold response completion. A route-capacity fallback uses a signed, expiring, stateless
-capability to meter each suppressed runtime publication without retaining or rendering an event.
-Live message IDs use bounded provisional history reservations until response completion commits the
-owning call; every path that abandons an unpublished event releases its reservation.
-Structured and default stream projection commits each complete replay record before exposure, so a
-failed or incomplete terminal cannot strand translated calls or generated messages outside history.
-The downstream writer acknowledges completed JSON bodies and SSE items back to the transform;
-visibility metrics, settlement, and deferred removal occur only at that acknowledgement boundary.
-
-Native results remain owned by Codex and first become router-visible in the following request. The
-router classifies only structured terminal fields and never promotes stdout or stderr to a reason.
-Commentary remains auxiliary: publisher, renderer, budget, or metrics failure cannot alter the
-action result. The existing bounded tool-output budget owns suppression, and router telemetry owns
-the explicit/default and terminal counts plus native-versus-form estimates.
+Runtime commentary uses one authenticated HTTP route per Code Mode or shell call. The shell worker
+owns runtime expression and argument expansion, publishes text without adding it to the tool result,
+and does not infer action boundaries or terminal outcomes. The router owns bounded route and event
+retention and renders events already available at stream completion or on the next response. This
+publication path is auxiliary and cannot change tool output, control flow, or exit status.
 
 ## CTR-METRICS-001 — Metrics classification and persistence
 

@@ -167,7 +167,7 @@ func newManagedHPatchProxyWithDataDirectory(t *testing.T, translator hpatchTrans
 	if err != nil {
 		t.Fatal(err)
 	}
-	proxy := newHPatchProxy(translator, registry, false, false, "")
+	proxy := newHPatchProxy(translator, registry, false, false)
 	t.Cleanup(func() {
 		if err := errors.Join(proxy.Close(), registry.Close()); err != nil {
 			t.Error(err)
@@ -540,7 +540,6 @@ func TestReportIssueRunsRouterHookWithoutWorker(t *testing.T) {
 		registry,
 		false,
 		false,
-		"",
 		newSessionTitleCacheAt(indexPath),
 	)
 	t.Cleanup(func() {
@@ -594,7 +593,7 @@ func TestReportIssueHookFailureDoesNotFailRouting(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	proxy := newHPatchProxy(testTranslator(t, new(int)), registry, false, false, "")
+	proxy := newHPatchProxy(testTranslator(t, new(int)), registry, false, false)
 	t.Cleanup(func() {
 		if err := errors.Join(proxy.Close(), registry.Close()); err != nil {
 			t.Error(err)
@@ -619,7 +618,7 @@ func TestReportIssueCallIDCannotBeReusedByHPatch(t *testing.T) {
 		t.Fatal(err)
 	}
 	calls := 0
-	proxy := newHPatchProxy(testTranslator(t, &calls), registry, false, false, "")
+	proxy := newHPatchProxy(testTranslator(t, &calls), registry, false, false)
 	t.Cleanup(func() {
 		if err := errors.Join(proxy.Close(), registry.Close()); err != nil {
 			t.Error(err)
@@ -3052,50 +3051,6 @@ func TestHPatchStreamingTranslationFailureCompletesDiagnosticExecLifecycle(t *te
 	}
 	if _, remembered := proxy.history(transform.historySessionID, "call-H"); !remembered {
 		t.Fatal("streaming translation rejection carrier was not remembered")
-	}
-}
-
-func TestRoutedCustomCallFromFailedStreamRetainsExactProviderItem(t *testing.T) {
-	transform, proxy, _, _ := newHPatchTestTransform(t, testTranslator(t, new(int)))
-	addedItem := testHPatchItem()
-	addedItem["status"] = "in_progress"
-	addedItem["input"] = ""
-	added := mustTestJSON(t, map[string]any{"type": "response.output_item.added", "item": addedItem})
-	if visible, err := transform.TransformSSE(added); err != nil || visible != nil {
-		t.Fatalf("added visible = %q, error %v", visible, err)
-	}
-	done := mustTestJSON(t, map[string]any{
-		"type": "response.custom_tool_call_input.done", "item_id": "item-H", "input": testHPatchScript,
-	})
-	visible, err := transform.TransformSSE(done)
-	if err != nil || len(visible) != 2 {
-		t.Fatalf("done visible = %q, error %v", visible, err)
-	}
-	failed := mustTestJSON(t, map[string]any{"type": "response.failed", "response": map[string]any{"status": "failed"}})
-	if _, err := transform.TransformSSE(failed); err != nil {
-		t.Fatal(err)
-	}
-	var addedEnvelope struct {
-		Item map[string]json.RawMessage `json:"item"`
-	}
-	var doneEnvelope struct {
-		Input string `json:"input"`
-	}
-	if json.Unmarshal(visible[0], &addedEnvelope) != nil || json.Unmarshal(visible[1], &doneEnvelope) != nil {
-		t.Fatalf("decode visible carrier = %q", visible)
-	}
-	addedEnvelope.Item["input"] = mustMarshalJSON(doneEnvelope.Input)
-	replay := parsedResponsesRequest{fields: map[string]json.RawMessage{
-		"input": mustMarshalJSON([]map[string]json.RawMessage{addedEnvelope.Item}),
-	}}
-	if err := proxy.reconcileInputPrefix(&replay, transform.historySessionID); err != nil {
-		t.Fatal(err)
-	}
-	var replayed []map[string]json.RawMessage
-	if json.Unmarshal(replay.fields["input"], &replayed) != nil || len(replayed) != 1 ||
-		jsonString(replayed[0], "type") != "custom_tool_call" || jsonString(replayed[0], "name") != hpatchToolName ||
-		jsonString(replayed[0], "input") != testHPatchScript {
-		t.Fatalf("failed custom stream replay = %s", replay.fields["input"])
 	}
 }
 

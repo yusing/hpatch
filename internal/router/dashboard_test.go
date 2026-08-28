@@ -182,15 +182,3 @@ func TestDashboardRejectsUnrelatedPaths(t *testing.T) {
 		t.Fatalf("status = %d", recorder.Code)
 	}
 }
-
-func TestDashboardExposesCommentaryFormComparison(t *testing.T) {
-	body := string(dashboardHTML)
-	for _, fragment := range []string{
-		"Operation commentary", "Visible text compared with authored forms", "data.commentary",
-		"native_tokens", "form_tokens", "suppressed",
-	} {
-		if !strings.Contains(body, fragment) {
-			t.Fatalf("dashboard does not expose commentary accounting: missing %q", fragment)
-		}
-	}
-}

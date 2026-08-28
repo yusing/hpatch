@@ -108,12 +108,11 @@ func Run(ctx context.Context, args []string, stderr io.Writer) (runErr error) {
 		defer func() {
 			runErr = errors.Join(runErr, registry.Close())
 		}()
-		commentaryEndpoint, err := commentaryPublisherURL(*listenAddress)
+		hpatchCalls = newHPatchProxy(translator, registry, customizedInstructions, compactTokens != nil, titles)
+		hpatchCalls.commentaryEndpoint, err = commentaryPublisherURL(*listenAddress)
 		if err != nil {
 			return fmt.Errorf("initialize commentary publisher: %w", err)
 		}
-		hpatchCalls = newHPatchProxy(translator, registry, customizedInstructions, compactTokens != nil, commentaryEndpoint, titles)
-		hpatchCalls.setMetrics(metrics)
 		defer func() {
 			runErr = errors.Join(runErr, hpatchCalls.Close())
 		}()
