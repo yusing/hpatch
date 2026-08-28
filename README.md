@@ -272,6 +272,8 @@ Defaults:
 | --- | --- |
 | Mode | `hpatch` (`--mode`); `passthrough` forwards Responses traffic without loading the tool registry |
 | Model protocol | `native` (`--model-protocol`); `ctp2` is opt-in and Hpatch-only, while `ctp1` and `ctp2` with `--mode passthrough` are rejected |
+| Mentor Handoff | Disabled (`--mentor-handoff`); the experiment is Hpatch-only |
+| Provider base URL | `https://chatgpt.com/backend-api/codex` (`--provider-base-url`) |
 | Listen | `127.0.0.1:8080` (`--listen`) |
 | Upstream response-start timeout | `10m` (`--timeout`) |
 | Upstream stream idle timeout | `4m` per blocked upstream read (`--stream-idle-timeout`); resets on byte progress, pauses during downstream processing, and imposes no total-duration limit |
@@ -279,6 +281,32 @@ Defaults:
 | Shell runtime directory | `$HPATCH_RUNTIME_DIR`, or the operating-system temporary directory when unset; router and executor must resolve the same absolute path |
 | Metrics / hooks | `$XDG_CONFIG_HOME/hpatch` or `~/.config/hpatch` |
 | Endpoints | `POST /v1/responses`, `GET /v1/models`, `GET /` (dashboard), `GET /api/metrics` |
+
+### Mentor Handoff experiment
+
+`--mentor-handoff` enables the first incremental form of **Mentor Handoff** for spawned subagents.
+It activates only when Codex supplies both the exact `x-openai-subagent: collab_spawn` header and
+`subagent_kind: thread_spawn` turn metadata. Ordinary sessions and forks do not activate it, and
+new-session, post-compaction, and side-conversation activation are not implemented yet.
+
+For a spawned subagent requesting `gpt-5.6-luna` or `gpt-5.6-terra`, the router sends
+`gpt-5.6-sol` with high reasoning while leaving the inherited input and every other request field
+intact. After the mentor has produced three completed custom/function tool calls, it remains active
+for one more completed response so it can consume the third call's result. The next request returns
+to the Codex-configured model after that response, after two completed assistant messages, or after
+the latest request reports at least 50,000 input tokens. That count already includes the inherited
+conversation history. The token limit is checked after each response, so its final mentor request
+may overshoot. Failed responses contribute reported input usage but do not
+contribute tool calls or messages, and a failed result-consuming response does not complete handoff.
+
+The router logs bounded progress without prompt content and attributes provider usage to the model
+actually used. It retains completion state for up to 256 spawned subagent threads; another new
+eligible subagent fails before provider forwarding rather than silently forgetting a completed
+handoff. Passthrough mode rejects the flag.
+
+`--provider-base-url` changes where the router sends Codex-managed credentials and Responses
+traffic. Use it only with a trusted endpoint. The benchmark uses it to place a content-free capture
+proxy between the router and the normal provider; ordinary deployments should keep the default.
 
 Outcome hooks receive one event for each routed hpatch or recovery result. The event identifies
 the emitted tool and exact model-emitted payload, the evaluated lifecycle stage, the outcome,

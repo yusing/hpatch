@@ -39,6 +39,31 @@ func (r parsedResponsesRequest) modelDescription() string {
 	return strings.TrimSpace(model + " " + strings.TrimSpace(reasoning.Effort))
 }
 
+func (r *parsedResponsesRequest) setModelAndReasoningEffort(model, effort string) error {
+	encodedModel, err := json.Marshal(model)
+	if err != nil {
+		return fmt.Errorf("encode model: %w", err)
+	}
+	reasoning := map[string]json.RawMessage{}
+	if raw, ok := r.fields["reasoning"]; ok && !bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+		if err := json.Unmarshal(raw, &reasoning); err != nil || reasoning == nil {
+			return errors.New("reasoning must be an object")
+		}
+	}
+	encodedEffort, err := json.Marshal(effort)
+	if err != nil {
+		return fmt.Errorf("encode reasoning effort: %w", err)
+	}
+	reasoning["effort"] = encodedEffort
+	encodedReasoning, err := json.Marshal(reasoning)
+	if err != nil {
+		return fmt.Errorf("encode reasoning: %w", err)
+	}
+	r.fields["model"] = encodedModel
+	r.fields["reasoning"] = encodedReasoning
+	return nil
+}
+
 func (r parsedResponsesRequest) promptCacheKey() string {
 	raw, ok := r.fields["prompt_cache_key"]
 	if !ok {

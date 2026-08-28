@@ -4,11 +4,28 @@ pjdoc:
   kind: architecture
   scope: root
   status: draft
-  revision: "29"
+  revision: "30"
   files:
     []
 ---
 # hpatch architecture contract
+
+## CTR-MENTOR-001 — Router-owned subagent model schedule
+
+The opt-in Mentor Handoff owner in `internal/router` sits before Hpatch request projection and CTP
+serialization. It authenticates the schedule boundary from Codex's exact thread-spawn header and
+turn metadata, keeps bounded child-thread counters, and changes only the provider-bound model and
+reasoning effort. The ordinary request owner continues to supply input history, tools, and session
+settings; Codex remains the owner of the configured model used after handoff.
+
+A request-local observer runs before response transformations so it counts native provider output
+items without depending on Hpatch carrier restoration or CTP decoding. The latest provider lifecycle
+usage is the authoritative current-context input count; usage from separate requests is not summed.
+The schedule commits completed output counts only after a
+completed terminal response, but records observed input usage on later delivery or terminal failure
+paths. Router metrics use the provider-bound model and expose their existing global and per-session
+model split. This owner is separate from Hpatch recovery history, tool metrics, and provider-client
+transport retries.
 
 ## CTR-CTP-001 — Router-owned compact provider representation
 
@@ -463,6 +480,13 @@ keys, response delivery, and provider usage. Its selected mode determines whethe
 existing hpatch transformer participates. Pass-through does not duplicate forwarding or
 introduce another provider client. The metrics endpoint is the executable mode-label
 boundary used to prevent arm misconfiguration.
+The Mentor benchmark owns a separate capturer in `benchmarks/capturer`. One instance places a
+front proxy before each router and a back proxy before the provider. It forwards bytes unchanged,
+streams responses as they arrive, and emits only the content-free correlation, model, usage, status,
+and tool-call fields needed for benchmark proof. A private correlation header exists only between
+the two capturer boundaries and is removed before the provider. Per-arm Compose networks make both proxy crossings
+mandatory. The router's provider-base configuration selects the back proxy but does not move
+authentication, retry, cache-key, or response-transformation ownership out of the router.
 The terminal request log is the request-level cache-attribution boundary: it combines the one
 terminal provider usage observation with the request and session already owned by that lifecycle.
 Aggregate metrics remain unchanged.

@@ -361,7 +361,7 @@ func TestCTP2ExecuteRequestFallsBackToNativeOnCodecFailure(t *testing.T) {
 
 			if err := executeRequest(
 				t.Context(), t.Context(), request, nil, "session", provider, &bytes.Buffer{},
-				newDiagnostics(&bytes.Buffer{}), time.Now, nil, codec, newMetricsStore(""),
+				newDiagnostics(&bytes.Buffer{}), time.Now, nil, codec, nil, newMetricsStore(""),
 			); err != nil {
 				t.Fatal(err)
 			}
@@ -438,7 +438,7 @@ func TestCTP2ExecuteRequestTransformsProviderBoundaryAndRecordsMetrics(t *testin
 	var output bytes.Buffer
 	if err := executeRequest(
 		t.Context(), t.Context(), request, nil, "session", provider, &output,
-		newDiagnostics(&bytes.Buffer{}), time.Now, nil, codec, store,
+		newDiagnostics(&bytes.Buffer{}), time.Now, nil, codec, nil, store,
 	); err != nil {
 		t.Fatal(err)
 	}

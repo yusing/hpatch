@@ -16,10 +16,11 @@ import (
 const codexTurnMetadataHeader = "x-codex-turn-metadata"
 
 type codexTurnMetadata struct {
-	RequestKind string                     `json:"request_kind"`
-	TurnID      string                     `json:"turn_id"`
-	Directories map[string]json.RawMessage `json:"workspaces"`
-	Compaction  json.RawMessage            `json:"compaction"`
+	RequestKind  string                     `json:"request_kind"`
+	TurnID       string                     `json:"turn_id"`
+	SubagentKind string                     `json:"subagent_kind"`
+	Directories  map[string]json.RawMessage `json:"workspaces"`
+	Compaction   json.RawMessage            `json:"compaction"`
 }
 
 func decodeCodexTurnMetadata(headers http.Header) (codexTurnMetadata, bool) {
