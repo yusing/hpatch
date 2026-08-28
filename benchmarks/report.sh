@@ -48,8 +48,20 @@ for file in "$results" "$hpatch_metrics"; do
 	fi
 done
 has_control=$(jq -s 'any(.arm == "control" or .arm == "hpatch-mentor")' "$results")
+has_fresh_control=$(jq -s '
+	any(.arm == "hpatch-mentor") or
+	any(.arm == "control" and (has("imported_control_baseline") | not))
+' "$results")
 if [[ $has_control == true && ! -s $control_metrics ]]; then
 	printf 'report.sh: required benchmark artifact is missing or empty: %s\n' "$control_metrics" >&2
+	exit 1
+fi
+if [[ ! -s $hpatch_capture ]]; then
+	printf 'report.sh: benchmark capture is missing or empty: %s\n' "$hpatch_capture" >&2
+	exit 1
+fi
+if [[ $has_fresh_control == true && ! -s $control_capture ]]; then
+	printf 'report.sh: benchmark capture is missing or empty: %s\n' "$control_capture" >&2
 	exit 1
 fi
 if [[ -d $issue_reports_directory ]]; then
@@ -154,12 +166,6 @@ if [[ $mentor_comparison == true ]]; then
 	fi
 	control_events+=("${control_child_events[@]}")
 	hpatch_events+=("${hpatch_child_events[@]}")
-	for capture in "$control_capture" "$hpatch_capture"; do
-		if [[ ! -s $capture ]]; then
-			printf 'report.sh: Mentor Handoff capture is missing or empty: %s\n' "$capture" >&2
-			exit 1
-		fi
-	done
 fi
 if ((${#hpatch_root_events[@]} == 0)) || [[ $has_control == true && ${#control_root_events[@]} == 0 ]]; then
 	printf 'report.sh: command artifacts are incomplete for task %s\n' "$task_id" >&2
@@ -168,22 +174,28 @@ fi
 if [[ $has_control == true ]]; then
 	python3 "$benchmark_root/analyze_commands.py" "${control_events[@]}" >"$analysis_dir/control.json"
 	if [[ $mentor_comparison == false ]]; then
-		python3 "$benchmark_root/analyze_cache.py" \
-			"$results" "$baseline_arm" "$control_log" >"$analysis_dir/control-cache.json"
+		if [[ $has_fresh_control == true ]]; then
+			python3 "$benchmark_root/analyze_capture.py" usage \
+				"$control_capture" "$results" "$baseline_arm" >"$analysis_dir/control-cache.json"
+		else
+			control_runs_expected=$(jq -s --arg arm "$baseline_arm" '[.[] | select(.arm == $arm)] | length' "$results")
+			jq -cn --arg arm "$baseline_arm" --argjson runs "$control_runs_expected" \
+				'{arm: $arm, available: false, runs: $runs}' >"$analysis_dir/control-cache.json"
+		fi
 	fi
 fi
 python3 "$benchmark_root/analyze_commands.py" "${hpatch_events[@]}" >"$analysis_dir/hpatch.json"
 if [[ $mentor_comparison == true ]]; then
-	python3 "$benchmark_root/analyze_mentor_capture.py" \
+	python3 "$benchmark_root/analyze_capture.py" mentor \
 		"$control_capture" "$results" "$baseline_arm" "$parent_model" "$model" \
 		"$analysis_dir/control.json" "${control_child_proofs[@]}" >"$analysis_dir/control-capture.json"
-	python3 "$benchmark_root/analyze_mentor_capture.py" \
+	python3 "$benchmark_root/analyze_capture.py" mentor \
 		"$hpatch_capture" "$results" "$treatment_arm" "$parent_model" "$model" \
 		"$analysis_dir/hpatch.json" "${hpatch_child_proofs[@]}" >"$analysis_dir/hpatch-capture.json"
 fi
 if [[ $mentor_comparison == false ]]; then
-	python3 "$benchmark_root/analyze_cache.py" \
-		"$results" "$treatment_arm" "$hpatch_log" >"$analysis_dir/hpatch-cache.json"
+	python3 "$benchmark_root/analyze_capture.py" usage \
+		"$hpatch_capture" "$results" "$treatment_arm" >"$analysis_dir/hpatch-cache.json"
 fi
 if [[ $exact_evidence_enabled == true ]]; then
 	python3 "$benchmark_root/analyze_hpatch_evidence.py" \
@@ -270,14 +282,25 @@ hpatch_rejections=$(jq -r '.hpatch_calls.rejected' "$hpatch_metrics")
 hpatch_successes=$(jq -r '.hpatch_calls.successful' "$hpatch_metrics")
 diagnostic_tokens=$(jq -r '.hpatch_calls.diagnostic_input_tokens' "$hpatch_metrics")
 control_requests=0
-if [[ $has_control == true ]]; then
-	control_requests=$(jq -r '.requests.started' "$control_metrics")
-fi
-hpatch_requests=$(jq -r '.requests.started' "$hpatch_metrics")
+hpatch_requests=0
 control_input=$(jq -sr --arg arm "$baseline_arm" '[.[] | select(.arm == $arm) | .agent.usage.input_tokens] | add // 0' "$results")
 hpatch_input=$(jq -sr --arg arm "$treatment_arm" '[.[] | select(.arm == $arm) | .agent.usage.input_tokens] | add // 0' "$results")
 control_output=$(jq -sr --arg arm "$baseline_arm" '[.[] | select(.arm == $arm) | .agent.usage.output_tokens] | add // 0' "$results")
 hpatch_output=$(jq -sr --arg arm "$treatment_arm" '[.[] | select(.arm == $arm) | .agent.usage.output_tokens] | add // 0' "$results")
+if [[ $mentor_comparison == false ]]; then
+	hpatch_requests=$(jq -r '.usage.requests' "$analysis_dir/hpatch-cache.json")
+	hpatch_input=$(jq -r '.usage.input_tokens' "$analysis_dir/hpatch-cache.json")
+	hpatch_output=$(jq -r '.usage.output_tokens' "$analysis_dir/hpatch-cache.json")
+	if [[ $has_control == true ]]; then
+		if [[ $has_fresh_control == true ]]; then
+			control_requests=$(jq -r '.usage.requests' "$analysis_dir/control-cache.json")
+			control_input=$(jq -r '.usage.input_tokens' "$analysis_dir/control-cache.json")
+			control_output=$(jq -r '.usage.output_tokens' "$analysis_dir/control-cache.json")
+		else
+			control_requests=$(jq -r '.requests.started' "$control_metrics")
+		fi
+	fi
+fi
 control_passes=$(jq -sr --arg arm "$baseline_arm" '[.[] | select(.arm == $arm and .task_pass)] | length' "$results")
 hpatch_passes=$(jq -sr --arg arm "$treatment_arm" '[.[] | select(.arm == $arm and .task_pass)] | length' "$results")
 control_runs=$(jq -sr --arg arm "$baseline_arm" '[.[] | select(.arm == $arm)] | length' "$results")
@@ -799,9 +822,7 @@ cache_rate_delta() {
 	if [[ $exact_evidence_enabled == true ]]; then
 		printf ', and exact Hpatch attempt payloads, reports, and diagnostics in `hpatch-exact-evidence.jsonl`'
 	fi
-	if [[ $mentor_comparison == true ]]; then
-		printf ', with sanitized Codex-facing and provider-facing request captures in `captures/`'
-	fi
+	printf ', with sanitized Codex-facing and provider-facing request captures in `captures/`'
 	printf ', plus detailed `artifacts/`. '
 	if [[ $has_control != true ]]; then
 		printf 'This diagnostic run has no control arm. '

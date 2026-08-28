@@ -212,20 +212,26 @@ Mentor Handoff mode uses a separate controlled difference: both arms use the Hpa
 the same static Sol-parent prompt, and the same locked Luna/Terra-child role and prompt, while only
 the `hpatch-mentor` router receives `--mentor-handoff`.
 
-Both Mentor Handoff arms use the same benchmark-only capturer executable on two HTTP boundaries:
+Every fresh benchmark arm uses the same benchmark-only capturer executable on two HTTP boundaries:
 Codex → front capturer → router → back capturer → provider. Per-arm isolated networks prevent Codex
 from reaching the router directly and prevent the router from reaching the provider directly. The
 front side records the restored tool-call identities visible to Codex; the back side records the
 actual provider-bound model and provider usage. Both sides preserve request and response body bytes and
 stream responses without waiting for completion. Durable JSONL records contain correlation IDs,
-thread classification, model, usage, status, and tool-call IDs, but no credentials, headers, prompt
-content, tool arguments, command output, or response text.
+local request sequence, provider-attempt order and duration, thread classification, model, usage, status, and tool-call IDs,
+but no credentials, headers, prompt content, tool arguments, command output, or response text.
 
-The front adds a private per-request correlation header, the router forwards it, and the back removes
-it before provider forwarding. The report requires each front request to match its back request by that ID,
-requires every proved parent and child thread to reach only the models allowed by its arm, and joins
-each structural-loop tool-call ID to exactly one provider model. Missing, duplicated, incomplete, or
-ambiguous capture fails the report instead of assigning a loop by request order or treating it as zero.
+The front adds a private per-request correlation header and local sequence, the router forwards the
+header, and the back removes it before provider forwarding. The report requires each front request
+to match one or more uniquely ordered provider attempts by identity and sequence. Recoverable
+non-success attempts may omit usage, while the final attempt must provide it. The report derives
+provider-attempt counts, usage, and eligible-prefix cache attribution from that joined evidence for paired, CTP-only,
+Mentor Handoff, and freshly measured single-arm runs. Hpatch-only and diagnostic runs do not require
+a nonexistent capture for their imported historical control. Missing final usage and missing,
+duplicated, incomplete, or ambiguous provider attempts fail the report instead of treating them as zero.
+
+Mentor Handoff additionally requires every proved parent and child thread to reach only the models
+allowed by its arm and joins each structural-loop tool-call ID to exactly one provider model.
 
 The control router forwards requests without tool rewriting. The treatment router removes the
 Code Mode surfaces displaced by the routed tools, exposes `functions.hpatch` and
@@ -512,16 +518,16 @@ $run_dir/instructions/hpatch.md
 $run_dir/instructions/control-to-hpatch-request.diff
 $run_dir/artifacts/$task_id/$run_id/child-events.jsonl  # Mentor Handoff mode
 $run_dir/artifacts/$task_id/$run_id/child-proof.json   # Mentor Handoff mode
-$run_dir/captures/control.jsonl                        # front/back Hpatch baseline capture
-$run_dir/captures/hpatch.jsonl                         # front/back Mentor treatment capture
+$run_dir/captures/control.jsonl                        # front/back first-arm capture in two-arm modes
+$run_dir/captures/hpatch.jsonl                         # front/back Hpatch/active/treatment capture
 ```
 
-The retained router logs include per-logical-request provider token counts. They support
-cache-miss attribution without retaining prompts, tool definitions, input history, or cache keys.
-The report joins those request records to each measured session. It preserves the provider's
-aggregate uncached-input total, then attributes it between cold or newly appended input and misses
-within the immediately preceding request's eligible prefix. Historical imported controls whose
-logs predate request-level token attribution show these derived values as unavailable.
+The provider-facing captures include per-logical-request provider token counts without retaining
+prompts, tool definitions, input history, or cache keys. The report joins those records to each
+measured thread and preserves the provider's aggregate uncached-input total, then attributes it
+between cold or newly appended input and misses within the immediately preceding captured request's
+eligible prefix. Historical imported controls without capture evidence show these derived values as
+unavailable.
 
 Each concurrent attempt first writes its own `result.json`. After a complete run,
 the parent shell sorts and merges `2 * repetitions` paired or CTP
@@ -618,8 +624,9 @@ for active representations: whole-request native and compact token and byte esti
 instruction carriers; encoded-string, visible-line-reference, and content-local dictionary counts;
 codec operations, time, and decode failures;
 plus native and compact assistant-output estimates taken from each completed response. Session
-records retain bounded individual provider requests and CTP input/output observations. A dropped
-counter makes retention truncation fail the CTP report instead of silently changing an aggregate.
+records retain bounded CTP input/output observations. A dropped counter makes CTP representation
+truncation fail the report instead of silently changing an aggregate. Per-request provider evidence
+comes from the sanitized capturer artifacts.
 
 In CTP-only mode `control-metrics.json` contains the fresh native sessions from the native-protocol
 Hpatch router. `hpatch-metrics.json` contains the fresh active sessions. The report
@@ -683,9 +690,9 @@ streaming counts come from terminal `response.output_text.done` events rather th
 projections. These same-request estimates use the repository GPT-5 estimator.
 
 The operational section reports total, cached, and uncached input, output and reasoning output,
-requests, and wall time from router-observed provider usage. It includes every individual attempt and
-provider request. Missing usage, a dropped bounded observation, or a per-request provider total that
-does not exactly reconcile with its session aggregate fails the report. A correctness-first Pareto
+requests, and wall time from provider-facing capture. It includes every individual attempt and
+provider request. Missing usage, a dropped CTP observation, or a captured provider total that does
+not exactly reconcile with its router session aggregate fails the report. A correctness-first Pareto
 label is `better` or `worse` only when one condition dominates wall time,
 input, output, and requests; tradeoffs are `mixed`. Token components are the cost basis, but the
 repository has no authoritative pricing table, so the report does not fabricate dollar cost.

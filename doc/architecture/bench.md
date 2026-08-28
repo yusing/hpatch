@@ -15,17 +15,17 @@ keys, response delivery, and provider usage. Its selected mode determines whethe
 existing hpatch transformer participates. Pass-through does not duplicate forwarding or
 introduce another provider client. The metrics endpoint is the executable mode-label
 boundary used to prevent arm misconfiguration.
-The Mentor benchmark owns a separate capturer in `benchmarks/capturer`. One instance places a
+The benchmark owns a separate capturer in `benchmarks/capturer`. One instance places a
 front proxy before each router and a back proxy before the provider. It forwards request and response
 body bytes unchanged,
-streams responses as they arrive, and emits only the content-free correlation, model, usage, status,
-and tool-call fields needed for benchmark proof. A private correlation header exists only between
+streams responses as they arrive, and emits only the content-free correlation, local sequence,
+provider-attempt ordinal, duration, model, usage, status, and tool-call fields needed for benchmark proof. A private correlation header exists only between
 the two capturer boundaries and is removed before the provider. Per-arm Compose networks make both proxy crossings
 mandatory. The router's provider-base configuration selects the back proxy but does not move
 authentication, retry, cache-key, or response-transformation ownership out of the router.
-The terminal request log is the request-level cache-attribution boundary: it combines the one
-terminal provider usage observation with the request and session already owned by that lifecycle.
-Aggregate metrics remain unchanged.
+The provider-facing capture is the benchmark's provider-attempt usage and cache-attribution boundary.
+Router metrics retain operator-facing lifecycle and aggregate usage, Hpatch evidence, and CTP
+representation measurements; they do not retain a second benchmark-only provider-request ledger.
 
 Hidden destinations cross into an agent-mutated workspace only through a pinned `*os.Root`
 after change capture. A pre-existing destination, lexical escape, or symlink escape fails

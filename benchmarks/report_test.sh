@@ -166,17 +166,39 @@ cat >"$fixture/results.jsonl" <<'JSON'
 JSON
 
 cat >"$fixture/control-router.log" <<'LOG'
-control-1 | msg="Responses request finished" request_id=1 session_id=control-session usage_observed=true input_tokens=400 cached_input_tokens=0 uncached_input_tokens=400
-control-1 | msg="Responses request finished" request_id=2 session_id=control-session usage_observed=true input_tokens=700 cached_input_tokens=256 uncached_input_tokens=444
-control-1 | msg="Responses request finished" request_id=3 session_id=control-session usage_observed=true input_tokens=1000 cached_input_tokens=640 uncached_input_tokens=360
+control-1 | msg="Responses request finished" request_id=1 session_id=control-session usage_observed=true
+control-1 | msg="Responses request finished" request_id=2 session_id=control-session usage_observed=true
+control-1 | msg="Responses request finished" request_id=3 session_id=control-session usage_observed=true
 LOG
 cat >"$fixture/hpatch-router.log" <<'LOG'
-hpatch-1 | msg="Responses request finished" request_id=1 session_id=hpatch-session usage_observed=true input_tokens=500 cached_input_tokens=0 uncached_input_tokens=500
-hpatch-1 | msg="Responses request finished" request_id=2 session_id=hpatch-session usage_observed=true input_tokens=800 cached_input_tokens=384 uncached_input_tokens=416
-hpatch-1 | msg="Responses request finished" request_id=3 session_id=hpatch-session usage_observed=true input_tokens=1100 cached_input_tokens=768 uncached_input_tokens=332
-hpatch-1 | msg="Responses request finished" request_id=4 session_id=hpatch-session usage_observed=true input_tokens=1400 cached_input_tokens=1024 uncached_input_tokens=376
-hpatch-1 | msg="Responses request finished" request_id=5 session_id=hpatch-session usage_observed=true input_tokens=1700 cached_input_tokens=1280 uncached_input_tokens=420
+hpatch-1 | msg="Responses request finished" request_id=1 session_id=hpatch-session usage_observed=true
+hpatch-1 | msg="Responses request finished" request_id=2 session_id=hpatch-session usage_observed=true
+hpatch-1 | msg="Responses request finished" request_id=3 session_id=hpatch-session usage_observed=true
+hpatch-1 | msg="Responses request finished" request_id=4 session_id=hpatch-session usage_observed=true
+hpatch-1 | msg="Responses request finished" request_id=5 session_id=hpatch-session usage_observed=true
 LOG
+
+mkdir -p "$fixture/captures"
+cat >"$fixture/captures/control.jsonl" <<'JSON'
+{"schema_version":2,"boundary":"codex","capture_id":"control-1","request_sequence":1,"thread_id":"control-session","request_model":"model","status_code":200,"response_complete":true,"response_status":"completed","duration_ms":31}
+{"schema_version":2,"boundary":"provider","provider_attempt":1,"capture_id":"control-1","request_sequence":1,"thread_id":"control-session","request_model":"model","status_code":200,"response_complete":true,"response_status":"completed","duration_ms":30,"usage":{"input_tokens":400,"cached_input_tokens":0,"output_tokens":30,"reasoning_tokens":3}}
+{"schema_version":2,"boundary":"codex","capture_id":"control-2","request_sequence":2,"thread_id":"control-session","request_model":"model","status_code":200,"response_complete":true,"response_status":"completed","duration_ms":41}
+{"schema_version":2,"boundary":"provider","provider_attempt":1,"capture_id":"control-2","request_sequence":2,"thread_id":"control-session","request_model":"model","status_code":200,"response_complete":true,"response_status":"completed","duration_ms":40,"usage":{"input_tokens":700,"cached_input_tokens":256,"output_tokens":30,"reasoning_tokens":3}}
+{"schema_version":2,"boundary":"codex","capture_id":"control-3","request_sequence":3,"thread_id":"control-session","request_model":"model","status_code":200,"response_complete":true,"response_status":"completed","duration_ms":51}
+{"schema_version":2,"boundary":"provider","provider_attempt":1,"capture_id":"control-3","request_sequence":3,"thread_id":"control-session","request_model":"model","status_code":200,"response_complete":true,"response_status":"completed","duration_ms":50,"usage":{"input_tokens":1000,"cached_input_tokens":640,"output_tokens":40,"reasoning_tokens":4}}
+JSON
+cat >"$fixture/captures/hpatch.jsonl" <<'JSON'
+{"schema_version":2,"boundary":"codex","capture_id":"hpatch-1","request_sequence":1,"thread_id":"hpatch-session","request_model":"model","status_code":200,"response_complete":true,"response_status":"completed","duration_ms":26}
+{"schema_version":2,"boundary":"provider","provider_attempt":1,"capture_id":"hpatch-1","request_sequence":1,"thread_id":"hpatch-session","request_model":"model","status_code":200,"response_complete":true,"response_status":"completed","duration_ms":25,"usage":{"input_tokens":500,"cached_input_tokens":0,"output_tokens":16,"reasoning_tokens":2}}
+{"schema_version":2,"boundary":"codex","capture_id":"hpatch-2","request_sequence":2,"thread_id":"hpatch-session","request_model":"model","status_code":200,"response_complete":true,"response_status":"completed","duration_ms":31}
+{"schema_version":2,"boundary":"provider","provider_attempt":1,"capture_id":"hpatch-2","request_sequence":2,"thread_id":"hpatch-session","request_model":"model","status_code":200,"response_complete":true,"response_status":"completed","duration_ms":30,"usage":{"input_tokens":800,"cached_input_tokens":384,"output_tokens":16,"reasoning_tokens":2}}
+{"schema_version":2,"boundary":"codex","capture_id":"hpatch-3","request_sequence":3,"thread_id":"hpatch-session","request_model":"model","status_code":200,"response_complete":true,"response_status":"completed","duration_ms":36}
+{"schema_version":2,"boundary":"provider","provider_attempt":1,"capture_id":"hpatch-3","request_sequence":3,"thread_id":"hpatch-session","request_model":"model","status_code":200,"response_complete":true,"response_status":"completed","duration_ms":35,"usage":{"input_tokens":1100,"cached_input_tokens":768,"output_tokens":16,"reasoning_tokens":2}}
+{"schema_version":2,"boundary":"codex","capture_id":"hpatch-4","request_sequence":4,"thread_id":"hpatch-session","request_model":"model","status_code":200,"response_complete":true,"response_status":"completed","duration_ms":41}
+{"schema_version":2,"boundary":"provider","provider_attempt":1,"capture_id":"hpatch-4","request_sequence":4,"thread_id":"hpatch-session","request_model":"model","status_code":200,"response_complete":true,"response_status":"completed","duration_ms":40,"usage":{"input_tokens":1400,"cached_input_tokens":1024,"output_tokens":16,"reasoning_tokens":3}}
+{"schema_version":2,"boundary":"codex","capture_id":"hpatch-5","request_sequence":5,"thread_id":"hpatch-session","request_model":"model","status_code":200,"response_complete":true,"response_status":"completed","duration_ms":46}
+{"schema_version":2,"boundary":"provider","provider_attempt":1,"capture_id":"hpatch-5","request_sequence":5,"thread_id":"hpatch-session","request_model":"model","status_code":200,"response_complete":true,"response_status":"completed","duration_ms":45,"usage":{"input_tokens":1700,"cached_input_tokens":1280,"output_tokens":16,"reasoning_tokens":3}}
+JSON
 
 cat >"$fixture/control-metrics.json" <<'JSON'
 {"requests":{"started":3},"hpatch_calls":{"successful":0,"rejected":0,"diagnostic_input_tokens":0},"sessions":[{"session_id":"control-session","hpatch_calls":{"successful":0,"rejected":0,"diagnostic_input_tokens":0}}]}
@@ -323,11 +345,28 @@ jq -e -s '
 	.[2].rendered_report == "done\nrefs:\n  1:aaaa final row\n"
 ' "$fixture/hpatch-exact-evidence.jsonl" >/dev/null
 
+imported="$fixture/imported-control"
+mkdir -p "$imported/captures"
+cp "$fixture/control-metrics.json" "$fixture/hpatch-metrics.json" \
+	"$fixture/control-router.log" "$fixture/hpatch-router.log" "$imported/"
+cp -a "$fixture/artifacts" "$imported/"
+cp "$fixture/captures/hpatch.jsonl" "$imported/captures/hpatch.jsonl"
+jq -c 'if .arm == "control" then .imported_control_baseline = {summary:"baseline/summary.md"} else . end' \
+	"$fixture/results.jsonl" >"$imported/results.jsonl"
+jq '.benchmark_mode = "hpatch-only" | .exact_hpatch_evidence_enabled = false | .report_issue_enabled = false' \
+	"$fixture/benchmark-config.json" >"$imported/benchmark-config.json"
+bash "$benchmark_root/report.sh" "$imported" >/dev/null
+grep -Fq '| Cold/new uncached input tokens | — | 1700 | — |' "$imported/summary.md"
+grep -Fq '| Model requests | 3 | 5 | 2 |' "$imported/summary.md"
+grep -Fq 'Control values are imported from `baseline/summary.md`; this run executed only Hpatch.' \
+	"$imported/summary.md"
+
 mentor_backup="$fixture/mentor-backup"
 mkdir "$mentor_backup"
 cp "$fixture/benchmark-config.json" "$fixture/results.jsonl" \
 	"$fixture/control-metrics.json" "$fixture/hpatch-metrics.json" \
 	"$fixture/hpatch-router.log" "$mentor_backup/"
+cp -a "$fixture/captures" "$mentor_backup/captures"
 
 cat >"$fixture/benchmark-config.json" <<'JSON'
 {"benchmark_mode":"mentor-handoff","codex_release":"0.150.1","mentor_handoff":{"child_prompt_sha256":"fixed-prompt-sha"},"report_issue_enabled":false,"exact_hpatch_evidence_enabled":false}
@@ -388,20 +427,20 @@ for mentor_artifact in \
 {"type":"item.completed","item":{"type":"agent_message","text":"child finished"}}
 JSON
 done
-mkdir "$fixture/captures"
+mkdir -p "$fixture/captures"
 cat >"$fixture/captures/control.jsonl" <<'JSON'
-{"schema_version":1,"boundary":"codex","capture_id":"baseline-parent","request_id":"reused-client-request","thread_id":"control-session","request_model":"gpt-5.6-sol","status_code":200,"response_complete":true,"response_status":"completed"}
-{"schema_version":1,"boundary":"provider","capture_id":"baseline-parent","request_id":"reused-client-request","thread_id":"control-session","request_model":"gpt-5.6-sol","status_code":200,"response_complete":true,"response_status":"completed","usage":{"input_tokens":500,"cached_input_tokens":300,"output_tokens":40,"reasoning_tokens":10}}
-{"schema_version":1,"boundary":"codex","capture_id":"baseline-child-request","request_id":"reused-client-request","thread_id":"baseline-child","subagent":"collab_spawn","request_model":"gpt-5.6-luna","status_code":200,"response_complete":true,"response_status":"completed","tool_call_ids":["baseline-call"]}
-{"schema_version":1,"boundary":"provider","capture_id":"baseline-child-request","request_id":"reused-client-request","thread_id":"baseline-child","subagent":"collab_spawn","request_model":"gpt-5.6-luna","status_code":200,"response_complete":true,"response_status":"completed","usage":{"input_tokens":2000,"cached_input_tokens":1200,"output_tokens":160,"reasoning_tokens":70},"tool_call_ids":["baseline-call"]}
+{"schema_version":2,"boundary":"codex","capture_id":"baseline-parent","request_sequence":1,"request_id":"reused-client-request","thread_id":"control-session","request_model":"gpt-5.6-sol","status_code":200,"response_complete":true,"response_status":"completed"}
+{"schema_version":2,"boundary":"provider","provider_attempt":1,"capture_id":"baseline-parent","request_sequence":1,"request_id":"reused-client-request","thread_id":"control-session","request_model":"gpt-5.6-sol","status_code":200,"response_complete":true,"response_status":"completed","usage":{"input_tokens":500,"cached_input_tokens":300,"output_tokens":40,"reasoning_tokens":10}}
+{"schema_version":2,"boundary":"codex","capture_id":"baseline-child-request","request_sequence":2,"request_id":"reused-client-request","thread_id":"baseline-child","subagent":"collab_spawn","request_model":"gpt-5.6-luna","status_code":200,"response_complete":true,"response_status":"completed","tool_call_ids":["baseline-call"]}
+{"schema_version":2,"boundary":"provider","provider_attempt":1,"capture_id":"baseline-child-request","request_sequence":2,"request_id":"reused-client-request","thread_id":"baseline-child","subagent":"collab_spawn","request_model":"gpt-5.6-luna","status_code":200,"response_complete":true,"response_status":"completed","usage":{"input_tokens":2000,"cached_input_tokens":1200,"output_tokens":160,"reasoning_tokens":70},"tool_call_ids":["baseline-call"]}
 JSON
 cat >"$fixture/captures/hpatch.jsonl" <<'JSON'
-{"schema_version":1,"boundary":"codex","capture_id":"treatment-parent","request_id":"reused-client-request","thread_id":"hpatch-session","request_model":"gpt-5.6-sol","status_code":200,"response_complete":true,"response_status":"completed"}
-{"schema_version":1,"boundary":"provider","capture_id":"treatment-parent","request_id":"reused-client-request","thread_id":"hpatch-session","request_model":"gpt-5.6-sol","status_code":200,"response_complete":true,"response_status":"completed","usage":{"input_tokens":600,"cached_input_tokens":350,"output_tokens":50,"reasoning_tokens":20}}
-{"schema_version":1,"boundary":"codex","capture_id":"treatment-mentor","request_id":"reused-client-request","thread_id":"treatment-child","subagent":"collab_spawn","request_model":"gpt-5.6-luna","status_code":200,"response_complete":true,"response_status":"completed","tool_call_ids":["treatment-call"]}
-{"schema_version":1,"boundary":"provider","capture_id":"treatment-mentor","request_id":"reused-client-request","thread_id":"treatment-child","subagent":"collab_spawn","request_model":"gpt-5.6-sol","status_code":200,"response_complete":true,"response_status":"completed","usage":{"input_tokens":400,"cached_input_tokens":250,"output_tokens":50,"reasoning_tokens":30},"tool_call_ids":["treatment-call"]}
-{"schema_version":1,"boundary":"codex","capture_id":"treatment-actual","request_id":"reused-client-request","thread_id":"treatment-child","subagent":"collab_spawn","request_model":"gpt-5.6-luna","status_code":200,"response_complete":true,"response_status":"completed"}
-{"schema_version":1,"boundary":"provider","capture_id":"treatment-actual","request_id":"reused-client-request","thread_id":"treatment-child","subagent":"collab_spawn","request_model":"gpt-5.6-luna","status_code":200,"response_complete":true,"response_status":"completed","usage":{"input_tokens":2000,"cached_input_tokens":1200,"output_tokens":150,"reasoning_tokens":70}}
+{"schema_version":2,"boundary":"codex","capture_id":"treatment-parent","request_sequence":1,"request_id":"reused-client-request","thread_id":"hpatch-session","request_model":"gpt-5.6-sol","status_code":200,"response_complete":true,"response_status":"completed"}
+{"schema_version":2,"boundary":"provider","provider_attempt":1,"capture_id":"treatment-parent","request_sequence":1,"request_id":"reused-client-request","thread_id":"hpatch-session","request_model":"gpt-5.6-sol","status_code":200,"response_complete":true,"response_status":"completed","usage":{"input_tokens":600,"cached_input_tokens":350,"output_tokens":50,"reasoning_tokens":20}}
+{"schema_version":2,"boundary":"codex","capture_id":"treatment-mentor","request_sequence":2,"request_id":"reused-client-request","thread_id":"treatment-child","subagent":"collab_spawn","request_model":"gpt-5.6-luna","status_code":200,"response_complete":true,"response_status":"completed","tool_call_ids":["treatment-call"]}
+{"schema_version":2,"boundary":"provider","provider_attempt":1,"capture_id":"treatment-mentor","request_sequence":2,"request_id":"reused-client-request","thread_id":"treatment-child","subagent":"collab_spawn","request_model":"gpt-5.6-sol","status_code":200,"response_complete":true,"response_status":"completed","usage":{"input_tokens":400,"cached_input_tokens":250,"output_tokens":50,"reasoning_tokens":30},"tool_call_ids":["treatment-call"]}
+{"schema_version":2,"boundary":"codex","capture_id":"treatment-actual","request_sequence":3,"request_id":"reused-client-request","thread_id":"treatment-child","subagent":"collab_spawn","request_model":"gpt-5.6-luna","status_code":200,"response_complete":true,"response_status":"completed"}
+{"schema_version":2,"boundary":"provider","provider_attempt":1,"capture_id":"treatment-actual","request_sequence":3,"request_id":"reused-client-request","thread_id":"treatment-child","subagent":"collab_spawn","request_model":"gpt-5.6-luna","status_code":200,"response_complete":true,"response_status":"completed","usage":{"input_tokens":2000,"cached_input_tokens":1200,"output_tokens":150,"reasoning_tokens":70}}
 JSON
 jq '. + {
 	"total":{"input_tokens":2500,"uncached_input_tokens":1000,"output_tokens":200,"reasoning_tokens":80},
@@ -515,38 +554,68 @@ mv "$fixture/valid-hpatch-capture.jsonl" "$fixture/captures/hpatch.jsonl"
 cp "$mentor_backup/benchmark-config.json" "$mentor_backup/results.jsonl" \
 	"$mentor_backup/control-metrics.json" "$mentor_backup/hpatch-metrics.json" \
 	"$mentor_backup/hpatch-router.log" "$fixture/"
+rm -rf "$fixture/captures"
+cp -a "$mentor_backup/captures" "$fixture/captures"
 rm -rf "$artifact_root/task-hpatch-r001" "$artifact_root/task-hpatch-mentor-r001"
 mv "$artifact_root/task-hpatch-original-r001" "$artifact_root/task-hpatch-r001"
 rm -f "$mentor_metrics" "$mentor_log"
 
-python3 "$benchmark_root/analyze_cache.py" \
-	"$fixture/results.jsonl" hpatch "$fixture/hpatch-router.log" |
+python3 "$benchmark_root/analyze_capture.py" usage \
+	"$fixture/captures/hpatch.jsonl" "$fixture/results.jsonl" hpatch |
 	jq -e '
-		.available and .request_count == 5 and
-		.uncached_input_tokens == 2044 and
+		.available and .usage.requests == 5 and
+		.usage.uncached_input_tokens == 2044 and
 		.cold_or_new_uncached_input_tokens == 1700 and
 		.eligible_prefix_miss_tokens == 344 and
 		(.per_run[0].requests[1].eligible_prefix_miss_tokens == 116)
 	' >/dev/null
 
-cat >"$fixture/imported-results.jsonl" <<'JSON'
-{"arm":"control","imported_control_baseline":{"summary":"old/summary.md"},"agent":{"thread_id":"legacy-control","usage":{"input_tokens":100,"cached_input_tokens":0}}}
-JSON
-cat >"$fixture/legacy-router.log" <<'LOG'
-control-1 | msg="Responses request finished" request_id=1 session_id=legacy-control usage_observed=true
-LOG
-python3 "$benchmark_root/analyze_cache.py" \
-	"$fixture/imported-results.jsonl" control "$fixture/legacy-router.log" |
-	jq -e '.available == false and .runs == 1' >/dev/null
-
-cat >"$fixture/incomplete-router.log" <<'LOG'
-hpatch-1 | msg="Responses request finished" request_id=1 session_id=hpatch-session usage_observed=true input_tokens=500 cached_input_tokens=0
-LOG
-if python3 "$benchmark_root/analyze_cache.py" \
-	"$fixture/results.jsonl" hpatch "$fixture/incomplete-router.log" 2>/dev/null; then
-	printf 'cache analysis accepted incomplete current router attribution\n' >&2
+cp "$fixture/captures/hpatch.jsonl" "$fixture/incomplete-capture.jsonl"
+jq -c 'if .boundary == "provider" and .capture_id == "hpatch-1" then del(.usage) else . end' \
+	"$fixture/incomplete-capture.jsonl" >"$fixture/captures/hpatch.jsonl"
+if python3 "$benchmark_root/analyze_capture.py" usage \
+	"$fixture/captures/hpatch.jsonl" "$fixture/results.jsonl" hpatch 2>/dev/null; then
+	printf 'capture analysis accepted missing provider usage\n' >&2
 	exit 1
 fi
+mv "$fixture/incomplete-capture.jsonl" "$fixture/captures/hpatch.jsonl"
+for model_case in missing mismatched; do
+	case $model_case in
+	missing)
+		model_filter='del(.request_model)'
+		;;
+	mismatched)
+		model_filter='.request_model = "different-model"'
+		;;
+	esac
+	jq -c \
+		"if .boundary == \"provider\" and .capture_id == \"hpatch-1\" then $model_filter else . end" \
+		"$fixture/captures/hpatch.jsonl" >"$fixture/model-capture.jsonl"
+	if python3 "$benchmark_root/analyze_capture.py" usage \
+		"$fixture/model-capture.jsonl" "$fixture/results.jsonl" hpatch 2>/dev/null; then
+		printf 'capture analysis accepted %s provider model evidence\n' "$model_case" >&2
+		exit 1
+	fi
+done
+cp "$fixture/captures/hpatch.jsonl" "$fixture/duplicate-capture.jsonl"
+grep -m1 -F '"boundary":"provider"' "$fixture/captures/hpatch.jsonl" \
+	>>"$fixture/duplicate-capture.jsonl"
+if python3 "$benchmark_root/analyze_capture.py" usage \
+	"$fixture/duplicate-capture.jsonl" "$fixture/results.jsonl" hpatch 2>/dev/null; then
+	printf 'capture analysis accepted duplicate provider evidence\n' >&2
+	exit 1
+fi
+jq -c 'if .boundary == "provider" and .capture_id == "hpatch-1" then .provider_attempt = 2 else . end' \
+	"$fixture/captures/hpatch.jsonl" >"$fixture/retry-capture.jsonl"
+printf '%s\n' '{"schema_version":2,"boundary":"provider","provider_attempt":1,"capture_id":"hpatch-1","request_sequence":1,"thread_id":"hpatch-session","request_model":"model","status_code":429,"response_complete":true,"response_status":"http_error","duration_ms":10}' \
+	>>"$fixture/retry-capture.jsonl"
+python3 "$benchmark_root/analyze_capture.py" usage \
+	"$fixture/retry-capture.jsonl" "$fixture/results.jsonl" hpatch |
+	jq -e '
+		.usage.requests == 6 and .logical_request_count == 5 and
+		.usage.input_tokens == 5500 and .per_run[0].requests[0].usage == null and
+		.per_run[0].requests[1].usage.input_tokens == 500
+	' >/dev/null
 
 glob_analysis="$fixture/glob-analysis"
 mkdir "$glob_analysis"
@@ -832,6 +901,7 @@ mkdir -p "$disabled"
 cp "$fixture/results.jsonl" "$fixture/hpatch-metrics.json" "$fixture/control-metrics.json" "$disabled/"
 cp "$fixture/hpatch-router.log" "$fixture/control-router.log" "$disabled/"
 cp -a "$fixture/artifacts" "$disabled/"
+cp -a "$fixture/captures" "$disabled/"
 jq '.exact_hpatch_evidence_enabled = false | .report_issue_enabled = false' \
 	"$fixture/benchmark-config.json" >"$disabled/benchmark-config.json"
 bash "$benchmark_root/report.sh" "$disabled" >/dev/null
@@ -850,6 +920,8 @@ cp "$fixture/benchmark-config.json" "$diagnostic/benchmark-config.json"
 cp "$fixture/agent-issue-reports.jsonl" "$diagnostic/agent-issue-reports.jsonl"
 cp "$fixture/hpatch-exact-evidence.jsonl" "$diagnostic/hpatch-exact-evidence.jsonl"
 cp "$fixture/hpatch-router.log" "$diagnostic/hpatch-router.log"
+mkdir -p "$diagnostic/captures"
+cp "$fixture/captures/hpatch.jsonl" "$diagnostic/captures/hpatch.jsonl"
 cp "$artifact_root/task-hpatch-r001/codex.jsonl" "$diagnostic/artifacts/task/task-hpatch-r001/codex.jsonl"
 bash "$benchmark_root/report.sh" "$diagnostic" >/dev/null
 

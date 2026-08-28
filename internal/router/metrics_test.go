@@ -107,6 +107,9 @@ func TestMetricsStoreSnapshotAndAPI(t *testing.T) {
 	if recorder.Code != http.StatusOK || recorder.Header().Get("Cache-Control") != "no-store" {
 		t.Fatalf("response = %d, %#v", recorder.Code, recorder.Header())
 	}
+	if strings.Contains(recorder.Body.String(), "request_observations") {
+		t.Fatalf("metrics API retained benchmark-only request observations: %s", recorder.Body.String())
+	}
 	var decoded metricsSnapshot
 	if err := json.Unmarshal(recorder.Body.Bytes(), &decoded); err != nil {
 		t.Fatal(err)
@@ -125,7 +128,7 @@ func TestMetricsStoreSnapshotAndAPI(t *testing.T) {
 	}
 }
 
-func TestMetricsSessionRetainsRequestAndCTP2Observations(t *testing.T) {
+func TestMetricsSessionRetainsCTP2Observations(t *testing.T) {
 	store := newMetricsStore("")
 	handle := store.beginRequest("session", "model")
 	sessionID, requestSequence := handle.metricIdentity()
@@ -151,10 +154,8 @@ func TestMetricsSessionRetainsRequestAndCTP2Observations(t *testing.T) {
 		t.Fatalf("sessions = %#v", snapshot.Sessions)
 	}
 	session := snapshot.Sessions[0]
-	if len(session.RequestObservations) != 1 || session.RequestObservations[0].Sequence != requestSequence ||
-		session.RequestObservations[0].Outcome != "completed" ||
-		session.RequestObservations[0].Usage.InputTokens != 9 {
-		t.Fatalf("request observations = %#v", session.RequestObservations)
+	if session.Requests.Completed != 1 || session.Total.InputTokens != 9 {
+		t.Fatalf("session request totals = %#v, usage = %#v", session.Requests, session.Total)
 	}
 	if len(session.CTP.InputObservations) != 1 || session.CTP.InputObservations[0].Decision != "active" ||
 		session.CTP.InputObservations[0].ctpRepresentationMetrics != input ||
@@ -175,23 +176,13 @@ func TestMetricsSessionRetainsRequestAndCTP2Observations(t *testing.T) {
 	}
 }
 
-func TestMetricsSessionObservationRetentionIsBounded(t *testing.T) {
+func TestMetricsSessionCTPObservationRetentionIsBounded(t *testing.T) {
 	store := newMetricsStore("")
 	for sequence := uint64(1); sequence <= maxSessionCTPObservations+1; sequence++ {
 		store.recordCTPRequest("session", sequence, ctp2RequestMissingCarrier,
 			ctpRepresentationMetrics{}, ctp2RepresentationMetrics{}, 0)
 		store.recordCTPOutput("session", sequence, ctpRepresentationMetrics{}, ctp2RepresentationMetrics{})
 	}
-	var firstRetainedRequestSequence, lastRequestSequence uint64
-	for index := range maxSessionRequestObservations + 1 {
-		handle := store.beginRequest("session", "model")
-		_, lastRequestSequence = handle.metricIdentity()
-		if index == 1 {
-			firstRetainedRequestSequence = lastRequestSequence
-		}
-		handle.finish(requestObservation{outcome: requestOutcomeCompleted})
-	}
-
 	session := store.snapshot().Sessions[0]
 	if len(session.CTP.InputObservations) != maxSessionCTPObservations ||
 		session.CTP.InputObservationsDropped != 1 ||
@@ -199,20 +190,11 @@ func TestMetricsSessionObservationRetentionIsBounded(t *testing.T) {
 		session.CTP.OutputObservationsDropped != 1 {
 		t.Fatalf("bounded CTP observations = %#v", session.CTP)
 	}
-	if len(session.RequestObservations) != maxSessionRequestObservations ||
-		session.RequestObservationsDropped != 1 {
-		t.Fatalf("bounded request observations = %d dropped %d",
-			len(session.RequestObservations), session.RequestObservationsDropped)
-	}
 	if session.CTP.InputObservations[0].RequestSequence != 2 ||
 		session.CTP.InputObservations[len(session.CTP.InputObservations)-1].RequestSequence != maxSessionCTPObservations+1 ||
 		session.CTP.OutputObservations[0].RequestSequence != 2 ||
 		session.CTP.OutputObservations[len(session.CTP.OutputObservations)-1].RequestSequence != maxSessionCTPObservations+1 {
 		t.Fatalf("CTP observations did not retain the latest window: %#v", session.CTP)
-	}
-	if session.RequestObservations[0].Sequence != firstRetainedRequestSequence ||
-		session.RequestObservations[len(session.RequestObservations)-1].Sequence != lastRequestSequence {
-		t.Fatalf("request observations did not retain the latest window: %#v", session.RequestObservations)
 	}
 }
 

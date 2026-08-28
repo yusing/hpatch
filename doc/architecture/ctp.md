@@ -27,11 +27,11 @@ The CTP/2 owner derives auxiliary native-versus-compact token pairs from the sam
 per-string selection. Input counts cover each active whole request after Hpatch projection; output
 counts cover decoded assistant text once per logical content item, using each terminal
 `response.output_text.done` event for streams while excluding repeated projections. The in-memory
-router metrics retain aggregates plus bounded per-session request and CTP input/output observations,
-including bytes, encoded-string and visible-reference counts, dictionary size, codec timing, and
-dropped-observation counters. Counting failure cannot replace a successful request, response, or
-provider usage record. Activation counters expose a missing instruction carrier without retaining
-prompt text.
+router metrics retain lifecycle and usage aggregates plus bounded per-session CTP input/output
+observations, including bytes, encoded-string and visible-reference counts, dictionary size, codec
+timing, and dropped-observation counters. Counting failure cannot replace a successful request,
+response, or provider usage record. Activation counters expose a missing instruction carrier
+without retaining prompt text.
 
 CTP/2 operates inside native Responses envelopes and may rewrite only the representation identified
 by `REQ-CTP-001`; that requirement retains the provider-owned fields and native fallback contract.

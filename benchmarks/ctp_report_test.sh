@@ -8,17 +8,11 @@ trap 'rm -rf -- "$fixture"' EXIT
 ctp="$fixture/ctp"
 mkdir -p "$ctp"
 cat >"$ctp/results.jsonl" <<'JSON'
-{"task_id":"task","arm":"native","repetition":1,"order_in_block":1,"model":"model","reasoning_effort":"medium","model_protocol":"native","router_mode":"hpatch","task_pass":true,"base_instructions":{"sha256":"native-sha"},"agent":{"thread_id":"native-session","duration_ms":1000,"turns":2,"item_counts":{"command_execution":1,"file_change":1},"failure_counts":{"turn_failures":0,"executor_process_creation":0}},"graders":[{"name":"hidden","required":true,"passed":true},{"name":"decoded-final-response","required":true,"passed":true}]}
-{"task_id":"task","arm":"ctp","repetition":1,"order_in_block":2,"model":"model","reasoning_effort":"medium","model_protocol":"ctp2","router_mode":"hpatch","task_pass":true,"base_instructions":{"sha256":"native-sha"},"agent":{"thread_id":"ctp-session","duration_ms":900,"turns":2,"item_counts":{"command_execution":1,"file_change":1},"failure_counts":{"turn_failures":0,"executor_process_creation":2}},"graders":[{"name":"hidden","required":true,"passed":true},{"name":"decoded-final-response","required":true,"passed":true}]}
+{"task_id":"task","arm":"native","repetition":1,"order_in_block":1,"model":"model","reasoning_effort":"medium","model_protocol":"native","router_mode":"hpatch","task_pass":true,"base_instructions":{"sha256":"native-sha"},"agent":{"thread_id":"native-session","duration_ms":1000,"turns":2,"usage":{"input_tokens":1000,"cached_input_tokens":700,"output_tokens":100,"reasoning_output_tokens":10},"item_counts":{"command_execution":1,"file_change":1},"failure_counts":{"turn_failures":0,"executor_process_creation":0}},"graders":[{"name":"hidden","required":true,"passed":true},{"name":"decoded-final-response","required":true,"passed":true}]}
+{"task_id":"task","arm":"ctp","repetition":1,"order_in_block":2,"model":"model","reasoning_effort":"medium","model_protocol":"ctp2","router_mode":"hpatch","task_pass":true,"base_instructions":{"sha256":"native-sha"},"agent":{"thread_id":"ctp-session","duration_ms":900,"turns":2,"usage":{"input_tokens":900,"cached_input_tokens":600,"output_tokens":80,"reasoning_output_tokens":8},"item_counts":{"command_execution":1,"file_change":1},"failure_counts":{"turn_failures":0,"executor_process_creation":2}},"graders":[{"name":"hidden","required":true,"passed":true},{"name":"decoded-final-response","required":true,"passed":true}]}
 JSON
 
 jq -n '
-	def request($sequence; $input; $uncached; $output; $reasoning; $upstream): {
-		sequence: $sequence, outcome: "completed", total_duration_ms: ($upstream + 10),
-		upstream_duration_ms: $upstream, usage_observed: true,
-		usage: {input_tokens: $input, uncached_input_tokens: $uncached,
-			output_tokens: $output, reasoning_tokens: $reasoning}
-	};
 	def lifecycle($started): {
 		started: $started, active: 0, completed: $started, failed: 0,
 		canceled_before_response: 0, canceled_after_response: 0, timed_out: 0,
@@ -50,8 +44,6 @@ jq -n '
 				session_id: "native-session",
 				total: {input_tokens: 1000, uncached_input_tokens: 300, output_tokens: 100, reasoning_tokens: 10},
 				requests: (lifecycle(2)),
-				request_observations: [request(1; 400; 100; 40; 4; 30), request(2; 600; 200; 60; 6; 50)],
-				request_observations_dropped: 0,
 				hpatch_calls: {successful: 1, rejected: 0, diagnostic_input_tokens: 0},
 				ctp: inactive_ctp
 			}
@@ -60,12 +52,6 @@ jq -n '
 ' >"$ctp/control-metrics.json"
 
 jq -n '
-	def request($sequence; $input; $uncached; $output; $reasoning; $upstream): {
-		sequence: $sequence, outcome: "completed", total_duration_ms: ($upstream + 10),
-		upstream_duration_ms: $upstream, usage_observed: true,
-		usage: {input_tokens: $input, uncached_input_tokens: $uncached,
-			output_tokens: $output, reasoning_tokens: $reasoning}
-	};
 	def lifecycle: {
 		started: 2, active: 0, completed: 2, failed: 0,
 		canceled_before_response: 0, canceled_after_response: 0, timed_out: 0,
@@ -106,8 +92,6 @@ jq -n '
 			session_id: "ctp-session",
 			total: {input_tokens: 900, uncached_input_tokens: 300, output_tokens: 80, reasoning_tokens: 8},
 			requests: lifecycle,
-			request_observations: [request(1; 400; 100; 30; 3; 25), request(2; 500; 200; 50; 5; 35)],
-			request_observations_dropped: 0,
 			hpatch_calls: {successful: 1, rejected: 0, diagnostic_input_tokens: 0},
 			ctp: ctp
 		}]
@@ -115,6 +99,19 @@ jq -n '
 ' >"$ctp/hpatch-metrics.json"
 printf '%s\n' '{"benchmark_mode":"ctp-only","ctp":{"require_input_compression":true,"require_output_compression":true}}' \
 	>"$ctp/benchmark-config.json"
+mkdir -p "$ctp/captures"
+cat >"$ctp/captures/control.jsonl" <<'JSON'
+{"schema_version":2,"boundary":"codex","capture_id":"native-1","request_sequence":1,"thread_id":"native-session","request_model":"model","status_code":200,"response_complete":true,"response_status":"completed","duration_ms":31}
+{"schema_version":2,"boundary":"provider","provider_attempt":1,"capture_id":"native-1","request_sequence":1,"thread_id":"native-session","request_model":"model","status_code":200,"response_complete":true,"response_status":"completed","duration_ms":30,"usage":{"input_tokens":400,"cached_input_tokens":300,"output_tokens":40,"reasoning_tokens":4}}
+{"schema_version":2,"boundary":"codex","capture_id":"native-2","request_sequence":2,"thread_id":"native-session","request_model":"model","status_code":200,"response_complete":true,"response_status":"completed","duration_ms":51}
+{"schema_version":2,"boundary":"provider","provider_attempt":1,"capture_id":"native-2","request_sequence":2,"thread_id":"native-session","request_model":"model","status_code":200,"response_complete":true,"response_status":"completed","duration_ms":50,"usage":{"input_tokens":600,"cached_input_tokens":400,"output_tokens":60,"reasoning_tokens":6}}
+JSON
+cat >"$ctp/captures/hpatch.jsonl" <<'JSON'
+{"schema_version":2,"boundary":"codex","capture_id":"ctp-1","request_sequence":1,"thread_id":"ctp-session","request_model":"model","status_code":200,"response_complete":true,"response_status":"completed","duration_ms":26}
+{"schema_version":2,"boundary":"provider","provider_attempt":1,"capture_id":"ctp-1","request_sequence":1,"thread_id":"ctp-session","request_model":"model","status_code":200,"response_complete":true,"response_status":"completed","duration_ms":25,"usage":{"input_tokens":400,"cached_input_tokens":300,"output_tokens":30,"reasoning_tokens":3}}
+{"schema_version":2,"boundary":"codex","capture_id":"ctp-2","request_sequence":2,"thread_id":"ctp-session","request_model":"model","status_code":200,"response_complete":true,"response_status":"completed","duration_ms":36}
+{"schema_version":2,"boundary":"provider","provider_attempt":1,"capture_id":"ctp-2","request_sequence":2,"thread_id":"ctp-session","request_model":"model","status_code":200,"response_complete":true,"response_status":"completed","duration_ms":35,"usage":{"input_tokens":500,"cached_input_tokens":300,"output_tokens":50,"reasoning_tokens":5}}
+JSON
 
 bash "$benchmark_root/report.sh" "$ctp" >/dev/null
 grep -Fq '# Native versus CTP/2-active benchmark report:' "$ctp/summary.md"
@@ -143,8 +140,8 @@ fi
 
 missing_usage="$fixture/missing-usage"
 cp -a "$ctp" "$missing_usage"
-jq '.sessions[0].request_observations_dropped = 1' \
-	"$ctp/hpatch-metrics.json" >"$missing_usage/hpatch-metrics.json"
+jq -c 'if .boundary == "provider" and .capture_id == "ctp-1" then del(.usage) else . end' \
+	"$ctp/captures/hpatch.jsonl" >"$missing_usage/captures/hpatch.jsonl"
 if bash "$benchmark_root/report.sh" "$missing_usage" >/dev/null 2>&1; then
 	printf 'CTP report accepted truncated per-request provider evidence\n' >&2
 	exit 1
@@ -152,8 +149,8 @@ fi
 
 inconsistent_usage="$fixture/inconsistent-usage"
 cp -a "$ctp" "$inconsistent_usage"
-jq '.sessions[0].request_observations[0].usage.input_tokens += 1' \
-	"$ctp/control-metrics.json" >"$inconsistent_usage/control-metrics.json"
+jq -c 'if .boundary == "provider" and .capture_id == "native-1" then .usage.input_tokens += 1 else . end' \
+	"$ctp/captures/control.jsonl" >"$inconsistent_usage/captures/control.jsonl"
 if bash "$benchmark_root/report.sh" "$inconsistent_usage" >/dev/null 2>&1; then
 	printf 'CTP report accepted per-request usage inconsistent with its session total\n' >&2
 	exit 1

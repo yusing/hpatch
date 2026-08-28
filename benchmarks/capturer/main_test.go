@@ -46,6 +46,7 @@ func TestCaptureProxyPreservesStreamingAndWritesSanitizedRecord(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer recorder.Close()
+	recorder.beginRequest("capture-1")
 	targetURL := mustParseTestURL(t, upstream.URL)
 	proxy := httptest.NewServer(newCaptureProxy(targetURL, "provider", recorder))
 	defer proxy.Close()
@@ -94,14 +95,198 @@ func TestCaptureProxyPreservesStreamingAndWritesSanitizedRecord(t *testing.T) {
 	if err := json.Unmarshal(bytes.TrimSpace(payload), &record); err != nil {
 		t.Fatal(err)
 	}
-	if record.Boundary != "provider" || record.CaptureID != "capture-1" || record.RequestID != "request-1" || record.ThreadID != "thread-1" ||
+	if record.SchemaVersion != 2 || record.Boundary != "provider" || record.CaptureID != "capture-1" ||
+		record.RequestSequence != 1 || record.ProviderAttempt != 1 ||
+		record.RequestID != "request-1" || record.ThreadID != "thread-1" ||
 		record.Subagent != "collab_spawn" || record.RequestModel != "gpt-5.6-sol" || !record.ResponseComplete ||
-		record.ResponseStatus != "completed" || !slices.Equal(record.ToolCallIDs, []string{"item-1", "call-1"}) {
+		record.ResponseStatus != "completed" || record.DurationMillis > 30_000 ||
+		!slices.Equal(record.ToolCallIDs, []string{"item-1", "call-1"}) {
 		t.Fatalf("capture record = %#v", record)
 	}
 	wantUsage := tokenUsage{InputTokens: 100, CachedTokens: 80, OutputTokens: 20, ReasoningTokens: 7}
 	if record.Usage == nil || *record.Usage != wantUsage {
 		t.Fatalf("usage = %#v, want %#v", record.Usage, wantUsage)
+	}
+}
+
+func TestCaptureProxyCorrelatesBoundariesAndSequencesRequests(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.Header.Get("x-hpatch-capture-id") != "" {
+			t.Error("private capture header reached the provider")
+		}
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(writer, `{"status":"completed","usage":{"input_tokens":1}}`)
+	}))
+	defer upstream.Close()
+
+	capturePath := filepath.Join(t.TempDir(), "capture.jsonl")
+	recorder, err := newCaptureRecorder(capturePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer recorder.Close()
+	back := httptest.NewServer(newCaptureProxy(mustParseTestURL(t, upstream.URL), "provider", recorder))
+	defer back.Close()
+	front := httptest.NewServer(newCaptureProxy(mustParseTestURL(t, back.URL), "codex", recorder))
+	defer front.Close()
+
+	for range 2 {
+		request, err := http.NewRequestWithContext(t.Context(), http.MethodPost, front.URL+"/responses", strings.NewReader(`{"model":"model"}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		request.Header.Set("thread-id", "thread")
+		response, err := http.DefaultClient.Do(request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := io.ReadAll(response.Body); err != nil {
+			t.Fatal(err)
+		}
+		if err := response.Body.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	file, err := os.Open(capturePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	bySequence := map[uint64]map[string]captureRecord{}
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		var record captureRecord
+		if err := json.Unmarshal(scanner.Bytes(), &record); err != nil {
+			t.Fatal(err)
+		}
+		if bySequence[record.RequestSequence] == nil {
+			bySequence[record.RequestSequence] = map[string]captureRecord{}
+		}
+		bySequence[record.RequestSequence][record.Boundary] = record
+	}
+	if err := scanner.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if len(bySequence) != 2 {
+		t.Fatalf("captured sequences = %#v", bySequence)
+	}
+	for sequence := uint64(1); sequence <= 2; sequence++ {
+		pair := bySequence[sequence]
+		if len(pair) != 2 || pair["codex"].CaptureID == "" || pair["codex"].CaptureID != pair["provider"].CaptureID ||
+			pair["provider"].ProviderAttempt != 1 {
+			t.Fatalf("capture pair %d = %#v", sequence, pair)
+		}
+	}
+}
+
+func TestCaptureProxyRetainsProviderRetryAttempts(t *testing.T) {
+	var providerRequests int
+	upstream := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		providerRequests++
+		writer.Header().Set("Content-Type", "application/json")
+		if providerRequests == 1 {
+			writer.WriteHeader(http.StatusTooManyRequests)
+			_, _ = io.WriteString(writer, `{"error":{"message":"model is at capacity"}}`)
+			return
+		}
+		_, _ = io.WriteString(writer, `{"status":"completed","usage":{"input_tokens":2}}`)
+	}))
+	defer upstream.Close()
+
+	capturePath := filepath.Join(t.TempDir(), "capture.jsonl")
+	recorder, err := newCaptureRecorder(capturePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer recorder.Close()
+	back := httptest.NewServer(newCaptureProxy(mustParseTestURL(t, upstream.URL), "provider", recorder))
+	defer back.Close()
+	router := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, incoming *http.Request) {
+		payload, err := io.ReadAll(incoming.Body)
+		if err != nil {
+			t.Error(err)
+			http.Error(writer, "read request", http.StatusInternalServerError)
+			return
+		}
+		for attempt := range 2 {
+			request, err := http.NewRequestWithContext(incoming.Context(), http.MethodPost, back.URL+"/responses", bytes.NewReader(payload))
+			if err != nil {
+				t.Error(err)
+				http.Error(writer, "build request", http.StatusInternalServerError)
+				return
+			}
+			request.Header = incoming.Header.Clone()
+			response, err := http.DefaultClient.Do(request)
+			if err != nil {
+				t.Error(err)
+				http.Error(writer, "send request", http.StatusInternalServerError)
+				return
+			}
+			responsePayload, err := io.ReadAll(response.Body)
+			if err != nil {
+				t.Error(err)
+				_ = response.Body.Close()
+				http.Error(writer, "read response", http.StatusInternalServerError)
+				return
+			}
+			if err := response.Body.Close(); err != nil {
+				t.Error(err)
+				http.Error(writer, "close response", http.StatusInternalServerError)
+				return
+			}
+			if attempt == 0 {
+				continue
+			}
+			writer.Header().Set("Content-Type", response.Header.Get("Content-Type"))
+			writer.WriteHeader(response.StatusCode)
+			_, _ = writer.Write(responsePayload)
+		}
+	}))
+	defer router.Close()
+	front := httptest.NewServer(newCaptureProxy(mustParseTestURL(t, router.URL), "codex", recorder))
+	defer front.Close()
+
+	request, err := http.NewRequestWithContext(t.Context(), http.MethodPost, front.URL+"/responses", strings.NewReader(`{"model":"model"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("thread-id", "thread")
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := io.ReadAll(response.Body); err != nil {
+		t.Fatal(err)
+	}
+	if err := response.Body.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	file, err := os.Open(capturePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	var providerRecords []captureRecord
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		var record captureRecord
+		if err := json.Unmarshal(scanner.Bytes(), &record); err != nil {
+			t.Fatal(err)
+		}
+		if record.Boundary == "provider" {
+			providerRecords = append(providerRecords, record)
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if len(providerRecords) != 2 || providerRecords[0].ProviderAttempt != 1 ||
+		providerRecords[0].ResponseStatus != "http_error" || !providerRecords[0].ResponseComplete ||
+		providerRecords[0].Usage != nil || providerRecords[1].ProviderAttempt != 2 ||
+		providerRecords[1].Usage == nil || providerRecords[1].Usage.InputTokens != 2 {
+		t.Fatalf("provider retry captures = %#v", providerRecords)
 	}
 }
 
@@ -148,6 +333,7 @@ func TestCaptureProxyKeepsNonterminalResponseIncomplete(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer recorder.Close()
+	recorder.beginRequest("capture-1")
 	proxy := httptest.NewServer(newCaptureProxy(mustParseTestURL(t, upstream.URL), "provider", recorder))
 	defer proxy.Close()
 
@@ -155,6 +341,7 @@ func TestCaptureProxyKeepsNonterminalResponseIncomplete(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	request.Header.Set("x-hpatch-capture-id", "capture-1")
 	response, err := http.DefaultClient.Do(request)
 	if err != nil {
 		t.Fatal(err)

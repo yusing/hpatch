@@ -29,13 +29,16 @@ const shutdownTimeout = 5 * time.Second
 type captureKey struct{}
 
 type requestCapture struct {
-	CaptureID string
-	RequestID string
-	SessionID string
-	ThreadID  string
-	Subagent  string
-	Model     string
-	Error     string
+	CaptureID       string
+	RequestSequence uint64
+	ProviderAttempt uint64
+	RequestID       string
+	SessionID       string
+	ThreadID        string
+	Subagent        string
+	Model           string
+	Error           string
+	StartedAt       time.Time
 }
 
 type tokenUsage struct {
@@ -49,6 +52,8 @@ type captureRecord struct {
 	SchemaVersion    int         `json:"schema_version"`
 	Boundary         string      `json:"boundary"`
 	CaptureID        string      `json:"capture_id"`
+	RequestSequence  uint64      `json:"request_sequence"`
+	ProviderAttempt  uint64      `json:"provider_attempt,omitempty"`
 	RequestID        string      `json:"request_id,omitempty"`
 	SessionID        string      `json:"session_id,omitempty"`
 	ThreadID         string      `json:"thread_id,omitempty"`
@@ -60,12 +65,20 @@ type captureRecord struct {
 	Usage            *tokenUsage `json:"usage,omitempty"`
 	ToolCallIDs      []string    `json:"tool_call_ids,omitempty"`
 	CaptureError     string      `json:"capture_error,omitempty"`
+	DurationMillis   uint64      `json:"duration_ms"`
 	CapturedAt       time.Time   `json:"captured_at"`
 }
 
 type captureRecorder struct {
-	mu   sync.Mutex
-	file *os.File
+	mu              sync.Mutex
+	file            *os.File
+	requestSequence uint64
+	requests        map[string]captureRequestState
+}
+
+type captureRequestState struct {
+	sequence         uint64
+	providerAttempts uint64
 }
 
 func newCaptureRecorder(path string) (*captureRecorder, error) {
@@ -73,7 +86,7 @@ func newCaptureRecorder(path string) (*captureRecorder, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &captureRecorder{file: file}, nil
+	return &captureRecorder{file: file, requests: map[string]captureRequestState{}}, nil
 }
 
 func (r *captureRecorder) Close() error {
@@ -90,6 +103,32 @@ func (r *captureRecorder) write(record captureRecord) error {
 	defer r.mu.Unlock()
 	_, err = r.file.Write(payload)
 	return err
+}
+
+func (r *captureRecorder) beginRequest(captureID string) uint64 {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.requestSequence++
+	r.requests[captureID] = captureRequestState{sequence: r.requestSequence}
+	return r.requestSequence
+}
+
+func (r *captureRecorder) beginProviderAttempt(captureID string) (uint64, uint64) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	state, ok := r.requests[captureID]
+	if !ok {
+		return 0, 0
+	}
+	state.providerAttempts++
+	r.requests[captureID] = state
+	return state.sequence, state.providerAttempts
+}
+
+func (r *captureRecorder) finishRequest(captureID string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	delete(r.requests, captureID)
 }
 
 type captureBody struct {
@@ -142,17 +181,20 @@ func newCaptureProxy(target *url.URL, boundary string, recorder *captureRecorder
 			ReadCloser: response.Body,
 			record: func(payload []byte) {
 				record := captureRecord{
-					SchemaVersion: 1,
-					Boundary:      boundary,
-					CaptureID:     capture.CaptureID,
-					RequestID:     capture.RequestID,
-					SessionID:     capture.SessionID,
-					ThreadID:      capture.ThreadID,
-					Subagent:      capture.Subagent,
-					RequestModel:  capture.Model,
-					StatusCode:    statusCode,
-					CaptureError:  capture.Error,
-					CapturedAt:    time.Now().UTC(),
+					SchemaVersion:   2,
+					Boundary:        boundary,
+					CaptureID:       capture.CaptureID,
+					RequestSequence: capture.RequestSequence,
+					ProviderAttempt: capture.ProviderAttempt,
+					RequestID:       capture.RequestID,
+					SessionID:       capture.SessionID,
+					ThreadID:        capture.ThreadID,
+					Subagent:        capture.Subagent,
+					RequestModel:    capture.Model,
+					StatusCode:      statusCode,
+					CaptureError:    capture.Error,
+					DurationMillis:  uint64(max(time.Since(capture.StartedAt).Milliseconds(), 0)),
+					CapturedAt:      time.Now().UTC(),
 				}
 				observedPayload, err := decodedCapturePayload(payload, contentEncoding)
 				if err != nil {
@@ -163,6 +205,12 @@ func newCaptureProxy(target *url.URL, boundary string, recorder *captureRecorder
 				switch record.ResponseStatus {
 				case "completed", "failed", "incomplete", "cancelled":
 					record.ResponseComplete = true
+				}
+				if statusCode < http.StatusOK || statusCode >= http.StatusMultipleChoices {
+					record.ResponseComplete = true
+					if record.ResponseStatus == "" {
+						record.ResponseStatus = "http_error"
+					}
 				}
 				if err := recorder.write(record); err != nil {
 					fmt.Fprintf(os.Stderr, "capturer: write %s record: %v\n", boundary, err)
@@ -182,6 +230,7 @@ func newCaptureProxy(target *url.URL, boundary string, recorder *captureRecorder
 			SessionID: cmp.Or(request.Header.Get("session-id"), request.Header.Get("Session_id")),
 			ThreadID:  request.Header.Get("thread-id"),
 			Subagent:  request.Header.Get("x-openai-subagent"),
+			StartedAt: time.Now(),
 		}
 		if boundary == "codex" {
 			captureID, err := randomCaptureID()
@@ -190,8 +239,14 @@ func newCaptureProxy(target *url.URL, boundary string, recorder *captureRecorder
 				return
 			}
 			capture.CaptureID = captureID
+			capture.RequestSequence = recorder.beginRequest(captureID)
+			defer recorder.finishRequest(captureID)
 			request.Header.Set("x-hpatch-capture-id", capture.CaptureID)
 		} else {
+			capture.RequestSequence, capture.ProviderAttempt = recorder.beginProviderAttempt(capture.CaptureID)
+			if capture.RequestSequence == 0 {
+				capture.Error = "unknown capture identity"
+			}
 			request.Header.Del("x-hpatch-capture-id")
 		}
 		payload, err := io.ReadAll(request.Body)

@@ -22,7 +22,6 @@ const (
 	maxMetricSubscribers               = 128
 	maxSessionHPatchRejections         = 32
 	maxSessionHPatchAttempts           = 128
-	maxSessionRequestObservations      = 128
 	maxSessionCTPObservations          = 128
 	maxSessionHPatchRejectionTextBytes = 16 << 10
 	maxSessionHPatchAttemptTextBytes   = 48 << 10
@@ -165,15 +164,6 @@ type requestObservation struct {
 	usageObserved    bool
 }
 
-type requestMetricObservation struct {
-	Sequence                     uint64      `json:"sequence"`
-	Outcome                      string      `json:"outcome"`
-	TotalDurationMilliseconds    uint64      `json:"total_duration_ms"`
-	UpstreamDurationMilliseconds uint64      `json:"upstream_duration_ms"`
-	Usage                        tokenCounts `json:"usage"`
-	UsageObserved                bool        `json:"usage_observed"`
-}
-
 type requestLifecycleMetrics struct {
 	Started                      uint64 `json:"started"`
 	Active                       uint64 `json:"active"`
@@ -245,16 +235,14 @@ func (g *metricGroup) add(model string, counts tokenCounts) {
 type sessionMetrics struct {
 	metricGroup
 
-	Requests                   requestLifecycleMetrics    `json:"requests"`
-	RequestObservations        []requestMetricObservation `json:"request_observations"`
-	RequestObservationsDropped uint64                     `json:"request_observations_dropped"`
-	HPatchCalls                hpatchCallMetrics          `json:"hpatch_calls"`
-	HPatchAttempts             []hpatchAttemptMetrics     `json:"hpatch_attempts"`
-	HPatchRejections           []hpatch.HostRejection     `json:"hpatch_rejections"`
-	CTP                        ctpSessionMetrics          `json:"ctp"`
-	SessionID                  string                     `json:"session_id"`
-	Title                      string                     `json:"title"`
-	Model                      string                     `json:"model"`
+	Requests         requestLifecycleMetrics `json:"requests"`
+	HPatchCalls      hpatchCallMetrics       `json:"hpatch_calls"`
+	HPatchAttempts   []hpatchAttemptMetrics  `json:"hpatch_attempts"`
+	HPatchRejections []hpatch.HostRejection  `json:"hpatch_rejections"`
+	CTP              ctpSessionMetrics       `json:"ctp"`
+	SessionID        string                  `json:"session_id"`
+	Title            string                  `json:"title"`
+	Model            string                  `json:"model"`
 }
 
 type hpatchAttemptMetrics struct {
@@ -410,16 +398,14 @@ type metricsStore struct {
 type retainedSessionMetrics struct {
 	metricGroup
 
-	requests                   requestLifecycleMetrics
-	requestObservations        []requestMetricObservation
-	requestObservationsDropped uint64
-	hpatchCalls                hpatchCallMetrics
-	hpatchAttempts             []hpatchAttemptMetrics
-	hpatchRejections           []hpatch.HostRejection
-	hpatchSequence             uint64
-	ctp                        ctpSessionMetrics
-	model                      string
-	modelOrder                 uint64
+	requests         requestLifecycleMetrics
+	hpatchCalls      hpatchCallMetrics
+	hpatchAttempts   []hpatchAttemptMetrics
+	hpatchRejections []hpatch.HostRejection
+	hpatchSequence   uint64
+	ctp              ctpSessionMetrics
+	model            string
+	modelOrder       uint64
 }
 
 type activeRequest struct {
@@ -712,21 +698,6 @@ func (h *activeRequestHandle) finish(observation requestObservation) {
 		if observation.usageObserved && observation.usageCounts != (tokenCounts{}) {
 			retained.add(h.model, observation.usageCounts)
 		}
-		requestMetric := requestMetricObservation{
-			Sequence:                     h.requestID,
-			Outcome:                      observation.outcome.String(),
-			TotalDurationMilliseconds:    durationMilliseconds(observation.totalDuration),
-			UpstreamDurationMilliseconds: durationMilliseconds(observation.upstreamDuration),
-			Usage:                        observation.usageCounts,
-			UsageObserved:                observation.usageObserved,
-		}
-		var dropped bool
-		retained.requestObservations, dropped = appendLatestMetricObservation(
-			retained.requestObservations, requestMetric, maxSessionRequestObservations,
-		)
-		if dropped {
-			retained.requestObservationsDropped++
-		}
 		h.store.retainedSessions[h.sessionID] = retained
 	}
 	h.store.notifyLocked()
@@ -788,9 +759,7 @@ func (m *metricsStore) snapshot() metricsSnapshot {
 	for id, retained := range m.retainedSessions {
 		sessions[id] = sessionMetrics{
 			SessionID: id, Model: retained.model, Requests: retained.requests,
-			RequestObservations:        slices.Clone(retained.requestObservations),
-			RequestObservationsDropped: retained.requestObservationsDropped,
-			HPatchCalls:                retained.hpatchCalls, HPatchAttempts: cloneHPatchAttempts(retained.hpatchAttempts),
+			HPatchCalls: retained.hpatchCalls, HPatchAttempts: cloneHPatchAttempts(retained.hpatchAttempts),
 			HPatchRejections: slices.Clone(retained.hpatchRejections),
 			CTP:              cloneCTPSessionMetrics(retained.ctp),
 			metricGroup:      cloneMetricGroup(retained.metricGroup),

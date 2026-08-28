@@ -290,15 +290,12 @@ func TestExecuteRequestPassesThroughOriginalRequestAndRecordsUsage(t *testing.T)
 		t.Fatalf("usage = %#v, want %#v", got, want)
 	}
 	logs := logOutput.String()
-	for _, field := range []string{
-		"input_tokens=12",
-		"cached_input_tokens=5",
-		"uncached_input_tokens=7",
-		"output_tokens=7",
-		"reasoning_tokens=3",
-	} {
-		if !strings.Contains(logs, field) {
-			t.Fatalf("terminal log lacks %q: %s", field, logs)
+	if !strings.Contains(logs, "usage_observed=true") {
+		t.Fatalf("terminal log lacks usage state: %s", logs)
+	}
+	for _, field := range []string{"input_tokens=", "cached_input_tokens=", "output_tokens=", "reasoning_tokens="} {
+		if strings.Contains(logs, field) {
+			t.Fatalf("terminal log retained benchmark-only field %q: %s", field, logs)
 		}
 	}
 }
@@ -924,8 +921,12 @@ func TestExecuteRequestTerminalOutcomes(t *testing.T) {
 				!strings.Contains(logs, "failure_phase="+string(test.wantFailurePhase)) {
 				t.Fatalf("terminal log = %q", logs)
 			}
-			if (test.wantUsage == 0) == strings.Contains(logs, "input_tokens=") {
-				t.Fatalf("terminal usage fields do not match observed usage: %q", logs)
+			if strings.Contains(logs, "input_tokens=") {
+				t.Fatalf("terminal log retained provider token counts: %q", logs)
+			}
+			wantUsageState := "usage_observed=" + strconv.FormatBool(test.wantUsage != 0)
+			if !strings.Contains(logs, wantUsageState) {
+				t.Fatalf("terminal usage state does not match observed usage: %q", logs)
 			}
 		})
 	}

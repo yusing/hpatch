@@ -74,10 +74,10 @@ input-overhead source table. The router's end-to-end Responses and per-session u
 authoritative for provider-consumed model input. These token counts are reproducible estimates rather
 than provider billing totals.
 
-Each terminal Responses lifecycle log attributes the observed provider input, cached input,
-uncached input, output, and reasoning counts to one logical router request. It never logs the
-cache key, authorization material, prompt body, instructions, tool definitions, or input history.
-Requests without terminal usage omit token-count fields rather than reporting zero usage.
+Each terminal Responses lifecycle log records the logical request outcome, failure phase, response
+state, durations, and whether provider usage was observed. Provider token counts remain in the
+structured in-memory metrics snapshot and are not duplicated in logs. Lifecycle logs never contain
+the cache key, authorization material, prompt body, instructions, tool definitions, or input history.
 
 The router's in-memory metrics snapshot also attributes successful and rejected hpatch
 translations and rejected-call diagnostic input tokens to the request session. Each session
@@ -101,12 +101,6 @@ text, diagnostics, nor repair context. Proxy failures that occur before evaluato
 not fabricate evaluator rejection identities.
 The snapshot also exposes aggregate counters so a benchmark can reconcile routed calls with
 client-visible file-change items without inferring failures from stderr envelopes.
-
-Each session retains the latest 128 completed Responses request observations. An observation carries
-only its router request sequence, terminal lifecycle outcome, total and upstream duration, whether
-provider usage was observed, and the provider input, uncached-input, output, and reasoning-token
-counts. A separate dropped-observation counter exposes retention truncation. Request bodies,
-response bodies, credentials, and provider identifiers are never retained by this telemetry.
 
 With CTP/2 enabled, aggregate and per-session metrics record considered, active, and missing-carrier
 requests and sum native and compact tokens and UTF-8 bytes for active requests and decoded assistant

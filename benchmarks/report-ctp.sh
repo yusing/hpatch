@@ -7,9 +7,12 @@ if (($# != 1)); then
 fi
 
 run_dir=$1
+benchmark_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 results="$run_dir/results.jsonl"
 native_router_metrics="$run_dir/control-metrics.json"
 active_router_metrics="$run_dir/hpatch-metrics.json"
+native_capture="$run_dir/captures/control.jsonl"
+active_capture="$run_dir/captures/hpatch.jsonl"
 benchmark_config="$run_dir/benchmark-config.json"
 summary="$run_dir/summary.md"
 temporary="$summary.tmp"
@@ -17,19 +20,26 @@ analysis_dir=$(mktemp -d)
 trap 'rm -rf -- "$analysis_dir"' EXIT
 attempts="$analysis_dir/attempts.json"
 stats="$analysis_dir/stats.json"
+native_capture_analysis="$analysis_dir/native-capture.json"
+active_capture_analysis="$analysis_dir/active-capture.json"
 
-for file in "$results" "$native_router_metrics" "$active_router_metrics" "$benchmark_config"; do
+for file in "$results" "$native_router_metrics" "$active_router_metrics" "$native_capture" "$active_capture" "$benchmark_config"; do
 	if [[ ! -s $file ]]; then
 		printf 'report-ctp.sh: required benchmark artifact is missing or empty: %s\n' "$file" >&2
 		exit 1
 	fi
 done
-for executable in jq mv; do
+for executable in jq mv python3; do
 	if ! command -v "$executable" >/dev/null; then
 		printf 'report-ctp.sh: %s is required\n' "$executable" >&2
 		exit 1
 	fi
 done
+
+python3 "$benchmark_root/analyze_capture.py" usage \
+	"$native_capture" "$results" native >"$native_capture_analysis"
+python3 "$benchmark_root/analyze_capture.py" usage \
+	"$active_capture" "$results" ctp >"$active_capture_analysis"
 
 if ! requirements=$(jq -er '
 	if .benchmark_mode != "ctp-only" then
@@ -76,10 +86,7 @@ fi
 
 for metrics in "$native_router_metrics" "$active_router_metrics"; do
 	if ! jq -e '
-		.mode == "hpatch" and (.sessions | type) == "array" and
-		(.requests.usage_missing == 0) and
-		([.total.input_tokens, .total.uncached_input_tokens,
-		  .total.output_tokens, .total.reasoning_tokens] | all(type == "number"))
+		.mode == "hpatch" and (.sessions | type) == "array"
 	' "$metrics" >/dev/null; then
 		printf 'report-ctp.sh: router metrics are incomplete: %s\n' "$metrics" >&2
 		exit 1
@@ -87,7 +94,9 @@ for metrics in "$native_router_metrics" "$active_router_metrics"; do
 done
 
 if ! jq -se --slurpfile native_router "$native_router_metrics" \
-	--slurpfile active_router "$active_router_metrics" '
+	--slurpfile active_router "$active_router_metrics" \
+	--slurpfile native_capture "$native_capture_analysis" \
+	--slurpfile active_capture "$active_capture_analysis" '
 	def nonnegative_number: type == "number" and . >= 0;
 	def valid_representation:
 		([.native_tokens, .compact_tokens, .native_bytes, .compact_bytes] |
@@ -113,32 +122,27 @@ if ! jq -se --slurpfile native_router "$native_router_metrics" \
 	def router($arm): if $arm == "ctp" then $active_router[0] else $native_router[0] end;
 	def session($run):
 		(router($run.arm).sessions | map(select(.session_id == $run.agent.thread_id))[0]);
+	def capture($run):
+		(if $run.arm == "ctp" then $active_capture[0] else $native_capture[0] end |
+		 .per_run | map(select(.thread_id == $run.agent.thread_id))[0]);
 	all(.[];
 		session(.) as $session |
+		capture(.) as $capture |
 		$session != null and
+		$capture != null and
 		$session.requests.started > 0 and
 		$session.requests.active == 0 and
 		$session.requests.usage_observed == $session.requests.started and
 		$session.requests.usage_missing == 0 and
-		$session.request_observations_dropped == 0 and
-		($session.request_observations | length) == $session.requests.started and
-		all($session.request_observations[];
-			.usage_observed == true and
-			([.usage.input_tokens, .usage.uncached_input_tokens,
-			  .usage.output_tokens, .usage.reasoning_tokens] | all(type == "number"))
-		) and
+		$capture.logical_requests == $session.requests.started and
 		([ $session.total.input_tokens, $session.total.uncached_input_tokens,
 		   $session.total.output_tokens, $session.total.reasoning_tokens,
 		   $session.hpatch_calls.successful, $session.hpatch_calls.rejected ] |
 		 all(type == "number")) and
-		([$session.request_observations[].usage.input_tokens] | add) ==
-			$session.total.input_tokens and
-		([$session.request_observations[].usage.uncached_input_tokens] | add) ==
-			$session.total.uncached_input_tokens and
-		([$session.request_observations[].usage.output_tokens] | add) ==
-			$session.total.output_tokens and
-		([$session.request_observations[].usage.reasoning_tokens] | add) ==
-			$session.total.reasoning_tokens and
+		$capture.usage.input_tokens == $session.total.input_tokens and
+		$capture.usage.uncached_input_tokens == $session.total.uncached_input_tokens and
+		$capture.usage.output_tokens == $session.total.output_tokens and
+		$capture.usage.reasoning_tokens == $session.total.reasoning_tokens and
 		(if .arm == "ctp" then
 			($session.ctp.input_observations // []) as $ctp_inputs |
 			($session.ctp.output_observations // []) as $ctp_outputs |
@@ -210,12 +214,18 @@ if ! jq -e '
 fi
 
 jq -cs --slurpfile native_router "$native_router_metrics" \
-	--slurpfile active_router "$active_router_metrics" '
+	--slurpfile active_router "$active_router_metrics" \
+	--slurpfile native_capture "$native_capture_analysis" \
+	--slurpfile active_capture "$active_capture_analysis" '
 	def router($arm): if $arm == "ctp" then $active_router[0] else $native_router[0] end;
 	def session($run):
 		(router($run.arm).sessions | map(select(.session_id == $run.agent.thread_id))[0]);
+	def capture($run):
+		(if $run.arm == "ctp" then $active_capture[0] else $native_capture[0] end |
+		 .per_run | map(select(.thread_id == $run.agent.thread_id))[0]);
 	map(. as $run |
 		session($run) as $session |
+		capture($run) as $capture |
 		([.graders[] | select(.required == true and .name != "decoded-final-response")]) as $hidden |
 		([.graders[] | select(.required == true and .name == "decoded-final-response")]) as $response |
 		{
@@ -232,9 +242,9 @@ jq -cs --slurpfile native_router "$native_router_metrics" \
 			file_change_items: (.agent.item_counts.file_change // 0),
 			turn_failures: (.agent.failure_counts.turn_failures // 0),
 			executor_process_creation_errors: (.agent.failure_counts.executor_process_creation // 0),
-			provider: $session.total,
+			provider: $capture.usage,
 			requests: $session.requests,
-			request_observations: $session.request_observations,
+			provider_requests: $capture.requests,
 			hpatch_calls: $session.hpatch_calls,
 			ctp: $session.ctp
 		}
@@ -263,7 +273,7 @@ jq '
 		uncached_input_tokens: ([$runs[].provider.uncached_input_tokens] | add),
 		output_tokens: ([$runs[].provider.output_tokens] | add),
 		reasoning_tokens: ([$runs[].provider.reasoning_tokens] | add),
-		requests: ([$runs[].requests.started] | add),
+		requests: ([$runs[].provider.requests] | add),
 		turns: ([$runs[].turns] | add),
 		command_items: ([$runs[].command_items] | add),
 		file_change_items: ([$runs[].file_change_items] | add),
@@ -480,7 +490,7 @@ fi
 			.repetition, .order, .arm,
 			(if .task_pass then "pass" else "fail" end),
 			(if .response_pass then "pass" else "fail" end),
-			.requests.started,
+			.provider.requests,
 			.provider.input_tokens,
 			(.provider.input_tokens - .provider.uncached_input_tokens),
 			.provider.output_tokens,
@@ -491,17 +501,18 @@ fi
 	' "$attempts"
 
 	printf '\n### Per-request provider usage\n\n'
-	printf '| Repetition | Arm | Request | Outcome | Input | Cached | Output | Reasoning | Upstream ms |\n'
+	printf '| Repetition | Arm | Request | Outcome | Input | Cached | Output | Reasoning | Provider ms |\n'
 	printf '|---:|---|---:|---|---:|---:|---:|---:|---:|\n'
 	jq -r '
 		.[] as $run |
-		($run.request_observations | sort_by(.sequence) | to_entries[]) as $entry |
+		($run.provider_requests | sort_by(.sequence) | to_entries[]) as $entry |
 		$entry.value as $request |
-		[$run.repetition, $run.arm, ($entry.key + 1), $request.outcome,
-		 $request.usage.input_tokens,
-		 ($request.usage.input_tokens - $request.usage.uncached_input_tokens),
-		 $request.usage.output_tokens, $request.usage.reasoning_tokens,
-		 $request.upstream_duration_ms] |
+		[$run.repetition, $run.arm, ($entry.key + 1), $request.status,
+		 ($request.usage.input_tokens // "—"),
+		 ($request.usage.cached_input_tokens // "—"),
+		 ($request.usage.output_tokens // "—"),
+		 ($request.usage.reasoning_tokens // "—"),
+		 $request.duration_ms] |
 		"| " + (map(tostring) | join(" | ")) + " |"
 	' "$attempts"
 
@@ -525,7 +536,7 @@ fi
 		printf '**Correctness gate failed:** %s/%s attempts failed overall task acceptance. Efficiency deltas are retained but are not correctness-adjusted wins.\n\n' \
 			"$failed_attempts" "$((repetitions * 2))"
 	fi
-	printf 'Machine-readable evidence remains in `results.jsonl`, `control-metrics.json`, and `hpatch-metrics.json`, including bounded per-request provider observations and per-request CTP representations, plus detailed `artifacts/`.\n'
+	printf 'Machine-readable evidence remains in `results.jsonl`, `control-metrics.json`, `hpatch-metrics.json`, and sanitized `captures/`, including per-request provider evidence and per-request CTP representations, plus detailed `artifacts/`.\n'
 } >"$temporary"
 
 mv -f -- "$temporary" "$summary"

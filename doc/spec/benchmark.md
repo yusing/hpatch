@@ -172,34 +172,42 @@ paths, and gain output remain available in retained machine-readable artifacts i
 duplicated in the primary summary. When bounded attempt retention is incomplete, the summary MUST
 label the retained fraction rather than infer full-run rates.
 
+Every fresh benchmark arm MUST use the transparent capture topology Codex → capturer → router →
+capturer → provider. Per-arm network isolation MUST leave no direct Codex-to-router or
+router-to-provider path. A single-arm Hpatch-only or diagnostic run requires only its freshly
+measured Hpatch capture; it MUST NOT require capture evidence for an imported historical control.
+The front capture MUST preserve and record the restored tool-call identities visible to Codex; the
+back capture MUST preserve and record the actual provider-bound model and provider usage. Capture
+MUST preserve request and response body bytes and stream them without waiting for a terminal
+response. It MUST NOT retain credentials, prompt content, tool arguments, command output, or
+response text.
+
+The front capturer MUST add a private per-request correlation header and monotonic local request
+sequence, the router MUST forward the correlation header, and the back capturer MUST remove it
+before provider forwarding. Each front logical request MUST reconcile with one or more ordered,
+unique provider-attempt captures under the same identity and sequence. A recoverable non-success
+attempt MAY omit usage; the final provider attempt MUST carry usage. Missing final usage and missing,
+duplicated, incomplete, or ambiguous attempts MUST fail the report. The report MUST derive provider
+attempt counts and usage from provider-facing capture for every freshly measured arm.
+
 For a Mentor Handoff comparison, both arms MUST route the same static Sol-parent prompt and locked
-history-free Luna/Terra child through the same transparent capture topology: Codex → capturer →
-Hpatch router → capturer → provider. Only the treatment router enables Mentor Handoff. Per-arm
-network isolation MUST leave no direct Codex-to-router or router-to-provider path. The front capture
-MUST preserve and record the restored tool-call identities visible to Codex; the back capture MUST
-preserve and record the actual provider-bound model and provider usage. Capture MUST preserve request
-and response body bytes and stream them without waiting for a terminal response. It MUST NOT retain
-credentials, prompt content, tool arguments, command output, or response text.
+history-free Luna/Terra child through that topology, and only the treatment router enables Mentor
+Handoff. Every proved parent and child thread MUST use only the models allowed for its arm. The
+report MUST derive parent, mentor, actual-child, and combined usage from provider-facing capture.
+Each same-path structural-loop invocation MUST retain its completed tool-call identity and join
+through the Codex-facing response to exactly one provider-facing actual model for the same request.
+Request order MUST NOT be used as model-attribution evidence. The summary MUST report the per-model
+loop counts without emitting correlation, session, thread, or tool-call identifiers.
 
-The front capturer MUST add a private per-request correlation header, the router MUST forward it,
-and the back capturer MUST remove it before provider forwarding. Every captured Responses request
-MUST reconcile across the two boundaries by that identity. Every proved parent and child thread MUST use only the models allowed for its arm.
-The report MUST derive parent, mentor, actual-child, combined usage, and provider request counts from
-the provider-facing capture. Each same-path structural-loop invocation MUST retain its completed
-tool-call identity and join through the Codex-facing response to exactly one provider-facing actual
-model for the same request. Missing, duplicated, incomplete, or ambiguous capture MUST fail the
-report; request order MUST NOT be used as attribution evidence. The summary MUST report the
-per-model loop counts without emitting correlation, session, thread, or tool-call identifiers.
-
-The summary MUST preserve provider input and cached-input totals. When terminal router logs contain
-request-level token attribution, it MUST also split provider uncached input into cold or newly
-appended input and misses within the immediately preceding request's eligible prefix. For a warm
+The summary MUST preserve provider input and cached-input totals from provider-facing capture. It
+MUST also split provider uncached input into cold or newly appended input and misses within the
+immediately preceding captured request's eligible prefix. For a warm
 request, that eligible prefix is the smaller of its input-token count and the preceding request's
 input-token count; cached tokens up to that size are hits. The derived buckets MUST reconcile
 exactly to provider uncached input, and the report MUST render their aggregate eligible-prefix
-cache rate. An imported historical control whose retained log predates request-level token
-attribution MUST show the derived values as unavailable rather than fabricate them. Missing or
-partial attribution for a newly measured session MUST fail report generation.
+cache rate. An imported historical control without capture evidence MUST show the derived values as
+unavailable rather than fabricate them. Missing or partial capture for a newly measured session
+MUST fail report generation.
 
 For CTP-only results, the summary MUST verify exactly one fresh native and active record per
 repetition, unique order values, the native protocol for native, CTP/2 for active, and identical
@@ -207,9 +215,9 @@ pre-router instruction digests. Every arm MUST contain a
 hidden required grader and the exact decoded-response grader. Imported-baseline provenance is not a
 valid substitute for any arm.
 
-The report MUST join each attempt to its router session and reject missing sessions, missing provider
-usage, dropped request or CTP observations, or per-request usage totals that do not exactly reconcile
-with their session aggregate. It MUST separate three evidence layers:
+The report MUST join each attempt to its router session and provider capture and reject missing
+sessions, missing provider usage, dropped CTP observations, or captured usage totals that do not
+exactly reconcile with their session aggregate. It MUST separate three evidence layers:
 
 1. Model performance reports hidden correctness, exact decoded-response correctness, overall task
    acceptance, median wall time, model requests, agent turns, reasoning tokens, and completed shell
@@ -225,8 +233,8 @@ with their session aggregate. It MUST separate three evidence layers:
    streaming responses.
 3. Operational provider usage reports total, cached, and uncached input, output and reasoning output,
    requests, and wall time for both arms. It MUST show active-minus-native deltas, individual attempt
-   rows, and individual provider request rows. Provider
-   usage observed before response transformation is authoritative. The report MAY label Pareto
+   rows, and individual provider request rows. Provider-facing capture is authoritative for usage;
+   router lifecycle and CTP metrics remain independent reconciliation evidence. The report MAY label Pareto
    dominance only after correctness, and MUST label tradeoffs as mixed. Token components are a cost
    basis; the report MUST NOT invent dollar pricing without an authoritative configured price source.
 

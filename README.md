@@ -557,7 +557,8 @@ never include model-emitted tool payloads. A request remains active even when no
 has a profitable compact form; those strings stay native.
 
 The router dashboard and `GET /api/metrics` expose the structured persistent aggregate without opening an engine workspace.
-Each terminal Responses log record also carries that logical request's provider token counts.
+Each terminal Responses log record carries that logical request's outcome, failure phase, response
+state, durations, and whether usage was observed, without duplicating provider token counts.
 
 These are reproducible payload estimates, not provider billing totals. They omit reasoning tokens, commentary, and host-specific framing. Provider Responses usage is authoritative for end-to-end input and output totals. Metrics are auxiliary and never replace a successful edit, command result, or rejection diagnostic. Passthrough mode does not install hpatch or plugin metric accounting.
 
@@ -614,6 +615,14 @@ The executable benchmark requires Docker, Codex authentication, and a local etcd
 bash benchmarks/bench.sh
 ```
 
+Every freshly measured arm runs through a transparent two-sided capturer:
+Codex → capturer → router → capturer → provider. Sanitized captures record local request and
+provider-attempt order, duration, status, actual provider model, usage, and restored tool-call identities without retaining
+credentials, prompts, tool arguments, command output, or response text. Reports require exact
+front/back attempt reconciliation and use provider-facing captures for request counts, token usage, and
+eligible-prefix cache attribution. Single-arm runs require only the newly measured Hpatch capture;
+an imported historical control does not need retroactive capture evidence.
+
 For an evidence-collection treatment run, set
 `BENCHMARK_RETAIN_EXACT_HPATCH_EVIDENCE=true` with `BENCHMARK_MODE=hpatch-only` or
 `hpatch-diagnostic`. This default-disabled option retains only exact hpatch/recovery payloads and
@@ -641,7 +650,7 @@ Each repetition runs native Hpatch without CTP guidance and CTP/2-active Hpatch 
 CTP/2 enabled. Their order rotates across repetitions, and each starts from an independent task
 snapshot. The report separates
 model correctness, turns, tool behavior, and latency; same-request CTP token, byte, dictionary, and
-codec measurements; and provider-observed input, output, reasoning, requests, and wall time. It also
+codec measurements; and captured provider input, output, reasoning, requests, and wall time. It also
 retains per-request usage and classifies executor, router, Hpatch, and CTP failures without removing
 them from the operational outcome. The task grades the same exact decoded final response in both
 arms and requires strictly smaller compact input and assistant-output representations. Four
@@ -665,11 +674,8 @@ whose locked configured model and reasoning are selected by `MODEL` and `REASONI
 model. Reports separate parent, mentor, and actual-child input, cached-input, output, and reasoning
 tokens, while the A/B comparison uses their combined provider-facing capture totals.
 
-For this experiment, each arm runs through a transparent two-sided capturer:
-Codex → capturer → Hpatch router → capturer → provider. The provider-facing side records the actual
-model and usage, while the Codex-facing side records restored tool-call identities. The front adds a
-private per-request correlation header that the back removes before provider forwarding. The report joins
-the two records by that identity, attributes every measured same-path loop
+For this experiment, the general capturer additionally proves parent and child model attribution.
+The report joins the two boundary records by their private identity and attributes every measured same-path loop
 to exactly one actual provider model, and fails rather than guessing when the join is missing or
 ambiguous. Captures omit credentials, prompts, tool arguments, command output, and response text.
 
