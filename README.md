@@ -650,6 +650,38 @@ repetitions schedule eight paid model attempts.
 
 Benchmark Codex processes disable `apps` identically in both arms.
 
+To compare an original-model subagent with Mentor Handoff, run two paired repetitions:
+
+```sh
+MODEL=gpt-5.6-luna REASONING_EFFORT=xhigh REPETITIONS=2 \
+  BENCHMARK_MODE=mentor-handoff BENCHMARK_REPORT_ISSUES=false \
+  bash benchmarks/bench.sh
+```
+
+Both arms receive the same Hpatch tools, independent workspace snapshots, static parent prompt,
+and static child role and prompt. In both arms a `gpt-5.6-sol` high parent spawns exactly one child
+whose locked configured model and reasoning are selected by `MODEL` and `REASONING_EFFORT`. The
+`hpatch` child uses that configured model throughout. The `hpatch-mentor` child temporarily uses
+`gpt-5.6-sol` high and must demonstrate a later request from the same child using its configured
+model. Reports separate parent, mentor, and actual-child input, cached-input, output, and reasoning
+tokens, while the A/B comparison uses their combined provider-facing capture totals.
+
+For this experiment, each arm runs through a transparent two-sided capturer:
+Codex → capturer → Hpatch router → capturer → provider. The provider-facing side records the actual
+model and usage, while the Codex-facing side records restored tool-call identities. The front adds a
+private per-request correlation header that the back removes before provider forwarding. The report joins
+the two records by that identity, attributes every measured same-path loop
+to exactly one actual provider model, and fails rather than guessing when the join is missing or
+ambiguous. Captures omit credentials, prompts, tool arguments, command output, and response text.
+
+The benchmark also retains a normalized `child-events.jsonl` per attempt from a host-owned, isolated
+Codex home. It includes completed child command and file-change items but excludes command output and
+raw rollout content, allowing command-loop comparisons across both arms. A content-free
+`child-proof.json` verifies the direct-child lineage, locked model and effort, and identical effective
+developer prompt across arms even though Codex 0.150.1 omits the completed spawn from root `--json`
+output. It retains only the child thread correlation needed to join the capturer. Missing or ambiguous child telemetry, including an unobserved nested spawn, fails the attempt
+instead of being reported as zero.
+
 The one-repetition `gpt-5.6-sol` Hpatch baseline passed and reported 45.2% lower
 successful edit payload (2,096 tokens versus 3,825 control-equivalent tokens). It used
 25 model requests, one once-recovered rejection chain, and no changed-file read → edit →

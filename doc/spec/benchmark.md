@@ -171,6 +171,26 @@ session, thread, tool-call, or correlation identifiers. Detailed transport metri
 paths, and gain output remain available in retained machine-readable artifacts instead of being
 duplicated in the primary summary. When bounded attempt retention is incomplete, the summary MUST
 label the retained fraction rather than infer full-run rates.
+
+For a Mentor Handoff comparison, both arms MUST route the same static Sol-parent prompt and locked
+history-free Luna/Terra child through the same transparent capture topology: Codex → capturer →
+Hpatch router → capturer → provider. Only the treatment router enables Mentor Handoff. Per-arm
+network isolation MUST leave no direct Codex-to-router or router-to-provider path. The front capture
+MUST preserve and record the restored tool-call identities visible to Codex; the back capture MUST
+preserve and record the actual provider-bound model and provider usage. Capture MUST stream bytes
+without waiting for a terminal response and MUST NOT retain credentials, prompt content, tool
+arguments, command output, or response text.
+
+The front capturer MUST add a private per-request correlation header, the router MUST forward it,
+and the back capturer MUST remove it before provider forwarding. Every captured Responses request
+MUST reconcile across the two boundaries by that identity. Every proved parent and child thread MUST use only the models allowed for its arm.
+The report MUST derive parent, mentor, actual-child, combined usage, and provider request counts from
+the provider-facing capture. Each same-path structural-loop invocation MUST retain its completed
+tool-call identity and join through the Codex-facing response to exactly one provider-facing actual
+model for the same request. Missing, duplicated, incomplete, or ambiguous capture MUST fail the
+report; request order MUST NOT be used as attribution evidence. The summary MUST report the
+per-model loop counts without emitting correlation, session, thread, or tool-call identifiers.
+
 The summary MUST preserve provider input and cached-input totals. When terminal router logs contain
 request-level token attribution, it MUST also split provider uncached input into cold or newly
 appended input and misses within the immediately preceding request's eligible prefix. For a warm

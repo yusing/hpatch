@@ -35,6 +35,43 @@ mode requires issue reporting to be disabled so no arm adds the diagnostic repor
 Native uses a native-protocol Hpatch router; active uses a separate CTP/2 Hpatch router. The task
 requires the same exact decoded final response in both arms.
 
+Run the spawned-subagent Mentor Handoff comparison with:
+
+```sh
+MODEL=gpt-5.6-luna REASONING_EFFORT=xhigh REPETITIONS=2 \
+  BENCHMARK_MODE=mentor-handoff BENCHMARK_REPORT_ISSUES=false \
+  bash benchmarks/bench.sh
+```
+
+This schedules four paid root-agent attempts. Both arms use an identical static prompt on a
+`gpt-5.6-sol` high parent. That parent must spawn exactly one history-free child through an identical
+static role and message, then otherwise wait for its result. The role locks the child to `MODEL` and
+`REASONING_EFFORT`, which are `gpt-5.6-luna` and `xhigh` above. The runner rejects a different child
+role, inherited parent history, model override, configured model or effort, or effective developer
+prompt. It also requires the full effective child developer-prompt hash to match across all arms and
+repetitions. Both arms use Hpatch with the native model protocol, independent task snapshots, and
+alternating order. The `hpatch` child keeps its configured model for every request. The
+`hpatch-mentor` arm enables Mentor Handoff only in its router, so the child begins with
+`gpt-5.6-sol` high and returns to its configured model after the bounded handoff.
+
+The report rejects a Mentor Handoff run unless every treatment repetition has one child session
+captured at the provider boundary with both the mentor and configured models, one completed handoff transition,
+no Mentor Handoff activation in the baseline arm, and exact reconciliation between the treatment
+role split and combined totals. It reports input, cached-input, output, and reasoning tokens
+separately for the parent, mentor, and configured child. Hpatch-versus-Hpatch-with-mentor differences
+use the complete combined provider-facing capture, including parent and subagent requests;
+they do not compare only the root process's usage summary.
+
+For Mentor Handoff, each attempt runs with an isolated, host-owned Codex home until the root process
+exits. Codex 0.150.1 does not emit the completed spawn in root `--json` output, so the runner uses the
+root and direct-child session metadata plus the root rollout's spawn call as the authoritative
+lineage. It verifies the single child and its fixed configuration, records a content-free
+`child-proof.json`, converts completed command and file-change items into `child-events.jsonl`, omits
+command output and rollout content, retains the child thread only as a capturer correlation key, and removes the raw Codex home. Missing, malformed, compressed,
+or mismatched child rollouts fail the attempt and report instead of becoming zero command counts. A
+nested spawn from the implementation child also fails the attempt because its executor activity
+would fall outside this first-stage capture.
+
 Treatment runs enable the model-visible `report_issue` tool by default. Set
 `BENCHMARK_REPORT_ISSUES=false` to omit it. When enabled, the treatment instructions require one
 report after every rejected-call recovery chain and one evidence-based report per other distinct
@@ -170,6 +207,25 @@ The controlled differences are:
 | Base-instruction tool guidance | Stock `apply_patch` paragraph | Repository-owned edit, read, search, and shell guidance |
 | Native base-prompt preferences | Stock `rg` and `exec_command` guidance | The two displaced lines are removed; routed `hgrep` and `shell` guidance owns those operations |
  | Model tool surface | Stock Code Mode `apply_patch` and `exec_command` | `functions.hpatch` and `functions.shell`; private `hread` and `hgrep` commands run through shell |
+
+Mentor Handoff mode uses a separate controlled difference: both arms use the Hpatch column above,
+the same static Sol-parent prompt, and the same locked Luna/Terra-child role and prompt, while only
+the `hpatch-mentor` router receives `--mentor-handoff`.
+
+Both Mentor Handoff arms use the same benchmark-only capturer executable on two HTTP boundaries:
+Codex → front capturer → router → back capturer → provider. Per-arm isolated networks prevent Codex
+from reaching the router directly and prevent the router from reaching the provider directly. The
+front side records the restored tool-call identities visible to Codex; the back side records the
+actual provider-bound model and provider usage. Both sides preserve request and response bytes and
+stream responses without waiting for completion. Durable JSONL records contain correlation IDs,
+thread classification, model, usage, status, and tool-call IDs, but no credentials, headers, prompt
+content, tool arguments, command output, or response text.
+
+The front adds a private per-request correlation header, the router forwards it, and the back removes
+it before provider forwarding. The report requires each front request to match its back request by that ID,
+requires every proved parent and child thread to reach only the models allowed by its arm, and joins
+each structural-loop tool-call ID to exactly one provider model. Missing, duplicated, incomplete, or
+ambiguous capture fails the report instead of assigning a loop by request order or treating it as zero.
 
 The control router forwards requests without tool rewriting. The treatment router removes the
 Code Mode surfaces displaced by the routed tools, exposes `functions.hpatch` and
@@ -454,6 +510,10 @@ $run_dir/hpatch-exact-evidence.jsonl  # only when explicitly enabled
 $run_dir/instructions/control.md
 $run_dir/instructions/hpatch.md
 $run_dir/instructions/control-to-hpatch-request.diff
+$run_dir/artifacts/$task_id/$run_id/child-events.jsonl  # Mentor Handoff mode
+$run_dir/artifacts/$task_id/$run_id/child-proof.json   # Mentor Handoff mode
+$run_dir/captures/control.jsonl                        # front/back Hpatch baseline capture
+$run_dir/captures/hpatch.jsonl                         # front/back Mentor treatment capture
 ```
 
 The retained router logs include per-logical-request provider token counts. They support
@@ -515,11 +575,18 @@ completed item counts
 model-turn failure count
 unified-exec process-creation error count
 Codex stdout and stderr paths
+normalized child event path, when Mentor Handoff mode captures a spawned child
+content-free child proof path with capturer correlation, when Mentor Handoff mode validates the spawned child
 ```
 
 CTP-only comparison records use the `native` and `ctp` arms, `hpatch` router mode for
 both, and the `native` and `ctp2` model protocols respectively. Every record contains
 both the hidden grader and a required `decoded-final-response` grader.
+
+Mentor Handoff comparison records use the `hpatch` and `hpatch-mentor` arms. Both record
+`hpatch` router mode and native model protocol; the arm name identifies the sole experiment toggle.
+`benchmark-config.json` records the repository commit and pinned Codex CLI release captured before
+the image build. Publication keeps that starting commit even if the checkout changes during a run.
 
 Grader duration is recorded separately so test compilation and execution do not
 inflate agent wall time.
@@ -537,6 +604,10 @@ curl --fail --silent --show-error \
   http://127.0.0.1:8082/api/metrics \
   > "$run_dir/hpatch-metrics.json"
 ```
+
+Mentor Handoff mode names these artifacts by condition instead:
+`hpatch-metrics.json` and `hpatch-router.log` are the baseline, while
+`hpatch-mentor-metrics.json` and `hpatch-mentor-router.log` are Hpatch + Mentor Handoff.
 
 `hpatch-metrics.json` contains structured gain data, including successful and
 failed hpatch calls, hpatch token estimates, equivalent translated

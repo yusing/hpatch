@@ -195,6 +195,40 @@ def command_words(segment: str) -> list[str]:
     return words
 
 
+def decode_ansi_c_word(word: str) -> str:
+    if not word.startswith("$"):
+        return word
+    escapes = {
+        "a": "\a",
+        "b": "\b",
+        "e": "\x1b",
+        "f": "\f",
+        "n": "\n",
+        "r": "\r",
+        "t": "\t",
+        "v": "\v",
+        "\\": "\\",
+        "'": "'",
+        '"': '"',
+    }
+    source = word[1:]
+    output: list[str] = []
+    index = 0
+    while index < len(source):
+        if source[index] != "\\" or index + 1 == len(source):
+            output.append(source[index])
+            index += 1
+            continue
+        escaped = source[index + 1]
+        replacement = escapes.get(escaped)
+        if replacement is None:
+            output.extend(("\\", escaped))
+        else:
+            output.append(replacement)
+        index += 2
+    return "".join(output)
+
+
 def shell_helper_body(segment: str) -> str | None:
     words = command_words(segment)
     if (
@@ -208,6 +242,8 @@ def shell_helper_body(segment: str) -> str | None:
     # program it carries. A failed executor-style call may retain that program as its
     # original JSON request, so recover only the established string cmd field.
     body = words[-1]
+    if "$'" in segment:
+        body = decode_ansi_c_word(body)
     try:
         request = json.loads(body)
     except json.JSONDecodeError:
@@ -484,6 +520,7 @@ def analyze(paths: list[Path]) -> dict[str, object]:
     repeated_changed_paths: set[str] = set()
     edited_paths: set[str] = set()
     invocations = 0
+    same_path_loop_invocations: list[dict[str, str]] = []
 
     for path in paths:
         events: list[dict[str, object]] = []
@@ -536,6 +573,7 @@ def analyze(paths: list[Path]) -> dict[str, object]:
                     if not words:
                         continue
                     category = classify(words)
+                    same_path_loop = False
                     invocations += 1
                     categories[category]["invocations"] += 1
                     if edited_paths:
@@ -567,6 +605,7 @@ def analyze(paths: list[Path]) -> dict[str, object]:
                             }
                             if later_operands:
                                 categories[category]["same_path_edit_read_edit"] += 1
+                                same_path_loop = True
                         elif prior_paths:
                             categories[category]["path_scope_operand_post_edit"] += 1
                             later_paths = {
@@ -576,10 +615,19 @@ def analyze(paths: list[Path]) -> dict[str, object]:
                             }
                             if later_paths:
                                 categories[category]["same_path_edit_read_edit"] += 1
+                                same_path_loop = True
                             else:
                                 categories[category]["path_scope_operand_without_later_change"] += 1
                         elif text_intersection and category in {"file_read", "search"}:
                             categories[category]["changed_path_in_non_path_operand_only"] += 1
+                    if same_path_loop:
+                        tool_call_id = item.get("tool_call_id")
+                        same_path_loop_invocations.append(
+                            {
+                                "category": category,
+                                "tool_call_id": tool_call_id if isinstance(tool_call_id, str) else "",
+                            }
+                        )
                     item_categories.add(category)
             if failed:
                 for category in item_categories:
@@ -598,6 +646,7 @@ def analyze(paths: list[Path]) -> dict[str, object]:
             + categories["search"]["same_path_edit_read_edit"]
             + categories["git_diff_content"]["same_path_edit_read_edit"]
         ),
+        "same_path_loop_invocations": same_path_loop_invocations,
         "categories": categories,
     }
 

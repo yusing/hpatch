@@ -55,10 +55,13 @@ services:
       - ${HPATCH_BENCH_CONTROL_MODE:-passthrough}
       - --model-protocol
       - native
+      - --provider-base-url
+      - http://control-capturer:9081
+    depends_on:
+      control-capturer:
+        condition: service_started
     networks:
-      control-agent: {}
-      egress:
-        gw_priority: 1
+      control-capture: {}
     volumes:
       - type: bind
         source: ${BENCH_RUN_DIR:?BENCH_RUN_DIR must be set}/work
@@ -91,10 +94,14 @@ services:
       - hpatch
       - --model-protocol
       - ${HPATCH_BENCH_HPATCH_MODEL_PROTOCOL:-native}
+      - --mentor-handoff=${HPATCH_BENCH_MENTOR_HANDOFF:-false}
+      - --provider-base-url
+      - http://hpatch-capturer:9082
+    depends_on:
+      hpatch-capturer:
+        condition: service_started
     networks:
-      hpatch-agent: {}
-      egress:
-        gw_priority: 1
+      hpatch-capture: {}
     volumes:
       - type: bind
         source: ${BENCH_RUN_DIR:?BENCH_RUN_DIR must be set}/work
@@ -116,6 +123,56 @@ services:
       interval: 250ms
       timeout: 1s
       retries: 40
+
+  control-capturer:
+    <<: *bench-image
+    user: ${HPATCH_BENCH_CAPTURE_USER:-0:0}
+    command:
+      - hpatch-benchmark-capturer
+      - --front-listen
+      - 0.0.0.0:8081
+      - --front-target
+      - http://control:8081
+      - --back-listen
+      - 0.0.0.0:9081
+      - --back-target
+      - https://chatgpt.com/backend-api/codex
+      - --output
+      - ${BENCH_RUN_DIR:?BENCH_RUN_DIR must be set}/captures/control.jsonl
+    networks:
+      control-agent: {}
+      control-capture: {}
+      egress:
+        gw_priority: 1
+    volumes:
+      - type: bind
+        source: ${BENCH_RUN_DIR:?BENCH_RUN_DIR must be set}/captures
+        target: ${BENCH_RUN_DIR:?BENCH_RUN_DIR must be set}/captures
+
+  hpatch-capturer:
+    <<: *bench-image
+    user: ${HPATCH_BENCH_CAPTURE_USER:-0:0}
+    command:
+      - hpatch-benchmark-capturer
+      - --front-listen
+      - 0.0.0.0:8082
+      - --front-target
+      - http://hpatch:8082
+      - --back-listen
+      - 0.0.0.0:9082
+      - --back-target
+      - https://chatgpt.com/backend-api/codex
+      - --output
+      - ${BENCH_RUN_DIR:?BENCH_RUN_DIR must be set}/captures/hpatch.jsonl
+    networks:
+      hpatch-agent: {}
+      hpatch-capture: {}
+      egress:
+        gw_priority: 1
+    volumes:
+      - type: bind
+        source: ${BENCH_RUN_DIR:?BENCH_RUN_DIR must be set}/captures
+        target: ${BENCH_RUN_DIR:?BENCH_RUN_DIR must be set}/captures
 
   dependency-loader:
     <<: *bench-image
@@ -144,5 +201,9 @@ networks:
   control-agent:
     internal: true
   hpatch-agent:
+    internal: true
+  control-capture:
+    internal: true
+  hpatch-capture:
     internal: true
   egress: {}

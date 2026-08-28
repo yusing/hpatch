@@ -7,6 +7,123 @@ trap 'rm -rf -- "$fixture"' EXIT
 artifact_root="$fixture/artifacts/task"
 mkdir -p "$artifact_root/task-control-r001" "$artifact_root/task-hpatch-r001"
 
+collector_root="$fixture/collector-root.jsonl"
+collector_home="$fixture/collector-home"
+collector_sessions="$collector_home/sessions"
+collector_output="$fixture/collector-child-events.jsonl"
+mkdir -p "$collector_sessions/2026/08/28"
+cat >"$collector_root" <<'JSON'
+{"type":"thread.started","thread_id":"root-thread"}
+{"type":"item.completed","item":{"type":"collab_tool_call","tool":"spawn_agent","receiver_thread_ids":["child-thread"],"status":"completed"}}
+JSON
+cat >"$collector_sessions/2026/08/28/rollout-child-thread.jsonl" <<'JSON'
+{"type":"session_meta","ordinal":0,"payload":{"id":"child-thread","parent_thread_id":"root-thread","subagent_history_start_ordinal":2,"source":{"subagent":{"thread_spawn":{"parent_thread_id":"root-thread"}}}}}
+{"type":"event_msg","ordinal":1,"payload":{"type":"item_completed","item":{"type":"CommandExecution","command":"inherited command","status":"completed","exit_code":0}}}
+{"type":"event_msg","ordinal":2,"payload":{"type":"item_completed","item":{"type":"CommandExecution","id":"collector-call","command":["bash","-lc","git status --short"],"status":"completed","exit_code":0,"stdout":"private output"}}}
+{"type":"event_msg","ordinal":3,"payload":{"type":"item_completed","item":{"type":"FileChange","id":"collector-change","status":"completed","changes":{"/workspace/repo/file.go":{"type":"update","unified_diff":"private diff","move_path":null}}}}}
+JSON
+python3 "$benchmark_root/collect_child_events.py" \
+	"$collector_root" "$collector_home" "$collector_output"
+test ! -e "$collector_home"
+cat >"$fixture/expected-child-events.jsonl" <<'JSON'
+{"item":{"command":"bash -lc 'git status --short'","exit_code":0,"status":"completed","tool_call_id":"collector-call","type":"command_execution"},"type":"item.completed"}
+{"item":{"changes":[{"kind":"update","path":"/workspace/repo/file.go"}],"status":"completed","tool_call_id":"collector-change","type":"file_change"},"type":"item.completed"}
+JSON
+diff -u "$fixture/expected-child-events.jsonl" "$collector_output"
+if grep -Fq 'private output' "$collector_output"; then
+	printf 'child event collector retained command output\n' >&2
+	exit 1
+fi
+
+static_root="$fixture/static-root.jsonl"
+static_home="$fixture/static-home"
+static_prompt="$fixture/static-prompt.txt"
+mkdir -p "$static_home/sessions"
+printf '%s' 'fixed child prompt' >"$static_prompt"
+cat >"$static_root" <<'JSON'
+{"type":"thread.started","thread_id":"root-thread"}
+JSON
+cat >"$static_home/sessions/rollout-root-thread.jsonl" <<'JSON'
+{"type":"session_meta","ordinal":0,"payload":{"id":"root-thread","parent_thread_id":null,"source":"exec"}}
+{"type":"response_item","ordinal":1,"payload":{"type":"function_call","namespace":"collaboration","name":"spawn_agent","arguments":"{\"agent_type\":\"benchmark_worker\",\"fork_turns\":\"none\",\"message\":\"encrypted\",\"task_name\":\"implementation\"}"}}
+JSON
+cat >"$static_home/sessions/rollout-child-thread.jsonl" <<'JSON'
+{"type":"session_meta","ordinal":0,"payload":{"id":"child-thread","parent_thread_id":"root-thread","agent_role":"benchmark_worker","source":{"subagent":{"thread_spawn":{"parent_thread_id":"root-thread","agent_role":"benchmark_worker"}}}}}
+{"type":"response_item","ordinal":1,"payload":{"type":"message","role":"developer","content":[{"type":"input_text","text":"fixed child prompt\nfixed automatic suffix"}]}}
+{"type":"turn_context","ordinal":2,"payload":{"model":"gpt-5.6-luna","effort":"xhigh"}}
+{"type":"event_msg","ordinal":3,"payload":{"type":"item_completed","item":{"type":"CommandExecution","id":"static-call","command":["go","test","./..."],"status":"completed","exit_code":0}}}
+JSON
+python3 "$benchmark_root/collect_child_events.py" \
+	"$static_root" "$static_home" "$fixture/static-events.jsonl" "$fixture/static-proof.json" \
+	benchmark_worker "$static_prompt" gpt-5.6-luna xhigh
+test ! -e "$static_home"
+jq -e '
+	.schema == "hpatch.benchmark.child-proof.v1" and
+	.role == "benchmark_worker" and
+	.configured_model == "gpt-5.6-luna" and
+	.configured_reasoning_effort == "xhigh" and
+	.child_thread_id == "child-thread"
+' "$fixture/static-proof.json" >/dev/null
+
+wrong_prompt_home="$fixture/wrong-prompt-home"
+mkdir -p "$wrong_prompt_home/sessions"
+cat >"$wrong_prompt_home/sessions/rollout-root-thread.jsonl" <<'JSON'
+{"type":"session_meta","ordinal":0,"payload":{"id":"root-thread","parent_thread_id":null,"source":"exec"}}
+{"type":"response_item","ordinal":1,"payload":{"type":"function_call","namespace":"collaboration","name":"spawn_agent","arguments":"{\"agent_type\":\"benchmark_worker\",\"fork_turns\":\"none\",\"message\":\"encrypted\",\"task_name\":\"implementation\"}"}}
+JSON
+cat >"$wrong_prompt_home/sessions/rollout-child-thread.jsonl" <<'JSON'
+{"type":"session_meta","ordinal":0,"payload":{"id":"child-thread","parent_thread_id":"root-thread","agent_role":"benchmark_worker","source":{"subagent":{"thread_spawn":{"parent_thread_id":"root-thread","agent_role":"benchmark_worker"}}}}}
+{"type":"response_item","ordinal":1,"payload":{"type":"message","role":"developer","content":[{"type":"input_text","text":"different child prompt"}]}}
+{"type":"turn_context","ordinal":2,"payload":{"model":"gpt-5.6-luna","effort":"xhigh"}}
+JSON
+if python3 "$benchmark_root/collect_child_events.py" \
+	"$static_root" "$wrong_prompt_home" "$fixture/wrong-prompt-events.jsonl" \
+	"$fixture/wrong-prompt-proof.json" benchmark_worker "$static_prompt" \
+	gpt-5.6-luna xhigh 2>/dev/null; then
+	printf 'child event collector accepted a non-static spawn prompt\n' >&2
+	exit 1
+fi
+test ! -e "$wrong_prompt_home"
+
+invalid_home="$fixture/invalid-home"
+invalid_sessions="$invalid_home/sessions"
+mkdir -p "$invalid_sessions"
+cat >"$invalid_sessions/rollout-child-thread.jsonl" <<'JSON'
+{"type":"session_meta","ordinal":0,"payload":{"id":"child-thread","parent_thread_id":"root-thread","subagent_history_start_ordinal":1,"source":{"subagent":{"thread_spawn":{"parent_thread_id":"root-thread"}}}}}
+{"type":"event_msg","payload":{"type":"item_completed","item":{"type":"CommandExecution","command":["git","status"],"status":"completed","exit_code":0}}}
+JSON
+if python3 "$benchmark_root/collect_child_events.py" \
+	"$collector_root" "$invalid_home" "$fixture/invalid-events.jsonl" 2>/dev/null; then
+	printf 'child event collector accepted an event without an ordinal\n' >&2
+	exit 1
+fi
+test ! -e "$invalid_home"
+
+nested_home="$fixture/nested-home"
+nested_sessions="$nested_home/sessions"
+mkdir -p "$nested_sessions"
+cat >"$nested_sessions/rollout-child-thread.jsonl" <<'JSON'
+{"type":"session_meta","ordinal":0,"payload":{"id":"child-thread","parent_thread_id":"root-thread","subagent_history_start_ordinal":1,"source":{"subagent":{"thread_spawn":{"parent_thread_id":"root-thread"}}}}}
+{"type":"event_msg","ordinal":1,"payload":{"type":"item_completed","item":{"type":"CollabAgentToolCall","tool":"SpawnAgent","status":"completed","receiver_thread_ids":["grandchild-thread"]}}}
+JSON
+if python3 "$benchmark_root/collect_child_events.py" \
+	"$collector_root" "$nested_home" "$fixture/nested-events.jsonl" 2>/dev/null; then
+	printf 'child event collector accepted an unobserved nested child\n' >&2
+	exit 1
+fi
+test ! -e "$nested_home"
+
+compressed_home="$fixture/compressed-home"
+compressed_sessions="$compressed_home/sessions"
+mkdir -p "$compressed_sessions"
+: >"$compressed_sessions/rollout-child-thread.jsonl.zst"
+if python3 "$benchmark_root/collect_child_events.py" \
+	"$collector_root" "$compressed_home" "$fixture/compressed-events.jsonl" 2>/dev/null; then
+	printf 'child event collector accepted unsupported compressed rollout\n' >&2
+	exit 1
+fi
+test ! -e "$compressed_home"
+
 cat >"$fixture/benchmark-config.json" <<'JSON'
 {"report_issue_enabled":true,"agent_issue_reports":"agent-issue-reports.jsonl","exact_hpatch_evidence_enabled":true,"exact_hpatch_evidence":"hpatch-exact-evidence.jsonl","exact_hpatch_evidence_schema":"hpatch.benchmark.exact-attempt.v1"}
 JSON
@@ -177,6 +294,169 @@ jq -e -s '
 	.[2].rendered_report == "done\nrefs:\n  1:aaaa final row\n"
 ' "$fixture/hpatch-exact-evidence.jsonl" >/dev/null
 
+mentor_backup="$fixture/mentor-backup"
+mkdir "$mentor_backup"
+cp "$fixture/benchmark-config.json" "$fixture/results.jsonl" \
+	"$fixture/control-metrics.json" "$fixture/hpatch-metrics.json" \
+	"$fixture/hpatch-router.log" "$mentor_backup/"
+
+cat >"$fixture/benchmark-config.json" <<'JSON'
+{"benchmark_mode":"mentor-handoff","codex_release":"0.150.1","mentor_handoff":{"child_prompt_sha256":"fixed-prompt-sha"},"report_issue_enabled":false,"exact_hpatch_evidence_enabled":false}
+JSON
+mentor_baseline_metrics="$fixture/hpatch-metrics.json"
+mentor_metrics="$fixture/hpatch-mentor-metrics.json"
+mentor_log="$fixture/hpatch-mentor-router.log"
+cp "$fixture/hpatch-metrics.json" "$mentor_metrics"
+cp "$fixture/control-metrics.json" "$mentor_baseline_metrics"
+cp "$fixture/hpatch-router.log" "$mentor_log"
+jq -c '
+	.model = "gpt-5.6-luna" |
+	.reasoning_effort = "xhigh" |
+	.parent_model = "gpt-5.6-sol" |
+	.parent_reasoning_effort = "high" |
+	.child_model = "gpt-5.6-luna" |
+	.child_reasoning_effort = "xhigh" |
+	if .arm == "control" then
+		.arm = "hpatch" |
+		.agent.usage = {"input_tokens":500,"cached_input_tokens":300,"output_tokens":40,"reasoning_output_tokens":10}
+	elif .arm == "hpatch" then
+		.arm = "hpatch-mentor" |
+		.agent.usage = {"input_tokens":600,"cached_input_tokens":350,"output_tokens":50,"reasoning_output_tokens":20}
+	else . end
+' "$fixture/results.jsonl" >"$fixture/results.tmp"
+mv "$fixture/results.tmp" "$fixture/results.jsonl"
+cp -a "$artifact_root/task-control-r001" "$artifact_root/task-hpatch-baseline-r001"
+cp -a "$artifact_root/task-hpatch-r001" "$artifact_root/task-hpatch-mentor-r001"
+mv "$artifact_root/task-hpatch-r001" "$artifact_root/task-hpatch-original-r001"
+mv "$artifact_root/task-hpatch-baseline-r001" "$artifact_root/task-hpatch-r001"
+for mentor_artifact in \
+	"$artifact_root/task-hpatch-r001" \
+	"$artifact_root/task-hpatch-mentor-r001"; do
+	cp "$mentor_artifact/codex.jsonl" "$mentor_artifact/child-events.jsonl"
+	if [[ $mentor_artifact == *task-hpatch-mentor-r001 ]]; then
+		child_thread=treatment-child
+		tool_call=treatment-call
+	else
+		child_thread=baseline-child
+		tool_call=baseline-call
+	fi
+	jq -c --arg call "$tool_call" \
+		'if .type == "item.completed" and .item.type == "command_execution" then .item.tool_call_id = $call else . end' \
+		"$mentor_artifact/child-events.jsonl" >"$mentor_artifact/child-events.tmp"
+	mv "$mentor_artifact/child-events.tmp" "$mentor_artifact/child-events.jsonl"
+	jq -cn --arg thread "$child_thread" '{
+		schema:"hpatch.benchmark.child-proof.v1",
+		role:"benchmark_worker",
+		configured_model:"gpt-5.6-luna",
+		configured_reasoning_effort:"xhigh",
+		developer_prompt_sha256:"fixed-effective-prompt-sha",
+		benchmark_prompt_sha256:"fixed-prompt-sha",
+		child_thread_id:$thread
+	}' >"$mentor_artifact/child-proof.json"
+	cat >"$mentor_artifact/codex.jsonl" <<'JSON'
+{"type":"thread.started","thread_id":"root-thread"}
+{"type":"item.completed","item":{"type":"collab_tool_call","tool":"spawn_agent","receiver_thread_ids":["child-thread"],"status":"completed"}}
+{"type":"item.completed","item":{"type":"agent_message","text":"child finished"}}
+JSON
+done
+mkdir "$fixture/captures"
+cat >"$fixture/captures/control.jsonl" <<'JSON'
+{"schema_version":1,"boundary":"codex","capture_id":"baseline-parent","request_id":"reused-client-request","thread_id":"control-session","request_model":"gpt-5.6-sol","status_code":200,"response_complete":true,"response_status":"completed"}
+{"schema_version":1,"boundary":"provider","capture_id":"baseline-parent","request_id":"reused-client-request","thread_id":"control-session","request_model":"gpt-5.6-sol","status_code":200,"response_complete":true,"response_status":"completed","usage":{"input_tokens":500,"cached_input_tokens":300,"output_tokens":40,"reasoning_tokens":10}}
+{"schema_version":1,"boundary":"codex","capture_id":"baseline-child-request","request_id":"reused-client-request","thread_id":"baseline-child","subagent":"collab_spawn","request_model":"gpt-5.6-luna","status_code":200,"response_complete":true,"response_status":"completed","tool_call_ids":["baseline-call"]}
+{"schema_version":1,"boundary":"provider","capture_id":"baseline-child-request","request_id":"reused-client-request","thread_id":"baseline-child","subagent":"collab_spawn","request_model":"gpt-5.6-luna","status_code":200,"response_complete":true,"response_status":"completed","usage":{"input_tokens":2000,"cached_input_tokens":1200,"output_tokens":160,"reasoning_tokens":70},"tool_call_ids":["baseline-call"]}
+JSON
+cat >"$fixture/captures/hpatch.jsonl" <<'JSON'
+{"schema_version":1,"boundary":"codex","capture_id":"treatment-parent","request_id":"reused-client-request","thread_id":"hpatch-session","request_model":"gpt-5.6-sol","status_code":200,"response_complete":true,"response_status":"completed"}
+{"schema_version":1,"boundary":"provider","capture_id":"treatment-parent","request_id":"reused-client-request","thread_id":"hpatch-session","request_model":"gpt-5.6-sol","status_code":200,"response_complete":true,"response_status":"completed","usage":{"input_tokens":600,"cached_input_tokens":350,"output_tokens":50,"reasoning_tokens":20}}
+{"schema_version":1,"boundary":"codex","capture_id":"treatment-mentor","request_id":"reused-client-request","thread_id":"treatment-child","subagent":"collab_spawn","request_model":"gpt-5.6-luna","status_code":200,"response_complete":true,"response_status":"completed","tool_call_ids":["treatment-call"]}
+{"schema_version":1,"boundary":"provider","capture_id":"treatment-mentor","request_id":"reused-client-request","thread_id":"treatment-child","subagent":"collab_spawn","request_model":"gpt-5.6-sol","status_code":200,"response_complete":true,"response_status":"completed","usage":{"input_tokens":400,"cached_input_tokens":250,"output_tokens":50,"reasoning_tokens":30},"tool_call_ids":["treatment-call"]}
+{"schema_version":1,"boundary":"codex","capture_id":"treatment-actual","request_id":"reused-client-request","thread_id":"treatment-child","subagent":"collab_spawn","request_model":"gpt-5.6-luna","status_code":200,"response_complete":true,"response_status":"completed"}
+{"schema_version":1,"boundary":"provider","capture_id":"treatment-actual","request_id":"reused-client-request","thread_id":"treatment-child","subagent":"collab_spawn","request_model":"gpt-5.6-luna","status_code":200,"response_complete":true,"response_status":"completed","usage":{"input_tokens":2000,"cached_input_tokens":1200,"output_tokens":150,"reasoning_tokens":70}}
+JSON
+jq '. + {
+	"total":{"input_tokens":2500,"uncached_input_tokens":1000,"output_tokens":200,"reasoning_tokens":80},
+	"by_model":{
+		"gpt-5.6-sol":{"input_tokens":500,"uncached_input_tokens":200,"output_tokens":40,"reasoning_tokens":10},
+		"gpt-5.6-luna":{"input_tokens":2000,"uncached_input_tokens":800,"output_tokens":160,"reasoning_tokens":70}
+	}
+} | .sessions[0].by_model = .by_model' "$mentor_baseline_metrics" >"$fixture/mentor-baseline-metrics.tmp"
+mv "$fixture/mentor-baseline-metrics.tmp" "$mentor_baseline_metrics"
+jq '. + {
+	"total":{"input_tokens":3000,"uncached_input_tokens":1200,"output_tokens":250,"reasoning_tokens":120},
+	"by_model":{
+		"gpt-5.6-sol":{"input_tokens":1000,"uncached_input_tokens":400,"output_tokens":100,"reasoning_tokens":50},
+		"gpt-5.6-luna":{"input_tokens":2000,"uncached_input_tokens":800,"output_tokens":150,"reasoning_tokens":70}
+	}
+} | .sessions[0].by_model = .by_model' "$mentor_metrics" >"$fixture/mentor-metrics.tmp"
+mv "$fixture/mentor-metrics.tmp" "$mentor_metrics"
+printf '%s\n' 'hpatch-1 | msg="Mentor Handoff progress" handoff_complete=true handoff_transitioned=true' >>"$mentor_log"
+
+bash "$benchmark_root/report.sh" "$fixture" >/dev/null
+
+grep -Fq '| Measure | Hpatch | Hpatch + Mentor Handoff | Difference |' "$fixture/summary.md"
+grep -Fq 'Both arms use the same static parent prompt and the same static child role and prompt.' \
+	"$fixture/summary.md"
+grep -Fq 'Child proof: one history-free `benchmark_worker` per attempt' "$fixture/summary.md"
+grep -Fq 'Codex CLI: `0.150.1`.' "$fixture/summary.md"
+grep -Fq '| Category | Hpatch | Hpatch + Mentor Handoff |' "$fixture/summary.md"
+if grep -Fq 'Not reported for this experiment.' "$fixture/summary.md"; then
+	printf 'mentor report ignored captured child command events\n' >&2
+	exit 1
+fi
+grep -Fq '| Total input tokens | 2500 | 3000 | 500 |' "$fixture/summary.md"
+grep -Fq '| Cached input tokens | 1500 | 1800 | 300 |' "$fixture/summary.md"
+grep -Fq '| Output tokens | 200 | 250 | 50 |' "$fixture/summary.md"
+grep -Fq '| Reasoning tokens | 80 | 120 | 40 |' "$fixture/summary.md"
+grep -Fq '| Model requests | 2 | 3 | 1 |' "$fixture/summary.md"
+grep -Fq '| Parent | gpt-5.6-sol | 600 | 350 | 50 | 20 |' "$fixture/summary.md"
+grep -Fq '| Mentor | gpt-5.6-sol | 400 | 250 | 50 | 30 |' "$fixture/summary.md"
+grep -Fq '| Actual | gpt-5.6-luna | 2000 | 1200 | 150 | 70 |' "$fixture/summary.md"
+grep -Fq '| Mentor + actual child | child requests | 2400 | 1450 | 200 | 100 |' "$fixture/summary.md"
+grep -Fq '| Combined comparison | parent + child | 3000 | 1800 | 250 | 120 |' "$fixture/summary.md"
+grep -Fq '| Hpatch + Mentor Handoff | gpt-5.6-sol | 1 | 2 | 2 | 5 |' "$fixture/summary.md"
+grep -Fq 'Treatment same-path loops by actual provider model: `gpt-5.6-sol` 5, `gpt-5.6-luna` 0.' "$fixture/summary.md"
+cp "$fixture/captures/hpatch.jsonl" "$fixture/valid-loop-capture.jsonl"
+jq -c 'if .boundary == "codex" and .capture_id == "treatment-mentor" then del(.tool_call_ids) else . end' \
+	"$fixture/valid-loop-capture.jsonl" >"$fixture/captures/hpatch.jsonl"
+if bash "$benchmark_root/report.sh" "$fixture" >/dev/null 2>&1; then
+	printf 'report accepted a loop without exact provider-model capture attribution\n' >&2
+	exit 1
+fi
+mv "$fixture/valid-loop-capture.jsonl" "$fixture/captures/hpatch.jsonl"
+jq -c '.task_pass = false' "$fixture/results.jsonl" >"$fixture/results.tmp"
+mv "$fixture/results.tmp" "$fixture/results.jsonl"
+bash "$benchmark_root/report.sh" "$fixture" >/dev/null
+grep -Fq 'Task success is inconclusive at the floor: neither Hpatch + Mentor Handoff nor Hpatch passed an attempt (0/1 versus 0/1).' "$fixture/summary.md"
+mv "$artifact_root/task-hpatch-mentor-r001/child-events.jsonl" "$fixture/missing-child-events.jsonl"
+if bash "$benchmark_root/report.sh" "$fixture" >/dev/null 2>&1; then
+	printf 'report accepted incomplete Mentor Handoff child event capture\n' >&2
+	exit 1
+fi
+mv "$fixture/missing-child-events.jsonl" "$artifact_root/task-hpatch-mentor-r001/child-events.jsonl"
+cp "$artifact_root/task-hpatch-mentor-r001/child-proof.json" "$fixture/valid-child-proof.json"
+jq '.developer_prompt_sha256 = "different-effective-prompt-sha"' \
+	"$fixture/valid-child-proof.json" >"$artifact_root/task-hpatch-mentor-r001/child-proof.json"
+if bash "$benchmark_root/report.sh" "$fixture" >/dev/null 2>&1; then
+	printf 'report accepted different effective child prompts across Mentor Handoff arms\n' >&2
+	exit 1
+fi
+mv "$fixture/valid-child-proof.json" "$artifact_root/task-hpatch-mentor-r001/child-proof.json"
+cp "$fixture/captures/hpatch.jsonl" "$fixture/valid-hpatch-capture.jsonl"
+jq -c 'select(.capture_id != "treatment-actual")' \
+	"$fixture/valid-hpatch-capture.jsonl" >"$fixture/captures/hpatch.jsonl"
+if bash "$benchmark_root/report.sh" "$fixture" >/dev/null 2>&1; then
+	printf 'report accepted a Mentor Handoff treatment without a same-child return to the actual model\n' >&2
+	exit 1
+fi
+mv "$fixture/valid-hpatch-capture.jsonl" "$fixture/captures/hpatch.jsonl"
+cp "$mentor_backup/benchmark-config.json" "$mentor_backup/results.jsonl" \
+	"$mentor_backup/control-metrics.json" "$mentor_backup/hpatch-metrics.json" \
+	"$mentor_backup/hpatch-router.log" "$fixture/"
+rm -rf "$artifact_root/task-hpatch-r001" "$artifact_root/task-hpatch-mentor-r001"
+mv "$artifact_root/task-hpatch-original-r001" "$artifact_root/task-hpatch-r001"
+rm -f "$mentor_metrics" "$mentor_log"
+
 python3 "$benchmark_root/analyze_cache.py" \
 	"$fixture/results.jsonl" hpatch "$fixture/hpatch-router.log" |
 	jq -e '
@@ -305,6 +585,7 @@ events = [
         }), "bash", ("-eu",))),
         exit_code=127,
     ),
+    command(carrier("shell bash $'go test ./...\\ngit status --short\\n'")),
 ]
 pathlib.Path(sys.argv[1]).write_text(
     "".join(json.dumps(event) + "\n" for event in events), encoding="utf-8"
@@ -313,9 +594,9 @@ PY
 python3 "$benchmark_root/analyze_commands.py" \
 	"$helper_analysis/events.jsonl" >"$helper_analysis/analysis.json"
 jq -e '
-	.command_execution_items == 3 and
+	.command_execution_items == 4 and
 	.failed_command_execution_items == 1 and
-	.parsed_command_invocations == 9 and
+	.parsed_command_invocations == 11 and
 	(.categories.file_read |
 		.invocations == 2 and .post_edit == 1 and .failed_items == 1 and
 		.path_scope_operand_post_edit == 1 and
@@ -340,8 +621,8 @@ jq -e '
 	.categories.git_diff_content.invocations == 1 and
 	.categories.git_diff_content.path_scope_operand_post_edit == 1 and
 	.categories.git_diff_content.path_scope_operand_without_later_change == 1 and
-	.categories.git_status.invocations == 1 and
-	.categories.test_or_build.invocations == 1 and
+	.categories.git_status.invocations == 2 and
+	.categories.test_or_build.invocations == 2 and
 	.categories.other.invocations == 1
 ' "$helper_analysis/analysis.json" >/dev/null
 
