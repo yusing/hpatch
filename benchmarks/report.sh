@@ -8,12 +8,30 @@ fi
 
 run_dir=$1
 benchmark_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+for executable in jq python3; do
+	if ! command -v "$executable" >/dev/null; then
+		printf 'report.sh: %s is required\n' "$executable" >&2
+		exit 1
+	fi
+done
 results="$run_dir/results.jsonl"
+benchmark_config="$run_dir/benchmark-config.json"
+benchmark_mode=paired
+if [[ -s $benchmark_config ]]; then
+	benchmark_mode=$(jq -r '.benchmark_mode // "paired"' "$benchmark_config")
+fi
 control_metrics="$run_dir/control-metrics.json"
 hpatch_metrics="$run_dir/hpatch-metrics.json"
 control_log="$run_dir/control-router.log"
 hpatch_log="$run_dir/hpatch-router.log"
-benchmark_config="$run_dir/benchmark-config.json"
+control_capture="$run_dir/captures/control.jsonl"
+hpatch_capture="$run_dir/captures/hpatch.jsonl"
+if [[ $benchmark_mode == mentor-handoff ]]; then
+	control_metrics="$run_dir/hpatch-metrics.json"
+	hpatch_metrics="$run_dir/hpatch-mentor-metrics.json"
+	control_log="$run_dir/hpatch-router.log"
+	hpatch_log="$run_dir/hpatch-mentor-router.log"
+fi
 issue_reports="$run_dir/agent-issue-reports.jsonl"
 issue_reports_directory="$run_dir/agent-issue-reports"
 exact_evidence="$run_dir/hpatch-exact-evidence.jsonl"
@@ -29,17 +47,11 @@ for file in "$results" "$hpatch_metrics"; do
 		exit 1
 	fi
 done
-has_control=$(jq -s 'any(.arm == "control")' "$results")
+has_control=$(jq -s 'any(.arm == "control" or .arm == "hpatch-mentor")' "$results")
 if [[ $has_control == true && ! -s $control_metrics ]]; then
 	printf 'report.sh: required benchmark artifact is missing or empty: %s\n' "$control_metrics" >&2
 	exit 1
 fi
-for executable in jq python3; do
-	if ! command -v "$executable" >/dev/null; then
-		printf 'report.sh: %s is required\n' "$executable" >&2
-		exit 1
-	fi
-done
 if [[ -d $issue_reports_directory ]]; then
 	bash "$benchmark_root/collect-agent-issue-reports.sh" \
 		"$issue_reports_directory" "$issue_reports"
@@ -79,6 +91,38 @@ fi
 task_id=$(jq -sr '.[0].task_id' "$results")
 model=$(jq -sr '.[0].model' "$results")
 reasoning_effort=$(jq -sr '.[0].reasoning_effort' "$results")
+if [[ $benchmark_mode == mentor-handoff ]]; then
+	if ! parent_model=$(jq -er -s '
+		if length > 0 and
+			all(.[]; (.parent_model | type) == "string" and (.parent_model | length) > 0) and
+			([.[].parent_model] | unique | length) == 1
+		then .[0].parent_model
+		else error("missing or inconsistent parent_model")
+		end
+	' "$results" 2>/dev/null); then
+		printf 'report.sh: Mentor Handoff results require one consistent non-empty parent_model\n' >&2
+		exit 1
+	fi
+else
+	parent_model=$(jq -sr '.[0].parent_model // .[0].model' "$results")
+fi
+parent_reasoning_effort=$(jq -sr '.[0].parent_reasoning_effort // .[0].reasoning_effort' "$results")
+codex_release=
+if [[ -s $benchmark_config ]]; then
+	codex_release=$(jq -r '.codex_release // empty' "$benchmark_config")
+fi
+mentor_comparison=false
+baseline_arm=control
+treatment_arm=hpatch
+baseline_label=Control
+treatment_label=Hpatch
+if [[ $benchmark_mode == mentor-handoff ]]; then
+	mentor_comparison=true
+	baseline_arm=hpatch
+	treatment_arm=hpatch-mentor
+	baseline_label=Hpatch
+	treatment_label='Hpatch + Mentor Handoff'
+fi
 commit=$(basename -- "$run_dir")
 commit=${commit%-*}
 ctp_comparison=$(jq -s 'any(.model_protocol == "ctp2")' "$results")
@@ -87,21 +131,60 @@ if [[ $ctp_comparison == true ]]; then
 	exec bash "$benchmark_root/report-ctp.sh" "$run_dir"
 fi
 shopt -s nullglob
-control_events=("$run_dir/artifacts/$task_id"/"$task_id-control-r"*/codex.jsonl)
-hpatch_events=("$run_dir/artifacts/$task_id"/"$task_id-hpatch-r"*/codex.jsonl)
+control_root_events=("$run_dir/artifacts/$task_id"/"$task_id-$baseline_arm-r"*/codex.jsonl)
+hpatch_root_events=("$run_dir/artifacts/$task_id"/"$task_id-$treatment_arm-r"*/codex.jsonl)
+control_child_events=("$run_dir/artifacts/$task_id"/"$task_id-$baseline_arm-r"*/child-events.jsonl)
+hpatch_child_events=("$run_dir/artifacts/$task_id"/"$task_id-$treatment_arm-r"*/child-events.jsonl)
+control_child_proofs=("$run_dir/artifacts/$task_id"/"$task_id-$baseline_arm-r"*/child-proof.json)
+hpatch_child_proofs=("$run_dir/artifacts/$task_id"/"$task_id-$treatment_arm-r"*/child-proof.json)
 shopt -u nullglob
-if ((${#hpatch_events[@]} == 0)) || [[ $has_control == true && ${#control_events[@]} == 0 ]]; then
+control_events=("${control_root_events[@]}")
+hpatch_events=("${hpatch_root_events[@]}")
+if [[ $mentor_comparison == true ]]; then
+	control_runs_expected=$(jq -sr --arg arm "$baseline_arm" '[.[] | select(.arm == $arm)] | length' "$results")
+	hpatch_runs_expected=$(jq -sr --arg arm "$treatment_arm" '[.[] | select(.arm == $arm)] | length' "$results")
+	if ((${#control_child_events[@]} != control_runs_expected || ${#hpatch_child_events[@]} != hpatch_runs_expected ||
+		${#control_child_proofs[@]} != control_runs_expected || ${#hpatch_child_proofs[@]} != hpatch_runs_expected)); then
+		printf 'report.sh: Mentor Handoff child capture is incomplete: %d/%d events and %d/%d proofs for Hpatch; %d/%d events and %d/%d proofs for Hpatch + Mentor Handoff\n' \
+			"${#control_child_events[@]}" "$control_runs_expected" \
+			"${#control_child_proofs[@]}" "$control_runs_expected" \
+			"${#hpatch_child_events[@]}" "$hpatch_runs_expected" \
+			"${#hpatch_child_proofs[@]}" "$hpatch_runs_expected" >&2
+		exit 1
+	fi
+	control_events+=("${control_child_events[@]}")
+	hpatch_events+=("${hpatch_child_events[@]}")
+	for capture in "$control_capture" "$hpatch_capture"; do
+		if [[ ! -s $capture ]]; then
+			printf 'report.sh: Mentor Handoff capture is missing or empty: %s\n' "$capture" >&2
+			exit 1
+		fi
+	done
+fi
+if ((${#hpatch_root_events[@]} == 0)) || [[ $has_control == true && ${#control_root_events[@]} == 0 ]]; then
 	printf 'report.sh: command artifacts are incomplete for task %s\n' "$task_id" >&2
 	exit 1
 fi
 if [[ $has_control == true ]]; then
 	python3 "$benchmark_root/analyze_commands.py" "${control_events[@]}" >"$analysis_dir/control.json"
-	python3 "$benchmark_root/analyze_cache.py" \
-		"$results" control "$control_log" >"$analysis_dir/control-cache.json"
+	if [[ $mentor_comparison == false ]]; then
+		python3 "$benchmark_root/analyze_cache.py" \
+			"$results" "$baseline_arm" "$control_log" >"$analysis_dir/control-cache.json"
+	fi
 fi
 python3 "$benchmark_root/analyze_commands.py" "${hpatch_events[@]}" >"$analysis_dir/hpatch.json"
-python3 "$benchmark_root/analyze_cache.py" \
-	"$results" hpatch "$hpatch_log" >"$analysis_dir/hpatch-cache.json"
+if [[ $mentor_comparison == true ]]; then
+	python3 "$benchmark_root/analyze_mentor_capture.py" \
+		"$control_capture" "$results" "$baseline_arm" "$parent_model" "$model" \
+		"$analysis_dir/control.json" "${control_child_proofs[@]}" >"$analysis_dir/control-capture.json"
+	python3 "$benchmark_root/analyze_mentor_capture.py" \
+		"$hpatch_capture" "$results" "$treatment_arm" "$parent_model" "$model" \
+		"$analysis_dir/hpatch.json" "${hpatch_child_proofs[@]}" >"$analysis_dir/hpatch-capture.json"
+fi
+if [[ $mentor_comparison == false ]]; then
+	python3 "$benchmark_root/analyze_cache.py" \
+		"$results" "$treatment_arm" "$hpatch_log" >"$analysis_dir/hpatch-cache.json"
+fi
 if [[ $exact_evidence_enabled == true ]]; then
 	python3 "$benchmark_root/analyze_hpatch_evidence.py" \
 		"$exact_evidence" "$hpatch_metrics" >"$analysis_dir/exact-evidence.json"
@@ -177,6 +260,12 @@ hpatch_file_read_loops=$(jq -r '.categories.file_read.same_path_edit_read_edit' 
 hpatch_search_loops=$(jq -r '.categories.search.same_path_edit_read_edit' "$analysis_dir/hpatch.json")
 hpatch_git_diff_loops=$(jq -r '.categories.git_diff_content.same_path_edit_read_edit' "$analysis_dir/hpatch.json")
 hpatch_structural_loops=$((hpatch_file_read_loops + hpatch_search_loops + hpatch_git_diff_loops))
+hpatch_mentor_loops=0
+hpatch_actual_loops=0
+if [[ $mentor_comparison == true ]]; then
+	hpatch_mentor_loops=$(jq -r --arg model "$parent_model" '[(.loops_by_model[$model] // {})[]] | add // 0' "$analysis_dir/hpatch-capture.json")
+	hpatch_actual_loops=$(jq -r --arg model "$model" '[(.loops_by_model[$model] // {})[]] | add // 0' "$analysis_dir/hpatch-capture.json")
+fi
 hpatch_rejections=$(jq -r '.hpatch_calls.rejected' "$hpatch_metrics")
 hpatch_successes=$(jq -r '.hpatch_calls.successful' "$hpatch_metrics")
 diagnostic_tokens=$(jq -r '.hpatch_calls.diagnostic_input_tokens' "$hpatch_metrics")
@@ -185,14 +274,49 @@ if [[ $has_control == true ]]; then
 	control_requests=$(jq -r '.requests.started' "$control_metrics")
 fi
 hpatch_requests=$(jq -r '.requests.started' "$hpatch_metrics")
-control_input=$(jq -sr '[.[] | select(.arm == "control") | .agent.usage.input_tokens] | add // 0' "$results")
-hpatch_input=$(jq -sr '[.[] | select(.arm == "hpatch") | .agent.usage.input_tokens] | add // 0' "$results")
-control_output=$(jq -sr '[.[] | select(.arm == "control") | .agent.usage.output_tokens] | add // 0' "$results")
-hpatch_output=$(jq -sr '[.[] | select(.arm == "hpatch") | .agent.usage.output_tokens] | add // 0' "$results")
-control_passes=$(jq -sr '[.[] | select(.arm == "control" and .task_pass)] | length' "$results")
-hpatch_passes=$(jq -sr '[.[] | select(.arm == "hpatch" and .task_pass)] | length' "$results")
-control_runs=$(jq -sr '[.[] | select(.arm == "control")] | length' "$results")
-hpatch_runs=$(jq -sr '[.[] | select(.arm == "hpatch")] | length' "$results")
+control_input=$(jq -sr --arg arm "$baseline_arm" '[.[] | select(.arm == $arm) | .agent.usage.input_tokens] | add // 0' "$results")
+hpatch_input=$(jq -sr --arg arm "$treatment_arm" '[.[] | select(.arm == $arm) | .agent.usage.input_tokens] | add // 0' "$results")
+control_output=$(jq -sr --arg arm "$baseline_arm" '[.[] | select(.arm == $arm) | .agent.usage.output_tokens] | add // 0' "$results")
+hpatch_output=$(jq -sr --arg arm "$treatment_arm" '[.[] | select(.arm == $arm) | .agent.usage.output_tokens] | add // 0' "$results")
+control_passes=$(jq -sr --arg arm "$baseline_arm" '[.[] | select(.arm == $arm and .task_pass)] | length' "$results")
+hpatch_passes=$(jq -sr --arg arm "$treatment_arm" '[.[] | select(.arm == $arm and .task_pass)] | length' "$results")
+control_runs=$(jq -sr --arg arm "$baseline_arm" '[.[] | select(.arm == $arm)] | length' "$results")
+hpatch_runs=$(jq -sr --arg arm "$treatment_arm" '[.[] | select(.arm == $arm)] | length' "$results")
+if [[ $mentor_comparison == true ]]; then
+	expected_child_prompt_sha=$(jq -r '.mentor_handoff.child_prompt_sha256 // empty' "$benchmark_config")
+	if ! jq -e -s --arg model "$model" --arg effort "$reasoning_effort" --arg prompt_sha "$expected_child_prompt_sha" '
+		length > 0 and
+		all(.[];
+			.schema == "hpatch.benchmark.child-proof.v1" and
+			.role == "benchmark_worker" and
+			.configured_model == $model and
+			.configured_reasoning_effort == $effort and
+			.benchmark_prompt_sha256 == $prompt_sha and
+			(.child_thread_id | type) == "string" and (.child_thread_id | length) > 0) and
+		([.[].developer_prompt_sha256] | unique | length) == 1 and
+		([.[].benchmark_prompt_sha256] | unique | length) == 1
+	' "${control_child_proofs[@]}" "${hpatch_child_proofs[@]}" >/dev/null; then
+		printf 'report.sh: Mentor Handoff child role, model, or effective prompt differed across arms\n' >&2
+		exit 1
+	fi
+	handoff_transitions=$(grep -Fc 'handoff_transitioned=true' "$hpatch_log" || true)
+	handoff_transitions=${handoff_transitions:-0}
+	if ((handoff_transitions != hpatch_runs)); then
+		printf 'report.sh: Mentor Handoff proof incomplete: %d completed handoffs for %d runs\n' \
+			"$handoff_transitions" "$hpatch_runs" >&2
+		exit 1
+	fi
+	if grep -Fq 'Mentor Handoff progress' "$control_log"; then
+		printf 'report.sh: Hpatch baseline unexpectedly activated Mentor Handoff\n' >&2
+		exit 1
+	fi
+	control_input=$(jq -r '.roles.combined.input_tokens' "$analysis_dir/control-capture.json")
+	hpatch_input=$(jq -r '.roles.combined.input_tokens' "$analysis_dir/hpatch-capture.json")
+	control_output=$(jq -r '.roles.combined.output_tokens' "$analysis_dir/control-capture.json")
+	hpatch_output=$(jq -r '.roles.combined.output_tokens' "$analysis_dir/hpatch-capture.json")
+	control_requests=$(jq -r '.roles.combined.requests' "$analysis_dir/control-capture.json")
+	hpatch_requests=$(jq -r '.roles.combined.requests' "$analysis_dir/hpatch-capture.json")
+fi
 report_issue_enabled=unknown
 report_issue_recorded=false
 if [[ -s $benchmark_config ]]; then
@@ -279,21 +403,37 @@ cache_rate_delta() {
 {
 	printf '# Benchmark report — `%s`\n\n' "$commit"
 	printf 'Task: `%s`  \n' "$task_id"
-	printf 'Configuration: `%s`, %s reasoning, %s measured Hpatch run(s).\n\n' \
-		"$model" "$reasoning_effort" "$hpatch_runs"
-	printf 'Uncached input is provider usage. Cache attribution splits it into cold or newly appended input and misses within the immediately preceding request prefix.\n\n'
-	if baseline_summary=$(jq -sr '[.[] | select(.arm == "control") | .imported_control_baseline.summary][0] // empty' "$results") && [[ -n $baseline_summary ]]; then
+	if [[ $mentor_comparison == true ]]; then
+		printf 'Configuration: `%s` %s parent, `%s` %s child, %s paired repetition(s).\n\n' \
+			"$parent_model" "$parent_reasoning_effort" "$model" "$reasoning_effort" "$hpatch_runs"
+		printf 'Both arms use the same static parent prompt and the same static child role and prompt. The baseline child uses `%s` throughout. Hpatch + Mentor Handoff temporarily uses `%s` with high reasoning in that child, then returns it to `%s`. Combined provider-facing capture of parent and child usage is used for the A/B comparison.\n\n' \
+			"$model" "$parent_model" "$model"
+		printf 'Child proof: one history-free `benchmark_worker` per attempt, locked `%s` %s configuration, no spawn-time model override, and one identical effective developer prompt across all %d attempts.\n\n' \
+			"$model" "$reasoning_effort" "$((control_runs + hpatch_runs))"
+	else
+		printf 'Configuration: `%s`, %s reasoning, %s measured Hpatch run(s).\n\n' \
+			"$model" "$reasoning_effort" "$hpatch_runs"
+		printf 'Uncached input is provider usage. Cache attribution splits it into cold or newly appended input and misses within the immediately preceding request prefix.\n\n'
+	fi
+	if [[ -n $codex_release ]]; then
+		printf 'Codex CLI: `%s`.\n\n' "$codex_release"
+	fi
+	if baseline_summary=$(jq -sr --arg arm "$baseline_arm" '[.[] | select(.arm == $arm) | .imported_control_baseline.summary][0] // empty' "$results") && [[ -n $baseline_summary ]]; then
 		printf 'Control values are imported from `%s`; this run executed only Hpatch.\n\n' "$baseline_summary"
 	fi
 
 	printf '## Outcome\n\n'
 	if [[ $has_control == true ]]; then
-		printf '| Measure | Control | Hpatch | Difference |\n'
+		if [[ $mentor_comparison == true ]]; then
+			printf '| Measure | Hpatch | Hpatch + Mentor Handoff | Difference |\n'
+		else
+			printf '| Measure | Control | Hpatch | Difference |\n'
+		fi
 		printf '|---|---:|---:|---:|\n'
 		printf '| Task pass rate | %s/%s | %s/%s | %s |\n' \
 			"$control_passes" "$control_runs" "$hpatch_passes" "$hpatch_runs" \
 			"$(if ((hpatch_passes == control_passes)); then printf 'equal'; elif ((hpatch_passes > control_passes)); then printf 'better'; else printf 'worse'; fi)"
-		jq -sr '
+		jq -sr --arg baseline "$baseline_arm" --arg treatment "$treatment_arm" '
 			group_by(.arm) |
 			map({key: .[0].arm, value: {
 				duration: (map(.agent.duration_ms) | add),
@@ -301,32 +441,79 @@ cache_rate_delta() {
 				uncached: (map(.agent.usage.input_tokens - .agent.usage.cached_input_tokens) | add),
 				output: (map(.agent.usage.output_tokens) | add)
 			}}) | from_entries as $arms |
-			[
-				["Agent wall time (s)", ($arms.control.duration / 1000), ($arms.hpatch.duration / 1000), (($arms.hpatch.duration - $arms.control.duration) / 1000)],
-				["Total input tokens", $arms.control.input, $arms.hpatch.input, ($arms.hpatch.input - $arms.control.input)],
-				["Uncached input tokens", $arms.control.uncached, $arms.hpatch.uncached, ($arms.hpatch.uncached - $arms.control.uncached)],
-				["Output tokens", $arms.control.output, $arms.hpatch.output, ($arms.hpatch.output - $arms.control.output)]
-			][] | "| " + (map(tostring) | join(" | ")) + " |"
+			[["Agent wall time (s)", ($arms[$baseline].duration / 1000), ($arms[$treatment].duration / 1000), (($arms[$treatment].duration - $arms[$baseline].duration) / 1000)]][] |
+			"| " + (map(tostring) | join(" | ")) + " |"
 		' "$results"
-		printf '| Cold/new uncached input tokens | %s | %s | %s |\n' \
-			"$(cache_field "$analysis_dir/control-cache.json" cold_or_new_uncached_input_tokens)" \
-			"$(cache_field "$analysis_dir/hpatch-cache.json" cold_or_new_uncached_input_tokens)" \
-			"$(cache_delta cold_or_new_uncached_input_tokens)"
-		printf '| Eligible-prefix miss tokens | %s | %s | %s |\n' \
-			"$(cache_field "$analysis_dir/control-cache.json" eligible_prefix_miss_tokens)" \
-			"$(cache_field "$analysis_dir/hpatch-cache.json" eligible_prefix_miss_tokens)" \
-			"$(cache_delta eligible_prefix_miss_tokens)"
-		printf '| Eligible-prefix cache rate | %s | %s | %s |\n' \
-			"$(cache_rate "$analysis_dir/control-cache.json")" \
-			"$(cache_rate "$analysis_dir/hpatch-cache.json")" \
-			"$(cache_rate_delta)"
+		if [[ $mentor_comparison == true ]]; then
+			jq -nr --slurpfile control "$analysis_dir/control-capture.json" --slurpfile treatment "$analysis_dir/hpatch-capture.json" '
+				def row($name; $control; $treatment):
+					[$name, $control, $treatment, ($treatment - $control)];
+				[
+					row("Total input tokens"; $control[0].roles.combined.input_tokens; $treatment[0].roles.combined.input_tokens),
+					row("Cached input tokens";
+						$control[0].roles.combined.cached_input_tokens;
+						$treatment[0].roles.combined.cached_input_tokens),
+					row("Output tokens"; $control[0].roles.combined.output_tokens; $treatment[0].roles.combined.output_tokens),
+					row("Reasoning tokens"; $control[0].roles.combined.reasoning_tokens; $treatment[0].roles.combined.reasoning_tokens)
+				][] | "| " + (map(tostring) | join(" | ")) + " |"
+			'
+		else
+			jq -sr --arg baseline "$baseline_arm" --arg treatment "$treatment_arm" '
+				group_by(.arm) |
+				map({key: .[0].arm, value: {
+					input: (map(.agent.usage.input_tokens) | add),
+					uncached: (map(.agent.usage.input_tokens - .agent.usage.cached_input_tokens) | add),
+					output: (map(.agent.usage.output_tokens) | add)
+				}}) | from_entries as $arms |
+				[
+					["Total input tokens", $arms[$baseline].input, $arms[$treatment].input, ($arms[$treatment].input - $arms[$baseline].input)],
+					["Uncached input tokens", $arms[$baseline].uncached, $arms[$treatment].uncached, ($arms[$treatment].uncached - $arms[$baseline].uncached)],
+					["Output tokens", $arms[$baseline].output, $arms[$treatment].output, ($arms[$treatment].output - $arms[$baseline].output)]
+				][] | "| " + (map(tostring) | join(" | ")) + " |"
+			' "$results"
+			printf '| Cold/new uncached input tokens | %s | %s | %s |\n' \
+				"$(cache_field "$analysis_dir/control-cache.json" cold_or_new_uncached_input_tokens)" \
+				"$(cache_field "$analysis_dir/hpatch-cache.json" cold_or_new_uncached_input_tokens)" \
+				"$(cache_delta cold_or_new_uncached_input_tokens)"
+			printf '| Eligible-prefix miss tokens | %s | %s | %s |\n' \
+				"$(cache_field "$analysis_dir/control-cache.json" eligible_prefix_miss_tokens)" \
+				"$(cache_field "$analysis_dir/hpatch-cache.json" eligible_prefix_miss_tokens)" \
+				"$(cache_delta eligible_prefix_miss_tokens)"
+			printf '| Eligible-prefix cache rate | %s | %s | %s |\n' \
+				"$(cache_rate "$analysis_dir/control-cache.json")" \
+				"$(cache_rate "$analysis_dir/hpatch-cache.json")" \
+				"$(cache_rate_delta)"
+		fi
 		printf '| Model requests | %s | %s | %s |\n' "$control_requests" "$hpatch_requests" "$(delta "$control_requests" "$hpatch_requests")"
+		if [[ $mentor_comparison == true ]]; then
+			printf '\n## Mentor Handoff model split\n\n'
+			printf '| Role | Model | Input | Cached input | Output | Reasoning |\n'
+			printf '|---|---|---:|---:|---:|---:|\n'
+			jq -r --arg actual "$model" --arg parent_model "$parent_model" '
+				def row($role; $model; $usage):
+					[$role, $model, $usage.input_tokens,
+						 $usage.cached_input_tokens,
+						 $usage.output_tokens, $usage.reasoning_tokens];
+				[
+					row("Parent"; $parent_model; .roles.parent),
+					row("Mentor"; $parent_model; .roles.mentor),
+					row("Actual"; $actual; .roles.actual),
+					row("Mentor + actual child"; "child requests"; {
+						input_tokens: (.roles.mentor.input_tokens + .roles.actual.input_tokens),
+						cached_input_tokens: (.roles.mentor.cached_input_tokens + .roles.actual.cached_input_tokens),
+						output_tokens: (.roles.mentor.output_tokens + .roles.actual.output_tokens),
+						reasoning_tokens: (.roles.mentor.reasoning_tokens + .roles.actual.reasoning_tokens)
+					}),
+					row("Combined comparison"; "parent + child"; .roles.combined)
+				][] | "| " + (map(tostring) | join(" | ")) + " |"
+			' "$analysis_dir/hpatch-capture.json"
+		fi
 	else
 		printf '| Measure | Hpatch |\n'
 		printf '|---|---:|\n'
 		printf '| Task pass rate | %s/%s |\n' "$hpatch_passes" "$hpatch_runs"
-		jq -sr '
-			[.[] | select(.arm == "hpatch")] as $runs |
+		jq -sr --arg arm "$treatment_arm" '
+			[.[] | select(.arm == $arm)] as $runs |
 			[
 				["Agent wall time (s)", (($runs | map(.agent.duration_ms) | add) / 1000)],
 				["Total input tokens", ($runs | map(.agent.usage.input_tokens) | add)],
@@ -345,8 +532,9 @@ cache_rate_delta() {
 
 	printf '\n## Command behavior\n\n'
 	printf 'Counts are parsed command invocations, not compound shell event rows.\n\n'
-	if [[ $has_control == true ]]; then
-		printf '| Category | Control | Hpatch | Control after edit | Hpatch after edit |\n'
+		if [[ $has_control == true ]]; then
+		printf '| Category | %s | %s | %s after edit | %s after edit |\n' \
+			"$baseline_label" "$treatment_label" "$baseline_label" "$treatment_label"
 		printf '|---|---:|---:|---:|---:|\n'
 		for category in file_read search discovery git_diff_content git_diff_check git_diff_metadata git_status test_or_build formatter upstream_fetch other; do
 			printf '| %s | %s | %s | %s | %s |\n' \
@@ -356,7 +544,7 @@ cache_rate_delta() {
 				"$(jq -r --arg category "$category" '.categories[$category].post_edit' "$analysis_dir/control.json")" \
 				"$(jq -r --arg category "$category" '.categories[$category].post_edit' "$analysis_dir/hpatch.json")"
 		done
-	else
+		else
 		printf '| Category | Invocations | After edit |\n'
 		printf '|---|---:|---:|\n'
 		for category in file_read search discovery git_diff_content git_diff_check git_diff_metadata git_status test_or_build formatter upstream_fetch other; do
@@ -365,16 +553,16 @@ cache_rate_delta() {
 				"$(jq -r --arg category "$category" '.categories[$category].invocations' "$analysis_dir/hpatch.json")" \
 				"$(jq -r --arg category "$category" '.categories[$category].post_edit' "$analysis_dir/hpatch.json")"
 		done
-	fi
+		fi
 
 	printf '\nA same-path loop is a read, search, or content git diff whose concrete file or directory operand covers a path in completed file changes both before and after that command. Pattern-only text matches and terminal validation reads do not count.\n\n'
-	if [[ $has_control == true ]]; then
-		printf '| Post-edit path behavior | Control | Hpatch |\n'
+		if [[ $has_control == true ]]; then
+		printf '| Post-edit path behavior | %s | %s |\n' "$baseline_label" "$treatment_label"
 		printf '|---|---:|---:|\n'
-	else
+		else
 		printf '| Post-edit path behavior | Hpatch |\n'
 		printf '|---|---:|---:|\n'
-	fi
+		fi
 	for category in file_read search git_diff_content; do
 		label=$(category_label "$category")
 		if [[ $has_control == true ]]; then
@@ -396,22 +584,44 @@ cache_rate_delta() {
 				"$(jq -r --arg category "$category" '.categories[$category].path_scope_operand_without_later_change' "$analysis_dir/hpatch.json")"
 		fi
 	done
-	if [[ $has_control == true ]]; then
+		if [[ $has_control == true ]]; then
 		printf '| Workspace-wide bare git diff after an edit | %s | %s |\n' \
 			"$(jq -r '.categories.git_diff_content.workspace_wide_post_edit' "$analysis_dir/control.json")" \
 			"$(jq -r '.categories.git_diff_content.workspace_wide_post_edit' "$analysis_dir/hpatch.json")"
-	else
+		else
 		printf '| Workspace-wide bare git diff after an edit | %s |\n' \
 			"$(jq -r '.categories.git_diff_content.workspace_wide_post_edit' "$analysis_dir/hpatch.json")"
+		fi
+	if [[ $mentor_comparison == true ]]; then
+		printf '\nExact loop attribution uses the Codex-facing tool-call identity joined to the provider-facing actual model for the same captured request.\n\n'
+		printf '| Arm | Actual model | File read | Search | Content diff | Total |\n'
+		printf '|---|---|---:|---:|---:|---:|\n'
+		jq -nr \
+			--slurpfile control_capture "$analysis_dir/control-capture.json" \
+			--slurpfile treatment_capture "$analysis_dir/hpatch-capture.json" \
+			--arg baseline "$baseline_label" --arg treatment "$treatment_label" \
+			--arg parent "$parent_model" --arg actual "$model" '
+				def row($arm; $model; $counts):
+					($counts.file_read // 0) as $read |
+					($counts.search // 0) as $search |
+					($counts.git_diff_content // 0) as $diff |
+					[$arm, $model, $read, $search, $diff, ($read + $search + $diff)];
+				[
+					row($baseline; $parent; $control_capture[0].loops_by_model[$parent]),
+					row($baseline; $actual; $control_capture[0].loops_by_model[$actual]),
+					row($treatment; $parent; $treatment_capture[0].loops_by_model[$parent]),
+					row($treatment; $actual; $treatment_capture[0].loops_by_model[$actual])
+				][] | "| " + (map(tostring) | join(" | ")) + " |"
+			'
 	fi
 
-	if [[ $has_control == true ]]; then
-		printf '\n| Structural measure | Control | Hpatch |\n'
+		if [[ $has_control == true ]]; then
+		printf '\n| Structural measure | %s | %s |\n' "$baseline_label" "$treatment_label"
 		printf '|---|---:|---:|\n'
-	else
+		else
 		printf '\n| Structural measure | Hpatch |\n'
 		printf '|---|---:|\n'
-	fi
+		fi
 	for measure in command_execution_items parsed_command_invocations failed_command_execution_items file_change_events changed_path_entries unique_changed_paths repeated_changed_paths; do
 		label=${measure//_/ }
 		if [[ $has_control == true ]]; then
@@ -484,10 +694,21 @@ cache_rate_delta() {
 	fi
 
 	printf '\n## Automated findings\n\n'
-	if [[ $has_control == true && $hpatch_passes -lt $control_passes ]]; then
-		printf -- '- Task success regressed: Hpatch passed %s/%s versus control %s/%s.\n' "$hpatch_passes" "$hpatch_runs" "$control_passes" "$control_runs"
+	if [[ $has_control == true && $hpatch_passes -eq 0 && $control_passes -eq 0 ]]; then
+		printf -- '- Task success is inconclusive at the floor: neither %s nor %s passed an attempt (%s/%s versus %s/%s).\n' \
+			"$treatment_label" "$baseline_label" "$hpatch_passes" "$hpatch_runs" "$control_passes" "$control_runs"
+	elif [[ $has_control == true && $hpatch_passes -lt $control_passes ]]; then
+		if [[ $mentor_comparison == true ]]; then
+			printf -- '- Task success regressed: %s passed %s/%s versus %s at %s/%s.\n' "$treatment_label" "$hpatch_passes" "$hpatch_runs" "$baseline_label" "$control_passes" "$control_runs"
+		else
+			printf -- '- Task success regressed: Hpatch passed %s/%s versus control %s/%s.\n' "$hpatch_passes" "$hpatch_runs" "$control_passes" "$control_runs"
+		fi
 	elif [[ $has_control == true ]]; then
-		printf -- '- Task success is at parity or better: Hpatch passed %s/%s versus control %s/%s.\n' "$hpatch_passes" "$hpatch_runs" "$control_passes" "$control_runs"
+		if [[ $mentor_comparison == true ]]; then
+			printf -- '- Task success is at parity or better: %s passed %s/%s versus %s at %s/%s.\n' "$treatment_label" "$hpatch_passes" "$hpatch_runs" "$baseline_label" "$control_passes" "$control_runs"
+		else
+			printf -- '- Task success is at parity or better: Hpatch passed %s/%s versus control %s/%s.\n' "$hpatch_passes" "$hpatch_runs" "$control_passes" "$control_runs"
+		fi
 	elif ((hpatch_passes == hpatch_runs)); then
 		printf -- '- Hpatch passed every measured task attempt: %s/%s.\n' "$hpatch_passes" "$hpatch_runs"
 	else
@@ -495,15 +716,25 @@ cache_rate_delta() {
 	fi
 	if ((hpatch_structural_loops > 0)); then
 		if [[ $has_control == true ]]; then
-			printf -- '- Same-path structural loops remain: %s file-read, %s search, and %s content-diff invocation(s), versus control at %s, %s, and %s.\n' \
-				"$hpatch_file_read_loops" "$hpatch_search_loops" "$hpatch_git_diff_loops" \
-				"$control_file_read_loops" "$control_search_loops" "$control_git_diff_loops"
+			if [[ $mentor_comparison == true ]]; then
+				printf -- '- Same-path structural loops remain: %s file-read, %s search, and %s content-diff invocation(s), versus %s at %s, %s, and %s.\n' \
+					"$hpatch_file_read_loops" "$hpatch_search_loops" "$hpatch_git_diff_loops" \
+					"$baseline_label" "$control_file_read_loops" "$control_search_loops" "$control_git_diff_loops"
+			else
+				printf -- '- Same-path structural loops remain: %s file-read, %s search, and %s content-diff invocation(s), versus control at %s, %s, and %s.\n' \
+					"$hpatch_file_read_loops" "$hpatch_search_loops" "$hpatch_git_diff_loops" \
+					"$control_file_read_loops" "$control_search_loops" "$control_git_diff_loops"
+			fi
 		else
 			printf -- '- Same-path structural loops remain: %s file-read, %s search, and %s content-diff invocation(s).\n' \
 				"$hpatch_file_read_loops" "$hpatch_search_loops" "$hpatch_git_diff_loops"
 		fi
 	else
 		printf -- '- No same-path edit → read/search/content-diff → edit structural loop was measured.\n'
+	fi
+	if [[ $mentor_comparison == true ]]; then
+		printf -- '- Treatment same-path loops by actual provider model: `%s` %s, `%s` %s.\n' \
+			"$parent_model" "$hpatch_mentor_loops" "$model" "$hpatch_actual_loops"
 	fi
 	if ((hpatch_rejections == 0)); then
 		printf -- '- No Hpatch recovery was required.\n'
@@ -523,8 +754,13 @@ cache_rate_delta() {
 		printf -- '- No later rejected attempt reused an earlier command, operation, target kind, and path in the same chain.\n'
 	fi
 	if [[ $has_control == true ]]; then
-		printf -- '- Requests changed by %+d, total input by %+d tokens, and output by %+d tokens relative to control.\n' \
-			"$((hpatch_requests - control_requests))" "$((hpatch_input - control_input))" "$((hpatch_output - control_output))"
+		if [[ $mentor_comparison == true ]]; then
+			printf -- '- Requests changed by %+d, total input by %+d tokens, and output by %+d tokens relative to Hpatch.\n' \
+				"$((hpatch_requests - control_requests))" "$((hpatch_input - control_input))" "$((hpatch_output - control_output))"
+		else
+			printf -- '- Requests changed by %+d, total input by %+d tokens, and output by %+d tokens relative to control.\n' \
+				"$((hpatch_requests - control_requests))" "$((hpatch_input - control_input))" "$((hpatch_output - control_output))"
+		fi
 	else
 		printf -- '- The hpatch-only diagnostic used %s model request(s), %s input tokens, and %s output tokens.\n' \
 			"$hpatch_requests" "$hpatch_input" "$hpatch_output"
@@ -552,15 +788,19 @@ cache_rate_delta() {
 	' "$hpatch_metrics"
 
 	if [[ $has_control == true ]]; then
-		printf '\nThe machine-readable evidence remains in `results.jsonl`, `control-metrics.json`, and `hpatch-metrics.json`'
+		printf '\nThe machine-readable evidence remains in `results.jsonl`, `%s`, and `%s`' \
+			"${control_metrics##*/}" "${hpatch_metrics##*/}"
 	else
-		printf '\nThe machine-readable evidence remains in `results.jsonl` and `hpatch-metrics.json`'
+		printf '\nThe machine-readable evidence remains in `results.jsonl` and `%s`' "${hpatch_metrics##*/}"
 	fi
 	if [[ $report_issue_recorded == true ]]; then
 		printf ', with diagnostic configuration and reports in `benchmark-config.json` and `agent-issue-reports.jsonl`'
 	fi
 	if [[ $exact_evidence_enabled == true ]]; then
 		printf ', and exact Hpatch attempt payloads, reports, and diagnostics in `hpatch-exact-evidence.jsonl`'
+	fi
+	if [[ $mentor_comparison == true ]]; then
+		printf ', with sanitized Codex-facing and provider-facing request captures in `captures/`'
 	fi
 	printf ', plus detailed `artifacts/`. '
 	if [[ $has_control != true ]]; then

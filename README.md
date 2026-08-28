@@ -272,6 +272,8 @@ Defaults:
 | --- | --- |
 | Mode | `hpatch` (`--mode`); `passthrough` forwards Responses traffic without loading the tool registry |
 | Model protocol | `native` (`--model-protocol`); `ctp2` is opt-in and Hpatch-only, while `ctp1` and `ctp2` with `--mode passthrough` are rejected |
+| Mentor Handoff | Disabled (`--mentor-handoff`); the experiment is Hpatch-only |
+| Provider base URL | `https://chatgpt.com/backend-api/codex` (`--provider-base-url`) |
 | Listen | `127.0.0.1:8080` (`--listen`) |
 | Upstream response-start timeout | `10m` (`--timeout`) |
 | Upstream stream idle timeout | `4m` per blocked upstream read (`--stream-idle-timeout`); resets on byte progress, pauses during downstream processing, and imposes no total-duration limit |
@@ -279,6 +281,31 @@ Defaults:
 | Shell runtime directory | `$HPATCH_RUNTIME_DIR`, or the operating-system temporary directory when unset; router and executor must resolve the same absolute path |
 | Metrics / hooks | `$XDG_CONFIG_HOME/hpatch` or `~/.config/hpatch` |
 | Endpoints | `POST /v1/responses`, `GET /v1/models`, `GET /` (dashboard), `GET /api/metrics` |
+
+### Mentor Handoff experiment
+
+`--mentor-handoff` enables the first incremental form of **Mentor Handoff** for spawned subagents.
+It activates only when Codex supplies both the exact `x-openai-subagent: collab_spawn` header and
+`subagent_kind: thread_spawn` turn metadata. Ordinary sessions and forks do not activate it, and
+new-session, post-compaction, and side-conversation activation are not implemented yet.
+
+For a spawned subagent requesting `gpt-5.6-luna` or `gpt-5.6-terra`, the router sends
+`gpt-5.6-sol` with high reasoning while leaving the inherited input and every other request field
+intact. After the mentor has produced three completed custom/function tool calls, it remains active
+for one more completed response so it can consume the third call's result. The next request returns
+to the Codex-configured model after that response, after two completed assistant messages, or after
+the latest request reports at least 50,000 input tokens. That count already includes the inherited
+conversation history. The token limit is checked after each response, so its final mentor request
+may overshoot. Failed responses contribute reported input usage but do not
+contribute tool calls or messages, and a failed result-consuming response does not complete handoff.
+
+The router logs bounded progress without prompt content and attributes provider usage to the model
+actually used. It retains process-lifetime state for each eligible spawned thread so a completed
+child cannot re-enter mentoring on a later request. Passthrough mode rejects the flag.
+
+`--provider-base-url` changes where the router sends Codex-managed credentials and Responses
+traffic. Use it only with a trusted endpoint. The benchmark uses it to place a content-free capture
+proxy between the router and the normal provider; ordinary deployments should keep the default.
 
 Outcome hooks receive one event for each routed hpatch or recovery result. The event identifies
 the emitted tool and exact model-emitted payload, the evaluated lifecycle stage, the outcome,
@@ -621,6 +648,38 @@ arms and requires strictly smaller compact input and assistant-output representa
 repetitions schedule eight paid model attempts.
 
 Benchmark Codex processes disable `apps` identically in both arms.
+
+To compare an original-model subagent with Mentor Handoff, run two paired repetitions:
+
+```sh
+MODEL=gpt-5.6-luna REASONING_EFFORT=xhigh REPETITIONS=2 \
+  BENCHMARK_MODE=mentor-handoff BENCHMARK_REPORT_ISSUES=false \
+  bash benchmarks/bench.sh
+```
+
+Both arms receive the same Hpatch tools, independent workspace snapshots, static parent prompt,
+and static child role and prompt. In both arms a `gpt-5.6-sol` high parent spawns exactly one child
+whose locked configured model and reasoning are selected by `MODEL` and `REASONING_EFFORT`. The
+`hpatch` child uses that configured model throughout. The `hpatch-mentor` child temporarily uses
+`gpt-5.6-sol` high and must demonstrate a later request from the same child using its configured
+model. Reports separate parent, mentor, and actual-child input, cached-input, output, and reasoning
+tokens, while the A/B comparison uses their combined provider-facing capture totals.
+
+For this experiment, each arm runs through a transparent two-sided capturer:
+Codex → capturer → Hpatch router → capturer → provider. The provider-facing side records the actual
+model and usage, while the Codex-facing side records restored tool-call identities. The front adds a
+private per-request correlation header that the back removes before provider forwarding. The report joins
+the two records by that identity, attributes every measured same-path loop
+to exactly one actual provider model, and fails rather than guessing when the join is missing or
+ambiguous. Captures omit credentials, prompts, tool arguments, command output, and response text.
+
+The benchmark also retains a normalized `child-events.jsonl` per attempt from a host-owned, isolated
+Codex home. It includes completed child command and file-change items but excludes command output and
+raw rollout content, allowing command-loop comparisons across both arms. A content-free
+`child-proof.json` verifies the direct-child lineage, locked model and effort, and identical effective
+developer prompt across arms even though Codex 0.150.1 omits the completed spawn from root `--json`
+output. It retains only the child thread correlation needed to join the capturer. Missing or ambiguous child telemetry, including an unobserved nested spawn, fails the attempt
+instead of being reported as zero.
 
 The one-repetition `gpt-5.6-sol` Hpatch baseline passed and reported 45.2% lower
 successful edit payload (2,096 tokens versus 3,825 control-equivalent tokens). It used

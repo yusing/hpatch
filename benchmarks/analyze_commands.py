@@ -195,6 +195,69 @@ def command_words(segment: str) -> list[str]:
     return words
 
 
+def decode_ansi_c_word(word: str) -> str:
+    if not (word.startswith("$'") and word.endswith("'")):
+        return word
+    escapes = {
+        "a": "\a",
+        "b": "\b",
+        "e": "\x1b",
+        "f": "\f",
+        "n": "\n",
+        "r": "\r",
+        "t": "\t",
+        "v": "\v",
+        "\\": "\\",
+        "'": "'",
+        '"': '"',
+    }
+    source = word[2:-1]
+    output: list[str] = []
+    index = 0
+    while index < len(source):
+        if source[index] != "\\" or index + 1 == len(source):
+            output.append(source[index])
+            index += 1
+            continue
+        escaped = source[index + 1]
+        replacement = escapes.get(escaped)
+        if replacement is not None:
+            output.append(replacement)
+            index += 2
+            continue
+        if escaped in "01234567":
+            end = index + 2
+            while end < min(index + 4, len(source)) and source[end] in "01234567":
+                end += 1
+            output.append(chr(int(source[index + 1 : end], 8) & 0xFF))
+            index = end
+            continue
+        widths = {"x": 2, "u": 4, "U": 8}
+        if escaped in widths:
+            end = index + 2
+            limit = min(end + widths[escaped], len(source))
+            while end < limit and source[end] in "0123456789abcdefABCDEF":
+                end += 1
+            if end != index + 2:
+                encoded = source[index + 2 : end]
+                try:
+                    value = int(encoded, 16)
+                    if escaped in "uU" and (value > 0x10FFFF or 0xD800 <= value <= 0xDFFF):
+                        raise ValueError
+                    output.append(chr(value))
+                except ValueError:
+                    output.append(source[index:end])
+                index = end
+                continue
+        if escaped == "c" and index + 2 < len(source) and ord(source[index + 2]) < 128:
+            output.append(chr(ord(source[index + 2].upper()) ^ 64))
+            index += 3
+            continue
+        output.extend(("\\", escaped))
+        index += 2
+    return "".join(output)
+
+
 def shell_helper_body(segment: str) -> str | None:
     words = command_words(segment)
     if (
@@ -208,6 +271,11 @@ def shell_helper_body(segment: str) -> str | None:
     # program it carries. A failed executor-style call may retain that program as its
     # original JSON request, so recover only the established string cmd field.
     body = words[-1]
+    ansi_body = re.search(r"(\$'(?:\\.|[^'])*')\s*$", segment, re.DOTALL)
+    raw_body = ansi_body.group(1) if ansi_body is not None else body
+    decoded_body = decode_ansi_c_word(raw_body)
+    if decoded_body != raw_body:
+        body = decoded_body
     try:
         request = json.loads(body)
     except json.JSONDecodeError:
@@ -484,6 +552,7 @@ def analyze(paths: list[Path]) -> dict[str, object]:
     repeated_changed_paths: set[str] = set()
     edited_paths: set[str] = set()
     invocations = 0
+    same_path_loop_invocations: list[dict[str, str]] = []
 
     for path in paths:
         events: list[dict[str, object]] = []
@@ -536,6 +605,7 @@ def analyze(paths: list[Path]) -> dict[str, object]:
                     if not words:
                         continue
                     category = classify(words)
+                    same_path_loop = False
                     invocations += 1
                     categories[category]["invocations"] += 1
                     if edited_paths:
@@ -567,6 +637,7 @@ def analyze(paths: list[Path]) -> dict[str, object]:
                             }
                             if later_operands:
                                 categories[category]["same_path_edit_read_edit"] += 1
+                                same_path_loop = True
                         elif prior_paths:
                             categories[category]["path_scope_operand_post_edit"] += 1
                             later_paths = {
@@ -576,10 +647,19 @@ def analyze(paths: list[Path]) -> dict[str, object]:
                             }
                             if later_paths:
                                 categories[category]["same_path_edit_read_edit"] += 1
+                                same_path_loop = True
                             else:
                                 categories[category]["path_scope_operand_without_later_change"] += 1
                         elif text_intersection and category in {"file_read", "search"}:
                             categories[category]["changed_path_in_non_path_operand_only"] += 1
+                    if same_path_loop:
+                        tool_call_id = item.get("tool_call_id")
+                        same_path_loop_invocations.append(
+                            {
+                                "category": category,
+                                "tool_call_id": tool_call_id if isinstance(tool_call_id, str) else "",
+                            }
+                        )
                     item_categories.add(category)
             if failed:
                 for category in item_categories:
@@ -598,6 +678,7 @@ def analyze(paths: list[Path]) -> dict[str, object]:
             + categories["search"]["same_path_edit_read_edit"]
             + categories["git_diff_content"]["same_path_edit_read_edit"]
         ),
+        "same_path_loop_invocations": same_path_loop_invocations,
         "categories": categories,
     }
 

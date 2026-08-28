@@ -4,6 +4,9 @@ set -euo pipefail
 benchmark_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 model=${MODEL:-gpt-5.6-sol}
 reasoning_effort=${REASONING_EFFORT:-medium}
+mentor_parent_model=gpt-5.6-sol
+mentor_parent_reasoning_effort=high
+mentor_child_role=benchmark_worker
 repetitions=${REPETITIONS:-4}
 benchmark_mode=${BENCHMARK_MODE:-paired}
 prepare_only=${BENCHMARK_PREPARE_ONLY:-false}
@@ -43,12 +46,12 @@ false) export HPATCH_BENCH_DIAGNOSE=0 ;;
 	;;
 esac
 if [[ $retain_exact_hpatch_evidence == true &&
-	($benchmark_mode == paired || $benchmark_mode == ctp-only) ]]; then
+	($benchmark_mode == paired || $benchmark_mode == ctp-only || $benchmark_mode == mentor-handoff) ]]; then
 	printf 'bench.sh: exact Hpatch evidence is available only in hpatch-only or hpatch-diagnostic mode\n' >&2
 	exit 2
 fi
 case "$benchmark_mode" in
-	paired|ctp-only) ;;
+	paired|ctp-only|mentor-handoff) ;;
 	hpatch-only|hpatch-diagnostic)
 		if ((repetitions != 1)); then
 			printf 'bench.sh: %s mode requires REPETITIONS=1; run separate trials for independent evidence\n' "$benchmark_mode" >&2
@@ -56,12 +59,16 @@ case "$benchmark_mode" in
 		fi
 		;;
 	*)
-		printf 'bench.sh: BENCHMARK_MODE must be paired, ctp-only, hpatch-only, or hpatch-diagnostic, got %s\n' "$benchmark_mode" >&2
+		printf 'bench.sh: BENCHMARK_MODE must be paired, ctp-only, mentor-handoff, hpatch-only, or hpatch-diagnostic, got %s\n' "$benchmark_mode" >&2
 		exit 2
 		;;
 esac
-if [[ $benchmark_mode == ctp-only && $report_issues != false ]]; then
-	printf 'bench.sh: ctp-only mode requires BENCHMARK_REPORT_ISSUES=false so diagnostic reporting does not confound the treatment\n' >&2
+if [[ ($benchmark_mode == ctp-only || $benchmark_mode == mentor-handoff) && $report_issues != false ]]; then
+	printf 'bench.sh: %s mode requires BENCHMARK_REPORT_ISSUES=false so diagnostic reporting does not confound the treatment\n' "$benchmark_mode" >&2
+	exit 2
+fi
+if [[ $benchmark_mode == mentor-handoff && $model != gpt-5.6-luna && $model != gpt-5.6-terra ]]; then
+	printf 'bench.sh: mentor-handoff mode requires MODEL=gpt-5.6-luna or MODEL=gpt-5.6-terra, got %s\n' "$model" >&2
 	exit 2
 fi
 task_id=${TASK_ID:-etcd-range-stream}
@@ -223,6 +230,14 @@ load_task_manifest() {
 }
 results_root="$benchmark_root/results"
 mkdir -p "$results_root"
+if ! benchmark_commit=$(git -C "$benchmark_root/.." rev-parse HEAD); then
+	printf 'bench.sh: cannot determine benchmark commit\n' >&2
+	exit 1
+fi
+if ! codex_release=$(sed -n 's/^ARG CODEX_RELEASE=//p' "$benchmark_root/Dockerfile") || [[ -z $codex_release ]]; then
+	printf 'bench.sh: cannot determine pinned Codex CLI release\n' >&2
+	exit 1
+fi
 if [[ -z $control_baseline_dir ]]; then
 	control_baseline_dir="$results_root/c07600a74ac93d1ac6c38c47b80d85519458bc9f-1"
 fi
@@ -235,16 +250,29 @@ control_log="$run_dir/control-router.log"
 hpatch_log="$run_dir/hpatch-router.log"
 control_metrics="$run_dir/control-metrics.json"
 hpatch_metrics="$run_dir/hpatch-metrics.json"
+if [[ $benchmark_mode == mentor-handoff ]]; then
+	control_log="$run_dir/hpatch-router.log"
+	hpatch_log="$run_dir/hpatch-mentor-router.log"
+	control_metrics="$run_dir/hpatch-metrics.json"
+	hpatch_metrics="$run_dir/hpatch-mentor-metrics.json"
+fi
 issue_reports_directory="$run_dir/agent-issue-reports"
 issue_reports="$run_dir/agent-issue-reports.jsonl"
 exact_evidence_directory="$run_dir/hpatch-exact-evidence"
 exact_evidence="$run_dir/hpatch-exact-evidence.jsonl"
+capture_directory="$run_dir/captures"
+control_capture="$capture_directory/control.jsonl"
+hpatch_capture="$capture_directory/hpatch.jsonl"
 benchmark_config="$run_dir/benchmark-config.json"
 instruction_dir="$run_dir/instructions"
 control_instruction="$instruction_dir/control.md"
 hpatch_instruction="$instruction_dir/hpatch.md"
 instruction_diff="$instruction_dir/control-to-hpatch-request.diff"
 instruction_source="$benchmark_root/../contrib/codex/file-editing-instructions.md"
+mentor_parent_prompt="$instruction_dir/mentor-parent.md"
+mentor_child_prompt="$instruction_dir/mentor-child.md"
+mentor_child_role_config="$instruction_dir/mentor-child.toml"
+mentor_spawn_prompt="$instruction_dir/mentor-spawn-message.txt"
 run_suffix=$(basename "$run_dir")
 image_tag_prefix=${HPATCH_BENCH_IMAGE_TAG:-run}
 export HPATCH_BENCH_IMAGE_TAG="$image_tag_prefix-${run_suffix#.staging-}"
@@ -265,9 +293,14 @@ export COMPOSE_PROJECT_NAME=$compose_project_name
 export HPATCH_BENCH_COMPOSE_FILE="$benchmark_root/compose.yaml"
 export HPATCH_BENCH_HPATCH_MODEL_PROTOCOL=native
 export HPATCH_BENCH_CONTROL_MODE=passthrough
+export HPATCH_BENCH_MENTOR_HANDOFF=false
 if [[ $benchmark_mode == ctp-only ]]; then
 	export HPATCH_BENCH_HPATCH_MODEL_PROTOCOL=ctp2
 	export HPATCH_BENCH_CONTROL_MODE=hpatch
+fi
+if [[ $benchmark_mode == mentor-handoff ]]; then
+	export HPATCH_BENCH_CONTROL_MODE=hpatch
+	export HPATCH_BENCH_MENTOR_HANDOFF=true
 fi
 if [[ $retain_exact_hpatch_evidence == true ]]; then
 	export HPATCH_BENCH_EXACT_EVIDENCE_DIR=/benchmark-hpatch-exact-evidence
@@ -298,12 +331,14 @@ collect_artifacts() {
 	if [[ $started != true || $collected == true ]]; then
 		return
 	fi
-	if [[ $benchmark_mode == paired || $benchmark_mode == ctp-only ]]; then
+	if [[ $benchmark_mode == paired || $benchmark_mode == ctp-only || $benchmark_mode == mentor-handoff ]]; then
 		"${compose[@]}" logs --no-color control >"$control_log" 2>&1 || true
+		"${compose[@]}" logs --no-color control-capturer >>"$control_log" 2>&1 || true
 		collect_router_metrics control 8081 "$control_metrics" ||
 			metrics_collected=false
 	fi
 	"${compose[@]}" logs --no-color hpatch >"$hpatch_log" 2>&1 || true
+	"${compose[@]}" logs --no-color hpatch-capturer >>"$hpatch_log" 2>&1 || true
 	collect_router_metrics hpatch 8082 "$hpatch_metrics" ||
 		metrics_collected=false
 	collected=$metrics_collected
@@ -404,6 +439,26 @@ normalize_repository_permissions() {
 	fi
 }
 
+normalize_codex_home_permissions() {
+	local codex_home=$1
+	local owner
+
+	if docker info --format '{{json .SecurityOptions}}' | grep -Fq '"name=rootless"'; then
+		owner=0:0
+	else
+		owner="$(id -u):$(id -g)"
+	fi
+
+	if ! docker run --rm \
+		--mount type=bind,source="$codex_home",target=/benchmark-codex-home \
+		"$benchmark_image" \
+		sh -euc 'chown -R "$1" /benchmark-codex-home; chmod -R u+rwX,go-rwx /benchmark-codex-home' \
+		sh "$owner"; then
+		printf 'bench.sh: cannot normalize isolated Codex home permissions at %s\n' "$codex_home" >&2
+		return 1
+	fi
+}
+
 merge_results() {
 	shopt -s nullglob
 	result_files=("$run_dir"/artifacts/"$task_id"/*/result.json)
@@ -422,6 +477,8 @@ print_lifecycle_summary() {
 		arms=(hpatch)
 	elif [[ $benchmark_mode == ctp-only ]]; then
 		arms=(native ctp)
+	elif [[ $benchmark_mode == mentor-handoff ]]; then
+		arms=(hpatch hpatch-mentor)
 	fi
 
 	printf '\nRouter lifecycle by benchmark session:\n'
@@ -429,7 +486,14 @@ print_lifecycle_summary() {
 	for arm in "${arms[@]}"; do
 		case "$arm" in
 			control|native) metrics=$control_metrics ;;
-			hpatch|ctp) metrics=$hpatch_metrics ;;
+			hpatch)
+				if [[ $benchmark_mode == mentor-handoff ]]; then
+					metrics=$control_metrics
+				else
+					metrics=$hpatch_metrics
+				fi
+				;;
+			hpatch-mentor|ctp) metrics=$hpatch_metrics ;;
 		esac
 		if [[ ! -s $results || ! -s $metrics ]] ||
 			! jq -e '
@@ -501,18 +565,13 @@ rewrite_published_paths() {
 preserve_run() {
 	local previous_run_dir=$run_dir
 
-	local commit_sha
 	local destination
 
-	if ! commit_sha=$(git -C "$benchmark_root/.." rev-parse HEAD); then
-		printf 'bench.sh: cannot determine benchmark commit\n' >&2
-		return 1
-	fi
 	if [[ $previous_run_dir != "$results_root"/.staging-* ]]; then
 		printf 'bench.sh: refusing to publish unexpected staging path: %s\n' "$previous_run_dir" >&2
 		return 1
 	fi
-	destination="$results_root/$commit_sha-$task_id-${previous_run_dir##*/.staging-}"
+	destination="$results_root/$benchmark_commit-$task_id-${previous_run_dir##*/.staging-}"
 	if [[ -e $destination || -L $destination ]]; then
 		printf 'bench.sh: collision at unique result destination: %s\n' "$destination" >&2
 		return 1
@@ -528,15 +587,28 @@ preserve_run() {
 	hpatch_log="$run_dir/hpatch-router.log"
 	control_metrics="$run_dir/control-metrics.json"
 	hpatch_metrics="$run_dir/hpatch-metrics.json"
+	if [[ $benchmark_mode == mentor-handoff ]]; then
+		control_log="$run_dir/hpatch-router.log"
+		hpatch_log="$run_dir/hpatch-mentor-router.log"
+		control_metrics="$run_dir/hpatch-metrics.json"
+		hpatch_metrics="$run_dir/hpatch-mentor-metrics.json"
+	fi
 	issue_reports_directory="$run_dir/agent-issue-reports"
 	issue_reports="$run_dir/agent-issue-reports.jsonl"
 	exact_evidence_directory="$run_dir/hpatch-exact-evidence"
 	exact_evidence="$run_dir/hpatch-exact-evidence.jsonl"
+	capture_directory="$run_dir/captures"
+	control_capture="$capture_directory/control.jsonl"
+	hpatch_capture="$capture_directory/hpatch.jsonl"
 	benchmark_config="$run_dir/benchmark-config.json"
 	instruction_dir="$run_dir/instructions"
 	control_instruction="$instruction_dir/control.md"
 	hpatch_instruction="$instruction_dir/hpatch.md"
 	instruction_diff="$instruction_dir/control-to-hpatch-request.diff"
+	mentor_parent_prompt="$instruction_dir/mentor-parent.md"
+	mentor_child_prompt="$instruction_dir/mentor-child.md"
+	mentor_child_role_config="$instruction_dir/mentor-child.toml"
+	mentor_spawn_prompt="$instruction_dir/mentor-spawn-message.txt"
 	export BENCH_RUN_DIR=$run_dir
 
 	if ! rewrite_published_paths "$previous_run_dir"; then
@@ -559,9 +631,9 @@ generate_summary() {
 # shellcheck disable=SC2329
 enforce_edit_loop_acceptance() {
 	local -a hpatch_events=()
-	if [[ $benchmark_mode == ctp-only ]]; then
+	if [[ $benchmark_mode == ctp-only || $benchmark_mode == mentor-handoff ]]; then
 		mapfile -t hpatch_events < <(
-			find "$run_dir/artifacts" -type f -name codex.jsonl -print | sort
+			find "$run_dir/artifacts" -type f \( -name codex.jsonl -o -name child-events.jsonl \) -print | sort
 		)
 	else
 		mapfile -t hpatch_events < <(
@@ -575,9 +647,17 @@ print_result_paths() {
 	printf 'Results: %s\n' "$results"
 	printf 'Artifacts: %s\n' "$run_dir/artifacts"
 	if [[ $benchmark_mode != hpatch-diagnostic ]]; then
-		printf 'Control metrics: %s\n' "$control_metrics"
+		if [[ $benchmark_mode == mentor-handoff ]]; then
+			printf 'Hpatch metrics: %s\n' "$control_metrics"
+		else
+			printf 'Control metrics: %s\n' "$control_metrics"
+		fi
 	fi
-	printf 'Hpatch metrics (including gain): %s\n' "$hpatch_metrics"
+	if [[ $benchmark_mode == mentor-handoff ]]; then
+		printf 'Hpatch + Mentor Handoff metrics (including gain): %s\n' "$hpatch_metrics"
+	else
+		printf 'Hpatch metrics (including gain): %s\n' "$hpatch_metrics"
+	fi
 	if [[ $benchmark_mode == hpatch-diagnostic ]]; then
 		printf 'Router log: %s\n' "$hpatch_log"
 	else
@@ -680,6 +760,11 @@ for executable in awk chmod cp curl date diff docker git go grep id jq mv sha256
 		exit 1
 	fi
 done
+if docker info --format '{{json .SecurityOptions}}' | grep -Fq '"name=rootless"'; then
+	export HPATCH_BENCH_CAPTURE_USER=0:0
+else
+	export HPATCH_BENCH_CAPTURE_USER="$(id -u):$(id -g)"
+fi
 if [[ $prepare_only == false && ! -f $CODEX_AUTH_PATH ]]; then
 	printf 'bench.sh: Codex auth file not found: %s\n' "$CODEX_AUTH_PATH" >&2
 	exit 1
@@ -717,8 +802,12 @@ This benchmark is intentionally offline. Use only the supplied workspace, visibl
 INSTRUCTION
 	)
 
+	local instruction_model=$model
+	if [[ $benchmark_mode == mentor-handoff ]]; then
+		instruction_model=$mentor_parent_model
+	fi
 	docker run --rm "$benchmark_image" codex debug models --bundled |
-		jq -er --arg model "$model" \
+		jq -er --arg model "$instruction_model" \
 			'.models[] | select(.slug == $model) | .base_instructions' \
 			>"$control_instruction"
 
@@ -745,8 +834,48 @@ INSTRUCTION
 	read -r hpatch_instruction_sha _ < <(sha256sum "$hpatch_instruction")
 }
 
+prepare_mentor_prompts() {
+	local child_instructions
+
+	if [[ $benchmark_mode != mentor-handoff ]]; then
+		return
+	fi
+	cat >"$mentor_child_prompt" <<PROMPT
+You are the sole implementation agent for this benchmark. Complete the task directly in the shared
+workspace, including focused validation. Do not spawn another agent. Work only from the supplied
+workspace, task, visible tests, and local toolchain.
+
+$(cat "$task/$prompt_file")
+PROMPT
+	child_instructions=$(jq -Rs . <"$mentor_child_prompt")
+	cat >"$mentor_child_role_config" <<ROLE
+model = "$model"
+model_reasoning_effort = "$reasoning_effort"
+developer_instructions = $child_instructions
+ROLE
+	printf '%s' 'Complete and validate the benchmark task exactly as specified in your developer instructions.' \
+		>"$mentor_spawn_prompt"
+	cat >"$mentor_parent_prompt" <<PROMPT
+Spawn exactly one subagent and otherwise do not inspect, edit, or validate the workspace yourself.
+Use agent_type "$mentor_child_role", task_name "implementation", fork_turns "none", and no model
+or reasoning override. The message argument must exactly equal the following single line:
+
+$(cat "$mentor_spawn_prompt")
+
+Wait for that child to finish, then return its result without doing any implementation yourself.
+PROMPT
+}
+
 configure_issue_reporting() {
 	local settings_directory="$run_dir/hpatch-config/hpatch"
+	local mentor_parent_prompt_sha=
+	local mentor_child_prompt_sha=
+	local mentor_spawn_prompt_sha=
+	if [[ $benchmark_mode == mentor-handoff ]]; then
+		read -r mentor_parent_prompt_sha _ < <(sha256sum "$mentor_parent_prompt")
+		read -r mentor_child_prompt_sha _ < <(sha256sum "$mentor_child_prompt")
+		read -r mentor_spawn_prompt_sha _ < <(sha256sum "$mentor_spawn_prompt")
+	fi
 
 	mkdir -p "$settings_directory" "$issue_reports_directory" "$exact_evidence_directory"
 	chmod 0700 "$exact_evidence_directory"
@@ -760,10 +889,36 @@ JSON
 		--argjson require_ctp_input_compression "$require_ctp_input_compression" \
 		--argjson require_ctp_output_compression "$require_ctp_output_compression" \
 		--arg benchmark_mode "$benchmark_mode" \
+		--arg benchmark_commit "$benchmark_commit" \
+		--arg codex_release "$codex_release" \
+		--arg parent_model "$mentor_parent_model" \
+		--arg parent_reasoning_effort "$mentor_parent_reasoning_effort" \
+		--arg child_model "$model" \
+		--arg child_reasoning_effort "$reasoning_effort" \
+		--arg child_role "$mentor_child_role" \
+		--arg parent_prompt_sha256 "$mentor_parent_prompt_sha" \
+		--arg child_prompt_sha256 "$mentor_child_prompt_sha" \
+		--arg spawn_prompt_sha256 "$mentor_spawn_prompt_sha" \
 		--arg reports "${issue_reports##*/}" \
 		--arg exact_evidence "${exact_evidence##*/}" \
 		'{
 			benchmark_mode: $benchmark_mode,
+			benchmark_commit: $benchmark_commit,
+			codex_release: $codex_release,
+			mentor_handoff: {
+				enabled: ($benchmark_mode == "mentor-handoff"),
+				trigger: "thread_spawn",
+				mentor_model: "gpt-5.6-sol",
+				mentor_reasoning_effort: "high",
+				parent_model: $parent_model,
+				parent_reasoning_effort: $parent_reasoning_effort,
+				child_model: $child_model,
+				child_reasoning_effort: $child_reasoning_effort,
+				child_role: $child_role,
+				parent_prompt_sha256: $parent_prompt_sha256,
+				child_prompt_sha256: $child_prompt_sha256,
+				spawn_prompt_sha256: $spawn_prompt_sha256
+			},
 			report_issue_enabled: $report_issue_enabled,
 			agent_issue_reports: $reports,
 			enforce_no_edit_loops: $enforce_no_edit_loops,
@@ -938,6 +1093,12 @@ qualify_agent_isolation() {
 				echo "unexpected access to the other benchmark router" >&2
 				exit 1
 			fi
+			for direct_router in http://control:8081/api/metrics http://hpatch:8082/api/metrics; do
+				if curl --fail --silent --connect-timeout 2 --max-time 4 "$direct_router" >/dev/null 2>&1; then
+					echo "unexpected direct access to a benchmark router" >&2
+					exit 1
+				fi
+			done
 			if curl --fail --silent --connect-timeout 2 --max-time 4 https://example.com/ >/dev/null 2>&1; then
 				echo "unexpected external network access" >&2
 				exit 1
@@ -1087,10 +1248,13 @@ run_agent() {
 	local workspace
 	local repository
 	local artifact_dir="$run_dir/artifacts/$task_id/$run_id"
-	local base_url=http://control:8081/v1
+	local base_url=http://control-capturer:8081/v1
 	local agent_service=control-agent
 	local codex_stdout="$artifact_dir/codex.jsonl"
 	local codex_stderr="$artifact_dir/codex.stderr"
+	local codex_home=
+	local child_events=
+	local child_proof=
 	local started_at
 	local started_ms
 	local duration_ms
@@ -1119,6 +1283,10 @@ run_agent() {
 	local executor_process_creation_errors=0
 	local expected_response_required=false
 	local expected_response_passed=true
+	local agent_prompt
+	local root_model=$model
+	local root_reasoning_effort=$reasoning_effort
+	local -a codex_feature_args=()
 
 	local path
 	local input_tokens
@@ -1128,8 +1296,32 @@ run_agent() {
 	local -a changed=()
 	local -a unauthorized=()
 
-	if [[ $arm == hpatch ]]; then
-		base_url=http://hpatch:8082/v1
+	if [[ $benchmark_mode == mentor-handoff ]]; then
+		case $arm in
+		hpatch)
+			instruction_name=hpatch.md
+			instruction_path=$hpatch_instruction
+			instruction_sha=$hpatch_instruction_sha
+			instruction_diff_for_arm=$instruction_diff
+			router_mode=hpatch
+			;;
+		hpatch-mentor)
+			base_url=http://hpatch-capturer:8082/v1
+			agent_service=hpatch-agent
+			instruction_name=hpatch.md
+			instruction_path=$hpatch_instruction
+			instruction_sha=$hpatch_instruction_sha
+			instruction_diff_for_arm=$instruction_diff
+			model_protocol=$HPATCH_BENCH_HPATCH_MODEL_PROTOCOL
+			router_mode=hpatch
+			;;
+		*)
+			printf 'bench.sh: unsupported Mentor Handoff benchmark arm: %s\n' "$arm" >&2
+			return 1
+			;;
+		esac
+	elif [[ $arm == hpatch ]]; then
+		base_url=http://hpatch-capturer:8082/v1
 		agent_service=hpatch-agent
 		instruction_name=hpatch.md
 		instruction_path=$hpatch_instruction
@@ -1147,7 +1339,7 @@ run_agent() {
 			instruction_diff_for_arm=$instruction_diff
 			;;
 		ctp)
-			base_url=http://hpatch:8082/v1
+			base_url=http://hpatch-capturer:8082/v1
 			agent_service=hpatch-agent
 			instruction_name=hpatch.md
 			instruction_path=$hpatch_instruction
@@ -1166,6 +1358,12 @@ run_agent() {
 	workspace=$(mktemp -d "$run_dir/work/$run_id-XXXXXX")
 	repository="$workspace/repo"
 	mkdir -p "$artifact_dir"
+	if [[ $benchmark_mode == mentor-handoff ]]; then
+		codex_home="$artifact_dir/codex-home"
+		child_events="$artifact_dir/child-events.jsonl"
+		child_proof="$artifact_dir/child-proof.json"
+		mkdir -m 0700 "$codex_home"
+	fi
 	snapshot "$base_commit" "$repository"
 	link_task_dependencies "$repository"
 	if [[ $dependency_kind == node ]]; then
@@ -1174,27 +1372,42 @@ run_agent() {
 	fi
 
 	provider_config="model_providers.bench={ name = \"bench\", base_url = \"$base_url\", wire_api = \"responses\", requires_openai_auth = true }"
+	agent_prompt=$(cat "$task/$prompt_file")
+	if [[ $benchmark_mode == mentor-handoff ]]; then
+		root_model=$mentor_parent_model
+		root_reasoning_effort=$mentor_parent_reasoning_effort
+		codex_feature_args=(
+			-c 'features.multi_agent_v2=true'
+			-c "agents.$mentor_child_role.description=\"Fixed benchmark implementation role\""
+			-c "agents.$mentor_child_role.config_file=\"/bench-instructions/${mentor_child_role_config##*/}\""
+		)
+		agent_prompt=$(cat "$mentor_parent_prompt")
+	fi
 	started_at=$(date --utc --iso-8601=ns)
 	started_ms=$(date +%s%3N)
 	set +e
 	(
 		cd "$repository"
 		export BENCH_AGENT_SERVICE=$agent_service
+		if [[ -n $codex_home ]]; then
+			export BENCH_CODEX_HOME=$codex_home
+		fi
 		exec timeout --signal=TERM --kill-after=10s "${agent_timeout}s" \
 			"$benchmark_root/codex-compose.sh" \
 			-c "$provider_config" \
 			-c "model_instructions_file=\"/bench-instructions/$instruction_name\"" \
 			-c 'model_provider="bench"' \
 			-c 'supports_websockets=true' \
-			--model "$model" \
-			-c "model_reasoning_effort=\"$reasoning_effort\"" \
+			--model "$root_model" \
+			-c "model_reasoning_effort=\"$root_reasoning_effort\"" \
 			-c 'approval_policy="never"' \
 			-c 'sandbox_mode="danger-full-access"' \
+			"${codex_feature_args[@]}" \
 			exec \
 			--json \
 			--color never \
 			-C "$repository" \
-			"$(cat "$task/$prompt_file")"
+			"$agent_prompt"
 	) >"$codex_stdout" 2>"$codex_stderr" &
 	active_agent_pid=$!
 	wait "$active_agent_pid"
@@ -1204,6 +1417,15 @@ run_agent() {
 	fi
 	active_agent_pid=
 	set -e
+	if [[ $benchmark_mode == mentor-handoff ]]; then
+		if ! normalize_codex_home_permissions "$codex_home"; then
+			task_pass=false
+		elif ! python3 "$benchmark_root/collect_child_events.py" \
+			"$codex_stdout" "$codex_home" "$child_events" "$child_proof" \
+			"$mentor_child_role" "$mentor_child_prompt" "$model" "$reasoning_effort"; then
+			task_pass=false
+		fi
+	fi
 	canceled=$pair_canceled
 	duration_ms=$(($(date +%s%3N) - started_ms))
 	executor_process_creation_errors=$(grep -Fc 'Failed to create unified exec process:' "$codex_stderr" || true)
@@ -1296,7 +1518,9 @@ run_agent() {
 				({}; .[$type] = ((.[$type] // 0) + 1))
 			),
 			stdout_path: $stdout_path,
-			stderr_path: $stderr_path
+			stderr_path: $stderr_path,
+			child_events_path: null,
+			child_proof_path: null
 		}' "$codex_stdout"); then
 		task_pass=false
 		agent_json=$(jq -cn \
@@ -1325,8 +1549,16 @@ run_agent() {
 				},
 				error: "invalid Codex JSONL",
 				stdout_path: $stdout_path,
-				stderr_path: $stderr_path
+				stderr_path: $stderr_path,
+				child_events_path: null,
+				child_proof_path: null
 			}')
+	fi
+	if [[ -f $child_events ]]; then
+		agent_json=$(jq -c --arg path "$child_events" '.child_events_path = $path' <<<"$agent_json")
+	fi
+	if [[ -f $child_proof ]]; then
+		agent_json=$(jq -c --arg path "$child_proof" '.child_proof_path = $path' <<<"$agent_json")
 	fi
 	if [[ -n $expected_final_response ]]; then
 		expected_response_required=true
@@ -1378,6 +1610,9 @@ run_agent() {
 		--argjson order "$order" \
 		--arg model "$model" \
 		--arg reasoning_effort "$reasoning_effort" \
+		--arg parent_model "$root_model" \
+		--arg parent_reasoning_effort "$root_reasoning_effort" \
+		--argjson mentor_mode "$([[ $benchmark_mode == mentor-handoff ]] && printf true || printf false)" \
 		--arg model_protocol "$model_protocol" \
 		--arg router_mode "$router_mode" \
 		--arg started_at "$started_at" \
@@ -1403,6 +1638,10 @@ run_agent() {
 			order_in_block: $order,
 			model: $model,
 			reasoning_effort: $reasoning_effort,
+			parent_model: $parent_model,
+			parent_reasoning_effort: $parent_reasoning_effort,
+			child_model: (if $mentor_mode then $model else null end),
+			child_reasoning_effort: (if $mentor_mode then $reasoning_effort else null end),
 			model_protocol: $model_protocol,
 			router_mode: $router_mode,
 			started_at: $started_at,
@@ -1463,6 +1702,31 @@ run_pair() {
 	return "$pair_status"
 }
 
+run_mentor_block() {
+	local repetition=$1
+	local pair_canceled=false
+	local pair_cancel_status=143
+	local block_status=0
+	local active_agent_pid=
+	local index
+	local -a arms=(hpatch hpatch-mentor)
+
+	trap - EXIT
+	trap 'cancel_pair 130' INT
+	trap 'cancel_pair 143' TERM
+	if ((repetition % 2)); then
+		arms=(hpatch-mentor hpatch)
+	fi
+	for index in 0 1; do
+		run_agent "${arms[$index]}" "$repetition" "$((index + 1))" || block_status=1
+		if [[ $pair_canceled == true ]]; then
+			return "$pair_cancel_status"
+		fi
+	done
+	trap - INT TERM
+	return "$block_status"
+}
+
 run_ctp_block() {
 	local repetition=$1
 	local pair_canceled=false
@@ -1501,18 +1765,23 @@ run_hpatch_only() {
 }
 
 
-mkdir -p "$run_dir/work" "$run_dir/hpatch-config" \
+mkdir -p "$run_dir/work" "$run_dir/hpatch-config" "$capture_directory" \
 	"$run_dir/hpatch-runtime/control" "$run_dir/hpatch-runtime/hpatch" "$instruction_dir"
 : >"$results"
 
 "${compose[@]}" build --quiet control
-configure_issue_reporting
 prepare_instructions
+prepare_mentor_prompts
+configure_issue_reporting
 prepare_dependency_cache
 printf 'Control base instructions: %s\n' "$control_instruction"
 printf 'Hpatch base instructions: %s\n' "$hpatch_instruction"
 if [[ $benchmark_mode == ctp-only ]]; then
 	printf 'Native and CTP/2-active receive the same pre-router instructions; the router selects protocol guidance.\n'
+fi
+if [[ $benchmark_mode == mentor-handoff ]]; then
+	printf 'Both arms use the same static %s/%s parent prompt and %s/%s child role and prompt; only the hpatch-mentor router enables the child handoff.\n' \
+		"$mentor_parent_model" "$mentor_parent_reasoning_effort" "$model" "$reasoning_effort"
 fi
 printf 'Base instruction override source: %s\n' "$instruction_source"
 printf 'Base instruction diff: %s\n' "$instruction_diff"
@@ -1529,7 +1798,7 @@ fi
 
 started=true
 compose_used=true
-if [[ $benchmark_mode == paired || $benchmark_mode == ctp-only ]]; then
+if [[ $benchmark_mode == paired || $benchmark_mode == ctp-only || $benchmark_mode == mentor-handoff ]]; then
 	"${compose[@]}" up --detach --wait control hpatch
 else
 	if [[ $benchmark_mode == hpatch-only ]]; then
@@ -1537,13 +1806,13 @@ else
 	fi
 	"${compose[@]}" up --detach --wait hpatch
 fi
-if [[ $benchmark_mode == paired ]]; then
-	qualify_agent_isolation control-agent control 8081 hpatch 8082
+if [[ $benchmark_mode == paired || $benchmark_mode == mentor-handoff ]]; then
+	qualify_agent_isolation control-agent control-capturer 8081 hpatch-capturer 8082
 fi
 if [[ $benchmark_mode == ctp-only ]]; then
-	qualify_agent_isolation control-agent control 8081 hpatch 8082
+	qualify_agent_isolation control-agent control-capturer 8081 hpatch-capturer 8082
 fi
-qualify_agent_isolation hpatch-agent hpatch 8082 control 8081
+qualify_agent_isolation hpatch-agent hpatch-capturer 8082 control-capturer 8081
 if [[ $dependency_workspace == "$run_dir"/dependency-source-* ]]; then
 	rm -rf -- "$dependency_workspace"
 	dependency_workspace=
@@ -1556,6 +1825,8 @@ benchmark_status=0
 for ((repetition = 1; repetition <= repetitions; repetition += 1)); do
 	if [[ $benchmark_mode == paired ]]; then
 		run_pair "$repetition" &
+	elif [[ $benchmark_mode == mentor-handoff ]]; then
+		run_mentor_block "$repetition" &
 	elif [[ $benchmark_mode == ctp-only ]]; then
 		run_ctp_block "$repetition" &
 	else

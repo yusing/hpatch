@@ -665,6 +665,20 @@ func (h *activeRequestHandle) metricIdentity() (string, uint64) {
 	return h.sessionID, h.requestID
 }
 
+func (h *activeRequestHandle) setModel(model string) {
+	if h == nil || model == "" || model == h.model {
+		return
+	}
+	h.store.mu.Lock()
+	defer h.store.mu.Unlock()
+	h.model = model
+	if active, ok := h.store.activeSessions[h.sessionID][h.requestID]; ok {
+		active.model = model
+		h.store.activeSessions[h.sessionID][h.requestID] = active
+	}
+	h.store.notifyLocked()
+}
+
 func (h *activeRequestHandle) finish(observation requestObservation) {
 	if h == nil {
 		return

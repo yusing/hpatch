@@ -12,6 +12,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"sync/atomic"
 	"time"
@@ -39,6 +40,8 @@ func Run(ctx context.Context, args []string, stderr io.Writer) (runErr error) {
 	streamIdleTimeout := flags.Duration("stream-idle-timeout", defaultStreamIdleTimeout, "maximum upstream response-stream inactivity between bytes")
 	mode := flags.String("mode", defaultRewriteMode, "response mode: hpatch or passthrough")
 	modelProtocol := flags.String("model-protocol", defaultModelProtocol, "model protocol: native or ctp2")
+	mentorHandoffEnabled := flags.Bool("mentor-handoff", false, "temporarily use gpt-5.6-sol high for lower-tier spawned subagents")
+	providerBaseURL := flags.String("provider-base-url", codexBaseURL, "Codex provider base URL")
 	if err := flags.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return nil
@@ -57,19 +60,28 @@ func Run(ctx context.Context, args []string, stderr io.Writer) (runErr error) {
 	if *mode == "passthrough" && *modelProtocol != "native" {
 		return errors.New("--model-protocol ctp2 requires --mode hpatch")
 	}
+	if *mode == "passthrough" && *mentorHandoffEnabled {
+		return errors.New("--mentor-handoff requires --mode hpatch")
+	}
 	if *timeout <= 0 {
 		return errors.New("--timeout must be positive")
 	}
 	if *streamIdleTimeout <= 0 {
 		return errors.New("--stream-idle-timeout must be positive")
 	}
+	providerURL, err := url.Parse(*providerBaseURL)
+	if err != nil || (providerURL.Scheme != "http" && providerURL.Scheme != "https") ||
+		providerURL.Host == "" || providerURL.User != nil || providerURL.RawQuery != "" || providerURL.Fragment != "" {
+		return errors.New("--provider-base-url must be an absolute HTTP(S) URL without credentials, query, or fragment")
+	}
 
 	log := newDiagnostics(stderr)
-	provider := newProviderClient(codexBaseURL, nil)
+	provider := newProviderClient(*providerBaseURL, nil)
 	provider.streamIdleTimeout = *streamIdleTimeout
 	var gainDirectory string
 	var hpatchCalls *hpatchProxy
 	var compactTokens *ctp2Codec
+	var mentor *mentorHandoff
 	if *mode == "hpatch" {
 		var err error
 		gainDirectory, err = hpatchMetricsDirectory()
@@ -82,6 +94,9 @@ func Run(ctx context.Context, args []string, stderr io.Writer) (runErr error) {
 				return fmt.Errorf("initialize compact token protocol: %w", err)
 			}
 		}
+	}
+	if *mentorHandoffEnabled {
+		mentor = newMentorHandoff()
 	}
 	titles := newSessionTitleCache()
 	metrics := newMetricsStore(gainDirectory, titles)
@@ -119,7 +134,7 @@ func Run(ctx context.Context, args []string, stderr io.Writer) (runErr error) {
 	mux.HandleFunc("GET /api/metrics", metrics.serveAPI)
 	mux.HandleFunc("GET /", serveDashboard)
 	mux.HandleFunc("GET /v1/models", modelsHandler(provider))
-	mux.HandleFunc("POST /v1/responses", responsesHandler(ctx, *timeout, provider, log, hpatchCalls, compactTokens, metrics, &requestSequence))
+	mux.HandleFunc("POST /v1/responses", responsesHandler(ctx, *timeout, provider, log, hpatchCalls, compactTokens, mentor, metrics, &requestSequence))
 
 	server := &http.Server{
 		Addr:              *listenAddress,
@@ -128,7 +143,7 @@ func Run(ctx context.Context, args []string, stderr io.Writer) (runErr error) {
 		ReadTimeout:       requestBodyReadTimeout,
 		IdleTimeout:       2 * time.Minute,
 	}
-	if err := log.log(ctx, slog.LevelInfo, "listening", "url", fmt.Sprintf("http://%s/v1/responses", *listenAddress), "mode", *mode, "model_protocol", *modelProtocol); err != nil {
+	if err := log.log(ctx, slog.LevelInfo, "listening", "url", fmt.Sprintf("http://%s/v1/responses", *listenAddress), "mode", *mode, "model_protocol", *modelProtocol, "mentor_handoff", *mentorHandoffEnabled); err != nil {
 		return fmt.Errorf("write listening log: %w", err)
 	}
 	serverError := make(chan error, 1)
@@ -187,6 +202,7 @@ func responsesHandler(
 	log diagnostics,
 	hpatchCalls *hpatchProxy,
 	compactTokens *ctp2Codec,
+	mentor *mentorHandoff,
 	metrics *metricsStore,
 	requestSequence *atomic.Uint64,
 ) http.HandlerFunc {
@@ -210,7 +226,7 @@ func responsesHandler(
 		startCtx, executionCtx, cancelRequest := requestContexts(request.Context(), lifecycle, responseStartTimeout)
 		defer cancelRequest()
 		sessionID := routingSessionID(request.Header, parsedRequest)
-		if err := executeRequest(startCtx, executionCtx, parsedRequest, request.Header, sessionID, provider, trackedWriter, requestLog, time.Now, hpatchCalls, compactTokens, metrics); err != nil {
+		if err := executeRequest(startCtx, executionCtx, parsedRequest, request.Header, sessionID, provider, trackedWriter, requestLog, time.Now, hpatchCalls, compactTokens, mentor, metrics); err != nil {
 			writeRequestError(trackedWriter, err)
 		}
 	}
@@ -382,6 +398,7 @@ func executeRequest(
 	now func() time.Time,
 	hpatchCalls *hpatchProxy,
 	compactTokens *ctp2Codec,
+	mentor *mentorHandoff,
 	metrics *metricsStore,
 ) (requestErr error) {
 	totalStarted := now()
@@ -401,12 +418,41 @@ func executeRequest(
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("prepare request: %w", err)
 	}
-	var (
-		hpatchTransform *hpatchResponseTransform
-		err             error
-	)
+	metadata, metadataValid := decodeCodexTurnMetadata(headers)
+	handoffRequest, err := mentor.prepare(headers, metadata, metadataValid, &parsedRequest)
+	if err != nil {
+		return fmt.Errorf("prepare Mentor Handoff: %w", err)
+	}
+	handoffRecorded := false
+	recordHandoff := func(includeCompletedOutput bool) {
+		if handoffRequest == nil || handoffRecorded {
+			return
+		}
+		progress := handoffRequest.record(finalization.observation.usageCounts.InputTokens, includeCompletedOutput)
+		handoffRecorded = true
+		_ = log.log(
+			context.WithoutCancel(executionCtx),
+			slog.LevelInfo,
+			"Mentor Handoff progress",
+			"thread_id", handoffRequest.threadID,
+			"requested_model", handoffRequest.requestedModel,
+			"leader_model", mentorLeaderModel,
+			"input_tokens", progress.latestInputTokens,
+			"tool_calls", progress.toolCalls,
+			"messages", progress.messages,
+			"awaiting_tool_result", progress.awaitingToolResult,
+			"handoff_complete", progress.complete,
+			"handoff_transitioned", progress.transitioned,
+		)
+	}
+	defer func() {
+		if finalization.observation.usageObserved {
+			recordHandoff(false)
+		}
+	}()
+	activeRequest.setModel(parsedRequest.model())
+	var hpatchTransform *hpatchResponseTransform
 	if hpatchCalls != nil {
-		metadata, metadataValid := decodeCodexTurnMetadata(headers)
 		hpatchTransform, err = hpatchCalls.prepareRequest(
 			ctx,
 			&parsedRequest,
@@ -487,8 +533,11 @@ func executeRequest(
 	}
 	var responseTransform responseTransformer
 	if response.StatusCode >= http.StatusOK && response.StatusCode < http.StatusMultipleChoices {
+		if handoffRequest != nil {
+			responseTransform = &handoffRequest.observation
+		}
 		if compactTransform != nil {
-			responseTransform = compactTransform
+			responseTransform = composeResponseTransformers(responseTransform, compactTransform)
 		}
 		if hpatchTransform != nil {
 			responseTransform = composeResponseTransformers(responseTransform, hpatchTransform)
@@ -561,6 +610,7 @@ func executeRequest(
 		finalization.failurePhase = requestFailureTerminalValidation
 	case finalization.upstreamTerminalState == responseTerminalCompleted:
 		finalization.observation.outcome = requestOutcomeCompleted
+		recordHandoff(true)
 	case finalization.upstreamTerminalState == responseTerminalFailed:
 		finalization.observation.outcome = requestOutcomeFailed
 		finalization.failurePhase = requestFailureTerminalValidation

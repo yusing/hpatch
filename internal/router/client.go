@@ -35,6 +35,8 @@ const (
 	selectedModelAtCapacity     = "selected model is at capacity"
 	codexBetaFeaturesHeader     = "x-codex-beta-features"
 	codexResponsesLiteHeader    = "x-openai-internal-codex-responses-lite"
+	openAISubagentHeader        = "x-openai-subagent"
+	hpatchCaptureIDHeader       = "x-hpatch-capture-id"
 	codexSessionIDHeader        = "Session_id"
 	upstreamJSONBufferBytes     = 64 << 20
 )
@@ -239,7 +241,9 @@ func forwardCodexRequestHeaders(destination, source http.Header) {
 		codexWindowIDHeader,
 		codexBetaFeaturesHeader,
 		codexResponsesLiteHeader,
+		openAISubagentHeader,
 		codexTurnMetadataHeader,
+		hpatchCaptureIDHeader,
 	} {
 		for _, value := range source.Values(name) {
 			destination.Add(name, value)
