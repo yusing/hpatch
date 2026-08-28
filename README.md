@@ -14,7 +14,7 @@ TL;DR:
 | Remove contradictory stock editing guidance | [Codex model instructions](#codex-model-instructions) |
 | Inspect measured token usage | [Metrics](#metrics), the dashboard, or `/api/metrics` |
 | Use the engine without Codex | [Go library](#go-library) |
-| Read the complete contract | [`doc/spec/interface.md`](doc/spec/interface.md) |
+| Read the complete contract | [`doc/spec/index.md`](doc/spec/index.md) |
 
 ## Why hpatch?
 
@@ -172,7 +172,7 @@ files. `make uninstall` removes only the installed `hpatch-router` and `shell` b
 
 The mandatory `builtin.shell` implementation comes from `plugins/shell.mjs` and is embedded during generation; `make install` does not copy it into user configuration.
 
-Configured plugins are direct regular `.js` or `.mjs` files in `$XDG_CONFIG_HOME/hpatch/plugins` or `~/.config/hpatch/plugins` on Linux. The router loads them in lexical order into one immutable process snapshot. It does not discover workspace-local or remote plugins and does not hot-reload files. Restart `hpatch-router` after any plugin change. Invalid modules, duplicate identities, or an unusable built-in registry fail startup before the router listens. The full module contract is in [`doc/spec/interface.md`](doc/spec/interface.md).
+Configured plugins are direct regular `.js` or `.mjs` files in `$XDG_CONFIG_HOME/hpatch/plugins` or `~/.config/hpatch/plugins` on Linux. The router loads them in lexical order into one immutable process snapshot. It does not discover workspace-local or remote plugins and does not hot-reload files. Restart `hpatch-router` after any plugin change. Invalid modules, duplicate identities, or an unusable built-in registry fail startup before the router listens. The full module contract is in [`doc/spec/plugin.md`](doc/spec/plugin.md).
 
 
 ## Shell tool
@@ -215,7 +215,7 @@ hsymbol refs internal/router/server.go 42:abcd Run 2
 inspect_file internal/router/server.go | jq -c '.data.outline[]'
 ```
 
-Inspect_file emits one exact JSON envelope with metadata, parser completeness, and a bounded structural outline; its private guidance includes a concise result shape rather than the specification schema. Its code formats are Go, Python `.py` and `.pyi`, and every stable TypeScript 7 source format: `.ts`, `.tsx`, `.d.ts`, `.mts`, `.d.mts`, `.cts`, `.d.cts`, `.js`, `.jsx`, `.mjs`, and `.cjs`. JSON remains a structural format. Markdown frontmatter is parsed as YAML, but only top-level scalar keys are returned. It never emits source bodies or scalar values. Hread emits `LINE:HASH TEXT`. Hgrep and hsymbol emit `"PATH":LINE:HASH TEXT`; hgrep searches text recursively and accepts GNU grep's `-R` as a no-op, while hsymbol runs one exact language-server query and emits canonical workspace-relative paths without a leading `./`. Use hread before editing because inspect_file lines are not HPATCH targets. See the [interface contract](doc/spec/interface.md) for complete inputs and failure behavior.
+Inspect_file emits one exact JSON envelope with metadata, parser completeness, and a bounded structural outline; its private guidance includes a concise result shape rather than the specification schema. Its code formats are Go, Python `.py` and `.pyi`, and every stable TypeScript 7 source format: `.ts`, `.tsx`, `.d.ts`, `.mts`, `.d.mts`, `.cts`, `.d.cts`, `.js`, `.jsx`, `.mjs`, and `.cjs`. JSON remains a structural format. Markdown frontmatter is parsed as YAML, but only top-level scalar keys are returned. It never emits source bodies or scalar values. Hread emits `LINE:HASH TEXT`. Hgrep and hsymbol emit `"PATH":LINE:HASH TEXT`; hgrep searches text recursively and accepts GNU grep's `-R` as a no-op, while hsymbol runs one exact language-server query and emits canonical workspace-relative paths without a leading `./`. Use hread before editing because inspect_file lines are not HPATCH targets. See [`REQ-READ-001`](doc/spec/read.md), [`REQ-GREP-001`](doc/spec/grep.md), [`REQ-SYMBOL-001`](doc/spec/symbol.md), and [`REQ-INSPECT-001`](doc/spec/inspect.md) for complete inputs and failure behavior.
 
 Hread, hgrep, and hsymbol share a 15,000 GPT-5-token soft output limit. One complete row may extend the
 result through 15,500 tokens. If another row cannot be admitted, stdout retains only complete
@@ -433,11 +433,11 @@ The module path is `github.com/yusing/hpatch`. The root package exposes workspac
 evaluation, translation, reporting, and host-metrics APIs as a Go library. Root-scoped workspace APIs use a caller-authorized `*os.Root` and root-relative cwd;
 `Translate` and `TranslateForHost` emit root-relative patch paths. Router translation uses
 `TranslateForHostAt`, retains cleaned host path identities for Codex to authorize, and never
-uses router cwd as a fallback. See [`doc/spec/interface.md`](doc/spec/interface.md).
+uses router cwd as a fallback. See [`doc/spec/file.md`](doc/spec/file.md) and [`doc/architecture/translate.md`](doc/architecture/translate.md).
 
 ## Editing language (summary)
 
-Authoritative guidance: [`contrib/codex/file-editing-instructions.md`](contrib/codex/file-editing-instructions.md). Contract: [`doc/spec/interface.md`](doc/spec/interface.md).
+Authoritative guidance: [`contrib/codex/file-editing-instructions.md`](contrib/codex/file-editing-instructions.md). Contract: [`doc/spec/script.md`](doc/spec/script.md).
 
 Hread and hpatch preview/context rows have the shape `LINE:HASH TEXT`. Copy the complete
 `LINE:HASH` reference into a mutation target. The one-based line is a location hint. The
@@ -518,7 +518,7 @@ Hpatch validates the rendered final state before committing or producing a carri
   and patch-summary data. Language and edit-conflict failures state whether correction is
   field-local, multi-command, a new script, or a later transaction.
 
-Exact language and correction behavior is part of the [interface contract](doc/spec/interface.md); this is not a general-purpose formatter for every file type.
+Exact language and correction behavior is part of [`REQ-OUTPUT-001`](doc/spec/output.md); this is not a general-purpose formatter for every file type.
 
 Multiline example:
 
@@ -728,11 +728,10 @@ Tests live beside the owners they exercise. The root `hpatch` package is the reu
 | Doc | Contents |
 | --- | --- |
 | [`doc/brief.md`](doc/brief.md) | Product brief and scope |
-| [`doc/spec/index.md`](doc/spec/index.md) | Specification inventory |
-| [`doc/spec/interface.md`](doc/spec/interface.md) | Engine, router, plugin, shell, rejected-script recovery, and metrics contracts |
+| [`doc/spec/index.md`](doc/spec/index.md) | Specification inventory; each listed file owns one requirement |
 | [`doc/spec/comparison.md`](doc/spec/comparison.md) | Payload comparison scenarios |
 | [`doc/spec/benchmark.md`](doc/spec/benchmark.md) | Benchmark requirements |
-| [`doc/architecture/index.md`](doc/architecture/index.md) | Stable ownership boundaries |
+| [`doc/architecture/index.md`](doc/architecture/index.md) | Ownership-contract inventory; each listed file owns one contract |
 | [`doc/benchmarks.md`](doc/benchmarks.md) | Benchmark operation and interpretation |
 | [`doc/codex-router-e2e.md`](doc/codex-router-e2e.md) | Codex-facing end-to-end procedure |
 | [`contrib/systemd/hpatch-router.service`](contrib/systemd/hpatch-router.service) | User service template |

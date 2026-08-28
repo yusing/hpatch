@@ -1,6 +1,6 @@
 AGENTS.md
 
-`README.md` is the source of truth for installation, deployment, user-visible router and shell workflows, and requirements. For those tasks, open its relevant section before inspecting implementation; this documentation-owner rule overrides any general preference to inspect code first. Update it when the requested change alters one of those user-visible surfaces. Use `doc/spec/interface.md` for normative engine, router, plugin, shell, hread/hgrep/hsymbol, recovery, and metrics contracts; open it when behavior or acceptance criteria are in question. Use `doc/architecture/index.md` for stable ownership boundaries; open it before moving responsibilities. Use `contrib/codex/file-editing-instructions.md` and `tool_grammar.lark` only when editing or validating HPATCH syntax or Codex model guidance.
+`README.md` is the source of truth for installation, deployment, user-visible router and shell workflows, and requirements. For those tasks, open its relevant section before inspecting implementation; this documentation-owner rule overrides any general preference to inspect code first. Update it when the requested change alters one of those user-visible surfaces. Use `doc/spec/index.md` to find the governing requirement file under `doc/spec/`; open that file when behavior or acceptance criteria are in question. Use `doc/architecture/index.md` to find the governing ownership contract under `doc/architecture/`; open that file before moving responsibilities. Use `contrib/codex/file-editing-instructions.md` and `tool_grammar.lark` only when editing or validating HPATCH syntax or Codex model guidance.
 
 ## Hpatch's target guidance
 
@@ -43,7 +43,7 @@ Deployment invariant: in hpatch mode, the router and Codex executor use the same
 
 Shell calls use the generic plugin carrier and forward the native executor's complete result. Their nested command remains `shell <interpreter> <program>`; the router stores the current authenticated worker at the path selected by `CODEX_THREAD_ID`, and the fixed helper reads that path and replaces itself with the worker. Bash and sh programs use the worker's `mvdan/sh` evaluator, which dispatches hread, hgrep, hsymbol, and inspect_file as private authenticated commands without executable frontends; they are not standalone model-visible tools.
 
-When changing Code Mode owner discovery or sibling preservation, open `doc/spec/interface.md` and the CLI-shape tests in `internal/router/hpatch_proxy_test.go` plus the app-server/request tests in `internal/router/server_test.go`. The supported owner is one custom `exec` under the leading `additional_tools` item: nested under `functions` for CLI traffic or direct for app-server traffic. Unsupported direct and top-level layouts fail closed.
+When changing Code Mode owner discovery or sibling preservation, open `doc/spec/plugin.md` and the CLI-shape tests in `internal/router/hpatch_proxy_test.go` plus the app-server/request tests in `internal/router/server_test.go`. The supported owner is one custom `exec` under the leading `additional_tools` item: nested under `functions` for CLI traffic or direct for app-server traffic. Unsupported direct and top-level layouts fail closed.
 
 A rejected script changes nothing. The engine owns evaluation diagnostics and repair context. The root text editor owns ordinary target semantics against an in-memory rejected-script baseline. The router owns bounded rejected-script ancestry, recovery detection, and complete-script reevaluation. Passthrough mode forwards Responses traffic without installing hpatch or plugins.
 
@@ -64,15 +64,15 @@ Start with the owner that matches the behavior:
 | Fixed shell-runtime locator and per-thread runtime path | `cmd/shell`, `internal/shellruntime`, `internal/router/shell_runtime.go` |
 | Configured plugin discovery, authenticated snapshots, and frontends | `internal/router/toolplugin/runtime.go`, `internal/router/tool_registry.go`, `internal/router/tool_wrapper.go` |
 | Router process signals and top-level exit behavior | `cmd/hpatch-router/main.go` |
-| Normative interface requirements | `doc/spec/interface.md` |
-| Stable ownership contracts | `doc/architecture/index.md` |
+| Normative interface requirements | `doc/spec/index.md` and the listed requirement file |
+| Stable ownership contracts | `doc/architecture/index.md` and the listed contract file |
 
 Preserve these boundaries:
 
 - The root package is the only edit engine; parser, evaluator, target, transaction, and patch-rendering semantics stay there.
 - The router owns Codex transport, tool exposure, sessions, replay, and rejected-script ancestry; recovery mutations rebuild one complete script through ordinary root APIs.
 - Normal router translation is non-mutating and directory-based through `TranslateForHostAt`. Retained shell application is a separate root-scoped path through `ApplyForHostRoot`.
-- Workspace authority changes must preserve this directory-based versus root-scoped split across code, `doc/spec/interface.md`, and `doc/architecture/index.md`.
+- Workspace authority changes must preserve this directory-based versus root-scoped split across code, `doc/spec/file.md`, `doc/architecture/core.md`, and `doc/architecture/translate.md`.
 - Routed history stays in the original Code Mode carrier shape even though the model sees standalone registry tools.
 - `functions.hpatch` and `functions.shell` are model-visible; hread, hgrep, hsymbol, and inspect_file remain private shell-internal commands.
 - Codex owns executor cwd, sandbox, permissions, process sessions, and final patch application.
