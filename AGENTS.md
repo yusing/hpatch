@@ -4,7 +4,7 @@ Hpatch is for the agent, you. Think from that perspective, not the user's.
 
 ## Where to look
 
-- `README.md` owns installation, deployment, user-visible router and shell workflows, and requirements. Open its relevant section before inspecting implementation. Update it when the change alters one of those surfaces.
+- `README.md` is the user guide for installation, deployment, and user-operated router and shell workflows. Open its relevant section before changing one of those workflows. Update it only when the documented user action, configuration, prerequisite, or observable workflow changes. Normative behavior and acceptance criteria belong in the requirement file listed by `doc/spec/index.md`.
 - `doc/spec/index.md` lists one requirement file per interface. Open that file when behavior or acceptance criteria are in question.
 - `doc/architecture/index.md` lists one ownership contract per boundary. Open that file before moving responsibilities.
 - `contrib/codex/file-editing-instructions.md` and `tool_grammar.lark` only when editing or validating HPATCH syntax or Codex model guidance.
