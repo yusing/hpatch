@@ -34,7 +34,7 @@ Each listed file owns one ownership contract. Related facts are cited by stable 
 - [`CTR-CORRECT-001`](correct.md): router-only rejected-script recovery
 - [`CTR-STATE-001`](state.md): bounded final-state projection
 - [`CTR-BOUNDARY-001`](boundary.md): filesystem and output boundary
-- [`CTR-PLUGIN-001`](plugin.md): tool registry and Code Mode carrier boundary
+- [`CTR-PLUGIN-001`](plugin.md): tool registry and executor carrier boundary
 - [`CTR-METRICS-001`](metrics.md): capture-owned transport metrics
 - [`CTR-TRANSLATE-001`](translate.md): patch rendering
 - [`CTR-COMPARE-001`](compare.md): independent comparison cases

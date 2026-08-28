@@ -199,6 +199,52 @@ func TestExecuteRequestDoesNotRequireWorkspaceMetadata(t *testing.T) {
 	}
 }
 
+func TestExecuteRequestSupportsNativeToolsOnTheSameResponsesPath(t *testing.T) {
+	workspace := t.TempDir()
+	provider := &serverFakeProvider{results: []serverForwardResult{{response: serverHTTPResponse(string(mustTestJSON(t, map[string]any{
+		"status": "completed",
+		"output": []any{map[string]any{
+			"type": "custom_tool_call", "id": "item-H", "call_id": "call-H",
+			"name": hpatchToolName, "input": testHPatchScript, "status": "completed",
+		}},
+	})))}}}
+	request := serverRequest(t, func(request map[string]any) {
+		request["input"] = []any{map[string]any{"role": "user", "content": "task"}}
+		request["tools"] = testNativeResponsesTools()
+	})
+	var output bytes.Buffer
+	err := executeRequest(
+		t.Context(),
+		t.Context(),
+		request,
+		serverMetadataHeaders(t, "turn", map[string]json.RawMessage{workspace: nil}),
+		"native-session",
+		provider,
+		&output,
+		newDiagnostics(io.Discard),
+		time.Now,
+		newManagedHPatchProxy(t, testTranslator(t, new(int))),
+		nil, nil,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(provider.forwarded) != 1 || bytes.Contains(provider.forwarded[0], []byte(`"name":"apply_patch"`)) ||
+		!bytes.Contains(provider.forwarded[0], []byte(`"name":"hpatch"`)) {
+		t.Fatalf("native forwarded request = %s", provider.forwarded)
+	}
+	var response struct {
+		Output []map[string]json.RawMessage `json:"output"`
+	}
+	if err := json.Unmarshal(output.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if len(response.Output) != 1 || jsonString(response.Output[0], "type") != "function_call" ||
+		jsonString(response.Output[0], "name") != nativeExecCommandToolName {
+		t.Fatalf("native client response = %s", output.Bytes())
+	}
+}
+
 func TestExecuteRequestForwardsCompactionWithoutRouterRewrite(t *testing.T) {
 	repeated := strings.Repeat("exact compaction text with a reserved !V prefix and repeated content; ", 20)
 	parsed, err := parseResponsesRequest(mustTestJSON(t, map[string]any{
@@ -1749,12 +1795,12 @@ func TestRunServesCaptureMetricsOnTheResponsesListener(t *testing.T) {
 	}
 
 	cancel()
-	if err := <-done; !errors.Is(err, context.Canceled) {
-		t.Fatalf("Run error = %v, want context cancellation", err)
+	if err := <-done; err != nil {
+		t.Fatalf("Run error = %v, want clean shutdown", err)
 	}
 }
 
-func TestRunReturnsCancellationAfterGracefulShutdown(t *testing.T) {
+func TestRunReturnsSuccessAfterGracefulShutdown(t *testing.T) {
 	if _, err := exec.LookPath(hpatchToolName); err != nil {
 		t.Skipf("installed hpatch unavailable: %v", err)
 	}
@@ -1763,7 +1809,19 @@ func TestRunReturnsCancellationAfterGracefulShutdown(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	writer := &cancelOnWrite{cancel: cancel}
 	err := Run(ctx, []string{"--listen", "127.0.0.1:0"}, writer)
-	if !errors.Is(err, context.Canceled) {
-		t.Fatalf("Run error = %v, want context cancellation", err)
+	if err != nil {
+		t.Fatalf("Run error = %v, want clean shutdown", err)
+	}
+}
+
+func TestRunPreservesListenerFailure(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	err = Run(t.Context(), []string{"--mode", "passthrough", "--listen", listener.Addr().String()}, io.Discard)
+	if err == nil || errors.Is(err, context.Canceled) {
+		t.Fatalf("Run error = %v, want listener failure", err)
 	}
 }

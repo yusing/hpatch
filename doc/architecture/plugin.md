@@ -1,6 +1,6 @@
-# Tool registry and Code Mode carrier boundary
+# Tool registry and executor carrier boundary
 
-## CTR-PLUGIN-001 — Tool registry and Code Mode carrier boundary
+## CTR-PLUGIN-001 — Tool registry and executor carrier boundary
 
 For `REQ-PLUGIN-001`, the router owns discovery from the public configuration surface in
 `doc/brief.md` § Public surface, complete-registry validation, stable registration order,
@@ -15,14 +15,15 @@ The registry normalizes each accepted declaration into one router-owned contribu
 its plugin and tool identity, exact serialized OpenAI specification, bounded input parser and
 argv projection, translator handle, and executor implementation handle. This
 normalized interface is the only input from plugin code to request rewriting. The router
-validates every translator result as a typed Code Mode tool-call carrier against the carrier
+validates every translator result as a typed executor tool-call carrier against the carrier
 catalog retained from that request. Plugins never construct output IDs, call IDs, status,
 JSON/SSE envelopes, or replay items.
 
 One carrier renderer owns each supported carrier shape. The generic path preserves a validated
-normal Code Mode tool name and payload. The exec helper is a renderer over that path. It alone
-owns the outer exec program, nested invocation, serialization, independent argv quoting, optional
-single-placeholder command-template expansion, optional JSON parameters, and result forwarding.
+normal tool name and payload. The exec helper is a renderer over that path. It alone owns the
+Code Mode outer program or native function arguments, nested invocation, serialization,
+independent argv quoting, optional single-placeholder command-template expansion, optional JSON
+parameters, and result forwarding.
 The parameter object cannot contain `cmd`; the renderer supplies `cmd` from the selected direct or
 independently quoted worker command. A present `login` value must be exactly `false`, and the
 renderer supplies `login: false` when it is absent. Plugin code can select the typed template and
@@ -38,20 +39,31 @@ native continuation operation resumes the same host-owned session. JSON and SSE 
 and replay preserve this distinction without defining another result envelope or continuation
 protocol. Other contributed tools retain their declared output projections.
 
-An implementation needing another executable Code Mode carrier uses
+An implementation needing another executable carrier uses
 the generic path rather than encoding an exec surrogate. Hpatch's native workspace translation, recovery
 ancestry, patch renderer, and semantic failure baseline remain adapter extensions beside this
 generic interface rather than capabilities granted to ordinary plugins.
 
-For each eligible request, the router recognizes exactly one authoritative Code Mode owner: the
-custom `exec` tool either directly inside an `additional_tools` input item's tool list for
-app-server traffic or nested under that item's `functions` namespace for CLI traffic. The
+For each eligible Code Mode request, the router recognizes exactly one authoritative owner: the
+custom `exec` tool either directly inside an `additional_tools` input item's tool list or nested
+under that item's `functions` namespace. The transport surface does not determine which shape
+Codex sends. The
 `apply_patch` extractor rewrites the owning description. The router also removes the `exec_command`
 Markdown section and introductory `tools.exec_command` example from that description. It derives
 the request-specific app argument-object or CLI parameter-list shape, removes `cmd`, and appends
 only that sanitized shape under `#!params` in the built-in `shell` description. Sibling direct tools,
 sibling namespaces, and nested tools remain unchanged. Direct `functions.exec` entries and
 top-level `exec` or `functions.exec` tools fail closed.
+
+For an eligible native request, the authoritative tool set instead contains exactly one top-level
+custom `apply_patch` and one top-level function `exec_command`. The router removes `apply_patch`,
+retains `exec_command` and unrelated siblings, and installs the same model-visible registry tools.
+The response transformer uses `exec_command` as a function carrier. Hpatch sends one shell command
+that feeds the translated patch to the executor-provided `apply_patch` command, suppresses its
+ordinary success text, and returns the root engine's complete final-state report. Failure preserves
+the command's nonzero status and output. Generic exec-backed contributions render direct native
+function arguments. Both request shapes share the same listener, registry, histories, replay,
+recovery, JSON framing, and SSE framing.
 
 Codex owns base prompt delivery. The router owns request-local hpatch guidance injection: it
 refreshes a marked section, replaces the pinned stock editing section, or appends only when the
@@ -120,7 +132,7 @@ hpatch alone attaches its existing recovery state. A plugin input rejection may 
 bounded diagnostic carrier, while a runtime-adapter failure, malformed translator result, or
 unavailable carrier fails routing and cannot be represented as successful translation.
 
-For hpatch, the immediate Code Mode carrier contains the root engine's translated patch and
+For hpatch, the immediate executor carrier contains the root engine's translated patch and
 already-rendered final-state report. Response restoration retains the original model-visible
 hpatch call and normal executor result for later model-visible history; it does not expose
 the translated patch as later model input or derive another report representation. A later

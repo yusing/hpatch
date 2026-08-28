@@ -13,9 +13,11 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/tiktoken-go/tokenizer"
 )
@@ -139,7 +141,9 @@ func TestRecorderObservesSingleListenerAndProviderRetries(t *testing.T) {
 		snapshot.HPatch.ProviderInputTokens != second.ToolCalls[0].InputTokens ||
 		snapshot.HPatch.DeliveredInputTokens != front.ToolCalls[0].InputTokens ||
 		snapshot.Protocol.InputPayloadTokensSaved != signedDifference(front.Request.Tokens, second.Request.Tokens) ||
-		snapshot.Protocol.OutputPayloadTokensSaved != signedDifference(front.Response.Tokens, second.Response.Tokens) ||
+		snapshot.Semantic.ClientResponses.Tokens != front.FinalResponse.Tokens ||
+		snapshot.Semantic.ProviderAttemptResponses.Tokens != second.FinalResponse.Tokens ||
+		snapshot.Protocol.OutputPayloadTokensSaved != signedDifference(front.FinalResponse.Tokens, second.FinalResponse.Tokens) ||
 		snapshot.Capture.Records != 3 || snapshot.Capture.CaptureErrors != 0 || snapshot.Capture.Incomplete != 0 ||
 		snapshot.Capture.MissingProvider != 0 || snapshot.Capture.AttemptGaps != 0 {
 		t.Fatalf("snapshot = %#v", snapshot)
@@ -338,6 +342,7 @@ func TestSnapshotAccountsCacheCorrectionsDiagnosticsAndMissingEvidence(t *testin
 
 	snapshot := recorder.snapshot()
 	if snapshot.Usage.InputTokens != 220 || snapshot.Usage.CachedInputTokens != 100 ||
+		snapshot.Cache.ProviderCacheRate == nil || *snapshot.Cache.ProviderCacheRate != float64(100)/220 ||
 		snapshot.Cache.ColdOrNewUncachedInputTokens != 100 || snapshot.Cache.EligiblePrefixTokens != 100 ||
 		snapshot.Cache.EligiblePrefixCachedTokens != 80 || snapshot.Cache.EligiblePrefixMissTokens != 20 ||
 		snapshot.Cache.EligiblePrefixCacheRate == nil || *snapshot.Cache.EligiblePrefixCacheRate != 0.8 ||
@@ -345,6 +350,62 @@ func TestSnapshotAccountsCacheCorrectionsDiagnosticsAndMissingEvidence(t *testin
 		snapshot.HPatch.Diagnostics["row-stale"] != 1 || snapshot.HPatch.InputTokensSaved != 6 ||
 		snapshot.Capture.MissingProvider != 1 {
 		t.Fatalf("snapshot = %#v", snapshot)
+	}
+}
+
+func TestSnapshotUsesTerminalResponseOnceInsteadOfWholeSSEStream(t *testing.T) {
+	recorder, err := New(Config{Mode: "hpatch", ModelProtocol: "native"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := &requestState{captureID: "stream", sequence: 1}
+	providerTerminal := `{"type":"response.completed","response":{"status":"completed","output":[{"type":"custom_tool_call","call_id":"call","name":"hpatch","input":"edit"}],"usage":{"input_tokens":10,"input_tokens_details":{"cached_tokens":8},"output_tokens":4}}}`
+	clientTerminal := `{"type":"response.completed","response":{"status":"completed","output":[{"type":"custom_tool_call","call_id":"call","name":"exec","input":"text(\"done\");"}]}}`
+	providerStream := strings.Repeat("data: {\"type\":\"response.custom_tool_call_input.delta\",\"delta\":\""+strings.Repeat("x", 400)+"\"}\n\n", 200) +
+		"data: " + providerTerminal + "\n\n"
+	clientStream := strings.Repeat("data: {\"type\":\"response.in_progress\"}\n\n", 200) +
+		"data: " + clientTerminal + "\n\n"
+	requestBody := []byte(`{"model":"model"}`)
+	recorder.recordExchange(
+		state, "provider", 1, time.Now(), requestBody,
+		observedPayload{content: []byte(providerStream), bytes: uint64(len(providerStream))},
+		http.StatusOK, "text/event-stream", "", nil,
+	)
+	recorder.recordExchange(
+		state, "codex", 0, time.Now(), requestBody,
+		observedPayload{content: []byte(clientStream), bytes: uint64(len(clientStream))},
+		http.StatusOK, "text/event-stream", "", nil,
+	)
+
+	snapshot := recorder.snapshot()
+	exchange := snapshot.Exchanges[0]
+	provider := exchange.ProviderAttempts[0]
+	want := signedDifference(exchange.ClientFinalResponse.Tokens, provider.FinalResponse.Tokens)
+	raw := signedDifference(exchange.ClientResponse.Tokens, provider.Response.Tokens)
+	if exchange.ClientFinalResponse.Tokens == 0 || provider.FinalResponse.Tokens == 0 ||
+		snapshot.Protocol.OutputPayloadTokensSaved != want || snapshot.Protocol.OutputPayloadTokensSaved == raw {
+		t.Fatalf("semantic protocol = %d, want %d; raw stream difference = %d; snapshot %#v", snapshot.Protocol.OutputPayloadTokensSaved, want, raw, snapshot)
+	}
+	if snapshot.Usage.OutputTokens != 4 || snapshot.Usage.ProviderAttempts != 1 {
+		t.Fatalf("provider usage = %#v", snapshot.Usage)
+	}
+}
+
+func TestRouterHTTPRejectionDoesNotBecomeCaptureCorruption(t *testing.T) {
+	recorder, err := New(Config{Mode: "hpatch", ModelProtocol: "native"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := recorder.Handler(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		http.Error(writer, "responses request cannot satisfy the required hpatch rewrite", http.StatusBadGateway)
+	}))
+	handler.ServeHTTP(
+		httptest.NewRecorder(),
+		httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"model"}`)),
+	)
+	snapshot := recorder.snapshot()
+	if snapshot.Requests.Failed != 1 || snapshot.Capture.CaptureErrors != 0 || snapshot.Capture.MissingProvider != 0 {
+		t.Fatalf("router rejection snapshot = %#v", snapshot)
 	}
 }
 
@@ -566,8 +627,18 @@ func TestObserveResponseJoinsMultilineSSEData(t *testing.T) {
 }
 
 func TestClassifyToolInputRetainsOnlyStableDiagnosticCodes(t *testing.T) {
+	nativeInput := func(command string) string {
+		t.Helper()
+		payload, err := json.Marshal(map[string]string{"cmd": command})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(payload)
+	}
+	diagnostic := "type: command 2, reason row-stale: private detail\n"
 	for _, test := range []struct {
 		name       string
+		toolName   string
 		input      string
 		wantKind   string
 		wantReason string
@@ -579,9 +650,32 @@ func TestClassifyToolInputRetainsOnlyStableDiagnosticCodes(t *testing.T) {
 		{name: "arbitrary text", input: `text("private sentinel\nmore private content");`, wantKind: "other"},
 		{name: "forged reason", input: `text("type: command 2, reason private-sentinel: detail\n");`, wantKind: "other"},
 		{name: "malformed envelope", input: `text("prefix, reason row-stale: detail\n");`, wantKind: "other"},
+		{
+			name:     "native apply carrier",
+			toolName: "exec_command",
+			input:    nativeInput(hpatchNativeApplyCarrierPrefix + "printf ok"),
+			wantKind: "apply_patch",
+		},
+		{
+			name:     "native report carrier",
+			toolName: "exec_command",
+			input:    nativeInput(hpatchNativeReportCarrierPrefix + "printf ok"),
+			wantKind: "hpatch_report",
+		},
+		{
+			name:       "native diagnostic carrier",
+			toolName:   "exec_command",
+			input:      nativeInput(hpatchNativeDiagnosticCarrierPrefix + strconv.Quote(diagnostic) + "\nprintf ok"),
+			wantKind:   "hpatch_diagnostic",
+			wantReason: "row-stale",
+		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			kind, reason := classifyToolInput("exec", test.input)
+			toolName := test.toolName
+			if toolName == "" {
+				toolName = "exec"
+			}
+			kind, reason := classifyToolInput(toolName, test.input)
 			if kind != test.wantKind || reason != test.wantReason {
 				t.Fatalf("classification = %q, %q", kind, reason)
 			}

@@ -170,7 +170,7 @@ func Run(ctx context.Context, args []string, stderr io.Writer) (runErr error) {
 		if errors.Is(serveErr, http.ErrServerClosed) {
 			serveErr = nil
 		}
-		return errors.Join(ctx.Err(), shutdownErr, serveErr)
+		return errors.Join(shutdownErr, serveErr)
 	}
 }
 

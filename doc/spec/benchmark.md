@@ -35,7 +35,8 @@ For every fresh arm, report generation MUST:
    provider usage with exchange attempts, and each measured root thread's usage with
    `results.jsonl`;
 4. use capturer-owned provider usage and cache attribution for all model-consumption totals;
-5. report signed client-versus-final-provider input and output payload savings;
+5. report signed client-versus-final-provider request savings and terminal-response-envelope savings,
+   while reporting complete response-stream transport separately;
 6. report actual provider-emitted and client-delivered tool shapes, including correlated Hpatch
    success, rejection, correction, unmatched, diagnostic, and carrier-token totals;
 7. report actual provider models from exchanges, including parent and child traffic; and

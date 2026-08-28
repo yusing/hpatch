@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -123,6 +124,14 @@ func testInstalledTools() []map[string]json.RawMessage {
 	}
 }
 
+func testNativeResponsesTools() []any {
+	return []any{
+		map[string]any{"type": "function", "name": nativeExecCommandToolName, "description": "run a command"},
+		map[string]any{"type": "custom", "name": applyPatchToolName, "description": "apply a patch"},
+		map[string]any{"type": "function", "name": "lookup", "future": true},
+	}
+}
+
 type hpatchTranslatorFunc func(context.Context, string, string) ([]byte, error)
 
 func (f hpatchTranslatorFunc) Translate(ctx context.Context, workspace string, script string) (hpatchTranslationResult, error) {
@@ -215,6 +224,33 @@ func newHPatchTestTransformWithProxy(t *testing.T, proxy *hpatchProxy) (*hpatchR
 		transform.Close()
 	})
 	return transform, proxy, &request, workspace
+}
+
+func newNativeHPatchTestTransformWithProxy(t *testing.T, proxy *hpatchProxy) (*hpatchResponseTransform, *parsedResponsesRequest) {
+	t.Helper()
+	workspace := t.TempDir()
+	request, err := parseResponsesRequest(mustTestJSON(t, map[string]any{
+		"model":       "gpt-test",
+		"input":       []any{map[string]any{"role": "user", "content": "task"}},
+		"tools":       testNativeResponsesTools(),
+		"tool_choice": "auto",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	transform, err := proxy.prepareRequest(
+		t.Context(),
+		&request,
+		"native-session",
+		"native-thread",
+		codexTurnMetadata{RequestKind: "turn", Directories: map[string]json.RawMessage{workspace: nil}},
+		true,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(transform.Close)
+	return transform, &request
 }
 
 func testTranslator(t *testing.T, calls *int) hpatchTranslator {
@@ -486,6 +522,249 @@ func TestHPatchPrepareRequestExposesEditToolsAndShell(t *testing.T) {
 	}
 	if string(request.fields["parallel_tool_calls"]) != "true" {
 		t.Fatalf("parallel_tool_calls = %s", request.fields["parallel_tool_calls"])
+	}
+}
+
+func TestHPatchNativeToolsUseExecCommandCarrierAndRestoreOriginalContract(t *testing.T) {
+	workspace := t.TempDir()
+	originalTools := mustTestJSON(t, testNativeResponsesTools())
+	request, err := parseResponsesRequest(mustTestJSON(t, map[string]any{
+		"model":               "gpt-test",
+		"input":               []any{map[string]any{"role": "user", "content": "task"}},
+		"tools":               json.RawMessage(originalTools),
+		"tool_choice":         "auto",
+		"parallel_tool_calls": true,
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	proxy := newManagedHPatchProxy(t, testTranslator(t, new(int)))
+	transform, err := proxy.prepareRequest(
+		t.Context(),
+		&request,
+		"native-session",
+		"native-thread",
+		codexTurnMetadata{RequestKind: "turn", Directories: map[string]json.RawMessage{workspace: nil}},
+		true,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer transform.Close()
+	if !transform.nativeTools || transform.codeModeToolName != nativeExecCommandToolName {
+		t.Fatalf("native carrier = %q, native %t", transform.codeModeToolName, transform.nativeTools)
+	}
+	var rewrittenTools []map[string]json.RawMessage
+	if err := json.Unmarshal(request.fields["tools"], &rewrittenTools); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{nativeExecCommandToolName, "lookup", hpatchToolName, hpatchRecoveryToolName, "shell"} {
+		if !slices.ContainsFunc(rewrittenTools, func(tool map[string]json.RawMessage) bool {
+			return jsonString(tool, "name") == name
+		}) {
+			t.Fatalf("rewritten native tools lost %q: %#v", name, rewrittenTools)
+		}
+	}
+	if slices.ContainsFunc(rewrittenTools, func(tool map[string]json.RawMessage) bool {
+		return jsonString(tool, "name") == applyPatchToolName
+	}) {
+		t.Fatalf("rewritten native tools retained apply_patch: %#v", rewrittenTools)
+	}
+
+	originalItem := mustTestJSON(t, testHPatchItem())
+	visible, err := transform.TransformJSON(mustTestJSON(t, map[string]any{
+		"status":      "completed",
+		"output":      []any{json.RawMessage(originalItem)},
+		"tools":       rewrittenTools,
+		"tool_choice": "auto",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var response struct {
+		Output []map[string]json.RawMessage `json:"output"`
+		Tools  json.RawMessage              `json:"tools"`
+	}
+	if err := json.Unmarshal(visible, &response); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(response.Tools, originalTools) || len(response.Output) != 1 {
+		t.Fatalf("restored native response contract = %s", visible)
+	}
+	carrier := response.Output[0]
+	if jsonString(carrier, "type") != "function_call" || jsonString(carrier, "name") != nativeExecCommandToolName {
+		t.Fatalf("native translated carrier = %s", mustTestJSON(t, carrier))
+	}
+	var arguments struct {
+		Command string `json:"cmd"`
+	}
+	if err := json.Unmarshal([]byte(jsonString(carrier, "arguments")), &arguments); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(arguments.Command, hpatchNativeApplyMarker) ||
+		!strings.Contains(arguments.Command, shellQuoteArgument(testTranslatedPatch)) ||
+		!strings.Contains(arguments.Command, shellQuoteArgument(testHPatchReport)) {
+		t.Fatalf("native exec_command arguments = %q", arguments.Command)
+	}
+
+	replay, err := parseResponsesRequest(mustTestJSON(t, map[string]any{"input": []any{
+		carrier,
+		map[string]any{"type": "function_call_output", "call_id": "call-H", "output": testHPatchReport},
+	}}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := proxy.reconcileInputPrefix(&replay, transform.historySessionID); err != nil {
+		t.Fatal(err)
+	}
+	var replayed []json.RawMessage
+	if err := json.Unmarshal(replay.fields["input"], &replayed); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(replayed[0], originalItem) {
+		t.Fatalf("restored native replay = %s, want %s", replayed[0], originalItem)
+	}
+	var replayedOutput map[string]json.RawMessage
+	if err := json.Unmarshal(replayed[1], &replayedOutput); err != nil {
+		t.Fatal(err)
+	}
+	if jsonString(replayedOutput, "type") != "custom_tool_call_output" ||
+		jsonString(replayedOutput, "output") != testHPatchReport {
+		t.Fatalf("restored native replay output = %s", replayed[1])
+	}
+
+	outputOnly, err := parseResponsesRequest(mustTestJSON(t, map[string]any{"input": []any{
+		map[string]any{"type": "function_call_output", "call_id": "call-H", "output": testHPatchReport},
+	}}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := proxy.reconcileInputPrefix(&outputOnly, transform.historySessionID); err != nil {
+		t.Fatal(err)
+	}
+	var restoredOutputOnly []map[string]json.RawMessage
+	if err := json.Unmarshal(outputOnly.fields["input"], &restoredOutputOnly); err != nil {
+		t.Fatal(err)
+	}
+	if len(restoredOutputOnly) != 1 || jsonString(restoredOutputOnly[0], "type") != "custom_tool_call_output" ||
+		jsonString(restoredOutputOnly[0], "output") != testHPatchReport {
+		t.Fatalf("restored output-only native replay = %#v", restoredOutputOnly)
+	}
+}
+
+func TestHPatchNativeExecCommandAppliesPatchAndReturnsOnlyReport(t *testing.T) {
+	var arguments struct {
+		Command string `json:"cmd"`
+	}
+	if err := json.Unmarshal([]byte(hpatchNativeApplyArguments(testTranslatedPatch, testHPatchReport)), &arguments); err != nil {
+		t.Fatal(err)
+	}
+	bin := t.TempDir()
+	capturedPatch := filepath.Join(t.TempDir(), "patch")
+	applyPatch := filepath.Join(bin, applyPatchToolName)
+	if err := os.WriteFile(applyPatch, []byte("#!/bin/sh\ncat >\"$HPATCH_CAPTURE\"\nprintf 'native apply output\\n'\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	command := exec.CommandContext(t.Context(), "bash", "-c", arguments.Command)
+	command.Env = append(os.Environ(), "PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"), "HPATCH_CAPTURE="+capturedPatch)
+	output, err := command.Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(output) != testHPatchReport {
+		t.Fatalf("native carrier output = %q, want report only", output)
+	}
+	patch, err := os.ReadFile(capturedPatch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(patch) != testTranslatedPatch {
+		t.Fatalf("native carrier patch = %q", patch)
+	}
+}
+
+func TestHPatchNativeDiagnosticAndAlreadySatisfiedUseReportCarriers(t *testing.T) {
+	tests := []struct {
+		name       string
+		translated hpatchTranslationResult
+		err        error
+		marker     string
+	}{
+		{
+			name:       "diagnostic",
+			translated: hpatchTranslationResult{diagnostic: "type: command 2, reason row-stale: current row\n"},
+			err:        errors.New("rejected"),
+			marker:     hpatchNativeDiagnosticMarker,
+		},
+		{
+			name: "already satisfied",
+			translated: hpatchTranslationResult{
+				report: "in file.txt\nlast none\n",
+				change: hpatch.HostChange{AlreadySatisfied: true},
+			},
+			marker: hpatchNativeReportMarker,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			translator := hpatchResultTranslatorFunc(func(context.Context, string, string) (hpatchTranslationResult, error) {
+				return test.translated, test.err
+			})
+			transform, _ := newNativeHPatchTestTransformWithProxy(t, newManagedHPatchProxy(t, translator))
+			history, err := transform.translate("call-H", testHPatchScript, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if history.effectiveCarrierKind() != codeModeCarrierFunction || history.carrierName != nativeExecCommandToolName {
+				t.Fatalf("native result carrier = %+v", history)
+			}
+			var arguments struct {
+				Command string `json:"cmd"`
+			}
+			if err := json.Unmarshal([]byte(history.carrierInput()), &arguments); err != nil {
+				t.Fatal(err)
+			}
+			if !strings.HasPrefix(arguments.Command, test.marker) {
+				t.Fatalf("native result command = %q", arguments.Command)
+			}
+		})
+	}
+}
+
+func TestHPatchNativeToolsTranslateShellAndStreamingHPatch(t *testing.T) {
+	proxy := newManagedHPatchProxy(t, testTranslator(t, new(int)))
+	transform, _ := newNativeHPatchTestTransformWithProxy(t, proxy)
+	history, err := transform.translateTool("shell", "call-shell", "printf ok\n", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if history.effectiveCarrierKind() != codeModeCarrierFunction || history.carrierName != nativeExecCommandToolName {
+		t.Fatalf("native shell carrier = %+v", history)
+	}
+	var arguments struct {
+		Command string `json:"cmd"`
+	}
+	if err := json.Unmarshal([]byte(history.carrierInput()), &arguments); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(arguments.Command, "shell bash") || !strings.Contains(arguments.Command, `"retained"`) {
+		t.Fatalf("native shell arguments = %q", arguments.Command)
+	}
+
+	stream, _ := newNativeHPatchTestTransformWithProxy(t, proxy)
+	added := testHPatchItem()
+	added["status"] = "in_progress"
+	added["input"] = ""
+	if visible, err := stream.TransformSSE(mustTestJSON(t, map[string]any{"type": "response.output_item.added", "item": added})); err != nil || visible != nil {
+		t.Fatalf("native buffered added = %q, error %v", visible, err)
+	}
+	done := mustTestJSON(t, map[string]any{
+		"type": "response.custom_tool_call_input.done", "item_id": "item-H", "input": testHPatchScript,
+	})
+	visible, err := stream.TransformSSE(done)
+	if err != nil || len(visible) != 2 || !bytes.Contains(visible[0], []byte(`"type":"function_call"`)) ||
+		!bytes.Contains(visible[1], []byte(`"type":"response.function_call_arguments.done"`)) {
+		t.Fatalf("native streaming carrier = %q, error %v", visible, err)
 	}
 }
 

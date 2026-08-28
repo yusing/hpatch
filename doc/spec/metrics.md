@@ -29,7 +29,7 @@ A durable record MUST contain only:
 - schema version, boundary, private capture identity, logical sequence, and provider attempt;
 - mode, model protocol, provider request model, and benchmark correlation fields already supplied
   by Codex;
-- payload byte and GPT-5 token counts;
+- complete transport payload byte and GPT-5 token counts plus the terminal Responses envelope measured once;
 - HTTP and Responses status, completeness, duration, and a bounded capture-error category;
 - provider usage counters;
 - request tool names; and
@@ -44,14 +44,16 @@ capturer, not by the router, engine, plugin, benchmark report, or dashboard. The
 
 1. logical request and provider-attempt counts, including completed and failed logical requests;
 2. provider input, cached input, uncached input, output, reasoning, and usage-bearing attempt counts;
-3. cache attribution that separates cold/new uncached input from misses within the immediately
+3. the overall provider cache rate from authoritative cached and total provider input, plus cache attribution that separates cold/new uncached input from misses within the immediately
    preceding logical request's final provider attempt for the same nonempty thread; retries within
    one request MUST NOT become cache predecessors, requests without a thread are cold, concurrent
    completions MUST retain request-arrival order, and a final attempt without usage MUST break the
    predecessor chain rather than reuse older evidence;
-4. client-request, provider-attempt-request, provider-response, and client-response payload totals;
-5. signed input/output byte and token savings between each client boundary and the final provider
-   attempt, so negative expansion remains visible;
+4. client-request, provider-attempt-request, complete provider-response-stream, and complete
+   client-response-stream payload totals, plus terminal provider and client response envelopes measured once;
+5. signed input byte and token savings between each client request and the final provider request,
+   plus signed output savings between their terminal response envelopes, so repeated SSE framing is
+   transport evidence rather than model-token savings and negative semantic expansion remains visible;
 6. provider-emitted and client-delivered tool aggregates;
 7. Hpatch call, correction, success, rejection, unmatched, diagnostic, provider-input,
    delivered-carrier-input, and signed saved-input totals;
@@ -61,7 +63,7 @@ capturer, not by the router, engine, plugin, benchmark report, or dashboard. The
    provider-attempt gaps, durable-write errors, skipped requests, and dropped exchange detail.
 
 Provider usage is authoritative for model consumption. Payload token counts are reproducible GPT-5
-estimates used only for exact observed transport comparisons. The Hpatch comparison MUST pair the
+estimates used only for exact observed transport or terminal-envelope comparisons. The Hpatch comparison MUST pair the
 actual provider-emitted Hpatch call with the actual delivered native carrier by tool-call identity;
 it MUST NOT synthesize an `apply_patch`, `exec_command`, shell command, or stock result.
 
@@ -77,7 +79,8 @@ Acceptance:
    consecutive provider attempts, one client record, provider usage, and correlated provider and
    delivered tool calls without retaining private payload text.
 2. A streaming test receives the first flushed event before the handler completes.
-3. JSON, multiline SSE, and gzip Responses payloads produce the same sanitized observations.
+3. JSON, multiline SSE, and gzip Responses payloads produce the same sanitized observations, and
+   any number of nonterminal SSE events contributes exactly one terminal envelope to protocol output savings.
 4. Snapshot totals reconcile their exchanges and provider attempts, and benchmark validation rejects
    changed aggregate usage or nonzero capture-health errors.
 5. Passthrough, Hpatch-native, CTP/2, and Mentor Handoff use the same capture owner and endpoint;

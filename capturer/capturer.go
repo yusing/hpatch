@@ -34,6 +34,12 @@ const maxObservedResponseBytes = 8 << 20
 
 const hpatchApplyCarrierPrefix = "// hpatch-proxy: apply translated patch\nawait tools.apply_patch("
 
+const (
+	hpatchNativeApplyCarrierPrefix      = "# hpatch-proxy: apply translated patch\n"
+	hpatchNativeReportCarrierPrefix     = "# hpatch-proxy: return hpatch report\n"
+	hpatchNativeDiagnosticCarrierPrefix = "# hpatch-proxy: return hpatch diagnostic "
+)
+
 type captureKey struct{}
 
 // Config identifies the observed router behavior and optional durable JSONL
@@ -88,6 +94,7 @@ type captureRecord struct {
 	Usage            *tokenUsage       `json:"usage,omitempty"`
 	ToolCalls        []toolCallMetrics `json:"tool_calls,omitempty"`
 	Response         payloadMetrics    `json:"response"`
+	FinalResponse    payloadMetrics    `json:"final_response,omitzero"`
 	CaptureError     string            `json:"capture_error,omitempty"`
 	DurationMillis   uint64            `json:"duration_ms"`
 	CapturedAt       time.Time         `json:"captured_at"`
@@ -309,7 +316,19 @@ func (r *Recorder) recordExchange(state *requestState, boundary string, attempt 
 			record.CaptureError = "measure response payload"
 		} else {
 			record.Response.Tokens = measured.Tokens
-			observeResponse(observedContent, contentType, &record, r.codec)
+			lowerContentType := strings.ToLower(contentType)
+			if statusCode >= http.StatusOK && statusCode < http.StatusMultipleChoices ||
+				strings.Contains(lowerContentType, "json") || strings.Contains(lowerContentType, "text/event-stream") ||
+				capturedPayloadLooksLikeSSE(observedContent) {
+				finalResponse := observeResponse(observedContent, contentType, &record, r.codec)
+				if len(finalResponse) != 0 {
+					if finalMeasured, finalMeasureErr := r.measure(finalResponse); finalMeasureErr != nil {
+						record.CaptureError = "measure final response payload"
+					} else {
+						record.FinalResponse = finalMeasured
+					}
+				}
+			}
 		}
 	}
 	switch record.ResponseStatus {

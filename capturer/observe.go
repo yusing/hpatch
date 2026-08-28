@@ -36,12 +36,15 @@ func decodedCapturePayload(payload []byte, contentEncoding string) ([]byte, erro
 	}
 }
 
-func observeResponse(payload []byte, contentType string, record *captureRecord, codec tokenizer.Codec) {
+func observeResponse(payload []byte, contentType string, record *captureRecord, codec tokenizer.Codec) []byte {
 	if strings.Contains(strings.ToLower(contentType), "text/event-stream") || capturedPayloadLooksLikeSSE(payload) {
 		var dataParts [][]byte
+		var finalResponse []byte
 		observeEvent := func() {
 			if len(dataParts) != 0 {
-				observeResponseJSON(bytes.Join(dataParts, []byte{'\n'}), record, codec)
+				if terminal := observeResponseJSON(bytes.Join(dataParts, []byte{'\n'}), record, codec); len(terminal) != 0 {
+					finalResponse = terminal
+				}
 				dataParts = dataParts[:0]
 			}
 		}
@@ -56,9 +59,9 @@ func observeResponse(payload []byte, contentType string, record *captureRecord, 
 			}
 		}
 		observeEvent()
-		return
+		return finalResponse
 	}
-	observeResponseJSON(payload, record, codec)
+	return observeResponseJSON(payload, record, codec)
 }
 
 func capturedPayloadLooksLikeSSE(payload []byte) bool {
@@ -78,9 +81,9 @@ func capturedPayloadLooksLikeSSE(payload []byte) bool {
 	return false
 }
 
-func observeResponseJSON(payload []byte, record *captureRecord, codec tokenizer.Codec) {
+func observeResponseJSON(payload []byte, record *captureRecord, codec tokenizer.Codec) []byte {
 	if len(payload) == 0 || bytes.Equal(payload, []byte("[DONE]")) {
-		return
+		return nil
 	}
 	var event struct {
 		Type     string          `json:"type"`
@@ -91,19 +94,30 @@ func observeResponseJSON(payload []byte, record *captureRecord, codec tokenizer.
 		if record.CaptureError == "" {
 			record.CaptureError = "invalid response JSON"
 		}
-		return
+		return nil
 	}
 	if len(event.Item) != 0 {
 		observeOutputItem(event.Item, record, codec)
 	}
 	if len(event.Response) != 0 {
 		observeResponseEnvelope(event.Response, record, codec)
-		return
+		switch event.Type {
+		case "response.completed", "response.failed", "response.incomplete":
+			return event.Response
+		default:
+			return nil
+		}
 	}
-	observeResponseEnvelope(payload, record, codec)
+	status := observeResponseEnvelope(payload, record, codec)
+	switch status {
+	case "completed", "failed", "incomplete", "cancelled":
+		return payload
+	default:
+		return nil
+	}
 }
 
-func observeResponseEnvelope(payload []byte, record *captureRecord, codec tokenizer.Codec) {
+func observeResponseEnvelope(payload []byte, record *captureRecord, codec tokenizer.Codec) string {
 	var response struct {
 		Status string            `json:"status"`
 		Output []json.RawMessage `json:"output"`
@@ -119,7 +133,7 @@ func observeResponseEnvelope(payload []byte, record *captureRecord, codec tokeni
 		} `json:"usage"`
 	}
 	if json.Unmarshal(payload, &response) != nil {
-		return
+		return ""
 	}
 	if response.Status != "" {
 		record.ResponseStatus = response.Status
@@ -135,6 +149,7 @@ func observeResponseEnvelope(payload []byte, record *captureRecord, codec tokeni
 			ReasoningTokens: response.Usage.OutputDetails.ReasoningTokens,
 		}
 	}
+	return response.Status
 }
 
 func observeOutputItem(payload []byte, record *captureRecord, codec tokenizer.Codec) {
@@ -174,6 +189,30 @@ func observeOutputItem(payload []byte, record *captureRecord, codec tokenizer.Co
 }
 
 func classifyToolInput(name, input string) (string, string) {
+	if name == "exec_command" {
+		var arguments struct {
+			Command string `json:"cmd"`
+		}
+		if json.Unmarshal([]byte(input), &arguments) != nil {
+			return "", ""
+		}
+		switch {
+		case strings.HasPrefix(arguments.Command, hpatchNativeApplyCarrierPrefix):
+			return "apply_patch", ""
+		case strings.HasPrefix(arguments.Command, hpatchNativeReportCarrierPrefix):
+			return "hpatch_report", ""
+		case strings.HasPrefix(arguments.Command, hpatchNativeDiagnosticCarrierPrefix):
+			line, _, _ := strings.Cut(arguments.Command, "\n")
+			encoded := strings.TrimPrefix(line, hpatchNativeDiagnosticCarrierPrefix)
+			diagnostic, err := strconv.Unquote(encoded)
+			if err != nil {
+				return "hpatch_diagnostic", ""
+			}
+			return "hpatch_diagnostic", hpatchDiagnosticCode(diagnostic)
+		default:
+			return "", ""
+		}
+	}
 	if name != "exec" {
 		return "", ""
 	}

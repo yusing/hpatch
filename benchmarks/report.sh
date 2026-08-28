@@ -110,6 +110,15 @@ percentage() {
 	fi
 }
 
+rate() {
+	local value=$1
+	if [[ $value == null ]]; then
+		printf 'n/a'
+	else
+		awk -v value="$value" 'BEGIN { printf "%.2f%%", 100*value }'
+	fi
+}
+
 print_outcome_row() {
 	local label=$1
 	local arm=$2
@@ -200,25 +209,26 @@ treatment_output=$(metric "$treatment_metrics" '.usage.output_tokens')
 	fi
 
 	printf '\n## Cache attribution\n\n'
-	printf '| Arm | Cached input | Uncached input | Cold/new uncached | Eligible prefix | Eligible cached | Eligible misses | Eligible cache rate |\n'
-	printf '|---|---:|---:|---:|---:|---:|---:|---:|\n'
+	printf '| Arm | Cached input | Uncached input | Provider cache rate | Cold/new uncached | Eligible prefix | Eligible cached | Eligible misses | Eligible prefix cache rate |\n'
+	printf '|---|---:|---:|---:|---:|---:|---:|---:|---:|\n'
 	for row in treatment ${has_baseline/true/baseline}; do
 		[[ $row == false ]] && continue
 		if [[ $row == baseline ]]; then label=$baseline_label; metrics=$baseline_metrics; else label=$treatment_label; metrics=$treatment_metrics; fi
 		eligible=$(metric "$metrics" '.cache.eligible_prefix_tokens')
 		eligible_cached=$(metric "$metrics" '.cache.eligible_prefix_cached_tokens')
-		printf '| %s | %s | %s | %s | %s | %s | %s | %s |\n' \
+		printf '| %s | %s | %s | %s | %s | %s | %s | %s | %s |\n' \
 			"$label" "$(metric "$metrics" '.usage.cached_input_tokens')" \
 			"$(metric "$metrics" '.usage.uncached_input_tokens')" \
+			"$(rate "$(metric "$metrics" '.cache.provider_cache_rate')")" \
 			"$(metric "$metrics" '.cache.cold_or_new_uncached_input_tokens')" \
 			"$eligible" "$eligible_cached" \
 			"$(metric "$metrics" '.cache.eligible_prefix_miss_tokens')" \
-			"$(percentage "$eligible_cached" "$eligible")"
+			"$(rate "$(metric "$metrics" '.cache.eligible_prefix_cache_rate')")"
 	done
 
 	printf '\n## Protocol transformation\n\n'
-	printf 'Positive savings mean the Codex-facing payload was larger than the final provider-facing payload. Negative values mean transformation added payload. Retries are reported separately and are not mistaken for logical requests.\n\n'
-	printf '| Arm | Input bytes saved | Input tokens saved | Output bytes saved | Output tokens saved | Provider attempts |\n'
+	printf 'Input savings compare each complete client request with its final provider request. Final-response savings compare one semantic terminal response envelope per boundary, never the repeated SSE event stream. Positive values mean the Codex-facing payload was larger; negative values mean transformation added payload. Retries remain separate provider attempts.\n\n'
+	printf '| Arm | Input bytes saved | Input tokens saved | Final-response bytes saved | Final-response tokens saved | Provider attempts |\n'
 	printf '|---|---:|---:|---:|---:|---:|\n'
 	if [[ $has_baseline == true ]]; then
 		printf '| %s | %s | %s | %s | %s | %s |\n' "$baseline_label" \
@@ -234,11 +244,27 @@ treatment_output=$(metric "$treatment_metrics" '.usage.output_tokens')
 		"$(metric "$treatment_metrics" '.protocol.output_payload_bytes_saved')" \
 		"$(metric "$treatment_metrics" '.protocol.output_payload_tokens_saved')" \
 		"$(metric "$treatment_metrics" '.requests.provider_attempts')"
+
+	printf '\n### Observed payloads\n\n'
+	printf '| Arm | Client requests | Provider requests | Provider response streams | Client response streams | Provider final responses | Client final responses |\n'
+	printf '|---|---:|---:|---:|---:|---:|---:|\n'
+	for row in treatment ${has_baseline/true/baseline}; do
+		[[ $row == false ]] && continue
+		if [[ $row == baseline ]]; then label=$baseline_label; metrics=$baseline_metrics; else label=$treatment_label; metrics=$treatment_metrics; fi
+		printf '| %s | %s | %s | %s | %s | %s | %s |\n' \
+			"$label" \
+			"$(metric "$metrics" '.transport.client_requests.tokens')" \
+			"$(metric "$metrics" '.transport.provider_attempt_requests.tokens')" \
+			"$(metric "$metrics" '.transport.provider_responses.tokens')" \
+			"$(metric "$metrics" '.transport.client_responses.tokens')" \
+			"$(metric "$metrics" '.semantic.provider_attempt_responses.tokens')" \
+			"$(metric "$metrics" '.semantic.client_responses.tokens')"
+	done
 	if [[ $mode == ctp-only ]]; then
 		ctp_input_saved=$(metric "$treatment_metrics" '.protocol.input_payload_tokens_saved')
 		ctp_output_saved=$(metric "$treatment_metrics" '.protocol.output_payload_tokens_saved')
 		printf '\n### CTP/2 acceptance\n\n'
-		printf 'Configured compression requirements use the capturer-owned, end-to-end client-versus-provider payload totals.\n\n'
+		printf 'Configured input compression uses complete request payloads; output compression uses one capturer-owned final response envelope per boundary.\n\n'
 		printf '| Direction | Required | Tokens saved | Result |\n|---|---|---:|---|\n'
 		input_result='not required'; output_result='not required'
 		if [[ $require_ctp_input_compression == true ]]; then
