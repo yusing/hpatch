@@ -66,7 +66,7 @@ func TestHPatch2MissingRowDoesNotGuessRepairContext(t *testing.T) {
 	writeTestFile(t, root, "file.txt", "alpha\n", 0o644)
 	result, err := translateForHostAtTest(t, root, "in file.txt\ntype 9:0000 \"B\"", "")
 	if err == nil || !strings.Contains(result.Diagnostic, "row-missing") {
-		t.Fatalf("TranslateForHost() error = %v, diagnostic %q", err, result.Diagnostic)
+		t.Fatalf("translateForHostForTest() error = %v, diagnostic %q", err, result.Diagnostic)
 	}
 	if strings.Count(result.Diagnostic, "\n") != 1 {
 		t.Fatalf("missing row emitted guessed repair context: %q", result.Diagnostic)

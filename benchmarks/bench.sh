@@ -11,21 +11,12 @@ repetitions=${REPETITIONS:-4}
 benchmark_mode=${BENCHMARK_MODE:-paired}
 prepare_only=${BENCHMARK_PREPARE_ONLY:-false}
 report_issues=${BENCHMARK_REPORT_ISSUES:-true}
-retain_exact_hpatch_evidence=${BENCHMARK_RETAIN_EXACT_HPATCH_EVIDENCE:-false}
 enforce_no_edit_loops=${BENCHMARK_ENFORCE_NO_EDIT_LOOPS:-true}
 control_baseline_dir=${CONTROL_BASELINE_DIR:-}
 case $prepare_only in
 true|false) ;;
 *)
 	printf 'bench.sh: BENCHMARK_PREPARE_ONLY must be true or false, got %s\n' "$prepare_only" >&2
-	exit 2
-	;;
-esac
-case $retain_exact_hpatch_evidence in
-true|false) ;;
-*)
-	printf 'bench.sh: BENCHMARK_RETAIN_EXACT_HPATCH_EVIDENCE must be true or false, got %s\n' \
-		"$retain_exact_hpatch_evidence" >&2
 	exit 2
 	;;
 esac
@@ -45,11 +36,6 @@ false) export HPATCH_BENCH_DIAGNOSE=0 ;;
 	exit 2
 	;;
 esac
-if [[ $retain_exact_hpatch_evidence == true &&
-	($benchmark_mode == paired || $benchmark_mode == ctp-only || $benchmark_mode == mentor-handoff) ]]; then
-	printf 'bench.sh: exact Hpatch evidence is available only in hpatch-only or hpatch-diagnostic mode\n' >&2
-	exit 2
-fi
 case "$benchmark_mode" in
 	paired|ctp-only|mentor-handoff) ;;
 	hpatch-only|hpatch-diagnostic)
@@ -90,7 +76,6 @@ grader_name=
 baseline_output_contains=
 dependency_kind=none
 preload_go_qualification_grader=false
-read_probe=
 require_ctp_input_compression=false
 require_ctp_output_compression=false
 expected_final_response=
@@ -172,7 +157,6 @@ load_task_manifest() {
 	dependency_kind=$(jq -er '.runtime.dependency_kind // "go"' "$task_manifest")
 	preload_go_qualification_grader=$(jq -er \
 		'.runtime.preload_go_qualification_grader // false' "$task_manifest")
-	read_probe=$(jq -er '.runtime.read_probe // "go.mod"' "$task_manifest")
 	require_ctp_input_compression=$(jq -r '.ctp.require_input_compression // false' "$task_manifest")
 	require_ctp_output_compression=$(jq -r '.ctp.require_output_compression // false' "$task_manifest")
 	if ! jq -e '(.expected_final_response // "") | type == "string"' "$task_manifest" >/dev/null; then
@@ -258,11 +242,7 @@ if [[ $benchmark_mode == mentor-handoff ]]; then
 fi
 issue_reports_directory="$run_dir/agent-issue-reports"
 issue_reports="$run_dir/agent-issue-reports.jsonl"
-exact_evidence_directory="$run_dir/hpatch-exact-evidence"
-exact_evidence="$run_dir/hpatch-exact-evidence.jsonl"
 capture_directory="$run_dir/captures"
-control_capture="$capture_directory/control.jsonl"
-hpatch_capture="$capture_directory/hpatch.jsonl"
 benchmark_config="$run_dir/benchmark-config.json"
 instruction_dir="$run_dir/instructions"
 control_instruction="$instruction_dir/control.md"
@@ -302,12 +282,6 @@ if [[ $benchmark_mode == mentor-handoff ]]; then
 	export HPATCH_BENCH_CONTROL_MODE=hpatch
 	export HPATCH_BENCH_MENTOR_HANDOFF=true
 fi
-if [[ $retain_exact_hpatch_evidence == true ]]; then
-	export HPATCH_BENCH_EXACT_EVIDENCE_DIR=/benchmark-hpatch-exact-evidence
-else
-	export HPATCH_BENCH_EXACT_EVIDENCE_DIR=
-fi
-
 compose=(docker compose --progress quiet -f "$HPATCH_BENCH_COMPOSE_FILE")
 
 collect_router_metrics() {
@@ -333,12 +307,10 @@ collect_artifacts() {
 	fi
 	if [[ $benchmark_mode == paired || $benchmark_mode == ctp-only || $benchmark_mode == mentor-handoff ]]; then
 		"${compose[@]}" logs --no-color control >"$control_log" 2>&1 || true
-		"${compose[@]}" logs --no-color control-capturer >>"$control_log" 2>&1 || true
 		collect_router_metrics control 8081 "$control_metrics" ||
 			metrics_collected=false
 	fi
 	"${compose[@]}" logs --no-color hpatch >"$hpatch_log" 2>&1 || true
-	"${compose[@]}" logs --no-color hpatch-capturer >>"$hpatch_log" 2>&1 || true
 	collect_router_metrics hpatch 8082 "$hpatch_metrics" ||
 		metrics_collected=false
 	collected=$metrics_collected
@@ -349,16 +321,6 @@ collect_artifacts() {
 collect_agent_issue_reports() {
 	bash "$benchmark_root/collect-agent-issue-reports.sh" \
 		"$issue_reports_directory" "$issue_reports"
-}
-
-# Invoked indirectly by cleanup from the EXIT trap.
-# shellcheck disable=SC2329
-collect_exact_hpatch_evidence() {
-	if [[ $retain_exact_hpatch_evidence != true || $started != true ]]; then
-		return
-	fi
-	bash "$benchmark_root/collect-hpatch-exact-evidence.sh" \
-		"$exact_evidence_directory" "$exact_evidence" "$hpatch_metrics"
 }
 
 import_control_baseline() {
@@ -397,7 +359,7 @@ normalize_hpatch_artifact_permissions() {
 	local config="$run_dir/hpatch-config"
 	local runtime="$run_dir/hpatch-runtime"
 	local reports_path=$issue_reports_directory
-	local exact_path=$exact_evidence_directory
+	local captures=$capture_directory
 	local owner
 
 	if docker info --format '{{json .SecurityOptions}}' | grep -Fq '"name=rootless"'; then
@@ -410,9 +372,9 @@ normalize_hpatch_artifact_permissions() {
 		--mount type=bind,source="$config",target=/hpatch-config \
 		--mount type=bind,source="$runtime",target=/hpatch-runtime \
 		--mount type=bind,source="$reports_path",target=/agent-issue-reports \
-		--mount type=bind,source="$exact_path",target=/hpatch-exact-evidence \
+		--mount type=bind,source="$captures",target=/captures \
 		"$benchmark_image" \
-		sh -euc 'chown -R "$1" /hpatch-config /hpatch-runtime /agent-issue-reports /hpatch-exact-evidence; chmod -R u+rwX,go+rX /hpatch-config /hpatch-runtime /agent-issue-reports; find /hpatch-exact-evidence -type d -exec chmod 0700 {} +; find /hpatch-exact-evidence -type f -exec chmod 0600 {} +' \
+		sh -euc 'chown -R "$1" /hpatch-config /hpatch-runtime /agent-issue-reports /captures; chmod -R u+rwX,go+rX /hpatch-config /hpatch-runtime /agent-issue-reports /captures' \
 		sh "$owner"; then
 		printf 'bench.sh: cannot normalize hpatch artifact permissions under %s\n' "$run_dir" >&2
 		return 1
@@ -469,7 +431,7 @@ merge_results() {
 
 # Invoked indirectly by cleanup from the EXIT trap.
 # shellcheck disable=SC2329
-print_lifecycle_summary() {
+print_capture_summary() {
 	local arm
 	local metrics
 	local -a arms=(control hpatch)
@@ -481,8 +443,8 @@ print_lifecycle_summary() {
 		arms=(hpatch hpatch-mentor)
 	fi
 
-	printf '\nRouter lifecycle by benchmark session:\n'
-	printf 'arm\tsession_id\tstarted\tactive\tcompleted\tfailed\tcanceled_before_response\tcanceled_after_response\ttimed_out\tbackground_pending\tusage_observed\tusage_missing\ttotal_duration_ms\tupstream_duration_ms\n'
+	printf '\nCapture summary by benchmark arm:\n'
+	printf 'arm\tlogical_requests\tprovider_attempts\tcompleted\tfailed\tcapture_errors\tincomplete_records\n'
 	for arm in "${arms[@]}"; do
 		case "$arm" in
 			control|native) metrics=$control_metrics ;;
@@ -495,39 +457,23 @@ print_lifecycle_summary() {
 				;;
 			hpatch-mentor|ctp) metrics=$hpatch_metrics ;;
 		esac
-		if [[ ! -s $results || ! -s $metrics ]] ||
-			! jq -e '
-				(.sessions | type) == "array" and
-				all(.sessions[]; (.session_id | type) == "string" and (.requests | type) == "object")
-			' "$metrics" >/dev/null; then
-			printf 'bench.sh: lifecycle summary unavailable for %s\n' "$arm" >&2
+		if [[ ! -s $metrics ]] || ! jq -e '.schema == "hpatch.capture.metrics.v1"' "$metrics" >/dev/null; then
+			printf 'bench.sh: capture summary unavailable for %s\n' "$arm" >&2
 			continue
 		fi
-		if ! jq -r --slurp --arg arm "$arm" --slurpfile router "$metrics" '
-			($router[0].sessions | INDEX(.[]; .session_id)) as $sessions |
-			.[] |
-			select(.arm == $arm) |
-			(.agent.thread_id // "") as $session_id |
-			($sessions[$session_id]) as $session |
+		if ! jq -r --arg arm "$arm" '
 			[
 				$arm,
-				$session_id,
-				($session.requests.started // "missing"),
-				($session.requests.active // "missing"),
-				($session.requests.completed // "missing"),
-				($session.requests.failed // "missing"),
-				($session.requests.canceled_before_response // "missing"),
-				($session.requests.canceled_after_response // "missing"),
-				($session.requests.timed_out // "missing"),
-				($session.requests.background_pending // "missing"),
-				($session.requests.usage_observed // "missing"),
-				($session.requests.usage_missing // "missing"),
-				($session.requests.total_duration_ms // "missing"),
-				($session.requests.upstream_duration_ms // "missing")
+				.requests.logical,
+				.requests.provider_attempts,
+				.requests.completed,
+				.requests.failed,
+				.capture.capture_errors,
+				.capture.incomplete_records
 			] |
 			@tsv
-		' "$results"; then
-			printf 'bench.sh: lifecycle summary rendering failed for %s\n' "$arm" >&2
+		' "$metrics"; then
+			printf 'bench.sh: capture summary rendering failed for %s\n' "$arm" >&2
 		fi
 	done
 }
@@ -595,11 +541,7 @@ preserve_run() {
 	fi
 	issue_reports_directory="$run_dir/agent-issue-reports"
 	issue_reports="$run_dir/agent-issue-reports.jsonl"
-	exact_evidence_directory="$run_dir/hpatch-exact-evidence"
-	exact_evidence="$run_dir/hpatch-exact-evidence.jsonl"
 	capture_directory="$run_dir/captures"
-	control_capture="$capture_directory/control.jsonl"
-	hpatch_capture="$capture_directory/hpatch.jsonl"
 	benchmark_config="$run_dir/benchmark-config.json"
 	instruction_dir="$run_dir/instructions"
 	control_instruction="$instruction_dir/control.md"
@@ -654,9 +596,9 @@ print_result_paths() {
 		fi
 	fi
 	if [[ $benchmark_mode == mentor-handoff ]]; then
-		printf 'Hpatch + Mentor Handoff metrics (including gain): %s\n' "$hpatch_metrics"
+		printf 'Hpatch + Mentor Handoff capture metrics: %s\n' "$hpatch_metrics"
 	else
-		printf 'Hpatch metrics (including gain): %s\n' "$hpatch_metrics"
+		printf 'Hpatch capture metrics: %s\n' "$hpatch_metrics"
 	fi
 	if [[ $benchmark_mode == hpatch-diagnostic ]]; then
 		printf 'Router log: %s\n' "$hpatch_log"
@@ -684,8 +626,8 @@ cleanup() {
 	merge_results
 	collect_artifacts
 	if [[ $started == true ]]; then
-		if ! print_lifecycle_summary; then
-			printf 'bench.sh: lifecycle summary failed\n' >&2
+		if ! print_capture_summary; then
+			printf 'bench.sh: capture summary failed\n' >&2
 		fi
 	fi
 	if [[ $compose_used == true ]]; then
@@ -705,11 +647,6 @@ cleanup() {
 		fi
 	fi
 	if ! collect_agent_issue_reports; then
-		if ((status == 0)); then
-			status=1
-		fi
-	fi
-	if ! collect_exact_hpatch_evidence; then
 		if ((status == 0)); then
 			status=1
 		fi
@@ -760,11 +697,6 @@ for executable in awk chmod cp curl date diff docker git go grep id jq mv sha256
 		exit 1
 	fi
 done
-if docker info --format '{{json .SecurityOptions}}' | grep -Fq '"name=rootless"'; then
-	export HPATCH_BENCH_CAPTURE_USER=0:0
-else
-	export HPATCH_BENCH_CAPTURE_USER="$(id -u):$(id -g)"
-fi
 if [[ $prepare_only == false && ! -f $CODEX_AUTH_PATH ]]; then
 	printf 'bench.sh: Codex auth file not found: %s\n' "$CODEX_AUTH_PATH" >&2
 	exit 1
@@ -877,14 +809,12 @@ configure_issue_reporting() {
 		read -r mentor_spawn_prompt_sha _ < <(sha256sum "$mentor_spawn_prompt")
 	fi
 
-	mkdir -p "$settings_directory" "$issue_reports_directory" "$exact_evidence_directory"
-	chmod 0700 "$exact_evidence_directory"
+	mkdir -p "$settings_directory" "$issue_reports_directory"
 	cat >"$settings_directory/settings.json" <<'JSON'
 {"hooks":{"diagnose":["hpatch-benchmark-report-issue {{shellquote .Title}} {{shellquote (format_markdown .)}}"]}}
 JSON
 	jq -cn \
 		--argjson report_issue_enabled "$report_issues" \
-		--argjson exact_hpatch_evidence_enabled "$retain_exact_hpatch_evidence" \
 		--argjson enforce_no_edit_loops "$enforce_no_edit_loops" \
 		--argjson require_ctp_input_compression "$require_ctp_input_compression" \
 		--argjson require_ctp_output_compression "$require_ctp_output_compression" \
@@ -900,7 +830,6 @@ JSON
 		--arg child_prompt_sha256 "$mentor_child_prompt_sha" \
 		--arg spawn_prompt_sha256 "$mentor_spawn_prompt_sha" \
 		--arg reports "${issue_reports##*/}" \
-		--arg exact_evidence "${exact_evidence##*/}" \
 		'{
 			benchmark_mode: $benchmark_mode,
 			benchmark_commit: $benchmark_commit,
@@ -922,9 +851,6 @@ JSON
 			report_issue_enabled: $report_issue_enabled,
 			agent_issue_reports: $reports,
 			enforce_no_edit_loops: $enforce_no_edit_loops,
-			exact_hpatch_evidence_enabled: $exact_hpatch_evidence_enabled,
-			exact_hpatch_evidence: $exact_evidence,
-			exact_hpatch_evidence_schema: "hpatch.benchmark.exact-attempt.v1",
 			ctp: {
 				require_input_compression: $require_ctp_input_compression,
 				require_output_compression: $require_ctp_output_compression
@@ -1093,12 +1019,6 @@ qualify_agent_isolation() {
 				echo "unexpected access to the other benchmark router" >&2
 				exit 1
 			fi
-			for direct_router in http://control:8081/api/metrics http://hpatch:8082/api/metrics; do
-				if curl --fail --silent --connect-timeout 2 --max-time 4 "$direct_router" >/dev/null 2>&1; then
-					echo "unexpected direct access to a benchmark router" >&2
-					exit 1
-				fi
-			done
 			if curl --fail --silent --connect-timeout 2 --max-time 4 https://example.com/ >/dev/null 2>&1; then
 				echo "unexpected external network access" >&2
 				exit 1
@@ -1248,7 +1168,7 @@ run_agent() {
 	local workspace
 	local repository
 	local artifact_dir="$run_dir/artifacts/$task_id/$run_id"
-	local base_url=http://control-capturer:8081/v1
+	local base_url=http://control:8081/v1
 	local agent_service=control-agent
 	local codex_stdout="$artifact_dir/codex.jsonl"
 	local codex_stderr="$artifact_dir/codex.stderr"
@@ -1306,7 +1226,7 @@ run_agent() {
 			router_mode=hpatch
 			;;
 		hpatch-mentor)
-			base_url=http://hpatch-capturer:8082/v1
+			base_url=http://hpatch:8082/v1
 			agent_service=hpatch-agent
 			instruction_name=hpatch.md
 			instruction_path=$hpatch_instruction
@@ -1321,7 +1241,7 @@ run_agent() {
 			;;
 		esac
 	elif [[ $arm == hpatch ]]; then
-		base_url=http://hpatch-capturer:8082/v1
+		base_url=http://hpatch:8082/v1
 		agent_service=hpatch-agent
 		instruction_name=hpatch.md
 		instruction_path=$hpatch_instruction
@@ -1339,7 +1259,7 @@ run_agent() {
 			instruction_diff_for_arm=$instruction_diff
 			;;
 		ctp)
-			base_url=http://hpatch-capturer:8082/v1
+			base_url=http://hpatch:8082/v1
 			agent_service=hpatch-agent
 			instruction_name=hpatch.md
 			instruction_path=$hpatch_instruction
@@ -1807,12 +1727,12 @@ else
 	"${compose[@]}" up --detach --wait hpatch
 fi
 if [[ $benchmark_mode == paired || $benchmark_mode == mentor-handoff ]]; then
-	qualify_agent_isolation control-agent control-capturer 8081 hpatch-capturer 8082
+	qualify_agent_isolation control-agent control 8081 hpatch 8082
 fi
 if [[ $benchmark_mode == ctp-only ]]; then
-	qualify_agent_isolation control-agent control-capturer 8081 hpatch-capturer 8082
+	qualify_agent_isolation control-agent control 8081 hpatch 8082
 fi
-qualify_agent_isolation hpatch-agent hpatch-capturer 8082 control-capturer 8081
+qualify_agent_isolation hpatch-agent hpatch 8082 control 8081
 if [[ $dependency_workspace == "$run_dir"/dependency-source-* ]]; then
 	rm -rf -- "$dependency_workspace"
 	dependency_workspace=

@@ -81,15 +81,6 @@ persist the session. They do not define a second result envelope or continuation
 result fields, yield timing, continuation arguments, and session lifetime remain owned by Codex's
 executable tool definitions in that request.
 
-For output metrics, the shell translator supplies a stock exec command for the normalized
-interpreter and exact body. Python-family executables pass the shell-quoted body as the `-c`
-argument, and Bun and Node-family executables pass it as the `-e` argument. Other interpreters
-receive `/dev/fd/3`; a quoted heredoc supplies that descriptor while leaving program stdin
-available. Its interpreter-derived delimiter changes when the body contains that delimiter as a
-complete line. The router applies any command template and parameters and counts the complete
-canonical Code Mode exec shape. Execution and replay retain the selected direct-command or
-shell-helper carrier.
-
 Acceptance:
 
 1. A free-form call containing `#!/usr/bin/env python3` translates to an exec carrier whose

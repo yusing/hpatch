@@ -36,9 +36,9 @@ failure instead directs the model to submit one complete corrected ordinary HPAT
 handle from an older baseline is stale. A re-rejection explicitly states that no workspace file
 changed, target corrections survive only in the new rejected-script baseline, and every earlier
 handle is invalid. Correlation IDs remain stable and attempt
-numbers increase across evaluated and proxy-rejected calls. Per-attempt telemetry preserves
-the emitted tool identity and outcome. Persistent metrics settle the correlated hpatch/recovery chain
-once according to the combined-payload and single-comparator rules above.
+numbers increase across evaluated and proxy-rejected calls. The transport capturer observes each
+provider-emitted `hpatch` or `hpatch_recover` call and its delivered carrier without changing
+recovery ancestry.
 
 Outcome hooks report one routed attempt once. Their structured event includes tool identity,
 chain and call identity, attempt number, correction marker, lifecycle stage, outcome, and
@@ -60,8 +60,7 @@ Acceptance:
 5. Recovery cannot cross sessions or selected worktrees, and unrelated tools cannot become bases.
 6. Replay restores `hpatch_recover` identity and the exact emitted short payload.
 7. Ordinary mutation-leading hpatch scripts are never detected as recovery.
-8. Per-attempt telemetry remains individual, while persistent metrics count every chain payload and one
-   final or failed comparator.
+8. Captured provider calls remain individual and correlate to their actual delivered carriers.
 9. One payload can correct multiple distinct command targets atomically without changing any other command field.
 10. A target correction can retarget an anchored or unanchored mutation to exact multiline
     text with escaped LF; rebuilding preserves the target bytes and public control exclusions.

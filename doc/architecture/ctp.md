@@ -23,15 +23,10 @@ routing, translation, history, recovery, and carrier rendering. The transport ow
 response-transformer composition needed to preserve that order and discard request-local sources on
 every terminal path.
 
-The CTP/2 owner derives auxiliary native-versus-compact token pairs from the same tokenizer used for
-per-string selection. Input counts cover each active whole request after Hpatch projection; output
-counts cover decoded assistant text once per logical content item, using each terminal
-`response.output_text.done` event for streams while excluding repeated projections. The in-memory
-router metrics retain lifecycle and usage aggregates plus bounded per-session CTP input/output
-observations, including bytes, encoded-string and visible-reference counts, dictionary size, codec
-timing, and dropped-observation counters. Counting failure cannot replace a successful request,
-response, or provider usage record. Activation counters expose a missing instruction carrier
-without retaining prompt text.
+The CTP/2 owner selects the smaller representation as behavior but emits no metric callbacks or
+histories. The transport capturer observes the post-Hpatch native client request, the actual CTP/2
+provider request, the provider response, and the restored client response. It owns exact observed
+payload savings and provider usage without retaining dictionary values, locators, or text.
 
 CTP/2 operates inside native Responses envelopes and may rewrite only the representation identified
 by `REQ-CTP-001`; that requirement retains the provider-owned fields and native fallback contract.

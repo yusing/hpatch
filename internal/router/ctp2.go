@@ -9,7 +9,6 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-	"time"
 	"unicode"
 	"unicode/utf8"
 
@@ -28,14 +27,6 @@ type ctp2Codec struct {
 	tokens tokenizer.Codec
 }
 
-type ctp2RequestDecision uint8
-
-const (
-	ctp2RequestDisabled ctp2RequestDecision = iota
-	ctp2RequestMissingCarrier
-	ctp2RequestActive
-)
-
 type ctp2InstructionCarrier uint8
 
 const (
@@ -52,35 +43,13 @@ type ctp2RequestView struct {
 	hasTools bool
 }
 
-type ctp2RepresentationMetrics struct {
-	Definitions       uint64
-	DictionaryBytes   uint64
-	Strings           uint64
-	VisibleReferences uint64
-}
-
-type ctp2RequestMetrics struct {
-	Representation ctpRepresentationMetrics
-	ctp2RepresentationMetrics
-}
-
 type ctp2ResponseTransform struct {
 	sources []ctp2VisibleLineSource
-	tokens  tokenizer.Codec
-
-	recordOutput func(ctpRepresentationMetrics, ctp2RepresentationMetrics)
-	recordDecode func(time.Duration, bool)
 }
 
 type ctp2Definition struct {
 	id    string
 	value string
-}
-
-type ctp2StringMetrics struct {
-	NativeTokens  uint64
-	CompactTokens uint64
-	ctp2RepresentationMetrics
 }
 
 type ctp2VisibleLineSeed struct {
@@ -114,40 +83,31 @@ func newCTP2Codec() (*ctp2Codec, error) {
 	return &ctp2Codec{tokens: tokens}, nil
 }
 
-func (c *ctp2Codec) prepareRequest(request *parsedResponsesRequest) (*ctp2ResponseTransform, ctp2RequestDecision, ctp2RequestMetrics, []byte, error) {
+func (c *ctp2Codec) prepareRequest(request *parsedResponsesRequest) (*ctp2ResponseTransform, []byte, error) {
 	if c == nil {
-		return nil, ctp2RequestDisabled, ctp2RequestMetrics{}, nil, nil
+		return nil, nil, nil
 	}
 	nativeBody, err := json.Marshal(request.fields)
 	if err != nil {
-		return nil, ctp2RequestDisabled, ctp2RequestMetrics{}, nil, fmt.Errorf("encode native CTP/2 comparison request: %w", err)
+		return nil, nil, fmt.Errorf("encode native CTP/2 request: %w", err)
 	}
-	nativeTokens, err := c.count(nativeBody)
-	if err != nil {
-		return nil, ctp2RequestDisabled, ctp2RequestMetrics{}, nativeBody, nil
-	}
-	metrics := ctp2RequestMetrics{Representation: ctpRepresentationMetrics{
-		NativeTokens: uint64(nativeTokens),
-		NativeBytes:  uint64(len(nativeBody)),
-	}}
 
 	transformed := maps.Clone(request.fields)
 	view, err := decodeCTP2RequestView(transformed)
 	if err != nil {
-		return nil, ctp2RequestDisabled, ctp2RequestMetrics{}, nativeBody, nil
+		return nil, nativeBody, nil
 	}
 	if view.carrier == ctp2CarrierNone {
-		return nil, ctp2RequestMissingCarrier, ctp2RequestMetrics{}, nativeBody, nil
+		return nil, nativeBody, nil
 	}
 
 	visible := newCTP2VisibleLineEncoder(c)
 	encodeLocal := func(value string) string {
-		encoded, encodedMetrics, encodeErr := c.encodeContentLocalString(value)
+		encoded, _, encodeErr := c.encodeContentLocalString(value)
 		if encodeErr != nil {
 			err = errors.Join(err, encodeErr)
 			return value
 		}
-		metrics.addString(encodedMetrics)
 		return encoded
 	}
 	if view.hasInput {
@@ -158,9 +118,9 @@ func (c *ctp2Codec) prepareRequest(request *parsedResponsesRequest) (*ctp2Respon
 			if view.carrier == ctp2CarrierDeveloperMessage {
 				preserveDeveloper = func(value string) string { return value }
 			}
-			found := transformCTP2Input(view.input, encodeLocal, preserveDeveloper, visible, &metrics, &err)
+			found := transformCTP2Input(view.input, encodeLocal, preserveDeveloper, visible, &err)
 			if preserveDeveloper != nil && !found {
-				return nil, ctp2RequestDisabled, ctp2RequestMetrics{}, nativeBody, nil
+				return nil, nativeBody, nil
 			}
 		}
 		transformed["input"], err = marshalCTP2Field(transformed["input"], view.input, err)
@@ -170,24 +130,17 @@ func (c *ctp2Codec) prepareRequest(request *parsedResponsesRequest) (*ctp2Respon
 		transformed["tools"], err = marshalCTP2Field(transformed["tools"], view.tools, err)
 	}
 	if err != nil {
-		return nil, ctp2RequestDisabled, ctp2RequestMetrics{}, nativeBody, nil
+		return nil, nativeBody, nil
 	}
 
 	compactBody, err := json.Marshal(transformed)
 	if err != nil {
-		return nil, ctp2RequestDisabled, ctp2RequestMetrics{}, nativeBody, nil
+		return nil, nativeBody, nil
 	}
-	compactTokens, err := c.count(compactBody)
-	if err != nil {
-		return nil, ctp2RequestDisabled, ctp2RequestMetrics{}, nativeBody, nil
-	}
-	metrics.Representation.CompactTokens = uint64(compactTokens)
-	metrics.Representation.CompactBytes = uint64(len(compactBody))
 	request.fields = transformed
 	return &ctp2ResponseTransform{
 		sources: cloneCTP2VisibleLineSources(visible.sources),
-		tokens:  c.tokens,
-	}, ctp2RequestActive, metrics, compactBody, nil
+	}, compactBody, nil
 }
 
 func marshalCTP2Field(original json.RawMessage, value any, prior error) (json.RawMessage, error) {
@@ -199,13 +152,6 @@ func marshalCTP2Field(original json.RawMessage, value any, prior error) (json.Ra
 		return original, fmt.Errorf("encode CTP/2 request field: %w", err)
 	}
 	return encoded, nil
-}
-
-func (m *ctp2RequestMetrics) addString(encoded ctp2StringMetrics) {
-	m.Definitions += encoded.Definitions
-	m.DictionaryBytes += encoded.DictionaryBytes
-	m.Strings += encoded.Strings
-	m.VisibleReferences += encoded.VisibleReferences
 }
 
 func (c *ctp2Codec) count(value []byte) (int, error) {
@@ -254,7 +200,6 @@ func transformCTP2Input(
 	value any,
 	transformString, transformFirstDeveloper func(string) string,
 	visible *ctp2VisibleLineEncoder,
-	metrics *ctp2RequestMetrics,
 	transformErr *error,
 ) bool {
 	items, ok := value.([]any)
@@ -281,7 +226,7 @@ func transformCTP2Input(
 		case "custom_tool_call":
 			transformCTP2StringField(object, "input", transformString)
 		case "custom_tool_call_output", "function_call_output":
-			transformCTP2VisibleLineOutput(object, visible, metrics, transformErr)
+			transformCTP2VisibleLineOutput(object, visible, transformErr)
 		case "function_call":
 			transformCTP2StringField(object, "arguments", transformString)
 		}
@@ -438,7 +383,6 @@ func transformCTP2StringField(object map[string]any, field string, transform fun
 func transformCTP2VisibleLineOutput(
 	object map[string]any,
 	encoder *ctp2VisibleLineEncoder,
-	metrics *ctp2RequestMetrics,
 	transformErr *error,
 ) {
 	if *transformErr != nil {
@@ -446,12 +390,11 @@ func transformCTP2VisibleLineOutput(
 	}
 	callID, _ := object["call_id"].(string)
 	encode := func(locator, value string) string {
-		encoded, encodedMetrics, err := encoder.encodeString(locator, value)
+		encoded, err := encoder.encodeString(locator, value)
 		if err != nil {
 			*transformErr = errors.Join(*transformErr, err)
 			return value
 		}
-		metrics.addString(encodedMetrics)
 		return encoded
 	}
 	switch output := object["output"].(type) {
@@ -772,28 +715,16 @@ func encodeCTP2LiteralString(value string) string {
 	return value
 }
 
-func (c *ctp2Codec) encodeContentLocalString(value string) (string, ctp2StringMetrics, error) {
+func (c *ctp2Codec) encodeContentLocalString(value string) (string, int, error) {
 	literal := encodeCTP2LiteralString(value)
-	nativeJSON, _ := json.Marshal(value)
 	literalJSON, _ := json.Marshal(literal)
-	nativeTokens, err := c.count(nativeJSON)
-	if err != nil {
-		return "", ctp2StringMetrics{}, err
-	}
 	literalTokens, err := c.count(literalJSON)
 	if err != nil {
-		return "", ctp2StringMetrics{}, err
-	}
-	metrics := ctp2StringMetrics{
-		NativeTokens:  uint64(nativeTokens),
-		CompactTokens: uint64(literalTokens),
-	}
-	if literal != value {
-		metrics.Strings = 1
+		return "", 0, err
 	}
 	definitions, err := c.stringDefinitions(value)
 	if err != nil {
-		return "", ctp2StringMetrics{}, err
+		return "", 0, err
 	}
 	encoded, references := newCTP2StringEncoder(definitions).encode(value)
 	retained := make([]ctp2Definition, 0, len(definitions))
@@ -812,30 +743,26 @@ func (c *ctp2Codec) encodeContentLocalString(value string) (string, ctp2StringMe
 		encoded, _ = newCTP2StringEncoder(definitions).encode(value)
 	}
 	if len(definitions) == 0 || !strings.HasPrefix(encoded, ctp2ReferenceTag) {
-		return literal, metrics, nil
+		return literal, literalTokens, nil
 	}
 	dictionary := renderCTP2Dictionary(definitions)
 	compact := dictionary + encoded
 	compactJSON, _ := json.Marshal(compact)
 	compactTokens, err := c.count(compactJSON)
 	if err != nil {
-		return "", ctp2StringMetrics{}, err
+		return "", 0, err
 	}
 	if compactTokens >= literalTokens {
-		return literal, metrics, nil
+		return literal, literalTokens, nil
 	}
 	decoded, err := decodeCTP2String(compact, nil, upstreamJSONBufferBytes)
 	if err != nil {
-		return "", ctp2StringMetrics{}, err
+		return "", 0, err
 	}
 	if decoded != value {
-		return "", ctp2StringMetrics{}, errors.New("CTP/2 content-local encoding changed text")
+		return "", 0, errors.New("CTP/2 content-local encoding changed text")
 	}
-	metrics.CompactTokens = uint64(compactTokens)
-	metrics.Definitions = uint64(len(definitions))
-	metrics.DictionaryBytes = uint64(len(dictionary))
-	metrics.Strings = 1
-	return compact, metrics, nil
+	return compact, compactTokens, nil
 }
 
 func renderCTP2Dictionary(definitions []ctp2Definition) string {
@@ -857,7 +784,7 @@ func newCTP2VisibleLineEncoder(codec *ctp2Codec) *ctp2VisibleLineEncoder {
 	}
 }
 
-func (e *ctp2VisibleLineEncoder) encodeString(locator, value string) (string, ctp2StringMetrics, error) {
+func (e *ctp2VisibleLineEncoder) encodeString(locator, value string) (string, error) {
 	lines := slices.Collect(strings.Lines(value))
 	if validCTP2VisibleLocator(locator) {
 		// The current output becomes a response-visible source after encoding, so
@@ -865,35 +792,30 @@ func (e *ctp2VisibleLineEncoder) encodeString(locator, value string) (string, ct
 		e.locators = append(e.locators, locator)
 		defer e.addSource(locator, lines)
 	}
-	local, metrics, err := e.codec.encodeContentLocalString(value)
+	local, localTokens, err := e.codec.encodeContentLocalString(value)
 	if err != nil {
-		return "", ctp2StringMetrics{}, err
+		return "", err
 	}
 	visible, references, err := e.encode(lines)
 	if err != nil || references == 0 {
-		return local, metrics, err
+		return local, err
 	}
 	visibleJSON, _ := json.Marshal(visible)
 	visibleTokens, err := e.codec.count(visibleJSON)
 	if err != nil {
-		return "", ctp2StringMetrics{}, err
+		return "", err
 	}
-	if uint64(visibleTokens) >= metrics.CompactTokens {
-		return local, metrics, nil
+	if visibleTokens >= localTokens {
+		return local, nil
 	}
 	decoded, err := decodeCTP2VisibleLines(visible, e.sources, upstreamJSONBufferBytes)
 	if err != nil {
-		return "", ctp2StringMetrics{}, err
+		return "", err
 	}
 	if decoded != value {
-		return "", ctp2StringMetrics{}, errors.New("CTP/2 visible-line encoding changed text")
+		return "", errors.New("CTP/2 visible-line encoding changed text")
 	}
-	metrics.CompactTokens = uint64(visibleTokens)
-	metrics.Definitions = 0
-	metrics.DictionaryBytes = 0
-	metrics.Strings = 1
-	metrics.VisibleReferences = uint64(references)
-	return visible, metrics, nil
+	return visible, nil
 }
 
 func validCTP2VisibleLocator(locator string) bool {
@@ -1231,16 +1153,11 @@ func appendCTP2Decoded(output *strings.Builder, value string, limit int) error {
 	return nil
 }
 
-func (t *ctp2ResponseTransform) TransformJSON(payload []byte) (transformed []byte, err error) {
-	started := time.Time{}
-	if t.recordDecode != nil {
-		started = time.Now()
-		defer func() { t.recordDecode(time.Since(started), err != nil) }()
-	}
-	return t.transformJSON(payload, true)
+func (t *ctp2ResponseTransform) TransformJSON(payload []byte) ([]byte, error) {
+	return t.transformJSON(payload)
 }
 
-func (t *ctp2ResponseTransform) transformJSON(payload []byte, observeOutput bool) ([]byte, error) {
+func (t *ctp2ResponseTransform) transformJSON(payload []byte) ([]byte, error) {
 	var response map[string]json.RawMessage
 	if err := json.Unmarshal(payload, &response); err != nil || response == nil {
 		return nil, errors.New("decode CTP/2 response")
@@ -1251,7 +1168,7 @@ func (t *ctp2ResponseTransform) transformJSON(payload []byte, observeOutput bool
 			return nil, errors.New("decode CTP/2 response output")
 		}
 		for _, item := range output {
-			if err := t.transformOutputItem(item, observeOutput); err != nil {
+			if err := t.transformOutputItem(item); err != nil {
 				return nil, err
 			}
 		}
@@ -1268,11 +1185,6 @@ func (t *ctp2ResponseTransform) transformJSON(payload []byte, observeOutput bool
 }
 
 func (t *ctp2ResponseTransform) TransformSSE(payload []byte) (transformed [][]byte, err error) {
-	started := time.Time{}
-	if t.recordDecode != nil {
-		started = time.Now()
-		defer func() { t.recordDecode(time.Since(started), err != nil) }()
-	}
 	var event map[string]json.RawMessage
 	if err := json.Unmarshal(payload, &event); err != nil || event == nil {
 		return [][]byte{payload}, nil
@@ -1282,7 +1194,7 @@ func (t *ctp2ResponseTransform) TransformSSE(payload []byte) (transformed [][]by
 	case "response.output_item.added", "response.output_item.done":
 		var item map[string]json.RawMessage
 		if json.Unmarshal(event["item"], &item) == nil && item != nil {
-			if err := t.transformOutputItem(item, false); err != nil {
+			if err := t.transformOutputItem(item); err != nil {
 				return nil, err
 			}
 			event["item"] = mustMarshalJSON(item)
@@ -1294,7 +1206,6 @@ func (t *ctp2ResponseTransform) TransformSSE(payload []byte) (transformed [][]by
 			return nil, err
 		}
 		event["text"] = mustMarshalJSON(decoded)
-		t.observeAssistantText(compact, decoded)
 	case "response.content_part.added", "response.content_part.done":
 		var part map[string]json.RawMessage
 		if json.Unmarshal(event["part"], &part) == nil && part != nil {
@@ -1307,7 +1218,7 @@ func (t *ctp2ResponseTransform) TransformSSE(payload []byte) (transformed [][]by
 	if rawResponse, ok := event["response"]; ok {
 		trimmed := bytes.TrimSpace(rawResponse)
 		if len(trimmed) != 0 && trimmed[0] == '{' {
-			decoded, err := t.transformJSON(rawResponse, false)
+			decoded, err := t.transformJSON(rawResponse)
 			if err != nil {
 				return nil, err
 			}
@@ -1328,7 +1239,7 @@ func (t *ctp2ResponseTransform) Finish(bool) error {
 	return nil
 }
 
-func (t *ctp2ResponseTransform) transformOutputItem(item map[string]json.RawMessage, observeOutput bool) error {
+func (t *ctp2ResponseTransform) transformOutputItem(item map[string]json.RawMessage) error {
 	if jsonString(item, "type") != "message" || jsonString(item, "role") != "assistant" {
 		return nil
 	}
@@ -1336,7 +1247,7 @@ func (t *ctp2ResponseTransform) transformOutputItem(item map[string]json.RawMess
 	if !ok {
 		return nil
 	}
-	decoded, err := t.transformMessageContent(raw, observeOutput)
+	decoded, err := t.transformMessageContent(raw)
 	if err != nil {
 		return err
 	}
@@ -1344,7 +1255,7 @@ func (t *ctp2ResponseTransform) transformOutputItem(item map[string]json.RawMess
 	return nil
 }
 
-func (t *ctp2ResponseTransform) transformMessageContent(raw json.RawMessage, observeOutput bool) (json.RawMessage, error) {
+func (t *ctp2ResponseTransform) transformMessageContent(raw json.RawMessage) (json.RawMessage, error) {
 	value, err := decodeJSONValue(raw)
 	if err != nil {
 		return nil, errors.New("decode CTP/2 message content")
@@ -1353,9 +1264,6 @@ func (t *ctp2ResponseTransform) transformMessageContent(raw json.RawMessage, obs
 		decoded, err := decodeCTP2String(text, t.sources, upstreamJSONBufferBytes)
 		if err != nil {
 			return nil, err
-		}
-		if observeOutput {
-			t.observeAssistantText(text, decoded)
 		}
 		return mustMarshalJSON(decoded), nil
 	}
@@ -1381,9 +1289,6 @@ func (t *ctp2ResponseTransform) transformMessageContent(raw json.RawMessage, obs
 			return nil, err
 		}
 		part["text"] = decoded
-		if observeOutput {
-			t.observeAssistantText(text, decoded)
-		}
 	}
 	return mustMarshalJSON(parts), nil
 }
@@ -1400,55 +1305,4 @@ func (t *ctp2ResponseTransform) transformTextPart(part map[string]json.RawMessag
 	}
 	part["text"] = mustMarshalJSON(decoded)
 	return nil
-}
-
-func (t *ctp2ResponseTransform) observeAssistantText(compact, native string) {
-	if t.recordOutput == nil || t.tokens == nil {
-		return
-	}
-	compactTokens, compactErr := t.tokens.Count(compact)
-	nativeTokens, nativeErr := t.tokens.Count(native)
-	if compactErr != nil || nativeErr != nil || compactTokens < 0 || nativeTokens < 0 {
-		return
-	}
-	t.recordOutput(ctpRepresentationMetrics{
-		NativeTokens:  uint64(nativeTokens),
-		CompactTokens: uint64(compactTokens),
-		NativeBytes:   uint64(len(native)),
-		CompactBytes:  uint64(len(compact)),
-	}, measureCTP2Representation(compact))
-}
-
-func measureCTP2Representation(value string) ctp2RepresentationMetrics {
-	var metrics ctp2RepresentationMetrics
-	if strings.HasPrefix(value, ctp2DictionaryTag) {
-		metrics.Strings = 1
-		metrics.DictionaryBytes = uint64(len(ctp2DictionaryTag))
-		remaining := value[len(ctp2DictionaryTag):]
-		for {
-			line, rest, ok := strings.Cut(remaining, "\n")
-			if !ok {
-				return ctp2RepresentationMetrics{}
-			}
-			metrics.DictionaryBytes += uint64(len(line) + 1)
-			remaining = rest
-			if line == "END" {
-				return metrics
-			}
-			metrics.Definitions++
-		}
-	}
-	if strings.HasPrefix(value, ctp2VisibleLinesTag) {
-		metrics.Strings = 1
-		for line := range strings.Lines(value[len(ctp2VisibleLinesTag):]) {
-			if strings.HasPrefix(line, "=") {
-				metrics.VisibleReferences++
-			}
-		}
-		return metrics
-	}
-	if strings.HasPrefix(value, ctp2LiteralTag) {
-		metrics.Strings = 1
-	}
-	return metrics
 }

@@ -3,10 +3,9 @@
 ## REQ-OUTPUT-001 — Output, final state, and failure behavior
 
 Every root entry point accepts one complete input and evaluates the entire script before an
-external filesystem commit or translated patch is returned. Basic `Apply` returns only an error;
-basic `Translate` returns only patch bytes and an error. `ApplyForHost`, `ApplyForHostRoot`,
-`TranslateForHost`, and `TranslateForHostAt` return `HostTranslation`, which carries the rendered
-report, final state, diagnostics, patch summary, target aliases, and evaluator metrics. Before
+external filesystem commit or translated patch is returned. Basic `Apply` returns only an error.
+`ApplyForHost`, `ApplyForHostRoot`, and `TranslateForHostAt` return `HostTranslation`, which carries
+the rendered report, final state, diagnostics, patch summary, and target aliases. Before
 finalization, every changed file whose final path ends in `.go`
 is parsed and formatted with Go's standard-library `go/format`; parse failures are collected
 from every changed Go file before the complete transaction rejects. For at most 32
@@ -51,7 +50,7 @@ equal remove/add of the empty line representation for an empty file. Translation
 After evaluation succeeds, host variants carry one fully rendered final-state report in
 `HostTranslation`. Apply host variants return it only after commit succeeds; translation host
 variants return it with the complete patch; routed `functions.hpatch` emits it through the
-restored carrier. Basic `Apply` and `Translate` do not return the report. Its line forms are:
+restored carrier. Basic `Apply` does not return the report. Its line forms are:
 
 ```text
 in PATH
@@ -119,8 +118,8 @@ rewriting or evaluation.
 
 For host variants, the complete report is rendered before commit or patch return. Apply host
 variants return it only after the external effect succeeds; router emission is auxiliary and
-cannot retroactively change or roll back a successful effect. Basic `Apply` and `Translate`
-discard the host-only report and structured state at their public boundary.
+cannot retroactively change or roll back a successful effect. Basic `Apply` discards the host-only
+report and structured state at its public boundary.
 
 Root application stages new contents in same-directory temporary files before starting the commit. Parse, validation, read, and evaluation failures leave the initial tree unchanged.
 A staging failure attempts to remove all temporary artifacts; cleanup failure returns
@@ -136,7 +135,7 @@ OpenAI `apply_patch` is a logical-line format and cannot preserve CRLF or standa
 bytes when its output is applied by the tool. Translation therefore returns LF-only patch text and normalizes line endings only in its displayed before/after lines. It does not modify source files. Root application continues to preserve existing line endings outside explicitly inserted strings. Applying translated output to a non-LF file may normalize
 that file to LF; this is a declared format limitation, not byte equivalence.
 
-Basic `Apply` and `Translate` return errors for failures. Host variants place generic diagnostics
+Basic `Apply` returns errors for failures. Host variants place generic diagnostics
 and structured failure data in `HostTranslation`; rendered generic diagnostics use the `hpatch:`
 prefix. Command failures have the stable rendered form:
 
@@ -172,7 +171,7 @@ immutable-baseline lines. If
 a command depends on content introduced by another command, the diagnostic directs the agent to
 apply the prerequisite independently, reread, and submit a later invocation. A missing row or
 failure without a verified baseline does not choose repair context. Repair context is
-supplementary: it never changes the host outcome, mutation, returned patch, or metrics classification.
+supplementary: it never changes the host outcome, mutation, or returned patch.
 When invalid generated source is localized to a fixed-heredoc mutation, each distinct rejection
 identity includes the non-sensitive `value_line`. Transient root diagnostics describe every
 bounded value-row context rather than mutation addresses. Routed target-only recovery diagnostics
@@ -187,10 +186,9 @@ bounded existing repair context rather than inventing new validation rules.
 
 Acceptance:
 
-1. Basic `Apply` returns only an error after commit and basic `Translate` returns only the complete
-   patch bytes or an error without mutation. Their host variants return `HostTranslation`, including
-   the rendered final- or pending-state report. An already-satisfied translation succeeds with an
-   empty patch; the host variant also returns the rendered already-satisfied state.
+1. Basic `Apply` returns only an error after commit. Host variants return `HostTranslation`,
+   including the rendered final- or pending-state report. An already-satisfied translation succeeds
+   with an empty patch and returns the rendered already-satisfied state.
 2. Active paths, bounded last-mutation ranges, per-command final-reference blocks, net file
    counts, Unicode columns, truncation, control escaping, moved files, deletions, and empty
    files produce the specified report without implying cross-invocation persistence.

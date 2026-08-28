@@ -25,9 +25,9 @@ A router-local tool plugin system loads TypeScript-authored, compiled JavaScript
 from the user configuration directory, exposes their OpenAI custom-tool specifications, and
 translates model calls into ordinary Code Mode tool-call carriers. Common exec translations
 use a router-owned wrapper, while tool implementations run only when Codex executes the
-translated carrier under its normal sandbox and permissions. Structured router metrics attribute
-installed definitions, emitted-versus-translated output shapes, and current-versus-stock executor-result input
-shapes to each contributed tool.
+translated carrier under its normal sandbox and permissions. An in-process transport capturer
+measures provider usage, payload transformation, and actual provider-versus-delivered tool shapes
+without adding a proxy or listener.
 
 The mandatory built-in `shell` plugin accepts one free-form script and exposes its normalized interpreter
 and exact body as `shell <interpreter> <program>` in the translated Codex exec carrier. The fixed,
@@ -70,11 +70,10 @@ wall time must remain close to control.
 - One immutable baseline per touched existing file for the complete script; overlapping
   mutations reject instead of rebasing or guessing.
 - Basic `Apply` validates, stages, and commits a complete change set, returning only an error.
-- Basic `Translate` does not modify files and returns only the OpenAI `apply_patch` bytes or an error.
-- `ApplyForHost`, `ApplyForHostRoot`, `TranslateForHost`, and `TranslateForHostAt` return
-  `HostTranslation` with the rendered report, final state, diagnostics, and evaluator metrics.
+- `ApplyForHost`, `ApplyForHostRoot`, and `TranslateForHostAt` return
+  `HostTranslation` with the rendered report, final state, and diagnostics.
 - Router-only target correction through `functions.hpatch_recover` with hashed command handles; an unchanged target rejects before reevaluation, and ordinary `functions.hpatch` and root APIs have no recovery mode.
-- Persistent encoding, diagnostic, command, target, and end-to-end benchmark metrics.
+- Capture-owned provider usage, cache, protocol, tool, Hpatch-delivery, and completeness metrics.
 - Historical-commit benchmark tasks with hidden graders, paired randomized attempts, and
   structured artifacts.
 - Router-local tool plugins discovered from `hpatch/plugins` beneath the platform user
@@ -82,20 +81,16 @@ wall time must remain close to control.
 - Model-visible custom-tool declarations using unconstrained string input or OpenAI-supported
   Lark and regex grammars, typed translation into Code Mode carriers, and executor-side tool
   implementations.
-- Per-plugin and per-tool installed-definition, emitted-call, validated stock-carrier, current-result,
-  and optional stock-result token estimates in the router dashboard and structured metrics endpoint.
-- Built-in hread and hgrep stock results preserve returned content while omitting their verified
-  `LINE:HASH` row identity, so structured router metrics report the input cost of editable row references.
+- Actual provider-emitted and Codex-delivered tool payload measurements in the structured capture
+  endpoint, without synthetic stock commands or executor results.
 - The repository `plugins/shell.mjs` source is embedded as the mandatory built-in shell, with
-  optional interpreter, command-template, JSON parameter directives, and an interpreter-specific
-  native exec baseline for output metrics.
+  optional interpreter, command-template, and JSON parameter directives.
 
 ## Public surface
 
-- Basic root Go APIs: `Apply` atomically updates an authorized workspace and returns an error;
-  `Translate` returns `apply_patch` bytes and an error.
-- Host root APIs: `ApplyForHost`, `ApplyForHostRoot`, `TranslateForHost`, and
-  `TranslateForHostAt` return `HostTranslation` for report, state, diagnostics, and metrics.
+- Basic root Go API: `Apply` atomically updates an authorized workspace and returns an error.
+- Host APIs: `ApplyForHost`, `ApplyForHostRoot`, and `TranslateForHostAt` return
+  `HostTranslation` for report, state, and diagnostics.
 - `hpatch-router --mode hpatch|passthrough`: expose model-visible hpatch and shell tools with
   private shell-internal hread, hgrep, hsymbol, and inspect_file commands, or the unchanged
   control path.
@@ -152,9 +147,8 @@ wall time must remain close to control.
   multiline values use the grammar-constrained `<<PATCH` frame.
 - Parsing, target resolution, validation, and in-memory evaluation failures must not
   modify files or emit a partial patch or successful final-state report.
-- Basic `Apply` returns only an error and basic `Translate` returns only patch bytes and an
-  error. Host variants return completed state, the rendered report, diagnostics, and evaluator
-  metrics through `HostTranslation`.
+- Basic `Apply` returns only an error. Host variants return completed state, the rendered report,
+  and diagnostics through `HostTranslation`.
 - A successful report row is current for its named final path and may target the next
   invocation directly. Saved pre-edit rows remain stale; when the exact next target is absent,
   the caller performs a focused read rather than guessing or reconstructing it.
@@ -179,6 +173,5 @@ wall time must remain close to control.
   envelope. The plugin API may provide an exec wrapper that alone owns the repeated outer exec
   shape.
 
-- A plugin executor returns its current result once and may include a stock result produced during
-  that same execution. The stock result is metric evidence only and cannot change the current
-  stdout, stderr, or exit status.
+- A plugin executor returns its current result once. Observation never causes a second execution or
+  adds a benchmark-only result shape.

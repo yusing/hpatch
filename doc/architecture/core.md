@@ -36,7 +36,7 @@ The engine obtains original files only through the workspace boundary, never wri
 or process output, and retains original identity across moves. It checks cancellation
 before command evaluation and final rendering. Failure or cancellation returns no
 completed changes or final state. A completed result contains ordered net changes,
-structured command and target metrics, final active logical path, last effective mutation
+final active logical path, last effective mutation
 metadata, effective per-command editor splices with authored command provenance, rendered
 final content already owned by each editor, and language-formatting offset maps needed for
 bounded state reporting.

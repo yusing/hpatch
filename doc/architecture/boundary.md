@@ -3,7 +3,7 @@
 ## CTR-BOUNDARY-001 — Filesystem and output boundary
 
 The root library boundary owns workspace authorization, evaluation diagnostics, completed
-results, atomic commit coordination, translation, and structured host metrics for
+results, atomic commit coordination, and translation for
 `REQ-GUIDE-001` and `REQ-OUTPUT-001`. Persistent Codex edit, shell, read, search, and inspection
 guidance and CTP/2 representation guidance share `contrib/codex/file-editing-instructions.md` as their source.
 Tool descriptions retain only call-local contracts and request-specific schemas. The router
@@ -38,11 +38,9 @@ Background Responses requests reject before upstream forwarding because
 the router has no retrieval boundary for their eventual result. Malformed SSE state is
 sticky and cannot be overwritten by a later terminal event.
 
-Metrics on the response path are auxiliary: tokenization or durable-write failures cannot
-replace a successful tool result, rejection diagnostic, read or search result, or overhead-only
-response, while request cancellation still propagates. Definition accounting consumes the
-exact serialized collection installed from the validated built-in and plugin registry and a
-stable per-plugin and per-tool breakdown derived from that same collection.
+Transport capture is auxiliary: tokenization or durable-write failures cannot replace a successful
+tool result, rejection diagnostic, read or search result, or response, while request cancellation
+still propagates. An explicitly requested capture file that cannot be opened fails startup.
 
 The router exposes only hpatch, hpatch_recover, and shell beside the displaced Code Mode `exec` carrier.
 Hpatch remains the native engine contribution. Hpatch_recover is a router-owned recovery contribution. Shell, hread, hgrep, hsymbol, and inspect_file are
@@ -53,7 +51,7 @@ specifications are private and they have no executable frontends. Configured use
 model-visible.
 
 The plugin runtime snapshots and validates the immutable built-in module before user
-declarations, then applies one normalized registry and metrics path to all executable
+declarations, then applies one normalized registry path to all executable
 contributions. The registry projects only model-visible tool definitions. Configured
 executor-backed plugins retain wrapper and frontend dispatch. Built-in shell uses the fixed
 executor-side locator and a direct per-thread runtime path; its private commands execute from
@@ -124,7 +122,7 @@ process snapshot. The directly launched shell child verifies that snapshot befor
 implementation; configured plugin children retain symlink-based verification. The router never
 pre-reads files and never fabricates an `apply_patch` result for
 read, search, symbol lookup, or inspection. Model history retains shell calls, private commands stay outside
-response routing and edit recovery ancestry, and generalized per-tool metrics record execution.
+response routing and edit recovery ancestry. Transport capture observes the resulting call once.
 Registry shutdown removes configured frontends and the snapshot.
 
 Library callers pass an already-authorized root and a root-relative cwd. Absolute operands

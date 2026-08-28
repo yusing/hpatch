@@ -271,7 +271,7 @@ func TestOutcomeHookFailureWarnsWithoutReplacingSuccess(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctx := WithAttemptMetadata(t.Context(), AttemptMetadata{SessionID: "session", CorrelationID: "chain", CallID: "call", Attempt: 1})
-	translated, err := TranslateForHost(ctx, Workspace{Root: root}, "new note.txt\ntype \"ok\"\n", dataDirectory)
+	translated, err := translateForHostForTest(ctx, Workspace{Root: root}, "new note.txt\ntype \"ok\"\n", dataDirectory)
 	if err != nil || len(translated.Patch) == 0 {
 		t.Fatalf("translation = %+v, error %v", translated, err)
 	}
@@ -292,9 +292,9 @@ func TestRejectedAttemptReportsSettingsFailureOnce(t *testing.T) {
 	}
 	ctx := WithAttemptMetadata(t.Context(), AttemptMetadata{SessionID: "session", CorrelationID: "chain", CallID: "call", Attempt: 1})
 
-	translated, err := TranslateForHost(ctx, Workspace{Root: root}, "unknown-command\n", dataDirectory)
+	translated, err := translateForHostForTest(ctx, Workspace{Root: root}, "unknown-command\n", dataDirectory)
 	if err == nil {
-		t.Fatalf("TranslateForHost() translation = %+v, want rejection", translated)
+		t.Fatalf("translateForHostForTest() translation = %+v, want rejection", translated)
 	}
 	if count := strings.Count(translated.Diagnostic, "hpatch: warning: decoding settings:"); count != 1 {
 		t.Fatalf("settings warning count = %d, diagnostic:\n%s", count, translated.Diagnostic)
@@ -341,7 +341,7 @@ func TestErrorAndOutcomeHooksReceiveAttemptMetadata(t *testing.T) {
 		EmittedPayload:  rejectedScript,
 		EvaluatedScript: rejectedScript,
 	}
-	failed, err := TranslateForHost(
+	failed, err := translateForHostForTest(
 		WithAttemptMetadata(t.Context(), rejectedMetadata),
 		Workspace{Root: root},
 		rejectedScript,
@@ -385,7 +385,7 @@ func TestErrorAndOutcomeHooksReceiveAttemptMetadata(t *testing.T) {
 		RecoveryDelta:   delta,
 		Title:           "Update note",
 	}
-	translated, err := TranslateForHost(
+	translated, err := translateForHostForTest(
 		WithAttemptMetadata(t.Context(), recoveryMetadata),
 		Workspace{Root: root},
 		evaluatedScript,

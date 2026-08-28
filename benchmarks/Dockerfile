@@ -10,7 +10,6 @@ RUN go mod download
 COPY . .
 RUN go build -trimpath -o /out/hpatch-router ./cmd/hpatch-router
 RUN go build -trimpath -o /out/shell ./cmd/shell
-RUN go build -trimpath -o /out/hpatch-benchmark-capturer ./benchmarks/capturer
 
 FROM golang:1.26-bookworm
 

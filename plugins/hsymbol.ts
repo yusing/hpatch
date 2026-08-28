@@ -80,7 +80,6 @@ type BackendLocation = GoplsDefinition | LineLocation | LanguageServerLocation;
 type BackendResult = {
   resolver: Resolver;
   locations: BackendLocation[];
-  stdout: string;
   stderr: string;
 };
 
@@ -400,7 +399,6 @@ async function queryBackend(
     return {
       resolver,
       locations: query.mode === "def" ? [parseDefinition(result.stdout)] : parseReferences(result.stdout),
-      stdout: result.stdout,
       stderr: result.stderr,
     };
   }
@@ -422,7 +420,6 @@ async function queryBackend(
   return {
     resolver,
     locations: result.locations.map((location) => ({kind: "lsp", location})),
-    stdout: result.stock,
     stderr: result.stderr,
   };
 }
@@ -514,11 +511,6 @@ async function executeQuery(query: Query): Promise<ExecutionResult> {
   if (currentInput.source !== inputFile.source) {
     throw new HSymbolFailure("input changed during query");
   }
-  const stock = {
-    stdout: backend.stdout,
-    ...(backend.stderr === "" ? {} : {stderr: backend.stderr}),
-    exitCode: 0,
-  };
   const output = new VerifiedRowOutput();
   const skipped = new Map<SourceFailureReason, number>();
   const skip = (reason: SourceFailureReason): void => {
@@ -582,7 +574,6 @@ async function executeQuery(query: Query): Promise<ExecutionResult> {
     stderr += "hsymbol: definition has no editable workspace location\n";
     return {
       ...(stderr === "" ? {} : {stderr}),
-      stock,
       exitCode: 1,
     };
   }
@@ -592,7 +583,6 @@ async function executeQuery(query: Query): Promise<ExecutionResult> {
   return {
     stdout: output.current,
     ...(stderr === "" ? {} : {stderr}),
-    stock,
     exitCode: output.incomplete ? 1 : 0,
   };
 }

@@ -3,7 +3,7 @@
 ## CTR-CORRECT-001 — Router-only rejected-script recovery
 
 The router owns the dedicated target-only recovery grammar, command handles,
-rejected-script ancestry, worktree isolation, correlation, replay, diagnostics, chain metrics,
+rejected-script ancestry, worktree isolation, correlation, replay, and diagnostics,
 and complete-script reevaluation. Each recovery line replaces only the target of one handled
 command in the latest evaluated script. The router uses the root `EditText` primitive to rebuild
 that complete script and evaluates it normally. The core evaluator, root public APIs, root

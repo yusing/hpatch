@@ -16,6 +16,8 @@ import (
 	"os"
 	"sync/atomic"
 	"time"
+
+	"github.com/yusing/hpatch/capturer"
 )
 
 const (
@@ -42,6 +44,7 @@ func Run(ctx context.Context, args []string, stderr io.Writer) (runErr error) {
 	modelProtocol := flags.String("model-protocol", defaultModelProtocol, "model protocol: native or ctp2")
 	mentorHandoffEnabled := flags.Bool("mentor-handoff", false, "temporarily use gpt-5.6-sol high for lower-tier spawned subagents")
 	providerBaseURL := flags.String("provider-base-url", codexBaseURL, "Codex provider base URL")
+	captureOutput := flags.String("capture-output", "", "optional sanitized capture JSONL path")
 	if err := flags.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return nil
@@ -76,15 +79,23 @@ func Run(ctx context.Context, args []string, stderr io.Writer) (runErr error) {
 	}
 
 	log := newDiagnostics(stderr)
+	capture, err := capturer.New(capturer.Config{Output: *captureOutput, Mode: *mode, ModelProtocol: *modelProtocol})
+	if err != nil {
+		return fmt.Errorf("initialize capture: %w", err)
+	}
+	defer func() {
+		runErr = errors.Join(runErr, capture.Close())
+	}()
 	provider := newProviderClient(*providerBaseURL, nil)
+	provider.httpClient.Transport = capture.Transport(provider.httpClient.Transport)
 	provider.streamIdleTimeout = *streamIdleTimeout
-	var gainDirectory string
+	var dataDirectory string
 	var hpatchCalls *hpatchProxy
 	var compactTokens *ctp2Codec
 	var mentor *mentorHandoff
 	if *mode == "hpatch" {
 		var err error
-		gainDirectory, err = hpatchMetricsDirectory()
+		dataDirectory, err = hpatchDataDirectory()
 		if err != nil {
 			return fmt.Errorf("initialize hpatch response proxy: %w", err)
 		}
@@ -99,18 +110,13 @@ func Run(ctx context.Context, args []string, stderr io.Writer) (runErr error) {
 		mentor = newMentorHandoff()
 	}
 	titles := newSessionTitleCache()
-	metrics := newMetricsStore(gainDirectory, titles)
-	metrics.mode = *mode
 	if *mode == "hpatch" {
-		translator := notifyingHPatchTranslator{
-			inner:   newInProcessHPatchTranslator(gainDirectory),
-			metrics: metrics,
-		}
+		translator := newInProcessHPatchTranslator(dataDirectory)
 		customizedInstructions, err := codexModelInstructionFileConfigured()
 		if err != nil {
 			return fmt.Errorf("initialize model instruction rewriting: %w", err)
 		}
-		registry, err := buildToolRegistry(ctx, gainDirectory, translator.ToolDescription(), os.Getenv("HPATCH_DIAGNOSE") == "1")
+		registry, err := buildToolRegistry(ctx, dataDirectory, translator.ToolDescription(), os.Getenv("HPATCH_DIAGNOSE") == "1")
 		if err != nil {
 			return fmt.Errorf("initialize tool registry: %w", err)
 		}
@@ -131,14 +137,14 @@ func Run(ctx context.Context, args []string, stderr io.Writer) (runErr error) {
 
 	var requestSequence atomic.Uint64
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /api/metrics", metrics.serveAPI)
 	mux.HandleFunc("GET /", serveDashboard)
+	mux.HandleFunc("GET /api/metrics", capture.ServeHTTP)
 	mux.HandleFunc("GET /v1/models", modelsHandler(provider))
-	mux.HandleFunc("POST /v1/responses", responsesHandler(ctx, *timeout, provider, log, hpatchCalls, compactTokens, mentor, metrics, &requestSequence))
+	mux.HandleFunc("POST /v1/responses", responsesHandler(ctx, *timeout, provider, log, hpatchCalls, compactTokens, mentor, &requestSequence))
 
 	server := &http.Server{
 		Addr:              *listenAddress,
-		Handler:           mux,
+		Handler:           capture.Handler(mux),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       requestBodyReadTimeout,
 		IdleTimeout:       2 * time.Minute,
@@ -203,7 +209,6 @@ func responsesHandler(
 	hpatchCalls *hpatchProxy,
 	compactTokens *ctp2Codec,
 	mentor *mentorHandoff,
-	metrics *metricsStore,
 	requestSequence *atomic.Uint64,
 ) http.HandlerFunc {
 	return func(writer http.ResponseWriter, request *http.Request) {
@@ -226,7 +231,7 @@ func responsesHandler(
 		startCtx, executionCtx, cancelRequest := requestContexts(request.Context(), lifecycle, responseStartTimeout)
 		defer cancelRequest()
 		sessionID := routingSessionID(request.Header, parsedRequest)
-		if err := executeRequest(startCtx, executionCtx, parsedRequest, request.Header, sessionID, provider, trackedWriter, requestLog, time.Now, hpatchCalls, compactTokens, mentor, metrics); err != nil {
+		if err := executeRequest(startCtx, executionCtx, parsedRequest, request.Header, sessionID, provider, trackedWriter, requestLog, time.Now, hpatchCalls, compactTokens, mentor); err != nil {
 			writeRequestError(trackedWriter, err)
 		}
 	}
@@ -305,7 +310,6 @@ type requestFinalization struct {
 
 func (f *requestFinalization) finish(
 	ctx context.Context,
-	activeRequest *activeRequestHandle,
 	requestErr error,
 	output io.Writer,
 	log diagnostics,
@@ -337,7 +341,6 @@ func (f *requestFinalization) finish(
 			f.observation.outcome = requestOutcomeFailed
 		}
 	}
-	activeRequest.finish(f.observation)
 	args := []any{
 		"session_id", f.sessionID,
 		"outcome", f.observation.outcome.String(),
@@ -389,20 +392,15 @@ func executeRequest(
 	hpatchCalls *hpatchProxy,
 	compactTokens *ctp2Codec,
 	mentor *mentorHandoff,
-	metrics *metricsStore,
 ) (requestErr error) {
 	totalStarted := now()
-	var activeRequest *activeRequestHandle
-	if metrics != nil {
-		activeRequest = metrics.beginRequest(sessionID, parsedRequest.model())
-	}
 	finalization := requestFinalization{failurePhase: requestFailurePrepare}
-	if validMetricSessionID(sessionID) {
+	if sessionID != "" {
 		finalization.sessionID = sessionID
 	}
 
 	defer func() {
-		requestErr = errors.Join(requestErr, finalization.finish(executionCtx, activeRequest, requestErr, output, log, now, totalStarted))
+		requestErr = errors.Join(requestErr, finalization.finish(executionCtx, requestErr, output, log, now, totalStarted))
 	}()
 
 	if err := ctx.Err(); err != nil {
@@ -440,7 +438,6 @@ func executeRequest(
 			recordHandoff(false)
 		}
 	}()
-	activeRequest.setModel(parsedRequest.model())
 	var hpatchTransform *hpatchResponseTransform
 	if hpatchCalls != nil {
 		hpatchTransform, err = hpatchCalls.prepareRequest(
@@ -461,35 +458,9 @@ func executeRequest(
 	if hpatchTransform != nil {
 		defer hpatchTransform.Close()
 	}
-	compactStarted := time.Now()
-	compactTransform, compactAdmission, compactRequestMetrics, forwardBody, err := compactTokens.prepareRequest(&parsedRequest)
-	compactDuration := time.Since(compactStarted)
-	metricSessionID, requestSequence := activeRequest.metricIdentity()
-	if metricSessionID == "" {
-		metricSessionID = sessionID
-	}
+	compactTransform, forwardBody, err := compactTokens.prepareRequest(&parsedRequest)
 	if err != nil {
 		return fmt.Errorf("prepare compact token protocol: %w", err)
-	}
-	if metrics != nil {
-		if compactTransform != nil {
-			compactTransform.recordOutput = func(representation ctpRepresentationMetrics, details ctp2RepresentationMetrics) {
-				metrics.recordCTPOutput(
-					metricSessionID, requestSequence, representation, details,
-				)
-			}
-			compactTransform.recordDecode = func(duration time.Duration, failed bool) {
-				metrics.recordCTPDecode(metricSessionID, duration, failed)
-			}
-		}
-		metrics.recordCTPRequest(
-			metricSessionID,
-			requestSequence,
-			compactAdmission,
-			compactRequestMetrics.Representation,
-			compactRequestMetrics.ctp2RepresentationMetrics,
-			compactDuration,
-		)
 	}
 	if forwardBody == nil {
 		forwardBody, err = json.Marshal(parsedRequest.fields)

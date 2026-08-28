@@ -436,8 +436,5 @@ func TestToolRegistryStartup(t *testing.T) {
 		if strings.Contains(stderr.String(), "listening") {
 			t.Fatalf("router listened with invalid registry: %s", stderr.String())
 		}
-		if _, err := os.Stat(filepath.Join(configRoot, "hpatch", "metrics.bin")); !os.IsNotExist(err) {
-			t.Fatalf("invalid startup changed durable metrics: %v", err)
-		}
 	})
 }

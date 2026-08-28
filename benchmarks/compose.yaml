@@ -56,12 +56,13 @@ services:
       - --model-protocol
       - native
       - --provider-base-url
-      - http://control-capturer:9081
-    depends_on:
-      control-capturer:
-        condition: service_started
+      - https://chatgpt.com/backend-api/codex
+      - --capture-output
+      - ${BENCH_RUN_DIR:?BENCH_RUN_DIR must be set}/captures/control.jsonl
     networks:
-      control-capture: {}
+      control-agent: {}
+      egress:
+        gw_priority: 1
     volumes:
       - type: bind
         source: ${BENCH_RUN_DIR:?BENCH_RUN_DIR must be set}/work
@@ -72,6 +73,9 @@ services:
       - type: bind
         source: ${BENCH_RUN_DIR:?BENCH_RUN_DIR must be set}/hpatch-runtime
         target: ${BENCH_RUN_DIR:?BENCH_RUN_DIR must be set}/hpatch-runtime
+      - type: bind
+        source: ${BENCH_RUN_DIR:?BENCH_RUN_DIR must be set}/captures
+        target: ${BENCH_RUN_DIR:?BENCH_RUN_DIR must be set}/captures
     healthcheck:
       test: [CMD, curl, --fail, --silent, http://127.0.0.1:8081/api/metrics]
       interval: 250ms
@@ -82,7 +86,6 @@ services:
     <<: *bench-image
     environment:
       HPATCH_BENCH_ISSUE_DIR: /benchmark-agent-issue-reports
-      HPATCH_BENCH_EXACT_EVIDENCE_DIR: ${HPATCH_BENCH_EXACT_EVIDENCE_DIR:-}
       HPATCH_DIAGNOSE: ${HPATCH_BENCH_DIAGNOSE:-0}
       HPATCH_RUNTIME_DIR: ${BENCH_RUN_DIR:?BENCH_RUN_DIR must be set}/hpatch-runtime
       TMPDIR: ${BENCH_RUN_DIR:?BENCH_RUN_DIR must be set}/hpatch-runtime
@@ -96,12 +99,13 @@ services:
       - ${HPATCH_BENCH_HPATCH_MODEL_PROTOCOL:-native}
       - --mentor-handoff=${HPATCH_BENCH_MENTOR_HANDOFF:-false}
       - --provider-base-url
-      - http://hpatch-capturer:9082
-    depends_on:
-      hpatch-capturer:
-        condition: service_started
+      - https://chatgpt.com/backend-api/codex
+      - --capture-output
+      - ${BENCH_RUN_DIR:?BENCH_RUN_DIR must be set}/captures/hpatch.jsonl
     networks:
-      hpatch-capture: {}
+      hpatch-agent: {}
+      egress:
+        gw_priority: 1
     volumes:
       - type: bind
         source: ${BENCH_RUN_DIR:?BENCH_RUN_DIR must be set}/work
@@ -116,63 +120,13 @@ services:
         source: ${BENCH_RUN_DIR:?BENCH_RUN_DIR must be set}/agent-issue-reports
         target: /benchmark-agent-issue-reports
       - type: bind
-        source: ${BENCH_RUN_DIR:?BENCH_RUN_DIR must be set}/hpatch-exact-evidence
-        target: /benchmark-hpatch-exact-evidence
+        source: ${BENCH_RUN_DIR:?BENCH_RUN_DIR must be set}/captures
+        target: ${BENCH_RUN_DIR:?BENCH_RUN_DIR must be set}/captures
     healthcheck:
       test: [CMD, curl, --fail, --silent, http://127.0.0.1:8082/api/metrics]
       interval: 250ms
       timeout: 1s
       retries: 40
-
-  control-capturer:
-    <<: *bench-image
-    user: ${HPATCH_BENCH_CAPTURE_USER:-0:0}
-    command:
-      - hpatch-benchmark-capturer
-      - --front-listen
-      - 0.0.0.0:8081
-      - --front-target
-      - http://control:8081
-      - --back-listen
-      - 0.0.0.0:9081
-      - --back-target
-      - https://chatgpt.com/backend-api/codex
-      - --output
-      - ${BENCH_RUN_DIR:?BENCH_RUN_DIR must be set}/captures/control.jsonl
-    networks:
-      control-agent: {}
-      control-capture: {}
-      egress:
-        gw_priority: 1
-    volumes:
-      - type: bind
-        source: ${BENCH_RUN_DIR:?BENCH_RUN_DIR must be set}/captures
-        target: ${BENCH_RUN_DIR:?BENCH_RUN_DIR must be set}/captures
-
-  hpatch-capturer:
-    <<: *bench-image
-    user: ${HPATCH_BENCH_CAPTURE_USER:-0:0}
-    command:
-      - hpatch-benchmark-capturer
-      - --front-listen
-      - 0.0.0.0:8082
-      - --front-target
-      - http://hpatch:8082
-      - --back-listen
-      - 0.0.0.0:9082
-      - --back-target
-      - https://chatgpt.com/backend-api/codex
-      - --output
-      - ${BENCH_RUN_DIR:?BENCH_RUN_DIR must be set}/captures/hpatch.jsonl
-    networks:
-      hpatch-agent: {}
-      hpatch-capture: {}
-      egress:
-        gw_priority: 1
-    volumes:
-      - type: bind
-        source: ${BENCH_RUN_DIR:?BENCH_RUN_DIR must be set}/captures
-        target: ${BENCH_RUN_DIR:?BENCH_RUN_DIR must be set}/captures
 
   dependency-loader:
     <<: *bench-image
@@ -201,9 +155,5 @@ networks:
   control-agent:
     internal: true
   hpatch-agent:
-    internal: true
-  control-capture:
-    internal: true
-  hpatch-capture:
     internal: true
   egress: {}

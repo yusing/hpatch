@@ -53,10 +53,6 @@ func (t *recordingHPatchTranslator) Translate(ctx context.Context, workspace str
 	return t.delegate.Translate(ctx, workspace, script)
 }
 
-func (t *recordingHPatchTranslator) RecordMetrics(ctx context.Context, record hpatchMetricRecord) error {
-	return t.delegate.RecordMetrics(ctx, record)
-}
-
 func (t *recordingHPatchTranslator) snapshot() []string {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -68,11 +64,11 @@ func TestCodexHPatchGrammarE2E(t *testing.T) {
 	gitPath := requireExecutable(t, "git")
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 
-	gainDirectory, err := hpatchMetricsDirectory()
+	dataDirectory, err := hpatchDataDirectory()
 	if err != nil {
 		t.Fatalf("create hpatch translator: %v", err)
 	}
-	recorder := &recordingHPatchTranslator{delegate: newInProcessHPatchTranslator(gainDirectory)}
+	recorder := &recordingHPatchTranslator{delegate: newInProcessHPatchTranslator(dataDirectory)}
 	var requestSequence atomic.Uint64
 	server := httptest.NewServer(responsesHandler(
 		t.Context(),
@@ -80,7 +76,7 @@ func TestCodexHPatchGrammarE2E(t *testing.T) {
 		newProviderClient(codexBaseURL, nil),
 		newDiagnostics(io.Discard),
 		newManagedHPatchProxy(t, recorder),
-		nil, nil, newMetricsStore(""),
+		nil, nil,
 		&requestSequence,
 	))
 	defer server.Close()

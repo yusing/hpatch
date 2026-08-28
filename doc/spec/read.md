@@ -58,10 +58,6 @@ would exceed 15,500 tokens, is omitted together with every later row. Omission p
 admitted complete rows on stdout, writes an incomplete-result diagnostic to stderr, and returns
 nonzero. It never cuts a row.
 
-For input metrics, hread produces its current and stock results from the same read. The stock
-result preserves selected `TEXT` and one LF per returned logical line while omitting the
-`LINE:HASH ` prefix. The comparison does not read a file twice.
-
 Acceptance:
 
 1. A whole-file or bounded read emits exact UTF-8 rows. Equal lines at different positions
@@ -71,8 +67,7 @@ Acceptance:
 3. Several hread commands in one shell call execute in authored shell order without an
    hread-owned batch format, buffer, header, or partial-success policy.
 4. Reading and whole-file UTF-8 validation use bounded streaming storage and observe
-   cancellation. Token-limited output retains only admitted complete rows, and current and stock
-   results retain the same source rows without a second read.
+   cancellation. Token-limited output retains only admitted complete rows without a second read.
 5. Success and failure reach Codex through the model-visible shell carrier. Replay retains
    the original shell call and output; it never synthesizes a model-visible hread call or
    includes the shell call in editable rejected-script recovery history.

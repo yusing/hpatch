@@ -28,15 +28,12 @@ func TestCTP2RequestUsesContentLocalDictionaries(t *testing.T) {
 		}}),
 	}}
 
-	transform, decision, metrics, _, err := codec.prepareRequest(&request)
+	transform, _, err := codec.prepareRequest(&request)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if transform == nil || decision != ctp2RequestActive {
-		t.Fatalf("transform = %#v, decision = %v", transform, decision)
-	}
-	if metrics.Definitions == 0 || metrics.Strings < 4 || metrics.Representation.CompactTokens >= metrics.Representation.NativeTokens {
-		t.Fatalf("request metrics = %#v", metrics)
+	if transform == nil {
+		t.Fatal("request was not transformed")
 	}
 	if got := jsonString(request.fields, "instructions"); got != "decode CTP/2 here" {
 		t.Fatalf("instructions = %q", got)
@@ -80,12 +77,12 @@ func TestCTP2RequestUsesVisiblePriorToolOutputLines(t *testing.T) {
 		}),
 	}}
 
-	transform, decision, metrics, _, err := codec.prepareRequest(&request)
+	transform, _, err := codec.prepareRequest(&request)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if transform == nil || decision != ctp2RequestActive || metrics.VisibleReferences == 0 {
-		t.Fatalf("transform = %#v, decision = %v, metrics = %#v", transform, decision, metrics)
+	if transform == nil {
+		t.Fatal("request was not transformed")
 	}
 	input := decodeCTP2TestValue(t, request.fields["input"]).([]any)
 	compact := input[1].(map[string]any)["output"].(string)
@@ -111,12 +108,12 @@ func TestCTP2VisibleReferencesStayUniqueAfterRegisteringLaterSources(t *testing.
 		}),
 	}}
 
-	transform, decision, metrics, _, err := codec.prepareRequest(&request)
+	transform, _, err := codec.prepareRequest(&request)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if transform == nil || decision != ctp2RequestActive || metrics.VisibleReferences == 0 {
-		t.Fatalf("transform = %#v, decision = %v, metrics = %#v", transform, decision, metrics)
+	if transform == nil {
+		t.Fatal("request was not transformed")
 	}
 	input := decodeCTP2TestValue(t, request.fields["input"]).([]any)
 	compact := input[1].(map[string]any)["output"].(string)
@@ -138,8 +135,8 @@ func TestCTP2VisiblePrefixIsStableWhenHistoryAppends(t *testing.T) {
 			"instructions": mustTestJSON(t, "decode CTP/2 here"),
 			"input":        mustTestJSON(t, input),
 		}}
-		if _, decision, _, _, err := codec.prepareRequest(&request); err != nil || decision != ctp2RequestActive {
-			t.Fatalf("prepare decision = %v, err = %v", decision, err)
+		if transform, _, err := codec.prepareRequest(&request); err != nil || transform == nil {
+			t.Fatalf("prepare transform = %#v, err = %v", transform, err)
 		}
 		var items []json.RawMessage
 		if err := json.Unmarshal(request.fields["input"], &items); err != nil {
@@ -167,16 +164,12 @@ func TestCTP2MissingInstructionCarrierStaysNative(t *testing.T) {
 		"type": "message", "role": "user", "content": strings.Repeat("repeat me ", 30),
 	}})
 	request := parsedResponsesRequest{fields: map[string]json.RawMessage{"input": native}}
-	transform, decision, metrics, _, err := codec.prepareRequest(&request)
+	transform, body, err := codec.prepareRequest(&request)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if transform != nil || decision != ctp2RequestMissingCarrier || string(request.fields["input"]) != string(native) {
-		t.Fatalf("transform = %#v, decision = %v, input = %s", transform, decision, request.fields["input"])
-	}
-	if metrics.Representation.NativeTokens != 0 || metrics.Representation.CompactTokens != 0 ||
-		metrics.Representation.NativeBytes != 0 || metrics.Representation.CompactBytes != 0 {
-		t.Fatalf("missing-carrier metrics = %#v", metrics)
+	if transform != nil || len(body) == 0 || string(request.fields["input"]) != string(native) {
+		t.Fatalf("transform = %#v, body = %s, input = %s", transform, body, request.fields["input"])
 	}
 }
 
@@ -189,9 +182,9 @@ func TestCTP2DeveloperCarrierRemainsNative(t *testing.T) {
 			map[string]any{"type": "message", "role": "user", "content": repeated},
 		}),
 	}}
-	transform, decision, _, _, err := codec.prepareRequest(&request)
-	if err != nil || transform == nil || decision != ctp2RequestActive {
-		t.Fatalf("transform = %#v, decision = %v, err = %v", transform, decision, err)
+	transform, _, err := codec.prepareRequest(&request)
+	if err != nil || transform == nil {
+		t.Fatalf("transform = %#v, err = %v", transform, err)
 	}
 	input := decodeCTP2TestValue(t, request.fields["input"]).([]any)
 	if got := input[0].(map[string]any)["content"]; got != "CTP/2 guidance" {
@@ -215,9 +208,9 @@ func TestCTP2MultipartDeveloperCarrierEncodesSiblingText(t *testing.T) {
 			},
 		}}),
 	}}
-	transform, decision, _, _, err := codec.prepareRequest(&request)
-	if err != nil || transform == nil || decision != ctp2RequestActive {
-		t.Fatalf("transform = %#v, decision = %v, err = %v", transform, decision, err)
+	transform, _, err := codec.prepareRequest(&request)
+	if err != nil || transform == nil {
+		t.Fatalf("transform = %#v, err = %v", transform, err)
 	}
 	input := decodeCTP2TestValue(t, request.fields["input"]).([]any)
 	content := input[0].(map[string]any)["content"].([]any)
@@ -251,14 +244,11 @@ func TestCTP2LiteralTagsRoundTrip(t *testing.T) {
 func TestCTP2ResponseRestoresLocalAndVisibleAssistantText(t *testing.T) {
 	codec := mustCTP2Codec(t)
 	source := "first visible line\nsecond visible line\nthird visible line\n"
-	transform := &ctp2ResponseTransform{
-		sources: []ctp2VisibleLineSource{{locator: "call_alpha", lines: slicesOfLines(source)}},
-		tokens:  codec.tokens,
-	}
+	transform := &ctp2ResponseTransform{sources: []ctp2VisibleLineSource{{locator: "call_alpha", lines: slicesOfLines(source)}}}
 	localNative := strings.Repeat("alpha beta gamma delta epsilon; ", 12)
-	local, localMetrics, err := codec.encodeContentLocalString(localNative)
-	if err != nil || local == localNative || localMetrics.Strings == 0 {
-		t.Fatalf("local = %q, metrics = %#v, err = %v", local, localMetrics, err)
+	local, _, err := codec.encodeContentLocalString(localNative)
+	if err != nil || local == localNative {
+		t.Fatalf("local = %q, err = %v", local, err)
 	}
 	visible := "!V=alpha,2,2\n+\"tail\"\n"
 	response, err := transform.TransformJSON(mustTestJSON(t, map[string]any{
@@ -361,7 +351,7 @@ func TestCTP2ExecuteRequestFallsBackToNativeOnCodecFailure(t *testing.T) {
 
 			if err := executeRequest(
 				t.Context(), t.Context(), request, nil, "session", provider, &bytes.Buffer{},
-				newDiagnostics(&bytes.Buffer{}), time.Now, nil, codec, nil, newMetricsStore(""),
+				newDiagnostics(&bytes.Buffer{}), time.Now, nil, codec, nil,
 			); err != nil {
 				t.Fatal(err)
 			}
@@ -372,23 +362,14 @@ func TestCTP2ExecuteRequestFallsBackToNativeOnCodecFailure(t *testing.T) {
 	}
 }
 
-func TestCTP2StreamingCountsOnlyTerminalText(t *testing.T) {
+func TestCTP2StreamingRestoresEveryCompletedTextShape(t *testing.T) {
 	codec := mustCTP2Codec(t)
 	compactNative := strings.Repeat("streamed repeated response; ", 8)
 	compact, _, err := codec.encodeContentLocalString(compactNative)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var outputs, decodes int
-	transform := &ctp2ResponseTransform{
-		tokens: codec.tokens,
-		recordOutput: func(ctpRepresentationMetrics, ctp2RepresentationMetrics) {
-			outputs++
-		},
-		recordDecode: func(time.Duration, bool) {
-			decodes++
-		},
-	}
+	transform := &ctp2ResponseTransform{}
 	for _, event := range []map[string]any{
 		{"type": "response.content_part.done", "part": map[string]any{"type": "output_text", "text": compact}},
 		{"type": "response.output_text.done", "text": compact},
@@ -407,12 +388,9 @@ func TestCTP2StreamingCountsOnlyTerminalText(t *testing.T) {
 			t.Fatalf("stream event retained CTP/2 representation: %s", transformed[0])
 		}
 	}
-	if outputs != 1 || decodes != 3 {
-		t.Fatalf("outputs = %d, decodes = %d", outputs, decodes)
-	}
 }
 
-func TestCTP2ExecuteRequestTransformsProviderBoundaryAndRecordsMetrics(t *testing.T) {
+func TestCTP2ExecuteRequestTransformsProviderBoundary(t *testing.T) {
 	codec := mustCTP2Codec(t)
 	nativeText := strings.Repeat("alpha beta gamma delta epsilon; ", 12)
 	compactText, _, err := codec.encodeContentLocalString(nativeText)
@@ -434,11 +412,10 @@ func TestCTP2ExecuteRequestTransformsProviderBoundaryAndRecordsMetrics(t *testin
 		}},
 	}))
 	provider := &serverFakeProvider{results: []serverForwardResult{{response: serverHTTPResponse(responseBody)}}}
-	store := newMetricsStore("")
 	var output bytes.Buffer
 	if err := executeRequest(
 		t.Context(), t.Context(), request, nil, "session", provider, &output,
-		newDiagnostics(&bytes.Buffer{}), time.Now, nil, codec, nil, store,
+		newDiagnostics(&bytes.Buffer{}), time.Now, nil, codec, nil,
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -457,11 +434,6 @@ func TestCTP2ExecuteRequestTransformsProviderBoundaryAndRecordsMetrics(t *testin
 	}
 	if got := visible.Output[0].Content[0].Text; got != nativeText {
 		t.Fatalf("visible response text = %q", got)
-	}
-	ctp := store.snapshot().CTP
-	if ctp.ConsideredRequests != 1 || ctp.ActiveRequests != 1 || ctp.AssistantTexts != 1 ||
-		ctp.RequestStrings == 0 || ctp.ResponseStrings != 1 || ctp.Codec.DecodeFailures != 0 {
-		t.Fatalf("CTP/2 metrics = %#v", ctp)
 	}
 }
 

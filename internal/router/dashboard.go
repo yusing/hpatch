@@ -1,7 +1,5 @@
 package router
 
-// Source: dashboard.go:1:20 embedded telemetry page handler.
-
 import (
 	_ "embed"
 	"net/http"
@@ -10,13 +8,13 @@ import (
 //go:embed dashboard.html
 var dashboardHTML []byte
 
-func serveDashboard(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Path != "/" {
-		http.NotFound(w, r)
+func serveDashboard(writer http.ResponseWriter, request *http.Request) {
+	if request.URL.Path != "/" {
+		http.NotFound(writer, request)
 		return
 	}
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Header().Set("Cache-Control", "no-store")
-	w.Header().Set("Content-Security-Policy", "default-src 'self'; connect-src 'self'; img-src 'self' data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'; font-src 'none'; base-uri 'none'; frame-ancestors 'none'")
-	_, _ = w.Write(dashboardHTML)
+	writer.Header().Set("Content-Type", "text/html; charset=utf-8")
+	writer.Header().Set("Cache-Control", "no-store")
+	writer.Header().Set("Content-Security-Policy", "default-src 'self'; connect-src 'self'; img-src 'self' data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'; font-src 'none'; base-uri 'none'; frame-ancestors 'none'")
+	_, _ = writer.Write(dashboardHTML)
 }

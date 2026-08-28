@@ -13,7 +13,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/yusing/hpatch"
 	"github.com/yusing/hpatch/internal/router/toolplugin"
 )
 
@@ -120,7 +119,7 @@ func runAuthenticatedToolWorker(
 	if err != nil {
 		return fail(err)
 	}
-	if manifest.Version != 1 || manifest.RuntimeRoot != "runtime" || manifest.NodeExecutable == "" || manifest.MetricsDir == "" {
+	if manifest.Version != 1 || manifest.RuntimeRoot != "runtime" || manifest.NodeExecutable == "" {
 		return fail(errors.New("tool worker manifest is inconsistent"))
 	}
 	if manifest.RegistryID != expectedRegistryID {
@@ -176,31 +175,7 @@ func runAuthenticatedToolWorker(
 	if _, err := io.WriteString(stderr, execution.Stderr); err != nil {
 		return fail(fmt.Errorf("write plugin stderr: %w", err))
 	}
-	recordToolExecutionMetrics(ctx, manifest.MetricsDir, *contribution, execution)
 	return true, execution.ExitCode
-}
-
-func recordToolExecutionMetrics(
-	ctx context.Context,
-	metricsDirectory string,
-	contribution toolContribution,
-	execution toolplugin.ExecutionOutput,
-) {
-	stockOutput := execution.Stdout + execution.Stderr
-	if execution.Stock != nil {
-		stockOutput = execution.Stock.Stdout + execution.Stock.Stderr
-	}
-	record, metricsErr := hpatch.ClassifyHostMetrics(hpatch.HostMetricInput{
-		ToolResult: &hpatch.HostToolResult{
-			PluginID:      contribution.PluginID,
-			ToolName:      contribution.Name,
-			CurrentOutput: execution.Stdout + execution.Stderr,
-			StockOutput:   stockOutput,
-		},
-	})
-	if metricsErr == nil {
-		_ = hpatch.RecordHostMetrics(ctx, metricsDirectory, record)
-	}
 }
 
 func toolRegistryIDFromDirectory(directory string) (string, bool) {

@@ -4,7 +4,7 @@ pjdoc:
   kind: spec
   scope: root
   status: draft
-  revision: "36"
+  revision: "38"
   files:
     - read.md
     - grep.md
@@ -39,7 +39,7 @@ Each listed file owns one requirement. Related facts are cited by stable ID or l
 - [`REQ-PLUGIN-001`](plugin.md): router-local custom tools and Code Mode carrier translation
 - [`REQ-DIAGNOSE-001`](diagnose.md): opt-in agent issue reports
 - [`REQ-SHELL-001`](shell.md): installable free-form script tool and interpreter selection
-- [`REQ-METRICS-001`](metrics.md): persistent encoding, command, target, and failure metrics
+- [`REQ-METRICS-001`](metrics.md): in-process captured Responses metrics
 - [`REQ-SCRIPT-001`](script.md): HPATCH/2 grammar and target forms
 - [`REQ-CORRECT-001`](correct.md): rejected-script recovery with ordinary verified-row edits
 - [`REQ-FILE-001`](file.md): file scope and lifecycle

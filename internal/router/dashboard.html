@@ -3,776 +3,97 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <meta name="color-scheme" content="dark">
-  <title>Hpatch router telemetry</title>
+  <title>Hpatch router metrics</title>
   <style>
-    :root{
-      --ink:#e8e6e3;--muted:#9a958e;--faint:#6a6660;
-      --paper:#0f0f0f;--surface:#161616;--surface-2:#1c1c1c;--border:#2c2c2c;--border-strong:#3d3d3d;
-      --accent-bg:#152230;--accent-text:#8ec4de;--accent-ring:rgba(142,196,222,.45);
-      --pale-green-bg:#152818;--pale-green-text:#8bc48e;
-      --pale-yellow-bg:#2a2414;--pale-yellow-text:#d9bf72;
-      --pale-red-bg:#2a1616;--pale-red-text:#d98a88;
-      /* Data-mark tones. Text tokens above are too light for marks, so marks use
-         their own validated steps: cool and warm are a warm/cool diverging pair
-         (OKLCH L in the dark band, chroma above the floor, adjacent CVD dE >= 8
-         for protan, deutan and tritan, contrast > 5:1 on --surface). The flat
-         tone is the deliberate de-emphasis gray and reads gray by design. */
-      --mark-cool:#499dcf;--mark-warm:#d27a44;--mark-flat:#6a6660;
-      --mark-track:rgba(232,230,227,.09);
-      --hover:rgba(255,255,255,.04);--press:rgba(255,255,255,.07);
-      --radius:8px;--radius-sm:6px;
-      --space-1:4px;--space-2:8px;--space-3:12px;--space-4:16px;--space-5:24px;--space-6:32px;--space-7:40px;
-      --ease:cubic-bezier(.16,1,.3,1);--dur:180ms;--dur-enter:420ms;
-      --font-sans:'Geist Sans','SF Pro Display','Helvetica Neue',Arial,sans-serif;
-      --font-serif:'Newsreader','Playfair Display',Georgia,serif;
-      --font-mono:'Geist Mono','SF Mono','JetBrains Mono',ui-monospace,monospace;
-      --focus:0 0 0 2px var(--paper),0 0 0 4px var(--accent-text);
-    }
-    *{box-sizing:border-box}
-    html{color-scheme:dark;-webkit-text-size-adjust:100%}
-    body{margin:0;color:var(--ink);background:var(--paper);font-family:var(--font-sans);font-size:15px;line-height:1.55;-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
-    body::before{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;background:radial-gradient(circle at 12% 18%,rgba(142,196,222,.055),transparent 42%),radial-gradient(circle at 88% 80%,rgba(217,191,114,.035),transparent 48%);animation:drift 28s ease-in-out infinite alternate}
-    @keyframes drift{from{transform:translate3d(0,0,0)}to{transform:translate3d(-1.2%,1.2%,0)}}
-    @media (prefers-reduced-motion:reduce){
-      body::before{animation:none}
-      *,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important;scroll-behavior:auto!important}
-      section{opacity:1!important;transform:none!important}
-      .pulse{animation:none!important;opacity:1}
-    }
-
-    .skip{position:absolute;left:var(--space-4);top:var(--space-4);z-index:100;padding:10px 14px;border-radius:var(--radius-sm);background:var(--accent-bg);color:var(--accent-text);font:600 13px/1 var(--font-sans);text-decoration:none;transform:translateY(-160%);transition:transform var(--dur) var(--ease)}
-    .skip:focus{transform:translateY(0);outline:none;box-shadow:var(--focus)}
-
-    main{position:relative;z-index:1;width:min(1120px,calc(100% - 32px));margin:0 auto;padding:var(--space-6) 0 72px}
-
-    .mast{display:flex;justify-content:space-between;align-items:flex-end;gap:var(--space-5);border-bottom:1px solid var(--border);padding-bottom:var(--space-5)}
-    .eyebrow{text-transform:uppercase;letter-spacing:.12em;font-size:11px;font-weight:600;color:var(--muted);margin:0 0 var(--space-3)}
-    .eyebrow b{color:var(--accent-text);font-weight:600}
-    .mast h1{font:500 clamp(36px,5.5vw,56px)/1.05 var(--font-serif);letter-spacing:-.03em;margin:0;color:var(--ink)}
-    .status{text-align:right;display:flex;flex-direction:column;align-items:flex-end;gap:var(--space-2)}
-    .status-pill{display:inline-flex;align-items:center;gap:8px;min-height:32px;padding:6px 12px;border-radius:9999px;background:var(--pale-yellow-bg);color:var(--pale-yellow-text);font-size:11px;text-transform:uppercase;letter-spacing:.08em;font-weight:600;border:1px solid transparent;transition:background var(--dur),color var(--dur),border-color var(--dur)}
-    .status-pill[data-state="live"]{background:var(--pale-green-bg);color:var(--pale-green-text);border-color:rgba(139,196,142,.18)}
-    .status-pill[data-state="error"]{background:var(--pale-red-bg);color:var(--pale-red-text);border-color:rgba(217,138,136,.2)}
-    .status-pill[data-state="connecting"]{border-color:rgba(217,191,114,.18)}
-    .pulse{width:7px;height:7px;border-radius:50%;background:currentColor;flex-shrink:0;animation:pulse 2s ease-in-out infinite}
-    @keyframes pulse{50%{opacity:.35;transform:scale(.8)}}
-    .status-meta{font-family:var(--font-mono);color:var(--muted);font-size:11px;letter-spacing:.02em}
-    .status-meta time{color:var(--ink)}
-
-    .tabs{display:flex;gap:2px;margin-top:var(--space-5);border-bottom:1px solid var(--border);padding-bottom:0;position:sticky;top:0;z-index:10;background:linear-gradient(var(--paper) 70%,rgba(15,15,15,.92));backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px)}
-    .tab{appearance:none;border:0;background:transparent;color:var(--muted);font:600 12px/1 var(--font-sans);text-transform:uppercase;letter-spacing:.1em;min-height:44px;padding:12px 16px;cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-1px;transition:color var(--dur),border-color var(--dur),background var(--dur);border-radius:var(--radius-sm) var(--radius-sm) 0 0;touch-action:manipulation}
-    .tab:hover{color:var(--ink);background:var(--hover)}
-    .tab:active{background:var(--press)}
-    .tab[aria-selected="true"]{color:var(--ink);border-bottom-color:var(--accent-text)}
-    .tab:focus{outline:none}
-    .tab:focus-visible{box-shadow:var(--focus);color:var(--ink)}
-
-    .panel{display:none;margin-top:var(--space-6)}
-    .panel.active{display:block}
-    .panel-stack{display:flex;flex-direction:column;gap:var(--space-7)}
-    .panel:focus{outline:none}
-    .panel:focus-visible{box-shadow:var(--focus);border-radius:var(--radius-sm)}
-
-    section{opacity:0;transform:translateY(10px);transition:opacity var(--dur-enter) var(--ease),transform var(--dur-enter) var(--ease)}
-    section.visible{opacity:1;transform:translateY(0)}
-    .section-head{display:flex;align-items:baseline;justify-content:space-between;gap:var(--space-4);border-bottom:1px solid var(--border);padding-bottom:var(--space-3);margin-bottom:var(--space-4)}
-    .section-head h2{font:500 20px/1.15 var(--font-serif);margin:0;letter-spacing:-.015em}
-    .section-head span{text-transform:uppercase;letter-spacing:.1em;font-size:11px;font-weight:600;color:var(--muted);text-align:right}
-    .section-head code{font-family:var(--font-mono);font-size:11px;color:var(--accent-text);background:var(--accent-bg);padding:2px 6px;border-radius:4px}
-
-    .cards{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:var(--space-3)}
-    .card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:var(--space-4);min-height:112px;display:flex;flex-direction:column;justify-content:space-between;gap:var(--space-2);transition:border-color var(--dur),background var(--dur)}
-    .card:hover{border-color:var(--border-strong);background:var(--surface-2)}
-    .card.lead{background:var(--accent-bg);border-color:rgba(142,196,222,.14)}
-    .card.lead label{color:var(--accent-text)}
-    .card.lead strong{color:var(--accent-text)}
-    .card label{text-transform:uppercase;letter-spacing:.08em;font-size:11px;font-weight:600;color:var(--muted)}
-    /* Tile values are proportional-figure sans: tabular-nums only aligns columns. */
-    .card strong{font:600 clamp(24px,2.6vw,34px)/1.05 var(--font-sans);letter-spacing:-.02em;word-break:break-word}
-    .card small{color:var(--muted);font-size:11.5px;font-weight:500;letter-spacing:.02em}
-
-    /* Meter: 4px rounded data-end anchored to the baseline, recessive track. */
-    .meter{display:flex;align-items:center;height:6px;margin-top:6px;border-radius:3px;background:var(--mark-track);overflow:hidden}
-    .meter[data-mode="signed"]{background:none;position:relative}
-    .meter[data-mode="signed"]::before{content:'';position:absolute;left:50%;top:-2px;bottom:-2px;width:1px;background:var(--faint)}
-    .meter-half{flex:0 0 50%;display:flex;height:100%;background:var(--mark-track)}
-    .meter-half.neg{justify-content:flex-end;border-radius:3px 0 0 3px}
-    .meter-half.pos{border-radius:0 3px 3px 0}
-    .meter[data-mode="magnitude"] .meter-half.neg{display:none}
-    .meter[data-mode="magnitude"] .meter-half.pos{flex:0 0 100%;background:none;border-radius:3px}
-    .meter-fill{height:100%;background:var(--mark-cool);border-radius:0 3px 3px 0;transition:width var(--dur) var(--ease)}
-    .meter-half.neg .meter-fill{background:var(--mark-warm);border-radius:3px 0 0 3px}
-    .meter-fill[data-tone="warm"]{background:var(--mark-warm)}
-    .meter-fill[data-tone="flat"]{background:var(--mark-flat)}
-
-    .breakdowns{margin-top:var(--space-5)}
-    .table-grid{display:grid;grid-template-columns:1fr 1fr;gap:var(--space-5);margin-top:var(--space-5);align-items:start}
-    .table-wrap{min-width:0;margin-top:var(--space-5)}
-    .table-grid>.table-wrap{margin-top:0}
-    .table-scroll{overflow-x:auto;-webkit-overflow-scrolling:touch;border-radius:var(--radius-sm)}
-    h3{font:600 11px/1 var(--font-sans);text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin:0 0 var(--space-3)}
-    .metric-table{width:100%;border-collapse:collapse;font-family:var(--font-mono);font-size:12.5px}
-    .metric-table th,.metric-table td{padding:9px 8px;border-bottom:1px solid var(--border);text-align:right;font-variant-numeric:tabular-nums;vertical-align:top}
-    .metric-table th:first-child,.metric-table td:first-child{text-align:left;font-family:var(--font-sans);font-weight:500}
-    .metric-table th{font-size:11px;text-transform:uppercase;letter-spacing:.06em;font-weight:600;color:var(--muted);border-bottom:1px solid var(--border-strong);white-space:nowrap}
-    .metric-table tbody tr{transition:background var(--dur)}
-    .metric-table tbody tr:hover{background:var(--hover)}
-    .metric-table tbody tr.total{font-weight:600;border-top:1px solid var(--border-strong)}
-    .metric-table tbody tr.total td{border-bottom:none}
-    .metric-table tbody tr.total td:first-child{color:var(--muted);text-transform:uppercase;letter-spacing:.06em;font-size:11px}
-    .metric-table tbody tr.idle td{color:var(--muted)}
-    .metric-table tbody tr.idle:hover td{color:var(--muted)}
-    .metric-table.desc td:last-child,.metric-table.desc th:last-child{text-align:left;font-family:var(--font-sans);font-weight:400;color:var(--muted);white-space:normal}
-    .metric-table.pair td:nth-child(2),.metric-table.pair th:nth-child(2){text-align:left}
-    .cell-value{display:block}
-    .metric-table td .meter{margin-top:5px;min-width:56px}
-    .note{margin:var(--space-3) 0 0;color:var(--muted);font-size:13px;line-height:1.5;max-width:72ch}
-    .gain-error{margin-top:var(--space-4)}
-    .session-ctp{margin-top:var(--space-6);padding-top:var(--space-5);border-top:1px solid var(--border)}
-
-    .stack{margin-top:var(--space-5)}
-    .stack-bar{display:flex;height:10px;border-radius:5px;overflow:hidden;background:var(--surface-2);gap:2px}
-    .stack-seg{height:100%;min-width:0;transition:flex-basis var(--dur) var(--ease)}
-    .legend{display:flex;flex-wrap:wrap;gap:var(--space-2) var(--space-5);margin-top:var(--space-3);font-size:12px;color:var(--muted)}
-    .legend-item{display:inline-flex;align-items:center;gap:8px}
-    .legend-key{width:10px;height:10px;border-radius:3px;flex-shrink:0}
-    .legend-item b{color:var(--ink);font-weight:600;font-variant-numeric:tabular-nums;font-family:var(--font-mono);font-size:12px}
-
-    #sessions{border-top:1px solid var(--border)}
-    details{border-bottom:1px solid var(--border)}
-    summary{cursor:pointer;list-style:none;display:grid;grid-template-columns:auto 1fr auto;gap:var(--space-4);align-items:center;padding:14px 8px;min-height:48px;border-radius:var(--radius-sm);transition:background var(--dur);touch-action:manipulation}
-    summary::-webkit-details-marker{display:none}
-    summary:hover{background:var(--hover)}
-    summary:active{background:var(--press)}
-    summary:focus{outline:none}
-    summary:focus-visible{box-shadow:var(--focus)}
-    .chev{width:28px;height:28px;display:grid;place-items:center;color:var(--muted);font-family:var(--font-mono);font-size:16px;flex-shrink:0;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);transition:color var(--dur),border-color var(--dur),background var(--dur)}
-    .chev::before{content:'+'}
-    details[open] .chev{color:var(--accent-text);border-color:rgba(142,196,222,.25);background:var(--accent-bg)}
-    details[open] .chev::before{content:'\2212'}
-    .session-id{font-family:var(--font-mono);font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
-    .session-id small{display:block;margin-top:4px;color:var(--muted);font-family:var(--font-sans);font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.06em}
-    .session-total{font:600 16px/1 var(--font-sans);white-space:nowrap;font-variant-numeric:tabular-nums;color:var(--ink)}
-    .session-body{border-top:1px solid var(--border);padding:var(--space-5) 8px var(--space-6)}
-    .session-body .cards{grid-template-columns:repeat(4,minmax(0,1fr))}
-    .facts{display:flex;flex-wrap:wrap;gap:var(--space-2) var(--space-5);margin:var(--space-5) 0 0;padding:0;list-style:none;font-size:12.5px;color:var(--muted)}
-    .facts li{display:inline-flex;align-items:baseline;gap:6px}
-    .facts b{color:var(--ink);font-family:var(--font-mono);font-weight:600;font-variant-numeric:tabular-nums}
-    .facts li[data-tone="warm"] b{color:var(--pale-red-text)}
-
-    .empty,.error{padding:var(--space-6) var(--space-4);border:1px dashed var(--border);border-radius:var(--radius);text-align:center;color:var(--muted);font-size:14px;line-height:1.5}
-    .error{color:var(--pale-red-text);border-style:solid;border-color:rgba(217,138,136,.28);background:var(--pale-red-bg)}
-    .empty strong{display:block;color:var(--ink);font-weight:600;margin-bottom:6px}
-    .table-wrap>.empty{padding:var(--space-5) var(--space-4);text-align:left}
-
-    ::selection{background:rgba(142,196,222,.28);color:var(--ink)}
-
-    @media(max-width:900px){
-      .cards,.session-body .cards,.table-grid{grid-template-columns:1fr 1fr}
-      .table-grid>.table-wrap+.table-wrap{margin-top:0}
-      .mast{flex-direction:column;align-items:flex-start;gap:var(--space-4)}
-      .status{align-items:flex-start;text-align:left}
-      .tabs{overflow-x:auto;scrollbar-width:thin}
-      .tab{flex:0 0 auto}
-    }
-    @media(max-width:520px){
-      main{width:calc(100% - 20px);padding-top:var(--space-5)}
-      .cards,.session-body .cards,.table-grid{grid-template-columns:1fr}
-      .session-total{display:none}
-      .section-head{flex-direction:column;align-items:flex-start;gap:6px}
-      .section-head span{text-align:left}
-      .card{min-height:96px}
-      body{font-size:16px}
-    }
+    :root{color-scheme:dark;--bg:#101311;--panel:#181d19;--line:#303a32;--text:#ecf2ed;--muted:#9aaa9d;--good:#79c99e;--bad:#e38b83;--accent:#d8b26e}
+    *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:16px/1.45 ui-monospace,SFMono-Regular,Consolas,monospace}
+    main{width:min(1180px,calc(100% - 32px));margin:32px auto 64px}header{display:flex;align-items:flex-end;justify-content:space-between;gap:20px;margin-bottom:24px}
+    h1{margin:0;font-size:clamp(24px,4vw,42px);letter-spacing:-.04em}h2{font-size:15px;text-transform:uppercase;letter-spacing:.08em;color:var(--accent);margin:0 0 14px}
+    p{margin:5px 0;color:var(--muted)}code{color:var(--text)}.status{text-align:right}.ok{color:var(--good)}.error{color:var(--bad)}
+    .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:14px}.panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:18px;min-width:0}
+    dl{display:grid;grid-template-columns:minmax(8rem,1fr) auto;gap:8px 18px;margin:0}dt{color:var(--muted);overflow-wrap:anywhere}dd{margin:0;text-align:right;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
+    .wide{grid-column:1/-1}.panel-head{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:14px}.panel-head h2{margin:0}.pager{display:flex;align-items:center;gap:10px;color:var(--muted)}button{min-height:44px;padding:8px 14px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--text);font:inherit}button:disabled{cursor:not-allowed;opacity:.4}button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}table{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums;white-space:nowrap}th,td{text-align:right;padding:8px 10px;border-bottom:1px solid var(--line)}th:first-child,td:first-child{text-align:left}th{color:var(--muted);font-weight:500}.scroll{max-width:100%;overflow:auto}.empty{color:var(--muted);text-align:left}
+    @media(max-width:600px){main{width:min(100% - 20px,1180px);margin-top:20px}header,.panel-head{align-items:flex-start;flex-direction:column}.status{text-align:left}.pager{width:100%;justify-content:space-between}.grid{grid-template-columns:minmax(0,1fr)}dl{grid-template-columns:1fr;gap:2px}dd{text-align:left;margin-bottom:8px}}
   </style>
 </head>
 <body>
-<a class="skip" href="#main">Skip to content</a>
-<main id="main">
-  <header class="mast">
-    <div>
-      <p class="eyebrow" id="mast-mode">Hpatch router — process ledger</p>
-      <h1>Token<br>Telemetry</h1>
-    </div>
-    <div class="status" aria-live="polite" aria-atomic="true">
-      <span class="status-pill" id="status-pill" data-state="connecting"><span class="pulse" aria-hidden="true"></span><span id="status">connecting</span></span>
-      <p class="status-meta" id="updated">Awaiting first snapshot</p>
-    </div>
+<main>
+  <header>
+    <div><h1>Hpatch router</h1><p id="mode">Capture metrics</p></div>
+    <div class="status"><div id="state" aria-live="polite">Loading…</div><p id="updated"></p></div>
   </header>
-  <nav class="tabs" role="tablist" aria-label="Telemetry views">
-    <button type="button" class="tab" role="tab" id="tab-usage" aria-controls="panel-usage" aria-selected="true" tabindex="0" data-tab="usage">Usage</button>
-    <button type="button" class="tab" role="tab" id="tab-gain" aria-controls="panel-gain" aria-selected="false" tabindex="-1" data-tab="gain">Gain</button>
-    <button type="button" class="tab" role="tab" id="tab-ctp" aria-controls="panel-ctp" aria-selected="false" tabindex="-1" data-tab="ctp">CTP/2</button>
-  </nav>
-  <div class="panel active" role="tabpanel" id="panel-usage" aria-labelledby="tab-usage" tabindex="0">
-    <div class="panel-stack">
-      <section><div class="section-head"><h2>Tokens</h2><span>Cumulative since process start</span></div><div id="overview"><div class="empty"><strong>Connecting</strong>Live metrics stream will populate totals and model breakdowns.</div></div></section>
-      <section><div class="section-head"><h2>Requests</h2><span>Upstream Responses lifecycle</span></div><div id="requests"><div class="empty"><strong>Connecting</strong>Request outcomes and durations appear with the first snapshot.</div></div></section>
-      <section><div class="section-head"><h2>Sessions</h2><span id="session-count">0 sessions</span></div><div id="sessions"><div class="empty"><strong>No sessions yet</strong>Waiting for identified usage-bearing responses.</div></div></section>
-    </div>
+  <div class="grid">
+    <section class="panel"><h2>Requests</h2><dl id="requests"></dl></section>
+    <section class="panel"><h2>Provider usage</h2><dl id="usage"></dl></section>
+    <section class="panel"><h2>Cache</h2><dl id="cache"></dl></section>
+    <section class="panel"><h2>Transport</h2><dl id="transport"></dl></section>
+    <section class="panel"><h2>Protocol savings</h2><dl id="protocol"></dl></section>
+    <section class="panel"><h2>Hpatch delivery</h2><dl id="hpatch"></dl></section>
+    <section class="panel"><h2>Hpatch diagnostics</h2><dl id="diagnostics"></dl></section>
+    <section class="panel"><h2>Capture health</h2><dl id="health"></dl></section>
+    <section class="panel wide"><h2>Tool transport</h2><div class="scroll"><table><thead><tr><th>Tool</th><th>Boundary</th><th>Calls</th><th>Input bytes</th><th>Input tokens</th><th>Item bytes</th><th>Item tokens</th></tr></thead><tbody id="tools"></tbody></table></div></section>
+    <section class="panel wide"><div class="panel-head"><h2>Recent exchanges</h2><div class="pager"><button id="newer" type="button">Newer</button><span id="page-info" aria-live="polite"></span><button id="older" type="button">Older</button></div></div><div class="scroll"><table><thead><tr><th>Sequence</th><th>Thread</th><th>Model</th><th>Status</th><th>Attempts</th><th>Client request</th><th>Client response</th><th>Input</th><th>Cached</th><th>Uncached</th><th>Output</th><th>Reasoning</th></tr></thead><tbody id="exchanges"></tbody></table></div></section>
+    <section class="panel wide"><h2>Provider attempts</h2><div class="scroll"><table><thead><tr><th>Sequence</th><th>Attempt</th><th>Model</th><th>Status</th><th>Complete</th><th>Request</th><th>Response</th><th>Input</th><th>Cached</th><th>Uncached</th><th>Output</th><th>Reasoning</th><th>Tools</th></tr></thead><tbody id="attempts"></tbody></table></div></section>
+    <section class="panel wide"><h2>Provider tool calls</h2><div class="scroll"><table><thead><tr><th>Sequence</th><th>Attempt</th><th>Call</th><th>Tool</th><th>Kind</th><th>Diagnostic</th><th>Input bytes</th><th>Input tokens</th><th>Item bytes</th><th>Item tokens</th></tr></thead><tbody id="provider-calls"></tbody></table></div></section>
+    <section class="panel wide"><h2>Delivered tool calls</h2><div class="scroll"><table><thead><tr><th>Sequence</th><th>Call</th><th>Tool</th><th>Kind</th><th>Diagnostic</th><th>Input bytes</th><th>Input tokens</th><th>Item bytes</th><th>Item tokens</th></tr></thead><tbody id="delivered"></tbody></table></div></section>
   </div>
-  <div class="panel" role="tabpanel" id="panel-gain" aria-labelledby="tab-gain" hidden tabindex="0">
-    <section class="visible"><div class="section-head"><h2>Gain</h2><span id="gain-subtitle">Durable aggregate from router metrics</span></div><div id="gain"><div class="empty"><strong>Connecting</strong>Reduction and command metrics appear with the first snapshot.</div></div></section>
-  </div>
-  <div class="panel" role="tabpanel" id="panel-ctp" aria-labelledby="tab-ctp" hidden tabindex="0">
-    <section class="visible"><div class="section-head"><h2>CTP/2 compression</h2><span>Auxiliary representation estimates</span></div><div id="ctp"><div class="empty"><strong>Connecting</strong>Activation, compression, reference, and codec metrics appear with the first snapshot.</div></div></section>
-  </div>
-</main><script>
-const labels={input_tokens:'Input tokens',uncached_input_tokens:'Uncached input',output_tokens:'Output tokens',reasoning_tokens:'Reasoning tokens'};
-const order=Object.keys(labels), fmt=new Intl.NumberFormat();
-const lifecycleKeys=['started','active','completed','failed','canceled_before_response','canceled_after_response','timed_out','stream_idle_timed_out','background_pending','usage_observed','usage_missing','total_duration_ms','upstream_duration_ms'];
-const callKeys=['successful','rejected','diagnostic_input_tokens'];
-const ctpKeys=['considered_requests','active_requests','missing_carrier','request_strings','request_visible_references','assistant_texts','response_strings','response_visible_references'];
-function element(tag,className,text){const node=document.createElement(tag);if(className)node.className=className;if(text!==undefined)node.textContent=text;return node}
-function metricValue(counts,key){const value=counts&&counts[key];return typeof value==='number'&&Number.isFinite(value)&&value>=0?value:0}
-function nonNeg(value){return typeof value==='number'&&Number.isFinite(value)&&value>=0?value:0}
-function decimal(text){const value=Number(text);return Number.isFinite(value)?value:null}
-function uintText(value){return fmt.format(nonNeg(value))}
-function signedText(text){const value=decimal(text);if(value===null)return typeof text==='string'?text:'0';return value>0?`+${fmt.format(value)}`:fmt.format(value)}
-function percentText(text){return typeof text==='string'&&text!==''?`${text}%`:'0.0%'}
-function ratio(part,whole){const total=nonNeg(whole);return total?(nonNeg(part)*100)/total:0}
-function savingPercent(nativeValue,compactValue){const native=nonNeg(nativeValue);return native?((native-nonNeg(compactValue))*100)/native:null}
-function savingText(value){return value===null?'n/a':`${value.toFixed(1)}%`}
-function durationText(ms){
-  const value=nonNeg(ms);
-  if(value<1000)return `${fmt.format(Math.round(value))} ms`;
-  if(value<60000)return `${(value/1000).toFixed(1)} s`;
-  if(value<3600000)return `${Math.floor(value/60000)}m ${Math.round((value%60000)/1000)}s`;
-  return `${Math.floor(value/3600000)}h ${Math.round((value%3600000)/60000)}m`
-}
-/* A magnitude meter fills one direction; a signed meter grows from a centre zero
-   rule so overhead (warm, left) never reads as a reduction (cool, right). Every
-   meter sits beside its own value text, so no reading depends on colour alone. */
-function meter(mode){
-  const track=element('div','meter');track.dataset.mode=mode;
-  const negative=element('div','meter-half neg'),positive=element('div','meter-half pos');
-  negative.append(element('span','meter-fill'));positive.append(element('span','meter-fill'));
-  track.append(negative,positive);return track
-}
-function setMeter(track,percent,tone){
-  const magnitude=track.dataset.mode==='magnitude',value=Number.isFinite(percent)?percent:0;
-  const width=Math.max(0,Math.min(100,Math.abs(value)));
-  const negativeFill=track.firstChild.firstChild,positiveFill=track.lastChild.firstChild;
-  negativeFill.style.width=!magnitude&&value<0?`${width}%`:'0%';
-  positiveFill.style.width=magnitude||value>=0?`${width}%`:'0%';
-  positiveFill.dataset.tone=tone||'cool'
-}
-function magnitude(text,percent,tone){return {text,percent,tone,mode:'magnitude'}}
-function signed(text,percent){return {text,percent,mode:'signed'}}
-function setCell(cell,value){
-  if(typeof value==='string'){
-    if(cell.dataset.kind!=='text'){cell.replaceChildren();cell.dataset.kind='text'}
-    cell.textContent=value;return
-  }
-  if(cell.dataset.kind!==value.mode){cell.replaceChildren(element('span','cell-value'),meter(value.mode));cell.dataset.kind=value.mode}
-  cell.firstChild.textContent=value.text;
-  setMeter(cell.lastChild,value.percent,value.tone)
-}
-function card(key,label,lead){
-  const node=element('div',lead?'card lead':'card');node.dataset.metric=key;
-  node.append(element('label','',label),element('strong','','0'));return node
-}
-function cardRow(entries,leadKey){
-  const cards=element('div','cards');
-  entries.forEach(([key,label])=>cards.append(card(key,label,key===leadKey)));return cards
-}
-function setCard(root,key,text){root.querySelector(`.card[data-metric="${key}"] strong`).textContent=text}
-function setCardNote(root,key,text){
-  const node=root.querySelector(`.card[data-metric="${key}"]`);
-  let note=node.querySelector('small');
-  if(!note){note=element('small');node.append(note)}
-  note.textContent=text
-}
-function setCardMeter(root,key,percent,tone,mode){
-  const node=root.querySelector(`.card[data-metric="${key}"]`);
-  let track=node.querySelector('.meter');
-  if(!track){track=meter(mode||'magnitude');node.append(track)}
-  setMeter(track,percent,tone)
-}
-function createGroup(root,lead){
-  root.replaceChildren();
-  const cards=cardRow(order.map(key=>[key,labels[key]]),lead?'input_tokens':'');
-  const breakdowns=element('div','breakdowns'),wrap=element('div','table-wrap');
-  wrap.append(element('h3','','By model'));
-  const scroll=element('div','table-scroll');
-  const table=element('table','metric-table'),head=element('thead'),headRow=element('tr');
-  headRow.append(element('th','','Model'));order.forEach(key=>headRow.append(element('th','',labels[key].replace(' tokens',''))));
-  head.append(headRow);table.append(head,element('tbody'));scroll.append(table);wrap.append(scroll,element('div','empty','No model breakdown yet'));breakdowns.append(wrap);root.append(cards,breakdowns)
-}
-function modelRows(byModel){
-  return Object.entries(byModel).map(([model,counts])=>({key:model,name:model,counts})).sort((a,b)=>metricValue(b.counts,'input_tokens')-metricValue(a.counts,'input_tokens')||a.name.localeCompare(b.name))
-}
-function updateGroup(root,data,lead){
-  if(!root.querySelector('.cards'))createGroup(root,lead);
-  order.forEach(key=>setCard(root,key,fmt.format(metricValue(data.total,key))));
-  const input=metricValue(data.total,'input_tokens'),uncached=metricValue(data.total,'uncached_input_tokens');
-  const cached=Math.max(0,input-uncached),cachedShare=ratio(cached,input);
-  setCardNote(root,'input_tokens',input?`${cachedShare.toFixed(1)}% cached · ${fmt.format(cached)} reused`:'no usage observed yet');
-  setCardMeter(root,'input_tokens',cachedShare,'cool');
-  const rows=modelRows(data.by_model),peak=rows.reduce((max,row)=>Math.max(max,metricValue(row.counts,'input_tokens')),0);
-  fillRows(root.querySelector('.metric-table tbody'),rows.map(row=>({
-    key:row.key,
-    cells:[row.name,magnitude(fmt.format(metricValue(row.counts,'input_tokens')),ratio(metricValue(row.counts,'input_tokens'),peak),'cool')]
-      .concat(order.slice(1).map(key=>fmt.format(metricValue(row.counts,key))))
-  })));
-  root.querySelector('.metric-table').hidden=rows.length===0;root.querySelector('.table-wrap>.empty').hidden=rows.length!==0
-}
-function tableWrap(title,headers,className){
-  const wrap=element('div','table-wrap');wrap.append(element('h3','',title));
-  const scroll=element('div','table-scroll');
-  const table=element('table',className?`metric-table ${className}`:'metric-table'),head=element('thead'),headRow=element('tr');
-  headers.forEach(header=>headRow.append(element('th','',header)));head.append(headRow);table.append(head,element('tbody'));scroll.append(table);wrap.append(scroll);return {wrap,tbody:table.querySelector('tbody')}
-}
-/* Rows are reconciled by key and then re-appended in the supplied order, so a
-   new tool or command cannot strand the total row above later rows. */
-function fillRows(tbody,rows){
-  const existing=new Map(Array.from(tbody.children,row=>[row.dataset.key,row]));
-  rows.forEach(entry=>{
-    let row=existing.get(entry.key);
-    if(!row){row=element('tr');row.dataset.key=entry.key;entry.cells.forEach(()=>row.append(element('td')))}
-    while(row.children.length<entry.cells.length)row.append(element('td'));
-    row.className=entry.className||'';
-    entry.cells.forEach((cell,index)=>setCell(row.children[index],cell));
-    existing.delete(entry.key);tbody.append(row)
-  });
-  existing.forEach(row=>row.remove())
-}
-/* Only an all-zero row is de-emphasized. A negative delta is still a reading. */
-function idleClass(...values){return values.every(value=>!Number(value))?'idle':''}
-function createRequests(root){
-  root.replaceChildren();
-  const cards=cardRow([['started','Requests started'],['completed','Completed'],['failed','Failed'],['active','In flight']],'started');
-  const stack=element('div','stack');
-  stack.append(element('h3','','Outcome share of started requests'));
-  const bar=element('div','stack-bar');bar.setAttribute('role','img');
-  const legend=element('div','legend');
-  const segments=[['completed','Completed','var(--mark-cool)'],['failed','Failed','var(--mark-warm)'],['other','In flight or canceled','var(--mark-flat)']].map(([key,label,color])=>{
-    const segment=element('div','stack-seg');segment.dataset.key=key;segment.style.background=color;bar.append(segment);
-    const item=element('div','legend-item'),swatch=element('span','legend-key');
-    swatch.style.background=color;const value=element('b','','0');
-    item.append(swatch,element('span','',label),value);legend.append(item);
-    return {key,label,segment,value}
-  });
-  stack.append(bar,legend);
-  const lifecycle=tableWrap('Lifecycle',['Outcome','Requests','Share of started']);
-  const durations=tableWrap('Durations',['Measure','Value']);
-  const calls=element('div','table-wrap');calls.append(element('h3','','hpatch calls this process'));
-  const callFacts=element('ul','facts');calls.append(callFacts);
-  const grid=element('div','table-grid');grid.append(lifecycle.wrap,durations.wrap);
-  root.append(cards,stack,grid,calls);
-  root.requests={bar,segments,lifecycle:lifecycle.tbody,durations:durations.tbody,callFacts}
-}
-function setFacts(list,entries){
-  const existing=new Map(Array.from(list.children,item=>[item.dataset.key,item]));
-  entries.forEach(entry=>{
-    let item=existing.get(entry.key);
-    if(!item){item=element('li');item.dataset.key=entry.key;item.append(element('span'),element('b'))}
-    item.firstChild.textContent=entry.label;item.lastChild.textContent=entry.value;
-    item.dataset.tone=entry.tone||'flat';
-    existing.delete(entry.key);list.append(item)
-  });
-  existing.forEach(item=>item.remove())
-}
-function updateRequests(root,requests,calls){
-  if(!root.querySelector('.cards'))createRequests(root);
-  const started=nonNeg(requests.started),completed=nonNeg(requests.completed),failed=nonNeg(requests.failed);
-  const other=Math.max(0,started-completed-failed);
-  setCard(root,'started',uintText(started));
-  setCard(root,'completed',uintText(completed));
-  setCard(root,'failed',uintText(failed));
-  setCard(root,'active',uintText(requests.active));
-  setCardNote(root,'started',`${uintText(requests.usage_observed)} with usage · ${uintText(requests.usage_missing)} without`);
-  setCardMeter(root,'started',ratio(requests.usage_observed,started),'cool');
-  setCardNote(root,'completed',`${ratio(completed,started).toFixed(1)}% of started`);
-  setCardMeter(root,'completed',ratio(completed,started),'cool');
-  setCardNote(root,'failed',`${ratio(failed,started).toFixed(1)}% of started`);
-  setCardMeter(root,'failed',ratio(failed,started),'warm');
-  setCardNote(root,'active',`${uintText(requests.background_pending)} background pending`);
-  setCardMeter(root,'active',ratio(requests.active,started),'flat');
-  const totals={completed,failed,other},denominator=completed+failed+other;
-  root.requests.segments.forEach(segment=>{
-    const value=totals[segment.key];
-    /* A zero segment is removed so its 2px surface gap does not survive it. */
-    segment.segment.hidden=value===0;
-    segment.segment.style.flexBasis=`${denominator?(value*100)/denominator:0}%`;
-    segment.value.textContent=uintText(value)
-  });
-  root.requests.bar.setAttribute('aria-label',`Of ${uintText(started)} started requests: ${uintText(completed)} completed, ${uintText(failed)} failed, ${uintText(other)} in flight or canceled.`);
-  fillRows(root.requests.lifecycle,[
-    ['completed','completed',requests.completed],
-    ['failed','failed',requests.failed],
-    ['active','in flight',requests.active],
-    ['canceled_before_response','canceled before response',requests.canceled_before_response],
-    ['canceled_after_response','canceled after response',requests.canceled_after_response],
-    ['timed_out','timed out',requests.timed_out],
-    ['stream_idle_timed_out','stream idle timed out',requests.stream_idle_timed_out],
-    ['background_pending','background pending',requests.background_pending],
-    ['usage_observed','usage observed',requests.usage_observed],
-    ['usage_missing','usage missing',requests.usage_missing]
-  ].map(([key,label,value])=>({
-    key,className:idleClass(value),
-    cells:[label,uintText(value),magnitude(`${ratio(value,started).toFixed(1)}%`,ratio(value,started),key==='completed'||key==='usage_observed'?'cool':key==='usage_missing'||key==='failed'||key==='timed_out'||key==='stream_idle_timed_out'?'warm':'flat')]
-  })));
-  const accounted=completed+failed;
-  fillRows(root.requests.durations,[
-    {key:'total',cells:['total routed time',durationText(requests.total_duration_ms)]},
-    {key:'upstream',cells:['upstream time',durationText(requests.upstream_duration_ms)]},
-    {key:'router',cells:['router overhead',durationText(Math.max(0,nonNeg(requests.total_duration_ms)-nonNeg(requests.upstream_duration_ms)))]},
-    {key:'mean',cells:['mean per settled request',accounted?durationText(nonNeg(requests.total_duration_ms)/accounted):'n/a']},
-    {key:'share',cells:['upstream share',magnitude(`${ratio(requests.upstream_duration_ms,requests.total_duration_ms).toFixed(1)}%`,ratio(requests.upstream_duration_ms,requests.total_duration_ms),'cool')]}
-  ]);
-  setFacts(root.requests.callFacts,[
-    {key:'successful',label:'successful',value:uintText(calls.successful),tone:'flat'},
-    {key:'rejected',label:'rejected',value:uintText(calls.rejected),tone:nonNeg(calls.rejected)?'warm':'flat'},
-    {key:'diagnostic',label:'diagnostic input tokens',value:uintText(calls.diagnostic_input_tokens),tone:'flat'}
-  ])
-}
-function createGain(root){
-  root.replaceChildren();
-  const cards=cardRow([['success_reduction','Successful reduction'],['overall_reduction','Overall reduction'],['hpatch_all','All hpatch output'],['apply_all','All apply_patch output']],'success_reduction');
-  const output=tableWrap('Output token estimates',['Tool','Calls','Emitted','Translated','Reduction']);
-  const recoveries=tableWrap('Recoveries',['Recoveries','Count']);
-  const input=tableWrap('Input token estimates',['Tool','Executions','Current','Stock','Reduction']);
-  const definitions=tableWrap('Installed tool definitions',['Tool','Tokens','Share']);
-  const overhead=tableWrap('Input token overhead estimates',['Source','Tokens','Description'],'desc');
-  const commands=tableWrap('Command metrics',['Command','Invocations','Errors','Error rate']);
-  const targets=tableWrap('Target metrics',['Target','Invocations','Errors','Error rate']);
-  const reasons=tableWrap('Failure reasons',['Reason','Errors']);
-  const commandReasons=tableWrap('Command failure reasons',['Command','Reason','Errors'],'pair');
-  const note=element('p','note','');
-  const definition=element('p','note','');
-  const err=element('div','error gain-error');err.hidden=true;err.setAttribute('role','alert');
-  const gridTop=element('div','table-grid');gridTop.append(input.wrap,definitions.wrap);
-  const gridMid=element('div','table-grid');gridMid.append(commands.wrap,targets.wrap);
-  const gridBot=element('div','table-grid');gridBot.append(reasons.wrap,commandReasons.wrap);
-  root.append(cards,err,output.wrap,recoveries.wrap,note,gridTop,overhead.wrap,definition,gridMid,gridBot);
-  root.gain={output:output.tbody,recoveries:recoveries.tbody,input:input.tbody,definitions:definitions.tbody,overhead:overhead.tbody,commands:commands.tbody,targets:targets.tbody,reasons:reasons.tbody,commandReasons:commandReasons.tbody,note,definition,err}
-}
-function sumPair(a,b){return nonNeg(a)+nonNeg(b)}
-function commandTotal(commands){
-  return (commands||[]).reduce((total,entry)=>({invocations:total.invocations+nonNeg(entry.invocations),errors:total.errors+nonNeg(entry.errors)}),{invocations:0,errors:0})
-}
-function errorRate(errors,invocations){
-  if(!invocations)return '0.0%';
-  return `${((errors*100)/invocations).toFixed(1)}%`
-}
-function reductionCell(text){
-  if(typeof text!=='string'||text==='')return 'n/a';
-  const value=decimal(text);
-  return value===null?text:signed(`${text}%`,value)
-}
-function toolLabel(entry){return `${entry.plugin_id}/${entry.tool_name}`}
-function updateGain(root,gain,gainError){
-  if(!root.querySelector('.cards'))createGain(root);
-  const g=gain||{};
-  setCard(root,'success_reduction',percentText(g.successful_reduction_percent));
-  setCard(root,'overall_reduction',percentText(g.overall_reduction_percent));
-  setCard(root,'hpatch_all',uintText(sumPair(g.hpatch_tokens,g.ineffective_hpatch_tokens)));
-  setCard(root,'apply_all',uintText(sumPair(g.apply_patch_tokens,g.failed_apply_patch_tokens)));
-  /* Signed mode so a negative reduction draws as overhead instead of reading
-     zero while the label above it shows a minus sign. */
-  setCardMeter(root,'success_reduction',decimal(g.successful_reduction_percent)||0,'cool','signed');
-  setCardMeter(root,'overall_reduction',decimal(g.overall_reduction_percent)||0,'cool','signed');
-  setCardNote(root,'hpatch_all',`${uintText(g.hpatch_tokens)} translated · ${uintText(g.ineffective_hpatch_tokens)} rejected`);
-  setCardNote(root,'apply_all',`${uintText(g.apply_patch_tokens)} accepted · ${uintText(g.failed_apply_patch_tokens)} baseline`);
-  const all=g.all_tools||{};
-  fillRows(root.gain.output,(g.tools||[]).map(entry=>({
-    key:`${entry.plugin_id}\0${entry.tool_name}\0${entry.failed}`,
-    cells:[`${toolLabel(entry)}${entry.failed?' failed':''}`,uintText(entry.calls),uintText(entry.emitted_tokens),uintText(entry.translated_tokens),reductionCell(entry.reduction_percent)]
-  })).concat([{
-    key:'all-tools',className:'total',
-    cells:['all-tools',uintText(all.calls),uintText(all.emitted_tokens),uintText(all.translated_tokens),reductionCell(all.reduction_percent)]
-  }]));
-  fillRows(root.gain.recoveries,(g.recoveries||[]).map(entry=>({
-    key:entry.name,className:idleClass(entry.count),
-    cells:[entry.name,uintText(entry.count)]
-  })));
-  const allInput=g.all_tool_inputs||{};
-  fillRows(root.gain.input,(g.tool_inputs||[]).map(entry=>({
-    key:`${entry.plugin_id}\0${entry.tool_name}`,
-    cells:[toolLabel(entry),uintText(entry.executions),uintText(entry.current_tokens),uintText(entry.stock_tokens),reductionCell(entry.reduction_percent)]
-  })).concat([{
-    key:'all-tools',className:'total',
-    cells:['all-tools',uintText(allInput.executions),uintText(allInput.current_tokens),uintText(allInput.stock_tokens),reductionCell(allInput.reduction_percent)]
-  }]));
-  const definitions=g.tool_definitions||[];
-  const definitionTotal=definitions.reduce((sum,entry)=>sum+nonNeg(entry.tokens),0);
-  /* Share is scaled by the same denominator it prints, so the bar can never
-     disagree with its own label. */
-  fillRows(root.gain.definitions,definitions.map(entry=>({
-    key:`${entry.plugin_id}\0${entry.tool_name}`,
-    cells:[toolLabel(entry),uintText(entry.tokens),magnitude(`${ratio(entry.tokens,definitionTotal).toFixed(1)}%`,ratio(entry.tokens,definitionTotal),'cool')]
-  })).concat([{
-    key:'shared',className:idleClass(g.shared_definition_tokens),
-    cells:['shared serialization delta',signedText(g.shared_definition_tokens||0),'']
-  },{
-    key:'total',className:'total',cells:['installed total',uintText(definitionTotal+(g.shared_definition_tokens||0)),'']
-  }]));
-  const applyPatchRemoved=nonNeg(g.removed_definition_input_tokens);
-  const execCommandRemoved=nonNeg(g.removed_exec_command_definition_input_tokens);
-  fillRows(root.gain.overhead,[
-    {key:'state',cells:['state reports',uintText(g.report_input_tokens),'final state returned after successful calls']},
-    {key:'diag',cells:['failure diagnostics',uintText(g.diagnostic_input_tokens),'errors and repair context returned after failed calls']},
-    {key:'misuse',cells:['Hpatch misuse warnings',uintText(g.misuse_warning_input_tokens),'warnings returned after prohibited tool use']},
-    {key:'def',cells:['installed tool definitions',uintText(g.definition_input_tokens),'exact serialized collection installed by the router']},
-    {key:'apply-removed',cells:['apply_patch definition removed',applyPatchRemoved?`-${fmt.format(applyPatchRemoved)}`:'0','exact Code Mode section removed by the router']},
-    {key:'exec-removed',cells:['exec_command definition removed',execCommandRemoved?`-${fmt.format(execCommandRemoved)}`:'0','exact Code Mode section removed by the router']},
-    {key:'net',className:'total',cells:['net added input',signedText(g.net_added_input),'actual measured input overhead after stock-result and definition credits']}
-  ]);
-  root.gain.note.textContent='Failed hpatch translation uses the empty-patch semantic baseline; other router rejections have no translated carrier. A negative reduction is measured overhead.';
-  root.gain.definition.textContent=`Definition routing covers ${uintText(g.definition_requests)} accounted request(s) in ${uintText(g.sessions)} distinct session(s) (${g.definition_sources||'not measured (missing caller session)'}).`;
-  const commandPeak=(g.commands||[]).reduce((max,entry)=>Math.max(max,nonNeg(entry.invocations)),0);
-  const commandRows=(g.commands||[]).map(entry=>({
-    key:entry.name,className:idleClass(entry.invocations),
-    cells:[entry.name,magnitude(uintText(entry.invocations),ratio(entry.invocations,commandPeak),'cool'),uintText(entry.errors),magnitude(percentText(entry.error_rate_percent),decimal(entry.error_rate_percent)||0,'warm')]
-  }));
-  const total=commandTotal(g.commands);
-  commandRows.push({key:'total',className:'total',cells:['total',uintText(total.invocations),uintText(total.errors),errorRate(total.errors,total.invocations)]});
-  fillRows(root.gain.commands,commandRows);
-  const targetPeak=(g.targets||[]).reduce((max,entry)=>Math.max(max,nonNeg(entry.invocations)),0);
-  const targetRows=(g.targets||[]).map(entry=>({
-    key:entry.name,className:idleClass(entry.invocations),
-    cells:[entry.name,magnitude(uintText(entry.invocations),ratio(entry.invocations,targetPeak),'cool'),uintText(entry.errors),magnitude(percentText(entry.error_rate_percent),decimal(entry.error_rate_percent)||0,'warm')]
-  }));
-  const targetTotal=commandTotal(g.targets);
-  targetRows.push({key:'total',className:'total',cells:['total',uintText(targetTotal.invocations),uintText(targetTotal.errors),errorRate(targetTotal.errors,targetTotal.invocations)]});
-  fillRows(root.gain.targets,targetRows);
-  const reasonPeak=(g.reasons||[]).reduce((max,entry)=>Math.max(max,nonNeg(entry.count)),0);
-  const reasonRows=(g.reasons||[]).map(entry=>({
-    key:entry.name,className:idleClass(entry.count),
-    cells:[entry.name,magnitude(uintText(entry.count),ratio(entry.count,reasonPeak),'warm')]
-  }));
-  const reasonTotal=(g.reasons||[]).reduce((sum,entry)=>sum+nonNeg(entry.count),0);
-  reasonRows.push({key:'total',className:'total',cells:['total',uintText(reasonTotal)]});
-  fillRows(root.gain.reasons,reasonRows);
-  fillRows(root.gain.commandReasons,(g.command_reasons||[]).map(entry=>({key:`${entry.command}\0${entry.reason}`,cells:[entry.command,entry.reason,uintText(entry.errors)]})));
-  if(gainError){root.gain.err.hidden=false;root.gain.err.textContent=gainError}else{root.gain.err.hidden=true;root.gain.err.textContent=''}
-}
-function createCTP(root){
-  root.replaceChildren();
-  const cards=cardRow([['input_saving','Input token saving'],['output_saving','Output token saving'],['active','Active requests'],['decode_failures','Decode failures']],'input_saving');
-  const representations=tableWrap('Representation savings',['Direction','Native tokens','Compact tokens','Token saving','Native bytes','Compact bytes','Byte saving']);
-  const activations=tableWrap('Request activation',['Decision','Requests','Share of considered']);
-  const codec=tableWrap('Representation and codec',['Measure','Value']);
-  const grid=element('div','table-grid');grid.append(activations.wrap,codec.wrap);
-  const note=element('p','note','');
-  root.append(cards,representations.wrap,grid,note);
-  root.ctp={representations:representations.tbody,activations:activations.tbody,codec:codec.tbody,note}
-}
-function updateCTP(root,ctp){
-  if(!root.querySelector('.cards'))createCTP(root);
-  const inputSaving=savingPercent(ctp.input.native_tokens,ctp.input.compact_tokens);
-  const outputSaving=savingPercent(ctp.output.native_tokens,ctp.output.compact_tokens);
-  const considered=nonNeg(ctp.considered_requests), hasConsidered=considered>0;
-  const activeShare=hasConsidered?ratio(ctp.active_requests,considered):null;
-  const missingShare=hasConsidered?ratio(ctp.missing_carrier,considered):null;
-  setCard(root,'input_saving',savingText(inputSaving));
-  setCard(root,'output_saving',savingText(outputSaving));
-  setCard(root,'active',`${uintText(ctp.active_requests)} / ${uintText(ctp.considered_requests)}`);
-  setCard(root,'decode_failures',uintText(ctp.codec.decode_failures));
-  setCardNote(root,'input_saving',`${uintText(ctp.input.native_tokens)} native · ${uintText(ctp.input.compact_tokens)} compact`);
-  setCardNote(root,'output_saving',`${uintText(ctp.output.native_tokens)} native · ${uintText(ctp.output.compact_tokens)} compact`);
-  setCardNote(root,'active',hasConsidered?`${activeShare.toFixed(1)}% of considered requests`:'No considered requests');
-  setCardNote(root,'decode_failures',`${uintText(ctp.codec.decode_operations)} decode operation(s)`);
-  setCardMeter(root,'input_saving',inputSaving||0,'cool','signed');
-  setCardMeter(root,'output_saving',outputSaving||0,'cool','signed');
-  setCardMeter(root,'active',activeShare||0,'cool');
-  setCardMeter(root,'decode_failures',ratio(ctp.codec.decode_failures,ctp.codec.decode_operations),'warm');
-  fillRows(root.ctp.representations,[
-    {key:'input',cells:['Input',uintText(ctp.input.native_tokens),uintText(ctp.input.compact_tokens),savingText(inputSaving),uintText(ctp.input_bytes.native_bytes),uintText(ctp.input_bytes.compact_bytes),savingText(savingPercent(ctp.input_bytes.native_bytes,ctp.input_bytes.compact_bytes))]},
-    {key:'output',cells:['Assistant output',uintText(ctp.output.native_tokens),uintText(ctp.output.compact_tokens),savingText(outputSaving),uintText(ctp.output_bytes.native_bytes),uintText(ctp.output_bytes.compact_bytes),savingText(savingPercent(ctp.output_bytes.native_bytes,ctp.output_bytes.compact_bytes))]}
-  ]);
-  fillRows(root.ctp.activations,[
-    {key:'active',cells:['Active',uintText(ctp.active_requests),hasConsidered?magnitude(`${activeShare.toFixed(1)}%`,activeShare,'cool'):'n/a']},
-    {key:'missing',className:idleClass(ctp.missing_carrier),cells:['Missing instruction carrier',uintText(ctp.missing_carrier),hasConsidered?magnitude(`${missingShare.toFixed(1)}%`,missingShare,'warm'):'n/a']},
-    {key:'total',className:'total',cells:['Considered',uintText(ctp.considered_requests),hasConsidered?'100.0%':'n/a']}
-  ]);
-  fillRows(root.ctp.codec,[
-    {key:'request-strings',cells:['Request encoded strings',uintText(ctp.request_strings)]},
-    {key:'request-visible',cells:['Request visible-line references',uintText(ctp.request_visible_references)]},
-    {key:'request-definitions',cells:['Request dictionary definitions',uintText(ctp.request_dictionary.definitions)]},
-    {key:'request-bytes',cells:['Request dictionary bytes',uintText(ctp.request_dictionary.bytes)]},
-    {key:'response-strings',cells:['Response encoded strings',uintText(ctp.response_strings)]},
-    {key:'response-visible',cells:['Response visible-line references',uintText(ctp.response_visible_references)]},
-    {key:'response-definitions',cells:['Response dictionary definitions',uintText(ctp.response_dictionary.definitions)]},
-    {key:'response-bytes',cells:['Response dictionary bytes',uintText(ctp.response_dictionary.bytes)]},
-    {key:'encode-operations',cells:['Encode operations',uintText(ctp.codec.encode_operations)]},
-    {key:'encode-time',cells:['Encode time',`${(nonNeg(ctp.codec.encode_nanoseconds)/1000000).toFixed(3)} ms`]},
-    {key:'decode-operations',cells:['Decode operations',uintText(ctp.codec.decode_operations)]},
-    {key:'decode-time',cells:['Decode time',`${(nonNeg(ctp.codec.decode_nanoseconds)/1000000).toFixed(3)} ms`]},
-    {key:'decode-failures',className:idleClass(ctp.codec.decode_failures),cells:['Decode failures',uintText(ctp.codec.decode_failures)]}
-  ]);
-  root.ctp.note.textContent=`${uintText(ctp.assistant_texts)} assistant text observation(s). Content-local dictionaries and visible-line references are measured together; these estimates do not replace provider usage.`
-}
-function validNamedCommand(entry){return entry&&typeof entry==='object'&&typeof entry.name==='string'&&typeof entry.invocations==='number'&&typeof entry.errors==='number'&&typeof entry.error_rate_percent==='string'}
-function validNamedCount(entry){return entry&&typeof entry==='object'&&typeof entry.name==='string'&&typeof entry.count==='number'}
-function validCommandReason(entry){return entry&&typeof entry==='object'&&typeof entry.command==='string'&&typeof entry.reason==='string'&&typeof entry.errors==='number'}
-function validToolGain(entry){return entry&&typeof entry==='object'&&typeof entry.plugin_id==='string'&&typeof entry.tool_name==='string'&&typeof entry.failed==='boolean'&&typeof entry.calls==='number'&&typeof entry.emitted_tokens==='number'&&typeof entry.translated_tokens==='number'&&typeof entry.reduction_percent==='string'}
-function validToolInput(entry){return entry&&typeof entry==='object'&&typeof entry.plugin_id==='string'&&typeof entry.tool_name==='string'&&typeof entry.executions==='number'&&typeof entry.current_tokens==='number'&&typeof entry.stock_tokens==='number'&&typeof entry.reduction_percent==='string'}
-function validToolDefinition(entry){return entry&&typeof entry==='object'&&typeof entry.plugin_id==='string'&&typeof entry.tool_name==='string'&&typeof entry.tokens==='number'}
-function validGain(gain){
-  return gain&&typeof gain==='object'&&!Array.isArray(gain)
-    &&typeof gain.hpatch_tokens==='number'&&typeof gain.apply_patch_tokens==='number'
-    &&typeof gain.ineffective_hpatch_tokens==='number'&&typeof gain.failed_apply_patch_tokens==='number'
-    &&typeof gain.successful_reduction_percent==='string'&&typeof gain.overall_reduction_percent==='string'
-    &&typeof gain.report_input_tokens==='number'&&typeof gain.diagnostic_input_tokens==='number'
-    &&typeof gain.definition_input_tokens==='number'&&typeof gain.removed_definition_input_tokens==='number'&&typeof gain.removed_exec_command_definition_input_tokens==='number'&&typeof gain.misuse_warning_input_tokens==='number'
-    &&typeof gain.net_added_input==='string'&&typeof gain.sessions==='number'&&typeof gain.definition_requests==='number'
-    &&typeof gain.definition_sources==='string'
-    &&Array.isArray(gain.tools)&&gain.tools.every(validToolGain)&&validToolGain(gain.all_tools)
-    &&Array.isArray(gain.recoveries)&&gain.recoveries.every(validNamedCount)
-    &&Array.isArray(gain.tool_inputs)&&gain.tool_inputs.every(validToolInput)&&validToolInput(gain.all_tool_inputs)
-    &&Array.isArray(gain.tool_definitions)&&gain.tool_definitions.every(validToolDefinition)&&typeof gain.shared_definition_tokens==='number'
-    &&Array.isArray(gain.commands)&&gain.commands.every(validNamedCommand)
-    &&Array.isArray(gain.targets)&&gain.targets.every(validNamedCommand)
-    &&Array.isArray(gain.reasons)&&gain.reasons.every(validNamedCount)
-    &&Array.isArray(gain.command_reasons)&&gain.command_reasons.every(validCommandReason)
-}
-function validUints(source,keys){return source&&typeof source==='object'&&!Array.isArray(source)&&keys.every(key=>typeof source[key]==='number'&&Number.isFinite(source[key])&&source[key]>=0)}
-function validRequests(requests){return validUints(requests,lifecycleKeys)}
-function validCalls(calls){return validUints(calls,callKeys)}
-function validCounts(counts){return validUints(counts,order)}
-function validRepresentation(representation){return validUints(representation,['native_tokens','compact_tokens','native_bytes','compact_bytes'])}
-function validCTP(ctp){
-  return validUints(ctp,ctpKeys)
-    &&validUints(ctp.input,['native_tokens','compact_tokens'])&&validUints(ctp.output,['native_tokens','compact_tokens'])
-    &&validUints(ctp.input_bytes,['native_bytes','compact_bytes'])&&validUints(ctp.output_bytes,['native_bytes','compact_bytes'])
-    &&validUints(ctp.request_dictionary,['definitions','bytes'])&&validUints(ctp.response_dictionary,['definitions','bytes'])
-    &&validUints(ctp.codec,['encode_operations','encode_nanoseconds','decode_operations','decode_nanoseconds','decode_failures'])
-}
-function validInputObservation(observation){return validRepresentation(observation)&&validUints(observation,['request_sequence','definitions','dictionary_bytes','strings','visible_references','encode_nanoseconds'])&&typeof observation.decision==='string'}
-function validOutputObservation(observation){return validRepresentation(observation)&&validUints(observation,['request_sequence','definitions','dictionary_bytes','strings','visible_references'])}
-function validObservations(observations,validate){return observations===null||(Array.isArray(observations)&&observations.every(validate))}
-function validSessionCTP(ctp){return validCTP(ctp)&&validObservations(ctp.input_observations,validInputObservation)&&validObservations(ctp.output_observations,validOutputObservation)&&validUints(ctp,['input_observations_dropped','output_observations_dropped'])}
-function validGroup(data){return data&&typeof data==='object'&&!Array.isArray(data)&&validCounts(data.total)&&data.by_model&&typeof data.by_model==='object'&&!Array.isArray(data.by_model)&&Object.values(data.by_model).every(validCounts)&&validRequests(data.requests)&&validCalls(data.hpatch_calls)}
-function validSnapshot(data){return validGroup(data)&&validCTP(data.ctp)&&Array.isArray(data.sessions)&&data.sessions.every(session=>validGroup(session)&&validSessionCTP(session.ctp)&&typeof session.session_id==='string'&&typeof session.title==='string'&&typeof session.model==='string')&&validGain(data.gain)&&(data.gain_error===undefined||typeof data.gain_error==='string')&&(data.mode===undefined||typeof data.mode==='string')}
-const sessionElements=new Map();
-function createSessionCTP(){
-  const root=element('div','session-ctp');
-  root.append(element('h3','','CTP/2 session compression'));
-  const facts=element('ul','facts');
-  const input=tableWrap('Input representations',['Request','Decision','Native tokens','Compact tokens','Token saving','Native bytes','Compact bytes','Byte saving','Strings','Definitions','Dictionary bytes','Visible references','Encode time']);
-  const output=tableWrap('Assistant output representations',['Request','Native tokens','Compact tokens','Token saving','Native bytes','Compact bytes','Byte saving','Strings','Definitions','Dictionary bytes','Visible references']);
-  root.append(facts,input.wrap,output.wrap);
-  root.ctp={facts,input:input.tbody,inputWrap:input.wrap,output:output.tbody,outputWrap:output.wrap};return root
-}
-function createSession(session){
-  const id=session.session_id,details=element('details');details.dataset.sessionId=id;
-  const summary=element('summary'),name=element('span','session-id'),route=element('small'),total=element('span','session-total');
-  name.append(document.createTextNode(session.title||id),element('br'),route);summary.append(element('span','chev'),name,total);
-  summary.querySelector('.chev').setAttribute('aria-hidden','true');
-  const body=element('div','session-body'),group=element('div'),facts=element('ul','facts'),ctp=createSessionCTP();
-  body.append(group,facts,ctp);
-  details.append(summary,body);details.name=name.firstChild;details.route=route;details.sessionTotal=total;details.sessionBody=group;details.sessionFacts=facts;details.sessionCTP=ctp;return details
-}
-function sessionFacts(session){
-  const requests=session.requests,calls=session.hpatch_calls;
-  const rejections=Array.isArray(session.hpatch_rejections)?session.hpatch_rejections.length:0;
-  return [
-    {key:'started',label:'requests',value:uintText(requests.started)},
-    {key:'completed',label:'completed',value:uintText(requests.completed)},
-    {key:'failed',label:'failed',value:uintText(requests.failed),tone:nonNeg(requests.failed)?'warm':'flat'},
-    {key:'active',label:'in flight',value:uintText(requests.active)},
-    {key:'missing',label:'usage missing',value:uintText(requests.usage_missing),tone:nonNeg(requests.usage_missing)?'warm':'flat'},
-    {key:'duration',label:'upstream time',value:durationText(requests.upstream_duration_ms)},
-    {key:'hpatch',label:'hpatch calls',value:uintText(calls.successful)},
-    {key:'rejected',label:'hpatch rejected',value:uintText(calls.rejected),tone:nonNeg(calls.rejected)?'warm':'flat'},
-    {key:'rejections',label:'recorded rejections',value:uintText(rejections),tone:rejections?'warm':'flat'}
-  ]
-}
-function updateSessionCTP(root,ctp){
-  const inputs=ctp.input_observations||[],outputs=ctp.output_observations||[];
-  const active=ctp.considered_requests||ctp.assistant_texts||ctp.codec.decode_operations||inputs.length||outputs.length||ctp.input_observations_dropped||ctp.output_observations_dropped;
-  root.hidden=!active;
-  if(!active)return;
-  setFacts(root.ctp.facts,[
-    {key:'active',label:'active requests',value:`${uintText(ctp.active_requests)} / ${uintText(ctp.considered_requests)}`},
-    {key:'input',label:'input token saving',value:savingText(savingPercent(ctp.input.native_tokens,ctp.input.compact_tokens))},
-    {key:'output',label:'output token saving',value:savingText(savingPercent(ctp.output.native_tokens,ctp.output.compact_tokens))},
-    {key:'texts',label:'assistant texts',value:uintText(ctp.assistant_texts)},
-    {key:'decode-failures',label:'decode failures',value:uintText(ctp.codec.decode_failures),tone:ctp.codec.decode_failures?'warm':'flat'},
-    {key:'dropped-input',label:'input observations dropped',value:uintText(ctp.input_observations_dropped),tone:ctp.input_observations_dropped?'warm':'flat'},
-    {key:'dropped-output',label:'output observations dropped',value:uintText(ctp.output_observations_dropped),tone:ctp.output_observations_dropped?'warm':'flat'}
-  ]);
-  fillRows(root.ctp.input,inputs.map(observation=>({
-    key:String(observation.request_sequence),
-    cells:[uintText(observation.request_sequence),observation.decision,uintText(observation.native_tokens),uintText(observation.compact_tokens),savingText(savingPercent(observation.native_tokens,observation.compact_tokens)),uintText(observation.native_bytes),uintText(observation.compact_bytes),savingText(savingPercent(observation.native_bytes,observation.compact_bytes)),uintText(observation.strings),uintText(observation.definitions),uintText(observation.dictionary_bytes),uintText(observation.visible_references),`${(nonNeg(observation.encode_nanoseconds)/1000000).toFixed(3)} ms`]
-  })));
-  fillRows(root.ctp.output,outputs.map(observation=>({
-    key:String(observation.request_sequence),
-    cells:[uintText(observation.request_sequence),uintText(observation.native_tokens),uintText(observation.compact_tokens),savingText(savingPercent(observation.native_tokens,observation.compact_tokens)),uintText(observation.native_bytes),uintText(observation.compact_bytes),savingText(savingPercent(observation.native_bytes,observation.compact_bytes)),uintText(observation.strings),uintText(observation.definitions),uintText(observation.dictionary_bytes),uintText(observation.visible_references)]
-  })));
-  root.ctp.inputWrap.hidden=inputs.length===0;
-  root.ctp.outputWrap.hidden=outputs.length===0
+</main>
+<script>
+const $=id=>document.getElementById(id);
+const number=value=>new Intl.NumberFormat().format(value??0);
+const signedNumber=value=>`${value>0?'+':''}${new Intl.NumberFormat().format(value)}`;
+const payload=value=>`${number(value?.bytes)} B · ${number(value?.tokens)} tok`;
+const text=(node,value)=>{node.textContent=String(value)};
+const detailPageSize=100;
+let detailPage=0;
+let currentSnapshot;
+function rows(id,entries){const root=$(id);root.replaceChildren(...entries.map(([label,value])=>{const dt=document.createElement('dt');text(dt,label);const dd=document.createElement('dd');text(dd,value);return [dt,dd]}).flat())}
+function tableRows(id,entries,columnCount){const root=$(id);if(entries.length===0){const row=document.createElement('tr');const cell=document.createElement('td');cell.colSpan=columnCount;cell.className='empty';text(cell,'No observations');row.append(cell);root.replaceChildren(row);return}root.replaceChildren(...entries.map(values=>{const row=document.createElement('tr');values.forEach(value=>{const cell=document.createElement('td');text(cell,value);row.append(cell)});return row}))}
+function toolNames(tools){return tools?.length?tools.map(tool=>tool.name).join(', '):'—'}
+function validSnapshot(data){return data&&data.schema==='hpatch.capture.metrics.v1'&&data.requests&&data.usage&&data.cache&&data.transport&&data.protocol&&data.hpatch&&data.capture&&Array.isArray(data.exchanges)}
+function renderDetails(){
+  if(!currentSnapshot)return;
+  const ordered=currentSnapshot.exchanges.slice().reverse();
+  const pageCount=Math.max(1,Math.ceil(ordered.length/detailPageSize));
+  detailPage=Math.min(detailPage,pageCount-1);
+  const start=detailPage*detailPageSize;
+  const recent=ordered.slice(start,start+detailPageSize);
+  const end=Math.min(start+recent.length,ordered.length);
+  text($('page-info'),ordered.length?`${number(start+1)}–${number(end)} of ${number(ordered.length)}`:'0 of 0');
+  $('newer').disabled=detailPage===0;
+  $('older').disabled=detailPage>=pageCount-1;
+  tableRows('exchanges',recent.map(exchange=>[number(exchange.sequence),exchange.thread_id||'—',exchange.model||'unknown',exchange.status||'unknown',number(exchange.provider_attempts?.length),payload(exchange.client_request),payload(exchange.client_response),number(exchange.usage?.input_tokens),number(exchange.usage?.cached_input_tokens),number(exchange.usage?.uncached_input_tokens),number(exchange.usage?.output_tokens),number(exchange.usage?.reasoning_tokens)]),12);
+  const attempts=recent.flatMap(exchange=>(exchange.provider_attempts||[]).map(attempt=>[number(exchange.sequence),number(attempt.attempt),attempt.model||'unknown',attempt.status||'unknown',attempt.response_complete?'yes':'no',payload(attempt.request),payload(attempt.response),number(attempt.usage?.input_tokens),number(attempt.usage?.cached_input_tokens),number(attempt.usage?.uncached_input_tokens),number(attempt.usage?.output_tokens),number(attempt.usage?.reasoning_tokens),toolNames(attempt.tools)]));
+  tableRows('attempts',attempts,13);
+  const providerCalls=recent.flatMap(exchange=>(exchange.provider_attempts||[]).flatMap(attempt=>(attempt.tools||[]).map(tool=>[number(exchange.sequence),number(attempt.attempt),tool.call_id||'—',tool.name||'unknown',tool.kind||'—',tool.diagnostic||'—',number(tool.input_bytes),number(tool.input_tokens),number(tool.item_bytes),number(tool.item_tokens)])));
+  tableRows('provider-calls',providerCalls,10);
+  const delivered=recent.flatMap(exchange=>(exchange.delivered_tools||[]).map(tool=>[number(exchange.sequence),tool.call_id||'—',tool.name||'unknown',tool.kind||'—',tool.diagnostic||'—',number(tool.input_bytes),number(tool.input_tokens),number(tool.item_bytes),number(tool.item_tokens)]));
+  tableRows('delivered',delivered,9);
 }
 function render(data){
-  if(!validSnapshot(data))throw new Error('invalid metrics snapshot');
-  updateGroup(document.querySelector('#overview'),data,true);
-  updateRequests(document.querySelector('#requests'),data.requests,data.hpatch_calls);
-  updateGain(document.querySelector('#gain'),data.gain,data.gain_error);
-  updateCTP(document.querySelector('#ctp'),data.ctp);
-  document.querySelector('#mast-mode').textContent=`Hpatch router — ${data.mode||'unknown'} mode — process ledger`;
-  const container=document.querySelector('#sessions'),seen=new Set();
-  data.sessions.forEach(session=>{let details=sessionElements.get(session.session_id);if(!details){details=createSession(session);sessionElements.set(session.session_id,details)}details.name.textContent=session.title||session.session_id;details.route.textContent=session.model;details.sessionTotal.textContent=`${fmt.format(metricValue(session.total,'input_tokens'))} in`;updateGroup(details.sessionBody,session,false);setFacts(details.sessionFacts,sessionFacts(session));updateSessionCTP(details.sessionCTP,session.ctp);container.append(details);seen.add(session.session_id)});
-  sessionElements.forEach((details,id)=>{if(!seen.has(id)){details.remove();sessionElements.delete(id)}});
-  let empty=container.querySelector(':scope>.empty');if(data.sessions.length===0){if(!empty){empty=element('div','empty');const title=element('strong','','No sessions yet');empty.append(title,document.createTextNode('No identified sessions have recorded usage.'));container.append(empty)}else{empty.replaceChildren(element('strong','','No sessions yet'),document.createTextNode('No identified sessions have recorded usage.'))}}else if(empty){empty.remove()}
-  document.querySelector('#session-count').textContent=`${data.sessions.length} ${data.sessions.length===1?'session':'sessions'}`
+  if(!validSnapshot(data))throw new Error('unsupported metrics snapshot');
+  currentSnapshot=data;
+  text($('mode'),`${data.mode} · ${data.model_protocol} · ${number(data.exchanges.length)} retained exchanges`);
+  rows('requests', [['Logical',number(data.requests.logical)],['Provider attempts',number(data.requests.provider_attempts)],['Completed',number(data.requests.completed)],['Failed',number(data.requests.failed)]]);
+  rows('usage', [['Input tokens',number(data.usage.input_tokens)],['Cached input',number(data.usage.cached_input_tokens)],['Uncached input',number(data.usage.uncached_input_tokens)],['Output tokens',number(data.usage.output_tokens)],['Reasoning tokens',number(data.usage.reasoning_tokens)],['Usage-bearing attempts',number(data.usage.provider_attempts)]]);
+  rows('cache', [['Cold or new uncached',number(data.cache.cold_or_new_uncached_input_tokens)],['Eligible prefix',number(data.cache.eligible_prefix_tokens)],['Eligible cached',number(data.cache.eligible_prefix_cached_tokens)],['Eligible misses',number(data.cache.eligible_prefix_miss_tokens)],['Eligible cache rate',data.cache.eligible_prefix_cache_rate==null?'n/a':`${(100*data.cache.eligible_prefix_cache_rate).toFixed(2)}%`]]);
+  rows('transport', [['Client requests',payload(data.transport.client_requests)],['Provider requests',payload(data.transport.provider_attempt_requests)],['Provider responses',payload(data.transport.provider_responses)],['Client responses',payload(data.transport.client_responses)]]);
+  rows('protocol', [['Input bytes saved',signedNumber(data.protocol.input_payload_bytes_saved)],['Input tokens saved',signedNumber(data.protocol.input_payload_tokens_saved)],['Output bytes saved',signedNumber(data.protocol.output_payload_bytes_saved)],['Output tokens saved',signedNumber(data.protocol.output_payload_tokens_saved)]]);
+  rows('hpatch', [['Calls',number(data.hpatch.calls)],['Corrections',number(data.hpatch.corrections)],['Successful',number(data.hpatch.successful)],['Rejected',number(data.hpatch.rejected)],['Unmatched',number(data.hpatch.unmatched)],['Provider input tokens',number(data.hpatch.provider_input_tokens)],['Delivered input tokens',number(data.hpatch.delivered_input_tokens)],['Input tokens saved',signedNumber(data.hpatch.input_tokens_saved)]]);
+  const diagnostics=Object.entries(data.hpatch.diagnostics||{}).sort(([left],[right])=>left.localeCompare(right));
+  rows('diagnostics',diagnostics.length?diagnostics.map(([reason,count])=>[reason,number(count)]):[['Stable reasons','None']]);
+  const health=[['Records',data.capture.records],['Capture errors',data.capture.capture_errors],['Incomplete',data.capture.incomplete_records],['Missing provider',data.capture.missing_provider_records],['Attempt gaps',data.capture.provider_attempt_gaps],['Write errors',data.capture.write_errors],['Skipped requests',data.capture.skipped_requests],['Dropped detail',data.capture.dropped_exchange_details||0]];
+  rows('health',health.map(([label,value])=>[label,number(value)]));
+  const names=[...new Set([...Object.keys(data.provider_tools||{}),...Object.keys(data.delivered_tools||{})])].sort();
+  const toolRows=names.flatMap(name=>[['Provider',data.provider_tools?.[name]],['Delivered',data.delivered_tools?.[name]]].filter(([,aggregate])=>aggregate).map(([boundary,aggregate])=>[name,boundary,number(aggregate.calls),number(aggregate.input_bytes),number(aggregate.input_tokens),number(aggregate.item_bytes),number(aggregate.item_tokens)]));
+  tableRows('tools',toolRows,7);
+  renderDetails();
+  const unhealthy=health.slice(1).some(([,value])=>value!==0);$('state').className=unhealthy?'error':'ok';text($('state'),unhealthy?'Capture needs attention':'Capture healthy');text($('updated'),`Updated ${new Date().toLocaleTimeString()}`);
 }
-function setStatus(text,state){
-  document.querySelector('#status').textContent=text;
-  document.querySelector('#status-pill').dataset.state=state;
-}
-function setUpdated(label){
-  const node=document.querySelector('#updated');
-  if(label==='live'){
-    const now=new Date();
-    node.replaceChildren(document.createTextNode('Updated '),Object.assign(document.createElement('time'),{dateTime:now.toISOString(),textContent:now.toLocaleTimeString()}));
-    return;
-  }
-  node.textContent=label;
-}
-function selectTab(name,{focusTab=false}={}){
-  const tabs=[...document.querySelectorAll('.tab')];
-  tabs.forEach(tab=>{
-    const selected=tab.dataset.tab===name;
-    tab.setAttribute('aria-selected',selected?'true':'false');
-    tab.tabIndex=selected?0:-1;
-    if(selected&&focusTab)tab.focus();
-  });
-  document.querySelectorAll('.panel').forEach(panel=>{
-    const active=panel.id===`panel-${name}`;
-    panel.classList.toggle('active',active);
-    panel.hidden=!active;
-  });
-  if(name==='usage'){
-    document.querySelectorAll('#panel-usage section').forEach(section=>section.classList.add('visible'));
-  }
-}
-function onTabKeydown(event){
-  const tabs=[...document.querySelectorAll('.tab')];
-  const index=tabs.indexOf(event.currentTarget);
-  if(index<0)return;
-  let next=-1;
-  switch(event.key){
-    case 'ArrowRight':
-    case 'ArrowDown': next=(index+1)%tabs.length;break;
-    case 'ArrowLeft':
-    case 'ArrowUp': next=(index-1+tabs.length)%tabs.length;break;
-    case 'Home': next=0;break;
-    case 'End': next=tabs.length-1;break;
-    default: return;
-  }
-  event.preventDefault();
-  selectTab(tabs[next].dataset.tab,{focusTab:true});
-}
-document.querySelectorAll('.tab').forEach(tab=>{
-  tab.addEventListener('click',()=>selectTab(tab.dataset.tab));
-  tab.addEventListener('keydown',onTabKeydown);
-});
-const events=new EventSource('/api/metrics');
-events.onmessage=event=>{try{render(JSON.parse(event.data));setStatus('live','live');setUpdated('live')}catch(error){setStatus('invalid event','error');setUpdated('Last snapshot rejected')}};
-events.onerror=()=>{setStatus('reconnecting','connecting');setUpdated('Stream interrupted — reconnecting')};
-const sectionObserver=new IntersectionObserver(entries=>{entries.forEach(entry=>{if(entry.isIntersecting){entry.target.classList.add('visible');sectionObserver.unobserve(entry.target)}})},{threshold:.08});
-document.querySelectorAll('#panel-usage section').forEach(section=>sectionObserver.observe(section));
-</script></body></html>
+$('newer').addEventListener('click',()=>{if(detailPage>0){detailPage--;renderDetails()}});
+$('older').addEventListener('click',()=>{const pages=Math.ceil((currentSnapshot?.exchanges.length||0)/detailPageSize);if(detailPage+1<pages){detailPage++;renderDetails()}});
+async function refresh(){try{const response=await fetch('/api/metrics',{cache:'no-store'});if(!response.ok)throw new Error(`HTTP ${response.status}`);render(await response.json())}catch(error){$('state').className='error';text($('state'),'Metrics unavailable');text($('updated'),error instanceof Error?error.message:String(error))}}
+refresh();setInterval(refresh,2000);
+</script>
+</body>
+</html>

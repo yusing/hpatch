@@ -19,7 +19,6 @@ type (
 		Payload      string                     `json:"payload"`
 		Template     string                     `json:"template"`
 		Params       map[string]json.RawMessage `json:"params"`
-		StockCommand string                     `json:"stockCommand"`
 		RetainInput  *bool                      `json:"retainInput"`
 	}
 
@@ -34,7 +33,6 @@ type (
 		Stdout   string           `json:"stdout"`
 		Stderr   string           `json:"stderr"`
 		ExitCode int              `json:"exitCode"`
-		Stock    *ExecutionOutput `json:"stock,omitempty"`
 	}
 
 	Snapshot struct {

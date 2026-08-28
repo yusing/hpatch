@@ -10,7 +10,6 @@ import {
   createExecutorTool,
   formatHashLine,
   MAX_POSSIBLE_GPT5_TOKEN_BYTES,
-  shellQuoteArgument,
   stripOptionalFinalNewline,
   VERIFIED_ROW_LIMIT_DIAGNOSTIC,
   VERIFIED_ROW_MAX_TOKENS,
@@ -105,7 +104,6 @@ function parseReadSpec(input: string): ReadSpec {
 
 type ComparedOutput = {
   current: string;
-  stock: string;
   incomplete: boolean;
   warning?: string;
 };
@@ -150,7 +148,7 @@ async function readHashLines(spec: ReadSpec): Promise<ComparedOutput> {
     const finishLine = (): void => {
       if (selected() && !output.incomplete) {
         const row = formatHashLine(lineNumber, content);
-        output.append(row, `${content}\n`);
+        output.append(row);
       }
       content = "";
       contentBytes = 0;
@@ -221,7 +219,7 @@ async function readHashLines(spec: ReadSpec): Promise<ComparedOutput> {
     const warning = !wholeFile && missingStartLine <= spec.endLine
       ? `hread: ${missingStartLine}-${spec.endLine}: [out of range]\n`
       : undefined;
-    return {current: output.current, stock: output.stock, incomplete: output.incomplete, warning};
+    return {current: output.current, incomplete: output.incomplete, warning};
   } finally {
     await handle.close();
   }
@@ -252,21 +250,11 @@ function hreadInput(argv: string[]): string {
 }
 
 
-function hreadStockCommand(argv: string[]): string {
-  const spec = parseReadSpec(hreadInput(argv));
-  const command = `cat ${shellQuoteArgument(spec.path)}`;
-  if (spec.startLine === 0) {
-    return command;
-  }
-  return `${command} | sed -n '${spec.startLine},${spec.endLine}p'`;
-}
-
 export function createHReadTool(description: string, grammar: string): Tool<string[]> {
   return createExecutorTool({
     name: "hread",
     description,
     grammar,
-    stockCommand: hreadStockCommand,
     argv(input, context) {
       const argumentsValue = hreadArguments(input);
       argumentsValue[0] = context.resolvePath(argumentsValue[0]);
@@ -291,11 +279,6 @@ export function createHReadTool(description: string, grammar: string): Tool<stri
         return {
           stdout: result.current,
           ...(stderr === "" ? {} : {stderr}),
-          stock: {
-            stdout: result.stock,
-            ...(limitDiagnostic === "" ? {} : {stderr: limitDiagnostic}),
-            exitCode: result.incomplete ? 1 : 0,
-          },
           exitCode: result.incomplete ? 1 : 0,
         };
       } catch (error) {

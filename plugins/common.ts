@@ -35,11 +35,10 @@ export function countGPT5Tokens(value: string): number {
 
 export class VerifiedRowOutput {
   current = "";
-  stock = "";
   incomplete = false;
   #sealed = false;
 
-  append(currentRow: string, stockRow: string): boolean {
+  append(currentRow: string): boolean {
     if (this.#sealed) {
       this.incomplete = true;
       return false;
@@ -51,7 +50,6 @@ export class VerifiedRowOutput {
       return false;
     }
     this.current = candidate;
-    this.stock += stockRow;
     this.#sealed = tokens > VERIFIED_ROW_SOFT_TOKENS;
     return true;
   }
@@ -95,7 +93,6 @@ type ExecutorToolOptions = {
   grammar: string;
   argv(input: string, context: TranslationContext): string[] | Promise<string[]>;
   execute(argv: string[], context: ExecutionContext): ExecutionResult | Promise<ExecutionResult>;
-  stockCommand?(input: string[]): string;
 };
 
 export function createExecutorTool(options: ExecutorToolOptions): Tool<string[]> {
@@ -113,7 +110,7 @@ export function createExecutorTool(options: ExecutorToolOptions): Tool<string[]>
       return input;
     },
     translate(input, api) {
-      return api.exec(undefined, undefined, options.stockCommand?.(input));
+      return api.exec();
     },
     execute: options.execute,
   };

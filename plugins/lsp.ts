@@ -22,7 +22,6 @@ export type LSPLocation = {
 
 type LSPQueryResult = {
   locations: LSPLocation[];
-  stock: string;
   stderr: string;
 };
 
@@ -236,7 +235,6 @@ export async function runLSPQuery(options: LSPQueryOptions): Promise<LSPQueryRes
     const stderr = semanticStderr(decodeUTF8(await stderrPromise, "language server stderr"));
     return {
       locations: parsedLocations,
-      stock: `${JSON.stringify(response)}\n`,
       stderr: cleanupError !== null && stderr === "" ? semanticStderr(`child error: ${errorText(cleanupError)}`) : stderr,
     };
   } catch (error) {

@@ -7,13 +7,13 @@ For `REQ-PLUGIN-001`, the router owns discovery from the public configuration su
 global tool-name ownership, immutable process-lifetime registry state, and the fail-before-serve
 sequence required by `doc/brief.md` § Constraints. One JavaScript runtime adapter loads compiled
 declaration modules and invokes their input parsers and translators; it does not own Responses
-rewriting, Code Mode capability discovery, wrappers, history, metrics, workspace authority, or
+rewriting, Code Mode capability discovery, wrappers, history, observation, workspace authority, or
 executor effects. Loading a declaration is trusted local extension code, but the adapter
 receives no engine workspace capability or Codex credential interface.
 
 The registry normalizes each accepted declaration into one router-owned contribution containing
 its plugin and tool identity, exact serialized OpenAI specification, bounded input parser and
-argv projection, translator handle, executor implementation handle, and metrics identity. This
+argv projection, translator handle, and executor implementation handle. This
 normalized interface is the only input from plugin code to request rewriting. The router
 validates every translator result as a typed Code Mode tool-call carrier against the carrier
 catalog retained from that request. Plugins never construct output IDs, call IDs, status,
@@ -38,10 +38,7 @@ native continuation operation resumes the same host-owned session. JSON and SSE 
 and replay preserve this distinction without defining another result envelope or continuation
 protocol. Other contributed tools retain their declared output projections.
 
-An exec translator may provide a validated nonempty stock command for output metrics. The same
-renderer applies the selected template and parameters to produce its canonical stock carrier.
-This evidence never replaces the selected direct-command or worker carrier used for the response,
-history, replay, or execution. An implementation needing another executable Code Mode carrier uses
+An implementation needing another executable Code Mode carrier uses
 the generic path rather than encoding an exec surrogate. Hpatch's native workspace translation, recovery
 ancestry, patch renderer, and semantic failure baseline remain adapter extensions beside this
 generic interface rather than capabilities granted to ordinary plugins.
@@ -82,7 +79,7 @@ basenames, `mvdan/sh` owns parsing, built-ins, functions, expansion, redirection
 working-directory changes, exported environment, and fallback external commands. Its exec
 middleware recognizes only hread, hgrep, hsymbol, and inspect_file, invokes the matching
 snapshot implementation once with expanded argv and the current handler context, writes results
-through the handler streams, records the same-execution stock evidence, and returns its status to
+through the handler streams, and returns its status to
 the shell. Non-terminal fallback commands use cancellable process groups so descendants cannot
 keep the worker alive by retaining inherited streams after cancellation or output overflow.
 Every command in a PTY-backed shell remains in the worker's foreground group because `mvdan/sh`
@@ -91,10 +88,8 @@ inherited-pipe wait.
 Other interpreter basenames retain the JavaScript executor's anonymous script descriptor path.
 
 `internal/router/toolplugin/plugin.d.ts` owns the executable result schema. The runtime adapter
-validates the current result independently from its optional stock metric evidence. The worker
-writes only the current result to Codex-facing streams and sends structured current and
-validated stock evidence, with the pinned plugin and tool identity, to the root metrics owner.
-The executor is the only content producer for both shapes; no metrics owner invokes it again.
+validates the current result, and the worker writes it to Codex-facing streams. No observation owner
+invokes the executor again.
 Configured frontend and wrapper creation is all-or-nothing for startup. When those frontends
 exist, the router holds one exclusive frontend lock for its process lifetime, and another router
 using that frontend directory fails startup. A built-in-only registry creates no frontend or

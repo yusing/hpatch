@@ -81,7 +81,13 @@ appended text
 PATCH
 ```
 
-Paths are nonempty and consume the remainder of their command line. For root-scoped library evaluation through `Translate` or `TranslateForHost`, relative paths resolve from cwd, absolute paths must remain beneath the canonical root, lexical and symlink escapes fail, and translation emits root-relative paths. Router host evaluation through `TranslateForHostAt` instead uses an optional canonical metadata directory without filesystem confinement. With a directory, relative operands resolve from it; without one, relative operands reject and absolute operands remain valid. Router process cwd is never an implicit base. Emitted patch paths retain cleaned host identities for Codex to authorize.
+Paths are nonempty and consume the remainder of their command line. Root-scoped library application
+through `Apply` or `ApplyForHost` resolves relative paths from cwd; absolute paths must remain beneath
+the canonical root, and lexical or symlink escapes fail. Host translation through
+`TranslateForHostAt` instead uses an optional canonical metadata directory without filesystem
+confinement. With a directory, relative operands resolve from it; without one, relative operands
+reject and absolute operands remain valid. Router process cwd is never an implicit base. Emitted
+patch paths retain cleaned host identities for Codex to authorize.
 Trailing operands, malformed rows, forbidden controls, missing values, and unknown
 commands are invalid.
 

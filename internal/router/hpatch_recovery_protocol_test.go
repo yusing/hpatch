@@ -9,6 +9,11 @@ import (
 	"github.com/yusing/hpatch"
 )
 
+func recoverScriptForTest(ctx context.Context, rejectedScript, payload string) (string, error) {
+	recovered, err := recoverScriptDetailed(ctx, rejectedScript, payload)
+	return recovered.script, err
+}
+
 func TestHPatchRecoveryDescriptionIsNonInstructional(t *testing.T) {
 	const want = "Target correction for the latest rejected HPATCH/2 script. Invalid recovery leaves the retained script and workspace unchanged."
 	if hpatchRecoveryDescription != want {
@@ -85,7 +90,7 @@ func TestRecoverScriptRetargetsObservedBatchSize(t *testing.T) {
 			fmt.Sprintf("%s %d:%04x", commands[index*2+1].handle, index+21, index+1),
 		)
 	}
-	got, err := recoverScript(t.Context(), script.String(), strings.Join(corrections, "\n"))
+	got, err := recoverScriptForTest(t.Context(), script.String(), strings.Join(corrections, "\n"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -97,7 +102,7 @@ func TestRecoverScriptRetargetsObservedBatchSize(t *testing.T) {
 func TestRecoverScriptRetargetsMultilineLiteral(t *testing.T) {
 	script := "in file.go\n" + `type 2:bbbb "old\ntext" "new text"` + "\n"
 	command := recoveryCommands(script)[1]
-	got, err := recoverScript(t.Context(), script, command.handle+` "current\u000Atext"`)
+	got, err := recoverScriptForTest(t.Context(), script, command.handle+` "current\u000Atext"`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -125,7 +130,7 @@ func TestRecoverScriptRejectsNonTargetDuplicateStaleAndMalformedPayloads(t *test
 		handle + " 1:aaaa",
 		"",
 	} {
-		if got, err := recoverScript(t.Context(), script, payload); err == nil || got != "" {
+		if got, err := recoverScriptForTest(t.Context(), script, payload); err == nil || got != "" {
 			t.Fatalf("recoverScript(%q) = %q, %v; want atomic rejection", payload, got, err)
 		}
 	}
@@ -157,7 +162,7 @@ func TestRecoverScriptRejectsSemanticallyUnchangedTarget(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			script := "in file.go\n" + test.command + "\n"
 			command := recoveryCommands(script)[1]
-			got, err := recoverScript(t.Context(), script, command.handle+" "+test.correction)
+			got, err := recoverScriptForTest(t.Context(), script, command.handle+" "+test.correction)
 			if err == nil || got != "" || !strings.Contains(err.Error(), "replacement target must differ") {
 				t.Fatalf("unchanged recovery = %q, %v", got, err)
 			}
@@ -168,7 +173,7 @@ func TestRecoverScriptRejectsSemanticallyUnchangedTarget(t *testing.T) {
 func TestRecoverScriptAllowsDifferentLiteralOccurrence(t *testing.T) {
 	script := "in file.go\n" + `type "old" "bad"` + "\n"
 	command := recoveryCommands(script)[1]
-	got, err := recoverScript(t.Context(), script, command.handle+` "old" 2`)
+	got, err := recoverScriptForTest(t.Context(), script, command.handle+` "old" 2`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -181,12 +186,12 @@ func TestRecoverScriptAllowsDifferentLiteralOccurrence(t *testing.T) {
 func TestRecoverScriptHonorsContext(t *testing.T) {
 	script := "in file.go\n" + `type 1:aaaa "bad"` + "\n"
 	payload := recoveryCommands(script)[1].handle + " 2:bbbb"
-	if got, err := recoverScript(nil, script, payload); err == nil || got != "" {
+	if got, err := recoverScriptForTest(nil, script, payload); err == nil || got != "" {
 		t.Fatalf("nil context = %q, %v", got, err)
 	}
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	if got, err := recoverScript(ctx, script, payload); err == nil || got != "" {
+	if got, err := recoverScriptForTest(ctx, script, payload); err == nil || got != "" {
 		t.Fatalf("cancelled context = %q, %v", got, err)
 	}
 }

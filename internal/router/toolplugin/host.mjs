@@ -600,7 +600,7 @@ function validateCarrier(carrier) {
   }
   if (carrier.kind === "exec") {
     const keys = Object.keys(carrier);
-    if (!keys.every((key) => ["kind", "template", "params", "stockCommand", "retainInput"].includes(key))) {
+    if (!keys.every((key) => ["kind", "template", "params", "retainInput"].includes(key))) {
       throw new Error("translator returned a malformed carrier");
     }
     const normalized = {kind: "exec"};
@@ -613,12 +613,6 @@ function validateCarrier(carrier) {
     }
     if (carrier.params !== undefined) {
       normalized.params = validateExecParams(carrier.params);
-    }
-    if (carrier.stockCommand !== undefined) {
-      if (typeof carrier.stockCommand !== "string" || carrier.stockCommand === "") {
-        throw new Error("translator returned a malformed carrier");
-      }
-      normalized.stockCommand = carrier.stockCommand;
     }
     if (carrier.retainInput !== undefined) {
       if (typeof carrier.retainInput !== "boolean") {
@@ -661,16 +655,13 @@ async function translateTool(request) {
     function(name, argumentsJSON) {
       return Object.freeze({kind: "function", name, payload: argumentsJSON});
     },
-    exec(template, params, stockCommand, retainInput) {
+    exec(template, params, retainInput) {
       const carrier = {kind: "exec"};
       if (template !== undefined) {
         carrier.template = template;
       }
       if (params !== undefined) {
         carrier.params = params;
-      }
-      if (stockCommand !== undefined) {
-        carrier.stockCommand = stockCommand;
       }
       if (retainInput !== undefined) {
         carrier.retainInput = retainInput;
@@ -717,23 +708,13 @@ async function executeTool(request) {
     outputBudgetBytes: request.outputBudgetBytes,
   });
   const execution = await tool.execute(argumentsValue, context);
-  const current = normalizeExecutionOutput(execution, ["stdout", "stderr", "exitCode", "stock"]);
+  const current = normalizeExecutionOutput(execution, ["stdout", "stderr", "exitCode"]);
   if (current === null) {
     throw new Error("executor must return stdout/stderr strings and an exitCode from 0 through 255");
   }
   const currentBytes = byteLength(current.stdout) + byteLength(current.stderr);
   if (currentBytes > request.outputBudgetBytes) {
     throw new Error(`executor stdout and stderr exceed ${request.outputBudgetBytes} UTF-8 bytes`);
-  }
-  let stock = null;
-  try {
-    stock = normalizeExecutionOutput(execution.stock, ["stdout", "stderr", "exitCode"]);
-  } catch {
-    // Optional metric evidence cannot replace or invalidate the current result.
-  }
-  if (stock !== null
-      && currentBytes + byteLength(stock.stdout) + byteLength(stock.stderr) <= request.outputBudgetBytes) {
-    return {...current, stock};
   }
   return current;
 }

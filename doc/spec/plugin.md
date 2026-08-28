@@ -27,8 +27,7 @@ Before opening its listener or installing any configured contributed-tool wrappe
 loads every discovered declaration and validates the complete registry. It reports all detected plugin
 schema, API-version, identity, duplicate-name, input, translator, implementation, and wrapper
 conflicts, then exits nonzero if any declaration is invalid. Failure exposes no
-partial registry, forwards no Responses request, starts no executor implementation, and
-changes no durable metrics. Locally deterministic grammar syntax and unsupported construct
+partial registry, forwards no Responses request, or starts an executor implementation. Locally deterministic grammar syntax and unsupported construct
 checks occur at startup; this does not promise to reproduce a provider's model-specific or
 complexity limits.
 
@@ -47,12 +46,6 @@ tools this is their frontend command. For built-in shell it is normally the fixe
 physical line containing one static external Bash command instead remains the complete outer
 command. An optional JSON parameter object cannot contain `cmd`. The router supplies `cmd` from
 the selected command. If the parameter object contains `login`, its value must be exactly `false`.
-
-An exec translator may also return one nonempty stock command for output metrics. The router
-applies the same optional command template and JSON parameters, then renders the stock command
-through the canonical exec wrapper. This stock carrier is metric evidence only: the response,
-history, replay, and execution paths retain the validated worker carrier. Without a stock
-command, output metrics use that worker carrier as before.
 
 For each configured executor-backed contributed tool, startup creates or verifies a stable
 executable symlink beside the running `hpatch-router`. Its basename is exactly the contributed tool name,
@@ -77,14 +70,8 @@ private names creates a snapshot wrapper, stable frontend, or `PATH` dependency.
 Startup removes an authenticated frontend for one of the retired built-in names when it was left
 by a crashed pre-revamp router, without removing an unrelated file or link.
 
-An executor returns its current stdout, stderr, and exit status once. It may also return one
-optional stock result with the same fields. The stock result represents the output that the
-displaced stock tool path would have returned for the same operation. The executor computes both
-results during the same execution; the router does not invoke a second metric-only implementation.
-The worker returns only the current result to Codex. It validates and records the stock result as
-metric evidence without allowing it to change the current output or status. When the stock result
-is absent or invalid, metrics use the validated current result as its stock result. Invalid optional
-metric evidence cannot replace or modify the current executor result.
+An executor returns its current stdout, stderr, and exit status once. The worker returns that result
+to Codex and never performs a second observation-only execution or returns a benchmark baseline.
 
 Without exec parameters, the carrier supplies no working-directory or environment override.
 With exec parameters, the router forwards the JSON values without replacing the request-specific
@@ -135,7 +122,6 @@ Acceptance:
    call after verifying the retained carrier.
 9. A model-input diagnostic is bounded and recoverable, while an invalid translator result
    cannot be returned or counted as a successful tool call.
-10. Startup validation and tool-call metrics failures cannot replace an otherwise successful
-    translated carrier or executor result; request cancellation still propagates.
-11. An executor can return one validated current result with or without a validated stock result.
-    The worker returns only the current result and does not run a second comparison execution.
+10. Observation failure cannot replace an otherwise successful translated carrier or executor
+    result; request cancellation still propagates.
+11. An executor returns one validated current result and does not run a comparison execution.

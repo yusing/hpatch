@@ -1185,7 +1185,7 @@ export function createInspectFileTool(description: string, grammar: string): Too
       }
       try {
         const stdout = success(await inspect(argv[0]));
-        return {stdout, stock: {stdout, exitCode: 0}, exitCode: 0};
+        return {stdout, exitCode: 0};
       } catch (error) {
         const cause = error instanceof InspectFailure
           ? error
