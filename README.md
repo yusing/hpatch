@@ -143,6 +143,26 @@ A one-line Bash program with no shebang or directive and containing one external
 
 For native executor background and interactive behavior, see [OpenAI's Codex prompting guide](https://developers.openai.com/cookbook/examples/gpt-5/codex_prompting_guide#shell_command).
 
+## Inline operation commentary
+
+In router mode, non-strict structured tools receive an optional `commentary` string. When present,
+the router shows that text as ordinary assistant commentary immediately before the tool call and
+removes the field before Codex executes the tool. When omitted, the router supplies a concise
+tool-specific default instead.
+
+Tools whose purpose is already commentary or user messaging, Codex context/compaction/result
+carriers, and private shell-internal tools are excluded. Instrumenting those surfaces would
+duplicate user communication or expose a private carrier as a model tool.
+
+Strict tools retain their original schemas and receive defaults only. This preserves provider-side
+strict validation without requiring the model to emit a nullable commentary member on every call.
+A tool that already owns a parameter named `commentary` is treated the same way: hpatch neither
+changes nor consumes that parameter.
+
+Generated commentary remains visible in Codex history, but the next routed request removes the
+generated message and restores the model's exact original function arguments before forwarding
+history to the provider. The displayed commentary therefore does not become repeated model input.
+
 ## Requirements
 
 - Go 1.26 or newer. Normal `go install` does not require a checkout.

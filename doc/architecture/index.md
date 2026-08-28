@@ -4,7 +4,7 @@ pjdoc:
   kind: architecture
   scope: root
   status: draft
-  revision: "29"
+  revision: "30"
   files:
     []
 ---
@@ -408,6 +408,21 @@ the translated patch as later model input or derive another report representatio
 model inference can therefore reuse an exact current row present in the retained successful
 report. Router history does not retain hread rows on behalf of the engine, predict later
 targets, or move final-reference projection across the root boundary.
+
+## CTR-COMMENTARY-001 — Router-owned structured commentary projection
+
+The Responses router owns optional commentary schema projection, per-request tool identity and
+default selection, structured argument removal, user-visible message synthesis, and exact replay
+collapse. It operates on ordinary function schemas and function-call items after request parsing
+and before Codex dispatch. Strict validation remains owned by the original tool schema, so the
+router does not relax strict tools or take ownership of an existing `commentary` parameter.
+
+One retained call record joins the original provider item, stripped local carrier, and generated
+message ID. The existing bounded per-session history owner stores that record and removes only a
+known generated message during replay. Stream buffering reuses the router's existing bounded
+pending-call lifecycle and validates identity before exposing a call. Commentary projection does
+not parse tool output, change tool success, define executor behavior, or add another persistence
+store.
 
 ## CTR-METRICS-001 — Metrics classification and persistence
 

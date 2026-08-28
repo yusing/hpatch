@@ -4,7 +4,7 @@ pjdoc:
   kind: spec
   scope: root
   status: draft
-  revision: "34"
+  revision: "35"
   files:
     - interface.md
     - comparison.md
@@ -13,7 +13,9 @@ pjdoc:
 ---
 # hpatch specification
 
-Revision 34 supersedes CTP/1 with content-local and visible-line CTP/2 and measures it through
+Revision 35 adds router-owned inline commentary for structured tools while retaining the CTP/2
+contract introduced in revision 34. CTP/2 uses content-local and visible-line representations and
+is measured through
 fresh native and CTP/2-active Hpatch arms with the same
 decoded-response contract. It separates model behavior, per-request protocol representations and
 codec cost, and provider-observed operational usage. Bounded session telemetry exposes request and

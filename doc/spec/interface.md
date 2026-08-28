@@ -597,6 +597,48 @@ Acceptance:
     Warning insertion preserves the exact submitted command, carrier result, replay behavior, and
     metric classification.
 
+## REQ-COMMENTARY-001 — Inline structured-tool commentary
+
+In hpatch router mode, every non-strict function tool with an object parameter schema receives one
+optional string property named `commentary`. The property describes concise progress text shown to
+the user before the operation. It is not added to a required-property list. Strict function tools
+retain their exact schemas and receive generated defaults only. A tool whose accepted-input schema
+already owns `commentary` also retains that property and receives generated defaults only; the
+router never redefines or consumes another tool's argument.
+
+Tools whose owned purpose is commentary or user messaging, Codex context/compaction/result
+carriers, and private shell-internal commands are excluded from both schema injection and automatic
+defaults.
+
+For a routed function call, a nonblank explicit value suppresses its default. The router emits one
+assistant message with phase `commentary` before exposing the executable function-call item and
+removes only the router-owned argument before Codex dispatch. A missing or blank router-owned value
+uses the tool-specific default. Malformed argument objects and non-string router-owned values fail
+before tool dispatch rather than reaching the original handler with partially translated input.
+
+Complete JSON responses place the generated message immediately before its function call. Streaming
+responses buffer the matching function-call item and argument fragments until complete arguments
+can be validated, emit a Codex-supported completed commentary message, and then expose the call.
+Buffered item ID, call ID, namespace, name, type, and one-time argument completion are immutable;
+inconsistent lifecycle events fail before the call is exposed.
+
+The router retains the original function-call item under its call ID. On the next request it removes
+only the retained generated message, validates the locally visible stripped call and output, and
+restores the exact original item before provider forwarding. Provider tool definitions and response
+contract fields remain the originals visible to Codex.
+
+Acceptance:
+
+1. A non-strict object-schema function accepts an omitted or explicit `commentary` member without
+   adding it to `required`; explicit text is displayed before dispatch and is absent from handler
+   arguments.
+2. A strict tool and a tool with a pre-existing `commentary` parameter keep their exact schemas and
+   arguments and receive generated defaults only.
+3. JSON and SSE calls display commentary before the executable item. Streamed argument fragments
+   never expose the router-owned member, and changed or repeated buffered identities fail closed.
+4. Replay removes the generated message and restores exact original arguments without removing an
+   unrelated assistant message.
+
 ## REQ-METRICS-001 — Persistent token, command, target, and failure metrics
 
 Each host API invocation returns evaluator counters in the metrics fields of `HostTranslation`; obtaining that result does not persist them. The host supplies the visible

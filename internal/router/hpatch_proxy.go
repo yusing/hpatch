@@ -194,15 +194,16 @@ type hpatchHistory struct {
 	carrierKind    codeModeCarrierKind
 	carrierPayload string
 
-	report            string
-	translationError  string
-	evaluatorRejected bool
-	rejections        []hpatch.HostRejection
-	correlationID     string
-	attempt           int
-	upstreamItem      map[string]json.RawMessage
-	replayCarrier     bool
-	bytes             int
+	report              string
+	translationError    string
+	evaluatorRejected   bool
+	rejections          []hpatch.HostRejection
+	correlationID       string
+	attempt             int
+	upstreamItem        map[string]json.RawMessage
+	replayCarrier       bool
+	commentaryMessageID string
+	bytes               int
 	// unevaluated marks a call the proxy rejected before hpatch saw it. Such a
 	// recovery changed nothing and has no script of its own, so another recovery
 	// looks past it to the rejected script it was trying to repair.
@@ -327,10 +328,14 @@ func (p *hpatchProxy) touchSession(session *hpatchHistorySession) {
 }
 
 type hpatchPendingCall struct {
-	callID   string
-	toolName string
+	callID        string
+	toolName      string
+	structured    bool
+	argumentsDone bool
 
-	added []byte
+	added              []byte
+	arguments          string
+	argumentsDoneEvent []byte
 }
 
 type hpatchResponseTransform struct {
@@ -352,6 +357,7 @@ type hpatchResponseTransform struct {
 	local                     map[string]hpatchHistory
 	directory                 string
 	carriers                  codeModeCarrierCatalog
+	commentaryTools           commentaryToolCatalog
 
 	installedToolDefinition  string
 	installedToolBreakdown   []hpatch.HostToolDefinition
@@ -482,6 +488,10 @@ func (p *hpatchProxy) prepareRequest(ctx context.Context, request *parsedRespons
 	if !replaced {
 		return nil, errors.New("responses request cannot satisfy the required hpatch rewrite")
 	}
+	commentaryTools, err := prepareCommentaryTools(request.fields)
+	if err != nil {
+		return nil, err
+	}
 	modelContributions := p.registry.modelContributions()
 	installedToolBreakdown := make([]hpatch.HostToolDefinition, len(modelContributions))
 	for index, contribution := range modelContributions {
@@ -525,6 +535,7 @@ func (p *hpatchProxy) prepareRequest(ctx context.Context, request *parsedRespons
 		local:                     make(map[string]hpatchHistory),
 		directory:                 directory,
 		carriers:                  carriers,
+		commentaryTools:           commentaryTools,
 
 		installedToolDefinition: string(mustMarshalJSON(installedTools)),
 		installedToolBreakdown:  installedToolBreakdown,
@@ -1014,7 +1025,7 @@ func (p *hpatchProxy) rememberBatch(sessionID string, histories map[string]hpatc
 		if err != nil {
 			return fmt.Errorf("encode hpatch history item: %w", err)
 		}
-		history.bytes = len(sessionID) + len(callID) + len(history.toolName) + len(history.pluginID) + len(history.script) + len(history.root) + len(history.evaluated) + len(history.patch) + len(history.carrierKind) + len(history.carrierName) + len(history.carrierPayload) + len(history.report) + len(history.translationError) + len(history.correlationID) + len(encodedItem)
+		history.bytes = len(sessionID) + len(callID) + len(history.toolName) + len(history.pluginID) + len(history.script) + len(history.root) + len(history.evaluated) + len(history.patch) + len(history.carrierKind) + len(history.carrierName) + len(history.carrierPayload) + len(history.report) + len(history.translationError) + len(history.correlationID) + len(history.commentaryMessageID) + len(encodedItem)
 		for _, rejection := range history.rejections {
 			history.bytes += hpatchRejectionTextBytes(rejection)
 		}
@@ -1264,6 +1275,20 @@ func (p *hpatchProxy) history(sessionID, callID string) (hpatchHistory, bool) {
 	return history, ok
 }
 
+func (p *hpatchProxy) commentaryMessageIDs(sessionID string) map[string]struct{} {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	result := make(map[string]struct{})
+	if session := p.sessions[sessionID]; session != nil {
+		for _, history := range session.calls {
+			if history.commentaryMessageID != "" {
+				result[history.commentaryMessageID] = struct{}{}
+			}
+		}
+	}
+	return result
+}
+
 func (p *hpatchProxy) confirmHistory(sessionID, callID, output string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -1314,6 +1339,20 @@ func (p *hpatchProxy) reconcileInputPrefix(request *parsedResponsesRequest, sess
 		return nil //nolint:nilerr // Non-array input cannot contain replayable hpatch calls.
 	}
 	changed := false
+	commentaryIDs := p.commentaryMessageIDs(sessionID)
+	if len(commentaryIDs) != 0 {
+		retained := items[:0]
+		for _, item := range items {
+			if jsonString(item, "type") == "message" {
+				if _, generated := commentaryIDs[jsonString(item, "id")]; generated {
+					changed = true
+					continue
+				}
+			}
+			retained = append(retained, item)
+		}
+		items = retained
+	}
 	newestRetained := uint64(0)
 	validatedCarriers := make(map[string]bool)
 	for index, item := range items {
@@ -2327,13 +2366,14 @@ func (t *hpatchResponseTransform) Finish(streamEvent bool) error {
 
 func (t *hpatchResponseTransform) TransformSSE(payload []byte) ([][]byte, error) {
 	var envelope struct {
-		Type     string          `json:"type"`
-		ItemID   string          `json:"item_id"`
-		CallID   string          `json:"call_id"`
-		Name     string          `json:"name"`
-		Input    string          `json:"input"`
-		Item     json.RawMessage `json:"item"`
-		Response json.RawMessage `json:"response"`
+		Type      string          `json:"type"`
+		ItemID    string          `json:"item_id"`
+		CallID    string          `json:"call_id"`
+		Name      string          `json:"name"`
+		Input     string          `json:"input"`
+		Arguments string          `json:"arguments"`
+		Item      json.RawMessage `json:"item"`
+		Response  json.RawMessage `json:"response"`
 	}
 	if err := json.Unmarshal(payload, &envelope); err != nil {
 		if len(t.pending) != 0 {
@@ -2348,12 +2388,31 @@ func (t *hpatchResponseTransform) TransformSSE(payload []byte) ([][]byte, error)
 			return [][]byte{payload}, nil //nolint:nilerr // Unrelated output items pass through unchanged.
 		}
 		name := jsonString(item, "name")
+		namespace := jsonString(item, "namespace")
 		if t.codeModeToolName != "" && name == t.codeModeToolName {
 			itemID := jsonString(item, "id")
 			if jsonString(item, "type") == "custom_tool_call" && itemID != "" {
 				t.nativeExecItems[itemID] = struct{}{}
 			}
 			return [][]byte{payload}, nil
+		}
+		if jsonString(item, "type") == "function_call" {
+			if _, exists := t.commentaryTools[commentaryToolKey(namespace, name)]; exists {
+				itemID, callID := jsonString(item, "id"), jsonString(item, "call_id")
+				if itemID == "" || callID == "" {
+					return nil, errors.New("upstream emitted malformed commentary function call")
+				}
+				if len(t.pending) >= maxHPatchPendingCalls {
+					return nil, errors.New("upstream commentary call identity capacity exceeded")
+				}
+				if _, exists := t.pending[itemID]; exists {
+					return nil, errors.New("upstream reused commentary item ID")
+				}
+				t.pending[itemID] = hpatchPendingCall{
+					callID: callID, toolName: name, structured: true, added: bytes.Clone(payload),
+				}
+				return nil, nil
+			}
 		}
 		if !t.routesTool(name) {
 			return [][]byte{payload}, nil
@@ -2372,7 +2431,7 @@ func (t *hpatchResponseTransform) TransformSSE(payload []byte) ([][]byte, error)
 		return nil, nil
 
 	case "response.custom_tool_call_input.delta":
-		if _, ok := t.pending[envelope.ItemID]; ok {
+		if pending, ok := t.pending[envelope.ItemID]; ok && !pending.structured {
 			// Translation needs the complete input, but Codex's SSE idle timer only
 			// observes dispatched events. Preserve liveness without exposing the
 			// untranslated input fragment.
@@ -2380,9 +2439,15 @@ func (t *hpatchResponseTransform) TransformSSE(payload []byte) ([][]byte, error)
 		}
 		return [][]byte{payload}, nil
 
+	case "response.function_call_arguments.delta":
+		if pending, ok := t.pending[envelope.ItemID]; ok && pending.structured {
+			return [][]byte{[]byte(`{"type":"response.in_progress"}`)}, nil
+		}
+		return [][]byte{payload}, nil
+
 	case "response.custom_tool_call_input.done":
 		pending, ok := t.pending[envelope.ItemID]
-		if !ok {
+		if !ok || pending.structured {
 			if _, nativeExec := t.nativeExecItems[envelope.ItemID]; nativeExec {
 				input, _, changed, _ := nativeExecCommandInput(envelope.Input)
 				if changed {
@@ -2422,26 +2487,145 @@ func (t *hpatchResponseTransform) TransformSSE(payload []byte) ([][]byte, error)
 		}
 		return [][]byte{addedEvent, doneEvent}, nil
 
+	case "response.function_call_arguments.done":
+		pending, ok := t.pending[envelope.ItemID]
+		if !ok || !pending.structured {
+			return [][]byte{payload}, nil
+		}
+		if pending.argumentsDone {
+			return nil, errors.New("upstream repeated commentary function arguments completion")
+		}
+		var addedEnvelope struct {
+			Item json.RawMessage `json:"item"`
+		}
+		if json.Unmarshal(pending.added, &addedEnvelope) != nil {
+			return nil, errors.New("decode buffered commentary item")
+		}
+		var item map[string]json.RawMessage
+		if json.Unmarshal(addedEnvelope.Item, &item) != nil {
+			return nil, errors.New("decode buffered commentary call")
+		}
+		item["arguments"] = mustMarshalJSON(envelope.Arguments)
+		if _, matched, err := extractStructuredCommentary(item, t.commentaryTools); err != nil {
+			return nil, err
+		} else if !matched {
+			return nil, errors.New("buffered commentary call became unavailable")
+		}
+		pending.argumentsDone = true
+		pending.arguments = envelope.Arguments
+		pending.argumentsDoneEvent = bytes.Clone(payload)
+		t.pending[envelope.ItemID] = pending
+		return [][]byte{[]byte(`{"type":"response.in_progress"}`)}, nil
+
 	case "response.output_item.done":
 		var item map[string]json.RawMessage
 		if json.Unmarshal(envelope.Item, &item) != nil {
 			return [][]byte{payload}, nil //nolint:nilerr // Malformed unrelated output remains the upstream's responsibility.
 		}
+		itemID := jsonString(item, "id")
+		callID := jsonString(item, "call_id")
+		for pendingID, pending := range t.pending {
+			if pending.structured && pending.callID == callID && pendingID != itemID {
+				return nil, errors.New("upstream commentary function call changed id")
+			}
+		}
+		pending, bufferedCommentary := t.pending[itemID]
+		bufferedCommentary = bufferedCommentary && pending.structured
+		if !bufferedCommentary && jsonString(item, "type") == "function_call" {
+			key := commentaryToolKey(jsonString(item, "namespace"), jsonString(item, "name"))
+			if _, instrumented := t.commentaryTools[key]; instrumented {
+				for _, active := range t.pending {
+					if active.structured {
+						return nil, errors.New("upstream commentary function call changed identity")
+					}
+				}
+			}
+		}
+		if bufferedCommentary {
+			if !pending.argumentsDone {
+				return nil, errors.New("upstream completed commentary function call before its arguments")
+			}
+			var addedEnvelope struct {
+				Item json.RawMessage `json:"item"`
+			}
+			var addedItem map[string]json.RawMessage
+			if json.Unmarshal(pending.added, &addedEnvelope) != nil || json.Unmarshal(addedEnvelope.Item, &addedItem) != nil {
+				return nil, errors.New("decode buffered commentary identity")
+			}
+			for _, field := range []string{"type", "id", "call_id", "namespace", "name"} {
+				if jsonString(item, field) != jsonString(addedItem, field) {
+					return nil, fmt.Errorf("upstream commentary function call changed %s", field)
+				}
+			}
+			if jsonString(item, "arguments") != pending.arguments {
+				return nil, errors.New("upstream commentary function call changed arguments")
+			}
+			item["arguments"] = mustMarshalJSON(pending.arguments)
+			message, _, err := t.transformStructuredCommentary(item)
+			if err != nil {
+				return nil, err
+			}
+			if message == nil {
+				return nil, errors.New("buffered commentary call became unavailable")
+			}
+			addedItem["arguments"] = item["arguments"]
+			addedItemPayload, err := json.Marshal(addedItem)
+			if err != nil {
+				return nil, err
+			}
+			addedEvent, err := replaceRawField(pending.added, "item", addedItemPayload)
+			if err != nil {
+				return nil, err
+			}
+			argumentsDoneEvent, err := replaceRawField(pending.argumentsDoneEvent, "arguments", item["arguments"])
+			if err != nil {
+				return nil, err
+			}
+			transformedItem, err := json.Marshal(item)
+			if err != nil {
+				return nil, err
+			}
+			itemDoneEvent, err := replaceRawField(payload, "item", transformedItem)
+			if err != nil {
+				return nil, err
+			}
+			delete(t.pending, itemID)
+			if err := t.commitLocalCall(callID); err != nil {
+				return nil, err
+			}
+			return [][]byte{commentaryDoneEvent(message), addedEvent, argumentsDoneEvent, itemDoneEvent}, nil
+		}
 		delete(t.nativeExecItems, jsonString(item, "id"))
+		message, commentaryChanged, err := t.transformStructuredCommentary(item)
+		if err != nil {
+			return nil, err
+		}
+		if bufferedCommentary {
+			message = nil
+		}
+		delete(t.pending, itemID)
 		changed, err := t.transformOutputItem(item)
 		if err != nil {
 			return nil, err
 		}
-		if !changed {
-			return [][]byte{payload}, nil
+		if !changed && !commentaryChanged {
+			if message == nil {
+				return [][]byte{payload}, nil
+			}
+			return [][]byte{commentaryDoneEvent(message), payload}, nil
 		}
-		delete(t.pending, jsonString(item, "id"))
 		transformed, err := json.Marshal(item)
 		if err != nil {
 			return nil, err
 		}
 		event, err := replaceRawField(payload, "item", transformed)
-		return onePayload(event, err)
+		if err != nil {
+			return nil, err
+		}
+		if message != nil {
+			return [][]byte{commentaryDoneEvent(message), event}, nil
+		}
+		return [][]byte{event}, nil
 
 	case "response.completed":
 		clear(t.nativeExecItems)
@@ -2511,19 +2695,29 @@ func (t *hpatchResponseTransform) transformResponse(payload []byte) ([]byte, err
 		if err := json.Unmarshal(rawOutput, &output); err != nil {
 			return nil, errors.New("decode hpatch-enabled response output")
 		}
+		transformedOutput := make([]map[string]json.RawMessage, 0, len(output))
 		for _, item := range output {
+			message, _, err := t.transformStructuredCommentary(item)
+			if err != nil {
+				return nil, err
+			}
+			if message != nil {
+				transformedOutput = append(transformedOutput, message)
+			}
 			if _, err := t.transformOutputItem(item); err != nil {
 				return nil, err
 			}
+			transformedOutput = append(transformedOutput, item)
 		}
-		encoded, err := json.Marshal(output)
+		encoded, err := json.Marshal(transformedOutput)
 		if err != nil {
 			return nil, err
 		}
 		object["output"] = encoded
 	}
 	t.restoreResponseContract(object)
-	if jsonString(object, "status") == "completed" {
+	switch jsonString(object, "status") {
+	case "completed", "failed", "incomplete":
 		if err := t.commitHistory(); err != nil {
 			return nil, err
 		}
