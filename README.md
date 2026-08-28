@@ -54,6 +54,9 @@ exposes the reusable Go edit engine used by the router.
   model-visible catalog.
 - `HPATCH_DIAGNOSE=1` adds a free-form `report_issue` tool for
   agent-experience problems. See [`REQ-DIAGNOSE-001`](doc/spec/diagnose.md).
+- Subagent activity shows the requested role, model, reasoning effort, exact
+  spawn and follow-up messages, and exact replies as commentary. These
+  messages are visible in Codex but are removed before later model requests.
 
 ### Token saving
 

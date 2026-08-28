@@ -298,6 +298,13 @@ type hpatchResponseTransform struct {
 	local                     map[string]hpatchHistory
 	directory                 string
 	carriers                  codeModeCarrierCatalog
+	subagentTools             map[string]struct{}
+	subagentPending           map[string]subagentPendingCall
+	subagentDeferred          []map[string]json.RawMessage
+	subagentResponses         []map[string]json.RawMessage
+	subagentEmitted           map[string]struct{}
+	parentModel               string
+	parentReasoningEffort     string
 
 	codeModeToolName string
 
@@ -403,6 +410,12 @@ func (p *hpatchProxy) prepareRequest(ctx context.Context, request *parsedRespons
 	if err := rewriteReceivedModelInstructions(request, p.customizedInstructions, p.modelInstructions); err != nil {
 		return nil, err
 	}
+	subagentTools := subagentToolCatalog(request.fields)
+	subagentDeferred := prepareSubagentInputCommentary(request.fields)
+	var reasoning struct {
+		Effort string `json:"effort"`
+	}
+	_ = json.Unmarshal(request.fields["reasoning"], &reasoning)
 	directory, _ := usableRoutingDirectory(metadata.Directories)
 	originalTools, originalToolsPresent := request.fields["tools"]
 	originalTools = bytes.Clone(originalTools)
@@ -456,6 +469,13 @@ func (p *hpatchProxy) prepareRequest(ctx context.Context, request *parsedRespons
 		local:                     make(map[string]hpatchHistory),
 		directory:                 directory,
 		carriers:                  carriers,
+		subagentTools:             subagentTools,
+		subagentPending:           make(map[string]subagentPendingCall),
+		subagentDeferred:          subagentDeferred,
+		subagentResponses:         subagentDeferred,
+		subagentEmitted:           make(map[string]struct{}),
+		parentModel:               request.model(),
+		parentReasoningEffort:     strings.TrimSpace(reasoning.Effort),
 
 		codeModeToolName: codeModeToolName,
 	}, nil
@@ -2027,6 +2047,9 @@ func (t *hpatchResponseTransform) Finish(streamEvent bool) error {
 	if streamEvent && len(t.pending) != 0 {
 		return errors.New("upstream stream ended with an incomplete hpatch call")
 	}
+	if streamEvent && len(t.subagentPending) != 0 {
+		return errors.New("upstream stream ended with an incomplete subagent call")
+	}
 	return nil
 }
 
@@ -2047,6 +2070,15 @@ func (t *hpatchResponseTransform) TransformSSE(payload []byte) ([][]byte, error)
 		return [][]byte{payload}, nil
 	}
 	switch envelope.Type {
+	case "response.created":
+		visible := [][]byte{payload}
+		for _, message := range t.subagentDeferred {
+			visible = append(visible, subagentCommentaryDoneEvent(message))
+			t.subagentEmitted[jsonString(message, "id")] = struct{}{}
+		}
+		t.subagentDeferred = nil
+		return visible, nil
+
 	case "response.output_item.added":
 		var item map[string]json.RawMessage
 		if json.Unmarshal(envelope.Item, &item) != nil {
@@ -2059,6 +2091,20 @@ func (t *hpatchResponseTransform) TransformSSE(payload []byte) ([][]byte, error)
 				t.nativeExecItems[itemID] = struct{}{}
 			}
 			return [][]byte{payload}, nil
+		}
+		if jsonString(item, "type") == "function_call" {
+			key := subagentToolKey(jsonString(item, "namespace"), name)
+			if _, instrumented := t.subagentTools[key]; instrumented {
+				itemID, callID := jsonString(item, "id"), jsonString(item, "call_id")
+				if itemID == "" || callID == "" || len(t.subagentPending) >= maxHPatchPendingCalls {
+					return [][]byte{payload}, nil
+				}
+				if _, exists := t.subagentPending[itemID]; exists {
+					return [][]byte{payload}, nil
+				}
+				t.subagentPending[itemID] = subagentPendingCall{callID: callID, added: bytes.Clone(payload)}
+				return nil, nil
+			}
 		}
 		if !t.routesTool(name) {
 			return [][]byte{payload}, nil
@@ -2081,6 +2127,12 @@ func (t *hpatchResponseTransform) TransformSSE(payload []byte) ([][]byte, error)
 			// Translation needs the complete input, but Codex's SSE idle timer only
 			// observes dispatched events. Preserve liveness without exposing the
 			// untranslated input fragment.
+			return [][]byte{[]byte(`{"type":"response.in_progress"}`)}, nil
+		}
+		return [][]byte{payload}, nil
+
+	case "response.function_call_arguments.delta":
+		if _, pending := t.subagentPending[envelope.ItemID]; pending {
 			return [][]byte{[]byte(`{"type":"response.in_progress"}`)}, nil
 		}
 		return [][]byte{payload}, nil
@@ -2127,12 +2179,40 @@ func (t *hpatchResponseTransform) TransformSSE(payload []byte) ([][]byte, error)
 		}
 		return [][]byte{addedEvent, doneEvent}, nil
 
+	case "response.function_call_arguments.done":
+		pending, exists := t.subagentPending[envelope.ItemID]
+		if !exists {
+			return [][]byte{payload}, nil
+		}
+		if len(pending.argumentsDone) != 0 {
+			return [][]byte{payload}, nil
+		}
+		pending.argumentsDone = bytes.Clone(payload)
+		t.subagentPending[envelope.ItemID] = pending
+		return [][]byte{[]byte(`{"type":"response.in_progress"}`)}, nil
+
 	case "response.output_item.done":
 		var item map[string]json.RawMessage
 		if json.Unmarshal(envelope.Item, &item) != nil {
 			return [][]byte{payload}, nil //nolint:nilerr // Malformed unrelated output remains the upstream's responsibility.
 		}
-		delete(t.nativeExecItems, jsonString(item, "id"))
+		itemID := jsonString(item, "id")
+		if pending, buffered := t.subagentPending[itemID]; buffered {
+			delete(t.subagentPending, itemID)
+			visible := make([][]byte, 0, 4)
+			if jsonString(item, "call_id") == pending.callID {
+				if message := t.subagentCallMessage(item); message != nil {
+					visible = append(visible, subagentCommentaryDoneEvent(message))
+				}
+			}
+			visible = append(visible, pending.added)
+			if len(pending.argumentsDone) != 0 {
+				visible = append(visible, pending.argumentsDone)
+			}
+			visible = append(visible, payload)
+			return visible, nil
+		}
+		delete(t.nativeExecItems, itemID)
 		changed, err := t.transformOutputItem(item)
 		if err != nil {
 			return nil, err
@@ -2178,6 +2258,7 @@ func (t *hpatchResponseTransform) TransformSSE(payload []byte) ([][]byte, error)
 	case "response.failed", "response.incomplete":
 		clear(t.pending)
 		clear(t.nativeExecItems)
+		clear(t.subagentPending)
 		if err := t.Finish(true); err != nil {
 			return nil, err
 		}
@@ -2216,12 +2297,27 @@ func (t *hpatchResponseTransform) transformResponse(payload []byte) ([]byte, err
 		if err := json.Unmarshal(rawOutput, &output); err != nil {
 			return nil, errors.New("decode hpatch-enabled response output")
 		}
+		transformedOutput := make([]map[string]json.RawMessage, 0, len(t.subagentResponses)+len(output))
+		for _, message := range t.subagentResponses {
+			transformedOutput = append(transformedOutput, message)
+		}
+		t.subagentDeferred = nil
 		for _, item := range output {
+			message, matched := subagentCallCommentary(
+				item,
+				t.subagentTools,
+				t.parentModel,
+				t.parentReasoningEffort,
+			)
+			if matched {
+				transformedOutput = append(transformedOutput, message)
+			}
 			if _, err := t.transformOutputItem(item); err != nil {
 				return nil, err
 			}
+			transformedOutput = append(transformedOutput, item)
 		}
-		encoded, err := json.Marshal(output)
+		encoded, err := json.Marshal(transformedOutput)
 		if err != nil {
 			return nil, err
 		}
@@ -2234,6 +2330,24 @@ func (t *hpatchResponseTransform) transformResponse(payload []byte) ([]byte, err
 		}
 	}
 	return json.Marshal(object)
+}
+
+func (t *hpatchResponseTransform) subagentCallMessage(item map[string]json.RawMessage) map[string]json.RawMessage {
+	message, matched := subagentCallCommentary(
+		item,
+		t.subagentTools,
+		t.parentModel,
+		t.parentReasoningEffort,
+	)
+	if !matched {
+		return nil
+	}
+	id := jsonString(message, "id")
+	if _, emitted := t.subagentEmitted[id]; emitted {
+		return nil
+	}
+	t.subagentEmitted[id] = struct{}{}
+	return message
 }
 
 func (t *hpatchResponseTransform) commitHistory() error {
