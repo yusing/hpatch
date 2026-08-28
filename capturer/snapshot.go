@@ -148,7 +148,7 @@ func newMetricsSnapshot(mode, modelProtocol string) metricsSnapshot {
 	}
 }
 
-func (r *Recorder) addExchange(front captureRecord, providers []captureRecord) {
+func (r *Recorder) addExchange(front captureRecord, state *requestState, providers []captureRecord) {
 	sort.Slice(providers, func(i, j int) bool {
 		return providers[i].ProviderAttempt < providers[j].ProviderAttempt
 	})
@@ -205,13 +205,13 @@ func (r *Recorder) addExchange(front captureRecord, providers []captureRecord) {
 	}
 	if len(providers) != 0 {
 		final := providers[len(providers)-1]
-		if final.Usage != nil {
-			addCache(&r.metrics.Cache, r.previousInput, front.ThreadID, usageOf(*final.Usage))
-		}
+		r.recordCacheObservation(state, final.Usage)
 		r.metrics.Protocol.InputPayloadTokensSaved += signedDifference(front.Request.Tokens, final.Request.Tokens)
 		r.metrics.Protocol.InputPayloadBytesSaved += signedDifference(front.Request.Bytes, final.Request.Bytes)
 		r.metrics.Protocol.OutputPayloadTokensSaved += signedDifference(front.Response.Tokens, final.Response.Tokens)
 		r.metrics.Protocol.OutputPayloadBytesSaved += signedDifference(front.Response.Bytes, final.Response.Bytes)
+	} else {
+		r.recordCacheObservation(state, nil)
 	}
 	addHPatch(&r.metrics.HPatch, providerTools, exchange.DeliveredTools)
 	if r.metrics.Cache.EligiblePrefixTokens != 0 {
@@ -224,6 +224,35 @@ func (r *Recorder) addExchange(front captureRecord, providers []captureRecord) {
 		r.metrics.Capture.DroppedExchangeDetails++
 	} else {
 		r.metrics.Exchanges = append(r.metrics.Exchanges, exchange)
+	}
+}
+
+func (r *Recorder) recordCacheObservation(state *requestState, observed *tokenUsage) {
+	if state.threadID == "" {
+		if observed != nil {
+			addCache(&r.metrics.Cache, r.previousInput, "", usageOf(*observed))
+		}
+		return
+	}
+	state.cacheReady = true
+	if observed != nil {
+		usage := usageOf(*observed)
+		state.cacheUsage = &usage
+	}
+	queue := r.cacheQueues[state.threadID]
+	for len(queue) != 0 && queue[0].cacheReady {
+		current := queue[0]
+		queue = queue[1:]
+		if current.cacheUsage == nil {
+			delete(r.previousInput, state.threadID)
+		} else {
+			addCache(&r.metrics.Cache, r.previousInput, state.threadID, *current.cacheUsage)
+		}
+	}
+	if len(queue) == 0 {
+		delete(r.cacheQueues, state.threadID)
+	} else {
+		r.cacheQueues[state.threadID] = queue
 	}
 }
 

@@ -30,7 +30,8 @@ The snapshot derives:
 - logical requests, provider attempts, completion and failure counts;
 - provider input, cached input, uncached input, output, and reasoning usage;
 - cold/new input and immediately preceding logical-request eligible-prefix cache attribution from
-  the final provider attempt by nonempty thread;
+  the final provider attempt by nonempty thread, ordered when requests enter the handler and
+  invalidated when that final attempt has no usage;
 - client and provider payload bytes and GPT-5 token estimates;
 - signed client-versus-final-provider payload savings for input and output;
 - provider-emitted and client-delivered tool shapes;

@@ -46,7 +46,9 @@ capturer, not by the router, engine, plugin, benchmark report, or dashboard. The
 2. provider input, cached input, uncached input, output, reasoning, and usage-bearing attempt counts;
 3. cache attribution that separates cold/new uncached input from misses within the immediately
    preceding logical request's final provider attempt for the same nonempty thread; retries within
-   one request MUST NOT become cache predecessors, and requests without a thread are cold;
+   one request MUST NOT become cache predecessors, requests without a thread are cold, concurrent
+   completions MUST retain request-arrival order, and a final attempt without usage MUST break the
+   predecessor chain rather than reuse older evidence;
 4. client-request, provider-attempt-request, provider-response, and client-response payload totals;
 5. signed input/output byte and token savings between each client boundary and the final provider
    attempt, so negative expansion remains visible;

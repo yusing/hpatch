@@ -72,7 +72,7 @@ func TestRecorderObservesSingleListenerAndProviderRetries(t *testing.T) {
 				continue
 			}
 			writer.Header().Set("Content-Type", "application/json")
-			_, _ = io.WriteString(writer, `{"status":"completed","output":[{"type":"custom_tool_call","call_id":"call-1","name":"exec","input":"const result = await tools.apply_patch(\"private patch\");"}]}`)
+			_, _ = io.WriteString(writer, `{"status":"completed","output":[{"type":"custom_tool_call","call_id":"call-1","name":"exec","input":"// hpatch-proxy: apply translated patch\nawait tools.apply_patch(\"private patch\");\ntext(\"done\");"}]}`)
 		}
 	})))
 	defer router.Close()
@@ -324,8 +324,11 @@ func TestSnapshotAccountsCacheCorrectionsDiagnosticsAndMissingEvidence(t *testin
 	} {
 		state := states[record.CaptureID]
 		if state == nil {
-			state = &requestState{captureID: record.CaptureID, sequence: record.RequestSequence}
+			state = &requestState{captureID: record.CaptureID, sequence: record.RequestSequence, threadID: record.ThreadID}
 			states[record.CaptureID] = state
+			if state.threadID != "" {
+				recorder.cacheQueues[state.threadID] = append(recorder.cacheQueues[state.threadID], state)
+			}
 		}
 		if record.Boundary == "provider" {
 			state.addProvider(record)
@@ -569,7 +572,10 @@ func TestClassifyToolInputRetainsOnlyStableDiagnosticCodes(t *testing.T) {
 		wantKind   string
 		wantReason string
 	}{
+		{name: "apply carrier", input: hpatchApplyCarrierPrefix + `"*** Begin Patch\\n*** End Patch");\ntext("done");`, wantKind: "apply_patch"},
+		{name: "exec command carrier", input: `const result = await tools.exec_command({"cmd":"true"});\ntext(result.output);`, wantKind: "exec_command"},
 		{name: "router diagnostic", input: `text("type: command 2, reason row-stale: private detail\n");`, wantKind: "hpatch_diagnostic", wantReason: "row-stale"},
+		{name: "apply substring in diagnostic", input: `text("type: command 2, reason file-path: missing tools.apply_patch(example)\n");`, wantKind: "hpatch_diagnostic", wantReason: "file-path"},
 		{name: "arbitrary text", input: `text("private sentinel\nmore private content");`, wantKind: "other"},
 		{name: "forged reason", input: `text("type: command 2, reason private-sentinel: detail\n");`, wantKind: "other"},
 		{name: "malformed envelope", input: `text("prefix, reason row-stale: detail\n");`, wantKind: "other"},
@@ -616,7 +622,10 @@ func TestCacheAttributionUsesFinalAttemptOfPrecedingLogicalRequest(t *testing.T)
 		t.Fatal(err)
 	}
 	writeExchange := func(sequence uint64, thread string, usages ...tokenUsage) {
-		state := &requestState{captureID: fmt.Sprintf("cache-%d", sequence), sequence: sequence}
+		state := &requestState{captureID: fmt.Sprintf("cache-%d", sequence), sequence: sequence, threadID: thread}
+		if thread != "" {
+			recorder.cacheQueues[thread] = append(recorder.cacheQueues[thread], state)
+		}
 		for index, value := range usages {
 			provider := captureRecord{
 				Boundary: "provider", CaptureID: state.captureID, RequestSequence: sequence,
@@ -635,10 +644,77 @@ func TestCacheAttributionUsesFinalAttemptOfPrecedingLogicalRequest(t *testing.T)
 	writeExchange(2, "thread", tokenUsage{InputTokens: 150, CachedTokens: 100})
 	writeExchange(3, "", tokenUsage{InputTokens: 80})
 	writeExchange(4, "", tokenUsage{InputTokens: 90, CachedTokens: 80})
+	writeExchange(5, "thread", tokenUsage{InputTokens: 200, CachedTokens: 150})
+	state := &requestState{captureID: "cache-6", sequence: 6, threadID: "thread"}
+	recorder.cacheQueues["thread"] = append(recorder.cacheQueues["thread"], state)
+	provider := captureRecord{
+		Boundary: "provider", CaptureID: state.captureID, RequestSequence: state.sequence,
+		ProviderAttempt: 1, ThreadID: state.threadID, StatusCode: http.StatusTooManyRequests,
+		ResponseStatus: "http_error", ResponseComplete: true,
+	}
+	state.addProvider(provider)
+	recorder.write(provider, state)
+	recorder.write(captureRecord{
+		Boundary: "codex", CaptureID: state.captureID, RequestSequence: state.sequence, ThreadID: state.threadID,
+		StatusCode: http.StatusTooManyRequests, ResponseStatus: "http_error", ResponseComplete: true,
+	}, state)
+	writeExchange(7, "thread", tokenUsage{InputTokens: 220, CachedTokens: 200})
 
 	cache := recorder.snapshot().Cache
-	if cache.EligiblePrefixTokens != 120 || cache.EligiblePrefixCachedTokens != 100 ||
-		cache.EligiblePrefixMissTokens != 20 || cache.ColdOrNewUncachedInputTokens != 240 {
+	if cache.EligiblePrefixTokens != 270 || cache.EligiblePrefixCachedTokens != 250 ||
+		cache.EligiblePrefixMissTokens != 20 || cache.ColdOrNewUncachedInputTokens != 310 {
 		t.Fatalf("cache metrics = %#v", cache)
+	}
+}
+
+func TestCacheAttributionFollowsRequestSequenceWhenResponsesFinishOutOfOrder(t *testing.T) {
+	recorder, err := New(Config{Mode: "hpatch", ModelProtocol: "native"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	states := make([]*requestState, 3)
+	header := make(http.Header)
+	header.Set("thread-id", "thread")
+	for index := range states {
+		states[index], err = recorder.beginRequest(header)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	finish := func(state *requestState, usage tokenUsage) {
+		provider := captureRecord{
+			Boundary: "provider", CaptureID: state.captureID, RequestSequence: state.sequence,
+			ProviderAttempt: 1, ThreadID: state.threadID, StatusCode: http.StatusOK,
+			ResponseStatus: "completed", ResponseComplete: true, Usage: &usage,
+		}
+		state.addProvider(provider)
+		recorder.write(provider, state)
+		recorder.write(captureRecord{
+			Boundary: "codex", CaptureID: state.captureID, RequestSequence: state.sequence, ThreadID: state.threadID,
+			StatusCode: http.StatusOK, ResponseStatus: "completed", ResponseComplete: true,
+		}, state)
+	}
+	finish(states[1], tokenUsage{InputTokens: 120, CachedTokens: 80})
+	finish(states[0], tokenUsage{InputTokens: 100})
+	finish(states[2], tokenUsage{InputTokens: 130, CachedTokens: 110})
+
+	cache := recorder.snapshot().Cache
+	if cache.EligiblePrefixTokens != 220 || cache.EligiblePrefixCachedTokens != 190 ||
+		cache.EligiblePrefixMissTokens != 30 || cache.ColdOrNewUncachedInputTokens != 130 {
+		t.Fatalf("cache metrics = %#v", cache)
+	}
+}
+
+func TestRecorderIgnoresUnregisteredResponsesSuffix(t *testing.T) {
+	recorder, err := New(Config{Mode: "hpatch", ModelProtocol: "native"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := recorder.Handler(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.WriteHeader(http.StatusNotFound)
+	}))
+	handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/invalid/responses", strings.NewReader(`{"model":"model"}`)))
+	if snapshot := recorder.snapshot(); snapshot.Capture.Records != 0 || snapshot.Requests.Logical != 0 {
+		t.Fatalf("snapshot = %#v", snapshot)
 	}
 }

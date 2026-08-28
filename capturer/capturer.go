@@ -32,6 +32,8 @@ const maxRetainedExchangeDetails = 4096
 
 const maxObservedResponseBytes = 8 << 20
 
+const hpatchApplyCarrierPrefix = "// hpatch-proxy: apply translated patch\nawait tools.apply_patch("
+
 type captureKey struct{}
 
 // Config identifies the observed router behavior and optional durable JSONL
@@ -102,6 +104,7 @@ type Recorder struct {
 	requestSequence uint64
 	metrics         metricsSnapshot
 	previousInput   map[string]uint64
+	cacheQueues     map[string][]*requestState
 }
 
 type requestState struct {
@@ -114,6 +117,8 @@ type requestState struct {
 	threadID         string
 	subagent         string
 	providers        []captureRecord
+	cacheReady       bool
+	cacheUsage       *usageMetrics
 }
 
 // New creates one in-process recorder. It never starts a server.
@@ -133,6 +138,7 @@ func New(config Config) (*Recorder, error) {
 		file: file, codec: codec, mode: config.Mode, modelProtocol: config.ModelProtocol,
 		metrics:       newMetricsSnapshot(config.Mode, config.ModelProtocol),
 		previousInput: make(map[string]uint64),
+		cacheQueues:   make(map[string][]*requestState),
 	}, nil
 }
 
@@ -148,7 +154,7 @@ func (r *Recorder) Close() error {
 // without capture state or buffering.
 func (r *Recorder) Handler(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		if request.Method != http.MethodPost || !strings.HasSuffix(request.URL.Path, "/responses") {
+		if request.Method != http.MethodPost || request.URL.Path != "/v1/responses" {
 			next.ServeHTTP(writer, request)
 			return
 		}
@@ -216,18 +222,21 @@ func (r *Recorder) beginRequest(header http.Header) (*requestState, error) {
 	if err != nil {
 		return nil, err
 	}
-	r.mu.Lock()
-	r.requestSequence++
-	sequence := r.requestSequence
-	r.mu.Unlock()
-	return &requestState{
+	state := &requestState{
 		captureID: captureID,
-		sequence:  sequence,
 		requestID: header.Get("x-client-request-id"),
 		sessionID: cmp.Or(header.Get("session-id"), header.Get("Session_id")),
 		threadID:  header.Get("thread-id"),
 		subagent:  header.Get("x-openai-subagent"),
-	}, nil
+	}
+	r.mu.Lock()
+	r.requestSequence++
+	state.sequence = r.requestSequence
+	if state.threadID != "" {
+		r.cacheQueues[state.threadID] = append(r.cacheQueues[state.threadID], state)
+	}
+	r.mu.Unlock()
+	return state, nil
 }
 
 func (s *requestState) beginProviderAttempt() uint64 {
@@ -347,7 +356,7 @@ func (r *Recorder) write(record captureRecord, state *requestState) {
 		r.metrics.Capture.Incomplete++
 	}
 	if record.Boundary == "codex" {
-		r.addExchange(record, state.providerRecords())
+		r.addExchange(record, state, state.providerRecords())
 	}
 	if encodeErr != nil {
 		r.metrics.Capture.WriteErrors++

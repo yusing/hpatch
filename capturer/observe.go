@@ -178,9 +178,9 @@ func classifyToolInput(name, input string) (string, string) {
 		return "", ""
 	}
 	switch {
-	case strings.Contains(input, "tools.apply_patch("):
+	case strings.HasPrefix(input, hpatchApplyCarrierPrefix):
 		return "apply_patch", ""
-	case strings.Contains(input, "tools.exec_command("):
+	case strings.HasPrefix(input, "const result = await tools.exec_command("):
 		return "exec_command", ""
 	}
 	encoded, ok := strings.CutPrefix(input, "text(")
