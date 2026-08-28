@@ -18,6 +18,8 @@ func TestDashboardUsesCaptureMetricsOnTheExistingListener(t *testing.T) {
 	}
 	body := recorder.Body.String()
 	for _, required := range []string{
+		"Token<br>Telemetry", "Skip to content", `role="tablist"`, `data-view="overview"`,
+		`id="status-pill"`, `class="cards"`, "prefers-reduced-motion",
 		"fetch('/api/metrics'", "hpatch.capture.metrics.v1", "Provider usage",
 		"Transport", "Protocol savings", "Hpatch delivery", "Hpatch diagnostics",
 		"Capture health", "Tool transport", "Recent exchanges", "Provider attempts",
