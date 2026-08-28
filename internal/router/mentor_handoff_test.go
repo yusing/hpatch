@@ -292,7 +292,7 @@ func TestExecuteRequestMentorHandoffCountsFailedResponseInput(t *testing.T) {
 	}
 }
 
-func TestMentorHandoffRejectsInvalidReasoningAndActiveCapacity(t *testing.T) {
+func TestMentorHandoffRejectsInvalidReasoningWithoutSharingMetricsCapacity(t *testing.T) {
 	mentor := newMentorHandoff()
 	headers := mentorTestHeaders(t, "child")
 	metadata, valid := decodeCodexTurnMetadata(headers)
@@ -307,7 +307,8 @@ func TestMentorHandoffRejectsInvalidReasoningAndActiveCapacity(t *testing.T) {
 		mentor.sessions[fmt.Sprintf("active-%d", index)] = mentorSession{}
 	}
 	request = mentorTestRequest(t, "gpt-5.6-luna")
-	if _, err := mentor.prepare(headers, metadata, valid, &request); err == nil {
-		t.Fatal("active subagent capacity was accepted")
+	prepared, err := mentor.prepare(headers, metadata, valid, &request)
+	if err != nil || prepared == nil {
+		t.Fatalf("new child at metrics history limit = %#v, %v", prepared, err)
 	}
 }

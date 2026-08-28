@@ -9,24 +9,11 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
+from benchmark_jsonl import load_jsonl
+
 
 def load_json(path: Path) -> Any:
     return json.loads(path.read_text(encoding="utf-8"))
-
-
-def load_jsonl(path: Path) -> list[dict[str, Any]]:
-    records: list[dict[str, Any]] = []
-    for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
-        if not line.strip():
-            continue
-        try:
-            record = json.loads(line)
-        except json.JSONDecodeError as error:
-            raise ValueError(f"{path}:{line_number}: invalid JSON: {error}") from error
-        if not isinstance(record, dict):
-            raise ValueError(f"{path}:{line_number}: record must be an object")
-        records.append(record)
-    return records
 
 
 def empty_usage() -> dict[str, int]:
@@ -76,6 +63,8 @@ def main() -> int:
     )
     proof_paths = [Path(value) for value in sys.argv[7:]]
     try:
+        if parent_model == actual_model:
+            raise ValueError("parent and actual child models must differ for Mentor Handoff attribution")
         records = load_jsonl(capture_path)
         results = load_jsonl(results_path)
         analysis = load_json(analysis_path)

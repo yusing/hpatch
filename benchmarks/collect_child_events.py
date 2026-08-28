@@ -13,20 +13,7 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-
-def load_jsonl(path: Path) -> list[dict[str, Any]]:
-    records: list[dict[str, Any]] = []
-    for line_number, raw_line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
-        if not raw_line.strip():
-            continue
-        try:
-            record = json.loads(raw_line)
-        except json.JSONDecodeError as error:
-            raise ValueError(f"{path}:{line_number}: invalid JSON: {error}") from error
-        if not isinstance(record, dict):
-            raise ValueError(f"{path}:{line_number}: record must be an object")
-        records.append(record)
-    return records
+from benchmark_jsonl import load_jsonl
 
 
 def root_and_child_ids(root_events: Path, allow_missing_child: bool = False) -> tuple[str, str | None]:
@@ -305,10 +292,12 @@ def main() -> int:
     root_events, codex_home, output = map(Path, sys.argv[1:4])
     proof_output = Path(sys.argv[4]) if len(sys.argv) == 9 else None
     expected_role = sys.argv[5] if len(sys.argv) == 9 else None
-    expected_prompt = Path(sys.argv[6]).read_text(encoding="utf-8") if len(sys.argv) == 9 else None
     expected_model = sys.argv[7] if len(sys.argv) == 9 else None
     expected_effort = sys.argv[8] if len(sys.argv) == 9 else None
+    expected_prompt = None
     try:
+        if len(sys.argv) == 9:
+            expected_prompt = Path(sys.argv[6]).read_text(encoding="utf-8")
         sessions = codex_home / "sessions"
         if not sessions.is_dir():
             raise ValueError(f"Codex sessions directory is missing: {sessions}")

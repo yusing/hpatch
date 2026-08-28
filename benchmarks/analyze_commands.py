@@ -196,7 +196,7 @@ def command_words(segment: str) -> list[str]:
 
 
 def decode_ansi_c_word(word: str) -> str:
-    if not word.startswith("$"):
+    if not (word.startswith("$'") and word.endswith("'")):
         return word
     escapes = {
         "a": "\a",
@@ -211,7 +211,7 @@ def decode_ansi_c_word(word: str) -> str:
         "'": "'",
         '"': '"',
     }
-    source = word[1:]
+    source = word[2:-1]
     output: list[str] = []
     index = 0
     while index < len(source):
@@ -221,10 +221,39 @@ def decode_ansi_c_word(word: str) -> str:
             continue
         escaped = source[index + 1]
         replacement = escapes.get(escaped)
-        if replacement is None:
-            output.extend(("\\", escaped))
-        else:
+        if replacement is not None:
             output.append(replacement)
+            index += 2
+            continue
+        if escaped in "01234567":
+            end = index + 2
+            while end < min(index + 4, len(source)) and source[end] in "01234567":
+                end += 1
+            output.append(chr(int(source[index + 1 : end], 8) & 0xFF))
+            index = end
+            continue
+        widths = {"x": 2, "u": 4, "U": 8}
+        if escaped in widths:
+            end = index + 2
+            limit = min(end + widths[escaped], len(source))
+            while end < limit and source[end] in "0123456789abcdefABCDEF":
+                end += 1
+            if end != index + 2:
+                encoded = source[index + 2 : end]
+                try:
+                    value = int(encoded, 16)
+                    if escaped in "uU" and (value > 0x10FFFF or 0xD800 <= value <= 0xDFFF):
+                        raise ValueError
+                    output.append(chr(value))
+                except ValueError:
+                    output.append(source[index:end])
+                index = end
+                continue
+        if escaped == "c" and index + 2 < len(source) and ord(source[index + 2]) < 128:
+            output.append(chr(ord(source[index + 2].upper()) ^ 64))
+            index += 3
+            continue
+        output.extend(("\\", escaped))
         index += 2
     return "".join(output)
 
@@ -242,8 +271,11 @@ def shell_helper_body(segment: str) -> str | None:
     # program it carries. A failed executor-style call may retain that program as its
     # original JSON request, so recover only the established string cmd field.
     body = words[-1]
-    if "$'" in segment:
-        body = decode_ansi_c_word(body)
+    ansi_body = re.search(r"(\$'(?:\\.|[^'])*')\s*$", segment, re.DOTALL)
+    raw_body = ansi_body.group(1) if ansi_body is not None else body
+    decoded_body = decode_ansi_c_word(raw_body)
+    if decoded_body != raw_body:
+        body = decoded_body
     try:
         request = json.loads(body)
     except json.JSONDecodeError:

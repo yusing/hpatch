@@ -95,7 +95,7 @@ func (r *captureRecorder) write(record captureRecord) error {
 type captureBody struct {
 	io.ReadCloser
 	content  bytes.Buffer
-	record   func([]byte, bool)
+	record   func([]byte)
 	recorded bool
 }
 
@@ -105,22 +105,22 @@ func (body *captureBody) Read(destination []byte) (int, error) {
 		_, _ = body.content.Write(destination[:count])
 	}
 	if errors.Is(err, io.EOF) {
-		body.finish(true)
+		body.finish()
 	}
 	return count, err
 }
 
 func (body *captureBody) Close() error {
-	body.finish(false)
+	body.finish()
 	return body.ReadCloser.Close()
 }
 
-func (body *captureBody) finish(complete bool) {
+func (body *captureBody) finish() {
 	if body.recorded {
 		return
 	}
 	body.recorded = true
-	body.record(body.content.Bytes(), complete)
+	body.record(body.content.Bytes())
 }
 
 func newCaptureProxy(target *url.URL, boundary string, recorder *captureRecorder) http.Handler {
@@ -140,20 +140,19 @@ func newCaptureProxy(target *url.URL, boundary string, recorder *captureRecorder
 		statusCode := response.StatusCode
 		response.Body = &captureBody{
 			ReadCloser: response.Body,
-			record: func(payload []byte, complete bool) {
+			record: func(payload []byte) {
 				record := captureRecord{
-					SchemaVersion:    1,
-					Boundary:         boundary,
-					CaptureID:        capture.CaptureID,
-					RequestID:        capture.RequestID,
-					SessionID:        capture.SessionID,
-					ThreadID:         capture.ThreadID,
-					Subagent:         capture.Subagent,
-					RequestModel:     capture.Model,
-					StatusCode:       statusCode,
-					ResponseComplete: complete,
-					CaptureError:     capture.Error,
-					CapturedAt:       time.Now().UTC(),
+					SchemaVersion: 1,
+					Boundary:      boundary,
+					CaptureID:     capture.CaptureID,
+					RequestID:     capture.RequestID,
+					SessionID:     capture.SessionID,
+					ThreadID:      capture.ThreadID,
+					Subagent:      capture.Subagent,
+					RequestModel:  capture.Model,
+					StatusCode:    statusCode,
+					CaptureError:  capture.Error,
+					CapturedAt:    time.Now().UTC(),
 				}
 				observedPayload, err := decodedCapturePayload(payload, contentEncoding)
 				if err != nil {
@@ -161,7 +160,8 @@ func newCaptureProxy(target *url.URL, boundary string, recorder *captureRecorder
 				} else {
 					observeResponse(observedPayload, contentType, &record)
 				}
-				if record.ResponseStatus != "" {
+				switch record.ResponseStatus {
+				case "completed", "failed", "incomplete", "cancelled":
 					record.ResponseComplete = true
 				}
 				if err := recorder.write(record); err != nil {

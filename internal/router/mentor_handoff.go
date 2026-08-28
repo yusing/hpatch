@@ -69,20 +69,20 @@ func (m *mentorHandoff) prepare(headers http.Header, metadata codexTurnMetadata,
 
 	m.mu.Lock()
 	state, exists := m.sessions[threadID]
-	if !exists && len(m.sessions) >= maxSessionHistories {
-		m.mu.Unlock()
-		return nil, errors.New("mentor handoff subagent capacity reached")
-	}
-	m.sessions[threadID] = state
-	m.mu.Unlock()
 	if state.complete {
+		m.mu.Unlock()
 		return nil, nil
 	}
 
 	requestedModel := request.model()
 	if err := request.setModelAndReasoningEffort(mentorLeaderModel, mentorLeaderEffort); err != nil {
+		m.mu.Unlock()
 		return nil, fmt.Errorf("prepare Mentor Handoff request: %w", err)
 	}
+	if !exists {
+		m.sessions[threadID] = state
+	}
+	m.mu.Unlock()
 	return &mentorRequest{owner: m, threadID: threadID, requestedModel: requestedModel}, nil
 }
 

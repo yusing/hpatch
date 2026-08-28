@@ -30,10 +30,27 @@ cat >"$fixture/expected-child-events.jsonl" <<'JSON'
 {"item":{"changes":[{"kind":"update","path":"/workspace/repo/file.go"}],"status":"completed","tool_call_id":"collector-change","type":"file_change"},"type":"item.completed"}
 JSON
 diff -u "$fixture/expected-child-events.jsonl" "$collector_output"
-if grep -Fq 'private output' "$collector_output"; then
-	printf 'child event collector retained command output\n' >&2
-	exit 1
-fi
+for secret in 'private output' 'private diff'; do
+	if grep -Fq "$secret" "$collector_output"; then
+		printf 'child event collector retained sensitive rollout content\n' >&2
+		exit 1
+	fi
+done
+
+python3 - "$benchmark_root" <<'PY'
+import sys
+
+sys.path.insert(0, sys.argv[1])
+from analyze_commands import decode_ansi_c_word, shell_helper_body
+
+decoded = decode_ansi_c_word(r"$'\101\x42\u0043\U00000044\cA\q'")
+if decoded != "ABCD\x01\\q":
+    raise SystemExit(f"ANSI-C decoding mismatch: {decoded!r}")
+if shell_helper_body("shell bash $'unrelated' $VAR") != "$VAR":
+    raise SystemExit("unrelated ANSI-C word changed the carried shell body")
+if shell_helper_body("shell bash $'hello world'") != "hello world":
+    raise SystemExit("ANSI-C carried body lost embedded whitespace")
+PY
 
 static_root="$fixture/static-root.jsonl"
 static_home="$fixture/static-home"
@@ -64,6 +81,18 @@ jq -e '
 	.configured_reasoning_effort == "xhigh" and
 	.child_thread_id == "child-thread"
 ' "$fixture/static-proof.json" >/dev/null
+
+missing_prompt_home="$fixture/missing-prompt-home"
+mkdir -p "$missing_prompt_home/sessions"
+if python3 "$benchmark_root/collect_child_events.py" \
+	"$static_root" "$missing_prompt_home" "$fixture/missing-prompt-events.jsonl" \
+	"$fixture/missing-prompt-proof.json" benchmark_worker "$fixture/missing-prompt.txt" \
+	gpt-5.6-luna xhigh 2>"$fixture/missing-prompt-error.txt"; then
+	printf 'child event collector accepted a missing expected prompt\n' >&2
+	exit 1
+fi
+grep -Fq 'collect_child_events.py:' "$fixture/missing-prompt-error.txt"
+test ! -e "$missing_prompt_home"
 
 wrong_prompt_home="$fixture/wrong-prompt-home"
 mkdir -p "$wrong_prompt_home/sessions"
@@ -416,6 +445,39 @@ grep -Fq '| Mentor + actual child | child requests | 2400 | 1450 | 200 | 100 |' 
 grep -Fq '| Combined comparison | parent + child | 3000 | 1800 | 250 | 120 |' "$fixture/summary.md"
 grep -Fq '| Hpatch + Mentor Handoff | gpt-5.6-sol | 1 | 2 | 2 | 5 |' "$fixture/summary.md"
 grep -Fq 'Treatment same-path loops by actual provider model: `gpt-5.6-sol` 5, `gpt-5.6-luna` 0.' "$fixture/summary.md"
+
+cp "$mentor_log" "$fixture/valid-mentor-log"
+printf '%s\n' 'hpatch-2 | msg="Mentor Handoff progress" handoff_complete=true handoff_transitioned=true' >>"$mentor_log"
+if bash "$benchmark_root/report.sh" "$fixture" >/dev/null 2>&1; then
+	printf 'report accepted more completed handoffs than treatment runs\n' >&2
+	exit 1
+fi
+mv "$fixture/valid-mentor-log" "$mentor_log"
+
+cp "$fixture/hpatch-router.log" "$fixture/valid-baseline-log"
+printf '%s\n' 'hpatch-1 | msg="Mentor Handoff progress"' >>"$fixture/hpatch-router.log"
+if bash "$benchmark_root/report.sh" "$fixture" >/dev/null 2>&1; then
+	printf 'report accepted a baseline arm that activated Mentor Handoff\n' >&2
+	exit 1
+fi
+mv "$fixture/valid-baseline-log" "$fixture/hpatch-router.log"
+
+cp "$fixture/results.jsonl" "$fixture/valid-parent-model-results.jsonl"
+jq -c 'del(.parent_model)' "$fixture/valid-parent-model-results.jsonl" >"$fixture/results.jsonl"
+if bash "$benchmark_root/report.sh" "$fixture" >/dev/null 2>&1; then
+	printf 'report accepted Mentor Handoff results without a parent model\n' >&2
+	exit 1
+fi
+mv "$fixture/valid-parent-model-results.jsonl" "$fixture/results.jsonl"
+
+cp "$fixture/results.jsonl" "$fixture/valid-distinct-model-results.jsonl"
+jq -c '.parent_model = .model' "$fixture/valid-distinct-model-results.jsonl" >"$fixture/results.jsonl"
+if bash "$benchmark_root/report.sh" "$fixture" >/dev/null 2>&1; then
+	printf 'report accepted identical parent and actual child models\n' >&2
+	exit 1
+fi
+mv "$fixture/valid-distinct-model-results.jsonl" "$fixture/results.jsonl"
+
 cp "$fixture/captures/hpatch.jsonl" "$fixture/valid-loop-capture.jsonl"
 jq -c 'if .boundary == "codex" and .capture_id == "treatment-mentor" then del(.tool_call_ids) else . end' \
 	"$fixture/valid-loop-capture.jsonl" >"$fixture/captures/hpatch.jsonl"

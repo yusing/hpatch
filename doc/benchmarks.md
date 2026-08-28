@@ -216,7 +216,7 @@ Both Mentor Handoff arms use the same benchmark-only capturer executable on two 
 Codex → front capturer → router → back capturer → provider. Per-arm isolated networks prevent Codex
 from reaching the router directly and prevent the router from reaching the provider directly. The
 front side records the restored tool-call identities visible to Codex; the back side records the
-actual provider-bound model and provider usage. Both sides preserve request and response bytes and
+actual provider-bound model and provider usage. Both sides preserve request and response body bytes and
 stream responses without waiting for completion. Durable JSONL records contain correlation IDs,
 thread classification, model, usage, status, and tool-call IDs, but no credentials, headers, prompt
 content, tool arguments, command output, or response text.
@@ -605,7 +605,8 @@ curl --fail --silent --show-error \
   > "$run_dir/hpatch-metrics.json"
 ```
 
-Mentor Handoff mode names these artifacts by condition instead:
+The preceding control filenames apply only to the ordinary paired benchmark. Mentor Handoff mode
+names its artifacts by condition instead:
 `hpatch-metrics.json` and `hpatch-router.log` are the baseline, while
 `hpatch-mentor-metrics.json` and `hpatch-mentor-router.log` are Hpatch + Mentor Handoff.
 

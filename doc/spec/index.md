@@ -13,9 +13,9 @@ pjdoc:
 ---
 # hpatch specification
 
-Revision 35 adds the opt-in spawned-subagent Mentor Handoff schedule and its native-versus-guided
-paired benchmark. The router recognizes Codex's exact thread-spawn marker, temporarily selects a
-higher-intelligence model, and returns the child to its configured model after bounded tool,
+Revision 35 adds the opt-in spawned-subagent Mentor Handoff schedule and its paired Hpatch-versus-
+Hpatch+Mentor benchmark. The router recognizes Codex's exact thread-spawn marker, temporarily selects
+a higher-intelligence model, and returns the child to its configured model after bounded tool,
 message, or provider-input usage. Reports separate mentor and configured-model provider usage while
 comparing their combined treatment total.
 `doc/spec/interface.md` owns the public report grammar, projection rule, continuation

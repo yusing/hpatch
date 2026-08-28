@@ -91,7 +91,21 @@ fi
 task_id=$(jq -sr '.[0].task_id' "$results")
 model=$(jq -sr '.[0].model' "$results")
 reasoning_effort=$(jq -sr '.[0].reasoning_effort' "$results")
-parent_model=$(jq -sr '.[0].parent_model // .[0].model' "$results")
+if [[ $benchmark_mode == mentor-handoff ]]; then
+	if ! parent_model=$(jq -er -s '
+		if length > 0 and
+			all(.[]; (.parent_model | type) == "string" and (.parent_model | length) > 0) and
+			([.[].parent_model] | unique | length) == 1
+		then .[0].parent_model
+		else error("missing or inconsistent parent_model")
+		end
+	' "$results" 2>/dev/null); then
+		printf 'report.sh: Mentor Handoff results require one consistent non-empty parent_model\n' >&2
+		exit 1
+	fi
+else
+	parent_model=$(jq -sr '.[0].parent_model // .[0].model' "$results")
+fi
 parent_reasoning_effort=$(jq -sr '.[0].parent_reasoning_effort // .[0].reasoning_effort' "$results")
 codex_release=
 if [[ -s $benchmark_config ]]; then

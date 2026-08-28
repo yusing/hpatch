@@ -1406,8 +1406,7 @@ assistant messages, or when the latest request reports at least 50,000 input tok
 input count already includes its inherited conversation history, so counts from separate requests
 are never summed. The completed request may overshoot the token limit.
 The next request from that child uses the model and reasoning supplied by Codex without a compatibility
-rewrite. At most 256 child schedules are retained for the router lifetime; capacity
-rejects another new eligible child before provider forwarding so a completed schedule is never
+rewrite. Child schedules are retained for the router lifetime so a completed schedule is never
 silently forgotten and restarted. State and progress logs retain counts and identifiers only, not
 prompt or response content. Metrics charge every request to the model actually sent upstream.
 

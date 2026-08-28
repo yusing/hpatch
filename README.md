@@ -300,9 +300,8 @@ may overshoot. Failed responses contribute reported input usage but do not
 contribute tool calls or messages, and a failed result-consuming response does not complete handoff.
 
 The router logs bounded progress without prompt content and attributes provider usage to the model
-actually used. It retains completion state for up to 256 spawned subagent threads; another new
-eligible subagent fails before provider forwarding rather than silently forgetting a completed
-handoff. Passthrough mode rejects the flag.
+actually used. It retains process-lifetime state for each eligible spawned thread so a completed
+child cannot re-enter mentoring on a later request. Passthrough mode rejects the flag.
 
 `--provider-base-url` changes where the router sends Codex-managed credentials and Responses
 traffic. Use it only with a trusted endpoint. The benchmark uses it to place a content-free capture

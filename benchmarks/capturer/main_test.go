@@ -136,6 +136,48 @@ func TestObserveResponseJoinsMultilineSSEData(t *testing.T) {
 	}
 }
 
+func TestCaptureProxyKeepsNonterminalResponseIncomplete(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(writer, "data: {\"type\":\"response.in_progress\",\"response\":{\"status\":\"in_progress\"}}\n\n")
+	}))
+	defer upstream.Close()
+	capturePath := filepath.Join(t.TempDir(), "capture.jsonl")
+	recorder, err := newCaptureRecorder(capturePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer recorder.Close()
+	proxy := httptest.NewServer(newCaptureProxy(mustParseTestURL(t, upstream.URL), "provider", recorder))
+	defer proxy.Close()
+
+	request, err := http.NewRequestWithContext(t.Context(), http.MethodPost, proxy.URL+"/responses", strings.NewReader(`{"model":"gpt-5.6-sol"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := io.ReadAll(response.Body); err != nil {
+		t.Fatal(err)
+	}
+	if err := response.Body.Close(); err != nil {
+		t.Fatal(err)
+	}
+	payload, err := os.ReadFile(capturePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var record captureRecord
+	if err := json.Unmarshal(bytes.TrimSpace(payload), &record); err != nil {
+		t.Fatal(err)
+	}
+	if record.ResponseStatus != "in_progress" || record.ResponseComplete {
+		t.Fatalf("nonterminal capture record = %#v", record)
+	}
+}
+
 func TestCaptureProxyPassesModelsWithoutRecording(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		_, _ = io.WriteString(writer, `{"models":[]}`)

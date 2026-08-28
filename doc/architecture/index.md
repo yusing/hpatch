@@ -14,8 +14,8 @@ pjdoc:
 
 The opt-in Mentor Handoff owner in `internal/router` sits before Hpatch request projection and CTP
 serialization. It authenticates the schedule boundary from Codex's exact thread-spawn header and
-turn metadata, keeps bounded child-thread counters, and changes only the provider-bound model and
-reasoning effort. The ordinary request owner continues to supply input history, tools, and session
+turn metadata, keeps process-lifetime child-thread counters, and changes only the provider-bound
+model and reasoning effort. The ordinary request owner continues to supply input history, tools, and session
 settings; Codex remains the owner of the configured model used after handoff.
 
 A request-local observer runs before response transformations so it counts native provider output
@@ -481,7 +481,8 @@ existing hpatch transformer participates. Pass-through does not duplicate forwar
 introduce another provider client. The metrics endpoint is the executable mode-label
 boundary used to prevent arm misconfiguration.
 The Mentor benchmark owns a separate capturer in `benchmarks/capturer`. One instance places a
-front proxy before each router and a back proxy before the provider. It forwards bytes unchanged,
+front proxy before each router and a back proxy before the provider. It forwards request and response
+body bytes unchanged,
 streams responses as they arrive, and emits only the content-free correlation, model, usage, status,
 and tool-call fields needed for benchmark proof. A private correlation header exists only between
 the two capturer boundaries and is removed before the provider. Per-arm Compose networks make both proxy crossings

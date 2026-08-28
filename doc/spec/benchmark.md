@@ -177,9 +177,9 @@ history-free Luna/Terra child through the same transparent capture topology: Cod
 Hpatch router → capturer → provider. Only the treatment router enables Mentor Handoff. Per-arm
 network isolation MUST leave no direct Codex-to-router or router-to-provider path. The front capture
 MUST preserve and record the restored tool-call identities visible to Codex; the back capture MUST
-preserve and record the actual provider-bound model and provider usage. Capture MUST stream bytes
-without waiting for a terminal response and MUST NOT retain credentials, prompt content, tool
-arguments, command output, or response text.
+preserve and record the actual provider-bound model and provider usage. Capture MUST preserve request
+and response body bytes and stream them without waiting for a terminal response. It MUST NOT retain
+credentials, prompt content, tool arguments, command output, or response text.
 
 The front capturer MUST add a private per-request correlation header, the router MUST forward it,
 and the back capturer MUST remove it before provider forwarding. Every captured Responses request
