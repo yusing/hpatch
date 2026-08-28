@@ -616,7 +616,7 @@ The Code Mode owner reserves `await commentary(value)`. The router preserves the
 and lowers it to the existing native execution carrier, which posts the evaluated string through an
 authenticated per-call capability on the router's HTTP server. Code Mode without an authored form
 receives `Running the requested operation.` Exact lowering requires the JavaScript parser; builds
-without it reject Code Mode input containing `commentary`.
+without it reject the reserved `await commentary(...)` form.
 
 The Bash and POSIX shell worker reserves the simple command `commentary`. After normal shell
 expansion it joins the arguments with spaces, publishes the resulting text, and executes a no-op.

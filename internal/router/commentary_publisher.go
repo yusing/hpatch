@@ -244,7 +244,8 @@ func publishCommentaryOnce(ctx context.Context, arguments []string) (bool, error
 		return true, err
 	}
 	sink := &httpShellCommentarySink{endpoint: arguments[1], token: arguments[2], client: commentaryHTTPClient}
-	return true, sink.Publish(ctx, text)
+	_ = sink.Publish(ctx, text)
+	return true, nil
 }
 
 func (s *httpShellCommentarySink) Publish(ctx context.Context, text string) error {

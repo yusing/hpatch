@@ -126,6 +126,24 @@ func TestStructuredCommentaryTransformsJSONAndReplay(t *testing.T) {
 	}
 }
 
+func TestStructuredCommentaryRejectsNonStringValues(t *testing.T) {
+	catalog := commentaryToolCatalog{
+		commentaryToolKey("functions", "lookup"): {
+			namespace: "functions", name: "lookup", display: "lookup", explicit: true,
+		},
+	}
+	for _, value := range []string{"null", "true", "42", `{}`, `[]`} {
+		item := map[string]json.RawMessage{
+			"type": mustMarshalJSON("function_call"), "namespace": mustMarshalJSON("functions"),
+			"name": mustMarshalJSON("lookup"), "arguments": mustMarshalJSON(`{"query":"x","commentary":` + value + `}`),
+		}
+		if _, matched, err := extractStructuredCommentary(item, catalog); err == nil || matched ||
+			!bytes.Contains([]byte(err.Error()), []byte("functions.lookup commentary must be a string")) {
+			t.Fatalf("commentary %s matched = %v, error = %v", value, matched, err)
+		}
+	}
+}
+
 func TestStructuredCommentaryBuffersStreamingArguments(t *testing.T) {
 	transform, _, _, _ := newHPatchTestTransform(t, testTranslator(t, new(int)))
 	transform.commentaryTools = commentaryToolCatalog{
@@ -168,6 +186,52 @@ func TestStructuredCommentaryBuffersStreamingArguments(t *testing.T) {
 	for _, event := range events[1:] {
 		if bytes.Contains(event, []byte(commentaryArgumentName)) {
 			t.Fatalf("router-owned argument leaked: %s", event)
+		}
+	}
+}
+
+func TestBufferedStructuredCommentaryOmitsNullCompletionMessage(t *testing.T) {
+	transform, _, _, _ := newHPatchTestTransform(t, testTranslator(t, new(int)))
+	transform.commentaryTools = commentaryToolCatalog{
+		commentaryToolKey("functions", "exec_command"): {
+			namespace: "functions", name: "exec_command", display: "exec_command", explicit: true,
+		},
+	}
+	added := mustTestJSON(t, map[string]any{
+		"type": "response.output_item.added", "output_index": 0,
+		"item": map[string]any{
+			"type": "function_call", "id": "item-exec", "call_id": "call-exec",
+			"namespace": "functions", "name": "exec_command", "arguments": "",
+		},
+	})
+	if events, err := transform.TransformSSE(added); err != nil || len(events) != 0 {
+		t.Fatalf("added events = %q, error %v", events, err)
+	}
+	arguments := `{"cmd":"go test ./...","commentary":"Testing the project."}`
+	argumentsDone := mustTestJSON(t, map[string]any{
+		"type": "response.function_call_arguments.done", "item_id": "item-exec", "output_index": 0,
+		"arguments": arguments,
+	})
+	if events, err := transform.TransformSSE(argumentsDone); err != nil || len(events) != 1 {
+		t.Fatalf("arguments events = %q, error %v", events, err)
+	}
+	itemDone := mustTestJSON(t, map[string]any{
+		"type": "response.output_item.done", "output_index": 0,
+		"item": map[string]any{
+			"type": "function_call", "id": "item-exec", "call_id": "call-exec",
+			"namespace": "functions", "name": "renamed", "arguments": arguments,
+		},
+	})
+	events, err := transform.TransformSSE(itemDone)
+	if err != nil || len(events) != 3 {
+		t.Fatalf("done events = %q, error %v", events, err)
+	}
+	wantTypes := []string{"response.output_item.added", "response.function_call_arguments.done", "response.output_item.done"}
+	for index, event := range events {
+		var envelope map[string]json.RawMessage
+		if json.Unmarshal(event, &envelope) != nil || jsonString(envelope, "type") != wantTypes[index] ||
+			bytes.Contains(event, []byte(`"item":null`)) {
+			t.Fatalf("event %d = %s", index, event)
 		}
 	}
 }

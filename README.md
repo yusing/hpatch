@@ -184,7 +184,7 @@ capacity or publication failure never changes the operation result.
 
 - Go 1.26 or newer. Normal `go install` does not require a checkout.
 - Code Mode runtime commentary requires a CGO-enabled source build for exact JavaScript parsing.
-  A CGO-disabled build rejects Code Mode input containing `commentary`.
+  A CGO-disabled build rejects the reserved `await commentary(...)` form.
 - Hpatch router mode requires Codex CLI with ChatGPT file auth from `codex login`, normally at `~/.codex/auth.json` or `$CODEX_HOME/auth.json`. At startup, the router reads the adjacent `config.toml` only to determine whether `model_instructions_file` is configured.
 - Hpatch router mode resolves Node.js 24 or newer as `node`; passthrough mode does not load the plugin registry.
 - Private hgrep requires `rg` on the Codex executor's `PATH`.

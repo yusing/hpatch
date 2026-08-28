@@ -297,6 +297,15 @@ func (p *hpatchProxy) deactivateSession(sessionID string) {
 	p.activeSessions[sessionID]--
 }
 
+func (p *hpatchProxy) drainCommentarySession(sessionID string) []publishedCommentary {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	if p.commentary == nil || p.activeSessions[sessionID] > 1 {
+		return nil
+	}
+	return p.commentary.drainSession(sessionID)
+}
+
 func (p *hpatchProxy) Close() error {
 	if p == nil {
 		return nil
@@ -526,10 +535,7 @@ func (p *hpatchProxy) prepareRequest(ctx context.Context, request *parsedRespons
 		p.deactivateSession(historySessionID)
 		return nil, err
 	}
-	var deferredCommentary []publishedCommentary
-	if p.commentary != nil {
-		deferredCommentary = p.commentary.drainSession(historySessionID)
-	}
+	deferredCommentary := p.drainCommentarySession(historySessionID)
 	return &hpatchResponseTransform{
 		ctx:              ctx,
 		proxy:            p,
@@ -2605,7 +2611,10 @@ func (t *hpatchResponseTransform) TransformSSE(payload []byte) ([][]byte, error)
 			if err := t.commitLocalCall(callID); err != nil {
 				return nil, err
 			}
-			return [][]byte{commentaryDoneEvent(message), addedEvent, argumentsDone, itemDone}, nil
+			if message != nil {
+				return [][]byte{commentaryDoneEvent(message), addedEvent, argumentsDone, itemDone}, nil
+			}
+			return [][]byte{addedEvent, argumentsDone, itemDone}, nil
 		}
 		delete(t.nativeExecItems, itemID)
 		message, err := t.transformStructuredCommentary(item)

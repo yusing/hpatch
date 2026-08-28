@@ -175,8 +175,12 @@ func extractStructuredCommentary(item map[string]json.RawMessage, catalog commen
 	result := structuredCommentary{originalArguments: original, arguments: original}
 	if tool.explicit {
 		if raw, present := arguments[commentaryArgumentName]; present {
-			var text string
-			if err := json.Unmarshal(raw, &text); err != nil {
+			var value any
+			if err := json.Unmarshal(raw, &value); err != nil {
+				return structuredCommentary{}, false, fmt.Errorf("%s commentary must be a string", qualifiedToolName(tool.namespace, tool.name))
+			}
+			text, ok := value.(string)
+			if !ok {
 				return structuredCommentary{}, false, fmt.Errorf("%s commentary must be a string", qualifiedToolName(tool.namespace, tool.name))
 			}
 			delete(arguments, commentaryArgumentName)

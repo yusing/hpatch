@@ -59,6 +59,54 @@ func TestCommentaryPublisherAuthenticatesAndDrainsLiveOrDeferred(t *testing.T) {
 	}
 }
 
+func TestPublishCommentaryOnceIgnoresPublicationFailure(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+		response.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	t.Cleanup(server.Close)
+
+	handled, err := publishCommentaryOnce(t.Context(), []string{
+		commentaryOnceArgument, server.URL, "token", "Running%20work.",
+	})
+	if !handled || err != nil {
+		t.Fatalf("handled = %v, error = %v", handled, err)
+	}
+	if handled, err := publishCommentaryOnce(t.Context(), []string{
+		commentaryOnceArgument, server.URL, "token", "%zz",
+	}); !handled || err == nil {
+		t.Fatalf("invalid escape handled = %v, error = %v", handled, err)
+	}
+	if handled, err := publishCommentaryOnce(t.Context(), []string{"other"}); handled || err != nil {
+		t.Fatalf("unrelated invocation handled = %v, error = %v", handled, err)
+	}
+}
+
+func TestConcurrentSessionDoesNotDrainCommentary(t *testing.T) {
+	proxy := newManagedHPatchProxy(t, testTranslator(t, new(int)))
+	const sessionID = "session"
+	if err := proxy.activateSession(sessionID); err != nil {
+		t.Fatal(err)
+	}
+	if err := proxy.activateSession(sessionID); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		proxy.deactivateSession(sessionID)
+	})
+
+	subscription := proxy.commentary.subscribe(sessionID, "call")
+	if subscription == nil || !proxy.commentary.publish(subscription.token, "Still running.", false) {
+		t.Fatal("commentary was not published")
+	}
+	if events := proxy.drainCommentarySession(sessionID); len(events) != 0 {
+		t.Fatalf("concurrent drain = %+v", events)
+	}
+	proxy.deactivateSession(sessionID)
+	if events := proxy.drainCommentarySession(sessionID); len(events) != 1 || events[0].text != "Still running." {
+		t.Fatalf("completed-turn drain = %+v", events)
+	}
+}
+
 func TestShellRouteOnlyInstallsPublisherForAuthoredCommentary(t *testing.T) {
 	for _, test := range []struct {
 		name          string
