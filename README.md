@@ -145,19 +145,20 @@ For native executor background and interactive behavior, see [OpenAI's Codex pro
 
 ## Inline operation commentary
 
-In router mode, non-strict structured tools receive an optional `commentary` string. When present,
-the router shows that text as ordinary assistant commentary immediately before the tool call and
-removes the field before Codex executes the tool. When omitted, the router supplies a concise
-tool-specific default instead.
+In router mode, extensible non-strict structured tools in the ordinary Responses tool catalog
+receive an optional `commentary` string. When present, the router shows that text as ordinary
+assistant commentary immediately before the tool call and removes the field before Codex executes
+the tool. When omitted, the router supplies a concise tool-specific default instead.
 
 Tools whose purpose is already commentary or user messaging, Codex context/compaction/result
 carriers, and private shell-internal tools are excluded. Instrumenting those surfaces would
 duplicate user communication or expose a private carrier as a model tool.
 
-Strict tools retain their original schemas and receive defaults only. This preserves provider-side
-strict validation without requiring the model to emit a nullable commentary member on every call.
-A tool that already owns a parameter named `commentary` is treated the same way: hpatch neither
-changes nor consumes that parameter.
+Strict tools and provider-configured `additional_tools`, including Codex-reserved collaboration
+functions, retain their original schemas and receive defaults only. This preserves provider-side
+schema validation without requiring the model to emit an unsupported member. A tool that already
+owns a parameter named `commentary` is treated the same way: hpatch neither changes nor consumes
+that parameter.
 
 Generated commentary remains visible in Codex history, but the next routed request removes the
 generated message and restores the model's exact original function arguments before forwarding

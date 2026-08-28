@@ -27,7 +27,7 @@ func commentaryToolKey(namespace, name string) string {
 
 func prepareCommentaryTools(fields map[string]json.RawMessage) (commentaryToolCatalog, error) {
 	catalog := make(commentaryToolCatalog)
-	instrument := func(namespace string, tool map[string]json.RawMessage) error {
+	instrument := func(namespace string, tool map[string]json.RawMessage, allowExplicit bool) error {
 		if jsonString(tool, "type") != "function" {
 			return nil
 		}
@@ -46,7 +46,7 @@ func prepareCommentaryTools(fields map[string]json.RawMessage) (commentaryToolCa
 		entry := commentaryTool{namespace: namespace, name: name, display: display}
 		var strict bool
 		_ = json.Unmarshal(tool["strict"], &strict)
-		if !strict {
+		if allowExplicit && !strict {
 			var parameters map[string]json.RawMessage
 			if json.Unmarshal(tool["parameters"], &parameters) == nil && parameters != nil && jsonString(parameters, "type") == "object" {
 				var properties map[string]json.RawMessage
@@ -78,7 +78,7 @@ func prepareCommentaryTools(fields map[string]json.RawMessage) (commentaryToolCa
 			return nil, fmt.Errorf("decode Responses tools for commentary: %w", err)
 		}
 		for _, tool := range tools {
-			if err := instrument("", tool); err != nil {
+			if err := instrument("", tool, true); err != nil {
 				return nil, err
 			}
 		}
@@ -89,7 +89,9 @@ func prepareCommentaryTools(fields map[string]json.RawMessage) (commentaryToolCa
 	if json.Unmarshal(fields["input"], &items) != nil {
 		return catalog, nil
 	}
-	changed := false
+	// The provider validates configured additional_tools against its own
+	// catalog even when a function is non-strict. Register defaults without
+	// rewriting those schemas.
 	for _, item := range items {
 		if jsonString(item, "type") != "additional_tools" {
 			continue
@@ -100,7 +102,7 @@ func prepareCommentaryTools(fields map[string]json.RawMessage) (commentaryToolCa
 		}
 		for _, tool := range tools {
 			if jsonString(tool, "type") != "namespace" {
-				if err := instrument("", tool); err != nil {
+				if err := instrument("", tool, false); err != nil {
 					return nil, err
 				}
 				continue
@@ -111,17 +113,11 @@ func prepareCommentaryTools(fields map[string]json.RawMessage) (commentaryToolCa
 				return nil, fmt.Errorf("decode %s tools for commentary: %w", namespace, err)
 			}
 			for _, child := range nested {
-				if err := instrument(namespace, child); err != nil {
+				if err := instrument(namespace, child, false); err != nil {
 					return nil, err
 				}
 			}
-			tool["tools"] = mustMarshalJSON(nested)
 		}
-		item["tools"] = mustMarshalJSON(tools)
-		changed = true
-	}
-	if changed {
-		fields["input"] = mustMarshalJSON(items)
 	}
 	return catalog, nil
 }

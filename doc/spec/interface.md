@@ -599,10 +599,12 @@ Acceptance:
 
 ## REQ-COMMENTARY-001 — Inline operation commentary
 
-In hpatch router mode, every non-strict function tool with an object parameter schema receives one
-optional string property named `commentary`. The property describes concise progress text shown to
-the user before the operation. It is not added to a required-property list. Strict function tools
-retain their exact schemas and receive generated defaults only. A tool whose accepted-input schema
+In hpatch router mode, every extensible non-strict function tool in the ordinary Responses tool
+catalog with an object parameter schema receives one optional string property named `commentary`.
+The property describes concise progress text shown to the user before the operation. It is not added
+to a required-property list. Strict function tools and provider-configured `additional_tools` retain
+their exact schemas and receive generated defaults only. This includes Codex-reserved collaboration
+functions whose configured schema the provider requires exactly. A tool whose accepted-input schema
 already owns `commentary` also retains that property and receives generated defaults only; the
 router never redefines or consumes another tool's argument.
 

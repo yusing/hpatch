@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-func TestPrepareCommentaryToolsAddsOptionalFieldAndPreservesStrictSchema(t *testing.T) {
+func TestPrepareCommentaryToolsAddsOptionalFieldAndPreservesExactSchemas(t *testing.T) {
 	fields := map[string]json.RawMessage{
 		"tools": mustTestJSON(t, []any{
 			map[string]any{
@@ -37,12 +37,13 @@ func TestPrepareCommentaryToolsAddsOptionalFieldAndPreservesStrictSchema(t *test
 			"tools": []any{map[string]any{
 				"type": "namespace", "name": "collaboration",
 				"tools": []any{map[string]any{
-					"type": "function", "name": "wait_agent", "strict": false,
+					"type": "function", "name": "followup_task", "strict": false,
 					"parameters": map[string]any{"type": "object", "properties": map[string]any{}},
 				}},
 			}},
 		}}),
 	}
+	additionalTools := bytes.Clone(fields["input"])
 
 	catalog, err := prepareCommentaryTools(fields)
 	if err != nil {
@@ -57,8 +58,21 @@ func TestPrepareCommentaryToolsAddsOptionalFieldAndPreservesStrictSchema(t *test
 	if catalog[commentaryToolKey("", "owned_commentary")].explicit {
 		t.Fatal("tool-owned commentary was hijacked")
 	}
-	if !catalog[commentaryToolKey("collaboration", "wait_agent")].explicit {
-		t.Fatal("namespaced wait_agent does not support explicit commentary")
+	if catalog[commentaryToolKey("collaboration", "followup_task")].explicit {
+		t.Fatal("provider-reserved followup_task unexpectedly supports explicit commentary")
+	}
+	if !bytes.Equal(fields["input"], additionalTools) {
+		t.Fatalf("provider-reserved additional tools changed:\n got %s\nwant %s", fields["input"], additionalTools)
+	}
+	reserved, matched, err := extractStructuredCommentary(map[string]json.RawMessage{
+		"type":      mustMarshalJSON("function_call"),
+		"namespace": mustMarshalJSON("collaboration"),
+		"name":      mustMarshalJSON("followup_task"),
+		"arguments": mustMarshalJSON(`{"target":"agent","message":"continue"}`),
+	}, catalog)
+	if err != nil || !matched || reserved.text != "Sending a follow-up task to the agent." ||
+		reserved.arguments != `{"target":"agent","message":"continue"}` {
+		t.Fatalf("provider-reserved default = %+v, matched %t, error %v", reserved, matched, err)
 	}
 
 	var tools []map[string]json.RawMessage
