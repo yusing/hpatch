@@ -151,7 +151,7 @@ flowchart TD
 
 Both arms use:
 
-- the same pinned Docker image and Codex CLI 0.146.0;
+- the same pinned Docker image and Codex CLI 0.150.1;
 - the same model, prompt, authentication, container filesystem, host network,
   approval policy, timeout, and historical base;
 - `-c 'sandbox_mode="danger-full-access"'`, because the disposable container is
@@ -250,7 +250,7 @@ RUN curl -fsSL https://chatgpt.com/codex/install.sh \
     | CODEX_RELEASE="$CODEX_RELEASE" CODEX_NON_INTERACTIVE=1 CODEX_INSTALL_DIR=/usr/local/bin sh
 ```
 
-`CODEX_RELEASE` defaults to `0.146.0`, pinning the executable and bundled stock
+`CODEX_RELEASE` defaults to `0.150.1`, pinning the executable and bundled stock
 base prompt used by the comparison.
 
 `benchmarks/compose.yaml` owns five services:
