@@ -736,7 +736,7 @@ Tests live beside the owners they exercise. The root `hpatch` package is the reu
 | [`doc/codex-router-e2e.md`](doc/codex-router-e2e.md) | Codex-facing end-to-end procedure |
 | [`contrib/systemd/hpatch-router.service`](contrib/systemd/hpatch-router.service) | User service template |
 | [`contrib/codex/file-editing-instructions.md`](contrib/codex/file-editing-instructions.md) | Persistent CTP/2, edit, shell, read, search, and inspection guidance for Codex |
-| [`AGENTS.md`](AGENTS.md) | Architecture and repository navigation for agents |
+| [`AGENTS.md`](AGENTS.md) | Agent workflow and repository navigation |
 
 Library use: module path `github.com/yusing/hpatch`. Importable as a library (`hpatch.Translate`, `hpatch.Workspace`, structured host metrics helpers); hosts should open an `*os.Root` capability for the workspace before calling in.
 
