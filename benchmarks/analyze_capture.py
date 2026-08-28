@@ -114,7 +114,7 @@ def validate_raw_capture(path: Path, metrics: dict[str, Any]) -> None:
     for record in records:
         boundary = record.get("boundary")
         capture_id = record.get("capture_id")
-        if record.get("schema_version") != 3 or boundary not in {"codex", "provider"}:
+        if record.get("schema_version") != 4 or boundary not in {"codex", "provider"}:
             raise ValueError("capture has an unsupported schema or boundary")
         if record.get("mode") != metrics.get("mode") or record.get("model_protocol") != metrics.get("model_protocol"):
             raise ValueError("raw capture mode or protocol differs from the metrics snapshot")
@@ -157,7 +157,7 @@ def validate_raw_capture(path: Path, metrics: dict[str, Any]) -> None:
         if (
             payload(front.get("request")) != payload(exchange.get("client_request"))
             or payload(front.get("response")) != payload(exchange.get("client_response"))
-            or payload(front.get("final_response")) != payload(exchange.get("client_final_response"))
+            or payload(front.get("final_output")) != payload(exchange.get("client_final_output"))
             or front.get("tool_calls", []) != exchange.get("delivered_tools", [])
         ):
             raise ValueError("raw client measurements differ from the metrics exchange")
@@ -173,7 +173,7 @@ def validate_raw_capture(path: Path, metrics: dict[str, Any]) -> None:
             if (
                 payload(raw.get("request")) != payload(measured.get("request"))
                 or payload(raw.get("response")) != payload(measured.get("response"))
-                or payload(raw.get("final_response")) != payload(measured.get("final_response"))
+                or payload(raw.get("final_output")) != payload(measured.get("final_output"))
                 or raw.get("tool_calls", []) != measured.get("tools", [])
             ):
                 raise ValueError("raw provider measurements differ from the metrics exchange")
@@ -199,7 +199,7 @@ def validate_raw_capture(path: Path, metrics: dict[str, Any]) -> None:
 
 
 def validate_snapshot(metrics: dict[str, Any], arm: str) -> None:
-    if metrics.get("schema") != "hpatch.capture.metrics.v1":
+    if metrics.get("schema") != "hpatch.capture.metrics.v2":
         raise ValueError("metrics have an unsupported schema")
     expected = EXPECTED_ARM_CONFIG.get(arm)
     if expected is None:
@@ -241,8 +241,8 @@ def validate_calculations(metrics: dict[str, Any], exchanges: list[dict[str, Any
         "client_responses": empty_payload(),
     }
     semantic = {
-        "provider_attempt_responses": empty_payload(),
-        "client_responses": empty_payload(),
+        "provider_attempt_outputs": empty_payload(),
+        "client_outputs": empty_payload(),
     }
     protocol = {
         "input_payload_tokens_saved": 0,
@@ -275,7 +275,7 @@ def validate_calculations(metrics: dict[str, Any], exchanges: list[dict[str, Any
         requests[outcome] += 1
         add_payload(transport["client_requests"], exchange.get("client_request"))
         add_payload(transport["client_responses"], exchange.get("client_response"))
-        add_payload(semantic["client_responses"], exchange.get("client_final_response"))
+        add_payload(semantic["client_outputs"], exchange.get("client_final_output"))
         delivered = exchange.get("delivered_tools", [])
         if not isinstance(delivered, list):
             raise ValueError("exchange delivered tools must be an array")
@@ -307,7 +307,7 @@ def validate_calculations(metrics: dict[str, Any], exchanges: list[dict[str, Any
                 final_usage = parsed_attempt_usage
             add_payload(transport["provider_attempt_requests"], attempt.get("request"))
             add_payload(transport["provider_responses"], attempt.get("response"))
-            add_payload(semantic["provider_attempt_responses"], attempt.get("final_response"))
+            add_payload(semantic["provider_attempt_outputs"], attempt.get("final_output"))
             tools = attempt.get("tools", [])
             if not isinstance(tools, list):
                 raise ValueError("provider attempt tools must be an array")
@@ -359,12 +359,12 @@ def validate_calculations(metrics: dict[str, Any], exchanges: list[dict[str, Any
             final = attempts[-1]
             client_request = payload(exchange.get("client_request"))
             provider_request = payload(final.get("request"))
-            client_response = payload(exchange.get("client_final_response"))
-            provider_response = payload(final.get("final_response"))
+            client_output = payload(exchange.get("client_final_output"))
+            provider_output = payload(final.get("final_output"))
             protocol["input_payload_bytes_saved"] += client_request["bytes"] - provider_request["bytes"]
             protocol["input_payload_tokens_saved"] += client_request["tokens"] - provider_request["tokens"]
-            protocol["output_payload_bytes_saved"] += client_response["bytes"] - provider_response["bytes"]
-            protocol["output_payload_tokens_saved"] += client_response["tokens"] - provider_response["tokens"]
+            protocol["output_payload_bytes_saved"] += client_output["bytes"] - provider_output["bytes"]
+            protocol["output_payload_tokens_saved"] += client_output["tokens"] - provider_output["tokens"]
 
     if metrics.get("requests") != requests:
         raise ValueError("request totals do not reconcile exchanges")

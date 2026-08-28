@@ -27,7 +27,7 @@ agents.
 
 For every fresh arm, report generation MUST:
 
-1. require `hpatch.capture.metrics.v1` and schema-3 sanitized records;
+1. require `hpatch.capture.metrics.v2` and schema-4 sanitized records;
 2. reject empty capture, capture errors, incomplete records, boundary mismatches, duplicate client
    records, missing provider records, attempt gaps, write failures, skipped requests, and dropped
    exchange detail;
@@ -35,8 +35,8 @@ For every fresh arm, report generation MUST:
    provider usage with exchange attempts, and each measured root thread's usage with
    `results.jsonl`;
 4. use capturer-owned provider usage and cache attribution for all model-consumption totals;
-5. report signed client-versus-final-provider request savings and terminal-response-envelope savings,
-   while reporting complete response-stream transport separately;
+5. report signed client-versus-final-provider request savings and terminal-output-array savings,
+   excluding echoed response metadata while reporting complete response-stream transport separately;
 6. report actual provider-emitted and client-delivered tool shapes, including correlated Hpatch
    success, rejection, correction, unmatched, diagnostic, and carrier-token totals;
 7. report actual provider models from exchanges, including parent and child traffic; and

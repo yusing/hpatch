@@ -4,7 +4,7 @@
 
 `hpatch-router` MUST create one in-process capturer and MUST keep one HTTP listener. The same listener
 MUST serve `POST /v1/responses`, `GET /v1/models`, and `GET /api/metrics`. Enabling
-`--capture-output PATH` MUST append sanitized schema-3 JSONL records at `PATH`; it MUST NOT start or
+`--capture-output PATH` MUST append sanitized schema-4 JSONL records at `PATH`; it MUST NOT start or
 require a capturer service, listener, proxy, or network hop.
 
 The same listener MUST serve a human-readable dashboard at `GET /`. The dashboard MUST consume the
@@ -29,7 +29,7 @@ A durable record MUST contain only:
 - schema version, boundary, private capture identity, logical sequence, and provider attempt;
 - mode, model protocol, provider request model, and benchmark correlation fields already supplied
   by Codex;
-- complete transport payload byte and GPT-5 token counts plus the terminal Responses envelope measured once;
+- complete transport payload byte and GPT-5 token counts plus the terminal Responses `output` array measured once;
 - HTTP and Responses status, completeness, duration, and a bounded capture-error category;
 - provider usage counters;
 - request tool names; and
@@ -39,7 +39,7 @@ A durable record MUST contain only:
 It MUST NOT contain authorization material, prompts, instructions, message content, tool arguments,
 command output, response text, script text, patches, reports, or diagnostics beyond the stable code.
 
-`GET /api/metrics` MUST return `hpatch.capture.metrics.v1`. Its calculations MUST be made by the
+`GET /api/metrics` MUST return `hpatch.capture.metrics.v2`. Its calculations MUST be made by the
 capturer, not by the router, engine, plugin, benchmark report, or dashboard. The snapshot MUST expose:
 
 1. logical request and provider-attempt counts, including completed and failed logical requests;
@@ -50,10 +50,11 @@ capturer, not by the router, engine, plugin, benchmark report, or dashboard. The
    completions MUST retain request-arrival order, and a final attempt without usage MUST break the
    predecessor chain rather than reuse older evidence;
 4. client-request, provider-attempt-request, complete provider-response-stream, and complete
-   client-response-stream payload totals, plus terminal provider and client response envelopes measured once;
+   client-response-stream payload totals, plus terminal provider and client `output` arrays measured once;
 5. signed input byte and token savings between each client request and the final provider request,
-   plus signed output savings between their terminal response envelopes, so repeated SSE framing is
-   transport evidence rather than model-token savings and negative semantic expansion remains visible;
+   plus signed output savings between their terminal `output` arrays, excluding echoed tools and all
+   other response metadata, so repeated SSE framing and response metadata remain transport evidence
+   rather than model-output savings and negative provider-boundary expansion remains visible;
 6. provider-emitted and client-delivered tool aggregates;
 7. Hpatch call, correction, success, rejection, unmatched, diagnostic, provider-input,
    delivered-carrier-input, and signed saved-input totals;
@@ -63,7 +64,7 @@ capturer, not by the router, engine, plugin, benchmark report, or dashboard. The
    provider-attempt gaps, durable-write errors, skipped requests, and dropped exchange detail.
 
 Provider usage is authoritative for model consumption. Payload token counts are reproducible GPT-5
-estimates used only for exact observed transport or terminal-envelope comparisons. The Hpatch comparison MUST pair the
+estimates used only for exact observed transport or terminal-output comparisons. The Hpatch comparison MUST pair the
 actual provider-emitted Hpatch call with the actual delivered native carrier by tool-call identity;
 it MUST NOT synthesize an `apply_patch`, `exec_command`, shell command, or stock result.
 
@@ -80,7 +81,7 @@ Acceptance:
    delivered tool calls without retaining private payload text.
 2. A streaming test receives the first flushed event before the handler completes.
 3. JSON, multiline SSE, and gzip Responses payloads produce the same sanitized observations, and
-   any number of nonterminal SSE events contributes exactly one terminal envelope to protocol output savings.
+   any number of nonterminal SSE events contributes exactly one terminal output array to protocol output savings.
 4. Snapshot totals reconcile their exchanges and provider attempts, and benchmark validation rejects
    changed aggregate usage or nonzero capture-health errors.
 5. Passthrough, Hpatch-native, CTP/2, and Mentor Handoff use the same capture owner and endpoint;

@@ -17,9 +17,9 @@ Go context. No correlation header crosses either HTTP boundary. Provider retries
 attempt numbers under the same logical request. The wrappers preserve request bytes, response bytes,
 stream flushing, cancellation, status, headers, and response-body ownership.
 
-Raw request and response bodies exist only while one boundary is being measured. Durable schema-3
+Raw request and response bodies exist only while one boundary is being measured. Durable schema-4
 JSONL records contain complete transport lengths, GPT-5 token estimates, one separately measured
-terminal Responses envelope, statuses, duration, request identity fields
+terminal Responses `output` array, statuses, duration, request identity fields
 needed for benchmark reconciliation, provider usage, tool names, tool-call identities, and sanitized
 Hpatch outcome kinds and allowlisted diagnostic reason codes parsed from the router-owned envelope.
 They never retain credentials, prompts, instructions, tool arguments, command output, response text,
@@ -33,9 +33,9 @@ The snapshot derives:
 - overall provider cache rate, plus cold/new input and immediately preceding logical-request eligible-prefix cache attribution from
   the final provider attempt by nonempty thread, ordered when requests enter the handler and
   invalidated when that final attempt has no usage;
-- complete client and provider transport bytes and GPT-5 token estimates, plus terminal response
-  envelopes measured once independently of SSE event count;
-- signed client-versus-final-provider request savings and terminal-response savings;
+- complete client and provider transport bytes and GPT-5 token estimates, plus terminal `output`
+  arrays measured once independently of SSE event count and echoed response metadata;
+- signed client-versus-final-provider request savings and terminal-output savings;
 - provider-emitted and client-delivered tool shapes;
 - correlated Hpatch calls, corrections, successful and rejected deliveries, unmatched calls,
   diagnostic codes, and signed Hpatch-versus-delivered-carrier input savings;

@@ -141,9 +141,9 @@ func TestRecorderObservesSingleListenerAndProviderRetries(t *testing.T) {
 		snapshot.HPatch.ProviderInputTokens != second.ToolCalls[0].InputTokens ||
 		snapshot.HPatch.DeliveredInputTokens != front.ToolCalls[0].InputTokens ||
 		snapshot.Protocol.InputPayloadTokensSaved != signedDifference(front.Request.Tokens, second.Request.Tokens) ||
-		snapshot.Semantic.ClientResponses.Tokens != front.FinalResponse.Tokens ||
-		snapshot.Semantic.ProviderAttemptResponses.Tokens != second.FinalResponse.Tokens ||
-		snapshot.Protocol.OutputPayloadTokensSaved != signedDifference(front.FinalResponse.Tokens, second.FinalResponse.Tokens) ||
+		snapshot.Semantic.ClientOutputs.Tokens != front.FinalOutput.Tokens ||
+		snapshot.Semantic.ProviderAttemptOutputs.Tokens != second.FinalOutput.Tokens ||
+		snapshot.Protocol.OutputPayloadTokensSaved != signedDifference(front.FinalOutput.Tokens, second.FinalOutput.Tokens) ||
 		snapshot.Capture.Records != 3 || snapshot.Capture.CaptureErrors != 0 || snapshot.Capture.Incomplete != 0 ||
 		snapshot.Capture.MissingProvider != 0 || snapshot.Capture.AttemptGaps != 0 {
 		t.Fatalf("snapshot = %#v", snapshot)
@@ -353,14 +353,16 @@ func TestSnapshotAccountsCacheCorrectionsDiagnosticsAndMissingEvidence(t *testin
 	}
 }
 
-func TestSnapshotUsesTerminalResponseOnceInsteadOfWholeSSEStream(t *testing.T) {
+func TestSnapshotUsesTerminalOutputOnceInsteadOfWholeSSEStream(t *testing.T) {
 	recorder, err := New(Config{Mode: "hpatch", ModelProtocol: "native"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	state := &requestState{captureID: "stream", sequence: 1}
-	providerTerminal := `{"type":"response.completed","response":{"status":"completed","output":[{"type":"custom_tool_call","call_id":"call","name":"hpatch","input":"edit"}],"usage":{"input_tokens":10,"input_tokens_details":{"cached_tokens":8},"output_tokens":4}}}`
-	clientTerminal := `{"type":"response.completed","response":{"status":"completed","output":[{"type":"custom_tool_call","call_id":"call","name":"exec","input":"text(\"done\");"}]}}`
+	providerOutput := `[{"type":"custom_tool_call","call_id":"call","name":"hpatch","input":"edit"}]`
+	clientOutput := `[{"type":"custom_tool_call","call_id":"call","name":"exec","input":"text(\"done\");"}]`
+	providerTerminal := `{"type":"response.completed","response":{"status":"completed","tools":[{"type":"custom","name":"hpatch","description":` + strconv.Quote(strings.Repeat("large provider tool definition ", 400)) + `}],"output":` + providerOutput + `,"usage":{"input_tokens":10,"input_tokens_details":{"cached_tokens":8},"output_tokens":4}}}`
+	clientTerminal := `{"type":"response.completed","response":{"status":"completed","tools":[{"type":"custom","name":"apply_patch"}],"output":` + clientOutput + `}}`
 	providerStream := strings.Repeat("data: {\"type\":\"response.custom_tool_call_input.delta\",\"delta\":\""+strings.Repeat("x", 400)+"\"}\n\n", 200) +
 		"data: " + providerTerminal + "\n\n"
 	clientStream := strings.Repeat("data: {\"type\":\"response.in_progress\"}\n\n", 200) +
@@ -380,14 +382,52 @@ func TestSnapshotUsesTerminalResponseOnceInsteadOfWholeSSEStream(t *testing.T) {
 	snapshot := recorder.snapshot()
 	exchange := snapshot.Exchanges[0]
 	provider := exchange.ProviderAttempts[0]
-	want := signedDifference(exchange.ClientFinalResponse.Tokens, provider.FinalResponse.Tokens)
+	providerOutputMetrics, err := recorder.measure([]byte(providerOutput))
+	if err != nil {
+		t.Fatal(err)
+	}
+	clientOutputMetrics, err := recorder.measure([]byte(clientOutput))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := signedDifference(clientOutputMetrics.Tokens, providerOutputMetrics.Tokens)
 	raw := signedDifference(exchange.ClientResponse.Tokens, provider.Response.Tokens)
-	if exchange.ClientFinalResponse.Tokens == 0 || provider.FinalResponse.Tokens == 0 ||
+	if exchange.ClientFinalOutput != clientOutputMetrics || provider.FinalOutput != providerOutputMetrics ||
 		snapshot.Protocol.OutputPayloadTokensSaved != want || snapshot.Protocol.OutputPayloadTokensSaved == raw {
 		t.Fatalf("semantic protocol = %d, want %d; raw stream difference = %d; snapshot %#v", snapshot.Protocol.OutputPayloadTokensSaved, want, raw, snapshot)
 	}
 	if snapshot.Usage.OutputTokens != 4 || snapshot.Usage.ProviderAttempts != 1 {
 		t.Fatalf("provider usage = %#v", snapshot.Usage)
+	}
+}
+
+func TestObserveResponseMeasuresOnlyTerminalOutput(t *testing.T) {
+	recorder, err := New(Config{Mode: "hpatch", ModelProtocol: "ctp2"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	output := `[{"type":"message","content":[{"type":"output_text","text":"decoded CTP text"}]}]`
+	response := `{"status":"completed","tools":[{"description":` + strconv.Quote(strings.Repeat("unrelated tool metadata ", 200)) + `}],"output":` + output + `}`
+	tests := map[string]struct {
+		payload     string
+		contentType string
+	}{
+		"JSON": {payload: response, contentType: "application/json"},
+		"SSE": {
+			payload:     "data: {\"type\":\"response.in_progress\"}\n\ndata: {\"type\":\"response.completed\",\"response\":" + response + "}\n\n",
+			contentType: "text/event-stream",
+		},
+	}
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			var record captureRecord
+			if got := observeResponse([]byte(test.payload), test.contentType, &record, recorder.codec); string(got) != output {
+				t.Fatalf("terminal output = %s, want %s", got, output)
+			}
+			if record.ResponseStatus != "completed" {
+				t.Fatalf("response status = %q", record.ResponseStatus)
+			}
+		})
 	}
 }
 

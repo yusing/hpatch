@@ -1765,7 +1765,7 @@ func TestRunServesCaptureMetricsOnTheResponsesListener(t *testing.T) {
 	if err := json.NewDecoder(response.Body).Decode(&metrics); err != nil {
 		t.Fatal(err)
 	}
-	if response.StatusCode != http.StatusOK || metrics["schema"] != "hpatch.capture.metrics.v1" {
+	if response.StatusCode != http.StatusOK || metrics["schema"] != "hpatch.capture.metrics.v2" {
 		t.Fatalf("metrics response = %d, %#v", response.StatusCode, metrics)
 	}
 	response, err = http.Get("http://" + address + "/")

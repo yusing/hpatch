@@ -100,27 +100,27 @@ func observeResponseJSON(payload []byte, record *captureRecord, codec tokenizer.
 		observeOutputItem(event.Item, record, codec)
 	}
 	if len(event.Response) != 0 {
-		observeResponseEnvelope(event.Response, record, codec)
+		_, output := observeResponseEnvelope(event.Response, record, codec)
 		switch event.Type {
 		case "response.completed", "response.failed", "response.incomplete":
-			return event.Response
+			return output
 		default:
 			return nil
 		}
 	}
-	status := observeResponseEnvelope(payload, record, codec)
+	status, output := observeResponseEnvelope(payload, record, codec)
 	switch status {
 	case "completed", "failed", "incomplete", "cancelled":
-		return payload
+		return output
 	default:
 		return nil
 	}
 }
 
-func observeResponseEnvelope(payload []byte, record *captureRecord, codec tokenizer.Codec) string {
+func observeResponseEnvelope(payload []byte, record *captureRecord, codec tokenizer.Codec) (string, []byte) {
 	var response struct {
-		Status string            `json:"status"`
-		Output []json.RawMessage `json:"output"`
+		Status string          `json:"status"`
+		Output json.RawMessage `json:"output"`
 		Usage  *struct {
 			InputTokens  uint64 `json:"input_tokens"`
 			OutputTokens uint64 `json:"output_tokens"`
@@ -133,12 +133,16 @@ func observeResponseEnvelope(payload []byte, record *captureRecord, codec tokeni
 		} `json:"usage"`
 	}
 	if json.Unmarshal(payload, &response) != nil {
-		return ""
+		return "", nil
+	}
+	var outputItems []json.RawMessage
+	if len(response.Output) != 0 && json.Unmarshal(response.Output, &outputItems) != nil {
+		return "", nil
 	}
 	if response.Status != "" {
 		record.ResponseStatus = response.Status
 	}
-	for _, item := range response.Output {
+	for _, item := range outputItems {
 		observeOutputItem(item, record, codec)
 	}
 	if response.Usage != nil {
@@ -149,7 +153,7 @@ func observeResponseEnvelope(payload []byte, record *captureRecord, codec tokeni
 			ReasoningTokens: response.Usage.OutputDetails.ReasoningTokens,
 		}
 	}
-	return response.Status
+	return response.Status, response.Output
 }
 
 func observeOutputItem(payload []byte, record *captureRecord, codec tokenizer.Codec) {
