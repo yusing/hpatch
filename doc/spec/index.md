@@ -4,8 +4,9 @@ pjdoc:
   kind: spec
   scope: root
   status: draft
-  revision: "38"
+  revision: "40"
   files:
+    - commentary.md
     - read.md
     - grep.md
     - symbol.md
@@ -32,6 +33,7 @@ Each listed file owns one requirement. Related facts are cited by stable ID or l
 
 ## Inventory
 
+- [`REQ-COMMENTARY-001`](commentary.md): user-only subagent activity details
 - [`REQ-READ-001`](read.md): routed verified-row reading and bounded ranges
 - [`REQ-GREP-001`](grep.md): routed ripgrep search with directly editable verified rows
 - [`REQ-SYMBOL-001`](symbol.md): routed semantic symbol lookup with directly editable verified rows

@@ -4,8 +4,9 @@ pjdoc:
   kind: architecture
   scope: root
   status: draft
-  revision: "33"
+  revision: "34"
   files:
+    - commentary.md
     - mentor.md
     - ctp.md
     - syntax.md
@@ -25,6 +26,7 @@ Each listed file owns one ownership contract. Related facts are cited by stable 
 
 ## Inventory
 
+- [`CTR-COMMENTARY-001`](commentary.md): router-owned subagent commentary projection
 - [`CTR-MENTOR-001`](mentor.md): router-owned subagent model schedule
 - [`CTR-CTP-001`](ctp.md): router-owned compact provider representation
 - [`CTR-SYNTAX-001`](syntax.md): shared compact-script framing
