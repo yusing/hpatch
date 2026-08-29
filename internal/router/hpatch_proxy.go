@@ -1902,13 +1902,15 @@ func hpatchDiagnosticExecInput(diagnostic string) string {
 }
 
 func nativeExecArguments(command string) string {
-	return string(mustMarshalJSON(map[string]string{"cmd": command}))
+	return string(mustMarshalJSON(map[string]any{"cmd": command, "login": false}))
 }
 
 func hpatchNativeApplyArguments(patch, report string) string {
 	command := hpatchNativeApplyMarker +
-		"hpatch_apply_output=$(printf %s " + shellQuoteArgument(patch) + " | apply_patch)\n" +
+		"hpatch_apply_output=$(printf %s " + shellQuoteArgument(patch) + " | apply_patch; " +
+		"hpatch_status=$?; printf x; exit \"$hpatch_status\")\n" +
 		"hpatch_status=$?\n" +
+		"hpatch_apply_output=${hpatch_apply_output%x}\n" +
 		"if [ \"$hpatch_status\" -ne 0 ]; then printf %s \"$hpatch_apply_output\"; exit \"$hpatch_status\"; fi\n" +
 		"printf %s " + shellQuoteArgument(report)
 	return nativeExecArguments(command)
@@ -2053,31 +2055,35 @@ func (registry *toolRegistry) nativeExecCarrierArguments(
 		metadata := string(mustMarshalJSON(resultMetadata))
 		command += "\nhpatch_status=$?\nprintf '\\n%s\\n' " + shellQuoteArgument(metadata) + "\nexit \"$hpatch_status\""
 	}
+	argumentsObject, err := execCommandArguments(command, params)
+	if err != nil {
+		return "", err
+	}
+	return string(mustMarshalJSON(argumentsObject)), nil
+}
+
+func execCommandArguments(command string, params map[string]json.RawMessage) (map[string]json.RawMessage, error) {
 	if _, exists := params["cmd"]; exists {
-		return "", errors.New("exec params must not contain cmd")
+		return nil, errors.New("exec params must not contain cmd")
+	}
+	if login, exists := params["login"]; exists && !bytes.Equal(bytes.TrimSpace(login), []byte("false")) {
+		return nil, errors.New("exec params login must be false")
 	}
 	argumentsObject := maps.Clone(params)
 	if argumentsObject == nil {
 		argumentsObject = make(map[string]json.RawMessage)
 	}
 	argumentsObject["cmd"] = mustMarshalJSON(command)
-	return string(mustMarshalJSON(argumentsObject)), nil
+	if _, exists := argumentsObject["login"]; !exists {
+		argumentsObject["login"] = mustMarshalJSON(false)
+	}
+	return argumentsObject, nil
 }
 
 func workerCommandExecInputWithResult(command string, params map[string]json.RawMessage, forwardNativeResult bool, resultMetadata ...map[string]json.RawMessage) (string, error) {
-	if _, exists := params["cmd"]; exists {
-		return "", errors.New("exec params must not contain cmd")
-	}
-	if login, exists := params["login"]; exists && !bytes.Equal(bytes.TrimSpace(login), []byte("false")) {
-		return "", errors.New("exec params login must be false")
-	}
-	arguments := maps.Clone(params)
-	if arguments == nil {
-		arguments = make(map[string]json.RawMessage)
-	}
-	arguments["cmd"] = mustMarshalJSON(command)
-	if _, exists := arguments["login"]; !exists {
-		arguments["login"] = mustMarshalJSON(false)
+	arguments, err := execCommandArguments(command, params)
+	if err != nil {
+		return "", err
 	}
 	resultOutput := "text(result.output);"
 	if forwardNativeResult || len(resultMetadata) > 0 && len(resultMetadata[0]) > 0 {

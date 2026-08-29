@@ -655,9 +655,13 @@ func TestHPatchNativeToolsUseExecCommandCarrierAndRestoreOriginalContract(t *tes
 func TestHPatchNativeExecCommandAppliesPatchAndReturnsOnlyReport(t *testing.T) {
 	var arguments struct {
 		Command string `json:"cmd"`
+		Login   *bool  `json:"login"`
 	}
 	if err := json.Unmarshal([]byte(hpatchNativeApplyArguments(testTranslatedPatch, testHPatchReport)), &arguments); err != nil {
 		t.Fatal(err)
+	}
+	if arguments.Login == nil || *arguments.Login {
+		t.Fatalf("native carrier login = %v, want false", arguments.Login)
 	}
 	bin := t.TempDir()
 	capturedPatch := filepath.Join(t.TempDir(), "patch")
@@ -680,6 +684,31 @@ func TestHPatchNativeExecCommandAppliesPatchAndReturnsOnlyReport(t *testing.T) {
 	}
 	if string(patch) != testTranslatedPatch {
 		t.Fatalf("native carrier patch = %q", patch)
+	}
+}
+
+func TestHPatchNativeExecCommandPreservesFailureOutput(t *testing.T) {
+	var arguments struct {
+		Command string `json:"cmd"`
+	}
+	if err := json.Unmarshal([]byte(hpatchNativeApplyArguments(testTranslatedPatch, testHPatchReport)), &arguments); err != nil {
+		t.Fatal(err)
+	}
+	bin := t.TempDir()
+	applyPatch := filepath.Join(bin, applyPatchToolName)
+	want := "native apply failure\n\n"
+	if err := os.WriteFile(applyPatch, []byte("#!/bin/sh\ncat >/dev/null\nprintf 'native apply failure\\n\\n'\nexit 7\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	command := exec.CommandContext(t.Context(), "bash", "-c", arguments.Command)
+	command.Env = append(os.Environ(), "PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	output, err := command.Output()
+	var exitError *exec.ExitError
+	if !errors.As(err, &exitError) || exitError.ExitCode() != 7 {
+		t.Fatalf("native carrier error = %v", err)
+	}
+	if string(output) != want {
+		t.Fatalf("native carrier failure output = %q, want %q", output, want)
 	}
 }
 
@@ -743,11 +772,13 @@ func TestHPatchNativeToolsTranslateShellAndStreamingHPatch(t *testing.T) {
 	}
 	var arguments struct {
 		Command string `json:"cmd"`
+		Login   *bool  `json:"login"`
 	}
 	if err := json.Unmarshal([]byte(history.carrierInput()), &arguments); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(arguments.Command, "shell bash") || !strings.Contains(arguments.Command, `"retained"`) {
+	if arguments.Login == nil || *arguments.Login ||
+		!strings.Contains(arguments.Command, "shell bash") || !strings.Contains(arguments.Command, `"retained"`) {
 		t.Fatalf("native shell arguments = %q", arguments.Command)
 	}
 

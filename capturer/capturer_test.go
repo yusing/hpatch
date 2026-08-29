@@ -359,14 +359,18 @@ func TestSnapshotUsesTerminalOutputOnceInsteadOfWholeSSEStream(t *testing.T) {
 		t.Fatal(err)
 	}
 	state := &requestState{captureID: "stream", sequence: 1}
-	providerOutput := `[{"type":"custom_tool_call","call_id":"call","name":"hpatch","input":"edit"}]`
-	clientOutput := `[{"type":"custom_tool_call","call_id":"call","name":"exec","input":"text(\"done\");"}]`
-	providerTerminal := `{"type":"response.completed","response":{"status":"completed","tools":[{"type":"custom","name":"hpatch","description":` + strconv.Quote(strings.Repeat("large provider tool definition ", 400)) + `}],"output":` + providerOutput + `,"usage":{"input_tokens":10,"input_tokens_details":{"cached_tokens":8},"output_tokens":4}}}`
-	clientTerminal := `{"type":"response.completed","response":{"status":"completed","tools":[{"type":"custom","name":"apply_patch"}],"output":` + clientOutput + `}}`
+	providerItem := `{"type":"custom_tool_call","call_id":"call","name":"hpatch","input":"edit"}`
+	clientItem := `{"type":"custom_tool_call","call_id":"call","name":"exec","input":"text(\"done\");"}`
+	providerOutput := `[` + providerItem + `]`
+	clientOutput := `[` + clientItem + `]`
+	providerDone := `{"type":"response.output_item.done","output_index":0,"item":` + providerItem + `}`
+	clientDone := `{"type":"response.output_item.done","output_index":0,"item":` + clientItem + `}`
+	providerTerminal := `{"type":"response.completed","response":{"status":"completed","tools":[{"type":"custom","name":"hpatch","description":` + strconv.Quote(strings.Repeat("large provider tool definition ", 400)) + `}],"output":[],"usage":{"input_tokens":10,"input_tokens_details":{"cached_tokens":8},"output_tokens":4}}}`
+	clientTerminal := `{"type":"response.completed","response":{"status":"completed","tools":[{"type":"custom","name":"apply_patch"}],"output":[]}}`
 	providerStream := strings.Repeat("data: {\"type\":\"response.custom_tool_call_input.delta\",\"delta\":\""+strings.Repeat("x", 400)+"\"}\n\n", 200) +
-		"data: " + providerTerminal + "\n\n"
+		"data: " + providerDone + "\n\ndata: " + providerTerminal + "\n\n"
 	clientStream := strings.Repeat("data: {\"type\":\"response.in_progress\"}\n\n", 200) +
-		"data: " + clientTerminal + "\n\n"
+		"data: " + clientDone + "\n\ndata: " + clientTerminal + "\n\n"
 	requestBody := []byte(`{"model":"model"}`)
 	recorder.recordExchange(
 		state, "provider", 1, time.Now(), requestBody,
@@ -406,7 +410,9 @@ func TestObserveResponseMeasuresOnlyTerminalOutput(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	output := `[{"type":"message","content":[{"type":"output_text","text":"decoded CTP text"}]}]`
+	firstItem := `{"type":"message","content":[{"type":"output_text","text":"decoded CTP text"}]}`
+	secondItem := `{"type":"custom_tool_call","call_id":"call","name":"hpatch","input":"edit"}`
+	output := `[` + firstItem + `,` + secondItem + `]`
 	response := `{"status":"completed","tools":[{"description":` + strconv.Quote(strings.Repeat("unrelated tool metadata ", 200)) + `}],"output":` + output + `}`
 	tests := map[string]struct {
 		payload     string
@@ -414,7 +420,10 @@ func TestObserveResponseMeasuresOnlyTerminalOutput(t *testing.T) {
 	}{
 		"JSON": {payload: response, contentType: "application/json"},
 		"SSE": {
-			payload:     "data: {\"type\":\"response.in_progress\"}\n\ndata: {\"type\":\"response.completed\",\"response\":" + response + "}\n\n",
+			payload: "data: {\"type\":\"response.in_progress\"}\n\n" +
+				"data: {\"type\":\"response.output_item.done\",\"output_index\":1,\"item\":" + secondItem + "}\n\n" +
+				"data: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":" + firstItem + "}\n\n" +
+				"data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"output\":[]}}\n\n",
 			contentType: "text/event-stream",
 		},
 	}

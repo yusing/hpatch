@@ -34,7 +34,8 @@ The snapshot derives:
   the final provider attempt by nonempty thread, ordered when requests enter the handler and
   invalidated when that final attempt has no usage;
 - complete client and provider transport bytes and GPT-5 token estimates, plus terminal `output`
-  arrays measured once independently of SSE event count and echoed response metadata;
+  arrays measured once independently of SSE event count and echoed response metadata; streaming
+  boundaries rebuild an empty terminal array from finalized output items in protocol index order;
 - signed client-versus-final-provider request savings and terminal-output savings;
 - provider-emitted and client-delivered tool shapes;
 - correlated Hpatch calls, corrections, successful and rejected deliveries, unmatched calls,

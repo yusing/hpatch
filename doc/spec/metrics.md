@@ -51,6 +51,8 @@ capturer, not by the router, engine, plugin, benchmark report, or dashboard. The
    predecessor chain rather than reuse older evidence;
 4. client-request, provider-attempt-request, complete provider-response-stream, and complete
    client-response-stream payload totals, plus terminal provider and client `output` arrays measured once;
+   streamed responses whose terminal envelope has an empty `output` array MUST reconstruct it in
+   `output_index` order from finalized `response.output_item.done` items;
 5. signed input byte and token savings between each client request and the final provider request,
    plus signed output savings between their terminal `output` arrays, excluding echoed tools and all
    other response metadata, so repeated SSE framing and response metadata remain transport evidence
@@ -80,8 +82,10 @@ Acceptance:
    consecutive provider attempts, one client record, provider usage, and correlated provider and
    delivered tool calls without retaining private payload text.
 2. A streaming test receives the first flushed event before the handler completes.
-3. JSON, multiline SSE, and gzip Responses payloads produce the same sanitized observations, and
-   any number of nonterminal SSE events contributes exactly one terminal output array to protocol output savings.
+3. JSON, multiline SSE, and gzip Responses payloads produce the same sanitized observations;
+   finalized SSE output items MUST produce the same ordered array when the terminal envelope omits
+   them, and any number of nonterminal SSE events contributes exactly one terminal output array to
+   protocol output savings.
 4. Snapshot totals reconcile their exchanges and provider attempts, and benchmark validation rejects
    changed aggregate usage or nonzero capture-health errors.
 5. Passthrough, Hpatch-native, CTP/2, and Mentor Handoff use the same capture owner and endpoint;

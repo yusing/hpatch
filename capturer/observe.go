@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"maps"
 	"slices"
 	"strconv"
 	"strings"
@@ -39,11 +40,18 @@ func decodedCapturePayload(payload []byte, contentEncoding string) ([]byte, erro
 func observeResponse(payload []byte, contentType string, record *captureRecord, codec tokenizer.Codec) []byte {
 	if strings.Contains(strings.ToLower(contentType), "text/event-stream") || capturedPayloadLooksLikeSSE(payload) {
 		var dataParts [][]byte
-		var finalResponse []byte
+		var finalOutput []byte
+		terminalOutputObserved := false
+		completedItems := make(map[int]json.RawMessage)
 		observeEvent := func() {
 			if len(dataParts) != 0 {
-				if terminal := observeResponseJSON(bytes.Join(dataParts, []byte{'\n'}), record, codec); len(terminal) != 0 {
-					finalResponse = terminal
+				payload := bytes.Join(dataParts, []byte{'\n'})
+				if index, item, ok := completedResponseOutputItem(payload); ok {
+					completedItems[index] = item
+				}
+				if terminal := observeResponseJSON(payload, record, codec); len(terminal) != 0 {
+					finalOutput = terminal
+					terminalOutputObserved = true
 				}
 				dataParts = dataParts[:0]
 			}
@@ -59,9 +67,44 @@ func observeResponse(payload []byte, contentType string, record *captureRecord, 
 			}
 		}
 		observeEvent()
-		return finalResponse
+		if !terminalOutputObserved {
+			return nil
+		}
+		var terminalItems []json.RawMessage
+		if len(finalOutput) != 0 && (json.Unmarshal(finalOutput, &terminalItems) != nil || len(terminalItems) != 0) {
+			return finalOutput
+		}
+		if len(completedItems) == 0 {
+			return finalOutput
+		}
+		indices := slices.Sorted(maps.Keys(completedItems))
+		items := make([]json.RawMessage, 0, len(indices))
+		for _, index := range indices {
+			items = append(items, completedItems[index])
+		}
+		output, err := json.Marshal(items)
+		if err != nil {
+			if record.CaptureError == "" {
+				record.CaptureError = "encode completed response output"
+			}
+			return nil
+		}
+		return output
 	}
 	return observeResponseJSON(payload, record, codec)
+}
+
+func completedResponseOutputItem(payload []byte) (int, json.RawMessage, bool) {
+	var event struct {
+		Type        string          `json:"type"`
+		OutputIndex *int            `json:"output_index"`
+		Item        json.RawMessage `json:"item"`
+	}
+	if json.Unmarshal(payload, &event) != nil || event.Type != "response.output_item.done" ||
+		event.OutputIndex == nil || *event.OutputIndex < 0 || len(event.Item) == 0 {
+		return 0, nil, false
+	}
+	return *event.OutputIndex, event.Item, true
 }
 
 func capturedPayloadLooksLikeSSE(payload []byte) bool {
@@ -119,8 +162,8 @@ func observeResponseJSON(payload []byte, record *captureRecord, codec tokenizer.
 
 func observeResponseEnvelope(payload []byte, record *captureRecord, codec tokenizer.Codec) (string, []byte) {
 	var response struct {
-		Status string          `json:"status"`
-		Output json.RawMessage `json:"output"`
+		Status string            `json:"status"`
+		Output []json.RawMessage `json:"output"`
 		Usage  *struct {
 			InputTokens  uint64 `json:"input_tokens"`
 			OutputTokens uint64 `json:"output_tokens"`
@@ -135,14 +178,10 @@ func observeResponseEnvelope(payload []byte, record *captureRecord, codec tokeni
 	if json.Unmarshal(payload, &response) != nil {
 		return "", nil
 	}
-	var outputItems []json.RawMessage
-	if len(response.Output) != 0 && json.Unmarshal(response.Output, &outputItems) != nil {
-		return "", nil
-	}
 	if response.Status != "" {
 		record.ResponseStatus = response.Status
 	}
-	for _, item := range outputItems {
+	for _, item := range response.Output {
 		observeOutputItem(item, record, codec)
 	}
 	if response.Usage != nil {
@@ -153,7 +192,14 @@ func observeResponseEnvelope(payload []byte, record *captureRecord, codec tokeni
 			ReasoningTokens: response.Usage.OutputDetails.ReasoningTokens,
 		}
 	}
-	return response.Status, response.Output
+	if response.Output == nil {
+		return response.Status, nil
+	}
+	output, err := json.Marshal(response.Output)
+	if err != nil {
+		return "", nil
+	}
+	return response.Status, output
 }
 
 func observeOutputItem(payload []byte, record *captureRecord, codec tokenizer.Codec) {
