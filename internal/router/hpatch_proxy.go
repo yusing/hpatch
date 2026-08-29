@@ -33,7 +33,11 @@ const (
 	hpatchRecoveryToolName = "hpatch_recover"
 
 	applyPatchToolName           = "apply_patch"
+	nativeExecCommandToolName    = "exec_command"
 	hpatchApplyExecMarker        = "// hpatch-proxy: apply translated patch\n"
+	hpatchNativeApplyMarker      = "# hpatch-proxy: apply translated patch\n"
+	hpatchNativeReportMarker     = "# hpatch-proxy: return hpatch report\n"
+	hpatchNativeDiagnosticMarker = "# hpatch-proxy: return hpatch diagnostic "
 	maxHPatchScriptBytes         = 1 << 20
 	maxHPatchPatchBytes          = 16 << 20
 	maxHPatchHistorySessionBytes = 32 << 20
@@ -307,6 +311,7 @@ type hpatchResponseTransform struct {
 	parentReasoningEffort     string
 
 	codeModeToolName string
+	nativeTools      bool
 
 	// localSequence orders the calls translated during this turn, so a
 	// recovery resolves against the newest rejection rather than an arbitrary
@@ -433,6 +438,14 @@ func (p *hpatchProxy) prepareRequest(ctx context.Context, request *parsedRespons
 	if err != nil {
 		return nil, err
 	}
+	nativeTools := false
+	if !replaced {
+		codeModeToolName, replaced, err = replaceNativeTools(request.fields, installedTools)
+		if err != nil {
+			return nil, err
+		}
+		nativeTools = replaced
+	}
 	if !replaced {
 		return nil, errors.New("responses request cannot satisfy the required hpatch rewrite")
 	}
@@ -478,6 +491,7 @@ func (p *hpatchProxy) prepareRequest(ctx context.Context, request *parsedRespons
 		parentReasoningEffort:     strings.TrimSpace(reasoning.Effort),
 
 		codeModeToolName: codeModeToolName,
+		nativeTools:      nativeTools,
 	}, nil
 }
 
@@ -514,6 +528,10 @@ func replaceAdditionalToolsApplyPatch(fields map[string]json.RawMessage, install
 		}
 	}
 	installedNames := installedToolNames(installedTools)
+	owner, err := findAdditionalToolsApplyPatch(fields, installedNames)
+	if err != nil || owner == nil {
+		return "", false, err
+	}
 	for _, tool := range topTools {
 		name := jsonString(tool, "name")
 		if _, exists := installedNames[name]; exists {
@@ -523,11 +541,6 @@ func replaceAdditionalToolsApplyPatch(fields map[string]json.RawMessage, install
 			return "", false, fmt.Errorf("responses request exposes unsupported top-level %s", name)
 		}
 	}
-
-	owner, err := findAdditionalToolsApplyPatch(fields, installedNames)
-	if err != nil || owner == nil {
-		return "", false, err
-	}
 	if codeModeToolChoiceRestricted(fields, owner.name) {
 		return "", false, nil
 	}
@@ -535,6 +548,62 @@ func replaceAdditionalToolsApplyPatch(fields map[string]json.RawMessage, install
 		return "", false, err
 	}
 	return owner.name, true, nil
+}
+
+// replaceNativeTools replaces the native apply_patch definition while retaining
+// exec_command as the executor-owned carrier for translated results.
+func replaceNativeTools(fields map[string]json.RawMessage, installedTools []map[string]json.RawMessage) (string, bool, error) {
+	var tools []map[string]json.RawMessage
+	if err := json.Unmarshal(fields["tools"], &tools); err != nil {
+		return "", false, nil //nolint:nilerr // An absent native tool array belongs to another request shape.
+	}
+	installedNames := installedToolNames(installedTools)
+	applyPatchIndex := -1
+	execCommandIndex := -1
+	for index, tool := range tools {
+		name := jsonString(tool, "name")
+		if _, exists := installedNames[name]; exists {
+			return "", false, fmt.Errorf("responses request already defines %s", name)
+		}
+		switch name {
+		case applyPatchToolName:
+			if applyPatchIndex >= 0 {
+				return "", false, errors.New("responses request defines native apply_patch more than once")
+			}
+			if jsonString(tool, "type") != "custom" {
+				return "", false, errors.New("responses native apply_patch is not a custom tool")
+			}
+			applyPatchIndex = index
+		case nativeExecCommandToolName:
+			if execCommandIndex >= 0 {
+				return "", false, errors.New("responses request defines native exec_command more than once")
+			}
+			if jsonString(tool, "type") != "function" {
+				return "", false, errors.New("responses native exec_command is not a function tool")
+			}
+			execCommandIndex = index
+		case "exec", "functions.exec":
+			return "", false, fmt.Errorf("responses request exposes unsupported top-level %s", name)
+		}
+	}
+	if applyPatchIndex < 0 || execCommandIndex < 0 {
+		return "", false, nil
+	}
+	var choice map[string]json.RawMessage
+	if json.Unmarshal(fields["tool_choice"], &choice) == nil {
+		selected := jsonString(choice, "name")
+		if selected == applyPatchToolName || selected == nativeExecCommandToolName {
+			return "", false, nil
+		}
+	}
+	tools = append(tools[:applyPatchIndex], tools[applyPatchIndex+1:]...)
+	tools = append(tools, installedTools...)
+	encoded, err := json.Marshal(tools)
+	if err != nil {
+		return "", false, fmt.Errorf("encode native Responses tools: %w", err)
+	}
+	fields["tools"] = encoded
+	return nativeExecCommandToolName, true, nil
 }
 
 func findAdditionalToolsApplyPatch(fields map[string]json.RawMessage, installedNames map[string]struct{}) (*additionalToolsApplyPatchOwner, error) {
@@ -1225,6 +1294,14 @@ func (p *hpatchProxy) reconcileInputPrefix(request *parsedResponsesRequest, sess
 		carrierKind := history.effectiveCarrierKind()
 		if itemType == carrierOutputItemType(carrierKind) {
 			p.confirmHistory(sessionID, callID, jsonString(item, "output"))
+			if !history.replayCarrier {
+				upstreamKind := codeModeCarrierCustom
+				if jsonString(history.upstreamItem, "type") == carrierItemType(codeModeCarrierFunction) {
+					upstreamKind = codeModeCarrierFunction
+				}
+				item["type"] = mustMarshalJSON(carrierOutputItemType(upstreamKind))
+				changed = true
+			}
 			continue
 		}
 		if itemType != carrierItemType(carrierKind) {
@@ -1646,7 +1723,7 @@ func (t *hpatchResponseTransform) translateRegisteredTool(contribution toolContr
 		return history, nil
 	}
 	pathPrefix := t.shellDirectory + string(os.PathSeparator)
-	recovered := lunaShellCodeModeProgram(contribution, input)
+	recovered := !t.nativeTools && lunaShellCodeModeProgram(contribution, input)
 	var translation toolplugin.Translation
 	var err error
 	if !recovered {
@@ -1676,6 +1753,9 @@ func (t *hpatchResponseTransform) translateRegisteredTool(contribution toolContr
 	}
 
 	kind := codeModeCarrierCustom
+	if t.nativeTools {
+		kind = codeModeCarrierFunction
+	}
 	name := t.codeModeToolName
 	payload := ""
 	diagnostic := translation.Diagnostic
@@ -1693,25 +1773,41 @@ func (t *hpatchResponseTransform) translateRegisteredTool(contribution toolContr
 		if diagnostic == "" {
 			diagnostic = contribution.Name + " rejected the model input"
 		}
-		payload = hpatchDiagnosticExecInput(diagnostic)
+		if t.nativeTools {
+			payload = nativeTextExecArguments(diagnostic)
+		} else {
+			payload = hpatchDiagnosticExecInput(diagnostic)
+		}
 	} else {
 		switch translation.Carrier.Kind {
 		case "exec":
 			if err := t.carriers.require(name, kind); err != nil {
 				return hpatchHistory{}, fmt.Errorf("%s exec carrier: %w", contribution.Name, err)
 			}
-			payload, err = t.proxy.registry.execCarrierInput(
-				contribution,
-				input,
-				translation.Arguments,
-				translation.Carrier.Template,
-				translation.Carrier.Params,
-				resultMetadata,
-			)
+			if t.nativeTools {
+				payload, err = t.proxy.registry.nativeExecCarrierArguments(
+					contribution,
+					input,
+					translation.Arguments,
+					translation.Carrier.Template,
+					translation.Carrier.Params,
+					resultMetadata,
+				)
+			} else {
+				payload, err = t.proxy.registry.execCarrierInput(
+					contribution,
+					input,
+					translation.Arguments,
+					translation.Carrier.Template,
+					translation.Carrier.Params,
+					resultMetadata,
+				)
+			}
 			if err != nil {
 				return hpatchHistory{}, fmt.Errorf("%s exec carrier: %w", contribution.Name, err)
 			}
 		case "custom":
+			kind = codeModeCarrierCustom
 			name = translation.Carrier.Name
 			payload = translation.Carrier.Payload
 			if err := t.carriers.require(name, kind); err != nil {
@@ -1747,6 +1843,17 @@ func (t *hpatchResponseTransform) translateRegisteredTool(contribution toolContr
 			misuseWarning += misuseWarningProjection(warning)
 		}
 		payload = misuseWarning + payload
+	} else if t.nativeTools && len(misuseWarnings) != 0 {
+		var arguments map[string]json.RawMessage
+		if json.Unmarshal([]byte(payload), &arguments) != nil || arguments == nil {
+			return hpatchHistory{}, fmt.Errorf("%s native exec carrier returned invalid arguments", contribution.Name)
+		}
+		command := jsonString(arguments, "cmd")
+		for _, warning := range misuseWarnings {
+			misuseWarning += warning + "\n"
+		}
+		arguments["cmd"] = mustMarshalJSON("printf %s " + shellQuoteArgument(misuseWarning) + "\n" + command)
+		payload = string(mustMarshalJSON(arguments))
 	} else {
 		for _, warning := range misuseWarnings {
 			warnedPayload, warningInput, _, warningErr := insertExecCommandWarning(payload, warning)
@@ -1792,6 +1899,32 @@ func hpatchApplyExecInput(patch, report string) string {
 
 func hpatchDiagnosticExecInput(diagnostic string) string {
 	return "text(" + strconv.Quote(diagnostic) + ");"
+}
+
+func nativeExecArguments(command string) string {
+	return string(mustMarshalJSON(map[string]string{"cmd": command}))
+}
+
+func hpatchNativeApplyArguments(patch, report string) string {
+	command := hpatchNativeApplyMarker +
+		"hpatch_apply_output=$(printf %s " + shellQuoteArgument(patch) + " | apply_patch)\n" +
+		"hpatch_status=$?\n" +
+		"if [ \"$hpatch_status\" -ne 0 ]; then printf %s \"$hpatch_apply_output\"; exit \"$hpatch_status\"; fi\n" +
+		"printf %s " + shellQuoteArgument(report)
+	return nativeExecArguments(command)
+}
+
+func nativeTextExecArguments(text string) string {
+	return nativeExecArguments("printf %s " + shellQuoteArgument(text))
+}
+
+func hpatchNativeReportArguments(report string) string {
+	return nativeExecArguments(hpatchNativeReportMarker + "printf %s " + shellQuoteArgument(report))
+}
+
+func hpatchNativeDiagnosticArguments(diagnostic string) string {
+	command := hpatchNativeDiagnosticMarker + strconv.Quote(diagnostic) + "\nprintf %s " + shellQuoteArgument(diagnostic)
+	return nativeExecArguments(command)
 }
 
 func workerCommand(executable string, arguments []string) string {
@@ -1867,6 +2000,19 @@ func (registry *toolRegistry) execCarrierInput(
 	params map[string]json.RawMessage,
 	resultMetadata ...map[string]json.RawMessage,
 ) (string, error) {
+	command, err := registry.execCarrierCommand(contribution, sourceInput, arguments, template)
+	if err != nil {
+		return "", err
+	}
+	return workerCommandExecInputWithResult(command, params, contribution.PluginID == builtinToolsPluginID && contribution.Name == "shell", resultMetadata...)
+}
+
+func (registry *toolRegistry) execCarrierCommand(
+	contribution toolContribution,
+	sourceInput string,
+	arguments []string,
+	template string,
+) (string, error) {
 	if registry == nil {
 		return "", errors.New("tool registry is unavailable")
 	}
@@ -1888,12 +2034,34 @@ func (registry *toolRegistry) execCarrierInput(
 		}
 		command = strings.Replace(template, "{.}", command, 1)
 	}
-	return workerCommandExecInputWithResult(
-		command,
-		params,
-		builtinShell,
-		resultMetadata...,
-	)
+	return command, nil
+}
+
+func (registry *toolRegistry) nativeExecCarrierArguments(
+	contribution toolContribution,
+	sourceInput string,
+	arguments []string,
+	template string,
+	params map[string]json.RawMessage,
+	resultMetadata map[string]json.RawMessage,
+) (string, error) {
+	command, err := registry.execCarrierCommand(contribution, sourceInput, arguments, template)
+	if err != nil {
+		return "", err
+	}
+	if len(resultMetadata) != 0 {
+		metadata := string(mustMarshalJSON(resultMetadata))
+		command += "\nhpatch_status=$?\nprintf '\\n%s\\n' " + shellQuoteArgument(metadata) + "\nexit \"$hpatch_status\""
+	}
+	if _, exists := params["cmd"]; exists {
+		return "", errors.New("exec params must not contain cmd")
+	}
+	argumentsObject := maps.Clone(params)
+	if argumentsObject == nil {
+		argumentsObject = make(map[string]json.RawMessage)
+	}
+	argumentsObject["cmd"] = mustMarshalJSON(command)
+	return string(mustMarshalJSON(argumentsObject)), nil
 }
 
 func workerCommandExecInputWithResult(command string, params map[string]json.RawMessage, forwardNativeResult bool, resultMetadata ...map[string]json.RawMessage) (string, error) {
@@ -2015,6 +2183,18 @@ func retainedEvaluated(emitted, evaluated string) string {
 }
 
 func (t *hpatchResponseTransform) recordLocal(callID string, history *hpatchHistory) {
+	if t.nativeTools && history.carrierKind == "" {
+		history.carrierKind = codeModeCarrierFunction
+		history.carrierName = nativeExecCommandToolName
+		switch {
+		case history.translationError != "":
+			history.carrierPayload = hpatchNativeDiagnosticArguments(history.translationError)
+		case history.applied || history.alreadySatisfied || history.patch == "":
+			history.carrierPayload = hpatchNativeReportArguments(history.report)
+		default:
+			history.carrierPayload = hpatchNativeApplyArguments(history.patch, history.report)
+		}
+	}
 	t.localSequence++
 	history.sequence = t.localSequence
 	t.local[callID] = *history

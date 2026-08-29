@@ -17,15 +17,17 @@ JSONL
 write_capture() {
 	local path=$1 id=$2 thread=$3 input=$4 cached=$5 output=$6 reasoning=$7 mode=$8
 	cat >"$path" <<JSONL
-{"schema_version":3,"boundary":"provider","capture_id":"$id","request_sequence":1,"provider_attempt":1,"mode":"$mode","model_protocol":"native","thread_id":"$thread","request_model":"model","request":{"bytes":80,"tokens":20},"status_code":200,"response_complete":true,"response_status":"completed","usage":{"input_tokens":$input,"cached_input_tokens":$cached,"output_tokens":$output,"reasoning_tokens":$reasoning},"tool_calls":[{"call_id":"call-1","name":"hpatch","input_bytes":10,"input_tokens":3,"item_bytes":30,"item_tokens":8}],"response":{"bytes":90,"tokens":22},"duration_ms":10,"captured_at":"2026-08-28T00:00:00Z"}
-{"schema_version":3,"boundary":"codex","capture_id":"$id","request_sequence":1,"mode":"$mode","model_protocol":"native","thread_id":"$thread","request_model":"model","request":{"bytes":100,"tokens":25},"status_code":200,"response_complete":true,"response_status":"completed","tool_calls":[{"call_id":"call-1","name":"exec","input_bytes":30,"input_tokens":9,"item_bytes":50,"item_tokens":14,"kind":"apply_patch"}],"response":{"bytes":120,"tokens":30},"duration_ms":12,"captured_at":"2026-08-28T00:00:00Z"}
+{"schema_version":4,"boundary":"provider","capture_id":"$id","request_sequence":1,"provider_attempt":1,"mode":"$mode","model_protocol":"native","thread_id":"$thread","request_model":"model","request":{"bytes":80,"tokens":20},"status_code":200,"response_complete":true,"response_status":"completed","usage":{"input_tokens":$input,"cached_input_tokens":$cached,"output_tokens":$output,"reasoning_tokens":$reasoning},"tool_calls":[{"call_id":"call-1","name":"hpatch","input_bytes":10,"input_tokens":3,"item_bytes":30,"item_tokens":8}],"response":{"bytes":90,"tokens":22},"final_output":{"bytes":70,"tokens":17},"duration_ms":10,"captured_at":"2026-08-28T00:00:00Z"}
+{"schema_version":4,"boundary":"codex","capture_id":"$id","request_sequence":1,"mode":"$mode","model_protocol":"native","thread_id":"$thread","request_model":"model","request":{"bytes":100,"tokens":25},"status_code":200,"response_complete":true,"response_status":"completed","tool_calls":[{"call_id":"call-1","name":"exec","input_bytes":30,"input_tokens":9,"item_bytes":50,"item_tokens":14,"kind":"apply_patch"}],"response":{"bytes":120,"tokens":30},"final_output":{"bytes":90,"tokens":25},"duration_ms":12,"captured_at":"2026-08-28T00:00:00Z"}
 JSONL
 }
 
 write_metrics() {
 	local path=$1 thread=$2 input=$3 cached=$4 output=$5 reasoning=$6 mode=$7
+	local cache_rate
+	cache_rate=$(awk -v cached="$cached" -v input="$input" 'BEGIN { print cached/input }')
 	cat >"$path" <<JSON
-{"schema":"hpatch.capture.metrics.v1","mode":"$mode","model_protocol":"native","requests":{"logical":1,"provider_attempts":1,"completed":1,"failed":0},"usage":{"input_tokens":$input,"cached_input_tokens":$cached,"uncached_input_tokens":$((input-cached)),"output_tokens":$output,"reasoning_tokens":$reasoning,"provider_attempts":1},"cache":{"cold_or_new_uncached_input_tokens":$((input-cached)),"eligible_prefix_tokens":0,"eligible_prefix_cached_tokens":0,"eligible_prefix_miss_tokens":0,"eligible_prefix_cache_rate":null},"transport":{"client_requests":{"bytes":100,"tokens":25},"provider_attempt_requests":{"bytes":80,"tokens":20},"provider_responses":{"bytes":90,"tokens":22},"client_responses":{"bytes":120,"tokens":30}},"protocol":{"input_payload_tokens_saved":5,"input_payload_bytes_saved":20,"output_payload_tokens_saved":8,"output_payload_bytes_saved":30},"provider_tools":{"hpatch":{"calls":1,"input_bytes":10,"input_tokens":3,"item_bytes":30,"item_tokens":8}},"delivered_tools":{"exec":{"calls":1,"input_bytes":30,"input_tokens":9,"item_bytes":50,"item_tokens":14}},"hpatch":{"calls":1,"corrections":0,"successful":1,"rejected":0,"unmatched":0,"provider_input_tokens":3,"delivered_input_tokens":9,"input_tokens_saved":6},"exchanges":[{"sequence":1,"thread_id":"$thread","model":"model","provider_attempts":[{"attempt":1,"model":"model","status":"completed","response_complete":true,"usage":{"input_tokens":$input,"cached_input_tokens":$cached,"uncached_input_tokens":$((input-cached)),"output_tokens":$output,"reasoning_tokens":$reasoning,"provider_attempts":1},"request":{"bytes":80,"tokens":20},"response":{"bytes":90,"tokens":22},"tools":[{"call_id":"call-1","name":"hpatch","input_bytes":10,"input_tokens":3,"item_bytes":30,"item_tokens":8}]}],"status":"completed","usage":{"input_tokens":$input,"cached_input_tokens":$cached,"uncached_input_tokens":$((input-cached)),"output_tokens":$output,"reasoning_tokens":$reasoning,"provider_attempts":1},"client_request":{"bytes":100,"tokens":25},"client_response":{"bytes":120,"tokens":30},"delivered_tools":[{"call_id":"call-1","name":"exec","input_bytes":30,"input_tokens":9,"item_bytes":50,"item_tokens":14,"kind":"apply_patch"}]}],"capture":{"records":2,"capture_errors":0,"incomplete_records":0,"missing_provider_records":0,"provider_attempt_gaps":0,"write_errors":0,"skipped_requests":0,"dropped_exchange_details":0}}
+{"schema":"hpatch.capture.metrics.v2","mode":"$mode","model_protocol":"native","requests":{"logical":1,"provider_attempts":1,"completed":1,"failed":0},"usage":{"input_tokens":$input,"cached_input_tokens":$cached,"uncached_input_tokens":$((input-cached)),"output_tokens":$output,"reasoning_tokens":$reasoning,"provider_attempts":1},"cache":{"cold_or_new_uncached_input_tokens":$((input-cached)),"provider_cache_rate":$cache_rate,"eligible_prefix_tokens":0,"eligible_prefix_cached_tokens":0,"eligible_prefix_miss_tokens":0,"eligible_prefix_cache_rate":null},"transport":{"client_requests":{"bytes":100,"tokens":25},"provider_attempt_requests":{"bytes":80,"tokens":20},"provider_responses":{"bytes":90,"tokens":22},"client_responses":{"bytes":120,"tokens":30}},"semantic":{"provider_attempt_outputs":{"bytes":70,"tokens":17},"client_outputs":{"bytes":90,"tokens":25}},"protocol":{"input_payload_tokens_saved":5,"input_payload_bytes_saved":20,"output_payload_tokens_saved":8,"output_payload_bytes_saved":20},"provider_tools":{"hpatch":{"calls":1,"input_bytes":10,"input_tokens":3,"item_bytes":30,"item_tokens":8}},"delivered_tools":{"exec":{"calls":1,"input_bytes":30,"input_tokens":9,"item_bytes":50,"item_tokens":14}},"hpatch":{"calls":1,"corrections":0,"successful":1,"rejected":0,"unmatched":0,"provider_input_tokens":3,"delivered_input_tokens":9,"input_tokens_saved":6},"exchanges":[{"sequence":1,"thread_id":"$thread","model":"model","provider_attempts":[{"attempt":1,"model":"model","status":"completed","response_complete":true,"usage":{"input_tokens":$input,"cached_input_tokens":$cached,"uncached_input_tokens":$((input-cached)),"output_tokens":$output,"reasoning_tokens":$reasoning,"provider_attempts":1},"request":{"bytes":80,"tokens":20},"response":{"bytes":90,"tokens":22},"final_output":{"bytes":70,"tokens":17},"tools":[{"call_id":"call-1","name":"hpatch","input_bytes":10,"input_tokens":3,"item_bytes":30,"item_tokens":8}]}],"status":"completed","usage":{"input_tokens":$input,"cached_input_tokens":$cached,"uncached_input_tokens":$((input-cached)),"output_tokens":$output,"reasoning_tokens":$reasoning,"provider_attempts":1},"client_request":{"bytes":100,"tokens":25},"client_response":{"bytes":120,"tokens":30},"client_final_output":{"bytes":90,"tokens":25},"delivered_tools":[{"call_id":"call-1","name":"exec","input_bytes":30,"input_tokens":9,"item_bytes":50,"item_tokens":14,"kind":"apply_patch"}]}],"capture":{"records":2,"capture_errors":0,"incomplete_records":0,"missing_provider_records":0,"provider_attempt_gaps":0,"write_errors":0,"skipped_requests":0,"dropped_exchange_details":0}}
 JSON
 }
 
@@ -39,6 +41,9 @@ grep -Fq '| Control | 1/1 |' "$fixture/summary.md"
 grep -Fq '| Hpatch | 1/1 |' "$fixture/summary.md"
 grep -Fq 'input **-20** (-20.00%)' "$fixture/summary.md"
 grep -Fq '| Carrier input tokens saved | 6 |' "$fixture/summary.md"
+grep -Fq '| Hpatch | 50 | 30 | 62.50% | 30 | 0 | 0 | 0 | n/a |' "$fixture/summary.md"
+grep -Fq '| Hpatch | 25 | 20 | 22 | 30 | 17 | 25 |' "$fixture/summary.md"
+grep -Fq 'Output tokens saved' "$fixture/summary.md"
 grep -Fq '| Hpatch | 2 | 1 | 0 | 0 | 0 | 0 | 0 |' "$fixture/summary.md"
 grep -Fq 'in-process `capturer` on each router listener' "$fixture/summary.md"
 if grep -Fq 'thread-hpatch' "$fixture/summary.md"; then
@@ -76,8 +81,14 @@ grep -Fq '| Output | true | 8 | passed |' "$ctp/summary.md"
 ctp_failed="$fixture/ctp-failed"
 mkdir -p "$ctp_failed/captures"
 cp "$ctp/benchmark-config.json" "$ctp/results.jsonl" "$ctp/control-metrics.json" "$ctp_failed/"
-cp "$ctp/captures/control.jsonl" "$ctp/captures/hpatch.jsonl" "$ctp_failed/captures/"
-jq '.protocol.output_payload_tokens_saved = 0' "$ctp/hpatch-metrics.json" >"$ctp_failed/hpatch-metrics.json"
+cp "$ctp/captures/control.jsonl" "$ctp_failed/captures/control.jsonl"
+jq -c 'if .boundary == "codex" then .final_output = {bytes: 70, tokens: 17} else . end' \
+	"$ctp/captures/hpatch.jsonl" >"$ctp_failed/captures/hpatch.jsonl"
+jq '.protocol.output_payload_tokens_saved = 0 |
+	.protocol.output_payload_bytes_saved = 0 |
+	.semantic.client_outputs = {bytes: 70, tokens: 17} |
+	.exchanges[0].client_final_output = {bytes: 70, tokens: 17}' \
+	"$ctp/hpatch-metrics.json" >"$ctp_failed/hpatch-metrics.json"
 if bash "$benchmark_root/report.sh" "$ctp_failed" >/dev/null 2>&1; then
 	printf 'report accepted missing required CTP output compression\n' >&2
 	exit 1
@@ -104,8 +115,8 @@ jq '.mode = "hpatch"' "$fixture/control-metrics.json" >"$mentor/hpatch-metrics.j
 sed 's/"mode":"passthrough"/"mode":"hpatch"/g' "$fixture/captures/control.jsonl" >"$mentor/captures/control.jsonl"
 cp "$fixture/captures/hpatch.jsonl" "$mentor/captures/hpatch.jsonl"
 cat >>"$mentor/captures/hpatch.jsonl" <<'JSONL'
-{"schema_version":3,"boundary":"provider","capture_id":"mentor-child","request_sequence":2,"provider_attempt":1,"mode":"hpatch","model_protocol":"native","thread_id":"thread-child","request_model":"model","request":{"bytes":0,"tokens":0},"status_code":200,"response_complete":true,"response_status":"completed","usage":{"input_tokens":0,"cached_input_tokens":0,"output_tokens":0,"reasoning_tokens":0},"response":{"bytes":0,"tokens":0},"duration_ms":1,"captured_at":"2026-08-28T00:00:00Z"}
-{"schema_version":3,"boundary":"codex","capture_id":"mentor-child","request_sequence":2,"mode":"hpatch","model_protocol":"native","thread_id":"thread-child","request_model":"model","request":{"bytes":0,"tokens":0},"status_code":200,"response_complete":true,"response_status":"completed","response":{"bytes":0,"tokens":0},"duration_ms":1,"captured_at":"2026-08-28T00:00:00Z"}
+{"schema_version":4,"boundary":"provider","capture_id":"mentor-child","request_sequence":2,"provider_attempt":1,"mode":"hpatch","model_protocol":"native","thread_id":"thread-child","request_model":"model","request":{"bytes":0,"tokens":0},"status_code":200,"response_complete":true,"response_status":"completed","usage":{"input_tokens":0,"cached_input_tokens":0,"output_tokens":0,"reasoning_tokens":0},"response":{"bytes":0,"tokens":0},"duration_ms":1,"captured_at":"2026-08-28T00:00:00Z"}
+{"schema_version":4,"boundary":"codex","capture_id":"mentor-child","request_sequence":2,"mode":"hpatch","model_protocol":"native","thread_id":"thread-child","request_model":"model","request":{"bytes":0,"tokens":0},"status_code":200,"response_complete":true,"response_status":"completed","response":{"bytes":0,"tokens":0},"duration_ms":1,"captured_at":"2026-08-28T00:00:00Z"}
 JSONL
 jq '.requests.logical += 1 |
 	.requests.provider_attempts += 1 |
@@ -131,12 +142,16 @@ printf '%s\n' '{"benchmark_mode":"hpatch-only"}' >"$no_usage/benchmark-config.js
 grep '"arm":"hpatch"' "$fixture/results.jsonl" >"$no_usage/results.jsonl"
 jq '.requests.provider_attempts += 1 |
 	.capture.records += 1 |
+	.transport.provider_attempt_requests.bytes += 80 |
+	.transport.provider_attempt_requests.tokens += 20 |
+	.transport.provider_responses.bytes += 20 |
+	.transport.provider_responses.tokens += 5 |
 	.exchanges[0].provider_attempts[0].attempt = 2 |
 	.exchanges[0].provider_attempts = [{attempt: 1, model: "model", status: "http_error", response_complete: true,
 		request: {bytes: 80, tokens: 20}, response: {bytes: 20, tokens: 5}}] + .exchanges[0].provider_attempts' \
 	"$fixture/hpatch-metrics.json" >"$no_usage/hpatch-metrics.json"
 {
-	printf '%s\n' '{"schema_version":3,"boundary":"provider","capture_id":"hpatch-id","request_sequence":1,"provider_attempt":1,"mode":"hpatch","model_protocol":"native","thread_id":"thread-hpatch","request_model":"model","request":{"bytes":80,"tokens":20},"status_code":429,"response_complete":true,"response_status":"http_error","response":{"bytes":20,"tokens":5},"duration_ms":1,"captured_at":"2026-08-28T00:00:00Z"}'
+	printf '%s\n' '{"schema_version":4,"boundary":"provider","capture_id":"hpatch-id","request_sequence":1,"provider_attempt":1,"mode":"hpatch","model_protocol":"native","thread_id":"thread-hpatch","request_model":"model","request":{"bytes":80,"tokens":20},"status_code":429,"response_complete":true,"response_status":"http_error","response":{"bytes":20,"tokens":5},"duration_ms":1,"captured_at":"2026-08-28T00:00:00Z"}'
 	sed 's/"provider_attempt":1/"provider_attempt":2/' "$fixture/captures/hpatch.jsonl"
 } >"$no_usage/captures/hpatch.jsonl"
 bash "$benchmark_root/report.sh" "$no_usage" >/dev/null
@@ -169,6 +184,23 @@ for index in "${!derived_usage_mutations[@]}"; do
 		"$fixture/captures/hpatch.jsonl" "$fixture/results.jsonl" hpatch >/dev/null 2>&1; then
 		printf 'capture validator accepted unreconciled derived usage: %s\n' \
 			"${derived_usage_mutations[$index]}" >&2
+		exit 1
+	fi
+done
+
+derived_metric_mutations=(
+	'.cache.provider_cache_rate = 0.99'
+	'.semantic.client_outputs.tokens += 1'
+	'.protocol.output_payload_tokens_saved += 1'
+	'.hpatch.input_tokens_saved += 1'
+)
+for index in "${!derived_metric_mutations[@]}"; do
+	bad="$fixture/bad-derived-metric-$index.json"
+	jq "${derived_metric_mutations[$index]}" "$fixture/hpatch-metrics.json" >"$bad"
+	if python3 "$benchmark_root/analyze_capture.py" "$bad" \
+		"$fixture/captures/hpatch.jsonl" "$fixture/results.jsonl" hpatch >/dev/null 2>&1; then
+		printf 'capture validator accepted an unreconciled derived metric: %s\n' \
+			"${derived_metric_mutations[$index]}" >&2
 		exit 1
 	fi
 done

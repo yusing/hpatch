@@ -26,6 +26,7 @@ type requestTotals struct {
 
 type cacheMetrics struct {
 	ColdOrNewUncachedInputTokens uint64   `json:"cold_or_new_uncached_input_tokens"`
+	ProviderCacheRate            *float64 `json:"provider_cache_rate"`
 	EligiblePrefixTokens         uint64   `json:"eligible_prefix_tokens"`
 	EligiblePrefixCachedTokens   uint64   `json:"eligible_prefix_cached_tokens"`
 	EligiblePrefixMissTokens     uint64   `json:"eligible_prefix_miss_tokens"`
@@ -42,6 +43,11 @@ type transportMetrics struct {
 	ProviderAttemptRequests payloadTotals `json:"provider_attempt_requests"`
 	ProviderResponses       payloadTotals `json:"provider_responses"`
 	ClientResponses         payloadTotals `json:"client_responses"`
+}
+
+type semanticOutputMetrics struct {
+	ProviderAttemptOutputs payloadTotals `json:"provider_attempt_outputs"`
+	ClientOutputs          payloadTotals `json:"client_outputs"`
 }
 
 type toolAggregate struct {
@@ -90,19 +96,21 @@ type providerAttemptMetrics struct {
 	Usage            *usageMetrics     `json:"usage,omitempty"`
 	Request          payloadMetrics    `json:"request"`
 	Response         payloadMetrics    `json:"response"`
+	FinalOutput      payloadMetrics    `json:"final_output,omitzero"`
 	Tools            []toolCallMetrics `json:"tools,omitempty"`
 }
 
 type exchangeMetrics struct {
-	Sequence         uint64                   `json:"sequence"`
-	ThreadID         string                   `json:"thread_id,omitempty"`
-	Model            string                   `json:"model,omitempty"`
-	ProviderAttempts []providerAttemptMetrics `json:"provider_attempts"`
-	Status           string                   `json:"status"`
-	Usage            *usageMetrics            `json:"usage,omitempty"`
-	ClientRequest    payloadMetrics           `json:"client_request"`
-	ClientResponse   payloadMetrics           `json:"client_response"`
-	DeliveredTools   []toolCallMetrics        `json:"delivered_tools,omitempty"`
+	Sequence          uint64                   `json:"sequence"`
+	ThreadID          string                   `json:"thread_id,omitempty"`
+	Model             string                   `json:"model,omitempty"`
+	ProviderAttempts  []providerAttemptMetrics `json:"provider_attempts"`
+	Status            string                   `json:"status"`
+	Usage             *usageMetrics            `json:"usage,omitempty"`
+	ClientRequest     payloadMetrics           `json:"client_request"`
+	ClientResponse    payloadMetrics           `json:"client_response"`
+	ClientFinalOutput payloadMetrics           `json:"client_final_output,omitzero"`
+	DeliveredTools    []toolCallMetrics        `json:"delivered_tools,omitempty"`
 }
 
 type metricsSnapshot struct {
@@ -113,6 +121,7 @@ type metricsSnapshot struct {
 	Usage          usageMetrics             `json:"usage"`
 	Cache          cacheMetrics             `json:"cache"`
 	Transport      transportMetrics         `json:"transport"`
+	Semantic       semanticOutputMetrics    `json:"semantic"`
 	Protocol       protocolMetrics          `json:"protocol"`
 	ProviderTools  map[string]toolAggregate `json:"provider_tools"`
 	DeliveredTools map[string]toolAggregate `json:"delivered_tools"`
@@ -139,7 +148,7 @@ func (r *Recorder) snapshot() metricsSnapshot {
 
 func newMetricsSnapshot(mode, modelProtocol string) metricsSnapshot {
 	return metricsSnapshot{
-		Schema:         "hpatch.capture.metrics.v1",
+		Schema:         "hpatch.capture.metrics.v2",
 		Mode:           mode,
 		ModelProtocol:  modelProtocol,
 		ProviderTools:  map[string]toolAggregate{},
@@ -152,7 +161,7 @@ func (r *Recorder) addExchange(front captureRecord, state *requestState, provide
 	sort.Slice(providers, func(i, j int) bool {
 		return providers[i].ProviderAttempt < providers[j].ProviderAttempt
 	})
-	if len(providers) == 0 {
+	if len(providers) == 0 && front.ResponseStatus == "completed" {
 		r.metrics.Capture.MissingProvider++
 	}
 	for index, provider := range providers {
@@ -164,7 +173,8 @@ func (r *Recorder) addExchange(front captureRecord, state *requestState, provide
 	exchange := exchangeMetrics{
 		Sequence: front.RequestSequence, ThreadID: front.ThreadID,
 		Status: front.ResponseStatus, ClientRequest: front.Request, ClientResponse: front.Response,
-		DeliveredTools: slices.Clone(front.ToolCalls),
+		ClientFinalOutput: front.FinalOutput,
+		DeliveredTools:    slices.Clone(front.ToolCalls),
 	}
 	var exchangeUsage usageMetrics
 	var providerTools []toolCallMetrics
@@ -172,6 +182,7 @@ func (r *Recorder) addExchange(front captureRecord, state *requestState, provide
 	r.metrics.Requests.ProviderAttempts += uint64(len(providers))
 	addPayload(&r.metrics.Transport.ClientRequests, front.Request)
 	addPayload(&r.metrics.Transport.ClientResponses, front.Response)
+	addPayload(&r.metrics.Semantic.ClientOutputs, front.FinalOutput)
 	addTools(r.metrics.DeliveredTools, front.ToolCalls)
 	if front.ResponseStatus == "completed" {
 		r.metrics.Requests.Completed++
@@ -181,12 +192,13 @@ func (r *Recorder) addExchange(front captureRecord, state *requestState, provide
 	for _, provider := range providers {
 		addPayload(&r.metrics.Transport.ProviderAttemptRequests, provider.Request)
 		addPayload(&r.metrics.Transport.ProviderResponses, provider.Response)
+		addPayload(&r.metrics.Semantic.ProviderAttemptOutputs, provider.FinalOutput)
 		addTools(r.metrics.ProviderTools, provider.ToolCalls)
 		providerTools = append(providerTools, provider.ToolCalls...)
 		attempt := providerAttemptMetrics{
 			Attempt: provider.ProviderAttempt, Model: provider.RequestModel, Status: provider.ResponseStatus,
 			ResponseComplete: provider.ResponseComplete,
-			Request:          provider.Request, Response: provider.Response,
+			Request:          provider.Request, Response: provider.Response, FinalOutput: provider.FinalOutput,
 			Tools: slices.Clone(provider.ToolCalls),
 		}
 		if provider.RequestModel != "" {
@@ -208,8 +220,8 @@ func (r *Recorder) addExchange(front captureRecord, state *requestState, provide
 		r.recordCacheObservation(state, final.Usage)
 		r.metrics.Protocol.InputPayloadTokensSaved += signedDifference(front.Request.Tokens, final.Request.Tokens)
 		r.metrics.Protocol.InputPayloadBytesSaved += signedDifference(front.Request.Bytes, final.Request.Bytes)
-		r.metrics.Protocol.OutputPayloadTokensSaved += signedDifference(front.Response.Tokens, final.Response.Tokens)
-		r.metrics.Protocol.OutputPayloadBytesSaved += signedDifference(front.Response.Bytes, final.Response.Bytes)
+		r.metrics.Protocol.OutputPayloadTokensSaved += signedDifference(front.FinalOutput.Tokens, final.FinalOutput.Tokens)
+		r.metrics.Protocol.OutputPayloadBytesSaved += signedDifference(front.FinalOutput.Bytes, final.FinalOutput.Bytes)
 	} else {
 		r.recordCacheObservation(state, nil)
 	}
@@ -217,6 +229,10 @@ func (r *Recorder) addExchange(front captureRecord, state *requestState, provide
 	if r.metrics.Cache.EligiblePrefixTokens != 0 {
 		rate := float64(r.metrics.Cache.EligiblePrefixCachedTokens) / float64(r.metrics.Cache.EligiblePrefixTokens)
 		r.metrics.Cache.EligiblePrefixCacheRate = &rate
+	}
+	if r.metrics.Usage.InputTokens != 0 {
+		rate := float64(r.metrics.Usage.CachedInputTokens) / float64(r.metrics.Usage.InputTokens)
+		r.metrics.Cache.ProviderCacheRate = &rate
 	}
 	if len(r.metrics.Exchanges) == maxRetainedExchangeDetails {
 		copy(r.metrics.Exchanges, r.metrics.Exchanges[1:])
@@ -264,6 +280,10 @@ func cloneMetricsSnapshot(source metricsSnapshot) metricsSnapshot {
 	if source.Cache.EligiblePrefixCacheRate != nil {
 		rate := *source.Cache.EligiblePrefixCacheRate
 		clone.Cache.EligiblePrefixCacheRate = &rate
+	}
+	if source.Cache.ProviderCacheRate != nil {
+		rate := *source.Cache.ProviderCacheRate
+		clone.Cache.ProviderCacheRate = &rate
 	}
 	clone.Exchanges = make([]exchangeMetrics, len(source.Exchanges))
 	for index, exchange := range source.Exchanges {

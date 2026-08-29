@@ -31,8 +31,8 @@ partial registry, forwards no Responses request, or starts an executor implement
 checks occur at startup; this does not promise to reproduce a provider's model-specific or
 complexity limits.
 
-A successful translator returns a typed normal Code Mode tool-call carrier. The router
-validates the carrier kind, name, and payload against the Code Mode tools available in that
+A successful translator returns a typed normal executor tool-call carrier. The router
+validates the carrier kind, name, and payload against the tools available in that
 request and retains ownership of response item IDs, call IDs, status, JSON and SSE framing,
 history, and replay. A plugin cannot invent an unavailable carrier or return a raw Responses
 envelope. The plugin API provides a canonical exec wrapper for tools that need one. The wrapper
@@ -46,6 +46,14 @@ tools this is their frontend command. For built-in shell it is normally the fixe
 physical line containing one static external Bash command instead remains the complete outer
 command. An optional JSON parameter object cannot contain `cmd`. The router supplies `cmd` from
 the selected command. If the parameter object contains `login`, its value must be exactly `false`.
+
+Requests may expose either the Code Mode custom `exec` owner in `additional_tools` or native
+top-level custom `apply_patch` plus function `exec_command`. The router replaces the editing
+surface in either shape without opening another listener. In native requests, `exec_command`
+remains the executor-owned carrier. Hpatch invokes the executor's `apply_patch` command through
+that carrier and returns the already-rendered report as its exact successful output; ordinary
+exec-backed contributions use direct native function arguments rather than a Code Mode wrapper.
+Response restoration and replay retain the request's original carrier shape.
 
 For each configured executor-backed contributed tool, startup creates or verifies a stable
 executable symlink beside the running `hpatch-router`. Its basename is exactly the contributed tool name,
@@ -87,7 +95,7 @@ Translated history retains the plugin identity, original tool name and input, an
 kind, name, and payload. Replay accepts only the byte-identical retained carrier and restores
 the original model-visible call before upstream forwarding. Ordinary plugins do not enter
 hpatch recovery ancestry. Runtime model-input rejection returns a bounded diagnostic
-through an available Code Mode carrier; a translator protocol violation, unavailable carrier,
+through an available executor carrier; a translator protocol violation, unavailable carrier,
 or malformed carrier is a routing failure rather than a successful approximation.
 
 Grammar compatibility for this requirement is pinned to OpenAI's Custom tools guide
@@ -107,9 +115,9 @@ Acceptance:
    independent startup mismatches are reported together and no valid subset is exposed.
 4. Duplicate tool names across plugins or built-ins fail startup, and the registry does not
    change until process restart.
-5. A plugin may translate to any compatible Code Mode tool call available in the current
+5. A plugin may translate to any compatible executor tool call available in the current
    request; an unavailable or wrong-kind carrier rejects before upstream execution.
-6. The exec wrapper renders the canonical outer exec shape and independently quotes every argv
+6. The exec wrapper renders the canonical Code Mode program or native function arguments and independently quotes every argv
    value. An optional template contains exactly one `{.}`, which expands to the complete worker
    command. The plugin declaration does not contain or generate the outer carrier shape.
 7. Invoking a configured executor-backed tool resolves its stable basename frontend through the
@@ -118,7 +126,8 @@ Acceptance:
 8. JSON and SSE responses preserve call identity while replacing a contributed call with its
    validated carrier. While the complete streaming input is buffered for validation, each withheld
    input delta becomes a content-free native `response.in_progress` event so downstream SSE remains
-   active without exposing untranslated content. Replay restores the exact original contributed
+   active without exposing untranslated content. Native function-argument events replace custom
+   input events when the request uses native tools. Replay restores the exact original contributed
    call after verifying the retained carrier.
 9. A model-input diagnostic is bounded and recoverable, while an invalid translator result
    cannot be returned or counted as a successful tool call.

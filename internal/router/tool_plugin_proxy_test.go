@@ -26,6 +26,7 @@ const testToolPluginDeclaration = `export default {
     translate(parsed, api) {
       if (parsed === "function") return api.function("lookup", "{\"value\":\"function\"}");
       if (parsed === "custom") return api.custom("exec", "custom payload");
+      if (parsed === "native-custom") return api.custom("custom_target", "native custom payload");
       if (parsed === "missing") return api.custom("missing_carrier", parsed);
       if (parsed === "wrong-kind") return api.function("exec", "{}");
       if (parsed === "invalid-json") return api.function("lookup", "{");
@@ -46,6 +47,48 @@ const testToolPluginDeclaration = `export default {
 
 func newToolPluginTestTransform(t *testing.T) (*hpatchResponseTransform, *hpatchProxy, *parsedResponsesRequest) {
 	t.Helper()
+	proxy := newToolPluginTestProxy(t)
+
+	request, err := parseResponsesRequest(mustTestJSON(t, map[string]any{
+		"model": "gpt-test",
+		"input": []any{
+			testCodeModeAdditionalTools(testCodeModeDescription),
+			map[string]any{"role": "user", "content": "task"},
+		},
+		"tools": []any{
+			map[string]any{"type": "function", "name": "lookup"},
+		},
+		"tool_choice":         "auto",
+		"parallel_tool_calls": true,
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	transform := prepareToolPluginTestRequest(t, proxy, &request, "plugin-session", "plugin-thread")
+	return transform, proxy, &request
+}
+
+func newNativeToolPluginTestTransform(t *testing.T) (*hpatchResponseTransform, *hpatchProxy) {
+	t.Helper()
+	proxy := newToolPluginTestProxy(t)
+	tools := append(testNativeResponsesTools(), map[string]any{
+		"type": "custom", "name": "custom_target", "description": "fixture carrier",
+	})
+	request, err := parseResponsesRequest(mustTestJSON(t, map[string]any{
+		"model":               "gpt-test",
+		"input":               []any{map[string]any{"role": "user", "content": "task"}},
+		"tools":               tools,
+		"tool_choice":         "auto",
+		"parallel_tool_calls": true,
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return prepareToolPluginTestRequest(t, proxy, &request, "native-plugin-session", "native-plugin-thread"), proxy
+}
+
+func newToolPluginTestProxy(t *testing.T) *hpatchProxy {
+	t.Helper()
 	t.Setenv(shellruntime.RuntimeDirectoryEnvironment, t.TempDir())
 	dataDirectory := t.TempDir()
 	pluginDirectory := filepath.Join(dataDirectory, "plugins")
@@ -65,33 +108,22 @@ func newToolPluginTestTransform(t *testing.T) (*hpatchResponseTransform, *hpatch
 			t.Error(err)
 		}
 	})
+	return proxy
+}
 
-	request, err := parseResponsesRequest(mustTestJSON(t, map[string]any{
-		"model": "gpt-test",
-		"input": []any{
-			testCodeModeAdditionalTools(testCodeModeDescription),
-			map[string]any{"role": "user", "content": "task"},
-		},
-		"tools": []any{
-			map[string]any{"type": "function", "name": "lookup"},
-		},
-		"tool_choice":         "auto",
-		"parallel_tool_calls": true,
-	}))
-	if err != nil {
-		t.Fatal(err)
-	}
+func prepareToolPluginTestRequest(t *testing.T, proxy *hpatchProxy, request *parsedResponsesRequest, sessionID, threadID string) *hpatchResponseTransform {
+	t.Helper()
 	workspace := t.TempDir()
 	metadata := codexTurnMetadata{
 		RequestKind: "turn",
 		Directories: map[string]json.RawMessage{workspace: nil},
 	}
-	transform, err := proxy.prepareRequest(t.Context(), &request, "plugin-session", "plugin-thread", metadata, true)
+	transform, err := proxy.prepareRequest(t.Context(), request, sessionID, threadID, metadata, true)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(transform.Close)
-	return transform, proxy, &request
+	return transform
 }
 
 func testToolPluginItem(input string) map[string]any {
@@ -287,12 +319,76 @@ func TestToolPluginGenericCarriers(t *testing.T) {
 				}
 				if jsonString(restored[0], "type") != "custom_tool_call" ||
 					jsonString(restored[0], "name") != "plugin_tool" ||
-					jsonString(restored[0], "input") != "function" {
+					jsonString(restored[0], "input") != "function" ||
+					jsonString(restored[1], "type") != "custom_tool_call_output" {
 					t.Fatalf("restored function carrier = %#v", restored)
 				}
 			}
 		})
 	}
+}
+
+func TestToolPluginNativeCustomCarrierJSONAndSSE(t *testing.T) {
+	t.Run("JSON", func(t *testing.T) {
+		transform, proxy := newNativeToolPluginTestTransform(t)
+		response, err := transform.TransformJSON(mustTestJSON(t, map[string]any{
+			"status": "completed",
+			"output": []any{testToolPluginItem("native-custom")},
+		}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		visible := decodeResponseItem(t, response)
+		if jsonString(visible, "type") != "custom_tool_call" ||
+			jsonString(visible, "name") != "custom_target" ||
+			jsonString(visible, "input") != "native custom payload" {
+			t.Fatalf("native custom carrier = %#v", visible)
+		}
+		history, ok := proxy.history(transform.historySessionID, "call-P")
+		if !ok || history.carrierKind != codeModeCarrierCustom || history.carrierName != "custom_target" {
+			t.Fatalf("native custom history = %+v, available %t", history, ok)
+		}
+	})
+
+	t.Run("SSE", func(t *testing.T) {
+		transform, _ := newNativeToolPluginTestTransform(t)
+		item := testToolPluginItem("native-custom")
+		added := maps.Clone(item)
+		added["status"] = "in_progress"
+		added["input"] = ""
+		visible, err := transform.TransformSSE(mustTestJSON(t, map[string]any{
+			"type": "response.output_item.added",
+			"item": added,
+		}))
+		if err != nil || visible != nil {
+			t.Fatalf("buffered native custom item = %q, error %v", visible, err)
+		}
+		visible, err = transform.TransformSSE(mustTestJSON(t, map[string]any{
+			"type": "response.custom_tool_call_input.done", "item_id": "item-P", "input": "native-custom",
+		}))
+		if err != nil || len(visible) != 2 {
+			t.Fatalf("native custom input.done = %q, error %v", visible, err)
+		}
+		var addedEvent struct {
+			Item map[string]json.RawMessage `json:"item"`
+		}
+		if err := json.Unmarshal(visible[0], &addedEvent); err != nil {
+			t.Fatal(err)
+		}
+		if jsonString(addedEvent.Item, "type") != "custom_tool_call" ||
+			jsonString(addedEvent.Item, "name") != "custom_target" ||
+			jsonString(addedEvent.Item, "input") != "" {
+			t.Fatalf("native custom added event = %s", visible[0])
+		}
+		var doneEvent map[string]json.RawMessage
+		if err := json.Unmarshal(visible[1], &doneEvent); err != nil {
+			t.Fatal(err)
+		}
+		if jsonString(doneEvent, "type") != "response.custom_tool_call_input.done" ||
+			jsonString(doneEvent, "input") != "native custom payload" {
+			t.Fatalf("native custom done event = %s", visible[1])
+		}
+	})
 }
 
 func TestToolPluginFunctionCarrierSSE(t *testing.T) {
