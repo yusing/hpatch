@@ -35,7 +35,15 @@ func executeShellTool(
 	shellContribution *toolContribution,
 	arguments []string,
 	stdin *os.File,
+	commentary shellCommentarySink,
 ) (toolplugin.ExecutionOutput, error) {
+	if commentary != nil {
+		defer func() {
+			completionContext, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
+			defer cancel()
+			_ = commentary.Complete(completionContext)
+		}()
+	}
 	if len(arguments) < 2 {
 		return toolplugin.ExecutionOutput{Stderr: "shell: missing interpreter or script body\n", ExitCode: 1}, nil
 	}
@@ -125,6 +133,7 @@ func executeShellTool(
 		interp.ExecHandler(middleware(func(ctx context.Context, arguments []string) error {
 			return executeExternalShellCommand(ctx, arguments, terminalShell)
 		})),
+		interp.CallHandler(shellCommentaryCallHandler(commentary)),
 	)
 	if err != nil {
 		return toolplugin.ExecutionOutput{Stderr: fmt.Sprintf("shell: %v\n", err), ExitCode: 1}, nil

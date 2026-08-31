@@ -214,6 +214,7 @@ func TestShellRunnerBoundsAndValidatesOutput(t *testing.T) {
 			captureBudget-1,
 		)},
 		nil,
+		nil,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -235,6 +236,7 @@ func TestShellRunnerBoundsAndValidatesOutput(t *testing.T) {
 		runtimeRoot,
 		&shell,
 		[]string{"bash", `python3 -c 'import os; os.write(1, b"\xff")'`},
+		nil,
 		nil,
 	)
 	if err != nil {

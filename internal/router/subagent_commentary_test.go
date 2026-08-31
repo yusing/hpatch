@@ -99,7 +99,7 @@ func TestSubagentResponseCommentaryDoesNotRepeat(t *testing.T) {
 		}},
 	}
 	generatedID := subagentCommentaryMessageID("response\x00amsg-result\x00/root/worker\x00" + responseText)
-	generated := subagentCommentaryMessage(generatedID, "Response from /root/worker:\n"+responseText)
+	generated := assistantCommentaryMessage(generatedID, "Response from /root/worker:\n"+responseText)
 	input := []any{generated, agentMessage}
 	transform, _, request := newSubagentCommentaryTestTransform(t, input)
 	if len(transform.subagentDeferred) != 0 {
@@ -289,6 +289,7 @@ func newSubagentCommentaryTestTransformWithMetadata(
 		return nil, nil
 	})
 	proxy := newManagedHPatchProxy(t, translator)
+	proxy.commentaryEndpoint = "http://127.0.0.1:8080" + commentaryPublisherPath
 	workspace := t.TempDir()
 	metadata.RequestKind = "turn"
 	metadata.Directories = map[string]json.RawMessage{workspace: nil}

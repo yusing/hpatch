@@ -1,6 +1,25 @@
-# Router-owned subagent commentary projection
+# Router-owned commentary projection
 
-## CTR-COMMENTARY-001 — Router-owned subagent commentary projection
+## CTR-COMMENTARY-001 — Router-owned operation and subagent commentary projection
+
+The Responses router owns optional commentary schema projection for extensible ordinary function
+tools, default selection for eligible structured calls, removal of only its own argument, assistant
+message rendering, and exact replay restoration. Provider-owned and strict schemas remain exact.
+Collaboration calls remain outside generic operation commentary so the distinct subagent contract
+below stays authoritative. The existing bounded Hpatch call history retains original call identity
+and router message IDs; JSON and SSE transformers share that state without adding another replay
+store. Streaming keeps subagent and generic structured pending calls separate because their
+validation and completion policies differ.
+
+The router also owns one bounded authenticated in-process publication broker. Code Mode lowering
+uses the JavaScript syntax owner when available and routes the evaluated expression through the
+existing shell worker carrier. The CGO-disabled detector only fails closed for the reserved awaited
+form. The Bash/POSIX evaluator intercepts the reserved command after ordinary expansion and turns
+it into a successful no-output command. Both runtime paths use opaque per-call capabilities and the
+same broker; they do not own executor results, shell process status, or Codex session control.
+Publications ready at stream completion are drained before the terminal event, while later and JSON
+publications are drained by the next non-concurrent request for the retained session. Limits and
+publication failures are auxiliary.
 
 The Responses router owns detection of the `spawn_agent` function from the request's configured
 namespaced tool catalog and rendering deterministic assistant commentary from non-message call

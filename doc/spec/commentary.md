@@ -1,6 +1,37 @@
-# Subagent activity commentary
+# Router commentary
 
-## REQ-COMMENTARY-001 — User-only subagent activity details
+## REQ-COMMENTARY-001 — User-only operation and subagent commentary
+
+In Hpatch router mode, every non-strict function tool in the ordinary Responses `tools` catalog
+with an object parameter schema receives one optional string property named `commentary`. A
+nonblank authored value is shown as assistant commentary immediately before the call and is removed
+before execution. An omitted or blank value uses a concise tool-specific default. Strict tools,
+provider-owned `additional_tools`, and tools that already own a `commentary` property keep their
+schemas and arguments unchanged and receive defaults only. Collaboration tools and tools whose
+purpose is user messaging receive no generic operation commentary.
+
+The central model instructions direct the agent to attach progress only through a supported tool's
+commentary field or documented runtime mechanism. The agent does not originate standalone assistant
+messages with `phase: "commentary"`; those messages are router-owned.
+
+JSON and streaming responses preserve the same ordering. The streaming path buffers an eligible
+function call until its complete arguments can be validated and stripped. The router retains the
+provider's exact original call in the existing bounded session history, removes only its generated
+message from later input, and restores the original call before provider replay. Malformed
+router-owned commentary fails before the tool call is exposed.
+
+Code Mode may publish runtime progress with `await commentary(value)`. The JavaScript parser
+replaces only the reserved awaited call while preserving ordinary strings, comments, and unrelated
+identifiers. Bash and POSIX shell programs may publish expanded text through the reserved
+`commentary` command; the command writes nothing and succeeds without changing surrounding shell
+control flow, redirections, output, or exit status. Other interpreters receive no runtime
+commentary handling, and shell calls without an authored command receive no default.
+
+Runtime publications use a per-call authenticated route on the router's existing HTTP server.
+Ready streaming publications precede the terminal response; later publications and publications
+from JSON responses appear at the start of the next non-concurrent request for the same session.
+Routes, events, request bodies, and retention time are bounded. Capacity, network, publication, and
+rendering failures remain auxiliary and do not replace the tool result.
 
 In Hpatch router mode, a namespaced Codex `spawn_agent` function call produces one assistant
 commentary message immediately before the unchanged call. It shows the model and reasoning effort
@@ -38,3 +69,15 @@ Acceptance:
    the matching message is already present in Codex history.
 6. Every terminal root-agent or subagent response with provider usage reports `i`, `ci`, `o`, and
    `r` exactly once without changing the provider's usage object or captured metrics.
+7. Extensible ordinary function tools accept optional authored commentary, while strict,
+   provider-owned, pre-owned-commentary, collaboration, and user-messaging schemas remain exact.
+8. JSON and streaming calls show one explicit or default message before the executable item,
+   execute without the router-owned argument, and restore the exact provider call during replay.
+9. Code Mode transforms nested reserved awaited forms inside-out without transforming occurrences
+   in strings, template text, comments, regular expressions, properties, or unrelated identifiers.
+10. Bash and POSIX shell commentary publishes expanded text without changing stdout, stderr,
+    control flow, or exit status; absent publisher capacity leaves the command a successful no-op.
+11. Ready and deferred runtime publications retain session and call identity, remain bounded, and
+    cannot replace a successful or failed tool result.
+12. Central model instructions keep agent-authored progress on supported tool calls and reserve
+    standalone assistant commentary messages for router output.
