@@ -7,6 +7,7 @@ package router
 import (
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -44,7 +45,7 @@ func subagentToolCatalog(fields map[string]json.RawMessage) map[string]struct{} 
 			}
 			for _, tool := range tools {
 				name := jsonString(tool, "name")
-				if jsonString(tool, "type") == "function" && (name == "spawn_agent" || name == "followup_task") {
+				if jsonString(tool, "type") == "function" && name == "spawn_agent" {
 					catalog[subagentToolKey(jsonString(namespace, "name"), name)] = struct{}{}
 				}
 			}
@@ -151,41 +152,76 @@ func subagentCallCommentary(
 	if callID == "" || json.Unmarshal([]byte(jsonString(item, "arguments")), &arguments) != nil {
 		return nil, false
 	}
-	var message string
-	if json.Unmarshal(arguments["message"], &message) != nil {
+	if name != "spawn_agent" {
 		return nil, false
 	}
-
-	var text string
-	switch name {
-	case "followup_task":
-		var target string
-		if json.Unmarshal(arguments["target"], &target) != nil {
-			return nil, false
-		}
-		text = "Follow-up to " + target + ":\n" + message
-	case "spawn_agent":
-		model, effort := parentModel, parentEffort
-		var requestedModel, requestedEffort, roleName string
-		_ = json.Unmarshal(arguments["model"], &requestedModel)
-		_ = json.Unmarshal(arguments["reasoning_effort"], &requestedEffort)
-		_ = json.Unmarshal(arguments["agent_type"], &roleName)
-		if strings.TrimSpace(requestedModel) != "" {
-			model = requestedModel
-		}
-		if strings.TrimSpace(requestedEffort) != "" {
-			effort = requestedEffort
-		}
-		var builder strings.Builder
-		builder.WriteString("Starting subagent.\n")
-		if roleName = strings.TrimSpace(roleName); roleName != "" {
-			fmt.Fprintf(&builder, "Role: %s\n", roleName)
-		}
-		fmt.Fprintf(&builder, "Model: %s\nReasoning effort: %s\nMessage:\n%s", model, effort, message)
-		text = builder.String()
-	default:
-		return nil, false
+	model, effort := parentModel, parentEffort
+	var requestedModel, requestedEffort, roleName string
+	_ = json.Unmarshal(arguments["model"], &requestedModel)
+	_ = json.Unmarshal(arguments["reasoning_effort"], &requestedEffort)
+	_ = json.Unmarshal(arguments["agent_type"], &roleName)
+	if strings.TrimSpace(requestedModel) != "" {
+		model = requestedModel
 	}
+	if strings.TrimSpace(requestedEffort) != "" {
+		effort = requestedEffort
+	}
+	var builder strings.Builder
+	builder.WriteString("Starting subagent.\n")
+	if roleName = strings.TrimSpace(roleName); roleName != "" {
+		fmt.Fprintf(&builder, "Role: %s\n", roleName)
+	}
+	fmt.Fprintf(&builder, "Model: %s\nReasoning effort: %s", model, effort)
 	id := subagentCommentaryMessageID(name + "\x00" + callID)
-	return subagentCommentaryMessage(id, text), true
+	return subagentCommentaryMessage(id, builder.String()), true
+}
+
+func tokenUsageCommentary(response []byte) map[string]json.RawMessage {
+	counts, ok := usageFromResponsePayload(response, false)
+	if !ok {
+		return nil
+	}
+	var identity struct {
+		ID string `json:"id"`
+	}
+	if json.Unmarshal(response, &identity) != nil || identity.ID == "" {
+		return nil
+	}
+	cachedInput := counts.InputTokens - counts.UncachedInputTokens
+	text := fmt.Sprintf(
+		"Tokens: i=%d, ci=%d, o=%d, r=%d",
+		counts.InputTokens,
+		cachedInput,
+		counts.OutputTokens,
+		counts.ReasoningTokens,
+	)
+	id := subagentCommentaryMessageID("usage\x00" + identity.ID)
+	return subagentCommentaryMessage(id, text)
+}
+
+func responseWithTokenUsageCommentary(response []byte) (
+	map[string]json.RawMessage,
+	map[string]json.RawMessage,
+	error,
+) {
+	var object map[string]json.RawMessage
+	if err := json.Unmarshal(response, &object); err != nil || object == nil {
+		return nil, nil, errors.New("decode hpatch-enabled response")
+	}
+	message := tokenUsageCommentary(response)
+	rawOutput, present := object["output"]
+	if message == nil || !present {
+		return object, message, nil
+	}
+	var output []map[string]json.RawMessage
+	if err := json.Unmarshal(rawOutput, &output); err != nil {
+		return nil, nil, errors.New("decode hpatch-enabled response output")
+	}
+	output = append(output, message)
+	encoded, err := json.Marshal(output)
+	if err != nil {
+		return nil, nil, err
+	}
+	object["output"] = encoded
+	return object, message, nil
 }

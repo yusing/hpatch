@@ -19,10 +19,15 @@ func TestSubagentCommentaryJSONIsVisibleAndRemovedFromReplay(t *testing.T) {
 	}
 	transform, _, request := newSubagentCommentaryTestTransform(t, []any{agentMessage})
 
-	spawnArguments := `{"task_name":"inspect","message":"first line\nsecond line","agent_type":" explorer ","model":"gpt-requested","reasoning_effort":"low"}`
-	followupArguments := `{"target":"/root/explorer","message":"check the exact edge case"}`
+	spawnArguments := `{"task_name":"inspect","message":"encrypted-spawn-message","agent_type":" explorer ","model":"gpt-requested","reasoning_effort":"low"}`
+	followupArguments := `{"target":"/root/explorer","message":"encrypted-follow-up-message"}`
+	usage := map[string]any{
+		"input_tokens": 120, "output_tokens": 30,
+		"input_tokens_details":  map[string]any{"cached_tokens": 80},
+		"output_tokens_details": map[string]any{"reasoning_tokens": 20},
+	}
 	payload := mustTestJSON(t, map[string]any{
-		"status": "completed",
+		"id": "resp-json", "status": "completed", "usage": usage,
 		"output": []any{
 			map[string]any{
 				"type": "function_call", "id": "item-spawn", "call_id": "call-spawn",
@@ -51,25 +56,23 @@ func TestSubagentCommentaryJSONIsVisibleAndRemovedFromReplay(t *testing.T) {
 	if len(response.Output) != 6 {
 		t.Fatalf("output = %s", transformed)
 	}
-	texts := []string{
-		commentaryText(t, response.Output[0]),
-		commentaryText(t, response.Output[1]),
-		commentaryText(t, response.Output[3]),
+	if text := commentaryText(t, response.Output[0]); text != "Response from /root/explorer:\n"+responseText {
+		t.Fatalf("response commentary = %q", text)
 	}
-	if texts[0] != "Response from /root/explorer:\n"+responseText {
-		t.Fatalf("response commentary = %q", texts[0])
+	wantSpawn := "Starting subagent.\nRole: explorer\nModel: gpt-requested\nReasoning effort: low"
+	if text := commentaryText(t, response.Output[1]); text != wantSpawn {
+		t.Fatalf("spawn commentary = %q", text)
 	}
-	wantSpawn := "Starting subagent.\nRole: explorer\nModel: gpt-requested\nReasoning effort: low\nMessage:\nfirst line\nsecond line"
-	if texts[1] != wantSpawn {
-		t.Fatalf("spawn commentary = %q", texts[1])
-	}
-	if texts[2] != "Follow-up to /root/explorer:\ncheck the exact edge case" {
-		t.Fatalf("follow-up commentary = %q", texts[2])
+	if text := commentaryText(t, response.Output[5]); text != "Tokens: i=120, ci=80, o=30, r=20" {
+		t.Fatalf("usage commentary = %q", text)
 	}
 	if jsonString(response.Output[2], "arguments") != spawnArguments ||
-		jsonString(response.Output[4], "arguments") != followupArguments ||
-		jsonString(response.Output[5], "name") != "send_message" {
+		jsonString(response.Output[3], "arguments") != followupArguments ||
+		jsonString(response.Output[4], "name") != "send_message" {
 		t.Fatalf("collaboration calls changed: %s", transformed)
+	}
+	if bytes.Contains(response.Output[1]["content"], []byte("encrypted")) {
+		t.Fatalf("encrypted message reached spawn commentary: %s", response.Output[1]["content"])
 	}
 
 	var forwarded []map[string]json.RawMessage
@@ -109,7 +112,7 @@ func TestSubagentResponseCommentaryDoesNotRepeat(t *testing.T) {
 
 func TestSubagentCommentaryBuffersStreamingCall(t *testing.T) {
 	transform, _, _ := newSubagentCommentaryTestTransform(t, nil)
-	arguments := `{"task_name":"inspect","message":"inspect exactly","agent_type":"explorer"}`
+	arguments := `{"task_name":"inspect","message":"encrypted-spawn-message","agent_type":"explorer"}`
 	item := map[string]any{
 		"type": "function_call", "id": "item-spawn", "call_id": "call-spawn",
 		"namespace": "collaboration", "name": "spawn_agent", "arguments": arguments,
@@ -143,28 +146,72 @@ func TestSubagentCommentaryBuffersStreamingCall(t *testing.T) {
 	if err != nil || len(events) != 4 {
 		t.Fatalf("done events = %q, error %v", events, err)
 	}
-	if !bytes.Contains(events[0], []byte("Starting subagent.")) || !bytes.Equal(events[1], added) ||
+	if !bytes.Contains(events[0], []byte("Starting subagent.")) || bytes.Contains(events[0], []byte("encrypted-spawn-message")) || !bytes.Equal(events[1], added) ||
 		!bytes.Equal(events[2], argumentsDone) || !bytes.Equal(events[3], itemDone) {
 		t.Fatalf("done events = %q", events)
 	}
 
 	completed := mustTestJSON(t, map[string]any{
-		"type":     "response.completed",
-		"response": map[string]any{"status": "completed", "output": []any{item}},
+		"type": "response.completed",
+		"response": map[string]any{
+			"id": "resp-stream", "status": "completed", "output": []any{item},
+			"usage": map[string]any{
+				"input_tokens": 75, "output_tokens": 12,
+				"input_tokens_details":  map[string]any{"cached_tokens": 50},
+				"output_tokens_details": map[string]any{"reasoning_tokens": 9},
+			},
+		},
 	})
 	events, err = transform.TransformSSE(completed)
-	if err != nil || len(events) != 1 {
+	if err != nil || len(events) != 2 {
 		t.Fatalf("completed events = %q, error %v", events, err)
+	}
+	if text := commentaryEventText(t, events[0]); text != "Tokens: i=75, ci=50, o=12, r=9" {
+		t.Fatalf("usage commentary = %q", text)
 	}
 	var terminal struct {
 		Response struct {
 			Output []map[string]json.RawMessage `json:"output"`
 		} `json:"response"`
 	}
-	if json.Unmarshal(events[0], &terminal) != nil || len(terminal.Response.Output) != 2 ||
-		bytes.Count(events[0], []byte("Starting subagent.")) != 1 ||
+	if json.Unmarshal(events[1], &terminal) != nil || len(terminal.Response.Output) != 3 ||
+		bytes.Count(events[1], []byte("Starting subagent.")) != 1 ||
 		jsonString(terminal.Response.Output[1], "arguments") != arguments {
-		t.Fatalf("completed event = %s", events[0])
+		t.Fatalf("completed event = %s", events[1])
+	}
+	if text := commentaryText(t, terminal.Response.Output[2]); text != "Tokens: i=75, ci=50, o=12, r=9" {
+		t.Fatalf("terminal usage commentary = %q", text)
+	}
+}
+
+func TestSubagentTokenUsageCommentaryOnFailedAndIncompleteStops(t *testing.T) {
+	for _, status := range []string{"failed", "incomplete"} {
+		t.Run(status, func(t *testing.T) {
+			metadata := codexTurnMetadata{SubagentKind: "thread_spawn"}
+			transform, _, _ := newSubagentCommentaryTestTransformWithMetadata(t, nil, metadata)
+			terminal := mustTestJSON(t, map[string]any{
+				"type": "response." + status,
+				"response": map[string]any{
+					"id": "resp-" + status, "status": status, "output": []any{},
+					"usage": map[string]any{
+						"input_tokens": 90, "output_tokens": 11,
+						"input_tokens_details":  map[string]any{"cached_tokens": 60},
+						"output_tokens_details": map[string]any{"reasoning_tokens": 7},
+					},
+				},
+			})
+			events, err := transform.TransformSSE(terminal)
+			if err != nil || len(events) != 2 {
+				t.Fatalf("terminal events = %q, error %v", events, err)
+			}
+			if text := commentaryEventText(t, events[0]); text != "Tokens: i=90, ci=60, o=11, r=7" {
+				t.Fatalf("usage commentary = %q", text)
+			}
+			if !bytes.Contains(events[1], []byte(`"type":"response.`+status+`"`)) ||
+				bytes.Count(events[1], []byte("Tokens: i=90")) != 1 {
+				t.Fatalf("terminal event = %s", events[1])
+			}
+		})
 	}
 }
 
@@ -211,6 +258,15 @@ func newSubagentCommentaryTestTransform(
 	conversation []any,
 ) (*hpatchResponseTransform, *hpatchProxy, *parsedResponsesRequest) {
 	t.Helper()
+	return newSubagentCommentaryTestTransformWithMetadata(t, conversation, codexTurnMetadata{})
+}
+
+func newSubagentCommentaryTestTransformWithMetadata(
+	t *testing.T,
+	conversation []any,
+	metadata codexTurnMetadata,
+) (*hpatchResponseTransform, *hpatchProxy, *parsedResponsesRequest) {
+	t.Helper()
 	additional := testCodeModeAdditionalTools(testCodeModeDescription)
 	namespaces := additional["tools"].([]any)
 	collaboration := namespaces[1].(map[string]any)
@@ -234,7 +290,8 @@ func newSubagentCommentaryTestTransform(
 	})
 	proxy := newManagedHPatchProxy(t, translator)
 	workspace := t.TempDir()
-	metadata := codexTurnMetadata{RequestKind: "turn", Directories: map[string]json.RawMessage{workspace: nil}}
+	metadata.RequestKind = "turn"
+	metadata.Directories = map[string]json.RawMessage{workspace: nil}
 	transform, err := proxy.prepareRequest(t.Context(), &request, "session", "thread", metadata, true)
 	if err != nil {
 		t.Fatal(err)
@@ -253,6 +310,17 @@ func commentaryText(t *testing.T, item map[string]json.RawMessage) string {
 		t.Fatalf("commentary content = %s, error %v", item["content"], err)
 	}
 	return jsonString(content[0], "text")
+}
+
+func commentaryEventText(t *testing.T, event []byte) string {
+	t.Helper()
+	var envelope struct {
+		Item map[string]json.RawMessage `json:"item"`
+	}
+	if err := json.Unmarshal(event, &envelope); err != nil {
+		t.Fatal(err)
+	}
+	return commentaryText(t, envelope.Item)
 }
 
 func containsAgentMessage(items []map[string]json.RawMessage, id string) bool {

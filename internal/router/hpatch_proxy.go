@@ -2226,7 +2226,8 @@ func (t *hpatchResponseTransform) nextRecoveryAttempt(correlationID string, base
 }
 
 func (t *hpatchResponseTransform) TransformJSON(payload []byte) ([]byte, error) {
-	return t.transformResponse(payload)
+	transformed, _, err := t.transformResponse(payload)
+	return transformed, err
 }
 
 func (t *hpatchResponseTransform) Finish(streamEvent bool) error {
@@ -2428,7 +2429,7 @@ func (t *hpatchResponseTransform) TransformSSE(payload []byte) ([][]byte, error)
 		if len(t.subagentPending) != 0 {
 			return nil, errors.New("upstream completed with an incomplete subagent call")
 		}
-		transformed, err := t.transformResponse(envelope.Response)
+		transformed, usageMessage, err := t.transformResponse(envelope.Response)
 		if err != nil {
 			return nil, err
 		}
@@ -2448,16 +2449,36 @@ func (t *hpatchResponseTransform) TransformSSE(payload []byte) ([][]byte, error)
 		if err := t.Finish(true); err != nil {
 			return nil, err
 		}
-		return [][]byte{event}, nil
+		visible := [][]byte{}
+		if usageMessage != nil {
+			visible = append(visible, subagentCommentaryDoneEvent(usageMessage))
+		}
+		return append(visible, event), nil
 
 	case "response.failed", "response.incomplete":
 		clear(t.pending)
 		clear(t.nativeExecItems)
 		clear(t.subagentPending)
+		object, usageMessage, err := responseWithTokenUsageCommentary(envelope.Response)
+		if err != nil {
+			return nil, err
+		}
+		transformed, err := json.Marshal(object)
+		if err != nil {
+			return nil, err
+		}
+		event, err := replaceRawField(payload, "response", transformed)
+		if err != nil {
+			return nil, err
+		}
 		if err := t.Finish(true); err != nil {
 			return nil, err
 		}
-		return [][]byte{payload}, nil
+		visible := [][]byte{}
+		if usageMessage != nil {
+			visible = append(visible, subagentCommentaryDoneEvent(usageMessage))
+		}
+		return append(visible, event), nil
 	default:
 		if _, pending := t.pending[envelope.ItemID]; pending || t.pendingCallKnown(envelope.CallID) || t.routesTool(envelope.Name) || envelope.Name == applyPatchToolName {
 			return nil, fmt.Errorf("unsupported hpatch-related stream event %q", envelope.Type)
@@ -2482,15 +2503,15 @@ func onePayload(payload []byte, err error) ([][]byte, error) {
 	return [][]byte{payload}, nil
 }
 
-func (t *hpatchResponseTransform) transformResponse(payload []byte) ([]byte, error) {
-	var object map[string]json.RawMessage
-	if err := json.Unmarshal(payload, &object); err != nil || object == nil {
-		return nil, errors.New("decode hpatch-enabled response")
+func (t *hpatchResponseTransform) transformResponse(payload []byte) ([]byte, map[string]json.RawMessage, error) {
+	object, usageMessage, err := responseWithTokenUsageCommentary(payload)
+	if err != nil {
+		return nil, nil, err
 	}
 	if rawOutput, ok := object["output"]; ok {
 		var output []map[string]json.RawMessage
 		if err := json.Unmarshal(rawOutput, &output); err != nil {
-			return nil, errors.New("decode hpatch-enabled response output")
+			return nil, nil, errors.New("decode hpatch-enabled response output")
 		}
 		transformedOutput := make([]map[string]json.RawMessage, 0, len(t.subagentResponses)+len(output))
 		for _, message := range t.subagentResponses {
@@ -2508,23 +2529,24 @@ func (t *hpatchResponseTransform) transformResponse(payload []byte) ([]byte, err
 				transformedOutput = append(transformedOutput, message)
 			}
 			if _, err := t.transformOutputItem(item); err != nil {
-				return nil, err
+				return nil, nil, err
 			}
 			transformedOutput = append(transformedOutput, item)
 		}
 		encoded, err := json.Marshal(transformedOutput)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		object["output"] = encoded
 	}
 	t.restoreResponseContract(object)
 	if jsonString(object, "status") == "completed" {
 		if err := t.commitHistory(); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 	}
-	return json.Marshal(object)
+	transformed, err := json.Marshal(object)
+	return transformed, usageMessage, err
 }
 
 func (t *hpatchResponseTransform) subagentCallMessage(item map[string]json.RawMessage) map[string]json.RawMessage {
