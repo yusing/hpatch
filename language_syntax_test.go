@@ -7,7 +7,6 @@ import (
 )
 
 func TestSupportedLanguageSyntaxDiagnostics(t *testing.T) {
-	requireTreeSitterIndentation(t)
 	tests := []struct {
 		name        string
 		path        string
@@ -91,7 +90,6 @@ func TestSupportedLanguageSyntaxDiagnostics(t *testing.T) {
 }
 
 func TestLanguageSyntaxDiagnosticsCollectDistinctCommandsAndFiles(t *testing.T) {
-	requireTreeSitterIndentation(t)
 	rootPath := t.TempDir()
 	javaScript := "const first = 1;\nconst second = 2;\n"
 	typeScript := "const third: number = 3;\n"
@@ -129,7 +127,6 @@ func TestLanguageSyntaxDiagnosticsCollectDistinctCommandsAndFiles(t *testing.T) 
 }
 
 func TestLanguageCascadeCollapsePreservesSameLineColumns(t *testing.T) {
-	requireTreeSitterIndentation(t)
 	failures := []languageSyntaxFailure{
 		{line: 1, column: 7, kind: "first"},
 		{line: 1, column: 20, kind: "second"},
@@ -146,7 +143,6 @@ func TestLanguageCascadeCollapsePreservesSameLineColumns(t *testing.T) {
 }
 
 func TestLanguageSyntaxDiagnosticsCollectHeredocLocationsAndCascades(t *testing.T) {
-	requireTreeSitterIndentation(t)
 	body := "const first = ;\n" +
 		strings.Repeat("const filler = 1;\n", 50) +
 		"const second = ;\n"
@@ -173,7 +169,6 @@ func TestLanguageSyntaxDiagnosticsCollectHeredocLocationsAndCascades(t *testing.
 }
 
 func TestLanguageSyntaxDiagnosticRepairsMultilineValue(t *testing.T) {
-	requireTreeSitterIndentation(t)
 	rootPath := t.TempDir()
 	source := "def f():\n    value = 1\n"
 	writeTestFile(t, rootPath, "file.py", source, 0o644)
@@ -210,7 +205,6 @@ func TestLanguageSyntaxDiagnosticRepairsMultilineValue(t *testing.T) {
 }
 
 func TestLanguageSyntaxDiagnosticAttributesUnterminatedEdit(t *testing.T) {
-	requireTreeSitterIndentation(t)
 	rootPath := t.TempDir()
 	source := "def f():\n    first = 1\n    second = 2\n"
 	writeTestFile(t, rootPath, "file.py", source, 0o644)
@@ -233,7 +227,6 @@ func TestLanguageSyntaxDiagnosticAttributesUnterminatedEdit(t *testing.T) {
 }
 
 func TestUnchangedInvalidSupportedLanguageIsNotValidated(t *testing.T) {
-	requireTreeSitterIndentation(t)
 	rootPath := t.TempDir()
 	source := "def f(:\n    pass\n"
 	writeTestFile(t, rootPath, "file.py", source, 0o644)

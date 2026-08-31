@@ -184,7 +184,7 @@ and [`REQ-SHELL-001`](doc/spec/shell.md).
 
 ## Requirements
 
-- Go 1.26 or newer. Normal `go install` does not require a checkout.
+- Go 1.26 or newer with CGO and a C toolchain. Normal `go install` does not require a checkout.
 - Hpatch router mode requires Codex CLI with ChatGPT auth from `codex login`
   so each request carries a Bearer token and ChatGPT account header. Codex
   normally stores that file auth at `~/.codex/auth.json` or
