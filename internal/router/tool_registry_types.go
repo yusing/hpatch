@@ -25,7 +25,6 @@ type (
 		NodeExecutable string
 		DiagnoseHooks  hpatch.DiagnoseHooks
 
-		executable        string
 		frontendDirectory string
 		frontendLock      *flock.Flock
 		runtimeDirectory  string

@@ -75,8 +75,6 @@ wrapper or plugin implementation. For each eligible thread, the router writes on
 authenticated snapshot. The locator reads that link and replaces itself with its target. Bash
 and POSIX evaluation dispatch private commands from the resolved worker after shell expansion, so none of the four
 private names creates a snapshot wrapper, stable frontend, or `PATH` dependency.
-Startup removes an authenticated frontend for one of the retired built-in names when it was left
-by a crashed pre-revamp router, without removing an unrelated file or link.
 
 An executor returns its current stdout, stderr, and exit status once. The worker returns that result
 to Codex and never performs a second observation-only execution or returns a benchmark baseline.

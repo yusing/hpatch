@@ -2,10 +2,10 @@ package router
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -30,7 +30,7 @@ func TestWorkerFrontendSymlinkLifecycle(t *testing.T) {
 	if err := os.WriteFile(link, []byte("unrelated"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := ensureWorkerFrontendSymlink(executable, wrapper, directory, name); err == nil ||
+	if _, err := ensureWorkerFrontendSymlink(wrapper, directory, name); err == nil ||
 		!strings.Contains(err.Error(), "not a symlink") {
 		t.Fatalf("unrelated frontend error = %v", err)
 	}
@@ -40,11 +40,18 @@ func TestWorkerFrontendSymlinkLifecycle(t *testing.T) {
 	if err := os.Symlink(executable, link); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := ensureWorkerFrontendSymlink(executable, wrapper, directory, name); err != nil {
-		t.Fatalf("replace legacy frontend: %v", err)
+	if _, err := ensureWorkerFrontendSymlink(wrapper, directory, name); err == nil ||
+		!strings.Contains(err.Error(), "points to") {
+		t.Fatalf("direct executable frontend error = %v", err)
 	}
-	if target, err := os.Readlink(link); err != nil || target != wrapper {
-		t.Fatalf("legacy frontend target = %q, want %q: %v", target, wrapper, err)
+	if target, err := os.Readlink(link); err != nil || target != executable {
+		t.Fatalf("direct executable frontend changed to %q: %v", target, err)
+	}
+	if err := os.Remove(link); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ensureWorkerFrontendSymlink(wrapper, directory, name); err != nil {
+		t.Fatalf("create frontend: %v", err)
 	}
 
 	otherWrapper := filepath.Join(t.TempDir(), name)
@@ -75,81 +82,11 @@ func TestWorkerFrontendSymlinkLifecycle(t *testing.T) {
 	if err := os.Symlink(staleWrapper, link); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := ensureWorkerFrontendSymlink(executable, wrapper, directory, name); err != nil {
+	if _, err := ensureWorkerFrontendSymlink(wrapper, directory, name); err != nil {
 		t.Fatalf("replace stale frontend: %v", err)
 	}
 	if target, err := os.Readlink(link); err != nil || target != wrapper {
 		t.Fatalf("stale frontend target = %q, want %q: %v", target, wrapper, err)
-	}
-}
-
-func TestToolRegistryRemovesRetiredBuiltinFrontends(t *testing.T) {
-	registry, err := buildToolRegistry(t.Context(), t.TempDir(), testHPatchToolDescription, false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		if err := registry.Close(); err != nil {
-			t.Error(err)
-		}
-	})
-	registry.frontendDirectory = t.TempDir()
-
-	staleWrapper := filepath.Join(registry.SnapshotDir, "hread")
-	if err := os.Symlink(registry.executable, staleWrapper); err != nil {
-		t.Fatal(err)
-	}
-	staleFrontend := filepath.Join(registry.frontendDirectory, "hread")
-	if err := os.Symlink(staleWrapper, staleFrontend); err != nil {
-		t.Fatal(err)
-	}
-
-	unrelatedTarget := filepath.Join(t.TempDir(), "shell")
-	unrelatedFrontend := filepath.Join(registry.frontendDirectory, "shell")
-	if err := os.Symlink(unrelatedTarget, unrelatedFrontend); err != nil {
-		t.Fatal(err)
-	}
-	forgedRegistryID := strings.Repeat("a", 64)
-	forgedDirectory := filepath.Join(t.TempDir(), "hpatch-router-tools-fixture-"+forgedRegistryID)
-	if err := os.Mkdir(forgedDirectory, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := writeToolWorkerManifest(forgedDirectory, toolWorkerManifest{
-		Version:     1,
-		RegistryID:  forgedRegistryID,
-		RuntimeRoot: "runtime",
-		Tools: []toolContribution{{
-			PluginID: builtinToolsPluginID,
-			Name:     "hgrep",
-		}},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	forgedWrapper := filepath.Join(forgedDirectory, "hgrep")
-	if err := os.Symlink(registry.executable, forgedWrapper); err != nil {
-		t.Fatal(err)
-	}
-	forgedFrontend := filepath.Join(registry.frontendDirectory, "hgrep")
-	if err := os.Symlink(forgedWrapper, forgedFrontend); err != nil {
-		t.Fatal(err)
-	}
-	if err := registry.installFrontends(); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := os.Lstat(staleFrontend); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("retired hread frontend remains: %v", err)
-	}
-	if target, err := os.Readlink(unrelatedFrontend); err != nil || target != unrelatedTarget {
-		t.Fatalf("unrelated shell frontend target = %q: %v", target, err)
-	}
-	if target, err := os.Readlink(forgedFrontend); err != nil || target != forgedWrapper {
-		t.Fatalf("forged hgrep frontend target = %q: %v", target, err)
-	}
-	if registry.frontendLock != nil {
-		t.Fatal("retired frontend cleanup retained a process-lifetime lock")
-	}
-	if err := registry.installFrontends(); err != nil {
-		t.Fatalf("clean built-in-only registry acquired global state: %v", err)
 	}
 }
 
@@ -353,43 +290,18 @@ func TestToolRegistryStartup(t *testing.T) {
 		}
 	})
 
-	t.Run("retired configured shell does not shadow the built-in", func(t *testing.T) {
+	t.Run("configured shell cannot shadow the built-in", func(t *testing.T) {
 		dataDirectory := t.TempDir()
 		pluginDirectory := filepath.Join(dataDirectory, "plugins")
 		if err := os.Mkdir(pluginDirectory, 0o700); err != nil {
 			t.Fatal(err)
 		}
-		legacyDeclaration := strings.Replace(
-			declaration(retiredConfiguredShellPluginID, "shell", ""),
-			"  }]\n};\n",
-			`  }, {
-    specification: {type: "custom", name: "legacy_extra", description: "test tool"},
-    parse(input) { return input; },
-    argv(input) { return [input]; },
-    translate(_input, api) { return api.exec(); },
-    execute(argv) { return {stdout: argv.join(" "), exitCode: 0}; }
-  }]
-};
-`,
-			1,
-		)
-		writePlugin(t, pluginDirectory, "shell.mjs", legacyDeclaration)
+		writePlugin(t, pluginDirectory, "shell.mjs", declaration("example.shell", "shell", ""))
 
 		registry, err := buildToolRegistry(t.Context(), dataDirectory, testHPatchToolDescription, false)
-		if err != nil {
-			t.Fatal(err)
-		}
-		t.Cleanup(func() {
-			if err := registry.Close(); err != nil {
-				t.Error(err)
-			}
-		})
-		shell, shellOK := registry.contribution("shell")
-		extra, extraOK := registry.contribution("legacy_extra")
-		if !shellOK || shell.PluginID != "builtin.shell" ||
-			!extraOK || extra.PluginID != retiredConfiguredShellPluginID ||
-			len(registry.ordered) != 8 {
-			t.Fatalf("registry retired the wrong contributions: %+v", registry.ordered)
+		if registry != nil || err == nil ||
+			!strings.Contains(err.Error(), `tool name "shell" is owned by both builtin.shell and example.shell`) {
+			t.Fatalf("registry = %+v, error = %v", registry, err)
 		}
 	})
 
@@ -422,14 +334,27 @@ func TestToolRegistryStartup(t *testing.T) {
 
 	t.Run("invalid registry fails the real entry point before listening", func(t *testing.T) {
 		configRoot := t.TempDir()
-		t.Setenv("XDG_CONFIG_HOME", configRoot)
-		pluginDirectory := filepath.Join(configRoot, "hpatch", "plugins")
+		switch runtime.GOOS {
+		case "windows":
+			t.Setenv("AppData", configRoot)
+		case "darwin", "ios":
+			t.Setenv("HOME", configRoot)
+		case "plan9":
+			t.Setenv("home", configRoot)
+		default:
+			t.Setenv("XDG_CONFIG_HOME", configRoot)
+		}
+		dataDirectory, err := hpatchDataDirectory()
+		if err != nil {
+			t.Fatal(err)
+		}
+		pluginDirectory := filepath.Join(dataDirectory, "plugins")
 		if err := os.MkdirAll(pluginDirectory, 0o700); err != nil {
 			t.Fatal(err)
 		}
 		writePlugin(t, pluginDirectory, "invalid.mjs", "export default null;\n")
 		var stderr strings.Builder
-		err := Run(t.Context(), []string{"--listen", "127.0.0.1:0"}, &stderr)
+		err = Run(t.Context(), []string{"--listen", "127.0.0.1:0"}, &stderr)
 		if err == nil || !strings.Contains(err.Error(), "initialize tool registry") {
 			t.Fatalf("Run() error = %v", err)
 		}

@@ -20,12 +20,11 @@ import (
 )
 
 const (
-	toolPluginManifestFilename     = "workers.json"
-	toolFrontendLockFilename       = ".hpatch-router-tools.lock"
-	retiredConfiguredShellPluginID = "example.shell"
-	builtinToolsPluginID           = "builtin.shell"
-	reportIssueToolName            = "report_issue"
-	reportIssueToolDescription     = `Free-form Markdown issue report for an observed hpatch-related tool interaction.`
+	toolPluginManifestFilename = "workers.json"
+	toolFrontendLockFilename   = ".hpatch-router-tools.lock"
+	builtinToolsPluginID       = "builtin.shell"
+	reportIssueToolName        = "report_issue"
+	reportIssueToolDescription = `Free-form Markdown issue report for an observed hpatch-related tool interaction.`
 )
 
 func buildToolRegistry(ctx context.Context, dataDirectory, hpatchDescription string, diagnose bool) (*toolRegistry, error) {
@@ -130,9 +129,6 @@ func buildToolRegistry(ctx context.Context, dataDirectory, hpatchDescription str
 				))
 				continue
 			}
-			if plugin.ID == retiredConfiguredShellPluginID && jsonString(specification, "name") == "shell" {
-				continue
-			}
 			name := jsonString(specification, "name")
 			contribution := toolContribution{
 				PluginID:      plugin.ID,
@@ -219,7 +215,6 @@ func buildToolRegistry(ctx context.Context, dataDirectory, hpatchDescription str
 		SnapshotDir:       snapshotDirectory,
 		RuntimeRoot:       runtimeRoot,
 		NodeExecutable:    pluginSnapshot.NodeExecutable,
-		executable:        executable,
 		frontendDirectory: frontendDirectory,
 		runtimeDirectory:  runtimeDirectory,
 		shellRuntime:      shellRuntime,
@@ -338,26 +333,7 @@ func (registry *toolRegistry) installFrontends() error {
 	if registry == nil {
 		return errors.New("tool registry is unavailable")
 	}
-	var retiredBuiltinNames []string
-	for _, contribution := range registry.ordered {
-		if contribution.PluginID == builtinToolsPluginID {
-			retiredBuiltinNames = append(retiredBuiltinNames, contribution.Name)
-		}
-	}
-	needsLock := len(registry.wrappers) > 0
-	if !needsLock {
-		for _, name := range retiredBuiltinNames {
-			if _, authenticated := authenticatedSnapshotFrontend(
-				registry.executable,
-				registry.frontendDirectory,
-				name,
-			); authenticated {
-				needsLock = true
-				break
-			}
-		}
-	}
-	if !needsLock {
+	if len(registry.wrappers) == 0 {
 		return nil
 	}
 	if registry.frontendLock != nil {
@@ -379,27 +355,12 @@ func (registry *toolRegistry) installFrontends() error {
 		registry.frontendLock = nil
 		return errors.Join(cause, cleanupErr, unlockErr)
 	}
-	for _, name := range retiredBuiltinNames {
-		if err := removeAuthenticatedSnapshotFrontend(
-			registry.executable,
-			registry.frontendDirectory,
-			name,
-		); err != nil {
-			return fail(err)
-		}
-	}
-	if len(registry.wrappers) == 0 {
-		registry.frontendLock = nil
-		return lock.Unlock()
-	}
-
 	for _, contribution := range registry.ordered {
 		wrapper, ok := registry.wrappers[contribution.Name]
 		if !ok {
 			continue
 		}
 		frontend, err := ensureWorkerFrontendSymlink(
-			registry.executable,
 			wrapper,
 			registry.frontendDirectory,
 			contribution.Name,

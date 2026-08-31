@@ -37,9 +37,9 @@ assignment and one `#!params=` assignment in either order. All canonical directi
 `#!key=value`. The tool trims ASCII spaces and tabs around each complete directive line. The
 nonempty command value is a shell command template containing exactly one `{.}` placeholder.
 The params value is a JSON object that cannot contain `cmd` because the script body supplies
-`cmd`. A present `login` value must be exactly `false`. Within the leading directive block,
-the tool safely normalizes `# !params JSON`, `#!params JSON`, and legacy `!params JSON` through
-the same params validation. A duplicate directive, malformed JSON, non-object JSON, unsupported
+`cmd`. A present `login` value must be exactly `false`. Within the leading directive block, the
+tool tolerates `# !params JSON` and `#!params JSON` as alternate spellings and applies the same
+params validation. A duplicate directive, malformed JSON, non-object JSON, unsupported
 leading directive, params object containing `cmd`, or unsafe `login` value rejects.
 
 The tool removes recognized directive lines and their complete line terminators from the body.
@@ -116,11 +116,9 @@ Acceptance:
     diagnostic without starting an interpreter.
 11. `make install` installs `hpatch-router` and the fixed `shell` helper without changing Codex
     configuration or instruction files. Startup and tool-snapshot changes do not rewrite that
-    helper and create no hread, hgrep, hsymbol, or inspect_file basename frontend. An authenticated
-    pre-revamp frontend for one of those private names is removed during upgrade; unrelated paths
-    remain unchanged.
+    helper and create no hread, hgrep, hsymbol, or inspect_file basename frontend.
 12. `#!params={"workdir":"/tmp","tty":true}` before or after `#!cmd=` produces an exec carrier
-    containing those fields and the router-supplied `cmd`. Safe leading params near-misses
+    containing those fields and the router-supplied `cmd`. Tolerated leading params variants
     produce the same carrier after normalization. An object containing `cmd` rejects, and a
     present `login` value must be `false`.
 13. The authoritative Code Mode owner is exactly one custom `exec` tool. App-server requests place

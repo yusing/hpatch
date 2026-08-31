@@ -178,7 +178,7 @@ describe("installable shell plugin", () => {
     expect(await tool.translate(laterDirective, {exec})).toEqual({kind: "exec"});
   });
 
-  test("recovers safe params near-misses in directive position", async () => {
+  test("tolerates safe params near-misses in directive position", async () => {
     const params = {workdir: "/tmp"};
     const exec = (commandTemplate?: string, commandParams?: Record<string, unknown>) => ({
       kind: "exec",
@@ -188,7 +188,6 @@ describe("installable shell plugin", () => {
     for (const input of [
       `# !params ${JSON.stringify(params)}\nprintf ok`,
       `#!params ${JSON.stringify(params)}\nprintf ok`,
-      `!params ${JSON.stringify(params)}\nprintf ok`,
       `#!/usr/bin/env bash\n# !params ${JSON.stringify(params)}\nprintf ok`,
     ]) {
       const parsed = await tool.parse(input);
@@ -212,6 +211,7 @@ describe("installable shell plugin", () => {
       "#!params=",
       "#!params=[]",
       "#!params={bad}",
+      "!params {\"workdir\":\"/tmp\"}\nprintf ok",
       "#!params={\"cmd\":\"forbidden\"}",
       "#!params={\"login\":true}",
       "#!params={\"login\":null}",

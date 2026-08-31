@@ -23,9 +23,9 @@ function parseDirectiveLine(line) {
   if (assignment !== null) {
     return {key: assignment[1], value: assignment[2]};
   }
-  const recoveredParams = /^(?:#[ \t]*!|!)params(?:[ \t]+([\s\S]+))?$/u.exec(line);
-  if (recoveredParams !== null) {
-    return {key: "params", value: recoveredParams[1] ?? ""};
+  const toleratedParams = /^#[ \t]*!params(?:[ \t]+([\s\S]+))?$/u.exec(line);
+  if (toleratedParams !== null) {
+    return {key: "params", value: toleratedParams[1] ?? ""};
   }
   return null;
 }

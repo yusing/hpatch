@@ -34,7 +34,7 @@ func verifyWorkerSymlink(link, executable, name string) (string, error) {
 	return link, nil
 }
 
-func ensureWorkerFrontendSymlink(executable, wrapper, directory, name string) (string, error) {
+func ensureWorkerFrontendSymlink(wrapper, directory, name string) (string, error) {
 	link := filepath.Join(directory, name)
 	currentTarget, err := os.Readlink(link)
 	if errors.Is(err, os.ErrNotExist) {
@@ -57,12 +57,7 @@ func ensureWorkerFrontendSymlink(executable, wrapper, directory, name string) (s
 	absoluteTarget = filepath.Clean(absoluteTarget)
 	_, snapshotTarget := toolRegistryIDFromDirectory(filepath.Dir(absoluteTarget))
 	staleSnapshot := snapshotTarget && filepath.Base(absoluteTarget) == name
-	legacyTarget := false
-	if !snapshotTarget {
-		resolvedTarget, resolveErr := filepath.EvalSymlinks(link)
-		legacyTarget = resolveErr == nil && resolvedTarget == executable
-	}
-	if !staleSnapshot && !legacyTarget {
+	if !staleSnapshot {
 		return "", fmt.Errorf("install %s worker frontend: %s points to %s, want %s", name, link, currentTarget, wrapper)
 	}
 
@@ -82,50 +77,6 @@ func ensureWorkerFrontendSymlink(executable, wrapper, directory, name string) (s
 		return "", fmt.Errorf("replace %s worker frontend: %w", name, err)
 	}
 	return link, nil
-}
-
-func authenticatedSnapshotFrontend(executable, directory, name string) (string, bool) {
-	link := filepath.Join(directory, name)
-	target, err := os.Readlink(link)
-	if err != nil {
-		return "", false
-	}
-	if !filepath.IsAbs(target) {
-		target = filepath.Join(directory, target)
-	}
-	target = filepath.Clean(target)
-	registryID, authenticated := toolRegistryIDFromDirectory(filepath.Dir(target))
-	if !authenticated || filepath.Base(target) != name {
-		return "", false
-	}
-	manifest, err := readToolWorkerManifest(filepath.Join(filepath.Dir(target), toolPluginManifestFilename))
-	if err != nil || manifest.RegistryID != registryID || manifest.RuntimeRoot == "" {
-		return "", false
-	}
-	identity, err := toolRegistryIdentity(manifest, filepath.Join(filepath.Dir(target), manifest.RuntimeRoot))
-	if err != nil || identity != registryID {
-		return "", false
-	}
-	registered := false
-	for _, contribution := range manifest.Tools {
-		if contribution.PluginID == builtinToolsPluginID && contribution.Name == name {
-			registered = true
-			break
-		}
-	}
-	resolved, err := filepath.EvalSymlinks(target)
-	return link, registered && err == nil && resolved == executable
-}
-
-func removeAuthenticatedSnapshotFrontend(executable, directory, name string) error {
-	link, authenticated := authenticatedSnapshotFrontend(executable, directory, name)
-	if !authenticated {
-		return nil
-	}
-	if err := os.Remove(link); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("remove retired %s worker frontend: %w", name, err)
-	}
-	return nil
 }
 
 func removeWorkerFrontendSymlink(link, wrapper string) error {

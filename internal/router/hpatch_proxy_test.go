@@ -2399,11 +2399,11 @@ func TestHPatchTranslationRewritesConfirmedTargetAlias(t *testing.T) {
 		translatedScript = script
 		return hpatchTranslationResult{patch: []byte(testTranslatedPatch), report: testHPatchReport}, nil
 	})
-	transform, proxy, _, workspace := newHPatchTestTransform(t, translator)
+	transform, proxy, _, _ := newHPatchTestTransform(t, translator)
 	alias := hpatch.TargetAlias{Path: "file.txt", Before: "2:1111", After: "3:2222"}
 	if err := proxy.rememberBatch(transform.historySessionID, map[string]hpatchHistory{
 		"call-first": {
-			root:      workspace,
+			root:      transform.directory,
 			report:    testHPatchReport,
 			confirmed: true,
 			aliases:   []hpatch.TargetAlias{alias},

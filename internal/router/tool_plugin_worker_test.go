@@ -46,6 +46,10 @@ func TestToolPluginWorkerRunsPinnedImplementationInCodexContext(t *testing.T) {
 	}
 	cwd := t.TempDir()
 	t.Chdir(cwd)
+	cwd, err := filepath.EvalSymlinks(cwd)
+	if err != nil {
+		t.Fatal(err)
+	}
 	t.Setenv("HPATCH_PLUGIN_TEST", "inherited")
 
 	var stdout, stderr bytes.Buffer
@@ -82,6 +86,10 @@ func TestToolPluginWorkerResolvesBasenameFromPath(t *testing.T) {
 	}
 	cwd := t.TempDir()
 	t.Chdir(cwd)
+	cwd, err := filepath.EvalSymlinks(cwd)
+	if err != nil {
+		t.Fatal(err)
+	}
 	t.Setenv("PATH", filepath.Dir(frontend))
 	t.Setenv("HPATCH_PLUGIN_TEST", "inherited")
 
@@ -116,6 +124,10 @@ func TestBuiltinToolWorkersRunGeneratedTypeScriptImplementations(t *testing.T) {
 	})
 	workspace := t.TempDir()
 	t.Chdir(workspace)
+	workspace, err = filepath.EvalSymlinks(workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile("file.txt", []byte("alpha\nbeta\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}

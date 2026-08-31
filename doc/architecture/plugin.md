@@ -106,15 +106,13 @@ Configured frontend and wrapper creation is all-or-nothing for startup. When tho
 exist, the router holds one exclusive frontend lock for its process lifetime, and another router
 using that frontend directory fails startup. A built-in-only registry creates no frontend or
 frontend lock. Each eligible thread instead gets one direct `.runtime` link under its
-`hpatch-$CODEX_THREAD_ID` directory. During upgrade the registry briefly takes the frontend lock
-only when an authenticated
-pre-revamp shell/private frontend exists, removes those retired links, and leaves unrelated paths
-unchanged. A later process can replace an authenticated prior configured frontend after a crash
-releases the lock. Shutdown removes thread runtime directories and owned configured frontends before
-removing the snapshot and releasing the frontend lock. An isolated executor deployment must use
-the same absolute `HPATCH_RUNTIME_DIR` and make the thread runtime link, router executable, plugin runtime,
-and implementation resources visible independently of workspace selection; the fixed helper and
-configured frontends additionally require their shared directory on the executor `PATH`.
+`hpatch-$CODEX_THREAD_ID` directory. A later process can replace an authenticated prior configured
+frontend after a crash releases the lock. Shutdown removes thread runtime directories and owned
+configured frontends before removing the snapshot and releasing the frontend lock. An isolated
+executor deployment must use the same absolute `HPATCH_RUNTIME_DIR` and make the thread runtime
+link, router executable, plugin runtime, and implementation resources visible independently of
+workspace selection; the fixed helper and configured frontends additionally require their shared
+directory on the executor `PATH`.
 
 Startup materializes the validated implementation modules and dispatch metadata into an
 immutable process-scoped worker snapshot. Locator-launched shell and symlink-launched configured
