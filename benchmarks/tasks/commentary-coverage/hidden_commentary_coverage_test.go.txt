@@ -1,0 +1,9 @@
+package commentarycoverage
+
+import "testing"
+
+func TestHPatchBenchmarkCommentaryCoverage(t *testing.T) {
+	if got := Status(); got != "ready" {
+		t.Fatalf("Status() = %q, want %q", got, "ready")
+	}
+}

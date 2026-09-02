@@ -46,7 +46,7 @@ func subagentToolCatalog(fields map[string]json.RawMessage) map[string]struct{} 
 			for _, tool := range tools {
 				name := jsonString(tool, "name")
 				if jsonString(tool, "type") == "function" && name == "spawn_agent" {
-					catalog[subagentToolKey(jsonString(namespace, "name"), name)] = struct{}{}
+					catalog[functionToolKey(jsonString(namespace, "name"), name)] = struct{}{}
 				}
 			}
 		}
@@ -54,30 +54,9 @@ func subagentToolCatalog(fields map[string]json.RawMessage) map[string]struct{} 
 	return catalog
 }
 
-func subagentToolKey(namespace, name string) string {
-	return namespace + "\x00" + name
-}
-
 func subagentCommentaryMessageID(seed string) string {
 	digest := sha256.Sum256([]byte(seed))
 	return fmt.Sprintf("%s%x", subagentCommentaryMessagePrefix, digest[:12])
-}
-
-func subagentCommentaryMessage(id, text string) map[string]json.RawMessage {
-	return map[string]json.RawMessage{
-		"type":   mustMarshalJSON("message"),
-		"id":     mustMarshalJSON(id),
-		"status": mustMarshalJSON("completed"),
-		"role":   mustMarshalJSON("assistant"),
-		"phase":  mustMarshalJSON("commentary"),
-		"content": mustMarshalJSON([]any{map[string]any{
-			"type": "output_text", "text": text, "annotations": []any{},
-		}}),
-	}
-}
-
-func subagentCommentaryDoneEvent(message map[string]json.RawMessage) []byte {
-	return mustMarshalJSON(map[string]any{"type": "response.output_item.done", "item": message})
 }
 
 func prepareSubagentInputCommentary(fields map[string]json.RawMessage) []map[string]json.RawMessage {
@@ -110,7 +89,7 @@ func prepareSubagentInputCommentary(fields map[string]json.RawMessage) []map[str
 		if _, alreadyVisible := visible[id]; alreadyVisible {
 			continue
 		}
-		commentary = append(commentary, subagentCommentaryMessage(id, "Response from "+sender+":\n"+text))
+		commentary = append(commentary, assistantCommentaryMessage(id, "Response from "+sender+":\n"+text))
 	}
 	return commentary
 }
@@ -144,7 +123,7 @@ func subagentCallCommentary(
 		return nil, false
 	}
 	name := jsonString(item, "name")
-	if _, exists := catalog[subagentToolKey(jsonString(item, "namespace"), name)]; !exists {
+	if _, exists := catalog[functionToolKey(jsonString(item, "namespace"), name)]; !exists {
 		return nil, false
 	}
 	callID := jsonString(item, "call_id")
@@ -173,7 +152,7 @@ func subagentCallCommentary(
 	}
 	fmt.Fprintf(&builder, "Model: %s\nReasoning effort: %s", model, effort)
 	id := subagentCommentaryMessageID(name + "\x00" + callID)
-	return subagentCommentaryMessage(id, builder.String()), true
+	return assistantCommentaryMessage(id, builder.String()), true
 }
 
 func tokenUsageCommentary(response []byte) map[string]json.RawMessage {
@@ -196,7 +175,7 @@ func tokenUsageCommentary(response []byte) map[string]json.RawMessage {
 		counts.ReasoningTokens,
 	)
 	id := subagentCommentaryMessageID("usage\x00" + identity.ID)
-	return subagentCommentaryMessage(id, text)
+	return assistantCommentaryMessage(id, text)
 }
 
 func responseWithTokenUsageCommentary(response []byte) (
@@ -217,7 +196,7 @@ func responseWithTokenUsageCommentary(response []byte) (
 	if err := json.Unmarshal(rawOutput, &output); err != nil {
 		return nil, nil, errors.New("decode hpatch-enabled response output")
 	}
-	output = append(output, message)
+	output = append([]map[string]json.RawMessage{message}, output...)
 	encoded, err := json.Marshal(output)
 	if err != nil {
 		return nil, nil, err

@@ -182,9 +182,49 @@ handle, use Codex's native session facilities; each shell call starts a new
 execution. See [OpenAI's Codex prompting guide](https://developers.openai.com/cookbook/examples/gpt-5/codex_prompting_guide#shell_command)
 and [`REQ-SHELL-001`](doc/spec/shell.md).
 
+## Inline operation commentary
+
+In router mode, extensible non-strict function tools receive an optional `commentary` string.
+The router shows explicit text, or a concise default when it is omitted, immediately before the
+tool call. It removes only the router-owned field before execution and restores the provider's
+exact call when replaying history. Strict tools, provider-configured `additional_tools`, and tools
+that already own a `commentary` parameter keep their schemas and arguments unchanged and receive
+defaults only. Collaboration tools remain under the subagent commentary contract described by
+[`REQ-COMMENTARY-001`](doc/spec/commentary.md) and do not receive generic operation commentary.
+The injected model guidance permits agent-authored progress only through supported tool calls;
+standalone assistant commentary messages are router-owned.
+
+Code Mode can publish evaluated progress while it runs:
+
+```js
+for (let index = 1; index <= total; index++) {
+  await commentary(`Running item ${index}/${total}`);
+  await tools.exec_command({cmd: commands[index - 1]});
+}
+```
+
+Bash and POSIX shell programs use the reserved `commentary` command:
+
+```sh
+for item in "$@"; do
+  commentary "Running $item"
+  process "$item"
+done
+```
+
+Both forms publish through an authenticated per-call route on the router's existing HTTP server.
+They write nothing to the tool result. Shell commentary expands its arguments and otherwise leaves
+normal shell control flow, redirections, output, and exit status alone. A shell call without an
+authored `commentary` command emits no default.
+
+Events ready when a streaming response completes are shown in that response. Later events, and
+events from JSON responses, are shown at the start of the next response for the same session.
+Routes, queued events, request bodies, and retention time are bounded; commentary is auxiliary, so
+capacity or publication failure never changes the operation result.
+
 ## Requirements
 
-- Go 1.26 or newer. Normal `go install` does not require a checkout.
+- Go 1.26 or newer with CGO and a C toolchain. Normal `go install` does not require a checkout.
 - Hpatch router mode requires Codex CLI with ChatGPT auth from `codex login`
   so each request carries a Bearer token and ChatGPT account header. Codex
   normally stores that file auth at `~/.codex/auth.json` or

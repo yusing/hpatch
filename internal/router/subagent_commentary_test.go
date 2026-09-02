@@ -60,19 +60,19 @@ func TestSubagentCommentaryJSONIsVisibleAndRemovedFromReplay(t *testing.T) {
 		t.Fatalf("response commentary = %q", text)
 	}
 	wantSpawn := "Starting subagent.\nRole: explorer\nModel: gpt-requested\nReasoning effort: low"
-	if text := commentaryText(t, response.Output[1]); text != wantSpawn {
+	if text := commentaryText(t, response.Output[2]); text != wantSpawn {
 		t.Fatalf("spawn commentary = %q", text)
 	}
-	if text := commentaryText(t, response.Output[5]); text != "Tokens: i=120, ci=80, o=30, r=20" {
+	if text := commentaryText(t, response.Output[1]); text != "Tokens: i=120, ci=80, o=30, r=20" {
 		t.Fatalf("usage commentary = %q", text)
 	}
-	if jsonString(response.Output[2], "arguments") != spawnArguments ||
-		jsonString(response.Output[3], "arguments") != followupArguments ||
-		jsonString(response.Output[4], "name") != "send_message" {
+	if jsonString(response.Output[3], "arguments") != spawnArguments ||
+		jsonString(response.Output[4], "arguments") != followupArguments ||
+		jsonString(response.Output[5], "name") != "send_message" {
 		t.Fatalf("collaboration calls changed: %s", transformed)
 	}
-	if bytes.Contains(response.Output[1]["content"], []byte("encrypted")) {
-		t.Fatalf("encrypted message reached spawn commentary: %s", response.Output[1]["content"])
+	if bytes.Contains(response.Output[2]["content"], []byte("encrypted")) {
+		t.Fatalf("encrypted message reached spawn commentary: %s", response.Output[2]["content"])
 	}
 
 	var forwarded []map[string]json.RawMessage
@@ -89,6 +89,73 @@ func TestSubagentCommentaryJSONIsVisibleAndRemovedFromReplay(t *testing.T) {
 	}
 }
 
+func TestTokenUsageCommentaryDoesNotReplaceTerminalMessage(t *testing.T) {
+	terminal := map[string]any{
+		"type": "message", "id": "msg-final", "role": "assistant", "status": "completed",
+		"content": []any{map[string]any{"type": "output_text", "text": "substantive result"}},
+	}
+	payload := mustTestJSON(t, map[string]any{
+		"id": "resp-terminal", "status": "completed", "output": []any{terminal},
+		"usage": map[string]any{
+			"input_tokens": 20, "output_tokens": 5,
+			"input_tokens_details":  map[string]any{"cached_tokens": 12},
+			"output_tokens_details": map[string]any{"reasoning_tokens": 3},
+		},
+	})
+	response, _, err := responseWithTokenUsageCommentary(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var output []map[string]json.RawMessage
+	if err := json.Unmarshal(response["output"], &output); err != nil || len(output) != 2 {
+		t.Fatalf("output = %s, error = %v", response["output"], err)
+	}
+	if text := commentaryText(t, output[0]); text != "Tokens: i=20, ci=12, o=5, r=3" {
+		t.Fatalf("usage commentary = %q", text)
+	}
+	if jsonString(output[1], "id") != "msg-final" {
+		t.Fatalf("terminal message = %s", response["output"])
+	}
+}
+
+func TestSubagentStreamingUsageDoesNotBecomeAStandaloneResult(t *testing.T) {
+	metadata := codexTurnMetadata{SubagentKind: threadSpawnSubagentKind}
+	transform, _, _ := newSubagentCommentaryTestTransformWithMetadata(t, nil, metadata)
+	terminal := mustTestJSON(t, map[string]any{
+		"type": "response.completed",
+		"response": map[string]any{
+			"id": "resp-child", "status": "completed",
+			"output": []any{map[string]any{
+				"type": "message", "id": "msg-child-final", "role": "assistant", "status": "completed",
+				"content": []any{map[string]any{"type": "output_text", "text": "child result"}},
+			}},
+			"usage": map[string]any{
+				"input_tokens": 20, "output_tokens": 5,
+				"input_tokens_details":  map[string]any{"cached_tokens": 12},
+				"output_tokens_details": map[string]any{"reasoning_tokens": 3},
+			},
+		},
+	})
+	events, err := transform.TransformSSE(terminal)
+	if err != nil || len(events) != 1 {
+		t.Fatalf("terminal events = %q, error = %v", events, err)
+	}
+	var envelope struct {
+		Response struct {
+			Output []map[string]json.RawMessage `json:"output"`
+		} `json:"response"`
+	}
+	if err := json.Unmarshal(events[0], &envelope); err != nil || len(envelope.Response.Output) != 2 {
+		t.Fatalf("terminal event = %s, error = %v", events[0], err)
+	}
+	if text := commentaryText(t, envelope.Response.Output[0]); text != "Tokens: i=20, ci=12, o=5, r=3" {
+		t.Fatalf("usage commentary = %q", text)
+	}
+	if jsonString(envelope.Response.Output[1], "id") != "msg-child-final" {
+		t.Fatalf("terminal message = %s", events[0])
+	}
+}
+
 func TestSubagentResponseCommentaryDoesNotRepeat(t *testing.T) {
 	responseText := "result"
 	agentMessage := map[string]any{
@@ -99,7 +166,7 @@ func TestSubagentResponseCommentaryDoesNotRepeat(t *testing.T) {
 		}},
 	}
 	generatedID := subagentCommentaryMessageID("response\x00amsg-result\x00/root/worker\x00" + responseText)
-	generated := subagentCommentaryMessage(generatedID, "Response from /root/worker:\n"+responseText)
+	generated := assistantCommentaryMessage(generatedID, "Response from /root/worker:\n"+responseText)
 	input := []any{generated, agentMessage}
 	transform, _, request := newSubagentCommentaryTestTransform(t, input)
 	if len(transform.subagentDeferred) != 0 {
@@ -176,10 +243,10 @@ func TestSubagentCommentaryBuffersStreamingCall(t *testing.T) {
 	}
 	if json.Unmarshal(events[1], &terminal) != nil || len(terminal.Response.Output) != 3 ||
 		bytes.Count(events[1], []byte("Starting subagent.")) != 1 ||
-		jsonString(terminal.Response.Output[1], "arguments") != arguments {
+		jsonString(terminal.Response.Output[2], "arguments") != arguments {
 		t.Fatalf("completed event = %s", events[1])
 	}
-	if text := commentaryText(t, terminal.Response.Output[2]); text != "Tokens: i=75, ci=50, o=12, r=9" {
+	if text := commentaryText(t, terminal.Response.Output[0]); text != "Tokens: i=75, ci=50, o=12, r=9" {
 		t.Fatalf("terminal usage commentary = %q", text)
 	}
 }
@@ -201,15 +268,12 @@ func TestSubagentTokenUsageCommentaryOnFailedAndIncompleteStops(t *testing.T) {
 				},
 			})
 			events, err := transform.TransformSSE(terminal)
-			if err != nil || len(events) != 2 {
+			if err != nil || len(events) != 1 {
 				t.Fatalf("terminal events = %q, error %v", events, err)
 			}
-			if text := commentaryEventText(t, events[0]); text != "Tokens: i=90, ci=60, o=11, r=7" {
-				t.Fatalf("usage commentary = %q", text)
-			}
-			if !bytes.Contains(events[1], []byte(`"type":"response.`+status+`"`)) ||
-				bytes.Count(events[1], []byte("Tokens: i=90")) != 1 {
-				t.Fatalf("terminal event = %s", events[1])
+			if !bytes.Contains(events[0], []byte(`"type":"response.`+status+`"`)) ||
+				bytes.Count(events[0], []byte("Tokens: i=90")) != 1 {
+				t.Fatalf("terminal event = %s", events[0])
 			}
 		})
 	}
@@ -289,6 +353,7 @@ func newSubagentCommentaryTestTransformWithMetadata(
 		return nil, nil
 	})
 	proxy := newManagedHPatchProxy(t, translator)
+	proxy.commentaryEndpoint = "http://127.0.0.1:8080" + commentaryPublisherPath
 	workspace := t.TempDir()
 	metadata.RequestKind = "turn"
 	metadata.Directories = map[string]json.RawMessage{workspace: nil}

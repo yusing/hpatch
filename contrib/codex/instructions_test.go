@@ -57,6 +57,29 @@ func TestNativeInstructionsOmitOnlyCTPRepresentation(t *testing.T) {
 	}
 }
 
+func TestInstructionsBindCommentaryToSupportedTools(t *testing.T) {
+	for _, test := range []struct {
+		name         string
+		instructions string
+	}{
+		{name: "CTP", instructions: Instructions()},
+		{name: "native", instructions: NativeInstructions()},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			for _, required := range []string{
+				"Attach progress commentary only to a supported tool call",
+				"When no available tool supports commentary, continue",
+				"Never emit a standalone assistant message with\n`phase: \"commentary\"`",
+				"standalone commentary messages are router-owned",
+			} {
+				if !strings.Contains(test.instructions, required) {
+					t.Errorf("instructions omit commentary rule %q", required)
+				}
+			}
+		})
+	}
+}
+
 func TestInstructionsOwnCompleteShellWorkflow(t *testing.T) {
 	for _, required := range []string{
 		"Submit one free-form script without an outer heredoc",

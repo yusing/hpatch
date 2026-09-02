@@ -13,8 +13,8 @@ content-mutating commands in one invalid Go file, the evaluator replays command-
 against the immutable baseline to select a one-minimal syntax-failing set, then attributes
 each useful parser failure to the retained edit nearest its generated parser position. Larger
 groups or an invalid baseline use nearest-edit attribution without subset replay. Supported
-changed `.py`, `.js`, and `.ts` files are syntax-checked when Tree-sitter language support is
-available and contribute all discovered failures to the same validation result. Parser
+changed `.py`, `.js`, and `.ts` files are syntax-checked with Tree-sitter and contribute all
+discovered failures to the same validation result. Parser
 cascades are collapsed when blanking an earlier repair line removes a later parser failure.
 Failures are deduplicated by originating command and physical heredoc value row, or by the
 command's script row when no physical value row exists. Each retained location includes at

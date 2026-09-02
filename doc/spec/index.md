@@ -4,7 +4,7 @@ pjdoc:
   kind: spec
   scope: root
   status: draft
-  revision: "40"
+  revision: "42"
   files:
     - commentary.md
     - read.md

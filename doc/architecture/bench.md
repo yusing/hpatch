@@ -37,3 +37,19 @@ Hidden tests and the allowed-path boundary decide correctness. Timing and token 
 interpreted only after correctness. CTP/2 and Mentor Handoff use the same capture and reporting
 path as paired and diagnostic runs; their distinct model/protocol behavior is visible in exchange
 models, protocol savings, and provider usage rather than production metric callbacks.
+
+Normal benchmark completion invokes finalization directly with the measured status; the EXIT trap
+owns the same finalization for earlier failures. Finalization preserves the original nonzero result
+while collecting available evidence, stopping task-owned Compose resources, publishing the retained
+run, and rendering available reports.
+
+The runner also owns opt-in commentary coverage over retained Codex events. Task manifests own the
+mode/arm profile assignments and required message, successful-command-marker, and item minimums;
+the checker owns schema validation and evidence matching. Runtime publication markers are matched
+only in successful command executions because Codex JSONL does not retain those publications as
+assistant messages. The artifact remains distinct from hidden functional graders and from
+capturer-owned transport and usage metrics.
+
+For task-owned exact responses, the runner selects the last substantive agent message. It excludes
+only the router's synthetic token-usage commentary, leaving any later ordinary assistant message
+authoritative.

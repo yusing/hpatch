@@ -6,15 +6,7 @@ import (
 	"testing"
 )
 
-func requireTreeSitterIndentation(t *testing.T) {
-	t.Helper()
-	if !treeSitterIndentationAvailable {
-		t.Skip("Tree-sitter indentation support requires cgo")
-	}
-}
-
 func TestPythonWrapperIndentationCorrection(t *testing.T) {
-	requireTreeSitterIndentation(t)
 	root := t.TempDir()
 	writeTestFile(t, root, "file.py", "def f():\n    if ready:\n        existing()\n    return\n", 0o644)
 	command := "type " + row(3, "        existing()") + " " + quoteTestValue("        if ready:\n        existing()\n")
@@ -29,7 +21,6 @@ func TestPythonWrapperIndentationCorrection(t *testing.T) {
 }
 
 func TestPythonWrapperRightShiftAndCorrectChild(t *testing.T) {
-	requireTreeSitterIndentation(t)
 	for _, proposed := range []string{"                existing()", "            existing()"} {
 		t.Run(strings.TrimSpace(proposed), func(t *testing.T) {
 			root := t.TempDir()
@@ -48,7 +39,6 @@ func TestPythonWrapperRightShiftAndCorrectChild(t *testing.T) {
 }
 
 func TestJavaScriptWrapperIndentationCorrection(t *testing.T) {
-	requireTreeSitterIndentation(t)
 	root := t.TempDir()
 	writeTestFile(t, root, "file.js", "function f() {\n  if (ready) {\n    existing();\n  }\n}\n", 0o644)
 	command := "type " + row(3, "    existing();") + " " + quoteTestValue("    if (ready) {\n    existing();\n    }\n")
@@ -63,7 +53,6 @@ func TestJavaScriptWrapperIndentationCorrection(t *testing.T) {
 }
 
 func TestTypeScriptWrapperIndentationCorrection(t *testing.T) {
-	requireTreeSitterIndentation(t)
 	root := t.TempDir()
 	writeTestFile(t, root, "file.ts", "function f(): void {\n  if (ready) {\n    existing();\n  }\n}\n", 0o644)
 	command := "type " + row(3, "    existing();") + " " + quoteTestValue("    if (ready) {\n    existing();\n    }\n")
@@ -78,7 +67,6 @@ func TestTypeScriptWrapperIndentationCorrection(t *testing.T) {
 }
 
 func TestJavaScriptAndTypeScriptWrapperRightShiftAndCorrectChild(t *testing.T) {
-	requireTreeSitterIndentation(t)
 	tests := []struct {
 		name        string
 		path        string
@@ -255,7 +243,6 @@ func TestPythonWrapperShapeRejectionsRemainSubmitted(t *testing.T) {
 }
 
 func TestWrapperUnrelatedParseErrorIsRejectedAtomically(t *testing.T) {
-	requireTreeSitterIndentation(t)
 	root := t.TempDir()
 	before := "def f():\n    if ready:\n        value()\n    broken = (\n"
 	writeTestFile(t, root, "file.py", before, 0o644)
@@ -287,7 +274,6 @@ func TestMixedStructuralUnitsRemainByteExact(t *testing.T) {
 }
 
 func TestPythonWrapperTabIndentationUnit(t *testing.T) {
-	requireTreeSitterIndentation(t)
 	root := t.TempDir()
 	writeTestFile(t, root, "file.py", "def f():\n\tif ready:\n\t\texisting()\n", 0o644)
 	replacement := "\t\tif ready:\n\texisting()\n"
@@ -303,7 +289,6 @@ func TestPythonWrapperTabIndentationUnit(t *testing.T) {
 }
 
 func TestWrapperCorrectionFinalReferencesUseCorrectedContent(t *testing.T) {
-	requireTreeSitterIndentation(t)
 	root := t.TempDir()
 	writeTestFile(t, root, "file.py", "def f():\n    if ready:\n        existing()\n    return\n", 0o644)
 	replacement := "        if ready:\n        existing()\n"
@@ -319,7 +304,6 @@ func TestWrapperCorrectionFinalReferencesUseCorrectedContent(t *testing.T) {
 }
 
 func TestMultipleWrapperCandidatesUseOneFinalProbe(t *testing.T) {
-	requireTreeSitterIndentation(t)
 	root := t.TempDir()
 	writeTestFile(t, root, "file.py", "def f():\n    first()\n    second()\n", 0o644)
 	first := "type " + row(2, "    first()") + " " +

@@ -130,6 +130,10 @@ func Run(ctx context.Context, args []string, stderr io.Writer) (runErr error) {
 			runErr = errors.Join(runErr, registry.Close())
 		}()
 		hpatchCalls = newHPatchProxy(translator, registry, customizedInstructions, compactTokens != nil, titles)
+		hpatchCalls.commentaryEndpoint, err = commentaryPublisherURL(*listenAddress)
+		if err != nil {
+			return fmt.Errorf("initialize commentary publisher: %w", err)
+		}
 		defer func() {
 			runErr = errors.Join(runErr, hpatchCalls.Close())
 		}()
@@ -140,6 +144,9 @@ func Run(ctx context.Context, args []string, stderr io.Writer) (runErr error) {
 	mux.HandleFunc("GET /", serveDashboard)
 	mux.HandleFunc("GET /api/metrics", capture.ServeHTTP)
 	mux.HandleFunc("GET /v1/models", modelsHandler(provider))
+	if hpatchCalls != nil {
+		mux.HandleFunc("POST "+commentaryPublisherPath, hpatchCalls.commentary.serveHTTP)
+	}
 	mux.HandleFunc("POST /v1/responses", responsesHandler(ctx, *timeout, provider, log, hpatchCalls, compactTokens, mentor, &requestSequence))
 
 	server := &http.Server{

@@ -51,6 +51,13 @@ Hpatch is translated internally, so `apply_patch` can still appear in execution 
 Use shell formatting commands for bulk mechanical rewrites, but do not create or edit files
 with shell write tricks or Python when hpatch is sufficient.
 
+## Commentary
+
+Attach progress commentary only to a supported tool call, using that tool's `commentary` field or
+documented runtime commentary mechanism. When no available tool supports commentary, continue
+without a commentary message. Never emit a standalone assistant message with
+`phase: "commentary"`; standalone commentary messages are router-owned.
+
 ## Shell execution
 
 Use `functions.shell` for shell commands. Submit one free-form script without an outer heredoc

@@ -149,10 +149,22 @@ func runAuthenticatedToolWorker(
 	if err := validateToolContribution(*contribution); err != nil {
 		return fail(err)
 	}
+	if contribution.PluginID == builtinToolsPluginID && contribution.Name == "shell" {
+		if handled, publishErr := publishCommentaryOnce(ctx, args); handled {
+			if publishErr != nil {
+				return fail(publishErr)
+			}
+			return true, 0
+		}
+	}
 
 	var execution toolplugin.ExecutionOutput
 	if contribution.PluginID == builtinToolsPluginID && contribution.Name == "shell" {
-		execution, err = executeShellTool(ctx, manifest, runtimeRoot, contribution, args, stdin)
+		var commentary shellCommentarySink
+		commentary, args, err = shellCommentaryPublisher(args)
+		if err == nil {
+			execution, err = executeShellTool(ctx, manifest, runtimeRoot, contribution, args, stdin, commentary)
+		}
 	} else {
 		execution, err = toolplugin.Execute(
 			ctx,

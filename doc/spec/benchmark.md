@@ -69,9 +69,22 @@ The benchmark MAY retain command and file-change events for structural loop anal
 reports for diagnostics. Those artifacts are behavioral evidence, not metric inputs. It MUST NOT ask
 production engine, router, CTP, registry, or plugin code to emit benchmark-only evidence.
 
+A task manifest MAY opt into runner-owned commentary coverage with versioned profiles assigned to
+specific benchmark modes and arms. Each profile declares minimum retained assistant-message
+matches, successful command markers, and completed item types. Successful command markers cover
+runtime commentary carriers that Codex JSONL retains as command executions rather than assistant
+messages. The runner MUST validate that evidence from the attempt's Codex JSONL, write a separate
+commentary-coverage artifact and result field, and fail the attempt when required evidence is absent
+or malformed. Commentary coverage MUST remain separate from hidden functional grading and MUST NOT
+become a capturer metric.
+
 An imported historical control without the current capture schema MAY supply correctness context,
 but its old metrics MUST NOT be combined with a fresh capture or presented as current authoritative
 metrics.
+
+When a task requires an exact final response, the runner MUST compare it with the final substantive
+agent message after excluding router-generated `Tokens: i=…, ci=…, o=…, r=…` telemetry. A later
+ordinary agent message remains the final response and MUST NOT be ignored.
 
 Acceptance:
 
@@ -83,4 +96,8 @@ Acceptance:
    failed required CTP compression.
 3. Paired, CTP/2, Mentor Handoff, Hpatch-only, and diagnostic scheduling reuse the same capture
    owner and report schema.
-4. A failed attempt or infrastructure check retains available artifacts and returns nonzero.
+4. A failed attempt or infrastructure check retains available artifacts, stops task-owned Compose
+   resources, and returns nonzero.
+5. Commentary coverage fixtures accept every configured operation and collaboration profile while
+   rejecting missing messages, missing successful command markers, missing completed item types,
+   malformed events, and unsupported modes.

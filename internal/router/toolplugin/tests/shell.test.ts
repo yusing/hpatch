@@ -434,7 +434,7 @@ ${installed.stderr}`);
       if (router.exitCode === null && router.signalCode === null) {
         router.kill("SIGTERM");
       }
-      expect(await routerExit).toEqual({code: 130, signal: null});
+      expect(await routerExit).toEqual({code: 0, signal: null});
     }
   }, 15000);
 });

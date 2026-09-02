@@ -1,5 +1,3 @@
-//go:build cgo
-
 package hpatch
 
 import (
@@ -11,8 +9,6 @@ import (
 	treeSitterPython "github.com/tree-sitter/tree-sitter-python/bindings/go"
 	treeSitterTypeScript "github.com/tree-sitter/tree-sitter-typescript/bindings/go"
 )
-
-const treeSitterIndentationAvailable = true
 
 var (
 	pythonTreeSitterLanguage     = sitter.NewLanguage(treeSitterPython.Language())

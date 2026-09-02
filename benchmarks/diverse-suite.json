@@ -67,6 +67,15 @@
       "language": "Go",
       "task_type": "CTP/2 bidirectional-compression microbenchmark",
       "difficulty": "easy"
+    },
+    {
+      "id": "commentary-coverage",
+      "manifest": "tasks/commentary-coverage/task.json",
+      "source_kind": "task-owned empty fixture",
+      "popularity_policy": "not applicable to a router-commentary coverage task",
+      "language": "Go",
+      "task_type": "exhaustive router commentary coverage",
+      "difficulty": "easy"
     }
   ]
 }
