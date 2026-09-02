@@ -2,9 +2,10 @@
 
 ## REQ-CTP-001 — Lossless model-visible data-plane encoding
 
-`hpatch-router --model-protocol ctp2` enables Compact Token Protocol version 2 for Hpatch-mode
-Responses traffic. `--model-protocol native` is the default. The removed `ctp1` value and every
-other unknown model protocol fail before the router listens. Passthrough mode accepts only native.
+Compact Token Protocol version 2 is the default Hpatch-mode model protocol. `--model-protocol native`
+keeps request and response strings uncompressed. The removed `ctp1` value and every other unknown
+model protocol fail before the router listens. Passthrough mode uses native and rejects an explicit
+`ctp2` value.
 
 CTP/2 is a reversible representation between the ordinary Hpatch request projection and the model
 provider. It is not another Responses protocol or an edit-engine feature. Responses objects, roles,
@@ -114,7 +115,7 @@ signed protocol savings include expansion and do not claim provider cache or bil
 ### Acceptance
 
 1. Native mode preserves request and response behavior without adding CTP/2 guidance or state.
-2. `ctp2` is accepted only in Hpatch mode; `ctp1` and unknown values fail before listening.
+2. Hpatch mode defaults to `ctp2`; `ctp2` is accepted only in Hpatch mode; `ctp1` and unknown values fail before listening.
 3. CTP/2 activates only with an existing native instruction carrier and never creates one.
    Validated compaction requests remain native and are not considered for activation.
 4. Every content-local dictionary and visible-line representation restores exact bytes, including

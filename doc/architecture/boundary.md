@@ -112,7 +112,8 @@ every other definition remains one line.
 The inspect_file built-in owns bounded structural inspection of one workspace-relative regular
 file. It canonicalizes the executor cwd and symlink target, uses pinned Lezer parsers for Go,
 Python, Markdown, JSON, and every stable TypeScript 7 source format, and projects only navigation
-metadata. Unsupported extensions stop after
+metadata. Outline `line` and `line_end` are shared verified-row identities for the inclusive span
+and are copyable HPATCH targets; the renderer still omits source text. Unsupported extensions stop after
 file metadata. A concise result shape schema supplies the embedded private guidance.
 The renderer owns the 64 KiB complete-document budget and truncates only at outline-entry
 boundaries; parser recovery remains an independent result flag.

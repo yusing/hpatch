@@ -1709,6 +1709,47 @@ func TestRunRejectsMentorHandoffWithPassthroughBeforeListening(t *testing.T) {
 	}
 }
 
+func TestRunPassthroughAllowsExplicitNativeProtocolAndDisabledMentor(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	err = Run(t.Context(), []string{
+		"--mode", "passthrough",
+		"--model-protocol", "native",
+		"--mentor-handoff=false",
+		"--listen", listener.Addr().String(),
+	}, io.Discard)
+	if err == nil || errors.Is(err, context.Canceled) {
+		t.Fatalf("Run error = %v, want listener failure", err)
+	}
+	if strings.Contains(err.Error(), "--model-protocol") || strings.Contains(err.Error(), "--mentor-handoff") {
+		t.Fatalf("Run error = %v, want passthrough to accept native protocol and disabled mentor", err)
+	}
+}
+
+func TestRunHpatchDefaultsToCTP2AndMentorHandoff(t *testing.T) {
+	if _, err := exec.LookPath(hpatchToolName); err != nil {
+		t.Skipf("installed hpatch unavailable: %v", err)
+	}
+	t.Setenv("CODEX_HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	ctx, cancel := context.WithCancel(t.Context())
+	var logs bytes.Buffer
+	err := Run(ctx, []string{"--listen", "127.0.0.1:0"}, io.MultiWriter(&logs, &cancelOnWrite{cancel: cancel}))
+	if err != nil {
+		t.Fatalf("Run error = %v, want clean shutdown", err)
+	}
+	got := logs.String()
+	if !strings.Contains(got, "model_protocol=ctp2") {
+		t.Fatalf("listening log = %q, want model_protocol=ctp2", got)
+	}
+	if !strings.Contains(got, "mentor_handoff=true") {
+		t.Fatalf("listening log = %q, want mentor_handoff=true", got)
+	}
+}
+
 func TestRunRejectsNonPositiveStreamIdleTimeoutBeforeListening(t *testing.T) {
 	err := Run(t.Context(), []string{"--stream-idle-timeout", "0"}, io.Discard)
 	if err == nil || !strings.Contains(err.Error(), "--stream-idle-timeout must be positive") {

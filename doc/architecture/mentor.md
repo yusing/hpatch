@@ -2,7 +2,7 @@
 
 ## CTR-MENTOR-001 — Router-owned subagent model schedule
 
-The opt-in Mentor Handoff owner in `internal/router` sits before Hpatch request projection and CTP
+The Mentor Handoff owner in `internal/router` is a default-on Hpatch product schedule. It sits before Hpatch request projection and CTP
 serialization. It authenticates the schedule boundary from Codex's exact thread-spawn header and
 turn metadata, keeps process-lifetime child-thread counters, and changes only the provider-bound
 model and reasoning effort. The ordinary request owner continues to supply input history, tools, and session

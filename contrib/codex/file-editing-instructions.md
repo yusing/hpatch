@@ -244,10 +244,10 @@ in an unchanged file justifies a focused read.
 When a known identifier or literal is likely to become a target, use hgrep first; use `-F` with repeated `-e` literals
 so punctuation cannot create a regex error, and add `-A` or `-B` when a small amount of surrounding code is needed.
 Every emitted match or context row is target-bearing. When the owner is known but the location
-is not, use inspect_file for structure or hgrep for a symbol, then hread only the smallest range
-needed to understand or replace the code. Avoid bare whole-file hread unless the complete file
-is necessary. Use ordinary reads and searches only for read-only work or while the edit owner is
-unknown.
+is not, use inspect_file for structure or hgrep for a symbol. Copy inspect_file `LINE:HASH` spans
+directly as HPATCH targets. Use hread only for the smallest range of unseen source text. Avoid bare whole-file hread unless the complete file
+is necessary. Use ordinary reads and searches only
+for read-only work or while the edit owner is unknown.
 
 Run one file per command as `hread PATH [START:END]`. Quote paths with shell syntax and batch
 already-known reads as separate commands in one shell script. A bare path reads the complete
@@ -272,8 +272,11 @@ into HPATCH/2 targets. Do not follow a complete hsymbol definition with hread of
 unless non-declaration context is needed. Never treat an incomplete token-limited hsymbol result
 as a complete definition or reference set.
 
-Use `inspect_file PATH` for bounded metadata and structural outlines. Its line numbers are
-metadata, not HPATCH targets; use hread when source text or target references are needed.
+Use `inspect_file PATH` for bounded metadata and a structural outline. Each outline entry's
+`line` and `line_end` are copyable `LINE:HASH` identities for that inclusive span. Copy a
+single-line span as a row target and a multi-line span as `line..line_end` with no spaces.
+Inspect_file never returns source bodies; use hread only when replacement needs unseen text
+rather than to obtain the target.
 It returns one JSON envelope shaped as follows:
 
 ```text
@@ -281,7 +284,7 @@ success: {ok:true,data:{path,kind,language,size_bytes,line_count,parse_complete,
           truncated,truncation}
 failure: {ok:false,path,error:{code,message}}
 outline entries: import, constant, variable, type, class, function, method, heading,
-                 frontmatter, or JSON pointer records with one-based line metadata
+                 frontmatter, or JSON pointer records with LINE:HASH span identities
 ```
 
 Inspect_file never returns raw excerpts, bodies, field definitions, frontmatter values, or

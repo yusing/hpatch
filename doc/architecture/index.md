@@ -4,7 +4,7 @@ pjdoc:
   kind: architecture
   scope: root
   status: draft
-  revision: "35"
+  revision: "36"
   files:
     - commentary.md
     - mentor.md

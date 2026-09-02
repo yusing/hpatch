@@ -14,6 +14,7 @@ import {
   byteLength,
   createExecutorTool,
   errorText,
+  hashLine,
   isOutsideWorkspace,
   stripOptionalFinalNewline,
 } from "./common.ts";
@@ -74,6 +75,10 @@ type JSONEntry = {
 };
 
 type OutlineEntry = CodeEntry | MethodEntry | HeadingEntry | FrontmatterEntry | JSONEntry;
+type PublicOutlineEntry = Omit<OutlineEntry, "line" | "line_end"> & {
+  line: string;
+  line_end: string;
+};
 type LocatedEntry = {
   entry: OutlineEntry;
   offset: number;
@@ -151,7 +156,7 @@ type InspectionData = {
   size_bytes: number;
   line_count: number | null;
   parse_complete: boolean;
-  outline: OutlineEntry[];
+  outline: PublicOutlineEntry[];
 };
 
 class InspectFailure extends Error {
@@ -989,17 +994,33 @@ export function sourceFormat(filePath: string): SourceFormat | null {
   return null;
 }
 
+function rowIdentity(lines: LineMap, line: number): string {
+  const logical = lines.logicalLine(line);
+  if (logical === null) {
+    throw new InspectFailure("parse", `missing line ${line}`);
+  }
+  return `${line}:${hashLine(logical.text)}`;
+}
+
+function hashOutline(lines: LineMap, outline: OutlineEntry[]): PublicOutlineEntry[] {
+  return outline.map((entry) => ({
+    ...entry,
+    line: rowIdentity(lines, entry.line),
+    line_end: rowIdentity(lines, entry.line_end),
+  }));
+}
+
 function parseContent(
   source: string,
   format: SourceFormat,
-): {parseComplete: boolean; outline: OutlineEntry[]; lineCount: number} {
+): {parseComplete: boolean; outline: PublicOutlineEntry[]; lineCount: number} {
   const lines = new LineMap(source);
   try {
     if (format.kind === "code") {
       const tree = codeTree(source, format);
       return {
         parseComplete: !hasParseError(tree),
-        outline: ordered(codeOutline(source, lines, format, tree)),
+        outline: hashOutline(lines, ordered(codeOutline(source, lines, format, tree))),
         lineCount: lines.count,
       };
     }
@@ -1008,12 +1029,16 @@ function parseContent(
       const outline = markdownOutline(source, lines, tree);
       return {
         parseComplete: !hasParseError(tree) && outline.parseComplete,
-        outline: ordered(outline.entries),
+        outline: hashOutline(lines, ordered(outline.entries)),
         lineCount: lines.count,
       };
     }
     const tree = jsonParser.parse(source);
-    return {parseComplete: !hasParseError(tree), outline: ordered(jsonOutline(source, lines, tree)), lineCount: lines.count};
+    return {
+      parseComplete: !hasParseError(tree),
+      outline: hashOutline(lines, ordered(jsonOutline(source, lines, tree))),
+      lineCount: lines.count,
+    };
   } catch (error) {
     throw new InspectFailure("parse", `parser failed: ${errorText(error)}`);
   }
@@ -1164,7 +1189,7 @@ function inspectFileInput(input: string): string[] {
   return [value];
 }
 
-export const inspectFileDescription = `Inspect one workspace-relative file and return bounded JSON metadata and a structural outline.
+export const inspectFileDescription = `Inspect one workspace-relative file and return bounded JSON metadata and a structural outline. Outline line and line_end are copyable LINE:HASH identities, not source text.
 
 Result shape schema:
 ${inspectFileShapeSchemaJSON}`;

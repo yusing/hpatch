@@ -93,7 +93,8 @@ wall time must remain close to control.
   `HostTranslation` for report, state, and diagnostics.
 - `hpatch-router --mode hpatch|passthrough`: expose model-visible hpatch and shell tools with
   private shell-internal hread, hgrep, hsymbol, and inspect_file commands, or the unchanged
-  control path.
+  control path. Hpatch mode defaults to CTP/2 and Mentor Handoff; passthrough stays native.
+- inspect_file outline spans are copyable `LINE:HASH` identities without source bodies.
 - `hpatch/plugins` beneath the platform user configuration directory: the configured tool-plugin
   discovery surface; the router has no plugin command-line flags.
 - `shell`: a mandatory built-in unconstrained custom tool whose translated exec carrier shows the

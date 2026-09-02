@@ -23,7 +23,7 @@ import (
 const (
 	defaultListenAddress        = "127.0.0.1:8080"
 	defaultRewriteMode          = "hpatch"
-	defaultModelProtocol        = "native"
+	defaultModelProtocol        = "ctp2"
 	defaultRequestTimeout       = 10 * time.Minute
 	defaultStreamIdleTimeout    = 4 * time.Minute
 	requestBodyReadTimeout      = 30 * time.Second
@@ -42,7 +42,7 @@ func Run(ctx context.Context, args []string, stderr io.Writer) (runErr error) {
 	streamIdleTimeout := flags.Duration("stream-idle-timeout", defaultStreamIdleTimeout, "maximum upstream response-stream inactivity between bytes")
 	mode := flags.String("mode", defaultRewriteMode, "response mode: hpatch or passthrough")
 	modelProtocol := flags.String("model-protocol", defaultModelProtocol, "model protocol: native or ctp2")
-	mentorHandoffEnabled := flags.Bool("mentor-handoff", false, "temporarily use gpt-5.6-sol high for lower-tier spawned subagents")
+	mentorHandoffEnabled := flags.Bool("mentor-handoff", true, "use gpt-5.6-sol high for eligible spawned subagents")
 	providerBaseURL := flags.String("provider-base-url", codexBaseURL, "Codex provider base URL")
 	captureOutput := flags.String("capture-output", "", "optional sanitized capture JSONL path")
 	if err := flags.Parse(args); err != nil {
@@ -60,11 +60,25 @@ func Run(ctx context.Context, args []string, stderr io.Writer) (runErr error) {
 	if *modelProtocol != "native" && *modelProtocol != "ctp2" {
 		return errors.New("--model-protocol must be native or ctp2")
 	}
-	if *mode == "passthrough" && *modelProtocol != "native" {
-		return errors.New("--model-protocol ctp2 requires --mode hpatch")
-	}
-	if *mode == "passthrough" && *mentorHandoffEnabled {
-		return errors.New("--mentor-handoff requires --mode hpatch")
+	protocolSet := false
+	mentorSet := false
+	flags.Visit(func(item *flag.Flag) {
+		switch item.Name {
+		case "model-protocol":
+			protocolSet = true
+		case "mentor-handoff":
+			mentorSet = true
+		}
+	})
+	if *mode == "passthrough" {
+		if protocolSet && *modelProtocol != "native" {
+			return errors.New("--model-protocol ctp2 requires --mode hpatch")
+		}
+		if mentorSet && *mentorHandoffEnabled {
+			return errors.New("--mentor-handoff requires --mode hpatch")
+		}
+		*modelProtocol = "native"
+		*mentorHandoffEnabled = false
 	}
 	if *timeout <= 0 {
 		return errors.New("--timeout must be positive")

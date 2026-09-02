@@ -102,6 +102,7 @@ func TestInstructionsAcquireTargetContextOnce(t *testing.T) {
 	for _, required := range []string{
 		"Acquire target-bearing context once before editing.",
 		"use hgrep first; use `-F` with repeated `-e` literals",
+		"Copy inspect_file `LINE:HASH` spans",
 		"`hsymbol refs PATH LINE:HASH SYMBOL [N]`",
 		"Use `hsymbol def PATH LINE:HASH SYMBOL [N]`",
 		"Avoid bare whole-file hread unless the complete file",

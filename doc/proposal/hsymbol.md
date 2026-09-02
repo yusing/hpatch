@@ -15,20 +15,20 @@ repeated acquire loop that `hread`, `hgrep`, and `inspect_file` do not close.
   calls are the language-server operation `hgrep` cannot express: this identifier, not every
   spelling of the name.
 - `inspect_file` ran 7 times across the same long-session sample that ran `hread` 1009 times.
-  Its outlines give line metadata, not copyable `LINE:HASH` rows, and existing guidance
-  already says those line numbers are not HPATCH targets.
+  Its outlines now give copyable `LINE:HASH` span targets for file-local declarations, but
+  they do not distinguish semantic identifiers or find callers and cross-file references.
 
 The local failure is not “the agent forgot a `gopls` flag”. `gopls definition` and
-`gopls references` already return `file:line:col`. The missing product is the same one
-`hgrep` added on top of `rg`: a verified complete source row the next `functions.hpatch`
-call can copy.
+`gopls references` already return `file:line:col`, while `inspect_file` owns structural
+navigation within one file. The missing product is language-server resolution rendered as
+verified complete source rows for exact definitions and references.
 
 ## Why this is not `hgrep` or `gopls`
 
 | Stock path | What it already does | What it does not do |
 | --- | --- | --- |
 | `hgrep -e Name --type go` | Text matches as verified rows | Distinguishes definition from mention, or two methods with the same name |
-| `inspect_file PATH` | File-local outline with line metadata | Callers, cross-file refs, or a copyable hash |
+| `inspect_file PATH` | File-local outline with copyable span targets | Callers, cross-file refs, or source rows |
 | `gopls definition` / `gopls references` | Precise identifier locations | `LINE:HASH` text; the agent still `hread`s the body |
 
 `hsymbol` is therefore the `hgrep` shape applied to a language server: the server remains
@@ -134,7 +134,6 @@ Metrics do not start a second query.
 - A grep fallback when a resolver is missing. That is `hgrep`.
 - Workspace-wide search by name alone. Start from a verified row.
 - Implementations, hover, rename, or completion.
-- Rewriting `inspect_file` to emit hashes. Its outline remains metadata.
 - Mixing symbol rows and hpatch recovery.
 
 ## Guidance

@@ -44,7 +44,8 @@ exposes the reusable Go edit engine used by the router.
   shebangs select the interpreter; Bash is the default.
 - Private shell commands stay inside Bash and POSIX programs: `hread` for
   verified rows, `hgrep` for text search, `hsymbol` for language-server
-  lookup, and `inspect_file` for a structural outline with no source bodies.
+  lookup, and `inspect_file` for a structural outline whose spans are copyable
+  `LINE:HASH` identities without source bodies.
 - Eligible programs can be retained, inspected, edited, and rerun through
   `@shell/` references. Wholly stale-target rejections use
   `functions.hpatch_recover` instead of rewriting the whole script.
@@ -63,28 +64,29 @@ exposes the reusable Go edit engine used by the router.
 ### Token saving
 
 - The hpatch family avoids repeating old context. `hpatch` identifies a
-  verified region and writes the replacement once. `hread`, `hgrep`, and
-  `hsymbol` emit copyable `LINE:HASH` rows. `inspect_file` returns structure
-  instead of file bodies.
+  verified region and writes the replacement once. `hread`, `hgrep`,
+  `hsymbol`, and `inspect_file` emit copyable `LINE:HASH` identities.
+  `inspect_file` still returns structure instead of file bodies.
 - `functions.shell` drops the JavaScript carrier, JSON argument object, and
   extra quoting layers that Code Mode `exec_command` requires.
-- Opt-in [CTP/2](doc/spec/ctp.md) is a lossless encoding of eligible
+- [CTP/2](doc/spec/ctp.md) is the default lossless encoding of eligible
   model-visible request strings and assistant text between the Hpatch-projected
   request and the provider. Repeats inside one string can become a local
   dictionary; tool outputs may instead point at earlier visible output lines
   in the same request. Newly emitted tool names and payloads stay native.
-  Validated compaction requests stay native and skip CTP/2.
+  Validated compaction requests stay native and skip CTP/2. Use
+  `--model-protocol native` to disable it.
 - A Lark grammar constrains HPATCH generation so the model does not have to
   retry invalid syntax. A completed invalid script is still rejected
   atomically.
 
 ### Performance
 
-- Opt-in `--mentor-handoff` temporarily sends eligible spawned
-  `gpt-5.6-luna` and `gpt-5.6-terra` children as `gpt-5.6-sol` with high
-  reasoning, then returns to the Codex-configured model. Only an AgentControl
-  `collab_spawn` with `subagent_kind: thread_spawn` activates it; ordinary
-  sessions and forks stay unchanged. See
+- Mentor Handoff sends eligible spawned `gpt-5.6-luna` and `gpt-5.6-terra`
+  children as `gpt-5.6-sol` with high reasoning, then returns to the
+  Codex-configured model. Only an AgentControl `collab_spawn` with
+  `subagent_kind: thread_spawn` activates it; ordinary sessions and forks stay
+  unchanged. Disable with `--mentor-handoff=false`. See
   [`REQ-MENTOR-001`](doc/spec/mentor.md).
 
 ## Why hpatch?
@@ -314,10 +316,11 @@ hsymbol refs internal/router/server.go 42:abcd Run 2
 inspect_file internal/router/server.go | jq -c '.data.outline[]'
 ```
 
-Use hread before editing; inspect_file lines are not HPATCH targets. Complete
-inputs and failure behavior: [`REQ-READ-001`](doc/spec/read.md),
-[`REQ-GREP-001`](doc/spec/grep.md), [`REQ-SYMBOL-001`](doc/spec/symbol.md),
-and [`REQ-INSPECT-001`](doc/spec/inspect.md).
+Copy inspect_file `LINE:HASH` spans into HPATCH targets. Use hread when the
+replacement needs unseen source text. Complete inputs and failure behavior:
+[`REQ-READ-001`](doc/spec/read.md), [`REQ-GREP-001`](doc/spec/grep.md),
+[`REQ-SYMBOL-001`](doc/spec/symbol.md), and
+[`REQ-INSPECT-001`](doc/spec/inspect.md).
 
 ## Codex router
 
@@ -332,8 +335,8 @@ Defaults:
 | Setting | Default |
 | --- | --- |
 | Mode | `hpatch` (`--mode`); `passthrough` forwards Responses traffic without loading the tool registry |
-| Model protocol | `native` (`--model-protocol`); `ctp2` is opt-in and Hpatch-only |
-| Mentor Handoff | Disabled (`--mentor-handoff`); Hpatch-only |
+| Model protocol | `ctp2` (`--model-protocol`); `native` disables compaction; Hpatch-only |
+| Mentor Handoff | Enabled (`--mentor-handoff`); Hpatch-only; disable with `--mentor-handoff=false` |
 | Provider base URL | `https://chatgpt.com/backend-api/codex` (`--provider-base-url`) |
 | Listen | `127.0.0.1:8080` (`--listen`) |
 | Upstream response-start timeout | `10m` (`--timeout`) |
@@ -351,9 +354,11 @@ Use `--mode passthrough` to forward Responses traffic without installing
 hpatch, shell, private commands, or rejected-script recovery. Capture remains
 available because it observes the transport.
 
-Use `--model-protocol ctp2` for the compact provider representation. See
-[`REQ-CTP-001`](doc/spec/ctp.md). Use `--mentor-handoff` only for the
-spawned-subagent schedule above. See [`REQ-MENTOR-001`](doc/spec/mentor.md).
+Hpatch mode defaults to CTP/2 and Mentor Handoff. Use `--model-protocol native`
+to keep request and response strings uncompressed. See
+[`REQ-CTP-001`](doc/spec/ctp.md). Use `--mentor-handoff=false` to leave spawned
+subagents on their Codex-configured model. See
+[`REQ-MENTOR-001`](doc/spec/mentor.md).
 
 In hpatch mode, run the router as the same login user as Codex so it can open
 the absolute workspace paths Codex sends. Codex attaches its managed

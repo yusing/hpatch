@@ -40,8 +40,9 @@ Persistent guidance teaches this workflow:
    likely to become a target, use hgrep first with
    repeated fixed-string patterns, adding bounded context options when surrounding code is needed.
    Every emitted match or context row is target-bearing. When the owner is known but the location
-   is not, use inspect_file for structure or hgrep for a symbol, then hread only the smallest range
-   needed to obtain the target. Use hsymbol refs for exact Go references and hsymbol def for an
+   is not, use inspect_file for structure or hgrep for a symbol. Copy inspect_file `LINE:HASH`
+   spans directly as HPATCH targets. Use hread only for the smallest range of unseen source text.
+   Use hsymbol refs for exact Go references and hsymbol def for an
    editable Go declaration after obtaining a verified selector row. Avoid whole-file hread unless
    the complete file is necessary.
 4. Run one hread command per file and batch only already-known reads in one shell script. Copy

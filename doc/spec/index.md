@@ -4,7 +4,7 @@ pjdoc:
   kind: spec
   scope: root
   status: draft
-  revision: "42"
+  revision: "43"
   files:
     - commentary.md
     - read.md
@@ -37,7 +37,7 @@ Each listed file owns one requirement. Related facts are cited by stable ID or l
 - [`REQ-READ-001`](read.md): routed verified-row reading and bounded ranges
 - [`REQ-GREP-001`](grep.md): routed ripgrep search with directly editable verified rows
 - [`REQ-SYMBOL-001`](symbol.md): routed semantic symbol lookup with directly editable verified rows
-- [`REQ-INSPECT-001`](inspect.md): routed structural file inspection
+- [`REQ-INSPECT-001`](inspect.md): routed structural file inspection with copyable `LINE:HASH` spans
 - [`REQ-PLUGIN-001`](plugin.md): router-local custom tools and Code Mode carrier translation
 - [`REQ-DIAGNOSE-001`](diagnose.md): opt-in agent issue reports
 - [`REQ-SHELL-001`](shell.md): installable free-form script tool and interpreter selection

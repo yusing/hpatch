@@ -2,7 +2,8 @@
 
 ## REQ-MENTOR-001 — Spawned-subagent Mentor Handoff
 
-Mentor Handoff is an opt-in Hpatch-mode model schedule. Passthrough mode rejects the option. Its
+Mentor Handoff is an Hpatch-mode product schedule. It is enabled by default and disabled with
+`--mentor-handoff=false`. Passthrough mode keeps it off and rejects an explicit enable. Its
 first incremental form recognizes only an AgentControl thread spawn carrying exactly one
 `x-openai-subagent: collab_spawn` header and valid Codex turn metadata whose `subagent_kind` is
 `thread_spawn`. The router forwards the subagent header unchanged. It does not infer a subagent from

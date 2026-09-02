@@ -111,6 +111,17 @@ async function inspectOutline(name: string): Promise<Record<string, unknown>[]> 
   return (await inspect(name)).result.data.outline;
 }
 
+const hashedRowPattern = /^(\d+):[0-9a-f]{4}$/u;
+
+function outlineLine(entry: Record<string, unknown>, field = "line"): number {
+  const value = String(entry[field]);
+  const match = hashedRowPattern.exec(value);
+  if (match === null) {
+    throw new Error(`invalid ${field} identity ${value}`);
+  }
+  return Number(match[1]);
+}
+
 function rustRegexMatches(pattern: string, input: string): boolean {
   const result = spawnSync(
     "rg",
@@ -1234,7 +1245,7 @@ describe("inspect_file language projections", () => {
       ["method", "gen", "Typed"],
     ]);
     const python = await inspectOutline("sample.py");
-    expect(python.map((entry) => [entry.kind, entry.name, entry.receiver, entry.line])).toEqual([
+    expect(python.map((entry) => [entry.kind, entry.name, entry.receiver, outlineLine(entry)])).toEqual([
       ["import", "package", undefined, 1], ["import", "alias", undefined, 1],
       ["import", "local", undefined, 2], ["import", "first", undefined, 3],
       ["import", "second_alias", undefined, 3], ["variable", "value", undefined, 7],
@@ -1275,7 +1286,12 @@ describe("inspect_file language projections", () => {
       expect(result.data.parse_complete).toBe(true);
     }
     for (const name of ["sample.d.ts", "sample.d.mts", "sample.d.cts"]) {
-      expect((await inspectOutline(name)).map((entry) => [entry.kind, entry.name, entry.line, entry.line_end]))
+      expect((await inspectOutline(name)).map((entry) => [
+        entry.kind,
+        entry.name,
+        outlineLine(entry),
+        outlineLine(entry, "line_end"),
+      ]))
         .toEqual([["function", "value", 1, 3]]);
     }
     expect((await inspectOutline("sample.pyi")).map((entry) => [entry.kind, entry.name]))
@@ -1284,6 +1300,30 @@ describe("inspect_file language projections", () => {
 });
 
 describe("inspect_file bounds and confinement", () => {
+
+  test("emits LINE:HASH span identities without source bodies", async () => {
+    const directory = await temporaryDirectory("inspect-file-hash-");
+    process.chdir(directory);
+    const source = [
+      "package p",
+      "func Visible() {",
+      "	secret := \"body-secret\"",
+      "}",
+      "",
+    ].join("\n");
+    await writeFile("sample.go", source);
+    const outline = await inspectOutline("sample.go");
+    const lines = new LineMap(source);
+    expect(outline.map((entry) => [entry.kind, entry.name, entry.line, entry.line_end])).toEqual([
+      [
+        "function",
+        "Visible",
+        `2:${hashLine(lines.logicalLine(2)?.text ?? "")}`,
+        `4:${hashLine(lines.logicalLine(4)?.text ?? "")}`,
+      ],
+    ]);
+    expect(JSON.stringify(outline)).not.toMatch(/body-secret|secret/u);
+  });
 
   test("reports recovery, exact line counts, and unsupported metadata", async () => {
     const directory = await temporaryDirectory("inspect-file-");

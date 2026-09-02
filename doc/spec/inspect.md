@@ -24,8 +24,12 @@ line count, parser-completeness flag, and a flat source-ordered outline. Code en
 imports, top-level constants and variables, types, classes, functions, and direct methods.
 Markdown includes only ATX headings outside fences and top-level scalar keys parsed from a closed
 initial `---` YAML frontmatter block. JSON includes every recognized value as a depth-first RFC
-6901 pointer and value type, including the empty root pointer. No result contains raw excerpts,
-bodies, fields, comments, frontmatter values, or JSON scalar values.
+6901 pointer and value type, including the empty root pointer. Each outline entry's `line` and
+`line_end` are `REQ-READ-001` `LINE:HASH` identities for the inclusive span: the positive one-based
+logical line and the lowercase four-digit hash of that complete logical line, excluding its
+terminator. A single-line span repeats the same identity in both fields. Those identities are
+copyable HPATCH row or `ROW..ROW` range targets. No result contains raw excerpts, bodies, fields,
+comments, frontmatter values, JSON scalar values, or row `TEXT`.
 
 The complete successful stdout, including its final LF, is at most 65,536 UTF-8 bytes. When
 necessary, the worker retains the longest complete outline prefix and returns
@@ -45,8 +49,8 @@ installs and advertises none of these surfaces.
 Acceptance:
 
 1. Each supported language projection returns only its declared navigation identifiers and exact
-   inclusive one-based ranges, while malformed recoverable input remains a successful partial
-   result with `parse_complete: false`.
+   inclusive `LINE:HASH` span identities, while malformed recoverable input remains a successful
+   partial result with `parse_complete: false`.
 2. Markdown excludes fences, Setext headings, nested YAML frontmatter keys, and all frontmatter
    values while preserving source order for repeated top-level scalar keys; JSON escapes `~` and
    `/`, preserves duplicate pointers, and never returns scalar values.
