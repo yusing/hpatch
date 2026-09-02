@@ -73,6 +73,10 @@ An imported historical control without the current capture schema MAY supply cor
 but its old metrics MUST NOT be combined with a fresh capture or presented as current authoritative
 metrics.
 
+When a task requires an exact final response, the runner MUST compare it with the final substantive
+agent message after excluding router-generated `Tokens: i=…, ci=…, o=…, r=…` telemetry. A later
+ordinary agent message remains the final response and MUST NOT be ignored.
+
 Acceptance:
 
 1. Compose defines one control router and one Hpatch router, with no capturer services; each router

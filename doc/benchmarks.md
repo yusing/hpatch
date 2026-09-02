@@ -145,10 +145,12 @@ identities.
 ## Validate reporting
 
 ```sh
+bash benchmarks/expected_final_response_test.sh
 bash benchmarks/report_test.sh
 ```
 
-The shell fixture covers every report mode and falsifies capture health, aggregate usage, baseline
-presence and schema, configured provider models, Mentor lineage, and required CTP compression. Go
-tests under `capturer/` prove retry correlation, privacy, streaming, gzip, multiline SSE, and bounded
-detail with complete cumulative totals.
+The expected-response fixture proves router token telemetry remains auxiliary while later ordinary
+assistant text remains authoritative. The reporting fixture covers every report mode and falsifies
+capture health, aggregate usage, baseline presence and schema, configured provider models, Mentor
+lineage, and required CTP compression. Go tests under `capturer/` prove retry correlation, privacy,
+streaming, gzip, multiline SSE, and bounded detail with complete cumulative totals.

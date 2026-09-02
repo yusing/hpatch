@@ -1482,12 +1482,8 @@ run_agent() {
 	fi
 	if [[ -n $expected_final_response ]]; then
 		expected_response_required=true
-		if ! jq -se --arg expected "$expected_final_response" '
-			[.[] |
-				select(.type == "item.completed" and .item.type == "agent_message") |
-				.item.text
-			][-1] == $expected
-		' "$codex_stdout" >/dev/null; then
+		if ! jq -se --arg expected "$expected_final_response" \
+			-f "$benchmark_root/expected_final_response.jq" "$codex_stdout" >/dev/null; then
 			expected_response_passed=false
 			task_pass=false
 		fi

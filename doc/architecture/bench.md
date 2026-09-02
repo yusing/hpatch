@@ -37,3 +37,7 @@ Hidden tests and the allowed-path boundary decide correctness. Timing and token 
 interpreted only after correctness. CTP/2 and Mentor Handoff use the same capture and reporting
 path as paired and diagnostic runs; their distinct model/protocol behavior is visible in exchange
 models, protocol savings, and provider usage rather than production metric callbacks.
+
+For task-owned exact responses, the runner selects the last substantive agent message. It excludes
+only the router's synthetic token-usage commentary, leaving any later ordinary assistant message
+authoritative.
