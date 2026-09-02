@@ -196,7 +196,7 @@ func responseWithTokenUsageCommentary(response []byte) (
 	if err := json.Unmarshal(rawOutput, &output); err != nil {
 		return nil, nil, errors.New("decode hpatch-enabled response output")
 	}
-	output = append(output, message)
+	output = append([]map[string]json.RawMessage{message}, output...)
 	encoded, err := json.Marshal(output)
 	if err != nil {
 		return nil, nil, err

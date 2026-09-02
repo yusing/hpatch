@@ -328,6 +328,7 @@ type hpatchResponseTransform struct {
 	subagentPending           map[string]subagentPendingCall
 	subagentDeferred          []map[string]json.RawMessage
 	subagentResponses         []map[string]json.RawMessage
+	subagentTurn              bool
 	parentModel               string
 	parentReasoningEffort     string
 
@@ -523,6 +524,7 @@ func (p *hpatchProxy) prepareRequest(ctx context.Context, request *parsedRespons
 		subagentPending:           make(map[string]subagentPendingCall),
 		subagentDeferred:          subagentDeferred,
 		subagentResponses:         subagentDeferred,
+		subagentTurn:              metadata.SubagentKind != "",
 		parentModel:               request.model(),
 		parentReasoningEffort:     strings.TrimSpace(reasoning.Effort),
 		commentaryTools:           commentaryTools,
@@ -2690,7 +2692,7 @@ func (t *hpatchResponseTransform) TransformSSE(payload []byte) ([][]byte, error)
 			}
 		}
 		t.commentaryTokens = nil
-		if usageMessage != nil {
+		if usageMessage != nil && !t.subagentTurn {
 			visible = append(visible, assistantCommentaryDoneEvent(usageMessage))
 		}
 		visible = append(visible, event)
@@ -2720,7 +2722,7 @@ func (t *hpatchResponseTransform) TransformSSE(payload []byte) ([][]byte, error)
 			return nil, err
 		}
 		visible := [][]byte{}
-		if usageMessage != nil {
+		if usageMessage != nil && !t.subagentTurn {
 			visible = append(visible, assistantCommentaryDoneEvent(usageMessage))
 		}
 		return append(visible, event), nil
