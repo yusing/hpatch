@@ -52,9 +52,12 @@ those messages from later provider-bound input while preserving the original col
 tool outputs, and inter-agent messages. A response already accompanied by its deterministic
 commentary is not projected again.
 
-Every terminal root-agent or subagent response with provider usage appends one commentary message
-reporting input (`i`), cached input (`ci`), output (`o`), and reasoning (`r`) tokens. JSON and
-streaming responses use the same provider-authoritative counts and rendering.
+Every terminal root-agent or subagent response with provider usage includes one commentary message
+reporting input (`i`), cached input (`ci`), output (`o`), and reasoning (`r`) tokens before the
+provider-authored output. JSON and streaming responses use the same provider-authoritative counts
+and rendering. A streamed subagent response carries usage in its terminal response object without
+emitting a later standalone item that collaboration could mistake for the child result. Usage
+commentary cannot become the terminal substantive result.
 
 Acceptance:
 
@@ -68,7 +71,8 @@ Acceptance:
 5. Router-authored messages are removed from every later provider request and are not repeated when
    the matching message is already present in Codex history.
 6. Every terminal root-agent or subagent response with provider usage reports `i`, `ci`, `o`, and
-   `r` exactly once without changing the provider's usage object or captured metrics.
+   `r` exactly once before provider-authored output, without changing the terminal substantive
+   result, provider usage object, or captured metrics.
 7. Extensible ordinary function tools accept optional authored commentary, while strict,
    provider-owned, pre-owned-commentary, collaboration, and user-messaging schemas remain exact.
 8. JSON and streaming calls show one explicit or default message before the executable item,

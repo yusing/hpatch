@@ -1,0 +1,97 @@
+{
+  "version": 1,
+  "id": "commentary-coverage",
+  "source": {
+    "kind": "empty_fixture",
+    "base_revision": "empty-v1",
+    "base_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "provenance": {
+    "base": "Task-owned empty directory represented by the SHA-256 digest of an empty byte stream. It has no repository or history.",
+    "qualification": "Only the empty base failure, intended hidden library grader discriminator, and runner-owned commentary evidence are qualified.",
+    "language": "Go",
+    "task_type": "exhaustive router commentary coverage",
+    "difficulty": "easy"
+  },
+  "runtime": {
+    "dependency_kind": "none",
+    "read_probe": ""
+  },
+  "expected_final_response": "verification: exhaustive commentary coverage passed",
+  "commentary_coverage": {
+    "version": 1,
+    "profiles": {
+      "operations": {
+        "messages": [
+          {"kind": "exact", "value": "Applying the requested changes.", "minimum": 2},
+          {"kind": "exact", "value": "Using hpatch_recover.", "minimum": 1}
+        ],
+        "commands": [
+          {"kind": "contains", "value": "commentary coverage:bash", "minimum": 1},
+          {"kind": "contains", "value": "commentary coverage:posix", "minimum": 1},
+          {"kind": "contains", "value": "coverage:exec-complete", "minimum": 1},
+          {"kind": "regex", "value": "coverage(?:%3A|:)code-mode", "minimum": 1}
+        ],
+        "items": {
+          "command_execution": 4,
+          "file_change": 2
+        }
+      },
+      "reporting": {
+        "messages": [
+          {"kind": "exact", "value": "Using report_issue.", "minimum": 1}
+        ]
+      },
+      "collaboration": {
+        "messages": [
+          {"kind": "regex", "value": "^Starting subagent\\.\\nRole: benchmark_worker\\nModel: gpt-5\\.6-sol\\nReasoning effort: high$", "minimum": 1},
+          {"kind": "regex", "value": "^Response from /root/implementation:\\nverification: exhaustive commentary coverage passed$", "minimum": 1}
+        ],
+        "items": {
+          "collab_tool_call": 1
+        }
+      },
+      "terminal": {
+        "messages": [
+          {"kind": "regex", "value": "^Tokens: i=[0-9]+, ci=[0-9]+, o=[0-9]+, r=[0-9]+$", "minimum": 1}
+        ]
+      }
+    },
+    "mode_arms": {
+      "hpatch-diagnostic": {
+        "hpatch": ["operations", "reporting", "terminal"]
+      },
+      "ctp-only": {
+        "native": ["operations", "terminal"],
+        "ctp": ["operations", "terminal"]
+      },
+      "mentor-handoff": {
+        "hpatch": ["collaboration", "terminal"],
+        "hpatch-mentor": ["collaboration", "terminal"]
+      }
+    }
+  },
+  "prompt_file": "prompt.md",
+  "hidden_files": [
+    {
+      "source": "hidden_commentary_coverage_test.go.txt",
+      "destination": "commentary_coverage_benchmark_test.go"
+    }
+  ],
+  "graders": [
+    {
+      "name": "commentary-coverage",
+      "command": [
+        "sh",
+        "-c",
+        "go test . -run '^TestHPatchBenchmarkCommentaryCoverage$' -count=1 || { status=$?; printf '%s\\n' 'commentary coverage check failed'; exit \"$status\"; }"
+      ],
+      "required": true,
+      "expect_base": "fail",
+      "baseline_output_contains": "commentary coverage check failed",
+      "timeout_seconds": 180
+    }
+  ],
+  "allowed_path_prefixes": ["go.mod", "coverage.go"],
+  "agent_timeout_seconds": 900
+}

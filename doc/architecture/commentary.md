@@ -36,5 +36,8 @@ are complete.
 
 The terminal response transformer also owns one user-only commentary projection of the provider's
 input, cached-input, output, and reasoning usage whenever a root or subagent turn stops. The
-provider usage object remains authoritative; the projection does not participate in capture
-calculations or durable metrics.
+projection precedes provider-authored output so it cannot replace a collaboration result. The
+streaming path does not emit a later standalone usage item for a subagent turn because the Codex
+collaboration runtime selects the last completed assistant item as the child result. The provider
+usage object remains authoritative; the projection remains in the terminal response object and
+does not participate in capture calculations or durable metrics.

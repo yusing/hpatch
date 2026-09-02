@@ -79,6 +79,7 @@ preload_go_qualification_grader=false
 require_ctp_input_compression=false
 require_ctp_output_compression=false
 expected_final_response=
+commentary_coverage_enabled=false
 
 agent_timeout=
 grader_timeout=
@@ -164,6 +165,13 @@ load_task_manifest() {
 		return 1
 	fi
 	expected_final_response=$(jq -r '.expected_final_response // ""' "$task_manifest")
+	if ! python3 "$benchmark_root/check_commentary_coverage.py" validate \
+		"$task_manifest" "$benchmark_mode"; then
+		return 1
+	fi
+	if jq -e '.commentary_coverage != null' "$task_manifest" >/dev/null; then
+		commentary_coverage_enabled=true
+	fi
 	case $dependency_kind in
 	go|node|none) ;;
 	*)
@@ -613,9 +621,13 @@ cleanup() {
 	local status=$?
 	local pid
 	local -a agent_containers=()
+	if (($#)); then
+		status=$1
+	fi
 
 	trap - EXIT
 	trap '' INT TERM
+	set +e
 	for pid in "${worker_pids[@]}"; do
 		kill -TERM "$pid" 2>/dev/null || true
 	done
@@ -623,8 +635,14 @@ cleanup() {
 		wait "$pid" 2>/dev/null || true
 	done
 	worker_pids=()
-	merge_results
-	collect_artifacts
+	if ! merge_results; then
+		printf 'bench.sh: cannot merge available benchmark results during cleanup\n' >&2
+		status=1
+	fi
+	if ! collect_artifacts; then
+		printf 'bench.sh: cannot collect available benchmark artifacts during cleanup\n' >&2
+		status=1
+	fi
 	if [[ $started == true ]]; then
 		if ! print_capture_summary; then
 			printf 'bench.sh: capture summary failed\n' >&2
@@ -1203,6 +1221,9 @@ run_agent() {
 	local executor_process_creation_errors=0
 	local expected_response_required=false
 	local expected_response_passed=true
+	local commentary_coverage_json=null
+	local commentary_coverage_path="$artifact_dir/commentary-coverage.json"
+	local commentary_coverage_status=0
 	local agent_prompt
 	local root_model=$model
 	local root_reasoning_effort=$reasoning_effort
@@ -1488,6 +1509,35 @@ run_agent() {
 			task_pass=false
 		fi
 	fi
+	if [[ $commentary_coverage_enabled == true ]]; then
+		if commentary_coverage_json=$(python3 "$benchmark_root/check_commentary_coverage.py" check \
+			"$task_manifest" "$benchmark_mode" "$arm" "$codex_stdout"); then
+			commentary_coverage_status=0
+		else
+			commentary_coverage_status=$?
+			task_pass=false
+		fi
+		if ! jq -e 'type == "object"' <<<"$commentary_coverage_json" >/dev/null 2>&1; then
+			commentary_coverage_json=$(jq -cn \
+				--arg mode "$benchmark_mode" \
+				--arg arm "$arm" \
+				--argjson status "$commentary_coverage_status" '
+				{
+					schema: "hpatch.benchmark.commentary-coverage.v1",
+					mode: $mode,
+					arm: $arm,
+					profiles: [],
+					passed: false,
+					observed: {agent_messages: 0, successful_commands: 0, item_counts: {}},
+					missing: ["checker-error"],
+					checker_exit_code: $status
+				}')
+			task_pass=false
+		fi
+		commentary_coverage_json=$(jq -c --arg path "$commentary_coverage_path" \
+			'. + {path: $path}' <<<"$commentary_coverage_json")
+		printf '%s\n' "$commentary_coverage_json" >"$commentary_coverage_path"
+	fi
 
 	grader_json=$(jq -cn \
 		--argjson passed "$([[ $grader_exit -eq 0 ]] && printf true || printf false)" \
@@ -1542,6 +1592,7 @@ run_agent() {
 		--argjson agent "$agent_json" \
 		--argjson changed_paths "$changed_json" \
 		--argjson unauthorized_paths "$unauthorized_json" \
+		--argjson commentary_coverage "$commentary_coverage_json" \
 		--rawfile diff "$diff_path" \
 		--arg diff_path "$diff_path" \
 		--argjson graders "$grader_json" \
@@ -1572,6 +1623,7 @@ run_agent() {
 			agent: $agent,
 			changed_paths: $changed_paths,
 			unauthorized_paths: $unauthorized_paths,
+			commentary_coverage: $commentary_coverage,
 			diff: $diff,
 			diff_path: $diff_path,
 			graders: $graders,
@@ -1779,4 +1831,5 @@ for diff in "${diffs[@]}"; do
 	printf '\nAgent diff: %s\n' "$diff"
 done
 
-exit "$benchmark_status"
+trap - EXIT
+cleanup "$benchmark_status"

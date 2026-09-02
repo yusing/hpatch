@@ -46,6 +46,23 @@ MODEL=gpt-5.6-luna REASONING_EFFORT=xhigh REPETITIONS=2 \
   bash benchmarks/bench.sh
 ```
 
+Exhaustive commentary coverage across diagnostic, native/CTP, and Mentor Handoff arms:
+
+```sh
+bash benchmarks/run-commentary-coverage.sh
+```
+
+The commentary suite runs one repetition in each mode and continues through all three modes so one
+failed arm does not hide later evidence. It intentionally permits repeated edits because stale-target
+recovery is part of the task. `MODEL` may select `gpt-5.6-luna` or `gpt-5.6-terra`, and
+`REASONING_EFFORT` overrides the default `medium` effort.
+
+Coverage includes Hpatch apply and recovery, optional issue reporting, Bash and POSIX runtime
+publications, provider-owned exec invocation, Code Mode runtime publication, subagent start and
+response projection, and terminal token telemetry. Runtime publications and exec invocation are
+proven by successful command markers because Codex JSONL does not reliably retain their user-only
+messages. Host-only continuation events are outside this retained event boundary.
+
 `MODEL`, `REASONING_EFFORT`, and paired-mode `REPETITIONS` override the defaults. CTP/2 and Mentor
 Handoff disable issue reporting so the reporting tool does not confound either treatment.
 
@@ -137,6 +154,11 @@ artifacts/                            # per-attempt result, events, patch, and g
 agent-issue-reports.jsonl             # when issue reporting collected records
 ```
 
+An opt-in commentary task also writes `commentary-coverage.json` beside each attempt's
+`result.json`. Functional correctness remains in the hidden grader record; commentary coverage is a
+separate result field derived from retained assistant messages, successful command markers, and
+completed item types in Codex events.
+
 Mentor Handoff renames the treatment snapshot and log to `hpatch-mentor-metrics.json` and
 `hpatch-mentor-router.log`. Child event and content-free lineage proof artifacts remain under the
 attempt directory. Summary output intentionally omits request, session, thread, call, and capture
@@ -145,12 +167,15 @@ identities.
 ## Validate reporting
 
 ```sh
+bash benchmarks/commentary_coverage_test.sh
 bash benchmarks/expected_final_response_test.sh
 bash benchmarks/report_test.sh
 ```
 
+The commentary fixture covers profile selection, operation and collaboration messages, successful
+command markers, event minimums, missing evidence, malformed event streams, and unsupported modes.
 The expected-response fixture proves router token telemetry remains auxiliary while later ordinary
-assistant text remains authoritative. The reporting fixture covers every report mode and falsifies
-capture health, aggregate usage, baseline presence and schema, configured provider models, Mentor
-lineage, and required CTP compression. Go tests under `capturer/` prove retry correlation, privacy,
-streaming, gzip, multiline SSE, and bounded detail with complete cumulative totals.
+assistant text remains authoritative. The reporting fixture covers every report mode and falsifies capture health,
+aggregate usage, baseline presence and schema, configured provider models, Mentor lineage, and
+required CTP compression. Go tests under `capturer/` prove retry correlation, privacy, streaming,
+gzip, multiline SSE, and bounded detail with complete cumulative totals.
