@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"slices"
 	"strings"
 )
 
@@ -245,4 +246,112 @@ func (t *hpatchResponseTransform) transformStructuredCommentary(item map[string]
 	})
 	item["arguments"] = mustMarshalJSON(extracted.arguments)
 	return assistantCommentaryMessage(messageID, extracted.text), nil
+}
+
+func (p *hpatchProxy) drainCommentarySession(sessionID string) []publishedCommentary {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	if p.commentary == nil || p.activeSessions[sessionID] > 1 {
+		return nil
+	}
+	return p.commentary.drainSession(sessionID)
+}
+
+func (t *hpatchResponseTransform) cancelCommentaryTokens() {
+	for _, token := range t.commentaryTokens {
+		t.proxy.commentary.cancel(token)
+	}
+	t.commentaryTokens = nil
+}
+
+// validateHPatchCompactionRequest recognizes local Codex compaction requests,
+// which stream through /responses without exposing model tools.
+// Source: openai/codex codex-rs/core/src/compact.rs:228:273 and client.rs:795:881.
+
+func (p *hpatchProxy) commentaryMessageIDs(sessionID string) map[string]struct{} {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	result := make(map[string]struct{})
+	if session := p.sessions[sessionID]; session != nil {
+		for _, history := range session.calls {
+			for _, messageID := range history.commentaryMessageIDs {
+				result[messageID] = struct{}{}
+			}
+		}
+	}
+	return result
+}
+
+func (p *hpatchProxy) addCommentaryMessageID(sessionID, callID, messageID string) bool {
+	history, exists := p.history(sessionID, callID)
+	if !exists {
+		return false
+	}
+	if slices.Contains(history.commentaryMessageIDs, messageID) {
+		return true
+	}
+	history.commentaryMessageIDs = append(history.commentaryMessageIDs, messageID)
+	return p.rememberBatch(sessionID, map[string]hpatchHistory{callID: history}) == nil
+}
+
+func (t *hpatchResponseTransform) subagentCallMessage(item map[string]json.RawMessage) map[string]json.RawMessage {
+	message, matched := subagentCallCommentary(
+		item,
+		t.subagentTools,
+		t.parentModel,
+		t.parentReasoningEffort,
+	)
+	if !matched {
+		return nil
+	}
+	id := jsonString(message, "id")
+	if _, emitted := t.commentaryEmitted[id]; emitted {
+		return nil
+	}
+	t.commentaryEmitted[id] = struct{}{}
+	return message
+}
+
+func (t *hpatchResponseTransform) runtimeCommentaryMessage(publication publishedCommentary) map[string]json.RawMessage {
+	if publication.text == "" || !t.proxy.addCommentaryMessageID(
+		t.historySessionID, publication.callID, publication.messageID,
+	) {
+		return nil
+	}
+	if history, exists := t.local[publication.callID]; exists && !slices.Contains(history.commentaryMessageIDs, publication.messageID) {
+		history.commentaryMessageIDs = append(history.commentaryMessageIDs, publication.messageID)
+		t.local[publication.callID] = history
+	}
+	return assistantCommentaryMessage(publication.messageID, publication.text)
+}
+
+func (t *hpatchResponseTransform) localStartCommentary(item map[string]json.RawMessage) map[string]json.RawMessage {
+	if t.proxy.commentaryEndpoint == "" {
+		return nil
+	}
+	callID := jsonString(item, "call_id")
+	history, exists := t.local[callID]
+	if !exists || jsonString(history.upstreamItem, "type") == "function_call" {
+		return nil
+	}
+	if history.toolName != codeModeCommentaryHistoryTool && history.pluginID == builtinToolsPluginID && history.toolName == "shell" {
+		return nil
+	}
+	if len(history.commentaryMessageIDs) == 0 {
+		if history.toolName == codeModeCommentaryHistoryTool {
+			return nil
+		}
+		history.commentaryMessageIDs = []string{commentaryMessageID(callID)}
+		t.local[callID] = history
+	}
+	messageID := history.commentaryMessageIDs[0]
+	if _, emitted := t.commentaryEmitted[messageID]; emitted {
+		return nil
+	}
+	t.commentaryEmitted[messageID] = struct{}{}
+	text := "Running the requested operation."
+	if history.toolName != codeModeCommentaryHistoryTool {
+		text = commentaryDefault(commentaryTool{qualifiedName: history.toolName, display: history.toolName}, nil)
+	}
+	return assistantCommentaryMessage(messageID, text)
 }
