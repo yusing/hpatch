@@ -5,6 +5,9 @@ import {
   parseShellHeader,
 } from "hpatch:core/v1";
 
+/**
+ * parseScript parses a shell script using the shared-core shell header parser.
+ */
 function parseScript(input, context) {
   const parsed = parseShellHeader(input);
   if (Object.hasOwn(parsed, "scriptPath")) {
@@ -27,6 +30,9 @@ function parseScript(input, context) {
   };
 }
 
+/**
+ * retainInput determines whether the script source should be retained for translation.
+ */
 function retainInput(input) {
   const interpreter = interpreterIdentity(input.interpreter[0]);
   if (interpreter !== "bash" && interpreter !== "sh") {
@@ -36,10 +42,16 @@ function retainInput(input) {
   return normalized.split(/\n|\r/u).length > 3;
 }
 
+/**
+ * executionError extracts a string message from an error value.
+ */
 function executionError(error) {
   return error instanceof Error ? error.message : String(error);
 }
 
+/**
+ * scriptEvaluationFlag returns the command-line flag for inline script evaluation.
+ */
 function scriptEvaluationFlag(interpreter) {
   switch (interpreterIdentity(interpreter)) {
     case "bun":
@@ -52,6 +64,9 @@ function scriptEvaluationFlag(interpreter) {
 }
 
 
+/**
+ * executeScriptThroughStdin runs a script by passing the body through stdin.
+ */
 function executeScriptThroughStdin(argv, maxOutputBytes) {
   const interpreter = argv[0];
   const interpreterArguments = argv.slice(1, -1);
@@ -85,6 +100,9 @@ function executeScriptThroughStdin(argv, maxOutputBytes) {
   }
 }
 
+/**
+ * executeScriptWithProgramInput runs a script using a file descriptor or evaluation flag.
+ */
 function executeScriptWithProgramInput(argv, context) {
   const interpreter = argv[0];
   const body = argv.at(-1);
@@ -198,6 +216,9 @@ function executeScriptWithProgramInput(argv, context) {
   });
 }
 
+/**
+ * executeScript executes a shell script with the appropriate interpreter.
+ */
 function executeScript(argv, context) {
   if (argv.length < 2) {
     return {stderr: "shell: missing interpreter or script body\n", exitCode: 1};

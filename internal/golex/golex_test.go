@@ -2,6 +2,7 @@ package golex
 
 import "testing"
 
+// TestIdentifierAndLiteral verifies Go identifier recognition and string literal decoding.
 func TestIdentifierAndLiteral(t *testing.T) {
 	for _, value := range []string{"alpha", "_alpha", "世界9"} {
 		if !IsIdentifier(value) {

@@ -494,7 +494,7 @@ func findLiteralOffsets(text, literal string, advance, limit int) []int {
 	return offsets
 }
 
-// logicalLines splits text into logical lines with terminator boundaries.
+// logicalLines splits text into logical lines using shared verified-row semantics.
 func logicalLines(text string) []logicalLine {
 	shared := verifiedrow.Lines(text)
 	lines := make([]logicalLine, len(shared))

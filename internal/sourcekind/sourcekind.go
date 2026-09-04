@@ -2,6 +2,7 @@ package sourcekind
 
 import "strings"
 
+// Format describes the source capabilities for one file path suffix.
 type Format struct {
 	Kind             string `json:"kind"`
 	Language         string `json:"language,omitempty"`
@@ -11,6 +12,7 @@ type Format struct {
 	SyntaxValidation bool   `json:"syntaxValidation,omitzero"`
 }
 
+// suffixFormat associates one file path suffix with its source format.
 type suffixFormat struct {
 	suffix string
 	format Format
@@ -35,6 +37,7 @@ var formats = []suffixFormat{
 	{suffix: ".json", format: Format{Kind: "json", Outline: true, SemanticResolver: "typescript"}},
 }
 
+// code constructs a code-kind source format with the given capabilities.
 func code(language string, jsx bool, resolver string, validation bool) Format {
 	return Format{
 		Kind:             "code",

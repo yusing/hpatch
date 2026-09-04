@@ -102,6 +102,9 @@ class SourceFailure extends Error {
   }
 }
 
+/**
+ * parsePositiveInteger parses a positive integer using the shared-core parser and wraps errors with a contextual label.
+ */
 function parsePositiveInteger(value: string, label: string): number {
   try {
     return parseCorePositiveInteger(value);
@@ -113,10 +116,16 @@ function parsePositiveInteger(value: string, label: string): number {
   }
 }
 
+/**
+ * validGoIdentifier checks whether value is a valid non-keyword Go identifier using the shared-core validator.
+ */
 function validGoIdentifier(value: string): boolean {
   return isGoIdentifier(value);
 }
 
+/**
+ * parseQuery validates and parses the hsymbol argv into a structured query object.
+ */
 function parseQuery(argv: string[]): Query {
   if (argv.length !== 4 && argv.length !== 5) {
     throw new HSymbolFailure("usage: hsymbol (def|refs) PATH LINE:HASH SYMBOL [N]");
@@ -476,6 +485,9 @@ async function materializeLocation(
   };
 }
 
+/**
+ * verifiedSourceRow formats a workspace-relative verified-row reference for the given line.
+ */
 function verifiedSourceRow(workspace: string, file: SourceFile, line: number): string | null {
   const logicalLine = file.lines.logicalLine(line);
   return logicalLine === null

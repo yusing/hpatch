@@ -35,22 +35,28 @@ var (
 	boundsBuffer [3]uint32
 )
 
+// coreError is the structured error result for shared-core operations.
 type coreError struct {
 	Code    string `json:"code"`
 	Message string `json:"message"`
 }
 
+// coreResponse is the JSON response envelope for shared-core invocations.
 type coreResponse struct {
 	OK    bool       `json:"ok"`
 	Value any        `json:"value,omitempty"`
 	Error *coreError `json:"error,omitempty"`
 }
 
+// exportedABIVersion returns the shared-core WASM ABI version for compatibility checking.
+//
 //go:wasmexport hpatch_core_abi_version
 func exportedABIVersion() uint32 {
 	return abiVersion
 }
 
+// reserveInput reserves an input buffer of the given size and returns its WASM pointer.
+//
 //go:wasmexport hpatch_core_reserve_input
 func reserveInput(size uint32) uint32 {
 	if cap(inputBuffer) < int(size) {
@@ -64,16 +70,22 @@ func reserveInput(size uint32) uint32 {
 	return uint32(uintptr(unsafe.Pointer(unsafe.SliceData(inputBuffer))))
 }
 
+// hash16 returns the two-byte verified-row hash of the input buffer as a big-endian uint32.
+//
 //go:wasmexport hpatch_core_hash16
 func hash16() uint32 {
 	return verifiedrow.Hash16(inputBuffer)
 }
 
+// lineCount returns the number of targetable logical lines in the input buffer.
+//
 //go:wasmexport hpatch_core_line_count
 func lineCount() uint32 {
 	return uint32(verifiedrow.Count(string(inputBuffer)))
 }
 
+// lineBounds returns a WASM pointer to a three-element array containing the start, content-end, and full-end offsets for the given line number.
+//
 //go:wasmexport hpatch_core_line_bounds
 func lineBounds(lineNumber uint32) uint32 {
 	line, ok := verifiedrow.At(string(inputBuffer), int(lineNumber))
@@ -84,6 +96,8 @@ func lineBounds(lineNumber uint32) uint32 {
 	return uint32(uintptr(unsafe.Pointer(&boundsBuffer[0])))
 }
 
+// invoke executes one shared-core operation on the input buffer and returns the JSON result byte length.
+//
 //go:wasmexport hpatch_core_invoke
 func invoke(operation uint32) uint32 {
 	if !utf8.Valid(inputBuffer) {
@@ -136,6 +150,8 @@ func invoke(operation uint32) uint32 {
 	return encode(coreResponse{OK: true, Value: value})
 }
 
+// resultPointer returns the WASM pointer to the JSON result buffer from the last invoke call.
+//
 //go:wasmexport hpatch_core_result_pointer
 func resultPointer() uint32 {
 	if len(resultBuffer) == 0 {
@@ -144,6 +160,7 @@ func resultPointer() uint32 {
 	return uint32(uintptr(unsafe.Pointer(unsafe.SliceData(resultBuffer))))
 }
 
+// parseRow parses a LINE:HASH verified-row reference and returns its components.
 func parseRow(input string) (any, *coreError) {
 	reference, err := verifiedrow.ParseReference(input)
 	if err != nil {
@@ -158,6 +175,7 @@ func parseRow(input string) (any, *coreError) {
 	return map[string]any{"line": reference.Line, "hash": reference.Hash}, nil
 }
 
+// parsePositiveInteger parses a positive decimal integer within JavaScript's safe integer range.
 func parsePositiveInteger(input string) (any, *coreError) {
 	if input == "" || input[0] == '0' {
 		return nil, &coreError{Code: "invalid_positive_integer", Message: "value must be a positive decimal integer"}
@@ -174,10 +192,12 @@ func parsePositiveInteger(input string) (any, *coreError) {
 	return value, nil
 }
 
+// encodeFailure encodes an error response and returns its byte length.
 func encodeFailure(code, message string) uint32 {
 	return encode(coreResponse{Error: &coreError{Code: code, Message: message}})
 }
 
+// encode marshals a response to JSON and returns its byte length.
 func encode(response coreResponse) uint32 {
 	encoded, err := json.Marshal(response)
 	if err != nil {

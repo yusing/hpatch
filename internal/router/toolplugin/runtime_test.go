@@ -8,6 +8,7 @@ import (
 	"time"
 )
 
+// TestLoadBoundsPluginHostOutput verifies that plugin validation rejects excessive host output.
 func TestLoadBoundsPluginHostOutput(t *testing.T) {
 	pluginDirectory := t.TempDir()
 	declaration := `process.stdout.write("x".repeat(16 * 1024 * 1024 + 1));
@@ -33,6 +34,7 @@ export default {
 	}
 }
 
+// TestLoadProvidesSharedCoreToConfiguredPlugin verifies that plugins can import and use hpatch:core/v1.
 func TestLoadProvidesSharedCoreToConfiguredPlugin(t *testing.T) {
 	pluginDirectory := t.TempDir()
 	declaration := `import {hashLine, parseRowReference} from "hpatch:core/v1";
@@ -73,6 +75,7 @@ export default {
 	t.Fatal("configured shared-core plugin was not loaded")
 }
 
+// TestLoadRejectsUnknownSharedCoreVersion verifies that unknown hpatch:core versions are rejected with diagnostics.
 func TestLoadRejectsUnknownSharedCoreVersion(t *testing.T) {
 	pluginDirectory := t.TempDir()
 	declaration := `import "hpatch:core/v2";
@@ -90,6 +93,7 @@ export default {apiVersion: "hpatch-tool-plugin/v1", id: "future.test", tools: [
 	}
 }
 
+// TestExecutionHostOutputBoundCoversJSONExpansion verifies the host output buffer accommodates JSON encoding overhead.
 func TestExecutionHostOutputBoundCoversJSONExpansion(t *testing.T) {
 	const minimum = 6*ExecutionOutputBudgetBytes + 1024
 	if maxEncodedExecutionHostOutputBytes < minimum {
@@ -97,6 +101,7 @@ func TestExecutionHostOutputBoundCoversJSONExpansion(t *testing.T) {
 	}
 }
 
+// TestLoadTimesOutPluginValidation verifies that plugin validation enforces a timeout.
 func TestLoadTimesOutPluginValidation(t *testing.T) {
 	pluginDirectory := t.TempDir()
 	declaration := `await new Promise((resolve) => setTimeout(resolve, 60_000));

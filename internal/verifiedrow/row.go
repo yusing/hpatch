@@ -17,6 +17,7 @@ var (
 	ErrLineOutOfRange   = errors.New("row line is out of range")
 )
 
+// Reference is a parsed LINE:HASH verified-row identity.
 type Reference struct {
 	Line uint64
 	Hash string
@@ -85,6 +86,7 @@ func Content(text string, line Line) string {
 	return text[line.Start:line.ContentEnd]
 }
 
+// lineAt returns one logical line starting at the given UTF-8 byte offset.
 func lineAt(text string, start int) Line {
 	contentEnd := start
 	for contentEnd < len(text) && text[contentEnd] != '\r' && text[contentEnd] != '\n' {

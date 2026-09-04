@@ -22,6 +22,9 @@ import {
 
 const READ_BUFFER_BYTES = 32 * 1024;
 
+/**
+ * conciseErrorText extracts a concise error message without syscall details.
+ */
 function conciseErrorText(error: unknown): string {
   const message = errorText(error);
   if (!(error instanceof Error) || !("syscall" in error) || typeof error.syscall !== "string") {
@@ -38,6 +41,9 @@ type ReadSpec = {
 };
 
 
+/**
+ * parseQuotedPath decodes a quoted hread path operand and returns the unconsumed trailing text.
+ */
 function parseQuotedPath(input: string): {path: string; trailing: string} {
   try {
     const decoded = decodeQuotedOperand(input);
@@ -47,6 +53,9 @@ function parseQuotedPath(input: string): {path: string; trailing: string} {
   }
 }
 
+/**
+ * parseReadSpec parses an hread input specification into path and optional line range.
+ */
 function parseReadSpec(input: string): ReadSpec {
   let path;
   let trailing;
@@ -96,6 +105,9 @@ type ComparedOutput = {
 };
 
 
+/**
+ * readHashLines reads verified-row output from a file with token-budget enforcement.
+ */
 async function readHashLines(spec: ReadSpec): Promise<ComparedOutput> {
   const handle = await open(spec.path, constants.O_RDONLY | (constants.O_NONBLOCK ?? 0));
 
@@ -213,6 +225,9 @@ async function readHashLines(spec: ReadSpec): Promise<ComparedOutput> {
 }
 
 
+/**
+ * hreadArguments converts parsed hread input to the internal argv representation.
+ */
 function hreadArguments(input: string): string[] {
   const spec = parseReadSpec(stripOptionalFinalNewline(input));
   if (spec.startLine === 0) {
@@ -222,6 +237,9 @@ function hreadArguments(input: string): string[] {
 }
 
 
+/**
+ * hreadInput reconstructs the canonical input specification from argv.
+ */
 function hreadInput(argv: string[]): string {
   if (argv.length === 1 && argv[0] !== "") {
     return JSON.stringify(argv[0]);
@@ -237,6 +255,9 @@ function hreadInput(argv: string[]): string {
 }
 
 
+/**
+ * createHReadTool creates the hread tool with bounded verified-row file output.
+ */
 export function createHReadTool(description: string, grammar: string): Tool<string[]> {
   return createExecutorTool({
     name: "hread",

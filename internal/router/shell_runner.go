@@ -168,6 +168,7 @@ func executeShellTool(
 	}, nil
 }
 
+// trimIncompleteUTF8Tail removes trailing incomplete UTF-8 sequences from value.
 func trimIncompleteUTF8Tail(value string) (string, bool) {
 	if utf8.ValidString(value) {
 		return value, true
@@ -183,6 +184,7 @@ func trimIncompleteUTF8Tail(value string) (string, bool) {
 	return string(encoded[:start]), true
 }
 
+// executeExternalShellCommand runs an external command from within the mvdan/sh interpreter.
 func executeExternalShellCommand(ctx context.Context, arguments []string, terminalShell bool) error {
 	handler := interp.HandlerCtx(ctx)
 	path, err := interp.LookPathDir(handler.Dir, handler.Env, arguments[0])
@@ -222,10 +224,12 @@ func executeExternalShellCommand(ctx context.Context, arguments []string, termin
 	return err
 }
 
+// shellInterpreterName normalizes an interpreter path for policy comparisons.
 func shellInterpreterName(interpreter string) string {
 	return shellsyntax.InterpreterIdentity(interpreter)
 }
 
+// shellEnvironment converts mvdan/sh environment variables to sorted KEY=VALUE pairs.
 func shellEnvironment(environment expand.Environ) []string {
 	values := make(map[string]string)
 	environment.Each(func(name string, variable expand.Variable) bool {
@@ -242,6 +246,7 @@ func shellEnvironment(environment expand.Environ) []string {
 	return result
 }
 
+// shellOutputCapture bounds mvdan/sh interpreter output to the execution budget.
 type shellOutputCapture struct {
 	mu        sync.Mutex
 	stdout    shellOutputWriter
@@ -251,11 +256,13 @@ type shellOutputCapture struct {
 	cancel    context.CancelFunc
 }
 
+// shellOutputWriter is one output stream for the shell output capture.
 type shellOutputWriter struct {
 	capture *shellOutputCapture
 	buffer  bytes.Buffer
 }
 
+// newShellOutputCapture creates a bounded output capture for shell execution.
 func newShellOutputCapture(cancel context.CancelFunc) *shellOutputCapture {
 	// Match the JavaScript executor's three-byte UTF-8 boundary reserve so both
 	// interpreter paths keep the overflow diagnostic inside the shared budget.
@@ -268,6 +275,7 @@ func newShellOutputCapture(cancel context.CancelFunc) *shellOutputCapture {
 	return capture
 }
 
+// Write captures output bytes up to the remaining budget and cancels on overflow.
 func (writer *shellOutputWriter) Write(value []byte) (int, error) {
 	written := len(value)
 	capture := writer.capture
@@ -286,6 +294,7 @@ func (writer *shellOutputWriter) Write(value []byte) (int, error) {
 	return written, nil
 }
 
+// result returns the captured stdout, stderr, and overflow status.
 func (capture *shellOutputCapture) result() (stdout, stderr string, overflow bool) {
 	capture.mu.Lock()
 	defer capture.mu.Unlock()

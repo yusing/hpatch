@@ -8,6 +8,7 @@ import (
 	"strings"
 )
 
+// Parsed is the portable shell header result.
 type Parsed struct {
 	Interpreter     []string       `json:"interpreter,omitempty"`
 	Body            string         `json:"body,omitempty"`
@@ -76,6 +77,7 @@ func InterpreterIdentity(interpreter string) string {
 	return base
 }
 
+// parseDirectives extracts #!cmd and #!params directives from shell script header lines.
 func parseDirectives(input string) (commandTemplate string, params map[string]any, hasParams bool, body string, err error) {
 	remaining := input
 	seen := make(map[string]struct{}, 2)
@@ -120,6 +122,7 @@ func parseDirectives(input string) (commandTemplate string, params map[string]an
 	return commandTemplate, params, hasParams, remaining, nil
 }
 
+// parseDirectiveLine parses one shell directive line into its key and value components.
 func parseDirectiveLine(line string) (key, value string, ok bool) {
 	if rest, matched := strings.CutPrefix(line, "#!"); matched {
 		separator := strings.IndexByte(rest, '=')
@@ -137,6 +140,7 @@ func parseDirectiveLine(line string) (key, value string, ok bool) {
 	return "", "", false
 }
 
+// validDirectiveKey reports whether value is a valid shell directive key name.
 func validDirectiveKey(value string) bool {
 	if value == "" {
 		return false
@@ -156,11 +160,13 @@ func validDirectiveKey(value string) bool {
 	return true
 }
 
+// isDirectiveCandidate reports whether line could be a well-formed or malformed directive.
 func isDirectiveCandidate(line string) bool {
 	_, _, ok := parseDirectiveLine(line)
 	return ok || malformedDirective(line)
 }
 
+// malformedDirective reports whether line contains a recognized but malformed directive.
 func malformedDirective(line string) bool {
 	for _, name := range []string{"#!cmd", "#!params"} {
 		if rest, ok := strings.CutPrefix(line, name); ok &&
@@ -171,6 +177,7 @@ func malformedDirective(line string) bool {
 	return false
 }
 
+// splitFirstLine splits input into its first physical line and remaining body.
 func splitFirstLine(input string) (line, body string) {
 	for index := range len(input) {
 		if input[index] != '\r' && input[index] != '\n' {
@@ -185,10 +192,12 @@ func splitFirstLine(input string) (line, body string) {
 	return input, ""
 }
 
+// trimField removes leading and trailing spaces and tabs from value.
 func trimField(value string) string {
 	return strings.Trim(value, " \t")
 }
 
+// splitFields splits value on spaces and tabs into non-empty fields.
 func splitFields(value string) []string {
 	return strings.FieldsFunc(value, func(character rune) bool {
 		return character == ' ' || character == '\t'

@@ -170,6 +170,9 @@ class InspectFailure extends Error {
   }
 }
 
+/**
+ * LineMap indexes UTF-8 byte offsets for each logical line in source text, using shared-core line-counting semantics.
+ */
 export class LineMap {
   readonly starts = [0];
   readonly count: number;
@@ -191,6 +194,9 @@ export class LineMap {
     }
   }
 
+  /**
+   * lineAt returns the 1-based line number containing the given UTF-8 byte offset.
+   */
   lineAt(offset: number): number {
     let low = 0;
     let high = this.starts.length;
@@ -303,6 +309,9 @@ function addNamedEntries(
   }
 }
 
+/**
+ * decodeGoImportPath extracts the import path from a Go string literal syntax node using the shared-core decoder.
+ */
 function decodeGoImportPath(source: string, node: SyntaxNode): string | null {
   const literal = nodeText(source, node);
   try {
@@ -965,6 +974,9 @@ function ordered(entries: LocatedEntry[]): OutlineEntry[] {
     .map(({entry}) => entry);
 }
 
+/**
+ * sourceFormat classifies a file path using the shared-core classifier and returns the outline-capable source format.
+ */
 export function sourceFormat(filePath: string): SourceFormat | null {
   const capabilities = classifySourcePath(filePath);
   if (capabilities === null || capabilities.outline !== true) {
