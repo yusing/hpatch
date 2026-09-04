@@ -59,7 +59,7 @@ func EditText(ctx context.Context, baseline, script string) (string, error) {
 			targetSpec:     command.target,
 			multilineValue: command.delimiter != "",
 		}
-		if err := target.applyMutation(command.operation, command.target, command.text, origin, command); err != nil {
+		if err := target.applyMutation(command.operation, command.target, command.text, origin, command, ""); err != nil {
 			return "", textEditCommandError(command, index+1, reasonOf(err, reasonOther), err.Error())
 		}
 	}

@@ -202,42 +202,28 @@ func bracedIfHeader(header string) bool {
 	return condition != "" && !strings.ContainsAny(condition, ";/#")
 }
 
-func (w *workspace) applyLanguageIndentation(ctx context.Context) error {
-	for _, file := range w.files {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		if file.deleted || len(file.editor.pendingIndentation) == 0 ||
-			indentationPolicy(file.path) != indentationPolicyAuto {
-			continue
-		}
-		if err := w.applySupportedIndentation(ctx, file); err != nil {
-			return err
-		}
-	}
-	return ctx.Err()
-}
-
-func (w *workspace) applySupportedIndentation(ctx context.Context, file *fileState) error {
-	language, _, ok := languageSyntaxForPath(file.path)
-	if !ok {
+func (e *editor) renderIndentation(ctx context.Context, path string) error {
+	language, _, ok := languageSyntaxForPath(path)
+	if !ok || !slices.ContainsFunc(e.edits, func(edit baselineEdit) bool {
+		return edit.indentation != nil
+	}) {
 		return nil
 	}
-	unit := inferIndentationUnit(file.editor.baseline, language)
+	unit := inferIndentationUnit(e.baseline, language)
 	var prepared []preparedWrapperCorrection
-	for _, candidate := range file.editor.pendingIndentation {
+	for editIndex := range e.edits {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		editIndex := candidate.sequence - 1
-		if editIndex < 0 || editIndex >= len(file.editor.edits) ||
-			file.editor.edits[editIndex].sequence != candidate.sequence {
+		indentation := e.edits[editIndex].indentation
+		if indentation == nil {
 			continue
 		}
+		candidate := indentation.candidate
 		switch candidate.kind {
 		case indentationCorrectionExact:
-			if file.editor.edits[editIndex].replacement != candidate.correction.correctedText {
-				file.editor.edits[editIndex].replacement = candidate.correction.correctedText
+			if e.edits[editIndex].replacement != candidate.correction.correctedText {
+				e.edits[editIndex].replacement = candidate.correction.correctedText
 			}
 		case indentationCorrectionPythonWrapper, indentationCorrectionBracedWrapper:
 			if unit == "" ||
@@ -247,7 +233,7 @@ func (w *workspace) applySupportedIndentation(ctx context.Context, file *fileSta
 				continue
 			}
 			corrected, childStart, childEnd, changed, ok := prepareWrapperReplacement(
-				file.editor.edits[editIndex].replacement,
+				e.edits[editIndex].replacement,
 				candidate.wrapper,
 				unit,
 			)
@@ -256,7 +242,7 @@ func (w *workspace) applySupportedIndentation(ctx context.Context, file *fileSta
 			}
 			prepared = append(prepared, preparedWrapperCorrection{
 				editIndex:   editIndex,
-				sequence:    candidate.sequence,
+				sequence:    e.edits[editIndex].sequence,
 				replacement: corrected,
 				childStart:  childStart,
 				childEnd:    childEnd,
@@ -268,11 +254,11 @@ func (w *workspace) applySupportedIndentation(ctx context.Context, file *fileSta
 		return nil
 	}
 
-	probeEdits := slices.Clone(file.editor.edits)
+	probeEdits := slices.Clone(e.edits)
 	for _, correction := range prepared {
 		probeEdits[correction.editIndex].replacement = correction.replacement
 	}
-	source := file.editor.contentWithEdits(probeEdits)
+	source := e.contentWithEdits(probeEdits)
 	probes := make([]indentationWrapperProbe, 0, len(prepared))
 	ranges := renderedEditRanges(probeEdits)
 	for _, correction := range prepared {
@@ -299,7 +285,7 @@ func (w *workspace) applySupportedIndentation(ctx context.Context, file *fileSta
 		return nil
 	}
 	for _, correction := range prepared {
-		file.editor.edits[correction.editIndex].replacement = correction.replacement
+		e.edits[correction.editIndex].replacement = correction.replacement
 	}
 	return nil
 }

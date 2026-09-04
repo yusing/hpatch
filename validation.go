@@ -169,39 +169,47 @@ func hostReasonName(reason failureReason) string {
 	return failureReasonNames[reason]
 }
 
-func (w *workspace) validationFailure(ctx context.Context) error {
-	failures := w.formatGoFiles(ctx)
-	if err := ctx.Err(); err != nil {
-		return err
+func (w *workspace) renderFinal(ctx context.Context) error {
+	var failures []*commandError
+	for _, file := range w.files {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if file.deleted {
+			continue
+		}
+		fileFailures, err := file.renderContent(ctx)
+		if err != nil {
+			return err
+		}
+		failures = append(failures, fileFailures...)
 	}
-	failures = append(failures, w.validateLanguageFiles(ctx)...)
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 	return groupValidationFailures(failures)
 }
 
-func (w *workspace) formatGoFiles(ctx context.Context) []*commandError {
+func (file *fileState) renderContent(ctx context.Context) ([]*commandError, error) {
+	if err := file.editor.renderIndentation(ctx, file.path); err != nil {
+		return nil, err
+	}
+	file.editor.finalContent = nil
+	file.editor.finalOffsets = nil
+	rendered := file.editor.contentWithEdits(file.editor.edits)
+	final := rendered
+	var offsets *formattedOffsetMap
 	var failures []*commandError
-	for _, file := range w.files {
-		if ctx.Err() != nil {
-			return failures
-		}
-		if file.deleted || filepath.Ext(file.path) != ".go" {
-			continue
-		}
-		content := file.editor.content()
-		if !file.created && file.original == content && filepath.Ext(file.originalPath) == ".go" {
-			continue
-		}
-		formatted, err := format.Source([]byte(content))
+	if filepath.Ext(file.path) == ".go" &&
+		(file.created || file.original != rendered || filepath.Ext(file.originalPath) != ".go") {
+		formatted, err := format.Source([]byte(rendered))
 		if err != nil {
-			for _, failure := range discoverGoSyntaxFailures(ctx, content, err) {
-				location := file.editor.syntaxFailureLocation(content, failure.line, failure.column)
+			for _, failure := range discoverGoSyntaxFailures(ctx, rendered, err) {
+				location := file.editor.syntaxFailureLocation(rendered, failure.line, failure.column)
 				if location.origin.command == 0 {
 					location.origin = file.validationOrigin()
 				}
-				repair := generatedSourceRepair(content, failure.line, failure.column)
+				repair := generatedSourceRepair(rendered, failure.line, failure.column)
 				repair += multilineValueRepair(location.origin.command, location.replacement, location.valueLine)
 				commandFailure := formatCommandError(
 					file, location.origin, reasonLanguageSyntax, failure.message,
@@ -212,47 +220,51 @@ func (w *workspace) formatGoFiles(ctx context.Context) []*commandError {
 				}
 				failures = append(failures, commandFailure)
 			}
-			continue
+			return failures, ctx.Err()
 		}
-		if string(formatted) != content {
-			final := string(formatted)
-			offsets, err := newFormattedOffsetMap(content, final)
+		final = string(formatted)
+		if final != rendered {
+			offsets, err = newFormattedOffsetMap(rendered, final)
 			if err != nil {
-				failures = append(failures, formatCommandError(file, file.validationOrigin(), reasonOther, fmt.Sprintf("map formatted Go source: %v", err), "", 0, 0, 0))
-				continue
+				return []*commandError{formatCommandError(
+					file,
+					file.validationOrigin(),
+					reasonOther,
+					fmt.Sprintf("map formatted Go source: %v", err),
+					"",
+					0,
+					0,
+					0,
+				)}, nil
 			}
-			file.editor.finalContent = &final
-			file.editor.finalOffsets = offsets
 		}
 	}
-	w.autofixWhitespace()
-	return failures
-}
 
-func (w *workspace) validateLanguageFiles(ctx context.Context) []*commandError {
-	var failures []*commandError
-	for _, file := range w.files {
+	if !isGitDefaultBinary(file.original) && !isGitDefaultBinary(final) {
+		fixed, deletions := fixChangedLineWhitespace(final, file.editor.edits, offsets)
+		if fixed != final {
+			cleanupOffsets := newWhitespaceOffsetMap(len(final), deletions)
+			if offsets == nil {
+				offsets = cleanupOffsets
+			} else {
+				offsets.subsequent = cleanupOffsets
+			}
+			final = fixed
+		}
+	}
+
+	language, name, supported := languageSyntaxForPath(file.path)
+	if supported && (file.created || file.originalPath != file.path || file.original != final) {
+		syntaxFailures := collapseLanguageSyntaxCascades(ctx, final, language, findLanguageSyntaxFailures(final, language))
 		if err := ctx.Err(); err != nil {
-			return nil
-		}
-		language, name, ok := languageSyntaxForPath(file.path)
-		if file.deleted || !ok {
-			continue
-		}
-		content := file.editor.content()
-		if !file.created && file.originalPath == file.path && file.original == content {
-			continue
-		}
-		syntaxFailures := collapseLanguageSyntaxCascades(ctx, content, language, findLanguageSyntaxFailures(content, language))
-		if err := ctx.Err(); err != nil {
-			return nil
+			return nil, err
 		}
 		for _, failure := range syntaxFailures {
-			location := file.editor.languageSyntaxFailureLocation(content, failure.line, failure.column, language)
+			location := file.editor.languageSyntaxFailureLocation(final, failure.line, failure.column, language)
 			if location.origin.command == 0 {
 				location.origin = file.validationOrigin()
 			}
-			repair := generatedSourceRepairForLanguage(content, failure.line, failure.column, name)
+			repair := generatedSourceRepairForLanguage(final, failure.line, failure.column, name)
 			repair += multilineValueRepair(location.origin.command, location.replacement, location.valueLine)
 			failures = append(failures, formatCommandError(
 				file,
@@ -266,7 +278,11 @@ func (w *workspace) validateLanguageFiles(ctx context.Context) []*commandError {
 			))
 		}
 	}
-	return failures
+	if final != rendered {
+		file.editor.finalContent = new(final)
+	}
+	file.editor.finalOffsets = offsets
+	return failures, nil
 }
 
 func languageSyntaxForPath(path string) (indentationWrapperLanguage, string, bool) {

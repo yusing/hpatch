@@ -498,7 +498,7 @@ func TestValidationCancellationPrecedesCollectedFailures(t *testing.T) {
 		editor:  editor{baseline: "package p\nvar =\n"},
 	}}}
 	ctx := &cancelAfterErrChecks{Context: t.Context(), remaining: 2}
-	err := w.validationFailure(ctx)
+	err := w.renderFinal(ctx)
 	if err != context.Canceled {
 		t.Fatalf("validation error = %v, want context.Canceled", err)
 	}
