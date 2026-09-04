@@ -66,6 +66,32 @@ func EditText(ctx context.Context, baseline, script string) (string, error) {
 	return target.content(), nil
 }
 
+// TargetIdentity is the comparable semantic identity of one HPATCH target.
+// Its representation is intentionally opaque so target syntax remains owned by
+// the root parser.
+type TargetIdentity struct {
+	target targetSpec
+}
+
+// ParseTargetIdentity parses the target prefix in source and returns the
+// unconsumed source. mutationValueFollows disambiguates a quoted value after a
+// row from an anchored literal target. Single-row ranges share a line target's
+// identity, and omitted occurrence counts share an explicit count of one.
+func ParseTargetIdentity(source string, mutationValueFollows bool) (TargetIdentity, string, error) {
+	target, trailing, err := parseTarget(1, source, mutationValueFollows)
+	if err != nil {
+		return TargetIdentity{}, "", err
+	}
+	if target.kind == targetEOF {
+		return TargetIdentity{}, "", fmt.Errorf("EOF is an add destination, not a target")
+	}
+	if target.kind == targetRange && target.start == target.end {
+		target.kind = targetLine
+		target.end = rowReference{}
+	}
+	return TargetIdentity{target: target}, trailing, nil
+}
+
 func textEditCommandError(command instruction, index int, reason failureReason, message string) *commandError {
 	return &commandError{
 		Target:    command.target.variant(),

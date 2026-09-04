@@ -44,3 +44,40 @@ func DecodeQuoted(source string) (string, string, error) {
 	}
 	return value, "", nil
 }
+
+// ValidOperandSpacing reports whether unquoted operands are separated by one
+// ASCII space, as required by the compact-script grammar. Whitespace inside a
+// quoted operand is not a separator.
+func ValidOperandSpacing(source string) bool {
+	quoted := false
+	escaped := false
+	for index := range len(source) {
+		character := source[index]
+		if quoted {
+			switch {
+			case escaped:
+				escaped = false
+			case character == '\\':
+				escaped = true
+			case character == '"':
+				if index+1 < len(source) && source[index+1] != ' ' {
+					return false
+				}
+				quoted = false
+			}
+			continue
+		}
+		if character == '"' {
+			if index > 0 && source[index-1] != ' ' {
+				return false
+			}
+			quoted = true
+			continue
+		}
+		if character == '\t' || character == '\r' || character == '\n' ||
+			character == ' ' && (index == 0 || index == len(source)-1 || source[index-1] == ' ') {
+			return false
+		}
+	}
+	return true
+}

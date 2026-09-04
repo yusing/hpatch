@@ -19,8 +19,7 @@ const hpatchRecoveryDescription = `Target correction for the latest rejected HPA
 var hpatchRecoveryGrammar string
 
 type recoveryCommandReference struct {
-	handle  string
-	command string
+	handle string
 
 	index  int
 	header int
@@ -35,20 +34,13 @@ type recoveryCommandParts struct {
 	value     string
 	multiline bool
 	parsed    bool
+	identity  hpatch.TargetIdentity
 }
 
 type recoveryOperation struct {
 	sequence int
 	command  *recoveryCommandReference
 	target   string
-}
-
-type recoveryTargetIdentity struct {
-	kind    byte
-	start   string
-	end     string
-	literal string
-	count   string
 }
 
 type recoveryEdit struct {
@@ -74,13 +66,12 @@ func recoveryCommands(script string) []recoveryCommandReference {
 		index = max(frame.Next, index)
 		source := script[offsets[header]:offsets[index]]
 		commands = append(commands, recoveryCommandReference{
-			handle:  fmt.Sprintf("C%d:%s", len(commands)+1, recoveryHash(source)),
-			command: strings.TrimSuffix(source, lines[index-1].Terminator),
-			index:   len(commands) + 1,
-			header:  header,
-			end:     index,
-			source:  source,
-			parts:   recoveryCommandPartsOf(line, frame),
+			handle: fmt.Sprintf("C%d:%s", len(commands)+1, recoveryHash(source)),
+			index:  len(commands) + 1,
+			header: header,
+			end:    index,
+			source: source,
+			parts:  recoveryCommandPartsOf(line, frame),
 		})
 	}
 	return commands
@@ -93,13 +84,22 @@ func recoveryCommandPartsOf(header string, frame hpatchsyntax.CommandFrame) reco
 	}
 	if frame.Delimiter != "" {
 		target := strings.TrimSpace(strings.TrimSuffix(operands, "<<PATCH"))
-		return recoveryCommandParts{
+		parts := recoveryCommandParts{
 			operation: operation,
 			target:    target,
 			value:     frame.Body,
 			multiline: true,
-			parsed:    operation == "type" && target == "" || operation == "add" && target == "EOF" || recoveryTarget(target),
 		}
+		if operation == "type" && target == "" || operation == "add" && target == "EOF" {
+			parts.parsed = true
+			return parts
+		}
+		identity, trailing, err := hpatch.ParseTargetIdentity(target, false)
+		if err == nil && strings.TrimSpace(trailing) == "" {
+			parts.parsed = true
+			parts.identity = identity
+		}
+		return parts
 	}
 	if operation == "type" && strings.HasPrefix(strings.TrimSpace(operands), `"`) {
 		value, trailing, err := hpatchsyntax.DecodeQuoted(strings.TrimSpace(operands))
@@ -107,68 +107,37 @@ func recoveryCommandPartsOf(header string, frame hpatchsyntax.CommandFrame) reco
 			return recoveryCommandParts{operation: operation, value: value, parsed: true}
 		}
 	}
-	target, value, ok := recoveryInlineMutation(operands)
-	return recoveryCommandParts{operation: operation, target: target, value: value, parsed: ok}
-}
-
-func recoveryInlineMutation(operands string) (string, string, bool) {
-	row, trailing := recoveryToken(operands)
-	if recoveryRowOrRange(row) {
-		trailing = strings.TrimLeft(trailing, " \t")
-		if !strings.HasPrefix(trailing, `"`) {
-			return "", "", false
+	if operation == "add" {
+		destination, trailing := recoveryToken(operands)
+		if destination == "EOF" {
+			value, rest, err := hpatchsyntax.DecodeQuoted(trailing)
+			if err == nil && strings.TrimSpace(rest) == "" {
+				return recoveryCommandParts{
+					operation: operation,
+					target:    destination,
+					value:     value,
+					parsed:    true,
+				}
+			}
+			return recoveryCommandParts{operation: operation}
 		}
-		first, afterFirst, err := hpatchsyntax.DecodeQuoted(trailing)
-		if err != nil {
-			return "", "", false
-		}
-		if strings.TrimSpace(afterFirst) == "" {
-			return row, first, true
-		}
-		if !recoveryValidTargetLiteral(first) {
-			return "", "", false
-		}
-		literalSource := trailing[:len(trailing)-len(afterFirst)]
-		return recoveryTargetAndValue(row, literalSource, afterFirst)
 	}
-	operands = strings.TrimLeft(operands, " \t")
-	if !strings.HasPrefix(operands, `"`) {
-		return "", "", false
+	identity, trailing, err := hpatch.ParseTargetIdentity(operands, true)
+	if err != nil {
+		return recoveryCommandParts{operation: operation}
 	}
-	literal, afterLiteral, err := hpatchsyntax.DecodeQuoted(operands)
-	if err != nil || !recoveryValidTargetLiteral(literal) {
-		return "", "", false
-	}
-	literalSource := operands[:len(operands)-len(afterLiteral)]
-	return recoveryTargetAndValue("", literalSource, afterLiteral)
-}
-
-func recoveryTargetAndValue(row, literalSource, trailing string) (string, string, bool) {
-	target := literalSource
-	if row != "" {
-		target = row + " " + target
-	}
-	trailing = strings.TrimLeft(trailing, " \t")
-	if trailing == "" {
-		return "", "", false
-	}
-	if strings.HasPrefix(trailing, `"`) {
-		value, rest, err := hpatchsyntax.DecodeQuoted(trailing)
-		if err != nil || strings.TrimSpace(rest) != "" {
-			return "", "", false
-		}
-		return target, value, true
-	}
-	count, afterCount := recoveryToken(trailing)
-	if !recoveryPositiveDecimal(count) {
-		return "", "", false
-	}
-	afterCount = strings.TrimLeft(afterCount, " \t")
-	value, rest, err := hpatchsyntax.DecodeQuoted(afterCount)
+	target := strings.TrimSpace(operands[:len(operands)-len(trailing)])
+	value, rest, err := hpatchsyntax.DecodeQuoted(trailing)
 	if err != nil || strings.TrimSpace(rest) != "" {
-		return "", "", false
+		return recoveryCommandParts{operation: operation}
 	}
-	return target + " " + count, value, true
+	return recoveryCommandParts{
+		operation: operation,
+		target:    target,
+		value:     value,
+		parsed:    true,
+		identity:  identity,
+	}
 }
 
 type recoveredScript struct {
@@ -237,12 +206,13 @@ func parseRecoveryPayload(
 		if err != nil {
 			return nil, recoveryError(index+1, err.Error())
 		}
-		currentTarget, currentOK := parseRecoveryTargetIdentity(command.parts.target)
-		replacementTarget, replacementOK := parseRecoveryTargetIdentity(target)
-		if !command.parts.parsed || command.parts.target == "" || !currentOK || !replacementOK {
+		replacementTarget, trailing, targetErr := hpatch.ParseTargetIdentity(target, false)
+		if !command.parts.parsed || command.parts.target == "" || command.parts.target == "EOF" ||
+			targetErr != nil || strings.TrimSpace(trailing) != "" || target == "EOF" ||
+			!hpatchsyntax.ValidOperandSpacing(target) {
 			return nil, recoveryError(index+1, "command must be target-bearing and the replacement target must be valid")
 		}
-		if replacementTarget == currentTarget {
+		if replacementTarget == command.parts.identity {
 			return nil, recoveryError(index+1, "replacement target must differ from the rejected target")
 		}
 		operations = append(operations, recoveryOperation{
@@ -355,79 +325,6 @@ func recoveryLogicalHandle(script string, row int) string {
 	reference := hpatch.TextReferences(script, row)
 	handle, _ := recoveryToken(reference)
 	return handle
-}
-
-func recoveryTarget(target string) bool {
-	_, ok := parseRecoveryTargetIdentity(target)
-	return ok
-}
-
-func parseRecoveryTargetIdentity(target string) (recoveryTargetIdentity, bool) {
-	if strings.HasPrefix(target, `"`) {
-		literal, count, ok := parseRecoveryLiteralTarget(target)
-		return recoveryTargetIdentity{kind: 'l', literal: literal, count: count}, ok
-	}
-	if start, end, rangeTarget := strings.Cut(target, ".."); rangeTarget {
-		if strings.Contains(end, "..") || !recoveryRow(start) || !recoveryRow(end) {
-			return recoveryTargetIdentity{}, false
-		}
-		if start == end {
-			return recoveryTargetIdentity{kind: 'r', start: start}, true
-		}
-		return recoveryTargetIdentity{kind: 'R', start: start, end: end}, true
-	}
-	row, literalTarget, anchored := strings.Cut(target, " ")
-	if !anchored {
-		if !recoveryRow(row) {
-			return recoveryTargetIdentity{}, false
-		}
-		return recoveryTargetIdentity{kind: 'r', start: row}, true
-	}
-	if !recoveryRow(row) || literalTarget == "" || literalTarget[0] == ' ' || literalTarget[0] == '\t' {
-		return recoveryTargetIdentity{}, false
-	}
-	literal, count, ok := parseRecoveryLiteralTarget(literalTarget)
-	return recoveryTargetIdentity{kind: 't', start: row, literal: literal, count: count}, ok
-}
-
-func parseRecoveryLiteralTarget(target string) (string, string, bool) {
-	literal, rest, err := hpatchsyntax.DecodeQuoted(target)
-	if err != nil || !recoveryValidTargetLiteral(literal) {
-		return "", "", false
-	}
-	if rest == "" {
-		return literal, "1", true
-	}
-	if len(rest) <= 1 || rest[0] != ' ' || rest[1] == ' ' || rest[1] == '\t' ||
-		!recoveryPositiveDecimal(rest[1:]) {
-		return "", "", false
-	}
-	return literal, rest[1:], true
-}
-
-func recoveryValidTargetLiteral(literal string) bool {
-	if literal == "" || strings.ContainsRune(literal, '\r') {
-		return false
-	}
-	for _, character := range literal {
-		if character < 0x20 && character != '\t' && character != '\n' {
-			return false
-		}
-	}
-	return true
-}
-
-func recoveryRowOrRange(value string) bool {
-	start, end, rangeTarget := strings.Cut(value, "..")
-	if rangeTarget {
-		return !strings.Contains(end, "..") && recoveryRow(start) && recoveryRow(end)
-	}
-	return recoveryRow(value)
-}
-
-func recoveryRow(value string) bool {
-	line, hash, ok := strings.Cut(value, ":")
-	return ok && recoveryPositiveDecimal(line) && len(hash) == 4 && recoveryLowerHex(hash)
 }
 
 func recoveryPositiveDecimal(value string) bool {

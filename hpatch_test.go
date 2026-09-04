@@ -549,6 +549,41 @@ func TestHPatch2TargetLiteralRejectsC0ControlsExceptTab(t *testing.T) {
 	}
 }
 
+func TestParseTargetIdentityUsesRootTargetSemantics(t *testing.T) {
+	parseExact := func(target string) TargetIdentity {
+		t.Helper()
+		identity, trailing, err := ParseTargetIdentity(target, false)
+		if err != nil || trailing != "" {
+			t.Fatalf("ParseTargetIdentity(%q) = %+v, %q, %v", target, identity, trailing, err)
+		}
+		return identity
+	}
+
+	for _, equivalent := range [][2]string{
+		{`1:aaaa`, `1:aaaa..1:aaaa`},
+		{`"old\u000Atext" 1`, `"old\ntext"`},
+		{`1:aaaa "old\u000Atext" 1`, `1:aaaa "old\ntext"`},
+	} {
+		if first, second := parseExact(equivalent[0]), parseExact(equivalent[1]); first != second {
+			t.Errorf("target identities differ for %q and %q", equivalent[0], equivalent[1])
+		}
+	}
+
+	for _, target := range []string{`"line\ntext"`, `"line\u000Atext"`, `1:aaaa "line\ntext"`, `"tab\ttext"`} {
+		parseExact(target)
+	}
+	for _, target := range []string{`""`, "\"raw\nnewline\"", `"return\r"`, `"return\u000D"`, `"control\u0001"`, `EOF`} {
+		if _, _, err := ParseTargetIdentity(target, false); err == nil {
+			t.Errorf("ParseTargetIdentity(%q) unexpectedly succeeded", target)
+		}
+	}
+
+	identity, trailing, err := ParseTargetIdentity(`1:aaaa "value"`, true)
+	if err != nil || identity != parseExact(`1:aaaa`) || trailing != `"value"` {
+		t.Fatalf("mutation target = %+v, %q, %v", identity, trailing, err)
+	}
+}
+
 func TestHPatch2MultilineLiteralTargets(t *testing.T) {
 	tests := []struct {
 		name    string
