@@ -1,0 +1,5 @@
+ Container hpatch_bench_stagingje9zzo-hpatch-agent-run-9375e412f673 Creating 
+ Container hpatch_bench_stagingje9zzo-hpatch-agent-run-9375e412f673 Created 
+Reading additional input from stdin...
+2026-09-02T10:28:55.828373Z ERROR codex_models_manager::manager: failed to refresh available models: timeout waiting for child process to exit
+2026-09-02T10:28:55.893995Z ERROR codex_models_manager::manager: failed to refresh available models: timeout waiting for child process to exit

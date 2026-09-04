@@ -1,0 +1,348 @@
+diff --git a/client/v3/mock/mockserver/mockserver.go b/client/v3/mock/mockserver/mockserver.go
+index 618cf67..0f8f113 100644
+--- a/client/v3/mock/mockserver/mockserver.go
++++ b/client/v3/mock/mockserver/mockserver.go
+@@ -22,7 +22,9 @@ import (
+ 	"sync"
+ 
+ 	"google.golang.org/grpc"
++	"google.golang.org/grpc/codes"
+ 	"google.golang.org/grpc/resolver"
++	"google.golang.org/grpc/status"
+ 
+ 	pb "go.etcd.io/etcd/api/v3/etcdserverpb"
+ )
+@@ -174,6 +176,10 @@ func (m *mockKVServer) Range(context.Context, *pb.RangeRequest) (*pb.RangeRespon
+ 	return &pb.RangeResponse{}, nil
+ }
+ 
++func (m *mockKVServer) RangeStream(*pb.RangeRequest, pb.KV_RangeStreamServer) error {
++	return status.Error(codes.Unimplemented, "RangeStream is not implemented by the mock server")
++}
++
+ func (m *mockKVServer) Put(context.Context, *pb.PutRequest) (*pb.PutResponse, error) {
+ 	return &pb.PutResponse{}, nil
+ }
+diff --git a/client/v3/retry.go b/client/v3/retry.go
+index 9152c53..a7d693c 100644
+--- a/client/v3/retry.go
++++ b/client/v3/retry.go
+@@ -108,6 +108,10 @@ func (rkv *retryKVClient) Range(ctx context.Context, in *pb.RangeRequest, opts .
+ 	return rkv.kc.Range(ctx, in, append(opts, withRepeatablePolicy())...)
+ }
+ 
++func (rkv *retryKVClient) RangeStream(ctx context.Context, in *pb.RangeRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[pb.RangeStreamResponse], error) {
++	return rkv.kc.RangeStream(ctx, in, opts...)
++}
++
+ func (rkv *retryKVClient) Put(ctx context.Context, in *pb.PutRequest, opts ...grpc.CallOption) (resp *pb.PutResponse, err error) {
+ 	return rkv.kc.Put(ctx, in, opts...)
+ }
+diff --git a/server/etcdserver/api/v3rpc/key.go b/server/etcdserver/api/v3rpc/key.go
+index bbf7907..6a7c83f 100644
+--- a/server/etcdserver/api/v3rpc/key.go
++++ b/server/etcdserver/api/v3rpc/key.go
+@@ -18,10 +18,14 @@ package v3rpc
+ import (
+ 	"context"
+ 
++	"google.golang.org/grpc/codes"
++	"google.golang.org/grpc/status"
++
+ 	pb "go.etcd.io/etcd/api/v3/etcdserverpb"
+ 	"go.etcd.io/etcd/api/v3/v3rpc/rpctypes"
+ 	"go.etcd.io/etcd/pkg/v3/adt"
+ 	"go.etcd.io/etcd/server/v3/etcdserver"
++	"go.etcd.io/etcd/server/v3/etcdserver/txn"
+ )
+ 
+ type kvServer struct {
+@@ -37,6 +41,31 @@ type kvServer struct {
+ 	pb.UnsafeKVServer
+ }
+ 
++func (s *kvServer) RangeStream(r *pb.RangeRequest, stream pb.KV_RangeStreamServer) error {
++	if err := checkRangeRequest(r); err != nil {
++		return err
++	}
++	if !txn.IsDefaultOrdering(r.SortTarget, r.SortOrder) || txn.HasRevisionFilters(r) {
++		return status.Error(codes.Unimplemented, "RangeStream does not support custom sort orders or revision filters")
++	}
++
++	var sendErr error
++	err := s.kv.RangeStream(stream.Context(), r, func(resp *pb.RangeStreamResponse) error {
++		if rr := resp.GetRangeResponse(); rr != nil && rr.Header != nil {
++			s.hdr.fill(rr.Header)
++		}
++		sendErr = stream.Send(resp)
++		return sendErr
++	})
++	if sendErr != nil {
++		return sendErr
++	}
++	if err != nil {
++		return togRPCError(err)
++	}
++	return nil
++}
++
+ func NewKVServer(s *etcdserver.EtcdServer) pb.KVServer {
+ 	return &kvServer{hdr: newHeader(s), kv: s, aa: &AuthAdmin{s}, maxTxnOps: s.Cfg.MaxTxnOps}
+ }
+diff --git a/server/etcdserver/txn/range.go b/server/etcdserver/txn/range.go
+index cb8e7bc..5a39214 100644
+--- a/server/etcdserver/txn/range.go
++++ b/server/etcdserver/txn/range.go
+@@ -41,6 +41,16 @@ func Range(ctx context.Context, lg *zap.Logger, kv mvcc.KV, r *pb.RangeRequest,
+ 	return resp, trace, err
+ }
+ 
++// Count returns the number of keys selected by r without loading their values.
++// The response header revision identifies the snapshot used for the count.
++func Count(ctx context.Context, lg *zap.Logger, kv mvcc.KV, r *pb.RangeRequest) (resp *pb.RangeResponse, trace *traceutil.Trace, err error) {
++	countRequest := *r
++	countRequest.CountOnly = true
++	countRequest.KeysOnly = false
++	countRequest.Limit = 0
++	return Range(ctx, lg, kv, &countRequest, false)
++}
++
+ func executeRange(ctx context.Context, lg *zap.Logger, txnRead mvcc.TxnRead, r *pb.RangeRequest, withTotalCount bool) (*pb.RangeResponse, error) {
+ 	trace := traceutil.Get(ctx)
+ 
+@@ -69,7 +79,7 @@ func executeRange(ctx context.Context, lg *zap.Logger, txnRead mvcc.TxnRead, r *
+ 
+ func rangeLimit(r *pb.RangeRequest) int64 {
+ 	limit := r.Limit
+-	if !isDefaultOrdering(r.SortTarget, r.SortOrder) || hasRevisionFilters(r) {
++	if !IsDefaultOrdering(r.SortTarget, r.SortOrder) || HasRevisionFilters(r) {
+ 		limit = 0
+ 	}
+ 	if limit > 0 && limit < math.MaxInt64 {
+@@ -78,15 +88,19 @@ func rangeLimit(r *pb.RangeRequest) int64 {
+ 	return limit
+ }
+ 
+-func isDefaultOrdering(sortTarget pb.RangeRequest_SortTarget, sortOrder pb.RangeRequest_SortOrder) bool {
++// IsDefaultOrdering reports whether mvcc's native key ordering satisfies the
++// requested ordering.
++func IsDefaultOrdering(sortTarget pb.RangeRequest_SortTarget, sortOrder pb.RangeRequest_SortOrder) bool {
+ 	// Since current mvcc.Range implementation returns results
+ 	// sorted by keys in lexiographically ascending order,
+ 	// don't re-sort when target is 'KEY' and order is ASCEND
+-	return sortOrder == pb.RangeRequest_NONE ||
+-		(sortTarget == pb.RangeRequest_KEY && sortOrder == pb.RangeRequest_ASCEND)
++	return sortTarget == pb.RangeRequest_KEY &&
++		(sortOrder == pb.RangeRequest_NONE || sortOrder == pb.RangeRequest_ASCEND)
+ }
+ 
+-func hasRevisionFilters(r *pb.RangeRequest) bool {
++// HasRevisionFilters reports whether r needs post-processing based on key
++// revision metadata.
++func HasRevisionFilters(r *pb.RangeRequest) bool {
+ 	return r.MinModRevision != 0 || r.MaxModRevision != 0 ||
+ 		r.MinCreateRevision != 0 || r.MaxCreateRevision != 0
+ }
+@@ -112,7 +126,7 @@ func sortRangeResults(rr *mvcc.RangeResult, r *pb.RangeRequest, lg *zap.Logger)
+ 		sortOrder = pb.RangeRequest_ASCEND
+ 	}
+ 
+-	if !isDefaultOrdering(r.SortTarget, sortOrder) {
++	if !IsDefaultOrdering(r.SortTarget, sortOrder) {
+ 		var sorter sort.Interface
+ 		switch {
+ 		case r.SortTarget == pb.RangeRequest_KEY:
+diff --git a/server/etcdserver/v3_server.go b/server/etcdserver/v3_server.go
+index 30e1c01..cf3b5be 100644
+--- a/server/etcdserver/v3_server.go
++++ b/server/etcdserver/v3_server.go
+@@ -18,6 +18,7 @@ import (
+ 	"context"
+ 	"encoding/base64"
+ 	errorspkg "errors"
++	"math"
+ 	"strconv"
+ 	"time"
+ 
+@@ -58,12 +59,132 @@ const (
+ 
+ type RaftKV interface {
+ 	Range(ctx context.Context, r *pb.RangeRequest) (*pb.RangeResponse, error)
++	RangeStream(ctx context.Context, r *pb.RangeRequest, send func(*pb.RangeStreamResponse) error) error
+ 	Put(ctx context.Context, r *pb.PutRequest) (*pb.PutResponse, error)
+ 	DeleteRange(ctx context.Context, r *pb.DeleteRangeRequest) (*pb.DeleteRangeResponse, error)
+ 	Txn(ctx context.Context, r *pb.TxnRequest) (*pb.TxnResponse, error)
+ 	Compact(ctx context.Context, r *pb.CompactionRequest) (*pb.CompactionResponse, error)
+ }
+ 
++func (s *EtcdServer) RangeStream(ctx context.Context, r *pb.RangeRequest, send func(*pb.RangeStreamResponse) error) (err error) {
++	if !r.Serializable {
++		if err = s.read.LinearizableReadNotify(ctx); err != nil {
++			return err
++		}
++	}
++
++	chk := func(ai *auth.AuthInfo) error {
++		return s.authStore.IsRangePermitted(ai, r.Key, r.RangeEnd)
++	}
++	stream := func() {
++		countResp, _, countErr := txn.Count(ctx, s.Logger(), s.KV(), r)
++		if countErr != nil {
++			err = countErr
++			return
++		}
++
++		pinnedRevision := r.Revision
++		if pinnedRevision == 0 {
++			pinnedRevision = countResp.Header.Revision
++		}
++		total := countResp.Count
++		more := r.Limit > 0 && total > r.Limit
++		remaining := total
++		if more {
++			remaining = r.Limit
++		}
++
++		if r.CountOnly {
++			countResp.Header.Revision = pinnedRevision
++			err = send(&pb.RangeStreamResponse{RangeResponse: countResp})
++			return
++		}
++		if remaining == 0 {
++			countResp.Header.Revision = pinnedRevision
++			countResp.More = more
++			err = send(&pb.RangeStreamResponse{RangeResponse: countResp})
++			return
++		}
++
++		request := *r
++		request.Revision = pinnedRevision
++		request.CountOnly = false
++		request.Limit = 1
++		request.Key = append([]byte(nil), r.Key...)
++
++		maxBytes := int64(s.Cfg.MaxRequestBytes)
++		if maxBytes < 1 {
++			maxBytes = 1
++		}
++		for remaining > 0 {
++			if ctxErr := ctx.Err(); ctxErr != nil {
++				err = ctxErr
++				return
++			}
++			if request.Limit > remaining {
++				request.Limit = remaining
++			}
++
++			var resp *pb.RangeResponse
++			resp, _, err = txn.Range(ctx, s.Logger(), s.KV(), &request, false)
++			if err != nil {
++				return
++			}
++			if len(resp.Kvs) == 0 {
++				// The count and all page reads use the same revision, so this can
++				// only happen if the request selected no more keys.
++				remaining = 0
++			}
++
++			remaining -= int64(len(resp.Kvs))
++			final := remaining == 0
++			if final {
++				resp.Header.Revision = pinnedRevision
++				resp.More = more
++				resp.Count = total
++			} else {
++				resp.Header = nil
++				resp.More = false
++				resp.Count = 0
++			}
++
++			chunk := &pb.RangeStreamResponse{RangeResponse: resp}
++			if err = send(chunk); err != nil {
++				return
++			}
++			if final {
++				return
++			}
++
++			lastKey := resp.Kvs[len(resp.Kvs)-1].Key
++			request.Key = make([]byte, len(lastKey)+1)
++			copy(request.Key, lastKey)
++
++			chunkBytes := int64(chunk.Size())
++			if chunkBytes < 1 {
++				chunkBytes = 1
++			}
++			nextLimit := remaining
++			if request.Limit <= math.MaxInt64/maxBytes {
++				nextLimit = request.Limit * maxBytes / chunkBytes
++			}
++			if nextLimit < 1 {
++				nextLimit = 1
++			} else if nextLimit == request.Limit && chunkBytes < maxBytes {
++				nextLimit++
++			}
++			if nextLimit > remaining {
++				nextLimit = remaining
++			}
++			request.Limit = nextLimit
++		}
++	}
++	if serr := s.doSerialize(ctx, chk, stream); serr != nil {
++		return serr
++	}
++	return err
++}
++
+ type Lessor interface {
+ 	// LeaseGrant sends LeaseGrant request to raft and toApply it after committed.
+ 	LeaseGrant(ctx context.Context, r *pb.LeaseGrantRequest) (*pb.LeaseGrantResponse, error)
+diff --git a/server/proxy/grpcproxy/adapter/kv_client_adapter.go b/server/proxy/grpcproxy/adapter/kv_client_adapter.go
+index 69e3a11..588ed43 100644
+--- a/server/proxy/grpcproxy/adapter/kv_client_adapter.go
++++ b/server/proxy/grpcproxy/adapter/kv_client_adapter.go
+@@ -18,6 +18,8 @@ import (
+ 	"context"
+ 
+ 	grpc "google.golang.org/grpc"
++	"google.golang.org/grpc/codes"
++	"google.golang.org/grpc/status"
+ 
+ 	pb "go.etcd.io/etcd/api/v3/etcdserverpb"
+ )
+@@ -32,6 +34,10 @@ func (s *kvs2kvc) Range(ctx context.Context, in *pb.RangeRequest, opts ...grpc.C
+ 	return s.kvs.Range(ctx, in)
+ }
+ 
++func (s *kvs2kvc) RangeStream(context.Context, *pb.RangeRequest, ...grpc.CallOption) (grpc.ServerStreamingClient[pb.RangeStreamResponse], error) {
++	return nil, status.Error(codes.Unimplemented, "RangeStream is not implemented by the KV server client adapter")
++}
++
+ func (s *kvs2kvc) Put(ctx context.Context, in *pb.PutRequest, opts ...grpc.CallOption) (*pb.PutResponse, error) {
+ 	return s.kvs.Put(ctx, in)
+ }
+diff --git a/server/proxy/grpcproxy/kv.go b/server/proxy/grpcproxy/kv.go
+index 865cd36..2f05c05 100644
+--- a/server/proxy/grpcproxy/kv.go
++++ b/server/proxy/grpcproxy/kv.go
+@@ -18,6 +18,9 @@ import (
+ 	"context"
+ 	"errors"
+ 
++	"google.golang.org/grpc/codes"
++	"google.golang.org/grpc/status"
++
+ 	pb "go.etcd.io/etcd/api/v3/etcdserverpb"
+ 	clientv3 "go.etcd.io/etcd/client/v3"
+ 	"go.etcd.io/etcd/server/v3/proxy/grpcproxy/cache"
+@@ -70,6 +73,10 @@ func (p *kvProxy) Range(ctx context.Context, r *pb.RangeRequest) (*pb.RangeRespo
+ 	return gresp, nil
+ }
+ 
++func (p *kvProxy) RangeStream(*pb.RangeRequest, pb.KV_RangeStreamServer) error {
++	return status.Error(codes.Unimplemented, "RangeStream is not implemented by the gRPC proxy")
++}
++
+ func (p *kvProxy) Put(ctx context.Context, r *pb.PutRequest) (*pb.PutResponse, error) {
+ 	p.cache.Invalidate(r.Key, nil)
+ 	cacheKeys.Set(float64(p.cache.Size()))

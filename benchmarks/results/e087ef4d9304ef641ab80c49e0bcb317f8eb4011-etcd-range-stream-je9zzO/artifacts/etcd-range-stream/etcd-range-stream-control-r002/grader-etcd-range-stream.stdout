@@ -1,0 +1,178 @@
+ok  	go.etcd.io/etcd/server/v3/etcdserver/txn	0.627s
+ok  	go.etcd.io/etcd/server/v3/etcdserver/api/v3rpc	0.983s
+--- FAIL: TestHPatchBenchmarkRangeStreamDataAndPinning (0.04s)
+    logger.go:146: 2026-09-02T18:28:47.386+0800	INFO	bbolt	Opening db file (/var/folders/xd/wfmprmfd55jcq5_skx245mf00000gp/T/TestHPatchBenchmarkRangeStreamDataAndPinning1120718696/001/etcd_backend_test3012240293/database) with mode -rw------- and with options: {Timeout: 0s, NoGrowSync: false, NoFreelistSync: false, PreLoadFreelist: false, FreelistType: , ReadOnly: false, MmapFlags: 0, InitialMmapSize: 10737418240, PageSize: 0, NoSync: false, OpenFile: 0x0, Mlock: false, Logger: 0x37837a907e8}
+    logger.go:146: 2026-09-02T18:28:47.391+0800	INFO	bbolt	Opening bbolt db (/var/folders/xd/wfmprmfd55jcq5_skx245mf00000gp/T/TestHPatchBenchmarkRangeStreamDataAndPinning1120718696/001/etcd_backend_test3012240293/database) successfully
+    logger.go:146: 2026-09-02T18:28:47.391+0800	DEBUG	bbolt	Starting a new transaction [writable: true]
+    logger.go:146: 2026-09-02T18:28:47.391+0800	DEBUG	bbolt	Starting a new transaction [writable: true] successfully
+    logger.go:146: 2026-09-02T18:28:47.391+0800	DEBUG	bbolt	Starting a new transaction [writable: false]
+    logger.go:146: 2026-09-02T18:28:47.391+0800	DEBUG	bbolt	Starting a new transaction [writable: false] successfully
+    logger.go:146: 2026-09-02T18:28:47.391+0800	DEBUG	bbolt	Creating bucket if not exist "key"
+    logger.go:146: 2026-09-02T18:28:47.391+0800	DEBUG	bbolt	Creating bucket if not exist "key" successfully
+    logger.go:146: 2026-09-02T18:28:47.391+0800	DEBUG	bbolt	Creating bucket if not exist "meta"
+    logger.go:146: 2026-09-02T18:28:47.391+0800	DEBUG	bbolt	Creating bucket if not exist "meta" successfully
+    logger.go:146: 2026-09-02T18:28:47.391+0800	DEBUG	bbolt	Committing transaction 2
+    logger.go:146: 2026-09-02T18:28:47.403+0800	DEBUG	bbolt	Committing transaction 2 successfully
+    logger.go:146: 2026-09-02T18:28:47.403+0800	DEBUG	bbolt	Starting a new transaction [writable: true]
+    logger.go:146: 2026-09-02T18:28:47.403+0800	DEBUG	bbolt	Starting a new transaction [writable: true] successfully
+    logger.go:146: 2026-09-02T18:28:47.403+0800	DEBUG	bbolt	Starting a new transaction [writable: false]
+    logger.go:146: 2026-09-02T18:28:47.403+0800	DEBUG	bbolt	Starting a new transaction [writable: false] successfully
+    logger.go:146: 2026-09-02T18:28:47.404+0800	INFO	kvstore restored	{"current-rev": 1}
+    logger.go:146: 2026-09-02T18:28:47.404+0800	INFO	bbolt	Opening db file (/var/folders/xd/wfmprmfd55jcq5_skx245mf00000gp/T/TestHPatchBenchmarkRangeStreamDataAndPinning1120718696/002/etcd_backend_test4049589028/database) with mode -rw------- and with options: {Timeout: 0s, NoGrowSync: false, NoFreelistSync: false, PreLoadFreelist: false, FreelistType: , ReadOnly: false, MmapFlags: 0, InitialMmapSize: 10737418240, PageSize: 0, NoSync: false, OpenFile: 0x0, Mlock: false, Logger: 0x37837a020f8}
+    logger.go:146: 2026-09-02T18:28:47.408+0800	INFO	bbolt	Opening bbolt db (/var/folders/xd/wfmprmfd55jcq5_skx245mf00000gp/T/TestHPatchBenchmarkRangeStreamDataAndPinning1120718696/002/etcd_backend_test4049589028/database) successfully
+    logger.go:146: 2026-09-02T18:28:47.408+0800	DEBUG	bbolt	Starting a new transaction [writable: true]
+    logger.go:146: 2026-09-02T18:28:47.408+0800	DEBUG	bbolt	Starting a new transaction [writable: true] successfully
+    logger.go:146: 2026-09-02T18:28:47.408+0800	DEBUG	bbolt	Starting a new transaction [writable: false]
+    logger.go:146: 2026-09-02T18:28:47.408+0800	DEBUG	bbolt	Starting a new transaction [writable: false] successfully
+    logger.go:146: 2026-09-02T18:28:47.408+0800	WARN	use default bcrypt cost instead of the invalid given cost	{"min-cost": 4, "max-cost": 31, "default-cost": 10, "given-cost": 0}
+    logger.go:146: 2026-09-02T18:28:47.408+0800	DEBUG	bbolt	Creating bucket if not exist "auth"
+    logger.go:146: 2026-09-02T18:28:47.408+0800	DEBUG	bbolt	Creating bucket if not exist "auth" successfully
+    logger.go:146: 2026-09-02T18:28:47.408+0800	DEBUG	bbolt	Creating bucket if not exist "authUsers"
+    logger.go:146: 2026-09-02T18:28:47.408+0800	DEBUG	bbolt	Creating bucket if not exist "authUsers" successfully
+    logger.go:146: 2026-09-02T18:28:47.408+0800	DEBUG	bbolt	Creating bucket if not exist "authRoles"
+    logger.go:146: 2026-09-02T18:28:47.408+0800	DEBUG	bbolt	Creating bucket if not exist "authRoles" successfully
+    logger.go:146: 2026-09-02T18:28:47.408+0800	DEBUG	bbolt	Putting key "authRevision"
+    logger.go:146: 2026-09-02T18:28:47.408+0800	DEBUG	bbolt	Putting key "authRevision" successfully
+    logger.go:146: 2026-09-02T18:28:47.408+0800	DEBUG	Refreshing rangePermCache
+    logger.go:146: 2026-09-02T18:28:47.408+0800	DEBUG	bbolt	Committing transaction 2
+    logger.go:146: 2026-09-02T18:28:47.421+0800	DEBUG	bbolt	Committing transaction 2 successfully
+    logger.go:146: 2026-09-02T18:28:47.421+0800	DEBUG	bbolt	Starting a new transaction [writable: true]
+    logger.go:146: 2026-09-02T18:28:47.421+0800	DEBUG	bbolt	Starting a new transaction [writable: true] successfully
+    logger.go:146: 2026-09-02T18:28:47.421+0800	DEBUG	bbolt	Starting a new transaction [writable: false]
+    logger.go:146: 2026-09-02T18:28:47.421+0800	DEBUG	bbolt	Starting a new transaction [writable: false] successfully
+    logger.go:146: 2026-09-02T18:28:47.421+0800	DEBUG	bbolt	Starting a new transaction [writable: false]
+    logger.go:146: 2026-09-02T18:28:47.421+0800	DEBUG	bbolt	Starting a new transaction [writable: false] successfully
+    logger.go:146: 2026-09-02T18:28:47.421+0800	DEBUG	bbolt	Putting key "\x00\x00\x00\x00\x00\x00\x00\x02_\x00\x00\x00\x00\x00\x00\x00\x00"
+    logger.go:146: 2026-09-02T18:28:47.421+0800	DEBUG	bbolt	Putting key "\x00\x00\x00\x00\x00\x00\x00\x02_\x00\x00\x00\x00\x00\x00\x00\x00" successfully
+    logger.go:146: 2026-09-02T18:28:47.421+0800	DEBUG	bbolt	Putting key "\x00\x00\x00\x00\x00\x00\x00\x03_\x00\x00\x00\x00\x00\x00\x00\x00"
+    logger.go:146: 2026-09-02T18:28:47.421+0800	DEBUG	bbolt	Putting key "\x00\x00\x00\x00\x00\x00\x00\x03_\x00\x00\x00\x00\x00\x00\x00\x00" successfully
+    logger.go:146: 2026-09-02T18:28:47.421+0800	DEBUG	bbolt	Putting key "\x00\x00\x00\x00\x00\x00\x00\x04_\x00\x00\x00\x00\x00\x00\x00\x00"
+    logger.go:146: 2026-09-02T18:28:47.421+0800	DEBUG	bbolt	Putting key "\x00\x00\x00\x00\x00\x00\x00\x04_\x00\x00\x00\x00\x00\x00\x00\x00" successfully
+    logger.go:146: 2026-09-02T18:28:47.421+0800	DEBUG	bbolt	Putting key "\x00\x00\x00\x00\x00\x00\x00\x05_\x00\x00\x00\x00\x00\x00\x00\x00"
+    logger.go:146: 2026-09-02T18:28:47.421+0800	DEBUG	bbolt	Putting key "\x00\x00\x00\x00\x00\x00\x00\x05_\x00\x00\x00\x00\x00\x00\x00\x00" successfully
+    logger.go:146: 2026-09-02T18:28:47.421+0800	DEBUG	bbolt	Putting key "\x00\x00\x00\x00\x00\x00\x00\x06_\x00\x00\x00\x00\x00\x00\x00\x00"
+    logger.go:146: 2026-09-02T18:28:47.421+0800	DEBUG	bbolt	Putting key "\x00\x00\x00\x00\x00\x00\x00\x06_\x00\x00\x00\x00\x00\x00\x00\x00" successfully
+    logger.go:146: 2026-09-02T18:28:47.421+0800	DEBUG	bbolt	Putting key "\x00\x00\x00\x00\x00\x00\x00\a_\x00\x00\x00\x00\x00\x00\x00\x00"
+    logger.go:146: 2026-09-02T18:28:47.421+0800	DEBUG	bbolt	Putting key "\x00\x00\x00\x00\x00\x00\x00\a_\x00\x00\x00\x00\x00\x00\x00\x00" successfully
+    logger.go:146: 2026-09-02T18:28:47.421+0800	DEBUG	bbolt	Putting key "\x00\x00\x00\x00\x00\x00\x00\b_\x00\x00\x00\x00\x00\x00\x00\x00"
+    logger.go:146: 2026-09-02T18:28:47.421+0800	DEBUG	bbolt	Putting key "\x00\x00\x00\x00\x00\x00\x00\b_\x00\x00\x00\x00\x00\x00\x00\x00" successfully
+    logger.go:146: 2026-09-02T18:28:47.421+0800	DEBUG	bbolt	Putting key "\x00\x00\x00\x00\x00\x00\x00\t_\x00\x00\x00\x00\x00\x00\x00\x00"
+    logger.go:146: 2026-09-02T18:28:47.421+0800	DEBUG	bbolt	Putting key "\x00\x00\x00\x00\x00\x00\x00\t_\x00\x00\x00\x00\x00\x00\x00\x00" successfully
+    logger.go:146: 2026-09-02T18:28:47.421+0800	DEBUG	bbolt	Putting key "\x00\x00\x00\x00\x00\x00\x00\n_\x00\x00\x00\x00\x00\x00\x00\x00"
+    logger.go:146: 2026-09-02T18:28:47.421+0800	DEBUG	bbolt	Putting key "\x00\x00\x00\x00\x00\x00\x00\n_\x00\x00\x00\x00\x00\x00\x00\x00" successfully
+    logger.go:146: 2026-09-02T18:28:47.422+0800	DEBUG	bbolt	Putting key "\x00\x00\x00\x00\x00\x00\x00\v_\x00\x00\x00\x00\x00\x00\x00\x00"
+    logger.go:146: 2026-09-02T18:28:47.422+0800	DEBUG	bbolt	Putting key "\x00\x00\x00\x00\x00\x00\x00\v_\x00\x00\x00\x00\x00\x00\x00\x00" successfully
+    logger.go:146: 2026-09-02T18:28:47.422+0800	DEBUG	bbolt	Putting key "\x00\x00\x00\x00\x00\x00\x00\f_\x00\x00\x00\x00\x00\x00\x00\x00"
+    logger.go:146: 2026-09-02T18:28:47.422+0800	DEBUG	bbolt	Putting key "\x00\x00\x00\x00\x00\x00\x00\f_\x00\x00\x00\x00\x00\x00\x00\x00" successfully
+    logger.go:146: 2026-09-02T18:28:47.422+0800	DEBUG	bbolt	Putting key "\x00\x00\x00\x00\x00\x00\x00\r_\x00\x00\x00\x00\x00\x00\x00\x00"
+    logger.go:146: 2026-09-02T18:28:47.422+0800	DEBUG	bbolt	Putting key "\x00\x00\x00\x00\x00\x00\x00\r_\x00\x00\x00\x00\x00\x00\x00\x00" successfully
+    logger.go:146: 2026-09-02T18:28:47.422+0800	DEBUG	bbolt	Putting key "\x00\x00\x00\x00\x00\x00\x00\x0e_\x00\x00\x00\x00\x00\x00\x00\x00"
+    logger.go:146: 2026-09-02T18:28:47.422+0800	DEBUG	bbolt	Putting key "\x00\x00\x00\x00\x00\x00\x00\x0e_\x00\x00\x00\x00\x00\x00\x00\x00" successfully
+    logger.go:146: 2026-09-02T18:28:47.422+0800	DEBUG	bbolt	Putting key "\x00\x00\x00\x00\x00\x00\x00\x0f_\x00\x00\x00\x00\x00\x00\x00\x00"
+    logger.go:146: 2026-09-02T18:28:47.422+0800	DEBUG	bbolt	Putting key "\x00\x00\x00\x00\x00\x00\x00\x0f_\x00\x00\x00\x00\x00\x00\x00\x00" successfully
+    logger.go:146: 2026-09-02T18:28:47.422+0800	DEBUG	bbolt	Putting key "\x00\x00\x00\x00\x00\x00\x00\x10_\x00\x00\x00\x00\x00\x00\x00\x00"
+    logger.go:146: 2026-09-02T18:28:47.422+0800	DEBUG	bbolt	Putting key "\x00\x00\x00\x00\x00\x00\x00\x10_\x00\x00\x00\x00\x00\x00\x00\x00" successfully
+    logger.go:146: 2026-09-02T18:28:47.422+0800	DEBUG	bbolt	Putting key "\x00\x00\x00\x00\x00\x00\x00\x11_\x00\x00\x00\x00\x00\x00\x00\x00"
+    logger.go:146: 2026-09-02T18:28:47.422+0800	DEBUG	bbolt	Putting key "\x00\x00\x00\x00\x00\x00\x00\x11_\x00\x00\x00\x00\x00\x00\x00\x00" successfully
+    logger.go:146: 2026-09-02T18:28:47.422+0800	DEBUG	bbolt	Putting key "\x00\x00\x00\x00\x00\x00\x00\x12_\x00\x00\x00\x00\x00\x00\x00\x00"
+    logger.go:146: 2026-09-02T18:28:47.422+0800	DEBUG	bbolt	Putting key "\x00\x00\x00\x00\x00\x00\x00\x12_\x00\x00\x00\x00\x00\x00\x00\x00" successfully
+    logger.go:146: 2026-09-02T18:28:47.422+0800	DEBUG	bbolt	Putting key "\x00\x00\x00\x00\x00\x00\x00\x13_\x00\x00\x00\x00\x00\x00\x00\x00"
+    logger.go:146: 2026-09-02T18:28:47.422+0800	DEBUG	bbolt	Putting key "\x00\x00\x00\x00\x00\x00\x00\x13_\x00\x00\x00\x00\x00\x00\x00\x00" successfully
+    logger.go:146: 2026-09-02T18:28:47.422+0800	DEBUG	bbolt	Putting key "\x00\x00\x00\x00\x00\x00\x00\x14_\x00\x00\x00\x00\x00\x00\x00\x00"
+    logger.go:146: 2026-09-02T18:28:47.422+0800	DEBUG	bbolt	Putting key "\x00\x00\x00\x00\x00\x00\x00\x14_\x00\x00\x00\x00\x00\x00\x00\x00" successfully
+    logger.go:146: 2026-09-02T18:28:47.422+0800	DEBUG	bbolt	Putting key "\x00\x00\x00\x00\x00\x00\x00\x15_\x00\x00\x00\x00\x00\x00\x00\x00"
+    logger.go:146: 2026-09-02T18:28:47.422+0800	DEBUG	bbolt	Putting key "\x00\x00\x00\x00\x00\x00\x00\x15_\x00\x00\x00\x00\x00\x00\x00\x00" successfully
+    logger.go:146: 2026-09-02T18:28:47.422+0800	DEBUG	bbolt	Putting key "\x00\x00\x00\x00\x00\x00\x00\x16_\x00\x00\x00\x00\x00\x00\x00\x00"
+    logger.go:146: 2026-09-02T18:28:47.422+0800	DEBUG	bbolt	Putting key "\x00\x00\x00\x00\x00\x00\x00\x16_\x00\x00\x00\x00\x00\x00\x00\x00" successfully
+    hpatch_benchmark_test.go:214: final response revision = revision:22 , want 21
+--- FAIL: TestHPatchBenchmarkRangeStreamExplicitRevision (0.04s)
+    logger.go:146: 2026-09-02T18:28:47.423+0800	INFO	bbolt	Opening db file (/var/folders/xd/wfmprmfd55jcq5_skx245mf00000gp/T/TestHPatchBenchmarkRangeStreamExplicitRevision3788853812/001/etcd_backend_test155173130/database) with mode -rw------- and with options: {Timeout: 0s, NoGrowSync: false, NoFreelistSync: false, PreLoadFreelist: false, FreelistType: , ReadOnly: false, MmapFlags: 0, InitialMmapSize: 10737418240, PageSize: 0, NoSync: false, OpenFile: 0x0, Mlock: false, Logger: 0x37837a021b8}
+    logger.go:146: 2026-09-02T18:28:47.430+0800	INFO	bbolt	Opening bbolt db (/var/folders/xd/wfmprmfd55jcq5_skx245mf00000gp/T/TestHPatchBenchmarkRangeStreamExplicitRevision3788853812/001/etcd_backend_test155173130/database) successfully
+    logger.go:146: 2026-09-02T18:28:47.430+0800	DEBUG	bbolt	Starting a new transaction [writable: true]
+    logger.go:146: 2026-09-02T18:28:47.430+0800	DEBUG	bbolt	Starting a new transaction [writable: true] successfully
+    logger.go:146: 2026-09-02T18:28:47.430+0800	DEBUG	bbolt	Starting a new transaction [writable: false]
+    logger.go:146: 2026-09-02T18:28:47.430+0800	DEBUG	bbolt	Starting a new transaction [writable: false] successfully
+    logger.go:146: 2026-09-02T18:28:47.430+0800	DEBUG	bbolt	Creating bucket if not exist "key"
+    logger.go:146: 2026-09-02T18:28:47.430+0800	DEBUG	bbolt	Creating bucket if not exist "key" successfully
+    logger.go:146: 2026-09-02T18:28:47.430+0800	DEBUG	bbolt	Creating bucket if not exist "meta"
+    logger.go:146: 2026-09-02T18:28:47.430+0800	DEBUG	bbolt	Creating bucket if not exist "meta" successfully
+    logger.go:146: 2026-09-02T18:28:47.430+0800	DEBUG	bbolt	Committing transaction 2
+    logger.go:146: 2026-09-02T18:28:47.443+0800	DEBUG	bbolt	Committing transaction 2 successfully
+    logger.go:146: 2026-09-02T18:28:47.443+0800	DEBUG	bbolt	Starting a new transaction [writable: true]
+    logger.go:146: 2026-09-02T18:28:47.443+0800	DEBUG	bbolt	Starting a new transaction [writable: true] successfully
+    logger.go:146: 2026-09-02T18:28:47.443+0800	DEBUG	bbolt	Starting a new transaction [writable: false]
+    logger.go:146: 2026-09-02T18:28:47.443+0800	DEBUG	bbolt	Starting a new transaction [writable: false] successfully
+    logger.go:146: 2026-09-02T18:28:47.444+0800	INFO	kvstore restored	{"current-rev": 1}
+    logger.go:146: 2026-09-02T18:28:47.444+0800	INFO	bbolt	Opening db file (/var/folders/xd/wfmprmfd55jcq5_skx245mf00000gp/T/TestHPatchBenchmarkRangeStreamExplicitRevision3788853812/002/etcd_backend_test3608670170/database) with mode -rw------- and with options: {Timeout: 0s, NoGrowSync: false, NoFreelistSync: false, PreLoadFreelist: false, FreelistType: , ReadOnly: false, MmapFlags: 0, InitialMmapSize: 10737418240, PageSize: 0, NoSync: false, OpenFile: 0x0, Mlock: false, Logger: 0x37837a021f8}
+    logger.go:146: 2026-09-02T18:28:47.449+0800	INFO	bbolt	Opening bbolt db (/var/folders/xd/wfmprmfd55jcq5_skx245mf00000gp/T/TestHPatchBenchmarkRangeStreamExplicitRevision3788853812/002/etcd_backend_test3608670170/database) successfully
+    logger.go:146: 2026-09-02T18:28:47.449+0800	DEBUG	bbolt	Starting a new transaction [writable: true]
+    logger.go:146: 2026-09-02T18:28:47.449+0800	DEBUG	bbolt	Starting a new transaction [writable: true] successfully
+    logger.go:146: 2026-09-02T18:28:47.449+0800	DEBUG	bbolt	Starting a new transaction [writable: false]
+    logger.go:146: 2026-09-02T18:28:47.449+0800	DEBUG	bbolt	Starting a new transaction [writable: false] successfully
+    logger.go:146: 2026-09-02T18:28:47.449+0800	WARN	use default bcrypt cost instead of the invalid given cost	{"min-cost": 4, "max-cost": 31, "default-cost": 10, "given-cost": 0}
+    logger.go:146: 2026-09-02T18:28:47.449+0800	DEBUG	bbolt	Creating bucket if not exist "auth"
+    logger.go:146: 2026-09-02T18:28:47.449+0800	DEBUG	bbolt	Creating bucket if not exist "auth" successfully
+    logger.go:146: 2026-09-02T18:28:47.449+0800	DEBUG	bbolt	Creating bucket if not exist "authUsers"
+    logger.go:146: 2026-09-02T18:28:47.449+0800	DEBUG	bbolt	Creating bucket if not exist "authUsers" successfully
+    logger.go:146: 2026-09-02T18:28:47.449+0800	DEBUG	bbolt	Creating bucket if not exist "authRoles"
+    logger.go:146: 2026-09-02T18:28:47.449+0800	DEBUG	bbolt	Creating bucket if not exist "authRoles" successfully
+    logger.go:146: 2026-09-02T18:28:47.449+0800	DEBUG	bbolt	Putting key "authRevision"
+    logger.go:146: 2026-09-02T18:28:47.449+0800	DEBUG	bbolt	Putting key "authRevision" successfully
+    logger.go:146: 2026-09-02T18:28:47.449+0800	DEBUG	Refreshing rangePermCache
+    logger.go:146: 2026-09-02T18:28:47.449+0800	DEBUG	bbolt	Committing transaction 2
+    logger.go:146: 2026-09-02T18:28:47.462+0800	DEBUG	bbolt	Committing transaction 2 successfully
+    logger.go:146: 2026-09-02T18:28:47.462+0800	DEBUG	bbolt	Starting a new transaction [writable: true]
+    logger.go:146: 2026-09-02T18:28:47.462+0800	DEBUG	bbolt	Starting a new transaction [writable: true] successfully
+    logger.go:146: 2026-09-02T18:28:47.462+0800	DEBUG	bbolt	Starting a new transaction [writable: false]
+    logger.go:146: 2026-09-02T18:28:47.462+0800	DEBUG	bbolt	Starting a new transaction [writable: false] successfully
+    logger.go:146: 2026-09-02T18:28:47.462+0800	DEBUG	bbolt	Starting a new transaction [writable: false]
+    logger.go:146: 2026-09-02T18:28:47.462+0800	DEBUG	bbolt	Starting a new transaction [writable: false] successfully
+    logger.go:146: 2026-09-02T18:28:47.462+0800	DEBUG	bbolt	Putting key "\x00\x00\x00\x00\x00\x00\x00\x02_\x00\x00\x00\x00\x00\x00\x00\x00"
+    logger.go:146: 2026-09-02T18:28:47.462+0800	DEBUG	bbolt	Putting key "\x00\x00\x00\x00\x00\x00\x00\x02_\x00\x00\x00\x00\x00\x00\x00\x00" successfully
+    logger.go:146: 2026-09-02T18:28:47.462+0800	DEBUG	bbolt	Putting key "\x00\x00\x00\x00\x00\x00\x00\x03_\x00\x00\x00\x00\x00\x00\x00\x00"
+    logger.go:146: 2026-09-02T18:28:47.462+0800	DEBUG	bbolt	Putting key "\x00\x00\x00\x00\x00\x00\x00\x03_\x00\x00\x00\x00\x00\x00\x00\x00" successfully
+    logger.go:146: 2026-09-02T18:28:47.462+0800	DEBUG	bbolt	Putting key "\x00\x00\x00\x00\x00\x00\x00\x04_\x00\x00\x00\x00\x00\x00\x00\x00"
+    logger.go:146: 2026-09-02T18:28:47.462+0800	DEBUG	bbolt	Putting key "\x00\x00\x00\x00\x00\x00\x00\x04_\x00\x00\x00\x00\x00\x00\x00\x00" successfully
+    logger.go:146: 2026-09-02T18:28:47.462+0800	DEBUG	bbolt	Putting key "\x00\x00\x00\x00\x00\x00\x00\x05_\x00\x00\x00\x00\x00\x00\x00\x00"
+    logger.go:146: 2026-09-02T18:28:47.462+0800	DEBUG	bbolt	Putting key "\x00\x00\x00\x00\x00\x00\x00\x05_\x00\x00\x00\x00\x00\x00\x00\x00" successfully
+    logger.go:146: 2026-09-02T18:28:47.462+0800	DEBUG	bbolt	Putting key "\x00\x00\x00\x00\x00\x00\x00\x06_\x00\x00\x00\x00\x00\x00\x00\x00"
+    logger.go:146: 2026-09-02T18:28:47.462+0800	DEBUG	bbolt	Putting key "\x00\x00\x00\x00\x00\x00\x00\x06_\x00\x00\x00\x00\x00\x00\x00\x00" successfully
+    logger.go:146: 2026-09-02T18:28:47.463+0800	DEBUG	bbolt	Putting key "\x00\x00\x00\x00\x00\x00\x00\a_\x00\x00\x00\x00\x00\x00\x00\x00"
+    logger.go:146: 2026-09-02T18:28:47.463+0800	DEBUG	bbolt	Putting key "\x00\x00\x00\x00\x00\x00\x00\a_\x00\x00\x00\x00\x00\x00\x00\x00" successfully
+    logger.go:146: 2026-09-02T18:28:47.463+0800	DEBUG	bbolt	Putting key "\x00\x00\x00\x00\x00\x00\x00\b_\x00\x00\x00\x00\x00\x00\x00\x00"
+    logger.go:146: 2026-09-02T18:28:47.463+0800	DEBUG	bbolt	Putting key "\x00\x00\x00\x00\x00\x00\x00\b_\x00\x00\x00\x00\x00\x00\x00\x00" successfully
+    logger.go:146: 2026-09-02T18:28:47.463+0800	DEBUG	bbolt	Putting key "\x00\x00\x00\x00\x00\x00\x00\t_\x00\x00\x00\x00\x00\x00\x00\x00"
+    logger.go:146: 2026-09-02T18:28:47.463+0800	DEBUG	bbolt	Putting key "\x00\x00\x00\x00\x00\x00\x00\t_\x00\x00\x00\x00\x00\x00\x00\x00" successfully
+    logger.go:146: 2026-09-02T18:28:47.463+0800	DEBUG	bbolt	Putting key "\x00\x00\x00\x00\x00\x00\x00\n_\x00\x00\x00\x00\x00\x00\x00\x00"
+    logger.go:146: 2026-09-02T18:28:47.463+0800	DEBUG	bbolt	Putting key "\x00\x00\x00\x00\x00\x00\x00\n_\x00\x00\x00\x00\x00\x00\x00\x00" successfully
+    logger.go:146: 2026-09-02T18:28:47.463+0800	DEBUG	bbolt	Putting key "\x00\x00\x00\x00\x00\x00\x00\v_\x00\x00\x00\x00\x00\x00\x00\x00"
+    logger.go:146: 2026-09-02T18:28:47.463+0800	DEBUG	bbolt	Putting key "\x00\x00\x00\x00\x00\x00\x00\v_\x00\x00\x00\x00\x00\x00\x00\x00" successfully
+    logger.go:146: 2026-09-02T18:28:47.463+0800	DEBUG	bbolt	Putting key "\x00\x00\x00\x00\x00\x00\x00\f_\x00\x00\x00\x00\x00\x00\x00\x00"
+    logger.go:146: 2026-09-02T18:28:47.463+0800	DEBUG	bbolt	Putting key "\x00\x00\x00\x00\x00\x00\x00\f_\x00\x00\x00\x00\x00\x00\x00\x00" successfully
+    logger.go:146: 2026-09-02T18:28:47.463+0800	DEBUG	bbolt	Putting key "\x00\x00\x00\x00\x00\x00\x00\r_\x00\x00\x00\x00\x00\x00\x00\x00"
+    logger.go:146: 2026-09-02T18:28:47.463+0800	DEBUG	bbolt	Putting key "\x00\x00\x00\x00\x00\x00\x00\r_\x00\x00\x00\x00\x00\x00\x00\x00" successfully
+    logger.go:146: 2026-09-02T18:28:47.463+0800	DEBUG	bbolt	Putting key "\x00\x00\x00\x00\x00\x00\x00\x0e_\x00\x00\x00\x00\x00\x00\x00\x00"
+    logger.go:146: 2026-09-02T18:28:47.463+0800	DEBUG	bbolt	Putting key "\x00\x00\x00\x00\x00\x00\x00\x0e_\x00\x00\x00\x00\x00\x00\x00\x00" successfully
+    logger.go:146: 2026-09-02T18:28:47.463+0800	DEBUG	bbolt	Putting key "\x00\x00\x00\x00\x00\x00\x00\x0f_\x00\x00\x00\x00\x00\x00\x00\x00"
+    logger.go:146: 2026-09-02T18:28:47.463+0800	DEBUG	bbolt	Putting key "\x00\x00\x00\x00\x00\x00\x00\x0f_\x00\x00\x00\x00\x00\x00\x00\x00" successfully
+    logger.go:146: 2026-09-02T18:28:47.463+0800	DEBUG	bbolt	Putting key "\x00\x00\x00\x00\x00\x00\x00\x10_\x00\x00\x00\x00\x00\x00\x00\x00"
+    logger.go:146: 2026-09-02T18:28:47.463+0800	DEBUG	bbolt	Putting key "\x00\x00\x00\x00\x00\x00\x00\x10_\x00\x00\x00\x00\x00\x00\x00\x00" successfully
+    logger.go:146: 2026-09-02T18:28:47.463+0800	DEBUG	bbolt	Putting key "\x00\x00\x00\x00\x00\x00\x00\x11_\x00\x00\x00\x00\x00\x00\x00\x00"
+    logger.go:146: 2026-09-02T18:28:47.463+0800	DEBUG	bbolt	Putting key "\x00\x00\x00\x00\x00\x00\x00\x11_\x00\x00\x00\x00\x00\x00\x00\x00" successfully
+    logger.go:146: 2026-09-02T18:28:47.463+0800	DEBUG	bbolt	Putting key "\x00\x00\x00\x00\x00\x00\x00\x12_\x00\x00\x00\x00\x00\x00\x00\x00"
+    logger.go:146: 2026-09-02T18:28:47.463+0800	DEBUG	bbolt	Putting key "\x00\x00\x00\x00\x00\x00\x00\x12_\x00\x00\x00\x00\x00\x00\x00\x00" successfully
+    logger.go:146: 2026-09-02T18:28:47.463+0800	DEBUG	bbolt	Putting key "\x00\x00\x00\x00\x00\x00\x00\x13_\x00\x00\x00\x00\x00\x00\x00\x00"
+    logger.go:146: 2026-09-02T18:28:47.463+0800	DEBUG	bbolt	Putting key "\x00\x00\x00\x00\x00\x00\x00\x13_\x00\x00\x00\x00\x00\x00\x00\x00" successfully
+    logger.go:146: 2026-09-02T18:28:47.463+0800	DEBUG	bbolt	Putting key "\x00\x00\x00\x00\x00\x00\x00\x14_\x00\x00\x00\x00\x00\x00\x00\x00"
+    logger.go:146: 2026-09-02T18:28:47.463+0800	DEBUG	bbolt	Putting key "\x00\x00\x00\x00\x00\x00\x00\x14_\x00\x00\x00\x00\x00\x00\x00\x00" successfully
+    logger.go:146: 2026-09-02T18:28:47.463+0800	DEBUG	bbolt	Putting key "\x00\x00\x00\x00\x00\x00\x00\x15_\x00\x00\x00\x00\x00\x00\x00\x00"
+    logger.go:146: 2026-09-02T18:28:47.463+0800	DEBUG	bbolt	Putting key "\x00\x00\x00\x00\x00\x00\x00\x15_\x00\x00\x00\x00\x00\x00\x00\x00" successfully
+    logger.go:146: 2026-09-02T18:28:47.463+0800	DEBUG	bbolt	Putting key "\x00\x00\x00\x00\x00\x00\x00\x16_\x00\x00\x00\x00\x00\x00\x00\x00"
+    logger.go:146: 2026-09-02T18:28:47.463+0800	DEBUG	bbolt	Putting key "\x00\x00\x00\x00\x00\x00\x00\x16_\x00\x00\x00\x00\x00\x00\x00\x00" successfully
+    hpatch_benchmark_test.go:247: explicit-revision response revision = revision:22 , want 21
+FAIL
+FAIL	go.etcd.io/etcd/server/v3/etcdserver	2.128s
+ok  	go.etcd.io/etcd/server/v3/proxy/grpcproxy/adapter	2.257s
+ok  	go.etcd.io/etcd/client/v3/mock/mockserver	1.199s
+ok  	go.etcd.io/etcd/client/v3	2.907s
+FAIL

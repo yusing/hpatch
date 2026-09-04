@@ -1,0 +1,7 @@
+ Container hpatch_bench_stagingje9zzo-control-agent-run-7da14fc546d1 Creating 
+ Container hpatch_bench_stagingje9zzo-control-agent-run-7da14fc546d1 Created 
+Reading additional input from stdin...
+2026-09-02T10:37:56.926300Z ERROR codex_core::tools::router: error=apply_patch verification failed: Failed to find expected lines in /Users/alanwong/projects/hpatch/benchmarks/results/.staging-je9zzO/work/etcd-range-stream-control-r003-OZg9lS/repo/server/etcdserver/api/v3rpc/key.go:
+	"go.etcd.io/etcd/pkg/v3/adt"
+	"go.etcd.io/etcd/server/v3/etcdserver"
+)

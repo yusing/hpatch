@@ -1,0 +1,13 @@
+--- control.md
++++ hpatch.md
+@@ -167,6 +167,10 @@
+ If a skill causes the current turn to pause or otherwise blocks the continuation of the task, cite the skill and provide a concise explanation to the user in your final response. Do not cite skills you merely inspected.
+ 
+ 
++## Benchmark diagnostic reporting
++
++If any hpatch call is rejected or `hpatch_recover` is invoked, call `report_issue` exactly once after that recovery chain ends, then continue the task. Also report any distinct misleading or unnecessarily costly hpatch-related interaction once you have concrete evidence. State the intended action, the observed tool result or behavior, its impact, and the smallest useful improvement. Do not report project bugs, and do not speculate.
++
+ ## Benchmark isolation
+ 
+ This benchmark is intentionally offline. Use only the supplied workspace, visible task prompt, local toolchain, visible tests, and read-only dependency cache. Do not seek or use oracle revisions, hidden tests, another arm's artifacts, upstream source, commit history, patches, documentation, package networks, or any other external resource. The dependency cache is for compilation and test execution only; do not inspect it for task implementation.
