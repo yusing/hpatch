@@ -11,6 +11,15 @@ workspace-local discovery, remote discovery, or hot reload. TypeScript is an aut
 and the complete registry remains immutable for the router process lifetime. Passthrough mode
 neither loads nor exposes the contributed tools.
 
+During declaration validation, translation, and execution, configured and built-in modules may import
+`hpatch:core/v1`. This exact virtual ECMAScript module is supplied by the router's authenticated snapshot;
+it requires no plugin-owned dependency or copied binary. It exposes deterministic verified-row hashing,
+formatting, logical-line counts and UTF-8 byte bounds, positive integer and `LINE:HASH` parsing, quoted
+operand decoding, source-format capability classification, Go identifier and string-literal handling,
+shell-header parsing, and interpreter identity. An unknown `hpatch:` module fails declaration loading.
+The shared core exposes no filesystem, workspace, symlink, process, network, credential, carrier, or
+row-resolution authority. Existing declarations that do not import it retain their behavior.
+
 Each plugin declares a stable plugin identity and one or more globally named tools. Each tool
 provides its exact OpenAI Responses custom-tool specification, a bounded string-input parser,
 a translator, and an executor-side implementation. A specification may omit `format` for
@@ -132,3 +141,6 @@ Acceptance:
 10. Observation failure cannot replace an otherwise successful translated carrier or executor
     result; request cancellation still propagates.
 11. An executor returns one validated current result and does not run a comparison execution.
+12. A configured plugin can import `hpatch:core/v1` and obtains the same verified-row, source, Go lexical,
+    and shell-header semantics as built-in contributions. An unavailable core version rejects startup,
+    and passthrough mode loads no core artifact.

@@ -1,17 +1,14 @@
 package hpatch
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"strings"
+
+	"github.com/yusing/hpatch/internal/verifiedrow"
 )
 
-const lineHashLength = 4
-
 func hashLine(content string) string {
-	sum := sha256.Sum256([]byte(content))
-	return hex.EncodeToString(sum[:lineHashLength/2])
+	return verifiedrow.Hash(content)
 }
 
 func lineContent(text string, line logicalLine) string {

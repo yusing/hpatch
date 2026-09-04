@@ -1,4 +1,3 @@
-import {createHash} from "node:crypto";
 import path from "node:path";
 import {countTokens as countGPT5TokensWithModel} from "gpt-tokenizer/model/gpt-5";
 import type {ExecutionContext, ExecutionResult, Tool, TranslationContext} from "../internal/router/toolplugin/plugin.d.ts";
@@ -14,14 +13,6 @@ const sourceTokenOptions = {disallowedSpecial: new Set<string>()};
 
 export function byteLength(value: string): number {
   return Buffer.byteLength(value, "utf8");
-}
-
-export function hashLine(content: string): string {
-  return createHash("sha256").update(content, "utf8").digest("hex").slice(0, 4);
-}
-
-export function formatHashLine(number: number, content: string): string {
-  return `${number}:${hashLine(content)} ${content}\n`;
 }
 
 export function isOutsideWorkspace(root: string, target: string): boolean {
@@ -78,13 +69,6 @@ export function stripOptionalFinalNewline(value: string): string {
     return value.slice(0, -1);
   }
   return value;
-}
-
-export function shellQuoteArgument(value: string): string {
-  if (/^[A-Za-z0-9_@%+=:,./-]+$/u.test(value)) {
-    return value;
-  }
-  return `'${value.replaceAll("'", "'\"'\"'")}'`;
 }
 
 type ExecutorToolOptions = {

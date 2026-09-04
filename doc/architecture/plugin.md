@@ -11,6 +11,21 @@ rewriting, Code Mode capability discovery, wrappers, history, observation, works
 executor effects. Loading a declaration is trusted local extension code, but the adapter
 receives no engine workspace capability or Codex credential interface.
 
+The plugin host maps the exact virtual import `hpatch:core/v1` to a router-owned ECMAScript adapter beside
+one Go-built WASI reactor in the immutable snapshot. The adapter and reactor are included in the registry
+identity, and the host rejects every other `hpatch:` import. Built-in and configured modules therefore use
+the same Go-owned portable semantics without vendoring an npm package or binary. The public ECMAScript
+surface is versioned independently from `hpatch-tool-plugin/v1`; the raw WASM exports are a private,
+lockstep adapter boundary.
+
+`internal/verifiedrow` owns hash and logical UTF-8 row mechanics; `internal/hpatchsyntax` owns compact
+quoted framing; `internal/sourcekind` owns portable source capabilities; `internal/golex` owns Go lexical
+questions; and `internal/shellsyntax` owns shell header and interpreter identity. Native Go callers import
+those packages directly. The reactor receives no preopened directory, inherited environment, or process
+capability. It reports UTF-8 byte coordinates only. Parser-specific UTF-16 coordinates, workspace
+canonicalization, retained-script reads, process execution, carrier policy, and stale-row resolution remain
+with their existing owners.
+
 The registry normalizes each accepted declaration into one router-owned contribution containing
 its plugin and tool identity, exact serialized OpenAI specification, bounded input parser and
 argv projection, translator handle, and executor implementation handle. This
@@ -114,7 +129,7 @@ link, router executable, plugin runtime, and implementation resources visible in
 workspace selection; the fixed helper and configured frontends additionally require their shared
 directory on the executor `PATH`.
 
-Startup materializes the validated implementation modules and dispatch metadata into an
+Startup materializes the validated implementation modules, shared-core adapter and reactor, and dispatch metadata into an
 immutable process-scoped worker snapshot. Locator-launched shell and symlink-launched configured
 children read that snapshot and verify its registry identity before loading an implementation. A child never rediscovers or
 executes the live configuration directory. Changing a configured module therefore cannot alter

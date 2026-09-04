@@ -3,12 +3,16 @@ import {open} from "node:fs/promises";
 import {tmpdir} from "node:os";
 
 import type {Tool} from "../internal/router/toolplugin/plugin.d.ts";
+import {
+  decodeQuotedOperand,
+  formatVerifiedRow,
+  parsePositiveInteger,
+} from "hpatch:core/v1";
 
 import {
   byteLength,
   errorText,
   createExecutorTool,
-  formatHashLine,
   MAX_POSSIBLE_GPT5_TOKEN_BYTES,
   stripOptionalFinalNewline,
   VERIFIED_ROW_LIMIT_DIAGNOSTIC,
@@ -35,33 +39,12 @@ type ReadSpec = {
 
 
 function parseQuotedPath(input: string): {path: string; trailing: string} {
-  let escaped = false;
-  for (let index = 1; index < input.length; index += 1) {
-    const character = input[index];
-    if (escaped) {
-      escaped = false;
-      continue;
-    }
-    if (character === "\\") {
-      escaped = true;
-      continue;
-    }
-    if (character !== "\"") {
-      continue;
-    }
-    const encoded = input.slice(0, index + 1);
-    let path;
-    try {
-      path = JSON.parse(encoded);
-    } catch (error) {
-      throw new Error(`invalid hread path: ${errorText(error)}`);
-    }
-    if (typeof path !== "string") {
-      throw new Error("invalid hread path");
-    }
-    return {path, trailing: input.slice(index + 1)};
+  try {
+    const decoded = decodeQuotedOperand(input);
+    return {path: decoded.value, trailing: decoded.rest};
+  } catch (error) {
+    throw new Error(`invalid hread path: ${errorText(error)}`);
   }
-  throw new Error("invalid hread path: unterminated quoted string");
 }
 
 function parseReadSpec(input: string): ReadSpec {
@@ -87,12 +70,16 @@ function parseReadSpec(input: string): ReadSpec {
   if (match === null) {
     throw new Error("hread input must be PATH or PATH START:END");
   }
-  const requestedStartLine = Number(match[1]);
-  const endLine = Number(match[2]);
-  if (!Number.isSafeInteger(requestedStartLine)) {
+  let requestedStartLine;
+  let endLine;
+  try {
+    requestedStartLine = match[1] === "0" ? 0 : parsePositiveInteger(match[1]);
+  } catch {
     throw new Error("hread start line is out of range");
   }
-  if (!Number.isSafeInteger(endLine)) {
+  try {
+    endLine = parsePositiveInteger(match[2]);
+  } catch {
     throw new Error("hread end line is out of range");
   }
   if (requestedStartLine > endLine) {
@@ -147,7 +134,7 @@ async function readHashLines(spec: ReadSpec): Promise<ComparedOutput> {
     };
     const finishLine = (): void => {
       if (selected() && !output.incomplete) {
-        const row = formatHashLine(lineNumber, content);
+        const row = formatVerifiedRow(lineNumber, content);
         output.append(row);
       }
       content = "";

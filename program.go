@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/yusing/hpatch/internal/hpatchsyntax"
+	"github.com/yusing/hpatch/internal/verifiedrow"
 )
 
 var (
@@ -454,15 +455,18 @@ func firstToken(value string) (string, string) {
 }
 
 func parseRowReference(sourceLine int, value string) (rowReference, error) {
-	match := rowPattern.FindStringSubmatch(value)
-	if match == nil {
+	reference, err := verifiedrow.ParseReference(value)
+	if err != nil {
+		if errors.Is(err, verifiedrow.ErrLineOutOfRange) {
+			return rowReference{}, scriptError(sourceLine, "row line is out of range")
+		}
 		return rowReference{}, scriptError(sourceLine, fmt.Sprintf("invalid row reference %q; expected LINE:HASH", value))
 	}
-	line, err := strconv.Atoi(match[1])
-	if err != nil {
+	line := int(reference.Line)
+	if line < 1 || uint64(line) != reference.Line {
 		return rowReference{}, scriptError(sourceLine, "row line is out of range")
 	}
-	return rowReference{line: line, hash: match[2]}, nil
+	return rowReference{line: line, hash: reference.Hash}, nil
 }
 
 func onlyOperandWhitespace(value string) bool {

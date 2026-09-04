@@ -11,10 +11,15 @@ import {isMap, isScalar, parseDocument} from "yaml";
 
 import type {Tool} from "../internal/router/toolplugin/plugin.d.ts";
 import {
+  classifySourcePath,
+  decodeGoStringLiteral,
+  hashLine,
+  lineCount as sharedLineCount,
+} from "hpatch:core/v1";
+import {
   byteLength,
   createExecutorTool,
   errorText,
-  hashLine,
   isOutsideWorkspace,
   stripOptionalFinalNewline,
 } from "./common.ts";
@@ -167,8 +172,10 @@ class InspectFailure extends Error {
 
 export class LineMap {
   readonly starts = [0];
+  readonly count: number;
 
   constructor(readonly source: string) {
+    this.count = sharedLineCount(source);
     for (let offset = 0; offset < source.length; offset += 1) {
       if (source[offset] === "\r") {
         if (source[offset + 1] === "\n") {
@@ -182,10 +189,6 @@ export class LineMap {
     if (this.starts.at(-1) === source.length && source.length > 0) {
       this.starts.pop();
     }
-  }
-
-  get count(): number {
-    return this.source.length === 0 ? 0 : this.starts.length;
   }
 
   lineAt(offset: number): number {
@@ -302,12 +305,8 @@ function addNamedEntries(
 
 function decodeGoImportPath(source: string, node: SyntaxNode): string | null {
   const literal = nodeText(source, node);
-  if (literal.startsWith("`") && literal.endsWith("`")) {
-    return literal.slice(1, -1).replaceAll("\r", "");
-  }
   try {
-    const decoded = JSON.parse(literal);
-    return typeof decoded === "string" ? decoded : null;
+    return decodeGoStringLiteral(literal);
   } catch {
     return null;
   }
@@ -967,31 +966,15 @@ function ordered(entries: LocatedEntry[]): OutlineEntry[] {
 }
 
 export function sourceFormat(filePath: string): SourceFormat | null {
-  if (filePath.endsWith(".go")) {
-    return {kind: "code", language: "go"};
+  const capabilities = classifySourcePath(filePath);
+  if (capabilities === null || capabilities.outline !== true) {
+    return null;
   }
-  if (filePath.endsWith(".tsx")) {
-    return {kind: "code", language: "typescript", jsx: true};
-  }
-  if (filePath.endsWith(".ts") || filePath.endsWith(".mts") || filePath.endsWith(".cts")) {
-    return {kind: "code", language: "typescript"};
-  }
-  if (filePath.endsWith(".jsx")) {
-    return {kind: "code", language: "javascript", jsx: true};
-  }
-  if (filePath.endsWith(".js") || filePath.endsWith(".mjs") || filePath.endsWith(".cjs")) {
-    return {kind: "code", language: "javascript"};
-  }
-  if (filePath.endsWith(".py") || filePath.endsWith(".pyi")) {
-    return {kind: "code", language: "python"};
-  }
-  if (filePath.endsWith(".md")) {
-    return {kind: "markdown", language: null};
-  }
-  if (filePath.endsWith(".json")) {
-    return {kind: "json", language: null};
-  }
-  return null;
+  return {
+    kind: capabilities.kind,
+    language: capabilities.language ?? null,
+    ...(capabilities.jsx === true ? {jsx: true} : {}),
+  };
 }
 
 function rowIdentity(lines: LineMap, line: number): string {

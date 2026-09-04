@@ -1,0 +1,2 @@
+[test]
+preload = ["./internal/router/toolplugin/tests/preload.ts"]

@@ -9,7 +9,6 @@ import (
 	"maps"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -17,6 +16,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/yusing/hpatch/internal/router/toolplugin"
+	"github.com/yusing/hpatch/internal/shellsyntax"
 	"golang.org/x/term"
 	"mvdan.cc/sh/v3/expand"
 	"mvdan.cc/sh/v3/interp"
@@ -222,11 +222,8 @@ func executeExternalShellCommand(ctx context.Context, arguments []string, termin
 	return err
 }
 
-// Source: plugins/shell.mjs:158:160 interpreterBasename.
 func shellInterpreterName(interpreter string) string {
-	base := filepath.Base(strings.ReplaceAll(interpreter, "\\", "/"))
-	base = strings.TrimSuffix(strings.ToLower(base), ".exe")
-	return base
+	return shellsyntax.InterpreterIdentity(interpreter)
 }
 
 func shellEnvironment(environment expand.Environ) []string {

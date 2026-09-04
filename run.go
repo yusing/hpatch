@@ -13,6 +13,7 @@ import (
 	"unicode"
 
 	"github.com/yusing/hpatch/internal/hpatchsyntax"
+	"github.com/yusing/hpatch/internal/verifiedrow"
 )
 
 // Workspace is the filesystem authority for one hpatch operation. Root should
@@ -108,7 +109,7 @@ func textEditCommandError(command instruction, index int, reason failureReason, 
 
 // TextLineCount returns the number of targetable logical rows in text.
 func TextLineCount(text string) int {
-	return len(logicalLines(text))
+	return verifiedrow.Count(text)
 }
 
 // TextReferences renders current LINE:HASH references for valid requested rows.

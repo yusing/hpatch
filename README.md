@@ -246,7 +246,7 @@ capacity or publication failure never changes the operation result.
 - The built-in shell uses the embedded `mvdan/sh`, including bash and sh
   shebangs; other selected interpreters must be available through the
   inherited `PATH` or a direct path.
-- Source builds that regenerate the embedded plugin with `make install` or
+- Source builds that regenerate embedded plugin assets with `make install` or
   `go generate` require Bun. `make install` additionally requires Make.
 
 ## Install from a checkout
@@ -275,6 +275,24 @@ does not discover workspace-local or remote plugins and does not hot-reload
 files. Restart `hpatch-router` after any plugin change. Invalid modules,
 duplicate identities, or an unusable built-in registry fail startup before the
 router listens. The module contract is [`REQ-PLUGIN-001`](doc/spec/plugin.md).
+
+Plugins can import the router-owned portable core directly:
+
+```js
+import {
+  hashLine,
+  lineBounds,
+  parseRowReference,
+} from "hpatch:core/v1";
+```
+
+The versioned module provides verified-row hashing and logical-line bounds,
+compact quoted and row parsing, source-format capabilities, Go lexical helpers,
+and shell-header parsing. It deliberately provides no filesystem, symlink,
+workspace, process, or carrier authority. A plugin that imports an unavailable
+core version fails validation before the router listens. The TypeScript surface
+is declared in
+[`internal/router/toolplugin/core-v1.d.ts`](internal/router/toolplugin/core-v1.d.ts).
 
 ## Shell tool
 

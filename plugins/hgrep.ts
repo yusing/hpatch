@@ -1,11 +1,11 @@
 import {spawn} from "node:child_process";
 
 import type {Tool} from "../internal/router/toolplugin/plugin.d.ts";
+import {formatVerifiedRow} from "hpatch:core/v1";
 import {
   decodeUTF8,
   errorText,
   createExecutorTool,
-  formatHashLine,
   stripOptionalFinalNewline,
   VERIFIED_ROW_LIMIT_DIAGNOSTIC,
   VerifiedRowOutput,
@@ -429,7 +429,7 @@ async function runRipgrep(argumentsValue: string[]): Promise<ComparedOutput> {
     }
     seen.add(key);
     const prefix = `${JSON.stringify(path)}:`;
-    const row = `${prefix}${formatHashLine(lineNumber, line)}`;
+    const row = `${prefix}${formatVerifiedRow(lineNumber, line)}`;
     return output.append(row);
   };
   const takePending = (): Buffer => {
