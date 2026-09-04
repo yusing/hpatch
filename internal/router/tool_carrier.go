@@ -173,42 +173,22 @@ func shellQuoteArgument(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
 }
 
-func hpatchApplyExecInput(patch, report string) string {
-	return hpatchApplyExecMarker +
-		"await tools.apply_patch(" + strconv.Quote(patch) + ");\n" +
-		"text(" + strconv.Quote(report) + ");"
-}
-
-func hpatchDiagnosticExecInput(diagnostic string) string {
-	return "text(" + strconv.Quote(diagnostic) + ");"
-}
-
-func nativeExecArguments(command string) string {
-	return string(mustMarshalJSON(map[string]any{"cmd": command, "login": false}))
-}
-
-func hpatchNativeApplyArguments(patch, report string) string {
-	command := hpatchNativeApplyMarker +
-		"hpatch_apply_output=$(printf %s " + shellQuoteArgument(patch) + " | apply_patch; " +
-		"hpatch_status=$?; printf x; exit \"$hpatch_status\")\n" +
-		"hpatch_status=$?\n" +
-		"hpatch_apply_output=${hpatch_apply_output%x}\n" +
-		"if [ \"$hpatch_status\" -ne 0 ]; then printf %s \"$hpatch_apply_output\"; exit \"$hpatch_status\"; fi\n" +
-		"printf %s " + shellQuoteArgument(report)
-	return nativeExecArguments(command)
-}
-
-func nativeTextExecArguments(text string) string {
-	return nativeExecArguments("printf %s " + shellQuoteArgument(text))
-}
-
-func hpatchNativeReportArguments(report string) string {
-	return nativeExecArguments(hpatchNativeReportMarker + "printf %s " + shellQuoteArgument(report))
-}
-
-func hpatchNativeDiagnosticArguments(diagnostic string) string {
-	command := hpatchNativeDiagnosticMarker + strconv.Quote(diagnostic) + "\nprintf %s " + shellQuoteArgument(diagnostic)
-	return nativeExecArguments(command)
+func hpatchNativeCommand(history hpatchHistory) string {
+	switch {
+	case history.translationError != "":
+		return hpatchNativeDiagnosticMarker + strconv.Quote(history.translationError) +
+			"\nprintf %s " + shellQuoteArgument(history.translationError)
+	case history.applied || history.alreadySatisfied || history.patch == "":
+		return hpatchNativeReportMarker + "printf %s " + shellQuoteArgument(history.report)
+	default:
+		return hpatchNativeApplyMarker +
+			"hpatch_apply_output=$(printf %s " + shellQuoteArgument(history.patch) + " | apply_patch; " +
+			"hpatch_status=$?; printf x; exit \"$hpatch_status\")\n" +
+			"hpatch_status=$?\n" +
+			"hpatch_apply_output=${hpatch_apply_output%x}\n" +
+			"if [ \"$hpatch_status\" -ne 0 ]; then printf %s \"$hpatch_apply_output\"; exit \"$hpatch_status\"; fi\n" +
+			"printf %s " + shellQuoteArgument(history.report)
+	}
 }
 
 func workerCommand(executable string, arguments []string) string {
@@ -276,19 +256,35 @@ func (registry *toolRegistry) directBashExecCommand(arguments []string) (string,
 	return command, true
 }
 
-func (registry *toolRegistry) execCarrierInput(
+func (registry *toolRegistry) execCarrierPayload(
+	kind codeModeCarrierKind,
 	contribution toolContribution,
 	sourceInput string,
 	arguments []string,
 	template string,
 	params map[string]json.RawMessage,
-	resultMetadata ...map[string]json.RawMessage,
+	resultMetadata map[string]json.RawMessage,
 ) (string, error) {
 	command, err := registry.execCarrierCommand(contribution, sourceInput, arguments, template)
 	if err != nil {
 		return "", err
 	}
-	return workerCommandExecInputWithResult(command, params, contribution.PluginID == builtinToolsPluginID && contribution.Name == "shell", resultMetadata...)
+	if _, exists := params["cmd"]; exists {
+		return "", errors.New("exec params must not contain cmd")
+	}
+	if login, exists := params["login"]; exists && !bytes.Equal(bytes.TrimSpace(login), []byte("false")) {
+		return "", errors.New("exec params login must be false")
+	}
+	if kind == codeModeCarrierFunction && len(resultMetadata) != 0 {
+		metadata := string(mustMarshalJSON(resultMetadata))
+		command += "\nhpatch_status=$?\nprintf '\\n%s\\n' " + shellQuoteArgument(metadata) + "\nexit \"$hpatch_status\""
+	}
+	return renderExecCarrier(
+		kind,
+		execCommandArguments(command, params),
+		contribution.PluginID == builtinToolsPluginID && contribution.Name == "shell",
+		resultMetadata,
+	), nil
 }
 
 func (registry *toolRegistry) execCarrierCommand(
@@ -321,36 +317,7 @@ func (registry *toolRegistry) execCarrierCommand(
 	return command, nil
 }
 
-func (registry *toolRegistry) nativeExecCarrierArguments(
-	contribution toolContribution,
-	sourceInput string,
-	arguments []string,
-	template string,
-	params map[string]json.RawMessage,
-	resultMetadata map[string]json.RawMessage,
-) (string, error) {
-	command, err := registry.execCarrierCommand(contribution, sourceInput, arguments, template)
-	if err != nil {
-		return "", err
-	}
-	if len(resultMetadata) != 0 {
-		metadata := string(mustMarshalJSON(resultMetadata))
-		command += "\nhpatch_status=$?\nprintf '\\n%s\\n' " + shellQuoteArgument(metadata) + "\nexit \"$hpatch_status\""
-	}
-	argumentsObject, err := execCommandArguments(command, params)
-	if err != nil {
-		return "", err
-	}
-	return string(mustMarshalJSON(argumentsObject)), nil
-}
-
-func execCommandArguments(command string, params map[string]json.RawMessage) (map[string]json.RawMessage, error) {
-	if _, exists := params["cmd"]; exists {
-		return nil, errors.New("exec params must not contain cmd")
-	}
-	if login, exists := params["login"]; exists && !bytes.Equal(bytes.TrimSpace(login), []byte("false")) {
-		return nil, errors.New("exec params login must be false")
-	}
+func execCommandArguments(command string, params map[string]json.RawMessage) map[string]json.RawMessage {
 	argumentsObject := maps.Clone(params)
 	if argumentsObject == nil {
 		argumentsObject = make(map[string]json.RawMessage)
@@ -359,23 +326,27 @@ func execCommandArguments(command string, params map[string]json.RawMessage) (ma
 	if _, exists := argumentsObject["login"]; !exists {
 		argumentsObject["login"] = mustMarshalJSON(false)
 	}
-	return argumentsObject, nil
+	return argumentsObject
 }
 
-func workerCommandExecInputWithResult(command string, params map[string]json.RawMessage, forwardNativeResult bool, resultMetadata ...map[string]json.RawMessage) (string, error) {
-	arguments, err := execCommandArguments(command, params)
-	if err != nil {
-		return "", err
+func renderExecCarrier(
+	kind codeModeCarrierKind,
+	arguments map[string]json.RawMessage,
+	forwardNativeResult bool,
+	resultMetadata map[string]json.RawMessage,
+) string {
+	encodedArguments := string(mustMarshalJSON(arguments))
+	if kind == codeModeCarrierFunction {
+		return encodedArguments
 	}
 	resultOutput := "text(result.output);"
-	if forwardNativeResult || len(resultMetadata) > 0 && len(resultMetadata[0]) > 0 {
+	if forwardNativeResult || len(resultMetadata) != 0 {
 		resultOutput = "text(JSON.stringify(result));"
-		if len(resultMetadata) > 0 && len(resultMetadata[0]) > 0 {
-			resultOutput = "text(JSON.stringify(Object.assign({}, result, " + string(mustMarshalJSON(resultMetadata[0])) + ")));"
+		if len(resultMetadata) != 0 {
+			resultOutput = "text(JSON.stringify(Object.assign({}, result, " + string(mustMarshalJSON(resultMetadata)) + ")));"
 		}
 	}
-	return "const result = await tools.exec_command(" + string(mustMarshalJSON(arguments)) + ");\n" +
-		resultOutput, nil
+	return "const result = await tools.exec_command(" + encodedArguments + ");\n" + resultOutput
 }
 
 func misuseWarningProjection(warning string) string {
@@ -415,12 +386,14 @@ func (h hpatchHistory) carrierInput() string {
 		return h.carrierPayload
 	}
 	if h.translationError != "" {
-		return hpatchDiagnosticExecInput(h.translationError)
+		return "text(" + strconv.Quote(h.translationError) + ");"
 	}
 	if h.applied || h.alreadySatisfied {
-		return hpatchDiagnosticExecInput(h.report)
+		return "text(" + strconv.Quote(h.report) + ");"
 	}
-	return hpatchApplyExecInput(h.patch, h.report)
+	return hpatchApplyExecMarker +
+		"await tools.apply_patch(" + strconv.Quote(h.patch) + ");\n" +
+		"text(" + strconv.Quote(h.report) + ");"
 }
 
 func (h hpatchHistory) effectiveCarrierKind() codeModeCarrierKind {

@@ -183,7 +183,7 @@ func registeredWorkerInput(t *testing.T, proxy *hpatchProxy, name string, argume
 	if !ok {
 		t.Fatalf("registered worker %q is unavailable", name)
 	}
-	input, err := proxy.registry.execCarrierInput(contribution, "", arguments, "", nil)
+	input, err := proxy.registry.execCarrierPayload(codeModeCarrierCustom, contribution, "", arguments, "", nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -657,7 +657,13 @@ func TestHPatchNativeExecCommandAppliesPatchAndReturnsOnlyReport(t *testing.T) {
 		Command string `json:"cmd"`
 		Login   *bool  `json:"login"`
 	}
-	if err := json.Unmarshal([]byte(hpatchNativeApplyArguments(testTranslatedPatch, testHPatchReport)), &arguments); err != nil {
+	nativeInput := renderExecCarrier(
+		codeModeCarrierFunction,
+		execCommandArguments(hpatchNativeCommand(hpatchHistory{patch: testTranslatedPatch, report: testHPatchReport}), nil),
+		false,
+		nil,
+	)
+	if err := json.Unmarshal([]byte(nativeInput), &arguments); err != nil {
 		t.Fatal(err)
 	}
 	if arguments.Login == nil || *arguments.Login {
@@ -691,7 +697,13 @@ func TestHPatchNativeExecCommandPreservesFailureOutput(t *testing.T) {
 	var arguments struct {
 		Command string `json:"cmd"`
 	}
-	if err := json.Unmarshal([]byte(hpatchNativeApplyArguments(testTranslatedPatch, testHPatchReport)), &arguments); err != nil {
+	nativeInput := renderExecCarrier(
+		codeModeCarrierFunction,
+		execCommandArguments(hpatchNativeCommand(hpatchHistory{patch: testTranslatedPatch, report: testHPatchReport}), nil),
+		false,
+		nil,
+	)
+	if err := json.Unmarshal([]byte(nativeInput), &arguments); err != nil {
 		t.Fatal(err)
 	}
 	bin := t.TempDir()
@@ -863,7 +875,7 @@ func TestReportIssueRunsRouterHookWithoutWorker(t *testing.T) {
 	if history.toolName != reportIssueToolName ||
 		history.carrierName != transform.codeModeToolName ||
 		history.report != "Issue reported." ||
-		history.carrierInput() != hpatchDiagnosticExecInput("Issue reported.") {
+		history.carrierInput() != "text("+strconv.Quote("Issue reported.")+");" {
 		t.Fatalf("report issue history = %+v", history)
 	}
 	body, err := os.ReadFile(updatedBodyPath)
@@ -905,7 +917,7 @@ func TestReportIssueHookFailureDoesNotFailRouting(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := "Issue report was not delivered.\nhpatch: warning: running diagnose hook 1: exit status 9\n"
-	if history.report != want || history.carrierInput() != hpatchDiagnosticExecInput(want) {
+	if history.report != want || history.carrierInput() != "text("+strconv.Quote(want)+");" {
 		t.Fatalf("report issue history = %+v, want report %q", history, want)
 	}
 }
@@ -1458,7 +1470,7 @@ func TestHPatchJSONWrapsPatchAndImmediateReportInCodeModeExec(t *testing.T) {
 	if err := json.Unmarshal(response.Output[0], &carrier); err != nil {
 		t.Fatal(err)
 	}
-	wantInput := hpatchApplyExecInput(testTranslatedPatch, testHPatchReport)
+	wantInput := (hpatchHistory{patch: testTranslatedPatch, report: testHPatchReport}).carrierInput()
 	if carrier.CallID != "call-H" || carrier.Name != "exec" || carrier.Input != wantInput || string(carrier.Future) != `{"kept":true}` {
 		t.Fatalf("translated call = %s", response.Output[0])
 	}
@@ -2120,11 +2132,13 @@ func TestWorkerTemplateExecInputQuotesNestedShellCommand(t *testing.T) {
 		t.Fatal("shell contribution is unavailable")
 	}
 	shellArguments := []string{"python3", `print('{"hello":"world"}')`}
-	carrierInput, err := proxy.registry.execCarrierInput(
+	carrierInput, err := proxy.registry.execCarrierPayload(
+		codeModeCarrierCustom,
 		shell,
 		"",
 		shellArguments,
 		"curl -fsSL URL | {.} | jq",
+		nil,
 		nil,
 	)
 	if err != nil {
@@ -2140,7 +2154,7 @@ func TestWorkerTemplateExecInputQuotesNestedShellCommand(t *testing.T) {
 	}
 
 	for _, template := range []string{"missing", "{.} then {.}"} {
-		if _, err := proxy.registry.execCarrierInput(shell, "", []string{"bash", ""}, template, nil); err == nil {
+		if _, err := proxy.registry.execCarrierPayload(codeModeCarrierCustom, shell, "", []string{"bash", ""}, template, nil, nil); err == nil {
 			t.Fatalf("worker template %q did not reject", template)
 		}
 	}
@@ -2152,7 +2166,7 @@ func TestShellCarrierUsesFixedHelperForBuiltin(t *testing.T) {
 	if !ok {
 		t.Fatal("shell contribution is unavailable")
 	}
-	carrierInput, err := proxy.registry.execCarrierInput(shell, "printf ok", []string{"bash", "printf ok"}, "", nil)
+	carrierInput, err := proxy.registry.execCarrierPayload(codeModeCarrierCustom, shell, "printf ok", []string{"bash", "printf ok"}, "", nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2173,11 +2187,11 @@ func TestWorkerExecInputMergesValidatedParams(t *testing.T) {
 		t.Fatal("shell contribution is unavailable")
 	}
 	const sourceInput = "#!params={\"workdir\":\"/tmp/example\",\"tty\":true,\"login\":false}\nrtk ok\n"
-	carrierInput, err := proxy.registry.execCarrierInput(shell, sourceInput, []string{"bash", "rtk ok\n"}, "", map[string]json.RawMessage{
+	carrierInput, err := proxy.registry.execCarrierPayload(codeModeCarrierCustom, shell, sourceInput, []string{"bash", "rtk ok\n"}, "", map[string]json.RawMessage{
 		"workdir": mustMarshalJSON("/tmp/example"),
 		"tty":     mustMarshalJSON(true),
 		"login":   mustMarshalJSON(false),
-	})
+	}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2195,14 +2209,14 @@ func TestWorkerExecInputMergesValidatedParams(t *testing.T) {
 		!arguments.TTY || arguments.Login {
 		t.Fatalf("translated exec arguments = %+v", arguments)
 	}
-	if _, err := proxy.registry.execCarrierInput(shell, "", []string{"bash", ""}, "", map[string]json.RawMessage{
+	if _, err := proxy.registry.execCarrierPayload(codeModeCarrierCustom, shell, "", []string{"bash", ""}, "", map[string]json.RawMessage{
 		"cmd": mustMarshalJSON("forbidden"),
-	}); err == nil {
+	}, nil); err == nil {
 		t.Fatal("exec params accepted cmd")
 	}
-	if _, err := proxy.registry.execCarrierInput(shell, "", []string{"bash", ""}, "", map[string]json.RawMessage{
+	if _, err := proxy.registry.execCarrierPayload(codeModeCarrierCustom, shell, "", []string{"bash", ""}, "", map[string]json.RawMessage{
 		"login": mustMarshalJSON(true),
-	}); err == nil {
+	}, nil); err == nil {
 		t.Fatal("exec params accepted login true")
 	}
 }
@@ -2213,11 +2227,13 @@ func TestShellExecCarriersForwardNativeResultWithoutPolling(t *testing.T) {
 	if !ok {
 		t.Fatal("shell contribution is unavailable")
 	}
-	carrierInput, err := proxy.registry.execCarrierInput(
+	carrierInput, err := proxy.registry.execCarrierPayload(
+		codeModeCarrierCustom,
 		shell,
 		"",
 		[]string{"python3", "print('ok')"},
 		"before | {.} | after",
+		nil,
 		nil,
 	)
 	if err != nil {
@@ -2234,7 +2250,7 @@ func TestShellExecCarriersForwardNativeResultWithoutPolling(t *testing.T) {
 	if !ok {
 		t.Fatal("configured contribution is unavailable")
 	}
-	plainInput, err := registry.execCarrierInput(plugin, "", []string{"line.txt"}, "", nil)
+	plainInput, err := registry.execCarrierPayload(codeModeCarrierCustom, plugin, "", []string{"line.txt"}, "", nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2309,7 +2325,7 @@ func TestHPatchHistoryDoesNotCrossWorkspacesSharingSessionIdentity(t *testing.T)
 	if name := jsonString(replayed[1], "name"); name != "exec" {
 		t.Fatalf("cross-workspace replay restored tool name %q", name)
 	}
-	if input := jsonString(replayed[1], "input"); input != hpatchApplyExecInput(testTranslatedPatch, testHPatchReport) {
+	if input := jsonString(replayed[1], "input"); input != (hpatchHistory{patch: testTranslatedPatch, report: testHPatchReport}).carrierInput() {
 		t.Fatalf("cross-workspace replay restored input %q", input)
 	}
 
@@ -2457,12 +2473,12 @@ func TestHPatchReportSeparatesHookWarning(t *testing.T) {
 func TestHPatchExecInputQuotesPatchReportAndDiagnostic(t *testing.T) {
 	patch := "*** Begin Patch\n*** Add File: quoted.txt\n+` ${value} \\\"\n*** End Patch\n"
 	report := "in quoted.txt 1:14\n1 ` ${value} \\\"\n"
-	input := hpatchApplyExecInput(patch, report)
+	input := (hpatchHistory{patch: patch, report: report}).carrierInput()
 	if !strings.HasPrefix(input, hpatchApplyExecMarker) || !strings.Contains(input, strconv.Quote(patch)) || !strings.Contains(input, strconv.Quote(report)) {
 		t.Fatalf("unsafe or incomplete apply wrapper: %q", input)
 	}
 	diagnostic := "selector `x` rejected: ${value} " + string([]byte{'\\'})
-	if got := hpatchDiagnosticExecInput(diagnostic); got != "text("+strconv.Quote(diagnostic)+");" {
+	if got := (hpatchHistory{translationError: diagnostic}).carrierInput(); got != "text("+strconv.Quote(diagnostic)+");" {
 		t.Fatalf("diagnostic wrapper = %q", got)
 	}
 }
@@ -2480,7 +2496,7 @@ func TestHPatchAlreadySatisfiedUsesDiagnosticCarrier(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !history.alreadySatisfied || strings.Contains(history.carrierInput(), "apply_patch") ||
-		history.carrierInput() != hpatchDiagnosticExecInput("in file.txt\nlast none\n") {
+		history.carrierInput() != "text("+strconv.Quote("in file.txt\nlast none\n")+");" {
 		t.Fatalf("already-satisfied history = %+v, carrier = %s", history, history.carrierInput())
 	}
 }
@@ -2502,7 +2518,7 @@ func TestHPatchStreamingReplacesLifecycleWithoutChangingCallID(t *testing.T) {
 		t.Fatalf("delta = %q, error %v", visible, err)
 	}
 	visible, err = transform.TransformSSE(mustTestJSON(t, map[string]any{"type": "response.custom_tool_call_input.done", "item_id": "item-H", "input": testHPatchScript}))
-	if err != nil || len(visible) != 2 || !bytes.Contains(visible[0], []byte(`"name":"exec"`)) || !bytes.Contains(visible[0], []byte(`"call_id":"call-H"`)) || !bytes.Contains(visible[1], []byte(jsonQuoted(hpatchApplyExecInput(testTranslatedPatch, testHPatchReport)))) {
+	if err != nil || len(visible) != 2 || !bytes.Contains(visible[0], []byte(`"name":"exec"`)) || !bytes.Contains(visible[0], []byte(`"call_id":"call-H"`)) || !bytes.Contains(visible[1], []byte(jsonQuoted((hpatchHistory{patch: testTranslatedPatch, report: testHPatchReport}).carrierInput()))) {
 		t.Fatalf("input.done = %q, error %v", visible, err)
 	}
 	visible, err = transform.TransformSSE(mustTestJSON(t, map[string]any{"type": "response.output_item.done", "item": item}))

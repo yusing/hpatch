@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -1190,9 +1191,14 @@ func (t *hpatchResponseTransform) translateRegisteredTool(contribution toolContr
 			diagnostic = contribution.Name + " rejected the model input"
 		}
 		if t.nativeTools {
-			payload = nativeTextExecArguments(diagnostic)
+			payload = renderExecCarrier(
+				kind,
+				execCommandArguments("printf %s "+shellQuoteArgument(diagnostic), nil),
+				false,
+				nil,
+			)
 		} else {
-			payload = hpatchDiagnosticExecInput(diagnostic)
+			payload = "text(" + strconv.Quote(diagnostic) + ");"
 		}
 	} else {
 		switch translation.Carrier.Kind {
@@ -1216,25 +1222,15 @@ func (t *hpatchResponseTransform) translateRegisteredTool(contribution toolContr
 					}, arguments...)
 				}
 			}
-			if t.nativeTools {
-				payload, err = t.proxy.registry.nativeExecCarrierArguments(
-					contribution,
-					input,
-					arguments,
-					translation.Carrier.Template,
-					translation.Carrier.Params,
-					resultMetadata,
-				)
-			} else {
-				payload, err = t.proxy.registry.execCarrierInput(
-					contribution,
-					input,
-					arguments,
-					translation.Carrier.Template,
-					translation.Carrier.Params,
-					resultMetadata,
-				)
-			}
+			payload, err = t.proxy.registry.execCarrierPayload(
+				kind,
+				contribution,
+				input,
+				arguments,
+				translation.Carrier.Template,
+				translation.Carrier.Params,
+				resultMetadata,
+			)
 			if err != nil {
 				t.proxy.commentary.cancel(commentaryToken)
 				return hpatchHistory{}, fmt.Errorf("%s exec carrier: %w", contribution.Name, err)

@@ -238,11 +238,13 @@ func TestToolPluginExecTemplateUsesCanonicalWorkerCommand(t *testing.T) {
 	if !ok {
 		t.Fatal("plugin contribution is unavailable")
 	}
-	payload, err := proxy.registry.execCarrierInput(
+	payload, err := proxy.registry.execCarrierPayload(
+		codeModeCarrierCustom,
 		contribution,
 		"",
 		[]string{"--fixed", "template"},
 		"before | {.} | after",
+		nil,
 		nil,
 	)
 	if err != nil {
