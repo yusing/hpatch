@@ -185,6 +185,7 @@ func (c *ctp2Codec) count(value []byte) (int, error) {
 	return count, nil
 }
 
+// decodeCTP2RequestView decodes and analyzes a CTP/2 request's input and tool catalog.
 func decodeCTP2RequestView(fields map[string]json.RawMessage, catalog *responsesToolCatalog) (ctp2RequestView, error) {
 	view := ctp2RequestView{catalog: catalog}
 	var instructions string
@@ -225,6 +226,7 @@ func decodeCTP2RequestView(fields map[string]json.RawMessage, catalog *responses
 	return view, nil
 }
 
+// decodeResponsesInput decodes a Responses input field into its structured form.
 func decodeResponsesInput(raw json.RawMessage) (responsesInput, error) {
 	input := responsesInput{raw: bytes.Clone(raw)}
 	var text string
@@ -247,6 +249,7 @@ func decodeResponsesInput(raw json.RawMessage) (responsesInput, error) {
 	return input, nil
 }
 
+// encode marshals the responsesInput back to JSON.
 func (input responsesInput) encode() (json.RawMessage, error) {
 	if input.text != nil {
 		return json.Marshal(*input.text)
@@ -257,6 +260,7 @@ func (input responsesInput) encode() (json.RawMessage, error) {
 	return bytes.Clone(input.raw), nil
 }
 
+// transformCTP2Input applies transformations to a Responses input array.
 func transformCTP2Input(
 	input *responsesInput,
 	transformString, transformFirstDeveloper func(string) string,
@@ -360,6 +364,7 @@ func transformCTP2DeveloperContent(
 	return encoded, true, err
 }
 
+// transformFirstDeveloperText finds and transforms the first developer message's text content.
 func transformFirstDeveloperText(input *responsesInput, transform func(string) string) (bool, error) {
 	if input == nil || !input.array {
 		return false, nil
@@ -382,6 +387,7 @@ func transformFirstDeveloperText(input *responsesInput, transform func(string) s
 	return false, nil
 }
 
+// transformLastTextContent finds and transforms the last text content part.
 func transformLastTextContent(raw json.RawMessage, transform func(string) string) (json.RawMessage, bool, error) {
 	if transform == nil {
 		return raw, false, nil
@@ -409,6 +415,7 @@ func transformLastTextContent(raw json.RawMessage, transform func(string) string
 	return raw, false, nil
 }
 
+// transformCTP2Content transforms text parts in message content.
 func transformCTP2Content(
 	raw json.RawMessage,
 	transform func(string) string,
@@ -442,6 +449,7 @@ func transformCTP2Content(
 	return encoded, true, err
 }
 
+// decodeResponsesTextParts decodes message content into text parts.
 func decodeResponsesTextParts(raw json.RawMessage) ([]responsesTextPart, bool) {
 	var values []json.RawMessage
 	if json.Unmarshal(raw, &values) != nil || values == nil {
@@ -459,6 +467,7 @@ func decodeResponsesTextParts(raw json.RawMessage) ([]responsesTextPart, bool) {
 	return parts, true
 }
 
+// encodeResponsesTextParts encodes text parts back to JSON.
 func encodeResponsesTextParts(parts []responsesTextPart) (json.RawMessage, error) {
 	values := make([]json.RawMessage, len(parts))
 	for index := range parts {
@@ -467,18 +476,22 @@ func encodeResponsesTextParts(parts []responsesTextPart) (json.RawMessage, error
 	return json.Marshal(values)
 }
 
+// isCTP2TextPart reports whether a type name is any CTP/2 text part.
 func isCTP2TextPart(typeName string) bool {
 	return typeName == "input_text" || typeName == "output_text" || typeName == "text"
 }
 
+// isCTP2InputTextPart reports whether a type name is an input text part.
 func isCTP2InputTextPart(typeName string) bool {
 	return typeName == "input_text" || typeName == "text"
 }
 
+// isCTP2AssistantTextPart reports whether a type name is an assistant text part.
 func isCTP2AssistantTextPart(typeName string) bool {
 	return typeName == "output_text" || typeName == "text"
 }
 
+// projectCTP2AdditionalTools transforms an additional_tools item for CTP/2.
 func projectCTP2AdditionalTools(group *responsesAdditionalTools, transform func(string) string) (json.RawMessage, error) {
 	item := maps.Clone(group.item)
 	if !group.tools.present {
@@ -492,6 +505,7 @@ func projectCTP2AdditionalTools(group *responsesAdditionalTools, transform func(
 	return json.Marshal(item)
 }
 
+// projectCTP2ToolSection transforms a tool section for CTP/2.
 func projectCTP2ToolSection(section *responsesToolSection, transform func(string) string) (json.RawMessage, error) {
 	if section == nil || !section.array {
 		return sectionRawTools(section), nil
@@ -522,6 +536,7 @@ func projectCTP2ToolSection(section *responsesToolSection, transform func(string
 	return json.Marshal(definitions)
 }
 
+// sectionRawTools returns the raw tools JSON from a section.
 func sectionRawTools(section *responsesToolSection) json.RawMessage {
 	if section == nil {
 		return nil

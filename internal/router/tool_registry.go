@@ -419,6 +419,7 @@ func (registry *toolRegistry) modelContributions() []toolContribution {
 	return contributions
 }
 
+// specifications returns the tool specifications for all model-visible contributions.
 func (registry *toolRegistry) specifications() ([]*responsesToolDefinition, error) {
 	if registry == nil {
 		return nil, errors.New("tool registry is unavailable")

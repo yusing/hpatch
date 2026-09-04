@@ -67,6 +67,7 @@ type indentationWrapperProbe struct {
 	candidate        indentationWrapperCandidate
 }
 
+// indentationPolicy returns the indentation policy for a file path.
 func indentationPolicy(path string) indentationPolicyKind {
 	if filepath.Ext(path) == ".go" {
 		return indentationPolicyGo
@@ -77,6 +78,7 @@ func indentationPolicy(path string) indentationPolicyKind {
 	return indentationPolicyReject
 }
 
+// detectIndentationCandidate detects if a replacement is an indentation correction candidate.
 func detectIndentationCandidate(baseline string, selected targetSpan, replacement string) (indentationCandidate, bool) {
 	if !selected.linewise {
 		return indentationCandidate{}, false
@@ -90,6 +92,7 @@ func detectIndentationCandidate(baseline string, selected targetSpan, replacemen
 	return detectIndentationWrapperCandidate(baseline, selected, replacement)
 }
 
+// detectIndentationWrapperCandidate detects if a replacement needs wrapper indentation correction.
 func detectIndentationWrapperCandidate(baseline string, selected targetSpan, replacement string) (indentationCandidate, bool) {
 	selectedLines := logicalLines(baseline[selected.start:selected.end])
 	if len(selectedLines) != 1 {

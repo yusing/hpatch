@@ -77,6 +77,7 @@ func recoveryCommands(script string) []recoveryCommandReference {
 	return commands
 }
 
+// recoveryCommandPartsOf parses a command header and frame into recovery command parts.
 func recoveryCommandPartsOf(header string, frame hpatchsyntax.CommandFrame) recoveryCommandParts {
 	operation, operands := recoveryToken(header)
 	if operation != "type" && operation != "add" {

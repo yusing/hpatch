@@ -56,10 +56,12 @@ func fixChangedLineWhitespace(content string, edits []baselineEdit, offsets *for
 	return string(result), deletions
 }
 
+// isGitDefaultBinary detects if content appears to be binary using Git's heuristic.
 func isGitDefaultBinary(content string) bool {
 	return strings.IndexByte(content[:min(len(content), gitBinaryProbeSize)], 0) >= 0
 }
 
+// markReplacementResultLines marks lines that were modified by edits.
 func markReplacementResultLines(changed []bool, lines []logicalLine, edits []baselineEdit, offsets *formattedOffsetMap) {
 	baselineOffset := 0
 	renderedOffset := 0
@@ -94,6 +96,7 @@ func markReplacementResultLines(changed []bool, lines []logicalLine, edits []bas
 	}
 }
 
+// newWhitespaceOffsetMap creates an offset map for whitespace deletions.
 func newWhitespaceOffsetMap(contentLength int, deletions []whitespaceDeletion) *formattedOffsetMap {
 	removed := 0
 	for _, deletion := range deletions {

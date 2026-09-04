@@ -287,6 +287,7 @@ func (s *requestState) providerRecords() []captureRecord {
 	return slices.Clone(s.providers)
 }
 
+// observedUsage retrieves the provider usage observation for a specific attempt.
 func (s *requestState) observedUsage(boundary string, attempt uint64) *ProviderUsage {
 	if boundary != "provider" {
 		return nil

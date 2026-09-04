@@ -150,6 +150,7 @@ func subagentCallCommentary(
 	return assistantCommentaryMessage(id, builder.String()), true
 }
 
+// tokenUsageCommentary creates a commentary message about token usage if observed.
 func tokenUsageCommentary(response []byte, counts tokenCounts, observed bool) map[string]json.RawMessage {
 	if !observed {
 		return nil
@@ -172,6 +173,7 @@ func tokenUsageCommentary(response []byte, counts tokenCounts, observed bool) ma
 	return assistantCommentaryMessage(id, text)
 }
 
+// responseWithTokenUsageCommentary extracts a response object and token usage commentary.
 func responseWithTokenUsageCommentary(response []byte, counts tokenCounts, usageObserved bool) (
 	map[string]json.RawMessage,
 	map[string]json.RawMessage,

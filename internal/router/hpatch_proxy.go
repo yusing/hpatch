@@ -244,6 +244,7 @@ func (t *hpatchResponseTransform) Close() {
 	}
 }
 
+// observeResponseUsage records provider-authoritative token usage for this response.
 func (t *hpatchResponseTransform) observeResponseUsage(counts tokenCounts) {
 	t.usageCounts = counts
 	t.usageObserved = true
@@ -528,6 +529,7 @@ func replaceNativeTools(fields map[string]json.RawMessage, catalog *responsesToo
 	return nativeExecCommandToolName, true, nil
 }
 
+// findAdditionalToolsApplyPatch locates the Code Mode exec tool in additional_tools.
 func findAdditionalToolsApplyPatch(catalog *responsesToolCatalog, installedNames map[string]struct{}) (*additionalToolsApplyPatchOwner, error) {
 	if catalog.inputObjectsErr != nil && catalog.inputItems == nil {
 		return nil, nil //nolint:nilerr // Unsupported input shapes are simply not Code Mode owners.
@@ -631,6 +633,7 @@ func codeModeToolChoiceRestricted(fields map[string]json.RawMessage, codeToolNam
 	return choice.Type == "custom" && choice.Name == codeToolName
 }
 
+// exposeStandaloneHPatch exposes standalone hpatch tools in the tool catalog.
 func exposeStandaloneHPatch(fields map[string]json.RawMessage, catalog *responsesToolCatalog, owner *additionalToolsApplyPatchOwner, installedTools []*responsesToolDefinition) error {
 	owner.section.tools[owner.toolIndex].setDescription(owner.strippedDescription)
 	shellIndex := slices.IndexFunc(installedTools, func(tool *responsesToolDefinition) bool {
@@ -675,6 +678,7 @@ func customFreeformTool(name, description string) map[string]json.RawMessage {
 	return mustToolDefinitionFields(tool)
 }
 
+// mustToolDefinitionFields converts a tool parameter to its JSON field map.
 func mustToolDefinitionFields(tool responses.ToolUnionParam) map[string]json.RawMessage {
 	var fields map[string]json.RawMessage
 	if err := json.Unmarshal(mustMarshalJSON(tool), &fields); err != nil {

@@ -41,6 +41,7 @@ func (e *indentationCorrectionError) diagnostic() string {
 	return output.String()
 }
 
+// detectIndentationCorrection checks if a replacement is an indentation-only change to preserved text.
 func detectIndentationCorrection(baseline string, selected targetSpan, replacement string) *indentationCorrectionError {
 	if !selected.linewise {
 		return nil
@@ -76,6 +77,7 @@ func detectIndentationCorrection(baseline string, selected targetSpan, replaceme
 	}
 }
 
+// splitIndent splits a line into its leading whitespace and remaining content.
 func splitIndent(line string) (string, string) {
 	end := 0
 	for end < len(line) && (line[end] == ' ' || line[end] == '\t') {
@@ -84,6 +86,7 @@ func splitIndent(line string) (string, string) {
 	return line[:end], line[end:]
 }
 
+// hostRejectionsOf extracts structured host rejections from an error.
 func hostRejectionsOf(err error) []HostRejection {
 	commands := commandsOf(err)
 	rejections := make([]HostRejection, 0, len(commands))
@@ -113,6 +116,7 @@ func hostRejectionsOf(err error) []HostRejection {
 	return rejections
 }
 
+// hostFailuresOf extracts actionable host failures from an error.
 func hostFailuresOf(err error, failureStage string) []HostFailure {
 	commands := commandsOf(err)
 	if len(commands) == 0 {
@@ -154,6 +158,7 @@ func hostFailuresOf(err error, failureStage string) []HostFailure {
 	return failures
 }
 
+// hostTargetName converts a target variant to its host-facing name.
 func hostTargetName(target targetVariant) string {
 	index := int(target) - 1
 	if index < 0 || index >= len(targetVariantNames) {
@@ -162,6 +167,7 @@ func hostTargetName(target targetVariant) string {
 	return targetVariantNames[index]
 }
 
+// hostReasonName converts a failure reason to its host-facing name.
 func hostReasonName(reason failureReason) string {
 	if int(reason) < 0 || int(reason) >= len(failureReasonNames) {
 		return failureReasonNames[reasonOther]
@@ -190,6 +196,7 @@ func (w *workspace) renderFinal(ctx context.Context) error {
 	return groupValidationFailures(failures)
 }
 
+// renderContent renders the final file content with formatting and validation.
 func (file *fileState) renderContent(ctx context.Context) ([]*commandError, error) {
 	if err := file.editor.renderIndentation(ctx, file.path); err != nil {
 		return nil, err
@@ -285,6 +292,7 @@ func (file *fileState) renderContent(ctx context.Context) ([]*commandError, erro
 	return failures, nil
 }
 
+// languageSyntaxForPath determines the language and syntax checker for a file path.
 func languageSyntaxForPath(path string) (indentationWrapperLanguage, string, bool) {
 	switch filepath.Ext(path) {
 	case ".py":
@@ -298,6 +306,7 @@ func languageSyntaxForPath(path string) (indentationWrapperLanguage, string, boo
 	}
 }
 
+// languageSyntaxFailureMessage formats a language syntax failure as a message.
 func languageSyntaxFailureMessage(name string, failure languageSyntaxFailure) string {
 	if failure.missing {
 		if failure.kind != "" {
@@ -325,6 +334,7 @@ type goSyntaxFailure struct {
 	counted bool
 }
 
+// goSyntaxFailures extracts Go syntax failures from a scanner or parser error.
 func goSyntaxFailures(err error) []goSyntaxFailure {
 	if scannerFailures, ok := errors.AsType[scanner.ErrorList](err); ok && len(scannerFailures) != 0 {
 		failures := make([]goSyntaxFailure, 0, len(scannerFailures))
@@ -346,6 +356,7 @@ func goSyntaxFailures(err error) []goSyntaxFailure {
 	return []goSyntaxFailure{{message: err.Error(), counted: true}}
 }
 
+// parseGoSyntaxFailures parses Go source and returns syntax failures.
 func parseGoSyntaxFailures(source string) []goSyntaxFailure {
 	_, err := parser.ParseFile(
 		token.NewFileSet(),
@@ -359,6 +370,7 @@ func parseGoSyntaxFailures(source string) []goSyntaxFailure {
 	return goSyntaxFailures(err)
 }
 
+// goSyntaxFailuresForSource parses source and merges failures with a fallback error.
 func goSyntaxFailuresForSource(source string, fallback error) []goSyntaxFailure {
 	failures := parseGoSyntaxFailures(source)
 	if len(failures) == 0 {
@@ -389,6 +401,7 @@ func goSyntaxFailuresForSource(source string, fallback error) []goSyntaxFailure 
 	return failures
 }
 
+// discoverGoSyntaxFailures iteratively discovers Go syntax failures by blanking lines.
 func discoverGoSyntaxFailures(ctx context.Context, content string, initial error) []goSyntaxFailure {
 	candidate := content
 	fallback := initial
@@ -432,6 +445,7 @@ func discoverGoSyntaxFailures(ctx context.Context, content string, initial error
 	}
 }
 
+// collapseGoSyntaxCascades collapses cascading Go syntax failures to their root causes.
 func collapseGoSyntaxCascades(ctx context.Context, content string, failures []goSyntaxFailure) []goSyntaxFailure {
 	locations := make([]goSyntaxFailure, 0, len(failures))
 	collapsed := make([]goSyntaxFailure, 0, len(failures))
@@ -473,6 +487,7 @@ func collapseGoSyntaxCascades(ctx context.Context, content string, failures []go
 	return collapsed
 }
 
+// goSyntaxFailureLinesAfterBlank returns the failure lines that remain after blanking a repair line.
 func goSyntaxFailureLinesAfterBlank(content string, repairLine int) map[int]struct{} {
 	candidate, ok := blankGeneratedLine(content, repairLine)
 	if !ok {
@@ -485,6 +500,7 @@ func goSyntaxFailureLinesAfterBlank(content string, repairLine int) map[int]stru
 	return lines
 }
 
+// collapseLanguageSyntaxCascades collapses cascading language syntax failures to their root causes.
 func collapseLanguageSyntaxCascades(ctx context.Context, content string, language indentationWrapperLanguage, failures []languageSyntaxFailure) []languageSyntaxFailure {
 	locations := make([]languageSyntaxFailure, 0, len(failures))
 	collapsed := make([]languageSyntaxFailure, 0, len(failures))
@@ -524,6 +540,7 @@ func collapseLanguageSyntaxCascades(ctx context.Context, content string, languag
 	return collapsed
 }
 
+// languageSyntaxFailureLinesAfterBlank returns the failure lines that remain after blanking a repair line.
 func languageSyntaxFailureLinesAfterBlank(content string, language indentationWrapperLanguage, repairLine int) map[int]struct{} {
 	candidate, ok := blankGeneratedLine(content, repairLine)
 	if !ok {
@@ -536,6 +553,7 @@ func languageSyntaxFailureLinesAfterBlank(content string, language indentationWr
 	return lines
 }
 
+// blankGeneratedLine blanks the content of a specific line in the generated source.
 func blankGeneratedLine(content string, line int) (string, bool) {
 	lines := renderedLines(content)
 	if line < 1 || line > len(lines) {
@@ -554,6 +572,7 @@ type validationFailureGroupKey struct {
 	path    string
 }
 
+// groupValidationFailures groups and deduplicates validation failures by command and location.
 func groupValidationFailures(failures []*commandError) error {
 	if len(failures) == 0 {
 		return nil
@@ -651,6 +670,7 @@ type syntaxFailureLocation struct {
 	valueLine   int
 }
 
+// syntaxFailureLocation localizes a Go syntax failure to the causative edit.
 func (e *editor) syntaxFailureLocation(content string, line, column int) syntaxFailureLocation {
 	return e.syntaxFailureLocationWith(content, line, column, func(source string) bool {
 		_, err := format.Source([]byte(source))
@@ -658,12 +678,14 @@ func (e *editor) syntaxFailureLocation(content string, line, column int) syntaxF
 	})
 }
 
+// languageSyntaxFailureLocation localizes a language syntax failure to the causative edit.
 func (e *editor) languageSyntaxFailureLocation(content string, line, column int, language indentationWrapperLanguage) syntaxFailureLocation {
 	return e.syntaxFailureLocationWith(content, line, column, func(source string) bool {
 		return len(findLanguageSyntaxFailures(source, language)) == 0
 	})
 }
 
+// syntaxFailureLocationWith localizes a syntax failure using a custom validity checker.
 func (e *editor) syntaxFailureLocationWith(content string, line, column int, valid func(string) bool) syntaxFailureLocation {
 	generatedOffset := generatedByteOffset(content, line, column)
 	groups := e.syntaxEditGroups(generatedOffset, len(content))
@@ -696,10 +718,12 @@ func (e *editor) syntaxFailureLocationWith(content string, line, column int, val
 	return syntaxLocationOf(closestSyntaxEditGroup(groups))
 }
 
+// syntaxLocationOf extracts a syntaxFailureLocation from a syntaxEditGroup.
 func syntaxLocationOf(group syntaxEditGroup) syntaxFailureLocation {
 	return syntaxFailureLocation{origin: group.origin, replacement: group.replacement, valueLine: group.valueLine}
 }
 
+// syntaxEditGroups groups edits by command and computes their distance from a failure offset.
 func (e *editor) syntaxEditGroups(generatedOffset, contentLength int) []syntaxEditGroup {
 	indices := make(map[int]int)
 	var groups []syntaxEditGroup
@@ -734,6 +758,7 @@ func (e *editor) syntaxEditGroups(generatedOffset, contentLength int) []syntaxEd
 	return groups
 }
 
+// replacementValueLine returns the 1-based value line number for an offset within a replacement.
 func replacementValueLine(replacement string, offset int) int {
 	lines := physicalValueLines(replacement)
 	if len(lines) == 0 {
@@ -743,6 +768,7 @@ func replacementValueLine(replacement string, offset int) int {
 	return lineNumberAt(lines, offset)
 }
 
+// physicalValueLines splits a value into physical lines for multiline value reporting.
 func physicalValueLines(value string) []logicalLine {
 	physical := hpatchsyntax.SplitPhysicalLines(value)
 	lines := make([]logicalLine, 0, len(physical))
@@ -759,6 +785,7 @@ func physicalValueLines(value string) []logicalLine {
 	return lines
 }
 
+// closestSyntaxEditGroup returns the edit group closest to a syntax failure.
 func closestSyntaxEditGroup(groups []syntaxEditGroup) syntaxEditGroup {
 	return slices.MinFunc(groups, func(first, second syntaxEditGroup) int {
 		if order := cmp.Compare(first.distance, second.distance); order != 0 {
@@ -768,6 +795,7 @@ func closestSyntaxEditGroup(groups []syntaxEditGroup) syntaxEditGroup {
 	})
 }
 
+// contentWithSyntaxGroups renders content with only the edits from the given groups.
 func (e *editor) contentWithSyntaxGroups(groups []syntaxEditGroup) string {
 	var edits []baselineEdit
 	for _, group := range groups {
@@ -776,6 +804,7 @@ func (e *editor) contentWithSyntaxGroups(groups []syntaxEditGroup) string {
 	return e.contentWithEdits(edits)
 }
 
+// generatedByteOffset converts a line and column position to a byte offset.
 func generatedByteOffset(content string, line, column int) int {
 	lines := renderedLines(content)
 	if line < 1 || line > len(lines) {
@@ -800,6 +829,7 @@ type formattedOffsetMap struct {
 	subsequent   *formattedOffsetMap
 }
 
+// newFormattedOffsetMap creates a mapping between pre- and post-formatted Go source offsets.
 func newFormattedOffsetMap(before, after string) (*formattedOffsetMap, error) {
 	beforeTokens := scanFormatTokens(before)
 	afterTokens := scanFormatTokens(after)
@@ -835,6 +865,7 @@ func newFormattedOffsetMap(before, after string) (*formattedOffsetMap, error) {
 	}, nil
 }
 
+// scanFormatTokens lexically scans Go source into format tokens for offset mapping.
 func scanFormatTokens(source string) []formatToken {
 	files := token.NewFileSet()
 	file := files.AddFile("", -1, len(source))
@@ -863,6 +894,7 @@ func scanFormatTokens(source string) []formatToken {
 	}
 }
 
+// mapOffset maps a pre-transformation offset to its post-transformation position.
 func (m *formattedOffsetMap) mapOffset(offset int) int {
 	if m == nil {
 		return offset
@@ -876,6 +908,7 @@ func (m *formattedOffsetMap) mapOffset(offset int) int {
 	return m.subsequent.mapOffset(mapped)
 }
 
+// mapDeletedOffset maps an offset through whitespace deletions.
 func (m *formattedOffsetMap) mapDeletedOffset(offset int) int {
 	offset = min(max(offset, 0), m.beforeLength)
 	removed := 0
@@ -891,6 +924,7 @@ func (m *formattedOffsetMap) mapDeletedOffset(offset int) int {
 	return offset - removed
 }
 
+// mapTokenOffset maps an offset through token-based formatting changes.
 func (m *formattedOffsetMap) mapTokenOffset(offset int) int {
 	offset = min(max(offset, 0), m.beforeLength)
 	next := sort.Search(len(m.before), func(index int) bool {
@@ -925,6 +959,7 @@ func (m *formattedOffsetMap) mapTokenOffset(offset int) int {
 	return afterStart + (offset-beforeStart)*(afterEnd-afterStart)/(beforeEnd-beforeStart)
 }
 
+// formatCommandError creates a command error for validation failures.
 func formatCommandError(file *fileState, origin editOrigin, reason failureReason, message, repair string, generatedLine, generatedColumn, valueLine int) *commandError {
 	category := ""
 	if origin.operation != "" {

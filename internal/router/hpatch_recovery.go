@@ -68,6 +68,7 @@ func hpatchRecoveryReferences(
 	return output.String(), true
 }
 
+// hpatchRecoveryCommandSummary creates a summary string for a recovery command reference.
 func hpatchRecoveryCommandSummary(command recoveryCommandReference) string {
 	summary := command.parts.operation
 	if command.parts.target != "" {

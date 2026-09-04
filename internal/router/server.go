@@ -400,6 +400,7 @@ func (f *requestFinalization) classifyCopyError(err error) {
 	}
 }
 
+// executeRequest executes a parsed Responses request through the router pipeline.
 func executeRequest(
 	ctx context.Context,
 	executionCtx context.Context,

@@ -32,6 +32,7 @@ const (
 
 type codeModeCarrierCatalog map[string]codeModeCarrierKind
 
+// buildCodeModeCarrierCatalog builds a catalog of Code Mode carrier tools from the tool catalog.
 func buildCodeModeCarrierCatalog(tools *responsesToolCatalog, registry *toolRegistry) (codeModeCarrierCatalog, error) {
 	catalog := make(codeModeCarrierCatalog)
 	add := func(tool *responsesToolDefinition) error {
@@ -165,6 +166,7 @@ func shellQuoteArgument(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
 }
 
+// hpatchNativeCommand generates a native shell command for an hpatch history entry.
 func hpatchNativeCommand(history hpatchHistory) string {
 	switch {
 	case history.translationError != "":
@@ -248,6 +250,7 @@ func (registry *toolRegistry) directBashExecCommand(arguments []string) (string,
 	return command, true
 }
 
+// execCarrierPayload generates the payload for an exec carrier tool call.
 func (registry *toolRegistry) execCarrierPayload(
 	kind codeModeCarrierKind,
 	contribution toolContribution,
@@ -309,6 +312,7 @@ func (registry *toolRegistry) execCarrierCommand(
 	return command, nil
 }
 
+// execCommandArguments creates the arguments map for an exec_command call.
 func execCommandArguments(command string, params map[string]json.RawMessage) map[string]json.RawMessage {
 	argumentsObject := maps.Clone(params)
 	if argumentsObject == nil {
@@ -321,6 +325,7 @@ func execCommandArguments(command string, params map[string]json.RawMessage) map
 	return argumentsObject
 }
 
+// renderExecCarrier renders an exec carrier payload from arguments and metadata.
 func renderExecCarrier(
 	kind codeModeCarrierKind,
 	arguments map[string]json.RawMessage,

@@ -54,6 +54,7 @@ type logicalLine struct {
 	fullEnd    int
 }
 
+// resolveTarget resolves a target specification to baseline byte offsets.
 func (e *editor) resolveTarget(target targetSpec) ([]targetSpan, error) {
 	switch target.kind {
 	case targetLine:
@@ -131,6 +132,7 @@ func (e *editor) resolveTarget(target targetSpec) ([]targetSpan, error) {
 	}
 }
 
+// resolveRow resolves a row reference to a baseline logical line.
 func (e *editor) resolveRow(reference rowReference) (logicalLine, error) {
 	resolved, baselineErr := resolveRow(e.baseline, reference)
 	if baselineErr == nil || len(e.edits) == 0 {
@@ -166,6 +168,7 @@ func (e *editor) resolveRow(reference rowReference) (logicalLine, error) {
 	return logicalLine{}, baselineErr
 }
 
+// renderedBaselineLine computes the rendered offsets of a baseline line after edits.
 func (e *editor) renderedBaselineLine(line logicalLine) (int, int, bool) {
 	for _, edit := range e.orderedEdits() {
 		if edit.start == edit.end {
@@ -183,6 +186,7 @@ func (e *editor) renderedBaselineLine(line logicalLine) (int, int, bool) {
 	return start, end, true
 }
 
+// renderedBaselineBoundary maps a baseline offset to its rendered position after edits.
 func (e *editor) renderedBaselineBoundary(offset int, includeInsertions bool) int {
 	rendered := offset
 	for _, edit := range e.orderedEdits() {
@@ -199,6 +203,7 @@ func (e *editor) renderedBaselineBoundary(offset int, includeInsertions bool) in
 	return rendered
 }
 
+// resolveRow resolves a row reference in an immutable baseline.
 func resolveRow(baseline string, reference rowReference) (logicalLine, error) {
 	lines := logicalLines(baseline)
 	if reference.line >= 1 && reference.line <= len(lines) {
@@ -255,6 +260,7 @@ func resolveRow(baseline string, reference rowReference) (logicalLine, error) {
 	))
 }
 
+// applyMutation applies a type or add mutation to the baseline.
 func (e *editor) applyMutation(operation string, target targetSpec, value string, origin editOrigin, command instruction, path string) error {
 	spans, err := e.resolveTarget(target)
 	if err != nil {
@@ -306,6 +312,7 @@ func (e *editor) applyMutation(operation string, target targetSpec, value string
 	return nil
 }
 
+// initialize initializes a new file's content.
 func (e *editor) initialize(value string, origin editOrigin) {
 	e.baseline = ""
 	e.edits = nil
@@ -326,6 +333,7 @@ func (e *editor) initialize(value string, origin editOrigin) {
 	e.lastOrigin = origin
 }
 
+// recordEdits validates and records edits, checking for conflicts.
 func (e *editor) recordEdits(candidates []baselineEdit) error {
 	pending := slices.Clone(e.edits)
 	additions := make([]baselineEdit, 0, len(candidates))
@@ -360,6 +368,7 @@ func (e *editor) recordEdits(candidates []baselineEdit) error {
 	return nil
 }
 
+// describeEditConflict describes a conflict between two baseline edits.
 func describeEditConflict(baseline string, first, second baselineEdit) (string, bool) {
 	firstInsertion := first.start == first.end
 	secondInsertion := second.start == second.end
@@ -391,6 +400,7 @@ func describeEditConflict(baseline string, first, second baselineEdit) (string, 
 	}
 }
 
+// baselineLine returns the 1-based line number for a baseline offset.
 func baselineLine(text string, offset int) int {
 	lines := logicalLines(text)
 	for index, line := range lines {
@@ -404,6 +414,7 @@ func baselineLine(text string, offset int) int {
 	return len(lines)
 }
 
+// firstEdit returns the first edit if one exists.
 func (e *editor) firstEdit() (baselineEdit, bool) {
 	if len(e.edits) == 0 {
 		return baselineEdit{}, false
@@ -411,10 +422,12 @@ func (e *editor) firstEdit() (baselineEdit, bool) {
 	return e.edits[0], true
 }
 
+// orderedEdits returns edits sorted by baseline offset.
 func (e *editor) orderedEdits() []baselineEdit {
 	return orderedBaselineEdits(e.edits)
 }
 
+// orderedBaselineEdits sorts baseline edits by offset and sequence.
 func orderedBaselineEdits(source []baselineEdit) []baselineEdit {
 	edits := slices.Clone(source)
 	slices.SortFunc(edits, func(first, second baselineEdit) int {
@@ -434,6 +447,7 @@ func orderedBaselineEdits(source []baselineEdit) []baselineEdit {
 	return edits
 }
 
+// content returns the editor's current rendered content.
 func (e *editor) content() string {
 	if e.finalContent != nil {
 		return *e.finalContent
@@ -441,6 +455,7 @@ func (e *editor) content() string {
 	return e.contentWithEdits(e.edits)
 }
 
+// contentWithEdits renders content with a specific set of edits.
 func (e *editor) contentWithEdits(source []baselineEdit) string {
 	edits := orderedBaselineEdits(source)
 	var result strings.Builder
@@ -454,10 +469,12 @@ func (e *editor) contentWithEdits(source []baselineEdit) string {
 	return result.String()
 }
 
+// nonOverlappingLiteralOffsets finds non-overlapping occurrences of literal in text.
 func nonOverlappingLiteralOffsets(text, literal string, limit int) []int {
 	return findLiteralOffsets(text, literal, len(literal), limit)
 }
 
+// findLiteralOffsets finds literal occurrences with a custom advance step.
 func findLiteralOffsets(text, literal string, advance, limit int) []int {
 	var offsets []int
 	for searchFrom := 0; searchFrom <= len(text)-len(literal); {
@@ -475,6 +492,7 @@ func findLiteralOffsets(text, literal string, advance, limit int) []int {
 	return offsets
 }
 
+// logicalLines splits text into logical lines with terminator boundaries.
 func logicalLines(text string) []logicalLine {
 	var lines []logicalLine
 	for start := 0; start < len(text); {
@@ -495,6 +513,7 @@ func logicalLines(text string) []logicalLine {
 	return lines
 }
 
+// lineTerminatorSuffix returns the line terminator suffix of text.
 func lineTerminatorSuffix(text string) string {
 	switch {
 	case strings.HasSuffix(text, "\r\n"):
@@ -508,6 +527,7 @@ func lineTerminatorSuffix(text string) string {
 	}
 }
 
+// endsWithLineTerminator reports whether text ends with a line terminator.
 func endsWithLineTerminator(text string) bool {
 	return lineTerminatorSuffix(text) != ""
 }

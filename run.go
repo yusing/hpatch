@@ -92,6 +92,7 @@ func ParseTargetIdentity(source string, mutationValueFollows bool) (TargetIdenti
 	return TargetIdentity{target: target}, trailing, nil
 }
 
+// textEditCommandError creates a command error for text editing failures.
 func textEditCommandError(command instruction, index int, reason failureReason, message string) *commandError {
 	return &commandError{
 		Target:    command.target.variant(),
@@ -259,6 +260,7 @@ func RewriteTargetAliasesWithDiagnostics(script string, aliases []TargetAlias) (
 	return rewritten.String(), diagnostics, nil
 }
 
+// targetAliasRelation determines the relation between a target and prior aliases.
 func targetAliasRelation(path string, target targetSpec, aliases []TargetAlias) TargetAliasRelation {
 	relation := TargetAliasRelationNone
 	for _, alias := range aliases {
@@ -278,6 +280,7 @@ func targetAliasRelation(path string, target targetSpec, aliases []TargetAlias) 
 	return relation
 }
 
+// rowSpanRelation computes the spatial relation between two row targets.
 func rowSpanRelation(target, prior targetSpec) TargetAliasRelation {
 	targetStart, targetEnd := target.start.line, target.start.line
 	if target.kind == targetRange {
@@ -302,6 +305,7 @@ func rowSpanRelation(target, prior targetSpec) TargetAliasRelation {
 	}
 }
 
+// targetAliasRelationRank returns the priority rank of an alias relation.
 func targetAliasRelationRank(relation TargetAliasRelation) int {
 	switch relation {
 	case TargetAliasRelationExact:
@@ -429,6 +433,7 @@ func ApplyForHostRoot(ctx context.Context, root *os.Root, script, dataDirectory 
 	return ApplyForHost(ctx, Workspace{Root: root}, script, dataDirectory)
 }
 
+// finishHostChange completes a host translation with outcome metadata and hooks.
 func finishHostChange(ctx context.Context, dataDirectory, script string, result HostTranslation, failureStage string, err error, applied bool) (HostTranslation, error) {
 	result.Attempt, _ = attemptMetadataFromContext(ctx)
 	if err != nil {
@@ -477,6 +482,7 @@ func finishHostChange(ctx context.Context, dataDirectory, script string, result 
 	return result, nil
 }
 
+// hostTranslationResult initializes a host translation result from evaluation output.
 func hostTranslationResult(changes []change, report string, aliases []TargetAlias, evaluated bool) HostTranslation {
 	files := len(changes)
 	return HostTranslation{
@@ -486,6 +492,7 @@ func hostTranslationResult(changes []change, report string, aliases []TargetAlia
 	}
 }
 
+// translateHostResult translates changes to a patch and updates the result.
 func translateHostResult(ctx context.Context, changes []change, result *HostTranslation) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -504,6 +511,7 @@ type filesystemWorkspace struct {
 	cwd  string
 }
 
+// evaluateScript evaluates a script in the given workspace.
 func evaluateScript(ctx context.Context, workspace Workspace, script string) ([]change, filesystemWorkspace, string, []TargetAlias, error) {
 	filesystem, err := validateWorkspace(ctx, workspace)
 	if err != nil {
@@ -512,6 +520,7 @@ func evaluateScript(ctx context.Context, workspace Workspace, script string) ([]
 	return evaluateScriptInFilesystem(ctx, filesystem, script)
 }
 
+// evaluateScriptAt evaluates a script in the given directory.
 func evaluateScriptAt(ctx context.Context, directory, script string) ([]change, filesystemWorkspace, string, []TargetAlias, error) {
 	filesystem, err := validateHostDirectory(ctx, directory)
 	if err != nil {
@@ -520,6 +529,7 @@ func evaluateScriptAt(ctx context.Context, directory, script string) ([]change, 
 	return evaluateScriptInFilesystem(ctx, filesystem, script)
 }
 
+// evaluateScriptInFilesystem evaluates a script against a filesystem workspace.
 func evaluateScriptInFilesystem(ctx context.Context, filesystem filesystemWorkspace, script string) ([]change, filesystemWorkspace, string, []TargetAlias, error) {
 	program, err := parse(script)
 	if err != nil {
@@ -548,6 +558,7 @@ func evaluateScriptInFilesystem(ctx context.Context, filesystem filesystemWorksp
 	return changes, filesystem, report, aliases, nil
 }
 
+// validateWorkspace validates and normalizes a workspace configuration.
 func validateWorkspace(ctx context.Context, workspace Workspace) (filesystemWorkspace, error) {
 	if ctx == nil {
 		return filesystemWorkspace{}, fmt.Errorf("context is nil")
@@ -576,6 +587,7 @@ func validateWorkspace(ctx context.Context, workspace Workspace) (filesystemWork
 	return filesystemWorkspace{root: workspace.Root, cwd: cwd}, nil
 }
 
+// validateHostDirectory validates and normalizes a host directory path.
 func validateHostDirectory(ctx context.Context, directory string) (filesystemWorkspace, error) {
 	if ctx == nil {
 		return filesystemWorkspace{}, fmt.Errorf("context is nil")
@@ -601,6 +613,7 @@ func validateHostDirectory(ctx context.Context, directory string) (filesystemWor
 	return filesystemWorkspace{cwd: directory}, nil
 }
 
+// resolvePath resolves a script path against the workspace root.
 func (w filesystemWorkspace) resolvePath(path string) (string, error) {
 	if w.root == nil {
 		path = filepath.Clean(path)
@@ -628,6 +641,7 @@ func (w filesystemWorkspace) resolvePath(path string) (string, error) {
 	return path, nil
 }
 
+// hostPath converts a resolved path to a host filesystem path.
 func (w filesystemWorkspace) hostPath(path string) string {
 	if filepath.IsAbs(path) {
 		return path
@@ -635,6 +649,7 @@ func (w filesystemWorkspace) hostPath(path string) string {
 	return filepath.Join(w.cwd, path)
 }
 
+// stat returns file information for the given path.
 func (w filesystemWorkspace) stat(path string) (fs.FileInfo, error) {
 	if w.root == nil {
 		return os.Stat(w.hostPath(path))
@@ -642,6 +657,7 @@ func (w filesystemWorkspace) stat(path string) (fs.FileInfo, error) {
 	return w.root.Stat(path)
 }
 
+// open opens the file at the given path.
 func (w filesystemWorkspace) open(path string) (*os.File, error) {
 	if w.root == nil {
 		return os.Open(w.hostPath(path))
@@ -649,6 +665,7 @@ func (w filesystemWorkspace) open(path string) (*os.File, error) {
 	return w.root.Open(path)
 }
 
+// sanitizeDiagnostic sanitizes a diagnostic message for safe display.
 func sanitizeDiagnostic(message string) string {
 	var sanitized strings.Builder
 	for _, character := range message {
@@ -665,10 +682,12 @@ func sanitizeDiagnostic(message string) string {
 	return sanitized.String()
 }
 
+// failureDiagnostic formats a failure message as a diagnostic.
 func failureDiagnostic(message string) string {
 	return fmt.Sprintf("hpatch: %s\n", sanitizeDiagnostic(message))
 }
 
+// evaluationDiagnostic formats an evaluation error as a diagnostic with repair context.
 func evaluationDiagnostic(ctx context.Context, err error, dataDirectory string) string {
 	commands := commandsOf(err)
 	if len(commands) == 0 {
@@ -691,6 +710,7 @@ func evaluationDiagnostic(ctx context.Context, err error, dataDirectory string) 
 	return output.String()
 }
 
+// warningDiagnostic formats a warning message as a diagnostic.
 func warningDiagnostic(message string) string {
 	message = sanitizeDiagnostic(message)
 	return fmt.Sprintf("hpatch: warning: %s\n", message)

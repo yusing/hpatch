@@ -202,6 +202,7 @@ func commentaryMessageID(seed string) string {
 	return fmt.Sprintf("msg_hpatch_commentary_%x", digest[:12])
 }
 
+// assistantCommentaryMessage creates an assistant commentary message with the given ID and text.
 func assistantCommentaryMessage(id, text string) map[string]json.RawMessage {
 	encoded := mustMarshalJSON(responses.ResponseOutputMessageParam{
 		ID: id,
@@ -221,6 +222,7 @@ func assistantCommentaryMessage(id, text string) map[string]json.RawMessage {
 	return message
 }
 
+// assistantCommentaryDoneEvent creates a response.output_item.done event for a commentary message.
 func assistantCommentaryDoneEvent(message map[string]json.RawMessage) []byte {
 	return mustMarshalJSON(struct {
 		Type string                     `json:"type"`

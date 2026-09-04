@@ -58,6 +58,7 @@ type workspace struct {
 	exists        pathProbe
 }
 
+// evaluate evaluates the program instructions against the workspace.
 func (p *program) evaluate(ctx context.Context, resolve pathResolver, load fileLoader, exists pathProbe) ([]change, string, []TargetAlias, error) {
 	w := &workspace{
 		paths:    make(map[string]*fileState),
@@ -121,6 +122,7 @@ func (p *program) evaluate(ctx context.Context, resolve pathResolver, load fileL
 	return changes, report, aliases, nil
 }
 
+// independentlyDetectableBaselineFailure reports whether a failure can be detected independently.
 func independentlyDetectableBaselineFailure(reason failureReason) bool {
 	switch reason {
 	case reasonRowMissing, reasonRowStale, reasonOccurrenceMissing, reasonTargetOrder:
@@ -130,6 +132,7 @@ func independentlyDetectableBaselineFailure(reason failureReason) bool {
 	}
 }
 
+// commandFailures wraps one or more command failures as an error.
 func commandFailures(failures []*commandError) error {
 	if len(failures) == 1 {
 		return failures[0]
@@ -137,6 +140,7 @@ func commandFailures(failures []*commandError) error {
 	return &commandGroupError{commands: failures}
 }
 
+// indentationFailure finds the earliest indentation-only edit that should be rejected.
 func (w *workspace) indentationFailure() *commandError {
 	var earliest *commandError
 	for _, file := range w.files {
@@ -172,6 +176,7 @@ func (w *workspace) indentationFailure() *commandError {
 	return earliest
 }
 
+// diagnosticPath returns the appropriate file path for diagnostic messages.
 func (w *workspace) diagnosticPath(command instruction) string {
 	if command.path != "" {
 		return command.path
@@ -182,6 +187,7 @@ func (w *workspace) diagnosticPath(command instruction) string {
 	return ""
 }
 
+// commandCategory returns the diagnostic category for an operation.
 func commandCategory(operation string) string {
 	switch operation {
 	case "in", "new", "mv", "rm":
@@ -193,6 +199,7 @@ func commandCategory(operation string) string {
 	}
 }
 
+// execute executes a single instruction against the workspace.
 func (w *workspace) execute(command instruction, commandIndex int) error {
 	origin := editOrigin{
 		command: commandIndex, line: command.line,
@@ -240,6 +247,7 @@ func (w *workspace) execute(command instruction, commandIndex int) error {
 	return nil
 }
 
+// selectFile makes an existing file the active file, loading it if necessary.
 func (w *workspace) selectFile(path string) error {
 	if file := w.paths[path]; file != nil {
 		w.active = file
@@ -265,6 +273,7 @@ func (w *workspace) selectFile(path string) error {
 	return nil
 }
 
+// newFile creates a new file at the given path.
 func (w *workspace) newFile(path string, origin editOrigin) error {
 	if err := w.validateFreeDestination(path); err != nil {
 		return err
@@ -277,6 +286,7 @@ func (w *workspace) newFile(path string, origin editOrigin) error {
 	return nil
 }
 
+// moveFile moves the active file to a new path.
 func (w *workspace) moveFile(path string, origin editOrigin) error {
 	if w.active == nil {
 		return withReason(reasonActiveFile, fmt.Errorf("mv requires an active file"))
@@ -294,6 +304,7 @@ func (w *workspace) moveFile(path string, origin editOrigin) error {
 	return nil
 }
 
+// removeFile deletes the active file from the workspace.
 func (w *workspace) removeFile() error {
 	if w.active == nil {
 		return withReason(reasonActiveFile, fmt.Errorf("rm requires an active file"))
@@ -329,6 +340,7 @@ func (w *workspace) removeFile() error {
 	return nil
 }
 
+// pathOccupied checks if a path is occupied in the workspace or filesystem.
 func (w *workspace) pathOccupied(path string) (bool, error) {
 	if w.paths[path] != nil || w.reserved[path] {
 		return true, nil
@@ -343,6 +355,7 @@ func (w *workspace) pathOccupied(path string) (bool, error) {
 	return occupied, nil
 }
 
+// validateDestinationParent checks that the parent directory exists.
 func (w *workspace) validateDestinationParent(path string) error {
 	parent := filepath.Dir(path)
 	mode, exists, err := w.exists(parent)
@@ -355,6 +368,7 @@ func (w *workspace) validateDestinationParent(path string) error {
 	return nil
 }
 
+// validateFreeDestination checks that a destination path is available.
 func (w *workspace) validateFreeDestination(path string) error {
 	if err := w.validateDestinationParent(path); err != nil {
 		return err
@@ -369,6 +383,7 @@ func (w *workspace) validateFreeDestination(path string) error {
 	return nil
 }
 
+// changes computes the final set of filesystem changes.
 func (w *workspace) changes() []change {
 	changes := make([]change, 0, len(w.files))
 	for _, file := range w.files {

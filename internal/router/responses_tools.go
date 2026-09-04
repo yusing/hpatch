@@ -47,6 +47,7 @@ type responsesToolDefinition struct {
 	Title       string
 }
 
+// decodeResponsesToolDefinition unmarshals a Responses tool definition from raw JSON.
 func decodeResponsesToolDefinition(raw json.RawMessage) (*responsesToolDefinition, error) {
 	var fields map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &fields); err != nil {
@@ -58,6 +59,7 @@ func decodeResponsesToolDefinition(raw json.RawMessage) (*responsesToolDefinitio
 	return newResponsesToolDefinition(fields), nil
 }
 
+// newResponsesToolDefinition creates a responsesToolDefinition from decoded JSON fields.
 func newResponsesToolDefinition(fields map[string]json.RawMessage) *responsesToolDefinition {
 	return &responsesToolDefinition{
 		fields:      fields,
@@ -75,11 +77,13 @@ func (tool *responsesToolDefinition) MarshalJSON() ([]byte, error) {
 	return json.Marshal(tool.fields)
 }
 
+// setDescription updates the tool description in both the field and the underlying map.
 func (tool *responsesToolDefinition) setDescription(description string) {
 	tool.Description = description
 	tool.fields["description"] = mustMarshalJSON(description)
 }
 
+// rawField returns the raw JSON for the named field.
 func (tool *responsesToolDefinition) rawField(name string) json.RawMessage {
 	if tool == nil || tool.fields == nil {
 		return nil
@@ -87,10 +91,12 @@ func (tool *responsesToolDefinition) rawField(name string) json.RawMessage {
 	return tool.fields[name]
 }
 
+// setRawField updates a raw JSON field in the tool definition.
 func (tool *responsesToolDefinition) setRawField(name string, value json.RawMessage) {
 	tool.fields[name] = value
 }
 
+// decodeResponsesToolCatalog decodes the tool catalog from a Responses request.
 func decodeResponsesToolCatalog(fields map[string]json.RawMessage) *responsesToolCatalog {
 	rawTop, topPresent := fields["tools"]
 	catalog := &responsesToolCatalog{
@@ -124,6 +130,7 @@ func decodeResponsesToolCatalog(fields map[string]json.RawMessage) *responsesToo
 	return catalog
 }
 
+// decodeResponsesToolSection decodes a tool section from raw JSON.
 func decodeResponsesToolSection(raw json.RawMessage, present bool) *responsesToolSection {
 	section := &responsesToolSection{present: present, raw: raw}
 	if !present {
@@ -160,6 +167,7 @@ func decodeResponsesToolSection(raw json.RawMessage, present bool) *responsesToo
 	return section
 }
 
+// appendTop appends tools to the top-level tool catalog.
 func (c *responsesToolCatalog) appendTop(tools []*responsesToolDefinition) {
 	c.top.present = true
 	c.top.array = true
@@ -174,6 +182,7 @@ func (c *responsesToolCatalog) appendTop(tools []*responsesToolDefinition) {
 	}
 }
 
+// removeTop removes a tool from the top-level catalog at the given index.
 func (c *responsesToolCatalog) removeTop(index int) {
 	c.top.tools = append(c.top.tools[:index], c.top.tools[index+1:]...)
 	c.top.rawTools = append(c.top.rawTools[:index], c.top.rawTools[index+1:]...)
@@ -191,6 +200,7 @@ func (c *responsesToolCatalog) removeTop(index int) {
 	}
 }
 
+// encodeTop encodes the top-level tools back into the request fields.
 func (c *responsesToolCatalog) encodeTop(fields map[string]json.RawMessage) error {
 	encoded, err := json.Marshal(c.top.tools)
 	if err != nil {
@@ -200,6 +210,7 @@ func (c *responsesToolCatalog) encodeTop(fields map[string]json.RawMessage) erro
 	return nil
 }
 
+// encodeAdditional encodes additional tools back into the request fields.
 func (c *responsesToolCatalog) encodeAdditional(fields map[string]json.RawMessage, group *responsesAdditionalTools, section *responsesToolSection) error {
 	if section != group.tools {
 		for _, node := range group.tools.nodes {

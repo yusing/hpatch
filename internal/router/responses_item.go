@@ -22,6 +22,7 @@ type responsesItem struct {
 	Arguments *string
 }
 
+// decodeResponsesItem decodes a Responses item from raw JSON.
 func decodeResponsesItem(raw json.RawMessage) (responsesItem, bool) {
 	var fields map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &fields); err != nil || fields == nil {
@@ -30,6 +31,7 @@ func decodeResponsesItem(raw json.RawMessage) (responsesItem, bool) {
 	return newResponsesItem(fields), true
 }
 
+// newResponsesItem creates a responsesItem from decoded JSON fields.
 func newResponsesItem(fields map[string]json.RawMessage) responsesItem {
 	item := responsesItem{
 		fields:    fields,
@@ -68,26 +70,31 @@ func (item *responsesItem) UnmarshalJSON(raw []byte) error {
 	return nil
 }
 
+// setContent updates the item's content field.
 func (item *responsesItem) setContent(content json.RawMessage) {
 	item.Content = content
 	item.fields["content"] = content
 }
 
+// setOutput updates the item's output field.
 func (item *responsesItem) setOutput(output json.RawMessage) {
 	item.Output = output
 	item.fields["output"] = output
 }
 
+// setInput updates the item's input field.
 func (item *responsesItem) setInput(input string) {
 	item.Input = new(input)
 	item.fields["input"] = mustMarshalJSON(input)
 }
 
+// setArguments updates the item's arguments field.
 func (item *responsesItem) setArguments(arguments string) {
 	item.Arguments = new(arguments)
 	item.fields["arguments"] = mustMarshalJSON(arguments)
 }
 
+// renderCarrier transforms the item into a Code Mode carrier with the given kind, name, and payload.
 func (item *responsesItem) renderCarrier(kind codeModeCarrierKind, name, payload string) {
 	item.Type = carrierItemType(kind)
 	item.Name = name
@@ -104,10 +111,12 @@ func (item *responsesItem) renderCarrier(kind codeModeCarrierKind, name, payload
 	}
 }
 
+// cloneFields returns a shallow clone of the item's JSON field map.
 func (item responsesItem) cloneFields() map[string]json.RawMessage {
 	return maps.Clone(item.fields)
 }
 
+// decodeJSONString decodes a JSON string value from raw JSON.
 func decodeJSONString(raw json.RawMessage) (string, bool) {
 	if len(raw) == 0 {
 		return "", false

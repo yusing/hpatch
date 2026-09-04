@@ -243,6 +243,7 @@ func (r *Recorder) addExchange(front captureRecord, state *requestState, provide
 	}
 }
 
+// recordCacheObservation records cache metrics for a request with provider usage observation.
 func (r *Recorder) recordCacheObservation(state *requestState, observed *ProviderUsage) {
 	if state.threadID == "" {
 		if observed != nil {
@@ -321,6 +322,7 @@ func signedDifference(larger, smaller uint64) int64 {
 	return -int64(difference)
 }
 
+// usageOf converts a ProviderUsage observation to internal usageMetrics.
 func usageOf(usage ProviderUsage) usageMetrics {
 	cached := min(usage.InputTokens, usage.CachedTokens)
 	return usageMetrics{
