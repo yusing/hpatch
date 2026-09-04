@@ -5,13 +5,19 @@ import {fileURLToPath} from "node:url";
 
 import type {ExecutionResult, Tool} from "../internal/router/toolplugin/plugin.d.ts";
 import {
+  formatVerifiedRow,
+  hashLine,
+  isGoIdentifier,
+  parsePositiveInteger as parseCorePositiveInteger,
+  parseRowReference,
+  SharedCoreError,
+} from "hpatch:core/v1";
+import {
   byteLength,
   collect,
   createExecutorTool,
   decodeUTF8,
   errorText,
-  formatHashLine,
-  hashLine,
   isOutsideWorkspace,
   stripOptionalFinalNewline,
   VERIFIED_ROW_LIMIT_DIAGNOSTIC,
@@ -88,14 +94,6 @@ type GoplsResult = {
   stderr: string;
 };
 
-const goKeywords = new Set([
-  "break", "default", "func", "interface", "select",
-  "case", "defer", "go", "map", "struct",
-  "chan", "else", "goto", "package", "switch",
-  "const", "fallthrough", "if", "range", "type",
-  "continue", "for", "import", "return", "var",
-]);
-
 class HSymbolFailure extends Error {}
 
 class SourceFailure extends Error {
@@ -104,21 +102,30 @@ class SourceFailure extends Error {
   }
 }
 
+/**
+ * parsePositiveInteger parses a positive integer using the shared-core parser and wraps errors with a contextual label.
+ */
 function parsePositiveInteger(value: string, label: string): number {
-  if (!/^[1-9][0-9]*$/u.test(value)) {
+  try {
+    return parseCorePositiveInteger(value);
+  } catch (error) {
+    if (error instanceof SharedCoreError && error.code === "integer_out_of_range") {
+      throw new HSymbolFailure(`${label} is too large`);
+    }
     throw new HSymbolFailure(`${label} must be a positive decimal integer`);
   }
-  const parsed = Number(value);
-  if (!Number.isSafeInteger(parsed)) {
-    throw new HSymbolFailure(`${label} is too large`);
-  }
-  return parsed;
 }
 
+/**
+ * validGoIdentifier checks whether value is a valid non-keyword Go identifier using the shared-core validator.
+ */
 function validGoIdentifier(value: string): boolean {
-  return /^(?:_|\p{L})(?:_|\p{L}|\p{Nd})*$/u.test(value) && !goKeywords.has(value);
+  return isGoIdentifier(value);
 }
 
+/**
+ * parseQuery validates and parses the hsymbol argv into a structured query object.
+ */
 function parseQuery(argv: string[]): Query {
   if (argv.length !== 4 && argv.length !== 5) {
     throw new HSymbolFailure("usage: hsymbol (def|refs) PATH LINE:HASH SYMBOL [N]");
@@ -130,15 +137,20 @@ function parseQuery(argv: string[]): Query {
   if (inputPath === "" || inputPath.includes("\0")) {
     throw new HSymbolFailure("path must be usable");
   }
-  const rowMatch = /^([1-9][0-9]*):([0-9a-f]{4})$/u.exec(row);
-  if (rowMatch === null) {
+  let parsedRow;
+  try {
+    parsedRow = parseRowReference(row);
+  } catch (error) {
+    if (error instanceof SharedCoreError && error.code === "integer_out_of_range") {
+      throw new HSymbolFailure("line is too large");
+    }
     throw new HSymbolFailure("row must be LINE:HASH with a positive line and lowercase four-digit hash");
   }
   return {
     mode,
     path: inputPath,
-    line: parsePositiveInteger(rowMatch[1], "line"),
-    hash: rowMatch[2],
+    line: parsedRow.line,
+    hash: parsedRow.hash,
     identifier,
     occurrence: occurrenceText === undefined ? null : parsePositiveInteger(occurrenceText, "N"),
   };
@@ -473,11 +485,14 @@ async function materializeLocation(
   };
 }
 
+/**
+ * verifiedSourceRow formats a workspace-relative verified-row reference for the given line.
+ */
 function verifiedSourceRow(workspace: string, file: SourceFile, line: number): string | null {
   const logicalLine = file.lines.logicalLine(line);
   return logicalLine === null
     ? null
-    : `${JSON.stringify(path.relative(workspace, file.path))}:${formatHashLine(line, logicalLine.text)}`;
+    : `${JSON.stringify(path.relative(workspace, file.path))}:${formatVerifiedRow(line, logicalLine.text)}`;
 }
 
 function skippedDiagnostic(skipped: Map<SourceFailureReason, number>): string {

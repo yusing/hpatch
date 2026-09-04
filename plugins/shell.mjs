@@ -1,149 +1,40 @@
 import {spawn, spawnSync} from "node:child_process";
 import {closeSync, readFileSync, writeFileSync} from "node:fs";
+import {
+  interpreterIdentity,
+  parseShellHeader,
+} from "hpatch:core/v1";
 
-
-function trimShebangField(value) {
-  return value.replace(/^[ \t]+|[ \t]+$/gu, "");
-}
-
-function splitFirstLine(input) {
-  const match = /\r\n|\n|\r/u.exec(input);
-  if (match === null) {
-    return {line: input, body: ""};
-  }
-  return {
-    line: input.slice(0, match.index),
-    body: input.slice(match.index + match[0].length),
-  };
-}
-
-
-function parseDirectiveLine(line) {
-  const assignment = /^#!([A-Za-z][A-Za-z0-9_-]*)=([\s\S]*)$/u.exec(line);
-  if (assignment !== null) {
-    return {key: assignment[1], value: assignment[2]};
-  }
-  const toleratedParams = /^#[ \t]*!params(?:[ \t]+([\s\S]+))?$/u.exec(line);
-  if (toleratedParams !== null) {
-    return {key: "params", value: toleratedParams[1] ?? ""};
-  }
-  return null;
-}
-
-
-function isDirectiveCandidate(line) {
-  return parseDirectiveLine(line) !== null || /^#!(?:cmd|params)(?:[ \t]|$)/u.test(line);
-}
-
-
-function parseDirectives(body) {
-  let remaining = body;
-  let commandTemplate = "";
-  let params;
-  const seen = new Set();
-
-  while (remaining !== "") {
-    const first = splitFirstLine(remaining);
-    const trimmedLine = trimShebangField(first.line);
-    const directive = parseDirectiveLine(trimmedLine);
-    if (directive === null) {
-      if (/^#!(?:cmd|params)(?:[ \t]|$)/u.test(trimmedLine) || trimmedLine.startsWith("!")) {
-        throw new Error("shell directive must use #!{key}={value}");
-      }
-      break;
-    }
-
-    const {key, value} = directive;
-    if (key !== "cmd" && key !== "params") {
-      throw new Error(`unsupported shell directive #!${key}`);
-    }
-    if (seen.has(key)) {
-      throw new Error(`shell directive #!${key} must not occur more than once`);
-    }
-    seen.add(key);
-
-    if (key === "cmd") {
-      if (value === "") {
-        throw new Error("command template must not be empty");
-      }
-      if (value.split("{.}").length !== 2) {
-        throw new Error("command template must contain exactly one {.} placeholder");
-      }
-      commandTemplate = value;
-    } else {
-      let parsed;
-      try {
-        parsed = JSON.parse(value);
-      } catch (error) {
-        throw new Error(`#!params must contain a JSON object: ${executionError(error)}`);
-      }
-      if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
-        throw new Error("#!params must contain a JSON object");
-      }
-      if (Object.hasOwn(parsed, "cmd")) {
-        throw new Error("#!params must not contain cmd; the script body supplies it");
-      }
-      if (Object.hasOwn(parsed, "login") && parsed.login !== false) {
-        throw new Error("#!params login must be false");
-      }
-      params = parsed;
-    }
-    remaining = first.body;
-  }
-
-  return {commandTemplate, params, body: remaining};
-}
-
+/**
+ * parseScript parses a shell script using the shared-core shell header parser.
+ */
 function parseScript(input, context) {
-  if (input.includes("\0")) {
-    throw new Error("script must not contain a NUL byte");
+  const parsed = parseShellHeader(input);
+  if (Object.hasOwn(parsed, "scriptPath")) {
+    return parseScript(readFileSync(context.resolvePath(parsed.scriptPath), "utf8"), context);
   }
-
-  let interpreter = ["bash"];
-  const retained = splitFirstLine(input);
-  const retainedLine = trimShebangField(retained.line);
-  if (retainedLine.startsWith("#!script=")) {
-    if (retained.body !== "") {
-      throw new Error("#!script must be the sole directive");
+  if (parsed.params !== undefined) {
+    if (Object.hasOwn(parsed.params, "cmd")) {
+      throw new Error("#!params must not contain cmd; the script body supplies it");
     }
-    return parseScript(readFileSync(context.resolvePath(retainedLine.slice("#!script=".length)), "utf8"), context);
+    if (Object.hasOwn(parsed.params, "login") && parsed.params.login !== false) {
+      throw new Error("#!params login must be false");
+    }
   }
-
-  let body = input;
-  const first = splitFirstLine(input);
-  const trimmedLine = trimShebangField(first.line);
-  const leadingDirective = isDirectiveCandidate(trimmedLine);
-  if (trimmedLine.startsWith("#!") && !leadingDirective) {
-    const selector = trimShebangField(trimmedLine.slice(2));
-    if (selector === "") {
-      throw new Error("shebang must select an interpreter");
-    }
-
-    interpreter = selector.split(/[ \t]+/u);
-    if (interpreter[0] === "env" || interpreter[0] === "/usr/bin/env") {
-      interpreter.shift();
-      if (interpreter[0] === "-S") {
-        interpreter.shift();
-      }
-      if (interpreter.length === 0 || interpreter[0].startsWith("-")) {
-        throw new Error("env shebang must select an interpreter");
-      }
-    }
-    body = first.body;
-  }
-
-  const directives = parseDirectives(body);
   return {
-    interpreter,
-    body: directives.body,
-    commandTemplate: directives.commandTemplate,
+    interpreter: parsed.interpreter ?? ["bash"],
+    body: parsed.body ?? "",
+    commandTemplate: parsed.commandTemplate ?? "",
     source: input,
-    params: directives.params,
+    params: parsed.params,
   };
 }
 
+/**
+ * retainInput determines whether the script source should be retained for translation.
+ */
 function retainInput(input) {
-  const interpreter = interpreterBasename(input.interpreter[0]).toLowerCase();
+  const interpreter = interpreterIdentity(input.interpreter[0]);
   if (interpreter !== "bash" && interpreter !== "sh") {
     return true;
   }
@@ -151,17 +42,18 @@ function retainInput(input) {
   return normalized.split(/\n|\r/u).length > 3;
 }
 
+/**
+ * executionError extracts a string message from an error value.
+ */
 function executionError(error) {
   return error instanceof Error ? error.message : String(error);
 }
 
-function interpreterBasename(interpreter) {
-  return interpreter.replaceAll("\\", "/").split("/").at(-1)?.replace(/\.exe$/iu, "") ?? "";
-}
-
-
+/**
+ * scriptEvaluationFlag returns the command-line flag for inline script evaluation.
+ */
 function scriptEvaluationFlag(interpreter) {
-  switch (interpreterBasename(interpreter).toLowerCase()) {
+  switch (interpreterIdentity(interpreter)) {
     case "bun":
     case "node":
     case "nodejs":
@@ -172,6 +64,9 @@ function scriptEvaluationFlag(interpreter) {
 }
 
 
+/**
+ * executeScriptThroughStdin runs a script by passing the body through stdin.
+ */
 function executeScriptThroughStdin(argv, maxOutputBytes) {
   const interpreter = argv[0];
   const interpreterArguments = argv.slice(1, -1);
@@ -205,6 +100,9 @@ function executeScriptThroughStdin(argv, maxOutputBytes) {
   }
 }
 
+/**
+ * executeScriptWithProgramInput runs a script using a file descriptor or evaluation flag.
+ */
 function executeScriptWithProgramInput(argv, context) {
   const interpreter = argv[0];
   const body = argv.at(-1);
@@ -318,11 +216,14 @@ function executeScriptWithProgramInput(argv, context) {
   });
 }
 
+/**
+ * executeScript executes a shell script with the appropriate interpreter.
+ */
 function executeScript(argv, context) {
   if (argv.length < 2) {
     return {stderr: "shell: missing interpreter or script body\n", exitCode: 1};
   }
-  const interpreter = interpreterBasename(argv[0]).toLowerCase();
+  const interpreter = interpreterIdentity(argv[0]);
   // Bash and POSIX shell programs must pass through the router's mvdan/sh
   // runner so private commands cannot fall back to executable frontends.
   if (interpreter === "bash" || interpreter === "sh") {

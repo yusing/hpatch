@@ -1,23 +1,23 @@
 package hpatch
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"strings"
+
+	"github.com/yusing/hpatch/internal/verifiedrow"
 )
 
-const lineHashLength = 4
-
+// hashLine returns the lowercase four-digit verified-row hash for content.
 func hashLine(content string) string {
-	sum := sha256.Sum256([]byte(content))
-	return hex.EncodeToString(sum[:lineHashLength/2])
+	return verifiedrow.Hash(content)
 }
 
+// lineContent returns the logical-line content without its terminator.
 func lineContent(text string, line logicalLine) string {
 	return text[line.start:line.contentEnd]
 }
 
+// writeHashLine formats and writes one verified-row LINE:HASH reference line with display text.
 func writeHashLine(output *strings.Builder, number int, content, displayed string) {
 	fmt.Fprintf(output, "%d:%s %s\n", number, hashLine(content), displayed)
 }

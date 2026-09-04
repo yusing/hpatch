@@ -16,6 +16,7 @@ import (
 	"strings"
 
 	"github.com/yusing/hpatch/internal/hpatchsyntax"
+	"github.com/yusing/hpatch/internal/sourcekind"
 )
 
 type indentationCorrectionError struct {
@@ -294,12 +295,16 @@ func (file *fileState) renderContent(ctx context.Context) ([]*commandError, erro
 
 // languageSyntaxForPath determines the language and syntax checker for a file path.
 func languageSyntaxForPath(path string) (indentationWrapperLanguage, string, bool) {
-	switch filepath.Ext(path) {
-	case ".py":
+	format, ok := sourcekind.Classify(path)
+	if !ok || !format.SyntaxValidation {
+		return 0, "", false
+	}
+	switch format.Language {
+	case "python":
 		return indentationLanguagePython, "Python", true
-	case ".js":
+	case "javascript":
 		return indentationLanguageJavaScript, "JavaScript", true
-	case ".ts":
+	case "typescript":
 		return indentationLanguageTypeScript, "TypeScript", true
 	default:
 		return 0, "", false

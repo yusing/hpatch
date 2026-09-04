@@ -1,7 +1,7 @@
 import {afterEach, describe, expect, test} from "bun:test";
 import {spawn, spawnSync, type ChildProcessWithoutNullStreams} from "node:child_process";
 import {closeSync, openSync} from "node:fs";
-import {lstat, mkdtemp, mkdir, readFile, readdir, rm, stat, writeFile} from "node:fs/promises";
+import {copyFile, lstat, mkdtemp, mkdir, readFile, readdir, rm, stat, writeFile} from "node:fs/promises";
 import {tmpdir} from "node:os";
 import path from "node:path";
 import {fileURLToPath} from "node:url";
@@ -320,15 +320,23 @@ describe("installable shell plugin", () => {
     }
   });
 
-  test("validates and executes through the production plugin host", () => {
+  test("validates and executes through the production plugin host", async () => {
+    const snapshotRoot = await temporaryDirectory("shell-plugin-host-");
+    const builtinRoot = path.join(snapshotRoot, "builtin");
+    await mkdir(builtinRoot);
+    await Promise.all([
+      copyFile(new URL("../../../../plugins/shell.mjs", import.meta.url), path.join(snapshotRoot, "shell.mjs")),
+      copyFile(new URL("../core-v1.mjs", import.meta.url), path.join(builtinRoot, "core-v1.mjs")),
+      copyFile(new URL("../shared_core.wasm", import.meta.url), path.join(builtinRoot, "shared_core.wasm")),
+    ]);
     const validated = spawnSync("node", [hostPath], {
-      cwd: repositoryRoot,
+      cwd: snapshotRoot,
       encoding: "utf8",
       env: {...process.env, NODE_NO_WARNINGS: "1"},
       input: JSON.stringify({
         operation: "validate",
-        snapshotRoot: repositoryRoot,
-        modules: ["plugins/shell.mjs"],
+        snapshotRoot,
+        modules: ["shell.mjs"],
       }),
     });
 
@@ -341,14 +349,14 @@ describe("installable shell plugin", () => {
       }],
     });
     const executed = spawnSync("node", [hostPath], {
-      cwd: repositoryRoot,
+      cwd: snapshotRoot,
       encoding: "utf8",
       env: {...process.env, HPATCH_SHELL_HOST_TEST: "stdin", NODE_NO_WARNINGS: "1"},
       input: JSON.stringify({
         operation: "execute",
         outputBudgetBytes: 16 * 1024 * 1024,
-        snapshotRoot: repositoryRoot,
-        module: "plugins/shell.mjs",
+        snapshotRoot,
+        module: "shell.mjs",
         index: 0,
         arguments: ["node", "process.stdout.write(`host:${process.env.HPATCH_SHELL_HOST_TEST}`)"],
       }),

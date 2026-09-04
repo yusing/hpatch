@@ -48,7 +48,10 @@ JavaScript- and TypeScript-authored built-in plugin contributions compiled by Bu
 embedded JavaScript module with the reserved `builtin.shell` identity. Shell is model-visible;
 hread, hgrep, hsymbol, and inspect_file retain snapshot-backed implementations but their
 specifications are private and they have no executable frontends. Configured user tools remain
-model-visible.
+model-visible. Portable verified-row, compact-syntax, source-classification, Go-lexical, and
+shell-header mechanisms come from the same authenticated Go-built shared core available to
+configured plugins under `REQ-PLUGIN-001`; filesystem, process, parser-coordinate, and carrier
+policy remain with the owners described here.
 
 The plugin runtime snapshots and validates the immutable built-in module before user
 declarations, then applies one normalized registry path to all executable

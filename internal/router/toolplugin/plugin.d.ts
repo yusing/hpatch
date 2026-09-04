@@ -1,3 +1,5 @@
+/// <reference path="./core-v1.d.ts" />
+
 export type CustomCarrier = {
   kind: "custom";
   name: string;

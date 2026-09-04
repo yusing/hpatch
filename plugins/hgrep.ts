@@ -1,11 +1,11 @@
 import {spawn} from "node:child_process";
 
 import type {Tool} from "../internal/router/toolplugin/plugin.d.ts";
+import {formatVerifiedRow} from "hpatch:core/v1";
 import {
   decodeUTF8,
   errorText,
   createExecutorTool,
-  formatHashLine,
   stripOptionalFinalNewline,
   VERIFIED_ROW_LIMIT_DIAGNOSTIC,
   VerifiedRowOutput,
@@ -141,6 +141,9 @@ type JSONEvent = {
   };
 };
 
+/**
+ * splitArguments parses a shell-quoted ripgrep argument line into individual arguments.
+ */
 export function splitArguments(rawInput: string): string[] {
   const input = stripOptionalFinalNewline(rawInput);
   if (input === "") {
@@ -204,6 +207,9 @@ export function splitArguments(rawInput: string): string[] {
   return argumentsValue;
 }
 
+/**
+ * normalizeArguments filters ripgrep arguments for verified-row output compatibility.
+ */
 function normalizeArguments(input: string[]): NormalizedArguments {
   let options = true;
   let patternFromOption = false;
@@ -331,6 +337,9 @@ function normalizeArguments(input: string[]): NormalizedArguments {
   return {arguments: normalized, warnings};
 }
 
+/**
+ * decodeJSONText extracts text or base64-encoded bytes from ripgrep JSON output.
+ */
 function decodeJSONText(value: JSONText | undefined, label: string): string {
   if (typeof value?.text === "string") {
     return value.text;
@@ -344,6 +353,9 @@ function decodeJSONText(value: JSONText | undefined, label: string): string {
   return decodeUTF8(Buffer.from(value.bytes, "base64"), `rg ${label}`);
 }
 
+/**
+ * collectStderr accumulates stderr output up to the maximum retained size.
+ */
 async function collectStderr(stream: AsyncIterable<Uint8Array>): Promise<string> {
   const chunks: Buffer[] = [];
   let retained = 0;
@@ -359,6 +371,9 @@ async function collectStderr(stream: AsyncIterable<Uint8Array>): Promise<string>
   return Buffer.concat(chunks).toString("utf8");
 }
 
+/**
+ * conciseDiagnostic extracts the most relevant error message from ripgrep stderr.
+ */
 function conciseDiagnostic(diagnostic: string): string {
   const lines = diagnostic.split("\n");
   for (let index = lines.length - 1; index >= 0; index -= 1) {
@@ -386,6 +401,9 @@ type ComparedOutput = {
   incomplete: boolean;
 };
 
+/**
+ * runRipgrep executes ripgrep with verified-row output and token-budget enforcement.
+ */
 async function runRipgrep(argumentsValue: string[]): Promise<ComparedOutput> {
   const child = spawn("rg", ["--json", "--no-config", ...argumentsValue], {
     stdio: ["ignore", "pipe", "pipe"],
@@ -429,7 +447,7 @@ async function runRipgrep(argumentsValue: string[]): Promise<ComparedOutput> {
     }
     seen.add(key);
     const prefix = `${JSON.stringify(path)}:`;
-    const row = `${prefix}${formatHashLine(lineNumber, line)}`;
+    const row = `${prefix}${formatVerifiedRow(lineNumber, line)}`;
     return output.append(row);
   };
   const takePending = (): Buffer => {
@@ -486,6 +504,9 @@ async function runRipgrep(argumentsValue: string[]): Promise<ComparedOutput> {
   throw new Error(`execute rg: exit status ${exitCode ?? "unknown"}`);
 }
 
+/**
+ * createHGrepTool creates the hgrep tool with bounded verified-row output.
+ */
 export function createHGrepTool(description: string, grammar: string): Tool<string[]> {
   return createExecutorTool({
     name: "hgrep",

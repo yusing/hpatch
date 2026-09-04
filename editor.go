@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+
+	"github.com/yusing/hpatch/internal/verifiedrow"
 )
 
 type targetSpan struct {
@@ -492,23 +494,12 @@ func findLiteralOffsets(text, literal string, advance, limit int) []int {
 	return offsets
 }
 
-// logicalLines splits text into logical lines with terminator boundaries.
+// logicalLines splits text into logical lines using shared verified-row semantics.
 func logicalLines(text string) []logicalLine {
-	var lines []logicalLine
-	for start := 0; start < len(text); {
-		contentEnd := start
-		for contentEnd < len(text) && text[contentEnd] != '\r' && text[contentEnd] != '\n' {
-			contentEnd++
-		}
-		fullEnd := contentEnd
-		if fullEnd < len(text) {
-			fullEnd++
-			if text[contentEnd] == '\r' && fullEnd < len(text) && text[fullEnd] == '\n' {
-				fullEnd++
-			}
-		}
-		lines = append(lines, logicalLine{start: start, contentEnd: contentEnd, fullEnd: fullEnd})
-		start = fullEnd
+	shared := verifiedrow.Lines(text)
+	lines := make([]logicalLine, len(shared))
+	for index, line := range shared {
+		lines[index] = logicalLine{start: line.Start, contentEnd: line.ContentEnd, fullEnd: line.End}
 	}
 	return lines
 }

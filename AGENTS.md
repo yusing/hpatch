@@ -30,6 +30,8 @@ Before adding a limit, retry, compatibility path, or defensive branch, name the 
 | Public engine entry points and workspace APIs | `run.go` |
 | Parsing, targets, edit planning, transactions, translation, reports, hooks, and engine metrics | Root-package `*.go` files and adjacent tests |
 | Shared quoted-string and heredoc framing | `internal/hpatchsyntax` |
+| Portable verified-row, source-capability, Go-lexical, and shell-header semantics | `internal/verifiedrow`, `internal/sourcekind`, `internal/golex`, `internal/shellsyntax` |
+| Versioned plugin shared-core adapter and private WASM bridge | `internal/router/toolplugin/core-v1.mjs`, `internal/router/toolplugin/core-v1.d.ts`, `internal/sharedwasm` |
 | Router lifecycle, modes, and HTTP endpoints | `internal/router/server.go` |
 | Codex authentication and upstream Responses transport | `internal/router/client.go` |
 | Tool replacement, host translation, response restoration, replay, and rejected-script recovery | `internal/router/hpatch_proxy.go`, `internal/router/hpatch_recovery.go` |
@@ -47,6 +49,7 @@ Before adding a limit, retry, compatibility path, or defensive branch, name the 
 | --- | --- |
 | Root engine | `go test .` |
 | Router request, response, recovery, workspace, plugin, or transport | `go test ./internal/router` |
+| Portable core or `hpatch:core/v1` adapter | `go generate ./internal/router/toolplugin`, then `go test ./...` and `bun test ./internal/router/toolplugin/tests/core.test.ts` |
 | TypeScript plugin source | `go generate ./internal/router/toolplugin`, then `bun test ./internal/router/toolplugin/tests` |
 | Router or shell-helper process entry point | `go test ./cmd/hpatch-router ./cmd/shell` |
 | Cross-package or broad contract | `go test ./...` |

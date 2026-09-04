@@ -5,7 +5,8 @@ import {tmpdir} from "node:os";
 import path from "node:path";
 import {pathToFileURL} from "node:url";
 
-import {countGPT5Tokens, formatHashLine, hashLine, VerifiedRowOutput} from "../../../../plugins/common.ts";
+import {formatVerifiedRow, hashLine} from "hpatch:core/v1";
+import {countGPT5Tokens, VerifiedRowOutput} from "../../../../plugins/common.ts";
 import {createHGrepTool, splitArguments} from "../../../../plugins/hgrep.ts";
 import {createHReadTool} from "../../../../plugins/hread.ts";
 import {createHSymbolTool} from "../../../../plugins/hsymbol.ts";
@@ -306,9 +307,9 @@ describe("hread built-in plugin", () => {
     const whole = await tool.execute(["plain.txt"], executionContext);
     expect(whole).toEqual({
       stdout: [
-        formatHashLine(1, "alpha"),
-        formatHashLine(2, "beta"),
-        formatHashLine(3, "gamma"),
+        formatVerifiedRow(1, "alpha"),
+        formatVerifiedRow(2, "beta"),
+        formatVerifiedRow(3, "gamma"),
       ].join(""),
       exitCode: 0,
     });
@@ -316,8 +317,8 @@ describe("hread built-in plugin", () => {
     const range = await tool.execute(["plain.txt", "2:3"], executionContext);
     expect(range).toEqual({
       stdout: [
-        formatHashLine(2, "beta"),
-        formatHashLine(3, "gamma"),
+        formatVerifiedRow(2, "beta"),
+        formatVerifiedRow(3, "gamma"),
       ].join(""),
       exitCode: 0,
     });
@@ -328,8 +329,8 @@ describe("hread built-in plugin", () => {
     const overrun = await tool.execute(["plain.txt", "2:5"], executionContext);
     expect(overrun).toEqual({
       stdout: [
-        formatHashLine(2, "beta"),
-        formatHashLine(3, "gamma"),
+        formatVerifiedRow(2, "beta"),
+        formatVerifiedRow(3, "gamma"),
       ].join(""),
       stderr: "hread: 4-5: [out of range]\n",
       exitCode: 0,
@@ -337,7 +338,7 @@ describe("hread built-in plugin", () => {
 
     const tokenSpellings = await tool.execute(["token-spellings.txt"], executionContext);
     expect(tokenSpellings).toEqual({
-      stdout: formatHashLine(1, "<|endoftext|> <|im_start|> <|fim_prefix|>"),
+      stdout: formatVerifiedRow(1, "<|endoftext|> <|im_start|> <|fim_prefix|>"),
       exitCode: 0,
     });
 
@@ -361,7 +362,7 @@ describe("hread built-in plugin", () => {
     process.env.CODEX_THREAD_ID = "thread-id";
     const retained = await tool.execute(["@shell/call-id"], executionContext);
     expect(retained).toEqual({
-      stdout: formatHashLine(1, "retained"),
+      stdout: formatVerifiedRow(1, "retained"),
       exitCode: 0,
     });
   });
@@ -393,13 +394,13 @@ describe("hread built-in plugin", () => {
   test("retains whole admitted rows and fails when later rows exceed the token limit", async () => {
     const directory = await temporaryDirectory("hread-limit-");
     process.chdir(directory);
-    const first = contentWithFormattedTokenCount(15_000, (content) => formatHashLine(1, content));
+    const first = contentWithFormattedTokenCount(15_000, (content) => formatVerifiedRow(1, content));
     await writeFile("large.txt", `${first}\nsecond\nthird\n`, "utf8");
 
     const tool = createHReadTool("description", "start: TEST");
     const result = await tool.execute(["large.txt"], executionContext);
     expect(result).toEqual({
-      stdout: formatHashLine(1, first) + formatHashLine(2, "second"),
+      stdout: formatVerifiedRow(1, first) + formatVerifiedRow(2, "second"),
       stderr: "hread: output incomplete: 15,000-token limit reached\n",
       exitCode: 1,
     });
@@ -497,8 +498,8 @@ describe("hgrep built-in plugin", () => {
     const tool = createHGrepTool("description", "start: TEST");
     const result = await tool.execute(["-A1", "-F", "needle", "path with spaces.txt"], executionContext);
     expect(result).toEqual({
-      stdout: `${JSON.stringify("path with spaces.txt")}:${formatHashLine(2, "needle")}`
-        + `${JSON.stringify("path with spaces.txt")}:${formatHashLine(3, "after")}`,
+      stdout: `${JSON.stringify("path with spaces.txt")}:${formatVerifiedRow(2, "needle")}`
+        + `${JSON.stringify("path with spaces.txt")}:${formatVerifiedRow(3, "after")}`,
       stderr: "",
       exitCode: 0,
     });
@@ -506,14 +507,14 @@ describe("hgrep built-in plugin", () => {
     await writeFile("carriage.txt", "needle\r", "utf8");
     const carriage = await tool.execute(["-F", "needle", "carriage.txt"], executionContext);
     expect(carriage).toEqual({
-      stdout: `${JSON.stringify("carriage.txt")}:${formatHashLine(1, "needle")}`,
+      stdout: `${JSON.stringify("carriage.txt")}:${formatVerifiedRow(1, "needle")}`,
       stderr: "",
       exitCode: 0,
     });
 
     const tokenSpellings = await tool.execute(["-F", "<|im_start|>", "token-spellings.txt"], executionContext);
     expect(tokenSpellings).toEqual({
-      stdout: `${JSON.stringify("token-spellings.txt")}:${formatHashLine(
+      stdout: `${JSON.stringify("token-spellings.txt")}:${formatVerifiedRow(
         1,
         "<|endoftext|> <|im_start|> <|fim_prefix|>",
       )}`,
@@ -534,15 +535,15 @@ describe("hgrep built-in plugin", () => {
     const prefix = `${JSON.stringify("large.txt")}:`;
     const first = contentWithFormattedTokenCount(
       15_000,
-      (content) => `${prefix}${formatHashLine(1, content)}`,
+      (content) => `${prefix}${formatVerifiedRow(1, content)}`,
     );
     await writeFile("large.txt", `${first}\nneedle second\nneedle third\n`, "utf8");
 
     const tool = createHGrepTool("description", "start: TEST");
     const result = await tool.execute(["-F", "needle", "large.txt"], executionContext);
     expect(result).toEqual({
-      stdout: `${prefix}${formatHashLine(2, "needle second")}`
-        + `${prefix}${formatHashLine(3, "needle third")}`,
+      stdout: `${prefix}${formatVerifiedRow(2, "needle second")}`
+        + `${prefix}${formatVerifiedRow(3, "needle third")}`,
       stderr: "",
       exitCode: 0,
     });
@@ -739,7 +740,7 @@ describe("hsymbol built-in plugin", () => {
         if (text === undefined) {
           throw new Error(`missing fixture line ${lineNumber}`);
         }
-        expected += `${JSON.stringify("declarations.go")}:${formatHashLine(lineNumber, text)}`;
+        expected += `${JSON.stringify("declarations.go")}:${formatVerifiedRow(lineNumber, text)}`;
       }
       expect(result).toEqual({
         stdout: expected,
@@ -787,7 +788,7 @@ describe("hsymbol built-in plugin", () => {
       executionContext,
     );
     expect(result).toEqual({
-      stdout: `${JSON.stringify("field.go")}:${formatHashLine(3, "  Field int")}`,
+      stdout: `${JSON.stringify("field.go")}:${formatVerifiedRow(3, "  Field int")}`,
       exitCode: 0,
     });
   });
@@ -832,8 +833,8 @@ describe("hsymbol built-in plugin", () => {
       executionContext,
     );
     expect(result).toEqual({
-      stdout: `${JSON.stringify("result.go")}:${formatHashLine(2, "func Target() {}")}`
-        + `${JSON.stringify("input.go")}:${formatHashLine(2, "func Use() { Target() }")}`,
+      stdout: `${JSON.stringify("result.go")}:${formatVerifiedRow(2, "func Target() {}")}`
+        + `${JSON.stringify("input.go")}:${formatVerifiedRow(2, "func Use() { Target() }")}`,
       stderr: "gopls note\nhsymbol: skipped 1 location outside workspace, 1 location not Go, 1 location not regular, 1 location not UTF-8, 1 location unavailable\n",
       exitCode: 0,
     });
@@ -904,7 +905,7 @@ describe("hsymbol built-in plugin", () => {
     const prefix = `${JSON.stringify("large.go")}:`;
     const first = contentWithFormattedTokenCount(
       15_000,
-      (content) => `${prefix}${formatHashLine(1, content)}`,
+      (content) => `${prefix}${formatVerifiedRow(1, content)}`,
     );
     await writeFile(resultPath, `${first}\nsecond\nthird\n`, "utf8");
     const externalDirectory = await temporaryDirectory("hsymbol-limit-external-");
@@ -925,7 +926,7 @@ describe("hsymbol built-in plugin", () => {
       executionContext,
     );
     expect(result).toEqual({
-      stdout: `${prefix}${formatHashLine(1, first)}${prefix}${formatHashLine(2, "second")}`,
+      stdout: `${prefix}${formatVerifiedRow(1, first)}${prefix}${formatVerifiedRow(2, "second")}`,
       stderr: "hsymbol: skipped 1 location outside workspace\n"
         + "hsymbol: output incomplete: 15,000-token limit reached\n",
       exitCode: 1,
@@ -996,8 +997,8 @@ describe("hsymbol built-in plugin", () => {
       executionContext,
     );
     expect(typescript).toMatchObject({exitCode: 0});
-    expect(typescript.stdout).toContain(`${JSON.stringify("target.ts")}:${formatHashLine(1, "export function target(value: number) {")}`);
-    expect(typescript.stdout).toContain(`${JSON.stringify("target.ts")}:${formatHashLine(3, "}")}`);
+    expect(typescript.stdout).toContain(`${JSON.stringify("target.ts")}:${formatVerifiedRow(1, "export function target(value: number) {")}`);
+    expect(typescript.stdout).toContain(`${JSON.stringify("target.ts")}:${formatVerifiedRow(3, "}")}`);
 
     const ambient = await tool.execute(
       ["def", "ambient_input.ts", `2:${hashLine(ambientInput.split("\n")[1])}`, "ambientTarget"],
@@ -1005,7 +1006,7 @@ describe("hsymbol built-in plugin", () => {
     );
     expect(ambient).toMatchObject({exitCode: 0});
     for (const [line, text] of ambientTarget.trimEnd().split("\n").entries()) {
-      expect(ambient.stdout).toContain(`${JSON.stringify("ambient.d.ts")}:${formatHashLine(line + 1, text)}`);
+      expect(ambient.stdout).toContain(`${JSON.stringify("ambient.d.ts")}:${formatVerifiedRow(line + 1, text)}`);
     }
 
     const python = await tool.execute(
@@ -1013,8 +1014,8 @@ describe("hsymbol built-in plugin", () => {
       executionContext,
     );
     expect(python).toMatchObject({exitCode: 0});
-    expect(python.stdout).toContain(`${JSON.stringify("target.py")}:${formatHashLine(1, "def target(value: int) -> int:")}`);
-    expect(python.stdout).toContain(`${JSON.stringify("target.py")}:${formatHashLine(2, "    return value + 1")}`);
+    expect(python.stdout).toContain(`${JSON.stringify("target.py")}:${formatVerifiedRow(1, "def target(value: int) -> int:")}`);
+    expect(python.stdout).toContain(`${JSON.stringify("target.py")}:${formatVerifiedRow(2, "    return value + 1")}`);
     const stub = await tool.execute(
       ["refs", "sample.pyi", `1:${hashLine(pythonStub.trimEnd())}`, "stub_target"],
       executionContext,

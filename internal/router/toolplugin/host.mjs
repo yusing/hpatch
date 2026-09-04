@@ -729,6 +729,15 @@ async function main() {
   const snapshotRoot = await realpath(path.resolve(request.snapshotRoot));
   registerHooks({
     resolve(specifier, context, nextResolve) {
+      if (specifier === "hpatch:core/v1") {
+        return {
+          shortCircuit: true,
+          url: pathToFileURL(path.join(snapshotRoot, "builtin", "core-v1.mjs")).href,
+        };
+      }
+      if (specifier.startsWith("hpatch:")) {
+        throw new Error(`hpatch plugin module is not supported: ${specifier}`);
+      }
       const resolved = nextResolve(specifier, context);
       if (resolved.url.startsWith("node:")) {
         return resolved;
