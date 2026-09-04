@@ -372,7 +372,7 @@ func (p *hpatchProxy) reconcileInputPrefix(request *parsedResponsesRequest, sess
 		if err != nil {
 			return fmt.Errorf("encode replayed Responses input: %w", err)
 		}
-		request.fields["input"] = encoded
+		request.setInput(encoded)
 	}
 	p.pruneSessionAfter(sessionID, newestRetained)
 	return nil

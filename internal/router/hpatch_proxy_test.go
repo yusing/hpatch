@@ -285,7 +285,7 @@ func TestBuildCodeModeCarrierCatalogReadsNamespacedTools(t *testing.T) {
 		"input": mustTestJSON(t, []any{additional}),
 	}
 	registry := &toolRegistry{byName: map[string]toolContribution{}}
-	catalog, err := buildCodeModeCarrierCatalog(fields, registry)
+	catalog, err := buildCodeModeCarrierCatalog(decodeResponsesToolCatalog(fields), registry)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -298,7 +298,7 @@ func TestBuildCodeModeCarrierCatalogReadsNamespacedTools(t *testing.T) {
 	nestedTools := functionsNamespace["tools"].([]any)
 	nestedTools[0].(map[string]any)["type"] = "function"
 	fields["input"] = mustTestJSON(t, []any{additional})
-	catalog, err = buildCodeModeCarrierCatalog(fields, registry)
+	catalog, err = buildCodeModeCarrierCatalog(decodeResponsesToolCatalog(fields), registry)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -312,7 +312,7 @@ func TestBuildCodeModeCarrierCatalogReadsFlatTools(t *testing.T) {
 		"input": mustTestJSON(t, []any{testFlatCodeModeAdditionalTools(testCodeModeDescription)}),
 	}
 	registry := &toolRegistry{byName: map[string]toolContribution{}}
-	catalog, err := buildCodeModeCarrierCatalog(fields, registry)
+	catalog, err := buildCodeModeCarrierCatalog(decodeResponsesToolCatalog(fields), registry)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -338,7 +338,7 @@ func TestBuildCodeModeCarrierCatalogRejectsDuplicateNames(t *testing.T) {
 		"input": mustTestJSON(t, []any{additional}),
 	}
 	registry := &toolRegistry{byName: map[string]toolContribution{}}
-	if _, err := buildCodeModeCarrierCatalog(fields, registry); err == nil || !strings.Contains(err.Error(), "defined more than once") {
+	if _, err := buildCodeModeCarrierCatalog(decodeResponsesToolCatalog(fields), registry); err == nil || !strings.Contains(err.Error(), "defined more than once") {
 		t.Fatalf("duplicate carrier error = %v", err)
 	}
 }
@@ -955,7 +955,7 @@ func TestHPatchReplacementReplacesNamespacedExecCommandWithShellParams(t *testin
 		"tools": mustTestJSON(t, []any{}),
 	}
 	installed := testInstalledTools()
-	owner, replaced, err := replaceAdditionalToolsApplyPatch(fields, installed)
+	owner, replaced, err := replaceAdditionalToolsApplyPatch(fields, decodeResponsesToolCatalog(fields), installed)
 	if err != nil || !replaced || owner != "exec" {
 		t.Fatalf("owner = %q, replaced %v, error %v", owner, replaced, err)
 	}
@@ -1005,7 +1005,7 @@ func TestHPatchReplacementReplacesFlatExecCommandWithShellParams(t *testing.T) {
 		"tools": mustTestJSON(t, []any{}),
 	}
 	installed := testInstalledTools()
-	owner, replaced, err := replaceAdditionalToolsApplyPatch(fields, installed)
+	owner, replaced, err := replaceAdditionalToolsApplyPatch(fields, decodeResponsesToolCatalog(fields), installed)
 	if err != nil || !replaced || owner != "exec" {
 		t.Fatalf("owner = %q, replaced %v, error %v", owner, replaced, err)
 	}
@@ -1063,7 +1063,7 @@ func TestHPatchReplacementKeepsBaseShellDescriptionWithoutExecCommandContract(t 
 	}
 	installed := testInstalledTools()
 
-	_, replaced, err := replaceAdditionalToolsApplyPatch(fields, installed)
+	_, replaced, err := replaceAdditionalToolsApplyPatch(fields, decodeResponsesToolCatalog(fields), installed)
 	if err != nil || !replaced {
 		t.Fatalf("replacement = %t, error %v", replaced, err)
 	}
@@ -1113,7 +1113,7 @@ func TestHPatchReplacementRejectsUnsupportedAndTopLevelExecCarriers(t *testing.T
 			}
 			beforeInput := bytes.Clone(fields["input"])
 			beforeTools := bytes.Clone(fields["tools"])
-			_, replaced, err := replaceAdditionalToolsApplyPatch(fields, testInstalledTools())
+			_, replaced, err := replaceAdditionalToolsApplyPatch(fields, decodeResponsesToolCatalog(fields), testInstalledTools())
 			if err == nil || replaced {
 				t.Fatalf("replacement = %t, error %v", replaced, err)
 			}
@@ -1253,7 +1253,7 @@ func TestHPatchAdditionalToolsReplacementRejectsDuplicateAndConflictingOwners(t 
 			}
 			beforeInput := bytes.Clone(fields["input"])
 			beforeTools := bytes.Clone(fields["tools"])
-			_, replaced, err := replaceAdditionalToolsApplyPatch(fields, testInstalledTools())
+			_, replaced, err := replaceAdditionalToolsApplyPatch(fields, decodeResponsesToolCatalog(fields), testInstalledTools())
 			if err == nil || replaced {
 				t.Fatalf("replacement = %v, error %v", replaced, err)
 			}
@@ -1270,7 +1270,7 @@ func TestHPatchAdditionalToolsReplacementAlwaysRemovesExecCommand(t *testing.T) 
 		"tools": mustTestJSON(t, []any{}),
 	}
 
-	owner, replaced, err := replaceAdditionalToolsApplyPatch(fields, testInstalledTools())
+	owner, replaced, err := replaceAdditionalToolsApplyPatch(fields, decodeResponsesToolCatalog(fields), testInstalledTools())
 	if err != nil || !replaced || owner != "exec" {
 		t.Fatalf("owner = %q, replaced %v, error %v", owner, replaced, err)
 	}
@@ -1328,7 +1328,7 @@ func TestHPatchAdditionalToolsReplacementLeavesUnsupportedAndMalformedRequestsUn
 			beforeInput := bytes.Clone(fields["input"])
 			beforeTools := bytes.Clone(fields["tools"])
 			beforeChoice := bytes.Clone(fields["tool_choice"])
-			_, replaced, err := replaceAdditionalToolsApplyPatch(fields, testInstalledTools())
+			_, replaced, err := replaceAdditionalToolsApplyPatch(fields, decodeResponsesToolCatalog(fields), testInstalledTools())
 			if err != nil || replaced {
 				t.Fatalf("replacement = %v, error %v", replaced, err)
 			}
@@ -1344,7 +1344,7 @@ func TestHPatchReplacementRetainsNamespacedExecOwnerName(t *testing.T) {
 		"input": mustTestJSON(t, []any{testCodeModeAdditionalTools(testCodeModeDescription)}),
 		"tools": mustTestJSON(t, []any{}),
 	}
-	got, replaced, err := replaceAdditionalToolsApplyPatch(fields, testInstalledTools())
+	got, replaced, err := replaceAdditionalToolsApplyPatch(fields, decodeResponsesToolCatalog(fields), testInstalledTools())
 	if err != nil || !replaced || got != "exec" {
 		t.Fatalf("owner = %q, replaced %v, error %v", got, replaced, err)
 	}

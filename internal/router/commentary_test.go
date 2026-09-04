@@ -39,7 +39,7 @@ func TestPrepareCommentaryToolsPreservesOwnedSchemas(t *testing.T) {
 		}}),
 	}
 	additionalTools := bytes.Clone(fields["input"])
-	catalog, err := prepareCommentaryTools(fields)
+	catalog, err := prepareCommentaryTools(fields, decodeResponsesToolCatalog(fields))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -75,6 +75,16 @@ func TestPrepareCommentaryToolsPreservesOwnedSchemas(t *testing.T) {
 	}
 	if raw := properties(2)[commentaryArgumentName]; !bytes.Contains(raw, []byte(`"boolean"`)) {
 		t.Fatalf("owned commentary changed: %s", raw)
+	}
+}
+
+func TestPrepareCommentaryToolsPreservesNullTopLevelTools(t *testing.T) {
+	fields := map[string]json.RawMessage{"tools": json.RawMessage("null")}
+	if _, err := prepareCommentaryTools(fields, decodeResponsesToolCatalog(fields)); err != nil {
+		t.Fatal(err)
+	}
+	if got := string(fields["tools"]); got != "null" {
+		t.Fatalf("tools = %s", got)
 	}
 }
 

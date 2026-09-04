@@ -321,8 +321,9 @@ func (p *hpatchProxy) prepareRequest(ctx context.Context, request *parsedRespons
 	if err := rewriteReceivedModelInstructions(request, p.customizedInstructions, p.modelInstructions); err != nil {
 		return nil, err
 	}
-	subagentTools := subagentToolCatalog(request.fields)
 	subagentDeferred := prepareSubagentInputCommentary(request.fields)
+	tools := request.responseTools()
+	subagentTools := subagentToolCatalog(tools)
 	var reasoning struct {
 		Effort string `json:"effort"`
 	}
@@ -332,7 +333,7 @@ func (p *hpatchProxy) prepareRequest(ctx context.Context, request *parsedRespons
 	originalTools = bytes.Clone(originalTools)
 	originalToolChoice, originalToolChoicePresent := request.fields["tool_choice"]
 	originalToolChoice = bytes.Clone(originalToolChoice)
-	carriers, err := buildCodeModeCarrierCatalog(request.fields, p.registry)
+	carriers, err := buildCodeModeCarrierCatalog(tools, p.registry)
 	if err != nil {
 		return nil, err
 	}
@@ -340,13 +341,13 @@ func (p *hpatchProxy) prepareRequest(ctx context.Context, request *parsedRespons
 	if err != nil {
 		return nil, err
 	}
-	codeModeToolName, replaced, err := replaceAdditionalToolsApplyPatch(request.fields, installedTools)
+	codeModeToolName, replaced, err := replaceAdditionalToolsApplyPatch(request.fields, tools, installedTools)
 	if err != nil {
 		return nil, err
 	}
 	nativeTools := false
 	if !replaced {
-		codeModeToolName, replaced, err = replaceNativeTools(request.fields, installedTools)
+		codeModeToolName, replaced, err = replaceNativeTools(request.fields, tools, installedTools)
 		if err != nil {
 			return nil, err
 		}
@@ -357,7 +358,7 @@ func (p *hpatchProxy) prepareRequest(ctx context.Context, request *parsedRespons
 	}
 	var commentaryTools commentaryToolCatalog
 	if p.commentaryEndpoint != "" {
-		commentaryTools, err = prepareCommentaryTools(request.fields)
+		commentaryTools, err = prepareCommentaryTools(request.fields, tools)
 		if err != nil {
 			return nil, err
 		}
@@ -413,15 +414,10 @@ func (p *hpatchProxy) prepareRequest(ctx context.Context, request *parsedRespons
 }
 
 type additionalToolsApplyPatchOwner struct {
-	items               []json.RawMessage
-	item                map[string]json.RawMessage
-	itemIndex           int
-	additionalTools     []map[string]json.RawMessage
-	additionalToolIndex int
-	tools               []map[string]json.RawMessage
-	toolIndex           int
-	nested              bool
-	name                string
+	group     *responsesAdditionalTools
+	section   *responsesToolSection
+	toolIndex int
+	name      string
 
 	strippedDescription          string
 	execCommandParamsDescription string
@@ -437,19 +433,18 @@ func installedToolNames(tools []map[string]json.RawMessage) map[string]struct{} 
 
 // replaceAdditionalToolsApplyPatch rewrites the Code Mode exec tool from an
 // app or CLI additional_tools owner and exposes the router's standalone tools.
-func replaceAdditionalToolsApplyPatch(fields map[string]json.RawMessage, installedTools []map[string]json.RawMessage) (string, bool, error) {
-	var topTools []map[string]json.RawMessage
-	if rawTools, exists := fields["tools"]; exists {
-		if err := json.Unmarshal(rawTools, &topTools); err != nil {
+func replaceAdditionalToolsApplyPatch(fields map[string]json.RawMessage, catalog *responsesToolCatalog, installedTools []map[string]json.RawMessage) (string, bool, error) {
+	if catalog.top.present {
+		if err := catalog.top.err; err != nil {
 			return "", false, fmt.Errorf("decode responses tools: %w", err)
 		}
 	}
 	installedNames := installedToolNames(installedTools)
-	owner, err := findAdditionalToolsApplyPatch(fields, installedNames)
+	owner, err := findAdditionalToolsApplyPatch(catalog, installedNames)
 	if err != nil || owner == nil {
 		return "", false, err
 	}
-	for _, tool := range topTools {
+	for _, tool := range catalog.top.tools {
 		name := jsonString(tool, "name")
 		if _, exists := installedNames[name]; exists {
 			return "", false, fmt.Errorf("responses request already defines %s", name)
@@ -461,7 +456,7 @@ func replaceAdditionalToolsApplyPatch(fields map[string]json.RawMessage, install
 	if codeModeToolChoiceRestricted(fields, owner.name) {
 		return "", false, nil
 	}
-	if err := exposeStandaloneHPatch(fields, topTools, owner, installedTools); err != nil {
+	if err := exposeStandaloneHPatch(fields, catalog, owner, installedTools); err != nil {
 		return "", false, err
 	}
 	return owner.name, true, nil
@@ -469,11 +464,11 @@ func replaceAdditionalToolsApplyPatch(fields map[string]json.RawMessage, install
 
 // replaceNativeTools replaces the native apply_patch definition while retaining
 // exec_command as the executor-owned carrier for translated results.
-func replaceNativeTools(fields map[string]json.RawMessage, installedTools []map[string]json.RawMessage) (string, bool, error) {
-	var tools []map[string]json.RawMessage
-	if err := json.Unmarshal(fields["tools"], &tools); err != nil {
+func replaceNativeTools(fields map[string]json.RawMessage, catalog *responsesToolCatalog, installedTools []map[string]json.RawMessage) (string, bool, error) {
+	if !catalog.top.present || catalog.top.err != nil {
 		return "", false, nil //nolint:nilerr // An absent native tool array belongs to another request shape.
 	}
+	tools := catalog.top.tools
 	installedNames := installedToolNames(installedTools)
 	applyPatchIndex := -1
 	execCommandIndex := -1
@@ -513,32 +508,26 @@ func replaceNativeTools(fields map[string]json.RawMessage, installedTools []map[
 			return "", false, nil
 		}
 	}
-	tools = append(tools[:applyPatchIndex], tools[applyPatchIndex+1:]...)
-	tools = append(tools, installedTools...)
-	encoded, err := json.Marshal(tools)
-	if err != nil {
+	catalog.removeTop(applyPatchIndex)
+	catalog.appendTop(installedTools)
+	if err := catalog.encodeTop(fields); err != nil {
 		return "", false, fmt.Errorf("encode native Responses tools: %w", err)
 	}
-	fields["tools"] = encoded
 	return nativeExecCommandToolName, true, nil
 }
 
-func findAdditionalToolsApplyPatch(fields map[string]json.RawMessage, installedNames map[string]struct{}) (*additionalToolsApplyPatchOwner, error) {
-	var items []json.RawMessage
-	if json.Unmarshal(fields["input"], &items) != nil {
+func findAdditionalToolsApplyPatch(catalog *responsesToolCatalog, installedNames map[string]struct{}) (*additionalToolsApplyPatchOwner, error) {
+	if catalog.inputObjectsErr != nil && catalog.inputItems == nil {
 		return nil, nil //nolint:nilerr // Unsupported input shapes are simply not Code Mode owners.
 	}
 	var owner *additionalToolsApplyPatchOwner
 	claim := func(
-		item map[string]json.RawMessage,
-		itemIndex int,
-		additionalTools []map[string]json.RawMessage,
-		additionalToolIndex int,
-		tools []map[string]json.RawMessage,
+		group *responsesAdditionalTools,
+		section *responsesToolSection,
 		toolIndex int,
 		nested bool,
 	) error {
-		tool := tools[toolIndex]
+		tool := section.tools[toolIndex]
 		name := jsonString(tool, "name")
 		if _, exists := installedNames[name]; exists {
 			if nested {
@@ -571,35 +560,26 @@ func findAdditionalToolsApplyPatch(fields map[string]json.RawMessage, installedN
 			return err
 		}
 		owner = &additionalToolsApplyPatchOwner{
-			item:                         item,
-			itemIndex:                    itemIndex,
-			additionalTools:              additionalTools,
-			additionalToolIndex:          additionalToolIndex,
-			tools:                        tools,
+			group:                        group,
+			section:                      section,
 			toolIndex:                    toolIndex,
-			nested:                       nested,
 			name:                         name,
 			strippedDescription:          stripped,
 			execCommandParamsDescription: execCommandParamsDescription,
 		}
 		return nil
 	}
-	for itemIndex, rawItem := range items {
-		var item map[string]json.RawMessage
-		if json.Unmarshal(rawItem, &item) != nil || jsonString(item, "type") != "additional_tools" {
+	for _, group := range catalog.additional {
+		if group.tools.err != nil {
 			continue
 		}
-		var additionalTools []map[string]json.RawMessage
-		if json.Unmarshal(item["tools"], &additionalTools) != nil {
-			continue
-		}
-		for additionalToolIndex, additionalTool := range additionalTools {
+		for additionalToolIndex, additionalTool := range group.tools.tools {
 			name := jsonString(additionalTool, "name")
 			if jsonString(additionalTool, "type") != "namespace" {
 				if name == "functions.exec" {
 					return nil, errors.New("responses additional_tools item exposes unsupported flat functions.exec")
 				}
-				if err := claim(item, itemIndex, additionalTools, additionalToolIndex, additionalTools, additionalToolIndex, false); err != nil {
+				if err := claim(group, group.tools, additionalToolIndex, false); err != nil {
 					return nil, err
 				}
 				continue
@@ -614,19 +594,16 @@ func findAdditionalToolsApplyPatch(fields map[string]json.RawMessage, installedN
 				continue
 			}
 
-			var tools []map[string]json.RawMessage
-			if json.Unmarshal(additionalTool["tools"], &tools) != nil {
+			node := group.tools.nodes[additionalToolIndex]
+			if node == nil || node.nested == nil || node.nested.err != nil {
 				continue
 			}
-			for toolIndex := range tools {
-				if err := claim(item, itemIndex, additionalTools, additionalToolIndex, tools, toolIndex, true); err != nil {
+			for toolIndex := range node.nested.tools {
+				if err := claim(group, node.nested, toolIndex, true); err != nil {
 					return nil, err
 				}
 			}
 		}
-	}
-	if owner != nil {
-		owner.items = items
 	}
 	return owner, nil
 }
@@ -639,8 +616,8 @@ func codeModeToolChoiceRestricted(fields map[string]json.RawMessage, codeToolNam
 	return jsonString(choice, "type") == "custom" && jsonString(choice, "name") == codeToolName
 }
 
-func exposeStandaloneHPatch(fields map[string]json.RawMessage, topTools []map[string]json.RawMessage, owner *additionalToolsApplyPatchOwner, installedTools []map[string]json.RawMessage) error {
-	owner.tools[owner.toolIndex]["description"] = mustMarshalJSON(owner.strippedDescription)
+func exposeStandaloneHPatch(fields map[string]json.RawMessage, catalog *responsesToolCatalog, owner *additionalToolsApplyPatchOwner, installedTools []map[string]json.RawMessage) error {
+	owner.section.tools[owner.toolIndex]["description"] = mustMarshalJSON(owner.strippedDescription)
 	shellIndex := slices.IndexFunc(installedTools, func(tool map[string]json.RawMessage) bool {
 		return jsonString(tool, "name") == "shell"
 	})
@@ -652,34 +629,13 @@ func exposeStandaloneHPatch(fields map[string]json.RawMessage, topTools []map[st
 		description += "\n\n" + owner.execCommandParamsDescription
 		installedTools[shellIndex]["description"] = mustMarshalJSON(description)
 	}
-	if owner.nested {
-		encodedNestedTools, err := json.Marshal(owner.tools)
-		if err != nil {
-			return fmt.Errorf("encode functions namespace tools: %w", err)
-		}
-		owner.additionalTools[owner.additionalToolIndex]["tools"] = encodedNestedTools
-	}
-	encodedAdditionalTools, err := json.Marshal(owner.additionalTools)
-	if err != nil {
-		return fmt.Errorf("encode additional tools: %w", err)
-	}
-	owner.item["tools"] = encodedAdditionalTools
-	encodedItem, err := json.Marshal(owner.item)
-	if err != nil {
-		return fmt.Errorf("encode additional_tools item: %w", err)
-	}
-	owner.items[owner.itemIndex] = encodedItem
-	encodedInput, err := json.Marshal(owner.items)
-	if err != nil {
+	if err := catalog.encodeAdditional(fields, owner.group, owner.section); err != nil {
 		return fmt.Errorf("encode Responses input: %w", err)
 	}
-	topTools = append(topTools, installedTools...)
-	encodedTopTools, err := json.Marshal(topTools)
-	if err != nil {
+	catalog.appendTop(installedTools)
+	if err := catalog.encodeTop(fields); err != nil {
 		return fmt.Errorf("encode Responses tools: %w", err)
 	}
-	fields["input"] = encodedInput
-	fields["tools"] = encodedTopTools
 	return nil
 }
 

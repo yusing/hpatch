@@ -24,7 +24,7 @@ func functionToolKey(namespace, name string) string {
 	return namespace + "\x00" + name
 }
 
-func prepareCommentaryTools(fields map[string]json.RawMessage) (commentaryToolCatalog, error) {
+func prepareCommentaryTools(fields map[string]json.RawMessage, tools *responsesToolCatalog) (commentaryToolCatalog, error) {
 	catalog := make(commentaryToolCatalog)
 	instrument := func(namespace string, tool map[string]json.RawMessage, addParameter bool) error {
 		if jsonString(tool, "type") != "function" {
@@ -69,34 +69,31 @@ func prepareCommentaryTools(fields map[string]json.RawMessage) (commentaryToolCa
 		return nil
 	}
 
-	if rawTools, exists := fields["tools"]; exists {
-		var tools []map[string]json.RawMessage
-		if err := json.Unmarshal(rawTools, &tools); err != nil {
+	if tools.top.present {
+		if err := tools.top.err; err != nil {
 			return nil, fmt.Errorf("decode Responses tools for commentary: %w", err)
 		}
-		for _, tool := range tools {
+		for _, tool := range tools.top.tools {
 			if err := instrument("", tool, true); err != nil {
 				return nil, err
 			}
 		}
-		fields["tools"] = mustMarshalJSON(tools)
+		fields["tools"] = mustMarshalJSON(tools.top.tools)
 	}
 
-	var items []map[string]json.RawMessage
-	if json.Unmarshal(fields["input"], &items) != nil {
+	if tools.inputObjectsErr != nil {
 		return catalog, nil
 	}
 	// The provider owns configured additional_tools schemas. They receive
 	// defaults, but the router never adds a parameter to them.
-	for _, item := range items {
-		if jsonString(item, "type") != "additional_tools" {
-			continue
+	for _, group := range tools.additional {
+		if !group.tools.present {
+			return nil, errors.New("decode additional tools for commentary: unexpected end of JSON input")
 		}
-		var tools []map[string]json.RawMessage
-		if err := json.Unmarshal(item["tools"], &tools); err != nil {
+		if err := group.tools.err; err != nil {
 			return nil, fmt.Errorf("decode additional tools for commentary: %w", err)
 		}
-		for _, tool := range tools {
+		for index, tool := range group.tools.tools {
 			if jsonString(tool, "type") != "namespace" {
 				if err := instrument("", tool, false); err != nil {
 					return nil, err
@@ -104,11 +101,14 @@ func prepareCommentaryTools(fields map[string]json.RawMessage) (commentaryToolCa
 				continue
 			}
 			namespace := jsonString(tool, "name")
-			var nested []map[string]json.RawMessage
-			if err := json.Unmarshal(tool["tools"], &nested); err != nil {
+			node := group.tools.nodes[index]
+			if node == nil || node.nested == nil {
+				return nil, fmt.Errorf("decode %s tools for commentary: unexpected end of JSON input", namespace)
+			}
+			if err := node.nested.err; err != nil {
 				return nil, fmt.Errorf("decode %s tools for commentary: %w", namespace, err)
 			}
-			for _, child := range nested {
+			for _, child := range node.nested.tools {
 				if err := instrument(namespace, child, false); err != nil {
 					return nil, err
 				}

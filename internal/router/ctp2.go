@@ -39,8 +39,8 @@ type ctp2RequestView struct {
 	carrier  ctp2InstructionCarrier
 	input    any
 	hasInput bool
-	tools    any
 	hasTools bool
+	catalog  *responsesToolCatalog
 }
 
 type ctp2ResponseTransform struct {
@@ -93,7 +93,7 @@ func (c *ctp2Codec) prepareRequest(request *parsedResponsesRequest) (*ctp2Respon
 	}
 
 	transformed := maps.Clone(request.fields)
-	view, err := decodeCTP2RequestView(transformed)
+	view, err := decodeCTP2RequestView(transformed, request.responseTools())
 	if err != nil {
 		return nil, nativeBody, nil
 	}
@@ -114,6 +114,16 @@ func (c *ctp2Codec) prepareRequest(request *parsedResponsesRequest) (*ctp2Respon
 		if text, ok := view.input.(string); ok {
 			view.input = encodeLocal(text)
 		} else {
+			if items, ok := view.input.([]any); ok {
+				for _, group := range view.catalog.additional {
+					projected, projectErr := projectCTP2AdditionalTools(group, encodeLocal)
+					if projectErr != nil {
+						err = errors.Join(err, projectErr)
+						continue
+					}
+					items[group.itemIndex] = json.RawMessage(projected)
+				}
+			}
 			var preserveDeveloper func(string) string
 			if view.carrier == ctp2CarrierDeveloperMessage {
 				preserveDeveloper = func(value string) string { return value }
@@ -126,8 +136,12 @@ func (c *ctp2Codec) prepareRequest(request *parsedResponsesRequest) (*ctp2Respon
 		transformed["input"], err = marshalCTP2Field(transformed["input"], view.input, err)
 	}
 	if view.hasTools {
-		transformCTP2Tools(view.tools, encodeLocal)
-		transformed["tools"], err = marshalCTP2Field(transformed["tools"], view.tools, err)
+		projected, projectErr := projectCTP2ToolSection(view.catalog.top, encodeLocal)
+		if projectErr != nil {
+			err = errors.Join(err, projectErr)
+		} else {
+			transformed["tools"] = projected
+		}
 	}
 	if err != nil {
 		return nil, nativeBody, nil
@@ -165,32 +179,47 @@ func (c *ctp2Codec) count(value []byte) (int, error) {
 	return count, nil
 }
 
-func decodeCTP2RequestView(fields map[string]json.RawMessage) (ctp2RequestView, error) {
-	var view ctp2RequestView
+func decodeCTP2RequestView(fields map[string]json.RawMessage, catalog *responsesToolCatalog) (ctp2RequestView, error) {
+	view := ctp2RequestView{catalog: catalog}
 	var instructions string
 	if json.Unmarshal(fields["instructions"], &instructions) == nil && strings.TrimSpace(instructions) != "" {
 		view.carrier = ctp2CarrierTopLevel
 	}
 	if raw, ok := fields["input"]; ok {
-		input, err := decodeJSONValue(raw)
-		if err != nil {
-			return ctp2RequestView{}, fmt.Errorf("decode CTP/2 input: %w", err)
+		if catalog.inputItems != nil {
+			items := make([]any, len(catalog.inputItems))
+			additional := make(map[int]struct{}, len(catalog.additional))
+			for _, group := range catalog.additional {
+				additional[group.itemIndex] = struct{}{}
+			}
+			for index, item := range catalog.inputItems {
+				if _, isAdditional := additional[index]; isAdditional {
+					items[index] = item
+					continue
+				}
+				decoded, err := decodeJSONValue(item)
+				if err != nil {
+					return ctp2RequestView{}, fmt.Errorf("decode CTP/2 input item: %w", err)
+				}
+				items[index] = decoded
+			}
+			view.input = items
+		} else {
+			input, err := decodeJSONValue(raw)
+			if err != nil {
+				return ctp2RequestView{}, fmt.Errorf("decode CTP/2 input: %w", err)
+			}
+			view.input = input
 		}
-		view.input = input
 		view.hasInput = true
-		if view.carrier == ctp2CarrierNone && transformFirstDeveloperText(input, func(value string) string { return value }) {
+		if view.carrier == ctp2CarrierNone && transformFirstDeveloperText(view.input, func(value string) string { return value }) {
 			view.carrier = ctp2CarrierDeveloperMessage
 		}
 	}
 	if view.carrier == ctp2CarrierNone {
 		return view, nil
 	}
-	if raw, ok := fields["tools"]; ok {
-		tools, err := decodeJSONValue(raw)
-		if err != nil {
-			return ctp2RequestView{}, fmt.Errorf("decode CTP/2 tools: %w", err)
-		}
-		view.tools = tools
+	if _, ok := fields["tools"]; ok {
 		view.hasTools = true
 	}
 	return view, nil
@@ -214,8 +243,6 @@ func transformCTP2Input(
 		}
 		typeName, _ := object["type"].(string)
 		switch typeName {
-		case "additional_tools":
-			transformCTP2Tools(object["tools"], transformString)
 		case "message":
 			role, _ := object["role"].(string)
 			if !developerTransformed && role == "developer" && transformCTP2DeveloperContent(object, transformString, transformFirstDeveloper) {
@@ -356,21 +383,54 @@ func transformCTP2Content(object map[string]any, field string, transform func(st
 	}
 }
 
-func transformCTP2Tools(value any, transform func(string) string) {
-	items, ok := value.([]any)
-	if !ok {
-		return
+func projectCTP2AdditionalTools(group *responsesAdditionalTools, transform func(string) string) (json.RawMessage, error) {
+	item := maps.Clone(group.item)
+	if !group.tools.present {
+		return json.Marshal(item)
 	}
-	for _, item := range items {
-		object, ok := item.(map[string]any)
-		if !ok {
+	tools, err := projectCTP2ToolSection(group.tools, transform)
+	if err != nil {
+		return nil, err
+	}
+	item["tools"] = tools
+	return json.Marshal(item)
+}
+
+func projectCTP2ToolSection(section *responsesToolSection, transform func(string) string) (json.RawMessage, error) {
+	if section == nil || !section.array {
+		return sectionRawTools(section), nil
+	}
+	definitions := slices.Clone(section.rawTools)
+	for index, node := range section.nodes {
+		if node == nil {
 			continue
 		}
-		transformCTP2StringField(object, "description", transform)
-		if nested, ok := object["tools"]; ok {
-			transformCTP2Tools(nested, transform)
+		tool := maps.Clone(node.definition)
+		var description *string
+		if json.Unmarshal(tool["description"], &description) == nil && description != nil {
+			tool["description"] = mustMarshalJSON(transform(*description))
 		}
+		if node.nested != nil {
+			nested, err := projectCTP2ToolSection(node.nested, transform)
+			if err != nil {
+				return nil, err
+			}
+			tool["tools"] = nested
+		}
+		encoded, err := json.Marshal(tool)
+		if err != nil {
+			return nil, err
+		}
+		definitions[index] = encoded
 	}
+	return json.Marshal(definitions)
+}
+
+func sectionRawTools(section *responsesToolSection) json.RawMessage {
+	if section == nil {
+		return nil
+	}
+	return section.raw
 }
 
 func transformCTP2StringField(object map[string]any, field string, transform func(string) string) {

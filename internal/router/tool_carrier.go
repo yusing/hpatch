@@ -32,7 +32,7 @@ const (
 
 type codeModeCarrierCatalog map[string]codeModeCarrierKind
 
-func buildCodeModeCarrierCatalog(fields map[string]json.RawMessage, registry *toolRegistry) (codeModeCarrierCatalog, error) {
+func buildCodeModeCarrierCatalog(tools *responsesToolCatalog, registry *toolRegistry) (codeModeCarrierCatalog, error) {
 	catalog := make(codeModeCarrierCatalog)
 	add := func(tool map[string]json.RawMessage) error {
 		name := jsonString(tool, "name")
@@ -61,39 +61,39 @@ func buildCodeModeCarrierCatalog(fields map[string]json.RawMessage, registry *to
 		return nil
 	}
 
-	if rawTools, exists := fields["tools"]; exists {
-		var tools []map[string]json.RawMessage
-		if err := json.Unmarshal(rawTools, &tools); err != nil {
+	if tools.top.present {
+		if err := tools.top.err; err != nil {
 			return nil, fmt.Errorf("decode Responses tools for carrier catalog: %w", err)
 		}
-		for _, tool := range tools {
+		for _, tool := range tools.top.tools {
 			if err := add(tool); err != nil {
 				return nil, err
 			}
 		}
 	}
-	var items []map[string]json.RawMessage
-	if json.Unmarshal(fields["input"], &items) == nil {
-		for _, item := range items {
-			if jsonString(item, "type") != "additional_tools" {
-				continue
+	if tools.inputObjectsErr == nil {
+		for _, group := range tools.additional {
+			if !group.tools.present {
+				return nil, errors.New("decode additional tools for carrier catalog: unexpected end of JSON input")
 			}
-			var additionalTools []map[string]json.RawMessage
-			if err := json.Unmarshal(item["tools"], &additionalTools); err != nil {
+			if err := group.tools.err; err != nil {
 				return nil, fmt.Errorf("decode additional tools for carrier catalog: %w", err)
 			}
-			for _, additionalTool := range additionalTools {
+			for index, additionalTool := range group.tools.tools {
 				if jsonString(additionalTool, "type") != "namespace" {
 					if err := add(additionalTool); err != nil {
 						return nil, err
 					}
 					continue
 				}
-				var tools []map[string]json.RawMessage
-				if err := json.Unmarshal(additionalTool["tools"], &tools); err != nil {
+				node := group.tools.nodes[index]
+				if node == nil || node.nested == nil {
+					return nil, errors.New("decode namespaced tools for carrier catalog: unexpected end of JSON input")
+				}
+				if err := node.nested.err; err != nil {
 					return nil, fmt.Errorf("decode namespaced tools for carrier catalog: %w", err)
 				}
-				for _, tool := range tools {
+				for _, tool := range node.nested.tools {
 					if err := add(tool); err != nil {
 						return nil, err
 					}

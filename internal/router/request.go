@@ -14,6 +14,40 @@ import (
 type parsedResponsesRequest struct {
 	fields         map[string]json.RawMessage
 	streamResponse bool
+	toolCatalog    *responsesToolCatalog
+}
+
+func (r *parsedResponsesRequest) responseTools() *responsesToolCatalog {
+	if r.toolCatalog == nil {
+		r.toolCatalog = decodeResponsesToolCatalog(r.fields)
+	}
+	return r.toolCatalog
+}
+
+func (r *parsedResponsesRequest) setInput(input json.RawMessage) {
+	r.fields["input"] = input
+	if r.toolCatalog == nil {
+		return
+	}
+	var items []json.RawMessage
+	if json.Unmarshal(input, &items) != nil {
+		return
+	}
+	groupIndex := 0
+	for itemIndex, rawItem := range items {
+		var item map[string]json.RawMessage
+		if json.Unmarshal(rawItem, &item) != nil || jsonString(item, "type") != "additional_tools" {
+			continue
+		}
+		if groupIndex >= len(r.toolCatalog.additional) {
+			return
+		}
+		group := r.toolCatalog.additional[groupIndex]
+		group.itemIndex = itemIndex
+		group.item = item
+		groupIndex++
+	}
+	r.toolCatalog.inputItems = items
 }
 
 func (r parsedResponsesRequest) model() string {

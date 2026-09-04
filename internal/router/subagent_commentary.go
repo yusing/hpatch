@@ -21,29 +21,24 @@ type subagentPendingCall struct {
 	argumentsDone []byte
 }
 
-func subagentToolCatalog(fields map[string]json.RawMessage) map[string]struct{} {
-	var items []map[string]json.RawMessage
-	if json.Unmarshal(fields["input"], &items) != nil {
+func subagentToolCatalog(tools *responsesToolCatalog) map[string]struct{} {
+	if tools.inputObjectsErr != nil {
 		return nil
 	}
 	catalog := make(map[string]struct{})
-	for _, item := range items {
-		if jsonString(item, "type") != "additional_tools" {
+	for _, group := range tools.additional {
+		if !group.tools.present || group.tools.err != nil {
 			continue
 		}
-		var namespaces []map[string]json.RawMessage
-		if json.Unmarshal(item["tools"], &namespaces) != nil {
-			continue
-		}
-		for _, namespace := range namespaces {
+		for index, namespace := range group.tools.tools {
 			if jsonString(namespace, "type") != "namespace" {
 				continue
 			}
-			var tools []map[string]json.RawMessage
-			if json.Unmarshal(namespace["tools"], &tools) != nil {
+			node := group.tools.nodes[index]
+			if node == nil || node.nested == nil || node.nested.err != nil {
 				continue
 			}
-			for _, tool := range tools {
+			for _, tool := range node.nested.tools {
 				name := jsonString(tool, "name")
 				if jsonString(tool, "type") == "function" && name == "spawn_agent" {
 					catalog[functionToolKey(jsonString(namespace, "name"), name)] = struct{}{}
