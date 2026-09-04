@@ -64,6 +64,65 @@ func TestCTP2RequestUsesContentLocalDictionaries(t *testing.T) {
 	}
 }
 
+func TestCTP2RequestPreservesProviderOwnedInputFields(t *testing.T) {
+	codec := mustCTP2Codec(t)
+	repeated := strings.Repeat("preserve provider-owned input data; ", 16)
+	request := parsedResponsesRequest{fields: map[string]json.RawMessage{
+		"instructions": mustTestJSON(t, "decode CTP/2 here"),
+		"input": mustTestJSON(t, []any{
+			map[string]any{
+				"type": "message", "role": "user", "call_id": 42,
+				"provider_item": map[string]any{"kept": true},
+				"content": []any{
+					map[string]any{
+						"type": "input_text", "text": repeated,
+						"provider_part": map[string]any{"kept": true},
+					},
+					map[string]any{"type": "input_image", "image_url": "provider://image", "provider_part": true},
+				},
+			},
+			map[string]any{"type": "future_item", "content": repeated, "provider_item": true},
+		}),
+	}}
+
+	transform, _, err := codec.prepareRequest(&request)
+	if err != nil || transform == nil {
+		t.Fatalf("transform = %#v, err = %v", transform, err)
+	}
+	var input []struct {
+		Type         string          `json:"type"`
+		Content      json.RawMessage `json:"content"`
+		ProviderItem json.RawMessage `json:"provider_item"`
+	}
+	if err := json.Unmarshal(request.fields["input"], &input); err != nil {
+		t.Fatal(err)
+	}
+	if len(input) != 2 || string(input[0].ProviderItem) != `{"kept":true}` || string(input[1].ProviderItem) != "true" {
+		t.Fatalf("provider-owned items changed: %s", request.fields["input"])
+	}
+	var content []struct {
+		Type         string          `json:"type"`
+		Text         string          `json:"text"`
+		ImageURL     string          `json:"image_url"`
+		ProviderPart json.RawMessage `json:"provider_part"`
+	}
+	if err := json.Unmarshal(input[0].Content, &content); err != nil {
+		t.Fatal(err)
+	}
+	if len(content) != 2 || string(content[0].ProviderPart) != `{"kept":true}` ||
+		content[1].ImageURL != "provider://image" || string(content[1].ProviderPart) != "true" {
+		t.Fatalf("provider-owned content changed: %s", input[0].Content)
+	}
+	decoded, err := decodeCTP2String(content[0].Text, transform.sources, upstreamJSONBufferBytes)
+	if err != nil || decoded != repeated {
+		t.Fatalf("text decoded = %q, err = %v", decoded, err)
+	}
+	var futureContent string
+	if err := json.Unmarshal(input[1].Content, &futureContent); err != nil || futureContent != repeated {
+		t.Fatalf("future item content = %q, err = %v", futureContent, err)
+	}
+}
+
 func TestCTP2RequestUsesCatalogForAdditionalToolDescriptions(t *testing.T) {
 	codec := mustCTP2Codec(t)
 	repeated := strings.Repeat("shared additional tool description; ", 16)
@@ -545,7 +604,8 @@ func mustCTP2Codec(t testing.TB) *ctp2Codec {
 
 func decodeCTP2TestValue(t *testing.T, raw json.RawMessage) any {
 	t.Helper()
-	value, err := decodeJSONValue(raw)
+	var value any
+	err := json.Unmarshal(raw, &value)
 	if err != nil {
 		t.Fatal(err)
 	}

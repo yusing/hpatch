@@ -15,7 +15,7 @@ func TestParsedResponsesRequestCachesToolCatalog(t *testing.T) {
 	if first != second {
 		t.Fatal("request decoded more than one tool catalog")
 	}
-	if got := jsonString(second.top.tools[0], "name"); got != "lookup" {
+	if got := second.top.tools[0].Name; got != "lookup" {
 		t.Fatalf("tool name = %q", got)
 	}
 }

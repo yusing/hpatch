@@ -92,12 +92,12 @@ func rewriteDeveloperModelInstructions(raw json.RawMessage, customized bool, mod
 	if len(raw) == 0 {
 		return nil, false, nil
 	}
-	input, err := decodeJSONValue(raw)
+	input, err := decodeResponsesInput(raw)
 	if err != nil {
 		return nil, false, fmt.Errorf("decode responses input instructions: %w", err)
 	}
 	var rewriteErr error
-	found := transformFirstDeveloperText(input, func(received string) string {
+	found, err := transformFirstDeveloperText(&input, func(received string) string {
 		rendered, err := renderModelInstructions(received, customized, modelInstructions)
 		if err != nil {
 			rewriteErr = err
@@ -105,13 +105,16 @@ func rewriteDeveloperModelInstructions(raw json.RawMessage, customized bool, mod
 		}
 		return rendered
 	})
+	if err != nil {
+		return nil, false, fmt.Errorf("encode responses input instructions: %w", err)
+	}
 	if rewriteErr != nil {
 		return nil, false, rewriteErr
 	}
 	if !found {
 		return nil, false, nil
 	}
-	rewritten, err := json.Marshal(input)
+	rewritten, err := input.encode()
 	if err != nil {
 		return nil, false, fmt.Errorf("encode responses input instructions: %w", err)
 	}

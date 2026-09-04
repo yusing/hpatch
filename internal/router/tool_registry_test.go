@@ -146,9 +146,9 @@ func TestToolRegistryStartup(t *testing.T) {
 			t.Fatal(err)
 		}
 		if len(specifications) != 3 ||
-			jsonString(specifications[0], "name") != hpatchToolName ||
-			jsonString(specifications[1], "name") != hpatchRecoveryToolName ||
-			jsonString(specifications[2], "name") != "shell" {
+			specifications[0].Name != hpatchToolName ||
+			specifications[1].Name != hpatchRecoveryToolName ||
+			specifications[2].Name != "shell" {
 			t.Fatalf("model-visible specifications = %#v", specifications)
 		}
 		second, err := buildToolRegistry(t.Context(), t.TempDir(), testHPatchToolDescription, false)
@@ -204,10 +204,10 @@ func TestToolRegistryStartup(t *testing.T) {
 			t.Fatal(err)
 		}
 		if len(specifications) != 4 ||
-			jsonString(specifications[0], "name") != hpatchToolName ||
-			jsonString(specifications[1], "name") != hpatchRecoveryToolName ||
-			jsonString(specifications[2], "name") != reportIssueToolName ||
-			jsonString(specifications[3], "name") != "shell" {
+			specifications[0].Name != hpatchToolName ||
+			specifications[1].Name != hpatchRecoveryToolName ||
+			specifications[2].Name != reportIssueToolName ||
+			specifications[3].Name != "shell" {
 			t.Fatalf("model-visible specifications = %#v", specifications)
 		}
 	})

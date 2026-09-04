@@ -34,8 +34,8 @@ type codeModeCarrierCatalog map[string]codeModeCarrierKind
 
 func buildCodeModeCarrierCatalog(tools *responsesToolCatalog, registry *toolRegistry) (codeModeCarrierCatalog, error) {
 	catalog := make(codeModeCarrierCatalog)
-	add := func(tool map[string]json.RawMessage) error {
-		name := jsonString(tool, "name")
+	add := func(tool *responsesToolDefinition) error {
+		name := tool.Name
 		if name == "" {
 			return nil
 		}
@@ -46,7 +46,7 @@ func buildCodeModeCarrierCatalog(tools *responsesToolCatalog, registry *toolRegi
 			return nil
 		}
 		var kind codeModeCarrierKind
-		switch jsonString(tool, "type") {
+		switch tool.Type {
 		case string(codeModeCarrierCustom):
 			kind = codeModeCarrierCustom
 		case string(codeModeCarrierFunction):
@@ -80,7 +80,7 @@ func buildCodeModeCarrierCatalog(tools *responsesToolCatalog, registry *toolRegi
 				return nil, fmt.Errorf("decode additional tools for carrier catalog: %w", err)
 			}
 			for index, additionalTool := range group.tools.tools {
-				if jsonString(additionalTool, "type") != "namespace" {
+				if additionalTool.Type != "namespace" {
 					if err := add(additionalTool); err != nil {
 						return nil, err
 					}
@@ -137,14 +137,6 @@ func carrierPayloadField(kind codeModeCarrierKind) string {
 		return "arguments"
 	}
 	return "input"
-}
-
-func renderCarrierItem(item map[string]json.RawMessage, kind codeModeCarrierKind, name, payload string) {
-	item["type"] = mustMarshalJSON(carrierItemType(kind))
-	item["name"] = mustMarshalJSON(name)
-	delete(item, "input")
-	delete(item, "arguments")
-	item[carrierPayloadField(kind)] = mustMarshalJSON(payload)
 }
 
 func renderCarrierDoneEvent(payload []byte, kind codeModeCarrierKind, carrierPayload string) ([]byte, error) {

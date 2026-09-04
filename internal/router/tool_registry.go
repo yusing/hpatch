@@ -119,8 +119,8 @@ func buildToolRegistry(ctx context.Context, dataDirectory, hpatchDescription str
 			pluginIDs[plugin.ID] = plugin.Module
 		}
 		for toolIndex, tool := range plugin.Tools {
-			var specification map[string]json.RawMessage
-			if decodeErr := json.Unmarshal(tool.Specification, &specification); decodeErr != nil {
+			specification, decodeErr := decodeResponsesToolDefinition(tool.Specification)
+			if decodeErr != nil {
 				validationErrors = append(validationErrors, fmt.Errorf(
 					"%s tool %d: decode normalized specification: %w",
 					plugin.Module,
@@ -129,7 +129,7 @@ func buildToolRegistry(ctx context.Context, dataDirectory, hpatchDescription str
 				))
 				continue
 			}
-			name := jsonString(specification, "name")
+			name := specification.Name
 			contribution := toolContribution{
 				PluginID:      plugin.ID,
 				Name:          name,
@@ -419,15 +419,15 @@ func (registry *toolRegistry) modelContributions() []toolContribution {
 	return contributions
 }
 
-func (registry *toolRegistry) specifications() ([]map[string]json.RawMessage, error) {
+func (registry *toolRegistry) specifications() ([]*responsesToolDefinition, error) {
 	if registry == nil {
 		return nil, errors.New("tool registry is unavailable")
 	}
 	contributions := registry.modelContributions()
-	specifications := make([]map[string]json.RawMessage, 0, len(contributions))
+	specifications := make([]*responsesToolDefinition, 0, len(contributions))
 	for _, contribution := range contributions {
-		var specification map[string]json.RawMessage
-		if err := json.Unmarshal(contribution.Specification, &specification); err != nil {
+		specification, err := decodeResponsesToolDefinition(contribution.Specification)
+		if err != nil {
 			return nil, fmt.Errorf("decode registered tool %s/%s: %w", contribution.PluginID, contribution.Name, err)
 		}
 		specifications = append(specifications, specification)

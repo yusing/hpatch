@@ -31,7 +31,7 @@ func subagentToolCatalog(tools *responsesToolCatalog) map[string]struct{} {
 			continue
 		}
 		for index, namespace := range group.tools.tools {
-			if jsonString(namespace, "type") != "namespace" {
+			if namespace.Type != "namespace" {
 				continue
 			}
 			node := group.tools.nodes[index]
@@ -39,9 +39,9 @@ func subagentToolCatalog(tools *responsesToolCatalog) map[string]struct{} {
 				continue
 			}
 			for _, tool := range node.nested.tools {
-				name := jsonString(tool, "name")
-				if jsonString(tool, "type") == "function" && name == "spawn_agent" {
-					catalog[functionToolKey(jsonString(namespace, "name"), name)] = struct{}{}
+				name := tool.Name
+				if tool.Type == "function" && name == "spawn_agent" {
+					catalog[functionToolKey(namespace.Name, name)] = struct{}{}
 				}
 			}
 		}

@@ -16,6 +16,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/openai/openai-go/v3/packages/param"
+	"github.com/openai/openai-go/v3/responses"
+	"github.com/openai/openai-go/v3/shared"
 	"github.com/yusing/hpatch"
 	codexinstructions "github.com/yusing/hpatch/contrib/codex"
 	"github.com/yusing/hpatch/internal/router/toolplugin"
@@ -423,17 +426,17 @@ type additionalToolsApplyPatchOwner struct {
 	execCommandParamsDescription string
 }
 
-func installedToolNames(tools []map[string]json.RawMessage) map[string]struct{} {
+func installedToolNames(tools []*responsesToolDefinition) map[string]struct{} {
 	names := make(map[string]struct{}, len(tools))
 	for _, tool := range tools {
-		names[jsonString(tool, "name")] = struct{}{}
+		names[tool.Name] = struct{}{}
 	}
 	return names
 }
 
 // replaceAdditionalToolsApplyPatch rewrites the Code Mode exec tool from an
 // app or CLI additional_tools owner and exposes the router's standalone tools.
-func replaceAdditionalToolsApplyPatch(fields map[string]json.RawMessage, catalog *responsesToolCatalog, installedTools []map[string]json.RawMessage) (string, bool, error) {
+func replaceAdditionalToolsApplyPatch(fields map[string]json.RawMessage, catalog *responsesToolCatalog, installedTools []*responsesToolDefinition) (string, bool, error) {
 	if catalog.top.present {
 		if err := catalog.top.err; err != nil {
 			return "", false, fmt.Errorf("decode responses tools: %w", err)
@@ -445,7 +448,7 @@ func replaceAdditionalToolsApplyPatch(fields map[string]json.RawMessage, catalog
 		return "", false, err
 	}
 	for _, tool := range catalog.top.tools {
-		name := jsonString(tool, "name")
+		name := tool.Name
 		if _, exists := installedNames[name]; exists {
 			return "", false, fmt.Errorf("responses request already defines %s", name)
 		}
@@ -464,7 +467,7 @@ func replaceAdditionalToolsApplyPatch(fields map[string]json.RawMessage, catalog
 
 // replaceNativeTools replaces the native apply_patch definition while retaining
 // exec_command as the executor-owned carrier for translated results.
-func replaceNativeTools(fields map[string]json.RawMessage, catalog *responsesToolCatalog, installedTools []map[string]json.RawMessage) (string, bool, error) {
+func replaceNativeTools(fields map[string]json.RawMessage, catalog *responsesToolCatalog, installedTools []*responsesToolDefinition) (string, bool, error) {
 	if !catalog.top.present || catalog.top.err != nil {
 		return "", false, nil //nolint:nilerr // An absent native tool array belongs to another request shape.
 	}
@@ -473,7 +476,7 @@ func replaceNativeTools(fields map[string]json.RawMessage, catalog *responsesToo
 	applyPatchIndex := -1
 	execCommandIndex := -1
 	for index, tool := range tools {
-		name := jsonString(tool, "name")
+		name := tool.Name
 		if _, exists := installedNames[name]; exists {
 			return "", false, fmt.Errorf("responses request already defines %s", name)
 		}
@@ -482,7 +485,7 @@ func replaceNativeTools(fields map[string]json.RawMessage, catalog *responsesToo
 			if applyPatchIndex >= 0 {
 				return "", false, errors.New("responses request defines native apply_patch more than once")
 			}
-			if jsonString(tool, "type") != "custom" {
+			if tool.Type != "custom" {
 				return "", false, errors.New("responses native apply_patch is not a custom tool")
 			}
 			applyPatchIndex = index
@@ -490,7 +493,7 @@ func replaceNativeTools(fields map[string]json.RawMessage, catalog *responsesToo
 			if execCommandIndex >= 0 {
 				return "", false, errors.New("responses request defines native exec_command more than once")
 			}
-			if jsonString(tool, "type") != "function" {
+			if tool.Type != "function" {
 				return "", false, errors.New("responses native exec_command is not a function tool")
 			}
 			execCommandIndex = index
@@ -501,9 +504,11 @@ func replaceNativeTools(fields map[string]json.RawMessage, catalog *responsesToo
 	if applyPatchIndex < 0 || execCommandIndex < 0 {
 		return "", false, nil
 	}
-	var choice map[string]json.RawMessage
+	var choice struct {
+		Name string `json:"name"`
+	}
 	if json.Unmarshal(fields["tool_choice"], &choice) == nil {
-		selected := jsonString(choice, "name")
+		selected := choice.Name
 		if selected == applyPatchToolName || selected == nativeExecCommandToolName {
 			return "", false, nil
 		}
@@ -528,7 +533,7 @@ func findAdditionalToolsApplyPatch(catalog *responsesToolCatalog, installedNames
 		nested bool,
 	) error {
 		tool := section.tools[toolIndex]
-		name := jsonString(tool, "name")
+		name := tool.Name
 		if _, exists := installedNames[name]; exists {
 			if nested {
 				return fmt.Errorf("responses functions namespace defines %s", name)
@@ -547,11 +552,11 @@ func findAdditionalToolsApplyPatch(catalog *responsesToolCatalog, installedNames
 		if owner != nil {
 			return errors.New("responses request defines Code Mode exec more than once")
 		}
-		stripped, found, err := stripCodeModeApplyPatchSection(jsonString(tool, "description"))
+		stripped, found, err := stripCodeModeApplyPatchSection(tool.Description)
 		if err != nil {
 			return err
 		}
-		if !found || jsonString(tool, "type") != "custom" {
+		if !found || tool.Type != "custom" {
 			return nil
 		}
 		var execCommandParamsDescription string
@@ -574,8 +579,8 @@ func findAdditionalToolsApplyPatch(catalog *responsesToolCatalog, installedNames
 			continue
 		}
 		for additionalToolIndex, additionalTool := range group.tools.tools {
-			name := jsonString(additionalTool, "name")
-			if jsonString(additionalTool, "type") != "namespace" {
+			name := additionalTool.Name
+			if additionalTool.Type != "namespace" {
 				if name == "functions.exec" {
 					return nil, errors.New("responses additional_tools item exposes unsupported flat functions.exec")
 				}
@@ -609,25 +614,28 @@ func findAdditionalToolsApplyPatch(catalog *responsesToolCatalog, installedNames
 }
 
 func codeModeToolChoiceRestricted(fields map[string]json.RawMessage, codeToolName string) bool {
-	var choice map[string]json.RawMessage
+	var choice struct {
+		Type string `json:"type"`
+		Name string `json:"name"`
+	}
 	if json.Unmarshal(fields["tool_choice"], &choice) != nil {
 		return false
 	}
-	return jsonString(choice, "type") == "custom" && jsonString(choice, "name") == codeToolName
+	return choice.Type == "custom" && choice.Name == codeToolName
 }
 
-func exposeStandaloneHPatch(fields map[string]json.RawMessage, catalog *responsesToolCatalog, owner *additionalToolsApplyPatchOwner, installedTools []map[string]json.RawMessage) error {
-	owner.section.tools[owner.toolIndex]["description"] = mustMarshalJSON(owner.strippedDescription)
-	shellIndex := slices.IndexFunc(installedTools, func(tool map[string]json.RawMessage) bool {
-		return jsonString(tool, "name") == "shell"
+func exposeStandaloneHPatch(fields map[string]json.RawMessage, catalog *responsesToolCatalog, owner *additionalToolsApplyPatchOwner, installedTools []*responsesToolDefinition) error {
+	owner.section.tools[owner.toolIndex].setDescription(owner.strippedDescription)
+	shellIndex := slices.IndexFunc(installedTools, func(tool *responsesToolDefinition) bool {
+		return tool.Name == "shell"
 	})
 	if shellIndex < 0 {
 		return errors.New("built-in shell tool is unavailable")
 	}
 	if owner.execCommandParamsDescription != "" {
-		description := strings.TrimRight(jsonString(installedTools[shellIndex], "description"), "\r\n")
+		description := strings.TrimRight(installedTools[shellIndex].Description, "\r\n")
 		description += "\n\n" + owner.execCommandParamsDescription
-		installedTools[shellIndex]["description"] = mustMarshalJSON(description)
+		installedTools[shellIndex].setDescription(description)
 	}
 	if err := catalog.encodeAdditional(fields, owner.group, owner.section); err != nil {
 		return fmt.Errorf("encode Responses input: %w", err)
@@ -648,24 +656,24 @@ func (t *hpatchResponseTransform) routesTool(name string) bool {
 }
 
 func customGrammarTool(name, description, grammar string) map[string]json.RawMessage {
-	return map[string]json.RawMessage{
-		"type":        mustMarshalJSON("custom"),
-		"name":        mustMarshalJSON(name),
-		"description": mustMarshalJSON(description),
-		"format": mustMarshalJSON(map[string]string{
-			"type":       "grammar",
-			"syntax":     "lark",
-			"definition": grammar,
-		}),
-	}
+	tool := responses.ToolParamOfCustom(name)
+	tool.OfCustom.Description = param.NewOpt(description)
+	tool.OfCustom.Format = shared.CustomToolInputFormatParamOfGrammar(grammar, "lark")
+	return mustToolDefinitionFields(tool)
 }
 
 func customFreeformTool(name, description string) map[string]json.RawMessage {
-	return map[string]json.RawMessage{
-		"type":        mustMarshalJSON("custom"),
-		"name":        mustMarshalJSON(name),
-		"description": mustMarshalJSON(description),
+	tool := responses.ToolParamOfCustom(name)
+	tool.OfCustom.Description = param.NewOpt(description)
+	return mustToolDefinitionFields(tool)
+}
+
+func mustToolDefinitionFields(tool responses.ToolUnionParam) map[string]json.RawMessage {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(mustMarshalJSON(tool), &fields); err != nil {
+		panic(err)
 	}
+	return fields
 }
 
 const (
@@ -1340,22 +1348,21 @@ func (t *hpatchResponseTransform) TransformSSE(payload []byte) ([][]byte, error)
 		return visible, nil
 
 	case "response.output_item.added":
-		var item map[string]json.RawMessage
-		if json.Unmarshal(envelope.Item, &item) != nil {
+		item, ok := decodeResponsesItem(envelope.Item)
+		if !ok {
 			return [][]byte{payload}, nil //nolint:nilerr // Unrelated output items pass through unchanged.
 		}
-		name := jsonString(item, "name")
+		name := item.Name
 		if t.codeModeToolName != "" && name == t.codeModeToolName {
-			itemID := jsonString(item, "id")
-			if jsonString(item, "type") == "custom_tool_call" && itemID != "" {
-				t.nativeExecCalls[itemID] = jsonString(item, "call_id")
+			if item.Type == "custom_tool_call" && item.ID != "" {
+				t.nativeExecCalls[item.ID] = item.CallID
 			}
 			return [][]byte{payload}, nil
 		}
-		if jsonString(item, "type") == "function_call" {
-			key := functionToolKey(jsonString(item, "namespace"), name)
+		if item.Type == "function_call" {
+			key := functionToolKey(item.Namespace, name)
 			if _, instrumented := t.subagentTools[key]; instrumented {
-				itemID, callID := jsonString(item, "id"), jsonString(item, "call_id")
+				itemID, callID := item.ID, item.CallID
 				if itemID == "" || callID == "" || len(t.subagentPending) >= maxHPatchPendingCalls {
 					return [][]byte{payload}, nil
 				}
@@ -1365,9 +1372,9 @@ func (t *hpatchResponseTransform) TransformSSE(payload []byte) ([][]byte, error)
 				t.subagentPending[itemID] = subagentPendingCall{callID: callID, added: bytes.Clone(payload)}
 				return nil, nil
 			}
-			key = functionToolKey(jsonString(item, "namespace"), name)
+			key = functionToolKey(item.Namespace, name)
 			if _, instrumented := t.commentaryTools[key]; instrumented {
-				itemID, callID := jsonString(item, "id"), jsonString(item, "call_id")
+				itemID, callID := item.ID, item.CallID
 				if itemID == "" || callID == "" {
 					return nil, errors.New("upstream emitted malformed commentary function call")
 				}
@@ -1386,8 +1393,8 @@ func (t *hpatchResponseTransform) TransformSSE(payload []byte) ([][]byte, error)
 		if !t.routesTool(name) {
 			return [][]byte{payload}, nil
 		}
-		itemID, callID := jsonString(item, "id"), jsonString(item, "call_id")
-		if jsonString(item, "type") != "custom_tool_call" || itemID == "" || callID == "" {
+		itemID, callID := item.ID, item.CallID
+		if item.Type != "custom_tool_call" || itemID == "" || callID == "" {
 			return nil, errors.New("upstream emitted malformed hpatch call")
 		}
 		if len(t.pending) >= maxHPatchPendingCalls {
@@ -1429,25 +1436,25 @@ func (t *hpatchResponseTransform) TransformSSE(payload []byte) ([][]byte, error)
 				}
 				callID := cmp.Or(addedCallID, envelope.CallID)
 				t.nativeExecCalls[envelope.ItemID] = callID
-				item := map[string]json.RawMessage{
+				item := newResponsesItem(map[string]json.RawMessage{
 					"type":    mustMarshalJSON("custom_tool_call"),
 					"id":      mustMarshalJSON(envelope.ItemID),
 					"call_id": mustMarshalJSON(callID),
 					"name":    mustMarshalJSON(t.codeModeToolName),
 					"input":   mustMarshalJSON(envelope.Input),
-				}
-				changed, err := t.transformOutputItem(item)
+				})
+				changed, err := t.transformOutputItem(&item)
 				if err != nil {
 					return nil, err
 				}
 				event := payload
 				if changed {
-					event, err = replaceRawField(payload, "input", item["input"])
+					event, err = replaceRawField(payload, "input", item.fields["input"])
 					if err != nil {
 						return nil, err
 					}
 				}
-				if message := t.localStartCommentary(item); message != nil {
+				if message := t.localStartCommentary(item.fields); message != nil {
 					return [][]byte{assistantCommentaryDoneEvent(message), event}, nil
 				}
 				return [][]byte{event}, nil
@@ -1464,12 +1471,12 @@ func (t *hpatchResponseTransform) TransformSSE(payload []byte) ([][]byte, error)
 		if json.Unmarshal(pending.added, &addedEnvelope) != nil {
 			return nil, errors.New("decode buffered hpatch item")
 		}
-		var addedItem map[string]json.RawMessage
-		if json.Unmarshal(addedEnvelope.Item, &addedItem) != nil {
+		addedItem, ok := decodeResponsesItem(addedEnvelope.Item)
+		if !ok {
 			return nil, errors.New("decode buffered hpatch call")
 		}
 		kind := history.effectiveCarrierKind()
-		renderCarrierItem(addedItem, kind, history.carrierName, "")
+		addedItem.renderCarrier(kind, history.carrierName, "")
 		itemPayload, err := json.Marshal(addedItem)
 		if err != nil {
 			return nil, err
@@ -1511,14 +1518,14 @@ func (t *hpatchResponseTransform) TransformSSE(payload []byte) ([][]byte, error)
 		return [][]byte{[]byte(`{"type":"response.in_progress"}`)}, nil
 
 	case "response.output_item.done":
-		var item map[string]json.RawMessage
-		if json.Unmarshal(envelope.Item, &item) != nil {
+		item, ok := decodeResponsesItem(envelope.Item)
+		if !ok {
 			return [][]byte{payload}, nil //nolint:nilerr // Malformed unrelated output remains the upstream's responsibility.
 		}
-		itemID := jsonString(item, "id")
-		callID := jsonString(item, "call_id")
+		itemID := item.ID
+		callID := item.CallID
 		if expectedCallID, nativeExec := t.nativeExecCalls[itemID]; nativeExec {
-			if jsonString(item, "type") != "custom_tool_call" || jsonString(item, "name") != t.codeModeToolName ||
+			if item.Type != "custom_tool_call" || item.Name != t.codeModeToolName ||
 				expectedCallID != callID {
 				return nil, errors.New("upstream completed inconsistent Code Mode call")
 			}
@@ -1526,8 +1533,8 @@ func (t *hpatchResponseTransform) TransformSSE(payload []byte) ([][]byte, error)
 		if pending, buffered := t.subagentPending[itemID]; buffered {
 			delete(t.subagentPending, itemID)
 			visible := make([][]byte, 0, 4)
-			if jsonString(item, "call_id") == pending.callID {
-				if message := t.subagentCallMessage(item); message != nil {
+			if item.CallID == pending.callID {
+				if message := t.subagentCallMessage(item.fields); message != nil {
 					visible = append(visible, assistantCommentaryDoneEvent(message))
 				}
 			}
@@ -1543,7 +1550,7 @@ func (t *hpatchResponseTransform) TransformSSE(payload []byte) ([][]byte, error)
 			if pending.callID != callID || len(pending.argumentsDone) == 0 {
 				return nil, errors.New("upstream completed inconsistent commentary function call")
 			}
-			message, err := t.transformStructuredCommentary(item)
+			message, err := t.transformStructuredCommentary(item.fields)
 			if err != nil {
 				return nil, err
 			}
@@ -1554,7 +1561,7 @@ func (t *hpatchResponseTransform) TransformSSE(payload []byte) ([][]byte, error)
 			if json.Unmarshal(pending.added, &addedEnvelope) != nil || json.Unmarshal(addedEnvelope.Item, &addedItem) != nil {
 				return nil, errors.New("decode buffered commentary call")
 			}
-			addedItem["arguments"] = item["arguments"]
+			addedItem["arguments"] = item.fields["arguments"]
 			addedPayload, err := json.Marshal(addedItem)
 			if err != nil {
 				return nil, err
@@ -1563,7 +1570,7 @@ func (t *hpatchResponseTransform) TransformSSE(payload []byte) ([][]byte, error)
 			if err != nil {
 				return nil, err
 			}
-			argumentsDone, err := replaceRawField(pending.argumentsDone, "arguments", item["arguments"])
+			argumentsDone, err := replaceRawField(pending.argumentsDone, "arguments", item.fields["arguments"])
 			if err != nil {
 				return nil, err
 			}
@@ -1584,16 +1591,17 @@ func (t *hpatchResponseTransform) TransformSSE(payload []byte) ([][]byte, error)
 			}
 			return [][]byte{addedEvent, argumentsDone, itemDone}, nil
 		}
-		message, err := t.transformStructuredCommentary(item)
+		message, err := t.transformStructuredCommentary(item.fields)
 		if err != nil {
 			return nil, err
 		}
-		changed, err := t.transformOutputItem(item)
+		item = newResponsesItem(item.fields)
+		changed, err := t.transformOutputItem(&item)
 		if err != nil {
 			return nil, err
 		}
 		if message == nil {
-			message = t.localStartCommentary(item)
+			message = t.localStartCommentary(item.fields)
 		}
 		if err := t.commitLocalCall(callID); err != nil {
 			return nil, err
@@ -1724,9 +1732,10 @@ func (t *hpatchResponseTransform) transformResponse(payload []byte) ([]byte, map
 			transformedOutput = append(transformedOutput, message)
 		}
 		t.subagentDeferred = nil
-		for _, item := range output {
+		for _, fields := range output {
+			item := newResponsesItem(fields)
 			subagentMessage, matched := subagentCallCommentary(
-				item,
+				item.fields,
 				t.subagentTools,
 				t.parentModel,
 				t.parentReasoningEffort,
@@ -1735,7 +1744,7 @@ func (t *hpatchResponseTransform) transformResponse(payload []byte) ([]byte, map
 				transformedOutput = append(transformedOutput, subagentMessage)
 			}
 			if !matched {
-				message, err := t.transformStructuredCommentary(item)
+				message, err := t.transformStructuredCommentary(item.fields)
 				if err != nil {
 					return nil, nil, err
 				}
@@ -1743,13 +1752,14 @@ func (t *hpatchResponseTransform) transformResponse(payload []byte) ([]byte, map
 					transformedOutput = append(transformedOutput, message)
 				}
 			}
-			if _, err := t.transformOutputItem(item); err != nil {
+			item = newResponsesItem(item.fields)
+			if _, err := t.transformOutputItem(&item); err != nil {
 				return nil, nil, err
 			}
-			if message := t.localStartCommentary(item); message != nil {
+			if message := t.localStartCommentary(item.fields); message != nil {
 				transformedOutput = append(transformedOutput, message)
 			}
-			transformedOutput = append(transformedOutput, item)
+			transformedOutput = append(transformedOutput, item.fields)
 		}
 		encoded, err := json.Marshal(transformedOutput)
 		if err != nil {
@@ -1785,25 +1795,28 @@ func (t *hpatchResponseTransform) restoreResponseContract(object map[string]json
 	}
 }
 
-func (t *hpatchResponseTransform) transformOutputItem(item map[string]json.RawMessage) (bool, error) {
-	name := jsonString(item, "name")
+func (t *hpatchResponseTransform) transformOutputItem(item *responsesItem) (bool, error) {
+	name := item.Name
 	if t.codeModeToolName != "" && name == t.codeModeToolName &&
-		jsonString(item, "type") == "custom_tool_call" {
-		callID := jsonString(item, "call_id")
-		originalInput := jsonString(item, "input")
+		item.Type == "custom_tool_call" {
+		callID := item.CallID
+		var originalInput string
+		if item.Input != nil {
+			originalInput = *item.Input
+		}
 		if retained, exists := t.local[callID]; exists && retained.toolName == codeModeCommentaryHistoryTool {
 			if retained.script != originalInput {
 				return false, fmt.Errorf("Code Mode commentary call %q changed input", callID)
 			}
-			retained.upstreamItem = maps.Clone(item)
+			retained.upstreamItem = item.cloneFields()
 			t.local[callID] = retained
-			item["input"] = mustMarshalJSON(retained.carrierPayload)
+			item.setInput(retained.carrierPayload)
 			return retained.carrierPayload != originalInput, nil
 		}
 		input, _, changed, detected := nativeExecCommandInput(originalInput)
 		if detected {
 			if changed {
-				item["input"] = mustMarshalJSON(input)
+				item.setInput(input)
 			}
 		}
 		input, commentaryChanged, err := t.lowerCodeModeCommentary(callID, input)
@@ -1813,7 +1826,7 @@ func (t *hpatchResponseTransform) transformOutputItem(item map[string]json.RawMe
 		changed = changed || commentaryChanged
 		if t.proxy.commentaryEndpoint == "" {
 			if changed {
-				item["input"] = mustMarshalJSON(input)
+				item.setInput(input)
 			}
 			return changed, nil
 		}
@@ -1823,7 +1836,7 @@ func (t *hpatchResponseTransform) transformOutputItem(item map[string]json.RawMe
 		history := hpatchHistory{
 			toolName: codeModeCommentaryHistoryTool,
 			script:   originalInput, carrierKind: codeModeCarrierCustom,
-			carrierName: name, carrierPayload: input, upstreamItem: maps.Clone(item),
+			carrierName: name, carrierPayload: input, upstreamItem: item.cloneFields(),
 		}
 		if !commentaryChanged {
 			history.replayCarrier = true
@@ -1831,22 +1844,26 @@ func (t *hpatchResponseTransform) transformOutputItem(item map[string]json.RawMe
 		}
 		t.recordLocal(callID, &history)
 		if changed {
-			item["input"] = mustMarshalJSON(input)
+			item.setInput(input)
 		}
 		return changed, nil
 	}
 	if !t.routesTool(name) {
 		return false, nil
 	}
-	callID := jsonString(item, "call_id")
-	if jsonString(item, "type") != "custom_tool_call" || callID == "" {
+	callID := item.CallID
+	if item.Type != "custom_tool_call" || callID == "" {
 		return false, fmt.Errorf("upstream emitted malformed %s call", name)
 	}
-	history, err := t.translateTool(name, callID, jsonString(item, "input"), maps.Clone(item))
+	var input string
+	if item.Input != nil {
+		input = *item.Input
+	}
+	history, err := t.translateTool(name, callID, input, item.cloneFields())
 	if err != nil {
 		return false, err
 	}
-	renderCarrierItem(item, history.effectiveCarrierKind(), history.carrierName, history.carrierInput())
+	item.renderCarrier(history.effectiveCarrierKind(), history.carrierName, history.carrierInput())
 	return true, nil
 }
 

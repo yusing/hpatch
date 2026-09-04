@@ -1,0 +1,120 @@
+package router
+
+import (
+	"encoding/json"
+	"maps"
+)
+
+// responsesItem keeps the complete provider object while exposing the stable
+// fields used by CTP, Code Mode, commentary, history, and carrier rendering.
+type responsesItem struct {
+	fields    map[string]json.RawMessage
+	Type      string
+	Role      string
+	ID        string
+	CallID    string
+	Name      string
+	Namespace string
+	Status    string
+	Content   json.RawMessage
+	Output    json.RawMessage
+	Input     *string
+	Arguments *string
+}
+
+func decodeResponsesItem(raw json.RawMessage) (responsesItem, bool) {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &fields); err != nil || fields == nil {
+		return responsesItem{}, false
+	}
+	return newResponsesItem(fields), true
+}
+
+func newResponsesItem(fields map[string]json.RawMessage) responsesItem {
+	item := responsesItem{
+		fields:    fields,
+		Type:      jsonString(fields, "type"),
+		Role:      jsonString(fields, "role"),
+		ID:        jsonString(fields, "id"),
+		CallID:    jsonString(fields, "call_id"),
+		Name:      jsonString(fields, "name"),
+		Namespace: jsonString(fields, "namespace"),
+		Status:    jsonString(fields, "status"),
+		Content:   fields["content"],
+		Output:    fields["output"],
+	}
+	if value, ok := decodeJSONString(fields["input"]); ok {
+		item.Input = new(value)
+	}
+	if value, ok := decodeJSONString(fields["arguments"]); ok {
+		item.Arguments = new(value)
+	}
+	return item
+}
+
+func (item responsesItem) MarshalJSON() ([]byte, error) {
+	if item.fields == nil {
+		return []byte("null"), nil
+	}
+	return json.Marshal(item.fields)
+}
+
+func (item *responsesItem) UnmarshalJSON(raw []byte) error {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		return err
+	}
+	*item = newResponsesItem(fields)
+	return nil
+}
+
+func (item *responsesItem) setContent(content json.RawMessage) {
+	item.Content = content
+	item.fields["content"] = content
+}
+
+func (item *responsesItem) setOutput(output json.RawMessage) {
+	item.Output = output
+	item.fields["output"] = output
+}
+
+func (item *responsesItem) setInput(input string) {
+	item.Input = new(input)
+	item.fields["input"] = mustMarshalJSON(input)
+}
+
+func (item *responsesItem) setArguments(arguments string) {
+	item.Arguments = new(arguments)
+	item.fields["arguments"] = mustMarshalJSON(arguments)
+}
+
+func (item *responsesItem) renderCarrier(kind codeModeCarrierKind, name, payload string) {
+	item.Type = carrierItemType(kind)
+	item.Name = name
+	item.fields["type"] = mustMarshalJSON(item.Type)
+	item.fields["name"] = mustMarshalJSON(name)
+	delete(item.fields, "input")
+	delete(item.fields, "arguments")
+	item.Input = nil
+	item.Arguments = nil
+	if kind == codeModeCarrierFunction {
+		item.setArguments(payload)
+	} else {
+		item.setInput(payload)
+	}
+}
+
+func (item responsesItem) cloneFields() map[string]json.RawMessage {
+	return maps.Clone(item.fields)
+}
+
+func decodeJSONString(raw json.RawMessage) (string, bool) {
+	if len(raw) == 0 {
+		return "", false
+	}
+	var value string
+	if json.Unmarshal(raw, &value) != nil {
+		return "", false
+	}
+	return value, true
+}

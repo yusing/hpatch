@@ -27,14 +27,68 @@ type responsesToolSection struct {
 	array    bool
 	raw      json.RawMessage
 	rawTools []json.RawMessage
-	tools    []map[string]json.RawMessage
+	tools    []*responsesToolDefinition
 	nodes    []*responsesToolNode
 	err      error
 }
 
 type responsesToolNode struct {
-	definition map[string]json.RawMessage
+	definition *responsesToolDefinition
 	nested     *responsesToolSection
+}
+
+// responsesToolDefinition exposes the stable Responses tool fields while its
+// raw object remains authoritative for provider- and plugin-owned extensions.
+type responsesToolDefinition struct {
+	fields      map[string]json.RawMessage
+	Type        string
+	Name        string
+	Description string
+	Title       string
+}
+
+func decodeResponsesToolDefinition(raw json.RawMessage) (*responsesToolDefinition, error) {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		return nil, err
+	}
+	if fields == nil {
+		return &responsesToolDefinition{}, nil
+	}
+	return newResponsesToolDefinition(fields), nil
+}
+
+func newResponsesToolDefinition(fields map[string]json.RawMessage) *responsesToolDefinition {
+	return &responsesToolDefinition{
+		fields:      fields,
+		Type:        jsonString(fields, "type"),
+		Name:        jsonString(fields, "name"),
+		Description: jsonString(fields, "description"),
+		Title:       jsonString(fields, "title"),
+	}
+}
+
+func (tool *responsesToolDefinition) MarshalJSON() ([]byte, error) {
+	if tool == nil || tool.fields == nil {
+		return []byte("null"), nil
+	}
+	return json.Marshal(tool.fields)
+}
+
+func (tool *responsesToolDefinition) setDescription(description string) {
+	tool.Description = description
+	tool.fields["description"] = mustMarshalJSON(description)
+}
+
+func (tool *responsesToolDefinition) rawField(name string) json.RawMessage {
+	if tool == nil || tool.fields == nil {
+		return nil
+	}
+	return tool.fields[name]
+}
+
+func (tool *responsesToolDefinition) setRawField(name string, value json.RawMessage) {
+	tool.fields[name] = value
 }
 
 func decodeResponsesToolCatalog(fields map[string]json.RawMessage) *responsesToolCatalog {
@@ -85,20 +139,20 @@ func decodeResponsesToolSection(raw json.RawMessage, present bool) *responsesToo
 	if definitions == nil {
 		return section
 	}
-	section.tools = make([]map[string]json.RawMessage, len(definitions))
+	section.tools = make([]*responsesToolDefinition, len(definitions))
 	section.nodes = make([]*responsesToolNode, len(definitions))
 	for index, definition := range definitions {
-		var tool map[string]json.RawMessage
-		if err := json.Unmarshal(definition, &tool); err != nil {
+		tool, err := decodeResponsesToolDefinition(definition)
+		if err != nil {
 			section.err = errors.Join(section.err, err)
 			continue
 		}
 		section.tools[index] = tool
-		if tool == nil {
+		if tool.fields == nil {
 			continue
 		}
 		node := &responsesToolNode{definition: tool}
-		if nested, ok := tool["tools"]; ok {
+		if nested, ok := tool.fields["tools"]; ok {
 			node.nested = decodeResponsesToolSection(nested, true)
 		}
 		section.nodes[index] = node
@@ -106,14 +160,14 @@ func decodeResponsesToolSection(raw json.RawMessage, present bool) *responsesToo
 	return section
 }
 
-func (c *responsesToolCatalog) appendTop(tools []map[string]json.RawMessage) {
+func (c *responsesToolCatalog) appendTop(tools []*responsesToolDefinition) {
 	c.top.present = true
 	c.top.array = true
 	c.top.tools = append(c.top.tools, tools...)
 	for _, tool := range tools {
 		c.top.rawTools = append(c.top.rawTools, mustMarshalJSON(tool))
 		node := &responsesToolNode{definition: tool}
-		if nested, ok := tool["tools"]; ok {
+		if nested, ok := tool.fields["tools"]; ok {
 			node.nested = decodeResponsesToolSection(nested, true)
 		}
 		c.top.nodes = append(c.top.nodes, node)
@@ -125,12 +179,12 @@ func (c *responsesToolCatalog) removeTop(index int) {
 	c.top.rawTools = append(c.top.rawTools[:index], c.top.rawTools[index+1:]...)
 	c.top.nodes = c.top.nodes[:0]
 	for _, tool := range c.top.tools {
-		if tool == nil {
+		if tool == nil || tool.fields == nil {
 			c.top.nodes = append(c.top.nodes, nil)
 			continue
 		}
 		node := &responsesToolNode{definition: tool}
-		if nested, ok := tool["tools"]; ok {
+		if nested, ok := tool.fields["tools"]; ok {
 			node.nested = decodeResponsesToolSection(nested, true)
 		}
 		c.top.nodes = append(c.top.nodes, node)
@@ -156,7 +210,7 @@ func (c *responsesToolCatalog) encodeAdditional(fields map[string]json.RawMessag
 			if err != nil {
 				return err
 			}
-			node.definition["tools"] = encoded
+			node.definition.setRawField("tools", encoded)
 			break
 		}
 	}

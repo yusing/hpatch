@@ -118,6 +118,22 @@ func TestStructuredCommentaryTransformsJSONAndReplay(t *testing.T) {
 		jsonString(response.Output[1], "arguments") != `{"chars":"y","session_id":42}` {
 		t.Fatalf("transformed output = %s", transformed)
 	}
+	var commentary struct {
+		Type    string `json:"type"`
+		Role    string `json:"role"`
+		Status  string `json:"status"`
+		Content []struct {
+			Type        string            `json:"type"`
+			Annotations []json.RawMessage `json:"annotations"`
+		} `json:"content"`
+	}
+	if err := json.Unmarshal(mustMarshalJSON(response.Output[0]), &commentary); err != nil {
+		t.Fatal(err)
+	}
+	if commentary.Type != "message" || commentary.Role != "assistant" || commentary.Status != "completed" ||
+		len(commentary.Content) != 1 || commentary.Content[0].Type != "output_text" || commentary.Content[0].Annotations == nil {
+		t.Fatalf("commentary message shape = %s", mustMarshalJSON(response.Output[0]))
+	}
 
 	replay, err := parseResponsesRequest(mustTestJSON(t, map[string]any{"input": []any{
 		response.Output[0], response.Output[1], map[string]any{

@@ -113,14 +113,14 @@ func testFunctionsNamespaceTools(t *testing.T, fields map[string]json.RawMessage
 	return tools, namespaces
 }
 
-func testInstalledTools() []map[string]json.RawMessage {
-	return []map[string]json.RawMessage{
-		customGrammarTool(hpatchToolName, testHPatchToolDescription, hpatch.ToolGrammar()),
-		{
+func testInstalledTools() []*responsesToolDefinition {
+	return []*responsesToolDefinition{
+		newResponsesToolDefinition(customGrammarTool(hpatchToolName, testHPatchToolDescription, hpatch.ToolGrammar())),
+		newResponsesToolDefinition(map[string]json.RawMessage{
 			"type":        mustMarshalJSON("custom"),
 			"name":        mustMarshalJSON("shell"),
 			"description": mustMarshalJSON("shell base description"),
-		},
+		}),
 	}
 }
 

@@ -18,7 +18,8 @@ func TestCodeModeCommentaryLowersRuntimeExpressionAndPreservesOriginal(t *testin
 		"type": mustMarshalJSON("custom_tool_call"), "name": mustMarshalJSON(transform.codeModeToolName),
 		"call_id": mustMarshalJSON("call-code"), "id": mustMarshalJSON("item-code"), "input": mustMarshalJSON(source),
 	}
-	changed, err := transform.transformOutputItem(item)
+	view := newResponsesItem(item)
+	changed, err := transform.transformOutputItem(&view)
 	if err != nil || !changed {
 		t.Fatalf("changed = %v, error %v", changed, err)
 	}
@@ -37,7 +38,8 @@ func TestCodeModeCommentaryLowersRuntimeExpressionAndPreservesOriginal(t *testin
 	}
 	repeated := maps.Clone(item)
 	repeated["input"] = mustMarshalJSON(source)
-	if changed, err := transform.transformOutputItem(repeated); err != nil || !changed || jsonString(repeated, "input") != lowered {
+	repeatedView := newResponsesItem(repeated)
+	if changed, err := transform.transformOutputItem(&repeatedView); err != nil || !changed || jsonString(repeated, "input") != lowered {
 		t.Fatalf("repeated lower = changed %v, error %v, input %s", changed, err, repeated["input"])
 	}
 }
@@ -140,7 +142,8 @@ func TestCodeModeWithoutExplicitCommentaryGetsDefault(t *testing.T) {
 		"call_id": mustMarshalJSON("call-default"), "id": mustMarshalJSON("item-default"),
 		"input": mustMarshalJSON("text('done');"),
 	}
-	changed, err := transform.transformOutputItem(item)
+	view := newResponsesItem(item)
+	changed, err := transform.transformOutputItem(&view)
 	if err != nil || changed {
 		t.Fatalf("changed = %v, error %v", changed, err)
 	}
