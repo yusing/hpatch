@@ -535,6 +535,15 @@ func executeRequest(
 	observeUsage := func(counts tokenCounts) {
 		finalization.observation.usageCounts = counts
 		finalization.observation.usageObserved = true
+		if hpatchTransform != nil {
+			hpatchTransform.observeResponseUsage(counts)
+		}
+		capturer.ObserveProviderUsage(executionCtx, capturer.ProviderUsage{
+			InputTokens:     counts.InputTokens,
+			CachedTokens:    counts.InputTokens - counts.UncachedInputTokens,
+			OutputTokens:    counts.OutputTokens,
+			ReasoningTokens: counts.ReasoningTokens,
+		})
 	}
 
 	var stagedBody []byte

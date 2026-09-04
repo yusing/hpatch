@@ -35,7 +35,8 @@ equivalent ordering; the streaming path buffers only matched function-call frami
 are complete.
 
 The terminal response transformer also owns one user-only commentary projection of the provider's
-input, cached-input, output, and reasoning usage whenever a root or subagent turn stops. The
+input, cached-input, output, and reasoning usage whenever a root or subagent turn stops. It consumes
+the counts from the shared terminal-payload parse rather than decoding usage again. The
 projection precedes provider-authored output so it cannot replace a collaboration result. The
 streaming path does not emit a later standalone usage item for a subagent turn because the Codex
 collaboration runtime selects the last completed assistant item as the child result. The provider

@@ -150,9 +150,8 @@ func subagentCallCommentary(
 	return assistantCommentaryMessage(id, builder.String()), true
 }
 
-func tokenUsageCommentary(response []byte) map[string]json.RawMessage {
-	counts, ok := usageFromResponsePayload(response, false)
-	if !ok {
+func tokenUsageCommentary(response []byte, counts tokenCounts, observed bool) map[string]json.RawMessage {
+	if !observed {
 		return nil
 	}
 	var identity struct {
@@ -173,7 +172,7 @@ func tokenUsageCommentary(response []byte) map[string]json.RawMessage {
 	return assistantCommentaryMessage(id, text)
 }
 
-func responseWithTokenUsageCommentary(response []byte) (
+func responseWithTokenUsageCommentary(response []byte, counts tokenCounts, usageObserved bool) (
 	map[string]json.RawMessage,
 	map[string]json.RawMessage,
 	error,
@@ -182,7 +181,7 @@ func responseWithTokenUsageCommentary(response []byte) (
 	if err := json.Unmarshal(response, &object); err != nil || object == nil {
 		return nil, nil, errors.New("decode hpatch-enabled response")
 	}
-	message := tokenUsageCommentary(response)
+	message := tokenUsageCommentary(response, counts, usageObserved)
 	rawOutput, present := object["output"]
 	if message == nil || !present {
 		return object, message, nil

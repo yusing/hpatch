@@ -243,7 +243,7 @@ func (r *Recorder) addExchange(front captureRecord, state *requestState, provide
 	}
 }
 
-func (r *Recorder) recordCacheObservation(state *requestState, observed *tokenUsage) {
+func (r *Recorder) recordCacheObservation(state *requestState, observed *ProviderUsage) {
 	if state.threadID == "" {
 		if observed != nil {
 			addCache(&r.metrics.Cache, r.previousInput, "", usageOf(*observed))
@@ -321,7 +321,7 @@ func signedDifference(larger, smaller uint64) int64 {
 	return -int64(difference)
 }
 
-func usageOf(usage tokenUsage) usageMetrics {
+func usageOf(usage ProviderUsage) usageMetrics {
 	cached := min(usage.InputTokens, usage.CachedTokens)
 	return usageMetrics{
 		InputTokens: usage.InputTokens, CachedInputTokens: cached,

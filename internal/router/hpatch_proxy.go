@@ -220,6 +220,8 @@ type hpatchResponseTransform struct {
 	subagentTurn              bool
 	parentModel               string
 	parentReasoningEffort     string
+	usageCounts               tokenCounts
+	usageObserved             bool
 
 	codeModeToolName string
 	nativeTools      bool
@@ -240,6 +242,11 @@ func (t *hpatchResponseTransform) Close() {
 		t.proxy.deactivateSession(t.historySessionID)
 		t.sessionActive = false
 	}
+}
+
+func (t *hpatchResponseTransform) observeResponseUsage(counts tokenCounts) {
+	t.usageCounts = counts
+	t.usageObserved = true
 }
 
 func validateHPatchCompactionRequest(request *parsedResponsesRequest, metadata codexTurnMetadata) error {
@@ -1671,7 +1678,11 @@ func (t *hpatchResponseTransform) TransformSSE(payload []byte) ([][]byte, error)
 		clear(t.nativeExecCalls)
 		clear(t.subagentPending)
 		t.cancelCommentaryTokens()
-		object, usageMessage, err := responseWithTokenUsageCommentary(envelope.Response)
+		object, usageMessage, err := responseWithTokenUsageCommentary(
+			envelope.Response,
+			t.usageCounts,
+			t.usageObserved,
+		)
 		if err != nil {
 			return nil, err
 		}
@@ -1712,7 +1723,11 @@ func (t *hpatchResponseTransform) pendingCallKnown(callID string) bool {
 }
 
 func (t *hpatchResponseTransform) transformResponse(payload []byte) ([]byte, map[string]json.RawMessage, error) {
-	object, usageMessage, err := responseWithTokenUsageCommentary(payload)
+	object, usageMessage, err := responseWithTokenUsageCommentary(
+		payload,
+		t.usageCounts,
+		t.usageObserved,
+	)
 	if err != nil {
 		return nil, nil, err
 	}

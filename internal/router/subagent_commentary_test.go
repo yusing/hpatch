@@ -43,6 +43,7 @@ func TestSubagentCommentaryJSONIsVisibleAndRemovedFromReplay(t *testing.T) {
 			},
 		},
 	})
+	observeTestResponseUsage(t, transform, payload, false)
 	transformed, err := transform.TransformJSON(payload)
 	if err != nil {
 		t.Fatal(err)
@@ -89,7 +90,7 @@ func TestSubagentCommentaryJSONIsVisibleAndRemovedFromReplay(t *testing.T) {
 	}
 }
 
-func TestTokenUsageCommentaryDoesNotReplaceTerminalMessage(t *testing.T) {
+func TestTokenUsageCommentaryUsesSharedObservationWithoutReplacingTerminalMessage(t *testing.T) {
 	terminal := map[string]any{
 		"type": "message", "id": "msg-final", "role": "assistant", "status": "completed",
 		"content": []any{map[string]any{"type": "output_text", "text": "substantive result"}},
@@ -102,7 +103,9 @@ func TestTokenUsageCommentaryDoesNotReplaceTerminalMessage(t *testing.T) {
 			"output_tokens_details": map[string]any{"reasoning_tokens": 3},
 		},
 	})
-	response, _, err := responseWithTokenUsageCommentary(payload)
+	response, _, err := responseWithTokenUsageCommentary(payload, tokenCounts{
+		InputTokens: 20, UncachedInputTokens: 8, OutputTokens: 5, ReasoningTokens: 3,
+	}, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -136,6 +139,7 @@ func TestSubagentStreamingUsageDoesNotBecomeAStandaloneResult(t *testing.T) {
 			},
 		},
 	})
+	observeTestResponseUsage(t, transform, terminal, true)
 	events, err := transform.TransformSSE(terminal)
 	if err != nil || len(events) != 1 {
 		t.Fatalf("terminal events = %q, error = %v", events, err)
@@ -229,6 +233,7 @@ func TestSubagentCommentaryBuffersStreamingCall(t *testing.T) {
 			},
 		},
 	})
+	observeTestResponseUsage(t, transform, completed, true)
 	events, err = transform.TransformSSE(completed)
 	if err != nil || len(events) != 2 {
 		t.Fatalf("completed events = %q, error %v", events, err)
@@ -267,6 +272,7 @@ func TestSubagentTokenUsageCommentaryOnFailedAndIncompleteStops(t *testing.T) {
 					},
 				},
 			})
+			observeTestResponseUsage(t, transform, terminal, true)
 			events, err := transform.TransformSSE(terminal)
 			if err != nil || len(events) != 1 {
 				t.Fatalf("terminal events = %q, error %v", events, err)
@@ -277,6 +283,15 @@ func TestSubagentTokenUsageCommentaryOnFailedAndIncompleteStops(t *testing.T) {
 			}
 		})
 	}
+}
+
+func observeTestResponseUsage(t *testing.T, transform *hpatchResponseTransform, payload []byte, streamEvent bool) {
+	t.Helper()
+	counts, observed := usageFromResponsePayload(payload, streamEvent)
+	if !observed {
+		t.Fatal("test response has no provider usage")
+	}
+	transform.observeResponseUsage(counts)
 }
 
 func TestSubagentCommentaryRejectsIncompleteCallBeforeHistoryCommit(t *testing.T) {

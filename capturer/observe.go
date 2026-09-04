@@ -164,16 +164,6 @@ func observeResponseEnvelope(payload []byte, record *captureRecord, codec tokeni
 	var response struct {
 		Status string            `json:"status"`
 		Output []json.RawMessage `json:"output"`
-		Usage  *struct {
-			InputTokens  uint64 `json:"input_tokens"`
-			OutputTokens uint64 `json:"output_tokens"`
-			InputDetails struct {
-				CachedTokens uint64 `json:"cached_tokens"`
-			} `json:"input_tokens_details"`
-			OutputDetails struct {
-				ReasoningTokens uint64 `json:"reasoning_tokens"`
-			} `json:"output_tokens_details"`
-		} `json:"usage"`
 	}
 	if json.Unmarshal(payload, &response) != nil {
 		return "", nil
@@ -183,14 +173,6 @@ func observeResponseEnvelope(payload []byte, record *captureRecord, codec tokeni
 	}
 	for _, item := range response.Output {
 		observeOutputItem(item, record, codec)
-	}
-	if response.Usage != nil {
-		record.Usage = &tokenUsage{
-			InputTokens:     response.Usage.InputTokens,
-			CachedTokens:    response.Usage.InputDetails.CachedTokens,
-			OutputTokens:    response.Usage.OutputTokens,
-			ReasoningTokens: response.Usage.OutputDetails.ReasoningTokens,
-		}
 	}
 	if response.Output == nil {
 		return response.Status, nil
