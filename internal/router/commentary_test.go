@@ -39,7 +39,7 @@ func TestPrepareCommentaryToolsPreservesOwnedSchemas(t *testing.T) {
 		}}),
 	}
 	additionalTools := bytes.Clone(fields["input"])
-	catalog, err := prepareCommentaryTools(fields)
+	catalog, err := prepareCommentaryTools(fields, decodeResponsesToolCatalog(fields))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -78,6 +78,16 @@ func TestPrepareCommentaryToolsPreservesOwnedSchemas(t *testing.T) {
 	}
 }
 
+func TestPrepareCommentaryToolsPreservesNullTopLevelTools(t *testing.T) {
+	fields := map[string]json.RawMessage{"tools": json.RawMessage("null")}
+	if _, err := prepareCommentaryTools(fields, decodeResponsesToolCatalog(fields)); err != nil {
+		t.Fatal(err)
+	}
+	if got := string(fields["tools"]); got != "null" {
+		t.Fatalf("tools = %s", got)
+	}
+}
+
 func TestStructuredCommentaryTransformsJSONAndReplay(t *testing.T) {
 	transform, proxy, _, _ := newHPatchTestTransform(t, testTranslator(t, new(int)))
 	proxy.commentaryEndpoint = "http://127.0.0.1:8080" + commentaryPublisherPath
@@ -107,6 +117,22 @@ func TestStructuredCommentaryTransformsJSONAndReplay(t *testing.T) {
 		!bytes.Contains(response.Output[0]["content"], []byte("Confirming the prompt.")) ||
 		jsonString(response.Output[1], "arguments") != `{"chars":"y","session_id":42}` {
 		t.Fatalf("transformed output = %s", transformed)
+	}
+	var commentary struct {
+		Type    string `json:"type"`
+		Role    string `json:"role"`
+		Status  string `json:"status"`
+		Content []struct {
+			Type        string            `json:"type"`
+			Annotations []json.RawMessage `json:"annotations"`
+		} `json:"content"`
+	}
+	if err := json.Unmarshal(mustMarshalJSON(response.Output[0]), &commentary); err != nil {
+		t.Fatal(err)
+	}
+	if commentary.Type != "message" || commentary.Role != "assistant" || commentary.Status != "completed" ||
+		len(commentary.Content) != 1 || commentary.Content[0].Type != "output_text" || commentary.Content[0].Annotations == nil {
+		t.Fatalf("commentary message shape = %s", mustMarshalJSON(response.Output[0]))
 	}
 
 	replay, err := parseResponsesRequest(mustTestJSON(t, map[string]any{"input": []any{

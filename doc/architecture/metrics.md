@@ -3,8 +3,10 @@
 ## CTR-METRICS-001 — Capture-owned metrics
 
 The root `capturer` subpackage is the sole owner of request correlation, payload measurement,
-provider usage, cache attribution, protocol savings, transported-tool accounting, Hpatch delivery
-accounting, capture health, durable capture records, and the structured metrics snapshot.
+provider-usage metrics, cache attribution, protocol savings, transported-tool accounting, Hpatch
+delivery accounting, capture health, durable capture records, and the structured metrics snapshot.
+The router's terminal-payload seam parses provider usage once and passes the resulting counts to
+the capturer, Mentor Handoff, and user-only usage commentary.
 
 The capturer is in-process. `hpatch-router` wraps its existing `POST /v1/responses` handler and
 its existing provider `http.RoundTripper`; it does not start a second HTTP server, open another
@@ -20,7 +22,7 @@ stream flushing, cancellation, status, headers, and response-body ownership.
 Raw request and response bodies exist only while one boundary is being measured. Durable schema-4
 JSONL records contain complete transport lengths, GPT-5 token estimates, one separately measured
 terminal Responses `output` array, statuses, duration, request identity fields
-needed for benchmark reconciliation, provider usage, tool names, tool-call identities, and sanitized
+needed for benchmark reconciliation, the passed provider usage, tool names, tool-call identities, and sanitized
 Hpatch outcome kinds and allowlisted diagnostic reason codes parsed from the router-owned envelope.
 They never retain credentials, prompts, instructions, tool arguments, command output, response text,
 translated patches, or reports. Each response boundary retains at most 8 MiB for parsing while
@@ -48,8 +50,8 @@ Router, edit-engine, CTP, registry, and plugin production code implement behavio
 maintain benchmark baselines, synthetic stock commands or results, gain counters, metric callbacks,
 persistence slots, session metric histories, dashboard-owned calculations, or metric-only
 classifier events.
-Provider usage parsing may remain where an operational behavior, such as Mentor Handoff, needs it;
-that behavior state is not a metrics source.
+The router passes usage as request-scoped observation data without receiving metric callbacks.
+Mentor and commentary remain operational consumers, not metrics sources.
 
 Capture failure is auxiliary after startup: it cannot alter an edit, command, translated response,
 or provider result. Failure to initialize an explicitly requested capture output prevents startup,

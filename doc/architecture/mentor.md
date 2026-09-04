@@ -9,10 +9,10 @@ model and reasoning effort. The ordinary request owner continues to supply input
 settings; Codex remains the owner of the configured model used after handoff.
 
 A request-local observer runs before response transformations so it counts native provider output
-items without depending on Hpatch carrier restoration or CTP decoding. The latest provider lifecycle
-usage is the authoritative current-context input count; usage from separate requests is not summed.
+items without depending on Hpatch carrier restoration or CTP decoding. The shared terminal-payload
+parse supplies the latest provider lifecycle usage as the authoritative current-context input count;
+usage from separate requests is not summed.
 The schedule commits completed output counts only after a
 completed terminal response, but records observed input usage on later delivery or terminal failure
-paths. This parsing exists only because the schedule behavior depends on the latest context size.
-The transport capturer independently records the provider-bound model and usage. This owner is
-separate from Hpatch recovery history and provider-client transport retries.
+paths. The same parsed usage is passed to the transport capturer; neither consumer reparses it.
+This owner is separate from Hpatch recovery history and provider-client transport retries.

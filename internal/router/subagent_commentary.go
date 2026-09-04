@@ -21,32 +21,27 @@ type subagentPendingCall struct {
 	argumentsDone []byte
 }
 
-func subagentToolCatalog(fields map[string]json.RawMessage) map[string]struct{} {
-	var items []map[string]json.RawMessage
-	if json.Unmarshal(fields["input"], &items) != nil {
+func subagentToolCatalog(tools *responsesToolCatalog) map[string]struct{} {
+	if tools.inputObjectsErr != nil {
 		return nil
 	}
 	catalog := make(map[string]struct{})
-	for _, item := range items {
-		if jsonString(item, "type") != "additional_tools" {
+	for _, group := range tools.additional {
+		if !group.tools.present || group.tools.err != nil {
 			continue
 		}
-		var namespaces []map[string]json.RawMessage
-		if json.Unmarshal(item["tools"], &namespaces) != nil {
-			continue
-		}
-		for _, namespace := range namespaces {
-			if jsonString(namespace, "type") != "namespace" {
+		for index, namespace := range group.tools.tools {
+			if namespace.Type != "namespace" {
 				continue
 			}
-			var tools []map[string]json.RawMessage
-			if json.Unmarshal(namespace["tools"], &tools) != nil {
+			node := group.tools.nodes[index]
+			if node == nil || node.nested == nil || node.nested.err != nil {
 				continue
 			}
-			for _, tool := range tools {
-				name := jsonString(tool, "name")
-				if jsonString(tool, "type") == "function" && name == "spawn_agent" {
-					catalog[functionToolKey(jsonString(namespace, "name"), name)] = struct{}{}
+			for _, tool := range node.nested.tools {
+				name := tool.Name
+				if tool.Type == "function" && name == "spawn_agent" {
+					catalog[functionToolKey(namespace.Name, name)] = struct{}{}
 				}
 			}
 		}
@@ -155,9 +150,9 @@ func subagentCallCommentary(
 	return assistantCommentaryMessage(id, builder.String()), true
 }
 
-func tokenUsageCommentary(response []byte) map[string]json.RawMessage {
-	counts, ok := usageFromResponsePayload(response, false)
-	if !ok {
+// tokenUsageCommentary creates a commentary message about token usage if observed.
+func tokenUsageCommentary(response []byte, counts tokenCounts, observed bool) map[string]json.RawMessage {
+	if !observed {
 		return nil
 	}
 	var identity struct {
@@ -178,7 +173,8 @@ func tokenUsageCommentary(response []byte) map[string]json.RawMessage {
 	return assistantCommentaryMessage(id, text)
 }
 
-func responseWithTokenUsageCommentary(response []byte) (
+// responseWithTokenUsageCommentary extracts a response object and token usage commentary.
+func responseWithTokenUsageCommentary(response []byte, counts tokenCounts, usageObserved bool) (
 	map[string]json.RawMessage,
 	map[string]json.RawMessage,
 	error,
@@ -187,7 +183,7 @@ func responseWithTokenUsageCommentary(response []byte) (
 	if err := json.Unmarshal(response, &object); err != nil || object == nil {
 		return nil, nil, errors.New("decode hpatch-enabled response")
 	}
-	message := tokenUsageCommentary(response)
+	message := tokenUsageCommentary(response, counts, usageObserved)
 	rawOutput, present := object["output"]
 	if message == nil || !present {
 		return object, message, nil

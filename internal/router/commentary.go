@@ -8,6 +8,8 @@ import (
 	"maps"
 	"slices"
 	"strings"
+
+	"github.com/openai/openai-go/v3/responses"
 )
 
 const commentaryArgumentName = "commentary"
@@ -24,13 +26,13 @@ func functionToolKey(namespace, name string) string {
 	return namespace + "\x00" + name
 }
 
-func prepareCommentaryTools(fields map[string]json.RawMessage) (commentaryToolCatalog, error) {
+func prepareCommentaryTools(fields map[string]json.RawMessage, tools *responsesToolCatalog) (commentaryToolCatalog, error) {
 	catalog := make(commentaryToolCatalog)
-	instrument := func(namespace string, tool map[string]json.RawMessage, addParameter bool) error {
-		if jsonString(tool, "type") != "function" {
+	instrument := func(namespace string, tool *responsesToolDefinition, addParameter bool) error {
+		if tool.Type != "function" {
 			return nil
 		}
-		name := jsonString(tool, "name")
+		name := tool.Name
 		if name == "" || commentaryExcluded(namespace, name) {
 			return nil
 		}
@@ -39,15 +41,15 @@ func prepareCommentaryTools(fields map[string]json.RawMessage) (commentaryToolCa
 		if _, exists := catalog[key]; exists {
 			return fmt.Errorf("commentary tool %q is defined more than once", qualifiedName)
 		}
-		entry := commentaryTool{qualifiedName: qualifiedName, display: jsonString(tool, "title")}
+		entry := commentaryTool{qualifiedName: qualifiedName, display: tool.Title}
 		if entry.display == "" {
 			entry.display = name
 		}
 		var strict bool
-		_ = json.Unmarshal(tool["strict"], &strict)
+		_ = json.Unmarshal(tool.rawField("strict"), &strict)
 		if addParameter && !strict {
 			var parameters map[string]json.RawMessage
-			if json.Unmarshal(tool["parameters"], &parameters) == nil && jsonString(parameters, "type") == "object" {
+			if json.Unmarshal(tool.rawField("parameters"), &parameters) == nil && jsonString(parameters, "type") == "object" {
 				var properties map[string]json.RawMessage
 				if raw, exists := parameters["properties"]; !exists {
 					properties = make(map[string]json.RawMessage)
@@ -60,7 +62,7 @@ func prepareCommentaryTools(fields map[string]json.RawMessage) (commentaryToolCa
 						"description": "Optional concise progress commentary shown before this operation.",
 					})
 					parameters["properties"] = mustMarshalJSON(properties)
-					tool["parameters"] = mustMarshalJSON(parameters)
+					tool.setRawField("parameters", mustMarshalJSON(parameters))
 					entry.explicit = true
 				}
 			}
@@ -69,46 +71,46 @@ func prepareCommentaryTools(fields map[string]json.RawMessage) (commentaryToolCa
 		return nil
 	}
 
-	if rawTools, exists := fields["tools"]; exists {
-		var tools []map[string]json.RawMessage
-		if err := json.Unmarshal(rawTools, &tools); err != nil {
+	if tools.top.present {
+		if err := tools.top.err; err != nil {
 			return nil, fmt.Errorf("decode Responses tools for commentary: %w", err)
 		}
-		for _, tool := range tools {
+		for _, tool := range tools.top.tools {
 			if err := instrument("", tool, true); err != nil {
 				return nil, err
 			}
 		}
-		fields["tools"] = mustMarshalJSON(tools)
+		fields["tools"] = mustMarshalJSON(tools.top.tools)
 	}
 
-	var items []map[string]json.RawMessage
-	if json.Unmarshal(fields["input"], &items) != nil {
+	if tools.inputObjectsErr != nil {
 		return catalog, nil
 	}
 	// The provider owns configured additional_tools schemas. They receive
 	// defaults, but the router never adds a parameter to them.
-	for _, item := range items {
-		if jsonString(item, "type") != "additional_tools" {
-			continue
+	for _, group := range tools.additional {
+		if !group.tools.present {
+			return nil, errors.New("decode additional tools for commentary: unexpected end of JSON input")
 		}
-		var tools []map[string]json.RawMessage
-		if err := json.Unmarshal(item["tools"], &tools); err != nil {
+		if err := group.tools.err; err != nil {
 			return nil, fmt.Errorf("decode additional tools for commentary: %w", err)
 		}
-		for _, tool := range tools {
-			if jsonString(tool, "type") != "namespace" {
+		for index, tool := range group.tools.tools {
+			if tool.Type != "namespace" {
 				if err := instrument("", tool, false); err != nil {
 					return nil, err
 				}
 				continue
 			}
-			namespace := jsonString(tool, "name")
-			var nested []map[string]json.RawMessage
-			if err := json.Unmarshal(tool["tools"], &nested); err != nil {
+			namespace := tool.Name
+			node := group.tools.nodes[index]
+			if node == nil || node.nested == nil {
+				return nil, fmt.Errorf("decode %s tools for commentary: unexpected end of JSON input", namespace)
+			}
+			if err := node.nested.err; err != nil {
 				return nil, fmt.Errorf("decode %s tools for commentary: %w", namespace, err)
 			}
-			for _, child := range nested {
+			for _, child := range node.nested.tools {
 				if err := instrument(namespace, child, false); err != nil {
 					return nil, err
 				}
@@ -200,21 +202,35 @@ func commentaryMessageID(seed string) string {
 	return fmt.Sprintf("msg_hpatch_commentary_%x", digest[:12])
 }
 
+// assistantCommentaryMessage creates an assistant commentary message with the given ID and text.
 func assistantCommentaryMessage(id, text string) map[string]json.RawMessage {
-	return map[string]json.RawMessage{
-		"type":   mustMarshalJSON("message"),
-		"id":     mustMarshalJSON(id),
-		"status": mustMarshalJSON("completed"),
-		"role":   mustMarshalJSON("assistant"),
-		"phase":  mustMarshalJSON("commentary"),
-		"content": mustMarshalJSON([]any{map[string]any{
-			"type": "output_text", "text": text, "annotations": []any{},
-		}}),
+	encoded := mustMarshalJSON(responses.ResponseOutputMessageParam{
+		ID: id,
+		Content: []responses.ResponseOutputMessageContentUnionParam{{
+			OfOutputText: new(responses.ResponseOutputTextParam{
+				Annotations: []responses.ResponseOutputTextAnnotationUnionParam{},
+				Text:        text,
+			}),
+		}},
+		Status: responses.ResponseOutputMessageStatusCompleted,
+		Phase:  responses.ResponseOutputMessagePhaseCommentary,
+	})
+	var message map[string]json.RawMessage
+	if err := json.Unmarshal(encoded, &message); err != nil {
+		panic(err)
 	}
+	return message
 }
 
+// assistantCommentaryDoneEvent creates a response.output_item.done event for a commentary message.
 func assistantCommentaryDoneEvent(message map[string]json.RawMessage) []byte {
-	return mustMarshalJSON(map[string]any{"type": "response.output_item.done", "item": message})
+	return mustMarshalJSON(struct {
+		Type string                     `json:"type"`
+		Item map[string]json.RawMessage `json:"item"`
+	}{
+		Type: "response.output_item.done",
+		Item: message,
+	})
 }
 
 func (t *hpatchResponseTransform) transformStructuredCommentary(item map[string]json.RawMessage) (map[string]json.RawMessage, error) {

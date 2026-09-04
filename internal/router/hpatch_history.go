@@ -372,7 +372,7 @@ func (p *hpatchProxy) reconcileInputPrefix(request *parsedResponsesRequest, sess
 		if err != nil {
 			return fmt.Errorf("encode replayed Responses input: %w", err)
 		}
-		request.fields["input"] = encoded
+		request.setInput(encoded)
 	}
 	p.pruneSessionAfter(sessionID, newestRetained)
 	return nil
@@ -415,14 +415,12 @@ func (t *hpatchResponseTransform) recordLocal(callID string, history *hpatchHist
 	if t.nativeTools && history.carrierKind == "" {
 		history.carrierKind = codeModeCarrierFunction
 		history.carrierName = nativeExecCommandToolName
-		switch {
-		case history.translationError != "":
-			history.carrierPayload = hpatchNativeDiagnosticArguments(history.translationError)
-		case history.applied || history.alreadySatisfied || history.patch == "":
-			history.carrierPayload = hpatchNativeReportArguments(history.report)
-		default:
-			history.carrierPayload = hpatchNativeApplyArguments(history.patch, history.report)
-		}
+		history.carrierPayload = renderExecCarrier(
+			codeModeCarrierFunction,
+			execCommandArguments(hpatchNativeCommand(*history), nil),
+			false,
+			nil,
+		)
 	}
 	t.localSequence++
 	history.sequence = t.localSequence

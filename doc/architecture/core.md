@@ -11,9 +11,12 @@ this existing owner rather than adding an editor, AST layer, or parallel patch e
 
 The workspace owner retains each touched file's invocation-original identity and content,
 current logical path, pending lifecycle action, and ordered pending splices. Returning to
-a file reuses those values. A successful script orders the splices once and renders one
-original-to-final content value. No command materializes an intermediate baseline, and
-all targets continue to resolve against the invocation-original content.
+a file reuses those values. Each splice owns any detected indentation candidate. Finalization
+resolves those candidates against the file's final path, orders the effective splices once,
+and performs indentation correction, Go formatting or Tree-sitter syntax validation, and
+changed-line whitespace cleanup as one original-to-final render. It retains the final content
+and its composed offset map for reporting. No command materializes an intermediate baseline,
+and all targets continue to resolve against the invocation-original content.
 
 One shared pure verified-row owner computes and renders `LINE:HASH` identity for routed
 reads under `REQ-READ-001`, target validation, repair context, and final-state previews.

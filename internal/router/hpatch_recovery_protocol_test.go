@@ -127,12 +127,24 @@ func TestRecoverScriptRejectsNonTargetDuplicateStaleAndMalformedPayloads(t *test
 		handle + ` 2:bbbb  "literal"`,
 		handle + ` 2:bbbb..3:cccc "literal"`,
 		handle + ` "literal"  2`,
+		handle + ` "literal"2`,
+		handle + " EOF",
 		handle + " 1:aaaa",
 		"",
 	} {
 		if got, err := recoverScriptForTest(t.Context(), script, payload); err == nil || got != "" {
 			t.Fatalf("recoverScript(%q) = %q, %v; want atomic rejection", payload, got, err)
 		}
+	}
+}
+
+func TestRecoveryCommandPartsPreserveEOFDestination(t *testing.T) {
+	command := recoveryCommands(`add EOF "value"`)[0]
+	if !command.parts.parsed || command.parts.target != "EOF" || command.parts.value != "value" {
+		t.Fatalf("command parts = %+v", command.parts)
+	}
+	if got, err := recoverScriptForTest(t.Context(), command.source, command.handle+" 1:aaaa"); err == nil || got != "" {
+		t.Fatalf("EOF recovery = %q, %v; want rejection", got, err)
 	}
 }
 
@@ -193,19 +205,6 @@ func TestRecoverScriptHonorsContext(t *testing.T) {
 	cancel()
 	if got, err := recoverScriptForTest(ctx, script, payload); err == nil || got != "" {
 		t.Fatalf("cancelled context = %q, %v", got, err)
-	}
-}
-
-func TestRecoveryMultilineLiteralTargetsMirrorPublicControls(t *testing.T) {
-	for _, target := range []string{`"line\ntext"`, `"line\u000Atext"`, `1:aaaa "line\ntext"`, `"tab\ttext"`} {
-		if !recoveryTarget(target) {
-			t.Errorf("recoveryTarget(%q) = false", target)
-		}
-	}
-	for _, target := range []string{`""`, "\"raw\nnewline\"", `"return\r"`, `"return\u000D"`, `"control\u0001"`} {
-		if recoveryTarget(target) {
-			t.Errorf("recoveryTarget(%q) = true", target)
-		}
 	}
 }
 

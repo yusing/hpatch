@@ -32,10 +32,11 @@ const (
 
 type codeModeCarrierCatalog map[string]codeModeCarrierKind
 
-func buildCodeModeCarrierCatalog(fields map[string]json.RawMessage, registry *toolRegistry) (codeModeCarrierCatalog, error) {
+// buildCodeModeCarrierCatalog builds a catalog of Code Mode carrier tools from the tool catalog.
+func buildCodeModeCarrierCatalog(tools *responsesToolCatalog, registry *toolRegistry) (codeModeCarrierCatalog, error) {
 	catalog := make(codeModeCarrierCatalog)
-	add := func(tool map[string]json.RawMessage) error {
-		name := jsonString(tool, "name")
+	add := func(tool *responsesToolDefinition) error {
+		name := tool.Name
 		if name == "" {
 			return nil
 		}
@@ -46,7 +47,7 @@ func buildCodeModeCarrierCatalog(fields map[string]json.RawMessage, registry *to
 			return nil
 		}
 		var kind codeModeCarrierKind
-		switch jsonString(tool, "type") {
+		switch tool.Type {
 		case string(codeModeCarrierCustom):
 			kind = codeModeCarrierCustom
 		case string(codeModeCarrierFunction):
@@ -61,39 +62,39 @@ func buildCodeModeCarrierCatalog(fields map[string]json.RawMessage, registry *to
 		return nil
 	}
 
-	if rawTools, exists := fields["tools"]; exists {
-		var tools []map[string]json.RawMessage
-		if err := json.Unmarshal(rawTools, &tools); err != nil {
+	if tools.top.present {
+		if err := tools.top.err; err != nil {
 			return nil, fmt.Errorf("decode Responses tools for carrier catalog: %w", err)
 		}
-		for _, tool := range tools {
+		for _, tool := range tools.top.tools {
 			if err := add(tool); err != nil {
 				return nil, err
 			}
 		}
 	}
-	var items []map[string]json.RawMessage
-	if json.Unmarshal(fields["input"], &items) == nil {
-		for _, item := range items {
-			if jsonString(item, "type") != "additional_tools" {
-				continue
+	if tools.inputObjectsErr == nil {
+		for _, group := range tools.additional {
+			if !group.tools.present {
+				return nil, errors.New("decode additional tools for carrier catalog: unexpected end of JSON input")
 			}
-			var additionalTools []map[string]json.RawMessage
-			if err := json.Unmarshal(item["tools"], &additionalTools); err != nil {
+			if err := group.tools.err; err != nil {
 				return nil, fmt.Errorf("decode additional tools for carrier catalog: %w", err)
 			}
-			for _, additionalTool := range additionalTools {
-				if jsonString(additionalTool, "type") != "namespace" {
+			for index, additionalTool := range group.tools.tools {
+				if additionalTool.Type != "namespace" {
 					if err := add(additionalTool); err != nil {
 						return nil, err
 					}
 					continue
 				}
-				var tools []map[string]json.RawMessage
-				if err := json.Unmarshal(additionalTool["tools"], &tools); err != nil {
+				node := group.tools.nodes[index]
+				if node == nil || node.nested == nil {
+					return nil, errors.New("decode namespaced tools for carrier catalog: unexpected end of JSON input")
+				}
+				if err := node.nested.err; err != nil {
 					return nil, fmt.Errorf("decode namespaced tools for carrier catalog: %w", err)
 				}
-				for _, tool := range tools {
+				for _, tool := range node.nested.tools {
 					if err := add(tool); err != nil {
 						return nil, err
 					}
@@ -139,14 +140,6 @@ func carrierPayloadField(kind codeModeCarrierKind) string {
 	return "input"
 }
 
-func renderCarrierItem(item map[string]json.RawMessage, kind codeModeCarrierKind, name, payload string) {
-	item["type"] = mustMarshalJSON(carrierItemType(kind))
-	item["name"] = mustMarshalJSON(name)
-	delete(item, "input")
-	delete(item, "arguments")
-	item[carrierPayloadField(kind)] = mustMarshalJSON(payload)
-}
-
 func renderCarrierDoneEvent(payload []byte, kind codeModeCarrierKind, carrierPayload string) ([]byte, error) {
 	var event map[string]json.RawMessage
 	if err := json.Unmarshal(payload, &event); err != nil {
@@ -173,42 +166,23 @@ func shellQuoteArgument(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
 }
 
-func hpatchApplyExecInput(patch, report string) string {
-	return hpatchApplyExecMarker +
-		"await tools.apply_patch(" + strconv.Quote(patch) + ");\n" +
-		"text(" + strconv.Quote(report) + ");"
-}
-
-func hpatchDiagnosticExecInput(diagnostic string) string {
-	return "text(" + strconv.Quote(diagnostic) + ");"
-}
-
-func nativeExecArguments(command string) string {
-	return string(mustMarshalJSON(map[string]any{"cmd": command, "login": false}))
-}
-
-func hpatchNativeApplyArguments(patch, report string) string {
-	command := hpatchNativeApplyMarker +
-		"hpatch_apply_output=$(printf %s " + shellQuoteArgument(patch) + " | apply_patch; " +
-		"hpatch_status=$?; printf x; exit \"$hpatch_status\")\n" +
-		"hpatch_status=$?\n" +
-		"hpatch_apply_output=${hpatch_apply_output%x}\n" +
-		"if [ \"$hpatch_status\" -ne 0 ]; then printf %s \"$hpatch_apply_output\"; exit \"$hpatch_status\"; fi\n" +
-		"printf %s " + shellQuoteArgument(report)
-	return nativeExecArguments(command)
-}
-
-func nativeTextExecArguments(text string) string {
-	return nativeExecArguments("printf %s " + shellQuoteArgument(text))
-}
-
-func hpatchNativeReportArguments(report string) string {
-	return nativeExecArguments(hpatchNativeReportMarker + "printf %s " + shellQuoteArgument(report))
-}
-
-func hpatchNativeDiagnosticArguments(diagnostic string) string {
-	command := hpatchNativeDiagnosticMarker + strconv.Quote(diagnostic) + "\nprintf %s " + shellQuoteArgument(diagnostic)
-	return nativeExecArguments(command)
+// hpatchNativeCommand generates a native shell command for an hpatch history entry.
+func hpatchNativeCommand(history hpatchHistory) string {
+	switch {
+	case history.translationError != "":
+		return hpatchNativeDiagnosticMarker + strconv.Quote(history.translationError) +
+			"\nprintf %s " + shellQuoteArgument(history.translationError)
+	case history.applied || history.alreadySatisfied || history.patch == "":
+		return hpatchNativeReportMarker + "printf %s " + shellQuoteArgument(history.report)
+	default:
+		return hpatchNativeApplyMarker +
+			"hpatch_apply_output=$(printf %s " + shellQuoteArgument(history.patch) + " | apply_patch; " +
+			"hpatch_status=$?; printf x; exit \"$hpatch_status\")\n" +
+			"hpatch_status=$?\n" +
+			"hpatch_apply_output=${hpatch_apply_output%x}\n" +
+			"if [ \"$hpatch_status\" -ne 0 ]; then printf %s \"$hpatch_apply_output\"; exit \"$hpatch_status\"; fi\n" +
+			"printf %s " + shellQuoteArgument(history.report)
+	}
 }
 
 func workerCommand(executable string, arguments []string) string {
@@ -276,19 +250,36 @@ func (registry *toolRegistry) directBashExecCommand(arguments []string) (string,
 	return command, true
 }
 
-func (registry *toolRegistry) execCarrierInput(
+// execCarrierPayload generates the payload for an exec carrier tool call.
+func (registry *toolRegistry) execCarrierPayload(
+	kind codeModeCarrierKind,
 	contribution toolContribution,
 	sourceInput string,
 	arguments []string,
 	template string,
 	params map[string]json.RawMessage,
-	resultMetadata ...map[string]json.RawMessage,
+	resultMetadata map[string]json.RawMessage,
 ) (string, error) {
 	command, err := registry.execCarrierCommand(contribution, sourceInput, arguments, template)
 	if err != nil {
 		return "", err
 	}
-	return workerCommandExecInputWithResult(command, params, contribution.PluginID == builtinToolsPluginID && contribution.Name == "shell", resultMetadata...)
+	if _, exists := params["cmd"]; exists {
+		return "", errors.New("exec params must not contain cmd")
+	}
+	if login, exists := params["login"]; exists && !bytes.Equal(bytes.TrimSpace(login), []byte("false")) {
+		return "", errors.New("exec params login must be false")
+	}
+	if kind == codeModeCarrierFunction && len(resultMetadata) != 0 {
+		metadata := string(mustMarshalJSON(resultMetadata))
+		command += "\nhpatch_status=$?\nprintf '\\n%s\\n' " + shellQuoteArgument(metadata) + "\nexit \"$hpatch_status\""
+	}
+	return renderExecCarrier(
+		kind,
+		execCommandArguments(command, params),
+		contribution.PluginID == builtinToolsPluginID && contribution.Name == "shell",
+		resultMetadata,
+	), nil
 }
 
 func (registry *toolRegistry) execCarrierCommand(
@@ -321,36 +312,8 @@ func (registry *toolRegistry) execCarrierCommand(
 	return command, nil
 }
 
-func (registry *toolRegistry) nativeExecCarrierArguments(
-	contribution toolContribution,
-	sourceInput string,
-	arguments []string,
-	template string,
-	params map[string]json.RawMessage,
-	resultMetadata map[string]json.RawMessage,
-) (string, error) {
-	command, err := registry.execCarrierCommand(contribution, sourceInput, arguments, template)
-	if err != nil {
-		return "", err
-	}
-	if len(resultMetadata) != 0 {
-		metadata := string(mustMarshalJSON(resultMetadata))
-		command += "\nhpatch_status=$?\nprintf '\\n%s\\n' " + shellQuoteArgument(metadata) + "\nexit \"$hpatch_status\""
-	}
-	argumentsObject, err := execCommandArguments(command, params)
-	if err != nil {
-		return "", err
-	}
-	return string(mustMarshalJSON(argumentsObject)), nil
-}
-
-func execCommandArguments(command string, params map[string]json.RawMessage) (map[string]json.RawMessage, error) {
-	if _, exists := params["cmd"]; exists {
-		return nil, errors.New("exec params must not contain cmd")
-	}
-	if login, exists := params["login"]; exists && !bytes.Equal(bytes.TrimSpace(login), []byte("false")) {
-		return nil, errors.New("exec params login must be false")
-	}
+// execCommandArguments creates the arguments map for an exec_command call.
+func execCommandArguments(command string, params map[string]json.RawMessage) map[string]json.RawMessage {
 	argumentsObject := maps.Clone(params)
 	if argumentsObject == nil {
 		argumentsObject = make(map[string]json.RawMessage)
@@ -359,23 +322,28 @@ func execCommandArguments(command string, params map[string]json.RawMessage) (ma
 	if _, exists := argumentsObject["login"]; !exists {
 		argumentsObject["login"] = mustMarshalJSON(false)
 	}
-	return argumentsObject, nil
+	return argumentsObject
 }
 
-func workerCommandExecInputWithResult(command string, params map[string]json.RawMessage, forwardNativeResult bool, resultMetadata ...map[string]json.RawMessage) (string, error) {
-	arguments, err := execCommandArguments(command, params)
-	if err != nil {
-		return "", err
+// renderExecCarrier renders an exec carrier payload from arguments and metadata.
+func renderExecCarrier(
+	kind codeModeCarrierKind,
+	arguments map[string]json.RawMessage,
+	forwardNativeResult bool,
+	resultMetadata map[string]json.RawMessage,
+) string {
+	encodedArguments := string(mustMarshalJSON(arguments))
+	if kind == codeModeCarrierFunction {
+		return encodedArguments
 	}
 	resultOutput := "text(result.output);"
-	if forwardNativeResult || len(resultMetadata) > 0 && len(resultMetadata[0]) > 0 {
+	if forwardNativeResult || len(resultMetadata) != 0 {
 		resultOutput = "text(JSON.stringify(result));"
-		if len(resultMetadata) > 0 && len(resultMetadata[0]) > 0 {
-			resultOutput = "text(JSON.stringify(Object.assign({}, result, " + string(mustMarshalJSON(resultMetadata[0])) + ")));"
+		if len(resultMetadata) != 0 {
+			resultOutput = "text(JSON.stringify(Object.assign({}, result, " + string(mustMarshalJSON(resultMetadata)) + ")));"
 		}
 	}
-	return "const result = await tools.exec_command(" + string(mustMarshalJSON(arguments)) + ");\n" +
-		resultOutput, nil
+	return "const result = await tools.exec_command(" + encodedArguments + ");\n" + resultOutput
 }
 
 func misuseWarningProjection(warning string) string {
@@ -415,12 +383,14 @@ func (h hpatchHistory) carrierInput() string {
 		return h.carrierPayload
 	}
 	if h.translationError != "" {
-		return hpatchDiagnosticExecInput(h.translationError)
+		return "text(" + strconv.Quote(h.translationError) + ");"
 	}
 	if h.applied || h.alreadySatisfied {
-		return hpatchDiagnosticExecInput(h.report)
+		return "text(" + strconv.Quote(h.report) + ");"
 	}
-	return hpatchApplyExecInput(h.patch, h.report)
+	return hpatchApplyExecMarker +
+		"await tools.apply_patch(" + strconv.Quote(h.patch) + ");\n" +
+		"text(" + strconv.Quote(h.report) + ");"
 }
 
 func (h hpatchHistory) effectiveCarrierKind() codeModeCarrierKind {

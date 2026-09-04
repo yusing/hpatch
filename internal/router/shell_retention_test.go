@@ -124,7 +124,8 @@ func TestShellResultMetadata(t *testing.T) {
 	if !ok {
 		t.Fatal("shell contribution is unavailable")
 	}
-	carrier, err := proxy.registry.execCarrierInput(
+	carrier, err := proxy.registry.execCarrierPayload(
+		codeModeCarrierCustom,
 		shell,
 		"printf ok",
 		[]string{"bash", "printf ok"},

@@ -120,7 +120,10 @@ func TestRewriteReceivedModelInstructionsUsesDeveloperCarrierWhenTopLevelIsEmpty
 	request := parsedResponsesRequest{fields: map[string]json.RawMessage{
 		"instructions": json.RawMessage(`""`),
 		"input": mustTestJSON(t, []any{
-			map[string]any{"type": "message", "role": "developer", "content": developerInstructions},
+			map[string]any{
+				"type": "message", "role": "developer", "content": developerInstructions,
+				"provider_item": map[string]any{"kept": true},
+			},
 			map[string]any{"type": "message", "role": "user", "content": "keep this unchanged"},
 		}),
 	}}
@@ -141,6 +144,10 @@ func TestRewriteReceivedModelInstructionsUsesDeveloperCarrierWhenTopLevelIsEmpty
 	}
 	if got := input[1]["content"]; got != "keep this unchanged" {
 		t.Fatalf("user content = %q", got)
+	}
+	providerItem, ok := input[0]["provider_item"].(map[string]any)
+	if !ok || providerItem["kept"] != true {
+		t.Fatalf("provider-owned item = %#v", input[0]["provider_item"])
 	}
 }
 

@@ -68,27 +68,16 @@ func hpatchRecoveryReferences(
 	return output.String(), true
 }
 
+// hpatchRecoveryCommandSummary creates a summary string for a recovery command reference.
 func hpatchRecoveryCommandSummary(command recoveryCommandReference) string {
-	if command.parts.parsed {
-		summary := command.parts.operation
-		if command.parts.target != "" {
-			summary += " " + command.parts.target
-		}
-		if command.parts.multiline {
-			return summary + " [heredoc value]"
-		}
-		return summary + " [inline value]"
+	summary := command.parts.operation
+	if command.parts.target != "" {
+		summary += " " + command.parts.target
 	}
-	header, _, _ := strings.Cut(command.command, "\n")
-	operation, operands := recoveryToken(header)
-	if operation == "type" || operation == "add" {
-		target, _ := recoveryToken(operands)
-		if recoveryRowOrRange(target) {
-			return operation + " " + target + " [malformed value]"
-		}
-		return operation + " [malformed operands]"
+	if command.parts.multiline {
+		return summary + " [heredoc value]"
 	}
-	return header
+	return summary + " [inline value]"
 }
 
 func hpatchLogicalRowsByPhysicalLine(script string, lines []hpatchsyntax.PhysicalLine) [][]int {

@@ -64,6 +64,151 @@ func TestCTP2RequestUsesContentLocalDictionaries(t *testing.T) {
 	}
 }
 
+func TestCTP2RequestPreservesProviderOwnedInputFields(t *testing.T) {
+	codec := mustCTP2Codec(t)
+	repeated := strings.Repeat("preserve provider-owned input data; ", 16)
+	request := parsedResponsesRequest{fields: map[string]json.RawMessage{
+		"instructions": mustTestJSON(t, "decode CTP/2 here"),
+		"input": mustTestJSON(t, []any{
+			map[string]any{
+				"type": "message", "role": "user", "call_id": 42,
+				"provider_item": map[string]any{"kept": true},
+				"content": []any{
+					map[string]any{
+						"type": "input_text", "text": repeated,
+						"provider_part": map[string]any{"kept": true},
+					},
+					map[string]any{"type": "input_image", "image_url": "provider://image", "provider_part": true},
+				},
+			},
+			map[string]any{"type": "future_item", "content": repeated, "provider_item": true},
+		}),
+	}}
+
+	transform, _, err := codec.prepareRequest(&request)
+	if err != nil || transform == nil {
+		t.Fatalf("transform = %#v, err = %v", transform, err)
+	}
+	var input []struct {
+		Type         string          `json:"type"`
+		Content      json.RawMessage `json:"content"`
+		ProviderItem json.RawMessage `json:"provider_item"`
+	}
+	if err := json.Unmarshal(request.fields["input"], &input); err != nil {
+		t.Fatal(err)
+	}
+	if len(input) != 2 || string(input[0].ProviderItem) != `{"kept":true}` || string(input[1].ProviderItem) != "true" {
+		t.Fatalf("provider-owned items changed: %s", request.fields["input"])
+	}
+	var content []struct {
+		Type         string          `json:"type"`
+		Text         string          `json:"text"`
+		ImageURL     string          `json:"image_url"`
+		ProviderPart json.RawMessage `json:"provider_part"`
+	}
+	if err := json.Unmarshal(input[0].Content, &content); err != nil {
+		t.Fatal(err)
+	}
+	if len(content) != 2 || string(content[0].ProviderPart) != `{"kept":true}` ||
+		content[1].ImageURL != "provider://image" || string(content[1].ProviderPart) != "true" {
+		t.Fatalf("provider-owned content changed: %s", input[0].Content)
+	}
+	decoded, err := decodeCTP2String(content[0].Text, transform.sources, upstreamJSONBufferBytes)
+	if err != nil || decoded != repeated {
+		t.Fatalf("text decoded = %q, err = %v", decoded, err)
+	}
+	var futureContent string
+	if err := json.Unmarshal(input[1].Content, &futureContent); err != nil || futureContent != repeated {
+		t.Fatalf("future item content = %q, err = %v", futureContent, err)
+	}
+}
+
+func TestCTP2RequestUsesCatalogForAdditionalToolDescriptions(t *testing.T) {
+	codec := mustCTP2Codec(t)
+	repeated := strings.Repeat("shared additional tool description; ", 16)
+	request := parsedResponsesRequest{fields: map[string]json.RawMessage{
+		"instructions": mustTestJSON(t, "decode CTP/2 here"),
+		"input": mustTestJSON(t, []any{map[string]any{
+			"type": "additional_tools",
+			"tools": []any{
+				map[string]any{"type": "custom", "name": "exec", "description": repeated},
+				map[string]any{
+					"type": "namespace", "name": "functions", "description": repeated,
+					"tools": []any{map[string]any{"type": "function", "name": "lookup", "description": repeated}},
+				},
+			},
+		}}),
+	}}
+
+	transform, _, err := codec.prepareRequest(&request)
+	if err != nil || transform == nil {
+		t.Fatalf("transform = %#v, err = %v", transform, err)
+	}
+	input := decodeCTP2TestValue(t, request.fields["input"]).([]any)
+	tools := input[0].(map[string]any)["tools"].([]any)
+	descriptions := []string{
+		tools[0].(map[string]any)["description"].(string),
+		tools[1].(map[string]any)["description"].(string),
+		tools[1].(map[string]any)["tools"].([]any)[0].(map[string]any)["description"].(string),
+	}
+	for index, description := range descriptions {
+		decoded, decodeErr := decodeCTP2String(description, transform.sources, upstreamJSONBufferBytes)
+		if decodeErr != nil || decoded != repeated {
+			t.Fatalf("description %d decoded = %q, err = %v", index, decoded, decodeErr)
+		}
+	}
+}
+
+func TestCTP2MalformedAdditionalToolsDoNotDisableOtherEncoding(t *testing.T) {
+	codec := mustCTP2Codec(t)
+	repeated := strings.Repeat("compress the unaffected message; ", 16)
+	request := parsedResponsesRequest{fields: map[string]json.RawMessage{
+		"instructions": mustTestJSON(t, "decode CTP/2 here"),
+		"input": mustTestJSON(t, []any{
+			map[string]any{"type": "additional_tools"},
+			map[string]any{"type": "message", "role": "user", "content": repeated},
+		}),
+	}}
+
+	transform, _, err := codec.prepareRequest(&request)
+	if err != nil || transform == nil {
+		t.Fatalf("transform = %#v, err = %v", transform, err)
+	}
+	input := decodeCTP2TestValue(t, request.fields["input"]).([]any)
+	if _, exists := input[0].(map[string]any)["tools"]; exists {
+		t.Fatal("missing additional tools field was added")
+	}
+	compact := input[1].(map[string]any)["content"].(string)
+	decoded, decodeErr := decodeCTP2String(compact, transform.sources, upstreamJSONBufferBytes)
+	if decodeErr != nil || decoded != repeated {
+		t.Fatalf("decoded message = %q, err = %v", decoded, decodeErr)
+	}
+}
+
+func TestCTP2PreservesNonStringToolDescriptions(t *testing.T) {
+	codec := mustCTP2Codec(t)
+	request := parsedResponsesRequest{fields: map[string]json.RawMessage{
+		"instructions": mustTestJSON(t, "decode CTP/2 here"),
+		"tools": mustTestJSON(t, []any{
+			map[string]any{"type": "function", "name": "null_description", "description": nil},
+			map[string]any{"type": "function", "name": "object_description", "description": map[string]any{"kept": true}},
+		}),
+	}}
+
+	transform, _, err := codec.prepareRequest(&request)
+	if err != nil || transform == nil {
+		t.Fatalf("transform = %#v, err = %v", transform, err)
+	}
+	tools := decodeCTP2TestValue(t, request.fields["tools"]).([]any)
+	if tools[0].(map[string]any)["description"] != nil {
+		t.Fatalf("null description = %#v", tools[0].(map[string]any)["description"])
+	}
+	object := tools[1].(map[string]any)["description"].(map[string]any)
+	if object["kept"] != true {
+		t.Fatalf("object description = %#v", object)
+	}
+}
+
 func TestCTP2RequestUsesVisiblePriorToolOutputLines(t *testing.T) {
 	codec := mustCTP2Codec(t)
 	first := strings.Repeat("first exact diagnostic line with enough content to make the reference worthwhile\n", 2) +
@@ -459,7 +604,8 @@ func mustCTP2Codec(t testing.TB) *ctp2Codec {
 
 func decodeCTP2TestValue(t *testing.T, raw json.RawMessage) any {
 	t.Helper()
-	value, err := decodeJSONValue(raw)
+	var value any
+	err := json.Unmarshal(raw, &value)
 	if err != nil {
 		t.Fatal(err)
 	}

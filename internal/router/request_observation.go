@@ -5,9 +5,9 @@ import (
 	"time"
 )
 
-// tokenCounts is retained for Mentor Handoff, whose transition depends on the
-// provider's reported input-token position. Aggregate reporting belongs to the
-// capture package instead.
+// tokenCounts carries one provider-authoritative terminal usage observation to
+// Mentor Handoff, user-only commentary, and the capturer. Aggregate reporting
+// belongs to the capture package.
 type tokenCounts struct {
 	InputTokens         uint64
 	UncachedInputTokens uint64

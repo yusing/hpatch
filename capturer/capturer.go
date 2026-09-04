@@ -50,7 +50,9 @@ type Config struct {
 	ModelProtocol string
 }
 
-type tokenUsage struct {
+// ProviderUsage is the provider-authoritative token count parsed from one
+// terminal Responses payload.
+type ProviderUsage struct {
 	InputTokens     uint64 `json:"input_tokens"`
 	CachedTokens    uint64 `json:"cached_input_tokens"`
 	OutputTokens    uint64 `json:"output_tokens"`
@@ -91,7 +93,7 @@ type captureRecord struct {
 	StatusCode       int               `json:"status_code"`
 	ResponseComplete bool              `json:"response_complete"`
 	ResponseStatus   string            `json:"response_status,omitempty"`
-	Usage            *tokenUsage       `json:"usage,omitempty"`
+	Usage            *ProviderUsage    `json:"usage,omitempty"`
 	ToolCalls        []toolCallMetrics `json:"tool_calls,omitempty"`
 	Response         payloadMetrics    `json:"response"`
 	FinalOutput      payloadMetrics    `json:"final_output,omitzero"`
@@ -124,8 +126,28 @@ type requestState struct {
 	threadID         string
 	subagent         string
 	providers        []captureRecord
+	providerUsage    map[uint64]ProviderUsage
 	cacheReady       bool
 	cacheUsage       *usageMetrics
+}
+
+// ObserveProviderUsage supplies the provider-authoritative usage parsed by the
+// router for the current provider attempt. Requests outside a Recorder handler
+// are ignored.
+func ObserveProviderUsage(ctx context.Context, usage ProviderUsage) {
+	state, ok := ctx.Value(captureKey{}).(*requestState)
+	if !ok {
+		return
+	}
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	if state.providerAttempts == 0 {
+		return
+	}
+	if state.providerUsage == nil {
+		state.providerUsage = make(map[uint64]ProviderUsage)
+	}
+	state.providerUsage[state.providerAttempts] = usage
 }
 
 // New creates one in-process recorder. It never starts a server.
@@ -265,6 +287,20 @@ func (s *requestState) providerRecords() []captureRecord {
 	return slices.Clone(s.providers)
 }
 
+// observedUsage retrieves the provider usage observation for a specific attempt.
+func (s *requestState) observedUsage(boundary string, attempt uint64) *ProviderUsage {
+	if boundary != "provider" {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	usage, ok := s.providerUsage[attempt]
+	if !ok {
+		return nil
+	}
+	return new(usage)
+}
+
 func (r *Recorder) recordExchange(state *requestState, boundary string, attempt uint64, started time.Time, requestBody []byte, responseBody observedPayload, statusCode int, contentType, contentEncoding string, exchangeErr error) {
 	record := captureRecord{
 		SchemaVersion:   schemaVersion,
@@ -281,6 +317,7 @@ func (r *Recorder) recordExchange(state *requestState, boundary string, attempt 
 		StatusCode:      statusCode,
 		DurationMillis:  uint64(max(time.Since(started).Milliseconds(), 0)),
 		CapturedAt:      time.Now().UTC(),
+		Usage:           state.observedUsage(boundary, attempt),
 	}
 	if exchangeErr != nil {
 		record.CaptureError = "request or response stream failed"
@@ -428,8 +465,9 @@ func (body *observedResponseBody) Read(destination []byte) (int, error) {
 		if !errors.Is(err, io.EOF) {
 			body.readErr = err
 		}
-		body.complete()
 	}
+	// The router supplies the shared terminal usage observation after reading
+	// the payload. Finalize on Close so that observation reaches this record.
 	return count, err
 }
 

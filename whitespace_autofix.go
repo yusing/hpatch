@@ -12,36 +12,12 @@ type whitespaceDeletion struct {
 
 const gitBinaryProbeSize = 8000
 
-// autofixWhitespace removes Git-default whitespace errors only from lines
-// introduced by the evaluated script. It runs after language formatting so
-// the final content and report offsets describe the same bytes.
-func (w *workspace) autofixWhitespace() {
-	for _, file := range w.files {
-		if file.deleted {
-			continue
-		}
-		content := file.editor.content()
-		if isGitDefaultBinary(file.original) || isGitDefaultBinary(content) {
-			continue
-		}
-		fixed, deletions := fixChangedLineWhitespace(content, &file.editor)
-		if fixed == content {
-			continue
-		}
-		cleanupOffsets := newWhitespaceOffsetMap(len(content), deletions)
-		file.editor.finalContent = &fixed
-		if file.editor.finalOffsets == nil {
-			file.editor.finalOffsets = cleanupOffsets
-		} else {
-			file.editor.finalOffsets.subsequent = cleanupOffsets
-		}
-	}
-}
-
-func fixChangedLineWhitespace(content string, source *editor) (string, []whitespaceDeletion) {
+// fixChangedLineWhitespace removes Git-default whitespace errors only from
+// lines introduced by the evaluated script.
+func fixChangedLineWhitespace(content string, edits []baselineEdit, offsets *formattedOffsetMap) (string, []whitespaceDeletion) {
 	lines := logicalLines(content)
 	changed := make([]bool, len(lines))
-	markReplacementResultLines(changed, lines, source)
+	markReplacementResultLines(changed, lines, edits, offsets)
 
 	var deletions []whitespaceDeletion
 	for index, line := range lines {
@@ -80,21 +56,23 @@ func fixChangedLineWhitespace(content string, source *editor) (string, []whitesp
 	return string(result), deletions
 }
 
+// isGitDefaultBinary detects if content appears to be binary using Git's heuristic.
 func isGitDefaultBinary(content string) bool {
 	return strings.IndexByte(content[:min(len(content), gitBinaryProbeSize)], 0) >= 0
 }
 
-func markReplacementResultLines(changed []bool, lines []logicalLine, source *editor) {
+// markReplacementResultLines marks lines that were modified by edits.
+func markReplacementResultLines(changed []bool, lines []logicalLine, edits []baselineEdit, offsets *formattedOffsetMap) {
 	baselineOffset := 0
 	renderedOffset := 0
-	for _, edit := range source.orderedEdits() {
+	for _, edit := range orderedBaselineEdits(edits) {
 		renderedOffset += edit.start - baselineOffset
 		start := renderedOffset
 		end := start + len(edit.replacement)
 		switch {
 		case start != end:
-			start = source.finalOffsets.mapOffset(start)
-			end = source.finalOffsets.mapOffset(end)
+			start = offsets.mapOffset(start)
+			end = offsets.mapOffset(end)
 			if end < start {
 				start, end = end, start
 			}
@@ -105,7 +83,7 @@ func markReplacementResultLines(changed []bool, lines []logicalLine, source *edi
 				changed[index] = true
 			}
 		case edit.target == targetVariantTextSingle || edit.target == targetVariantTextMultiple:
-			point := source.finalOffsets.mapOffset(start)
+			point := offsets.mapOffset(start)
 			index := sort.Search(len(lines), func(index int) bool {
 				return lines[index].contentEnd >= point
 			})
@@ -118,6 +96,7 @@ func markReplacementResultLines(changed []bool, lines []logicalLine, source *edi
 	}
 }
 
+// newWhitespaceOffsetMap creates an offset map for whitespace deletions.
 func newWhitespaceOffsetMap(contentLength int, deletions []whitespaceDeletion) *formattedOffsetMap {
 	removed := 0
 	for _, deletion := range deletions {

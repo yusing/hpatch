@@ -6,6 +6,7 @@ require (
 	github.com/BurntSushi/toml v1.6.0
 	github.com/creack/pty v1.1.24
 	github.com/gofrs/flock v0.13.0
+	github.com/openai/openai-go/v3 v3.56.0
 	github.com/pmezard/go-difflib v1.0.0
 	github.com/tiktoken-go/tokenizer v0.8.1
 	github.com/tree-sitter/go-tree-sitter v0.25.0
@@ -19,5 +20,9 @@ require (
 require (
 	github.com/dlclark/regexp2/v2 v2.5.2 // indirect
 	github.com/mattn/go-pointer v0.0.1 // indirect
+	github.com/tidwall/gjson v1.19.0 // indirect
+	github.com/tidwall/match v1.1.1 // indirect
+	github.com/tidwall/pretty v1.2.1 // indirect
+	github.com/tidwall/sjson v1.2.5 // indirect
 	golang.org/x/sys v0.47.0 // indirect
 )

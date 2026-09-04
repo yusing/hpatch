@@ -69,6 +69,11 @@ func TestRecorderObservesSingleListenerAndProviderRetries(t *testing.T) {
 				return
 			}
 			_, _ = io.Copy(io.Discard, response.Body)
+			if attempt == 1 {
+				ObserveProviderUsage(incoming.Context(), ProviderUsage{
+					InputTokens: 20, CachedTokens: 8, OutputTokens: 5, ReasoningTokens: 2,
+				})
+			}
 			_ = response.Body.Close()
 			if attempt == 0 {
 				continue
@@ -193,6 +198,13 @@ func TestRecorderAcceptsConsumerCloseAfterTerminalResponse(t *testing.T) {
 	if _, err := io.ReadFull(response.Body, payload); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := response.Body.Read(make([]byte, 1)); !errors.Is(err, io.EOF) {
+		t.Fatalf("terminal read error = %v, want EOF", err)
+	}
+	if records := state.providerRecords(); len(records) != 0 {
+		t.Fatalf("provider record finalized before shared usage: %#v", records)
+	}
+	ObserveProviderUsage(request.Context(), ProviderUsage{InputTokens: 3})
 	if err := response.Body.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -315,8 +327,8 @@ func TestSnapshotAccountsCacheCorrectionsDiagnosticsAndMissingEvidence(t *testin
 		record.ResponseComplete = true
 		return record
 	}
-	usage := func(input, cached, output uint64) *tokenUsage {
-		return &tokenUsage{InputTokens: input, CachedTokens: cached, OutputTokens: output}
+	usage := func(input, cached, output uint64) *ProviderUsage {
+		return &ProviderUsage{InputTokens: input, CachedTokens: cached, OutputTokens: output}
 	}
 	states := make(map[string]*requestState)
 	for _, record := range []captureRecord{
@@ -358,7 +370,13 @@ func TestSnapshotUsesTerminalOutputOnceInsteadOfWholeSSEStream(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	state := &requestState{captureID: "stream", sequence: 1}
+	state := &requestState{
+		captureID: "stream",
+		sequence:  1,
+		providerUsage: map[uint64]ProviderUsage{1: {
+			InputTokens: 10, CachedTokens: 8, OutputTokens: 4,
+		}},
+	}
 	providerItem := `{"type":"custom_tool_call","call_id":"call","name":"hpatch","input":"edit"}`
 	clientItem := `{"type":"custom_tool_call","call_id":"call","name":"exec","input":"text(\"done\");"}`
 	providerOutput := `[` + providerItem + `]`
@@ -478,7 +496,7 @@ func TestSnapshotBoundsExchangeDetailWithoutLosingTotals(t *testing.T) {
 		provider := captureRecord{
 			Boundary: "provider", CaptureID: state.captureID, RequestSequence: sequence, ProviderAttempt: 1,
 			StatusCode: http.StatusOK, ResponseStatus: "completed", ResponseComplete: true,
-			Usage: &tokenUsage{InputTokens: 1},
+			Usage: &ProviderUsage{InputTokens: 1},
 		}
 		state.addProvider(provider)
 		recorder.write(provider, state)
@@ -670,7 +688,7 @@ func TestObserveResponseJoinsMultilineSSEData(t *testing.T) {
 	}
 	var record captureRecord
 	observeResponse(payload, "application/octet-stream", &record, codec)
-	if record.CaptureError != "" || record.ResponseStatus != "completed" || record.Usage == nil || record.Usage.InputTokens != 3 {
+	if record.CaptureError != "" || record.ResponseStatus != "completed" || record.Usage != nil {
 		t.Fatalf("multiline SSE record = %#v", record)
 	}
 }
@@ -764,7 +782,7 @@ func TestCacheAttributionUsesFinalAttemptOfPrecedingLogicalRequest(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	writeExchange := func(sequence uint64, thread string, usages ...tokenUsage) {
+	writeExchange := func(sequence uint64, thread string, usages ...ProviderUsage) {
 		state := &requestState{captureID: fmt.Sprintf("cache-%d", sequence), sequence: sequence, threadID: thread}
 		if thread != "" {
 			recorder.cacheQueues[thread] = append(recorder.cacheQueues[thread], state)
@@ -783,11 +801,11 @@ func TestCacheAttributionUsesFinalAttemptOfPrecedingLogicalRequest(t *testing.T)
 			StatusCode: http.StatusOK, ResponseStatus: "completed", ResponseComplete: true,
 		}, state)
 	}
-	writeExchange(1, "thread", tokenUsage{InputTokens: 100}, tokenUsage{InputTokens: 120})
-	writeExchange(2, "thread", tokenUsage{InputTokens: 150, CachedTokens: 100})
-	writeExchange(3, "", tokenUsage{InputTokens: 80})
-	writeExchange(4, "", tokenUsage{InputTokens: 90, CachedTokens: 80})
-	writeExchange(5, "thread", tokenUsage{InputTokens: 200, CachedTokens: 150})
+	writeExchange(1, "thread", ProviderUsage{InputTokens: 100}, ProviderUsage{InputTokens: 120})
+	writeExchange(2, "thread", ProviderUsage{InputTokens: 150, CachedTokens: 100})
+	writeExchange(3, "", ProviderUsage{InputTokens: 80})
+	writeExchange(4, "", ProviderUsage{InputTokens: 90, CachedTokens: 80})
+	writeExchange(5, "thread", ProviderUsage{InputTokens: 200, CachedTokens: 150})
 	state := &requestState{captureID: "cache-6", sequence: 6, threadID: "thread"}
 	recorder.cacheQueues["thread"] = append(recorder.cacheQueues["thread"], state)
 	provider := captureRecord{
@@ -801,7 +819,7 @@ func TestCacheAttributionUsesFinalAttemptOfPrecedingLogicalRequest(t *testing.T)
 		Boundary: "codex", CaptureID: state.captureID, RequestSequence: state.sequence, ThreadID: state.threadID,
 		StatusCode: http.StatusTooManyRequests, ResponseStatus: "http_error", ResponseComplete: true,
 	}, state)
-	writeExchange(7, "thread", tokenUsage{InputTokens: 220, CachedTokens: 200})
+	writeExchange(7, "thread", ProviderUsage{InputTokens: 220, CachedTokens: 200})
 
 	cache := recorder.snapshot().Cache
 	if cache.EligiblePrefixTokens != 270 || cache.EligiblePrefixCachedTokens != 250 ||
@@ -824,7 +842,7 @@ func TestCacheAttributionFollowsRequestSequenceWhenResponsesFinishOutOfOrder(t *
 			t.Fatal(err)
 		}
 	}
-	finish := func(state *requestState, usage tokenUsage) {
+	finish := func(state *requestState, usage ProviderUsage) {
 		provider := captureRecord{
 			Boundary: "provider", CaptureID: state.captureID, RequestSequence: state.sequence,
 			ProviderAttempt: 1, ThreadID: state.threadID, StatusCode: http.StatusOK,
@@ -837,9 +855,9 @@ func TestCacheAttributionFollowsRequestSequenceWhenResponsesFinishOutOfOrder(t *
 			StatusCode: http.StatusOK, ResponseStatus: "completed", ResponseComplete: true,
 		}, state)
 	}
-	finish(states[1], tokenUsage{InputTokens: 120, CachedTokens: 80})
-	finish(states[0], tokenUsage{InputTokens: 100})
-	finish(states[2], tokenUsage{InputTokens: 130, CachedTokens: 110})
+	finish(states[1], ProviderUsage{InputTokens: 120, CachedTokens: 80})
+	finish(states[0], ProviderUsage{InputTokens: 100})
+	finish(states[2], ProviderUsage{InputTokens: 130, CachedTokens: 110})
 
 	cache := recorder.snapshot().Cache
 	if cache.EligiblePrefixTokens != 220 || cache.EligiblePrefixCachedTokens != 190 ||

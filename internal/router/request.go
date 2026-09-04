@@ -14,8 +14,45 @@ import (
 type parsedResponsesRequest struct {
 	fields         map[string]json.RawMessage
 	streamResponse bool
+	toolCatalog    *responsesToolCatalog
 }
 
+// responseTools returns the decoded tool catalog, decoding it on first access.
+func (r *parsedResponsesRequest) responseTools() *responsesToolCatalog {
+	if r.toolCatalog == nil {
+		r.toolCatalog = decodeResponsesToolCatalog(r.fields)
+	}
+	return r.toolCatalog
+}
+
+// setInput updates the request input and re-indexes additional tool groups.
+func (r *parsedResponsesRequest) setInput(input json.RawMessage) {
+	r.fields["input"] = input
+	if r.toolCatalog == nil {
+		return
+	}
+	var items []json.RawMessage
+	if json.Unmarshal(input, &items) != nil {
+		return
+	}
+	groupIndex := 0
+	for itemIndex, rawItem := range items {
+		var item map[string]json.RawMessage
+		if json.Unmarshal(rawItem, &item) != nil || jsonString(item, "type") != "additional_tools" {
+			continue
+		}
+		if groupIndex >= len(r.toolCatalog.additional) {
+			return
+		}
+		group := r.toolCatalog.additional[groupIndex]
+		group.itemIndex = itemIndex
+		group.item = item
+		groupIndex++
+	}
+	r.toolCatalog.inputItems = items
+}
+
+// model returns the model name from the request.
 func (r parsedResponsesRequest) model() string {
 	raw, ok := r.fields["model"]
 	if !ok {
@@ -28,6 +65,7 @@ func (r parsedResponsesRequest) model() string {
 	return strings.TrimSpace(model)
 }
 
+// modelDescription returns the model name and reasoning effort as a description string.
 func (r parsedResponsesRequest) modelDescription() string {
 	model := r.model()
 	var reasoning struct {
@@ -39,6 +77,7 @@ func (r parsedResponsesRequest) modelDescription() string {
 	return strings.TrimSpace(model + " " + strings.TrimSpace(reasoning.Effort))
 }
 
+// setModelAndReasoningEffort updates the model and reasoning effort fields in the request.
 func (r *parsedResponsesRequest) setModelAndReasoningEffort(model, effort string) error {
 	encodedModel, err := json.Marshal(model)
 	if err != nil {
@@ -64,6 +103,7 @@ func (r *parsedResponsesRequest) setModelAndReasoningEffort(model, effort string
 	return nil
 }
 
+// promptCacheKey returns the prompt cache key from the request.
 func (r parsedResponsesRequest) promptCacheKey() string {
 	raw, ok := r.fields["prompt_cache_key"]
 	if !ok {
@@ -76,6 +116,7 @@ func (r parsedResponsesRequest) promptCacheKey() string {
 	return key
 }
 
+// parseResponsesRequest parses and validates a Responses request from raw JSON bytes.
 func parseResponsesRequest(body []byte) (parsedResponsesRequest, error) {
 	decoder := json.NewDecoder(bytes.NewReader(body))
 	var request map[string]json.RawMessage
@@ -103,6 +144,7 @@ func parseResponsesRequest(body []byte) (parsedResponsesRequest, error) {
 	return parsedResponsesRequest{fields: request, streamResponse: streamResponse}, nil
 }
 
+// readResponsesRequest reads and validates a Responses request body from a reader.
 func readResponsesRequest(reader io.Reader) ([]byte, error) {
 	body, err := io.ReadAll(reader)
 	if err != nil {
