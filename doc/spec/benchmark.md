@@ -14,6 +14,9 @@ Supported modes are:
 - `ctp-only`: Hpatch native protocol versus Hpatch CTP/2 with alternating order; and
 - `mentor-handoff`: Hpatch versus Hpatch with the bounded mentor model schedule.
 
+The control router MUST explicitly disable Mentor Handoff, including when it runs in
+Hpatch mode. CTP-only arms MUST both disable Mentor; only the Mentor treatment enables it.
+
 Each fresh arm MUST run exactly one router process with exactly one listener. The agent MUST connect
 directly to that listener, and the listener MUST expose Responses plus `/api/metrics`. The router
 MUST connect directly to the provider. No standalone capturer process, proxy, listener, or Compose
