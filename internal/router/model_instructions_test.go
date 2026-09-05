@@ -42,6 +42,58 @@ func TestCentralModelInstructionsHaveOneMarkerPair(t *testing.T) {
 	}
 }
 
+func TestRewriteGPT5RecordedEditingFragments(t *testing.T) {
+	// Fragment fixture from contrib/codex/install_test.go at
+	// 9918aca0d080ef90bfe51baf90a9662adcf0b400, including its before/after sentinels.
+	// This is not a full upstream prompt. Keep input and expected output
+	// independent of the production matcher's stock constants.
+	data, err := os.ReadFile("testdata/gpt-5-stock-editing-fragments.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	stock := string(data)
+	for _, carrier := range []string{"instructions", "developer"} {
+		for _, protocol := range []string{"native", "ctp2"} {
+			t.Run(carrier+"/"+protocol, func(t *testing.T) {
+				guidance := codexinstructions.NativeInstructions()
+				if protocol == "ctp2" {
+					guidance = codexinstructions.Instructions()
+				}
+				request := parsedResponsesRequest{fields: make(map[string]json.RawMessage)}
+				if carrier == "instructions" {
+					request.fields[carrier] = mustTestJSON(t, stock)
+				} else {
+					request.fields["input"] = mustTestJSON(t, []any{
+						map[string]any{"type": "message", "role": "developer", "content": stock},
+					})
+				}
+				if err := rewriteReceivedModelInstructions(&request, false, guidance); err != nil {
+					t.Fatal(err)
+				}
+				var got string
+				if carrier == "instructions" {
+					if err := json.Unmarshal(request.fields[carrier], &got); err != nil {
+						t.Fatal(err)
+					}
+				} else {
+					var input []struct{ Content string }
+					if err := json.Unmarshal(request.fields["input"], &input); err != nil {
+						t.Fatal(err)
+					}
+					got = input[0].Content
+				}
+				if got != "before\n"+guidance+"after\n" {
+					t.Fatal("recorded stock rewrite changed unrelated content or retained displaced guidance")
+				}
+				refreshed, err := renderModelInstructions(got, false, guidance)
+				if err != nil || refreshed != got {
+					t.Fatalf("recorded stock guidance refresh is not idempotent: %v", err)
+				}
+			})
+		}
+	}
+}
+
 func TestRewriteAstraStockModelInstructions(t *testing.T) {
 	// Stock Astra template from Codex's 2026-09-05 model catalog, before
 	// personality variables are expanded. Keep this independent of the matcher.
