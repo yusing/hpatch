@@ -122,7 +122,7 @@ type hpatchProxy struct {
 	modelInstructions      string
 	shellDirectory         string
 	titles                 *sessionTitleCache
-	shellSessions          map[string]struct{}
+	shellSessions          map[string]*shellSession
 	commentary             *commentaryBroker
 	commentaryEndpoint     string
 
@@ -154,7 +154,7 @@ func newHPatchProxy(translator hpatchTranslator, registry *toolRegistry, customi
 		modelInstructions:      modelInstructions,
 		shellDirectory:         directory,
 		titles:                 titles,
-		shellSessions:          make(map[string]struct{}),
+		shellSessions:          make(map[string]*shellSession),
 		commentary:             newCommentaryBroker(),
 		sessions:               make(map[string]*hpatchHistorySession),
 		activeSessions:         make(map[string]int),
@@ -169,8 +169,8 @@ func (p *hpatchProxy) Close() error {
 	defer p.mu.Unlock()
 	p.closed = true
 	var cleanupErr error
-	for directory := range p.shellSessions {
-		cleanupErr = errors.Join(cleanupErr, os.RemoveAll(directory))
+	for _, session := range p.shellSessions {
+		cleanupErr = errors.Join(cleanupErr, session.close())
 	}
 	clear(p.shellSessions)
 	clear(p.sessions)
@@ -947,11 +947,10 @@ func (t *hpatchResponseTransform) translate(callID, input string, upstreamItem m
 	}
 	attemptContext := hpatch.WithAttemptMetadata(t.ctx, attemptMetadata)
 	if retainedApply {
-		root, openErr := os.OpenRoot(t.shellDirectory)
+		root, openErr := t.proxy.shellRoot(t.shellDirectory)
 		if openErr != nil {
 			return hpatchHistory{}, fmt.Errorf("open retained shell directory: %w", openErr)
 		}
-		defer root.Close()
 		applier, ok := t.proxy.translator.(hpatchApplier)
 		if !ok {
 			return hpatchHistory{}, errors.New("hpatch translator cannot apply retained shell edits")
@@ -1019,34 +1018,6 @@ func (t *hpatchResponseTransform) translate(callID, input string, upstreamItem m
 	}
 	t.recordLocal(callID, &history)
 	return history, nil
-}
-
-func (p *hpatchProxy) retainShell(directory, callID, script string) (string, bool) {
-	if directory == "" {
-		return "", false
-	}
-	reference := shellArtifactPrefix + callID
-	path := filepath.Join(directory, callID)
-	p.mu.Lock()
-	if p.closed {
-		p.mu.Unlock()
-		return "", false
-	}
-	if p.shellSessions == nil {
-		p.shellSessions = make(map[string]struct{})
-	}
-	p.shellSessions[directory] = struct{}{}
-	p.mu.Unlock()
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return "", false
-	}
-	if err := os.WriteFile(path, []byte(script), 0o600); err != nil {
-		return "", false
-	}
-	time.AfterFunc(shellArtifactTTL, func() {
-		_ = os.Remove(path)
-	})
-	return reference, true
 }
 
 func (t *hpatchResponseTransform) translateTool(name, callID, input string, upstreamItem map[string]json.RawMessage) (hpatchHistory, error) {
@@ -1118,14 +1089,21 @@ func (t *hpatchResponseTransform) translateRegisteredTool(contribution toolContr
 	recovered := !t.nativeTools && lunaShellCodeModeProgram(contribution, input)
 	var translation toolplugin.Translation
 	var err error
-	if !recovered {
+	effectiveInput := input
+	if !recovered && contribution.PluginID == builtinToolsPluginID && contribution.Name == "shell" {
+		effectiveInput, err = t.proxy.resolveShellInput(t.shellDirectory, input)
+		if err != nil {
+			translation = toolplugin.Translation{Rejected: true, Diagnostic: err.Error()}
+		}
+	}
+	if !recovered && !translation.Rejected {
 		translation, err = toolplugin.Translate(
 			t.ctx,
 			t.proxy.registry.NodeExecutable,
 			t.proxy.registry.RuntimeRoot,
 			contribution.Module,
 			contribution.ModuleIndex,
-			input,
+			effectiveInput,
 			pathPrefix,
 		)
 		if err != nil {
@@ -1136,7 +1114,7 @@ func (t *hpatchResponseTransform) translateRegisteredTool(contribution toolContr
 	if translation.Carrier.RetainInput != nil {
 		resultMetadata = map[string]json.RawMessage{"retained": mustMarshalJSON(false)}
 		if *translation.Carrier.RetainInput {
-			reference, retained := t.proxy.retainShell(t.shellDirectory, callID, input)
+			reference, retained := t.proxy.retainShell(t.shellDirectory, callID, effectiveInput)
 			resultMetadata["retained"] = mustMarshalJSON(retained)
 			if retained {
 				resultMetadata["script_ref"] = mustMarshalJSON(reference)

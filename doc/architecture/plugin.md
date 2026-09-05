@@ -130,6 +130,23 @@ link, router executable, plugin runtime, and implementation resources visible in
 workspace selection; the fixed helper and configured frontends additionally require their shared
 directory on the executor `PATH`.
 
+The shell runtime owner validates thread and artifact IDs before treating them as single
+filesystem components. It pins the thread's separate `scripts` directory with `os.Root` for
+retention, rerun resolution, and private hpatch application. Exclusive artifact creation
+cannot follow a preexisting symlink or overwrite an existing artifact. Expiry uses the pinned
+script root; shutdown cancels timers and cleans the owned contents through pinned roots.
+It removes only empty directory entries whose identities still match those roots, never
+recursively deleting a replacement pathname. Directory opening verifies the opened identity
+against the checked entry, and nonblocking file opening rejects FIFO replacements before
+reading. The `.runtime` launcher is outside the script capability.
+The router resolves `#!script` references before calling the shell plugin parser, which
+rejects unresolved references and performs no retained-file reads. Nested references remain
+within the same script root and cycles reject. Replay retains the original call, while a
+rerun's retained artifact contains the resolved body. The private hread middleware opens a
+retained regular file through the same confined Go boundary and passes its descriptor to
+the JavaScript reader; the reader never reconstructs a retained host path. Ordinary hread
+paths and configured plugin translation remain unchanged.
+
 Startup materializes the validated implementation modules, shared-core adapter and reactor, and dispatch metadata into an
 immutable process-scoped worker snapshot. Locator-launched shell and symlink-launched configured
 children read that snapshot and verify its registry identity before loading an implementation. A child never rediscovers or

@@ -16,6 +16,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/yusing/hpatch/internal/router/toolplugin"
+	"github.com/yusing/hpatch/internal/shellruntime"
 	"github.com/yusing/hpatch/internal/shellsyntax"
 	"golang.org/x/term"
 	"mvdan.cc/sh/v3/expand"
@@ -91,14 +92,36 @@ func executeShellTool(
 				return next(handlerCtx, command)
 			}
 			handler := interp.HandlerCtx(handlerCtx)
+			arguments := command[1:]
 			input, _ := handler.Stdin.(*os.File)
+			var retained *os.File
+			if contribution.Name == "hread" && len(arguments) > 0 && strings.HasPrefix(arguments[0], shellArtifactPrefix) {
+				runtimeDirectory := handler.Env.Get(shellruntime.RuntimeDirectoryEnvironment).String()
+				if runtimeDirectory == "" {
+					runtimeDirectory = os.TempDir()
+				}
+				var openErr error
+				retained, openErr = openRetainedShellFile(
+					runtimeDirectory,
+					handler.Env.Get(shellruntime.ThreadIDEnvironment).String(),
+					arguments[0],
+				)
+				if openErr != nil {
+					_, _ = fmt.Fprintf(handler.Stderr, "hread: %v\n", openErr)
+					return interp.ExitStatus(1)
+				}
+				defer retained.Close()
+				arguments = slices.Clone(arguments)
+				arguments[0] = "/dev/fd/3"
+				input = retained
+			}
 			execution, executeErr := toolplugin.Execute(
 				handlerCtx,
 				manifest.NodeExecutable,
 				runtimeRoot,
 				contribution.Module,
 				contribution.ModuleIndex,
-				command[1:],
+				arguments,
 				input,
 				handler.Dir,
 				shellEnvironment(handler.Env),

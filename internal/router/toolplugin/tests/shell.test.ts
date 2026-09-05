@@ -76,6 +76,14 @@ afterEach(async () => {
 });
 
 describe("installable shell plugin", () => {
+  test("rejects unresolved retained references without opening a host file", async () => {
+    const directory = await temporaryDirectory("hpatch-shell-reference-");
+    const stored = path.join(directory, "outside-script");
+    await writeFile(stored, "#!python3\nprint('outside')\n");
+    expect(() => tool.parse(`#!script=${stored}`, {
+      resolvePath: (value: string) => value,
+    })).toThrow();
+  });
   test("normalizes shebangs and preserves the exact body", async () => {
     expect(tool.specification).toMatchObject({
       type: "custom",
@@ -108,7 +116,7 @@ describe("installable shell plugin", () => {
     expect(await tool.translate(bash, {exec: () => ({kind: "exec"})})).toEqual({kind: "exec"});
   });
 
-  test("classifies retention and resolves retained references", async () => {
+  test("classifies retention and rejects unresolved retained references", async () => {
     const context = {resolvePath: (value: string) => value};
     const retention = async (input: string) => {
       const parsed = await tool.parse(input, context);
@@ -124,13 +132,7 @@ describe("installable shell plugin", () => {
     expect(await retention("#!sh\none\ntwo\nthree")).toBe(true);
     expect(await retention("#!python3\npass")).toBe(true);
 
-    const directory = await temporaryDirectory("hpatch-shell-reference-");
-    const stored = path.join(directory, "call-id");
-    await writeFile(stored, "#!python3\nprint('stored')\n");
-    const parsed = await tool.parse("#!script=@shell/call-id", {
-      resolvePath: (value: string) => value === "@shell/call-id" ? stored : value,
-    });
-    expect(await tool.argv(parsed)).toEqual(["python3", "print('stored')\n"]);
+    expect(() => tool.parse("#!script=@shell/call-id", context)).toThrow("resolved by the router");
   });
 
   test("expands a command directive after an optional interpreter shebang", async () => {

@@ -81,6 +81,22 @@ persist the session. They do not define a second result envelope or continuation
 result fields, yield timing, continuation arguments, and session lifetime remain owned by Codex's
 executable tool definitions in that request.
 
+Eligible shell calls return `retained: true` and a thread-scoped `script_ref` shaped
+`@shell/<artifact-id>`. `hread` inspects that reference, hpatch edits it inside private
+script storage, and a sole `#!script=@shell/<artifact-id>` reruns its current content.
+References select regular UTF-8 script files, never arbitrary host paths or the runtime
+launcher. Thread and artifact IDs must be single nonempty filename components, excluding
+`.` and `..`, separators, and NUL; `.runtime` is reserved and cannot identify an artifact.
+Missing, cyclic, traversing, and symlink-escaping references reject without execution.
+Invalid retention IDs or existing artifact names yield `retained: false` without overwriting
+files or changing execution of an otherwise valid shell call.
+
+Retained scripts occupy a separate `scripts` directory below the thread runtime directory.
+Retention writes, reads, edits, expiry, and shutdown cleanup remain confined even when a
+storage pathname is subsequently replaced by an escaping symlink. Artifacts expire after
+one hour; shutdown cancels expiry callbacks and removes owned thread storage. Reruns retain
+the resolved script body while conversation replay preserves the original reference call.
+
 Acceptance:
 
 1. A free-form call containing `#!/usr/bin/env python3` translates to an exec carrier whose
@@ -144,3 +160,7 @@ Acceptance:
     JavaScript emits its recovery warning first and then every detected nested shell warning.
     Warning insertion preserves the exact submitted command, carrier result, replay behavior, and
     metric classification.
+17. Retain, read, edit, and rerun preserve the script body and original model-visible call.
+    Unsafe thread IDs reject before runtime creation; unsafe artifact IDs cannot redirect
+    retention, reads, edits, expiry, or cleanup. A retained script cannot read or overwrite
+    the runtime launcher, another thread's scripts, or workspace files through a reference.

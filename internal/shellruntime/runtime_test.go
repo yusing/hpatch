@@ -9,8 +9,22 @@ import (
 func TestPathMapsThreadToRuntime(t *testing.T) {
 	root := t.TempDir()
 	want := filepath.Join(root, "hpatch-thread-1", ".runtime")
-	if got := Path(root, "thread-1"); got != want {
+	got, err := Path(root, "thread-1")
+	if err != nil {
+		t.Fatalf("Path() error = %v", err)
+	}
+	if got != want {
 		t.Fatalf("Path() = %q, want %q", got, want)
+	}
+}
+
+func TestPathRejectsInvalidThreadIDs(t *testing.T) {
+	for _, threadID := range []string{"", ".", "..", "nested/thread", `nested\\thread`, "thread\x00suffix"} {
+		t.Run(threadID, func(t *testing.T) {
+			if got, err := Path(t.TempDir(), threadID); err == nil || got != "" {
+				t.Fatalf("Path() = (%q, %v), want empty path and an error", got, err)
+			}
+		})
 	}
 }
 

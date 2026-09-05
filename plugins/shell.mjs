@@ -8,10 +8,10 @@ import {
 /**
  * parseScript parses a shell script using the shared-core shell header parser.
  */
-function parseScript(input, context) {
+function parseScript(input) {
   const parsed = parseShellHeader(input);
   if (Object.hasOwn(parsed, "scriptPath")) {
-    return parseScript(readFileSync(context.resolvePath(parsed.scriptPath), "utf8"), context);
+    throw new Error("retained shell references must be resolved by the router");
   }
   if (parsed.params !== undefined) {
     if (Object.hasOwn(parsed.params, "cmd")) {

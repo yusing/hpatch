@@ -149,6 +149,118 @@ func TestShellRunnerEvaluatesPrivateToolsWithoutFrontends(t *testing.T) {
 	}
 }
 
+func TestShellRunnerReadsRetainedHReadArtifact(t *testing.T) {
+	registry, err := buildToolRegistry(t.Context(), t.TempDir(), testHPatchToolDescription, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := registry.Close(); err != nil {
+			t.Error(err)
+		}
+	})
+	runtimeDirectory := t.TempDir()
+	retainedDirectory := filepath.Join(runtimeDirectory, "hpatch-thread-id", "scripts")
+	if err := os.MkdirAll(retainedDirectory, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(retainedDirectory, "call-id"), []byte("first\nretained\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HPATCH_RUNTIME_DIR", runtimeDirectory)
+	t.Setenv("CODEX_THREAD_ID", "thread-id")
+
+	stdout, stderr, exitCode := runShellWorkerTest(
+		t,
+		registry,
+		"/bin/sh",
+		nil,
+		"hread @shell/call-id 2:2",
+		nil,
+	)
+	if exitCode != 0 || stdout != "2:ca67 retained\n" || stderr != "" {
+		t.Fatalf("exit %d, stdout %q, stderr %q", exitCode, stdout, stderr)
+	}
+}
+
+func TestShellRunnerConfinesRetainedHReadArtifact(t *testing.T) {
+	registry, err := buildToolRegistry(t.Context(), t.TempDir(), testHPatchToolDescription, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := registry.Close(); err != nil {
+			t.Error(err)
+		}
+	})
+	runtimeDirectory := t.TempDir()
+	outsideDirectory := t.TempDir()
+	sentinel := "outside-retained-sentinel"
+	if err := os.Mkdir(filepath.Join(outsideDirectory, "scripts"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{
+		filepath.Join(outsideDirectory, "call-id"),
+		filepath.Join(outsideDirectory, "scripts", "call-id"),
+	} {
+		if err := os.WriteFile(name, []byte(sentinel+"\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	threadDirectory := filepath.Join(runtimeDirectory, "hpatch-thread-id")
+	if err := os.MkdirAll(filepath.Join(threadDirectory, "scripts"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HPATCH_RUNTIME_DIR", runtimeDirectory)
+	t.Setenv("CODEX_THREAD_ID", "thread-id")
+	assertRejected := func(script string) {
+		t.Helper()
+		stdout, _, exitCode := runShellWorkerTest(t, registry, "/bin/sh", nil, script, nil)
+		if exitCode == 0 || strings.Contains(stdout, sentinel) {
+			t.Fatalf("%q: exit %d, stdout %q", script, exitCode, stdout)
+		}
+	}
+	for _, reference := range []string{
+		"@shell/../hpatch-other/scripts/call-id",
+		"@shell//absolute",
+		"@shell/.runtime",
+	} {
+		assertRejected("hread " + reference)
+	}
+	t.Setenv("HPATCH_RUNTIME_DIR", "relative-runtime")
+	stdout, stderr, exitCode := runShellWorkerTest(t, registry, "/bin/sh", nil, "hread @shell/call-id", nil)
+	if exitCode == 0 || stdout != "" || !strings.Contains(stderr, "HPATCH_RUNTIME_DIR must be an absolute path") {
+		t.Fatalf("relative runtime: exit %d, stdout %q, stderr %q", exitCode, stdout, stderr)
+	}
+	t.Setenv("HPATCH_RUNTIME_DIR", runtimeDirectory)
+
+	if err := os.Symlink(outsideDirectory, filepath.Join(runtimeDirectory, "hpatch-thread-link")); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CODEX_THREAD_ID", "thread-link")
+	assertRejected("hread @shell/call-id")
+
+	scriptsLinkThread := filepath.Join(runtimeDirectory, "hpatch-scripts-link")
+	if err := os.Mkdir(scriptsLinkThread, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(outsideDirectory, "scripts"), filepath.Join(scriptsLinkThread, "scripts")); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CODEX_THREAD_ID", "scripts-link")
+	assertRejected("hread @shell/call-id")
+
+	artifactLinkDirectory := filepath.Join(runtimeDirectory, "hpatch-artifact-link", "scripts")
+	if err := os.MkdirAll(artifactLinkDirectory, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(outsideDirectory, "call-id"), filepath.Join(artifactLinkDirectory, "call-id")); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CODEX_THREAD_ID", "artifact-link")
+	assertRejected("hread @shell/call-id")
+}
+
 func TestShellRunnerPreservesStdinAndExternalCommands(t *testing.T) {
 	registry, err := buildToolRegistry(t.Context(), t.TempDir(), testHPatchToolDescription, false)
 	if err != nil {

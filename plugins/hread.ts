@@ -1,6 +1,5 @@
 import {constants} from "node:fs";
 import {open} from "node:fs/promises";
-import {tmpdir} from "node:os";
 
 import type {Tool} from "../internal/router/toolplugin/plugin.d.ts";
 import {
@@ -271,15 +270,11 @@ export function createHReadTool(description: string, grammar: string): Tool<stri
     async execute(argv) {
       try {
         const executionArguments = [...argv];
-        if (executionArguments[0]?.startsWith("@shell/")) {
-          const sessionID = process.env.CODEX_THREAD_ID;
-          if (sessionID === undefined || sessionID === "") {
-            throw new Error("CODEX_THREAD_ID is unavailable");
-          }
-          const runtimeDirectory = process.env.HPATCH_RUNTIME_DIR || tmpdir();
-          executionArguments[0] = `${runtimeDirectory}/hpatch-${sessionID}/${executionArguments[0].slice("@shell/".length)}`;
+        const spec = parseReadSpec(stripOptionalFinalNewline(hreadInput(executionArguments)));
+        if (spec.path.startsWith("@shell/")) {
+          throw new Error("unresolved @shell path");
         }
-        const result = await readHashLines(parseReadSpec(stripOptionalFinalNewline(hreadInput(executionArguments))));
+        const result = await readHashLines(spec);
         const limitDiagnostic = result.incomplete
           ? `hread: ${VERIFIED_ROW_LIMIT_DIAGNOSTIC}`
           : "";

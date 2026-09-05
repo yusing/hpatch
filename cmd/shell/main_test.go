@@ -24,7 +24,10 @@ done
 		t.Fatal(err)
 	}
 	const threadID = "thread-one"
-	runtimePath := shellruntime.Path(root, threadID)
+	runtimePath, err := shellruntime.Path(root, threadID)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := os.MkdirAll(filepath.Dir(runtimePath), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -48,6 +51,22 @@ done
 	}, "\n")
 	if string(output) != want {
 		t.Fatalf("runtime invocation = %q, want %q", output, want)
+	}
+}
+
+func TestShellHelperRejectsInvalidThreadID(t *testing.T) {
+	command := exec.Command(os.Args[0], "-test.run=^TestShellHelperProcess$", "--")
+	command.Env = append(os.Environ(),
+		"HPATCH_SHELL_HELPER_PROCESS=1",
+		shellruntime.RuntimeDirectoryEnvironment+"="+t.TempDir(),
+		shellruntime.ThreadIDEnvironment+"=nested/thread",
+	)
+	output, err := command.CombinedOutput()
+	if err == nil {
+		t.Fatalf("shell helper succeeded for invalid thread ID; output %q", output)
+	}
+	if !strings.Contains(string(output), "single filename component") {
+		t.Fatalf("shell helper error = %q, want invalid thread ID error", output)
 	}
 }
 

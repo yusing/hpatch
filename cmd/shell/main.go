@@ -21,7 +21,12 @@ func main() {
 		fmt.Fprintln(os.Stderr, "shell: CODEX_THREAD_ID is unavailable")
 		os.Exit(1)
 	}
-	runtime, err := os.Readlink(shellruntime.Path(root, threadID))
+	runtimePath, err := shellruntime.Path(root, threadID)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "shell: locate current hpatch runtime:", err)
+		os.Exit(1)
+	}
+	runtime, err := os.Readlink(runtimePath)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "shell: locate current hpatch runtime:", err)
 		os.Exit(1)

@@ -21,8 +21,6 @@ import plugin from "../../../../plugins/tools.ts";
 
 const originalCWD = process.cwd();
 const originalPath = process.env.PATH;
-const originalRuntimeDirectory = process.env.HPATCH_RUNTIME_DIR;
-const originalThreadID = process.env.CODEX_THREAD_ID;
 const pluginBin = path.resolve(import.meta.dir, "../../../../plugins/node_modules/.bin");
 const temporaryDirectories: string[] = [];
 const executionContext = {stdinFD: null, scriptReadFD: null, scriptWriteFD: null, outputBudgetBytes: 16 * 1024 * 1024};
@@ -179,16 +177,6 @@ afterEach(async () => {
     delete process.env.PATH;
   } else {
     process.env.PATH = originalPath;
-  }
-  if (originalRuntimeDirectory === undefined) {
-    delete process.env.HPATCH_RUNTIME_DIR;
-  } else {
-    process.env.HPATCH_RUNTIME_DIR = originalRuntimeDirectory;
-  }
-  if (originalThreadID === undefined) {
-    delete process.env.CODEX_THREAD_ID;
-  } else {
-    process.env.CODEX_THREAD_ID = originalThreadID;
   }
   await Promise.all(
     temporaryDirectories.splice(0).map((directory) => rm(directory, {recursive: true, force: true})),
@@ -354,16 +342,9 @@ describe("hread built-in plugin", () => {
       exitCode: 1,
     });
 
-    const runtimeDirectory = await temporaryDirectory("hpatch-runtime-");
-    const retainedDirectory = path.join(runtimeDirectory, "hpatch-thread-id");
-    await mkdir(retainedDirectory);
-    await writeFile(path.join(retainedDirectory, "call-id"), "retained\n", "utf8");
-    process.env.HPATCH_RUNTIME_DIR = runtimeDirectory;
-    process.env.CODEX_THREAD_ID = "thread-id";
-    const retained = await tool.execute(["@shell/call-id"], executionContext);
-    expect(retained).toEqual({
-      stdout: formatVerifiedRow(1, "retained"),
-      exitCode: 0,
+    expect(await tool.execute(["@shell/call-id"], executionContext)).toEqual({
+      stderr: "hread: unresolved @shell path\n",
+      exitCode: 1,
     });
   });
 
