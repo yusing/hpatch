@@ -3,10 +3,12 @@ package router
 import (
 	"bufio"
 	"bytes"
-	"cmp"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"slices"
@@ -14,7 +16,16 @@ import (
 	"testing"
 )
 
-const ctpReplayMaximumRecordBytes = 64 << 20
+const (
+	ctpReplayMaximumRecordBytes = 64 << 20
+	ctpReplayManifestVersion    = 1
+	ctpReplaySampleLimit        = 50
+	ctpReplaySelectionSeed      = "hpatch-ctp-replay-corpus-v1"
+	ctpReplaySelectionAlgorithm = "sha256(seed + NUL + session_id), ascending"
+	ctpReplayVariantAlgorithm   = "sha256(seed + NUL + rollout_id), ascending; sha256(content), ascending tie-break"
+	ctpReplayEligibility        = "completed stock Codex apply_patch/exec_command session with a string-valued exec call"
+	ctpReplayManifestFilename   = "manifest.json"
+)
 
 type ctpReplayRecord struct {
 	Type    string          `json:"type"`
@@ -55,9 +66,42 @@ type ctpReplayResponseItem struct {
 }
 
 type ctpReplayCandidate struct {
-	Path        string
 	SessionID   string
+	RolloutID   string
 	TotalTokens uint64
+	Data        []byte
+	Rank        [sha256.Size]byte
+}
+
+type ctpReplayManifest struct {
+	SchemaVersion int                        `json:"schema_version"`
+	Selection     ctpReplayManifestSelection `json:"selection"`
+	Entries       []ctpReplayManifestEntry   `json:"entries"`
+}
+
+type ctpReplayManifestSelection struct {
+	Seed                    string `json:"seed"`
+	Algorithm               string `json:"algorithm"`
+	Eligibility             string `json:"eligibility"`
+	SampleLimit             int    `json:"sample_limit"`
+	CandidateCount          int    `json:"candidate_count"`
+	EligibleRolloutCount    int    `json:"eligible_rollout_count"`
+	VariantSelection        string `json:"variant_selection"`
+	ExcludedCurrentThreadID string `json:"excluded_current_thread_id,omitempty"`
+}
+
+type ctpReplayManifestEntry struct {
+	SessionID string `json:"session_id"`
+	RolloutID string `json:"rollout_id"`
+	Filename  string `json:"filename"`
+	Size      int64  `json:"size"`
+	SHA256    string `json:"sha256"`
+}
+
+type ctpReplayCorpusSession struct {
+	Entry       ctpReplayManifestEntry
+	TotalTokens uint64
+	Snapshots   []ctpReplaySnapshot
 }
 
 type ctpReplaySnapshot struct {
@@ -80,39 +124,29 @@ type ctpReplayTotals struct {
 	MissingCarrierRequest uint64
 }
 
-func BenchmarkCTPLongSessionReplay(b *testing.B) {
-	candidates := ctpReplayCandidates(b, 1)
+func BenchmarkCTPSessionReplay(b *testing.B) {
+	corpus, _ := loadConfiguredCTPReplayCorpus(b)
+	session := corpus[0]
 	codec := mustCTP2Codec(b)
-	snapshots, err := loadCTPReplaySnapshots(candidates[0].Path)
-	if err != nil {
-		b.Fatal(err)
-	}
 
 	b.ReportAllocs()
 	b.ResetTimer()
 	var totals ctpReplayTotals
 	for b.Loop() {
-		totals, err = replayCTP2Snapshots(codec, snapshots)
+		var err error
+		totals, err = replayCTP2Snapshots(codec, session.Snapshots)
 		if err != nil {
 			b.Fatal(err)
 		}
 	}
 	b.StopTimer()
 	reportCTPReplayTotals(b, totals)
-	b.ReportMetric(float64(candidates[0].TotalTokens), "session_recorded_tokens")
+	b.ReportMetric(float64(session.TotalTokens), "session_recorded_tokens")
 }
 
 func BenchmarkCTPCorpusReplay(b *testing.B) {
-	candidates := ctpReplayCandidates(b, 50)
+	corpus, _ := loadConfiguredCTPReplayCorpus(b)
 	codec := mustCTP2Codec(b)
-	corpus := make([][]ctpReplaySnapshot, len(candidates))
-	for index, candidate := range candidates {
-		var err error
-		corpus[index], err = loadCTPReplaySnapshots(candidate.Path)
-		if err != nil {
-			b.Fatal(err)
-		}
-	}
 
 	b.ReportAllocs()
 	b.ResetTimer()
@@ -123,8 +157,8 @@ func BenchmarkCTPCorpusReplay(b *testing.B) {
 	for b.Loop() {
 		corpusTotals = ctpReplayTotals{}
 		savings = savings[:0]
-		for _, snapshots := range corpus {
-			totals, err := replayCTP2Snapshots(codec, snapshots)
+		for _, session := range corpus {
+			totals, err := replayCTP2Snapshots(codec, session.Snapshots)
 			if err != nil {
 				b.Fatal(err)
 			}
@@ -134,7 +168,7 @@ func BenchmarkCTPCorpusReplay(b *testing.B) {
 	}
 	b.StopTimer()
 	reportCTPReplayTotals(b, corpusTotals)
-	b.ReportMetric(float64(len(candidates)), "sessions")
+	b.ReportMetric(float64(len(corpus)), "sessions")
 	slices.Sort(savings)
 	if len(savings) != 0 {
 		middle := len(savings) / 2
@@ -175,19 +209,79 @@ func TestCTPReplayNewContentResetsCompactedInputPrefix(t *testing.T) {
 	}
 }
 
-func ctpReplayCandidates(tb testing.TB, limit int) []ctpReplayCandidate {
-	tb.Helper()
+func TestFreezeCTPReplayCorpus(t *testing.T) {
+	destination := os.Getenv("HPATCH_CTP_REPLAY_FREEZE")
+	if destination == "" {
+		t.Skip("HPATCH_CTP_REPLAY_FREEZE is not set")
+	}
 	root := os.Getenv("CODEX_HOME")
 	if root == "" {
 		home, err := os.UserHomeDir()
 		if err != nil {
-			tb.Fatal(err)
+			t.Fatal(err)
 		}
 		root = filepath.Join(home, ".codex")
 	}
-	current := os.Getenv("CODEX_THREAD_ID")
-	var candidates []ctpReplayCandidate
-	for _, directory := range []string{filepath.Join(root, "sessions"), filepath.Join(root, "archived_sessions")} {
+	repositoryRoot, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, identity, err := freezeCTPReplayCorpus(destination, root, os.Getenv("CODEX_THREAD_ID"), repositoryRoot, t.Logf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("CTP replay freeze complete: sessions frozen, manifest sha256=%s", identity)
+}
+
+func loadConfiguredCTPReplayCorpus(tb testing.TB) ([]ctpReplayCorpusSession, string) {
+	tb.Helper()
+	manifestPath := os.Getenv("HPATCH_CTP_REPLAY_MANIFEST")
+	if manifestPath == "" {
+		tb.Skip("HPATCH_CTP_REPLAY_MANIFEST is not set")
+	}
+	repositoryRoot, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		tb.Fatalf("resolve repository root: %v", err)
+	}
+	corpus, identity, err := loadCTPReplayCorpus(manifestPath, repositoryRoot, func(format string, args ...any) {
+		tb.Helper()
+		tb.Logf(format, args...)
+	})
+	if err != nil {
+		tb.Fatalf("load CTP replay manifest: %v", err)
+	}
+	tb.Logf("CTP replay manifest sha256=%s sessions=%d", identity, len(corpus))
+	return corpus, identity
+}
+
+func freezeCTPReplayCorpus(destination, sourceRoot, currentThreadID, repositoryRoot string, logf func(string, ...any)) (string, string, error) {
+	destination, err := filepath.Abs(destination)
+	if err != nil {
+		return "", "", fmt.Errorf("resolve freeze destination: %w", err)
+	}
+	outside, err := ctpReplayPathOutsideRepository(destination, repositoryRoot)
+	if err != nil {
+		return "", "", err
+	}
+	if !outside {
+		return "", "", fmt.Errorf("freeze destination must be outside repository: %s", destination)
+	}
+	if err := os.Mkdir(destination, 0o700); err != nil {
+		if errors.Is(err, os.ErrExist) {
+			return "", "", fmt.Errorf("freeze destination already exists: %s", destination)
+		}
+		return "", "", fmt.Errorf("create freeze destination: %w", err)
+	}
+	if err := os.Chmod(destination, 0o700); err != nil {
+		return "", "", fmt.Errorf("set freeze destination permissions: %w", err)
+	}
+
+	var (
+		eligibleRollouts      []ctpReplayCandidate
+		scanned               int
+		excludedCurrentThread string
+	)
+	for directoryIndex, directory := range []string{filepath.Join(sourceRoot, "sessions"), filepath.Join(sourceRoot, "archived_sessions")} {
 		err := filepath.WalkDir(directory, func(path string, entry os.DirEntry, walkErr error) error {
 			if walkErr != nil {
 				if errors.Is(walkErr, os.ErrNotExist) {
@@ -198,45 +292,263 @@ func ctpReplayCandidates(tb testing.TB, limit int) []ctpReplayCandidate {
 			if entry.IsDir() || !strings.HasPrefix(entry.Name(), "rollout-") || filepath.Ext(entry.Name()) != ".jsonl" {
 				return nil
 			}
-			candidate, ok, err := inspectCTPReplayCandidate(path, current)
+			scanned++
+			if scanned == 1 || scanned%100 == 0 {
+				logf("CTP replay freeze scan: files=%d eligible_rollouts=%d", scanned, len(eligibleRollouts))
+			}
+			data, err := os.ReadFile(path)
 			if err != nil {
 				return err
 			}
-			if ok {
-				candidates = append(candidates, candidate)
+			candidate, eligible, err := inspectCTPReplayCandidate(data)
+			if err != nil {
+				return err
 			}
+			if !eligible {
+				return nil
+			}
+			if candidate.SessionID == currentThreadID {
+				excludedCurrentThread = currentThreadID
+				return nil
+			}
+			eligibleRollouts = append(eligibleRollouts, candidate)
 			return nil
 		})
 		if err != nil && !errors.Is(err, os.ErrNotExist) {
-			tb.Fatalf("scan Codex transcripts in %s: %v", directory, err)
+			return "", "", fmt.Errorf("scan Codex transcripts: %w", err)
 		}
+		logf("CTP replay freeze scan: directories complete=%d/2 files=%d eligible_rollouts=%d", directoryIndex+1, scanned, len(eligibleRollouts))
 	}
-	slices.SortFunc(candidates, func(left, right ctpReplayCandidate) int {
-		if left.TotalTokens != right.TotalTokens {
-			return cmp.Compare(right.TotalTokens, left.TotalTokens)
+	if len(eligibleRollouts) == 0 {
+		return "", "", errors.New("no eligible completed stock Codex sessions found; destination contains no manifest")
+	}
+	candidates := chooseCTPReplayVariants(eligibleRollouts)
+	selected := selectCTPReplayCandidates(candidates, ctpReplaySampleLimit)
+	manifest := ctpReplayManifest{
+		SchemaVersion: ctpReplayManifestVersion,
+		Selection: ctpReplayManifestSelection{
+			Seed:                    ctpReplaySelectionSeed,
+			Algorithm:               ctpReplaySelectionAlgorithm,
+			Eligibility:             ctpReplayEligibility,
+			SampleLimit:             ctpReplaySampleLimit,
+			CandidateCount:          len(candidates),
+			EligibleRolloutCount:    len(eligibleRollouts),
+			VariantSelection:        ctpReplayVariantAlgorithm,
+			ExcludedCurrentThreadID: excludedCurrentThread,
+		},
+		Entries: make([]ctpReplayManifestEntry, 0, len(selected)),
+	}
+	for index, candidate := range selected {
+		logf("CTP replay freeze snapshot: %d/%d", index+1, len(selected))
+		filename := fmt.Sprintf("session-%03d.jsonl", index+1)
+		path := filepath.Join(destination, filename)
+		if err := writeCTPReplayPrivateFile(path, candidate.Data); err != nil {
+			return "", "", fmt.Errorf("write snapshotted session %d: %w", index+1, err)
 		}
-		return strings.Compare(left.Path, right.Path)
-	})
-	if len(candidates) == 0 {
-		tb.Fatal("no completed stock Code Mode transcript with a string-valued exec call found")
+		digest := sha256.Sum256(candidate.Data)
+		manifest.Entries = append(manifest.Entries, ctpReplayManifestEntry{
+			SessionID: candidate.SessionID,
+			RolloutID: candidate.RolloutID,
+			Filename:  filename,
+			Size:      int64(len(candidate.Data)),
+			SHA256:    fmt.Sprintf("%x", digest),
+		})
 	}
-	return candidates[:min(limit, len(candidates))]
+	manifestData, err := json.MarshalIndent(manifest, "", "  ")
+	if err != nil {
+		return "", "", fmt.Errorf("encode replay manifest: %w", err)
+	}
+	manifestData = append(manifestData, '\n')
+	manifestPath := filepath.Join(destination, ctpReplayManifestFilename)
+	temporaryManifestPath := filepath.Join(destination, "."+ctpReplayManifestFilename+".tmp")
+	if err := writeCTPReplayPrivateFile(temporaryManifestPath, manifestData); err != nil {
+		return "", "", fmt.Errorf("write replay manifest: %w", err)
+	}
+	if err := os.Rename(temporaryManifestPath, manifestPath); err != nil {
+		return "", "", fmt.Errorf("publish replay manifest: %w", err)
+	}
+	identity := sha256.Sum256(manifestData)
+	return manifestPath, fmt.Sprintf("%x", identity), nil
 }
 
-func inspectCTPReplayCandidate(path, currentSessionID string) (ctpReplayCandidate, bool, error) {
-	file, err := os.Open(path)
-	if err != nil {
-		return ctpReplayCandidate{}, false, err
+func selectCTPReplayCandidates(candidates []ctpReplayCandidate, limit int) []ctpReplayCandidate {
+	selected := slices.Clone(candidates)
+	for index := range selected {
+		selected[index].Rank = sha256.Sum256([]byte(ctpReplaySelectionSeed + "\x00" + selected[index].SessionID))
 	}
-	defer file.Close()
+	slices.SortFunc(selected, func(left, right ctpReplayCandidate) int {
+		if order := bytes.Compare(left.Rank[:], right.Rank[:]); order != 0 {
+			return order
+		}
+		return strings.Compare(left.SessionID, right.SessionID)
+	})
+	return selected[:min(limit, len(selected))]
+}
 
+func chooseCTPReplayVariants(rollouts []ctpReplayCandidate) []ctpReplayCandidate {
+	bySession := make(map[string][]ctpReplayCandidate)
+	for _, rollout := range rollouts {
+		bySession[rollout.SessionID] = append(bySession[rollout.SessionID], rollout)
+	}
+	selected := make([]ctpReplayCandidate, 0, len(bySession))
+	for _, variants := range bySession {
+		slices.SortFunc(variants, func(left, right ctpReplayCandidate) int {
+			leftRank := sha256.Sum256([]byte(ctpReplaySelectionSeed + "\x00" + left.RolloutID))
+			rightRank := sha256.Sum256([]byte(ctpReplaySelectionSeed + "\x00" + right.RolloutID))
+			if order := bytes.Compare(leftRank[:], rightRank[:]); order != 0 {
+				return order
+			}
+			leftContent := sha256.Sum256(left.Data)
+			rightContent := sha256.Sum256(right.Data)
+			return bytes.Compare(leftContent[:], rightContent[:])
+		})
+		selected = append(selected, variants[0])
+	}
+	return selected
+}
+
+func loadCTPReplayCorpus(manifestPath, repositoryRoot string, logf func(string, ...any)) ([]ctpReplayCorpusSession, string, error) {
+	manifestData, err := readCTPReplayPrivateFile(manifestPath, repositoryRoot)
+	if err != nil {
+		return nil, "", err
+	}
+	identity := sha256.Sum256(manifestData)
+	var manifest ctpReplayManifest
+	if err := json.Unmarshal(manifestData, &manifest); err != nil {
+		return nil, "", fmt.Errorf("decode manifest: %w", err)
+	}
+	if err := validateCTPReplayManifest(manifest); err != nil {
+		return nil, "", err
+	}
+	directory := filepath.Dir(manifestPath)
+	corpus := make([]ctpReplayCorpusSession, 0, len(manifest.Entries))
+	for index, entry := range manifest.Entries {
+		logf("CTP replay validate session: %d/%d", index+1, len(manifest.Entries))
+		data, err := readCTPReplayPrivateFile(filepath.Join(directory, entry.Filename), repositoryRoot)
+		if err != nil {
+			return nil, "", fmt.Errorf("read replay session %d: %w", index+1, err)
+		}
+		if int64(len(data)) != entry.Size {
+			return nil, "", fmt.Errorf("replay session %d size drift", index+1)
+		}
+		digest := sha256.Sum256(data)
+		if fmt.Sprintf("%x", digest) != entry.SHA256 {
+			return nil, "", fmt.Errorf("replay session %d sha256 drift", index+1)
+		}
+		candidate, eligible, err := inspectCTPReplayCandidate(data)
+		if err != nil {
+			return nil, "", fmt.Errorf("inspect replay session %d: %w", index+1, err)
+		}
+		if !eligible || candidate.SessionID != entry.SessionID || candidate.RolloutID != entry.RolloutID {
+			return nil, "", fmt.Errorf("replay session %d identity mismatch", index+1)
+		}
+		snapshots, err := loadCTPReplaySnapshotsBytes(data)
+		if err != nil {
+			return nil, "", fmt.Errorf("load replay session %d: %w", index+1, err)
+		}
+		corpus = append(corpus, ctpReplayCorpusSession{Entry: entry, TotalTokens: candidate.TotalTokens, Snapshots: snapshots})
+	}
+	return corpus, fmt.Sprintf("%x", identity), nil
+}
+
+func validateCTPReplayManifest(manifest ctpReplayManifest) error {
+	selection := manifest.Selection
+	if manifest.SchemaVersion != ctpReplayManifestVersion || selection.Seed != ctpReplaySelectionSeed ||
+		selection.Algorithm != ctpReplaySelectionAlgorithm || selection.Eligibility != ctpReplayEligibility ||
+		selection.SampleLimit != ctpReplaySampleLimit || selection.VariantSelection != ctpReplayVariantAlgorithm {
+		return errors.New("unsupported CTP replay manifest schema or selection policy")
+	}
+	wantEntries := min(selection.CandidateCount, selection.SampleLimit)
+	if selection.CandidateCount <= 0 || selection.EligibleRolloutCount < selection.CandidateCount || len(manifest.Entries) != wantEntries {
+		return errors.New("CTP replay manifest candidate or entry count is inconsistent")
+	}
+	seenIDs := make(map[string]struct{}, len(manifest.Entries))
+	seenRolloutIDs := make(map[string]struct{}, len(manifest.Entries))
+	var previousRank [sha256.Size]byte
+	for index, entry := range manifest.Entries {
+		wantFilename := fmt.Sprintf("session-%03d.jsonl", index+1)
+		if entry.SessionID == "" || entry.RolloutID == "" || entry.Filename != wantFilename || entry.Size < 0 {
+			return fmt.Errorf("CTP replay manifest entry %d is invalid", index+1)
+		}
+		if _, exists := seenIDs[entry.SessionID]; exists {
+			return fmt.Errorf("CTP replay manifest has duplicate session ID at entry %d", index+1)
+		}
+		if _, exists := seenRolloutIDs[entry.RolloutID]; exists {
+			return fmt.Errorf("CTP replay manifest has duplicate rollout ID at entry %d", index+1)
+		}
+		seenIDs[entry.SessionID] = struct{}{}
+		seenRolloutIDs[entry.RolloutID] = struct{}{}
+		rank := sha256.Sum256([]byte(selection.Seed + "\x00" + entry.SessionID))
+		if index != 0 && bytes.Compare(previousRank[:], rank[:]) >= 0 {
+			return fmt.Errorf("CTP replay manifest entry %d is out of selection order", index+1)
+		}
+		previousRank = rank
+		decoded, err := hex.DecodeString(entry.SHA256)
+		if err != nil || len(decoded) != sha256.Size || len(entry.SHA256) != sha256.Size*2 || strings.ToLower(entry.SHA256) != entry.SHA256 {
+			return fmt.Errorf("CTP replay manifest entry %d has invalid sha256", index+1)
+		}
+	}
+	return nil
+}
+
+func readCTPReplayPrivateFile(path, repositoryRoot string) ([]byte, error) {
+	// Replay inputs already exist, so resolve their final component as well as
+	// their parent. A symlink must not hide repository-resident private data.
+	resolved, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return nil, err
+	}
+	outside, err := ctpReplayPathOutsideRepository(resolved, repositoryRoot)
+	if err != nil {
+		return nil, err
+	}
+	if !outside {
+		return nil, errors.New("CTP replay input must be outside the repository")
+	}
+	return os.ReadFile(resolved)
+}
+
+func writeCTPReplayPrivateFile(path string, data []byte) error {
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return err
+	}
+	if err := file.Chmod(0o600); err != nil {
+		file.Close()
+		return err
+	}
+	if _, err := file.Write(data); err != nil {
+		file.Close()
+		return err
+	}
+	return file.Close()
+}
+
+func ctpReplayPathOutsideRepository(destination, repositoryRoot string) (bool, error) {
+	repositoryRoot, err := filepath.EvalSymlinks(repositoryRoot)
+	if err != nil {
+		return false, fmt.Errorf("resolve repository root: %w", err)
+	}
+	parent, err := filepath.EvalSymlinks(filepath.Dir(destination))
+	if err != nil {
+		return false, fmt.Errorf("resolve freeze destination parent: %w", err)
+	}
+	resolved := filepath.Join(parent, filepath.Base(destination))
+	relative, err := filepath.Rel(repositoryRoot, resolved)
+	if err != nil {
+		return false, fmt.Errorf("compare freeze destination with repository: %w", err)
+	}
+	return relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)), nil
+}
+
+func inspectCTPReplayCandidate(data []byte) (ctpReplayCandidate, bool, error) {
 	var (
 		metadata    ctpReplaySessionMetadata
 		totalTokens uint64
 		hasExec     bool
 		terminal    string
 	)
-	err = scanCTPReplayRecords(file, func(record ctpReplayRecord) error {
+	err := scanCTPReplayRecords(bytes.NewReader(data), func(record ctpReplayRecord) error {
 		switch record.Type {
 		case "session_meta":
 			return json.Unmarshal(record.Payload, &metadata)
@@ -265,27 +577,25 @@ func inspectCTPReplayCandidate(path, currentSessionID string) (ctpReplayCandidat
 		return nil
 	})
 	if err != nil {
-		return ctpReplayCandidate{}, false, fmt.Errorf("inspect Codex transcript %s: %w", path, err)
+		return ctpReplayCandidate{}, false, fmt.Errorf("inspect Codex transcript: %w", err)
 	}
 	sessionID := metadata.SessionID
 	if sessionID == "" {
 		sessionID = metadata.ID
 	}
+	rolloutID := metadata.ID
+	if rolloutID == "" {
+		rolloutID = sessionID
+	}
 	instructions := strings.ToLower(metadata.BaseInstructions.Text)
 	stockCodeMode := strings.Contains(instructions, "apply_patch") &&
 		strings.Contains(instructions, "exec_command") &&
 		!strings.Contains(instructions, "hpatch")
-	ok := sessionID != "" && sessionID != currentSessionID && hasExec && terminal == "task_complete" && stockCodeMode
-	return ctpReplayCandidate{Path: path, SessionID: sessionID, TotalTokens: totalTokens}, ok, nil
+	ok := sessionID != "" && rolloutID != "" && hasExec && terminal == "task_complete" && stockCodeMode
+	return ctpReplayCandidate{SessionID: sessionID, RolloutID: rolloutID, TotalTokens: totalTokens, Data: data}, ok, nil
 }
 
-func loadCTPReplaySnapshots(path string) ([]ctpReplaySnapshot, error) {
-	file, err := os.Open(path)
-	if err != nil {
-		return nil, err
-	}
-	defer file.Close()
-
+func loadCTPReplaySnapshotsBytes(data []byte) ([]ctpReplaySnapshot, error) {
 	var (
 		metadata         ctpReplaySessionMetadata
 		history          []json.RawMessage
@@ -293,7 +603,7 @@ func loadCTPReplaySnapshots(path string) ([]ctpReplaySnapshot, error) {
 		snapshots        []ctpReplaySnapshot
 		resetInputPrefix bool
 	)
-	err = scanCTPReplayRecords(file, func(record ctpReplayRecord) error {
+	err := scanCTPReplayRecords(bytes.NewReader(data), func(record ctpReplayRecord) error {
 		switch record.Type {
 		case "session_meta":
 			return json.Unmarshal(record.Payload, &metadata)
@@ -320,10 +630,10 @@ func loadCTPReplaySnapshots(path string) ([]ctpReplaySnapshot, error) {
 		return nil
 	})
 	if err != nil {
-		return nil, fmt.Errorf("load Codex transcript %s: %w", path, err)
+		return nil, fmt.Errorf("load Codex transcript: %w", err)
 	}
 	if len(snapshots) == 0 {
-		return nil, fmt.Errorf("load Codex transcript %s: no request snapshots", path)
+		return nil, errors.New("load Codex transcript: no request snapshots")
 	}
 	return snapshots, nil
 }
@@ -525,8 +835,8 @@ func countCTPReplayFields(codec *ctp2Codec, fields map[string]json.RawMessage) (
 	return codec.count(encoded)
 }
 
-func scanCTPReplayRecords(file *os.File, visit func(ctpReplayRecord) error) error {
-	scanner := bufio.NewScanner(file)
+func scanCTPReplayRecords(reader io.Reader, visit func(ctpReplayRecord) error) error {
+	scanner := bufio.NewScanner(reader)
 	scanner.Buffer(make([]byte, 64<<10), ctpReplayMaximumRecordBytes)
 	for scanner.Scan() {
 		var record ctpReplayRecord

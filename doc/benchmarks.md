@@ -164,6 +164,45 @@ Mentor Handoff renames the treatment snapshot and log to `hpatch-mentor-metrics.
 attempt directory. Summary output intentionally omits request, session, thread, call, and capture
 identities.
 
+## Fixed local CTP replay
+
+Codec replay measures compression of reconstructed requests from real Codex sessions. It does
+not call a model or measure task success, provider billing, response quality, or task completion
+time. Use the paired task modes above for those end-to-end questions.
+
+Freeze a private sample once, then reuse it for comparisons. The destination must be a new
+directory outside the repository. It contains raw conversations, including any sensitive text
+they contain: do not commit, upload, or share it. Set `corpus_root` to an absolute private path:
+
+```sh
+corpus_root=/absolute/private/ctp-replay
+HPATCH_CTP_REPLAY_FREEZE="$corpus_root" \
+  go test ./internal/router -run '^TestFreezeCTPReplayCorpus$' -count=1 -v
+
+HPATCH_CTP_REPLAY_MANIFEST="$corpus_root/manifest.json" \
+  go test ./internal/router -run '^$' -bench '^BenchmarkCTPCorpusReplay$' -benchtime=1x -count=1 -v
+```
+
+Freezing scans `sessions` and `archived_sessions` under `$CODEX_HOME`, or `~/.codex` when unset.
+Eligibility requires a completed session with stock editing and execution guidance, no Hpatch
+guidance, and a custom `exec` tool call. The active `CODEX_THREAD_ID` is excluded. When several
+eligible rollouts share a logical session identity, a seeded hash selects one rollout for that
+session. Logical session identities are then ranked by a seeded hash; up to 50 are copied without
+altering their bytes. Neither selection uses token counts or compression results. All eligible
+logical sessions are included when fewer than 50 exist, with one rollout per session.
+
+The private manifest records selection criteria, seed, eligible session and rollout counts, ordered
+session and rollout identities, byte lengths, and content hashes. Replay reports the manifest hash and verifies the
+frozen files before using them. Missing or changed files fail rather than silently replacing the
+sample from live history. Preserve the corpus and record the code revision alongside results;
+use a different new destination when deliberately selecting another sample. Without an explicit
+manifest, replay benchmarks skip.
+
+This is a sample of eligible local stock-execution sessions, not all Codex workloads. Hash-based
+selection avoids choosing sessions because they compress well, but does not remove that coverage
+limit. Report both the sample definition and manifest identity with compression measurements.
+Synthetic test inputs cover replay mechanics only and are not efficiency evidence.
+
 ## Validate reporting
 
 ```sh

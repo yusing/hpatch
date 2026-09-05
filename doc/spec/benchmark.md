@@ -89,6 +89,24 @@ When a task requires an exact final response, the runner MUST compare it with th
 agent message after excluding router-generated `Tokens: i=…, ci=…, o=…, r=…` telemetry. A later
 ordinary agent message remains the final response and MUST NOT be ignored.
 
+### Local codec replay
+
+Real-session codec replay MUST consume an explicitly selected frozen private corpus, not discover
+new benchmark inputs from mutable conversation history on each run. A one-time freeze operation
+MUST select eligible sessions independently of compression results and session token counts, record
+its eligibility criteria, selection algorithm, seed, population size, and ordered sample identities,
+and preserve exact selected bytes outside the repository. It MUST refuse to overwrite an existing
+destination. Multiple eligible rollouts for one logical session MUST contribute only one selected
+rollout, chosen independently of token counts and compression results; the manifest MUST record
+both identities and the rollout-selection rule. Conversation contents MUST NOT appear in benchmark
+diagnostics.
+
+The manifest MUST bind each sample to its session identity, byte length, and content hash. Replay
+MUST report the manifest identity, reject missing or changed samples, and never silently substitute
+live history. Without an explicit manifest, private replay benchmarks MUST skip. Their results
+MUST be described as codec measurements on the recorded eligible local population, not evidence of
+task success, latency, provider billing, or universal compression efficiency.
+
 Acceptance:
 
 1. Compose defines one control router and one Hpatch router, with no capturer services; each router
@@ -104,3 +122,6 @@ Acceptance:
 5. Commentary coverage fixtures accept every configured operation and collaboration profile while
    rejecting missing messages, missing successful command markers, missing completed item types,
    malformed events, and unsupported modes.
+6. Local replay tests prove sample ordering is independent of recorded token counts, frozen bytes
+   and identities round-trip, missing or altered samples reject, and freezing never overwrites an
+   existing destination. Synthetic fixtures validate these mechanics, not compression efficiency.

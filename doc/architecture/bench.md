@@ -43,6 +43,13 @@ owns the same finalization for earlier failures. Finalization preserves the orig
 while collecting available evidence, stopping task-owned Compose resources, publishing the retained
 run, and rendering available reports.
 
+The router package's test-only replay harness owns private real-session corpus selection, freezing,
+manifest integrity checks, and reconstructed-request codec measurements. Freezing is explicit and
+separate from replay. The manifest owns fixed sample membership; replay never replaces missing or
+changed samples with live history. Raw conversations remain outside the repository and are not
+diagnostic output. This harness consumes the production codec without adding production metrics;
+its local compression measurements do not replace graded provider-backed task evaluation.
+
 The runner also owns opt-in commentary coverage over retained Codex events. Task manifests own the
 mode/arm profile assignments and required message, successful-command-marker, and item minimums;
 the checker owns schema validation and evidence matching. Runtime publication markers are matched
