@@ -144,6 +144,14 @@ rejects the whole script, and supported language validation runs before Codex
 applies anything. Grammar is syntax only; missing files, stale rows, and
 conflicting edits still fail atomically.
 
+“Verified” does not mean a whole-file version check: a range verifies its two
+endpoint rows, not all text between them. Agents and their host must coordinate
+overlapping edits from inspection through application, including the interval
+between router translation and Codex applying the patch. Assign distinct file
+ownership or serialize that complete cycle; after a handoff, inspect the current
+content before authoring the next edit. Hpatch does not lock the workspace or
+detect every intervening write.
+
 See [`REQ-SCRIPT-001`](doc/spec/script.md), [`REQ-SELECT-001`](doc/spec/select.md),
 and [`REQ-OUTPUT-001`](doc/spec/output.md). Authoritative agent workflow:
 [`contrib/codex/file-editing-instructions.md`](contrib/codex/file-editing-instructions.md).
@@ -508,6 +516,13 @@ root-relative cwd. Host translation uses `TranslateForHostAt`, retains cleaned
 host path identities for Codex to authorize, and never uses router cwd as a
 fallback. See [`REQ-FILE-001`](doc/spec/file.md) and
 [`CTR-TRANSLATE-001`](doc/architecture/translate.md).
+
+Callers coordinate overlapping writers through the complete read/edit/apply
+cycle, including rollback and host execution of translated patches. Application
+validates the whole script before staged writes, but multi-file installation is
+neither crash-atomic nor isolated from readers. An application error can follow
+filesystem changes; inspect the outcome before retrying. The complete guarantees
+are in [`REQ-OUTPUT-001`](doc/spec/output.md).
 
 ## Metrics
 

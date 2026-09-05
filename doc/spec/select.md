@@ -18,7 +18,11 @@ replacement inside the line makes it ineligible. Content introduced or modified 
 does not become targetable. The resolved target remains the mapped baseline line, so conflict and
 transaction semantics do not acquire a second editing baseline.
 
-Both endpoints of a range must verify independently and remain ordered. An anchored text target
+Both endpoints of a range must verify independently and remain ordered. This verifies the
+endpoint lines, not every byte in the inclusive region: changed interior content can still
+be selected when both endpoints match. Row hashes are target checks, not file versions or
+concurrent-writer protection; caller coordination is required by `REQ-OUTPUT-001`.
+An anchored text target
 searches the verified baseline suffix. If its row is missing or stale, the row is redundant only
 when the complete immutable baseline contains exactly the requested number of non-overlapping
 literal matches; that exact set is selected. Extra or missing global matches preserve the row

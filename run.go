@@ -19,6 +19,9 @@ import (
 // Workspace is the filesystem authority for one hpatch operation. Root should
 // be opened from its canonical absolute path; absolute script paths are matched
 // against that name. CWD is root-relative and defaults to ".".
+// Callers coordinate writers to overlapping files and lifecycle paths, from the
+// reads used to author an edit through application and any rollback. Sharing a
+// Root does not serialize operations or provide a filesystem snapshot.
 type Workspace struct {
 	Root *os.Root
 	CWD  string
@@ -322,7 +325,10 @@ func targetAliasRelationRank(relation TargetAliasRelation) int {
 	}
 }
 
-// Apply evaluates and atomically applies script within workspace.
+// Apply evaluates the complete script before staging and applying its changes.
+// Callers must coordinate writers as described by Workspace. Application uses
+// ordered filesystem operations and rollback attempts, not a crash-atomic or
+// reader-isolated transaction. An application error does not imply no writes.
 func Apply(ctx context.Context, workspace Workspace, script string) error {
 	changes, filesystem, _, _, err := evaluateScript(ctx, workspace, script)
 	if err != nil {
@@ -399,7 +405,9 @@ type HostTranslation struct {
 
 // TranslateForHostAt evaluates a host script relative to directory without
 // imposing filesystem confinement. The host executor remains responsible for
-// authorizing the translated patch.
+// authorizing and applying the translated patch. The caller coordinates writers
+// from the reads used to author the edit through translation and host application;
+// the returned patch and report do not reserve the evaluated filesystem state.
 func TranslateForHostAt(ctx context.Context, directory, script, dataDirectory string) (HostTranslation, error) {
 	changes, _, report, aliases, err := evaluateScriptAt(ctx, directory, script)
 	result := hostTranslationResult(changes, report, aliases, err == nil)
@@ -412,7 +420,9 @@ func TranslateForHostAt(ctx context.Context, directory, script, dataDirectory st
 	return finishHostChange(ctx, dataDirectory, script, result, failureStage, err, false)
 }
 
-// ApplyForHost evaluates and atomically applies script while returning host diagnostics.
+// ApplyForHost applies a script with the same caller-coordination and commit
+// guarantees as Apply, while returning host diagnostics. A late cancellation
+// can be returned after changes have been applied.
 func ApplyForHost(ctx context.Context, workspace Workspace, script, dataDirectory string) (HostTranslation, error) {
 	changes, filesystem, report, aliases, err := evaluateScript(ctx, workspace, script)
 	result := hostTranslationResult(changes, report, aliases, err == nil)
@@ -429,7 +439,8 @@ func ApplyForHost(ctx context.Context, workspace Workspace, script, dataDirector
 }
 
 // ApplyForHostRoot evaluates and applies a script within root. It is intended
-// for hosts that own a confined private filesystem.
+// for hosts that own a confined private filesystem and coordinate its writers
+// under the same contract as ApplyForHost.
 func ApplyForHostRoot(ctx context.Context, root *os.Root, script, dataDirectory string) (HostTranslation, error) {
 	return ApplyForHost(ctx, Workspace{Root: root}, script, dataDirectory)
 }

@@ -206,6 +206,106 @@ func TestHPatch2RejectsInvalidTargetsAtomically(t *testing.T) {
 	}
 }
 
+func TestHPatch2RangeVerificationChecksEndpointsNotInterior(t *testing.T) {
+	script := "in file.txt\ntype " + row(1, "first") + ".." + row(3, "last") + ` "replacement"`
+	for _, mode := range []string{"apply", "translate"} {
+		for _, test := range []struct {
+			name, current string
+			reject        bool
+		}{
+			{"unchanged endpoints", "first\nchanged since inspection\nlast\n", false},
+			{"changed start", "new first\ninterior\nlast\n", true},
+			{"changed end", "first\ninterior\nnew last\n", true},
+		} {
+			t.Run(mode+"/"+test.name, func(t *testing.T) {
+				root := t.TempDir()
+				writeTestFile(t, root, "file.txt", test.current, 0o644)
+				var result HostTranslation
+				var err error
+				if mode == "apply" {
+					result, err = applyForHostAtTest(t, root, script, "")
+				} else {
+					result, err = TranslateForHostAt(t.Context(), root, script, "")
+				}
+				if test.reject {
+					if err == nil || !strings.Contains(result.Diagnostic, "row-stale") || len(result.Patch) != 0 {
+						t.Fatalf("changed endpoint accepted: %+v, %v", result, err)
+					}
+					if got := readTestFile(t, root, "file.txt"); got != test.current {
+						t.Fatalf("rejection changed file to %q", got)
+					}
+					return
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+				got := readTestFile(t, root, "file.txt")
+				if mode == "translate" {
+					if got != test.current {
+						t.Fatal("translation changed the workspace")
+					}
+					tree, err := patchtest.Apply(map[string]string{"file.txt": got}, string(result.Patch))
+					if err != nil {
+						t.Fatal(err)
+					}
+					got = tree["file.txt"]
+				}
+				if got != "replacement\n" {
+					t.Fatalf("range result = %q", got)
+				}
+			})
+		}
+	}
+}
+
+func TestCallerCoordinatedEditsRefreshBaselineAfterHandoff(t *testing.T) {
+	for _, mode := range []string{"Apply", "ApplyForHost", "ApplyForHostRoot", "TranslateForHostAt"} {
+		t.Run(mode, func(t *testing.T) {
+			directory := t.TempDir()
+			writeTestFile(t, directory, "file.txt", "first\n", 0o644)
+			root, err := os.OpenRoot(directory)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer root.Close()
+			// The caller completes each read/edit/apply cycle before handing the
+			// file to the next writer. Translation alone does not finish the cycle.
+			for _, replacement := range []string{"second", "third"} {
+				current := readTestFile(t, directory, "file.txt")
+				script := "in file.txt\ntype " + row(1, strings.TrimSuffix(current, "\n")) + " " + fmt.Sprintf("%q", replacement)
+				switch mode {
+				case "Apply":
+					err = Apply(t.Context(), Workspace{Root: root}, script)
+				case "ApplyForHost":
+					_, err = ApplyForHost(t.Context(), Workspace{Root: root}, script, "")
+				case "ApplyForHostRoot":
+					_, err = ApplyForHostRoot(t.Context(), root, script, "")
+				case "TranslateForHostAt":
+					var result HostTranslation
+					result, err = TranslateForHostAt(t.Context(), directory, script, "")
+					if err != nil {
+						break
+					}
+					if got := readTestFile(t, directory, "file.txt"); got != current {
+						t.Fatal("translation changed the workspace")
+					}
+					var applied map[string]string
+					applied, err = patchtest.Apply(map[string]string{"file.txt": current}, string(result.Patch))
+					if err == nil {
+						err = root.WriteFile("file.txt", []byte(applied["file.txt"]), 0o644)
+					}
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+				if got := readTestFile(t, directory, "file.txt"); got != replacement+"\n" {
+					t.Fatalf("completed cycle = %q, want %q", got, replacement+"\n")
+				}
+			}
+		})
+	}
+}
+
 func TestHPatch2RelocatesUniqueRowsAfterPriorEdits(t *testing.T) {
 	tests := []struct {
 		name    string

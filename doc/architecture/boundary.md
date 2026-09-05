@@ -3,7 +3,7 @@
 ## CTR-BOUNDARY-001 — Filesystem and output boundary
 
 The root library boundary owns workspace authorization, evaluation diagnostics, completed
-results, atomic commit coordination, and translation for
+results, staged commit and rollback coordination, and translation for
 `REQ-GUIDE-001` and `REQ-OUTPUT-001`. Persistent Codex edit, shell, read, search, and inspection
 guidance and CTP/2 representation guidance share `contrib/codex/file-editing-instructions.md` as their source.
 Tool descriptions retain only call-local contracts and request-specific schemas. The router
@@ -134,8 +134,16 @@ are matched against the canonical root name; equivalent aliases are not resolved
 capability. Translation and commit consume the same identities, so cwd affects relative operands
 without changing the workspace boundary.
 
+The caller owns coordination of overlapping filesystem writers from edit-authoring reads
+through application and rollback, including create and move destinations. Translation callers
+retain that coordination until the host executor completes the patch. Hosts applying private
+retained scripts have the same responsibility. Neither an `os.Root` capability nor a rendered
+patch provides writer serialization, baseline reservation, or a cross-file snapshot.
+
 The root library validates and formats the state report before an external effect. Apply stages
-the complete engine result and commits atomically; translation completely renders the patch
-without mutation. No script command crosses the external commit boundary. The transaction
+the complete engine result and installs it through ordered filesystem operations; translation
+completely renders the patch without mutation. No script command crosses the external commit
+boundary. Atomic evaluation does not imply crash-atomic installation or isolation from external
+readers. The transaction
 coordinator owns backups, ordered operations, rollback attempts, and honest reporting of external
 commit or rollback failure.

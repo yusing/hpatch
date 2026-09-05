@@ -121,7 +121,17 @@ variants return it only after the external effect succeeds; router emission is a
 cannot retroactively change or roll back a successful effect. Basic `Apply` discards the host-only
 report and structured state at its public boundary.
 
-Root application stages new contents in same-directory temporary files before starting the commit. Parse, validation, read, and evaluation failures leave the initial tree unchanged.
+Callers own coordination between writers to overlapping files and lifecycle paths, including
+create and move destinations. Coordination covers the reads used to author an edit, evaluation,
+and the complete application or rollback sequence. For translated edits it must continue until
+the host executor finishes applying the patch; returning a patch does not reserve its baseline.
+Callers may serialize overlapping work or assign non-overlapping ownership. The library and
+router add no workspace writer lock, commit-time baseline comparison, or automatic rebase.
+An immutable invocation baseline is an in-memory evaluation rule, not a cross-file filesystem
+snapshot. If another writer changes a touched path outside this coordination contract, its
+changes can be overwritten without a stale-target rejection.
+
+Root application stages new contents in same-directory temporary files before starting the commit. Parse, validation, read, and evaluation failures leave the tree unchanged by hpatch.
 A staging failure attempts to remove all temporary artifacts; cleanup failure returns
 nonzero and identifies every artifact it could not remove. Commit-time filesystem failures
 trigger rollback attempts using staged backups. Ordinary filesystems cannot provide a
@@ -130,6 +140,14 @@ rollback failure during commit can leave a partial change set. Such a failure mu
 nonzero and name the affected paths; it must never report success or claim rollback
 succeeded when it did not. Existing file permission bits are preserved; files created by
 `new` use mode `0644`.
+
+Atomic validation means that no script command publishes an intermediate edit. It does not
+mean that external readers observe all changed paths at once: staging, installation, and
+rollback use sequential filesystem operations. Callers requiring a consistent multi-file read
+must coordinate those readers too. Cancellation observed before entering staging and commit
+prevents application; cancellation during that sequence does not interrupt it. A host API can
+return late cancellation after applying changes. An application error therefore does not imply
+that no files changed; callers must inspect the outcome and workspace before retrying.
 
 OpenAI `apply_patch` is a logical-line format and cannot preserve CRLF or standalone-CR
 bytes when its output is applied by the tool. Translation therefore returns LF-only patch text and normalizes line endings only in its displayed before/after lines. It does not modify source files. Root application continues to preserve existing line endings outside explicitly inserted strings. Applying translated output to a non-LF file may normalize
@@ -200,7 +218,9 @@ Acceptance:
    rejects the transaction without mutation; supported changed Python, JavaScript, and TypeScript files are syntax-checked and receive supported automatic indentation correction.
 5. Malformed input, missing, stale, reversed, or incomplete targets, edit conflicts,
    unknown or future commands, invalid UTF-8, missing or non-regular files, path collisions,
-   staging failure, translation failure, and cancellation produce no mutation, returned patch, or final-state report.
+   staging failure, translation failure, and cancellation observed before staging/commit produce
+   no workspace mutation, returned patch, or final-state report, subject to the external-failure
+   and temporary-artifact cleanup rules above.
 6. Injected external filesystem commit and rollback failures are reported without false
    atomicity claims and without a successful final-state report.
 7. Failure to emit a fully rendered routed report after a successful external effect does not reverse that effect or record a complete report-input token estimate.
