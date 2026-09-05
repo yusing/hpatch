@@ -17,10 +17,12 @@ const (
 
 	// Exact stock fragments make upstream prompt changes fail closed instead of
 	// leaving conflicting editing guidance in the forwarded request.
-	stockEditHeading     = "## File editing constraints"
-	stockEditInstruction = "Use `apply_patch` for local file edits. Do not create or edit files with `cat` or other shell write tricks. Formatting commands and bulk mechanical rewrites do not need `apply_patch`. Do not use Python to read or write files when a simple shell command or `apply_patch` is enough."
-	stockRGInstruction   = "- When you search for text or files, you reach first for `rg` or `rg --files`; they are much faster than alternatives like `grep`. If `rg` is unavailable, you use the next best tool without fuss."
-	stockExecInstruction = "- Exercise caution when escaping text for exec_command calls - backticks and `$()` passed to the `cmd` argument will still execute. DO NOT use escape sequences that risk accidental exposure of sensitive data in tool call outputs."
+	stockEditHeading       = "## File editing constraints"
+	stockEditInstruction   = "Use `apply_patch` for local file edits. Do not create or edit files with `cat` or other shell write tricks. Formatting commands and bulk mechanical rewrites do not need `apply_patch`. Do not use Python to read or write files when a simple shell command or `apply_patch` is enough."
+	stockRGInstruction     = "- When you search for text or files, you reach first for `rg` or `rg --files`; they are much faster than alternatives like `grep`. If `rg` is unavailable, you use the next best tool without fuss."
+	stockExecInstruction   = "- Exercise caution when escaping text for exec_command calls - backticks and `$()` passed to the `cmd` argument will still execute. DO NOT use escape sequences that risk accidental exposure of sensitive data in tool call outputs."
+	stockAstraIntroduction = "You are Codex, an agent based on GPT-6. You and the user share one workspace, and your job is to collaborate with them until their intended goal is completely handled."
+	stockWorkHeading       = "# Rules for getting work done"
 )
 
 type instructionLine struct {
@@ -148,6 +150,21 @@ func renderModelInstructions(input string, appendIfMissing bool, modelInstructio
 		}
 	}
 
+	// Astra has no editing section. Replace its pinned search line in the
+	// work rules instead, retaining the other rules and removing the displaced
+	// exec-command guidance just as for the GPT-5 stock template.
+	astraIntroductions := matchingInstructionLines(lines, stockAstraIntroduction)
+	workHeadings := matchingInstructionLines(lines, stockWorkHeading)
+	if len(astraIntroductions) == 1 && len(workHeadings) == 1 &&
+		len(stockHeadings) == 0 && len(stockInstructions) == 0 &&
+		len(stockRGInstructions) == 1 && len(stockExecInstructions) == 1 &&
+		astraIntroductions[0].number < workHeadings[0].number &&
+		stockRGInstructions[0].number == workHeadings[0].number+2 &&
+		lines[workHeadings[0].number].text == "" &&
+		stockExecInstructions[0].number > stockRGInstructions[0].number {
+		return renderStockModelInstructions(lines, stockRGInstructions[0], stockRGInstructions[0], stockRGInstructions[0], stockExecInstructions[0], modelInstructions), nil
+	}
+
 	if appendIfMissing {
 		if input == "" {
 			return modelInstructions, nil
@@ -161,13 +178,13 @@ func renderModelInstructions(input string, appendIfMissing bool, modelInstructio
 	return "", errors.New("responses instructions match neither stock nor marked hpatch guidance")
 }
 
-func renderStockModelInstructions(lines []instructionLine, heading, instruction, rgInstruction, execInstruction instructionLine, modelInstructions string) string {
+func renderStockModelInstructions(lines []instructionLine, first, last, rgInstruction, execInstruction instructionLine, modelInstructions string) string {
 	var rendered strings.Builder
 	for _, line := range lines {
-		if line.number == heading.number {
+		if line.number == first.number {
 			rendered.WriteString(modelInstructions)
 		}
-		if line.number >= heading.number && line.number <= instruction.number ||
+		if line.number >= first.number && line.number <= last.number ||
 			line.number == rgInstruction.number || line.number == execInstruction.number {
 			continue
 		}

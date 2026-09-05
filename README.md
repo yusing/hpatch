@@ -489,10 +489,12 @@ applies it in memory and never reads or writes the configured instruction file.
 
 The carrier is a nonempty top-level `instructions` string, or the first
 textual developer message when that field is missing, null, or empty. A
-recognized stock Codex file-editing section is replaced. A customized prompt
-without that section receives the hpatch section only when
+recognized stock Codex file-editing section is replaced. GPT-6 Astra's stock
+prompt is also supported: hpatch guidance replaces its search instruction
+under the work rules, and the displaced exec-command instruction is removed.
+A customized prompt without recognized stock or marked guidance receives the hpatch section only when
 `model_instructions_file` is set in Codex's `config.toml`; without that
-setting, a missing section fails before forwarding. Validated compaction
+setting, an unrecognized prompt fails before forwarding. Validated compaction
 requests skip this rewrite. The router snapshots the setting at startup;
 restart it after adding or removing the key. See
 [`REQ-GUIDE-001`](doc/spec/guide.md).

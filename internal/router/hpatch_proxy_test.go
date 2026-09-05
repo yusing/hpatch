@@ -402,6 +402,43 @@ func TestHPatchPrepareRequestRewritesNamespacedExecWithShell(t *testing.T) {
 	}
 }
 
+func TestHPatchPrepareRequestSupportsAstraStockInstructions(t *testing.T) {
+	stock, err := os.ReadFile("testdata/gpt-6-astra-instructions.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	request, err := parseResponsesRequest(mustTestJSON(t, map[string]any{
+		"model":        "gpt-6-astra",
+		"input":        []any{testCodeModeAdditionalTools(testCodeModeDescription)},
+		"tool_choice":  "auto",
+		"instructions": string(stock),
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	proxy := newManagedHPatchProxy(t, testTranslator(t, new(int)))
+	metadata := codexTurnMetadata{RequestKind: "turn", Directories: map[string]json.RawMessage{t.TempDir(): nil}}
+	transform, err := proxy.prepareRequest(t.Context(), &request, "astra-session", "astra-thread", metadata, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if transform == nil {
+		t.Fatal("Astra request did not receive Hpatch tool projection")
+	}
+	defer transform.Close()
+	if request.model() != "gpt-6-astra" {
+		t.Fatalf("Astra model was changed to %q", request.model())
+	}
+	var instructions string
+	if err := json.Unmarshal(request.fields["instructions"], &instructions); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Count(instructions, codexinstructions.NativeInstructions()) != 1 ||
+		strings.Contains(instructions, stockRGInstruction) || strings.Contains(instructions, stockExecInstruction) {
+		t.Fatal("Astra request did not receive exactly one replacement guidance section")
+	}
+}
+
 func TestHPatchPrepareRequestUsesCustomizedModelInstructions(t *testing.T) {
 	workspace := t.TempDir()
 	newRequest := func(t *testing.T) parsedResponsesRequest {

@@ -81,8 +81,9 @@ function arguments. Both request shapes share the same listener, registry, histo
 recovery, JSON framing, and SSE framing.
 
 Codex owns base prompt delivery. The router owns request-local hpatch guidance injection: it
-refreshes a marked section, replaces the pinned stock editing section, or appends only when the
-top-level Codex config declares `model_instructions_file`. An unconfigured unknown section fails
+refreshes a marked section, replaces the pinned stock editing section or GPT-6 Astra search line
+and displaced exec-command guidance, or appends only when the top-level Codex config declares
+`model_instructions_file`. An unconfigured unknown section fails
 closed as upstream drift. This policy runs in memory and never changes Codex configuration or
 instruction files.
 

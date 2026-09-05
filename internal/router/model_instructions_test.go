@@ -42,6 +42,75 @@ func TestCentralModelInstructionsHaveOneMarkerPair(t *testing.T) {
 	}
 }
 
+func TestRewriteAstraStockModelInstructions(t *testing.T) {
+	// Stock Astra template from Codex's 2026-09-05 model catalog, before
+	// personality variables are expanded. Keep this independent of the matcher.
+	data, err := os.ReadFile("testdata/gpt-6-astra-instructions.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	stock := string(data)
+	for _, carrier := range []string{"instructions", "developer"} {
+		for _, protocol := range []string{"native", "ctp2"} {
+			t.Run(carrier+"/"+protocol, func(t *testing.T) {
+				guidance := codexinstructions.NativeInstructions()
+				if protocol == "ctp2" {
+					guidance = codexinstructions.Instructions()
+				}
+				request := parsedResponsesRequest{fields: map[string]json.RawMessage{
+					"model": mustTestJSON(t, "gpt-6-astra"),
+				}}
+				if carrier == "instructions" {
+					request.fields["instructions"] = mustTestJSON(t, stock)
+				} else {
+					request.fields["input"] = mustTestJSON(t, []any{
+						map[string]any{"type": "message", "role": "developer", "content": stock},
+					})
+				}
+				if err := rewriteReceivedModelInstructions(&request, false, guidance); err != nil {
+					t.Fatal(err)
+				}
+				var got string
+				if carrier == "instructions" {
+					if err := json.Unmarshal(request.fields["instructions"], &got); err != nil {
+						t.Fatal(err)
+					}
+				} else {
+					var input []struct{ Content string }
+					if err := json.Unmarshal(request.fields["input"], &input); err != nil {
+						t.Fatal(err)
+					}
+					got = input[0].Content
+				}
+				want := strings.Replace(stock, stockRGInstruction+"\n", guidance, 1)
+				want = strings.Replace(want, stockExecInstruction+"\n", "", 1)
+				if got != want {
+					t.Fatal("Astra rewrite did not preserve unrelated stock instructions")
+				}
+				refreshed, err := renderModelInstructions(got, false, guidance)
+				if err != nil || refreshed != got {
+					t.Fatalf("Astra guidance refresh is not idempotent: %v", err)
+				}
+			})
+		}
+	}
+	for _, test := range []struct{ name, input string }{
+		{"changed identity", strings.Replace(stock, "an agent based on GPT-6", "an agent based on GPT-7", 1)},
+		{"missing search instruction", strings.Replace(stock, stockRGInstruction, "search differently", 1)},
+		{"missing exec instruction", strings.Replace(stock, stockExecInstruction, "execute differently", 1)},
+		{"duplicate search instruction", stock + "\n" + stockRGInstruction},
+		{"changed rules heading", strings.Replace(stock, "# Rules for getting work done", "# Changed rules", 1)},
+		{"nonblank separator", strings.Replace(stock, "# Rules for getting work done\n\n", "# Rules for getting work done\nnew guidance\n", 1)},
+		{"partial old editing section", stock + "\n" + stockEditHeading},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if _, err := renderModelInstructions(test.input, false, codexinstructions.NativeInstructions()); err == nil {
+				t.Fatal("changed stock instructions were accepted")
+			}
+		})
+	}
+}
+
 func TestRenderModelInstructionsRefreshesInheritedConversation(t *testing.T) {
 	input := "custom prefix\n" + codexinstructions.NativeInstructions() + "custom suffix\n"
 	got, err := renderModelInstructions(input, false, codexinstructions.NativeInstructions())

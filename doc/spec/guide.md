@@ -12,10 +12,14 @@ then transforms only eligible model-visible strings under `REQ-CTP-001`.
 
 For each eligible turn carrying a non-null Responses `instructions` string, the router refreshes
 one current marked hpatch section or replaces the pinned stock Codex file-editing section and its
-displaced rg and exec-command lines. It preserves all unrelated instruction content. At startup,
+displaced rg and exec-command lines. The GPT-6 Astra stock template has no file-editing section:
+the router recognizes its pinned introduction and work-rules heading, replaces the pinned rg line
+immediately after the heading and blank separator with central guidance, and removes the pinned
+exec-command line. Both displaced lines must be unique, and an old file-editing section must be absent.
+It preserves all unrelated instruction content. At startup,
 the router reads `$CODEX_HOME/config.toml`, falling back to `~/.codex/config.toml`, only to
 snapshot whether the top-level `model_instructions_file` key is set. A configured custom prompt
-without either recognized section receives the central guidance by append; without that setting,
+without recognized stock or marked guidance receives the central guidance by append; without that setting,
 the request fails before upstream forwarding as an unsupported upstream instruction change.
 Missing and null `instructions` values remain unchanged. This request-local behavior covers
 session start, post-compaction, subagent start, and subagent post-compaction instruction delivery;
@@ -76,7 +80,7 @@ Acceptance:
 1. A model can choose and encode every HPATCH/2 operation from the persistent guidance.
 2. The forwarded prompt contains the selected central guidance exactly once and omits the pinned
    stock apply_patch, rg, and exec_command instructions. Native omits the CTP/2 section; CTP/2 retains
-   it.
+   it. Both the GPT-5 editing-section template and GPT-6 Astra work-rules template are supported.
 3. A marked prompt retains content before and after the owned section and refreshes idempotently;
    a configured custom prompt without a recognized section retains its content before the append.
 4. Missing and null request instructions remain byte-equivalent. An unconfigured, unrecognized
