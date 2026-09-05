@@ -29,7 +29,11 @@ requirements use the capturer's signed end-to-end protocol totals and fail after
 summary when required input or output savings are not positive.
 
 Arm labels are evidence-backed: the validator requires passthrough/native for control,
-Hpatch/native for Hpatch, native-protocol, and Mentor arms, and Hpatch/CTP2 for the CTP arm. Raw
+Hpatch/native for ordinary Hpatch and native-protocol arms, and Hpatch/CTP2 for the CTP arm.
+Mentor arms use Hpatch with the shared protocol selected by the retained benchmark configuration,
+native by default. The main model is selected independently of the router-owned child mentor
+schedule; the validator binds treatment children to the configured mentor model, not the main
+model. Required compression is checked for both Mentor arms when their protocol is CTP/2. Raw
 records must agree with the snapshot. Model reporting groups every provider attempt and separately
 counts attempts carrying provider usage.
 

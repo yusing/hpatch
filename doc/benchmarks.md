@@ -46,6 +46,21 @@ MODEL=gpt-5.6-luna REASONING_EFFORT=xhigh REPETITIONS=2 \
   bash benchmarks/bench.sh
 ```
 
+To keep Astra as the main agent and enable CTP/2 alongside Mentor Handoff:
+
+```sh
+MENTOR_PARENT_MODEL=gpt-6-astra MENTOR_MODEL_PROTOCOL=ctp2 \
+  MODEL=gpt-5.6-luna REPETITIONS=2 BENCHMARK_MODE=mentor-handoff \
+  BENCHMARK_REPORT_ISSUES=false bash benchmarks/bench.sh
+```
+
+In Mentor mode, `MODEL` selects the requested child model (Luna or Terra), while
+`MENTOR_PARENT_MODEL` selects the main agent (default Sol, high effort). The router's default
+Sol/high-to-child handoff schedule is unchanged by the main model. `MENTOR_MODEL_PROTOCOL`
+selects `native` (default) or `ctp2` for both arms; only the treatment enables Mentor Handoff.
+Two repetitions produce four graded attempts. The summary names the main model separately from
+the child and mentor models, and checks required CTP/2 compression in both CTP/2 arms.
+
 Exhaustive commentary coverage across diagnostic, native/CTP, and Mentor Handoff arms:
 
 ```sh

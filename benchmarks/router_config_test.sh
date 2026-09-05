@@ -6,30 +6,33 @@ fixture=$(mktemp -d)
 trap 'rm -rf -- "$fixture"' EXIT
 
 # Resolve commands without starting containers or reading Codex credentials.
-for mode in paired ctp-only mentor-handoff; do
+for mode in paired ctp-only mentor-handoff mentor-ctp; do
 	control_mode=passthrough
+	control_protocol=native
 	protocol=native
 	mentor=false
 	case "$mode" in
 		ctp-only) control_mode=hpatch; protocol=ctp2 ;;
 		mentor-handoff) control_mode=hpatch; mentor=true ;;
+		mentor-ctp) control_mode=hpatch; protocol=ctp2; control_protocol=ctp2; mentor=true ;;
 	esac
 	BENCH_RUN_DIR="$fixture" \
 		BENCH_DEPENDENCY_CACHE="$fixture" \
 		CODEX_AUTH_PATH="$fixture/auth.json" \
 		HPATCH_BENCH_CONTROL_MODE="$control_mode" \
+		HPATCH_BENCH_CONTROL_MODEL_PROTOCOL="$control_protocol" \
 		HPATCH_BENCH_HPATCH_MODEL_PROTOCOL="$protocol" \
 		HPATCH_BENCH_MENTOR_HANDOFF="$mentor" \
 		docker compose -f "$benchmark_root/compose.yaml" config --format json >"$fixture/config.json"
-	python3 - "$fixture/config.json" "$control_mode" "$protocol" "$mentor" <<'PY'
+	python3 - "$fixture/config.json" "$control_mode" "$control_protocol" "$protocol" "$mentor" <<'PY'
 import json
 import sys
 
-path, control_mode, protocol, mentor = sys.argv[1:]
+path, control_mode, control_protocol, protocol, mentor = sys.argv[1:]
 with open(path) as source:
     services = json.load(source)["services"]
 for arm, expected_mode, expected_protocol, expected_mentor in (
-    ("control", control_mode, "native", "false"),
+    ("control", control_mode, control_protocol, "false"),
     ("hpatch", "hpatch", protocol, mentor),
 ):
     command = services[arm]["command"]
@@ -42,4 +45,4 @@ for arm, expected_mode, expected_protocol, expected_mentor in (
 PY
 done
 
-printf '%s\n' 'Router configuration: paired, CTP-only, and Mentor arms passed'
+printf '%s\n' 'Router configuration: paired, CTP-only, native Mentor and CTP/2 Mentor arms passed'

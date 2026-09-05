@@ -198,12 +198,17 @@ def validate_raw_capture(path: Path, metrics: dict[str, Any]) -> None:
         raise ValueError("capturer health reports incomplete evidence")
 
 
-def validate_snapshot(metrics: dict[str, Any], arm: str) -> None:
+def validate_snapshot(metrics: dict[str, Any], arm: str, config: dict[str, Any]) -> None:
     if metrics.get("schema") != "hpatch.capture.metrics.v2":
         raise ValueError("metrics have an unsupported schema")
     expected = EXPECTED_ARM_CONFIG.get(arm)
     if expected is None:
         raise ValueError(f"unsupported benchmark arm {arm}")
+    if config.get("benchmark_mode") == "mentor-handoff" and arm in {"hpatch", "hpatch-mentor"}:
+        protocol = config.get("mentor_handoff", {}).get("model_protocol", "native")
+        if protocol not in {"native", "ctp2"}:
+            raise ValueError("unsupported Mentor benchmark model protocol")
+        expected = ("hpatch", protocol)
     if (metrics.get("mode"), metrics.get("model_protocol")) != expected:
         raise ValueError(f"{arm} capture has the wrong router mode or model protocol")
     exchanges = metrics.get("exchanges")
@@ -420,7 +425,7 @@ def required_text(value: object, description: str) -> str:
     return value
 
 
-def validate_results(metrics: dict[str, Any], results_path: Path, arm: str) -> int:
+def validate_results(metrics: dict[str, Any], results_path: Path, arm: str, config: dict[str, Any]) -> int:
     expected: dict[str, dict[str, int]] = {}
     allowed_models: dict[str, set[str]] = {}
     mentor_threads: dict[str, str] = {}
@@ -457,9 +462,12 @@ def validate_results(metrics: dict[str, Any], results_path: Path, arm: str) -> i
         child_effort = required_text(result_record.get("child_reasoning_effort"), "mentor child effort")
         if proof.get("configured_reasoning_effort") != child_effort:
             raise ValueError("mentor child proof disagrees with the configured reasoning effort")
-        allowed_models[child_thread] = {child_model} if arm != "hpatch-mentor" else {child_model, parent_model}
+        allowed_models[child_thread] = {child_model}
         if arm == "hpatch-mentor":
-            mentor_threads[child_thread] = parent_model
+            # The router's child mentor is independent of the benchmark's main model.
+            mentor_model = required_text(config.get("mentor_handoff", {}).get("mentor_model"), "mentor model")
+            allowed_models[child_thread].add(mentor_model)
+            mentor_threads[child_thread] = mentor_model
     if not expected:
         raise ValueError(f"results contain no {arm} records")
 
@@ -504,10 +512,12 @@ def main() -> int:
     parser.add_argument("arm")
     args = parser.parse_args()
     try:
+        config_path = args.results.parent / "benchmark-config.json"
+        config = load_json(config_path) if config_path.exists() else {}
         metrics = load_json(args.metrics)
-        validate_snapshot(metrics, args.arm)
+        validate_snapshot(metrics, args.arm, config)
         validate_raw_capture(args.capture, metrics)
-        runs = validate_results(metrics, args.results, args.arm)
+        runs = validate_results(metrics, args.results, args.arm, config)
     except (OSError, ValueError, json.JSONDecodeError) as error:
         parser.error(str(error))
     json.dump(

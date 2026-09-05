@@ -16,6 +16,8 @@ Supported modes are:
 
 The control router MUST explicitly disable Mentor Handoff, including when it runs in
 Hpatch mode. CTP-only arms MUST both disable Mentor; only the Mentor treatment enables it.
+Mentor mode MUST permit an independently configured main model and a shared `native` or `ctp2`
+protocol for both arms. These selections MUST NOT change the router-owned child mentor schedule.
 
 Each fresh arm MUST run exactly one router process with exactly one listener. The agent MUST connect
 directly to that listener, and the listener MUST expose Responses plus `/api/metrics`. The router
@@ -51,11 +53,14 @@ are the only modes that MAY omit a fresh baseline. Each root thread's provider a
 configured parent model. Mentor child traffic MUST match a retained child proof, use only its
 configured child model in the baseline, use only the child or mentor model in the treatment, and
 include at least one mentor-model request in the treatment. Any unproved thread MUST fail validation.
+The treatment's permitted mentor model MUST come from its retained mentor configuration, not from
+the independently selected main model. The summary MUST distinguish main, child, and mentor models.
 
 When a CTP task requires input or output compression, report generation MUST evaluate the matching
 signed client-versus-provider token savings from the CTP capturer snapshot. A required direction
 MUST be positive. Failure MUST retain the measured value in `summary.md` and make the benchmark exit
 nonzero.
+When Mentor mode uses CTP/2, both arms MUST meet any configured compression requirements.
 
 The report validator MAY recompute exchange sums only to prove that the snapshot is internally
 consistent. The summary MUST format the snapshot's values and MUST NOT own alternate metric,
@@ -64,7 +69,9 @@ retries MUST not be counted as new logical requests, retry usage MUST not be dis
 reporting MUST include provider attempts without usage while distinguishing usage-bearing attempts.
 
 The validator MUST bind each arm to its router configuration: `control` is passthrough/native;
-`hpatch`, `native`, and both Mentor arms are Hpatch/native; and `ctp` is Hpatch/CTP2. Every raw record
+`hpatch` outside Mentor mode and `native` are Hpatch/native; `ctp` is Hpatch/CTP2; and both Mentor
+arms use Hpatch with the shared protocol selected in the retained benchmark configuration (native
+by default). Every raw record
 MUST agree with its snapshot mode and protocol. Self-consistent evidence from the wrong configuration
 MUST fail before it receives a treatment label.
 

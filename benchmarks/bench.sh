@@ -4,8 +4,9 @@ set -euo pipefail
 benchmark_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 model=${MODEL:-gpt-5.6-sol}
 reasoning_effort=${REASONING_EFFORT:-medium}
-mentor_parent_model=gpt-5.6-sol
+mentor_parent_model=${MENTOR_PARENT_MODEL:-gpt-5.6-sol}
 mentor_parent_reasoning_effort=high
+mentor_model_protocol=${MENTOR_MODEL_PROTOCOL:-native}
 mentor_child_role=benchmark_worker
 repetitions=${REPETITIONS:-4}
 benchmark_mode=${BENCHMARK_MODE:-paired}
@@ -57,6 +58,13 @@ if [[ $benchmark_mode == mentor-handoff && $model != gpt-5.6-luna && $model != g
 	printf 'bench.sh: mentor-handoff mode requires MODEL=gpt-5.6-luna or MODEL=gpt-5.6-terra, got %s\n' "$model" >&2
 	exit 2
 fi
+case $mentor_model_protocol in
+native|ctp2) ;;
+*)
+	printf 'bench.sh: MENTOR_MODEL_PROTOCOL must be native or ctp2, got %s\n' "$mentor_model_protocol" >&2
+	exit 2
+	;;
+esac
 task_id=${TASK_ID:-etcd-range-stream}
 suite_manifest="$benchmark_root/diverse-suite.json"
 task=
@@ -280,6 +288,7 @@ compose_project_name="hpatch_bench_$(basename "$run_dir" | tr '[:upper:]' '[:low
 export COMPOSE_PROJECT_NAME=$compose_project_name
 export HPATCH_BENCH_COMPOSE_FILE="$benchmark_root/compose.yaml"
 export HPATCH_BENCH_HPATCH_MODEL_PROTOCOL=native
+export HPATCH_BENCH_CONTROL_MODEL_PROTOCOL=native
 export HPATCH_BENCH_CONTROL_MODE=passthrough
 export HPATCH_BENCH_MENTOR_HANDOFF=false
 if [[ $benchmark_mode == ctp-only ]]; then
@@ -289,6 +298,8 @@ fi
 if [[ $benchmark_mode == mentor-handoff ]]; then
 	export HPATCH_BENCH_CONTROL_MODE=hpatch
 	export HPATCH_BENCH_MENTOR_HANDOFF=true
+	export HPATCH_BENCH_CONTROL_MODEL_PROTOCOL=$mentor_model_protocol
+	export HPATCH_BENCH_HPATCH_MODEL_PROTOCOL=$mentor_model_protocol
 fi
 compose=(docker compose --progress quiet -f "$HPATCH_BENCH_COMPOSE_FILE")
 
@@ -840,6 +851,7 @@ JSON
 		--arg benchmark_commit "$benchmark_commit" \
 		--arg codex_release "$codex_release" \
 		--arg parent_model "$mentor_parent_model" \
+		--arg mentor_model_protocol "$mentor_model_protocol" \
 		--arg parent_reasoning_effort "$mentor_parent_reasoning_effort" \
 		--arg child_model "$model" \
 		--arg child_reasoning_effort "$reasoning_effort" \
@@ -858,6 +870,7 @@ JSON
 				mentor_model: "gpt-5.6-sol",
 				mentor_reasoning_effort: "high",
 				parent_model: $parent_model,
+				model_protocol: $mentor_model_protocol,
 				parent_reasoning_effort: $parent_reasoning_effort,
 				child_model: $child_model,
 				child_reasoning_effort: $child_reasoning_effort,
@@ -1238,6 +1251,7 @@ run_agent() {
 	local -a unauthorized=()
 
 	if [[ $benchmark_mode == mentor-handoff ]]; then
+		model_protocol=$mentor_model_protocol
 		case $arm in
 		hpatch)
 			instruction_name=hpatch.md

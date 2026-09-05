@@ -54,7 +54,7 @@ services:
       - --mode
       - ${HPATCH_BENCH_CONTROL_MODE:-passthrough}
       - --model-protocol
-      - native
+      - ${HPATCH_BENCH_CONTROL_MODEL_PROTOCOL:-native}
       - --mentor-handoff=false
       - --provider-base-url
       - https://chatgpt.com/backend-api/codex

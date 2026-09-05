@@ -97,7 +97,7 @@ grep -Fq '| Output | true | 0 | failed |' "$ctp_failed/summary.md"
 
 mentor="$fixture/mentor"
 mkdir -p "$mentor/captures"
-printf '%s\n' '{"benchmark_mode":"mentor-handoff"}' >"$mentor/benchmark-config.json"
+printf '%s\n' '{"benchmark_mode":"mentor-handoff","mentor_handoff":{"mentor_model":"model"}}' >"$mentor/benchmark-config.json"
 sed -e '1s/"arm":"control"/"arm":"hpatch"/' -e '2s/"arm":"hpatch"/"arm":"hpatch-mentor"/' \
 	"$fixture/results.jsonl" | jq -c --arg proof "$mentor/child-proof.json" '
 		if .arm == "hpatch-mentor" then
@@ -135,6 +135,140 @@ jq '.requests.logical += 1 |
 bash "$benchmark_root/report.sh" "$mentor" >/dev/null
 grep -Fq '| Hpatch | 1/1 |' "$mentor/summary.md"
 grep -Fq '| Hpatch + Mentor Handoff | 1/1 |' "$mentor/summary.md"
+
+# Distinct main, mentor, and child models with two independent repetitions per arm.
+mentor_ctp="$fixture/mentor-ctp"
+python3 - "$mentor" "$mentor_ctp" <<'PY'
+import copy
+import json
+from pathlib import Path
+import sys
+
+source, target = map(Path, sys.argv[1:])
+(target / "captures").mkdir(parents=True)
+config = {
+    "benchmark_mode": "mentor-handoff",
+    "mentor_handoff": {
+        "parent_model": "gpt-6-astra", "mentor_model": "gpt-5.6-sol",
+        "child_model": "gpt-5.6-luna", "model_protocol": "ctp2",
+    },
+    "ctp": {"require_input_compression": True, "require_output_compression": True},
+}
+(target / "benchmark-config.json").write_text(json.dumps(config))
+base_metrics = json.loads((source / "hpatch-mentor-metrics.json").read_text())
+base_records = [json.loads(line) for line in (source / "captures/hpatch.jsonl").read_text().splitlines()]
+base_result = json.loads((source / "results.jsonl").read_text().splitlines()[1])
+
+def twice(value):
+    if isinstance(value, dict):
+        return {key: twice(item) for key, item in value.items()}
+    return value * 2 if type(value) is int else value
+
+results = []
+for arm, capture_name, child_provider in (
+    ("hpatch", "control", "gpt-5.6-luna"),
+    ("hpatch-mentor", "hpatch", "gpt-5.6-sol"),
+):
+    metrics = twice(base_metrics)
+    metrics["model_protocol"] = "ctp2"
+    metrics["exchanges"] = []
+    records = []
+    for repetition in (1, 2):
+        root = f"{arm}-root-{repetition}"
+        child = f"{arm}-child-{repetition}"
+        for original in base_metrics["exchanges"]:
+            exchange = copy.deepcopy(original)
+            is_child = exchange["thread_id"] == "thread-child"
+            exchange["thread_id"] = child if is_child else root
+            exchange["sequence"] += (repetition - 1) * 2
+            exchange["model"] = child_provider if is_child else "gpt-6-astra"
+            for attempt in exchange["provider_attempts"]:
+                attempt["model"] = exchange["model"]
+            metrics["exchanges"].append(exchange)
+        for original in base_records:
+            record = copy.deepcopy(original)
+            is_child = record["thread_id"] == "thread-child"
+            record["thread_id"] = child if is_child else root
+            record["request_model"] = child_provider if is_child else "gpt-6-astra"
+            record["request_sequence"] += (repetition - 1) * 2
+            record["capture_id"] += f"-{arm}-{repetition}"
+            record["model_protocol"] = "ctp2"
+            records.append(record)
+        proof = f"{arm}-proof-{repetition}.json"
+        (target / proof).write_text(json.dumps({
+            "schema": "hpatch.benchmark.child-proof.v1", "child_thread_id": child,
+            "configured_model": "gpt-5.6-luna", "configured_reasoning_effort": "high",
+        }))
+        result = copy.deepcopy(base_result)
+        result.update(arm=arm, repetition=repetition, model="gpt-5.6-luna",
+                      parent_model="gpt-6-astra", child_model="gpt-5.6-luna",
+                      model_protocol="ctp2", router_mode="hpatch")
+        result["agent"].update(thread_id=root, child_proof_path=proof)
+        results.append(result)
+    (target / f"{arm}-metrics.json").write_text(json.dumps(metrics))
+    (target / f"captures/{capture_name}.jsonl").write_text("".join(json.dumps(row) + "\n" for row in records))
+(target / "results.jsonl").write_text("".join(json.dumps(row) + "\n" for row in results))
+PY
+bash "$benchmark_root/report.sh" "$mentor_ctp" >/dev/null
+grep -Fq -- '- Model: `gpt-6-astra`' "$mentor_ctp/summary.md"
+grep -Fq -- '- Both arms model protocol: `ctp2`' "$mentor_ctp/summary.md"
+grep -Fq '| Hpatch | 2/2 |' "$mentor_ctp/summary.md"
+grep -Fq '| Hpatch + Mentor Handoff | 2/2 |' "$mentor_ctp/summary.md"
+grep -Fq '### CTP/2 acceptance: Hpatch + Mentor Handoff' "$mentor_ctp/summary.md"
+[[ $(grep -Fc '| Output | true | 16 | passed |' "$mentor_ctp/summary.md") == 2 ]]
+if grep -Eq 'hpatch-root-|hpatch-mentor-child-' "$mentor_ctp/summary.md"; then
+	printf 'Mentor CTP report leaked a thread identifier\n' >&2
+	exit 1
+fi
+
+for failure in baseline-compression wrong-protocol wrong-parent missing-mentor; do
+	broken="$fixture/mentor-ctp-$failure"
+	cp -R "$mentor_ctp" "$broken"
+	python3 - "$broken" "$failure" <<'PY'
+import json
+from pathlib import Path
+import sys
+
+root = Path(sys.argv[1])
+failure = sys.argv[2]
+baseline = failure == "baseline-compression"
+metrics_path = root / ("hpatch-metrics.json" if baseline else "hpatch-mentor-metrics.json")
+capture_path = root / ("captures/control.jsonl" if baseline else "captures/hpatch.jsonl")
+metrics = json.loads(metrics_path.read_text())
+records = [json.loads(line) for line in capture_path.read_text().splitlines()]
+if baseline:
+    metrics["protocol"]["output_payload_tokens_saved"] = 0
+    metrics["protocol"]["output_payload_bytes_saved"] = 0
+    metrics["semantic"]["client_outputs"] = metrics["semantic"]["provider_attempt_outputs"]
+    for exchange in metrics["exchanges"]:
+        exchange["client_final_output"] = exchange["provider_attempts"][0].get("final_output")
+    for record in records:
+        if record["boundary"] == "codex" and record.get("final_output"):
+            record["final_output"] = {"bytes": 70, "tokens": 17}
+elif failure == "wrong-protocol":
+    metrics["model_protocol"] = "native"
+    for record in records:
+        record["model_protocol"] = "native"
+else:
+    marker = "-root-" if failure == "wrong-parent" else "-child-"
+    for exchange in metrics["exchanges"]:
+        if marker in exchange["thread_id"]:
+            exchange["model"] = "gpt-5.6-luna"
+            exchange["provider_attempts"][0]["model"] = "gpt-5.6-luna"
+    for record in records:
+        if marker in record["thread_id"]:
+            record["request_model"] = "gpt-5.6-luna"
+metrics_path.write_text(json.dumps(metrics))
+capture_path.write_text("".join(json.dumps(row) + "\n" for row in records))
+PY
+	if bash "$benchmark_root/report.sh" "$broken" >/dev/null 2>&1; then
+		printf 'Mentor CTP report accepted %s\n' "$failure" >&2
+		exit 1
+	fi
+	if [[ $failure == baseline-compression ]]; then
+		grep -Fq '| Output | true | 0 | failed |' "$broken/summary.md"
+	fi
+done
 
 no_usage="$fixture/no-usage-retry"
 mkdir -p "$no_usage/captures"

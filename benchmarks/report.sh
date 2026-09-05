@@ -23,7 +23,11 @@ mode=paired
 [[ -s $config ]] && mode=$(jq -r '.benchmark_mode // "paired"' "$config")
 require_ctp_input_compression=false
 require_ctp_output_compression=false
-if [[ $mode == ctp-only ]]; then
+mentor_protocol=native
+if [[ $mode == mentor-handoff ]]; then
+	mentor_protocol=$(jq -r '.mentor_handoff.model_protocol // "native"' "$config")
+fi
+if [[ $mode == ctp-only || $mentor_protocol == ctp2 ]]; then
 	require_ctp_input_compression=$(jq -r '.ctp.require_input_compression // false' "$config")
 	require_ctp_output_compression=$(jq -r '.ctp.require_output_compression // false' "$config")
 fi
@@ -179,16 +183,23 @@ print_model_rows() {
 }
 
 task_id=$(jq -sr '.[0].task_id' "$results")
-model=$(jq -sr '.[0].model' "$results")
-effort=$(jq -sr '.[0].reasoning_effort' "$results")
+model=$(jq -sr '.[0] | .parent_model // .model' "$results")
+effort=$(jq -sr '.[0] | .parent_reasoning_effort // .reasoning_effort' "$results")
 treatment_input=$(metric "$treatment_metrics" '.usage.input_tokens')
 treatment_output=$(metric "$treatment_metrics" '.usage.output_tokens')
+ctp_failed=false
 
 {
 	printf '# Hpatch benchmark: %s\n\n' "$task_id"
 	printf -- '- Mode: `%s`\n' "$mode"
 	printf -- '- Model: `%s`\n' "$model"
 	printf -- '- Reasoning effort: `%s`\n' "$effort"
+	if [[ $mode == mentor-handoff ]]; then
+		printf -- '- Both arms model protocol: `%s`\n' "$mentor_protocol"
+		printf -- '- Requested child model: `%s`; initial mentor model: `%s`\n' \
+			"$(jq -sr '.[0].child_model' "$results")" \
+			"$(jq -r '.mentor_handoff.mentor_model' "$config")"
+	fi
 	printf -- '- Metrics owner: in-process `capturer` on each router listener\n'
 	printf -- '- Evidence validation: passed\n'
 
@@ -260,10 +271,14 @@ treatment_output=$(metric "$treatment_metrics" '.usage.output_tokens')
 			"$(metric "$metrics" '.semantic.provider_attempt_outputs.tokens')" \
 			"$(metric "$metrics" '.semantic.client_outputs.tokens')"
 	done
-	if [[ $mode == ctp-only ]]; then
-		ctp_input_saved=$(metric "$treatment_metrics" '.protocol.input_payload_tokens_saved')
-		ctp_output_saved=$(metric "$treatment_metrics" '.protocol.output_payload_tokens_saved')
-		printf '\n### CTP/2 acceptance\n\n'
+	ctp_rows=()
+	if [[ $mode == ctp-only ]]; then ctp_rows=(treatment); fi
+	if [[ $mentor_protocol == ctp2 ]]; then ctp_rows=(baseline treatment); fi
+	for row in "${ctp_rows[@]}"; do
+		if [[ $row == baseline ]]; then label=$baseline_label; metrics=$baseline_metrics; else label=$treatment_label; metrics=$treatment_metrics; fi
+		ctp_input_saved=$(metric "$metrics" '.protocol.input_payload_tokens_saved')
+		ctp_output_saved=$(metric "$metrics" '.protocol.output_payload_tokens_saved')
+		printf '\n### CTP/2 acceptance: %s\n\n' "$label"
 		printf 'Configured input compression uses complete request payloads; output compression uses one capturer-owned terminal output array per boundary.\n\n'
 		printf '| Direction | Required | Tokens saved | Result |\n|---|---|---:|---|\n'
 		input_result='not required'; output_result='not required'
@@ -275,7 +290,8 @@ treatment_output=$(metric "$treatment_metrics" '.usage.output_tokens')
 		fi
 		printf '| Input | %s | %s | %s |\n' "$require_ctp_input_compression" "$ctp_input_saved" "$input_result"
 		printf '| Output | %s | %s | %s |\n' "$require_ctp_output_compression" "$ctp_output_saved" "$output_result"
-	fi
+		if [[ $input_result == failed || $output_result == failed ]]; then ctp_failed=true; fi
+	done
 
 	printf '\n## Actual model use\n\n'
 	printf '| Arm | Provider model | Provider attempts | Usage-bearing attempts | Input tokens | Cached input | Output tokens | Reasoning tokens |\n'
@@ -313,13 +329,7 @@ treatment_output=$(metric "$treatment_metrics" '.usage.output_tokens')
 
 mv -f -- "$temporary" "$summary"
 printf 'Benchmark summary: %s\n' "$summary"
-if [[ $mode == ctp-only ]]; then
-	if [[ $require_ctp_input_compression == true ]] && ((ctp_input_saved <= 0)); then
-		printf 'report.sh: required CTP/2 input compression was not observed\n' >&2
-		exit 1
-	fi
-	if [[ $require_ctp_output_compression == true ]] && ((ctp_output_saved <= 0)); then
-		printf 'report.sh: required CTP/2 output compression was not observed\n' >&2
-		exit 1
-	fi
+if [[ $ctp_failed == true ]]; then
+	printf 'report.sh: required CTP/2 compression was not observed; see per-arm acceptance\n' >&2
+	exit 1
 fi
