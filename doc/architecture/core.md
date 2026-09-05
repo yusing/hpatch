@@ -20,10 +20,14 @@ and all targets continue to resolve against the invocation-original content.
 
 One shared pure verified-row owner computes and renders `LINE:HASH` identity for routed
 reads under `REQ-READ-001`, target validation, repair context, and final-state previews.
-Target resolution looks up the specified one-based line, compares its hash, and never
-scans for another hash match. It converts line, inclusive range, and anchored literal
-targets into one or more immutable-baseline spans. Resolution performs no mutation and
-retains no active target state.
+Target resolution checks the specified one-based line and, when that check fails,
+permits unique hash relocation within the same immutable baseline under `REQ-SELECT-001`.
+The editor owns the pending-coordinate fallback: it may identify only an unchanged
+baseline line, never content introduced or modified by pending edits. Anchored literal
+resolution may ignore a failed row only when complete-baseline literal multiplicity
+matches the requested count exactly. Line, inclusive range, and literal targets all
+resolve to immutable-baseline spans. Resolution performs no mutation and retains no
+active target state.
 
 The evaluator permits targetless `type` only as the next nonblank command after `new` and
 closes that opportunity when any other command begins. The edit planner maps target-bearing
