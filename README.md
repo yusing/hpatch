@@ -391,6 +391,18 @@ the absolute workspace paths Codex sends. Codex attaches its managed
 credentials to each request. A user systemd unit is the intended long-running
 setup.
 
+For an optional comparison baseline, start the router with verified editing and
+shell adaptation enabled, but without CTP/2 or Mentor model overrides:
+
+```sh
+hpatch-router --mode hpatch --model-protocol native --mentor-handoff=false
+```
+
+This is not passthrough: the other Hpatch-mode behavior remains enabled. To
+evaluate either policy separately, change only `--model-protocol` to `ctp2` or
+`--mentor-handoff` to `true`. Normal startup without these overrides keeps both
+policies enabled by default.
+
 ### Install the binary
 
 ```sh
