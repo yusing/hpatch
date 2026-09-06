@@ -23,11 +23,15 @@ mode=paired
 [[ -s $config ]] && mode=$(jq -r '.benchmark_mode // "paired"' "$config")
 require_ctp_input_compression=false
 require_ctp_output_compression=false
+paired_protocol=native
+if [[ $mode == paired && -s $config ]]; then
+	paired_protocol=$(jq -r '.treatment_model_protocol // "native"' "$config")
+fi
 mentor_protocol=native
 if [[ $mode == mentor-handoff ]]; then
 	mentor_protocol=$(jq -r '.mentor_handoff.model_protocol // "native"' "$config")
 fi
-if [[ $mode == ctp-only || $mentor_protocol == ctp2 ]]; then
+if [[ $mode == ctp-only || $mentor_protocol == ctp2 || $paired_protocol == ctp2 ]]; then
 	require_ctp_input_compression=$(jq -r '.ctp.require_input_compression // false' "$config")
 	require_ctp_output_compression=$(jq -r '.ctp.require_output_compression // false' "$config")
 fi
@@ -41,6 +45,16 @@ treatment_label=Hpatch
 treatment_metrics="$run_dir/hpatch-metrics.json"
 treatment_capture="$run_dir/captures/hpatch.jsonl"
 case "$mode" in
+	control-only)
+		baseline_arm=
+		baseline_label=
+		baseline_metrics=
+		baseline_capture=
+		treatment_arm=control
+		treatment_label=Stock
+		treatment_metrics="$run_dir/control-metrics.json"
+		treatment_capture="$run_dir/captures/control.jsonl"
+		;;
 	ctp-only)
 		baseline_arm=native
 		baseline_label='Native protocol'
@@ -61,7 +75,12 @@ case "$mode" in
 		baseline_metrics=
 		baseline_capture=
 		;;
-	paired) ;;
+	paired)
+		if [[ $paired_protocol == ctp2 ]]; then
+			baseline_label="Stock"
+			treatment_label="Hpatch + CTP/2"
+		fi
+		;;
 	*) printf 'report.sh: unsupported benchmark mode: %s\n' "$mode" >&2; exit 1 ;;
 esac
 
@@ -272,7 +291,7 @@ ctp_failed=false
 			"$(metric "$metrics" '.semantic.client_outputs.tokens')"
 	done
 	ctp_rows=()
-	if [[ $mode == ctp-only ]]; then ctp_rows=(treatment); fi
+	if [[ $mode == ctp-only || $paired_protocol == ctp2 ]]; then ctp_rows=(treatment); fi
 	if [[ $mentor_protocol == ctp2 ]]; then ctp_rows=(baseline treatment); fi
 	for row in "${ctp_rows[@]}"; do
 		if [[ $row == baseline ]]; then label=$baseline_label; metrics=$baseline_metrics; else label=$treatment_label; metrics=$treatment_metrics; fi
@@ -305,18 +324,20 @@ ctp_failed=false
 	if [[ $has_baseline == true ]]; then print_tool_rows "$baseline_label" "$baseline_metrics"; fi
 	print_tool_rows "$treatment_label" "$treatment_metrics"
 
-	printf '\n## Hpatch delivery\n\n'
-	printf '| Measure | Result |\n|---|---:|\n'
-	for spec in \
-		'Calls:.hpatch.calls' 'Corrections:.hpatch.corrections' \
-		'Successful deliveries:.hpatch.successful' 'Rejected deliveries:.hpatch.rejected' \
-		'Unmatched calls:.hpatch.unmatched' 'Provider Hpatch input tokens:.hpatch.provider_input_tokens' \
-		'Delivered carrier input tokens:.hpatch.delivered_input_tokens' \
-		'Carrier input tokens saved:.hpatch.input_tokens_saved'; do
-		label=${spec%%:*}; expression=${spec#*:}
-		printf '| %s | %s |\n' "$label" "$(metric "$treatment_metrics" "$expression")"
-	done
-	jq -r '.hpatch.diagnostics // {} | to_entries[] | "| Diagnostic `\(.key)` | \(.value) |"' "$treatment_metrics"
+	if [[ $mode != control-only ]]; then
+		printf '\n## Hpatch delivery\n\n'
+		printf '| Measure | Result |\n|---|---:|\n'
+		for spec in \
+			'Calls:.hpatch.calls' 'Corrections:.hpatch.corrections' \
+			'Successful deliveries:.hpatch.successful' 'Rejected deliveries:.hpatch.rejected' \
+			'Unmatched calls:.hpatch.unmatched' 'Provider Hpatch input tokens:.hpatch.provider_input_tokens' \
+			'Delivered carrier input tokens:.hpatch.delivered_input_tokens' \
+			'Carrier input tokens saved:.hpatch.input_tokens_saved'; do
+			label=${spec%%:*}; expression=${spec#*:}
+			printf '| %s | %s |\n' "$label" "$(metric "$treatment_metrics" "$expression")"
+		done
+		jq -r '.hpatch.diagnostics // {} | to_entries[] | "| Diagnostic `\(.key)` | \(.value) |"' "$treatment_metrics"
+	fi
 
 	printf '\n## Capture completeness\n\n'
 	printf '| Arm | Records | Provider attempts | Capture errors | Incomplete | Provider/sequence errors | Write/skipped errors | Dropped detail |\n'

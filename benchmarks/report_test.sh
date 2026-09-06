@@ -51,6 +51,24 @@ if grep -Fq 'thread-hpatch' "$fixture/summary.md"; then
 	exit 1
 fi
 
+control_only="$fixture/control-only"
+mkdir -p "$control_only/captures"
+printf '%s\n' '{"benchmark_mode":"control-only"}' >"$control_only/benchmark-config.json"
+grep '"arm":"control"' "$fixture/results.jsonl" >"$control_only/results.jsonl"
+cp "$fixture/control-metrics.json" "$control_only/"
+cp "$fixture/captures/control.jsonl" "$control_only/captures/"
+bash "$benchmark_root/report.sh" "$control_only" >/dev/null
+grep -Fq '| Stock | 1/1 |' "$control_only/summary.md"
+if grep -Eq 'Hpatch delivery|Actual provider-token change' "$control_only/summary.md"; then
+    printf 'control-only report invented a treatment or comparison\n' >&2
+    exit 1
+fi
+jq '.mode = "hpatch"' "$fixture/control-metrics.json" >"$control_only/control-metrics.json"
+if bash "$benchmark_root/report.sh" "$control_only" >/dev/null 2>&1; then
+    printf 'control-only report accepted a Hpatch control\n' >&2
+    exit 1
+fi
+
 for single_mode in hpatch-only hpatch-diagnostic; do
 	single="$fixture/$single_mode"
 	mkdir -p "$single/captures"
@@ -77,6 +95,24 @@ grep -Fq '| Native protocol | 1/1 |' "$ctp/summary.md"
 grep -Fq '| CTP/2 | 1/1 |' "$ctp/summary.md"
 grep -Fq '| Input | true | 5 | passed |' "$ctp/summary.md"
 grep -Fq '| Output | true | 8 | passed |' "$ctp/summary.md"
+
+paired_ctp="$fixture/paired-ctp"
+mkdir -p "$paired_ctp/captures"
+printf '%s\n' '{"benchmark_mode":"paired","treatment_model_protocol":"ctp2","ctp":{"require_input_compression":true,"require_output_compression":true}}' >"$paired_ctp/benchmark-config.json"
+cp "$fixture/results.jsonl" "$fixture/control-metrics.json" "$paired_ctp/"
+cp "$fixture/captures/control.jsonl" "$paired_ctp/captures/"
+cp "$ctp/hpatch-metrics.json" "$paired_ctp/"
+cp "$ctp/captures/hpatch.jsonl" "$paired_ctp/captures/"
+bash "$benchmark_root/report.sh" "$paired_ctp" >/dev/null
+grep -Fq '| Stock | 1/1 |' "$paired_ctp/summary.md"
+grep -Fq '| Hpatch + CTP/2 | 1/1 |' "$paired_ctp/summary.md"
+grep -Fq '| Output | true | 8 | passed |' "$paired_ctp/summary.md"
+cp "$fixture/hpatch-metrics.json" "$paired_ctp/"
+cp "$fixture/captures/hpatch.jsonl" "$paired_ctp/captures/"
+if bash "$benchmark_root/report.sh" "$paired_ctp" >/dev/null 2>&1; then
+    printf 'report accepted native treatment for CTP/2 paired preset\n' >&2
+    exit 1
+fi
 
 ctp_failed="$fixture/ctp-failed"
 mkdir -p "$ctp_failed/captures"

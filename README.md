@@ -550,7 +550,11 @@ diagnostics are discarded after measurement.
 
 The executable benchmark requires Docker Compose, Codex authentication, and
 the task's local source under `benchmarks/repos/`. The default task,
-`etcd-range-stream`, needs a local etcd checkout. Read the
+`etcd-range-stream`, needs a local etcd checkout. The default A/B preset runs one
+attempt per arm with GPT-6 Astra at medium effort: stock versus Hpatch + CTP/2,
+with Mentor Handoff and issue reporting disabled. Use `BENCHMARK_MODE=control-only`
+for one stock attempt, or add `BENCHMARK_PREPARE_ONLY=true` to qualify the historical
+base and oracle without model calls. Read the
 [benchmark methodology](doc/benchmarks.md) before running
 `bash benchmarks/bench.sh`. Capture, snapshot shape, and comparison rules are
 [`REQ-METRICS-001`](doc/spec/metrics.md) and

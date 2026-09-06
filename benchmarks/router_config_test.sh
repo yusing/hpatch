@@ -12,6 +12,7 @@ for mode in paired ctp-only mentor-handoff mentor-ctp; do
 	protocol=native
 	mentor=false
 	case "$mode" in
+		paired) protocol=ctp2 ;;
 		ctp-only) control_mode=hpatch; protocol=ctp2 ;;
 		mentor-handoff) control_mode=hpatch; mentor=true ;;
 		mentor-ctp) control_mode=hpatch; protocol=ctp2; control_protocol=ctp2; mentor=true ;;

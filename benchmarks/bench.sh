@@ -2,16 +2,16 @@
 set -euo pipefail
 
 benchmark_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
-model=${MODEL:-gpt-5.6-sol}
+model=${MODEL:-gpt-6-astra}
 reasoning_effort=${REASONING_EFFORT:-medium}
 mentor_parent_model=${MENTOR_PARENT_MODEL:-gpt-5.6-sol}
 mentor_parent_reasoning_effort=high
 mentor_model_protocol=${MENTOR_MODEL_PROTOCOL:-native}
 mentor_child_role=benchmark_worker
-repetitions=${REPETITIONS:-4}
+repetitions=${REPETITIONS:-1}
 benchmark_mode=${BENCHMARK_MODE:-paired}
 prepare_only=${BENCHMARK_PREPARE_ONLY:-false}
-report_issues=${BENCHMARK_REPORT_ISSUES:-true}
+report_issues=${BENCHMARK_REPORT_ISSUES:-false}
 enforce_no_edit_loops=${BENCHMARK_ENFORCE_NO_EDIT_LOOPS:-true}
 control_baseline_dir=${CONTROL_BASELINE_DIR:-}
 case $prepare_only in
@@ -39,18 +39,18 @@ false) export HPATCH_BENCH_DIAGNOSE=0 ;;
 esac
 case "$benchmark_mode" in
 	paired|ctp-only|mentor-handoff) ;;
-	hpatch-only|hpatch-diagnostic)
+	control-only|hpatch-only|hpatch-diagnostic)
 		if ((repetitions != 1)); then
 			printf 'bench.sh: %s mode requires REPETITIONS=1; run separate trials for independent evidence\n' "$benchmark_mode" >&2
 			exit 2
 		fi
 		;;
 	*)
-		printf 'bench.sh: BENCHMARK_MODE must be paired, ctp-only, mentor-handoff, hpatch-only, or hpatch-diagnostic, got %s\n' "$benchmark_mode" >&2
+		printf 'bench.sh: BENCHMARK_MODE must be paired, control-only, ctp-only, mentor-handoff, hpatch-only, or hpatch-diagnostic, got %s\n' "$benchmark_mode" >&2
 		exit 2
 		;;
 esac
-if [[ ($benchmark_mode == ctp-only || $benchmark_mode == mentor-handoff) && $report_issues != false ]]; then
+if [[ ($benchmark_mode == control-only || $benchmark_mode == ctp-only || $benchmark_mode == mentor-handoff) && $report_issues != false ]]; then
 	printf 'bench.sh: %s mode requires BENCHMARK_REPORT_ISSUES=false so diagnostic reporting does not confound the treatment\n' "$benchmark_mode" >&2
 	exit 2
 fi
@@ -291,6 +291,9 @@ export HPATCH_BENCH_HPATCH_MODEL_PROTOCOL=native
 export HPATCH_BENCH_CONTROL_MODEL_PROTOCOL=native
 export HPATCH_BENCH_CONTROL_MODE=passthrough
 export HPATCH_BENCH_MENTOR_HANDOFF=false
+if [[ $benchmark_mode == paired ]]; then
+	export HPATCH_BENCH_HPATCH_MODEL_PROTOCOL=ctp2
+fi
 if [[ $benchmark_mode == ctp-only ]]; then
 	export HPATCH_BENCH_HPATCH_MODEL_PROTOCOL=ctp2
 	export HPATCH_BENCH_CONTROL_MODE=hpatch
@@ -324,14 +327,14 @@ collect_artifacts() {
 	if [[ $started != true || $collected == true ]]; then
 		return
 	fi
-	if [[ $benchmark_mode == paired || $benchmark_mode == ctp-only || $benchmark_mode == mentor-handoff ]]; then
+	if [[ $benchmark_mode == paired || $benchmark_mode == control-only || $benchmark_mode == ctp-only || $benchmark_mode == mentor-handoff ]]; then
 		"${compose[@]}" logs --no-color control >"$control_log" 2>&1 || true
-		collect_router_metrics control 8081 "$control_metrics" ||
-			metrics_collected=false
+		collect_router_metrics control 8081 "$control_metrics" || metrics_collected=false
 	fi
-	"${compose[@]}" logs --no-color hpatch >"$hpatch_log" 2>&1 || true
-	collect_router_metrics hpatch 8082 "$hpatch_metrics" ||
-		metrics_collected=false
+	if [[ $benchmark_mode != control-only ]]; then
+		"${compose[@]}" logs --no-color hpatch >"$hpatch_log" 2>&1 || true
+		collect_router_metrics hpatch 8082 "$hpatch_metrics" || metrics_collected=false
+	fi
 	collected=$metrics_collected
 }
 
@@ -454,7 +457,9 @@ print_capture_summary() {
 	local arm
 	local metrics
 	local -a arms=(control hpatch)
-	if [[ $benchmark_mode == hpatch-diagnostic ]]; then
+	if [[ $benchmark_mode == control-only ]]; then
+		arms=(control)
+	elif [[ $benchmark_mode == hpatch-diagnostic ]]; then
 		arms=(hpatch)
 	elif [[ $benchmark_mode == ctp-only ]]; then
 		arms=(native ctp)
@@ -591,6 +596,8 @@ generate_summary() {
 # Invoked indirectly by cleanup from the EXIT trap.
 # shellcheck disable=SC2329
 enforce_edit_loop_acceptance() {
+	# Stock has no Hpatch event stream or Hpatch-specific loop policy.
+	if [[ $benchmark_mode == control-only ]]; then return; fi
 	local -a hpatch_events=()
 	if [[ $benchmark_mode == ctp-only || $benchmark_mode == mentor-handoff ]]; then
 		mapfile -t hpatch_events < <(
@@ -607,6 +614,10 @@ enforce_edit_loop_acceptance() {
 print_result_paths() {
 	printf 'Results: %s\n' "$results"
 	printf 'Artifacts: %s\n' "$run_dir/artifacts"
+	if [[ $benchmark_mode == control-only ]]; then
+		printf 'Control metrics: %s\nRouter log: %s\n' "$control_metrics" "$control_log"
+		return
+	fi
 	if [[ $benchmark_mode != hpatch-diagnostic ]]; then
 		if [[ $benchmark_mode == mentor-handoff ]]; then
 			printf 'Hpatch metrics: %s\n' "$control_metrics"
@@ -848,6 +859,7 @@ JSON
 		--argjson require_ctp_input_compression "$require_ctp_input_compression" \
 		--argjson require_ctp_output_compression "$require_ctp_output_compression" \
 		--arg benchmark_mode "$benchmark_mode" \
+		--arg treatment_model_protocol "$HPATCH_BENCH_HPATCH_MODEL_PROTOCOL" \
 		--arg benchmark_commit "$benchmark_commit" \
 		--arg codex_release "$codex_release" \
 		--arg parent_model "$mentor_parent_model" \
@@ -862,6 +874,7 @@ JSON
 		--arg reports "${issue_reports##*/}" \
 		'{
 			benchmark_mode: $benchmark_mode,
+			treatment_model_protocol: $treatment_model_protocol,
 			benchmark_commit: $benchmark_commit,
 			codex_release: $codex_release,
 			mentor_handoff: {
@@ -1231,6 +1244,9 @@ run_agent() {
 	local model_protocol=native
 	local router_mode=passthrough
 	local attempts_per_repetition=2
+	if [[ $benchmark_mode == control-only || $benchmark_mode == hpatch-diagnostic ]]; then
+		attempts_per_repetition=1
+	fi
 	local executor_process_creation_errors=0
 	local expected_response_required=false
 	local expected_response_passed=true
@@ -1734,7 +1750,7 @@ run_ctp_block() {
 	return "$block_status"
 }
 
-run_hpatch_only() {
+run_single_arm() {
 	local repetition=$1
 	local pair_canceled=false
 	local pair_cancel_status=143
@@ -1743,7 +1759,44 @@ run_hpatch_only() {
 	trap - EXIT
 	trap 'cancel_pair 130' INT
 	trap 'cancel_pair 143' TERM
-	run_agent hpatch "$repetition" 2
+	if [[ $benchmark_mode == control-only ]]; then
+		run_agent control "$repetition" 1
+	else
+		run_agent hpatch "$repetition" "$([[ $benchmark_mode == hpatch-only ]] && printf 2 || printf 1)"
+	fi
+}
+
+
+start_routers() {
+	started=true
+	compose_used=true
+	if [[ $benchmark_mode == paired || $benchmark_mode == ctp-only || $benchmark_mode == mentor-handoff ]]; then
+		"${compose[@]}" up --detach --wait control hpatch
+	elif [[ $benchmark_mode == control-only ]]; then
+		"${compose[@]}" up --detach --wait control
+	else
+		if [[ $benchmark_mode == hpatch-only ]]; then
+			import_control_baseline
+		fi
+		"${compose[@]}" up --detach --wait hpatch
+	fi
+	if [[ $benchmark_mode == paired || $benchmark_mode == control-only || $benchmark_mode == mentor-handoff ]]; then
+		qualify_agent_isolation control-agent control 8081 hpatch 8082
+	fi
+	if [[ $benchmark_mode == ctp-only ]]; then
+		qualify_agent_isolation control-agent control 8081 hpatch 8082
+	fi
+	if [[ $benchmark_mode != control-only ]]; then
+		qualify_agent_isolation hpatch-agent hpatch 8082 control 8081
+	fi
+}
+
+run_phase() {
+	local label=$1 start=$SECONDS
+	shift
+	printf 'phase %s: starting\n' "$label"
+	"$@"
+	printf 'phase %s: passed (%ds)\n' "$label" "$((SECONDS - start))"
 }
 
 
@@ -1751,11 +1804,11 @@ mkdir -p "$run_dir/work" "$run_dir/hpatch-config" "$capture_directory" \
 	"$run_dir/hpatch-runtime/control" "$run_dir/hpatch-runtime/hpatch" "$instruction_dir"
 : >"$results"
 
-"${compose[@]}" build --quiet control
-prepare_instructions
+run_phase image-build "${compose[@]}" build control
+run_phase instructions prepare_instructions
 prepare_mentor_prompts
 configure_issue_reporting
-prepare_dependency_cache
+run_phase dependencies prepare_dependency_cache
 printf 'Control base instructions: %s\n' "$control_instruction"
 printf 'Hpatch base instructions: %s\n' "$hpatch_instruction"
 if [[ $benchmark_mode == ctp-only ]]; then
@@ -1768,9 +1821,9 @@ fi
 printf 'Base instruction override source: %s\n' "$instruction_source"
 printf 'Base instruction diff: %s\n' "$instruction_diff"
 
-validate_revision base "$base_commit" fail
+run_phase base-qualification validate_revision base "$base_commit" fail
 if [[ $source_kind == git ]]; then
-	validate_revision oracle "$oracle_commit" pass
+	run_phase oracle-qualification validate_revision oracle "$oracle_commit" pass
 fi
 
 if [[ $prepare_only == true ]]; then
@@ -1778,23 +1831,8 @@ if [[ $prepare_only == true ]]; then
 	exit 0
 fi
 
-started=true
-compose_used=true
-if [[ $benchmark_mode == paired || $benchmark_mode == ctp-only || $benchmark_mode == mentor-handoff ]]; then
-	"${compose[@]}" up --detach --wait control hpatch
-else
-	if [[ $benchmark_mode == hpatch-only ]]; then
-		import_control_baseline
-	fi
-	"${compose[@]}" up --detach --wait hpatch
-fi
-if [[ $benchmark_mode == paired || $benchmark_mode == mentor-handoff ]]; then
-	qualify_agent_isolation control-agent control 8081 hpatch 8082
-fi
-if [[ $benchmark_mode == ctp-only ]]; then
-	qualify_agent_isolation control-agent control 8081 hpatch 8082
-fi
-qualify_agent_isolation hpatch-agent hpatch 8082 control 8081
+run_phase router-isolation start_routers
+
 if [[ $dependency_workspace == "$run_dir"/dependency-source-* ]]; then
 	rm -rf -- "$dependency_workspace"
 	dependency_workspace=
@@ -1812,7 +1850,7 @@ for ((repetition = 1; repetition <= repetitions; repetition += 1)); do
 	elif [[ $benchmark_mode == ctp-only ]]; then
 		run_ctp_block "$repetition" &
 	else
-		run_hpatch_only "$repetition" &
+		run_single_arm "$repetition" &
 	fi
 	worker_pids+=("$!")
 done
@@ -1827,7 +1865,7 @@ merge_results
 expected_results=$((repetitions * 2))
 if [[ $benchmark_mode == hpatch-only ]]; then
 	expected_results=$((repetitions + 1))
-elif [[ $benchmark_mode == hpatch-diagnostic ]]; then
+elif [[ $benchmark_mode == control-only || $benchmark_mode == hpatch-diagnostic ]]; then
 	expected_results=$repetitions
 fi
 if ((${#result_files[@]} != expected_results)); then

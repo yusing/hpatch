@@ -29,7 +29,9 @@ requirements use the capturer's signed end-to-end protocol totals and fail after
 summary when required input or output savings are not positive.
 
 Arm labels are evidence-backed: the validator requires passthrough/native for control,
-Hpatch/native for ordinary Hpatch and native-protocol arms, and Hpatch/CTP2 for the CTP arm.
+Hpatch/native for single-arm Hpatch and native-protocol arms, and Hpatch/CTP2 for the CTP arm.
+Paired treatment uses the protocol retained in benchmark configuration. Control-only starts and
+collects only the stock router and validates its evidence without a treatment or comparison.
 Mentor arms use Hpatch with the shared protocol selected by the retained benchmark configuration,
 native by default. The main model is selected independently of the router-owned child mentor
 schedule; the validator binds treatment children to the configured mentor model, not the main

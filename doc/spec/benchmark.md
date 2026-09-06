@@ -8,11 +8,20 @@ and run the hidden executable grader. Correctness MUST take precedence over perf
 
 Supported modes are:
 
-- `paired`: passthrough control versus Hpatch with alternating order;
+- `paired`: stock passthrough/native control versus Hpatch + CTP/2 with alternating order;
+- `control-only`: exactly one fresh stock passthrough/native attempt, without a treatment router;
 - `hpatch-only`: one fresh Hpatch attempt against an explicitly matching published control result;
 - `hpatch-diagnostic`: one fresh Hpatch attempt without a control arm;
 - `ctp-only`: Hpatch native protocol versus Hpatch CTP/2 with alternating order; and
 - `mentor-handoff`: Hpatch versus Hpatch with the bounded mentor model schedule.
+
+The default preset MUST use `paired`, `gpt-6-astra`, `medium` reasoning effort, and one
+repetition (one attempt per arm), with issue reporting and Mentor Handoff disabled.
+
+Control-only MUST disable issue reporting, collect only control capture and metrics, and validate
+that evidence without requiring or inventing a treatment, Hpatch loop result, or A/B delta.
+Preparation-only MUST qualify the historical base and oracle without invoking a model. The runner
+MUST expose phase elapsed times separately from measured agent wall time.
 
 The control router MUST explicitly disable Mentor Handoff, including when it runs in
 Hpatch mode. CTP-only arms MUST both disable Mentor; only the Mentor treatment enables it.
@@ -49,7 +58,7 @@ For every fresh arm, report generation MUST:
 
 Paired, CTP/2, and Mentor Handoff reports MUST require current baseline and treatment capture plus
 snapshots; a missing, empty, or wrong-schema baseline MUST fail. Hpatch-only and diagnostic modes
-are the only modes that MAY omit a fresh baseline. Each root thread's provider attempts MUST use its
+MAY omit a fresh baseline. Control-only MUST require a fresh baseline and MAY omit treatment evidence. Each root thread's provider attempts MUST use its
 configured parent model. Mentor child traffic MUST match a retained child proof, use only its
 configured child model in the baseline, use only the child or mentor model in the treatment, and
 include at least one mentor-model request in the treatment. Any unproved thread MUST fail validation.
@@ -69,7 +78,8 @@ retries MUST not be counted as new logical requests, retry usage MUST not be dis
 reporting MUST include provider attempts without usage while distinguishing usage-bearing attempts.
 
 The validator MUST bind each arm to its router configuration: `control` is passthrough/native;
-`hpatch` outside Mentor mode and `native` are Hpatch/native; `ctp` is Hpatch/CTP2; and both Mentor
+`hpatch` in paired mode uses the retained `treatment_model_protocol` (native for historical
+records without that field); `hpatch` in single-arm modes and `native` are Hpatch/native; `ctp` is Hpatch/CTP2; and both Mentor
 arms use Hpatch with the shared protocol selected in the retained benchmark configuration (native
 by default). Every raw record
 MUST agree with its snapshot mode and protocol. Self-consistent evidence from the wrong configuration
@@ -122,7 +132,7 @@ Acceptance:
    delivery, and zero capture-health errors, and reject altered aggregate usage, incomplete
    evidence, absent baseline evidence, wrong router mode or protocol, wrong provider models, and
    failed required CTP compression.
-3. Paired, CTP/2, Mentor Handoff, Hpatch-only, and diagnostic scheduling reuse the same capture
+3. Paired, CTP/2, Mentor Handoff, Hpatch-only, control-only, and diagnostic scheduling reuse the same capture
    owner and report schema.
 4. A failed attempt or infrastructure check retains available artifacts, stops task-owned Compose
    resources, and returns nonzero.

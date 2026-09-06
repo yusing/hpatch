@@ -13,17 +13,47 @@ The runner checks its host dependencies. You need Docker Compose, Codex authenti
 
 ## Run it
 
+Default A/B preset: one attempt per arm, `gpt-6-astra` at `medium` effort.
+A is stock passthrough/native; B is Hpatch + CTP/2. Mentor Handoff and issue reporting
+are disabled in both arms. The default task is `etcd-range-stream`.
+
 Default paired run:
 
 ```sh
 bash benchmarks/bench.sh
 ```
 
+For a matching Sol A/B pair, run `MODEL=gpt-5.6-sol bash benchmarks/bench.sh`.
+
+One stock control attempt, with no Hpatch router or treatment attempt:
+
+```sh
+MODEL=gpt-5.6-sol BENCHMARK_MODE=control-only bash benchmarks/bench.sh
+```
+
+`control-only` requires one repetition and issue reporting disabled. Its report validates only
+stock capture and usage; it contains no A/B delta or Hpatch delivery section.
+
+For local preparation and hidden-grader qualification without any model calls:
+
+```sh
+MODEL=gpt-5.6-sol BENCHMARK_MODE=control-only BENCHMARK_PREPARE_ONLY=true \
+  bash benchmarks/bench.sh
+```
+
+Preparation builds the image, prepares dependencies, and proves that the historical base fails
+and oracle passes the hidden grader. It does not run an agent. The runner prints phase elapsed
+times separately from agent wall time; a later measured invocation repeats preparation in its
+own isolated workspace and qualifies router/network isolation before invoking Codex.
+
 One Hpatch attempt against a matching published control:
 
 ```sh
-BENCHMARK_MODE=hpatch-only REPETITIONS=1 bash benchmarks/bench.sh
+MODEL=gpt-5.6-sol BENCHMARK_MODE=hpatch-only REPETITIONS=1 bash benchmarks/bench.sh
 ```
+
+For another model, also set `CONTROL_BASELINE_DIR` to a published control with matching
+model, effort, task, and instruction evidence.
 
 One diagnostic run without a control:
 
@@ -108,7 +138,7 @@ router appends its own sanitized evidence file.
 
 ## What differs between arms
 
-Paired control uses passthrough mode and the pinned stock instructions. Hpatch mode replaces the
+Paired control uses passthrough mode and the pinned stock instructions. The paired treatment enables CTP/2 as well as Hpatch. Hpatch mode replaces the
 supported Code Mode editing owner with Hpatch and shell while preserving unrelated tools. Each arm
 gets a separate workspace and alternates execution order across repetitions.
 
@@ -224,6 +254,7 @@ Synthetic test inputs cover replay mechanics only and are not efficiency evidenc
 bash benchmarks/commentary_coverage_test.sh
 bash benchmarks/expected_final_response_test.sh
 bash benchmarks/report_test.sh
+bash benchmarks/control_only_test.sh
 ```
 
 The commentary fixture covers profile selection, operation and collaboration messages, successful

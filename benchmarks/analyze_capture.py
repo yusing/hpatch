@@ -209,6 +209,11 @@ def validate_snapshot(metrics: dict[str, Any], arm: str, config: dict[str, Any])
         if protocol not in {"native", "ctp2"}:
             raise ValueError("unsupported Mentor benchmark model protocol")
         expected = ("hpatch", protocol)
+    if config.get("benchmark_mode") == "paired" and arm == "hpatch":
+        protocol = config.get("treatment_model_protocol", "native")
+        if protocol not in {"native", "ctp2"}:
+            raise ValueError("unsupported paired benchmark model protocol")
+        expected = ("hpatch", protocol)
     if (metrics.get("mode"), metrics.get("model_protocol")) != expected:
         raise ValueError(f"{arm} capture has the wrong router mode or model protocol")
     exchanges = metrics.get("exchanges")
