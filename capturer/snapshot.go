@@ -148,7 +148,7 @@ func (r *Recorder) snapshot() metricsSnapshot {
 
 func newMetricsSnapshot(mode, modelProtocol string) metricsSnapshot {
 	return metricsSnapshot{
-		Schema:         "hpatch.capture.metrics.v2",
+		Schema:         "hpatch.capture.metrics.v3",
 		Mode:           mode,
 		ModelProtocol:  modelProtocol,
 		ProviderTools:  map[string]toolAggregate{},

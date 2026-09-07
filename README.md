@@ -546,7 +546,9 @@ replace a successful edit, command result, or rejection diagnostic.
 Use `--capture-output PATH` when durable evidence is needed. The file contains
 sanitized JSONL: payload sizes, statuses, provider usage, tool identities, and
 bounded outcome kinds. Raw prompts, scripts, patches, credentials, and full
-diagnostics are discarded after measurement.
+diagnostics are discarded after measurement. Metrics v3/schema-5 captures exclude router-generated
+commentary from model-origin output counts, but retain it in transport totals. Older capture
+versions cannot supply corrected output comparisons; collect fresh evidence.
 
 The executable benchmark requires Docker Compose, Codex authentication, and
 the task's local source under `benchmarks/repos/`. The default task,

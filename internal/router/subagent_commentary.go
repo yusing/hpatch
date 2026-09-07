@@ -11,9 +11,11 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+
+	"github.com/yusing/hpatch/internal/commentaryid"
 )
 
-const subagentCommentaryMessagePrefix = "msg_hpatch_subagent_commentary_"
+const subagentCommentaryMessagePrefix = commentaryid.SubagentPrefix
 
 type subagentPendingCall struct {
 	callID        string

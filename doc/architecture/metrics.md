@@ -19,7 +19,7 @@ Go context. No correlation header crosses either HTTP boundary. Provider retries
 attempt numbers under the same logical request. The wrappers preserve request bytes, response bytes,
 stream flushing, cancellation, status, headers, and response-body ownership.
 
-Raw request and response bodies exist only while one boundary is being measured. Durable schema-4
+Raw request and response bodies exist only while one boundary is being measured. Durable schema-5
 JSONL records contain complete transport lengths, GPT-5 token estimates, one separately measured
 terminal Responses `output` array, statuses, duration, request identity fields
 needed for benchmark reconciliation, the passed provider usage, tool names, tool-call identities, and sanitized
@@ -37,7 +37,11 @@ The snapshot derives:
   invalidated when that final attempt has no usage;
 - complete client and provider transport bytes and GPT-5 token estimates, plus terminal `output`
   arrays measured once independently of SSE event count and echoed response metadata; streaming
-  boundaries rebuild an empty terminal array from finalized output items in protocol index order;
+  boundaries rebuild empty, missing, null, or generated-commentary-only terminal arrays from
+  finalized output items in protocol index order. The capturer excludes only client message items
+  in the router-owned namespaces supplied by `internal/commentaryid`; provider and passthrough
+  items remain exact. This operates on observed bytes without metric callbacks from the router.
+  All generated commentary remains part of complete transport measurement;
 - signed client-versus-final-provider request savings and terminal-output savings;
 - provider-emitted and client-delivered tool shapes;
 - correlated Hpatch calls, corrections, successful and rejected deliveries, unmatched calls,

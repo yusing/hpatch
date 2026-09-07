@@ -41,4 +41,7 @@ projection precedes provider-authored output so it cannot replace a collaboratio
 streaming path does not emit a later standalone usage item for a subagent turn because the Codex
 collaboration runtime selects the last completed assistant item as the child result. The provider
 usage object remains authoritative; the projection remains in the terminal response object and
-does not participate in capture calculations or durable metrics.
+does not participate in model-origin output accounting. It remains present in transport byte
+and token totals. `internal/commentaryid` owns the reserved operation/runtime and subagent/usage
+message ID namespaces shared by rendering, replay, and capture classification; message text and
+phase do not establish generated provenance.

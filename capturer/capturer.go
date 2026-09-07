@@ -22,7 +22,7 @@ import (
 	"github.com/tiktoken-go/tokenizer"
 )
 
-const schemaVersion = 4
+const schemaVersion = 5
 
 // Detailed exchanges are diagnostic evidence rather than the cumulative
 // counters. Keeping a fixed recent window prevents an always-on router from

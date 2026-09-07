@@ -151,7 +151,7 @@ schedule. Parent and child traffic remains visible through actual model names in
 
 ## Capture and metrics
 
-`capturer` records schema-4 JSONL at both boundaries without storing credentials, prompts,
+`capturer` records schema-5 JSONL at both boundaries without storing credentials, prompts,
 instructions, tool arguments, command output, response text, diagnostics, scripts, reports, or
 patches. Records contain sizes, token estimates, status, duration, provider usage, tool identities,
 and sanitized delivery kinds or diagnostic codes. Correlation is process-private Go context; no
@@ -161,7 +161,17 @@ Each response boundary retains at most 8 MiB for parsing while the complete stre
 and byte-counted. Overflow is incomplete evidence. Diagnostic capture accepts only stable allowlisted
 reason codes from a complete router-owned envelope; arbitrary `text(...)` content is discarded.
 
-`GET /api/metrics` returns `hpatch.capture.metrics.v2`. It is authoritative for:
+`GET /api/metrics` returns `hpatch.capture.metrics.v3`. Schema-5 capture records and metrics v3
+exclude router-generated commentary from model-origin output, while transport still includes it.
+Streamed output is rebuilt from finalized items when the terminal array is empty, absent, null,
+or contains only generated commentary. Genuine model commentary is retained, including text
+that resembles token telemetry. Payload estimates are not billed output-token counts.
+
+Older records cannot be repaired from retained counters, since raw output items are not saved.
+Their functional grading and provider usage remain historical evidence, but current comparison
+validation rejects their output-accounting version. Fresh captures are required.
+
+It is authoritative for:
 
 - logical requests and provider retry attempts;
 - provider input, cached input, uncached input, output, and reasoning tokens;

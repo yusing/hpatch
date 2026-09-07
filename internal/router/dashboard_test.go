@@ -20,12 +20,15 @@ func TestDashboardUsesCaptureMetricsOnTheExistingListener(t *testing.T) {
 	for _, required := range []string{
 		"Token<br>Telemetry", "Skip to content", `role="tablist"`, `data-view="overview"`,
 		`id="status-pill"`, `class="cards"`, "prefers-reduced-motion",
-		"fetch('/api/metrics'", "hpatch.capture.metrics.v2", "Provider usage",
+		"fetch('/api/metrics'", "hpatch.capture.metrics.v3", "Provider usage",
 		"Transport", "Protocol savings", "Hpatch delivery", "Hpatch diagnostics",
 		"Capture health", "Tool transport", "Recent exchanges", "Provider attempts",
 		"Provider tool calls", "Delivered tool calls", "Usage-bearing attempts", "Provider input tokens",
 		"Delivered input tokens", "Input bytes", "Item bytes", "response_complete", "Semantic output",
-		"provider_attempt_outputs", "client_final_output", "Provider-attempt outputs",
+		"provider_attempt_outputs", "client_final_output", "Provider-attempt model outputs",
+		"Client model outputs", "<th>Client model output</th>", "<th>Provider model output</th>",
+		"Complete model-origin output arrays", "excludes router-generated commentary",
+		"All observed payload and stream bytes", "Model-output tokens saved",
 		"thread_id", "uncached_input_tokens", "id=\"newer\"", "id=\"older\"",
 	} {
 		if !strings.Contains(body, required) {

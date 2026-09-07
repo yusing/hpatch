@@ -114,7 +114,7 @@ def validate_raw_capture(path: Path, metrics: dict[str, Any]) -> None:
     for record in records:
         boundary = record.get("boundary")
         capture_id = record.get("capture_id")
-        if record.get("schema_version") != 4 or boundary not in {"codex", "provider"}:
+        if record.get("schema_version") != 5 or boundary not in {"codex", "provider"}:
             raise ValueError("capture has an unsupported schema or boundary")
         if record.get("mode") != metrics.get("mode") or record.get("model_protocol") != metrics.get("model_protocol"):
             raise ValueError("raw capture mode or protocol differs from the metrics snapshot")
@@ -199,7 +199,7 @@ def validate_raw_capture(path: Path, metrics: dict[str, Any]) -> None:
 
 
 def validate_snapshot(metrics: dict[str, Any], arm: str, config: dict[str, Any]) -> None:
-    if metrics.get("schema") != "hpatch.capture.metrics.v2":
+    if metrics.get("schema") != "hpatch.capture.metrics.v3":
         raise ValueError("metrics have an unsupported schema")
     expected = EXPECTED_ARM_CONFIG.get(arm)
     if expected is None:

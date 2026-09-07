@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/tiktoken-go/tokenizer"
+	"github.com/yusing/hpatch/internal/commentaryid"
 )
 
 var errDecodedPayloadTooLarge = errors.New("decoded response exceeds capture observation limit")
@@ -46,11 +47,11 @@ func observeResponse(payload []byte, contentType string, record *captureRecord, 
 		observeEvent := func() {
 			if len(dataParts) != 0 {
 				payload := bytes.Join(dataParts, []byte{'\n'})
-				if index, item, ok := completedResponseOutputItem(payload); ok {
+				if index, item, ok := completedResponseOutputItem(payload); ok && !generatedOutputItem(item, record) {
 					completedItems[index] = item
 				}
-				if terminal := observeResponseJSON(payload, record, codec); len(terminal) != 0 {
-					finalOutput = terminal
+				if output, terminal := observeResponseJSON(payload, record, codec); terminal {
+					finalOutput = output
 					terminalOutputObserved = true
 				}
 				dataParts = dataParts[:0]
@@ -91,7 +92,8 @@ func observeResponse(payload []byte, contentType string, record *captureRecord, 
 		}
 		return output
 	}
-	return observeResponseJSON(payload, record, codec)
+	output, _ := observeResponseJSON(payload, record, codec)
+	return output
 }
 
 func completedResponseOutputItem(payload []byte) (int, json.RawMessage, bool) {
@@ -124,9 +126,9 @@ func capturedPayloadLooksLikeSSE(payload []byte) bool {
 	return false
 }
 
-func observeResponseJSON(payload []byte, record *captureRecord, codec tokenizer.Codec) []byte {
+func observeResponseJSON(payload []byte, record *captureRecord, codec tokenizer.Codec) ([]byte, bool) {
 	if len(payload) == 0 || bytes.Equal(payload, []byte("[DONE]")) {
-		return nil
+		return nil, false
 	}
 	var event struct {
 		Type     string          `json:"type"`
@@ -137,7 +139,7 @@ func observeResponseJSON(payload []byte, record *captureRecord, codec tokenizer.
 		if record.CaptureError == "" {
 			record.CaptureError = "invalid response JSON"
 		}
-		return nil
+		return nil, false
 	}
 	if len(event.Item) != 0 {
 		observeOutputItem(event.Item, record, codec)
@@ -146,17 +148,17 @@ func observeResponseJSON(payload []byte, record *captureRecord, codec tokenizer.
 		_, output := observeResponseEnvelope(event.Response, record, codec)
 		switch event.Type {
 		case "response.completed", "response.failed", "response.incomplete":
-			return output
+			return output, true
 		default:
-			return nil
+			return nil, false
 		}
 	}
 	status, output := observeResponseEnvelope(payload, record, codec)
 	switch status {
 	case "completed", "failed", "incomplete", "cancelled":
-		return output
+		return output, true
 	default:
-		return nil
+		return nil, false
 	}
 }
 
@@ -177,11 +179,28 @@ func observeResponseEnvelope(payload []byte, record *captureRecord, codec tokeni
 	if response.Output == nil {
 		return response.Status, nil
 	}
-	output, err := json.Marshal(response.Output)
+	// Remove only router-origin messages, before deciding whether a terminal
+	// array can replace the indexed streamed items. Telemetry alone is not a
+	// complete model output. Transport measurement still sees every byte.
+	outputItems := slices.DeleteFunc(response.Output, func(item json.RawMessage) bool {
+		return generatedOutputItem(item, record)
+	})
+	output, err := json.Marshal(outputItems)
 	if err != nil {
 		return "", nil
 	}
 	return response.Status, output
+}
+
+func generatedOutputItem(payload []byte, record *captureRecord) bool {
+	if record.Boundary != "codex" || record.Mode != "hpatch" {
+		return false
+	}
+	var item struct {
+		Type string `json:"type"`
+		ID   string `json:"id"`
+	}
+	return json.Unmarshal(payload, &item) == nil && item.Type == "message" && commentaryid.Generated(item.ID)
 }
 
 func observeOutputItem(payload []byte, record *captureRecord, codec tokenizer.Codec) {

@@ -257,7 +257,7 @@ ctp_failed=false
 	done
 
 	printf '\n## Protocol transformation\n\n'
-	printf 'Input savings compare each complete client request with its final provider request. Output savings compare only each terminal response output array, excluding echoed tools and other response metadata as well as repeated SSE events. Positive values mean the provider boundary is smaller than the Codex-facing boundary; negative values mean provider-boundary expansion. Retries remain separate provider attempts.\n\n'
+	printf 'Input savings compare each complete client request with its final provider request. Output savings compare complete model-origin output arrays, reconstructed from finalized stream items when needed and excluding router-generated commentary, echoed tools, and other response metadata as well as repeated SSE events. Positive values mean the provider boundary is smaller than the Codex-facing boundary; negative values mean provider-boundary expansion. Retries remain separate provider attempts.\n\n'
 	printf '| Arm | Input bytes saved | Input tokens saved | Output bytes saved | Output tokens saved | Provider attempts |\n'
 	printf '|---|---:|---:|---:|---:|---:|\n'
 	if [[ $has_baseline == true ]]; then
@@ -345,7 +345,7 @@ ctp_failed=false
 	if [[ $has_baseline == true ]]; then print_capture_rows "$baseline_label" "$baseline_metrics"; fi
 	print_capture_rows "$treatment_label" "$treatment_metrics"
 
-	printf '\nThe capturer snapshot is authoritative for calculations. `results.jsonl` is reconciled against per-thread provider usage, and the sanitized schema-4 JSONL in `captures/` is reconciled against snapshot health and exchange totals. The summary contains no request, session, thread, call, or capture identifiers.\n'
+	printf '\nThe capturer snapshot is authoritative for calculations. `results.jsonl` is reconciled against per-thread provider usage, and the sanitized schema-5 JSONL in `captures/` is reconciled against snapshot health and exchange totals. The summary contains no request, session, thread, call, or capture identifiers.\n'
 } >"$temporary"
 
 mv -f -- "$temporary" "$summary"

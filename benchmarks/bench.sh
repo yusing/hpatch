@@ -500,7 +500,7 @@ print_capture_summary() {
 				;;
 			hpatch-mentor|ctp) metrics=$hpatch_metrics ;;
 		esac
-		if [[ ! -s $metrics ]] || ! jq -e '.schema == "hpatch.capture.metrics.v2"' "$metrics" >/dev/null; then
+		if [[ ! -s $metrics ]] || ! jq -e '.schema == "hpatch.capture.metrics.v3"' "$metrics" >/dev/null; then
 			printf 'bench.sh: capture summary unavailable for %s\n' "$arm" >&2
 			continue
 		fi

@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/openai/openai-go/v3/responses"
+	"github.com/yusing/hpatch/internal/commentaryid"
 )
 
 const commentaryArgumentName = "commentary"
@@ -199,7 +200,7 @@ func extractStructuredCommentary(item map[string]json.RawMessage, catalog commen
 
 func commentaryMessageID(seed string) string {
 	digest := sha256.Sum256([]byte(seed))
-	return fmt.Sprintf("msg_hpatch_commentary_%x", digest[:12])
+	return fmt.Sprintf("%s%x", commentaryid.OperationPrefix, digest[:12])
 }
 
 // assistantCommentaryMessage creates an assistant commentary message with the given ID and text.
