@@ -6,7 +6,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
-	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -523,15 +522,17 @@ func executeRequest(
 			return fmt.Errorf("prepare Grok collaboration bridge: %w", err)
 		}
 	}
-	compactTransform, forwardBody, err := compactTokens.prepareRequest(&parsedRequest)
+	nativeBody, err := parsedRequest.wireBody(parsedRequest.fields)
+	if err != nil {
+		return fmt.Errorf("encode native Responses request: %w", err)
+	}
+	capturer.ObserveNativeRequest(ctx, nativeBody)
+	compactTransform, forwardBody, err := compactTokens.prepareRequest(&parsedRequest, nativeBody)
 	if err != nil {
 		return fmt.Errorf("prepare compact token protocol: %w", err)
 	}
 	if forwardBody == nil {
-		forwardBody, err = json.Marshal(parsedRequest.fields)
-		if err != nil {
-			return fmt.Errorf("encode Responses request: %w", err)
-		}
+		forwardBody = nativeBody
 	}
 	finalization.failurePhase = requestFailureForward
 	if err := log.log(ctx, slog.LevelInfo, "forwarding Responses request"); err != nil {

@@ -153,7 +153,7 @@ func renderCarrierDoneEvent(payload []byte, kind codeModeCarrierKind, carrierPay
 	delete(event, "input")
 	delete(event, "arguments")
 	event[carrierPayloadField(kind)] = mustMarshalJSON(carrierPayload)
-	return json.Marshal(event)
+	return marshalProtocolJSON(event)
 }
 
 func shellQuoteArgument(value string) string {

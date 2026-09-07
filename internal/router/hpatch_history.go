@@ -99,7 +99,7 @@ func (p *hpatchProxy) rememberBatch(sessionID string, histories map[string]hpatc
 	}
 	prepared := make(map[string]hpatchHistory, len(histories))
 	for callID, history := range histories {
-		encodedItem, err := json.Marshal(history.upstreamItem)
+		encodedItem, err := marshalProtocolJSON(history.upstreamItem)
 		if err != nil {
 			return fmt.Errorf("encode hpatch history item: %w", err)
 		}
@@ -368,7 +368,7 @@ func (p *hpatchProxy) reconcileInputPrefix(request *parsedResponsesRequest, sess
 		changed = true
 	}
 	if changed {
-		encoded, err := json.Marshal(items)
+		encoded, err := marshalProtocolJSON(items)
 		if err != nil {
 			return fmt.Errorf("encode replayed Responses input: %w", err)
 		}

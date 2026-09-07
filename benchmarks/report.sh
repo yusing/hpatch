@@ -257,25 +257,25 @@ ctp_failed=false
 	done
 
 	printf '\n## Protocol transformation\n\n'
-	printf 'Input savings compare each complete client request with its final provider request. Output savings compare complete model-origin output arrays, reconstructed from finalized stream items when needed and excluding router-generated commentary, echoed tools, and other response metadata as well as repeated SSE events. Positive values mean the provider boundary is smaller than the Codex-facing boundary; negative values mean provider-boundary expansion. Retries remain separate provider attempts.\n\n'
-	printf '| Arm | Input bytes saved | Input tokens saved | Output bytes saved | Output tokens saved | Provider attempts |\n'
+	printf 'Token estimates count decoded JSON keys and scalar values, excluding outer JSON framing and escaping; literal escapes inside content still count. Byte counts retain exact observed bytes. Input savings compare the actual native request AFTER replay and Hpatch projection with its final CTP provider request, not incoming Codex history. Output representation differences compare complete model-origin output arrays, reconstructed from finalized stream items when needed and excluding router-generated commentary, echoed tools, and other response metadata as well as repeated SSE events. Output differences include tool-carrier translation and are not CTP savings or stock-model savings. Positive output differences mean the delivered representation is larger than provider output. Only paired provider usage measures actual model-use differences. Retries remain separate provider attempts.\n\n'
+	printf '| Arm | CTP input bytes saved | CTP input tokens saved | Delivery byte expansion | Delivery token expansion | Provider attempts |\n'
 	printf '|---|---:|---:|---:|---:|---:|\n'
 	if [[ $has_baseline == true ]]; then
 		printf '| %s | %s | %s | %s | %s | %s |\n' "$baseline_label" \
 			"$(metric "$baseline_metrics" '.protocol.input_payload_bytes_saved')" \
 			"$(metric "$baseline_metrics" '.protocol.input_payload_tokens_saved')" \
-			"$(metric "$baseline_metrics" '.protocol.output_payload_bytes_saved')" \
-			"$(metric "$baseline_metrics" '.protocol.output_payload_tokens_saved')" \
+			"$(metric "$baseline_metrics" '.protocol.output_payload_bytes_expansion')" \
+			"$(metric "$baseline_metrics" '.protocol.output_payload_tokens_expansion')" \
 			"$(metric "$baseline_metrics" '.requests.provider_attempts')"
 	fi
 	printf '| %s | %s | %s | %s | %s | %s |\n' "$treatment_label" \
 		"$(metric "$treatment_metrics" '.protocol.input_payload_bytes_saved')" \
 		"$(metric "$treatment_metrics" '.protocol.input_payload_tokens_saved')" \
-		"$(metric "$treatment_metrics" '.protocol.output_payload_bytes_saved')" \
-		"$(metric "$treatment_metrics" '.protocol.output_payload_tokens_saved')" \
+		"$(metric "$treatment_metrics" '.protocol.output_payload_bytes_expansion')" \
+		"$(metric "$treatment_metrics" '.protocol.output_payload_tokens_expansion')" \
 		"$(metric "$treatment_metrics" '.requests.provider_attempts')"
 
-	printf '\n### Observed payloads\n\n'
+	printf '\n### Observed content-token estimates\n\n'
 	printf '| Arm | Client requests | Provider requests | Provider response streams | Client response streams | Provider outputs | Client outputs |\n'
 	printf '|---|---:|---:|---:|---:|---:|---:|\n'
 	for row in treatment ${has_baseline/true/baseline}; do
@@ -296,9 +296,9 @@ ctp_failed=false
 	for row in "${ctp_rows[@]}"; do
 		if [[ $row == baseline ]]; then label=$baseline_label; metrics=$baseline_metrics; else label=$treatment_label; metrics=$treatment_metrics; fi
 		ctp_input_saved=$(metric "$metrics" '.protocol.input_payload_tokens_saved')
-		ctp_output_saved=$(metric "$metrics" '.protocol.output_payload_tokens_saved')
+		ctp_output_saved=$(metric "$metrics" '.protocol.output_text_tokens_saved')
 		printf '\n### CTP/2 acceptance: %s\n\n' "$label"
-		printf 'Configured input compression uses complete request payloads; output compression uses one capturer-owned terminal output array per boundary.\n\n'
+		printf 'Input compression uses the post-replay native request versus its CTP encoding. Output compression uses only assistant output_text, excluding tool-carrier translation.\n\n'
 		printf '| Direction | Required | Tokens saved | Result |\n|---|---|---:|---|\n'
 		input_result='not required'; output_result='not required'
 		if [[ $require_ctp_input_compression == true ]]; then
@@ -332,7 +332,7 @@ ctp_failed=false
 			'Successful deliveries:.hpatch.successful' 'Rejected deliveries:.hpatch.rejected' \
 			'Unmatched calls:.hpatch.unmatched' 'Provider Hpatch input tokens:.hpatch.provider_input_tokens' \
 			'Delivered carrier input tokens:.hpatch.delivered_input_tokens' \
-			'Carrier input tokens saved:.hpatch.input_tokens_saved'; do
+			'Carrier token expansion:.hpatch.carrier_input_tokens_expansion'; do
 			label=${spec%%:*}; expression=${spec#*:}
 			printf '| %s | %s |\n' "$label" "$(metric "$treatment_metrics" "$expression")"
 		done
@@ -345,7 +345,7 @@ ctp_failed=false
 	if [[ $has_baseline == true ]]; then print_capture_rows "$baseline_label" "$baseline_metrics"; fi
 	print_capture_rows "$treatment_label" "$treatment_metrics"
 
-	printf '\nThe capturer snapshot is authoritative for calculations. `results.jsonl` is reconciled against per-thread provider usage, and the sanitized schema-5 JSONL in `captures/` is reconciled against snapshot health and exchange totals. The summary contains no request, session, thread, call, or capture identifiers.\n'
+	printf '\nThe capturer snapshot is authoritative for calculations. `results.jsonl` is reconciled against per-thread provider usage, and the sanitized schema-6 JSONL in `captures/` is reconciled against snapshot health and exchange totals. The summary contains no request, session, thread, call, or capture identifiers.\n'
 } >"$temporary"
 
 mv -f -- "$temporary" "$summary"

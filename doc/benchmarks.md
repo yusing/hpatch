@@ -151,7 +151,7 @@ schedule. Parent and child traffic remains visible through actual model names in
 
 ## Capture and metrics
 
-`capturer` records schema-5 JSONL at both boundaries without storing credentials, prompts,
+`capturer` records schema-6 JSONL at both boundaries without storing credentials, prompts,
 instructions, tool arguments, command output, response text, diagnostics, scripts, reports, or
 patches. Records contain sizes, token estimates, status, duration, provider usage, tool identities,
 and sanitized delivery kinds or diagnostic codes. Correlation is process-private Go context; no
@@ -161,11 +161,15 @@ Each response boundary retains at most 8 MiB for parsing while the complete stre
 and byte-counted. Overflow is incomplete evidence. Diagnostic capture accepts only stable allowlisted
 reason codes from a complete router-owned envelope; arbitrary `text(...)` content is discarded.
 
-`GET /api/metrics` returns `hpatch.capture.metrics.v3`. Schema-5 capture records and metrics v3
+`GET /api/metrics` returns `hpatch.capture.metrics.v4`. Schema-6 capture records and metrics v4
 exclude router-generated commentary from model-origin output, while transport still includes it.
 Streamed output is rebuilt from finalized items when the terminal array is empty, absent, null,
 or contains only generated commentary. Genuine model commentary is retained, including text
 that resembles token telemetry. Payload estimates are not billed output-token counts.
+
+Local token estimates count decoded JSON keys and scalar values, not outer JSON framing or escaping. Literal escapes inside content still count. Transport bytes remain exact, and provider usage remains authoritative. Metrics v4/schema-6 evidence is required for this counting contract.
+
+Replay restores provider-native calls before CTP measurement. Input savings compare that actual projected request with its encoded request. Output compression measures assistant text only; whole-output and carrier differences are delivery expansion, not stock-model savings.
 
 Older records cannot be repaired from retained counters, since raw output items are not saved.
 Their functional grading and provider usage remain historical evidence, but current comparison

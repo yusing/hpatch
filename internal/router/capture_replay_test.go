@@ -1,0 +1,153 @@
+package router
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/yusing/hpatch/capturer"
+)
+
+type captureReplayProvider struct {
+	client *http.Client
+	url    string
+}
+
+func (p captureReplayProvider) forwardExecution(ctx, _ context.Context, body []byte, _ http.Header, _ string) (*http.Response, error) {
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, p.url+"/responses", bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	return p.client.Do(request)
+}
+
+func TestCaptureRequestBaselineAfterHPatchReplay(t *testing.T) {
+	for _, protocol := range []string{"native", "ctp2"} {
+		t.Run(protocol, func(t *testing.T) {
+			recorder, err := capturer.New(capturer.Config{Mode: "hpatch", ModelProtocol: protocol})
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = recorder.Close() })
+			var forwarded [][]byte
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				body, _ := io.ReadAll(r.Body)
+				forwarded = append(forwarded, body)
+				w.Header().Set("Content-Type", "application/json")
+				output := []any{testHPatchItem()}
+				if len(forwarded) > 1 {
+					output = []any{}
+				}
+				_, _ = w.Write(mustTestJSON(t, map[string]any{"status": "completed", "output": output}))
+			}))
+			t.Cleanup(upstream.Close)
+			provider := captureReplayProvider{client: &http.Client{Transport: recorder.Transport(http.DefaultTransport)}, url: upstream.URL}
+			proxy := newManagedHPatchProxy(t, testTranslator(t, new(int)))
+			var codec *ctp2Codec
+			if protocol == "ctp2" {
+				codec = mustCTP2Codec(t)
+			}
+			headers := serverMetadataHeaders(t, "turn", map[string]json.RawMessage{t.TempDir(): nil})
+			handler := recorder.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				body, _ := io.ReadAll(r.Body)
+				parsed, err := parseResponsesRequest(body)
+				if err != nil {
+					t.Error(err)
+					return
+				}
+				w.Header().Set("Content-Type", "application/json")
+				if err := executeRequest(r.Context(), r.Context(), parsed, headers, "capture-replay", provider, w, newDiagnostics(io.Discard), time.Now, proxy, codec, nil); err != nil {
+					t.Error(err)
+				}
+			}))
+			initial := serverRequest(t, func(fields map[string]any) { fields["instructions"] = stockModelInstructionsForTest("", "") })
+			first := httptest.NewRecorder()
+			handler.ServeHTTP(first, httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(initial.originalBody)))
+			var response struct {
+				Output []json.RawMessage `json:"output"`
+			}
+			if err := json.Unmarshal(first.Body.Bytes(), &response); err != nil {
+				t.Fatal(err)
+			}
+			var carrier json.RawMessage
+			for _, item := range response.Output {
+				var obj map[string]json.RawMessage
+				_ = json.Unmarshal(item, &obj)
+				if jsonString(obj, "type") == "custom_tool_call" {
+					carrier = item
+				}
+			}
+			if carrier == nil {
+				t.Fatal("missing delivered carrier")
+			}
+			next := serverRequest(t, func(fields map[string]any) {
+				fields["instructions"] = stockModelInstructionsForTest("", "")
+				fields["input"] = append(fields["input"].([]any), carrier, map[string]any{"type": "custom_tool_call_output", "call_id": "call-H", "output": strings.Repeat("repeated result text with enough exact words; ", 24)})
+			})
+			second := httptest.NewRecorder()
+			handler.ServeHTTP(second, httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(next.originalBody)))
+			if len(forwarded) != 2 {
+				t.Fatalf("provider requests %d", len(forwarded))
+			}
+			var envelope struct {
+				Input []map[string]json.RawMessage `json:"input"`
+			}
+			_ = json.Unmarshal(forwarded[1], &envelope)
+			restored := false
+			for _, item := range envelope.Input {
+				if jsonString(item, "name") == "hpatch" {
+					restored = true
+				}
+			}
+			if !restored {
+				t.Fatal("provider history did not restore original hpatch call")
+			}
+			metrics := httptest.NewRecorder()
+			recorder.ServeHTTP(metrics, httptest.NewRequest(http.MethodGet, "/api/metrics", nil))
+			var snapshot struct {
+				Protocol struct {
+					Input int64 `json:"input_payload_tokens_saved"`
+				} `json:"protocol"`
+				Capture struct {
+					Errors int `json:"capture_errors"`
+				} `json:"capture"`
+				Exchanges []struct {
+					Client struct {
+						Tokens int64 `json:"tokens"`
+					} `json:"client_request"`
+					Attempts []struct {
+						Native struct {
+							Tokens int64 `json:"tokens"`
+						} `json:"native_request"`
+						Request struct {
+							Tokens int64 `json:"tokens"`
+						} `json:"request"`
+					} `json:"provider_attempts"`
+				} `json:"exchanges"`
+			}
+			if err := json.Unmarshal(metrics.Body.Bytes(), &snapshot); err != nil {
+				t.Fatal(err)
+			}
+			var expected int64
+			var differs bool
+			for _, exchange := range snapshot.Exchanges {
+				for _, attempt := range exchange.Attempts {
+					expected += attempt.Native.Tokens - attempt.Request.Tokens
+					differs = differs || exchange.Client.Tokens != attempt.Native.Tokens
+				}
+			}
+			if !differs || snapshot.Protocol.Input != expected || snapshot.Capture.Errors != 0 {
+				t.Fatalf("replay baseline = %+v, expected %d", snapshot, expected)
+			}
+			if protocol == "native" && expected != 0 {
+				t.Fatalf("replay incorrectly counted as compression: %d", expected)
+			}
+		})
+	}
+}

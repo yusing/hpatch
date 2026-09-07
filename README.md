@@ -574,9 +574,13 @@ replace a successful edit, command result, or rejection diagnostic.
 Use `--capture-output PATH` when durable evidence is needed. The file contains
 sanitized JSONL: payload sizes, statuses, provider usage, tool identities, and
 bounded outcome kinds. Raw prompts, scripts, patches, credentials, and full
-diagnostics are discarded after measurement. Metrics v3/schema-5 captures exclude router-generated
+diagnostics are discarded after measurement. Metrics v4/schema-6 captures exclude router-generated
 commentary from model-origin output counts, but retain it in transport totals. Older capture
 versions cannot supply corrected output comparisons; collect fresh evidence.
+
+Local token estimates count decoded JSON keys and scalar values, not outer JSON framing or escaping. Literal escapes inside content still count. Transport bytes remain exact, and provider usage remains authoritative. Metrics v4/schema-6 evidence is required for this counting contract.
+
+Request compression is measured after replay and Hpatch projection, not against incoming Codex history. Delivery expansion is reported separately from assistant-text compression and authoritative paired provider usage.
 
 The executable benchmark requires Docker Compose, Codex authentication, and
 the task's local source under `benchmarks/repos/`. The default task,

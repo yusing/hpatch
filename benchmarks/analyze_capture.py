@@ -114,7 +114,7 @@ def validate_raw_capture(path: Path, metrics: dict[str, Any]) -> None:
     for record in records:
         boundary = record.get("boundary")
         capture_id = record.get("capture_id")
-        if record.get("schema_version") != 5 or boundary not in {"codex", "provider"}:
+        if record.get("schema_version") != 6 or boundary not in {"codex", "provider"}:
             raise ValueError("capture has an unsupported schema or boundary")
         if record.get("mode") != metrics.get("mode") or record.get("model_protocol") != metrics.get("model_protocol"):
             raise ValueError("raw capture mode or protocol differs from the metrics snapshot")
@@ -158,6 +158,7 @@ def validate_raw_capture(path: Path, metrics: dict[str, Any]) -> None:
             payload(front.get("request")) != payload(exchange.get("client_request"))
             or payload(front.get("response")) != payload(exchange.get("client_response"))
             or payload(front.get("final_output")) != payload(exchange.get("client_final_output"))
+            or payload(front.get("final_text")) != payload(exchange.get("client_final_text"))
             or front.get("tool_calls", []) != exchange.get("delivered_tools", [])
         ):
             raise ValueError("raw client measurements differ from the metrics exchange")
@@ -172,8 +173,10 @@ def validate_raw_capture(path: Path, metrics: dict[str, Any]) -> None:
                 raise ValueError("raw provider usage differs from the metrics exchange")
             if (
                 payload(raw.get("request")) != payload(measured.get("request"))
+                or payload(raw.get("native_request")) != payload(measured.get("native_request"))
                 or payload(raw.get("response")) != payload(measured.get("response"))
                 or payload(raw.get("final_output")) != payload(measured.get("final_output"))
+                or payload(raw.get("final_text")) != payload(measured.get("final_text"))
                 or raw.get("tool_calls", []) != measured.get("tools", [])
             ):
                 raise ValueError("raw provider measurements differ from the metrics exchange")
@@ -199,7 +202,7 @@ def validate_raw_capture(path: Path, metrics: dict[str, Any]) -> None:
 
 
 def validate_snapshot(metrics: dict[str, Any], arm: str, config: dict[str, Any]) -> None:
-    if metrics.get("schema") != "hpatch.capture.metrics.v3":
+    if metrics.get("schema") != "hpatch.capture.metrics.v4":
         raise ValueError("metrics have an unsupported schema")
     expected = EXPECTED_ARM_CONFIG.get(arm)
     if expected is None:
@@ -257,8 +260,9 @@ def validate_calculations(metrics: dict[str, Any], exchanges: list[dict[str, Any
     protocol = {
         "input_payload_tokens_saved": 0,
         "input_payload_bytes_saved": 0,
-        "output_payload_tokens_saved": 0,
-        "output_payload_bytes_saved": 0,
+        "output_payload_tokens_expansion": 0,
+        "output_text_tokens_saved": 0,
+        "output_payload_bytes_expansion": 0,
     }
     provider_tools: dict[str, dict[str, int]] = {}
     delivered_tools: dict[str, dict[str, int]] = {}
@@ -272,7 +276,7 @@ def validate_calculations(metrics: dict[str, Any], exchanges: list[dict[str, Any
         "unmatched": 0,
         "provider_input_tokens": 0,
         "delivered_input_tokens": 0,
-        "input_tokens_saved": 0,
+        "carrier_input_tokens_expansion": 0,
     }
     diagnostics: dict[str, int] = defaultdict(int)
 
@@ -304,6 +308,11 @@ def validate_calculations(metrics: dict[str, Any], exchanges: list[dict[str, Any
                 raise ValueError("provider attempt must be an object")
             if not isinstance(attempt.get("model"), str) or not attempt["model"]:
                 raise ValueError("provider attempt is missing its actual model")
+            if not isinstance(attempt.get("native_request"), dict):
+                raise ValueError("missing post-replay native request observation")
+            native_request = payload(attempt["native_request"])
+            if metrics.get("model_protocol") == "native" and native_request != payload(attempt.get("request")):
+                raise ValueError("native protocol changed the post-replay request")
             published_attempt_usage = attempt.get("usage")
             parsed_attempt_usage = None
             if published_attempt_usage is not None:
@@ -367,14 +376,15 @@ def validate_calculations(metrics: dict[str, Any], exchanges: list[dict[str, Any
 
         if attempts:
             final = attempts[-1]
-            client_request = payload(exchange.get("client_request"))
+            native_request = payload(final["native_request"])
             provider_request = payload(final.get("request"))
             client_output = payload(exchange.get("client_final_output"))
             provider_output = payload(final.get("final_output"))
-            protocol["input_payload_bytes_saved"] += client_request["bytes"] - provider_request["bytes"]
-            protocol["input_payload_tokens_saved"] += client_request["tokens"] - provider_request["tokens"]
-            protocol["output_payload_bytes_saved"] += client_output["bytes"] - provider_output["bytes"]
-            protocol["output_payload_tokens_saved"] += client_output["tokens"] - provider_output["tokens"]
+            protocol["input_payload_bytes_saved"] += native_request["bytes"] - provider_request["bytes"]
+            protocol["input_payload_tokens_saved"] += native_request["tokens"] - provider_request["tokens"]
+            protocol["output_text_tokens_saved"] += payload(exchange.get("client_final_text"))["tokens"] - payload(final.get("final_text"))["tokens"]
+            protocol["output_payload_bytes_expansion"] += client_output["bytes"] - provider_output["bytes"]
+            protocol["output_payload_tokens_expansion"] += client_output["tokens"] - provider_output["tokens"]
 
     if metrics.get("requests") != requests:
         raise ValueError("request totals do not reconcile exchanges")
@@ -389,7 +399,7 @@ def validate_calculations(metrics: dict[str, Any], exchanges: list[dict[str, Any
     if metrics.get("provider_tools") != provider_tools or metrics.get("delivered_tools") != delivered_tools:
         raise ValueError("tool aggregates do not reconcile exchanges")
 
-    hpatch["input_tokens_saved"] = hpatch["delivered_input_tokens"] - hpatch["provider_input_tokens"]
+    hpatch["carrier_input_tokens_expansion"] = hpatch["delivered_input_tokens"] - hpatch["provider_input_tokens"]
     published_hpatch = metrics.get("hpatch")
     if not isinstance(published_hpatch, dict):
         raise ValueError("metrics are missing Hpatch calculations")

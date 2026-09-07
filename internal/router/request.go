@@ -8,10 +8,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"strings"
 )
 
 type parsedResponsesRequest struct {
+	originalBody   []byte
+	originalFields map[string]json.RawMessage
 	fields         map[string]json.RawMessage
 	streamResponse bool
 	toolCatalog    *responsesToolCatalog
@@ -79,7 +82,7 @@ func (r parsedResponsesRequest) modelDescription() string {
 
 // setModelAndReasoningEffort updates the model and reasoning effort fields in the request.
 func (r *parsedResponsesRequest) setModelAndReasoningEffort(model, effort string) error {
-	encodedModel, err := json.Marshal(model)
+	encodedModel, err := marshalProtocolJSON(model)
 	if err != nil {
 		return fmt.Errorf("encode model: %w", err)
 	}
@@ -89,12 +92,12 @@ func (r *parsedResponsesRequest) setModelAndReasoningEffort(model, effort string
 			return errors.New("reasoning must be an object")
 		}
 	}
-	encodedEffort, err := json.Marshal(effort)
+	encodedEffort, err := marshalProtocolJSON(effort)
 	if err != nil {
 		return fmt.Errorf("encode reasoning effort: %w", err)
 	}
 	reasoning["effort"] = encodedEffort
-	encodedReasoning, err := json.Marshal(reasoning)
+	encodedReasoning, err := marshalProtocolJSON(reasoning)
 	if err != nil {
 		return fmt.Errorf("encode reasoning: %w", err)
 	}
@@ -141,7 +144,7 @@ func parseResponsesRequest(body []byte) (parsedResponsesRequest, error) {
 	if backgroundResponse {
 		return parsedResponsesRequest{}, errors.New("background Responses requests are not supported")
 	}
-	return parsedResponsesRequest{fields: request, streamResponse: streamResponse}, nil
+	return parsedResponsesRequest{fields: request, streamResponse: streamResponse, originalBody: body, originalFields: maps.Clone(request)}, nil
 }
 
 // readResponsesRequest reads and validates a Responses request body from a reader.

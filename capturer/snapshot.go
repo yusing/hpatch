@@ -59,15 +59,15 @@ type toolAggregate struct {
 }
 
 type hpatchMetrics struct {
-	Calls                uint64            `json:"calls"`
-	Corrections          uint64            `json:"corrections"`
-	Successful           uint64            `json:"successful"`
-	Rejected             uint64            `json:"rejected"`
-	Unmatched            uint64            `json:"unmatched"`
-	ProviderInputTokens  uint64            `json:"provider_input_tokens"`
-	DeliveredInputTokens uint64            `json:"delivered_input_tokens"`
-	InputTokensSaved     int64             `json:"input_tokens_saved"`
-	Diagnostics          map[string]uint64 `json:"diagnostics,omitempty"`
+	Calls                       uint64            `json:"calls"`
+	Corrections                 uint64            `json:"corrections"`
+	Successful                  uint64            `json:"successful"`
+	Rejected                    uint64            `json:"rejected"`
+	Unmatched                   uint64            `json:"unmatched"`
+	ProviderInputTokens         uint64            `json:"provider_input_tokens"`
+	DeliveredInputTokens        uint64            `json:"delivered_input_tokens"`
+	CarrierInputTokensExpansion int64             `json:"carrier_input_tokens_expansion"`
+	Diagnostics                 map[string]uint64 `json:"diagnostics,omitempty"`
 }
 
 type captureHealth struct {
@@ -82,10 +82,11 @@ type captureHealth struct {
 }
 
 type protocolMetrics struct {
-	InputPayloadTokensSaved  int64 `json:"input_payload_tokens_saved"`
-	InputPayloadBytesSaved   int64 `json:"input_payload_bytes_saved"`
-	OutputPayloadTokensSaved int64 `json:"output_payload_tokens_saved"`
-	OutputPayloadBytesSaved  int64 `json:"output_payload_bytes_saved"`
+	InputPayloadTokensSaved      int64 `json:"input_payload_tokens_saved"`
+	InputPayloadBytesSaved       int64 `json:"input_payload_bytes_saved"`
+	OutputTextTokensSaved        int64 `json:"output_text_tokens_saved"`
+	OutputPayloadTokensExpansion int64 `json:"output_payload_tokens_expansion"`
+	OutputPayloadBytesExpansion  int64 `json:"output_payload_bytes_expansion"`
 }
 
 type providerAttemptMetrics struct {
@@ -95,8 +96,10 @@ type providerAttemptMetrics struct {
 	ResponseComplete bool              `json:"response_complete"`
 	Usage            *usageMetrics     `json:"usage,omitempty"`
 	Request          payloadMetrics    `json:"request"`
+	NativeRequest    *payloadMetrics   `json:"native_request,omitempty"`
 	Response         payloadMetrics    `json:"response"`
 	FinalOutput      payloadMetrics    `json:"final_output,omitzero"`
+	FinalText        payloadMetrics    `json:"final_text,omitzero"`
 	Tools            []toolCallMetrics `json:"tools,omitempty"`
 }
 
@@ -109,6 +112,7 @@ type exchangeMetrics struct {
 	Usage             *usageMetrics            `json:"usage,omitempty"`
 	ClientRequest     payloadMetrics           `json:"client_request"`
 	ClientResponse    payloadMetrics           `json:"client_response"`
+	ClientFinalText   payloadMetrics           `json:"client_final_text,omitzero"`
 	ClientFinalOutput payloadMetrics           `json:"client_final_output,omitzero"`
 	DeliveredTools    []toolCallMetrics        `json:"delivered_tools,omitempty"`
 }
@@ -148,7 +152,7 @@ func (r *Recorder) snapshot() metricsSnapshot {
 
 func newMetricsSnapshot(mode, modelProtocol string) metricsSnapshot {
 	return metricsSnapshot{
-		Schema:         "hpatch.capture.metrics.v3",
+		Schema:         "hpatch.capture.metrics.v4",
 		Mode:           mode,
 		ModelProtocol:  modelProtocol,
 		ProviderTools:  map[string]toolAggregate{},
@@ -173,8 +177,8 @@ func (r *Recorder) addExchange(front captureRecord, state *requestState, provide
 	exchange := exchangeMetrics{
 		Sequence: front.RequestSequence, ThreadID: front.ThreadID,
 		Status: front.ResponseStatus, ClientRequest: front.Request, ClientResponse: front.Response,
-		ClientFinalOutput: front.FinalOutput,
-		DeliveredTools:    slices.Clone(front.ToolCalls),
+		ClientFinalOutput: front.FinalOutput, ClientFinalText: front.FinalText,
+		DeliveredTools: slices.Clone(front.ToolCalls),
 	}
 	var exchangeUsage usageMetrics
 	var providerTools []toolCallMetrics
@@ -198,7 +202,8 @@ func (r *Recorder) addExchange(front captureRecord, state *requestState, provide
 		attempt := providerAttemptMetrics{
 			Attempt: provider.ProviderAttempt, Model: provider.RequestModel, Status: provider.ResponseStatus,
 			ResponseComplete: provider.ResponseComplete,
-			Request:          provider.Request, Response: provider.Response, FinalOutput: provider.FinalOutput,
+			NativeRequest:    provider.NativeRequest,
+			Request:          provider.Request, Response: provider.Response, FinalOutput: provider.FinalOutput, FinalText: provider.FinalText,
 			Tools: slices.Clone(provider.ToolCalls),
 		}
 		if provider.RequestModel != "" {
@@ -218,10 +223,13 @@ func (r *Recorder) addExchange(front captureRecord, state *requestState, provide
 	if len(providers) != 0 {
 		final := providers[len(providers)-1]
 		r.recordCacheObservation(state, final.Usage)
-		r.metrics.Protocol.InputPayloadTokensSaved += signedDifference(front.Request.Tokens, final.Request.Tokens)
-		r.metrics.Protocol.InputPayloadBytesSaved += signedDifference(front.Request.Bytes, final.Request.Bytes)
-		r.metrics.Protocol.OutputPayloadTokensSaved += signedDifference(front.FinalOutput.Tokens, final.FinalOutput.Tokens)
-		r.metrics.Protocol.OutputPayloadBytesSaved += signedDifference(front.FinalOutput.Bytes, final.FinalOutput.Bytes)
+		if final.NativeRequest != nil {
+			r.metrics.Protocol.InputPayloadTokensSaved += signedDifference(final.NativeRequest.Tokens, final.Request.Tokens)
+			r.metrics.Protocol.InputPayloadBytesSaved += signedDifference(final.NativeRequest.Bytes, final.Request.Bytes)
+		}
+		r.metrics.Protocol.OutputTextTokensSaved += signedDifference(front.FinalText.Tokens, final.FinalText.Tokens)
+		r.metrics.Protocol.OutputPayloadTokensExpansion += signedDifference(front.FinalOutput.Tokens, final.FinalOutput.Tokens)
+		r.metrics.Protocol.OutputPayloadBytesExpansion += signedDifference(front.FinalOutput.Bytes, final.FinalOutput.Bytes)
 	} else {
 		r.recordCacheObservation(state, nil)
 	}
@@ -407,5 +415,5 @@ func addHPatch(total *hpatchMetrics, provider, delivered []toolCallMetrics) {
 			}
 		}
 	}
-	total.InputTokensSaved = signedDifference(total.DeliveredInputTokens, total.ProviderInputTokens)
+	total.CarrierInputTokensExpansion = signedDifference(total.DeliveredInputTokens, total.ProviderInputTokens)
 }

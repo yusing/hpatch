@@ -674,7 +674,11 @@ func replayCTP2Snapshots(codec *ctp2Codec, snapshots []ctpReplaySnapshot) (ctpRe
 	for _, snapshot := range snapshots {
 		native := snapshot.Fields
 		request := parsedResponsesRequest{fields: snapshot.Fields}
-		transform, _, err := codec.prepareRequest(&request)
+		nativeWire, err := request.wireBody(request.fields)
+		if err != nil {
+			return ctpReplayTotals{}, err
+		}
+		transform, _, err := codec.prepareRequest(&request, nativeWire)
 		if err != nil {
 			return ctpReplayTotals{}, err
 		}

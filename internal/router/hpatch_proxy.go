@@ -901,7 +901,7 @@ func stripCodeModeExecCommandContract(description string) (string, string, bool,
 }
 
 func mustMarshalJSON(value any) json.RawMessage {
-	encoded, err := json.Marshal(value)
+	encoded, err := marshalProtocolJSON(value)
 	if err != nil {
 		panic(err)
 	}
@@ -1484,7 +1484,7 @@ func (t *hpatchResponseTransform) TransformSSE(payload []byte) ([][]byte, error)
 		}
 		kind := history.effectiveCarrierKind()
 		addedItem.renderCarrier(kind, history.carrierName, "")
-		itemPayload, err := json.Marshal(addedItem)
+		itemPayload, err := marshalProtocolJSON(addedItem)
 		if err != nil {
 			return nil, err
 		}
@@ -1569,7 +1569,7 @@ func (t *hpatchResponseTransform) TransformSSE(payload []byte) ([][]byte, error)
 				return nil, errors.New("decode buffered commentary call")
 			}
 			addedItem["arguments"] = item.fields["arguments"]
-			addedPayload, err := json.Marshal(addedItem)
+			addedPayload, err := marshalProtocolJSON(addedItem)
 			if err != nil {
 				return nil, err
 			}
@@ -1581,7 +1581,7 @@ func (t *hpatchResponseTransform) TransformSSE(payload []byte) ([][]byte, error)
 			if err != nil {
 				return nil, err
 			}
-			itemPayload, err := json.Marshal(item)
+			itemPayload, err := marshalProtocolJSON(item)
 			if err != nil {
 				return nil, err
 			}
@@ -1617,7 +1617,7 @@ func (t *hpatchResponseTransform) TransformSSE(payload []byte) ([][]byte, error)
 			return [][]byte{payload}, nil
 		}
 		delete(t.pending, itemID)
-		transformed, err := json.Marshal(item)
+		transformed, err := marshalProtocolJSON(item)
 		if err != nil {
 			return nil, err
 		}
@@ -1686,7 +1686,7 @@ func (t *hpatchResponseTransform) TransformSSE(payload []byte) ([][]byte, error)
 		if err != nil {
 			return nil, err
 		}
-		transformed, err := json.Marshal(object)
+		transformed, err := marshalProtocolJSON(object)
 		if err != nil {
 			return nil, err
 		}
@@ -1776,7 +1776,7 @@ func (t *hpatchResponseTransform) transformResponse(payload []byte) ([]byte, map
 			}
 			transformedOutput = append(transformedOutput, item.fields)
 		}
-		encoded, err := json.Marshal(transformedOutput)
+		encoded, err := marshalProtocolJSON(transformedOutput)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -1789,7 +1789,7 @@ func (t *hpatchResponseTransform) transformResponse(payload []byte) ([]byte, map
 			return nil, nil, err
 		}
 	}
-	transformed, err := json.Marshal(object)
+	transformed, err := marshalProtocolJSON(object)
 	return transformed, usageMessage, err
 }
 
@@ -1888,5 +1888,5 @@ func replaceRawField(payload []byte, name string, value json.RawMessage) ([]byte
 		return nil, errors.New("decode stream event")
 	}
 	object[name] = value
-	return json.Marshal(object)
+	return marshalProtocolJSON(object)
 }

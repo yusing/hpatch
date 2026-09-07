@@ -145,10 +145,10 @@ func TestRecorderObservesSingleListenerAndProviderRetries(t *testing.T) {
 		snapshot.HPatch.Calls != 1 || snapshot.HPatch.Successful != 1 || snapshot.HPatch.Rejected != 0 ||
 		snapshot.HPatch.ProviderInputTokens != second.ToolCalls[0].InputTokens ||
 		snapshot.HPatch.DeliveredInputTokens != front.ToolCalls[0].InputTokens ||
-		snapshot.Protocol.InputPayloadTokensSaved != signedDifference(front.Request.Tokens, second.Request.Tokens) ||
+		snapshot.Protocol.InputPayloadTokensSaved != 0 ||
 		snapshot.Semantic.ClientOutputs.Tokens != front.FinalOutput.Tokens ||
 		snapshot.Semantic.ProviderAttemptOutputs.Tokens != second.FinalOutput.Tokens ||
-		snapshot.Protocol.OutputPayloadTokensSaved != signedDifference(front.FinalOutput.Tokens, second.FinalOutput.Tokens) ||
+		snapshot.Protocol.OutputPayloadTokensExpansion != signedDifference(front.FinalOutput.Tokens, second.FinalOutput.Tokens) ||
 		snapshot.Capture.Records != 3 || snapshot.Capture.CaptureErrors != 0 || snapshot.Capture.Incomplete != 0 ||
 		snapshot.Capture.MissingProvider != 0 || snapshot.Capture.AttemptGaps != 0 {
 		t.Fatalf("snapshot = %#v", snapshot)
@@ -359,7 +359,7 @@ func TestSnapshotAccountsCacheCorrectionsDiagnosticsAndMissingEvidence(t *testin
 		snapshot.Cache.EligiblePrefixCachedTokens != 80 || snapshot.Cache.EligiblePrefixMissTokens != 20 ||
 		snapshot.Cache.EligiblePrefixCacheRate == nil || *snapshot.Cache.EligiblePrefixCacheRate != 0.8 ||
 		snapshot.HPatch.Calls != 1 || snapshot.HPatch.Corrections != 1 || snapshot.HPatch.Rejected != 1 ||
-		snapshot.HPatch.Diagnostics["row-stale"] != 1 || snapshot.HPatch.InputTokensSaved != 6 ||
+		snapshot.HPatch.Diagnostics["row-stale"] != 1 || snapshot.HPatch.CarrierInputTokensExpansion != 6 ||
 		snapshot.Capture.MissingProvider != 1 {
 		t.Fatalf("snapshot = %#v", snapshot)
 	}
@@ -415,8 +415,8 @@ func TestSnapshotUsesTerminalOutputOnceInsteadOfWholeSSEStream(t *testing.T) {
 	want := signedDifference(clientOutputMetrics.Tokens, providerOutputMetrics.Tokens)
 	raw := signedDifference(exchange.ClientResponse.Tokens, provider.Response.Tokens)
 	if exchange.ClientFinalOutput != clientOutputMetrics || provider.FinalOutput != providerOutputMetrics ||
-		snapshot.Protocol.OutputPayloadTokensSaved != want || snapshot.Protocol.OutputPayloadTokensSaved == raw {
-		t.Fatalf("semantic protocol = %d, want %d; raw stream difference = %d; snapshot %#v", snapshot.Protocol.OutputPayloadTokensSaved, want, raw, snapshot)
+		snapshot.Protocol.OutputPayloadTokensExpansion != want || snapshot.Protocol.OutputPayloadTokensExpansion == raw {
+		t.Fatalf("semantic protocol = %d, want %d; raw stream difference = %d; snapshot %#v", snapshot.Protocol.OutputPayloadTokensExpansion, want, raw, snapshot)
 	}
 	if snapshot.Usage.OutputTokens != 4 || snapshot.Usage.ProviderAttempts != 1 {
 		t.Fatalf("provider usage = %#v", snapshot.Usage)

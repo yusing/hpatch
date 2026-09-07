@@ -40,6 +40,7 @@ func decodedCapturePayload(payload []byte, contentEncoding string) ([]byte, erro
 
 func observeResponse(payload []byte, contentType string, record *captureRecord, codec tokenizer.Codec) []byte {
 	if strings.Contains(strings.ToLower(contentType), "text/event-stream") || capturedPayloadLooksLikeSSE(payload) {
+		payload = bytes.TrimPrefix(payload, []byte{0xef, 0xbb, 0xbf})
 		var dataParts [][]byte
 		var finalOutput []byte
 		terminalOutputObserved := false
@@ -218,7 +219,7 @@ func observeOutputItem(payload []byte, record *captureRecord, codec tokenizer.Co
 	callID := cmp.Or(item.CallID, item.ID)
 	input := cmp.Or(item.Input, item.Arguments)
 	inputTokens, inputErr := codec.Count(input)
-	itemTokens, itemErr := codec.Count(string(payload))
+	itemTokens, itemErr := contentTokens(payload, codec)
 	if inputErr != nil || itemErr != nil || inputTokens < 0 || itemTokens < 0 || callID == "" || item.Name == "" {
 		return
 	}

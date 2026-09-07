@@ -74,7 +74,7 @@ func (tool *responsesToolDefinition) MarshalJSON() ([]byte, error) {
 	if tool == nil || tool.fields == nil {
 		return []byte("null"), nil
 	}
-	return json.Marshal(tool.fields)
+	return marshalProtocolJSON(tool.fields)
 }
 
 // setDescription updates the tool description in both the field and the underlying map.
@@ -202,7 +202,7 @@ func (c *responsesToolCatalog) removeTop(index int) {
 
 // encodeTop encodes the top-level tools back into the request fields.
 func (c *responsesToolCatalog) encodeTop(fields map[string]json.RawMessage) error {
-	encoded, err := json.Marshal(c.top.tools)
+	encoded, err := marshalProtocolJSON(c.top.tools)
 	if err != nil {
 		return err
 	}
@@ -217,7 +217,7 @@ func (c *responsesToolCatalog) encodeAdditional(fields map[string]json.RawMessag
 			if node == nil || node.nested != section {
 				continue
 			}
-			encoded, err := json.Marshal(section.tools)
+			encoded, err := marshalProtocolJSON(section.tools)
 			if err != nil {
 				return err
 			}
@@ -225,17 +225,17 @@ func (c *responsesToolCatalog) encodeAdditional(fields map[string]json.RawMessag
 			break
 		}
 	}
-	encodedTools, err := json.Marshal(group.tools.tools)
+	encodedTools, err := marshalProtocolJSON(group.tools.tools)
 	if err != nil {
 		return err
 	}
 	group.item["tools"] = encodedTools
-	encodedItem, err := json.Marshal(group.item)
+	encodedItem, err := marshalProtocolJSON(group.item)
 	if err != nil {
 		return err
 	}
 	c.inputItems[group.itemIndex] = encodedItem
-	encodedInput, err := json.Marshal(c.inputItems)
+	encodedInput, err := marshalProtocolJSON(c.inputItems)
 	if err != nil {
 		return err
 	}

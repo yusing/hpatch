@@ -97,15 +97,10 @@ func newCTP2Codec() (*ctp2Codec, error) {
 	return &ctp2Codec{tokens: tokens}, nil
 }
 
-func (c *ctp2Codec) prepareRequest(request *parsedResponsesRequest) (*ctp2ResponseTransform, []byte, error) {
+func (c *ctp2Codec) prepareRequest(request *parsedResponsesRequest, nativeBody []byte) (*ctp2ResponseTransform, []byte, error) {
 	if c == nil {
 		return nil, nil, nil
 	}
-	nativeBody, err := json.Marshal(request.fields)
-	if err != nil {
-		return nil, nil, fmt.Errorf("encode native CTP/2 request: %w", err)
-	}
-
 	transformed := maps.Clone(request.fields)
 	view, err := decodeCTP2RequestView(transformed, request.responseTools())
 	if err != nil {
@@ -164,7 +159,7 @@ func (c *ctp2Codec) prepareRequest(request *parsedResponsesRequest) (*ctp2Respon
 		return nil, nativeBody, nil
 	}
 
-	compactBody, err := json.Marshal(transformed)
+	compactBody, err := request.wireBody(transformed)
 	if err != nil {
 		return nil, nativeBody, nil
 	}
@@ -252,10 +247,10 @@ func decodeResponsesInput(raw json.RawMessage) (responsesInput, error) {
 // encode marshals the responsesInput back to JSON.
 func (input responsesInput) encode() (json.RawMessage, error) {
 	if input.text != nil {
-		return json.Marshal(*input.text)
+		return marshalProtocolJSON(*input.text)
 	}
 	if input.array {
-		return json.Marshal(input.items)
+		return marshalProtocolJSON(input.items)
 	}
 	return bytes.Clone(input.raw), nil
 }
@@ -473,7 +468,7 @@ func encodeResponsesTextParts(parts []responsesTextPart) (json.RawMessage, error
 	for index := range parts {
 		values[index] = parts[index].raw
 	}
-	return json.Marshal(values)
+	return marshalProtocolJSON(values)
 }
 
 // isCTP2TextPart reports whether a type name is any CTP/2 text part.
@@ -495,14 +490,14 @@ func isCTP2AssistantTextPart(typeName string) bool {
 func projectCTP2AdditionalTools(group *responsesAdditionalTools, transform func(string) string) (json.RawMessage, error) {
 	item := maps.Clone(group.item)
 	if !group.tools.present {
-		return json.Marshal(item)
+		return marshalProtocolJSON(item)
 	}
 	tools, err := projectCTP2ToolSection(group.tools, transform)
 	if err != nil {
 		return nil, err
 	}
 	item["tools"] = tools
-	return json.Marshal(item)
+	return marshalProtocolJSON(item)
 }
 
 // projectCTP2ToolSection transforms a tool section for CTP/2.
@@ -527,13 +522,13 @@ func projectCTP2ToolSection(section *responsesToolSection, transform func(string
 			}
 			tool["tools"] = nested
 		}
-		encoded, err := json.Marshal(tool)
+		encoded, err := marshalProtocolJSON(tool)
 		if err != nil {
 			return nil, err
 		}
 		definitions[index] = encoded
 	}
-	return json.Marshal(definitions)
+	return marshalProtocolJSON(definitions)
 }
 
 // sectionRawTools returns the raw tools JSON from a section.
@@ -693,7 +688,7 @@ func (c *ctp2Codec) stringDefinitions(value string) ([]ctp2Definition, error) {
 		if occurrences < 2 {
 			continue
 		}
-		quoted, _ := json.Marshal(candidate.value)
+		quoted, _ := marshalProtocolJSON(candidate.value)
 		definitionTokens, err := c.tokens.Count("0=" + string(quoted) + "\n")
 		if err != nil {
 			return nil, fmt.Errorf("estimate CTP/2 definition: %w", err)
@@ -883,8 +878,7 @@ func encodeCTP2LiteralString(value string) string {
 
 func (c *ctp2Codec) encodeContentLocalString(value string) (string, int, error) {
 	literal := encodeCTP2LiteralString(value)
-	literalJSON, _ := json.Marshal(literal)
-	literalTokens, err := c.count(literalJSON)
+	literalTokens, err := c.count([]byte(literal))
 	if err != nil {
 		return "", 0, err
 	}
@@ -913,8 +907,7 @@ func (c *ctp2Codec) encodeContentLocalString(value string) (string, int, error) 
 	}
 	dictionary := renderCTP2Dictionary(definitions)
 	compact := dictionary + encoded
-	compactJSON, _ := json.Marshal(compact)
-	compactTokens, err := c.count(compactJSON)
+	compactTokens, err := c.count([]byte(compact))
 	if err != nil {
 		return "", 0, err
 	}
@@ -935,7 +928,7 @@ func renderCTP2Dictionary(definitions []ctp2Definition) string {
 	var dictionary strings.Builder
 	dictionary.WriteString(ctp2DictionaryTag)
 	for _, definition := range definitions {
-		encoded, _ := json.Marshal(definition.value)
+		encoded, _ := marshalProtocolJSON(definition.value)
 		fmt.Fprintf(&dictionary, "%s=%s\n", definition.id, encoded)
 	}
 	dictionary.WriteString(ctp2DictionaryEnd)
@@ -966,8 +959,7 @@ func (e *ctp2VisibleLineEncoder) encodeString(locator, value string) (string, er
 	if err != nil || references == 0 {
 		return local, err
 	}
-	visibleJSON, _ := json.Marshal(visible)
-	visibleTokens, err := e.codec.count(visibleJSON)
+	visibleTokens, err := e.codec.count([]byte(visible))
 	if err != nil {
 		return "", err
 	}
@@ -1019,16 +1011,15 @@ func (e *ctp2VisibleLineEncoder) encode(lines []string) (string, int, error) {
 }
 
 func (e *ctp2VisibleLineEncoder) visibleReferenceProfitable(reference string, lines []string) (bool, error) {
-	referenceJSON, _ := json.Marshal(ctp2VisibleLinesTag + reference)
+	referenceText := ctp2VisibleLinesTag + reference
 	var literal strings.Builder
 	literal.WriteString(ctp2VisibleLinesTag)
 	writeCTP2VisibleLiteral(&literal, lines)
-	literalJSON, _ := json.Marshal(literal.String())
-	referenceTokens, err := e.codec.count(referenceJSON)
+	referenceTokens, err := e.codec.count([]byte(referenceText))
 	if err != nil {
 		return false, err
 	}
-	literalTokens, err := e.codec.count(literalJSON)
+	literalTokens, err := e.codec.count([]byte(literal.String()))
 	if err != nil {
 		return false, err
 	}
@@ -1102,7 +1093,7 @@ func writeCTP2VisibleLiteral(compact *strings.Builder, lines []string) {
 	if len(lines) == 0 {
 		return
 	}
-	encoded, _ := json.Marshal(strings.Join(lines, ""))
+	encoded, _ := marshalProtocolJSON(strings.Join(lines, ""))
 	compact.WriteByte('+')
 	compact.Write(encoded)
 	compact.WriteByte('\n')
@@ -1340,7 +1331,7 @@ func (t *ctp2ResponseTransform) transformJSON(payload []byte) ([]byte, error) {
 		}
 		response["output"] = mustMarshalJSON(output)
 	}
-	encoded, err := json.Marshal(response)
+	encoded, err := marshalProtocolJSON(response)
 	if err != nil {
 		return nil, err
 	}
@@ -1390,7 +1381,7 @@ func (t *ctp2ResponseTransform) TransformSSE(payload []byte) (transformed [][]by
 			event["response"] = decoded
 		}
 	}
-	encoded, err := json.Marshal(event)
+	encoded, err := marshalProtocolJSON(event)
 	if err != nil {
 		return nil, err
 	}

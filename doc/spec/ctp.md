@@ -49,7 +49,7 @@ Candidate scoring charges the dictionary line, every reference, the reference ta
 token for the definition and for each reference. Candidates are ordered by remaining saving, then
 readable boundaries, byte length, and bytewise value. At each byte position the encoder prefers the
 longest selected definition. Definitions used fewer than twice after overlap resolution are removed.
-The string uses its compact form only when its complete JSON-string token estimate is strictly
+The string uses its compact form only when its complete decoded-string token estimate is strictly
 smaller than its literal form.
 
 ### Visible prior-output lines
@@ -133,3 +133,12 @@ signed protocol savings include expansion and do not claim provider cache or bil
 11. Malformed or ambiguous compact output fails honestly, and decoded-size limits fail before
     downstream translation.
 12. Metrics account for every considered request and bounded observation without retaining text.
+
+### Request wire preservation
+
+Stock passthrough MUST forward the validated original request bytes unchanged. Hpatch and CTP/2
+MUST preserve the received top-level envelope and untouched field values; only projected fields
+and newly added fields are written. A projected field with unchanged decoded content MUST retain
+its original spelling. Router-generated protocol JSON MUST disable HTML escaping of `<`, `>`,
+and `&`. Changed content still requires JSON encoding; incoming literal escape text is not rewritten.
+CTP/2 profitability MUST compare decoded model-visible strings rather than outer JSON escaping.

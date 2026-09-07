@@ -3,7 +3,7 @@
 ## CTR-METRICS-001 — Capture-owned metrics
 
 The root `capturer` subpackage is the sole owner of request correlation, payload measurement,
-provider-usage metrics, cache attribution, protocol savings, transported-tool accounting, Hpatch
+provider-usage metrics, cache attribution, representation differences, transported-tool accounting, Hpatch
 delivery accounting, capture health, durable capture records, and the structured metrics snapshot.
 The router's terminal-payload seam parses provider usage once and passes the resulting counts to
 the capturer, Mentor Handoff, and user-only usage commentary.
@@ -19,7 +19,7 @@ Go context. No correlation header crosses either HTTP boundary. Provider retries
 attempt numbers under the same logical request. The wrappers preserve request bytes, response bytes,
 stream flushing, cancellation, status, headers, and response-body ownership.
 
-Raw request and response bodies exist only while one boundary is being measured. Durable schema-5
+Raw request and response bodies exist only while one boundary is being measured. Durable schema-6
 JSONL records contain complete transport lengths, GPT-5 token estimates, one separately measured
 terminal Responses `output` array (or reconstructed Chat Completions assistant-message array), statuses, duration, request identity fields
 needed for benchmark reconciliation, the passed provider usage, tool names, tool-call identities, and sanitized
@@ -42,21 +42,26 @@ The snapshot derives:
   in the router-owned namespaces supplied by `internal/commentaryid`; provider and passthrough
   items remain exact. This operates on observed bytes without metric callbacks from the router.
   All generated commentary remains part of complete transport measurement;
-- signed client-versus-final-provider request savings and terminal-output savings;
+- signed post-replay-native-versus-final-provider CTP request savings, assistant-text CTP savings,
+  and separately labeled complete-output delivery expansion;
 - provider-emitted and client-delivered tool shapes;
 - correlated Hpatch calls, corrections, successful and rejected deliveries, unmatched calls,
-  diagnostic codes, and signed Hpatch-versus-delivered-carrier input savings;
+  diagnostic codes, and signed Hpatch-versus-delivered-carrier input expansion (not stock-model savings);
 - a bounded recent window of per-exchange provider attempts and usage, with complete cumulative
   process totals and explicit dropped-detail health; and
 - capture, completeness, boundary, sequence, write, and skipped-request health.
 
 Router, edit-engine, CTP, registry, and plugin production code implement behavior only. They do not
-maintain benchmark baselines, synthetic stock commands or results, gain counters, metric callbacks,
+maintain hypothetical stock baselines, synthetic stock commands or results, gain counters, metric callbacks,
 persistence slots, session metric histories, dashboard-owned calculations, or metric-only
 classifier events.
-The router passes usage as request-scoped observation data without receiving metric callbacks.
+The router passes usage and the actual post-replay, post-Hpatch, pre-CTP request as request-scoped
+observation data without receiving metric callbacks. The capturer measures the latter immediately
+and retains only sizes. Native-only forwarding supplies the same request as its own baseline.
 Mentor and commentary remain operational consumers, not metrics sources.
 
 Capture failure is auxiliary after startup: it cannot alter an edit, command, translated response,
 or provider result. Failure to initialize an explicitly requested capture output prevents startup,
 because silently omitting requested evidence would make a benchmark invalid.
+
+Local token estimates count decoded JSON keys and scalar values, not outer JSON framing or escaping. Literal escapes inside content still count. Transport bytes remain exact, and provider usage remains authoritative. Metrics v4/schema-6 evidence is required for this counting contract.

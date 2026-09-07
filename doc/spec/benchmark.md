@@ -55,7 +55,7 @@ agents.
 
 For every fresh arm, report generation MUST:
 
-1. require `hpatch.capture.metrics.v3` and schema-5 sanitized records;
+1. require `hpatch.capture.metrics.v4` and schema-6 sanitized records;
 2. reject empty capture, capture errors, incomplete records, boundary mismatches, duplicate client
    records, missing provider records, attempt gaps, write failures, skipped requests, and dropped
    exchange detail;
@@ -156,3 +156,5 @@ Acceptance:
 6. Local replay tests prove sample ordering is independent of recorded token counts, frozen bytes
    and identities round-trip, missing or altered samples reject, and freezing never overwrites an
    existing destination. Synthetic fixtures validate these mechanics, not compression efficiency.
+
+CTP input acceptance uses the captured post-replay native request, never incoming client history. CTP output acceptance uses assistant output_text savings, never tool-carrier delivery expansion. Paired provider usage is the only actual model-consumption comparison.

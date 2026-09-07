@@ -28,7 +28,7 @@ func TestCTP2RequestUsesContentLocalDictionaries(t *testing.T) {
 		}}),
 	}}
 
-	transform, _, err := codec.prepareRequest(&request)
+	transform, _, err := prepareCTP2TestRequest(t, codec, &request)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -85,7 +85,7 @@ func TestCTP2RequestPreservesProviderOwnedInputFields(t *testing.T) {
 		}),
 	}}
 
-	transform, _, err := codec.prepareRequest(&request)
+	transform, _, err := prepareCTP2TestRequest(t, codec, &request)
 	if err != nil || transform == nil {
 		t.Fatalf("transform = %#v, err = %v", transform, err)
 	}
@@ -140,7 +140,7 @@ func TestCTP2RequestUsesCatalogForAdditionalToolDescriptions(t *testing.T) {
 		}}),
 	}}
 
-	transform, _, err := codec.prepareRequest(&request)
+	transform, _, err := prepareCTP2TestRequest(t, codec, &request)
 	if err != nil || transform == nil {
 		t.Fatalf("transform = %#v, err = %v", transform, err)
 	}
@@ -170,7 +170,7 @@ func TestCTP2MalformedAdditionalToolsDoNotDisableOtherEncoding(t *testing.T) {
 		}),
 	}}
 
-	transform, _, err := codec.prepareRequest(&request)
+	transform, _, err := prepareCTP2TestRequest(t, codec, &request)
 	if err != nil || transform == nil {
 		t.Fatalf("transform = %#v, err = %v", transform, err)
 	}
@@ -195,7 +195,7 @@ func TestCTP2PreservesNonStringToolDescriptions(t *testing.T) {
 		}),
 	}}
 
-	transform, _, err := codec.prepareRequest(&request)
+	transform, _, err := prepareCTP2TestRequest(t, codec, &request)
 	if err != nil || transform == nil {
 		t.Fatalf("transform = %#v, err = %v", transform, err)
 	}
@@ -222,7 +222,7 @@ func TestCTP2RequestUsesVisiblePriorToolOutputLines(t *testing.T) {
 		}),
 	}}
 
-	transform, _, err := codec.prepareRequest(&request)
+	transform, _, err := prepareCTP2TestRequest(t, codec, &request)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -253,7 +253,7 @@ func TestCTP2VisibleReferencesStayUniqueAfterRegisteringLaterSources(t *testing.
 		}),
 	}}
 
-	transform, _, err := codec.prepareRequest(&request)
+	transform, _, err := prepareCTP2TestRequest(t, codec, &request)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -280,7 +280,7 @@ func TestCTP2VisiblePrefixIsStableWhenHistoryAppends(t *testing.T) {
 			"instructions": mustTestJSON(t, "decode CTP/2 here"),
 			"input":        mustTestJSON(t, input),
 		}}
-		if transform, _, err := codec.prepareRequest(&request); err != nil || transform == nil {
+		if transform, _, err := prepareCTP2TestRequest(t, codec, &request); err != nil || transform == nil {
 			t.Fatalf("prepare transform = %#v, err = %v", transform, err)
 		}
 		var items []json.RawMessage
@@ -309,7 +309,7 @@ func TestCTP2MissingInstructionCarrierStaysNative(t *testing.T) {
 		"type": "message", "role": "user", "content": strings.Repeat("repeat me ", 30),
 	}})
 	request := parsedResponsesRequest{fields: map[string]json.RawMessage{"input": native}}
-	transform, body, err := codec.prepareRequest(&request)
+	transform, body, err := prepareCTP2TestRequest(t, codec, &request)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -327,7 +327,7 @@ func TestCTP2DeveloperCarrierRemainsNative(t *testing.T) {
 			map[string]any{"type": "message", "role": "user", "content": repeated},
 		}),
 	}}
-	transform, _, err := codec.prepareRequest(&request)
+	transform, _, err := prepareCTP2TestRequest(t, codec, &request)
 	if err != nil || transform == nil {
 		t.Fatalf("transform = %#v, err = %v", transform, err)
 	}
@@ -353,7 +353,7 @@ func TestCTP2MultipartDeveloperCarrierEncodesSiblingText(t *testing.T) {
 			},
 		}}),
 	}}
-	transform, _, err := codec.prepareRequest(&request)
+	transform, _, err := prepareCTP2TestRequest(t, codec, &request)
 	if err != nil || transform == nil {
 		t.Fatalf("transform = %#v, err = %v", transform, err)
 	}
@@ -634,4 +634,13 @@ func (c failingCTP2Tokenizer) Encode(value string) ([]uint, []string, error) {
 		return nil, nil, errors.New("injected encode failure")
 	}
 	return c.Codec.Encode(value)
+}
+
+func prepareCTP2TestRequest(t testing.TB, codec *ctp2Codec, request *parsedResponsesRequest) (*ctp2ResponseTransform, []byte, error) {
+	t.Helper()
+	native, err := request.wireBody(request.fields)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return codec.prepareRequest(request, native)
 }

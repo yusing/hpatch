@@ -58,7 +58,7 @@ func (item responsesItem) MarshalJSON() ([]byte, error) {
 	if item.fields == nil {
 		return []byte("null"), nil
 	}
-	return json.Marshal(item.fields)
+	return marshalProtocolJSON(item.fields)
 }
 
 func (item *responsesItem) UnmarshalJSON(raw []byte) error {

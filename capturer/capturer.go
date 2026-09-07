@@ -22,7 +22,7 @@ import (
 	"github.com/tiktoken-go/tokenizer"
 )
 
-const schemaVersion = 5
+const schemaVersion = 6
 
 // Detailed exchanges are diagnostic evidence rather than the cumulative
 // counters. Keeping a fixed recent window prevents an always-on router from
@@ -89,6 +89,7 @@ type captureRecord struct {
 	Subagent         string            `json:"subagent,omitempty"`
 	RequestModel     string            `json:"request_model,omitempty"`
 	Request          payloadMetrics    `json:"request"`
+	NativeRequest    *payloadMetrics   `json:"native_request,omitempty"`
 	RequestTools     []string          `json:"request_tools,omitempty"`
 	StatusCode       int               `json:"status_code"`
 	ResponseComplete bool              `json:"response_complete"`
@@ -97,6 +98,7 @@ type captureRecord struct {
 	ToolCalls        []toolCallMetrics `json:"tool_calls,omitempty"`
 	Response         payloadMetrics    `json:"response"`
 	FinalOutput      payloadMetrics    `json:"final_output,omitzero"`
+	FinalText        payloadMetrics    `json:"final_text,omitzero"`
 	CaptureError     string            `json:"capture_error,omitempty"`
 	DurationMillis   uint64            `json:"duration_ms"`
 	CapturedAt       time.Time         `json:"captured_at"`
@@ -117,18 +119,21 @@ type Recorder struct {
 }
 
 type requestState struct {
-	mu               sync.Mutex
-	captureID        string
-	sequence         uint64
-	providerAttempts uint64
-	requestID        string
-	sessionID        string
-	threadID         string
-	subagent         string
-	providers        []captureRecord
-	providerUsage    map[uint64]ProviderUsage
-	cacheReady       bool
-	cacheUsage       *usageMetrics
+	recorder           *Recorder
+	nativeRequest      *payloadMetrics
+	nativeRequestError bool
+	mu                 sync.Mutex
+	captureID          string
+	sequence           uint64
+	providerAttempts   uint64
+	requestID          string
+	sessionID          string
+	threadID           string
+	subagent           string
+	providers          []captureRecord
+	providerUsage      map[uint64]ProviderUsage
+	cacheReady         bool
+	cacheUsage         *usageMetrics
 }
 
 // ObserveProviderUsage supplies the provider-authoritative usage parsed by the
@@ -148,6 +153,21 @@ func ObserveProviderUsage(ctx context.Context, usage ProviderUsage) {
 		state.providerUsage = make(map[uint64]ProviderUsage)
 	}
 	state.providerUsage[state.providerAttempts] = usage
+}
+
+// ObserveNativeRequest supplies the actual request after replay/tool projection
+// and before CTP encoding. Measurement is capture-owned; no raw body is retained.
+// It is observation only and cannot fail or change the routed operation.
+func ObserveNativeRequest(ctx context.Context, body []byte) {
+	state, ok := ctx.Value(captureKey{}).(*requestState)
+	if !ok {
+		return
+	}
+	measured, err := state.recorder.measure(body)
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	state.nativeRequest = &measured
+	state.nativeRequestError = err != nil
 }
 
 // New creates one in-process recorder. It never starts a server.
@@ -253,6 +273,7 @@ func (r *Recorder) beginRequest(header http.Header) (*requestState, error) {
 	}
 	state := &requestState{
 		captureID: captureID,
+		recorder:  r,
 		requestID: header.Get("x-client-request-id"),
 		sessionID: cmp.Or(header.Get("session-id"), header.Get("Session_id")),
 		threadID:  header.Get("thread-id"),
@@ -327,6 +348,26 @@ func (r *Recorder) recordExchange(state *requestState, boundary string, attempt 
 	} else {
 		record.Request = measured
 	}
+	if boundary == "provider" {
+		state.mu.Lock()
+		if state.nativeRequest != nil {
+			baseline := *state.nativeRequest
+			record.NativeRequest = &baseline
+		}
+		baselineError := state.nativeRequestError
+		state.mu.Unlock()
+		if baselineError {
+			record.CaptureError = "measure native request"
+		}
+		if record.NativeRequest == nil {
+			if r.modelProtocol == "ctp2" {
+				record.CaptureError = "missing native request observation"
+			} else {
+				baseline := record.Request
+				record.NativeRequest = &baseline
+			}
+		}
+	}
 	var requestEnvelope struct {
 		Model    string            `json:"model"`
 		Messages json.RawMessage   `json:"messages"`
@@ -369,6 +410,11 @@ func (r *Recorder) recordExchange(state *requestState, boundary string, attempt 
 						record.CaptureError = "measure final output payload"
 					} else {
 						record.FinalOutput = finalMeasured
+						if textMetrics, textErr := measureOutputText(finalOutput, r.codec); textErr != nil {
+							record.CaptureError = "measure output text"
+						} else {
+							record.FinalText = textMetrics
+						}
 					}
 				}
 			}
@@ -391,7 +437,7 @@ func (r *Recorder) recordExchange(state *requestState, boundary string, attempt 
 }
 
 func (r *Recorder) measure(payload []byte) (payloadMetrics, error) {
-	count, err := r.codec.Count(string(payload))
+	count, err := contentTokens(payload, r.codec)
 	if err != nil {
 		return payloadMetrics{}, err
 	}

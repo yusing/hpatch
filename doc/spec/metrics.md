@@ -4,7 +4,7 @@
 
 `hpatch-router` MUST create one in-process capturer and MUST keep one HTTP listener. The same listener
 MUST serve `POST /v1/responses`, `GET /v1/models`, and `GET /api/metrics`. Enabling
-`--capture-output PATH` MUST append sanitized schema-5 JSONL records at `PATH`; it MUST NOT start or
+`--capture-output PATH` MUST append sanitized schema-6 JSONL records at `PATH`; it MUST NOT start or
 require a capturer service, listener, proxy, or network hop.
 
 The same listener MUST serve a human-readable dashboard at `GET /`. The dashboard MUST consume the
@@ -29,9 +29,11 @@ A durable record MUST contain only:
 - schema version, boundary, private capture identity, logical sequence, and provider attempt;
 - mode, model protocol, provider request model, and benchmark correlation fields already supplied
   by Codex;
-- complete transport payload byte and GPT-5 token counts plus the terminal Responses `output` array measured once;
+- complete transport byte counts and framing-independent GPT-5 content estimates plus the terminal Responses `output` array measured once;
 - HTTP and Responses status, completeness, duration, and a bounded capture-error category;
 - provider usage counters;
+- the measured `native_request` after history replay/tool projection and before CTP, on provider records;
+- decoded assistant `final_text` sizes, separate from complete output arrays;
 - request tool names; and
 - tool name, call identity, byte/token sizes, sanitized delivered kind, and an allowlisted stable
   diagnostic reason parsed from the complete router-owned diagnostic envelope.
@@ -39,7 +41,7 @@ A durable record MUST contain only:
 It MUST NOT contain authorization material, prompts, instructions, message content, tool arguments,
 command output, response text, script text, patches, reports, or diagnostics beyond the stable code.
 
-`GET /api/metrics` MUST return `hpatch.capture.metrics.v3`. Its calculations MUST be made by the
+`GET /api/metrics` MUST return `hpatch.capture.metrics.v4`. Its calculations MUST be made by the
 capturer, not by the router, engine, plugin, benchmark report, or dashboard. The snapshot MUST expose:
 
 1. logical request and provider-attempt counts, including completed and failed logical requests;
@@ -60,20 +62,31 @@ capturer, not by the router, engine, plugin, benchmark report, or dashboard. The
    model-origin output in `output_index` order from finalized `response.output_item.done` items,
    excluding generated commentary there as well. A missing terminal event MUST NOT be treated as a
    completed output;
-5. signed input byte and token savings between each client request and the final provider request,
-   plus signed output savings between their complete model-origin `output` arrays, excluding generated commentary, echoed tools, and all
+5. signed CTP input byte and token savings between the actual post-replay, post-Hpatch native
+   request and its final provider request, never between raw client history and provider input,
+   plus signed delivery expansion between their complete model-origin `output` arrays, excluding generated commentary, echoed tools, and all
    other response metadata, so repeated SSE framing and response metadata remain transport evidence
-   rather than model-output savings and negative provider-boundary expansion remains visible;
+   rather than model-output savings. Tool translation is delivery expansion, not CTP compression
+   or a hypothetical stock-model saving. Separate `output_text_tokens_saved` MUST compare only
+   decoded assistant `output_text` strings, excluding tool calls and reasoning;
 6. provider-emitted and client-delivered tool aggregates;
 7. Hpatch call, correction, success, rejection, unmatched, diagnostic, provider-input,
-   delivered-carrier-input, and signed saved-input totals;
+   delivered-carrier-input, and signed delivered-carrier input expansion, not stock-model savings;
 8. a bounded recent window of per-logical-request exchanges containing every provider attempt and
    its usage, while cumulative totals remain process-lifetime totals; and
 9. capture health for record failures, incomplete records, missing provider records,
    provider-attempt gaps, durable-write errors, skipped requests, and dropped exchange detail.
 
-Provider usage is authoritative for model consumption. Payload token counts include the serialized representation of model-origin items (including opaque
-reasoning fields when present), not generated-token billing. They are reproducible GPT-5 estimates used only for exact observed transport or terminal-output comparisons. The Hpatch comparison MUST pair the
+Provider usage is authoritative for model consumption. Local token estimates MUST count decoded
+JSON object keys and scalar values independently, excluding JSON punctuation, field ordering,
+whitespace, and string-escape spelling. Equivalent numeric spellings MUST normalize without losing
+precision. Arrays retain every element. Strings containing code or JSON remain literal content:
+backslashes and escapes inside that content still count. SSE estimates count each decoded event's
+content, not event/data framing; repeated events remain stream evidence, not final model output.
+Non-JSON text is counted as literal text. Transport byte counts MUST remain exact observed bytes.
+These reproducible GPT-5 content estimates include envelope and opaque reasoning values when
+present; they MUST NOT be labeled as exact provider input or billed generated tokens.
+The Hpatch comparison MUST pair the
 actual provider-emitted Hpatch call with the actual delivered native carrier by tool-call identity;
 it MUST NOT synthesize an `apply_patch`, `exec_command`, shell command, or stock result.
 
@@ -106,6 +119,15 @@ Acceptance:
 7. Arbitrary or malformed `text(...)` carrier content never becomes a durable diagnostic, and a
    response larger than the observation bound preserves delivery while failing capture health.
 
-Schema-5 records and metrics v3 identify this output-accounting contract. Older records cannot be
+Schema-6 records and metrics v4 identify this content-token and output-accounting contract. Older records cannot be
 reinterpreted as corrected measurements because they do not retain the raw output items; benchmark
 validation MUST reject them as current comparison evidence.
+
+JSON whitespace, key order, and equivalent string escaping MUST leave all content estimates unchanged while observed bytes may differ. Literal model-visible escape sequences MUST retain their token cost.
+
+The router supplies the actual native request at the projection seam as observation data. The
+capturer owns its measurement, discards the bytes immediately, and correlates the sizes with each
+provider attempt. Missing CTP baseline observation MUST mark capture incomplete, never fall back to
+client history. Native-only forwarding uses the forwarded request as the identical baseline.
+Only paired authoritative provider usage measures actual model-consumption changes. Input CTP
+savings and assistant-text CTP savings measure representation changes, not billing predictions.

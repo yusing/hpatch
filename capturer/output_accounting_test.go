@@ -79,7 +79,7 @@ func TestGeneratedCommentaryChangesTransportButNotOutputSavingsOrUsage(t *testin
 		r.recordExchange(state, boundary, attempt, time.Now(), []byte(`{"model":"model"}`), observedPayload{content: []byte(body), bytes: uint64(len(body))}, 200, "text/event-stream", "", nil)
 	}
 	snapshot := r.snapshot()
-	if snapshot.Protocol.OutputPayloadTokensSaved != 0 || snapshot.Protocol.OutputPayloadBytesSaved != 0 ||
+	if snapshot.Protocol.OutputPayloadTokensExpansion != 0 || snapshot.Protocol.OutputPayloadBytesExpansion != 0 ||
 		snapshot.Semantic.ClientOutputs != snapshot.Semantic.ProviderAttemptOutputs {
 		encoded, _ := json.Marshal(snapshot)
 		t.Fatalf("synthetic output affected savings: %s", encoded)
