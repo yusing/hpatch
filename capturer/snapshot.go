@@ -90,31 +90,36 @@ type protocolMetrics struct {
 }
 
 type providerAttemptMetrics struct {
-	Attempt          uint64            `json:"attempt"`
-	Model            string            `json:"model,omitempty"`
-	Status           string            `json:"status"`
-	ResponseComplete bool              `json:"response_complete"`
-	Usage            *usageMetrics     `json:"usage,omitempty"`
-	Request          payloadMetrics    `json:"request"`
-	NativeRequest    *payloadMetrics   `json:"native_request,omitempty"`
-	Response         payloadMetrics    `json:"response"`
-	FinalOutput      payloadMetrics    `json:"final_output,omitzero"`
-	FinalText        payloadMetrics    `json:"final_text,omitzero"`
-	Tools            []toolCallMetrics `json:"tools,omitempty"`
+	Attempt           uint64              `json:"attempt"`
+	Model             string              `json:"model,omitempty"`
+	Status            string              `json:"status"`
+	ResponseComplete  bool                `json:"response_complete"`
+	Usage             *usageMetrics       `json:"usage,omitempty"`
+	Request           payloadMetrics      `json:"request"`
+	Fingerprint       *requestFingerprint `json:"cache_fingerprint,omitempty"`
+	NativeFingerprint *requestFingerprint `json:"native_fingerprint,omitempty"`
+	NativeRequest     *payloadMetrics     `json:"native_request,omitempty"`
+	Response          payloadMetrics      `json:"response"`
+	FinalOutput       payloadMetrics      `json:"final_output,omitzero"`
+	FinalText         payloadMetrics      `json:"final_text,omitzero"`
+	Tools             []toolCallMetrics   `json:"tools,omitempty"`
 }
 
 type exchangeMetrics struct {
-	Sequence          uint64                   `json:"sequence"`
-	ThreadID          string                   `json:"thread_id,omitempty"`
-	Model             string                   `json:"model,omitempty"`
-	ProviderAttempts  []providerAttemptMetrics `json:"provider_attempts"`
-	Status            string                   `json:"status"`
-	Usage             *usageMetrics            `json:"usage,omitempty"`
-	ClientRequest     payloadMetrics           `json:"client_request"`
-	ClientResponse    payloadMetrics           `json:"client_response"`
-	ClientFinalText   payloadMetrics           `json:"client_final_text,omitzero"`
-	ClientFinalOutput payloadMetrics           `json:"client_final_output,omitzero"`
-	DeliveredTools    []toolCallMetrics        `json:"delivered_tools,omitempty"`
+	PredecessorSequence uint64                   `json:"predecessor_sequence,omitempty"`
+	ClientFingerprint   *requestFingerprint      `json:"client_fingerprint,omitempty"`
+	CacheDiagnosis      *cacheDiagnosis          `json:"cache_diagnostics,omitempty"`
+	Sequence            uint64                   `json:"sequence"`
+	ThreadID            string                   `json:"thread_id,omitempty"`
+	Model               string                   `json:"model,omitempty"`
+	ProviderAttempts    []providerAttemptMetrics `json:"provider_attempts"`
+	Status              string                   `json:"status"`
+	Usage               *usageMetrics            `json:"usage,omitempty"`
+	ClientRequest       payloadMetrics           `json:"client_request"`
+	ClientResponse      payloadMetrics           `json:"client_response"`
+	ClientFinalText     payloadMetrics           `json:"client_final_text,omitzero"`
+	ClientFinalOutput   payloadMetrics           `json:"client_final_output,omitzero"`
+	DeliveredTools      []toolCallMetrics        `json:"delivered_tools,omitempty"`
 }
 
 type metricsSnapshot struct {
@@ -147,7 +152,9 @@ func (r *Recorder) ServeHTTP(writer http.ResponseWriter, _ *http.Request) {
 func (r *Recorder) snapshot() metricsSnapshot {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return cloneMetricsSnapshot(r.metrics)
+	snapshot := cloneMetricsSnapshot(r.metrics)
+	diagnoseCacheExchanges(snapshot.Exchanges)
+	return snapshot
 }
 
 func newMetricsSnapshot(mode, modelProtocol string) metricsSnapshot {
@@ -175,8 +182,9 @@ func (r *Recorder) addExchange(front captureRecord, state *requestState, provide
 	}
 
 	exchange := exchangeMetrics{
-		Sequence: front.RequestSequence, ThreadID: front.ThreadID,
+		Sequence: front.RequestSequence, ThreadID: front.ThreadID, PredecessorSequence: front.PredecessorSequence,
 		Status: front.ResponseStatus, ClientRequest: front.Request, ClientResponse: front.Response,
+		ClientFingerprint: front.Fingerprint,
 		ClientFinalOutput: front.FinalOutput, ClientFinalText: front.FinalText,
 		DeliveredTools: slices.Clone(front.ToolCalls),
 	}
@@ -202,8 +210,9 @@ func (r *Recorder) addExchange(front captureRecord, state *requestState, provide
 		attempt := providerAttemptMetrics{
 			Attempt: provider.ProviderAttempt, Model: provider.RequestModel, Status: provider.ResponseStatus,
 			ResponseComplete: provider.ResponseComplete,
-			NativeRequest:    provider.NativeRequest,
-			Request:          provider.Request, Response: provider.Response, FinalOutput: provider.FinalOutput, FinalText: provider.FinalText,
+			Fingerprint:      provider.Fingerprint, NativeFingerprint: provider.NativeFingerprint,
+			NativeRequest: provider.NativeRequest,
+			Request:       provider.Request, Response: provider.Response, FinalOutput: provider.FinalOutput, FinalText: provider.FinalText,
 			Tools: slices.Clone(provider.ToolCalls),
 		}
 		if provider.RequestModel != "" {
@@ -297,10 +306,13 @@ func cloneMetricsSnapshot(source metricsSnapshot) metricsSnapshot {
 	clone.Exchanges = make([]exchangeMetrics, len(source.Exchanges))
 	for index, exchange := range source.Exchanges {
 		clone.Exchanges[index] = exchange
+		clone.Exchanges[index].ClientFingerprint = cloneFingerprint(exchange.ClientFingerprint)
 		clone.Exchanges[index].DeliveredTools = slices.Clone(exchange.DeliveredTools)
 		clone.Exchanges[index].ProviderAttempts = make([]providerAttemptMetrics, len(exchange.ProviderAttempts))
 		for attemptIndex, attempt := range exchange.ProviderAttempts {
 			clone.Exchanges[index].ProviderAttempts[attemptIndex] = attempt
+			clone.Exchanges[index].ProviderAttempts[attemptIndex].Fingerprint = cloneFingerprint(attempt.Fingerprint)
+			clone.Exchanges[index].ProviderAttempts[attemptIndex].NativeFingerprint = cloneFingerprint(attempt.NativeFingerprint)
 			clone.Exchanges[index].ProviderAttempts[attemptIndex].Tools = slices.Clone(attempt.Tools)
 			if attempt.Usage != nil {
 				usage := *attempt.Usage

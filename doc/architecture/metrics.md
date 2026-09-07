@@ -57,7 +57,7 @@ persistence slots, session metric histories, dashboard-owned calculations, or me
 classifier events.
 The router passes usage and the actual post-replay, post-Hpatch, pre-CTP request as request-scoped
 observation data without receiving metric callbacks. The capturer measures the latter immediately
-and retains only sizes. Native-only forwarding supplies the same request as its own baseline.
+and retains only sizes and keyed fingerprints. Native-only forwarding supplies the same request as its own baseline.
 Mentor and commentary remain operational consumers, not metrics sources.
 
 Capture failure is auxiliary after startup: it cannot alter an edit, command, translated response,
@@ -65,3 +65,12 @@ or provider result. Failure to initialize an explicitly requested capture output
 because silently omitting requested evidence would make a benchmark invalid.
 
 Local token estimates count decoded JSON keys and scalar values, not outer JSON framing or escaping. Literal escapes inside content still count. Transport bytes remain exact, and provider usage remains authoritative. Metrics v4/schema-6 evidence is required for this counting contract.
+
+Cache diagnosis also belongs to the capturer. It fingerprints the existing client/native/provider
+seams, never adds router callbacks or retains a second raw history. A recorder-private ephemeral
+HMAC key makes fingerprints useful for within-run comparison without exposing public prompt
+hashes. Snapshot-local comparisons use each request’s recorded immediate arrival predecessor, break at
+pending, failed, or evicted predecessors,
+and retain the existing 4096-exchange window. Each stage retains at most 128 input-item fingerprints;
+partial evidence is unavailable rather than a claim of stability. Benchmark and dashboard code
+present these diagnoses; the benchmark independently reconciles them with sanitized observations.

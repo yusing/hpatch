@@ -113,7 +113,7 @@ func (r parsedResponsesRequest) promptCacheKey() string {
 		return ""
 	}
 	var key string
-	if json.Unmarshal(raw, &key) != nil || strings.TrimSpace(key) == "" {
+	if json.Unmarshal(raw, &key) != nil || !validCodexCacheKey(key) {
 		return ""
 	}
 	return key

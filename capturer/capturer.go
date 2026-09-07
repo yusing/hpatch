@@ -76,64 +76,72 @@ type toolCallMetrics struct {
 }
 
 type captureRecord struct {
-	SchemaVersion    int               `json:"schema_version"`
-	Boundary         string            `json:"boundary"`
-	CaptureID        string            `json:"capture_id"`
-	RequestSequence  uint64            `json:"request_sequence"`
-	ProviderAttempt  uint64            `json:"provider_attempt,omitempty"`
-	Mode             string            `json:"mode"`
-	ModelProtocol    string            `json:"model_protocol"`
-	RequestID        string            `json:"request_id,omitempty"`
-	SessionID        string            `json:"session_id,omitempty"`
-	ThreadID         string            `json:"thread_id,omitempty"`
-	Subagent         string            `json:"subagent,omitempty"`
-	RequestModel     string            `json:"request_model,omitempty"`
-	Request          payloadMetrics    `json:"request"`
-	NativeRequest    *payloadMetrics   `json:"native_request,omitempty"`
-	RequestTools     []string          `json:"request_tools,omitempty"`
-	StatusCode       int               `json:"status_code"`
-	ResponseComplete bool              `json:"response_complete"`
-	ResponseStatus   string            `json:"response_status,omitempty"`
-	Usage            *ProviderUsage    `json:"usage,omitempty"`
-	ToolCalls        []toolCallMetrics `json:"tool_calls,omitempty"`
-	Response         payloadMetrics    `json:"response"`
-	FinalOutput      payloadMetrics    `json:"final_output,omitzero"`
-	FinalText        payloadMetrics    `json:"final_text,omitzero"`
-	CaptureError     string            `json:"capture_error,omitempty"`
-	DurationMillis   uint64            `json:"duration_ms"`
-	CapturedAt       time.Time         `json:"captured_at"`
+	PredecessorSequence uint64              `json:"predecessor_sequence,omitempty"`
+	SchemaVersion       int                 `json:"schema_version"`
+	Boundary            string              `json:"boundary"`
+	CaptureID           string              `json:"capture_id"`
+	RequestSequence     uint64              `json:"request_sequence"`
+	ProviderAttempt     uint64              `json:"provider_attempt,omitempty"`
+	Mode                string              `json:"mode"`
+	ModelProtocol       string              `json:"model_protocol"`
+	RequestID           string              `json:"request_id,omitempty"`
+	SessionID           string              `json:"session_id,omitempty"`
+	ThreadID            string              `json:"thread_id,omitempty"`
+	Subagent            string              `json:"subagent,omitempty"`
+	RequestModel        string              `json:"request_model,omitempty"`
+	Request             payloadMetrics      `json:"request"`
+	Fingerprint         *requestFingerprint `json:"cache_fingerprint,omitempty"`
+	NativeFingerprint   *requestFingerprint `json:"native_fingerprint,omitempty"`
+	NativeRequest       *payloadMetrics     `json:"native_request,omitempty"`
+	RequestTools        []string            `json:"request_tools,omitempty"`
+	StatusCode          int                 `json:"status_code"`
+	ResponseComplete    bool                `json:"response_complete"`
+	ResponseStatus      string              `json:"response_status,omitempty"`
+	Usage               *ProviderUsage      `json:"usage,omitempty"`
+	ToolCalls           []toolCallMetrics   `json:"tool_calls,omitempty"`
+	Response            payloadMetrics      `json:"response"`
+	FinalOutput         payloadMetrics      `json:"final_output,omitzero"`
+	FinalText           payloadMetrics      `json:"final_text,omitzero"`
+	CaptureError        string              `json:"capture_error,omitempty"`
+	DurationMillis      uint64              `json:"duration_ms"`
+	CapturedAt          time.Time           `json:"captured_at"`
 }
 
 // Recorder owns correlation, sanitized measurement, durable capture, and
 // derived metrics for one router process.
 type Recorder struct {
-	mu              sync.Mutex
-	file            *os.File
-	codec           tokenizer.Codec
-	mode            string
-	modelProtocol   string
-	requestSequence uint64
-	metrics         metricsSnapshot
-	previousInput   map[string]uint64
-	cacheQueues     map[string][]*requestState
+	lastRequestSequence map[string]uint64
+	fingerprintKey      [32]byte
+	mu                  sync.Mutex
+	file                *os.File
+	codec               tokenizer.Codec
+	mode                string
+	modelProtocol       string
+	requestSequence     uint64
+	metrics             metricsSnapshot
+	previousInput       map[string]uint64
+	cacheQueues         map[string][]*requestState
 }
 
 type requestState struct {
-	recorder           *Recorder
-	nativeRequest      *payloadMetrics
-	nativeRequestError bool
-	mu                 sync.Mutex
-	captureID          string
-	sequence           uint64
-	providerAttempts   uint64
-	requestID          string
-	sessionID          string
-	threadID           string
-	subagent           string
-	providers          []captureRecord
-	providerUsage      map[uint64]ProviderUsage
-	cacheReady         bool
-	cacheUsage         *usageMetrics
+	predecessorSequence uint64
+	recorder            *Recorder
+	nativeRequest       *payloadMetrics
+	nativeRequestError  bool
+	nativeFingerprint   *requestFingerprint
+	providerRouting     map[uint64]string
+	mu                  sync.Mutex
+	captureID           string
+	sequence            uint64
+	providerAttempts    uint64
+	requestID           string
+	sessionID           string
+	threadID            string
+	subagent            string
+	providers           []captureRecord
+	providerUsage       map[uint64]ProviderUsage
+	cacheReady          bool
+	cacheUsage          *usageMetrics
 }
 
 // ObserveProviderUsage supplies the provider-authoritative usage parsed by the
@@ -164,9 +172,11 @@ func ObserveNativeRequest(ctx context.Context, body []byte) {
 		return
 	}
 	measured, err := state.recorder.measure(body)
+	fingerprint := state.recorder.requestFingerprint(body)
 	state.mu.Lock()
 	defer state.mu.Unlock()
 	state.nativeRequest = &measured
+	state.nativeFingerprint = fingerprint
 	state.nativeRequestError = err != nil
 }
 
@@ -183,11 +193,19 @@ func New(config Config) (*Recorder, error) {
 			return nil, fmt.Errorf("open capture output: %w", err)
 		}
 	}
+	var fingerprintKey [32]byte
+	if _, err := rand.Read(fingerprintKey[:]); err != nil {
+		if file != nil {
+			_ = file.Close()
+		}
+		return nil, fmt.Errorf("initialize private cache fingerprints: %w", err)
+	}
 	return &Recorder{
-		file: file, codec: codec, mode: config.Mode, modelProtocol: config.ModelProtocol,
-		metrics:       newMetricsSnapshot(config.Mode, config.ModelProtocol),
-		previousInput: make(map[string]uint64),
-		cacheQueues:   make(map[string][]*requestState),
+		fingerprintKey: fingerprintKey, file: file, codec: codec, mode: config.Mode, modelProtocol: config.ModelProtocol,
+		lastRequestSequence: make(map[string]uint64),
+		metrics:             newMetricsSnapshot(config.Mode, config.ModelProtocol),
+		previousInput:       make(map[string]uint64),
+		cacheQueues:         make(map[string][]*requestState),
 	}, nil
 }
 
@@ -247,6 +265,14 @@ func (r *Recorder) Transport(next http.RoundTripper) http.RoundTripper {
 		if err != nil {
 			return nil, fmt.Errorf("capture provider request body: %w", err)
 		}
+		state.mu.Lock()
+		if state.providerRouting == nil {
+			state.providerRouting = make(map[uint64]string)
+		}
+		if key := request.Header.Get("Session_id"); key != "" {
+			state.providerRouting[attempt] = r.fingerprint("cache-key", key)
+		}
+		state.mu.Unlock()
 		started := time.Now()
 		response, roundTripErr := next.RoundTrip(request)
 		if roundTripErr != nil {
@@ -283,6 +309,20 @@ func (r *Recorder) beginRequest(header http.Header) (*requestState, error) {
 	r.requestSequence++
 	state.sequence = r.requestSequence
 	if state.threadID != "" {
+		// Evicted arrival metadata yields an unavailable comparison, never a
+		// comparison against an older surviving request from that thread.
+		if _, known := r.lastRequestSequence[state.threadID]; !known && len(r.lastRequestSequence) >= maxRetainedExchangeDetails {
+			var oldestThread string
+			oldest := ^uint64(0)
+			for thread, sequence := range r.lastRequestSequence {
+				if sequence < oldest {
+					oldestThread, oldest = thread, sequence
+				}
+			}
+			delete(r.lastRequestSequence, oldestThread)
+		}
+		state.predecessorSequence = r.lastRequestSequence[state.threadID]
+		r.lastRequestSequence[state.threadID] = state.sequence
 		r.cacheQueues[state.threadID] = append(r.cacheQueues[state.threadID], state)
 	}
 	r.mu.Unlock()
@@ -327,7 +367,7 @@ func (r *Recorder) recordExchange(state *requestState, boundary string, attempt 
 		SchemaVersion:   schemaVersion,
 		Boundary:        boundary,
 		CaptureID:       state.captureID,
-		RequestSequence: state.sequence,
+		RequestSequence: state.sequence, PredecessorSequence: state.predecessorSequence,
 		ProviderAttempt: attempt,
 		Mode:            r.mode,
 		ModelProtocol:   r.modelProtocol,
@@ -348,8 +388,14 @@ func (r *Recorder) recordExchange(state *requestState, boundary string, attempt 
 	} else {
 		record.Request = measured
 	}
+	record.Fingerprint = r.requestFingerprint(requestBody)
 	if boundary == "provider" {
 		state.mu.Lock()
+		record.NativeFingerprint = state.nativeFingerprint
+		if record.Fingerprint != nil {
+			record.Fingerprint.RoutingKey = state.providerRouting[attempt]
+		}
+
 		if state.nativeRequest != nil {
 			baseline := *state.nativeRequest
 			record.NativeRequest = &baseline
@@ -365,6 +411,10 @@ func (r *Recorder) recordExchange(state *requestState, boundary string, attempt 
 			} else {
 				baseline := record.Request
 				record.NativeRequest = &baseline
+				record.NativeFingerprint = cloneFingerprint(record.Fingerprint)
+				if record.NativeFingerprint != nil {
+					record.NativeFingerprint.RoutingKey = ""
+				}
 			}
 		}
 	}

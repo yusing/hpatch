@@ -158,3 +158,5 @@ Acceptance:
    existing destination. Synthetic fixtures validate these mechanics, not compression efficiency.
 
 CTP input acceptance uses the captured post-replay native request, never incoming client history. CTP output acceptance uses assistant output_text savings, never tool-carrier delivery expansion. Paired provider usage is the only actual model-consumption comparison.
+
+Cache-prefix diagnostic tables MUST display only request ordinals, provider usage, stage comparison statuses, and fixed changed-field categories; never fingerprint values or routing keys. Missing older observations MUST display unavailable, not stable.

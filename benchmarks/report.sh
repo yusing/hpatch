@@ -256,6 +256,22 @@ ctp_failed=false
 			"$(rate "$(metric "$metrics" '.cache.eligible_prefix_cache_rate')")"
 	done
 
+	printf '\n## Cache-prefix diagnostics\n\n'
+	printf 'Comparisons use decoded request items, not the provider hidden token prefix. Appended/identical means the observed earlier content is stable; it does not guarantee a cache hit. A changed post-replay prefix with a stable client prefix points to projection/replay; a changed provider prefix with a stable native prefix points to CTP. Missing, truncated, restarted, or first observations are unavailable. Routing compares private fingerprints of the actual outgoing session key; no key or content hash is shown.\n\n'
+	printf '| Arm | Request ordinal | Input | Cached | Client prefix | Post-replay prefix | Provider prefix | Route key | Request cache key |\n'
+	printf '|---|---:|---:|---:|---|---|---|---|---|\n'
+	for row in treatment ${has_baseline/true/baseline}; do
+		[[ $row == false ]] && continue
+		metrics=$treatment_metrics label=$treatment_label
+		if [[ $row == baseline ]]; then metrics=$baseline_metrics; label=$baseline_label; fi
+		jq -r --arg arm "$label" '
+          def prefix: if . == null then "unavailable" else .status + (if .status == "changed" then " (common items=" + (.common_items|tostring) + (if (.changed_fields|length)>0 then "; fields=" + (.changed_fields|join(",")) else "" end) + ")" else "" end) end;
+          .exchanges | sort_by(.sequence) | to_entries[] | .key as $ordinal | .value as $e |
+          $e.provider_attempts[-1] as $p | $e.cache_diagnostics as $d |
+          "| \($arm) | \($ordinal+1) | \($p.usage.input_tokens // "n/a") | \($p.usage.cached_input_tokens // "n/a") | \($d.client | prefix) | \($d.native | prefix) | \($d.provider | prefix) | \($d.routing // "unavailable") | \($d.request_key // "unavailable") |"
+        ' "$metrics"
+	done
+
 	printf '\n## Protocol transformation\n\n'
 	printf 'Token estimates count decoded JSON keys and scalar values, excluding outer JSON framing and escaping; literal escapes inside content still count. Byte counts retain exact observed bytes. Input savings compare the actual native request AFTER replay and Hpatch projection with its final CTP provider request, not incoming Codex history. Output representation differences compare complete model-origin output arrays, reconstructed from finalized stream items when needed and excluding router-generated commentary, echoed tools, and other response metadata as well as repeated SSE events. Output differences include tool-carrier translation and are not CTP savings or stock-model savings. Positive output differences mean the delivered representation is larger than provider output. Only paired provider usage measures actual model-use differences. Retries remain separate provider attempts.\n\n'
 	printf '| Arm | CTP input bytes saved | CTP input tokens saved | Delivery byte expansion | Delivery token expansion | Provider attempts |\n'

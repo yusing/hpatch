@@ -50,6 +50,88 @@ def add(target: dict[str, int], value: dict[str, int]) -> None:
         target[key] += value[key]
 
 
+FINGERPRINT_FIELDS = ("model", "instructions", "tools", "reasoning", "tool_choice", "parallel_tool_calls", "other")
+
+
+def validate_fingerprint(value):
+    if value is None:
+        return
+    def digest(text):
+        return isinstance(text, str) and len(text) == 32 and all(c in "0123456789abcdef" for c in text)
+    if not isinstance(value, dict) or not digest(value.get("scope")):
+        raise ValueError("invalid private cache fingerprint")
+    fields, items = value.get("fields"), value.get("items")
+    count = value.get("item_count")
+    if (not isinstance(fields, dict) or "other" not in fields or any(k not in FINGERPRINT_FIELDS or not digest(v) for k, v in fields.items())
+        or not isinstance(items, list) or len(items) > 128 or any(not digest(v) for v in items)
+        or type(count) is not int or count < 0 or len(items) != min(count, 128) or type(value.get("complete")) is not bool
+        or value["complete"] != (count == len(items))
+        or value.get("input_kind") not in {"array", "string", "other", "absent"}):
+        raise ValueError("invalid private cache fingerprint shape")
+    if (value["input_kind"] == "absent" and count != 0) or (value["input_kind"] in {"string", "other"} and count != 1):
+        raise ValueError("cache fingerprint item count disagrees with input kind")
+    for key in ("request_key", "routing_key"):
+        if key in value and not digest(value[key]):
+            raise ValueError("invalid private cache routing fingerprint")
+
+
+def compare_prefix(previous, current):
+    result = {"status": "unavailable", "common_items": 0, "changed_fields": []}
+    if (previous is None or current is None or not previous["complete"] or not current["complete"]
+        or previous["scope"] != current["scope"]):
+        return result
+    result["changed_fields"] = [k for k in FINGERPRINT_FIELDS if previous["fields"].get(k) != current["fields"].get(k)]
+    for left, right in zip(previous["items"], current["items"]):
+        if left != right:
+            break
+        result["common_items"] += 1
+    if previous["input_kind"] != current["input_kind"] or result["changed_fields"] or result["common_items"] < len(previous["items"]):
+        result["status"] = "changed"
+    else:
+        result["status"] = "identical" if len(previous["items"]) == len(current["items"]) else "appended"
+    return result
+
+
+def compare_route(previous, current, key):
+    if previous is None or current is None or previous["scope"] != current["scope"]:
+        return "unavailable"
+    left, right = previous.get(key), current.get(key)
+    return "absent" if left is None and right is None else "stable" if left == right else "changed"
+
+
+def validate_cache_diagnostics(exchanges):
+    by_sequence = {e["sequence"]: e for e in exchanges}
+    for exchange in exchanges:
+        thread = exchange.get("thread_id")
+        attempts = exchange["provider_attempts"]
+        validate_fingerprint(exchange.get("client_fingerprint"))
+        for attempt in attempts:
+            validate_fingerprint(attempt.get("cache_fingerprint"))
+            validate_fingerprint(attempt.get("native_fingerprint"))
+        if not thread or not attempts or attempts[-1].get("cache_fingerprint") is None:
+            if exchange.get("cache_diagnostics") is not None:
+                raise ValueError("unavailable cache diagnosis presented as measured")
+            continue
+        final = attempts[-1]
+        predecessor = exchange.get("predecessor_sequence", 0)
+        if type(predecessor) is not int or predecessor < 0 or predecessor >= exchange["sequence"]:
+            raise ValueError("invalid same-thread arrival predecessor")
+        before = by_sequence.get(predecessor)
+        if before and (before.get("thread_id") != thread or before.get("status") != "completed" or not before["provider_attempts"]):
+            before = None
+        last = before["provider_attempts"][-1] if before else {}
+        expected = {
+            "previous_sequence": before["sequence"] if before else 0,
+            "client": compare_prefix(before.get("client_fingerprint") if before else None, exchange.get("client_fingerprint")),
+            "native": compare_prefix(last.get("native_fingerprint"), final.get("native_fingerprint")),
+            "provider": compare_prefix(last.get("cache_fingerprint"), final.get("cache_fingerprint")),
+            "routing": compare_route(last.get("cache_fingerprint"), final.get("cache_fingerprint"), "routing_key"),
+            "request_key": compare_route(last.get("cache_fingerprint"), final.get("cache_fingerprint"), "request_key"),
+        }
+        if exchange.get("cache_diagnostics") != expected:
+            raise ValueError("cache diagnosis does not reconcile stage fingerprints")
+
+
 def empty_usage() -> dict[str, int]:
     return {key: 0 for key in USAGE_KEYS}
 
@@ -155,7 +237,9 @@ def validate_raw_capture(path: Path, metrics: dict[str, Any]) -> None:
         if not isinstance(attempts, list) or len(attempts) != len(providers):
             raise ValueError("raw provider attempts differ from the metrics exchange")
         if (
-            payload(front.get("request")) != payload(exchange.get("client_request"))
+            front.get("predecessor_sequence", 0) != exchange.get("predecessor_sequence", 0)
+            or front.get("cache_fingerprint") != exchange.get("client_fingerprint")
+            or payload(front.get("request")) != payload(exchange.get("client_request"))
             or payload(front.get("response")) != payload(exchange.get("client_response"))
             or payload(front.get("final_output")) != payload(exchange.get("client_final_output"))
             or payload(front.get("final_text")) != payload(exchange.get("client_final_text"))
@@ -172,7 +256,10 @@ def validate_raw_capture(path: Path, metrics: dict[str, Any]) -> None:
             if raw_usage is not None and usage(raw_usage) != usage(measured_usage):
                 raise ValueError("raw provider usage differs from the metrics exchange")
             if (
-                payload(raw.get("request")) != payload(measured.get("request"))
+                raw.get("predecessor_sequence", 0) != front.get("predecessor_sequence", 0)
+                or raw.get("cache_fingerprint") != measured.get("cache_fingerprint")
+                or raw.get("native_fingerprint") != measured.get("native_fingerprint")
+                or payload(raw.get("request")) != payload(measured.get("request"))
                 or payload(raw.get("native_request")) != payload(measured.get("native_request"))
                 or payload(raw.get("response")) != payload(measured.get("response"))
                 or payload(raw.get("final_output")) != payload(measured.get("final_output"))
@@ -385,6 +472,8 @@ def validate_calculations(metrics: dict[str, Any], exchanges: list[dict[str, Any
             protocol["output_text_tokens_saved"] += payload(exchange.get("client_final_text"))["tokens"] - payload(final.get("final_text"))["tokens"]
             protocol["output_payload_bytes_expansion"] += client_output["bytes"] - provider_output["bytes"]
             protocol["output_payload_tokens_expansion"] += client_output["tokens"] - provider_output["tokens"]
+
+    validate_cache_diagnostics(exchanges)
 
     if metrics.get("requests") != requests:
         raise ValueError("request totals do not reconcile exchanges")

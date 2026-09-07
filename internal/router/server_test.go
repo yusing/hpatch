@@ -1866,3 +1866,20 @@ func TestRunPreservesListenerFailure(t *testing.T) {
 		t.Fatalf("Run error = %v, want listener failure", err)
 	}
 }
+
+func TestExecuteRequestUnsafeCacheKeyRetainsSessionAffinity(t *testing.T) {
+	for _, key := range []string{" padded ", "line\nbreak"} {
+		parsed := serverRequest(t, func(request map[string]any) { request["prompt_cache_key"] = key })
+		original := bytes.Clone(parsed.originalBody)
+		provider := &serverFakeProvider{results: []serverForwardResult{{response: serverHTTPResponse(`{"status":"completed","output":[]}`)}}}
+		if err := executeRequest(t.Context(), t.Context(), parsed, http.Header{}, "stable-session", provider, io.Discard, newDiagnostics(io.Discard), time.Now, nil, nil, nil); err != nil {
+			t.Fatal(err)
+		}
+		if provider.forwardedCacheKey[0] != "stable-session" {
+			t.Fatal("unsafe body key disabled valid session affinity")
+		}
+		if !bytes.Equal(provider.forwarded[0], original) {
+			t.Fatal("cache routing fallback rewrote client request")
+		}
+	}
+}

@@ -68,7 +68,9 @@ func TestCaptureRequestBaselineAfterHPatchReplay(t *testing.T) {
 			}))
 			initial := serverRequest(t, func(fields map[string]any) { fields["instructions"] = stockModelInstructionsForTest("", "") })
 			first := httptest.NewRecorder()
-			handler.ServeHTTP(first, httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(initial.originalBody)))
+			firstRequest := httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(initial.originalBody))
+			firstRequest.Header = headers.Clone()
+			handler.ServeHTTP(first, firstRequest)
 			var response struct {
 				Output []json.RawMessage `json:"output"`
 			}
@@ -91,7 +93,9 @@ func TestCaptureRequestBaselineAfterHPatchReplay(t *testing.T) {
 				fields["input"] = append(fields["input"].([]any), carrier, map[string]any{"type": "custom_tool_call_output", "call_id": "call-H", "output": strings.Repeat("repeated result text with enough exact words; ", 24)})
 			})
 			second := httptest.NewRecorder()
-			handler.ServeHTTP(second, httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(next.originalBody)))
+			secondRequest := httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(next.originalBody))
+			secondRequest.Header = headers.Clone()
+			handler.ServeHTTP(second, secondRequest)
 			if len(forwarded) != 2 {
 				t.Fatalf("provider requests %d", len(forwarded))
 			}
@@ -118,6 +122,14 @@ func TestCaptureRequestBaselineAfterHPatchReplay(t *testing.T) {
 					Errors int `json:"capture_errors"`
 				} `json:"capture"`
 				Exchanges []struct {
+					Diagnosis struct {
+						Native struct {
+							Status string `json:"status"`
+						} `json:"native"`
+						Provider struct {
+							Status string `json:"status"`
+						} `json:"provider"`
+					} `json:"cache_diagnostics"`
 					Client struct {
 						Tokens int64 `json:"tokens"`
 					} `json:"client_request"`
@@ -133,6 +145,9 @@ func TestCaptureRequestBaselineAfterHPatchReplay(t *testing.T) {
 			}
 			if err := json.Unmarshal(metrics.Body.Bytes(), &snapshot); err != nil {
 				t.Fatal(err)
+			}
+			if len(snapshot.Exchanges) != 2 || snapshot.Exchanges[1].Diagnosis.Native.Status != "appended" || snapshot.Exchanges[1].Diagnosis.Provider.Status != "appended" {
+				t.Fatalf("replay/CTP changed an existing prefix: %+v", snapshot.Exchanges)
 			}
 			var expected int64
 			var differs bool

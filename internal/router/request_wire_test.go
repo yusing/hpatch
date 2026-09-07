@@ -92,3 +92,15 @@ func TestRequestWirePreservesSemanticallyUnchangedProjection(t *testing.T) {
 		t.Fatalf("unchanged projected value rewritten: %s, %v", got, err)
 	}
 }
+
+func TestPromptCacheKeyRejectsUnsafeRoutingValues(t *testing.T) {
+	for _, key := range []string{" surrounding ", "line\nbreak", "line\rbreak", "control\x01", "delete\x7f"} {
+		request, err := parseResponsesRequest(mustTestJSON(t, map[string]any{"model": "model", "prompt_cache_key": key}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if request.promptCacheKey() != "" {
+			t.Fatal("unsafe prompt cache key suppressed the valid session fallback")
+		}
+	}
+}

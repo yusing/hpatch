@@ -151,6 +151,8 @@ schedule. Parent and child traffic remains visible through actual model names in
 
 ## Capture and metrics
 
+New captures include keyed per-stage prefix diagnostics and route-key stability. The report locates changes before replay, during replay/projection, or during CTP, but does not claim visibility into provider cache routing. Run `python3 benchmarks/cache_diagnostics_test.py` for the model-free evidence-validation checks.
+
 `capturer` records schema-6 JSONL at both boundaries without storing credentials, prompts,
 instructions, tool arguments, command output, response text, diagnostics, scripts, reports, or
 patches. Records contain sizes, token estimates, status, duration, provider usage, tool identities,

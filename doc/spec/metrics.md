@@ -34,6 +34,7 @@ A durable record MUST contain only:
 - provider usage counters;
 - the measured `native_request` after history replay/tool projection and before CTP, on provider records;
 - decoded assistant `final_text` sizes, separate from complete output arrays;
+- bounded private request/routing fingerprints as specified below;
 - request tool names; and
 - tool name, call identity, byte/token sizes, sanitized delivered kind, and an allowlisted stable
   diagnostic reason parsed from the complete router-owned diagnostic envelope.
@@ -131,3 +132,36 @@ provider attempt. Missing CTP baseline observation MUST mark capture incomplete,
 client history. Native-only forwarding uses the forwarded request as the identical baseline.
 Only paired authoritative provider usage measures actual model-consumption changes. Input CTP
 savings and assistant-text CTP savings measure representation changes, not billing predictions.
+
+### Privacy-safe cache diagnostics
+
+Schema-6 records and metrics v4 MAY additionally contain `cache_fingerprint` for observed
+request representations, `native_fingerprint` for the actual post-replay/pre-CTP request,
+and `client_fingerprint` in exchanges. New captures MUST produce these for valid requests.
+The capturer MUST HMAC decoded JSON components and ordered input items with a fresh random
+256-bit recorder-lifetime key, retaining only 128-bit digests. It MUST NOT persist that key,
+raw content, or raw outgoing routing keys. Fingerprints MUST include a recorder scope;
+comparisons across different scopes MUST be unavailable. Equal keys may be correlated only
+within that recorder. Field categories MUST come from a fixed allowlist, never arbitrary
+user-supplied property names. JSON framing differences MUST NOT change fingerprints.
+
+At most the first 128 input items are retained, with total item count and explicit completeness.
+Truncated, malformed, missing, or cross-scope fingerprints MUST NOT claim a stable prefix.
+`cache_diagnostics` MUST compare client, native, and final-provider representations against
+the immediate same-thread arrival predecessor, and only when that request remains retained and completed.
+Requests MUST retain that predecessor sequence even when completions arrive out of order. Arrival
+head metadata is bounded to the existing 4096-entry detail limit; evicted head metadata yields
+an unavailable comparison, never a guess at an older predecessor.
+An unfinished intervening request, failed predecessor, absent thread, or missing observation
+MUST break comparison. Retries MUST retain their individual fingerprints and actual outgoing
+`Session_id` fingerprints but MUST NOT become logical-request predecessors.
+
+Each stage reports identical, appended, changed, or unavailable, the common leading item count,
+and changed fixed field categories. It MUST compare body cache-key and actual outgoing route-key
+stability separately. These are observable representation differences, not the provider's hidden
+model-token prefix, cache residency, or a guarantee of cache reuse. Reports and the dashboard MUST
+show unavailable evidence explicitly and correlate stage changes with authoritative input/cached
+usage without labeling inferred shortfalls as proven router-induced cache misses.
+Older captures without these additive fields remain valid for their existing metrics but cannot
+supply cache-prefix diagnoses. Benchmark validation MUST reconcile retained fingerprints and
+independently verify published diagnostic comparisons.
