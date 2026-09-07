@@ -455,6 +455,32 @@ ExecStart=%h/.local/bin/hpatch-router --listen 127.0.0.1:9090
 
 Then `systemctl --user daemon-reload && systemctl --user restart hpatch-router.service`.
 
+### Grok native subagents (opt-in)
+
+Start the router with `--grok` to add `grok:grok-4.6` to its Codex model catalog and enable
+plaintext collaboration bridging. Keep your existing OpenAI provider/auth configuration.
+This is supported in Hpatch mode, not passthrough mode. Start a new Codex session after enabling
+it so that the model catalog and collaboration history agree. A separately configured
+`model_catalog_json` must also include the Grok entry; it overrides the router's catalog.
+
+For authentication, either sign in with `grok login --oauth`, or provide `XAI_API_KEY` in the
+router's environment. An API key takes precedence and uses the public xAI API; Grok login uses
+the CLI chat proxy instead. Without an API key, the router reads `~/.grok/auth.json` by default;
+`--grok-auth-file /absolute/path/auth.json` selects another store. It supports the standard Grok
+OAuth issuer/client and refreshes credentials under the CLI's shared lock. You still own login
+and account selection. The router never launches the Grok CLI or forwards Codex credentials to Grok.
+
+Ask the main agent to spawn `grok:grok-4.6` with `fork_turns="none"` and reasoning
+`low`, `medium`, `high` or `xhigh`. Codex still owns the native child, its tools, messages,
+follow-ups, interruptions and permissions. The provider may report the underlying model as
+`grok-4.6-build`. The model-facing collaboration namespace is projected by Hpatch and restored
+before Codex executes it; native lifecycle operations do not become shell-wrapped CLI jobs.
+
+Text/image input and custom/function tools are translated. OpenAI-hosted search is unavailable
+on this route. Encrypted OpenAI history, opaque provider file IDs and unsupported provider tools
+fail explicitly; do not fork encrypted OpenAI context into Grok. See the
+[third-party subagent requirements](doc/spec/subagents.md) for the full contract.
+
 ### Point Codex at the router
 
 Add a Responses provider in `~/.codex/config.toml`:

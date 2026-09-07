@@ -69,15 +69,15 @@ ancestry, patch renderer, and semantic failure baseline remain adapter extension
 generic interface rather than capabilities granted to ordinary plugins.
 
 For each eligible Code Mode request, the router recognizes exactly one authoritative owner: the
-custom `exec` tool either directly inside an `additional_tools` input item's tool list or nested
+custom `exec` tool at the top level, directly inside an `additional_tools` input item's tool list, or nested
 under that item's `functions` namespace. The transport surface does not determine which shape
 Codex sends. The
 `apply_patch` extractor rewrites the owning description. The router also removes the `exec_command`
 Markdown section and introductory `tools.exec_command` example from that description. It derives
 the request-specific app argument-object or CLI parameter-list shape, removes `cmd`, and appends
 only that sanitized shape under `#!params` in the built-in `shell` description. Sibling direct tools,
-sibling namespaces, and nested tools remain unchanged. Direct `functions.exec` entries and
-top-level `exec` or `functions.exec` tools fail closed.
+sibling namespaces, and nested tools remain unchanged. Direct `functions.exec` entries and duplicate Code Mode owners fail closed. A top-level
+custom `exec` is accepted only when its description contains the authoritative apply-patch contract.
 
 For an eligible native request, the authoritative tool set instead contains exactly one top-level
 custom `apply_patch` and one top-level function `exec_command`. The router removes `apply_patch`,

@@ -4,7 +4,8 @@
 
 The Responses router owns optional commentary schema projection for extensible ordinary function
 tools, default selection for eligible structured calls, removal of only its own argument, assistant
-message rendering, and exact replay restoration. Provider-owned and strict schemas remain exact.
+message rendering, and exact replay restoration. Provider-owned and strict schemas remain exact, except for the separately owned opt-in
+[third-party collaboration projection](subagents.md).
 Collaboration calls remain outside generic operation commentary so the distinct subagent contract
 below stays authoritative. The existing bounded Hpatch call history retains original call identity
 and router message IDs; JSON and SSE transformers share that state without adding another replay
@@ -23,7 +24,7 @@ publication failures are auxiliary.
 
 The Responses router owns detection of the `spawn_agent` function from the request's configured
 namespaced tool catalog and rendering deterministic assistant commentary from non-message call
-arguments. It does not inspect the encrypted spawn message or render commentary for `followup_task`.
+arguments. The commentary owner does not inspect the encrypted spawn message or render commentary for `followup_task`.
 It does not read Codex configuration files. The Codex collaboration runtime continues to own
 validation, agent creation, delivery, effective execution, and the original tool results.
 

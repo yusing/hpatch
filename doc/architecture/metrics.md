@@ -9,7 +9,7 @@ The router's terminal-payload seam parses provider usage once and passes the res
 the capturer, Mentor Handoff, and user-only usage commentary.
 
 The capturer is in-process. `hpatch-router` wraps its existing `POST /v1/responses` handler and
-its existing provider `http.RoundTripper`; it does not start a second HTTP server, open another
+its existing provider `http.RoundTripper` for Responses and Chat Completions; it does not start a second HTTP server, open another
 listener, or require another process. `GET /api/metrics` serves the capturer snapshot from the same
 router listener as Responses and models traffic. The embedded `GET /` dashboard is a presentation
 view of that snapshot on the same listener and owns no metric state or calculation.
@@ -21,7 +21,7 @@ stream flushing, cancellation, status, headers, and response-body ownership.
 
 Raw request and response bodies exist only while one boundary is being measured. Durable schema-5
 JSONL records contain complete transport lengths, GPT-5 token estimates, one separately measured
-terminal Responses `output` array, statuses, duration, request identity fields
+terminal Responses `output` array (or reconstructed Chat Completions assistant-message array), statuses, duration, request identity fields
 needed for benchmark reconciliation, the passed provider usage, tool names, tool-call identities, and sanitized
 Hpatch outcome kinds and allowlisted diagnostic reason codes parsed from the router-owned envelope.
 They never retain credentials, prompts, instructions, tool arguments, command output, response text,

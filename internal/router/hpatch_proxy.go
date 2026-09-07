@@ -352,7 +352,7 @@ func (p *hpatchProxy) prepareRequest(ctx context.Context, request *parsedRespons
 	if err != nil {
 		return nil, err
 	}
-	codeModeToolName, replaced, err := replaceAdditionalToolsApplyPatch(request.fields, tools, installedTools)
+	codeModeToolName, replaced, err := replaceCodeModeTools(request.fields, tools, installedTools)
 	if err != nil {
 		return nil, err
 	}
@@ -424,7 +424,7 @@ func (p *hpatchProxy) prepareRequest(ctx context.Context, request *parsedRespons
 	}, nil
 }
 
-type additionalToolsApplyPatchOwner struct {
+type codeModeApplyPatchOwner struct {
 	group     *responsesAdditionalTools
 	section   *responsesToolSection
 	toolIndex int
@@ -442,20 +442,23 @@ func installedToolNames(tools []*responsesToolDefinition) map[string]struct{} {
 	return names
 }
 
-// replaceAdditionalToolsApplyPatch rewrites the Code Mode exec tool from an
-// app or CLI additional_tools owner and exposes the router's standalone tools.
-func replaceAdditionalToolsApplyPatch(fields map[string]json.RawMessage, catalog *responsesToolCatalog, installedTools []*responsesToolDefinition) (string, bool, error) {
+// replaceCodeModeTools rewrites the authoritative Code Mode exec tool, whether
+// top-level or in additional_tools, and exposes the router's standalone tools.
+func replaceCodeModeTools(fields map[string]json.RawMessage, catalog *responsesToolCatalog, installedTools []*responsesToolDefinition) (string, bool, error) {
 	if catalog.top.present {
 		if err := catalog.top.err; err != nil {
 			return "", false, fmt.Errorf("decode responses tools: %w", err)
 		}
 	}
 	installedNames := installedToolNames(installedTools)
-	owner, err := findAdditionalToolsApplyPatch(catalog, installedNames)
+	owner, err := findCodeModeApplyPatch(catalog, installedNames)
 	if err != nil || owner == nil {
 		return "", false, err
 	}
-	for _, tool := range catalog.top.tools {
+	for index, tool := range catalog.top.tools {
+		if owner.group == nil && index == owner.toolIndex {
+			continue
+		}
 		name := tool.Name
 		if _, exists := installedNames[name]; exists {
 			return "", false, fmt.Errorf("responses request already defines %s", name)
@@ -529,12 +532,9 @@ func replaceNativeTools(fields map[string]json.RawMessage, catalog *responsesToo
 	return nativeExecCommandToolName, true, nil
 }
 
-// findAdditionalToolsApplyPatch locates the Code Mode exec tool in additional_tools.
-func findAdditionalToolsApplyPatch(catalog *responsesToolCatalog, installedNames map[string]struct{}) (*additionalToolsApplyPatchOwner, error) {
-	if catalog.inputObjectsErr != nil && catalog.inputItems == nil {
-		return nil, nil //nolint:nilerr // Unsupported input shapes are simply not Code Mode owners.
-	}
-	var owner *additionalToolsApplyPatchOwner
+// findCodeModeApplyPatch locates exactly one authoritative Code Mode exec tool.
+func findCodeModeApplyPatch(catalog *responsesToolCatalog, installedNames map[string]struct{}) (*codeModeApplyPatchOwner, error) {
+	var owner *codeModeApplyPatchOwner
 	claim := func(
 		group *responsesAdditionalTools,
 		section *responsesToolSection,
@@ -573,7 +573,7 @@ func findAdditionalToolsApplyPatch(catalog *responsesToolCatalog, installedNames
 		if err != nil {
 			return err
 		}
-		owner = &additionalToolsApplyPatchOwner{
+		owner = &codeModeApplyPatchOwner{
 			group:                        group,
 			section:                      section,
 			toolIndex:                    toolIndex,
@@ -582,6 +582,18 @@ func findAdditionalToolsApplyPatch(catalog *responsesToolCatalog, installedNames
 			execCommandParamsDescription: execCommandParamsDescription,
 		}
 		return nil
+	}
+	if catalog.top.err == nil {
+		for index, tool := range catalog.top.tools {
+			if tool != nil && tool.Name == "exec" {
+				if err := claim(nil, catalog.top, index, false); err != nil {
+					return nil, err
+				}
+			}
+		}
+	}
+	if catalog.inputObjectsErr != nil && catalog.inputItems == nil {
+		return owner, nil
 	}
 	for _, group := range catalog.additional {
 		if group.tools.err != nil {
@@ -634,7 +646,7 @@ func codeModeToolChoiceRestricted(fields map[string]json.RawMessage, codeToolNam
 }
 
 // exposeStandaloneHPatch exposes standalone hpatch tools in the tool catalog.
-func exposeStandaloneHPatch(fields map[string]json.RawMessage, catalog *responsesToolCatalog, owner *additionalToolsApplyPatchOwner, installedTools []*responsesToolDefinition) error {
+func exposeStandaloneHPatch(fields map[string]json.RawMessage, catalog *responsesToolCatalog, owner *codeModeApplyPatchOwner, installedTools []*responsesToolDefinition) error {
 	owner.section.tools[owner.toolIndex].setDescription(owner.strippedDescription)
 	shellIndex := slices.IndexFunc(installedTools, func(tool *responsesToolDefinition) bool {
 		return tool.Name == "shell"
@@ -647,8 +659,10 @@ func exposeStandaloneHPatch(fields map[string]json.RawMessage, catalog *response
 		description += "\n\n" + owner.execCommandParamsDescription
 		installedTools[shellIndex].setDescription(description)
 	}
-	if err := catalog.encodeAdditional(fields, owner.group, owner.section); err != nil {
-		return fmt.Errorf("encode Responses input: %w", err)
+	if owner.group != nil {
+		if err := catalog.encodeAdditional(fields, owner.group, owner.section); err != nil {
+			return fmt.Errorf("encode Responses input: %w", err)
+		}
 	}
 	catalog.appendTop(installedTools)
 	if err := catalog.encodeTop(fields); err != nil {

@@ -219,7 +219,7 @@ func (r *Recorder) Transport(next http.RoundTripper) http.RoundTripper {
 	}
 	return roundTripperFunc(func(request *http.Request) (*http.Response, error) {
 		state, ok := request.Context().Value(captureKey{}).(*requestState)
-		if !ok || request.Method != http.MethodPost || !strings.HasSuffix(request.URL.Path, "/responses") {
+		if !ok || request.Method != http.MethodPost || !(strings.HasSuffix(request.URL.Path, "/responses") || strings.HasSuffix(request.URL.Path, "/chat/completions")) {
 			return next.RoundTrip(request)
 		}
 		attempt := state.beginProviderAttempt()
@@ -328,8 +328,9 @@ func (r *Recorder) recordExchange(state *requestState, boundary string, attempt 
 		record.Request = measured
 	}
 	var requestEnvelope struct {
-		Model string            `json:"model"`
-		Tools []json.RawMessage `json:"tools"`
+		Model    string            `json:"model"`
+		Messages json.RawMessage   `json:"messages"`
+		Tools    []json.RawMessage `json:"tools"`
 	}
 	if len(requestBody) != 0 {
 		if err := json.Unmarshal(requestBody, &requestEnvelope); err != nil {
@@ -357,7 +358,12 @@ func (r *Recorder) recordExchange(state *requestState, boundary string, attempt 
 			if statusCode >= http.StatusOK && statusCode < http.StatusMultipleChoices ||
 				strings.Contains(lowerContentType, "json") || strings.Contains(lowerContentType, "text/event-stream") ||
 				capturedPayloadLooksLikeSSE(observedContent) {
-				finalOutput := observeResponse(observedContent, contentType, &record, r.codec)
+				var finalOutput []byte
+				if len(requestEnvelope.Messages) > 0 {
+					finalOutput = observeChatResponse(observedContent, contentType, &record, r.codec)
+				} else {
+					finalOutput = observeResponse(observedContent, contentType, &record, r.codec)
+				}
 				if len(finalOutput) != 0 {
 					if finalMeasured, finalMeasureErr := r.measure(finalOutput); finalMeasureErr != nil {
 						record.CaptureError = "measure final output payload"

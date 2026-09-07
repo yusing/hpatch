@@ -5,6 +5,7 @@ package router
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -14,6 +15,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"sync/atomic"
 	"time"
 
@@ -44,6 +46,8 @@ func Run(ctx context.Context, args []string, stderr io.Writer) (runErr error) {
 	modelProtocol := flags.String("model-protocol", defaultModelProtocol, "model protocol: native or ctp2")
 	mentorHandoffEnabled := flags.Bool("mentor-handoff", true, "use gpt-5.6-sol high for eligible spawned subagents")
 	providerBaseURL := flags.String("provider-base-url", codexBaseURL, "Codex provider base URL")
+	grokEnabled := flags.Bool("grok", false, "enable native Grok subagents and plaintext collaboration projection")
+	grokAuthFile := flags.String("grok-auth-file", "", "Grok OAuth credential file (default ~/.grok/auth.json)")
 	captureOutput := flags.String("capture-output", "", "optional sanitized capture JSONL path")
 	if err := flags.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -80,6 +84,12 @@ func Run(ctx context.Context, args []string, stderr io.Writer) (runErr error) {
 		*modelProtocol = "native"
 		*mentorHandoffEnabled = false
 	}
+	if *grokEnabled && *mode != "hpatch" {
+		return errors.New("--grok requires --mode hpatch")
+	}
+	if !*grokEnabled && *grokAuthFile != "" {
+		return errors.New("--grok-auth-file requires --grok")
+	}
 	if *timeout <= 0 {
 		return errors.New("--timeout must be positive")
 	}
@@ -103,6 +113,21 @@ func Run(ctx context.Context, args []string, stderr io.Writer) (runErr error) {
 	provider := newProviderClient(*providerBaseURL, nil)
 	provider.httpClient.Transport = capture.Transport(provider.httpClient.Transport)
 	provider.streamIdleTimeout = *streamIdleTimeout
+	if *grokEnabled {
+		path := *grokAuthFile
+		if path == "" {
+			home, err := os.UserHomeDir()
+			if err != nil {
+				return fmt.Errorf("locate Grok credentials: %w", err)
+			}
+			path = filepath.Join(home, ".grok", "auth.json")
+		}
+		auth := newGrokAuth(path, os.Getenv("XAI_API_KEY"))
+		client := withDialTimeout(nil)
+		client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+		client.Transport = capture.Transport(client.Transport)
+		provider.grok = &grokClient{httpClient: client, auth: auth, streamIdleTimeout: *streamIdleTimeout}
+	}
 	var dataDirectory string
 	var hpatchCalls *hpatchProxy
 	var compactTokens *ctp2Codec
@@ -170,7 +195,7 @@ func Run(ctx context.Context, args []string, stderr io.Writer) (runErr error) {
 		ReadTimeout:       requestBodyReadTimeout,
 		IdleTimeout:       2 * time.Minute,
 	}
-	if err := log.log(ctx, slog.LevelInfo, "listening", "url", fmt.Sprintf("http://%s/v1/responses", *listenAddress), "mode", *mode, "model_protocol", *modelProtocol, "mentor_handoff", *mentorHandoffEnabled); err != nil {
+	if err := log.log(ctx, slog.LevelInfo, "listening", "url", fmt.Sprintf("http://%s/v1/responses", *listenAddress), "mode", *mode, "model_protocol", *modelProtocol, "mentor_handoff", *mentorHandoffEnabled, "grok_subagents", *grokEnabled); err != nil {
 		return fmt.Errorf("write listening log: %w", err)
 	}
 	serverError := make(chan error, 1)
@@ -211,6 +236,15 @@ func modelsHandler(provider *providerClient) http.HandlerFunc {
 		if len(body) > modelsResponseBufferBytes {
 			http.Error(writer, "upstream models response exceeds the router buffer budget", http.StatusBadGateway)
 			return
+		}
+		if provider.grok != nil && response.StatusCode == http.StatusOK {
+			body, err = appendGrokModel(body)
+			if err != nil {
+				http.Error(writer, err.Error(), http.StatusBadGateway)
+				return
+			}
+			sum := sha256.Sum256(body)
+			response.Header.Set("ETag", fmt.Sprintf(`"hpatch-%x"`, sum))
 		}
 		for _, name := range []string{"Content-Type", "Cache-Control", "ETag"} {
 			for _, value := range response.Header.Values(name) {
@@ -480,6 +514,13 @@ func executeRequest(
 	if hpatchTransform != nil {
 		defer hpatchTransform.Close()
 	}
+	var bridge *subagentBridge
+	if client, ok := provider.(*providerClient); ok && client.grok != nil {
+		bridge, err = prepareSubagentBridge(&parsedRequest)
+		if err != nil {
+			return fmt.Errorf("prepare Grok collaboration bridge: %w", err)
+		}
+	}
 	compactTransform, forwardBody, err := compactTokens.prepareRequest(&parsedRequest)
 	if err != nil {
 		return fmt.Errorf("prepare compact token protocol: %w", err)
@@ -521,6 +562,9 @@ func executeRequest(
 		}
 		if compactTransform != nil {
 			responseTransform = composeResponseTransformers(responseTransform, compactTransform)
+		}
+		if bridge != nil {
+			responseTransform = composeResponseTransformers(responseTransform, bridge)
 		}
 		if hpatchTransform != nil {
 			responseTransform = composeResponseTransformers(responseTransform, hpatchTransform)
