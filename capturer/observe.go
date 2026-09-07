@@ -318,9 +318,18 @@ func requestToolNames(tools []json.RawMessage) []string {
 	names := make([]string, 0, len(tools))
 	for _, raw := range tools {
 		var tool struct {
-			Name string `json:"name"`
+			Name     string `json:"name"`
+			Function struct {
+				Name string `json:"name"`
+			} `json:"function"`
 		}
-		if json.Unmarshal(raw, &tool) == nil && tool.Name != "" && !slices.Contains(names, tool.Name) {
+		if json.Unmarshal(raw, &tool) != nil {
+			continue
+		}
+		if tool.Name == "" {
+			tool.Name = tool.Function.Name
+		}
+		if tool.Name != "" && !slices.Contains(names, tool.Name) {
 			names = append(names, tool.Name)
 		}
 	}

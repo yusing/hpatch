@@ -65,7 +65,7 @@ physical line containing one static external Bash command instead remains the co
 command. An optional JSON parameter object cannot contain `cmd`. The router supplies `cmd` from
 the selected command. If the parameter object contains `login`, its value must be exactly `false`.
 
-Requests may expose either the Code Mode custom `exec` owner in `additional_tools` or native
+Requests may expose the Code Mode custom `exec` owner at the top level or in `additional_tools`, or native
 top-level custom `apply_patch` plus function `exec_command`. The router replaces the editing
 surface in either shape without opening another listener. In native requests, `exec_command`
 remains the executor-owned carrier. Hpatch invokes the executor's `apply_patch` command through

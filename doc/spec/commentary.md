@@ -7,7 +7,8 @@ with an object parameter schema receives one optional string property named `com
 nonblank authored value is shown as assistant commentary immediately before the call and is removed
 before execution. An omitted or blank value uses a concise tool-specific default. Strict tools,
 provider-owned `additional_tools`, and tools that already own a `commentary` property keep their
-schemas and arguments unchanged and receive defaults only. Collaboration tools and tools whose
+schemas and arguments unchanged and receive defaults only. The opt-in [third-party subagent bridge](subagents.md) separately projects
+collaboration schemas and restores native identities before commentary handling. Collaboration tools and tools whose
 purpose is user messaging receive no generic operation commentary.
 
 The central model instructions direct the agent to attach progress only through a supported tool's

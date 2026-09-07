@@ -6,6 +6,7 @@ pjdoc:
   status: draft
   revision: "44"
   files:
+    - subagents.md
     - commentary.md
     - read.md
     - grep.md
@@ -33,6 +34,7 @@ Each listed file owns one requirement. Related facts are cited by stable ID or l
 
 ## Inventory
 
+- [`REQ-SUBAGENTS-001`](subagents.md): Grok-backed native subagents
 - [`REQ-COMMENTARY-001`](commentary.md): user-only subagent activity details
 - [`REQ-READ-001`](read.md): routed verified-row reading and bounded ranges
 - [`REQ-GREP-001`](grep.md): routed ripgrep search with directly editable verified rows

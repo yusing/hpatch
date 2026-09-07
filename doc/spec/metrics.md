@@ -13,7 +13,7 @@ It MUST present every aggregate group plus the retained exchange, provider-attem
 and delivered-tool detail rather than substituting a reduced dashboard-specific metric set.
 
 The capturer MUST observe both the Codex-facing Responses handler and every provider-facing
-Responses attempt made by that request. Correlation MUST remain process-private and MUST NOT add a
+Responses or Chat Completions attempt made by that request. Correlation MUST remain process-private and MUST NOT add a
 header to either observed request. A provider retry MUST retain the logical request identity and use
 attempt numbers `1..N` without gaps.
 
@@ -54,10 +54,12 @@ capturer, not by the router, engine, plugin, benchmark report, or dashboard. The
    router-generated commentary MUST be excluded from model-origin output accounting by its reserved
    message identity, never by matching text or the commentary phase. This exclusion applies only
    to router-generated client output, not provider output or passthrough responses. All bytes
-   remain in transport totals. Streamed responses whose terminal output is empty, omitted, null,
-   or contains only generated commentary MUST reconstruct model-origin output in `output_index`
-   order from finalized `response.output_item.done` items, excluding generated commentary there
-   as well. A missing terminal event MUST NOT be treated as a completed output;
+   remain in transport totals. Chat Completions streams reconstruct their terminal assistant-message
+   array and preserve actual function names and argument measurements. Streamed responses whose
+   terminal output is empty, omitted, null, or contains only generated commentary MUST reconstruct
+   model-origin output in `output_index` order from finalized `response.output_item.done` items,
+   excluding generated commentary there as well. A missing terminal event MUST NOT be treated as a
+   completed output;
 5. signed input byte and token savings between each client request and the final provider request,
    plus signed output savings between their complete model-origin `output` arrays, excluding generated commentary, echoed tools, and all
    other response metadata, so repeated SSE framing and response metadata remain transport evidence

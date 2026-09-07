@@ -992,7 +992,7 @@ func TestHPatchReplacementReplacesNamespacedExecCommandWithShellParams(t *testin
 		"tools": mustTestJSON(t, []any{}),
 	}
 	installed := testInstalledTools()
-	owner, replaced, err := replaceAdditionalToolsApplyPatch(fields, decodeResponsesToolCatalog(fields), installed)
+	owner, replaced, err := replaceCodeModeTools(fields, decodeResponsesToolCatalog(fields), installed)
 	if err != nil || !replaced || owner != "exec" {
 		t.Fatalf("owner = %q, replaced %v, error %v", owner, replaced, err)
 	}
@@ -1042,7 +1042,7 @@ func TestHPatchReplacementReplacesFlatExecCommandWithShellParams(t *testing.T) {
 		"tools": mustTestJSON(t, []any{}),
 	}
 	installed := testInstalledTools()
-	owner, replaced, err := replaceAdditionalToolsApplyPatch(fields, decodeResponsesToolCatalog(fields), installed)
+	owner, replaced, err := replaceCodeModeTools(fields, decodeResponsesToolCatalog(fields), installed)
 	if err != nil || !replaced || owner != "exec" {
 		t.Fatalf("owner = %q, replaced %v, error %v", owner, replaced, err)
 	}
@@ -1100,7 +1100,7 @@ func TestHPatchReplacementKeepsBaseShellDescriptionWithoutExecCommandContract(t 
 	}
 	installed := testInstalledTools()
 
-	_, replaced, err := replaceAdditionalToolsApplyPatch(fields, decodeResponsesToolCatalog(fields), installed)
+	_, replaced, err := replaceCodeModeTools(fields, decodeResponsesToolCatalog(fields), installed)
 	if err != nil || !replaced {
 		t.Fatalf("replacement = %t, error %v", replaced, err)
 	}
@@ -1116,7 +1116,7 @@ func TestHPatchReplacementKeepsBaseShellDescriptionWithoutExecCommandContract(t 
 	}
 }
 
-func TestHPatchReplacementRejectsUnsupportedAndTopLevelExecCarriers(t *testing.T) {
+func TestHPatchReplacementRejectsUnsupportedAndDuplicateExecCarriers(t *testing.T) {
 	flat := func(name string) []any {
 		return []any{map[string]any{
 			"type": "additional_tools",
@@ -1132,7 +1132,7 @@ func TestHPatchReplacementRejectsUnsupportedAndTopLevelExecCarriers(t *testing.T
 	}{
 		{name: "flat functions exec", input: flat("functions.exec")},
 		{
-			name:  "top-level exec",
+			name:  "top-level and additional exec",
 			input: []any{testCodeModeAdditionalTools(testCodeModeDescription)},
 			tools: []any{map[string]any{"type": "custom", "name": "exec", "description": testCodeModeDescription}},
 		},
@@ -1150,7 +1150,7 @@ func TestHPatchReplacementRejectsUnsupportedAndTopLevelExecCarriers(t *testing.T
 			}
 			beforeInput := bytes.Clone(fields["input"])
 			beforeTools := bytes.Clone(fields["tools"])
-			_, replaced, err := replaceAdditionalToolsApplyPatch(fields, decodeResponsesToolCatalog(fields), testInstalledTools())
+			_, replaced, err := replaceCodeModeTools(fields, decodeResponsesToolCatalog(fields), testInstalledTools())
 			if err == nil || replaced {
 				t.Fatalf("replacement = %t, error %v", replaced, err)
 			}
@@ -1290,7 +1290,7 @@ func TestHPatchAdditionalToolsReplacementRejectsDuplicateAndConflictingOwners(t 
 			}
 			beforeInput := bytes.Clone(fields["input"])
 			beforeTools := bytes.Clone(fields["tools"])
-			_, replaced, err := replaceAdditionalToolsApplyPatch(fields, decodeResponsesToolCatalog(fields), testInstalledTools())
+			_, replaced, err := replaceCodeModeTools(fields, decodeResponsesToolCatalog(fields), testInstalledTools())
 			if err == nil || replaced {
 				t.Fatalf("replacement = %v, error %v", replaced, err)
 			}
@@ -1307,7 +1307,7 @@ func TestHPatchAdditionalToolsReplacementAlwaysRemovesExecCommand(t *testing.T) 
 		"tools": mustTestJSON(t, []any{}),
 	}
 
-	owner, replaced, err := replaceAdditionalToolsApplyPatch(fields, decodeResponsesToolCatalog(fields), testInstalledTools())
+	owner, replaced, err := replaceCodeModeTools(fields, decodeResponsesToolCatalog(fields), testInstalledTools())
 	if err != nil || !replaced || owner != "exec" {
 		t.Fatalf("owner = %q, replaced %v, error %v", owner, replaced, err)
 	}
@@ -1365,7 +1365,7 @@ func TestHPatchAdditionalToolsReplacementLeavesUnsupportedAndMalformedRequestsUn
 			beforeInput := bytes.Clone(fields["input"])
 			beforeTools := bytes.Clone(fields["tools"])
 			beforeChoice := bytes.Clone(fields["tool_choice"])
-			_, replaced, err := replaceAdditionalToolsApplyPatch(fields, decodeResponsesToolCatalog(fields), testInstalledTools())
+			_, replaced, err := replaceCodeModeTools(fields, decodeResponsesToolCatalog(fields), testInstalledTools())
 			if err != nil || replaced {
 				t.Fatalf("replacement = %v, error %v", replaced, err)
 			}
@@ -1381,7 +1381,7 @@ func TestHPatchReplacementRetainsNamespacedExecOwnerName(t *testing.T) {
 		"input": mustTestJSON(t, []any{testCodeModeAdditionalTools(testCodeModeDescription)}),
 		"tools": mustTestJSON(t, []any{}),
 	}
-	got, replaced, err := replaceAdditionalToolsApplyPatch(fields, decodeResponsesToolCatalog(fields), testInstalledTools())
+	got, replaced, err := replaceCodeModeTools(fields, decodeResponsesToolCatalog(fields), testInstalledTools())
 	if err != nil || !replaced || got != "exec" {
 		t.Fatalf("owner = %q, replaced %v, error %v", got, replaced, err)
 	}
@@ -3481,4 +3481,40 @@ func mustTestJSON(t *testing.T, value any) []byte {
 
 func jsonQuoted(value string) string {
 	return strconv.Quote(value)
+}
+
+func TestHPatchReplacementSupportsTopLevelCodeModeForGrok(t *testing.T) {
+	workspace := t.TempDir()
+	request, err := parseResponsesRequest(mustTestJSON(t, map[string]any{
+		"model": grokModel, "stream": true, "input": []any{map[string]any{"role": "user", "content": "probe"}},
+		"tools": []any{map[string]any{"type": "custom", "name": "exec", "description": testCodeModeDescription}}, "tool_choice": "auto",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	proxy := newManagedHPatchProxy(t, testTranslator(t, new(int)))
+	transform, err := proxy.prepareRequest(t.Context(), &request, "grok-session", "grok-thread", codexTurnMetadata{RequestKind: "turn", SubagentKind: "thread_spawn", Directories: map[string]json.RawMessage{workspace: nil}}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer transform.Close()
+	if transform.nativeTools || transform.codeModeToolName != "exec" {
+		t.Fatal("top-level Code Mode became a native shell carrier")
+	}
+	var tools []map[string]json.RawMessage
+	json.Unmarshal(request.fields["tools"], &tools)
+	var execDescription string
+	names := map[string]bool{}
+	for _, tool := range tools {
+		names[jsonString(tool, "name")] = true
+		if jsonString(tool, "name") == "exec" {
+			execDescription = jsonString(tool, "description")
+		}
+	}
+	if !names["hpatch"] || !names["shell"] || strings.Contains(execDescription, codeModeApplyPatchHeading) || strings.Contains(execDescription, "tools.exec_command") {
+		t.Fatal("Code Mode projection did not expose Hpatch and shell")
+	}
+	if _, err := translateGrokRequest(mustTestJSON(t, request.fields)); err != nil {
+		t.Fatal(err)
+	}
 }

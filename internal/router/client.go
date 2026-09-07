@@ -103,6 +103,7 @@ func composeResponseTransformers(first, second responseTransformer) responseTran
 }
 
 type providerClient struct {
+	grok              *grokClient
 	httpClient        *http.Client
 	baseURL           string
 	streamIdleTimeout time.Duration
@@ -155,6 +156,19 @@ func (c *providerClient) forwardModels(ctx context.Context, headers http.Header,
 }
 
 func (c *providerClient) forwardExecution(startCtx, responseCtx context.Context, body []byte, headers http.Header, cacheKey string) (*http.Response, error) {
+	var model struct {
+		Model string `json:"model"`
+	}
+	if err := json.Unmarshal(body, &model); err != nil {
+		return nil, errors.New("invalid provider request")
+	}
+	if isGrokModel(model.Model) {
+		if c.grok == nil {
+			return nil, errors.New("Grok subagents require --grok")
+		}
+		return c.grok.forwardExecution(startCtx, responseCtx, body, headers)
+	}
+
 	authorization, accountID, err := requiredCodexAuthHeaders(headers)
 	if err != nil {
 		return nil, err

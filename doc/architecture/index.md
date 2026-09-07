@@ -6,6 +6,7 @@ pjdoc:
   status: draft
   revision: "37"
   files:
+    - subagents.md
     - commentary.md
     - mentor.md
     - ctp.md
@@ -26,6 +27,7 @@ Each listed file owns one ownership contract. Related facts are cited by stable 
 
 ## Inventory
 
+- [`CTR-SUBAGENTS-001`](subagents.md): router-owned third-party provider bridge
 - [`CTR-COMMENTARY-001`](commentary.md): router-owned subagent commentary projection
 - [`CTR-MENTOR-001`](mentor.md): router-owned subagent model schedule
 - [`CTR-CTP-001`](ctp.md): router-owned compact provider representation

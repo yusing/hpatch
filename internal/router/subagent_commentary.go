@@ -28,22 +28,25 @@ func subagentToolCatalog(tools *responsesToolCatalog) map[string]struct{} {
 		return nil
 	}
 	catalog := make(map[string]struct{})
+	sections := []*responsesToolSection{tools.top}
 	for _, group := range tools.additional {
-		if !group.tools.present || group.tools.err != nil {
+		sections = append(sections, group.tools)
+	}
+	for _, section := range sections {
+		if !section.present || section.err != nil {
 			continue
 		}
-		for index, namespace := range group.tools.tools {
-			if namespace.Type != "namespace" {
+		for index, namespace := range section.tools {
+			if namespace == nil || namespace.Type != "namespace" {
 				continue
 			}
-			node := group.tools.nodes[index]
+			node := section.nodes[index]
 			if node == nil || node.nested == nil || node.nested.err != nil {
 				continue
 			}
 			for _, tool := range node.nested.tools {
-				name := tool.Name
-				if tool.Type == "function" && name == "spawn_agent" {
-					catalog[functionToolKey(namespace.Name, name)] = struct{}{}
+				if tool != nil && tool.Type == "function" && tool.Name == "spawn_agent" {
+					catalog[functionToolKey(namespace.Name, tool.Name)] = struct{}{}
 				}
 			}
 		}

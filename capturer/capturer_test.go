@@ -879,3 +879,33 @@ func TestRecorderIgnoresUnregisteredResponsesSuffix(t *testing.T) {
 		t.Fatalf("snapshot = %#v", snapshot)
 	}
 }
+
+// Return bytes with the cancellation error to exercise the final in-flight update.
+type closeReleasedBody struct {
+	reading chan struct{}
+	closed  chan struct{}
+}
+
+func (b *closeReleasedBody) Read(p []byte) (int, error) {
+	close(b.reading)
+	<-b.closed
+	return copy(p, "last"), io.ErrClosedPipe
+}
+func (b *closeReleasedBody) Close() error { close(b.closed); return nil }
+
+func TestObservedResponseCloseWaitsForReadObservation(t *testing.T) {
+	upstream := &closeReleasedBody{reading: make(chan struct{}), closed: make(chan struct{})}
+	var payload observedPayload
+	var readErr error
+	body := &observedResponseBody{ReadCloser: upstream, finish: func(p observedPayload, err error) { payload, readErr = p, err }}
+	readDone := make(chan struct{})
+	go func() { defer close(readDone); _, _ = body.Read(make([]byte, 10)) }()
+	<-upstream.reading
+	if err := body.Close(); err != nil {
+		t.Fatal(err)
+	}
+	<-readDone
+	if string(payload.content) != "last" || !errors.Is(readErr, io.ErrClosedPipe) {
+		t.Fatalf("payload=%q error=%v", payload.content, readErr)
+	}
+}
