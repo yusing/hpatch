@@ -70,6 +70,7 @@ suite_manifest="$benchmark_root/diverse-suite.json"
 task=
 task_manifest=
 prompt_file=
+task_contract_sha256=
 source_repo=
 source_repository=
 source_is_public=false
@@ -106,6 +107,21 @@ is_allowed_path() {
 	done
 	return 1
 }
+compute_task_contract() {
+	local fingerprint
+	fingerprint=$(cd -- "$task" && sha256sum -- "${task_manifest##*/}" "$prompt_file" "${hidden_sources[@]}" | sha256sum) || return 1
+	task_contract_sha256=${fingerprint%% *}
+}
+
+verify_task_contract() {
+	local current
+	current=$(compute_task_contract && printf '%s' "$task_contract_sha256") || return 1
+	if [[ $current != "$task_contract_sha256" ]]; then
+		printf 'bench.sh: task content changed during this run; refusing mismatched execution or grading\n' >&2
+		return 1
+	fi
+}
+
 load_task_manifest() {
 	local repository
 	local manifest_relative
@@ -157,6 +173,7 @@ load_task_manifest() {
 	mapfile -t allowed_paths < <(jq -er '.allowed_path_prefixes[]' "$task_manifest")
 	mapfile -t hidden_sources < <(jq -er '.hidden_files[].source' "$task_manifest")
 	mapfile -t hidden_paths < <(jq -er '.hidden_files[].destination' "$task_manifest")
+	compute_task_contract || return 1
 	mapfile -t grader_command < <(jq -er '.graders[0].command[]' "$task_manifest")
 	grader_name=$(jq -er '.graders[0].name' "$task_manifest")
 	baseline_output_contains=$(jq -er '.graders[0].baseline_output_contains' "$task_manifest")
@@ -357,9 +374,11 @@ import_control_baseline() {
 		fi
 	done
 	if ! jq -e --arg task "$task_id" --arg model "$model" --arg effort "$reasoning_effort" \
-		".task_id == \$task and .arm == \"control\" and .model == \$model and .reasoning_effort == \$effort and .task_pass == true" \
+		--arg contract "$task_contract_sha256" --arg instructions "$control_instruction_sha" \
+		'.task_id == $task and .arm == "control" and .model == $model and .reasoning_effort == $effort and .task_pass == true
+		 and .task_contract_sha256 == $contract and .base_instructions.sha256 == $instructions' \
 		"$baseline_result" >/dev/null; then
-		printf "bench.sh: control baseline does not match the task, model, reasoning, and passing-result contract: %s\n" "$baseline_result" >&2
+		printf "bench.sh: control baseline does not match the task content, instructions, model, reasoning, and passing-result contract: %s\n" "$baseline_result" >&2
 		return 1
 	fi
 	mkdir -p "$destination"
@@ -859,6 +878,7 @@ JSON
 		--argjson require_ctp_input_compression "$require_ctp_input_compression" \
 		--argjson require_ctp_output_compression "$require_ctp_output_compression" \
 		--arg benchmark_mode "$benchmark_mode" \
+		--arg task_contract_sha256 "$task_contract_sha256" \
 		--arg treatment_model_protocol "$HPATCH_BENCH_HPATCH_MODEL_PROTOCOL" \
 		--arg benchmark_commit "$benchmark_commit" \
 		--arg codex_release "$codex_release" \
@@ -874,6 +894,7 @@ JSON
 		--arg reports "${issue_reports##*/}" \
 		'{
 			benchmark_mode: $benchmark_mode,
+			task_contract_sha256: $task_contract_sha256,
 			treatment_model_protocol: $treatment_model_protocol,
 			benchmark_commit: $benchmark_commit,
 			codex_release: $codex_release,
@@ -1129,6 +1150,9 @@ grade() {
 	local repository=$1
 	local stdout=$2
 	local stderr=$3
+	local status=0
+
+	verify_task_contract || return 1
 
 	case $dependency_kind in
 	go)
@@ -1138,7 +1162,7 @@ grade() {
 			GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local \
 				timeout --signal=TERM --kill-after=10s "${grader_timeout}s" \
 				"${grader_command[@]}"
-		) >"$stdout" 2>"$stderr"
+		) >"$stdout" 2>"$stderr" || status=$?
 		;;
 	node)
 		(
@@ -1146,16 +1170,18 @@ grade() {
 			PATH="$dependency_cache/node_modules/.bin:$PATH" \
 				timeout --signal=TERM --kill-after=10s "${grader_timeout}s" \
 				"${grader_command[@]}"
-		) >"$stdout" 2>"$stderr"
+		) >"$stdout" 2>"$stderr" || status=$?
 		;;
 	none)
 		(
 			cd "$repository"
 			timeout --signal=TERM --kill-after=10s "${grader_timeout}s" \
 				"${grader_command[@]}"
-		) >"$stdout" 2>"$stderr"
+		) >"$stdout" 2>"$stderr" || status=$?
 		;;
 	esac
+	verify_task_contract || return 1
+	return "$status"
 }
 
 validate_revision() {
@@ -1175,6 +1201,8 @@ validate_revision() {
 	else
 		actual=fail
 	fi
+	# Expected base failures must not turn a task-integrity failure into success.
+	verify_task_contract || return 1
 	if [[ $actual != "$expected" ]]; then
 		cat "$workspace/grader.stdout" "$workspace/grader.stderr" >&2
 		printf 'validation %s: got %s, want %s\n' "$name" "$actual" "$expected" >&2
@@ -1204,6 +1232,7 @@ cancel_pair() {
 }
 
 run_agent() {
+	verify_task_contract || return 1
 	local arm=$1
 	local repetition=$2
 	local order=$3
@@ -1613,6 +1642,7 @@ run_agent() {
 		--arg router_mode "$router_mode" \
 		--arg started_at "$started_at" \
 		--arg task_id "$task_id" \
+		--arg task_contract_sha256 "$task_contract_sha256" \
 		--arg base_instructions_path "$instruction_path" \
 		--arg base_instructions_container_path "/bench-instructions/$instruction_name" \
 		--arg base_instructions_sha256 "$instruction_sha" \
@@ -1630,6 +1660,7 @@ run_agent() {
 		{
 			run_id: $run_id,
 			task_id: $task_id,
+			task_contract_sha256: $task_contract_sha256,
 			arm: $arm,
 			repetition: $repetition,
 			order_in_block: $order,

@@ -30,7 +30,7 @@ collected=false
 control_log="$fixture/control.log"
 control_metrics="$fixture/control-metrics.json"
 start_routers
-run_single_arm 1
+(run_single_arm 1)
 collect_artifacts
 [[ $started == true && $collected == true ]]
 enforce_edit_loop_acceptance

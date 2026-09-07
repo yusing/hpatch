@@ -554,7 +554,8 @@ the task's local source under `benchmarks/repos/`. The default task,
 attempt per arm with GPT-6 Astra at medium effort: stock versus Hpatch + CTP/2,
 with Mentor Handoff and issue reporting disabled. Use `BENCHMARK_MODE=control-only`
 for one stock attempt, or add `BENCHMARK_PREPARE_ONLY=true` to qualify the historical
-base and oracle without model calls. Read the
+base and oracle without model calls. Imported controls must match the current task-content and
+instruction hashes; older results without that evidence require a fresh control. Read the
 [benchmark methodology](doc/benchmarks.md) before running
 `bash benchmarks/bench.sh`. Capture, snapshot shape, and comparison rules are
 [`REQ-METRICS-001`](doc/spec/metrics.md) and

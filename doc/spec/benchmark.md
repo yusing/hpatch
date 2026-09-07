@@ -15,6 +15,20 @@ Supported modes are:
 - `ctp-only`: Hpatch native protocol versus Hpatch CTP/2 with alternating order; and
 - `mentor-handoff`: Hpatch versus Hpatch with the bounded mentor model schedule.
 
+The RangeStream task MUST publish its initial non-CountOnly key budget (at most 10, capped by
+a positive request Limit), not leave initial batching implicit. Subsequent batches MUST adapt
+toward MaxRequestBytes with a minimum of one key and respect the remaining request Limit.
+MaxRequestBytes is a size target, not a hard ceiling for an indivisible value or the initial
+sampling batch. Hidden grading MUST check the first response as well as later chunking,
+revision pinning, complete ordered data, and final Count/More semantics.
+
+Every fresh result MUST retain a content fingerprint covering its task manifest, visible prompt,
+and hidden grader files. Importing a control MUST require the same fingerprint and stock base
+instruction hash as the current task, in addition to matching task ID, model, effort, and a
+passing result. Missing content evidence MUST reject import rather than treating an older task
+contract as a matching control. The runner MUST verify that this content is unchanged before
+starting an agent and before and after grading; a mid-run task change MUST fail the run.
+
 The default preset MUST use `paired`, `gpt-6-astra`, `medium` reasoning effort, and one
 repetition (one attempt per arm), with issue reporting and Mentor Handoff disabled.
 

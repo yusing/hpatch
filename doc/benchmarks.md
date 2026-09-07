@@ -53,7 +53,10 @@ MODEL=gpt-5.6-sol BENCHMARK_MODE=hpatch-only REPETITIONS=1 bash benchmarks/bench
 ```
 
 For another model, also set `CONTROL_BASELINE_DIR` to a published control with matching
-model, effort, task, and instruction evidence.
+model, effort, task-content fingerprint, and instruction evidence. The fingerprint covers the
+manifest, visible task prompt, and hidden graders. Results without it, or from a different task
+contract, cannot be imported; collect a fresh control instead. Keep task files unchanged during a
+run: content checks before agent launch and around grading fail a run if those files change.
 
 One diagnostic run without a control:
 
@@ -255,6 +258,7 @@ bash benchmarks/commentary_coverage_test.sh
 bash benchmarks/expected_final_response_test.sh
 bash benchmarks/report_test.sh
 bash benchmarks/control_only_test.sh
+bash benchmarks/task_contract_test.sh
 ```
 
 The commentary fixture covers profile selection, operation and collaboration messages, successful

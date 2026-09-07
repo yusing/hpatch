@@ -39,6 +39,12 @@ model. Required compression is checked for both Mentor arms when their protocol 
 records must agree with the snapshot. Model reporting groups every provider attempt and separately
 counts attempts carrying provider usage.
 
+The runner binds fresh results to a content hash of the task manifest, visible prompt, and hidden
+grader files. Imported controls must match that hash and the current stock instruction hash as
+well as task ID, model, effort, and successful grading. Changing task behavior therefore cannot
+silently reuse a published control from a different contract. Content checks before agent launch
+and around grading reject mid-run task edits without replacing the recorded identity.
+
 Hidden tests and the allowed-path boundary decide correctness. Timing and token comparisons are
 interpreted only after correctness. CTP/2 and Mentor Handoff use the same capture and reporting
 path as paired and diagnostic runs; their distinct model/protocol behavior is visible in exchange

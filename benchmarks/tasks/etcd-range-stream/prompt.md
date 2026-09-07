@@ -6,7 +6,7 @@ Implement the complete production path:
 
 - add the streaming handler to the etcd server and RaftKV interface;
 - stream bounded chunks in key order, pin an implicit read revision for the lifetime of the stream, preserve explicit revisions, report More and the total Count on the final chunk, and support CountOnly as one response;
-- adapt the chunk limit toward MaxRequestBytes without ever producing an unlimited or zero-sized chunk;
+- begin non-CountOnly streams with a key limit of at most 10, capped by any positive request Limit, including the first response; adapt subsequent key limits toward MaxRequestBytes, decreasing an oversized batch toward a minimum of one key and increasing undersized batches, while respecting the remaining request Limit; MaxRequestBytes is an adaptive target, not a hard byte ceiling, since even one value may exceed it; never use a zero or unlimited per-chunk limit;
 - expose the range Count helper and the ordering/revision-filter predicates needed by the streaming validation;
 - reject custom sort orders and revision filters for RangeStream with an Unimplemented gRPC status while preserving normal range validation;
 - fill cluster, member, and raft-term header fields on the chunk carrying a response header without overwriting the handler's pinned revision;

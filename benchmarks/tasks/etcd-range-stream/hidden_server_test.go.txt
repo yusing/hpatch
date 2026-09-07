@@ -172,6 +172,38 @@ func TestHPatchBenchmarkPublicRangeStreamHandler(t *testing.T) {
 	}
 }
 
+// The first response is bounded before any size feedback is available. Test
+// both a short range and large values so later adaptation cannot mask it.
+func TestHPatchBenchmarkRangeStreamInitialChunk(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		valueSize int
+		limit     int64
+		wantMax   int
+	}{
+		{name: "small", valueSize: 1, wantMax: 10},
+		{name: "large", valueSize: 4096, wantMax: 10},
+		{name: "limited", valueSize: 128, limit: 3, wantMax: 3},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			server := newHPatchBenchmarkServer(t, bytes.Repeat([]byte("x"), test.valueSize))
+			server.Cfg.MaxRequestBytes = 1024
+			stream := &hpatchBenchmarkRangeStream{ctx: t.Context()}
+			if err := invokeHPatchBenchmarkRangeStream(t, server, &pb.RangeRequest{
+				Key: []byte("k00"), RangeEnd: []byte("l"), Limit: test.limit, Serializable: true,
+			}, stream); err != nil {
+				t.Fatal(err)
+			}
+			if len(stream.responses) == 0 {
+				t.Fatal("stream emitted no response")
+			}
+			if got := len(stream.responses[0].RangeResponse.Kvs); got < 1 || got > test.wantMax {
+				t.Fatalf("initial response has %d keys, want 1..%d", got, test.wantMax)
+			}
+		})
+	}
+}
+
 func TestHPatchBenchmarkRangeStreamDataAndPinning(t *testing.T) {
 	server := newHPatchBenchmarkServer(t, bytes.Repeat([]byte("x"), 128))
 	server.Cfg.MaxRequestBytes = 1024
@@ -257,15 +289,55 @@ func TestHPatchBenchmarkRangeStreamLargeValues(t *testing.T) {
 	if err != nil {
 		t.Fatalf("large-value rangeStream returned error: %v", err)
 	}
-	var keys int
-	for _, chunk := range stream.responses {
-		keys += len(chunk.RangeResponse.Kvs)
+	var keys, previous int
+	for i, chunk := range stream.responses {
+		n := len(chunk.RangeResponse.Kvs)
+		// Terminal metadata may be sent separately from the last data batch.
+		if n == 0 && i == len(stream.responses)-1 {
+			continue
+		}
+		if n == 0 || (i > 0 && previous > 1 && n >= previous) || (previous == 1 && n != 1) {
+			t.Fatalf("oversized-value chunk %d has %d keys after %d; want decreasing batches down to one key", i, n, previous)
+		}
+		previous = n
+		keys += n
 	}
 	if keys != 20 {
 		t.Fatalf("large-value stream returned %d keys, want 20", keys)
 	}
 	if len(stream.responses) < 2 {
 		t.Fatalf("large-value stream emitted %d chunks, want adaptation", len(stream.responses))
+	}
+	final := stream.responses[len(stream.responses)-1].RangeResponse
+	if final.Count != 20 || final.More || final.Header == nil || final.Header.Revision != server.KV().Rev() {
+		t.Fatalf("large-value terminal metadata = %+v, want count 20, more false, and pinned revision", final)
+	}
+}
+
+func TestHPatchBenchmarkRangeStreamGrowsSmallChunks(t *testing.T) {
+	server := newHPatchBenchmarkServer(t, []byte("x"))
+	for i := 20; i < 100; i++ {
+		server.KV().Put([]byte(fmt.Sprintf("k%02d", i)), []byte("x"), lease.NoLease)
+	}
+	stream := &hpatchBenchmarkRangeStream{ctx: t.Context()}
+	if err := invokeHPatchBenchmarkRangeStream(t, server, &pb.RangeRequest{
+		Key: []byte("k00"), RangeEnd: []byte("l"), Serializable: true,
+	}, stream); err != nil {
+		t.Fatal(err)
+	}
+	if len(stream.responses) < 2 {
+		t.Fatal("small-value stream did not chunk")
+	}
+	initial := len(stream.responses[0].RangeResponse.Kvs)
+	grew := false
+	total := 0
+	for _, response := range stream.responses {
+		n := len(response.RangeResponse.Kvs)
+		total += n
+		grew = grew || n > initial
+	}
+	if total != 100 || !grew {
+		t.Fatalf("small-value stream returned %d keys, grew=%t; want 100 and growing chunks", total, grew)
 	}
 }
 
