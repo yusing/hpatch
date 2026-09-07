@@ -1459,6 +1459,7 @@ func TestProviderClientForwardsCodexAuthenticationAndRequestHeaders(t *testing.T
 	headers.Set(codexResponsesLiteHeader, "true")
 	headers.Set(openAISubagentHeader, threadSpawnSubagent)
 	headers.Set(codexTurnMetadataHeader, "metadata")
+	headers.Set("x-codex-turn-state", "opaque-turn-state")
 	headers.Set(hpatchCaptureIDHeader, "capture")
 	httpClient := &http.Client{Transport: serverRoundTripper(func(request *http.Request) (*http.Response, error) {
 		trusted := map[string]string{
@@ -1472,7 +1473,7 @@ func TestProviderClientForwardsCodexAuthenticationAndRequestHeaders(t *testing.T
 				t.Errorf("header %s = %q, want %q", name, got, value)
 			}
 		}
-		for _, name := range []string{threadIDHeader, clientRequestIDHeader, codexWindowIDHeader, codexBetaFeaturesHeader, codexResponsesLiteHeader, openAISubagentHeader, codexTurnMetadataHeader, hpatchCaptureIDHeader} {
+		for _, name := range []string{threadIDHeader, clientRequestIDHeader, codexWindowIDHeader, codexBetaFeaturesHeader, codexResponsesLiteHeader, openAISubagentHeader, codexTurnMetadataHeader, "x-codex-turn-state", hpatchCaptureIDHeader} {
 			if got, want := request.Header.Values(name), headers.Values(name); !slices.Equal(got, want) {
 				t.Errorf("header %s = %q, want %q", name, got, want)
 			}
@@ -1578,6 +1579,7 @@ func TestProviderClientPreservesCodexRequestHeadersAcrossRetries(t *testing.T) {
 	headers.Set(codexBetaFeaturesHeader, "feature")
 	headers.Set(codexResponsesLiteHeader, "true")
 	headers.Set(codexTurnMetadataHeader, "metadata")
+	headers.Set("x-codex-turn-state", "opaque-turn-state")
 	var attempts []http.Header
 	httpClient := &http.Client{Transport: serverRoundTripper(func(request *http.Request) (*http.Response, error) {
 		attempts = append(attempts, request.Header.Clone())
@@ -1608,7 +1610,7 @@ func TestProviderClientPreservesCodexRequestHeadersAcrossRetries(t *testing.T) {
 		if got := forwarded.Get(sessionIDHeader); got != "" {
 			t.Errorf("attempt %d %s = %q, want empty", attempt+1, sessionIDHeader, got)
 		}
-		for _, name := range []string{threadIDHeader, clientRequestIDHeader, codexWindowIDHeader, codexBetaFeaturesHeader, codexResponsesLiteHeader, codexTurnMetadataHeader} {
+		for _, name := range []string{threadIDHeader, clientRequestIDHeader, codexWindowIDHeader, codexBetaFeaturesHeader, codexResponsesLiteHeader, codexTurnMetadataHeader, "x-codex-turn-state"} {
 			if got, want := forwarded.Values(name), headers.Values(name); !slices.Equal(got, want) {
 				t.Errorf("attempt %d header %s = %q, want %q", attempt+1, name, got, want)
 			}

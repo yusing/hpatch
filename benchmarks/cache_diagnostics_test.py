@@ -41,6 +41,30 @@ class CacheDiagnosticsTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             validate_cache_diagnostics(broken)
 
+    def test_turn_state_forwarding_and_tampering(self):
+        unavailable = {"status": "unavailable", "common_items": 0, "changed_fields": []}
+        for client, provider, expected in (("", "", "absent"), ("d"*32, "d"*32, "preserved"),
+                                           ("d"*32, "", "dropped"), ("d"*32, "e"*32, "changed")):
+            fp = fingerprint([])
+            fp["turn_state"] = client
+            diagnosis = {"previous_sequence": 0, "client": unavailable, "native": unavailable,
+                         "provider": unavailable, "routing": "unavailable", "request_key": "unavailable",
+                         "turn_state_forwarding": expected}
+            row = exchange(1, fp, diagnosis)
+            row["provider_attempts"][0]["cache_fingerprint"] = copy.deepcopy(fp)
+            row["provider_attempts"][0]["cache_fingerprint"]["turn_state"] = provider
+            validate_cache_diagnostics([row])
+            del row["thread_id"]
+            validate_cache_diagnostics([row])
+            row["cache_diagnostics"]["turn_state_forwarding"] = "wrong"
+            with self.assertRaises(ValueError):
+                validate_cache_diagnostics([row])
+        for invalid in (None, "private state", 42):
+            fp = fingerprint([])
+            fp["turn_state"] = invalid
+            with self.assertRaises(ValueError):
+                validate_fingerprint(fp)
+
     def test_private_shape_and_partial_evidence(self):
         fp = fingerprint(["d" * 32])
         validate_fingerprint(fp)

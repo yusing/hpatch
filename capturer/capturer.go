@@ -129,7 +129,8 @@ type requestState struct {
 	nativeRequest       *payloadMetrics
 	nativeRequestError  bool
 	nativeFingerprint   *requestFingerprint
-	providerRouting     map[uint64]string
+	providerRouting     map[uint64]requestRouting
+	clientTurnState     string
 	mu                  sync.Mutex
 	captureID           string
 	sequence            uint64
@@ -142,6 +143,11 @@ type requestState struct {
 	providerUsage       map[uint64]ProviderUsage
 	cacheReady          bool
 	cacheUsage          *usageMetrics
+}
+
+type requestRouting struct {
+	sessionKey string
+	turnState  string
 }
 
 // ObserveProviderUsage supplies the provider-authoritative usage parsed by the
@@ -267,11 +273,13 @@ func (r *Recorder) Transport(next http.RoundTripper) http.RoundTripper {
 		}
 		state.mu.Lock()
 		if state.providerRouting == nil {
-			state.providerRouting = make(map[uint64]string)
+			state.providerRouting = make(map[uint64]requestRouting)
 		}
+		routing := requestRouting{turnState: r.turnStateFingerprint(request.Header.Get("x-codex-turn-state"))}
 		if key := request.Header.Get("Session_id"); key != "" {
-			state.providerRouting[attempt] = r.fingerprint("cache-key", key)
+			routing.sessionKey = r.fingerprint("cache-key", key)
 		}
+		state.providerRouting[attempt] = routing
 		state.mu.Unlock()
 		started := time.Now()
 		response, roundTripErr := next.RoundTrip(request)
@@ -298,12 +306,13 @@ func (r *Recorder) beginRequest(header http.Header) (*requestState, error) {
 		return nil, err
 	}
 	state := &requestState{
-		captureID: captureID,
-		recorder:  r,
-		requestID: header.Get("x-client-request-id"),
-		sessionID: cmp.Or(header.Get("session-id"), header.Get("Session_id")),
-		threadID:  header.Get("thread-id"),
-		subagent:  header.Get("x-openai-subagent"),
+		captureID:       captureID,
+		recorder:        r,
+		clientTurnState: r.turnStateFingerprint(header.Get("x-codex-turn-state")),
+		requestID:       header.Get("x-client-request-id"),
+		sessionID:       cmp.Or(header.Get("session-id"), header.Get("Session_id")),
+		threadID:        header.Get("thread-id"),
+		subagent:        header.Get("x-openai-subagent"),
 	}
 	r.mu.Lock()
 	r.requestSequence++
@@ -389,11 +398,18 @@ func (r *Recorder) recordExchange(state *requestState, boundary string, attempt 
 		record.Request = measured
 	}
 	record.Fingerprint = r.requestFingerprint(requestBody)
+	if boundary == "codex" && record.Fingerprint != nil {
+		value := state.clientTurnState
+		record.Fingerprint.TurnState = &value
+	}
 	if boundary == "provider" {
 		state.mu.Lock()
 		record.NativeFingerprint = state.nativeFingerprint
 		if record.Fingerprint != nil {
-			record.Fingerprint.RoutingKey = state.providerRouting[attempt]
+			if routing, ok := state.providerRouting[attempt]; ok {
+				record.Fingerprint.RoutingKey = routing.sessionKey
+				record.Fingerprint.TurnState = &routing.turnState
+			}
 		}
 
 		if state.nativeRequest != nil {
@@ -414,6 +430,7 @@ func (r *Recorder) recordExchange(state *requestState, boundary string, attempt 
 				record.NativeFingerprint = cloneFingerprint(record.Fingerprint)
 				if record.NativeFingerprint != nil {
 					record.NativeFingerprint.RoutingKey = ""
+					record.NativeFingerprint.TurnState = nil
 				}
 			}
 		}

@@ -74,3 +74,7 @@ pending, failed, or evicted predecessors,
 and retain the existing 4096-exchange window. Each stage retains at most 128 input-item fingerprints;
 partial evidence is unavailable rather than a claim of stability. Benchmark and dashboard code
 present these diagnoses; the benchmark independently reconciles them with sanitized observations.
+
+The same capture wrappers privately fingerprint the incoming and outgoing `x-codex-turn-state`
+headers. The snapshot compares their forwarding separately from session-key stability, without
+owning turn state or changing routing. Missing old evidence is unavailable, not an absent header.

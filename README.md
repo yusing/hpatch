@@ -582,6 +582,11 @@ Local token estimates count decoded JSON keys and scalar values, not outer JSON 
 
 Request compression is measured after replay and Hpatch projection, not against incoming Codex history. Delivery expansion is reported separately from assistant-text compression and authoritative paired provider usage.
 
+The dashboard's cache diagnostics compare private request fingerprints and show whether the
+client's per-turn sticky-routing header reaches the provider. `Turn-state forwarding` reports
+absent, preserved, dropped, changed, or unavailable. Stable session keys alone do not establish
+sticky routing, and neither check guarantees a provider cache hit. Raw routing tokens are not saved.
+
 The executable benchmark requires Docker Compose, Codex authentication, and
 the task's local source under `benchmarks/repos/`. The default task,
 `etcd-range-stream`, needs a local etcd checkout. The default A/B preset runs one

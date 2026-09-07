@@ -257,6 +257,9 @@ func forwardCodexRequestHeaders(destination, source http.Header) {
 		codexResponsesLiteHeader,
 		openAISubagentHeader,
 		codexTurnMetadataHeader,
+		// Codex owns this provider-issued, per-turn sticky-routing token. Relay
+		// it unchanged; never derive it from or retain it with the session key.
+		"x-codex-turn-state",
 		hpatchCaptureIDHeader,
 	} {
 		for _, value := range source.Values(name) {

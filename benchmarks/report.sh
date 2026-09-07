@@ -257,9 +257,9 @@ ctp_failed=false
 	done
 
 	printf '\n## Cache-prefix diagnostics\n\n'
-	printf 'Comparisons use decoded request items, not the provider hidden token prefix. Appended/identical means the observed earlier content is stable; it does not guarantee a cache hit. A changed post-replay prefix with a stable client prefix points to projection/replay; a changed provider prefix with a stable native prefix points to CTP. Missing, truncated, restarted, or first observations are unavailable. Routing compares private fingerprints of the actual outgoing session key; no key or content hash is shown.\n\n'
-	printf '| Arm | Request ordinal | Input | Cached | Client prefix | Post-replay prefix | Provider prefix | Route key | Request cache key |\n'
-	printf '|---|---:|---:|---:|---|---|---|---|---|\n'
+	printf 'Comparisons use decoded request items, not the provider hidden token prefix. Appended/identical means the observed earlier content is stable; it does not guarantee a cache hit. A changed post-replay prefix with a stable client prefix points to projection/replay; a changed provider prefix with a stable native prefix points to CTP. Missing, truncated, restarted, or first prefix observations are unavailable. Routing compares private fingerprints of the actual outgoing session key. Turn-state forwarding compares the current client/provider sticky-routing header: absent, preserved, dropped, changed, or unavailable. Stable session keys alone do not prove sticky routing; no key or content hash is shown.\n\n'
+	printf '| Arm | Request ordinal | Input | Cached | Client prefix | Post-replay prefix | Provider prefix | Route key | Request cache key | Turn-state forwarding |\n'
+	printf '|---|---:|---:|---:|---|---|---|---|---|---|\n'
 	for row in treatment ${has_baseline/true/baseline}; do
 		[[ $row == false ]] && continue
 		metrics=$treatment_metrics label=$treatment_label
@@ -268,7 +268,7 @@ ctp_failed=false
           def prefix: if . == null then "unavailable" else .status + (if .status == "changed" then " (common items=" + (.common_items|tostring) + (if (.changed_fields|length)>0 then "; fields=" + (.changed_fields|join(",")) else "" end) + ")" else "" end) end;
           .exchanges | sort_by(.sequence) | to_entries[] | .key as $ordinal | .value as $e |
           $e.provider_attempts[-1] as $p | $e.cache_diagnostics as $d |
-          "| \($arm) | \($ordinal+1) | \($p.usage.input_tokens // "n/a") | \($p.usage.cached_input_tokens // "n/a") | \($d.client | prefix) | \($d.native | prefix) | \($d.provider | prefix) | \($d.routing // "unavailable") | \($d.request_key // "unavailable") |"
+          "| \($arm) | \($ordinal+1) | \($p.usage.input_tokens // "n/a") | \($p.usage.cached_input_tokens // "n/a") | \($d.client | prefix) | \($d.native | prefix) | \($d.provider | prefix) | \($d.routing // "unavailable") | \($d.request_key // "unavailable") | \($d.turn_state_forwarding // "unavailable") |"
         ' "$metrics"
 	done
 

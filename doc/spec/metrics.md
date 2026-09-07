@@ -165,3 +165,13 @@ usage without labeling inferred shortfalls as proven router-induced cache misses
 Older captures without these additive fields remain valid for their existing metrics but cannot
 supply cache-prefix diagnoses. Benchmark validation MUST reconcile retained fingerprints and
 independently verify published diagnostic comparisons.
+
+Client and provider request fingerprints MUST additionally observe `x-codex-turn-state` with
+the recorder-private HMAC key. `turn_state` is an empty string when no nonempty header value was
+observed, a digest for a nonempty header, and omitted when unobserved. The body-only native seam MUST
+omit it. No raw sticky-routing token may be retained. `turn_state_forwarding` compares the current
+client request with its final provider attempt: absent (both empty), preserved (equal nonempty),
+dropped (only the provider empty), changed (other unequal values), or unavailable (missing or
+cross-scope evidence). It requires neither a predecessor nor thread identity; a new turn legitimately omits this header.
+Reports MUST distinguish this check from `Session_id` stability. Older evidence MUST NOT be
+reinterpreted as observed absence. Each retry retains its own observed header fingerprint.

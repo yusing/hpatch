@@ -74,6 +74,21 @@ def validate_fingerprint(value):
         if key in value and not digest(value[key]):
             raise ValueError("invalid private cache routing fingerprint")
 
+    if "turn_state" in value and value["turn_state"] != "" and not digest(value["turn_state"]):
+        raise ValueError("invalid private turn-state fingerprint")
+
+
+def compare_turn_state(client, provider):
+    if (client is None or provider is None or client["scope"] != provider["scope"]
+        or "turn_state" not in client or "turn_state" not in provider):
+        return "unavailable"
+    left, right = client["turn_state"], provider["turn_state"]
+    if left == "" and right == "":
+        return "absent"
+    if left == right:
+        return "preserved"
+    return "dropped" if right == "" else "changed"
+
 
 def compare_prefix(previous, current):
     result = {"status": "unavailable", "common_items": 0, "changed_fields": []}
@@ -108,7 +123,10 @@ def validate_cache_diagnostics(exchanges):
         for attempt in attempts:
             validate_fingerprint(attempt.get("cache_fingerprint"))
             validate_fingerprint(attempt.get("native_fingerprint"))
-        if not thread or not attempts or attempts[-1].get("cache_fingerprint") is None:
+        client_fp = exchange.get("client_fingerprint")
+        provider_fp = attempts[-1].get("cache_fingerprint") if attempts else None
+        has_turn_state = "turn_state" in (client_fp or {}) or "turn_state" in (provider_fp or {})
+        if (not thread and not has_turn_state) or not attempts or provider_fp is None:
             if exchange.get("cache_diagnostics") is not None:
                 raise ValueError("unavailable cache diagnosis presented as measured")
             continue
@@ -116,7 +134,7 @@ def validate_cache_diagnostics(exchanges):
         predecessor = exchange.get("predecessor_sequence", 0)
         if type(predecessor) is not int or predecessor < 0 or predecessor >= exchange["sequence"]:
             raise ValueError("invalid same-thread arrival predecessor")
-        before = by_sequence.get(predecessor)
+        before = by_sequence.get(predecessor) if thread else None
         if before and (before.get("thread_id") != thread or before.get("status") != "completed" or not before["provider_attempts"]):
             before = None
         last = before["provider_attempts"][-1] if before else {}
@@ -128,6 +146,8 @@ def validate_cache_diagnostics(exchanges):
             "routing": compare_route(last.get("cache_fingerprint"), final.get("cache_fingerprint"), "routing_key"),
             "request_key": compare_route(last.get("cache_fingerprint"), final.get("cache_fingerprint"), "request_key"),
         }
+        if has_turn_state:
+            expected["turn_state_forwarding"] = compare_turn_state(client_fp, provider_fp)
         if exchange.get("cache_diagnostics") != expected:
             raise ValueError("cache diagnosis does not reconcile stage fingerprints")
 

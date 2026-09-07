@@ -151,7 +151,13 @@ schedule. Parent and child traffic remains visible through actual model names in
 
 ## Capture and metrics
 
-New captures include keyed per-stage prefix diagnostics and route-key stability. The report locates changes before replay, during replay/projection, or during CTP, but does not claim visibility into provider cache routing. Run `python3 benchmarks/cache_diagnostics_test.py` for the model-free evidence-validation checks.
+New captures include keyed per-stage prefix diagnostics, route-key stability, and current-request
+turn-state forwarding. The latter checks whether Codex's `x-codex-turn-state` reaches the provider;
+it is separate from the session key. Both arms relay that provider-issued token unchanged and leave
+its per-turn lifecycle to Codex. The report locates changes before replay, during replay/projection,
+or during CTP, but does not claim visibility into provider cache routing. Older captures without
+turn-state evidence show unavailable. Run `python3 benchmarks/cache_diagnostics_test.py` for the
+model-free evidence-validation checks.
 
 `capturer` records schema-6 JSONL at both boundaries without storing credentials, prompts,
 instructions, tool arguments, command output, response text, diagnostics, scripts, reports, or

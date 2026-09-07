@@ -47,6 +47,12 @@ directly to that listener, and the listener MUST expose Responses plus `/api/met
 MUST connect directly to the provider. No standalone capturer process, proxy, listener, or Compose
 service is permitted.
 
+Both router arms MUST relay the Codex-owned `x-codex-turn-state` sticky-routing header unchanged
+on each upstream request, including retries, and return the provider's response header to Codex.
+The router MUST NOT synthesize that token from `Session_id`, cache it across requests, or carry
+it into a new turn when the client omits it. This preserves the Codex transport contract rather
+than warming a cache artificially; provider cache hits remain provider-owned.
+
 The runner MUST pass `--capture-output` to each router and mount a private arm-specific capture
 path. Its isolated networks MUST prevent either agent from reaching the other arm's router while
 allowing only its router provider egress. The collected `control-metrics.json` and
@@ -159,4 +165,4 @@ Acceptance:
 
 CTP input acceptance uses the captured post-replay native request, never incoming client history. CTP output acceptance uses assistant output_text savings, never tool-carrier delivery expansion. Paired provider usage is the only actual model-consumption comparison.
 
-Cache-prefix diagnostic tables MUST display only request ordinals, provider usage, stage comparison statuses, and fixed changed-field categories; never fingerprint values or routing keys. Missing older observations MUST display unavailable, not stable.
+Cache-prefix diagnostic tables MUST display only request ordinals, provider usage, stage comparison statuses, turn-state forwarding status, and fixed changed-field categories; never fingerprint values or routing keys. Missing older observations MUST display unavailable, not stable.

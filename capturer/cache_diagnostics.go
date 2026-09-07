@@ -24,6 +24,9 @@ type requestFingerprint struct {
 	Complete   bool              `json:"complete"`
 	RequestKey string            `json:"request_key,omitempty"`
 	RoutingKey string            `json:"routing_key,omitempty"`
+	// Nil means unobserved (older evidence or the body-only native seam).
+	// An observed empty value means no nonempty turn-state header was sent.
+	TurnState *string `json:"turn_state,omitempty"`
 }
 
 type prefixComparison struct {
@@ -33,12 +36,13 @@ type prefixComparison struct {
 }
 
 type cacheDiagnosis struct {
-	PreviousSequence uint64           `json:"previous_sequence"`
-	Client           prefixComparison `json:"client"`
-	Native           prefixComparison `json:"native"`
-	Provider         prefixComparison `json:"provider"`
-	Routing          string           `json:"routing"`
-	RequestKey       string           `json:"request_key"`
+	PreviousSequence    uint64           `json:"previous_sequence"`
+	Client              prefixComparison `json:"client"`
+	Native              prefixComparison `json:"native"`
+	Provider            prefixComparison `json:"provider"`
+	Routing             string           `json:"routing"`
+	RequestKey          string           `json:"request_key"`
+	TurnStateForwarding string           `json:"turn_state_forwarding,omitempty"`
 }
 
 func (r *Recorder) fingerprint(domain string, value any) string {
@@ -134,7 +138,37 @@ func cloneFingerprint(source *requestFingerprint) *requestFingerprint {
 	result := *source
 	result.Fields = maps.Clone(source.Fields)
 	result.Items = slices.Clone(source.Items)
+	if source.TurnState != nil {
+		value := *source.TurnState
+		result.TurnState = &value
+	}
 	return &result
+}
+
+func (r *Recorder) turnStateFingerprint(header string) string {
+	if header == "" {
+		return ""
+	}
+	return r.fingerprint("turn-state", header)
+}
+
+// Compare the current client/provider headers, not two requests' session keys.
+// Turn state legitimately appears after the first response and resets per turn.
+func compareTurnState(client, provider *requestFingerprint) string {
+	if client == nil || provider == nil || client.Scope != provider.Scope || client.TurnState == nil || provider.TurnState == nil {
+		return "unavailable"
+	}
+	left, right := *client.TurnState, *provider.TurnState
+	switch {
+	case left == "" && right == "":
+		return "absent"
+	case left == right:
+		return "preserved"
+	case right == "":
+		return "dropped"
+	default:
+		return "changed"
+	}
 }
 
 // This compares decoded request representations, not the provider's private
@@ -189,17 +223,24 @@ func diagnoseCacheExchanges(exchanges []exchangeMetrics) {
 	}
 	for index := range exchanges {
 		current := &exchanges[index]
-		if current.ThreadID == "" || len(current.ProviderAttempts) == 0 {
+		if len(current.ProviderAttempts) == 0 {
 			continue
 		}
 		final := current.ProviderAttempts[len(current.ProviderAttempts)-1]
 		if final.Fingerprint == nil {
 			continue
 		}
+		hasTurnState := final.Fingerprint.TurnState != nil || (current.ClientFingerprint != nil && current.ClientFingerprint.TurnState != nil)
+		if current.ThreadID == "" && !hasTurnState {
+			continue
+		}
 		empty := prefixComparison{Status: "unavailable", ChangedFields: []string{}}
 		diagnosis := &cacheDiagnosis{Client: empty, Native: empty, Provider: empty, Routing: "unavailable", RequestKey: "unavailable"}
+		if hasTurnState {
+			diagnosis.TurnStateForwarding = compareTurnState(current.ClientFingerprint, final.Fingerprint)
+		}
 		prior, found := bySequence[current.PredecessorSequence]
-		if found && current.PredecessorSequence < current.Sequence {
+		if found && current.ThreadID != "" && current.PredecessorSequence < current.Sequence {
 			before := exchanges[prior]
 			if before.ThreadID == current.ThreadID && before.Status == "completed" && len(before.ProviderAttempts) > 0 {
 				last := before.ProviderAttempts[len(before.ProviderAttempts)-1]

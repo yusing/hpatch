@@ -1,8 +1,11 @@
 package capturer
 
 import (
+	"bytes"
 	"encoding/json"
+	"io"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 )
@@ -124,5 +127,70 @@ func TestCacheDiagnosisDoesNotBridgeEvictedFailedPredecessor(t *testing.T) {
 	diagnoseCacheExchanges(exchanges)
 	if got := exchanges[0].CacheDiagnosis; got.PreviousSequence != 0 || got.Provider.Status != "unavailable" {
 		t.Fatalf("bridged evicted failed predecessor: %+v", got)
+	}
+}
+
+func TestTurnStateFingerprintForwarding(t *testing.T) {
+	r := diagnosticRecorder(t)
+	for _, test := range []struct{ client, provider, want string }{
+		{"", "", "absent"}, {"private-state", "private-state", "preserved"},
+		{"private-state", "", "dropped"}, {"private-state", "different-state", "changed"},
+		{"", "injected-state", "changed"},
+	} {
+		t.Run(test.want+test.provider, func(t *testing.T) {
+			transport := r.Transport(roundTripperFunc(func(request *http.Request) (*http.Response, error) {
+				if request.Header.Get("x-codex-turn-state") != test.provider {
+					t.Error("capture changed forwarded header")
+				}
+				return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(`{"status":"completed","output":[]}`))}, nil
+			}))
+			handler := r.Handler(http.HandlerFunc(func(w http.ResponseWriter, incoming *http.Request) {
+				body, _ := io.ReadAll(incoming.Body)
+				req, _ := http.NewRequestWithContext(incoming.Context(), http.MethodPost, "http://provider/responses", bytes.NewReader(body))
+				if test.provider != "" {
+					req.Header.Set("x-codex-turn-state", test.provider)
+				}
+				response, err := transport.RoundTrip(req)
+				if err != nil {
+					t.Error(err)
+					return
+				}
+				defer response.Body.Close()
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = io.Copy(w, response.Body)
+			}))
+			incoming := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"input":[]}`))
+			// A current-request comparison must also work without thread identity.
+			if test.want != "dropped" {
+				incoming.Header.Set("thread-id", "thread")
+			}
+			if test.client != "" {
+				incoming.Header.Set("x-codex-turn-state", test.client)
+			}
+			handler.ServeHTTP(httptest.NewRecorder(), incoming)
+			snapshot := r.snapshot()
+			latest := snapshot.Exchanges[len(snapshot.Exchanges)-1]
+			if latest.CacheDiagnosis.TurnStateForwarding != test.want {
+				t.Fatalf("forwarding status: %s, want %s", latest.CacheDiagnosis.TurnStateForwarding, test.want)
+			}
+			encoded, _ := json.Marshal(snapshot)
+			for _, secret := range []string{"private-state", "different-state", "injected-state"} {
+				if bytes.Contains(encoded, []byte(secret)) {
+					t.Fatal("raw turn state retained")
+				}
+			}
+			clone := cloneFingerprint(latest.ClientFingerprint)
+			*clone.TurnState = "mutated"
+			if *latest.ClientFingerprint.TurnState == "mutated" {
+				t.Fatal("aliased turn-state fingerprint")
+			}
+		})
+	}
+	if compareTurnState(nil, nil) != "unavailable" {
+		t.Fatal("missing evidence is not unavailable")
+	}
+	first := r.requestFingerprint([]byte(`{}`))
+	if compareTurnState(first, first) != "unavailable" {
+		t.Fatal("legacy evidence is not unavailable")
 	}
 }
