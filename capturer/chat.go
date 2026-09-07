@@ -80,8 +80,11 @@ func observeChatResponse(payload []byte, contentType string, record *captureReco
 			}
 		}
 	}
+	payload = bytes.TrimPrefix(payload, []byte{0xef, 0xbb, 0xbf})
 	stream := strings.Contains(contentType, "text/event-stream") || capturedPayloadLooksLikeSSE(payload)
 	if stream {
+		payload = bytes.ReplaceAll(payload, []byte("\r\n"), []byte("\n"))
+		payload = bytes.ReplaceAll(payload, []byte("\r"), []byte("\n"))
 		var parts [][]byte
 		event := func() {
 			if len(parts) > 0 {

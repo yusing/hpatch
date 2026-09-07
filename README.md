@@ -478,7 +478,9 @@ before Codex executes it; native lifecycle operations do not become shell-wrappe
 
 Text/image input and custom/function tools are translated. OpenAI-hosted search is unavailable
 on this route. Encrypted OpenAI history, opaque provider file IDs and unsupported provider tools
-fail explicitly; do not fork encrypted OpenAI context into Grok. See the
+fail explicitly; do not fork encrypted OpenAI context into Grok. Omit `max_output_tokens` on this
+route: Chat Completions cannot enforce a total output budget including reasoning, so the router
+rejects that setting rather than silently weakening it. See the
 [third-party subagent requirements](doc/spec/subagents.md) for the full contract.
 
 ### Point Codex at the router

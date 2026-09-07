@@ -456,6 +456,7 @@ func (body *observedReadCloser) Read(destination []byte) (int, error) {
 
 type observedResponseBody struct {
 	io.ReadCloser
+	mu       sync.Mutex
 	content  boundedObservation
 	finish   func(observedPayload, error)
 	finished bool
@@ -463,6 +464,11 @@ type observedResponseBody struct {
 }
 
 func (body *observedResponseBody) Read(destination []byte) (int, error) {
+	body.mu.Lock()
+	defer body.mu.Unlock()
+	if body.finished {
+		return 0, io.ErrClosedPipe
+	}
 	count, err := body.ReadCloser.Read(destination)
 	if count != 0 {
 		_, _ = body.content.Write(destination[:count])
@@ -478,16 +484,16 @@ func (body *observedResponseBody) Read(destination []byte) (int, error) {
 }
 
 func (body *observedResponseBody) Close() error {
-	body.complete()
-	return body.ReadCloser.Close()
-}
-
-func (body *observedResponseBody) complete() {
-	if body.finished {
-		return
+	// Closing the transport must unblock an in-flight Read before we wait for
+	// its observation updates. Finalization and buffer writes are serialized.
+	err := body.ReadCloser.Close()
+	body.mu.Lock()
+	defer body.mu.Unlock()
+	if !body.finished {
+		body.finished = true
+		body.finish(body.content.snapshot(), body.readErr)
 	}
-	body.finished = true
-	body.finish(body.content.snapshot(), body.readErr)
+	return err
 }
 
 type observedResponseWriter struct {

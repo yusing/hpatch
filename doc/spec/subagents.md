@@ -43,7 +43,8 @@ calls and their identities/results, parallel calls, structured output, reasoning
 Custom tool grammars remain explicit input instructions and are still validated by their existing
 router/executor owners. Provider-hosted OpenAI search is not offered on the Grok route; the model is
 informed of its absence. Other unsupported provider tools/content fail explicitly rather than being
-silently approximated. Encrypted agent messages, encrypted reasoning, opaque provider file IDs and
+silently approximated. A non-null `max_output_tokens` fails before inference: Chat completion
+limits exclude reasoning and cannot enforce the Responses total output budget. Encrypted agent messages, encrypted reasoning, opaque provider file IDs and
 provider-only history items cannot be translated. Fresh-context spawning (`fork_turns=none`) avoids
 inherited OpenAI encrypted history; unsupported history must fail without a provider request.
 

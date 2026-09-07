@@ -16,6 +16,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -114,15 +115,16 @@ func Run(ctx context.Context, args []string, stderr io.Writer) (runErr error) {
 	provider.httpClient.Transport = capture.Transport(provider.httpClient.Transport)
 	provider.streamIdleTimeout = *streamIdleTimeout
 	if *grokEnabled {
+		apiKey := strings.TrimSpace(os.Getenv("XAI_API_KEY"))
 		path := *grokAuthFile
-		if path == "" {
+		if path == "" && apiKey == "" {
 			home, err := os.UserHomeDir()
 			if err != nil {
 				return fmt.Errorf("locate Grok credentials: %w", err)
 			}
 			path = filepath.Join(home, ".grok", "auth.json")
 		}
-		auth := newGrokAuth(path, os.Getenv("XAI_API_KEY"))
+		auth := newGrokAuth(path, apiKey)
 		client := withDialTimeout(nil)
 		client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 		client.Transport = capture.Transport(client.Transport)

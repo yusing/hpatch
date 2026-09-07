@@ -160,7 +160,11 @@ func translateGrokRequest(body []byte) (*grokTranslation, error) {
 			name := grokToolName(jsonString(item, "namespace"), jsonString(item, "name"))
 			arguments := jsonString(item, "arguments")
 			if kind == "custom_tool_call" {
-				arguments = string(mustMarshalJSON(map[string]string{"input": jsonString(item, "input")}))
+				var input *string
+				if json.Unmarshal(item["input"], &input) != nil || input == nil {
+					return nil, errors.New("Grok custom tool history input is not a string")
+				}
+				arguments = string(mustMarshalJSON(map[string]string{"input": *input}))
 			}
 			if !json.Valid([]byte(arguments)) {
 				return nil, errors.New("invalid JSON in Grok tool-call history")
@@ -227,8 +231,10 @@ func translateGrokRequest(body []byte) (*grokTranslation, error) {
 			return nil, errors.New("Grok supports reasoning effort low, medium, high or xhigh")
 		}
 	}
-	if raw, ok := request.fields["max_output_tokens"]; ok {
-		tr.body["max_tokens"] = raw
+	// Chat completion limits exclude reasoning, so they cannot enforce a
+	// Responses total output budget. Reject it before sending an inference.
+	if raw, ok := request.fields["max_output_tokens"]; ok && strings.TrimSpace(string(raw)) != "null" {
+		return nil, errors.New("Grok Chat Completions cannot enforce max_output_tokens including reasoning; omit this unsupported setting")
 	}
 	for _, field := range []string{"temperature", "top_p"} {
 		if raw, ok := request.fields[field]; ok {
@@ -261,12 +267,12 @@ func translateGrokRequest(body []byte) (*grokTranslation, error) {
 }
 
 func grokContent(raw json.RawMessage) (any, error) {
-	var text string
-	if json.Unmarshal(raw, &text) == nil {
-		return text, nil
+	var text *string
+	if json.Unmarshal(raw, &text) == nil && text != nil {
+		return *text, nil
 	}
 	var parts []map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &parts); err != nil {
+	if err := json.Unmarshal(raw, &parts); err != nil || parts == nil {
 		return nil, errors.New("unsupported Grok message content")
 	}
 	var content []any

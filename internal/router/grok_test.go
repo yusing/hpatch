@@ -374,3 +374,110 @@ func TestGrokNullCustomInputIsNotExecutable(t *testing.T) {
 		t.Fatalf("null input accepted: err=%v executable=%v", err, executable)
 	}
 }
+
+func TestGrokRejectsNonStringHistory(t *testing.T) {
+	for _, value := range []any{nil, 42, true, map[string]any{}} {
+		for _, item := range []map[string]any{
+			{"type": "message", "role": "user", "content": value},
+			{"type": "agent_message", "content": value},
+			{"type": "function_call_output", "call_id": "c1", "output": value},
+			{"type": "custom_tool_call_output", "call_id": "c1", "output": value},
+			{"type": "custom_tool_call", "call_id": "c1", "name": "exec", "input": value},
+		} {
+			body := mustTestJSON(t, map[string]any{"model": grokModel, "input": []any{item}})
+			if _, err := translateGrokRequest(body); err == nil {
+				t.Fatalf("accepted %s", body)
+			}
+		}
+	}
+	for _, value := range []any{"", []any{}} {
+		if _, err := grokContent(mustTestJSON(t, value)); err != nil {
+			t.Fatalf("rejected empty content: %v", err)
+		}
+	}
+}
+
+func TestGrokStreamCRLF(t *testing.T) {
+	tr, err := translateGrokRequest(grokTestRequest(t, true))
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := tr.readGrokStream(strings.NewReader(strings.ReplaceAll(grokTextStream(), "\n", "\r\n")), func(map[string]any) error { return nil })
+	if err != nil || result["status"] != "completed" {
+		t.Fatalf("result=%v err=%v", result, err)
+	}
+}
+
+func TestGrokCloseUnblocksUpstreamRead(t *testing.T) {
+	upstream, writer := io.Pipe()
+	defer writer.Close()
+	client := &grokClient{auth: newGrokAuth("", "test"), httpClient: &http.Client{Transport: grokTestTransport(func(*http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": {"text/event-stream"}}, Body: upstream}, nil
+	})}}
+	response, err := client.forwardExecution(t.Context(), t.Context(), grokTestRequest(t, true), grokTestHeaders())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Drain the initial response.created event so translation reaches upstream.Read.
+	buffer := make([]byte, 4096)
+	if _, err := response.Body.Read(buffer); err != nil {
+		t.Fatal(err)
+	}
+	closed := make(chan error, 1)
+	go func() { closed <- response.Body.Close() }()
+	select {
+	case err := <-closed:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(2 * time.Second):
+		upstream.Close()
+		<-closed
+		t.Fatal("Close waited for an upstream read before closing it")
+	}
+}
+
+func TestGrokAPIKeyStartupWithoutHome(t *testing.T) {
+	t.Setenv("HOME", "")
+	t.Setenv("XAI_API_KEY", "test")
+	t.Setenv("CODEX_HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	err := Run(ctx, []string{"--grok", "--listen", "127.0.0.1:0", "--model-protocol", "native", "--mentor-handoff=false"}, &cancelOnWrite{cancel: cancel})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestGrokOutputBudgetRejectedBeforeInference(t *testing.T) {
+	client := &grokClient{auth: newGrokAuth("", "test"), httpClient: &http.Client{Transport: grokTestTransport(func(*http.Request) (*http.Response, error) {
+		t.Error("unsupported budget reached provider")
+		return nil, fmt.Errorf("unexpected inference")
+	})}}
+	var request map[string]any
+	if err := json.Unmarshal(grokTestRequest(t, true), &request); err != nil {
+		t.Fatal(err)
+	}
+	request["max_output_tokens"] = 1000
+	if _, err := client.forwardExecution(t.Context(), t.Context(), mustTestJSON(t, request), grokTestHeaders()); err == nil || !strings.Contains(err.Error(), "max_output_tokens") {
+		t.Fatalf("expected explicit budget rejection, got %v", err)
+	}
+	request["max_output_tokens"] = nil
+	tr, err := translateGrokRequest(mustTestJSON(t, request))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := tr.body["max_tokens"]; ok {
+		t.Fatal("forwarded a Chat token budget")
+	}
+}
+
+func TestGrokWhitespaceAPIKeyUsesOAuthHome(t *testing.T) {
+	t.Setenv("HOME", "")
+	t.Setenv("XAI_API_KEY", " \t ")
+	err := Run(t.Context(), []string{"--grok"}, io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "locate Grok credentials") {
+		t.Fatalf("expected default OAuth path lookup, got %v", err)
+	}
+}

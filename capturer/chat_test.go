@@ -29,3 +29,23 @@ func TestChatCaptureRecordsActualToolShapeAndCompletion(t *testing.T) {
 		t.Fatalf("names=%v", names)
 	}
 }
+
+func TestChatCaptureSSELineEndingsAndBOM(t *testing.T) {
+	codec, err := tokenizer.Get(tokenizer.O200kBase)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Multiline data must remain a single event, including with CRLF framing.
+	stream := "data: {\"choices\":[\ndata: {\"delta\":{\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n"
+	for _, ending := range []string{"\n", "\r\n", "\r"} {
+		for _, bom := range []string{"", "\xef\xbb\xbf"} {
+			for _, contentType := range []string{"text/event-stream", ""} {
+				var record captureRecord
+				output := observeChatResponse([]byte(bom+strings.ReplaceAll(stream, "\n", ending)), contentType, &record, codec)
+				if record.ResponseStatus != "completed" || record.CaptureError != "" || string(output) != `[{"content":"ok","role":"assistant"}]` {
+					t.Fatalf("ending=%q BOM=%q type=%q record=%+v output=%s", ending, bom, contentType, record, output)
+				}
+			}
+		}
+	}
+}

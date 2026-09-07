@@ -127,8 +127,9 @@ func (g *grokClient) forwardExecution(startCtx, responseCtx context.Context, bod
 		stopCancel()
 		reader.Close()
 		cancel()
+		err := upstream.Close()
 		<-finished
-		return upstream.Close()
+		return err
 	}}}, nil
 }
 
