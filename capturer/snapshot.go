@@ -90,19 +90,20 @@ type protocolMetrics struct {
 }
 
 type providerAttemptMetrics struct {
-	Attempt           uint64              `json:"attempt"`
-	Model             string              `json:"model,omitempty"`
-	Status            string              `json:"status"`
-	ResponseComplete  bool                `json:"response_complete"`
-	Usage             *usageMetrics       `json:"usage,omitempty"`
-	Request           payloadMetrics      `json:"request"`
-	Fingerprint       *requestFingerprint `json:"cache_fingerprint,omitempty"`
-	NativeFingerprint *requestFingerprint `json:"native_fingerprint,omitempty"`
-	NativeRequest     *payloadMetrics     `json:"native_request,omitempty"`
-	Response          payloadMetrics      `json:"response"`
-	FinalOutput       payloadMetrics      `json:"final_output,omitzero"`
-	FinalText         payloadMetrics      `json:"final_text,omitzero"`
-	Tools             []toolCallMetrics   `json:"tools,omitempty"`
+	ProviderResponse  *providerResponseEvidence `json:"provider_response,omitempty"`
+	Attempt           uint64                    `json:"attempt"`
+	Model             string                    `json:"model,omitempty"`
+	Status            string                    `json:"status"`
+	ResponseComplete  bool                      `json:"response_complete"`
+	Usage             *usageMetrics             `json:"usage,omitempty"`
+	Request           payloadMetrics            `json:"request"`
+	Fingerprint       *requestFingerprint       `json:"cache_fingerprint,omitempty"`
+	NativeFingerprint *requestFingerprint       `json:"native_fingerprint,omitempty"`
+	NativeRequest     *payloadMetrics           `json:"native_request,omitempty"`
+	Response          payloadMetrics            `json:"response"`
+	FinalOutput       payloadMetrics            `json:"final_output,omitzero"`
+	FinalText         payloadMetrics            `json:"final_text,omitzero"`
+	Tools             []toolCallMetrics         `json:"tools,omitempty"`
 }
 
 type exchangeMetrics struct {
@@ -208,7 +209,8 @@ func (r *Recorder) addExchange(front captureRecord, state *requestState, provide
 		addTools(r.metrics.ProviderTools, provider.ToolCalls)
 		providerTools = append(providerTools, provider.ToolCalls...)
 		attempt := providerAttemptMetrics{
-			Attempt: provider.ProviderAttempt, Model: provider.RequestModel, Status: provider.ResponseStatus,
+			ProviderResponse: provider.ProviderResponse,
+			Attempt:          provider.ProviderAttempt, Model: provider.RequestModel, Status: provider.ResponseStatus,
 			ResponseComplete: provider.ResponseComplete,
 			Fingerprint:      provider.Fingerprint, NativeFingerprint: provider.NativeFingerprint,
 			NativeRequest: provider.NativeRequest,
@@ -311,6 +313,7 @@ func cloneMetricsSnapshot(source metricsSnapshot) metricsSnapshot {
 		clone.Exchanges[index].ProviderAttempts = make([]providerAttemptMetrics, len(exchange.ProviderAttempts))
 		for attemptIndex, attempt := range exchange.ProviderAttempts {
 			clone.Exchanges[index].ProviderAttempts[attemptIndex] = attempt
+			clone.Exchanges[index].ProviderAttempts[attemptIndex].ProviderResponse = cloneProviderEvidence(attempt.ProviderResponse)
 			clone.Exchanges[index].ProviderAttempts[attemptIndex].Fingerprint = cloneFingerprint(attempt.Fingerprint)
 			clone.Exchanges[index].ProviderAttempts[attemptIndex].NativeFingerprint = cloneFingerprint(attempt.NativeFingerprint)
 			clone.Exchanges[index].ProviderAttempts[attemptIndex].Tools = slices.Clone(attempt.Tools)

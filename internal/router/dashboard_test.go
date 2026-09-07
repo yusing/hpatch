@@ -22,7 +22,7 @@ func TestDashboardUsesCaptureMetricsOnTheExistingListener(t *testing.T) {
 		`id="status-pill"`, `class="cards"`, "prefers-reduced-motion",
 		"fetch('/api/metrics'", "hpatch.capture.metrics.v4", "Provider usage",
 		"Transport", "Protocol representation", "Hpatch delivery", "Hpatch diagnostics",
-		"Cache-prefix diagnostics", "cache_diagnostics", "Post-replay prefix", "Outgoing route key", "Turn-state forwarding", "turn_state_forwarding", "Capture health", "Tool transport", "Recent exchanges", "Provider attempts",
+		"Provider response evidence", "provider_response", "Provider request ID", "Explicit cached tokens", "Cache-prefix diagnostics", "cache_diagnostics", "Post-replay prefix", "Outgoing route key", "Turn-state forwarding", "turn_state_forwarding", "Capture health", "Tool transport", "Recent exchanges", "Provider attempts",
 		"Provider tool calls", "Delivered tool calls", "Usage-bearing attempts", "Provider input tokens",
 		"Delivered input tokens", "Input bytes", "Item bytes", "response_complete", "Semantic output",
 		"provider_attempt_outputs", "client_final_output", "Provider-attempt model outputs",

@@ -587,6 +587,12 @@ client's per-turn sticky-routing header reaches the provider. `Turn-state forwar
 absent, preserved, dropped, changed, or unavailable. Stable session keys alone do not establish
 sticky routing, and neither check guarantees a provider cache hit. Raw routing tokens are not saved.
 
+The **Provider response evidence** table distinguishes explicit cached-token counts from missing,
+null, invalid, or unavailable telemetry. It also shows provider-reported models and the provider
+request ID for support correlation. Existing aggregate counters may default missing telemetry to
+zero, so consult this table before treating a zero as a confirmed cache miss. These additive
+details are unavailable in older captures.
+
 The executable benchmark requires Docker Compose, Codex authentication, and
 the task's local source under `benchmarks/repos/`. The default task,
 `etcd-range-stream`, needs a local etcd checkout. The default A/B preset runs one

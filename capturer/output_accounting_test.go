@@ -76,7 +76,7 @@ func TestGeneratedCommentaryChangesTransportButNotOutputSavingsOrUsage(t *testin
 		if boundary == "codex" {
 			body, attempt = stream+clientTerminal, 0
 		}
-		r.recordExchange(state, boundary, attempt, time.Now(), []byte(`{"model":"model"}`), observedPayload{content: []byte(body), bytes: uint64(len(body))}, 200, "text/event-stream", "", nil)
+		r.recordExchange(state, boundary, attempt, time.Now(), []byte(`{"model":"model"}`), observedPayload{content: []byte(body), bytes: uint64(len(body))}, 200, "text/event-stream", "", nil, providerResponseEvidence{})
 	}
 	snapshot := r.snapshot()
 	if snapshot.Protocol.OutputPayloadTokensExpansion != 0 || snapshot.Protocol.OutputPayloadBytesExpansion != 0 ||

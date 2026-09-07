@@ -76,35 +76,36 @@ type toolCallMetrics struct {
 }
 
 type captureRecord struct {
-	PredecessorSequence uint64              `json:"predecessor_sequence,omitempty"`
-	SchemaVersion       int                 `json:"schema_version"`
-	Boundary            string              `json:"boundary"`
-	CaptureID           string              `json:"capture_id"`
-	RequestSequence     uint64              `json:"request_sequence"`
-	ProviderAttempt     uint64              `json:"provider_attempt,omitempty"`
-	Mode                string              `json:"mode"`
-	ModelProtocol       string              `json:"model_protocol"`
-	RequestID           string              `json:"request_id,omitempty"`
-	SessionID           string              `json:"session_id,omitempty"`
-	ThreadID            string              `json:"thread_id,omitempty"`
-	Subagent            string              `json:"subagent,omitempty"`
-	RequestModel        string              `json:"request_model,omitempty"`
-	Request             payloadMetrics      `json:"request"`
-	Fingerprint         *requestFingerprint `json:"cache_fingerprint,omitempty"`
-	NativeFingerprint   *requestFingerprint `json:"native_fingerprint,omitempty"`
-	NativeRequest       *payloadMetrics     `json:"native_request,omitempty"`
-	RequestTools        []string            `json:"request_tools,omitempty"`
-	StatusCode          int                 `json:"status_code"`
-	ResponseComplete    bool                `json:"response_complete"`
-	ResponseStatus      string              `json:"response_status,omitempty"`
-	Usage               *ProviderUsage      `json:"usage,omitempty"`
-	ToolCalls           []toolCallMetrics   `json:"tool_calls,omitempty"`
-	Response            payloadMetrics      `json:"response"`
-	FinalOutput         payloadMetrics      `json:"final_output,omitzero"`
-	FinalText           payloadMetrics      `json:"final_text,omitzero"`
-	CaptureError        string              `json:"capture_error,omitempty"`
-	DurationMillis      uint64              `json:"duration_ms"`
-	CapturedAt          time.Time           `json:"captured_at"`
+	ProviderResponse    *providerResponseEvidence `json:"provider_response,omitempty"`
+	PredecessorSequence uint64                    `json:"predecessor_sequence,omitempty"`
+	SchemaVersion       int                       `json:"schema_version"`
+	Boundary            string                    `json:"boundary"`
+	CaptureID           string                    `json:"capture_id"`
+	RequestSequence     uint64                    `json:"request_sequence"`
+	ProviderAttempt     uint64                    `json:"provider_attempt,omitempty"`
+	Mode                string                    `json:"mode"`
+	ModelProtocol       string                    `json:"model_protocol"`
+	RequestID           string                    `json:"request_id,omitempty"`
+	SessionID           string                    `json:"session_id,omitempty"`
+	ThreadID            string                    `json:"thread_id,omitempty"`
+	Subagent            string                    `json:"subagent,omitempty"`
+	RequestModel        string                    `json:"request_model,omitempty"`
+	Request             payloadMetrics            `json:"request"`
+	Fingerprint         *requestFingerprint       `json:"cache_fingerprint,omitempty"`
+	NativeFingerprint   *requestFingerprint       `json:"native_fingerprint,omitempty"`
+	NativeRequest       *payloadMetrics           `json:"native_request,omitempty"`
+	RequestTools        []string                  `json:"request_tools,omitempty"`
+	StatusCode          int                       `json:"status_code"`
+	ResponseComplete    bool                      `json:"response_complete"`
+	ResponseStatus      string                    `json:"response_status,omitempty"`
+	Usage               *ProviderUsage            `json:"usage,omitempty"`
+	ToolCalls           []toolCallMetrics         `json:"tool_calls,omitempty"`
+	Response            payloadMetrics            `json:"response"`
+	FinalOutput         payloadMetrics            `json:"final_output,omitzero"`
+	FinalText           payloadMetrics            `json:"final_text,omitzero"`
+	CaptureError        string                    `json:"capture_error,omitempty"`
+	DurationMillis      uint64                    `json:"duration_ms"`
+	CapturedAt          time.Time                 `json:"captured_at"`
 }
 
 // Recorder owns correlation, sanitized measurement, durable capture, and
@@ -248,7 +249,7 @@ func (r *Recorder) Handler(next http.Handler) http.Handler {
 			r.recordExchange(
 				state, "codex", 0, started,
 				requestBody.content.Bytes(), response.content.snapshot(), response.statusCode(),
-				response.Header().Get("Content-Type"), response.Header().Get("Content-Encoding"), errors.Join(requestBody.readError, response.writeError),
+				response.Header().Get("Content-Type"), response.Header().Get("Content-Encoding"), errors.Join(requestBody.readError, response.writeError), providerResponseEvidence{},
 			)
 		}()
 		next.ServeHTTP(response, request)
@@ -284,16 +285,17 @@ func (r *Recorder) Transport(next http.RoundTripper) http.RoundTripper {
 		started := time.Now()
 		response, roundTripErr := next.RoundTrip(request)
 		if roundTripErr != nil {
-			r.recordExchange(state, "provider", attempt, started, requestBody, observedPayload{}, 0, "", "", roundTripErr)
+			r.recordExchange(state, "provider", attempt, started, requestBody, observedPayload{}, 0, "", "", roundTripErr, providerResponseEvidence{CachedTokensState: "unavailable"})
 			return nil, roundTripErr
 		}
 		contentType := response.Header.Get("Content-Type")
 		contentEncoding := response.Header.Get("Content-Encoding")
 		statusCode := response.StatusCode
+		evidence := providerHeaderEvidence(response.Header)
 		response.Body = &observedResponseBody{
 			ReadCloser: response.Body,
 			finish: func(body observedPayload, readErr error) {
-				r.recordExchange(state, "provider", attempt, started, requestBody, body, statusCode, contentType, contentEncoding, readErr)
+				r.recordExchange(state, "provider", attempt, started, requestBody, body, statusCode, contentType, contentEncoding, readErr, evidence)
 			},
 		}
 		return response, nil
@@ -371,7 +373,7 @@ func (s *requestState) observedUsage(boundary string, attempt uint64) *ProviderU
 	return new(usage)
 }
 
-func (r *Recorder) recordExchange(state *requestState, boundary string, attempt uint64, started time.Time, requestBody []byte, responseBody observedPayload, statusCode int, contentType, contentEncoding string, exchangeErr error) {
+func (r *Recorder) recordExchange(state *requestState, boundary string, attempt uint64, started time.Time, requestBody []byte, responseBody observedPayload, statusCode int, contentType, contentEncoding string, exchangeErr error, evidence providerResponseEvidence) {
 	record := captureRecord{
 		SchemaVersion:   schemaVersion,
 		Boundary:        boundary,
@@ -388,6 +390,12 @@ func (r *Recorder) recordExchange(state *requestState, boundary string, attempt 
 		DurationMillis:  uint64(max(time.Since(started).Milliseconds(), 0)),
 		CapturedAt:      time.Now().UTC(),
 		Usage:           state.observedUsage(boundary, attempt),
+	}
+	if boundary == "provider" {
+		if evidence.CachedTokensState == "" {
+			evidence.CachedTokensState = "unavailable"
+		}
+		record.ProviderResponse = &evidence
 	}
 	if exchangeErr != nil {
 		record.CaptureError = "request or response stream failed"

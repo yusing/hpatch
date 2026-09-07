@@ -15,6 +15,11 @@ Supported modes are:
 - `ctp-only`: Hpatch native protocol versus Hpatch CTP/2 with alternating order; and
 - `mentor-handoff`: Hpatch versus Hpatch with the bounded mentor model schedule.
 
+`hpatch-diagnostic` MUST support `DIAGNOSTIC_MODEL_PROTOCOL=native|ctp2`, defaulting
+to native, without scheduling or importing a control. The explicit option MUST be
+rejected in other modes. Configuration, capture validation, and report labeling MUST
+agree on the selected treatment protocol; CTP acceptance criteria remain unchanged.
+
 The RangeStream task MUST publish its initial non-CountOnly key budget (at most 10, capped by
 a positive request Limit), not leave initial batching implicit. Subsequent batches MUST adapt
 toward MaxRequestBytes with a minimum of one key and respect the remaining request Limit.
@@ -98,8 +103,8 @@ retries MUST not be counted as new logical requests, retry usage MUST not be dis
 reporting MUST include provider attempts without usage while distinguishing usage-bearing attempts.
 
 The validator MUST bind each arm to its router configuration: `control` is passthrough/native;
-`hpatch` in paired mode uses the retained `treatment_model_protocol` (native for historical
-records without that field); `hpatch` in single-arm modes and `native` are Hpatch/native; `ctp` is Hpatch/CTP2; and both Mentor
+`hpatch` in paired and diagnostic modes uses the retained `treatment_model_protocol` (native for historical
+records without that field); `hpatch` in hpatch-only mode and `native` are Hpatch/native; `ctp` is Hpatch/CTP2; and both Mentor
 arms use Hpatch with the shared protocol selected in the retained benchmark configuration (native
 by default). Every raw record
 MUST agree with its snapshot mode and protocol. Self-consistent evidence from the wrong configuration
@@ -166,3 +171,8 @@ Acceptance:
 CTP input acceptance uses the captured post-replay native request, never incoming client history. CTP output acceptance uses assistant output_text savings, never tool-carrier delivery expansion. Paired provider usage is the only actual model-consumption comparison.
 
 Cache-prefix diagnostic tables MUST display only request ordinals, provider usage, stage comparison statuses, turn-state forwarding status, and fixed changed-field categories; never fingerprint values or routing keys. Missing older observations MUST display unavailable, not stable.
+
+Provider-response evidence tables MUST include every retained attempt, distinguish explicit cached
+counts from missing/null/invalid/unavailable telemetry, and label response/header models as
+provider-reported. Provider request IDs MUST remain absent from summaries. Raw/snapshot metadata
+and present cached counts MUST reconcile; legacy evidence MUST NOT be fabricated from counters.

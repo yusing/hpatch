@@ -35,6 +35,7 @@ A durable record MUST contain only:
 - the measured `native_request` after history replay/tool projection and before CTP, on provider records;
 - decoded assistant `final_text` sizes, separate from complete output arrays;
 - bounded private request/routing fingerprints as specified below;
+- bounded, allowlisted provider-response evidence as specified below;
 - request tool names; and
 - tool name, call identity, byte/token sizes, sanitized delivered kind, and an allowlisted stable
   diagnostic reason parsed from the complete router-owned diagnostic envelope.
@@ -175,3 +176,30 @@ dropped (only the provider empty), changed (other unequal values), or unavailabl
 cross-scope evidence). It requires neither a predecessor nor thread identity; a new turn legitimately omits this header.
 Reports MUST distinguish this check from `Session_id` stability. Older evidence MUST NOT be
 reinterpreted as observed absence. Each retry retains its own observed header fingerprint.
+
+### Provider-response evidence
+
+Each provider attempt MUST retain `provider_response` separately from requested-model identity
+and normalized usage. It contains only the provider's `x-request-id`, `openai-model` header,
+latest explicitly supplied response-envelope `model`, and terminal cached-token evidence.
+Identifiers MUST be limited to 256 ASCII letters, digits, `-`, `_`, `.`, `:`, and `/`;
+missing or invalid identifiers are omitted. The response model MUST NOT fall back to the
+request model. Header and body model values remain separate provider claims, not proof of
+the backend identity. Arbitrary headers, credentials, routing tokens, and response content
+MUST NOT be retained. Provider request IDs MAY appear in local dashboard details for support
+correlation, but MUST NOT appear in benchmark summaries.
+
+`cached_tokens_state` MUST distinguish `present`, `missing`, `null`, `invalid`, and
+`unavailable`. Missing or null at any level of `usage.input_tokens_details.cached_tokens`
+MUST retain that distinction. Present means a valid unsigned 64-bit JSON integer and MUST
+retain its exact `cached_tokens` value, including zero. Other states MUST omit that value.
+Only terminal response usage supplies this evidence; nonterminal usage MUST NOT be reused.
+An incomplete, malformed, or unobserved terminal response yields unavailable evidence.
+JSON, SSE, and supported compressed payloads MUST follow the same rules.
+
+This evidence is additive to schema-6/metrics-v4 and does not change existing normalized
+usage counters. Missing older evidence is unavailable, never explicit zero. Reports and
+dashboard MUST warn that normalized aggregate counters may default missing telemetry to zero
+and MUST show per-attempt field state and explicit counts separately. Benchmark validation
+MUST reconcile raw evidence with snapshots, reject unsafe shapes, and reject a present cached
+count that disagrees with normalized usage. All retries retain their own response evidence.

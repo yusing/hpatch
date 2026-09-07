@@ -78,3 +78,10 @@ present these diagnoses; the benchmark independently reconciles them with saniti
 The same capture wrappers privately fingerprint the incoming and outgoing `x-codex-turn-state`
 headers. The snapshot compares their forwarding separately from session-key stability, without
 owning turn state or changing routing. Missing old evidence is unavailable, not an absent header.
+
+Provider-response evidence also belongs to the capturer. Its existing transport observes only
+allowlisted request-ID/model response headers, and its response parser observes envelope model
+and terminal cached-token field presence. The router usage callback and normalized counters are
+unchanged. Evidence travels with each attempt, without another callback or retained raw response;
+snapshot clones isolate its explicit count. Reports distinguish unknown telemetry from explicit
+zero and keep provider request IDs out of public summaries.

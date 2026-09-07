@@ -393,12 +393,12 @@ func TestSnapshotUsesTerminalOutputOnceInsteadOfWholeSSEStream(t *testing.T) {
 	recorder.recordExchange(
 		state, "provider", 1, time.Now(), requestBody,
 		observedPayload{content: []byte(providerStream), bytes: uint64(len(providerStream))},
-		http.StatusOK, "text/event-stream", "", nil,
+		http.StatusOK, "text/event-stream", "", nil, providerResponseEvidence{},
 	)
 	recorder.recordExchange(
 		state, "codex", 0, time.Now(), requestBody,
 		observedPayload{content: []byte(clientStream), bytes: uint64(len(clientStream))},
-		http.StatusOK, "text/event-stream", "", nil,
+		http.StatusOK, "text/event-stream", "", nil, providerResponseEvidence{},
 	)
 
 	snapshot := recorder.snapshot()

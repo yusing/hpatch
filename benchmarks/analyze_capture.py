@@ -121,6 +121,7 @@ def validate_cache_diagnostics(exchanges):
         attempts = exchange["provider_attempts"]
         validate_fingerprint(exchange.get("client_fingerprint"))
         for attempt in attempts:
+            validate_provider_evidence(attempt.get("provider_response"), attempt.get("usage"))
             validate_fingerprint(attempt.get("cache_fingerprint"))
             validate_fingerprint(attempt.get("native_fingerprint"))
         client_fp = exchange.get("client_fingerprint")
@@ -206,6 +207,32 @@ def validate_rate(actual: object, numerator: int, denominator: int, description:
         raise ValueError(f"{description} does not reconcile its token totals")
 
 
+
+def validate_provider_evidence(value, measured_usage):
+    if value is None:
+        return
+    fields = {"request_id", "header_model", "model", "cached_tokens_state", "cached_tokens"}
+    if not isinstance(value, dict) or set(value) - fields:
+        raise ValueError("invalid provider response evidence")
+    for key in ("request_id", "header_model", "model"):
+        if key in value:
+            text = value[key]
+            if (not isinstance(text, str) or not 1 <= len(text) <= 256
+                or any(not (c.isascii() and (c.isalnum() or c in "-_.:/")) for c in text)):
+                raise ValueError("unsafe provider response identifier")
+    state = value.get("cached_tokens_state")
+    if state not in {"unavailable", "missing", "null", "invalid", "present"}:
+        raise ValueError("invalid cached-token evidence state")
+    if state == "present":
+        count = value.get("cached_tokens")
+        if type(count) is not int or not 0 <= count < 2**64:
+            raise ValueError("invalid explicit provider cached count")
+        if measured_usage is not None and count != measured_usage.get("cached_input_tokens"):
+            raise ValueError("provider cached count differs from usage")
+    elif "cached_tokens" in value:
+        raise ValueError("missing provider telemetry represented as a count")
+
+
 def validate_raw_capture(path: Path, metrics: dict[str, Any]) -> None:
     records = load_jsonl(path)
     if not records:
@@ -267,6 +294,9 @@ def validate_raw_capture(path: Path, metrics: dict[str, Any]) -> None:
         ):
             raise ValueError("raw client measurements differ from the metrics exchange")
         for raw, measured in zip(providers, attempts, strict=True):
+            if raw.get("provider_response") != measured.get("provider_response"):
+                raise ValueError("raw provider response evidence differs from snapshot")
+            validate_provider_evidence(raw.get("provider_response"), raw.get("usage"))
             if raw.get("request_model") != measured.get("model"):
                 raise ValueError("raw provider model differs from the metrics exchange")
             raw_usage = raw.get("usage")
@@ -319,10 +349,10 @@ def validate_snapshot(metrics: dict[str, Any], arm: str, config: dict[str, Any])
         if protocol not in {"native", "ctp2"}:
             raise ValueError("unsupported Mentor benchmark model protocol")
         expected = ("hpatch", protocol)
-    if config.get("benchmark_mode") == "paired" and arm == "hpatch":
+    if config.get("benchmark_mode") in {"paired", "hpatch-diagnostic"} and arm == "hpatch":
         protocol = config.get("treatment_model_protocol", "native")
         if protocol not in {"native", "ctp2"}:
-            raise ValueError("unsupported paired benchmark model protocol")
+            raise ValueError("unsupported treatment benchmark model protocol")
         expected = ("hpatch", protocol)
     if (metrics.get("mode"), metrics.get("model_protocol")) != expected:
         raise ValueError(f"{arm} capture has the wrong router mode or model protocol")

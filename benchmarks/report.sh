@@ -23,15 +23,15 @@ mode=paired
 [[ -s $config ]] && mode=$(jq -r '.benchmark_mode // "paired"' "$config")
 require_ctp_input_compression=false
 require_ctp_output_compression=false
-paired_protocol=native
-if [[ $mode == paired && -s $config ]]; then
-	paired_protocol=$(jq -r '.treatment_model_protocol // "native"' "$config")
+treatment_protocol=native
+if [[ ($mode == paired || $mode == hpatch-diagnostic) && -s $config ]]; then
+	treatment_protocol=$(jq -r '.treatment_model_protocol // "native"' "$config")
 fi
 mentor_protocol=native
 if [[ $mode == mentor-handoff ]]; then
 	mentor_protocol=$(jq -r '.mentor_handoff.model_protocol // "native"' "$config")
 fi
-if [[ $mode == ctp-only || $mentor_protocol == ctp2 || $paired_protocol == ctp2 ]]; then
+if [[ $mode == ctp-only || $mentor_protocol == ctp2 || $treatment_protocol == ctp2 ]]; then
 	require_ctp_input_compression=$(jq -r '.ctp.require_input_compression // false' "$config")
 	require_ctp_output_compression=$(jq -r '.ctp.require_output_compression // false' "$config")
 fi
@@ -70,13 +70,14 @@ case "$mode" in
 		treatment_metrics="$run_dir/hpatch-mentor-metrics.json"
 		;;
 	hpatch-only|hpatch-diagnostic)
+		if [[ $treatment_protocol == ctp2 ]]; then treatment_label="Hpatch + CTP/2"; fi
 		baseline_arm=
 		baseline_label=
 		baseline_metrics=
 		baseline_capture=
 		;;
 	paired)
-		if [[ $paired_protocol == ctp2 ]]; then
+		if [[ $treatment_protocol == ctp2 ]]; then
 			baseline_label="Stock"
 			treatment_label="Hpatch + CTP/2"
 		fi
@@ -272,6 +273,22 @@ ctp_failed=false
         ' "$metrics"
 	done
 
+
+    printf '\n## Provider response evidence\n\n'
+    printf 'Cached-token telemetry distinguishes an explicit count (including zero) from missing, null, invalid, or unavailable evidence. Legacy aggregate counters may default missing telemetry to zero; those zeros are not proven cache misses. Response/header models are provider-reported identifiers, not verification of backend identity. Provider request IDs are retained privately in capture details, not this summary.\n\n'
+    printf '| Arm | Request ordinal | Attempt | Response model | Header model | Cached-token telemetry | Explicit cached tokens |\n'
+    printf '|---|---:|---:|---|---|---|---:|\n'
+    for row in treatment ${has_baseline/true/baseline}; do
+        [[ $row == false ]] && continue
+        metrics=$treatment_metrics label=$treatment_label
+        if [[ $row == baseline ]]; then metrics=$baseline_metrics; label=$baseline_label; fi
+        jq -r --arg arm "$label" '
+          .exchanges | sort_by(.sequence) | to_entries[] | .key as $ordinal | .value.provider_attempts[] |
+          .provider_response as $e |
+          "| \($arm) | \($ordinal+1) | \(.attempt) | \($e.model // "unavailable") | \($e.header_model // "unavailable") | \($e.cached_tokens_state // "unavailable") | \(if $e.cached_tokens_state == "present" then $e.cached_tokens else "unavailable" end) |"
+        ' "$metrics"
+    done
+
 	printf '\n## Protocol transformation\n\n'
 	printf 'Token estimates count decoded JSON keys and scalar values, excluding outer JSON framing and escaping; literal escapes inside content still count. Byte counts retain exact observed bytes. Input savings compare the actual native request AFTER replay and Hpatch projection with its final CTP provider request, not incoming Codex history. Output representation differences compare complete model-origin output arrays, reconstructed from finalized stream items when needed and excluding router-generated commentary, echoed tools, and other response metadata as well as repeated SSE events. Output differences include tool-carrier translation and are not CTP savings or stock-model savings. Positive output differences mean the delivered representation is larger than provider output. Only paired provider usage measures actual model-use differences. Retries remain separate provider attempts.\n\n'
 	printf '| Arm | CTP input bytes saved | CTP input tokens saved | Delivery byte expansion | Delivery token expansion | Provider attempts |\n'
@@ -307,7 +324,7 @@ ctp_failed=false
 			"$(metric "$metrics" '.semantic.client_outputs.tokens')"
 	done
 	ctp_rows=()
-	if [[ $mode == ctp-only || $paired_protocol == ctp2 ]]; then ctp_rows=(treatment); fi
+	if [[ $mode == ctp-only || $treatment_protocol == ctp2 ]]; then ctp_rows=(treatment); fi
 	if [[ $mentor_protocol == ctp2 ]]; then ctp_rows=(baseline treatment); fi
 	for row in "${ctp_rows[@]}"; do
 		if [[ $row == baseline ]]; then label=$baseline_label; metrics=$baseline_metrics; else label=$treatment_label; metrics=$treatment_metrics; fi

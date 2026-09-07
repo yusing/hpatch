@@ -81,6 +81,49 @@ for single_mode in hpatch-only hpatch-diagnostic; do
 	grep -Fq '| Hpatch | 1/1 |' "$single/summary.md"
 done
 
+
+# A single CTP treatment retains strict evidence validation without importing a
+# differently configured control or scheduling a second model attempt.
+single_ctp="$fixture/single-ctp"
+mkdir -p "$single_ctp/captures"
+printf '%s\n' '{"benchmark_mode":"hpatch-diagnostic","treatment_model_protocol":"ctp2"}' >"$single_ctp/benchmark-config.json"
+grep '"arm":"hpatch"' "$fixture/results.jsonl" >"$single_ctp/results.jsonl"
+jq '.model_protocol="ctp2"' "$fixture/hpatch-metrics.json" >"$single_ctp/hpatch-metrics.json"
+jq -c '.model_protocol="ctp2"' "$fixture/captures/hpatch.jsonl" >"$single_ctp/captures/hpatch.jsonl"
+bash "$benchmark_root/report.sh" "$single_ctp" >/dev/null
+grep -Fq '| Hpatch + CTP/2 | 1/1 |' "$single_ctp/summary.md"
+grep -Fq '### CTP/2 acceptance: Hpatch + CTP/2' "$single_ctp/summary.md"
+if grep -Fq 'Actual provider-token change' "$single_ctp/summary.md"; then
+ printf 'single CTP report invented a comparison\n' >&2; exit 1
+fi
+printf '%s\n' '{"benchmark_mode":"hpatch-diagnostic","treatment_model_protocol":"native"}' >"$single_ctp/benchmark-config.json"
+if bash "$benchmark_root/report.sh" "$single_ctp" >/dev/null 2>&1; then
+ printf 'diagnostic report accepted mismatched protocol\n' >&2; exit 1
+fi
+
+
+provider_evidence="$fixture/provider-evidence"
+mkdir -p "$provider_evidence/captures"
+printf '%s\n' '{"benchmark_mode":"hpatch-diagnostic"}' >"$provider_evidence/benchmark-config.json"
+grep '"arm":"hpatch"' "$fixture/results.jsonl" >"$provider_evidence/results.jsonl"
+for state in present missing null invalid unavailable; do
+    evidence=$(jq -nc --arg state "$state" '{request_id:"req-private-lookup",model:"response-model",header_model:"header-model",cached_tokens_state:$state} + (if $state == "present" then {cached_tokens:50} else {} end)')
+    jq --argjson e "$evidence" '.exchanges[0].provider_attempts[0].provider_response=$e' "$fixture/hpatch-metrics.json" >"$provider_evidence/hpatch-metrics.json"
+    jq -c --argjson e "$evidence" 'if .boundary == "provider" then .provider_response=$e else . end' "$fixture/captures/hpatch.jsonl" >"$provider_evidence/captures/hpatch.jsonl"
+    bash "$benchmark_root/report.sh" "$provider_evidence" >/dev/null
+    count=unavailable
+    [[ $state != present ]] || count=50
+    grep -Fq "| Hpatch | 1 | 1 | response-model | header-model | $state | $count |" "$provider_evidence/summary.md"
+    if grep -Fq 'req-private-lookup' "$provider_evidence/summary.md"; then
+        printf 'report leaked provider request ID\n' >&2; exit 1
+    fi
+done
+jq '.exchanges[0].provider_attempts[0].provider_response.model="tampered-model"' "$provider_evidence/hpatch-metrics.json" >"$provider_evidence/tampered.json"
+cp "$provider_evidence/tampered.json" "$provider_evidence/hpatch-metrics.json"
+if bash "$benchmark_root/report.sh" "$provider_evidence" >/dev/null 2>&1; then
+    printf 'report accepted tampered provider evidence\n' >&2; exit 1
+fi
+
 ctp="$fixture/ctp"
 mkdir -p "$ctp/captures"
 printf '%s\n' '{"benchmark_mode":"ctp-only","ctp":{"require_input_compression":true,"require_output_compression":true}}' >"$ctp/benchmark-config.json"

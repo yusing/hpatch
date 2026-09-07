@@ -64,6 +64,18 @@ One diagnostic run without a control:
 BENCHMARK_MODE=hpatch-diagnostic REPETITIONS=1 bash benchmarks/bench.sh
 ```
 
+To run only the Hpatch + CTP/2 treatment used by the paired preset:
+
+```sh
+MODEL=gpt-6-astra REASONING_EFFORT=low BENCHMARK_MODE=hpatch-diagnostic \
+  DIAGNOSTIC_MODEL_PROTOCOL=ctp2 REPETITIONS=1 bash benchmarks/bench.sh
+```
+
+`DIAGNOSTIC_MODEL_PROTOCOL` accepts `native` (the standalone default) or `ctp2`,
+and is valid only in `hpatch-diagnostic` mode. No control attempt is launched or
+imported. Historical comparisons across models or effort levels are descriptive,
+not controlled measurements of a router change. Paired defaults are unchanged.
+
 Native Hpatch versus CTP/2:
 
 ```sh
@@ -158,6 +170,12 @@ its per-turn lifecycle to Codex. The report locates changes before replay, durin
 or during CTP, but does not claim visibility into provider cache routing. Older captures without
 turn-state evidence show unavailable. Run `python3 benchmarks/cache_diagnostics_test.py` for the
 model-free evidence-validation checks.
+
+Provider response evidence additionally shows per-attempt cached-token field state and explicit
+counts, plus provider-reported body/header model identifiers. Missing telemetry is not an explicit
+zero; existing normalized aggregate counters can still contain default-zero values. The provider
+request ID is retained in capture/dashboard details for support correlation but omitted from
+benchmark summaries. Older captures cannot reconstruct these observations.
 
 `capturer` records schema-6 JSONL at both boundaries without storing credentials, prompts,
 instructions, tool arguments, command output, response text, diagnostics, scripts, reports, or

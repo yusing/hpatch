@@ -146,30 +146,43 @@ func observeResponseJSON(payload []byte, record *captureRecord, codec tokenizer.
 		observeOutputItem(event.Item, record, codec)
 	}
 	if len(event.Response) != 0 {
-		_, output := observeResponseEnvelope(event.Response, record, codec)
+		_, output, valid := observeResponseEnvelope(event.Response, record, codec)
 		switch event.Type {
 		case "response.completed", "response.failed", "response.incomplete":
+			if valid {
+				record.observeProviderEvidence(event.Response)
+			} else if record.ProviderResponse != nil {
+				record.ProviderResponse.CachedTokensState = "unavailable"
+				record.ProviderResponse.CachedTokens = nil
+			}
 			return output, true
 		default:
 			return nil, false
 		}
 	}
-	status, output := observeResponseEnvelope(payload, record, codec)
+	status, output, _ := observeResponseEnvelope(payload, record, codec)
 	switch status {
 	case "completed", "failed", "incomplete", "cancelled":
+		record.observeProviderEvidence(payload)
 		return output, true
 	default:
 		return nil, false
 	}
 }
 
-func observeResponseEnvelope(payload []byte, record *captureRecord, codec tokenizer.Codec) (string, []byte) {
-	var response struct {
+func observeResponseEnvelope(payload []byte, record *captureRecord, codec tokenizer.Codec) (string, []byte, bool) {
+	var response *struct {
 		Status string            `json:"status"`
 		Output []json.RawMessage `json:"output"`
+		Model  json.RawMessage   `json:"model"`
 	}
-	if json.Unmarshal(payload, &response) != nil {
-		return "", nil
+	if json.Unmarshal(payload, &response) != nil || response == nil {
+		return "", nil, false
+	}
+	if record.Boundary == "provider" && record.ProviderResponse != nil && len(response.Model) != 0 {
+		var model string
+		_ = json.Unmarshal(response.Model, &model)
+		record.ProviderResponse.Model = safeProviderIdentifier(model)
 	}
 	if response.Status != "" {
 		record.ResponseStatus = response.Status
@@ -178,7 +191,7 @@ func observeResponseEnvelope(payload []byte, record *captureRecord, codec tokeni
 		observeOutputItem(item, record, codec)
 	}
 	if response.Output == nil {
-		return response.Status, nil
+		return response.Status, nil, true
 	}
 	// Remove only router-origin messages, before deciding whether a terminal
 	// array can replace the indexed streamed items. Telemetry alone is not a
@@ -188,9 +201,9 @@ func observeResponseEnvelope(payload []byte, record *captureRecord, codec tokeni
 	})
 	output, err := json.Marshal(outputItems)
 	if err != nil {
-		return "", nil
+		return "", nil, false
 	}
-	return response.Status, output
+	return response.Status, output, true
 }
 
 func generatedOutputItem(payload []byte, record *captureRecord) bool {

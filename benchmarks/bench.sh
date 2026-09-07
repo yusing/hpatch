@@ -7,6 +7,7 @@ reasoning_effort=${REASONING_EFFORT:-medium}
 mentor_parent_model=${MENTOR_PARENT_MODEL:-gpt-5.6-sol}
 mentor_parent_reasoning_effort=high
 mentor_model_protocol=${MENTOR_MODEL_PROTOCOL:-native}
+diagnostic_model_protocol=${DIAGNOSTIC_MODEL_PROTOCOL:-native}
 mentor_child_role=benchmark_worker
 repetitions=${REPETITIONS:-1}
 benchmark_mode=${BENCHMARK_MODE:-paired}
@@ -65,6 +66,14 @@ native|ctp2) ;;
 	exit 2
 	;;
 esac
+case $diagnostic_model_protocol in
+native|ctp2) ;;
+*) printf 'bench.sh: DIAGNOSTIC_MODEL_PROTOCOL must be native or ctp2\n' >&2; exit 2 ;;
+esac
+if [[ -n ${DIAGNOSTIC_MODEL_PROTOCOL+x} && $benchmark_mode != hpatch-diagnostic ]]; then
+    printf 'bench.sh: DIAGNOSTIC_MODEL_PROTOCOL requires hpatch-diagnostic mode\n' >&2
+    exit 2
+fi
 task_id=${TASK_ID:-etcd-range-stream}
 suite_manifest="$benchmark_root/diverse-suite.json"
 task=
@@ -308,6 +317,9 @@ export HPATCH_BENCH_HPATCH_MODEL_PROTOCOL=native
 export HPATCH_BENCH_CONTROL_MODEL_PROTOCOL=native
 export HPATCH_BENCH_CONTROL_MODE=passthrough
 export HPATCH_BENCH_MENTOR_HANDOFF=false
+if [[ $benchmark_mode == hpatch-diagnostic ]]; then
+	export HPATCH_BENCH_HPATCH_MODEL_PROTOCOL=$diagnostic_model_protocol
+fi
 if [[ $benchmark_mode == paired ]]; then
 	export HPATCH_BENCH_HPATCH_MODEL_PROTOCOL=ctp2
 fi

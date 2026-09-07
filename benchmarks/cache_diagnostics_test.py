@@ -5,7 +5,7 @@ import sys
 import unittest
 
 sys.dont_write_bytecode = True
-from analyze_capture import compare_prefix, validate_cache_diagnostics, validate_fingerprint
+from analyze_capture import compare_prefix, validate_cache_diagnostics, validate_fingerprint, validate_provider_evidence
 
 
 def fingerprint(items):
@@ -64,6 +64,26 @@ class CacheDiagnosticsTests(unittest.TestCase):
             fp["turn_state"] = invalid
             with self.assertRaises(ValueError):
                 validate_fingerprint(fp)
+
+    def test_provider_response_evidence(self):
+        for state in ("missing", "null", "invalid", "unavailable"):
+            e = {"cached_tokens_state": state}
+            validate_provider_evidence(e, None)
+            e["cached_tokens"] = 0
+            with self.assertRaises(ValueError):
+                validate_provider_evidence(e, None)
+        for count in (0, 128):
+            e = {"cached_tokens_state": "present", "cached_tokens": count,
+                 "request_id": "req-test", "model": "response-model", "header_model": "header-model"}
+            validate_provider_evidence(e, {"cached_input_tokens": count})
+            with self.assertRaises(ValueError):
+                validate_provider_evidence(e, {"cached_input_tokens": count+1})
+        for changes in ({"cached_tokens": None}, {"cached_tokens": -1}, {"request_id": "unsafe\ntext"},
+                        {"authorization": "secret"}, {"model": "x"*257}):
+            e = {"cached_tokens_state": "present", "cached_tokens": 0} | changes
+            with self.assertRaises(ValueError):
+                validate_provider_evidence(e, None)
+        validate_provider_evidence(None, {"cached_input_tokens": 0})
 
     def test_private_shape_and_partial_evidence(self):
         fp = fingerprint(["d" * 32])
