@@ -11,6 +11,15 @@ rewriting, Code Mode capability discovery, wrappers, history, observation, works
 executor effects. Loading a declaration is trusted local extension code, but the adapter
 receives no engine workspace capability or Codex credential interface.
 
+The registry owns one warm translation host for the router-owned built-in declaration. It starts
+after snapshot authentication and before serving, waits for declaration/core import readiness,
+and closes before snapshot removal. The toolplugin adapter owns serialized, bounded request/response
+framing over private pipes, cancellation, process-group cleanup, and replacement after a failed
+call. It never retries the failed call. This keeps Node, bundle, and WASM cold loading outside
+ordinary built-in response translation without raising its five-second budget. Configured plugins
+retain fresh hosts so module-local state cannot leak between their translation calls. Executors
+remain one-shot and are never invoked by the warm host.
+
 The plugin host maps the exact virtual import `hpatch:core/v1` to a router-owned ECMAScript adapter beside
 one Go-built WASI reactor in the immutable snapshot. The adapter and reactor are included in the registry
 identity, and the host rejects every other `hpatch:` import. Built-in and configured modules therefore use

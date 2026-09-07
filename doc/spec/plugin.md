@@ -40,6 +40,15 @@ partial registry, forwards no Responses request, or starts an executor implement
 checks occur at startup; this does not promise to reproduce a provider's model-specific or
 complexity limits.
 
+Built-in translations MUST use a router-lifetime host that loads its declaration and shared core
+before the listener opens. Calls MUST be serialized within that host, retain the five-second
+translation bound (including queue admission), and propagate caller cancellation. A timeout,
+crash, malformed response, or output overflow MUST fail the current call and discard that host;
+only a later call may start a replacement. No failed call or executor effect may be retried by
+this mechanism. Input rejections remain ordinary bounded diagnostics and do not poison the host.
+Shutdown MUST cancel active translation and reap the host before removing its snapshot.
+Configured declarations and all executor invocations MUST retain isolated per-call hosts.
+
 A successful translator returns a typed normal executor tool-call carrier. The router
 validates the carrier kind, name, and payload against the tools available in that
 request and retains ownership of response item IDs, call IDs, status, JSON and SSE framing,

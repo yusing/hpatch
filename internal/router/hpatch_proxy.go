@@ -1097,15 +1097,19 @@ func (t *hpatchResponseTransform) translateRegisteredTool(contribution toolContr
 		}
 	}
 	if !recovered && !translation.Rejected {
-		translation, err = toolplugin.Translate(
-			t.ctx,
-			t.proxy.registry.NodeExecutable,
-			t.proxy.registry.RuntimeRoot,
-			contribution.Module,
-			contribution.ModuleIndex,
-			effectiveInput,
-			pathPrefix,
-		)
+		if contribution.PluginID == builtinToolsPluginID {
+			translation, err = t.proxy.registry.builtinTranslator.Translate(t.ctx, contribution.ModuleIndex, effectiveInput, pathPrefix)
+		} else {
+			translation, err = toolplugin.Translate(
+				t.ctx,
+				t.proxy.registry.NodeExecutable,
+				t.proxy.registry.RuntimeRoot,
+				contribution.Module,
+				contribution.ModuleIndex,
+				effectiveInput,
+				pathPrefix,
+			)
+		}
 		if err != nil {
 			return hpatchHistory{}, fmt.Errorf("translate registered tool %s: %w", contribution.Name, err)
 		}

@@ -6,6 +6,7 @@ import (
 
 	"github.com/gofrs/flock"
 	"github.com/yusing/hpatch"
+	"github.com/yusing/hpatch/internal/router/toolplugin"
 )
 
 type (
@@ -24,6 +25,8 @@ type (
 		RuntimeRoot    string
 		NodeExecutable string
 		DiagnoseHooks  hpatch.DiagnoseHooks
+
+		builtinTranslator *toolplugin.Translator
 
 		frontendDirectory string
 		frontendLock      *flock.Flock

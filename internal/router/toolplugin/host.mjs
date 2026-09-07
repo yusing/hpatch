@@ -2,6 +2,7 @@ import { realpath } from "node:fs/promises";
 import { registerHooks } from "node:module";
 import path from "node:path";
 import process from "node:process";
+import { createInterface } from "node:readline";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const API_VERSION = "hpatch-tool-plugin/v1";
@@ -719,14 +720,8 @@ async function executeTool(request) {
   return current;
 }
 
-async function main() {
-  const request = JSON.parse(await new Promise((resolve, reject) => {
-    const chunks = [];
-    process.stdin.on("data", (chunk) => chunks.push(chunk));
-    process.stdin.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
-    process.stdin.on("error", reject);
-  }));
-  const snapshotRoot = await realpath(path.resolve(request.snapshotRoot));
+async function registerSnapshot(root) {
+  const snapshotRoot = await realpath(path.resolve(root));
   registerHooks({
     resolve(specifier, context, nextResolve) {
       if (specifier === "hpatch:core/v1") {
@@ -755,6 +750,43 @@ async function main() {
       return resolved;
     },
   });
+  return snapshotRoot;
+}
+
+// Only the router-owned built-in declaration uses a warm translation process.
+// Configured declarations and executor effects retain their one-shot hosts.
+async function serveTranslations() {
+  const lines = createInterface({input: process.stdin, crlfDelay: Infinity});
+  let snapshotRoot;
+  let module;
+  for await (const line of lines) {
+    const request = JSON.parse(line);
+    let response;
+    if (snapshotRoot === undefined) {
+      snapshotRoot = await registerSnapshot(request.snapshotRoot);
+      module = request.module;
+      await loadDeclaration(snapshotRoot, module);
+      response = {ready: true};
+    } else {
+      response = await translateTool({...request, snapshotRoot, module});
+    }
+    await new Promise((resolve, reject) => {
+      process.stdout.write(JSON.stringify(response) + "\n", (error) => error ? reject(error) : resolve());
+    });
+  }
+}
+
+async function main() {
+  if (process.argv[2] === "--translate-server") {
+    return serveTranslations();
+  }
+  const request = JSON.parse(await new Promise((resolve, reject) => {
+    const chunks = [];
+    process.stdin.on("data", (chunk) => chunks.push(chunk));
+    process.stdin.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
+    process.stdin.on("error", reject);
+  }));
+  const snapshotRoot = await registerSnapshot(request.snapshotRoot);
 
   let response;
   switch (request.operation) {
@@ -786,4 +818,5 @@ async function main() {
 main().catch((error) => {
   process.stderr.write(`${error?.stack ?? String(error)}\n`);
   process.exitCode = 1;
+  process.stdin.destroy();
 });

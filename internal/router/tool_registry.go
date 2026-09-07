@@ -211,7 +211,12 @@ func buildToolRegistry(ctx context.Context, dataDirectory, hpatchDescription str
 	if shellRuntime == "" {
 		return fail(errors.New("built-in shell runtime is unavailable"))
 	}
+	translator, err := toolplugin.NewTranslator(ctx, pluginSnapshot.NodeExecutable, runtimeRoot, byName["shell"].Module)
+	if err != nil {
+		return fail(err)
+	}
 	return &toolRegistry{
+		builtinTranslator: translator,
 		SnapshotDir:       snapshotDirectory,
 		RuntimeRoot:       runtimeRoot,
 		NodeExecutable:    pluginSnapshot.NodeExecutable,
@@ -378,6 +383,7 @@ func (registry *toolRegistry) Close() error {
 		return nil
 	}
 	registry.closeOnce.Do(func() {
+		registry.builtinTranslator.Close()
 		registry.closeErr = errors.Join(
 			removeWorkerFrontendSymlinks(registry.frontends, registry.wrappers),
 			os.RemoveAll(registry.SnapshotDir),
