@@ -1,20 +1,11 @@
 #!/usr/bin/env bash
+# shellcheck source-path=SCRIPTDIR
 set -euo pipefail
 benchmark_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 fixture=$(mktemp -d)
 trap 'rm -rf -- "$fixture"' EXIT
-python3 - "$benchmark_root/bench.sh" "$fixture/functions.sh" <<'PY'
-from pathlib import Path
-import sys
-source = Path(sys.argv[1]).read_text()
-functions = []
-for name in ('compute_task_contract', 'verify_task_contract', 'import_control_baseline', 'grade', 'validate_revision'):
-    start = source.index(name + '() {')
-    end = source.index('\n}', start) + 2
-    functions.append(source[start:end])
-Path(sys.argv[2]).write_text('\n'.join(functions))
-PY
-source "$fixture/functions.sh"
+# shellcheck source=bench.sh
+source "$benchmark_root/bench.sh"
 task="$fixture/task"
 mkdir -p "$task"
 task_manifest="$task/task.json"
@@ -33,7 +24,7 @@ task_manifest="$task/task.json"
 compute_task_contract
 [[ $task_contract_sha256 == "$original" ]]
 task_id=fixture model=gpt-6-astra reasoning_effort=medium
-control_instruction_sha=fixture-instructions
+control_instruction_sha="fixture-instructions"
 control_baseline_dir="$fixture/baseline"
 base_artifacts="$control_baseline_dir/artifacts/fixture/fixture-control-r001"
 mkdir -p "$base_artifacts"
@@ -70,7 +61,7 @@ done
 task_contract_sha256=$original
 control_instruction_sha=different-instructions
 reject_import
-control_instruction_sha=fixture-instructions
+control_instruction_sha="fixture-instructions"
 jq 'del(.task_contract_sha256)' "$base_artifacts/result.json" >"$fixture/missing.json"
 cp "$fixture/missing.json" "$base_artifacts/result.json"
 reject_import

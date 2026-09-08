@@ -4,7 +4,10 @@
 
 The benchmark runner owns historical workspace creation, instruction preparation, arm scheduling,
 network isolation, Codex invocation, pre-grader artifact capture, hidden grading, result retention,
-and report validation. Agents cannot reach the historical oracle or hidden grader before their
+and report validation. Sourceable runner modules separate configuration, task identity, preparation,
+execution, and artifact finalization without starting a run. One normalized arm plan owns fresh and
+imported membership, executor service, router mode/protocol, instructions, and capture destinations.
+One block scheduler owns alternating order and per-block cancellation for all measured modes. Agents cannot reach the historical oracle or hidden grader before their
 changes are captured.
 
 Each fresh arm has one `hpatch` process and one router listener. Codex connects directly to

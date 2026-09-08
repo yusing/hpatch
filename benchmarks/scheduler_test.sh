@@ -1,0 +1,99 @@
+#!/usr/bin/env bash
+# shellcheck source-path=SCRIPTDIR
+set -euo pipefail
+benchmark_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+fixture=$(mktemp -d)
+trap 'rm -rf -- "$fixture"' EXIT
+# Importing definitions must not create workspaces, install traps, or run tools.
+before_traps=$(trap -p)
+# shellcheck source=bench.sh
+source "$benchmark_root/bench.sh"
+[[ $(trap -p) == "$before_traps" ]]
+[[ ! -v run_dir ]]
+
+for mode in paired control-only hpatch-only hpatch-diagnostic ctp-only mentor-handoff; do
+ (
+  export BENCHMARK_MODE=$mode MODEL=gpt-5.6-luna REPETITIONS=1
+  export BENCHMARK_REPORT_ISSUES=false
+  unset DIAGNOSTIC_MODEL_PROTOCOL MENTOR_MODEL_PROTOCOL
+  configure_benchmark
+  case $mode in
+   paired) expected=(control hpatch); retained=(control hpatch) ;;
+   control-only) expected=(control); retained=(control) ;;
+   hpatch-only) expected=(hpatch); retained=(control hpatch) ;;
+   hpatch-diagnostic) expected=(hpatch); retained=(hpatch) ;;
+   ctp-only) expected=(native ctp); retained=(native ctp) ;;
+   mentor-handoff) expected=(hpatch hpatch-mentor); retained=(hpatch hpatch-mentor) ;;
+  esac
+  [[ ${run_arms[*]} == "${expected[*]}" && ${retained_arms[*]} == "${retained[*]}" ]]
+  calls="$fixture/$mode"
+  run_agent() {
+   local arm=$1
+   printf '%s %s %s %s %s %s %s %s\n' "$arm" "$2" "$3" "${arm_services[$arm]}" \
+    "${arm_modes[$arm]}" "${arm_protocols[$arm]}" "${arm_instructions[$arm]}" "${arm_mentor[$arm]}" >>"$calls"
+  }
+  (run_block 1)
+  (run_block 2)
+  case $mode in
+   paired) cat >"$fixture/want" <<'EOF'
+hpatch 1 1 hpatch-agent hpatch ctp2 hpatch.md false
+control 1 2 control-agent passthrough native control.md false
+control 2 1 control-agent passthrough native control.md false
+hpatch 2 2 hpatch-agent hpatch ctp2 hpatch.md false
+EOF
+    ;;
+   control-only) cat >"$fixture/want" <<'EOF'
+control 1 1 control-agent passthrough native control.md false
+control 2 1 control-agent passthrough native control.md false
+EOF
+    ;;
+   hpatch-only) cat >"$fixture/want" <<'EOF'
+hpatch 1 2 hpatch-agent hpatch native hpatch.md false
+hpatch 2 2 hpatch-agent hpatch native hpatch.md false
+EOF
+    ;;
+   hpatch-diagnostic) cat >"$fixture/want" <<'EOF'
+hpatch 1 1 hpatch-agent hpatch native hpatch.md false
+hpatch 2 1 hpatch-agent hpatch native hpatch.md false
+EOF
+    ;;
+   ctp-only) cat >"$fixture/want" <<'EOF'
+ctp 1 1 hpatch-agent hpatch ctp2 hpatch.md false
+native 1 2 control-agent hpatch native hpatch.md false
+native 2 1 control-agent hpatch native hpatch.md false
+ctp 2 2 hpatch-agent hpatch ctp2 hpatch.md false
+EOF
+    ;;
+   mentor-handoff) cat >"$fixture/want" <<'EOF'
+hpatch-mentor 1 1 hpatch-agent hpatch native hpatch.md true
+hpatch 1 2 control-agent hpatch native hpatch.md false
+hpatch 2 1 control-agent hpatch native hpatch.md false
+hpatch-mentor 2 2 hpatch-agent hpatch native hpatch.md true
+EOF
+    ;;
+  esac
+  diff -u "$fixture/want" "$calls"
+  : >"$calls"
+  started=true collected=false run_dir=/synthetic
+  collect_router_metrics() { printf '%s %s %s\n' "$@" >>"$calls"; }
+  collect_artifacts
+  [[ $collected == true && $(wc -l <"$calls") -eq ${#run_arms[@]} ]]
+  collect_artifacts
+  [[ $(wc -l <"$calls") -eq ${#run_arms[@]} ]]
+ )
+done
+
+# A failed arm must not suppress its paired sibling; cancellation must.
+export BENCHMARK_MODE=paired MODEL=gpt-5.6-sol REPETITIONS=1 BENCHMARK_REPORT_ISSUES=false
+configure_benchmark
+calls="$fixture/status"
+run_agent() { printf '%s\n' "$1" >>"$calls"; return 1; }
+status=0
+(run_block 1) || status=$?
+[[ $status == 1 && $(wc -l <"$calls") -eq 2 ]]
+: >"$calls"
+run_agent() { printf '%s\n' "$1" >>"$calls"; cancel_pair 143; }
+status=0
+(run_block 1) || status=$?
+[[ $status == 143 && $(wc -l <"$calls") -eq 1 ]]
+printf '%s\n' 'Sourceable runner, arm plans, alternating order, failure and cancellation passed'
