@@ -4,9 +4,29 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/pmezard/go-difflib/difflib"
 )
+
+func renderFileWritePatch(path, content string) (string, error) {
+	if path == "" || strings.TrimSpace(path) != path || strings.ContainsAny(path, "\r\n\x00") || !utf8.ValidString(path) {
+		return "", fmt.Errorf("file write path is not representable in apply_patch")
+	}
+	if !utf8.ValidString(content) || strings.ContainsAny(content, "\r\x00") || content != "" && !strings.HasSuffix(content, "\n") {
+		return "", fmt.Errorf("file write requires empty or LF-terminated UTF-8 text")
+	}
+	var patch strings.Builder
+	patch.WriteString("*** Begin Patch\n")
+	if content == "" {
+		fmt.Fprintf(&patch, "*** Add File: %s\n", path)
+	} else {
+		// Each addition row supplies its own LF in the host parser.
+		writeAddition(&patch, path, strings.TrimSuffix(content, "\n"))
+	}
+	patch.WriteString("*** End Patch\n")
+	return patch.String(), nil
+}
 
 func translate(changes []change) (string, error) {
 	if len(changes) == 0 {

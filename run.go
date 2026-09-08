@@ -403,6 +403,15 @@ type HostTranslation struct {
 	Rejections    []HostRejection
 }
 
+// RenderFileWritePatch renders a literal, truncating text write for a host's
+// apply_patch tool. It does not read, validate source code, format, or apply the
+// file. Add File deliberately also overwrites an existing file in that tool,
+// so commands executed before the write cannot invalidate a sampled baseline.
+// Only empty or LF-terminated text is representable without changing its bytes.
+func RenderFileWritePatch(path, content string) (string, error) {
+	return renderFileWritePatch(path, content)
+}
+
 // TranslateForHostAt evaluates a host script relative to directory without
 // imposing filesystem confinement. The host executor remains responsible for
 // authorizing and applying the translated patch. The caller coordinates writers

@@ -1176,6 +1176,7 @@ func (t *hpatchResponseTransform) translateRegisteredTool(contribution toolContr
 	name := t.codeModeToolName
 	payload := ""
 	diagnostic := translation.Diagnostic
+	catWriteCarrier := false
 	var misuseWarnings []string
 	if recovered {
 		misuseWarnings = append(misuseWarnings, lunaShellRecoveryWarning)
@@ -1207,6 +1208,11 @@ func (t *hpatchResponseTransform) translateRegisteredTool(contribution toolContr
 				return hpatchHistory{}, fmt.Errorf("%s exec carrier: %w", contribution.Name, err)
 			}
 			arguments := translation.Arguments
+			if splitPayload, ok := t.shellCatCarrier(contribution, kind, arguments, translation.Carrier.Template, translation.Carrier.Params, resultMetadata); ok {
+				payload = splitPayload
+				catWriteCarrier = true
+				break
+			}
 			commentaryToken := ""
 			interpreter := ""
 			if len(arguments) != 0 {
@@ -1264,7 +1270,7 @@ func (t *hpatchResponseTransform) translateRegisteredTool(contribution toolContr
 			)
 		}
 	}
-	if !translation.Rejected {
+	if !translation.Rejected && !catWriteCarrier {
 		for _, misuse := range shellInterpreterWrapperMisuses(contribution, input) {
 			misuseWarnings = append(misuseWarnings, shellInterpreterWrapperWarning(misuse))
 		}

@@ -81,13 +81,47 @@ With `#!params=`, Codex applies the accepted outer exec arguments before launchi
 The worker returns stdout, stderr, and exit status without copying the script body into either
 output stream.
 
-The shell carrier forwards the complete native `exec_command` result defined by the owning Code
+For the built-in Bash/sh tool, the router recognizes literal truncating writes of the form
+`cat > PATH <<'EOF'` (either redirection order, single/double-quoted delimiter, and `<<-` tab
+stripping). A simple sequence separated only by newlines or semicolons is lowered, in order,
+to shell commands and native `apply_patch` calls in one Code Mode carrier. Heredoc contents are
+parsed as data, never as statement separators. The native-tools carrier uses the executor's
+`apply_patch` executable, as hpatch does. The original shell call, not the generated sequence,
+is restored on provider replay; tool declarations, instructions, and the existing provider cache
+prefix do not change for this projection.
+
+Only empty or LF-terminated literal UTF-8 bodies are projected. The patch performs an unconditional
+write, including overwriting an existing file, without reading an early baseline, formatting,
+or source validation. Each write is applied only after its preceding commands finish. An
+execution-time guard leaves missing parents, symlinks, and special-file targets to the original
+cat command instead of giving `Add File` permission to create parents or replace special targets.
+Ordinary command output remains ordered in the shell result; patch success and guard output do
+not enter it. Host patch errors/refusals stop the carrier rather than retrying the write as cat.
+Already captured ordinary output and retention metadata remain visible when a later tool fails;
+the host error propagates without executing the remaining statements.
+
+The complete script stays on its existing execution path if it contains conditionals, pipelines,
+background jobs, compound statements, shell-state mutations (`cd`, assignments, functions,
+options), or dynamic expansions. Append writes, file-copy forms, unquoted heredocs, and paths or
+contents not representable without byte changes remain shell commands. Interpreter arguments,
+command templates, PTYs, and exec parameters other than workdir, output budget, yield timing,
+and false login/tty also keep the existing carrier. A known absolute workdir is required.
+
+The ordinary shell carrier forwards the complete native `exec_command` result defined by the owning Code
 Mode contract rather than only its output field. A result containing the native continuation
 handle remains yielded rather than terminal, and the same host-owned continuation operation
 resumes that session. The router and shell plugin do not poll, resume, cancel, retry, replace, or
 persist the session. They do not define a second result envelope or continuation protocol. Exact
 result fields, yield timing, continuation arguments, and session lifetime remain owned by Codex's
 executable tool definitions in that request.
+
+For a split cat-write sequence, the enclosing Code Mode program waits for each command's
+terminal result with the native `write_stdin` operation before starting the next step. The same
+Code Mode cell may yield while this work is pending. No session is restarted or retried. It
+concatenates command output in execution order and retains the last step's exit status and
+terminal result fields, plus the existing retention metadata. Native patch success contributes
+empty output and status zero. No generated patch or intermediate guard result is published to
+the provider as a separate conversation item.
 
 Eligible shell calls return `retained: true` and a thread-scoped `script_ref` shaped
 `@shell/<artifact-id>`. `hread` inspects that reference, hpatch edits it inside private
@@ -187,3 +221,10 @@ Acceptance:
     Unsafe thread IDs reject before runtime creation; unsafe artifact IDs cannot redirect
     retention, reads, edits, expiry, or cleanup. A retained script cannot read or overwrite
     the runtime launcher, another thread's scripts, or workspace files through a reference.
+18. `foo; cat > out <<'EOF'` followed by a literal body, delimiter, and `bar` runs foo, the
+    user-visible native patch, and bar in that order. Newline-only separators behave identically.
+    Multiple writes to one file observe execution order, not a pre-execution filesystem snapshot.
+    Quoted dollar signs, semicolons, blank lines, and final LF bytes remain literal file content.
+19. Complex shell constructs remain unsplit. A yielded prefix finishes before any patch or suffix
+    begins. JSON and SSE projections restore the exact original shell call and unchanged result
+    on replay, and native/compact provider cache diagnostics retain an appended prefix.

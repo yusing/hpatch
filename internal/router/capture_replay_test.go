@@ -27,8 +27,15 @@ func (p captureReplayProvider) forwardExecution(ctx, _ context.Context, body []b
 }
 
 func TestCaptureRequestBaselineAfterHPatchReplay(t *testing.T) {
-	for _, protocol := range []string{"native", "ctp2"} {
-		t.Run(protocol, func(t *testing.T) {
+	const catWrite = "foo; cat > cache-replay.txt <<'EOF'\nliteral content\nEOF\nbar"
+	for _, fixture := range []struct{ name, input, protocol string }{
+		{"hpatch", testHPatchScript, "native"},
+		{"hpatch", testHPatchScript, "ctp2"},
+		{"shell", catWrite, "native"},
+		{"shell", catWrite, "ctp2"},
+	} {
+		protocol := fixture.protocol
+		t.Run(fixture.name+"/"+protocol, func(t *testing.T) {
 			recorder, err := capturer.New(capturer.Config{Mode: "hpatch", ModelProtocol: protocol})
 			if err != nil {
 				t.Fatal(err)
@@ -40,6 +47,8 @@ func TestCaptureRequestBaselineAfterHPatchReplay(t *testing.T) {
 				forwarded = append(forwarded, body)
 				w.Header().Set("Content-Type", "application/json")
 				output := []any{testHPatchItem()}
+				output[0].(map[string]any)["name"] = fixture.name
+				output[0].(map[string]any)["input"] = fixture.input
 				if len(forwarded) > 1 {
 					output = []any{}
 				}
@@ -87,6 +96,9 @@ func TestCaptureRequestBaselineAfterHPatchReplay(t *testing.T) {
 			if carrier == nil {
 				t.Fatal("missing delivered carrier")
 			}
+			if fixture.name == "shell" && !bytes.Contains(carrier, []byte("await tools.apply_patch(")) {
+				t.Fatalf("cat write was not projected: %s", carrier)
+			}
 			next := serverRequest(t, func(fields map[string]any) {
 				fields["instructions"] = stockModelInstructionsForTest("", "")
 				fields["input"] = append(fields["input"].([]any), carrier, map[string]any{"type": "custom_tool_call_output", "call_id": "call-H", "output": strings.Repeat("repeated result text with enough exact words; ", 24)})
@@ -104,12 +116,12 @@ func TestCaptureRequestBaselineAfterHPatchReplay(t *testing.T) {
 			_ = json.Unmarshal(forwarded[1], &envelope)
 			restored := false
 			for _, item := range envelope.Input {
-				if jsonString(item, "name") == "hpatch" {
+				if jsonString(item, "name") == fixture.name {
 					restored = true
 				}
 			}
 			if !restored {
-				t.Fatal("provider history did not restore original hpatch call")
+				t.Fatal("provider history did not restore original tool call")
 			}
 			metrics := httptest.NewRecorder()
 			recorder.ServeHTTP(metrics, httptest.NewRequest(http.MethodGet, "/api/metrics", nil))

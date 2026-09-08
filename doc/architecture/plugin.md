@@ -63,6 +63,15 @@ native continuation operation resumes the same host-owned session. JSON and SSE 
 and replay preserve this distinction without defining another result envelope or continuation
 protocol. Other contributed tools retain their declared output projections.
 
+The bounded syntax exception is the simple cat-write sequence in `REQ-SHELL-001`.
+The response transformer owns detection and lowering after built-in shell parsing and before
+the ordinary exec renderer. It uses the shared shell AST to reject stateful/compound scripts,
+the root renderer for literal patches, and the existing call history for exact provider replay.
+Its Code Mode carrier awaits each nested command and its native continuation before advancing,
+then aggregates ordinary output and the final status; it owns no separate persistent session.
+The native carrier invokes the same executor-provided apply_patch command as hpatch. Plugin
+declarations and the model-visible tool catalog remain unchanged.
+
 An implementation needing another executable carrier uses
 the generic path rather than encoding an exec surrogate. Hpatch's native workspace translation, recovery
 ancestry, patch renderer, and semantic failure baseline remain adapter extensions beside this

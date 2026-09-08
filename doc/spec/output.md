@@ -2,7 +2,15 @@
 
 ## REQ-OUTPUT-001 — Output, final state, and failure behavior
 
-Every root entry point accepts one complete input and evaluates the entire script before an
+The rendering-only `RenderFileWritePatch` entry point converts one literal truncating file
+write to a complete `apply_patch` envelope. Unlike engine evaluation, it does not read the
+filesystem, format or validate source, run hooks, or apply changes. It accepts only representable
+paths and empty or LF-terminated UTF-8 text without CR or NUL, preserving every content byte.
+The host's `Add File` action performs the unconditional write even when the file already exists.
+Invalid paths or content return an error and no patch. This adapter is used by the shell carrier
+specified in `REQ-SHELL-001`; it does not alter engine translation semantics below.
+
+Every engine evaluation entry point accepts one complete input and evaluates the entire script before an
 external filesystem commit or translated patch is returned. Basic `Apply` returns only an error.
 All apply and host entry points reject a nil context with `context is nil`, before evaluation
 or finalization; host variants return a zero result without running hooks or publishing output.
