@@ -85,9 +85,7 @@ func TestThreadUsageSurvivesRoundTripsAndSessionRemapping(t *testing.T) {
 	if !valid || got != (tokenCounts{InputTokens: 30, UncachedInputTokens: 9, OutputTokens: 10, ReasoningTokens: 8}) {
 		t.Fatal("root lifetime counts changed across round trips", got, valid)
 	}
-	if next.usageCounts != second || !next.usageObserved {
-		t.Fatal("provider-authoritative response observation was replaced by totals")
-	}
+
 	if got, valid := child.threadUsageCounts(); !valid || got.InputTokens != 500 {
 		t.Fatal("root and child totals mixed", got, valid)
 	}

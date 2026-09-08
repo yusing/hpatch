@@ -76,14 +76,12 @@ Illustrative root commentary, generated from observed activity:
 ```text
 [/root/hook_policy] Reading hook failure handling.
 [/root/guard_review] Running the focused router tests.
-[root -> /root/guard_review] Follow-up requested.
-[/root/hook_policy -> /root/guard_review] Message requested: check the cancellation path too.
 [/root/guard_review <- /root/hook_policy] Message received: check the cancellation path too.
 [/root/hook_policy] Reply received: one failure path needs attention.
 ```
 
 Agent-to-agent commentary identifies both sender and recipient, including sibling
-agents and nested children. Distinguish a requested send from observed receipt;
+agents and nested children. Show actual observed receipt, not router-authored request notices;
 show message text only when plaintext is available. Otherwise show the direction
 and event without inventing or decrypting the payload. Project these events to the
 same root feed without changing their actual recipient or waking another agent.
@@ -98,14 +96,15 @@ Subagent activity since the last update:
 ```
 
 These are examples of content, not permission to invent summaries. Prefer the
-agent's existing authored tool/runtime commentary. Otherwise use a concise,
-recognizable tool description. Do not copy entire shell programs, tool arguments,
-environment assignments, or raw outputs into the feed.
+agent's existing authored tool/runtime commentary. Complete child tool calls also
+show their tool identity and a bounded, single-line input preview; collaboration
+and user-messaging arguments remain opaque. Do not copy entire shell programs or
+raw outputs into the feed.
 
 Task text is optional evidence, not a required new model field. Show it only when
 available as plaintext. An opaque task name is an identity label, not an inferred
-objective. Received reply excerpts must be labelled as excerpts when shortened;
-the original model-visible message and substantive answer remain intact.
+objective. Received plaintext replies are shown in full or omitted if they exceed the auxiliary
+rendering budget; the original model-visible message and substantive answer remain intact.
 
 ## Proposed design
 
@@ -125,23 +124,24 @@ Unknown ancestry must not cause broadcast delivery or guessing from a shared
 routing-session identifier. Keep the child's normal output available even when
 root projection is unavailable.
 
-### 2. Extend collaboration commentary separately
+### 2. Observe child starts and received messages
 
-Keep reserved collaboration schemas and executed arguments unchanged. At the
-existing collaboration-call projection boundary, distinguish:
+Codex owns native spawn, follow-up, messaging, waiting, and interruption display.
+Keep collaboration schemas, executed arguments, and streamed call framing unchanged;
+add no router-authored collaboration request notices.
 
-- spawn requested;
-- message sent/requested, according to the available execution evidence;
-- follow-up requested;
-- waiting for agent updates;
-- reply received, when the actual inter-agent envelope is observed.
+The first accepted `thread_spawn` child request adds one root start notice with the
+canonical child path, observed model, and reasoning effort. Missing effort is
+labelled "not specified". Stable child-thread identity deduplicates later requests.
+This records an accepted request, not successful provider inference or agent completion.
 
-Do not read encrypted `message` arguments. A call being emitted does not prove
-successful delivery. Do not infer an agent's completion, failure, or interruption
-from a generic HTTP terminal event, silence, or the word "completed" in prose.
+Actual received inter-agent envelopes identify sender and recipient. Show plaintext
+replies in full within the auxiliary budget, and encrypted receipt and direction
+without reading encrypted message arguments. Do not infer completion, failure, or
+interruption from HTTP terminal events, silence, or prose.
 
-Hpatch can add useful commentary beside stock collaboration rows. It cannot
-rename or remove those native rows, including stock wait-result wording.
+Hpatch cannot rename or remove native collaboration rows, including stock wait-result
+wording.
 
 ### 3. Project into the root's available response stream
 
@@ -224,7 +224,7 @@ Do not silently turn a provider-free diagnostic into a live model run.
    collection/projection path. Exercise it in stock Codex and record immediate
    versus deferred display behavior. No production stream-lifetime changes.
 2. **Production wiring:** attach actual child commentary and observed metadata,
-   add collaboration-call descriptions, and enable bounded root projection using
+   observe first accepted child starts and actual message receipts, and enable bounded root projection using
    the delivery behavior established by playback.
 3. **Focused validation:** run Hpatch's router tests and the diagnostic cases.
    Verify JSON/SSE parity, two concurrent roots, nested agents, duplicate delivery,

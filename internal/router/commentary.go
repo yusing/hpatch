@@ -17,7 +17,6 @@ const commentaryArgumentName = "commentary"
 
 type commentaryTool struct {
 	qualifiedName string
-	explicit      bool
 }
 
 type commentaryToolCatalog map[string]commentaryTool
@@ -28,6 +27,7 @@ func functionToolKey(namespace, name string) string {
 
 func prepareCommentaryTools(fields map[string]json.RawMessage, tools *responsesToolCatalog) (commentaryToolCatalog, error) {
 	catalog := make(commentaryToolCatalog)
+	seen := make(map[string]struct{})
 	instrument := func(namespace string, tool *responsesToolDefinition, addParameter bool) error {
 		if tool.Type != "function" {
 			return nil
@@ -38,10 +38,10 @@ func prepareCommentaryTools(fields map[string]json.RawMessage, tools *responsesT
 		}
 		key := functionToolKey(namespace, name)
 		qualifiedName := qualifiedToolName(namespace, name)
-		if _, exists := catalog[key]; exists {
+		if _, exists := seen[key]; exists {
 			return fmt.Errorf("commentary tool %q is defined more than once", qualifiedName)
 		}
-		entry := commentaryTool{qualifiedName: qualifiedName}
+		seen[key] = struct{}{}
 		var strict bool
 		_ = json.Unmarshal(tool.rawField("strict"), &strict)
 		if addParameter && !strict {
@@ -60,11 +60,10 @@ func prepareCommentaryTools(fields map[string]json.RawMessage, tools *responsesT
 					})
 					parameters["properties"] = mustMarshalJSON(properties)
 					tool.setRawField("parameters", mustMarshalJSON(parameters))
-					entry.explicit = true
+					catalog[key] = commentaryTool{qualifiedName: qualifiedName}
 				}
 			}
 		}
-		catalog[key] = entry
 		return nil
 	}
 
@@ -152,18 +151,16 @@ func extractStructuredCommentary(item map[string]json.RawMessage, catalog commen
 		return structuredCommentary{}, false, errors.New("commentary function arguments must be a JSON object")
 	}
 	result := structuredCommentary{originalArguments: original, arguments: original}
-	if tool.explicit {
-		if raw, present := arguments[commentaryArgumentName]; present {
-			var value *string
-			if err := json.Unmarshal(raw, &value); err != nil || value == nil {
-				return structuredCommentary{}, false, fmt.Errorf("%s commentary must be a string", tool.qualifiedName)
-			}
-			delete(arguments, commentaryArgumentName)
-			result.arguments = string(mustMarshalJSON(arguments))
-			if strings.TrimSpace(*value) != "" {
-				result.text = *value
-				return result, true, nil
-			}
+	if raw, present := arguments[commentaryArgumentName]; present {
+		var value *string
+		if err := json.Unmarshal(raw, &value); err != nil || value == nil {
+			return structuredCommentary{}, false, fmt.Errorf("%s commentary must be a string", tool.qualifiedName)
+		}
+		delete(arguments, commentaryArgumentName)
+		result.arguments = string(mustMarshalJSON(arguments))
+		if strings.TrimSpace(*value) != "" {
+			result.text = *value
+			return result, true, nil
 		}
 	}
 	return result, true, nil

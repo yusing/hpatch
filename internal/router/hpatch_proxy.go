@@ -239,7 +239,6 @@ type hpatchResponseTransform struct {
 	subagentResponses         []map[string]json.RawMessage
 	subagentTurn              bool
 	usageTracker              *threadUsageObservation
-	usageCounts               tokenCounts
 	usageObserved             bool
 
 	codeModeToolName string
@@ -266,7 +265,6 @@ func (t *hpatchResponseTransform) Close() {
 // observeResponseUsage records provider-authoritative token usage for this response.
 func (t *hpatchResponseTransform) observeResponseUsage(counts tokenCounts) {
 	t.usageTracker.observe(counts)
-	t.usageCounts = counts
 	t.usageObserved = true
 }
 
