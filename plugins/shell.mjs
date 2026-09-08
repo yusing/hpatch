@@ -1,5 +1,6 @@
-import {spawn, spawnSync} from "node:child_process";
-import {closeSync, readFileSync, writeFileSync} from "node:fs";
+import {spawn} from "node:child_process";
+import {closeSync} from "node:fs";
+import {Socket} from "node:net";
 import {
   interpreterIdentity,
   parseShellHeader,
@@ -65,51 +66,18 @@ function scriptEvaluationFlag(interpreter) {
 
 
 /**
- * executeScriptThroughStdin runs a script by passing the body through stdin.
+ * executeInterpreter runs a script with bounded output and inherited-pipe cleanup.
  */
-function executeScriptThroughStdin(argv, maxOutputBytes) {
-  const interpreter = argv[0];
-  const interpreterArguments = argv.slice(1, -1);
-  const body = argv.at(-1);
-
-  try {
-    const result = spawnSync(interpreter, interpreterArguments, {
-      encoding: "utf8",
-      env: process.env,
-      input: body,
-      maxBuffer: Math.max(1, Math.floor(maxOutputBytes / 2)),
-    });
-    const stdout = result.stdout ?? "";
-    let stderr = result.stderr ?? "";
-
-    if (result.error !== undefined) {
-      stderr += `shell: ${executionError(result.error)}\n`;
-      return {
-        stdout,
-        stderr,
-        exitCode: result.error.code === "ENOENT" ? 127 : 1,
-      };
-    }
-    if (result.signal !== null) {
-      stderr += `shell: interpreter terminated by ${result.signal}\n`;
-      return {stdout, stderr, exitCode: 1};
-    }
-    return {stdout, stderr, exitCode: result.status ?? 1};
-  } catch (error) {
-    return {stderr: `shell: ${executionError(error)}\n`, exitCode: 1};
-  }
-}
-
-/**
- * executeScriptWithProgramInput runs a script using a file descriptor or evaluation flag.
- */
-function executeScriptWithProgramInput(argv, context) {
+function executeInterpreter(argv, context) {
   const interpreter = argv[0];
   const body = argv.at(-1);
   const evaluationFlag = scriptEvaluationFlag(interpreter);
-  const usesDescriptor = evaluationFlag === null;
-  const interpreterArguments = usesDescriptor
-    ? [...argv.slice(1, -1), "/dev/fd/3"]
+  const hasProgramInput = [context?.stdinFD, context?.scriptReadFD, context?.scriptWriteFD].every(
+    (fileDescriptor) => Number.isSafeInteger(fileDescriptor) && fileDescriptor >= 3,
+  );
+  const usesDescriptor = hasProgramInput && evaluationFlag === null;
+  const interpreterArguments = !hasProgramInput ? argv.slice(1, -1)
+    : usesDescriptor ? [...argv.slice(1, -1), "/dev/fd/3"]
     : [...argv.slice(1, -1), evaluationFlag, body];
 
   return new Promise((resolve) => {
@@ -117,7 +85,7 @@ function executeScriptWithProgramInput(argv, context) {
     try {
       child = spawn(interpreter, interpreterArguments, {
         env: process.env,
-        stdio: usesDescriptor
+        stdio: !hasProgramInput ? ["pipe", "pipe", "pipe"] : usesDescriptor
           ? [context.stdinFD, "pipe", "pipe", context.scriptReadFD]
           : [context.stdinFD, "pipe", "pipe"],
       });
@@ -137,6 +105,9 @@ function executeScriptWithProgramInput(argv, context) {
     let overflow = false;
     let spawnError;
     let scriptError;
+    let drainDeadline;
+    let scriptInput;
+    const truncatedStreams = new Set();
 
     const capture = (chunks, chunk) => {
       const bytes = Buffer.from(chunk);
@@ -144,9 +115,19 @@ function executeScriptWithProgramInput(argv, context) {
       if (remaining > 0) {
         chunks.push(bytes.subarray(0, remaining));
       }
+      if (bytes.length > remaining) {
+        truncatedStreams.add(chunks);
+      }
       if (bytes.length > remaining && !overflow) {
         overflow = true;
+        scriptInput?.destroy();
         child.kill("SIGKILL");
+        // Inherited pipes can outlive the interpreter. Return the bounded result
+        // so the host's process-group owner can retire the remaining descendants.
+        drainDeadline = setTimeout(() => {
+          child.stdout.destroy();
+          child.stderr.destroy();
+        }, 1_000);
       }
       capturedBytes += Math.min(bytes.length, remaining);
     };
@@ -160,18 +141,26 @@ function executeScriptWithProgramInput(argv, context) {
       spawnError = error;
     });
     child.on("close", (status, signal) => {
+      clearTimeout(drainDeadline);
+      scriptInput?.destroy();
+      const finish = (output) => resolve(overflow
+        ? {...output, terminationReason: "output_limit"}
+        : output);
       let stdout;
       let stderr;
       try {
-        stdout = new TextDecoder("utf-8", {fatal: true}).decode(Buffer.concat(stdoutChunks));
-        stderr = new TextDecoder("utf-8", {fatal: true}).decode(Buffer.concat(stderrChunks));
+        // A byte-limited prefix may end inside one otherwise valid UTF-8 rune.
+        // Streaming decode omits only that incomplete suffix and still rejects
+        // malformed sequences in the retained bytes.
+        stdout = new TextDecoder("utf-8", {fatal: true}).decode(Buffer.concat(stdoutChunks), {stream: truncatedStreams.has(stdoutChunks)});
+        stderr = new TextDecoder("utf-8", {fatal: true}).decode(Buffer.concat(stderrChunks), {stream: truncatedStreams.has(stderrChunks)});
       } catch {
-        resolve({stderr: "shell: interpreter output is not UTF-8\n", exitCode: 1});
+        finish({stderr: "shell: interpreter output is not UTF-8\n" + (overflow ? overflowDiagnostic : ""), exitCode: 1});
         return;
       }
       if (spawnError !== undefined) {
         stderr += `shell: ${executionError(spawnError)}\n`;
-        resolve({
+        finish({
           stdout,
           stderr,
           exitCode: spawnError.code === "ENOENT" ? 127 : 1,
@@ -180,37 +169,45 @@ function executeScriptWithProgramInput(argv, context) {
       }
       if (overflow) {
         stderr += overflowDiagnostic;
-        resolve({stdout, stderr, exitCode: 1});
+        finish({stdout, stderr, exitCode: 1});
         return;
       }
       if (scriptError !== undefined) {
         stderr += `shell: write script body: ${executionError(scriptError)}\n`;
-        resolve({stdout, stderr, exitCode: 1});
+        finish({stdout, stderr, exitCode: 1});
         return;
       }
       if (signal !== null) {
         stderr += `shell: interpreter terminated by ${signal}\n`;
-        resolve({stdout, stderr, exitCode: 1});
+        finish({stdout, stderr, exitCode: 1});
         return;
       }
-      resolve({stdout, stderr, exitCode: status ?? 1});
+      finish({stdout, stderr, exitCode: status ?? 1});
     });
 
     try {
-      if (usesDescriptor) {
-        writeFileSync(context.scriptWriteFD, body);
+      // Wrap the inherited pipe in event-loop I/O, not a filesystem write that
+      // can block while a streaming interpreter fills its output pipe.
+      scriptInput = !hasProgramInput ? child.stdin
+        : usesDescriptor ? new Socket({fd: context.scriptWriteFD, readable: false, writable: true})
+        : null;
+      if (scriptInput === null) {
+        closeSync(context.scriptWriteFD);
+        return;
       }
+      scriptInput.on("error", (error) => {
+        scriptError = error;
+        child.kill("SIGKILL");
+      });
+      scriptInput.end(body);
     } catch (error) {
       scriptError = error;
       child.kill("SIGKILL");
-    } finally {
-      try {
-        closeSync(context.scriptWriteFD);
-      } catch (error) {
-        if (scriptError === undefined) {
-          scriptError = error;
-          child.kill("SIGKILL");
-        }
+      if (scriptInput !== undefined) {
+        scriptInput?.destroy();
+      } else if (hasProgramInput) {
+        // Ownership transfers to Socket only after construction succeeds.
+        try { closeSync(context.scriptWriteFD); } catch {}
       }
     }
   });
@@ -229,12 +226,7 @@ function executeScript(argv, context) {
   if (interpreter === "bash" || interpreter === "sh") {
     return {stderr: "shell: bash and sh require the router shell runner\n", exitCode: 1};
   }
-  if (![context?.stdinFD, context?.scriptReadFD, context?.scriptWriteFD].every(
-    (fileDescriptor) => Number.isSafeInteger(fileDescriptor) && fileDescriptor >= 3,
-  )) {
-    return executeScriptThroughStdin(argv, context.outputBudgetBytes);
-  }
-  return executeScriptWithProgramInput(argv, context);
+  return executeInterpreter(argv, context);
 }
 
 export const shellTool = {

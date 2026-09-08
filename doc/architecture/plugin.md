@@ -125,7 +125,13 @@ inherited-pipe wait.
 Other interpreter basenames retain the JavaScript executor's anonymous script descriptor path.
 
 `internal/router/toolplugin/plugin.d.ts` owns the executable result schema. The runtime adapter
-validates the current result, and the worker writes it to Codex-facing streams. No observation owner
+validates the current result, and the worker writes it to Codex-facing streams. Optional
+`terminationReason: "output_limit"` is validated nonzero-result cleanup metadata, not public
+execution output. The JavaScript interpreter executor owns bounded capture and inherited-pipe
+drain; it keeps the interpreter in the existing invocation group. After receiving that bounded
+failure, the Go invocation owner terminates the remaining Unix process group and strips the
+metadata before returning stdout, stderr, and status. Successful invocations do not retire
+background processes. Cancellation continues to use the same existing process-group owner. No observation owner
 invokes the executor again.
 Configured frontend and wrapper creation is all-or-nothing for startup. Each registry uses its own `bin` directory, and the wrapper prepends it only
 to its Codex child's PATH. No shared frontend lock exists. Built-in shell keeps its

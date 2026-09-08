@@ -37,7 +37,10 @@ export type ExecutionOutput = {
   exitCode: number;
 };
 
-export type ExecutionResult = ExecutionOutput;
+export type ExecutionResult = ExecutionOutput & {
+  // Private host cleanup metadata, never part of the executor-facing output.
+  terminationReason?: "output_limit";
+};
 
 export type ExecutionContext = {
   stdinFD: number | null;

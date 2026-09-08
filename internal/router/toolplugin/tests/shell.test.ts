@@ -269,6 +269,33 @@ describe("installable shell plugin", () => {
     }
   });
 
+  for (const stream of ["stdout", "stderr"]) {
+    test(`preserves UTF-8 ${stream} prefixes cut by the output budget`, async () => {
+      const budget = 128;
+      const result = await tool.execute(
+        ["node", `process.${stream}.write("😀".repeat(200))`],
+        {stdinFD: null, scriptReadFD: null, scriptWriteFD: null, outputBudgetBytes: budget},
+      );
+      expect(result.exitCode).toBe(1);
+      expect(result.terminationReason).toBe("output_limit");
+      expect(result.stderr).toContain("interpreter output exceeds 128 bytes");
+      expect(result.stderr).not.toContain("not UTF-8");
+      const prefix = stream === "stdout" ? result.stdout : result.stderr.split("shell:")[0];
+      expect(prefix).toMatch(/^(?:😀)+$/u);
+      expect(Buffer.byteLength((result.stdout ?? "") + (result.stderr ?? ""))).toBeLessThanOrEqual(budget);
+    });
+  }
+
+  test("rejects incomplete and malformed UTF-8 without an output cutoff", async () => {
+    for (const bytes of [[0xff], [0xf0, 0x9f]]) {
+      const result = await tool.execute(
+        ["node", `process.stdout.write(Buffer.from(${JSON.stringify(bytes)}))`],
+        {stdinFD: null, scriptReadFD: null, scriptWriteFD: null, outputBudgetBytes: 128},
+      );
+      expect(result).toEqual({stderr: "shell: interpreter output is not UTF-8\n", exitCode: 1});
+    }
+  });
+
   test("bounds malformed UTF-8 interpreter output", async () => {
     const nullDevice = process.platform === "win32" ? "NUL" : "/dev/null";
     const inputFD = openSync(nullDevice, "r");
@@ -287,6 +314,7 @@ describe("installable shell plugin", () => {
       );
       expect(result.exitCode).toBe(1);
       expect(result.stderr).toContain("output is not UTF-8");
+      expect(result.stderr).toContain("interpreter output exceeds 128 bytes");
       expect(Buffer.byteLength((result.stdout ?? "") + (result.stderr ?? ""), "utf8")).toBeLessThanOrEqual(budget);
     } finally {
       closeSync(inputFD);

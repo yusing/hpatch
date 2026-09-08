@@ -11,6 +11,13 @@ import (
 // allowance covers the execution envelope.
 const maxEncodedExecutionHostOutputBytes = 6*ExecutionOutputBudgetBytes + 1<<20
 
+// executionResponse carries private host cleanup metadata separately from the
+// output returned to the executor caller.
+type executionResponse struct {
+	ExecutionOutput
+	TerminationReason string `json:"terminationReason,omitempty"`
+}
+
 func Execute(
 	ctx context.Context,
 	node, runtimeRoot, module string,
@@ -37,7 +44,7 @@ func Execute(
 		InputFD:           stdin != nil,
 		OutputBudgetBytes: ExecutionOutputBudgetBytes,
 	}
-	var result ExecutionOutput
+	var result executionResponse
 	var scriptFiles []*os.File
 	if stdin != nil {
 		scriptRead, scriptWrite, err := os.Pipe()
@@ -63,5 +70,5 @@ func Execute(
 		request,
 		&result,
 	)
-	return result, err
+	return result.ExecutionOutput, err
 }

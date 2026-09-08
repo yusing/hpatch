@@ -338,3 +338,23 @@ describe("plugin translation and execution", () => {
   });
 
 });
+
+for (const result of [
+  {exitCode: 0, terminationReason: "output_limit"},
+  {exitCode: 1, terminationReason: "unknown"},
+  {exitCode: 1, terminationReason: null},
+]) {
+  test(`rejects invalid executor termination metadata ${JSON.stringify(result)}`, async () => {
+    const directory = await temporaryDirectory();
+    const declaration = pluginDeclaration().replace(
+      'return {stdout: "", exitCode: 0};',
+      `return ${JSON.stringify(result)};`,
+    );
+    await writeFile(path.join(directory, "plugin.mjs"), declaration);
+    const response = invokeHost(directory, {
+      operation: "execute", module: "plugin.mjs", index: 0, arguments: [], outputBudgetBytes: 1024,
+    });
+    expect(response.status).toBe(1);
+    expect(response.stderr).toContain("terminationReason must be output_limit with nonzero exitCode");
+  });
+}

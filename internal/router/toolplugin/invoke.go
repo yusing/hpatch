@@ -120,5 +120,15 @@ func invoke(
 	if decoder.Decode(&struct{}{}) != io.EOF {
 		return errors.New("plugin runtime returned trailing output")
 	}
+	if execution, ok := response.(*executionResponse); ok && execution.TerminationReason != "" {
+		if execution.TerminationReason != "output_limit" || execution.ExitCode == 0 {
+			return errors.New("invalid plugin runtime termination reason")
+		}
+		// The host has released its interpreter pipes and returned the bounded
+		// failure. Retire only this overflowing invocation's remaining group.
+		if err := command.Cancel(); err != nil && !errors.Is(err, os.ErrProcessDone) {
+			return fmt.Errorf("retire overflowing plugin process group: %w", err)
+		}
+	}
 	return nil
 }

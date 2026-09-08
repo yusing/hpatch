@@ -709,9 +709,16 @@ async function executeTool(request) {
     outputBudgetBytes: request.outputBudgetBytes,
   });
   const execution = await tool.execute(argumentsValue, context);
-  const current = normalizeExecutionOutput(execution, ["stdout", "stderr", "exitCode"]);
+  const current = normalizeExecutionOutput(execution, ["stdout", "stderr", "exitCode", "terminationReason"]);
   if (current === null) {
     throw new Error("executor must return stdout/stderr strings and an exitCode from 0 through 255");
+  }
+  const terminationReason = execution.terminationReason;
+  if (terminationReason !== undefined) {
+    if (terminationReason !== "output_limit" || current.exitCode === 0) {
+      throw new Error("executor terminationReason must be output_limit with nonzero exitCode");
+    }
+    current.terminationReason = terminationReason;
   }
   const currentBytes = byteLength(current.stdout) + byteLength(current.stderr);
   if (currentBytes > request.outputBudgetBytes) {

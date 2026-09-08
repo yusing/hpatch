@@ -68,7 +68,15 @@ preserving terminal input for direct commands and piped stages that read `/dev/t
 Other interpreters retain the plugin executor path. It passes middle fields as interpreter
 arguments, supplies the final exact body through an anonymous script descriptor such as
 `/dev/fd/3`, and leaves standard input available as program data. Neither path stores an
-intermediate script file. Without `#!params=`, the worker inherits Codex's execution context.
+intermediate script file. Descriptor delivery is asynchronous so a streaming interpreter can
+produce output before consuming the complete script without blocking output capture. On interpreter
+output overflow, it bounds captured output and inherited-pipe cleanup, discards only an incomplete
+trailing UTF-8 code point from a truncated output prefix,
+and returns an explicit nonzero overflow result (also retaining malformed-UTF-8 diagnostics when
+present). It asks the existing invocation process-group owner to terminate remaining descendants
+on Unix. Successful background jobs and ordinary
+cancellation keep their existing lifecycle; the interpreter does not enter a detached session.
+Without `#!params=`, the worker inherits Codex's execution context.
 With `#!params=`, Codex applies the accepted outer exec arguments before launching the worker.
 The worker returns stdout, stderr, and exit status without copying the script body into either
 output stream.
