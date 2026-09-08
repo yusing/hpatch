@@ -994,19 +994,26 @@ export function sourceFormat(filePath: string): SourceFormat | null {
   };
 }
 
-function rowIdentity(lines: LineMap, line: number): string {
-  const logical = lines.logicalLine(line);
-  if (logical === null) {
-    throw new InspectFailure("parse", `missing line ${line}`);
-  }
-  return `${line}:${hashLine(logical.text)}`;
-}
-
 function hashOutline(lines: LineMap, outline: OutlineEntry[]): PublicOutlineEntry[] {
+  // All entries refer to this immutable source snapshot, including repeated endpoints.
+  const identities = new Map<number, string>();
+  function rowIdentity(line: number): string {
+    const cached = identities.get(line);
+    if (cached !== undefined) {
+      return cached;
+    }
+    const logical = lines.logicalLine(line);
+    if (logical === null) {
+      throw new InspectFailure("parse", `missing line ${line}`);
+    }
+    const identity = `${line}:${hashLine(logical.text)}`;
+    identities.set(line, identity);
+    return identity;
+  }
   return outline.map((entry) => ({
     ...entry,
-    line: rowIdentity(lines, entry.line),
-    line_end: rowIdentity(lines, entry.line_end),
+    line: rowIdentity(entry.line),
+    line_end: rowIdentity(entry.line_end),
   }));
 }
 

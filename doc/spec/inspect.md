@@ -29,7 +29,9 @@ initial `---` YAML frontmatter block. JSON includes every recognized value as a 
 6901 pointer and value type, including the empty root pointer. Each outline entry's `line` and
 `line_end` are `REQ-READ-001` `LINE:HASH` identities for the inclusive span: the positive one-based
 logical line and the lowercase four-digit hash of that complete logical line, excluding its
-terminator. A single-line span repeats the same identity in both fields. Those identities are
+terminator. A single-line span repeats the same identity in both fields. Repeated boundaries within an
+inspection MUST reuse the verified identity of that immutable source line rather than rehashing
+the complete line for every entry. Those identities are
 copyable HPATCH row or `ROW..ROW` range targets. No result contains raw excerpts, bodies, fields,
 comments, frontmatter values, JSON scalar values, or row `TEXT`.
 

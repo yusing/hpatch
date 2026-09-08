@@ -1,4 +1,4 @@
-import {afterEach, describe, expect, test} from "bun:test";
+import {afterEach, describe, expect, spyOn, test} from "bun:test";
 import {spawnSync} from "node:child_process";
 import {chmod, mkdtemp, mkdir, readFile, rm, symlink, writeFile} from "node:fs/promises";
 import {tmpdir} from "node:os";
@@ -1168,6 +1168,35 @@ describe("inspect_file built-in plugin", () => {
 });
 
 describe("inspect_file language projections", () => {
+  test("hashes each outline boundary once per inspected snapshot", async () => {
+    const directory = await temporaryDirectory("inspect-hash-cache-");
+    process.chdir(directory);
+    const source = JSON.stringify(Array.from({length: 10000}, (_, index) => index));
+    await writeFile("dense.json", source);
+    const logicalLine = spyOn(LineMap.prototype, "logicalLine");
+    try {
+      const first = await inspect("dense.json");
+      expect(first.result.ok).toBe(true);
+      expect(first.result.truncated).toBe(true);
+      expect(logicalLine).toHaveBeenCalledTimes(1);
+      const identity = `1:${hashLine(source)}`;
+      for (const entry of first.result.data.outline) {
+        expect(entry.line).toBe(identity);
+        expect(entry.line_end).toBe(entry.line);
+      }
+      await writeFile("dense.json", "[true, false]\r\n");
+      const second = await inspect("dense.json");
+      expect(logicalLine).toHaveBeenCalledTimes(2);
+      expect(second.result.data.outline).toHaveLength(3);
+      for (const entry of second.result.data.outline) {
+        expect(entry.line).toBe(`1:${hashLine("[true, false]")}`);
+        expect(entry.line_end).toBe(entry.line);
+      }
+    } finally {
+      logicalLine.mockRestore();
+    }
+  });
+
   test("keeps Go initializer declarations and generic parameters out of top-level outlines", async () => {
     const directory = await temporaryDirectory("inspect-go-scopes-");
     process.chdir(directory);
