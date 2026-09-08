@@ -458,8 +458,8 @@ func markdownFence(value string) string {
 
 func executeErrorHook(ctx context.Context, command string) error {
 	process := exec.CommandContext(ctx, "/bin/sh", "-c", command)
-	process.Stdout = io.Discard
-	process.Stderr = io.Discard
+	// Nil output streams go directly to os.DevNull. Using io.Discard creates
+	// copying pipes that descendants can hold open after the shell is canceled.
 	err := process.Run()
 	if ctx.Err() != nil {
 		return ctx.Err()
