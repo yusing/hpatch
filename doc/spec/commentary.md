@@ -64,9 +64,9 @@ Role, model, and reasoning effort use inline-code formatting. Task names are lef
 native display. The router does not read or project the encrypted `message` argument or read
 Codex configuration files to produce commentary.
 
-Namespaced `followup_task`, `wait_agent`, and `interrupt_agent` calls
-receive distinct follow-up-requested, waiting, and interruption-requested commentary.
-`send_message` adds no request notice, leaving interaction display to Codex. A requested call
+Namespaced `followup_task` and `interrupt_agent` calls receive distinct follow-up-requested
+and interruption-requested commentary. `send_message` and `wait_agent` add no request notice,
+leaving interaction and waiting display to Codex. A requested call
 is not proof of execution, delivery, or lifecycle completion. Sender and requested target labels
 accompany projected communication notices. Reserved schemas and executed arguments remain unchanged;
 encrypted message arguments are never read or exposed.
@@ -84,12 +84,22 @@ those messages from later provider-bound input while preserving the original col
 tool outputs, and inter-agent messages. A response already accompanied by its deterministic
 commentary is not projected again.
 
-Every terminal root-agent or subagent response with provider usage includes one commentary message
-reporting input (`i`), cached input (`ci`), output (`o`), and reasoning (`r`) tokens before the
-provider-authored output. JSON and streaming responses use the same provider-authoritative counts
-and rendering. A streamed subagent response carries usage in its terminal response object without
-emitting a later standalone item that collaboration could mistake for the child result. Usage
-commentary cannot become the terminal substantive result.
+A completed root-agent or subagent final answer with provider usage includes one commentary
+message before the provider-authored output. It uses a `Tokens:` heading followed by separate
+`Input:`, `Cached input:`, `Output:`, and `Reasoning:` lines, with each numeric value formatted
+as inline code. Labels are written in full, not abbreviated. Intermediate tool-call responses, commentary-only responses,
+and failed or incomplete responses do not report tokens. A final answer uses the `final_answer`
+phase, or an unphased assistant answer for older clients, without accompanying client-dispatched
+tool calls. Completed provider-executed tools may accompany the final answer.
+JSON and streaming responses report the same cumulative provider-authoritative input, cached-input,
+output, and reasoning totals for the originating thread. Intermediate responses contribute to
+these totals without producing notices. Root and child threads remain separate; compaction and
+routing-session changes do not reset totals. Repeated terminal observations within one request
+count once. Totals remain in memory until router shutdown, with at most 256 tracked threads;
+capacity exhaustion preserves existing totals and suppresses new-thread reports. Arithmetic
+overflow suppresses reporting for the affected thread rather than showing a partial total. A streamed subagent response carries usage
+in its terminal response object without emitting a later standalone item that collaboration
+could mistake for the child result. Usage commentary cannot become the terminal substantive result.
 
 Child operation and runtime commentary carries a `[/root/worker] ` prefix from the request’s
 canonical `agent_name` when `subagent_kind` identifies a child. Root and older unnamed clients
@@ -137,15 +147,17 @@ Acceptance:
 
 1. Spawn-request commentary shows `agent_type` when present and the selected model and reasoning effort
    before the unchanged call without reading or projecting its encrypted `message` argument.
-2. Collaboration tools remain unchanged. Spawn, follow-up, wait, and interruption commentary describes requests without claiming successful delivery or lifecycle completion; send-message calls add no request notice.
+2. Collaboration tools remain unchanged. Spawn, follow-up, and interruption commentary describes requests without claiming successful delivery or lifecycle completion; send-message and wait calls add no request notice.
 3. Received inter-agent envelopes identify both parties, including siblings and nested children. Plaintext replies are shown in full or omitted when they exceed the auxiliary rendering budget; encrypted content remains opaque and original model-visible items stay exact.
 4. JSON and streaming responses expose the same messages and preserve the collaboration calls.
    Streaming buffers only a matched call until its complete arguments are available.
 5. Router-authored messages are removed from every later provider request and are not repeated when
    the matching message is already present in Codex history.
-6. Every terminal root-agent or subagent response with provider usage reports `i`, `ci`, `o`, and
-   `r` exactly once before provider-authored output, without changing the terminal substantive
-   result, provider usage object, or captured metrics.
+6. A completed root-agent or subagent final answer with provider usage reports input, cached input,
+   output, and reasoning tokens exactly once before provider-authored output, using full labels
+   on separate lines and inline-code numeric values. Intermediate tool calls and commentary,
+   failed responses, and incomplete responses remain silent. The terminal substantive result,
+   provider usage object, and captured metrics remain unchanged.
 7. Extensible ordinary function tools accept optional authored commentary, while strict,
    provider-owned, pre-owned-commentary, collaboration, and user-messaging schemas remain exact.
 8. JSON and streaming calls show authored commentary before the executable item, remain silent

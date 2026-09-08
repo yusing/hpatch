@@ -54,26 +54,23 @@ func TestSubagentCommentaryJSONIsVisibleAndRemovedFromReplay(t *testing.T) {
 	if err := json.Unmarshal(transformed, &response); err != nil {
 		t.Fatal(err)
 	}
-	if len(response.Output) != 7 {
+	if len(response.Output) != 6 {
 		t.Fatalf("output = %s", transformed)
 	}
 	if text := commentaryText(t, response.Output[0]); text != "[/root <- /root/explorer] Reply received:\n"+responseText {
 		t.Fatalf("response commentary = %q", text)
 	}
 	wantSpawn := "[/root] Spawn requested.\nRole: `explorer`\nModel: `gpt-requested`\nReasoning effort: `low`"
-	if text := commentaryText(t, response.Output[2]); text != wantSpawn {
+	if text := commentaryText(t, response.Output[1]); text != wantSpawn {
 		t.Fatalf("spawn commentary = %q", text)
 	}
-	if text := commentaryText(t, response.Output[1]); text != "Tokens: i=120, ci=80, o=30, r=20" {
-		t.Fatalf("usage commentary = %q", text)
-	}
-	if jsonString(response.Output[3], "arguments") != spawnArguments ||
-		jsonString(response.Output[5], "arguments") != followupArguments ||
-		jsonString(response.Output[6], "name") != "send_message" {
+	if jsonString(response.Output[2], "arguments") != spawnArguments ||
+		jsonString(response.Output[4], "arguments") != followupArguments ||
+		jsonString(response.Output[5], "name") != "send_message" {
 		t.Fatalf("collaboration calls changed: %s", transformed)
 	}
-	if bytes.Contains(response.Output[2]["content"], []byte("encrypted")) {
-		t.Fatalf("encrypted message reached spawn commentary: %s", response.Output[2]["content"])
+	if bytes.Contains(response.Output[1]["content"], []byte("encrypted")) {
+		t.Fatalf("encrypted message reached spawn commentary: %s", response.Output[1]["content"])
 	}
 
 	var forwarded []map[string]json.RawMessage
@@ -105,7 +102,7 @@ func TestTokenUsageCommentaryUsesSharedObservationWithoutReplacingTerminalMessag
 	})
 	response, _, err := responseWithTokenUsageCommentary(payload, tokenCounts{
 		InputTokens: 20, UncachedInputTokens: 8, OutputTokens: 5, ReasoningTokens: 3,
-	}, true)
+	}, true, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -113,7 +110,7 @@ func TestTokenUsageCommentaryUsesSharedObservationWithoutReplacingTerminalMessag
 	if err := json.Unmarshal(response["output"], &output); err != nil || len(output) != 2 {
 		t.Fatalf("output = %s, error = %v", response["output"], err)
 	}
-	if text := commentaryText(t, output[0]); text != "Tokens: i=20, ci=12, o=5, r=3" {
+	if text := commentaryText(t, output[0]); text != "Tokens:\nInput: `20`\nCached input: `12`\nOutput: `5`\nReasoning: `3`" {
 		t.Fatalf("usage commentary = %q", text)
 	}
 	if jsonString(output[1], "id") != "msg-final" {
@@ -152,7 +149,7 @@ func TestSubagentStreamingUsageDoesNotBecomeAStandaloneResult(t *testing.T) {
 	if err := json.Unmarshal(events[0], &envelope); err != nil || len(envelope.Response.Output) != 2 {
 		t.Fatalf("terminal event = %s, error = %v", events[0], err)
 	}
-	if text := commentaryText(t, envelope.Response.Output[0]); text != "Tokens: i=20, ci=12, o=5, r=3" {
+	if text := commentaryText(t, envelope.Response.Output[0]); text != "Tokens:\nInput: `20`\nCached input: `12`\nOutput: `5`\nReasoning: `3`" {
 		t.Fatalf("usage commentary = %q", text)
 	}
 	if jsonString(envelope.Response.Output[1], "id") != "msg-child-final" {
@@ -235,28 +232,23 @@ func TestSubagentCommentaryBuffersStreamingCall(t *testing.T) {
 	})
 	observeTestResponseUsage(t, transform, completed, true)
 	events, err = transform.TransformSSE(completed)
-	if err != nil || len(events) != 2 {
+	if err != nil || len(events) != 1 {
 		t.Fatalf("completed events = %q, error %v", events, err)
-	}
-	if text := commentaryEventText(t, events[0]); text != "Tokens: i=75, ci=50, o=12, r=9" {
-		t.Fatalf("usage commentary = %q", text)
 	}
 	var terminal struct {
 		Response struct {
 			Output []map[string]json.RawMessage `json:"output"`
 		} `json:"response"`
 	}
-	if json.Unmarshal(events[1], &terminal) != nil || len(terminal.Response.Output) != 3 ||
-		bytes.Count(events[1], []byte("Spawn requested.")) != 1 ||
-		jsonString(terminal.Response.Output[2], "arguments") != arguments {
-		t.Fatalf("completed event = %s", events[1])
-	}
-	if text := commentaryText(t, terminal.Response.Output[0]); text != "Tokens: i=75, ci=50, o=12, r=9" {
-		t.Fatalf("terminal usage commentary = %q", text)
+	if json.Unmarshal(events[0], &terminal) != nil || len(terminal.Response.Output) != 2 ||
+		bytes.Count(events[0], []byte("Spawn requested.")) != 1 ||
+		jsonString(terminal.Response.Output[1], "arguments") != arguments ||
+		bytes.Contains(events[0], []byte("Tokens:")) {
+		t.Fatalf("completed event = %s", events[0])
 	}
 }
 
-func TestSubagentTokenUsageCommentaryOnFailedAndIncompleteStops(t *testing.T) {
+func TestSubagentTokenUsageSilentOnFailedAndIncompleteStops(t *testing.T) {
 	for _, status := range []string{"failed", "incomplete"} {
 		t.Run(status, func(t *testing.T) {
 			metadata := codexTurnMetadata{SubagentKind: "thread_spawn"}
@@ -278,7 +270,7 @@ func TestSubagentTokenUsageCommentaryOnFailedAndIncompleteStops(t *testing.T) {
 				t.Fatalf("terminal events = %q, error %v", events, err)
 			}
 			if !bytes.Contains(events[0], []byte(`"type":"response.`+status+`"`)) ||
-				bytes.Count(events[0], []byte("Tokens: i=90")) != 1 {
+				bytes.Contains(events[0], []byte("Tokens:")) {
 				t.Fatalf("terminal event = %s", events[0])
 			}
 		})

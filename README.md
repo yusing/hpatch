@@ -30,8 +30,9 @@ keeping Codex's sandbox, permissions, command sessions, and normal patch diff UI
     labelled as activity since the last update. This is not a continuous live
     feed during native waits, and requires no Codex panel or client patch.
 - **See token usage for the main agent and subagents.**
-  - Completed responses with provider usage show input, cached-input, output,
-    and reasoning token counts.
+  - Final answers with provider usage show input, cached-input, output, and reasoning
+    token totals accumulated for that agent's thread during the router's lifetime, including across compaction.
+    Intermediate tool calls do not produce token notices.
   - Router notices are removed from later model requests, so the display does
     not add repeated context. See [inline commentary](doc/spec/commentary.md).
 - **Inspect a session in your browser.**

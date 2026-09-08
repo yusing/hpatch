@@ -160,7 +160,7 @@ func subagentCallCommentary(
 	case "send_message":
 		return nil, false
 	case "wait_agent":
-		action = "Waiting for agent updates."
+		return nil, false
 	case "interrupt_agent":
 		action = "Interruption requested."
 	case "spawn_agent":
@@ -197,20 +197,77 @@ func subagentCallCommentary(
 	return assistantCommentaryMessage(id, builder.String()), true
 }
 
-// tokenUsageCommentary creates a commentary message about token usage if observed.
-func tokenUsageCommentary(response []byte, counts tokenCounts, observed bool) map[string]json.RawMessage {
+// tokenUsageCommentary reports usage only alongside a completed substantive answer.
+func tokenUsageCommentary(response []byte, counts tokenCounts, observed bool, terminalStatus string) map[string]json.RawMessage {
 	if !observed {
 		return nil
 	}
 	var identity struct {
-		ID string `json:"id"`
+		ID     string                       `json:"id"`
+		Status string                       `json:"status"`
+		Output []map[string]json.RawMessage `json:"output"`
 	}
+
 	if json.Unmarshal(response, &identity) != nil || identity.ID == "" {
 		return nil
 	}
+	status := identity.Status
+	if terminalStatus != "" {
+		status = terminalStatus
+	}
+	if status != "completed" {
+		return nil
+	}
+	substantive := false
+	for _, item := range identity.Output {
+		// Client tool items are dispatch requests even when their item status is
+		// completed. Hosted tools can finish before the accompanying final answer.
+		switch jsonString(item, "type") {
+		case "function_call", "custom_tool_call", "computer_call", "local_shell_call", "apply_patch_call", "mcp_approval_request":
+			return nil
+		case "tool_search_call":
+			if jsonString(item, "execution") != "server" {
+				return nil
+			}
+		case "shell_call":
+			var environment map[string]json.RawMessage
+			if json.Unmarshal(item["environment"], &environment) != nil || jsonString(environment, "type") != "container_reference" {
+				return nil
+			}
+		}
+		if strings.HasSuffix(jsonString(item, "type"), "_call") {
+			if callStatus := jsonString(item, "status"); callStatus != "completed" && callStatus != "failed" {
+				return nil
+			}
+		}
+
+		if jsonString(item, "type") != "message" || jsonString(item, "role") != "assistant" {
+			continue
+		}
+		if phase := jsonString(item, "phase"); phase != "" && phase != "final_answer" {
+			continue
+		}
+		if itemStatus := jsonString(item, "status"); itemStatus != "" && itemStatus != "completed" {
+			continue
+		}
+		var content []map[string]json.RawMessage
+		if json.Unmarshal(item["content"], &content) != nil {
+			continue
+		}
+		for _, part := range content {
+			if jsonString(part, "type") == "output_text" && strings.TrimSpace(jsonString(part, "text")) != "" ||
+				jsonString(part, "type") == "refusal" && strings.TrimSpace(jsonString(part, "refusal")) != "" {
+				substantive = true
+			}
+		}
+	}
+	if !substantive {
+		return nil
+	}
+
 	cachedInput := counts.InputTokens - counts.UncachedInputTokens
 	text := fmt.Sprintf(
-		"Tokens: i=%d, ci=%d, o=%d, r=%d",
+		"Tokens:\nInput: `%d`\nCached input: `%d`\nOutput: `%d`\nReasoning: `%d`",
 		counts.InputTokens,
 		cachedInput,
 		counts.OutputTokens,
@@ -221,7 +278,7 @@ func tokenUsageCommentary(response []byte, counts tokenCounts, observed bool) ma
 }
 
 // responseWithTokenUsageCommentary extracts a response object and token usage commentary.
-func responseWithTokenUsageCommentary(response []byte, counts tokenCounts, usageObserved bool) (
+func responseWithTokenUsageCommentary(response []byte, counts tokenCounts, usageObserved bool, terminalStatus string) (
 	map[string]json.RawMessage,
 	map[string]json.RawMessage,
 	error,
@@ -230,7 +287,7 @@ func responseWithTokenUsageCommentary(response []byte, counts tokenCounts, usage
 	if err := json.Unmarshal(response, &object); err != nil || object == nil {
 		return nil, nil, errors.New("decode hpatch-enabled response")
 	}
-	message := tokenUsageCommentary(response, counts, usageObserved)
+	message := tokenUsageCommentary(response, counts, usageObserved, terminalStatus)
 	rawOutput, present := object["output"]
 	if message == nil || !present {
 		return object, message, nil

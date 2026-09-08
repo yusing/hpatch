@@ -127,6 +127,7 @@ type hpatchProxy struct {
 	shellLeases            sync.WaitGroup
 	commentary             *commentaryBroker
 	commentaryEndpoint     string
+	usage                  *threadUsage
 	activity               *subagentActivity
 
 	mu              sync.RWMutex
@@ -158,6 +159,7 @@ func newHPatchProxy(translator hpatchTranslator, registry *toolRegistry, customi
 		titles:                 titles,
 		shellSessions:          make(map[string]*shellSession),
 		commentary:             broker,
+		usage:                  newThreadUsage(),
 		activity:               activity,
 		sessions:               make(map[string]*hpatchHistorySession),
 		activeSessions:         make(map[string]int),
@@ -191,6 +193,7 @@ func (p *hpatchProxy) Close() error {
 	if p.commentary != nil {
 		p.commentary.close()
 	}
+	p.usage.close()
 	p.activity.close()
 	return cleanupErr
 }
@@ -238,6 +241,7 @@ type hpatchResponseTransform struct {
 	subagentTurn              bool
 	parentModel               string
 	parentReasoningEffort     string
+	usageTracker              *threadUsageObservation
 	usageCounts               tokenCounts
 	usageObserved             bool
 
@@ -264,6 +268,7 @@ func (t *hpatchResponseTransform) Close() {
 
 // observeResponseUsage records provider-authoritative token usage for this response.
 func (t *hpatchResponseTransform) observeResponseUsage(counts tokenCounts) {
+	t.usageTracker.observe(counts)
 	t.usageCounts = counts
 	t.usageObserved = true
 }
@@ -438,6 +443,7 @@ func (p *hpatchProxy) prepareRequest(ctx context.Context, request *parsedRespons
 		model:            request.modelDescription(),
 		historySessionID: historySessionID,
 		sessionActive:    true,
+		usageTracker:     p.usage.observation(threadID, metadata.ThreadID),
 		threadID:         activityThreadID,
 		activityStarted:  time.Now(),
 
@@ -1801,10 +1807,12 @@ func (t *hpatchResponseTransform) pendingCallKnown(callID string) bool {
 }
 
 func (t *hpatchResponseTransform) transformResponse(payload []byte, terminalStatus string) ([]byte, map[string]json.RawMessage, error) {
+	counts, observed := t.threadUsageCounts()
 	object, usageMessage, err := responseWithTokenUsageCommentary(
 		payload,
-		t.usageCounts,
-		t.usageObserved,
+		counts,
+		observed && t.usageObserved,
+		terminalStatus,
 	)
 	if err != nil {
 		return nil, nil, err

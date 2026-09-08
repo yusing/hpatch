@@ -71,7 +71,7 @@ recipient selection, interruption, waiting, and assignment lifecycle ownership.
 The collaboration projection boundary recognizes catalog-declared spawn, follow-up,
 send, wait, and interruption calls, leaving schemas and executable arguments exact.
 It describes requests rather than claiming execution or successful delivery, leaves send-message
-request notices and task names to Codex's native display, and never reads encrypted message arguments. The input boundary recognizes actual
+and wait request notices and task names to Codex's native display, and never reads encrypted message arguments. The input boundary recognizes actual
 inter-agent envelopes addressed to the current canonical agent, including sibling
 and nested traffic. Plaintext replies are shown in full, never excerpted; replies
 exceeding the auxiliary rendering budget are omitted. Encrypted receipt is
@@ -80,8 +80,15 @@ Deterministic router IDs suppress repeated local commentary on replay. Streaming
 buffers only matched function-call framing until arguments are complete.
 
 The terminal response transformer also owns one user-only commentary projection of the provider's
-input, cached-input, output, and reasoning usage whenever a root or subagent turn stops. It consumes
-the counts from the shared terminal-payload parse rather than decoding usage again. The
+input, cached-input, output, and reasoning usage when a completed root or subagent response
+contains a final assistant answer and no client-dispatched tool calls. Rendering uses full metadata-style labels
+on separate lines with inline-code numeric values. Intermediate commentary and failed or
+incomplete responses do not trigger usage commentary. Final-answer phase identifies the answer;
+unphased assistant answers support older clients. Counts from the shared terminal-payload parse
+accumulate by stable originating thread, independently of routing-session and compaction lifetimes.
+Root and child totals remain separate, and repeated terminal observations within a request count once.
+`thread_usage.go` owns bounded, non-evicting totals until router shutdown; ancestry and author
+metadata do not own token attribution. The
 projection precedes provider-authored output so it cannot replace a collaboration result. The
 streaming path does not emit a later standalone usage item for a subagent turn because the Codex
 collaboration runtime selects the last completed assistant item as the child result. The provider

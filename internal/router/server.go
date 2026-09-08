@@ -598,12 +598,21 @@ func executeRequest(
 			return fmt.Errorf("record hpatch request overhead: %w", err)
 		}
 	}
+	var untransformedUsage *threadUsageObservation
+	if hpatchCalls != nil && metadataValid {
+		untransformedUsage = hpatchCalls.usage.observation(threadID, metadata.ThreadID)
+	}
 	observeUsage := func(counts tokenCounts) {
 		finalization.observation.usageCounts = counts
 		finalization.observation.usageObserved = true
 		if hpatchTransform != nil {
 			hpatchTransform.observeResponseUsage(counts)
+		} else {
+			// Compaction has no hpatch response transform, but still consumes
+			// provider tokens belonging to the same stable thread.
+			untransformedUsage.observe(counts)
 		}
+
 		capturer.ObserveProviderUsage(executionCtx, capturer.ProviderUsage{
 			InputTokens:     counts.InputTokens,
 			CachedTokens:    counts.InputTokens - counts.UncachedInputTokens,
