@@ -321,11 +321,16 @@ function decodeGoImportPath(source: string, node: SyntaxNode): string | null {
   }
 }
 
+function goSpecifications(declaration: SyntaxNode, name: string): SyntaxNode[] {
+  const container = children(declaration).find((child) => child.name === "SpecList") ?? declaration;
+  return children(container).filter((child) => child.name === name);
+}
+
 function goOutline(source: string, lines: LineMap, tree: Tree): LocatedEntry[] {
   const output: LocatedEntry[] = [];
   for (const declaration of children(tree.topNode)) {
     if (declaration.name === "ImportDecl") {
-      for (const specification of descendants(declaration, "ImportSpec")) {
+      for (const specification of goSpecifications(declaration, "ImportSpec")) {
         const pathNode = firstDescendant(specification, new Set(["String"]));
         if (pathNode === null) {
           continue;
@@ -344,13 +349,13 @@ function goOutline(source: string, lines: LineMap, tree: Tree): LocatedEntry[] {
 
     const projected = goDeclarationProjections[declaration.name];
     if (projected !== undefined) {
-      for (const specification of descendants(declaration, projected.node)) {
+      for (const specification of goSpecifications(declaration, projected.node)) {
         addNamedEntries(
           output,
           source,
           lines,
           declaration,
-          descendants(specification, projected.name),
+          children(specification).filter((child) => child.name === projected.name),
           projected.kind,
           specification,
         );

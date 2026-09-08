@@ -22,6 +22,8 @@ Success is one LF-terminated JSON document with `ok`, `data`, `truncated`, and `
 `data` contains the normalized requested path, kind, language, exact inspected byte size, logical
 line count, parser-completeness flag, and a flat source-ordered outline. Code entries include only
 imports, top-level constants and variables, types, classes, functions, and direct methods.
+Declaration-owned names MUST exclude initializer-local declarations, type parameters, and fields,
+including when the enclosing top-level declaration spans multiple lines.
 Markdown includes only ATX headings outside fences and top-level scalar keys parsed from a closed
 initial `---` YAML frontmatter block. JSON includes every recognized value as a depth-first RFC
 6901 pointer and value type, including the empty root pointer. Each outline entry's `line` and

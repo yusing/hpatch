@@ -1168,6 +1168,40 @@ describe("inspect_file built-in plugin", () => {
 });
 
 describe("inspect_file language projections", () => {
+  test("keeps Go initializer declarations and generic parameters out of top-level outlines", async () => {
+    const directory = await temporaryDirectory("inspect-go-scopes-");
+    process.chdir(directory);
+    const source = [
+      "package sample",
+      "var Exported = func() {",
+      "  var localVar = 1",
+      "  const localConst = 2",
+      "  type localType int",
+      "  _ = localVar; _ = localConst; _ = localType(0)",
+      "}",
+      "var (First, Second = 1, 2; Third = func() { var hidden = 3; _ = hidden })",
+      "const (Alpha, Beta = 1, 2)",
+      "type (Generic[P any] struct { Field P }; Alias = int)",
+      "",
+    ].join("\n");
+    await writeFile("scope.go", source, "utf8");
+    expect((await inspectOutline("scope.go")).map((entry) => [entry.kind, entry.name])).toEqual([
+      ["variable", "Exported"], ["variable", "First"], ["variable", "Second"], ["variable", "Third"],
+      ["constant", "Alpha"], ["constant", "Beta"], ["type", "Generic"], ["type", "Alias"],
+    ]);
+    for (const name of ["localVar", "localConst", "localType", "hidden", "P", "Field"]) {
+      const offset = source.indexOf(name);
+      expect(goDeclarationRange(source, Buffer.byteLength(source.slice(0, offset)),
+        Buffer.byteLength(source.slice(0, offset + name.length)))).toBeNull();
+    }
+    const fake = await installFakeGopls();
+    await fake.respond(definitionJSON(path.join(directory, "scope.go"), source, source.indexOf("localVar"), "localVar"));
+    const useLine = source.split("\n")[5];
+    const tool = createHSymbolTool("description", "start: TEST");
+    const result = await tool.execute(["def", "scope.go", `6:${hashLine(useLine)}`, "localVar"], executionContext);
+    expect(result).toEqual({ stdout: `${JSON.stringify("scope.go")}:${formatVerifiedRow(3, source.split("\n")[2])}`, exitCode: 0 });
+  });
+
 
   test("normalizes JavaScript, TypeScript, and Python declarations", async () => {
     const directory = await temporaryDirectory("inspect-file-");
