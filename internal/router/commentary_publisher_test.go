@@ -8,6 +8,8 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"testing/synctest"
+	"time"
 )
 
 func TestCommentaryPublisherAuthenticatesAndDrainsLiveOrDeferred(t *testing.T) {
@@ -59,6 +61,20 @@ func TestCommentaryPublisherAuthenticatesAndDrainsLiveOrDeferred(t *testing.T) {
 		t.Fatalf("deferred events = %+v", events)
 	}
 
+	if err := sink.Publish(t.Context(), "Still running deferred work."); err != nil {
+		t.Fatal(err)
+	}
+	if err := sink.Complete(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	next := broker.drainSession("session")
+	if len(next) != 1 || next[0].text != "Still running deferred work." || next[0].messageID == events[0].messageID {
+		t.Fatalf("later deferred events = %+v", next)
+	}
+	if len(broker.drainSession("session")) != 0 || broker.publish(deferred, "after completion", false) {
+		t.Fatal("completed route retained events or authorization")
+	}
+
 	request, err := http.NewRequestWithContext(t.Context(), http.MethodPost, server.URL, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -70,6 +86,60 @@ func TestCommentaryPublisherAuthenticatesAndDrainsLiveOrDeferred(t *testing.T) {
 	response.Body.Close()
 	if response.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("unauthenticated status = %d", response.StatusCode)
+	}
+}
+
+func TestCommentaryDrainRetainsActiveCapacityUntilCompletionOrExpiry(t *testing.T) {
+	for _, mode := range []string{"token", "session"} {
+		t.Run(mode, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				broker := newCommentaryBroker()
+				t.Cleanup(broker.close)
+				drain := func(token string) []publishedCommentary {
+					if mode == "token" {
+						return broker.drain(token)
+					}
+					return broker.drainSession("session")
+				}
+				tokens := make([]string, maxCommentaryRoutes)
+				for i := range tokens {
+					tokens[i] = broker.subscribe("session", "call")
+					if tokens[i] == "" || !broker.publish(tokens[i], "first", false) {
+						t.Fatal("route capacity was not available")
+					}
+				}
+				seen := make(map[string]bool)
+				for _, token := range tokens {
+					for _, event := range drain(token) {
+						if seen[event.messageID] {
+							t.Fatal("publication delivered twice")
+						}
+						seen[event.messageID] = true
+					}
+				}
+				if len(seen) != maxCommentaryRoutes || broker.eventCount != 0 || broker.subscribe("session", "overflow") != "" {
+					t.Fatalf("active drain: delivered=%d pending=%d routes=%d", len(seen), broker.eventCount, len(broker.routes))
+				}
+				if !broker.publish(tokens[0], "second", true) {
+					t.Fatal("drain retired an active publisher")
+				}
+				events := drain(tokens[0])
+				if len(events) != 1 || seen[events[0].messageID] || events[0].text != "second" || broker.publish(tokens[0], "late", false) {
+					t.Fatalf("completed drain = %+v", events)
+				}
+				replacement := broker.subscribe("session", "replacement")
+				if replacement == "" || !broker.publish(replacement, "pending expiry", false) {
+					t.Fatal("completion did not release capacity")
+				}
+				time.Sleep(commentaryRouteTTL)
+				if events := drain(replacement); len(events) != 0 || broker.eventCount != 0 || len(broker.routes) != 0 {
+					t.Fatalf("expiry: events=%+v pending=%d routes=%d", events, broker.eventCount, len(broker.routes))
+				}
+				if broker.subscribe("session", "after-expiry") == "" {
+					t.Fatal("expiry did not release route capacity")
+				}
+			})
+		})
 	}
 }
 

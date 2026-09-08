@@ -19,8 +19,10 @@ form. The Bash/POSIX evaluator intercepts the reserved command after ordinary ex
 it into a successful no-output command. Both runtime paths use opaque per-call capabilities and the
 same broker; they do not own executor results, shell process status, or Codex session control.
 Publications ready at stream completion are drained before the terminal event, while later and JSON
-publications are drained by the next non-concurrent request for the retained session. Limits and
-publication failures are auxiliary.
+publications are drained by the next non-concurrent request for the retained session. Token and
+session drains share one completion-sensitive primitive: consume queued events once, retain active
+publishers, and retire completed routes after delivery. Both drain boundaries expire stale routes
+and release their queued-event accounting. Limits and publication failures are auxiliary.
 
 The Responses router owns detection of the `spawn_agent` function from the request's configured
 namespaced tool catalog and rendering deterministic assistant commentary from non-message call

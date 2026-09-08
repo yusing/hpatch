@@ -31,6 +31,9 @@ commentary handling, and shell calls without an authored command receive no defa
 Runtime publications use a per-call authenticated route on the router's existing HTTP server.
 Ready streaming publications precede the terminal response; later publications and publications
 from JSON responses appear at the start of the next non-concurrent request for the same session.
+Draining ready publications consumes each message once without retiring a still-running publisher;
+subsequent publications remain deliverable through the same route. Completion retires the route
+after queued publications are drained, and expiry releases both queued events and route capacity.
 Routes, events, request bodies, and retention time are bounded. Capacity, network, publication, and
 rendering failures remain auxiliary and do not replace the tool result.
 

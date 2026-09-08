@@ -116,10 +116,7 @@ func (b *commentaryBroker) drainSession(sessionID string) []publishedCommentary 
 		if route.sessionID != sessionID {
 			continue
 		}
-		events = append(events, route.events...)
-		b.eventCount -= len(route.events)
-		route.events = nil
-		delete(b.routes, token)
+		events = append(events, b.drainLocked(token)...)
 	}
 	return events
 }
@@ -182,6 +179,13 @@ func (b *commentaryBroker) drain(token string) []publishedCommentary {
 	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	b.cleanupExpiredLocked(time.Now())
+	return b.drainLocked(token)
+}
+
+// drainLocked consumes publications without retiring a still-running publisher.
+// Both live and deferred delivery share the same completion-sensitive lifetime.
+func (b *commentaryBroker) drainLocked(token string) []publishedCommentary {
 	route := b.routes[token]
 	if route == nil {
 		return nil
