@@ -1,3 +1,4 @@
+import {withResolverDeadline} from "./resolver.ts";
 import {spawn} from "node:child_process";
 import {readFile, realpath, stat} from "node:fs/promises";
 import path from "node:path";
@@ -278,43 +279,42 @@ function conciseGoplsError(stderr: string, exitCode: number | null): string {
 }
 
 async function runGopls(mode: QueryMode, position: string): Promise<GoplsResult> {
-  const argumentsValue = mode === "def"
-    ? ["definition", "-json", position]
-    : ["references", "-d", position];
-  const child = spawn("gopls", argumentsValue, {stdio: ["ignore", "pipe", "pipe"]});
-  const completion = new Promise<{exitCode: number | null; error?: Error}>((resolve) => {
-    child.once("error", (error) => resolve({exitCode: null, error}));
-    child.once("close", (exitCode) => resolve({exitCode}));
-  });
-  const deadline = new Promise<never>((_, reject) => {
-    setTimeout(() => reject(new Error("deadline exceeded")), 30_000);
-  });
-  const stdoutPromise = collect(child.stdout);
-  const stderrPromise = collect(child.stderr);
-  try {
-    const completed = await Promise.race([completion, deadline]);
-    if (completed.error !== undefined) {
-      await Promise.allSettled([stdoutPromise, stderrPromise]);
-      if ("code" in completed.error && completed.error.code === "ENOENT") {
-        throw new HSymbolFailure("gopls is unavailable");
+  return withResolverDeadline(async (deadline) => {
+    const argumentsValue = mode === "def"
+      ? ["definition", "-json", position]
+      : ["references", "-d", position];
+    const child = spawn("gopls", argumentsValue, {stdio: ["ignore", "pipe", "pipe"]});
+    const completion = new Promise<{exitCode: number | null; error?: Error}>((resolve) => {
+      child.once("error", (error) => resolve({exitCode: null, error}));
+      child.once("close", (exitCode) => resolve({exitCode}));
+    });
+    const stdoutPromise = collect(child.stdout);
+    const stderrPromise = collect(child.stderr);
+    try {
+      const completed = await Promise.race([completion, deadline]);
+      if (completed.error !== undefined) {
+        await Promise.allSettled([stdoutPromise, stderrPromise]);
+        if ("code" in completed.error && completed.error.code === "ENOENT") {
+          throw new HSymbolFailure("gopls is unavailable");
+        }
+        throw new HSymbolFailure(`cannot start gopls: ${errorText(completed.error)}`);
       }
-      throw new HSymbolFailure(`cannot start gopls: ${errorText(completed.error)}`);
+      const [stdoutBytes, stderrBytes] = await Promise.all([stdoutPromise, stderrPromise]);
+      const stdout = decodeUTF8(stdoutBytes, "gopls stdout");
+      const stderr = decodeUTF8(stderrBytes, "gopls stderr");
+      if (completed.exitCode !== 0) {
+        throw new HSymbolFailure(conciseGoplsError(stderr, completed.exitCode));
+      }
+      return {stdout, stderr};
+    } catch (error) {
+      child.kill("SIGKILL");
+      await completion;
+      if (error instanceof HSymbolFailure) {
+        throw error;
+      }
+      throw new HSymbolFailure(`gopls query failed: ${errorText(error)}`);
     }
-    const [stdoutBytes, stderrBytes] = await Promise.all([stdoutPromise, stderrPromise]);
-    const stdout = decodeUTF8(stdoutBytes, "gopls stdout");
-    const stderr = decodeUTF8(stderrBytes, "gopls stderr");
-    if (completed.exitCode !== 0) {
-      throw new HSymbolFailure(conciseGoplsError(stderr, completed.exitCode));
-    }
-    return {stdout, stderr};
-  } catch (error) {
-    child.kill("SIGKILL");
-    await completion;
-    if (error instanceof HSymbolFailure) {
-      throw error;
-    }
-    throw new HSymbolFailure(`gopls query failed: ${errorText(error)}`);
-  }
+  });
 }
 
 function parseDefinition(stdout: string): GoplsDefinition {

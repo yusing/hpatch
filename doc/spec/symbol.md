@@ -29,7 +29,9 @@ Each invocation starts exactly one semantic query at the selected token. Go uses
 TypeScript, and JSON start `tsc --lsp --stdio`; Python starts `pyright-langserver --stdio`. The LSP
 client initializes the canonical workspace, opens the verified source snapshot, negotiates UTF-16
 positions, sends one `textDocument/definition` or `textDocument/references` request, and reaps the
-server after the response. References request `includeDeclaration: true`. There is no text-search
+server after the response. Both resolver paths release their 30-second query deadline on success,
+failure, and spawn failure; completed queries must not keep the private host alive until deadline
+expiry. References request `includeDeclaration: true`. There is no text-search
 fallback. A missing resolver, invalid arguments, stale rows, invalid selectors, malformed protocol
 result, or failed semantic query returns concise stderr and nonzero status without useful stdout.
 
