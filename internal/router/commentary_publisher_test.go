@@ -258,50 +258,147 @@ func TestShellWorkerPublishesWithoutChangingCommandResult(t *testing.T) {
 	}
 }
 
-func TestReadyRuntimeCommentaryPrecedesStreamCompletion(t *testing.T) {
+func shellCommentaryTestItem() map[string]any {
+	return map[string]any{
+		"type": "custom_tool_call", "id": "item-runtime", "call_id": "call-runtime",
+		"name": "shell", "input": "printf ok", "status": "completed",
+	}
+}
+
+func newRuntimeCommentaryTransform(t *testing.T) (*hpatchResponseTransform, *hpatchProxy) {
+	t.Helper()
 	transform, proxy, _, _ := newHPatchTestTransform(t, testTranslator(t, new(int)))
-	if err := proxy.rememberBatch(transform.historySessionID, map[string]hpatchHistory{
-		"call-runtime": {
-			toolName: "shell", carrierName: "exec", carrierKind: codeModeCarrierCustom,
-			carrierPayload: "payload", upstreamItem: map[string]json.RawMessage{},
-		},
-	}); err != nil {
-		t.Fatal(err)
+	proxy.commentaryEndpoint = "http://127.0.0.1:8080" + commentaryPublisherPath
+	return transform, proxy
+}
+
+func runtimeCommentaryToken(t *testing.T, transform *hpatchResponseTransform) string {
+	t.Helper()
+	if len(transform.commentarySubscriptions) != 1 {
+		t.Fatalf("commentary subscription count = %d", len(transform.commentarySubscriptions))
 	}
-	subscription := proxy.commentary.subscribe(transform.historySessionID, "call-runtime")
-	if subscription == "" || !proxy.commentary.publish(subscription, "Running streamed work.", false) {
-		t.Fatal("runtime commentary was not published")
+	return transform.commentarySubscriptions[0].token
+}
+
+func TestReadyRuntimeCommentaryPrecedesEveryStreamTerminal(t *testing.T) {
+	for _, status := range []string{"completed", "failed", "incomplete"} {
+		t.Run(status, func(t *testing.T) {
+			transform, proxy := newRuntimeCommentaryTransform(t)
+			carrier, err := transform.TransformSSE(mustTestJSON(t, map[string]any{
+				"type": "response.output_item.done", "item": shellCommentaryTestItem(),
+			}))
+			if err != nil || len(carrier) != 1 || !bytes.Contains(carrier[0], []byte(`"name":"exec"`)) {
+				t.Fatalf("shell carrier = %s, %v", carrier, err)
+			}
+			token := runtimeCommentaryToken(t, transform)
+			if !proxy.commentary.publish(token, "Running streamed work.", false) {
+				t.Fatal("runtime commentary was not published")
+			}
+			beforeBytes := proxy.historyBytes
+			payload := mustTestJSON(t, map[string]any{
+				"type":     "response." + status,
+				"response": map[string]any{"status": status, "output": []any{}},
+			})
+			events, err := transform.TransformSSE(payload)
+			if err != nil || len(events) != 2 || !bytes.Contains(events[0], []byte("Running streamed work.")) ||
+				!bytes.Contains(events[1], []byte(`"type":"response.`+status+`"`)) {
+				t.Fatalf("terminal events = %s, %v", events, err)
+			}
+			history, exists := proxy.history(transform.historySessionID, "call-runtime")
+			if !exists || len(history.commentaryMessageIDs) != 1 || proxy.historyBytes-beforeBytes != len(history.commentaryMessageIDs[0]) {
+				t.Fatalf("history = %+v, bytes before = %d, after = %d", history, beforeBytes, proxy.historyBytes)
+			}
+			transform.Close()
+			if !proxy.commentary.publish(token, "Later work.", false) {
+				t.Fatal("terminal response retired an active publisher")
+			}
+			deferred := proxy.drainCommentarySession(transform.historySessionID)
+			if len(deferred) != 1 || deferred[0].text != "Later work." || deferred[0].messageID == history.commentaryMessageIDs[0] {
+				t.Fatalf("deferred events = %+v", deferred)
+			}
+			if len(proxy.drainCommentarySession(transform.historySessionID)) != 0 {
+				t.Fatal("publication delivered twice")
+			}
+			if !proxy.commentary.publish(token, "", true) || proxy.commentary.publish(token, "after completion", false) {
+				t.Fatal("publisher completion did not retire drained route")
+			}
+		})
 	}
-	transform.commentaryTokens = []string{subscription}
-	beforeBytes := proxy.historyBytes
-	payload := mustTestJSON(t, map[string]any{
-		"type":     "response.completed",
-		"response": map[string]any{"status": "completed", "output": []any{}},
-	})
-	events, err := transform.TransformSSE(payload)
-	if err != nil || len(events) != 2 || !bytes.Contains(events[0], []byte("Running streamed work.")) ||
-		!bytes.Contains(events[1], []byte(`"type":"response.completed"`)) {
-		t.Fatalf("stream events = %q, error %v", events, err)
+}
+
+func TestJSONTerminalHandsOffRuntimePublisher(t *testing.T) {
+	for _, status := range []string{"completed", "failed", "incomplete"} {
+		t.Run(status, func(t *testing.T) {
+			transform, proxy := newRuntimeCommentaryTransform(t)
+			payload, err := transform.TransformJSON(mustTestJSON(t, map[string]any{
+				"status": status, "output": []any{shellCommentaryTestItem()},
+			}))
+			if err != nil || !bytes.Contains(payload, []byte(`"name":"exec"`)) {
+				t.Fatalf("JSON carrier = %s, %v", payload, err)
+			}
+			token := runtimeCommentaryToken(t, transform)
+			transform.Close()
+			if !proxy.commentary.publish(token, "Deferred JSON work.", true) {
+				t.Fatal("JSON terminal cancelled handed-off publisher")
+			}
+			if events := proxy.drainCommentarySession(transform.historySessionID); len(events) != 1 || events[0].text != "Deferred JSON work." {
+				t.Fatalf("deferred JSON events = %+v", events)
+			}
+		})
 	}
-	history, exists := proxy.history(transform.historySessionID, "call-runtime")
-	if !exists || len(history.commentaryMessageIDs) != 1 ||
-		proxy.historyBytes-beforeBytes != len(history.commentaryMessageIDs[0]) {
-		t.Fatalf("history = %+v, bytes before = %d, after = %d", history, beforeBytes, proxy.historyBytes)
+}
+
+func TestEarlyStreamReleasePreservesHandedOffPublishers(t *testing.T) {
+	for _, name := range []string{"shell", "exec"} {
+		t.Run(name, func(t *testing.T) {
+			transform, proxy := newRuntimeCommentaryTransform(t)
+			item := shellCommentaryTestItem()
+			item["name"], item["input"], item["status"] = name, "", "in_progress"
+			if _, err := transform.TransformSSE(mustTestJSON(t, map[string]any{"type": "response.output_item.added", "item": item})); err != nil {
+				t.Fatal(err)
+			}
+			input := "printf ok"
+			if name == "exec" {
+				input = `await commentary("Working");`
+			}
+			events, err := transform.TransformSSE(mustTestJSON(t, map[string]any{
+				"type": "response.custom_tool_call_input.done", "item_id": "item-runtime", "input": input,
+			}))
+			if err != nil || len(events) == 0 || !bytes.Contains(bytes.Join(events, nil), []byte("response.custom_tool_call_input.done")) {
+				t.Fatalf("carrier input handoff = %s, %v", events, err)
+			}
+			token := runtimeCommentaryToken(t, transform)
+			transform.Close() // A disconnect can occur before item.done or a terminal.
+			if !proxy.commentary.publish(token, "Work after disconnect.", true) {
+				t.Fatal("disconnect cancelled an emitted carrier publisher")
+			}
+			if events := proxy.drainCommentarySession(transform.historySessionID); len(events) != 1 || events[0].text != "Work after disconnect." {
+				t.Fatalf("deferred disconnected events = %+v", events)
+			}
+			if _, exists := proxy.history(transform.historySessionID, "call-runtime"); !exists {
+				t.Fatal("emitted carrier has no replay history for deferred commentary")
+			}
+		})
 	}
 }
 
 func TestUnhandedRuntimeCommentaryRouteIsCancelled(t *testing.T) {
-	transform, proxy, _, _ := newHPatchTestTransform(t, testTranslator(t, new(int)))
-	token := proxy.commentary.subscribe(transform.historySessionID, "call-runtime")
-	if token == "" {
-		t.Fatal("runtime commentary route was rejected")
+	transform, proxy := newRuntimeCommentaryTransform(t)
+	_, err := transform.TransformJSON(mustTestJSON(t, map[string]any{
+		"status": "completed", "output": []any{
+			shellCommentaryTestItem(),
+			map[string]any{"type": "custom_tool_call", "name": hpatchToolName, "input": testHPatchScript},
+		},
+	}))
+	if err == nil {
+		t.Fatal("malformed later call did not prevent JSON handoff")
 	}
-	transform.commentaryTokens = []string{token}
+	token := runtimeCommentaryToken(t, transform)
+	if !proxy.commentary.publish(token, "Unhanded work.", false) {
+		t.Fatal("prepared route was not registered")
+	}
 	transform.Close()
-	proxy.commentary.mu.Lock()
-	_, retained := proxy.commentary.routes[token]
-	proxy.commentary.mu.Unlock()
-	if retained {
-		t.Fatal("unhanded commentary route was retained")
+	if proxy.commentary.publish(token, "later", false) || len(proxy.drainCommentarySession(transform.historySessionID)) != 0 {
+		t.Fatal("unhanded route or its queued publication was retained")
 	}
 }

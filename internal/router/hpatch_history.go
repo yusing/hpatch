@@ -435,6 +435,9 @@ func (t *hpatchResponseTransform) commitHistory() error {
 		return err
 	}
 	t.historyCommitted = true
+	for callID := range t.local {
+		t.handOffCommentary(callID)
+	}
 	return nil
 }
 
@@ -443,5 +446,9 @@ func (t *hpatchResponseTransform) commitLocalCall(callID string) error {
 	if !exists {
 		return nil
 	}
-	return t.proxy.rememberBatch(t.historySessionID, map[string]hpatchHistory{callID: history})
+	if err := t.proxy.rememberBatch(t.historySessionID, map[string]hpatchHistory{callID: history}); err != nil {
+		return err
+	}
+	t.handOffCommentary(callID)
+	return nil
 }

@@ -54,7 +54,7 @@ func (t *hpatchResponseTransform) lowerCodeModeCommentary(callID, input string) 
 
 	token := t.proxy.commentary.subscribe(t.historySessionID, callID)
 	if token != "" {
-		t.commentaryTokens = append(t.commentaryTokens, token)
+		t.commentarySubscriptions = append(t.commentarySubscriptions, commentarySubscription{token: token, callID: callID})
 	}
 	replacements := make([]string, len(calls))
 	for index := len(calls) - 1; index >= 0; index-- {

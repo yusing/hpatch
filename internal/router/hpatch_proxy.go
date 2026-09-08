@@ -217,7 +217,7 @@ type hpatchResponseTransform struct {
 	directory                 string
 	carriers                  codeModeCarrierCatalog
 	commentaryTools           commentaryToolCatalog
-	commentaryTokens          []string
+	commentarySubscriptions   []commentarySubscription
 	deferredCommentary        []publishedCommentary
 	commentaryEmitted         map[string]struct{}
 	subagentTools             map[string]struct{}
@@ -244,7 +244,7 @@ func (t *hpatchResponseTransform) Close() {
 	if t == nil {
 		return
 	}
-	t.cancelCommentaryTokens()
+	t.releaseCommentarySubscriptions()
 	if t.sessionActive {
 		t.proxy.deactivateSession(t.historySessionID)
 		t.sessionActive = false
@@ -1236,7 +1236,7 @@ func (t *hpatchResponseTransform) translateRegisteredTool(contribution toolContr
 				return hpatchHistory{}, fmt.Errorf("%s exec carrier: %w", contribution.Name, err)
 			}
 			if commentaryToken != "" {
-				t.commentaryTokens = append(t.commentaryTokens, commentaryToken)
+				t.commentarySubscriptions = append(t.commentarySubscriptions, commentarySubscription{token: commentaryToken, callID: callID})
 			}
 		case "custom":
 			kind = codeModeCarrierCustom
@@ -1332,12 +1332,6 @@ func retainedEvaluated(emitted, evaluated string) string {
 
 func (t *hpatchResponseTransform) TransformJSON(payload []byte) ([]byte, error) {
 	transformed, _, err := t.transformResponse(payload, "")
-	if err == nil {
-		var response map[string]json.RawMessage
-		if json.Unmarshal(transformed, &response) == nil && jsonString(response, "status") == "completed" {
-			t.commentaryTokens = nil
-		}
-	}
 	return transformed, err
 }
 
@@ -1489,6 +1483,9 @@ func (t *hpatchResponseTransform) TransformSSE(payload []byte) ([][]byte, error)
 					if err != nil {
 						return nil, err
 					}
+				}
+				if err := t.commitLocalCall(callID); err != nil {
+					return nil, err
 				}
 				if message := t.localStartCommentary(item.fields); message != nil {
 					return [][]byte{assistantCommentaryDoneEvent(message), event}, nil
@@ -1699,19 +1696,18 @@ func (t *hpatchResponseTransform) TransformSSE(payload []byte) ([][]byte, error)
 		if err := t.Finish(true); err != nil {
 			return nil, err
 		}
-		visible := make([][]byte, 0, len(t.commentaryTokens)+1)
-		if envelope.Type == "response.completed" {
-			for _, token := range t.commentaryTokens {
-				for _, publication := range t.proxy.commentary.drain(token) {
-					if message := t.runtimeCommentaryMessage(publication); message != nil {
-						visible = append(visible, assistantCommentaryDoneEvent(message))
-					}
+		visible := make([][]byte, 0, len(t.commentarySubscriptions)+1)
+		for _, subscription := range t.commentarySubscriptions {
+			if !subscription.handedOff {
+				continue
+			}
+			for _, publication := range t.proxy.commentary.drain(subscription.token) {
+				if message := t.runtimeCommentaryMessage(publication); message != nil {
+					visible = append(visible, assistantCommentaryDoneEvent(message))
 				}
 			}
-			t.commentaryTokens = nil
-		} else {
-			t.cancelCommentaryTokens()
 		}
+		t.releaseCommentarySubscriptions()
 		if usageMessage != nil && !t.subagentTurn {
 			visible = append(visible, assistantCommentaryDoneEvent(usageMessage))
 		}

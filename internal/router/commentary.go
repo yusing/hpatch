@@ -274,11 +274,29 @@ func (p *hpatchProxy) drainCommentarySession(sessionID string) []publishedCommen
 	return p.commentary.drainSession(sessionID)
 }
 
-func (t *hpatchResponseTransform) cancelCommentaryTokens() {
-	for _, token := range t.commentaryTokens {
-		t.proxy.commentary.cancel(token)
+type commentarySubscription struct {
+	token     string
+	callID    string
+	handedOff bool
+}
+
+func (t *hpatchResponseTransform) handOffCommentary(callID string) {
+	for index := range t.commentarySubscriptions {
+		if t.commentarySubscriptions[index].callID == callID {
+			t.commentarySubscriptions[index].handedOff = true
+		}
 	}
-	t.commentaryTokens = nil
+}
+
+func (t *hpatchResponseTransform) releaseCommentarySubscriptions() {
+	for _, subscription := range t.commentarySubscriptions {
+		// Once the carrier is handed off, publication completion and broker
+		// expiry own the route, regardless of how the provider response ends.
+		if !subscription.handedOff {
+			t.proxy.commentary.cancel(subscription.token)
+		}
+	}
+	t.commentarySubscriptions = nil
 }
 
 // validateHPatchCompactionRequest recognizes local Codex compaction requests,

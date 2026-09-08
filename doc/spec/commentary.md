@@ -29,8 +29,11 @@ control flow, redirections, output, or exit status. Other interpreters receive n
 commentary handling, and shell calls without an authored command receive no default.
 
 Runtime publications use a per-call authenticated route on the router's existing HTTP server.
-Ready streaming publications precede the terminal response; later publications and publications
-from JSON responses appear at the start of the next non-concurrent request for the same session.
+Ready streaming publications precede completed, failed, and incomplete terminal responses;
+later publications and publications from JSON responses appear at the start of the next
+non-concurrent request for the same session. Once a carrier has been handed off, an interrupted
+provider response or early transform release does not cancel its publisher. Routes prepared for
+carriers that were never handed off are cancelled instead.
 Draining ready publications consumes each message once without retiring a still-running publisher;
 subsequent publications remain deliverable through the same route. Completion retires the route
 after queued publications are drained, and expiry releases both queued events and route capacity.
