@@ -447,6 +447,13 @@ func ApplyForHostRoot(ctx context.Context, root *os.Root, script, dataDirectory 
 
 // finishHostChange completes a host translation with outcome metadata and hooks.
 func finishHostChange(ctx context.Context, dataDirectory, script string, result HostTranslation, failureStage string, err error, applied bool) (HostTranslation, error) {
+	// Evaluation prepares the success projection before external effects, but
+	// no failing return may publish it. Keep lifecycle/effect metadata separate:
+	// late cancellation can still truthfully report that application succeeded.
+	report, aliases := result.Report, result.TargetAliases
+	patch, summary := result.Patch, result.PatchSummary
+	result.Report, result.TargetAliases = "", nil
+	result.Patch, result.PatchSummary = nil, HostPatchSummary{}
 	result.Attempt, _ = attemptMetadataFromContext(ctx)
 	if err != nil {
 		result.Rejections = hostRejectionsOf(err)
@@ -484,13 +491,15 @@ func finishHostChange(ctx context.Context, dataDirectory, script string, result 
 		result.Change.Applied = true
 	}
 	result.Outcome = HostOutcome{Stage: stage, Status: status}
-	for _, hookErr := range runOutcomeHooks(ctx, dataDirectory, stage, status, script, result.Patch, errorHooksTimeout) {
+	for _, hookErr := range runOutcomeHooks(ctx, dataDirectory, stage, status, script, patch, errorHooksTimeout) {
 		result.Diagnostic += warningDiagnostic(hookErr.Error())
 	}
 	if err := ctx.Err(); err != nil {
 		result.Diagnostic = ""
 		return result, err
 	}
+	result.Report, result.TargetAliases = report, aliases
+	result.Patch, result.PatchSummary = patch, summary
 	return result, nil
 }
 

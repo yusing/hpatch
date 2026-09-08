@@ -145,7 +145,11 @@ retain that coordination until the host executor completes the patch. Hosts appl
 retained scripts have the same responsibility. Neither an `os.Root` capability nor a rendered
 patch provides writer serialization, baseline reservation, or a cross-file snapshot.
 
-The root library validates and formats the state report before an external effect. Apply stages
+The root library validates and formats the state report before an external effect, retains
+the report, aliases, patch, and patch summary privately through finalization, and publishes
+them only on a successful return. Failure results retain lifecycle and effect metadata,
+including a completed application followed by late cancellation, without success projections.
+Apply stages
 the complete engine result and installs it through ordered filesystem operations; translation
 completely renders the patch without mutation. No script command crosses the external commit
 boundary. Atomic evaluation does not imply crash-atomic installation or isolation from external

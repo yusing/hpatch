@@ -180,8 +180,12 @@ row, remain one visible location. Independently parseable syntax failures may be
 together before evaluation. A heredoc failure is owned by its header and may additionally
 report its attributable source span. Control bytes are escaped and embedded newlines are
 folded so one command failure remains one logical line.
-Failures return no completed patch. Basic entry points return an error; host variants return
-`HostTranslation` diagnostics without a successful final-state report. Malformed row syntax
+Failures return no completed patch, patch summary, final-state report, or target aliases.
+The prepared success projection is published only after finalization succeeds, including
+its final cancellation check. A late cancellation after application retains honest
+`Outcome` and `Change.Applied` metadata without publishing reusable success references.
+Basic entry points return an error; host variants return `HostTranslation` diagnostics.
+Malformed row syntax
 receives a syntax diagnostic.
 
 A stale row reports the actual current-line candidate and up to two neighboring baseline rows.
