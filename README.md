@@ -356,6 +356,7 @@ After installation and `codex login`, run:
 
 ```sh
 hpatch-router wrap codex
+hpatch-router --grok wrap codex
 hpatch-router wrap codex --model gpt-6-astra
 hpatch-router wrap codex exec "Explain this repository"
 ```
@@ -367,8 +368,10 @@ preserves Codex's exit status. Terminal Ctrl-C stays with Codex; SIGTERM to the
 wrapper terminates both. Startup diagnostics, including the selected port, go
 to stderr. Codex inherits your terminal, environment, and working directory.
 
-Everything after `codex` is a Codex argument. The wrapper uses the router's
-normal defaults; use the standalone workflow below for custom router flags.
+Put router flags before `wrap`; everything after `codex` is a Codex argument.
+For example, `hpatch-router --grok --model-protocol native wrap codex` enables
+Grok and disables CTP/2. The wrapper rejects `--listen` and `--provider-base-url`
+because it always uses a random loopback port and the default upstream.
 **Custom providers are not supported by the wrapper.** It overrides provider
 selection from `config.toml` or a Codex profile and always uses Hpatch's default
 ChatGPT upstream. Provider-selection arguments such as `--oss`, `--local-provider`,

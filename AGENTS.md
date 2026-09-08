@@ -24,7 +24,7 @@ When parts of this file is stale after your work, update this file.
 | Shared quoted-string and heredoc framing | `internal/hpatchsyntax` |
 | Portable verified-row, source-capability, Go-lexical, and shell-header semantics | `internal/verifiedrow`, `internal/sourcekind`, `internal/golex`, `internal/shellsyntax` |
 | Versioned plugin shared-core adapter and private WASM bridge | `internal/router/toolplugin/core-v1.mjs`, `internal/router/toolplugin/core-v1.d.ts`, `internal/sharedwasm` |
-| Router lifecycle, modes, and HTTP endpoints | `internal/router/server.go` |
+| Router lifecycle, launch flags, modes, and HTTP endpoints | `internal/router/server.go`, `internal/router/flags.go` |
 | Third-party native subagent projection, Grok authentication/translation, and catalog augmentation | `internal/router/subagent_bridge.go`, `internal/router/grok_*.go` |
 | Codex authentication and upstream Responses transport | `internal/router/client.go` |
 | Tool replacement, host translation, response restoration, replay, and rejected-script recovery | `internal/router/hpatch_proxy.go`, `internal/router/hpatch_recovery.go` |

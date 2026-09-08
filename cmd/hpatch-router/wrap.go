@@ -15,9 +15,9 @@ import (
 	"github.com/yusing/hpatch/internal/router"
 )
 
-func runWrap(args []string) int {
+func runWrap(routerArgs, args []string) int {
 	if len(args) == 0 || args[0] != "codex" {
-		fmt.Fprintln(os.Stderr, "usage: hpatch-router wrap codex [Codex arguments...]")
+		fmt.Fprintln(os.Stderr, "usage: hpatch-router [router flags] wrap codex [Codex arguments...]")
 		return 2
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM)
@@ -27,14 +27,14 @@ func runWrap(args []string) int {
 	interrupts := make(chan os.Signal, 1)
 	signal.Notify(interrupts, os.Interrupt)
 	defer signal.Stop(interrupts)
-	code, err := wrapCodex(ctx, args[1:])
+	code, err := wrapCodex(ctx, routerArgs, args[1:])
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "router:", err)
 	}
 	return code
 }
 
-func wrapCodex(ctx context.Context, args []string) (int, error) {
+func wrapCodex(ctx context.Context, routerArgs, args []string) (int, error) {
 	if err := validateCodexArgs(args); err != nil {
 		return 2, err
 	}
@@ -47,7 +47,7 @@ func wrapCodex(ctx context.Context, args []string) (int, error) {
 	ready := make(chan string, 1)
 	routerDone := make(chan error, 1)
 	go func() {
-		routerDone <- router.RunWithReady(ctx, []string{"--listen", "127.0.0.1:0"}, os.Stderr, func(baseURL string) {
+		routerDone <- router.RunWithReady(ctx, append([]string{"--listen", "127.0.0.1:0"}, routerArgs...), os.Stderr, func(baseURL string) {
 			ready <- baseURL
 		})
 	}()

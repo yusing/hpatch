@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"net"
@@ -110,7 +111,7 @@ func TestWrappedRouterProcess(t *testing.T) {
 	if os.Getenv("HPATCH_TEST_ROUTER") != "1" {
 		return
 	}
-	os.Args = []string{os.Args[0], "wrap", "codex"}
+	os.Args = []string{os.Args[0], "--grok", "--model-protocol", "native", "--mentor-handoff=false", "wrap", "codex"}
 	os.Exit(run())
 }
 
@@ -136,7 +137,8 @@ func TestWrapTerminalInterruptAndTermination(t *testing.T) {
 	cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestWrappedRouterProcess$")
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
-	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
+	var logs bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &logs, &logs
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
@@ -173,6 +175,9 @@ func TestWrapTerminalInterruptAndTermination(t *testing.T) {
 	}
 	if err := <-done; err == nil || cmd.ProcessState.ExitCode() != 143 {
 		t.Fatalf("termination = %v, %v", cmd.ProcessState, err)
+	}
+	if !strings.Contains(logs.String(), "grok_subagents=true") || !strings.Contains(logs.String(), "model_protocol=native") || !strings.Contains(logs.String(), "mentor_handoff=false") {
+		t.Fatalf("router flags did not reach wrapped server: %s", logs.String())
 	}
 	entries, err := os.ReadDir(runtimeDirectory)
 	if err != nil || len(entries) != 0 {
@@ -222,7 +227,7 @@ func TestWrapCodexLifecycle(t *testing.T) {
 			}
 			deadline := time.AfterFunc(20*time.Second, cancel)
 			defer deadline.Stop()
-			code, err := wrapCodex(ctx, []string{"exec", "prompt with spaces"})
+			code, err := wrapCodex(ctx, nil, []string{"exec", "prompt with spaces"})
 			if err != nil || code != test.code {
 				t.Fatalf("wrap = %d, %v; want %d", code, err, test.code)
 			}
@@ -246,7 +251,7 @@ func TestWrapCodexLifecycle(t *testing.T) {
 
 func TestWrapCodexMissingExecutable(t *testing.T) {
 	t.Setenv("PATH", t.TempDir())
-	code, err := wrapCodex(t.Context(), nil)
+	code, err := wrapCodex(t.Context(), nil, nil)
 	if code != 1 || err == nil || !strings.Contains(err.Error(), "locate codex") {
 		t.Fatalf("wrap = %d, %v", code, err)
 	}
@@ -277,7 +282,7 @@ func TestValidateCodexArgs(t *testing.T) {
 
 func TestRunWrapUsage(t *testing.T) {
 	for _, args := range [][]string{nil, {"other"}} {
-		if code := runWrap(args); code != 2 {
+		if code := runWrap(nil, args); code != 2 {
 			t.Errorf("runWrap(%q) = %d", args, code)
 		}
 	}
@@ -316,7 +321,7 @@ func TestWrapCodexStartupFailures(t *testing.T) {
 			}
 			ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
 			defer cancel()
-			code, err := wrapCodex(ctx, nil)
+			code, err := wrapCodex(ctx, nil, nil)
 			if code != 1 || err == nil {
 				t.Fatalf("wrap = %d, %v", code, err)
 			}

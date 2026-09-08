@@ -45,22 +45,7 @@ func Run(ctx context.Context, args []string, stderr io.Writer) error {
 // succeeds and the listener is bound, ready receives its actual Responses base URL.
 // The callback must return promptly; it is never called on startup failure.
 func RunWithReady(ctx context.Context, args []string, stderr io.Writer, ready func(string)) (runErr error) {
-	flags := flag.NewFlagSet("hpatch-router", flag.ContinueOnError)
-	flags.SetOutput(stderr)
-	flags.Usage = func() {
-		fmt.Fprintln(stderr, "Usage: hpatch-router [router flags]\n       hpatch-router wrap codex [Codex arguments...]")
-		flags.PrintDefaults()
-	}
-	listenAddress := flags.String("listen", defaultListenAddress, "HTTP listen address")
-	timeout := flags.Duration("timeout", defaultRequestTimeout, "upstream response-start timeout")
-	streamIdleTimeout := flags.Duration("stream-idle-timeout", defaultStreamIdleTimeout, "maximum upstream response-stream inactivity between bytes")
-	mode := flags.String("mode", defaultRewriteMode, "response mode: hpatch or passthrough")
-	modelProtocol := flags.String("model-protocol", defaultModelProtocol, "model protocol: native or ctp2")
-	mentorHandoffEnabled := flags.Bool("mentor-handoff", true, "use gpt-5.6-sol high for eligible spawned subagents")
-	providerBaseURL := flags.String("provider-base-url", codexBaseURL, "Codex provider base URL")
-	grokEnabled := flags.Bool("grok", false, "enable native Grok subagents and plaintext collaboration projection")
-	grokAuthFile := flags.String("grok-auth-file", "", "Grok OAuth credential file (default ~/.grok/auth.json)")
-	captureOutput := flags.String("capture-output", "", "optional sanitized capture JSONL path")
+	flags := newRouterFlags(stderr)
 	if err := flags.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return nil
@@ -70,10 +55,10 @@ func RunWithReady(ctx context.Context, args []string, stderr io.Writer, ready fu
 	if flags.NArg() != 0 {
 		return errors.New("positional arguments are not supported")
 	}
-	if *mode != "hpatch" && *mode != "passthrough" {
+	if *flags.mode != "hpatch" && *flags.mode != "passthrough" {
 		return errors.New("--mode must be hpatch or passthrough")
 	}
-	if *modelProtocol != "native" && *modelProtocol != "ctp2" {
+	if *flags.modelProtocol != "native" && *flags.modelProtocol != "ctp2" {
 		return errors.New("--model-protocol must be native or ctp2")
 	}
 	protocolSet := false
@@ -86,48 +71,48 @@ func RunWithReady(ctx context.Context, args []string, stderr io.Writer, ready fu
 			mentorSet = true
 		}
 	})
-	if *mode == "passthrough" {
-		if protocolSet && *modelProtocol != "native" {
+	if *flags.mode == "passthrough" {
+		if protocolSet && *flags.modelProtocol != "native" {
 			return errors.New("--model-protocol ctp2 requires --mode hpatch")
 		}
-		if mentorSet && *mentorHandoffEnabled {
+		if mentorSet && *flags.mentorHandoffEnabled {
 			return errors.New("--mentor-handoff requires --mode hpatch")
 		}
-		*modelProtocol = "native"
-		*mentorHandoffEnabled = false
+		*flags.modelProtocol = "native"
+		*flags.mentorHandoffEnabled = false
 	}
-	if *grokEnabled && *mode != "hpatch" {
+	if *flags.grokEnabled && *flags.mode != "hpatch" {
 		return errors.New("--grok requires --mode hpatch")
 	}
-	if !*grokEnabled && *grokAuthFile != "" {
+	if !*flags.grokEnabled && *flags.grokAuthFile != "" {
 		return errors.New("--grok-auth-file requires --grok")
 	}
-	if *timeout <= 0 {
+	if *flags.timeout <= 0 {
 		return errors.New("--timeout must be positive")
 	}
-	if *streamIdleTimeout <= 0 {
+	if *flags.streamIdleTimeout <= 0 {
 		return errors.New("--stream-idle-timeout must be positive")
 	}
-	providerURL, err := url.Parse(*providerBaseURL)
+	providerURL, err := url.Parse(*flags.providerBaseURL)
 	if err != nil || (providerURL.Scheme != "http" && providerURL.Scheme != "https") ||
 		providerURL.Host == "" || providerURL.User != nil || providerURL.RawQuery != "" || providerURL.Fragment != "" {
 		return errors.New("--provider-base-url must be an absolute HTTP(S) URL without credentials, query, or fragment")
 	}
 
 	log := newDiagnostics(stderr)
-	capture, err := capturer.New(capturer.Config{Output: *captureOutput, Mode: *mode, ModelProtocol: *modelProtocol})
+	capture, err := capturer.New(capturer.Config{Output: *flags.captureOutput, Mode: *flags.mode, ModelProtocol: *flags.modelProtocol})
 	if err != nil {
 		return fmt.Errorf("initialize capture: %w", err)
 	}
 	defer func() {
 		runErr = errors.Join(runErr, capture.Close())
 	}()
-	provider := newProviderClient(*providerBaseURL, nil)
+	provider := newProviderClient(*flags.providerBaseURL, nil)
 	provider.httpClient.Transport = capture.Transport(provider.httpClient.Transport)
-	provider.streamIdleTimeout = *streamIdleTimeout
-	if *grokEnabled {
+	provider.streamIdleTimeout = *flags.streamIdleTimeout
+	if *flags.grokEnabled {
 		apiKey := strings.TrimSpace(os.Getenv("XAI_API_KEY"))
-		path := *grokAuthFile
+		path := *flags.grokAuthFile
 		if path == "" && apiKey == "" {
 			home, err := os.UserHomeDir()
 			if err != nil {
@@ -139,30 +124,30 @@ func RunWithReady(ctx context.Context, args []string, stderr io.Writer, ready fu
 		client := withDialTimeout(nil)
 		client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 		client.Transport = capture.Transport(client.Transport)
-		provider.grok = &grokClient{httpClient: client, auth: auth, streamIdleTimeout: *streamIdleTimeout}
+		provider.grok = &grokClient{httpClient: client, auth: auth, streamIdleTimeout: *flags.streamIdleTimeout}
 	}
 	var dataDirectory string
 	var hpatchCalls *hpatchProxy
 	var compactTokens *ctp2Codec
 	var mentor *mentorHandoff
-	if *mode == "hpatch" {
+	if *flags.mode == "hpatch" {
 		var err error
 		dataDirectory, err = hpatchDataDirectory()
 		if err != nil {
 			return fmt.Errorf("initialize hpatch response proxy: %w", err)
 		}
-		if *modelProtocol == "ctp2" {
+		if *flags.modelProtocol == "ctp2" {
 			compactTokens, err = newCTP2Codec()
 			if err != nil {
 				return fmt.Errorf("initialize compact token protocol: %w", err)
 			}
 		}
 	}
-	if *mentorHandoffEnabled {
+	if *flags.mentorHandoffEnabled {
 		mentor = newMentorHandoff()
 	}
 	titles := newSessionTitleCache()
-	if *mode == "hpatch" {
+	if *flags.mode == "hpatch" {
 		translator := newInProcessHPatchTranslator(dataDirectory)
 		customizedInstructions, err := codexModelInstructionFileConfigured()
 		if err != nil {
@@ -187,7 +172,7 @@ func RunWithReady(ctx context.Context, args []string, stderr io.Writer, ready fu
 		}()
 	}
 
-	listener, err := net.Listen("tcp", *listenAddress)
+	listener, err := net.Listen("tcp", *flags.listenAddress)
 	if err != nil {
 		return err
 	}
@@ -208,17 +193,17 @@ func RunWithReady(ctx context.Context, args []string, stderr io.Writer, ready fu
 	if hpatchCalls != nil {
 		mux.HandleFunc("POST "+commentaryPublisherPath, hpatchCalls.commentary.serveHTTP)
 	}
-	mux.HandleFunc("POST /v1/responses", responsesHandler(ctx, *timeout, provider, log, hpatchCalls, compactTokens, mentor, &requestSequence))
+	mux.HandleFunc("POST /v1/responses", responsesHandler(ctx, *flags.timeout, provider, log, hpatchCalls, compactTokens, mentor, &requestSequence))
 
 	server := &http.Server{
-		Addr:              *listenAddress,
+		Addr:              *flags.listenAddress,
 		Handler:           capture.Handler(mux),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       requestBodyReadTimeout,
 		IdleTimeout:       2 * time.Minute,
 	}
 	baseURL := "http://" + address + "/v1"
-	if err := log.log(ctx, slog.LevelInfo, "listening", "url", baseURL+"/responses", "mode", *mode, "model_protocol", *modelProtocol, "mentor_handoff", *mentorHandoffEnabled, "grok_subagents", *grokEnabled); err != nil {
+	if err := log.log(ctx, slog.LevelInfo, "listening", "url", baseURL+"/responses", "mode", *flags.mode, "model_protocol", *flags.modelProtocol, "mentor_handoff", *flags.mentorHandoffEnabled, "grok_subagents", *flags.grokEnabled); err != nil {
 		return fmt.Errorf("write listening log: %w", err)
 	}
 	serverError := make(chan error, 1)

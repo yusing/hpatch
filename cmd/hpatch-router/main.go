@@ -28,9 +28,14 @@ func run() int {
 	); handled {
 		return exitCode
 	}
-	if len(os.Args) > 1 && os.Args[1] == "wrap" {
+	routerArgs, command, parseErr := router.SplitCommand(os.Args[1:])
+	if parseErr != nil && len(command) > 0 && command[0] == "wrap" {
+		fmt.Fprintln(os.Stderr, "router:", parseErr)
+		return 2
+	}
+	if parseErr == nil && len(command) > 0 && command[0] == "wrap" {
 		stop()
-		return runWrap(os.Args[2:])
+		return runWrap(routerArgs, command[1:])
 	}
 	if err := router.Run(ctx, os.Args[1:], os.Stderr); err != nil {
 		if errors.Is(err, context.Canceled) {
