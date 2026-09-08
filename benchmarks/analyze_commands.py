@@ -12,6 +12,8 @@ import sys
 from collections import Counter
 from pathlib import Path, PurePosixPath
 
+from benchmark_jsonl import load_jsonl
+
 
 CATEGORIES = (
     "file_read",
@@ -556,11 +558,7 @@ def analyze(paths: list[Path]) -> dict[str, object]:
 
     for path in paths:
         events: list[dict[str, object]] = []
-        for raw_line in path.read_text(encoding="utf-8").splitlines():
-            try:
-                event = json.loads(raw_line)
-            except json.JSONDecodeError:
-                continue
+        for event in load_jsonl(path):
             if event.get("type") == "item.completed":
                 events.append(event)
 
@@ -692,7 +690,12 @@ def main() -> int:
     if missing:
         print(f"analyze_commands.py: missing input: {', '.join(missing)}", file=sys.stderr)
         return 1
-    json.dump(analyze(paths), sys.stdout, sort_keys=True, separators=(",", ":"))
+    try:
+        result = analyze(paths)
+    except (OSError, ValueError) as error:
+        print(f"analyze_commands.py: {error}", file=sys.stderr)
+        return 1
+    json.dump(result, sys.stdout, sort_keys=True, separators=(",", ":"))
     sys.stdout.write("\n")
     return 0
 

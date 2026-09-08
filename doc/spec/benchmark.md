@@ -119,7 +119,9 @@ MUST agree with its snapshot mode and protocol. Self-consistent evidence from th
 MUST fail before it receives a treatment label.
 
 The benchmark MAY retain command and file-change events for structural loop analysis and agent issue
-reports for diagnostics. Those artifacts are behavioral evidence, not metric inputs. It MUST NOT ask
+reports for diagnostics. Those artifacts are behavioral evidence, not metric inputs. Command-loop analysis MUST reject malformed JSON or non-object JSONL records with a path and
+line diagnostic, rather than discard damaged evidence and report zero findings. Non-JSON numeric
+constants (`NaN`, `Infinity`, and `-Infinity`) MUST reject, including in nested values. It MUST NOT ask
 production engine, router, CTP, registry, or plugin code to emit benchmark-only evidence.
 
 A task manifest MAY opt into runner-owned commentary coverage with versioned profiles assigned to
