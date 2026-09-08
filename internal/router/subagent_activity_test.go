@@ -29,7 +29,7 @@ func TestSubagentActivityAncestryReplayAndOrder(t *testing.T) {
 	if len(messages) != 2 || !strings.Contains(commentaryText(t, messages[0]), "Reply received") || !strings.Contains(commentaryText(t, messages[1]), "Checking.") {
 		t.Fatal(messages)
 	}
-	if strings.Count(commentaryText(t, messages[1]), "[/root/alpha/nested]") != 1 || !strings.Contains(commentaryText(t, messages[1]), "since the last update") {
+	if strings.Count(commentaryText(t, messages[1]), "[`/root/alpha/nested`]") != 1 || !strings.Contains(commentaryText(t, messages[1]), "since the last update") {
 		t.Fatal(messages)
 	}
 	if len(a.drain("root-a", time.Now(), maxCommentaryPublicationBytes)) != 0 {
@@ -61,7 +61,7 @@ func TestSubagentActivityCapacityExpiryConflictAndConcurrentRoots(t *testing.T) 
 				t.Errorf("root %d: %d notices", i, len(messages))
 			}
 			for _, m := range messages {
-				if commentaryText(t, m) != "[/root/worker] "+fmt.Sprint(i) {
+				if commentaryText(t, m) != "[`/root/worker`] "+fmt.Sprint(i) {
 					t.Error("cross-root text", m)
 				}
 			}
@@ -96,7 +96,7 @@ func TestActivityBudgetPreservesNoticeOrderAndReplayAfterExpiry(t *testing.T) {
 	a.observe("c", "r", "/root/c", true)
 	a.collect("c", "1", "reply", "first notice")
 	a.collect("c", "2", "reply", "x")
-	if len(a.drain("r", time.Time{}, len("[/root/c] x"))) != 0 {
+	if len(a.drain("r", time.Time{}, len("[`/root/c`] x"))) != 0 {
 		t.Fatal("later notice overtook blocked earlier notice")
 	}
 	delivered := a.drain("r", time.Time{}, maxCommentaryPublicationBytes)
@@ -138,7 +138,7 @@ func TestCriticalErrorProjectionUsesOriginDespiteSharedSession(t *testing.T) {
 		t.Fatal("successful sibling inherited another thread's failure")
 	}
 	projected := a.drain("root-a", time.Time{}, maxCommentaryPublicationBytes)
-	if len(projected) != 1 || !strings.Contains(commentaryText(t, projected[0]), "[/root/a] Hpatch") {
+	if len(projected) != 1 || !strings.Contains(commentaryText(t, projected[0]), "[`/root/a`] Hpatch") {
 		t.Fatal(projected)
 	}
 	record("child-b", requestOutcomeFailed)

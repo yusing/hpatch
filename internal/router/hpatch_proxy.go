@@ -1565,6 +1565,7 @@ func (t *hpatchResponseTransform) transformActivitySSE(payload []byte) ([][]byte
 			return [][]byte{payload}, nil //nolint:nilerr // Malformed unrelated output remains the upstream's responsibility.
 		}
 		t.collectProviderCommentary(item.fields)
+		t.collectSubagentToolCall(item.fields)
 		if _, delivered := t.local[item.CallID]; item.Status == "incomplete" && !delivered {
 			// Item completion can report interrupted generation, not complete input.
 			delete(t.pending, item.ID)
@@ -1792,6 +1793,7 @@ func (t *hpatchResponseTransform) transformResponse(payload []byte, terminalStat
 				continue
 			}
 			t.collectProviderCommentary(item.fields)
+			t.collectSubagentToolCall(item.fields)
 			message, err := t.transformStructuredCommentary(item.fields)
 			if err != nil {
 				return nil, nil, err

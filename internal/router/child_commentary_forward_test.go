@@ -92,7 +92,7 @@ func TestChildProviderCommentaryAdmissionAndDistinctSources(t *testing.T) {
 		if err := json.Unmarshal(event, &envelope); err != nil {
 			t.Fatal(err)
 		}
-		if commentaryText(t, envelope.Item) != "[/root/worker] Same authored text" {
+		if commentaryText(t, envelope.Item) != "[`/root/worker`] Same authored text" {
 			t.Fatalf("unexpected projection: %s", event)
 		}
 		ids = append(ids, jsonString(envelope.Item, "id"))
@@ -143,7 +143,7 @@ func TestChildProviderCommentaryForwardsWithoutChangingHistory(t *testing.T) {
 			if err := json.Unmarshal(visible, &response); err != nil || len(response.Output) != 1 {
 				t.Fatalf("root projection: %s, %v", visible, err)
 			}
-			if commentaryText(t, response.Output[0]) != "[/root/worker/nested] Checked the caller.\nThe result is consistent." {
+			if commentaryText(t, response.Output[0]) != "[`/root/worker/nested`] Checked the caller.\nThe result is consistent." {
 				t.Fatalf("attribution: %s", visible)
 			}
 			if output, err := other.TransformJSON([]byte(`{"output":[]}`)); err != nil || bytes.Contains(output, []byte("Checked the caller")) {

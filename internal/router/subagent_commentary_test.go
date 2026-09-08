@@ -57,7 +57,7 @@ func TestSubagentCommentaryJSONIsVisibleAndRemovedFromReplay(t *testing.T) {
 	if len(response.Output) != 4 {
 		t.Fatalf("output = %s", transformed)
 	}
-	if text := commentaryText(t, response.Output[0]); text != "[/root <- /root/explorer] Reply received:\n"+responseText {
+	if text := commentaryText(t, response.Output[0]); text != "[`/root` <- `/root/explorer`] Reply received:\n"+responseText {
 		t.Fatalf("response commentary = %q", text)
 	}
 	if jsonString(response.Output[1], "arguments") != spawnArguments ||

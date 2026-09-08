@@ -60,7 +60,7 @@ func TestActualChildActivityProjectsWithoutChangingChildResult(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			if !bytes.Contains(projected, []byte("[/root/alpha/nested] Checking cancellation.")) || !bytes.Contains(projected, []byte("Substantive result.")) {
+			if !bytes.Contains(projected, []byte("[`/root/alpha/nested`] Checking cancellation.")) || !bytes.Contains(projected, []byte("Substantive result.")) {
 				t.Fatal(string(projected))
 			}
 			untouched, err := other.TransformJSON(rootResponse)
@@ -76,7 +76,7 @@ func TestActualChildActivityProjectsWithoutChangingChildResult(t *testing.T) {
 			p.commentary.publish(token, "Late runtime progress.", false)
 			next, request := prepareActivityTest(t, p, "remapped-session", "root-thread", "", "/root", nil)
 			output, err := next.TransformJSON(rootResponse)
-			if err != nil || !bytes.Contains(output, []byte("since the last update")) || !bytes.Contains(output, []byte("[/root/alpha/nested] Late runtime progress.")) {
+			if err != nil || !bytes.Contains(output, []byte("since the last update")) || !bytes.Contains(output, []byte("[`/root/alpha/nested`] Late runtime progress.")) {
 				t.Fatal(string(output), err)
 			}
 			var response struct{ Output []map[string]json.RawMessage }
@@ -113,7 +113,7 @@ func TestSiblingReceiptAndOpaqueCallsKeepExactEnvelope(t *testing.T) {
 		t.Fatal(string(output))
 	}
 	output, err = root.TransformJSON([]byte(`{"status":"completed","output":[]}`))
-	if err != nil || !bytes.Contains(output, []byte("/root/beta <- /root/alpha")) || bytes.Contains(output, []byte("Follow-up requested.")) || bytes.Contains(output, []byte("opaque-secret")) || bytes.Contains(output, []byte("] [")) {
+	if err != nil || !bytes.Contains(output, []byte("`/root/beta` <- `/root/alpha`")) || bytes.Contains(output, []byte("Follow-up requested.")) || bytes.Contains(output, []byte("opaque-secret")) || bytes.Contains(output, []byte("] [")) {
 		t.Fatal(string(output), err)
 	}
 }

@@ -338,16 +338,33 @@ func attributedCommentary(author, text string) string {
 	if author == "" {
 		return text
 	}
-	prefix := "[" + author + "] "
+	prefix := "[" + commentaryCode(author) + "] "
 	if hasCommentaryAuthor(text, author) {
 		return text
 	}
 	return prefix + text
 }
 
-// Check the exact display prefix without allocating an author-sized string.
+// commentaryCode keeps backticks in names or previews from ending the code span.
+func commentaryCode(value string) string {
+	longest, run := 0, 0
+	for _, r := range value {
+		if r == '`' {
+			run++
+			longest = max(longest, run)
+		} else {
+			run = 0
+		}
+	}
+	fence := strings.Repeat("`", longest+1)
+	if longest > 0 || strings.HasPrefix(value, " ") || strings.HasSuffix(value, " ") {
+		return fence + " " + value + " " + fence
+	}
+	return fence + value + fence
+}
+
 func hasCommentaryAuthor(text, author string) bool {
-	return len(text) >= len(author)+3 && text[0] == '[' && text[1:1+len(author)] == author && text[1+len(author):3+len(author)] == "] "
+	return strings.HasPrefix(text, "["+commentaryCode(author)+"] ")
 }
 
 func (t *hpatchResponseTransform) operationCommentaryMessage(id, text string) map[string]json.RawMessage {

@@ -62,14 +62,23 @@ Collaboration calls add no router-authored request notices. Codex owns the nativ
 follow-up, messaging, waiting, and interruption display; schemas, executed arguments, and
 streamed call framing remain unchanged. The router never reads encrypted message arguments.
 
+Complete subagent tool calls are also forwarded as user-only activity, never as executable
+root calls. Each distinct call shows its qualified tool name as inline code and a single-line
+input preview, limited to 240 non-whitespace characters within the first 4 KiB and marked
+with an ellipsis when shortened. Collaboration and user-messaging arguments remain opaque:
+only their tool identity is displayed. Calls without textual input show only the tool name.
+The display describes an observed call, not successful execution or agent completion.
+JSON output, completed SSE items, and terminal output share source-identity deduplication;
+partial calls are not projected. Native child call framing and replay stay unchanged.
+
 Actual child-authored commentary is forwarded to the root through the shared activity collector,
 alongside authored tool and runtime progress. Completed assistant messages with `phase: "commentary"`
 retain their original child content and identity. Root copies carry the originating agent's
-canonical path, are deduplicated by source identity, and remain user-only. Final answers are
+canonical path as inline code, are deduplicated by source identity, and remain user-only. Final answers are
 not reclassified as progress.
 
 When a request receives an actual Codex inter-agent envelope addressed to its
-canonical agent name, commentary identifies both recipient and sender. Valid
+canonical agent name, commentary identifies both recipient and sender, each wrapped in inline code. Valid
 plaintext `MESSAGE` and `FINAL_ANSWER` payloads are shown in full as received replies,
 never as excerpts. Replies exceeding the auxiliary rendering budget are omitted
 from commentary without changing the original envelope. Encrypted envelopes show receipt
@@ -98,7 +107,7 @@ overflow suppresses reporting for the affected thread rather than showing a part
 in its terminal response object without emitting a later standalone item that collaboration
 could mistake for the child result. Usage commentary cannot become the terminal substantive result.
 
-Child operation and runtime commentary carries a `[/root/worker] ` prefix from the request’s
+Child operation and runtime commentary carries a ``[`/root/worker`] `` prefix from the request’s
 canonical `agent_name` when `subagent_kind` identifies a child. Root and older unnamed clients
 retain unprefixed commentary. An identical existing prefix is not duplicated. Runtime capabilities
 bind their author at creation; thread provenance retains that author across route expiry and
@@ -113,7 +122,7 @@ routing-session ID. Missing ancestry, cycles, conflicting identity, or exhausted
 auxiliary capacity suppress projection, not child output or tool execution.
 
 Child-authored commentary, operation, shell, and Code Mode progress enters the same collector as
-received inter-agent envelopes and existing critical-error notices.
+received inter-agent envelopes, tool-call displays, and existing critical-error notices.
 Errors are collected from the originating request before session-level deduplication,
 never attributed from another request's retained session queue. Projecting an error
 does not acknowledge the original session notice or

@@ -66,7 +66,7 @@ func TestReceivedReplyOverBudgetIsOmittedWithoutChangingInput(t *testing.T) {
 	if !bytes.Equal(fields["input"], original) {
 		t.Fatal("oversized reply changed model-visible input")
 	}
-	if len(messages) != 1 || commentaryText(t, messages[0]) != "[/root/b <- /root/a] Reply received:\nComplete small reply." {
+	if len(messages) != 1 || commentaryText(t, messages[0]) != "[`/root/b` <- `/root/a`] Reply received:\nComplete small reply." {
 		t.Fatal("oversized reply was excerpted or consumed the next reply's budget")
 	}
 }

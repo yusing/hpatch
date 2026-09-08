@@ -36,10 +36,10 @@ func TestChildCommentaryAttributionJSONAndSSE(t *testing.T) {
 			root := prepare("root", "root", "/root/alpha", "")
 			legacy := prepare("legacy", "legacy", "", "thread_spawn")
 			for i, transform := range []*hpatchResponseTransform{first, second, root, legacy} {
-				want := []string{"[/root/alpha] Checking.", "[/root/beta] Checking.", "Checking.", "Checking."}[i]
+				want := []string{"[`/root/alpha`] Checking.", "[`/root/beta`] Checking.", "Checking.", "Checking."}[i]
 				arguments := `{"commentary":"Checking."}`
 				if i == 1 {
-					arguments = `{"commentary":"[/root/beta] Checking."}`
+					arguments = string(mustTestJSON(t, map[string]string{"commentary": "[`/root/beta`] Checking."}))
 				}
 				call := map[string]any{"type": "function_call", "id": "item", "call_id": "call", "name": "lookup", "arguments": arguments}
 				var output []byte
@@ -59,7 +59,7 @@ func TestChildCommentaryAttributionJSONAndSSE(t *testing.T) {
 				if !bytes.Contains(output, []byte(want)) || bytes.Contains(output, []byte("] [")) {
 					t.Fatalf("attribution: %s", output)
 				}
-				if i >= 2 && bytes.Contains(output, []byte("[/root/")) {
+				if i >= 2 && bytes.Contains(output, []byte("[`/root/")) {
 					t.Fatalf("root/legacy relabeled: %s", output)
 				}
 				replay := &parsedResponsesRequest{fields: map[string]json.RawMessage{"input": mustTestJSON(t, []any{assistantCommentaryMessage(commentaryMessageID("call"), want), map[string]any{"type": "function_call", "id": "item", "call_id": "call", "name": "lookup", "arguments": "{}"}})}}
@@ -82,7 +82,7 @@ func TestChildCommentaryAttributionJSONAndSSE(t *testing.T) {
 				t.Fatal("Code Mode publication missing")
 			}
 			message := second.runtimeCommentaryMessage(publications[0])
-			if message == nil || !bytes.Contains(message["content"], []byte("[/root/beta] Code work.")) {
+			if message == nil || !bytes.Contains(message["content"], []byte("[`/root/beta`] Code work.")) {
 				t.Fatalf("Code Mode attribution: %s", mustTestJSON(t, message))
 			}
 			// A capability's author survives its creator and a later request with absent metadata.
@@ -112,7 +112,7 @@ func TestChildCommentaryAttributionJSONAndSSE(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			if !bytes.Contains(output, []byte("[/root/alpha] Deferred work.")) || strings.LastIndex(string(output), "Actual child answer.") < strings.LastIndex(string(output), "Deferred work.") {
+			if !bytes.Contains(output, []byte("[`/root/alpha`] Deferred work.")) || strings.LastIndex(string(output), "Actual child answer.") < strings.LastIndex(string(output), "Deferred work.") {
 				t.Fatalf("deferred author/result: %s", output)
 			}
 			if events := proxy.drainCommentarySession(second.historySessionID, second.shellThreadID); len(events) != 0 {
@@ -124,7 +124,7 @@ func TestChildCommentaryAttributionJSONAndSSE(t *testing.T) {
 
 func TestRuntimeCommentaryRenderedByteBudget(t *testing.T) {
 	author := "/root/worker"
-	prefix := "[" + author + "] "
+	prefix := "[" + commentaryCode(author) + "] "
 	b := newCommentaryBroker()
 	oversized := "/root/" + strings.Repeat("a", maxCommentaryPublicationBytes)
 	if b.subscribe("session", "call", oversized) != "" || b.subscribeThread("session", "thread", oversized) != "" {

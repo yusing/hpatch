@@ -75,7 +75,7 @@ func newCommentaryBroker() *commentaryBroker {
 }
 
 func (b *commentaryBroker) subscribe(sessionID, callID, author string) string {
-	if len(author) > maxCommentaryPublicationBytes-3 {
+	if len(author) > maxCommentaryPublicationBytes || len(commentaryCode(author))+3 > maxCommentaryPublicationBytes {
 		return ""
 	}
 	b.mu.Lock()
@@ -101,7 +101,7 @@ func (b *commentaryBroker) subscribe(sessionID, callID, author string) string {
 // subscribeThread reuses the thread capability while refreshing its current replay session.
 // The broker never calls back into the proxy: proxy locks may precede this lock.
 func (b *commentaryBroker) subscribeThread(sessionID, threadID, author string) string {
-	if sessionID == "" || threadID == "" || len(author) > maxCommentaryPublicationBytes-3 {
+	if sessionID == "" || threadID == "" || len(author) > maxCommentaryPublicationBytes || len(commentaryCode(author))+3 > maxCommentaryPublicationBytes {
 		return ""
 	}
 	b.mu.Lock()
@@ -158,7 +158,7 @@ func (b *commentaryBroker) publish(token, text string, complete bool) bool {
 	// Oversized auxiliary text still reaches completion handling below.
 	renderedFits := len(text) <= maxCommentaryPublicationBytes
 	if route.author != "" && !hasCommentaryAuthor(text, route.author) {
-		renderedFits = renderedFits && len(route.author)+3 <= maxCommentaryPublicationBytes-len(text)
+		renderedFits = renderedFits && len(commentaryCode(route.author))+3 <= maxCommentaryPublicationBytes-len(text)
 	}
 	if renderedFits && strings.TrimSpace(text) != "" && withinRouteCapacity && b.eventCount < maxCommentaryEvents {
 		route.nextID++

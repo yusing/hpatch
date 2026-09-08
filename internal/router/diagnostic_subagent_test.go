@@ -45,7 +45,7 @@ func TestSubagentDiagnosticPlaybackAndReplay(t *testing.T) {
 						}
 						break
 					}
-					if step == 0 && mode != "deferred" && (!strings.Contains(body, "[/root/diagnostic_alpha]") || !strings.Contains(body, "[/root/diagnostic_beta]")) {
+					if step == 0 && mode != "deferred" && (!strings.Contains(body, "[`/root/diagnostic_alpha`]") || !strings.Contains(body, "[`/root/diagnostic_beta`]")) {
 						t.Fatal("attribution missing", body)
 					}
 					if step == 1 && (!strings.Contains(body, "since the last update") || !strings.Contains(body, "substantive answer unchanged")) {

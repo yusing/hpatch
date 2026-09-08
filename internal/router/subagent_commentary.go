@@ -52,9 +52,9 @@ func prepareSubagentInputCommentary(fields map[string]json.RawMessage, recipient
 		if _, alreadyVisible := visible[id]; alreadyVisible {
 			continue
 		}
-		label := "[" + recipient + " <- " + sender + "] Message received."
+		label := "[" + commentaryCode(recipient) + " <- " + commentaryCode(sender) + "] Message received."
 		if text != "" {
-			label = "[" + recipient + " <- " + sender + "] Reply received:\n" + text
+			label = "[" + commentaryCode(recipient) + " <- " + commentaryCode(sender) + "] Reply received:\n" + text
 		}
 		if len(label) <= budget && len(commentary) < maxCommentaryEventsPerRoute {
 			budget -= len(label)
