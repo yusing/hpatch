@@ -40,5 +40,14 @@ func Path(root, threadID string) (string, error) {
 	if err := ValidateID(threadID); err != nil {
 		return "", fmt.Errorf("thread ID: %w", err)
 	}
-	return filepath.Join(root, "hpatch-"+threadID, ".runtime"), nil
+	return filepath.Join(root, "hpatch-runtime-"+threadID), nil
+}
+
+// ScriptsPath locates the exclusively-created storage for a thread's active
+// retained artifacts. It is separate from the persistent flat runtime locator.
+func ScriptsPath(root, threadID string) (string, error) {
+	if err := ValidateID(threadID); err != nil {
+		return "", fmt.Errorf("thread ID: %w", err)
+	}
+	return filepath.Join(root, "hpatch-scripts-"+threadID), nil
 }

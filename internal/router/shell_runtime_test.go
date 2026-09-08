@@ -22,13 +22,14 @@ func TestPreparedRequestStoresCurrentShellRuntime(t *testing.T) {
 	if target != proxy.registry.shellRuntime {
 		t.Fatalf("runtime target = %q, want %q", target, proxy.registry.shellRuntime)
 	}
-	if transform.shellDirectory != filepath.Join(filepath.Dir(runtimePath), "scripts") {
-		t.Fatalf("shell directory = %q, want scripts below %q", transform.shellDirectory, filepath.Dir(runtimePath))
+	scriptsPath, err := shellruntime.ScriptsPath(proxy.shellDirectory, "thread-1")
+	if err != nil || transform.shellDirectory != scriptsPath {
+		t.Fatalf("shell directory = %q, want %q: %v", transform.shellDirectory, scriptsPath, err)
 	}
 	if err := proxy.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Lstat(filepath.Dir(runtimePath)); !errors.Is(err, os.ErrNotExist) {
+	if _, err := os.Lstat(runtimePath); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("thread runtime survived proxy close: %v", err)
 	}
 }
@@ -40,30 +41,59 @@ func TestShellRuntimeRejectsTraversalAndSymlinkDirectories(t *testing.T) {
 			t.Fatalf("accepted thread ID %q", id)
 		}
 	}
-	for _, component := range []string{"thread", "scripts"} {
-		t.Run(component, func(t *testing.T) {
-			outside := t.TempDir()
-			sentinel := filepath.Join(outside, ".runtime")
-			if err := os.WriteFile(sentinel, []byte("untouched"), 0o600); err != nil {
+	outside := t.TempDir()
+	sentinel := filepath.Join(outside, ".runtime")
+	if err := os.WriteFile(sentinel, []byte("untouched"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	directory, err := shellruntime.ScriptsPath(proxy.shellDirectory, "symlink-scripts")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, directory); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := proxy.storeShellRuntime("symlink-scripts"); err != nil {
+		t.Fatalf("launcher depended on scripts: %v", err)
+	}
+	if _, retained := proxy.retainShell(directory, "call", "changed"); retained {
+		t.Fatal("accepted symlink script storage")
+	}
+	if got, err := os.ReadFile(sentinel); err != nil || string(got) != "untouched" {
+		t.Fatalf("outside launcher changed: %q, %v", got, err)
+	}
+}
+
+func TestShellRuntimePreservesReplacementLocators(t *testing.T) {
+	for _, replacement := range []string{"file", "directory", "symlink"} {
+		t.Run(replacement, func(t *testing.T) {
+			proxy, _ := newShellStorageTestProxy(t)
+			path := testShellRuntimePath(t, proxy.shellDirectory, "thread-id")
+			if err := os.Remove(path); err != nil {
 				t.Fatal(err)
 			}
-			threadID := "symlink-" + component
-			thread := filepath.Join(proxy.shellDirectory, "hpatch-"+threadID)
-			link := thread
-			if component == "scripts" {
-				if err := os.Mkdir(thread, 0o700); err != nil {
+			switch replacement {
+			case "file":
+				if err := os.WriteFile(path, []byte("keep"), 0o600); err != nil {
 					t.Fatal(err)
 				}
-				link = filepath.Join(thread, "scripts")
+			case "directory":
+				if err := os.Mkdir(path, 0o700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(path, "sentinel"), []byte("keep"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			case "symlink":
+				if err := os.Symlink("/another-router-worker", path); err != nil {
+					t.Fatal(err)
+				}
 			}
-			if err := os.Symlink(outside, link); err != nil {
+			if err := proxy.Close(); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := proxy.storeShellRuntime(threadID); err == nil {
-				t.Fatal("accepted symlink storage directory")
-			}
-			if got, err := os.ReadFile(sentinel); err != nil || string(got) != "untouched" {
-				t.Fatalf("outside launcher changed: %q, %v", got, err)
+			if _, err := os.Lstat(path); err != nil {
+				t.Fatalf("replacement locator removed: %v", err)
 			}
 		})
 	}

@@ -160,7 +160,7 @@ func TestShellRunnerReadsRetainedHReadArtifact(t *testing.T) {
 		}
 	})
 	runtimeDirectory := t.TempDir()
-	retainedDirectory := filepath.Join(runtimeDirectory, "hpatch-thread-id", "scripts")
+	retainedDirectory := filepath.Join(runtimeDirectory, "hpatch-scripts-thread-id")
 	if err := os.MkdirAll(retainedDirectory, 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -207,8 +207,8 @@ func TestShellRunnerConfinesRetainedHReadArtifact(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	threadDirectory := filepath.Join(runtimeDirectory, "hpatch-thread-id")
-	if err := os.MkdirAll(filepath.Join(threadDirectory, "scripts"), 0o700); err != nil {
+	threadDirectory := filepath.Join(runtimeDirectory, "hpatch-scripts-thread-id")
+	if err := os.MkdirAll(threadDirectory, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("HPATCH_RUNTIME_DIR", runtimeDirectory)
@@ -221,7 +221,7 @@ func TestShellRunnerConfinesRetainedHReadArtifact(t *testing.T) {
 		}
 	}
 	for _, reference := range []string{
-		"@shell/../hpatch-other/scripts/call-id",
+		"@shell/../hpatch-scripts-other/call-id",
 		"@shell//absolute",
 		"@shell/.runtime",
 	} {
@@ -234,23 +234,13 @@ func TestShellRunnerConfinesRetainedHReadArtifact(t *testing.T) {
 	}
 	t.Setenv("HPATCH_RUNTIME_DIR", runtimeDirectory)
 
-	if err := os.Symlink(outsideDirectory, filepath.Join(runtimeDirectory, "hpatch-thread-link")); err != nil {
+	if err := os.Symlink(outsideDirectory, filepath.Join(runtimeDirectory, "hpatch-scripts-thread-link")); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("CODEX_THREAD_ID", "thread-link")
 	assertRejected("hread @shell/call-id")
 
-	scriptsLinkThread := filepath.Join(runtimeDirectory, "hpatch-scripts-link")
-	if err := os.Mkdir(scriptsLinkThread, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(filepath.Join(outsideDirectory, "scripts"), filepath.Join(scriptsLinkThread, "scripts")); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("CODEX_THREAD_ID", "scripts-link")
-	assertRejected("hread @shell/call-id")
-
-	artifactLinkDirectory := filepath.Join(runtimeDirectory, "hpatch-artifact-link", "scripts")
+	artifactLinkDirectory := filepath.Join(runtimeDirectory, "hpatch-scripts-artifact-link")
 	if err := os.MkdirAll(artifactLinkDirectory, 0o700); err != nil {
 		t.Fatal(err)
 	}

@@ -123,6 +123,8 @@ type hpatchProxy struct {
 	shellDirectory         string
 	titles                 *sessionTitleCache
 	shellSessions          map[string]*shellSession
+	shellParent            *os.Root
+	shellLeases            sync.WaitGroup
 	commentary             *commentaryBroker
 	commentaryEndpoint     string
 
@@ -162,13 +164,22 @@ func (p *hpatchProxy) Close() error {
 		return nil
 	}
 	p.mu.Lock()
-	defer p.mu.Unlock()
 	p.closed = true
+	p.mu.Unlock()
+	// New leases are rejected after closed is set. Existing operations finish
+	// before shutdown removes retained files or closes their shared anchor.
+	p.shellLeases.Wait()
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	var cleanupErr error
 	for _, session := range p.shellSessions {
 		cleanupErr = errors.Join(cleanupErr, session.close())
 	}
 	clear(p.shellSessions)
+	if p.shellParent != nil {
+		cleanupErr = errors.Join(cleanupErr, p.shellParent.Close())
+		p.shellParent = nil
+	}
 	clear(p.sessions)
 	clear(p.activeSessions)
 	p.historyBytes = 0
@@ -975,10 +986,14 @@ func (t *hpatchResponseTransform) evaluateScript(
 	}
 	attemptContext := hpatch.WithAttemptMetadata(t.ctx, attemptMetadata)
 	if retainedApply {
-		root, openErr := t.proxy.shellRoot(t.shellDirectory)
+		root, release, openErr := t.proxy.shellRoot(t.shellDirectory)
+		if errors.Is(openErr, errRetainedShellUnavailable) {
+			return t.rejectUnevaluated(attemptMetadata.ToolName, callID, input, openErr, attemptMetadata, "", nil, upstreamItem)
+		}
 		if openErr != nil {
 			return hpatchHistory{}, fmt.Errorf("open retained shell directory: %w", openErr)
 		}
+		defer release()
 		applier, ok := t.proxy.translator.(hpatchApplier)
 		if !ok {
 			return hpatchHistory{}, errors.New("hpatch translator cannot apply retained shell edits")

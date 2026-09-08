@@ -94,7 +94,8 @@ executor calls.
 Built-in shell and its private hread, hgrep, hsymbol, and inspect_file commands are the exception
 to that frontend path. The PATH-installed `shell` name is a fixed shared locator, not a snapshot
 wrapper or plugin implementation. For each eligible thread, the router writes one direct
-`.runtime` link under `hpatch-$CODEX_THREAD_ID` to the current private `shell` wrapper in the
+`hpatch-runtime-$CODEX_THREAD_ID` link directly below the runtime directory to the current private
+`shell` wrapper in the
 authenticated snapshot. The locator reads that link and replaces itself with its target. Bash
 and POSIX evaluation dispatch private commands from the resolved worker after shell expansion, so none of the four
 private names creates a snapshot wrapper, stable frontend, or `PATH` dependency.

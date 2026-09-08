@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 	"unicode/utf8"
@@ -16,19 +17,50 @@ import (
 	"github.com/yusing/hpatch/internal/shellsyntax"
 )
 
-// A session pins both the private script tree and its cleanup parent. Neither
-// model references nor later symlink replacements can redirect its operations.
+// A session acquires its script directory only by exclusive creation. Its live
+// root, never a historical inode snapshot or a replacement pathname, authorizes
+// recursive cleanup. The proxy owns one shared parent capability for all threads.
 type shellSession struct {
-	parent  *os.Root
-	thread  *os.Root
-	scripts *os.Root
-	name    string
-	timers  map[string]*time.Timer
+	parent        *os.Root
+	scripts       *os.Root
+	name          string
+	runtimeName   string
+	runtimeTarget string
+	timers        map[string]*time.Timer // nil timer means expired, awaiting leases
+	leases        int
 }
 
-func (s *shellSession) close() error {
-	for _, timer := range s.timers {
-		timer.Stop()
+var errRetainedShellUnavailable = errors.New("retained shell storage is unavailable")
+
+func (s *shellSession) createStorage() error {
+	if s.scripts != nil {
+		return nil
+	}
+	// An unexpected existing directory is not ours, even if an old inode number
+	// has been recycled. Do not open it for either application or cleanup.
+	if err := s.parent.Mkdir(s.name, 0o700); err != nil {
+		return err
+	}
+	root, err := openExistingShellDirectory(s.parent, s.name)
+	if err != nil {
+		// Opening can fail transiently after Mkdir (for example, EMFILE). Only
+		// roll back an empty directory entry, without traversing replacements.
+		info, cleanupErr := s.parent.Lstat(s.name)
+		if cleanupErr == nil && info.IsDir() {
+			cleanupErr = s.parent.Remove(s.name)
+		}
+		if errors.Is(cleanupErr, os.ErrNotExist) {
+			cleanupErr = nil
+		}
+		return errors.Join(err, cleanupErr)
+	}
+	s.scripts = root
+	return nil
+}
+
+func (s *shellSession) retireStorage() error {
+	if s.scripts == nil {
+		return nil
 	}
 	var cleanupErr error
 	entries, err := fs.ReadDir(s.scripts.FS(), ".")
@@ -36,14 +68,40 @@ func (s *shellSession) close() error {
 	for _, entry := range entries {
 		cleanupErr = errors.Join(cleanupErr, s.scripts.RemoveAll(entry.Name()))
 	}
-	if err := s.thread.Remove(".runtime"); err != nil && !errors.Is(err, os.ErrNotExist) {
-		cleanupErr = errors.Join(cleanupErr, err)
+	cleanupErr = errors.Join(cleanupErr, removeShellDirectory(s.parent, s.name, s.scripts), s.scripts.Close())
+	s.scripts = nil
+	return cleanupErr
+}
+
+func (s *shellSession) retireIdle() {
+	if s.leases != 0 {
+		return
 	}
-	cleanupErr = errors.Join(cleanupErr,
-		removeShellDirectory(s.thread, "scripts", s.scripts),
-		removeShellDirectory(s.parent, s.name, s.thread),
-	)
-	return errors.Join(cleanupErr, s.scripts.Close(), s.thread.Close(), s.parent.Close())
+	for name, timer := range s.timers {
+		if timer == nil {
+			_ = s.scripts.Remove(name)
+			delete(s.timers, name)
+		}
+	}
+	if len(s.timers) == 0 {
+		_ = s.retireStorage()
+	}
+}
+
+func (s *shellSession) close() error {
+	for _, timer := range s.timers {
+		if timer != nil {
+			timer.Stop()
+		}
+	}
+	cleanupErr := s.retireStorage()
+	// A flat launcher is only unlinked, never traversed or recursively removed.
+	// Matching the worker target preserves a newer router's locator and makes
+	// missing or replaced script storage irrelevant to launcher cleanup.
+	if target, err := s.parent.Readlink(s.runtimeName); err == nil && target == s.runtimeTarget {
+		cleanupErr = errors.Join(cleanupErr, s.parent.Remove(s.runtimeName))
+	}
+	return cleanupErr
 }
 
 func removeShellDirectory(parent *os.Root, name string, owned *os.Root) error {
@@ -61,18 +119,28 @@ func removeShellDirectory(parent *os.Root, name string, owned *os.Root) error {
 	if !os.SameFile(identity, current) {
 		return nil
 	}
-	// Never recurse through a name that another writer can replace. A final
-	// replacement with a nonempty directory must survive even after this check.
+	// The live owned root pins its inode through this comparison. Never recurse
+	// through the name; even a final replacement with a nonempty directory survives.
 	return parent.Remove(name)
 }
 
-func (s *shellSession) setRuntime(worker string) error {
-	// Removing the launcher link does not follow its target. Scripts are kept in
-	// a separate capability so retained edits cannot replace this launcher.
-	if err := s.thread.Remove(".runtime"); err != nil && !errors.Is(err, os.ErrNotExist) {
+func setShellRuntime(parent *os.Root, name, worker string) error {
+	current, err := parent.Lstat(name)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
-	return s.thread.Symlink(worker, ".runtime")
+	if err == nil {
+		if current.Mode()&os.ModeSymlink == 0 {
+			return errors.New("shell runtime locator is not a symbolic link")
+		}
+		if target, err := parent.Readlink(name); err == nil && target == worker {
+			return nil
+		}
+		if err := parent.Remove(name); err != nil {
+			return err
+		}
+	}
+	return parent.Symlink(worker, name)
 }
 
 func (p *hpatchProxy) storeShellRuntime(threadID string) (string, error) {
@@ -80,47 +148,35 @@ func (p *hpatchProxy) storeShellRuntime(threadID string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	directory := filepath.Join(filepath.Dir(runtimePath), "scripts")
+	directory, err := shellruntime.ScriptsPath(p.shellDirectory, threadID)
+	if err != nil {
+		return "", err
+	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.closed {
 		return "", errors.New("hpatch proxy is closed")
 	}
-	if session, ok := p.shellSessions[directory]; ok {
-		return directory, session.setRuntime(p.registry.shellRuntime)
+	if p.shellParent == nil {
+		p.shellParent, err = os.OpenRoot(p.shellDirectory)
+		if err != nil {
+			return "", err
+		}
 	}
-	parent, err := os.OpenRoot(p.shellDirectory)
-	if err != nil {
+	runtimeName := filepath.Base(runtimePath)
+	if err := setShellRuntime(p.shellParent, runtimeName, p.registry.shellRuntime); err != nil {
 		return "", err
 	}
-	name := filepath.Base(filepath.Dir(runtimePath))
-	thread, err := openShellDirectory(parent, name)
-	if err != nil {
-		_ = parent.Close()
-		return "", err
+	if session := p.shellSessions[directory]; session != nil {
+		session.runtimeTarget = p.registry.shellRuntime
+	} else {
+		p.shellSessions[directory] = &shellSession{
+			parent: p.shellParent, name: filepath.Base(directory),
+			runtimeName: runtimeName, runtimeTarget: p.registry.shellRuntime,
+			timers: make(map[string]*time.Timer),
+		}
 	}
-	scripts, err := openShellDirectory(thread, "scripts")
-	if err != nil {
-		_ = thread.Close()
-		_ = parent.Close()
-		return "", err
-	}
-	session := &shellSession{parent: parent, thread: thread, scripts: scripts, name: name, timers: make(map[string]*time.Timer)}
-	if err := session.setRuntime(p.registry.shellRuntime); err != nil {
-		_ = scripts.Close()
-		_ = thread.Close()
-		_ = parent.Close()
-		return "", err
-	}
-	p.shellSessions[directory] = session
 	return directory, nil
-}
-
-func openShellDirectory(parent *os.Root, name string) (*os.Root, error) {
-	if err := parent.Mkdir(name, 0o700); err != nil && !errors.Is(err, os.ErrExist) {
-		return nil, err
-	}
-	return openExistingShellDirectory(parent, name)
 }
 
 func openExistingShellDirectory(parent *os.Root, name string) (*os.Root, error) {
@@ -150,7 +206,7 @@ func openRetainedShellFile(directory, threadID, reference string) (*os.File, err
 	if !filepath.IsAbs(directory) {
 		return nil, fmt.Errorf("%s must be an absolute path", shellruntime.RuntimeDirectoryEnvironment)
 	}
-	runtimePath, err := shellruntime.Path(directory, threadID)
+	scriptsPath, err := shellruntime.ScriptsPath(directory, threadID)
 	if err != nil {
 		return nil, err
 	}
@@ -159,12 +215,7 @@ func openRetainedShellFile(directory, threadID, reference string) (*os.File, err
 		return nil, err
 	}
 	defer parent.Close()
-	thread, err := openExistingShellDirectory(parent, filepath.Base(filepath.Dir(runtimePath)))
-	if err != nil {
-		return nil, err
-	}
-	defer thread.Close()
-	scripts, err := openExistingShellDirectory(thread, "scripts")
+	scripts, err := openExistingShellDirectory(parent, filepath.Base(scriptsPath))
 	if err != nil {
 		return nil, err
 	}
@@ -206,17 +257,33 @@ func openRegularShellFile(root *os.Root, name string) (*os.File, error) {
 	return file, nil
 }
 
-func (p *hpatchProxy) shellRoot(directory string) (*os.Root, error) {
-	p.mu.RLock()
-	defer p.mu.RUnlock()
+// shellRoot leases the private capability across the complete read or Apply.
+// Expiry and shutdown cannot remove its files or close its roots until release.
+func (p *hpatchProxy) shellRoot(directory string) (*os.Root, func(), error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	if p.closed {
-		return nil, errors.New("hpatch proxy is closed")
+		return nil, nil, errors.New("hpatch proxy is closed")
 	}
 	session, ok := p.shellSessions[directory]
 	if !ok {
-		return nil, errors.New("retained shell storage is unavailable")
+		return nil, nil, errRetainedShellUnavailable
 	}
-	return session.scripts, nil
+	if session.scripts == nil {
+		return nil, nil, errRetainedShellUnavailable
+	}
+	session.leases++
+	p.shellLeases.Add(1)
+	release := sync.OnceFunc(func() {
+		defer p.shellLeases.Done()
+		p.mu.Lock()
+		defer p.mu.Unlock()
+		session.leases--
+		if !p.closed {
+			session.retireIdle()
+		}
+	})
+	return session.scripts, release, nil
 }
 
 func (p *hpatchProxy) retainShell(directory, callID, script string) (string, bool) {
@@ -229,6 +296,10 @@ func (p *hpatchProxy) retainShell(directory, callID, script string) (string, boo
 	if p.closed || !ok {
 		return "", false
 	}
+	if err := session.createStorage(); err != nil {
+		return "", false
+	}
+	defer session.retireIdle()
 	if _, pendingExpiry := session.timers[callID]; pendingExpiry {
 		return "", false
 	}
@@ -247,8 +318,8 @@ func (p *hpatchProxy) retainShell(directory, callID, script string) (string, boo
 		p.mu.Lock()
 		defer p.mu.Unlock()
 		if !p.closed {
-			_ = session.scripts.Remove(callID)
-			delete(session.timers, callID)
+			session.timers[callID] = nil
+			session.retireIdle()
 		}
 	})
 	return shellArtifactPrefix + callID, true
@@ -256,6 +327,7 @@ func (p *hpatchProxy) retainShell(directory, callID, script string) (string, boo
 
 func (p *hpatchProxy) resolveShellInput(directory, input string) (string, error) {
 	seen := make(map[string]bool)
+	var root *os.Root
 	for {
 		parsed, err := shellsyntax.Parse(input)
 		if err != nil {
@@ -272,9 +344,13 @@ func (p *hpatchProxy) resolveShellInput(directory, input string) (string, error)
 			return "", errors.New("retained shell reference cycle")
 		}
 		seen[name] = true
-		root, err := p.shellRoot(directory)
-		if err != nil {
-			return "", err
+		if root == nil {
+			var release func()
+			root, release, err = p.shellRoot(directory)
+			if err != nil {
+				return "", err
+			}
+			defer release()
 		}
 		file, err := openRegularShellFile(root, name)
 		if err != nil {

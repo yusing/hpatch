@@ -99,11 +99,26 @@ Missing, cyclic, traversing, and symlink-escaping references reject without exec
 Invalid retention IDs or existing artifact names yield `retained: false` without overwriting
 files or changing execution of an otherwise valid shell call.
 
-Retained scripts occupy a separate `scripts` directory below the thread runtime directory.
-Retention writes, reads, edits, expiry, and shutdown cleanup remain confined even when a
-storage pathname is subsequently replaced by an escaping symlink. Artifacts expire after
-one hour; shutdown cancels expiry callbacks and removes owned thread storage. Reruns retain
-the resolved script body while conversation replay preserves the original reference call.
+Thread runtime locators are flat `hpatch-runtime-<thread-id>` symlinks below the runtime
+directory. Active retained scripts occupy sibling `hpatch-scripts-<thread-id>` directories.
+One shared pinned parent capability anchors this namespace. Launcher preparation creates no
+script storage and retains no per-thread directory handles. A retained-script directory is
+created exclusively for each active storage lifetime; an unexpected existing directory or
+symlink rejects retention rather than becoming application or cleanup authority. If the
+initial capability open fails, preparation rolls back only the new empty directory entry;
+nonempty or non-directory replacements are preserved, and a transient failure can be retried.
+
+Artifacts expire after one hour. Live storage roots remain pinned while artifacts or router-side
+read/edit leases exist. Expiry waits for those operations before deleting their artifacts.
+Last expiry removes the owned script directory through its live capability and closes that
+capability. A later retention starts with another exclusive directory creation; an idle session
+never reopens a historical directory for editing or recursive cleanup. Reads, edits, expiry,
+and cleanup remain confined when a storage pathname is replaced by an escaping symlink.
+Launcher refresh remains independent of script-storage availability. Shutdown rejects new
+leases, waits for existing operations, cancels expiry callbacks, cleans active owned storage,
+unlinks only flat locators still targeting this router's worker, and closes the shared parent.
+Replacement locator files or directories are never traversed or recursively removed. Reruns
+retain the resolved script body while conversation replay preserves the original reference call.
 
 Acceptance:
 

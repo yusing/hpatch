@@ -141,14 +141,14 @@ must see the same absolute runtime directory and executable resources; the fixed
 shell locator remains on the executor PATH.
 
 The shell runtime owner validates thread and artifact IDs before treating them as single
-filesystem components. It pins the thread's separate `scripts` directory with `os.Root` for
+filesystem components. It pins the thread's active `hpatch-scripts-<thread-id>` directory with `os.Root` for
 retention, rerun resolution, and private hpatch application. Exclusive artifact creation
 cannot follow a preexisting symlink or overwrite an existing artifact. Expiry uses the pinned
 script root; shutdown cancels timers and cleans the owned contents through pinned roots.
 It removes only empty directory entries whose identities still match those roots, never
 recursively deleting a replacement pathname. Directory opening verifies the opened identity
 against the checked entry, and nonblocking file opening rejects FIFO replacements before
-reading. The `.runtime` launcher is outside the script capability.
+reading. The flat runtime locator is outside the script capability.
 The router resolves `#!script` references before calling the shell plugin parser, which
 rejects unresolved references and performs no retained-file reads. Nested references remain
 within the same script root and cycles reject. Replay retains the original call, while a
@@ -162,8 +162,13 @@ immutable process-scoped worker snapshot. Locator-launched shell and symlink-lau
 children read that snapshot and verify its registry identity before loading an implementation. A child never rediscovers or
 executes the live configuration directory. Changing a configured module therefore cannot alter
 served tool behavior before restart. Missing, corrupted, or mismatched snapshot state fails the
-child honestly. Shutdown cleanup owns thread runtime directories, configured session frontends,
-snapshot wrappers, and the shared snapshot.
+child honestly. Router shell storage owns one pinned runtime parent, flat per-thread launcher
+symlinks, and exclusively-created active script directories. Artifact and operation leases keep
+script capabilities alive; only those live capabilities authorize recursive cleanup. Idle sessions
+never reopen directory identity snapshots. Locator cleanup matches the router worker target and
+only unlinks the locator; this is not authentication or isolation from arbitrary same-user
+filesystem tampering. Shutdown cleanup owns these locators and active script capabilities,
+configured session frontends, snapshot wrappers, and the shared snapshot.
 
 The response transformer uses registry membership instead of hardcoded tool-name predicates for
 JSON, SSE, and replay. One status-aware terminal projection restores both JSON and every SSE
