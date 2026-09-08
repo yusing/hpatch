@@ -27,6 +27,14 @@ initialization, accepted edits, and actual indentation corrections. Hypothetical
 and syntax-subset snapshots use the same projector without replacing the editor's snapshot.
 Consumers retain their distinct aggregation, distance, deletion, and endpoint policies.
 
+`syntax_cascade.go` owns the common diagnostic cascade reducer. Go and Tree-sitter adapters
+normalize diagnostics to generated line numbers and reparse callbacks; the reducer returns
+original diagnostic indices, caches remaining failure lines once per candidate repair line,
+and searches earlier repair locations in order. Each trial blanks only that repair line in
+the original candidate source, preserving byte positions and terminators. Same-line diagnostics
+keep their distinct columns and payloads. Go retains each incoming diagnostic's occurrence
+accounting; Tree-sitter retains the selected repair diagnostic's complete node identity.
+
 One shared pure verified-row owner computes and renders `LINE:HASH` identity for routed
 reads under `REQ-READ-001`, target validation, repair context, and final-state previews.
 Target resolution checks the specified one-based line and, when that check fails,

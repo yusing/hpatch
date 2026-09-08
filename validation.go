@@ -449,126 +449,45 @@ func discoverGoSyntaxFailures(ctx context.Context, content string, initial error
 	}
 }
 
-// collapseGoSyntaxCascades collapses cascading Go syntax failures to their root causes.
+// collapseGoSyntaxCascades keeps Go's original occurrence accounting while
+// projecting cascades to their earlier repair diagnostic.
 func collapseGoSyntaxCascades(ctx context.Context, content string, failures []goSyntaxFailure) []goSyntaxFailure {
-	locations := make([]goSyntaxFailure, 0, len(failures))
-	collapsed := make([]goSyntaxFailure, 0, len(failures))
-	remainingByRepairLine := make(map[int]map[int]struct{})
-	for _, failure := range failures {
-		if ctx.Err() != nil {
-			return collapsed
+	linesOf := func(failures []goSyntaxFailure) []int {
+		lines := make([]int, len(failures))
+		for i, failure := range failures {
+			lines[i] = failure.line
 		}
-		mapped := false
-		for _, location := range locations {
-			if failure.line == location.line {
-				mapped = true
-				break
-			}
-			if location.line < 1 {
-				continue
-			}
-			remaining, ok := remainingByRepairLine[location.line]
-			if !ok {
-				if ctx.Err() != nil {
-					return collapsed
-				}
-				remaining = goSyntaxFailureLinesAfterBlank(content, location.line)
-				remainingByRepairLine[location.line] = remaining
-			}
-			if _, remains := remaining[failure.line]; !remains {
-				counted := failure.counted
-				failure = location
-				failure.counted = counted
-				mapped = true
-				break
-			}
-		}
-		if !mapped {
-			locations = append(locations, failure)
-		}
-		collapsed = append(collapsed, failure)
+		return lines
+	}
+	origins := syntaxCascadeOrigins(ctx, content, linesOf(failures), func(source string) []int {
+		return linesOf(parseGoSyntaxFailures(source))
+	})
+	collapsed := make([]goSyntaxFailure, len(origins))
+	for i, origin := range origins {
+		collapsed[i] = failures[origin]
+		collapsed[i].counted = failures[i].counted
 	}
 	return collapsed
 }
 
-// goSyntaxFailureLinesAfterBlank returns the failure lines that remain after blanking a repair line.
-func goSyntaxFailureLinesAfterBlank(content string, repairLine int) map[int]struct{} {
-	candidate, ok := blankGeneratedLine(content, repairLine)
-	if !ok {
-		return nil
-	}
-	lines := make(map[int]struct{})
-	for _, failure := range parseGoSyntaxFailures(candidate) {
-		lines[failure.line] = struct{}{}
-	}
-	return lines
-}
-
-// collapseLanguageSyntaxCascades collapses cascading language syntax failures to their root causes.
+// collapseLanguageSyntaxCascades retains the selected Tree-sitter diagnostic's
+// complete payload, including its missing-node identity.
 func collapseLanguageSyntaxCascades(ctx context.Context, content string, language indentationWrapperLanguage, failures []languageSyntaxFailure) []languageSyntaxFailure {
-	locations := make([]languageSyntaxFailure, 0, len(failures))
-	collapsed := make([]languageSyntaxFailure, 0, len(failures))
-	remainingByRepairLine := make(map[int]map[int]struct{})
-	for _, failure := range failures {
-		if ctx.Err() != nil {
-			return collapsed
+	linesOf := func(failures []languageSyntaxFailure) []int {
+		lines := make([]int, len(failures))
+		for i, failure := range failures {
+			lines[i] = failure.line
 		}
-		mapped := false
-		for _, location := range locations {
-			if failure.line == location.line {
-				mapped = true
-				break
-			}
-			if location.line < 1 {
-				continue
-			}
-			remaining, ok := remainingByRepairLine[location.line]
-			if !ok {
-				if ctx.Err() != nil {
-					return collapsed
-				}
-				remaining = languageSyntaxFailureLinesAfterBlank(content, language, location.line)
-				remainingByRepairLine[location.line] = remaining
-			}
-			if _, remains := remaining[failure.line]; !remains {
-				failure = location
-				mapped = true
-				break
-			}
-		}
-		if !mapped {
-			locations = append(locations, failure)
-		}
-		collapsed = append(collapsed, failure)
+		return lines
+	}
+	origins := syntaxCascadeOrigins(ctx, content, linesOf(failures), func(source string) []int {
+		return linesOf(findLanguageSyntaxFailures(source, language))
+	})
+	collapsed := make([]languageSyntaxFailure, len(origins))
+	for i, origin := range origins {
+		collapsed[i] = failures[origin]
 	}
 	return collapsed
-}
-
-// languageSyntaxFailureLinesAfterBlank returns the failure lines that remain after blanking a repair line.
-func languageSyntaxFailureLinesAfterBlank(content string, language indentationWrapperLanguage, repairLine int) map[int]struct{} {
-	candidate, ok := blankGeneratedLine(content, repairLine)
-	if !ok {
-		return nil
-	}
-	lines := make(map[int]struct{})
-	for _, failure := range findLanguageSyntaxFailures(candidate, language) {
-		lines[failure.line] = struct{}{}
-	}
-	return lines
-}
-
-// blankGeneratedLine blanks the content of a specific line in the generated source.
-func blankGeneratedLine(content string, line int) (string, bool) {
-	lines := renderedLines(content)
-	if line < 1 || line > len(lines) {
-		return "", false
-	}
-	current := lines[line-1]
-	candidate := []byte(content)
-	for index := current.start; index < current.contentEnd; index++ {
-		candidate[index] = ' '
-	}
-	return string(candidate), true
 }
 
 type validationFailureGroupKey struct {
