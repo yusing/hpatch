@@ -27,7 +27,7 @@ func observeChatResponse(payload []byte, contentType string, record *captureReco
 	calls := map[int]*chatCaptureCall{}
 	finished, done := false, false
 	consume := func(data []byte) {
-		if bytes.Equal(data, []byte("[DONE]")) {
+		if bytes.Equal(bytes.TrimSpace(data), []byte("[DONE]")) {
 			done = true
 			return
 		}
@@ -79,31 +79,13 @@ func observeChatResponse(payload []byte, contentType string, record *captureReco
 			}
 		}
 	}
-	payload = bytes.TrimPrefix(payload, []byte{0xef, 0xbb, 0xbf})
-	stream := strings.Contains(contentType, "text/event-stream") || capturedPayloadLooksLikeSSE(payload)
+	stream := strings.Contains(strings.ToLower(contentType), "text/event-stream") || capturedPayloadLooksLikeSSE(payload)
 	if stream {
-		payload = bytes.ReplaceAll(payload, []byte("\r\n"), []byte("\n"))
-		payload = bytes.ReplaceAll(payload, []byte("\r"), []byte("\n"))
-		var parts [][]byte
-		event := func() {
-			if len(parts) > 0 {
-				consume(bytes.Join(parts, []byte{'\n'}))
-				parts = nil
-			}
+		for data := range sseData(payload) {
+			consume(data)
 		}
-		for line := range bytes.SplitSeq(payload, []byte{'\n'}) {
-			line = bytes.TrimSpace(line)
-			if len(line) == 0 {
-				event()
-				continue
-			}
-			if data, ok := bytes.CutPrefix(line, []byte("data:")); ok {
-				parts = append(parts, bytes.TrimSpace(data))
-			}
-		}
-		event()
 	} else {
-		consume(payload)
+		consume(bytes.TrimPrefix(payload, []byte{0xef, 0xbb, 0xbf}))
 		done = true
 	}
 	if !finished || !done {

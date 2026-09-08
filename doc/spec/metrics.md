@@ -107,6 +107,8 @@ Acceptance:
    delivered tool calls without retaining private payload text.
 2. A streaming test receives the first flushed event before the handler completes.
 3. JSON, multiline SSE, and gzip Responses payloads produce the same sanitized observations;
+   SSE framing MUST handle LF, CRLF, CR, and an initial BOM consistently across response
+   observation and token measurement; framing normalization MUST preserve data-field contents.
    finalized SSE output items MUST produce the same ordered array when the terminal envelope omits
    them, and any number of nonterminal SSE events contributes exactly one terminal output array to
    protocol output savings. JSON and SSE exclude router-generated usage, operation, runtime, and

@@ -40,35 +40,18 @@ func decodedCapturePayload(payload []byte, contentEncoding string) ([]byte, erro
 
 func observeResponse(payload []byte, contentType string, record *captureRecord, codec tokenizer.Codec) []byte {
 	if strings.Contains(strings.ToLower(contentType), "text/event-stream") || capturedPayloadLooksLikeSSE(payload) {
-		payload = bytes.TrimPrefix(payload, []byte{0xef, 0xbb, 0xbf})
-		var dataParts [][]byte
 		var finalOutput []byte
 		terminalOutputObserved := false
 		completedItems := make(map[int]json.RawMessage)
-		observeEvent := func() {
-			if len(dataParts) != 0 {
-				payload := bytes.Join(dataParts, []byte{'\n'})
-				if index, item, ok := completedResponseOutputItem(payload); ok && !generatedOutputItem(item, record) {
-					completedItems[index] = item
-				}
-				if output, terminal := observeResponseJSON(payload, record, codec); terminal {
-					finalOutput = output
-					terminalOutputObserved = true
-				}
-				dataParts = dataParts[:0]
+		for data := range sseData(payload) {
+			if index, item, ok := completedResponseOutputItem(data); ok && !generatedOutputItem(item, record) {
+				completedItems[index] = item
+			}
+			if output, terminal := observeResponseJSON(data, record, codec); terminal {
+				finalOutput = output
+				terminalOutputObserved = true
 			}
 		}
-		for line := range bytes.SplitSeq(payload, []byte{'\n'}) {
-			line = bytes.TrimSpace(line)
-			if len(line) == 0 {
-				observeEvent()
-				continue
-			}
-			if data, ok := bytes.CutPrefix(line, []byte("data:")); ok {
-				dataParts = append(dataParts, bytes.TrimSpace(data))
-			}
-		}
-		observeEvent()
 		if !terminalOutputObserved {
 			return nil
 		}
@@ -111,9 +94,7 @@ func completedResponseOutputItem(payload []byte) (int, json.RawMessage, bool) {
 }
 
 func capturedPayloadLooksLikeSSE(payload []byte) bool {
-	payload = bytes.TrimPrefix(payload, []byte{0xef, 0xbb, 0xbf})
-	for line := range bytes.SplitSeq(payload, []byte{'\n'}) {
-		line = bytes.TrimSpace(line)
+	for line := range sseLines(payload) {
 		if len(line) == 0 {
 			continue
 		}
@@ -128,7 +109,7 @@ func capturedPayloadLooksLikeSSE(payload []byte) bool {
 }
 
 func observeResponseJSON(payload []byte, record *captureRecord, codec tokenizer.Codec) ([]byte, bool) {
-	if len(payload) == 0 || bytes.Equal(payload, []byte("[DONE]")) {
+	if len(bytes.TrimSpace(payload)) == 0 || bytes.Equal(bytes.TrimSpace(payload), []byte("[DONE]")) {
 		return nil, false
 	}
 	var event struct {

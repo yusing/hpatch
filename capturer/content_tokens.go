@@ -16,36 +16,16 @@ import (
 // This is a local content estimate, never provider billing usage.
 func contentTokens(payload []byte, codec tokenizer.Codec) (int, error) {
 	if capturedPayloadLooksLikeSSE(payload) {
-		payload = bytes.TrimPrefix(payload, []byte{0xef, 0xbb, 0xbf})
 		total := 0
-		var data [][]byte
-		flush := func() error {
-			if len(data) == 0 {
-				return nil
-			}
-			body := bytes.Join(data, []byte{'\n'})
-			data = nil
+		for body := range sseData(payload) {
 			if bytes.Equal(bytes.TrimSpace(body), []byte("[DONE]")) {
-				return nil
-			}
-			n, err := contentTokens(body, codec)
-			total += n
-			return err
-		}
-		for line := range bytes.SplitSeq(payload, []byte{'\n'}) {
-			line = bytes.TrimSuffix(line, []byte{'\r'})
-			if len(line) == 0 {
-				if err := flush(); err != nil {
-					return 0, err
-				}
 				continue
 			}
-			if value, ok := bytes.CutPrefix(line, []byte("data:")); ok {
-				data = append(data, bytes.TrimPrefix(value, []byte{' '}))
+			count, err := contentTokens(body, codec)
+			if err != nil {
+				return 0, err
 			}
-		}
-		if err := flush(); err != nil {
-			return 0, err
+			total += count
 		}
 		return total, nil
 	}
