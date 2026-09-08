@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { realpath } from "node:fs/promises";
 import { registerHooks } from "node:module";
 import path from "node:path";
@@ -8,6 +9,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 const API_VERSION = "hpatch-tool-plugin/v1";
 const MAX_GRAMMAR_BYTES = 1024 * 1024;
 const MAX_DIAGNOSTIC_BYTES = 16 * 1024;
+let regexValidator = "rg";
 const identifierPattern = /^[A-Za-z][A-Za-z0-9._-]*$/;
 const toolNamePattern = /^[A-Za-z_][A-Za-z0-9_-]*$/;
 const ruleHeaderPattern = /^[!?]?([A-Za-z_][A-Za-z0-9_]*)\s*:\s*(.*)$/s;
@@ -50,106 +52,94 @@ function errorText(error) {
   return encoded.subarray(0, MAX_DIAGNOSTIC_BYTES).toString("utf8");
 }
 
-function validateRegexGrammar(definition) {
-  if (/[\r\n]/.test(definition)) {
-    return "regex grammar must be one line";
-  }
-  for (const unsupported of ["(?=", "(?!", "(?<=", "(?<!", "*?", "+?", "??"]) {
-    if (definition.includes(unsupported)) {
-      return `regex grammar uses unsupported construct ${JSON.stringify(unsupported)}`;
-    }
-  }
-
-  let groups = 0;
-  let inClass = false;
-  let escaped = false;
-  let canRepeat = false;
+// Syntax belongs to ripgrep's Rust engine. This scanner checks only provider
+// modifiers after compilation, without mistaking escaped text or class members
+// for operators. Extended mode is excluded by the provider's one-line contract.
+function unsupportedRegexModifier(definition) {
+  const classes = [];
+  let repetition = false;
   for (let index = 0; index < definition.length; index += 1) {
     const character = definition[index];
-    if (escaped) {
-      if (/[1-9]/.test(character)) {
-        return "regex grammar uses an unsupported backreference";
-      }
-      escaped = false;
-      canRepeat = true;
-      continue;
-    }
     if (character === "\\") {
-      escaped = true;
+      const escaped = definition[++index];
+      if ("pPxuUb".includes(escaped) && definition[index + 1] === "{") {
+        index = definition.indexOf("}", index + 2);
+      }
+      if (classes.length > 0) classes[classes.length - 1] = "body";
+      repetition = false;
       continue;
     }
-    if (inClass) {
-      if (character === "]") {
-        inClass = false;
-        canRepeat = true;
+    if (classes.length > 0) {
+      const first = classes.at(-1);
+      if (character === "[") {
+        classes[classes.length - 1] = "body";
+        classes.push("start");
+      } else if (character === "]" && first === "body") {
+        classes.pop();
+      } else {
+        classes[classes.length - 1] = character === "^" && first === "start" ? "negated" : "body";
       }
       continue;
     }
     if (character === "[") {
-      inClass = true;
-      canRepeat = false;
+      classes.push("start");
+      repetition = false;
       continue;
     }
-    if (character === "]") {
-      return "regex grammar has an unmatched ']'";
-    }
-    if (character === "(") {
-      groups += 1;
-      canRepeat = false;
-      continue;
-    }
-    if (character === ")") {
-      if (groups === 0) {
-        return "regex grammar has an unmatched ')'";
-      }
-      groups -= 1;
-      canRepeat = true;
-      continue;
-    }
-    if (character === "*" || character === "+" || character === "?") {
-      if (character === "?" && index > 0 && definition[index - 1] === "(") {
+    if (character === "(" && definition[index + 1] === "?") {
+      if (definition.startsWith("(?P<", index) || definition.startsWith("(?<", index)) {
+        index = definition.indexOf(">", index + 3);
+        repetition = false;
         continue;
       }
-      if (!canRepeat) {
-        return `regex grammar has misplaced quantifier ${JSON.stringify(character)}`;
+      const flags = /^\(\?([imsRUux-]*)(?:[:)])/u.exec(definition.slice(index));
+      if (flags !== null) {
+        if (flags[1].split("-", 1)[0].includes("x")) {
+          return "regex grammar uses unsupported extended mode";
+        }
+        index += flags[0].length - 1;
       }
-      canRepeat = false;
+      repetition = false;
       continue;
+    }
+    if (character === "?" && repetition) {
+      return "regex grammar uses unsupported construct: lazy repetition";
     }
     if (character === "{") {
-      const quantifier = definition.slice(index).match(/^\{([0-9]+)(?:,([0-9]*))?\}/);
-      if (!canRepeat || quantifier === null) {
-        return "regex grammar has an invalid counted repetition";
-      }
-      if (quantifier[2] !== undefined && quantifier[2] !== "" && Number(quantifier[2]) < Number(quantifier[1])) {
-        return "regex grammar has a descending counted repetition";
-      }
-      index += quantifier[0].length - 1;
-      canRepeat = false;
+      index = definition.indexOf("}", index + 1);
+      repetition = true;
       continue;
     }
-    if (character === "}") {
-      return "regex grammar has an unmatched '}'";
-    }
-    if (character === "|") {
-      canRepeat = false;
-      continue;
-    }
-    if (character === "^" || character === "$" || (character === ":" && index > 0 && definition[index - 1] === "?")) {
-      continue;
-    }
-    canRepeat = true;
-  }
-  if (escaped) {
-    return "regex grammar has a trailing escape";
-  }
-  if (inClass) {
-    return "regex grammar has an unterminated character class";
-  }
-  if (groups !== 0) {
-    return "regex grammar has an unterminated group";
+    repetition = character === "*" || character === "+" || character === "?";
   }
   return null;
+}
+
+function validateRegexGrammar(definition) {
+  if (/[\r\n]/u.test(definition)) {
+    return "regex grammar must be one line";
+  }
+  if (regexValidator === "") {
+    return "regex grammar validation requires ripgrep (rg) on the router PATH";
+  }
+  // Patterns travel on stdin, not argv: the admitted grammar size can exceed
+  // the operating system's per-argument limit. Never search workspace files.
+  const result = spawnSync(regexValidator, [
+    "--no-config", "--engine", "default", "--multiline", "--quiet",
+    "--file", "-", "--", process.platform === "win32" ? "NUL" : "/dev/null",
+  ], {
+    input: `${definition}\n`, encoding: "utf8", timeout: 1_000,
+    killSignal: "SIGKILL", maxBuffer: MAX_DIAGNOSTIC_BYTES,
+  });
+  if (result.error !== undefined) {
+    return result.error.code === "ENOENT"
+      ? "regex grammar validation requires ripgrep (rg) on the router PATH"
+      : `cannot validate Rust regex grammar: ${errorText(result.error)}`;
+  }
+  if (result.status !== 0 && result.status !== 1) {
+    return `Rust regex validation failed: ${errorText(result.stderr.trim().split("\n\n", 1)[0] || `validator exited with status ${result.status}`)}`;
+  }
+  return unsupportedRegexModifier(definition);
 }
 
 function tokenizeLarkExpression(expression) {
@@ -219,10 +209,12 @@ function tokenizeLarkExpression(expression) {
       if (!closed) {
         throw new Error("unterminated regex terminal");
       }
+      const flagsStart = index;
       while (index < expression.length && /[A-Za-z]/.test(expression[index])) {
         index += 1;
       }
-      const regexError = validateRegexGrammar(body);
+      const flags = expression.slice(flagsStart, index);
+      const regexError = validateRegexGrammar(flags === "" ? body : `(?${flags}:${body})`);
       if (regexError !== null) {
         throw new Error(regexError);
       }
@@ -798,6 +790,12 @@ async function main() {
   let response;
   switch (request.operation) {
     case "validate": {
+      if (request.regexValidator !== undefined) {
+        if (typeof request.regexValidator !== "string") {
+          throw new Error("regex validator must be an executable path");
+        }
+        regexValidator = request.regexValidator;
+      }
       const plugins = [];
       const errors = [];
       for (const modulePath of request.modules) {

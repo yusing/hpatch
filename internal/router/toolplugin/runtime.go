@@ -224,14 +224,27 @@ func resolveNodeRuntime(ctx context.Context) (string, error) {
 func validateSnapshot(ctx context.Context, node, hostPath, pluginRoot string, modules []string) ([]Plugin, []string, error) {
 	ctx, cancel := context.WithTimeout(ctx, pluginInvocationTimeout)
 	defer cancel()
+	// Resolve against the router environment before the host's PATH is isolated.
+	// Absence is reported only if a declaration actually contains a regex.
+	regexValidator, lookupErr := exec.LookPath("rg")
+	if lookupErr != nil {
+		regexValidator = ""
+	} else {
+		regexValidator, lookupErr = filepath.Abs(regexValidator)
+		if lookupErr != nil {
+			return nil, nil, fmt.Errorf("resolve regex validator: %w", lookupErr)
+		}
+	}
 	request := struct {
-		Operation    string   `json:"operation"`
-		SnapshotRoot string   `json:"snapshotRoot"`
-		Modules      []string `json:"modules"`
+		Operation      string   `json:"operation"`
+		SnapshotRoot   string   `json:"snapshotRoot"`
+		Modules        []string `json:"modules"`
+		RegexValidator string   `json:"regexValidator"`
 	}{
-		Operation:    "validate",
-		SnapshotRoot: pluginRoot,
-		Modules:      modules,
+		Operation:      "validate",
+		SnapshotRoot:   pluginRoot,
+		Modules:        modules,
+		RegexValidator: regexValidator,
 	}
 	var response struct {
 		Plugins []Plugin `json:"plugins"`

@@ -129,7 +129,18 @@ Grammar compatibility for this requirement is pinned to OpenAI's Custom tools gu
 definitions use Rust `regex` syntax and do not support lookarounds or lazy quantifiers; Lark
 definitions support common imports and `%ignore` while terminal priorities, templates,
 non-common imports, and `%declare` are unsupported. Startup validates this stable subset
-locally; provider model-specific and complexity limits remain provider-owned.
+locally. Rust regex compilation is delegated to installed ripgrep's default engine with
+configuration files disabled; PCRE is never selected. The router resolves `rg` on its own `PATH`
+before isolating the validation host. The prerequisite applies only when a declaration contains
+an actual regex, whether a regex-format definition or a Lark regex terminal. Missing or unusable
+`rg`, compilation failure, or a bounded validator failure rejects that declaration with a clear
+diagnostic; unconstrained and regex-free Lark declarations remain independent of `rg`.
+Provider modifier checks respect escapes, nested character classes, capture names, and group
+flags rather than inspecting raw substrings. Lazy repetitions, including counted lazy repetitions,
+and extended mode are rejected; ordinary Rust escapes, Unicode properties, classes, and supported
+flags retain their engine semantics. Lark terminal flags participate in validation rather than
+being discarded. Provider model-specific and complexity limits remain provider-owned, distinct
+from the local compiler's resource limits.
 
 Acceptance:
 

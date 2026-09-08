@@ -1,6 +1,6 @@
 import {afterEach, describe, expect, test} from "bun:test";
 import {spawnSync} from "node:child_process";
-import {mkdir, mkdtemp, rm, symlink, writeFile} from "node:fs/promises";
+import {chmod, mkdir, mkdtemp, rm, symlink, writeFile} from "node:fs/promises";
 import {tmpdir} from "node:os";
 import path from "node:path";
 import {fileURLToPath} from "node:url";
@@ -34,11 +34,12 @@ afterEach(async () => {
 function invokeHost(
   snapshotRoot: string,
   request: Record<string, unknown>,
+  environment: Record<string, string | undefined> = process.env,
 ): {status: number | null; stdout: string; stderr: string} {
   const result = spawnSync("node", [hostPath], {
     cwd: snapshotRoot,
     encoding: "utf8",
-    env: {...process.env, NODE_NO_WARNINGS: "1"},
+    env: {...environment, NODE_NO_WARNINGS: "1"},
     input: JSON.stringify({...request, snapshotRoot}),
   });
   return {
@@ -139,9 +140,9 @@ describe("plugin declaration validation", () => {
     ["duplicate rule", "lark", "start: \"a\"\nstart: \"b\"", "defined more than once"],
     ["duplicate terminal", "lark", "TOKEN: \"a\"\nTOKEN: \"b\"\nstart: TOKEN", "defined more than once"],
     ["newline", "regex", "one\ntwo", "must be one line"],
-    ["lookaround", "regex", "(?=ok)ok", "unsupported construct"],
+    ["lookaround", "regex", "(?=ok)ok", "look-around"],
     ["lazy quantifier", "regex", "ok+?", "unsupported construct"],
-    ["backreference", "regex", String.raw`(ok)\1`, "unsupported backreference"],
+    ["backreference", "regex", String.raw`(ok)\1`, "backreferences are not supported"],
   ])("rejects %s", async (_name, syntax, definition, diagnostic) => {
     const {response} = await validateDeclaration(pluginDeclaration({
       type: "grammar",
@@ -358,3 +359,100 @@ for (const result of [
     expect(response.stderr).toContain("terminationReason must be output_limit with nonzero exitCode");
   });
 }
+
+describe("authoritative Rust regex validation", () => {
+  const valid = [
+    "[+?]", "[()?!+*]", "[]?+*]+", "[^]?+*]+", "[a-z&&[^aeiou]]+", "[[:alpha:]]+",
+    String.raw`\(\?=`, String.raw`\+\?`, String.raw`\+?`, String.raw`\}?`,
+    String.raw`\p{Letter}?`, String.raw`\p{Script=Greek}+`, String.raw`\u{1F600}`,
+    String.raw`\Afoo\nbar\z`, "(?i:foo)(?-i:Bar)", "(?m)^foo$", "(?s:.)", "(?U:a+)",
+    "(?-x:foo)", "[(?x)]", String.raw`\b{start}?`, "(?P<n[>a)", "a{1,3}", "a{2}",
+  ];
+  for (const definition of valid) {
+    test(`accepts Rust grammar ${JSON.stringify(definition)}`, async () => {
+      const {response} = await validateDeclaration(pluginDeclaration({type: "grammar", syntax: "regex", definition}));
+      expect(response.errors).toEqual([]);
+      expect(response.plugins).toHaveLength(1);
+    });
+  }
+  for (const definition of [
+    "[z-a]", String.raw`\q`, String.raw`(a)\1`, "(?=a)", "(?<=a)", "[[]", "a{3,1}",
+    "a*?", "a+?", "a??", "a{2}?", "a{1,3}?", "[^^]+?", "[a-z&&[^x]]+?", "(?i:a+?)",
+    "(?P<n[>a+?)", "(?<n]>a+?)", "(?x:a)", "(?x)a", "(?i-x:a)(?x:b)",
+  ]) {
+    test(`rejects unsupported Rust grammar ${JSON.stringify(definition)}`, async () => {
+      const {response} = await validateDeclaration(pluginDeclaration({type: "grammar", syntax: "regex", definition}));
+      expect(response.plugins).toEqual([]);
+      expect(response.errors.join("\n")).toMatch(/Rust regex validation failed|unsupported/u);
+    });
+  }
+  test("passes large patterns through stdin rather than operating-system argv", async () => {
+    const {response} = await validateDeclaration(pluginDeclaration({
+      type: "grammar", syntax: "regex", definition: "a".repeat(150_000),
+    }));
+    expect(response.errors).toEqual([]);
+  });
+  test.each([
+    ["start: /[+?]/", true],
+    ["start: /[z-a]/", false],
+    [String.raw`start: /\q/`, false],
+    ["start: /a+?/", false],
+    ["start: /ok/i", true],
+    ["start: /ok/x", false],
+    ["start: /ok/z", false],
+  ])("validates Lark regex terminals with the same Rust owner: %s", async (definition, accepted) => {
+    const {response} = await validateDeclaration(pluginDeclaration({type: "grammar", syntax: "lark", definition}));
+    expect(response.errors.length === 0).toBe(accepted);
+  });
+  test.each([
+    [undefined, true],
+    [{type: "grammar", syntax: "lark", definition: 'start: "ok"'}, true],
+    [{type: "grammar", syntax: "regex", definition: "ok"}, false],
+    [{type: "grammar", syntax: "lark", definition: "start: /ok/"}, false],
+  ])("requires rg only when the declaration contains a regex", async (format, accepted) => {
+    const directory = await temporaryDirectory();
+    await writeFile(path.join(directory, "plugin.mjs"), pluginDeclaration(format));
+    const result = invokeHost(directory, {operation: "validate", modules: ["plugin.mjs"], regexValidator: ""});
+    const response = JSON.parse(result.stdout) as HostResponse;
+    expect(result.status).toBe(0);
+    expect(response.errors.length === 0).toBe(accepted);
+    if (!accepted) expect(response.errors.join("\n")).toContain("requires ripgrep (rg) on the router PATH");
+  });
+  test("reports missing and unusable validator executables", async () => {
+    const directory = await temporaryDirectory();
+    await writeFile(path.join(directory, "plugin.mjs"), pluginDeclaration({type: "grammar", syntax: "regex", definition: "ok"}));
+    const denied = path.join(directory, "denied");
+    await writeFile(denied, "not an executable", {mode: 0o600});
+    for (const [regexValidator, diagnostic] of [[path.join(directory, "missing"), "requires ripgrep"], [denied, "cannot validate Rust regex"]]) {
+      const result = invokeHost(directory, {operation: "validate", modules: ["plugin.mjs"], regexValidator});
+      const response = JSON.parse(result.stdout) as HostResponse;
+      expect(response.plugins).toEqual([]);
+      expect(response.errors.join("\n")).toContain(diagnostic);
+    }
+  });
+});
+
+test("regex validation ignores ripgrep configuration and cannot switch to PCRE", async () => {
+  const directory = await temporaryDirectory();
+  const config = path.join(directory, "ripgrep.conf");
+  await writeFile(config, "--pcre2\n");
+  await writeFile(path.join(directory, "plugin.mjs"), pluginDeclaration({type: "grammar", syntax: "regex", definition: "(?=a)a"}));
+  const result = invokeHost(directory, {operation: "validate", modules: ["plugin.mjs"]}, {...process.env, RIPGREP_CONFIG_PATH: config});
+  const response = JSON.parse(result.stdout) as HostResponse;
+  expect(response.plugins).toEqual([]);
+  expect(response.errors.join("\n")).toContain("look-around");
+});
+
+test("bounds a stalled regex validator without retaining its child", async () => {
+  const directory = await temporaryDirectory();
+  const validator = path.join(directory, "validator");
+  await writeFile(validator, "#!/bin/sh\nexec /bin/sleep 10\n");
+  await chmod(validator, 0o700);
+  await writeFile(path.join(directory, "plugin.mjs"), pluginDeclaration({type: "grammar", syntax: "regex", definition: "ok"}));
+  const started = performance.now();
+  const result = invokeHost(directory, {operation: "validate", modules: ["plugin.mjs"], regexValidator: validator});
+  const response = JSON.parse(result.stdout) as HostResponse;
+  expect(response.plugins).toEqual([]);
+  expect(response.errors.join("\n")).toContain("cannot validate Rust regex grammar");
+  expect(performance.now() - started).toBeLessThan(3_000);
+});

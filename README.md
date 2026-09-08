@@ -242,7 +242,11 @@ capacity or publication failure never changes the operation result.
   configured.
 - Hpatch router mode resolves Node.js 24 or newer as `node`; passthrough mode
   does not load the plugin registry.
-- Private hgrep requires `rg` on the Codex executor's `PATH`.
+- Regex grammar validation requires ripgrep (`rg`) on the router's `PATH` at
+  startup. This covers regex-format tools and regex terminals inside Lark
+  grammars, including the built-in tools. Unconstrained and regex-free Lark
+  declarations do not need it; passthrough mode does not validate plugins.
+  Private hgrep separately requires `rg` on the Codex executor's `PATH`.
 - Private hsymbol requires the resolver for the queried language on the Codex
   executor's `PATH`: `gopls` for Go, TypeScript 7 as `tsc` for JavaScript,
   TypeScript, and JSON, and `pyright-langserver` for Python `.py` and `.pyi`
