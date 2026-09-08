@@ -70,4 +70,3 @@ func TestReceivedReplyOverBudgetIsOmittedWithoutChangingInput(t *testing.T) {
 		t.Fatal("oversized reply was excerpted or consumed the next reply's budget")
 	}
 }
-

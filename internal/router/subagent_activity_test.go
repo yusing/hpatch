@@ -119,6 +119,24 @@ func TestActivityBudgetPreservesNoticeOrderAndReplayAfterExpiry(t *testing.T) {
 	}
 }
 
+func TestDeferredOversizedActivityDoesNotBlockLaterNotice(t *testing.T) {
+	a := newSubagentActivity()
+	a.observe("r", "", "/root", false)
+	a.observe("c", "r", "/root/c", true)
+	a.collect("c", "large", "reply", strings.Repeat("x", maxCommentaryPublicationBytes-len("[`/root/c`] ")))
+	a.collect("c", "small", "reply", "later notice")
+	if len(a.events) != 2 {
+		t.Fatal("boundary-sized notice was not admitted")
+	}
+	messages := a.drain("r", time.Now(), maxCommentaryPublicationBytes)
+	if len(messages) != 1 || !strings.Contains(commentaryText(t, messages[0]), "later notice") {
+		t.Fatal("unrenderable deferred notice blocked later activity", messages)
+	}
+	if len(a.events) != 0 {
+		t.Fatal("permanently unrenderable notice retained")
+	}
+}
+
 func TestCriticalErrorProjectionUsesOriginDespiteSharedSession(t *testing.T) {
 	a := newSubagentActivity()
 	a.observe("root-a", "", "/root", false)

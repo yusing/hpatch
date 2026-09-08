@@ -31,6 +31,43 @@ func prepareActivityTest(t *testing.T, proxy *hpatchProxy, session, thread, pare
 	return transform, &request
 }
 
+func TestRejectedChildIdentityDoesNotReuseEarlierAttribution(t *testing.T) {
+	for _, parent := range []string{"", "child"} {
+		t.Run("parent="+parent, func(t *testing.T) {
+			proxy := newManagedHPatchProxy(t, testTranslator(t, new(int)))
+			root, _ := prepareActivityTest(t, proxy, "root-session", "root", "", "/root", nil)
+			child, _ := prepareActivityTest(t, proxy, "child-session", "child", "root", "/root/alpha", nil)
+			child.Close()
+			root.drainActivity()
+			request, err := parseResponsesRequest(mustTestJSON(t, map[string]any{
+				"model": "gpt-test", "input": []any{testCodeModeAdditionalTools(testCodeModeDescription)}, "tools": []any{},
+			}))
+			if err != nil {
+				t.Fatal(err)
+			}
+			next, err := proxy.prepareRequest(t.Context(), &request, "next-session", "child", codexTurnMetadata{
+				RequestKind: "turn", ThreadID: "child", ParentThreadID: parent,
+				AgentName: "/root/beta", SubagentKind: "thread_spawn",
+			}, true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(next.Close)
+			message := assistantCommentaryMessage("new-progress", "New child progress.")
+			output, err := next.TransformJSON(mustTestJSON(t, map[string]any{"status": "completed", "output": []any{message}}))
+			if err != nil || !bytes.Contains(output, []byte("New child progress.")) {
+				t.Fatal("child output changed", string(output), err)
+			}
+			if got := root.drainActivity(); len(got) != 0 {
+				t.Fatal("rejected identity reused old attribution", got)
+			}
+			if proxy.activity.observe("child", "root", "/root/alpha", true) {
+				t.Fatal("conflicting identity was not retained")
+			}
+		})
+	}
+}
+
 func TestActualChildActivityProjectsWithoutChangingChildResult(t *testing.T) {
 	for _, stream := range []bool{false, true} {
 		t.Run(map[bool]string{false: "json", true: "sse"}[stream], func(t *testing.T) {

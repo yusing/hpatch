@@ -36,31 +36,35 @@ func newSubagentActivity() *subagentActivity {
 	return &subagentActivity{threads: make(map[string]*activityThread), copies: make(map[string]struct{})}
 }
 
-func (a *subagentActivity) observe(thread, parent, name string, child bool) {
-	if a == nil || thread == "" || len(thread)+len(parent)+len(name) > maxCommentaryPublicationBytes || strings.ContainsAny(name, "\r\n\x00") {
-		return
-	}
-	if child && (parent == "" || parent == thread || !strings.HasPrefix(name, "/root/")) {
-		return
-	}
-	if !child && (parent != "" || name != "/root") {
-		return
+func (a *subagentActivity) observe(thread, parent, name string, child bool) bool {
+	if a == nil || thread == "" {
+		return false
 	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if a.closed {
-		return
+		return false
 	}
 	if old := a.threads[thread]; old != nil {
 		if old.parent != parent || old.name != name || old.child != child {
 			old.conflicted = true
 		}
-		return
+		return !old.conflicted
+	}
+	if len(thread)+len(parent)+len(name) > maxCommentaryPublicationBytes || strings.ContainsAny(name, "\r\n\x00") {
+		return false
+	}
+	if child && (parent == "" || parent == thread || !strings.HasPrefix(name, "/root/")) {
+		return false
+	}
+	if !child && (parent != "" || name != "/root") {
+		return false
 	}
 	if len(a.threads) >= maxCommentaryRoutes {
-		return
+		return false
 	}
 	a.threads[thread] = &activityThread{parent: parent, name: name, child: child, seen: make(map[string]struct{})}
+	return true
 }
 
 func (a *subagentActivity) rootLocked(thread string) string {
@@ -145,6 +149,11 @@ func (a *subagentActivity) drain(root string, started time.Time, budget int) []m
 		text := event.text
 		if event.observed.Before(started) {
 			text = "Subagent activity since the last update:\n" + text
+		}
+		// Labels can make an admitted event permanently too large. Omit it
+		// rather than letting it block later activity until expiry.
+		if len(text) > maxCommentaryPublicationBytes {
+			continue
 		}
 		if blocked[event.thread] || len(text) > budget {
 			blocked[event.thread] = true

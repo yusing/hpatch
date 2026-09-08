@@ -356,14 +356,15 @@ func (p *hpatchProxy) prepareRequest(ctx context.Context, request *parsedRespons
 	if err := rewriteReceivedModelInstructions(request, p.customizedInstructions, modelInstructions); err != nil {
 		return nil, err
 	}
-	activityThreadID := ""
-	if !metadata.activityIdentityInvalid && (metadata.ThreadID == "" || metadata.ThreadID == threadID) {
-		activityThreadID = threadID
-		p.activity.observe(threadID, metadata.ParentThreadID, metadata.AgentName, metadata.SubagentKind != "")
-	}
 	recipient := metadata.AgentName
 	if recipient == "" && metadata.SubagentKind == "" {
 		recipient = "/root"
+	}
+	activityThreadID := ""
+	if !metadata.activityIdentityInvalid && (metadata.ThreadID == "" || metadata.ThreadID == threadID) {
+		if p.activity.observe(threadID, metadata.ParentThreadID, recipient, metadata.SubagentKind != "") {
+			activityThreadID = threadID
+		}
 	}
 	subagentDeferred := prepareSubagentInputCommentary(request.fields, recipient)
 	for _, message := range subagentDeferred {
