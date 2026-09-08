@@ -71,7 +71,12 @@ surface in either shape without opening another listener. In native requests, `e
 remains the executor-owned carrier. Hpatch invokes the executor's `apply_patch` command through
 that carrier and returns the already-rendered report as its exact successful output; ordinary
 exec-backed contributions use direct native function arguments rather than a Code Mode wrapper.
-Response restoration and replay retain the request's original carrier shape.
+Response restoration and replay retain the request's original carrier shape. JSON and all
+terminal SSE statuses restore the request's tool catalog and choice plus completed calls' exact
+carriers. Failed or incomplete responses do not evaluate unfinished call input or retain it for
+replay. An output-item completion explicitly marked `incomplete` likewise does not evaluate its
+input; an absent status on a completion event remains accepted. Completed calls remain replayable
+when a later call or the response is interrupted.
 
 For each configured executor-backed contributed tool, startup creates or verifies a session-private
 executable symlink in the authenticated snapshot's `bin` directory. Its basename is exactly the contributed tool name,

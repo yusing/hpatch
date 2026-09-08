@@ -1316,7 +1316,7 @@ func retainedEvaluated(emitted, evaluated string) string {
 }
 
 func (t *hpatchResponseTransform) TransformJSON(payload []byte) ([]byte, error) {
-	transformed, _, err := t.transformResponse(payload)
+	transformed, _, err := t.transformResponse(payload, "")
 	if err == nil {
 		var response map[string]json.RawMessage
 		if json.Unmarshal(transformed, &response) == nil && jsonString(response, "status") == "completed" {
@@ -1543,6 +1543,13 @@ func (t *hpatchResponseTransform) TransformSSE(payload []byte) ([][]byte, error)
 		if !ok {
 			return [][]byte{payload}, nil //nolint:nilerr // Malformed unrelated output remains the upstream's responsibility.
 		}
+		if _, delivered := t.local[item.CallID]; item.Status == "incomplete" && !delivered {
+			// Item completion can report interrupted generation, not complete input.
+			delete(t.pending, item.ID)
+			delete(t.subagentPending, item.ID)
+			delete(t.nativeExecCalls, item.ID)
+			return [][]byte{payload}, nil
+		}
 		itemID := item.ID
 		callID := item.CallID
 		if expectedCallID, nativeExec := t.nativeExecCalls[itemID]; nativeExec {
@@ -1644,15 +1651,20 @@ func (t *hpatchResponseTransform) TransformSSE(payload []byte) ([][]byte, error)
 		}
 		return [][]byte{event}, nil
 
-	case "response.completed":
+	case "response.completed", "response.failed", "response.incomplete":
 		clear(t.nativeExecCalls)
-		if len(t.pending) != 0 {
-			return nil, errors.New("upstream completed with an incomplete hpatch call")
+		if envelope.Type == "response.completed" {
+			if len(t.pending) != 0 {
+				return nil, errors.New("upstream completed with an incomplete hpatch call")
+			}
+			if len(t.subagentPending) != 0 {
+				return nil, errors.New("upstream completed with an incomplete subagent call")
+			}
+		} else {
+			clear(t.pending)
+			clear(t.subagentPending)
 		}
-		if len(t.subagentPending) != 0 {
-			return nil, errors.New("upstream completed with an incomplete subagent call")
-		}
-		transformed, usageMessage, err := t.transformResponse(envelope.Response)
+		transformed, usageMessage, err := t.transformResponse(envelope.Response, strings.TrimPrefix(envelope.Type, "response."))
 		if err != nil {
 			return nil, err
 		}
@@ -1663,7 +1675,7 @@ func (t *hpatchResponseTransform) TransformSSE(payload []byte) ([][]byte, error)
 		var terminal struct {
 			Status string `json:"status"`
 		}
-		if json.Unmarshal(transformed, &terminal) == nil && terminal.Status == "failed" {
+		if envelope.Type == "response.completed" && json.Unmarshal(transformed, &terminal) == nil && terminal.Status == "failed" {
 			event, err = replaceRawField(event, "type", mustMarshalJSON("response.failed"))
 		}
 		if err != nil {
@@ -1673,52 +1685,24 @@ func (t *hpatchResponseTransform) TransformSSE(payload []byte) ([][]byte, error)
 			return nil, err
 		}
 		visible := make([][]byte, 0, len(t.commentaryTokens)+1)
-		for _, token := range t.commentaryTokens {
-			for _, publication := range t.proxy.commentary.drain(token) {
-				if message := t.runtimeCommentaryMessage(publication); message != nil {
-					visible = append(visible, assistantCommentaryDoneEvent(message))
+		if envelope.Type == "response.completed" {
+			for _, token := range t.commentaryTokens {
+				for _, publication := range t.proxy.commentary.drain(token) {
+					if message := t.runtimeCommentaryMessage(publication); message != nil {
+						visible = append(visible, assistantCommentaryDoneEvent(message))
+					}
 				}
 			}
+			t.commentaryTokens = nil
+		} else {
+			t.cancelCommentaryTokens()
 		}
-		t.commentaryTokens = nil
 		if usageMessage != nil && !t.subagentTurn {
 			visible = append(visible, assistantCommentaryDoneEvent(usageMessage))
 		}
 		visible = append(visible, event)
 		return visible, nil
 
-	case "response.failed", "response.incomplete":
-		clear(t.pending)
-		clear(t.nativeExecCalls)
-		clear(t.subagentPending)
-		t.cancelCommentaryTokens()
-		object, usageMessage, err := responseWithTokenUsageCommentary(
-			envelope.Response,
-			t.usageCounts,
-			t.usageObserved,
-		)
-		if err != nil {
-			return nil, err
-		}
-		transformed, err := marshalProtocolJSON(object)
-		if err != nil {
-			return nil, err
-		}
-		event, err := replaceRawField(payload, "response", transformed)
-		if err != nil {
-			return nil, err
-		}
-		if err := t.commitHistory(); err != nil {
-			return nil, err
-		}
-		if err := t.Finish(true); err != nil {
-			return nil, err
-		}
-		visible := [][]byte{}
-		if usageMessage != nil && !t.subagentTurn {
-			visible = append(visible, assistantCommentaryDoneEvent(usageMessage))
-		}
-		return append(visible, event), nil
 	default:
 		if _, pending := t.pending[envelope.ItemID]; pending || t.pendingCallKnown(envelope.CallID) || t.routesTool(envelope.Name) || envelope.Name == applyPatchToolName {
 			return nil, fmt.Errorf("unsupported hpatch-related stream event %q", envelope.Type)
@@ -1736,7 +1720,7 @@ func (t *hpatchResponseTransform) pendingCallKnown(callID string) bool {
 	return false
 }
 
-func (t *hpatchResponseTransform) transformResponse(payload []byte) ([]byte, map[string]json.RawMessage, error) {
+func (t *hpatchResponseTransform) transformResponse(payload []byte, terminalStatus string) ([]byte, map[string]json.RawMessage, error) {
 	object, usageMessage, err := responseWithTokenUsageCommentary(
 		payload,
 		t.usageCounts,
@@ -1745,6 +1729,10 @@ func (t *hpatchResponseTransform) transformResponse(payload []byte) ([]byte, map
 	if err != nil {
 		return nil, nil, err
 	}
+	// SSE terminal events own completion even when the embedded status is absent.
+	// JSON responses have no event envelope and retain body-status semantics.
+	status := cmp.Or(terminalStatus, jsonString(object, "status"))
+	interrupted := status == "failed" || status == "incomplete"
 	if rawOutput, ok := object["output"]; ok {
 		var output []map[string]json.RawMessage
 		if err := json.Unmarshal(rawOutput, &output); err != nil {
@@ -1763,6 +1751,13 @@ func (t *hpatchResponseTransform) transformResponse(payload []byte) ([]byte, map
 		t.subagentDeferred = nil
 		for _, fields := range output {
 			item := newResponsesItem(fields)
+			// An interrupted response can contain partial calls. Only complete items
+			// or calls whose complete input was already delivered may be projected.
+			_, delivered := t.local[item.CallID]
+			if interrupted && item.Status != "completed" && !delivered {
+				transformedOutput = append(transformedOutput, fields)
+				continue
+			}
 			subagentMessage, matched := subagentCallCommentary(
 				item.fields,
 				t.subagentTools,
@@ -1797,7 +1792,7 @@ func (t *hpatchResponseTransform) transformResponse(payload []byte) ([]byte, map
 		object["output"] = encoded
 	}
 	t.restoreResponseContract(object)
-	switch jsonString(object, "status") {
+	switch status {
 	case "completed", "failed", "incomplete":
 		if err := t.commitHistory(); err != nil {
 			return nil, nil, err

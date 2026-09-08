@@ -330,6 +330,48 @@ func TestHPatchRecoveryAppliesRetainedShellArtifactDirectly(t *testing.T) {
 	}
 }
 
+func TestInterruptedTerminalWithoutStatusDoesNotApplyUnfinishedShellEdit(t *testing.T) {
+	for _, status := range []string{"failed", "incomplete"} {
+		t.Run(status, func(t *testing.T) {
+			transform, proxy, _, _ := newHPatchTestTransform(t, newInProcessHPatchTranslator(t.TempDir()))
+			var output []any
+			for _, id := range []string{"complete", "unfinished"} {
+				reference, retained := proxy.retainShell(transform.shellDirectory, id, "printf ok\n")
+				if !retained {
+					t.Fatal("shell script was not retained")
+				}
+				item := testHPatchItem()
+				item["id"], item["call_id"] = "item-"+id, "call-"+id
+				item["input"] = "in " + reference + "\ntype 1:ef86 \"printf fixed\"\n"
+				if id == "unfinished" {
+					item["status"] = "incomplete"
+				}
+				output = append(output, item)
+			}
+			events, err := transform.TransformSSE(mustTestJSON(t, map[string]any{
+				"type":     "response." + status,
+				"response": map[string]any{"output": output},
+			}))
+			if err != nil || len(events) != 1 {
+				t.Fatalf("terminal = %s, %v", events, err)
+			}
+			for id, want := range map[string]string{"complete": "printf fixed\n", "unfinished": "printf ok\n"} {
+				got, err := os.ReadFile(filepath.Join(transform.shellDirectory, id))
+				if err != nil || string(got) != want {
+					t.Fatalf("%s content = %q, %v", id, got, err)
+				}
+			}
+			history, remembered := proxy.history(transform.historySessionID, "call-complete")
+			if !remembered || !history.applied || !history.confirmed {
+				t.Fatalf("completed replay = %+v, %v", history, remembered)
+			}
+			if _, remembered := proxy.history(transform.historySessionID, "call-unfinished"); remembered {
+				t.Fatal("unfinished private edit entered replay history")
+			}
+		})
+	}
+}
+
 func TestHPatchTreatsShellArtifactLiteralAsContent(t *testing.T) {
 	const script = "in /tmp/repro.txt\ntype 1:6db7 \"literal @shell/ marker\"\n"
 	calls := 0

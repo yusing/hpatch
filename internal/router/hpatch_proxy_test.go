@@ -3120,6 +3120,124 @@ func TestHPatchStreamingTranslationFailureCompletesDiagnosticExecLifecycle(t *te
 	}
 }
 
+func TestHPatchTerminalProjectionRestoresCompletedCallsOnly(t *testing.T) {
+	for _, native := range []bool{false, true} {
+		for _, status := range []string{"failed", "incomplete"} {
+			for _, transport := range []string{"json", "sse", "sse-after-item", "sse-after-incomplete-item", "sse-no-status"} {
+				t.Run(fmt.Sprintf("native=%v/%s/%s", native, status, transport), func(t *testing.T) {
+					calls := 0
+					proxy := newManagedHPatchProxy(t, testTranslator(t, &calls))
+					var transform *hpatchResponseTransform
+					if native {
+						transform, _ = newNativeHPatchTestTransformWithProxy(t, proxy)
+					} else {
+						transform, _, _, _ = newHPatchTestTransformWithProxy(t, proxy)
+					}
+					completed := testHPatchItem()
+					unfinished := testHPatchItem()
+					unfinished["id"], unfinished["call_id"], unfinished["status"] = "item-unfinished", "call-unfinished", "in_progress"
+					// Even syntactically complete input is not executable before completion.
+					if transport == "sse-after-item" {
+						if _, err := transform.TransformSSE(mustTestJSON(t, map[string]any{"type": "response.output_item.done", "item": completed})); err != nil {
+							t.Fatal(err)
+						}
+						if _, err := transform.TransformSSE(mustTestJSON(t, map[string]any{"type": "response.output_item.added", "item": unfinished})); err != nil {
+							t.Fatal(err)
+						}
+					}
+					if transport == "sse-after-incomplete-item" {
+						unfinished["status"] = "incomplete"
+						if _, err := transform.TransformSSE(mustTestJSON(t, map[string]any{"type": "response.output_item.done", "item": unfinished})); err != nil {
+							t.Fatal(err)
+						}
+					}
+					responseFields := map[string]any{
+						"status": status, "output": []any{completed, unfinished},
+						"tools":       []any{map[string]any{"type": "custom", "name": hpatchToolName}},
+						"tool_choice": hpatchToolName, "future": map[string]any{"kept": true},
+					}
+					wireStatus := status
+					if transport == "sse-no-status" {
+						delete(responseFields, "status")
+						wireStatus = ""
+					}
+					response := mustTestJSON(t, responseFields)
+					var visible []byte
+					var err error
+					if transport == "json" {
+						visible, err = transform.TransformJSON(response)
+					} else {
+						var events [][]byte
+						events, err = transform.TransformSSE(mustTestJSON(t, map[string]any{"type": "response." + status, "response": json.RawMessage(response)}))
+						if err == nil {
+							var envelope map[string]json.RawMessage
+							if len(events) == 0 || json.Unmarshal(events[len(events)-1], &envelope) != nil || jsonString(envelope, "type") != "response."+status {
+								t.Fatalf("terminal events = %s", events)
+							}
+							visible = envelope["response"]
+						}
+					}
+					if err != nil {
+						t.Fatal(err)
+					}
+					var result map[string]json.RawMessage
+					var output []map[string]json.RawMessage
+					if json.Unmarshal(visible, &result) != nil || json.Unmarshal(result["output"], &output) != nil || len(output) != 2 {
+						t.Fatalf("terminal response = %s", visible)
+					}
+					if jsonString(result, "status") != wireStatus || jsonString(result, "tool_choice") != "auto" || !bytes.Equal(result["tools"], transform.originalTools) || string(result["future"]) != `{"kept":true}` {
+						t.Fatalf("terminal contract = %s", visible)
+					}
+					history, remembered := proxy.history(transform.historySessionID, "call-H")
+					payloadField := "input"
+					if native {
+						payloadField = "arguments"
+					}
+					if calls != 1 || !remembered || jsonString(output[0], "name") != history.carrierName || jsonString(output[0], payloadField) != history.carrierInput() {
+						t.Fatalf("completed carrier: calls=%d remembered=%v output=%s", calls, remembered, visible)
+					}
+					if jsonString(output[1], "status") != unfinished["status"] || jsonString(output[1], "input") != testHPatchScript {
+						t.Fatalf("unfinished call changed = %s", visible)
+					}
+					if _, remembered := proxy.history(transform.historySessionID, "call-unfinished"); remembered {
+						t.Fatal("unfinished call entered replay history")
+					}
+					if err := transform.Finish(transport != "json"); err != nil {
+						t.Fatal(err)
+					}
+				})
+			}
+		}
+	}
+}
+
+func TestHPatchOutputItemDoneRespectsIncompleteStatus(t *testing.T) {
+	for _, status := range []string{"", "completed", "incomplete"} {
+		t.Run(status, func(t *testing.T) {
+			calls := 0
+			transform, proxy, _, _ := newHPatchTestTransform(t, testTranslator(t, &calls))
+			item := testHPatchItem()
+			if status == "" {
+				delete(item, "status")
+			} else {
+				item["status"] = status
+			}
+			events, err := transform.TransformSSE(mustTestJSON(t, map[string]any{"type": "response.output_item.done", "item": item}))
+			if err != nil || len(events) != 1 {
+				t.Fatalf("item completion = %s, %v", events, err)
+			}
+			wantCalls := 1
+			if status == "incomplete" {
+				wantCalls = 0
+			}
+			_, remembered := proxy.history(transform.historySessionID, "call-H")
+			if calls != wantCalls || remembered != (wantCalls == 1) {
+				t.Fatalf("calls = %d, remembered = %v", calls, remembered)
+			}
+		})
+	}
+}
+
 func TestHPatchStreamingTranslationFailureRejectsMalformedTerminal(t *testing.T) {
 	transform, _, _, _ := newHPatchTestTransform(t, hpatchTranslatorFunc(func(context.Context, string, string) ([]byte, error) {
 		return nil, errors.New("selector is not unique")

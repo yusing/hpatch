@@ -160,7 +160,11 @@ child honestly. Shutdown cleanup owns thread runtime directories, configured ses
 snapshot wrappers, and the shared snapshot.
 
 The response transformer uses registry membership instead of hardcoded tool-name predicates for
-JSON, SSE, and replay. Retained history stores the original contribution identity and input plus
+JSON, SSE, and replay. One status-aware terminal projection restores both JSON and every SSE
+terminal variant. An SSE terminal event supplies the authoritative status even when the embedded
+response omits it, without adding or changing wire fields; JSON uses its body status. Stream
+handling owns pending-call cancellation versus successful completion checks. Interrupted terminal projection only evaluates completed items or restores already-delivered
+calls, never unfinished input. Retained history stores the original contribution identity and input plus
 the exact validated carrier kind, name, and payload. Replay verifies the carrier byte-for-byte
 before restoring the model-visible call. Generic history cannot enter recovery ancestry;
 hpatch alone attaches its existing recovery state. A plugin input rejection may become a
