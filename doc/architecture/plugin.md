@@ -72,6 +72,16 @@ then aggregates ordinary output and the final status; it owns no separate persis
 The native carrier invokes the same executor-provided apply_patch command as hpatch. Plugin
 declarations and the model-visible tool catalog remain unchanged.
 
+For `REQ-ROUTER-DIAG-001`, the request boundary owns user-prefix detection and local static
+response playback before provider dispatch or CTP encoding. Diagnostic shell payloads use the
+same response translation, executor authorization, JSON/SSE framing, and bounded call history
+as ordinary shell calls. The existing history additionally records router-authored diagnostic
+provenance. The target driver advances only from successful terminal results already present
+in the current user turn; it owns no second session store or native process lifecycle.
+Before a later user turn reaches normal preparation, the request boundary omits only the old
+diagnostic command and its router-authored transcript items from provider history. Fixed fixture
+definitions own the cases; the host's mktemp invocation and tools own every filesystem effect.
+
 An implementation needing another executable carrier uses
 the generic path rather than encoding an exec surrogate. Hpatch's native workspace translation, recovery
 ancestry, patch renderer, and semantic failure baseline remain adapter extensions beside this

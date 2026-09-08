@@ -42,6 +42,7 @@ type hpatchHistory struct {
 	attempt              int
 	upstreamItem         map[string]json.RawMessage
 	replayCarrier        bool
+	diagnostic           bool // Router-authored static playback, never provider output.
 	commentaryMessageIDs []string
 	bytes                int
 	// unevaluated marks a call the proxy rejected before hpatch saw it. Such a
