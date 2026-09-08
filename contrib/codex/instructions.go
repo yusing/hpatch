@@ -9,14 +9,32 @@ import (
 const HPatchToolDescription = "Atomic HPATCH/2 edit-script application. Rejection or cancellation leaves the workspace unchanged."
 
 //go:embed file-editing-instructions.md
-var instructions string
+var instructionSource string
+
+//go:embed editing-workflow-default.md
+var defaultWorkflow string
+
+//go:embed editing-workflow-astra.md
+var astraWorkflow string
+
+var instructionTemplate = template.Must(template.New("model-instructions").Parse(instructionSource))
+var instructions = renderInstructions(defaultWorkflow)
+var astraInstructions = renderInstructions(astraWorkflow)
+
+func renderInstructions(workflow string) string {
+	var rendered strings.Builder
+	if err := instructionTemplate.Execute(&rendered, struct{ EditingWorkflow string }{strings.TrimSuffix(workflow, "\n")}); err != nil {
+		panic(err)
+	}
+	return rendered.String()
+}
 
 //go:embed hpatch-recovery.tmpl
 var recoverySource string
 
 var recoveryTemplate = template.Must(template.New("hpatch-recovery").Parse(recoverySource))
 
-// Instructions returns the authoritative persistent Codex model instructions.
+// Instructions returns the default persistent Codex model instructions with CTP/2 guidance.
 func Instructions() string {
 	return instructions
 }
@@ -24,6 +42,23 @@ func Instructions() string {
 // NativeInstructions returns the central guidance without the CTP/2 section. Deriving it from the
 // active source keeps every non-CTP workflow byte-identical across the two model protocols.
 func NativeInstructions() string {
+	return nativeInstructions(instructions)
+}
+
+// InstructionsForModel selects the editing workflow per request, independently of transport.
+// Unknown model IDs use the default workflow; Astra-prefixed variants share the Astra workflow.
+func InstructionsForModel(model string, compactModelProtocol bool) string {
+	selected := instructions
+	if model == "gpt-6-astra" || strings.HasPrefix(model, "gpt-6-astra-") {
+		selected = astraInstructions
+	}
+	if !compactModelProtocol {
+		return nativeInstructions(selected)
+	}
+	return selected
+}
+
+func nativeInstructions(instructions string) string {
 	const (
 		ctpHeading         = "## CTP/2 transport\n"
 		fileEditingHeading = "## File editing\n"

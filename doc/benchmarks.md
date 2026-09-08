@@ -161,6 +161,12 @@ CTP-only uses Hpatch in both arms; only the model protocol and owning guidance d
 Handoff uses Hpatch in both arms; only the treatment router enables its bounded subagent model
 schedule. Parent and child traffic remains visible through actual model names in capture exchanges.
 
+Tool-specific guidance may teach effective use of Hpatch capabilities, including batching related
+edits atomically and reusing verified targets. It must not add treatment-only general policies for
+autonomy, approvals, prose length, or task validation. Those stay in the common host/task guidance.
+Historical diagnostic runs compare the tool and its usage guidance without a fresh control; they
+do not isolate the effect of one instruction change.
+
 ## Capture and metrics
 
 New captures include keyed per-stage prefix diagnostics, route-key stability, and current-request

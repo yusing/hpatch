@@ -531,9 +531,17 @@ curl -sS http://127.0.0.1:8080/v1/models
 ### Codex model instructions
 
 [`contrib/codex/file-editing-instructions.md`](contrib/codex/file-editing-instructions.md)
-is the single source for CTP/2 representation rules and all durable HPATCH,
-shell, hread, hgrep, hsymbol, and inspect_file workflow guidance. The router
-applies it in memory and never reads or writes the configured instruction file.
+contains shared CTP/2 and tool contracts. The router fills its workflow slot with
+[`editing-workflow-astra.md`](contrib/codex/editing-workflow-astra.md) for `gpt-6-astra`
+and `gpt-6-astra-*`, or
+[`editing-workflow-default.md`](contrib/codex/editing-workflow-default.md) for other models.
+Selection follows each request's model, including switches within a conversation, in both native
+and CTP/2 modes. Each variant covers editing, commentary, shell submission, batching, target reuse,
+and target acquisition. Both variants explain effective tool use, including atomic batching and
+verified-target reuse, without adding task-wide autonomy, prose-length, or validation policies.
+Technical references remain shared.
+No additional configuration is needed. The router
+applies the guidance in memory and never reads or writes the configured instruction file.
 
 The carrier is a nonempty top-level `instructions` string, or the first
 textual developer message when that field is missing, null, or empty. A

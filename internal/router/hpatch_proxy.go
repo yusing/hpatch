@@ -119,7 +119,7 @@ type hpatchProxy struct {
 	translator             hpatchTranslator
 	registry               *toolRegistry
 	customizedInstructions bool
-	modelInstructions      string
+	compactModelProtocol   bool
 	shellDirectory         string
 	titles                 *sessionTitleCache
 	shellSessions          map[string]*shellSession
@@ -143,15 +143,11 @@ func newHPatchProxy(translator hpatchTranslator, registry *toolRegistry, customi
 		titles = titleCaches[0]
 	}
 	directory := registry.runtimeDirectory
-	modelInstructions := codexinstructions.NativeInstructions()
-	if compactModelProtocol {
-		modelInstructions = codexinstructions.Instructions()
-	}
 	return &hpatchProxy{
 		translator:             translator,
 		registry:               registry,
 		customizedInstructions: customizedInstructions,
-		modelInstructions:      modelInstructions,
+		compactModelProtocol:   compactModelProtocol,
 		shellDirectory:         directory,
 		titles:                 titles,
 		shellSessions:          make(map[string]*shellSession),
@@ -329,7 +325,8 @@ func (p *hpatchProxy) prepareRequest(ctx context.Context, request *parsedRespons
 	if !metadataValid || metadata.RequestKind != "turn" {
 		return nil, errors.New("hpatch rewrite requires valid turn metadata")
 	}
-	if err := rewriteReceivedModelInstructions(request, p.customizedInstructions, p.modelInstructions); err != nil {
+	modelInstructions := codexinstructions.InstructionsForModel(request.model(), p.compactModelProtocol)
+	if err := rewriteReceivedModelInstructions(request, p.customizedInstructions, modelInstructions); err != nil {
 		return nil, err
 	}
 	subagentDeferred := prepareSubagentInputCommentary(request.fields)

@@ -4,7 +4,8 @@
 
 In hpatch router mode, the model receives `hpatch` and `shell` as standalone custom tools.
 All persistent hread, hgrep, hsymbol, inspect_file, shell-execution, and HPATCH workflow guidance comes
-from `contrib/codex/file-editing-instructions.md`. The router injects a protocol-specific projection
+from `contrib/codex/file-editing-instructions.md` and its selected adjacent editing-workflow file
+under `REQ-GUIDE-001`. The router injects a model- and protocol-specific projection
 of that source into the top-level Responses `instructions` value in memory and never changes an
 instruction file. Native model protocol omits the leading CTP/2 section and stops after the ordinary
 guidance and tool rewrite. CTP/2 injects the complete source, preserves the selected top-level or

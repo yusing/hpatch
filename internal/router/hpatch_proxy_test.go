@@ -433,9 +433,51 @@ func TestHPatchPrepareRequestSupportsAstraStockInstructions(t *testing.T) {
 	if err := json.Unmarshal(request.fields["instructions"], &instructions); err != nil {
 		t.Fatal(err)
 	}
-	if strings.Count(instructions, codexinstructions.NativeInstructions()) != 1 ||
+	if strings.Count(instructions, codexinstructions.InstructionsForModel("gpt-6-astra", false)) != 1 ||
 		strings.Contains(instructions, stockRGInstruction) || strings.Contains(instructions, stockExecInstruction) {
 		t.Fatal("Astra request did not receive exactly one replacement guidance section")
+	}
+}
+
+func TestHPatchPrepareRequestRefreshesWorkflowOnModelSwitch(t *testing.T) {
+	for _, compact := range []bool{false, true} {
+		for _, developer := range []bool{false, true} {
+			proxy := newManagedHPatchProxy(t, testTranslator(t, new(int)))
+			proxy.compactModelProtocol = compact
+			metadata := codexTurnMetadata{RequestKind: "turn", Directories: map[string]json.RawMessage{t.TempDir(): nil}}
+			instructions := "prefix\n" + codexinstructions.NativeInstructions() + "suffix\n"
+			for _, model := range []string{"gpt-6-astra", "gpt-5.6-sol", "gpt-6-astra-2026-09-01"} {
+				input := []any{testCodeModeAdditionalTools(testCodeModeDescription)}
+				fields := map[string]any{"model": model, "tool_choice": "auto", "instructions": instructions}
+				if developer {
+					delete(fields, "instructions")
+					input = append([]any{map[string]any{"type": "message", "role": "developer", "content": instructions}}, input...)
+				}
+				fields["input"] = input
+				request, err := parseResponsesRequest(mustTestJSON(t, fields))
+				if err != nil {
+					t.Fatal(err)
+				}
+				transform, err := proxy.prepareRequest(t.Context(), &request, "model-switch-session", "model-switch-thread", metadata, true)
+				if err != nil {
+					t.Fatal(err)
+				}
+				transform.Close()
+				if developer {
+					var rewritten []map[string]any
+					if err := json.Unmarshal(request.fields["input"], &rewritten); err != nil {
+						t.Fatal(err)
+					}
+					instructions = rewritten[0]["content"].(string)
+				} else if err := json.Unmarshal(request.fields["instructions"], &instructions); err != nil {
+					t.Fatal(err)
+				}
+				want := "prefix\n" + codexinstructions.InstructionsForModel(model, compact) + "suffix\n"
+				if instructions != want || request.model() != model {
+					t.Fatalf("model %q compact %v developer %v: incorrect request-local refresh", model, compact, developer)
+				}
+			}
+		}
 	}
 }
 

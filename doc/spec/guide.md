@@ -2,8 +2,19 @@
 
 ## REQ-GUIDE-001 — Agent guidance
 
-`contrib/codex/file-editing-instructions.md` is the single Codex source for CTP/2 representation
-rules and all durable edit, shell, read, search, and inspection guidance.
+`contrib/codex/file-editing-instructions.md` owns shared CTP/2 representation rules and durable
+tool contracts. Its editing-workflow slot is rendered from adjacent `editing-workflow-astra.md`
+for request model `gpt-6-astra` or IDs beginning `gpt-6-astra-`, and from
+`editing-workflow-default.md` for every other or missing model ID. Selection happens on each
+eligible request, including model switches and inherited marked prompts, independently of
+native versus CTP/2 transport. Only the selected workflow is injected; shared tool syntax,
+atomicity, recovery, and commentary-routing rules are unchanged. Both workflow files cover file
+editing, commentary routing, shell submission, edit planning, target reuse, and target acquisition.
+Model-specific phrasing does not alter the shared reference contracts. Guidance includes effective
+use of tool capabilities: batching related edits against immutable baselines, reusing verified
+targets, selecting suitable mutation forms, and leaving formatting to the engine. It does not
+prescribe general task autonomy, approval checkpoints, prose length, validation scope, or a ban
+on inspecting changed files. Those policies remain with the host and task instructions.
 Each requirement file listed from `doc/spec/index.md` owns one normative engine or router contract. Model-visible tool descriptions contain only concise
 call-local contracts and request-specific schemas. The router does not use private tool
 descriptions as prompt text. Native model protocol injects the central source without its leading
@@ -32,7 +43,7 @@ for rejected target-bearing commands. Other evaluator rejections direct the mode
 ordinary script. A re-rejected recovery states that prior handles are stale and refreshes the
 listed commands from the latest evaluated script.
 
-Persistent guidance teaches this workflow:
+Both model variants teach the following tool workflow, with different wording and detail.
 
 1. Submit a shell call as one free-form script without an outer wrapper. Use Bash by default or
    select another interpreter with a direct compact shebang. Keep program input on standard input,
@@ -40,15 +51,15 @@ Persistent guidance teaches this workflow:
    use native session facilities for PTY-backed or long-running executions.
 2. Inspect, edit, or rerun a retained shell script through its `@shell/` reference, and never mix
    retained and workspace paths in one hpatch script.
-3. Acquire target-bearing context once before editing. When a known identifier or literal is
+3. Acquire target-bearing context for existing-file edits. When a known identifier or literal is
    likely to become a target, use hgrep first with
    repeated fixed-string patterns, adding bounded context options when surrounding code is needed.
    Every emitted match or context row is target-bearing. When the owner is known but the location
    is not, use inspect_file for structure or hgrep for a symbol. Copy inspect_file `LINE:HASH`
-   spans directly as HPATCH targets. Use hread only for the smallest range of unseen source text.
+   spans directly as HPATCH targets. Use bounded hread for source text not supplied by the search
+   or outline.
    Use hsymbol refs for exact Go references and hsymbol def for an
-   editable Go declaration after obtaining a verified selector row. Avoid whole-file hread unless
-   the complete file is necessary.
+   editable Go declaration after obtaining a verified selector row.
 4. Run one hread command per file and batch only already-known reads in one shell script. Copy
    only current emitted references. Do not follow target-bearing hgrep output with hread unless
    nonmatching context outside the requested bounds is needed.
@@ -56,14 +67,12 @@ Persistent guidance teaches this workflow:
 6. Submit every known related edit in one atomic script. Split only when a later edit depends on
    validation or information unavailable before the current call. Keep unrelated large values
    in separate failure-domain calls.
-7. Prefer the smallest mutation and let hpatch formatting own formatting. After success, do not
-   hread, hgrep, hsymbol, or run `git diff` on a changed file or a directory containing one merely to
-   inspect, verify, or locate a follow-up target. Reuse the exact authored value, unchanged rows,
-   and any
-   exact pre-edit row or range covered by a confirmed routed `reuse` mapping. Use a returned
-   final-state row or exact unanchored current text for other changed content; acquire only a
-   target that none of these forms identifies. Use a fixed heredoc for regular expressions and
-   other escape-heavy source.
+7. Use an insertion or targeted replacement rather than rewriting surrounding declarations for
+   formatting that the engine already owns. Reuse exact authored text, unchanged rows, and exact
+   pre-edit rows or ranges covered by confirmed routed mappings. Use returned final-state rows
+   or exact unanchored current text for other changed content. Acquire a focused read when these
+   forms do not identify the intended current target; rereading solely to recover an available
+   target is unnecessary. Use a fixed heredoc for regular expressions and other escape-heavy source.
 8. Use nonempty `type` to replace and empty target-bearing `type` to delete. Use `add` to
    insert before a line or text destination and `add EOF` to append. Use inline values for
    short text and `<<PATCH` for multiline or escape-heavy values.
@@ -81,6 +90,8 @@ Acceptance:
 2. The forwarded prompt contains the selected central guidance exactly once and omits the pinned
    stock apply_patch, rg, and exec_command instructions. Native omits the CTP/2 section; CTP/2 retains
    it. Both the GPT-5 editing-section template and GPT-6 Astra work-rules template are supported.
+   The workflow follows the request model, not the stock prompt shape or the proxy's first model.
+   Switching models refreshes the existing marked section without retaining the other workflow.
 3. A marked prompt retains content before and after the owned section and refreshes idempotently;
    a configured custom prompt without a recognized section retains its content before the append.
 4. Missing and null request instructions remain byte-equivalent. An unconfigured, unrecognized

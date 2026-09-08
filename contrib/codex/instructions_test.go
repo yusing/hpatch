@@ -12,6 +12,43 @@ func TestHPatchToolDescriptionStaysNonInstructional(t *testing.T) {
 	}
 }
 
+func TestInstructionsSelectModelWorkflowIndependentlyOfTransport(t *testing.T) {
+	for _, model := range []string{"gpt-6-astra", "gpt-6-astra-2026-09-01", "gpt-5.6-sol", "gpt-6-astral", "other-astra", ""} {
+		for _, compact := range []bool{false, true} {
+			got := InstructionsForModel(model, compact)
+			astra := model == "gpt-6-astra" || model == "gpt-6-astra-2026-09-01"
+			workflow, excluded := defaultWorkflow, astraWorkflow
+			if astra {
+				workflow, excluded = astraWorkflow, defaultWorkflow
+			}
+			if !strings.Contains(got, strings.TrimSuffix(workflow, "\n")) || strings.Contains(got, strings.TrimSuffix(excluded, "\n")) {
+				t.Fatalf("model %q compact %v: wrong workflow", model, compact)
+			}
+			if strings.Contains(got, "## CTP/2 transport") != compact {
+				t.Fatalf("model %q compact %v: wrong transport guidance", model, compact)
+			}
+			for _, heading := range []string{"## File editing\n", "## Commentary\n", "## Shell execution\n", "## Edit planning\n", "## Target reuse\n", "## Target acquisition\n"} {
+				if strings.Count(got, heading) != 1 {
+					t.Fatalf("model %q: workflow section %q must occur once", model, heading)
+				}
+			}
+			for _, marker := range []string{"<!-- hpatch-model-instructions:start -->", "<!-- hpatch-model-instructions:end -->"} {
+				if strings.Count(got, marker) != 1 {
+					t.Fatalf("model %q: marker %q must occur once", model, marker)
+				}
+			}
+			// Only the workflow varies; syntax and private-tool contracts remain shared.
+			baseline := Instructions()
+			if !compact {
+				baseline = NativeInstructions()
+			}
+			if strings.Replace(got, strings.TrimSuffix(workflow, "\n"), "", 1) != strings.Replace(baseline, strings.TrimSuffix(defaultWorkflow, "\n"), "", 1) {
+				t.Fatalf("model %q compact %v: shared guidance changed", model, compact)
+			}
+		}
+	}
+}
+
 func TestInstructionsOwnCTP2Representation(t *testing.T) {
 	for _, required := range []string{
 		"## CTP/2 transport",
@@ -98,17 +135,15 @@ func TestInstructionsOwnCompleteShellWorkflow(t *testing.T) {
 	}
 }
 
-func TestInstructionsAcquireTargetContextOnce(t *testing.T) {
+func TestInstructionsAcquireAndReuseVerifiedTargets(t *testing.T) {
 	for _, required := range []string{
-		"Acquire target-bearing context once before editing.",
+		"Acquire target-bearing context for existing-file edits.",
 		"use hgrep first; use `-F` with repeated `-e` literals",
 		"Copy inspect_file `LINE:HASH` spans",
 		"`hsymbol refs PATH LINE:HASH SYMBOL [N]`",
 		"Use `hsymbol def PATH LINE:HASH SYMBOL [N]`",
-		"Avoid bare whole-file hread unless the complete file",
-		"After a successful hpatch, do not use hread,\nhgrep, hsymbol, or `git diff` on a changed file",
-		"inspect, verify, or locate a follow-up target",
-		"unknown or ambiguous\nin an unchanged file justifies a focused read",
+		"instead of rereading solely to obtain an already available target",
+		"When those forms no longer identify the intended current span",
 		"Existing-file edits require a target.",
 		"Targetless `type VALUE` is valid only immediately after",
 		"unchanged saved rows remain valid even when edits shifted their line numbers",
@@ -124,14 +159,22 @@ func TestInstructionsAcquireTargetContextOnce(t *testing.T) {
 }
 
 func TestInstructionsStayWithinHPatchAndPrivateTools(t *testing.T) {
-	for _, excluded := range []string{
-		"behavioral validation",
-		"behavior-defining helper or callee semantics",
-		"trace one concrete boundary",
-		"imports inside the existing import declaration",
-	} {
-		if strings.Contains(Instructions(), excluded) {
-			t.Errorf("Instructions() contains general project guidance %q", excluded)
+	for _, model := range []string{"gpt-5.6-sol", "gpt-6-astra"} {
+		for _, excluded := range []string{
+			"behavioral validation",
+			"behavior-defining helper or callee semantics",
+			"trace one concrete boundary",
+			"imports inside the existing import declaration",
+			"approval checkpoint",
+			"required checks pass",
+			"Keep progress updates brief",
+			"complete task's correctness",
+			"`git diff` on a changed file",
+			"execution history",
+		} {
+			if strings.Contains(InstructionsForModel(model, true), excluded) {
+				t.Errorf("model %q contains out-of-scope guidance %q", model, excluded)
+			}
 		}
 	}
 }

@@ -5,7 +5,12 @@
 The root library boundary owns workspace authorization, evaluation diagnostics, completed
 results, staged commit and rollback coordination, and translation for
 `REQ-GUIDE-001` and `REQ-OUTPUT-001`. Persistent Codex edit, shell, read, search, and inspection
-guidance and CTP/2 representation guidance share `contrib/codex/file-editing-instructions.md` as their source.
+guidance and CTP/2 representation guidance use `contrib/codex/file-editing-instructions.md` as their
+shared reference template. The adjacent Astra and default editing-workflow files own model-specific
+editing, commentary-routing, shell-submission, planning, target-reuse, and target-acquisition
+guidance. General task autonomy, prose style, and validation policy remain host- and task-owned.
+`contrib/codex/instructions.go` renders
+the selected workflow; the router supplies each request's model and configured transport.
 Tool descriptions retain only call-local contracts and request-specific schemas. The router
 renders dynamic rejected-script references and the recovery instruction from the adjacent
 recovery template only for actionable evaluator rejection diagnostics.
