@@ -28,6 +28,10 @@ func run() int {
 	); handled {
 		return exitCode
 	}
+	if len(os.Args) > 1 && os.Args[1] == "wrap" {
+		stop()
+		return runWrap(os.Args[2:])
+	}
 	if err := router.Run(ctx, os.Args[1:], os.Stderr); err != nil {
 		if errors.Is(err, context.Canceled) {
 			fmt.Fprintln(os.Stderr, "router: canceled")

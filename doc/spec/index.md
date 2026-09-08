@@ -4,8 +4,9 @@ pjdoc:
   kind: spec
   scope: root
   status: draft
-  revision: "44"
+  revision: "45"
   files:
+    - router.md
     - subagents.md
     - commentary.md
     - read.md
@@ -34,6 +35,7 @@ Each listed file owns one requirement. Related facts are cited by stable ID or l
 
 ## Inventory
 
+- [`REQ-ROUTER-001`](router.md): standalone and session-scoped Codex launch
 - [`REQ-SUBAGENTS-001`](subagents.md): Grok-backed native subagents
 - [`REQ-COMMENTARY-001`](commentary.md): user-only subagent activity details
 - [`REQ-READ-001`](read.md): routed verified-row reading and bounded ranges

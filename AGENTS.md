@@ -32,7 +32,7 @@ When parts of this file is stale after your work, update this file.
 | Built-in tool sources and private execution runtime | `plugins`, `internal/router/toolplugin` |
 | Fixed shell-runtime locator and per-thread runtime path | `cmd/shell`, `internal/shellruntime`, `internal/router/shell_runtime.go` |
 | Configured plugin discovery, authenticated snapshots, and frontends | `internal/router/toolplugin/runtime.go`, `internal/router/tool_registry.go`, `internal/router/tool_wrapper.go` |
-| Router process signals and top-level exit behavior | `cmd/hpatch-router/main.go` |
+| Router process signals, wrapped Codex lifecycle, and top-level exit behavior | `cmd/hpatch-router/main.go`, `cmd/hpatch-router/wrap.go` |
 | Normative interface requirements | `doc/spec/index.md` and the listed requirement file |
 | Stable ownership contracts | `doc/architecture/index.md` and the listed contract file |
 

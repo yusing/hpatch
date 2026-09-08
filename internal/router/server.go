@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -36,9 +37,20 @@ const (
 
 var errUpstreamResponseWithoutTerminal = errors.New("upstream Responses response ended without a terminal state")
 
-func Run(ctx context.Context, args []string, stderr io.Writer) (runErr error) {
+func Run(ctx context.Context, args []string, stderr io.Writer) error {
+	return RunWithReady(ctx, args, stderr, nil)
+}
+
+// RunWithReady runs the router until cancellation or failure. Once initialization
+// succeeds and the listener is bound, ready receives its actual Responses base URL.
+// The callback must return promptly; it is never called on startup failure.
+func RunWithReady(ctx context.Context, args []string, stderr io.Writer, ready func(string)) (runErr error) {
 	flags := flag.NewFlagSet("hpatch-router", flag.ContinueOnError)
 	flags.SetOutput(stderr)
+	flags.Usage = func() {
+		fmt.Fprintln(stderr, "Usage: hpatch-router [router flags]\n       hpatch-router wrap codex [Codex arguments...]")
+		flags.PrintDefaults()
+	}
 	listenAddress := flags.String("listen", defaultListenAddress, "HTTP listen address")
 	timeout := flags.Duration("timeout", defaultRequestTimeout, "upstream response-start timeout")
 	streamIdleTimeout := flags.Duration("stream-idle-timeout", defaultStreamIdleTimeout, "maximum upstream response-stream inactivity between bytes")
@@ -170,13 +182,22 @@ func Run(ctx context.Context, args []string, stderr io.Writer) (runErr error) {
 			runErr = errors.Join(runErr, registry.Close())
 		}()
 		hpatchCalls = newHPatchProxy(translator, registry, customizedInstructions, compactTokens != nil, titles)
-		hpatchCalls.commentaryEndpoint, err = commentaryPublisherURL(*listenAddress)
-		if err != nil {
-			return fmt.Errorf("initialize commentary publisher: %w", err)
-		}
 		defer func() {
 			runErr = errors.Join(runErr, hpatchCalls.Close())
 		}()
+	}
+
+	listener, err := net.Listen("tcp", *listenAddress)
+	if err != nil {
+		return err
+	}
+	defer listener.Close()
+	address := listener.Addr().String()
+	if hpatchCalls != nil {
+		hpatchCalls.commentaryEndpoint, err = commentaryPublisherURL(address)
+		if err != nil {
+			return fmt.Errorf("initialize commentary publisher: %w", err)
+		}
 	}
 
 	var requestSequence atomic.Uint64
@@ -196,13 +217,17 @@ func Run(ctx context.Context, args []string, stderr io.Writer) (runErr error) {
 		ReadTimeout:       requestBodyReadTimeout,
 		IdleTimeout:       2 * time.Minute,
 	}
-	if err := log.log(ctx, slog.LevelInfo, "listening", "url", fmt.Sprintf("http://%s/v1/responses", *listenAddress), "mode", *mode, "model_protocol", *modelProtocol, "mentor_handoff", *mentorHandoffEnabled, "grok_subagents", *grokEnabled); err != nil {
+	baseURL := "http://" + address + "/v1"
+	if err := log.log(ctx, slog.LevelInfo, "listening", "url", baseURL+"/responses", "mode", *mode, "model_protocol", *modelProtocol, "mentor_handoff", *mentorHandoffEnabled, "grok_subagents", *grokEnabled); err != nil {
 		return fmt.Errorf("write listening log: %w", err)
 	}
 	serverError := make(chan error, 1)
 	go func() {
-		serverError <- server.ListenAndServe()
+		serverError <- server.Serve(listener)
 	}()
+	if ready != nil && ctx.Err() == nil {
+		ready(baseURL)
+	}
 	select {
 	case err := <-serverError:
 		if errors.Is(err, http.ErrServerClosed) {
@@ -213,6 +238,9 @@ func Run(ctx context.Context, args []string, stderr io.Writer) (runErr error) {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 		defer cancel()
 		shutdownErr := server.Shutdown(shutdownCtx)
+		if shutdownErr != nil {
+			shutdownErr = errors.Join(shutdownErr, server.Close())
+		}
 		serveErr := <-serverError
 		if errors.Is(serveErr, http.ErrServerClosed) {
 			serveErr = nil
