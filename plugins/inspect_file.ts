@@ -23,6 +23,7 @@ import {
   isOutsideWorkspace,
   stripOptionalFinalNewline,
 } from "./common.ts";
+import {decodeJavaScriptStringLiteral} from "./javascript_string.ts";
 import {inspectFileShapeSchemaJSON} from "./inspect_file_schema.ts";
 
 const OUTPUT_BYTES = 64 * 1024;
@@ -498,17 +499,13 @@ function javascriptOutline(source: string, lines: LineMap, tree: Tree): LocatedE
       } else {
         const moduleNode = firstDescendant(declaration, new Set(["String"]));
         if (moduleNode !== null) {
-          try {
-            const name = JSON.parse(nodeText(source, moduleNode));
-            if (typeof name === "string" && name !== "") {
-              output.push({
-                entry: {kind: "import", name, ...lines.range(declaration)},
-                offset: declaration.from,
-                order: output.length,
-              });
-            }
-          } catch {
-            // A recovered invalid string contributes no fabricated module name.
+          const name = decodeJavaScriptStringLiteral(nodeText(source, moduleNode));
+          if (name !== null) {
+            output.push({
+              entry: {kind: "import", name, ...lines.range(declaration)},
+              offset: declaration.from,
+              order: output.length,
+            });
           }
         }
       }

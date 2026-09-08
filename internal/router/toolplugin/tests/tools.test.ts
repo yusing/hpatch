@@ -1168,6 +1168,27 @@ describe("inspect_file built-in plugin", () => {
 });
 
 describe("inspect_file language projections", () => {
+  test("decodes JavaScript side-effect imports using module string semantics", async () => {
+    const directory = await temporaryDirectory("inspect-js-imports-");
+    process.chdir(directory);
+    const literals = [
+      {raw: "'single'", name: "single"},
+      {raw: '\"double\"', name: "double"},
+      {raw: String.raw`'hex\x2d\u0061\u{1f600}'`, name: "hex-a😀"},
+      {raw: String.raw`'it\'s'`, name: "it's"},
+      {raw: "'continued\\\nmodule'", name: "continuedmodule"},
+      {raw: "''", name: ""},
+    ];
+    for (const extension of ["js", "ts"]) {
+      await writeFile(`imports.${extension}`, literals.map(({raw}) => `import ${raw};`).join("\n"));
+      const result = await inspect(`imports.${extension}`);
+      expect(result.result.ok).toBe(true);
+      expect(result.result.data.parse_complete).toBe(true);
+      expect(result.result.data.outline.map((entry: Record<string, unknown>) => [entry.kind, entry.name]))
+        .toEqual(literals.map(({name}) => ["import", name]));
+    }
+  });
+
   test("hashes each outline boundary once per inspected snapshot", async () => {
     const directory = await temporaryDirectory("inspect-hash-cache-");
     process.chdir(directory);

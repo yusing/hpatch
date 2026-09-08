@@ -24,6 +24,9 @@ line count, parser-completeness flag, and a flat source-ordered outline. Code en
 imports, top-level constants and variables, types, classes, functions, and direct methods.
 Declaration-owned names MUST exclude initializer-local declarations, type parameters, and fields,
 including when the enclosing top-level declaration spans multiple lines.
+JavaScript and TypeScript side-effect imports use their decoded module string as the name,
+including single- and double-quoted literals and ECMAScript escapes and line continuations.
+Recovered invalid module strings MUST NOT contribute fabricated names.
 Markdown includes only ATX headings outside fences and top-level scalar keys parsed from a closed
 initial `---` YAML frontmatter block. JSON includes every recognized value as a depth-first RFC
 6901 pointer and value type, including the empty root pointer. Each outline entry's `line` and
