@@ -707,8 +707,8 @@ async function executeTool(request) {
   }
   const terminationReason = execution.terminationReason;
   if (terminationReason !== undefined) {
-    if (terminationReason !== "output_limit" || current.exitCode === 0) {
-      throw new Error("executor terminationReason must be output_limit with nonzero exitCode");
+    if (terminationReason !== "resolver_cleanup" && (terminationReason !== "output_limit" || current.exitCode === 0)) {
+      throw new Error("executor terminationReason must be output_limit with nonzero exitCode or resolver_cleanup");
     }
     current.terminationReason = terminationReason;
   }

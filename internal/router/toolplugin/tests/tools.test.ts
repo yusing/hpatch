@@ -610,6 +610,7 @@ describe("hsymbol built-in plugin", () => {
     expect(selected).toEqual({
       stdout: "",
       exitCode: 0,
+      terminationReason: "resolver_cleanup",
     });
     const selectedOffset = source.indexOf("名稱", source.indexOf("名稱") + 1);
     const calls = await readFile(fake.callsPath, "utf8");
@@ -650,6 +651,7 @@ describe("hsymbol built-in plugin", () => {
     expect(await tool.execute(["refs", inputPath, reference, "Target"], executionContext)).toEqual({
       stdout: "",
       exitCode: 0,
+      terminationReason: "resolver_cleanup",
     });
 
     const externalDirectory = await temporaryDirectory("hsymbol-external-");
@@ -726,6 +728,7 @@ describe("hsymbol built-in plugin", () => {
       expect(result).toEqual({
         stdout: expected,
         exitCode: 0,
+        terminationReason: "resolver_cleanup",
       });
     }
   });
@@ -771,6 +774,7 @@ describe("hsymbol built-in plugin", () => {
     expect(result).toEqual({
       stdout: `${JSON.stringify("field.go")}:${formatVerifiedRow(3, "  Field int")}`,
       exitCode: 0,
+      terminationReason: "resolver_cleanup",
     });
   });
 
@@ -818,6 +822,7 @@ describe("hsymbol built-in plugin", () => {
         + `${JSON.stringify("input.go")}:${formatVerifiedRow(2, "func Use() { Target() }")}`,
       stderr: "gopls note\nhsymbol: skipped 1 location outside workspace, 1 location not Go, 1 location not regular, 1 location not UTF-8, 1 location unavailable\n",
       exitCode: 0,
+      terminationReason: "resolver_cleanup",
     });
     expect(await readFile(fake.callsPath, "utf8")).toContain("references -d");
   });
@@ -844,16 +849,17 @@ describe("hsymbol built-in plugin", () => {
     expect(external).toEqual({
       stderr: "hsymbol: skipped 1 location outside workspace\nhsymbol: definition has no editable workspace location\n",
       exitCode: 1,
+      terminationReason: "resolver_cleanup",
     });
 
     await fake.respond("", "query failed\n", 2);
     const failed = await tool.execute(["refs", "input.go", reference, "Target"], executionContext);
-    expect(failed).toEqual({stderr: "hsymbol: query failed\n", exitCode: 1});
+    expect(failed).toEqual({stderr: "hsymbol: query failed\n", exitCode: 1, terminationReason: "resolver_cleanup"});
 
     const emptyPath = await temporaryDirectory("hsymbol-empty-path-");
     process.env.PATH = emptyPath;
     const unavailable = await tool.execute(["refs", "input.go", reference, "Target"], executionContext);
-    expect(unavailable).toEqual({stderr: "hsymbol: gopls is unavailable\n", exitCode: 1});
+    expect(unavailable).toEqual({stderr: "hsymbol: gopls is unavailable\n", exitCode: 1, terminationReason: "resolver_cleanup"});
   });
 
   test("fails without query output when the selected input changes during gopls", async () => {
@@ -874,7 +880,7 @@ describe("hsymbol built-in plugin", () => {
       ["refs", "input.go", `2:${hashLine(inputLine)}`, "Target"],
       executionContext,
     );
-    expect(result).toEqual({stderr: "hsymbol: input changed during query\n", exitCode: 1});
+    expect(result).toEqual({stderr: "hsymbol: input changed during query\n", exitCode: 1, terminationReason: "resolver_cleanup"});
   });
 
   test("applies the shared whole-row token admission to references", async () => {
@@ -911,6 +917,7 @@ describe("hsymbol built-in plugin", () => {
       stderr: "hsymbol: skipped 1 location outside workspace\n"
         + "hsymbol: output incomplete: 15,000-token limit reached\n",
       exitCode: 1,
+      terminationReason: "resolver_cleanup",
     });
   });
 
@@ -1007,11 +1014,11 @@ describe("hsymbol built-in plugin", () => {
     expect(await tool.execute(
       ["refs", "input.ts", `2:${hashLine(typescriptLine)}`, "target"],
       executionContext,
-    )).toEqual({stderr: "hsymbol: tsc is unavailable\n", exitCode: 1});
+    )).toEqual({stderr: "hsymbol: tsc is unavailable\n", exitCode: 1, terminationReason: "resolver_cleanup"});
     expect(await tool.execute(
       ["refs", "input.py", `2:${hashLine(pythonLine)}`, "target"],
       executionContext,
-    )).toEqual({stderr: "hsymbol: pyright-langserver is unavailable\n", exitCode: 1});
+    )).toEqual({stderr: "hsymbol: pyright-langserver is unavailable\n", exitCode: 1, terminationReason: "resolver_cleanup"});
   });
 
   test("reaps a language server that ignores shutdown", async () => {
@@ -1249,7 +1256,7 @@ describe("inspect_file language projections", () => {
     const useLine = source.split("\n")[5];
     const tool = createHSymbolTool("description", "start: TEST");
     const result = await tool.execute(["def", "scope.go", `6:${hashLine(useLine)}`, "localVar"], executionContext);
-    expect(result).toEqual({ stdout: `${JSON.stringify("scope.go")}:${formatVerifiedRow(3, source.split("\n")[2])}`, exitCode: 0 });
+    expect(result).toEqual({ stdout: `${JSON.stringify("scope.go")}:${formatVerifiedRow(3, source.split("\n")[2])}`, exitCode: 0, terminationReason: "resolver_cleanup" });
   });
 
 

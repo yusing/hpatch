@@ -39,7 +39,7 @@ export type ExecutionOutput = {
 
 export type ExecutionResult = ExecutionOutput & {
   // Private host cleanup metadata, never part of the executor-facing output.
-  terminationReason?: "output_limit";
+  terminationReason?: "output_limit" | "resolver_cleanup";
 };
 
 export type ExecutionContext = {

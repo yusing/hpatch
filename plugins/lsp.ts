@@ -1,4 +1,4 @@
-import {withResolverDeadline} from "./resolver.ts";
+import {resolverProcess, withResolverDeadline} from "./resolver.ts";
 import {spawn} from "node:child_process";
 import {pathToFileURL} from "node:url";
 
@@ -119,13 +119,11 @@ export async function runLSPQuery(options: LSPQueryOptions): Promise<LSPQueryRes
       child.once("spawn", () => resolve(null));
       child.once("error", (error) => resolve(error));
     });
-    const completion = new Promise<Error | null>((resolve) => {
-      child.once("error", (error) => resolve(error));
-      child.once("close", () => resolve(null));
-    });
+    const processLifecycle = resolverProcess(child);
     const stderrPromise = collect(child.stderr);
     const startError = await started;
     if (startError !== null) {
+      await processLifecycle.finish();
       await stderrPromise;
       throw processFailure(options.command, startError);
     }
@@ -150,6 +148,20 @@ export async function runLSPQuery(options: LSPQueryOptions): Promise<LSPQueryRes
     connection.onRequest("window/workDoneProgress/create", () => null);
     connection.listen();
 
+    let protocolFinished = false;
+    let protocolDrainTimer: ReturnType<typeof setTimeout> | undefined;
+    const processEnded = new Promise<never>((_, reject) => {
+      void processLifecycle.exited.then(() => {
+        if (protocolFinished) return;
+        // Pipe EOF does not mean the JSON-RPC dispatch queue is empty. Keep an
+        // independent grace period for a buffered reply, even when pipes close
+        // immediately; a missing reply still fails within this bound.
+        protocolDrainTimer = setTimeout(() => {
+          reject(new Error("language server exited before completing the query"));
+        }, 1_000);
+      });
+    });
+    void processEnded.catch(() => {});
     let phase = "initialize";
     try {
       const initialized = await Promise.race([
@@ -169,6 +181,7 @@ export async function runLSPQuery(options: LSPQueryOptions): Promise<LSPQueryRes
           },
         }),
         deadline,
+        processEnded,
       ]);
       const positionEncoding = initialized !== null && typeof initialized === "object"
         ? (initialized as {capabilities?: {positionEncoding?: unknown}}).capabilities?.positionEncoding
@@ -177,16 +190,16 @@ export async function runLSPQuery(options: LSPQueryOptions): Promise<LSPQueryRes
         throw new Error(`language server selected unsupported position encoding ${String(positionEncoding)}`);
       }
       phase = "open document";
-      await connection.sendNotification("initialized", {});
+      await Promise.race([connection.sendNotification("initialized", {}), deadline, processEnded]);
       const uri = pathToFileURL(options.path).href;
-      await connection.sendNotification("textDocument/didOpen", {
+      await Promise.race([connection.sendNotification("textDocument/didOpen", {
         textDocument: {
           uri,
           languageId: options.languageID,
           version: 1,
           text: options.source,
         },
-      });
+      }), deadline, processEnded]);
       phase = options.mode === "def" ? "definition" : "references";
       const response = options.mode === "def"
         ? await Promise.race([
@@ -195,6 +208,7 @@ export async function runLSPQuery(options: LSPQueryOptions): Promise<LSPQueryRes
             position: options.position,
           }),
           deadline,
+          processEnded,
         ])
         : await Promise.race([
           connection.sendRequest("textDocument/references", {
@@ -203,17 +217,16 @@ export async function runLSPQuery(options: LSPQueryOptions): Promise<LSPQueryRes
             context: {includeDeclaration: true},
           }),
           deadline,
+          processEnded,
         ]);
       const parsedLocations = locations(response, options.mode);
       phase = "shutdown";
       // Cleanup is auxiliary once the semantic response is complete. Bound the
       // child lifetime even when a server ignores shutdown or exit.
-      const cleanupTimeout = setTimeout(() => child.kill("SIGKILL"), 1_000);
-      let cleanupError: Error | null = null;
-      try {
+      const completion = await processLifecycle.finish(async () => {
         const shutdownCompleted = await Promise.race([
           connection.sendRequest("shutdown").then(() => true, () => false),
-          completion.then(() => false),
+          processLifecycle.exited.then(() => false),
         ]);
         if (shutdownCompleted) {
           await connection.sendNotification("exit");
@@ -221,16 +234,8 @@ export async function runLSPQuery(options: LSPQueryOptions): Promise<LSPQueryRes
         } else {
           child.kill("SIGKILL");
         }
-      } catch {
-        // A completed semantic response remains valid when the server closes its
-        // connection during shutdown. Reap the invocation rather than replacing it.
-        child.kill("SIGKILL");
-      }
-      const completionError = await completion;
-      clearTimeout(cleanupTimeout);
-      if (completionError !== null) {
-        cleanupError = completionError;
-      }
+      });
+      const cleanupError = completion.error ?? null;
       const stderr = semanticStderr(decodeUTF8(await stderrPromise, "language server stderr"));
       return {
         locations: parsedLocations,
@@ -238,7 +243,7 @@ export async function runLSPQuery(options: LSPQueryOptions): Promise<LSPQueryRes
       };
     } catch (error) {
       child.kill("SIGKILL");
-      const completionError = await completion;
+      const completionError = (await processLifecycle.finish()).error ?? null;
       await stderrPromise;
       if (completionError !== null && "code" in completionError && completionError.code === "ENOENT") {
         throw processFailure(options.command, completionError);
@@ -246,6 +251,8 @@ export async function runLSPQuery(options: LSPQueryOptions): Promise<LSPQueryRes
       const message = error instanceof Error ? error.message : errorText(error);
       throw new Error(`${phase} failed: ${message}`);
     } finally {
+      protocolFinished = true;
+      clearTimeout(protocolDrainTimer);
       connection.dispose();
     }
   });

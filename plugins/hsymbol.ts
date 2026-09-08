@@ -1,4 +1,4 @@
-import {withResolverDeadline} from "./resolver.ts";
+import {resolverProcess, withResolverDeadline} from "./resolver.ts";
 import {spawn} from "node:child_process";
 import {readFile, realpath, stat} from "node:fs/promises";
 import path from "node:path";
@@ -284,14 +284,12 @@ async function runGopls(mode: QueryMode, position: string): Promise<GoplsResult>
       ? ["definition", "-json", position]
       : ["references", "-d", position];
     const child = spawn("gopls", argumentsValue, {stdio: ["ignore", "pipe", "pipe"]});
-    const completion = new Promise<{exitCode: number | null; error?: Error}>((resolve) => {
-      child.once("error", (error) => resolve({exitCode: null, error}));
-      child.once("close", (exitCode) => resolve({exitCode}));
-    });
+    const lifecycle = resolverProcess(child);
     const stdoutPromise = collect(child.stdout);
     const stderrPromise = collect(child.stderr);
     try {
-      const completed = await Promise.race([completion, deadline]);
+      const completed = await Promise.race([lifecycle.exited, deadline]);
+      await lifecycle.finish();
       if (completed.error !== undefined) {
         await Promise.allSettled([stdoutPromise, stderrPromise]);
         if ("code" in completed.error && completed.error.code === "ENOENT") {
@@ -308,7 +306,7 @@ async function runGopls(mode: QueryMode, position: string): Promise<GoplsResult>
       return {stdout, stderr};
     } catch (error) {
       child.kill("SIGKILL");
-      await completion;
+      await lifecycle.finish();
       if (error instanceof HSymbolFailure) {
         throw error;
       }
@@ -400,11 +398,13 @@ async function queryBackend(
   file: SourceFile,
   query: Query,
   selectedOffset: number,
+  onResolverStart: () => void,
 ): Promise<BackendResult> {
   const resolver = resolverFor(file.format);
   if (resolver === null) {
     throw new HSymbolFailure("path has an unsupported hsymbol source format");
   }
+  onResolverStart();
   if (resolver === "gopls") {
     const position = `${file.path}:#${byteLength(file.source.slice(0, selectedOffset))}`;
     const result = await runGopls(query.mode, position);
@@ -500,7 +500,7 @@ function skippedDiagnostic(skipped: Map<SourceFailureReason, number>): string {
   return parts.length === 0 ? "" : `hsymbol: skipped ${parts.join(", ")}\n`;
 }
 
-async function executeQuery(query: Query): Promise<ExecutionResult> {
+async function executeQuery(query: Query, onResolverStart: () => void): Promise<ExecutionResult> {
   let workspace: string;
   try {
     workspace = await realpath(process.cwd());
@@ -515,7 +515,7 @@ async function executeQuery(query: Query): Promise<ExecutionResult> {
     throw new HSymbolFailure(sourceFailure(error).message);
   }
   const selectedOffset = selectSymbol(inputFile, query);
-  const backend = await queryBackend(workspace, inputFile, query, selectedOffset);
+  const backend = await queryBackend(workspace, inputFile, query, selectedOffset, onResolverStart);
   cache.clear();
   let currentInput: SourceFile;
   try {
@@ -670,12 +670,15 @@ export function createHSymbolTool(description: string, grammar: string): Tool<st
       return parseHSymbolArguments(input);
     },
     async execute(argv) {
+      let resolverStarted = false;
+      let result: ExecutionResult;
       try {
-        return await executeQuery(parseQuery(argv));
+        result = await executeQuery(parseQuery(argv), () => { resolverStarted = true; });
       } catch (error) {
         const message = error instanceof HSymbolFailure ? error.message : errorText(error);
-        return {stderr: `hsymbol: ${message}\n`, exitCode: 1};
+        result = {stderr: `hsymbol: ${message}\n`, exitCode: 1};
       }
+      return resolverStarted ? {...result, terminationReason: "resolver_cleanup"} : result;
     },
   });
 }

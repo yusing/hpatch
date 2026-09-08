@@ -31,7 +31,13 @@ client initializes the canonical workspace, opens the verified source snapshot, 
 positions, sends one `textDocument/definition` or `textDocument/references` request, and reaps the
 server after the response. Both resolver paths release their 30-second query deadline on success,
 failure, and spawn failure; completed queries must not keep the private host alive until deadline
-expiry. References request `includeDeclaration: true`. There is no text-search
+expiry. Process exit is distinct from inherited-pipe EOF. Both resolver paths bound final pipe
+drain and LSP shutdown to one second, including failures and deadlines, so descendants cannot
+hold a completed query open. LSP separately allows one second after process exit for buffered
+protocol messages to reach dispatch; early pipe EOF does not shorten that grace period. A semantic
+reply dispatched within the query and drain deadlines remains valid. The existing Unix invocation owner retires remaining resolver
+descendants before returning the result. Completed semantic results retain their stdout and exit
+status when auxiliary cleanup is forced. References request `includeDeclaration: true`. There is no text-search
 fallback. A missing resolver, invalid arguments, stale rows, invalid selectors, malformed protocol
 result, or failed semantic query returns concise stderr and nonzero status without useful stdout.
 

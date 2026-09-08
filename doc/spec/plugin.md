@@ -103,9 +103,10 @@ private names creates a snapshot wrapper, stable frontend, or `PATH` dependency.
 An executor returns its current stdout, stderr, and exit status once. The worker returns that result
 to Codex and never performs a second observation-only execution or returns a benchmark baseline.
 An executor may attach `terminationReason: "output_limit"` only to a nonzero result after bounded
-output capture and stream cleanup. The host validates this optional cleanup metadata; the Go
-invocation owner retires the overflowing invocation's process group on Unix before returning the
-result. The metadata is private to the plugin/host boundary and is not part of Codex-facing output.
+output capture and stream cleanup. Semantic resolvers attach `terminationReason: "resolver_cleanup"`
+after a backend invocation, including successful results, to retire their invocation-owned descendants
+without changing the semantic result. The host validates this optional cleanup metadata; the Go
+invocation owner retires the requested process group on Unix before returning the result. The metadata is private to the plugin/host boundary and is not part of Codex-facing output.
 Absent metadata preserves ordinary successful background-process and cancellation behavior.
 
 Without exec parameters, the carrier supplies no working-directory or environment override.

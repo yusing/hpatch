@@ -130,8 +130,11 @@ validates the current result, and the worker writes it to Codex-facing streams. 
 execution output. The JavaScript interpreter executor owns bounded capture and inherited-pipe
 drain; it keeps the interpreter in the existing invocation group. After receiving that bounded
 failure, the Go invocation owner terminates the remaining Unix process group and strips the
-metadata before returning stdout, stderr, and status. Successful invocations do not retire
-background processes. Cancellation continues to use the same existing process-group owner. No observation owner
+metadata before returning stdout, stderr, and status. Resolver lifecycle code distinguishes child
+exit from stream closure, bounds final drain and shutdown, and requests `resolver_cleanup` for
+its invocation-owned descendants without changing a completed semantic result. This cleanup
+reason permits successful results. Successful shell programs without cleanup metadata continue
+to preserve background processes. Cancellation continues to use the same existing process-group owner. No observation owner
 invokes the executor again.
 Configured frontend and wrapper creation is all-or-nothing for startup. Each registry uses its own `bin` directory, and the wrapper prepends it only
 to its Codex child's PATH. No shared frontend lock exists. Built-in shell keeps its
