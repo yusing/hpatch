@@ -6,7 +6,7 @@ The first working path in `doc/brief.md` § Outcome supplies the built-in declar
 `plugins/shell.mjs`. The generated plugin bundle contributes an unconstrained custom tool named
 `shell`, limits its UTF-8 input to the executor argv limit, and translates successful input
 through the canonical exec carrier from `REQ-PLUGIN-001`. The repository `make install` target
-regenerates that bundle and installs `hpatch-router` plus the fixed `shell` helper. It changes no Codex configuration,
+regenerates that bundle and installs `hpatch` plus the fixed `shell` helper. It changes no Codex configuration,
 instruction file, or configured shell declaration.
 
 The tool treats the first logical line as a shebang when that line, after trimming only its
@@ -130,7 +130,7 @@ Acceptance:
    `/dev/tty`, accept interactive input without a background-process-group stop.
 10. Malformed selectors and input that cannot fit the bounded exec argv return a concise
     diagnostic without starting an interpreter.
-11. `make install` installs `hpatch-router` and the fixed `shell` helper without changing Codex
+11. `make install` installs `hpatch` and the fixed `shell` helper without changing Codex
     configuration or instruction files. Startup and tool-snapshot changes do not rewrite that
     helper and create no hread, hgrep, hsymbol, or inspect_file basename frontend.
 12. `#!params={"workdir":"/tmp","tty":true}` before or after `#!cmd=` produces an exec carrier

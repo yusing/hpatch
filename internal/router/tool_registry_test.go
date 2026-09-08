@@ -19,7 +19,7 @@ func TestReportIssueDescriptionIsNonInstructional(t *testing.T) {
 
 func TestWorkerFrontendSymlinkLifecycle(t *testing.T) {
 	directory := t.TempDir()
-	executable := filepath.Join(directory, "hpatch-router")
+	executable := filepath.Join(directory, "hpatch")
 	if err := os.WriteFile(executable, []byte("fixture"), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -68,26 +68,6 @@ func TestWorkerFrontendSymlinkLifecycle(t *testing.T) {
 		t.Fatalf("owned frontend remains: %v", err)
 	}
 
-	staleDirectory := filepath.Join(
-		t.TempDir(),
-		"hpatch-router-tools-fixture-"+strings.Repeat("a", 64),
-	)
-	if err := os.Mkdir(staleDirectory, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	staleWrapper := filepath.Join(staleDirectory, name)
-	if err := os.Symlink(executable, staleWrapper); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(staleWrapper, link); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := ensureWorkerFrontendSymlink(wrapper, directory, name); err != nil {
-		t.Fatalf("replace stale frontend: %v", err)
-	}
-	if target, err := os.Readlink(link); err != nil || target != wrapper {
-		t.Fatalf("stale frontend target = %q, want %q: %v", target, wrapper, err)
-	}
 }
 
 func TestToolRegistryStartup(t *testing.T) {
@@ -354,7 +334,7 @@ func TestToolRegistryStartup(t *testing.T) {
 		}
 		writePlugin(t, pluginDirectory, "invalid.mjs", "export default null;\n")
 		var stderr strings.Builder
-		err = Run(t.Context(), []string{"--listen", "127.0.0.1:0"}, &stderr)
+		err = RunSession(t.Context(), nil, nil, func(Session) { t.Error("invalid registry reached readiness") })
 		if err == nil || !strings.Contains(err.Error(), "initialize tool registry") {
 			t.Fatalf("Run() error = %v", err)
 		}

@@ -8,7 +8,7 @@ delivery accounting, capture health, durable capture records, and the structured
 The router's terminal-payload seam parses provider usage once and passes the resulting counts to
 the capturer, Mentor Handoff, and user-only usage commentary.
 
-The capturer is in-process. `hpatch-router` wraps its existing `POST /v1/responses` handler and
+The capturer is in-process. `hpatch` wraps its existing `POST /v1/responses` handler and
 its existing provider `http.RoundTripper` for Responses and Chat Completions; it does not start a second HTTP server, open another
 listener, or require another process. `GET /api/metrics` serves the capturer snapshot from the same
 router listener as Responses and models traffic. The embedded `GET /` dashboard is a presentation
@@ -85,3 +85,7 @@ and terminal cached-token field presence. The router usage callback and normaliz
 unchanged. Evidence travels with each attempt, without another callback or retained raw response;
 snapshot clones isolate its explicit count. Reports distinguish unknown telemetry from explicit
 zero and keep provider request IDs out of public summaries.
+
+The capturer also owns final snapshot serialization and offline benchmark session
+aggregation. Both reuse the live snapshot and exchange calculations. The benchmark
+CLI owns artifact paths and orchestration, not another metric implementation.

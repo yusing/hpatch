@@ -84,6 +84,17 @@ func TestWrappedCodexProcess(t *testing.T) {
 	if response.StatusCode != http.StatusOK {
 		os.Exit(91)
 	}
+	// Missing required tools fails locally, producing request diagnostics without upstream traffic.
+	response, err = client.Post(baseURL+"/responses", "application/json", strings.NewReader(`{"model":"test","input":"hello"}`))
+	if err != nil {
+		os.Exit(96)
+	}
+	response.Body.Close()
+	if response.StatusCode < 400 {
+		os.Exit(97)
+	}
+	fmt.Fprintln(os.Stdout, "codex stdout")
+	fmt.Fprintln(os.Stderr, "codex stderr")
 	if err := os.WriteFile(os.Getenv("HPATCH_TEST_ADDRESS"), []byte(baseURL), 0o600); err != nil {
 		os.Exit(92)
 	}
@@ -111,12 +122,14 @@ func TestWrappedRouterProcess(t *testing.T) {
 	if os.Getenv("HPATCH_TEST_ROUTER") != "1" {
 		return
 	}
-	os.Args = []string{os.Args[0], "--grok", "--model-protocol", "native", "--mentor-handoff=false", "wrap", "codex"}
+	os.Args = []string{os.Args[0], "--grok", "--model-protocol", "native", "--mentor-handoff=false", "codex"}
 	os.Exit(run())
 }
 
 func TestWrapTerminalInterruptAndTermination(t *testing.T) {
 	directory := t.TempDir()
+	logDirectory := t.TempDir()
+	t.Setenv("TMPDIR", logDirectory)
 	runtimeDirectory := t.TempDir()
 	addressFile := filepath.Join(directory, "address")
 	t.Setenv("CODEX_HOME", t.TempDir())
@@ -137,8 +150,8 @@ func TestWrapTerminalInterruptAndTermination(t *testing.T) {
 	cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestWrappedRouterProcess$")
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
-	var logs bytes.Buffer
-	cmd.Stdout, cmd.Stderr = &logs, &logs
+	var stdout, logs bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &stdout, &logs
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
@@ -176,9 +189,20 @@ func TestWrapTerminalInterruptAndTermination(t *testing.T) {
 	if err := <-done; err == nil || cmd.ProcessState.ExitCode() != 143 {
 		t.Fatalf("termination = %v, %v", cmd.ProcessState, err)
 	}
-	if !strings.Contains(logs.String(), "grok_subagents=true") || !strings.Contains(logs.String(), "model_protocol=native") || !strings.Contains(logs.String(), "mentor_handoff=false") {
-		t.Fatalf("router flags did not reach wrapped server: %s", logs.String())
+	if strings.Contains(logs.String(), "level=") || strings.Contains(logs.String(), "router log:") {
+		t.Fatal("operational logs reached Codex")
 	}
+	if stdout.String() != "codex stdout\n" || !strings.Contains(logs.String(), "codex stderr\n") {
+		t.Fatal("Codex output was not inherited")
+	}
+	announcement := "hpatch dashboard: " + strings.TrimSuffix(baseURL, "/v1") + "/\n"
+	if !strings.HasPrefix(logs.String(), announcement) || strings.Count(logs.String(), "hpatch dashboard: ") != 1 {
+		t.Fatalf("dashboard announcement must precede Codex output exactly once: %q", logs.String())
+	}
+	if entries, err := os.ReadDir(logDirectory); err != nil || len(entries) != 0 {
+		t.Fatalf("unexpected log files: %v %v", entries, err)
+	}
+
 	entries, err := os.ReadDir(runtimeDirectory)
 	if err != nil || len(entries) != 0 {
 		t.Errorf("runtime resources survived: %v, %v", entries, err)
@@ -194,6 +218,7 @@ func TestWrapCodexLifecycle(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			directory := t.TempDir()
+			t.Setenv("TMPDIR", t.TempDir())
 			runtimeDirectory := t.TempDir()
 			addressFile := filepath.Join(directory, "address")
 			t.Setenv("CODEX_HOME", t.TempDir())
@@ -292,6 +317,7 @@ func TestWrapCodexStartupFailures(t *testing.T) {
 	for _, failure := range []string{"router", "codex"} {
 		t.Run(failure, func(t *testing.T) {
 			directory := t.TempDir()
+			t.Setenv("TMPDIR", t.TempDir())
 			runtimeDirectory := t.TempDir()
 			configDirectory := t.TempDir()
 			t.Setenv("CODEX_HOME", t.TempDir())

@@ -50,33 +50,7 @@ func ensureWorkerFrontendSymlink(wrapper, directory, name string) (string, error
 		return link, nil
 	}
 
-	absoluteTarget := currentTarget
-	if !filepath.IsAbs(absoluteTarget) {
-		absoluteTarget = filepath.Join(directory, absoluteTarget)
-	}
-	absoluteTarget = filepath.Clean(absoluteTarget)
-	_, snapshotTarget := toolRegistryIDFromDirectory(filepath.Dir(absoluteTarget))
-	staleSnapshot := snapshotTarget && filepath.Base(absoluteTarget) == name
-	if !staleSnapshot {
-		return "", fmt.Errorf("install %s worker frontend: %s points to %s, want %s", name, link, currentTarget, wrapper)
-	}
-
-	temporary, err := os.CreateTemp(directory, "."+name+"-")
-	if err != nil {
-		return "", fmt.Errorf("prepare %s worker frontend: %w", name, err)
-	}
-	temporaryPath := temporary.Name()
-	if err := errors.Join(temporary.Close(), os.Remove(temporaryPath)); err != nil {
-		return "", fmt.Errorf("prepare %s worker frontend: %w", name, err)
-	}
-	defer os.Remove(temporaryPath) //nolint:errcheck // Best-effort cleanup after rename or failure.
-	if err := os.Symlink(wrapper, temporaryPath); err != nil {
-		return "", fmt.Errorf("prepare %s worker frontend: %w", name, err)
-	}
-	if err := os.Rename(temporaryPath, link); err != nil {
-		return "", fmt.Errorf("replace %s worker frontend: %w", name, err)
-	}
-	return link, nil
+	return "", fmt.Errorf("install %s worker frontend: %s points to %s, want %s", name, link, currentTarget, wrapper)
 }
 
 func removeWorkerFrontendSymlink(link, wrapper string) error {

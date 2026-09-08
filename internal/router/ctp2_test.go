@@ -7,7 +7,6 @@ import (
 	"slices"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/tiktoken-go/tokenizer"
 )
@@ -496,7 +495,7 @@ func TestCTP2ExecuteRequestFallsBackToNativeOnCodecFailure(t *testing.T) {
 
 			if err := executeRequest(
 				t.Context(), t.Context(), request, nil, "session", provider, &bytes.Buffer{},
-				newDiagnostics(&bytes.Buffer{}), time.Now, nil, codec, nil,
+				nil, nil, codec, nil,
 			); err != nil {
 				t.Fatal(err)
 			}
@@ -560,7 +559,7 @@ func TestCTP2ExecuteRequestTransformsProviderBoundary(t *testing.T) {
 	var output bytes.Buffer
 	if err := executeRequest(
 		t.Context(), t.Context(), request, nil, "session", provider, &output,
-		newDiagnostics(&bytes.Buffer{}), time.Now, nil, codec, nil,
+		nil, nil, codec, nil,
 	); err != nil {
 		t.Fatal(err)
 	}

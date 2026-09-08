@@ -6,131 +6,37 @@ x-bench-image: &bench-image
 x-agent: &agent
   <<: *bench-image
   profiles: [agent]
+  read_only: true
+  cap_add: [NET_ADMIN, SYS_ADMIN]
+  # Docker AppArmor blocks the trusted launcher from creating private mounts.
+  # The executor instead has no capabilities, immutable groups and read-only mounts.
+  security_opt: [no-new-privileges:true, apparmor:unconfined]
+  tmpfs: [/tmp, /root/.codex]
   environment:
     GOPROXY: "off"
     GOSUMDB: "off"
     GOTOOLCHAIN: "local"
     GOVCS: "*:off"
-    HPATCH_RUNTIME_DIR: ${BENCH_RUN_DIR:?BENCH_RUN_DIR must be set}/hpatch-runtime
     PYTHONDONTWRITEBYTECODE: "1"
-    PYTHONPYCACHEPREFIX: "/tmp/hpatch-benchmark-pycache"
+    PYTHONPYCACHEPREFIX: /tmp/hpatch-benchmark-pycache
+    HPATCH_BENCH_ISSUE_DIR: /benchmark-agent-issue-reports
+    HPATCH_DIAGNOSE: ${HPATCH_BENCH_DIAGNOSE:-0}
   labels:
     hpatch.benchmark.role: agent
   volumes:
-    - type: bind
-      source: ${BENCH_RUN_DIR:?BENCH_RUN_DIR must be set}/instructions
-      target: /bench-instructions
-      read_only: true
-    - type: bind
-      source: ${BENCH_RUN_DIR:?BENCH_RUN_DIR must be set}/hpatch-runtime
-      target: ${BENCH_RUN_DIR:?BENCH_RUN_DIR must be set}/hpatch-runtime
-      read_only: true
-    - type: bind
-      source: ${BENCH_DEPENDENCY_CACHE:?BENCH_DEPENDENCY_CACHE must be set}
-      target: /go/pkg/mod
-      read_only: true
-    - type: bind
-      source: ${BENCH_DEPENDENCY_CACHE:?BENCH_DEPENDENCY_CACHE must be set}
-      target: ${BENCH_DEPENDENCY_CACHE:?BENCH_DEPENDENCY_CACHE must be set}
-      read_only: true
-    - type: bind
-      source: ${CODEX_AUTH_PATH:?CODEX_AUTH_PATH must be set}
-      target: /root/.codex/auth.json
-      read_only: true
+    - ${BENCH_RUN_DIR:?}/instructions:/bench-instructions:ro
+    - ${BENCH_RUN_DIR:?}/hpatch-config:/root/.config:ro
+    - ${BENCH_RUN_DIR:?}/agent-issue-reports:/benchmark-agent-issue-reports
+    - ${BENCH_DEPENDENCY_CACHE:?}:/go/pkg/mod:ro
+    - ${BENCH_DEPENDENCY_CACHE:?}:${BENCH_DEPENDENCY_CACHE:?}:ro
+    - ${CODEX_AUTH_PATH:?}:/root/.codex/auth.json:ro
 
 services:
-  control:
+  dependency-loader:
+    <<: *bench-image
     build:
       context: ..
       dockerfile: benchmarks/Dockerfile
-    <<: *bench-image
-    environment:
-      HPATCH_RUNTIME_DIR: ${BENCH_RUN_DIR:?BENCH_RUN_DIR must be set}/hpatch-runtime
-      TMPDIR: ${BENCH_RUN_DIR:?BENCH_RUN_DIR must be set}/hpatch-runtime/control
-    command:
-      - hpatch-router
-      - --listen
-      - 0.0.0.0:8081
-      - --mode
-      - ${HPATCH_BENCH_CONTROL_MODE:-passthrough}
-      - --model-protocol
-      - ${HPATCH_BENCH_CONTROL_MODEL_PROTOCOL:-native}
-      - --mentor-handoff=false
-      - --provider-base-url
-      - https://chatgpt.com/backend-api/codex
-      - --capture-output
-      - ${BENCH_RUN_DIR:?BENCH_RUN_DIR must be set}/captures/control.jsonl
-    networks:
-      control-agent: {}
-      egress:
-        gw_priority: 1
-    volumes:
-      - type: bind
-        source: ${BENCH_RUN_DIR:?BENCH_RUN_DIR must be set}/work
-        target: ${BENCH_RUN_DIR:?BENCH_RUN_DIR must be set}/work
-      - type: bind
-        source: ${BENCH_RUN_DIR:?BENCH_RUN_DIR must be set}/hpatch-config
-        target: /root/.config
-      - type: bind
-        source: ${BENCH_RUN_DIR:?BENCH_RUN_DIR must be set}/hpatch-runtime
-        target: ${BENCH_RUN_DIR:?BENCH_RUN_DIR must be set}/hpatch-runtime
-      - type: bind
-        source: ${BENCH_RUN_DIR:?BENCH_RUN_DIR must be set}/captures
-        target: ${BENCH_RUN_DIR:?BENCH_RUN_DIR must be set}/captures
-    healthcheck:
-      test: [CMD, curl, --fail, --silent, http://127.0.0.1:8081/api/metrics]
-      interval: 250ms
-      timeout: 1s
-      retries: 40
-
-  hpatch:
-    <<: *bench-image
-    environment:
-      HPATCH_BENCH_ISSUE_DIR: /benchmark-agent-issue-reports
-      HPATCH_DIAGNOSE: ${HPATCH_BENCH_DIAGNOSE:-0}
-      HPATCH_RUNTIME_DIR: ${BENCH_RUN_DIR:?BENCH_RUN_DIR must be set}/hpatch-runtime
-      TMPDIR: ${BENCH_RUN_DIR:?BENCH_RUN_DIR must be set}/hpatch-runtime
-    command:
-      - hpatch-router
-      - --listen
-      - 0.0.0.0:8082
-      - --mode
-      - hpatch
-      - --model-protocol
-      - ${HPATCH_BENCH_HPATCH_MODEL_PROTOCOL:-native}
-      - --mentor-handoff=${HPATCH_BENCH_MENTOR_HANDOFF:-false}
-      - --provider-base-url
-      - https://chatgpt.com/backend-api/codex
-      - --capture-output
-      - ${BENCH_RUN_DIR:?BENCH_RUN_DIR must be set}/captures/hpatch.jsonl
-    networks:
-      hpatch-agent: {}
-      egress:
-        gw_priority: 1
-    volumes:
-      - type: bind
-        source: ${BENCH_RUN_DIR:?BENCH_RUN_DIR must be set}/work
-        target: ${BENCH_RUN_DIR:?BENCH_RUN_DIR must be set}/work
-      - type: bind
-        source: ${BENCH_RUN_DIR:?BENCH_RUN_DIR must be set}/hpatch-config
-        target: /root/.config
-      - type: bind
-        source: ${BENCH_RUN_DIR:?BENCH_RUN_DIR must be set}/hpatch-runtime
-        target: ${BENCH_RUN_DIR:?BENCH_RUN_DIR must be set}/hpatch-runtime
-      - type: bind
-        source: ${BENCH_RUN_DIR:?BENCH_RUN_DIR must be set}/agent-issue-reports
-        target: /benchmark-agent-issue-reports
-      - type: bind
-        source: ${BENCH_RUN_DIR:?BENCH_RUN_DIR must be set}/captures
-        target: ${BENCH_RUN_DIR:?BENCH_RUN_DIR must be set}/captures
-    healthcheck:
-      test: [CMD, curl, --fail, --silent, http://127.0.0.1:8082/api/metrics]
-      interval: 250ms
-      timeout: 1s
-      retries: 40
-
-  dependency-loader:
-    <<: *bench-image
     profiles: [setup]
     environment:
       GOSUMDB: "off"
@@ -138,23 +44,19 @@ services:
     networks:
       egress: {}
     volumes:
-      - type: bind
-        source: ${BENCH_DEPENDENCY_CACHE:?BENCH_DEPENDENCY_CACHE must be set}
-        target: /go/pkg/mod
+      - ${BENCH_DEPENDENCY_CACHE:?}:/go/pkg/mod
 
   control-agent:
     <<: *agent
     networks:
-      control-agent: {}
+      control-egress: {}
 
   hpatch-agent:
     <<: *agent
     networks:
-      hpatch-agent: {}
+      hpatch-egress: {}
 
 networks:
-  control-agent:
-    internal: true
-  hpatch-agent:
-    internal: true
+  control-egress: {}
+  hpatch-egress: {}
   egress: {}

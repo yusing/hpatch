@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -438,13 +439,16 @@ func TestGrokCloseUnblocksUpstreamRead(t *testing.T) {
 }
 
 func TestGrokAPIKeyStartupWithoutHome(t *testing.T) {
+	if runtime.GOOS == "darwin" || runtime.GOOS == "ios" {
+		t.Skip("os.UserConfigDir requires HOME on Darwin independently of Grok authentication")
+	}
 	t.Setenv("HOME", "")
 	t.Setenv("XAI_API_KEY", "test")
 	t.Setenv("CODEX_HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
-	err := Run(ctx, []string{"--grok", "--listen", "127.0.0.1:0", "--model-protocol", "native", "--mentor-handoff=false"}, &cancelOnWrite{cancel: cancel})
+	err := RunSession(ctx, []string{"--grok", "--model-protocol", "native", "--mentor-handoff=false"}, nil, func(Session) { cancel() })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -476,7 +480,7 @@ func TestGrokOutputBudgetRejectedBeforeInference(t *testing.T) {
 func TestGrokWhitespaceAPIKeyUsesOAuthHome(t *testing.T) {
 	t.Setenv("HOME", "")
 	t.Setenv("XAI_API_KEY", " \t ")
-	err := Run(t.Context(), []string{"--grok"}, io.Discard)
+	err := RunSession(t.Context(), []string{"--grok"}, nil, nil)
 	if err == nil || !strings.Contains(err.Error(), "locate Grok credentials") {
 		t.Fatalf("expected default OAuth path lookup, got %v", err)
 	}

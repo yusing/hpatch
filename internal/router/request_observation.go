@@ -2,7 +2,6 @@ package router
 
 import (
 	"encoding/json"
-	"time"
 )
 
 // tokenCounts carries one provider-authoritative terminal usage observation to
@@ -49,10 +48,8 @@ func (outcome requestOutcome) String() string {
 type requestObservation struct {
 	outcome requestOutcome
 
-	totalDuration    time.Duration
-	upstreamDuration time.Duration
-	usageCounts      tokenCounts
-	usageObserved    bool
+	usageCounts   tokenCounts
+	usageObserved bool
 }
 
 func usageFromResponsePayload(body []byte, streamEvent bool) (tokenCounts, bool) {

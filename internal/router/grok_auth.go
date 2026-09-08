@@ -43,7 +43,7 @@ func newGrokAuth(path, apiKey string) *grokAuth {
 }
 func (a *grokAuth) credentials(ctx context.Context) (grokCredentials, error) {
 	if a.apiKey != "" {
-		return grokCredentials{endpoint: grokAPIEndpoint, headers: http.Header{"Authorization": []string{"Bearer " + a.apiKey}, "User-Agent": []string{"hpatch-router"}}}, nil
+		return grokCredentials{endpoint: grokAPIEndpoint, headers: http.Header{"Authorization": []string{"Bearer " + a.apiKey}, "User-Agent": []string{"hpatch"}}}, nil
 	}
 	_, entry, err := a.read()
 	if err != nil {
@@ -65,9 +65,9 @@ func (a *grokAuth) credentials(ctx context.Context) (grokCredentials, error) {
 	}
 	return grokCredentials{endpoint: grokProxyEndpoint, headers: http.Header{
 		"Authorization": []string{"Bearer " + token}, "X-Xai-Token-Auth": []string{"xai-grok-cli"},
-		"X-Grok-Model-Override": []string{"grok-4.6"}, "X-Grok-Client-Identifier": []string{"hpatch-router"},
+		"X-Grok-Model-Override": []string{"grok-4.6"}, "X-Grok-Client-Identifier": []string{"hpatch"},
 		// The proxy gates its CLI wire protocol independently of our user agent.
-		"X-Grok-Client-Version": []string{"1.0.13"}, "X-Grok-Client-Mode": []string{"headless"}, "User-Agent": []string{"hpatch-router"},
+		"X-Grok-Client-Version": []string{"1.0.13"}, "X-Grok-Client-Mode": []string{"headless"}, "User-Agent": []string{"hpatch"},
 	}}, nil
 }
 func (a *grokAuth) read() (map[string]json.RawMessage, map[string]json.RawMessage, error) {

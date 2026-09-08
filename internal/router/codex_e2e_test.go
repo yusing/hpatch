@@ -5,7 +5,6 @@ package router
 import (
 	"bytes"
 	"context"
-	"io"
 	"net/http/httptest"
 	"os"
 	"os/exec"
@@ -74,7 +73,7 @@ func TestCodexHPatchGrammarE2E(t *testing.T) {
 		t.Context(),
 		10*time.Minute,
 		newProviderClient(codexBaseURL, nil),
-		newDiagnostics(io.Discard),
+		nil,
 		newManagedHPatchProxy(t, recorder),
 		nil, nil,
 		&requestSequence,

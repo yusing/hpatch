@@ -343,7 +343,7 @@ func (p *hpatchProxy) prepareRequest(ctx context.Context, request *parsedRespons
 	originalToolChoice = bytes.Clone(originalToolChoice)
 	carriers, err := buildCodeModeCarrierCatalog(tools, p.registry)
 	if err != nil {
-		return nil, err
+		return nil, incompatibleRequest("invalid_tool_catalog", err.Error()+". Check the Codex tool catalog.")
 	}
 	installedTools, err := p.registry.specifications()
 	if err != nil {
@@ -362,7 +362,7 @@ func (p *hpatchProxy) prepareRequest(ctx context.Context, request *parsedRespons
 		nativeTools = replaced
 	}
 	if !replaced {
-		return nil, errors.New("responses request cannot satisfy the required hpatch rewrite")
+		return nil, incompatibleRequest("unsupported_tool_catalog", "This request exposes no supported editing and execution tools. Use a Codex session with apply_patch and exec_command, or the supported Code Mode exec tool.")
 	}
 	var commentaryTools commentaryToolCatalog
 	if p.commentaryEndpoint != "" {
@@ -465,7 +465,7 @@ func replaceCodeModeTools(fields map[string]json.RawMessage, catalog *responsesT
 		}
 	}
 	if codeModeToolChoiceRestricted(fields, owner.name) {
-		return "", false, nil
+		return "", false, incompatibleRequest("restricted_tool_choice", "The forced Code Mode tool choice prevents Hpatch replacement. Use automatic tool choice.")
 	}
 	if err := exposeStandaloneHPatch(fields, catalog, owner, installedTools); err != nil {
 		return "", false, err
@@ -486,28 +486,34 @@ func replaceNativeTools(fields map[string]json.RawMessage, catalog *responsesToo
 	for index, tool := range tools {
 		name := tool.Name
 		if _, exists := installedNames[name]; exists {
-			return "", false, fmt.Errorf("responses request already defines %s", name)
+			return "", false, incompatibleRequest("invalid_tool_catalog", fmt.Sprintf("The request already defines %s. Remove the conflicting Hpatch tool definition.", name))
 		}
 		switch name {
 		case applyPatchToolName:
 			if applyPatchIndex >= 0 {
-				return "", false, errors.New("responses request defines native apply_patch more than once")
+				return "", false, incompatibleRequest("invalid_tool_catalog", "Native apply_patch is defined more than once. Use one custom apply_patch tool.")
 			}
 			if tool.Type != "custom" {
-				return "", false, errors.New("responses native apply_patch is not a custom tool")
+				return "", false, incompatibleRequest("invalid_tool_catalog", "Native apply_patch must be a custom tool. Check the Codex tool catalog.")
 			}
 			applyPatchIndex = index
 		case nativeExecCommandToolName:
 			if execCommandIndex >= 0 {
-				return "", false, errors.New("responses request defines native exec_command more than once")
+				return "", false, incompatibleRequest("invalid_tool_catalog", "Native exec_command is defined more than once. Use one function exec_command tool.")
 			}
 			if tool.Type != "function" {
-				return "", false, errors.New("responses native exec_command is not a function tool")
+				return "", false, incompatibleRequest("invalid_tool_catalog", "Native exec_command must be a function tool. Check the Codex tool catalog.")
 			}
 			execCommandIndex = index
 		case "exec", "functions.exec":
-			return "", false, fmt.Errorf("responses request exposes unsupported top-level %s", name)
+			return "", false, incompatibleRequest("invalid_tool_catalog", fmt.Sprintf("Unsupported top-level %s tool. Use a supported Codex tool catalog.", name))
 		}
+	}
+	if applyPatchIndex < 0 && execCommandIndex >= 0 {
+		return "", false, incompatibleRequest("missing_apply_patch", "The request has exec_command but no apply_patch tool. Enable editing tools for this Codex session.")
+	}
+	if execCommandIndex < 0 && applyPatchIndex >= 0 {
+		return "", false, incompatibleRequest("missing_exec_command", "The request has apply_patch but no exec_command carrier. Enable execution tools for this Codex session.")
 	}
 	if applyPatchIndex < 0 || execCommandIndex < 0 {
 		return "", false, nil
@@ -518,7 +524,7 @@ func replaceNativeTools(fields map[string]json.RawMessage, catalog *responsesToo
 	if json.Unmarshal(fields["tool_choice"], &choice) == nil {
 		selected := choice.Name
 		if selected == applyPatchToolName || selected == nativeExecCommandToolName {
-			return "", false, nil
+			return "", false, incompatibleRequest("restricted_tool_choice", "The forced native tool choice prevents Hpatch replacement. Use automatic tool choice.")
 		}
 	}
 	catalog.removeTop(applyPatchIndex)

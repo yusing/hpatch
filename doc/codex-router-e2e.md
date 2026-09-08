@@ -26,21 +26,15 @@ The router validates and canonicalizes the optional declared base-directory stri
 
 ### Reproduction shape
 
-Start the router from this repository:
+Launch the router and probe together from this repository:
 
 ```sh
-go run ./cmd/hpatch-router --listen 0.0.0.0:8080
-```
-
-For a non-interactive Codex probe, global options such as approval policy must
-appear before the `exec` subcommand:
-
-```sh
-codex --local-provider codex-dynamic --oss --model gpt-5.6-luna \
+go run ./cmd/hpatch codex --model gpt-5.6-luna \
   --sandbox workspace-write --ask-for-approval never \
   exec --ephemeral -C /absolute/path/inside/this/repository "PROMPT"
 ```
 
-Use a temporary directory inside the repository for edit-producing probes,
-constrain the prompt to that directory, verify the actual output path, and remove
-the temporary artifacts afterward. Stop the router when the probe is complete.
+Use a session-created temporary directory outside the repository for disposable
+probes, constrain edits to it, and verify the output paths. The wrapper stops its
+router automatically when Codex exits. Older host observations above are not a
+substitute for rerunning the focused end-to-end tests with the installed Codex.

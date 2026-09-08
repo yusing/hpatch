@@ -6,17 +6,14 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
-	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"testing/iotest"
 	"testing/synctest"
@@ -139,15 +136,15 @@ func TestExecuteRequestFailsClosedBeforeUpstreamWhenRewriteIsIneligible(t *testi
 			additional := input[0].(map[string]any)
 			tools := additional["tools"].([]any)
 			tools[0].(map[string]any)["description"] = "Run JavaScript without apply_patch."
-		}, want: "required hpatch rewrite"},
+		}, want: "unsupported_tool_catalog"},
 		{name: "restricted Code Mode tool", sessionID: "session", headers: validHeaders, mutate: func(request map[string]any) {
 			request["tool_choice"] = map[string]any{"type": "custom", "name": "exec"}
-		}, want: "required hpatch rewrite"},
+		}, want: "restricted_tool_choice"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			provider := &serverFakeProvider{}
-			err := executeRequest(t.Context(), t.Context(), serverRequest(t, test.mutate), test.headers, test.sessionID, provider, io.Discard, newDiagnostics(io.Discard), time.Now, newManagedHPatchProxy(t, testTranslator(t, new(int))), nil, nil)
+			err := executeRequest(t.Context(), t.Context(), serverRequest(t, test.mutate), test.headers, test.sessionID, provider, io.Discard, nil, newManagedHPatchProxy(t, testTranslator(t, new(int))), nil, nil)
 			if err == nil || !strings.Contains(err.Error(), test.want) {
 				t.Fatalf("error = %v, want containing %q", err, test.want)
 			}
@@ -184,8 +181,7 @@ func TestExecuteRequestDoesNotRequireWorkspaceMetadata(t *testing.T) {
 				"session",
 				provider,
 				&output,
-				newDiagnostics(io.Discard),
-				time.Now,
+				nil,
 				proxy,
 				nil, nil,
 			)
@@ -221,8 +217,7 @@ func TestExecuteRequestSupportsNativeToolsOnTheSameResponsesPath(t *testing.T) {
 		"native-session",
 		provider,
 		&output,
-		newDiagnostics(io.Discard),
-		time.Now,
+		nil,
 		newManagedHPatchProxy(t, testTranslator(t, new(int))),
 		nil, nil,
 	)
@@ -283,7 +278,7 @@ func TestExecuteRequestForwardsCompactionWithoutRouterRewrite(t *testing.T) {
 	}))
 	codec := mustCTP2Codec(t)
 	var output bytes.Buffer
-	err = executeRequest(t.Context(), t.Context(), parsed, serverCompactionMetadataHeaders(t), "session", provider, &output, newDiagnostics(io.Discard), time.Now, proxy, codec, nil)
+	err = executeRequest(t.Context(), t.Context(), parsed, serverCompactionMetadataHeaders(t), "session", provider, &output, nil, proxy, codec, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -314,8 +309,9 @@ func TestExecuteRequestPassesThroughOriginalRequestAndRecordsUsage(t *testing.T)
 		},
 	}))
 	provider := &serverFakeProvider{results: []serverForwardResult{{response: serverHTTPResponse(responseBody)}}}
-	var output, logOutput bytes.Buffer
-	if err := executeRequest(t.Context(), t.Context(), parsed, http.Header{}, "session", provider, &output, newDiagnostics(&logOutput), time.Now, nil, nil, nil); err != nil {
+	var output bytes.Buffer
+	issues := NewCriticalErrors()
+	if err := executeRequest(t.Context(), t.Context(), parsed, http.Header{}, "session", provider, &output, issues, nil, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	if len(provider.forwarded) != 1 || !bytes.Equal(provider.forwarded[0], originalBody) {
@@ -327,14 +323,8 @@ func TestExecuteRequestPassesThroughOriginalRequestAndRecordsUsage(t *testing.T)
 	if output.String() != responseBody {
 		t.Fatalf("visible response = %q, want %q", output.String(), responseBody)
 	}
-	logs := logOutput.String()
-	if !strings.Contains(logs, "usage_observed=true") {
-		t.Fatalf("terminal log lacks usage state: %s", logs)
-	}
-	for _, field := range []string{"input_tokens=", "cached_input_tokens=", "output_tokens=", "reasoning_tokens="} {
-		if strings.Contains(logs, field) {
-			t.Fatalf("terminal log retained benchmark-only field %q: %s", field, logs)
-		}
+	if len(issues.Pending()) != 0 {
+		t.Fatal("successful request emitted critical notice")
 	}
 }
 
@@ -368,7 +358,7 @@ func TestExecuteRequestForwardsRewrittenRequestAndRecordsUsage(t *testing.T) {
 		return nil, nil
 	}))
 	var output bytes.Buffer
-	err := executeRequest(t.Context(), t.Context(), parsed, headers, "session", provider, &output, newDiagnostics(io.Discard), time.Now, proxy, nil, nil)
+	err := executeRequest(t.Context(), t.Context(), parsed, headers, "session", provider, &output, nil, proxy, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -479,8 +469,7 @@ func TestShellHReadAfterAppliedHPatchCarrierRemainsModelVisible(t *testing.T) {
 			sessionID,
 			provider,
 			&output,
-			newDiagnostics(io.Discard),
-			time.Now,
+			nil,
 			proxy,
 			nil, nil,
 		); err != nil {
@@ -624,8 +613,7 @@ func TestExecuteRequestRejectsDirectAdditionalApplyPatchWithoutExecCarrier(t *te
 		"session-direct",
 		provider,
 		&output,
-		newDiagnostics(io.Discard),
-		time.Now,
+		nil,
 		proxy,
 		nil, nil,
 	)
@@ -648,13 +636,10 @@ func TestExecuteRequestRecordsUsageAndFailureWhenDeliveryFails(t *testing.T) {
 		"usage":  map[string]any{"input_tokens": 10},
 	}))
 	provider := &serverFakeProvider{results: []serverForwardResult{{response: serverHTTPResponse(responseBody)}}}
-	var logOutput bytes.Buffer
-	err := executeRequest(t.Context(), t.Context(), serverRequest(t, nil), serverMetadataHeaders(t, "turn", map[string]json.RawMessage{workspace: nil}), "session", provider, serverErrorWriter{err: io.ErrClosedPipe}, newDiagnostics(&logOutput), serverLifecycleClock(0, 10*time.Millisecond, 30*time.Millisecond), newManagedHPatchProxy(t, testTranslator(t, new(int))), nil, nil)
+	issues := NewCriticalErrors()
+	err := executeRequest(t.Context(), t.Context(), serverRequest(t, nil), serverMetadataHeaders(t, "turn", map[string]json.RawMessage{workspace: nil}), "session", provider, serverErrorWriter{err: io.ErrClosedPipe}, issues, newManagedHPatchProxy(t, testTranslator(t, new(int))), nil, nil)
 	if err == nil {
 		t.Fatal("delivery failure returned no error")
-	}
-	if logs := logOutput.String(); strings.Count(logs, "Responses request finished") != 1 || !strings.Contains(logs, "failure_phase=write_response") {
-		t.Fatalf("delivery terminal log = %q", logs)
 	}
 }
 
@@ -675,7 +660,7 @@ func TestResponsesHandlerRejectsBackgroundBeforeUpstream(t *testing.T) {
 	)
 	recorder := httptest.NewRecorder()
 	provider := &serverFakeProvider{}
-	responsesHandler(t.Context(), time.Minute, provider, newDiagnostics(io.Discard), nil, nil, nil, new(atomic.Uint64))(recorder, request)
+	responsesHandler(t.Context(), time.Minute, provider, nil, nil, nil, nil)(recorder, request)
 	if recorder.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusBadRequest)
 	}
@@ -692,7 +677,7 @@ func TestResponsesHandlerRejectsBodyBeyondRouterBufferBudget(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	provider := &serverFakeProvider{}
 
-	responsesHandler(t.Context(), time.Minute, provider, newDiagnostics(io.Discard), nil, nil, nil, new(atomic.Uint64))(recorder, request)
+	responsesHandler(t.Context(), time.Minute, provider, nil, nil, nil, nil)(recorder, request)
 
 	if recorder.Code != http.StatusRequestEntityTooLarge {
 		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusRequestEntityTooLarge)
@@ -739,8 +724,8 @@ func TestResponsesHandlerDoesNotLogClientCancellationAsOperationalEvent(t *testi
 			},
 		}, nil
 	})
-	var logOutput bytes.Buffer
-	handler := responsesHandler(t.Context(), time.Minute, provider, newDiagnostics(&logOutput), newManagedHPatchProxy(t, nil), nil, nil, new(atomic.Uint64))
+	issues := NewCriticalErrors()
+	handler := responsesHandler(t.Context(), time.Minute, provider, issues, newManagedHPatchProxy(t, nil), nil, nil)
 	handled := make(chan struct{})
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		handler(writer, request)
@@ -788,17 +773,6 @@ func TestResponsesHandlerDoesNotLogClientCancellationAsOperationalEvent(t *testi
 	default:
 		t.Fatal("client cancellation did not reach the upstream response body")
 	}
-	if logs := logOutput.String(); strings.Contains(logs, "canceled after response started") {
-		t.Fatalf("client cancellation was logged as an operational event:\n%s", logs)
-	}
-}
-
-func serverLifecycleClock(offsets ...time.Duration) func() time.Time {
-	base := time.Unix(1_000, 0)
-	var index atomic.Uint64
-	return func() time.Time {
-		return base.Add(offsets[index.Add(1)-1])
-	}
 }
 
 func TestExecuteRequestSuccessfulStreamLifecycle(t *testing.T) {
@@ -817,22 +791,16 @@ func TestExecuteRequestSuccessfulStreamLifecycle(t *testing.T) {
 	provider := &serverFakeProvider{results: []serverForwardResult{{response: response}}}
 	recorder := httptest.NewRecorder()
 	writer := &trackedResponseWriter{ResponseWriter: recorder}
-	var logOutput bytes.Buffer
+	issues := NewCriticalErrors()
 	err := executeRequest(
 		t.Context(), t.Context(),
 		serverRequest(t, func(request map[string]any) { request["stream"] = true }),
-		http.Header{}, "stream-session", provider, writer, newDiagnostics(&logOutput),
-		serverLifecycleClock(0, 10*time.Millisecond, 40*time.Millisecond), nil, nil, nil,
+		http.Header{}, "stream-session", provider, writer, issues, nil, nil, nil,
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if logs := logOutput.String(); strings.Count(logs, "Responses request finished") != 1 ||
-		!strings.Contains(logs, "outcome=completed") ||
-		!strings.Contains(logs, "response_started=true") {
-		t.Fatalf("stream terminal log = %q", logs)
-	}
 }
 
 func TestExecuteRequestTerminalOutcomes(t *testing.T) {
@@ -876,27 +844,16 @@ func TestExecuteRequestTerminalOutcomes(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			provider := &serverFakeProvider{results: []serverForwardResult{{response: test.response}}}
-			var logOutput bytes.Buffer
+			issues := NewCriticalErrors()
 			err := executeRequest(
 				t.Context(), t.Context(), serverRequest(t, test.mutate), http.Header{}, "session",
-				provider, io.Discard, newDiagnostics(&logOutput),
-				serverLifecycleClock(0, 5*time.Millisecond, 25*time.Millisecond), nil, nil, nil,
+				provider, io.Discard, issues, nil, nil, nil,
 			)
 			if err != nil {
 				t.Fatal(err)
 			}
-			logs := logOutput.String()
-			if strings.Count(logs, "Responses request finished") != 1 ||
-				!strings.Contains(logs, "outcome="+test.wantOutcome.String()) ||
-				!strings.Contains(logs, "failure_phase="+string(test.wantFailurePhase)) {
-				t.Fatalf("terminal log = %q", logs)
-			}
-			if strings.Contains(logs, "input_tokens=") {
-				t.Fatalf("terminal log retained provider token counts: %q", logs)
-			}
-			wantUsageState := "usage_observed=" + strconv.FormatBool(test.wantUsage != 0)
-			if !strings.Contains(logs, wantUsageState) {
-				t.Fatalf("terminal usage state does not match observed usage: %q", logs)
+			if len(issues.Pending()) != 1 {
+				t.Fatal("terminal failure must queue one notice")
 			}
 		})
 	}
@@ -910,12 +867,12 @@ func TestExecuteRequestCancellationBeforeResponseLifecycle(t *testing.T) {
 		return nil, startCtx.Err()
 	})
 	ctx, cancel := context.WithCancel(t.Context())
-	var logOutput bytes.Buffer
+	issues := NewCriticalErrors()
 	result := make(chan error, 1)
 	go func() {
 		result <- executeRequest(
 			ctx, ctx, serverRequest(t, nil), http.Header{}, "session", provider, io.Discard,
-			newDiagnostics(&logOutput), serverLifecycleClock(0, 10*time.Millisecond, 30*time.Millisecond), nil, nil, nil,
+			issues, nil, nil, nil,
 		)
 	}()
 	<-started
@@ -925,11 +882,6 @@ func TestExecuteRequestCancellationBeforeResponseLifecycle(t *testing.T) {
 		t.Fatalf("error = %v, want cancellation", err)
 	}
 
-	if logs := logOutput.String(); strings.Count(logs, "Responses request finished") != 1 ||
-		!strings.Contains(logs, "outcome=canceled_before_response") ||
-		!strings.Contains(logs, "response_started=false") {
-		t.Fatalf("terminal log = %q", logs)
-	}
 }
 
 type serverBlockingSSEBody struct {
@@ -1063,14 +1015,13 @@ func TestExecuteRequestStreamIdleTimeoutLifecycle(t *testing.T) {
 		provider := &serverFakeProvider{results: []serverForwardResult{{response: response}}}
 		recorder := httptest.NewRecorder()
 		writer := &trackedResponseWriter{ResponseWriter: recorder}
-		var logOutput bytes.Buffer
+		issues := NewCriticalErrors()
 		result := make(chan error, 1)
 		go func() {
 			result <- executeRequest(
 				t.Context(), t.Context(),
 				serverRequest(t, func(request map[string]any) { request["stream"] = true }),
-				http.Header{}, "idle-session", provider, writer, newDiagnostics(&logOutput),
-				serverLifecycleClock(0, 5*time.Millisecond, 35*time.Millisecond), nil, nil, nil,
+				http.Header{}, "idle-session", provider, writer, issues, nil, nil, nil,
 			)
 		}()
 
@@ -1086,11 +1037,6 @@ func TestExecuteRequestStreamIdleTimeoutLifecycle(t *testing.T) {
 			t.Fatalf("error = %v, want stream idle timeout", err)
 		}
 
-		if logs := logOutput.String(); !strings.Contains(logs, "outcome=stream_idle_timed_out") ||
-			!strings.Contains(logs, "failure_phase=stream_idle_timeout") ||
-			!strings.Contains(logs, "response_started=true") {
-			t.Fatalf("stream idle terminal log = %q", logs)
-		}
 	})
 }
 
@@ -1141,14 +1087,13 @@ func TestExecuteRequestCancellationAfterResponseLifecycle(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	recorder := httptest.NewRecorder()
 	writer := &trackedResponseWriter{ResponseWriter: recorder}
-	var logOutput bytes.Buffer
+	issues := NewCriticalErrors()
 	result := make(chan error, 1)
 	go func() {
 		result <- executeRequest(
 			ctx, ctx,
 			serverRequest(t, func(request map[string]any) { request["stream"] = true }),
-			http.Header{}, "session", provider, writer, newDiagnostics(&logOutput),
-			serverLifecycleClock(0, 5*time.Millisecond, 35*time.Millisecond), nil, nil, nil,
+			http.Header{}, "session", provider, writer, issues, nil, nil, nil,
 		)
 	}()
 	<-blocked
@@ -1158,11 +1103,6 @@ func TestExecuteRequestCancellationAfterResponseLifecycle(t *testing.T) {
 		t.Fatalf("error = %v, want cancellation", err)
 	}
 
-	if logs := logOutput.String(); strings.Count(logs, "Responses request finished") != 1 ||
-		!strings.Contains(logs, "outcome=canceled_after_response") ||
-		!strings.Contains(logs, "response_started=true") {
-		t.Fatalf("terminal log = %q", logs)
-	}
 }
 
 type serverCancelAfterTerminalResponseWriter struct {
@@ -1207,13 +1147,12 @@ func TestExecuteRequestCompletesAtTerminalEventBeforeStreamEOF(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	downstream := &serverCancelAfterTerminalResponseWriter{ResponseWriter: recorder, cancel: cancel}
 	writer := &trackedResponseWriter{ResponseWriter: downstream}
-	var logOutput bytes.Buffer
+	issues := NewCriticalErrors()
 
 	err := executeRequest(
 		ctx, ctx,
 		serverRequest(t, func(request map[string]any) { request["stream"] = true }),
-		http.Header{}, "session", provider, writer, newDiagnostics(&logOutput),
-		serverLifecycleClock(0, 5*time.Millisecond, 35*time.Millisecond), nil, nil, nil,
+		http.Header{}, "session", provider, writer, issues, nil, nil, nil,
 	)
 	if err != nil {
 		t.Fatalf("terminal response returned error: %v", err)
@@ -1224,10 +1163,6 @@ func TestExecuteRequestCompletesAtTerminalEventBeforeStreamEOF(t *testing.T) {
 	default:
 	}
 
-	if logs := logOutput.String(); !strings.Contains(logs, "outcome=completed") ||
-		!strings.Contains(logs, "upstream_terminal_state=completed") {
-		t.Fatalf("terminal response log = %q", logs)
-	}
 }
 
 func TestExecuteRequestResponseStartDeadlineLifecycle(t *testing.T) {
@@ -1243,7 +1178,7 @@ func TestExecuteRequestResponseStartDeadlineLifecycle(t *testing.T) {
 	go func() {
 		result <- executeRequest(
 			ctx, t.Context(), serverRequest(t, nil), http.Header{}, "session", provider, io.Discard,
-			newDiagnostics(io.Discard), serverLifecycleClock(0, 5*time.Millisecond, 25*time.Millisecond), nil, nil, nil,
+			nil, nil, nil, nil,
 		)
 	}()
 	<-started
@@ -1257,42 +1192,13 @@ func TestExecuteRequestIndependentUpstreamCancellationIsFailure(t *testing.T) {
 	provider := serverProviderFunc(func(context.Context, context.Context, []byte, http.Header, string) (*http.Response, error) {
 		return nil, context.Canceled
 	})
-	var logOutput bytes.Buffer
+	issues := NewCriticalErrors()
 	err := executeRequest(
 		t.Context(), t.Context(), serverRequest(t, nil), http.Header{}, "session",
-		provider, io.Discard, newDiagnostics(&logOutput),
-		serverLifecycleClock(0, 5*time.Millisecond, 25*time.Millisecond), nil, nil, nil,
+		provider, io.Discard, issues, nil, nil, nil,
 	)
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("error = %v, want wrapped upstream cancellation", err)
-	}
-	if logs := logOutput.String(); !strings.Contains(logs, "outcome=failed") {
-		t.Fatalf("terminal log = %q", logs)
-	}
-}
-
-type serverFailTerminalLogWriter struct {
-	writes int
-}
-
-func (writer *serverFailTerminalLogWriter) Write(content []byte) (int, error) {
-	writer.writes++
-	if writer.writes == 2 {
-		return 0, io.ErrClosedPipe
-	}
-	return len(content), nil
-}
-
-func TestExecuteRequestReturnsTerminalLogFailure(t *testing.T) {
-	provider := &serverFakeProvider{results: []serverForwardResult{{response: serverHTTPResponse(`{"status":"completed"}`)}}}
-	logOutput := new(serverFailTerminalLogWriter)
-	err := executeRequest(
-		t.Context(), t.Context(), serverRequest(t, nil), http.Header{}, "session",
-		provider, io.Discard, newDiagnostics(logOutput),
-		serverLifecycleClock(0, 5*time.Millisecond, 25*time.Millisecond), nil, nil, nil,
-	)
-	if !errors.Is(err, io.ErrClosedPipe) || !strings.Contains(err.Error(), "write terminal log") {
-		t.Fatalf("error = %v, want terminal log failure", err)
 	}
 }
 
@@ -1305,20 +1211,15 @@ func TestExecuteRequestTransformFailureLifecycle(t *testing.T) {
 		"output": []any{item},
 	}))
 	provider := &serverFakeProvider{results: []serverForwardResult{{response: serverHTTPResponse(responseBody)}}}
-	var logOutput bytes.Buffer
+	issues := NewCriticalErrors()
 	err := executeRequest(
 		t.Context(), t.Context(), serverRequest(t, nil),
 		serverMetadataHeaders(t, "turn", map[string]json.RawMessage{workspace: nil}),
-		"session", provider, io.Discard, newDiagnostics(&logOutput),
-		serverLifecycleClock(0, 5*time.Millisecond, 25*time.Millisecond),
+		"session", provider, io.Discard, issues,
 		newManagedHPatchProxy(t, testTranslator(t, new(int))), nil, nil,
 	)
 	if err == nil {
 		t.Fatal("transform failure returned no error")
-	}
-	if logs := logOutput.String(); strings.Count(logs, "Responses request finished") != 1 ||
-		!strings.Contains(logs, "failure_phase=transform") {
-		t.Fatalf("terminal log = %q", logs)
 	}
 }
 
@@ -1360,7 +1261,7 @@ func TestModelsHandlerForwardsCodexAuthenticationQueryAndResponse(t *testing.T) 
 	request.Header = codexAuthHeaders()
 	recorder := httptest.NewRecorder()
 
-	modelsHandler(newProviderClient(testProviderBaseURL, httpClient))(recorder, request)
+	modelsHandler(newProviderClient(testProviderBaseURL, httpClient), nil)(recorder, request)
 
 	if recorder.Code != http.StatusOK || recorder.Body.String() != `{"models":[]}` {
 		t.Fatalf("response = %d %q", recorder.Code, recorder.Body.String())
@@ -1391,7 +1292,7 @@ func TestModelsHandlerRejectsUpstreamBodyReadFailure(t *testing.T) {
 	request.Header = codexAuthHeaders()
 	recorder := httptest.NewRecorder()
 
-	modelsHandler(newProviderClient(testProviderBaseURL, httpClient))(recorder, request)
+	modelsHandler(newProviderClient(testProviderBaseURL, httpClient), nil)(recorder, request)
 
 	if recorder.Code != http.StatusBadGateway || !strings.Contains(recorder.Body.String(), "upstream read failed") {
 		t.Fatalf("response = %d %q", recorder.Code, recorder.Body.String())
@@ -1415,7 +1316,7 @@ func TestModelsHandlerRejectsBodyBeyondRouterBufferBudget(t *testing.T) {
 	request.Header = codexAuthHeaders()
 	recorder := httptest.NewRecorder()
 
-	modelsHandler(newProviderClient(testProviderBaseURL, httpClient))(recorder, request)
+	modelsHandler(newProviderClient(testProviderBaseURL, httpClient), nil)(recorder, request)
 
 	if recorder.Code != http.StatusBadGateway || !strings.Contains(recorder.Body.String(), "router buffer budget") {
 		t.Fatalf("response = %d %q", recorder.Code, recorder.Body.String())
@@ -1430,7 +1331,7 @@ func TestModelsHandlerRejectsMissingAuthentication(t *testing.T) {
 	})}
 	recorder := httptest.NewRecorder()
 
-	modelsHandler(newProviderClient(testProviderBaseURL, httpClient))(
+	modelsHandler(newProviderClient(testProviderBaseURL, httpClient), nil)(
 		recorder,
 		httptest.NewRequest(http.MethodGet, "/v1/models", nil),
 	)
@@ -1666,215 +1567,12 @@ func TestCopyJSONTransformedRejectsBodyBeyondRouterBufferBudget(t *testing.T) {
 	}
 }
 
-type cancelOnWrite struct {
-	once   sync.Once
-	cancel context.CancelFunc
-}
-
-func (writer *cancelOnWrite) Write(content []byte) (int, error) {
-	writer.once.Do(writer.cancel)
-	return len(content), nil
-}
-
-func TestRunRejectsUnknownModeBeforeListening(t *testing.T) {
-	err := Run(t.Context(), []string{"--mode", "unknown"}, io.Discard)
-	if err == nil || !strings.Contains(err.Error(), "--mode must be hpatch or passthrough") {
-		t.Fatalf("Run error = %v", err)
-	}
-}
-
-func TestRunRejectsUnknownModelProtocolBeforeListening(t *testing.T) {
-	err := Run(t.Context(), []string{"--model-protocol", "unknown"}, io.Discard)
-	if err == nil || !strings.Contains(err.Error(), "--model-protocol must be native or ctp2") {
-		t.Fatalf("Run error = %v", err)
-	}
-}
-
-func TestRunRejectsCTP1BeforeListening(t *testing.T) {
-	err := Run(t.Context(), []string{"--model-protocol", "ctp1"}, io.Discard)
-	if err == nil || !strings.Contains(err.Error(), "--model-protocol must be native or ctp2") {
-		t.Fatalf("Run error = %v", err)
-	}
-}
-
-func TestRunRejectsCTP2WithPassthroughBeforeListening(t *testing.T) {
-	err := Run(t.Context(), []string{"--mode", "passthrough", "--model-protocol", "ctp2"}, io.Discard)
-	if err == nil || !strings.Contains(err.Error(), "--model-protocol ctp2 requires --mode hpatch") {
-		t.Fatalf("Run error = %v", err)
-	}
-}
-
-func TestRunRejectsMentorHandoffWithPassthroughBeforeListening(t *testing.T) {
-	err := Run(t.Context(), []string{"--mode", "passthrough", "--mentor-handoff"}, io.Discard)
-	if err == nil || !strings.Contains(err.Error(), "--mentor-handoff requires --mode hpatch") {
-		t.Fatalf("Run error = %v", err)
-	}
-}
-
-func TestRunPassthroughAllowsExplicitNativeProtocolAndDisabledMentor(t *testing.T) {
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer listener.Close()
-	err = Run(t.Context(), []string{
-		"--mode", "passthrough",
-		"--model-protocol", "native",
-		"--mentor-handoff=false",
-		"--listen", listener.Addr().String(),
-	}, io.Discard)
-	if err == nil || errors.Is(err, context.Canceled) {
-		t.Fatalf("Run error = %v, want listener failure", err)
-	}
-	if strings.Contains(err.Error(), "--model-protocol") || strings.Contains(err.Error(), "--mentor-handoff") {
-		t.Fatalf("Run error = %v, want passthrough to accept native protocol and disabled mentor", err)
-	}
-}
-
-func TestRunHpatchDefaultsToCTP2AndMentorHandoff(t *testing.T) {
-	if _, err := exec.LookPath(hpatchToolName); err != nil {
-		t.Skipf("installed hpatch unavailable: %v", err)
-	}
-	t.Setenv("CODEX_HOME", t.TempDir())
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
-	ctx, cancel := context.WithCancel(t.Context())
-	var logs bytes.Buffer
-	err := Run(ctx, []string{"--listen", "127.0.0.1:0"}, io.MultiWriter(&logs, &cancelOnWrite{cancel: cancel}))
-	if err != nil {
-		t.Fatalf("Run error = %v, want clean shutdown", err)
-	}
-	got := logs.String()
-	if !strings.Contains(got, "model_protocol=ctp2") {
-		t.Fatalf("listening log = %q, want model_protocol=ctp2", got)
-	}
-	if !strings.Contains(got, "mentor_handoff=true") {
-		t.Fatalf("listening log = %q, want mentor_handoff=true", got)
-	}
-}
-
-func TestRunRejectsNonPositiveStreamIdleTimeoutBeforeListening(t *testing.T) {
-	err := Run(t.Context(), []string{"--stream-idle-timeout", "0"}, io.Discard)
-	if err == nil || !strings.Contains(err.Error(), "--stream-idle-timeout must be positive") {
-		t.Fatalf("Run error = %v", err)
-	}
-}
-
-func TestRunRejectsInvalidProviderBaseURLBeforeListening(t *testing.T) {
-	for _, value := range []string{"capture:9081", "ftp://capture:9081", "http://token@capture:9081", "http://capture:9081?secret=value"} {
-		err := Run(t.Context(), []string{"--provider-base-url", value}, io.Discard)
-		if err == nil || !strings.Contains(err.Error(), "--provider-base-url must be an absolute HTTP(S) URL") {
-			t.Errorf("Run(%q) error = %v", value, err)
-		}
-	}
-}
-
-func TestRunServesCaptureMetricsOnTheResponsesListener(t *testing.T) {
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	address := listener.Addr().String()
-	if err := listener.Close(); err != nil {
-		t.Fatal(err)
-	}
-
-	ctx, cancel := context.WithCancel(t.Context())
-	done := make(chan error, 1)
-	capturePath := filepath.Join(t.TempDir(), "capture.jsonl")
-	go func() {
-		done <- Run(ctx, []string{
-			"--listen", address,
-			"--mode", "passthrough",
-			"--capture-output", capturePath,
-		}, io.Discard)
-	}()
-	t.Cleanup(cancel)
-
-	var response *http.Response
-	for range 100 {
-		response, err = http.Get("http://" + address + "/api/metrics")
-		if err == nil {
-			break
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	if err != nil {
-		cancel()
-		<-done
-		t.Fatalf("same-listener metrics endpoint unavailable: %v", err)
-	}
-	defer response.Body.Close()
-	var metrics map[string]any
-	if err := json.NewDecoder(response.Body).Decode(&metrics); err != nil {
-		t.Fatal(err)
-	}
-	if response.StatusCode != http.StatusOK || metrics["schema"] != "hpatch.capture.metrics.v4" {
-		t.Fatalf("metrics response = %d, %#v", response.StatusCode, metrics)
-	}
-	response, err = http.Get("http://" + address + "/")
-	if err != nil {
-		t.Fatal(err)
-	}
-	dashboard, err := io.ReadAll(response.Body)
-	_ = response.Body.Close()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if response.StatusCode != http.StatusOK || !bytes.Contains(dashboard, []byte("fetch('/api/metrics'")) {
-		t.Fatalf("dashboard response = %d, %q", response.StatusCode, dashboard)
-	}
-
-	request, err := http.NewRequestWithContext(t.Context(), http.MethodPost, "http://"+address+"/v1/responses", strings.NewReader("{"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	response, err = http.DefaultClient.Do(request)
-	if err != nil {
-		t.Fatal(err)
-	}
-	_ = response.Body.Close()
-	if response.StatusCode != http.StatusBadRequest {
-		t.Fatalf("Responses endpoint status = %d", response.StatusCode)
-	}
-
-	cancel()
-	if err := <-done; err != nil {
-		t.Fatalf("Run error = %v, want clean shutdown", err)
-	}
-}
-
-func TestRunReturnsSuccessAfterGracefulShutdown(t *testing.T) {
-	if _, err := exec.LookPath(hpatchToolName); err != nil {
-		t.Skipf("installed hpatch unavailable: %v", err)
-	}
-	t.Setenv("CODEX_HOME", t.TempDir())
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
-	ctx, cancel := context.WithCancel(t.Context())
-	writer := &cancelOnWrite{cancel: cancel}
-	err := Run(ctx, []string{"--listen", "127.0.0.1:0"}, writer)
-	if err != nil {
-		t.Fatalf("Run error = %v, want clean shutdown", err)
-	}
-}
-
-func TestRunPreservesListenerFailure(t *testing.T) {
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer listener.Close()
-	err = Run(t.Context(), []string{"--mode", "passthrough", "--listen", listener.Addr().String()}, io.Discard)
-	if err == nil || errors.Is(err, context.Canceled) {
-		t.Fatalf("Run error = %v, want listener failure", err)
-	}
-}
-
 func TestExecuteRequestUnsafeCacheKeyRetainsSessionAffinity(t *testing.T) {
 	for _, key := range []string{" padded ", "line\nbreak"} {
 		parsed := serverRequest(t, func(request map[string]any) { request["prompt_cache_key"] = key })
 		original := bytes.Clone(parsed.originalBody)
 		provider := &serverFakeProvider{results: []serverForwardResult{{response: serverHTTPResponse(`{"status":"completed","output":[]}`)}}}
-		if err := executeRequest(t.Context(), t.Context(), parsed, http.Header{}, "stable-session", provider, io.Discard, newDiagnostics(io.Discard), time.Now, nil, nil, nil); err != nil {
+		if err := executeRequest(t.Context(), t.Context(), parsed, http.Header{}, "stable-session", provider, io.Discard, nil, nil, nil, nil); err != nil {
 			t.Fatal(err)
 		}
 		if provider.forwardedCacheKey[0] != "stable-session" {

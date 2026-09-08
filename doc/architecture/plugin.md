@@ -99,7 +99,7 @@ instruction files.
 For every configured executor-backed contribution, the router wrapper owner creates a symlink
 inside the authenticated snapshot directory. The snapshot symlink has the tool-name basename and targets
 the running router executable. After complete-registry validation, the owner creates or verifies
-a stable same-basename frontend beside the router executable. The frontend targets the snapshot
+a session-private same-basename frontend in the snapshot's `bin` directory. The frontend targets the snapshot
 wrapper. Configured child dispatch resolves the frontend once, validates the snapshot wrapper and
 registry identity, and gives the implementation the remaining argv without inventing a cwd or
 environment. The worker passes frontend standard input to the JavaScript host on a dedicated
@@ -127,17 +127,12 @@ Other interpreter basenames retain the JavaScript executor's anonymous script de
 `internal/router/toolplugin/plugin.d.ts` owns the executable result schema. The runtime adapter
 validates the current result, and the worker writes it to Codex-facing streams. No observation owner
 invokes the executor again.
-Configured frontend and wrapper creation is all-or-nothing for startup. When those frontends
-exist, the router holds one exclusive frontend lock for its process lifetime, and another router
-using that frontend directory fails startup. A built-in-only registry creates no frontend or
-frontend lock. Each eligible thread instead gets one direct `.runtime` link under its
-`hpatch-$CODEX_THREAD_ID` directory. A later process can replace an authenticated prior configured
-frontend after a crash releases the lock. Shutdown removes thread runtime directories and owned
-configured frontends before removing the snapshot and releasing the frontend lock. An isolated
-executor deployment must use the same absolute `HPATCH_RUNTIME_DIR` and make the thread runtime
-link, router executable, plugin runtime, and implementation resources visible independently of
-workspace selection; the fixed helper and configured frontends additionally require their shared
-directory on the executor `PATH`.
+Configured frontend and wrapper creation is all-or-nothing for startup. Each registry uses its own `bin` directory, and the wrapper prepends it only
+to its Codex child's PATH. No shared frontend lock exists. Built-in shell keeps its
+fixed locator and direct per-thread runtime path. Shutdown removes thread runtime
+resources and owned configured frontends before the snapshot. Isolated executors
+must see the same absolute runtime directory and executable resources; the fixed
+shell locator remains on the executor PATH.
 
 The shell runtime owner validates thread and artifact IDs before treating them as single
 filesystem components. It pins the thread's separate `scripts` directory with `os.Root` for
@@ -161,7 +156,7 @@ immutable process-scoped worker snapshot. Locator-launched shell and symlink-lau
 children read that snapshot and verify its registry identity before loading an implementation. A child never rediscovers or
 executes the live configuration directory. Changing a configured module therefore cannot alter
 served tool behavior before restart. Missing, corrupted, or mismatched snapshot state fails the
-child honestly. Shutdown cleanup owns thread runtime directories, configured stable frontends,
+child honestly. Shutdown cleanup owns thread runtime directories, configured session frontends,
 snapshot wrappers, and the shared snapshot.
 
 The response transformer uses registry membership instead of hardcoded tool-name predicates for

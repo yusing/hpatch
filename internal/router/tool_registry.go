@@ -13,7 +13,6 @@ import (
 	"path/filepath"
 	"slices"
 
-	"github.com/gofrs/flock"
 	"github.com/yusing/hpatch"
 	"github.com/yusing/hpatch/internal/router/toolplugin"
 	"github.com/yusing/hpatch/internal/shellruntime"
@@ -21,7 +20,6 @@ import (
 
 const (
 	toolPluginManifestFilename = "workers.json"
-	toolFrontendLockFilename   = ".hpatch-router-tools.lock"
 	builtinToolsPluginID       = "builtin.shell"
 	reportIssueToolName        = "report_issue"
 	reportIssueToolDescription = `Free-form Markdown issue report for an observed hpatch-related tool interaction.`
@@ -33,16 +31,15 @@ func buildToolRegistry(ctx context.Context, dataDirectory, hpatchDescription str
 	}
 	executableLocation, err := os.Executable()
 	if err != nil {
-		return nil, fmt.Errorf("locate hpatch-router executable: %w", err)
+		return nil, fmt.Errorf("locate hpatch executable: %w", err)
 	}
 	executableLocation, err = filepath.Abs(executableLocation)
 	if err != nil {
-		return nil, fmt.Errorf("locate hpatch-router executable: %w", err)
+		return nil, fmt.Errorf("locate hpatch executable: %w", err)
 	}
-	frontendDirectory := filepath.Dir(executableLocation)
 	executable, err := filepath.EvalSymlinks(executableLocation)
 	if err != nil {
-		return nil, fmt.Errorf("resolve hpatch-router executable: %w", err)
+		return nil, fmt.Errorf("resolve hpatch executable: %w", err)
 	}
 	runtimeDirectory, err := shellruntime.Directory()
 	if err != nil {
@@ -51,7 +48,7 @@ func buildToolRegistry(ctx context.Context, dataDirectory, hpatchDescription str
 	if err := os.MkdirAll(runtimeDirectory, 0o700); err != nil {
 		return nil, fmt.Errorf("create shell runtime directory: %w", err)
 	}
-	snapshotDirectory, err := os.MkdirTemp(runtimeDirectory, "hpatch-router-tools-")
+	snapshotDirectory, err := os.MkdirTemp(runtimeDirectory, "hpatch-tools-")
 	if err != nil {
 		return nil, fmt.Errorf("create tool registry snapshot: %w", err)
 	}
@@ -220,7 +217,7 @@ func buildToolRegistry(ctx context.Context, dataDirectory, hpatchDescription str
 		SnapshotDir:       snapshotDirectory,
 		RuntimeRoot:       runtimeRoot,
 		NodeExecutable:    pluginSnapshot.NodeExecutable,
-		frontendDirectory: frontendDirectory,
+		frontendDirectory: filepath.Join(snapshotDirectory, "bin"),
 		runtimeDirectory:  runtimeDirectory,
 		shellRuntime:      shellRuntime,
 		ordered:           contributions,
@@ -341,24 +338,13 @@ func (registry *toolRegistry) installFrontends() error {
 	if len(registry.wrappers) == 0 {
 		return nil
 	}
-	if registry.frontendLock != nil {
-		return errors.New("tool registry frontends are already installed")
+	if err := os.MkdirAll(registry.frontendDirectory, 0o700); err != nil {
+		return fmt.Errorf("create session tool frontends: %w", err)
 	}
-	lock := flock.New(filepath.Join(registry.frontendDirectory, toolFrontendLockFilename))
-	locked, err := lock.TryLock()
-	if err != nil {
-		return fmt.Errorf("lock tool registry frontends: %w", err)
-	}
-	if !locked {
-		return errors.New("another hpatch-router process owns the tool frontends")
-	}
-	registry.frontendLock = lock
 	fail := func(cause error) error {
 		cleanupErr := removeWorkerFrontendSymlinks(registry.frontends, registry.wrappers)
 		clear(registry.frontends)
-		unlockErr := lock.Unlock()
-		registry.frontendLock = nil
-		return errors.Join(cause, cleanupErr, unlockErr)
+		return errors.Join(cause, cleanupErr)
 	}
 	for _, contribution := range registry.ordered {
 		wrapper, ok := registry.wrappers[contribution.Name]
@@ -388,10 +374,7 @@ func (registry *toolRegistry) Close() error {
 			removeWorkerFrontendSymlinks(registry.frontends, registry.wrappers),
 			os.RemoveAll(registry.SnapshotDir),
 		)
-		if registry.frontendLock != nil {
-			registry.closeErr = errors.Join(registry.closeErr, registry.frontendLock.Unlock())
-			registry.frontendLock = nil
-		}
+
 	})
 	return registry.closeErr
 }

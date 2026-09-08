@@ -58,11 +58,19 @@ The router MUST NOT synthesize that token from `Session_id`, cache it across req
 it into a new turn when the client omits it. This preserves the Codex transport contract rather
 than warming a cache artificially; provider cache hits remain provider-owned.
 
-The runner MUST pass `--capture-output` to each router and mount a private arm-specific capture
-path. Its isolated networks MUST prevent either agent from reaching the other arm's router while
-allowing only its router provider egress. The collected `control-metrics.json` and
-`hpatch-metrics.json` (or mode-specific equivalents) MUST come from the same listeners used by the
-agents.
+The runner MUST pass `--capture-output` and `--metrics-output` to each session wrapper
+and retain per-attempt exports. Only the trusted wrapper has provider egress. The
+Codex executor MUST have a fixed primary group, no capabilities, no supplementary
+groups, no privilege elevation, private mount/PID namespaces, and read-only trusted
+capture/runtime/configuration mounts. IPv4/IPv6 firewall rules MUST permit only its
+assigned loopback listener and reject other destinations. Qualification MUST reject
+an ineffective restriction before inference. Separate arm networks remain isolated.
+
+The capturer-owned merger MUST verify each complete session snapshot against its
+raw records before creating combined arm exports. It MUST retain originals and
+rebase combined request/predecessor sequences without mixing repeated threads or
+modes/protocols. Metrics are the same measurements served by the session listener;
+collection MUST NOT require the listener to survive Codex exit.
 
 For every fresh arm, report generation MUST:
 
@@ -151,8 +159,8 @@ task success, latency, provider billing, or universal compression efficiency.
 
 Acceptance:
 
-1. Compose defines one control router and one Hpatch router, with no capturer services; each router
-   has one `--listen` and one `--capture-output`.
+1. Compose runs each arm as a session-scoped `hpatch codex` container, with no
+   persistent router or capturer service; every attempt retains both capture exports.
 2. Report fixtures prove provider usage, signed arm deltas, cache values, protocol savings, Hpatch
    delivery, and zero capture-health errors, and reject altered aggregate usage, incomplete
    evidence, absent baseline evidence, wrong router mode or protocol, wrong provider models, and

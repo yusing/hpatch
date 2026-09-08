@@ -46,3 +46,10 @@ does not participate in model-origin output accounting. It remains present in tr
 and token totals. `internal/commentaryid` owns the reserved operation/runtime and subagent/usage
 message ID namespaces shared by rendering, replay, and capture classification; message text and
 phase do not establish generated provenance.
+
+The router owns a separate bounded critical-notice queue because request failures
+may occur before tool-call history or publication capabilities exist. The launcher
+owns that queue's lifetime through router shutdown and terminal fallback. The
+response transformer reserves notices by routing session, confirms only successful
+writes, and strips exact generated IDs on replay. It never changes provider or
+executor failure semantics. Operational log sinks are not part of this boundary.

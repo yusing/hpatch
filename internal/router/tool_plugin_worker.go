@@ -49,22 +49,25 @@ func RunToolPluginWorker(
 
 	executableLocation, err := os.Executable()
 	if err != nil {
-		return fail(fmt.Errorf("locate hpatch-router executable: %w", err))
+		return fail(fmt.Errorf("locate hpatch executable: %w", err))
 	}
 	executableLocation, err = filepath.Abs(executableLocation)
 	if err != nil {
-		return fail(fmt.Errorf("locate hpatch-router executable: %w", err))
+		return fail(fmt.Errorf("locate hpatch executable: %w", err))
 	}
 	executable, err := filepath.EvalSymlinks(executableLocation)
 	if err != nil {
-		return fail(fmt.Errorf("resolve hpatch-router executable: %w", err))
+		return fail(fmt.Errorf("resolve hpatch executable: %w", err))
 	}
 
 	wrapper := candidate
 	directory := filepath.Dir(wrapper)
 	_, snapshotWrapper := toolRegistryIDFromDirectory(directory)
 	if !snapshotWrapper {
-		if filepath.Dir(candidate) != filepath.Dir(executableLocation) {
+		if filepath.Base(directory) != "bin" {
+			return false, 0
+		}
+		if _, authenticated := toolRegistryIDFromDirectory(filepath.Dir(directory)); !authenticated {
 			return false, 0
 		}
 		target, readErr := os.Readlink(candidate)
@@ -75,7 +78,7 @@ func RunToolPluginWorker(
 			target = filepath.Join(filepath.Dir(candidate), target)
 		}
 		wrapper = filepath.Clean(target)
-		if filepath.Base(wrapper) != invokedName {
+		if filepath.Dir(wrapper) != filepath.Dir(directory) || filepath.Base(wrapper) != invokedName {
 			return fail(errors.New("tool frontend and snapshot wrapper names differ"))
 		}
 		wrapperInfo, wrapperErr := os.Lstat(wrapper)
@@ -94,7 +97,7 @@ func RunToolPluginWorker(
 		return fail(fmt.Errorf("resolve tool wrapper: %w", err))
 	}
 	if target != executable {
-		return fail(errors.New("tool wrapper does not target the running hpatch-router executable"))
+		return fail(errors.New("tool wrapper does not target the running hpatch executable"))
 	}
 
 	return runAuthenticatedToolWorker(ctx, directory, filepath.Base(wrapper), args, stdin, stdout, stderr)
@@ -192,7 +195,7 @@ func runAuthenticatedToolWorker(
 
 func toolRegistryIDFromDirectory(directory string) (string, bool) {
 	base := filepath.Base(directory)
-	if !strings.HasPrefix(base, "hpatch-router-tools-") {
+	if !strings.HasPrefix(base, "hpatch-tools-") {
 		return "", false
 	}
 	separator := strings.LastIndexByte(base, '-')

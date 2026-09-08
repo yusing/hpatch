@@ -128,10 +128,10 @@ Handoff disable issue reporting so the reporting tool does not confound either t
 
 ## One-listener topology
 
-Each measured arm runs one `hpatch-router` process with one listener:
+Each measured arm runs one `hpatch` process with one listener:
 
 ```text
-Codex ──HTTP──> hpatch-router ──HTTP──> provider
+Codex ──HTTP──> hpatch ──HTTP──> provider
                  │         │
                  └─ in-process capturer
 ```
@@ -146,10 +146,22 @@ GET  /api/metrics
 GET  /                 # human-readable view of /api/metrics
 ```
 
-The Compose file therefore contains `control` and `hpatch` router services but no front or back
-capturer services. Each agent joins only its router's internal network. Each router also joins the
-egress network and talks directly to the provider. The runner supplies `--capture-output` so each
-router appends its own sanitized evidence file.
+Compose defines task-scoped `control-agent` and `hpatch-agent` containers. Each
+runs `hpatch codex` with one random loopback listener and fixed provider egress.
+The image requires Linux iptables and util-linux. Only the trusted launcher has
+NET_ADMIN and SYS_ADMIN. Docker’s default AppArmor profile is disabled to permit
+the trusted launcher’s private mount setup. Before inference, Codex enters private
+mount/PID namespaces with no capabilities or supplementary groups and no privilege elevation.
+Its fixed primary group is allowed TCP access only to its own listener; IPv4 and
+IPv6 external traffic are rejected. Trusted capture/config/runtime mounts and the
+image filesystem are read-only to the executor. A fail-closed probe verifies the
+restrictions before launching the real Codex binary.
+
+Each attempt writes its own sanitized `capture.jsonl` and final `metrics.json`.
+The benchmark-only `hpatch-merge-captures` command validates each pair and uses the
+capturer's live calculations to combine distinct-thread sessions into arm exports,
+rebasing only combined sequence identities. Original per-attempt evidence remains
+unchanged. Collection needs no running router or metrics endpoint.
 
 ## What differs between arms
 
@@ -242,8 +254,6 @@ control-metrics.json                 # when a fresh baseline arm ran
 hpatch-metrics.json
 captures/control.jsonl               # when a fresh baseline arm ran
 captures/hpatch.jsonl
-control-router.log                   # when applicable
-hpatch-router.log
 artifacts/                            # per-attempt result, events, patch, and grader evidence
 agent-issue-reports.jsonl             # when issue reporting collected records
 ```
@@ -253,8 +263,7 @@ An opt-in commentary task also writes `commentary-coverage.json` beside each att
 separate result field derived from retained assistant messages, successful command markers, and
 completed item types in Codex events.
 
-Mentor Handoff renames the treatment snapshot and log to `hpatch-mentor-metrics.json` and
-`hpatch-mentor-router.log`. Child event and content-free lineage proof artifacts remain under the
+Mentor Handoff names its treatment snapshot `hpatch-mentor-metrics.json`. Child event and content-free lineage proof artifacts remain under the
 attempt directory. Summary output intentionally omits request, session, thread, call, and capture
 identities.
 

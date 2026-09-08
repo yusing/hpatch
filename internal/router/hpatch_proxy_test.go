@@ -1408,7 +1408,7 @@ func TestHPatchAdditionalToolsReplacementLeavesUnsupportedAndMalformedRequestsUn
 			beforeTools := bytes.Clone(fields["tools"])
 			beforeChoice := bytes.Clone(fields["tool_choice"])
 			_, replaced, err := replaceCodeModeTools(fields, decodeResponsesToolCatalog(fields), testInstalledTools())
-			if err != nil || replaced {
+			if (err != nil) != (test.toolChoice != nil) || replaced {
 				t.Fatalf("replacement = %v, error %v", replaced, err)
 			}
 			if !bytes.Equal(fields["input"], beforeInput) || !bytes.Equal(fields["tools"], beforeTools) || !bytes.Equal(fields["tool_choice"], beforeChoice) {

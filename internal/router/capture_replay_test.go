@@ -9,7 +9,6 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/yusing/hpatch/capturer"
 )
@@ -62,7 +61,7 @@ func TestCaptureRequestBaselineAfterHPatchReplay(t *testing.T) {
 					return
 				}
 				w.Header().Set("Content-Type", "application/json")
-				if err := executeRequest(r.Context(), r.Context(), parsed, headers, "capture-replay", provider, w, newDiagnostics(io.Discard), time.Now, proxy, codec, nil); err != nil {
+				if err := executeRequest(r.Context(), r.Context(), parsed, headers, "capture-replay", provider, w, nil, proxy, codec, nil); err != nil {
 					t.Error(err)
 				}
 			}))

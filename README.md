@@ -3,7 +3,7 @@
 A Codex Responses router that gives agents verified atomic edits and direct
 script execution, without Code Mode wrapper ceremony.
 
-`hpatch-router` sits between Codex and the Responses API. The model sees
+`hpatch` sits between Codex and the Responses API. The model sees
 constrained `functions.hpatch` and free-form `functions.shell`. Successful
 calls still return native Codex carriers, so sandbox checks, permissions,
 command sessions, and the normal diff UI stay intact. The repository also
@@ -26,10 +26,9 @@ exposes the reusable Go edit engine used by the router.
 - Codex still owns sandboxing, permissions, process sessions, and the visible
   patch diff. The router translates; it does not silently commit workspace
   edits.
-- A human-readable dashboard lives at the router root, for example
-  `http://127.0.0.1:8080/`. The same listener serves Responses, models, and
-  `/api/metrics`.
-- A systemd user unit is the intended long-running setup. Passthrough mode
+- A human-readable dashboard lives at the private router root. The same listener
+  serves Responses, models, and `/api/metrics`; its port is assigned per session.
+- Each Codex invocation owns a private router. Passthrough mode
   forwards Responses traffic without installing hpatch or plugins.
 - Codex keeps seeing stream activity while a tool call is validated; the
   router withholds untranslated input until the complete payload is ready.
@@ -260,7 +259,7 @@ capacity or publication failure never changes the operation result.
 ## Install from a checkout
 
 `make install` regenerates the embedded built-in plugin bundle and installs
-`hpatch-router` plus the fixed `shell` helper through `go install`:
+`hpatch` plus the fixed `shell` helper through `go install`:
 
 ```sh
 make install
@@ -268,7 +267,7 @@ make install
 
 Installation and uninstallation never create, edit, or remove Codex
 configuration or instruction files. `make uninstall` removes only the
-installed `hpatch-router` and `shell` binaries.
+installed `hpatch` and `shell` binaries.
 
 ### Configured plugins
 
@@ -280,7 +279,7 @@ Configured plugins are direct regular `.js` or `.mjs` files in
 `$XDG_CONFIG_HOME/hpatch/plugins` or `~/.config/hpatch/plugins` on Linux. The
 router loads them in lexical order into one immutable process snapshot. It
 does not discover workspace-local or remote plugins and does not hot-reload
-files. Restart `hpatch-router` after any plugin change. Invalid modules,
+files. Restart `hpatch` after any plugin change. Invalid modules,
 duplicate identities, or an unusable built-in registry fail startup before the
 router listens. The module contract is [`REQ-PLUGIN-001`](doc/spec/plugin.md).
 
@@ -355,27 +354,42 @@ replacement needs unseen source text. Complete inputs and failure behavior:
 After installation and `codex login`, run:
 
 ```sh
-hpatch-router wrap codex
-hpatch-router --grok wrap codex
-hpatch-router wrap codex --model gpt-6-astra
-hpatch-router wrap codex exec "Explain this repository"
+hpatch codex
+hpatch --grok codex
+hpatch codex --model gpt-6-astra
+hpatch codex exec "Explain this repository"
 ```
 
-The wrapper starts a private router on a random loopback port, then launches
-Codex with invocation-only `-c` provider overrides. No Codex configuration edit
-or systemd service is needed. The router stops when Codex exits, and the wrapper
-preserves Codex's exit status. Terminal Ctrl-C stays with Codex; SIGTERM to the
-wrapper terminates both. Startup diagnostics, including the selected port, go
-to stderr. Codex inherits your terminal, environment, and working directory.
+The wrapper starts a private router on a random loopback port and launches Codex
+with invocation-only provider overrides. It writes no Codex configuration and
+starts no persistent service. Codex owns terminal Ctrl-C; SIGTERM to the wrapper
+terminates both. Codex exit status is preserved.
 
-Put router flags before `wrap`; everything after `codex` is a Codex argument.
-For example, `hpatch-router --grok --model-protocol native wrap codex` enables
-Grok and disables CTP/2. The wrapper rejects `--listen` and `--provider-base-url`
-because it always uses a random loopback port and the default upstream.
-**Custom providers are not supported by the wrapper.** It overrides provider
-selection from `config.toml` or a Codex profile and always uses Hpatch's default
-ChatGPT upstream. Provider-selection arguments such as `--oss`, `--local-provider`,
-and provider-related `-c` overrides are rejected.
+Hpatch emits no operational logs or log files. Actionable failures appear as
+user-only commentary, queued for the same session when necessary. Repeated
+failures are deduplicated. Undelivered errors and repetition summaries appear on
+stderr after Codex exits; startup failures appear before Codex launches. HTTP
+errors, tool-result diagnostics, and exit codes remain intact.
+
+Put Hpatch flags before `codex`; everything after it belongs to Codex.
+`hpatch --grok --model-protocol native codex` enables Grok without CTP/2.
+Fixed listeners, standalone serving, and custom providers are not supported.
+The wrapper overrides provider selection from config and profiles and rejects
+provider-selection arguments such as `--oss` and provider-related `-c` overrides.
+Configured plugin frontends are private to the session and prepended to the
+child's `PATH`, so multiple wrapped sessions can run concurrently.
+
+Before Codex starts, Hpatch prints `hpatch dashboard: http://127.0.0.1:PORT/`
+once to stderr. Open that URL in your browser while the session is running.
+Metrics are private to that session, not shared across separate launches.
+
+The child inherits `HPATCH_BASE_URL`, the private Responses URL. While the session
+is alive, removing its `/v1` suffix gives the dashboard URL. Metrics stay in memory
+unless explicitly exported: `--capture-output PATH` appends sanitized JSONL, and
+`--metrics-output PATH` writes the final metrics snapshot on shutdown. Use separate
+files; the metrics destination is overwritten. Neither export contains operational
+logs. Opt-in agent issue-report hooks remain available.
+
 See [`REQ-ROUTER-001`](doc/spec/router.md).
 
 ### Standalone router
@@ -393,8 +407,8 @@ Defaults:
 | Mode | `hpatch` (`--mode`); `passthrough` forwards Responses traffic without loading the tool registry |
 | Model protocol | `ctp2` (`--model-protocol`); `native` disables compaction; Hpatch-only |
 | Mentor Handoff | Enabled (`--mentor-handoff`); Hpatch-only; disable with `--mentor-handoff=false` |
-| Provider base URL | `https://chatgpt.com/backend-api/codex` (`--provider-base-url`) |
-| Listen | `127.0.0.1:8080` (`--listen`) |
+| Provider base URL | Fixed Codex ChatGPT upstream |
+| Listen | Random private loopback port per invocation |
 | Upstream response-start timeout | `10m` (`--timeout`) |
 | Upstream stream idle timeout | `4m` of inactivity between bytes (`--stream-idle-timeout`) |
 | Auth | Codex-managed ChatGPT credentials, typically `~/.codex/auth.json` or `$CODEX_HOME/auth.json`; Codex owns login and refresh |
@@ -402,9 +416,6 @@ Defaults:
 | Capture output | Disabled; `--capture-output PATH` appends sanitized JSONL |
 | Hooks | `$XDG_CONFIG_HOME/hpatch` or `~/.config/hpatch` |
 | Endpoints | `GET /` dashboard, `POST /v1/responses`, `GET /v1/models`, and `GET /api/metrics`, all on one listener |
-
-`--provider-base-url` changes where the router sends Codex-managed credentials
-and Responses traffic. Use it only with a trusted endpoint.
 
 Use `--mode passthrough` to forward Responses traffic without installing
 hpatch, shell, private commands, or rejected-script recovery. Capture remains
@@ -418,14 +429,13 @@ subagents on their Codex-configured model. See
 
 In hpatch mode, run the router as the same login user as Codex so it can open
 the absolute workspace paths Codex sends. Codex attaches its managed
-credentials to each request. A user systemd unit is the intended long-running
-setup.
+credentials to each request. The router runs only for the wrapped session.
 
 For an optional comparison baseline, start the router with verified editing and
 shell adaptation enabled, but without CTP/2 or Mentor model overrides:
 
 ```sh
-hpatch-router --mode hpatch --model-protocol native --mentor-handoff=false
+hpatch --mode hpatch --model-protocol native --mentor-handoff=false codex
 ```
 
 This is not passthrough: the other Hpatch-mode behavior remains enabled. To
@@ -436,7 +446,7 @@ policies enabled by default.
 ### Install the binary
 
 ```sh
-go install github.com/yusing/hpatch/cmd/hpatch-router@latest \
+go install github.com/yusing/hpatch/cmd/hpatch@latest \
   github.com/yusing/hpatch/cmd/shell@latest
 ```
 
@@ -444,46 +454,23 @@ The binaries are installed under `$GOBIN`, or under `$(go env GOPATH)/bin`
 when `GOBIN` is unset. Ensure that directory is on the router and Codex
 executor `PATH`.
 
-### Install and start the unit
+### Migrating an older installation
 
-Install the published user-unit template:
-
-```sh
-mkdir -p ~/.config/systemd/user
-curl -fsSL https://raw.githubusercontent.com/yusing/hpatch/main/contrib/systemd/hpatch-router.service \
-  -o ~/.config/systemd/user/hpatch-router.service
-systemctl --user daemon-reload
-systemctl --user enable --now hpatch-router.service
-systemctl --user status hpatch-router.service
-```
-
-Optional: keep the service after logout:
+`make install` installs `hpatch` and `shell`; it does not stop or remove an old
+service or executable. Finish active sessions before changing the old setup.
+If you installed the old systemd user unit, explicitly stop and disable it when
+ready:
 
 ```sh
-loginctl enable-linger "$USER"
+systemctl --user disable --now hpatch-router.service
 ```
 
-One-shot without the unit (still uses the installed binary):
-
-```sh
-hpatch-router --listen 127.0.0.1:8080
-```
-
-If auth lives outside `~/.codex`, or the binary is not in `~/go/bin`, use a
-drop-in:
-
-```sh
-systemctl --user edit hpatch-router.service
-```
-
-```ini
-[Service]
-Environment=CODEX_HOME=%h/.codex
-ExecStart=
-ExecStart=%h/.local/bin/hpatch-router --listen 127.0.0.1:9090
-```
-
-Then `systemctl --user daemon-reload && systemctl --user restart hpatch-router.service`.
+Remove the old unit file and its drop-ins only after confirming their paths with
+`systemctl --user cat hpatch-router.service`, then run `systemctl --user daemon-reload`.
+Locate the obsolete executable with `command -v hpatch-router` before removing it.
+Remove only old Hpatch-specific provider entries from your Codex configuration;
+keep authentication, unrelated providers, and other settings. Start future
+sessions with `hpatch codex`. No old-name executable alias is installed.
 
 ### Grok native subagents (opt-in)
 
@@ -513,50 +500,22 @@ route: Chat Completions cannot enforce a total output budget including reasoning
 rejects that setting rather than silently weakening it. See the
 [third-party subagent requirements](doc/spec/subagents.md) for the full contract.
 
-### Point Codex at the router
+### Inspect a running session
 
-Add a Responses provider in `~/.codex/config.toml`:
+Open the dashboard URL printed at startup. For a remote SSH session, forward its
+assigned port to your computer first.
 
-```toml
-[model_providers.hpatch]
-name = "hpatch"
-base_url = "http://127.0.0.1:8080/v1"
-wire_api = "responses"
-requires_openai_auth = true
-```
-
-Make it the default for the whole config:
-
-```toml
-model_provider = "hpatch"
-```
-
-Or select it for one invocation with a profile. Put
-`model_provider = "hpatch"` in `~/.codex/hpatch.config.toml` (the provider
-block can live in the base config or in that file), then:
+From a command run inside wrapped Codex, the inherited URL locates the private
+listener without a fixed port:
 
 ```sh
-codex --profile hpatch
+curl -sS "${HPATCH_BASE_URL%/v1}/api/metrics"
 ```
 
-You can also overlay the same setting without a profile file:
-
-```sh
-codex -c 'model_provider="hpatch"'
-```
-
-Hpatch mode requires valid turn metadata, but its wire `workspaces` member is
-optional. No usable directory does not block the turn, never falls back to
-router cwd, and permits only absolute hpatch operands.
-
-Useful checks:
-
-```sh
-systemctl --user status hpatch-router.service
-journalctl --user -u hpatch-router.service -f
-curl -sS http://127.0.0.1:8080/api/metrics
-curl -sS http://127.0.0.1:8080/v1/models
-```
+Open `${HPATCH_BASE_URL%/v1}/` in a browser for its dashboard. The URL stops working
+when Codex exits. Hpatch requires valid turn metadata; an absent workspace never
+falls back to the router's cwd, and only absolute Hpatch operands are accepted
+without a usable workspace directory.
 
 ### Codex model instructions
 
@@ -604,7 +563,7 @@ are in [`REQ-OUTPUT-001`](doc/spec/output.md).
 
 ## Metrics
 
-Open the router root URL, such as `http://127.0.0.1:8080/`, for the dashboard.
+Open the dashboard URL printed at startup.
 `GET /api/metrics` returns the process-lifetime capturer snapshot. Provider
 usage is authoritative for model consumption. Metrics are auxiliary and cannot
 replace a successful edit, command result, or rejection diagnostic.
@@ -653,7 +612,6 @@ instruction hashes; older results without that evidence require a fresh control.
 | [`doc/architecture/index.md`](doc/architecture/index.md) | Ownership-contract inventory |
 | [`doc/benchmarks.md`](doc/benchmarks.md) | Benchmark operation and interpretation |
 | [`doc/codex-router-e2e.md`](doc/codex-router-e2e.md) | Codex-facing end-to-end procedure |
-| [`contrib/systemd/hpatch-router.service`](contrib/systemd/hpatch-router.service) | User service template |
 | [`contrib/codex/file-editing-instructions.md`](contrib/codex/file-editing-instructions.md) | Persistent CTP/2, edit, shell, read, search, and inspection guidance |
 | [`AGENTS.md`](AGENTS.md) | Agent workflow and repository navigation |
 
@@ -668,7 +626,7 @@ make install
 ```
 
 Focused checks are `go test .` for the engine, `go test ./internal/router` for
-routing and plugins, and `go test ./cmd/hpatch-router ./cmd/shell` for the
+routing and plugins, and `go test ./cmd/hpatch ./cmd/shell` for the
 process entry points.
 
 Starting the router in hpatch mode with `HPATCH_DIAGNOSE=1` adds the

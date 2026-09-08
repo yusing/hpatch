@@ -1,23 +1,25 @@
 package router
 
 import (
+	"bytes"
 	"context"
-	"io"
 	"net"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 )
 
-func TestRunWithReadyUsesBoundPortAndClosesListener(t *testing.T) {
+func TestRunSessionUsesBoundPortAndClosesListener(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	ready := make(chan string, 1)
 	done := make(chan error, 1)
 	go func() {
-		done <- RunWithReady(ctx, []string{"--mode", "passthrough", "--listen", "127.0.0.1:0"}, io.Discard, func(url string) {
-			ready <- url
+		done <- RunSession(ctx, []string{"--mode", "passthrough"}, nil, func(session Session) {
+			ready <- session.BaseURL
 		})
 	}()
 	var baseURL string
@@ -52,16 +54,55 @@ func TestRunWithReadyUsesBoundPortAndClosesListener(t *testing.T) {
 	}
 }
 
-func TestRunWithReadyDoesNotNotifyOnStartupFailure(t *testing.T) {
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+func TestRunSessionDoesNotNotifyOnStartupFailure(t *testing.T) {
+	for _, args := range [][]string{{"--mode", "unknown"}, {"--model-protocol", "ctp1"}, {"--mode", "passthrough", "--model-protocol", "ctp2"}, {"--mode", "passthrough", "--mentor-handoff=true"}, {"--stream-idle-timeout", "0"}, {"--listen", "127.0.0.1:0"}, {"--provider-base-url", "https://example.com"}} {
+		if err := RunSession(t.Context(), args, nil, func(Session) { t.Error("ready called despite startup failure") }); err == nil {
+			t.Fatalf("accepted %q", args)
+		}
+	}
+}
+
+func TestRunSessionExportsFinalMetricsWithoutLogging(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "metrics.json")
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	err := RunSession(ctx, []string{"--mode", "passthrough", "--model-protocol", "native", "--mentor-handoff=false", "--metrics-output", path}, NewCriticalErrors(), func(session Session) {
+		if session.FrontendDirectory != "" {
+			t.Error("passthrough installed frontends")
+		}
+		response, err := http.Get(strings.TrimSuffix(session.BaseURL, "/v1") + "/api/metrics")
+		if err != nil {
+			t.Error(err)
+		} else {
+			response.Body.Close()
+		}
+		cancel()
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer listener.Close()
-	err = RunWithReady(t.Context(), []string{"--mode", "passthrough", "--listen", listener.Addr().String()}, io.Discard, func(string) {
-		t.Error("ready called despite failed bind")
-	})
+	body, err := os.ReadFile(path)
+	if err != nil || !bytes.Contains(body, []byte(`"schema":"hpatch.capture.metrics.v4"`)) {
+		t.Fatalf("metrics = %s, %v", body, err)
+	}
+}
+
+func TestRunSessionRejectsAliasedExportDestinations(t *testing.T) {
+	directory := t.TempDir()
+	capture := filepath.Join(directory, "capture.jsonl")
+	metrics := filepath.Join(directory, "metrics.json")
+	if err := os.WriteFile(capture, []byte("retained\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(capture, metrics); err != nil {
+		t.Fatal(err)
+	}
+	err := RunSession(t.Context(), []string{"--mode", "passthrough", "--capture-output", capture, "--metrics-output", metrics}, nil, func(Session) { t.Error("aliased exports reached readiness") })
 	if err == nil {
-		t.Fatal("expected bind failure")
+		t.Fatal("aliased outputs accepted")
+	}
+	data, err := os.ReadFile(capture)
+	if err != nil || string(data) != "retained\n" {
+		t.Fatalf("capture truncated: %q %v", data, err)
 	}
 }

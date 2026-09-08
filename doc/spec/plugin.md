@@ -2,7 +2,7 @@
 
 ## REQ-PLUGIN-001 — Router-local tool plugins
 
-In hpatch mode, `hpatch-router` discovers tool plugins only from the `hpatch/plugins`
+In hpatch mode, `hpatch` discovers tool plugins only from the `hpatch/plugins`
 directory beneath the platform user configuration directory. Each direct regular file whose
 name ends in `.js` or `.mjs` is one compiled ECMAScript-module declaration, loaded in lexical
 filename order; directories, symlinks, and other entries are not declarations. A missing or
@@ -73,13 +73,13 @@ that carrier and returns the already-rendered report as its exact successful out
 exec-backed contributions use direct native function arguments rather than a Code Mode wrapper.
 Response restoration and replay retain the request's original carrier shape.
 
-For each configured executor-backed contributed tool, startup creates or verifies a stable
-executable symlink beside the running `hpatch-router`. Its basename is exactly the contributed tool name,
+For each configured executor-backed contributed tool, startup creates or verifies a session-private
+executable symlink in the authenticated snapshot's `bin` directory. Its basename is exactly the contributed tool name,
 and its target is the authenticated process-scoped snapshot wrapper with the same basename.
-The snapshot wrapper targets the running `hpatch-router` executable. Without a command template,
+The snapshot wrapper targets the running `hpatch` executable. Without a command template,
 the exec wrapper invokes only the basename and represents the parsed model input as its ordered
 argv. With a command template, the router replaces `{.}` with that same independently quoted
-basename and argv. When launched through both symlinks, the router verifies the stable frontend
+basename and argv. When launched through both symlinks, the router verifies the session frontend
 location, snapshot identity, wrapper target, and registered implementation before passing the
 remaining argv unchanged.
 The configured-plugin worker keeps the frontend standard input separate from the JavaScript
@@ -102,10 +102,10 @@ With exec parameters, the router forwards the JSON values without replacing the 
 Codex contract. Codex validates those values and remains the owner of working directory, sandbox,
 filesystem, process, network, terminal, and permission enforcement. Missing, conflicting,
 incorrectly targeted, or unusable configured-tool symlinks fail startup before the listener
-opens. When configured frontends exist, the router holds one exclusive frontend lock for its
-process lifetime and a concurrent router fails startup. A built-in-only registry takes no
-frontend lock. After a crash releases a configured frontend lock, a later router can replace
-authenticated prior frontends even when the prior process snapshot remains.
+opens. Configured frontends reside in disjoint session directories. The launcher
+prepends only its own directory to Codex's PATH; no installation-directory lock or
+shared frontend is created. Concurrent sessions cannot replace each other's
+frontends. Shutdown removes only the owning session's frontends and snapshot.
 
 Translated history retains the plugin identity, original tool name and input, and exact carrier
 kind, name, and payload. Replay accepts only the byte-identical retained carrier and restores
@@ -136,8 +136,8 @@ Acceptance:
 6. The exec wrapper renders the canonical Code Mode program or native function arguments and independently quotes every argv
    value. An optional template contains exactly one `{.}`, which expands to the complete worker
    command. The plugin declaration does not contain or generate the outer carrier shape.
-7. Invoking a configured executor-backed tool resolves its stable basename frontend through the
-   authenticated snapshot wrapper to `hpatch-router`, verifies the pinned registry, dispatches
+7. Invoking a configured executor-backed tool resolves its session basename frontend through the
+   authenticated snapshot wrapper to `hpatch`, verifies the pinned registry, dispatches
    by `argv[0]`, and delivers the declared argv under Codex's cwd, sandbox, and permissions.
 8. JSON and SSE responses preserve call identity while replacing a contributed call with its
    validated carrier. While the complete streaming input is buffered for validation, each withheld

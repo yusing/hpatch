@@ -2,6 +2,7 @@ package capturer
 
 import (
 	"encoding/json"
+	"io"
 	"maps"
 	"net/http"
 	"slices"
@@ -145,9 +146,14 @@ type metricsSnapshot struct {
 func (r *Recorder) ServeHTTP(writer http.ResponseWriter, _ *http.Request) {
 	writer.Header().Set("Content-Type", "application/json")
 	writer.Header().Set("Cache-Control", "no-store")
-	if err := json.NewEncoder(writer).Encode(r.snapshot()); err != nil {
+	if err := r.WriteMetrics(writer); err != nil {
 		return
 	}
+}
+
+// WriteMetrics exports the same capture-owned snapshot served by the dashboard.
+func (r *Recorder) WriteMetrics(writer io.Writer) error {
+	return json.NewEncoder(writer).Encode(r.snapshot())
 }
 
 func (r *Recorder) snapshot() metricsSnapshot {

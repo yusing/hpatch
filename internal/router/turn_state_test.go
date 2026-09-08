@@ -9,7 +9,6 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
-	"time"
 )
 
 // Model the Codex-owned lifecycle: capture the first response's sticky token,
@@ -77,7 +76,7 @@ func TestTurnStateRoundTrip(t *testing.T) {
 					})
 					original := bytes.Clone(parsed.originalBody)
 					output := httptest.NewRecorder()
-					if err := executeRequest(t.Context(), t.Context(), parsed, headers, "stable-session", provider, output, newDiagnostics(io.Discard), time.Now, proxy, codec, nil); err != nil {
+					if err := executeRequest(t.Context(), t.Context(), parsed, headers, "stable-session", provider, output, nil, proxy, codec, nil); err != nil {
 						t.Fatal(err)
 					}
 					if step == 0 {

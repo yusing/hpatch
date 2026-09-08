@@ -7,14 +7,26 @@ network isolation, Codex invocation, pre-grader artifact capture, hidden grading
 and report validation. Agents cannot reach the historical oracle or hidden grader before their
 changes are captured.
 
-Each fresh arm has one `hpatch-router` process and one router listener. Codex connects directly to
+Each fresh arm has one `hpatch` process and one router listener. Codex connects directly to
 that listener. The router connects directly to the provider. The root `capturer` package observes
 both boundaries in-process and writes the arm's sanitized JSONL. The benchmark never inserts a
 capturer proxy or service and never needs three servers for one router.
 
-Separate internal agent networks prevent either agent from reaching the other arm's router. Each
-router alone also joins the egress network. Capture files are mounted directly into the router and
-`GET /api/metrics` is collected from that same listener after attempts finish.
+Each attempt's container owns one session wrapper and one Codex process. Separate
+arm networks and an immutable executor primary group keep network access distinct:
+ipv4/ipv6 OUTPUT rules allow Codex only its assigned loopback port. The trusted
+launcher retains firewall/mount setup capabilities; Codex runs in private mount/PID
+namespaces with all capabilities removed and privilege elevation disabled. Trusted
+runtime, capture, and configuration mounts are read-only to Codex. Qualification
+fails before inference if group changes, external access, capabilities, or writable
+trusted mounts are possible.
+
+The session's `--capture-output` and `--metrics-output` artifacts survive shutdown.
+The benchmark-only merger validates each session against its raw records and uses
+capturer-owned calculations for combined arm exports. It rebases combined sequence
+and predecessor identities, rejects repeated threads, and leaves originals intact.
+No standalone router, permanent listener, log collection, or post-exit HTTP scrape
+is involved.
 
 The capturer snapshot is the authoritative calculation surface. Reporting validates raw records,
 snapshot exchange totals, capture health, and result-reported per-thread provider usage before it

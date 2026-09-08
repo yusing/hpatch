@@ -14,12 +14,12 @@ type (
 	}
 
 	Carrier struct {
-		Kind         string                     `json:"kind"`
-		Name         string                     `json:"name"`
-		Payload      string                     `json:"payload"`
-		Template     string                     `json:"template"`
-		Params       map[string]json.RawMessage `json:"params"`
-		RetainInput  *bool                      `json:"retainInput"`
+		Kind        string                     `json:"kind"`
+		Name        string                     `json:"name"`
+		Payload     string                     `json:"payload"`
+		Template    string                     `json:"template"`
+		Params      map[string]json.RawMessage `json:"params"`
+		RetainInput *bool                      `json:"retainInput"`
 	}
 
 	Translation struct {
@@ -30,9 +30,9 @@ type (
 	}
 
 	ExecutionOutput struct {
-		Stdout   string           `json:"stdout"`
-		Stderr   string           `json:"stderr"`
-		ExitCode int              `json:"exitCode"`
+		Stdout   string `json:"stdout"`
+		Stderr   string `json:"stderr"`
+		ExitCode int    `json:"exitCode"`
 	}
 
 	Snapshot struct {

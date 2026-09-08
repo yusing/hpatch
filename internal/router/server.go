@@ -10,21 +10,19 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"log/slog"
+	"log"
 	"net"
 	"net/http"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
-	"sync/atomic"
 	"time"
 
 	"github.com/yusing/hpatch/capturer"
 )
 
 const (
-	defaultListenAddress        = "127.0.0.1:8080"
+	defaultListenAddress        = "127.0.0.1:0"
 	defaultRewriteMode          = "hpatch"
 	defaultModelProtocol        = "ctp2"
 	defaultRequestTimeout       = 10 * time.Minute
@@ -37,15 +35,15 @@ const (
 
 var errUpstreamResponseWithoutTerminal = errors.New("upstream Responses response ended without a terminal state")
 
-func Run(ctx context.Context, args []string, stderr io.Writer) error {
-	return RunWithReady(ctx, args, stderr, nil)
+// Session is available only after initialization and listener binding succeed.
+type Session struct {
+	BaseURL           string
+	FrontendDirectory string
 }
 
-// RunWithReady runs the router until cancellation or failure. Once initialization
-// succeeds and the listener is bound, ready receives its actual Responses base URL.
-// The callback must return promptly; it is never called on startup failure.
-func RunWithReady(ctx context.Context, args []string, stderr io.Writer, ready func(string)) (runErr error) {
-	flags := newRouterFlags(stderr)
+// RunSession owns the private router for one wrapped Codex process.
+func RunSession(ctx context.Context, args []string, issues *CriticalErrors, ready func(Session)) (runErr error) {
+	flags := newRouterFlags(io.Discard)
 	if err := flags.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return nil
@@ -93,21 +91,39 @@ func RunWithReady(ctx context.Context, args []string, stderr io.Writer, ready fu
 	if *flags.streamIdleTimeout <= 0 {
 		return errors.New("--stream-idle-timeout must be positive")
 	}
-	providerURL, err := url.Parse(*flags.providerBaseURL)
-	if err != nil || (providerURL.Scheme != "http" && providerURL.Scheme != "https") ||
-		providerURL.Host == "" || providerURL.User != nil || providerURL.RawQuery != "" || providerURL.Fragment != "" {
-		return errors.New("--provider-base-url must be an absolute HTTP(S) URL without credentials, query, or fragment")
-	}
-
-	log := newDiagnostics(stderr)
 	capture, err := capturer.New(capturer.Config{Output: *flags.captureOutput, Mode: *flags.mode, ModelProtocol: *flags.modelProtocol})
 	if err != nil {
 		return fmt.Errorf("initialize capture: %w", err)
 	}
+	var metricsFile *os.File
+	if *flags.metricsOutput != "" {
+		metricsPath, err := filepath.Abs(*flags.metricsOutput)
+		if err != nil {
+			return errors.Join(err, capture.Close())
+		}
+		capturePath, _ := filepath.Abs(*flags.captureOutput)
+		if *flags.captureOutput != "" && metricsPath == capturePath {
+			return errors.Join(errors.New("capture-output and metrics-output must use different files"), capture.Close())
+		}
+		if *flags.captureOutput != "" {
+			captureInfo, captureErr := os.Stat(capturePath)
+			metricsInfo, metricsErr := os.Stat(metricsPath)
+			if captureErr == nil && metricsErr == nil && os.SameFile(captureInfo, metricsInfo) {
+				return errors.Join(errors.New("capture-output and metrics-output must use different files"), capture.Close())
+			}
+		}
+		metricsFile, err = os.OpenFile(metricsPath, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
+		if err != nil {
+			return errors.Join(fmt.Errorf("open metrics output: %w", err), capture.Close())
+		}
+	}
 	defer func() {
+		if metricsFile != nil {
+			runErr = errors.Join(runErr, capture.WriteMetrics(metricsFile), metricsFile.Close())
+		}
 		runErr = errors.Join(runErr, capture.Close())
 	}()
-	provider := newProviderClient(*flags.providerBaseURL, nil)
+	provider := newProviderClient(codexBaseURL, nil)
 	provider.httpClient.Transport = capture.Transport(provider.httpClient.Transport)
 	provider.streamIdleTimeout = *flags.streamIdleTimeout
 	if *flags.grokEnabled {
@@ -126,6 +142,7 @@ func RunWithReady(ctx context.Context, args []string, stderr io.Writer, ready fu
 		client.Transport = capture.Transport(client.Transport)
 		provider.grok = &grokClient{httpClient: client, auth: auth, streamIdleTimeout: *flags.streamIdleTimeout}
 	}
+	var frontendDirectory string
 	var dataDirectory string
 	var hpatchCalls *hpatchProxy
 	var compactTokens *ctp2Codec
@@ -166,13 +183,14 @@ func RunWithReady(ctx context.Context, args []string, stderr io.Writer, ready fu
 		defer func() {
 			runErr = errors.Join(runErr, registry.Close())
 		}()
+		frontendDirectory = registry.frontendDirectory
 		hpatchCalls = newHPatchProxy(translator, registry, customizedInstructions, compactTokens != nil, titles)
 		defer func() {
 			runErr = errors.Join(runErr, hpatchCalls.Close())
 		}()
 	}
 
-	listener, err := net.Listen("tcp", *flags.listenAddress)
+	listener, err := net.Listen("tcp", defaultListenAddress)
 	if err != nil {
 		return err
 	}
@@ -185,33 +203,30 @@ func RunWithReady(ctx context.Context, args []string, stderr io.Writer, ready fu
 		}
 	}
 
-	var requestSequence atomic.Uint64
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /", serveDashboard)
 	mux.HandleFunc("GET /api/metrics", capture.ServeHTTP)
-	mux.HandleFunc("GET /v1/models", modelsHandler(provider))
+	mux.HandleFunc("GET /v1/models", modelsHandler(provider, issues))
 	if hpatchCalls != nil {
 		mux.HandleFunc("POST "+commentaryPublisherPath, hpatchCalls.commentary.serveHTTP)
 	}
-	mux.HandleFunc("POST /v1/responses", responsesHandler(ctx, *flags.timeout, provider, log, hpatchCalls, compactTokens, mentor, &requestSequence))
+	mux.HandleFunc("POST /v1/responses", responsesHandler(ctx, *flags.timeout, provider, issues, hpatchCalls, compactTokens, mentor))
 
 	server := &http.Server{
-		Addr:              *flags.listenAddress,
+		ErrorLog:          log.New(io.Discard, "", 0), // Disable net/http terminal diagnostics while Codex owns it.
+		Addr:              defaultListenAddress,
 		Handler:           capture.Handler(mux),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       requestBodyReadTimeout,
 		IdleTimeout:       2 * time.Minute,
 	}
 	baseURL := "http://" + address + "/v1"
-	if err := log.log(ctx, slog.LevelInfo, "listening", "url", baseURL+"/responses", "mode", *flags.mode, "model_protocol", *flags.modelProtocol, "mentor_handoff", *flags.mentorHandoffEnabled, "grok_subagents", *flags.grokEnabled); err != nil {
-		return fmt.Errorf("write listening log: %w", err)
-	}
 	serverError := make(chan error, 1)
 	go func() {
 		serverError <- server.Serve(listener)
 	}()
 	if ready != nil && ctx.Err() == nil {
-		ready(baseURL)
+		ready(Session{BaseURL: baseURL, FrontendDirectory: frontendDirectory})
 	}
 	select {
 	case err := <-serverError:
@@ -234,8 +249,17 @@ func RunWithReady(ctx context.Context, args []string, stderr io.Writer, ready fu
 	}
 }
 
-func modelsHandler(provider *providerClient) http.HandlerFunc {
+func modelsHandler(provider *providerClient, issues *CriticalErrors) http.HandlerFunc {
 	return func(writer http.ResponseWriter, request *http.Request) {
+		tracked := &trackedResponseWriter{ResponseWriter: writer}
+		writer = tracked
+		defer func() {
+			if tracked.statusCode >= 400 && request.Context().Err() == nil {
+				issues.record(&requestFinalization{sessionID: request.Header.Get(sessionIDHeader), failurePhase: requestFailureForward,
+					upstreamStatusCode: tracked.statusCode, observation: requestObservation{outcome: requestOutcomeFailed}}, nil)
+			}
+		}()
+
 		response, err := provider.forwardModels(request.Context(), request.Header, request.URL.RawQuery)
 		if err != nil {
 			http.Error(writer, err.Error(), http.StatusBadGateway)
@@ -274,15 +298,13 @@ func responsesHandler(
 	lifecycle context.Context,
 	responseStartTimeout time.Duration,
 	provider responseProvider,
-	log diagnostics,
+	issues *CriticalErrors,
 	hpatchCalls *hpatchProxy,
 	compactTokens *ctp2Codec,
 	mentor *mentorHandoff,
-	requestSequence *atomic.Uint64,
 ) http.HandlerFunc {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		trackedWriter := &trackedResponseWriter{ResponseWriter: writer}
-		requestLog := log.with("request_id", requestSequence.Add(1))
 		body, err := readResponsesRequest(io.LimitReader(request.Body, responsesRequestBufferBytes+1))
 		if err != nil {
 			http.Error(trackedWriter, err.Error(), http.StatusBadRequest)
@@ -300,7 +322,7 @@ func responsesHandler(
 		startCtx, executionCtx, cancelRequest := requestContexts(request.Context(), lifecycle, responseStartTimeout)
 		defer cancelRequest()
 		sessionID := routingSessionID(request.Header, parsedRequest)
-		if err := executeRequest(startCtx, executionCtx, parsedRequest, request.Header, sessionID, provider, trackedWriter, requestLog, time.Now, hpatchCalls, compactTokens, mentor); err != nil {
+		if err := executeRequest(startCtx, executionCtx, parsedRequest, request.Header, sessionID, provider, trackedWriter, issues, hpatchCalls, compactTokens, mentor); err != nil {
 			writeRequestError(trackedWriter, err)
 		}
 	}
@@ -320,7 +342,8 @@ func requestContexts(requestCtx, serverCtx context.Context, responseStartTimeout
 type trackedResponseWriter struct {
 	http.ResponseWriter
 
-	committed bool
+	committed  bool
+	statusCode int
 }
 
 func (w *trackedResponseWriter) WriteHeader(statusCode int) {
@@ -328,6 +351,7 @@ func (w *trackedResponseWriter) WriteHeader(statusCode int) {
 		return
 	}
 	w.committed = true
+	w.statusCode = statusCode
 	w.ResponseWriter.WriteHeader(statusCode)
 }
 
@@ -351,7 +375,11 @@ func (w *trackedResponseWriter) Unwrap() http.ResponseWriter {
 
 func writeRequestError(writer *trackedResponseWriter, requestErr error) {
 	if !writer.committed {
-		http.Error(writer, requestErr.Error(), http.StatusBadGateway)
+		status := http.StatusBadGateway
+		if _, ok := errors.AsType[*requestCompatibilityError](requestErr); ok {
+			status = http.StatusBadRequest
+		}
+		http.Error(writer, requestErr.Error(), status)
 	}
 }
 
@@ -373,24 +401,15 @@ type requestFinalization struct {
 	failurePhase          requestFailurePhase
 	upstreamStatusCode    int
 	upstreamTerminalState responseTerminalState
-	upstreamStarted       time.Time
-	upstreamBegan         bool
 }
 
 func (f *requestFinalization) finish(
 	ctx context.Context,
 	requestErr error,
 	output io.Writer,
-	log diagnostics,
-	now func() time.Time,
-	totalStarted time.Time,
+	issues *CriticalErrors,
 ) error {
-	finished := now()
 	responseStarted := requestResponseStarted(output)
-	f.observation.totalDuration = finished.Sub(totalStarted)
-	if f.upstreamBegan {
-		f.observation.upstreamDuration = finished.Sub(f.upstreamStarted)
-	}
 	if f.observation.outcome == requestOutcomeUnknown {
 		switch {
 		case errors.Is(requestErr, context.DeadlineExceeded):
@@ -410,23 +429,8 @@ func (f *requestFinalization) finish(
 			f.observation.outcome = requestOutcomeFailed
 		}
 	}
-	args := []any{
-		"session_id", f.sessionID,
-		"outcome", f.observation.outcome.String(),
-		"failure_phase", string(f.failurePhase),
-		"response_started", responseStarted,
-		"upstream_status_code", f.upstreamStatusCode,
-		"upstream_terminal_state", f.upstreamTerminalState.String(),
-		"request_duration", f.observation.totalDuration,
-		"upstream_execution_duration", f.observation.upstreamDuration,
-		"usage_observed", f.observation.usageObserved,
-	}
-	if requestErr != nil {
-		args = append(args, "err", requestErr)
-	}
-	if err := log.log(context.WithoutCancel(ctx), slog.LevelInfo, "Responses request finished", args...); err != nil {
-		return fmt.Errorf("write terminal log: %w", err)
-	}
+	issues.record(f, requestErr)
+
 	return nil
 }
 
@@ -457,26 +461,27 @@ func executeRequest(
 	sessionID string,
 	provider responseProvider,
 	output io.Writer,
-	log diagnostics,
-	now func() time.Time,
+	issues *CriticalErrors,
 	hpatchCalls *hpatchProxy,
 	compactTokens *ctp2Codec,
 	mentor *mentorHandoff,
 ) (requestErr error) {
-	totalStarted := now()
 	finalization := requestFinalization{failurePhase: requestFailurePrepare}
 	if sessionID != "" {
 		finalization.sessionID = sessionID
 	}
 
 	defer func() {
-		requestErr = errors.Join(requestErr, finalization.finish(executionCtx, requestErr, output, log, now, totalStarted))
+		requestErr = errors.Join(requestErr, finalization.finish(executionCtx, requestErr, output, issues))
 	}()
 
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("prepare request: %w", err)
 	}
 	metadata, metadataValid := decodeCodexTurnMetadata(headers)
+	issues.stripInput(&parsedRequest, sessionID)
+	notices := issues.transform(sessionID, metadata.SubagentKind != "")
+	defer func() { notices.finish(requestErr == nil) }()
 	handoffRequest, err := mentor.prepare(headers, metadata, metadataValid, &parsedRequest)
 	if err != nil {
 		return fmt.Errorf("prepare Mentor Handoff: %w", err)
@@ -486,22 +491,8 @@ func executeRequest(
 		if handoffRequest == nil || handoffRecorded {
 			return
 		}
-		progress := handoffRequest.record(finalization.observation.usageCounts.InputTokens, includeCompletedOutput)
+		handoffRequest.record(finalization.observation.usageCounts.InputTokens, includeCompletedOutput)
 		handoffRecorded = true
-		_ = log.log(
-			context.WithoutCancel(executionCtx),
-			slog.LevelInfo,
-			"Mentor Handoff progress",
-			"thread_id", handoffRequest.threadID,
-			"requested_model", handoffRequest.requestedModel,
-			"leader_model", mentorLeaderModel,
-			"input_tokens", progress.latestInputTokens,
-			"tool_calls", progress.toolCalls,
-			"messages", progress.messages,
-			"awaiting_tool_result", progress.awaitingToolResult,
-			"handoff_complete", progress.complete,
-			"handoff_transitioned", progress.transitioned,
-		)
 	}
 	defer func() {
 		if finalization.observation.usageObserved {
@@ -548,11 +539,6 @@ func executeRequest(
 		forwardBody = nativeBody
 	}
 	finalization.failurePhase = requestFailureForward
-	if err := log.log(ctx, slog.LevelInfo, "forwarding Responses request"); err != nil {
-		return fmt.Errorf("write execution log: %w", err)
-	}
-	finalization.upstreamStarted = now()
-	finalization.upstreamBegan = true
 	cacheKey := parsedRequest.promptCacheKey()
 	if cacheKey == "" {
 		cacheKey = sessionID
@@ -584,6 +570,9 @@ func executeRequest(
 		}
 		if hpatchTransform != nil {
 			responseTransform = composeResponseTransformers(responseTransform, hpatchTransform)
+		}
+		if notices != nil {
+			responseTransform = composeResponseTransformers(responseTransform, notices)
 		}
 	}
 	if hpatchTransform != nil && responseTransform == nil {

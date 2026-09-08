@@ -1,5 +1,5 @@
 import {afterEach, describe, expect, test} from "bun:test";
-import {spawn, spawnSync, type ChildProcessWithoutNullStreams} from "node:child_process";
+import {spawnSync} from "node:child_process";
 import {closeSync, openSync} from "node:fs";
 import {copyFile, lstat, mkdtemp, mkdir, readFile, readdir, rm, stat, writeFile} from "node:fs/promises";
 import {tmpdir} from "node:os";
@@ -28,34 +28,6 @@ async function temporaryDirectory(prefix: string): Promise<string> {
   const directory = await mkdtemp(path.join(tmpdir(), prefix));
   temporaryDirectories.push(directory);
   return directory;
-}
-
-function waitForListening(router: ChildProcessWithoutNullStreams): Promise<string> {
-  return new Promise((resolve, reject) => {
-    let stderr = "";
-    const timer = setTimeout(() => {
-      cleanup();
-      reject(new Error(`router did not become ready:\n${stderr}`));
-    }, 5000);
-    const onData = (chunk: Buffer) => {
-      stderr += chunk.toString("utf8");
-      if (stderr.includes("msg=listening")) {
-        cleanup();
-        resolve(stderr);
-      }
-    };
-    const onExit = (code: number | null, signal: NodeJS.Signals | null) => {
-      cleanup();
-      reject(new Error(`router exited before readiness with code ${code}, signal ${signal}:\n${stderr}`));
-    };
-    const cleanup = () => {
-      clearTimeout(timer);
-      router.stderr.off("data", onData);
-      router.off("exit", onExit);
-    };
-    router.stderr.on("data", onData);
-    router.once("exit", onExit);
-  });
 }
 
 afterEach(async () => {
@@ -376,7 +348,7 @@ describe("installable shell plugin", () => {
     const installRoot = await temporaryDirectory("shell-plugin-install-");
     const binaryDirectory = path.join(installRoot, "bin");
     const configDirectory = path.join(installRoot, "config");
-    const routerPath = path.join(binaryDirectory, "hpatch-router");
+    const routerPath = path.join(binaryDirectory, "hpatch");
     const shellHelperPath = path.join(binaryDirectory, "shell");
     const installedPlugin = path.join(configDirectory, "hpatch", "plugins", "shell.mjs");
     const codexHome = path.join(installRoot, "codex-home");
@@ -423,28 +395,26 @@ ${installed.stderr}`);
     expect((await stat(instructionsPath)).mode & 0o777).toBe(0o600);
     await expect(stat(defaultInstructionsPath)).rejects.toThrow();
 
-    const router = spawn(routerPath, ["--mode", "hpatch", "--listen", "127.0.0.1:0"], {
+    await writeFile(path.join(binaryDirectory, "codex"), [
+      "#!/bin/sh",
+      'test -n "$HPATCH_BASE_URL" || exit 1',
+      'printf "ready"',
+      "",
+    ].join("\n"), {mode: 0o755});
+    const wrapped = spawnSync(routerPath, ["--mode", "hpatch", "codex"], {
       cwd: repositoryRoot,
+      encoding: "utf8",
       env: {
         ...installEnvironment,
         PATH: `${binaryDirectory}${path.delimiter}${process.env.PATH ?? ""}`,
       },
     });
-    const routerExit = new Promise<{code: number | null; signal: NodeJS.Signals | null}>(
-      (resolve) => router.once("exit", (code, signal) => resolve({code, signal})),
-    );
-
-    try {
-      await waitForListening(router);
-      expect((await stat(shellHelperPath)).mode & 0o111).not.toBe(0);
-      for (const name of ["hread", "hgrep", "hsymbol", "inspect_file"]) {
-        await expect(lstat(path.join(binaryDirectory, name))).rejects.toThrow();
-      }
-    } finally {
-      if (router.exitCode === null && router.signalCode === null) {
-        router.kill("SIGTERM");
-      }
-      expect(await routerExit).toEqual({code: 0, signal: null});
+    expect(wrapped.status).toBe(0);
+    expect(wrapped.stdout).toBe("ready");
+    expect(wrapped.stderr).toMatch(/^hpatch dashboard: http:\/\/127\.0\.0\.1:\d+\/\n$/);
+    expect((await stat(shellHelperPath)).mode & 0o111).not.toBe(0);
+    for (const name of ["hread", "hgrep", "hsymbol", "inspect_file"]) {
+      await expect(lstat(path.join(binaryDirectory, name))).rejects.toThrow();
     }
   }, 15000);
 });

@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"sync"
 
-	"github.com/gofrs/flock"
 	"github.com/yusing/hpatch"
 	"github.com/yusing/hpatch/internal/router/toolplugin"
 )
@@ -29,7 +28,6 @@ type (
 		builtinTranslator *toolplugin.Translator
 
 		frontendDirectory string
-		frontendLock      *flock.Flock
 		runtimeDirectory  string
 		shellRuntime      string
 		ordered           []toolContribution

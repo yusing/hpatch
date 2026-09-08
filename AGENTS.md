@@ -32,7 +32,7 @@ When parts of this file is stale after your work, update this file.
 | Built-in tool sources and private execution runtime | `plugins`, `internal/router/toolplugin` |
 | Fixed shell-runtime locator and per-thread runtime path | `cmd/shell`, `internal/shellruntime`, `internal/router/shell_runtime.go` |
 | Configured plugin discovery, authenticated snapshots, and frontends | `internal/router/toolplugin/runtime.go`, `internal/router/tool_registry.go`, `internal/router/tool_wrapper.go` |
-| Router process signals, wrapped Codex lifecycle, and top-level exit behavior | `cmd/hpatch-router/main.go`, `cmd/hpatch-router/wrap.go` |
+| Router process signals, wrapped Codex lifecycle, and top-level exit behavior | `cmd/hpatch/main.go`, `cmd/hpatch/wrap.go` |
 | Normative interface requirements | `doc/spec/index.md` and the listed requirement file |
 | Stable ownership contracts | `doc/architecture/index.md` and the listed contract file |
 
@@ -44,7 +44,7 @@ When parts of this file is stale after your work, update this file.
 | Router request, response, recovery, workspace, plugin, or transport | `go test ./internal/router` |
 | Portable core or `hpatch:core/v1` adapter | `go generate ./internal/router/toolplugin`, then `go test ./...` and `bun test ./internal/router/toolplugin/tests/core.test.ts` |
 | TypeScript plugin source | `go generate ./internal/router/toolplugin`, then `bun test ./internal/router/toolplugin/tests` |
-| Router or shell-helper process entry point | `go test ./cmd/hpatch-router ./cmd/shell` |
+| Router or shell-helper process entry point | `go test ./cmd/hpatch ./cmd/shell` |
 | Cross-package or broad contract | `go test ./...` |
 
 Use `go test ./...` only when a change crosses package owners. Run `go vet ./...` for broad Go checks and `make install` when validating generation and router/helper installation. Broad development commands are in `README.md`.

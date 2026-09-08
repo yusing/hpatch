@@ -7,7 +7,6 @@ import (
 	"io"
 	"net/http"
 	"testing"
-	"time"
 )
 
 func mentorTestHeaders(t *testing.T, threadID string) http.Header {
@@ -230,7 +229,7 @@ func TestExecuteRequestMentorHandoffPreservesHistoryAndRestoresRequestedModel(t 
 		request := mentorTestRequest(t, "gpt-5.6-luna")
 		if err := executeRequest(
 			t.Context(), t.Context(), request, headers, "session", provider, io.Discard,
-			newDiagnostics(io.Discard), time.Now, nil, nil, mentor,
+			nil, nil, nil, mentor,
 		); err != nil {
 			t.Fatal(err)
 		}
@@ -269,7 +268,7 @@ func TestExecuteRequestMentorHandoffCountsFailedResponseInput(t *testing.T) {
 		request := mentorTestRequest(t, "gpt-5.6-luna")
 		if err := executeRequest(
 			t.Context(), t.Context(), request, headers, "session", provider, io.Discard,
-			newDiagnostics(io.Discard), time.Now, nil, nil, mentor,
+			nil, nil, nil, mentor,
 		); err != nil {
 			t.Fatal(err)
 		}

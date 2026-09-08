@@ -22,11 +22,22 @@ case $BENCH_AGENT_SERVICE in
 		;;
 esac
 
+: "${BENCH_ARTIFACT_DIR:?BENCH_ARTIFACT_DIR must be set}"
+: "${BENCH_RUN_DIR:?BENCH_RUN_DIR must be set}"
+session_runtime="$BENCH_RUN_DIR/hpatch-runtime/${BENCH_ARTIFACT_DIR##*/}"
+
 exec docker compose -f "$HPATCH_BENCH_COMPOSE_FILE" run \
 	--interactive=false \
 	--no-tty \
 	--rm \
 	--no-deps \
+	--env "HPATCH_RUNTIME_DIR=$session_runtime" \
+	--volume "$session_runtime:$session_runtime" \
+	--env "BENCH_ARTIFACT_DIR=$BENCH_ARTIFACT_DIR" \
+	--env "HPATCH_BENCH_MODE=${HPATCH_BENCH_MODE:?}" \
+	--env "HPATCH_BENCH_PROTOCOL=${HPATCH_BENCH_PROTOCOL:?}" \
+	--env "HPATCH_BENCH_MENTOR=${HPATCH_BENCH_MENTOR:-false}" \
+	--volume "$BENCH_ARTIFACT_DIR:$BENCH_ARTIFACT_DIR" \
 	--env GIT_CONFIG_COUNT=1 \
 	--env GIT_CONFIG_KEY_0=safe.directory \
 	--env "GIT_CONFIG_VALUE_0=$PWD" \
@@ -34,4 +45,4 @@ exec docker compose -f "$HPATCH_BENCH_COMPOSE_FILE" run \
 	--volume "$PWD:$PWD" \
 	--workdir "$PWD" \
 	"$BENCH_AGENT_SERVICE" \
-	codex --disable apps "$@"
+	hpatch-benchmark-session "$@"

@@ -272,13 +272,9 @@ dependency_cache=$(mktemp -d "$results_root/.dependency-cache-XXXXXX")
 dependency_workspace=
 
 results="$run_dir/results.jsonl"
-control_log="$run_dir/control-router.log"
-hpatch_log="$run_dir/hpatch-router.log"
 control_metrics="$run_dir/control-metrics.json"
 hpatch_metrics="$run_dir/hpatch-metrics.json"
 if [[ $benchmark_mode == mentor-handoff ]]; then
-	control_log="$run_dir/hpatch-router.log"
-	hpatch_log="$run_dir/hpatch-mentor-router.log"
 	control_metrics="$run_dir/hpatch-metrics.json"
 	hpatch_metrics="$run_dir/hpatch-mentor-metrics.json"
 fi
@@ -314,9 +310,6 @@ compose_project_name="hpatch_bench_$(basename "$run_dir" | tr '[:upper:]' '[:low
 export COMPOSE_PROJECT_NAME=$compose_project_name
 export HPATCH_BENCH_COMPOSE_FILE="$benchmark_root/compose.yaml"
 export HPATCH_BENCH_HPATCH_MODEL_PROTOCOL=native
-export HPATCH_BENCH_CONTROL_MODEL_PROTOCOL=native
-export HPATCH_BENCH_CONTROL_MODE=passthrough
-export HPATCH_BENCH_MENTOR_HANDOFF=false
 if [[ $benchmark_mode == hpatch-diagnostic ]]; then
 	export HPATCH_BENCH_HPATCH_MODEL_PROTOCOL=$diagnostic_model_protocol
 fi
@@ -325,46 +318,39 @@ if [[ $benchmark_mode == paired ]]; then
 fi
 if [[ $benchmark_mode == ctp-only ]]; then
 	export HPATCH_BENCH_HPATCH_MODEL_PROTOCOL=ctp2
-	export HPATCH_BENCH_CONTROL_MODE=hpatch
 fi
 if [[ $benchmark_mode == mentor-handoff ]]; then
-	export HPATCH_BENCH_CONTROL_MODE=hpatch
-	export HPATCH_BENCH_MENTOR_HANDOFF=true
-	export HPATCH_BENCH_CONTROL_MODEL_PROTOCOL=$mentor_model_protocol
 	export HPATCH_BENCH_HPATCH_MODEL_PROTOCOL=$mentor_model_protocol
 fi
 compose=(docker compose --progress quiet -f "$HPATCH_BENCH_COMPOSE_FILE")
 
 collect_router_metrics() {
-	local service=$1
-	local port=$2
-	local destination=$3
-	local temporary="$destination.tmp"
-
-	if "${compose[@]}" exec -T "$service" curl --fail --silent --show-error \
-		"http://127.0.0.1:$port/api/metrics" >"$temporary"; then
-		mv -f -- "$temporary" "$destination"
-		return
-	fi
-	rm -f -- "$temporary"
-	return 1
+	local arm=$1 destination=$2 capture=$3 directory
+	local -a sessions=()
+	for directory in "$run_dir/artifacts/$task_id/"*; do
+		[[ -f $directory/arm ]] || continue
+		[[ $(cat "$directory/arm") == "$arm" ]] && sessions+=("$directory")
+	done
+	((${#sessions[@]})) || return 1
+	"${compose[@]}" run --rm --no-deps --no-tty \
+		--volume "$run_dir:$run_dir" dependency-loader \
+		hpatch-merge-captures "$destination" "$capture" "${sessions[@]}"
 }
 
 collect_artifacts() {
-	local metrics_collected=true
-
-	if [[ $started != true || $collected == true ]]; then
-		return
-	fi
+	[[ $started == true && $collected != true ]] || return 0
+	local control_arm=control hpatch_arm=hpatch
+	if [[ $benchmark_mode == ctp-only ]]; then control_arm=native; hpatch_arm=ctp; fi
+	if [[ $benchmark_mode == mentor-handoff ]]; then control_arm=hpatch; hpatch_arm=hpatch-mentor; fi
+	local complete=true
 	if [[ $benchmark_mode == paired || $benchmark_mode == control-only || $benchmark_mode == ctp-only || $benchmark_mode == mentor-handoff ]]; then
-		"${compose[@]}" logs --no-color control >"$control_log" 2>&1 || true
-		collect_router_metrics control 8081 "$control_metrics" || metrics_collected=false
+		collect_router_metrics "$control_arm" "$control_metrics" "$run_dir/captures/control.jsonl" || complete=false
 	fi
 	if [[ $benchmark_mode != control-only ]]; then
-		"${compose[@]}" logs --no-color hpatch >"$hpatch_log" 2>&1 || true
-		collect_router_metrics hpatch 8082 "$hpatch_metrics" || metrics_collected=false
+		collect_router_metrics "$hpatch_arm" "$hpatch_metrics" "$run_dir/captures/hpatch.jsonl" || complete=false
 	fi
-	collected=$metrics_collected
+	collected=$complete
+	[[ $complete == true ]]
 }
 
 # Invoked indirectly by cleanup from the EXIT trap.
@@ -396,11 +382,7 @@ import_control_baseline() {
 	mkdir -p "$destination"
 	cp -a -- "$control_baseline_dir/artifacts/$task_id/${task_id}-control-r001/." "$destination/"
 	cp -- "$control_baseline_dir/control-metrics.json" "$control_metrics"
-	if [[ -f $control_baseline_dir/control-router.log ]]; then
-		cp -- "$control_baseline_dir/control-router.log" "$control_log"
-	else
-		: >"$control_log"
-	fi
+
 	jq --arg previous "$control_baseline_dir/" --arg current "$run_dir/" \
 		--arg summary "$control_baseline_dir/summary.md" \
 		"walk(if type == \"string\" and startswith(\$previous) then \$current + ltrimstr(\$previous) else . end) | .imported_control_baseline = {summary: \$summary}" \
@@ -426,8 +408,14 @@ normalize_hpatch_artifact_permissions() {
 		--mount type=bind,source="$runtime",target=/hpatch-runtime \
 		--mount type=bind,source="$reports_path",target=/agent-issue-reports \
 		--mount type=bind,source="$captures",target=/captures \
+		--mount type=bind,source="$run_dir/artifacts",target=/artifacts \
+		--mount type=bind,source="$run_dir",target=/benchmark-run \
 		"$benchmark_image" \
-		sh -euc 'chown -R "$1" /hpatch-config /hpatch-runtime /agent-issue-reports /captures; chmod -R u+rwX,go+rX /hpatch-config /hpatch-runtime /agent-issue-reports /captures' \
+		sh -euc 'chown -R "$1" /hpatch-config /hpatch-runtime /agent-issue-reports /captures /artifacts; chmod -R u+rwX,go-rwx /hpatch-config /hpatch-runtime /agent-issue-reports /captures /artifacts
+		for name in control-metrics.json hpatch-metrics.json hpatch-mentor-metrics.json; do
+			path=/benchmark-run/$name
+			if [ -f "$path" ]; then chown "$1" "$path"; chmod 600 "$path"; fi
+		done' \
 		sh "$owner"; then
 		printf 'bench.sh: cannot normalize hpatch artifact permissions under %s\n' "$run_dir" >&2
 		return 1
@@ -584,13 +572,9 @@ preserve_run() {
 
 	run_dir=$destination
 	results="$run_dir/results.jsonl"
-	control_log="$run_dir/control-router.log"
-	hpatch_log="$run_dir/hpatch-router.log"
 	control_metrics="$run_dir/control-metrics.json"
 	hpatch_metrics="$run_dir/hpatch-metrics.json"
 	if [[ $benchmark_mode == mentor-handoff ]]; then
-		control_log="$run_dir/hpatch-router.log"
-		hpatch_log="$run_dir/hpatch-mentor-router.log"
 		control_metrics="$run_dir/hpatch-metrics.json"
 		hpatch_metrics="$run_dir/hpatch-mentor-metrics.json"
 	fi
@@ -646,7 +630,7 @@ print_result_paths() {
 	printf 'Results: %s\n' "$results"
 	printf 'Artifacts: %s\n' "$run_dir/artifacts"
 	if [[ $benchmark_mode == control-only ]]; then
-		printf 'Control metrics: %s\nRouter log: %s\n' "$control_metrics" "$control_log"
+		printf 'Control metrics: %s\n' "$control_metrics"
 		return
 	fi
 	if [[ $benchmark_mode != hpatch-diagnostic ]]; then
@@ -661,11 +645,7 @@ print_result_paths() {
 	else
 		printf 'Hpatch capture metrics: %s\n' "$hpatch_metrics"
 	fi
-	if [[ $benchmark_mode == hpatch-diagnostic ]]; then
-		printf 'Router log: %s\n' "$hpatch_log"
-	else
-		printf 'Router logs: %s, %s\n' "$control_log" "$hpatch_log"
-	fi
+
 }
 
 # Invoked indirectly by the EXIT trap.
@@ -692,15 +672,6 @@ cleanup() {
 		printf 'bench.sh: cannot merge available benchmark results during cleanup\n' >&2
 		status=1
 	fi
-	if ! collect_artifacts; then
-		printf 'bench.sh: cannot collect available benchmark artifacts during cleanup\n' >&2
-		status=1
-	fi
-	if [[ $started == true ]]; then
-		if ! print_capture_summary; then
-			printf 'bench.sh: capture summary failed\n' >&2
-		fi
-	fi
 	if [[ $compose_used == true ]]; then
 		mapfile -t agent_containers < <(
 			docker ps -aq \
@@ -710,12 +681,25 @@ cleanup() {
 		if ((${#agent_containers[@]})); then
 			docker rm --force "${agent_containers[@]}" >/dev/null 2>&1 || true
 		fi
-		"${compose[@]}" down --volumes --remove-orphans >/dev/null 2>&1 || true
-		if [[ $started == true ]] && ! normalize_hpatch_artifact_permissions; then
-			if ((status == 0)); then
-				status=1
-			fi
+	fi
+	if ! collect_artifacts; then
+		printf 'bench.sh: cannot collect available benchmark artifacts during cleanup\n' >&2
+		status=1
+	fi
+	if [[ $started == true ]] && ! normalize_hpatch_artifact_permissions; then
+		if ((status == 0)); then
+			status=1
 		fi
+	fi
+	if [[ $started == true ]]; then
+		if ! print_capture_summary; then
+			printf 'bench.sh: capture summary failed\n' >&2
+		fi
+	fi
+	if [[ $compose_used == true ]]; then
+
+		"${compose[@]}" down --volumes --remove-orphans >/dev/null 2>&1 || true
+
 	fi
 	if ! collect_agent_issue_reports; then
 		if ((status == 0)); then
@@ -809,7 +793,7 @@ INSTRUCTION
 	if [[ $benchmark_mode == mentor-handoff ]]; then
 		instruction_model=$mentor_parent_model
 	fi
-	docker run --rm "$benchmark_image" codex debug models --bundled |
+	docker run --rm "$benchmark_image" /usr/local/libexec/codex-real debug models --bundled |
 		jq -er --arg model "$instruction_model" \
 			'.models[] | select(.slug == $model) | .base_instructions' \
 			>"$control_instruction"
@@ -1071,58 +1055,6 @@ prepare_dependency_cache() {
 	shopt -u nullglob
 }
 
-qualify_agent_isolation() {
-	local service=$1
-	local assigned_router=$2
-	local assigned_port=$3
-	local forbidden_router=$4
-	local forbidden_port=$5
-	printf 'validate agent isolation: %s may reach only %s:%s\n' \
-		"$service" "$assigned_router" "$assigned_port"
-	if ! "${compose[@]}" run \
-		--interactive=false \
-		--no-tty \
-		--rm \
-		--no-deps \
-		--env "ASSIGNED_ROUTER=http://$assigned_router:$assigned_port/api/metrics" \
-		--env "FORBIDDEN_ROUTER=http://$forbidden_router:$forbidden_port/api/metrics" \
-		--env "DEPENDENCY_KIND=$dependency_kind" \
-		--volume "$dependency_workspace/repo:$dependency_workspace/repo:ro" \
-		--workdir "$dependency_workspace/repo" \
-		"$service" \
-		sh -euc '
-			curl --fail --silent --show-error "$ASSIGNED_ROUTER" >/dev/null
-			if curl --fail --silent --connect-timeout 2 --max-time 4 "$FORBIDDEN_ROUTER" >/dev/null 2>&1; then
-				echo "unexpected access to the other benchmark router" >&2
-				exit 1
-			fi
-			if curl --fail --silent --connect-timeout 2 --max-time 4 https://example.com/ >/dev/null 2>&1; then
-				echo "unexpected external network access" >&2
-				exit 1
-			fi
-			command -v shell >/dev/null
-			for private_tool in hread hgrep hsymbol inspect_file; do
-				if command -v "$private_tool" >/dev/null; then
-					echo "private tool unexpectedly installed on PATH: $private_tool" >&2
-					exit 1
-				fi
-			done
-			test "$(codex --disable apps mcp list --json)" = "[]"
-			case "$DEPENDENCY_KIND" in
-			go) go mod download all ;;
-			node) test -x node_modules/.bin/tsc; node --version >/dev/null ;;
-			none)
-				python3 --version >/dev/null
-				printf "value = 1\n" >/tmp/hpatch-benchmark-probe.py
-				python3 -m py_compile /tmp/hpatch-benchmark-probe.py
-				test ! -e /tmp/__pycache__/hpatch-benchmark-probe.cpython-*.pyc
-				;;
-			esac
-		'; then
-		printf 'bench.sh: agent isolation qualification failed for %s\n' "$service" >&2
-		return 1
-	fi
-}
 
 inject_hidden_tests() {
 	local repository=$1
@@ -1253,7 +1185,6 @@ run_agent() {
 	local workspace
 	local repository
 	local artifact_dir="$run_dir/artifacts/$task_id/$run_id"
-	local base_url=http://control:8081/v1
 	local agent_service=control-agent
 	local codex_stdout="$artifact_dir/codex.jsonl"
 	local codex_stderr="$artifact_dir/codex.stderr"
@@ -1276,7 +1207,6 @@ run_agent() {
 	local unauthorized_json='[]'
 	local changed_json
 	local grader_json
-	local provider_config
 	local result_json
 	local instruction_name=control.md
 	local instruction_path=$control_instruction
@@ -1318,7 +1248,6 @@ run_agent() {
 			router_mode=hpatch
 			;;
 		hpatch-mentor)
-			base_url=http://hpatch:8082/v1
 			agent_service=hpatch-agent
 			instruction_name=hpatch.md
 			instruction_path=$hpatch_instruction
@@ -1333,7 +1262,6 @@ run_agent() {
 			;;
 		esac
 	elif [[ $arm == hpatch ]]; then
-		base_url=http://hpatch:8082/v1
 		agent_service=hpatch-agent
 		instruction_name=hpatch.md
 		instruction_path=$hpatch_instruction
@@ -1351,7 +1279,6 @@ run_agent() {
 			instruction_diff_for_arm=$instruction_diff
 			;;
 		ctp)
-			base_url=http://hpatch:8082/v1
 			agent_service=hpatch-agent
 			instruction_name=hpatch.md
 			instruction_path=$hpatch_instruction
@@ -1370,6 +1297,7 @@ run_agent() {
 	workspace=$(mktemp -d "$run_dir/work/$run_id-XXXXXX")
 	repository="$workspace/repo"
 	mkdir -p "$artifact_dir"
+	printf '%s\n' "$arm" >"$artifact_dir/arm"
 	if [[ $benchmark_mode == mentor-handoff ]]; then
 		codex_home="$artifact_dir/codex-home"
 		child_events="$artifact_dir/child-events.jsonl"
@@ -1383,7 +1311,6 @@ run_agent() {
 		git -C "$repository" commit --quiet --amend --no-edit
 	fi
 
-	provider_config="model_providers.bench={ name = \"bench\", base_url = \"$base_url\", wire_api = \"responses\", requires_openai_auth = true }"
 	agent_prompt=$(cat "$task/$prompt_file")
 	if [[ $benchmark_mode == mentor-handoff ]]; then
 		root_model=$mentor_parent_model
@@ -1401,14 +1328,16 @@ run_agent() {
 	(
 		cd "$repository"
 		export BENCH_AGENT_SERVICE=$agent_service
+		export BENCH_ARTIFACT_DIR=$artifact_dir
+		export HPATCH_BENCH_MODE=$router_mode HPATCH_BENCH_PROTOCOL=$model_protocol
+		export HPATCH_BENCH_MENTOR=false
+		if [[ $arm == hpatch-mentor ]]; then export HPATCH_BENCH_MENTOR=true; fi
 		if [[ -n $codex_home ]]; then
 			export BENCH_CODEX_HOME=$codex_home
 		fi
 		exec timeout --signal=TERM --kill-after=10s "${agent_timeout}s" \
 			"$benchmark_root/codex-compose.sh" \
-			-c "$provider_config" \
 			-c "model_instructions_file=\"/bench-instructions/$instruction_name\"" \
-			-c 'model_provider="bench"' \
 			-c 'supports_websockets=true' \
 			--model "$root_model" \
 			-c "model_reasoning_effort=\"$root_reasoning_effort\"" \
@@ -1810,29 +1739,12 @@ run_single_arm() {
 }
 
 
-start_routers() {
+prepare_sessions() {
 	started=true
 	compose_used=true
-	if [[ $benchmark_mode == paired || $benchmark_mode == ctp-only || $benchmark_mode == mentor-handoff ]]; then
-		"${compose[@]}" up --detach --wait control hpatch
-	elif [[ $benchmark_mode == control-only ]]; then
-		"${compose[@]}" up --detach --wait control
-	else
-		if [[ $benchmark_mode == hpatch-only ]]; then
-			import_control_baseline
-		fi
-		"${compose[@]}" up --detach --wait hpatch
-	fi
-	if [[ $benchmark_mode == paired || $benchmark_mode == control-only || $benchmark_mode == mentor-handoff ]]; then
-		qualify_agent_isolation control-agent control 8081 hpatch 8082
-	fi
-	if [[ $benchmark_mode == ctp-only ]]; then
-		qualify_agent_isolation control-agent control 8081 hpatch 8082
-	fi
-	if [[ $benchmark_mode != control-only ]]; then
-		qualify_agent_isolation hpatch-agent hpatch 8082 control 8081
-	fi
+	if [[ $benchmark_mode == hpatch-only ]]; then import_control_baseline; fi
 }
+
 
 run_phase() {
 	local label=$1 start=$SECONDS
@@ -1847,7 +1759,7 @@ mkdir -p "$run_dir/work" "$run_dir/hpatch-config" "$capture_directory" \
 	"$run_dir/hpatch-runtime/control" "$run_dir/hpatch-runtime/hpatch" "$instruction_dir"
 : >"$results"
 
-run_phase image-build "${compose[@]}" build control
+run_phase image-build "${compose[@]}" build dependency-loader
 run_phase instructions prepare_instructions
 prepare_mentor_prompts
 configure_issue_reporting
@@ -1874,7 +1786,7 @@ if [[ $prepare_only == true ]]; then
 	exit 0
 fi
 
-run_phase router-isolation start_routers
+run_phase session-preparation prepare_sessions
 
 if [[ $dependency_workspace == "$run_dir"/dependency-source-* ]]; then
 	rm -rf -- "$dependency_workspace"

@@ -86,3 +86,21 @@ Acceptance:
     cannot replace a successful or failed tool result.
 12. Central model instructions keep agent-authored progress on supported tool calls and reserve
     standalone assistant commentary messages for router output.
+
+### Critical session errors
+
+Router failures that block work or require action produce bounded, actionable
+user-only notices, not raw request data or event logs. Success and ordinary
+cancellation are silent. Deduplication is by routing session and failure category.
+Notices without a writable response remain queued for that session. A failed
+render/write does not consume them. Ready root streaming notices precede provider
+output; child notices appear before substantive output only in the terminal
+response object, never as a later standalone child result. Exact retained IDs are
+removed from subsequent provider-bound input, including passthrough requests.
+
+The queue retains at most 256 session/category entries until shutdown. Concurrent
+responses cannot claim the same pending notice. Repeats after delivery are
+summarized only at shutdown; excess distinct entries become one overflow count.
+The launcher reports pending notices and repeat counts after Codex exits. Delivery
+remains auxiliary: HTTP failures, tool errors, exit codes, and substantive results
+are preserved. A queue cannot deliver through an absent or broken transport.

@@ -17,7 +17,7 @@ import (
 
 func runWrap(routerArgs, args []string) int {
 	if len(args) == 0 || args[0] != "codex" {
-		fmt.Fprintln(os.Stderr, "usage: hpatch-router [router flags] wrap codex [Codex arguments...]")
+		fmt.Fprintln(os.Stderr, "usage: hpatch [flags] codex [Codex arguments...]")
 		return 2
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM)
@@ -29,7 +29,7 @@ func runWrap(routerArgs, args []string) int {
 	defer signal.Stop(interrupts)
 	code, err := wrapCodex(ctx, routerArgs, args[1:])
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "router:", err)
+		fmt.Fprintln(os.Stderr, "hpatch:", err)
 	}
 	return code
 }
@@ -42,22 +42,34 @@ func wrapCodex(ctx context.Context, routerArgs, args []string) (int, error) {
 	if err != nil {
 		return 1, fmt.Errorf("locate codex: %w", err)
 	}
+	issues := router.NewCriticalErrors()
+	defer func() {
+		for _, message := range issues.Pending() {
+			fmt.Fprintln(os.Stderr, message)
+		}
+	}()
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	ready := make(chan string, 1)
+	ready := make(chan router.Session, 1)
 	routerDone := make(chan error, 1)
 	go func() {
-		routerDone <- router.RunWithReady(ctx, append([]string{"--listen", "127.0.0.1:0"}, routerArgs...), os.Stderr, func(baseURL string) {
-			ready <- baseURL
+		routerDone <- router.RunSession(ctx, routerArgs, issues, func(session router.Session) {
+			ready <- session
 		})
 	}()
-	var baseURL string
+	var session router.Session
 	select {
 	case err := <-routerDone:
 		return 1, err
-	case baseURL = <-ready:
+	case session = <-ready:
 	}
-	cmd := exec.CommandContext(ctx, executable, codexArgs(baseURL, args)...)
+	// Announce once before Codex takes over the terminal, never during its UI.
+	fmt.Fprintf(os.Stderr, "hpatch dashboard: %s/\n", strings.TrimSuffix(session.BaseURL, "/v1"))
+	cmd := exec.CommandContext(ctx, executable, codexArgs(session.BaseURL, args)...)
+	cmd.Env = append(os.Environ(), "HPATCH_BASE_URL="+session.BaseURL)
+	if session.FrontendDirectory != "" {
+		cmd.Env = append(cmd.Env, "PATH="+session.FrontendDirectory+string(os.PathListSeparator)+os.Getenv("PATH"))
+	}
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 	cmd.Cancel = func() error { return cmd.Process.Signal(syscall.SIGTERM) }
 	cmd.WaitDelay = 5 * time.Second
@@ -111,7 +123,7 @@ func validateCodexArgs(args []string) error {
 			break
 		}
 		if arg == "--oss" || arg == "--local-provider" || strings.HasPrefix(arg, "--local-provider=") {
-			return errors.New("wrap codex does not support provider-selection arguments; use the standalone router for custom providers")
+			return errors.New("hpatch codex does not support provider-selection arguments; custom providers are not supported")
 		}
 		var override string
 		switch {
@@ -129,7 +141,7 @@ func validateCodexArgs(args []string) error {
 		root, _, _ := strings.Cut(key, ".")
 		root = strings.Trim(strings.TrimSpace(root), `"'`)
 		if root == "model_provider" || root == "model_providers" || root == "openai_base_url" || root == "oss_provider" {
-			return errors.New("wrap codex does not support provider overrides; it overrides config.toml provider selection and uses the router's default upstream")
+			return errors.New("hpatch codex does not support provider overrides; it overrides config.toml provider selection and uses the router's default upstream")
 		}
 	}
 	return nil

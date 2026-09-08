@@ -76,9 +76,11 @@ func TestToolPluginWorkerResolvesBasenameFromPath(t *testing.T) {
 		t.Fatal(err)
 	}
 	second, _ := newToolPluginTestRegistry(t)
-	if err := second.installFrontends(); err == nil ||
-		!strings.Contains(err.Error(), "another hpatch-router process owns the tool frontends") {
-		t.Fatalf("second configured registry frontend installation error = %v", err)
+	if err := second.installFrontends(); err != nil {
+		t.Fatalf("concurrent session frontend installation: %v", err)
+	}
+	if registry.frontendDirectory == second.frontendDirectory {
+		t.Fatal("sessions share tool frontends")
 	}
 	frontend, ok := registry.frontends["plugin_tool"]
 	if !ok {
@@ -228,5 +230,25 @@ func TestToolPluginWorkerRejectsMissingManifest(t *testing.T) {
 	handled, exitCode := RunToolPluginWorker(t.Context(), wrapper, nil, os.Stdin, &bytes.Buffer{}, &stderr)
 	if !handled || exitCode != 1 || !strings.Contains(stderr.String(), "open tool worker manifest") {
 		t.Fatalf("worker handled %t, exit code %d, stderr %q", handled, exitCode, stderr.String())
+	}
+}
+
+func TestOrdinaryBinSymlinkIsNotAPluginWorker(t *testing.T) {
+	directory := filepath.Join(t.TempDir(), "bin")
+	if err := os.Mkdir(directory, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(directory, "hpatch")
+	if err := os.Symlink(executable, link); err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	handled, code := RunToolPluginWorker(t.Context(), link, []string{"--help"}, os.Stdin, &output, &output)
+	if handled || code != 0 || output.Len() != 0 {
+		t.Fatalf("ordinary launcher symlink claimed as a worker: %t %d %q", handled, code, output.String())
 	}
 }

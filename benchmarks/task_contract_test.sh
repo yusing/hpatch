@@ -44,12 +44,10 @@ jq -n --arg hash "$original" '{task_id:"fixture", arm:"control", model:"gpt-6-as
   base_instructions:{sha256:"fixture-instructions"}}' >"$base_artifacts/result.json"
 run_dir="$fixture/matching"
 control_metrics="$run_dir/control-metrics.json"
-control_log="$run_dir/control-router.log"
 import_control_baseline
 [[ -s $run_dir/artifacts/fixture/fixture-control-r001/result.json ]]
 run_dir="$fixture/rejected"
 control_metrics="$run_dir/control-metrics.json"
-control_log="$run_dir/control-router.log"
 reject_import() {
     if import_control_baseline >/dev/null 2>&1; then
         printf 'accepted mismatched task contract\n' >&2; exit 1

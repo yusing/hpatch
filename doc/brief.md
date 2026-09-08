@@ -91,7 +91,7 @@ wall time must remain close to control.
 - Basic root Go API: `Apply` atomically updates an authorized workspace and returns an error.
 - Host APIs: `ApplyForHost`, `ApplyForHostRoot`, and `TranslateForHostAt` return
   `HostTranslation` for report, state, and diagnostics.
-- `hpatch-router --mode hpatch|passthrough`: expose model-visible hpatch and shell tools with
+- `hpatch --mode hpatch|passthrough codex`: expose model-visible hpatch and shell tools with
   private shell-internal hread, hgrep, hsymbol, and inspect_file commands, or the unchanged
   control path. Hpatch mode defaults to CTP/2 and Mentor Handoff; passthrough stays native.
 - inspect_file outline spans are copyable `LINE:HASH` identities without source bodies.
@@ -100,7 +100,7 @@ wall time must remain close to control.
 - `shell`: a mandatory built-in unconstrained custom tool whose translated exec carrier shows the
   interpreter and exact script body, optionally with `#!cmd=` and request-specific `#!params=`
   assignments.
-- `make install`: regenerate the embedded plugin bundle and install `hpatch-router` plus the fixed
+- `make install`: regenerate the embedded plugin bundle and install `hpatch` plus the fixed
   `shell` helper without installing private command files or changing Codex configuration and
   instructions.
 - `hpatch-bench validate --manifest TASK.json` and `hpatch-bench run`: validate and run
@@ -161,13 +161,10 @@ wall time must remain close to control.
 - In hpatch mode the router validates the complete discovered plugin registry before opening
   its listener or installing tool wrappers; any schema, identity, implementation, or wrapper
   mismatch reports diagnostics and stops startup without exposing a partial registry.
-- Each configured executor-backed contributed tool uses a stable basename symlink beside `hpatch-router`.
-  The stable symlink targets an authenticated snapshot wrapper with the same basename, and the
-  snapshot wrapper targets `hpatch-router`. A translated exec carrier invokes only the basename;
-  configured child dispatch validates both links and selects the pinned implementation from the
-  snapshot, so Codex remains the owner of working directory, sandbox, and permissions.
-  One process-lifetime lock owns a nonempty configured frontend set. A restart can reclaim
-  authenticated links after a crash, while a concurrent router using those names fails startup.
+- Each configured executor-backed contribution uses a session-private basename frontend
+  inside its authenticated snapshot's `bin` directory, pointing to the same-basename
+  snapshot wrapper and then the running `hpatch`. Only the wrapped Codex PATH is
+  extended. Sessions have disjoint frontends and no shared frontend lock.
   Built-in shell instead uses the fixed PATH-installed `shell` locator and a direct per-thread
   runtime path selected by `CODEX_THREAD_ID`. Its private commands create no wrapper or frontend.
 - A plugin translator returns a normal Code Mode tool-call carrier rather than an exec-specific

@@ -2,7 +2,7 @@
 
 ## REQ-METRICS-001 — Captured Responses metrics
 
-`hpatch-router` MUST create one in-process capturer and MUST keep one HTTP listener. The same listener
+`hpatch` MUST create one in-process capturer and MUST keep one HTTP listener. The same listener
 MUST serve `POST /v1/responses`, `GET /v1/models`, and `GET /api/metrics`. Enabling
 `--capture-output PATH` MUST append sanitized schema-6 JSONL records at `PATH`; it MUST NOT start or
 require a capturer service, listener, proxy, or network hop.
@@ -203,3 +203,9 @@ dashboard MUST warn that normalized aggregate counters may default missing telem
 and MUST show per-attempt field state and explicit counts separately. Benchmark validation
 MUST reconcile raw evidence with snapshots, reject unsafe shapes, and reject a present cached
 count that disagrees with normalized usage. All retries retain their own response evidence.
+
+Explicit `--metrics-output PATH` writes the capturer's final metrics snapshot during
+session shutdown. It is independent of operational logging. Benchmark session
+aggregation belongs to this package: complete source snapshots must reconcile their
+records, modes/protocols must match, and sessions must have distinct threads.
+Combined sequences are rebased while original session exports remain unchanged.
