@@ -143,6 +143,13 @@ does not coordinate job-control handoff across pipelines; cancellation uses a bo
 inherited-pipe wait.
 Other interpreter basenames retain the JavaScript executor's anonymous script descriptor path.
 
+Shell transformation never adds router-owned flags. The shell runtime owner supplies commentary
+connection details through a private per-thread descriptor beside the locator, keyed by inherited
+`CODEX_THREAD_ID`. The worker accepts discovery only for its own current runtime target. Descriptor
+reads are bounded and reject symlinks and non-regular files; missing or invalid discovery leaves
+script execution unchanged. A shared thread publisher is independent of individual worker
+completion. The runtime owner removes only its own descriptor, preserving replacement entries.
+
 `internal/router/toolplugin/plugin.d.ts` owns the executable result schema. The runtime adapter
 validates the current result, and the worker writes it to Codex-facing streams. Optional
 `terminationReason: "output_limit"` is validated nonzero-result cleanup metadata, not public
@@ -185,11 +192,11 @@ children read that snapshot and verify its registry identity before loading an i
 executes the live configuration directory. Changing a configured module therefore cannot alter
 served tool behavior before restart. Missing, corrupted, or mismatched snapshot state fails the
 child honestly. Router shell storage owns one pinned runtime parent, flat per-thread launcher
-symlinks, and exclusively-created active script directories. Artifact and operation leases keep
+symlinks, private commentary descriptors, and exclusively-created active script directories. Artifact and operation leases keep
 script capabilities alive; only those live capabilities authorize recursive cleanup. Idle sessions
 never reopen directory identity snapshots. Locator cleanup matches the router worker target and
 only unlinks the locator; this is not authentication or isolation from arbitrary same-user
-filesystem tampering. Shutdown cleanup owns these locators and active script capabilities,
+filesystem tampering. Shutdown cleanup owns these locators, commentary descriptors, and active script capabilities,
 configured session frontends, snapshot wrappers, and the shared snapshot.
 
 The response transformer uses registry membership instead of hardcoded tool-name predicates for

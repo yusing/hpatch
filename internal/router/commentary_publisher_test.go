@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"strings"
 	"testing"
 	"testing/synctest"
@@ -178,12 +177,15 @@ func TestConcurrentSessionDoesNotDrainCommentary(t *testing.T) {
 		proxy.deactivateSession(sessionID)
 	})
 
-	subscription := proxy.commentary.subscribe(sessionID, "call")
+	subscription := proxy.commentary.subscribeThread(sessionID, "thread")
 	if subscription == "" || !proxy.commentary.publish(subscription, "Still running.", false) {
 		t.Fatal("commentary was not published")
 	}
 	if events := proxy.drainCommentarySession(sessionID); len(events) != 0 {
 		t.Fatalf("concurrent drain = %+v", events)
+	}
+	if events := proxy.drainThreadCommentarySession(sessionID); len(events) != 0 {
+		t.Fatal("concurrent terminal drained thread commentary")
 	}
 	proxy.deactivateSession(sessionID)
 	if events := proxy.drainCommentarySession(sessionID); len(events) != 1 || events[0].text != "Still running." {
@@ -191,14 +193,13 @@ func TestConcurrentSessionDoesNotDrainCommentary(t *testing.T) {
 	}
 }
 
-func TestShellRouteInstallsPublisherWithoutAddingDefaultCommentary(t *testing.T) {
+func TestShellRouteKeepsCleanCommandWithoutDefaultCommentary(t *testing.T) {
 	for _, test := range []struct {
-		name          string
-		input         string
-		wantPublisher bool
+		name  string
+		input string
 	}{
-		{name: "ordinary shell", input: "printf ok", wantPublisher: true},
-		{name: "commentary", input: "commentary Running check\nprintf ok", wantPublisher: true},
+		{name: "ordinary shell", input: "printf ok"},
+		{name: "commentary", input: "commentary Running check\nprintf ok"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			transform, proxy, _ := newToolPluginTestTransform(t)
@@ -219,49 +220,85 @@ func TestShellRouteInstallsPublisherWithoutAddingDefaultCommentary(t *testing.T)
 				t.Fatalf("shell response = %s", response)
 			}
 			carrier := jsonString(decoded.Output[0], "input")
-			if strings.Contains(carrier, commentaryEndpointArgument) != test.wantPublisher {
+			var args struct {
+				Command string `json:"cmd"`
+			}
+			decodeExecCarrierArguments(t, carrier, &args)
+			want := "shell bash " + shellQuoteArgument(test.input)
+			if args.Command != want {
+				t.Fatalf("command = %q, want %q", args.Command, want)
+			}
+
+			if strings.Contains(carrier, "--commentary-") || strings.Contains(carrier, proxy.commentaryEndpoint) || len(transform.commentarySubscriptions) != 0 {
 				t.Fatalf("shell carrier = %s", carrier)
 			}
 		})
 	}
 }
 
-func TestShellWorkerPublishesWithoutChangingCommandResult(t *testing.T) {
-	registry, err := buildToolRegistry(t.Context(), t.TempDir(), testHPatchToolDescription, false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		if err := registry.Close(); err != nil {
-			t.Error(err)
+func TestShellCommentaryPreservesDirectCommands(t *testing.T) {
+	for _, native := range []bool{false, true} {
+		name := "code mode"
+		if native {
+			name = "native"
 		}
-	})
-	broker := newCommentaryBroker()
-	server := httptest.NewServer(http.HandlerFunc(broker.serveHTTP))
-	t.Cleanup(server.Close)
-	subscription := broker.subscribe("session", "call-shell")
-	if subscription == "" {
-		t.Fatal("shell subscription was rejected")
-	}
-	arguments := []string{
-		commentaryEndpointArgument, server.URL, commentaryTokenArgument, subscription,
-		"bash", "cmd=commentary\n\"$cmd\" Running check\nfalse\necho continued",
-	}
-	var stdout, stderr bytes.Buffer
-	handled, exitCode := RunToolPluginWorker(t.Context(), registry.shellRuntime, arguments, os.Stdin, &stdout, &stderr)
-	if !handled || exitCode != 0 || stdout.String() != "continued\n" || stderr.Len() != 0 {
-		t.Fatalf("handled %v, exit %d, stdout %q, stderr %q", handled, exitCode, stdout.String(), stderr.String())
-	}
-	events := broker.drain(subscription)
-	if len(events) != 1 || events[0].text != "Running check" {
-		t.Fatalf("shell events = %+v", events)
+		t.Run(name, func(t *testing.T) {
+			var transform *hpatchResponseTransform
+			var proxy *hpatchProxy
+			if native {
+				transform, proxy = newNativeToolPluginTestTransform(t)
+			} else {
+				transform, proxy, _ = newToolPluginTestTransform(t)
+			}
+			proxy.commentaryEndpoint = "http://127.0.0.1:8080" + commentaryPublisherPath
+			const command = "mktemp -d -t hpatch-diag.XXXXXXXXXX"
+			response, err := transform.TransformJSON(mustTestJSON(t, map[string]any{
+				"status": "completed", "output": []any{map[string]any{
+					"type": "custom_tool_call", "id": "item-shell", "call_id": "call-shell",
+					"name": "shell", "input": command, "status": "completed",
+				}},
+			}))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var decoded struct {
+				Output []map[string]json.RawMessage `json:"output"`
+			}
+			if err := json.Unmarshal(response, &decoded); err != nil {
+				t.Fatal(err)
+			}
+			if len(decoded.Output) != 1 {
+				t.Fatalf("output count = %d, want 1", len(decoded.Output))
+			}
+			var arguments struct {
+				Command string `json:"cmd"`
+			}
+			if native {
+				if err := json.Unmarshal([]byte(jsonString(decoded.Output[0], "arguments")), &arguments); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				decodeExecCarrierArguments(t, jsonString(decoded.Output[0], "input"), &arguments)
+			}
+			visibleCommand := arguments.Command
+			if native {
+				// Native carriers append the existing script-retention result metadata.
+				visibleCommand, _, _ = strings.Cut(visibleCommand, "\n")
+			}
+			if visibleCommand != command {
+				t.Fatal("commentary changed the direct command")
+			}
+			if len(transform.commentarySubscriptions) != 0 {
+				t.Fatal("direct command allocated a commentary subscription")
+			}
+		})
 	}
 }
 
 func shellCommentaryTestItem() map[string]any {
 	return map[string]any{
 		"type": "custom_tool_call", "id": "item-runtime", "call_id": "call-runtime",
-		"name": "shell", "input": "printf ok", "status": "completed",
+		"name": "exec", "input": `await commentary("Working");`, "status": "completed",
 	}
 }
 
@@ -349,7 +386,7 @@ func TestJSONTerminalHandsOffRuntimePublisher(t *testing.T) {
 }
 
 func TestEarlyStreamReleasePreservesHandedOffPublishers(t *testing.T) {
-	for _, name := range []string{"shell", "exec"} {
+	for _, name := range []string{"exec"} {
 		t.Run(name, func(t *testing.T) {
 			transform, proxy := newRuntimeCommentaryTransform(t)
 			item := shellCommentaryTestItem()

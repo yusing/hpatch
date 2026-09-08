@@ -1791,6 +1791,7 @@ func TestDirectBashExecCommand(t *testing.T) {
 		{name: "external redirection", arguments: []string{"bash", "rtk ok >out\n"}, want: "rtk ok >out", ok: true},
 		{name: "private", arguments: []string{"bash", "hread file.txt\n"}},
 		{name: "builtin", arguments: []string{"bash", "printf ok\n"}},
+		{name: "commentary", arguments: []string{"bash", "commentary Running check\n"}},
 		{name: "dynamic command", arguments: []string{"bash", "$command ok\n"}},
 		{name: "command substitution", arguments: []string{"bash", "rtk \"$(hread file.txt)\"\n"}},
 		{name: "process substitution", arguments: []string{"bash", "rtk <(hread file.txt)\n"}},

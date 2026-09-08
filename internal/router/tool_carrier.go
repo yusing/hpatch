@@ -228,7 +228,7 @@ func (registry *toolRegistry) directBashExecCommand(arguments []string) (string,
 		}
 	})
 	commandName, err := expand.Literal(nil, call.Args[0])
-	if err != nil || !staticCommand || commandName == "" || interp.IsBuiltin(commandName) {
+	if err != nil || !staticCommand || commandName == "" || commandName == commentaryArgumentName || interp.IsBuiltin(commandName) {
 		return "", false
 	}
 	if contribution, exists := registry.contribution(commandName); exists &&

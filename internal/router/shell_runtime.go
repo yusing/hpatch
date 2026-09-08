@@ -26,6 +26,7 @@ type shellSession struct {
 	name          string
 	runtimeName   string
 	runtimeTarget string
+	commentary    *ownedShellCommentary
 	timers        map[string]*time.Timer // nil timer means expired, awaiting leases
 	leases        int
 }
@@ -94,7 +95,7 @@ func (s *shellSession) close() error {
 			timer.Stop()
 		}
 	}
-	cleanupErr := s.retireStorage()
+	cleanupErr := errors.Join(s.retireStorage(), s.closeCommentary())
 	// A flat launcher is only unlinked, never traversed or recursively removed.
 	// Matching the worker target preserves a newer router's locator and makes
 	// missing or replaced script storage irrelevant to launcher cleanup.

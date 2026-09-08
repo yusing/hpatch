@@ -274,6 +274,16 @@ func (p *hpatchProxy) drainCommentarySession(sessionID string) []publishedCommen
 	return p.commentary.drainSession(sessionID)
 }
 
+// Only thread routes lack a carrier subscription. Keep call-scoped live delivery separate.
+func (p *hpatchProxy) drainThreadCommentarySession(sessionID string) []publishedCommentary {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	if p.commentary == nil || p.activeSessions[sessionID] > 1 {
+		return nil
+	}
+	return p.commentary.drainThreadSession(sessionID)
+}
+
 type commentarySubscription struct {
 	token     string
 	callID    string
@@ -307,6 +317,9 @@ func (p *hpatchProxy) commentaryMessageIDs(sessionID string) map[string]struct{}
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 	result := make(map[string]struct{})
+	if p.commentary != nil {
+		maps.Copy(result, p.commentary.threadMessageIDs(sessionID))
+	}
 	if session := p.sessions[sessionID]; session != nil {
 		for _, history := range session.calls {
 			for _, messageID := range history.commentaryMessageIDs {
@@ -318,6 +331,9 @@ func (p *hpatchProxy) commentaryMessageIDs(sessionID string) map[string]struct{}
 }
 
 func (p *hpatchProxy) addCommentaryMessageID(sessionID, callID, messageID string) bool {
+	if callID == "" {
+		return p.commentary.hasThreadMessageID(sessionID, messageID)
+	}
 	history, exists := p.history(sessionID, callID)
 	if !exists {
 		return false

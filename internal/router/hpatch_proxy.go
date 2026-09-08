@@ -393,6 +393,7 @@ func (p *hpatchProxy) prepareRequest(ctx context.Context, request *parsedRespons
 	if err := p.activateSession(historySessionID); err != nil {
 		return nil, err
 	}
+	p.prepareShellCommentary(threadID, historySessionID)
 	if err := p.reconcileInputPrefix(request, historySessionID); err != nil {
 		p.deactivateSession(historySessionID)
 		return nil, err
@@ -1213,21 +1214,6 @@ func (t *hpatchResponseTransform) translateRegisteredTool(contribution toolContr
 				catWriteCarrier = true
 				break
 			}
-			commentaryToken := ""
-			interpreter := ""
-			if len(arguments) != 0 {
-				interpreter = shellInterpreterName(arguments[0])
-			}
-			if contribution.PluginID == builtinToolsPluginID && contribution.Name == "shell" &&
-				t.proxy.commentaryEndpoint != "" && (interpreter == "bash" || interpreter == "sh") {
-				commentaryToken = t.proxy.commentary.subscribe(t.historySessionID, callID)
-				if commentaryToken != "" {
-					arguments = append([]string{
-						commentaryEndpointArgument, t.proxy.commentaryEndpoint,
-						commentaryTokenArgument, commentaryToken,
-					}, arguments...)
-				}
-			}
 			payload, err = t.proxy.registry.execCarrierPayload(
 				kind,
 				contribution,
@@ -1238,11 +1224,7 @@ func (t *hpatchResponseTransform) translateRegisteredTool(contribution toolContr
 				resultMetadata,
 			)
 			if err != nil {
-				t.proxy.commentary.cancel(commentaryToken)
 				return hpatchHistory{}, fmt.Errorf("%s exec carrier: %w", contribution.Name, err)
-			}
-			if commentaryToken != "" {
-				t.commentarySubscriptions = append(t.commentarySubscriptions, commentarySubscription{token: commentaryToken, callID: callID})
 			}
 		case "custom":
 			kind = codeModeCarrierCustom
@@ -1711,6 +1693,33 @@ func (t *hpatchResponseTransform) TransformSSE(payload []byte) ([][]byte, error)
 				if message := t.runtimeCommentaryMessage(publication); message != nil {
 					visible = append(visible, assistantCommentaryDoneEvent(message))
 				}
+			}
+		}
+		var threadMessages []map[string]json.RawMessage
+		for _, publication := range t.proxy.drainThreadCommentarySession(t.historySessionID) {
+			if message := t.runtimeCommentaryMessage(publication); message != nil {
+				if t.subagentTurn {
+					threadMessages = append(threadMessages, message)
+				} else {
+					visible = append(visible, assistantCommentaryDoneEvent(message))
+				}
+			}
+		}
+		if len(threadMessages) != 0 {
+			var response map[string]json.RawMessage
+			var output []map[string]json.RawMessage
+			if err := json.Unmarshal(transformed, &response); err != nil {
+				return nil, err
+			}
+			if raw, exists := response["output"]; exists {
+				if err := json.Unmarshal(raw, &output); err != nil {
+					return nil, err
+				}
+			}
+			response["output"] = mustMarshalJSON(append(threadMessages, output...))
+			event, err = replaceRawField(event, "response", mustMarshalJSON(response))
+			if err != nil {
+				return nil, err
 			}
 		}
 		t.releaseCommentarySubscriptions()

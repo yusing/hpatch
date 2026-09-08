@@ -6,9 +6,9 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net"
 	"net/http"
 	"net/url"
@@ -19,9 +19,8 @@ import (
 
 const (
 	commentaryPublisherPath       = "/internal/commentary"
-	commentaryEndpointArgument    = "--commentary-endpoint"
-	commentaryTokenArgument       = "--commentary-token"
 	commentaryOnceArgument        = "--commentary-once"
+	maxThreadCommentaryIDs        = 16384
 	maxCommentaryRoutes           = 256
 	maxCommentaryEvents           = 1024
 	maxCommentaryEventsPerRoute   = 64
@@ -40,6 +39,7 @@ type publishedCommentary struct {
 }
 
 type commentaryRoute struct {
+	threadID  string
 	sessionID string
 	callID    string
 	expires   time.Time
@@ -48,15 +48,25 @@ type commentaryRoute struct {
 	complete  bool
 }
 
+// Replay provenance has its own non-evicting budget. A thread can outlive its
+// route and change history sessions without losing user-only message identity.
+// Exhaustion suppresses new commentary, never essential tool replay history.
+type threadCommentaryProvenance struct {
+	sessionID string
+	ids       map[string]struct{}
+}
+
 type commentaryBroker struct {
-	mu         sync.Mutex
-	routes     map[string]*commentaryRoute
-	eventCount int
-	closed     bool
+	threads       map[string]*threadCommentaryProvenance
+	threadIDCount int
+	mu            sync.Mutex
+	routes        map[string]*commentaryRoute
+	eventCount    int
+	closed        bool
 }
 
 func newCommentaryBroker() *commentaryBroker {
-	return &commentaryBroker{routes: make(map[string]*commentaryRoute)}
+	return &commentaryBroker{routes: make(map[string]*commentaryRoute), threads: make(map[string]*threadCommentaryProvenance)}
 }
 
 func (b *commentaryBroker) subscribe(sessionID, callID string) string {
@@ -79,6 +89,47 @@ func (b *commentaryBroker) subscribe(sessionID, callID string) string {
 	return token
 }
 
+// subscribeThread reuses the thread capability while refreshing its current replay session.
+// The broker never calls back into the proxy: proxy locks may precede this lock.
+func (b *commentaryBroker) subscribeThread(sessionID, threadID string) string {
+	if sessionID == "" || threadID == "" {
+		return ""
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	now := time.Now()
+	b.cleanupExpiredLocked(now)
+	if b.closed {
+		return ""
+	}
+	provenance := b.threads[threadID]
+	if provenance == nil {
+		if len(b.threads) >= maxCommentaryRoutes {
+			return ""
+		}
+		provenance = &threadCommentaryProvenance{ids: make(map[string]struct{})}
+		b.threads[threadID] = provenance
+	}
+	provenance.sessionID = sessionID
+	for token, route := range b.routes {
+		if route.threadID == threadID {
+			route.sessionID = sessionID
+			route.expires = now.Add(commentaryRouteTTL)
+			return token
+		}
+	}
+	if len(b.routes) >= maxCommentaryRoutes {
+		return ""
+	}
+	random := make([]byte, 32)
+	if _, err := rand.Read(random); err != nil {
+		return ""
+	}
+	token := base64.RawURLEncoding.EncodeToString(random)
+	b.routes[token] = &commentaryRoute{sessionID: sessionID, threadID: threadID, expires: now.Add(commentaryRouteTTL)}
+	return token
+}
+
 func (b *commentaryBroker) publish(token, text string, complete bool) bool {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -89,12 +140,21 @@ func (b *commentaryBroker) publish(token, text string, complete bool) bool {
 		return false
 	}
 	route.expires = now.Add(commentaryRouteTTL)
-	if strings.TrimSpace(text) != "" && route.nextID < maxCommentaryEventsPerRoute && b.eventCount < maxCommentaryEvents {
+	withinRouteCapacity := route.nextID < maxCommentaryEventsPerRoute
+	if route.threadID != "" {
+		complete = false // Concurrent shell workers share this route; no worker owns its lifetime.
+		withinRouteCapacity = len(route.events) < maxCommentaryEventsPerRoute && b.threadIDCount < maxThreadCommentaryIDs
+	}
+	if strings.TrimSpace(text) != "" && withinRouteCapacity && b.eventCount < maxCommentaryEvents {
 		route.nextID++
 		event := publishedCommentary{
 			callID:    route.callID,
 			messageID: commentaryMessageID(token + ":" + fmt.Sprint(route.nextID)),
 			text:      text,
+		}
+		if route.threadID != "" {
+			b.threads[route.threadID].ids[event.messageID] = struct{}{}
+			b.threadIDCount++
 		}
 		route.events = append(route.events, event)
 		b.eventCount++
@@ -121,6 +181,44 @@ func (b *commentaryBroker) drainSession(sessionID string) []publishedCommentary 
 	return events
 }
 
+func (b *commentaryBroker) drainThreadSession(sessionID string) []publishedCommentary {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.cleanupExpiredLocked(time.Now())
+	var events []publishedCommentary
+	for token, route := range b.routes {
+		if route.threadID != "" && route.sessionID == sessionID {
+			events = append(events, b.drainLocked(token)...)
+		}
+	}
+	return events
+}
+
+func (b *commentaryBroker) hasThreadMessageID(sessionID, messageID string) bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	for _, thread := range b.threads {
+		if thread.sessionID == sessionID {
+			if _, exists := thread.ids[messageID]; exists {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func (b *commentaryBroker) threadMessageIDs(sessionID string) map[string]struct{} {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	ids := make(map[string]struct{})
+	for _, thread := range b.threads {
+		if thread.sessionID == sessionID {
+			maps.Copy(ids, thread.ids)
+		}
+	}
+	return ids
+}
+
 func (b *commentaryBroker) cleanupExpiredLocked(now time.Time) {
 	for token, route := range b.routes {
 		if !now.Before(route.expires) {
@@ -134,6 +232,8 @@ func (b *commentaryBroker) close() {
 	b.mu.Lock()
 	b.closed = true
 	clear(b.routes)
+	clear(b.threads)
+	b.threadIDCount = 0
 	b.eventCount = 0
 	b.mu.Unlock()
 }
@@ -220,20 +320,6 @@ type httpShellCommentarySink struct {
 	endpoint string
 	token    string
 	client   *http.Client
-}
-
-func shellCommentaryPublisher(arguments []string) (shellCommentarySink, []string, error) {
-	if len(arguments) < 4 || arguments[0] != commentaryEndpointArgument || arguments[2] != commentaryTokenArgument {
-		return nil, arguments, nil
-	}
-	if _, err := url.ParseRequestURI(arguments[1]); err != nil || arguments[3] == "" {
-		return nil, nil, errors.New("shell commentary publisher arguments are invalid")
-	}
-	return &httpShellCommentarySink{
-		endpoint: arguments[1],
-		token:    arguments[3],
-		client:   commentaryHTTPClient,
-	}, arguments[4:], nil
 }
 
 func publishCommentaryOnce(ctx context.Context, arguments []string) (bool, error) {

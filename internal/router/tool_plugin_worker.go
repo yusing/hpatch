@@ -163,11 +163,7 @@ func runAuthenticatedToolWorker(
 
 	var execution toolplugin.ExecutionOutput
 	if contribution.PluginID == builtinToolsPluginID && contribution.Name == "shell" {
-		var commentary shellCommentarySink
-		commentary, args, err = shellCommentaryPublisher(args)
-		if err == nil {
-			execution, err = executeShellTool(ctx, manifest, runtimeRoot, contribution, args, stdin, commentary)
-		}
+		execution, err = executeShellTool(ctx, manifest, runtimeRoot, contribution, args, stdin, discoverShellCommentary(filepath.Join(directory, name)))
 	} else {
 		execution, err = toolplugin.Execute(
 			ctx,

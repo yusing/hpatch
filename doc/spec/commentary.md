@@ -28,17 +28,33 @@ identifiers. Bash and POSIX shell programs may publish expanded text through the
 control flow, redirections, output, or exit status. Other interpreters receive no runtime
 commentary handling, and shell calls without an authored command receive no default.
 
-Runtime publications use a per-call authenticated route on the router's existing HTTP server.
+Runtime publications use authenticated routes on the router's existing HTTP server.
+Code Mode routes retain per-call identity. Bash and POSIX shell commentary is thread-scoped,
+not attributed to an original tool-call ID. Workers discover private connection details using
+the inherited `CODEX_THREAD_ID` and its thread-bound runtime. The shell transformation MUST NOT
+add flags or inline environment assignments to carry those details. Concurrent shell workers
+in one thread share delivery without guessing which original call produced a publication;
+one worker finishing must not retire the other workers' publisher.
 Ready streaming publications precede completed, failed, and incomplete terminal responses;
 later publications and publications from JSON responses appear at the start of the next
 non-concurrent request for the same session. Once a carrier has been handed off, an interrupted
-provider response or early transform release does not cancel its publisher. Routes prepared for
-carriers that were never handed off are cancelled instead.
+provider response or early transform release does not cancel its publisher. Code Mode routes
+prepared for carriers that were never handed off are cancelled instead. Shell thread routes
+survive individual call and response lifetimes and expire when idle or at router shutdown.
 Draining ready publications consumes each message once without retiring a still-running publisher;
-subsequent publications remain deliverable through the same route. Completion retires the route
-after queued publications are drained, and expiry releases both queued events and route capacity.
+subsequent publications remain deliverable through the same route. Code Mode completion retires
+its route after queued publications are drained. Expiry releases queued events and route capacity.
 Routes, events, request bodies, and retention time are bounded. Capacity, network, publication, and
 rendering failures remain auxiliary and do not replace the tool result.
+Shell commentary replay provenance follows stable thread identity across routing-session changes.
+Its retention is independently bounded: exhausted commentary capacity suppresses new commentary,
+never evicts executable-call replay or recovery records or prevents later tool calls.
+The router retains shell provenance until shutdown, including across publication-route expiry,
+for at most 256 threads and 16,384 message IDs in total. Reaching either bound leaves existing
+replay provenance intact rather than reclaiming it for new commentary.
+At a subagent stream terminal, ready shell commentary appears before substantive output inside
+the terminal response object, not as a later standalone completed assistant item that could
+replace the subagent's final answer.
 
 In Hpatch router mode, a namespaced Codex `spawn_agent` function call produces one assistant
 commentary message immediately before the unchanged call. It shows the model and reasoning effort
@@ -88,8 +104,10 @@ Acceptance:
    in strings, template text, comments, regular expressions, properties, or unrelated identifiers.
 10. Bash and POSIX shell commentary publishes expanded text without changing stdout, stderr,
     control flow, or exit status; absent publisher capacity leaves the command a successful no-op.
-11. Ready and deferred runtime publications retain session and call identity, remain bounded, and
-    cannot replace a successful or failed tool result.
+11. Ready and deferred runtime publications retain their routing identity: thread-scoped for shell,
+    per-call for Code Mode. They remain bounded, are removed exactly on replay, and cannot replace
+    a successful or failed tool result. Identical concurrent shell calls do not require guessed
+    call attribution; completion of one does not interrupt the others' commentary.
 12. Central model instructions keep agent-authored progress on supported tool calls and reserve
     standalone assistant commentary messages for router output.
 

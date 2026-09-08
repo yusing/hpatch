@@ -28,9 +28,18 @@ followed by the exact body as its final value. The resulting Codex exec carrier 
 `shell python3 <quoted-body>` on one physical command line; the model does not author that command
 or its quoting. For implicit default Bash without a directive, a body with at most one final line
 terminator remains direct when it parses as one non-background, non-negated simple call whose
-static command is neither a shell built-in nor a private contribution and whose statement contains
-no command or process substitution. The direct carrier removes that optional final line terminator
-and otherwise preserves the command text.
+static command is neither a shell built-in, the reserved `commentary` command, nor a private
+contribution and whose statement contains no command or process substitution. The direct carrier
+removes that optional final line terminator and otherwise preserves the command text.
+
+The `shell` transformation MUST NOT add flags to the rendered command. Only interpreter
+arguments supplied by the input's selector may appear as interpreter flags. Router-owned
+metadata, including commentary connection details and credentials, must travel through private
+runtime plumbing, never through added command arguments or inline environment assignments.
+Enabling commentary must not change whether an otherwise eligible command remains direct.
+Shell commentary is thread-scoped. The worker discovers its private publisher through the
+inherited `CODEX_THREAD_ID` and current thread runtime, without changing the interpreter argv.
+Missing or unavailable commentary discovery must not prevent script execution.
 
 After an optional interpreter shebang, a leading directive block can contain one `#!cmd=`
 assignment and one `#!params=` assignment in either order. All canonical directives use
@@ -135,6 +144,10 @@ files or changing execution of an otherwise valid shell call.
 
 Thread runtime locators are flat `hpatch-runtime-<thread-id>` symlinks below the runtime
 directory. Active retained scripts occupy sibling `hpatch-scripts-<thread-id>` directories.
+Private commentary descriptors are regular mode-0600 files beside the thread locators,
+outside retained script storage. Discovery rejects symlinks, non-regular files, and descriptors
+that do not match the worker selected by the current locator. Unexpected existing entries are
+not overwritten, and missing or invalid descriptors disable commentary only.
 One shared pinned parent capability anchors this namespace. Launcher preparation creates no
 script storage and retains no per-thread directory handles. A retained-script directory is
 created exclusively for each active storage lifetime; an unexpected existing directory or
@@ -150,7 +163,8 @@ never reopens a historical directory for editing or recursive cleanup. Reads, ed
 and cleanup remain confined when a storage pathname is replaced by an escaping symlink.
 Launcher refresh remains independent of script-storage availability. Shutdown rejects new
 leases, waits for existing operations, cancels expiry callbacks, cleans active owned storage,
-unlinks only flat locators still targeting this router's worker, and closes the shared parent.
+removes only owned commentary descriptors, unlinks only flat locators still targeting this
+router's worker, and closes the shared parent.
 Replacement locator files or directories are never traversed or recursively removed. Reruns
 retain the resolved script body while conversation replay preserves the original reference call.
 
@@ -228,3 +242,8 @@ Acceptance:
 19. Complex shell constructs remain unsplit. A yielded prefix finishes before any patch or suffix
     begins. JSON and SSE projections restore the exact original shell call and unchanged result
     on replay, and native/compact provider cache diagnostics retain an appended prefix.
+20. With commentary enabled, `mktemp -d -t hpatch-diag.XXXXXXXXXX` remains the direct command.
+    Wrapped Bash and POSIX scripts retain only their normalized interpreter fields and quoted
+    body; transformation adds no flags, connection details, credentials, or inline environment
+    assignments. Thread-scoped commentary discovery preserves script output and exit status,
+    and completion of one worker leaves concurrent workers' commentary available.
