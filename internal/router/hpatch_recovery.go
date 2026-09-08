@@ -230,70 +230,7 @@ func (t *hpatchResponseTransform) translateRecovery(
 	}
 	attemptMetadata.EvaluatedScript = recovered.script
 	attemptMetadata.RecoveryDelta = recovered.delta
-	history, err := t.translateRecovered(callID, input, recovered.script, attemptMetadata, upstreamItem)
-	if err == nil {
-		history.toolName = hpatchRecoveryToolName
-		t.local[callID] = history
-	}
-	return history, err
-}
-
-func (t *hpatchResponseTransform) translateRecovered(
-	callID, emitted, evaluated string,
-	attemptMetadata hpatch.AttemptMetadata,
-	upstreamItem map[string]json.RawMessage,
-) (hpatchHistory, error) {
-	attemptContext := hpatch.WithAttemptMetadata(t.ctx, attemptMetadata)
-	translated, err := t.proxy.translator.Translate(attemptContext, t.directory, evaluated)
-	if err != nil {
-		if contextErr := t.ctx.Err(); contextErr != nil {
-			return hpatchHistory{}, contextErr
-		}
-		if errors.Is(err, errHPatchCapacity) {
-			return hpatchHistory{}, err
-		}
-		evaluatorRejected := len(translated.rejections) != 0
-		diagnostic := translated.diagnostic
-		if diagnostic == "" {
-			diagnostic = err.Error()
-		}
-		if evaluatorRejected {
-			diagnostic += hpatchRecoveryGuidance(evaluated, translated.rejections, true)
-		}
-		history := hpatchHistory{
-			toolName:          hpatchRecoveryToolName,
-			script:            emitted,
-			root:              t.directory,
-			evaluated:         evaluated,
-			carrierName:       t.codeModeToolName,
-			translationError:  diagnostic,
-			evaluatorRejected: evaluatorRejected,
-			rejections:        slices.Clone(translated.rejections),
-			upstreamItem:      maps.Clone(upstreamItem),
-			correlationID:     attemptMetadata.CorrelationID,
-			attempt:           attemptMetadata.Attempt,
-		}
-		t.recordLocal(callID, &history)
-		return history, nil
-	}
-	patchText := string(translated.patch)
-	alreadySatisfied := translated.change.AlreadySatisfied
-	history := hpatchHistory{
-		toolName:         hpatchRecoveryToolName,
-		script:           emitted,
-		root:             t.directory,
-		evaluated:        evaluated,
-		patch:            patchText,
-		alreadySatisfied: alreadySatisfied,
-		aliases:          slices.Clone(translated.aliases),
-		carrierName:      t.codeModeToolName,
-		report:           hpatchReport(translated.report, translated.diagnostic),
-		upstreamItem:     maps.Clone(upstreamItem),
-		correlationID:    attemptMetadata.CorrelationID,
-		attempt:          attemptMetadata.Attempt,
-	}
-	t.recordLocal(callID, &history)
-	return history, nil
+	return t.evaluateScript(callID, input, recovered.script, attemptMetadata, upstreamItem)
 }
 
 func (t *hpatchResponseTransform) rejectUnevaluated(

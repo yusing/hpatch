@@ -950,6 +950,17 @@ func (t *hpatchResponseTransform) translate(callID, input string, upstreamItem m
 		EvaluatedScript: evaluated,
 	}
 
+	return t.evaluateScript(callID, input, evaluated, attemptMetadata, upstreamItem)
+}
+
+// evaluateScript owns target dispatch and result projection for both ordinary and
+// rebuilt recovery scripts. Recovery policy never selects a different storage root.
+func (t *hpatchResponseTransform) evaluateScript(
+	callID, input, evaluated string,
+	attemptMetadata hpatch.AttemptMetadata,
+	upstreamItem map[string]json.RawMessage,
+) (hpatchHistory, error) {
+	var err error
 	applied := false
 	var translated hpatchTranslationResult
 	retainedStart := len(evaluated) - len(strings.TrimLeft(evaluated, "\r\n"))
@@ -990,10 +1001,10 @@ func (t *hpatchResponseTransform) translate(callID, input string, upstreamItem m
 			diagnostic = err.Error()
 		}
 		if evaluatorRejected {
-			diagnostic += hpatchRecoveryGuidance(evaluated, translated.rejections, false)
+			diagnostic += hpatchRecoveryGuidance(evaluated, translated.rejections, attemptMetadata.Correction)
 		}
 		history := hpatchHistory{
-			toolName: hpatchToolName,
+			toolName: attemptMetadata.ToolName,
 			script:   input,
 
 			root:              t.directory,
@@ -1017,7 +1028,7 @@ func (t *hpatchResponseTransform) translate(callID, input string, upstreamItem m
 	patchText := string(patch)
 	alreadySatisfied := translated.change.AlreadySatisfied
 	history := hpatchHistory{
-		toolName: hpatchToolName,
+		toolName: attemptMetadata.ToolName,
 		script:   input,
 
 		root:             t.directory,

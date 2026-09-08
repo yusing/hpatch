@@ -20,7 +20,10 @@ The router owns recovery grammar, parsing, handle resolution, ancestry, worktree
 dispatch, replay, diagnostics, and reevaluation. Every command handle resolves against the latest
 visible evaluated rejected script as one immutable baseline. Each handled command may appear at
 most once in a payload. The router changes only its target, rebuilds the complete script through
-the root `EditText` primitive, then evaluates that script normally.
+the root `EditText` primitive, then evaluates that script normally. Ordinary and recovered scripts share target-aware
+evaluation: workspace targets translate to a host patch, while `@shell/` targets apply
+directly inside the current thread’s private retained-script storage. Recovery retains
+the reference in its rejected baseline and replay, never resolving it as a workspace path.
 
 A malformed, stale, unchanged, conflicting, incomplete, cross-worktree, or otherwise invalid recovery
 changes neither workspace state nor retained rejected ancestry. Proxy-rejected attempts keep

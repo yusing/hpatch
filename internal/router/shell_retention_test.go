@@ -296,6 +296,40 @@ func TestHPatchAppliesRetainedShellArtifactDirectly(t *testing.T) {
 	}
 }
 
+func TestHPatchRecoveryAppliesRetainedShellArtifactDirectly(t *testing.T) {
+	transform, proxy, _, _ := newHPatchTestTransform(t, newInProcessHPatchTranslator(t.TempDir()))
+	reference, retained := proxy.retainShell(transform.shellDirectory, "call-shell", "printf ok\n")
+	if !retained {
+		t.Fatal("shell script was not retained")
+	}
+	emitted := "in " + reference + "\ntype 1:aaaa \"printf fixed\"\n"
+	first, err := transform.translate("call-edit", emitted, nil)
+	if err != nil || !first.evaluatorRejected {
+		t.Fatalf("initial rejection = %+v, %v", first, err)
+	}
+	payload := recoveryCommands(emitted)[1].handle + " 1:ef86\n"
+	history, err := transform.translateRecovery("call-recovery", payload, nil)
+	if err != nil || history.translationError != "" {
+		t.Fatalf("recovery = %+v, %v", history, err)
+	}
+	if !history.applied || !history.confirmed || history.patch != "" || strings.Contains(history.carrierInput(), "apply_patch") || strings.Contains(history.carrierInput(), "exec_command") {
+		t.Fatalf("retained recovery used host patch carrier: %+v", history)
+	}
+	if history.toolName != hpatchRecoveryToolName || history.script != payload || history.correlationID != first.correlationID || history.attempt != 2 || !strings.HasPrefix(history.evaluated, "in "+reference+"\n") {
+		t.Fatalf("recovery identity = %+v", history)
+	}
+	path := filepath.Join(transform.shellDirectory, "call-shell")
+	if content, err := os.ReadFile(path); err != nil || string(content) != "printf fixed\n" {
+		t.Fatalf("applied content = %q, %v", content, err)
+	}
+	if _, err := os.Stat(filepath.Join(transform.directory, "@shell")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("private recovery touched workspace: %v", err)
+	}
+	if replay, err := transform.translateRecovery("call-recovery", payload, nil); err != nil || replay.evaluated != history.evaluated || !replay.applied {
+		t.Fatalf("recovery replay = %+v, %v", replay, err)
+	}
+}
+
 func TestHPatchTreatsShellArtifactLiteralAsContent(t *testing.T) {
 	const script = "in /tmp/repro.txt\ntype 1:6db7 \"literal @shell/ marker\"\n"
 	calls := 0
