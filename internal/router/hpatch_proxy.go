@@ -426,6 +426,11 @@ func (p *hpatchProxy) prepareRequest(ctx context.Context, request *parsedRespons
 		p.deactivateSession(historySessionID)
 		return nil, err
 	}
+	if metadata.SubagentKind == "thread_spawn" {
+		// The collector deduplicates this source by stable child thread, including
+		// across routing-session changes, and forwards it only to the observed root.
+		p.activity.collect(activityThreadID, "subagent-start\x00"+activityThreadID, "start", subagentStartCommentary(request))
+	}
 	deferredCommentary := p.drainCommentarySession(historySessionID, threadID)
 	return &hpatchResponseTransform{
 		ctx:              ctx,

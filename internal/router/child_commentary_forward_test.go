@@ -83,11 +83,11 @@ func TestChildProviderCommentaryAdmissionAndDistinctSources(t *testing.T) {
 		child.collectProviderCommentary(assistantCommentaryMessage(id, "Same authored text"))
 	}
 	events, err := root.TransformSSE([]byte(`{"type":"response.in_progress"}`))
-	if err != nil || len(events) != 3 {
+	if err != nil || len(events) != 4 {
 		t.Fatalf("root activity boundary: %s, %v", events, err)
 	}
 	var ids []string
-	for _, event := range events[:2] {
+	for _, event := range events[1:3] {
 		var envelope struct{ Item map[string]json.RawMessage }
 		if err := json.Unmarshal(event, &envelope); err != nil {
 			t.Fatal(err)
@@ -140,9 +140,11 @@ func TestChildProviderCommentaryForwardsWithoutChangingHistory(t *testing.T) {
 				t.Fatal(err)
 			}
 			var response struct{ Output []map[string]json.RawMessage }
-			if err := json.Unmarshal(visible, &response); err != nil || len(response.Output) != 1 {
+			if err := json.Unmarshal(visible, &response); err != nil || len(response.Output) != 3 {
 				t.Fatalf("root projection: %s, %v", visible, err)
 			}
+			// The parent and nested child each announce their first request.
+			response.Output = response.Output[2:]
 			if commentaryText(t, response.Output[0]) != "[`/root/worker/nested`] Checked the caller.\nThe result is consistent." {
 				t.Fatalf("attribution: %s", visible)
 			}

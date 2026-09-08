@@ -210,15 +210,14 @@ func (b *commentaryBroker) drainThreadSession(sessionID, threadID string) []publ
 	return events
 }
 
-func (b *commentaryBroker) hasThreadMessageID(sessionID, messageID string) bool {
+func (b *commentaryBroker) hasThreadMessageID(threadID, messageID string) bool {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	for _, thread := range b.threads {
-		if thread.sessionID == sessionID {
-			if _, exists := thread.ids[messageID]; exists {
-				return true
-			}
-		}
+	// A publication may already be claimed by a response when another request
+	// remaps the thread's session. Its rendering authority is the stable thread.
+	if thread := b.threads[threadID]; thread != nil {
+		_, exists := thread.ids[messageID]
+		return exists
 	}
 	return false
 }

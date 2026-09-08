@@ -15,6 +15,8 @@ keeping Codex's sandbox, permissions, command sessions, and normal patch diff UI
   - Each launch gets its own router, with no persistent service or changes to
     your Codex configuration files.
 - **See subagent progress and replies inline.**
+  - A start notice shows each subagent's observed model and reasoning effort once its
+    first request reaches the router. Other lifecycle actions add no extra notices.
   - Subagents' own commentary appears in the main conversation with their agent paths.
   - Received messages and final answers identify both parties and show plaintext
     replies in full when they fit the display budget. Encrypted collaboration messages are not exposed.

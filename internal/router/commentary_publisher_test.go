@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -164,32 +165,59 @@ func TestPublishCommentaryOnceIgnoresPublicationFailure(t *testing.T) {
 	}
 }
 
-func TestConcurrentSessionDoesNotDrainCommentary(t *testing.T) {
-	proxy := newManagedHPatchProxy(t, testTranslator(t, new(int)))
-	const sessionID = "session"
-	if err := proxy.activateSession(sessionID); err != nil {
-		t.Fatal(err)
-	}
-	if err := proxy.activateSession(sessionID); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		proxy.deactivateSession(sessionID)
-	})
-
-	subscription := proxy.commentary.subscribeThread(sessionID, "thread", "")
-	if subscription == "" || !proxy.commentary.publish(subscription, "Still running.", false) {
-		t.Fatal("commentary was not published")
-	}
-	if events := proxy.drainCommentarySession(sessionID, "thread"); len(events) != 0 {
-		t.Fatalf("concurrent drain = %+v", events)
-	}
-	if events := proxy.drainThreadCommentarySession(sessionID, "thread"); len(events) != 0 {
-		t.Fatal("concurrent terminal drained thread commentary")
-	}
-	proxy.deactivateSession(sessionID)
-	if events := proxy.drainCommentarySession(sessionID, "thread"); len(events) != 1 || events[0].text != "Still running." {
-		t.Fatalf("completed-turn drain = %+v", events)
+func TestConcurrentSessionDrainsOnlyOriginatingShellCommentary(t *testing.T) {
+	for _, terminal := range []bool{false, true} {
+		t.Run(map[bool]string{false: "request", true: "terminal"}[terminal], func(t *testing.T) {
+			proxy := newManagedHPatchProxy(t, testTranslator(t, new(int)))
+			const sessionID = "session"
+			for range 2 {
+				if err := proxy.activateSession(sessionID); err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(func() { proxy.deactivateSession(sessionID) })
+			}
+			shell := proxy.commentary.subscribeThread(sessionID, "root", "")
+			child := proxy.commentary.subscribeThread(sessionID, "child", "/root/child")
+			call := proxy.commentary.subscribe(sessionID, "code-mode-call", "")
+			for token, text := range map[string]string{shell: "root progress", child: "child progress", call: "call progress"} {
+				if token == "" || !proxy.commentary.publish(token, text, false) {
+					t.Fatal("commentary was not published")
+				}
+			}
+			drain := proxy.drainCommentarySession
+			if terminal {
+				drain = proxy.drainThreadCommentarySession
+			}
+			// Concurrent responses for the same thread compete atomically. Other
+			// threads and call-scoped deferred publications cannot be consumed.
+			results := make(chan []publishedCommentary, 2)
+			var workers sync.WaitGroup
+			for range 2 {
+				workers.Go(func() { results <- drain(sessionID, "root") })
+			}
+			workers.Wait()
+			close(results)
+			var events []publishedCommentary
+			for result := range results {
+				events = append(events, result...)
+			}
+			if len(events) != 1 || events[0].text != "root progress" {
+				t.Fatalf("concurrent root delivery = %+v", events)
+			}
+			if events := drain(sessionID, "child"); len(events) != 1 || !strings.Contains(events[0].text, "child progress") {
+				t.Fatalf("child delivery = %+v", events)
+			}
+			if !proxy.commentary.publish(shell, "later root progress", false) {
+				t.Fatal("drain retired the shell publisher")
+			}
+			if events := drain(sessionID, "root"); len(events) != 1 || events[0].text != "later root progress" {
+				t.Fatalf("later delivery = %+v", events)
+			}
+			proxy.deactivateSession(sessionID)
+			if events := proxy.drainCommentarySession(sessionID, "root"); len(events) != 1 || events[0].text != "call progress" {
+				t.Fatalf("non-concurrent call delivery = %+v", events)
+			}
+		})
 	}
 }
 

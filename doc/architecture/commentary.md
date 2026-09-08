@@ -23,8 +23,12 @@ environment assignments. The runtime owner binds discovery to the current worker
 private descriptor cleanup. Discovery and publication failures are silent and auxiliary.
 Shell publications retain thread identity, not an inferred original call ID. Deferred and terminal
 drains select the originating shell thread as well as the routing session, so a different thread
-sharing that session cannot consume its publications. Per-call Code Mode delivery stays session-scoped. Shell worker
+sharing that session cannot consume its publications. Shell drains use the broker's atomic
+consume operation even during concurrent requests; the session-wide concurrency guard applies
+only to deferred Code Mode delivery, whose routes remain session-scoped. Shell worker
 completion cannot retire a shared thread route; idle expiry and router shutdown own that lifetime.
+Rendering admission for a claimed shell publication checks its retained ID against the response's
+stable thread, so a concurrent session remap cannot invalidate an already-drained publication.
 Exact shell replay provenance follows stable thread identity rather than the current routing
 session and has a separate bounded budget. Commentary retention cannot reclaim tool-call history
 or prevent tool-call admission. Child terminals prepend ready runtime commentary inside the terminal
@@ -32,8 +36,9 @@ response object without emitting standalone completed assistant items after the 
 The response transformer owns each Code Mode subscription until its carrier/history handoff boundary;
 thereafter publisher completion and broker expiry own its lifetime. Transform release cancels only
 unhanded subscriptions. Publications ready at every stream terminal status are drained before the
-terminal event, while later and JSON publications are drained by the next non-concurrent request
-for the retained session. Token and
+terminal event. Deferred shell publications drain on the next originating-thread request without
+waiting for other active requests; deferred Code Mode publications require the next non-concurrent
+request for the retained session. Token and
 session drains share one completion-sensitive primitive: consume queued events once, retain active
 publishers, and retire completed Code Mode routes after delivery. Both drain boundaries expire stale routes
 and release their queued-event accounting. Limits and publication failures are auxiliary.
@@ -69,6 +74,12 @@ per-response rendered byte budget. Root copies precede substantive output; idle 
 closed streams defer delivery rather than extending stream lifetime. Concurrent
 root responses cannot drain the same event twice. Codex retains scheduling,
 recipient selection, interruption, waiting, and assignment lifecycle ownership.
+
+The accepted child-request boundary also contributes a start notice using that request's model
+and reasoning effort, never the parent's requested spawn override or inferred role defaults.
+The existing collector deduplicates the fixed start source per child thread, retaining attribution,
+bounded admission, deferred root delivery, and exact replay filtering without another lifecycle
+store. Start notices do not modify child output or synthesize other lifecycle events.
 
 Codex owns collaboration-call display. The router leaves collaboration schemas, executable
 arguments, and streaming call framing exact and never reads encrypted message arguments.

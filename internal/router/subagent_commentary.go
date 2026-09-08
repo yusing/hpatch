@@ -21,6 +21,29 @@ func subagentCommentaryMessageID(seed string) string {
 	return fmt.Sprintf("%s%x", subagentCommentaryMessagePrefix, digest[:12])
 }
 
+// Start metadata comes from the child's actual request, not the parent's spawn
+// arguments: native roles can override the model and reasoning configuration.
+func subagentStartCommentary(request *parsedResponsesRequest) string {
+	model := request.model()
+	var reasoning struct {
+		Effort string `json:"effort"`
+	}
+	if raw, ok := request.fields["reasoning"]; ok {
+		if err := json.Unmarshal(raw, &reasoning); err != nil {
+			return ""
+		}
+	}
+	effort := strings.TrimSpace(reasoning.Effort)
+	if model == "" || len(model)+len(effort) > maxCommentaryPublicationBytes || strings.ContainsAny(model+effort, "\r\n\x00") {
+		return ""
+	}
+	renderedEffort := "not specified"
+	if effort != "" {
+		renderedEffort = commentaryCode(effort)
+	}
+	return "Started.\nModel: " + commentaryCode(model) + "\nReasoning effort: " + renderedEffort
+}
+
 func prepareSubagentInputCommentary(fields map[string]json.RawMessage, recipient string) []map[string]json.RawMessage {
 	var items []map[string]json.RawMessage
 	if json.Unmarshal(fields["input"], &items) != nil {

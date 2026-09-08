@@ -244,8 +244,13 @@ func (t *hpatchResponseTransform) transformStructuredCommentary(item map[string]
 func (p *hpatchProxy) drainCommentarySession(sessionID, threadID string) []publishedCommentary {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
-	if p.commentary == nil || p.activeSessions[sessionID] > 1 {
+	if p.commentary == nil {
 		return nil
+	}
+	// Call-scoped deferred progress still needs a non-concurrent session.
+	// Shell progress already has exact thread identity and is drained atomically.
+	if p.activeSessions[sessionID] > 1 {
+		return p.commentary.drainThreadSession(sessionID, threadID)
 	}
 	return p.commentary.drainSession(sessionID, threadID)
 }
@@ -254,7 +259,7 @@ func (p *hpatchProxy) drainCommentarySession(sessionID, threadID string) []publi
 func (p *hpatchProxy) drainThreadCommentarySession(sessionID, threadID string) []publishedCommentary {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
-	if p.commentary == nil || p.activeSessions[sessionID] > 1 {
+	if p.commentary == nil {
 		return nil
 	}
 	return p.commentary.drainThreadSession(sessionID, threadID)
@@ -306,9 +311,9 @@ func (p *hpatchProxy) commentaryMessageIDs(sessionID string) map[string]struct{}
 	return result
 }
 
-func (p *hpatchProxy) addCommentaryMessageID(sessionID, callID, messageID string) bool {
+func (p *hpatchProxy) addCommentaryMessageID(sessionID, threadID, callID, messageID string) bool {
 	if callID == "" {
-		return p.commentary.hasThreadMessageID(sessionID, messageID)
+		return p.commentary.hasThreadMessageID(threadID, messageID)
 	}
 	history, exists := p.history(sessionID, callID)
 	if !exists {
@@ -323,7 +328,7 @@ func (p *hpatchProxy) addCommentaryMessageID(sessionID, callID, messageID string
 
 func (t *hpatchResponseTransform) runtimeCommentaryMessage(publication publishedCommentary) map[string]json.RawMessage {
 	if publication.text == "" || !t.proxy.addCommentaryMessageID(
-		t.historySessionID, publication.callID, publication.messageID,
+		t.historySessionID, t.shellThreadID, publication.callID, publication.messageID,
 	) {
 		return nil
 	}

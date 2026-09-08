@@ -41,9 +41,11 @@ func TestSubagentToolActivityJSONAndSSE(t *testing.T) {
 				t.Fatal(err)
 			}
 			var response struct{ Output []map[string]json.RawMessage }
-			if err := json.Unmarshal(visible, &response); err != nil || len(response.Output) != 3 {
+			if err := json.Unmarshal(visible, &response); err != nil || len(response.Output) != 4 {
 				t.Fatalf("distinct calls or terminal deduplication: %s, %v", visible, err)
 			}
+			// Start metadata precedes the child's distinct tool calls.
+			response.Output = response.Output[1:]
 			if got := commentaryText(t, response.Output[0]); got != "[`/root/worker`] Tool call: `functions.lookup`\n`{\"query\":\"hello\"}`" {
 				t.Fatalf("tool display: %s", got)
 			}
@@ -69,7 +71,7 @@ func TestSubagentToolActivityRejectsPartialCalls(t *testing.T) {
 		call := map[string]json.RawMessage{"type": mustTestJSON(t, "function_call"), "id": mustTestJSON(t, status), "status": mustTestJSON(t, status)}
 		child.collectSubagentToolCall(call)
 	}
-	if got := proxy.activity.drain("r", root.activityStarted, maxCommentaryPublicationBytes); len(got) != 0 {
+	if got := proxy.activity.drain("r", root.activityStarted, maxCommentaryPublicationBytes); len(got) != 1 || !strings.Contains(commentaryText(t, got[0]), "Started.") {
 		t.Fatal("partial calls projected")
 	}
 }

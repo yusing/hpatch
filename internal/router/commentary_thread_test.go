@@ -132,6 +132,7 @@ func TestThreadCommentaryTerminalReplayWithoutCallHistory(t *testing.T) {
 
 func TestThreadCommentaryReplaySurvivesSessionRemapAndExpiry(t *testing.T) {
 	transform, proxy := newRuntimeCommentaryTransform(t)
+	transform.shellThreadID = "stable-thread"
 	oldSession := transform.historySessionID
 	token := proxy.commentary.subscribeThread(oldSession, "stable-thread", "")
 	proxy.commentary.publish(token, "delivered", false)
@@ -170,7 +171,7 @@ func TestThreadCommentaryCannotReclaimToolHistoryCapacity(t *testing.T) {
 	}
 	before := proxy.historyBytes
 	token := proxy.commentary.subscribeThread("0", "thread", "")
-	transform := &hpatchResponseTransform{proxy: proxy, historySessionID: "0"}
+	transform := &hpatchResponseTransform{proxy: proxy, historySessionID: "0", shellThreadID: "thread"}
 	for range maxCommentaryEventsPerRoute {
 		proxy.commentary.publish(token, "auxiliary", false)
 		publication := proxy.commentary.drainSession("0", "thread")[0]
@@ -283,13 +284,67 @@ func TestThreadCommentaryDoesNotCrossSharedRoutingSession(t *testing.T) {
 			if bytes.Contains(bytes.Join(events, nil), []byte("root shell progress")) {
 				t.Fatal("another thread consumed root shell commentary through the shared routing session")
 			}
-			child.Close()
 			next := prepare("root-thread")
 			events, err = next.TransformSSE(mustTestJSON(t, map[string]any{"type": "response.created"}))
 			if err != nil || !bytes.Contains(bytes.Join(events, nil), []byte("root shell progress")) {
 				t.Fatal("root shell commentary was not delivered to its originating thread")
 			}
+			// The other request remains active while the root reaches a terminal.
+			proxy.commentary.publish(token, "later root progress", false)
+			events, err = next.TransformSSE(mustTestJSON(t, map[string]any{
+				"type": "response.completed", "response": map[string]any{"status": "completed", "output": []any{}},
+			}))
+			if err != nil || !bytes.Contains(bytes.Join(events, nil), []byte("later root progress")) {
+				t.Fatal("concurrent root terminal did not deliver its shell commentary", err)
+			}
+			child.Close()
 			next.Close()
+		})
+	}
+}
+
+func TestThreadCommentaryDeferredDeliverySurvivesRemap(t *testing.T) {
+	for _, stream := range []bool{false, true} {
+		t.Run(map[bool]string{false: "json", true: "sse"}[stream], func(t *testing.T) {
+			transform, proxy := newRuntimeCommentaryTransform(t)
+			token := proxy.commentary.subscribeThread(transform.historySessionID, transform.shellThreadID, "")
+			proxy.commentary.publish(token, "queued before remap", false)
+			transform.deferredCommentary = proxy.drainCommentarySession(transform.historySessionID, transform.shellThreadID)
+			if len(transform.deferredCommentary) != 1 {
+				t.Fatal("request did not claim its queued publication")
+			}
+			publication := transform.deferredCommentary[0]
+			proxy.commentary.subscribeThread("remapped-session", transform.shellThreadID, "")
+			var visible []byte
+			if stream {
+				events, err := transform.TransformSSE([]byte(`{"type":"response.created"}`))
+				if err != nil {
+					t.Fatal(err)
+				}
+				visible = bytes.Join(events, nil)
+			} else {
+				var err error
+				visible, err = transform.TransformJSON([]byte(`{"status":"completed","output":[]}`))
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			if !bytes.Contains(visible, []byte("queued before remap")) {
+				t.Fatalf("claimed publication lost after remap: %s", visible)
+			}
+			if events := proxy.drainCommentarySession("remapped-session", transform.shellThreadID); len(events) != 0 {
+				t.Fatal("remapping duplicated an already claimed publication")
+			}
+			other := &hpatchResponseTransform{proxy: proxy, historySessionID: "remapped-session", shellThreadID: "other-thread"}
+			if other.runtimeCommentaryMessage(publication) != nil {
+				t.Fatal("another thread rendered the claimed publication")
+			}
+			replay := &parsedResponsesRequest{fields: map[string]json.RawMessage{
+				"input": mustMarshalJSON([]any{assistantCommentaryMessage(publication.messageID, publication.text)}),
+			}}
+			if err := proxy.reconcileInputPrefix(replay, "remapped-session"); err != nil || string(replay.fields["input"]) != "[]" {
+				t.Fatalf("remapped replay leaked commentary: %s, %v", replay.fields["input"], err)
+			}
 		})
 	}
 }

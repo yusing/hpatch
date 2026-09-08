@@ -158,7 +158,7 @@ func TestRuntimeCommentaryRenderedByteBudget(t *testing.T) {
 	if len(events) != 1 || events[0].text != prefix+fits || b.threadIDCount != 1 {
 		t.Fatal("prefix or provenance budget changed")
 	}
-	if !b.hasThreadMessageID("session", events[0].messageID) {
+	if !b.hasThreadMessageID("thread", events[0].messageID) {
 		t.Fatal("accepted message lost replay provenance")
 	}
 	if !b.publish(token, "Still active.", false) || len(b.drain(token)) != 1 {

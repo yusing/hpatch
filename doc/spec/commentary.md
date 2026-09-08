@@ -37,9 +37,12 @@ in one thread share delivery without guessing which original call produced a pub
 one worker finishing must not retire the other workers' publisher. Distinct threads sharing a
 routing session cannot consume each other's shell publications, either on request preparation
 or at a streaming terminal.
-Ready streaming publications precede completed, failed, and incomplete terminal responses;
-later publications and publications from JSON responses appear at the start of the next
-non-concurrent request for the same session. Once a carrier has been handed off, an interrupted
+Ready streaming publications precede completed, failed, and incomplete terminal responses.
+Deferred shell publications appear at the next request for their originating thread, even while
+other requests share the routing session. Request-start and terminal drains atomically consume
+each publication once, including when concurrent responses belong to the same thread.
+Deferred Code Mode publications still require a non-concurrent request for the same session.
+Once a carrier has been handed off, an interrupted
 provider response or early transform release does not cancel its publisher. Code Mode routes
 prepared for carriers that were never handed off are cancelled instead. Shell thread routes
 survive individual call and response lifetimes and expire when idle or at router shutdown.
@@ -48,6 +51,8 @@ subsequent publications remain deliverable through the same route. Code Mode com
 its route after queued publications are drained. Expiry releases queued events and route capacity.
 Routes, events, request bodies, and retention time are bounded. Capacity, network, publication, and
 rendering failures remain auxiliary and do not replace the tool result.
+A shell publication already claimed by a response remains renderable after its thread changes
+routing sessions; rendering validates stable thread provenance, not the current session mapping.
 Shell commentary replay provenance follows stable thread identity across routing-session changes.
 Its retention is independently bounded: exhausted commentary capacity suppresses new commentary,
 never evicts executable-call replay or recovery records or prevents later tool calls.
@@ -61,6 +66,14 @@ replace the subagent's final answer.
 Collaboration calls add no router-authored request notices. Codex owns the native spawn,
 follow-up, messaging, waiting, and interruption display; schemas, executed arguments, and
 streamed call framing remain unchanged. The router never reads encrypted message arguments.
+
+The first accepted `thread_spawn` child request adds one start notice to the root activity
+collector. It shows the child's canonical path, observed model, and reasoning effort as inline
+code; an omitted effort is labelled "not specified", not inferred from the parent or role.
+The notice describes the child request, not successful provider inference. Stable child-thread
+identity deduplicates retries, later turns, and routing-session changes. Unknown or conflicting
+ancestry suppresses projection. Start notices use the existing bounded activity and replay
+provenance; they never replace child answers or add follow-up, message, wait, or interruption notices.
 
 Complete subagent tool calls are also forwarded as user-only activity, never as executable
 root calls. Each distinct call shows its qualified tool name as inline code and a single-line
@@ -153,8 +166,11 @@ Acceptance:
 
 1. Actual child-authored commentary reaches the root with the originating agent's identity, without
    changing the original child message, substantive result, or model-visible history.
-2. Collaboration calls add no router-generated notices and retain exact schemas, arguments, and
-   streaming framing without commentary-specific buffering.
+2. Collaboration calls retain exact schemas, arguments, and streaming framing without
+   commentary-specific buffering. The first accepted child request produces one root start notice
+   with observed model and effort; later requests do not repeat it, and other lifecycle events
+   produce no added notices.
+
 3. Received inter-agent envelopes identify both parties, including siblings and nested children. Plaintext replies are shown in full or omitted when they exceed the auxiliary rendering budget; encrypted content remains opaque and original model-visible items stay exact.
 4. JSON and streaming responses expose equivalent attributed child commentary. Repeated completed
    items and terminal output do not duplicate root copies.
