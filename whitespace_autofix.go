@@ -72,11 +72,8 @@ func markReplacementResultLines(changed []bool, lines []logicalLine, edits []bas
 		end := start + len(edit.replacement)
 		switch {
 		case start != end:
-			start = offsets.mapOffset(start)
-			end = offsets.mapOffset(end)
-			if end < start {
-				start, end = end, start
-			}
+			extent := offsets.mapExtent(renderedSpan{start: start, end: end})
+			start, end = extent.start, extent.end
 			first := sort.Search(len(lines), func(index int) bool {
 				return lines[index].fullEnd > start
 			})
@@ -94,19 +91,6 @@ func markReplacementResultLines(changed []bool, lines []logicalLine, edits []bas
 		}
 		renderedOffset += len(edit.replacement)
 		baselineOffset = max(baselineOffset, edit.end)
-	}
-}
-
-// newWhitespaceOffsetMap creates an offset map for whitespace deletions.
-func newWhitespaceOffsetMap(contentLength int, deletions []whitespaceDeletion) *formattedOffsetMap {
-	removed := 0
-	for _, deletion := range deletions {
-		removed += deletion.end - deletion.start
-	}
-	return &formattedOffsetMap{
-		beforeLength: contentLength,
-		afterLength:  contentLength - removed,
-		deletions:    deletions,
 	}
 }
 

@@ -96,8 +96,8 @@ func (w *workspace) targetAliases() []TargetAlias {
 		if !ok || extent.start == extent.end {
 			continue
 		}
-		startOffset := reported.file.editor.finalOffsets.mapOffset(extent.start)
-		endOffset := reported.file.editor.finalOffsets.mapOffset(extent.end)
+		extent = reported.file.editor.finalOffsets.mapExtent(extent)
+		startOffset, endOffset := extent.start, extent.end
 		startLine := renderedCoordinateAt(document.content, document.lines, startOffset).line
 		endLine := renderedCoordinateAt(document.content, document.lines, max(startOffset, endOffset-1)).line
 		before := renderRowTarget(reported.target)
@@ -172,8 +172,8 @@ func (w *workspace) writeFinalReferences(report *strings.Builder) bool {
 		if !ok {
 			panic("reported edit has no effective editor splice")
 		}
-		startOffset := reported.file.editor.finalOffsets.mapOffset(extent.start)
-		endOffset := reported.file.editor.finalOffsets.mapOffset(extent.end)
+		extent = reported.file.editor.finalOffsets.mapExtent(extent)
+		startOffset, endOffset := extent.start, extent.end
 		startLine := renderedCoordinateAt(document.content, document.lines, startOffset).line
 		endLine := renderedCoordinateAt(document.content, document.lines, endOffset).line
 		firstLine, lastLine := min(startLine, endLine), max(startLine, endLine)

@@ -8,7 +8,11 @@ external filesystem commit or translated patch is returned. Basic `Apply` return
 the rendered report, final state, diagnostics, patch summary, and target aliases. Before
 finalization, every changed file whose final path ends in `.go`
 is parsed and formatted with Go's standard-library `go/format`; parse failures are collected
-from every changed Go file before the complete transaction rejects. For at most 32
+from every changed Go file before the complete transaction rejects. Source correspondence
+preserves authored byte coordinates while mapping to formatter-normalized literal spellings,
+rewritten comments, and sorted or deduplicated imports. These valid formatter transformations
+do not reject an otherwise valid transaction. A removed duplicate import maps to its surviving
+equivalent import; rewritten gaps map between surviving lexical anchors. For at most 32
 content-mutating commands in one invalid Go file, the evaluator replays command-group subsets
 against the immutable baseline to select a one-minimal syntax-failing set, then attributes
 each useful parser failure to the retained edit nearest its generated parser position. Larger
@@ -80,7 +84,10 @@ endpoint or context rows are emitted once within that block. A row may appear in
 blocks when it identifies the context of separate source commands.
 
 The projector derives each aggregate extent from that command's effective editor splices
-in rendered final content, then maps both endpoints through language-formatting offsets.
+in rendered final content, then maps the whole extent through language-formatting offsets,
+including interior anchors that import sorting moves beyond the original endpoints. Import
+spans carry their leading inline comments, indentation, and final row terminator. Replacement
+aliases use an exclusive end; report endpoint rows retain the surviving boundary row.
 A collapsed deletion endpoint maps to its surviving containing row; its available
 neighboring rows provide boundary anchors. Logical-line clamping does not invent a
 trailing empty row for a final terminator. An empty surviving file reports row `1` with
@@ -215,7 +222,10 @@ Acceptance:
    exact reported row without hread, while an unreported target requires a focused read and
    a saved pre-edit row still rejects as stale.
 4. Changed Go files are formatted with the standard library before output, and invalid Go
-   rejects the transaction without mutation; supported changed Python, JavaScript, and TypeScript files are syntax-checked and receive supported automatic indentation correction.
+   rejects the transaction without mutation. Literal normalization, comment rewriting, and
+   import sorting or deduplication preserve usable final report rows and replacement aliases;
+   supported changed Python, JavaScript, and TypeScript files are syntax-checked and receive
+   supported automatic indentation correction.
 5. Malformed input, missing, stale, reversed, or incomplete targets, edit conflicts,
    unknown or future commands, invalid UTF-8, missing or non-regular files, path collisions,
    staging failure, translation failure, and cancellation observed before staging/commit produce
