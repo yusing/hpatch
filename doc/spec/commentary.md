@@ -34,7 +34,9 @@ not attributed to an original tool-call ID. Workers discover private connection 
 the inherited `CODEX_THREAD_ID` and its thread-bound runtime. The shell transformation MUST NOT
 add flags or inline environment assignments to carry those details. Concurrent shell workers
 in one thread share delivery without guessing which original call produced a publication;
-one worker finishing must not retire the other workers' publisher.
+one worker finishing must not retire the other workers' publisher. Distinct threads sharing a
+routing session cannot consume each other's shell publications, either on request preparation
+or at a streaming terminal.
 Ready streaming publications precede completed, failed, and incomplete terminal responses;
 later publications and publications from JSON responses appear at the start of the next
 non-concurrent request for the same session. Once a carrier has been handed off, an interrupted
@@ -56,20 +58,15 @@ At a subagent stream terminal, ready shell commentary appears before substantive
 the terminal response object, not as a later standalone completed assistant item that could
 replace the subagent's final answer.
 
-In Hpatch router mode, a namespaced Codex `spawn_agent` function call produces one assistant
-commentary message immediately before the unchanged call. It shows the model and reasoning effort
-from explicit call arguments, falling back to the parent request when an argument is absent. It
-shows `agent_type` as the role when present, using Codex's trimmed role-name semantics.
-Role, model, and reasoning effort use inline-code formatting. Task names are left to Codex's
-native display. The router does not read or project the encrypted `message` argument or read
-Codex configuration files to produce commentary.
+Collaboration calls add no router-authored request notices. Codex owns the native spawn,
+follow-up, messaging, waiting, and interruption display; schemas, executed arguments, and
+streamed call framing remain unchanged. The router never reads encrypted message arguments.
 
-Namespaced `followup_task` and `interrupt_agent` calls receive distinct follow-up-requested
-and interruption-requested commentary. `send_message` and `wait_agent` add no request notice,
-leaving interaction and waiting display to Codex. A requested call
-is not proof of execution, delivery, or lifecycle completion. Sender and requested target labels
-accompany projected communication notices. Reserved schemas and executed arguments remain unchanged;
-encrypted message arguments are never read or exposed.
+Actual child-authored commentary is forwarded to the root through the shared activity collector,
+alongside authored tool and runtime progress. Completed assistant messages with `phase: "commentary"`
+retain their original child content and identity. Root copies carry the originating agent's
+canonical path, are deduplicated by source identity, and remain user-only. Final answers are
+not reclassified as progress.
 
 When a request receives an actual Codex inter-agent envelope addressed to its
 canonical agent name, commentary identifies both recipient and sender. Valid
@@ -115,13 +112,13 @@ root projection. It never infers ancestry from a name, message payload, or share
 routing-session ID. Missing ancestry, cycles, conflicting identity, or exhausted
 auxiliary capacity suppress projection, not child output or tool execution.
 
-Child operation, shell, and Code Mode commentary enters the same collector as
-child collaboration notices, received inter-agent envelopes, and existing critical-error
-notices. Errors are collected from the originating request before session-level deduplication,
+Child-authored commentary, operation, shell, and Code Mode progress enters the same collector as
+received inter-agent envelopes and existing critical-error notices.
+Errors are collected from the originating request before session-level deduplication,
 never attributed from another request's retained session queue. Projecting an error
 does not acknowledge the original session notice or
 change its failure semantics. Each child keeps
-its latest ordinary activity plus distinct notices, ordered by observation within
+its latest ordinary activity plus distinct authored commentary and notices, ordered by observation within
 that child. Deduplication uses originating thread and source event identity, not
 shared text. This is observed activity, not an inferred task objective or lifecycle
 state; provider completion is not agent completion.
@@ -145,12 +142,13 @@ with inherited root history, without removing original child messages or tool re
 
 Acceptance:
 
-1. Spawn-request commentary shows `agent_type` when present and the selected model and reasoning effort
-   before the unchanged call without reading or projecting its encrypted `message` argument.
-2. Collaboration tools remain unchanged. Spawn, follow-up, and interruption commentary describes requests without claiming successful delivery or lifecycle completion; send-message and wait calls add no request notice.
+1. Actual child-authored commentary reaches the root with the originating agent's identity, without
+   changing the original child message, substantive result, or model-visible history.
+2. Collaboration calls add no router-generated notices and retain exact schemas, arguments, and
+   streaming framing without commentary-specific buffering.
 3. Received inter-agent envelopes identify both parties, including siblings and nested children. Plaintext replies are shown in full or omitted when they exceed the auxiliary rendering budget; encrypted content remains opaque and original model-visible items stay exact.
-4. JSON and streaming responses expose the same messages and preserve the collaboration calls.
-   Streaming buffers only a matched call until its complete arguments are available.
+4. JSON and streaming responses expose equivalent attributed child commentary. Repeated completed
+   items and terminal output do not duplicate root copies.
 5. Router-authored messages are removed from every later provider request and are not repeated when
    the matching message is already present in Codex history.
 6. A completed root-agent or subagent final answer with provider usage reports input, cached input,

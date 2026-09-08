@@ -1,8 +1,7 @@
 package router
 
-// Source: openai/codex codex-rs/core/src/tools/handlers/multi_agents_v2/spawn.rs
-// and codex-rs/protocol/src/protocol.rs. These are the collaboration call and
-// inter-agent message shapes visible at the Responses boundary.
+// Source: openai/codex codex-rs/protocol/src/protocol.rs.
+// Inter-agent message shapes visible at the Responses boundary.
 
 import (
 	"crypto/sha256"
@@ -16,43 +15,6 @@ import (
 )
 
 const subagentCommentaryMessagePrefix = commentaryid.SubagentPrefix
-
-type subagentPendingCall struct {
-	callID        string
-	added         []byte
-	argumentsDone []byte
-}
-
-func subagentToolCatalog(tools *responsesToolCatalog) map[string]struct{} {
-	if tools.inputObjectsErr != nil {
-		return nil
-	}
-	catalog := make(map[string]struct{})
-	sections := []*responsesToolSection{tools.top}
-	for _, group := range tools.additional {
-		sections = append(sections, group.tools)
-	}
-	for _, section := range sections {
-		if !section.present || section.err != nil {
-			continue
-		}
-		for index, namespace := range section.tools {
-			if namespace == nil || namespace.Type != "namespace" {
-				continue
-			}
-			node := section.nodes[index]
-			if node == nil || node.nested == nil || node.nested.err != nil {
-				continue
-			}
-			for _, tool := range node.nested.tools {
-				if tool != nil && tool.Type == "function" && slices.Contains([]string{"spawn_agent", "followup_task", "send_message", "wait_agent", "interrupt_agent"}, tool.Name) {
-					catalog[functionToolKey(namespace.Name, tool.Name)] = struct{}{}
-				}
-			}
-		}
-	}
-	return catalog
-}
 
 func subagentCommentaryMessageID(seed string) string {
 	digest := sha256.Sum256([]byte(seed))
@@ -126,75 +88,6 @@ func subagentResponse(item map[string]json.RawMessage) (text, sender string, ok 
 		return "", "", false
 	}
 	return payload, sender, true
-}
-
-func subagentCallCommentary(
-	item map[string]json.RawMessage,
-	catalog map[string]struct{},
-	parentModel, parentEffort, author string,
-) (map[string]json.RawMessage, bool) {
-	if jsonString(item, "type") != "function_call" {
-		return nil, false
-	}
-	name := jsonString(item, "name")
-	if _, exists := catalog[functionToolKey(jsonString(item, "namespace"), name)]; !exists {
-		return nil, false
-	}
-	callID := jsonString(item, "call_id")
-	var arguments map[string]json.RawMessage
-	if callID == "" || json.Unmarshal([]byte(jsonString(item, "arguments")), &arguments) != nil {
-		return nil, false
-	}
-	if author == "" {
-		author = "/root"
-	}
-	target := jsonString(arguments, "target")
-	label := "[" + author + "] "
-	if target != "" {
-		label = "[" + author + " -> " + target + "] "
-	}
-	var action string
-	switch name {
-	case "followup_task":
-		action = "Follow-up requested."
-	case "send_message":
-		return nil, false
-	case "wait_agent":
-		return nil, false
-	case "interrupt_agent":
-		action = "Interruption requested."
-	case "spawn_agent":
-	default:
-		return nil, false
-	}
-	id := subagentCommentaryMessageID(name + "\x00" + callID)
-	if action != "" {
-		if strings.ContainsAny(target, "\r\n\x00") || len(label)+len(action) > maxCommentaryPublicationBytes {
-			return nil, false
-		}
-		return assistantCommentaryMessage(id, label+action), true
-	}
-	model, effort := parentModel, parentEffort
-	var requestedModel, requestedEffort, roleName string
-	_ = json.Unmarshal(arguments["model"], &requestedModel)
-	_ = json.Unmarshal(arguments["reasoning_effort"], &requestedEffort)
-	_ = json.Unmarshal(arguments["agent_type"], &roleName)
-	if strings.TrimSpace(requestedModel) != "" {
-		model = requestedModel
-	}
-	if strings.TrimSpace(requestedEffort) != "" {
-		effort = requestedEffort
-	}
-	var builder strings.Builder
-	builder.WriteString("[" + author + "] Spawn requested.\n")
-	if roleName = strings.TrimSpace(roleName); roleName != "" {
-		fmt.Fprintf(&builder, "Role: `%s`\n", roleName)
-	}
-	fmt.Fprintf(&builder, "Model: `%s`\nReasoning effort: `%s`", model, effort)
-	if builder.Len() > maxCommentaryPublicationBytes {
-		return nil, false
-	}
-	return assistantCommentaryMessage(id, builder.String()), true
 }
 
 // tokenUsageCommentary reports usage only alongside a completed substantive answer.

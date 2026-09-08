@@ -55,7 +55,7 @@ func TestCommentaryPublisherAuthenticatesAndDrainsLiveOrDeferred(t *testing.T) {
 	if err := sink.Publish(t.Context(), "Running deferred work."); err != nil {
 		t.Fatal(err)
 	}
-	events = broker.drainSession("session")
+	events = broker.drainSession("session", "")
 	if len(events) != 1 || events[0].callID != "call-deferred" || events[0].text != "Running deferred work." {
 		t.Fatalf("deferred events = %+v", events)
 	}
@@ -66,11 +66,11 @@ func TestCommentaryPublisherAuthenticatesAndDrainsLiveOrDeferred(t *testing.T) {
 	if err := sink.Complete(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	next := broker.drainSession("session")
+	next := broker.drainSession("session", "")
 	if len(next) != 1 || next[0].text != "Still running deferred work." || next[0].messageID == events[0].messageID {
 		t.Fatalf("later deferred events = %+v", next)
 	}
-	if len(broker.drainSession("session")) != 0 || broker.publish(deferred, "after completion", false) {
+	if len(broker.drainSession("session", "")) != 0 || broker.publish(deferred, "after completion", false) {
 		t.Fatal("completed route retained events or authorization")
 	}
 
@@ -98,7 +98,7 @@ func TestCommentaryDrainRetainsActiveCapacityUntilCompletionOrExpiry(t *testing.
 					if mode == "token" {
 						return broker.drain(token)
 					}
-					return broker.drainSession("session")
+					return broker.drainSession("session", "")
 				}
 				tokens := make([]string, maxCommentaryRoutes)
 				for i := range tokens {
@@ -181,14 +181,14 @@ func TestConcurrentSessionDoesNotDrainCommentary(t *testing.T) {
 	if subscription == "" || !proxy.commentary.publish(subscription, "Still running.", false) {
 		t.Fatal("commentary was not published")
 	}
-	if events := proxy.drainCommentarySession(sessionID); len(events) != 0 {
+	if events := proxy.drainCommentarySession(sessionID, "thread"); len(events) != 0 {
 		t.Fatalf("concurrent drain = %+v", events)
 	}
-	if events := proxy.drainThreadCommentarySession(sessionID); len(events) != 0 {
+	if events := proxy.drainThreadCommentarySession(sessionID, "thread"); len(events) != 0 {
 		t.Fatal("concurrent terminal drained thread commentary")
 	}
 	proxy.deactivateSession(sessionID)
-	if events := proxy.drainCommentarySession(sessionID); len(events) != 1 || events[0].text != "Still running." {
+	if events := proxy.drainCommentarySession(sessionID, "thread"); len(events) != 1 || events[0].text != "Still running." {
 		t.Fatalf("completed-turn drain = %+v", events)
 	}
 }
@@ -349,11 +349,11 @@ func TestReadyRuntimeCommentaryPrecedesEveryStreamTerminal(t *testing.T) {
 			if !proxy.commentary.publish(token, "Later work.", false) {
 				t.Fatal("terminal response retired an active publisher")
 			}
-			deferred := proxy.drainCommentarySession(transform.historySessionID)
+			deferred := proxy.drainCommentarySession(transform.historySessionID, transform.shellThreadID)
 			if len(deferred) != 1 || deferred[0].text != "Later work." || deferred[0].messageID == history.commentaryMessageIDs[0] {
 				t.Fatalf("deferred events = %+v", deferred)
 			}
-			if len(proxy.drainCommentarySession(transform.historySessionID)) != 0 {
+			if len(proxy.drainCommentarySession(transform.historySessionID, transform.shellThreadID)) != 0 {
 				t.Fatal("publication delivered twice")
 			}
 			if !proxy.commentary.publish(token, "", true) || proxy.commentary.publish(token, "after completion", false) {
@@ -378,7 +378,7 @@ func TestJSONTerminalHandsOffRuntimePublisher(t *testing.T) {
 			if !proxy.commentary.publish(token, "Deferred JSON work.", true) {
 				t.Fatal("JSON terminal cancelled handed-off publisher")
 			}
-			if events := proxy.drainCommentarySession(transform.historySessionID); len(events) != 1 || events[0].text != "Deferred JSON work." {
+			if events := proxy.drainCommentarySession(transform.historySessionID, transform.shellThreadID); len(events) != 1 || events[0].text != "Deferred JSON work." {
 				t.Fatalf("deferred JSON events = %+v", events)
 			}
 		})
@@ -409,7 +409,7 @@ func TestEarlyStreamReleasePreservesHandedOffPublishers(t *testing.T) {
 			if !proxy.commentary.publish(token, "Work after disconnect.", true) {
 				t.Fatal("disconnect cancelled an emitted carrier publisher")
 			}
-			if events := proxy.drainCommentarySession(transform.historySessionID); len(events) != 1 || events[0].text != "Work after disconnect." {
+			if events := proxy.drainCommentarySession(transform.historySessionID, transform.shellThreadID); len(events) != 1 || events[0].text != "Work after disconnect." {
 				t.Fatalf("deferred disconnected events = %+v", events)
 			}
 			if _, exists := proxy.history(transform.historySessionID, "call-runtime"); !exists {
@@ -435,7 +435,7 @@ func TestUnhandedRuntimeCommentaryRouteIsCancelled(t *testing.T) {
 		t.Fatal("prepared route was not registered")
 	}
 	transform.Close()
-	if proxy.commentary.publish(token, "later", false) || len(proxy.drainCommentarySession(transform.historySessionID)) != 0 {
+	if proxy.commentary.publish(token, "later", false) || len(proxy.drainCommentarySession(transform.historySessionID, transform.shellThreadID)) != 0 {
 		t.Fatal("unhanded route or its queued publication was retained")
 	}
 }

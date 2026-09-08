@@ -109,11 +109,11 @@ func TestSiblingReceiptAndOpaqueCallsKeepExactEnvelope(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Contains(output, []byte("Follow-up requested.")) || !bytes.Contains(output, []byte(body)) || bytes.Contains(output, []byte("[excerpt]")) {
+	if bytes.Contains(output, []byte("Follow-up requested.")) || !bytes.Contains(output, []byte("opaque-secret")) || !bytes.Contains(output, []byte(body)) || bytes.Contains(output, []byte("[excerpt]")) {
 		t.Fatal(string(output))
 	}
 	output, err = root.TransformJSON([]byte(`{"status":"completed","output":[]}`))
-	if err != nil || !bytes.Contains(output, []byte("/root/beta <- /root/alpha")) || !bytes.Contains(output, []byte("/root/beta -")) || bytes.Contains(output, []byte("opaque-secret")) || bytes.Contains(output, []byte("] [")) {
+	if err != nil || !bytes.Contains(output, []byte("/root/beta <- /root/alpha")) || bytes.Contains(output, []byte("Follow-up requested.")) || bytes.Contains(output, []byte("opaque-secret")) || bytes.Contains(output, []byte("] [")) {
 		t.Fatal(string(output), err)
 	}
 }

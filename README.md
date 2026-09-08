@@ -14,15 +14,15 @@ keeping Codex's sandbox, permissions, command sessions, and normal patch diff UI
 - **Keep the familiar Codex workflow.**
   - Each launch gets its own router, with no persistent service or changes to
     your Codex configuration files.
-- **See subagent details and replies inline.**
-  - Before launch, see the requested role, model, and reasoning effort.
+- **See subagent progress and replies inline.**
+  - Subagents' own commentary appears in the main conversation with their agent paths.
   - Received messages and final answers identify both parties and show plaintext
     replies in full when they fit the display budget. Encrypted collaboration messages are not exposed.
 - **Follow work as it runs.**
   - Supported tool calls can carry an authored description before execution; calls without one stay quiet.
   - Scripts can publish progress such as “Running item 3/10” without mixing
     updates into command output.
-  - Child tool and script updates carry the agent's path when Codex supplies
+  - Child commentary, tool, and script updates carry the agent's path when Codex supplies
     its identity, so concurrent agents' updates are distinguishable.
   - When Codex supplies parent-thread metadata, child activity also appears inline
     in the stock root TUI. Updates are offered at response-event boundaries;

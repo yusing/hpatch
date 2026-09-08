@@ -186,14 +186,14 @@ func TestShellWorkerDiscoversThreadCommentary(t *testing.T) {
 	token := proxy.commentary.subscribeThread("worker-history", "worker-thread", "")
 	t.Setenv(shellruntime.RuntimeDirectoryEnvironment, proxy.shellDirectory)
 	t.Setenv(shellruntime.ThreadIDEnvironment, "worker-thread")
-	for range 2 {
+	for _, value := range []string{"expanded", "I’ll remove the generated collaboration-call notices and forward the subagents’ own progress to the main conversation instead."} {
 		var stdout, stderr bytes.Buffer
-		handled, code := RunToolPluginWorker(t.Context(), registry.shellRuntime, []string{"bash", "value=expanded; commentary \"progress $value\"; printf stdout; printf stderr >&2; exit 7"}, os.Stdin, &stdout, &stderr)
+		handled, code := RunToolPluginWorker(t.Context(), registry.shellRuntime, []string{"bash", "--", value, "commentary \"$1\"; sleep 0.01; commentary \"completed $1\"; printf stdout; printf stderr >&2; exit 7"}, os.Stdin, &stdout, &stderr)
 		if !handled || code != 7 || stdout.String() != "stdout" || stderr.String() != "stderr" {
 			t.Fatalf("worker handled=%v code=%d stdout=%q stderr=%q", handled, code, stdout.String(), stderr.String())
 		}
 		events := proxy.commentary.drain(token)
-		if len(events) != 1 || events[0].text != "progress expanded" {
+		if len(events) != 2 || events[0].text != value || events[1].text != "completed "+value {
 			t.Fatalf("events = %+v", events)
 		}
 	}

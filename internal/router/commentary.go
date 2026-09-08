@@ -125,7 +125,7 @@ func qualifiedToolName(namespace, name string) string {
 }
 
 func commentaryExcluded(namespace, name string) bool {
-	if namespace == "collaboration" {
+	if namespace == "collaboration" || namespace != "" && slices.Contains([]string{"spawn_agent", "followup_task", "send_message", "wait_agent", "interrupt_agent"}, name) {
 		return true
 	}
 	qualified := qualifiedToolName(namespace, name)
@@ -241,23 +241,23 @@ func (t *hpatchResponseTransform) transformStructuredCommentary(item map[string]
 	return t.operationCommentaryMessage(messageID, extracted.text), nil
 }
 
-func (p *hpatchProxy) drainCommentarySession(sessionID string) []publishedCommentary {
+func (p *hpatchProxy) drainCommentarySession(sessionID, threadID string) []publishedCommentary {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 	if p.commentary == nil || p.activeSessions[sessionID] > 1 {
 		return nil
 	}
-	return p.commentary.drainSession(sessionID)
+	return p.commentary.drainSession(sessionID, threadID)
 }
 
 // Only thread routes lack a carrier subscription. Keep call-scoped live delivery separate.
-func (p *hpatchProxy) drainThreadCommentarySession(sessionID string) []publishedCommentary {
+func (p *hpatchProxy) drainThreadCommentarySession(sessionID, threadID string) []publishedCommentary {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 	if p.commentary == nil || p.activeSessions[sessionID] > 1 {
 		return nil
 	}
-	return p.commentary.drainThreadSession(sessionID)
+	return p.commentary.drainThreadSession(sessionID, threadID)
 }
 
 type commentarySubscription struct {
@@ -321,26 +321,6 @@ func (p *hpatchProxy) addCommentaryMessageID(sessionID, callID, messageID string
 	return p.rememberBatch(sessionID, map[string]hpatchHistory{callID: history}) == nil
 }
 
-func (t *hpatchResponseTransform) subagentCallMessage(item map[string]json.RawMessage) map[string]json.RawMessage {
-	message, matched := subagentCallCommentary(
-		item,
-		t.subagentTools,
-		t.parentModel,
-		t.parentReasoningEffort,
-		t.commentaryAuthor,
-	)
-	if !matched {
-		return nil
-	}
-	id := jsonString(message, "id")
-	if _, emitted := t.commentaryEmitted[id]; emitted {
-		return nil
-	}
-	t.commentaryEmitted[id] = struct{}{}
-	t.collectCollaborationCommentary(message)
-	return message
-}
-
 func (t *hpatchResponseTransform) runtimeCommentaryMessage(publication publishedCommentary) map[string]json.RawMessage {
 	if publication.text == "" || !t.proxy.addCommentaryMessageID(
 		t.historySessionID, publication.callID, publication.messageID,
@@ -379,11 +359,32 @@ func (t *hpatchResponseTransform) operationCommentaryMessage(id, text string) ma
 	return assistantCommentaryMessage(id, attributedCommentary(t.commentaryAuthor, text))
 }
 
-func (t *hpatchResponseTransform) collectCollaborationCommentary(message map[string]json.RawMessage) {
-	var content []struct {
-		Text string `json:"text"`
+// Completed provider commentary is copied to the root without rewriting the
+// child's original message. Router-owned messages already have their own paths.
+func (t *hpatchResponseTransform) collectProviderCommentary(message map[string]json.RawMessage) {
+	if !t.subagentTurn || jsonString(message, "type") != "message" ||
+		jsonString(message, "role") != "assistant" || jsonString(message, "phase") != "commentary" ||
+		jsonString(message, "status") != "completed" {
+		return
 	}
-	if json.Unmarshal(message["content"], &content) == nil && len(content) == 1 {
-		t.proxy.activity.collect(t.threadID, jsonString(message, "id"), "notice", content[0].Text)
+	id := jsonString(message, "id")
+	if id == "" || len(id) > maxCommentaryPublicationBytes-len("provider-message\x00") || commentaryid.Generated(id) {
+		return
 	}
+	var content []map[string]json.RawMessage
+	if json.Unmarshal(message["content"], &content) != nil {
+		return
+	}
+	var text strings.Builder
+	for _, part := range content {
+		if jsonString(part, "type") != "output_text" {
+			continue
+		}
+		value := jsonString(part, "text")
+		if len(value) > maxCommentaryPublicationBytes-text.Len() {
+			return
+		}
+		text.WriteString(value)
+	}
+	t.proxy.activity.collect(t.threadID, "provider-message\x00"+id, "commentary", text.String())
 }

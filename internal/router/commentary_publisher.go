@@ -183,13 +183,13 @@ func (b *commentaryBroker) publish(token, text string, complete bool) bool {
 	return true
 }
 
-func (b *commentaryBroker) drainSession(sessionID string) []publishedCommentary {
+func (b *commentaryBroker) drainSession(sessionID, threadID string) []publishedCommentary {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.cleanupExpiredLocked(time.Now())
 	var events []publishedCommentary
 	for token, route := range b.routes {
-		if route.sessionID != sessionID {
+		if route.sessionID != sessionID || route.threadID != "" && route.threadID != threadID {
 			continue
 		}
 		events = append(events, b.drainLocked(token)...)
@@ -197,13 +197,13 @@ func (b *commentaryBroker) drainSession(sessionID string) []publishedCommentary 
 	return events
 }
 
-func (b *commentaryBroker) drainThreadSession(sessionID string) []publishedCommentary {
+func (b *commentaryBroker) drainThreadSession(sessionID, threadID string) []publishedCommentary {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.cleanupExpiredLocked(time.Now())
 	var events []publishedCommentary
 	for token, route := range b.routes {
-		if route.threadID != "" && route.sessionID == sessionID {
+		if route.threadID != "" && route.threadID == threadID && route.sessionID == sessionID {
 			events = append(events, b.drainLocked(token)...)
 		}
 	}

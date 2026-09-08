@@ -6,11 +6,10 @@ The Responses router owns optional commentary schema projection for extensible o
 tools, authored commentary for eligible structured calls, removal of only its own argument, assistant
 message rendering, and exact replay restoration. Provider-owned and strict schemas remain exact, except for the separately owned opt-in
 [third-party collaboration projection](subagents.md).
-Collaboration calls remain outside generic operation commentary so the distinct subagent contract
-below stays authoritative. The existing bounded Hpatch call history retains original call identity
-and router message IDs; JSON and SSE transformers share that state without adding another replay
-store. Streaming keeps subagent and generic structured pending calls separate because their
-validation and completion policies differ.
+Collaboration calls remain outside operation commentary and pass through without generated
+request notices or commentary-specific buffering. The existing bounded Hpatch call history
+retains original call identity and router message IDs; JSON and SSE transformers share that
+state without adding another replay store.
 
 The router also owns one bounded authenticated in-process publication broker. Code Mode lowering
 uses the JavaScript syntax owner when available and routes the evaluated expression through the
@@ -22,7 +21,9 @@ Code Mode retains per-call capabilities. Shell uses a shared thread capability d
 private runtime data keyed by inherited `CODEX_THREAD_ID`, with no added command flags or inline
 environment assignments. The runtime owner binds discovery to the current worker and owns its
 private descriptor cleanup. Discovery and publication failures are silent and auxiliary.
-Shell publications retain thread identity, not an inferred original call ID. Shell worker
+Shell publications retain thread identity, not an inferred original call ID. Deferred and terminal
+drains select the originating shell thread as well as the routing session, so a different thread
+sharing that session cannot consume its publications. Per-call Code Mode delivery stays session-scoped. Shell worker
 completion cannot retire a shared thread route; idle expiry and router shutdown own that lifetime.
 Exact shell replay provenance follows stable thread identity rather than the current routing
 session and has a separate bounded budget. Commentary retention cannot reclaim tool-call history
@@ -54,8 +55,9 @@ The commentary producer and publication broker feed the collector without consum
 child output. Runtime capabilities bind their originating thread at creation.
 The collector does not call back into the broker or proxy while holding its lock.
 
-The collector coalesces ordinary child operations, retains distinct collaboration
-reply, and existing critical-error notices, deduplicates source identities per thread, and expires pending
+The collector coalesces ordinary child operations and retains distinct completed child-authored
+commentary, received replies, and critical-error notices. It deduplicates source identities per
+thread and expires pending
 events. Non-evicting thread/source and exact root-copy provenance budgets prevent
 replay leakage after session remapping or expiry without displacing tool history.
 Exact retained root-copy IDs are stripped from any provider replay, including
@@ -68,16 +70,17 @@ closed streams defer delivery rather than extending stream lifetime. Concurrent
 root responses cannot drain the same event twice. Codex retains scheduling,
 recipient selection, interruption, waiting, and assignment lifecycle ownership.
 
-The collaboration projection boundary recognizes catalog-declared spawn, follow-up,
-send, wait, and interruption calls, leaving schemas and executable arguments exact.
-It describes requests rather than claiming execution or successful delivery, leaves send-message
-and wait request notices and task names to Codex's native display, and never reads encrypted message arguments. The input boundary recognizes actual
-inter-agent envelopes addressed to the current canonical agent, including sibling
-and nested traffic. Plaintext replies are shown in full, never excerpted; replies
-exceeding the auxiliary rendering budget are omitted. Encrypted receipt is
-direction-only. Original model-visible envelopes remain unchanged.
-Deterministic router IDs suppress repeated local commentary on replay. Streaming
-buffers only matched function-call framing until arguments are complete.
+Codex owns collaboration-call display. The router leaves collaboration schemas, executable
+arguments, and streaming call framing exact and never reads encrypted message arguments.
+Completed child assistant commentary enters the existing collector at JSON output and SSE
+completed-item boundaries. The original child item remains unchanged; root copies use observed
+ancestry and source identity without replacing final answers or entering provider replay.
+
+The input boundary recognizes actual inter-agent envelopes addressed to the current canonical
+agent, including sibling and nested traffic. Plaintext replies are shown in full, never excerpted;
+replies exceeding the auxiliary rendering budget are omitted. Encrypted receipt is direction-only.
+Original model-visible envelopes remain unchanged. Deterministic router IDs suppress repeated
+local commentary on replay.
 
 The terminal response transformer also owns one user-only commentary projection of the provider's
 input, cached-input, output, and reasoning usage when a completed root or subagent response
