@@ -3,6 +3,7 @@ package router
 import (
 	"net/http"
 	"net/http/httptest"
+	"os/exec"
 	"strings"
 	"testing"
 )
@@ -48,5 +49,12 @@ func TestDashboardRejectsUnrelatedPaths(t *testing.T) {
 	serveDashboard(recorder, httptest.NewRequest(http.MethodGet, "/future", nil))
 	if recorder.Code != http.StatusNotFound {
 		t.Fatalf("status = %d", recorder.Code)
+	}
+}
+
+func TestDashboardPollingRunsSerially(t *testing.T) {
+	command := exec.CommandContext(t.Context(), "node", "--test", "dashboard.test.mjs")
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("dashboard polling: %v\n%s", err, output)
 	}
 }

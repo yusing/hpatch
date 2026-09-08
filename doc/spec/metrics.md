@@ -11,6 +11,8 @@ The same listener MUST serve a human-readable dashboard at `GET /`. The dashboar
 capturer snapshot and MUST NOT own counters, histories, classifications, or alternate calculations.
 It MUST present every aggregate group plus the retained exchange, provider-attempt, provider-tool,
 and delivered-tool detail rather than substituting a reduced dashboard-specific metric set.
+Dashboard polling MUST not overlap requests or replace a newer snapshot with an older response.
+Polling MUST resume after a failed request.
 
 The capturer MUST observe both the Codex-facing Responses handler and every provider-facing
 Responses or Chat Completions attempt made by that request. Correlation MUST remain process-private and MUST NOT add a

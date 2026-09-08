@@ -166,8 +166,20 @@ const tabs=[...document.querySelectorAll('[role="tab"]')];
 function selectView(tab,focus){tabs.forEach(candidate=>{const selected=candidate===tab;candidate.setAttribute('aria-selected',String(selected));candidate.tabIndex=selected?0:-1;const view=$(`view-${candidate.dataset.view}`);view.hidden=!selected;view.classList.toggle('active',selected)});if(focus)tab.focus()}
 tabs.forEach((tab,index)=>{tab.addEventListener('click',()=>selectView(tab,false));tab.addEventListener('keydown',event=>{let next;if(event.key==='ArrowRight')next=(index+1)%tabs.length;else if(event.key==='ArrowLeft')next=(index-1+tabs.length)%tabs.length;else if(event.key==='Home')next=0;else if(event.key==='End')next=tabs.length-1;if(next===undefined)return;event.preventDefault();selectView(tabs[next],true)})});
 $('newer').addEventListener('click',()=>{if(detailPage>0){detailPage--;renderDetails()}});$('older').addEventListener('click',()=>{const pages=Math.ceil((currentSnapshot?.exchanges.length||0)/detailPageSize);if(detailPage+1<pages){detailPage++;renderDetails()}});
-async function refresh(){try{const response=await fetch('/api/metrics',{cache:'no-store'});if(!response.ok)throw new Error(`HTTP ${response.status}`);render(await response.json())}catch(error){$('status-pill').dataset.state='error';text($('state'),'metrics unavailable');text($('updated'),error instanceof Error?error.message:String(error))}}
-refresh();setInterval(refresh,2000);
+async function refresh(){
+  try{
+    const response=await fetch('/api/metrics',{cache:'no-store'});
+    if(!response.ok)throw new Error(`HTTP ${response.status}`);
+    render(await response.json());
+  }catch(error){
+    $('status-pill').dataset.state='error';
+    text($('state'),'metrics unavailable');
+    text($('updated'),error instanceof Error?error.message:String(error));
+  }finally{
+    setTimeout(refresh,2000);
+  }
+}
+refresh();
 </script>
 </body>
 </html>
