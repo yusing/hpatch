@@ -1,0 +1,4 @@
+ Container hpatch_bench_stagingttpygv-control-agent-run-b13721d28e37 Creating 
+ Container hpatch_bench_stagingttpygv-control-agent-run-b13721d28e37 Created 
+Reading additional input from stdin...
+2026-09-07T09:14:09.766351Z ERROR codex_core::tools::router: error=apply_patch verification failed: invalid patch: multiple operations target /home/ubuntu/projects/hpatch/benchmarks/results/.staging-ttPygV/work/etcd-range-stream-control-r001-PJS2X9/repo/server/etcdserver/txn/range.go

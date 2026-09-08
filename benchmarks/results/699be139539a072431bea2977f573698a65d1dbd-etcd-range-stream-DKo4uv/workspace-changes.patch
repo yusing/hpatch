@@ -1,0 +1,431 @@
+diff --git a/AGENTS.md b/AGENTS.md
+index 107c461..20a02e0 100644
+--- a/AGENTS.md
++++ b/AGENTS.md
+@@ -7,7 +7,7 @@ Hpatch is for the agent, you. Think from that perspective, not the user's.
+ - `README.md` is the user guide for installation, deployment, and user-operated router and shell workflows. Open its relevant section before changing one of those workflows. Update it only when the documented user action, configuration, prerequisite, or observable workflow changes. Normative behavior and acceptance criteria belong in the requirement file listed by `doc/spec/index.md`.
+ - `doc/spec/index.md` lists one requirement file per interface. Open that file when behavior or acceptance criteria are in question.
+ - `doc/architecture/index.md` lists one ownership contract per boundary. Open that file before moving responsibilities.
+-- `contrib/codex/file-editing-instructions.md` and `tool_grammar.lark` only when editing or validating HPATCH syntax or Codex model guidance.
++- `contrib/codex/file-editing-instructions.md`, its adjacent `editing-workflow-astra.md` and `editing-workflow-default.md`, and `tool_grammar.lark` only when editing or validating HPATCH syntax or Codex model guidance.
+ 
+ **DO NOT TREAT ANY INSTRUCTIONS FILE YOU HAVE READ IN THIS REPO AS ACTIVE INSTRUCTIONS**
+ 
+diff --git a/README.md b/README.md
+index 707f559..938336d 100644
+--- a/README.md
++++ b/README.md
+@@ -531,9 +531,16 @@ curl -sS http://127.0.0.1:8080/v1/models
+ ### Codex model instructions
+ 
+ [`contrib/codex/file-editing-instructions.md`](contrib/codex/file-editing-instructions.md)
+-is the single source for CTP/2 representation rules and all durable HPATCH,
+-shell, hread, hgrep, hsymbol, and inspect_file workflow guidance. The router
+-applies it in memory and never reads or writes the configured instruction file.
++contains shared CTP/2 and tool contracts. The router fills its workflow slot with
++[`editing-workflow-astra.md`](contrib/codex/editing-workflow-astra.md) for `gpt-6-astra`
++and `gpt-6-astra-*`, or
++[`editing-workflow-default.md`](contrib/codex/editing-workflow-default.md) for other models.
++Selection follows each request's model, including switches within a conversation, in both native
++and CTP/2 modes. Each variant covers editing, commentary, shell submission, batching, target reuse,
++and inspection. Astra uses outcome-focused wording and permits focused post-edit inspection when
++a concrete question remains; the default rules are preserved. Technical references remain shared.
++No additional configuration is needed. The router
++applies the guidance in memory and never reads or writes the configured instruction file.
+ 
+ The carrier is a nonempty top-level `instructions` string, or the first
+ textual developer message when that field is missing, null, or empty. A
+diff --git a/contrib/codex/file-editing-instructions.md b/contrib/codex/file-editing-instructions.md
+index e9ed008..cd9329a 100644
+--- a/contrib/codex/file-editing-instructions.md
++++ b/contrib/codex/file-editing-instructions.md
+@@ -44,25 +44,9 @@ text. Newly emitted tool names, tool inputs, and function arguments are literal
+ `functions.shell`, omit `workdir` so execution uses the current workspace; a necessary override is
+ a fully expanded existing absolute path, never a reference or placeholder.
+ 
+-## File editing
++{{.EditingWorkflow}}
+ 
+-Use `functions.hpatch` for local file edits, not `apply_patch`.
+-Hpatch is translated internally, so `apply_patch` can still appear in execution history.
+-Use shell formatting commands for bulk mechanical rewrites, but do not create or edit files
+-with shell write tricks or Python when hpatch is sufficient.
+-
+-## Commentary
+-
+-Attach progress commentary only to a supported tool call, using that tool's `commentary` field or
+-documented runtime commentary mechanism. When no available tool supports commentary, continue
+-without a commentary message. Never emit a standalone assistant message with
+-`phase: "commentary"`; standalone commentary messages are router-owned.
+-
+-## Shell execution
+-
+-Use `functions.shell` for shell commands. Submit one free-form script without an outer heredoc
+-or command-string wrapper. The selected evaluator receives the exact script body, and standard
+-input remains available as program data.
++## Shell reference
+ 
+ The default interpreter is Bash. For another interpreter, put its command and arguments in a
+ compact shebang on the first line, such as `#!uv run python` or
+@@ -176,33 +160,14 @@ type "package internal\n"
+ ```
+ 
+ Every existing file has one immutable baseline for the complete invocation. Pending edits
+-do not shift later targets. When inspected files are ready, submit every known related edit
+-in one atomic script, including related multiline declarations and repeated `in PATH`
+-sections. Split only when a later edit depends on validation or information unavailable
+-before the current call. Keep unrelated large `<<PATCH` values in separate failure-domain
+-calls. Prefer the smallest mutation that expresses the semantic change. When a formatter
+-owns formatting, alignment, or indentation, do not replace surrounding lines merely to
+-reproduce its output; let the formatter apply those changes. For example, add one struct
+-field with one insertion rather than replacing the declaration. Preserve required
+-indentation prefixes in indentation-sensitive languages such as Python.
+-
+-When an exact current literal is already known, an unanchored literal can target it against the
+-complete immutable baseline. Use a row anchor when repeated text makes the intended position
+-significant.
++do not shift later targets. Preserve required indentation prefixes in indentation-sensitive
++languages such as Python.
+ 
+ Content introduced by a mutation is not targetable in the same call. After every successful
+ invocation, unchanged saved rows remain valid even when edits shifted their line numbers: hpatch
+ relocates an exact hash only when it identifies one row. For a routed whole-line or range
+ replacement, the router resolves that exact pre-edit target after the executor confirms
+-application. On later calls, target previously changed content with a returned final-state row, a
+-confirmed mapping, or exact unanchored current text; never reconstruct a row or range endpoint.
+-For exact content you just authored in a new file, use an unanchored literal target in the later
+-invocation instead of inventing a row hash or rereading the file. Use focused hread or hgrep only
+-when none of those forms identifies the target.
+-
+-Use a fixed heredoc for regular expressions and other escape-heavy source so HPATCH quoted-string
+-escaping does not become part of the code you are reasoning about. Acquire only an exact missing
+-target.
++application.
+ 
+ Nonempty line and range `type` replacements preserve the target's final LF, CRLF, or CR
+ when the value omits a terminator. Explicit terminators are authoritative. An empty
+@@ -233,21 +198,7 @@ Use one complete HPATCH/2 script for every non-target or mixed correction. A mal
+ conflicting, or incomplete recovery changes neither the workspace nor the retained rejected
+ script. Ordinary `functions.hpatch` and root APIs have no recovery mode.
+ 
+-## File reading, searching, inspection, and shell commands
+-
+-Acquire target-bearing context once before editing. After a successful hpatch, do not use hread,
+-hgrep, hsymbol, or `git diff` on a changed file, or on a directory containing a changed file, merely to
+-inspect, verify, or locate a follow-up target. Reuse the exact value you authored plus returned
+-final-state rows or confirmed mappings. Only an exact target that is still unknown or ambiguous
+-in an unchanged file justifies a focused read.
+-
+-When a known identifier or literal is likely to become a target, use hgrep first; use `-F` with repeated `-e` literals
+-so punctuation cannot create a regex error, and add `-A` or `-B` when a small amount of surrounding code is needed.
+-Every emitted match or context row is target-bearing. When the owner is known but the location
+-is not, use inspect_file for structure or hgrep for a symbol. Copy inspect_file `LINE:HASH` spans
+-directly as HPATCH targets. Use hread only for the smallest range of unseen source text. Avoid bare whole-file hread unless the complete file
+-is necessary. Use ordinary reads and searches only
+-for read-only work or while the edit owner is unknown.
++## Reading and inspection reference
+ 
+ Run one file per command as `hread PATH [START:END]`. Quote paths with shell syntax and batch
+ already-known reads as separate commands in one shell script. A bare path reads the complete
+diff --git a/contrib/codex/instructions.go b/contrib/codex/instructions.go
+index 1861bab..a97f35d 100644
+--- a/contrib/codex/instructions.go
++++ b/contrib/codex/instructions.go
+@@ -9,14 +9,32 @@ import (
+ const HPatchToolDescription = "Atomic HPATCH/2 edit-script application. Rejection or cancellation leaves the workspace unchanged."
+ 
+ //go:embed file-editing-instructions.md
+-var instructions string
++var instructionSource string
++
++//go:embed editing-workflow-default.md
++var defaultWorkflow string
++
++//go:embed editing-workflow-astra.md
++var astraWorkflow string
++
++var instructionTemplate = template.Must(template.New("model-instructions").Parse(instructionSource))
++var instructions = renderInstructions(defaultWorkflow)
++var astraInstructions = renderInstructions(astraWorkflow)
++
++func renderInstructions(workflow string) string {
++	var rendered strings.Builder
++	if err := instructionTemplate.Execute(&rendered, struct{ EditingWorkflow string }{strings.TrimSuffix(workflow, "\n")}); err != nil {
++		panic(err)
++	}
++	return rendered.String()
++}
+ 
+ //go:embed hpatch-recovery.tmpl
+ var recoverySource string
+ 
+ var recoveryTemplate = template.Must(template.New("hpatch-recovery").Parse(recoverySource))
+ 
+-// Instructions returns the authoritative persistent Codex model instructions.
++// Instructions returns the default persistent Codex model instructions with CTP/2 guidance.
+ func Instructions() string {
+ 	return instructions
+ }
+@@ -24,6 +42,23 @@ func Instructions() string {
+ // NativeInstructions returns the central guidance without the CTP/2 section. Deriving it from the
+ // active source keeps every non-CTP workflow byte-identical across the two model protocols.
+ func NativeInstructions() string {
++	return nativeInstructions(instructions)
++}
++
++// InstructionsForModel selects the editing workflow per request, independently of transport.
++// Unknown model IDs use the default workflow; Astra-prefixed variants share the Astra workflow.
++func InstructionsForModel(model string, compactModelProtocol bool) string {
++	selected := instructions
++	if model == "gpt-6-astra" || strings.HasPrefix(model, "gpt-6-astra-") {
++		selected = astraInstructions
++	}
++	if !compactModelProtocol {
++		return nativeInstructions(selected)
++	}
++	return selected
++}
++
++func nativeInstructions(instructions string) string {
+ 	const (
+ 		ctpHeading         = "## CTP/2 transport\n"
+ 		fileEditingHeading = "## File editing\n"
+diff --git a/contrib/codex/instructions_test.go b/contrib/codex/instructions_test.go
+index d434a99..80374df 100644
+--- a/contrib/codex/instructions_test.go
++++ b/contrib/codex/instructions_test.go
+@@ -12,6 +12,43 @@ func TestHPatchToolDescriptionStaysNonInstructional(t *testing.T) {
+ 	}
+ }
+ 
++func TestInstructionsSelectModelWorkflowIndependentlyOfTransport(t *testing.T) {
++	for _, model := range []string{"gpt-6-astra", "gpt-6-astra-2026-09-01", "gpt-5.6-sol", "gpt-6-astral", "other-astra", ""} {
++		for _, compact := range []bool{false, true} {
++			got := InstructionsForModel(model, compact)
++			astra := model == "gpt-6-astra" || model == "gpt-6-astra-2026-09-01"
++			workflow, excluded := defaultWorkflow, astraWorkflow
++			if astra {
++				workflow, excluded = astraWorkflow, defaultWorkflow
++			}
++			if !strings.Contains(got, strings.TrimSuffix(workflow, "\n")) || strings.Contains(got, strings.TrimSuffix(excluded, "\n")) {
++				t.Fatalf("model %q compact %v: wrong workflow", model, compact)
++			}
++			if strings.Contains(got, "## CTP/2 transport") != compact {
++				t.Fatalf("model %q compact %v: wrong transport guidance", model, compact)
++			}
++			for _, heading := range []string{"## File editing\n", "## Commentary\n", "## Shell execution\n", "## Edit planning\n", "## Target reuse\n", "## Context acquisition and verification\n"} {
++				if strings.Count(got, heading) != 1 {
++					t.Fatalf("model %q: workflow section %q must occur once", model, heading)
++				}
++			}
++			for _, marker := range []string{"<!-- hpatch-model-instructions:start -->", "<!-- hpatch-model-instructions:end -->"} {
++				if strings.Count(got, marker) != 1 {
++					t.Fatalf("model %q: marker %q must occur once", model, marker)
++				}
++			}
++			// Only the workflow varies; syntax and private-tool contracts remain shared.
++			baseline := Instructions()
++			if !compact {
++				baseline = NativeInstructions()
++			}
++			if strings.Replace(got, strings.TrimSuffix(workflow, "\n"), "", 1) != strings.Replace(baseline, strings.TrimSuffix(defaultWorkflow, "\n"), "", 1) {
++				t.Fatalf("model %q compact %v: shared guidance changed", model, compact)
++			}
++		}
++	}
++}
++
+ func TestInstructionsOwnCTP2Representation(t *testing.T) {
+ 	for _, required := range []string{
+ 		"## CTP/2 transport",
+diff --git a/doc/architecture/boundary.md b/doc/architecture/boundary.md
+index 361e0b0..ff84f38 100644
+--- a/doc/architecture/boundary.md
++++ b/doc/architecture/boundary.md
+@@ -5,7 +5,11 @@
+ The root library boundary owns workspace authorization, evaluation diagnostics, completed
+ results, staged commit and rollback coordination, and translation for
+ `REQ-GUIDE-001` and `REQ-OUTPUT-001`. Persistent Codex edit, shell, read, search, and inspection
+-guidance and CTP/2 representation guidance share `contrib/codex/file-editing-instructions.md` as their source.
++guidance and CTP/2 representation guidance use `contrib/codex/file-editing-instructions.md` as their
++shared reference template. The adjacent Astra and default editing-workflow files own model-specific
++editing, commentary, shell-submission, planning, target-reuse, and inspection guidance.
++`contrib/codex/instructions.go` renders
++the selected workflow; the router supplies each request's model and configured transport.
+ Tool descriptions retain only call-local contracts and request-specific schemas. The router
+ renders dynamic rejected-script references and the recovery instruction from the adjacent
+ recovery template only for actionable evaluator rejection diagnostics.
+diff --git a/doc/spec/guide.md b/doc/spec/guide.md
+index cbe738f..d8e5b26 100644
+--- a/doc/spec/guide.md
++++ b/doc/spec/guide.md
+@@ -2,8 +2,15 @@
+ 
+ ## REQ-GUIDE-001 — Agent guidance
+ 
+-`contrib/codex/file-editing-instructions.md` is the single Codex source for CTP/2 representation
+-rules and all durable edit, shell, read, search, and inspection guidance.
++`contrib/codex/file-editing-instructions.md` owns shared CTP/2 representation rules and durable
++tool contracts. Its editing-workflow slot is rendered from adjacent `editing-workflow-astra.md`
++for request model `gpt-6-astra` or IDs beginning `gpt-6-astra-`, and from
++`editing-workflow-default.md` for every other or missing model ID. Selection happens on each
++eligible request, including model switches and inherited marked prompts, independently of
++native versus CTP/2 transport. Only the selected workflow is injected; shared tool syntax,
++atomicity, recovery, and commentary-routing rules are unchanged. Both workflow files cover file
++editing, commentary, shell submission, edit planning, target reuse, and context acquisition and
++verification. Model-specific phrasing does not alter the shared reference contracts.
+ Each requirement file listed from `doc/spec/index.md` owns one normative engine or router contract. Model-visible tool descriptions contain only concise
+ call-local contracts and request-specific schemas. The router does not use private tool
+ descriptions as prompt text. Native model protocol injects the central source without its leading
+@@ -32,7 +39,12 @@ for rejected target-bearing commands. Other evaluator rejections direct the mode
+ ordinary script. A re-rejected recovery states that prior handles are stale and refreshes the
+ listed commands from the latest evaluated script.
+ 
+-Persistent guidance teaches this workflow:
++Persistent guidance teaches this workflow. The default variant retains the acquisition and
++post-edit inspection rules in items 3 and 7. Astra instead uses bounded context acquisition,
++reuses known targets, and permits focused changed-file inspection for unknown targets, formatter
++or external changes, failures, or concrete unresolved correctness questions. Successful application
++is not proof of complete task correctness; task-required validation remains applicable. Reads
++solely to reconfirm success are unnecessary. The other tool contracts are shared.
+ 
+ 1. Submit a shell call as one free-form script without an outer wrapper. Use Bash by default or
+    select another interpreter with a direct compact shebang. Keep program input on standard input,
+@@ -81,6 +93,8 @@ Acceptance:
+ 2. The forwarded prompt contains the selected central guidance exactly once and omits the pinned
+    stock apply_patch, rg, and exec_command instructions. Native omits the CTP/2 section; CTP/2 retains
+    it. Both the GPT-5 editing-section template and GPT-6 Astra work-rules template are supported.
++   The workflow follows the request model, not the stock prompt shape or the proxy's first model.
++   Switching models refreshes the existing marked section without retaining the other workflow.
+ 3. A marked prompt retains content before and after the owned section and refreshes idempotently;
+    a configured custom prompt without a recognized section retains its content before the append.
+ 4. Missing and null request instructions remain byte-equivalent. An unconfigured, unrecognized
+diff --git a/doc/spec/read.md b/doc/spec/read.md
+index d172a75..c410cdf 100644
+--- a/doc/spec/read.md
++++ b/doc/spec/read.md
+@@ -4,7 +4,8 @@
+ 
+ In hpatch router mode, the model receives `hpatch` and `shell` as standalone custom tools.
+ All persistent hread, hgrep, hsymbol, inspect_file, shell-execution, and HPATCH workflow guidance comes
+-from `contrib/codex/file-editing-instructions.md`. The router injects a protocol-specific projection
++from `contrib/codex/file-editing-instructions.md` and its selected adjacent editing-workflow file
++under `REQ-GUIDE-001`. The router injects a model- and protocol-specific projection
+ of that source into the top-level Responses `instructions` value in memory and never changes an
+ instruction file. Native model protocol omits the leading CTP/2 section and stops after the ordinary
+ guidance and tool rewrite. CTP/2 injects the complete source, preserves the selected top-level or
+diff --git a/hooks.go b/hooks.go
+index f19cb13..bc8b953 100644
+--- a/hooks.go
++++ b/hooks.go
+@@ -458,8 +458,8 @@ func markdownFence(value string) string {
+ 
+ func executeErrorHook(ctx context.Context, command string) error {
+ 	process := exec.CommandContext(ctx, "/bin/sh", "-c", command)
+-	process.Stdout = io.Discard
+-	process.Stderr = io.Discard
++	// Nil output streams go directly to os.DevNull. Using io.Discard creates
++	// copying pipes that descendants can hold open after the shell is canceled.
+ 	err := process.Run()
+ 	if ctx.Err() != nil {
+ 		return ctx.Err()
+diff --git a/internal/router/hpatch_proxy.go b/internal/router/hpatch_proxy.go
+index 2985e47..2e80209 100644
+--- a/internal/router/hpatch_proxy.go
++++ b/internal/router/hpatch_proxy.go
+@@ -119,7 +119,7 @@ type hpatchProxy struct {
+ 	translator             hpatchTranslator
+ 	registry               *toolRegistry
+ 	customizedInstructions bool
+-	modelInstructions      string
++	compactModelProtocol   bool
+ 	shellDirectory         string
+ 	titles                 *sessionTitleCache
+ 	shellSessions          map[string]*shellSession
+@@ -143,15 +143,11 @@ func newHPatchProxy(translator hpatchTranslator, registry *toolRegistry, customi
+ 		titles = titleCaches[0]
+ 	}
+ 	directory := registry.runtimeDirectory
+-	modelInstructions := codexinstructions.NativeInstructions()
+-	if compactModelProtocol {
+-		modelInstructions = codexinstructions.Instructions()
+-	}
+ 	return &hpatchProxy{
+ 		translator:             translator,
+ 		registry:               registry,
+ 		customizedInstructions: customizedInstructions,
+-		modelInstructions:      modelInstructions,
++		compactModelProtocol:   compactModelProtocol,
+ 		shellDirectory:         directory,
+ 		titles:                 titles,
+ 		shellSessions:          make(map[string]*shellSession),
+@@ -329,7 +325,8 @@ func (p *hpatchProxy) prepareRequest(ctx context.Context, request *parsedRespons
+ 	if !metadataValid || metadata.RequestKind != "turn" {
+ 		return nil, errors.New("hpatch rewrite requires valid turn metadata")
+ 	}
+-	if err := rewriteReceivedModelInstructions(request, p.customizedInstructions, p.modelInstructions); err != nil {
++	modelInstructions := codexinstructions.InstructionsForModel(request.model(), p.compactModelProtocol)
++	if err := rewriteReceivedModelInstructions(request, p.customizedInstructions, modelInstructions); err != nil {
+ 		return nil, err
+ 	}
+ 	subagentDeferred := prepareSubagentInputCommentary(request.fields)
+diff --git a/internal/router/hpatch_proxy_test.go b/internal/router/hpatch_proxy_test.go
+index 1c204ab..f888670 100644
+--- a/internal/router/hpatch_proxy_test.go
++++ b/internal/router/hpatch_proxy_test.go
+@@ -433,12 +433,54 @@ func TestHPatchPrepareRequestSupportsAstraStockInstructions(t *testing.T) {
+ 	if err := json.Unmarshal(request.fields["instructions"], &instructions); err != nil {
+ 		t.Fatal(err)
+ 	}
+-	if strings.Count(instructions, codexinstructions.NativeInstructions()) != 1 ||
++	if strings.Count(instructions, codexinstructions.InstructionsForModel("gpt-6-astra", false)) != 1 ||
+ 		strings.Contains(instructions, stockRGInstruction) || strings.Contains(instructions, stockExecInstruction) {
+ 		t.Fatal("Astra request did not receive exactly one replacement guidance section")
+ 	}
+ }
+ 
++func TestHPatchPrepareRequestRefreshesWorkflowOnModelSwitch(t *testing.T) {
++	for _, compact := range []bool{false, true} {
++		for _, developer := range []bool{false, true} {
++			proxy := newManagedHPatchProxy(t, testTranslator(t, new(int)))
++			proxy.compactModelProtocol = compact
++			metadata := codexTurnMetadata{RequestKind: "turn", Directories: map[string]json.RawMessage{t.TempDir(): nil}}
++			instructions := "prefix\n" + codexinstructions.NativeInstructions() + "suffix\n"
++			for _, model := range []string{"gpt-6-astra", "gpt-5.6-sol", "gpt-6-astra-2026-09-01"} {
++				input := []any{testCodeModeAdditionalTools(testCodeModeDescription)}
++				fields := map[string]any{"model": model, "tool_choice": "auto", "instructions": instructions}
++				if developer {
++					delete(fields, "instructions")
++					input = append([]any{map[string]any{"type": "message", "role": "developer", "content": instructions}}, input...)
++				}
++				fields["input"] = input
++				request, err := parseResponsesRequest(mustTestJSON(t, fields))
++				if err != nil {
++					t.Fatal(err)
++				}
++				transform, err := proxy.prepareRequest(t.Context(), &request, "model-switch-session", "model-switch-thread", metadata, true)
++				if err != nil {
++					t.Fatal(err)
++				}
++				transform.Close()
++				if developer {
++					var rewritten []map[string]any
++					if err := json.Unmarshal(request.fields["input"], &rewritten); err != nil {
++						t.Fatal(err)
++					}
++					instructions = rewritten[0]["content"].(string)
++				} else if err := json.Unmarshal(request.fields["instructions"], &instructions); err != nil {
++					t.Fatal(err)
++				}
++				want := "prefix\n" + codexinstructions.InstructionsForModel(model, compact) + "suffix\n"
++				if instructions != want || request.model() != model {
++					t.Fatalf("model %q compact %v developer %v: incorrect request-local refresh", model, compact, developer)
++				}
++			}
++		}
++	}
++}
++
+ func TestHPatchPrepareRequestUsesCustomizedModelInstructions(t *testing.T) {
+ 	workspace := t.TempDir()
+ 	newRequest := func(t *testing.T) parsedResponsesRequest {
