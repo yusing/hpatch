@@ -1,625 +1,319 @@
 # hpatch
 
-A Codex Responses router that gives agents verified atomic edits and direct
-script execution, without Code Mode wrapper ceremony.
+Verified edits and direct script execution for Codex, with less model-generated
+boilerplate. Hpatch routes Codex requests through a private local router while
+keeping Codex's sandbox, permissions, command sessions, and normal patch diff UI.
 
-`hpatch` sits between Codex and the Responses API. The model sees
-constrained `functions.hpatch` and free-form `functions.shell`. Successful
-calls still return native Codex carriers, so sandbox checks, permissions,
-command sessions, and the normal diff UI stay intact. The repository also
-exposes the reusable Go edit engine used by the router.
-
-| Goal | Start here |
-| --- | --- |
-| Install and route Codex through hpatch | [Codex router](#codex-router) |
-| See what you get | [Features](#features) |
-| Understand verified editing | [Why hpatch?](#why-hpatch) |
-| Run programs without Code Mode wrappers | [Why shell?](#why-shell) |
-| Inspect live usage | [Metrics](#metrics) |
-| Use the engine without Codex | [Go library](#go-library) |
-| Read contracts | [`doc/spec/index.md`](doc/spec/index.md) |
+[Install](#install) · [Features](#features) · [Usage](#usage) ·
+[Metrics](#metrics) · [Documentation](#documentation)
 
 ## Features
 
-### User experience
+### UX
 
-- Codex still owns sandboxing, permissions, process sessions, and the visible
-  patch diff. The router translates; it does not silently commit workspace
-  edits.
-- A human-readable dashboard lives at the private router root. The same listener
-  serves Responses, models, and `/api/metrics`; its port is assigned per session.
-- Each Codex invocation owns a private router. Passthrough mode
-  forwards Responses traffic without installing hpatch or plugins.
-- Codex keeps seeing stream activity while a tool call is validated; the
-  router withholds untranslated input until the complete payload is ready.
-- Optional `--capture-output` appends sanitized JSONL for later inspection.
-  Outcome hooks can record each routed hpatch or recovery result.
+- **Keep the familiar Codex workflow.**
+  - Each launch gets its own router, with no persistent service or changes to
+    your Codex configuration files.
+- **See subagent details and replies inline.**
+  - Before launch, see the requested role, model, and reasoning effort.
+  - Plaintext messages and final answers show the sender and exact reply, not
+    just the main agent's summary. Encrypted collaboration messages are not exposed.
+- **Follow work as it runs.**
+  - Supported tool calls show a short description before execution.
+  - Scripts can publish progress such as “Running item 3/10” without mixing
+    updates into command output.
+- **See token usage for the main agent and subagents.**
+  - Completed responses with provider usage show input, cached-input, output,
+    and reasoning token counts.
+  - Router notices are removed from later model requests, so the display does
+    not add repeated context. See [inline commentary](doc/spec/commentary.md).
+- **Inspect a session in your browser.**
+  - Each launch has its own dashboard with request metrics, provider token
+    usage, compression measurements, and cache diagnostics.
+- **Use [Grok native subagents](#grok-subagents) alongside OpenAI models.**
+  - Opt in with `--grok` and separate Grok authentication.
 
-### Agent experience
+### AX
 
-- `functions.hpatch` is a verified atomic edit language: copy a `LINE:HASH`
-  row, emit the new text once, and let the router build the patch.
-- `functions.shell` sends the program body in its native syntax. Compact
-  shebangs select the interpreter; Bash is the default.
-- Private shell commands stay inside Bash and POSIX programs: `hread` for
-  verified rows, `hgrep` for text search, `hsymbol` for language-server
-  lookup, and `inspect_file` for a structural outline whose spans are copyable
-  `LINE:HASH` identities without source bodies.
-- Eligible programs can be retained, inspected, edited, and rerun through
-  `@shell/` references. Wholly stale-target rejections use
-  `functions.hpatch_recover` instead of rewriting the whole script.
-- A [Lark grammar](https://developers.openai.com/api/docs/guides/function-calling#context-free-grammars)
-  constrains HPATCH syntax as the model writes it. Supported languages are
-  validated before Codex applies the patch. Configured plugins can join the
-  model-visible catalog.
-- `HPATCH_DIAGNOSE=1` adds a free-form `report_issue` tool for
-  agent-experience problems. See [`REQ-DIAGNOSE-001`](doc/spec/diagnose.md).
-- Subagent activity shows the requested role, model, reasoning effort, and
-  exact replies as commentary without exposing encrypted collaboration
-  messages. Root and subagent stops also report input, cached-input, output,
-  and reasoning token usage. Router commentary is visible in Codex but is
-  removed before later model requests.
+- **Verified editing.**
+  - `functions.hpatch` identifies existing text with `LINE:HASH` references and
+    writes the replacement once.
+  - Invalid scripts are rejected as a whole before Codex applies the generated patch.
+- **Direct execution.**
+  - `functions.shell` accepts a program in its native syntax, without a
+    JavaScript wrapper or nested command-string quoting.
+- **Read only what the edit needs.**
+  - `hgrep` finds matching text, `hsymbol` locates definitions and references,
+    and `inspect_file` outlines a file without returning its full source.
+  - Their verified references can be used directly as edit targets; `hread`
+    supplies source text when more context is needed.
+- **Correct without starting over.**
+  - Eligible shell programs can be retained, inspected, edited, and rerun
+    instead of emitted again.
+  - When an edit is rejected solely because its target rows are stale, the
+    agent can correct the references without repeating the replacement text.
 
 ### Token saving
 
-- The hpatch family avoids repeating old context. `hpatch` identifies a
-  verified region and writes the replacement once. `hread`, `hgrep`,
-  `hsymbol`, and `inspect_file` emit copyable `LINE:HASH` identities.
-  `inspect_file` still returns structure instead of file bodies.
-- `functions.shell` drops the JavaScript carrier, JSON argument object, and
-  extra quoting layers that Code Mode `exec_command` requires.
-- [CTP/2](doc/spec/ctp.md) is the default lossless encoding of eligible
-  model-visible request strings and assistant text between the Hpatch-projected
-  request and the provider. Repeats inside one string can become a local
-  dictionary; tool outputs may instead point at earlier visible output lines
-  in the same request. Newly emitted tool names and payloads stay native.
-  Validated compaction requests stay native and skip CTP/2. Use
-  `--model-protocol native` to disable it.
-- A Lark grammar constrains HPATCH generation so the model does not have to
-  retry invalid syntax. A completed invalid script is still rejected
-  atomically.
+- **Write the new code once.**
+  - Replacing an 11-line function does not require reproducing all 11 old lines
+    as patch context. The model names the verified range and writes the new
+    function; the router generates the patch framing.
+- **Spend output on the program, not its wrapper.**
+  - Direct scripts avoid the JavaScript carrier, JSON argument object, and
+    extra quoting layers needed to call the executor through Code Mode.
+- **Avoid sending repeated text in full.**
+  - [CTP/2](doc/spec/ctp.md), enabled by default, losslessly encodes eligible
+    model-visible text using local dictionaries and references to earlier
+    visible tool output lines in the same request.
+  - Tool names and newly generated tool payloads stay native.
+    Use `--model-protocol native` to disable CTP/2.
 
 ### Performance
 
-- Mentor Handoff sends eligible spawned `gpt-5.6-luna` and `gpt-5.6-terra`
-  children as `gpt-5.6-sol` with high reasoning, then returns to the
-  Codex-configured model. Only an AgentControl `collab_spawn` with
-  `subagent_kind: thread_spawn` activates it; ordinary sessions and forks stay
-  unchanged. Disable with `--mentor-handoff=false`. See
-  [`REQ-MENTOR-001`](doc/spec/mentor.md).
-
-## Why hpatch?
-
-A direct Code Mode edit makes the model repeat patch framing, old context,
-replacement text, and a JavaScript carrier. The router moves patch
-reconstruction out of model output:
-
-```mermaid
-flowchart LR
-    subgraph output["Alternative model-output payloads"]
-        H["hpatch path<br/>functions.hpatch + verified targets + replacement"]
-        A["apply_patch baseline<br/>functions.exec + JavaScript carrier<br/>+ old context + replacement + patch framing"]
-    end
-
-    subgraph router["Router and Codex after model output"]
-        B["Router reads the immutable<br/>workspace baseline"]
-        C["Router generates the<br/>apply_patch envelope"]
-        D["Codex applies the patch<br/>sandbox checks + normal diff"]
-    end
-
-    H --> B --> C --> D
-    A --> D
-```
-
-The patch is not eliminated: the router generates it after inference.
-
-For an 11-line function replacement, hpatch asks the model for this:
-
-```text
-functions.hpatch
-in parser.go
-type 42:e217..52:d10b <<PATCH
-func parse(input []byte) (Document, error) {
-	tokens, err := tokenize(input)
-	if err != nil {
-		return Document{}, fmt.Errorf("tokenize: %w", err)
-	}
-	document, err := buildDocument(tokens)
-	if err != nil {
-		return Document{}, fmt.Errorf("build document: %w", err)
-	}
-	return document, nil
-}
-PATCH
-```
-
-Direct `apply_patch` in Code Mode repeats all 11 old lines, then writes the
-same 11 new lines plus patch framing and the JavaScript carrier. Hpatch writes
-the new function once and identifies the old region with two verified rows.
-
-That smaller payload is only one benefit. Editing becomes a verified
-transaction: targets check an immutable invocation baseline, a bad command
-rejects the whole script, and supported language validation runs before Codex
-applies anything. Grammar is syntax only; missing files, stale rows, and
-conflicting edits still fail atomically.
-
-“Verified” does not mean a whole-file version check: a range verifies its two
-endpoint rows, not all text between them. Agents and their host must coordinate
-overlapping edits from inspection through application, including the interval
-between router translation and Codex applying the patch. Assign distinct file
-ownership or serialize that complete cycle; after a handoff, inspect the current
-content before authoring the next edit. Hpatch does not lock the workspace or
-detect every intervening write.
-
-See [`REQ-SCRIPT-001`](doc/spec/script.md), [`REQ-SELECT-001`](doc/spec/select.md),
-and [`REQ-OUTPUT-001`](doc/spec/output.md). Authoritative agent workflow:
-[`contrib/codex/file-editing-instructions.md`](contrib/codex/file-editing-instructions.md).
-
-## Why shell?
-
-Native `tools.exec_command` is Codex's execution backend. Calling it from Code
-Mode makes the model generate a JavaScript program, a JSON argument object, a
-quoted command, and an output projection. `functions.shell` is an adapter to
-that same executor: the model sends the program body directly.
-
-```python
-#!python3
-print("hello")
-```
-
-| Concern | Code Mode `tools.exec_command` | `functions.shell` |
-| --- | --- | --- |
-| Model output | JavaScript wrapper, argument object, quoted command, and output projection | Exact script body |
-| Quoting | Program text can cross JavaScript, JSON, and shell quoting layers | No outer heredoc or command-string wrapper |
-| Interpreter | Encoded in the command construction | Compact shebang; Bash is the default |
-| Standard input | Arranged through the wrapper | Remains available to the program |
-| Correction | The model must emit the program again | Eligible programs can be retained, inspected, edited, and rerun |
-| Execution policy | Codex native executor | The same Codex native executor, sandbox, permissions, and result |
-
-This is better for the harness because it removes syntax that exists only to
-reach the executor. It is not a claim that the underlying process runs faster.
-
-A one-line Bash program with no shebang or directive and containing one
-external command is sent directly to the native executor, so a call such as
-`rtk shadowtree test .` remains that command. Composed scripts, private
-commands, and other interpreters use the generated
-`shell <interpreter> <program>` carrier.
-
-`shell` can start PTY-backed, interactive, and long-running programs and
-forwards the native executor's complete result. If execution yields a session
-handle, use Codex's native session facilities; each shell call starts a new
-execution. See [OpenAI's Codex prompting guide](https://developers.openai.com/cookbook/examples/gpt-5/codex_prompting_guide#shell_command)
-and [`REQ-SHELL-001`](doc/spec/shell.md).
-
-## Inline operation commentary
-
-In router mode, extensible non-strict function tools receive an optional `commentary` string.
-The router shows explicit text, or a concise default when it is omitted, immediately before the
-tool call. It removes only the router-owned field before execution and restores the provider's
-exact call when replaying history. Strict tools, provider-configured `additional_tools`, and tools
-that already own a `commentary` parameter keep their schemas and arguments unchanged and receive
-defaults only. Collaboration tools remain under the subagent commentary contract described by
-[`REQ-COMMENTARY-001`](doc/spec/commentary.md) and do not receive generic operation commentary.
-The injected model guidance permits agent-authored progress only through supported tool calls;
-standalone assistant commentary messages are router-owned.
-
-Code Mode can publish evaluated progress while it runs:
-
-```js
-for (let index = 1; index <= total; index++) {
-  await commentary(`Running item ${index}/${total}`);
-  await tools.exec_command({cmd: commands[index - 1]});
-}
-```
-
-Bash and POSIX shell programs use the reserved `commentary` command:
-
-```sh
-for item in "$@"; do
-  commentary "Running $item"
-  process "$item"
-done
-```
-
-Both forms publish through an authenticated per-call route on the router's existing HTTP server.
-They write nothing to the tool result. Shell commentary expands its arguments and otherwise leaves
-normal shell control flow, redirections, output, and exit status alone. A shell call without an
-authored `commentary` command emits no default.
-
-Events ready when a streaming response completes are shown in that response. Later events, and
-events from JSON responses, are shown at the start of the next response for the same session.
-Routes, queued events, request bodies, and retention time are bounded; commentary is auxiliary, so
-capacity or publication failure never changes the operation result.
-
-## Requirements
-
-- Go 1.26 or newer with CGO and a C toolchain. Normal `go install` does not require a checkout.
-- Hpatch router mode requires Codex CLI with ChatGPT auth from `codex login`
-  so each request carries a Bearer token and ChatGPT account header. Codex
-  normally stores that file auth at `~/.codex/auth.json` or
-  `$CODEX_HOME/auth.json`. At startup, the router reads the adjacent
-  `config.toml` only to determine whether `model_instructions_file` is
-  configured.
-- Hpatch router mode resolves Node.js 24 or newer as `node`; passthrough mode
-  does not load the plugin registry.
-- Regex grammar validation requires ripgrep (`rg`) on the router's `PATH` at
-  startup. This covers regex-format tools and regex terminals inside Lark
-  grammars, including the built-in tools. Unconstrained and regex-free Lark
-  declarations do not need it; passthrough mode does not validate plugins.
-  Private hgrep separately requires `rg` on the Codex executor's `PATH`.
-- Private hsymbol requires the resolver for the queried language on the Codex
-  executor's `PATH`: `gopls` for Go, TypeScript 7 as `tsc` for JavaScript,
-  TypeScript, and JSON, and `pyright-langserver` for Python `.py` and `.pyi`
-  sources.
-- Private hread, hgrep, hsymbol, and inspect_file are evaluated inside Bash or
-  POSIX shell programs. The separately installed, fixed `shell` helper must be
-  on the Codex executor's trusted `PATH`.
-- The built-in shell uses the embedded `mvdan/sh`, including bash and sh
-  shebangs; other selected interpreters must be available through the
-  inherited `PATH` or a direct path.
-- Source builds that regenerate embedded plugin assets with `make install` or
-  `go generate` require Bun. `make install` additionally requires Make.
-
-## Install from a checkout
-
-`make install` regenerates the embedded built-in plugin bundle and installs
-`hpatch` plus the fixed `shell` helper through `go install`:
-
-```sh
-make install
-```
-
-Installation and uninstallation never create, edit, or remove Codex
-configuration or instruction files. `make uninstall` removes only the
-installed `hpatch` and `shell` binaries.
-
-### Configured plugins
-
-The mandatory `builtin.shell` implementation comes from `plugins/shell.mjs`
-and is embedded during generation; `make install` does not copy it into user
-configuration.
-
-Configured plugins are direct regular `.js` or `.mjs` files in
-`$XDG_CONFIG_HOME/hpatch/plugins` or `~/.config/hpatch/plugins` on Linux. The
-router loads them in lexical order into one immutable process snapshot. It
-does not discover workspace-local or remote plugins and does not hot-reload
-files. Restart `hpatch` after any plugin change. Invalid modules,
-duplicate identities, or an unusable built-in registry fail startup before the
-router listens. The module contract is [`REQ-PLUGIN-001`](doc/spec/plugin.md).
-
-Plugins can import the router-owned portable core directly:
-
-```js
-import {
-  hashLine,
-  lineBounds,
-  parseRowReference,
-} from "hpatch:core/v1";
-```
-
-The versioned module provides verified-row hashing and logical-line bounds,
-compact quoted and row parsing, source-format capabilities, Go lexical helpers,
-and shell-header parsing. It deliberately provides no filesystem, symlink,
-workspace, process, or carrier authority. A plugin that imports an unavailable
-core version fails validation before the router listens. The TypeScript surface
-is declared in
-[`internal/router/toolplugin/core-v1.d.ts`](internal/router/toolplugin/core-v1.d.ts).
-
-## Shell tool
-
-Everyday `functions.shell` use is a free-form program. Compact shebang,
-interpreter selection, and session behavior are in [Why shell?](#why-shell)
-and [`REQ-SHELL-001`](doc/spec/shell.md).
-
-### Retain, inspect, and rerun
-
-A retained result includes `retained: true` and a `script_ref` such as
-`@shell/<call-id>`. The artifact is scoped to the Codex thread, expires after
-one hour by default, and is not a workspace file. Its thread directory is
-removed when the router shuts down.
-
-```sh
-hread @shell/<call-id>
-```
-
-Copy an emitted `LINE:HASH` row into a complete hpatch script whose paths are
-all under `@shell/`. Do not mix retained and workspace paths in one script.
-Rerun the current retained body with:
-
-```text
-#!script=@shell/<call-id>
-```
-
-Retained edits use router-owned storage rather than the workspace
-`apply_patch` carrier. See [`REQ-SHELL-001`](doc/spec/shell.md).
-
-### Private shell commands
-
-Hread, hgrep, hsymbol, and inspect_file are recognized only by the Bash and
-POSIX shell evaluators:
-
-```sh
-hread parser.go 20:40
-hgrep -e 'TranslateForHostAt' .
-hsymbol refs internal/router/server.go 42:abcd Run 2
-inspect_file internal/router/server.go | jq -c '.data.outline[]'
-```
-
-Copy inspect_file `LINE:HASH` spans into HPATCH targets. Use hread when the
-replacement needs unseen source text. Complete inputs and failure behavior:
-[`REQ-READ-001`](doc/spec/read.md), [`REQ-GREP-001`](doc/spec/grep.md),
-[`REQ-SYMBOL-001`](doc/spec/symbol.md), and
-[`REQ-INSPECT-001`](doc/spec/inspect.md).
-
-## Codex router
-
-### Launch with Codex
-
-After installation and `codex login`, run:
-
-```sh
-hpatch codex
-hpatch --grok codex
-hpatch codex --model gpt-6-astra
-hpatch codex exec "Explain this repository"
-```
-
-The wrapper starts a private router on a random loopback port and launches Codex
-with invocation-only provider overrides. It writes no Codex configuration and
-starts no persistent service. Codex owns terminal Ctrl-C; SIGTERM to the wrapper
-terminates both. Codex exit status is preserved.
-
-Hpatch emits no operational logs or log files. Actionable failures appear as
-user-only commentary, queued for the same session when necessary. Repeated
-failures are deduplicated. Undelivered errors and repetition summaries appear on
-stderr after Codex exits; startup failures appear before Codex launches. HTTP
-errors, tool-result diagnostics, and exit codes remain intact.
-
-Put Hpatch flags before `codex`; everything after it belongs to Codex.
-`hpatch --grok --model-protocol native codex` enables Grok without CTP/2.
-Fixed listeners, standalone serving, and custom providers are not supported.
-The wrapper overrides provider selection from config and profiles and rejects
-provider-selection arguments such as `--oss` and provider-related `-c` overrides.
-Configured plugin frontends are private to the session and prepended to the
-child's `PATH`, so multiple wrapped sessions can run concurrently.
-
-Before Codex starts, Hpatch prints `hpatch dashboard: http://127.0.0.1:PORT/`
-once to stderr. Open that URL in your browser while the session is running.
-Metrics are private to that session, not shared across separate launches.
-
-The child inherits `HPATCH_BASE_URL`, the private Responses URL. While the session
-is alive, removing its `/v1` suffix gives the dashboard URL. Metrics stay in memory
-unless explicitly exported: `--capture-output PATH` appends sanitized JSONL, and
-`--metrics-output PATH` writes the final metrics snapshot on shutdown. Use separate
-files; the metrics destination is overwritten. Neither export contains operational
-logs. Opt-in agent issue-report hooks remain available.
-
-See [`REQ-ROUTER-001`](doc/spec/router.md).
-
-### Standalone router
-
-In hpatch mode, the router validates authentication and turn metadata,
-constructs the plugin registry, and installs standalone `functions.hpatch` and
-`functions.shell`. Configured contributions marked model-visible join that
-catalog. Hread, hgrep, hsymbol, and inspect_file remain authenticated
-shell-internal commands.
-
-Defaults:
-
-| Setting | Default |
-| --- | --- |
-| Mode | `hpatch` (`--mode`); `passthrough` forwards Responses traffic without loading the tool registry |
-| Model protocol | `ctp2` (`--model-protocol`); `native` disables compaction; Hpatch-only |
-| Mentor Handoff | Enabled (`--mentor-handoff`); Hpatch-only; disable with `--mentor-handoff=false` |
-| Provider base URL | Fixed Codex ChatGPT upstream |
-| Listen | Random private loopback port per invocation |
-| Upstream response-start timeout | `10m` (`--timeout`) |
-| Upstream stream idle timeout | `4m` of inactivity between bytes (`--stream-idle-timeout`) |
-| Auth | Codex-managed ChatGPT credentials, typically `~/.codex/auth.json` or `$CODEX_HOME/auth.json`; Codex owns login and refresh |
-| Shell runtime directory | `$HPATCH_RUNTIME_DIR`, or the operating-system temporary directory when unset; router and executor must resolve the same absolute path |
-| Capture output | Disabled; `--capture-output PATH` appends sanitized JSONL |
-| Hooks | `$XDG_CONFIG_HOME/hpatch` or `~/.config/hpatch` |
-| Endpoints | `GET /` dashboard, `POST /v1/responses`, `GET /v1/models`, and `GET /api/metrics`, all on one listener |
-
-Use `--mode passthrough` to forward Responses traffic without installing
-hpatch, shell, private commands, or rejected-script recovery. Capture remains
-available because it observes the transport.
-
-Hpatch mode defaults to CTP/2 and Mentor Handoff. Use `--model-protocol native`
-to keep request and response strings uncompressed. See
-[`REQ-CTP-001`](doc/spec/ctp.md). Use `--mentor-handoff=false` to leave spawned
-subagents on their Codex-configured model. See
-[`REQ-MENTOR-001`](doc/spec/mentor.md).
-
-In hpatch mode, run the router as the same login user as Codex so it can open
-the absolute workspace paths Codex sends. Codex attaches its managed
-credentials to each request. The router runs only for the wrapped session.
-
-For an optional comparison baseline, start the router with verified editing and
-shell adaptation enabled, but without CTP/2 or Mentor model overrides:
-
-```sh
-hpatch --mode hpatch --model-protocol native --mentor-handoff=false codex
-```
-
-This is not passthrough: the other Hpatch-mode behavior remains enabled. To
-evaluate either policy separately, change only `--model-protocol` to `ctp2` or
-`--mentor-handoff` to `true`. Normal startup without these overrides keeps both
-policies enabled by default.
-
-### Install the binary
+- **Start eligible subagents with [Mentor Handoff](doc/spec/mentor.md).**
+  - Enabled by default: `gpt-5.6-luna` and `gpt-5.6-terra` subagents start on
+    `gpt-5.6-sol` with high reasoning, then hand back to their configured model.
+  - Ordinary sessions and forks are unchanged.
+    Disable it with `--mentor-handoff=false`.
+
+Token savings and model handoffs are not a promise of faster commands or better
+results on every task. See the [benchmark methodology](doc/benchmarks.md) for
+comparisons.
+
+## Install
+
+### Requirements
+
+- **Go 1.26+**, CGO enabled, and a C toolchain to build the binaries.
+- **Codex CLI**, signed in with `codex login` using ChatGPT authentication.
+- **Node.js 24+** available as `node`, and **ripgrep** available as `rg` on
+  the router's `PATH` for Hpatch mode.
+- Any interpreter your agent selects, such as `python3`, on the executor's
+  `PATH`. Bash and POSIX shell execution are built in.
+
+Install both the router and its shell helper:
 
 ```sh
 go install github.com/yusing/hpatch/cmd/hpatch@latest \
   github.com/yusing/hpatch/cmd/shell@latest
 ```
 
-The binaries are installed under `$GOBIN`, or under `$(go env GOPATH)/bin`
-when `GOBIN` is unset. Ensure that directory is on the router and Codex
-executor `PATH`.
+Add `$GOBIN`, or `$(go env GOPATH)/bin` when unset, to the `PATH` used by both
+Hpatch and Codex. The fixed `shell` helper must be available to Codex's executor.
 
-### Migrating an older installation
-
-`make install` installs `hpatch` and `shell`; it does not stop or remove an old
-service or executable. Finish active sessions before changing the old setup.
-If you installed the old systemd user unit, explicitly stop and disable it when
-ready:
+Then launch:
 
 ```sh
-systemctl --user disable --now hpatch-router.service
+codex login
+hpatch codex
 ```
 
-Remove the old unit file and its drop-ins only after confirming their paths with
-`systemctl --user cat hpatch-router.service`, then run `systemctl --user daemon-reload`.
-Locate the obsolete executable with `command -v hpatch-router` before removing it.
-Remove only old Hpatch-specific provider entries from your Codex configuration;
-keep authentication, unrelated providers, and other settings. Start future
-sessions with `hpatch codex`. No old-name executable alias is installed.
+Hpatch prints a dashboard URL before Codex opens. Use Codex as usual; the router
+supplies the agent's tool guidance automatically.
 
-### Grok native subagents (opt-in)
+### From a checkout
 
-Start the router with `--grok` to add `grok:grok-4.6` to its Codex model catalog and enable
-plaintext collaboration bridging. Keep your existing OpenAI provider/auth configuration.
-This is supported in Hpatch mode, not passthrough mode. Start a new Codex session after enabling
-it so that the model catalog and collaboration history agree. A separately configured
-`model_catalog_json` must also include the Grok entry; it overrides the router's catalog.
+With **Bun** and **Make** installed:
 
-For authentication, either sign in with `grok login --oauth`, or provide `XAI_API_KEY` in the
-router's environment. An API key takes precedence and uses the public xAI API; Grok login uses
-the CLI chat proxy instead. Without an API key, the router reads `~/.grok/auth.json` by default;
-`--grok-auth-file /absolute/path/auth.json` selects another store. It supports the standard Grok
-OAuth issuer/client and refreshes credentials under the CLI's shared lock. You still own login
-and account selection. The router never launches the Grok CLI or forwards Codex credentials to Grok.
+```sh
+make install
+```
 
-Ask the main agent to spawn `grok:grok-4.6` with `fork_turns="none"` and reasoning
-`low`, `medium`, `high` or `xhigh`. Codex still owns the native child, its tools, messages,
-follow-ups, interruptions and permissions. The provider may report the underlying model as
-`grok-4.6-build`. The model-facing collaboration namespace is projected by Hpatch and restored
-before Codex executes it; native lifecycle operations do not become shell-wrapped CLI jobs.
+This regenerates the embedded plugins and installs both binaries. Installation
+and uninstallation leave Codex configuration and instruction files untouched.
+`make uninstall` removes only the installed `hpatch` and `shell` binaries.
 
-Text/image input and custom/function tools are translated. OpenAI-hosted search is unavailable
-on this route. Encrypted OpenAI history, opaque provider file IDs and unsupported provider tools
-fail explicitly; do not fork encrypted OpenAI context into Grok. Omit `max_output_tokens` on this
-route: Chat Completions cannot enforce a total output budget including reasoning, so the router
-rejects that setting rather than silently weakening it. See the
-[third-party subagent requirements](doc/spec/subagents.md) for the full contract.
+## Usage
 
-### Inspect a running session
+Put Hpatch flags **before** `codex`; arguments after it belong to Codex:
 
-Open the dashboard URL printed at startup. For a remote SSH session, forward its
-assigned port to your computer first.
+```sh
+hpatch codex
+hpatch codex --model gpt-6-astra
+hpatch codex exec "Explain this repository"
+hpatch --model-protocol native --mentor-handoff=false codex
+```
 
-From a command run inside wrapped Codex, the inherited URL locates the private
-listener without a fixed port:
+Each invocation starts a private router on a random loopback port and shuts it
+down when Codex exits. Multiple sessions can run independently. Codex handles
+terminal Ctrl-C, and its exit status is preserved.
+
+The wrapper uses the fixed Codex ChatGPT upstream and overrides provider
+selection for that invocation only. Standalone serving, fixed ports, custom
+providers, and provider-selection arguments such as `--oss` are not supported.
+
+### Options
+
+| Flag | Default | Purpose |
+| --- | --- | --- |
+| `--mode` | `hpatch` | Use `passthrough` to forward traffic without Hpatch tools, plugins, CTP/2, or Mentor Handoff |
+| `--model-protocol` | `ctp2` | Use `native` to disable CTP/2 in Hpatch mode |
+| `--mentor-handoff` | `true` | Use `false` to keep subagents on their configured models |
+| `--grok` | `false` | Enable Grok subagents in Hpatch mode |
+| `--grok-auth-file` | `~/.grok/auth.json` | Select a Grok OAuth credential store |
+| `--timeout` | `10m` | Wait for the upstream response to start |
+| `--stream-idle-timeout` | `4m` | Limit inactivity between upstream response bytes |
+| `--capture-output PATH` | Disabled | Append sanitized JSONL metrics |
+| `--metrics-output PATH` | Disabled | Write the final metrics snapshot on shutdown, overwriting the destination |
+
+For a transport-only session:
+
+```sh
+hpatch --mode passthrough codex
+```
+
+Passthrough does not load the plugin registry, so it does not require Node.js or
+plugin grammar validation. Capture remains available.
+
+### Grok subagents
+
+Opting in enables Grok requests and plaintext collaboration messages. Authenticate
+with `grok login --oauth`, or supply `XAI_API_KEY` in the router's environment.
+An API key takes precedence. Codex credentials are never forwarded to Grok.
+
+```sh
+hpatch --grok codex
+```
+
+Ask the main agent to spawn `grok:grok-4.6` in fresh context
+(`fork_turns="none"`). Codex still manages the child, tools, permissions, and
+follow-ups. Start a new session after enabling Grok; a custom
+`model_catalog_json` must also include its entry.
+
+OpenAI-hosted search and inherited encrypted OpenAI history are not supported
+on this route. Explicit `max_output_tokens` limits are rejected because this
+route cannot enforce a total budget including reasoning. See the
+[Grok subagent requirements](doc/spec/subagents.md) for supported inputs and
+credential handling.
+
+## How editing and execution work
+
+### Verified edits
+
+Instead of emitting old source lines, new source lines, and patch framing, the
+agent selects a verified `LINE:HASH` target and sends the new text once. Hpatch
+checks the script and generates the patch; Codex authorizes and applies it.
+Supported language checks run before application.
+
+Verification is not a workspace lock. A range checks its endpoint rows, not
+every line between them. Agents editing overlapping content must coordinate the
+complete read/edit/apply cycle and inspect current content after a handoff.
+
+See the [editing guarantees](doc/spec/output.md) and
+[target selection rules](doc/spec/select.md).
+
+### Direct scripts
+
+The agent can send a program directly to `functions.shell`, for example:
+
+```python
+#!python3
+print("hello")
+```
+
+Bash is the default. Interactive and long-running programs still use Codex's
+native execution and session facilities. Eligible literal `cat` heredoc writes
+are converted to patches so they appear in the usual diff UI; other scripts
+remain ordinary shell execution.
+
+The following commands are available **inside the tool's Bash and POSIX
+programs**, not as standalone utilities in your terminal:
+
+| Command | Purpose | Extra prerequisite on the executor's `PATH` |
+| --- | --- | --- |
+| `hread` | Read verified source rows | None |
+| `hgrep` | Search text with verified row references | `rg` |
+| `hsymbol` | Look up definitions and references | `gopls` for Go; TypeScript 7 as `tsc` for JS, TS, and JSON; `pyright-langserver` for Python |
+| `inspect_file` | Inspect structure without full source bodies | None |
+
+Retained programs use thread-local `@shell/` references and expire after one
+hour by default. They are not workspace files and are removed on router
+shutdown. See the [shell reference](doc/spec/shell.md) for retention, editing,
+reruns, and interpreter selection.
+
+## Metrics
+
+Open the dashboard URL printed at startup. It belongs to that session and stops
+working when Codex exits. For an SSH session, forward its assigned port first.
+
+From a command running inside wrapped Codex, fetch the same metrics as JSON:
 
 ```sh
 curl -sS "${HPATCH_BASE_URL%/v1}/api/metrics"
 ```
 
-Open `${HPATCH_BASE_URL%/v1}/` in a browser for its dashboard. The URL stops working
-when Codex exits. Hpatch requires valid turn metadata; an absent workspace never
-falls back to the router's cwd, and only absolute Hpatch operands are accepted
-without a usable workspace directory.
+Metrics stay in memory unless you request an export. Capture appends JSONL;
+the final snapshot overwrites its destination. Use separate paths:
 
-### Codex model instructions
+```sh
+hpatch --capture-output capture.jsonl --metrics-output metrics.json codex
+```
 
-[`contrib/codex/file-editing-instructions.md`](contrib/codex/file-editing-instructions.md)
-contains shared CTP/2 and tool contracts. The router fills its workflow slot with
-[`editing-workflow-astra.md`](contrib/codex/editing-workflow-astra.md) for `gpt-6-astra`
-and `gpt-6-astra-*`, or
-[`editing-workflow-default.md`](contrib/codex/editing-workflow-default.md) for other models.
-Selection follows each request's model, including switches within a conversation, in both native
-and CTP/2 modes. Each variant covers editing, commentary, shell submission, batching, target reuse,
-and target acquisition. Both variants explain effective tool use, including atomic batching and
-verified-target reuse, without adding task-wide autonomy, prose-length, or validation policies.
-Technical references remain shared.
-No additional configuration is needed. The router
-applies the guidance in memory and never reads or writes the configured instruction file.
+Exports contain sanitized measurements, not raw prompts, scripts, patches, or
+credentials. Provider-reported usage is authoritative; local token estimates
+are not billing figures. Missing cache telemetry is not a confirmed cache miss.
+See the [metrics reference](doc/spec/metrics.md) for interpretation.
 
-The carrier is a nonempty top-level `instructions` string, or the first
-textual developer message when that field is missing, null, or empty. A
-recognized stock Codex file-editing section is replaced. GPT-6 Astra's stock
-prompt is also supported: hpatch guidance replaces its search instruction
-under the work rules, and the displaced exec-command instruction is removed.
-A customized prompt without recognized stock or marked guidance receives the hpatch section only when
-`model_instructions_file` is set in Codex's `config.toml`; without that
-setting, an unrecognized prompt fails before forwarding. Validated compaction
-requests skip this rewrite. The router snapshots the setting at startup;
-restart it after adding or removing the key. See
-[`REQ-GUIDE-001`](doc/spec/guide.md).
+## Configuration and troubleshooting
+
+- **Custom instructions:** Hpatch supplies tool guidance in memory without
+  editing your instruction file. If you use a custom prompt, configure it with
+  Codex's `model_instructions_file` setting. Restart Hpatch after adding or
+  removing that setting. See [guidance compatibility](doc/spec/guide.md).
+- **Plugins:** put regular `.js` or `.mjs` modules in `hpatch/plugins` beneath
+  your platform's user configuration directory. On Linux this is
+  `$XDG_CONFIG_HOME/hpatch/plugins` or `~/.config/hpatch/plugins`; on macOS it is
+  `~/Library/Application Support/hpatch/plugins`. Plugins are loaded at startup;
+  changes require a new Hpatch launch. See the [plugin contract](doc/spec/plugin.md).
+- **Executor environment:** the router and executor must see the same workspace
+  paths and shell runtime directory. `HPATCH_RUNTIME_DIR` overrides the default
+  operating-system temporary directory; both must resolve it to the same
+  absolute path.
+- **Failures:** startup errors appear before Codex launches. Session failures
+  appear as user-only commentary; undelivered notices appear on stderr after
+  Codex exits. Hpatch does not create operational log files.
+- **Diagnostics:** [local tool playback](doc/spec/router-diagnostics.md) and
+  [opt-in agent issue reports](doc/spec/diagnose.md) are available when needed.
+
+### Older installations
+
+Installation does not stop an old service or remove old configuration. Finish
+active sessions before retiring the old setup. If you previously installed the
+systemd user service, stop and disable it when ready:
+
+```sh
+systemctl --user disable --now hpatch-router.service
+```
+
+Confirm old unit paths with `systemctl --user cat hpatch-router.service` before
+removing them, then run `systemctl --user daemon-reload`. Locate any obsolete
+binary with `command -v hpatch-router` before removing it. Remove only old
+Hpatch-specific provider entries from Codex configuration, preserving auth and
+unrelated settings. Use `hpatch codex` for future sessions.
 
 ## Go library
 
-The module path is `github.com/yusing/hpatch`. The root package exposes
-workspace evaluation, application, reporting, and host translation APIs.
-Root-scoped application APIs use a caller-authorized `*os.Root` and
-root-relative cwd. Host translation uses `TranslateForHostAt`, retains cleaned
-host path identities for Codex to authorize, and never uses router cwd as a
-fallback. See [`REQ-FILE-001`](doc/spec/file.md) and
-[`CTR-TRANSLATE-001`](doc/architecture/translate.md).
+The root package, `github.com/yusing/hpatch`, also exposes workspace evaluation,
+application, reporting, and host translation APIs. See the
+[workspace API requirements](doc/spec/file.md) and
+[translation contract](doc/architecture/translate.md).
 
-Callers coordinate overlapping writers through the complete read/edit/apply
-cycle, including rollback and host execution of translated patches. Application
-validates the whole script before staged writes, but multi-file installation is
-neither crash-atomic nor isolated from readers. An application error can follow
-filesystem changes; inspect the outcome before retrying. The complete guarantees
-are in [`REQ-OUTPUT-001`](doc/spec/output.md).
-
-## Metrics
-
-Open the dashboard URL printed at startup.
-`GET /api/metrics` returns the process-lifetime capturer snapshot. Provider
-usage is authoritative for model consumption. Metrics are auxiliary and cannot
-replace a successful edit, command result, or rejection diagnostic.
-
-Use `--capture-output PATH` when durable evidence is needed. The file contains
-sanitized JSONL: payload sizes, statuses, provider usage, tool identities, and
-bounded outcome kinds. Raw prompts, scripts, patches, credentials, and full
-diagnostics are discarded after measurement. Metrics v4/schema-6 captures exclude router-generated
-commentary from model-origin output counts, but retain it in transport totals. Older capture
-versions cannot supply corrected output comparisons; collect fresh evidence.
-
-Local token estimates count decoded JSON keys and scalar values, not outer JSON framing or escaping. Literal escapes inside content still count. Transport bytes remain exact, and provider usage remains authoritative. Metrics v4/schema-6 evidence is required for this counting contract.
-
-Request compression is measured after replay and Hpatch projection, not against incoming Codex history. Delivery expansion is reported separately from assistant-text compression and authoritative paired provider usage.
-
-The dashboard's cache diagnostics compare private request fingerprints and show whether the
-client's per-turn sticky-routing header reaches the provider. `Turn-state forwarding` reports
-absent, preserved, dropped, changed, or unavailable. Stable session keys alone do not establish
-sticky routing, and neither check guarantees a provider cache hit. Raw routing tokens are not saved.
-
-The **Provider response evidence** table distinguishes explicit cached-token counts from missing,
-null, invalid, or unavailable telemetry. It also shows provider-reported models and the provider
-request ID for support correlation. Existing aggregate counters may default missing telemetry to
-zero, so consult this table before treating a zero as a confirmed cache miss. These additive
-details are unavailable in older captures.
-
-The executable benchmark requires Docker Compose, Codex authentication, and
-the task's local source under `benchmarks/repos/`. The default task,
-`etcd-range-stream`, needs a local etcd checkout. The default A/B preset runs one
-attempt per arm with GPT-6 Astra at medium effort: stock versus Hpatch + CTP/2,
-with Mentor Handoff and issue reporting disabled. Use `BENCHMARK_MODE=control-only`
-for one stock attempt, or add `BENCHMARK_PREPARE_ONLY=true` to qualify the historical
-base and oracle without model calls. Imported controls must match the current task-content and
-instruction hashes; older results without that evidence require a fresh control. Read the
-[benchmark methodology](doc/benchmarks.md) before running
-`bash benchmarks/bench.sh`. Capture, snapshot shape, and comparison rules are
-[`REQ-METRICS-001`](doc/spec/metrics.md) and
-[`REQ-BENCH-001`](doc/spec/benchmark.md).
+Library callers must coordinate concurrent writers. Multi-file installation is
+not crash-atomic or isolated from readers, and an application error can follow
+filesystem changes. Inspect the outcome before retrying; see the
+[complete guarantees](doc/spec/output.md).
 
 ## Documentation
 
-| Doc | Contents |
-| --- | --- |
-| [`doc/brief.md`](doc/brief.md) | Product brief and scope |
-| [`doc/spec/index.md`](doc/spec/index.md) | Specification inventory; each listed file owns one requirement |
-| [`doc/architecture/index.md`](doc/architecture/index.md) | Ownership-contract inventory |
-| [`doc/benchmarks.md`](doc/benchmarks.md) | Benchmark operation and interpretation |
-| [`doc/codex-router-e2e.md`](doc/codex-router-e2e.md) | Codex-facing end-to-end procedure |
-| [`contrib/codex/file-editing-instructions.md`](contrib/codex/file-editing-instructions.md) | Persistent CTP/2, edit, shell, read, search, and inspection guidance |
-| [`AGENTS.md`](AGENTS.md) | Agent workflow and repository navigation |
+- [Interface specifications](doc/spec/index.md)
+- [Architecture and ownership](doc/architecture/index.md)
+- [Benchmark methodology](doc/benchmarks.md)
+- [Codex end-to-end checks](doc/codex-router-e2e.md)
 
 ## Development
+
+Bun is required to regenerate and test plugin assets:
 
 ```sh
 go generate ./internal/router/toolplugin
@@ -629,11 +323,10 @@ go vet ./...
 make install
 ```
 
-Focused checks are `go test .` for the engine, `go test ./internal/router` for
-routing and plugins, and `go test ./cmd/hpatch ./cmd/shell` for the
-process entry points.
+For focused checks, use `go test .` for the engine,
+`go test ./internal/router` for routing, or
+`go test ./cmd/hpatch ./cmd/shell` for process entry points.
 
-Starting the router in hpatch mode with `HPATCH_DIAGNOSE=1` adds the
-model-visible `report_issue` tool. Configure `hooks.diagnose` in
-`$XDG_CONFIG_HOME/hpatch/settings.json` or `~/.config/hpatch/settings.json`.
-See [`REQ-DIAGNOSE-001`](doc/spec/diagnose.md).
+## License
+
+MIT. See [LICENSE](LICENSE).
