@@ -814,8 +814,8 @@ func execCommandParamsDescription(section string) string {
 	const heading = "### `#!params`"
 	const appMarker = "exec_command(args:"
 
-	if marker := strings.Index(section, appMarker); marker >= 0 {
-		rest := strings.TrimLeft(section[marker+len(appMarker):], " \t")
+	if _, after, ok := strings.Cut(section, appMarker); ok {
+		rest := strings.TrimLeft(after, " \t")
 		end := strings.Index(rest, "}): Promise")
 		if !strings.HasPrefix(rest, "{") || end < 0 {
 			return ""

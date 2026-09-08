@@ -186,11 +186,12 @@ func hpatchNativeCommand(history hpatchHistory) string {
 }
 
 func workerCommand(executable string, arguments []string) string {
-	command := shellQuoteArgument(executable)
+	var command strings.Builder
+	command.WriteString(shellQuoteArgument(executable))
 	for _, argument := range arguments {
-		command += " " + shellQuoteArgument(argument)
+		command.WriteString(" " + shellQuoteArgument(argument))
 	}
-	return command
+	return command.String()
 }
 
 func (registry *toolRegistry) directBashExecCommand(arguments []string) (string, bool) {

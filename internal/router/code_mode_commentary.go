@@ -84,11 +84,11 @@ func (t *hpatchResponseTransform) lowerCodeModeCommentary(callID, input string) 
 	}
 
 	result := input
-	for index := len(calls) - 1; index >= 0; index-- {
+	for index, call := range slices.Backward(calls) {
 		if parents[index] != -1 {
 			continue
 		}
-		call := calls[index]
+
 		result = result[:call.start] + replacements[index] + result[call.end:]
 	}
 	return result, true, nil

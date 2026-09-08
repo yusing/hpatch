@@ -67,7 +67,6 @@ func observeChatResponse(payload []byte, contentType string, record *captureReco
 				call.Function.Arguments += part.Function.Arguments
 			}
 			for i, part := range choice.Message.ToolCalls {
-				part := part
 				calls[i] = &part
 			}
 			switch choice.FinishReason {

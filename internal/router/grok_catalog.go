@@ -3,6 +3,7 @@ package router
 import (
 	"encoding/json"
 	"errors"
+	"maps"
 )
 
 // appendGrokModel preserves Codex's evolving model metadata schema by extending
@@ -37,9 +38,7 @@ func appendGrokModel(body []byte) ([]byte, error) {
 		return nil, errors.New("Grok requires a Codex catalog with native v2 subagent support")
 	}
 	model := make(map[string]json.RawMessage, len(template))
-	for key, value := range template {
-		model[key] = value
-	}
+	maps.Copy(model, template)
 	for key, value := range map[string]any{
 		"slug": grokModel, "display_name": grokModel, "description": "Grok 4.6 native subagent through Hpatch. Start with fork_turns=none.",
 		"context_window": 500000, "max_context_window": 500000,

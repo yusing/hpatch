@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"io"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -61,11 +62,9 @@ func TestTurnStateRoundTrip(t *testing.T) {
 					codec = mustCTP2Codec(t)
 				}
 				headers := serverMetadataHeaders(t, "turn", map[string]json.RawMessage{t.TempDir(): nil})
-				for key, values := range codexAuthHeaders() {
-					headers[key] = values
-				}
+				maps.Copy(headers, codexAuthHeaders())
 				firstToken := ""
-				for step := 0; step < 3; step++ {
+				for step := range 3 {
 					headers.Del("x-codex-turn-state")
 					if step == 1 {
 						headers.Set("x-codex-turn-state", firstToken)

@@ -331,8 +331,8 @@ func transformCTP2DeveloperContent(
 		return raw, false, nil
 	}
 	carrier := -1
-	for index := len(parts) - 1; index >= 0; index-- {
-		if parts[index].text != nil && isCTP2InputTextPart(parts[index].typeName) {
+	for index, part := range slices.Backward(parts) {
+		if part.text != nil && isCTP2InputTextPart(part.typeName) {
 			carrier = index
 			break
 		}

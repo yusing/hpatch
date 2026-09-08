@@ -132,7 +132,7 @@ func TestProviderEvidenceRetainsAttemptHeadersWithoutSecrets(t *testing.T) {
 		t.Fatal("raw secret retained")
 	}
 	var records []captureRecord
-	for _, line := range bytes.Split(bytes.TrimSpace(payload), []byte{'\n'}) {
+	for line := range bytes.SplitSeq(bytes.TrimSpace(payload), []byte{'\n'}) {
 		var record captureRecord
 		if err := json.Unmarshal(line, &record); err != nil {
 			t.Fatal(err)

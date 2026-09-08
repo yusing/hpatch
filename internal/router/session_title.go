@@ -94,11 +94,11 @@ func scanSessionTitle(path, sessionID string) string {
 
 func jsonStringField(line, name string) (string, bool) {
 	key := strconv.Quote(name)
-	start := strings.Index(line, key)
-	if start < 0 {
+	_, after, ok := strings.Cut(line, key)
+	if !ok {
 		return "", false
 	}
-	remaining := strings.TrimLeft(line[start+len(key):], " \t")
+	remaining := strings.TrimLeft(after, " \t")
 	if !strings.HasPrefix(remaining, ":") {
 		return "", false
 	}

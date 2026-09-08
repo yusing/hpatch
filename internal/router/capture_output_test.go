@@ -75,7 +75,7 @@ func TestCaptureModelOutputThroughRouterCommentary(t *testing.T) {
 					_, _ = w.Write(transformed)
 					return
 				}
-				for _, raw := range bytes.Split(bytes.TrimSpace(body), []byte("\n\n")) {
+				for raw := range bytes.SplitSeq(bytes.TrimSpace(body), []byte("\n\n")) {
 					event := bytes.TrimPrefix(raw, []byte("data: "))
 					var envelope struct {
 						Type string `json:"type"`

@@ -1667,11 +1667,11 @@ func TestNativeExecCommandAddsShellWarning(t *testing.T) {
 func decodeExecCarrierArguments(t *testing.T, carrierInput string, destination any) {
 	t.Helper()
 	encoded := strings.TrimPrefix(carrierInput, "const result = await tools.exec_command(")
-	end := strings.Index(encoded, ");\n")
-	if end < 0 {
+	before, _, ok := strings.Cut(encoded, ");\n")
+	if !ok {
 		t.Fatalf("translated exec carrier is malformed: %s", carrierInput)
 	}
-	if err := json.Unmarshal([]byte(encoded[:end]), destination); err != nil {
+	if err := json.Unmarshal([]byte(before), destination); err != nil {
 		t.Fatalf("decode translated exec arguments: %v\n%s", err, carrierInput)
 	}
 }

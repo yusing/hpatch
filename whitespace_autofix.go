@@ -1,6 +1,7 @@
 package hpatch
 
 import (
+	"slices"
 	"sort"
 	"strings"
 )
@@ -31,8 +32,8 @@ func fixChangedLineWhitespace(content string, edits []baselineEdit, offsets *for
 	// A blank line is at EOF when every physical line after it is also blank.
 	// Delete only lines attributed to an edit, retaining pre-existing blank
 	// lines outside effective replacement spans.
-	for index := len(lines) - 1; index >= 0; index-- {
-		line := lines[index]
+	for index, line := range slices.Backward(lines) {
+
 		if !onlyHorizontalWhitespace(content[line.start:line.contentEnd]) {
 			break
 		}
