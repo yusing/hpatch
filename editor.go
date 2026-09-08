@@ -39,6 +39,7 @@ type baselineEdit struct {
 type editor struct {
 	baseline     string
 	edits        []baselineEdit
+	projected    []renderedEdit
 	lastOrigin   editOrigin
 	finalContent *string
 	finalOffsets *formattedOffsetMap
@@ -172,7 +173,7 @@ func (e *editor) resolveRow(reference rowReference) (logicalLine, error) {
 
 // renderedBaselineLine computes the rendered offsets of a baseline line after edits.
 func (e *editor) renderedBaselineLine(line logicalLine) (int, int, bool) {
-	for _, edit := range e.orderedEdits() {
+	for _, edit := range e.renderedEdits() {
 		if edit.start == edit.end {
 			if edit.start > line.start && edit.start < line.fullEnd {
 				return 0, 0, false
@@ -191,7 +192,7 @@ func (e *editor) renderedBaselineLine(line logicalLine) (int, int, bool) {
 // renderedBaselineBoundary maps a baseline offset to its rendered position after edits.
 func (e *editor) renderedBaselineBoundary(offset int, includeInsertions bool) int {
 	rendered := offset
-	for _, edit := range e.orderedEdits() {
+	for _, edit := range e.renderedEdits() {
 		if edit.start == edit.end {
 			if edit.start < offset || (includeInsertions && edit.start == offset) {
 				rendered += len(edit.replacement)
@@ -318,6 +319,7 @@ func (e *editor) applyMutation(operation string, target targetSpec, value string
 func (e *editor) initialize(value string, origin editOrigin) {
 	e.baseline = ""
 	e.edits = nil
+	e.projected = nil
 	e.finalContent = nil
 	e.finalOffsets = nil
 	if value == "" {
@@ -365,6 +367,7 @@ func (e *editor) recordEdits(candidates []baselineEdit) error {
 	}
 	e.edits = append(e.edits, additions...)
 	if len(additions) != 0 {
+		e.projected = nil
 		e.lastOrigin = additions[len(additions)-1].editOrigin
 	}
 	return nil
@@ -424,11 +427,6 @@ func (e *editor) firstEdit() (baselineEdit, bool) {
 	return e.edits[0], true
 }
 
-// orderedEdits returns edits sorted by baseline offset.
-func (e *editor) orderedEdits() []baselineEdit {
-	return orderedBaselineEdits(e.edits)
-}
-
 // orderedBaselineEdits sorts baseline edits by offset and sequence.
 func orderedBaselineEdits(source []baselineEdit) []baselineEdit {
 	edits := slices.Clone(source)
@@ -454,21 +452,12 @@ func (e *editor) content() string {
 	if e.finalContent != nil {
 		return *e.finalContent
 	}
-	return e.contentWithEdits(e.edits)
+	return e.contentWithProjection(e.renderedEdits())
 }
 
 // contentWithEdits renders content with a specific set of edits.
 func (e *editor) contentWithEdits(source []baselineEdit) string {
-	edits := orderedBaselineEdits(source)
-	var result strings.Builder
-	cursor := 0
-	for _, edit := range edits {
-		result.WriteString(e.baseline[cursor:edit.start])
-		result.WriteString(edit.replacement)
-		cursor = max(cursor, edit.end)
-	}
-	result.WriteString(e.baseline[cursor:])
-	return result.String()
+	return e.contentWithProjection(projectBaselineEdits(source))
 }
 
 // nonOverlappingLiteralOffsets finds non-overlapping occurrences of literal in text.

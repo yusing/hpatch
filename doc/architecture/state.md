@@ -6,8 +6,8 @@ One projector owned beside the engine consumes only the completed result. It der
 active final path, last effective mutation operation and surviving path, affected target
 count, at most three immutable-baseline Unicode ranges, remaining-range count, aggregate
 net file actions, and final-reference blocks for `REQ-OUTPUT-001`. For each surviving
-effective content command, it uses the editor's existing splices and rendered content to
-form one aggregate rendered extent, maps the whole extent through the existing language-format
+effective content command, it aggregates spans from the editor-owned ordered splice projection
+into one rendered extent, maps the whole extent through the existing language-format
 offset map, and selects the endpoint rows plus their immediate surviving neighbors. It
 retains authored command order, orders each block by final line, and deduplicates rows
 within that block. It does not consult the committed filesystem or reconstruct editor state.

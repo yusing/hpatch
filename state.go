@@ -13,11 +13,6 @@ type renderedCoordinate struct {
 	column int
 }
 
-type renderedSpan struct {
-	start int
-	end   int
-}
-
 type renderedDocument struct {
 	content string
 	lines   []logicalLine
@@ -200,21 +195,14 @@ func (w *workspace) writeFinalReferences(report *strings.Builder) bool {
 
 func (e *editor) renderedEditExtents() map[int]renderedSpan {
 	result := make(map[int]renderedSpan)
-	renderedOffset := 0
-	baselineOffset := 0
-	for _, edit := range e.orderedEdits() {
-		renderedOffset += edit.start - baselineOffset
-		start := renderedOffset
-		end := start + len(edit.replacement)
+	for _, edit := range e.renderedEdits() {
 		if extent, ok := result[edit.command]; ok {
-			extent.start = min(extent.start, start)
-			extent.end = max(extent.end, end)
+			extent.start = min(extent.start, edit.span.start)
+			extent.end = max(extent.end, edit.span.end)
 			result[edit.command] = extent
 		} else {
-			result[edit.command] = renderedSpan{start: start, end: end}
+			result[edit.command] = edit.span
 		}
-		renderedOffset = end
-		baselineOffset = max(baselineOffset, edit.end)
 	}
 	return result
 }

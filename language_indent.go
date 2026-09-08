@@ -227,6 +227,7 @@ func (e *editor) renderIndentation(ctx context.Context, path string) error {
 		case indentationCorrectionExact:
 			if e.edits[editIndex].replacement != candidate.correction.correctedText {
 				e.edits[editIndex].replacement = candidate.correction.correctedText
+				e.projected = nil
 			}
 		case indentationCorrectionPythonWrapper, indentationCorrectionBracedWrapper:
 			if unit == "" ||
@@ -261,9 +262,13 @@ func (e *editor) renderIndentation(ctx context.Context, path string) error {
 	for _, correction := range prepared {
 		probeEdits[correction.editIndex].replacement = correction.replacement
 	}
-	source := e.contentWithEdits(probeEdits)
+	projection := projectBaselineEdits(probeEdits)
+	source := e.contentWithProjection(projection)
 	probes := make([]indentationWrapperProbe, 0, len(prepared))
-	ranges := renderedEditRanges(probeEdits)
+	ranges := make(map[int]renderedSpan, len(projection))
+	for _, edit := range projection {
+		ranges[edit.sequence] = edit.span
+	}
 	for _, correction := range prepared {
 		span, ok := ranges[correction.sequence]
 		if !ok {
@@ -290,6 +295,7 @@ func (e *editor) renderIndentation(ctx context.Context, path string) error {
 	for _, correction := range prepared {
 		e.edits[correction.editIndex].replacement = correction.replacement
 	}
+	e.projected = nil
 	return nil
 }
 
@@ -316,18 +322,4 @@ func prepareWrapperReplacement(replacement string, candidate indentationWrapperC
 		correctedChild.contentEnd,
 		true,
 		true
-}
-
-func renderedEditRanges(source []baselineEdit) map[int]renderedSpan {
-	ranges := make(map[int]renderedSpan, len(source))
-	baselineOffset := 0
-	renderedOffset := 0
-	for _, edit := range orderedBaselineEdits(source) {
-		renderedOffset += edit.start - baselineOffset
-		start, end := renderedOffset, renderedOffset+len(edit.replacement)
-		ranges[edit.sequence] = renderedSpan{start: start, end: end}
-		renderedOffset = end
-		baselineOffset = max(baselineOffset, edit.end)
-	}
-	return ranges
 }

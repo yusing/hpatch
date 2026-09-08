@@ -18,6 +18,15 @@ changed-line whitespace cleanup as one original-to-final render. It retains the 
 and its composed offset map for reporting. No command materializes an intermediate baseline,
 and all targets continue to resolve against the invocation-original content.
 
+`editor_projection.go` owns the ordered splice projection for each immutable edit snapshot.
+Each projected splice retains its baseline edit and one half-open, pre-format rendered byte
+span, including collapsed deletion spans. Content rendering, reporting, whitespace cleanup,
+indentation probes, and syntax attribution consume that projection rather than independently
+accumulating rendered offsets. The editor caches its current snapshot and invalidates it on
+initialization, accepted edits, and actual indentation corrections. Hypothetical indentation
+and syntax-subset snapshots use the same projector without replacing the editor's snapshot.
+Consumers retain their distinct aggregation, distance, deletion, and endpoint policies.
+
 One shared pure verified-row owner computes and renders `LINE:HASH` identity for routed
 reads under `REQ-READ-001`, target validation, repair context, and final-state previews.
 Target resolution checks the specified one-based line and, when that check fails,

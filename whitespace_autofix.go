@@ -15,7 +15,7 @@ const gitBinaryProbeSize = 8000
 
 // fixChangedLineWhitespace removes Git-default whitespace errors only from
 // lines introduced by the evaluated script.
-func fixChangedLineWhitespace(content string, edits []baselineEdit, offsets *formattedOffsetMap) (string, []whitespaceDeletion) {
+func fixChangedLineWhitespace(content string, edits []renderedEdit, offsets *formattedOffsetMap) (string, []whitespaceDeletion) {
 	lines := logicalLines(content)
 	changed := make([]bool, len(lines))
 	markReplacementResultLines(changed, lines, edits, offsets)
@@ -63,13 +63,9 @@ func isGitDefaultBinary(content string) bool {
 }
 
 // markReplacementResultLines marks lines that were modified by edits.
-func markReplacementResultLines(changed []bool, lines []logicalLine, edits []baselineEdit, offsets *formattedOffsetMap) {
-	baselineOffset := 0
-	renderedOffset := 0
-	for _, edit := range orderedBaselineEdits(edits) {
-		renderedOffset += edit.start - baselineOffset
-		start := renderedOffset
-		end := start + len(edit.replacement)
+func markReplacementResultLines(changed []bool, lines []logicalLine, edits []renderedEdit, offsets *formattedOffsetMap) {
+	for _, edit := range edits {
+		start, end := edit.span.start, edit.span.end
 		switch {
 		case start != end:
 			extent := offsets.mapExtent(renderedSpan{start: start, end: end})
@@ -89,8 +85,6 @@ func markReplacementResultLines(changed []bool, lines []logicalLine, edits []bas
 				changed[index] = true
 			}
 		}
-		renderedOffset += len(edit.replacement)
-		baselineOffset = max(baselineOffset, edit.end)
 	}
 }
 

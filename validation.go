@@ -203,7 +203,7 @@ func (file *fileState) renderContent(ctx context.Context) ([]*commandError, erro
 	}
 	file.editor.finalContent = nil
 	file.editor.finalOffsets = nil
-	rendered := file.editor.contentWithEdits(file.editor.edits)
+	rendered := file.editor.contentWithProjection(file.editor.renderedEdits())
 	final := rendered
 	var offsets *formattedOffsetMap
 	var failures []*commandError
@@ -248,7 +248,7 @@ func (file *fileState) renderContent(ctx context.Context) ([]*commandError, erro
 	}
 
 	if !isGitDefaultBinary(file.original) && !isGitDefaultBinary(final) {
-		fixed, deletions := fixChangedLineWhitespace(final, file.editor.edits, offsets)
+		fixed, deletions := fixChangedLineWhitespace(final, file.editor.renderedEdits(), offsets)
 		if fixed != final {
 			cleanupOffsets := newWhitespaceOffsetMap(len(final), deletions)
 			if offsets == nil {
@@ -741,12 +741,8 @@ func (e *editor) syntaxEditGroups(generatedOffset, contentLength int) []syntaxEd
 		groups[index].edits = append(groups[index].edits, edit)
 	}
 
-	baselineOffset := 0
-	renderedOffset := 0
-	for _, edit := range e.orderedEdits() {
-		renderedOffset += edit.start - baselineOffset
-		start := renderedOffset
-		end := start + len(edit.replacement)
+	for _, edit := range e.renderedEdits() {
+		start, end := edit.span.start, edit.span.end
 		distance := max(start-generatedOffset, generatedOffset-end, 0)
 		index := indices[edit.command]
 		if distance <= groups[index].distance {
@@ -756,8 +752,6 @@ func (e *editor) syntaxEditGroups(generatedOffset, contentLength int) []syntaxEd
 				groups[index].valueLine = replacementValueLine(edit.replacement, generatedOffset-start)
 			}
 		}
-		renderedOffset = end
-		baselineOffset = max(baselineOffset, edit.end)
 	}
 	return groups
 }

@@ -138,7 +138,7 @@ func writeTextTargetRepair(report *strings.Builder, editor *editor, lines []logi
 }
 
 func (e *editor) claimedLineSpans(lines []logicalLine) string {
-	edits := e.orderedEdits()
+	edits := e.renderedEdits()
 	claims := make([]string, 0, min(len(edits), repairListLimit))
 	for _, edit := range edits[:min(len(edits), repairListLimit)] {
 		start := lineNumberAt(lines, edit.start)
