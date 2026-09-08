@@ -61,7 +61,7 @@ func TestCodeModeCommentaryUsesOneRouteAndFallsBackToEvaluation(t *testing.T) {
 	}
 
 	for index := routes; index < maxCommentaryRoutes; index++ {
-		if proxy.commentary.subscribe("session", "call") == "" {
+		if proxy.commentary.subscribe("session", "call", "") == "" {
 			t.Fatalf("route %d was rejected early", index)
 		}
 	}
@@ -134,7 +134,7 @@ func TestCodeModeCommentaryLowersAuthoritativeStreamingInput(t *testing.T) {
 	}
 }
 
-func TestCodeModeWithoutExplicitCommentaryGetsDefault(t *testing.T) {
+func TestCodeModeWithoutExplicitCommentaryPreservesOutput(t *testing.T) {
 	transform, proxy, _, _ := newHPatchTestTransform(t, testTranslator(t, new(int)))
 	proxy.commentaryEndpoint = "http://127.0.0.1:8080" + commentaryPublisherPath
 	item := map[string]json.RawMessage{
@@ -142,16 +142,17 @@ func TestCodeModeWithoutExplicitCommentaryGetsDefault(t *testing.T) {
 		"call_id": mustMarshalJSON("call-default"), "id": mustMarshalJSON("item-default"),
 		"input": mustMarshalJSON("text('done');"),
 	}
-	view := newResponsesItem(item)
-	changed, err := transform.transformOutputItem(&view)
-	if err != nil || changed {
-		t.Fatalf("changed = %v, error %v", changed, err)
+	output, err := transform.TransformJSON(mustTestJSON(t, map[string]any{"status": "completed", "output": []any{item}}))
+	if err != nil {
+		t.Fatal(err)
 	}
-	message := transform.localStartCommentary(item)
-	if message == nil || !strings.Contains(string(message["content"]), "Running the requested operation.") {
-		t.Fatalf("default commentary = %v", message)
+	var response struct {
+		Output []map[string]json.RawMessage `json:"output"`
 	}
-	if repeated := transform.localStartCommentary(item); repeated != nil {
-		t.Fatalf("repeated default = %v", repeated)
+	if err := json.Unmarshal(output, &response); err != nil {
+		t.Fatal(err)
+	}
+	if len(response.Output) != 1 || jsonString(response.Output[0], "input") != "text('done');" {
+		t.Fatalf("operation output changed: %s", output)
 	}
 }

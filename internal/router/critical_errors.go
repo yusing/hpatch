@@ -49,6 +49,13 @@ func (c *CriticalErrors) record(f *requestFinalization, err error) {
 			message = "Hpatch could not safely translate the response. No unsupported tool call was released; check the request error before retrying."
 		}
 	}
+	// Observe this request's safe description before session deduplication. A
+	// routing session can be shared or remapped; its retained queue cannot tell
+	// us which thread produced an earlier failure.
+	noticeID := commentaryMessageID("critical:" + f.sessionID + ":" + category)
+	if f.observeCriticalNotice != nil {
+		f.observeCriticalNotice(noticeID, message)
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	for _, notice := range c.entries {
@@ -62,7 +69,7 @@ func (c *CriticalErrors) record(f *requestFinalization, err error) {
 		return
 	}
 	c.entries = append(c.entries, &criticalNotice{session: f.sessionID, category: category, message: message,
-		id: commentaryMessageID("critical:" + f.sessionID + ":" + category), count: 1})
+		id: noticeID, count: 1})
 }
 
 func noticeText(n *criticalNotice) string {

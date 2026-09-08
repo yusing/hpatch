@@ -7,7 +7,7 @@ selects statically authored router payloads instead of a provider response. Lead
 whitespace is ignored. The prefix is case-sensitive and must end at a whitespace boundary.
 Arguments may use literal shell quoting, but expansion, redirection, operators, and multiple
 commands are not accepted. Missing/unknown targets and invalid arguments produce a local
-assistant explanation listing the available target; they do not contact a provider or run tools.
+assistant explanation listing the available targets; they do not contact a provider or run tools.
 
 Only the latest actual user message selects playback. String content and text-part arrays are
 supported. Tool output, agent messages, quoted examples, code fences, and mentions later in prose
@@ -60,3 +60,36 @@ Acceptance:
 4. Unknown/malformed commands remain local; quoted/prose/tool-output occurrences do not trigger.
 5. Subsequent normal requests preserve unrelated history and contain no diagnostic command,
    fixture payload, result, or local progress message. Passthrough requests are unchanged.
+
+## Subagent commentary playback
+
+`:hpatch_diag subagent_commentary [stream|deferred|wait]` uses synthetic child
+observations through the shared ancestry, collection, queue, attribution, and
+root-copy replay path. The default combines stream and deferred cases. Every
+fixture identifies itself as diagnostic; no provider request, real subagent spawn,
+user script, encrypted prompt, or workspace edit is involved.
+
+- `stream` interleaves alpha/beta observations between SSE frames. JSON presents
+  the equivalent collected activity before the fixture result.
+- `deferred` emits the fixed shell no-op `:` through the normal host authorization
+  and translation path. After that response closes, a fixture publication is
+  queued for the next validated diagnostic tool continuation, exactly once.
+- `wait` requires SSE and a catalog-advertised v2 mailbox wait whose limits permit
+  the fixed 10-second request. It emits the unchanged native wait call, keeps only
+  this diagnostic stream open for two seconds, then offers a synthetic update
+  before the terminal. The user observes whether native waiting had begun;
+  projection alone does not establish dispatch timing. Unsupported catalogs report
+  the case unavailable without a substitute operation. Existing agents are never
+  interrupted. Cancellation ends the diagnostic hold.
+
+Diagnostic/root-copy transcript items are removed on subsequent ordinary replay,
+without removing unrelated history or changing the substantive fixture result.
+Incomplete, duplicate, missing, or pending continuation history stops playback
+without repeating a payload. Synthetic tests do not establish real child traffic;
+that requires a separately requested stock-Codex delegation smoke test.
+
+Acceptance additionally covers JSON/SSE attribution, nested ancestry, concurrent
+roots, coalescing and duplicate suppression, late publications, expiry, byte and
+capacity limits, cancellation, and preservation of original child output and
+root substantive results. No production stream-lifetime change is authorized by
+the diagnostic wait experiment.

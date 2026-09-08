@@ -45,7 +45,7 @@ func subagentToolCatalog(tools *responsesToolCatalog) map[string]struct{} {
 				continue
 			}
 			for _, tool := range node.nested.tools {
-				if tool != nil && tool.Type == "function" && tool.Name == "spawn_agent" {
+				if tool != nil && tool.Type == "function" && slices.Contains([]string{"spawn_agent", "followup_task", "send_message", "wait_agent", "interrupt_agent"}, tool.Name) {
 					catalog[functionToolKey(namespace.Name, tool.Name)] = struct{}{}
 				}
 			}
@@ -59,7 +59,7 @@ func subagentCommentaryMessageID(seed string) string {
 	return fmt.Sprintf("%s%x", subagentCommentaryMessagePrefix, digest[:12])
 }
 
-func prepareSubagentInputCommentary(fields map[string]json.RawMessage) []map[string]json.RawMessage {
+func prepareSubagentInputCommentary(fields map[string]json.RawMessage, recipient string) []map[string]json.RawMessage {
 	var items []map[string]json.RawMessage
 	if json.Unmarshal(fields["input"], &items) != nil {
 		return nil
@@ -80,30 +80,44 @@ func prepareSubagentInputCommentary(fields map[string]json.RawMessage) []map[str
 	}
 
 	var commentary []map[string]json.RawMessage
+	budget := maxCommentaryPublicationBytes
 	for _, item := range items {
 		text, sender, ok := subagentResponse(item)
-		if !ok {
+		if !ok || jsonString(item, "recipient") != recipient {
 			continue
 		}
 		id := subagentCommentaryMessageID("response\x00" + jsonString(item, "id") + "\x00" + sender + "\x00" + text)
 		if _, alreadyVisible := visible[id]; alreadyVisible {
 			continue
 		}
-		commentary = append(commentary, assistantCommentaryMessage(id, "Response from "+sender+":\n"+text))
+		label := "[" + recipient + " <- " + sender + "] Message received."
+		if text != "" {
+			label = "[" + recipient + " <- " + sender + "] Reply received:\n" + text
+		}
+		if len(label) <= budget && len(commentary) < maxCommentaryEventsPerRoute {
+			budget -= len(label)
+			commentary = append(commentary, assistantCommentaryMessage(id, label))
+		}
 	}
 	return commentary
 }
 
 func subagentResponse(item map[string]json.RawMessage) (text, sender string, ok bool) {
-	if jsonString(item, "type") != "agent_message" || jsonString(item, "recipient") != "/root" {
+	if jsonString(item, "type") != "agent_message" {
 		return "", "", false
 	}
 	sender = jsonString(item, "author")
-	if !strings.HasPrefix(sender, "/root/") {
+	if sender != "/root" && !strings.HasPrefix(sender, "/root/") || strings.ContainsAny(sender, "\r\n\x00") {
 		return "", "", false
 	}
 	var content []map[string]json.RawMessage
-	if json.Unmarshal(item["content"], &content) != nil || len(content) != 1 || jsonString(content[0], "type") != "input_text" {
+	if json.Unmarshal(item["content"], &content) != nil || len(content) != 1 {
+		return "", "", false
+	}
+	if jsonString(content[0], "type") == "encrypted_content" {
+		return "", sender, true
+	}
+	if jsonString(content[0], "type") != "input_text" {
 		return "", "", false
 	}
 	body := jsonString(content[0], "text")
@@ -117,7 +131,7 @@ func subagentResponse(item map[string]json.RawMessage) (text, sender string, ok 
 func subagentCallCommentary(
 	item map[string]json.RawMessage,
 	catalog map[string]struct{},
-	parentModel, parentEffort string,
+	parentModel, parentEffort, author string,
 ) (map[string]json.RawMessage, bool) {
 	if jsonString(item, "type") != "function_call" {
 		return nil, false
@@ -131,8 +145,34 @@ func subagentCallCommentary(
 	if callID == "" || json.Unmarshal([]byte(jsonString(item, "arguments")), &arguments) != nil {
 		return nil, false
 	}
-	if name != "spawn_agent" {
+	if author == "" {
+		author = "/root"
+	}
+	target := jsonString(arguments, "target")
+	label := "[" + author + "] "
+	if target != "" {
+		label = "[" + author + " -> " + target + "] "
+	}
+	var action string
+	switch name {
+	case "followup_task":
+		action = "Follow-up requested."
+	case "send_message":
 		return nil, false
+	case "wait_agent":
+		action = "Waiting for agent updates."
+	case "interrupt_agent":
+		action = "Interruption requested."
+	case "spawn_agent":
+	default:
+		return nil, false
+	}
+	id := subagentCommentaryMessageID(name + "\x00" + callID)
+	if action != "" {
+		if strings.ContainsAny(target, "\r\n\x00") || len(label)+len(action) > maxCommentaryPublicationBytes {
+			return nil, false
+		}
+		return assistantCommentaryMessage(id, label+action), true
 	}
 	model, effort := parentModel, parentEffort
 	var requestedModel, requestedEffort, roleName string
@@ -146,12 +186,14 @@ func subagentCallCommentary(
 		effort = requestedEffort
 	}
 	var builder strings.Builder
-	builder.WriteString("Starting subagent.\n")
+	builder.WriteString("[" + author + "] Spawn requested.\n")
 	if roleName = strings.TrimSpace(roleName); roleName != "" {
-		fmt.Fprintf(&builder, "Role: %s\n", roleName)
+		fmt.Fprintf(&builder, "Role: `%s`\n", roleName)
 	}
-	fmt.Fprintf(&builder, "Model: %s\nReasoning effort: %s", model, effort)
-	id := subagentCommentaryMessageID(name + "\x00" + callID)
+	fmt.Fprintf(&builder, "Model: `%s`\nReasoning effort: `%s`", model, effort)
+	if builder.Len() > maxCommentaryPublicationBytes {
+		return nil, false
+	}
 	return assistantCommentaryMessage(id, builder.String()), true
 }
 

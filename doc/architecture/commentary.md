@@ -3,7 +3,7 @@
 ## CTR-COMMENTARY-001 — Router-owned operation and subagent commentary projection
 
 The Responses router owns optional commentary schema projection for extensible ordinary function
-tools, default selection for eligible structured calls, removal of only its own argument, assistant
+tools, authored commentary for eligible structured calls, removal of only its own argument, assistant
 message rendering, and exact replay restoration. Provider-owned and strict schemas remain exact, except for the separately owned opt-in
 [third-party collaboration projection](subagents.md).
 Collaboration calls remain outside generic operation commentary so the distinct subagent contract
@@ -26,7 +26,7 @@ Shell publications retain thread identity, not an inferred original call ID. She
 completion cannot retire a shared thread route; idle expiry and router shutdown own that lifetime.
 Exact shell replay provenance follows stable thread identity rather than the current routing
 session and has a separate bounded budget. Commentary retention cannot reclaim tool-call history
-or prevent tool-call admission. Child terminals prepend ready shell commentary inside the terminal
+or prevent tool-call admission. Child terminals prepend ready runtime commentary inside the terminal
 response object without emitting standalone completed assistant items after the child's answer.
 The response transformer owns each Code Mode subscription until its carrier/history handoff boundary;
 thereafter publisher completion and broker expiry own its lifetime. Transform release cancels only
@@ -37,18 +37,47 @@ session drains share one completion-sensitive primitive: consume queued events o
 publishers, and retire completed Code Mode routes after delivery. Both drain boundaries expire stale routes
 and release their queued-event accounting. Limits and publication failures are auxiliary.
 
-The Responses router owns detection of the `spawn_agent` function from the request's configured
-namespaced tool catalog and rendering deterministic assistant commentary from non-message call
-arguments. The commentary owner does not inspect the encrypted spawn message or render commentary for `followup_task`.
-It does not read Codex configuration files. The Codex collaboration runtime continues to own
-validation, agent creation, delivery, effective execution, and the original tool results.
+Child operation and runtime commentary carries a `[/root/worker] ` prefix from the request’s
+canonical `agent_name` when `subagent_kind` identifies a child. Root and older unnamed clients
+retain unprefixed commentary. An identical existing prefix is not duplicated. Runtime capabilities
+bind their author at creation; thread provenance retains that author across route expiry and
+session remapping, and deferred publications never borrow the draining request’s identity.
+Runtime author admission and rendered publications share the 16 KiB auxiliary byte budget.
+An oversized author suppresses capability creation; oversized rendered text is not retained,
+while completion handling and substantive tool execution remain unchanged. This local budget
+does not restrict valid Codex names or reject requests.
+`subagent_activity.go` owns bounded observation and root-copy provenance, independent
+of executable-call recovery. The request boundary supplies only observed canonical
+identity and parent-thread metadata. Stable thread relationships, never session IDs
+or path-looking message text, select the root. Conflicting identities fail closed.
+The commentary producer and publication broker feed the collector without consuming
+child output. Runtime capabilities bind their originating thread at creation.
+The collector does not call back into the broker or proxy while holding its lock.
 
-The same request boundary recognizes plaintext inter-agent messages addressed from a child path to
-`/root`. It projects their payload for the user without replacing the original item. Deterministic
-router IDs let request preparation remove only router-authored commentary before provider dispatch
-and suppress a projection already present in Codex history. JSON and SSE response transformers own
-equivalent ordering; the streaming path buffers only matched function-call framing until arguments
-are complete.
+The collector coalesces ordinary child operations, retains distinct collaboration
+reply, and existing critical-error notices, deduplicates source identities per thread, and expires pending
+events. Non-evicting thread/source and exact root-copy provenance budgets prevent
+replay leakage after session remapping or expiry without displacing tool history.
+Exact retained root-copy IDs are stripped from any provider replay, including
+new child requests inheriting root history before their ancestry is registered.
+Error collection observes the originating request's safe description at record
+time, before session deduplication, without acknowledging the original notice.
+The root transformer drains atomically at JSON and SSE event boundaries under a
+per-response rendered byte budget. Root copies precede substantive output; idle or
+closed streams defer delivery rather than extending stream lifetime. Concurrent
+root responses cannot drain the same event twice. Codex retains scheduling,
+recipient selection, interruption, waiting, and assignment lifecycle ownership.
+
+The collaboration projection boundary recognizes catalog-declared spawn, follow-up,
+send, wait, and interruption calls, leaving schemas and executable arguments exact.
+It describes requests rather than claiming execution or successful delivery, leaves send-message
+request notices and task names to Codex's native display, and never reads encrypted message arguments. The input boundary recognizes actual
+inter-agent envelopes addressed to the current canonical agent, including sibling
+and nested traffic. Plaintext replies are shown in full, never excerpted; replies
+exceeding the auxiliary rendering budget are omitted. Encrypted receipt is
+direction-only. Original model-visible envelopes remain unchanged.
+Deterministic router IDs suppress repeated local commentary on replay. Streaming
+buffers only matched function-call framing until arguments are complete.
 
 The terminal response transformer also owns one user-only commentary projection of the provider's
 input, cached-input, output, and reasoning usage whenever a root or subagent turn stops. It consumes

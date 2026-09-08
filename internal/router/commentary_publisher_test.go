@@ -17,7 +17,7 @@ func TestCommentaryPublisherAuthenticatesAndDrainsLiveOrDeferred(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(broker.serveHTTP))
 	t.Cleanup(server.Close)
 
-	live := broker.subscribe("session", "call-live")
+	live := broker.subscribe("session", "call-live", "")
 	if live == "" {
 		t.Fatal("live subscription was rejected")
 	}
@@ -32,7 +32,7 @@ func TestCommentaryPublisherAuthenticatesAndDrainsLiveOrDeferred(t *testing.T) {
 	if len(events) != 1 || events[0].callID != "call-live" || events[0].text != "Running live work." {
 		t.Fatalf("live events = %+v", events)
 	}
-	empty := broker.subscribe("session", "call-empty")
+	empty := broker.subscribe("session", "call-empty", "")
 	if empty == "" {
 		t.Fatal("empty subscription was rejected")
 	}
@@ -47,7 +47,7 @@ func TestCommentaryPublisherAuthenticatesAndDrainsLiveOrDeferred(t *testing.T) {
 		t.Fatal("completed route without publications was retained")
 	}
 
-	deferred := broker.subscribe("session", "call-deferred")
+	deferred := broker.subscribe("session", "call-deferred", "")
 	if deferred == "" {
 		t.Fatal("deferred subscription was rejected")
 	}
@@ -102,7 +102,7 @@ func TestCommentaryDrainRetainsActiveCapacityUntilCompletionOrExpiry(t *testing.
 				}
 				tokens := make([]string, maxCommentaryRoutes)
 				for i := range tokens {
-					tokens[i] = broker.subscribe("session", "call")
+					tokens[i] = broker.subscribe("session", "call", "")
 					if tokens[i] == "" || !broker.publish(tokens[i], "first", false) {
 						t.Fatal("route capacity was not available")
 					}
@@ -116,7 +116,7 @@ func TestCommentaryDrainRetainsActiveCapacityUntilCompletionOrExpiry(t *testing.
 						seen[event.messageID] = true
 					}
 				}
-				if len(seen) != maxCommentaryRoutes || broker.eventCount != 0 || broker.subscribe("session", "overflow") != "" {
+				if len(seen) != maxCommentaryRoutes || broker.eventCount != 0 || broker.subscribe("session", "overflow", "") != "" {
 					t.Fatalf("active drain: delivered=%d pending=%d routes=%d", len(seen), broker.eventCount, len(broker.routes))
 				}
 				if !broker.publish(tokens[0], "second", true) {
@@ -126,7 +126,7 @@ func TestCommentaryDrainRetainsActiveCapacityUntilCompletionOrExpiry(t *testing.
 				if len(events) != 1 || seen[events[0].messageID] || events[0].text != "second" || broker.publish(tokens[0], "late", false) {
 					t.Fatalf("completed drain = %+v", events)
 				}
-				replacement := broker.subscribe("session", "replacement")
+				replacement := broker.subscribe("session", "replacement", "")
 				if replacement == "" || !broker.publish(replacement, "pending expiry", false) {
 					t.Fatal("completion did not release capacity")
 				}
@@ -134,7 +134,7 @@ func TestCommentaryDrainRetainsActiveCapacityUntilCompletionOrExpiry(t *testing.
 				if events := drain(replacement); len(events) != 0 || broker.eventCount != 0 || len(broker.routes) != 0 {
 					t.Fatalf("expiry: events=%+v pending=%d routes=%d", events, broker.eventCount, len(broker.routes))
 				}
-				if broker.subscribe("session", "after-expiry") == "" {
+				if broker.subscribe("session", "after-expiry", "") == "" {
 					t.Fatal("expiry did not release route capacity")
 				}
 			})
@@ -177,7 +177,7 @@ func TestConcurrentSessionDoesNotDrainCommentary(t *testing.T) {
 		proxy.deactivateSession(sessionID)
 	})
 
-	subscription := proxy.commentary.subscribeThread(sessionID, "thread")
+	subscription := proxy.commentary.subscribeThread(sessionID, "thread", "")
 	if subscription == "" || !proxy.commentary.publish(subscription, "Still running.", false) {
 		t.Fatal("commentary was not published")
 	}

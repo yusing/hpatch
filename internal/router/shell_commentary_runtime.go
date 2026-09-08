@@ -27,7 +27,7 @@ type ownedShellCommentary struct {
 
 // Commentary discovery is auxiliary: unavailable or replaced storage never
 // prevents a shell command from running.
-func (p *hpatchProxy) prepareShellCommentary(threadID, historySessionID string) {
+func (p *hpatchProxy) prepareShellCommentary(threadID, historySessionID, author string) {
 	if p.commentaryEndpoint == "" {
 		return
 	}
@@ -35,7 +35,7 @@ func (p *hpatchProxy) prepareShellCommentary(threadID, historySessionID string) 
 	if err != nil {
 		return
 	}
-	token := p.commentary.subscribeThread(historySessionID, threadID)
+	token := p.commentary.subscribeThread(historySessionID, threadID, author)
 	if token == "" {
 		return
 	}

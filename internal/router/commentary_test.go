@@ -93,7 +93,7 @@ func TestStructuredCommentaryTransformsJSONAndReplay(t *testing.T) {
 	proxy.commentaryEndpoint = "http://127.0.0.1:8080" + commentaryPublisherPath
 	transform.commentaryTools = commentaryToolCatalog{
 		functionToolKey("functions", "write_stdin"): {
-			qualifiedName: "functions.write_stdin", display: "write_stdin", explicit: true,
+			qualifiedName: "functions.write_stdin", explicit: true,
 		},
 	}
 	originalArguments := `{"session_id":42,"chars":"y","commentary":"Confirming the prompt."}`
@@ -156,7 +156,7 @@ func TestStructuredCommentaryTransformsJSONAndReplay(t *testing.T) {
 func TestStructuredCommentaryRejectsNonStringValues(t *testing.T) {
 	catalog := commentaryToolCatalog{
 		functionToolKey("functions", "lookup"): {
-			qualifiedName: "functions.lookup", display: "lookup", explicit: true,
+			qualifiedName: "functions.lookup", explicit: true,
 		},
 	}
 	for _, value := range []string{"null", "true", "42", `{}`, `[]`} {
@@ -175,7 +175,7 @@ func TestStructuredCommentaryBuffersStreamingArguments(t *testing.T) {
 	transform, _, _, _ := newHPatchTestTransform(t, testTranslator(t, new(int)))
 	transform.commentaryTools = commentaryToolCatalog{
 		functionToolKey("functions", "exec_command"): {
-			qualifiedName: "functions.exec_command", display: "exec_command", explicit: true,
+			qualifiedName: "functions.exec_command", explicit: true,
 		},
 	}
 	added := mustTestJSON(t, map[string]any{
@@ -221,7 +221,7 @@ func TestBufferedStructuredCommentaryOmitsNullCompletionMessage(t *testing.T) {
 	transform, _, _, _ := newHPatchTestTransform(t, testTranslator(t, new(int)))
 	transform.commentaryTools = commentaryToolCatalog{
 		functionToolKey("functions", "exec_command"): {
-			qualifiedName: "functions.exec_command", display: "exec_command", explicit: true,
+			qualifiedName: "functions.exec_command", explicit: true,
 		},
 	}
 	added := mustTestJSON(t, map[string]any{

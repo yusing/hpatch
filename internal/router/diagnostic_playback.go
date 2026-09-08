@@ -150,16 +150,20 @@ func (t *hpatchResponseTransform) diagnosticResponse(request *parsedResponsesReq
 	}
 	target, args, matched, commandErr := diagnosticCommand(userText)
 	if !matched {
+		t.proxy.activity.discardDiagnostics(t.threadID)
 		return nil, false, nil
 	}
 	finish := func(message string) (*http.Response, bool, error) {
 		return diagnosticHTTPResponse(request, []map[string]json.RawMessage{diagnosticMessage("final_answer", message)}), true, nil
 	}
 	if commandErr != nil {
-		return finish(commandErr.Error() + ". Available target: cat_write_translation.")
+		return finish(commandErr.Error() + ". Available targets: cat_write_translation, subagent_commentary.")
+	}
+	if target == "subagent_commentary" {
+		return t.subagentDiagnosticResponse(request, args, items)
 	}
 	if target != "cat_write_translation" {
-		return finish("Unknown diagnostic target " + strconv.Quote(target) + ". Available target: cat_write_translation.")
+		return finish("Unknown diagnostic target " + strconv.Quote(target) + ". Available targets: cat_write_translation, subagent_commentary.")
 	}
 	return t.catWriteDiagnosticResponse(request, args, items)
 }
@@ -345,6 +349,11 @@ func diagnosticHTTPResponse(request *parsedResponsesRequest, output []map[string
 				emit("response.output_item.added", map[string]any{"output_index": index, "item": added})
 				emit("response.custom_tool_call_input.delta", map[string]any{"output_index": index, "item_id": jsonString(item, "id"), "delta": jsonString(item, "input")})
 				emit("response.custom_tool_call_input.done", map[string]any{"output_index": index, "item_id": jsonString(item, "id"), "input": jsonString(item, "input")})
+			} else if jsonString(item, "type") == "function_call" {
+				added["arguments"] = mustMarshalJSON("")
+				emit("response.output_item.added", map[string]any{"output_index": index, "item": added})
+				emit("response.function_call_arguments.delta", map[string]any{"output_index": index, "item_id": jsonString(item, "id"), "delta": jsonString(item, "arguments")})
+				emit("response.function_call_arguments.done", map[string]any{"output_index": index, "item_id": jsonString(item, "id"), "arguments": jsonString(item, "arguments")})
 			} else {
 				added["content"] = mustMarshalJSON([]any{})
 				emit("response.output_item.added", map[string]any{"output_index": index, "item": added})

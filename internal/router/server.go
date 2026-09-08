@@ -396,6 +396,7 @@ const (
 )
 
 type requestFinalization struct {
+	observeCriticalNotice func(source, text string)
 	observation           requestObservation
 	sessionID             string
 	failurePhase          requestFailurePhase
@@ -479,6 +480,10 @@ func executeRequest(
 		return fmt.Errorf("prepare request: %w", err)
 	}
 	metadata, metadataValid := decodeCodexTurnMetadata(headers)
+	threadID := codexThreadID(headers)
+	if hpatchCalls != nil && metadataValid && !metadata.activityIdentityInvalid && (metadata.ThreadID == "" || metadata.ThreadID == threadID) {
+		finalization.observeCriticalNotice = func(source, text string) { hpatchCalls.activity.collect(threadID, source, "error", text) }
+	}
 	if hpatchCalls != nil {
 		stripPastDiagnosticTurns(&parsedRequest)
 	}

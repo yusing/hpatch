@@ -54,13 +54,13 @@ func TestSubagentCommentaryJSONIsVisibleAndRemovedFromReplay(t *testing.T) {
 	if err := json.Unmarshal(transformed, &response); err != nil {
 		t.Fatal(err)
 	}
-	if len(response.Output) != 6 {
+	if len(response.Output) != 7 {
 		t.Fatalf("output = %s", transformed)
 	}
-	if text := commentaryText(t, response.Output[0]); text != "Response from /root/explorer:\n"+responseText {
+	if text := commentaryText(t, response.Output[0]); text != "[/root <- /root/explorer] Reply received:\n"+responseText {
 		t.Fatalf("response commentary = %q", text)
 	}
-	wantSpawn := "Starting subagent.\nRole: explorer\nModel: gpt-requested\nReasoning effort: low"
+	wantSpawn := "[/root] Spawn requested.\nRole: `explorer`\nModel: `gpt-requested`\nReasoning effort: `low`"
 	if text := commentaryText(t, response.Output[2]); text != wantSpawn {
 		t.Fatalf("spawn commentary = %q", text)
 	}
@@ -68,8 +68,8 @@ func TestSubagentCommentaryJSONIsVisibleAndRemovedFromReplay(t *testing.T) {
 		t.Fatalf("usage commentary = %q", text)
 	}
 	if jsonString(response.Output[3], "arguments") != spawnArguments ||
-		jsonString(response.Output[4], "arguments") != followupArguments ||
-		jsonString(response.Output[5], "name") != "send_message" {
+		jsonString(response.Output[5], "arguments") != followupArguments ||
+		jsonString(response.Output[6], "name") != "send_message" {
 		t.Fatalf("collaboration calls changed: %s", transformed)
 	}
 	if bytes.Contains(response.Output[2]["content"], []byte("encrypted")) {
@@ -217,7 +217,7 @@ func TestSubagentCommentaryBuffersStreamingCall(t *testing.T) {
 	if err != nil || len(events) != 4 {
 		t.Fatalf("done events = %q, error %v", events, err)
 	}
-	if !bytes.Contains(events[0], []byte("Starting subagent.")) || bytes.Contains(events[0], []byte("encrypted-spawn-message")) || !bytes.Equal(events[1], added) ||
+	if !bytes.Contains(events[0], []byte("Spawn requested.")) || bytes.Contains(events[0], []byte("encrypted-spawn-message")) || !bytes.Equal(events[1], added) ||
 		!bytes.Equal(events[2], argumentsDone) || !bytes.Equal(events[3], itemDone) {
 		t.Fatalf("done events = %q", events)
 	}
@@ -247,7 +247,7 @@ func TestSubagentCommentaryBuffersStreamingCall(t *testing.T) {
 		} `json:"response"`
 	}
 	if json.Unmarshal(events[1], &terminal) != nil || len(terminal.Response.Output) != 3 ||
-		bytes.Count(events[1], []byte("Starting subagent.")) != 1 ||
+		bytes.Count(events[1], []byte("Spawn requested.")) != 1 ||
 		jsonString(terminal.Response.Output[2], "arguments") != arguments {
 		t.Fatalf("completed event = %s", events[1])
 	}

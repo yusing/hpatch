@@ -145,7 +145,7 @@ func TestPrepareShellCommentaryRefreshAndCleanup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	proxy.prepareShellCommentary("commentary-thread", "history")
+	proxy.prepareShellCommentary("commentary-thread", "history", "")
 	session := proxy.shellSessions[directory]
 	if session.commentary == nil {
 		t.Fatal("descriptor not created")
@@ -154,7 +154,7 @@ func TestPrepareShellCommentaryRefreshAndCleanup(t *testing.T) {
 	proxy.commentary.mu.Lock()
 	clear(proxy.commentary.routes)
 	proxy.commentary.mu.Unlock()
-	proxy.prepareShellCommentary("commentary-thread", "history-new")
+	proxy.prepareShellCommentary("commentary-thread", "history-new", "")
 	if string(first) == string(session.commentary.content) {
 		t.Fatal("expired capability not refreshed")
 	}
@@ -182,8 +182,8 @@ func TestShellWorkerDiscoversThreadCommentary(t *testing.T) {
 	if _, err := proxy.storeShellRuntime("worker-thread"); err != nil {
 		t.Fatal(err)
 	}
-	proxy.prepareShellCommentary("worker-thread", "worker-history")
-	token := proxy.commentary.subscribeThread("worker-history", "worker-thread")
+	proxy.prepareShellCommentary("worker-thread", "worker-history", "")
+	token := proxy.commentary.subscribeThread("worker-history", "worker-thread", "")
 	t.Setenv(shellruntime.RuntimeDirectoryEnvironment, proxy.shellDirectory)
 	t.Setenv(shellruntime.ThreadIDEnvironment, "worker-thread")
 	for range 2 {

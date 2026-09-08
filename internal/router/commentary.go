@@ -17,7 +17,6 @@ const commentaryArgumentName = "commentary"
 
 type commentaryTool struct {
 	qualifiedName string
-	display       string
 	explicit      bool
 }
 
@@ -42,10 +41,7 @@ func prepareCommentaryTools(fields map[string]json.RawMessage, tools *responsesT
 		if _, exists := catalog[key]; exists {
 			return fmt.Errorf("commentary tool %q is defined more than once", qualifiedName)
 		}
-		entry := commentaryTool{qualifiedName: qualifiedName, display: tool.Title}
-		if entry.display == "" {
-			entry.display = name
-		}
+		entry := commentaryTool{qualifiedName: qualifiedName}
 		var strict bool
 		_ = json.Unmarshal(tool.rawField("strict"), &strict)
 		if addParameter && !strict {
@@ -87,8 +83,8 @@ func prepareCommentaryTools(fields map[string]json.RawMessage, tools *responsesT
 	if tools.inputObjectsErr != nil {
 		return catalog, nil
 	}
-	// The provider owns configured additional_tools schemas. They receive
-	// defaults, but the router never adds a parameter to them.
+	// The provider owns configured additional_tools schemas; the router never
+	// adds a commentary parameter to them.
 	for _, group := range tools.additional {
 		if !group.tools.present {
 			return nil, errors.New("decode additional tools for commentary: unexpected end of JSON input")
@@ -136,30 +132,6 @@ func commentaryExcluded(namespace, name string) bool {
 	return qualified == "functions.send_user_message_async" || qualified == "send_user_message_async"
 }
 
-func commentaryDefault(tool commentaryTool, arguments map[string]json.RawMessage) string {
-	switch tool.qualifiedName {
-	case "functions.wait", "wait":
-		return "Waiting for the running operation."
-	case "functions.write_stdin", "write_stdin":
-		var input string
-		_ = json.Unmarshal(arguments["chars"], &input)
-		if input == "" {
-			return "Waiting for command output."
-		}
-		return "Sending input to the running command."
-	case "functions.apply_patch", "apply_patch", "functions.hpatch", "hpatch":
-		return "Applying the requested changes."
-	case "functions.request_user_input", "request_user_input":
-		return "Waiting for your input."
-	case "web.run":
-		return "Looking up current information."
-	case "image_gen.imagegen":
-		return "Generating the requested image."
-	default:
-		return "Using " + tool.display + "."
-	}
-}
-
 type structuredCommentary struct {
 	text              string
 	originalArguments string
@@ -194,7 +166,6 @@ func extractStructuredCommentary(item map[string]json.RawMessage, catalog commen
 			}
 		}
 	}
-	result.text = commentaryDefault(tool, arguments)
 	return result, true, nil
 }
 
@@ -249,8 +220,13 @@ func (t *hpatchResponseTransform) transformStructuredCommentary(item map[string]
 			return nil, fmt.Errorf("commentary call %q changed arguments", callID)
 		}
 		item["arguments"] = mustMarshalJSON(extracted.arguments)
-		return assistantCommentaryMessage(messageID, extracted.text), nil
+		return t.operationCommentaryMessage(messageID, extracted.text), nil
 	}
+	var messageIDs []string
+	if extracted.text != "" {
+		messageIDs = []string{messageID}
+	}
+
 	original := maps.Clone(item)
 	t.recordLocal(callID, &hpatchHistory{
 		toolName:             qualifiedToolName(jsonString(item, "namespace"), jsonString(item, "name")),
@@ -259,10 +235,10 @@ func (t *hpatchResponseTransform) transformStructuredCommentary(item map[string]
 		carrierName:          jsonString(item, "name"),
 		carrierPayload:       extracted.arguments,
 		upstreamItem:         original,
-		commentaryMessageIDs: []string{messageID},
+		commentaryMessageIDs: messageIDs,
 	})
 	item["arguments"] = mustMarshalJSON(extracted.arguments)
-	return assistantCommentaryMessage(messageID, extracted.text), nil
+	return t.operationCommentaryMessage(messageID, extracted.text), nil
 }
 
 func (p *hpatchProxy) drainCommentarySession(sessionID string) []publishedCommentary {
@@ -351,6 +327,7 @@ func (t *hpatchResponseTransform) subagentCallMessage(item map[string]json.RawMe
 		t.subagentTools,
 		t.parentModel,
 		t.parentReasoningEffort,
+		t.commentaryAuthor,
 	)
 	if !matched {
 		return nil
@@ -360,6 +337,7 @@ func (t *hpatchResponseTransform) subagentCallMessage(item map[string]json.RawMe
 		return nil
 	}
 	t.commentaryEmitted[id] = struct{}{}
+	t.collectCollaborationCommentary(message)
 	return message
 }
 
@@ -376,33 +354,36 @@ func (t *hpatchResponseTransform) runtimeCommentaryMessage(publication published
 	return assistantCommentaryMessage(publication.messageID, publication.text)
 }
 
-func (t *hpatchResponseTransform) localStartCommentary(item map[string]json.RawMessage) map[string]json.RawMessage {
-	if t.proxy.commentaryEndpoint == "" {
+func attributedCommentary(author, text string) string {
+	if author == "" {
+		return text
+	}
+	prefix := "[" + author + "] "
+	if hasCommentaryAuthor(text, author) {
+		return text
+	}
+	return prefix + text
+}
+
+// Check the exact display prefix without allocating an author-sized string.
+func hasCommentaryAuthor(text, author string) bool {
+	return len(text) >= len(author)+3 && text[0] == '[' && text[1:1+len(author)] == author && text[1+len(author):3+len(author)] == "] "
+}
+
+func (t *hpatchResponseTransform) operationCommentaryMessage(id, text string) map[string]json.RawMessage {
+	if text == "" {
 		return nil
 	}
-	callID := jsonString(item, "call_id")
-	history, exists := t.local[callID]
-	if !exists || jsonString(history.upstreamItem, "type") == "function_call" {
-		return nil
+
+	t.proxy.activity.collect(t.threadID, id, "operation", text)
+	return assistantCommentaryMessage(id, attributedCommentary(t.commentaryAuthor, text))
+}
+
+func (t *hpatchResponseTransform) collectCollaborationCommentary(message map[string]json.RawMessage) {
+	var content []struct {
+		Text string `json:"text"`
 	}
-	if history.toolName != codeModeCommentaryHistoryTool && history.pluginID == builtinToolsPluginID && history.toolName == "shell" {
-		return nil
+	if json.Unmarshal(message["content"], &content) == nil && len(content) == 1 {
+		t.proxy.activity.collect(t.threadID, jsonString(message, "id"), "notice", content[0].Text)
 	}
-	if len(history.commentaryMessageIDs) == 0 {
-		if history.toolName == codeModeCommentaryHistoryTool {
-			return nil
-		}
-		history.commentaryMessageIDs = []string{commentaryMessageID(callID)}
-		t.local[callID] = history
-	}
-	messageID := history.commentaryMessageIDs[0]
-	if _, emitted := t.commentaryEmitted[messageID]; emitted {
-		return nil
-	}
-	t.commentaryEmitted[messageID] = struct{}{}
-	text := "Running the requested operation."
-	if history.toolName != codeModeCommentaryHistoryTool {
-		text = commentaryDefault(commentaryTool{qualifiedName: history.toolName, display: history.toolName}, nil)
-	}
-	return assistantCommentaryMessage(messageID, text)
 }

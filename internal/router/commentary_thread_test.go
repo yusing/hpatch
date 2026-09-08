@@ -13,14 +13,14 @@ import (
 
 func TestThreadCommentarySharedCompletionAndSessionMapping(t *testing.T) {
 	b := newCommentaryBroker()
-	token := b.subscribeThread("session-a", "thread-a")
-	other := b.subscribeThread("session-b", "thread-b")
+	token := b.subscribeThread("session-a", "thread-a", "")
+	other := b.subscribeThread("session-b", "thread-b", "")
 	var wg sync.WaitGroup
 	for i := range 20 {
 		wg.Go(func() { b.publish(token, fmt.Sprint(i), true) })
 	}
 	wg.Wait()
-	if token == "" || token == other || b.subscribeThread("session-new", "thread-a") != token {
+	if token == "" || token == other || b.subscribeThread("session-new", "thread-a", "") != token {
 		t.Fatal("thread capability was not stable and isolated")
 	}
 	if events := b.drainSession("session-a"); len(events) != 0 {
@@ -48,7 +48,7 @@ func TestThreadCommentarySharedCompletionAndSessionMapping(t *testing.T) {
 func TestThreadCommentaryCapacityRefreshAndExpiry(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		b := newCommentaryBroker()
-		token := b.subscribeThread("session", "thread")
+		token := b.subscribeThread("session", "thread", "")
 		for range maxCommentaryEventsPerRoute + 1 {
 			b.publish(token, "pending", false)
 		}
@@ -62,13 +62,13 @@ func TestThreadCommentaryCapacityRefreshAndExpiry(t *testing.T) {
 			}
 		}
 		for i := range maxCommentaryRoutes - 1 {
-			b.subscribeThread("session", fmt.Sprint(i))
+			b.subscribeThread("session", fmt.Sprint(i), "")
 		}
-		if b.subscribeThread("session", "overflow") != "" {
+		if b.subscribeThread("session", "overflow", "") != "" {
 			t.Fatal("route capacity not bounded")
 		}
 		time.Sleep(commentaryRouteTTL / 2)
-		if b.subscribeThread("session", "thread") != token {
+		if b.subscribeThread("session", "thread", "") != token {
 			t.Fatal("full capacity prevented refresh")
 		}
 		time.Sleep(commentaryRouteTTL / 2)
@@ -79,7 +79,7 @@ func TestThreadCommentaryCapacityRefreshAndExpiry(t *testing.T) {
 		if len(b.drain(token)) != 0 || b.eventCount != 0 || len(b.routes) != 0 {
 			t.Fatal("expiry retained capacity")
 		}
-		if replacement := b.subscribeThread("session", "thread"); replacement == "" || replacement == token {
+		if replacement := b.subscribeThread("session", "thread", ""); replacement == "" || replacement == token {
 			t.Fatal("expiry did not rotate capability")
 		}
 	})
@@ -89,7 +89,7 @@ func TestThreadCommentaryTerminalReplayWithoutCallHistory(t *testing.T) {
 	for _, status := range []string{"completed", "failed", "incomplete"} {
 		t.Run(status, func(t *testing.T) {
 			transform, proxy := newRuntimeCommentaryTransform(t)
-			token := proxy.commentary.subscribeThread(transform.historySessionID, "thread")
+			token := proxy.commentary.subscribeThread(transform.historySessionID, "thread", "")
 			proxy.commentary.publish(token, "thread progress", true)
 			events, err := transform.TransformSSE(mustTestJSON(t, map[string]any{
 				"type": "response." + status, "response": map[string]any{"status": status, "output": []any{}},
@@ -133,7 +133,7 @@ func TestThreadCommentaryTerminalReplayWithoutCallHistory(t *testing.T) {
 func TestThreadCommentaryReplaySurvivesSessionRemapAndExpiry(t *testing.T) {
 	transform, proxy := newRuntimeCommentaryTransform(t)
 	oldSession := transform.historySessionID
-	token := proxy.commentary.subscribeThread(oldSession, "stable-thread")
+	token := proxy.commentary.subscribeThread(oldSession, "stable-thread", "")
 	proxy.commentary.publish(token, "delivered", false)
 	publication := proxy.commentary.drainSession(oldSession)[0]
 	message := transform.runtimeCommentaryMessage(publication)
@@ -143,7 +143,7 @@ func TestThreadCommentaryReplaySurvivesSessionRemapAndExpiry(t *testing.T) {
 	proxy.commentary.mu.Lock()
 	proxy.commentary.routes[token].expires = time.Now().Add(-time.Second)
 	proxy.commentary.mu.Unlock()
-	if proxy.commentary.subscribeThread("remapped", "stable-thread") == "" {
+	if proxy.commentary.subscribeThread("remapped", "stable-thread", "") == "" {
 		t.Fatal("thread refresh rejected")
 	}
 	request := &parsedResponsesRequest{fields: map[string]json.RawMessage{"input": mustTestJSON(t, []any{message})}}
@@ -169,7 +169,7 @@ func TestThreadCommentaryCannotReclaimToolHistoryCapacity(t *testing.T) {
 		}
 	}
 	before := proxy.historyBytes
-	token := proxy.commentary.subscribeThread("0", "thread")
+	token := proxy.commentary.subscribeThread("0", "thread", "")
 	transform := &hpatchResponseTransform{proxy: proxy, historySessionID: "0"}
 	for range maxCommentaryEventsPerRoute {
 		proxy.commentary.publish(token, "auxiliary", false)
@@ -196,7 +196,7 @@ func TestThreadCommentaryCannotReclaimToolHistoryCapacity(t *testing.T) {
 
 func TestThreadCommentaryProvenanceCapacitySuppressesOnlyCommentary(t *testing.T) {
 	b := newCommentaryBroker()
-	token := b.subscribeThread("session", "thread")
+	token := b.subscribeThread("session", "thread", "")
 	for range maxThreadCommentaryIDs {
 		b.publish(token, "bounded", false)
 		if len(b.drain(token)) != 1 {
@@ -219,7 +219,7 @@ func TestChildThreadCommentaryPreservesSubstantiveStreamResult(t *testing.T) {
 	if events, err := transform.TransformSSE(mustTestJSON(t, map[string]any{"type": "response.output_item.done", "item": answer})); err != nil || len(events) != 1 {
 		t.Fatalf("answer delivery = %s, %v", events, err)
 	}
-	token := proxy.commentary.subscribeThread(transform.historySessionID, "child")
+	token := proxy.commentary.subscribeThread(transform.historySessionID, "child", "")
 	proxy.commentary.publish(token, "child progress", false)
 	events, err := transform.TransformSSE(mustTestJSON(t, map[string]any{"type": "response.completed", "response": map[string]any{"status": "completed", "output": []any{answer}}}))
 	if err != nil || len(events) != 1 {
