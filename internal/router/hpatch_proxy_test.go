@@ -396,7 +396,7 @@ func TestHPatchPrepareRequestRewritesNamespacedExecWithShell(t *testing.T) {
 	if err := json.Unmarshal(request.fields["instructions"], &rewrittenInstructions); err != nil {
 		t.Fatal(err)
 	}
-	wantInstructions := "existing base\n" + codexinstructions.NativeInstructions() + "existing suffix\n"
+	wantInstructions := "existing base\n" + codexinstructions.InstructionsForModel("", false) + "existing suffix\n"
 	if rewrittenInstructions != wantInstructions {
 		t.Fatalf("request instructions = %q, want %q", rewrittenInstructions, wantInstructions)
 	}
@@ -445,7 +445,7 @@ func TestHPatchPrepareRequestRefreshesWorkflowOnModelSwitch(t *testing.T) {
 			proxy := newManagedHPatchProxy(t, testTranslator(t, new(int)))
 			proxy.compactModelProtocol = compact
 			metadata := codexTurnMetadata{RequestKind: "turn", Directories: map[string]json.RawMessage{t.TempDir(): nil}}
-			instructions := "prefix\n" + codexinstructions.NativeInstructions() + "suffix\n"
+			instructions := "prefix\n" + codexinstructions.InstructionsForModel("", false) + "suffix\n"
 			for _, model := range []string{"gpt-6-astra", "gpt-5.6-sol", "gpt-6-astra-2026-09-01"} {
 				input := []any{testCodeModeAdditionalTools(testCodeModeDescription)}
 				fields := map[string]any{"model": model, "tool_choice": "auto", "instructions": instructions}
@@ -510,7 +510,7 @@ func TestHPatchPrepareRequestUsesCustomizedModelInstructions(t *testing.T) {
 		if err := json.Unmarshal(request.fields["instructions"], &instructions); err != nil {
 			t.Fatal(err)
 		}
-		want := "custom instructions\n\n" + codexinstructions.NativeInstructions()
+		want := "custom instructions\n\n" + codexinstructions.InstructionsForModel("", false)
 		if instructions != want {
 			t.Fatalf("instructions = %q, want %q", instructions, want)
 		}

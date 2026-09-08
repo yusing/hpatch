@@ -81,11 +81,6 @@ func At(text string, number int) (Line, bool) {
 	return Line{}, false
 }
 
-// Content returns the logical-line content without its terminator.
-func Content(text string, line Line) string {
-	return text[line.Start:line.ContentEnd]
-}
-
 // lineAt returns one logical line starting at the given UTF-8 byte offset.
 func lineAt(text string, start int) Line {
 	contentEnd := start

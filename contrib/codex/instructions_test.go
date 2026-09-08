@@ -38,10 +38,7 @@ func TestInstructionsSelectModelWorkflowIndependentlyOfTransport(t *testing.T) {
 				}
 			}
 			// Only the workflow varies; syntax and private-tool contracts remain shared.
-			baseline := Instructions()
-			if !compact {
-				baseline = NativeInstructions()
-			}
+			baseline := InstructionsForModel("", compact)
 			if strings.Replace(got, strings.TrimSuffix(workflow, "\n"), "", 1) != strings.Replace(baseline, strings.TrimSuffix(defaultWorkflow, "\n"), "", 1) {
 				t.Fatalf("model %q compact %v: shared guidance changed", model, compact)
 			}
@@ -71,14 +68,14 @@ func TestInstructionsOwnCTP2Representation(t *testing.T) {
 		"fully expanded existing absolute path, never a reference or placeholder",
 		"Every decoded byte is final text",
 	} {
-		if !strings.Contains(Instructions(), required) {
-			t.Errorf("Instructions() omits CTP representation rule %q", required)
+		if !strings.Contains(InstructionsForModel("", true), required) {
+			t.Errorf("default instructions omit CTP representation rule %q", required)
 		}
 	}
 }
 
 func TestNativeInstructionsOmitOnlyCTPRepresentation(t *testing.T) {
-	native := NativeInstructions()
+	native := InstructionsForModel("", false)
 	if strings.Contains(native, "## CTP/2 transport") || strings.Contains(native, "!ctp2") || strings.Contains(native, "!V=") {
 		t.Fatal("native instructions contain CTP guidance")
 	}
@@ -89,7 +86,7 @@ func TestNativeInstructionsOmitOnlyCTPRepresentation(t *testing.T) {
 		"<!-- hpatch-model-instructions:end -->",
 	} {
 		if !strings.Contains(native, required) {
-			t.Errorf("NativeInstructions() omits %q", required)
+			t.Errorf("native instructions omit %q", required)
 		}
 	}
 }
@@ -99,8 +96,8 @@ func TestInstructionsBindCommentaryToSupportedTools(t *testing.T) {
 		name         string
 		instructions string
 	}{
-		{name: "CTP", instructions: Instructions()},
-		{name: "native", instructions: NativeInstructions()},
+		{name: "CTP", instructions: InstructionsForModel("", true)},
+		{name: "native", instructions: InstructionsForModel("", false)},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			for _, required := range []string{
@@ -129,8 +126,8 @@ func TestInstructionsOwnCompleteShellWorkflow(t *testing.T) {
 		"never mix retained scripts and workspace files",
 		"PTY-backed, interactive, and long-running programs",
 	} {
-		if !strings.Contains(Instructions(), required) {
-			t.Errorf("Instructions() omits shell workflow %q", required)
+		if !strings.Contains(InstructionsForModel("", true), required) {
+			t.Errorf("default instructions omit shell workflow %q", required)
 		}
 	}
 }
@@ -152,8 +149,8 @@ func TestInstructionsAcquireAndReuseVerifiedTargets(t *testing.T) {
 		`C3:bcde "return oldResult, nil"`,
 		"exact known target text spans logical lines or includes a trailing LF",
 	} {
-		if !strings.Contains(Instructions(), required) {
-			t.Errorf("Instructions() omits target acquisition rule %q", required)
+		if !strings.Contains(InstructionsForModel("", true), required) {
+			t.Errorf("default instructions omit target acquisition rule %q", required)
 		}
 	}
 }

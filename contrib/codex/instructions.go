@@ -34,17 +34,6 @@ var recoverySource string
 
 var recoveryTemplate = template.Must(template.New("hpatch-recovery").Parse(recoverySource))
 
-// Instructions returns the default persistent Codex model instructions with CTP/2 guidance.
-func Instructions() string {
-	return instructions
-}
-
-// NativeInstructions returns the central guidance without the CTP/2 section. Deriving it from the
-// active source keeps every non-CTP workflow byte-identical across the two model protocols.
-func NativeInstructions() string {
-	return nativeInstructions(instructions)
-}
-
 // InstructionsForModel selects the editing workflow per request, independently of transport.
 // Unknown model IDs use the default workflow; Astra-prefixed variants share the Astra workflow.
 func InstructionsForModel(model string, compactModelProtocol bool) string {

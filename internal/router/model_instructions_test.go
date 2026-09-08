@@ -12,7 +12,7 @@ import (
 
 func TestRenderModelInstructionsAtInstructionLifecycles(t *testing.T) {
 	stock := stockModelInstructionsForTest("custom prefix\n", "custom suffix\n")
-	want := "custom prefix\n" + codexinstructions.NativeInstructions() + "custom suffix\n"
+	want := "custom prefix\n" + codexinstructions.InstructionsForModel("", false) + "custom suffix\n"
 	for _, lifecycle := range []string{
 		"session start",
 		"post compaction",
@@ -20,7 +20,7 @@ func TestRenderModelInstructionsAtInstructionLifecycles(t *testing.T) {
 		"subagent post compaction",
 	} {
 		t.Run(lifecycle, func(t *testing.T) {
-			got, err := renderModelInstructions(stock, false, codexinstructions.NativeInstructions())
+			got, err := renderModelInstructions(stock, false, codexinstructions.InstructionsForModel("", false))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -32,7 +32,7 @@ func TestRenderModelInstructionsAtInstructionLifecycles(t *testing.T) {
 }
 
 func TestCentralModelInstructionsHaveOneMarkerPair(t *testing.T) {
-	instructions := codexinstructions.Instructions()
+	instructions := codexinstructions.InstructionsForModel("", true)
 	if strings.Count(instructions, hpatchInstructionsStartMarker) != 1 ||
 		strings.Count(instructions, hpatchInstructionsEndMarker) != 1 {
 		t.Fatal("central model instructions do not contain one marker pair")
@@ -55,9 +55,9 @@ func TestRewriteGPT5RecordedEditingFragments(t *testing.T) {
 	for _, carrier := range []string{"instructions", "developer"} {
 		for _, protocol := range []string{"native", "ctp2"} {
 			t.Run(carrier+"/"+protocol, func(t *testing.T) {
-				guidance := codexinstructions.NativeInstructions()
+				guidance := codexinstructions.InstructionsForModel("", false)
 				if protocol == "ctp2" {
-					guidance = codexinstructions.Instructions()
+					guidance = codexinstructions.InstructionsForModel("", true)
 				}
 				request := parsedResponsesRequest{fields: make(map[string]json.RawMessage)}
 				if carrier == "instructions" {
@@ -105,9 +105,9 @@ func TestRewriteAstraStockModelInstructions(t *testing.T) {
 	for _, carrier := range []string{"instructions", "developer"} {
 		for _, protocol := range []string{"native", "ctp2"} {
 			t.Run(carrier+"/"+protocol, func(t *testing.T) {
-				guidance := codexinstructions.NativeInstructions()
+				guidance := codexinstructions.InstructionsForModel("", false)
 				if protocol == "ctp2" {
-					guidance = codexinstructions.Instructions()
+					guidance = codexinstructions.InstructionsForModel("", true)
 				}
 				request := parsedResponsesRequest{fields: map[string]json.RawMessage{
 					"model": mustTestJSON(t, "gpt-6-astra"),
@@ -156,7 +156,7 @@ func TestRewriteAstraStockModelInstructions(t *testing.T) {
 		{"partial old editing section", stock + "\n" + stockEditHeading},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			if _, err := renderModelInstructions(test.input, false, codexinstructions.NativeInstructions()); err == nil {
+			if _, err := renderModelInstructions(test.input, false, codexinstructions.InstructionsForModel("", false)); err == nil {
 				t.Fatal("changed stock instructions were accepted")
 			}
 		})
@@ -164,8 +164,8 @@ func TestRewriteAstraStockModelInstructions(t *testing.T) {
 }
 
 func TestRenderModelInstructionsRefreshesInheritedConversation(t *testing.T) {
-	input := "custom prefix\n" + codexinstructions.NativeInstructions() + "custom suffix\n"
-	got, err := renderModelInstructions(input, false, codexinstructions.NativeInstructions())
+	input := "custom prefix\n" + codexinstructions.InstructionsForModel("", false) + "custom suffix\n"
+	got, err := renderModelInstructions(input, false, codexinstructions.InstructionsForModel("", false))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -184,11 +184,11 @@ func TestRenderModelInstructionsAppendsForCustomizedModelInstructions(t *testing
 		{name: "malformed stock", input: strings.Replace(stockModelInstructionsForTest("", ""), stockEditHeading+"\n\n", stockEditHeading+"\ncustom guidance\n", 1)},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			got, err := renderModelInstructions(test.input, true, codexinstructions.NativeInstructions())
+			got, err := renderModelInstructions(test.input, true, codexinstructions.InstructionsForModel("", false))
 			if err != nil {
 				t.Fatal(err)
 			}
-			want := test.input + "\n" + codexinstructions.NativeInstructions()
+			want := test.input + "\n" + codexinstructions.InstructionsForModel("", false)
 			if got != want {
 				t.Fatalf("renderModelInstructions() = %q, want %q", got, want)
 			}
@@ -208,7 +208,7 @@ func TestRenderModelInstructionsFailsClosedForChangedUpstreamInstructions(t *tes
 		{name: "reversed markers", input: hpatchInstructionsEndMarker + "\n" + hpatchInstructionsStartMarker + "\n", customized: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			if _, err := renderModelInstructions(test.input, test.customized, codexinstructions.NativeInstructions()); err == nil {
+			if _, err := renderModelInstructions(test.input, test.customized, codexinstructions.InstructionsForModel("", false)); err == nil {
 				t.Fatal("renderModelInstructions() succeeded")
 			}
 		})
@@ -226,7 +226,7 @@ func TestRewriteReceivedModelInstructionsLeavesMissingAndNullValues(t *testing.T
 		t.Run(test.name, func(t *testing.T) {
 			before := string(test.fields["instructions"])
 			request := parsedResponsesRequest{fields: test.fields}
-			if err := rewriteReceivedModelInstructions(&request, false, codexinstructions.NativeInstructions()); err != nil {
+			if err := rewriteReceivedModelInstructions(&request, false, codexinstructions.InstructionsForModel("", false)); err != nil {
 				t.Fatal(err)
 			}
 			if got := string(request.fields["instructions"]); got != before {
@@ -249,7 +249,7 @@ func TestRewriteReceivedModelInstructionsUsesDeveloperCarrierWhenTopLevelIsEmpty
 		}),
 	}}
 
-	if err := rewriteReceivedModelInstructions(&request, false, codexinstructions.NativeInstructions()); err != nil {
+	if err := rewriteReceivedModelInstructions(&request, false, codexinstructions.InstructionsForModel("", false)); err != nil {
 		t.Fatal(err)
 	}
 	if got := string(request.fields["instructions"]); got != `""` {
@@ -259,7 +259,7 @@ func TestRewriteReceivedModelInstructionsUsesDeveloperCarrierWhenTopLevelIsEmpty
 	if err := json.Unmarshal(request.fields["input"], &input); err != nil {
 		t.Fatal(err)
 	}
-	want := "developer prefix\n" + codexinstructions.NativeInstructions() + "developer suffix\n"
+	want := "developer prefix\n" + codexinstructions.InstructionsForModel("", false) + "developer suffix\n"
 	if got := input[0]["content"]; got != want {
 		t.Fatalf("developer instructions = %q, want %q", got, want)
 	}
