@@ -4,6 +4,8 @@
 
 Every root entry point accepts one complete input and evaluates the entire script before an
 external filesystem commit or translated patch is returned. Basic `Apply` returns only an error.
+All apply and host entry points reject a nil context with `context is nil`, before evaluation
+or finalization; host variants return a zero result without running hooks or publishing output.
 `ApplyForHost`, `ApplyForHostRoot`, and `TranslateForHostAt` return `HostTranslation`, which carries
 the rendered report, final state, diagnostics, patch summary, and target aliases. Before
 finalization, every changed file whose final path ends in `.go`

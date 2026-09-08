@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -142,5 +143,42 @@ func TestHostSuccessPublishesPreparedProjection(t *testing.T) {
 	unchanged, err := TranslateForHostAt(t.Context(), root, "in file.txt", "")
 	if err != nil || unchanged.Report == "" || !unchanged.Change.AlreadySatisfied || len(unchanged.Patch) != 0 || len(unchanged.TargetAliases) != 0 {
 		t.Fatalf("no-op error %v, projection %+v", err, unchanged)
+	}
+}
+
+func TestPublicAPIsRejectNilContext(t *testing.T) {
+	root := t.TempDir()
+	writeTestFile(t, root, "file.txt", "old\n", 0o644)
+	capability, err := os.OpenRoot(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer capability.Close()
+	script := "in file.txt\ntype " + row(1, "old") + ` "new"`
+	for _, test := range []struct {
+		name string
+		call func() (HostTranslation, error)
+	}{
+		{"Apply", func() (HostTranslation, error) {
+			return HostTranslation{}, Apply(nil, Workspace{Root: capability}, script)
+		}},
+		{"ApplyForHost", func() (HostTranslation, error) { return ApplyForHost(nil, Workspace{Root: capability}, script, "") }},
+		{"ApplyForHostRoot", func() (HostTranslation, error) { return ApplyForHostRoot(nil, capability, script, "") }},
+		{"TranslateForHostAt", func() (HostTranslation, error) { return TranslateForHostAt(nil, root, script, "") }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			defer func() {
+				if panicValue := recover(); panicValue != nil {
+					t.Errorf("nil context caused panic: %v", panicValue)
+				}
+				if got := readTestFile(t, root, "file.txt"); got != "old\n" {
+					t.Errorf("nil context mutated content: %q", got)
+				}
+			}()
+			result, err := test.call()
+			if err == nil || err.Error() != "context is nil" || !reflect.DeepEqual(result, HostTranslation{}) {
+				t.Fatalf("result %+v, error %v; want zero result and context is nil", result, err)
+			}
+		})
 	}
 }

@@ -409,6 +409,9 @@ type HostTranslation struct {
 // from the reads used to author the edit through translation and host application;
 // the returned patch and report do not reserve the evaluated filesystem state.
 func TranslateForHostAt(ctx context.Context, directory, script, dataDirectory string) (HostTranslation, error) {
+	if ctx == nil {
+		return HostTranslation{}, fmt.Errorf("context is nil")
+	}
 	changes, _, report, aliases, err := evaluateScriptAt(ctx, directory, script)
 	result := hostTranslationResult(changes, report, aliases, err == nil)
 	failureStage := ""
@@ -424,6 +427,9 @@ func TranslateForHostAt(ctx context.Context, directory, script, dataDirectory st
 // guarantees as Apply, while returning host diagnostics. A late cancellation
 // can be returned after changes have been applied.
 func ApplyForHost(ctx context.Context, workspace Workspace, script, dataDirectory string) (HostTranslation, error) {
+	if ctx == nil {
+		return HostTranslation{}, fmt.Errorf("context is nil")
+	}
 	changes, filesystem, report, aliases, err := evaluateScript(ctx, workspace, script)
 	result := hostTranslationResult(changes, report, aliases, err == nil)
 	failureStage := ""
