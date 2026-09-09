@@ -7,6 +7,13 @@ compaction threshold and counting scope, model changes, and manual compaction
 requests remain unchanged. Hpatch does not rewrite Codex settings or schedule
 an earlier trigger.
 
+The launcher preserves the `OpenAI` provider identity for its fixed ChatGPT
+upstream while routing the base URL to the local listener. Codex uses that
+identity to select remote compaction for both manual and automatic triggers;
+an unrecognized provider name selects model summarization instead.
+The invocation also disables Codex request compression because the local router
+accepts uncompressed JSON, not ChatGPT Zstd request bodies.
+
 The router handles `POST /v1/responses/compact` locally. It also handles streaming
 `POST /v1/responses` requests identified by Codex metadata as
 `responses_compaction_v2`. Neither path calls a provider. Other metadata-tagged
@@ -61,9 +68,10 @@ archive, session cache requirement, or model-operated retrieval step.
 Acceptance checks cover local HTTP completion without provider calls, native
 restoration with fresh context and suffixes, repeated compaction, restart and
 concurrent key creation, damaged or missing keys, and conservative output pruning.
-Installed Codex 0.153.4 has passed loopback legacy and V2 automatic-compaction
-round trips with both counting scopes and a large user request that is truncated
-by the client's V2 retention step, then restored in full without duplication.
-Other versions and manual/resumed client flows need corresponding
-runtime coverage. Paired outcome evaluation is still required before claiming
+Installed Codex 0.153.4 has passed loopback legacy and V2 round trips with
+synthetic ChatGPT authentication: automatic compaction with both counting scopes,
+and the manual compact operation used by `/compact`. A large user request is
+truncated by the client's V2 retention step, then restored in full without
+duplication. Other versions and resumed client flows need corresponding runtime
+coverage. Paired outcome evaluation is still required before claiming
 an optimal output budget or task-critical semantic preservation on real histories.

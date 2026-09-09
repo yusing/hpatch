@@ -174,11 +174,13 @@ down when Codex exits. Multiple sessions can run independently. Codex handles
 terminal Ctrl-C, and its exit status is preserved.
 
 The wrapper uses the fixed Codex ChatGPT upstream and overrides provider
-selection for that invocation only. Standalone serving, fixed ports, custom
-providers, and provider-selection arguments such as `--oss` are not supported.
-It also forces `include_collaboration_mode_instructions=false` for the invocation,
-so Codex does not inject collaboration-mode instructions, even if enabled in your
-config or command-line overrides. No configuration files are changed.
+selection for that invocation only. Codex displays this provider as `OpenAI`;
+its requests still go through the private Mekugi router. Standalone serving,
+fixed ports, custom providers, and provider-selection arguments such as `--oss`
+are not supported. It also forces
+`include_collaboration_mode_instructions=false` for the invocation, so Codex
+does not inject collaboration-mode instructions, even if enabled in your config
+or command-line overrides. No configuration files are changed.
 
 The wrapper enables WebSockets between Codex and Mekugi for that invocation,
 without changing Codex configuration. Mekugi keeps the ChatGPT connection open

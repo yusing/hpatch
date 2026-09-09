@@ -2,6 +2,7 @@ package router
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -26,8 +27,9 @@ func TestCompactionInstalledCodex(t *testing.T) {
 	for _, probe := range []struct {
 		legacy bool
 		scope  string
-	}{{false, "total"}, {false, "body_after_prefix"}, {true, "total"}, {true, "body_after_prefix"}} {
-		t.Run(fmt.Sprintf("legacy=%v/scope=%s", probe.legacy, probe.scope), func(t *testing.T) {
+		manual bool
+	}{{false, "total", false}, {false, "body_after_prefix", false}, {true, "total", false}, {true, "body_after_prefix", false}, {false, "total", true}, {true, "total", true}} {
+		t.Run(fmt.Sprintf("legacy=%v/scope=%s/manual=%v", probe.legacy, probe.scope, probe.manual), func(t *testing.T) {
 			prompt := "Run the Go tests, then print the working directory, then report completion. Preserve the test result.\n" +
 				strings.Repeat("Keep the original user constraint. ", 10000) +
 				"\nThis final instruction must also survive intact."
@@ -45,6 +47,19 @@ func TestProbe(t *testing.T) {
 				if err := os.WriteFile(filepath.Join(directory, name), []byte(content), 0o600); err != nil {
 					t.Fatal(err)
 				}
+			}
+			// Synthetic ChatGPT auth exercises the same compression gate as the
+			// launcher, without reading credentials or contacting an auth service.
+			// Source: Codex app-server/tests/common/auth_fixtures.rs.
+			encode := base64.RawURLEncoding.EncodeToString
+			idToken := encode([]byte(`{"alg":"none","typ":"JWT"}`)) + "." +
+				encode([]byte(`{"https://api.openai.com/auth":{"chatgpt_plan_type":"pro"}}`)) + "." + encode([]byte("signature"))
+			auth := map[string]any{
+				"auth_mode": "chatgpt", "last_refresh": time.Now().UTC().Format(time.RFC3339),
+				"tokens": map[string]any{"id_token": idToken, "access_token": "loopback-test-access", "refresh_token": "loopback-test-refresh"},
+			}
+			if err := os.WriteFile(filepath.Join(home, "auth.json"), mustMarshalJSON(auth), 0o600); err != nil {
+				t.Fatal(err)
 			}
 			compactor := &contextCompactor{keyPath: filepath.Join(home, "compaction.key")}
 			var normal, compacted atomic.Int32
@@ -69,6 +84,9 @@ func TestProbe(t *testing.T) {
 					command, callID := "go test -v ./...", "probe_go"
 					if step == 2 {
 						command, callID, inputTokens = "pwd", "probe_pwd", 300000
+					}
+					if probe.manual {
+						inputTokens = 1000
 					}
 					item = map[string]any{
 						"type": "function_call", "id": fmt.Sprintf("fc_probe_%d", step), "call_id": callID,
@@ -97,7 +115,7 @@ func TestProbe(t *testing.T) {
 							t.Error("local ciphertext reached the model fixture")
 						}
 					}
-					if userCopies != 1 {
+					if compacted.Load() > 0 && userCopies != 1 {
 						t.Errorf("restored full user request copies = %d, want exactly one", userCopies)
 					}
 					item = map[string]any{
@@ -122,6 +140,19 @@ func TestProbe(t *testing.T) {
 				}
 			})
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method == http.MethodGet && r.URL.Path == "/v1/models" {
+					w.Header().Set("Content-Type", "application/json")
+					_, _ = io.WriteString(w, `{"models":[]}`)
+					return
+				}
+				if r.Header.Get("Content-Encoding") != "" {
+					t.Error("Codex sent compressed JSON to the router")
+					http.Error(w, "request compression unsupported", http.StatusBadRequest)
+					return
+				}
+				if r.Header.Get("Authorization") == "" {
+					t.Error("synthetic ChatGPT authentication was not applied")
+				}
 				metadata, _ := decodeCodexTurnMetadata(r.Header)
 				if metadata.RequestKind == "compaction" || r.URL.Path == "/v1/responses/compact" {
 					compacted.Add(1)
@@ -154,12 +185,17 @@ model_provider = "loopback"
 model_context_window = 1000000
 model_auto_compact_token_limit = 200000
 model_auto_compact_token_limit_scope = %q
+approval_policy = "never"
+sandbox_mode = "danger-full-access"
 tool_output_token_limit = 20000
+cli_auth_credentials_store_mode = "file"
+[features]
+enable_request_compression = false
 [model_providers.loopback]
-name = "Azure"
+name = "OpenAI"
 base_url = %q
 wire_api = "responses"
-requires_openai_auth = false
+requires_openai_auth = true
 supports_websockets = false
 request_max_retries = 0
 stream_max_retries = 0
@@ -172,20 +208,136 @@ metrics_exporter = "none"
 				t.Fatal(err)
 			}
 			args := []string{"exec", "--skip-git-repo-check", "--ephemeral", "--json", "--dangerously-bypass-approvals-and-sandbox"}
+			if probe.manual {
+				args = []string{"app-server"}
+			}
+			// Mirror the launcher's final overrides even when the caller enables
+			// compression through both CLI feature flags and subcommand config.
+			args = append(args, "--enable", "enable_request_compression", "-c", "features.enable_request_compression=true",
+				"--disable", "enable_request_compression", "-c", "features.enable_request_compression=false")
 			if probe.legacy {
 				args = append(args, "--disable", "remote_compaction_v2")
 			}
-			args = append(args, "-")
+			if !probe.manual {
+				args = append(args, "-")
+			}
 			ctx, cancel := context.WithTimeout(t.Context(), 120*time.Second)
 			defer cancel()
 			command := exec.CommandContext(ctx, binary, args...)
-			command.Stdin = strings.NewReader(prompt)
 			command.Dir = directory
 			command.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + os.Getenv("HOME"), "CODEX_HOME=" + home}
-			output, err := command.CombinedOutput()
-			if err != nil || compacted.Load() != 1 || normal.Load() != 3 || !restored.Load() {
+			var output []byte
+			var err error
+			wantNormal := int32(3)
+			if probe.manual {
+				wantNormal = 4
+				err = runManualCompactionProbe(command, directory, prompt)
+			} else {
+				command.Stdin = strings.NewReader(prompt)
+				output, err = command.CombinedOutput()
+			}
+			if err != nil || compacted.Load() != 1 || normal.Load() != wantNormal || !restored.Load() {
+
 				t.Fatalf("client round trip: err=%v normal=%d compactions=%d restored=%v; output=%s", err, normal.Load(), compacted.Load(), restored.Load(), output)
 			}
 		})
 	}
+}
+
+// The app-server operation uses the same Op::Compact as the TUI's /compact.
+// Source: Codex app-server/tests/suite/v2/compaction.rs.
+func runManualCompactionProbe(command *exec.Cmd, directory, prompt string) error {
+	stdin, err := command.StdinPipe()
+	if err != nil {
+		return err
+	}
+	stdout, err := command.StdoutPipe()
+	if err != nil {
+		return err
+	}
+	if err := command.Start(); err != nil {
+		return err
+	}
+	defer func() {
+		_ = stdin.Close()
+		_ = command.Process.Kill()
+		_ = command.Wait()
+	}()
+	encoder, decoder := json.NewEncoder(stdin), json.NewDecoder(stdout)
+	send := func(id int, method string, params any) error {
+		return encoder.Encode(map[string]any{"jsonrpc": "2.0", "id": id, "method": method, "params": params})
+	}
+	type rpcMessage struct {
+		ID     int             `json:"id"`
+		Method string          `json:"method"`
+		Result json.RawMessage `json:"result"`
+		Params json.RawMessage `json:"params"`
+		Error  json.RawMessage `json:"error"`
+	}
+	receive := func(id int, method string) (rpcMessage, error) {
+		for {
+			var message rpcMessage
+			if err := decoder.Decode(&message); err != nil {
+				return message, fmt.Errorf("app-server read: %w", err)
+			}
+			if len(message.Error) > 0 || message.Method == "error" {
+				return message, fmt.Errorf("app-server error: %+v", message)
+			}
+			if (id != 0 && message.ID == id) || (method != "" && message.Method == method) {
+				return message, nil
+			}
+		}
+	}
+	if err := send(1, "initialize", map[string]any{"clientInfo": map[string]any{"name": "hpatch_compaction_test", "version": "1"}}); err != nil {
+		return err
+	}
+	if _, err := receive(1, ""); err != nil {
+		return err
+	}
+	if err := encoder.Encode(map[string]any{"jsonrpc": "2.0", "method": "initialized"}); err != nil {
+		return err
+	}
+	if err := send(2, "thread/start", map[string]any{"cwd": directory}); err != nil {
+		return err
+	}
+	message, err := receive(2, "")
+	if err != nil {
+		return err
+	}
+	var started struct {
+		Thread struct {
+			ID string `json:"id"`
+		} `json:"thread"`
+	}
+	if err := json.Unmarshal(message.Result, &started); err != nil {
+		return err
+	}
+	for index, text := range []string{prompt, "", "Report the preserved test result."} {
+		method := "turn/start"
+		params := map[string]any{"threadId": started.Thread.ID}
+		if index == 1 {
+			method = "thread/compact/start"
+		} else {
+			params["input"] = []any{map[string]any{"type": "text", "text": text, "textElements": []any{}}}
+		}
+		if err := send(index+3, method, params); err != nil {
+			return err
+		}
+		if _, err := receive(index+3, ""); err != nil {
+			return err
+		}
+		message, err := receive(0, "turn/completed")
+		if err != nil {
+			return err
+		}
+		var completed struct {
+			Turn struct {
+				Status string `json:"status"`
+			} `json:"turn"`
+		}
+		if err := json.Unmarshal(message.Params, &completed); err != nil || completed.Turn.Status != "completed" {
+			return fmt.Errorf("app-server turn failed: %s: %v", message.Params, err)
+		}
+	}
+	return nil
 }
