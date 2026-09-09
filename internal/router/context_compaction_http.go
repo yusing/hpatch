@@ -103,7 +103,7 @@ func (c *contextCompactor) handler(next http.Handler) http.HandlerFunc {
 		}
 		reduced := reduceContextCompaction(input)
 		if slices.EqualFunc(input, reduced, func(a, b json.RawMessage) bool { return bytes.Equal(a, b) }) {
-			http.Error(writer, "no safe context reduction is available for this history; protected context was not discarded and no provider compaction was requested", http.StatusUnprocessableEntity)
+			http.Error(writer, "no supported context reduction is available for this history; protected context was not discarded and no provider compaction was requested", http.StatusUnprocessableEntity)
 			return
 		}
 		capsule, err := c.seal(request.Context(), reduced)
@@ -117,13 +117,14 @@ func (c *contextCompactor) handler(next http.Handler) http.HandlerFunc {
 		_ = json.Unmarshal(capsule, &sealedItem)
 		responseID := "resp_" + strings.TrimPrefix(sealedItem.ID, "cmp_")
 		if standalone {
-			// Legacy Codex replaces its history wholesale. Keep user messages
-			// visible to its own user-input handling as well as in the capsule.
+			// Legacy Codex replaces its history wholesale. Keep real user messages
+			// visible to its user-input handling. Historical canonical context stays
+			// only in the capsule so it cannot be mistaken for a fresh injection.
 			var output []json.RawMessage
 			for _, item := range reduced {
 				var fields map[string]json.RawMessage
 				_ = json.Unmarshal(item, &fields)
-				if jsonString(fields, "type") == "message" && jsonString(fields, "role") == "user" {
+				if jsonString(fields, "type") == "message" && jsonString(fields, "role") == "user" && !contextCompactionFreshContext(item) {
 					output = append(output, item)
 				}
 			}

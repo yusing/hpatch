@@ -11,10 +11,16 @@ import (
 	"mvdan.cc/sh/v3/syntax"
 )
 
-// reduceContextCompaction changes only recognized, completed historical tool
-// output. Requests, decisions, opaque state, calls, order, and the last result
-// remain intact. It makes no claim that the surviving history fits a token cap.
+// reduceContextCompaction retains authority and the active frontier while
+// reducing redundant evidence and retiring eligible finished operations under
+// the explicit lossy retention policy. It does not guarantee a fixed token cap.
 func reduceContextCompaction(input []json.RawMessage) []json.RawMessage {
+	// Clean transport metadata while stable native IDs are still present.
+	// Narration reduction may remove an unreferenced ordinary-assistant ID,
+	// after which the metadata pass must conservatively leave that item alone.
+	input = reduceContextCompactionMetadata(input)
+	input = reduceContextCompactionNarration(input)
+	protected := contextCompactionReferencedResults(input)
 	output := slices.Clone(input)
 	type item struct {
 		Type      string          `json:"type"`
@@ -44,7 +50,7 @@ func reduceContextCompaction(input []json.RawMessage) []json.RawMessage {
 		}
 	}
 	for index, current := range items {
-		if index == lastResult || (current.Type != "function_call_output" && current.Type != "custom_tool_call_output") {
+		if index == lastResult || protected[current.CallID] || (current.Type != "function_call_output" && current.Type != "custom_tool_call_output") {
 			continue
 		}
 		callIndex, exists := calls[current.CallID]
@@ -98,7 +104,7 @@ func reduceContextCompaction(input []json.RawMessage) []json.RawMessage {
 		case "search":
 			// A later byte-identical output is explicit replacement evidence,
 			// not an assumption that rerunning a search gives its old answer.
-			// Only read outputs qualify, so this source cannot itself be reduced.
+			// Keep the referenced read intact in this and subsequent compactions.
 			if len(text) < 256 {
 				continue
 			}
@@ -127,6 +133,7 @@ func reduceContextCompaction(input []json.RawMessage) []json.RawMessage {
 				}
 				_, evidence, ok := contextCompactionOutput(candidate.Output)
 				if ok && evidence == text {
+					protected[candidate.CallID] = true
 					reduced = fmt.Sprintf("[hpatch compaction: matching search listing retained verbatim in tool result %q; original command and successful exit status retained]\n", candidate.CallID)
 					break
 				}
@@ -142,7 +149,9 @@ func reduceContextCompaction(input []json.RawMessage) []json.RawMessage {
 		fields["output"] = encode(reduced)
 		output[index] = mustMarshalJSON(fields)
 	}
-	return output
+	retained := reduceContextCompactionSource(input,
+		retireCompactionOperations(reduceRepeatedCompactionRows(output, protected)))
+	return consolidateContextCompactionRecords(input, retained)
 }
 
 // Accept structured results or Codex's native completed-exec header. Unknown

@@ -94,6 +94,40 @@ func TestCompactionHTTPProviderFreeRoundTrip(t *testing.T) {
 	}
 }
 
+func TestCompactionLegacyDoesNotReexportCanonicalContext(t *testing.T) {
+	compactor := &contextCompactor{keyPath: filepath.Join(t.TempDir(), "compaction.key")}
+	message := func(text string) json.RawMessage {
+		return mustMarshalJSON(map[string]any{"type": "message", "role": "user", "content": []any{map[string]string{"type": "input_text", "text": text}}})
+	}
+	contextItems := []json.RawMessage{
+		message("# AGENTS.md instructions\n<INSTRUCTIONS>Preserve the workspace.</INSTRUCTIONS>"),
+		message("<environment_context>\n<cwd>/old</cwd>\n</environment_context>"),
+	}
+	input := append(slices.Clone(contextItems), compactHTTPHistory()...)
+	response := httptest.NewRecorder()
+	compactor.handler(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		t.Fatal("compaction reached provider")
+	}))(response, httptest.NewRequest(http.MethodPost, "/v1/responses/compact",
+		strings.NewReader(string(mustMarshalJSON(map[string]any{"model": "gpt-5", "input": input})))))
+	var compacted struct {
+		Output []json.RawMessage `json:"output"`
+	}
+	if response.Code != http.StatusOK || json.Unmarshal(response.Body.Bytes(), &compacted) != nil {
+		t.Fatalf("local compaction failed: %d", response.Code)
+	}
+	// Canonical context belongs in the authenticated history, not in the legacy
+	// real-user carry list where restoration would mistake it for a fresh event.
+	for _, item := range compacted.Output {
+		if contextCompactionFreshContext(item) {
+			t.Fatal("historical canonical context reexported as fresh context")
+		}
+	}
+	got, err := compactor.restore(t.Context(), compacted.Output)
+	if err != nil || contextCompactionCanonicalJSON(mustMarshalJSON(got)) != contextCompactionCanonicalJSON(mustMarshalJSON(reduceContextCompaction(input))) {
+		t.Fatalf("historical context duplicated or lost: %v", err)
+	}
+}
+
 func TestCompactionHTTPStreamingV2AndFailures(t *testing.T) {
 	compactor := &contextCompactor{keyPath: filepath.Join(t.TempDir(), "compaction.key")}
 	next := http.HandlerFunc(func(http.ResponseWriter, *http.Request) { t.Fatal("compaction reached provider") })

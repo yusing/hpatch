@@ -125,10 +125,17 @@ provider request. The first compaction creates an owner-only key at
 `~/.config/hpatch/compaction.key` on Linux). Keep that key to resume compacted
 sessions, including when moving them to another installation.
 
-The initial reducers handle only recognized search listings and verbose Go test
-results. Uncertain evidence is retained; when nothing can safely be reduced,
-compaction reports an error instead of dropping context or asking a provider
-for a summary. The retained history is not guaranteed to fit a 30k-token window.
+Compaction can discard unmarked historical details from older finished operations,
+even while the task is still open. It keeps factual execution records, requests,
+visible decisions, diagnostic excerpts, referenced evidence, and recent/live work.
+Recognized applied patch bodies and associated older opaque reasoning can also be
+retired. Older failed-command output and truncated documentation can lose
+unreferenced bulk while retaining errors, warnings, and provenance.
+Discarded details are not currently retrievable through Hpatch.
+
+Unknown or ambiguous execution states remain intact. If nothing qualifies,
+compaction reports an error rather than asking a provider for a summary.
+Compaction does not guarantee a fixed retained-history size.
 
 Then launch:
 

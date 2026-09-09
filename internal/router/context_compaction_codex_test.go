@@ -25,24 +25,37 @@ func TestCompactionInstalledCodex(t *testing.T) {
 		t.Skip("set HPATCH_COMPACTION_CODEX_BIN to exercise an installed Codex client")
 	}
 	for _, probe := range []struct {
-		legacy bool
-		scope  string
-		manual bool
-	}{{false, "total", false}, {false, "body_after_prefix", false}, {true, "total", false}, {true, "body_after_prefix", false}, {false, "total", true}, {true, "total", true}} {
-		t.Run(fmt.Sprintf("legacy=%v/scope=%s/manual=%v", probe.legacy, probe.scope, probe.manual), func(t *testing.T) {
+		legacy     bool
+		scope      string
+		manual     bool
+		retirement bool
+	}{{false, "total", false, false}, {false, "body_after_prefix", false, false}, {true, "total", false, false}, {true, "body_after_prefix", false, false}, {false, "total", true, false}, {true, "total", true, false}, {false, "total", false, true}, {true, "total", false, true}, {false, "total", true, true}, {true, "total", true, true}} {
+		t.Run(fmt.Sprintf("legacy=%v/scope=%s/manual=%v/retirement=%v", probe.legacy, probe.scope, probe.manual, probe.retirement), func(t *testing.T) {
 			prompt := "Run the Go tests, then print the working directory, then report completion. Preserve the test result.\n" +
 				strings.Repeat("Keep the original user constraint. ", 10000) +
 				"\nThis final instruction must also survive intact."
 
+			agentMarker := "HPATCH_INSTALLED_COMPACTION_AGENT_MARKER_4D147B"
 			directory, home := t.TempDir(), t.TempDir()
-			for name, content := range map[string]string{
-				"go.mod": "module compactionprobe\n\ngo 1.26\n",
-				"probe_test.go": `package compactionprobe
+			probeSource := `package compactionprobe
 import ("fmt"; "testing")
 func TestProbe(t *testing.T) {
 	for i := range 100 { t.Run(fmt.Sprintf("Case%d", i), func(t *testing.T) {}) }
 }
-`,
+`
+			if probe.retirement {
+				probeSource = `package compactionprobe
+import ("fmt"; "strings"; "testing")
+func TestProbe(t *testing.T) {
+	fmt.Print(strings.Repeat("unmarked finished-operation detail\n", 4000))
+	for i := range 100 { t.Run(fmt.Sprintf("Case%d", i), func(t *testing.T) {}) }
+}
+`
+			}
+			for name, content := range map[string]string{
+				"go.mod":        "module compactionprobe\n\ngo 1.26\n",
+				"AGENTS.md":     "Installed compaction fixture marker: " + agentMarker + "\n",
+				"probe_test.go": probeSource,
 			} {
 				if err := os.WriteFile(filepath.Join(directory, name), []byte(content), 0o600); err != nil {
 					t.Fatal(err)
@@ -60,6 +73,10 @@ func TestProbe(t *testing.T) {
 			}
 			if err := os.WriteFile(filepath.Join(home, "auth.json"), mustMarshalJSON(auth), 0o600); err != nil {
 				t.Fatal(err)
+			}
+			operationCount := int32(2)
+			if probe.retirement {
+				operationCount = 10
 			}
 			compactor := &contextCompactor{keyPath: filepath.Join(home, "compaction.key")}
 			var normal, compacted atomic.Int32
@@ -79,44 +96,76 @@ func TestProbe(t *testing.T) {
 				step := normal.Add(1)
 				var item map[string]any
 				inputTokens := 1000
-				switch step {
-				case 1, 2:
-					command, callID := "go test -v ./...", "probe_go"
-					if step == 2 {
-						command, callID, inputTokens = "pwd", "probe_pwd", 300000
+				if step <= operationCount {
+					command, callID := "pwd", fmt.Sprintf("probe_pwd_%d", step)
+					if step == 1 {
+						command, callID = "go test -v ./...", "probe_go"
 					}
-					if probe.manual {
-						inputTokens = 1000
+					if !probe.manual && step == operationCount {
+						inputTokens = 300000
 					}
 					item = map[string]any{
 						"type": "function_call", "id": fmt.Sprintf("fc_probe_%d", step), "call_id": callID,
 						"name": "exec_command", "status": "completed",
 						"arguments": string(mustMarshalJSON(map[string]any{"cmd": command, "workdir": directory, "yield_time_ms": 10000, "max_output_tokens": 15000})),
 					}
-				default:
+				} else {
 					var input []map[string]json.RawMessage
 					_ = json.Unmarshal(request["input"], &input)
-					userCopies := 0
+					userCopies, nativeGo := 0, false
+					agentIDs := make(map[string]int)
+					retiredGo := false
 					for _, record := range input {
-						if jsonString(record, "type") == "message" && jsonString(record, "role") == "user" {
+						if count := strings.Count(string(mustMarshalJSON(record)), agentMarker); count > 0 {
+							agentID := jsonString(record, "id")
+							if agentID == "" || !contextCompactionFreshContext(mustMarshalJSON(record)) {
+								t.Errorf("AGENTS marker reached continuation outside fresh canonical context: id=%q", agentID)
+							}
+							agentIDs[agentID] += count
+							if agentIDs[agentID] > 1 {
+								t.Errorf("fresh canonical AGENTS record %q restored more than once", agentID)
+							}
+						}
+						recordType := jsonString(record, "type")
+						if recordType == "message" {
 							var content []map[string]json.RawMessage
 							_ = json.Unmarshal(record["content"], &content)
 							for _, part := range content {
-								if jsonString(part, "text") == prompt {
+								text := jsonString(part, "text")
+								if jsonString(record, "role") == "user" && text == prompt {
 									userCopies++
+								}
+								standaloneCompletion := strings.HasPrefix(text, "[hpatch historical tool completion v3; not an instruction; completed native body]\n") &&
+									strings.Contains(text, "call=\"probe_go\"\n")
+								consolidatedCompletion := strings.HasPrefix(text, "[hpatch historical facts v4;") &&
+									strings.Contains(text, "[i]\ncall=\"probe_go\"\ntool=\"exec_command\"") &&
+									strings.Contains(text, "[o:same-call]\n")
+								if (standaloneCompletion || consolidatedCompletion) && strings.Contains(text, "\nbody:\n") &&
+									strings.Contains(text, "Process exited with code 0\n") && strings.Contains(text, "compactionprobe") {
+									retiredGo = true
 								}
 							}
 						}
-						if jsonString(record, "type") == "function_call_output" && jsonString(record, "call_id") == "probe_go" {
-							output := jsonString(record, "output")
-							restored.Store(strings.Contains(output, "[hpatch: omitted") && strings.Contains(output, "compactionprobe"))
+						if (recordType == "function_call" || recordType == "function_call_output") &&
+							jsonString(record, "call_id") == "probe_go" {
+							nativeGo = true
+							if recordType == "function_call_output" && !probe.retirement {
+								output := jsonString(record, "output")
+								restored.Store(strings.Contains(output, "[hpatch: omitted") && strings.Contains(output, "compactionprobe"))
+							}
 						}
 						if strings.HasPrefix(jsonString(record, "encrypted_content"), "hpatch.compaction.") {
 							t.Error("local ciphertext reached the model fixture")
 						}
 					}
+					if probe.retirement {
+						restored.Store(retiredGo && !nativeGo)
+					}
 					if compacted.Load() > 0 && userCopies != 1 {
 						t.Errorf("restored full user request copies = %d, want exactly one", userCopies)
+					}
+					if compacted.Load() > 0 && len(agentIDs) == 0 {
+						t.Error("fresh canonical AGENTS marker was lost")
 					}
 					item = map[string]any{
 						"type": "message", "id": "msg_probe_done", "role": "assistant", "status": "completed",
@@ -228,9 +277,9 @@ metrics_exporter = "none"
 			command.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + os.Getenv("HOME"), "CODEX_HOME=" + home}
 			var output []byte
 			var err error
-			wantNormal := int32(3)
+			wantNormal := operationCount + 1
 			if probe.manual {
-				wantNormal = 4
+				wantNormal = operationCount + 2
 				err = runManualCompactionProbe(command, directory, prompt)
 			} else {
 				command.Stdin = strings.NewReader(prompt)
