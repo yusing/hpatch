@@ -161,17 +161,7 @@ func newManagedHPatchProxy(t *testing.T, translator hpatchTranslator) *hpatchPro
 	if translator.ToolDescription() != testHPatchToolDescription {
 		return newManagedHPatchProxyWithDataDirectory(t, translator, t.TempDir())
 	}
-	registry := sharedProxyTestRegistry(t)
-	directory := t.TempDir()
-	t.Setenv(shellruntime.RuntimeDirectoryEnvironment, directory)
-	proxy := newHPatchProxy(translator, registry, false, false)
-	proxy.shellDirectory = directory
-	t.Cleanup(func() {
-		if err := proxy.Close(); err != nil {
-			t.Error(err)
-		}
-	})
-	return proxy
+	return newProxyWithSharedTestRegistry(t, translator, sharedProxyTestRegistry(t))
 }
 
 func newManagedHPatchProxyWithDataDirectory(t *testing.T, translator hpatchTranslator, dataDirectory string) *hpatchProxy {

@@ -230,7 +230,7 @@ func TestShellRouteKeepsCleanCommandWithoutDefaultCommentary(t *testing.T) {
 		{name: "commentary", input: "commentary Running check\nprintf ok"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			transform, proxy, _ := newToolPluginTestTransform(t)
+			transform, proxy, _, _ := newHPatchTestTransform(t, testTranslator(t, new(int)))
 			proxy.commentaryEndpoint = "http://127.0.0.1:8080" + commentaryPublisherPath
 			response, err := transform.TransformJSON(mustTestJSON(t, map[string]any{
 				"status": "completed", "output": []any{map[string]any{
@@ -274,9 +274,10 @@ func TestShellCommentaryPreservesDirectCommands(t *testing.T) {
 			var transform *hpatchResponseTransform
 			var proxy *hpatchProxy
 			if native {
-				transform, proxy = newNativeToolPluginTestTransform(t)
+				proxy = newManagedHPatchProxy(t, testTranslator(t, new(int)))
+				transform, _ = newNativeHPatchTestTransformWithProxy(t, proxy)
 			} else {
-				transform, proxy, _ = newToolPluginTestTransform(t)
+				transform, proxy, _, _ = newHPatchTestTransform(t, testTranslator(t, new(int)))
 			}
 			proxy.commentaryEndpoint = "http://127.0.0.1:8080" + commentaryPublisherPath
 			const command = "mktemp -d -t hpatch-shell.XXXXXXXXXX"

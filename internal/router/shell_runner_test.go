@@ -39,15 +39,7 @@ func runShellWorkerTest(
 }
 
 func TestShellRunnerUsesInterpreterBasenameForLanguageVariant(t *testing.T) {
-	registry, err := buildToolRegistry(t.Context(), t.TempDir(), testHPatchToolDescription, false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		if err := registry.Close(); err != nil {
-			t.Error(err)
-		}
-	})
+	registry := sharedProxyTestRegistry(t)
 
 	for _, interpreter := range []string{"bash", "/usr/bin/bash"} {
 		t.Run(interpreter, func(t *testing.T) {
@@ -108,15 +100,7 @@ func TestShellRunnerUsesInterpreterBasenameForLanguageVariant(t *testing.T) {
 }
 
 func TestShellRunnerEvaluatesPrivateToolsWithoutFrontends(t *testing.T) {
-	registry, err := buildToolRegistry(t.Context(), t.TempDir(), testHPatchToolDescription, false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		if err := registry.Close(); err != nil {
-			t.Error(err)
-		}
-	})
+	registry := sharedProxyTestRegistry(t)
 	for _, name := range []string{"hread", "hgrep", "hsymbol", "inspect_file"} {
 		if wrapper, ok := registry.wrapper(name); ok {
 			t.Fatalf("private tool %q unexpectedly has wrapper %q", name, wrapper)
@@ -150,15 +134,7 @@ func TestShellRunnerEvaluatesPrivateToolsWithoutFrontends(t *testing.T) {
 }
 
 func TestShellRunnerReadsRetainedHReadArtifact(t *testing.T) {
-	registry, err := buildToolRegistry(t.Context(), t.TempDir(), testHPatchToolDescription, false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		if err := registry.Close(); err != nil {
-			t.Error(err)
-		}
-	})
+	registry := sharedProxyTestRegistry(t)
 	runtimeDirectory := t.TempDir()
 	retainedDirectory := filepath.Join(runtimeDirectory, "hpatch-scripts-thread-id")
 	if err := os.MkdirAll(retainedDirectory, 0o700); err != nil {
@@ -184,15 +160,7 @@ func TestShellRunnerReadsRetainedHReadArtifact(t *testing.T) {
 }
 
 func TestShellRunnerConfinesRetainedHReadArtifact(t *testing.T) {
-	registry, err := buildToolRegistry(t.Context(), t.TempDir(), testHPatchToolDescription, false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		if err := registry.Close(); err != nil {
-			t.Error(err)
-		}
-	})
+	registry := sharedProxyTestRegistry(t)
 	runtimeDirectory := t.TempDir()
 	outsideDirectory := t.TempDir()
 	sentinel := "outside-retained-sentinel"
@@ -252,15 +220,7 @@ func TestShellRunnerConfinesRetainedHReadArtifact(t *testing.T) {
 }
 
 func TestShellRunnerPreservesStdinAndExternalCommands(t *testing.T) {
-	registry, err := buildToolRegistry(t.Context(), t.TempDir(), testHPatchToolDescription, false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		if err := registry.Close(); err != nil {
-			t.Error(err)
-		}
-	})
+	registry := sharedProxyTestRegistry(t)
 	inputPath := filepath.Join(t.TempDir(), "stdin")
 	if err := os.WriteFile(inputPath, []byte("stream\n"), 0o600); err != nil {
 		t.Fatal(err)
@@ -285,15 +245,7 @@ func TestShellRunnerPreservesStdinAndExternalCommands(t *testing.T) {
 }
 
 func TestShellRunnerBoundsAndValidatesOutput(t *testing.T) {
-	registry, err := buildToolRegistry(t.Context(), t.TempDir(), testHPatchToolDescription, false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		if err := registry.Close(); err != nil {
-			t.Error(err)
-		}
-	})
+	registry := sharedProxyTestRegistry(t)
 	manifest, err := readToolWorkerManifest(filepath.Join(registry.SnapshotDir, toolPluginManifestFilename))
 	if err != nil {
 		t.Fatal(err)

@@ -3,14 +3,9 @@ package router
 import (
 	"bytes"
 	"encoding/json"
-	"errors"
 	"maps"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
-
-	"github.com/yusing/hpatch/internal/shellruntime"
 )
 
 const testToolPluginDeclaration = `export default {
@@ -89,26 +84,7 @@ func newNativeToolPluginTestTransform(t *testing.T) (*hpatchResponseTransform, *
 
 func newToolPluginTestProxy(t *testing.T) *hpatchProxy {
 	t.Helper()
-	t.Setenv(shellruntime.RuntimeDirectoryEnvironment, t.TempDir())
-	dataDirectory := t.TempDir()
-	pluginDirectory := filepath.Join(dataDirectory, "plugins")
-	if err := os.Mkdir(pluginDirectory, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(pluginDirectory, "proxy.mjs"), []byte(testToolPluginDeclaration), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	registry, err := buildToolRegistry(t.Context(), dataDirectory, testHPatchToolDescription, false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	proxy := newHPatchProxy(testTranslator(t, new(int)), registry, false, false)
-	t.Cleanup(func() {
-		if err := errors.Join(proxy.Close(), registry.Close()); err != nil {
-			t.Error(err)
-		}
-	})
-	return proxy
+	return newProxyWithSharedTestRegistry(t, testTranslator(t, new(int)), pluginProxyTestFixture.get(t, testToolPluginDeclaration))
 }
 
 func prepareToolPluginTestRequest(t *testing.T, proxy *hpatchProxy, request *parsedResponsesRequest, sessionID, threadID string) *hpatchResponseTransform {

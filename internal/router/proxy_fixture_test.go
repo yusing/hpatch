@@ -11,40 +11,72 @@ import (
 	"github.com/yusing/hpatch/internal/shellruntime"
 )
 
-var proxyTestFixture struct {
+type proxyRegistryFixture struct {
 	once      sync.Once
 	registry  *toolRegistry
 	directory string
 	err       error
 }
 
+var proxyTestFixture, pluginProxyTestFixture proxyRegistryFixture
+
 // Ordinary proxy tests borrow the real, immutable built-in catalog and its
 // stateless shell translator. Each proxy still owns its session state and shell
-// storage. Tests of configured plugins, registry mutation, startup, or shutdown
+// storage. Tests of plugin loading, registry mutation, startup, or shutdown
 // build and close their own registries instead.
 func sharedProxyTestRegistry(t *testing.T) *toolRegistry {
 	t.Helper()
-	proxyTestFixture.once.Do(func() {
-		proxyTestFixture.directory, proxyTestFixture.err = os.MkdirTemp("", "hpatch-proxy-tests-")
-		if proxyTestFixture.err != nil {
+	return proxyTestFixture.get(t, "")
+}
+
+func (fixture *proxyRegistryFixture) get(t *testing.T, pluginSource string) *toolRegistry {
+	t.Helper()
+	fixture.once.Do(func() {
+		fixture.directory, fixture.err = os.MkdirTemp("", "hpatch-proxy-tests-")
+		if fixture.err != nil {
 			return
 		}
-		t.Setenv(shellruntime.RuntimeDirectoryEnvironment, proxyTestFixture.directory)
-		proxyTestFixture.registry, proxyTestFixture.err = buildToolRegistry(
-			t.Context(), filepath.Join(proxyTestFixture.directory, "data"), testHPatchToolDescription, false,
-		)
+		t.Setenv(shellruntime.RuntimeDirectoryEnvironment, fixture.directory)
+		dataDirectory := filepath.Join(fixture.directory, "data")
+		if pluginSource != "" {
+			pluginDirectory := filepath.Join(dataDirectory, "plugins")
+			if fixture.err = os.MkdirAll(pluginDirectory, 0o700); fixture.err != nil {
+				return
+			}
+			if fixture.err = os.WriteFile(filepath.Join(pluginDirectory, "proxy.mjs"), []byte(pluginSource), 0o600); fixture.err != nil {
+				return
+			}
+		}
+		fixture.registry, fixture.err = buildToolRegistry(t.Context(), dataDirectory, testHPatchToolDescription, false)
 	})
-	if proxyTestFixture.err != nil {
-		t.Fatal(proxyTestFixture.err)
+	if fixture.err != nil {
+		t.Fatal(fixture.err)
 	}
-	return proxyTestFixture.registry
+	// Workers must not put thread artifacts into the shared fixture directory.
+	t.Setenv(shellruntime.RuntimeDirectoryEnvironment, t.TempDir())
+	return fixture.registry
+}
+
+func newProxyWithSharedTestRegistry(t *testing.T, translator hpatchTranslator, registry *toolRegistry) *hpatchProxy {
+	t.Helper()
+	proxy := newHPatchProxy(translator, registry, false, false)
+	proxy.shellDirectory = os.Getenv(shellruntime.RuntimeDirectoryEnvironment)
+	t.Cleanup(func() {
+		if err := proxy.Close(); err != nil {
+			t.Error(err)
+		}
+	})
+	return proxy
 }
 
 func TestMain(m *testing.M) {
 	code := m.Run()
-	err := proxyTestFixture.registry.Close()
-	if proxyTestFixture.directory != "" {
-		err = errors.Join(err, os.RemoveAll(proxyTestFixture.directory))
+	var err error
+	for _, fixture := range []*proxyRegistryFixture{&proxyTestFixture, &pluginProxyTestFixture} {
+		err = errors.Join(err, fixture.registry.Close())
+		if fixture.directory != "" {
+			err = errors.Join(err, os.RemoveAll(fixture.directory))
+		}
 	}
 	if err != nil {
 		_, _ = fmt.Fprintf(os.Stderr, "clean up proxy test fixture: %v\n", err)

@@ -114,19 +114,10 @@ func TestToolPluginWorkerResolvesBasenameFromPath(t *testing.T) {
 }
 
 func TestBuiltinToolWorkersRunGeneratedTypeScriptImplementations(t *testing.T) {
-	dataDirectory := t.TempDir()
-	registry, err := buildToolRegistry(t.Context(), dataDirectory, testHPatchToolDescription, false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		if err := registry.Close(); err != nil {
-			t.Error(err)
-		}
-	})
+	registry := sharedProxyTestRegistry(t)
 	workspace := t.TempDir()
 	t.Chdir(workspace)
-	workspace, err = filepath.EvalSymlinks(workspace)
+	workspace, err := filepath.EvalSymlinks(workspace)
 	if err != nil {
 		t.Fatal(err)
 	}
