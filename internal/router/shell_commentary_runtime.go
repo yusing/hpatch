@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 
 	"github.com/yusing/hpatch/internal/shellruntime"
@@ -29,6 +30,11 @@ type ownedShellCommentary struct {
 // prevents a shell command from running.
 func (p *hpatchProxy) prepareShellCommentary(threadID, historySessionID, author string) {
 	if p.commentaryEndpoint == "" {
+		return
+	}
+	// Shell authors persist across turns. Reject malformed names before they
+	// acquire provenance, independently of optional root-projection ancestry.
+	if strings.ContainsAny(author, "\r\n\x00") {
 		return
 	}
 	directory, err := shellruntime.ScriptsPath(p.shellDirectory, threadID)
