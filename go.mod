@@ -4,6 +4,7 @@ go 1.26
 
 require (
 	github.com/BurntSushi/toml v1.6.0
+	github.com/coder/websocket v1.8.15
 	github.com/creack/pty v1.1.24
 	github.com/gofrs/flock v0.13.0
 	github.com/openai/openai-go/v3 v3.56.0

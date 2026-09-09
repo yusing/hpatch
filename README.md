@@ -159,6 +159,13 @@ The wrapper uses the fixed Codex ChatGPT upstream and overrides provider
 selection for that invocation only. Standalone serving, fixed ports, custom
 providers, and provider-selection arguments such as `--oss` are not supported.
 
+Codex keeps its local HTTP/SSE connection. Hpatch uses persistent WebSockets to
+ChatGPT without changing Codex configuration; full model-visible input is still
+sent on every request. Networks must allow secure WebSocket connections to
+ChatGPT. Hpatch falls back to HTTP when the endpoint explicitly does not support
+the upgrade, not after an in-flight connection drops. A dropped request fails
+rather than being silently replayed. Grok requests remain on HTTP.
+
 ### Options
 
 | Flag | Default | Purpose |
@@ -169,7 +176,7 @@ providers, and provider-selection arguments such as `--oss` are not supported.
 | `--grok` | `false` | Enable Grok subagents in Hpatch mode |
 | `--grok-auth-file` | `~/.grok/auth.json` | Select a Grok OAuth credential store |
 | `--timeout` | `10m` | Wait for the upstream response to start |
-| `--stream-idle-timeout` | `4m` | Limit inactivity between upstream response bytes |
+| `--stream-idle-timeout` | `4m` | Limit gaps between provider WebSocket messages, or HTTP response bytes |
 | `--capture-output PATH` | Disabled | Append sanitized JSONL metrics |
 | `--metrics-output PATH` | Disabled | Write the final metrics snapshot on shutdown, overwriting the destination |
 

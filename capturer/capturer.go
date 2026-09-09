@@ -76,6 +76,7 @@ type toolCallMetrics struct {
 }
 
 type captureRecord struct {
+	Transport           string                    `json:"transport,omitempty"`
 	InstructionRewrite  *InstructionRewrite       `json:"instruction_rewrite,omitempty"`
 	ProviderResponse    *providerResponseEvidence `json:"provider_response,omitempty"`
 	PredecessorSequence uint64                    `json:"predecessor_sequence,omitempty"`
@@ -274,16 +275,7 @@ func (r *Recorder) Transport(next http.RoundTripper) http.RoundTripper {
 		if err != nil {
 			return nil, fmt.Errorf("capture provider request body: %w", err)
 		}
-		state.mu.Lock()
-		if state.providerRouting == nil {
-			state.providerRouting = make(map[uint64]requestRouting)
-		}
-		routing := requestRouting{turnState: r.turnStateFingerprint(request.Header.Get("x-codex-turn-state"))}
-		if key := request.Header.Get("Session_id"); key != "" {
-			routing.sessionKey = r.fingerprint("cache-key", key)
-		}
-		state.providerRouting[attempt] = routing
-		state.mu.Unlock()
+		state.observeProviderRouting(attempt, request.Header)
 		started := time.Now()
 		response, roundTripErr := next.RoundTrip(request)
 		if roundTripErr != nil {
@@ -398,6 +390,9 @@ func (r *Recorder) recordExchange(state *requestState, boundary string, attempt 
 		record.InstructionRewrite = new(*state.instructionRewrite)
 	}
 	state.mu.Unlock()
+	if contentType == webSocketContentType {
+		record.Transport = "websocket"
+	}
 	if boundary == "provider" {
 		if evidence.CachedTokensState == "" {
 			evidence.CachedTokensState = "unavailable"
@@ -473,7 +468,7 @@ func (r *Recorder) recordExchange(state *requestState, boundary string, attempt 
 	} else if err != nil {
 		record.CaptureError = "unsupported or invalid response content encoding"
 	} else if len(observedContent) != 0 {
-		if measured, measureErr := r.measure(observedContent); measureErr != nil {
+		if measured, measureErr := r.measureResponse(observedContent, contentType); measureErr != nil {
 			record.CaptureError = "measure response payload"
 		} else {
 			record.Response.Tokens = measured.Tokens
@@ -503,10 +498,10 @@ func (r *Recorder) recordExchange(state *requestState, boundary string, attempt 
 		}
 	}
 	switch record.ResponseStatus {
-	case "completed", "failed", "incomplete", "cancelled":
+	case "completed", "failed", "incomplete", "cancelled", "error":
 		record.ResponseComplete = true
 	}
-	if statusCode < http.StatusOK || statusCode >= http.StatusMultipleChoices {
+	if (statusCode < http.StatusOK || statusCode >= http.StatusMultipleChoices) && contentType != webSocketContentType {
 		record.ResponseComplete = true
 		if record.ResponseStatus == "" {
 			record.ResponseStatus = "http_error"
@@ -733,4 +728,19 @@ func randomCaptureID() (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(value[:]), nil
+}
+
+func (r *Recorder) measureResponse(payload []byte, contentType string) (payloadMetrics, error) {
+	if contentType != webSocketContentType {
+		return r.measure(payload)
+	}
+	measured := payloadMetrics{Bytes: uint64(len(payload))}
+	for message := range webSocketMessages(payload) {
+		value, err := r.measure(message)
+		if err != nil {
+			return payloadMetrics{}, err
+		}
+		measured.Tokens += value.Tokens
+	}
+	return measured, nil
 }

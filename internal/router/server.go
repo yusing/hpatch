@@ -126,6 +126,8 @@ func RunSession(ctx context.Context, args []string, issues *CriticalErrors, read
 	provider := newProviderClient(codexBaseURL, nil)
 	provider.httpClient.Transport = capture.Transport(provider.httpClient.Transport)
 	provider.streamIdleTimeout = *flags.streamIdleTimeout
+	provider.enableWebSockets(ctx)
+	defer provider.websockets.close()
 	if *flags.grokEnabled {
 		apiKey := strings.TrimSpace(os.Getenv("XAI_API_KEY"))
 		path := *flags.grokAuthFile

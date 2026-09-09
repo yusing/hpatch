@@ -89,6 +89,20 @@ func (r *Recorder) requestFingerprint(body []byte) *requestFingerprint {
 	if decoder.Decode(&fields) != nil || fields == nil {
 		return nil
 	}
+	// These fields describe delivery/routing, not cacheable inference input.
+	// Normalize the established HTTP and WebSocket representations alike.
+	delete(fields, "stream")
+	if fields["type"] == "response.create" {
+		delete(fields, "type")
+	}
+	if metadata, ok := fields["client_metadata"].(map[string]any); ok {
+		for _, key := range []string{"x-codex-turn-state", "x-codex-turn-metadata", "thread-id", "x-codex-window-id", "x-openai-subagent", "ws_request_header_x_openai_internal_codex_responses_lite"} {
+			delete(metadata, key)
+		}
+		if len(metadata) == 0 {
+			delete(fields, "client_metadata")
+		}
+	}
 	normalizeFingerprintNumbers(fields)
 	fp := &requestFingerprint{Scope: r.fingerprint("scope", nil), Fields: make(map[string]string), Items: []string{}, Complete: true}
 	if key, present := fields["prompt_cache_key"]; present {

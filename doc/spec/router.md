@@ -55,3 +55,68 @@ Acceptance:
 7. Invalid native editing/execution catalogs and forced incompatible tool choices
    fail closed with actionable HTTP 400 errors, not retryable upstream 502 errors.
 8. Fixed listener and provider flags, bare serving, and the former wrap command reject.
+
+### Provider WebSocket transport
+
+The Codex-facing interface remains HTTP: streaming Responses use SSE, and
+nonstream requests return terminal response JSON. The ChatGPT Responses path
+uses persistent WebSockets by default in both Hpatch and passthrough modes.
+Models discovery and Grok keep their existing HTTP transports. No downstream
+WebSocket endpoint or Codex WebSocket capability override is introduced.
+
+Each `response.create` carries the complete transformed request input. HTTP's
+`stream` field is omitted; incremental `previous_response_id` requests are
+rejected rather than silently dropping their history dependency. Existing
+`client_metadata` is preserved. Codex's per-request metadata channels carry
+turn metadata and sticky turn state, while authentication, account, session,
+thread, window, subagent, and capability headers partition connection reuse.
+The connection owns no replay or conversation history. A new logical request
+never inherits another request's turn metadata or response headers.
+
+Known ancillary events `codex.response.metadata`, `codex.rate_limits`, and
+`responsesapi.websocket_timing` remain forwarded and captured but are neutral
+to terminal-state validation. Unknown non-Responses event kinds remain invalid.
+Responses terminal event types own completion even if the embedded response
+omits status; nonstream JSON supplies the missing status from that event type.
+
+A connection serves at most one active response. The pool admits at most 32
+connections including pending handshakes, evicts idle entries under pressure,
+and waits cancellably when every entry is busy. Idle connections close after
+one minute. Connections aged 50 minutes retire before reuse or after their
+active response completes. Shutdown closes active, idle, and dialing entries.
+Cancellation, early body close, malformed or oversized messages, and a stream
+ending before a valid terminal event discard the connection. Individual JSON
+messages and reconstructed nonstream output have a 64 MiB router buffer budget.
+`--timeout` covers pool wait, handshake, send, and first provider message;
+`--stream-idle-timeout` limits gaps between complete WebSocket messages, while
+HTTP response streams retain their byte-inactivity timeout.
+
+Message queues, pending-delivery reservations, cancellation, and capture belong
+to individual leases, not reusable connections. Receiver admission and lease
+handoff are synchronized. A terminal read ends that lease's active receive
+phase before reuse; a late callback or reserved delivery cannot target the next
+lease. Early close/cancellation waits for already-read messages to be observed
+before finalizing capture, including queued and blocked deliveries.
+
+Only an explicit unsupported upgrade response (HTTP 404, 405, or 501), before
+any `response.create` write, permits HTTP fallback. Authentication, rate-limit,
+and other upgrade errors remain visible. Once a write begins, write failures,
+provider error events, and dropped streams never cause transparent replay or
+HTTP fallback. Handshake-only headers are not copied to downstream responses;
+provider response headers from that handshake belong only to its first exchange.
+Valid error-event status and headers remain visible to the HTTP client.
+
+Acceptance:
+
+1. Sequential full-input requests reuse a connection while turn metadata changes
+   independently; credential or session changes never share that connection.
+2. Concurrent requests cannot interleave responses on one socket. Pool capacity,
+   retirement, cancellation, and shutdown release their owned resources.
+3. Terminal events finish responses without waiting for socket EOF. Nonstream
+   output reconstructs finalized items in index order when the terminal array
+   is empty or absent, and applies tool translation once.
+4. SSE translation, native tool carriers, CTP/2, provider usage, and capture
+   remain integrated; neither nonstream delivery nor Grok needs WebSocket support
+   in Codex.
+5. Unsupported-upgrade fallback is pre-send only. Failed sends, partial streams,
+   and provider error events are not replayed, and poisoned sockets are not reused.

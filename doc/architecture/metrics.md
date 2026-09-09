@@ -9,12 +9,12 @@ The router's terminal-payload seam parses provider usage once and passes the res
 the capturer, Mentor Handoff, and user-only usage commentary.
 
 The capturer is in-process. `hpatch` wraps its existing `POST /v1/responses` handler and
-its existing provider `http.RoundTripper` for Responses and Chat Completions; it does not start a second HTTP server, open another
+its existing provider `http.RoundTripper` for HTTP Responses and Chat Completions, and observes each provider WebSocket JSON-message exchange at its transport boundary; it does not start a second HTTP server, open another
 listener, or require another process. `GET /api/metrics` serves the capturer snapshot from the same
 router listener as Responses and models traffic. The embedded `GET /` dashboard is a presentation
 view of that snapshot on the same listener and owns no metric state or calculation.
 
-The client and provider wrappers share a request-scoped, process-private correlation value through
+The client and provider transport observers share a request-scoped, process-private correlation value through
 Go context. No correlation header crosses either HTTP boundary. Provider retries receive consecutive
 attempt numbers under the same logical request. The wrappers preserve request bytes, response bytes,
 stream flushing, cancellation, status, headers, and response-body ownership.
@@ -57,7 +57,7 @@ persistence slots, session metric histories, dashboard-owned calculations, or me
 classifier events.
 The router passes usage and the actual post-replay, post-Hpatch, pre-CTP request as request-scoped
 observation data without receiving metric callbacks. The capturer measures the latter immediately
-and retains only sizes and keyed fingerprints. Native-only forwarding supplies the same request as its own baseline.
+and retains only sizes and keyed fingerprints. Native-only forwarding supplies its inference request before WebSocket transport framing as the baseline.
 Mentor and commentary remain operational consumers, not metrics sources.
 
 Capture failure is auxiliary after startup: it cannot alter an edit, command, translated response,
@@ -89,3 +89,25 @@ zero and keep provider request IDs out of public summaries.
 The capturer also owns final snapshot serialization and offline benchmark session
 aggregation. Both reuse the live snapshot and exchange calculations. The benchmark
 CLI owns artifact paths and orchestration, not another metric implementation.
+
+WebSocket transport observation lives in `capturer/websocket.go`, alongside the
+HTTP observer, not in router metrics callbacks. The router supplies the actual
+sent message and received message bytes at the transport seam, and closes that
+attempt after terminal usage observation. The capturer owns bounded raw-payload
+observation, JSON-message parsing, exact payload lengths, transport labeling,
+cache-fingerprint normalization, and sanitized persistence. Router-generated
+SSE and reconstructed nonstream JSON belong only to the Codex boundary.
+
+`internal/router/client_websocket.go` owns connection leases, credential/routing
+partitioning, message framing, HTTP fallback decisions, response-body ownership,
+and cleanup. The connection pool retains no conversation or capture history.
+A lease's response body owns its attempt until Close, even after the socket has
+received a terminal event. Capturer state never decides whether to reuse a
+connection or whether a provider request may be retried.
+
+The connection receiver observes each successful message read before queueing
+it for that lease. Queued messages and blocked delivery reservations remain
+part of that attempt's evidence. Abort closes the connection and joins its
+receiver before capture finalization; successful handoff follows the terminal
+receive boundary. Neither delivery backpressure nor early downstream close
+can discard bytes that the receiver has already observed.
