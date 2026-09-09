@@ -76,8 +76,10 @@ updates to the opaque `internal_chat_message_metadata_passthrough` field as the 
 a tool call, retaining its latest encoding without allowing changes to tool identity or input. JSON and all
 terminal SSE statuses restore the request's tool catalog and choice plus completed calls' exact
 carriers. Failed or incomplete responses do not evaluate unfinished call input or retain it for
-replay. An output-item completion explicitly marked `incomplete` likewise does not evaluate its
-input; an absent status on a completion event remains accepted. Completed calls remain replayable
+replay. An output-item completion explicitly marked `incomplete` likewise does not evaluate unfinished
+input. If `input.done` already handed off the complete call, replay retains that translation and
+accepts the item's transition from `in_progress` to `incomplete` without evaluating it again.
+An absent status on a completion event remains accepted. Completed calls remain replayable
 when a later call or the response is interrupted.
 
 For each configured executor-backed contributed tool, startup creates or verifies a session-private

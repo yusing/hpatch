@@ -325,8 +325,9 @@ func mergeReplayHistory(old, next replayHistory) (replayHistory, error) {
 			// output_item.done. Preserve its latest spelling for replay without
 			// relaxing checks on tool identity, input, or other item fields.
 			metadata := k == "internal_chat_message_metadata_passthrough"
-			completed := k == "status" && string(previous) == `"in_progress"` && string(v) == `"completed"`
-			if !bytes.Equal(previous, v) && !metadata && !completed {
+			finalized := k == "status" && string(previous) == `"in_progress"` &&
+				(string(v) == `"completed"` || string(v) == `"incomplete"`)
+			if !bytes.Equal(previous, v) && !metadata && !finalized {
 				return next, fmt.Errorf("conflicting durable replay item field %q", k)
 			}
 		}
