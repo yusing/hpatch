@@ -89,17 +89,11 @@ func TestSubagentBuiltinToolDisplay(t *testing.T) {
 	}
 }
 
-func TestToolActivityPreviewBoundsSourceWindow(t *testing.T) {
-	if got := toolActivityPreview(strings.Repeat(" ", 4096) + "outside window"); !strings.HasSuffix(got, "…") || strings.Contains(got, "outside") {
-		t.Fatalf("preview escaped source window: %q", got)
-	}
-}
-
-func TestClassifiedToolActivitySharesPreviewBudget(t *testing.T) {
-	input := "cat " + strings.Repeat("a", 200) + "\ncat " + strings.Repeat("b", 100) + "\ncat omitted"
-	got := toolActivityShell(input)
-	want := "Read `" + strings.Repeat("a", 200) + "`\n\nRead `" + strings.Repeat("b", 40) + "…`"
-	if got != want {
-		t.Fatalf("aggregate preview: got %q, want %q", got, want)
+func TestClassifiedToolActivityShowsEveryOperation(t *testing.T) {
+	path := strings.Repeat("a", 4200)
+	input := "cat " + path + "\nrg needle src\ncat last"
+	want := "Read `" + path + "`\n\nSearch `needle src`\n\nRead `last`"
+	if got := toolActivityShell(input); got != want {
+		t.Fatalf("display: got %q, want %q", got, want)
 	}
 }

@@ -164,6 +164,10 @@ func (a *subagentActivity) drain(root string, started time.Time, budget int) []m
 			continue
 		}
 		text := event.text
+		author := "[" + commentaryCode(a.threads[event.thread].name) + "] "
+		if event.kind == "tool" {
+			text = "In " + commentaryCode(a.threads[event.thread].name) + "\n\n" + toolActivityNested(strings.TrimPrefix(event.text, author))
+		}
 		if event.observed.Before(started) {
 			text = "Subagent activity since the last update:\n" + text
 		}
@@ -177,30 +181,18 @@ func (a *subagentActivity) drain(root string, started time.Time, budget int) []m
 			kept = append(kept, event)
 			continue
 		}
-		// Coalesce only activity already ready at this delivery boundary.
-		// Never wait for a third call or carry a partial group into another drain.
+		// Group ready calls by author without waiting for more activity.
 		if event.kind == "tool" {
-			author := "[" + commentaryCode(a.threads[event.thread].name) + "] "
-			heading, detail := toolActivityGroup(strings.TrimPrefix(event.text, author))
-			for grouped := 1; heading != "" && grouped < 3 && index+1 < len(a.events); grouped++ {
+			for index+1 < len(a.events) {
 				next := a.events[index+1]
 				if next.thread != event.thread || next.kind != "tool" || next.observed.Before(started) != event.observed.Before(started) {
 					break
 				}
-				nextHeading, nextDetail := toolActivityGroup(strings.TrimPrefix(next.text, author))
-				if nextHeading != heading {
-					break
-				}
-				separator := ", "
-				if strings.ContainsAny(detail+nextDetail, "\r\n") {
-					separator = "\n,\n\n"
-				}
-				combined := text + separator + nextDetail
+				combined := text + "\n\n" + toolActivityNested(strings.TrimPrefix(next.text, author))
 				if len(combined) > budget || len(combined) > maxCommentaryPublicationBytes {
 					break
 				}
 				text = combined
-				detail += separator + nextDetail
 				index++
 			}
 		}

@@ -44,28 +44,19 @@ func TestSubagentToolActivityJSONAndSSE(t *testing.T) {
 				t.Fatal(err)
 			}
 			var response struct{ Output []map[string]json.RawMessage }
-			if err := json.Unmarshal(visible, &response); err != nil || len(response.Output) != 7 {
+			if err := json.Unmarshal(visible, &response); err != nil || len(response.Output) != 2 {
 				t.Fatalf("distinct calls or terminal deduplication: %s, %v", visible, err)
 			}
 			// Start metadata precedes the child's distinct tool calls.
 			response.Output = response.Output[1:]
-			if got := commentaryText(t, response.Output[0]); got != "[`/root/worker`] Tool call: `functions.lookup`\n`{\"query\":\"hello\"}`" {
-				t.Fatalf("tool display: %s", got)
-			}
-			if got := commentaryText(t, response.Output[1]); !strings.Contains(got, "first line\n") || !strings.HasSuffix(got, "…\n```") {
-				t.Fatalf("bounded script display: %s", got)
-			}
-			if got := commentaryText(t, response.Output[2]); got != "[`/root/worker`] Tool call: `collaboration.send_message`" {
-				t.Fatalf("opaque collaboration display: %s", got)
-			}
-			for index, want := range []string{
-				"[`/root/worker`] Run\n```\necho a\n  echo b\n```",
-				"[`/root/worker`] Read `a`",
-				"[`/root/worker`] Search web\n`Go parser`",
-			} {
-				if got := commentaryText(t, response.Output[index+3]); got != want {
-					t.Fatalf("operation display: got %q, want %q", got, want)
-				}
+			got := commentaryText(t, response.Output[0])
+			want := "In `/root/worker`\n\n- Tool call: `functions.lookup`\n  `{\"query\":\"hello\"}`" +
+				"\n\n- Tool call: `external`\n  ```\n  first line\n  " + strings.Repeat("界", 300) + "\n  ```" +
+				"\n\n- Tool call: `collaboration.send_message`" +
+				"\n\n- Run\n  ```\n  echo a\n    echo b\n  ```" +
+				"\n\n- Read `a`\n\n- Search web\n  `Go parser`"
+			if got != want {
+				t.Fatalf("grouped display: got %q, want %q", got, want)
 			}
 			_, replay := prepareActivityTest(t, proxy, "replay", "c", "r", "/root/worker", []any{response.Output[0], calls[0]})
 			if bytes.Contains(replay.fields["input"], response.Output[0]["id"]) || !bytes.Contains(replay.fields["input"], mustTestJSON(t, calls[0])) {

@@ -91,16 +91,17 @@ labels, retaining search flags and operands. Native web/file search, image viewi
 code execution, input sending, and editing calls use descriptive operation labels.
 Unsupported compound or dynamic commands retain their source rather than claiming a simpler operation.
 Multiline source previews preserve line breaks and indentation in fenced code blocks.
-Previews are limited to 240 non-whitespace characters within the first 4 KiB and marked
-with an ellipsis when shortened. Unknown tools retain their qualified name and a bounded
-input preview. Collaboration and user-messaging arguments remain opaque: only their tool
-identity is displayed. Calls without textual input show only the operation or tool name.
-Consecutive tool displays from the same child with the same action kind share one heading,
-with comma-separated details, in groups of at most three calls. Grouping uses only calls
-already pending at a root delivery boundary: one or two calls are delivered without waiting
-for a third. A different child, action, notice, or deferred/current boundary ends the group.
-Multiline details keep their code fences. Each source call remains independently deduplicated;
-grouped root copies remain user-only and preserve the existing rendering budget and replay rules.
+Transformed displays retain every operation and its full detail without preview truncation.
+Unknown tools retain their qualified name and full input. Collaboration and user-messaging
+arguments remain opaque: only their tool identity is displayed. Calls without textual input
+show only the operation or tool name.
+Consecutive tool displays from the same child share an `In <canonical path>` heading with
+nested bullet items, including mixed action kinds. Grouping uses only calls already pending
+at a root delivery boundary and never waits for more calls. A different child, notice, or
+deferred/current boundary ends the group. Multiline details keep their nested code fences.
+Each source call remains independently deduplicated; grouped root copies remain user-only
+and preserve the existing auxiliary rendering budget and replay rules. Over-budget displays
+are deferred or omitted under those rules, never shortened.
 The display describes an observed call, not successful execution or agent completion.
 JSON output, completed SSE items, and terminal output share source-identity deduplication;
 partial calls are not projected. Native child call framing and replay stay unchanged.

@@ -115,9 +115,6 @@ func toolActivityArgv(argv []string) string {
 }
 
 func toolActivityShell(script string) string {
-	if len(script) > 4096 {
-		return toolActivityDetail("Run", script)
-	}
 	// Native carriers may wrap the source in `shell bash $'...'`.
 	for range 2 {
 		program, err := syntax.NewParser().Parse(strings.NewReader(script), "")
@@ -238,18 +235,12 @@ func toolActivityReads(script string) (string, bool) {
 		}
 	}
 	var lines []string
-	remaining := 240
-	for index, operation := range operations {
-		preview, used, truncated := toolActivityPreviewLimit(operation.detail, remaining)
-		remaining -= used
-		if remaining == 0 && !truncated && index+1 < len(operations) {
-			preview += "…"
-			truncated = true
+	for _, operation := range operations {
+		separator := " "
+		if strings.ContainsAny(operation.detail, "\r\n") {
+			separator = "\n"
 		}
-		lines = append(lines, operation.label+" "+toolActivityCode(preview))
-		if truncated {
-			break
-		}
+		lines = append(lines, operation.label+separator+toolActivityCode(operation.detail))
 	}
 	return strings.Join(lines, "\n\n"), true
 
@@ -258,9 +249,6 @@ func toolActivityReads(script string) (string, bool) {
 // Recognize transparent Code Mode wrappers, not arbitrary programs containing a
 // tool call (which may branch, execute other work, or never invoke that call).
 func toolActivityUnwrapExec(source string) (map[string]json.RawMessage, bool) {
-	if len(source) > 4096 {
-		return nil, false
-	}
 	parser := sitter.NewParser()
 	defer parser.Close()
 	if parser.SetLanguage(codeModeJavaScriptLanguage) != nil {
