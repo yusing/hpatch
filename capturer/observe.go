@@ -39,11 +39,15 @@ func decodedCapturePayload(payload []byte, contentEncoding string) ([]byte, erro
 }
 
 func observeResponse(payload []byte, contentType string, record *captureRecord, codec tokenizer.Codec) []byte {
-	if strings.Contains(strings.ToLower(contentType), "text/event-stream") || capturedPayloadLooksLikeSSE(payload) {
+	if contentType == webSocketContentType || strings.Contains(strings.ToLower(contentType), "text/event-stream") || capturedPayloadLooksLikeSSE(payload) {
 		var finalOutput []byte
 		terminalOutputObserved := false
 		completedItems := make(map[int]json.RawMessage)
-		for data := range sseData(payload) {
+		messages := sseData(payload)
+		if contentType == webSocketContentType {
+			messages = webSocketMessages(payload)
+		}
+		for data := range messages {
 			if index, item, ok := completedResponseOutputItem(data); ok && !generatedOutputItem(item, record) {
 				completedItems[index] = item
 			}
@@ -113,13 +117,35 @@ func observeResponseJSON(payload []byte, record *captureRecord, codec tokenizer.
 		return nil, false
 	}
 	var event struct {
-		Type     string          `json:"type"`
-		Item     json.RawMessage `json:"item"`
-		Response json.RawMessage `json:"response"`
+		Type     string                     `json:"type"`
+		Item     json.RawMessage            `json:"item"`
+		Response json.RawMessage            `json:"response"`
+		Headers  map[string]json.RawMessage `json:"headers"`
 	}
 	if err := json.Unmarshal(payload, &event); err != nil {
 		if record.CaptureError == "" {
 			record.CaptureError = "invalid response JSON"
+		}
+		return nil, false
+	}
+	if event.Type == "error" || event.Type == "codex.response.metadata" {
+		if record.Boundary == "provider" && record.ProviderResponse != nil {
+			for name, raw := range event.Headers {
+				var value string
+				if json.Unmarshal(raw, &value) != nil {
+					continue
+				}
+				switch strings.ToLower(name) {
+				case "x-request-id":
+					record.ProviderResponse.RequestID = safeProviderIdentifier(value)
+				case "openai-model":
+					record.ProviderResponse.HeaderModel = safeProviderIdentifier(value)
+				}
+			}
+		}
+		if event.Type == "error" {
+			record.ResponseStatus = "error"
+			return nil, true
 		}
 		return nil, false
 	}
@@ -131,6 +157,7 @@ func observeResponseJSON(payload []byte, record *captureRecord, codec tokenizer.
 		switch event.Type {
 		case "response.completed", "response.failed", "response.incomplete":
 			if valid {
+				record.ResponseStatus = strings.TrimPrefix(event.Type, "response.")
 				record.observeProviderEvidence(event.Response)
 			} else if record.ProviderResponse != nil {
 				record.ProviderResponse.CachedTokensState = "unavailable"

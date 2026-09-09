@@ -91,6 +91,7 @@ type protocolMetrics struct {
 }
 
 type providerAttemptMetrics struct {
+	Transport         string                    `json:"transport,omitempty"`
 	ProviderResponse  *providerResponseEvidence `json:"provider_response,omitempty"`
 	Attempt           uint64                    `json:"attempt"`
 	Model             string                    `json:"model,omitempty"`
@@ -217,6 +218,7 @@ func (r *Recorder) addExchange(front captureRecord, state *requestState, provide
 		addTools(r.metrics.ProviderTools, provider.ToolCalls)
 		providerTools = append(providerTools, provider.ToolCalls...)
 		attempt := providerAttemptMetrics{
+			Transport:        provider.Transport,
 			ProviderResponse: provider.ProviderResponse,
 			Attempt:          provider.ProviderAttempt, Model: provider.RequestModel, Status: provider.ResponseStatus,
 			ResponseComplete: provider.ResponseComplete,

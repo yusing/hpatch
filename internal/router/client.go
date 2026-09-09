@@ -103,6 +103,7 @@ func composeResponseTransformers(first, second responseTransformer) responseTran
 }
 
 type providerClient struct {
+	websockets        *providerWebSockets
 	grok              *grokClient
 	httpClient        *http.Client
 	baseURL           string
@@ -172,6 +173,21 @@ func (c *providerClient) forwardExecution(startCtx, responseCtx context.Context,
 	authorization, accountID, err := requiredCodexAuthHeaders(headers)
 	if err != nil {
 		return nil, err
+	}
+	if c.websockets != nil {
+		upstreamHeaders := http.Header{}
+		upstreamHeaders.Set("Authorization", authorization)
+		upstreamHeaders.Set(chatGPTAccountIDHeader, accountID)
+		upstreamHeaders.Set("Originator", codexClientIdentity)
+		upstreamHeaders.Set("User-Agent", codexClientIdentity)
+		forwardCodexRequestHeaders(upstreamHeaders, headers)
+		if validCodexCacheKey(cacheKey) {
+			upstreamHeaders[codexSessionIDHeader] = []string{cacheKey}
+		}
+		response, fallback, err := c.forwardWebSocket(startCtx, responseCtx, body, upstreamHeaders, cacheKey)
+		if !fallback {
+			return response, err
+		}
 	}
 	endpoint := strings.TrimRight(c.baseURL, "/") + "/responses"
 	for attempt := 0; ; attempt++ {
@@ -720,6 +736,18 @@ func encodeSSEEventPayload(lines []string, payload []byte) string {
 	return result.String()
 }
 
+// Source: codex-rs/codex-api/src/endpoint/responses_websocket.rs:749:777 and
+// codex-rs/codex-api/src/sse/responses.rs:524:535. These carry metadata rather
+// than response acceptance or a terminal state.
+func isResponseAncillaryEvent(kind string) bool {
+	switch kind {
+	case "codex.response.metadata", "codex.rate_limits", "responsesapi.websocket_timing":
+		return true
+	default:
+		return false
+	}
+}
+
 func observeResponseTerminal(body []byte, streamEvent bool) responseTerminalState {
 	if streamEvent {
 		payload := strings.TrimSpace(string(body))
@@ -739,6 +767,9 @@ func observeResponseTerminal(body []byte, streamEvent bool) responseTerminalStat
 	}
 	status := envelope.Status
 	if streamEvent {
+		if isResponseAncillaryEvent(envelope.Type) {
+			return responseTerminalUnknown
+		}
 		if !strings.HasPrefix(envelope.Type, "response.") || envelope.Type == "response." {
 			return responseTerminalInvalid
 		}

@@ -32,7 +32,7 @@ A durable record MUST contain only:
 - mode, model protocol, provider request model, and benchmark correlation fields already supplied
   by Codex;
 - complete transport byte counts and framing-independent GPT-5 content estimates plus the terminal Responses `output` array measured once;
-- HTTP and Responses status, completeness, duration, and a bounded capture-error category;
+- HTTP and Responses status, completeness, duration, a bounded capture-error category, and an optional `transport: "websocket"` marker;
 - provider usage counters;
 - the measured `native_request` after history replay/tool projection and before CTP, on provider records;
 - decoded assistant `final_text` sizes, separate from complete output arrays;
@@ -134,7 +134,7 @@ JSON whitespace, key order, and equivalent string escaping MUST leave all conten
 The router supplies the actual native request at the projection seam as observation data. The
 capturer owns its measurement, discards the bytes immediately, and correlates the sizes with each
 provider attempt. Missing CTP baseline observation MUST mark capture incomplete, never fall back to
-client history. Native-only forwarding uses the forwarded request as the identical baseline.
+client history. Native-only forwarding observes the same inference request before transport framing; WebSocket metadata and its `response.create` envelope remain part of measured provider transport costs.
 Only paired authoritative provider usage measures actual model-consumption changes. Input CTP
 savings and assistant-text CTP savings measure representation changes, not billing predictions.
 
@@ -186,6 +186,10 @@ reinterpreted as observed absence. Each retry retains its own observed header fi
 Each provider attempt MUST retain `provider_response` separately from requested-model identity
 and normalized usage. It contains only the provider's `x-request-id`, `openai-model` header,
 latest explicitly supplied response-envelope `model`, and terminal cached-token evidence.
+The same allowlisted header identifiers are observed in `codex.response.metadata`
+events. Current per-response metadata replaces corresponding handshake evidence,
+including on reused connections. Metadata observation remains terminal-neutral
+and provider-boundary-only; arbitrary metadata headers are not retained.
 Identifiers MUST be limited to 256 ASCII letters, digits, `-`, `_`, `.`, `:`, and `/`;
 missing or invalid identifiers are omitted. The response model MUST NOT fall back to the
 request model. Header and body model values remain separate provider claims, not proof of
@@ -237,3 +241,42 @@ carrier is evidence of router rejection, not confirmation that the host ran that
 Both additions use existing process-lifetime retention, detail limits, JSONL capture, and metrics
 exports. They are additive to schema-6/metrics-v4; older evidence remains valid but cannot supply
 these diagnoses.
+
+### WebSocket capture
+
+Provider WebSocket exchanges use the same request-private correlation, attempt
+sequence, sanitized records, snapshots, and offline aggregation as HTTP.
+Each sent `response.create` is one provider attempt. A rejected upgrade that
+ends the request is an HTTP-error attempt with zero request-body bytes; an
+unsupported handshake followed by HTTP fallback is negotiation, not a separate
+inference attempt. The fallback POST remains observed by the HTTP wrapper.
+
+A WebSocket attempt records `transport: "websocket"`. Its `status_code: 101`
+describes the established connection, including reused connections; it does not
+claim that every exchange performed another handshake. Responses status and
+terminal evidence determine success, failure, and completeness. Status 101 alone
+MUST NOT classify a request as complete or an HTTP error. Provider error events
+are terminal errors rather than missing output or successful responses.
+
+Request bytes MUST measure the exact sent JSON message, including transport
+metadata. Response bytes MUST measure the observed provider JSON payloads,
+without synthetic SSE framing, WebSocket frame headers, or control frames.
+Content token estimates sum each decoded message independently. Finalized-item
+reconstruction, terminal output, bounded 8 MiB parsing, usage, and private
+provider-response evidence follow the same rules as SSE. First-handshake
+response evidence MUST NOT be reused as evidence for later exchanges.
+Terminal event types determine captured Responses status even when the embedded
+body omits status. Receiver-observed messages MUST be counted before delivery;
+early close and cancellation MUST finalize only after already-read queued or
+reserved messages have reached that lease's observer.
+
+Cache fingerprints, unlike transport measurements, normalize the transport-only
+`stream` field and `response.create` discriminator. They also exclude these
+established `client_metadata` transport fields in both representations:
+`x-codex-turn-state`, `x-codex-turn-metadata`, `thread-id`, `x-codex-window-id`,
+`x-openai-subagent`, and
+`ws_request_header_x_openai_internal_codex_responses_lite`. Arbitrary metadata
+and inference fields remain fingerprinted. Sticky-state forwarding still has its
+own private routing fingerprint. Equal inference inputs MUST retain comparable
+fingerprints across HTTP and WebSocket transport changes; changed inference
+input or arbitrary metadata MUST remain detectable.
