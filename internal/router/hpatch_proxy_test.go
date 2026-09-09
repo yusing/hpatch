@@ -1840,15 +1840,7 @@ func TestDirectBashExecCommand(t *testing.T) {
 }
 
 func TestWorkerCommandBashRoundTripsQuotedArgument(t *testing.T) {
-	registry, err := buildToolRegistry(t.Context(), t.TempDir(), testHPatchToolDescription, false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		if err := registry.Close(); err != nil {
-			t.Error(err)
-		}
-	})
+	registry := sharedProxyTestRegistry(t)
 
 	argument := "printf '\"%s\\n\"' ./* | sed 's#^\\./##'\n"
 	stdout, stderr, exitCode := runShellWorkerTest(

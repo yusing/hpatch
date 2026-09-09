@@ -57,13 +57,26 @@ func TestResolverCleanupRetiresInheritedPipeDescendants(t *testing.T) {
 					t.Fatal(err)
 				}
 				budget := 5 * time.Second
+				var deadlineDurationPath, deadlineReadyPath, deadlineExpiredPath string
+				var deadlinePreload string
 				if outcome == "timeout" {
-					budget = 35 * time.Second
+					deadlineDurationPath = filepath.Join(directory, "deadline-duration")
+					deadlineReadyPath = filepath.Join(directory, "deadline-ready")
+					deadlineExpiredPath = filepath.Join(directory, "deadline-expired")
+					deadlinePreload = filepath.Join(directory, "deadline.cjs")
+					if err := os.WriteFile(deadlinePreload, []byte(resolverDeadlinePreload), 0600); err != nil {
+						t.Fatal(err)
+					}
 				}
 				ctx, cancel := context.WithTimeout(t.Context(), budget)
 				defer cancel()
 				environment := append(os.Environ(), "PATH="+directory, "FIXTURE_KIND="+kind, "FIXTURE_OUTCOME="+outcome,
 					"FIXTURE_PID="+pidPath, "FIXTURE_SOURCE="+inputPath)
+				if outcome == "timeout" {
+					nodeOptions := strings.TrimSpace(os.Getenv("NODE_OPTIONS") + " --require=" + strconv.Quote(deadlinePreload))
+					environment = append(environment, "NODE_OPTIONS="+nodeOptions, "FIXTURE_DEADLINE_DURATION="+deadlineDurationPath,
+						"FIXTURE_DEADLINE_READY="+deadlineReadyPath, "FIXTURE_DEADLINE_EXPIRED="+deadlineExpiredPath)
+				}
 				started := time.Now()
 				result, err := Execute(ctx, snapshot.NodeExecutable, snapshot.Root, "builtin/tools.js", 2,
 					[]string{"refs", name, row + ":" + verifiedrow.Hash(line), "Target"}, nil, directory, environment)
@@ -84,6 +97,18 @@ func TestResolverCleanupRetiresInheritedPipeDescendants(t *testing.T) {
 					}
 					if outcome == "timeout" && !strings.Contains(result.Stderr, "deadline exceeded") {
 						t.Fatalf("timeout result = %+v", result)
+					}
+				}
+				if outcome == "timeout" {
+					for path, want := range map[string]string{
+						deadlineDurationPath: "30000",
+						deadlineReadyPath:    "ready",
+						deadlineExpiredPath:  "ready",
+					} {
+						encoded, err := os.ReadFile(path)
+						if err != nil || string(encoded) != want {
+							t.Fatalf("controlled resolver deadline evidence %s = %q, %v; want %q", filepath.Base(path), encoded, err, want)
+						}
 					}
 				}
 				encoded, err := os.ReadFile(pidPath)
@@ -118,6 +143,7 @@ writeFileSync(process.env.FIXTURE_PID, String(child.pid));
 if (process.env.FIXTURE_KIND === "gopls") {
   if (outcome === "success") process.stdout.write(process.env.FIXTURE_SOURCE + ":2:5-11\n", () => process.exit(0));
   else if (outcome === "failure") process.stderr.write("query failed\n", () => process.exit(1));
+  else if (outcome === "timeout") writeFileSync(process.env.FIXTURE_DEADLINE_READY, "ready");
 } else {
   let input = Buffer.alloc(0);
   function frame(message) {
@@ -139,7 +165,9 @@ if (process.env.FIXTURE_KIND === "gopls") {
       if (message.method === "initialize") {
         if (outcome === "exit") process.exit(0);
         respond(message.id, {capabilities:{positionEncoding:outcome === "failure" ? "utf-8" : "utf-16"}});
-      } else if (message.method === "textDocument/references" && outcome !== "timeout") {
+      } else if (message.method === "textDocument/references" && outcome === "timeout") {
+        writeFileSync(process.env.FIXTURE_DEADLINE_READY, "ready");
+      } else if (message.method === "textDocument/references") {
         const result = [{uri:pathToFileURL(process.env.FIXTURE_SOURCE).href, range:{start:{line:0,character:6},end:{line:0,character:12}}}];
         if (outcome.startsWith("queued_")) {
           // The real JSON-RPC adapter dispatches these notifications one per
@@ -156,4 +184,41 @@ if (process.env.FIXTURE_KIND === "gopls") {
   });
 }
 setInterval(() => {}, 1000);
+`
+
+// The timeout cases must exercise the shipped 30-second resolver deadline
+// without making the test suite sleep for it. The fake resolver releases this
+// one controlled timer only after it has received the semantic query. All
+// cleanup and protocol-drain timers retain their real durations.
+const resolverDeadlinePreload = `const {existsSync, writeFileSync} = require("node:fs");
+const realSetTimeout = globalThis.setTimeout;
+const realClearTimeout = globalThis.clearTimeout;
+const controlled = new Map();
+globalThis.setTimeout = function(callback, delay, ...args) {
+  if (delay !== 30_000 || !process.env.FIXTURE_DEADLINE_READY) {
+    return realSetTimeout(callback, delay, ...args);
+  }
+  writeFileSync(process.env.FIXTURE_DEADLINE_DURATION, String(delay));
+  const token = {};
+  const state = {cancelled: false, handle: undefined};
+  controlled.set(token, state);
+  const poll = () => {
+    if (state.cancelled) return;
+    if (existsSync(process.env.FIXTURE_DEADLINE_READY)) {
+      writeFileSync(process.env.FIXTURE_DEADLINE_EXPIRED, "ready");
+      callback(...args);
+      return;
+    }
+    state.handle = realSetTimeout(poll, 1);
+  };
+  state.handle = realSetTimeout(poll, 1);
+  return token;
+};
+globalThis.clearTimeout = function(timer) {
+  const state = controlled.get(timer);
+  if (state === undefined) return realClearTimeout(timer);
+  controlled.delete(timer);
+  state.cancelled = true;
+  return realClearTimeout(state.handle);
+};
 `

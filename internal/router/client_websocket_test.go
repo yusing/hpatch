@@ -888,8 +888,9 @@ func TestWebSocketCaptureIncludesQueuedAndReservedReadsOnClose(t *testing.T) {
 		for {
 			client.websockets.mu.Lock()
 			pending := body.lease.pending
+			terminal := body.lease.terminal
 			client.websockets.mu.Unlock()
-			if pending {
+			if pending && terminal {
 				break
 			}
 			if time.Now().After(deadline) {
