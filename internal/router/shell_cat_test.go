@@ -150,7 +150,8 @@ func runShellCatJavaScript(t *testing.T, node, directory, carrier string, result
 const fs = require('node:fs');
 const tools = {
   exec_command: async args => {
-    const child = spawnSync('/bin/sh', ['-c', args.cmd], {cwd: args.workdir || process.cwd(), encoding: 'utf8'});
+    // Carrier arguments use Bash ANSI-C quoting, including escaped heredoc newlines.
+    const child = spawnSync('bash', ['-c', args.cmd], {cwd: args.workdir || process.cwd(), encoding: 'utf8'});
     if (child.error) throw child.error;
     return {output: child.stdout + child.stderr, exit_code: child.status};
   },
@@ -269,7 +270,8 @@ func TestShellCatNativeCarrierWithHostApplyPatch(t *testing.T) {
 		if err := json.Unmarshal([]byte(carrier), &arguments); err != nil {
 			t.Fatal(err)
 		}
-		command := exec.CommandContext(t.Context(), "/bin/sh", "-c", jsonString(arguments, "cmd"))
+		// Execute the outer carrier with Bash, matching its canonical argument quoting.
+		command := exec.CommandContext(t.Context(), "bash", "-c", jsonString(arguments, "cmd"))
 		command.Dir = transform.directory
 		command.Env = append(os.Environ(), "PATH="+filepath.Dir(applyPatch)+string(os.PathListSeparator)+os.Getenv("PATH"))
 		output, err := command.CombinedOutput()
