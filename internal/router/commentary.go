@@ -324,16 +324,29 @@ func (p *hpatchProxy) addCommentaryMessageID(sessionID, threadID, callID, messag
 }
 
 func (t *hpatchResponseTransform) runtimeCommentaryMessage(publication publishedCommentary) map[string]json.RawMessage {
-	if publication.text == "" || !t.proxy.addCommentaryMessageID(
-		t.historySessionID, t.shellThreadID, publication.callID, publication.messageID,
-	) {
+	if publication.text == "" {
 		return nil
 	}
+	if t.proxy.replayStore != nil && publication.callID != "" {
+		// A completed call may have left the bounded memory cache while its
+		// authenticated progress subscription is still alive.
+		_, found, err := t.proxy.replayStore.lookup(t.ctx, t.directory, publication.callID)
+		if err != nil || !found {
+			return nil
+		}
+	} else if !t.proxy.addCommentaryMessageID(t.historySessionID, t.shellThreadID, publication.callID, publication.messageID) {
+		return nil
+	}
+
 	if history, exists := t.local[publication.callID]; exists && !slices.Contains(history.commentaryMessageIDs, publication.messageID) {
 		history.commentaryMessageIDs = append(history.commentaryMessageIDs, publication.messageID)
 		t.local[publication.callID] = history
 	}
-	return assistantCommentaryMessage(publication.messageID, publication.text)
+	message := assistantCommentaryMessage(publication.messageID, publication.text)
+	if len(t.retainCommentary(message)) == 0 {
+		return nil
+	}
+	return message
 }
 
 func attributedCommentary(author, text string) string {
@@ -375,7 +388,11 @@ func (t *hpatchResponseTransform) operationCommentaryMessage(id, text string) ma
 	}
 
 	t.proxy.activity.collect(t.threadID, id, "operation", text)
-	return assistantCommentaryMessage(id, attributedCommentary(t.commentaryAuthor, text))
+	message := assistantCommentaryMessage(id, attributedCommentary(t.commentaryAuthor, text))
+	if len(t.retainCommentary(message)) == 0 {
+		return nil
+	}
+	return message
 }
 
 // Completed provider commentary is copied to the root without rewriting the
@@ -406,4 +423,22 @@ func (t *hpatchResponseTransform) collectProviderCommentary(message map[string]j
 		text.WriteString(value)
 	}
 	t.proxy.activity.collect(t.threadID, "provider-message\x00"+id, "commentary", text.String())
+}
+
+// retainCommentary is called only at router-authored message construction sites.
+// A provider's use of a reserved-looking ID is not proof of router provenance.
+func (t *hpatchResponseTransform) retainCommentary(messages ...map[string]json.RawMessage) []map[string]json.RawMessage {
+	if t.proxy.replayStore == nil {
+		return messages
+	}
+	var ids []string
+	for _, message := range messages {
+		if id := jsonString(message, "id"); id != "" {
+			ids = append(ids, id)
+		}
+	}
+	if len(ids) != 0 && t.proxy.replayStore.putCommentary(t.ctx, t.directory, ids) != nil {
+		return nil
+	}
+	return messages
 }

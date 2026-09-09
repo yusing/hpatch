@@ -2,6 +2,7 @@ package router
 
 import (
 	"cmp"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -51,9 +52,8 @@ type hpatchHistory struct {
 	alreadySatisfied bool
 	confirmed        bool
 	aliases          []hpatch.TargetAlias
-	// sequence orders retained calls within a session. Calls are keyed by ID in
-	// an unordered map, so recovery needs an explicit order to identify the
-	// latest rejected script.
+	// sequence orders a request-visible view (or the bounded memory cache).
+	// It is never durable: replay derives recovery order from the input.
 	sequence uint64
 }
 
@@ -252,82 +252,71 @@ func (p *hpatchProxy) history(sessionID, callID string) (hpatchHistory, bool) {
 	return history, ok
 }
 
-func (p *hpatchProxy) confirmHistory(sessionID, callID, output string) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	session := p.sessions[sessionID]
-	if session == nil {
-		return
-	}
-	history, ok := session.calls[callID]
-	if !ok || history.translationError != "" || output != history.report {
-		return
-	}
-	history.confirmed = true
-	session.calls[callID] = history
-}
-
-func (p *hpatchProxy) targetAliases(sessionID, root string) []hpatch.TargetAlias {
-	p.mu.RLock()
-	defer p.mu.RUnlock()
-	session := p.sessions[sessionID]
-	if session == nil {
-		return nil
-	}
-	histories := make([]hpatchHistory, 0, len(session.calls))
-	for _, history := range session.calls {
-		if history.root == root && (history.confirmed || history.applied) && len(history.aliases) != 0 {
-			histories = append(histories, history)
-		}
-	}
-	slices.SortFunc(histories, func(first, second hpatchHistory) int {
-		return cmp.Compare(first.sequence, second.sequence)
-	})
-	var aliases []hpatch.TargetAlias
-	for _, history := range histories {
-		aliases = append(aliases, history.aliases...)
-	}
-	return aliases
-}
-
-// reconcileInputPrefix replays retained hpatch calls into the request's input
-// and prunes the retained calls the conversation no longer shows.
-func (p *hpatchProxy) reconcileInputPrefix(request *parsedResponsesRequest, sessionID string) error {
+// reconcileVisibleInput constructs recovery ancestry from the validated request,
+// never from a routing session's most recent turn. All changes stay local until
+// the entire input is valid, including output confirmations.
+func (p *hpatchProxy) reconcileVisibleInput(ctx context.Context, request *parsedResponsesRequest, workspace, sessionID string) (map[string]hpatchHistory, error) {
+	visible := make(map[string]hpatchHistory)
 	raw, ok := request.fields["input"]
 	if !ok {
-		return nil
+		return visible, nil
 	}
 	var items []map[string]json.RawMessage
 	if json.Unmarshal(raw, &items) != nil {
-		return nil //nolint:nilerr // Non-array input cannot contain replayable hpatch calls.
+		return visible, nil
 	}
 	changed := false
 	commentaryIDs := p.commentaryMessageIDs(sessionID)
-	if len(commentaryIDs) != 0 {
-		items = slices.DeleteFunc(items, func(item map[string]json.RawMessage) bool {
-			if jsonString(item, "type") != "message" {
-				return false
+	filtered := make([]map[string]json.RawMessage, 0, len(items))
+	for _, item := range items {
+		if jsonString(item, "type") == "message" {
+			id := jsonString(item, "id")
+			_, generated := commentaryIDs[id]
+			if p.replayStore != nil {
+				var err error
+				generated, err = p.replayStore.hasCommentary(ctx, workspace, id)
+				if err != nil {
+					return nil, err
+				}
 			}
-			_, generated := commentaryIDs[jsonString(item, "id")]
-			changed = changed || generated
-			return generated
-		})
+			if generated {
+				changed = true
+				continue
+			}
+		}
+		filtered = append(filtered, item)
 	}
-	newestRetained := uint64(0)
+	items = filtered
 	validatedCarriers := make(map[string]bool)
 	for index, item := range items {
 		itemType := jsonString(item, "type")
-		callID := jsonString(item, "call_id")
-		history, known := p.history(sessionID, callID)
-		if !known {
+		if itemType != "custom_tool_call" && itemType != "function_call" && itemType != "custom_tool_call_output" && itemType != "function_call_output" {
 			continue
 		}
-		// Record before the output-item skip below, so a call the input shows
-		// only as its output sibling still counts as surviving.
-		newestRetained = max(newestRetained, history.sequence)
+		callID := jsonString(item, "call_id")
+		history, known := visible[callID]
+		if !known {
+			if p.replayStore != nil {
+				var err error
+				history, known, err = p.replayStore.lookup(ctx, workspace, callID)
+				if err != nil {
+					return nil, err
+				}
+			} else {
+				history, known = p.history(sessionID, callID)
+			}
+			if !known {
+				continue
+			}
+			history.sequence = uint64(len(visible) + 1)
+			history.confirmed = false
+		}
 		carrierKind := history.effectiveCarrierKind()
 		if itemType == carrierOutputItemType(carrierKind) {
-			p.confirmHistory(sessionID, callID, jsonString(item, "output"))
+			if history.translationError == "" && jsonString(item, "output") == history.report {
+				history.confirmed = true
+			}
+			visible[callID] = history
 			if !history.replayCarrier {
 				upstreamKind := codeModeCarrierCustom
 				if jsonString(history.upstreamItem, "type") == carrierItemType(codeModeCarrierFunction) {
@@ -339,30 +328,26 @@ func (p *hpatchProxy) reconcileInputPrefix(request *parsedResponsesRequest, sess
 			continue
 		}
 		if itemType != carrierItemType(carrierKind) {
-			return fmt.Errorf("replayed call %q changed item type", callID)
+			return nil, fmt.Errorf("replayed call %q changed item type", callID)
 		}
 		if jsonString(item, "name") != history.carrierName {
-			return fmt.Errorf("replayed call %q changed carrier name", callID)
+			return nil, fmt.Errorf("replayed call %q changed carrier name", callID)
 		}
 		if validatedCarriers[callID] {
-			return fmt.Errorf("replayed call %q appears more than once", callID)
+			return nil, fmt.Errorf("replayed call %q appears more than once", callID)
 		}
 		if jsonString(item, carrierPayloadField(carrierKind)) != history.carrierInput() {
-			return fmt.Errorf("replayed call %q changed translated payload", callID)
+			return nil, fmt.Errorf("replayed call %q changed translated payload", callID)
 		}
 		validatedCarriers[callID] = true
+		visible[callID] = history
 		if history.replayCarrier {
 			continue
 		}
 		if len(history.upstreamItem) != 0 {
 			items[index] = maps.Clone(history.upstreamItem)
 		} else {
-			name := history.toolName
-			if name == "" {
-				name = hpatchToolName
-			}
-			item["name"] = mustMarshalJSON(name)
-
+			item["name"] = mustMarshalJSON(cmp.Or(history.toolName, hpatchToolName))
 			item["input"] = mustMarshalJSON(history.script)
 		}
 		changed = true
@@ -370,45 +355,11 @@ func (p *hpatchProxy) reconcileInputPrefix(request *parsedResponsesRequest, sess
 	if changed {
 		encoded, err := marshalProtocolJSON(items)
 		if err != nil {
-			return fmt.Errorf("encode replayed Responses input: %w", err)
+			return nil, fmt.Errorf("encode replayed Responses input: %w", err)
 		}
 		request.setInput(encoded)
 	}
-	p.pruneSessionAfter(sessionID, newestRetained)
-	return nil
-}
-
-// pruneSessionAfter drops every retained call newer than the newest one the
-// current request's input still shows. Truncation only ever removes a suffix of
-// the conversation, so the newer calls belong to turns the model no longer
-// sees: keeping them would let recovery edit a discarded script, and would let
-// them consume the history budget that a surviving call needs to replay.
-func (p *hpatchProxy) pruneSessionAfter(sessionID string, newest uint64) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	// A second in-flight turn commits its calls only at response completion, so
-	// this request's input cannot show them and pruning would discard them.
-	if p.activeSessions[sessionID] > 1 {
-		return
-	}
-	session := p.sessions[sessionID]
-	if session == nil {
-		return
-	}
-	pruned := 0
-	for callID, history := range session.calls {
-		if history.sequence > newest {
-			pruned += history.bytes
-			delete(session.calls, callID)
-		}
-	}
-	if pruned == 0 {
-		return
-	}
-	// nextSequence stays monotonic so a later call still outranks every
-	// survivor and recovery keeps resolving "newest" correctly.
-	session.bytes -= pruned
-	p.historyBytes -= pruned
+	return visible, nil
 }
 
 func (t *hpatchResponseTransform) recordLocal(callID string, history *hpatchHistory) {
@@ -431,7 +382,10 @@ func (t *hpatchResponseTransform) commitHistory() error {
 	if t.historyCommitted {
 		return nil
 	}
-	if err := t.proxy.rememberBatch(t.historySessionID, t.local); err != nil {
+	if err := t.proxy.replayStore.put(t.ctx, t.directory, t.local); err != nil {
+		return err
+	}
+	if err := t.proxy.rememberBatch(t.historySessionID, t.local); err != nil && t.proxy.replayStore == nil {
 		return err
 	}
 	t.historyCommitted = true
@@ -446,9 +400,28 @@ func (t *hpatchResponseTransform) commitLocalCall(callID string) error {
 	if !exists {
 		return nil
 	}
-	if err := t.proxy.rememberBatch(t.historySessionID, map[string]hpatchHistory{callID: history}); err != nil {
+	if err := t.proxy.replayStore.put(t.ctx, t.directory, map[string]hpatchHistory{callID: history}); err != nil {
+		return err
+	}
+	if err := t.proxy.rememberBatch(t.historySessionID, map[string]hpatchHistory{callID: history}); err != nil && t.proxy.replayStore == nil {
 		return err
 	}
 	t.handOffCommentary(callID)
 	return nil
+}
+
+// targetAliases includes only visible ancestry and calls applied in this turn.
+func (t *hpatchResponseTransform) targetAliases() []hpatch.TargetAlias {
+	histories := slices.Collect(maps.Values(t.visible))
+	slices.SortFunc(histories, func(a, b hpatchHistory) int { return cmp.Compare(a.sequence, b.sequence) })
+	local := slices.Collect(maps.Values(t.local))
+	slices.SortFunc(local, func(a, b hpatchHistory) int { return cmp.Compare(a.sequence, b.sequence) })
+	histories = append(histories, local...)
+	var aliases []hpatch.TargetAlias
+	for _, history := range histories {
+		if history.root == t.directory && (history.confirmed || history.applied) {
+			aliases = append(aliases, history.aliases...)
+		}
+	}
+	return aliases
 }

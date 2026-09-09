@@ -13,6 +13,11 @@ only rebuilding, ancestry, and correction guidance. The core evaluator, root pub
 grammar, and ordinary `functions.hpatch` have no recovery mode. Non-target and mixed failures
 require a complete ordinary script. Malformed, stale, conflicting, or incomplete recovery
 changes neither the workspace nor the retained evaluated baseline.
+Durable translation facts belong to the replay store under `CTR-BOUNDARY-001`; the recovery
+owner receives an ordered request-local view of visible calls, followed by the current response's
+evaluated calls. It never selects a baseline by scanning all stored calls or a parent's latest state.
+Restart and forks do not change this selection rule. Confirmation and alias selection remain
+isolated to the request even when routing or thread identities are shared.
 While separating a retained `type` or `add` command's target from its value, the router obtains the
 target's opaque identity from the root target parser and retains it with the command. Before
 rebuilding, it obtains the replacement identity from that same parser and rejects an unchanged

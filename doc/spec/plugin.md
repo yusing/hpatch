@@ -126,6 +126,15 @@ hpatch recovery ancestry. Runtime model-input rejection returns a bounded diagno
 through an available executor carrier; a translator protocol violation, unavailable carrier,
 or malformed carrier is a routing failure rather than a successful approximation.
 
+Completed translations MUST survive router restart and restore inherited calls in resumed or
+forked threads within the same canonical workspace, independently of routing-session IDs and
+cache keys. The router MUST durably retain a completed mapping before exposing its executable
+carrier, including completed streaming calls whose enclosing response later ends or is interrupted.
+Storage failures MUST fail routing before that carrier is exposed. Replay MUST NOT reevaluate
+the historical input or invoke an old plugin worker. Changed carrier identity, conflicting
+mappings, and corrupt records reject; unknown legacy calls without retained mappings remain
+unchanged. Durable records do not keep executor processes or private runtime capabilities alive.
+
 Grammar compatibility for this requirement is pinned to OpenAI's Custom tools guide
 (<https://developers.openai.com/api/docs/guides/function-calling#custom-tools>): regex
 definitions use Rust `regex` syntax and do not support lookarounds or lazy quantifiers; Lark
@@ -168,6 +177,9 @@ Acceptance:
    active without exposing untranslated content. Native function-argument events replace custom
    input events when the request uses native tools. Replay restores the exact original contributed
    call after verifying the retained carrier.
+   Fresh-process resume and same- or different-process forks preserve that exact call in both
+   native and Code Mode histories. A fork with fewer inherited calls cannot remove the parent's
+   records or use its omitted calls for recovery.
 9. A model-input diagnostic is bounded and recoverable, while an invalid translator result
    cannot be returned or counted as a successful tool call.
 10. Observation failure cannot replace an otherwise successful translated carrier or executor

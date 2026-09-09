@@ -7,9 +7,9 @@ tools, authored commentary for eligible structured calls, removal of only its ow
 message rendering, and exact replay restoration. Provider-owned and strict schemas remain exact, except for the separately owned opt-in
 [third-party collaboration projection](subagents.md).
 Collaboration calls remain outside operation commentary and pass through without generated
-request notices or commentary-specific buffering. The existing bounded Hpatch call history
-retains original call identity and router message IDs; JSON and SSE transformers share that
-state without adding another replay store.
+request notices or commentary-specific buffering. The Hpatch durable replay store retains
+original call identity and exact router message provenance under `CTR-BOUNDARY-001`; JSON and
+SSE transformers share that owner. Request-local history views restore only visible calls.
 
 The router also owns one bounded authenticated in-process publication broker. Code Mode lowering
 uses the JavaScript syntax owner when available and routes the evaluated expression through the
@@ -29,8 +29,11 @@ only to deferred Code Mode delivery, whose routes remain session-scoped. Shell w
 completion cannot retire a shared thread route; idle expiry and router shutdown own that lifetime.
 Rendering admission for a claimed shell publication checks its retained ID against the response's
 stable thread, so a concurrent session remap cannot invalidate an already-drained publication.
-Exact shell replay provenance follows stable thread identity rather than the current routing
-session and has a separate bounded budget. Commentary retention cannot reclaim tool-call history
+Live shell replay provenance follows stable thread identity rather than the current routing
+session and has a separate bounded budget. Before emitting router-authored commentary, the response
+boundary persists exact message provenance in the workspace replay store. Resume and forks strip
+only known IDs; message prefixes, phases, and text alone do not authorize removal. Persistence
+failure suppresses the auxiliary message, not substantive output. Commentary retention cannot reclaim tool-call history
 or prevent tool-call admission. Child terminals prepend ready runtime commentary inside the terminal
 response object without emitting standalone completed assistant items after the child's answer.
 The response transformer owns each Code Mode subscription until its carrier/history handoff boundary;
@@ -123,3 +126,7 @@ owns that queue's lifetime through router shutdown and terminal fallback. The
 response transformer reserves notices by routing session, confirms only successful
 writes, and strips exact generated IDs on replay. It never changes provider or
 executor failure semantics. Operational log sinks are not part of this boundary.
+In Hpatch mode, the transport's notice transform retains exact message provenance through
+the same workspace replay store before delivery, even though it runs after the tool transform.
+Failed provenance retention leaves notices pending without replacing substantive output.
+Passthrough does not acquire a durable replay store.

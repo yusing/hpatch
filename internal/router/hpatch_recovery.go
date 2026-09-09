@@ -100,16 +100,6 @@ type hpatchOutcomeReporter interface {
 	ReportOutcome(ctx context.Context, stage, outcome string) error
 }
 
-func (p *hpatchProxy) recoverableHistory(sessionID string) (hpatchHistory, error) {
-	p.mu.RLock()
-	defer p.mu.RUnlock()
-	session := p.sessions[sessionID]
-	if session == nil {
-		return hpatchHistory{}, errors.New("no rejected hpatch script to recover; send a complete script")
-	}
-	return recoveryHistoryOf(maps.Values(session.calls))
-}
-
 // recoveryHistoryOf picks the newest call that hpatch actually evaluated.
 // Proxy-rejected calls are skipped because they changed nothing. A successful
 // newest call blocks recovery of an older rejection.
@@ -145,16 +135,6 @@ func latestRecoveryAttempt(histories iter.Seq[hpatchHistory], correlationID stri
 		}
 	}
 	return latest
-}
-
-func (p *hpatchProxy) latestRecoveryAttempt(sessionID, correlationID string) int {
-	p.mu.RLock()
-	defer p.mu.RUnlock()
-	session := p.sessions[sessionID]
-	if session == nil {
-		return 0
-	}
-	return latestRecoveryAttempt(maps.Values(session.calls), correlationID)
 }
 
 // recoveryBaseline is the complete rejected script a following recovery edits.
@@ -276,11 +256,11 @@ func (t *hpatchResponseTransform) recoveryHistory() (hpatchHistory, error) {
 			return recoveryHistoryOf(maps.Values(t.local))
 		}
 	}
-	return t.proxy.recoverableHistory(t.historySessionID)
+	return recoveryHistoryOf(maps.Values(t.visible))
 }
 
 func (t *hpatchResponseTransform) nextRecoveryAttempt(correlationID string, baseAttempt int) int {
-	latest := max(baseAttempt, t.proxy.latestRecoveryAttempt(t.historySessionID, correlationID))
+	latest := max(baseAttempt, latestRecoveryAttempt(maps.Values(t.visible), correlationID))
 	latest = max(latest, latestRecoveryAttempt(maps.Values(t.local), correlationID))
 	return max(latest+1, 2)
 }

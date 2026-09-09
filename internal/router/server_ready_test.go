@@ -106,3 +106,29 @@ func TestRunSessionRejectsAliasedExportDestinations(t *testing.T) {
 		t.Fatalf("capture truncated: %q %v", data, err)
 	}
 }
+
+func TestRunSessionRejectsUnusableReplayStorageBeforeReady(t *testing.T) {
+	state := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", state)
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("CODEX_HOME", t.TempDir())
+	t.Setenv("HPATCH_RUNTIME_DIR", t.TempDir())
+	if err := os.WriteFile(filepath.Join(state, "hpatch"), []byte("not a directory"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	err := RunSession(t.Context(), []string{"--mode", "hpatch", "--model-protocol", "native", "--mentor-handoff=false"}, nil, func(Session) { t.Error("unusable replay storage reached readiness") })
+	if err == nil || !strings.Contains(err.Error(), "initialize replay storage") {
+		t.Fatalf("startup error = %v", err)
+	}
+}
+
+func TestRunSessionPassthroughIgnoresInvalidReplayStorage(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", "relative-invalid-state")
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	notified := false
+	err := RunSession(ctx, []string{"--mode", "passthrough"}, nil, func(Session) { notified = true; cancel() })
+	if err != nil || !notified {
+		t.Fatalf("passthrough ready=%v error=%v", notified, err)
+	}
+}

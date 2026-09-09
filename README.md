@@ -136,12 +136,18 @@ and uninstallation leave Codex configuration and instruction files untouched.
 
 ## Usage
 
+Hpatch keeps private replay records on disk so resumed and forked conversations
+retain their original tool history. These records include tool inputs and recovery
+diagnostics, not just metrics. See [replay storage](#replay-storage) for location,
+limits, and cleanup.
+
 Put Hpatch flags **before** `codex`; arguments after it belong to Codex:
 
 ```sh
 hpatch codex
 hpatch codex --model gpt-6-astra
 hpatch codex exec "Explain this repository"
+hpatch codex resume 'CONVERSATION_ID'
 hpatch --model-protocol native --mentor-handoff=false codex
 ```
 
@@ -284,6 +290,28 @@ See the [metrics reference](doc/spec/metrics.md) for interpretation.
   appear as user-only commentary; undelivered notices appear on stderr after
   Codex exits. Hpatch does not create operational log files.
 - **Agent issue reports:** see [opt-in agent issue reports](doc/spec/diagnose.md).
+
+### Replay storage
+
+Replay records live at `$XDG_STATE_HOME/hpatch/replay`, or
+`~/.local/state/hpatch/replay` when `XDG_STATE_HOME` is unset. An override must be
+absolute. The directory and records are private to your operating-system user.
+Multiple wrappers share this store, with workspace isolation; closing a wrapper
+does not delete it. Passthrough mode does not open it.
+
+Resuming a conversation or opening a side conversation needs no extra Hpatch flag.
+Only inherited calls actually present in that conversation become available for
+recovery. Replay does not rerun old commands or restore live shell processes,
+continuation handles, or expired private scripts. History recorded by older
+versions without durable replay records cannot be reconstructed reliably.
+
+The store limits call records to 1 GiB in total and 32 MiB per record. Commentary
+identities have a separate 16 MiB allowance. It rejects new call records when full
+instead of silently discarding resumable history. To reset
+storage, stop all Hpatch wrappers and move the replay directory aside. Conversations
+whose records you remove lose replay restoration; keep the moved directory if you
+may need to restore it later. Do not remove records just because one fork no longer
+shows those calls: a parent or sibling conversation may still need them.
 
 ### Older installations
 

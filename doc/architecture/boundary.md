@@ -27,18 +27,30 @@ router-owned filesystem capability, and never falls back to router cwd. Without 
 directory, only absolute operands are valid. Retained private `@shell` application is the confined
 router exception and uses `ApplyForHostRoot`.
 
-The router chooses retained-state identity from an explicit `session-id`, then a stable
-`prompt_cache_key`, and only then a request-scoped client request ID. Retained history is
-additionally scoped to the selected canonical metadata directory, or to the explicit no-directory
-state, preventing a reused cache key from exposing recovery or replay state across worktrees.
-Retained recovery and replay history is bounded: the oldest calls within a session and the
-least-recently used inactive sessions are evicted before capacity can reject new completed work.
-Retained history is also reconciled against each request: because truncation only removes a
-suffix of a conversation, every retained call newer than the newest one the request's input still
-shows belongs to a discarded turn and is dropped, releasing its call and byte budget. A request
-the router rejects mutates no retained state, and a session with a second in-flight turn is not
-reconciled because that turn's calls are committed only at response completion.
-An active request protects its session throughout replay restoration and response transformation.
+The router chooses transport session identity from an explicit `session-id`, then a stable
+`prompt_cache_key`, and only then a request-scoped client request ID. Neither that identity nor
+a shared thread owns historical translation. `internal/router/hpatch_store.go` owns versioned,
+durable replay records scoped to the selected canonical metadata directory, or the explicit
+no-directory state. Call IDs select records; replay validates the exact carrier kind, name, and
+payload before restoring the model-visible item. A conflicting mapping or corrupt record fails
+routing rather than guessing. An absent legacy record leaves an ordinary unknown host call intact.
+
+`internal/router/hpatch_history.go` builds one ordered visible-history view per accepted request.
+Recovery, target aliases, and executor confirmation use only that view and calls evaluated in the
+same response. Resume and forks resolve their inherited carriers from the same workspace store;
+they do not clone session maps or import hidden parent calls. Input truncation or compaction
+removes unavailable ancestry from the next view, never from another request or the durable store.
+Concurrent requests cannot change each other's view. Rejected reconciliation publishes no partial
+confirmation or ancestry changes. Output-only history requires an unambiguous retained call record.
+
+Completed call records are durably written before their carriers are exposed, including per-call
+SSE completion before a terminal response. Partial inputs are never evaluated or retained.
+Consistent later completion metadata may finalize a record without changing its translated mapping.
+The store uses private filesystem permissions, cross-process locking, atomic replacement, and
+synced writes. Durable capacity rejects new records rather than evicting resumable history;
+memory-cache eviction does not delete durable records. Shutdown leaves replay records intact but
+still releases process-owned runtime resources. Replay performs no translation or execution and
+does not revive shell processes, continuation handles, or expired private script capabilities.
 Background Responses requests reject before upstream forwarding because
 the router has no retrieval boundary for their eventual result. Malformed SSE state is
 sticky and cannot be overwritten by a later terminal event.

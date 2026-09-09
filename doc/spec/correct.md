@@ -30,7 +30,11 @@ changes neither workspace state nor retained rejected ancestry. Proxy-rejected a
 the last evaluated script as the next baseline. A re-rejected recovery becomes the next
 baseline, and replay restores the exact `functions.hpatch_recover` payload while retaining its
 rebuilt script for later recovery. Non-hpatch plugin and shell failures never enter this
-ancestry. Input truncation removes calls the conversation no longer shows.
+ancestry. Input truncation removes calls the conversation no longer shows from the request's
+recovery view, without deleting durable replay records needed by another branch. Resumed and
+forked threads inherit only ancestry actually visible in their input. Ordering and executor
+confirmation are request-local; concurrent requests cannot alter each other's recovery baseline
+or target aliases.
 
 When every structured rejection is `row-stale`, the routed diagnostic lists only the rejected
 target-bearing commands and their current `C...` handles. Recovery guidance directs the model to
@@ -60,7 +64,10 @@ Acceptance:
 2. Every command handle resolves against one immutable latest evaluated rejected script, and a command appears at most once per payload.
 3. A successful rebuild is reevaluated as one complete ordinary HPATCH/2 script.
 4. Re-rejection advances the baseline, emits refreshed target-command handles, and invalidates every prior handle; proxy rejection leaves the baseline unchanged.
-5. Recovery cannot cross sessions or selected worktrees, and unrelated tools cannot become bases.
+5. Recovery cannot use another request's nonvisible calls or cross selected worktrees, and
+   unrelated tools cannot become bases. Resumed and forked threads can recover a visible inherited
+   rejection without importing later parent calls. Rejected replay validation changes no ancestry
+   or executor confirmation.
 6. Replay restores `hpatch_recover` identity and the exact emitted short payload.
 7. Ordinary mutation-leading hpatch scripts are never detected as recovery.
 8. Captured provider calls remain individual and correlate to their actual delivered carriers.

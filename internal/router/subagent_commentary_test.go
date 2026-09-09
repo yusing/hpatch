@@ -166,8 +166,10 @@ func TestSubagentResponseCommentaryDoesNotRepeat(t *testing.T) {
 	if len(transform.subagentDeferred) != 0 {
 		t.Fatalf("deferred commentary = %#v", transform.subagentDeferred)
 	}
-	if bytes.Contains(request.fields["input"], []byte(generatedID)) {
-		t.Fatalf("generated commentary reached model input: %s", request.fields["input"])
+	// This fixture has no retained provenance for the supplied message. Its
+	// visible identity prevents a duplicate projection, but cannot authorize removal.
+	if !bytes.Contains(request.fields["input"], []byte(generatedID)) {
+		t.Fatalf("unretained commentary disappeared from model input: %s", request.fields["input"])
 	}
 }
 

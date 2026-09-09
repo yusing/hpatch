@@ -17,7 +17,7 @@ messages with `phase: "commentary"`; those messages are router-owned.
 
 JSON and streaming responses preserve the same ordering. The streaming path buffers an eligible
 function call until its complete arguments can be validated and stripped. The router retains the
-provider's exact original call in the existing bounded session history, removes only its generated
+provider's exact original call in durable replay history, removes only its generated
 message from later input, and restores the original call before provider replay. Malformed
 router-owned commentary fails before the tool call is exposed.
 
@@ -53,10 +53,14 @@ Routes, events, request bodies, and retention time are bounded. Capacity, networ
 rendering failures remain auxiliary and do not replace the tool result.
 A shell publication already claimed by a response remains renderable after its thread changes
 routing sessions; rendering validates stable thread provenance, not the current session mapping.
-Shell commentary replay provenance follows stable thread identity across routing-session changes.
+Shell commentary delivery follows stable thread identity across routing-session changes. Exact
+message provenance is durably recorded before emission so inherited commentary is also removed
+after restart or a fork within the same selected workspace. Persistence failure suppresses that
+auxiliary message without replacing a tool result. A generated-looking ID without retained
+provenance is not sufficient reason to remove a message.
 Its retention is independently bounded: exhausted commentary capacity suppresses new commentary,
 never evicts executable-call replay or recovery records or prevents later tool calls.
-The router retains shell provenance until shutdown, including across publication-route expiry,
+The live broker retains shell provenance until shutdown, including across publication-route expiry,
 for at most 256 threads and 16,384 message IDs in total. Reaching either bound leaves existing
 replay provenance intact rather than reclaiming it for new commentary.
 At a subagent stream terminal, ready shell commentary appears before substantive output inside
@@ -182,8 +186,9 @@ This guarantees attributed deferred inline updates, not continuous wait-time dis
 The collector retains at most 256 thread identities, 16,384 source identities,
 1,024 pending events, and 64 pending events per child. Pending events expire after
 one hour. Rendered root copies share a 16 KiB budget per response, after labels
-are added. Exact root-copy IDs remain bound to stable root thread identity until
-shutdown, across session remapping and event expiry. Capacity exhaustion never
+are added. Live root-copy IDs remain bound to stable root thread identity until
+shutdown, across session remapping and event expiry; emitted message provenance also survives
+shutdown in the workspace-scoped replay store. Capacity exhaustion never
 evicts executable-call history or existing replay provenance. Root copies are
 removed by exact retained ID from every replay, including a first child request
 with inherited root history, without removing original child messages or tool results.
@@ -232,6 +237,11 @@ render/write does not consume them. Ready root streaming notices precede provide
 output; child notices appear before substantive output only in the terminal
 response object, never as a later standalone child result. Exact retained IDs are
 removed from subsequent provider-bound input, including passthrough requests.
+In Hpatch mode, emitted notice IDs also enter the workspace-scoped durable commentary
+store so resume and forks remove them without a live queue or matching routing session.
+If that auxiliary retention fails, the notice stays pending and substantive output is
+unchanged. Compaction without a usable canonical workspace also leaves notices pending.
+Passthrough keeps its existing in-process notice behavior.
 
 The queue retains at most 256 session/category entries until shutdown. Concurrent
 responses cannot claim the same pending notice. Repeats after delivery are

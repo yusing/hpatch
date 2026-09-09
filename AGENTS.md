@@ -28,7 +28,8 @@ When parts of this file is stale after your work, update this file.
 | Router lifecycle, launch flags, modes, and HTTP endpoints | `internal/router/server.go`, `internal/router/flags.go` |
 | Third-party native subagent projection, Grok authentication/translation, and catalog augmentation | `internal/router/subagent_bridge.go`, `internal/router/grok_*.go` |
 | Codex authentication and upstream Responses transport | `internal/router/client.go` |
-| Tool replacement, host translation, response restoration, replay, and rejected-script recovery | `internal/router/hpatch_proxy.go`, `internal/router/hpatch_recovery.go` |
+| Tool replacement, host translation, and response restoration | `internal/router/hpatch_proxy.go` |
+| Durable replay records, request-visible history, and rejected-script recovery | `internal/router/hpatch_store.go`, `internal/router/hpatch_history.go`, `internal/router/hpatch_recovery.go` |
 | Carrier catalog and model-visible projection | `internal/router/tool_carrier.go`, `internal/router/tool_registry.go` |
 | Built-in tool sources and private execution runtime | `plugins`, `internal/router/toolplugin` |
 | Fixed shell-runtime locator and per-thread runtime path | `cmd/shell`, `internal/shellruntime`, `internal/router/shell_runtime.go` |

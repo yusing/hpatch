@@ -31,6 +31,15 @@ errors outside the active Codex UI. Critical request failures use the user-only
 commentary contract. The launcher prints undelivered notices and repetition
 summaries after Codex exits. In-memory metrics, explicit sanitized capture and
 final metrics exports, and opt-in issue reports are not operational logging.
+Hpatch mode also retains private durable replay state so resumed and forked conversations restore
+their original model-visible tools. This is correctness state, not an operational session log.
+It lives at `$XDG_STATE_HOME/hpatch/replay`, or `~/.local/state/hpatch/replay` when that variable is
+unset, and survives wrapper shutdown. A relative `XDG_STATE_HOME` is invalid. Passthrough mode
+does not open this store. Initialization failure prevents Codex launch. The store admits at most
+1 GiB of call replay data and 32 MiB per call record; reaching a limit rejects new records rather
+than discarding resumable history. Exact commentary provenance has an independent 16 MiB budget;
+failure to retain it suppresses new commentary instead of consuming call-record capacity.
+Cleanup is explicit, never inferred from one thread's truncation.
 `--capture-output PATH` appends records; `--metrics-output PATH` overwrites a final
 snapshot from the same capturer. The destinations must be distinct.
 
@@ -41,7 +50,8 @@ Acceptance:
 3. Startup failure does not launch Codex; all exits release owned resources.
 4. Codex arguments, exit status, terminal input, stdout, and stderr remain intact.
 5. Simultaneous configured-plugin sessions have disjoint frontends and independent cleanup.
-6. No operational logs or session log files are created or mixed with Codex output.
+6. No operational logs or session log files are created or mixed with Codex output. Private replay
+   correctness records survive shutdown and are shared safely by simultaneous wrappers.
 7. Invalid native editing/execution catalogs and forced incompatible tool choices
    fail closed with actionable HTTP 400 errors, not retryable upstream 502 errors.
 8. Fixed listener and provider flags, bare serving, and the former wrap command reject.

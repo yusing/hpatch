@@ -156,6 +156,28 @@ func (c *CriticalErrors) transform(session string, subagent bool) *criticalError
 	return t
 }
 
+// retain records the exact router-authored IDs before they can become visible.
+// Failure suppresses only these auxiliary notices; finish leaves them queued
+// because emitted remains false.
+func (t *criticalErrorTransform) retain(ctx context.Context, store *hpatchReplayStore, workspace string) {
+	if t == nil || store == nil || len(t.messages) == 0 {
+		return
+	}
+	ids := make([]string, 0, len(t.messages))
+	for _, message := range t.messages {
+		ids = append(ids, jsonString(message, "id"))
+	}
+	if store.putCommentary(ctx, workspace, ids) != nil {
+		t.messages = nil
+	}
+}
+
+func (t *criticalErrorTransform) suppress() {
+	if t != nil {
+		t.messages = nil
+	}
+}
+
 func (t *criticalErrorTransform) finish(success bool) {
 	if t == nil {
 		return

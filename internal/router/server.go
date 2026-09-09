@@ -184,7 +184,16 @@ func RunSession(ctx context.Context, args []string, issues *CriticalErrors, read
 			runErr = errors.Join(runErr, registry.Close())
 		}()
 		frontendDirectory = registry.frontendDirectory
+		replayDirectory, err := defaultHPatchReplayDirectory()
+		if err != nil {
+			return fmt.Errorf("initialize replay storage: %w", err)
+		}
+		replayStore, err := openHPatchReplayStore(replayDirectory)
+		if err != nil {
+			return fmt.Errorf("initialize replay storage: %w", err)
+		}
 		hpatchCalls = newHPatchProxy(translator, registry, customizedInstructions, compactTokens != nil, titles)
+		hpatchCalls.replayStore = replayStore
 		defer func() {
 			runErr = errors.Join(runErr, hpatchCalls.Close())
 		}()
@@ -519,6 +528,19 @@ func executeRequest(
 		}
 		if metadataValid && metadata.RequestKind == "compaction" {
 			compactTokens = nil
+		}
+	}
+	if hpatchCalls != nil {
+		workspace, usable := usableRoutingDirectory(metadata.Directories)
+		if hpatchTransform != nil {
+			workspace, usable = hpatchTransform.directory, true
+		}
+		if usable {
+			notices.retain(ctx, hpatchCalls.replayStore, workspace)
+		} else {
+			// Without a canonical namespace the notice cannot be stripped from a
+			// later ordinary turn, so keep it queued instead of emitting it.
+			notices.suppress()
 		}
 	}
 	if hpatchTransform != nil {

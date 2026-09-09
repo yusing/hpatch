@@ -8,14 +8,12 @@ import (
 
 func TestHPatchRecoveryRejectsDifferentWorktree(t *testing.T) {
 	calls := 0
-	transform, proxy, _, workspace := newHPatchTestTransform(t, testTranslator(t, &calls))
-	if err := proxy.rememberBatch(transform.historySessionID, map[string]hpatchHistory{"call-old": {
+	transform, _, _, workspace := newHPatchTestTransform(t, testTranslator(t, &calls))
+	transform.visible = map[string]hpatchHistory{"call-old": {
 		toolName: hpatchToolName, script: testHPatchScript, root: workspace + "-other", carrierName: "exec",
 		translationError: "rejected", sequence: 1,
 		evaluatorRejected: true,
-	}}); err != nil {
-		t.Fatal(err)
-	}
+	}}
 	history, err := transform.translateRecovery("call-new", recoveryCommands(testHPatchScript)[0].handle+" 1:aaaa", nil)
 	if err != nil {
 		t.Fatal(err)

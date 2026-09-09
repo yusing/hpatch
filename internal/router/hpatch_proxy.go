@@ -131,6 +131,7 @@ type hpatchProxy struct {
 	activity               *subagentActivity
 
 	mu              sync.RWMutex
+	replayStore     *hpatchReplayStore
 	sessions        map[string]*hpatchHistorySession
 	activeSessions  map[string]int
 	historyBytes    int
@@ -214,6 +215,7 @@ type hpatchResponseTransform struct {
 	shellThreadID    string // Runtime identity remains available when activity attribution is invalid.
 	shellDirectory   string
 	model            string
+	visible          map[string]hpatchHistory
 	historySessionID string
 	sessionActive    bool
 	threadID         string
@@ -226,7 +228,7 @@ type hpatchResponseTransform struct {
 	originalToolChoice        json.RawMessage
 	originalToolChoicePresent bool
 	pending                   map[string]hpatchPendingCall
-	nativeExecCalls           map[string]string
+	nativeExecCalls           map[string]map[string]json.RawMessage
 	local                     map[string]hpatchHistory
 	directory                 string
 	carriers                  codeModeCarrierCatalog
@@ -361,7 +363,11 @@ func (p *hpatchProxy) prepareRequest(ctx context.Context, request *parsedRespons
 	if metadata.SubagentKind != "" && metadata.activityIdentityInvalid {
 		recipient = ""
 	}
+
+	// Projection deduplication needs the original visible messages. Keep this
+	// request-local result until replay validation succeeds and strips known copies.
 	subagentDeferred := prepareSubagentInputCommentary(request.fields, recipient)
+
 	tools := request.responseTools()
 	directory, _ := usableRoutingDirectory(metadata.Directories)
 	originalTools, originalToolsPresent := request.fields["tools"]
@@ -405,12 +411,13 @@ func (p *hpatchProxy) prepareRequest(ctx context.Context, request *parsedRespons
 	if err != nil {
 		return nil, fmt.Errorf("store shell runtime: %w", err)
 	}
-	historySessionID := directory + "\x00" + sessionID
+	historySessionID := directory + "\x00" + threadID
 	if err := p.activateSession(historySessionID); err != nil {
 		return nil, err
 	}
 	p.prepareShellCommentary(threadID, historySessionID, metadata.commentaryAuthor())
-	if err := p.reconcileInputPrefix(request, historySessionID); err != nil {
+	visible, err := p.reconcileVisibleInput(ctx, request, directory, historySessionID)
+	if err != nil {
 		p.deactivateSession(historySessionID)
 		return nil, err
 	}
@@ -449,6 +456,7 @@ func (p *hpatchProxy) prepareRequest(ctx context.Context, request *parsedRespons
 		shellDirectory:   shellDirectory,
 		model:            request.modelDescription(),
 		historySessionID: historySessionID,
+		visible:          visible,
 		sessionActive:    true,
 		usageTracker:     p.usage.observation(threadID, metadata.ThreadID),
 		threadID:         activityThreadID,
@@ -459,7 +467,7 @@ func (p *hpatchProxy) prepareRequest(ctx context.Context, request *parsedRespons
 		originalToolChoice:        originalToolChoice,
 		originalToolChoicePresent: originalToolChoicePresent,
 		pending:                   make(map[string]hpatchPendingCall),
-		nativeExecCalls:           make(map[string]string),
+		nativeExecCalls:           make(map[string]map[string]json.RawMessage),
 		local:                     make(map[string]hpatchHistory),
 		directory:                 directory,
 		carriers:                  carriers,
@@ -987,7 +995,7 @@ func (t *hpatchResponseTransform) translate(callID, input string, upstreamItem m
 		return hpatchHistory{}, fmt.Errorf("hpatch call %q script exceeds %d bytes", callID, maxHPatchScriptBytes)
 	}
 
-	evaluated, err := hpatch.RewriteTargetAliases(input, t.proxy.targetAliases(t.historySessionID, t.directory))
+	evaluated, err := hpatch.RewriteTargetAliases(input, t.targetAliases())
 	if err != nil {
 		// Preserve evaluator-owned syntax diagnostics for malformed scripts.
 		evaluated = input
@@ -1374,7 +1382,13 @@ func (t *hpatchResponseTransform) Finish(streamEvent bool) error {
 }
 
 func (t *hpatchResponseTransform) TransformSSE(payload []byte) ([][]byte, error) {
-	messages := t.drainActivity()
+	if len(t.subagentDeferred) != 0 {
+		t.subagentDeferred = t.retainCommentary(t.subagentDeferred...)
+		if len(t.subagentDeferred) == 0 {
+			t.subagentResponses = nil
+		}
+	}
+	messages := t.retainCommentary(t.drainActivity()...)
 	t.activityMessages = append(t.activityMessages, messages...)
 	visible, err := t.transformActivitySSE(payload)
 	if err != nil || len(messages) == 0 {
@@ -1434,7 +1448,7 @@ func (t *hpatchResponseTransform) transformActivitySSE(payload []byte) ([][]byte
 		name := item.Name
 		if t.codeModeToolName != "" && name == t.codeModeToolName {
 			if item.Type == "custom_tool_call" && item.ID != "" {
-				t.nativeExecCalls[item.ID] = item.CallID
+				t.nativeExecCalls[item.ID] = item.cloneFields()
 			}
 			return [][]byte{payload}, nil
 		}
@@ -1494,19 +1508,16 @@ func (t *hpatchResponseTransform) transformActivitySSE(payload []byte) ([][]byte
 	case "response.custom_tool_call_input.done":
 		pending, ok := t.pending[envelope.ItemID]
 		if !ok || pending.structured {
-			if addedCallID, nativeExec := t.nativeExecCalls[envelope.ItemID]; nativeExec {
+			if addedFields, nativeExec := t.nativeExecCalls[envelope.ItemID]; nativeExec {
+				addedCallID := jsonString(addedFields, "call_id")
 				if addedCallID != "" && envelope.CallID != "" && addedCallID != envelope.CallID {
 					return nil, errors.New("upstream Code Mode call changed call ID")
 				}
 				callID := cmp.Or(addedCallID, envelope.CallID)
-				t.nativeExecCalls[envelope.ItemID] = callID
-				item := newResponsesItem(map[string]json.RawMessage{
-					"type":    mustMarshalJSON("custom_tool_call"),
-					"id":      mustMarshalJSON(envelope.ItemID),
-					"call_id": mustMarshalJSON(callID),
-					"name":    mustMarshalJSON(t.codeModeToolName),
-					"input":   mustMarshalJSON(envelope.Input),
-				})
+				addedFields["call_id"] = mustMarshalJSON(callID)
+				original := maps.Clone(addedFields)
+				original["input"] = mustMarshalJSON(envelope.Input)
+				item := newResponsesItem(original)
 				changed, err := t.transformOutputItem(&item)
 				if err != nil {
 					return nil, err
@@ -1525,10 +1536,6 @@ func (t *hpatchResponseTransform) transformActivitySSE(payload []byte) ([][]byte
 			}
 			return [][]byte{payload}, nil
 		}
-		history, err := t.translateTool(pending.toolName, pending.callID, envelope.Input, nil)
-		if err != nil {
-			return nil, err
-		}
 		var addedEnvelope struct {
 			Item json.RawMessage `json:"item"`
 		}
@@ -1538,6 +1545,13 @@ func (t *hpatchResponseTransform) transformActivitySSE(payload []byte) ([][]byte
 		addedItem, ok := decodeResponsesItem(addedEnvelope.Item)
 		if !ok {
 			return nil, errors.New("decode buffered hpatch call")
+		}
+		// input.done is already an executable handoff boundary. Retain the
+		// original item shape now; output_item.done may never arrive.
+		addedItem.setInput(envelope.Input)
+		history, err := t.translateTool(pending.toolName, pending.callID, envelope.Input, addedItem.cloneFields())
+		if err != nil {
+			return nil, err
 		}
 		kind := history.effectiveCarrierKind()
 		addedItem.renderCarrier(kind, history.carrierName, "")
@@ -1588,7 +1602,8 @@ func (t *hpatchResponseTransform) transformActivitySSE(payload []byte) ([][]byte
 		}
 		itemID := item.ID
 		callID := item.CallID
-		if expectedCallID, nativeExec := t.nativeExecCalls[itemID]; nativeExec {
+		if addedFields, nativeExec := t.nativeExecCalls[itemID]; nativeExec {
+			expectedCallID := jsonString(addedFields, "call_id")
 			if item.Type != "custom_tool_call" || item.Name != t.codeModeToolName ||
 				expectedCallID != callID {
 				return nil, errors.New("upstream completed inconsistent Code Mode call")
@@ -1776,6 +1791,16 @@ func (t *hpatchResponseTransform) transformResponse(payload []byte, terminalStat
 	if err != nil {
 		return nil, nil, err
 	}
+	if usageMessage != nil && len(t.retainCommentary(usageMessage)) == 0 {
+		var output []map[string]json.RawMessage
+		if json.Unmarshal(object["output"], &output) == nil {
+			id := jsonString(usageMessage, "id")
+			output = slices.DeleteFunc(output, func(item map[string]json.RawMessage) bool { return jsonString(item, "id") == id })
+			object["output"] = mustMarshalJSON(output)
+		}
+		usageMessage = nil
+	}
+	t.subagentResponses = t.retainCommentary(t.subagentResponses...)
 	// SSE terminal events own completion even when the embedded status is absent.
 	// JSON responses have no event envelope and retain body-status semantics.
 	status := cmp.Or(terminalStatus, jsonString(object, "status"))
@@ -1785,7 +1810,8 @@ func (t *hpatchResponseTransform) transformResponse(payload []byte, terminalStat
 		if err := json.Unmarshal(rawOutput, &output); err != nil {
 			return nil, nil, errors.New("decode hpatch-enabled response output")
 		}
-		t.activityMessages = append(t.activityMessages, t.drainActivity()...)
+		activityMessages := t.retainCommentary(t.drainActivity()...)
+		t.activityMessages = append(t.activityMessages, activityMessages...)
 		transformedOutput := append([]map[string]json.RawMessage{}, t.activityMessages...)
 		for _, publication := range t.deferredCommentary {
 			if message := t.runtimeCommentaryMessage(publication); message != nil {
@@ -1802,7 +1828,7 @@ func (t *hpatchResponseTransform) transformResponse(payload []byte, terminalStat
 			// An interrupted response can contain partial calls. Only complete items
 			// or calls whose complete input was already delivered may be projected.
 			_, delivered := t.local[item.CallID]
-			if interrupted && item.Status != "completed" && !delivered {
+			if !delivered && (interrupted && item.Status != "completed" || item.Status == "in_progress" || item.Status == "incomplete") {
 				transformedOutput = append(transformedOutput, fields)
 				continue
 			}
@@ -1828,11 +1854,10 @@ func (t *hpatchResponseTransform) transformResponse(payload []byte, terminalStat
 		object["output"] = encoded
 	}
 	t.restoreResponseContract(object)
-	switch status {
-	case "completed", "failed", "incomplete":
-		if err := t.commitHistory(); err != nil {
-			return nil, nil, err
-		}
+	// Every translated carrier in a JSON body is about to become visible,
+	// regardless of whether the provider supplied a terminal response status.
+	if err := t.commitHistory(); err != nil {
+		return nil, nil, err
 	}
 	transformed, err := marshalProtocolJSON(object)
 	return transformed, usageMessage, err

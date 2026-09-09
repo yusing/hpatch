@@ -2440,73 +2440,15 @@ func TestHPatchReplayPreservesImmediateApplyFailure(t *testing.T) {
 	}
 }
 
-func TestHPatchReplayConfirmsTargetAliasesOnlyAfterSuccessfulApply(t *testing.T) {
-	proxy := newManagedHPatchProxy(t, testTranslator(t, new(int)))
-	alias := hpatch.TargetAlias{Path: "file.txt", Before: "2:1111", After: "2:2222"}
-	history := hpatchHistory{
-		script:      testHPatchScript,
-		patch:       testTranslatedPatch,
-		root:        "/workspace",
-		carrierName: "exec",
-		report:      testHPatchReport,
-		aliases:     []hpatch.TargetAlias{alias},
-	}
-	if err := proxy.rememberBatch("session", map[string]hpatchHistory{"call-H": history}); err != nil {
-		t.Fatal(err)
-	}
-	if aliases := proxy.targetAliases("session", "/workspace"); len(aliases) != 0 {
-		t.Fatalf("aliases before apply confirmation = %+v", aliases)
-	}
-
-	failed, err := parseResponsesRequest(mustTestJSON(t, map[string]any{"input": []any{
-		map[string]any{"type": "custom_tool_call_output", "call_id": "call-H", "output": "apply failed"},
-	}}))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := proxy.reconcileInputPrefix(&failed, "session"); err != nil {
-		t.Fatal(err)
-	}
-	if aliases := proxy.targetAliases("session", "/workspace"); len(aliases) != 0 {
-		t.Fatalf("aliases after failed apply = %+v", aliases)
-	}
-
-	succeeded, err := parseResponsesRequest(mustTestJSON(t, map[string]any{"input": []any{
-		map[string]any{"type": "custom_tool_call_output", "call_id": "call-H", "output": testHPatchReport},
-	}}))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := proxy.reconcileInputPrefix(&succeeded, "session"); err != nil {
-		t.Fatal(err)
-	}
-	aliases := proxy.targetAliases("session", "/workspace")
-	if len(aliases) != 1 || aliases[0] != alias {
-		t.Fatalf("confirmed aliases = %+v, want %+v", aliases, alias)
-	}
-	if aliases := proxy.targetAliases("session", "/other"); len(aliases) != 0 {
-		t.Fatalf("cross-workspace aliases = %+v", aliases)
-	}
-}
-
 func TestHPatchTranslationRewritesConfirmedTargetAlias(t *testing.T) {
 	var translatedScript string
 	translator := hpatchResultTranslatorFunc(func(_ context.Context, _ string, script string) (hpatchTranslationResult, error) {
 		translatedScript = script
 		return hpatchTranslationResult{patch: []byte(testTranslatedPatch), report: testHPatchReport}, nil
 	})
-	transform, proxy, _, _ := newHPatchTestTransform(t, translator)
+	transform, _, _, _ := newHPatchTestTransform(t, translator)
 	alias := hpatch.TargetAlias{Path: "file.txt", Before: "2:1111", After: "3:2222"}
-	if err := proxy.rememberBatch(transform.historySessionID, map[string]hpatchHistory{
-		"call-first": {
-			root:      transform.directory,
-			report:    testHPatchReport,
-			confirmed: true,
-			aliases:   []hpatch.TargetAlias{alias},
-		},
-	}); err != nil {
-		t.Fatal(err)
-	}
+	transform.visible = map[string]hpatchHistory{"call-first": {root: transform.directory, report: testHPatchReport, confirmed: true, aliases: []hpatch.TargetAlias{alias}}}
 
 	emitted := "in file.txt\ntype 2:1111 \"replacement\""
 	if _, err := transform.translate("call-next", emitted, nil); err != nil {
@@ -2673,6 +2615,7 @@ func TestNonHPatchHistoryIsExcludedFromRecovery(t *testing.T) {
 		proxy:            proxy,
 		sessionID:        "session",
 		historySessionID: "session",
+		visible:          map[string]hpatchHistory{"call-H": history},
 		local: map[string]hpatchHistory{
 			"call-local-shell": {
 				toolName: "shell",

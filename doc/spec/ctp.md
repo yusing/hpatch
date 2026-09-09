@@ -124,7 +124,9 @@ signed protocol savings include expansion and do not claim provider cache or bil
 6. Visible-line references resolve only against preceding visible tool output, are independently
    profitable, and beat the complete content-local fallback.
 7. Appending history cannot change an already encoded prefix; compaction and branching cannot
-   reference removed history.
+   reference removed history. For an otherwise unchanged request and configuration, restored
+   tool history after router restart or a thread fork produces the same encoded input as an
+   uninterrupted continuation. This is byte stability, not a guarantee of provider cache hits.
 8. Literal CTP/2 prefixes round-trip through `!ctp2 L`; CTP/1 and ordinary `@` text remain native.
 9. Tool names, new tool payloads, function arguments, schemas, reasoning, usage, identifiers, and
    instruction priority remain unchanged.
