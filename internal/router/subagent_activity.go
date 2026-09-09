@@ -40,6 +40,12 @@ func (a *subagentActivity) observe(thread, parent, name string, child bool) bool
 	if a == nil || thread == "" {
 		return false
 	}
+	if len(thread)+len(parent)+len(name) > maxCommentaryPublicationBytes || strings.ContainsAny(name, "\r\n\x00") ||
+		child && (parent == "" || parent == thread || !strings.HasPrefix(name, "/root/")) ||
+		!child && (parent != "" || name != "/root") {
+		a.invalidate(thread)
+		return false
+	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if a.closed {
@@ -50,15 +56,6 @@ func (a *subagentActivity) observe(thread, parent, name string, child bool) bool
 			old.conflicted = true
 		}
 		return !old.conflicted
-	}
-	if len(thread)+len(parent)+len(name) > maxCommentaryPublicationBytes || strings.ContainsAny(name, "\r\n\x00") {
-		return false
-	}
-	if child && (parent == "" || parent == thread || !strings.HasPrefix(name, "/root/")) {
-		return false
-	}
-	if !child && (parent != "" || name != "/root") {
-		return false
 	}
 	if len(a.threads) >= maxCommentaryRoutes {
 		return false
@@ -79,6 +76,27 @@ func (a *subagentActivity) rootLocked(thread string) string {
 		thread = node.parent
 	}
 	return "" // Cycles and unknown ancestry never broadcast.
+}
+
+// Shell workers share stable thread capabilities across requests. Once an
+// accepted request makes that thread's identity ambiguous, later publications
+// cannot safely use its earlier ancestry, even after another valid turn.
+// Keep local runtime authors and replay provenance intact; suppress root copies.
+func (a *subagentActivity) invalidate(thread string) {
+	if a == nil || thread == "" || len(thread) > maxCommentaryPublicationBytes {
+		return
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.closed {
+		return
+	}
+	if node := a.threads[thread]; node != nil {
+		node.conflicted = true
+	} else if len(a.threads) < maxCommentaryRoutes {
+		// An initially ambiguous capability must not acquire ancestry later.
+		a.threads[thread] = &activityThread{conflicted: true}
+	}
 }
 
 func (a *subagentActivity) collect(thread, source, kind, text string) {

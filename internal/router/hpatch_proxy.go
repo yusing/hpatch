@@ -355,24 +355,13 @@ func (p *hpatchProxy) prepareRequest(ctx context.Context, request *parsedRespons
 		return nil, err
 	}
 	recipient := metadata.AgentName
-	if recipient == "" && metadata.SubagentKind == "" {
+	if metadata.SubagentKind == "" {
 		recipient = "/root"
 	}
-	activityThreadID := ""
-	if !metadata.activityIdentityInvalid && (metadata.ThreadID == "" || metadata.ThreadID == threadID) {
-		if p.activity.observe(threadID, metadata.ParentThreadID, recipient, metadata.SubagentKind != "") {
-			activityThreadID = threadID
-		}
+	if metadata.SubagentKind != "" && metadata.activityIdentityInvalid {
+		recipient = ""
 	}
 	subagentDeferred := prepareSubagentInputCommentary(request.fields, recipient)
-	for _, message := range subagentDeferred {
-		var content []struct {
-			Text string `json:"text"`
-		}
-		if json.Unmarshal(message["content"], &content) == nil && len(content) == 1 {
-			p.activity.collect(activityThreadID, jsonString(message, "id"), "reply", content[0].Text)
-		}
-	}
 	tools := request.responseTools()
 	directory, _ := usableRoutingDirectory(metadata.Directories)
 	originalTools, originalToolsPresent := request.fields["tools"]
@@ -424,6 +413,27 @@ func (p *hpatchProxy) prepareRequest(ctx context.Context, request *parsedRespons
 	if err := p.reconcileInputPrefix(request, historySessionID); err != nil {
 		p.deactivateSession(historySessionID)
 		return nil, err
+	}
+	// Only accepted requests may change retained ancestry or collect activity.
+	activityThreadID := ""
+	if metadata.activityIdentityInvalid || metadata.ThreadID != "" && metadata.ThreadID != threadID {
+		p.activity.invalidate(threadID)
+	} else {
+		name := metadata.AgentName
+		if name == "" && metadata.SubagentKind == "" {
+			name = "/root"
+		}
+		if p.activity.observe(threadID, metadata.ParentThreadID, name, metadata.SubagentKind != "") {
+			activityThreadID = threadID
+		}
+	}
+	for _, message := range subagentDeferred {
+		var content []struct {
+			Text string `json:"text"`
+		}
+		if json.Unmarshal(message["content"], &content) == nil && len(content) == 1 {
+			p.activity.collect(activityThreadID, jsonString(message, "id"), "reply", content[0].Text)
+		}
 	}
 	if metadata.SubagentKind == "thread_spawn" {
 		// The collector deduplicates this source by stable child thread, including

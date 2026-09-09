@@ -55,7 +55,12 @@ does not restrict valid Codex names or reject requests.
 `subagent_activity.go` owns bounded observation and root-copy provenance, independent
 of executable-call recovery. The request boundary supplies only observed canonical
 identity and parent-thread metadata. Stable thread relationships, never session IDs
-or path-looking message text, select the root. Conflicting identities fail closed.
+or path-looking message text, select the root. Only successful request preparation commits
+identity observations and collected starts/replies. Preparation-failure critical errors still
+use previously established request-thread identity. Conflicting identities fail closed. Accepted
+malformed auxiliary identity or contradictory thread metadata retains a bounded conflicted
+thread marker, suppressing root copies from shared runtime capabilities until shutdown without
+changing their local authors or replay provenance.
 The commentary producer and publication broker feed the collector without consuming
 child output. Runtime capabilities bind their originating thread at creation.
 The collector does not call back into the broker or proxy while holding its lock.

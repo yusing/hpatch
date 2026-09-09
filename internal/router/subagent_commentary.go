@@ -63,6 +63,11 @@ func prepareSubagentInputCommentary(fields map[string]json.RawMessage, recipient
 	if len(items) != originalLen {
 		fields["input"] = mustMarshalJSON(items)
 	}
+	// Replay cleanup is unconditional, but an absent or malformed identity
+	// cannot establish that an envelope is addressed to this request.
+	if recipient != "/root" && !strings.HasPrefix(recipient, "/root/") || strings.ContainsAny(recipient, "\r\n\x00") {
+		return nil
+	}
 
 	var commentary []map[string]json.RawMessage
 	budget := maxCommentaryPublicationBytes

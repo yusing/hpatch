@@ -91,7 +91,9 @@ canonical path as inline code, are deduplicated by source identity, and remain u
 not reclassified as progress.
 
 When a request receives an actual Codex inter-agent envelope addressed to its
-canonical agent name, commentary identifies both recipient and sender, each wrapped in inline code. Valid
+canonical agent name, commentary identifies both recipient and sender, each wrapped in inline code.
+The recipient is `/root` for non-child turns and the canonical child name for child turns.
+An absent or malformed child identity never matches an unaddressed envelope. Valid
 plaintext `MESSAGE` and `FINAL_ANSWER` payloads are shown in full as received replies,
 never as excerpts. Replies exceeding the auxiliary rendering budget are omitted
 from commentary without changing the original envelope. Encrypted envelopes show receipt
@@ -133,6 +135,13 @@ Hpatch retains observed canonical names and parent-thread relationships for boun
 root projection. It never infers ancestry from a name, message payload, or shared
 routing-session ID. Missing ancestry, cycles, conflicting identity, or exhausted
 auxiliary capacity suppress projection, not child output or tool execution.
+Identity observation and start/reply collection begin only after request preparation succeeds.
+A prepared request with malformed auxiliary identity or a contradictory thread ID disables
+root projection for that stable thread until shutdown. Shell workers share thread capabilities,
+so later valid metadata cannot distinguish delayed work from the ambiguous request. Local runtime
+delivery, immutable authors, and replay provenance remain intact. Invalid turn headers and requests
+rejected during preparation do not register or invalidate collector identities.
+Critical errors from rejected requests still use previously established request-thread identity.
 
 Child-authored commentary, operation, shell, and Code Mode progress enters the same collector as
 received inter-agent envelopes, tool-call displays, and existing critical-error notices.
