@@ -10,8 +10,9 @@ model protocol fail before the router listens. Passthrough mode uses native and 
 CTP/2 is a reversible representation between the ordinary Mekugi request projection and the model
 provider. It is not another Responses protocol or an edit-engine feature. Responses objects, roles,
 instruction priority, identifiers, statuses, reasoning, schemas, grammar definitions, streaming,
-usage, conversation selection, and compaction remain provider-owned and native. CTP/2 changes only
-eligible model-visible request strings and assistant text. Newly emitted tool names, tool inputs,
+and usage remain native and outside CTP/2 ownership. Context pruning and router-owned compaction
+items belong to `REQ-COMPACTION-001`. CTP/2 changes only eligible model-visible request strings and
+assistant text. Newly emitted tool names, tool inputs,
 and function arguments remain native.
 
 `contrib/codex/file-editing-instructions.md` owns the model-visible interpretation and emission

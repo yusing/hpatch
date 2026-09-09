@@ -26,6 +26,7 @@ When parts of this file is stale after your work, update this file.
 | Portable verified-row, source-capability, Go-lexical, and shell-header semantics | `internal/verifiedrow`, `internal/sourcekind`, `internal/golex`, `internal/shellsyntax` |
 | Versioned plugin shared-core adapter and private WASM bridge | `internal/router/toolplugin/core-v1.mjs`, `internal/router/toolplugin/core-v1.d.ts`, `internal/sharedwasm` |
 | Router lifecycle, launch flags, modes, and HTTP endpoints | `internal/router/server.go`, `internal/router/flags.go` |
+| Provider-free context pruning, local envelopes, and native-history restoration | `internal/router/context_compaction*.go` |
 | Third-party native subagent projection, Grok authentication/translation, and model-catalog metadata | `internal/router/subagent_bridge.go`, `internal/router/grok_*.go` |
 | Codex-facing WebSocket sessions, incremental history, and steering | `internal/router/server_websocket.go` |
 | Codex authentication and upstream Responses transport | `internal/router/client.go`, `internal/router/client_websocket.go` |
@@ -47,6 +48,7 @@ When parts of this file is stale after your work, update this file.
 | --- | --- |
 | Root engine | `go test .` |
 | Router request, response, recovery, workspace, plugin, or transport | `go test ./internal/router` |
+| Context compaction client compatibility | `HPATCH_COMPACTION_CODEX_BIN="$(command -v codex)" go test ./internal/router -run '^TestCompactionInstalledCodex$'` (isolated loopback fixtures, no provider inference) |
 | Portable core or `mekugi:core/v1` adapter | `go generate ./internal/router/toolplugin`, then `go test ./...` and `bun test ./internal/router/toolplugin/tests/core.test.ts` |
 | TypeScript plugin source | `go generate ./internal/router/toolplugin`, then `bun test ./internal/router/toolplugin/tests` |
 | Router or shell-helper process entry point | `go test ./cmd/mekugi ./cmd/shell` |

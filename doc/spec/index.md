@@ -29,6 +29,7 @@ pjdoc:
     - guide.md
     - comparison.md
     - benchmark.md
+    - compaction.md
     - ctp.md
 ---
 # mekugi specification
@@ -60,6 +61,7 @@ Each listed file owns one requirement. Related facts are cited by stable ID or l
 - [`REQ-GUIDE-001`](guide.md): concise agent guidance
 - [`REQ-COMPARE-001`](comparison.md): token comparison scenarios
 - [`REQ-BENCH-001`](benchmark.md): historical-commit correctness and paired model evaluation
+- [`REQ-COMPACTION-001`](compaction.md): provider-free context pruning and native-history restoration
 - [`REQ-CTP-001`](ctp.md): lossless token-positive model-visible data-plane encoding
 
 All listed requirements are must-haves for this increment.

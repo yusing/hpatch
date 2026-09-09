@@ -117,6 +117,19 @@ go install github.com/yusing/mekugi/cmd/mekugi@latest \
 Add `$GOBIN`, or `$(go env GOPATH)/bin` when unset, to the `PATH` used by both
 Mekugi and Codex. The fixed `shell` helper must be available to Codex's executor.
 
+Context compaction is handled locally, without a provider-generated summary.
+Codex still decides when to compact using your settings. Hpatch preserves the
+retained native history in an encrypted item and restores it before the next
+provider request. The first compaction creates an owner-only key at
+`$XDG_CONFIG_HOME/hpatch/compaction.key` (normally
+`~/.config/hpatch/compaction.key` on Linux). Keep that key to resume compacted
+sessions, including when moving them to another installation.
+
+The initial reducers handle only recognized search listings and verbose Go test
+results. Uncertain evidence is retained; when nothing can safely be reduced,
+compaction reports an error instead of dropping context or asking a provider
+for a summary. The retained history is not guaranteed to fit a 30k-token window.
+
 Then launch:
 
 ```sh
@@ -179,6 +192,9 @@ HTTP/SSE clients and can fall back to HTTP for those requests when ChatGPT
 explicitly rejects the WebSocket upgrade. It never silently replays a dropped
 request or accepted steering. Grok provider requests remain on HTTP.
 
+See the [context-compaction contract](doc/spec/compaction.md) for supported forms
+and preservation behavior. No compaction threshold or scope is overridden.
+
 ### Options
 
 | Flag | Default | Purpose |
@@ -194,14 +210,14 @@ request or accepted steering. Grok provider requests remain on HTTP.
 | `--metrics-output PATH` | Disabled | Write the final metrics snapshot on shutdown, overwriting the destination |
 | `--debug` | Disabled | Record diagnostics, capture, metrics, patched instructions, runtime reads, and an AX report; print all artifact paths on exit |
 
-For a transport-only session:
+To disable Hpatch tool and model-string transformations:
 
 ```sh
 mekugi --mode passthrough codex
 ```
 
 Passthrough does not load the plugin registry, so it does not require Node.js or
-plugin grammar validation. Capture remains available.
+plugin grammar validation. Local context compaction and capture remain available.
 
 ### Grok subagents
 
