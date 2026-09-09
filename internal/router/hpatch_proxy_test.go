@@ -155,7 +155,23 @@ func (hpatchResultTranslatorFunc) ToolDescription() string {
 
 func newManagedHPatchProxy(t *testing.T, translator hpatchTranslator) *hpatchProxy {
 	t.Helper()
-	return newManagedHPatchProxyWithDataDirectory(t, translator, t.TempDir())
+	if translator == nil {
+		return nil
+	}
+	if translator.ToolDescription() != testHPatchToolDescription {
+		return newManagedHPatchProxyWithDataDirectory(t, translator, t.TempDir())
+	}
+	registry := sharedProxyTestRegistry(t)
+	directory := t.TempDir()
+	t.Setenv(shellruntime.RuntimeDirectoryEnvironment, directory)
+	proxy := newHPatchProxy(translator, registry, false, false)
+	proxy.shellDirectory = directory
+	t.Cleanup(func() {
+		if err := proxy.Close(); err != nil {
+			t.Error(err)
+		}
+	})
+	return proxy
 }
 
 func newManagedHPatchProxyWithDataDirectory(t *testing.T, translator hpatchTranslator, dataDirectory string) *hpatchProxy {
