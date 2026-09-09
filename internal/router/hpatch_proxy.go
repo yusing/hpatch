@@ -127,6 +127,8 @@ type hpatchProxy struct {
 	shellLeases            sync.WaitGroup
 	commentary             *commentaryBroker
 	commentaryEndpoint     string
+	usage                  *threadUsage
+	activity               *subagentActivity
 
 	mu              sync.RWMutex
 	sessions        map[string]*hpatchHistorySession
@@ -145,6 +147,9 @@ func newHPatchProxy(translator hpatchTranslator, registry *toolRegistry, customi
 		titles = titleCaches[0]
 	}
 	directory := registry.runtimeDirectory
+	activity := newSubagentActivity()
+	broker := newCommentaryBroker()
+	broker.activity = activity
 	return &hpatchProxy{
 		translator:             translator,
 		registry:               registry,
@@ -153,7 +158,9 @@ func newHPatchProxy(translator hpatchTranslator, registry *toolRegistry, customi
 		shellDirectory:         directory,
 		titles:                 titles,
 		shellSessions:          make(map[string]*shellSession),
-		commentary:             newCommentaryBroker(),
+		commentary:             broker,
+		usage:                  newThreadUsage(),
+		activity:               activity,
 		sessions:               make(map[string]*hpatchHistorySession),
 		activeSessions:         make(map[string]int),
 	}
@@ -186,6 +193,8 @@ func (p *hpatchProxy) Close() error {
 	if p.commentary != nil {
 		p.commentary.close()
 	}
+	p.usage.close()
+	p.activity.close()
 	return cleanupErr
 }
 
@@ -202,10 +211,15 @@ type hpatchResponseTransform struct {
 	ctx              context.Context
 	proxy            *hpatchProxy
 	sessionID        string
+	shellThreadID    string // Runtime identity remains available when activity attribution is invalid.
 	shellDirectory   string
 	model            string
 	historySessionID string
 	sessionActive    bool
+	threadID         string
+	activityStarted  time.Time
+	activityBytes    int
+	activityMessages []map[string]json.RawMessage
 
 	originalTools             json.RawMessage
 	originalToolsPresent      bool
@@ -216,18 +230,15 @@ type hpatchResponseTransform struct {
 	local                     map[string]hpatchHistory
 	directory                 string
 	carriers                  codeModeCarrierCatalog
+	commentaryAuthor          string
 	commentaryTools           commentaryToolCatalog
 	commentarySubscriptions   []commentarySubscription
 	deferredCommentary        []publishedCommentary
 	commentaryEmitted         map[string]struct{}
-	subagentTools             map[string]struct{}
-	subagentPending           map[string]subagentPendingCall
 	subagentDeferred          []map[string]json.RawMessage
 	subagentResponses         []map[string]json.RawMessage
 	subagentTurn              bool
-	parentModel               string
-	parentReasoningEffort     string
-	usageCounts               tokenCounts
+	usageTracker              *threadUsageObservation
 	usageObserved             bool
 
 	codeModeToolName string
@@ -253,7 +264,7 @@ func (t *hpatchResponseTransform) Close() {
 
 // observeResponseUsage records provider-authoritative token usage for this response.
 func (t *hpatchResponseTransform) observeResponseUsage(counts tokenCounts) {
-	t.usageCounts = counts
+	t.usageTracker.observe(counts)
 	t.usageObserved = true
 }
 
@@ -321,6 +332,9 @@ func validateHPatchCompactionRequest(request *parsedResponsesRequest, metadata c
 }
 
 func (p *hpatchProxy) prepareRequest(ctx context.Context, request *parsedResponsesRequest, sessionID, threadID string, metadata codexTurnMetadata, metadataValid bool) (*hpatchResponseTransform, error) {
+	if p != nil {
+		p.activity.stripInput(request.fields)
+	}
 	if metadataValid && metadata.RequestKind == "compaction" {
 		if err := validateHPatchCompactionRequest(request, metadata); err != nil {
 			return nil, err
@@ -340,13 +354,15 @@ func (p *hpatchProxy) prepareRequest(ctx context.Context, request *parsedRespons
 	if err := rewriteReceivedModelInstructions(request, p.customizedInstructions, modelInstructions); err != nil {
 		return nil, err
 	}
-	subagentDeferred := prepareSubagentInputCommentary(request.fields)
-	tools := request.responseTools()
-	subagentTools := subagentToolCatalog(tools)
-	var reasoning struct {
-		Effort string `json:"effort"`
+	recipient := metadata.AgentName
+	if metadata.SubagentKind == "" {
+		recipient = "/root"
 	}
-	_ = json.Unmarshal(request.fields["reasoning"], &reasoning)
+	if metadata.SubagentKind != "" && metadata.activityIdentityInvalid {
+		recipient = ""
+	}
+	subagentDeferred := prepareSubagentInputCommentary(request.fields, recipient)
+	tools := request.responseTools()
 	directory, _ := usableRoutingDirectory(metadata.Directories)
 	originalTools, originalToolsPresent := request.fields["tools"]
 	originalTools = bytes.Clone(originalTools)
@@ -393,20 +409,50 @@ func (p *hpatchProxy) prepareRequest(ctx context.Context, request *parsedRespons
 	if err := p.activateSession(historySessionID); err != nil {
 		return nil, err
 	}
-	p.prepareShellCommentary(threadID, historySessionID)
+	p.prepareShellCommentary(threadID, historySessionID, metadata.commentaryAuthor())
 	if err := p.reconcileInputPrefix(request, historySessionID); err != nil {
 		p.deactivateSession(historySessionID)
 		return nil, err
 	}
-	deferredCommentary := p.drainCommentarySession(historySessionID)
+	// Only accepted requests may change retained ancestry or collect activity.
+	activityThreadID := ""
+	if metadata.activityIdentityInvalid || metadata.ThreadID != "" && metadata.ThreadID != threadID {
+		p.activity.invalidate(threadID)
+	} else {
+		name := metadata.AgentName
+		if name == "" && metadata.SubagentKind == "" {
+			name = "/root"
+		}
+		if p.activity.observe(threadID, metadata.ParentThreadID, name, metadata.SubagentKind != "") {
+			activityThreadID = threadID
+		}
+	}
+	for _, message := range subagentDeferred {
+		var content []struct {
+			Text string `json:"text"`
+		}
+		if json.Unmarshal(message["content"], &content) == nil && len(content) == 1 {
+			p.activity.collect(activityThreadID, jsonString(message, "id"), "reply", content[0].Text)
+		}
+	}
+	if metadata.SubagentKind == "thread_spawn" {
+		// The collector deduplicates this source by stable child thread, including
+		// across routing-session changes, and forwards it only to the observed root.
+		p.activity.collect(activityThreadID, "subagent-start\x00"+activityThreadID, "start", subagentStartCommentary(request))
+	}
+	deferredCommentary := p.drainCommentarySession(historySessionID, threadID)
 	return &hpatchResponseTransform{
 		ctx:              ctx,
 		proxy:            p,
 		sessionID:        sessionID,
+		shellThreadID:    threadID,
 		shellDirectory:   shellDirectory,
 		model:            request.modelDescription(),
 		historySessionID: historySessionID,
 		sessionActive:    true,
+		usageTracker:     p.usage.observation(threadID, metadata.ThreadID),
+		threadID:         activityThreadID,
+		activityStarted:  time.Now(),
 
 		originalTools:             originalTools,
 		originalToolsPresent:      originalToolsPresent,
@@ -417,13 +463,10 @@ func (p *hpatchProxy) prepareRequest(ctx context.Context, request *parsedRespons
 		local:                     make(map[string]hpatchHistory),
 		directory:                 directory,
 		carriers:                  carriers,
-		subagentTools:             subagentTools,
-		subagentPending:           make(map[string]subagentPendingCall),
 		subagentDeferred:          subagentDeferred,
 		subagentResponses:         subagentDeferred,
 		subagentTurn:              metadata.SubagentKind != "",
-		parentModel:               request.model(),
-		parentReasoningEffort:     strings.TrimSpace(reasoning.Effort),
+		commentaryAuthor:          metadata.commentaryAuthor(),
 		commentaryTools:           commentaryTools,
 		deferredCommentary:        deferredCommentary,
 		commentaryEmitted:         make(map[string]struct{}),
@@ -1327,13 +1370,31 @@ func (t *hpatchResponseTransform) Finish(streamEvent bool) error {
 	if streamEvent && len(t.pending) != 0 {
 		return errors.New("upstream stream ended with an incomplete hpatch call")
 	}
-	if streamEvent && len(t.subagentPending) != 0 {
-		return errors.New("upstream stream ended with an incomplete subagent call")
-	}
 	return nil
 }
 
 func (t *hpatchResponseTransform) TransformSSE(payload []byte) ([][]byte, error) {
+	messages := t.drainActivity()
+	t.activityMessages = append(t.activityMessages, messages...)
+	visible, err := t.transformActivitySSE(payload)
+	if err != nil || len(messages) == 0 {
+		return visible, err
+	}
+	var generated [][]byte
+	for _, message := range messages {
+		generated = append(generated, assistantCommentaryDoneEvent(message))
+	}
+	var event struct {
+		Type string `json:"type"`
+	}
+	_ = json.Unmarshal(payload, &event)
+	if event.Type == "response.created" && len(visible) != 0 {
+		return append(append(visible[:1:1], generated...), visible[1:]...), nil
+	}
+	return append(generated, visible...), nil
+}
+
+func (t *hpatchResponseTransform) transformActivitySSE(payload []byte) ([][]byte, error) {
 	var envelope struct {
 		Type     string          `json:"type"`
 		ItemID   string          `json:"item_id"`
@@ -1379,18 +1440,6 @@ func (t *hpatchResponseTransform) TransformSSE(payload []byte) ([][]byte, error)
 		}
 		if item.Type == "function_call" {
 			key := functionToolKey(item.Namespace, name)
-			if _, instrumented := t.subagentTools[key]; instrumented {
-				itemID, callID := item.ID, item.CallID
-				if itemID == "" || callID == "" || len(t.subagentPending) >= maxHPatchPendingCalls {
-					return [][]byte{payload}, nil
-				}
-				if _, exists := t.subagentPending[itemID]; exists {
-					return [][]byte{payload}, nil
-				}
-				t.subagentPending[itemID] = subagentPendingCall{callID: callID, added: bytes.Clone(payload)}
-				return nil, nil
-			}
-			key = functionToolKey(item.Namespace, name)
 			if _, instrumented := t.commentaryTools[key]; instrumented {
 				itemID, callID := item.ID, item.CallID
 				if itemID == "" || callID == "" {
@@ -1434,9 +1483,6 @@ func (t *hpatchResponseTransform) TransformSSE(payload []byte) ([][]byte, error)
 		return [][]byte{payload}, nil
 
 	case "response.function_call_arguments.delta":
-		if _, pending := t.subagentPending[envelope.ItemID]; pending {
-			return [][]byte{[]byte(`{"type":"response.in_progress"}`)}, nil
-		}
 		if pending, ok := t.pending[envelope.ItemID]; ok && pending.structured {
 			return [][]byte{[]byte(`{"type":"response.in_progress"}`)}, nil
 		}
@@ -1474,9 +1520,6 @@ func (t *hpatchResponseTransform) TransformSSE(payload []byte) ([][]byte, error)
 				}
 				if err := t.commitLocalCall(callID); err != nil {
 					return nil, err
-				}
-				if message := t.localStartCommentary(item.fields); message != nil {
-					return [][]byte{assistantCommentaryDoneEvent(message), event}, nil
 				}
 				return [][]byte{event}, nil
 			}
@@ -1516,14 +1559,6 @@ func (t *hpatchResponseTransform) TransformSSE(payload []byte) ([][]byte, error)
 		return [][]byte{addedEvent, doneEvent}, nil
 
 	case "response.function_call_arguments.done":
-		if pending, exists := t.subagentPending[envelope.ItemID]; exists {
-			if len(pending.argumentsDone) != 0 {
-				return [][]byte{payload}, nil
-			}
-			pending.argumentsDone = bytes.Clone(payload)
-			t.subagentPending[envelope.ItemID] = pending
-			return [][]byte{[]byte(`{"type":"response.in_progress"}`)}, nil
-		}
 		pending, ok := t.pending[envelope.ItemID]
 		if !ok {
 			return [][]byte{payload}, nil
@@ -1543,10 +1578,11 @@ func (t *hpatchResponseTransform) TransformSSE(payload []byte) ([][]byte, error)
 		if !ok {
 			return [][]byte{payload}, nil //nolint:nilerr // Malformed unrelated output remains the upstream's responsibility.
 		}
+		t.collectProviderCommentary(item.fields)
+		t.collectSubagentToolCall(item.fields)
 		if _, delivered := t.local[item.CallID]; item.Status == "incomplete" && !delivered {
 			// Item completion can report interrupted generation, not complete input.
 			delete(t.pending, item.ID)
-			delete(t.subagentPending, item.ID)
 			delete(t.nativeExecCalls, item.ID)
 			return [][]byte{payload}, nil
 		}
@@ -1557,21 +1593,6 @@ func (t *hpatchResponseTransform) TransformSSE(payload []byte) ([][]byte, error)
 				expectedCallID != callID {
 				return nil, errors.New("upstream completed inconsistent Code Mode call")
 			}
-		}
-		if pending, buffered := t.subagentPending[itemID]; buffered {
-			delete(t.subagentPending, itemID)
-			visible := make([][]byte, 0, 4)
-			if item.CallID == pending.callID {
-				if message := t.subagentCallMessage(item.fields); message != nil {
-					visible = append(visible, assistantCommentaryDoneEvent(message))
-				}
-			}
-			visible = append(visible, pending.added)
-			if len(pending.argumentsDone) != 0 {
-				visible = append(visible, pending.argumentsDone)
-			}
-			visible = append(visible, payload)
-			return visible, nil
 		}
 		delete(t.nativeExecCalls, itemID)
 		if pending, buffered := t.pending[itemID]; buffered && pending.structured {
@@ -1619,6 +1640,7 @@ func (t *hpatchResponseTransform) TransformSSE(payload []byte) ([][]byte, error)
 			}
 			return [][]byte{addedEvent, argumentsDone, itemDone}, nil
 		}
+		originalArguments := string(item.fields["arguments"])
 		message, err := t.transformStructuredCommentary(item.fields)
 		if err != nil {
 			return nil, err
@@ -1628,13 +1650,10 @@ func (t *hpatchResponseTransform) TransformSSE(payload []byte) ([][]byte, error)
 		if err != nil {
 			return nil, err
 		}
-		if message == nil {
-			message = t.localStartCommentary(item.fields)
-		}
 		if err := t.commitLocalCall(callID); err != nil {
 			return nil, err
 		}
-		if !changed && message == nil {
+		if !changed && message == nil && string(item.fields["arguments"]) == originalArguments {
 			return [][]byte{payload}, nil
 		}
 		delete(t.pending, itemID)
@@ -1657,12 +1676,8 @@ func (t *hpatchResponseTransform) TransformSSE(payload []byte) ([][]byte, error)
 			if len(t.pending) != 0 {
 				return nil, errors.New("upstream completed with an incomplete hpatch call")
 			}
-			if len(t.subagentPending) != 0 {
-				return nil, errors.New("upstream completed with an incomplete subagent call")
-			}
 		} else {
 			clear(t.pending)
-			clear(t.subagentPending)
 		}
 		transformed, usageMessage, err := t.transformResponse(envelope.Response, strings.TrimPrefix(envelope.Type, "response."))
 		if err != nil {
@@ -1685,18 +1700,22 @@ func (t *hpatchResponseTransform) TransformSSE(payload []byte) ([][]byte, error)
 			return nil, err
 		}
 		visible := make([][]byte, 0, len(t.commentarySubscriptions)+1)
+		var threadMessages []map[string]json.RawMessage
 		for _, subscription := range t.commentarySubscriptions {
 			if !subscription.handedOff {
 				continue
 			}
 			for _, publication := range t.proxy.commentary.drain(subscription.token) {
 				if message := t.runtimeCommentaryMessage(publication); message != nil {
-					visible = append(visible, assistantCommentaryDoneEvent(message))
+					if t.subagentTurn {
+						threadMessages = append(threadMessages, message)
+					} else {
+						visible = append(visible, assistantCommentaryDoneEvent(message))
+					}
 				}
 			}
 		}
-		var threadMessages []map[string]json.RawMessage
-		for _, publication := range t.proxy.drainThreadCommentarySession(t.historySessionID) {
+		for _, publication := range t.proxy.drainThreadCommentarySession(t.historySessionID, t.shellThreadID) {
 			if message := t.runtimeCommentaryMessage(publication); message != nil {
 				if t.subagentTurn {
 					threadMessages = append(threadMessages, message)
@@ -1747,10 +1766,12 @@ func (t *hpatchResponseTransform) pendingCallKnown(callID string) bool {
 }
 
 func (t *hpatchResponseTransform) transformResponse(payload []byte, terminalStatus string) ([]byte, map[string]json.RawMessage, error) {
+	counts, observed := t.threadUsageCounts()
 	object, usageMessage, err := responseWithTokenUsageCommentary(
 		payload,
-		t.usageCounts,
-		t.usageObserved,
+		counts,
+		observed && t.usageObserved,
+		terminalStatus,
 	)
 	if err != nil {
 		return nil, nil, err
@@ -1764,7 +1785,8 @@ func (t *hpatchResponseTransform) transformResponse(payload []byte, terminalStat
 		if err := json.Unmarshal(rawOutput, &output); err != nil {
 			return nil, nil, errors.New("decode hpatch-enabled response output")
 		}
-		transformedOutput := make([]map[string]json.RawMessage, 0, len(t.deferredCommentary)+len(t.subagentResponses)+len(output))
+		t.activityMessages = append(t.activityMessages, t.drainActivity()...)
+		transformedOutput := append([]map[string]json.RawMessage{}, t.activityMessages...)
 		for _, publication := range t.deferredCommentary {
 			if message := t.runtimeCommentaryMessage(publication); message != nil {
 				transformedOutput = append(transformedOutput, message)
@@ -1784,30 +1806,18 @@ func (t *hpatchResponseTransform) transformResponse(payload []byte, terminalStat
 				transformedOutput = append(transformedOutput, fields)
 				continue
 			}
-			subagentMessage, matched := subagentCallCommentary(
-				item.fields,
-				t.subagentTools,
-				t.parentModel,
-				t.parentReasoningEffort,
-			)
-			if matched {
-				transformedOutput = append(transformedOutput, subagentMessage)
+			t.collectProviderCommentary(item.fields)
+			t.collectSubagentToolCall(item.fields)
+			message, err := t.transformStructuredCommentary(item.fields)
+			if err != nil {
+				return nil, nil, err
 			}
-			if !matched {
-				message, err := t.transformStructuredCommentary(item.fields)
-				if err != nil {
-					return nil, nil, err
-				}
-				if message != nil {
-					transformedOutput = append(transformedOutput, message)
-				}
+			if message != nil {
+				transformedOutput = append(transformedOutput, message)
 			}
 			item = newResponsesItem(item.fields)
 			if _, err := t.transformOutputItem(&item); err != nil {
 				return nil, nil, err
-			}
-			if message := t.localStartCommentary(item.fields); message != nil {
-				transformedOutput = append(transformedOutput, message)
 			}
 			transformedOutput = append(transformedOutput, item.fields)
 		}

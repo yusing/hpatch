@@ -13,20 +13,20 @@ import (
 
 func TestThreadCommentarySharedCompletionAndSessionMapping(t *testing.T) {
 	b := newCommentaryBroker()
-	token := b.subscribeThread("session-a", "thread-a")
-	other := b.subscribeThread("session-b", "thread-b")
+	token := b.subscribeThread("session-a", "thread-a", "")
+	other := b.subscribeThread("session-b", "thread-b", "")
 	var wg sync.WaitGroup
 	for i := range 20 {
 		wg.Go(func() { b.publish(token, fmt.Sprint(i), true) })
 	}
 	wg.Wait()
-	if token == "" || token == other || b.subscribeThread("session-new", "thread-a") != token {
+	if token == "" || token == other || b.subscribeThread("session-new", "thread-a", "") != token {
 		t.Fatal("thread capability was not stable and isolated")
 	}
-	if events := b.drainSession("session-a"); len(events) != 0 {
+	if events := b.drainSession("session-a", "thread-a"); len(events) != 0 {
 		t.Fatal("old session received remapped thread publications")
 	}
-	events := b.drainSession("session-new")
+	events := b.drainSession("session-new", "thread-a")
 	if len(events) != 20 {
 		t.Fatalf("events = %d", len(events))
 	}
@@ -37,10 +37,10 @@ func TestThreadCommentarySharedCompletionAndSessionMapping(t *testing.T) {
 		}
 		seen[event.messageID] = true
 	}
-	if !b.publish(token, "after shared completion", true) || len(b.drainSession("session-new")) != 1 {
+	if !b.publish(token, "after shared completion", true) || len(b.drainSession("session-new", "thread-a")) != 1 {
 		t.Fatal("worker completion retired shared thread")
 	}
-	if len(b.drainSession("session-b")) != 0 {
+	if len(b.drainSession("session-b", "thread-b")) != 0 {
 		t.Fatal("thread isolation failed")
 	}
 }
@@ -48,7 +48,7 @@ func TestThreadCommentarySharedCompletionAndSessionMapping(t *testing.T) {
 func TestThreadCommentaryCapacityRefreshAndExpiry(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		b := newCommentaryBroker()
-		token := b.subscribeThread("session", "thread")
+		token := b.subscribeThread("session", "thread", "")
 		for range maxCommentaryEventsPerRoute + 1 {
 			b.publish(token, "pending", false)
 		}
@@ -62,13 +62,13 @@ func TestThreadCommentaryCapacityRefreshAndExpiry(t *testing.T) {
 			}
 		}
 		for i := range maxCommentaryRoutes - 1 {
-			b.subscribeThread("session", fmt.Sprint(i))
+			b.subscribeThread("session", fmt.Sprint(i), "")
 		}
-		if b.subscribeThread("session", "overflow") != "" {
+		if b.subscribeThread("session", "overflow", "") != "" {
 			t.Fatal("route capacity not bounded")
 		}
 		time.Sleep(commentaryRouteTTL / 2)
-		if b.subscribeThread("session", "thread") != token {
+		if b.subscribeThread("session", "thread", "") != token {
 			t.Fatal("full capacity prevented refresh")
 		}
 		time.Sleep(commentaryRouteTTL / 2)
@@ -79,7 +79,7 @@ func TestThreadCommentaryCapacityRefreshAndExpiry(t *testing.T) {
 		if len(b.drain(token)) != 0 || b.eventCount != 0 || len(b.routes) != 0 {
 			t.Fatal("expiry retained capacity")
 		}
-		if replacement := b.subscribeThread("session", "thread"); replacement == "" || replacement == token {
+		if replacement := b.subscribeThread("session", "thread", ""); replacement == "" || replacement == token {
 			t.Fatal("expiry did not rotate capability")
 		}
 	})
@@ -89,7 +89,7 @@ func TestThreadCommentaryTerminalReplayWithoutCallHistory(t *testing.T) {
 	for _, status := range []string{"completed", "failed", "incomplete"} {
 		t.Run(status, func(t *testing.T) {
 			transform, proxy := newRuntimeCommentaryTransform(t)
-			token := proxy.commentary.subscribeThread(transform.historySessionID, "thread")
+			token := proxy.commentary.subscribeThread(transform.historySessionID, transform.shellThreadID, "")
 			proxy.commentary.publish(token, "thread progress", true)
 			events, err := transform.TransformSSE(mustTestJSON(t, map[string]any{
 				"type": "response." + status, "response": map[string]any{"status": status, "output": []any{}},
@@ -123,7 +123,7 @@ func TestThreadCommentaryTerminalReplayWithoutCallHistory(t *testing.T) {
 			}
 			transform.Close()
 			proxy.commentary.publish(token, "later", true)
-			if events := proxy.drainCommentarySession(transform.historySessionID); len(events) != 1 || events[0].text != "later" {
+			if events := proxy.drainCommentarySession(transform.historySessionID, transform.shellThreadID); len(events) != 1 || events[0].text != "later" {
 				t.Fatalf("deferred events = %+v", events)
 			}
 		})
@@ -132,10 +132,11 @@ func TestThreadCommentaryTerminalReplayWithoutCallHistory(t *testing.T) {
 
 func TestThreadCommentaryReplaySurvivesSessionRemapAndExpiry(t *testing.T) {
 	transform, proxy := newRuntimeCommentaryTransform(t)
+	transform.shellThreadID = "stable-thread"
 	oldSession := transform.historySessionID
-	token := proxy.commentary.subscribeThread(oldSession, "stable-thread")
+	token := proxy.commentary.subscribeThread(oldSession, "stable-thread", "")
 	proxy.commentary.publish(token, "delivered", false)
-	publication := proxy.commentary.drainSession(oldSession)[0]
+	publication := proxy.commentary.drainSession(oldSession, "stable-thread")[0]
 	message := transform.runtimeCommentaryMessage(publication)
 	if message == nil {
 		t.Fatal("initial publication suppressed")
@@ -143,7 +144,7 @@ func TestThreadCommentaryReplaySurvivesSessionRemapAndExpiry(t *testing.T) {
 	proxy.commentary.mu.Lock()
 	proxy.commentary.routes[token].expires = time.Now().Add(-time.Second)
 	proxy.commentary.mu.Unlock()
-	if proxy.commentary.subscribeThread("remapped", "stable-thread") == "" {
+	if proxy.commentary.subscribeThread("remapped", "stable-thread", "") == "" {
 		t.Fatal("thread refresh rejected")
 	}
 	request := &parsedResponsesRequest{fields: map[string]json.RawMessage{"input": mustTestJSON(t, []any{message})}}
@@ -169,11 +170,11 @@ func TestThreadCommentaryCannotReclaimToolHistoryCapacity(t *testing.T) {
 		}
 	}
 	before := proxy.historyBytes
-	token := proxy.commentary.subscribeThread("0", "thread")
-	transform := &hpatchResponseTransform{proxy: proxy, historySessionID: "0"}
+	token := proxy.commentary.subscribeThread("0", "thread", "")
+	transform := &hpatchResponseTransform{proxy: proxy, historySessionID: "0", shellThreadID: "thread"}
 	for range maxCommentaryEventsPerRoute {
 		proxy.commentary.publish(token, "auxiliary", false)
-		publication := proxy.commentary.drainSession("0")[0]
+		publication := proxy.commentary.drainSession("0", "thread")[0]
 		if transform.runtimeCommentaryMessage(publication) == nil {
 			t.Fatal("independent commentary capacity unavailable")
 		}
@@ -196,7 +197,7 @@ func TestThreadCommentaryCannotReclaimToolHistoryCapacity(t *testing.T) {
 
 func TestThreadCommentaryProvenanceCapacitySuppressesOnlyCommentary(t *testing.T) {
 	b := newCommentaryBroker()
-	token := b.subscribeThread("session", "thread")
+	token := b.subscribeThread("session", "thread", "")
 	for range maxThreadCommentaryIDs {
 		b.publish(token, "bounded", false)
 		if len(b.drain(token)) != 1 {
@@ -219,7 +220,7 @@ func TestChildThreadCommentaryPreservesSubstantiveStreamResult(t *testing.T) {
 	if events, err := transform.TransformSSE(mustTestJSON(t, map[string]any{"type": "response.output_item.done", "item": answer})); err != nil || len(events) != 1 {
 		t.Fatalf("answer delivery = %s, %v", events, err)
 	}
-	token := proxy.commentary.subscribeThread(transform.historySessionID, "child")
+	token := proxy.commentary.subscribeThread(transform.historySessionID, transform.shellThreadID, "")
 	proxy.commentary.publish(token, "child progress", false)
 	events, err := transform.TransformSSE(mustTestJSON(t, map[string]any{"type": "response.completed", "response": map[string]any{"status": "completed", "output": []any{answer}}}))
 	if err != nil || len(events) != 1 {
@@ -236,5 +237,114 @@ func TestChildThreadCommentaryPreservesSubstantiveStreamResult(t *testing.T) {
 	}
 	if terminal.Type != "response.completed" || len(terminal.Response.Output) != 2 || jsonString(terminal.Response.Output[1], "id") != "answer" || !bytes.Contains(terminal.Response.Output[0]["content"], []byte("child progress")) {
 		t.Fatalf("child terminal order = %s", events[0])
+	}
+}
+
+func TestThreadCommentaryDoesNotCrossSharedRoutingSession(t *testing.T) {
+	proxy := newManagedHPatchProxy(t, testTranslator(t, new(int)))
+	proxy.commentaryEndpoint = "http://127.0.0.1:8080" + commentaryPublisherPath
+	workspace := t.TempDir()
+	prepare := func(thread string) *hpatchResponseTransform {
+		t.Helper()
+		request, err := parseResponsesRequest(mustTestJSON(t, map[string]any{
+			"model": "gpt-test",
+			"input": []any{testCodeModeAdditionalTools(testCodeModeDescription)},
+			"tools": []any{map[string]any{"type": "function", "name": "lookup"}},
+		}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		transform, err := proxy.prepareRequest(t.Context(), &request, "shared-session", thread,
+			codexTurnMetadata{RequestKind: "turn", Directories: map[string]json.RawMessage{workspace: nil}}, true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(transform.Close)
+		return transform
+	}
+	for _, timing := range []string{"deferred", "terminal"} {
+		t.Run(timing, func(t *testing.T) {
+			root := prepare("root-thread")
+			root.Close()
+			token := proxy.commentary.subscribeThread(root.historySessionID, "root-thread", "")
+			if timing == "deferred" {
+				proxy.commentary.publish(token, "root shell progress", false)
+			}
+			child := prepare("child-thread")
+			if timing == "terminal" {
+				proxy.commentary.publish(token, "root shell progress", false)
+			}
+			answer := map[string]any{"type": "message", "id": "child-answer", "role": "assistant", "content": []any{map[string]any{"type": "output_text", "text": "Child result."}}}
+			events, err := child.TransformSSE(mustTestJSON(t, map[string]any{
+				"type": "response.completed", "response": map[string]any{"status": "completed", "output": []any{answer}},
+			}))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if bytes.Contains(bytes.Join(events, nil), []byte("root shell progress")) {
+				t.Fatal("another thread consumed root shell commentary through the shared routing session")
+			}
+			next := prepare("root-thread")
+			events, err = next.TransformSSE(mustTestJSON(t, map[string]any{"type": "response.created"}))
+			if err != nil || !bytes.Contains(bytes.Join(events, nil), []byte("root shell progress")) {
+				t.Fatal("root shell commentary was not delivered to its originating thread")
+			}
+			// The other request remains active while the root reaches a terminal.
+			proxy.commentary.publish(token, "later root progress", false)
+			events, err = next.TransformSSE(mustTestJSON(t, map[string]any{
+				"type": "response.completed", "response": map[string]any{"status": "completed", "output": []any{}},
+			}))
+			if err != nil || !bytes.Contains(bytes.Join(events, nil), []byte("later root progress")) {
+				t.Fatal("concurrent root terminal did not deliver its shell commentary", err)
+			}
+			child.Close()
+			next.Close()
+		})
+	}
+}
+
+func TestThreadCommentaryDeferredDeliverySurvivesRemap(t *testing.T) {
+	for _, stream := range []bool{false, true} {
+		t.Run(map[bool]string{false: "json", true: "sse"}[stream], func(t *testing.T) {
+			transform, proxy := newRuntimeCommentaryTransform(t)
+			token := proxy.commentary.subscribeThread(transform.historySessionID, transform.shellThreadID, "")
+			proxy.commentary.publish(token, "queued before remap", false)
+			transform.deferredCommentary = proxy.drainCommentarySession(transform.historySessionID, transform.shellThreadID)
+			if len(transform.deferredCommentary) != 1 {
+				t.Fatal("request did not claim its queued publication")
+			}
+			publication := transform.deferredCommentary[0]
+			proxy.commentary.subscribeThread("remapped-session", transform.shellThreadID, "")
+			var visible []byte
+			if stream {
+				events, err := transform.TransformSSE([]byte(`{"type":"response.created"}`))
+				if err != nil {
+					t.Fatal(err)
+				}
+				visible = bytes.Join(events, nil)
+			} else {
+				var err error
+				visible, err = transform.TransformJSON([]byte(`{"status":"completed","output":[]}`))
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			if !bytes.Contains(visible, []byte("queued before remap")) {
+				t.Fatalf("claimed publication lost after remap: %s", visible)
+			}
+			if events := proxy.drainCommentarySession("remapped-session", transform.shellThreadID); len(events) != 0 {
+				t.Fatal("remapping duplicated an already claimed publication")
+			}
+			other := &hpatchResponseTransform{proxy: proxy, historySessionID: "remapped-session", shellThreadID: "other-thread"}
+			if other.runtimeCommentaryMessage(publication) != nil {
+				t.Fatal("another thread rendered the claimed publication")
+			}
+			replay := &parsedResponsesRequest{fields: map[string]json.RawMessage{
+				"input": mustMarshalJSON([]any{assistantCommentaryMessage(publication.messageID, publication.text)}),
+			}}
+			if err := proxy.reconcileInputPrefix(replay, "remapped-session"); err != nil || string(replay.fields["input"]) != "[]" {
+				t.Fatalf("remapped replay leaked commentary: %s, %v", replay.fields["input"], err)
+			}
+		})
 	}
 }

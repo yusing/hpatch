@@ -14,17 +14,27 @@ keeping Codex's sandbox, permissions, command sessions, and normal patch diff UI
 - **Keep the familiar Codex workflow.**
   - Each launch gets its own router, with no persistent service or changes to
     your Codex configuration files.
-- **See subagent details and replies inline.**
-  - Before launch, see the requested role, model, and reasoning effort.
-  - Plaintext messages and final answers show the sender and exact reply, not
-    just the main agent's summary. Encrypted collaboration messages are not exposed.
+- **See subagent progress and replies inline.**
+  - A start notice shows each subagent's observed model and reasoning effort once its
+    first request reaches the router. Other lifecycle actions add no extra notices.
+  - Subagents' own commentary appears in the main conversation with their agent paths.
+  - Received messages and final answers identify both parties and show plaintext
+    replies in full when they fit the display budget. Encrypted collaboration messages are not exposed.
 - **Follow work as it runs.**
-  - Supported tool calls show a short description before execution.
+  - Supported tool calls can carry an authored description before execution; calls without one stay quiet.
   - Scripts can publish progress such as “Running item 3/10” without mixing
     updates into command output.
+  - Child commentary, tool, and script updates carry the agent's path when Codex supplies
+    its identity, so concurrent agents' updates are distinguishable.
+  - When Codex supplies parent-thread metadata, child activity also appears inline
+    in the stock root TUI. Updates are offered at response-event boundaries;
+    activity after a response closes waits for the next root response and is
+    labelled as activity since the last update. This is not a continuous live
+    feed during native waits, and requires no Codex panel or client patch.
 - **See token usage for the main agent and subagents.**
-  - Completed responses with provider usage show input, cached-input, output,
-    and reasoning token counts.
+  - Final answers with provider usage show input, cached-input, output, and reasoning
+    token totals accumulated for that agent's thread during the router's lifetime, including across compaction.
+    Intermediate tool calls do not produce token notices.
   - Router notices are removed from later model requests, so the display does
     not add repeated context. See [inline commentary](doc/spec/commentary.md).
 - **Inspect a session in your browser.**
@@ -273,8 +283,13 @@ See the [metrics reference](doc/spec/metrics.md) for interpretation.
 - **Failures:** startup errors appear before Codex launches. Session failures
   appear as user-only commentary; undelivered notices appear on stderr after
   Codex exits. Hpatch does not create operational log files.
-- **Diagnostics:** [local tool playback](doc/spec/router-diagnostics.md) and
-  [opt-in agent issue reports](doc/spec/diagnose.md) are available when needed.
+- **Diagnostics:** Try `:hpatch_diag subagent_commentary` inside Codex for
+  provider-free synthetic inline activity and deferred delivery. The `stream`,
+  `deferred`, and `wait` cases can also be selected separately. The wait case
+  uses a bounded native mailbox wait only when its catalog supports it; no real
+  subagents are spawned and no workspace files are edited. Synthetic playback
+  does not prove real-agent execution. See [local tool playback](doc/spec/router-diagnostics.md) and
+  [opt-in agent issue reports](doc/spec/diagnose.md).
 
 ### Older installations
 

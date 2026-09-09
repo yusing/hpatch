@@ -6,7 +6,7 @@ import (
 
 // tokenCounts carries one provider-authoritative terminal usage observation to
 // Mentor Handoff, user-only commentary, and the capturer. Aggregate reporting
-// belongs to the capture package.
+// for provider metrics belongs to capture; lifetime commentary totals are separate.
 type tokenCounts struct {
 	InputTokens         uint64
 	UncachedInputTokens uint64

@@ -396,6 +396,7 @@ const (
 )
 
 type requestFinalization struct {
+	observeCriticalNotice func(source, text string)
 	observation           requestObservation
 	sessionID             string
 	failurePhase          requestFailurePhase
@@ -479,6 +480,10 @@ func executeRequest(
 		return fmt.Errorf("prepare request: %w", err)
 	}
 	metadata, metadataValid := decodeCodexTurnMetadata(headers)
+	threadID := codexThreadID(headers)
+	if hpatchCalls != nil && metadataValid && !metadata.activityIdentityInvalid && (metadata.ThreadID == "" || metadata.ThreadID == threadID) {
+		finalization.observeCriticalNotice = func(source, text string) { hpatchCalls.activity.collect(threadID, source, "error", text) }
+	}
 	if hpatchCalls != nil {
 		stripPastDiagnosticTurns(&parsedRequest)
 	}
@@ -593,12 +598,21 @@ func executeRequest(
 			return fmt.Errorf("record hpatch request overhead: %w", err)
 		}
 	}
+	var untransformedUsage *threadUsageObservation
+	if hpatchCalls != nil && metadataValid {
+		untransformedUsage = hpatchCalls.usage.observation(threadID, metadata.ThreadID)
+	}
 	observeUsage := func(counts tokenCounts) {
 		finalization.observation.usageCounts = counts
 		finalization.observation.usageObserved = true
 		if hpatchTransform != nil {
 			hpatchTransform.observeResponseUsage(counts)
+		} else {
+			// Compaction has no hpatch response transform, but still consumes
+			// provider tokens belonging to the same stable thread.
+			untransformedUsage.observe(counts)
 		}
+
 		capturer.ObserveProviderUsage(executionCtx, capturer.ProviderUsage{
 			InputTokens:     counts.InputTokens,
 			CachedTokens:    counts.InputTokens - counts.UncachedInputTokens,

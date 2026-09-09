@@ -39,24 +39,29 @@ type publishedCommentary struct {
 }
 
 type commentaryRoute struct {
-	threadID  string
-	sessionID string
-	callID    string
-	expires   time.Time
-	nextID    uint64
-	events    []publishedCommentary
-	complete  bool
+	originThread string
+	author       string
+	threadID     string
+	sessionID    string
+	callID       string
+	expires      time.Time
+	nextID       uint64
+	events       []publishedCommentary
+	complete     bool
 }
 
 // Replay provenance has its own non-evicting budget. A thread can outlive its
 // route and change history sessions without losing user-only message identity.
+// Its author is immutable: later requests cannot relabel an existing publisher.
 // Exhaustion suppresses new commentary, never essential tool replay history.
 type threadCommentaryProvenance struct {
+	author    string
 	sessionID string
 	ids       map[string]struct{}
 }
 
 type commentaryBroker struct {
+	activity      *subagentActivity
 	threads       map[string]*threadCommentaryProvenance
 	threadIDCount int
 	mu            sync.Mutex
@@ -69,7 +74,10 @@ func newCommentaryBroker() *commentaryBroker {
 	return &commentaryBroker{routes: make(map[string]*commentaryRoute), threads: make(map[string]*threadCommentaryProvenance)}
 }
 
-func (b *commentaryBroker) subscribe(sessionID, callID string) string {
+func (b *commentaryBroker) subscribe(sessionID, callID, author string) string {
+	if len(author) > maxCommentaryPublicationBytes || len(commentaryCode(author))+3 > maxCommentaryPublicationBytes {
+		return ""
+	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.cleanupExpiredLocked(time.Now())
@@ -82,6 +90,7 @@ func (b *commentaryBroker) subscribe(sessionID, callID string) string {
 	}
 	token := base64.RawURLEncoding.EncodeToString(random)
 	b.routes[token] = &commentaryRoute{
+		author:    author,
 		sessionID: sessionID,
 		callID:    callID,
 		expires:   time.Now().Add(commentaryRouteTTL),
@@ -91,8 +100,8 @@ func (b *commentaryBroker) subscribe(sessionID, callID string) string {
 
 // subscribeThread reuses the thread capability while refreshing its current replay session.
 // The broker never calls back into the proxy: proxy locks may precede this lock.
-func (b *commentaryBroker) subscribeThread(sessionID, threadID string) string {
-	if sessionID == "" || threadID == "" {
+func (b *commentaryBroker) subscribeThread(sessionID, threadID, author string) string {
+	if sessionID == "" || threadID == "" || len(author) > maxCommentaryPublicationBytes || len(commentaryCode(author))+3 > maxCommentaryPublicationBytes {
 		return ""
 	}
 	b.mu.Lock()
@@ -107,7 +116,7 @@ func (b *commentaryBroker) subscribeThread(sessionID, threadID string) string {
 		if len(b.threads) >= maxCommentaryRoutes {
 			return ""
 		}
-		provenance = &threadCommentaryProvenance{ids: make(map[string]struct{})}
+		provenance = &threadCommentaryProvenance{author: author, ids: make(map[string]struct{})}
 		b.threads[threadID] = provenance
 	}
 	provenance.sessionID = sessionID
@@ -126,7 +135,7 @@ func (b *commentaryBroker) subscribeThread(sessionID, threadID string) string {
 		return ""
 	}
 	token := base64.RawURLEncoding.EncodeToString(random)
-	b.routes[token] = &commentaryRoute{sessionID: sessionID, threadID: threadID, expires: now.Add(commentaryRouteTTL)}
+	b.routes[token] = &commentaryRoute{author: provenance.author, sessionID: sessionID, threadID: threadID, originThread: threadID, expires: now.Add(commentaryRouteTTL)}
 	return token
 }
 
@@ -145,17 +154,24 @@ func (b *commentaryBroker) publish(token, text string, complete bool) bool {
 		complete = false // Concurrent shell workers share this route; no worker owns its lifetime.
 		withinRouteCapacity = len(route.events) < maxCommentaryEventsPerRoute && b.threadIDCount < maxThreadCommentaryIDs
 	}
-	if strings.TrimSpace(text) != "" && withinRouteCapacity && b.eventCount < maxCommentaryEvents {
+	// Check rendered bytes before attribution allocates or provenance is retained.
+	// Oversized auxiliary text still reaches completion handling below.
+	renderedFits := len(text) <= maxCommentaryPublicationBytes
+	if route.author != "" && !hasCommentaryAuthor(text, route.author) {
+		renderedFits = renderedFits && len(commentaryCode(route.author))+3 <= maxCommentaryPublicationBytes-len(text)
+	}
+	if renderedFits && strings.TrimSpace(text) != "" && withinRouteCapacity && b.eventCount < maxCommentaryEvents {
 		route.nextID++
 		event := publishedCommentary{
 			callID:    route.callID,
 			messageID: commentaryMessageID(token + ":" + fmt.Sprint(route.nextID)),
-			text:      text,
+			text:      attributedCommentary(route.author, text),
 		}
 		if route.threadID != "" {
 			b.threads[route.threadID].ids[event.messageID] = struct{}{}
 			b.threadIDCount++
 		}
+		b.activity.collect(route.originThread, event.messageID, "operation", event.text)
 		route.events = append(route.events, event)
 		b.eventCount++
 	}
@@ -167,13 +183,13 @@ func (b *commentaryBroker) publish(token, text string, complete bool) bool {
 	return true
 }
 
-func (b *commentaryBroker) drainSession(sessionID string) []publishedCommentary {
+func (b *commentaryBroker) drainSession(sessionID, threadID string) []publishedCommentary {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.cleanupExpiredLocked(time.Now())
 	var events []publishedCommentary
 	for token, route := range b.routes {
-		if route.sessionID != sessionID {
+		if route.sessionID != sessionID || route.threadID != "" && route.threadID != threadID {
 			continue
 		}
 		events = append(events, b.drainLocked(token)...)
@@ -181,28 +197,27 @@ func (b *commentaryBroker) drainSession(sessionID string) []publishedCommentary 
 	return events
 }
 
-func (b *commentaryBroker) drainThreadSession(sessionID string) []publishedCommentary {
+func (b *commentaryBroker) drainThreadSession(sessionID, threadID string) []publishedCommentary {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.cleanupExpiredLocked(time.Now())
 	var events []publishedCommentary
 	for token, route := range b.routes {
-		if route.threadID != "" && route.sessionID == sessionID {
+		if route.threadID != "" && route.threadID == threadID && route.sessionID == sessionID {
 			events = append(events, b.drainLocked(token)...)
 		}
 	}
 	return events
 }
 
-func (b *commentaryBroker) hasThreadMessageID(sessionID, messageID string) bool {
+func (b *commentaryBroker) hasThreadMessageID(threadID, messageID string) bool {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	for _, thread := range b.threads {
-		if thread.sessionID == sessionID {
-			if _, exists := thread.ids[messageID]; exists {
-				return true
-			}
-		}
+	// A publication may already be claimed by a response when another request
+	// remaps the thread's session. Its rendering authority is the stable thread.
+	if thread := b.threads[threadID]; thread != nil {
+		_, exists := thread.ids[messageID]
+		return exists
 	}
 	return false
 }
@@ -364,4 +379,12 @@ func (s *httpShellCommentarySink) send(ctx context.Context, publication map[stri
 		return fmt.Errorf("commentary publisher returned %s", response.Status)
 	}
 	return nil
+}
+
+func (b *commentaryBroker) bindActivity(token, thread string) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if route := b.routes[token]; route != nil && route.originThread == "" {
+		route.originThread = thread
+	}
 }

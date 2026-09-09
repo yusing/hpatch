@@ -24,9 +24,6 @@ func bridgeTestRequest(t *testing.T, additional bool) parsedResponsesRequest {
 func TestSubagentBridgeProjectsAndRestoresPlaintext(t *testing.T) {
 	for _, additional := range []bool{false, true} {
 		request := bridgeTestRequest(t, additional)
-		if len(subagentToolCatalog(request.responseTools())) != 1 {
-			t.Fatal("native spawn commentary catalog missing")
-		}
 		bridge, err := prepareSubagentBridge(&request)
 		if err != nil {
 			t.Fatal(err)

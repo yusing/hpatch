@@ -145,7 +145,7 @@ func TestPrepareShellCommentaryRefreshAndCleanup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	proxy.prepareShellCommentary("commentary-thread", "history")
+	proxy.prepareShellCommentary("commentary-thread", "history", "")
 	session := proxy.shellSessions[directory]
 	if session.commentary == nil {
 		t.Fatal("descriptor not created")
@@ -154,7 +154,7 @@ func TestPrepareShellCommentaryRefreshAndCleanup(t *testing.T) {
 	proxy.commentary.mu.Lock()
 	clear(proxy.commentary.routes)
 	proxy.commentary.mu.Unlock()
-	proxy.prepareShellCommentary("commentary-thread", "history-new")
+	proxy.prepareShellCommentary("commentary-thread", "history-new", "")
 	if string(first) == string(session.commentary.content) {
 		t.Fatal("expired capability not refreshed")
 	}
@@ -182,18 +182,18 @@ func TestShellWorkerDiscoversThreadCommentary(t *testing.T) {
 	if _, err := proxy.storeShellRuntime("worker-thread"); err != nil {
 		t.Fatal(err)
 	}
-	proxy.prepareShellCommentary("worker-thread", "worker-history")
-	token := proxy.commentary.subscribeThread("worker-history", "worker-thread")
+	proxy.prepareShellCommentary("worker-thread", "worker-history", "")
+	token := proxy.commentary.subscribeThread("worker-history", "worker-thread", "")
 	t.Setenv(shellruntime.RuntimeDirectoryEnvironment, proxy.shellDirectory)
 	t.Setenv(shellruntime.ThreadIDEnvironment, "worker-thread")
-	for range 2 {
+	for _, value := range []string{"expanded", "I’ll remove the generated collaboration-call notices and forward the subagents’ own progress to the main conversation instead."} {
 		var stdout, stderr bytes.Buffer
-		handled, code := RunToolPluginWorker(t.Context(), registry.shellRuntime, []string{"bash", "value=expanded; commentary \"progress $value\"; printf stdout; printf stderr >&2; exit 7"}, os.Stdin, &stdout, &stderr)
+		handled, code := RunToolPluginWorker(t.Context(), registry.shellRuntime, []string{"bash", "--", value, "commentary \"$1\"; sleep 0.01; commentary \"completed $1\"; printf stdout; printf stderr >&2; exit 7"}, os.Stdin, &stdout, &stderr)
 		if !handled || code != 7 || stdout.String() != "stdout" || stderr.String() != "stderr" {
 			t.Fatalf("worker handled=%v code=%d stdout=%q stderr=%q", handled, code, stdout.String(), stderr.String())
 		}
 		events := proxy.commentary.drain(token)
-		if len(events) != 1 || events[0].text != "progress expanded" {
+		if len(events) != 2 || events[0].text != value || events[1].text != "completed "+value {
 			t.Fatalf("events = %+v", events)
 		}
 	}

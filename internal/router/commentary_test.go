@@ -43,11 +43,7 @@ func TestPrepareCommentaryToolsPreservesOwnedSchemas(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, collaborationInstrumented := catalog[functionToolKey("collaboration", "followup_task")]
-	if !catalog[functionToolKey("", "lookup")].explicit ||
-		catalog[functionToolKey("", "strict_lookup")].explicit ||
-		catalog[functionToolKey("", "owned_commentary")].explicit ||
-		collaborationInstrumented {
+	if _, ok := catalog[functionToolKey("", "lookup")]; !ok || len(catalog) != 1 {
 		t.Fatalf("commentary catalog = %#v", catalog)
 	}
 	if !bytes.Equal(fields["input"], additionalTools) {
@@ -93,7 +89,7 @@ func TestStructuredCommentaryTransformsJSONAndReplay(t *testing.T) {
 	proxy.commentaryEndpoint = "http://127.0.0.1:8080" + commentaryPublisherPath
 	transform.commentaryTools = commentaryToolCatalog{
 		functionToolKey("functions", "write_stdin"): {
-			qualifiedName: "functions.write_stdin", display: "write_stdin", explicit: true,
+			qualifiedName: "functions.write_stdin",
 		},
 	}
 	originalArguments := `{"session_id":42,"chars":"y","commentary":"Confirming the prompt."}`
@@ -156,7 +152,7 @@ func TestStructuredCommentaryTransformsJSONAndReplay(t *testing.T) {
 func TestStructuredCommentaryRejectsNonStringValues(t *testing.T) {
 	catalog := commentaryToolCatalog{
 		functionToolKey("functions", "lookup"): {
-			qualifiedName: "functions.lookup", display: "lookup", explicit: true,
+			qualifiedName: "functions.lookup",
 		},
 	}
 	for _, value := range []string{"null", "true", "42", `{}`, `[]`} {
@@ -175,7 +171,7 @@ func TestStructuredCommentaryBuffersStreamingArguments(t *testing.T) {
 	transform, _, _, _ := newHPatchTestTransform(t, testTranslator(t, new(int)))
 	transform.commentaryTools = commentaryToolCatalog{
 		functionToolKey("functions", "exec_command"): {
-			qualifiedName: "functions.exec_command", display: "exec_command", explicit: true,
+			qualifiedName: "functions.exec_command",
 		},
 	}
 	added := mustTestJSON(t, map[string]any{
@@ -221,7 +217,7 @@ func TestBufferedStructuredCommentaryOmitsNullCompletionMessage(t *testing.T) {
 	transform, _, _, _ := newHPatchTestTransform(t, testTranslator(t, new(int)))
 	transform.commentaryTools = commentaryToolCatalog{
 		functionToolKey("functions", "exec_command"): {
-			qualifiedName: "functions.exec_command", display: "exec_command", explicit: true,
+			qualifiedName: "functions.exec_command",
 		},
 	}
 	added := mustTestJSON(t, map[string]any{

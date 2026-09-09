@@ -1,8 +1,7 @@
 package router
 
-// Source: openai/codex codex-rs/core/src/tools/handlers/multi_agents_v2/spawn.rs
-// and codex-rs/protocol/src/protocol.rs. These are the collaboration call and
-// inter-agent message shapes visible at the Responses boundary.
+// Source: openai/codex codex-rs/protocol/src/protocol.rs.
+// Inter-agent message shapes visible at the Responses boundary.
 
 import (
 	"crypto/sha256"
@@ -17,49 +16,35 @@ import (
 
 const subagentCommentaryMessagePrefix = commentaryid.SubagentPrefix
 
-type subagentPendingCall struct {
-	callID        string
-	added         []byte
-	argumentsDone []byte
-}
-
-func subagentToolCatalog(tools *responsesToolCatalog) map[string]struct{} {
-	if tools.inputObjectsErr != nil {
-		return nil
-	}
-	catalog := make(map[string]struct{})
-	sections := []*responsesToolSection{tools.top}
-	for _, group := range tools.additional {
-		sections = append(sections, group.tools)
-	}
-	for _, section := range sections {
-		if !section.present || section.err != nil {
-			continue
-		}
-		for index, namespace := range section.tools {
-			if namespace == nil || namespace.Type != "namespace" {
-				continue
-			}
-			node := section.nodes[index]
-			if node == nil || node.nested == nil || node.nested.err != nil {
-				continue
-			}
-			for _, tool := range node.nested.tools {
-				if tool != nil && tool.Type == "function" && tool.Name == "spawn_agent" {
-					catalog[functionToolKey(namespace.Name, tool.Name)] = struct{}{}
-				}
-			}
-		}
-	}
-	return catalog
-}
-
 func subagentCommentaryMessageID(seed string) string {
 	digest := sha256.Sum256([]byte(seed))
 	return fmt.Sprintf("%s%x", subagentCommentaryMessagePrefix, digest[:12])
 }
 
-func prepareSubagentInputCommentary(fields map[string]json.RawMessage) []map[string]json.RawMessage {
+// Start metadata comes from the child's actual request, not the parent's spawn
+// arguments: native roles can override the model and reasoning configuration.
+func subagentStartCommentary(request *parsedResponsesRequest) string {
+	model := request.model()
+	var reasoning struct {
+		Effort string `json:"effort"`
+	}
+	if raw, ok := request.fields["reasoning"]; ok {
+		if err := json.Unmarshal(raw, &reasoning); err != nil {
+			return ""
+		}
+	}
+	effort := strings.TrimSpace(reasoning.Effort)
+	if model == "" || len(model)+len(effort) > maxCommentaryPublicationBytes || strings.ContainsAny(model+effort, "\r\n\x00") {
+		return ""
+	}
+	renderedEffort := "not specified"
+	if effort != "" {
+		renderedEffort = commentaryCode(effort)
+	}
+	return "Started.\nModel: " + commentaryCode(model) + "\nReasoning effort: " + renderedEffort
+}
+
+func prepareSubagentInputCommentary(fields map[string]json.RawMessage, recipient string) []map[string]json.RawMessage {
 	var items []map[string]json.RawMessage
 	if json.Unmarshal(fields["input"], &items) != nil {
 		return nil
@@ -78,32 +63,51 @@ func prepareSubagentInputCommentary(fields map[string]json.RawMessage) []map[str
 	if len(items) != originalLen {
 		fields["input"] = mustMarshalJSON(items)
 	}
+	// Replay cleanup is unconditional, but an absent or malformed identity
+	// cannot establish that an envelope is addressed to this request.
+	if recipient != "/root" && !strings.HasPrefix(recipient, "/root/") || strings.ContainsAny(recipient, "\r\n\x00") {
+		return nil
+	}
 
 	var commentary []map[string]json.RawMessage
+	budget := maxCommentaryPublicationBytes
 	for _, item := range items {
 		text, sender, ok := subagentResponse(item)
-		if !ok {
+		if !ok || jsonString(item, "recipient") != recipient {
 			continue
 		}
 		id := subagentCommentaryMessageID("response\x00" + jsonString(item, "id") + "\x00" + sender + "\x00" + text)
 		if _, alreadyVisible := visible[id]; alreadyVisible {
 			continue
 		}
-		commentary = append(commentary, assistantCommentaryMessage(id, "Response from "+sender+":\n"+text))
+		label := "[" + commentaryCode(recipient) + " <- " + commentaryCode(sender) + "] Message received."
+		if text != "" {
+			label = "[" + commentaryCode(recipient) + " <- " + commentaryCode(sender) + "] Reply received:\n" + text
+		}
+		if len(label) <= budget && len(commentary) < maxCommentaryEventsPerRoute {
+			budget -= len(label)
+			commentary = append(commentary, assistantCommentaryMessage(id, label))
+		}
 	}
 	return commentary
 }
 
 func subagentResponse(item map[string]json.RawMessage) (text, sender string, ok bool) {
-	if jsonString(item, "type") != "agent_message" || jsonString(item, "recipient") != "/root" {
+	if jsonString(item, "type") != "agent_message" {
 		return "", "", false
 	}
 	sender = jsonString(item, "author")
-	if !strings.HasPrefix(sender, "/root/") {
+	if sender != "/root" && !strings.HasPrefix(sender, "/root/") || strings.ContainsAny(sender, "\r\n\x00") {
 		return "", "", false
 	}
 	var content []map[string]json.RawMessage
-	if json.Unmarshal(item["content"], &content) != nil || len(content) != 1 || jsonString(content[0], "type") != "input_text" {
+	if json.Unmarshal(item["content"], &content) != nil || len(content) != 1 {
+		return "", "", false
+	}
+	if jsonString(content[0], "type") == "encrypted_content" {
+		return "", sender, true
+	}
+	if jsonString(content[0], "type") != "input_text" {
 		return "", "", false
 	}
 	body := jsonString(content[0], "text")
@@ -114,61 +118,77 @@ func subagentResponse(item map[string]json.RawMessage) (text, sender string, ok 
 	return payload, sender, true
 }
 
-func subagentCallCommentary(
-	item map[string]json.RawMessage,
-	catalog map[string]struct{},
-	parentModel, parentEffort string,
-) (map[string]json.RawMessage, bool) {
-	if jsonString(item, "type") != "function_call" {
-		return nil, false
-	}
-	name := jsonString(item, "name")
-	if _, exists := catalog[functionToolKey(jsonString(item, "namespace"), name)]; !exists {
-		return nil, false
-	}
-	callID := jsonString(item, "call_id")
-	var arguments map[string]json.RawMessage
-	if callID == "" || json.Unmarshal([]byte(jsonString(item, "arguments")), &arguments) != nil {
-		return nil, false
-	}
-	if name != "spawn_agent" {
-		return nil, false
-	}
-	model, effort := parentModel, parentEffort
-	var requestedModel, requestedEffort, roleName string
-	_ = json.Unmarshal(arguments["model"], &requestedModel)
-	_ = json.Unmarshal(arguments["reasoning_effort"], &requestedEffort)
-	_ = json.Unmarshal(arguments["agent_type"], &roleName)
-	if strings.TrimSpace(requestedModel) != "" {
-		model = requestedModel
-	}
-	if strings.TrimSpace(requestedEffort) != "" {
-		effort = requestedEffort
-	}
-	var builder strings.Builder
-	builder.WriteString("Starting subagent.\n")
-	if roleName = strings.TrimSpace(roleName); roleName != "" {
-		fmt.Fprintf(&builder, "Role: %s\n", roleName)
-	}
-	fmt.Fprintf(&builder, "Model: %s\nReasoning effort: %s", model, effort)
-	id := subagentCommentaryMessageID(name + "\x00" + callID)
-	return assistantCommentaryMessage(id, builder.String()), true
-}
-
-// tokenUsageCommentary creates a commentary message about token usage if observed.
-func tokenUsageCommentary(response []byte, counts tokenCounts, observed bool) map[string]json.RawMessage {
+// tokenUsageCommentary reports usage only alongside a completed substantive answer.
+func tokenUsageCommentary(response []byte, counts tokenCounts, observed bool, terminalStatus string) map[string]json.RawMessage {
 	if !observed {
 		return nil
 	}
 	var identity struct {
-		ID string `json:"id"`
+		ID     string                       `json:"id"`
+		Status string                       `json:"status"`
+		Output []map[string]json.RawMessage `json:"output"`
 	}
+
 	if json.Unmarshal(response, &identity) != nil || identity.ID == "" {
 		return nil
 	}
+	status := identity.Status
+	if terminalStatus != "" {
+		status = terminalStatus
+	}
+	if status != "completed" {
+		return nil
+	}
+	substantive := false
+	for _, item := range identity.Output {
+		// Client tool items are dispatch requests even when their item status is
+		// completed. Hosted tools can finish before the accompanying final answer.
+		switch jsonString(item, "type") {
+		case "function_call", "custom_tool_call", "computer_call", "local_shell_call", "apply_patch_call", "mcp_approval_request":
+			return nil
+		case "tool_search_call":
+			if jsonString(item, "execution") != "server" {
+				return nil
+			}
+		case "shell_call":
+			var environment map[string]json.RawMessage
+			if json.Unmarshal(item["environment"], &environment) != nil || jsonString(environment, "type") != "container_reference" {
+				return nil
+			}
+		}
+		if strings.HasSuffix(jsonString(item, "type"), "_call") {
+			if callStatus := jsonString(item, "status"); callStatus != "completed" && callStatus != "failed" {
+				return nil
+			}
+		}
+
+		if jsonString(item, "type") != "message" || jsonString(item, "role") != "assistant" {
+			continue
+		}
+		if phase := jsonString(item, "phase"); phase != "" && phase != "final_answer" {
+			continue
+		}
+		if itemStatus := jsonString(item, "status"); itemStatus != "" && itemStatus != "completed" {
+			continue
+		}
+		var content []map[string]json.RawMessage
+		if json.Unmarshal(item["content"], &content) != nil {
+			continue
+		}
+		for _, part := range content {
+			if jsonString(part, "type") == "output_text" && strings.TrimSpace(jsonString(part, "text")) != "" ||
+				jsonString(part, "type") == "refusal" && strings.TrimSpace(jsonString(part, "refusal")) != "" {
+				substantive = true
+			}
+		}
+	}
+	if !substantive {
+		return nil
+	}
+
 	cachedInput := counts.InputTokens - counts.UncachedInputTokens
 	text := fmt.Sprintf(
-		"Tokens: i=%d, ci=%d, o=%d, r=%d",
+		"Tokens:\nInput: `%d`\nCached input: `%d`\nOutput: `%d`\nReasoning: `%d`",
 		counts.InputTokens,
 		cachedInput,
 		counts.OutputTokens,
@@ -179,7 +199,7 @@ func tokenUsageCommentary(response []byte, counts tokenCounts, observed bool) ma
 }
 
 // responseWithTokenUsageCommentary extracts a response object and token usage commentary.
-func responseWithTokenUsageCommentary(response []byte, counts tokenCounts, usageObserved bool) (
+func responseWithTokenUsageCommentary(response []byte, counts tokenCounts, usageObserved bool, terminalStatus string) (
 	map[string]json.RawMessage,
 	map[string]json.RawMessage,
 	error,
@@ -188,7 +208,7 @@ func responseWithTokenUsageCommentary(response []byte, counts tokenCounts, usage
 	if err := json.Unmarshal(response, &object); err != nil || object == nil {
 		return nil, nil, errors.New("decode hpatch-enabled response")
 	}
-	message := tokenUsageCommentary(response, counts, usageObserved)
+	message := tokenUsageCommentary(response, counts, usageObserved, terminalStatus)
 	rawOutput, present := object["output"]
 	if message == nil || !present {
 		return object, message, nil

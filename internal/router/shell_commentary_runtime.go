@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 
 	"github.com/yusing/hpatch/internal/shellruntime"
@@ -27,15 +28,20 @@ type ownedShellCommentary struct {
 
 // Commentary discovery is auxiliary: unavailable or replaced storage never
 // prevents a shell command from running.
-func (p *hpatchProxy) prepareShellCommentary(threadID, historySessionID string) {
+func (p *hpatchProxy) prepareShellCommentary(threadID, historySessionID, author string) {
 	if p.commentaryEndpoint == "" {
+		return
+	}
+	// Shell authors persist across turns. Reject malformed names before they
+	// acquire provenance, independently of optional root-projection ancestry.
+	if strings.ContainsAny(author, "\r\n\x00") {
 		return
 	}
 	directory, err := shellruntime.ScriptsPath(p.shellDirectory, threadID)
 	if err != nil {
 		return
 	}
-	token := p.commentary.subscribeThread(historySessionID, threadID)
+	token := p.commentary.subscribeThread(historySessionID, threadID, author)
 	if token == "" {
 		return
 	}

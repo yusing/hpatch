@@ -16,11 +16,15 @@ import (
 const codexTurnMetadataHeader = "x-codex-turn-metadata"
 
 type codexTurnMetadata struct {
-	RequestKind  string                     `json:"request_kind"`
-	TurnID       string                     `json:"turn_id"`
-	SubagentKind string                     `json:"subagent_kind"`
-	Directories  map[string]json.RawMessage `json:"workspaces"`
-	Compaction   json.RawMessage            `json:"compaction"`
+	activityIdentityInvalid bool
+	ThreadID                string                     `json:"thread_id"`
+	ParentThreadID          string                     `json:"parent_thread_id"`
+	AgentName               string                     `json:"agent_name"`
+	RequestKind             string                     `json:"request_kind"`
+	TurnID                  string                     `json:"turn_id"`
+	SubagentKind            string                     `json:"subagent_kind"`
+	Directories             map[string]json.RawMessage `json:"workspaces"`
+	Compaction              json.RawMessage            `json:"compaction"`
 }
 
 func decodeCodexTurnMetadata(headers http.Header) (codexTurnMetadata, bool) {
@@ -48,8 +52,24 @@ func decodeCodexTurnMetadata(headers http.Header) (codexTurnMetadata, bool) {
 	}
 	decoder := json.NewDecoder(strings.NewReader(values[0]))
 	var metadata codexTurnMetadata
-	if err := decoder.Decode(&metadata); err != nil {
+	// Auxiliary ancestry fields must not turn an otherwise valid request into a
+	// transport failure. Malformed identities disable projection only.
+	wire := struct {
+		*codexTurnMetadata
+		ThreadID       json.RawMessage `json:"thread_id"`
+		AgentName      json.RawMessage `json:"agent_name"`
+		ParentThreadID json.RawMessage `json:"parent_thread_id"`
+	}{codexTurnMetadata: &metadata}
+	if err := decoder.Decode(&wire); err != nil {
 		return codexTurnMetadata{}, false
+	}
+	for _, field := range []struct {
+		raw   json.RawMessage
+		value *string
+	}{{wire.ThreadID, &metadata.ThreadID}, {wire.ParentThreadID, &metadata.ParentThreadID}, {wire.AgentName, &metadata.AgentName}} {
+		if len(field.raw) != 0 && (string(field.raw) == "null" || json.Unmarshal(field.raw, field.value) != nil) {
+			metadata.activityIdentityInvalid = true
+		}
 	}
 	var trailing any
 	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
@@ -83,4 +103,12 @@ func usableRoutingDirectory(declared map[string]json.RawMessage) (string, bool) 
 		return canonical, true
 	}
 	return "", false
+}
+
+// Only child requests carry an operation author. Older clients may omit the name.
+func (m codexTurnMetadata) commentaryAuthor() string {
+	if m.SubagentKind == "" || !strings.HasPrefix(m.AgentName, "/root/") {
+		return ""
+	}
+	return m.AgentName
 }
