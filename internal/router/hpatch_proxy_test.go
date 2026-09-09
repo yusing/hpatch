@@ -1711,7 +1711,27 @@ func TestShellJSONTranslatesBashCasesEndToEnd(t *testing.T) {
 		{
 			name:        "params directive",
 			input:       "#!params={\"workdir\":\"/tmp\"}\nrtk ok\n",
+			wantCommand: "rtk ok",
+		},
+		{
+			name:        "reported test with exec params",
+			input:       "#!params={\"max_output_tokens\":2000}\nrtk go test ./internal/router\n",
+			wantCommand: "rtk go test ./internal/router",
+		},
+		{
+			name:        "reported install with tolerated params",
+			input:       "# !params {\"yield_time_ms\":1000}\nrtk make install\n",
+			wantCommand: "rtk make install",
+		},
+		{
+			name:        "explicit bash with params",
+			input:       "#!bash\n#!params={\"workdir\":\"/tmp\"}\nrtk ok\n",
 			wantCommand: `shell bash $'rtk ok\n'`,
+		},
+		{
+			name:        "params with private command",
+			input:       "#!params={\"workdir\":\"/tmp\"}\nhread file.txt\n",
+			wantCommand: `shell bash $'hread file.txt\n'`,
 		},
 		{name: "single private command", input: "hread file.txt\n"},
 		{name: "single shell builtin", input: "printf ok\n"},
@@ -2151,7 +2171,7 @@ func TestWorkerExecInputMergesValidatedParams(t *testing.T) {
 		Login   bool   `json:"login"`
 	}
 	decodeExecCarrierArguments(t, carrierInput, &arguments)
-	if arguments.Command != workerCommand("shell", []string{"bash", "rtk ok\n"}) || arguments.Workdir != "/tmp/example" ||
+	if arguments.Command != "rtk ok" || arguments.Workdir != "/tmp/example" ||
 		!arguments.TTY || arguments.Login {
 		t.Fatalf("translated exec arguments = %+v", arguments)
 	}

@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/yusing/hpatch/internal/shellsyntax"
+
 	"mvdan.cc/sh/v3/expand"
 	"mvdan.cc/sh/v3/interp"
 	"mvdan.cc/sh/v3/syntax"
@@ -299,9 +301,15 @@ func (registry *toolRegistry) execCarrierCommand(
 		}
 	}
 	command := workerCommand(contribution.Name, arguments)
-	if builtinShell && template == "" && len(arguments) > 0 && arguments[len(arguments)-1] == sourceInput {
-		if direct, ok := registry.directBashExecCommand(arguments); ok {
-			command = direct
+	if builtinShell && template == "" {
+		// Parse only directives, not an authored interpreter selector. Exec
+		// parameters affect the outer carrier, not eligibility for a direct call.
+		parsed, err := shellsyntax.Parse("#!bash\n" + sourceInput)
+		if err == nil && parsed.CommandTemplate == "" && len(arguments) > 0 &&
+			parsed.Body == arguments[len(arguments)-1] {
+			if direct, ok := registry.directBashExecCommand(arguments); ok {
+				command = direct
+			}
 		}
 	}
 	if template != "" {

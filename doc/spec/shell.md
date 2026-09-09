@@ -26,7 +26,7 @@ and trailing body whitespace, including an absent or final line terminator. With
 the complete input is the body. The translated argv contains each normalized interpreter field
 followed by the exact body as its final value. The resulting Codex exec carrier therefore shows
 `shell python3 <quoted-body>` on one physical command line; the model does not author that command
-or its quoting. For implicit default Bash without a directive, a body with at most one final line
+or its quoting. For implicit default Bash without a command template, a body with at most one final line
 terminator remains direct when it parses as one non-background, non-negated simple call whose
 static command is neither a shell built-in, the reserved `commentary` command, nor a private
 contribution and whose statement contains no command or process substitution. The direct carrier
@@ -54,9 +54,9 @@ leading directive, params object containing `cmd`, or unsafe `login` value rejec
 The tool removes recognized directive lines and their complete line terminators from the body.
 The router replaces `{.}` with the canonical independently quoted shell-helper command and argv.
 The command template then runs through the normal exec carrier shell. Without an interpreter
-shebang, the nested worker selects `bash`. Without either directive, an eligible simple external
-Bash command remains direct; every other body uses the worker command as the complete outer
-command. After the first body line, directive-like lines remain ordinary body data.
+shebang, the nested worker selects `bash`. Without an interpreter shebang or command template, an eligible simple external
+Bash command remains direct, including when exec parameters are supplied; every other body uses
+the worker command as the complete outer command. After the first body line, directive-like lines remain ordinary body data.
 
 When the worker carrier is selected, the executor starts the fixed helper once with the normalized
 interpreter fields and exact body.
@@ -187,7 +187,8 @@ Acceptance:
    in any later body line remains ordinary body text.
 7. Input without a shebang or command directive selects Bash semantics. One physical line
    containing the static external command `rtk shadowtree test . -run='^$'` and one optional final
-   line terminator produces that direct native command without `shell bash`; shell built-ins,
+   line terminator produces that direct native command without `shell bash`, with or without a
+   params directive. Exec parameters remain on the outer carrier unchanged. Shell built-ins,
    private commands, nested command or process substitutions, composed statements, and malformed
    syntax retain the fixed helper. Explicit `bash` and `/usr/bin/bash` selectors have the same
    `mvdan/sh` Bash semantics; `sh` and `/bin/sh` have the same POSIX semantics and reject Bash-only
