@@ -167,3 +167,113 @@ func TestCriticalErrorProjectionUsesOriginDespiteSharedSession(t *testing.T) {
 		t.Fatal("root copy consumed or changed child notice deduplication")
 	}
 }
+
+func TestToolActivityGroupsAtMostThreeWithoutWaiting(t *testing.T) {
+	a := newSubagentActivity()
+	a.observe("r", "", "/root", false)
+	a.observe("c", "r", "/root/c", true)
+	for index := range 5 {
+		a.collect("c", fmt.Sprint(index), "tool", "Read "+commentaryCode(fmt.Sprint(index)))
+	}
+	messages := a.drain("r", time.Time{}, maxCommentaryPublicationBytes)
+	if len(messages) != 2 {
+		t.Fatalf("group count: %d", len(messages))
+	}
+	for index, want := range []string{
+		"[`/root/c`] Read `0`, `1`, `2`",
+		"[`/root/c`] Read `3`, `4`",
+	} {
+		if got := commentaryText(t, messages[index]); got != want {
+			t.Fatalf("got %q, want %q", got, want)
+		}
+	}
+	for index := range 5 {
+		a.collect("c", fmt.Sprint(index), "tool", "Read `duplicate`")
+	}
+	if got := a.drain("r", time.Time{}, maxCommentaryPublicationBytes); len(got) != 0 {
+		t.Fatal("grouped sources repeated")
+	}
+	fields := map[string]json.RawMessage{"input": mustMarshalJSON(messages)}
+	a.stripInput(fields)
+	if string(fields["input"]) != "[]" {
+		t.Fatal("grouped messages entered replay")
+	}
+	a.collect("c", "single", "tool", "Read `single`")
+	if got := a.drain("r", time.Time{}, maxCommentaryPublicationBytes); len(got) != 1 {
+		t.Fatal("single call held waiting for a group")
+	}
+}
+
+func TestToolActivityGroupingBoundariesAndBudget(t *testing.T) {
+	a := newSubagentActivity()
+	a.observe("r", "", "/root", false)
+	a.observe("c", "r", "/root/c", true)
+	a.observe("d", "r", "/root/d", true)
+	for index, item := range []struct{ thread, kind, text string }{
+		{"c", "tool", "Read `a`"},
+		{"d", "tool", "Read `b`"},
+		{"c", "tool", "Read `c`"},
+		{"c", "tool", "Search `d`"},
+		{"c", "reply", "notice"},
+		{"c", "tool", "Search `e`"},
+	} {
+		a.collect(item.thread, fmt.Sprint(index), item.kind, item.text)
+	}
+	if got := a.drain("r", time.Time{}, maxCommentaryPublicationBytes); len(got) != 6 {
+		t.Fatalf("group crossed a boundary: %d", len(got))
+	}
+	for _, name := range []string{"first", "second"} {
+		a.collect("c", name, "tool", "Read "+commentaryCode(name))
+	}
+	if got := a.drain("r", time.Time{}, len("[`/root/c`] Read `first`")); len(got) != 1 ||
+		commentaryText(t, got[0]) != "[`/root/c`] Read `first`" {
+		t.Fatal("grouping blocked a deliverable first item")
+	}
+	if got := a.drain("r", time.Time{}, maxCommentaryPublicationBytes); len(got) != 1 ||
+		commentaryText(t, got[0]) != "[`/root/c`] Read `second`" {
+		t.Fatal("budget lost the remaining item")
+	}
+}
+
+func TestToolActivityGroupingPreservesMultilineSource(t *testing.T) {
+	a := newSubagentActivity()
+	a.observe("r", "", "/root", false)
+	a.observe("c", "r", "/root/c", true)
+	a.collect("c", "one", "tool", "Run\n```\necho a\n  echo b\n```")
+	a.collect("c", "two", "tool", "Run\n```\necho c\n  echo d\n```")
+	messages := a.drain("r", time.Time{}, maxCommentaryPublicationBytes)
+	want := "[`/root/c`] Run\n```\necho a\n  echo b\n```\n,\n\n```\necho c\n  echo d\n```"
+	if len(messages) != 1 || commentaryText(t, messages[0]) != want {
+		t.Fatalf("multiline grouping: %v", messages)
+	}
+}
+
+func TestToolActivityGroupingKeepsActionAndDeferredKindsDistinct(t *testing.T) {
+	a := newSubagentActivity()
+	a.observe("r", "", "/root", false)
+	a.observe("c", "r", "/root/c", true)
+	a.collect("c", "old", "tool", "Read `old`")
+	started := time.Now()
+	a.events[0].observed = started.Add(-time.Second)
+	a.collect("c", "new", "tool", "Read `new`")
+	a.collect("c", "web", "tool", "Search web\n`query`")
+	a.collect("c", "files", "tool", "Search files\n`query`")
+	a.collect("c", "search", "tool", "Search `query`")
+	messages := a.drain("r", started, maxCommentaryPublicationBytes)
+	if len(messages) != 5 {
+		t.Fatalf("action/deferred boundary lost: %d", len(messages))
+	}
+}
+
+func TestToolActivityGroupingDoesNotMergeMixedFencedOperations(t *testing.T) {
+	a := newSubagentActivity()
+	a.observe("r", "", "/root", false)
+	a.observe("c", "r", "/root/c", true)
+	mixed := toolActivityShell("hgrep -F 'alpha\nbeta' a\ncat b")
+	a.collect("c", "mixed", "tool", mixed)
+	a.collect("c", "search", "tool", toolActivityShell("hgrep gamma c"))
+	messages := a.drain("r", time.Time{}, maxCommentaryPublicationBytes)
+	if len(messages) != 2 || commentaryText(t, messages[0]) != "[`/root/c`] "+mixed {
+		t.Fatalf("mixed operations merged: %v", messages)
+	}
+}

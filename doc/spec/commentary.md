@@ -76,10 +76,27 @@ ancestry suppresses projection. Start notices use the existing bounded activity 
 provenance; they never replace child answers or add follow-up, message, wait, or interruption notices.
 
 Complete subagent tool calls are also forwarded as user-only activity, never as executable
-root calls. Each distinct call shows its qualified tool name as inline code and a single-line
-input preview, limited to 240 non-whitespace characters within the first 4 KiB and marked
-with an ellipsis when shortened. Collaboration and user-messaging arguments remain opaque:
-only their tool identity is displayed. Calls without textual input show only the tool name.
+root calls. Known tools use operation labels rather than raw transport arguments. Shell calls
+and transparent, statically recognized Code Mode shell wrappers share a `Run` display.
+Simple literal `cat` and `hread` calls display `Read <file>`; `skills-mgr get <skill-name>`
+and reads of a named skill's `SKILL.md` display `Skill Read <skill-name>`.
+`skills-mgr get <skill-name>/<reference-path>` displays `Skill Reference Read` with the
+full skill/reference operand. Optional read ranges remain visible for both forms.
+Simple listing, search, and structural inspection commands use `List`, `Search`, and `Inspect`
+labels, retaining search flags and operands. Native web/file search, image viewing/generation,
+code execution, input sending, and editing calls use descriptive operation labels.
+Unsupported compound or dynamic commands retain their source rather than claiming a simpler operation.
+Multiline source previews preserve line breaks and indentation in fenced code blocks.
+Previews are limited to 240 non-whitespace characters within the first 4 KiB and marked
+with an ellipsis when shortened. Unknown tools retain their qualified name and a bounded
+input preview. Collaboration and user-messaging arguments remain opaque: only their tool
+identity is displayed. Calls without textual input show only the operation or tool name.
+Consecutive tool displays from the same child with the same action kind share one heading,
+with comma-separated details, in groups of at most three calls. Grouping uses only calls
+already pending at a root delivery boundary: one or two calls are delivered without waiting
+for a third. A different child, action, notice, or deferred/current boundary ends the group.
+Multiline details keep their code fences. Each source call remains independently deduplicated;
+grouped root copies remain user-only and preserve the existing rendering budget and replay rules.
 The display describes an observed call, not successful execution or agent completion.
 JSON output, completed SSE items, and terminal output share source-identity deduplication;
 partial calls are not projected. Native child call framing and replay stay unchanged.

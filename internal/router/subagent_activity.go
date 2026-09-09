@@ -157,7 +157,8 @@ func (a *subagentActivity) drain(root string, started time.Time, budget int) []m
 	var messages []map[string]json.RawMessage
 	kept := a.events[:0]
 	blocked := make(map[string]bool)
-	for _, event := range a.events {
+	for index := 0; index < len(a.events); index++ {
+		event := a.events[index]
 		if a.rootLocked(event.thread) != root {
 			kept = append(kept, event)
 			continue
@@ -175,6 +176,33 @@ func (a *subagentActivity) drain(root string, started time.Time, budget int) []m
 			blocked[event.thread] = true
 			kept = append(kept, event)
 			continue
+		}
+		// Coalesce only activity already ready at this delivery boundary.
+		// Never wait for a third call or carry a partial group into another drain.
+		if event.kind == "tool" {
+			author := "[" + commentaryCode(a.threads[event.thread].name) + "] "
+			heading, detail := toolActivityGroup(strings.TrimPrefix(event.text, author))
+			for grouped := 1; heading != "" && grouped < 3 && index+1 < len(a.events); grouped++ {
+				next := a.events[index+1]
+				if next.thread != event.thread || next.kind != "tool" || next.observed.Before(started) != event.observed.Before(started) {
+					break
+				}
+				nextHeading, nextDetail := toolActivityGroup(strings.TrimPrefix(next.text, author))
+				if nextHeading != heading {
+					break
+				}
+				separator := ", "
+				if strings.ContainsAny(detail+nextDetail, "\r\n") {
+					separator = "\n,\n\n"
+				}
+				combined := text + separator + nextDetail
+				if len(combined) > budget || len(combined) > maxCommentaryPublicationBytes {
+					break
+				}
+				text = combined
+				detail += separator + nextDetail
+				index++
+			}
 		}
 		id := commentaryMessageID("root-copy\x00" + root + "\x00" + event.thread + "\x00" + event.source)
 		a.copies[id] = struct{}{}

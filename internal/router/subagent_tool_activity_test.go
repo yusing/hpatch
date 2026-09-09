@@ -17,6 +17,9 @@ func TestSubagentToolActivityJSONAndSSE(t *testing.T) {
 				{"type": "function_call", "id": "first", "call_id": "first", "namespace": "functions", "name": "lookup", "arguments": "{\"query\":\"hello\"}"},
 				{"type": "custom_tool_call", "id": "second", "call_id": "second", "name": "external", "input": "first line\n" + strings.Repeat("界", 300)},
 				{"type": "function_call", "id": "third", "call_id": "third", "namespace": "collaboration", "name": "send_message", "arguments": "opaque message"},
+				{"type": "shell_call", "id": "shell", "status": "completed", "action": map[string]any{"commands": []string{"echo a", "  echo b"}}},
+				{"type": "local_shell_call", "id": "exec", "status": "completed", "action": map[string]any{"command": []string{"bash", "-lc", "cat a"}}},
+				{"type": "web_search_call", "id": "web", "status": "completed", "action": map[string]any{"type": "search", "query": "Go parser"}},
 			}
 			payload := mustTestJSON(t, map[string]any{"status": "completed", "output": calls})
 			if stream {
@@ -41,7 +44,7 @@ func TestSubagentToolActivityJSONAndSSE(t *testing.T) {
 				t.Fatal(err)
 			}
 			var response struct{ Output []map[string]json.RawMessage }
-			if err := json.Unmarshal(visible, &response); err != nil || len(response.Output) != 4 {
+			if err := json.Unmarshal(visible, &response); err != nil || len(response.Output) != 7 {
 				t.Fatalf("distinct calls or terminal deduplication: %s, %v", visible, err)
 			}
 			// Start metadata precedes the child's distinct tool calls.
@@ -49,11 +52,20 @@ func TestSubagentToolActivityJSONAndSSE(t *testing.T) {
 			if got := commentaryText(t, response.Output[0]); got != "[`/root/worker`] Tool call: `functions.lookup`\n`{\"query\":\"hello\"}`" {
 				t.Fatalf("tool display: %s", got)
 			}
-			if got := commentaryText(t, response.Output[1]); !strings.Contains(got, "first line ") || !strings.HasSuffix(got, "…`") {
+			if got := commentaryText(t, response.Output[1]); !strings.Contains(got, "first line\n") || !strings.HasSuffix(got, "…\n```") {
 				t.Fatalf("bounded script display: %s", got)
 			}
 			if got := commentaryText(t, response.Output[2]); got != "[`/root/worker`] Tool call: `collaboration.send_message`" {
 				t.Fatalf("opaque collaboration display: %s", got)
+			}
+			for index, want := range []string{
+				"[`/root/worker`] Run\n```\necho a\n  echo b\n```",
+				"[`/root/worker`] Read `a`",
+				"[`/root/worker`] Search web\n`Go parser`",
+			} {
+				if got := commentaryText(t, response.Output[index+3]); got != want {
+					t.Fatalf("operation display: got %q, want %q", got, want)
+				}
 			}
 			_, replay := prepareActivityTest(t, proxy, "replay", "c", "r", "/root/worker", []any{response.Output[0], calls[0]})
 			if bytes.Contains(replay.fields["input"], response.Output[0]["id"]) || !bytes.Contains(replay.fields["input"], mustTestJSON(t, calls[0])) {

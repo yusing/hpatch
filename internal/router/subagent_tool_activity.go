@@ -30,45 +30,71 @@ func (t *hpatchResponseTransform) collectSubagentToolCall(item map[string]json.R
 	if len(name) > maxCommentaryPublicationBytes {
 		return
 	}
-	text := "Tool call: " + commentaryCode(name)
-	// Keep the card scannable even for Code Mode scripts. Collaboration arguments
-	// can carry opaque messages; show only the tool identity for those calls.
-	if !commentaryExcluded(jsonString(item, "namespace"), jsonString(item, "name")) {
-		input := jsonString(item, "arguments")
-		if input == "" {
-			input = jsonString(item, "input")
-		}
-		if preview := toolActivityPreview(input); preview != "" {
-			text += "\n" + commentaryCode(preview)
-		}
-	}
+	text := subagentToolActivityText(item, name)
 	t.proxy.activity.collect(t.threadID, "tool-call\x00"+id, "tool", text)
 }
 
 func toolActivityPreview(input string) string {
-	// Bound work as well as output; a large script needs only its opening context.
+	preview, _, _ := toolActivityPreviewLimit(input, 240)
+	return preview
+}
+
+func toolActivityPreviewLimit(input string, limit int) (string, int, bool) {
+	// Preserve source layout. Inline code would fold newlines in Markdown.
 	var preview strings.Builder
-	space := false
 	count := 0
 	for offset, r := range input {
-		if offset >= 4096 {
+		if offset >= 4096 || count >= limit {
 			preview.WriteString("…")
-			break
+			return preview.String(), count, true
 		}
-		if r == ' ' || r == '\n' || r == '\r' || r == '\t' {
-			space = preview.Len() > 0
-			continue
-		}
-		if count >= 240 {
-			preview.WriteString("…")
-			break
-		}
-		if space {
-			preview.WriteByte(' ')
-			space = false
-		}
+
 		preview.WriteRune(r)
-		count++
+		if r != ' ' && r != '\n' && r != '\r' && r != '\t' {
+			count++
+		}
 	}
-	return preview.String()
+	return preview.String(), count, false
+}
+
+func toolActivityCode(input string) string {
+	preview := toolActivityPreview(input)
+	if !strings.ContainsAny(preview, "\r\n") {
+		return commentaryCode(preview)
+	}
+	fence := "```"
+	for strings.Contains(preview, fence) {
+		fence += "`"
+	}
+	return fence + "\n" + preview + "\n" + fence
+}
+
+// Only router-authored, single-operation displays can share a heading.
+// Mixed summaries remain intact instead of being grouped by their first action.
+func toolActivityGroup(text string) (heading, detail string) {
+	for _, label := range []string{
+		"Skill Reference Read", "Skill Read", "Read", "Search web", "Search files",
+		"Search", "List", "Inspect", "Run JavaScript", "Run code", "Run",
+		"Open page", "Find in page", "View image", "Send input", "Edit",
+	} {
+		for _, separator := range []string{" ", "\n"} {
+			if detail, ok := strings.CutPrefix(text, label+separator); ok {
+				// Multiline source is fenced; unfenced blank lines separate
+				// independently labelled operations inside a single call.
+				if strings.HasPrefix(detail, "```") {
+					lines := strings.Split(detail, "\n")
+					for index, line := range lines[1:] {
+						if line == lines[0] && index+2 != len(lines) {
+							return "", ""
+						}
+					}
+				} else if strings.Contains(detail, "\n\n") {
+					return "", ""
+				}
+
+				return label, detail
+			}
+		}
+	}
+	return "", ""
 }
