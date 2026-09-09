@@ -289,3 +289,47 @@ func TestHPatchReplayStoreStructuredFieldWhitespaceRetry(t *testing.T) {
 		t.Fatal("accepted changed escape spelling")
 	}
 }
+
+func TestHPatchReplayStoreProviderMetadataCompletion(t *testing.T) {
+	dir := t.TempDir()
+	s, err := openHPatchReplayStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := hpatchHistory{script: "echo test", upstreamItem: map[string]json.RawMessage{
+		"id": json.RawMessage(`"item"`), "call_id": json.RawMessage(`"call"`),
+		"name": json.RawMessage(`"shell"`), "type": json.RawMessage(`"custom_tool_call"`),
+		"input": json.RawMessage(`"echo test"`), "status": json.RawMessage(`"in_progress"`),
+		"internal_chat_message_metadata_passthrough": json.RawMessage(`{"phase":"started"}`),
+	}}
+	if err := s.put(t.Context(), "/w", map[string]hpatchHistory{"call": h}); err != nil {
+		t.Fatal(err)
+	}
+	metadata := json.RawMessage(`{"phase":"finished","opaque":"\u003c"}`)
+	h.upstreamItem["internal_chat_message_metadata_passthrough"] = metadata
+	h.upstreamItem["status"] = json.RawMessage(`"completed"`)
+	if err := s.put(t.Context(), "/w", map[string]hpatchHistory{"call": h}); err != nil {
+		t.Fatalf("provider metadata completion: %v", err)
+	}
+	s, err = openHPatchReplayStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, found, err := s.lookup(t.Context(), "/w", "call")
+	if err != nil || !found {
+		t.Fatalf("restart lookup: %v, %v", found, err)
+	}
+	if !bytes.Equal(got.upstreamItem["internal_chat_message_metadata_passthrough"], metadata) {
+		t.Fatal("replay did not retain exact completed provider metadata")
+	}
+	for _, key := range []string{"id", "call_id", "name", "type", "input", "status"} {
+		t.Run(key, func(t *testing.T) {
+			original := h.upstreamItem[key]
+			h.upstreamItem[key] = json.RawMessage(`"changed"`)
+			defer func() { h.upstreamItem[key] = original }()
+			if err := s.put(t.Context(), "/w", map[string]hpatchHistory{"call": h}); err == nil {
+				t.Fatalf("accepted changed %s", key)
+			}
+		})
+	}
+}

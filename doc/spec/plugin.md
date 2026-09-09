@@ -71,7 +71,9 @@ surface in either shape without opening another listener. In native requests, `e
 remains the executor-owned carrier. Hpatch invokes the executor's `apply_patch` command through
 that carrier and returns the already-rendered report as its exact successful output; ordinary
 exec-backed contributions use direct native function arguments rather than a Code Mode wrapper.
-Response restoration and replay retain the request's original carrier shape. JSON and all
+Response restoration and replay retain the request's original carrier shape. Durable replay accepts
+updates to the opaque `internal_chat_message_metadata_passthrough` field as the provider completes
+a tool call, retaining its latest encoding without allowing changes to tool identity or input. JSON and all
 terminal SSE statuses restore the request's tool catalog and choice plus completed calls' exact
 carriers. Failed or incomplete responses do not evaluate unfinished call input or retain it for
 replay. An output-item completion explicitly marked `incomplete` likewise does not evaluate its

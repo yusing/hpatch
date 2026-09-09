@@ -290,7 +290,8 @@ func (s *hpatchReplayStore) put(ctx context.Context, workspace string, histories
 }
 
 // Upstream completion may add fields or finalize status after an SSE item is
-// already durable. It cannot alter the original model payload or translation.
+// already durable, including opaque provider passthrough metadata. It cannot
+// alter the original model payload or translation.
 func mergeReplayHistory(old, next replayHistory) (replayHistory, error) {
 	oldItem, nextItem := old.UpstreamItem, next.UpstreamItem
 	oldIDs, nextIDs := old.CommentaryMessageIDs, next.CommentaryMessageIDs
@@ -320,7 +321,12 @@ func mergeReplayHistory(old, next replayHistory) (replayHistory, error) {
 				return next, fmt.Errorf("invalid retained replay item field %q: %w", k, err)
 			}
 			previous = compact.Bytes()
-			if !bytes.Equal(previous, v) && (k != "status" || string(previous) != `"in_progress"` || string(v) != `"completed"`) {
+			// The provider enriches this opaque metadata between input.done and
+			// output_item.done. Preserve its latest spelling for replay without
+			// relaxing checks on tool identity, input, or other item fields.
+			metadata := k == "internal_chat_message_metadata_passthrough"
+			completed := k == "status" && string(previous) == `"in_progress"` && string(v) == `"completed"`
+			if !bytes.Equal(previous, v) && !metadata && !completed {
 				return next, fmt.Errorf("conflicting durable replay item field %q", k)
 			}
 		}
