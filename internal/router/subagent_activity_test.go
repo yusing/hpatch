@@ -167,16 +167,3 @@ func TestCriticalErrorProjectionUsesOriginDespiteSharedSession(t *testing.T) {
 		t.Fatal("root copy consumed or changed child notice deduplication")
 	}
 }
-
-func TestDiagnosticQueueRetirementPreservesOrdinaryActivity(t *testing.T) {
-	a := newSubagentActivity()
-	a.observe("r", "", "/root", false)
-	a.observe("c", "r", "/root/c", true)
-	a.collect("c", diagnosticCallPrefix+"fixture", "reply", "synthetic")
-	a.collect("c", "actual", "reply", "real reply")
-	a.discardDiagnostics("r")
-	messages := a.drain("r", time.Time{}, maxCommentaryPublicationBytes)
-	if len(messages) != 1 || !strings.Contains(commentaryText(t, messages[0]), "real reply") {
-		t.Fatal(messages)
-	}
-}

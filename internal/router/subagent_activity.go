@@ -29,7 +29,6 @@ type activityThread struct {
 type activityEvent struct {
 	thread, source, kind, text string
 	observed                   time.Time
-	diagnostic                 bool
 }
 
 func newSubagentActivity() *subagentActivity {
@@ -109,7 +108,6 @@ func (a *subagentActivity) collect(thread, source, kind, text string) {
 	if a.closed || node == nil || !node.child || node.conflicted || a.sources >= maxThreadCommentaryIDs {
 		return
 	}
-	diagnostic := strings.HasPrefix(source, diagnosticCallPrefix)
 	source = commentaryMessageID(source)
 	if _, exists := node.seen[source]; exists {
 		return
@@ -138,7 +136,7 @@ func (a *subagentActivity) collect(thread, source, kind, text string) {
 	}
 	node.seen[source] = struct{}{}
 	a.sources++
-	a.events = append(a.events, activityEvent{thread: thread, source: source, kind: kind, text: text, observed: now, diagnostic: diagnostic})
+	a.events = append(a.events, activityEvent{thread: thread, source: source, kind: kind, text: text, observed: now})
 }
 
 func (a *subagentActivity) expireLocked(now time.Time) {
@@ -238,13 +236,4 @@ func (a *subagentActivity) close() {
 	clear(a.copies)
 	a.events = nil
 	a.sources = 0
-}
-
-func (a *subagentActivity) discardDiagnostics(root string) {
-	if a == nil {
-		return
-	}
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	a.events = slices.DeleteFunc(a.events, func(event activityEvent) bool { return event.diagnostic && a.rootLocked(event.thread) == root })
 }

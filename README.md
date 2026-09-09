@@ -283,13 +283,7 @@ See the [metrics reference](doc/spec/metrics.md) for interpretation.
 - **Failures:** startup errors appear before Codex launches. Session failures
   appear as user-only commentary; undelivered notices appear on stderr after
   Codex exits. Hpatch does not create operational log files.
-- **Diagnostics:** Try `:hpatch_diag subagent_commentary` inside Codex for
-  provider-free synthetic inline activity and deferred delivery. The `stream`,
-  `deferred`, and `wait` cases can also be selected separately. The wait case
-  uses a bounded native mailbox wait only when its catalog supports it; no real
-  subagents are spawned and no workspace files are edited. Synthetic playback
-  does not prove real-agent execution. See [local tool playback](doc/spec/router-diagnostics.md) and
-  [opt-in agent issue reports](doc/spec/diagnose.md).
+- **Agent issue reports:** see [opt-in agent issue reports](doc/spec/diagnose.md).
 
 ### Older installations
 

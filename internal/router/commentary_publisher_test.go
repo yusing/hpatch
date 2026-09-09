@@ -279,7 +279,7 @@ func TestShellCommentaryPreservesDirectCommands(t *testing.T) {
 				transform, proxy, _ = newToolPluginTestTransform(t)
 			}
 			proxy.commentaryEndpoint = "http://127.0.0.1:8080" + commentaryPublisherPath
-			const command = "mktemp -d -t hpatch-diag.XXXXXXXXXX"
+			const command = "mktemp -d -t hpatch-shell.XXXXXXXXXX"
 			response, err := transform.TransformJSON(mustTestJSON(t, map[string]any{
 				"status": "completed", "output": []any{map[string]any{
 					"type": "custom_tool_call", "id": "item-shell", "call_id": "call-shell",

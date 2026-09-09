@@ -242,7 +242,7 @@ Acceptance:
 19. Complex shell constructs remain unsplit. A yielded prefix finishes before any patch or suffix
     begins. JSON and SSE projections restore the exact original shell call and unchanged result
     on replay, and native/compact provider cache diagnostics retain an appended prefix.
-20. With commentary enabled, `mktemp -d -t hpatch-diag.XXXXXXXXXX` remains the direct command.
+20. With commentary enabled, `mktemp -d -t hpatch-shell.XXXXXXXXXX` remains the direct command.
     Wrapped Bash and POSIX scripts retain only their normalized interpreter fields and quoted
     body; transformation adds no flags, connection details, credentials, or inline environment
     assignments. Thread-scoped commentary discovery preserves script output and exit status,

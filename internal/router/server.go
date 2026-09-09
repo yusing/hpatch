@@ -484,9 +484,6 @@ func executeRequest(
 	if hpatchCalls != nil && metadataValid && !metadata.activityIdentityInvalid && (metadata.ThreadID == "" || metadata.ThreadID == threadID) {
 		finalization.observeCriticalNotice = func(source, text string) { hpatchCalls.activity.collect(threadID, source, "error", text) }
 	}
-	if hpatchCalls != nil {
-		stripPastDiagnosticTurns(&parsedRequest)
-	}
 	issues.stripInput(&parsedRequest, sessionID)
 	notices := issues.transform(sessionID, metadata.SubagentKind != "")
 	defer func() { notices.finish(requestErr == nil) }()
@@ -527,41 +524,35 @@ func executeRequest(
 	if hpatchTransform != nil {
 		defer hpatchTransform.Close()
 	}
-	response, diagnostic, err := hpatchTransform.diagnosticResponse(&parsedRequest)
-	if err != nil {
-		return fmt.Errorf("prepare diagnostic playback: %w", err)
-	}
 	var bridge *subagentBridge
 	var compactTransform *ctp2ResponseTransform
-	if !diagnostic {
-		if client, ok := provider.(*providerClient); ok && client.grok != nil {
-			bridge, err = prepareSubagentBridge(&parsedRequest)
-			if err != nil {
-				return fmt.Errorf("prepare Grok collaboration bridge: %w", err)
-			}
-		}
-		nativeBody, err := parsedRequest.wireBody(parsedRequest.fields)
+	if client, ok := provider.(*providerClient); ok && client.grok != nil {
+		bridge, err = prepareSubagentBridge(&parsedRequest)
 		if err != nil {
-			return fmt.Errorf("encode native Responses request: %w", err)
+			return fmt.Errorf("prepare Grok collaboration bridge: %w", err)
 		}
-		capturer.ObserveNativeRequest(ctx, nativeBody)
-		var forwardBody []byte
-		compactTransform, forwardBody, err = compactTokens.prepareRequest(&parsedRequest, nativeBody)
-		if err != nil {
-			return fmt.Errorf("prepare compact token protocol: %w", err)
-		}
-		if forwardBody == nil {
-			forwardBody = nativeBody
-		}
-		finalization.failurePhase = requestFailureForward
-		cacheKey := parsedRequest.promptCacheKey()
-		if cacheKey == "" {
-			cacheKey = sessionID
-		}
-		response, err = provider.forwardExecution(ctx, executionCtx, forwardBody, headers, cacheKey)
-		if err != nil {
-			return fmt.Errorf("execute request: %w", err)
-		}
+	}
+	nativeBody, err := parsedRequest.wireBody(parsedRequest.fields)
+	if err != nil {
+		return fmt.Errorf("encode native Responses request: %w", err)
+	}
+	capturer.ObserveNativeRequest(ctx, nativeBody)
+	var forwardBody []byte
+	compactTransform, forwardBody, err = compactTokens.prepareRequest(&parsedRequest, nativeBody)
+	if err != nil {
+		return fmt.Errorf("prepare compact token protocol: %w", err)
+	}
+	if forwardBody == nil {
+		forwardBody = nativeBody
+	}
+	finalization.failurePhase = requestFailureForward
+	cacheKey := parsedRequest.promptCacheKey()
+	if cacheKey == "" {
+		cacheKey = sessionID
+	}
+	response, err := provider.forwardExecution(ctx, executionCtx, forwardBody, headers, cacheKey)
+	if err != nil {
+		return fmt.Errorf("execute request: %w", err)
 	}
 	finalization.upstreamStatusCode = response.StatusCode
 	finalization.failurePhase = requestFailureInspectResponse
@@ -575,7 +566,7 @@ func executeRequest(
 	}
 	var responseTransform responseTransformer
 	if response.StatusCode >= http.StatusOK && response.StatusCode < http.StatusMultipleChoices {
-		if handoffRequest != nil && !diagnostic {
+		if handoffRequest != nil {
 			responseTransform = &handoffRequest.observation
 		}
 		if compactTransform != nil {

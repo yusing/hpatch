@@ -186,7 +186,7 @@ func TestFirstChildRequestStripsInheritedRootCopies(t *testing.T) {
 	root, _ := prepareActivityTest(t, p, "root-session", "r", "", "/root", nil)
 	p.activity.observe("c", "r", "/root/existing", true)
 	p.activity.collect("c", "actual", "reply", "display-only real activity")
-	p.activity.collect("c", diagnosticCallPrefix+"fixture", "reply", "display-only diagnostic fixture")
+	p.activity.collect("c", "second", "reply", "display-only second activity")
 	output, err := root.TransformJSON([]byte(`{"status":"completed","output":[]}`))
 	if err != nil {
 		t.Fatal(err)
