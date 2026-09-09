@@ -403,7 +403,6 @@ func (h hpatchHistory) effectiveCarrierKind() codeModeCarrierKind {
 
 const (
 	nativeExecCommandWarning = "Warning: Use `functions.shell`"
-	lunaShellRecoveryWarning = "Recovered Code Mode JavaScript submitted through `functions.shell`; use `functions.exec` directly next time"
 
 	codeModeExecCallPrefix        = "const result = await tools.exec_command("
 	codeModeOutputProjection      = "text(result.output);"
@@ -417,10 +416,6 @@ const (
 )
 
 var (
-	codeModeToolProgramPattern = regexp.MustCompile(
-		`^(?:(?:const|let|var)[ \t]+[A-Za-z_$][A-Za-z0-9_$]*[ \t]*=[ \t]*)?await[ \t]+tools\.[A-Za-z_$][A-Za-z0-9_$]*[ \t]*\(`,
-	)
-	codeModeProjectionPattern             = regexp.MustCompile(`(?m)(?:^|;)[ \t]*(?:text|image|audio|generatedImage)[ \t]*\(`)
 	shellHeredocPattern                   = regexp.MustCompile(`<<-?`)
 	shellInterpreterCommandWrapperPattern = regexp.MustCompile(
 		`(?i)(?:^|\\[nrt]|[^[:alnum:]_./+-])/?(?:[[:alnum:]_.+-]+/)*(` + shellInterpreterNamePattern + `)` +
@@ -538,20 +533,6 @@ func shellInterpreterWrapperWarning(misuse shellWrapperMisuse) string {
 		shebang,
 		program,
 	)
-}
-
-// Luna occasionally submits Code Mode JavaScript through functions.shell.
-// Recover only programs whose first statement invokes a nested Code Mode tool
-// and which project a result through a Code Mode output helper. A shebang,
-// directive, comment, or ordinary shell statement at the start keeps the
-// documented shell semantics.
-func lunaShellCodeModeProgram(contribution toolContribution, input string) bool {
-	if contribution.PluginID != builtinToolsPluginID || contribution.Name != "shell" {
-		return false
-	}
-	program := strings.TrimLeft(input, " \t\r\n")
-	return codeModeToolProgramPattern.MatchString(program) &&
-		codeModeProjectionPattern.MatchString(program)
 }
 
 func nativeExecCommandInput(input string) (string, string, bool, bool) {

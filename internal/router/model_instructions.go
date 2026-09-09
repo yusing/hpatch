@@ -1,6 +1,7 @@
 package router
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -9,6 +10,8 @@ import (
 	"strings"
 
 	"github.com/BurntSushi/toml"
+	"github.com/yusing/hpatch/capturer"
+	codexinstructions "github.com/yusing/hpatch/contrib/codex"
 )
 
 const (
@@ -61,16 +64,25 @@ func modelInstructionFileConfiguredAt(path string) (bool, error) {
 	return config.ModelInstructionFile != nil, nil
 }
 
-func rewriteReceivedModelInstructions(request *parsedResponsesRequest, customized bool, modelInstructions string) error {
+func rewriteReceivedModelInstructions(ctx context.Context, request *parsedResponsesRequest, customized bool, modelInstructions string) (rewriteErr error) {
+	evidence := capturer.InstructionRewrite{Carrier: "none", Strategy: "unchanged", Workflow: codexinstructions.WorkflowForModel(request.model()), CustomConfigured: customized}
+	defer func() {
+		if rewriteErr != nil {
+			evidence.Strategy = "rejected"
+		}
+		capturer.ObserveInstructionRewrite(ctx, evidence)
+	}()
+
 	raw, present := request.fields["instructions"]
 	var received *string
 	if present {
 		if err := json.Unmarshal(raw, &received); err != nil {
+			evidence.Carrier, evidence.Strategy = "instructions", "rejected"
 			return errors.New("responses instructions must be a string or null")
 		}
 	}
 	if received == nil || *received == "" {
-		rewritten, found, err := rewriteDeveloperModelInstructions(request.fields["input"], customized, modelInstructions)
+		rewritten, found, err := rewriteDeveloperModelInstructions(request.fields["input"], customized, modelInstructions, &evidence)
 		if err != nil {
 			return err
 		}
@@ -82,7 +94,9 @@ func rewriteReceivedModelInstructions(request *parsedResponsesRequest, customize
 	if !present || received == nil {
 		return nil
 	}
-	rendered, err := renderModelInstructions(*received, customized, modelInstructions)
+	evidence.Carrier = "instructions"
+	rendered, strategy, err := renderModelInstructions(*received, customized, modelInstructions)
+	evidence.Strategy = strategy
 	if err != nil {
 		return err
 	}
@@ -90,7 +104,7 @@ func rewriteReceivedModelInstructions(request *parsedResponsesRequest, customize
 	return nil
 }
 
-func rewriteDeveloperModelInstructions(raw json.RawMessage, customized bool, modelInstructions string) (json.RawMessage, bool, error) {
+func rewriteDeveloperModelInstructions(raw json.RawMessage, customized bool, modelInstructions string, evidence *capturer.InstructionRewrite) (json.RawMessage, bool, error) {
 	if len(raw) == 0 {
 		return nil, false, nil
 	}
@@ -100,7 +114,9 @@ func rewriteDeveloperModelInstructions(raw json.RawMessage, customized bool, mod
 	}
 	var rewriteErr error
 	found, err := transformFirstDeveloperText(&input, func(received string) string {
-		rendered, err := renderModelInstructions(received, customized, modelInstructions)
+		evidence.Carrier = "developer"
+		rendered, strategy, err := renderModelInstructions(received, customized, modelInstructions)
+		evidence.Strategy = strategy
 		if err != nil {
 			rewriteErr = err
 			return received
@@ -123,18 +139,18 @@ func rewriteDeveloperModelInstructions(raw json.RawMessage, customized bool, mod
 	return rewritten, true, nil
 }
 
-func renderModelInstructions(input string, appendIfMissing bool, modelInstructions string) (string, error) {
+func renderModelInstructions(input string, appendIfMissing bool, modelInstructions string) (string, string, error) {
 	lines := instructionLines(input)
 	starts := matchingInstructionLines(lines, hpatchInstructionsStartMarker)
 	ends := matchingInstructionLines(lines, hpatchInstructionsEndMarker)
 	if len(starts) != 0 || len(ends) != 0 {
 		if len(starts) != 1 || len(ends) != 1 {
-			return "", errors.New("responses instructions contain incomplete hpatch markers")
+			return "", "rejected", errors.New("responses instructions contain incomplete hpatch markers")
 		}
 		if starts[0].number >= ends[0].number {
-			return "", errors.New("responses instructions contain reversed hpatch markers")
+			return "", "rejected", errors.New("responses instructions contain reversed hpatch markers")
 		}
-		return input[:starts[0].start] + modelInstructions + input[ends[0].end:], nil
+		return input[:starts[0].start] + modelInstructions + input[ends[0].end:], "marked", nil
 	}
 
 	stockHeadings := matchingInstructionLines(lines, stockEditHeading)
@@ -143,10 +159,10 @@ func renderModelInstructions(input string, appendIfMissing bool, modelInstructio
 	stockExecInstructions := matchingInstructionLines(lines, stockExecInstruction)
 	if len(stockHeadings) == 1 && len(stockInstructions) == 1 && len(stockRGInstructions) == 1 && len(stockExecInstructions) == 1 {
 		if stockInstructions[0].number == stockHeadings[0].number+2 && lines[stockHeadings[0].number].text == "" {
-			return renderStockModelInstructions(lines, stockHeadings[0], stockInstructions[0], stockRGInstructions[0], stockExecInstructions[0], modelInstructions), nil
+			return renderStockModelInstructions(lines, stockHeadings[0], stockInstructions[0], stockRGInstructions[0], stockExecInstructions[0], modelInstructions), "stock-gpt5", nil
 		}
 		if !appendIfMissing {
-			return "", errors.New("stock file-editing heading, separator, and instruction are not one section")
+			return "", "rejected", errors.New("stock file-editing heading, separator, and instruction are not one section")
 		}
 	}
 
@@ -162,20 +178,20 @@ func renderModelInstructions(input string, appendIfMissing bool, modelInstructio
 		stockRGInstructions[0].number == workHeadings[0].number+2 &&
 		lines[workHeadings[0].number].text == "" &&
 		stockExecInstructions[0].number > stockRGInstructions[0].number {
-		return renderStockModelInstructions(lines, stockRGInstructions[0], stockRGInstructions[0], stockRGInstructions[0], stockExecInstructions[0], modelInstructions), nil
+		return renderStockModelInstructions(lines, stockRGInstructions[0], stockRGInstructions[0], stockRGInstructions[0], stockExecInstructions[0], modelInstructions), "stock-astra", nil
 	}
 
 	if appendIfMissing {
 		if input == "" {
-			return modelInstructions, nil
+			return modelInstructions, "custom-append", nil
 		}
 		separator := "\n\n"
 		if strings.HasSuffix(input, "\n") {
 			separator = "\n"
 		}
-		return input + separator + modelInstructions, nil
+		return input + separator + modelInstructions, "custom-append", nil
 	}
-	return "", errors.New("responses instructions match neither stock nor marked hpatch guidance")
+	return "", "rejected", errors.New("responses instructions match neither stock nor marked hpatch guidance")
 }
 
 func renderStockModelInstructions(lines []instructionLine, first, last, rgInstruction, execInstruction instructionLine, modelInstructions string) string {

@@ -38,13 +38,21 @@ var recoveryTemplate = template.Must(template.New("hpatch-recovery").Parse(recov
 // Unknown model IDs use the default workflow; Astra-prefixed variants share the Astra workflow.
 func InstructionsForModel(model string, compactModelProtocol bool) string {
 	selected := instructions
-	if model == "gpt-6-astra" || strings.HasPrefix(model, "gpt-6-astra-") {
+	if WorkflowForModel(model) == "astra" {
 		selected = astraInstructions
 	}
 	if !compactModelProtocol {
 		return nativeInstructions(selected)
 	}
 	return selected
+}
+
+// WorkflowForModel identifies the selected wording independently of the incoming prompt shape.
+func WorkflowForModel(model string) string {
+	if model == "gpt-6-astra" || strings.HasPrefix(model, "gpt-6-astra-") {
+		return "astra"
+	}
+	return "default"
 }
 
 func nativeInstructions(instructions string) string {

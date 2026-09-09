@@ -1844,146 +1844,6 @@ func TestWorkerCommandBashRoundTripsQuotedArgument(t *testing.T) {
 	}
 }
 
-func TestShellRecoversLunaCodeModePrograms(t *testing.T) {
-	const legacy = "const result = await tools.exec_command({\"cmd\":\"git status --short\",\"login\":false,\"max_output_tokens\":24000});\n" +
-		"text(JSON.stringify(Object.assign({}, result, {\"retained\":false})));"
-	tests := []struct {
-		name  string
-		input string
-	}{
-		{
-			name:  "legacy exec_command carrier",
-			input: legacy,
-		},
-		{
-			name:  "exec program",
-			input: "const r = await tools.exec({command:\"git show --stat\",workdir:\"/workspace\"});\ntext(r);",
-		},
-		{
-			name:  "write_stdin program",
-			input: "const r = await tools.write_stdin({chars:\"\",session_id:83733,yield_time_ms:30000});\ntext(r.output);",
-		},
-		{
-			name:  "same-line exec projection",
-			input: "const r = await tools.exec({command:\"printf ok\"}); text(r);",
-		},
-		{
-			name:  "same-line write_stdin projection",
-			input: "const r = await tools.write_stdin({chars:\"\",session_id:83733}); text(r.output);",
-		},
-		{
-			name: "multiple tool calls remain unchanged",
-			input: "const r = await tools.exec({command:\"git show --stat\"});\n" +
-				"text(r);\nconst r = await tools.write_stdin({chars:\"\",session_id:83733});\ntext(r.output);",
-		},
-		{
-			name:  "leading whitespace",
-			input: "\n \tconst r = await tools.exec({command:\"printf ok\"});\ntext(r);",
-		},
-	}
-
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			recovered := lunaShellCodeModeProgram(
-				toolContribution{PluginID: "builtin.shell", Name: "shell"},
-				test.input,
-			)
-			if !recovered {
-				t.Fatal("Code Mode program was not recovered")
-			}
-			warningInput := misuseWarningProjection(lunaShellRecoveryWarning)
-			want := warningInput + test.input
-
-			translator := hpatchTranslatorFunc(func(context.Context, string, string) ([]byte, error) {
-				return []byte(testTranslatedPatch), nil
-			})
-			transform, proxy, _, _ := newHPatchTestTransform(t, translator)
-			visible, err := transform.TransformJSON(mustTestJSON(t, map[string]any{
-				"status": "completed",
-				"output": []any{map[string]any{
-					"type": "custom_tool_call", "id": "item-shell", "call_id": "call-shell",
-					"name": "shell", "input": test.input, "status": "completed",
-				}},
-			}))
-			if err != nil {
-				t.Fatal(err)
-			}
-			var response struct {
-				Output []map[string]json.RawMessage `json:"output"`
-			}
-			if err := json.Unmarshal(visible, &response); err != nil {
-				t.Fatal(err)
-			}
-			if len(response.Output) != 1 || jsonString(response.Output[0], "name") != "exec" ||
-				jsonString(response.Output[0], "input") != want {
-				t.Fatalf("recovered shell carrier = %s", visible)
-			}
-			history, ok := proxy.history(transform.historySessionID, "call-shell")
-			if !ok || history.toolName != "shell" || history.carrierPayload != want || !history.replayCarrier {
-				t.Fatalf("recovered shell history = %+v, available %t", history, ok)
-			}
-
-			replay, err := parseResponsesRequest(mustTestJSON(t, map[string]any{
-				"input": []any{
-					response.Output[0],
-					map[string]any{
-						"type": "custom_tool_call_output", "call_id": "call-shell", "output": "command output",
-					},
-				},
-			}))
-			if err != nil {
-				t.Fatal(err)
-			}
-			if err := proxy.reconcileInputPrefix(&replay, transform.historySessionID); err != nil {
-				t.Fatal(err)
-			}
-			firstReplay := bytes.Clone(replay.fields["input"])
-			if err := proxy.reconcileInputPrefix(&replay, transform.historySessionID); err != nil {
-				t.Fatal(err)
-			}
-			if !bytes.Equal(replay.fields["input"], firstReplay) {
-				t.Fatalf("recovered carrier replay was not idempotent: %s", replay.fields["input"])
-			}
-			var replayed []map[string]json.RawMessage
-			if err := json.Unmarshal(replay.fields["input"], &replayed); err != nil {
-				t.Fatal(err)
-			}
-			if len(replayed) != 2 || jsonString(replayed[0], "name") != "exec" ||
-				jsonString(replayed[0], "input") != want ||
-				jsonString(replayed[1], "output") != "command output" {
-				t.Fatalf("recovered carrier replay = %s", replay.fields["input"])
-			}
-		})
-	}
-}
-
-func TestLunaShellCodeModeProgramRejectsNearMisses(t *testing.T) {
-	contribution := toolContribution{PluginID: "builtin.shell", Name: "shell"}
-	valid := "const r = await tools.exec({command:\"printf ok\"});\ntext(r);"
-	for _, input := range []string{
-		"printf ok",
-		"#!node\n" + valid,
-		"#!params={}\n" + valid,
-		"# const r = await tools.exec({command:\"printf ok\"});\ntext(r);",
-		"// comment\n" + valid,
-		"const r = tools.exec({command:\"printf ok\"});\ntext(r);",
-		"const r = await other.exec({command:\"printf ok\"});\ntext(r);",
-		"const r = await tools.exec({command:\"printf ok\"});\nconsole.log(r);",
-		"printf '%s' 'const r = await tools.exec({command:\"printf ok\"}); text(r);'",
-		"text(\"before\");\n" + valid,
-	} {
-		if lunaShellCodeModeProgram(contribution, input) {
-			t.Errorf("near-miss shell input recovered: %q", input)
-		}
-	}
-	if lunaShellCodeModeProgram(
-		toolContribution{PluginID: "configured", Name: "shell"},
-		valid,
-	) {
-		t.Error("configured shell plugin received Luna recovery")
-	}
-}
-
 func TestShellInterpreterWrapperAddsWarning(t *testing.T) {
 	contribution := toolContribution{PluginID: "builtin.shell", Name: "shell"}
 	for _, test := range []struct {
@@ -2205,7 +2065,7 @@ func TestShellStacksDistinctMisuseWarnings(t *testing.T) {
 		jsonQuoted(command) +
 		",\"login\":false});\ntext(JSON.stringify(result));"
 	recovered := call(t, recoveredInput)
-	wantPrefix := misuseWarningProjection(lunaShellRecoveryWarning) + wrapperInput + heredocInput
+	wantPrefix := misuseWarningProjection(shellCodeModeRecoveryWarning) + wrapperInput + heredocInput
 	if recovered != wantPrefix+recoveredInput {
 		t.Fatalf("recovered shell warnings did not stack in order:\n%s", recovered)
 	}
@@ -3626,5 +3486,143 @@ func TestHPatchReplacementSupportsTopLevelCodeModeForGrok(t *testing.T) {
 	}
 	if _, err := translateGrokRequest(mustTestJSON(t, request.fields)); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestShellRecoversCodeModePrograms(t *testing.T) {
+	const legacy = "const result = await tools.exec_command({\"cmd\":\"git status --short\",\"login\":false,\"max_output_tokens\":24000});\n" +
+		"text(JSON.stringify(Object.assign({}, result, {\"retained\":false})));"
+	tests := []struct {
+		name  string
+		input string
+	}{
+		{name: "original standalone helper", input: `text("I cannot send collaboration tool from exec")`},
+		{name: "original catalog lookup", input: `const hits = ALL_TOOLS.filter(x => /send_message|collaboration/.test(x.name+" "+x.description)); text(hits);`},
+		{name: "commented nested call", input: "// Code Mode\ntext(await tools.exec({}));"},
+		{
+			name:  "legacy exec_command carrier",
+			input: legacy,
+		},
+		{
+			name:  "exec program",
+			input: "const r = await tools.exec({command:\"git show --stat\",workdir:\"/workspace\"});\ntext(r);",
+		},
+		{
+			name:  "write_stdin program",
+			input: "const r = await tools.write_stdin({chars:\"\",session_id:83733,yield_time_ms:30000});\ntext(r.output);",
+		},
+		{
+			name:  "same-line exec projection",
+			input: "const r = await tools.exec({command:\"printf ok\"}); text(r);",
+		},
+		{
+			name:  "same-line write_stdin projection",
+			input: "const r = await tools.write_stdin({chars:\"\",session_id:83733}); text(r.output);",
+		},
+		{
+			name: "multiple tool calls remain unchanged",
+			input: "const r = await tools.exec({command:\"git show --stat\"});\n" +
+				"text(r);\nconst s = await tools.write_stdin({chars:\"\",session_id:83733});\ntext(r.output);",
+		},
+		{
+			name:  "leading whitespace",
+			input: "\n \tconst r = await tools.exec({command:\"printf ok\"});\ntext(r);",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			recovered := shellCodeModeRecovery(
+				toolContribution{PluginID: "builtin.shell", Name: "shell"},
+				test.input,
+			)
+			if !recovered {
+				t.Fatal("Code Mode program was not recovered")
+			}
+			warningInput := misuseWarningProjection(shellCodeModeRecoveryWarning)
+			want := warningInput + test.input
+
+			translator := hpatchTranslatorFunc(func(context.Context, string, string) ([]byte, error) {
+				return []byte(testTranslatedPatch), nil
+			})
+			transform, proxy, _, _ := newHPatchTestTransform(t, translator)
+			visible, err := transform.TransformJSON(mustTestJSON(t, map[string]any{
+				"status": "completed",
+				"output": []any{map[string]any{
+					"type": "custom_tool_call", "id": "item-shell", "call_id": "call-shell",
+					"name": "shell", "input": test.input, "status": "completed",
+				}},
+			}))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var response struct {
+				Output []map[string]json.RawMessage `json:"output"`
+			}
+			if err := json.Unmarshal(visible, &response); err != nil {
+				t.Fatal(err)
+			}
+			if len(response.Output) != 1 || jsonString(response.Output[0], "name") != "exec" ||
+				jsonString(response.Output[0], "input") != want {
+				t.Fatalf("recovered shell carrier = %s", visible)
+			}
+			history, ok := proxy.history(transform.historySessionID, "call-shell")
+			if !ok || history.toolName != "shell" || history.carrierPayload != want || !history.replayCarrier {
+				t.Fatalf("recovered shell history = %+v, available %t", history, ok)
+			}
+
+			replay, err := parseResponsesRequest(mustTestJSON(t, map[string]any{
+				"input": []any{
+					response.Output[0],
+					map[string]any{
+						"type": "custom_tool_call_output", "call_id": "call-shell", "output": "command output",
+					},
+				},
+			}))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := proxy.reconcileInputPrefix(&replay, transform.historySessionID); err != nil {
+				t.Fatal(err)
+			}
+			firstReplay := bytes.Clone(replay.fields["input"])
+			if err := proxy.reconcileInputPrefix(&replay, transform.historySessionID); err != nil {
+				t.Fatal(err)
+			}
+			if !bytes.Equal(replay.fields["input"], firstReplay) {
+				t.Fatalf("recovered carrier replay was not idempotent: %s", replay.fields["input"])
+			}
+			var replayed []map[string]json.RawMessage
+			if err := json.Unmarshal(replay.fields["input"], &replayed); err != nil {
+				t.Fatal(err)
+			}
+			if len(replayed) != 2 || jsonString(replayed[0], "name") != "exec" ||
+				jsonString(replayed[0], "input") != want ||
+				jsonString(replayed[1], "output") != "command output" {
+				t.Fatalf("recovered carrier replay = %s", replay.fields["input"])
+			}
+		})
+	}
+}
+
+func TestShellCodeModeRecoveryRejectsNearMisses(t *testing.T) {
+	contribution := toolContribution{PluginID: "builtin.shell", Name: "shell"}
+	valid := "const r = await tools.exec({command:\"printf ok\"});\ntext(r);"
+	for _, input := range []string{
+		"printf ok",
+		"#!node\n" + valid,
+		"#!params={}\n" + valid,
+		"# const r = await tools.exec({command:\"printf ok\"});\ntext(r);",
+		"printf '%s' 'const r = await tools.exec({command:\"printf ok\"}); text(r);'",
+	} {
+		if shellCodeModeRecovery(contribution, input) {
+			t.Errorf("near-miss shell input recovered: %q", input)
+		}
+	}
+	if shellCodeModeRecovery(
+		toolContribution{PluginID: "configured", Name: "shell"},
+		valid,
+	) {
+		t.Error("configured shell plugin received Luna recovery")
 	}
 }

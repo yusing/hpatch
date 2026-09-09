@@ -262,6 +262,15 @@ func classifyToolInput(name, input string) (string, string) {
 	if name != "exec" {
 		return "", ""
 	}
+	if first, _, ok := strings.Cut(input, "\n"); ok {
+		if encoded, ok := strings.CutPrefix(first, "text("); ok {
+			if encoded, ok := strings.CutSuffix(encoded, ");"); ok {
+				if warning, err := strconv.Unquote(encoded); err == nil && strings.HasPrefix(warning, "shell: [shell-code-mode-recovered] ") {
+					return "code_mode_recovery", "shell-code-mode-recovered"
+				}
+			}
+		}
+	}
 	switch {
 	case strings.HasPrefix(input, hpatchApplyCarrierPrefix):
 		return "apply_patch", ""
@@ -290,6 +299,9 @@ func classifyToolInput(name, input string) (string, string) {
 }
 
 func hpatchDiagnosticCode(text string) string {
+	if strings.HasPrefix(text, "shell: [shell-typescript-misuse] ") {
+		return "shell-typescript-misuse"
+	}
 	line, _, _ := strings.Cut(text, "\n")
 	command, reason, ok := strings.Cut(line, ", reason ")
 	if !ok || !strings.Contains(command, ": command ") {

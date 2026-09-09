@@ -353,7 +353,7 @@ func (p *hpatchProxy) prepareRequest(ctx context.Context, request *parsedRespons
 		return nil, errors.New("hpatch rewrite requires valid turn metadata")
 	}
 	modelInstructions := codexinstructions.InstructionsForModel(request.model(), p.compactModelProtocol)
-	if err := rewriteReceivedModelInstructions(request, p.customizedInstructions, modelInstructions); err != nil {
+	if err := rewriteReceivedModelInstructions(ctx, request, p.customizedInstructions, modelInstructions); err != nil {
 		return nil, err
 	}
 	recipient := metadata.AgentName
@@ -1181,7 +1181,7 @@ func (t *hpatchResponseTransform) translateRegisteredTool(contribution toolContr
 		return history, nil
 	}
 	pathPrefix := t.shellDirectory + string(os.PathSeparator)
-	recovered := !t.nativeTools && lunaShellCodeModeProgram(contribution, input)
+	recovered := !t.nativeTools && shellCodeModeRecovery(contribution, input)
 	var translation toolplugin.Translation
 	var err error
 	effectiveInput := input
@@ -1209,6 +1209,9 @@ func (t *hpatchResponseTransform) translateRegisteredTool(contribution toolContr
 			return hpatchHistory{}, fmt.Errorf("translate registered tool %s: %w", contribution.Name, err)
 		}
 	}
+	if !recovered && !translation.Rejected && shellTypeScriptMisuse(contribution, translation.Arguments) {
+		translation = toolplugin.Translation{Rejected: true, Diagnostic: shellTypeScriptDiagnostic}
+	}
 	var resultMetadata map[string]json.RawMessage
 	if translation.Carrier.RetainInput != nil {
 		resultMetadata = map[string]json.RawMessage{"retained": mustMarshalJSON(false)}
@@ -1231,10 +1234,10 @@ func (t *hpatchResponseTransform) translateRegisteredTool(contribution toolContr
 	catWriteCarrier := false
 	var misuseWarnings []string
 	if recovered {
-		misuseWarnings = append(misuseWarnings, lunaShellRecoveryWarning)
+		misuseWarnings = append(misuseWarnings, shellCodeModeRecoveryWarning)
 		payload = input
 		if err := t.carriers.require(name, kind); err != nil {
-			return hpatchHistory{}, fmt.Errorf("%s Code Mode exec recovery: %w", contribution.Name, err)
+			return hpatchHistory{}, err
 		}
 	} else if translation.Rejected {
 		if err := t.carriers.require(name, kind); err != nil {
@@ -1244,9 +1247,13 @@ func (t *hpatchResponseTransform) translateRegisteredTool(contribution toolContr
 			diagnostic = contribution.Name + " rejected the model input"
 		}
 		if t.nativeTools {
+			command := "printf %s " + shellQuoteArgument(diagnostic)
+			if diagnostic == shellTypeScriptDiagnostic {
+				command = hpatchNativeDiagnosticMarker + strconv.Quote(diagnostic) + "\n" + command
+			}
 			payload = renderExecCarrier(
 				kind,
-				execCommandArguments("printf %s "+shellQuoteArgument(diagnostic), nil),
+				execCommandArguments(command, nil),
 				false,
 				nil,
 			)

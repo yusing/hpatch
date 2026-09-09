@@ -20,7 +20,7 @@ func TestRenderModelInstructionsAtInstructionLifecycles(t *testing.T) {
 		"subagent post compaction",
 	} {
 		t.Run(lifecycle, func(t *testing.T) {
-			got, err := renderModelInstructions(stock, false, codexinstructions.InstructionsForModel("", false))
+			got, _, err := renderModelInstructions(stock, false, codexinstructions.InstructionsForModel("", false))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -28,6 +28,33 @@ func TestRenderModelInstructionsAtInstructionLifecycles(t *testing.T) {
 				t.Fatalf("renderModelInstructions() = %q, want %q", got, want)
 			}
 		})
+	}
+}
+
+func TestInstructionRewriteStrategiesAcrossModels(t *testing.T) {
+	astra := stockAstraIntroduction + "\n" + stockWorkHeading + "\n\n" + stockRGInstruction + "\n" + stockExecInstruction
+	for _, model := range []string{"gpt-6-astra", "gpt-5.6-luna"} {
+		guidance := codexinstructions.InstructionsForModel(model, false)
+		for _, test := range []struct {
+			name, input, strategy string
+			customized            bool
+		}{
+			{"GPT5 override", stockModelInstructionsForTest("", ""), "stock-gpt5", true},
+			{"Astra override", astra, "stock-astra", true},
+			{"marked", codexinstructions.InstructionsForModel("other", false), "marked", false},
+			{"custom", "my custom prompt", "custom-append", true},
+			{"unsupported", "my custom prompt", "rejected", false},
+		} {
+			t.Run(model+"/"+test.name, func(t *testing.T) {
+				got, strategy, err := renderModelInstructions(test.input, test.customized, guidance)
+				if strategy != test.strategy || (err != nil) != (strategy == "rejected") {
+					t.Fatalf("strategy=%q, error=%v", strategy, err)
+				}
+				if err == nil && !strings.Contains(got, guidance) {
+					t.Fatal("request model's guidance was not selected")
+				}
+			})
+		}
 	}
 }
 
@@ -67,7 +94,7 @@ func TestRewriteGPT5RecordedEditingFragments(t *testing.T) {
 						map[string]any{"type": "message", "role": "developer", "content": stock},
 					})
 				}
-				if err := rewriteReceivedModelInstructions(&request, false, guidance); err != nil {
+				if err := rewriteReceivedModelInstructions(t.Context(), &request, false, guidance); err != nil {
 					t.Fatal(err)
 				}
 				var got string
@@ -85,7 +112,7 @@ func TestRewriteGPT5RecordedEditingFragments(t *testing.T) {
 				if got != "before\n"+guidance+"after\n" {
 					t.Fatal("recorded stock rewrite changed unrelated content or retained displaced guidance")
 				}
-				refreshed, err := renderModelInstructions(got, false, guidance)
+				refreshed, _, err := renderModelInstructions(got, false, guidance)
 				if err != nil || refreshed != got {
 					t.Fatalf("recorded stock guidance refresh is not idempotent: %v", err)
 				}
@@ -119,7 +146,7 @@ func TestRewriteAstraStockModelInstructions(t *testing.T) {
 						map[string]any{"type": "message", "role": "developer", "content": stock},
 					})
 				}
-				if err := rewriteReceivedModelInstructions(&request, false, guidance); err != nil {
+				if err := rewriteReceivedModelInstructions(t.Context(), &request, false, guidance); err != nil {
 					t.Fatal(err)
 				}
 				var got string
@@ -139,7 +166,7 @@ func TestRewriteAstraStockModelInstructions(t *testing.T) {
 				if got != want {
 					t.Fatal("Astra rewrite did not preserve unrelated stock instructions")
 				}
-				refreshed, err := renderModelInstructions(got, false, guidance)
+				refreshed, _, err := renderModelInstructions(got, false, guidance)
 				if err != nil || refreshed != got {
 					t.Fatalf("Astra guidance refresh is not idempotent: %v", err)
 				}
@@ -156,7 +183,7 @@ func TestRewriteAstraStockModelInstructions(t *testing.T) {
 		{"partial old editing section", stock + "\n" + stockEditHeading},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			if _, err := renderModelInstructions(test.input, false, codexinstructions.InstructionsForModel("", false)); err == nil {
+			if _, _, err := renderModelInstructions(test.input, false, codexinstructions.InstructionsForModel("", false)); err == nil {
 				t.Fatal("changed stock instructions were accepted")
 			}
 		})
@@ -165,7 +192,7 @@ func TestRewriteAstraStockModelInstructions(t *testing.T) {
 
 func TestRenderModelInstructionsRefreshesInheritedConversation(t *testing.T) {
 	input := "custom prefix\n" + codexinstructions.InstructionsForModel("", false) + "custom suffix\n"
-	got, err := renderModelInstructions(input, false, codexinstructions.InstructionsForModel("", false))
+	got, _, err := renderModelInstructions(input, false, codexinstructions.InstructionsForModel("", false))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -184,7 +211,7 @@ func TestRenderModelInstructionsAppendsForCustomizedModelInstructions(t *testing
 		{name: "malformed stock", input: strings.Replace(stockModelInstructionsForTest("", ""), stockEditHeading+"\n\n", stockEditHeading+"\ncustom guidance\n", 1)},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			got, err := renderModelInstructions(test.input, true, codexinstructions.InstructionsForModel("", false))
+			got, _, err := renderModelInstructions(test.input, true, codexinstructions.InstructionsForModel("", false))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -208,7 +235,7 @@ func TestRenderModelInstructionsFailsClosedForChangedUpstreamInstructions(t *tes
 		{name: "reversed markers", input: hpatchInstructionsEndMarker + "\n" + hpatchInstructionsStartMarker + "\n", customized: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			if _, err := renderModelInstructions(test.input, test.customized, codexinstructions.InstructionsForModel("", false)); err == nil {
+			if _, _, err := renderModelInstructions(test.input, test.customized, codexinstructions.InstructionsForModel("", false)); err == nil {
 				t.Fatal("renderModelInstructions() succeeded")
 			}
 		})
@@ -226,7 +253,7 @@ func TestRewriteReceivedModelInstructionsLeavesMissingAndNullValues(t *testing.T
 		t.Run(test.name, func(t *testing.T) {
 			before := string(test.fields["instructions"])
 			request := parsedResponsesRequest{fields: test.fields}
-			if err := rewriteReceivedModelInstructions(&request, false, codexinstructions.InstructionsForModel("", false)); err != nil {
+			if err := rewriteReceivedModelInstructions(t.Context(), &request, false, codexinstructions.InstructionsForModel("", false)); err != nil {
 				t.Fatal(err)
 			}
 			if got := string(request.fields["instructions"]); got != before {
@@ -249,7 +276,7 @@ func TestRewriteReceivedModelInstructionsUsesDeveloperCarrierWhenTopLevelIsEmpty
 		}),
 	}}
 
-	if err := rewriteReceivedModelInstructions(&request, false, codexinstructions.InstructionsForModel("", false)); err != nil {
+	if err := rewriteReceivedModelInstructions(t.Context(), &request, false, codexinstructions.InstructionsForModel("", false)); err != nil {
 		t.Fatal(err)
 	}
 	if got := string(request.fields["instructions"]); got != `""` {

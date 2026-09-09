@@ -227,10 +227,29 @@ Acceptance:
     without calling the continuation operation or starting the worker again. No router session
     record or plugin-defined continuation surface is created.
 16. For one built-in shell input, the router emits one warning for every distinct detected
-    interpreter-wrapper or heredoc kind rather than stopping after the first. Recovered Code Mode
-    JavaScript emits its recovery warning first and then every detected nested shell warning.
-    Warning insertion preserves the exact submitted command, carrier result, replay behavior, and
-    metric classification.
+    interpreter-wrapper or heredoc kind rather than stopping after the first. Warning insertion
+    preserves the exact submitted command, carrier result, replay behavior, and metric classification.
+    For default or explicitly selected Bash, the router parses the normalized body as Bash first.
+    Valid Bash always retains shell semantics. A body that fails Bash parsing but parses as
+    TypeScript (including JavaScript) is rejected with `shell-typescript-misuse` before execution,
+    except for the established Code Mode recovery below.
+    The result explains how to submit Code Mode helpers or choose an explicit script interpreter;
+    rejected input is never automatically executed as Code Mode. Neither the script nor its
+    command template runs. Headers and retained-script resolution use the normal translator;
+    configured plugins, other interpreters, and bodies invalid in both languages retain their
+    existing behavior. JSON, SSE, native, and Code Mode carriers deliver the same diagnostic,
+    and replay retains the original shell call and its rejection result.
+    With a Code Mode carrier available, the built-in shell recovers headerless JavaScript that
+    fails Bash parsing, parses as JavaScript, and has syntax-tree references to the Code Mode
+    runtime: a `tools` method call, `ALL_TOOLS`, or a direct `text`, `image`, `audio`, or
+    `generatedImage` call. Formatting, comments, statement order, and awaiting style do not
+    determine recovery. Strings, comments, and property names are not runtime references.
+    A runtime name bound or assigned anywhere in the program is conservatively excluded from
+    recovery evidence; local lookalikes must not be treated as Code Mode globals.
+    Explicit interpreter selections, directives, and retained references never opt into recovery.
+    Recovery preserves the exact program, prepends `shell-code-mode-recovered` guidance followed
+    by detected nested shell warnings, and replays the recovered Code Mode carrier. Native-only
+    requests and other misplaced JavaScript/TypeScript use the rejection behavior above.
 17. Retain, read, edit, and rerun preserve the script body and original model-visible call.
     Unsafe thread IDs reject before runtime creation; unsafe artifact IDs cannot redirect
     retention, reads, edits, expiry, or cleanup. A retained script cannot read or overwrite

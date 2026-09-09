@@ -37,6 +37,12 @@ session start, post-compaction, subagent start, and subagent post-compaction ins
 an inherited side conversation refreshes the marked section already in its prompt. Neither
 `make install`, `make uninstall`, nor the router creates, changes, or removes an instruction file.
 
+The capture evidence in `REQ-METRICS-001` records the actual instruction carrier, matched rewrite
+strategy, selected model workflow, and whether a custom instruction file was configured. Prompt
+shape matching tries both stock shapes independently of workflow selection, including an
+Astra-shaped override sent to a non-Astra model. Evidence describes the rewrite decision, not
+proof that the model followed the guidance or that a later forwarding step succeeded.
+
 The recovery template adjacent to the central source owns dynamic recovery prose. After each
 wholly row-stale evaluator rejection, the router supplies only the current handles and summaries
 for rejected target-bearing commands. Other evaluator rejections direct the model to one complete

@@ -271,6 +271,21 @@ credentials. Provider-reported usage is authoritative; local token estimates
 are not billing figures. Missing cache telemetry is not a confirmed cache miss.
 See the [metrics reference](doc/spec/metrics.md) for interpretation.
 
+To investigate tool confusion, inspect the affected thread's rewrite decision and delivered
+calls in the JSON metrics:
+
+```sh
+curl -sS "${HPATCH_BASE_URL%/v1}/api/metrics" |
+  jq '.exchanges[] | {thread_id, model, instruction_rewrite, delivered_tools}'
+```
+
+`instruction_rewrite` separates the matched prompt shape from the selected model wording and
+shows whether custom instructions were configured. A `shell-typescript-misuse` diagnostic means
+a Bash submission was rejected as valid TypeScript/JavaScript before execution, not silently
+rerouted. `shell-code-mode-recovered` instead identifies an established Code Mode call recovered
+with a warning to use `functions.exec` directly. Missing fields mean the evidence was not recorded. Export capture or metrics before
+shutdown if you need to investigate later; neither export contains raw prompts or scripts.
+
 ## Configuration and troubleshooting
 
 - **Custom instructions:** Hpatch supplies tool guidance in memory without
