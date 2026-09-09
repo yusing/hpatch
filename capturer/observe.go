@@ -128,7 +128,7 @@ func observeResponseJSON(payload []byte, record *captureRecord, codec tokenizer.
 		}
 		return nil, false
 	}
-	if event.Type == "error" {
+	if event.Type == "error" || event.Type == "codex.response.metadata" {
 		if record.Boundary == "provider" && record.ProviderResponse != nil {
 			for name, raw := range event.Headers {
 				var value string
@@ -143,8 +143,11 @@ func observeResponseJSON(payload []byte, record *captureRecord, codec tokenizer.
 				}
 			}
 		}
-		record.ResponseStatus = "error"
-		return nil, true
+		if event.Type == "error" {
+			record.ResponseStatus = "error"
+			return nil, true
+		}
+		return nil, false
 	}
 	if len(event.Item) != 0 {
 		observeOutputItem(event.Item, record, codec)

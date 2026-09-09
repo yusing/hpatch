@@ -87,7 +87,12 @@ active response completes. Shutdown closes active, idle, and dialing entries.
 Cancellation, early body close, malformed or oversized messages, and a stream
 ending before a valid terminal event discard the connection. Individual JSON
 messages and reconstructed nonstream output have a 64 MiB router buffer budget.
-`--timeout` covers pool wait, handshake, send, and first provider message;
+`--timeout` covers pool wait, handshake, send, and the first non-ancillary
+response or error message. An ancillary-only stream does not reset that deadline.
+The router buffers at most 64 KiB of ancillary startup messages while deciding
+the HTTP status. Successful streaming responses preserve their original order;
+an error returns only its structured JSON body and provider status/headers,
+while the ancillary prefix remains part of provider capture.
 `--stream-idle-timeout` limits gaps between complete WebSocket messages, while
 HTTP response streams retain their byte-inactivity timeout.
 

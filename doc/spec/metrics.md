@@ -186,6 +186,10 @@ reinterpreted as observed absence. Each retry retains its own observed header fi
 Each provider attempt MUST retain `provider_response` separately from requested-model identity
 and normalized usage. It contains only the provider's `x-request-id`, `openai-model` header,
 latest explicitly supplied response-envelope `model`, and terminal cached-token evidence.
+The same allowlisted header identifiers are observed in `codex.response.metadata`
+events. Current per-response metadata replaces corresponding handshake evidence,
+including on reused connections. Metadata observation remains terminal-neutral
+and provider-boundary-only; arbitrary metadata headers are not retained.
 Identifiers MUST be limited to 256 ASCII letters, digits, `-`, `_`, `.`, `:`, and `/`;
 missing or invalid identifiers are omitted. The response model MUST NOT fall back to the
 request model. Header and body model values remain separate provider claims, not proof of

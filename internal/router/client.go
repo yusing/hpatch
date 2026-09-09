@@ -736,6 +736,18 @@ func encodeSSEEventPayload(lines []string, payload []byte) string {
 	return result.String()
 }
 
+// Source: codex-rs/codex-api/src/endpoint/responses_websocket.rs:749:777 and
+// codex-rs/codex-api/src/sse/responses.rs:524:535. These carry metadata rather
+// than response acceptance or a terminal state.
+func isResponseAncillaryEvent(kind string) bool {
+	switch kind {
+	case "codex.response.metadata", "codex.rate_limits", "responsesapi.websocket_timing":
+		return true
+	default:
+		return false
+	}
+}
+
 func observeResponseTerminal(body []byte, streamEvent bool) responseTerminalState {
 	if streamEvent {
 		payload := strings.TrimSpace(string(body))
@@ -755,12 +767,7 @@ func observeResponseTerminal(body []byte, streamEvent bool) responseTerminalStat
 	}
 	status := envelope.Status
 	if streamEvent {
-		// Codex emits these ancillary events alongside Responses on both SSE
-		// and WebSockets. They carry metadata, not a response terminal state.
-		// Source: codex-rs/codex-api/src/endpoint/responses_websocket.rs:749:777
-		// and codex-rs/codex-api/src/sse/responses.rs:524:535.
-		switch envelope.Type {
-		case "codex.response.metadata", "codex.rate_limits", "responsesapi.websocket_timing":
+		if isResponseAncillaryEvent(envelope.Type) {
 			return responseTerminalUnknown
 		}
 		if !strings.HasPrefix(envelope.Type, "response.") || envelope.Type == "response." {

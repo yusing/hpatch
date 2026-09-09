@@ -437,12 +437,43 @@ func (c *providerClient) forwardWebSocket(startCtx, responseCtx context.Context,
 	if err := entry.conn.Write(requestCtx, websocket.MessageText, payload); err != nil {
 		return fail(err)
 	}
-	first, err := entry.next(requestCtx, lease)
-	if err != nil {
-		return fail(err)
+	var prefetched [][]byte
+	var event struct {
+		Type       string                     `json:"type"`
+		Status     int                        `json:"status"`
+		StatusCode int                        `json:"status_code"`
+		Headers    map[string]json.RawMessage `json:"headers"`
 	}
-	if !json.Valid(first) {
-		return fail(errors.New("provider websocket sent invalid JSON"))
+	prefixBytes := 0
+	for {
+		if err := startCtx.Err(); err != nil {
+			return fail(err)
+		}
+		if err := requestCtx.Err(); err != nil {
+			return fail(err)
+		}
+		message, err := entry.next(requestCtx, lease)
+		if err != nil {
+			return fail(err)
+		}
+		// Decode into a fresh envelope; absent fields must not retain earlier
+		// ancillary metadata while deciding the actual response status.
+		event.Type, event.Status, event.StatusCode, event.Headers = "", 0, 0, nil
+		if json.Unmarshal(message, &event) != nil {
+			return fail(errors.New("provider websocket sent invalid JSON"))
+		}
+		if !isResponseAncillaryEvent(event.Type) {
+			if event.Type == "error" {
+				prefetched = nil
+			}
+			prefetched = append(prefetched, message)
+			break
+		}
+		prefixBytes += len(message)
+		if prefixBytes > maxUpstreamSniffBytes {
+			return fail(errors.New("provider websocket ancillary prefix exceeds the router inspection budget"))
+		}
+		prefetched = append(prefetched, message)
 	}
 	if !stopStart() {
 		err := startCtx.Err()
@@ -451,16 +482,9 @@ func (c *providerClient) forwardWebSocket(startCtx, responseCtx context.Context,
 		}
 		return fail(err)
 	}
-	result := &webSocketResponseBody{entry: entry, lease: lease, ctx: requestCtx, cancel: cancel, observation: observation, stream: stream, idleTimeout: c.streamIdleTimeout, first: first}
+	result := &webSocketResponseBody{entry: entry, lease: lease, ctx: requestCtx, cancel: cancel, observation: observation, stream: stream, idleTimeout: c.streamIdleTimeout, prefetched: prefetched}
 	result.stopCancellation = context.AfterFunc(requestCtx, func() { entry.release(lease, false) })
 	status := http.StatusOK
-	var event struct {
-		Type       string                     `json:"type"`
-		Status     int                        `json:"status"`
-		StatusCode int                        `json:"status_code"`
-		Headers    map[string]json.RawMessage `json:"headers"`
-	}
-	_ = json.Unmarshal(first, &event)
 	if event.Type == "error" {
 		status = event.Status
 		if status == 0 {
@@ -521,7 +545,7 @@ type webSocketResponseBody struct {
 	stream           bool
 	errorResponse    bool
 	idleTimeout      time.Duration
-	first            []byte
+	prefetched       [][]byte
 	buffer           bytes.Buffer
 	terminal         bool
 	closed           bool
@@ -538,8 +562,12 @@ func (body *webSocketResponseBody) Read(destination []byte) (int, error) {
 		if body.terminal {
 			return 0, io.EOF
 		}
-		payload := body.first
-		body.first = nil
+		var payload []byte
+		if len(body.prefetched) != 0 {
+			payload = body.prefetched[0]
+			body.prefetched[0] = nil
+			body.prefetched = body.prefetched[1:]
+		}
 		if payload == nil {
 			ctx := body.ctx
 			cancel := func() {}
@@ -673,7 +701,7 @@ func (body *webSocketResponseBody) Close() error {
 	}
 	body.observation.Finish(captureErr)
 	body.cancel()
-	body.first = nil
+	body.prefetched = nil
 	body.buffer.Reset()
 	return nil
 }
