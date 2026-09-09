@@ -2,6 +2,9 @@ package router
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/rand"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,9 +16,10 @@ import (
 // request data or an operational event history. It outlives router shutdown so
 // the launcher can report notices that could not reach Codex.
 type CriticalErrors struct {
-	mu       sync.Mutex
-	entries  []*criticalNotice
-	overflow uint64
+	mu             sync.Mutex
+	entries        []*criticalNotice
+	overflow       uint64
+	diagnosticSalt string
 }
 
 type criticalNotice struct {
@@ -24,7 +28,45 @@ type criticalNotice struct {
 	inFlight                       bool
 }
 
-func NewCriticalErrors() *CriticalErrors { return &CriticalErrors{} }
+func NewCriticalErrors() *CriticalErrors { return &CriticalErrors{diagnosticSalt: rand.Text()} }
+
+// criticalDiagnosticError carries producer-owned text that is safe to show to
+// the user. Error retains the original cause for the request path; critical
+// notices use only summary and code, never the wrapped error text.
+type criticalDiagnosticError struct {
+	err      error
+	code     string
+	summary  string
+	distinct bool
+}
+
+func (e *criticalDiagnosticError) Error() string { return e.err.Error() }
+func (e *criticalDiagnosticError) Unwrap() error { return e.err }
+
+func criticalDiagnostic(err error, code, summary string, distinct bool) error {
+	if err == nil {
+		return nil
+	}
+	if _, ok := errors.AsType[*criticalDiagnosticError](err); ok {
+		return err
+	}
+	return &criticalDiagnosticError{err: err, code: code, summary: summary, distinct: distinct}
+}
+
+func staticCriticalDiagnostic(code, summary string) error {
+	return &criticalDiagnosticError{err: errors.New(summary), code: code, summary: summary}
+}
+
+func (c *CriticalErrors) diagnosticReference(f *requestFinalization, err error) string {
+	mac := hmac.New(sha256.New, []byte(c.diagnosticSalt))
+	_, _ = fmt.Fprintf(mac, "%s|%d|%s|", f.failurePhase, f.upstreamStatusCode, f.upstreamTerminalState)
+	if err == nil {
+		_, _ = mac.Write([]byte("request failed without a wrapped error"))
+	} else {
+		_, _ = mac.Write([]byte(err.Error()))
+	}
+	return fmt.Sprintf("%x", mac.Sum(nil)[:6])
+}
 
 func (c *CriticalErrors) record(f *requestFinalization, err error) {
 	if c == nil || f.observation.outcome == requestOutcomeCompleted ||
@@ -44,9 +86,38 @@ func (c *CriticalErrors) record(f *requestFinalization, err error) {
 		case errors.Is(err, context.DeadlineExceeded), errors.Is(err, errUpstreamStreamIdleTimeout):
 			category, message = "timeout", "The upstream response timed out. Retry the turn."
 		case f.failurePhase == requestFailurePrepare:
-			message = "Hpatch could not prepare this request. Check the request error for the incompatible configuration or tool definition."
+			message = "Hpatch could not prepare this request. Check the session's tool and configuration compatibility before retrying."
 		case f.failurePhase == requestFailureTransform:
-			message = "Hpatch could not safely translate the response. No unsupported tool call was released; check the request error before retrying."
+			message = "Hpatch could not safely translate the response. No unsupported tool call was released."
+		}
+		if category == string(f.failurePhase) {
+			reference := c.diagnosticReference(f, err)
+			phase := requestFailureDescription(f.failurePhase)
+			diagnostic, _ := errors.AsType[*criticalDiagnosticError](err)
+			switch {
+			case diagnostic != nil:
+			case errors.Is(err, errUpstreamResponseWithoutTerminal):
+				state := f.upstreamTerminalState.String()
+				diagnostic = &criticalDiagnosticError{code: "missing_upstream_terminal:" + state, summary: "the upstream response ended without a completed or failed terminal state; observed state was " + state}
+			case errors.Is(err, errResponseWrite):
+				diagnostic = &criticalDiagnosticError{code: "downstream_response_write", summary: "the downstream response could not be written", distinct: true}
+			case f.failurePhase == requestFailureTerminalValidation && err == nil && f.upstreamTerminalState != responseTerminalUnknown:
+				diagnostic = &criticalDiagnosticError{code: "upstream_" + f.upstreamTerminalState.String(), summary: "the upstream response reported terminal state " + f.upstreamTerminalState.String()}
+			}
+			message += " Failure phase: " + phase + "."
+			if diagnostic != nil {
+				category += ":" + diagnostic.code
+				if diagnostic.distinct {
+					category += ":" + reference
+				}
+				message += " Cause: " + diagnostic.summary + ". Diagnostic reference: " + reference + "."
+			} else {
+				// Unknown errors may contain unquoted prompts, scripts, headers, or
+				// credentials. Retain a correlation reference and phase without
+				// copying arbitrary error text into a user-visible notice.
+				category += ":unclassified:" + reference
+				message += " The detailed cause was not safe for display. Diagnostic reference: " + reference + "."
+			}
 		}
 	}
 	// Observe this request's safe description before session deduplication. A
@@ -70,6 +141,27 @@ func (c *CriticalErrors) record(f *requestFinalization, err error) {
 	}
 	c.entries = append(c.entries, &criticalNotice{session: f.sessionID, category: category, message: message,
 		id: noticeID, count: 1})
+}
+
+func requestFailureDescription(phase requestFailurePhase) string {
+	switch phase {
+	case requestFailurePrepare:
+		return "request preparation"
+	case requestFailureForward:
+		return "upstream request forwarding"
+	case requestFailureInspectResponse:
+		return "upstream response inspection"
+	case requestFailureStreamIdleTimeout:
+		return "upstream stream waiting"
+	case requestFailureTransform:
+		return "response translation"
+	case requestFailureWriteResponse:
+		return "downstream response writing"
+	case requestFailureTerminalValidation:
+		return "terminal response validation"
+	default:
+		return "request processing"
+	}
 }
 
 func noticeText(n *criticalNotice) string {

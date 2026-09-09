@@ -1378,17 +1378,22 @@ func retainedEvaluated(emitted, evaluated string) string {
 
 func (t *hpatchResponseTransform) TransformJSON(payload []byte) ([]byte, error) {
 	transformed, _, err := t.transformResponse(payload, "")
-	return transformed, err
+	return transformed, criticalDiagnostic(err, "hpatch_json", "Hpatch response translation failed while processing a JSON response", true)
 }
 
 func (t *hpatchResponseTransform) Finish(streamEvent bool) error {
 	if streamEvent && len(t.pending) != 0 {
-		return errors.New("upstream stream ended with an incomplete hpatch call")
+		return staticCriticalDiagnostic("stream_ended_incomplete_hpatch_call", "the upstream stream ended with an incomplete Hpatch call")
 	}
 	return nil
 }
 
 func (t *hpatchResponseTransform) TransformSSE(payload []byte) ([][]byte, error) {
+	visible, err := t.transformSSE(payload)
+	return visible, criticalDiagnostic(err, "hpatch_sse", "Hpatch response translation failed while processing an upstream streaming event", true)
+}
+
+func (t *hpatchResponseTransform) transformSSE(payload []byte) ([][]byte, error) {
 	if len(t.subagentDeferred) != 0 {
 		t.subagentDeferred = t.retainCommentary(t.subagentDeferred...)
 		if len(t.subagentDeferred) == 0 {
@@ -1427,7 +1432,7 @@ func (t *hpatchResponseTransform) transformActivitySSE(payload []byte) ([][]byte
 	}
 	if err := json.Unmarshal(payload, &envelope); err != nil {
 		if len(t.pending) != 0 {
-			return nil, errors.New("decode pending hpatch stream event")
+			return nil, staticCriticalDiagnostic("malformed_pending_hpatch_event", "the upstream sent a malformed event while an Hpatch call was pending")
 		}
 		return [][]byte{payload}, nil
 	}
@@ -1464,13 +1469,13 @@ func (t *hpatchResponseTransform) transformActivitySSE(payload []byte) ([][]byte
 			if _, instrumented := t.commentaryTools[key]; instrumented {
 				itemID, callID := item.ID, item.CallID
 				if itemID == "" || callID == "" {
-					return nil, errors.New("upstream emitted malformed commentary function call")
+					return nil, staticCriticalDiagnostic("malformed_commentary_call", "the upstream emitted a malformed commentary function call")
 				}
 				if len(t.pending) >= maxHPatchPendingCalls {
-					return nil, errors.New("upstream commentary call capacity exceeded")
+					return nil, staticCriticalDiagnostic("commentary_call_capacity", "the upstream commentary call capacity was exceeded")
 				}
 				if _, exists := t.pending[itemID]; exists || t.pendingCallKnown(callID) {
-					return nil, errors.New("upstream reused commentary call identity")
+					return nil, staticCriticalDiagnostic("reused_commentary_call", "the upstream reused a commentary call identity")
 				}
 				t.pending[itemID] = hpatchPendingCall{
 					callID: callID, toolName: name, structured: true, added: bytes.Clone(payload),
@@ -1483,13 +1488,13 @@ func (t *hpatchResponseTransform) transformActivitySSE(payload []byte) ([][]byte
 		}
 		itemID, callID := item.ID, item.CallID
 		if item.Type != "custom_tool_call" || itemID == "" || callID == "" {
-			return nil, errors.New("upstream emitted malformed hpatch call")
+			return nil, staticCriticalDiagnostic("malformed_hpatch_call", "the upstream emitted a malformed Hpatch call")
 		}
 		if len(t.pending) >= maxHPatchPendingCalls {
-			return nil, errors.New("upstream hpatch call identity capacity exceeded")
+			return nil, staticCriticalDiagnostic("hpatch_call_capacity", "the upstream Hpatch call capacity was exceeded")
 		}
 		if _, exists := t.pending[itemID]; exists {
-			return nil, errors.New("upstream reused hpatch item ID")
+			return nil, staticCriticalDiagnostic("reused_hpatch_item", "the upstream reused an Hpatch item identity")
 		}
 		t.pending[itemID] = hpatchPendingCall{callID: callID, toolName: name, added: bytes.Clone(payload)}
 		return nil, nil
@@ -1508,7 +1513,7 @@ func (t *hpatchResponseTransform) transformActivitySSE(payload []byte) ([][]byte
 			return [][]byte{[]byte(`{"type":"response.in_progress"}`)}, nil
 		}
 		if _, pending := t.pending[envelope.ItemID]; pending {
-			return nil, fmt.Errorf("unsupported hpatch-related stream event %q", envelope.Type)
+			return nil, unsupportedHPatchStreamEvent(envelope.Type)
 		}
 		return [][]byte{payload}, nil
 
@@ -1518,7 +1523,7 @@ func (t *hpatchResponseTransform) transformActivitySSE(payload []byte) ([][]byte
 			if addedFields, nativeExec := t.nativeExecCalls[envelope.ItemID]; nativeExec {
 				addedCallID := jsonString(addedFields, "call_id")
 				if addedCallID != "" && envelope.CallID != "" && addedCallID != envelope.CallID {
-					return nil, errors.New("upstream Code Mode call changed call ID")
+					return nil, staticCriticalDiagnostic("changed_code_mode_call", "the upstream changed a Code Mode call identity")
 				}
 				callID := cmp.Or(addedCallID, envelope.CallID)
 				addedFields["call_id"] = mustMarshalJSON(callID)
@@ -1547,11 +1552,11 @@ func (t *hpatchResponseTransform) transformActivitySSE(payload []byte) ([][]byte
 			Item json.RawMessage `json:"item"`
 		}
 		if json.Unmarshal(pending.added, &addedEnvelope) != nil {
-			return nil, errors.New("decode buffered hpatch item")
+			return nil, staticCriticalDiagnostic("malformed_buffered_hpatch_item", "Hpatch could not decode a buffered upstream item")
 		}
 		addedItem, ok := decodeResponsesItem(addedEnvelope.Item)
 		if !ok {
-			return nil, errors.New("decode buffered hpatch call")
+			return nil, staticCriticalDiagnostic("malformed_buffered_hpatch_call", "Hpatch could not decode a buffered upstream call")
 		}
 		// input.done is already an executable handoff boundary. Retain the
 		// original item shape now; output_item.done may never arrive.
@@ -1585,10 +1590,10 @@ func (t *hpatchResponseTransform) transformActivitySSE(payload []byte) ([][]byte
 			return [][]byte{payload}, nil
 		}
 		if !pending.structured {
-			return nil, fmt.Errorf("unsupported hpatch-related stream event %q", envelope.Type)
+			return nil, unsupportedHPatchStreamEvent(envelope.Type)
 		}
 		if len(pending.argumentsDone) != 0 {
-			return nil, errors.New("upstream repeated commentary arguments completion")
+			return nil, staticCriticalDiagnostic("repeated_commentary_arguments", "the upstream repeated commentary argument completion")
 		}
 		pending.argumentsDone = bytes.Clone(payload)
 		t.pending[envelope.ItemID] = pending
@@ -1613,13 +1618,13 @@ func (t *hpatchResponseTransform) transformActivitySSE(payload []byte) ([][]byte
 			expectedCallID := jsonString(addedFields, "call_id")
 			if item.Type != "custom_tool_call" || item.Name != t.codeModeToolName ||
 				expectedCallID != callID {
-				return nil, errors.New("upstream completed inconsistent Code Mode call")
+				return nil, staticCriticalDiagnostic("inconsistent_code_mode_call", "the upstream completed an inconsistent Code Mode call")
 			}
 		}
 		delete(t.nativeExecCalls, itemID)
 		if pending, buffered := t.pending[itemID]; buffered && pending.structured {
 			if pending.callID != callID || len(pending.argumentsDone) == 0 {
-				return nil, errors.New("upstream completed inconsistent commentary function call")
+				return nil, staticCriticalDiagnostic("inconsistent_commentary_call", "the upstream completed an inconsistent commentary function call")
 			}
 			message, err := t.transformStructuredCommentary(item.fields)
 			if err != nil {
@@ -1630,7 +1635,7 @@ func (t *hpatchResponseTransform) transformActivitySSE(payload []byte) ([][]byte
 			}
 			var addedItem map[string]json.RawMessage
 			if json.Unmarshal(pending.added, &addedEnvelope) != nil || json.Unmarshal(addedEnvelope.Item, &addedItem) != nil {
-				return nil, errors.New("decode buffered commentary call")
+				return nil, staticCriticalDiagnostic("malformed_buffered_commentary_call", "Hpatch could not decode a buffered commentary call")
 			}
 			addedItem["arguments"] = item.fields["arguments"]
 			addedPayload, err := marshalProtocolJSON(addedItem)
@@ -1698,7 +1703,7 @@ func (t *hpatchResponseTransform) transformActivitySSE(payload []byte) ([][]byte
 		clear(t.nativeExecCalls)
 		if envelope.Type == "response.completed" {
 			if len(t.pending) != 0 {
-				return nil, errors.New("upstream completed with an incomplete hpatch call")
+				return nil, staticCriticalDiagnostic("terminal_incomplete_hpatch_call", "the upstream completed with an incomplete Hpatch call")
 			}
 		} else {
 			clear(t.pending)
@@ -1774,9 +1779,26 @@ func (t *hpatchResponseTransform) transformActivitySSE(payload []byte) ([][]byte
 
 	default:
 		if _, pending := t.pending[envelope.ItemID]; pending || t.pendingCallKnown(envelope.CallID) || t.routesTool(envelope.Name) || envelope.Name == applyPatchToolName {
-			return nil, fmt.Errorf("unsupported hpatch-related stream event %q", envelope.Type)
+			return nil, unsupportedHPatchStreamEvent(envelope.Type)
 		}
 		return [][]byte{payload}, nil
+	}
+}
+
+func unsupportedHPatchStreamEvent(eventType string) error {
+	underlying := fmt.Errorf("unsupported hpatch-related stream event %q", eventType)
+	switch eventType {
+	case "response.function_call_arguments.delta", "response.function_call_arguments.done":
+		return criticalDiagnostic(
+			underlying,
+			"unsupported_hpatch_stream_event:"+eventType,
+			fmt.Sprintf("the upstream emitted unsupported Hpatch-related streaming event %q", eventType),
+			false,
+		)
+	default:
+		// Unknown event names are provider-controlled payload. Their lexical
+		// shape alone cannot establish that they are safe to display.
+		return criticalDiagnostic(underlying, "unsupported_hpatch_stream_event", "the upstream emitted an unsupported Hpatch-related streaming event", true)
 	}
 }
 

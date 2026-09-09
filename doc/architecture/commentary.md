@@ -126,6 +126,13 @@ owns that queue's lifetime through router shutdown and terminal fallback. The
 response transformer reserves notices by routing session, confirms only successful
 writes, and strips exact generated IDs on replay. It never changes provider or
 executor failure semantics. Operational log sinks are not part of this boundary.
+Request-path producers attach bounded, display-safe cause metadata to errors whose
+dynamic values they understand. The queue uses that metadata for notice text and
+cause-level deduplication. Every otherwise-generic failure identifies its phase.
+For all unclassified errors the queue derives an opaque reference with a
+process-random key and does not retain or render the original error text. A
+provider-controlled value requires explicit semantic recognition before it can be
+included in a safe cause; lexical validation alone is insufficient.
 In Hpatch mode, the transport's notice transform retains exact message provenance through
 the same workspace replay store before delivery, even though it runs after the tool transform.
 Failed provenance retention leaves notices pending without replacing substantive output.

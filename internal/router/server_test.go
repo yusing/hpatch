@@ -1223,6 +1223,57 @@ func TestExecuteRequestTransformFailureLifecycle(t *testing.T) {
 	}
 }
 
+func TestCommittedSSETransformFailureDefersSafeCauseToCriticalNotice(t *testing.T) {
+	workspace := t.TempDir()
+	added := testHPatchItem()
+	added["status"] = "in_progress"
+	added["input"] = ""
+	secret := "Authorization Bearer token-plain prompt unquoted-secret-script"
+	responseBody := "data: " + string(mustTestJSON(t, map[string]any{
+		"type": "response.created", "response": map[string]any{"id": "response", "status": "in_progress", "output": []any{}},
+	})) + "\n\n" +
+		"data: " + string(mustTestJSON(t, map[string]any{"type": "response.output_item.added", "item": added})) + "\n\n" +
+		"data: " + string(mustTestJSON(t, map[string]any{
+		"type": "response.function_call_arguments.done", "item_id": "item-H", "arguments": secret,
+	})) + "\n\n"
+	response := &http.Response{
+		StatusCode: http.StatusOK,
+		Status:     "200 OK",
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+		Body:       io.NopCloser(strings.NewReader(responseBody)),
+	}
+	provider := &serverFakeProvider{results: []serverForwardResult{{response: response}}}
+	issues := NewCriticalErrors()
+	request := serverRequest(t, func(fields map[string]any) { fields["stream"] = true })
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(string(request.originalBody)))
+	req.Header = serverMetadataHeaders(t, "turn", map[string]json.RawMessage{workspace: nil})
+	req.Header.Set(sessionIDHeader, "session")
+	output := httptest.NewRecorder()
+	responsesHandler(t.Context(), time.Minute, provider, issues,
+		newManagedHPatchProxy(t, testTranslator(t, new(int))), nil, nil)(output, req)
+
+	if output.Code != http.StatusOK || !strings.Contains(output.Body.String(), "response.created") {
+		t.Fatalf("stream was not committed before transform failure: %d %s", output.Code, output.Body.String())
+	}
+	if strings.Contains(output.Body.String(), "unsupported Hpatch-related") || strings.Contains(output.Body.String(), secret) {
+		t.Fatalf("failure detail was written into the active response: %s", output.Body.String())
+	}
+	pending := strings.Join(issues.Pending(), "\n")
+	if !strings.Contains(pending, `response.function_call_arguments.done`) ||
+		!strings.Contains(pending, "Diagnostic reference:") || strings.Contains(pending, secret) {
+		t.Fatalf("safe underlying cause was not retained: %s", pending)
+	}
+	visible := issues.transform("session", false)
+	if len(visible.messages) != 1 {
+		t.Fatalf("critical notice was not available to a later response: %d", len(visible.messages))
+	}
+	encoded := string(mustTestJSON(t, visible.messages[0]))
+	visible.finish(false)
+	if !strings.Contains(encoded, `response.function_call_arguments.done`) || strings.Contains(encoded, secret) {
+		t.Fatalf("user-only notice was unsafe or hid the cause: %s", encoded)
+	}
+}
+
 const testProviderBaseURL = "https://provider.example"
 
 type serverRoundTripper func(*http.Request) (*http.Response, error)
