@@ -2,7 +2,9 @@ package router
 
 import (
 	"encoding/json"
+	"math"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	sitter "github.com/tree-sitter/go-tree-sitter"
@@ -12,6 +14,10 @@ import (
 
 // Presentation only: never evaluate code, expand paths, or alter the observed call.
 func subagentToolActivityText(item map[string]json.RawMessage, qualifiedName string) string {
+	return subagentToolActivityTextWithHistory(item, qualifiedName, nil)
+}
+
+func subagentToolActivityTextWithHistory(item map[string]json.RawMessage, qualifiedName string, history *hpatchHistory) string {
 	name := jsonString(item, "name")
 	if commentaryExcluded(jsonString(item, "namespace"), name) {
 		return "Tool call: " + commentaryCode(qualifiedName)
@@ -58,12 +64,25 @@ func subagentToolActivityText(item map[string]json.RawMessage, qualifiedName str
 		}
 		return toolActivityShell(script)
 	case "exec":
-		return toolActivityDetail("Run JavaScript", input)
+		return toolActivityJavaScript(input)
 	case "view_image":
 		return toolActivityDetail("View image", jsonString(arguments, "path"))
 	case "write_stdin":
-		return toolActivityDetail("Send input", jsonString(arguments, "chars"))
-	case "apply_patch", "hpatch", "hpatch_recover":
+		return toolActivityWriteStdin(arguments)
+	case "apply_patch":
+		patch := input
+		if arguments != nil {
+			if decoded := jsonString(arguments, "patch"); decoded != "" {
+				patch = decoded
+			} else if decoded := jsonString(arguments, "input"); decoded != "" {
+				patch = decoded
+			}
+		}
+		return toolActivityDiff("Edit", patch)
+	case "hpatch", "hpatch_recover":
+		if history != nil && history.translationError == "" && history.patch != "" {
+			return toolActivityDiff("Edit", history.patch)
+		}
 		return toolActivityDetail("Edit", input)
 	}
 	switch jsonString(item, "type") {
@@ -101,6 +120,44 @@ func toolActivityDetail(label, input string) string {
 		return label
 	}
 	return label + "\n" + toolActivityCode(input)
+}
+
+func toolActivityFenced(language, input string) string {
+	fence := "```"
+	for strings.Contains(input, fence) {
+		fence += "`"
+	}
+	trailer := "\n"
+	if strings.HasSuffix(input, "\n") {
+		trailer = ""
+	}
+	return fence + language + "\n" + input + trailer + fence
+}
+
+func toolActivityJavaScript(input string) string {
+	if strings.TrimSpace(input) == "" {
+		return "Run JavaScript"
+	}
+	return "Run JavaScript\n" + toolActivityFenced("javascript", input)
+}
+
+func toolActivityDiff(label, patch string) string {
+	if strings.TrimSpace(patch) == "" {
+		return label
+	}
+	return label + "\n" + toolActivityFenced("diff", patch)
+}
+
+func toolActivityWriteStdin(arguments map[string]json.RawMessage) string {
+	chars := jsonString(arguments, "chars")
+	if chars != "" {
+		return toolActivityDetail("Send input", chars)
+	}
+	session := strings.TrimSpace(string(arguments["session_id"]))
+	if session == "" || !json.Valid([]byte(session)) {
+		return "Wait for command output"
+	}
+	return "Wait for command output\n" + commentaryCode("session "+session)
 }
 
 func toolActivityArgv(argv []string) string {
@@ -312,16 +369,146 @@ func toolActivityUnwrapExec(source string) (map[string]json.RawMessage, bool) {
 	if callee.Utf8Text(bytes) != "tools."+name {
 		return nil, false
 	}
-	argument := args.NamedChild(0).Utf8Text(bytes)
-	var value any
-	if json.Unmarshal([]byte(argument), &value) != nil {
+	value, ok := toolActivityStaticJavaScriptValue(args.NamedChild(0), bytes)
+	if !ok {
 		return nil, false
 	}
 	item := map[string]json.RawMessage{"name": mustMarshalJSON(name)}
 	if text, ok := value.(string); ok {
 		item["input"] = mustMarshalJSON(text)
 	} else {
-		item["arguments"] = mustMarshalJSON(argument)
+		item["arguments"] = mustMarshalJSON(string(mustMarshalJSON(value)))
 	}
 	return item, true
+}
+
+func toolActivityStaticJavaScriptValue(node *sitter.Node, source []byte) (any, bool) {
+	if node == nil {
+		return nil, false
+	}
+	switch node.Kind() {
+	case "parenthesized_expression":
+		if node.NamedChildCount() != 1 {
+			return nil, false
+		}
+		return toolActivityStaticJavaScriptValue(node.NamedChild(0), source)
+	case "object":
+		value := make(map[string]any, node.NamedChildCount())
+		for i := range node.NamedChildCount() {
+			pair := node.NamedChild(uint(i))
+			if pair.Kind() != "pair" {
+				return nil, false
+			}
+			keyNode, valueNode := pair.ChildByFieldName("key"), pair.ChildByFieldName("value")
+			if keyNode == nil || valueNode == nil {
+				return nil, false
+			}
+			var key string
+			switch keyNode.Kind() {
+			case "property_identifier":
+				key = keyNode.Utf8Text(source)
+				if strings.ContainsRune(key, '\\') {
+					return nil, false
+				}
+			case "string":
+				var ok bool
+				key, ok = toolActivityJavaScriptString(keyNode.Utf8Text(source))
+				if !ok {
+					return nil, false
+				}
+			default:
+				return nil, false
+			}
+			decoded, ok := toolActivityStaticJavaScriptValue(valueNode, source)
+			if !ok {
+				return nil, false
+			}
+			value[key] = decoded
+		}
+		return value, true
+	case "array":
+		value := make([]any, 0, node.NamedChildCount())
+		cursor := int(node.StartByte()) + 1
+		for i := range node.NamedChildCount() {
+			child := node.NamedChild(uint(i))
+			gap := strings.TrimSpace(string(source[cursor:int(child.StartByte())]))
+			if i == 0 && gap != "" || i > 0 && gap != "," || child.Kind() == "comment" {
+				return nil, false
+			}
+			decoded, ok := toolActivityStaticJavaScriptValue(child, source)
+			if !ok {
+				return nil, false
+			}
+			value = append(value, decoded)
+			cursor = int(child.EndByte())
+		}
+		tail := strings.TrimSpace(string(source[cursor : int(node.EndByte())-1]))
+		if len(value) == 0 && tail != "" || len(value) != 0 && tail != "" && tail != "," {
+			return nil, false
+		}
+		return value, true
+	case "string":
+		return toolActivityJavaScriptString(node.Utf8Text(source))
+	case "number":
+		return toolActivityJSONNumber(node.Utf8Text(source))
+	case "true":
+		return true, true
+	case "false":
+		return false, true
+	case "null":
+		return nil, true
+	case "unary_expression":
+		if node.NamedChildCount() != 1 || !strings.HasPrefix(strings.TrimSpace(node.Utf8Text(source)), "-") {
+			return nil, false
+		}
+		child := node.NamedChild(0)
+		if child.Kind() != "number" {
+			return nil, false
+		}
+		return toolActivityJSONNumber(node.Utf8Text(source))
+	default:
+		return nil, false
+	}
+}
+func toolActivityJSONNumber(source string) (any, bool) {
+	if !json.Valid([]byte(source)) {
+		return nil, false
+	}
+	value, err := strconv.ParseFloat(source, 64)
+	if err != nil || math.IsInf(value, 0) {
+		return nil, false
+	}
+	return value, true
+}
+
+func toolActivityJavaScriptString(source string) (string, bool) {
+	if len(source) < 2 || source[0] != source[len(source)-1] || source[0] != '"' && source[0] != '\'' {
+		return "", false
+	}
+	quote := source[0]
+	rest := source[1 : len(source)-1]
+	var value strings.Builder
+	for rest != "" {
+		if rest[0] == '\\' {
+			if len(rest) < 2 {
+				return "", false
+			}
+			switch rest[1] {
+			case '\'', '"', '/', '\\':
+				value.WriteByte(rest[1])
+				rest = rest[2:]
+				continue
+			case 'b', 'f', 'n', 'r', 't', 'v', 'x', 'u':
+			default:
+				return "", false
+			}
+		}
+		char, _, tail, err := strconv.UnquoteChar(rest, quote)
+		if err != nil {
+			return "", false
+		}
+		value.WriteRune(char)
+		rest = tail
+	}
+	return value.String(), true
 }

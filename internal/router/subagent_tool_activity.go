@@ -30,7 +30,14 @@ func (t *hpatchResponseTransform) collectSubagentToolCall(item map[string]json.R
 	if len(name) > maxCommentaryPublicationBytes {
 		return
 	}
-	text := subagentToolActivityText(item, name)
+	var history *hpatchHistory
+	callID := jsonString(item, "call_id")
+	if retained, exists := t.local[callID]; exists {
+		history = &retained
+	} else if retained, exists := t.visible[callID]; exists {
+		history = &retained
+	}
+	text := subagentToolActivityTextWithHistory(item, name, history)
 	t.proxy.activity.collect(t.threadID, "tool-call\x00"+id, "tool", text)
 }
 
@@ -71,9 +78,20 @@ func toolActivityNested(text string) string {
 			if line == fence {
 				fence = ""
 			}
-		} else if strings.HasPrefix(line, "```") && strings.Trim(line, "`") == "" {
-			fence = line
+		} else if delimiter, ok := toolActivityFenceDelimiter(line); ok {
+			fence = delimiter
 		}
 	}
 	return out.String()
+}
+
+func toolActivityFenceDelimiter(line string) (string, bool) {
+	ticks := 0
+	for ticks < len(line) && line[ticks] == '`' {
+		ticks++
+	}
+	if ticks < 3 || strings.ContainsRune(line[ticks:], '`') {
+		return "", false
+	}
+	return line[:ticks], true
 }

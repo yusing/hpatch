@@ -66,6 +66,61 @@ func TestSubagentToolActivityJSONAndSSE(t *testing.T) {
 	}
 }
 
+func TestSubagentTranslatedEditActivityJSONAndSSE(t *testing.T) {
+	for _, stream := range []bool{false, true} {
+		t.Run(map[bool]string{false: "json", true: "sse"}[stream], func(t *testing.T) {
+			calls := 0
+			proxy := newManagedHPatchProxy(t, testTranslator(t, &calls))
+			root, _ := prepareActivityTest(t, proxy, "root", "r", "", "/root", nil)
+			child, _ := prepareActivityTest(t, proxy, "child", "c", "r", "/root/worker", nil)
+			call := testHPatchItem()
+			original := mustTestJSON(t, call)
+			child.directory = t.TempDir()
+
+			if stream {
+				if _, err := child.TransformSSE(mustTestJSON(t, map[string]any{
+					"type": "response.output_item.done", "item": call,
+				})); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				payload := mustTestJSON(t, map[string]any{"status": "completed", "output": []any{call}})
+				if _, err := child.TransformJSON(payload); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if calls != 1 {
+				t.Fatalf("display translated or executed the edit again: %d translations", calls)
+			}
+			if got := mustTestJSON(t, call); !bytes.Equal(got, original) {
+				t.Fatalf("activity changed the original call: %s", got)
+			}
+
+			visible, err := root.TransformJSON([]byte(`{"status":"completed","output":[]}`))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var response struct{ Output []map[string]json.RawMessage }
+			if err := json.Unmarshal(visible, &response); err != nil {
+				t.Fatal(err)
+			}
+			found := false
+			for _, item := range response.Output {
+				text := strings.ReplaceAll(commentaryText(t, item), "\n  ", "\n")
+				if strings.Contains(text, "```diff\n"+testTranslatedPatch+"```") {
+					found = true
+				}
+			}
+			if !found {
+				t.Fatalf("translated edit activity missing: %s", visible)
+			}
+			if calls != 1 {
+				t.Fatalf("root delivery retranslated the edit: %d translations", calls)
+			}
+		})
+	}
+}
+
 func TestSubagentToolActivityRejectsPartialCalls(t *testing.T) {
 	proxy := newManagedHPatchProxy(t, testTranslator(t, new(int)))
 	root, _ := prepareActivityTest(t, proxy, "root", "r", "", "/root", nil)

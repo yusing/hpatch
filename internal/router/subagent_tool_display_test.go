@@ -35,6 +35,12 @@ func TestSubagentToolDisplay(t *testing.T) {
 		{"view_image", `{"path":"/tmp/a.png"}`, "View image\n`/tmp/a.png`"},
 		{"exec", `const result = await tools.exec_command({"cmd":"shell bash $'cat a\\n'","login":false}); text(JSON.stringify(Object.assign({}, result, {"retained":false})));`, "Read `a`"},
 		{"exec", `await tools.exec_command({"cmd":"echo a\necho b"})`, "Run\n```\necho a\necho b\n```"},
+		{"exec", `const r = await tools.write_stdin({session_id: 52915, chars: "", yield_time_ms: 30000, max_output_tokens: 3000}); text(r);`, "Wait for command output\n`session 52915`"},
+		{"exec", `await tools.write_stdin({session_id: -12, chars: ""})`, "Wait for command output\n`session -12`"},
+		{"exec", `await tools.write_stdin({session_id: 9007199254740993, chars: ""})`, "Wait for command output\n`session 9007199254740992`"},
+		{"exec", `await tools.write_stdin({session_id: -9007199254740993, chars: ""})`, "Wait for command output\n`session -9007199254740992`"},
+		{"exec", `await tools.exec_command({cmd: 'cat a', login: false})`, "Read `a`"},
+		{"exec", `await tools.apply_patch("*** Begin Patch\n*** Add File: a\n+x\n*** End Patch\n")`, "Edit\n```diff\n*** Begin Patch\n*** Add File: a\n+x\n*** End Patch\n```"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name+"/"+tt.input, func(t *testing.T) {
@@ -52,10 +58,30 @@ func TestSubagentToolDisplayDoesNotUnwrapArbitraryCode(t *testing.T) {
 		`const r = await tools.exec_command({"cmd":"cat a"}); text(other())`,
 		`await tools.exec_command({"cmd":command})`,
 		`await tools.exec_command({"cmd":"cat a"}`,
+		`await tools.exec_command({["cmd"]:"cat a"})`,
+		`await tools.exec_command({...args})`,
+		`await tools.exec_command({get cmd() { return "cat a" }})`,
+		`await tools.shell({command: ["cat", , "a"]})`,
+		`await tools.write_stdin({session_id: 0x10, chars: ""})`,
+		`await tools.write_stdin({session_id: 1_000, chars: ""})`,
+		`await tools.write_stdin({session_id: 1n, chars: ""})`,
+		`await tools.write_stdin({session_id: -0x10, chars: ""})`,
+		`await tools.write_stdin({session_id: -1_000, chars: ""})`,
+		`await tools.write_stdin({session_id: -1n, chars: ""})`,
+		`await tools.write_stdin({session_id: 1e309, chars: ""})`,
+		`await tools.write_stdin({session_id: -1e309, chars: ""})`,
+		`await tools.exec_command({cmd: "cat a", \u0063md: "cat b"})`,
 	} {
 		if _, ok := toolActivityUnwrapExec(source); ok {
 			t.Fatalf("unwrapped nontransparent code: %s", source)
 		}
+	}
+
+	source := `await tools.exec_command({cmd: command})`
+	item := map[string]json.RawMessage{"name": mustMarshalJSON("exec"), "input": mustMarshalJSON(source)}
+	want := "Run JavaScript\n```javascript\n" + source + "\n```"
+	if got := subagentToolActivityText(item, "exec"); got != want {
+		t.Fatalf("dynamic display = %q, want %q", got, want)
 	}
 }
 
@@ -95,5 +121,46 @@ func TestClassifiedToolActivityShowsEveryOperation(t *testing.T) {
 	want := "Read `" + path + "`\n\nSearch `needle src`\n\nRead `last`"
 	if got := toolActivityShell(input); got != want {
 		t.Fatalf("display: got %q, want %q", got, want)
+	}
+}
+
+func TestSubagentEditDisplayUsesRetainedTranslation(t *testing.T) {
+	patch := "*** Begin Patch\n*** Update File: a\n@@\n-old\n+new\n*** End Patch\n"
+	want := "Edit\n```diff\n" + patch + "```"
+	for _, name := range []string{"hpatch", "hpatch_recover"} {
+		item := map[string]json.RawMessage{
+			"name":    mustMarshalJSON(name),
+			"call_id": mustMarshalJSON("call-edit"),
+			"input":   mustMarshalJSON("source edit"),
+		}
+		history := &hpatchHistory{toolName: name, script: "source edit", patch: patch}
+		if got := subagentToolActivityTextWithHistory(item, name, history); got != want {
+			t.Fatalf("%s translated display = %q, want %q", name, got, want)
+		}
+		history.translationError = "rejected"
+		if got := subagentToolActivityTextWithHistory(item, name, history); got != "Edit\n`source edit`" {
+			t.Fatalf("%s rejected display = %q", name, got)
+		}
+	}
+
+	for _, item := range []map[string]json.RawMessage{
+		{"name": mustMarshalJSON("apply_patch"), "input": mustMarshalJSON(patch)},
+		{"name": mustMarshalJSON("apply_patch"), "arguments": mustMarshalJSON(`{"patch":` + string(mustMarshalJSON(patch)) + `}`)},
+	} {
+		if got := subagentToolActivityText(item, "apply_patch"); got != want {
+			t.Fatalf("native apply_patch display = %q, want %q", got, want)
+		}
+	}
+}
+
+func TestToolActivityNestedLanguageFencePreservesBlankLinesAndBackticks(t *testing.T) {
+	display := toolActivityDiff("Edit", "+before\n+``` literal\n\n+`after`")
+	if !strings.HasPrefix(display, "Edit\n````diff\n") {
+		t.Fatalf("diff fence did not avoid literal backticks: %q", display)
+	}
+	nested := toolActivityNested(display)
+	want := "- Edit\n  ````diff\n  +before\n  +``` literal\n  \n  +`after`\n  ````"
+	if nested != want {
+		t.Fatalf("nested language fence = %q, want %q", nested, want)
 	}
 }

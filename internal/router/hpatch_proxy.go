@@ -1600,7 +1600,7 @@ func (t *hpatchResponseTransform) transformActivitySSE(payload []byte) ([][]byte
 			return [][]byte{payload}, nil //nolint:nilerr // Malformed unrelated output remains the upstream's responsibility.
 		}
 		t.collectProviderCommentary(item.fields)
-		t.collectSubagentToolCall(item.fields)
+		activityFields := maps.Clone(item.fields)
 		if _, delivered := t.local[item.CallID]; item.Status == "incomplete" && !delivered {
 			// Item completion can report interrupted generation, not complete input.
 			delete(t.pending, item.ID)
@@ -1657,6 +1657,7 @@ func (t *hpatchResponseTransform) transformActivitySSE(payload []byte) ([][]byte
 			if err := t.commitLocalCall(callID); err != nil {
 				return nil, err
 			}
+			t.collectSubagentToolCall(activityFields)
 			if message != nil {
 				return [][]byte{assistantCommentaryDoneEvent(message), addedEvent, argumentsDone, itemDone}, nil
 			}
@@ -1675,6 +1676,7 @@ func (t *hpatchResponseTransform) transformActivitySSE(payload []byte) ([][]byte
 		if err := t.commitLocalCall(callID); err != nil {
 			return nil, err
 		}
+		t.collectSubagentToolCall(activityFields)
 		if !changed && message == nil && string(item.fields["arguments"]) == originalArguments {
 			return [][]byte{payload}, nil
 		}
@@ -1840,7 +1842,7 @@ func (t *hpatchResponseTransform) transformResponse(payload []byte, terminalStat
 				continue
 			}
 			t.collectProviderCommentary(item.fields)
-			t.collectSubagentToolCall(item.fields)
+			activityFields := maps.Clone(item.fields)
 			message, err := t.transformStructuredCommentary(item.fields)
 			if err != nil {
 				return nil, nil, err
@@ -1852,6 +1854,7 @@ func (t *hpatchResponseTransform) transformResponse(payload []byte, terminalStat
 			if _, err := t.transformOutputItem(&item); err != nil {
 				return nil, nil, err
 			}
+			t.collectSubagentToolCall(activityFields)
 			transformedOutput = append(transformedOutput, item.fields)
 		}
 		encoded, err := marshalProtocolJSON(transformedOutput)

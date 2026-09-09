@@ -82,6 +82,11 @@ provenance; they never replace child answers or add follow-up, message, wait, or
 Complete subagent tool calls are also forwarded as user-only activity, never as executable
 root calls. Known tools use operation labels rather than raw transport arguments. Shell calls
 and transparent, statically recognized Code Mode shell wrappers share a `Run` display.
+Code Mode recognition accepts literal JavaScript objects with identifier or quoted keys and
+recursively static JSON-compatible values. It never evaluates source; computed keys, spreads,
+calls, references, and other dynamic expressions retain a `Run JavaScript` display with the
+original source in a `javascript` fence. A literal `write_stdin` call with no characters is
+shown as waiting for command output rather than as raw JavaScript.
 Simple literal `cat` and `hread` calls display `Read <file>`; `skills-mgr get <skill-name>`
 and reads of a named skill's `SKILL.md` display `Skill Read <skill-name>`.
 `skills-mgr get <skill-name>/<reference-path>` displays `Skill Reference Read` with the
@@ -89,12 +94,17 @@ full skill/reference operand. Optional read ranges remain visible for both forms
 Simple listing, search, and structural inspection commands use `List`, `Search`, and `Inspect`
 labels, retaining search flags and operands. Native web/file search, image viewing/generation,
 code execution, input sending, and editing calls use descriptive operation labels.
+A native `apply_patch` call unwraps its string or structured patch argument for display.
+A successfully translated `hpatch` or `hpatch_recover` call uses the already-retained translated
+patch and displays it in a `diff` fence. Display never executes or retranslates an edit.
+Rejected, unavailable, and already-satisfied translations retain a truthful source-level
+fallback rather than claiming a patch was applied.
 Unsupported compound or dynamic commands retain their source rather than claiming a simpler operation.
-Multiline source previews preserve line breaks and indentation in fenced code blocks.
-Transformed displays retain every operation and its full detail without preview truncation.
-Unknown tools retain their qualified name and full input. Collaboration and user-messaging
-arguments remain opaque: only their tool identity is displayed. Calls without textual input
-show only the operation or tool name.
+Multiline source previews preserve line breaks and indentation in fenced code blocks, including
+language-tagged fences and literal backticks. Transformed displays retain every operation and its
+full detail without preview truncation. Unknown tools retain their qualified name and full input.
+Collaboration and user-messaging arguments remain opaque: only their tool identity is displayed.
+Calls without textual input show only the operation or tool name.
 Consecutive tool displays from the same child share an `In <canonical path>` heading with
 nested bullet items, including mixed action kinds. Grouping uses only calls already pending
 at a root delivery boundary and never waits for more calls. A different child, notice, or
