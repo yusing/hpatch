@@ -11,6 +11,10 @@ The same listener MUST serve a human-readable dashboard at `GET /`. The dashboar
 capturer snapshot and MUST NOT own counters, histories, classifications, or alternate calculations.
 It MUST present every aggregate group plus the retained exchange, provider-attempt, provider-tool,
 and delivered-tool detail rather than substituting a reduced dashboard-specific metric set.
+Provider-attempt detail MUST display the snapshot's transport marker as
+`WebSocket`, or `HTTP` when absent, without claiming that every HTTP attempt is
+an SSE fallback. Unknown transport markers remain visible rather than being
+misclassified as HTTP. The empty-table row MUST span all displayed columns.
 Dashboard polling MUST not overlap requests or replace a newer snapshot with an older response.
 Polling MUST resume after a failed request.
 

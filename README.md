@@ -260,6 +260,11 @@ reruns, and interpreter selection.
 Open the dashboard URL printed at startup. It belongs to that session and stops
 working when Codex exits. For an SSH session, forward its assigned port first.
 
+Under **Exchanges → Provider attempts**, the **Transport** column shows
+**WebSocket** or **HTTP** for each provider attempt. A completed ChatGPT attempt
+using HTTP took the fallback path; Grok normally uses HTTP. This describes the
+provider connection, not the Codex-to-hpatch HTTP/SSE connection.
+
 From a command running inside wrapped Codex, fetch the same metrics as JSON:
 
 ```sh
