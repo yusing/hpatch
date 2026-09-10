@@ -35,7 +35,7 @@ shared `shell` helper uses `CODEX_THREAD_ID` to read the current router runtime 
 itself with that authenticated worker. The executor preserves standard input for program
 data. A compact shebang selects the interpreter, while a missing shebang selects `bash`.
 Bash and sh basenames, including direct paths, use the router worker's `mvdan/sh` Bash or POSIX
-evaluator. That evaluator dispatches hread, hgrep, hsymbol, and inspect_file directly from the
+evaluator. That evaluator dispatches hcat, hgrep, hsymbol, and inspect_file directly from the
 authenticated snapshot without executable frontends or another router worker. Optional directives
 use one `#!key=value` syntax: `#!cmd=` wraps that canonical shell helper
 command in one user-supplied command template, while `#!params=` forwards a JSON object, except
@@ -58,8 +58,8 @@ wall time must remain close to control.
 ## First-draft scope
 
 - Multiple UTF-8 files opened in sequence by `in PATH` or created by `new PATH`.
-- Private hread commands accept one existing file and an optional range; shell scripts batch reads
-  as separate hread commands.
+- Private hcat commands accept one existing file and an optional range; shell scripts batch reads
+  as separate hcat commands.
 - Private hgrep commands accept familiar ripgrep matching, context, and file-selection arguments
   and emit complete UTF-8 result rows as copyable path-and-`LINE:HASH` results.
 - Mutation-owned complete-line, inclusive line-range, and anchored literal targets.
@@ -92,7 +92,7 @@ wall time must remain close to control.
 - Host APIs: `ApplyForHost`, `ApplyForHostRoot`, and `TranslateForHostAt` return
   `HostTranslation` for report, state, and diagnostics.
 - `mekugi --mode mekugi|passthrough codex`: expose model-visible hpatch and shell tools with
-  private shell-internal hread, hgrep, hsymbol, and inspect_file commands, or the unchanged
+  private shell-internal hcat, hgrep, hsymbol, and inspect_file commands, or the unchanged
   control path. `mekugi` mode defaults to CTP/2 and Mentor Handoff; passthrough stays native.
 - inspect_file outline spans are copyable `LINE:HASH` identities without source bodies.
 - `mekugi/plugins` beneath the platform user configuration directory: the configured tool-plugin
@@ -110,7 +110,7 @@ wall time must remain close to control.
   including an owned line or range terminator. `add` inserts before a line or text
   destination; `add EOF` appends.
 - Immediately after `new`, targetless `type` may initialize the empty file once.
-- A target is a copyable hread row, an inclusive pair of rows, or a row-anchored literal
+- A target is a copyable hcat row, an inclusive pair of rows, or a row-anchored literal
   with optional multiplicity, as specified by `REQ-SCRIPT-001`.
 
 ## Non-goals

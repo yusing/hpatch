@@ -54,7 +54,7 @@ interiors and insertions strictly inside them, permits boundary insertions, and 
 same-boundary insertions by script command order. Later targets continue to resolve
 against the unchanged invocation baseline. Content introduced by a pending edit is not
 target input; a dependent edit crosses the external success boundary and uses an exact
-current report row when present or a focused later hread when absent.
+current report row when present or a focused later hcat when absent.
 
 The engine obtains original files only through the workspace boundary, never writes files
 or process output, and retains original identity across moves. It checks cancellation

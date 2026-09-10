@@ -112,7 +112,7 @@ Polls correlate only with visible call/result pairs that include execution metad
 same request; output-only Code Mode projections are not session evidence. Missing command
 history or unavailable stored source is labelled `command unavailable`, never guessed.
 These presentation rules do not change execution, validation, or replay payloads. Calls that send nonempty characters display `Send input`.
-Simple literal `cat` and `hread` calls display `Read <file>`; `skills-mgr get <skill-name>`
+Simple literal `cat` and `hcat` calls display `Read <file>`; `skills-mgr get <skill-name>`
 and reads of a named skill's `SKILL.md` display `Skill Read <skill-name>`.
 `skills-mgr get <skill-name>/<reference-path>` displays `Skill Reference Read` with the
 full skill/reference operand. Optional read ranges remain visible for both forms.

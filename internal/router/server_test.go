@@ -419,7 +419,7 @@ func TestExecuteRequestForwardsRewrittenRequestAndRecordsUsage(t *testing.T) {
 	}
 }
 
-func TestShellHReadAfterAppliedMekugiCarrierRemainsModelVisible(t *testing.T) {
+func TestShellHCatAfterAppliedMekugiCarrierRemainsModelVisible(t *testing.T) {
 	workspace := t.TempDir()
 	path := filepath.Join(workspace, "file.txt")
 	initial := "alpha\nbeta\ngamma\n"
@@ -428,7 +428,7 @@ func TestShellHReadAfterAppliedMekugiCarrierRemainsModelVisible(t *testing.T) {
 	}
 
 	mekugiScript := "in file.txt\ntype 2:f44e \"B\"\n"
-	shellInput := "hread file.txt 1:3"
+	shellInput := "hcat file.txt 1:3"
 	provider := &serverFakeProvider{
 		results: []serverForwardResult{
 			{response: serverHTTPResponse(string(mustTestJSON(t, map[string]any{
@@ -451,7 +451,7 @@ func TestShellHReadAfterAppliedMekugiCarrierRemainsModelVisible(t *testing.T) {
 	translator := newInProcessMekugiTranslator(t.TempDir())
 	proxy := newManagedMekugiProxy(t, translator)
 	headers := serverMetadataHeaders(t, "turn", map[string]json.RawMessage{workspace: nil})
-	const sessionID = "session-mekugi-shell-hread"
+	const sessionID = "session-mekugi-shell-hcat"
 
 	requestWith := func(items ...any) parsedResponsesRequest {
 		return serverRequest(t, func(request map[string]any) {
@@ -544,7 +544,7 @@ func TestShellHReadAfterAppliedMekugiCarrierRemainsModelVisible(t *testing.T) {
 		proxy.registry.shellRuntime,
 		[]string{
 			"bash",
-			"hread file.txt 1:3",
+			"hcat file.txt 1:3",
 		},
 		os.Stdin,
 		&shellStdout,
@@ -553,7 +553,7 @@ func TestShellHReadAfterAppliedMekugiCarrierRemainsModelVisible(t *testing.T) {
 	wantRows := "1:8ed3 alpha\n2:df7e B\n3:be9d gamma\n"
 	if !handled || exitCode != 0 || shellStdout.String() != wantRows || shellStderr.Len() != 0 {
 		t.Fatalf(
-			"hread worker handled %t, exit %d, stdout %q, stderr %q",
+			"hcat worker handled %t, exit %d, stdout %q, stderr %q",
 			handled,
 			exitCode,
 			shellStdout.String(),

@@ -95,7 +95,7 @@ The configured-plugin worker keeps the frontend standard input separate from the
 host's JSON control stream. The host exposes that input only as a dedicated inherited descriptor during
 executor calls.
 
-Built-in shell and its private hread, hgrep, hsymbol, and inspect_file commands are the exception
+Built-in shell and its private hcat, hgrep, hsymbol, and inspect_file commands are the exception
 to that frontend path. The PATH-installed `shell` name is a fixed shared locator, not a snapshot
 wrapper or plugin implementation. For each eligible thread, the router writes one direct
 `mekugi-runtime-$CODEX_THREAD_ID` link directly below the runtime directory to the current private

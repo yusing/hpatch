@@ -119,7 +119,7 @@ A runtime failure may leave earlier statements' effects in place. Inspect affect
 retrying; a failed call does not imply rollback.
 
 A retained result includes `retained: true` and a `script_ref`. Read the source with
-`hread @shell/<reference>`, edit it with hpatch, or rerun its current content with a shell call
+`hcat @shell/<reference>`, edit it with hpatch, or rerun its current content with a shell call
 containing only `#!script=@shell/<reference>`. A HPATCH script using an `@shell/` path must use
 only `@shell/` paths; never mix retained scripts and workspace files in one HPATCH script.
 
@@ -241,17 +241,17 @@ script. Ordinary `functions.hpatch` and root APIs have no recovery mode.
 
 ## Reading and inspection reference
 
-Run one file per command as `hread PATH [START:END]`. Quote paths with shell syntax and batch
+Run one file per command as `hcat PATH [START:END]`. Quote paths with shell syntax and batch
 already-known reads as separate commands in one shell script. A bare path reads the complete
 file. A start line of `0` begins at line 1 without emitting line 0. An end past EOF warns after
 returning available rows; a start past EOF fails. Copy a current `LINE:HASH` directly into an
-HPATCH/2 target. If hread reports an incomplete token-limited result, retain the emitted rows and
+HPATCH/2 target. If hcat reports an incomplete token-limited result, retain the emitted rows and
 request a smaller range for the missing context.
 
 Run hgrep with familiar ripgrep arguments and ordinary shell quoting, redirection, and
 pipelines. Combine known patterns and paths with repeated `-e` arguments. Its output is
 `"PATH":LINE:HASH TEXT`; copy a current target directly and never reconstruct a row.
-Do not follow target-bearing hgrep output with hread unless nonmatching context outside the
+Do not follow target-bearing hgrep output with hcat unless nonmatching context outside the
 requested bounds is needed. If hgrep reports an incomplete token-limited result, retain the
 emitted rows and narrow the patterns, paths, context, or file selection.
 
@@ -260,14 +260,14 @@ For Go, JavaScript, TypeScript, JSON, and Python, use
 at every reference. Use `hsymbol def PATH LINE:HASH SYMBOL [N]` when the next edit is the symbol's
 declaration. `N` counts exact language tokens on the verified input line and may be omitted only
 when one exists. Copy emitted `"PATH":LINE:HASH TEXT` rows directly
-into HPATCH/2 targets. Do not follow a complete hsymbol definition with hread of the same span
+into HPATCH/2 targets. Do not follow a complete hsymbol definition with hcat of the same span
 unless non-declaration context is needed. Never treat an incomplete token-limited hsymbol result
 as a complete definition or reference set.
 
 Use `inspect_file PATH` for bounded metadata and a structural outline. Each outline entry's
 `line` and `line_end` are copyable `LINE:HASH` identities for that inclusive span. Copy a
 single-line span as a row target and a multi-line span as `line..line_end` with no spaces.
-Inspect_file never returns source bodies; use hread only when replacement needs unseen text
+Inspect_file never returns source bodies; use hcat only when replacement needs unseen text
 rather than to obtain the target.
 It returns one JSON envelope shaped as follows:
 

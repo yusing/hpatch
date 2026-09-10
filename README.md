@@ -59,7 +59,7 @@ command sessions, and patch diff UI. No fork, no config edits, no daemon.
 - **Read only what the edit needs.**
   - `hgrep` finds matching text, `hsymbol` locates definitions and references,
     and `inspect_file` outlines a file without returning its full source.
-  - Their verified references can be used directly as edit targets; `hread`
+  - Their verified references can be used directly as edit targets; `hcat`
     supplies source text when more context is needed.
 - **Correct without starting over.**
   - Eligible shell programs can be retained, inspected, edited, and rerun
@@ -258,7 +258,7 @@ programs**, not as standalone utilities in your terminal:
 
 | Command | Purpose | Extra prerequisite on the executor's `PATH` |
 | --- | --- | --- |
-| `hread` | Read verified source rows | None |
+| `hcat` | Read verified source rows | None |
 | `hgrep` | Search text with verified row references | `rg` |
 | `hsymbol` | Look up definitions and references | `gopls` for Go; TypeScript 7 as `tsc` for JS, TS, and JSON; `pyright-langserver` for Python |
 | `inspect_file` | Inspect structure without full source bodies | None |

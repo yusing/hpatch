@@ -4,7 +4,7 @@ pjdoc:
   kind: architecture
   scope: root
   status: draft
-  revision: "40"
+  revision: "41"
   files:
     - subagents.md
     - commentary.md

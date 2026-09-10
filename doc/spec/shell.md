@@ -64,7 +64,7 @@ The helper reads the current thread runtime path and replaces itself with the au
 router worker, without a second Codex executor call. For Bash and sh basenames,
 the worker parses the body with `mvdan/sh` using
 `LangBash` or `LangPOSIX`, applies supported middle fields as shell options or parameters, and
-executes the syntax in-process. Its exec handler receives expanded argv, invokes hread, hgrep,
+executes the syntax in-process. Its exec handler receives expanded argv, invokes hcat, hgrep,
 hsymbol, and inspect_file directly from the authenticated snapshot, and delegates every other
 external command to the inherited environment. Private command stdout, stderr, status,
 redirections, pipelines, cwd, exported environment, and cancellation remain part of the same
@@ -133,7 +133,7 @@ empty output and status zero. No generated patch or intermediate guard result is
 the provider as a separate conversation item.
 
 Eligible shell calls return `retained: true` and a thread-scoped `script_ref` shaped
-`@shell/<artifact-id>`. `hread` inspects that reference, mekugi edits it inside private
+`@shell/<artifact-id>`. `hcat` inspects that reference, mekugi edits it inside private
 script storage, and a sole `#!script=@shell/<artifact-id>` reruns its current content.
 References select regular UTF-8 script files, never arbitrary host paths or the runtime
 launcher. Thread and artifact IDs must be single nonempty filename components, excluding
@@ -205,7 +205,7 @@ Acceptance:
     diagnostic without starting an interpreter.
 11. `make install` installs `mekugi` and the fixed `shell` helper without changing Codex
     configuration or instruction files. Startup and tool-snapshot changes do not rewrite that
-    helper and create no hread, hgrep, hsymbol, or inspect_file basename frontend.
+    helper and create no hcat, hgrep, hsymbol, or inspect_file basename frontend.
 12. `#!params={"workdir":"/tmp","tty":true}` before or after `#!cmd=` produces an exec carrier
     containing those fields and the router-supplied `cmd`. Tolerated leading params variants
     produce the same carrier after normalization. An object containing `cmd` rejects, and a

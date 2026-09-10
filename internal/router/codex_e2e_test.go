@@ -22,7 +22,7 @@ const codexE2EPrompt = `Use only functions.hpatch for every file edit. Shell com
 
 Work through these requests in order:
 
-1. Inspect whole.go with fresh hread output. Replace the complete logical lines of the status function with:
+1. Inspect whole.go with fresh hcat output. Replace the complete logical lines of the status function with:
 func status() string {
 	return "new"
 }

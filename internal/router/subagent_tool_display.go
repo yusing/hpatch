@@ -318,12 +318,12 @@ func toolActivityReads(script string) (string, bool) {
 			argv = append(argv, value)
 		}
 		switch argv[0] {
-		case "cat", "hread":
+		case "cat", "hcat":
 			if len(argv) < 2 {
 				return "", false
 			}
 			paths, readRange := argv[1:], ""
-			if argv[0] == "hread" {
+			if argv[0] == "hcat" {
 				if len(argv) != 2 && len(argv) != 3 {
 					return "", false
 				}

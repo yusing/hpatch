@@ -81,12 +81,12 @@ and without CTP. The variants teach the following tool workflow:
    repeated fixed-string patterns, adding bounded context options when surrounding code is needed.
    Every emitted match or context row is target-bearing. When the owner is known but the location
    is not, use inspect_file for structure or hgrep for a symbol. Copy inspect_file `LINE:HASH`
-   spans directly as HPATCH targets. Use bounded hread for source text not supplied by the search
+   spans directly as HPATCH targets. Use bounded hcat for source text not supplied by the search
    or outline.
    Use hsymbol refs for exact Go references and hsymbol def for an
    editable Go declaration after obtaining a verified selector row.
-4. Run one hread command per file and batch only already-known reads in one shell script. Copy
-   only current emitted references. Do not follow target-bearing hgrep output with hread unless
+4. Run one hcat command per file and batch only already-known reads in one shell script. Copy
+   only current emitted references. Do not follow target-bearing hgrep output with hcat unless
    nonmatching context outside the requested bounds is needed.
 5. Choose a line, inclusive range, or anchored literal target inside the mutation command.
 6. Submit every known related edit in one atomic script. Split only when a later edit depends on
@@ -131,4 +131,4 @@ Acceptance:
    and exact guidance for one atomic target-correction payload. Other failures direct one complete
    ordinary script; re-rejection explicitly invalidates prior handles.
 7. A routed success can be followed by another hpatch call using an exact row from its report
-   without an intervening hread; a saved pre-edit row still rejects as stale.
+   without an intervening hcat; a saved pre-edit row still rejects as stale.

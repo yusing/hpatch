@@ -5,16 +5,16 @@ Status: implemented. `REQ-SYMBOL-001` owns the normative interface.
 ## Evidence
 
 Recent non-mekugi long-running sessions (Codex and Claude, 1 August 2026 onward) show a
-repeated acquire loop that `hread`, `hgrep`, and `inspect_file` do not close.
+repeated acquire loop that `hcat`, `hgrep`, and `inspect_file` do not close.
 
-- One polymarket-ev-daemon Codex session issued `hread daemon.go` 57 times, `health.go` 60
+- One polymarket-ev-daemon Codex session issued `hcat daemon.go` 57 times, `health.go` 60
   times, and `daemon_test.go` 69 times, plus 240 `hgrep` calls. The names were unique enough
   to search, but each textual hit still forced a later range read of the same files.
 - A godoxy OIDC session called `gopls definition` once and `gopls references` five times
   with `PATH:LINE:COL` positions (`internal/auth/oidc.go`, `provider.go`, `auth.go`). Those
   calls are the language-server operation `hgrep` cannot express: this identifier, not every
   spelling of the name.
-- `inspect_file` ran 7 times across the same long-session sample that ran `hread` 1009 times.
+- `inspect_file` ran 7 times across the same long-session sample that ran `hcat` 1009 times.
   Its outlines now give copyable `LINE:HASH` span targets for file-local declarations, but
   they do not distinguish semantic identifiers or find callers and cross-file references.
 
@@ -29,7 +29,7 @@ verified complete source rows for exact definitions and references.
 | --- | --- | --- |
 | `hgrep -e Name --type go` | Text matches as verified rows | Distinguishes definition from mention, or two methods with the same name |
 | `inspect_file PATH` | File-local outline with copyable span targets | Callers, cross-file refs, or source rows |
-| `gopls definition` / `gopls references` | Precise identifier locations | `LINE:HASH` text; the agent still `hread`s the body |
+| `gopls definition` / `gopls references` | Precise identifier locations | `LINE:HASH` text; the agent still uses `hcat` for the body |
 
 `hsymbol` is therefore the `hgrep` shape applied to a language server: the server remains
 the resolver; the frontend is the only row emitter. A wrapper that reprints `file:line:col`
@@ -37,13 +37,13 @@ would fail this test the way `hlog` failed it.
 
 ## Owner
 
-Builtin private frontend, same family as `hread` / `hgrep` / `inspect_file`.
+Builtin private frontend, same family as `hcat` / `hgrep` / `inspect_file`.
 
 | Piece | Owner |
 | --- | --- |
 | Declaration, argv, executor | `plugins/` (`hsymbol.ts` plus `tools.ts`) |
 | Bundle and frontend symlink | `internal/router/toolplugin` and router startup |
-| Verified-row identity | Existing `LINE:HASH` helper used by `hread` / `hgrep` |
+| Verified-row identity | Existing `LINE:HASH` helper used by `hcat` / `hgrep` |
 | Language resolution | Installed `gopls`, TypeScript 7 `tsc`, or `pyright-langserver` on the Codex executor `PATH` |
 | Model-visible catalog | Unchanged: still `functions.hpatch` and `functions.shell` |
 | Guidance | `contrib/codex/file-editing-instructions.md` |
@@ -56,7 +56,7 @@ JavaScript, TypeScript, and JSON, and Pyright for Python.
 
 Private executable `hsymbol`, invoked only through `functions.shell`. One invocation, one
 query. Shell quoting owns path whitespace. Batch several queries as separate `hsymbol`
-commands in one shell script, the same way `hread` batches.
+commands in one shell script, the same way `hcat` batches.
 
 ```text
 hsymbol def PATH LINE:HASH SYMBOL [N]
@@ -142,11 +142,11 @@ The router-injected `contrib/codex/file-editing-instructions.md` guidance teache
 
 - After `hgrep` has a current row for an identifier that must be renamed, audited, or
   replaced at every call site, use `hsymbol refs` on that row instead of repeating `hgrep`
-  and whole-file `hread`.
+  and whole-file `hcat`.
 - Use `hsymbol def` when the next edit is the declaration body and the current row is only
   a use or signature line.
 - Copy emitted rows directly into HPATCH/2 targets. Do not reconstruct hashes.
-- Do not follow `hsymbol def` with `hread` of the same span unless non-declaration context
+- Do not follow `hsymbol def` with `hcat` of the same span unless non-declaration context
   is required.
 
 The tool description stays behavioral: modes, operands, row shape, and failure cases. No
@@ -155,7 +155,7 @@ workflow instructions in the specification string.
 ## Acceptance
 
 1. `hsymbol def` on a verified use-site row of a supported top-level declaration emits the complete
-   current declaration as `hgrep`-shaped rows whose hashes match `hread` of that span.
+   current declaration as `hgrep`-shaped rows whose hashes match `hcat` of that span.
 2. `hsymbol refs` on a verified language-token row emits each workspace reference once as a
    complete current line. A textual `hgrep` of the same name may return additional
    non-identifier hits; those extra hits are not a `refs` failure.
@@ -180,6 +180,6 @@ workflow instructions in the specification string.
 
 The owner is the builtin private-tool bundle. The local failure is a precise identifier
 query whose stock CLI result cannot be copied into HPATCH/2, which then causes repeated
-`hread` of the same files. The protection is one resolver-backed frontend that reuses
+`hcat` of the same files. The protection is one resolver-backed frontend that reuses
 `REQ-READ-001` row identity. It does not add a second edit engine, a model-visible tool, or
 a search fallback.

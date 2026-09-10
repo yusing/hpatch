@@ -123,7 +123,7 @@ func TestInstructionsOwnCompleteShellWorkflow(t *testing.T) {
 		"rather than `/usr/bin/env`",
 		"accepts exactly one `{.}` placeholder",
 		"`#!params=<JSON object>`",
-		"`hread @shell/<reference>`",
+		"`hcat @shell/<reference>`",
 		"only `#!script=@shell/<reference>`",
 		"never mix retained scripts and workspace files",
 		"PTY-backed, interactive, and long-running programs",

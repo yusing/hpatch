@@ -233,7 +233,7 @@ func (w *workspace) execute(command instruction, commandIndex int) error {
 		w.initializable = nil
 	} else {
 		if file.created {
-			return withReason(reasonInitialization, fmt.Errorf("new file content is not targetable before a successful invocation and hread"))
+			return withReason(reasonInitialization, fmt.Errorf("new file content is not targetable before a successful invocation and hcat"))
 		}
 		err := file.editor.applyMutation(command.operation, command.target, command.text, origin, command, file.path)
 		if err != nil {

@@ -133,7 +133,7 @@ func buildToolRegistry(ctx context.Context, dataDirectory, mekugiDescription str
 				Specification: slices.Clone(tool.Specification),
 				Module:        plugin.Module,
 				ModuleIndex:   toolIndex,
-				ModelVisible:  name != "hread" && name != "hgrep" && name != "hsymbol" && name != "inspect_file",
+				ModelVisible:  name != "hcat" && name != "hgrep" && name != "hsymbol" && name != "inspect_file",
 			}
 			if validationErr := validateToolContribution(contribution); validationErr != nil {
 				validationErrors = append(validationErrors, validationErr)

@@ -95,7 +95,7 @@ func executeShellTool(
 			arguments := command[1:]
 			input, _ := handler.Stdin.(*os.File)
 			var retained *os.File
-			if contribution.Name == "hread" && len(arguments) > 0 && strings.HasPrefix(arguments[0], shellArtifactPrefix) {
+			if contribution.Name == "hcat" && len(arguments) > 0 && strings.HasPrefix(arguments[0], shellArtifactPrefix) {
 				runtimeDirectory := handler.Env.Get(shellruntime.RuntimeDirectoryEnvironment).String()
 				if runtimeDirectory == "" {
 					runtimeDirectory = os.TempDir()
@@ -107,7 +107,7 @@ func executeShellTool(
 					arguments[0],
 				)
 				if openErr != nil {
-					_, _ = fmt.Fprintf(handler.Stderr, "hread: %v\n", openErr)
+					_, _ = fmt.Fprintf(handler.Stderr, "hcat: %v\n", openErr)
 					return interp.ExitStatus(1)
 				}
 				defer retained.Close()

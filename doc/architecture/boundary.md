@@ -60,10 +60,10 @@ tool result, rejection diagnostic, read or search result, or response, while req
 still propagates. An explicitly requested capture file that cannot be opened fails startup.
 
 The router exposes only hpatch, hpatch_recover, and shell beside the displaced Code Mode `exec` carrier.
-`hpatch` remains the native engine contribution. `hpatch_recover` is a router-owned recovery contribution. Shell, hread, hgrep, hsymbol, and inspect_file are
+`hpatch` remains the native engine contribution. `hpatch_recover` is a router-owned recovery contribution. Shell, hcat, hgrep, hsymbol, and inspect_file are
 JavaScript- and TypeScript-authored built-in plugin contributions compiled by Bun into one
 embedded JavaScript module with the reserved `builtin.shell` identity. Shell is model-visible;
-hread, hgrep, hsymbol, and inspect_file retain snapshot-backed implementations but their
+hcat, hgrep, hsymbol, and inspect_file retain snapshot-backed implementations but their
 specifications are private and they have no executable frontends. Configured user tools remain
 model-visible. Portable verified-row, compact-syntax, source-classification, Go-lexical, and
 shell-header mechanisms come from the same authenticated Go-built shared core available to
@@ -98,14 +98,14 @@ parameters, the shell carrier sets neither an environment override nor a working
 direct `apply_patch` owner, missing Node.js runtime, invalid embedded declaration, or configured
 wrapper failure rejects startup or rewriting before forwarding.
 
-The hread built-in accepts one path argv and an optional separate inclusive range argv.
-Shell quoting owns whitespace and metacharacters in paths. Hread has no multi-file input or
+The hcat built-in accepts one path argv and an optional separate inclusive range argv.
+Shell quoting owns whitespace and metacharacters in paths. Hcat has no multi-file input or
 batch result format; the model batches reads as separate commands in one shell script.
 Rendering streams fixed-size chunks, validates UTF-8 across the complete regular file,
 and buffers only selected lines. The shared verified-row accumulator counts exact formatted
 current output with the pinned GPT-5 tokenizer, admits through the 15,000-token soft limit with
 one complete-row overshoot through 15,500, and retains current and stock rows as one pair.
-An omitted row seals output growth while hread continues the existing stream for file and range
+An omitted row seals output growth while hcat continues the existing stream for file and range
 validation.
 
 The hgrep built-in receives ordinary shell-produced argv. Its TypeScript implementation

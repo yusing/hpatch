@@ -8,7 +8,7 @@ import {pathToFileURL} from "node:url";
 import {formatVerifiedRow, hashLine} from "mekugi:core/v1";
 import {countGPT5Tokens, VerifiedRowOutput} from "../../../../plugins/common.ts";
 import {createHGrepTool, splitArguments} from "../../../../plugins/hgrep.ts";
-import {createHReadTool} from "../../../../plugins/hread.ts";
+import {createHCatTool} from "../../../../plugins/hcat.ts";
 import {createHSymbolTool} from "../../../../plugins/hsymbol.ts";
 import {runLSPQuery} from "../../../../plugins/lsp.ts";
 import {
@@ -220,12 +220,12 @@ describe("verified-row output", () => {
   });
 });
 
-describe("hread built-in plugin", () => {
+describe("hcat built-in plugin", () => {
   test("keeps the private description call-local", () => {
     const description = plugin.tools[0].specification.description.replace(/\s+/g, " ");
     expect(description).toContain("Read one UTF-8 file or inclusive logical-line range");
     expect(description).toContain("`LINE:HASH TEXT`");
-    expect(description).toContain("`hread PATH [START:END]`");
+    expect(description).toContain("`hcat PATH [START:END]`");
     for (const persistent of ["authorized edit", "ordinary read", "HPATCH targets", "through `shell`"]) {
       expect(description).not.toContain(persistent);
     }
@@ -235,7 +235,7 @@ describe("hread built-in plugin", () => {
     const format = plugin.tools[0].specification.format;
     expect(format?.syntax).toBe("regex");
     if (format === undefined) {
-      throw new Error("hread grammar format is missing");
+      throw new Error("hcat grammar format is missing");
     }
     for (const input of [
       "plain.txt",
@@ -261,7 +261,7 @@ describe("hread built-in plugin", () => {
   });
 
   test("parses one path and optional range into shell arguments", async () => {
-    const tool = createHReadTool("description", "start: TEST");
+    const tool = createHCatTool("description", "start: TEST");
     const context = {resolvePath: (path: string) => path};
     const parse = (input: string) => tool.parse(input, context);
 
@@ -279,19 +279,19 @@ describe("hread built-in plugin", () => {
       "2:9",
     ]);
     expect(() => parse("first.txt\nsecond.txt 2:9")).toThrow(
-      "invalid bare hread path",
+      "invalid bare hcat path",
     );
   });
 
 
   test("reads one whole file or range", async () => {
-    const directory = await temporaryDirectory("hread-plugin-");
+    const directory = await temporaryDirectory("hcat-plugin-");
     process.chdir(directory);
     await writeFile("plain.txt", "alpha\r\nbeta\rgamma\n", "utf8");
     await writeFile("second file.txt", "one\ntwo\nthree", "utf8");
     await writeFile("token-spellings.txt", "<|endoftext|> <|im_start|> <|fim_prefix|>\n", "utf8");
 
-    const tool = createHReadTool("description", "start: TEST");
+    const tool = createHCatTool("description", "start: TEST");
     const whole = await tool.execute(["plain.txt"], executionContext);
     expect(whole).toEqual({
       stdout: [
@@ -320,7 +320,7 @@ describe("hread built-in plugin", () => {
         formatVerifiedRow(2, "beta"),
         formatVerifiedRow(3, "gamma"),
       ].join(""),
-      stderr: "hread: 4-5: [out of range]\n",
+      stderr: "hcat: 4-5: [out of range]\n",
       exitCode: 0,
     });
 
@@ -332,24 +332,24 @@ describe("hread built-in plugin", () => {
 
     const outside = await tool.execute(["plain.txt", "4:5"], executionContext);
     expect(outside).toEqual({
-      stderr: "hread: start line 4 is past EOF (3 lines)\n",
+      stderr: "hcat: start line 4 is past EOF (3 lines)\n",
       exitCode: 1,
     });
 
     const missing = await tool.execute(["missing.txt"], executionContext);
     expect(missing).toEqual({
-      stderr: "hread: ENOENT: no such file or directory\n",
+      stderr: "hcat: ENOENT: no such file or directory\n",
       exitCode: 1,
     });
 
     expect(await tool.execute(["@shell/call-id"], executionContext)).toEqual({
-      stderr: "hread: unresolved @shell path\n",
+      stderr: "hcat: unresolved @shell path\n",
       exitCode: 1,
     });
   });
 
   test("rejects malformed ranges, non-regular files, and invalid UTF-8", async () => {
-    const directory = await temporaryDirectory("hread-plugin-");
+    const directory = await temporaryDirectory("hcat-plugin-");
     process.chdir(directory);
     await writeFile("short.txt", "one\n", "utf8");
     await writeFile("binary.txt", Uint8Array.from([0xff]));
@@ -359,7 +359,7 @@ describe("hread built-in plugin", () => {
       expect(created.status).toBe(0);
     }
 
-    const tool = createHReadTool("description", "start: TEST");
+    const tool = createHCatTool("description", "start: TEST");
     for (const [argv, diagnostic] of [
       [["short.txt", "3:2"], "range start exceeds end"],
       [["binary.txt"], "not UTF-8"],
@@ -373,30 +373,30 @@ describe("hread built-in plugin", () => {
   });
 
   test("retains whole admitted rows and fails when later rows exceed the token limit", async () => {
-    const directory = await temporaryDirectory("hread-limit-");
+    const directory = await temporaryDirectory("hcat-limit-");
     process.chdir(directory);
     const first = contentWithFormattedTokenCount(15_000, (content) => formatVerifiedRow(1, content));
     await writeFile("large.txt", `${first}\nsecond\nthird\n`, "utf8");
 
-    const tool = createHReadTool("description", "start: TEST");
+    const tool = createHCatTool("description", "start: TEST");
     const result = await tool.execute(["large.txt"], executionContext);
     expect(result).toEqual({
       stdout: formatVerifiedRow(1, first) + formatVerifiedRow(2, "second"),
-      stderr: "hread: output incomplete: 15,000-token limit reached\n",
+      stderr: "hcat: output incomplete: 15,000-token limit reached\n",
       exitCode: 1,
     });
   });
 
   test("discards an unavoidably over-limit row while streaming", async () => {
-    const directory = await temporaryDirectory("hread-oversized-row-");
+    const directory = await temporaryDirectory("hcat-oversized-row-");
     process.chdir(directory);
     await writeFile("large.txt", " ".repeat(15_500 * 128 + 1), "utf8");
 
-    const tool = createHReadTool("description", "start: TEST");
+    const tool = createHCatTool("description", "start: TEST");
     const result = await tool.execute(["large.txt"], executionContext);
     expect(result).toEqual({
       stdout: "",
-      stderr: "hread: output incomplete: 15,000-token limit reached\n",
+      stderr: "hcat: output incomplete: 15,000-token limit reached\n",
       exitCode: 1,
     });
   });
@@ -1111,7 +1111,7 @@ describe("inspect_file built-in plugin", () => {
     ));
     expect(schema.success.data.outline).toBe("outline_entry[]");
     expect(schema.failure.error.code).toContain("outside_workspace");
-    for (const persistent of ["hread", "before editing", "Reason carefully"]) {
+    for (const persistent of ["hcat", "before editing", "Reason carefully"]) {
       expect(inspectFileDescription).not.toContain(persistent);
     }
 

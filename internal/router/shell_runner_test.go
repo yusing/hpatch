@@ -101,7 +101,7 @@ func TestShellRunnerUsesInterpreterBasenameForLanguageVariant(t *testing.T) {
 
 func TestShellRunnerEvaluatesPrivateToolsWithoutFrontends(t *testing.T) {
 	registry := sharedProxyTestRegistry(t)
-	for _, name := range []string{"hread", "hgrep", "hsymbol", "inspect_file"} {
+	for _, name := range []string{"hcat", "hgrep", "hsymbol", "inspect_file"} {
 		if wrapper, ok := registry.wrapper(name); ok {
 			t.Fatalf("private tool %q unexpectedly has wrapper %q", name, wrapper)
 		}
@@ -124,7 +124,7 @@ func TestShellRunnerEvaluatesPrivateToolsWithoutFrontends(t *testing.T) {
 			registry,
 			interpreter,
 			nil,
-			"cd nested\nhread 'space name.txt' 1:1 | { read -r row; printf 'row:%s\\n' \"$row\"; }\nhread missing 2>/dev/null || printf recovered",
+			"cd nested\nhcat 'space name.txt' 1:1 | { read -r row; printf 'row:%s\\n' \"$row\"; }\nhcat missing 2>/dev/null || printf recovered",
 			nil,
 		)
 		if exitCode != 0 || stdout != "row:1:8ed3 alpha\nrecovered" || stderr != "" {
@@ -133,7 +133,7 @@ func TestShellRunnerEvaluatesPrivateToolsWithoutFrontends(t *testing.T) {
 	}
 }
 
-func TestShellRunnerReadsRetainedHReadArtifact(t *testing.T) {
+func TestShellRunnerReadsRetainedHCatArtifact(t *testing.T) {
 	registry := sharedProxyTestRegistry(t)
 	runtimeDirectory := t.TempDir()
 	retainedDirectory := filepath.Join(runtimeDirectory, "mekugi-scripts-thread-id")
@@ -151,7 +151,7 @@ func TestShellRunnerReadsRetainedHReadArtifact(t *testing.T) {
 		registry,
 		"/bin/sh",
 		nil,
-		"hread @shell/call-id 2:2",
+		"hcat @shell/call-id 2:2",
 		nil,
 	)
 	if exitCode != 0 || stdout != "2:ca67 retained\n" || stderr != "" {
@@ -159,7 +159,7 @@ func TestShellRunnerReadsRetainedHReadArtifact(t *testing.T) {
 	}
 }
 
-func TestShellRunnerConfinesRetainedHReadArtifact(t *testing.T) {
+func TestShellRunnerConfinesRetainedHCatArtifact(t *testing.T) {
 	registry := sharedProxyTestRegistry(t)
 	runtimeDirectory := t.TempDir()
 	outsideDirectory := t.TempDir()
@@ -193,10 +193,10 @@ func TestShellRunnerConfinesRetainedHReadArtifact(t *testing.T) {
 		"@shell//absolute",
 		"@shell/.runtime",
 	} {
-		assertRejected("hread " + reference)
+		assertRejected("hcat " + reference)
 	}
 	t.Setenv("MEKUGI_RUNTIME_DIR", "relative-runtime")
-	stdout, stderr, exitCode := runShellWorkerTest(t, registry, "/bin/sh", nil, "hread @shell/call-id", nil)
+	stdout, stderr, exitCode := runShellWorkerTest(t, registry, "/bin/sh", nil, "hcat @shell/call-id", nil)
 	if exitCode == 0 || stdout != "" || !strings.Contains(stderr, "MEKUGI_RUNTIME_DIR must be an absolute path") {
 		t.Fatalf("relative runtime: exit %d, stdout %q, stderr %q", exitCode, stdout, stderr)
 	}
@@ -206,7 +206,7 @@ func TestShellRunnerConfinesRetainedHReadArtifact(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("CODEX_THREAD_ID", "thread-link")
-	assertRejected("hread @shell/call-id")
+	assertRejected("hcat @shell/call-id")
 
 	artifactLinkDirectory := filepath.Join(runtimeDirectory, "mekugi-scripts-artifact-link")
 	if err := os.MkdirAll(artifactLinkDirectory, 0o700); err != nil {
@@ -216,7 +216,7 @@ func TestShellRunnerConfinesRetainedHReadArtifact(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("CODEX_THREAD_ID", "artifact-link")
-	assertRejected("hread @shell/call-id")
+	assertRejected("hcat @shell/call-id")
 }
 
 func TestShellRunnerPreservesStdinAndExternalCommands(t *testing.T) {

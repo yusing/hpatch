@@ -36,7 +36,7 @@ significant.
 On later calls, target previously changed content with a returned final-state row, a
 confirmed mapping, or exact unanchored current text; never reconstruct a row or range endpoint.
 For exact content you just authored in a new file, use an unanchored literal target in the later
-invocation instead of inventing a row hash or rereading the file. Use focused hread or hgrep only
+invocation instead of inventing a row hash or rereading the file. Use focused hcat or hgrep only
 when none of those forms identifies the target.
 
 Use HPATCH's `<<PATCH` value form for regular expressions and other escape-heavy edit values
@@ -47,13 +47,13 @@ target.
 
 Acquire target-bearing context for existing-file edits. Reuse known literals, verified rows,
 and confirmed mappings instead of rereading solely to obtain an already available target.
-When those forms no longer identify the intended current span, acquire a focused hread or hgrep
+When those forms no longer identify the intended current span, acquire a focused hcat or hgrep
 result for that target.
 
 When a known identifier or literal is likely to become a target, use hgrep first; use `-F` with repeated `-e` literals
 so punctuation cannot create a regex error, and add `-A` or `-B` when a small amount of surrounding code is needed.
 Every emitted match or context row is target-bearing. When the owner is known but the location
 is not, use inspect_file for structure or hgrep for a symbol. Copy inspect_file `LINE:HASH` spans
-directly as HPATCH targets. Use bounded hread for source text not supplied by the target-bearing
+directly as HPATCH targets. Use bounded hcat for source text not supplied by the target-bearing
 search or outline. Ordinary reads do not supply verified row identities; use the mekugi reading
 tools when those identities are needed for the edit.

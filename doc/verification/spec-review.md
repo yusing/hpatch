@@ -20,7 +20,7 @@ empty-file behavior, and current-row reuse in testable terms.
 
 The accepted correction is present: reported rows support exact boundary-local continuation,
 but the projection does not promise to contain a distant or interior target needed later.
-Focused hread remains required for an absent target, saved pre-edit references remain stale,
+Focused hcat remains required for an absent target, saved pre-edit references remain stale,
 and caller-selected report ranges remain outside this increment.
 
 No contradictory behavior, duplicate semantic owner, invented public surface, lost constraint,

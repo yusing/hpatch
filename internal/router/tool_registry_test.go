@@ -109,7 +109,7 @@ func TestToolRegistryStartup(t *testing.T) {
 		if err := registry.installFrontends(); err != nil {
 			t.Fatal(err)
 		}
-		for _, name := range []string{"hread", "hgrep", "hsymbol", "inspect_file", "shell"} {
+		for _, name := range []string{"hcat", "hgrep", "hsymbol", "inspect_file", "shell"} {
 			_, ok := registry.contribution(name)
 			if !ok {
 				t.Fatalf("built-in %q is unavailable", name)
@@ -235,7 +235,7 @@ func TestToolRegistryStartup(t *testing.T) {
 				t.Fatalf("wrapper %q targets %q", wrapper, target)
 			}
 		}
-		for _, name := range []string{mekugiToolName, "hread", "hgrep", "hsymbol", "inspect_file", "shell"} {
+		for _, name := range []string{mekugiToolName, "hcat", "hgrep", "hsymbol", "inspect_file", "shell"} {
 			if _, ok := registry.wrapper(name); ok {
 				t.Fatalf("built-in %q unexpectedly has an executor wrapper", name)
 			}

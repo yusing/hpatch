@@ -4,7 +4,7 @@ pjdoc:
   kind: spec
   scope: root
   status: draft
-  revision: "49"
+  revision: "50"
   files:
     - router.md
     - subagents.md

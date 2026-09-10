@@ -125,7 +125,7 @@ never contains tool-specific state; the router updates the direct thread runtime
 current snapshot worker instead. The worker verifies the manifest and registry identity. For Bash and sh
 basenames, `mvdan/sh` owns parsing, built-ins, functions, expansion, redirections, pipelines,
 working-directory changes, exported environment, and fallback external commands. Its exec
-middleware recognizes only hread, hgrep, hsymbol, and inspect_file, invokes the matching
+middleware recognizes only hcat, hgrep, hsymbol, and inspect_file, invokes the matching
 snapshot implementation once with expanded argv and the current handler context, writes results
 through the handler streams, and returns its status to
 the shell. Non-terminal fallback commands use cancellable process groups so descendants cannot
@@ -173,9 +173,9 @@ reading. The flat runtime locator is outside the script capability.
 The router resolves `#!script` references before calling the shell plugin parser, which
 rejects unresolved references and performs no retained-file reads. Nested references remain
 within the same script root and cycles reject. Replay retains the original call, while a
-rerun's retained artifact contains the resolved body. The private hread middleware opens a
+rerun's retained artifact contains the resolved body. The private hcat middleware opens a
 retained regular file through the same confined Go boundary and passes its descriptor to
-the JavaScript reader; the reader never reconstructs a retained host path. Ordinary hread
+the JavaScript reader; the reader never reconstructs a retained host path. Ordinary hcat
 paths and configured plugin translation remain unchanged.
 
 Startup materializes the validated implementation modules, shared-core adapter and reactor, and dispatch metadata into an
@@ -214,5 +214,5 @@ already-rendered final-state report. Response restoration retains the original m
 hpatch call and normal executor result for later model-visible history; it does not expose
 the translated patch as later model input or derive another report representation. A later
 model inference can therefore reuse an exact current row present in the retained successful
-report. Router history does not retain hread rows on behalf of the engine, predict later
+report. Router history does not retain hcat rows on behalf of the engine, predict later
 targets, or move final-reference projection across the root boundary.

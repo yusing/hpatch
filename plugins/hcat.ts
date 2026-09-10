@@ -41,19 +41,19 @@ type ReadSpec = {
 
 
 /**
- * parseQuotedPath decodes a quoted hread path operand and returns the unconsumed trailing text.
+ * parseQuotedPath decodes a quoted hcat path operand and returns the unconsumed trailing text.
  */
 function parseQuotedPath(input: string): {path: string; trailing: string} {
   try {
     const decoded = decodeQuotedOperand(input);
     return {path: decoded.value, trailing: decoded.rest};
   } catch (error) {
-    throw new Error(`invalid hread path: ${errorText(error)}`);
+    throw new Error(`invalid hcat path: ${errorText(error)}`);
   }
 }
 
 /**
- * parseReadSpec parses an hread input specification into path and optional line range.
+ * parseReadSpec parses an hcat input specification into path and optional line range.
  */
 function parseReadSpec(input: string): ReadSpec {
   let path;
@@ -65,33 +65,33 @@ function parseReadSpec(input: string): ReadSpec {
     path = separator < 0 ? input : input.slice(0, separator);
     trailing = separator < 0 ? "" : input.slice(separator);
     if (/[\u0000-\u0020"]/u.test(path)) {
-      throw new Error("invalid bare hread path");
+      throw new Error("invalid bare hcat path");
     }
   }
   if (path === "") {
-    throw new Error("hread path must not be empty");
+    throw new Error("hcat path must not be empty");
   }
   if (trailing === "") {
     return {path, startLine: 0, endLine: 0};
   }
   const match = trailing.match(/^ (0|[1-9][0-9]*):([1-9][0-9]*)$/u);
   if (match === null) {
-    throw new Error("hread input must be PATH or PATH START:END");
+    throw new Error("hcat input must be PATH or PATH START:END");
   }
   let requestedStartLine;
   let endLine;
   try {
     requestedStartLine = match[1] === "0" ? 0 : parsePositiveInteger(match[1]);
   } catch {
-    throw new Error("hread start line is out of range");
+    throw new Error("hcat start line is out of range");
   }
   try {
     endLine = parsePositiveInteger(match[2]);
   } catch {
-    throw new Error("hread end line is out of range");
+    throw new Error("hcat end line is out of range");
   }
   if (requestedStartLine > endLine) {
-    throw new Error("hread line range start exceeds end");
+    throw new Error("hcat line range start exceeds end");
   }
   return {path, startLine: Math.max(1, requestedStartLine), endLine};
 }
@@ -215,7 +215,7 @@ async function readHashLines(spec: ReadSpec): Promise<ComparedOutput> {
     }
     const missingStartLine = Math.max(spec.startLine, lineCount + 1);
     const warning = !wholeFile && missingStartLine <= spec.endLine
-      ? `hread: ${missingStartLine}-${spec.endLine}: [out of range]\n`
+      ? `hcat: ${missingStartLine}-${spec.endLine}: [out of range]\n`
       : undefined;
     return {current: output.current, incomplete: output.incomplete, warning};
   } finally {
@@ -225,9 +225,9 @@ async function readHashLines(spec: ReadSpec): Promise<ComparedOutput> {
 
 
 /**
- * hreadArguments converts parsed hread input to the internal argv representation.
+ * hcatArguments converts parsed hcat input to the internal argv representation.
  */
-function hreadArguments(input: string): string[] {
+function hcatArguments(input: string): string[] {
   const spec = parseReadSpec(stripOptionalFinalNewline(input));
   if (spec.startLine === 0) {
     return [spec.path];
@@ -237,9 +237,9 @@ function hreadArguments(input: string): string[] {
 
 
 /**
- * hreadInput reconstructs the canonical input specification from argv.
+ * hcatInput reconstructs the canonical input specification from argv.
  */
-function hreadInput(argv: string[]): string {
+function hcatInput(argv: string[]): string {
   if (argv.length === 1 && argv[0] !== "") {
     return JSON.stringify(argv[0]);
   }
@@ -250,33 +250,33 @@ function hreadInput(argv: string[]): string {
   ) {
     return `${JSON.stringify(argv[0])} ${argv[1]}`;
   }
-  throw new Error("hread expected PATH or PATH START:END");
+  throw new Error("hcat expected PATH or PATH START:END");
 }
 
 
 /**
- * createHReadTool creates the hread tool with bounded verified-row file output.
+ * createHCatTool creates the hcat tool with bounded verified-row file output.
  */
-export function createHReadTool(description: string, grammar: string): Tool<string[]> {
+export function createHCatTool(description: string, grammar: string): Tool<string[]> {
   return createExecutorTool({
-    name: "hread",
+    name: "hcat",
     description,
     grammar,
     argv(input, context) {
-      const argumentsValue = hreadArguments(input);
+      const argumentsValue = hcatArguments(input);
       argumentsValue[0] = context.resolvePath(argumentsValue[0]);
       return argumentsValue;
     },
     async execute(argv) {
       try {
         const executionArguments = [...argv];
-        const spec = parseReadSpec(stripOptionalFinalNewline(hreadInput(executionArguments)));
+        const spec = parseReadSpec(stripOptionalFinalNewline(hcatInput(executionArguments)));
         if (spec.path.startsWith("@shell/")) {
           throw new Error("unresolved @shell path");
         }
         const result = await readHashLines(spec);
         const limitDiagnostic = result.incomplete
-          ? `hread: ${VERIFIED_ROW_LIMIT_DIAGNOSTIC}`
+          ? `hcat: ${VERIFIED_ROW_LIMIT_DIAGNOSTIC}`
           : "";
         const stderr = `${result.warning ?? ""}${limitDiagnostic}`;
         return {
@@ -285,7 +285,7 @@ export function createHReadTool(description: string, grammar: string): Tool<stri
           exitCode: result.incomplete ? 1 : 0,
         };
       } catch (error) {
-        return {stderr: `hread: ${conciseErrorText(error)}\n`, exitCode: 1};
+        return {stderr: `hcat: ${conciseErrorText(error)}\n`, exitCode: 1};
       }
     },
   });
