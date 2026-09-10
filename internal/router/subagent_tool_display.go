@@ -24,7 +24,7 @@ func subagentToolActivityTexts(item map[string]json.RawMessage, qualifiedName st
 	}
 	shortName := strings.TrimPrefix(qualifiedName, "functions.")
 	if shortName == "exec" {
-		if nested, ok := toolActivityUnwrapExec(input); ok {
+		if nested, ok := toolActivityUnwrapExec(input, false); ok {
 			return subagentToolActivityTexts(nested, qualifiedToolName(jsonString(nested, "namespace"), jsonString(nested, "name")), nil)
 		}
 	}
@@ -193,11 +193,7 @@ func toolActivityWriteStdin(arguments map[string]json.RawMessage) string {
 	if chars != "" {
 		return toolActivityDetail("Send input", chars)
 	}
-	session := strings.TrimSpace(string(arguments["session_id"]))
-	if session == "" || !json.Valid([]byte(session)) {
-		return "Wait"
-	}
-	return "Wait\n" + commentaryCode("session "+session)
+	return "Still Running · command unavailable"
 }
 
 func toolActivityShellArgv(argv []string) string {
@@ -215,7 +211,7 @@ func toolActivityShell(script string) string {
 	return toolActivityShellLanguage(script, "bash")
 }
 
-func toolActivityShellLanguage(script, language string) string {
+func toolActivityUnwrapShell(script, language string) (string, string) {
 	// Native carriers may wrap the source in `shell bash $'...'`.
 	for range 2 {
 		program, err := syntax.NewParser().Parse(strings.NewReader(script), "")
@@ -236,6 +232,14 @@ func toolActivityShellLanguage(script, language string) string {
 		}
 		script = body
 		language = interpreter
+	}
+	return script, language
+}
+
+func toolActivityShellLanguage(script, language string) string {
+	script, language = toolActivityUnwrapShell(script, language)
+	if toolActivityScriptReference(script) != "" {
+		return "Running stored script · command unavailable"
 	}
 	parsed, err := shellsyntax.Parse(script)
 	if err == nil && !parsed.HasScript && parsed.CommandTemplate == "" && len(parsed.Interpreter) == 1 &&
@@ -392,7 +396,9 @@ func toolActivityReads(script string) (string, bool) {
 
 // Recognize transparent Code Mode wrappers, not arbitrary programs containing a
 // tool call (which may branch, execute other work, or never invoke that call).
-func toolActivityUnwrapExec(source string) (map[string]json.RawMessage, bool) {
+// Output-only projections can describe commands but cannot identify sessions:
+// their stdout is program-controlled, not execution metadata.
+func toolActivityUnwrapExec(source string, requireResultMetadata bool) (map[string]json.RawMessage, bool) {
 	parser := sitter.NewParser()
 	defer parser.Close()
 	if parser.SetLanguage(codeModeJavaScriptLanguage) != nil {
@@ -424,6 +430,8 @@ func toolActivityUnwrapExec(source string) (map[string]json.RawMessage, bool) {
 		expression = first.NamedChild(0)
 		if args, ok := toolActivityCallArguments(expression, bytes, "text"); ok && len(args) == 1 {
 			expression = args[0]
+		} else if requireResultMetadata {
+			return nil, false
 		}
 	} else if first.Kind() == "lexical_declaration" && first.NamedChildCount() == 1 && len(statements) == 2 {
 		declaration := first.NamedChild(0)
@@ -432,7 +440,7 @@ func toolActivityUnwrapExec(source string) (map[string]json.RawMessage, bool) {
 			return nil, false
 		}
 		name := binding.Utf8Text(bytes)
-		if !toolActivityResultProjection(statements[1], bytes, name) {
+		if !toolActivityResultProjection(statements[1], bytes, name, requireResultMetadata) {
 			return nil, false
 		}
 		expression = declaration.ChildByFieldName("value")
@@ -476,7 +484,7 @@ func toolActivityUnwrapExec(source string) (map[string]json.RawMessage, bool) {
 
 // Inspect the projection tree so formatting never determines whether a wrapper
 // is transparent. Only the bound result and the supported metadata copy qualify.
-func toolActivityResultProjection(statement *sitter.Node, source []byte, binding string) bool {
+func toolActivityResultProjection(statement *sitter.Node, source []byte, binding string, requireResultMetadata bool) bool {
 	if statement.Kind() != "expression_statement" || statement.NamedChildCount() != 1 {
 		return false
 	}
@@ -485,8 +493,10 @@ func toolActivityResultProjection(statement *sitter.Node, source []byte, binding
 		return false
 	}
 	value := args[0]
-	if toolActivityMemberPath(value, source, binding) ||
-		toolActivityMemberPath(value, source, binding, "output") {
+	if toolActivityMemberPath(value, source, binding, "output") {
+		return !requireResultMetadata
+	}
+	if toolActivityMemberPath(value, source, binding) {
 		return true
 	}
 	args, ok = toolActivityCallArguments(value, source, "JSON", "stringify")

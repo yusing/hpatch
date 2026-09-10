@@ -53,10 +53,10 @@ func TestSubagentToolDisplay(t *testing.T) {
 		{"view_image", `{"path":"/tmp/a.png"}`, "View image\n`/tmp/a.png`"},
 		{"exec", `const result = await tools.exec_command({"cmd":"shell bash $'cat a\\n'","login":false}); text(JSON.stringify(Object.assign({}, result, {"retained":false})));`, "Read `a`"},
 		{"exec", `await tools.exec_command({"cmd":"echo a\necho b"})`, "Run\n```bash\necho a\necho b\n```"},
-		{"exec", `const r = await tools.write_stdin({session_id: 52915, chars: "", yield_time_ms: 30000, max_output_tokens: 3000}); text(r);`, "Wait\n`session 52915`"},
-		{"exec", `await tools.write_stdin({session_id: -12, chars: ""})`, "Wait\n`session -12`"},
-		{"exec", `await tools.write_stdin({session_id: 9007199254740993, chars: ""})`, "Wait\n`session 9007199254740992`"},
-		{"exec", `await tools.write_stdin({session_id: -9007199254740993, chars: ""})`, "Wait\n`session -9007199254740992`"},
+		{"exec", `const r = await tools.write_stdin({session_id: 52915, chars: "", yield_time_ms: 30000, max_output_tokens: 3000}); text(r);`, "Still Running · command unavailable"},
+		{"exec", `await tools.write_stdin({session_id: -12, chars: ""})`, "Still Running · command unavailable"},
+		{"exec", `await tools.write_stdin({session_id: 9007199254740993, chars: ""})`, "Still Running · command unavailable"},
+		{"exec", `await tools.write_stdin({session_id: -9007199254740993, chars: ""})`, "Still Running · command unavailable"},
 		{"exec", `await tools.exec_command({cmd: 'cat a', login: false})`, "Read `a`"},
 		{"exec", `await tools.apply_patch("*** Begin Patch\n*** Add File: a\n+x\n*** End Patch\n")`, "Write `a`\n```diff\n+x\n```"},
 	}
@@ -93,8 +93,8 @@ func TestSubagentWriteStdinDisplay(t *testing.T) {
 		arguments string
 		want      string
 	}{
-		{`{"session_id":52915}`, "Wait\n`session 52915`"},
-		{`{"session_id":52915,"chars":""}`, "Wait\n`session 52915`"},
+		{`{"session_id":52915}`, "Still Running · command unavailable"},
+		{`{"session_id":52915,"chars":""}`, "Still Running · command unavailable"},
 		{`{"session_id":52915,"chars":"yes"}`, "Send input\n`yes`"},
 	} {
 		for _, projection := range []string{"text(r)", "text (r . output)", "text(JSON.stringify(r))"} {
@@ -130,7 +130,7 @@ func TestSubagentInlineAwaitDisplay(t *testing.T) {
 		},
 		{
 			`text(await tools.write_stdin({session_id:23221,chars:"",yield_time_ms:1000,max_output_tokens:5000}));`,
-			"Wait\n`session 23221`",
+			"Still Running · command unavailable",
 		},
 	} {
 		t.Run(tt.source, func(t *testing.T) {
@@ -212,7 +212,7 @@ func TestSubagentToolDisplayDoesNotUnwrapArbitraryCode(t *testing.T) {
 		`await tools.write_stdin({session_id: -1e309, chars: ""})`,
 		`await tools.exec_command({cmd: "cat a", \u0063md: "cat b"})`,
 	} {
-		if _, ok := toolActivityUnwrapExec(source); ok {
+		if _, ok := toolActivityUnwrapExec(source, false); ok {
 			t.Fatalf("unwrapped nontransparent code: %s", source)
 		}
 	}

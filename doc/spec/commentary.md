@@ -104,8 +104,14 @@ Code Mode recognition accepts literal JavaScript objects with identifier or quot
 recursively static JSON-compatible values. It never evaluates source; computed keys, spreads,
 calls, references, and other dynamic expressions retain a `Run JavaScript` display with the
 original source in a `javascript` fence. A literal `write_stdin` call with no characters is
-shown as `Wait` with its session ID rather than as raw JavaScript, matching native
-`write_stdin` polls. Calls that send nonempty characters display `Send input`.
+shown as `Still Running` with a short excerpt of the actual command, matching native
+`write_stdin` polls. Stored shell references display `Running stored script` with the
+resolved command excerpt, not transport directives or reference IDs. These excerpts
+use the first source line, at most 120 characters including an ellipsis when shortened.
+Polls correlate only with visible call/result pairs that include execution metadata in the
+same request; output-only Code Mode projections are not session evidence. Missing command
+history or unavailable stored source is labelled `command unavailable`, never guessed.
+These presentation rules do not change execution, validation, or replay payloads. Calls that send nonempty characters display `Send input`.
 Simple literal `cat` and `hread` calls display `Read <file>`; `skills-mgr get <skill-name>`
 and reads of a named skill's `SKILL.md` display `Skill Read <skill-name>`.
 `skills-mgr get <skill-name>/<reference-path>` displays `Skill Reference Read` with the

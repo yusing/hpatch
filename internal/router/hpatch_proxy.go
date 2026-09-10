@@ -209,19 +209,20 @@ type hpatchPendingCall struct {
 }
 
 type hpatchResponseTransform struct {
-	ctx              context.Context
-	proxy            *hpatchProxy
-	sessionID        string
-	shellThreadID    string // Runtime identity remains available when activity attribution is invalid.
-	shellDirectory   string
-	model            string
-	visible          map[string]hpatchHistory
-	historySessionID string
-	sessionActive    bool
-	threadID         string
-	activityStarted  time.Time
-	activityBytes    int
-	activityMessages []map[string]json.RawMessage
+	ctx                   context.Context
+	proxy                 *hpatchProxy
+	sessionID             string
+	shellThreadID         string // Runtime identity remains available when activity attribution is invalid.
+	shellDirectory        string
+	model                 string
+	visible               map[string]hpatchHistory
+	historySessionID      string
+	sessionActive         bool
+	threadID              string
+	activityStarted       time.Time
+	activityBytes         int
+	activityMessages      []map[string]json.RawMessage
+	activityShellSessions map[string]string
 
 	originalTools             json.RawMessage
 	originalToolsPresent      bool
@@ -455,7 +456,7 @@ func (p *hpatchProxy) prepareRequest(ctx context.Context, request *parsedRespons
 		p.activity.collect(activityThreadID, "subagent-start\x00"+activityThreadID, "start", subagentStartCommentary(request))
 	}
 	deferredCommentary := p.drainCommentarySession(historySessionID, threadID)
-	return &hpatchResponseTransform{
+	transform := &hpatchResponseTransform{
 		ctx:              ctx,
 		proxy:            p,
 		sessionID:        sessionID,
@@ -488,7 +489,11 @@ func (p *hpatchProxy) prepareRequest(ctx context.Context, request *parsedRespons
 
 		codeModeToolName: codeModeToolName,
 		nativeTools:      nativeTools,
-	}, nil
+	}
+	if transform.subagentTurn {
+		transform.prepareShellActivity(request.fields["input"])
+	}
+	return transform, nil
 }
 
 type codeModeApplyPatchOwner struct {

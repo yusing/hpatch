@@ -38,7 +38,12 @@ func (t *hpatchResponseTransform) collectSubagentToolCall(item map[string]json.R
 	} else if retained, exists := t.visible[callID]; exists {
 		history = &retained
 	}
-	displays := subagentToolActivityTexts(item, name, history)
+	var displays []string
+	if display, ok := t.shellActivityDisplay(item, name); ok {
+		displays = []string{display}
+	} else {
+		displays = subagentToolActivityTexts(item, name, history)
+	}
 	for index, text := range displays {
 		source, kind := "tool-call\x00"+id, "tool"
 		if len(displays) > 1 {
