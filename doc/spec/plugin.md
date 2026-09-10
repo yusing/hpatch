@@ -2,7 +2,7 @@
 
 ## REQ-PLUGIN-001 — Router-local tool plugins
 
-In hpatch mode, `hpatch` discovers tool plugins only from the `hpatch/plugins`
+In hpatch mode, `mekugi` discovers tool plugins only from the `mekugi/plugins`
 directory beneath the platform user configuration directory. Each direct regular file whose
 name ends in `.js` or `.mjs` is one compiled ECMAScript-module declaration, loaded in lexical
 filename order; directories, symlinks, and other entries are not declarations. A missing or
@@ -85,7 +85,7 @@ when a later call or the response is interrupted.
 For each configured executor-backed contributed tool, startup creates or verifies a session-private
 executable symlink in the authenticated snapshot's `bin` directory. Its basename is exactly the contributed tool name,
 and its target is the authenticated process-scoped snapshot wrapper with the same basename.
-The snapshot wrapper targets the running `hpatch` executable. Without a command template,
+The snapshot wrapper targets the running `mekugi` executable. Without a command template,
 the exec wrapper invokes only the basename and represents the parsed model input as its ordered
 argv. With a command template, the router replaces `{.}` with that same independently quoted
 basename and argv. When launched through both symlinks, the router verifies the session frontend
@@ -98,9 +98,10 @@ executor calls.
 Built-in shell and its private hread, hgrep, hsymbol, and inspect_file commands are the exception
 to that frontend path. The PATH-installed `shell` name is a fixed shared locator, not a snapshot
 wrapper or plugin implementation. For each eligible thread, the router writes one direct
-`hpatch-runtime-$CODEX_THREAD_ID` link directly below the runtime directory to the current private
+`mekugi-runtime-$CODEX_THREAD_ID` link directly below the runtime directory to the current private
 `shell` wrapper in the
-authenticated snapshot. The locator reads that link and replaces itself with its target. Bash
+authenticated snapshot. The locator reads that link and replaces itself with its target.
+If that link is absent, the helper follows `hpatch-runtime-$CODEX_THREAD_ID`. Bash
 and POSIX evaluation dispatch private commands from the resolved worker after shell expansion, so none of the four
 private names creates a snapshot wrapper, stable frontend, or `PATH` dependency.
 
@@ -173,7 +174,7 @@ Acceptance:
    value. An optional template contains exactly one `{.}`, which expands to the complete worker
    command. The plugin declaration does not contain or generate the outer carrier shape.
 7. Invoking a configured executor-backed tool resolves its session basename frontend through the
-   authenticated snapshot wrapper to `hpatch`, verifies the pinned registry, dispatches
+   authenticated snapshot wrapper to `mekugi`, verifies the pinned registry, dispatches
    by `argv[0]`, and delivers the declared argv under Codex's cwd, sandbox, and permissions.
 8. JSON and SSE responses preserve call identity while replacing a contributed call with its
    validated carrier. While the complete streaming input is buffered for validation, each withheld

@@ -157,7 +157,7 @@ func TestWrapTerminalInterruptAndTermination(t *testing.T) {
 	t.Setenv("CODEX_HOME", t.TempDir())
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
-	t.Setenv("HPATCH_RUNTIME_DIR", runtimeDirectory)
+	t.Setenv("MEKUGI_RUNTIME_DIR", runtimeDirectory)
 	t.Setenv("HPATCH_TEST_ROUTER", "1")
 	t.Setenv("HPATCH_TEST_CODEX", "1")
 	t.Setenv("HPATCH_TEST_EXIT", "interrupt")
@@ -217,8 +217,8 @@ func TestWrapTerminalInterruptAndTermination(t *testing.T) {
 	if stdout.String() != "codex stdout\n" || !strings.Contains(logs.String(), "codex stderr\n") {
 		t.Fatal("Codex output was not inherited")
 	}
-	announcement := "hpatch dashboard: " + strings.TrimSuffix(baseURL, "/v1") + "/\n"
-	if !strings.HasPrefix(logs.String(), announcement) || strings.Count(logs.String(), "hpatch dashboard: ") != 1 {
+	announcement := "mekugi dashboard: " + strings.TrimSuffix(baseURL, "/v1") + "/\n"
+	if !strings.HasPrefix(logs.String(), announcement) || strings.Count(logs.String(), "mekugi dashboard: ") != 1 {
 		t.Fatalf("dashboard announcement must precede Codex output exactly once: %q", logs.String())
 	}
 	if entries, err := os.ReadDir(logDirectory); err != nil || len(entries) != 0 {
@@ -246,7 +246,7 @@ func TestWrapCodexLifecycle(t *testing.T) {
 			t.Setenv("CODEX_HOME", t.TempDir())
 			t.Setenv("HOME", t.TempDir())
 			t.Setenv("XDG_CONFIG_HOME", t.TempDir())
-			t.Setenv("HPATCH_RUNTIME_DIR", runtimeDirectory)
+			t.Setenv("MEKUGI_RUNTIME_DIR", runtimeDirectory)
 			t.Setenv("HPATCH_TEST_CODEX", "1")
 			t.Setenv("HPATCH_TEST_EXIT", test.exit)
 			t.Setenv("HPATCH_TEST_ADDRESS", addressFile)
@@ -309,7 +309,7 @@ func TestValidateCodexArgs(t *testing.T) {
 		{"--oss"}, {"exec", "--local-provider", "ollama"}, {"--local-provider=ollama"},
 		{"-c", `model_provider="other"`}, {"--config=model_providers.other={}"},
 		{`-cmodel_provider="other"`}, {`-c=model_provider="other"`},
-		{"--config", `"model_providers".hpatch_wrap.base_url="https://example.com"`},
+		{"--config", `"model_providers".mekugi_wrap.base_url="https://example.com"`},
 		{"-c", `openai_base_url="https://example.com"`}, {"-c", `oss_provider="ollama"`},
 	} {
 		if err := validateCodexArgs(args); err == nil {
@@ -345,7 +345,7 @@ func TestWrapCodexStartupFailures(t *testing.T) {
 			t.Setenv("CODEX_HOME", t.TempDir())
 			t.Setenv("HOME", t.TempDir())
 			t.Setenv("XDG_CONFIG_HOME", configDirectory)
-			t.Setenv("HPATCH_RUNTIME_DIR", runtimeDirectory)
+			t.Setenv("MEKUGI_RUNTIME_DIR", runtimeDirectory)
 			t.Setenv("PATH", directory+string(os.PathListSeparator)+os.Getenv("PATH"))
 			marker := filepath.Join(directory, "launched")
 			stub := "#!/bin/sh\ntouch " + strconv.Quote(marker) + "\n"
@@ -356,7 +356,7 @@ func TestWrapCodexStartupFailures(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				plugins := filepath.Join(userConfig, "hpatch", "plugins")
+				plugins := filepath.Join(userConfig, "mekugi", "plugins")
 				if err := os.MkdirAll(plugins, 0o700); err != nil {
 					t.Fatal(err)
 				}

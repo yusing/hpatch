@@ -29,7 +29,7 @@ func openDebugOutput(flags routerFlags) (*debugOutput, error) {
 	if !*flags.debug {
 		return nil, nil
 	}
-	directory, err := os.MkdirTemp("", "hpatch-debug-")
+	directory, err := os.MkdirTemp("", "mekugi-debug-")
 	if err != nil {
 		return nil, fmt.Errorf("create debug directory: %w", err)
 	}

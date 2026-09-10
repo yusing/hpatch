@@ -149,10 +149,10 @@ Handoff disable issue reporting so the reporting tool does not confound either t
 
 ## One-listener topology
 
-Each measured arm runs one `hpatch` process with one listener:
+Each measured arm runs one `mekugi` process with one listener:
 
 ```text
-Codex ──HTTP──> hpatch ──HTTP──> provider
+Codex ──HTTP──> mekugi ──HTTP──> provider
                  │         │
                  └─ in-process capturer
 ```
@@ -168,7 +168,7 @@ GET  /                 # human-readable view of /api/metrics
 ```
 
 Compose defines task-scoped `control-agent` and `hpatch-agent` containers. Each
-runs `hpatch codex` with one random loopback listener and fixed provider egress.
+runs `mekugi codex` with one random loopback listener and fixed provider egress.
 The image requires Linux iptables and util-linux. Only the trusted launcher has
 NET_ADMIN and SYS_ADMIN. Docker’s default AppArmor profile is disabled to permit
 the trusted launcher’s private mount setup. Before inference, Codex enters private

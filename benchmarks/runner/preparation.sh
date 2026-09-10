@@ -83,7 +83,7 @@ PROMPT
 }
 
 configure_issue_reporting() {
-	local settings_directory="$run_dir/hpatch-config/hpatch"
+	local settings_directory="$run_dir/hpatch-config/mekugi"
 	local mentor_parent_prompt_sha=
 	local mentor_child_prompt_sha=
 	local mentor_spawn_prompt_sha=
@@ -400,7 +400,7 @@ build_benchmark_image() {
 	benchmark_image=$benchmark_image_id
 	read -r build_inputs_sha256 _ < <(sha256sum "$run_dir/build-inputs.tar")
 	docker run --rm --network none "$benchmark_image_id" \
-		sha256sum /usr/local/bin/hpatch /usr/local/bin/shell /usr/local/libexec/codex-real \
+		sha256sum /usr/local/bin/mekugi /usr/local/bin/shell /usr/local/libexec/codex-real \
 		>"$run_dir/binary-sha256.txt" || return 1
 	jq -cn --arg image_id "$benchmark_image_id" --arg source_sha256 "$build_inputs_sha256" \
 		--rawfile binaries "$run_dir/binary-sha256.txt" \

@@ -24,12 +24,12 @@ if int(fields["CapEff"].strip(), 16) or int(fields["CapBnd"].strip(), 16):
     fail("executor retained capabilities")
 if fields["NoNewPrivs"].strip() != "1":
     fail("privilege elevation is not disabled")
-for path in (os.environ["HPATCH_RUNTIME_DIR"], os.environ["XDG_STATE_HOME"], os.environ["BENCH_ARTIFACT_DIR"], "/benchmark-agent-issue-reports", "/root/.config"):
+for path in (os.environ["MEKUGI_RUNTIME_DIR"], os.environ["XDG_STATE_HOME"], os.environ["BENCH_ARTIFACT_DIR"], "/benchmark-agent-issue-reports", "/root/.config"):
     if not os.statvfs(path).f_flag & os.ST_RDONLY:
         fail("trusted artifacts are writable")
 # The configured listener must work. Everything else, including other loopback
 # ports, IPv6, DNS and other arm containers, is blocked by the OUTPUT policy.
-with urlopen(os.environ["HPATCH_BASE_URL"].removesuffix("/v1") + "/api/metrics", timeout=5) as response:
+with urlopen(os.environ["MEKUGI_BASE_URL"].removesuffix("/v1") + "/api/metrics", timeout=5) as response:
     if response.status != 200:
         fail("assigned router is unavailable")
 for family, address in ((socket.AF_INET, ("1.1.1.1", 443)), (socket.AF_INET6, ("2606:4700:4700::1111", 443))):

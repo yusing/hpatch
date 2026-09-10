@@ -232,7 +232,7 @@ func TestDefaultHPatchReplayDirectory(t *testing.T) {
 	state := t.TempDir()
 	t.Setenv("XDG_STATE_HOME", state)
 	got, err := defaultHPatchReplayDirectory()
-	if err != nil || got != filepath.Join(state, "hpatch", "replay") {
+	if err != nil || got != filepath.Join(state, "mekugi", "replay") {
 		t.Fatalf("explicit state path = %q, %v", got, err)
 	}
 	t.Setenv("XDG_STATE_HOME", "relative-state")
@@ -245,7 +245,7 @@ func TestDefaultHPatchReplayDirectory(t *testing.T) {
 		t.Fatal(err)
 	}
 	got, err = defaultHPatchReplayDirectory()
-	if err != nil || got != filepath.Join(home, ".local", "state", "hpatch", "replay") {
+	if err != nil || got != filepath.Join(home, ".local", "state", "mekugi", "replay") {
 		t.Fatalf("fallback state path = %q, %v", got, err)
 	}
 }

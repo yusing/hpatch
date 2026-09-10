@@ -128,7 +128,7 @@ func defaultHPatchReplayDirectory() (string, error) {
 	if !filepath.IsAbs(base) {
 		return "", errors.New("XDG_STATE_HOME must be absolute")
 	}
-	return filepath.Join(base, "hpatch", "replay"), nil
+	return filepath.Join(base, "mekugi", "replay"), nil
 }
 func openHPatchReplayStore(directory string) (*hpatchReplayStore, error) {
 	directory, err := filepath.Abs(directory)

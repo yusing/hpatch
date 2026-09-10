@@ -265,7 +265,7 @@ func TestOrdinaryBinSymlinkIsNotAPluginWorker(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	link := filepath.Join(directory, "hpatch")
+	link := filepath.Join(directory, "mekugi")
 	if err := os.Symlink(executable, link); err != nil {
 		t.Fatal(err)
 	}

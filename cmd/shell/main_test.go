@@ -54,6 +54,31 @@ done
 	}
 }
 
+func TestShellHelperFollowsLegacyRuntimeLocator(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv(shellruntime.RuntimeDirectoryEnvironment, root)
+	executable := filepath.Join(root, "router")
+	if err := os.WriteFile(executable, []byte("#!/bin/sh\nprintf legacy-ok\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	const threadID = "thread-legacy"
+	if err := os.Symlink(executable, filepath.Join(root, "hpatch-runtime-"+threadID)); err != nil {
+		t.Fatal(err)
+	}
+	command := exec.Command(os.Args[0], "-test.run=^TestShellHelperProcess$", "--")
+	command.Env = append(os.Environ(),
+		"HPATCH_SHELL_HELPER_PROCESS=1",
+		shellruntime.ThreadIDEnvironment+"="+threadID,
+	)
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("shell helper: %v\n%s", err, output)
+	}
+	if string(output) != "legacy-ok" {
+		t.Fatalf("runtime invocation = %q, want legacy-ok", output)
+	}
+}
+
 func TestShellHelperRejectsInvalidThreadID(t *testing.T) {
 	command := exec.Command(os.Args[0], "-test.run=^TestShellHelperProcess$", "--")
 	command.Env = append(os.Environ(),

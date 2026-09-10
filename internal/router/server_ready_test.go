@@ -112,8 +112,8 @@ func TestRunSessionRejectsUnusableReplayStorageBeforeReady(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", state)
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	t.Setenv("CODEX_HOME", t.TempDir())
-	t.Setenv("HPATCH_RUNTIME_DIR", t.TempDir())
-	if err := os.WriteFile(filepath.Join(state, "hpatch"), []byte("not a directory"), 0600); err != nil {
+	t.Setenv("MEKUGI_RUNTIME_DIR", t.TempDir())
+	if err := os.WriteFile(filepath.Join(state, "mekugi"), []byte("not a directory"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	err := RunSession(t.Context(), []string{"--mode", "hpatch", "--model-protocol", "native", "--mentor-handoff=false"}, nil, func(Session) { t.Error("unusable replay storage reached readiness") }, nil)

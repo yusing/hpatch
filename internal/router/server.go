@@ -189,7 +189,7 @@ func RunSession(ctx context.Context, args []string, issues *CriticalErrors, read
 		if err != nil {
 			return fmt.Errorf("initialize model instruction rewriting: %w", err)
 		}
-		registry, err := buildToolRegistry(ctx, dataDirectory, translator.ToolDescription(), os.Getenv("HPATCH_DIAGNOSE") == "1")
+		registry, err := buildToolRegistry(ctx, dataDirectory, translator.ToolDescription(), os.Getenv("MEKUGI_DIAGNOSE") == "1")
 		if err != nil {
 			return fmt.Errorf("initialize tool registry: %w", err)
 		}

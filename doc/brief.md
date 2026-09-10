@@ -1,4 +1,4 @@
-# hpatch brief
+# mekugi brief
 
 ## Problem
 
@@ -76,7 +76,7 @@ wall time must remain close to control.
 - Capture-owned provider usage, cache, protocol, tool, Hpatch-delivery, and completeness metrics.
 - Historical-commit benchmark tasks with hidden graders, paired randomized attempts, and
   structured artifacts.
-- Router-local tool plugins discovered from `hpatch/plugins` beneath the platform user
+- Router-local tool plugins discovered from `mekugi/plugins` beneath the platform user
   configuration directory, with complete-registry startup validation.
 - Model-visible custom-tool declarations using unconstrained string input or OpenAI-supported
   Lark and regex grammars, typed translation into Code Mode carriers, and executor-side tool
@@ -91,16 +91,16 @@ wall time must remain close to control.
 - Basic root Go API: `Apply` atomically updates an authorized workspace and returns an error.
 - Host APIs: `ApplyForHost`, `ApplyForHostRoot`, and `TranslateForHostAt` return
   `HostTranslation` for report, state, and diagnostics.
-- `hpatch --mode hpatch|passthrough codex`: expose model-visible hpatch and shell tools with
+- `mekugi --mode hpatch|passthrough codex`: expose model-visible hpatch and shell tools with
   private shell-internal hread, hgrep, hsymbol, and inspect_file commands, or the unchanged
   control path. Hpatch mode defaults to CTP/2 and Mentor Handoff; passthrough stays native.
 - inspect_file outline spans are copyable `LINE:HASH` identities without source bodies.
-- `hpatch/plugins` beneath the platform user configuration directory: the configured tool-plugin
+- `mekugi/plugins` beneath the platform user configuration directory: the configured tool-plugin
   discovery surface; the router has no plugin command-line flags.
 - `shell`: a mandatory built-in unconstrained custom tool whose translated exec carrier shows the
   interpreter and exact script body, optionally with `#!cmd=` and request-specific `#!params=`
   assignments.
-- `make install`: regenerate the embedded plugin bundle and install `hpatch` plus the fixed
+- `make install`: regenerate the embedded plugin bundle and install `mekugi` plus the fixed
   `shell` helper without installing private command files or changing Codex configuration and
   instructions.
 - `hpatch-bench validate --manifest TASK.json` and `hpatch-bench run`: validate and run
@@ -163,7 +163,7 @@ wall time must remain close to control.
   mismatch reports diagnostics and stops startup without exposing a partial registry.
 - Each configured executor-backed contribution uses a session-private basename frontend
   inside its authenticated snapshot's `bin` directory, pointing to the same-basename
-  snapshot wrapper and then the running `hpatch`. Only the wrapped Codex PATH is
+  snapshot wrapper and then the running `mekugi`. Only the wrapped Codex PATH is
   extended. Sessions have disjoint frontends and no shared frontend lock.
   Built-in shell instead uses the fixed PATH-installed `shell` locator and a direct per-thread
   runtime path selected by `CODEX_THREAD_ID`. Its private commands create no wrapper or frontend.

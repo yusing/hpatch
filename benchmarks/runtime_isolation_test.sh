@@ -26,7 +26,7 @@ printf 'host-only\n' >"$fixture/host-marker"
 # Current launch scripts plus the real router and real Codex --version exercise
 # read-only root startup, replay creation, listener health and executor restrictions.
 "${compose[@]}" run --interactive=false --no-tty --rm --no-deps \
-    --env HPATCH_RUNTIME_DIR=/runtime --volume "$fixture/runtime:/runtime" \
+    --env MEKUGI_RUNTIME_DIR=/runtime --volume "$fixture/runtime:/runtime" \
     --env BENCH_ARTIFACT_DIR=/artifacts --volume "$fixture/artifacts/probe:/artifacts" \
     --env HPATCH_BENCH_MODE=hpatch --env HPATCH_BENCH_PROTOCOL=native \
     --volume "$benchmark_root/session-entry.sh:/usr/local/bin/hpatch-benchmark-session:ro" \
@@ -34,7 +34,7 @@ printf 'host-only\n' >"$fixture/host-marker"
     hpatch-agent bash /usr/local/bin/hpatch-benchmark-session --version >"$fixture/startup.stdout" 2>"$fixture/startup.stderr" || {
         cat "$fixture/startup.stderr" >&2; exit 1;
     }
-[[ -d $fixture/runtime/state/hpatch ]]
+[[ -d $fixture/runtime/state/mekugi ]]
 grep -Fq 'codex-cli' "$fixture/startup.stdout"
 # The real grading wrapper loads candidate shell code, but only inside its container.
 dependency_cache=$BENCH_DEPENDENCY_CACHE dependency_kind=none grader_timeout=20

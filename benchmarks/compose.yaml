@@ -20,7 +20,7 @@ x-agent: &agent
     PYTHONDONTWRITEBYTECODE: "1"
     PYTHONPYCACHEPREFIX: /tmp/hpatch-benchmark-pycache
     HPATCH_BENCH_ISSUE_DIR: /benchmark-agent-issue-reports
-    HPATCH_DIAGNOSE: ${HPATCH_BENCH_DIAGNOSE:-0}
+    MEKUGI_DIAGNOSE: ${HPATCH_BENCH_DIAGNOSE:-0}
   labels:
     hpatch.benchmark.role: agent
   volumes:

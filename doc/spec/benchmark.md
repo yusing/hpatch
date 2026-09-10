@@ -178,7 +178,7 @@ task success, latency, provider billing, or universal compression efficiency.
 
 Acceptance:
 
-1. Compose runs each arm as a session-scoped `hpatch codex` container, with no
+1. Compose runs each arm as a session-scoped `mekugi codex` container, with no
    persistent router or capturer service; every attempt retains both capture exports.
 2. Report fixtures prove provider usage, signed arm deltas, cache values, protocol savings, Hpatch
    delivery, and zero capture-health errors, and reject altered aggregate usage, incomplete

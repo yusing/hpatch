@@ -49,15 +49,15 @@ func RunToolPluginWorker(
 
 	executableLocation, err := os.Executable()
 	if err != nil {
-		return fail(fmt.Errorf("locate hpatch executable: %w", err))
+		return fail(fmt.Errorf("locate mekugi executable: %w", err))
 	}
 	executableLocation, err = filepath.Abs(executableLocation)
 	if err != nil {
-		return fail(fmt.Errorf("locate hpatch executable: %w", err))
+		return fail(fmt.Errorf("locate mekugi executable: %w", err))
 	}
 	executable, err := filepath.EvalSymlinks(executableLocation)
 	if err != nil {
-		return fail(fmt.Errorf("resolve hpatch executable: %w", err))
+		return fail(fmt.Errorf("resolve mekugi executable: %w", err))
 	}
 
 	wrapper := candidate
@@ -97,7 +97,7 @@ func RunToolPluginWorker(
 		return fail(fmt.Errorf("resolve tool wrapper: %w", err))
 	}
 	if target != executable {
-		return fail(errors.New("tool wrapper does not target the running hpatch executable"))
+		return fail(errors.New("tool wrapper does not target the running mekugi executable"))
 	}
 
 	return runAuthenticatedToolWorker(ctx, directory, filepath.Base(wrapper), args, stdin, stdout, stderr)
@@ -191,7 +191,7 @@ func runAuthenticatedToolWorker(
 
 func toolRegistryIDFromDirectory(directory string) (string, bool) {
 	base := filepath.Base(directory)
-	if !strings.HasPrefix(base, "hpatch-tools-") {
+	if !strings.HasPrefix(base, "mekugi-tools-") {
 		return "", false
 	}
 	separator := strings.LastIndexByte(base, '-')

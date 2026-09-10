@@ -18,7 +18,7 @@ and read-only dependency material. It cannot write authoritative artifacts or an
 The session launcher places replay state under its private runtime mount, writable to the router
 but read-only in the executor namespace.
 
-Each fresh arm has one `hpatch` process and one router listener. Codex connects directly to
+Each fresh arm has one `mekugi` process and one router listener. Codex connects directly to
 that listener. The router connects directly to the provider. The root `capturer` package observes
 both boundaries in-process and writes the arm's sanitized JSONL. The benchmark never inserts a
 capturer proxy or service and never needs three servers for one router.

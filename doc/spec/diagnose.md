@@ -2,7 +2,7 @@
 
 ## REQ-DIAGNOSE-001 — Agent issue reports
 
-When hpatch mode starts with the inherited environment variable `HPATCH_DIAGNOSE` exactly
+When hpatch mode starts with the inherited environment variable `MEKUGI_DIAGNOSE` exactly
 equal to `1`, the immutable built-in registry contributes a model-visible unconstrained custom
 tool named `report_issue`. Any other value, including an unset variable, omits that contribution.
 Passthrough mode remains unchanged because it does not construct the registry.
@@ -25,7 +25,7 @@ fail or interrupt response routing.
 
 Acceptance:
 
-1. Exactly `HPATCH_DIAGNOSE=1` in hpatch mode exposes the free-form `report_issue` specification;
+1. Exactly `MEKUGI_DIAGNOSE=1` in hpatch mode exposes the free-form `report_issue` specification;
    all other values and passthrough mode expose none of it.
 2. One report reaches each configured `hooks.diagnose` command byte-for-byte through `.Body` and
    `format_markdown`, exposes the task title through `.Title`, and does not run `hooks.error`.

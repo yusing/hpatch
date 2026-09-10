@@ -376,9 +376,9 @@ describe("installable shell plugin", () => {
     const installRoot = await temporaryDirectory("shell-plugin-install-");
     const binaryDirectory = path.join(installRoot, "bin");
     const configDirectory = path.join(installRoot, "config");
-    const routerPath = path.join(binaryDirectory, "hpatch");
+    const routerPath = path.join(binaryDirectory, "mekugi");
     const shellHelperPath = path.join(binaryDirectory, "shell");
-    const installedPlugin = path.join(configDirectory, "hpatch", "plugins", "shell.mjs");
+    const installedPlugin = path.join(configDirectory, "mekugi", "plugins", "shell.mjs");
     const codexHome = path.join(installRoot, "codex-home");
     const configPath = path.join(codexHome, "config.toml");
     const instructionsPath = path.join(codexHome, "custom-instructions.md");
@@ -425,7 +425,7 @@ ${installed.stderr}`);
 
     await writeFile(path.join(binaryDirectory, "codex"), [
       "#!/bin/sh",
-      'test -n "$HPATCH_BASE_URL" || exit 1',
+      'test -n "$MEKUGI_BASE_URL" || exit 1',
       'printf "ready"',
       "",
     ].join("\n"), {mode: 0o755});
@@ -439,7 +439,7 @@ ${installed.stderr}`);
     });
     expect(wrapped.status).toBe(0);
     expect(wrapped.stdout).toBe("ready");
-    expect(wrapped.stderr).toMatch(/^hpatch dashboard: http:\/\/127\.0\.0\.1:\d+\/\n$/);
+    expect(wrapped.stderr).toMatch(/^mekugi dashboard: http:\/\/127\.0\.0\.1:\d+\/\n$/);
     expect((await stat(shellHelperPath)).mode & 0o111).not.toBe(0);
     for (const name of ["hread", "hgrep", "hsymbol", "inspect_file"]) {
       await expect(lstat(path.join(binaryDirectory, name))).rejects.toThrow();

@@ -6,7 +6,7 @@ The first working path in `doc/brief.md` § Outcome supplies the built-in declar
 `plugins/shell.mjs`. The generated plugin bundle contributes an unconstrained custom tool named
 `shell`, limits its UTF-8 input to the executor argv limit, and translates successful input
 through the canonical exec carrier from `REQ-PLUGIN-001`. The repository `make install` target
-regenerates that bundle and installs `hpatch` plus the fixed `shell` helper. It changes no Codex configuration,
+regenerates that bundle and installs `mekugi` plus the fixed `shell` helper. It changes no Codex configuration,
 instruction file, or configured shell declaration.
 
 The tool treats the first logical line as a shebang when that line, after trimming only its
@@ -142,8 +142,11 @@ Missing, cyclic, traversing, and symlink-escaping references reject without exec
 Invalid retention IDs or existing artifact names yield `retained: false` without overwriting
 files or changing execution of an otherwise valid shell call.
 
-Thread runtime locators are flat `hpatch-runtime-<thread-id>` symlinks below the runtime
-directory. Active retained scripts occupy sibling `hpatch-scripts-<thread-id>` directories.
+Thread runtime locators are flat `mekugi-runtime-<thread-id>` symlinks below the runtime
+directory. The PATH-installed helper follows that name when present. If it is absent, the
+helper follows the previous `hpatch-runtime-<thread-id>` locator so an in-flight older
+router survives helper replacement. Active retained scripts occupy sibling
+`mekugi-scripts-<thread-id>` directories.
 Private commentary descriptors are regular mode-0600 files beside the thread locators,
 outside retained script storage. Discovery rejects symlinks, non-regular files, and descriptors
 that do not match the worker selected by the current locator. Unexpected existing entries are
@@ -202,7 +205,7 @@ Acceptance:
    `/dev/tty`, accept interactive input without a background-process-group stop.
 10. Malformed selectors and input that cannot fit the bounded exec argv return a concise
     diagnostic without starting an interpreter.
-11. `make install` installs `hpatch` and the fixed `shell` helper without changing Codex
+11. `make install` installs `mekugi` and the fixed `shell` helper without changing Codex
     configuration or instruction files. Startup and tool-snapshot changes do not rewrite that
     helper and create no hread, hgrep, hsymbol, or inspect_file basename frontend.
 12. `#!params={"workdir":"/tmp","tty":true}` before or after `#!cmd=` produces an exec carrier

@@ -11,7 +11,7 @@ import (
 )
 
 func TestReportIssueDescriptionIsNonInstructional(t *testing.T) {
-	const want = "Free-form Markdown issue report for an observed hpatch-related tool interaction."
+	const want = "Free-form Markdown issue report for an observed mekugi-related tool interaction."
 	if reportIssueToolDescription != want {
 		t.Fatalf("reportIssueToolDescription = %q, want %q", reportIssueToolDescription, want)
 	}

@@ -8,7 +8,7 @@ WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN go build -trimpath -o /out/hpatch ./cmd/hpatch
+RUN go build -trimpath -o /out/mekugi ./cmd/mekugi
 RUN go build -trimpath -o /out/shell ./cmd/shell
 RUN go build -trimpath -o /out/hpatch-merge-captures ./benchmarks/cmd/merge-captures
 

@@ -1,8 +1,12 @@
-# hpatch
+# mekugi
 
-Hashline edits and direct script execution for Codex, with less model-generated
-boilerplate. Hpatch routes Codex requests through a private local router while
-keeping Codex's sandbox, permissions, command sessions, and normal patch diff UI.
+A mekugi is the small peg that pins a Japanese sword's handle to the blade.
+Take it out and the handle comes off. Leave it in and the blade is still the
+blade.
+
+Mekugi pins compact agent tools onto stock Codex: hashline edits, direct
+scripts, and inline subagent activity. Codex keeps the sandbox, permissions,
+command sessions, and patch diff UI. No fork, no config edits, no daemon.
 
 [Install](#install) · [Features](#features) · [Usage](#usage) ·
 [Metrics](#metrics) · [Documentation](#documentation)
@@ -98,28 +102,28 @@ comparisons.
 - **Go 1.26+**, CGO enabled, and a C toolchain to build the binaries.
 - **Codex CLI**, signed in with `codex login` using ChatGPT authentication.
 - **Node.js 24+** available as `node`, and **ripgrep** available as `rg` on
-  the router's `PATH` for Hpatch mode.
+  the router's `PATH` for hpatch mode.
 - Any interpreter your agent selects, such as `python3`, on the executor's
   `PATH`. Bash and POSIX shell execution are built in.
 
 Install both the router and its shell helper:
 
 ```sh
-go install github.com/yusing/hpatch/cmd/hpatch@latest \
+go install github.com/yusing/hpatch/cmd/mekugi@latest \
   github.com/yusing/hpatch/cmd/shell@latest
 ```
 
 Add `$GOBIN`, or `$(go env GOPATH)/bin` when unset, to the `PATH` used by both
-Hpatch and Codex. The fixed `shell` helper must be available to Codex's executor.
+Mekugi and Codex. The fixed `shell` helper must be available to Codex's executor.
 
 Then launch:
 
 ```sh
 codex login
-hpatch codex
+mekugi codex
 ```
 
-Hpatch prints a dashboard URL before Codex opens. Use Codex as usual; the router
+Mekugi prints a dashboard URL before Codex opens. Use Codex as usual; the router
 supplies the agent's tool guidance automatically.
 
 ### From a checkout
@@ -132,23 +136,23 @@ make install
 
 This regenerates the embedded plugins and installs both binaries. Installation
 and uninstallation leave Codex configuration and instruction files untouched.
-`make uninstall` removes only the installed `hpatch` and `shell` binaries.
+`make uninstall` removes only the installed `mekugi` and `shell` binaries.
 
 ## Usage
 
-Hpatch keeps private replay records on disk so resumed and forked conversations
+Mekugi keeps private replay records on disk so resumed and forked conversations
 retain their original tool history. These records include tool inputs and recovery
 diagnostics, not just metrics. See [replay storage](#replay-storage) for location,
 limits, and cleanup.
 
-Put Hpatch flags **before** `codex`; arguments after it belong to Codex:
+Put Mekugi flags **before** `codex`; arguments after it belong to Codex:
 
 ```sh
-hpatch codex
-hpatch codex --model gpt-6-astra
-hpatch codex exec "Explain this repository"
-hpatch codex resume 'CONVERSATION_ID'
-hpatch --model-protocol native --mentor-handoff=false codex
+mekugi codex
+mekugi codex --model gpt-6-astra
+mekugi codex exec "Explain this repository"
+mekugi codex resume 'CONVERSATION_ID'
+mekugi --model-protocol native --mentor-handoff=false codex
 ```
 
 Each invocation starts a private router on a random loopback port and shuts it
@@ -162,14 +166,14 @@ It also forces `include_collaboration_mode_instructions=false` for the invocatio
 so Codex does not inject collaboration-mode instructions, even if enabled in your
 config or command-line overrides. No configuration files are changed.
 
-The wrapper enables WebSockets between Codex and Hpatch for that invocation,
-without changing Codex configuration. Hpatch keeps the ChatGPT connection open
+The wrapper enables WebSockets between Codex and Mekugi for that invocation,
+without changing Codex configuration. Mekugi keeps the ChatGPT connection open
 across responses so a compatible Codex client can send
 [mid-turn steering](https://developers.openai.com/api/docs/guides/steering)
 updates. Steering requires a supporting client and model; enabling the transport
 does not add steering to an older Codex client.
 
-Networks must allow secure WebSocket connections to ChatGPT. Hpatch also accepts
+Networks must allow secure WebSocket connections to ChatGPT. Mekugi also accepts
 HTTP/SSE clients and can fall back to HTTP for those requests when ChatGPT
 explicitly rejects the WebSocket upgrade. It never silently replays a dropped
 request or accepted steering. Grok provider requests remain on HTTP.
@@ -178,10 +182,10 @@ request or accepted steering. Grok provider requests remain on HTTP.
 
 | Flag | Default | Purpose |
 | --- | --- | --- |
-| `--mode` | `hpatch` | Use `passthrough` to forward traffic without Hpatch tools, plugins, CTP/2, or Mentor Handoff |
-| `--model-protocol` | `ctp2` | Use `native` to disable CTP/2 in Hpatch mode |
+| `--mode` | `hpatch` | Use `passthrough` to forward traffic without hpatch tools, plugins, CTP/2, or Mentor Handoff |
+| `--model-protocol` | `ctp2` | Use `native` to disable CTP/2 in hpatch mode |
 | `--mentor-handoff` | `true` | Use `false` to keep subagents on their configured models |
-| `--grok` | `false` | Enable Grok subagents in Hpatch mode |
+| `--grok` | `false` | Enable Grok subagents in hpatch mode |
 | `--grok-auth-file` | `~/.grok/auth.json` | Select a Grok OAuth credential store |
 | `--timeout` | `10m` | Wait for the upstream response to start |
 | `--stream-idle-timeout` | `4m` | Limit gaps between provider messages during an active response, or HTTP response bytes |
@@ -192,7 +196,7 @@ request or accepted steering. Grok provider requests remain on HTTP.
 For a transport-only session:
 
 ```sh
-hpatch --mode passthrough codex
+mekugi --mode passthrough codex
 ```
 
 Passthrough does not load the plugin registry, so it does not require Node.js or
@@ -205,7 +209,7 @@ with `grok login --oauth`, or supply `XAI_API_KEY` in the router's environment.
 An API key takes precedence. Codex credentials are never forwarded to Grok.
 
 ```sh
-hpatch --grok codex
+mekugi --grok codex
 ```
 
 Ask the main agent to spawn `grok:grok-4.6` in fresh context
@@ -224,7 +228,7 @@ credential handling.
 ### Hashline edits
 
 Instead of emitting old source lines, new source lines, and patch framing, the
-agent selects a verified `LINE:HASH` target and sends the new text once. Hpatch
+agent selects a verified `LINE:HASH` target and sends the new text once. Mekugi
 checks the script and generates the patch; Codex authorizes and applies it.
 Supported language checks run before application.
 
@@ -272,19 +276,19 @@ working when Codex exits. For an SSH session, forward its assigned port first.
 Under **Exchanges → Provider attempts**, the **Transport** column shows
 **WebSocket** or **HTTP** for each provider attempt. A completed ChatGPT attempt
 using HTTP took the fallback path; Grok normally uses HTTP. This describes the
-provider connection, not the Codex-to-hpatch HTTP/SSE connection.
+provider connection, not the Codex-to-mekugi HTTP/SSE connection.
 
 From a command running inside wrapped Codex, fetch the same metrics as JSON:
 
 ```sh
-curl -sS "${HPATCH_BASE_URL%/v1}/api/metrics"
+curl -sS "${MEKUGI_BASE_URL%/v1}/api/metrics"
 ```
 
 Metrics stay in memory unless you request an export. Capture appends JSONL;
 the final snapshot overwrites its destination. Use separate paths:
 
 ```sh
-hpatch --capture-output capture.jsonl --metrics-output metrics.json codex
+mekugi --capture-output capture.jsonl --metrics-output metrics.json codex
 ```
 
 Exports contain sanitized measurements, not raw prompts, scripts, patches, or
@@ -296,7 +300,7 @@ To investigate tool confusion, inspect the affected thread's rewrite decision an
 calls in the JSON metrics:
 
 ```sh
-curl -sS "${HPATCH_BASE_URL%/v1}/api/metrics" |
+curl -sS "${MEKUGI_BASE_URL%/v1}/api/metrics" |
   jq '.exchanges[] | {thread_id, model, instruction_rewrite, delivered_tools}'
 ```
 
@@ -310,10 +314,10 @@ shutdown if you need to investigate later; neither export contains raw prompts o
 To record the patched instructions for new requests, use:
 
 ```sh
-hpatch --debug codex
+mekugi --debug codex
 ```
 
-Debug mode creates a private `hpatch-debug-*` directory in the system temporary
+Debug mode creates a private `mekugi-debug-*` directory in the system temporary
 directory. After Codex exits, it prints absolute paths to stderr for:
 
 - `router.jsonl`: router lifecycle and parsed-request outcomes, with safe failure codes and
@@ -339,38 +343,39 @@ Artifacts survive wrapper exit, but the operating system may eventually clean te
 files. Copy them elsewhere if needed. Existing `--capture-output` and `--metrics-output`
 paths take precedence over the debug defaults and are included in the exit listing.
 Debug output failures are reported on exit without changing request execution.
-Resuming with `hpatch --debug codex resume SESSION_ID` records future requests; it cannot
+Resuming with `mekugi --debug codex resume SESSION_ID` records future requests; it cannot
 recover an earlier request that was not dumped.
 
 ## Configuration and troubleshooting
 
-- **Custom instructions:** Hpatch supplies tool guidance in memory without
+- **Custom instructions:** Mekugi supplies tool guidance in memory without
   editing your instruction file. If you use a custom prompt, configure it with
-  Codex's `model_instructions_file` setting. Restart Hpatch after adding or
+  Codex's `model_instructions_file` setting. Restart Mekugi after adding or
   removing that setting. See [guidance compatibility](doc/spec/guide.md).
-- **Plugins:** put regular `.js` or `.mjs` modules in `hpatch/plugins` beneath
+- **Plugins:** put regular `.js` or `.mjs` modules in `mekugi/plugins` beneath
   your platform's user configuration directory. On Linux this is
-  `$XDG_CONFIG_HOME/hpatch/plugins` or `~/.config/hpatch/plugins`; on macOS it is
-  `~/Library/Application Support/hpatch/plugins`. Plugins are loaded at startup;
-  changes require a new Hpatch launch. See the [plugin contract](doc/spec/plugin.md).
+  `$XDG_CONFIG_HOME/mekugi/plugins` or `~/.config/mekugi/plugins`; on macOS it is
+  `~/Library/Application Support/mekugi/plugins`. Plugins are loaded at startup;
+  changes require a new Mekugi launch. See the [plugin contract](doc/spec/plugin.md).
 - **Executor environment:** the router and executor must see the same workspace
-  paths and shell runtime directory. `HPATCH_RUNTIME_DIR` overrides the default
+  paths and shell runtime directory. `MEKUGI_RUNTIME_DIR` overrides the default
   operating-system temporary directory; both must resolve it to the same
-  absolute path.
+  absolute path. The shared `shell` helper also follows an older session's
+  `hpatch-runtime-<thread>` locator when the current name is absent.
 - **Failures:** startup errors appear before Codex launches. Session failures
   appear as user-only commentary; undelivered notices appear on stderr after
-  Codex exits. Hpatch does not create operational log files unless `--debug` is enabled.
+  Codex exits. Mekugi does not create operational log files unless `--debug` is enabled.
 - **Agent issue reports:** see [opt-in agent issue reports](doc/spec/diagnose.md).
 
 ### Replay storage
 
-Replay records live at `$XDG_STATE_HOME/hpatch/replay`, or
-`~/.local/state/hpatch/replay` when `XDG_STATE_HOME` is unset. An override must be
+Replay records live at `$XDG_STATE_HOME/mekugi/replay`, or
+`~/.local/state/mekugi/replay` when `XDG_STATE_HOME` is unset. An override must be
 absolute. The directory and records are private to your operating-system user.
 Multiple wrappers share this store, with workspace isolation; closing a wrapper
 does not delete it. Passthrough mode does not open it.
 
-Resuming a conversation or opening a side conversation needs no extra Hpatch flag.
+Resuming a conversation or opening a side conversation needs no extra Mekugi flag.
 Only inherited calls actually present in that conversation become available for
 recovery. Replay does not rerun old commands or restore live shell processes,
 continuation handles, or expired private scripts. History recorded by older
@@ -379,7 +384,7 @@ versions without durable replay records cannot be reconstructed reliably.
 The store limits call records to 1 GiB in total and 32 MiB per record. Commentary
 identities have a separate 16 MiB allowance. It rejects new call records when full
 instead of silently discarding resumable history. To reset
-storage, stop all Hpatch wrappers and move the replay directory aside. Conversations
+storage, stop all Mekugi wrappers and move the replay directory aside. Conversations
 whose records you remove lose replay restoration; keep the moved directory if you
 may need to restore it later. Do not remove records just because one fork no longer
 shows those calls: a parent or sibling conversation may still need them.
@@ -398,7 +403,7 @@ Confirm old unit paths with `systemctl --user cat hpatch-router.service` before
 removing them, then run `systemctl --user daemon-reload`. Locate any obsolete
 binary with `command -v hpatch-router` before removing it. Remove only old
 Hpatch-specific provider entries from Codex configuration, preserving auth and
-unrelated settings. Use `hpatch codex` for future sessions.
+unrelated settings. Use `mekugi codex` for future sessions.
 
 ## Go library
 
@@ -433,7 +438,7 @@ make install
 
 For focused checks, use `go test .` for the engine,
 `go test ./internal/router` for routing, or
-`go test ./cmd/hpatch ./cmd/shell` for process entry points.
+`go test ./cmd/mekugi ./cmd/shell` for process entry points.
 
 ## License
 

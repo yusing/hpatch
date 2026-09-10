@@ -22,10 +22,10 @@ type routerFlags struct {
 }
 
 func newRouterFlags(stderr io.Writer) routerFlags {
-	flags := flag.NewFlagSet("hpatch", flag.ContinueOnError)
+	flags := flag.NewFlagSet("mekugi", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	flags.Usage = func() {
-		fmt.Fprintln(stderr, "Usage: hpatch [flags] codex [Codex arguments...]")
+		fmt.Fprintln(stderr, "Usage: mekugi [flags] codex [Codex arguments...]")
 		flags.PrintDefaults()
 	}
 	return routerFlags{

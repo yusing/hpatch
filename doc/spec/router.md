@@ -2,7 +2,7 @@
 
 ## REQ-ROUTER-001 — Session-scoped Codex launch
 
-`hpatch [flags] codex [Codex arguments...]` starts one private router on an
+`mekugi [flags] codex [Codex arguments...]` starts one private router on an
 OS-assigned port bound to `127.0.0.1` and launches Codex from PATH only after
 initialization and binding succeed. There is no standalone or daemon command,
 fixed-listener flag, custom-provider flag, or installed old-name alias.
@@ -10,14 +10,14 @@ fixed-listener flag, custom-provider flag, or installed old-name alias.
 Invocation-only provider overrides select the listener, Responses transport,
 and Codex-managed authentication against the fixed ChatGPT upstream. Provider
 selection in config and profiles is overridden without modifying configuration.
-Provider-selection arguments are rejected. Hpatch flags precede `codex`; subsequent
+Provider-selection arguments are rejected. Mekugi flags precede `codex`; subsequent
 arguments remain intact, including subcommands and `--` delimiters.
 The wrapper also enforces `include_collaboration_mode_instructions=false` in the
 final command's invocation-only config layer, after user overrides and before `--`.
 This disables Codex's collaboration-mode instruction injection without editing config files.
 
 Codex inherits cwd, stdin, stdout, stderr, and the environment, augmented only
-with `HPATCH_BASE_URL` and the private configured-plugin frontend directory at
+with `MEKUGI_BASE_URL` and the private configured-plugin frontend directory at
 the front of PATH. Terminal Ctrl-C remains Codex-owned. SIGTERM to the wrapper
 terminates Codex and the router with bounded cleanup. Codex exit, launch failure,
 and cancellation clean up owned runtime resources. Ordinary exit status is
@@ -25,7 +25,7 @@ preserved; signal exits use `128 + signal`. Unexpected router termination also
 terminates Codex rather than leaving a dead provider connection.
 
 After successful binding and before launching Codex, the wrapper prints exactly
-one `hpatch dashboard: http://127.0.0.1:PORT/` line to stderr. It does not write
+one `mekugi dashboard: http://127.0.0.1:PORT/` line to stderr. It does not write
 the announcement to stdout or repeat it during the active Codex UI. The URL and
 in-memory metrics belong to this invocation and expire on shutdown.
 
@@ -36,7 +36,7 @@ summaries after Codex exits. In-memory metrics, explicit sanitized capture and
 final metrics exports, and opt-in issue reports are not operational logging.
 Hpatch mode also retains private durable replay state so resumed and forked conversations restore
 their original model-visible tools. This is correctness state, not an operational session log.
-It lives at `$XDG_STATE_HOME/hpatch/replay`, or `~/.local/state/hpatch/replay` when that variable is
+It lives at `$XDG_STATE_HOME/mekugi/replay`, or `~/.local/state/mekugi/replay` when that variable is
 unset, and survives wrapper shutdown. A relative `XDG_STATE_HOME` is invalid. Passthrough mode
 does not open this store. Initialization failure prevents Codex launch. The store admits at most
 1 GiB of call replay data and 32 MiB per call record; reaching a limit rejects new records rather
@@ -47,7 +47,7 @@ Cleanup is explicit, never inferred from one thread's truncation.
 snapshot from the same capturer. The destinations must be distinct.
 
 `--debug` is a boolean flag requiring no argument. It creates a private, unique
-`hpatch-debug-*` directory in the system temporary directory, with router diagnostics,
+`mekugi-debug-*` directory in the system temporary directory, with router diagnostics,
 sanitized capture, final metrics, and an instruction dump. Explicit capture and metrics
 destinations retain precedence. The wrapper prints all four absolute artifact paths to
 stderr only on exit, after the child and router have stopped; it never prints debug paths

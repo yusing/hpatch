@@ -67,9 +67,9 @@ type inProcessHPatchTranslator struct {
 func hpatchDataDirectory() (string, error) {
 	configDirectory, err := os.UserConfigDir()
 	if err != nil {
-		return "", fmt.Errorf("determine hpatch data directory: %w", err)
+		return "", fmt.Errorf("determine mekugi data directory: %w", err)
 	}
-	return filepath.Join(configDirectory, "hpatch"), nil
+	return filepath.Join(configDirectory, "mekugi"), nil
 }
 
 func newInProcessHPatchTranslator(dataDirectory string) hpatchTranslator {

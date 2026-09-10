@@ -22,7 +22,7 @@ const (
 	toolPluginManifestFilename = "workers.json"
 	builtinToolsPluginID       = "builtin.shell"
 	reportIssueToolName        = "report_issue"
-	reportIssueToolDescription = `Free-form Markdown issue report for an observed hpatch-related tool interaction.`
+	reportIssueToolDescription = `Free-form Markdown issue report for an observed mekugi-related tool interaction.`
 )
 
 func buildToolRegistry(ctx context.Context, dataDirectory, hpatchDescription string, diagnose bool) (*toolRegistry, error) {
@@ -31,15 +31,15 @@ func buildToolRegistry(ctx context.Context, dataDirectory, hpatchDescription str
 	}
 	executableLocation, err := os.Executable()
 	if err != nil {
-		return nil, fmt.Errorf("locate hpatch executable: %w", err)
+		return nil, fmt.Errorf("locate mekugi executable: %w", err)
 	}
 	executableLocation, err = filepath.Abs(executableLocation)
 	if err != nil {
-		return nil, fmt.Errorf("locate hpatch executable: %w", err)
+		return nil, fmt.Errorf("locate mekugi executable: %w", err)
 	}
 	executable, err := filepath.EvalSymlinks(executableLocation)
 	if err != nil {
-		return nil, fmt.Errorf("resolve hpatch executable: %w", err)
+		return nil, fmt.Errorf("resolve mekugi executable: %w", err)
 	}
 	runtimeDirectory, err := shellruntime.Directory()
 	if err != nil {
@@ -48,7 +48,7 @@ func buildToolRegistry(ctx context.Context, dataDirectory, hpatchDescription str
 	if err := os.MkdirAll(runtimeDirectory, 0o700); err != nil {
 		return nil, fmt.Errorf("create shell runtime directory: %w", err)
 	}
-	snapshotDirectory, err := os.MkdirTemp(runtimeDirectory, "hpatch-tools-")
+	snapshotDirectory, err := os.MkdirTemp(runtimeDirectory, "mekugi-tools-")
 	if err != nil {
 		return nil, fmt.Errorf("create tool registry snapshot: %w", err)
 	}

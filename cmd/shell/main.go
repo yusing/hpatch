@@ -21,19 +21,19 @@ func main() {
 		fmt.Fprintln(os.Stderr, "shell: CODEX_THREAD_ID is unavailable")
 		os.Exit(1)
 	}
-	runtimePath, err := shellruntime.Path(root, threadID)
+	runtimePath, err := shellruntime.CurrentPath(root, threadID)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "shell: locate current hpatch runtime:", err)
+		fmt.Fprintln(os.Stderr, "shell: locate current runtime:", err)
 		os.Exit(1)
 	}
 	runtime, err := os.Readlink(runtimePath)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "shell: locate current hpatch runtime:", err)
+		fmt.Fprintln(os.Stderr, "shell: locate current runtime:", err)
 		os.Exit(1)
 	}
 	arguments := append([]string{runtime}, os.Args[1:]...)
 	if err := syscall.Exec(runtime, arguments, os.Environ()); err != nil {
-		fmt.Fprintln(os.Stderr, "shell: start current hpatch runtime:", err)
+		fmt.Fprintln(os.Stderr, "shell: start current runtime:", err)
 		os.Exit(1)
 	}
 }

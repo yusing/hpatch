@@ -162,7 +162,7 @@ must see the same absolute runtime directory and executable resources; the fixed
 shell locator remains on the executor PATH.
 
 The shell runtime owner validates thread and artifact IDs before treating them as single
-filesystem components. It pins the thread's active `hpatch-scripts-<thread-id>` directory with `os.Root` for
+filesystem components. It pins the thread's active `mekugi-scripts-<thread-id>` directory with `os.Root` for
 retention, rerun resolution, and private hpatch application. Exclusive artifact creation
 cannot follow a preexisting symlink or overwrite an existing artifact. Expiry uses the pinned
 script root; shutdown cancels timers and cleans the owned contents through pinned roots.

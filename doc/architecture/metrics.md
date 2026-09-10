@@ -7,7 +7,7 @@ of sanitized capture. It reuses capturer exports for capture and metrics, record
 instruction snapshot after rewriting alongside the prepared wire instruction subset, and logs
 lifecycle/request outcomes without raw errors. Local projection is not proof of delivery;
 cached-prefix reuse/replacement and request-less automatic successors are explicit in the dump.
-`cmd/hpatch/wrap.go` prints its paths only after the child and router exit.
+`cmd/mekugi/wrap.go` prints its paths only after the child and router exit.
 
 The root `capturer` subpackage is the sole owner of request correlation, payload measurement,
 provider-usage metrics, cache attribution, representation differences, transported-tool accounting, Hpatch
@@ -15,7 +15,7 @@ delivery accounting, capture health, durable capture records, and the structured
 The router's terminal-payload seam parses provider usage once and passes the resulting counts to
 the capturer, Mentor Handoff, and user-only usage commentary.
 
-The capturer is in-process. `hpatch` wraps its `POST /v1/responses` handler and
+The capturer is in-process. `mekugi` wraps its `POST /v1/responses` handler and
 provider `http.RoundTripper` for HTTP Responses and Chat Completions. For
 `GET /v1/responses`, that wrapper supplies a context-private factory for
 Codex-facing WebSocket exchanges, without counting the upgrade as an inference

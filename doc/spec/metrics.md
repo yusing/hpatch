@@ -2,7 +2,7 @@
 
 ## REQ-METRICS-001 — Captured Responses metrics
 
-`hpatch` MUST create one in-process capturer and MUST keep one HTTP listener. The same listener
+`mekugi` MUST create one in-process capturer and MUST keep one HTTP listener. The same listener
 MUST serve `POST /v1/responses`, WebSocket upgrades at `GET /v1/responses`,
 `GET /v1/models`, and `GET /api/metrics`. Enabling
 `--capture-output PATH` MUST append sanitized schema-6 JSONL records at `PATH`; it MUST NOT start or

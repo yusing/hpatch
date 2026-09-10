@@ -29,7 +29,7 @@ The router validates and canonicalizes the optional declared base-directory stri
 Launch the router and probe together from this repository:
 
 ```sh
-go run ./cmd/hpatch codex --model gpt-5.6-luna \
+go run ./cmd/mekugi codex --model gpt-5.6-luna \
   --sandbox workspace-write --ask-for-approval never \
   exec --ephemeral -C /absolute/path/inside/this/repository "PROMPT"
 ```

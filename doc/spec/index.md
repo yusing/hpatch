@@ -4,7 +4,7 @@ pjdoc:
   kind: spec
   scope: root
   status: draft
-  revision: "47"
+  revision: "49"
   files:
     - router.md
     - subagents.md
@@ -29,7 +29,7 @@ pjdoc:
     - benchmark.md
     - ctp.md
 ---
-# hpatch specification
+# mekugi specification
 
 Each listed file owns one requirement. Related facts are cited by stable ID or linked; they are not copied.
 

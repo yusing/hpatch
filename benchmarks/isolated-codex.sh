@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
-: "${HPATCH_BASE_URL:?Codex must be launched by hpatch}"
-: "${HPATCH_RUNTIME_DIR:?}"
+: "${MEKUGI_BASE_URL:?Codex must be launched by mekugi}"
+: "${MEKUGI_RUNTIME_DIR:?}"
 : "${BENCH_ARTIFACT_DIR:?}"
-port=${HPATCH_BASE_URL#http://127.0.0.1:}
+port=${MEKUGI_BASE_URL#http://127.0.0.1:}
 port=${port%/v1}
 [[ $port =~ ^[0-9]+$ ]] || { echo 'benchmark: invalid private listener' >&2; exit 1; }
 # Socket ownership is the agent's immutable primary group. The router keeps

@@ -3,16 +3,16 @@ set -euo pipefail
 benchmark_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 fixture=$(mktemp -d)
 trap 'rm -rf -- "$fixture"' EXIT
-cat >"$fixture/hpatch" <<'SH'
+cat >"$fixture/mekugi" <<'SH'
 #!/bin/sh
 printf '%s\n' "$@" >"$CAPTURE"
 SH
-chmod +x "$fixture/hpatch"
+chmod +x "$fixture/mekugi"
 for mode in passthrough hpatch; do
  for protocol in native ctp2; do
   for mentor in false true; do
    CAPTURE="$fixture/args" PATH="$fixture:$PATH" BENCH_ARTIFACT_DIR=/benchmark-artifacts/session \
-    HPATCH_RUNTIME_DIR="$fixture/runtime" HPATCH_BENCH_MODE="$mode" HPATCH_BENCH_PROTOCOL="$protocol" HPATCH_BENCH_MENTOR="$mentor" \
+    MEKUGI_RUNTIME_DIR="$fixture/runtime" HPATCH_BENCH_MODE="$mode" HPATCH_BENCH_PROTOCOL="$protocol" HPATCH_BENCH_MENTOR="$mentor" \
     bash "$benchmark_root/session-entry.sh" exec 'prompt with spaces'
    python3 - "$fixture/args" "$mode" "$protocol" "$mentor" <<'PY'
 import pathlib,sys

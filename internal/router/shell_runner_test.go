@@ -136,14 +136,14 @@ func TestShellRunnerEvaluatesPrivateToolsWithoutFrontends(t *testing.T) {
 func TestShellRunnerReadsRetainedHReadArtifact(t *testing.T) {
 	registry := sharedProxyTestRegistry(t)
 	runtimeDirectory := t.TempDir()
-	retainedDirectory := filepath.Join(runtimeDirectory, "hpatch-scripts-thread-id")
+	retainedDirectory := filepath.Join(runtimeDirectory, "mekugi-scripts-thread-id")
 	if err := os.MkdirAll(retainedDirectory, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(retainedDirectory, "call-id"), []byte("first\nretained\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("HPATCH_RUNTIME_DIR", runtimeDirectory)
+	t.Setenv("MEKUGI_RUNTIME_DIR", runtimeDirectory)
 	t.Setenv("CODEX_THREAD_ID", "thread-id")
 
 	stdout, stderr, exitCode := runShellWorkerTest(
@@ -175,11 +175,11 @@ func TestShellRunnerConfinesRetainedHReadArtifact(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	threadDirectory := filepath.Join(runtimeDirectory, "hpatch-scripts-thread-id")
+	threadDirectory := filepath.Join(runtimeDirectory, "mekugi-scripts-thread-id")
 	if err := os.MkdirAll(threadDirectory, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("HPATCH_RUNTIME_DIR", runtimeDirectory)
+	t.Setenv("MEKUGI_RUNTIME_DIR", runtimeDirectory)
 	t.Setenv("CODEX_THREAD_ID", "thread-id")
 	assertRejected := func(script string) {
 		t.Helper()
@@ -189,26 +189,26 @@ func TestShellRunnerConfinesRetainedHReadArtifact(t *testing.T) {
 		}
 	}
 	for _, reference := range []string{
-		"@shell/../hpatch-scripts-other/call-id",
+		"@shell/../mekugi-scripts-other/call-id",
 		"@shell//absolute",
 		"@shell/.runtime",
 	} {
 		assertRejected("hread " + reference)
 	}
-	t.Setenv("HPATCH_RUNTIME_DIR", "relative-runtime")
+	t.Setenv("MEKUGI_RUNTIME_DIR", "relative-runtime")
 	stdout, stderr, exitCode := runShellWorkerTest(t, registry, "/bin/sh", nil, "hread @shell/call-id", nil)
-	if exitCode == 0 || stdout != "" || !strings.Contains(stderr, "HPATCH_RUNTIME_DIR must be an absolute path") {
+	if exitCode == 0 || stdout != "" || !strings.Contains(stderr, "MEKUGI_RUNTIME_DIR must be an absolute path") {
 		t.Fatalf("relative runtime: exit %d, stdout %q, stderr %q", exitCode, stdout, stderr)
 	}
-	t.Setenv("HPATCH_RUNTIME_DIR", runtimeDirectory)
+	t.Setenv("MEKUGI_RUNTIME_DIR", runtimeDirectory)
 
-	if err := os.Symlink(outsideDirectory, filepath.Join(runtimeDirectory, "hpatch-scripts-thread-link")); err != nil {
+	if err := os.Symlink(outsideDirectory, filepath.Join(runtimeDirectory, "mekugi-scripts-thread-link")); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("CODEX_THREAD_ID", "thread-link")
 	assertRejected("hread @shell/call-id")
 
-	artifactLinkDirectory := filepath.Join(runtimeDirectory, "hpatch-scripts-artifact-link")
+	artifactLinkDirectory := filepath.Join(runtimeDirectory, "mekugi-scripts-artifact-link")
 	if err := os.MkdirAll(artifactLinkDirectory, 0o700); err != nil {
 		t.Fatal(err)
 	}

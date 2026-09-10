@@ -87,8 +87,9 @@ mode loads no registry.
 The shell carrier preserves one physical line containing one static external implicit-default-Bash
 command, with no shebang or directive, as the direct Codex exec command. Every other program emits
 `shell <interpreter> <program>` in Codex's exec context. The fixed `cmd/shell` locator reads the path
-`$HPATCH_RUNTIME_DIR/hpatch-$CODEX_THREAD_ID/.runtime` and replaces itself with the authenticated
-snapshot worker stored there by the router. For Bash and sh selectors, a router-owned `mvdan/sh`
+`$MEKUGI_RUNTIME_DIR/mekugi-runtime-$CODEX_THREAD_ID` and replaces itself with the authenticated
+snapshot worker stored there by the router. If that locator is absent, the helper follows
+`$MEKUGI_RUNTIME_DIR/hpatch-runtime-$CODEX_THREAD_ID`. For Bash and sh selectors, a router-owned `mvdan/sh`
 runner
 parses `LangBash` or `LangPOSIX`, preserves shell-owned expansion and composition, and intercepts
 private command argv without launching another router worker. Other interpreters retain the

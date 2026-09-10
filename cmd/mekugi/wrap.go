@@ -17,7 +17,7 @@ import (
 
 func runWrap(routerArgs, args []string) int {
 	if len(args) == 0 || args[0] != "codex" {
-		fmt.Fprintln(os.Stderr, "usage: hpatch [flags] codex [Codex arguments...]")
+		fmt.Fprintln(os.Stderr, "usage: mekugi [flags] codex [Codex arguments...]")
 		return 2
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM)
@@ -29,7 +29,7 @@ func runWrap(routerArgs, args []string) int {
 	defer signal.Stop(interrupts)
 	code, err := wrapCodex(ctx, routerArgs, args[1:])
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "hpatch:", err)
+		fmt.Fprintln(os.Stderr, "mekugi:", err)
 	}
 	return code
 }
@@ -55,7 +55,7 @@ func wrapCodex(ctx context.Context, routerArgs, args []string) (int, error) {
 	var debugPaths []string
 	defer func() {
 		for _, path := range debugPaths {
-			fmt.Fprintf(os.Stderr, "hpatch debug: %s\n", path)
+			fmt.Fprintf(os.Stderr, "mekugi debug: %s\n", path)
 		}
 	}()
 	go func() {
@@ -70,9 +70,9 @@ func wrapCodex(ctx context.Context, routerArgs, args []string) (int, error) {
 	case session = <-ready:
 	}
 	// Announce once before Codex takes over the terminal, never during its UI.
-	fmt.Fprintf(os.Stderr, "hpatch dashboard: %s/\n", strings.TrimSuffix(session.BaseURL, "/v1"))
+	fmt.Fprintf(os.Stderr, "mekugi dashboard: %s/\n", strings.TrimSuffix(session.BaseURL, "/v1"))
 	cmd := exec.CommandContext(ctx, executable, codexArgs(session.BaseURL, args)...)
-	cmd.Env = append(os.Environ(), "HPATCH_BASE_URL="+session.BaseURL)
+	cmd.Env = append(os.Environ(), "MEKUGI_BASE_URL="+session.BaseURL)
 	if session.FrontendDirectory != "" {
 		cmd.Env = append(cmd.Env, "PATH="+session.FrontendDirectory+string(os.PathListSeparator)+os.Getenv("PATH"))
 	}
@@ -117,8 +117,8 @@ func codexArgs(baseURL string, args []string) []string {
 		index = len(args)
 	}
 	return slices.Insert(slices.Clone(args), index,
-		"-c", `model_provider="hpatch_wrap"`,
-		"-c", fmt.Sprintf(`model_providers.hpatch_wrap={name="hpatch",base_url=%q,wire_api="responses",requires_openai_auth=true,supports_websockets=true}`, baseURL),
+		"-c", `model_provider="mekugi_wrap"`,
+		"-c", fmt.Sprintf(`model_providers.mekugi_wrap={name="mekugi",base_url=%q,wire_api="responses",requires_openai_auth=true,supports_websockets=true}`, baseURL),
 		"-c", `include_collaboration_mode_instructions=false`,
 	)
 }
@@ -130,7 +130,7 @@ func validateCodexArgs(args []string) error {
 			break
 		}
 		if arg == "--oss" || arg == "--local-provider" || strings.HasPrefix(arg, "--local-provider=") {
-			return errors.New("hpatch codex does not support provider-selection arguments; custom providers are not supported")
+			return errors.New("mekugi codex does not support provider-selection arguments; custom providers are not supported")
 		}
 		var override string
 		switch {
@@ -148,7 +148,7 @@ func validateCodexArgs(args []string) error {
 		root, _, _ := strings.Cut(key, ".")
 		root = strings.Trim(strings.TrimSpace(root), `"'`)
 		if root == "model_provider" || root == "model_providers" || root == "openai_base_url" || root == "oss_provider" {
-			return errors.New("hpatch codex does not support provider overrides; it overrides config.toml provider selection and uses the router's default upstream")
+			return errors.New("mekugi codex does not support provider overrides; it overrides config.toml provider selection and uses the router's default upstream")
 		}
 	}
 	return nil

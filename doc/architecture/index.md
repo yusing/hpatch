@@ -4,7 +4,7 @@ pjdoc:
   kind: architecture
   scope: root
   status: draft
-  revision: "38"
+  revision: "40"
   files:
     - subagents.md
     - commentary.md
@@ -21,7 +21,7 @@ pjdoc:
     - compare.md
     - bench.md
 ---
-# hpatch architecture contract
+# mekugi architecture contract
 
 Each listed file owns one ownership contract. Related facts are cited by stable ID or linked; they are not copied.
 

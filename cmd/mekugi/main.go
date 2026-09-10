@@ -36,7 +36,7 @@ func run() int {
 		return 0
 	}
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "hpatch:", err)
+		fmt.Fprintln(os.Stderr, "mekugi:", err)
 		return 2
 	}
 	stop()

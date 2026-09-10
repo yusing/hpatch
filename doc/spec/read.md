@@ -29,8 +29,9 @@ shell script.
 
 The shell carrier invokes the fixed `shell` helper from the executor's trusted `PATH`. The
 router stores the current authenticated shell worker at
-`$HPATCH_RUNTIME_DIR/hpatch-runtime-$CODEX_THREAD_ID`; the helper reads that path and replaces
-itself with the worker. Its `mvdan/sh` Bash and POSIX evaluators intercept the exact command
+`$MEKUGI_RUNTIME_DIR/mekugi-runtime-$CODEX_THREAD_ID`; the helper reads that path and replaces
+itself with the worker. If that locator is absent, it follows the previous
+`$MEKUGI_RUNTIME_DIR/hpatch-runtime-$CODEX_THREAD_ID` name. The worker's `mvdan/sh` Bash and POSIX evaluators intercept the exact command
 names `hread`, `hgrep`, `hsymbol`, and `inspect_file` after ordinary shell expansion, then call the matching
 immutable snapshot implementation directly. These private names are not filesystem entries and
 do not use `PATH`. A deployment that isolates router and executor filesystems must expose the

@@ -31,7 +31,7 @@ exec docker compose -f "$HPATCH_BENCH_COMPOSE_FILE" run \
 	--no-tty \
 	--rm \
 	--no-deps \
-	--env "HPATCH_RUNTIME_DIR=$session_runtime" \
+	--env "MEKUGI_RUNTIME_DIR=$session_runtime" \
 	--volume "$session_runtime:$session_runtime" \
 	--env "BENCH_ARTIFACT_DIR=$BENCH_ARTIFACT_DIR" \
 	--env "HPATCH_BENCH_MODE=${HPATCH_BENCH_MODE:?}" \
