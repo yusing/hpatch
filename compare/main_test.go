@@ -5,10 +5,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/yusing/hpatch/internal/patchtest"
+	"github.com/yusing/mekugi/internal/patchtest"
 )
 
-func TestRunHPatchAcceptsFinalStateReportAndPreservesUnrelatedFiles(t *testing.T) {
+func TestRunMekugiAcceptsFinalStateReportAndPreservesUnrelatedFiles(t *testing.T) {
 	scenario := scenario{
 		initial: map[string]string{
 			"target.txt":    "old\n",
@@ -16,7 +16,7 @@ func TestRunHPatchAcceptsFinalStateReportAndPreservesUnrelatedFiles(t *testing.T
 		},
 		script: "in target.txt\ntype 1:cba0 \"old\" \"new\"\n",
 	}
-	got, err := runHPatch(scenario)
+	got, err := runMekugi(scenario)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -25,15 +25,15 @@ func TestRunHPatchAcceptsFinalStateReportAndPreservesUnrelatedFiles(t *testing.T
 	}
 }
 
-func TestRunHPatchRejectsMalformedAndFutureCommands(t *testing.T) {
+func TestRunMekugiRejectsMalformedAndFutureCommands(t *testing.T) {
 	for _, script := range []string{
 		"in target.txt\ntype 1:cba0\n",
 		"future-command\n",
 	} {
 		t.Run(strings.TrimSpace(script), func(t *testing.T) {
-			_, err := runHPatch(scenario{initial: map[string]string{"target.txt": "old\n"}, script: script})
-			if err == nil || !strings.Contains(err.Error(), "applying hpatch script") {
-				t.Fatalf("runHPatch() error = %v", err)
+			_, err := runMekugi(scenario{initial: map[string]string{"target.txt": "old\n"}, script: script})
+			if err == nil || !strings.Contains(err.Error(), "applying HPATCH script") {
+				t.Fatalf("runMekugi() error = %v", err)
 			}
 		})
 	}
@@ -42,7 +42,7 @@ func TestRunHPatchRejectsMalformedAndFutureCommands(t *testing.T) {
 func TestScenariosProduceEquivalentChanges(t *testing.T) {
 	for _, scenario := range scenarios() {
 		t.Run(scenario.name, func(t *testing.T) {
-			got, err := runHPatch(scenario)
+			got, err := runMekugi(scenario)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -51,7 +51,7 @@ func TestScenariosProduceEquivalentChanges(t *testing.T) {
 				t.Fatal(err)
 			}
 			if !reflect.DeepEqual(got, want) {
-				t.Fatalf("hpatch tree = %#v, apply_patch tree = %#v", got, want)
+				t.Fatalf("mekugi tree = %#v, apply_patch tree = %#v", got, want)
 			}
 		})
 	}

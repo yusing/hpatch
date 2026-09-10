@@ -125,21 +125,21 @@ func (c *CriticalErrors) record(f *requestFinalization, err error) {
 		f.diagnosticCode = compatibility.code
 	}
 	category := string(f.failurePhase)
-	message := "Hpatch could not complete the request. Retry the turn; if it persists, restart the session."
+	message := "Mekugi could not complete the request. Retry the turn; if it persists, restart the session."
 	if compatibility, ok := errors.AsType[*requestCompatibilityError](err); ok {
 		category, message = compatibility.code, compatibility.Error()
 	} else {
 		switch {
 		case f.upstreamStatusCode == 401 || f.upstreamStatusCode == 403:
-			category, message = "authentication", "Hpatch upstream authentication was rejected. Check your Codex or Grok credentials before retrying."
+			category, message = "authentication", "Mekugi upstream authentication was rejected. Check your Codex or Grok credentials before retrying."
 		case f.upstreamStatusCode == 429:
 			category, message = "rate_limit", "The upstream service rate-limited this turn. Wait before retrying."
 		case errors.Is(err, context.DeadlineExceeded), errors.Is(err, errUpstreamStreamIdleTimeout):
 			category, message = "timeout", "The upstream response timed out. Retry the turn."
 		case f.failurePhase == requestFailurePrepare:
-			message = "Hpatch could not prepare this request. Check the session's tool and configuration compatibility before retrying."
+			message = "Mekugi could not prepare this request. Check the session's tool and configuration compatibility before retrying."
 		case f.failurePhase == requestFailureTransform:
-			message = "Hpatch could not safely translate the response. No unsupported tool call was released."
+			message = "Mekugi could not safely translate the response. No unsupported tool call was released."
 		}
 		if category == string(f.failurePhase) {
 			reference := f.diagnosticReference
@@ -238,11 +238,11 @@ func (c *CriticalErrors) Pending() []string {
 	var result []string
 	for _, n := range c.entries {
 		if n.count > n.delivered {
-			result = append(result, "hpatch: "+noticeText(n))
+			result = append(result, "mekugi: "+noticeText(n))
 		}
 	}
 	if c.overflow != 0 {
-		result = append(result, fmt.Sprintf("hpatch: %d additional failures could not be retained; check the failed turns.", c.overflow))
+		result = append(result, fmt.Sprintf("mekugi: %d additional failures could not be retained; check the failed turns.", c.overflow))
 	}
 	return result
 }
@@ -308,7 +308,7 @@ func (c *CriticalErrors) transform(session string, subagent bool) *criticalError
 // retain records the exact router-authored IDs before they can become visible.
 // Failure suppresses only these auxiliary notices; finish leaves them queued
 // because emitted remains false.
-func (t *criticalErrorTransform) retain(ctx context.Context, store *hpatchReplayStore, workspace string) {
+func (t *criticalErrorTransform) retain(ctx context.Context, store *mekugiReplayStore, workspace string) {
 	if t == nil || store == nil || len(t.messages) == 0 {
 		return
 	}
@@ -395,7 +395,7 @@ func (*criticalErrorTransform) Finish(bool) error { return nil }
 // Permanent local incompatibilities must not masquerade as retryable upstream 502s.
 type requestCompatibilityError struct{ code, message string }
 
-func (e *requestCompatibilityError) Error() string { return "Hpatch " + e.code + ": " + e.message }
+func (e *requestCompatibilityError) Error() string { return "Mekugi " + e.code + ": " + e.message }
 func incompatibleRequest(code, message string) error {
 	return &requestCompatibilityError{code: code, message: message}
 }

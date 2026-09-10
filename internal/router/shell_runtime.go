@@ -13,8 +13,8 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/yusing/hpatch/internal/shellruntime"
-	"github.com/yusing/hpatch/internal/shellsyntax"
+	"github.com/yusing/mekugi/internal/shellruntime"
+	"github.com/yusing/mekugi/internal/shellsyntax"
 )
 
 // A session acquires its script directory only by exclusive creation. Its live
@@ -144,7 +144,7 @@ func setShellRuntime(parent *os.Root, name, worker string) error {
 	return parent.Symlink(worker, name)
 }
 
-func (p *hpatchProxy) storeShellRuntime(threadID string) (string, error) {
+func (p *mekugiProxy) storeShellRuntime(threadID string) (string, error) {
 	runtimePath, err := shellruntime.Path(p.shellDirectory, threadID)
 	if err != nil {
 		return "", err
@@ -156,7 +156,7 @@ func (p *hpatchProxy) storeShellRuntime(threadID string) (string, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.closed {
-		return "", errors.New("hpatch proxy is closed")
+		return "", errors.New("mekugi proxy is closed")
 	}
 	if p.shellParent == nil {
 		p.shellParent, err = os.OpenRoot(p.shellDirectory)
@@ -260,11 +260,11 @@ func openRegularShellFile(root *os.Root, name string) (*os.File, error) {
 
 // shellRoot leases the private capability across the complete read or Apply.
 // Expiry and shutdown cannot remove its files or close its roots until release.
-func (p *hpatchProxy) shellRoot(directory string) (*os.Root, func(), error) {
+func (p *mekugiProxy) shellRoot(directory string) (*os.Root, func(), error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.closed {
-		return nil, nil, errors.New("hpatch proxy is closed")
+		return nil, nil, errors.New("mekugi proxy is closed")
 	}
 	session, ok := p.shellSessions[directory]
 	if !ok {
@@ -287,7 +287,7 @@ func (p *hpatchProxy) shellRoot(directory string) (*os.Root, func(), error) {
 	return session.scripts, release, nil
 }
 
-func (p *hpatchProxy) retainShell(directory, callID, script string) (string, bool) {
+func (p *mekugiProxy) retainShell(directory, callID, script string) (string, bool) {
 	if shellruntime.ValidateID(callID) != nil || callID == ".runtime" {
 		return "", false
 	}
@@ -326,7 +326,7 @@ func (p *hpatchProxy) retainShell(directory, callID, script string) (string, boo
 	return shellArtifactPrefix + callID, true
 }
 
-func (p *hpatchProxy) resolveShellInput(directory, input string) (string, error) {
+func (p *mekugiProxy) resolveShellInput(directory, input string) (string, error) {
 	seen := make(map[string]bool)
 	var root *os.Root
 	for {

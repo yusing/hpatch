@@ -1,7 +1,6 @@
 package shellruntime
 
 import (
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -16,33 +15,6 @@ func TestPathMapsThreadToRuntime(t *testing.T) {
 	}
 	if got != want {
 		t.Fatalf("Path() = %q, want %q", got, want)
-	}
-}
-
-func TestCurrentPathPrefersCurrentLocatorThenLegacy(t *testing.T) {
-	root := t.TempDir()
-	current, err := Path(root, "thread-1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	legacy := filepath.Join(root, "hpatch-runtime-thread-1")
-	got, err := CurrentPath(root, "thread-1")
-	if err != nil || got != current {
-		t.Fatalf("missing locators = %q, %v, want canonical %q", got, err, current)
-	}
-	if err := os.WriteFile(legacy, nil, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	got, err = CurrentPath(root, "thread-1")
-	if err != nil || got != legacy {
-		t.Fatalf("legacy locator = %q, %v, want %q", got, err, legacy)
-	}
-	if err := os.WriteFile(current, nil, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	got, err = CurrentPath(root, "thread-1")
-	if err != nil || got != current {
-		t.Fatalf("current locator = %q, %v, want %q", got, err, current)
 	}
 }
 

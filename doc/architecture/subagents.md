@@ -6,9 +6,9 @@
 projection and Grok protocol/authentication adaptation. Codex remains the only owner of agent
 creation, delivery, tool execution, sandbox/approval enforcement and lifecycle state.
 
-The collaboration bridge runs after ordinary Hpatch request preparation and before CTP serialization.
+The collaboration bridge runs after ordinary Mekugi request preparation and before CTP serialization.
 Response restoration reverses that order: CTP, collaboration identity restoration, then ordinary
-Hpatch handling and subagent commentary. The bridge uses request-local tool identities and the
+Mekugi handling and subagent commentary. The bridge uses request-local tool identities and the
 existing Codex history, not a second agent registry or transcript store. Only the private bridge
 namespace is restored; arbitrary tool arguments or user text are not namespace-rewritten.
 

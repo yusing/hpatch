@@ -32,7 +32,7 @@ func newRouterFlags(stderr io.Writer) routerFlags {
 		FlagSet:              flags,
 		timeout:              flags.Duration("timeout", defaultRequestTimeout, "upstream response-start timeout"),
 		streamIdleTimeout:    flags.Duration("stream-idle-timeout", defaultStreamIdleTimeout, "maximum upstream inactivity between WebSocket messages or HTTP response bytes"),
-		mode:                 flags.String("mode", defaultRewriteMode, "response mode: hpatch or passthrough"),
+		mode:                 flags.String("mode", defaultRewriteMode, "response mode: mekugi or passthrough"),
 		modelProtocol:        flags.String("model-protocol", defaultModelProtocol, "model protocol: native or ctp2"),
 		mentorHandoffEnabled: flags.Bool("mentor-handoff", true, "use gpt-5.6-sol high for eligible spawned subagents"),
 		grokEnabled:          flags.Bool("grok", false, "enable native Grok subagents and plaintext collaboration projection"),

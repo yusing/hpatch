@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	codexinstructions "github.com/yusing/hpatch/contrib/codex"
+	codexinstructions "github.com/yusing/mekugi/contrib/codex"
 )
 
 func TestRewriteModelFamilyToolConflicts(t *testing.T) {

@@ -56,7 +56,7 @@ function pluginDeclaration(format?: {
 }): string {
   const formatField = format === undefined ? "" : `, format: ${JSON.stringify(format)}`;
   return `export default {
-  apiVersion: "hpatch-tool-plugin/v1",
+  apiVersion: "mekugi-tool-plugin/v1",
   id: "grammar.test",
   tools: [{
     specification: {
@@ -185,7 +185,7 @@ describe("plugin translation and execution", () => {
     await writeFile(
       path.join(directory, "plugin.mjs"),
       `export default {
-  apiVersion: "hpatch-tool-plugin/v1",
+  apiVersion: "mekugi-tool-plugin/v1",
   id: "translation.test",
   tools: [{
     specification: {type: "custom", name: "translation_test", description: "test tool"},

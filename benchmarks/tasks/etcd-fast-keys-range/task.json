@@ -14,11 +14,11 @@
   "hidden_files": [
     {
       "source": "hidden_mvcc_test.go.txt",
-      "destination": "server/storage/mvcc/hpatch_benchmark_test.go"
+      "destination": "server/storage/mvcc/mekugi_benchmark_test.go"
     },
     {
       "source": "hidden_txn_test.go.txt",
-      "destination": "server/etcdserver/txn/hpatch_benchmark_test.go"
+      "destination": "server/etcdserver/txn/mekugi_benchmark_test.go"
     }
   ],
   "graders": [
@@ -30,7 +30,7 @@
         "./server/storage/mvcc",
         "./server/etcdserver/txn",
         "-run",
-        "^TestHPatchBenchmark",
+        "^TestMekugiBenchmark",
         "-count=1"
       ],
       "required": true,

@@ -1,4 +1,4 @@
-package hpatch
+package mekugi
 
 import (
 	"fmt"
@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-func TestHPatch2ToolGrammarQuotedOperands(t *testing.T) {
+func TestMekugi2ToolGrammarQuotedOperands(t *testing.T) {
 	target := grammarTerminalRegexp(t, "TARGET_QUOTED")
 	for _, value := range []string{
 		`"text"`,
@@ -51,7 +51,7 @@ func TestHPatch2ToolGrammarQuotedOperands(t *testing.T) {
 	}
 }
 
-func TestHPatch2ToolGrammarMatchesPublicCommands(t *testing.T) {
+func TestMekugi2ToolGrammarMatchesPublicCommands(t *testing.T) {
 	for _, rule := range []string{
 		`path_command: PATH_OP SP PATH`,
 		`inline_mutation: "type" SP target SP QUOTED`,
@@ -70,7 +70,7 @@ func TestHPatch2ToolGrammarMatchesPublicCommands(t *testing.T) {
 	}
 }
 
-func TestHPatch2ToolGrammarLineTerminators(t *testing.T) {
+func TestMekugi2ToolGrammarLineTerminators(t *testing.T) {
 	newline := grammarTerminalRegexp(t, "NL")
 	for value, want := range map[string]bool{"\n": true, "\r\n": true, "\r": false} {
 		if got := newline.MatchString(value); got != want {
@@ -107,7 +107,7 @@ func TestToolDescriptionIsNonInstructional(t *testing.T) {
 	}
 }
 
-func TestHPatch2ToolDescriptionExamplesExecute(t *testing.T) {
+func TestMekugi2ToolDescriptionExamplesExecute(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, root, "parser.go", "package parser\n\nfunc parse() {}\n", 0o644)
 	script := "in parser.go\n" +

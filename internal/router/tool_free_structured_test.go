@@ -73,7 +73,7 @@ func TestExecuteAuxiliaryStructuredRequest(t *testing.T) {
 					tools[0].(map[string]any)["tools"] = append(nested, map[string]any{"type": "function", "name": "request_user_input_async"})
 					tools = append(tools,
 						map[string]any{"type": "namespace", "name": "clock", "tools": []any{map[string]any{"type": "function", "name": "sleep"}}},
-						map[string]any{"type": "namespace", "name": "hpatch_collaboration", "tools": []any{map[string]any{"type": "function", "name": "spawn_agent"}}})
+						map[string]any{"type": "namespace", "name": "mekugi_collaboration", "tools": []any{map[string]any{"type": "function", "name": "spawn_agent"}}})
 				}
 				if catalog == "flat code mode" || catalog == "top code mode" {
 					tools = tools[0].(map[string]any)["tools"].([]any)
@@ -90,7 +90,7 @@ func TestExecuteAuxiliaryStructuredRequest(t *testing.T) {
 			}
 			response := `{"status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"{\"title\":\"Format Run previews\"}"}]}]}`
 			provider := &serverFakeProvider{results: []serverForwardResult{{response: serverHTTPResponse(response)}}}
-			proxy := newManagedHPatchProxy(t, testTranslator(t, new(int)))
+			proxy := newManagedMekugiProxy(t, testTranslator(t, new(int)))
 			proxy.customizedInstructions = true
 			var output bytes.Buffer
 			err = executeRequest(t.Context(), t.Context(), request, serverMetadataHeaders(t, "turn", nil), "title-session", provider, &output, nil, proxy, codec, nil)
@@ -143,7 +143,7 @@ func TestAuxiliaryCodeModeDoesNotAdmitOtherTools(t *testing.T) {
 				t.Fatal(err)
 			}
 			provider := &serverFakeProvider{}
-			err = executeRequest(t.Context(), t.Context(), request, serverMetadataHeaders(t, "turn", nil), "title-session", provider, io.Discard, nil, newManagedHPatchProxy(t, testTranslator(t, new(int))), nil, nil)
+			err = executeRequest(t.Context(), t.Context(), request, serverMetadataHeaders(t, "turn", nil), "title-session", provider, io.Discard, nil, newManagedMekugiProxy(t, testTranslator(t, new(int))), nil, nil)
 			if err == nil || len(provider.forwarded) != 0 {
 				t.Fatalf("unsupported catalog admitted: error=%v forwards=%d", err, len(provider.forwarded))
 			}
@@ -180,14 +180,14 @@ func TestStructuredRequestWithEditingToolsStillRewrites(t *testing.T) {
 					t.Fatal(err)
 				}
 				provider := &serverFakeProvider{results: []serverForwardResult{{response: serverHTTPResponse(`{"status":"completed","output":[]}`)}}}
-				proxy := newManagedHPatchProxy(t, testTranslator(t, new(int)))
+				proxy := newManagedMekugiProxy(t, testTranslator(t, new(int)))
 				proxy.customizedInstructions = true
 				err = executeRequest(t.Context(), t.Context(), request, serverMetadataHeaders(t, "turn", nil), "session", provider, io.Discard, nil, proxy, nil, nil)
 				if err != nil {
 					t.Fatal(err)
 				}
 				if len(provider.forwarded) != 1 || !bytes.Contains(provider.forwarded[0], []byte(`"name":"hpatch"`)) {
-					t.Fatal("structured editing request bypassed Hpatch tool rewriting")
+					t.Fatal("structured editing request bypassed HPATCH tool rewriting")
 				}
 			})
 		}
@@ -222,7 +222,7 @@ func TestToolFreeStructuredRequestDoesNotBypassAdmission(t *testing.T) {
 				t.Fatal(err)
 			}
 			provider := &serverFakeProvider{}
-			err = executeRequest(t.Context(), t.Context(), request, headers, "title-session", provider, io.Discard, nil, newManagedHPatchProxy(t, testTranslator(t, new(int))), nil, nil)
+			err = executeRequest(t.Context(), t.Context(), request, headers, "title-session", provider, io.Discard, nil, newManagedMekugiProxy(t, testTranslator(t, new(int))), nil, nil)
 			if err == nil || len(provider.forwarded) != 0 {
 				t.Fatalf("invalid request admitted: error=%v forwards=%d", err, len(provider.forwarded))
 			}
@@ -236,7 +236,7 @@ func TestResponsesWebSocketToolFreeStructuredTurnAfterPrewarm(t *testing.T) {
 	headers := codexAuthHeaders()
 	headers.Set(sessionIDHeader, "title-session")
 	headers.Set(threadIDHeader, "title-thread")
-	proxy := newManagedHPatchProxy(t, testTranslator(t, new(int)))
+	proxy := newManagedMekugiProxy(t, testTranslator(t, new(int)))
 	conn := testResponsesSocket(t, ctx, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		upstream, err := websocket.Accept(w, r, nil)
 		if err != nil {
@@ -254,7 +254,7 @@ func TestResponsesWebSocketToolFreeStructuredTurnAfterPrewarm(t *testing.T) {
 				if jsonString(request, "previous_response_id") != "warm" || !sameJSONValue(request["text"], mustTestJSON(t, titleRequestFields()["text"])) {
 					t.Errorf("title continuation changed: %s", mustMarshalJSON(request))
 				}
-				if strings.Contains(string(request["input"]), "hpatch-model-instructions") || len(request["tools"]) != 0 {
+				if strings.Contains(string(request["input"]), "mekugi-model-instructions") || len(request["tools"]) != 0 {
 					t.Error("title request acquired editing guidance or tools")
 				}
 			}
@@ -327,7 +327,7 @@ func TestToolProjectionAcrossClients(t *testing.T) {
 							fields["input"] = append([]any{map[string]any{"type": "additional_tools", "tools": []any{
 								map[string]any{"type": "namespace", "name": "functions", "tools": tools},
 								map[string]any{"type": "namespace", "name": "clock", "tools": []any{map[string]any{"type": "function", "name": "sleep"}}},
-								map[string]any{"type": "namespace", "name": "hpatch_collaboration", "tools": []any{map[string]any{"type": "function", "name": "spawn_agent"}}},
+								map[string]any{"type": "namespace", "name": "mekugi_collaboration", "tools": []any{map[string]any{"type": "function", "name": "spawn_agent"}}},
 							}}}, fields["input"].([]any)...)
 						}
 						request, err := parseResponsesRequest(mustTestJSON(t, fields))
@@ -335,7 +335,7 @@ func TestToolProjectionAcrossClients(t *testing.T) {
 							t.Fatal(err)
 						}
 						provider := &serverFakeProvider{results: []serverForwardResult{{response: serverHTTPResponse(`{"status":"completed","output":[]}`)}}}
-						proxy := newManagedHPatchProxy(t, testTranslator(t, new(int)))
+						proxy := newManagedMekugiProxy(t, testTranslator(t, new(int)))
 						proxy.customizedInstructions = true
 						err = executeRequest(t.Context(), t.Context(), request, serverMetadataHeaders(t, "turn", nil), "session", provider, io.Discard, nil, proxy, nil, nil)
 						if err != nil {

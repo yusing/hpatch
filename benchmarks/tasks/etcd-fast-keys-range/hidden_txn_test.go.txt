@@ -27,19 +27,19 @@ import (
 	"go.etcd.io/etcd/server/v3/storage/mvcc"
 )
 
-type hpatchBenchmarkTxnRead struct {
+type mekugiBenchmarkTxnRead struct {
 	options mvcc.RangeOptions
 }
 
-func (r *hpatchBenchmarkTxnRead) FirstRev() int64 { return 1 }
-func (r *hpatchBenchmarkTxnRead) Rev() int64      { return 3 }
-func (r *hpatchBenchmarkTxnRead) End()            {}
+func (r *mekugiBenchmarkTxnRead) FirstRev() int64 { return 1 }
+func (r *mekugiBenchmarkTxnRead) Rev() int64      { return 3 }
+func (r *mekugiBenchmarkTxnRead) End()            {}
 
-func (r *hpatchBenchmarkTxnRead) Range(context.Context, []byte, []byte, mvcc.RangeOptions) (*mvcc.RangeResult, error) {
+func (r *mekugiBenchmarkTxnRead) Range(context.Context, []byte, []byte, mvcc.RangeOptions) (*mvcc.RangeResult, error) {
 	panic("unreachable")
 }
 
-func (r *hpatchBenchmarkTxnRead) captureRange(_ context.Context, _ []byte, _ []byte, options mvcc.RangeOptions) (*mvcc.RangeResult, error) {
+func (r *mekugiBenchmarkTxnRead) captureRange(_ context.Context, _ []byte, _ []byte, options mvcc.RangeOptions) (*mvcc.RangeResult, error) {
 	r.options = options
 	return &mvcc.RangeResult{
 		KVs: []*mvccpb.KeyValue{{
@@ -54,15 +54,15 @@ func (r *hpatchBenchmarkTxnRead) captureRange(_ context.Context, _ []byte, _ []b
 	}, nil
 }
 
-type hpatchBenchmarkReadAdapter struct {
-	*hpatchBenchmarkTxnRead
+type mekugiBenchmarkReadAdapter struct {
+	*mekugiBenchmarkTxnRead
 }
 
-func (r hpatchBenchmarkReadAdapter) Range(ctx context.Context, key, end []byte, options mvcc.RangeOptions) (*mvcc.RangeResult, error) {
+func (r mekugiBenchmarkReadAdapter) Range(ctx context.Context, key, end []byte, options mvcc.RangeOptions) (*mvcc.RangeResult, error) {
 	return r.captureRange(ctx, key, end, options)
 }
 
-func TestHPatchBenchmarkKeysOnlyRouting(t *testing.T) {
+func TestMekugiBenchmarkKeysOnlyRouting(t *testing.T) {
 	tests := []struct {
 		name       string
 		request    *pb.RangeRequest
@@ -99,9 +99,9 @@ func TestHPatchBenchmarkKeysOnlyRouting(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			read := &hpatchBenchmarkTxnRead{}
-			ctx, _ := traceutil.EnsureTrace(t.Context(), zaptest.NewLogger(t), "hpatch benchmark")
-			_, err := executeRange(ctx, zaptest.NewLogger(t), hpatchBenchmarkReadAdapter{read}, test.request, test.totalCount)
+			read := &mekugiBenchmarkTxnRead{}
+			ctx, _ := traceutil.EnsureTrace(t.Context(), zaptest.NewLogger(t), "mekugi benchmark")
+			_, err := executeRange(ctx, zaptest.NewLogger(t), mekugiBenchmarkReadAdapter{read}, test.request, test.totalCount)
 			if err != nil {
 				t.Fatalf("executeRange returned error: %v", err)
 			}

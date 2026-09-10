@@ -4,7 +4,7 @@ import {Socket} from "node:net";
 import {
   interpreterIdentity,
   parseShellHeader,
-} from "hpatch:core/v1";
+} from "mekugi:core/v1";
 
 /**
  * parseScript parses a shell script using the shared-core shell header parser.
@@ -255,7 +255,7 @@ export const shellTool = {
 };
 
 export default {
-  apiVersion: "hpatch-tool-plugin/v1",
+  apiVersion: "mekugi-tool-plugin/v1",
   id: "builtin.shell",
   tools: [shellTool],
 };

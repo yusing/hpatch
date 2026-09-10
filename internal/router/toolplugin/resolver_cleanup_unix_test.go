@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yusing/hpatch/internal/verifiedrow"
+	"github.com/yusing/mekugi/internal/verifiedrow"
 )
 
 func TestResolverCleanupRetiresInheritedPipeDescendants(t *testing.T) {

@@ -12,7 +12,7 @@ import (
 
 func TestRecorderDistinguishesNoGenerateFromMissingProvider(t *testing.T) {
 	capturePath := filepath.Join(t.TempDir(), "capture.jsonl")
-	recorder, err := New(Config{Output: capturePath, Mode: "hpatch", ModelProtocol: "native"})
+	recorder, err := New(Config{Output: capturePath, Mode: "mekugi", ModelProtocol: "native"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -79,4 +79,3 @@ func TestRecorderDistinguishesNoGenerateFromMissingProvider(t *testing.T) {
 		t.Fatalf("provider expectation does not reconcile: live=%+v rebuilt=%+v", snapshot, rebuilt)
 	}
 }
-

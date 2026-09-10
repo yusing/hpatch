@@ -1,4 +1,4 @@
-package hpatch
+package mekugi
 
 import (
 	"strings"
@@ -56,7 +56,7 @@ func TestTextReferencesUseTargetableRows(t *testing.T) {
 }
 
 func TestGoSyntaxDiagnosticUsesConciseCommandShape(t *testing.T) {
-	script := "new hpatch_invalid_recovery_probe.go\n" +
+	script := "new mekugi_invalid_recovery_probe.go\n" +
 		"type <<PATCH\n" +
 		"package main\n\n" +
 		"func main() {\n" +
@@ -68,7 +68,7 @@ func TestGoSyntaxDiagnosticUsesConciseCommandShape(t *testing.T) {
 	if err == nil {
 		t.Fatal("invalid Go source unexpectedly succeeded")
 	}
-	want := "type: command 2, path \"hpatch_invalid_recovery_probe.go\", reason language-syntax: expected statement, found ')' (and 1 more errors)\n"
+	want := "type: command 2, path \"mekugi_invalid_recovery_probe.go\", reason language-syntax: expected statement, found ')' (and 1 more errors)\n"
 	if !strings.HasPrefix(result.Diagnostic, want) {
 		t.Fatalf("diagnostic = %q, want prefix %q", result.Diagnostic, want)
 	}

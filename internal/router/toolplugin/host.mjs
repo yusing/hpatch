@@ -6,7 +6,7 @@ import process from "node:process";
 import { createInterface } from "node:readline";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-const API_VERSION = "hpatch-tool-plugin/v1";
+const API_VERSION = "mekugi-tool-plugin/v1";
 const MAX_GRAMMAR_BYTES = 1024 * 1024;
 const MAX_DIAGNOSTIC_BYTES = 16 * 1024;
 let regexValidator = "rg";
@@ -723,14 +723,14 @@ async function registerSnapshot(root) {
   const snapshotRoot = await realpath(path.resolve(root));
   registerHooks({
     resolve(specifier, context, nextResolve) {
-      if (specifier === "hpatch:core/v1") {
+      if (specifier === "mekugi:core/v1") {
         return {
           shortCircuit: true,
           url: pathToFileURL(path.join(snapshotRoot, "builtin", "core-v1.mjs")).href,
         };
       }
-      if (specifier.startsWith("hpatch:")) {
-        throw new Error(`hpatch plugin module is not supported: ${specifier}`);
+      if (specifier.startsWith("mekugi:")) {
+        throw new Error(`mekugi plugin module is not supported: ${specifier}`);
       }
       const resolved = nextResolve(specifier, context);
       if (resolved.url.startsWith("node:")) {

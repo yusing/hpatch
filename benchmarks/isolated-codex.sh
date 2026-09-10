@@ -14,4 +14,4 @@ ip6tables -w -A OUTPUT -m owner --gid-owner 65534 -j REJECT
 # A private PID namespace hides the egress-capable parent. Private read-only
 # mounts keep the executor from modifying trusted capture and runtime artifacts.
 exec unshare --mount --pid --fork --mount-proc --kill-child=KILL \
- /usr/local/libexec/hpatch-agent-mounts "$@"
+ /usr/local/libexec/mekugi-agent-mounts "$@"

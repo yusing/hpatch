@@ -13,7 +13,7 @@ func TestCriticalNoticeReplayUsesDurableExactProvenance(t *testing.T) {
 	for _, stream := range []bool{false, true} {
 		t.Run(map[bool]string{false: "json", true: "sse"}[stream], func(t *testing.T) {
 			workspace := t.TempDir()
-			store, err := openHPatchReplayStore(t.TempDir())
+			store, err := openMekugiReplayStore(t.TempDir())
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -21,7 +21,7 @@ func TestCriticalNoticeReplayUsesDurableExactProvenance(t *testing.T) {
 			queueCritical(issues, "parent-session")
 			noticeID := issues.entries[0].id
 
-			first := newManagedHPatchProxy(t, testTranslator(t, new(int)))
+			first := newManagedMekugiProxy(t, testTranslator(t, new(int)))
 			first.replayStore = store
 			provider := &serverFakeProvider{results: []serverForwardResult{{response: criticalTestResponse(stream)}}}
 			request := serverRequest(t, func(fields map[string]any) { fields["stream"] = stream })
@@ -36,7 +36,7 @@ func TestCriticalNoticeReplayUsesDurableExactProvenance(t *testing.T) {
 			}
 
 			// A fresh proxy and changed routing session model resume/fork replay.
-			fresh := newManagedHPatchProxy(t, testTranslator(t, new(int)))
+			fresh := newManagedMekugiProxy(t, testTranslator(t, new(int)))
 			fresh.replayStore = store
 			replayProvider := &serverFakeProvider{results: []serverForwardResult{{response: criticalTestResponse(stream)}}}
 			replay := serverRequest(t, func(fields map[string]any) {
@@ -57,7 +57,7 @@ func TestCriticalNoticeReplayUsesDurableExactProvenance(t *testing.T) {
 }
 
 func TestCriticalNoticeRetentionFailureSuppressesWithoutAcknowledging(t *testing.T) {
-	store, err := openHPatchReplayStore(t.TempDir())
+	store, err := openMekugiReplayStore(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -93,7 +93,7 @@ func TestCriticalNoticePassthroughStillEmitsWithoutReplayStore(t *testing.T) {
 
 func TestCompactionCriticalNoticeRetainsReplayProvenanceWithoutChangingRequest(t *testing.T) {
 	workspace := t.TempDir()
-	store, err := openHPatchReplayStore(t.TempDir())
+	store, err := openMekugiReplayStore(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -123,7 +123,7 @@ func TestCompactionCriticalNoticeRetainsReplayProvenanceWithoutChangingRequest(t
 			"phase": "standalone_turn", "strategy": "memento",
 		},
 	})))
-	proxy := newManagedHPatchProxy(t, testTranslator(t, new(int)))
+	proxy := newManagedMekugiProxy(t, testTranslator(t, new(int)))
 	proxy.replayStore = store
 	provider := &serverFakeProvider{results: []serverForwardResult{{response: criticalTestResponse(true)}}}
 	var visible bytes.Buffer
@@ -138,7 +138,7 @@ func TestCompactionCriticalNoticeRetainsReplayProvenanceWithoutChangingRequest(t
 		t.Fatalf("compaction did not emit retained notice: %s", visible.Bytes())
 	}
 
-	fresh := newManagedHPatchProxy(t, testTranslator(t, new(int)))
+	fresh := newManagedMekugiProxy(t, testTranslator(t, new(int)))
 	fresh.replayStore = store
 	replay := serverRequest(t, func(fields map[string]any) {
 		input := fields["input"].([]any)

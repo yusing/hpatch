@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/yusing/hpatch/capturer"
+	"github.com/yusing/mekugi/capturer"
 )
 
 func main() {

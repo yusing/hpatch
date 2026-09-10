@@ -20,7 +20,7 @@ func activityAdmissionRequest(t *testing.T, input []any) parsedResponsesRequest 
 }
 
 func TestFailedPreparationDoesNotChangeActivityIdentity(t *testing.T) {
-	proxy := newManagedHPatchProxy(t, testTranslator(t, new(int)))
+	proxy := newManagedMekugiProxy(t, testTranslator(t, new(int)))
 	root, _ := prepareActivityTest(t, proxy, "root-session", "r", "", "/root", nil)
 	child, _ := prepareActivityTest(t, proxy, "child-session", "c", "r", "/root/child", nil)
 	child.Close()
@@ -49,7 +49,7 @@ func TestRejectedIdentityCannotReuseShellActivityAncestry(t *testing.T) {
 		`"thread_id":"c","parent_thread_id":42,"agent_name":"/root/child"`,
 	} {
 		t.Run(identity, func(t *testing.T) {
-			proxy := newManagedHPatchProxy(t, testTranslator(t, new(int)))
+			proxy := newManagedMekugiProxy(t, testTranslator(t, new(int)))
 			proxy.commentaryEndpoint = "http://127.0.0.1:8080" + commentaryPublisherPath
 			root, _ := prepareActivityTest(t, proxy, "root-session", "r", "", "/root", nil)
 			child, _ := prepareActivityTest(t, proxy, "child-session", "c", "r", "/root/child", nil)
@@ -99,7 +99,7 @@ func TestReplyRecipientRequiresCurrentValidIdentity(t *testing.T) {
 		{name: "valid child", author: "/root/child", kind: "thread_spawn", recipient: "/root/child", want: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			proxy := newManagedHPatchProxy(t, testTranslator(t, new(int)))
+			proxy := newManagedMekugiProxy(t, testTranslator(t, new(int)))
 			envelope := map[string]any{"type": "agent_message", "id": "received", "author": "/root/sender",
 				"content": []any{map[string]any{"type": "input_text", "text": "Message Type: MESSAGE\nSender: /root/sender\nPayload:\nReply payload."}}}
 			if tc.recipient != "" {
@@ -135,7 +135,7 @@ func TestInitiallyAmbiguousShellActivityCannotAcquireAncestry(t *testing.T) {
 		{name: "noncanonical string identity", author: "not-canonical"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			proxy := newManagedHPatchProxy(t, testTranslator(t, new(int)))
+			proxy := newManagedMekugiProxy(t, testTranslator(t, new(int)))
 			proxy.commentaryEndpoint = "http://127.0.0.1:8080" + commentaryPublisherPath
 			root, _ := prepareActivityTest(t, proxy, "root-session", "r", "", "/root", nil)
 			request := activityAdmissionRequest(t, nil)

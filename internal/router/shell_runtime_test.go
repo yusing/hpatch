@@ -6,11 +6,11 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/yusing/hpatch/internal/shellruntime"
+	"github.com/yusing/mekugi/internal/shellruntime"
 )
 
 func TestPreparedRequestStoresCurrentShellRuntime(t *testing.T) {
-	transform, proxy, _, _ := newHPatchTestTransform(t, testTranslator(t, new(int)))
+	transform, proxy, _, _ := newMekugiTestTransform(t, testTranslator(t, new(int)))
 	runtimePath, err := shellruntime.Path(proxy.shellDirectory, "thread-1")
 	if err != nil {
 		t.Fatal(err)

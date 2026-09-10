@@ -55,7 +55,7 @@ func TestBatchedExecWarningDelivery(t *testing.T) {
 	for _, name := range []string{"exec", "shell"} {
 		for _, streaming := range []bool{false, true} {
 			t.Run(name+map[bool]string{false: "/json", true: "/sse"}[streaming], func(t *testing.T) {
-				transform, _, _, _ := newHPatchTestTransform(t, testTranslator(t, new(int)))
+				transform, _, _, _ := newMekugiTestTransform(t, testTranslator(t, new(int)))
 				item := map[string]any{"type": "custom_tool_call", "name": name, "call_id": "batch", "id": "batch-item", "input": source, "status": "completed"}
 				var carrier map[string]json.RawMessage
 				if streaming {
@@ -118,14 +118,14 @@ func TestExecWarningsPreserveLocalOutputBinding(t *testing.T) {
 	const source = `const globalThis = "local scope"; const text = "local data"; const r = await tools.exec_command({cmd:"one"}); console.log(r.output, text);`
 	for _, name := range []string{"exec", "shell"} {
 		t.Run(name, func(t *testing.T) {
-			proxy := newManagedHPatchProxy(t, testTranslator(t, new(int)))
+			proxy := newManagedMekugiProxy(t, testTranslator(t, new(int)))
 			storeDirectory := t.TempDir()
 			var err error
-			proxy.replayStore, err = openHPatchReplayStore(storeDirectory)
+			proxy.replayStore, err = openMekugiReplayStore(storeDirectory)
 			if err != nil {
 				t.Fatal(err)
 			}
-			transform, _, _, workspace := newHPatchTestTransformWithProxy(t, proxy)
+			transform, _, _, workspace := newMekugiTestTransformWithProxy(t, proxy)
 			body, err := transform.TransformJSON(mustTestJSON(t, map[string]any{
 				"status": "completed", "output": []any{map[string]any{
 					"type": "custom_tool_call", "name": name, "call_id": "local-text", "input": source,
@@ -150,8 +150,8 @@ func TestExecWarningsPreserveLocalOutputBinding(t *testing.T) {
 			if err != nil || string(output) != "one local data\n" {
 				t.Fatalf("carrier changed execution: %v: %s", err, output)
 			}
-			resumed := newManagedHPatchProxy(t, testTranslator(t, new(int)))
-			resumed.replayStore, err = openHPatchReplayStore(storeDirectory)
+			resumed := newManagedMekugiProxy(t, testTranslator(t, new(int)))
+			resumed.replayStore, err = openMekugiReplayStore(storeDirectory)
 			if err != nil {
 				t.Fatal(err)
 			}

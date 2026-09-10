@@ -17,11 +17,11 @@ import (
 	"github.com/creack/pty"
 )
 
-const shellPTYHelperEnvironment = "HPATCH_SHELL_PTY_HELPER"
+const shellPTYHelperEnvironment = "MEKUGI_SHELL_PTY_HELPER"
 
 func TestShellRunnerExternalPipelineReadsPTY(t *testing.T) {
 	if os.Getenv(shellPTYHelperEnvironment) == "1" {
-		registry, err := buildToolRegistry(t.Context(), t.TempDir(), testHPatchToolDescription, false)
+		registry, err := buildToolRegistry(t.Context(), t.TempDir(), testMekugiToolDescription, false)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -38,7 +38,7 @@ func TestShellRunnerExternalPipelineReadsPTY(t *testing.T) {
 			`printf 'stream\n' | sh -c 'IFS= read -r stream; IFS= read -r terminal </dev/tty; printf "pty:%s:%s" "$stream" "$terminal"'`,
 			os.Stdin,
 		)
-		_, _ = fmt.Fprintf(os.Stdout, "HPATCH_PTY_RESULT=%d|%s|%s\n", exitCode, stdout, stderr)
+		_, _ = fmt.Fprintf(os.Stdout, "MEKUGI_PTY_RESULT=%d|%s|%s\n", exitCode, stdout, stderr)
 		return
 	}
 
@@ -65,7 +65,7 @@ func TestShellRunnerExternalPipelineReadsPTY(t *testing.T) {
 	if waitErr != nil {
 		t.Fatalf("PTY helper failed: %v\n%s", waitErr, output)
 	}
-	if !strings.Contains(string(output), "HPATCH_PTY_RESULT=0|pty:stream:hello|") {
+	if !strings.Contains(string(output), "MEKUGI_PTY_RESULT=0|pty:stream:hello|") {
 		t.Fatalf("PTY shell output = %q", output)
 	}
 }

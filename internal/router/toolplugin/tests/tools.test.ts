@@ -5,7 +5,7 @@ import {tmpdir} from "node:os";
 import path from "node:path";
 import {pathToFileURL} from "node:url";
 
-import {formatVerifiedRow, hashLine} from "hpatch:core/v1";
+import {formatVerifiedRow, hashLine} from "mekugi:core/v1";
 import {countGPT5Tokens, VerifiedRowOutput} from "../../../../plugins/common.ts";
 import {createHGrepTool, splitArguments} from "../../../../plugins/hgrep.ts";
 import {createHReadTool} from "../../../../plugins/hread.ts";

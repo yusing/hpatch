@@ -9,7 +9,7 @@ import (
 )
 
 const testToolPluginDeclaration = `export default {
-  apiVersion: "hpatch-tool-plugin/v1",
+  apiVersion: "mekugi-tool-plugin/v1",
   id: "proxy.test",
   tools: [{
     specification: {type: "custom", name: "plugin_tool", description: "fixture plugin tool"},
@@ -31,7 +31,7 @@ const testToolPluginDeclaration = `export default {
     },
     execute(argv) {
       return {
-        stdout: [process.cwd(), process.env.HPATCH_PLUGIN_TEST, ...argv].join("|"),
+        stdout: [process.cwd(), process.env.MEKUGI_PLUGIN_TEST, ...argv].join("|"),
         stderr: "fixture stderr",
         exitCode: 7,
       };
@@ -40,7 +40,7 @@ const testToolPluginDeclaration = `export default {
 };
 `
 
-func newToolPluginTestTransform(t *testing.T) (*hpatchResponseTransform, *hpatchProxy, *parsedResponsesRequest) {
+func newToolPluginTestTransform(t *testing.T) (*mekugiResponseTransform, *mekugiProxy, *parsedResponsesRequest) {
 	t.Helper()
 	proxy := newToolPluginTestProxy(t)
 
@@ -63,7 +63,7 @@ func newToolPluginTestTransform(t *testing.T) (*hpatchResponseTransform, *hpatch
 	return transform, proxy, &request
 }
 
-func newNativeToolPluginTestTransform(t *testing.T) (*hpatchResponseTransform, *hpatchProxy) {
+func newNativeToolPluginTestTransform(t *testing.T) (*mekugiResponseTransform, *mekugiProxy) {
 	t.Helper()
 	proxy := newToolPluginTestProxy(t)
 	tools := append(testNativeResponsesTools(), map[string]any{
@@ -82,12 +82,12 @@ func newNativeToolPluginTestTransform(t *testing.T) (*hpatchResponseTransform, *
 	return prepareToolPluginTestRequest(t, proxy, &request, "native-plugin-session", "native-plugin-thread"), proxy
 }
 
-func newToolPluginTestProxy(t *testing.T) *hpatchProxy {
+func newToolPluginTestProxy(t *testing.T) *mekugiProxy {
 	t.Helper()
 	return newProxyWithSharedTestRegistry(t, testTranslator(t, new(int)), pluginProxyTestFixture.get(t, testToolPluginDeclaration))
 }
 
-func prepareToolPluginTestRequest(t *testing.T, proxy *hpatchProxy, request *parsedResponsesRequest, sessionID, threadID string) *hpatchResponseTransform {
+func prepareToolPluginTestRequest(t *testing.T, proxy *mekugiProxy, request *parsedResponsesRequest, sessionID, threadID string) *mekugiResponseTransform {
 	t.Helper()
 	workspace := t.TempDir()
 	metadata := codexTurnMetadata{
@@ -418,7 +418,7 @@ func TestToolPluginFunctionCarrierSSE(t *testing.T) {
 	}
 }
 
-func TestToolPluginFailuresStayOutsideHPatchRecovery(t *testing.T) {
+func TestToolPluginFailuresStayOutsideMekugiRecovery(t *testing.T) {
 	t.Run("parser rejection is recoverable", func(t *testing.T) {
 		transform, proxy, _ := newToolPluginTestTransform(t)
 		response, err := transform.TransformJSON(mustTestJSON(t, map[string]any{
@@ -434,7 +434,7 @@ func TestToolPluginFailuresStayOutsideHPatchRecovery(t *testing.T) {
 			t.Fatalf("rejection carrier = %#v", visible)
 		}
 		if _, err := proxy.recoverableHistory(transform.historySessionID); err == nil ||
-			!strings.Contains(err.Error(), "no rejected hpatch script") {
+			!strings.Contains(err.Error(), "no rejected HPATCH script") {
 			t.Fatalf("plugin entered recovery ancestry: %v", err)
 		}
 	})

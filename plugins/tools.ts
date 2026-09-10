@@ -26,7 +26,7 @@ type BuiltinPlugin = Omit<Plugin, "tools"> & {
 };
 
 const plugin: BuiltinPlugin = {
-  apiVersion: "hpatch-tool-plugin/v1",
+  apiVersion: "mekugi-tool-plugin/v1",
   id: "builtin.shell",
   tools: [
     createHReadTool(hreadDescription, hreadRegex),

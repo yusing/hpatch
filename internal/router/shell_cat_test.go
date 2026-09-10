@@ -82,8 +82,8 @@ func TestSplitShellCatWritesLeavesUnsupportedShellUnchanged(t *testing.T) {
 }
 
 func TestShellCatCarrierExecutionAndReplay(t *testing.T) {
-	proxy := newManagedHPatchProxy(t, testTranslator(t, new(int)))
-	transform, _, _, _ := newHPatchTestTransformWithProxy(t, proxy)
+	proxy := newManagedMekugiProxy(t, testTranslator(t, new(int)))
+	transform, _, _, _ := newMekugiTestTransformWithProxy(t, proxy)
 	session := transform.historySessionID
 	directory := t.TempDir()
 	transform.directory = directory
@@ -181,8 +181,8 @@ const text = value => process.stdout.write(value);
 }
 
 func TestShellCatCarrierWaitsBeforeApplying(t *testing.T) {
-	proxy := newManagedHPatchProxy(t, testTranslator(t, new(int)))
-	transform, _, _, _ := newHPatchTestTransformWithProxy(t, proxy)
+	proxy := newManagedMekugiProxy(t, testTranslator(t, new(int)))
+	transform, _, _, _ := newMekugiTestTransformWithProxy(t, proxy)
 	transform.directory = t.TempDir()
 	contribution, _ := proxy.registry.contribution("shell")
 	carrier, ok := transform.shellCatCarrier(contribution, codeModeCarrierCustom, []string{"bash", "foo; cat >out <<'EOF'\nhello\nEOF\nbar"}, "", nil, nil)
@@ -214,8 +214,8 @@ tools.apply_patch = async () => {
 }
 
 func TestShellCatCarrierRuntimeFallbacks(t *testing.T) {
-	proxy := newManagedHPatchProxy(t, testTranslator(t, new(int)))
-	transform, _, _, _ := newHPatchTestTransformWithProxy(t, proxy)
+	proxy := newManagedMekugiProxy(t, testTranslator(t, new(int)))
+	transform, _, _, _ := newMekugiTestTransformWithProxy(t, proxy)
 	directory := t.TempDir()
 	transform.directory = directory
 	bin := t.TempDir()
@@ -255,8 +255,8 @@ func TestShellCatNativeCarrierWithHostApplyPatch(t *testing.T) {
 	if err != nil {
 		t.Skip("host apply_patch executable is not installed")
 	}
-	proxy := newManagedHPatchProxy(t, testTranslator(t, new(int)))
-	transform, _ := newNativeHPatchTestTransformWithProxy(t, proxy)
+	proxy := newManagedMekugiProxy(t, testTranslator(t, new(int)))
+	transform, _ := newNativeMekugiTestTransformWithProxy(t, proxy)
 	transform.directory = t.TempDir()
 	contribution, _ := proxy.registry.contribution("shell")
 	// Use the real host parser/application, including an overwrite and an empty file.
@@ -286,8 +286,8 @@ func TestShellCatNativeCarrierWithHostApplyPatch(t *testing.T) {
 }
 
 func TestShellCatStreamingKeepsOneReplayableCarrier(t *testing.T) {
-	proxy := newManagedHPatchProxy(t, testTranslator(t, new(int)))
-	transform, _, _, _ := newHPatchTestTransformWithProxy(t, proxy)
+	proxy := newManagedMekugiProxy(t, testTranslator(t, new(int)))
+	transform, _, _, _ := newMekugiTestTransformWithProxy(t, proxy)
 	source := "foo; cat > out <<'EOF'\nliteral\nEOF\nbar"
 	item := map[string]any{"id": "cat-item", "call_id": "cat-call", "type": "custom_tool_call", "name": "shell", "input": source, "status": "completed"}
 	added := map[string]any{"id": "cat-item", "call_id": "cat-call", "type": "custom_tool_call", "name": "shell", "input": "", "status": "in_progress"}
@@ -317,8 +317,8 @@ func TestShellCatStreamingKeepsOneReplayableCarrier(t *testing.T) {
 }
 
 func TestShellCatCarrierPreservesOutputOnHostFailure(t *testing.T) {
-	proxy := newManagedHPatchProxy(t, testTranslator(t, new(int)))
-	transform, _, _, _ := newHPatchTestTransformWithProxy(t, proxy)
+	proxy := newManagedMekugiProxy(t, testTranslator(t, new(int)))
+	transform, _, _, _ := newMekugiTestTransformWithProxy(t, proxy)
 	contribution, _ := proxy.registry.contribution("shell")
 	carrier, ok := transform.shellCatCarrier(contribution, codeModeCarrierCustom,
 		[]string{"bash", "foo; cat > out <<'EOF'\nliteral\nEOF\nbar"}, "", nil,

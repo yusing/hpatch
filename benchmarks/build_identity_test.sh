@@ -5,7 +5,7 @@ set -euo pipefail
 benchmark_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck source=runner/preparation.sh
 source "$benchmark_root/runner/preparation.sh"
-fixture=$(mktemp -d /tmp/hpatch-build-test-XXXXXX)
+fixture=$(mktemp -d /tmp/mekugi-build-test-XXXXXX)
 trap 'rm -rf -- "$fixture"' EXIT
 mkdir -p "$fixture/source/benchmarks" "$fixture/run"
 cp "$benchmark_root/build_inputs.py" "$fixture/source/benchmarks/"

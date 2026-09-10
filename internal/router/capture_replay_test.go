@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/yusing/hpatch/capturer"
+	"github.com/yusing/mekugi/capturer"
 )
 
 type captureReplayProvider struct {
@@ -26,17 +26,17 @@ func (p captureReplayProvider) forwardExecution(ctx, _ context.Context, body []b
 	return p.client.Do(request)
 }
 
-func TestCaptureRequestBaselineAfterHPatchReplay(t *testing.T) {
+func TestCaptureRequestBaselineAfterMekugiReplay(t *testing.T) {
 	const catWrite = "foo; cat > cache-replay.txt <<'EOF'\nliteral content\nEOF\nbar"
 	for _, fixture := range []struct{ name, input, protocol string }{
-		{"hpatch", testHPatchScript, "native"},
-		{"hpatch", testHPatchScript, "ctp2"},
+		{"hpatch", testMekugiScript, "native"},
+		{"hpatch", testMekugiScript, "ctp2"},
 		{"shell", catWrite, "native"},
 		{"shell", catWrite, "ctp2"},
 	} {
 		protocol := fixture.protocol
 		t.Run(fixture.name+"/"+protocol, func(t *testing.T) {
-			recorder, err := capturer.New(capturer.Config{Mode: "hpatch", ModelProtocol: protocol})
+			recorder, err := capturer.New(capturer.Config{Mode: "mekugi", ModelProtocol: protocol})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -46,7 +46,7 @@ func TestCaptureRequestBaselineAfterHPatchReplay(t *testing.T) {
 				body, _ := io.ReadAll(r.Body)
 				forwarded = append(forwarded, body)
 				w.Header().Set("Content-Type", "application/json")
-				output := []any{testHPatchItem()}
+				output := []any{testMekugiItem()}
 				output[0].(map[string]any)["name"] = fixture.name
 				output[0].(map[string]any)["input"] = fixture.input
 				if len(forwarded) > 1 {
@@ -56,7 +56,7 @@ func TestCaptureRequestBaselineAfterHPatchReplay(t *testing.T) {
 			}))
 			t.Cleanup(upstream.Close)
 			provider := captureReplayProvider{client: &http.Client{Transport: recorder.Transport(http.DefaultTransport)}, url: upstream.URL}
-			proxy := newManagedHPatchProxy(t, testTranslator(t, new(int)))
+			proxy := newManagedMekugiProxy(t, testTranslator(t, new(int)))
 			var codec *ctp2Codec
 			if protocol == "ctp2" {
 				codec = mustCTP2Codec(t)

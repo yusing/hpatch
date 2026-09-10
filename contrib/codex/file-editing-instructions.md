@@ -1,4 +1,4 @@
-<!-- hpatch-model-instructions:start -->
+<!-- mekugi-model-instructions:start -->
 ## CTP/2 transport
 
 CTP/2 is an inline representation used in some model-visible strings. Decode it while reading, then
@@ -120,8 +120,8 @@ retrying; a failed call does not imply rollback.
 
 A retained result includes `retained: true` and a `script_ref`. Read the source with
 `hread @shell/<reference>`, edit it with hpatch, or rerun its current content with a shell call
-containing only `#!script=@shell/<reference>`. An hpatch script using an `@shell/` path must use
-only `@shell/` paths; never mix retained scripts and workspace files in one hpatch script.
+containing only `#!script=@shell/<reference>`. A HPATCH script using an `@shell/` path must use
+only `@shell/` paths; never mix retained scripts and workspace files in one HPATCH script.
 
 Shell can start PTY-backed, interactive, and long-running programs. When execution yields a
 session handle, use the native session facilities to send input, poll output, resize the PTY, or
@@ -205,7 +205,7 @@ do not shift later targets. Preserve required indentation prefixes in indentatio
 languages such as Python.
 
 Content introduced by a mutation is not targetable in the same call. After every successful
-invocation, unchanged saved rows remain valid even when edits shifted their line numbers: hpatch
+invocation, unchanged saved rows remain valid even when edits shifted their line numbers: mekugi
 relocates an exact hash only when it identifies one row. For a routed whole-line or range
 replacement, the router resolves that exact pre-edit target after the executor confirms
 application.
@@ -281,4 +281,4 @@ outline entries: import, constant, variable, type, class, function, method, head
 
 Inspect_file never returns raw excerpts, bodies, field definitions, frontmatter values, or
 JSON scalar values.
-<!-- hpatch-model-instructions:end -->
+<!-- mekugi-model-instructions:end -->

@@ -1,4 +1,4 @@
-package hpatch
+package mekugi
 
 import (
 	"cmp"
@@ -14,8 +14,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/yusing/hpatch/internal/hpatchsyntax"
-	"github.com/yusing/hpatch/internal/sourcekind"
+	"github.com/yusing/mekugi/internal/hpatchsyntax"
+	"github.com/yusing/mekugi/internal/sourcekind"
 )
 
 type indentationCorrectionError struct {

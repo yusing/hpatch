@@ -1,10 +1,10 @@
-package hpatch
+package mekugi
 
 import (
 	"fmt"
 	"strings"
 
-	"github.com/yusing/hpatch/internal/verifiedrow"
+	"github.com/yusing/mekugi/internal/verifiedrow"
 )
 
 // hashLine returns the lowercase four-digit verified-row hash for content.

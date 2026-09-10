@@ -4,19 +4,19 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/yusing/hpatch"
+	"github.com/yusing/mekugi"
 )
 
-func TestHPatchRecoveryGuidanceListsOnlyRowStaleTargetCommands(t *testing.T) {
+func TestMekugiRecoveryGuidanceListsOnlyRowStaleTargetCommands(t *testing.T) {
 	script := "in file.go\n" +
 		"type 13:974b..16:d10b <<PATCH\n" +
 		"replacement\n" +
 		"broken\n" +
 		"PATCH\n"
-	rejections := []hpatch.HostRejection{{
+	rejections := []mekugi.HostRejection{{
 		Command: 2, SourceLine: 2, Operation: "type", Target: "range", Reason: "row-stale",
 	}}
-	guidance := hpatchRecoveryGuidance(script, rejections, true)
+	guidance := mekugiRecoveryGuidance(script, rejections, true)
 	command := recoveryCommands(script)[1]
 	for _, want := range []string{
 		"Rejected target commands:",
@@ -40,11 +40,11 @@ func TestHPatchRecoveryGuidanceListsOnlyRowStaleTargetCommands(t *testing.T) {
 	}
 }
 
-func TestHPatchRecoveryGuidanceRequiresCompleteScriptForNonTargetFailure(t *testing.T) {
+func TestMekugiRecoveryGuidanceRequiresCompleteScriptForNonTargetFailure(t *testing.T) {
 	script := "in file.go\n" + `type 1:abcd "sensitive replacement" trailing` + "\n"
-	guidance := hpatchRecoveryGuidance(
+	guidance := mekugiRecoveryGuidance(
 		script,
-		[]hpatch.HostRejection{{Command: 2, SourceLine: 2, Operation: "type", Reason: "language-syntax"}},
+		[]mekugi.HostRejection{{Command: 2, SourceLine: 2, Operation: "type", Reason: "language-syntax"}},
 		false,
 	)
 	if strings.Contains(guidance, "sensitive replacement") ||
@@ -54,7 +54,7 @@ func TestHPatchRecoveryGuidanceRequiresCompleteScriptForNonTargetFailure(t *test
 	}
 }
 
-func mustHPatchHistory(t *testing.T, proxy *hpatchProxy, callID string) hpatchHistory {
+func mustMekugiHistory(t *testing.T, proxy *mekugiProxy, callID string) mekugiHistory {
 	t.Helper()
 	history, ok := proxy.history("session", callID)
 	if !ok {

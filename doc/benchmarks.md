@@ -2,7 +2,7 @@
 
 The benchmark compares actual Codex runs from independent historical workspaces. Hidden executable
 tests and a changed-path boundary decide correctness. The capture path then reports provider usage,
-transport savings, tools, and Hpatch delivery from observed traffic rather than production counters
+transport savings, tools, and HPATCH delivery from observed traffic rather than production counters
 or hypothetical baselines.
 
 ## Requirements
@@ -14,7 +14,7 @@ The runner checks its host dependencies. You need Docker Compose, Codex authenti
 ## Run it
 
 Default A/B preset: one attempt per arm, `gpt-6-astra` at `medium` effort.
-A is stock passthrough/native; B is Hpatch + CTP/2. Mentor Handoff and issue reporting
+A is stock passthrough/native; B is Mekugi + CTP/2. Mentor Handoff and issue reporting
 are disabled in both arms. The default task is `etcd-range-stream`.
 
 Default paired run:
@@ -25,14 +25,14 @@ bash benchmarks/bench.sh
 
 For a matching Sol A/B pair, run `MODEL=gpt-5.6-sol bash benchmarks/bench.sh`.
 
-One stock control attempt, with no Hpatch router or treatment attempt:
+One stock control attempt, with no Mekugi router or treatment attempt:
 
 ```sh
 MODEL=gpt-5.6-sol BENCHMARK_MODE=control-only bash benchmarks/bench.sh
 ```
 
 `control-only` requires one repetition and issue reporting disabled. Its report validates only
-stock capture and usage; it contains no A/B delta or Hpatch delivery section.
+stock capture and usage; it contains no A/B delta or HPATCH delivery section.
 
 For local preparation and hidden-grader qualification without any model calls:
 
@@ -61,50 +61,52 @@ attempt remains failed and no substituted grader runs.
 To check real startup and isolation without model calls, use an already built benchmark image:
 
 ```sh
-BENCH_TEST_IMAGE=hpatch-bench:your-built-tag bash benchmarks/runtime_isolation_test.sh
+BENCH_TEST_IMAGE=mekugi-bench:your-built-tag bash benchmarks/runtime_isolation_test.sh
 ```
 
 This starts the real router and Codex `--version`, checks the executor's read-only replay state,
 and exercises the isolated grader and private caches. It does not need provider credentials.
 
-One Hpatch attempt against a matching published control:
+One Mekugi attempt against a matching published control:
 
 ```sh
-MODEL=gpt-5.6-sol BENCHMARK_MODE=hpatch-only REPETITIONS=1 bash benchmarks/bench.sh
+CONTROL_BASELINE_DIR=/absolute/path/to/current-control-run \
+  MODEL=gpt-5.6-sol BENCHMARK_MODE=mekugi-only REPETITIONS=1 bash benchmarks/bench.sh
 ```
 
-For another model, also set `CONTROL_BASELINE_DIR` to a published control with matching
+Set `CONTROL_BASELINE_DIR` to a published control from the current runner with matching
 model, effort, task-content fingerprint, and instruction evidence. The fingerprint covers the
 manifest, visible task prompt, and hidden graders. Results without it, or from a different task
 contract, cannot be imported; collect a fresh control instead. Keep task files unchanged during a
 run: content checks before agent launch and around grading fail a run if those files change.
+Historical results remain unchanged; their older metrics schema is not accepted by the current runner.
 
 One diagnostic run without a control:
 
 ```sh
-BENCHMARK_MODE=hpatch-diagnostic REPETITIONS=1 bash benchmarks/bench.sh
+BENCHMARK_MODE=mekugi-diagnostic REPETITIONS=1 bash benchmarks/bench.sh
 ```
 
-To run only the Hpatch + CTP/2 treatment used by the paired preset:
+To run only the Mekugi + CTP/2 treatment used by the paired preset:
 
 ```sh
-MODEL=gpt-6-astra REASONING_EFFORT=low BENCHMARK_MODE=hpatch-diagnostic \
+MODEL=gpt-6-astra REASONING_EFFORT=low BENCHMARK_MODE=mekugi-diagnostic \
   DIAGNOSTIC_MODEL_PROTOCOL=ctp2 REPETITIONS=1 bash benchmarks/bench.sh
 ```
 
 `DIAGNOSTIC_MODEL_PROTOCOL` accepts `native` (the standalone default) or `ctp2`,
-and is valid only in `hpatch-diagnostic` mode. No control attempt is launched or
+and is valid only in `mekugi-diagnostic` mode. No control attempt is launched or
 imported. Historical comparisons across models or effort levels are descriptive,
 not controlled measurements of a router change. Paired defaults are unchanged.
 
-Native Hpatch versus CTP/2:
+Native Mekugi versus CTP/2:
 
 ```sh
 TASK_ID=batch-diagnostic-collapse BENCHMARK_MODE=ctp-only \
   BENCHMARK_REPORT_ISSUES=false REPETITIONS=4 bash benchmarks/bench.sh
 ```
 
-Hpatch versus Mentor Handoff:
+Mekugi versus Mentor Handoff:
 
 ```sh
 MODEL=gpt-5.6-luna REASONING_EFFORT=xhigh REPETITIONS=2 \
@@ -138,7 +140,7 @@ failed arm does not hide later evidence. It intentionally permits repeated edits
 recovery is part of the task. `MODEL` may select `gpt-5.6-luna` or `gpt-5.6-terra`, and
 `REASONING_EFFORT` overrides the default `medium` effort.
 
-Coverage includes Hpatch apply and recovery, optional issue reporting, Bash and POSIX runtime
+Coverage includes HPATCH apply and recovery, optional issue reporting, Bash and POSIX runtime
 publications, provider-owned exec invocation, Code Mode runtime publication, subagent start and
 response projection, and terminal token telemetry. Runtime publications and exec invocation are
 proven by successful command markers because Codex JSONL does not reliably retain their user-only
@@ -167,7 +169,7 @@ GET  /api/metrics
 GET  /                 # human-readable view of /api/metrics
 ```
 
-Compose defines task-scoped `control-agent` and `hpatch-agent` containers. Each
+Compose defines task-scoped `control-agent` and `mekugi-agent` containers. Each
 runs `mekugi codex` with one random loopback listener and fixed provider egress.
 The image requires Linux iptables and util-linux. Only the trusted launcher has
 NET_ADMIN and SYS_ADMIN. Docker’s default AppArmor profile is disabled to permit
@@ -179,22 +181,22 @@ image filesystem are read-only to the executor. A fail-closed probe verifies the
 restrictions before launching the real Codex binary.
 
 Each attempt writes its own sanitized `capture.jsonl` and final `metrics.json`.
-The benchmark-only `hpatch-merge-captures` command validates each pair and uses the
+The benchmark-only `mekugi-merge-captures` command validates each pair and uses the
 capturer's live calculations to combine distinct-thread sessions into arm exports,
 rebasing only combined sequence identities. Original per-attempt evidence remains
 unchanged. Collection needs no running router or metrics endpoint.
 
 ## What differs between arms
 
-Paired control uses passthrough mode and the pinned stock instructions. The paired treatment enables CTP/2 as well as Hpatch. Hpatch mode replaces the
-supported Code Mode editing owner with Hpatch and shell while preserving unrelated tools. Each arm
+Paired control uses passthrough mode and the pinned stock instructions. The paired treatment enables CTP/2 as well as Mekugi. `mekugi` mode replaces the
+supported Code Mode editing owner with `hpatch` and `shell` while preserving unrelated tools. Each arm
 gets a separate workspace and alternates execution order across repetitions.
 
-CTP-only uses Hpatch in both arms; only the model protocol and owning guidance differ. Mentor
-Handoff uses Hpatch in both arms; only the treatment router enables its bounded subagent model
+CTP-only uses Mekugi in both arms; only the model protocol and owning guidance differ. Mentor
+Handoff uses Mekugi in both arms; only the treatment router enables its bounded subagent model
 schedule. Parent and child traffic remains visible through actual model names in capture exchanges.
 
-Tool-specific guidance may teach effective use of Hpatch capabilities, including batching related
+Tool-specific guidance may teach effective use of Mekugi capabilities, including batching related
 edits atomically and reusing verified targets. It must not add treatment-only general policies for
 autonomy, approvals, prose length, or task validation. Those stay in the common host/task guidance.
 Historical diagnostic runs compare the tool and its usage guidance without a fresh control; they
@@ -226,7 +228,7 @@ Each response boundary retains at most 8 MiB for parsing while the complete stre
 and byte-counted. Overflow is incomplete evidence. Diagnostic capture accepts only stable allowlisted
 reason codes from a complete router-owned envelope; arbitrary `text(...)` content is discarded.
 
-`GET /api/metrics` returns `hpatch.capture.metrics.v4`. Schema-6 capture records and metrics v4
+`GET /api/metrics` returns `mekugi.capture.metrics.v4`. Schema-6 capture records and metrics v4
 exclude router-generated commentary from model-origin output, while transport still includes it.
 Streamed output is rebuilt from finalized items when the terminal array is empty, absent, null,
 or contains only generated commentary. Genuine model commentary is retained, including text
@@ -248,7 +250,7 @@ It is authoritative for:
 - client and provider payload bytes and GPT-5 token estimates;
 - signed protocol input and output savings;
 - provider-emitted and client-delivered tool shapes;
-- correlated Hpatch calls, corrections, deliveries, rejections, diagnostics, and carrier savings;
+- correlated HPATCH calls, corrections, deliveries, rejections, diagnostics, and carrier savings;
 - actual provider model for every attempt, including attempts without usage; and
 - capture completeness, dropped-detail, and write health.
 
@@ -261,7 +263,7 @@ configured model, and Mentor child lineage and model schedules. It rejects parti
 evidence. Configured CTP/2 compression requirements use signed snapshot savings and retain a failed
 value in the summary before the run exits nonzero. The report formats snapshot values rather than
 calculating another notion of gain. This means retries remain retries, negative expansion stays
-visible, and Hpatch is compared with the native carrier actually delivered to Codex.
+visible, and Mekugi is compared with the native carrier actually delivered to Codex.
 
 ## Artifacts
 
@@ -272,9 +274,9 @@ results.jsonl
 summary.md
 benchmark-config.json
 control-metrics.json                 # when a fresh baseline arm ran
-hpatch-metrics.json
+mekugi-metrics.json
 captures/control.jsonl               # when a fresh baseline arm ran
-captures/hpatch.jsonl
+captures/mekugi.jsonl
 artifacts/                            # per-attempt result, events, patch, and grader evidence
 agent-issue-reports.jsonl             # when issue reporting collected records
 ```
@@ -284,7 +286,7 @@ An opt-in commentary task also writes `commentary-coverage.json` beside each att
 separate result field derived from retained assistant messages, successful command markers, and
 completed item types in Codex events.
 
-Mentor Handoff names its treatment snapshot `hpatch-mentor-metrics.json`. Child event and content-free lineage proof artifacts remain under the
+Mentor Handoff names its treatment snapshot `mekugi-mentor-metrics.json`. Child event and content-free lineage proof artifacts remain under the
 attempt directory. Summary output intentionally omits request, session, thread, call, and capture
 identities.
 
@@ -300,15 +302,15 @@ they contain: do not commit, upload, or share it. Set `corpus_root` to an absolu
 
 ```sh
 corpus_root=/absolute/private/ctp-replay
-HPATCH_CTP_REPLAY_FREEZE="$corpus_root" \
+MEKUGI_CTP_REPLAY_FREEZE="$corpus_root" \
   go test ./internal/router -run '^TestFreezeCTPReplayCorpus$' -count=1 -v
 
-HPATCH_CTP_REPLAY_MANIFEST="$corpus_root/manifest.json" \
+MEKUGI_CTP_REPLAY_MANIFEST="$corpus_root/manifest.json" \
   go test ./internal/router -run '^$' -bench '^BenchmarkCTPCorpusReplay$' -benchtime=1x -count=1 -v
 ```
 
 Freezing scans `sessions` and `archived_sessions` under `$CODEX_HOME`, or `~/.codex` when unset.
-Eligibility requires a completed session with stock editing and execution guidance, no Hpatch
+Eligibility requires a completed session with stock editing and execution guidance, no Mekugi
 guidance, and a custom `exec` tool call. The active `CODEX_THREAD_ID` is excluded. When several
 eligible rollouts share a logical session identity, a seeded hash selects one rollout for that
 session. Logical session identities are then ranked by a seeded hash; up to 50 are copied without

@@ -11,10 +11,10 @@ import (
 func TestChildCommentaryAttributionJSONAndSSE(t *testing.T) {
 	for _, stream := range []bool{false, true} {
 		t.Run(map[bool]string{false: "json", true: "sse"}[stream], func(t *testing.T) {
-			proxy := newManagedHPatchProxy(t, testTranslator(t, new(int)))
+			proxy := newManagedMekugiProxy(t, testTranslator(t, new(int)))
 			proxy.commentaryEndpoint = "http://127.0.0.1:8080" + commentaryPublisherPath
 			workspace := t.TempDir()
-			prepare := func(session, thread, author, kind string) *hpatchResponseTransform {
+			prepare := func(session, thread, author, kind string) *mekugiResponseTransform {
 				t.Helper()
 				request, err := parseResponsesRequest(mustTestJSON(t, map[string]any{"model": "gpt-test", "input": []any{testCodeModeAdditionalTools(testCodeModeDescription)}, "tools": []any{map[string]any{"type": "function", "name": "lookup", "parameters": map[string]any{"type": "object", "properties": map[string]any{}}}}}))
 				if err != nil {
@@ -35,7 +35,7 @@ func TestChildCommentaryAttributionJSONAndSSE(t *testing.T) {
 			second := prepare("b", "b", "/root/beta", "thread_spawn")
 			root := prepare("root", "root", "/root/alpha", "")
 			legacy := prepare("legacy", "legacy", "", "thread_spawn")
-			for i, transform := range []*hpatchResponseTransform{first, second, root, legacy} {
+			for i, transform := range []*mekugiResponseTransform{first, second, root, legacy} {
 				want := []string{"[`/root/alpha`] Checking.", "[`/root/beta`] Checking.", "Checking.", "Checking."}[i]
 				arguments := `{"commentary":"Checking."}`
 				if i == 1 {

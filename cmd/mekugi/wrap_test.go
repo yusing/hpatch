@@ -80,11 +80,11 @@ func TestCodexArgsEnforcesCollaborationModeInstructions(t *testing.T) {
 
 // A fake Codex process checks the real listener before exiting, without provider traffic.
 func TestWrappedCodexProcess(t *testing.T) {
-	if os.Getenv("HPATCH_TEST_CODEX") != "1" {
+	if os.Getenv("MEKUGI_TEST_CODEX") != "1" {
 		return
 	}
 	interrupts := make(chan os.Signal, 1)
-	if os.Getenv("HPATCH_TEST_EXIT") == "interrupt" {
+	if os.Getenv("MEKUGI_TEST_EXIT") == "interrupt" {
 		signal.Notify(interrupts, os.Interrupt)
 	}
 	var baseURL string
@@ -117,13 +117,13 @@ func TestWrappedCodexProcess(t *testing.T) {
 	}
 	fmt.Fprintln(os.Stdout, "codex stdout")
 	fmt.Fprintln(os.Stderr, "codex stderr")
-	if err := os.WriteFile(os.Getenv("HPATCH_TEST_ADDRESS"), []byte(baseURL), 0o600); err != nil {
+	if err := os.WriteFile(os.Getenv("MEKUGI_TEST_ADDRESS"), []byte(baseURL), 0o600); err != nil {
 		os.Exit(92)
 	}
-	switch os.Getenv("HPATCH_TEST_EXIT") {
+	switch os.Getenv("MEKUGI_TEST_EXIT") {
 	case "interrupt":
 		<-interrupts
-		if err := os.WriteFile(os.Getenv("HPATCH_TEST_ADDRESS")+".interrupt", nil, 0o600); err != nil {
+		if err := os.WriteFile(os.Getenv("MEKUGI_TEST_ADDRESS")+".interrupt", nil, 0o600); err != nil {
 			os.Exit(94)
 		}
 		time.Sleep(time.Minute)
@@ -135,13 +135,13 @@ func TestWrappedCodexProcess(t *testing.T) {
 		time.Sleep(time.Minute)
 		os.Exit(93)
 	default:
-		code, _ := strconv.Atoi(os.Getenv("HPATCH_TEST_EXIT"))
+		code, _ := strconv.Atoi(os.Getenv("MEKUGI_TEST_EXIT"))
 		os.Exit(code)
 	}
 }
 
 func TestWrappedRouterProcess(t *testing.T) {
-	if os.Getenv("HPATCH_TEST_ROUTER") != "1" {
+	if os.Getenv("MEKUGI_TEST_ROUTER") != "1" {
 		return
 	}
 	os.Args = []string{os.Args[0], "--grok", "--model-protocol", "native", "--mentor-handoff=false", "codex"}
@@ -158,10 +158,10 @@ func TestWrapTerminalInterruptAndTermination(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	t.Setenv("MEKUGI_RUNTIME_DIR", runtimeDirectory)
-	t.Setenv("HPATCH_TEST_ROUTER", "1")
-	t.Setenv("HPATCH_TEST_CODEX", "1")
-	t.Setenv("HPATCH_TEST_EXIT", "interrupt")
-	t.Setenv("HPATCH_TEST_ADDRESS", addressFile)
+	t.Setenv("MEKUGI_TEST_ROUTER", "1")
+	t.Setenv("MEKUGI_TEST_CODEX", "1")
+	t.Setenv("MEKUGI_TEST_EXIT", "interrupt")
+	t.Setenv("MEKUGI_TEST_ADDRESS", addressFile)
 	t.Setenv("PATH", directory+string(os.PathListSeparator)+os.Getenv("PATH"))
 	stub := "#!/bin/sh\nexec " + strconv.Quote(os.Args[0]) + " -test.run=^TestWrappedCodexProcess$ -- \"$@\"\n"
 	if err := os.WriteFile(filepath.Join(directory, "codex"), []byte(stub), 0o700); err != nil {
@@ -247,9 +247,9 @@ func TestWrapCodexLifecycle(t *testing.T) {
 			t.Setenv("HOME", t.TempDir())
 			t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 			t.Setenv("MEKUGI_RUNTIME_DIR", runtimeDirectory)
-			t.Setenv("HPATCH_TEST_CODEX", "1")
-			t.Setenv("HPATCH_TEST_EXIT", test.exit)
-			t.Setenv("HPATCH_TEST_ADDRESS", addressFile)
+			t.Setenv("MEKUGI_TEST_CODEX", "1")
+			t.Setenv("MEKUGI_TEST_EXIT", test.exit)
+			t.Setenv("MEKUGI_TEST_ADDRESS", addressFile)
 			t.Setenv("PATH", directory+string(os.PathListSeparator)+os.Getenv("PATH"))
 			stub := "#!/bin/sh\nexec " + strconv.Quote(os.Args[0]) + " -test.run=^TestWrappedCodexProcess$ -- \"$@\"\n"
 			if err := os.WriteFile(filepath.Join(directory, "codex"), []byte(stub), 0o700); err != nil {
@@ -350,7 +350,7 @@ func TestWrapCodexStartupFailures(t *testing.T) {
 			marker := filepath.Join(directory, "launched")
 			stub := "#!/bin/sh\ntouch " + strconv.Quote(marker) + "\n"
 			if failure == "codex" {
-				stub = "#!/nonexistent-hpatch-test-interpreter\n"
+				stub = "#!/nonexistent-mekugi-test-interpreter\n"
 			} else {
 				userConfig, err := os.UserConfigDir()
 				if err != nil {

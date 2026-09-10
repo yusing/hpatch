@@ -5,13 +5,13 @@ set -euo pipefail
 benchmark_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck source=bench.sh
 source "$benchmark_root/bench.sh"
-fixture=$(mktemp -d /tmp/hpatch-attempt-test-XXXXXX)
+fixture=$(mktemp -d /tmp/mekugi-attempt-test-XXXXXX)
 trap 'rm -rf -- "$fixture"' EXIT
 configure_benchmark
 run_dir="$fixture/run"
 task_id=fixture task="$fixture/task" prompt_file=prompt.md
 instruction_dir="$fixture/instructions"
-control_instruction_sha=control hpatch_instruction_sha=hpatch
+control_instruction_sha=control mekugi_instruction_sha=mekugi
 instruction_diff= instruction_source= control_instruction=
 base_commit=fixture dependency_kind=none source_kind=empty
 agent_timeout=10 grader_timeout=10 grader_name=hidden
@@ -38,7 +38,7 @@ if run_block 1; then
     exit 1
 fi
 [[ ! -e $fixture/grader-executed ]]
-for arm in control hpatch; do
+for arm in control mekugi; do
     result="$run_dir/artifacts/fixture/fixture-$arm-r001/result.json"
     jq -e '.task_pass == false and .graders[0].exit_code == 125' "$result" >/dev/null
     grep -Fq 'destination already exists' "${result%/*}/grader-fixture.stderr"
@@ -46,7 +46,7 @@ done
 # Mandatory preparation failure must retain failure evidence and skip inference/grading.
 snapshot() { return 9; }
 if run_block 2; then exit 1; fi
-for arm in control hpatch; do
+for arm in control mekugi; do
     jq -e '.task_pass == false and .infrastructure_error != null' \
         "$run_dir/artifacts/fixture/fixture-$arm-r002/result.json" >/dev/null
 done

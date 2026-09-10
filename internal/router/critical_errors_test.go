@@ -62,15 +62,15 @@ func TestCriticalErrorsKeepDistinctSafeCausesAndHideExternalPayloads(t *testing.
 		c.record(&requestFinalization{sessionID: "one", failurePhase: requestFailureTransform,
 			observation: requestObservation{outcome: requestOutcomeFailed}}, err)
 	}
-	first := staticCriticalDiagnostic("stream_ended_incomplete_hpatch_call", "the upstream stream ended with an incomplete Hpatch call")
+	first := staticCriticalDiagnostic("stream_ended_incomplete_mekugi_call", "the upstream stream ended with an incomplete HPATCH call")
 	record(first)
 	record(first)
-	record(staticCriticalDiagnostic("malformed_hpatch_call", "the upstream emitted a malformed Hpatch call"))
+	record(staticCriticalDiagnostic("malformed_mekugi_call", "the upstream emitted a malformed HPATCH call"))
 	if len(c.entries) != 2 || c.entries[0].count != 2 || c.entries[1].count != 1 {
 		t.Fatalf("safe causes collapsed or did not deduplicate: %+v", c.entries)
 	}
 	pending := strings.Join(c.Pending(), "\n")
-	for _, want := range []string{"incomplete Hpatch call", "malformed Hpatch call", "occurred 2 times", "Diagnostic reference:"} {
+	for _, want := range []string{"incomplete HPATCH call", "malformed HPATCH call", "occurred 2 times", "Diagnostic reference:"} {
 		if !strings.Contains(pending, want) {
 			t.Fatalf("pending notice lacks %q: %s", want, pending)
 		}
@@ -89,9 +89,9 @@ func TestCriticalErrorsKeepDistinctSafeCausesAndHideExternalPayloads(t *testing.
 	unsafeEvent := NewCriticalErrors()
 	unsafeEventName := "unquotedsecretpayload"
 	unsafeEvent.record(&requestFinalization{sessionID: "one", failurePhase: requestFailureTransform,
-		observation: requestObservation{outcome: requestOutcomeFailed}}, unsupportedHPatchStreamEvent(unsafeEventName))
+		observation: requestObservation{outcome: requestOutcomeFailed}}, unsupportedMekugiStreamEvent(unsafeEventName))
 	unsafeEventNotice := strings.Join(unsafeEvent.Pending(), "\n")
-	if strings.Contains(unsafeEventNotice, unsafeEventName) || !strings.Contains(unsafeEventNotice, "unsupported Hpatch-related streaming event") {
+	if strings.Contains(unsafeEventNotice, unsafeEventName) || !strings.Contains(unsafeEventNotice, "unsupported HPATCH-related streaming event") {
 		t.Fatalf("untrusted protocol value was exposed or hid its safe cause: %s", unsafeEventNotice)
 	}
 }
@@ -211,7 +211,7 @@ func TestCriticalErrorsBoundedAndCancellationSilent(t *testing.T) {
 
 func TestPermanentRewriteFailureIsBadRequestAndQueued(t *testing.T) {
 	c := NewCriticalErrors()
-	proxy := newManagedHPatchProxy(t, testTranslator(t, new(int)))
+	proxy := newManagedMekugiProxy(t, testTranslator(t, new(int)))
 	provider := &serverFakeProvider{}
 	request := serverRequest(t, func(fields map[string]any) { fields["tool_choice"] = map[string]any{"type": "custom", "name": "exec"} })
 	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(string(request.originalBody)))
@@ -254,7 +254,7 @@ func TestInvalidNativeCatalogIsBadRequestBeforeForwarding(t *testing.T) {
 		{tool("custom", "apply_patch"), tool("function", "exec_command"), tool("function", "exec_command")},
 		{tool("custom", "apply_patch"), tool("function", "exec_command"), tool("custom", "hpatch")},
 	} {
-		proxy := newManagedHPatchProxy(t, testTranslator(t, new(int)))
+		proxy := newManagedMekugiProxy(t, testTranslator(t, new(int)))
 		provider := &serverFakeProvider{}
 		parsed := serverRequest(t, func(fields map[string]any) { fields["input"] = []any{}; fields["tools"] = tools })
 		request := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(string(parsed.originalBody)))

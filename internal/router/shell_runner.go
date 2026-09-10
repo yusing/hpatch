@@ -15,9 +15,9 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/yusing/hpatch/internal/router/toolplugin"
-	"github.com/yusing/hpatch/internal/shellruntime"
-	"github.com/yusing/hpatch/internal/shellsyntax"
+	"github.com/yusing/mekugi/internal/router/toolplugin"
+	"github.com/yusing/mekugi/internal/shellruntime"
+	"github.com/yusing/mekugi/internal/shellsyntax"
 	"golang.org/x/term"
 	"mvdan.cc/sh/v3/expand"
 	"mvdan.cc/sh/v3/interp"

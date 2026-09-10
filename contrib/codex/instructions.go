@@ -6,7 +6,7 @@ import (
 	"text/template"
 )
 
-const HPatchToolDescription = "Atomic HPATCH/2 edit-script application. Rejection or cancellation leaves the workspace unchanged."
+const MekugiToolDescription = "Atomic HPATCH/2 edit-script application. Rejection or cancellation leaves the workspace unchanged."
 
 //go:embed file-editing-instructions.md
 var instructionSource string
@@ -29,10 +29,10 @@ func renderInstructions(workflow string) string {
 	return rendered.String()
 }
 
-//go:embed hpatch-recovery.tmpl
+//go:embed mekugi-recovery.tmpl
 var recoverySource string
 
-var recoveryTemplate = template.Must(template.New("hpatch-recovery").Parse(recoverySource))
+var recoveryTemplate = template.Must(template.New("mekugi-recovery").Parse(recoverySource))
 
 // InstructionsForModel selects the editing workflow per request, independently of transport.
 // Unknown model IDs use the default workflow; Astra-prefixed variants share the Astra workflow.

@@ -2,7 +2,7 @@
 
 ## REQ-PLUGIN-001 — Router-local tool plugins
 
-In hpatch mode, `mekugi` discovers tool plugins only from the `mekugi/plugins`
+In mekugi mode, `mekugi` discovers tool plugins only from the `mekugi/plugins`
 directory beneath the platform user configuration directory. Each direct regular file whose
 name ends in `.js` or `.mjs` is one compiled ECMAScript-module declaration, loaded in lexical
 filename order; directories, symlinks, and other entries are not declarations. A missing or
@@ -12,11 +12,11 @@ and the complete registry remains immutable for the router process lifetime. Pas
 neither loads nor exposes the contributed tools.
 
 During declaration validation, translation, and execution, configured and built-in modules may import
-`hpatch:core/v1`. This exact virtual ECMAScript module is supplied by the router's authenticated snapshot;
+`mekugi:core/v1`. This exact virtual ECMAScript module is supplied by the router's authenticated snapshot;
 it requires no plugin-owned dependency or copied binary. It exposes deterministic verified-row hashing,
 formatting, logical-line counts and UTF-8 byte bounds, positive integer and `LINE:HASH` parsing, quoted
 operand decoding, source-format capability classification, Go identifier and string-literal handling,
-shell-header parsing, and interpreter identity. An unknown `hpatch:` module fails declaration loading.
+shell-header parsing, and interpreter identity. An unknown `mekugi:` module fails declaration loading.
 The shared core exposes no filesystem, workspace, symlink, process, network, credential, carrier, or
 row-resolution authority. Existing declarations that do not import it retain their behavior.
 
@@ -68,7 +68,7 @@ the selected command. If the parameter object contains `login`, its value must b
 Requests may expose the Code Mode custom `exec` owner at the top level or in `additional_tools`, or native
 top-level custom `apply_patch` plus function `exec_command`. The router replaces the editing
 surface in either shape without opening another listener. In native requests, `exec_command`
-remains the executor-owned carrier. Hpatch invokes the executor's `apply_patch` command through
+remains the executor-owned carrier. Mekugi invokes the executor's `apply_patch` command through
 that carrier and returns the already-rendered report as its exact successful output; ordinary
 exec-backed contributions use direct native function arguments rather than a Code Mode wrapper.
 Response restoration and replay retain the request's original carrier shape. Durable replay accepts
@@ -101,7 +101,7 @@ wrapper or plugin implementation. For each eligible thread, the router writes on
 `mekugi-runtime-$CODEX_THREAD_ID` link directly below the runtime directory to the current private
 `shell` wrapper in the
 authenticated snapshot. The locator reads that link and replaces itself with its target.
-If that link is absent, the helper follows `hpatch-runtime-$CODEX_THREAD_ID`. Bash
+Bash
 and POSIX evaluation dispatch private commands from the resolved worker after shell expansion, so none of the four
 private names creates a snapshot wrapper, stable frontend, or `PATH` dependency.
 
@@ -127,7 +127,7 @@ frontends. Shutdown removes only the owning session's frontends and snapshot.
 Translated history retains the plugin identity, original tool name and input, and exact carrier
 kind, name, and payload. Replay accepts only the byte-identical retained carrier and restores
 the original model-visible call before upstream forwarding. Ordinary plugins do not enter
-hpatch recovery ancestry. Runtime model-input rejection returns a bounded diagnostic
+mekugi recovery ancestry. Runtime model-input rejection returns a bounded diagnostic
 through an available executor carrier; a translator protocol violation, unavailable carrier,
 or malformed carrier is a routing failure rather than a successful approximation.
 
@@ -161,8 +161,8 @@ from the local compiler's resource limits.
 Acceptance:
 
 1. A valid discovered JavaScript declaration contributes its exact unconstrained, Lark, or
-   regex custom-tool object to hpatch-mode Responses requests without a plugin flag.
-2. A missing or empty plugin directory preserves the built-in hpatch-mode behavior, while
+   regex custom-tool object to mekugi-mode Responses requests without a plugin flag.
+2. A missing or empty plugin directory preserves the built-in mekugi-mode behavior, while
    passthrough mode loads and exposes no contributed tools.
 3. One invalid declaration or configured-tool symlink prevents the listener from opening;
    independent startup mismatches are reported together and no valid subset is exposed.
@@ -190,6 +190,6 @@ Acceptance:
 10. Observation failure cannot replace an otherwise successful translated carrier or executor
     result; request cancellation still propagates.
 11. An executor returns one validated current result and does not run a comparison execution.
-12. A configured plugin can import `hpatch:core/v1` and obtains the same verified-row, source, Go lexical,
+12. A configured plugin can import `mekugi:core/v1` and obtains the same verified-row, source, Go lexical,
     and shell-header semantics as built-in contributions. An unavailable core version rejects startup,
     and passthrough mode loads no core artifact.

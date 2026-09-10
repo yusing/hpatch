@@ -95,7 +95,7 @@ For the built-in Bash/sh tool, the router recognizes literal truncating writes o
 stripping). A simple sequence separated only by newlines or semicolons is lowered, in order,
 to shell commands and native `apply_patch` calls in one Code Mode carrier. Heredoc contents are
 parsed as data, never as statement separators. The native-tools carrier uses the executor's
-`apply_patch` executable, as hpatch does. The original shell call, not the generated sequence,
+`apply_patch` executable, as mekugi does. The original shell call, not the generated sequence,
 is restored on provider replay; tool declarations, instructions, and the existing provider cache
 prefix do not change for this projection.
 
@@ -133,7 +133,7 @@ empty output and status zero. No generated patch or intermediate guard result is
 the provider as a separate conversation item.
 
 Eligible shell calls return `retained: true` and a thread-scoped `script_ref` shaped
-`@shell/<artifact-id>`. `hread` inspects that reference, hpatch edits it inside private
+`@shell/<artifact-id>`. `hread` inspects that reference, mekugi edits it inside private
 script storage, and a sole `#!script=@shell/<artifact-id>` reruns its current content.
 References select regular UTF-8 script files, never arbitrary host paths or the runtime
 launcher. Thread and artifact IDs must be single nonempty filename components, excluding
@@ -143,9 +143,7 @@ Invalid retention IDs or existing artifact names yield `retained: false` without
 files or changing execution of an otherwise valid shell call.
 
 Thread runtime locators are flat `mekugi-runtime-<thread-id>` symlinks below the runtime
-directory. The PATH-installed helper follows that name when present. If it is absent, the
-helper follows the previous `hpatch-runtime-<thread-id>` locator so an in-flight older
-router survives helper replacement. Active retained scripts occupy sibling
+directory. The PATH-installed helper follows that name. Active retained scripts occupy sibling
 `mekugi-scripts-<thread-id>` directories.
 Private commentary descriptors are regular mode-0600 files beside the thread locators,
 outside retained script storage. Discovery rejects symlinks, non-regular files, and descriptors
@@ -277,7 +275,7 @@ Acceptance:
 19. Complex shell constructs remain unsplit. A yielded prefix finishes before any patch or suffix
     begins. JSON and SSE projections restore the exact original shell call and unchanged result
     on replay, and native/compact provider cache diagnostics retain an appended prefix.
-20. With commentary enabled, `mktemp -d -t hpatch-shell.XXXXXXXXXX` remains the direct command.
+20. With commentary enabled, `mktemp -d -t mekugi-shell.XXXXXXXXXX` remains the direct command.
     Wrapped Bash and POSIX scripts retain only their normalized interpreter fields and quoted
     body; transformation adds no flags, connection details, credentials, or inline environment
     assignments. Thread-scoped commentary discovery preserves script output and exit status,

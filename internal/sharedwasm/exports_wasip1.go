@@ -7,11 +7,11 @@ import (
 	"unicode/utf8"
 	"unsafe"
 
-	"github.com/yusing/hpatch/internal/golex"
-	"github.com/yusing/hpatch/internal/hpatchsyntax"
-	"github.com/yusing/hpatch/internal/shellsyntax"
-	"github.com/yusing/hpatch/internal/sourcekind"
-	"github.com/yusing/hpatch/internal/verifiedrow"
+	"github.com/yusing/mekugi/internal/golex"
+	"github.com/yusing/mekugi/internal/hpatchsyntax"
+	"github.com/yusing/mekugi/internal/shellsyntax"
+	"github.com/yusing/mekugi/internal/sourcekind"
+	"github.com/yusing/mekugi/internal/verifiedrow"
 )
 
 const abiVersion = 1
@@ -50,14 +50,14 @@ type coreResponse struct {
 
 // exportedABIVersion returns the shared-core WASM ABI version for compatibility checking.
 //
-//go:wasmexport hpatch_core_abi_version
+//go:wasmexport mekugi_core_abi_version
 func exportedABIVersion() uint32 {
 	return abiVersion
 }
 
 // reserveInput reserves an input buffer of the given size and returns its WASM pointer.
 //
-//go:wasmexport hpatch_core_reserve_input
+//go:wasmexport mekugi_core_reserve_input
 func reserveInput(size uint32) uint32 {
 	if cap(inputBuffer) < int(size) {
 		inputBuffer = make([]byte, size)
@@ -72,21 +72,21 @@ func reserveInput(size uint32) uint32 {
 
 // hash16 returns the two-byte verified-row hash of the input buffer as a big-endian uint32.
 //
-//go:wasmexport hpatch_core_hash16
+//go:wasmexport mekugi_core_hash16
 func hash16() uint32 {
 	return verifiedrow.Hash16(inputBuffer)
 }
 
 // lineCount returns the number of targetable logical lines in the input buffer.
 //
-//go:wasmexport hpatch_core_line_count
+//go:wasmexport mekugi_core_line_count
 func lineCount() uint32 {
 	return uint32(verifiedrow.Count(string(inputBuffer)))
 }
 
 // lineBounds returns a WASM pointer to a three-element array containing the start, content-end, and full-end offsets for the given line number.
 //
-//go:wasmexport hpatch_core_line_bounds
+//go:wasmexport mekugi_core_line_bounds
 func lineBounds(lineNumber uint32) uint32 {
 	line, ok := verifiedrow.At(string(inputBuffer), int(lineNumber))
 	if !ok {
@@ -98,7 +98,7 @@ func lineBounds(lineNumber uint32) uint32 {
 
 // invoke executes one shared-core operation on the input buffer and returns the JSON result byte length.
 //
-//go:wasmexport hpatch_core_invoke
+//go:wasmexport mekugi_core_invoke
 func invoke(operation uint32) uint32 {
 	if !utf8.Valid(inputBuffer) {
 		return encodeFailure("invalid_utf8", "shared-core input is not UTF-8")
@@ -152,7 +152,7 @@ func invoke(operation uint32) uint32 {
 
 // resultPointer returns the WASM pointer to the JSON result buffer from the last invoke call.
 //
-//go:wasmexport hpatch_core_result_pointer
+//go:wasmexport mekugi_core_result_pointer
 func resultPointer() uint32 {
 	if len(resultBuffer) == 0 {
 		return 0

@@ -9,14 +9,14 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/yusing/hpatch"
-	"github.com/yusing/hpatch/internal/hpatchsyntax"
+	"github.com/yusing/mekugi"
+	"github.com/yusing/mekugi/internal/hpatchsyntax"
 )
 
-const hpatchRecoveryDescription = `Target correction for the latest rejected HPATCH/2 script. Invalid recovery leaves the retained script and workspace unchanged.`
+const mekugiRecoveryDescription = `Target correction for the latest rejected HPATCH/2 script. Invalid recovery leaves the retained script and workspace unchanged.`
 
-//go:embed hpatch_recovery_grammar.lark
-var hpatchRecoveryGrammar string
+//go:embed mekugi_recovery_grammar.lark
+var mekugiRecoveryGrammar string
 
 type recoveryCommandReference struct {
 	handle string
@@ -34,7 +34,7 @@ type recoveryCommandParts struct {
 	value     string
 	multiline bool
 	parsed    bool
-	identity  hpatch.TargetIdentity
+	identity  mekugi.TargetIdentity
 }
 
 type recoveryOperation struct {
@@ -95,7 +95,7 @@ func recoveryCommandPartsOf(header string, frame hpatchsyntax.CommandFrame) reco
 			parts.parsed = true
 			return parts
 		}
-		identity, trailing, err := hpatch.ParseTargetIdentity(target, false)
+		identity, trailing, err := mekugi.ParseTargetIdentity(target, false)
 		if err == nil && strings.TrimSpace(trailing) == "" {
 			parts.parsed = true
 			parts.identity = identity
@@ -123,7 +123,7 @@ func recoveryCommandPartsOf(header string, frame hpatchsyntax.CommandFrame) reco
 			return recoveryCommandParts{operation: operation}
 		}
 	}
-	identity, trailing, err := hpatch.ParseTargetIdentity(operands, true)
+	identity, trailing, err := mekugi.ParseTargetIdentity(operands, true)
 	if err != nil {
 		return recoveryCommandParts{operation: operation}
 	}
@@ -167,7 +167,7 @@ func recoverScriptDetailed(ctx context.Context, rejectedScript, payload string) 
 		editScript.WriteString(edit.script)
 		editScript.WriteByte('\n')
 	}
-	rebuilt, err := hpatch.EditText(ctx, rejectedScript, editScript.String())
+	rebuilt, err := mekugi.EditText(ctx, rejectedScript, editScript.String())
 	if err != nil {
 		return recoveredScript{}, err
 	}
@@ -207,7 +207,7 @@ func parseRecoveryPayload(
 		if err != nil {
 			return nil, recoveryError(index+1, err.Error())
 		}
-		replacementTarget, trailing, targetErr := hpatch.ParseTargetIdentity(target, false)
+		replacementTarget, trailing, targetErr := mekugi.ParseTargetIdentity(target, false)
 		if !command.parts.parsed || command.parts.target == "" || command.parts.target == "EOF" ||
 			targetErr != nil || strings.TrimSpace(trailing) != "" || target == "EOF" ||
 			!hpatchsyntax.ValidOperandSpacing(target) {
@@ -253,7 +253,7 @@ func resolveRecoveryCommand(
 func planRecoveryEdits(script string, operations []recoveryOperation) ([]recoveryEdit, error) {
 	seen := make(map[int]struct{}, len(operations))
 	lines := hpatchsyntax.SplitPhysicalLines(script)
-	logicalRows := hpatchLogicalRowsByPhysicalLine(script, lines)
+	logicalRows := mekugiLogicalRowsByPhysicalLine(script, lines)
 	edits := make([]recoveryEdit, 0, len(operations))
 	for _, operation := range operations {
 		if _, duplicate := seen[operation.command.index]; duplicate {
@@ -323,7 +323,7 @@ func recoveryPhysicalTarget(script string, logicalRows [][]int, start, end int) 
 }
 
 func recoveryLogicalHandle(script string, row int) string {
-	reference := hpatch.TextReferences(script, row)
+	reference := mekugi.TextReferences(script, row)
 	handle, _ := recoveryToken(reference)
 	return handle
 }

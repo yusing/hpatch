@@ -168,7 +168,7 @@ func TestPublishCommentaryOnceIgnoresPublicationFailure(t *testing.T) {
 func TestConcurrentSessionDrainsOnlyOriginatingShellCommentary(t *testing.T) {
 	for _, terminal := range []bool{false, true} {
 		t.Run(map[bool]string{false: "request", true: "terminal"}[terminal], func(t *testing.T) {
-			proxy := newManagedHPatchProxy(t, testTranslator(t, new(int)))
+			proxy := newManagedMekugiProxy(t, testTranslator(t, new(int)))
 			const sessionID = "session"
 			for range 2 {
 				if err := proxy.activateSession(sessionID); err != nil {
@@ -230,7 +230,7 @@ func TestShellRouteKeepsCleanCommandWithoutDefaultCommentary(t *testing.T) {
 		{name: "commentary", input: "commentary Running check\nprintf ok"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			transform, proxy, _, _ := newHPatchTestTransform(t, testTranslator(t, new(int)))
+			transform, proxy, _, _ := newMekugiTestTransform(t, testTranslator(t, new(int)))
 			proxy.commentaryEndpoint = "http://127.0.0.1:8080" + commentaryPublisherPath
 			response, err := transform.TransformJSON(mustTestJSON(t, map[string]any{
 				"status": "completed", "output": []any{map[string]any{
@@ -271,16 +271,16 @@ func TestShellCommentaryPreservesDirectCommands(t *testing.T) {
 			name = "native"
 		}
 		t.Run(name, func(t *testing.T) {
-			var transform *hpatchResponseTransform
-			var proxy *hpatchProxy
+			var transform *mekugiResponseTransform
+			var proxy *mekugiProxy
 			if native {
-				proxy = newManagedHPatchProxy(t, testTranslator(t, new(int)))
-				transform, _ = newNativeHPatchTestTransformWithProxy(t, proxy)
+				proxy = newManagedMekugiProxy(t, testTranslator(t, new(int)))
+				transform, _ = newNativeMekugiTestTransformWithProxy(t, proxy)
 			} else {
-				transform, proxy, _, _ = newHPatchTestTransform(t, testTranslator(t, new(int)))
+				transform, proxy, _, _ = newMekugiTestTransform(t, testTranslator(t, new(int)))
 			}
 			proxy.commentaryEndpoint = "http://127.0.0.1:8080" + commentaryPublisherPath
-			const command = "mktemp -d -t hpatch-shell.XXXXXXXXXX"
+			const command = "mktemp -d -t mekugi-shell.XXXXXXXXXX"
 			response, err := transform.TransformJSON(mustTestJSON(t, map[string]any{
 				"status": "completed", "output": []any{map[string]any{
 					"type": "custom_tool_call", "id": "item-shell", "call_id": "call-shell",
@@ -331,14 +331,14 @@ func shellCommentaryTestItem() map[string]any {
 	}
 }
 
-func newRuntimeCommentaryTransform(t *testing.T) (*hpatchResponseTransform, *hpatchProxy) {
+func newRuntimeCommentaryTransform(t *testing.T) (*mekugiResponseTransform, *mekugiProxy) {
 	t.Helper()
-	transform, proxy, _, _ := newHPatchTestTransform(t, testTranslator(t, new(int)))
+	transform, proxy, _, _ := newMekugiTestTransform(t, testTranslator(t, new(int)))
 	proxy.commentaryEndpoint = "http://127.0.0.1:8080" + commentaryPublisherPath
 	return transform, proxy
 }
 
-func runtimeCommentaryToken(t *testing.T, transform *hpatchResponseTransform) string {
+func runtimeCommentaryToken(t *testing.T, transform *mekugiResponseTransform) string {
 	t.Helper()
 	if len(transform.commentarySubscriptions) != 1 {
 		t.Fatalf("commentary subscription count = %d", len(transform.commentarySubscriptions))
@@ -453,7 +453,7 @@ func TestUnhandedRuntimeCommentaryRouteIsCancelled(t *testing.T) {
 	_, err := transform.TransformJSON(mustTestJSON(t, map[string]any{
 		"status": "completed", "output": []any{
 			shellCommentaryTestItem(),
-			map[string]any{"type": "custom_tool_call", "name": hpatchToolName, "input": testHPatchScript},
+			map[string]any{"type": "custom_tool_call", "name": mekugiToolName, "input": testMekugiScript},
 		},
 	}))
 	if err == nil {

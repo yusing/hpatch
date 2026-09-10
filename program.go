@@ -1,4 +1,4 @@
-package hpatch
+package mekugi
 
 import (
 	"errors"
@@ -8,8 +8,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/yusing/hpatch/internal/hpatchsyntax"
-	"github.com/yusing/hpatch/internal/verifiedrow"
+	"github.com/yusing/mekugi/internal/hpatchsyntax"
+	"github.com/yusing/mekugi/internal/verifiedrow"
 )
 
 var (

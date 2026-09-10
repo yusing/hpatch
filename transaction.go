@@ -1,4 +1,4 @@
-package hpatch
+package mekugi
 
 import (
 	"errors"
@@ -113,7 +113,7 @@ func stageChanges(changes []change, operations fileOperations) ([]*stagedChange,
 		staged = append(staged, item)
 
 		if current.kind != changeAdd {
-			backup, backupPath, err := operations.CreateTemp(filepath.Dir(current.originalPath), "."+filepath.Base(current.originalPath)+".hpatch-backup-")
+			backup, backupPath, err := operations.CreateTemp(filepath.Dir(current.originalPath), "."+filepath.Base(current.originalPath)+".mekugi-backup-")
 			if err != nil {
 				return nil, stagingError("creating backup reservation for "+current.originalPath, err, staged, operations)
 			}
@@ -127,7 +127,7 @@ func stageChanges(changes []change, operations fileOperations) ([]*stagedChange,
 		}
 
 		if current.kind != changeDelete {
-			output, outputPath, err := operations.CreateTemp(filepath.Dir(current.path), "."+filepath.Base(current.path)+".hpatch-output-")
+			output, outputPath, err := operations.CreateTemp(filepath.Dir(current.path), "."+filepath.Base(current.path)+".mekugi-output-")
 			if err != nil {
 				return nil, stagingError("creating output for "+current.path, err, staged, operations)
 			}

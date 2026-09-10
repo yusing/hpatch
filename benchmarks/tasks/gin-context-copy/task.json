@@ -19,13 +19,13 @@
   "hidden_files": [
     {
       "source": "hidden_context_copy_test.go.txt",
-      "destination": "hpatch_benchmark_test.go"
+      "destination": "mekugi_benchmark_test.go"
     }
   ],
   "graders": [
     {
       "name": "context-copy-isolation",
-      "command": ["go", "test", ".", "-run", "^TestHPatchBenchmarkContextCopyIsolation$", "-count=1"],
+      "command": ["go", "test", ".", "-run", "^TestMekugiBenchmarkContextCopyIsolation$", "-count=1"],
       "required": true,
       "expect_base": "fail",
       "baseline_output_contains": "Context.Copy omitted request state",

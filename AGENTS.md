@@ -29,8 +29,8 @@ When parts of this file is stale after your work, update this file.
 | Third-party native subagent projection, Grok authentication/translation, and catalog augmentation | `internal/router/subagent_bridge.go`, `internal/router/grok_*.go` |
 | Codex-facing WebSocket sessions, incremental history, and steering | `internal/router/server_websocket.go` |
 | Codex authentication and upstream Responses transport | `internal/router/client.go`, `internal/router/client_websocket.go` |
-| Tool replacement, host translation, and response restoration | `internal/router/hpatch_proxy.go` |
-| Durable replay records, request-visible history, and rejected-script recovery | `internal/router/hpatch_store.go`, `internal/router/hpatch_history.go`, `internal/router/hpatch_recovery.go` |
+| Tool replacement, host translation, and response restoration | `internal/router/mekugi_proxy.go` |
+| Durable replay records, request-visible history, and rejected-script recovery | `internal/router/mekugi_store.go`, `internal/router/mekugi_history.go`, `internal/router/mekugi_recovery.go` |
 | Carrier catalog and model-visible projection | `internal/router/tool_carrier.go`, `internal/router/tool_registry.go` |
 | Built-in tool sources and private execution runtime | `plugins`, `internal/router/toolplugin` |
 | Fixed shell-runtime locator and per-thread runtime path | `cmd/shell`, `internal/shellruntime`, `internal/router/shell_runtime.go` |
@@ -45,7 +45,7 @@ When parts of this file is stale after your work, update this file.
 | --- | --- |
 | Root engine | `go test .` |
 | Router request, response, recovery, workspace, plugin, or transport | `go test ./internal/router` |
-| Portable core or `hpatch:core/v1` adapter | `go generate ./internal/router/toolplugin`, then `go test ./...` and `bun test ./internal/router/toolplugin/tests/core.test.ts` |
+| Portable core or `mekugi:core/v1` adapter | `go generate ./internal/router/toolplugin`, then `go test ./...` and `bun test ./internal/router/toolplugin/tests/core.test.ts` |
 | TypeScript plugin source | `go generate ./internal/router/toolplugin`, then `bun test ./internal/router/toolplugin/tests` |
 | Router or shell-helper process entry point | `go test ./cmd/mekugi ./cmd/shell` |
 | Cross-package or broad contract | `go test ./...` |

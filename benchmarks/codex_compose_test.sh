@@ -18,9 +18,9 @@ chmod +x "$fixture/docker"
 
 PATH="$fixture:$PATH" \
 	CAPTURE="$capture" \
-	HPATCH_BENCH_COMPOSE_FILE="$fixture/compose.yaml" \
+	MEKUGI_BENCH_COMPOSE_FILE="$fixture/compose.yaml" \
 	BENCH_AGENT_SERVICE=control-agent \
-	BENCH_RUN_DIR="$fixture" BENCH_ARTIFACT_DIR="$fixture/artifacts" HPATCH_BENCH_MODE=passthrough HPATCH_BENCH_PROTOCOL=native \
+	BENCH_RUN_DIR="$fixture" BENCH_ARTIFACT_DIR="$fixture/artifacts" MEKUGI_BENCH_MODE=passthrough MEKUGI_BENCH_PROTOCOL=native \
 	BENCH_CODEX_HOME="$codex_home" \
 	CODEX_AUTH_PATH="$auth" \
 	bash "$benchmark_root/codex-compose.sh" --version
@@ -30,4 +30,4 @@ grep -Fxq "$codex_home:/benchmark-codex-home" "$capture"
 grep -Fxq "$auth:/benchmark-codex-home/auth.json:ro" "$capture"
 
 tail -n 3 "$capture" | diff -u - <(printf '%s\n' \
-	control-agent hpatch-benchmark-session --version)
+	control-agent mekugi-benchmark-session --version)

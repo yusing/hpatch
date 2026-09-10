@@ -69,7 +69,7 @@ func newFixtureTranslator(t *testing.T) *Translator {
 	}
 	module := `import {appendFileSync, writeFileSync} from "node:fs";
 appendFileSync(new URL("./imports", import.meta.url), "loaded\n");
-export default {apiVersion: "hpatch-tool-plugin/v1", tools: [{
+export default {apiVersion: "mekugi-tool-plugin/v1", tools: [{
   parse(input) { if (input === "reject") throw new Error("invalid input"); return input; },
   argv(input, context) { return [input, context.resolvePath("@shell/script")]; },
   translate(input, api) {

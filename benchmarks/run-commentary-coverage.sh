@@ -30,7 +30,7 @@ run_mode() {
 	fi
 }
 
-run_mode hpatch-diagnostic true
+run_mode mekugi-diagnostic true
 run_mode ctp-only false
 run_mode mentor-handoff false
 exit "$status"

@@ -1,7 +1,7 @@
-name: ${COMPOSE_PROJECT_NAME:-hpatch-bench}
+name: ${COMPOSE_PROJECT_NAME:-mekugi-bench}
 
 x-bench-image: &bench-image
-  image: ${BENCH_IMAGE:-hpatch-bench:${HPATCH_BENCH_IMAGE_TAG:-local}}
+  image: ${BENCH_IMAGE:-mekugi-bench:${MEKUGI_BENCH_IMAGE_TAG:-local}}
 
 x-agent: &agent
   <<: *bench-image
@@ -18,14 +18,14 @@ x-agent: &agent
     GOTOOLCHAIN: "local"
     GOVCS: "*:off"
     PYTHONDONTWRITEBYTECODE: "1"
-    PYTHONPYCACHEPREFIX: /tmp/hpatch-benchmark-pycache
-    HPATCH_BENCH_ISSUE_DIR: /benchmark-agent-issue-reports
-    MEKUGI_DIAGNOSE: ${HPATCH_BENCH_DIAGNOSE:-0}
+    PYTHONPYCACHEPREFIX: /tmp/mekugi-benchmark-pycache
+    MEKUGI_BENCH_ISSUE_DIR: /benchmark-agent-issue-reports
+    MEKUGI_DIAGNOSE: ${MEKUGI_BENCH_DIAGNOSE:-0}
   labels:
-    hpatch.benchmark.role: agent
+    mekugi.benchmark.role: agent
   volumes:
     - ${BENCH_RUN_DIR:?}/instructions:/bench-instructions:ro
-    - ${BENCH_RUN_DIR:?}/hpatch-config:/root/.config:ro
+    - ${BENCH_RUN_DIR:?}/mekugi-config:/root/.config:ro
     - ${BENCH_RUN_DIR:?}/agent-issue-reports:/benchmark-agent-issue-reports
     - ${BENCH_DEPENDENCY_CACHE:?}:/go/pkg/mod:ro
     - ${BENCH_DEPENDENCY_CACHE:?}:${BENCH_DEPENDENCY_CACHE:?}:ro
@@ -75,12 +75,12 @@ services:
     networks:
       control-egress: {}
 
-  hpatch-agent:
+  mekugi-agent:
     <<: *agent
     networks:
-      hpatch-egress: {}
+      mekugi-egress: {}
 
 networks:
   control-egress: {}
-  hpatch-egress: {}
+  mekugi-egress: {}
   egress: {}

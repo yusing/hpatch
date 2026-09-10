@@ -104,7 +104,7 @@ func (u *threadUsage) close() {
 	clear(u.threads)
 }
 
-func (t *hpatchResponseTransform) threadUsageCounts() (tokenCounts, bool) {
+func (t *mekugiResponseTransform) threadUsageCounts() (tokenCounts, bool) {
 	if t.usageTracker == nil {
 		return tokenCounts{}, false
 	}

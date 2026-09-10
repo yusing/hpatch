@@ -1,7 +1,7 @@
 import {spawn} from "node:child_process";
 
 import type {Tool} from "../internal/router/toolplugin/plugin.d.ts";
-import {formatVerifiedRow} from "hpatch:core/v1";
+import {formatVerifiedRow} from "mekugi:core/v1";
 import {
   decodeUTF8,
   errorText,

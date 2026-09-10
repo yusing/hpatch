@@ -7,7 +7,7 @@ import (
 	"strings"
 )
 
-const subagentBridgeNamespace = "hpatch_collaboration"
+const subagentBridgeNamespace = "mekugi_collaboration"
 
 // subagentBridge projects the provider-reserved collaboration schema into an
 // ordinary plaintext namespace. Codex still executes every restored native call.
@@ -31,7 +31,7 @@ func prepareSubagentBridge(request *parsedResponsesRequest) (*subagentBridge, er
 			}
 			switch jsonString(tool, "name") {
 			case subagentBridgeNamespace:
-				return nil, errors.New("tool namespace hpatch_collaboration is reserved by the Grok bridge")
+				return nil, errors.New("tool namespace mekugi_collaboration is reserved by the Grok bridge")
 			case "collaboration":
 				var functions []map[string]json.RawMessage
 				if err := json.Unmarshal(tool["tools"], &functions); err != nil {
@@ -117,7 +117,7 @@ func prepareSubagentBridge(request *parsedResponsesRequest) (*subagentBridge, er
 		return nil, nil
 	}
 	instructions := jsonString(request.fields, "instructions")
-	instructions += "\nUse hpatch_collaboration for native agent operations. Its message arguments are plaintext; Codex owns agent execution, permissions and lifecycle. For grok:grok-4.6 start a fresh context (fork_turns=none); encrypted OpenAI history cannot be sent to Grok."
+	instructions += "\nUse mekugi_collaboration for native agent operations. Its message arguments are plaintext; Codex owns agent execution, permissions and lifecycle. For grok:grok-4.6 start a fresh context (fork_turns=none); encrypted OpenAI history cannot be sent to Grok."
 	request.fields["instructions"] = mustMarshalJSON(instructions)
 	if raw, ok := request.fields["tool_choice"]; ok {
 		var choice map[string]json.RawMessage

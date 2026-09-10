@@ -20,11 +20,11 @@ ordinary built-in response translation without raising its five-second budget. C
 retain fresh hosts so module-local state cannot leak between their translation calls. Executors
 remain one-shot and are never invoked by the warm host.
 
-The plugin host maps the exact virtual import `hpatch:core/v1` to a router-owned ECMAScript adapter beside
+The plugin host maps the exact virtual import `mekugi:core/v1` to a router-owned ECMAScript adapter beside
 one Go-built WASI reactor in the immutable snapshot. The adapter and reactor are included in the registry
-identity, and the host rejects every other `hpatch:` import. Built-in and configured modules therefore use
+identity, and the host rejects every other `mekugi:` import. Built-in and configured modules therefore use
 the same Go-owned portable semantics without vendoring an npm package or binary. The public ECMAScript
-surface is versioned independently from `hpatch-tool-plugin/v1`; the raw WASM exports are a private,
+surface is versioned independently from `mekugi-tool-plugin/v1`; the raw WASM exports are a private,
 lockstep adapter boundary.
 
 `internal/verifiedrow` owns hash and logical UTF-8 row mechanics; `internal/hpatchsyntax` owns compact
@@ -69,11 +69,11 @@ the ordinary exec renderer. It uses the shared shell AST to reject stateful/comp
 the root renderer for literal patches, and the existing call history for exact provider replay.
 Its Code Mode carrier awaits each nested command and its native continuation before advancing,
 then aggregates ordinary output and the final status; it owns no separate persistent session.
-The native carrier invokes the same executor-provided apply_patch command as hpatch. Plugin
+The native carrier invokes the same executor-provided apply_patch command as mekugi. Plugin
 declarations and the model-visible tool catalog remain unchanged.
 
 An implementation needing another executable carrier uses
-the generic path rather than encoding an exec surrogate. Hpatch's native workspace translation, recovery
+the generic path rather than encoding an exec surrogate. Mekugi's native workspace translation, recovery
 ancestry, patch renderer, and semantic failure baseline remain adapter extensions beside this
 generic interface rather than capabilities granted to ordinary plugins.
 
@@ -91,14 +91,14 @@ custom `exec` is accepted only when its description contains the authoritative a
 For an eligible native request, the authoritative tool set instead contains exactly one top-level
 custom `apply_patch` and one top-level function `exec_command`. The router removes `apply_patch`,
 retains `exec_command` and unrelated siblings, and installs the same model-visible registry tools.
-The response transformer uses `exec_command` as a function carrier. Hpatch sends one shell command
+The response transformer uses `exec_command` as a function carrier. Mekugi sends one shell command
 that feeds the translated patch to the executor-provided `apply_patch` command, suppresses its
 ordinary success text, and returns the root engine's complete final-state report. Failure preserves
 the command's nonzero status and output. Generic exec-backed contributions render direct native
 function arguments. Both request shapes share the same listener, registry, histories, replay,
 recovery, JSON framing, and SSE framing.
 
-Codex owns base prompt delivery. The router owns request-local hpatch guidance injection: it
+Codex owns base prompt delivery. The router owns request-local mekugi guidance injection: it
 refreshes a marked section, replaces the pinned stock editing section or GPT-6 Astra search line
 and displaced exec-command guidance, or appends only when the top-level Codex config declares
 `model_instructions_file`. Pinned conflicting progress and tool-scheduling fragments are also
@@ -163,7 +163,7 @@ shell locator remains on the executor PATH.
 
 The shell runtime owner validates thread and artifact IDs before treating them as single
 filesystem components. It pins the thread's active `mekugi-scripts-<thread-id>` directory with `os.Root` for
-retention, rerun resolution, and private hpatch application. Exclusive artifact creation
+retention, rerun resolution, and private mekugi application. Exclusive artifact creation
 cannot follow a preexisting symlink or overwrite an existing artifact. Expiry uses the pinned
 script root; shutdown cancels timers and cleans the owned contents through pinned roots.
 It removes only empty directory entries whose identities still match those roots, never
@@ -199,7 +199,7 @@ handling owns pending-call cancellation versus successful completion checks. Int
 calls, never unfinished input. Retained history stores the original contribution identity and input plus
 the exact validated carrier kind, name, and payload. Replay verifies the carrier byte-for-byte
 before restoring the model-visible call. Generic history cannot enter recovery ancestry;
-hpatch alone attaches its existing recovery state. A plugin input rejection may become a
+mekugi alone attaches its existing recovery state. A plugin input rejection may become a
 bounded diagnostic carrier, while a runtime-adapter failure, malformed translator result, or
 unavailable carrier fails routing and cannot be represented as successful translation.
 
@@ -209,7 +209,7 @@ text part to the model-visible tool result, preserving the executor's original t
 content parts. The durable record carries this projection across resume and forks; repeated
 projection does not duplicate the warning. Commentary configuration does not control delivery.
 
-For hpatch, the immediate executor carrier contains the root engine's translated patch and
+For mekugi, the immediate executor carrier contains the root engine's translated patch and
 already-rendered final-state report. Response restoration retains the original model-visible
 hpatch call and normal executor result for later model-visible history; it does not expose
 the translated patch as later model input or derive another report representation. A later

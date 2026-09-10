@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"strings"
 
-	"github.com/yusing/hpatch/internal/shellsyntax"
+	"github.com/yusing/mekugi/internal/shellsyntax"
 )
 
 // Only presentation reads these references. In particular, accepting a params
@@ -74,7 +74,7 @@ func toolActivityShellCall(item map[string]json.RawMessage, name string, require
 	return name, args, script
 }
 
-func (t *hpatchResponseTransform) shellActivityExcerpt(script string) string {
+func (t *mekugiResponseTransform) shellActivityExcerpt(script string) string {
 	if reference := toolActivityScriptReference(script); reference != "" {
 		resolved, err := t.proxy.resolveShellInput(t.shellDirectory, reference)
 		if err != nil {
@@ -85,7 +85,7 @@ func (t *hpatchResponseTransform) shellActivityExcerpt(script string) string {
 	return toolActivityCommandExcerpt(script)
 }
 
-func (t *hpatchResponseTransform) shellActivityDisplay(item map[string]json.RawMessage, name string) (string, bool) {
+func (t *mekugiResponseTransform) shellActivityDisplay(item map[string]json.RawMessage, name string) (string, bool) {
 	name, args, script := toolActivityShellCall(item, name, false)
 	label, excerpt := "", ""
 	switch name {
@@ -112,7 +112,7 @@ func (t *hpatchResponseTransform) shellActivityDisplay(item map[string]json.RawM
 
 // Reconstruct from this request's visible call/result pairs, not the latest
 // command or another thread's session ID. No process state is retained globally.
-func (t *hpatchResponseTransform) prepareShellActivity(input json.RawMessage) {
+func (t *mekugiResponseTransform) prepareShellActivity(input json.RawMessage) {
 	var items []map[string]json.RawMessage
 	if json.Unmarshal(input, &items) != nil {
 		return

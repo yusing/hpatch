@@ -6,9 +6,9 @@ import (
 )
 
 func TestKnownReplayCarrierRejectsTamperedIdentity(t *testing.T) {
-	proxy := newManagedHPatchProxy(t, testTranslator(t, new(int)))
-	history := hpatchHistory{carrierName: "exec", patch: "patch", report: "report"}
-	if err := proxy.rememberBatch("session", map[string]hpatchHistory{"call-1": history}); err != nil {
+	proxy := newManagedMekugiProxy(t, testTranslator(t, new(int)))
+	history := mekugiHistory{carrierName: "exec", patch: "patch", report: "report"}
+	if err := proxy.rememberBatch("session", map[string]mekugiHistory{"call-1": history}); err != nil {
 		t.Fatal(err)
 	}
 	tests := []struct {
@@ -37,8 +37,8 @@ func TestKnownReplayCarrierRejectsTamperedIdentity(t *testing.T) {
 }
 
 func TestKnownReplayOutputRemainsValid(t *testing.T) {
-	proxy := newManagedHPatchProxy(t, testTranslator(t, new(int)))
-	if err := proxy.rememberBatch("session", map[string]hpatchHistory{"call-1": {carrierName: "exec"}}); err != nil {
+	proxy := newManagedMekugiProxy(t, testTranslator(t, new(int)))
+	if err := proxy.rememberBatch("session", map[string]mekugiHistory{"call-1": {carrierName: "exec"}}); err != nil {
 		t.Fatal(err)
 	}
 	request, err := parseResponsesRequest(mustTestJSON(t, map[string]any{"input": []any{map[string]any{

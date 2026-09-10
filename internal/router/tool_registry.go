@@ -13,9 +13,9 @@ import (
 	"path/filepath"
 	"slices"
 
-	"github.com/yusing/hpatch"
-	"github.com/yusing/hpatch/internal/router/toolplugin"
-	"github.com/yusing/hpatch/internal/shellruntime"
+	"github.com/yusing/mekugi"
+	"github.com/yusing/mekugi/internal/router/toolplugin"
+	"github.com/yusing/mekugi/internal/shellruntime"
 )
 
 const (
@@ -25,7 +25,7 @@ const (
 	reportIssueToolDescription = `Free-form Markdown issue report for an observed mekugi-related tool interaction.`
 )
 
-func buildToolRegistry(ctx context.Context, dataDirectory, hpatchDescription string, diagnose bool) (*toolRegistry, error) {
+func buildToolRegistry(ctx context.Context, dataDirectory, mekugiDescription string, diagnose bool) (*toolRegistry, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -61,9 +61,9 @@ func buildToolRegistry(ctx context.Context, dataDirectory, hpatchDescription str
 			os.RemoveAll(snapshotDirectory),
 		)
 	}
-	diagnoseHooks := hpatch.NewDiagnoseHooks("")
+	diagnoseHooks := mekugi.NewDiagnoseHooks("")
 	if diagnose {
-		diagnoseHooks = hpatch.NewDiagnoseHooks(dataDirectory)
+		diagnoseHooks = mekugi.NewDiagnoseHooks(dataDirectory)
 	}
 
 	pluginSnapshot, err := toolplugin.Load(
@@ -76,23 +76,23 @@ func buildToolRegistry(ctx context.Context, dataDirectory, hpatchDescription str
 	}
 	contributions := []toolContribution{
 		{
-			PluginID:      "builtin.hpatch",
-			Name:          hpatchToolName,
-			Specification: mustMarshalJSON(customGrammarTool(hpatchToolName, hpatchDescription, hpatch.ToolGrammar())),
+			PluginID:      "builtin.mekugi",
+			Name:          mekugiToolName,
+			Specification: mustMarshalJSON(customGrammarTool(mekugiToolName, mekugiDescription, mekugi.ToolGrammar())),
 			Builtin:       true,
 			ModelVisible:  true,
 		},
 		{
-			PluginID:      "builtin.hpatch",
-			Name:          hpatchRecoveryToolName,
-			Specification: mustMarshalJSON(customGrammarTool(hpatchRecoveryToolName, hpatchRecoveryDescription, hpatchRecoveryGrammar)),
+			PluginID:      "builtin.mekugi",
+			Name:          mekugiRecoveryToolName,
+			Specification: mustMarshalJSON(customGrammarTool(mekugiRecoveryToolName, mekugiRecoveryDescription, mekugiRecoveryGrammar)),
 			Builtin:       true,
 			ModelVisible:  true,
 		},
 	}
 	if diagnose {
 		contributions = append(contributions, toolContribution{
-			PluginID:      "builtin.hpatch",
+			PluginID:      "builtin.mekugi",
 			Name:          reportIssueToolName,
 			Specification: mustMarshalJSON(customFreeformTool(reportIssueToolName, reportIssueToolDescription)),
 			Builtin:       true,

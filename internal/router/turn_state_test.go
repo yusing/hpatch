@@ -15,7 +15,7 @@ import (
 // Model the Codex-owned lifecycle: capture the first response's sticky token,
 // echo it on continuations, then omit it on a new turn in the same session.
 func TestTurnStateRoundTrip(t *testing.T) {
-	for _, mode := range []string{"passthrough", "hpatch", "ctp2"} {
+	for _, mode := range []string{"passthrough", "mekugi", "ctp2"} {
 		for _, stream := range []bool{false, true} {
 			name := mode + "/json"
 			if stream {
@@ -53,10 +53,10 @@ func TestTurnStateRoundTrip(t *testing.T) {
 				}))
 				defer upstream.Close()
 				provider := newProviderClient(upstream.URL, upstream.Client())
-				var proxy *hpatchProxy
+				var proxy *mekugiProxy
 				var codec *ctp2Codec
 				if mode != "passthrough" {
-					proxy = newManagedHPatchProxy(t, testTranslator(t, new(int)))
+					proxy = newManagedMekugiProxy(t, testTranslator(t, new(int)))
 				}
 				if mode == "ctp2" {
 					codec = mustCTP2Codec(t)

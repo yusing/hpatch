@@ -11,7 +11,7 @@ cat >"$fixture/benchmark-config.json" <<'JSON'
 JSON
 cat >"$fixture/results.jsonl" <<'JSONL'
 {"task_id":"fixture","arm":"control","model":"model","reasoning_effort":"high","task_pass":true,"agent":{"thread_id":"thread-control","duration_ms":1000,"usage":{"input_tokens":100,"cached_input_tokens":40,"output_tokens":20,"reasoning_output_tokens":5}}}
-{"task_id":"fixture","arm":"hpatch","model":"model","reasoning_effort":"high","task_pass":true,"agent":{"thread_id":"thread-hpatch","duration_ms":900,"usage":{"input_tokens":80,"cached_input_tokens":50,"output_tokens":12,"reasoning_output_tokens":3}}}
+{"task_id":"fixture","arm":"mekugi","model":"model","reasoning_effort":"high","task_pass":true,"agent":{"thread_id":"thread-mekugi","duration_ms":900,"usage":{"input_tokens":80,"cached_input_tokens":50,"output_tokens":12,"reasoning_output_tokens":3}}}
 JSONL
 
 write_capture() {
@@ -27,26 +27,26 @@ write_metrics() {
 	local cache_rate
 	cache_rate=$(awk -v cached="$cached" -v input="$input" 'BEGIN { print cached/input }')
 	cat >"$path" <<JSON
-{"schema":"hpatch.capture.metrics.v4","mode":"$mode","model_protocol":"native","requests":{"logical":1,"provider_attempts":1,"completed":1,"failed":0},"usage":{"input_tokens":$input,"cached_input_tokens":$cached,"uncached_input_tokens":$((input-cached)),"output_tokens":$output,"reasoning_tokens":$reasoning,"provider_attempts":1},"cache":{"cold_or_new_uncached_input_tokens":$((input-cached)),"provider_cache_rate":$cache_rate,"eligible_prefix_tokens":0,"eligible_prefix_cached_tokens":0,"eligible_prefix_miss_tokens":0,"eligible_prefix_cache_rate":null},"transport":{"client_requests":{"bytes":100,"tokens":25},"provider_attempt_requests":{"bytes":80,"tokens":20},"provider_responses":{"bytes":90,"tokens":22},"client_responses":{"bytes":120,"tokens":30}},"semantic":{"provider_attempt_outputs":{"bytes":70,"tokens":17},"client_outputs":{"bytes":90,"tokens":25}},"protocol":{"input_payload_tokens_saved":0,"input_payload_bytes_saved":0,"output_text_tokens_saved":0,"output_payload_tokens_expansion":8,"output_payload_bytes_expansion":20},"provider_tools":{"hpatch":{"calls":1,"input_bytes":10,"input_tokens":3,"item_bytes":30,"item_tokens":8}},"delivered_tools":{"exec":{"calls":1,"input_bytes":30,"input_tokens":9,"item_bytes":50,"item_tokens":14}},"hpatch":{"calls":1,"corrections":0,"successful":1,"rejected":0,"unmatched":0,"provider_input_tokens":3,"delivered_input_tokens":9,"carrier_input_tokens_expansion":6},"exchanges":[{"sequence":1,"thread_id":"$thread","model":"model","provider_attempts":[{"attempt":1,"model":"model","status":"completed","response_complete":true,"usage":{"input_tokens":$input,"cached_input_tokens":$cached,"uncached_input_tokens":$((input-cached)),"output_tokens":$output,"reasoning_tokens":$reasoning,"provider_attempts":1},"request":{"bytes":80,"tokens":20},"native_request":{"bytes":80,"tokens":20},"response":{"bytes":90,"tokens":22},"final_output":{"bytes":70,"tokens":17},"final_text":{"bytes":70,"tokens":17},"tools":[{"call_id":"call-1","name":"hpatch","input_bytes":10,"input_tokens":3,"item_bytes":30,"item_tokens":8}]}],"status":"completed","usage":{"input_tokens":$input,"cached_input_tokens":$cached,"uncached_input_tokens":$((input-cached)),"output_tokens":$output,"reasoning_tokens":$reasoning,"provider_attempts":1},"client_request":{"bytes":100,"tokens":25},"client_response":{"bytes":120,"tokens":30},"client_final_output":{"bytes":90,"tokens":25},"client_final_text":{"bytes":70,"tokens":17},"delivered_tools":[{"call_id":"call-1","name":"exec","input_bytes":30,"input_tokens":9,"item_bytes":50,"item_tokens":14,"kind":"apply_patch"}]}],"capture":{"records":2,"capture_errors":0,"incomplete_records":0,"missing_provider_records":0,"provider_attempt_gaps":0,"write_errors":0,"skipped_requests":0,"dropped_exchange_details":0}}
+{"schema":"mekugi.capture.metrics.v4","mode":"$mode","model_protocol":"native","requests":{"logical":1,"provider_attempts":1,"completed":1,"failed":0},"usage":{"input_tokens":$input,"cached_input_tokens":$cached,"uncached_input_tokens":$((input-cached)),"output_tokens":$output,"reasoning_tokens":$reasoning,"provider_attempts":1},"cache":{"cold_or_new_uncached_input_tokens":$((input-cached)),"provider_cache_rate":$cache_rate,"eligible_prefix_tokens":0,"eligible_prefix_cached_tokens":0,"eligible_prefix_miss_tokens":0,"eligible_prefix_cache_rate":null},"transport":{"client_requests":{"bytes":100,"tokens":25},"provider_attempt_requests":{"bytes":80,"tokens":20},"provider_responses":{"bytes":90,"tokens":22},"client_responses":{"bytes":120,"tokens":30}},"semantic":{"provider_attempt_outputs":{"bytes":70,"tokens":17},"client_outputs":{"bytes":90,"tokens":25}},"protocol":{"input_payload_tokens_saved":0,"input_payload_bytes_saved":0,"output_text_tokens_saved":0,"output_payload_tokens_expansion":8,"output_payload_bytes_expansion":20},"provider_tools":{"hpatch":{"calls":1,"input_bytes":10,"input_tokens":3,"item_bytes":30,"item_tokens":8}},"delivered_tools":{"exec":{"calls":1,"input_bytes":30,"input_tokens":9,"item_bytes":50,"item_tokens":14}},"mekugi":{"calls":1,"corrections":0,"successful":1,"rejected":0,"unmatched":0,"provider_input_tokens":3,"delivered_input_tokens":9,"carrier_input_tokens_expansion":6},"exchanges":[{"sequence":1,"thread_id":"$thread","model":"model","provider_attempts":[{"attempt":1,"model":"model","status":"completed","response_complete":true,"usage":{"input_tokens":$input,"cached_input_tokens":$cached,"uncached_input_tokens":$((input-cached)),"output_tokens":$output,"reasoning_tokens":$reasoning,"provider_attempts":1},"request":{"bytes":80,"tokens":20},"native_request":{"bytes":80,"tokens":20},"response":{"bytes":90,"tokens":22},"final_output":{"bytes":70,"tokens":17},"final_text":{"bytes":70,"tokens":17},"tools":[{"call_id":"call-1","name":"hpatch","input_bytes":10,"input_tokens":3,"item_bytes":30,"item_tokens":8}]}],"status":"completed","usage":{"input_tokens":$input,"cached_input_tokens":$cached,"uncached_input_tokens":$((input-cached)),"output_tokens":$output,"reasoning_tokens":$reasoning,"provider_attempts":1},"client_request":{"bytes":100,"tokens":25},"client_response":{"bytes":120,"tokens":30},"client_final_output":{"bytes":90,"tokens":25},"client_final_text":{"bytes":70,"tokens":17},"delivered_tools":[{"call_id":"call-1","name":"exec","input_bytes":30,"input_tokens":9,"item_bytes":50,"item_tokens":14,"kind":"apply_patch"}]}],"capture":{"records":2,"capture_errors":0,"incomplete_records":0,"missing_provider_records":0,"provider_attempt_gaps":0,"write_errors":0,"skipped_requests":0,"dropped_exchange_details":0}}
 JSON
 }
 
 write_capture "$fixture/captures/control.jsonl" control-id thread-control 100 40 20 5 passthrough
-write_capture "$fixture/captures/hpatch.jsonl" hpatch-id thread-hpatch 80 50 12 3 hpatch
+write_capture "$fixture/captures/mekugi.jsonl" mekugi-id thread-mekugi 80 50 12 3 mekugi
 write_metrics "$fixture/control-metrics.json" thread-control 100 40 20 5 passthrough
-write_metrics "$fixture/hpatch-metrics.json" thread-hpatch 80 50 12 3 hpatch
+write_metrics "$fixture/mekugi-metrics.json" thread-mekugi 80 50 12 3 mekugi
 
 bash "$benchmark_root/report.sh" "$fixture" >/dev/null
 grep -Fq '| Control | 1/1 |' "$fixture/summary.md"
-grep -Fq '| Hpatch | 1/1 |' "$fixture/summary.md"
+grep -Fq '| Mekugi | 1/1 |' "$fixture/summary.md"
 grep -Fq 'input **-20** (-20.00%)' "$fixture/summary.md"
 grep -Fq '| Carrier token expansion | 6 |' "$fixture/summary.md"
-grep -Fq '| Hpatch | 50 | 30 | 62.50% | 30 | 0 | 0 | 0 | n/a |' "$fixture/summary.md"
-grep -Fq '| Hpatch | 25 | 20 | 22 | 30 | 17 | 25 |' "$fixture/summary.md"
+grep -Fq '| Mekugi | 50 | 30 | 62.50% | 30 | 0 | 0 | 0 | n/a |' "$fixture/summary.md"
+grep -Fq '| Mekugi | 25 | 20 | 22 | 30 | 17 | 25 |' "$fixture/summary.md"
 grep -Fq 'Delivery token expansion' "$fixture/summary.md"
-grep -Fq '| Hpatch | 2 | 1 | 0 | 0 | 0 | 0 | 0 |' "$fixture/summary.md"
+grep -Fq '| Mekugi | 2 | 1 | 0 | 0 | 0 | 0 | 0 |' "$fixture/summary.md"
 grep -Fq 'in-process `capturer` on each router listener' "$fixture/summary.md"
-if grep -Fq 'thread-hpatch' "$fixture/summary.md"; then
+if grep -Fq 'thread-mekugi' "$fixture/summary.md"; then
 	printf 'report leaked a thread identifier\n' >&2
 	exit 1
 fi
@@ -59,26 +59,26 @@ cp "$fixture/control-metrics.json" "$control_only/"
 cp "$fixture/captures/control.jsonl" "$control_only/captures/"
 bash "$benchmark_root/report.sh" "$control_only" >/dev/null
 grep -Fq '| Stock | 1/1 |' "$control_only/summary.md"
-if grep -Eq 'Hpatch delivery|Actual provider-token change' "$control_only/summary.md"; then
+if grep -Eq 'HPATCH delivery|Actual provider-token change' "$control_only/summary.md"; then
     printf 'control-only report invented a treatment or comparison\n' >&2
     exit 1
 fi
-jq '.mode = "hpatch"' "$fixture/control-metrics.json" >"$control_only/control-metrics.json"
+jq '.mode = "mekugi"' "$fixture/control-metrics.json" >"$control_only/control-metrics.json"
 if bash "$benchmark_root/report.sh" "$control_only" >/dev/null 2>&1; then
-    printf 'control-only report accepted a Hpatch control\n' >&2
+    printf 'control-only report accepted a Mekugi control\n' >&2
     exit 1
 fi
 
-for single_mode in hpatch-only hpatch-diagnostic; do
+for single_mode in mekugi-only mekugi-diagnostic; do
 	single="$fixture/$single_mode"
 	mkdir -p "$single/captures"
 	printf '{"benchmark_mode":"%s"}\n' "$single_mode" >"$single/benchmark-config.json"
-	grep '"arm":"hpatch"' "$fixture/results.jsonl" >"$single/results.jsonl"
-	cp "$fixture/hpatch-metrics.json" "$single/hpatch-metrics.json"
-	cp "$fixture/captures/hpatch.jsonl" "$single/captures/hpatch.jsonl"
+	grep '"arm":"mekugi"' "$fixture/results.jsonl" >"$single/results.jsonl"
+	cp "$fixture/mekugi-metrics.json" "$single/mekugi-metrics.json"
+	cp "$fixture/captures/mekugi.jsonl" "$single/captures/mekugi.jsonl"
 	bash "$benchmark_root/report.sh" "$single" >/dev/null
 	grep -Fq -- "- Mode: \`$single_mode\`" "$single/summary.md"
-	grep -Fq '| Hpatch | 1/1 |' "$single/summary.md"
+	grep -Fq '| Mekugi | 1/1 |' "$single/summary.md"
 done
 
 
@@ -86,17 +86,17 @@ done
 # differently configured control or scheduling a second model attempt.
 single_ctp="$fixture/single-ctp"
 mkdir -p "$single_ctp/captures"
-printf '%s\n' '{"benchmark_mode":"hpatch-diagnostic","treatment_model_protocol":"ctp2"}' >"$single_ctp/benchmark-config.json"
-grep '"arm":"hpatch"' "$fixture/results.jsonl" >"$single_ctp/results.jsonl"
-jq '.model_protocol="ctp2"' "$fixture/hpatch-metrics.json" >"$single_ctp/hpatch-metrics.json"
-jq -c '.model_protocol="ctp2"' "$fixture/captures/hpatch.jsonl" >"$single_ctp/captures/hpatch.jsonl"
+printf '%s\n' '{"benchmark_mode":"mekugi-diagnostic","treatment_model_protocol":"ctp2"}' >"$single_ctp/benchmark-config.json"
+grep '"arm":"mekugi"' "$fixture/results.jsonl" >"$single_ctp/results.jsonl"
+jq '.model_protocol="ctp2"' "$fixture/mekugi-metrics.json" >"$single_ctp/mekugi-metrics.json"
+jq -c '.model_protocol="ctp2"' "$fixture/captures/mekugi.jsonl" >"$single_ctp/captures/mekugi.jsonl"
 bash "$benchmark_root/report.sh" "$single_ctp" >/dev/null
-grep -Fq '| Hpatch + CTP/2 | 1/1 |' "$single_ctp/summary.md"
-grep -Fq '### CTP/2 acceptance: Hpatch + CTP/2' "$single_ctp/summary.md"
+grep -Fq '| Mekugi + CTP/2 | 1/1 |' "$single_ctp/summary.md"
+grep -Fq '### CTP/2 acceptance: Mekugi + CTP/2' "$single_ctp/summary.md"
 if grep -Fq 'Actual provider-token change' "$single_ctp/summary.md"; then
  printf 'single CTP report invented a comparison\n' >&2; exit 1
 fi
-printf '%s\n' '{"benchmark_mode":"hpatch-diagnostic","treatment_model_protocol":"native"}' >"$single_ctp/benchmark-config.json"
+printf '%s\n' '{"benchmark_mode":"mekugi-diagnostic","treatment_model_protocol":"native"}' >"$single_ctp/benchmark-config.json"
 if bash "$benchmark_root/report.sh" "$single_ctp" >/dev/null 2>&1; then
  printf 'diagnostic report accepted mismatched protocol\n' >&2; exit 1
 fi
@@ -104,22 +104,22 @@ fi
 
 provider_evidence="$fixture/provider-evidence"
 mkdir -p "$provider_evidence/captures"
-printf '%s\n' '{"benchmark_mode":"hpatch-diagnostic"}' >"$provider_evidence/benchmark-config.json"
-grep '"arm":"hpatch"' "$fixture/results.jsonl" >"$provider_evidence/results.jsonl"
+printf '%s\n' '{"benchmark_mode":"mekugi-diagnostic"}' >"$provider_evidence/benchmark-config.json"
+grep '"arm":"mekugi"' "$fixture/results.jsonl" >"$provider_evidence/results.jsonl"
 for state in present missing null invalid unavailable; do
     evidence=$(jq -nc --arg state "$state" '{request_id:"req-private-lookup",model:"response-model",header_model:"header-model",cached_tokens_state:$state} + (if $state == "present" then {cached_tokens:50} else {} end)')
-    jq --argjson e "$evidence" '.exchanges[0].provider_attempts[0].provider_response=$e' "$fixture/hpatch-metrics.json" >"$provider_evidence/hpatch-metrics.json"
-    jq -c --argjson e "$evidence" 'if .boundary == "provider" then .provider_response=$e else . end' "$fixture/captures/hpatch.jsonl" >"$provider_evidence/captures/hpatch.jsonl"
+    jq --argjson e "$evidence" '.exchanges[0].provider_attempts[0].provider_response=$e' "$fixture/mekugi-metrics.json" >"$provider_evidence/mekugi-metrics.json"
+    jq -c --argjson e "$evidence" 'if .boundary == "provider" then .provider_response=$e else . end' "$fixture/captures/mekugi.jsonl" >"$provider_evidence/captures/mekugi.jsonl"
     bash "$benchmark_root/report.sh" "$provider_evidence" >/dev/null
     count=unavailable
     [[ $state != present ]] || count=50
-    grep -Fq "| Hpatch | 1 | 1 | response-model | header-model | $state | $count |" "$provider_evidence/summary.md"
+    grep -Fq "| Mekugi | 1 | 1 | response-model | header-model | $state | $count |" "$provider_evidence/summary.md"
     if grep -Fq 'req-private-lookup' "$provider_evidence/summary.md"; then
         printf 'report leaked provider request ID\n' >&2; exit 1
     fi
 done
-jq '.exchanges[0].provider_attempts[0].provider_response.model="tampered-model"' "$provider_evidence/hpatch-metrics.json" >"$provider_evidence/tampered.json"
-cp "$provider_evidence/tampered.json" "$provider_evidence/hpatch-metrics.json"
+jq '.exchanges[0].provider_attempts[0].provider_response.model="tampered-model"' "$provider_evidence/mekugi-metrics.json" >"$provider_evidence/tampered.json"
+cp "$provider_evidence/tampered.json" "$provider_evidence/mekugi-metrics.json"
 if bash "$benchmark_root/report.sh" "$provider_evidence" >/dev/null 2>&1; then
     printf 'report accepted tampered provider evidence\n' >&2; exit 1
 fi
@@ -127,12 +127,12 @@ fi
 ctp="$fixture/ctp"
 mkdir -p "$ctp/captures"
 printf '%s\n' '{"benchmark_mode":"ctp-only","ctp":{"require_input_compression":true,"require_output_compression":true}}' >"$ctp/benchmark-config.json"
-sed -e 's/"arm":"control"/"arm":"native"/' -e 's/"arm":"hpatch"/"arm":"ctp"/' \
+sed -e 's/"arm":"control"/"arm":"native"/' -e 's/"arm":"mekugi"/"arm":"ctp"/' \
 	"$fixture/results.jsonl" >"$ctp/results.jsonl"
-jq '.mode = "hpatch"' "$fixture/control-metrics.json" >"$ctp/control-metrics.json"
-sed 's/"mode":"passthrough"/"mode":"hpatch"/g' "$fixture/captures/control.jsonl" >"$ctp/captures/control.jsonl"
-jq '.model_protocol = "ctp2" | .protocol.input_payload_tokens_saved = 5 | .protocol.input_payload_bytes_saved = 20 | .protocol.output_text_tokens_saved = 8 | .exchanges[0].provider_attempts[0].native_request = {bytes:100,tokens:25} | .exchanges[0].client_final_text = {bytes:90,tokens:25}' "$fixture/hpatch-metrics.json" >"$ctp/hpatch-metrics.json"
-jq -c '.model_protocol = "ctp2" | if .boundary == "provider" then .native_request = {bytes:100,tokens:25} else .final_text = {bytes:90,tokens:25} end' "$fixture/captures/hpatch.jsonl" >"$ctp/captures/hpatch.jsonl"
+jq '.mode = "mekugi"' "$fixture/control-metrics.json" >"$ctp/control-metrics.json"
+sed 's/"mode":"passthrough"/"mode":"mekugi"/g' "$fixture/captures/control.jsonl" >"$ctp/captures/control.jsonl"
+jq '.model_protocol = "ctp2" | .protocol.input_payload_tokens_saved = 5 | .protocol.input_payload_bytes_saved = 20 | .protocol.output_text_tokens_saved = 8 | .exchanges[0].provider_attempts[0].native_request = {bytes:100,tokens:25} | .exchanges[0].client_final_text = {bytes:90,tokens:25}' "$fixture/mekugi-metrics.json" >"$ctp/mekugi-metrics.json"
+jq -c '.model_protocol = "ctp2" | if .boundary == "provider" then .native_request = {bytes:100,tokens:25} else .final_text = {bytes:90,tokens:25} end' "$fixture/captures/mekugi.jsonl" >"$ctp/captures/mekugi.jsonl"
 bash "$benchmark_root/report.sh" "$ctp" >/dev/null
 grep -Fq '| Native protocol | 1/1 |' "$ctp/summary.md"
 grep -Fq '| CTP/2 | 1/1 |' "$ctp/summary.md"
@@ -144,14 +144,14 @@ mkdir -p "$paired_ctp/captures"
 printf '%s\n' '{"benchmark_mode":"paired","treatment_model_protocol":"ctp2","ctp":{"require_input_compression":true,"require_output_compression":true}}' >"$paired_ctp/benchmark-config.json"
 cp "$fixture/results.jsonl" "$fixture/control-metrics.json" "$paired_ctp/"
 cp "$fixture/captures/control.jsonl" "$paired_ctp/captures/"
-cp "$ctp/hpatch-metrics.json" "$paired_ctp/"
-cp "$ctp/captures/hpatch.jsonl" "$paired_ctp/captures/"
+cp "$ctp/mekugi-metrics.json" "$paired_ctp/"
+cp "$ctp/captures/mekugi.jsonl" "$paired_ctp/captures/"
 bash "$benchmark_root/report.sh" "$paired_ctp" >/dev/null
 grep -Fq '| Stock | 1/1 |' "$paired_ctp/summary.md"
-grep -Fq '| Hpatch + CTP/2 | 1/1 |' "$paired_ctp/summary.md"
+grep -Fq '| Mekugi + CTP/2 | 1/1 |' "$paired_ctp/summary.md"
 grep -Fq '| Output | true | 8 | passed |' "$paired_ctp/summary.md"
-cp "$fixture/hpatch-metrics.json" "$paired_ctp/"
-cp "$fixture/captures/hpatch.jsonl" "$paired_ctp/captures/"
+cp "$fixture/mekugi-metrics.json" "$paired_ctp/"
+cp "$fixture/captures/mekugi.jsonl" "$paired_ctp/captures/"
 if bash "$benchmark_root/report.sh" "$paired_ctp" >/dev/null 2>&1; then
     printf 'report accepted native treatment for CTP/2 paired preset\n' >&2
     exit 1
@@ -162,14 +162,14 @@ mkdir -p "$ctp_failed/captures"
 cp "$ctp/benchmark-config.json" "$ctp/results.jsonl" "$ctp/control-metrics.json" "$ctp_failed/"
 cp "$ctp/captures/control.jsonl" "$ctp_failed/captures/control.jsonl"
 jq -c 'if .boundary == "codex" then .final_output = {bytes: 70, tokens: 17} | .final_text = {bytes: 70, tokens: 17} else . end' \
-	"$ctp/captures/hpatch.jsonl" >"$ctp_failed/captures/hpatch.jsonl"
+	"$ctp/captures/mekugi.jsonl" >"$ctp_failed/captures/mekugi.jsonl"
 jq '.protocol.output_text_tokens_saved = 0 |
  .protocol.output_payload_tokens_expansion = 0 |
 	.protocol.output_payload_bytes_expansion = 0 |
 	.semantic.client_outputs = {bytes: 70, tokens: 17} |
 	.exchanges[0].client_final_text = {bytes: 70, tokens: 17} |
  .exchanges[0].client_final_output = {bytes: 70, tokens: 17}' \
-	"$ctp/hpatch-metrics.json" >"$ctp_failed/hpatch-metrics.json"
+	"$ctp/mekugi-metrics.json" >"$ctp_failed/mekugi-metrics.json"
 if bash "$benchmark_root/report.sh" "$ctp_failed" >/dev/null 2>&1; then
 	printf 'report accepted missing required CTP output compression\n' >&2
 	exit 1
@@ -179,9 +179,9 @@ grep -Fq '| Output | true | 0 | failed |' "$ctp_failed/summary.md"
 mentor="$fixture/mentor"
 mkdir -p "$mentor/captures"
 printf '%s\n' '{"benchmark_mode":"mentor-handoff","mentor_handoff":{"mentor_model":"model"}}' >"$mentor/benchmark-config.json"
-sed -e '1s/"arm":"control"/"arm":"hpatch"/' -e '2s/"arm":"hpatch"/"arm":"hpatch-mentor"/' \
+sed -e '1s/"arm":"control"/"arm":"mekugi"/' -e '2s/"arm":"mekugi"/"arm":"mekugi-mentor"/' \
 	"$fixture/results.jsonl" | jq -c --arg proof "$mentor/child-proof.json" '
-		if .arm == "hpatch-mentor" then
+		if .arm == "mekugi-mentor" then
 			.parent_model = .model |
 			.parent_reasoning_effort = .reasoning_effort |
 			.child_model = .model |
@@ -190,14 +190,14 @@ sed -e '1s/"arm":"control"/"arm":"hpatch"/' -e '2s/"arm":"hpatch"/"arm":"hpatch-
 		else . end
 	' >"$mentor/results.jsonl"
 cat >"$mentor/child-proof.json" <<'JSON'
-{"schema":"hpatch.benchmark.child-proof.v1","child_thread_id":"thread-child","configured_model":"model","configured_reasoning_effort":"high"}
+{"schema":"mekugi.benchmark.child-proof.v1","child_thread_id":"thread-child","configured_model":"model","configured_reasoning_effort":"high"}
 JSON
-jq '.mode = "hpatch"' "$fixture/control-metrics.json" >"$mentor/hpatch-metrics.json"
-sed 's/"mode":"passthrough"/"mode":"hpatch"/g' "$fixture/captures/control.jsonl" >"$mentor/captures/control.jsonl"
-cp "$fixture/captures/hpatch.jsonl" "$mentor/captures/hpatch.jsonl"
-cat >>"$mentor/captures/hpatch.jsonl" <<'JSONL'
-{"schema_version":6,"boundary":"provider","capture_id":"mentor-child","request_sequence":2,"provider_attempt":1,"mode":"hpatch","model_protocol":"native","thread_id":"thread-child","request_model":"model","request":{"bytes":0,"tokens":0},"native_request":{"bytes":0,"tokens":0},"status_code":200,"response_complete":true,"response_status":"completed","usage":{"input_tokens":0,"cached_input_tokens":0,"output_tokens":0,"reasoning_tokens":0},"response":{"bytes":0,"tokens":0},"duration_ms":1,"captured_at":"2026-08-28T00:00:00Z"}
-{"schema_version":6,"boundary":"codex","capture_id":"mentor-child","request_sequence":2,"mode":"hpatch","model_protocol":"native","thread_id":"thread-child","request_model":"model","request":{"bytes":0,"tokens":0},"native_request":{"bytes":0,"tokens":0},"status_code":200,"response_complete":true,"response_status":"completed","response":{"bytes":0,"tokens":0},"duration_ms":1,"captured_at":"2026-08-28T00:00:00Z"}
+jq '.mode = "mekugi"' "$fixture/control-metrics.json" >"$mentor/mekugi-metrics.json"
+sed 's/"mode":"passthrough"/"mode":"mekugi"/g' "$fixture/captures/control.jsonl" >"$mentor/captures/control.jsonl"
+cp "$fixture/captures/mekugi.jsonl" "$mentor/captures/mekugi.jsonl"
+cat >>"$mentor/captures/mekugi.jsonl" <<'JSONL'
+{"schema_version":6,"boundary":"provider","capture_id":"mentor-child","request_sequence":2,"provider_attempt":1,"mode":"mekugi","model_protocol":"native","thread_id":"thread-child","request_model":"model","request":{"bytes":0,"tokens":0},"native_request":{"bytes":0,"tokens":0},"status_code":200,"response_complete":true,"response_status":"completed","usage":{"input_tokens":0,"cached_input_tokens":0,"output_tokens":0,"reasoning_tokens":0},"response":{"bytes":0,"tokens":0},"duration_ms":1,"captured_at":"2026-08-28T00:00:00Z"}
+{"schema_version":6,"boundary":"codex","capture_id":"mentor-child","request_sequence":2,"mode":"mekugi","model_protocol":"native","thread_id":"thread-child","request_model":"model","request":{"bytes":0,"tokens":0},"native_request":{"bytes":0,"tokens":0},"status_code":200,"response_complete":true,"response_status":"completed","response":{"bytes":0,"tokens":0},"duration_ms":1,"captured_at":"2026-08-28T00:00:00Z"}
 JSONL
 jq '.requests.logical += 1 |
 	.requests.provider_attempts += 1 |
@@ -212,10 +212,10 @@ jq '.requests.logical += 1 |
 		status: "completed",
 		usage: {input_tokens: 0, cached_input_tokens: 0, uncached_input_tokens: 0, output_tokens: 0, reasoning_tokens: 0, provider_attempts: 1},
 		client_request: {bytes: 0, tokens: 0}, client_response: {bytes: 0, tokens: 0}
-	}]' "$fixture/hpatch-metrics.json" >"$mentor/hpatch-mentor-metrics.json"
+	}]' "$fixture/mekugi-metrics.json" >"$mentor/mekugi-mentor-metrics.json"
 bash "$benchmark_root/report.sh" "$mentor" >/dev/null
-grep -Fq '| Hpatch | 1/1 |' "$mentor/summary.md"
-grep -Fq '| Hpatch + Mentor Handoff | 1/1 |' "$mentor/summary.md"
+grep -Fq '| Mekugi | 1/1 |' "$mentor/summary.md"
+grep -Fq '| Mekugi + Mentor Handoff | 1/1 |' "$mentor/summary.md"
 
 # Distinct main, mentor, and child models with two independent repetitions per arm.
 mentor_ctp="$fixture/mentor-ctp"
@@ -236,8 +236,8 @@ config = {
     "ctp": {"require_input_compression": True, "require_output_compression": True},
 }
 (target / "benchmark-config.json").write_text(json.dumps(config))
-base_metrics = json.loads((source / "hpatch-mentor-metrics.json").read_text())
-base_records = [json.loads(line) for line in (source / "captures/hpatch.jsonl").read_text().splitlines()]
+base_metrics = json.loads((source / "mekugi-mentor-metrics.json").read_text())
+base_records = [json.loads(line) for line in (source / "captures/mekugi.jsonl").read_text().splitlines()]
 base_result = json.loads((source / "results.jsonl").read_text().splitlines()[1])
 base_metrics["protocol"].update(input_payload_tokens_saved=5, input_payload_bytes_saved=20, output_text_tokens_saved=8)
 base_metrics["exchanges"][0]["provider_attempts"][0]["native_request"] = {"bytes":100,"tokens":25}
@@ -258,8 +258,8 @@ def twice(value):
 
 results = []
 for arm, capture_name, child_provider in (
-    ("hpatch", "control", "gpt-5.6-luna"),
-    ("hpatch-mentor", "hpatch", "gpt-5.6-sol"),
+    ("mekugi", "control", "gpt-5.6-luna"),
+    ("mekugi-mentor", "mekugi", "gpt-5.6-sol"),
 ):
     metrics = twice(base_metrics)
     metrics["model_protocol"] = "ctp2"
@@ -288,13 +288,13 @@ for arm, capture_name, child_provider in (
             records.append(record)
         proof = f"{arm}-proof-{repetition}.json"
         (target / proof).write_text(json.dumps({
-            "schema": "hpatch.benchmark.child-proof.v1", "child_thread_id": child,
+            "schema": "mekugi.benchmark.child-proof.v1", "child_thread_id": child,
             "configured_model": "gpt-5.6-luna", "configured_reasoning_effort": "high",
         }))
         result = copy.deepcopy(base_result)
         result.update(arm=arm, repetition=repetition, model="gpt-5.6-luna",
                       parent_model="gpt-6-astra", child_model="gpt-5.6-luna",
-                      model_protocol="ctp2", router_mode="hpatch")
+                      model_protocol="ctp2", router_mode="mekugi")
         result["agent"].update(thread_id=root, child_proof_path=proof)
         results.append(result)
     (target / f"{arm}-metrics.json").write_text(json.dumps(metrics))
@@ -304,11 +304,11 @@ PY
 bash "$benchmark_root/report.sh" "$mentor_ctp" >/dev/null
 grep -Fq -- '- Model: `gpt-6-astra`' "$mentor_ctp/summary.md"
 grep -Fq -- '- Both arms model protocol: `ctp2`' "$mentor_ctp/summary.md"
-grep -Fq '| Hpatch | 2/2 |' "$mentor_ctp/summary.md"
-grep -Fq '| Hpatch + Mentor Handoff | 2/2 |' "$mentor_ctp/summary.md"
-grep -Fq '### CTP/2 acceptance: Hpatch + Mentor Handoff' "$mentor_ctp/summary.md"
+grep -Fq '| Mekugi | 2/2 |' "$mentor_ctp/summary.md"
+grep -Fq '| Mekugi + Mentor Handoff | 2/2 |' "$mentor_ctp/summary.md"
+grep -Fq '### CTP/2 acceptance: Mekugi + Mentor Handoff' "$mentor_ctp/summary.md"
 [[ $(grep -Fc '| Output | true | 16 | passed |' "$mentor_ctp/summary.md") == 2 ]]
-if grep -Eq 'hpatch-root-|hpatch-mentor-child-' "$mentor_ctp/summary.md"; then
+if grep -Eq 'mekugi-root-|mekugi-mentor-child-' "$mentor_ctp/summary.md"; then
 	printf 'Mentor CTP report leaked a thread identifier\n' >&2
 	exit 1
 fi
@@ -324,8 +324,8 @@ import sys
 root = Path(sys.argv[1])
 failure = sys.argv[2]
 baseline = failure == "baseline-compression"
-metrics_path = root / ("hpatch-metrics.json" if baseline else "hpatch-mentor-metrics.json")
-capture_path = root / ("captures/control.jsonl" if baseline else "captures/hpatch.jsonl")
+metrics_path = root / ("mekugi-metrics.json" if baseline else "mekugi-mentor-metrics.json")
+capture_path = root / ("captures/control.jsonl" if baseline else "captures/mekugi.jsonl")
 metrics = json.loads(metrics_path.read_text())
 records = [json.loads(line) for line in capture_path.read_text().splitlines()]
 if baseline:
@@ -367,8 +367,8 @@ done
 
 no_usage="$fixture/no-usage-retry"
 mkdir -p "$no_usage/captures"
-printf '%s\n' '{"benchmark_mode":"hpatch-only"}' >"$no_usage/benchmark-config.json"
-grep '"arm":"hpatch"' "$fixture/results.jsonl" >"$no_usage/results.jsonl"
+printf '%s\n' '{"benchmark_mode":"mekugi-only"}' >"$no_usage/benchmark-config.json"
+grep '"arm":"mekugi"' "$fixture/results.jsonl" >"$no_usage/results.jsonl"
 jq '.requests.provider_attempts += 1 |
 	.capture.records += 1 |
 	.transport.provider_attempt_requests.bytes += 80 |
@@ -378,24 +378,24 @@ jq '.requests.provider_attempts += 1 |
 	.exchanges[0].provider_attempts[0].attempt = 2 |
 	.exchanges[0].provider_attempts = [{attempt: 1, model: "model", status: "http_error", response_complete: true,
 		request: {bytes: 80, tokens: 20}, native_request: {bytes: 80, tokens: 20}, response: {bytes: 20, tokens: 5}}] + .exchanges[0].provider_attempts' \
-	"$fixture/hpatch-metrics.json" >"$no_usage/hpatch-metrics.json"
+	"$fixture/mekugi-metrics.json" >"$no_usage/mekugi-metrics.json"
 {
-	printf '%s\n' '{"schema_version":6,"boundary":"provider","capture_id":"hpatch-id","request_sequence":1,"provider_attempt":1,"mode":"hpatch","model_protocol":"native","thread_id":"thread-hpatch","request_model":"model","request":{"bytes":80,"tokens":20},"native_request":{"bytes":80,"tokens":20},"status_code":429,"response_complete":true,"response_status":"http_error","response":{"bytes":20,"tokens":5},"duration_ms":1,"captured_at":"2026-08-28T00:00:00Z"}'
-	sed 's/"provider_attempt":1/"provider_attempt":2/' "$fixture/captures/hpatch.jsonl"
-} >"$no_usage/captures/hpatch.jsonl"
+	printf '%s\n' '{"schema_version":6,"boundary":"provider","capture_id":"mekugi-id","request_sequence":1,"provider_attempt":1,"mode":"mekugi","model_protocol":"native","thread_id":"thread-mekugi","request_model":"model","request":{"bytes":80,"tokens":20},"native_request":{"bytes":80,"tokens":20},"status_code":429,"response_complete":true,"response_status":"http_error","response":{"bytes":20,"tokens":5},"duration_ms":1,"captured_at":"2026-08-28T00:00:00Z"}'
+	sed 's/"provider_attempt":1/"provider_attempt":2/' "$fixture/captures/mekugi.jsonl"
+} >"$no_usage/captures/mekugi.jsonl"
 bash "$benchmark_root/report.sh" "$no_usage" >/dev/null
-grep -Fq '| Hpatch | `model` | 2 | 1 | 80 | 50 | 12 | 3 |' "$no_usage/summary.md"
+grep -Fq '| Mekugi | `model` | 2 | 1 | 80 | 50 | 12 | 3 |' "$no_usage/summary.md"
 
-jq '.capture.incomplete_records = 1' "$fixture/hpatch-metrics.json" >"$fixture/bad-metrics.json"
+jq '.capture.incomplete_records = 1' "$fixture/mekugi-metrics.json" >"$fixture/bad-metrics.json"
 if python3 "$benchmark_root/analyze_capture.py" "$fixture/bad-metrics.json" \
-	"$fixture/captures/hpatch.jsonl" "$fixture/results.jsonl" hpatch >/dev/null 2>&1; then
+	"$fixture/captures/mekugi.jsonl" "$fixture/results.jsonl" mekugi >/dev/null 2>&1; then
 	printf 'capture validator accepted incomplete evidence\n' >&2
 	exit 1
 fi
 
-jq '.usage.output_tokens = 13' "$fixture/hpatch-metrics.json" >"$fixture/bad-usage.json"
+jq '.usage.output_tokens = 13' "$fixture/mekugi-metrics.json" >"$fixture/bad-usage.json"
 if python3 "$benchmark_root/analyze_capture.py" "$fixture/bad-usage.json" \
-	"$fixture/captures/hpatch.jsonl" "$fixture/results.jsonl" hpatch >/dev/null 2>&1; then
+	"$fixture/captures/mekugi.jsonl" "$fixture/results.jsonl" mekugi >/dev/null 2>&1; then
 	printf 'capture validator accepted unreconciled usage\n' >&2
 	exit 1
 fi
@@ -408,9 +408,9 @@ derived_usage_mutations=(
 )
 for index in "${!derived_usage_mutations[@]}"; do
 	bad="$fixture/bad-derived-usage-$index.json"
-	jq "${derived_usage_mutations[$index]}" "$fixture/hpatch-metrics.json" >"$bad"
+	jq "${derived_usage_mutations[$index]}" "$fixture/mekugi-metrics.json" >"$bad"
 	if python3 "$benchmark_root/analyze_capture.py" "$bad" \
-		"$fixture/captures/hpatch.jsonl" "$fixture/results.jsonl" hpatch >/dev/null 2>&1; then
+		"$fixture/captures/mekugi.jsonl" "$fixture/results.jsonl" mekugi >/dev/null 2>&1; then
 		printf 'capture validator accepted unreconciled derived usage: %s\n' \
 			"${derived_usage_mutations[$index]}" >&2
 		exit 1
@@ -421,13 +421,13 @@ derived_metric_mutations=(
 	'.cache.provider_cache_rate = 0.99'
 	'.semantic.client_outputs.tokens += 1'
 	'.protocol.output_payload_tokens_expansion += 1'
-	'.hpatch.carrier_input_tokens_expansion += 1'
+	'.mekugi.carrier_input_tokens_expansion += 1'
 )
 for index in "${!derived_metric_mutations[@]}"; do
 	bad="$fixture/bad-derived-metric-$index.json"
-	jq "${derived_metric_mutations[$index]}" "$fixture/hpatch-metrics.json" >"$bad"
+	jq "${derived_metric_mutations[$index]}" "$fixture/mekugi-metrics.json" >"$bad"
 	if python3 "$benchmark_root/analyze_capture.py" "$bad" \
-		"$fixture/captures/hpatch.jsonl" "$fixture/results.jsonl" hpatch >/dev/null 2>&1; then
+		"$fixture/captures/mekugi.jsonl" "$fixture/results.jsonl" mekugi >/dev/null 2>&1; then
 		printf 'capture validator accepted an unreconciled derived metric: %s\n' \
 			"${derived_metric_mutations[$index]}" >&2
 		exit 1
@@ -437,11 +437,11 @@ done
 duplicate_sequence="$fixture/duplicate-raw-sequence"
 mkdir -p "$duplicate_sequence"
 jq '.capture.records = 4 | .exchanges += [(.exchanges[0] | .sequence = 2)]' \
-	"$fixture/hpatch-metrics.json" >"$duplicate_sequence/metrics.json"
+	"$fixture/mekugi-metrics.json" >"$duplicate_sequence/metrics.json"
 {
-	cat "$fixture/captures/hpatch.jsonl"
-	sed 's/"capture_id":"hpatch-id"/"capture_id":"duplicate-id"/g' \
-		"$fixture/captures/hpatch.jsonl"
+	cat "$fixture/captures/mekugi.jsonl"
+	sed 's/"capture_id":"mekugi-id"/"capture_id":"duplicate-id"/g' \
+		"$fixture/captures/mekugi.jsonl"
 } >"$duplicate_sequence/capture.jsonl"
 if PYTHONPATH="$benchmark_root" python3 - "$duplicate_sequence/metrics.json" \
 	"$duplicate_sequence/capture.jsonl" >/dev/null 2>&1 <<'PY'
@@ -456,18 +456,18 @@ then
 	exit 1
 fi
 
-jq '.exchanges[0].provider_attempts[0].model = "wrong-model"' "$fixture/hpatch-metrics.json" >"$fixture/bad-model.json"
-sed 's/"request_model":"model"/"request_model":"wrong-model"/g' "$fixture/captures/hpatch.jsonl" >"$fixture/bad-model-capture.jsonl"
+jq '.exchanges[0].provider_attempts[0].model = "wrong-model"' "$fixture/mekugi-metrics.json" >"$fixture/bad-model.json"
+sed 's/"request_model":"model"/"request_model":"wrong-model"/g' "$fixture/captures/mekugi.jsonl" >"$fixture/bad-model-capture.jsonl"
 if python3 "$benchmark_root/analyze_capture.py" "$fixture/bad-model.json" \
-	"$fixture/bad-model-capture.jsonl" "$fixture/results.jsonl" hpatch >/dev/null 2>&1; then
+	"$fixture/bad-model-capture.jsonl" "$fixture/results.jsonl" mekugi >/dev/null 2>&1; then
 	printf 'capture validator accepted the wrong provider model\n' >&2
 	exit 1
 fi
 
-jq '.mode = "passthrough"' "$fixture/hpatch-metrics.json" >"$fixture/bad-mode.json"
-sed 's/"mode":"hpatch"/"mode":"passthrough"/g' "$fixture/captures/hpatch.jsonl" >"$fixture/bad-mode-capture.jsonl"
+jq '.mode = "passthrough"' "$fixture/mekugi-metrics.json" >"$fixture/bad-mode.json"
+sed 's/"mode":"mekugi"/"mode":"passthrough"/g' "$fixture/captures/mekugi.jsonl" >"$fixture/bad-mode-capture.jsonl"
 if python3 "$benchmark_root/analyze_capture.py" "$fixture/bad-mode.json" \
-	"$fixture/bad-mode-capture.jsonl" "$fixture/results.jsonl" hpatch >/dev/null 2>&1; then
+	"$fixture/bad-mode-capture.jsonl" "$fixture/results.jsonl" mekugi >/dev/null 2>&1; then
 	printf 'capture validator accepted the wrong treatment mode\n' >&2
 	exit 1
 fi
@@ -475,8 +475,8 @@ fi
 for missing in control-metrics.json captures/control.jsonl; do
 	broken="$fixture/missing-baseline-${missing//\//-}"
 	mkdir -p "$broken/captures"
-	cp "$fixture/benchmark-config.json" "$fixture/results.jsonl" "$fixture/control-metrics.json" "$fixture/hpatch-metrics.json" "$broken/"
-	cp "$fixture/captures/control.jsonl" "$fixture/captures/hpatch.jsonl" "$broken/captures/"
+	cp "$fixture/benchmark-config.json" "$fixture/results.jsonl" "$fixture/control-metrics.json" "$fixture/mekugi-metrics.json" "$broken/"
+	cp "$fixture/captures/control.jsonl" "$fixture/captures/mekugi.jsonl" "$broken/captures/"
 	rm -f "$broken/$missing"
 	if bash "$benchmark_root/report.sh" "$broken" >/dev/null 2>&1; then
 		printf 'report accepted a missing baseline artifact: %s\n' "$missing" >&2
@@ -486,8 +486,8 @@ done
 
 broken="$fixture/wrong-baseline-schema"
 mkdir -p "$broken/captures"
-cp "$fixture/benchmark-config.json" "$fixture/results.jsonl" "$fixture/control-metrics.json" "$fixture/hpatch-metrics.json" "$broken/"
-cp "$fixture/captures/control.jsonl" "$fixture/captures/hpatch.jsonl" "$broken/captures/"
+cp "$fixture/benchmark-config.json" "$fixture/results.jsonl" "$fixture/control-metrics.json" "$fixture/mekugi-metrics.json" "$broken/"
+cp "$fixture/captures/control.jsonl" "$fixture/captures/mekugi.jsonl" "$broken/captures/"
 jq '.schema = "wrong"' "$broken/control-metrics.json" >"$broken/control-metrics.tmp"
 mv "$broken/control-metrics.tmp" "$broken/control-metrics.json"
 if bash "$benchmark_root/report.sh" "$broken" >/dev/null 2>&1; then
@@ -497,25 +497,25 @@ fi
 
 # Old accounting cannot be relabeled as corrected evidence: raw payloads were
 # not retained, so the missing semantic output cannot be reconstructed offline.
-jq '.schema = "hpatch.capture.metrics.v3"' "$fixture/hpatch-metrics.json" >"$fixture/old-metrics.json"
+jq '.schema = "mekugi.capture.metrics.v3"' "$fixture/mekugi-metrics.json" >"$fixture/old-metrics.json"
 if python3 "$benchmark_root/analyze_capture.py" "$fixture/old-metrics.json" \
-    "$fixture/captures/hpatch.jsonl" "$fixture/results.jsonl" hpatch >/dev/null 2>&1; then
+    "$fixture/captures/mekugi.jsonl" "$fixture/results.jsonl" mekugi >/dev/null 2>&1; then
     printf 'validator accepted old output accounting\n' >&2; exit 1
 fi
-sed 's/"schema_version":6/"schema_version":5/g' "$fixture/captures/hpatch.jsonl" >"$fixture/old-capture.jsonl"
-if python3 "$benchmark_root/analyze_capture.py" "$fixture/hpatch-metrics.json" \
-    "$fixture/old-capture.jsonl" "$fixture/results.jsonl" hpatch >/dev/null 2>&1; then
+sed 's/"schema_version":6/"schema_version":5/g' "$fixture/captures/mekugi.jsonl" >"$fixture/old-capture.jsonl"
+if python3 "$benchmark_root/analyze_capture.py" "$fixture/mekugi-metrics.json" \
+    "$fixture/old-capture.jsonl" "$fixture/results.jsonl" mekugi >/dev/null 2>&1; then
     printf 'validator accepted old capture output accounting\n' >&2; exit 1
 fi
 
-jq '.exchanges[0].provider_attempts[0].native_request.tokens += 1 | .protocol.input_payload_tokens_saved += 1' "$fixture/hpatch-metrics.json" >"$fixture/false-native.json"
-jq -c 'if .boundary == "provider" then .native_request.tokens += 1 else . end' "$fixture/captures/hpatch.jsonl" >"$fixture/false-native-capture.jsonl"
-if python3 "$benchmark_root/analyze_capture.py" "$fixture/false-native.json" "$fixture/false-native-capture.jsonl" "$fixture/results.jsonl" hpatch >/dev/null 2>&1; then
+jq '.exchanges[0].provider_attempts[0].native_request.tokens += 1 | .protocol.input_payload_tokens_saved += 1' "$fixture/mekugi-metrics.json" >"$fixture/false-native.json"
+jq -c 'if .boundary == "provider" then .native_request.tokens += 1 else . end' "$fixture/captures/mekugi.jsonl" >"$fixture/false-native-capture.jsonl"
+if python3 "$benchmark_root/analyze_capture.py" "$fixture/false-native.json" "$fixture/false-native-capture.jsonl" "$fixture/results.jsonl" mekugi >/dev/null 2>&1; then
     printf 'validator accepted false native compression\n' >&2; exit 1
 fi
-jq 'del(.exchanges[0].provider_attempts[0].native_request)' "$no_usage/hpatch-metrics.json" >"$fixture/missing-retry-baseline.json"
-jq -c 'if .boundary == "provider" and .provider_attempt == 1 then del(.native_request) else . end' "$no_usage/captures/hpatch.jsonl" >"$fixture/missing-retry-baseline-capture.jsonl"
-if python3 "$benchmark_root/analyze_capture.py" "$fixture/missing-retry-baseline.json" "$fixture/missing-retry-baseline-capture.jsonl" "$no_usage/results.jsonl" hpatch >/dev/null 2>&1; then
+jq 'del(.exchanges[0].provider_attempts[0].native_request)' "$no_usage/mekugi-metrics.json" >"$fixture/missing-retry-baseline.json"
+jq -c 'if .boundary == "provider" and .provider_attempt == 1 then del(.native_request) else . end' "$no_usage/captures/mekugi.jsonl" >"$fixture/missing-retry-baseline-capture.jsonl"
+if python3 "$benchmark_root/analyze_capture.py" "$fixture/missing-retry-baseline.json" "$fixture/missing-retry-baseline-capture.jsonl" "$no_usage/results.jsonl" mekugi >/dev/null 2>&1; then
     printf 'validator accepted missing retry baseline\n' >&2; exit 1
 fi
 printf 'report tests passed\n'

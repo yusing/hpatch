@@ -202,7 +202,7 @@ func TestSubagentTokenUsageSilentOnFailedAndIncompleteStops(t *testing.T) {
 	}
 }
 
-func observeTestResponseUsage(t *testing.T, transform *hpatchResponseTransform, payload []byte, streamEvent bool) {
+func observeTestResponseUsage(t *testing.T, transform *mekugiResponseTransform, payload []byte, streamEvent bool) {
 	t.Helper()
 	counts, observed := usageFromResponsePayload(payload, streamEvent)
 	if !observed {
@@ -211,18 +211,18 @@ func observeTestResponseUsage(t *testing.T, transform *hpatchResponseTransform, 
 	transform.observeResponseUsage(counts)
 }
 
-func TestSubagentCommentaryPreservesPendingHPatchEventRejection(t *testing.T) {
+func TestSubagentCommentaryPreservesPendingMekugiEventRejection(t *testing.T) {
 	transform, _, _ := newSubagentCommentaryTestTransform(t, nil)
-	transform.pending["item-hpatch"] = hpatchPendingCall{callID: "call-hpatch"}
+	transform.pending["item-mekugi"] = mekugiPendingCall{callID: "call-mekugi"}
 
 	for _, eventType := range []string{
 		"response.function_call_arguments.delta",
 		"response.function_call_arguments.done",
 	} {
 		t.Run(eventType, func(t *testing.T) {
-			payload := mustTestJSON(t, map[string]any{"type": eventType, "item_id": "item-hpatch"})
+			payload := mustTestJSON(t, map[string]any{"type": eventType, "item_id": "item-mekugi"})
 			events, err := transform.TransformSSE(payload)
-			if err == nil || !strings.Contains(err.Error(), "unsupported hpatch-related stream event") || len(events) != 0 {
+			if err == nil || !strings.Contains(err.Error(), "unsupported mekugi-related stream event") || len(events) != 0 {
 				t.Fatalf("events = %q, error = %v", events, err)
 			}
 		})
@@ -232,7 +232,7 @@ func TestSubagentCommentaryPreservesPendingHPatchEventRejection(t *testing.T) {
 func newSubagentCommentaryTestTransform(
 	t *testing.T,
 	conversation []any,
-) (*hpatchResponseTransform, *hpatchProxy, *parsedResponsesRequest) {
+) (*mekugiResponseTransform, *mekugiProxy, *parsedResponsesRequest) {
 	t.Helper()
 	return newSubagentCommentaryTestTransformWithMetadata(t, conversation, codexTurnMetadata{})
 }
@@ -241,7 +241,7 @@ func newSubagentCommentaryTestTransformWithMetadata(
 	t *testing.T,
 	conversation []any,
 	metadata codexTurnMetadata,
-) (*hpatchResponseTransform, *hpatchProxy, *parsedResponsesRequest) {
+) (*mekugiResponseTransform, *mekugiProxy, *parsedResponsesRequest) {
 	t.Helper()
 	additional := testCodeModeAdditionalTools(testCodeModeDescription)
 	namespaces := additional["tools"].([]any)
@@ -260,11 +260,11 @@ func newSubagentCommentaryTestTransformWithMetadata(
 	if err != nil {
 		t.Fatal(err)
 	}
-	translator := hpatchTranslatorFunc(func(context.Context, string, string) ([]byte, error) {
-		t.Fatal("unexpected hpatch translation")
+	translator := mekugiTranslatorFunc(func(context.Context, string, string) ([]byte, error) {
+		t.Fatal("unexpected mekugi translation")
 		return nil, nil
 	})
-	proxy := newManagedHPatchProxy(t, translator)
+	proxy := newManagedMekugiProxy(t, translator)
 	proxy.commentaryEndpoint = "http://127.0.0.1:8080" + commentaryPublisherPath
 	workspace := t.TempDir()
 	metadata.RequestKind = "turn"

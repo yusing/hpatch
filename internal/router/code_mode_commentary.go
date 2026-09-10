@@ -7,7 +7,7 @@ import (
 	"strconv"
 )
 
-const codeModeCommentaryHistoryTool = "__hpatch_code_mode_commentary"
+const codeModeCommentaryHistoryTool = "__mekugi_code_mode_commentary"
 
 type codeModeCommentaryCall struct {
 	start         int
@@ -16,7 +16,7 @@ type codeModeCommentaryCall struct {
 	argumentEnd   int
 }
 
-func (t *hpatchResponseTransform) lowerCodeModeCommentary(callID, input string) (string, bool, error) {
+func (t *mekugiResponseTransform) lowerCodeModeCommentary(callID, input string) (string, bool, error) {
 	if t.proxy.commentaryEndpoint == "" {
 		return input, false, nil
 	}

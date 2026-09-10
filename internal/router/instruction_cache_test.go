@@ -54,7 +54,7 @@ func TestWebSocketPrewarmInstructionDelivery(t *testing.T) {
 						if jsonString(request, "previous_response_id") != "" || len(input) != index+2 {
 							t.Errorf("%s did not replace the stale provider prefix: parent=%q items=%d", id, jsonString(request, "previous_response_id"), len(input))
 						}
-						if !bytes.Contains(request["input"], []byte("hpatch-model-instructions:start")) || bytes.Contains(request["input"], []byte("tools.exec_command")) {
+						if !bytes.Contains(request["input"], []byte("mekugi-model-instructions:start")) || bytes.Contains(request["input"], []byte("tools.exec_command")) {
 							t.Errorf("%s did not deliver patched guidance and catalog", id)
 						}
 					case "next", "astra-next":

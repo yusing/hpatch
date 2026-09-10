@@ -20,7 +20,7 @@ test("bounds combined executor output", async () => {
   await writeFile(
     path.join(directory, "plugin.mjs"),
     `export default {
-  apiVersion: "hpatch-tool-plugin/v1",
+  apiVersion: "mekugi-tool-plugin/v1",
   id: "execution-output.test",
   tools: [{
     specification: {type: "custom", name: "execution_output_test", description: "test tool"},

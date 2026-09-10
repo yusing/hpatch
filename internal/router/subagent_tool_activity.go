@@ -8,7 +8,7 @@ import (
 
 // Observe complete calls, not argument deltas. This is a user-only description
 // of a request, never a second executable call or a claim of tool success.
-func (t *hpatchResponseTransform) collectSubagentToolCall(item map[string]json.RawMessage) {
+func (t *mekugiResponseTransform) collectSubagentToolCall(item map[string]json.RawMessage) {
 	if !t.subagentTurn {
 		return
 	}
@@ -31,7 +31,7 @@ func (t *hpatchResponseTransform) collectSubagentToolCall(item map[string]json.R
 	if len(name) > maxCommentaryPublicationBytes {
 		return
 	}
-	var history *hpatchHistory
+	var history *mekugiHistory
 	callID := jsonString(item, "call_id")
 	if retained, exists := t.local[callID]; exists {
 		history = &retained

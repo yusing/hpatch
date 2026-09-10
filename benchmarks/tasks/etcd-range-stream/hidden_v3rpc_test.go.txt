@@ -27,33 +27,33 @@ import (
 	"go.etcd.io/etcd/server/v3/etcdserver"
 )
 
-type hpatchBenchmarkRaftStatus struct{}
+type mekugiBenchmarkRaftStatus struct{}
 
-func (hpatchBenchmarkRaftStatus) MemberID() types.ID     { return 1 }
-func (hpatchBenchmarkRaftStatus) Leader() types.ID       { return 2 }
-func (hpatchBenchmarkRaftStatus) CommittedIndex() uint64 { return 3 }
-func (hpatchBenchmarkRaftStatus) AppliedIndex() uint64   { return 4 }
-func (hpatchBenchmarkRaftStatus) Term() uint64           { return 9 }
+func (mekugiBenchmarkRaftStatus) MemberID() types.ID     { return 1 }
+func (mekugiBenchmarkRaftStatus) Leader() types.ID       { return 2 }
+func (mekugiBenchmarkRaftStatus) CommittedIndex() uint64 { return 3 }
+func (mekugiBenchmarkRaftStatus) AppliedIndex() uint64   { return 4 }
+func (mekugiBenchmarkRaftStatus) Term() uint64           { return 9 }
 
-type hpatchBenchmarkRaftKV struct {
+type mekugiBenchmarkRaftKV struct {
 	etcdserver.RaftKV
 }
 
-type hpatchBenchmarkRangeStream struct {
+type mekugiBenchmarkRangeStream struct {
 	ctx context.Context
 }
 
-func (s *hpatchBenchmarkRangeStream) SetHeader(metadata.MD) error  { return nil }
-func (s *hpatchBenchmarkRangeStream) SendHeader(metadata.MD) error { return nil }
-func (s *hpatchBenchmarkRangeStream) SetTrailer(metadata.MD)       {}
-func (s *hpatchBenchmarkRangeStream) Context() context.Context     { return s.ctx }
-func (s *hpatchBenchmarkRangeStream) SendMsg(any) error            { return nil }
-func (s *hpatchBenchmarkRangeStream) RecvMsg(any) error            { return nil }
-func (s *hpatchBenchmarkRangeStream) Send(*pb.RangeStreamResponse) error {
+func (s *mekugiBenchmarkRangeStream) SetHeader(metadata.MD) error  { return nil }
+func (s *mekugiBenchmarkRangeStream) SendHeader(metadata.MD) error { return nil }
+func (s *mekugiBenchmarkRangeStream) SetTrailer(metadata.MD)       {}
+func (s *mekugiBenchmarkRangeStream) Context() context.Context     { return s.ctx }
+func (s *mekugiBenchmarkRangeStream) SendMsg(any) error            { return nil }
+func (s *mekugiBenchmarkRangeStream) RecvMsg(any) error            { return nil }
+func (s *mekugiBenchmarkRangeStream) Send(*pb.RangeStreamResponse) error {
 	return nil
 }
 
-func TestHPatchBenchmarkRangeStreamValidation(t *testing.T) {
+func TestMekugiBenchmarkRangeStreamValidation(t *testing.T) {
 	tests := []struct {
 		name string
 		req  *pb.RangeRequest
@@ -79,8 +79,8 @@ func TestHPatchBenchmarkRangeStreamValidation(t *testing.T) {
 			want: codes.Unimplemented,
 		},
 	}
-	server := &kvServer{kv: &hpatchBenchmarkRaftKV{}}
-	stream := &hpatchBenchmarkRangeStream{ctx: t.Context()}
+	server := &kvServer{kv: &mekugiBenchmarkRaftKV{}}
+	stream := &mekugiBenchmarkRangeStream{ctx: t.Context()}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			if got := status.Code(server.RangeStream(test.req, stream)); got != test.want {
@@ -90,11 +90,11 @@ func TestHPatchBenchmarkRangeStreamValidation(t *testing.T) {
 	}
 }
 
-func TestHPatchBenchmarkStreamingHeaderPreservesRevision(t *testing.T) {
+func TestMekugiBenchmarkStreamingHeaderPreservesRevision(t *testing.T) {
 	header := header{
 		clusterID: 7,
 		memberID:  11,
-		sg:        hpatchBenchmarkRaftStatus{},
+		sg:        mekugiBenchmarkRaftStatus{},
 	}
 	response := &pb.ResponseHeader{Revision: 42}
 	header.fill(response)

@@ -5,10 +5,10 @@ import (
 	"testing"
 )
 
-func TestHPatchToolDescriptionStaysNonInstructional(t *testing.T) {
+func TestMekugiToolDescriptionStaysNonInstructional(t *testing.T) {
 	const want = "Atomic HPATCH/2 edit-script application. Rejection or cancellation leaves the workspace unchanged."
-	if HPatchToolDescription != want {
-		t.Fatalf("HPatchToolDescription = %q, want %q", HPatchToolDescription, want)
+	if MekugiToolDescription != want {
+		t.Fatalf("MekugiToolDescription = %q, want %q", MekugiToolDescription, want)
 	}
 }
 
@@ -32,7 +32,7 @@ func TestInstructionsSelectModelWorkflowIndependentlyOfTransport(t *testing.T) {
 					t.Fatalf("model %q: workflow section %q must occur once", model, heading)
 				}
 			}
-			for _, marker := range []string{"<!-- hpatch-model-instructions:start -->", "<!-- hpatch-model-instructions:end -->"} {
+			for _, marker := range []string{"<!-- mekugi-model-instructions:start -->", "<!-- mekugi-model-instructions:end -->"} {
 				if strings.Count(got, marker) != 1 {
 					t.Fatalf("model %q: marker %q must occur once", model, marker)
 				}
@@ -78,10 +78,10 @@ func TestNativeInstructionsOmitOnlyCTPRepresentation(t *testing.T) {
 		t.Fatal("native instructions contain CTP guidance")
 	}
 	for _, required := range []string{
-		"<!-- hpatch-model-instructions:start -->",
+		"<!-- mekugi-model-instructions:start -->",
 		"## File editing",
 		"## Shell execution",
-		"<!-- hpatch-model-instructions:end -->",
+		"<!-- mekugi-model-instructions:end -->",
 	} {
 		if !strings.Contains(native, required) {
 			t.Errorf("native instructions omit %q", required)
@@ -162,7 +162,7 @@ func TestInstructionsAcquireAndReuseVerifiedTargets(t *testing.T) {
 	}
 }
 
-func TestInstructionsStayWithinHPatchAndPrivateTools(t *testing.T) {
+func TestInstructionsStayWithinMekugiAndPrivateTools(t *testing.T) {
 	for _, model := range []string{"gpt-5.6-sol", "gpt-6-astra"} {
 		for _, excluded := range []string{
 			"behavioral validation",

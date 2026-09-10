@@ -1,4 +1,4 @@
-Create a tiny Go library while exercising every task-reachable Hpatch commentary path in the order
+Create a tiny Go library while exercising every task-reachable Mekugi commentary path in the order
 below. Create exactly `go.mod` and `coverage.go`; do not add other files. The module and root package
 must both be named `commentarycoverage`, use Go 1.26, and have no third-party dependencies.
 

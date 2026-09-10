@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-func TestHPatchDeliveredInputSurvivesIncompleteItem(t *testing.T) {
+func TestMekugiDeliveredInputSurvivesIncompleteItem(t *testing.T) {
 	for _, native := range []bool{false, true} {
 		name := "code-mode"
 		if native {
@@ -13,20 +13,20 @@ func TestHPatchDeliveredInputSurvivesIncompleteItem(t *testing.T) {
 		}
 		t.Run(name, func(t *testing.T) {
 			calls := 0
-			proxy := newManagedHPatchProxy(t, testTranslator(t, &calls))
+			proxy := newManagedMekugiProxy(t, testTranslator(t, &calls))
 			dir := t.TempDir()
-			store, err := openHPatchReplayStore(dir)
+			store, err := openMekugiReplayStore(dir)
 			if err != nil {
 				t.Fatal(err)
 			}
 			proxy.replayStore = store
-			var transform *hpatchResponseTransform
+			var transform *mekugiResponseTransform
 			if native {
-				transform, _ = newNativeHPatchTestTransformWithProxy(t, proxy)
+				transform, _ = newNativeMekugiTestTransformWithProxy(t, proxy)
 			} else {
-				transform, _, _, _ = newHPatchTestTransformWithProxy(t, proxy)
+				transform, _, _, _ = newMekugiTestTransformWithProxy(t, proxy)
 			}
-			added := testHPatchItem()
+			added := testMekugiItem()
 			added["status"], added["input"] = "in_progress", ""
 			if _, err := transform.TransformSSE(mustTestJSON(t, map[string]any{
 				"type": "response.output_item.added", "item": added,
@@ -34,7 +34,7 @@ func TestHPatchDeliveredInputSurvivesIncompleteItem(t *testing.T) {
 				t.Fatal(err)
 			}
 			if events, err := transform.TransformSSE(mustTestJSON(t, map[string]any{
-				"type": "response.custom_tool_call_input.done", "item_id": "item-H", "input": testHPatchScript,
+				"type": "response.custom_tool_call_input.done", "item_id": "item-H", "input": testMekugiScript,
 			})); err != nil || len(events) != 2 {
 				t.Fatalf("complete input handoff: %s, %v", events, err)
 			}
@@ -42,7 +42,7 @@ func TestHPatchDeliveredInputSurvivesIncompleteItem(t *testing.T) {
 			if err != nil || !found {
 				t.Fatalf("retained handoff: %v, %v", found, err)
 			}
-			done := testHPatchItem()
+			done := testMekugiItem()
 			done["status"] = "incomplete"
 			if _, err := transform.TransformSSE(mustTestJSON(t, map[string]any{
 				"type": "response.output_item.done", "item": done,
@@ -55,7 +55,7 @@ func TestHPatchDeliveredInputSurvivesIncompleteItem(t *testing.T) {
 			})); err != nil {
 				t.Fatalf("interrupted response after handoff: %v", err)
 			}
-			reopened, err := openHPatchReplayStore(dir)
+			reopened, err := openMekugiReplayStore(dir)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -68,10 +68,9 @@ func TestHPatchDeliveredInputSurvivesIncompleteItem(t *testing.T) {
 				t.Fatalf("interruption changed execution or lost final status: evaluations=%d", calls)
 			}
 			after.upstreamItem["input"] = json.RawMessage(`"changed"`)
-			if err := reopened.put(t.Context(), transform.directory, map[string]hpatchHistory{"call-H": after}); err == nil {
+			if err := reopened.put(t.Context(), transform.directory, map[string]mekugiHistory{"call-H": after}); err == nil {
 				t.Fatal("accepted changed input after interruption")
 			}
 		})
 	}
 }
-

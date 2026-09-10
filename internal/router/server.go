@@ -19,12 +19,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/yusing/hpatch/capturer"
+	"github.com/yusing/mekugi/capturer"
 )
 
 const (
 	defaultListenAddress        = "127.0.0.1:0"
-	defaultRewriteMode          = "hpatch"
+	defaultRewriteMode          = "mekugi"
 	defaultModelProtocol        = "ctp2"
 	defaultRequestTimeout       = 10 * time.Minute
 	defaultStreamIdleTimeout    = 4 * time.Minute
@@ -55,8 +55,8 @@ func RunSession(ctx context.Context, args []string, issues *CriticalErrors, read
 	if flags.NArg() != 0 {
 		return errors.New("positional arguments are not supported")
 	}
-	if *flags.mode != "hpatch" && *flags.mode != "passthrough" {
-		return errors.New("--mode must be hpatch or passthrough")
+	if *flags.mode != "mekugi" && *flags.mode != "passthrough" {
+		return errors.New("--mode must be mekugi or passthrough")
 	}
 	if *flags.modelProtocol != "native" && *flags.modelProtocol != "ctp2" {
 		return errors.New("--model-protocol must be native or ctp2")
@@ -73,16 +73,16 @@ func RunSession(ctx context.Context, args []string, issues *CriticalErrors, read
 	})
 	if *flags.mode == "passthrough" {
 		if protocolSet && *flags.modelProtocol != "native" {
-			return errors.New("--model-protocol ctp2 requires --mode hpatch")
+			return errors.New("--model-protocol ctp2 requires --mode mekugi")
 		}
 		if mentorSet && *flags.mentorHandoffEnabled {
-			return errors.New("--mentor-handoff requires --mode hpatch")
+			return errors.New("--mentor-handoff requires --mode mekugi")
 		}
 		*flags.modelProtocol = "native"
 		*flags.mentorHandoffEnabled = false
 	}
-	if *flags.grokEnabled && *flags.mode != "hpatch" {
-		return errors.New("--grok requires --mode hpatch")
+	if *flags.grokEnabled && *flags.mode != "mekugi" {
+		return errors.New("--grok requires --mode mekugi")
 	}
 	if !*flags.grokEnabled && *flags.grokAuthFile != "" {
 		return errors.New("--grok-auth-file requires --grok")
@@ -163,14 +163,14 @@ func RunSession(ctx context.Context, args []string, issues *CriticalErrors, read
 	}
 	var frontendDirectory string
 	var dataDirectory string
-	var hpatchCalls *hpatchProxy
+	var mekugiCalls *mekugiProxy
 	var compactTokens *ctp2Codec
 	var mentor *mentorHandoff
-	if *flags.mode == "hpatch" {
+	if *flags.mode == "mekugi" {
 		var err error
-		dataDirectory, err = hpatchDataDirectory()
+		dataDirectory, err = mekugiDataDirectory()
 		if err != nil {
-			return fmt.Errorf("initialize hpatch response proxy: %w", err)
+			return fmt.Errorf("initialize mekugi response proxy: %w", err)
 		}
 		if *flags.modelProtocol == "ctp2" {
 			compactTokens, err = newCTP2Codec()
@@ -183,8 +183,8 @@ func RunSession(ctx context.Context, args []string, issues *CriticalErrors, read
 		mentor = newMentorHandoff()
 	}
 	titles := newSessionTitleCache()
-	if *flags.mode == "hpatch" {
-		translator := newInProcessHPatchTranslator(dataDirectory)
+	if *flags.mode == "mekugi" {
+		translator := newInProcessMekugiTranslator(dataDirectory)
 		customizedInstructions, err := codexModelInstructionFileConfigured()
 		if err != nil {
 			return fmt.Errorf("initialize model instruction rewriting: %w", err)
@@ -203,18 +203,18 @@ func RunSession(ctx context.Context, args []string, issues *CriticalErrors, read
 			runErr = errors.Join(runErr, registry.Close())
 		}()
 		frontendDirectory = registry.frontendDirectory
-		replayDirectory, err := defaultHPatchReplayDirectory()
+		replayDirectory, err := defaultMekugiReplayDirectory()
 		if err != nil {
 			return fmt.Errorf("initialize replay storage: %w", err)
 		}
-		replayStore, err := openHPatchReplayStore(replayDirectory)
+		replayStore, err := openMekugiReplayStore(replayDirectory)
 		if err != nil {
 			return fmt.Errorf("initialize replay storage: %w", err)
 		}
-		hpatchCalls = newHPatchProxy(translator, registry, customizedInstructions, compactTokens != nil, titles)
-		hpatchCalls.replayStore = replayStore
+		mekugiCalls = newMekugiProxy(translator, registry, customizedInstructions, compactTokens != nil, titles)
+		mekugiCalls.replayStore = replayStore
 		defer func() {
-			runErr = errors.Join(runErr, hpatchCalls.Close())
+			runErr = errors.Join(runErr, mekugiCalls.Close())
 		}()
 	}
 
@@ -224,8 +224,8 @@ func RunSession(ctx context.Context, args []string, issues *CriticalErrors, read
 	}
 	defer listener.Close()
 	address := listener.Addr().String()
-	if hpatchCalls != nil {
-		hpatchCalls.commentaryEndpoint, err = commentaryPublisherURL(address)
+	if mekugiCalls != nil {
+		mekugiCalls.commentaryEndpoint, err = commentaryPublisherURL(address)
 		if err != nil {
 			return fmt.Errorf("initialize commentary publisher: %w", err)
 		}
@@ -235,13 +235,13 @@ func RunSession(ctx context.Context, args []string, issues *CriticalErrors, read
 	mux.HandleFunc("GET /", serveDashboard)
 	mux.HandleFunc("GET /api/metrics", capture.ServeHTTP)
 	mux.HandleFunc("GET /v1/models", modelsHandler(provider, issues))
-	if hpatchCalls != nil {
-		mux.HandleFunc("POST "+commentaryPublisherPath, hpatchCalls.commentary.serveHTTP)
+	if mekugiCalls != nil {
+		mux.HandleFunc("POST "+commentaryPublisherPath, mekugiCalls.commentary.serveHTTP)
 	}
-	webSocketEndpoint := responsesWebSocketHandler(ctx, *flags.timeout, provider, issues, hpatchCalls, compactTokens, mentor)
+	webSocketEndpoint := responsesWebSocketHandler(ctx, *flags.timeout, provider, issues, mekugiCalls, compactTokens, mentor)
 	defer webSocketEndpoint.Close()
 	mux.Handle("GET /v1/responses", webSocketEndpoint)
-	mux.HandleFunc("POST /v1/responses", responsesHandler(ctx, *flags.timeout, provider, issues, hpatchCalls, compactTokens, mentor))
+	mux.HandleFunc("POST /v1/responses", responsesHandler(ctx, *flags.timeout, provider, issues, mekugiCalls, compactTokens, mentor))
 
 	server := &http.Server{
 		ErrorLog:          log.New(io.Discard, "", 0), // Disable net/http terminal diagnostics while Codex owns it.
@@ -313,7 +313,7 @@ func modelsHandler(provider *providerClient, issues *CriticalErrors) http.Handle
 				return
 			}
 			sum := sha256.Sum256(body)
-			response.Header.Set("ETag", fmt.Sprintf(`"hpatch-%x"`, sum))
+			response.Header.Set("ETag", fmt.Sprintf(`"mekugi-%x"`, sum))
 		}
 		for _, name := range []string{"Content-Type", "Cache-Control", "ETag"} {
 			for _, value := range response.Header.Values(name) {
@@ -330,7 +330,7 @@ func responsesHandler(
 	responseStartTimeout time.Duration,
 	provider responseProvider,
 	issues *CriticalErrors,
-	hpatchCalls *hpatchProxy,
+	mekugiCalls *mekugiProxy,
 	compactTokens *ctp2Codec,
 	mentor *mentorHandoff,
 ) http.HandlerFunc {
@@ -353,7 +353,7 @@ func responsesHandler(
 		startCtx, executionCtx, cancelRequest := requestContexts(request.Context(), lifecycle, responseStartTimeout)
 		defer cancelRequest()
 		sessionID := routingSessionID(request.Header, parsedRequest)
-		if err := executeRequest(startCtx, executionCtx, parsedRequest, request.Header, sessionID, provider, trackedWriter, issues, hpatchCalls, compactTokens, mentor); err != nil {
+		if err := executeRequest(startCtx, executionCtx, parsedRequest, request.Header, sessionID, provider, trackedWriter, issues, mekugiCalls, compactTokens, mentor); err != nil {
 			writeRequestError(trackedWriter, err)
 		}
 	}
@@ -496,7 +496,7 @@ func executeRequest(
 	provider responseProvider,
 	output io.Writer,
 	issues *CriticalErrors,
-	hpatchCalls *hpatchProxy,
+	mekugiCalls *mekugiProxy,
 	compactTokens *ctp2Codec,
 	mentor *mentorHandoff,
 ) (requestErr error) {
@@ -527,8 +527,8 @@ func executeRequest(
 	}
 	metadata, metadataValid := decodeCodexTurnMetadata(headers)
 	threadID := codexThreadID(headers)
-	if hpatchCalls != nil && metadataValid && !metadata.activityIdentityInvalid && (metadata.ThreadID == "" || metadata.ThreadID == threadID) {
-		finalization.observeCriticalNotice = func(source, text string) { hpatchCalls.activity.collect(threadID, source, "error", text) }
+	if mekugiCalls != nil && metadataValid && !metadata.activityIdentityInvalid && (metadata.ThreadID == "" || metadata.ThreadID == threadID) {
+		finalization.observeCriticalNotice = func(source, text string) { mekugiCalls.activity.collect(threadID, source, "error", text) }
 	}
 	parsedRequest.filterInput(func(map[string]json.RawMessage) { issues.stripInput(&parsedRequest, sessionID) })
 	notices := issues.transform(sessionID, metadata.SubagentKind != "")
@@ -550,7 +550,7 @@ func executeRequest(
 			recordHandoff(false)
 		}
 	}()
-	var hpatchTransform *hpatchResponseTransform
+	var mekugiTransform *mekugiResponseTransform
 	// Only the WebSocket provider guarantees non-generating warmup for every
 	// supported model. HTTP requests must retain ordinary preparation checks.
 	_, webSocketRequest := provider.(*webSocketExchange)
@@ -559,8 +559,8 @@ func executeRequest(
 		// Prewarm retains native instructions, including no CTP decoding guide.
 		compactTokens = nil
 	}
-	if hpatchCalls != nil && !prewarm {
-		hpatchTransform, err = hpatchCalls.prepareRequest(
+	if mekugiCalls != nil && !prewarm {
+		mekugiTransform, err = mekugiCalls.prepareRequest(
 			ctx,
 			&parsedRequest,
 			sessionID,
@@ -569,29 +569,29 @@ func executeRequest(
 			metadataValid,
 		)
 		if err != nil {
-			return fmt.Errorf("prepare hpatch response proxy: %w", err)
+			return fmt.Errorf("prepare mekugi response proxy: %w", err)
 		}
-		if hpatchTransform == nil {
+		if mekugiTransform == nil {
 			// Compaction and auxiliary structured turns do not receive the
-			// Hpatch instructions needed to decode CTP text.
+			// Mekugi instructions needed to decode CTP text.
 			compactTokens = nil
 		}
 	}
-	if hpatchCalls != nil {
+	if mekugiCalls != nil {
 		workspace, usable := usableRoutingDirectory(metadata.Directories)
-		if hpatchTransform != nil {
-			workspace, usable = hpatchTransform.directory, true
+		if mekugiTransform != nil {
+			workspace, usable = mekugiTransform.directory, true
 		}
 		if usable {
-			notices.retain(ctx, hpatchCalls.replayStore, workspace)
+			notices.retain(ctx, mekugiCalls.replayStore, workspace)
 		} else {
 			// Without a canonical namespace the notice cannot be stripped from a
 			// later ordinary turn, so keep it queued instead of emitting it.
 			notices.suppress()
 		}
 	}
-	if hpatchTransform != nil {
-		defer hpatchTransform.Close()
+	if mekugiTransform != nil {
+		defer mekugiTransform.Close()
 	}
 	var bridge *subagentBridge
 	var compactTransform *ctp2ResponseTransform
@@ -652,8 +652,8 @@ func executeRequest(
 	}
 	finalization.upstreamStatusCode = response.StatusCode
 	finalization.failurePhase = requestFailureInspectResponse
-	if hpatchTransform != nil {
-		hpatchTransform.ctx = executionCtx
+	if mekugiTransform != nil {
+		mekugiTransform.ctx = executionCtx
 	}
 	streamResponse, err := prepareUpstreamBody(response, parsedRequest.streamResponse)
 	if err != nil {
@@ -671,31 +671,31 @@ func executeRequest(
 		if bridge != nil {
 			responseTransform = composeResponseTransformers(responseTransform, bridge)
 		}
-		if hpatchTransform != nil {
-			responseTransform = composeResponseTransformers(responseTransform, hpatchTransform)
+		if mekugiTransform != nil {
+			responseTransform = composeResponseTransformers(responseTransform, mekugiTransform)
 		}
 		if notices != nil {
 			responseTransform = composeResponseTransformers(responseTransform, notices)
 		}
 	}
-	if hpatchTransform != nil && responseTransform == nil {
+	if mekugiTransform != nil && responseTransform == nil {
 		finalization.failurePhase = requestFailureTransform
-		if err := hpatchTransform.Finish(false); err != nil {
+		if err := mekugiTransform.Finish(false); err != nil {
 			response.Body.Close()
-			return fmt.Errorf("record hpatch request overhead: %w", err)
+			return fmt.Errorf("record mekugi request overhead: %w", err)
 		}
 	}
 	var untransformedUsage *threadUsageObservation
-	if hpatchCalls != nil && metadataValid {
-		untransformedUsage = hpatchCalls.usage.observation(threadID, metadata.ThreadID)
+	if mekugiCalls != nil && metadataValid {
+		untransformedUsage = mekugiCalls.usage.observation(threadID, metadata.ThreadID)
 	}
 	observeUsage := func(counts tokenCounts) {
 		finalization.observation.usageCounts = counts
 		finalization.observation.usageObserved = true
-		if hpatchTransform != nil {
-			hpatchTransform.observeResponseUsage(counts)
+		if mekugiTransform != nil {
+			mekugiTransform.observeResponseUsage(counts)
 		} else {
-			// Compaction has no hpatch response transform, but still consumes
+			// Compaction has no mekugi response transform, but still consumes
 			// provider tokens belonging to the same stable thread.
 			untransformedUsage.observe(counts)
 		}

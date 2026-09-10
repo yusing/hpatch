@@ -13,7 +13,7 @@ import (
 
 func TestResponsesWebSocketCapturesLogicalExchanges(t *testing.T) {
 	capturePath := filepath.Join(t.TempDir(), "capture.jsonl")
-	recorder, err := New(Config{Output: capturePath, Mode: "hpatch", ModelProtocol: "native"})
+	recorder, err := New(Config{Output: capturePath, Mode: "mekugi", ModelProtocol: "native"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -147,7 +147,7 @@ func TestResponsesWebSocketCapturesLogicalExchanges(t *testing.T) {
 }
 
 func TestResponsesWebSocketHandshakeDoesNotCreateLogicalRequest(t *testing.T) {
-	recorder, err := New(Config{Mode: "hpatch", ModelProtocol: "native"})
+	recorder, err := New(Config{Mode: "mekugi", ModelProtocol: "native"})
 	if err != nil {
 		t.Fatal(err)
 	}

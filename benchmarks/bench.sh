@@ -47,8 +47,8 @@ benchmark_main() {
 	fi
 
 
-	mkdir -p "$run_dir/work" "$run_dir/hpatch-config" "$capture_directory" \
-		"$run_dir/hpatch-runtime/control" "$run_dir/hpatch-runtime/hpatch" "$instruction_dir"
+	mkdir -p "$run_dir/work" "$run_dir/mekugi-config" "$capture_directory" \
+		"$run_dir/mekugi-runtime/control" "$run_dir/mekugi-runtime/mekugi" "$instruction_dir"
 	: >"$results"
 
 	run_phase image-build build_benchmark_image
@@ -57,12 +57,12 @@ benchmark_main() {
 	configure_issue_reporting
 	run_phase dependencies prepare_dependency_cache
 	printf 'Control base instructions: %s\n' "$control_instruction"
-	printf 'Hpatch base instructions: %s\n' "$hpatch_instruction"
+	printf 'Mekugi base instructions: %s\n' "$mekugi_instruction"
 	if [[ $benchmark_mode == ctp-only ]]; then
 		printf 'Native and CTP/2-active receive the same pre-router instructions; the router selects protocol guidance.\n'
 	fi
 	if [[ $benchmark_mode == mentor-handoff ]]; then
-		printf 'Both arms use the same static %s/%s parent prompt and %s/%s child role and prompt; only the hpatch-mentor router enables the child handoff.\n' \
+		printf 'Both arms use the same static %s/%s parent prompt and %s/%s child role and prompt; only the mekugi-mentor router enables the child handoff.\n' \
 			"$mentor_parent_model" "$mentor_parent_reasoning_effort" "$model" "$reasoning_effort"
 	fi
 	printf 'Base instruction override source: %s\n' "$instruction_source"

@@ -19,7 +19,7 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
-	"github.com/yusing/hpatch/capturer"
+	"github.com/yusing/mekugi/capturer"
 )
 
 var errProviderWebSocketResponse = errors.New("provider websocket error")
@@ -369,7 +369,7 @@ func webSocketRequest(body []byte, headers http.Header, cacheKey string) ([]byte
 	if thread := headers.Get(threadIDHeader); thread != "" {
 		handshake.Set(clientRequestIDHeader, thread)
 	}
-	handshake.Del(hpatchCaptureIDHeader)
+	handshake.Del(mekugiCaptureIDHeader)
 	handshake.Del("Content-Type")
 	handshake.Del("Accept")
 	handshake.Set("OpenAI-Beta", responsesWebSocketBeta)

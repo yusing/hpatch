@@ -19,7 +19,7 @@ type grokTranslation struct {
 }
 
 func grokToolName(namespace, name string) string {
-	if namespace == "" && len(name) > 0 && len(name) <= 64 && !strings.HasPrefix(name, "_hpatch_") {
+	if namespace == "" && len(name) > 0 && len(name) <= 64 && !strings.HasPrefix(name, "_mekugi_") {
 		valid := true
 		for _, c := range name {
 			if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '_' || c == '-') {
@@ -32,7 +32,7 @@ func grokToolName(namespace, name string) string {
 		}
 	}
 	sum := sha256.Sum256([]byte(namespace + "\x00" + name))
-	return "_hpatch_" + hex.EncodeToString(sum[:16])
+	return "_mekugi_" + hex.EncodeToString(sum[:16])
 }
 
 // translateGrokRequest translates only representations with defined equivalents.

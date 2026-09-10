@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
-	"github.com/yusing/hpatch/capturer"
+	"github.com/yusing/mekugi/capturer"
 )
 
 func TestResponsesWebSocketCaptureSeparatesSteeringAndAutomaticRequest(t *testing.T) {

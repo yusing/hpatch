@@ -4,7 +4,7 @@ Status: implemented. `REQ-SYMBOL-001` owns the normative interface.
 
 ## Evidence
 
-Recent non-hpatch long-running sessions (Codex and Claude, 1 August 2026 onward) show a
+Recent non-mekugi long-running sessions (Codex and Claude, 1 August 2026 onward) show a
 repeated acquire loop that `hread`, `hgrep`, and `inspect_file` do not close.
 
 - One polymarket-ev-daemon Codex session issued `hread daemon.go` 57 times, `health.go` 60
@@ -134,7 +134,7 @@ Metrics do not start a second query.
 - A grep fallback when a resolver is missing. That is `hgrep`.
 - Workspace-wide search by name alone. Start from a verified row.
 - Implementations, hover, rename, or completion.
-- Mixing symbol rows and hpatch recovery.
+- Mixing symbol rows and mekugi recovery.
 
 ## Guidance
 

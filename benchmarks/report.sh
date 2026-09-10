@@ -24,7 +24,7 @@ mode=paired
 require_ctp_input_compression=false
 require_ctp_output_compression=false
 treatment_protocol=native
-if [[ ($mode == paired || $mode == hpatch-diagnostic) && -s $config ]]; then
+if [[ ($mode == paired || $mode == mekugi-diagnostic) && -s $config ]]; then
 	treatment_protocol=$(jq -r '.treatment_model_protocol // "native"' "$config")
 fi
 mentor_protocol=native
@@ -40,10 +40,10 @@ baseline_arm=control
 baseline_label=Control
 baseline_metrics="$run_dir/control-metrics.json"
 baseline_capture="$run_dir/captures/control.jsonl"
-treatment_arm=hpatch
-treatment_label=Hpatch
-treatment_metrics="$run_dir/hpatch-metrics.json"
-treatment_capture="$run_dir/captures/hpatch.jsonl"
+treatment_arm=mekugi
+treatment_label=Mekugi
+treatment_metrics="$run_dir/mekugi-metrics.json"
+treatment_capture="$run_dir/captures/mekugi.jsonl"
 case "$mode" in
 	control-only)
 		baseline_arm=
@@ -62,15 +62,15 @@ case "$mode" in
 		treatment_label='CTP/2'
 		;;
 	mentor-handoff)
-		baseline_arm=hpatch
-		baseline_label=Hpatch
-		treatment_arm=hpatch-mentor
-		treatment_label='Hpatch + Mentor Handoff'
-		baseline_metrics="$run_dir/hpatch-metrics.json"
-		treatment_metrics="$run_dir/hpatch-mentor-metrics.json"
+		baseline_arm=mekugi
+		baseline_label=Mekugi
+		treatment_arm=mekugi-mentor
+		treatment_label='Mekugi + Mentor Handoff'
+		baseline_metrics="$run_dir/mekugi-metrics.json"
+		treatment_metrics="$run_dir/mekugi-mentor-metrics.json"
 		;;
-	hpatch-only|hpatch-diagnostic)
-		if [[ $treatment_protocol == ctp2 ]]; then treatment_label="Hpatch + CTP/2"; fi
+	mekugi-only|mekugi-diagnostic)
+		if [[ $treatment_protocol == ctp2 ]]; then treatment_label="Mekugi + CTP/2"; fi
 		baseline_arm=
 		baseline_label=
 		baseline_metrics=
@@ -79,7 +79,7 @@ case "$mode" in
 	paired)
 		if [[ $treatment_protocol == ctp2 ]]; then
 			baseline_label="Stock"
-			treatment_label="Hpatch + CTP/2"
+			treatment_label="Mekugi + CTP/2"
 		fi
 		;;
 	*) printf 'report.sh: unsupported benchmark mode: %s\n' "$mode" >&2; exit 1 ;;
@@ -210,7 +210,7 @@ treatment_output=$(metric "$treatment_metrics" '.usage.output_tokens')
 ctp_failed=false
 
 {
-	printf '# Hpatch benchmark: %s\n\n' "$task_id"
+	printf '# Mekugi benchmark: %s\n\n' "$task_id"
 	printf -- '- Mode: `%s`\n' "$mode"
 	printf -- '- Model: `%s`\n' "$model"
 	printf -- '- Reasoning effort: `%s`\n' "$effort"
@@ -290,7 +290,7 @@ ctp_failed=false
     done
 
 	printf '\n## Protocol transformation\n\n'
-	printf 'Token estimates count decoded JSON keys and scalar values, excluding outer JSON framing and escaping; literal escapes inside content still count. Byte counts retain exact observed bytes. Input savings compare the actual native request AFTER replay and Hpatch projection with its final CTP provider request, not incoming Codex history. Output representation differences compare complete model-origin output arrays, reconstructed from finalized stream items when needed and excluding router-generated commentary, echoed tools, and other response metadata as well as repeated SSE events. Output differences include tool-carrier translation and are not CTP savings or stock-model savings. Positive output differences mean the delivered representation is larger than provider output. Only paired provider usage measures actual model-use differences. Retries remain separate provider attempts.\n\n'
+	printf 'Token estimates count decoded JSON keys and scalar values, excluding outer JSON framing and escaping; literal escapes inside content still count. Byte counts retain exact observed bytes. Input savings compare the actual native request AFTER replay and Mekugi projection with its final CTP provider request, not incoming Codex history. Output representation differences compare complete model-origin output arrays, reconstructed from finalized stream items when needed and excluding router-generated commentary, echoed tools, and other response metadata as well as repeated SSE events. Output differences include tool-carrier translation and are not CTP savings or stock-model savings. Positive output differences mean the delivered representation is larger than provider output. Only paired provider usage measures actual model-use differences. Retries remain separate provider attempts.\n\n'
 	printf '| Arm | CTP input bytes saved | CTP input tokens saved | Delivery byte expansion | Delivery token expansion | Provider attempts |\n'
 	printf '|---|---:|---:|---:|---:|---:|\n'
 	if [[ $has_baseline == true ]]; then
@@ -358,18 +358,18 @@ ctp_failed=false
 	print_tool_rows "$treatment_label" "$treatment_metrics"
 
 	if [[ $mode != control-only ]]; then
-		printf '\n## Hpatch delivery\n\n'
+		printf '\n## HPATCH delivery\n\n'
 		printf '| Measure | Result |\n|---|---:|\n'
 		for spec in \
-			'Calls:.hpatch.calls' 'Corrections:.hpatch.corrections' \
-			'Successful deliveries:.hpatch.successful' 'Rejected deliveries:.hpatch.rejected' \
-			'Unmatched calls:.hpatch.unmatched' 'Provider Hpatch input tokens:.hpatch.provider_input_tokens' \
-			'Delivered carrier input tokens:.hpatch.delivered_input_tokens' \
-			'Carrier token expansion:.hpatch.carrier_input_tokens_expansion'; do
+			'Calls:.mekugi.calls' 'Corrections:.mekugi.corrections' \
+			'Successful deliveries:.mekugi.successful' 'Rejected deliveries:.mekugi.rejected' \
+			'Unmatched calls:.mekugi.unmatched' 'Provider HPATCH input tokens:.mekugi.provider_input_tokens' \
+			'Delivered carrier input tokens:.mekugi.delivered_input_tokens' \
+			'Carrier token expansion:.mekugi.carrier_input_tokens_expansion'; do
 			label=${spec%%:*}; expression=${spec#*:}
 			printf '| %s | %s |\n' "$label" "$(metric "$treatment_metrics" "$expression")"
 		done
-		jq -r '.hpatch.diagnostics // {} | to_entries[] | "| Diagnostic `\(.key)` | \(.value) |"' "$treatment_metrics"
+		jq -r '.mekugi.diagnostics // {} | to_entries[] | "| Diagnostic `\(.key)` | \(.value) |"' "$treatment_metrics"
 	fi
 
 	printf '\n## Capture completeness\n\n'

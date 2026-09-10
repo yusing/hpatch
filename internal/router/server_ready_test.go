@@ -82,7 +82,7 @@ func TestRunSessionExportsFinalMetricsWithoutLogging(t *testing.T) {
 		t.Fatal(err)
 	}
 	body, err := os.ReadFile(path)
-	if err != nil || !bytes.Contains(body, []byte(`"schema":"hpatch.capture.metrics.v4"`)) {
+	if err != nil || !bytes.Contains(body, []byte(`"schema":"mekugi.capture.metrics.v4"`)) {
 		t.Fatalf("metrics = %s, %v", body, err)
 	}
 }
@@ -116,7 +116,7 @@ func TestRunSessionRejectsUnusableReplayStorageBeforeReady(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(state, "mekugi"), []byte("not a directory"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	err := RunSession(t.Context(), []string{"--mode", "hpatch", "--model-protocol", "native", "--mentor-handoff=false"}, nil, func(Session) { t.Error("unusable replay storage reached readiness") }, nil)
+	err := RunSession(t.Context(), []string{"--mode", "mekugi", "--model-protocol", "native", "--mentor-handoff=false"}, nil, func(Session) { t.Error("unusable replay storage reached readiness") }, nil)
 	if err == nil || !strings.Contains(err.Error(), "initialize replay storage") {
 		t.Fatalf("startup error = %v", err)
 	}

@@ -10,13 +10,13 @@ import (
 	"strings"
 
 	"github.com/BurntSushi/toml"
-	"github.com/yusing/hpatch/capturer"
-	codexinstructions "github.com/yusing/hpatch/contrib/codex"
+	"github.com/yusing/mekugi/capturer"
+	codexinstructions "github.com/yusing/mekugi/contrib/codex"
 )
 
 const (
-	hpatchInstructionsStartMarker = "<!-- hpatch-model-instructions:start -->"
-	hpatchInstructionsEndMarker   = "<!-- hpatch-model-instructions:end -->"
+	mekugiInstructionsStartMarker = "<!-- mekugi-model-instructions:start -->"
+	mekugiInstructionsEndMarker   = "<!-- mekugi-model-instructions:end -->"
 
 	// Exact stock fragments make upstream prompt changes fail closed instead of
 	// leaving conflicting editing guidance in the forwarded request.
@@ -142,14 +142,14 @@ func rewriteDeveloperModelInstructions(raw json.RawMessage, customized bool, mod
 
 func renderModelInstructions(input string, appendIfMissing bool, modelInstructions string) (string, string, error) {
 	lines := instructionLines(input)
-	starts := matchingInstructionLines(lines, hpatchInstructionsStartMarker)
-	ends := matchingInstructionLines(lines, hpatchInstructionsEndMarker)
+	starts := matchingInstructionLines(lines, mekugiInstructionsStartMarker)
+	ends := matchingInstructionLines(lines, mekugiInstructionsEndMarker)
 	if len(starts) != 0 || len(ends) != 0 {
 		if len(starts) != 1 || len(ends) != 1 {
-			return "", "rejected", errors.New("responses instructions contain incomplete hpatch markers")
+			return "", "rejected", errors.New("responses instructions contain incomplete mekugi markers")
 		}
 		if starts[0].number >= ends[0].number {
-			return "", "rejected", errors.New("responses instructions contain reversed hpatch markers")
+			return "", "rejected", errors.New("responses instructions contain reversed mekugi markers")
 		}
 		return rewriteStockToolConflicts(input[:starts[0].start]) + modelInstructions + rewriteStockToolConflicts(input[ends[0].end:]), "marked", nil
 	}
@@ -203,7 +203,7 @@ func renderModelInstructions(input string, appendIfMissing bool, modelInstructio
 		}
 		return rewriteStockToolConflicts(input) + separator + modelInstructions, "custom-append", nil
 	}
-	return "", "rejected", errors.New("responses instructions match neither stock nor marked hpatch guidance")
+	return "", "rejected", errors.New("responses instructions match neither stock nor marked mekugi guidance")
 }
 
 func renderStockModelInstructions(lines []instructionLine, first, last, rgInstruction, execInstruction instructionLine, modelInstructions string) string {

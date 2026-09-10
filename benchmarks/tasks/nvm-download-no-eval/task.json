@@ -19,13 +19,13 @@
   "hidden_files": [
     {
       "source": "hidden_nvm_download_no_eval.sh",
-      "destination": ".hpatch_benchmark_nvm_download.sh"
+      "destination": ".mekugi_benchmark_nvm_download.sh"
     }
   ],
   "graders": [
     {
       "name": "download-argument-integrity",
-      "command": ["sh", ".hpatch_benchmark_nvm_download.sh"],
+      "command": ["sh", ".mekugi_benchmark_nvm_download.sh"],
       "required": true,
       "expect_base": "fail",
       "baseline_output_contains": "nvm_download evaluated untrusted argument text",

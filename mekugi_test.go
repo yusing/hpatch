@@ -1,4 +1,4 @@
-package hpatch
+package mekugi
 
 import (
 	"fmt"
@@ -9,10 +9,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/yusing/hpatch/internal/patchtest"
+	"github.com/yusing/mekugi/internal/patchtest"
 )
 
-func TestHPatch2NormalMultiFileWorkflow(t *testing.T) {
+func TestMekugi2NormalMultiFileWorkflow(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, root, "a.txt", "alpha old\nkeep\nend\n", 0o750)
 	if err := os.Chmod(filepath.Join(root, "a.txt"), 0o750); err != nil {
@@ -55,7 +55,7 @@ func TestHPatch2NormalMultiFileWorkflow(t *testing.T) {
 	}
 }
 
-func TestHPatch2TranslateMatchesNormalMode(t *testing.T) {
+func TestMekugi2TranslateMatchesNormalMode(t *testing.T) {
 	initial := map[string]string{
 		"code.go":     "package sample\n\nvar value = old\n",
 		"obsolete.go": "package obsolete\n",
@@ -97,7 +97,7 @@ func TestHPatch2TranslateMatchesNormalMode(t *testing.T) {
 	}
 }
 
-func TestHPatch2LineAndRangeTerminatorSemantics(t *testing.T) {
+func TestMekugi2LineAndRangeTerminatorSemantics(t *testing.T) {
 	tests := []struct {
 		name, content, script, want string
 	}{
@@ -128,7 +128,7 @@ func TestHPatch2LineAndRangeTerminatorSemantics(t *testing.T) {
 	}
 }
 
-func TestHPatch2EmptyInitializerRemainsEmptyFile(t *testing.T) {
+func TestMekugi2EmptyInitializerRemainsEmptyFile(t *testing.T) {
 	root := t.TempDir()
 	result, err := applyForHostAtTest(t, root, "new empty.txt\ntype \"\"\n", "")
 	if err != nil {
@@ -139,7 +139,7 @@ func TestHPatch2EmptyInitializerRemainsEmptyFile(t *testing.T) {
 	}
 }
 
-func TestHPatch2SameBoundaryInsertionsKeepScriptOrder(t *testing.T) {
+func TestMekugi2SameBoundaryInsertionsKeepScriptOrder(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, root, "file.txt", "target\n", 0o644)
 	target := row(1, "target")
@@ -160,7 +160,7 @@ func TestHPatch2SameBoundaryInsertionsKeepScriptOrder(t *testing.T) {
 	}
 }
 
-func TestHPatch2InsertionsAtReplacementBoundariesAreAllowed(t *testing.T) {
+func TestMekugi2InsertionsAtReplacementBoundariesAreAllowed(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, root, "file.txt", "target\n", 0o644)
 	target := row(1, "target")
@@ -179,7 +179,7 @@ func TestHPatch2InsertionsAtReplacementBoundariesAreAllowed(t *testing.T) {
 	}
 }
 
-func TestHPatch2RejectsInvalidTargetsAtomically(t *testing.T) {
+func TestMekugi2RejectsInvalidTargetsAtomically(t *testing.T) {
 	tests := []struct{ name, script, reason string }{
 		{"stale", "in file.txt\ntype 2:0000 \"B\"", "row-stale"},
 		{"missing", "in file.txt\ntype 9:0000 \"B\"", "row-missing"},
@@ -206,7 +206,7 @@ func TestHPatch2RejectsInvalidTargetsAtomically(t *testing.T) {
 	}
 }
 
-func TestHPatch2RangeVerificationChecksEndpointsNotInterior(t *testing.T) {
+func TestMekugi2RangeVerificationChecksEndpointsNotInterior(t *testing.T) {
 	script := "in file.txt\ntype " + row(1, "first") + ".." + row(3, "last") + ` "replacement"`
 	for _, mode := range []string{"apply", "translate"} {
 		for _, test := range []struct {
@@ -306,7 +306,7 @@ func TestCallerCoordinatedEditsRefreshBaselineAfterHandoff(t *testing.T) {
 	}
 }
 
-func TestHPatch2RelocatesUniqueRowsAfterPriorEdits(t *testing.T) {
+func TestMekugi2RelocatesUniqueRowsAfterPriorEdits(t *testing.T) {
 	tests := []struct {
 		name    string
 		content string
@@ -353,7 +353,7 @@ func TestHPatch2RelocatesUniqueRowsAfterPriorEdits(t *testing.T) {
 	}
 }
 
-func TestHPatch2ResolvesPostEditCoordinateForUnchangedBaselineRow(t *testing.T) {
+func TestMekugi2ResolvesPostEditCoordinateForUnchangedBaselineRow(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, root, "file.txt", "alpha\n}\nbeta\n}\n", 0o644)
 	script := "in file.txt\n" +
@@ -369,7 +369,7 @@ func TestHPatch2ResolvesPostEditCoordinateForUnchangedBaselineRow(t *testing.T) 
 	}
 }
 
-func TestHPatch2DoesNotResolvePostEditCoordinateForIntroducedRow(t *testing.T) {
+func TestMekugi2DoesNotResolvePostEditCoordinateForIntroducedRow(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, root, "file.txt", "alpha\nbeta\n", 0o644)
 	script := "in file.txt\n" +
@@ -384,7 +384,7 @@ func TestHPatch2DoesNotResolvePostEditCoordinateForIntroducedRow(t *testing.T) {
 	}
 }
 
-func TestHPatch2RejectsAmbiguousRelocatedRow(t *testing.T) {
+func TestMekugi2RejectsAmbiguousRelocatedRow(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, root, "file.txt", "other\nalpha\nalpha\n", 0o644)
 	before := readTestFile(t, root, "file.txt")
@@ -398,7 +398,7 @@ func TestHPatch2RejectsAmbiguousRelocatedRow(t *testing.T) {
 	}
 }
 
-func TestHPatch2IgnoresRedundantStaleLiteralAnchor(t *testing.T) {
+func TestMekugi2IgnoresRedundantStaleLiteralAnchor(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, root, "file.txt", "alpha\nunique target\nomega\n", 0o644)
 	script := `in file.txt
@@ -412,7 +412,7 @@ type 1:ffff "unique target" "replacement"`
 	}
 }
 
-func TestHPatch2RejectsStaleLiteralAnchorWhenLiteralIsAmbiguous(t *testing.T) {
+func TestMekugi2RejectsStaleLiteralAnchorWhenLiteralIsAmbiguous(t *testing.T) {
 	root := t.TempDir()
 	before := "target\nanchor\ntarget\n"
 	writeTestFile(t, root, "file.txt", before, 0o644)
@@ -430,7 +430,7 @@ type 2:ffff "target" "replacement"`
 	}
 }
 
-func TestHPatch2NewFileInitializerIsImmediate(t *testing.T) {
+func TestMekugi2NewFileInitializerIsImmediate(t *testing.T) {
 	tests := []struct{ name, script, wantMessage string }{
 		{"existing", "in existing.txt\ntype \"new\"", "bare type VALUE only initializes the immediately preceding new; editing an existing file requires a line, range, or text target"},
 		{"intervening", "new new.txt\nin existing.txt\nin new.txt\ntype \"new\"", ""},
@@ -456,7 +456,7 @@ func TestHPatch2NewFileInitializerIsImmediate(t *testing.T) {
 	}
 }
 
-func TestHPatch2RejectsInvalidMutationForms(t *testing.T) {
+func TestMekugi2RejectsInvalidMutationForms(t *testing.T) {
 	for _, command := range []string{
 		"add " + row(1, "x") + ".." + row(1, "x") + ` "value"`,
 		`type EOF "value"`,
@@ -473,7 +473,7 @@ func TestHPatch2RejectsInvalidMutationForms(t *testing.T) {
 	}
 }
 
-func TestHPatch2FixedHeredocAndInlineInsertion(t *testing.T) {
+func TestMekugi2FixedHeredocAndInlineInsertion(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, root, "file.txt", "target\n", 0o644)
 	script := "in file.txt\n" +
@@ -489,7 +489,7 @@ func TestHPatch2FixedHeredocAndInlineInsertion(t *testing.T) {
 	}
 }
 
-func TestHPatch2HeredocValueSupportsTextTarget(t *testing.T) {
+func TestMekugi2HeredocValueSupportsTextTarget(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, root, "file.txt", "prefix needle suffix\n", 0o644)
 	script := "in file.txt\ntype " + row(1, "prefix needle suffix") + " \"needle\" <<PATCH\n" +
@@ -504,7 +504,7 @@ func TestHPatch2HeredocValueSupportsTextTarget(t *testing.T) {
 	}
 }
 
-func TestHPatch2UnanchoredLiteralTargetsUseImmutableBaseline(t *testing.T) {
+func TestMekugi2UnanchoredLiteralTargetsUseImmutableBaseline(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, root, "file.txt", "alpha x\nbeta x\n", 0o644)
 	script := strings.Join([]string{
@@ -521,7 +521,7 @@ func TestHPatch2UnanchoredLiteralTargetsUseImmutableBaseline(t *testing.T) {
 	}
 }
 
-func TestHPatch2UnanchoredLiteralHeredocAndMissingOccurrence(t *testing.T) {
+func TestMekugi2UnanchoredLiteralHeredocAndMissingOccurrence(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, root, "file.txt", "before needle after\n", 0o644)
 	script := "in file.txt\ntype \"needle\" <<PATCH\nmultiline\nvalue\nPATCH\n"
@@ -544,7 +544,7 @@ func TestHPatch2UnanchoredLiteralHeredocAndMissingOccurrence(t *testing.T) {
 	}
 }
 
-func TestHPatch2QuotedDoubleLessRemainsInlineText(t *testing.T) {
+func TestMekugi2QuotedDoubleLessRemainsInlineText(t *testing.T) {
 	tests := []struct {
 		name    string
 		path    string
@@ -613,7 +613,7 @@ func TestHPatch2QuotedDoubleLessRemainsInlineText(t *testing.T) {
 	}
 }
 
-func TestHPatch2InvalidHeredocIsOneHeaderOwnedFailure(t *testing.T) {
+func TestMekugi2InvalidHeredocIsOneHeaderOwnedFailure(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, root, "file.txt", "unchanged\n", 0o644)
 	script := "in file.txt\ntype " + row(1, "unchanged") + " <<BODY\n" +
@@ -632,7 +632,7 @@ func TestHPatch2InvalidHeredocIsOneHeaderOwnedFailure(t *testing.T) {
 	}
 }
 
-func TestHPatch2TargetLiteralRejectsC0ControlsExceptTab(t *testing.T) {
+func TestMekugi2TargetLiteralRejectsC0ControlsExceptTab(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, root, "file.txt", "a\tb\n", 0o644)
 	valid := "in file.txt\ntype " + row(1, "a\tb") + ` "a\tb" "ok"`
@@ -684,7 +684,7 @@ func TestParseTargetIdentityUsesRootTargetSemantics(t *testing.T) {
 	}
 }
 
-func TestHPatch2MultilineLiteralTargets(t *testing.T) {
+func TestMekugi2MultilineLiteralTargets(t *testing.T) {
 	tests := []struct {
 		name    string
 		content string
@@ -737,7 +737,7 @@ func TestHPatch2MultilineLiteralTargets(t *testing.T) {
 	}
 }
 
-func TestHPatch2MultilineLiteralTargetRejectionsAreAtomic(t *testing.T) {
+func TestMekugi2MultilineLiteralTargetRejectionsAreAtomic(t *testing.T) {
 	tests := []struct {
 		name, content, script, diagnostic string
 	}{

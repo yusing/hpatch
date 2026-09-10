@@ -1,8 +1,8 @@
-package hpatch
+package mekugi
 
 import "context"
 
-// AttemptMetadata identifies one router-owned hpatch attempt and its recovery chain.
+// AttemptMetadata identifies one router-owned mekugi attempt and its recovery chain.
 type AttemptMetadata struct {
 	SessionID       string
 	Title           string

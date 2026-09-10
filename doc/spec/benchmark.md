@@ -25,14 +25,14 @@ so the compiled guidance and effective treatment can be reproduced.
 
 Supported modes are:
 
-- `paired`: stock passthrough/native control versus Hpatch + CTP/2 with alternating order;
+- `paired`: stock passthrough/native control versus Mekugi + CTP/2 with alternating order;
 - `control-only`: exactly one fresh stock passthrough/native attempt, without a treatment router;
-- `hpatch-only`: one fresh Hpatch attempt against an explicitly matching published control result;
-- `hpatch-diagnostic`: one fresh Hpatch attempt without a control arm;
-- `ctp-only`: Hpatch native protocol versus Hpatch CTP/2 with alternating order; and
-- `mentor-handoff`: Hpatch versus Hpatch with the bounded mentor model schedule.
+- `mekugi-only`: one fresh Mekugi attempt against an explicitly matching current-schema published control result selected by `CONTROL_BASELINE_DIR`;
+- `mekugi-diagnostic`: one fresh Mekugi attempt without a control arm;
+- `ctp-only`: Mekugi native protocol versus Mekugi CTP/2 with alternating order; and
+- `mentor-handoff`: Mekugi versus Mekugi with the bounded mentor model schedule.
 
-`hpatch-diagnostic` MUST support `DIAGNOSTIC_MODEL_PROTOCOL=native|ctp2`, defaulting
+`mekugi-diagnostic` MUST support `DIAGNOSTIC_MODEL_PROTOCOL=native|ctp2`, defaulting
 to native, without scheduling or importing a control. The explicit option MUST be
 rejected in other modes. Configuration, capture validation, and report labeling MUST
 agree on the selected treatment protocol; CTP acceptance criteria remain unchanged.
@@ -55,12 +55,12 @@ The default preset MUST use `paired`, `gpt-6-astra`, `medium` reasoning effort, 
 repetition (one attempt per arm), with issue reporting and Mentor Handoff disabled.
 
 Control-only MUST disable issue reporting, collect only control capture and metrics, and validate
-that evidence without requiring or inventing a treatment, Hpatch loop result, or A/B delta.
+that evidence without requiring or inventing a treatment, Mekugi loop result, or A/B delta.
 Preparation-only MUST qualify the historical base and oracle without invoking a model. The runner
 MUST expose phase elapsed times separately from measured agent wall time.
 
 The control router MUST explicitly disable Mentor Handoff, including when it runs in
-Hpatch mode. CTP-only arms MUST both disable Mentor; only the Mentor treatment enables it.
+`mekugi` mode. CTP-only arms MUST both disable Mentor; only the Mentor treatment enables it.
 Mentor mode MUST permit an independently configured main model and a shared `native` or `ctp2`
 protocol for both arms. These selections MUST NOT change the router-owned child mentor schedule.
 
@@ -91,7 +91,7 @@ collection MUST NOT require the listener to survive Codex exit.
 
 For every fresh arm, report generation MUST:
 
-1. require `hpatch.capture.metrics.v4` and schema-6 sanitized records;
+1. require `mekugi.capture.metrics.v4` and schema-6 sanitized records;
 2. reject empty capture, capture errors, incomplete records, boundary mismatches, duplicate client
    records, missing provider records, attempt gaps, write failures, skipped requests, and dropped
    exchange detail;
@@ -101,13 +101,13 @@ For every fresh arm, report generation MUST:
 4. use capturer-owned provider usage and cache attribution for all model-consumption totals;
 5. report signed client-versus-final-provider request savings and model-origin-output-array savings,
    excluding router-generated commentary and echoed response metadata while reporting complete response-stream transport separately;
-6. report actual provider-emitted and client-delivered tool shapes, including correlated Hpatch
+6. report actual provider-emitted and client-delivered tool shapes, including correlated Mekugi
    success, rejection, correction, unmatched, diagnostic, and carrier-token totals;
 7. report actual provider models from exchanges, including parent and child traffic; and
 8. omit request, session, thread, tool-call, and capture identities from `summary.md`.
 
 Paired, CTP/2, and Mentor Handoff reports MUST require current baseline and treatment capture plus
-snapshots; a missing, empty, or wrong-schema baseline MUST fail. Hpatch-only and diagnostic modes
+snapshots; a missing, empty, or wrong-schema baseline MUST fail. `mekugi-only` and diagnostic modes
 MAY omit a fresh baseline. Control-only MUST require a fresh baseline and MAY omit treatment evidence. Each root thread's provider attempts MUST use its
 configured parent model. Mentor child traffic MUST match a retained child proof, use only its
 configured child model in the baseline, use only the child or mentor model in the treatment, and
@@ -128,9 +128,9 @@ retries MUST not be counted as new logical requests, retry usage MUST not be dis
 reporting MUST include provider attempts without usage while distinguishing usage-bearing attempts.
 
 The validator MUST bind each arm to its router configuration: `control` is passthrough/native;
-`hpatch` in paired and diagnostic modes uses the retained `treatment_model_protocol` (native for historical
-records without that field); `hpatch` in hpatch-only mode and `native` are Hpatch/native; `ctp` is Hpatch/CTP2; and both Mentor
-arms use Hpatch with the shared protocol selected in the retained benchmark configuration (native
+`mekugi` in paired and diagnostic modes uses the retained `treatment_model_protocol` (native for historical
+records without that field); `mekugi` in mekugi-only mode and `native` are Mekugi/native; `ctp` is Mekugi/CTP2; and both Mentor
+arms use Mekugi with the shared protocol selected in the retained benchmark configuration (native
 by default). Every raw record
 MUST agree with its snapshot mode and protocol. Self-consistent evidence from the wrong configuration
 MUST fail before it receives a treatment label.
@@ -180,11 +180,11 @@ Acceptance:
 
 1. Compose runs each arm as a session-scoped `mekugi codex` container, with no
    persistent router or capturer service; every attempt retains both capture exports.
-2. Report fixtures prove provider usage, signed arm deltas, cache values, protocol savings, Hpatch
+2. Report fixtures prove provider usage, signed arm deltas, cache values, protocol savings, Mekugi
    delivery, and zero capture-health errors, and reject altered aggregate usage, incomplete
    evidence, absent baseline evidence, wrong router mode or protocol, wrong provider models, and
    failed required CTP compression.
-3. Paired, CTP/2, Mentor Handoff, Hpatch-only, control-only, and diagnostic scheduling reuse the same capture
+3. Paired, CTP/2, Mentor Handoff, `mekugi-only`, control-only, and diagnostic scheduling reuse the same capture
    owner and report schema.
 4. A failed attempt or infrastructure check retains available artifacts, stops task-owned Compose
    resources, and returns nonzero.

@@ -1,4 +1,4 @@
-package hpatch
+package mekugi
 
 import (
 	"errors"
@@ -42,7 +42,7 @@ func TestRollbackFailureIsReportedAndBackupPreserved(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "rollback also failed") || !strings.Contains(err.Error(), "b.txt") {
 		t.Fatalf("commitChanges() error = %v", err)
 	}
-	backups, globErr := filepath.Glob(filepath.Join(root, ".b.txt.hpatch-backup-*"))
+	backups, globErr := filepath.Glob(filepath.Join(root, ".b.txt.mekugi-backup-*"))
 	if globErr != nil || len(backups) != 1 {
 		t.Fatalf("preserved backups = %v, error %v", backups, globErr)
 	}
@@ -63,10 +63,10 @@ func TestStagingCleanupFailureReportsRetainedArtifact(t *testing.T) {
 		},
 	}
 	err := commitChanges(updateChanges()[:1], operations)
-	if err == nil || !strings.Contains(err.Error(), "cleanup also failed") || !strings.Contains(err.Error(), ".a.txt.hpatch-backup-") {
+	if err == nil || !strings.Contains(err.Error(), "cleanup also failed") || !strings.Contains(err.Error(), ".a.txt.mekugi-backup-") {
 		t.Fatalf("commitChanges() error = %v", err)
 	}
-	artifacts, globErr := filepath.Glob(filepath.Join(root, ".a.txt.hpatch-backup-*"))
+	artifacts, globErr := filepath.Glob(filepath.Join(root, ".a.txt.mekugi-backup-*"))
 	if globErr != nil || len(artifacts) != 1 {
 		t.Fatalf("retained artifacts = %v, error %v", artifacts, globErr)
 	}

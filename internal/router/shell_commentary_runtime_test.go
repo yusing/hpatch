@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/yusing/hpatch/internal/shellruntime"
+	"github.com/yusing/mekugi/internal/shellruntime"
 )
 
 func TestDiscoverShellCommentary(t *testing.T) {

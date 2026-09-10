@@ -29,7 +29,7 @@ A malformed, stale, unchanged, conflicting, incomplete, cross-worktree, or other
 changes neither workspace state nor retained rejected ancestry. Proxy-rejected attempts keep
 the last evaluated script as the next baseline. A re-rejected recovery becomes the next
 baseline, and replay restores the exact `functions.hpatch_recover` payload while retaining its
-rebuilt script for later recovery. Non-hpatch plugin and shell failures never enter this
+rebuilt script for later recovery. Non-mekugi plugin and shell failures never enter this
 ancestry. Input truncation removes calls the conversation no longer shows from the request's
 recovery view, without deleting durable replay records needed by another branch. Resumed and
 forked threads inherit only ancestry actually visible in their input. Ordering and executor
@@ -69,7 +69,7 @@ Acceptance:
    rejection without importing later parent calls. Rejected replay validation changes no ancestry
    or executor confirmation.
 6. Replay restores `hpatch_recover` identity and the exact emitted short payload.
-7. Ordinary mutation-leading hpatch scripts are never detected as recovery.
+7. Ordinary mutation-leading HPATCH scripts are never detected as recovery.
 8. Captured provider calls remain individual and correlate to their actual delivered carriers.
 9. One payload can correct multiple distinct command targets atomically without changing any other command field.
 10. A target correction can retarget an anchored or unanchored mutation to exact multiline

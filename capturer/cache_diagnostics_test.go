@@ -12,7 +12,7 @@ import (
 
 func diagnosticRecorder(t *testing.T) *Recorder {
 	t.Helper()
-	r, err := New(Config{Mode: "hpatch", ModelProtocol: "native"})
+	r, err := New(Config{Mode: "mekugi", ModelProtocol: "native"})
 	if err != nil {
 		t.Fatal(err)
 	}

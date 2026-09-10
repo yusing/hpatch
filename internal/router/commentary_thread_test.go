@@ -160,18 +160,18 @@ func TestThreadCommentaryReplaySurvivesSessionRemapAndExpiry(t *testing.T) {
 }
 
 func TestThreadCommentaryCannotReclaimToolHistoryCapacity(t *testing.T) {
-	proxy := newManagedHPatchProxy(t, testTranslator(t, new(int)))
+	proxy := newManagedMekugiProxy(t, testTranslator(t, new(int)))
 	// Four almost-full sessions exercise both the session and global budgets.
-	script := strings.Repeat("x", maxHPatchHistorySessionBytes-256)
+	script := strings.Repeat("x", maxMekugiHistorySessionBytes-256)
 	for i := range 4 {
 		session := fmt.Sprint(i)
-		if err := proxy.rememberBatch(session, map[string]hpatchHistory{"essential": {script: script}}); err != nil {
+		if err := proxy.rememberBatch(session, map[string]mekugiHistory{"essential": {script: script}}); err != nil {
 			t.Fatal(err)
 		}
 	}
 	before := proxy.historyBytes
 	token := proxy.commentary.subscribeThread("0", "thread", "")
-	transform := &hpatchResponseTransform{proxy: proxy, historySessionID: "0", shellThreadID: "thread"}
+	transform := &mekugiResponseTransform{proxy: proxy, historySessionID: "0", shellThreadID: "thread"}
 	for range maxCommentaryEventsPerRoute {
 		proxy.commentary.publish(token, "auxiliary", false)
 		publication := proxy.commentary.drainSession("0", "thread")[0]
@@ -187,7 +187,7 @@ func TestThreadCommentaryCannotReclaimToolHistoryCapacity(t *testing.T) {
 			t.Fatal("commentary evicted essential history")
 		}
 	}
-	if err := proxy.rememberBatch("0", map[string]hpatchHistory{"later": {script: "ok"}}); err != nil {
+	if err := proxy.rememberBatch("0", map[string]mekugiHistory{"later": {script: "ok"}}); err != nil {
 		t.Fatalf("later tool admission blocked: %v", err)
 	}
 	if _, exists := proxy.history("0", "essential"); !exists {
@@ -241,10 +241,10 @@ func TestChildThreadCommentaryPreservesSubstantiveStreamResult(t *testing.T) {
 }
 
 func TestThreadCommentaryDoesNotCrossSharedRoutingSession(t *testing.T) {
-	proxy := newManagedHPatchProxy(t, testTranslator(t, new(int)))
+	proxy := newManagedMekugiProxy(t, testTranslator(t, new(int)))
 	proxy.commentaryEndpoint = "http://127.0.0.1:8080" + commentaryPublisherPath
 	workspace := t.TempDir()
-	prepare := func(thread string) *hpatchResponseTransform {
+	prepare := func(thread string) *mekugiResponseTransform {
 		t.Helper()
 		request, err := parseResponsesRequest(mustTestJSON(t, map[string]any{
 			"model": "gpt-test",
@@ -335,7 +335,7 @@ func TestThreadCommentaryDeferredDeliverySurvivesRemap(t *testing.T) {
 			if events := proxy.drainCommentarySession("remapped-session", transform.shellThreadID); len(events) != 0 {
 				t.Fatal("remapping duplicated an already claimed publication")
 			}
-			other := &hpatchResponseTransform{proxy: proxy, historySessionID: "remapped-session", shellThreadID: "other-thread"}
+			other := &mekugiResponseTransform{proxy: proxy, historySessionID: "remapped-session", shellThreadID: "other-thread"}
 			if other.runtimeCommentaryMessage(publication) != nil {
 				t.Fatal("another thread rendered the claimed publication")
 			}

@@ -10,7 +10,7 @@ import (
 	"strings"
 
 	"github.com/openai/openai-go/v3/responses"
-	"github.com/yusing/hpatch/internal/commentaryid"
+	"github.com/yusing/mekugi/internal/commentaryid"
 )
 
 const commentaryArgumentName = "commentary"
@@ -202,7 +202,7 @@ func assistantCommentaryDoneEvent(message map[string]json.RawMessage) []byte {
 	})
 }
 
-func (t *hpatchResponseTransform) transformStructuredCommentary(item map[string]json.RawMessage) (map[string]json.RawMessage, error) {
+func (t *mekugiResponseTransform) transformStructuredCommentary(item map[string]json.RawMessage) (map[string]json.RawMessage, error) {
 	extracted, matched, err := extractStructuredCommentary(item, t.commentaryTools)
 	if err != nil || !matched {
 		return nil, err
@@ -225,7 +225,7 @@ func (t *hpatchResponseTransform) transformStructuredCommentary(item map[string]
 	}
 
 	original := maps.Clone(item)
-	t.recordLocal(callID, &hpatchHistory{
+	t.recordLocal(callID, &mekugiHistory{
 		toolName:             qualifiedToolName(jsonString(item, "namespace"), jsonString(item, "name")),
 		script:               extracted.originalArguments,
 		carrierKind:          codeModeCarrierFunction,
@@ -238,7 +238,7 @@ func (t *hpatchResponseTransform) transformStructuredCommentary(item map[string]
 	return t.operationCommentaryMessage(messageID, extracted.text), nil
 }
 
-func (p *hpatchProxy) drainCommentarySession(sessionID, threadID string) []publishedCommentary {
+func (p *mekugiProxy) drainCommentarySession(sessionID, threadID string) []publishedCommentary {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 	if p.commentary == nil {
@@ -253,7 +253,7 @@ func (p *hpatchProxy) drainCommentarySession(sessionID, threadID string) []publi
 }
 
 // Only thread routes lack a carrier subscription. Keep call-scoped live delivery separate.
-func (p *hpatchProxy) drainThreadCommentarySession(sessionID, threadID string) []publishedCommentary {
+func (p *mekugiProxy) drainThreadCommentarySession(sessionID, threadID string) []publishedCommentary {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 	if p.commentary == nil {
@@ -268,7 +268,7 @@ type commentarySubscription struct {
 	handedOff bool
 }
 
-func (t *hpatchResponseTransform) handOffCommentary(callID string) {
+func (t *mekugiResponseTransform) handOffCommentary(callID string) {
 	for index := range t.commentarySubscriptions {
 		if t.commentarySubscriptions[index].callID == callID {
 			t.commentarySubscriptions[index].handedOff = true
@@ -276,7 +276,7 @@ func (t *hpatchResponseTransform) handOffCommentary(callID string) {
 	}
 }
 
-func (t *hpatchResponseTransform) releaseCommentarySubscriptions() {
+func (t *mekugiResponseTransform) releaseCommentarySubscriptions() {
 	for _, subscription := range t.commentarySubscriptions {
 		// Once the carrier is handed off, publication completion and broker
 		// expiry own the route, regardless of how the provider response ends.
@@ -287,11 +287,11 @@ func (t *hpatchResponseTransform) releaseCommentarySubscriptions() {
 	t.commentarySubscriptions = nil
 }
 
-// validateHPatchCompactionRequest recognizes local Codex compaction requests,
+// validateMekugiCompactionRequest recognizes local Codex compaction requests,
 // which stream through /responses without exposing model tools.
 // Source: openai/codex codex-rs/core/src/compact.rs:228:273 and client.rs:795:881.
 
-func (p *hpatchProxy) commentaryMessageIDs(sessionID string) map[string]struct{} {
+func (p *mekugiProxy) commentaryMessageIDs(sessionID string) map[string]struct{} {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 	result := make(map[string]struct{})
@@ -308,7 +308,7 @@ func (p *hpatchProxy) commentaryMessageIDs(sessionID string) map[string]struct{}
 	return result
 }
 
-func (p *hpatchProxy) addCommentaryMessageID(sessionID, threadID, callID, messageID string) bool {
+func (p *mekugiProxy) addCommentaryMessageID(sessionID, threadID, callID, messageID string) bool {
 	if callID == "" {
 		return p.commentary.hasThreadMessageID(threadID, messageID)
 	}
@@ -320,10 +320,10 @@ func (p *hpatchProxy) addCommentaryMessageID(sessionID, threadID, callID, messag
 		return true
 	}
 	history.commentaryMessageIDs = append(history.commentaryMessageIDs, messageID)
-	return p.rememberBatch(sessionID, map[string]hpatchHistory{callID: history}) == nil
+	return p.rememberBatch(sessionID, map[string]mekugiHistory{callID: history}) == nil
 }
 
-func (t *hpatchResponseTransform) runtimeCommentaryMessage(publication publishedCommentary) map[string]json.RawMessage {
+func (t *mekugiResponseTransform) runtimeCommentaryMessage(publication publishedCommentary) map[string]json.RawMessage {
 	if publication.text == "" {
 		return nil
 	}
@@ -382,7 +382,7 @@ func hasCommentaryAuthor(text, author string) bool {
 	return strings.HasPrefix(text, "["+commentaryCode(author)+"] ")
 }
 
-func (t *hpatchResponseTransform) operationCommentaryMessage(id, text string) map[string]json.RawMessage {
+func (t *mekugiResponseTransform) operationCommentaryMessage(id, text string) map[string]json.RawMessage {
 	if text == "" {
 		return nil
 	}
@@ -397,7 +397,7 @@ func (t *hpatchResponseTransform) operationCommentaryMessage(id, text string) ma
 
 // Completed provider commentary is copied to the root without rewriting the
 // child's original message. Router-owned messages already have their own paths.
-func (t *hpatchResponseTransform) collectProviderCommentary(message map[string]json.RawMessage) {
+func (t *mekugiResponseTransform) collectProviderCommentary(message map[string]json.RawMessage) {
 	if !t.subagentTurn || jsonString(message, "type") != "message" ||
 		jsonString(message, "role") != "assistant" || jsonString(message, "phase") != "commentary" ||
 		jsonString(message, "status") != "completed" {
@@ -427,7 +427,7 @@ func (t *hpatchResponseTransform) collectProviderCommentary(message map[string]j
 
 // retainCommentary is called only at router-authored message construction sites.
 // A provider's use of a reserved-looking ID is not proof of router provenance.
-func (t *hpatchResponseTransform) retainCommentary(messages ...map[string]json.RawMessage) []map[string]json.RawMessage {
+func (t *mekugiResponseTransform) retainCommentary(messages ...map[string]json.RawMessage) []map[string]json.RawMessage {
 	if t.proxy.replayStore == nil {
 		return messages
 	}

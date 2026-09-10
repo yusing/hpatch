@@ -19,13 +19,13 @@
   "hidden_files": [
     {
       "source": "hidden_ipv6_server_name.py",
-      "destination": ".hpatch_benchmark_ipv6.py"
+      "destination": ".mekugi_benchmark_ipv6.py"
     }
   ],
   "graders": [
     {
       "name": "ipv6-server-name",
-      "command": ["python3", ".hpatch_benchmark_ipv6.py"],
+      "command": ["python3", ".mekugi_benchmark_ipv6.py"],
       "required": true,
       "expect_base": "fail",
       "baseline_output_contains": "Flask.run does not parse bracketed IPv6 SERVER_NAME",

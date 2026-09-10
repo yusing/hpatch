@@ -42,7 +42,7 @@ is involved.
 The capturer snapshot is the authoritative calculation surface. Reporting validates raw records,
 snapshot exchange totals, capture health, and result-reported per-thread provider usage before it
 formats provider usage, cache attribution, payload savings, actual provider and delivered tool
-shapes, Hpatch delivery, model attribution, and completeness. It never reconstructs a hypothetical
+shapes, HPATCH delivery, model attribution, and completeness. It never reconstructs a hypothetical
 stock command, result, or patch.
 
 Fresh two-arm modes require both arms' current capture and snapshot. The validator binds each root
@@ -52,10 +52,10 @@ requirements use the capturer's signed end-to-end protocol totals and fail after
 summary when required input or output savings are not positive.
 
 Arm labels are evidence-backed: the validator requires passthrough/native for control,
-Hpatch/native for hpatch-only and native-protocol arms, and Hpatch/CTP2 for the CTP arm.
-Paired and diagnostic Hpatch treatment use the protocol retained in benchmark configuration. Control-only starts and
+Mekugi/native for mekugi-only and native-protocol arms, and Mekugi/CTP2 for the CTP arm.
+Paired and diagnostic Mekugi treatment use the protocol retained in benchmark configuration. Control-only starts and
 collects only the stock router and validates its evidence without a treatment or comparison.
-Mentor arms use Hpatch with the shared protocol selected by the retained benchmark configuration,
+Mentor arms use Mekugi with the shared protocol selected by the retained benchmark configuration,
 native by default. The main model is selected independently of the router-owned child mentor
 schedule; the validator binds treatment children to the configured mentor model, not the main
 model. Required compression is checked for both Mentor arms when their protocol is CTP/2. Raw

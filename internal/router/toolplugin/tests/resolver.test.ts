@@ -43,7 +43,7 @@ process.stdin.on("data", (chunk) => {
 `);
         const script = resolver === "gopls" ? `
 import {createHSymbolTool} from ${JSON.stringify(hsymbol)};
-import {hashLine} from "hpatch:core/v1";
+import {hashLine} from "mekugi:core/v1";
 const result = await createHSymbolTool("test", "test").execute(
   ["refs", "input.go", "2:" + hashLine("var Target = 1"), "Target"],
   {stdinFD: null, scriptReadFD: null, scriptWriteFD: null, outputBudgetBytes: 1024},

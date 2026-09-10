@@ -6,7 +6,7 @@ import {
   decodeQuotedOperand,
   formatVerifiedRow,
   parsePositiveInteger,
-} from "hpatch:core/v1";
+} from "mekugi:core/v1";
 
 import {
   byteLength,

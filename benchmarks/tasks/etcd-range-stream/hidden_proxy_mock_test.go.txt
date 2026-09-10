@@ -22,7 +22,7 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-func TestHPatchBenchmarkMockServerRejectsRangeStream(t *testing.T) {
+func TestMekugiBenchmarkMockServerRejectsRangeStream(t *testing.T) {
 	err := (&mockKVServer{}).RangeStream(nil, nil)
 	if status.Code(err) != codes.Unimplemented {
 		t.Fatalf("RangeStream error code = %s, want %s", status.Code(err), codes.Unimplemented)

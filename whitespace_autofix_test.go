@@ -1,4 +1,4 @@
-package hpatch
+package mekugi
 
 import (
 	"strconv"

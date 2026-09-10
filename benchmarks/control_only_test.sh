@@ -36,4 +36,8 @@ fi
 if BENCHMARK_REPORT_ISSUES=true bash -c 'source "$1"; configure_benchmark' bash "$benchmark_root/bench.sh" >/dev/null 2>&1; then
     printf 'control-only accepted diagnostic extras\n' >&2; exit 1
 fi
+if (benchmark_mode=mekugi-only; control_baseline_dir=; initialize_run) >"$fixture/missing-baseline" 2>&1; then
+    printf 'mekugi-only accepted a missing current baseline\n' >&2; exit 1
+fi
+grep -Fq 'requires CONTROL_BASELINE_DIR from a current control-only run' "$fixture/missing-baseline"
 printf 'Control-only scheduling, isolation, collection and mode guards passed\n'

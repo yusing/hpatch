@@ -1,4 +1,4 @@
-module github.com/yusing/hpatch
+module github.com/yusing/mekugi
 
 go 1.26
 

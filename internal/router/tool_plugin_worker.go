@@ -13,7 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/yusing/hpatch/internal/router/toolplugin"
+	"github.com/yusing/mekugi/internal/router/toolplugin"
 )
 
 // RunToolPluginWorker handles the private child-process mode used by a

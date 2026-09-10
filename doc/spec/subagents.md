@@ -2,7 +2,7 @@
 
 ## REQ-SUBAGENTS-001 — Grok-backed native subagents
 
-`--grok` enables `grok:grok-4.6` in Hpatch mode. Passthrough mode rejects the flag.
+`--grok` enables `grok:grok-4.6` in `mekugi` mode. Passthrough mode rejects the flag.
 Without it, the existing model catalog, collaboration schemas and OpenAI routing remain unchanged;
 a `grok:` request fails locally rather than sending it to the OpenAI provider.
 
@@ -19,7 +19,7 @@ Only a native child request with one `x-openai-subagent: collab_spawn` header, a
 waiting, interruption, follow-up, tool execution, permissions and sandboxing. The router never
 creates a substitute agent process or executes a tool itself.
 
-When enabled, the provider-visible collaboration namespace is `hpatch_collaboration`. Its message
+When enabled, the provider-visible collaboration namespace is `mekugi_collaboration`. Its message
 schema has no OpenAI encryption annotation. Response calls are restored to the original native
 `collaboration` namespace; spawn, send-message and follow-up calls carry the explicitly empty
 `encrypted_function_args` marker required by Codex for plaintext delivery. Replay consistently maps
@@ -31,7 +31,7 @@ Grok uses streaming Chat Completions, either through the public xAI API with `XA
 the Grok CLI chat proxy with the existing Grok OAuth credential store. An API key takes precedence.
 `--grok-auth-file` selects a different credential file; otherwise the router uses the current user's
 Grok OAuth store. This route supports the standard `https://auth.x.ai` Grok public client, not custom
-enterprise issuers. Grok owns interactive login; Hpatch refreshes expired/near-expiry OAuth tokens
+enterprise issuers. Grok owns interactive login; Mekugi refreshes expired/near-expiry OAuth tokens
 and retries one rejected access token. Refresh uses Grok's cross-process advisory lock, re-reads
 credentials under that lock, and atomically saves rotated credentials while preserving unrelated
 accounts and fields. No credentials, provider error bodies, or prompts enter diagnostics.

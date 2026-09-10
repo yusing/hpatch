@@ -2,7 +2,7 @@
 
 ## REQ-MENTOR-001 — Spawned-subagent Mentor Handoff
 
-Mentor Handoff is an Hpatch-mode product schedule. It is enabled by default and disabled with
+Mentor Handoff is a `mekugi`-mode product schedule. It is enabled by default and disabled with
 `--mentor-handoff=false`. Passthrough mode keeps it off and rejects an explicit enable. Its
 first incremental form recognizes only an AgentControl thread spawn carrying exactly one
 `x-openai-subagent: collab_spawn` header and valid Codex turn metadata whose `subagent_kind` is
@@ -13,7 +13,7 @@ instructions. Requests outside this exact boundary remain unchanged.
 For a recognized child request whose configured model is exactly `gpt-5.6-luna` or
 `gpt-5.6-terra`, the router replaces only the top-level request model with `gpt-5.6-sol` and the
 reasoning effort with `high`, preserving other reasoning members, input history, tools, metadata,
-and request fields. This happens before Hpatch projection, CTP preparation, provider serialization,
+and request fields. This happens before Mekugi projection, CTP preparation, provider serialization,
 and transport capture. Codex continues to construct later requests from its session
 settings; the router never rewrites response model metadata.
 

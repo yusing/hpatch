@@ -4,10 +4,10 @@
 
 Every explicit target resolves against the active existing file's immutable invocation
 baseline. A row first compares its four-digit hash with the exact content at its one-based
-logical-line hint. If they differ or the hint is out of bounds, hpatch scans the same immutable
+logical-line hint. If they differ or the hint is out of bounds, mekugi scans the same immutable
 baseline and resolves the row only when exactly one line has that hash. No match is
 `row-missing` when the hint is out of bounds and `row-stale` otherwise. Multiple matches are
-`row-stale`; hpatch never chooses among duplicate content. The 16-bit hash retains an accepted
+`row-stale`; mekugi never chooses among duplicate content. The 16-bit hash retains an accepted
 approximately 1-in-65,536 random false-acceptance residual for a candidate line.
 
 If baseline resolution fails after earlier commands have pending edits, the evaluator may treat

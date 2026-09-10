@@ -151,7 +151,7 @@ def evaluate(config: dict[str, Any], mode: str, arm: str, events_path: Path) -> 
             missing.append(f"item:{item_type}")
 
     return {
-        "schema": "hpatch.benchmark.commentary-coverage.v1",
+        "schema": "mekugi.benchmark.commentary-coverage.v1",
         "mode": mode,
         "arm": arm,
         "profiles": selected,

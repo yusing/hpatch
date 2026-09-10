@@ -102,15 +102,15 @@ comparisons.
 - **Go 1.26+**, CGO enabled, and a C toolchain to build the binaries.
 - **Codex CLI**, signed in with `codex login` using ChatGPT authentication.
 - **Node.js 24+** available as `node`, and **ripgrep** available as `rg` on
-  the router's `PATH` for hpatch mode.
+  the router's `PATH` for mekugi mode.
 - Any interpreter your agent selects, such as `python3`, on the executor's
   `PATH`. Bash and POSIX shell execution are built in.
 
 Install both the router and its shell helper:
 
 ```sh
-go install github.com/yusing/hpatch/cmd/mekugi@latest \
-  github.com/yusing/hpatch/cmd/shell@latest
+go install github.com/yusing/mekugi/cmd/mekugi@latest \
+  github.com/yusing/mekugi/cmd/shell@latest
 ```
 
 Add `$GOBIN`, or `$(go env GOPATH)/bin` when unset, to the `PATH` used by both
@@ -182,10 +182,10 @@ request or accepted steering. Grok provider requests remain on HTTP.
 
 | Flag | Default | Purpose |
 | --- | --- | --- |
-| `--mode` | `hpatch` | Use `passthrough` to forward traffic without hpatch tools, plugins, CTP/2, or Mentor Handoff |
-| `--model-protocol` | `ctp2` | Use `native` to disable CTP/2 in hpatch mode |
+| `--mode` | `mekugi` | Use `passthrough` to forward traffic without mekugi tools, plugins, CTP/2, or Mentor Handoff |
+| `--model-protocol` | `ctp2` | Use `native` to disable CTP/2 in mekugi mode |
 | `--mentor-handoff` | `true` | Use `false` to keep subagents on their configured models |
-| `--grok` | `false` | Enable Grok subagents in hpatch mode |
+| `--grok` | `false` | Enable Grok subagents in mekugi mode |
 | `--grok-auth-file` | `~/.grok/auth.json` | Select a Grok OAuth credential store |
 | `--timeout` | `10m` | Wait for the upstream response to start |
 | `--stream-idle-timeout` | `4m` | Limit gaps between provider messages during an active response, or HTTP response bytes |
@@ -360,8 +360,8 @@ recover an earlier request that was not dumped.
 - **Executor environment:** the router and executor must see the same workspace
   paths and shell runtime directory. `MEKUGI_RUNTIME_DIR` overrides the default
   operating-system temporary directory; both must resolve it to the same
-  absolute path. The shared `shell` helper also follows an older session's
-  `hpatch-runtime-<thread>` locator when the current name is absent.
+  absolute path. The shared `shell` helper follows the session's
+  `mekugi-runtime-<thread>` locator.
 - **Failures:** startup errors appear before Codex launches. Session failures
   appear as user-only commentary; undelivered notices appear on stderr after
   Codex exits. Mekugi does not create operational log files unless `--debug` is enabled.
@@ -391,23 +391,13 @@ shows those calls: a parent or sibling conversation may still need them.
 
 ### Older installations
 
-Installation does not stop an old service or remove old configuration. Finish
-active sessions before retiring the old setup. If you previously installed the
-systemd user service, stop and disable it when ready:
-
-```sh
-systemctl --user disable --now hpatch-router.service
-```
-
-Confirm old unit paths with `systemctl --user cat hpatch-router.service` before
-removing them, then run `systemctl --user daemon-reload`. Locate any obsolete
-binary with `command -v hpatch-router` before removing it. Remove only old
-Hpatch-specific provider entries from Codex configuration, preserving auth and
-unrelated settings. Use `mekugi codex` for future sessions.
+Finish active sessions before replacing an older installation. Retire any old
+service and provider configuration separately, preserving unrelated settings and
+authentication. Use `mekugi codex` for future sessions.
 
 ## Go library
 
-The root package, `github.com/yusing/hpatch`, also exposes workspace evaluation,
+The root package, `github.com/yusing/mekugi`, also exposes workspace evaluation,
 application, reporting, and host translation APIs. See the
 [workspace API requirements](doc/spec/file.md) and
 [translation contract](doc/architecture/translate.md).

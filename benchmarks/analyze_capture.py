@@ -16,10 +16,10 @@ from benchmark_jsonl import load_jsonl
 USAGE_KEYS = ("input_tokens", "cached_input_tokens", "output_tokens", "reasoning_tokens")
 EXPECTED_ARM_CONFIG = {
     "control": ("passthrough", "native"),
-    "hpatch": ("hpatch", "native"),
-    "native": ("hpatch", "native"),
-    "ctp": ("hpatch", "ctp2"),
-    "hpatch-mentor": ("hpatch", "native"),
+    "mekugi": ("mekugi", "native"),
+    "native": ("mekugi", "native"),
+    "ctp": ("mekugi", "ctp2"),
+    "mekugi-mentor": ("mekugi", "native"),
 }
 
 
@@ -339,21 +339,21 @@ def validate_raw_capture(path: Path, metrics: dict[str, Any]) -> None:
 
 
 def validate_snapshot(metrics: dict[str, Any], arm: str, config: dict[str, Any]) -> None:
-    if metrics.get("schema") != "hpatch.capture.metrics.v4":
+    if metrics.get("schema") != "mekugi.capture.metrics.v4":
         raise ValueError("metrics have an unsupported schema")
     expected = EXPECTED_ARM_CONFIG.get(arm)
     if expected is None:
         raise ValueError(f"unsupported benchmark arm {arm}")
-    if config.get("benchmark_mode") == "mentor-handoff" and arm in {"hpatch", "hpatch-mentor"}:
+    if config.get("benchmark_mode") == "mentor-handoff" and arm in {"mekugi", "mekugi-mentor"}:
         protocol = config.get("mentor_handoff", {}).get("model_protocol", "native")
         if protocol not in {"native", "ctp2"}:
             raise ValueError("unsupported Mentor benchmark model protocol")
-        expected = ("hpatch", protocol)
-    if config.get("benchmark_mode") in {"paired", "hpatch-diagnostic"} and arm == "hpatch":
+        expected = ("mekugi", protocol)
+    if config.get("benchmark_mode") in {"paired", "mekugi-diagnostic"} and arm == "mekugi":
         protocol = config.get("treatment_model_protocol", "native")
         if protocol not in {"native", "ctp2"}:
             raise ValueError("unsupported treatment benchmark model protocol")
-        expected = ("hpatch", protocol)
+        expected = ("mekugi", protocol)
     if (metrics.get("mode"), metrics.get("model_protocol")) != expected:
         raise ValueError(f"{arm} capture has the wrong router mode or model protocol")
     exchanges = metrics.get("exchanges")
@@ -405,7 +405,7 @@ def validate_calculations(metrics: dict[str, Any], exchanges: list[dict[str, Any
     delivered_tools: dict[str, dict[str, int]] = {}
     previous_input: dict[str, int] = {}
     cold_or_new = eligible = eligible_cached = 0
-    hpatch = {
+    mekugi = {
         "calls": 0,
         "corrections": 0,
         "successful": 0,
@@ -471,19 +471,19 @@ def validate_calculations(metrics: dict[str, Any], exchanges: list[dict[str, Any
                 add_tool(provider_tools, emitted)
                 if emitted.get("name") not in {"hpatch", "hpatch_recover"}:
                     continue
-                hpatch["calls"] += 1
+                mekugi["calls"] += 1
                 if emitted["name"] == "hpatch_recover":
-                    hpatch["corrections"] += 1
-                hpatch["provider_input_tokens"] += emitted.get("input_tokens", 0)
+                    mekugi["corrections"] += 1
+                mekugi["provider_input_tokens"] += emitted.get("input_tokens", 0)
                 carrier = delivered_by_id.get(emitted.get("call_id"))
                 if carrier is None:
-                    hpatch["unmatched"] += 1
+                    mekugi["unmatched"] += 1
                     continue
-                hpatch["delivered_input_tokens"] += carrier.get("input_tokens", 0)
-                if carrier.get("kind") in {"apply_patch", "hpatch_report"}:
-                    hpatch["successful"] += 1
+                mekugi["delivered_input_tokens"] += carrier.get("input_tokens", 0)
+                if carrier.get("kind") in {"apply_patch", "mekugi_report"}:
+                    mekugi["successful"] += 1
                 else:
-                    hpatch["rejected"] += 1
+                    mekugi["rejected"] += 1
                     reason = carrier.get("diagnostic")
                     if isinstance(reason, str) and reason:
                         diagnostics[reason] += 1
@@ -538,14 +538,14 @@ def validate_calculations(metrics: dict[str, Any], exchanges: list[dict[str, Any
     if metrics.get("provider_tools") != provider_tools or metrics.get("delivered_tools") != delivered_tools:
         raise ValueError("tool aggregates do not reconcile exchanges")
 
-    hpatch["carrier_input_tokens_expansion"] = hpatch["delivered_input_tokens"] - hpatch["provider_input_tokens"]
-    published_hpatch = metrics.get("hpatch")
-    if not isinstance(published_hpatch, dict):
-        raise ValueError("metrics are missing Hpatch calculations")
-    if {key: published_hpatch.get(key) for key in hpatch} != hpatch or published_hpatch.get(
+    mekugi["carrier_input_tokens_expansion"] = mekugi["delivered_input_tokens"] - mekugi["provider_input_tokens"]
+    published_mekugi = metrics.get("mekugi")
+    if not isinstance(published_mekugi, dict):
+        raise ValueError("metrics are missing HPATCH calculations")
+    if {key: published_mekugi.get(key) for key in mekugi} != mekugi or published_mekugi.get(
         "diagnostics", {}
     ) != dict(diagnostics):
-        raise ValueError("Hpatch calculations do not reconcile tool calls")
+        raise ValueError("HPATCH calculations do not reconcile tool calls")
 
     published_cache = metrics.get("cache")
     if not isinstance(published_cache, dict):
@@ -598,7 +598,7 @@ def validate_results(metrics: dict[str, Any], results_path: Path, arm: str, conf
 
         child_model = result_record.get("child_model")
         proof_value = agent.get("child_proof_path") if isinstance(agent, dict) else None
-        mentor_result = child_model is not None or proof_value is not None or arm == "hpatch-mentor"
+        mentor_result = child_model is not None or proof_value is not None or arm == "mekugi-mentor"
         if not mentor_result:
             continue
         child_model = required_text(child_model, "mentor child model")
@@ -606,7 +606,7 @@ def validate_results(metrics: dict[str, Any], results_path: Path, arm: str, conf
         if not proof_path.is_absolute():
             proof_path = results_path.parent / proof_path
         proof = load_json(proof_path)
-        if proof.get("schema") != "hpatch.benchmark.child-proof.v1":
+        if proof.get("schema") != "mekugi.benchmark.child-proof.v1":
             raise ValueError("mentor child proof has an unsupported schema")
         child_thread = required_text(proof.get("child_thread_id"), "mentor child thread")
         if child_thread in allowed_models:
@@ -617,7 +617,7 @@ def validate_results(metrics: dict[str, Any], results_path: Path, arm: str, conf
         if proof.get("configured_reasoning_effort") != child_effort:
             raise ValueError("mentor child proof disagrees with the configured reasoning effort")
         allowed_models[child_thread] = {child_model}
-        if arm == "hpatch-mentor":
+        if arm == "mekugi-mentor":
             # The router's child mentor is independent of the benchmark's main model.
             mentor_model = required_text(config.get("mentor_handoff", {}).get("mentor_model"), "mentor model")
             allowed_models[child_thread].add(mentor_model)
@@ -676,7 +676,7 @@ def main() -> int:
         parser.error(str(error))
     json.dump(
         {
-            "schema": "hpatch.benchmark.capture-validation.v1",
+            "schema": "mekugi.benchmark.capture-validation.v1",
             "arm": args.arm,
             "runs": runs,
             "records": metrics["capture"]["records"],

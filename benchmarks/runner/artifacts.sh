@@ -11,7 +11,7 @@ collect_router_metrics() {
 	((${#sessions[@]})) || return 1
 	"${compose[@]}" run --rm --no-deps --no-tty \
 		--volume "$run_dir:$run_dir" dependency-loader \
-		hpatch-merge-captures "$destination" "$capture" "${sessions[@]}"
+		mekugi-merge-captures "$destination" "$capture" "${sessions[@]}"
 }
 
 collect_artifacts() {
@@ -59,9 +59,9 @@ import_control_baseline() {
 	mv -f -- "$temporary" "$destination/result.json"
 }
 
-normalize_hpatch_artifact_permissions() {
-	local config="$run_dir/hpatch-config"
-	local runtime="$run_dir/hpatch-runtime"
+normalize_mekugi_artifact_permissions() {
+	local config="$run_dir/mekugi-config"
+	local runtime="$run_dir/mekugi-runtime"
 	local reports_path=$issue_reports_directory
 	local captures=$capture_directory
 	local owner
@@ -73,20 +73,20 @@ normalize_hpatch_artifact_permissions() {
 	fi
 
 	if ! docker run --rm \
-		--mount type=bind,source="$config",target=/hpatch-config \
-		--mount type=bind,source="$runtime",target=/hpatch-runtime \
+		--mount type=bind,source="$config",target=/mekugi-config \
+		--mount type=bind,source="$runtime",target=/mekugi-runtime \
 		--mount type=bind,source="$reports_path",target=/agent-issue-reports \
 		--mount type=bind,source="$captures",target=/captures \
 		--mount type=bind,source="$run_dir/artifacts",target=/artifacts \
 		--mount type=bind,source="$run_dir",target=/benchmark-run \
 		"$benchmark_image" \
-		sh -euc 'chown -R "$1" /hpatch-config /hpatch-runtime /agent-issue-reports /captures /artifacts; chmod -R u+rwX,go-rwx /hpatch-config /hpatch-runtime /agent-issue-reports /captures /artifacts
-		for name in control-metrics.json hpatch-metrics.json hpatch-mentor-metrics.json; do
+		sh -euc 'chown -R "$1" /mekugi-config /mekugi-runtime /agent-issue-reports /captures /artifacts; chmod -R u+rwX,go-rwx /mekugi-config /mekugi-runtime /agent-issue-reports /captures /artifacts
+		for name in control-metrics.json mekugi-metrics.json mekugi-mentor-metrics.json; do
 			path=/benchmark-run/$name
 			if [ -f "$path" ]; then chown "$1" "$path"; chmod 600 "$path"; fi
 		done' \
 		sh "$owner"; then
-		printf 'bench.sh: cannot normalize hpatch artifact permissions under %s\n' "$run_dir" >&2
+		printf 'bench.sh: cannot normalize mekugi artifact permissions under %s\n' "$run_dir" >&2
 		return 1
 	fi
 }
@@ -146,7 +146,7 @@ print_capture_summary() {
 	printf 'arm\tlogical_requests\tprovider_attempts\tcompleted\tfailed\tcapture_errors\tincomplete_records\n'
 	for arm in "${retained_arms[@]}"; do
 		metrics="$run_dir/${arm_metrics[$arm]}"
-		if [[ ! -s $metrics ]] || ! jq -e '.schema == "hpatch.capture.metrics.v4"' "$metrics" >/dev/null; then
+		if [[ ! -s $metrics ]] || ! jq -e '.schema == "mekugi.capture.metrics.v4"' "$metrics" >/dev/null; then
 			printf 'bench.sh: capture summary unavailable for %s\n' "$arm" >&2
 			continue
 		fi
@@ -215,10 +215,10 @@ preserve_run() {
 	run_dir=$destination
 	results="$run_dir/results.jsonl"
 	control_metrics="$run_dir/control-metrics.json"
-	hpatch_metrics="$run_dir/hpatch-metrics.json"
+	mekugi_metrics="$run_dir/mekugi-metrics.json"
 	if [[ $benchmark_mode == mentor-handoff ]]; then
-		control_metrics="$run_dir/hpatch-metrics.json"
-		hpatch_metrics="$run_dir/hpatch-mentor-metrics.json"
+		control_metrics="$run_dir/mekugi-metrics.json"
+		mekugi_metrics="$run_dir/mekugi-mentor-metrics.json"
 	fi
 	issue_reports_directory="$run_dir/agent-issue-reports"
 	issue_reports="$run_dir/agent-issue-reports.jsonl"
@@ -226,8 +226,8 @@ preserve_run() {
 	benchmark_config="$run_dir/benchmark-config.json"
 	instruction_dir="$run_dir/instructions"
 	control_instruction="$instruction_dir/control.md"
-	hpatch_instruction="$instruction_dir/hpatch.md"
-	instruction_diff="$instruction_dir/control-to-hpatch-request.diff"
+	mekugi_instruction="$instruction_dir/mekugi.md"
+	instruction_diff="$instruction_dir/control-to-mekugi-request.diff"
 	mentor_parent_prompt="$instruction_dir/mentor-parent.md"
 	mentor_child_prompt="$instruction_dir/mentor-child.md"
 	mentor_child_role_config="$instruction_dir/mentor-child.toml"
@@ -249,19 +249,19 @@ generate_summary() {
 }
 
 enforce_edit_loop_acceptance() {
-	# Stock has no Hpatch event stream or Hpatch-specific loop policy.
+	# Stock has no HPATCH event stream or Mekugi-specific loop policy.
 	if [[ $benchmark_mode == control-only ]]; then return; fi
-	local -a hpatch_events=()
+	local -a mekugi_events=()
 	if [[ $benchmark_mode == ctp-only || $benchmark_mode == mentor-handoff ]]; then
-		mapfile -t hpatch_events < <(
+		mapfile -t mekugi_events < <(
 			find "$run_dir/artifacts" -type f \( -name codex.jsonl -o -name child-events.jsonl \) -print | sort
 		)
 	else
-		mapfile -t hpatch_events < <(
-			find "$run_dir/artifacts" -type f -path '*-hpatch-r*/codex.jsonl' -print | sort
+		mapfile -t mekugi_events < <(
+			find "$run_dir/artifacts" -type f -path '*-mekugi-r*/codex.jsonl' -print | sort
 		)
 	fi
-	bash "$benchmark_root/check-edit-loops.sh" "$benchmark_root" "${hpatch_events[@]}"
+	bash "$benchmark_root/check-edit-loops.sh" "$benchmark_root" "${mekugi_events[@]}"
 }
 
 print_result_paths() {
@@ -271,17 +271,17 @@ print_result_paths() {
 		printf 'Control metrics: %s\n' "$control_metrics"
 		return
 	fi
-	if [[ $benchmark_mode != hpatch-diagnostic ]]; then
+	if [[ $benchmark_mode != mekugi-diagnostic ]]; then
 		if [[ $benchmark_mode == mentor-handoff ]]; then
-			printf 'Hpatch metrics: %s\n' "$control_metrics"
+			printf 'Mekugi metrics: %s\n' "$control_metrics"
 		else
 			printf 'Control metrics: %s\n' "$control_metrics"
 		fi
 	fi
 	if [[ $benchmark_mode == mentor-handoff ]]; then
-		printf 'Hpatch + Mentor Handoff capture metrics: %s\n' "$hpatch_metrics"
+		printf 'Mekugi + Mentor Handoff capture metrics: %s\n' "$mekugi_metrics"
 	else
-		printf 'Hpatch capture metrics: %s\n' "$hpatch_metrics"
+		printf 'Mekugi capture metrics: %s\n' "$mekugi_metrics"
 	fi
 
 }
@@ -312,7 +312,7 @@ cleanup() {
 		mapfile -t agent_containers < <(
 			docker ps -aq \
 				--filter "label=com.docker.compose.project=$COMPOSE_PROJECT_NAME" \
-				--filter label=hpatch.benchmark.role=agent
+				--filter label=mekugi.benchmark.role=agent
 		)
 		if ((${#agent_containers[@]})); then
 			docker rm --force "${agent_containers[@]}" >/dev/null 2>&1 || true
@@ -322,7 +322,7 @@ cleanup() {
 		printf 'bench.sh: cannot collect available benchmark artifacts during cleanup\n' >&2
 		status=1
 	fi
-	if [[ $started == true ]] && ! normalize_hpatch_artifact_permissions; then
+	if [[ $started == true ]] && ! normalize_mekugi_artifact_permissions; then
 		if ((status == 0)); then
 			status=1
 		fi

@@ -2,7 +2,7 @@
 
 ## REQ-READ-001 — Shell-routed verified-row reader
 
-In hpatch router mode, the model receives `hpatch` and `shell` as standalone custom tools.
+In mekugi router mode, the model receives `hpatch` and `shell` as standalone custom tools.
 All persistent hread, hgrep, hsymbol, inspect_file, shell-execution, and HPATCH workflow guidance comes
 from `contrib/codex/file-editing-instructions.md` and its selected adjacent editing-workflow file
 under `REQ-GUIDE-001`. The router injects a model- and protocol-specific projection
@@ -30,8 +30,7 @@ shell script.
 The shell carrier invokes the fixed `shell` helper from the executor's trusted `PATH`. The
 router stores the current authenticated shell worker at
 `$MEKUGI_RUNTIME_DIR/mekugi-runtime-$CODEX_THREAD_ID`; the helper reads that path and replaces
-itself with the worker. If that locator is absent, it follows the previous
-`$MEKUGI_RUNTIME_DIR/hpatch-runtime-$CODEX_THREAD_ID` name. The worker's `mvdan/sh` Bash and POSIX evaluators intercept the exact command
+itself with the worker. The worker's `mvdan/sh` Bash and POSIX evaluators intercept the exact command
 names `hread`, `hgrep`, `hsymbol`, and `inspect_file` after ordinary shell expansion, then call the matching
 immutable snapshot implementation directly. These private names are not filesystem entries and
 do not use `PATH`. A deployment that isolates router and executor filesystems must expose the

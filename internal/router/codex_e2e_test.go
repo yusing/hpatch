@@ -34,47 +34,47 @@ The replacement must have exactly one trailing newline and no blank line after t
 
 Do not merely describe the edits. Make them and verify the resulting files.`
 
-type recordingHPatchTranslator struct {
-	delegate hpatchTranslator
+type recordingMekugiTranslator struct {
+	delegate mekugiTranslator
 
 	mu      sync.Mutex
 	scripts []string
 }
 
-func (t *recordingHPatchTranslator) ToolDescription() string {
+func (t *recordingMekugiTranslator) ToolDescription() string {
 	return t.delegate.ToolDescription()
 }
 
-func (t *recordingHPatchTranslator) Translate(ctx context.Context, workspace string, script string) (hpatchTranslationResult, error) {
+func (t *recordingMekugiTranslator) Translate(ctx context.Context, workspace string, script string) (mekugiTranslationResult, error) {
 	t.mu.Lock()
 	t.scripts = append(t.scripts, script)
 	t.mu.Unlock()
 	return t.delegate.Translate(ctx, workspace, script)
 }
 
-func (t *recordingHPatchTranslator) snapshot() []string {
+func (t *recordingMekugiTranslator) snapshot() []string {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	return append([]string(nil), t.scripts...)
 }
 
-func TestCodexHPatchGrammarE2E(t *testing.T) {
+func TestCodexMekugiGrammarE2E(t *testing.T) {
 	codexPath := requireExecutable(t, "codex")
 	gitPath := requireExecutable(t, "git")
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 
-	dataDirectory, err := hpatchDataDirectory()
+	dataDirectory, err := mekugiDataDirectory()
 	if err != nil {
-		t.Fatalf("create hpatch translator: %v", err)
+		t.Fatalf("create mekugi translator: %v", err)
 	}
-	recorder := &recordingHPatchTranslator{delegate: newInProcessHPatchTranslator(dataDirectory)}
+	recorder := &recordingMekugiTranslator{delegate: newInProcessMekugiTranslator(dataDirectory)}
 	var requestSequence atomic.Uint64
 	server := httptest.NewServer(responsesHandler(
 		t.Context(),
 		10*time.Minute,
 		newProviderClient(codexBaseURL, nil),
 		nil,
-		newManagedHPatchProxy(t, recorder),
+		newManagedMekugiProxy(t, recorder),
 		nil, nil,
 		&requestSequence,
 	))
@@ -86,8 +86,8 @@ func TestCodexHPatchGrammarE2E(t *testing.T) {
 	writeFixture(t, workspace, "anchor.go", "package sample\n\nfunc save(path string, b []byte) error {\n\t\treturn saveArtifactPayload(path, b)\n}\n")
 	writeFixture(t, workspace, "partial.go", "package sample\n\nvar expression = prefix + oldCall(\n\tfirstArgument,\n\tfinalArgument) + suffix\n")
 
-	model := environmentOrDefault("HPATCH_E2E_MODEL", "gpt-5.6-luna")
-	providerName := "hpatch-e2e"
+	model := environmentOrDefault("MEKUGI_E2E_MODEL", "gpt-5.6-luna")
+	providerName := "mekugi-e2e"
 	baseURL := server.URL + "/v1"
 	providerConfig := "model_providers." + providerName + "={ name = " + strconv.Quote(providerName) +
 		", base_url = " + strconv.Quote(baseURL) + ", wire_api = \"responses\", requires_openai_auth = true }"
@@ -132,11 +132,11 @@ func TestCodexHPatchGrammarE2E(t *testing.T) {
 		"fixed heredoc delimiter": `(?m)^PATCH$`,
 	} {
 		if !regexp.MustCompile(pattern).MatchString(scripts) {
-			t.Errorf("%s not found in translated hpatch scripts; pattern %q\nscripts:\n%s", name, pattern, scripts)
+			t.Errorf("%s not found in translated HPATCH scripts; pattern %q\nscripts:\n%s", name, pattern, scripts)
 		}
 	}
 	if strings.Contains(scripts, "\n\nPATCH") {
-		t.Errorf("translated hpatch scripts contain an empty trailing heredoc line\nscripts:\n%s", scripts)
+		t.Errorf("translated HPATCH scripts contain an empty trailing heredoc line\nscripts:\n%s", scripts)
 	}
 }
 

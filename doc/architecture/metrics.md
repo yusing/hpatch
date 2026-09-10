@@ -10,7 +10,7 @@ cached-prefix reuse/replacement and request-less automatic successors are explic
 `cmd/mekugi/wrap.go` prints its paths only after the child and router exit.
 
 The root `capturer` subpackage is the sole owner of request correlation, payload measurement,
-provider-usage metrics, cache attribution, representation differences, transported-tool accounting, Hpatch
+provider-usage metrics, cache attribution, representation differences, transported-tool accounting, Mekugi
 delivery accounting, capture health, durable capture records, and the structured metrics snapshot.
 The router's terminal-payload seam parses provider usage once and passes the resulting counts to
 the capturer, Mentor Handoff, and user-only usage commentary.
@@ -34,7 +34,7 @@ Raw request and response bodies exist only while one boundary is being measured.
 JSONL records contain complete transport lengths, GPT-5 token estimates, one separately measured
 terminal Responses `output` array (or reconstructed Chat Completions assistant-message array), statuses, duration, request identity fields
 needed for benchmark reconciliation, the passed provider usage, tool names, tool-call identities, and sanitized
-Hpatch outcome kinds and allowlisted diagnostic reason codes parsed from the router-owned envelope.
+HPATCH outcome kinds and allowlisted diagnostic reason codes parsed from the router-owned envelope.
 They never retain credentials, prompts, instructions, tool arguments, command output, response text,
 translated patches, or reports. Each response boundary retains at most 8 MiB for parsing while
 forwarding and byte-counting the complete stream; overflow becomes explicit incomplete health.
@@ -56,8 +56,8 @@ The snapshot derives:
 - signed post-replay-native-versus-final-provider CTP request savings, assistant-text CTP savings,
   and separately labeled complete-output delivery expansion;
 - provider-emitted and client-delivered tool shapes;
-- correlated Hpatch calls, corrections, successful and rejected deliveries, unmatched calls,
-  diagnostic codes, and signed Hpatch-versus-delivered-carrier input expansion (not stock-model savings);
+- correlated HPATCH calls, corrections, successful and rejected deliveries, unmatched calls,
+  diagnostic codes, and signed Mekugi-versus-delivered-carrier input expansion (not stock-model savings);
 - a bounded recent window of per-exchange provider attempts and usage, with complete cumulative
   process totals and explicit dropped-detail health; and
 - capture, completeness, boundary, sequence, write, and skipped-request health.
@@ -66,7 +66,7 @@ Router, edit-engine, CTP, registry, and plugin production code implement behavio
 maintain hypothetical stock baselines, synthetic stock commands or results, gain counters, metric callbacks,
 persistence slots, session metric histories, dashboard-owned calculations, or metric-only
 classifier events.
-The router passes usage and the actual post-replay, post-Hpatch, pre-CTP request as request-scoped
+The router passes usage and the actual post-replay, post-Mekugi, pre-CTP request as request-scoped
 observation data without receiving metric callbacks. The capturer measures the latter immediately
 and retains only sizes and keyed fingerprints. Native-only forwarding supplies its inference request before WebSocket transport framing as the baseline.
 Mentor and commentary remain operational consumers, not metrics sources.

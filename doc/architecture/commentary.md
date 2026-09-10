@@ -7,7 +7,7 @@ tools, authored commentary for eligible structured calls, removal of only its ow
 message rendering, and exact replay restoration. Provider-owned and strict schemas remain exact, except for the separately owned opt-in
 [third-party collaboration projection](subagents.md).
 Collaboration calls remain outside operation commentary and pass through without generated
-request notices or commentary-specific buffering. The Hpatch durable replay store retains
+request notices or commentary-specific buffering. The Mekugi durable replay store retains
 original call identity and exact router message provenance under `CTR-BOUNDARY-001`; JSON and
 SSE transformers share that owner. Request-local history views restore only visible calls.
 
@@ -136,7 +136,7 @@ For all unclassified errors the queue derives an opaque reference with a
 process-random key and does not retain or render the original error text. A
 provider-controlled value requires explicit semantic recognition before it can be
 included in a safe cause; lexical validation alone is insufficient.
-In Hpatch mode, the transport's notice transform retains exact message provenance through
+In `mekugi` mode, the transport's notice transform retains exact message provenance through
 the same workspace replay store before delivery, even though it runs after the tool transform.
 Failed provenance retention leaves notices pending without replacing substantive output.
 Passthrough does not acquire a durable replay store.

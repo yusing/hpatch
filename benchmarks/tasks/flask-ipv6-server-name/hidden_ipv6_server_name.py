@@ -30,7 +30,7 @@ sys.modules["werkzeug.serving"] = serving
 
 cli = types.SimpleNamespace(load_dotenv=lambda: None, show_server_banner=lambda debug, name: None)
 namespace = {
-    "__name__": "hpatch_flask_run_test",
+    "__name__": "mekugi_flask_run_test",
     "t": t,
     "os": os,
     "click": types.SimpleNamespace(secho=lambda *args, **kwargs: None),

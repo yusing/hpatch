@@ -7,7 +7,7 @@ import (
 )
 
 func TestCommentaryReplayFilteringRequiresExactRetainedID(t *testing.T) {
-	store, err := openHPatchReplayStore(t.TempDir())
+	store, err := openMekugiReplayStore(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -23,7 +23,7 @@ func TestCommentaryReplayFilteringRequiresExactRetainedID(t *testing.T) {
 			assistantCommentaryMessage(unknown, "model-authored"),
 		}),
 	}}
-	proxy := &hpatchProxy{replayStore: store}
+	proxy := &mekugiProxy{replayStore: store}
 	if _, err := proxy.reconcileVisibleInput(t.Context(), request, "workspace", "session"); err != nil {
 		t.Fatal(err)
 	}

@@ -20,11 +20,11 @@ func TestRoutingSessionIDKeepsRecoveryHistoryAcrossRequestIDs(t *testing.T) {
 		t.Fatalf("routing sessions = %q and %q, want one stable session", firstSession, secondSession)
 	}
 
-	proxy := newManagedHPatchProxy(t, testTranslator(t, new(int)))
-	if err := proxy.rememberBatch(firstSession, map[string]hpatchHistory{
+	proxy := newManagedMekugiProxy(t, testTranslator(t, new(int)))
+	if err := proxy.rememberBatch(firstSession, map[string]mekugiHistory{
 		"call": {
-			toolName:          hpatchToolName,
-			script:            testHPatchScript,
+			toolName:          mekugiToolName,
+			script:            testMekugiScript,
 			translationError:  "rejected",
 			evaluatorRejected: true,
 		},
@@ -32,7 +32,7 @@ func TestRoutingSessionIDKeepsRecoveryHistoryAcrossRequestIDs(t *testing.T) {
 		t.Fatal(err)
 	}
 	history, err := proxy.recoverableHistory(secondSession)
-	if err != nil || history.script != testHPatchScript {
+	if err != nil || history.script != testMekugiScript {
 		t.Fatalf("recovery history = %+v, error %v", history, err)
 	}
 }

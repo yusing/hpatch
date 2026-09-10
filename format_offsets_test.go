@@ -1,4 +1,4 @@
-package hpatch
+package mekugi
 
 import (
 	"go/format"
@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/yusing/hpatch/internal/patchtest"
+	"github.com/yusing/mekugi/internal/patchtest"
 )
 
 func TestFormatterNormalizedLiterals(t *testing.T) {

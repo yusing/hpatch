@@ -19,7 +19,7 @@ func TestReportIssueDescriptionIsNonInstructional(t *testing.T) {
 
 func TestWorkerFrontendSymlinkLifecycle(t *testing.T) {
 	directory := t.TempDir()
-	executable := filepath.Join(directory, "hpatch")
+	executable := filepath.Join(directory, "mekugi")
 	if err := os.WriteFile(executable, []byte("fixture"), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -78,7 +78,7 @@ func TestToolRegistryStartup(t *testing.T) {
 			formatField = ", format: " + format
 		}
 		return fmt.Sprintf(`export default {
-  apiVersion: "hpatch-tool-plugin/v1",
+  apiVersion: "mekugi-tool-plugin/v1",
   id: %q,
   tools: [{
     specification: {type: "custom", name: %q, description: "test tool"%s},
@@ -98,7 +98,7 @@ func TestToolRegistryStartup(t *testing.T) {
 	}
 
 	t.Run("missing directory loads embedded built-ins", func(t *testing.T) {
-		registry, err := buildToolRegistry(t.Context(), t.TempDir(), testHPatchToolDescription, false)
+		registry, err := buildToolRegistry(t.Context(), t.TempDir(), testMekugiToolDescription, false)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -126,12 +126,12 @@ func TestToolRegistryStartup(t *testing.T) {
 			t.Fatal(err)
 		}
 		if len(specifications) != 3 ||
-			specifications[0].Name != hpatchToolName ||
-			specifications[1].Name != hpatchRecoveryToolName ||
+			specifications[0].Name != "hpatch" ||
+			specifications[1].Name != "hpatch_recover" ||
 			specifications[2].Name != "shell" {
 			t.Fatalf("model-visible specifications = %#v", specifications)
 		}
-		second, err := buildToolRegistry(t.Context(), t.TempDir(), testHPatchToolDescription, false)
+		second, err := buildToolRegistry(t.Context(), t.TempDir(), testMekugiToolDescription, false)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -155,7 +155,7 @@ func TestToolRegistryStartup(t *testing.T) {
 	})
 
 	t.Run("diagnose mode adds router-native report issue", func(t *testing.T) {
-		registry, err := buildToolRegistry(t.Context(), t.TempDir(), testHPatchToolDescription, true)
+		registry, err := buildToolRegistry(t.Context(), t.TempDir(), testMekugiToolDescription, true)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -166,7 +166,7 @@ func TestToolRegistryStartup(t *testing.T) {
 		}()
 
 		contribution, ok := registry.contribution(reportIssueToolName)
-		if !ok || contribution.PluginID != "builtin.hpatch" || !contribution.Builtin || !contribution.ModelVisible {
+		if !ok || contribution.PluginID != "builtin.mekugi" || !contribution.Builtin || !contribution.ModelVisible {
 			t.Fatalf("report issue contribution = %+v, available %t", contribution, ok)
 		}
 		var specification map[string]json.RawMessage
@@ -184,8 +184,8 @@ func TestToolRegistryStartup(t *testing.T) {
 			t.Fatal(err)
 		}
 		if len(specifications) != 4 ||
-			specifications[0].Name != hpatchToolName ||
-			specifications[1].Name != hpatchRecoveryToolName ||
+			specifications[0].Name != mekugiToolName ||
+			specifications[1].Name != mekugiRecoveryToolName ||
 			specifications[2].Name != reportIssueToolName ||
 			specifications[3].Name != "shell" {
 			t.Fatalf("model-visible specifications = %#v", specifications)
@@ -212,7 +212,7 @@ func TestToolRegistryStartup(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		registry, err := buildToolRegistry(t.Context(), dataDirectory, testHPatchToolDescription, false)
+		registry, err := buildToolRegistry(t.Context(), dataDirectory, testMekugiToolDescription, false)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -235,7 +235,7 @@ func TestToolRegistryStartup(t *testing.T) {
 				t.Fatalf("wrapper %q targets %q", wrapper, target)
 			}
 		}
-		for _, name := range []string{hpatchToolName, "hread", "hgrep", "hsymbol", "inspect_file", "shell"} {
+		for _, name := range []string{mekugiToolName, "hread", "hgrep", "hsymbol", "inspect_file", "shell"} {
 			if _, ok := registry.wrapper(name); ok {
 				t.Fatalf("built-in %q unexpectedly has an executor wrapper", name)
 			}
@@ -277,11 +277,11 @@ func TestToolRegistryStartup(t *testing.T) {
 			t.Fatal(err)
 		}
 		writePlugin(t, pluginDirectory, "bad.mjs", "export default {apiVersion: 'wrong'};\n")
-		writePlugin(t, pluginDirectory, "duplicate-a.mjs", declaration("duplicate.plugin", hpatchToolName, ""))
+		writePlugin(t, pluginDirectory, "duplicate-a.mjs", declaration("duplicate.plugin", mekugiToolName, ""))
 		writePlugin(t, pluginDirectory, "duplicate-b.mjs", declaration("duplicate.plugin", "other_tool", ""))
 		writePlugin(t, pluginDirectory, "shell.mjs", declaration("shell.plugin", "eval", ""))
 		writePlugin(t, pluginDirectory, "configured-shell.mjs", declaration("example.shell", "shell", ""))
-		registry, err := buildToolRegistry(t.Context(), dataDirectory, testHPatchToolDescription, false)
+		registry, err := buildToolRegistry(t.Context(), dataDirectory, testMekugiToolDescription, false)
 		if registry != nil || err == nil {
 			t.Fatalf("registry = %+v, error = %v", registry, err)
 		}
@@ -311,7 +311,7 @@ func TestToolRegistryStartup(t *testing.T) {
 		default:
 			t.Setenv("XDG_CONFIG_HOME", configRoot)
 		}
-		dataDirectory, err := hpatchDataDirectory()
+		dataDirectory, err := mekugiDataDirectory()
 		if err != nil {
 			t.Fatal(err)
 		}

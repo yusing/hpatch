@@ -7,7 +7,7 @@ results_root="$benchmark_root/results"
 mkdir -p "$results_root/preparation"
 
 staging=$(mktemp -d "$results_root/.prepare-XXXXXX")
-workspace=$(mktemp -d "${TMPDIR:-/tmp}/hpatch-diverse-prepare-XXXXXX")
+workspace=$(mktemp -d "${TMPDIR:-/tmp}/mekugi-diverse-prepare-XXXXXX")
 published=false
 cleanup() {
 	status=$?

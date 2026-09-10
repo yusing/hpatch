@@ -8,7 +8,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/yusing/hpatch/internal/shellruntime"
+	"github.com/yusing/mekugi/internal/shellruntime"
 )
 
 type proxyRegistryFixture struct {
@@ -32,7 +32,7 @@ func sharedProxyTestRegistry(t *testing.T) *toolRegistry {
 func (fixture *proxyRegistryFixture) get(t *testing.T, pluginSource string) *toolRegistry {
 	t.Helper()
 	fixture.once.Do(func() {
-		fixture.directory, fixture.err = os.MkdirTemp("", "hpatch-proxy-tests-")
+		fixture.directory, fixture.err = os.MkdirTemp("", "mekugi-proxy-tests-")
 		if fixture.err != nil {
 			return
 		}
@@ -47,7 +47,7 @@ func (fixture *proxyRegistryFixture) get(t *testing.T, pluginSource string) *too
 				return
 			}
 		}
-		fixture.registry, fixture.err = buildToolRegistry(t.Context(), dataDirectory, testHPatchToolDescription, false)
+		fixture.registry, fixture.err = buildToolRegistry(t.Context(), dataDirectory, testMekugiToolDescription, false)
 	})
 	if fixture.err != nil {
 		t.Fatal(fixture.err)
@@ -57,9 +57,9 @@ func (fixture *proxyRegistryFixture) get(t *testing.T, pluginSource string) *too
 	return fixture.registry
 }
 
-func newProxyWithSharedTestRegistry(t *testing.T, translator hpatchTranslator, registry *toolRegistry) *hpatchProxy {
+func newProxyWithSharedTestRegistry(t *testing.T, translator mekugiTranslator, registry *toolRegistry) *mekugiProxy {
 	t.Helper()
-	proxy := newHPatchProxy(translator, registry, false, false)
+	proxy := newMekugiProxy(translator, registry, false, false)
 	proxy.shellDirectory = os.Getenv(shellruntime.RuntimeDirectoryEnvironment)
 	t.Cleanup(func() {
 		if err := proxy.Close(); err != nil {

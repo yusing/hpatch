@@ -13,7 +13,7 @@ import (
 	"strings"
 
 	"github.com/tiktoken-go/tokenizer"
-	"github.com/yusing/hpatch/internal/commentaryid"
+	"github.com/yusing/mekugi/internal/commentaryid"
 )
 
 var errDecodedPayloadTooLarge = errors.New("decoded response exceeds capture observation limit")
@@ -215,7 +215,7 @@ func observeResponseEnvelope(payload []byte, record *captureRecord, codec tokeni
 }
 
 func generatedOutputItem(payload []byte, record *captureRecord) bool {
-	if record.Boundary != "codex" || record.Mode != "hpatch" {
+	if record.Boundary != "codex" || record.Mode != "mekugi" {
 		return false
 	}
 	var item struct {
@@ -270,18 +270,18 @@ func classifyToolInput(name, input string) (string, string) {
 			return "", ""
 		}
 		switch {
-		case strings.HasPrefix(arguments.Command, hpatchNativeApplyCarrierPrefix):
+		case strings.HasPrefix(arguments.Command, mekugiNativeApplyCarrierPrefix):
 			return "apply_patch", ""
-		case strings.HasPrefix(arguments.Command, hpatchNativeReportCarrierPrefix):
-			return "hpatch_report", ""
-		case strings.HasPrefix(arguments.Command, hpatchNativeDiagnosticCarrierPrefix):
+		case strings.HasPrefix(arguments.Command, mekugiNativeReportCarrierPrefix):
+			return "mekugi_report", ""
+		case strings.HasPrefix(arguments.Command, mekugiNativeDiagnosticCarrierPrefix):
 			line, _, _ := strings.Cut(arguments.Command, "\n")
-			encoded := strings.TrimPrefix(line, hpatchNativeDiagnosticCarrierPrefix)
+			encoded := strings.TrimPrefix(line, mekugiNativeDiagnosticCarrierPrefix)
 			diagnostic, err := strconv.Unquote(encoded)
 			if err != nil {
-				return "hpatch_diagnostic", ""
+				return "mekugi_diagnostic", ""
 			}
-			return "hpatch_diagnostic", hpatchDiagnosticCode(diagnostic)
+			return "mekugi_diagnostic", mekugiDiagnosticCode(diagnostic)
 		default:
 			return "", ""
 		}
@@ -299,7 +299,7 @@ func classifyToolInput(name, input string) (string, string) {
 		}
 	}
 	switch {
-	case strings.HasPrefix(input, hpatchApplyCarrierPrefix):
+	case strings.HasPrefix(input, mekugiApplyCarrierPrefix):
 		return "apply_patch", ""
 	case strings.HasPrefix(input, "const result = await tools.exec_command("):
 		return "exec_command", ""
@@ -317,15 +317,15 @@ func classifyToolInput(name, input string) (string, string) {
 		return "other", ""
 	}
 	if strings.HasPrefix(text, "in ") && strings.Contains(text, "\nlast ") && strings.Contains(text, "\nfiles ") {
-		return "hpatch_report", ""
+		return "mekugi_report", ""
 	}
-	if code := hpatchDiagnosticCode(text); code != "" {
-		return "hpatch_diagnostic", code
+	if code := mekugiDiagnosticCode(text); code != "" {
+		return "mekugi_diagnostic", code
 	}
 	return "other", ""
 }
 
-func hpatchDiagnosticCode(text string) string {
+func mekugiDiagnosticCode(text string) string {
 	if strings.HasPrefix(text, "shell: [shell-typescript-misuse] ") {
 		return "shell-typescript-misuse"
 	}

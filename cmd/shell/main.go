@@ -7,7 +7,7 @@ import (
 	"os"
 	"syscall"
 
-	"github.com/yusing/hpatch/internal/shellruntime"
+	"github.com/yusing/mekugi/internal/shellruntime"
 )
 
 func main() {
@@ -21,7 +21,7 @@ func main() {
 		fmt.Fprintln(os.Stderr, "shell: CODEX_THREAD_ID is unavailable")
 		os.Exit(1)
 	}
-	runtimePath, err := shellruntime.CurrentPath(root, threadID)
+	runtimePath, err := shellruntime.Path(root, threadID)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "shell: locate current runtime:", err)
 		os.Exit(1)

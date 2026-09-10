@@ -29,13 +29,13 @@ router exception and uses `ApplyForHostRoot`.
 
 The router chooses transport session identity from an explicit `session-id`, then a stable
 `prompt_cache_key`, and only then a request-scoped client request ID. Neither that identity nor
-a shared thread owns historical translation. `internal/router/hpatch_store.go` owns versioned,
+a shared thread owns historical translation. `internal/router/mekugi_store.go` owns versioned,
 durable replay records scoped to the selected canonical metadata directory, or the explicit
 no-directory state. Call IDs select records; replay validates the exact carrier kind, name, and
 payload before restoring the model-visible item. A conflicting mapping or corrupt record fails
 routing rather than guessing. An absent legacy record leaves an ordinary unknown host call intact.
 
-`internal/router/hpatch_history.go` builds one ordered visible-history view per accepted request.
+`internal/router/mekugi_history.go` builds one ordered visible-history view per accepted request.
 Recovery, target aliases, and executor confirmation use only that view and calls evaluated in the
 same response. Resume and forks resolve their inherited carriers from the same workspace store;
 they do not clone session maps or import hidden parent calls. Input truncation or compaction
@@ -60,7 +60,7 @@ tool result, rejection diagnostic, read or search result, or response, while req
 still propagates. An explicitly requested capture file that cannot be opened fails startup.
 
 The router exposes only hpatch, hpatch_recover, and shell beside the displaced Code Mode `exec` carrier.
-Hpatch remains the native engine contribution. Hpatch_recover is a router-owned recovery contribution. Shell, hread, hgrep, hsymbol, and inspect_file are
+`hpatch` remains the native engine contribution. `hpatch_recover` is a router-owned recovery contribution. Shell, hread, hgrep, hsymbol, and inspect_file are
 JavaScript- and TypeScript-authored built-in plugin contributions compiled by Bun into one
 embedded JavaScript module with the reserved `builtin.shell` identity. Shell is model-visible;
 hread, hgrep, hsymbol, and inspect_file retain snapshot-backed implementations but their
@@ -88,8 +88,7 @@ The shell carrier preserves one physical line containing one static external imp
 command, with no shebang or directive, as the direct Codex exec command. Every other program emits
 `shell <interpreter> <program>` in Codex's exec context. The fixed `cmd/shell` locator reads the path
 `$MEKUGI_RUNTIME_DIR/mekugi-runtime-$CODEX_THREAD_ID` and replaces itself with the authenticated
-snapshot worker stored there by the router. If that locator is absent, the helper follows
-`$MEKUGI_RUNTIME_DIR/hpatch-runtime-$CODEX_THREAD_ID`. For Bash and sh selectors, a router-owned `mvdan/sh`
+snapshot worker stored there by the router. For Bash and sh selectors, a router-owned `mvdan/sh`
 runner
 parses `LangBash` or `LangPOSIX`, preserves shell-owned expansion and composition, and intercepts
 private command argv without launching another router worker. Other interpreters retain the

@@ -72,14 +72,14 @@ run_agent() {
 	local -a changed=()
 	local -a unauthorized=()
 
-	if [[ $instruction_name == hpatch.md ]]; then
-		instruction_sha=$hpatch_instruction_sha
+	if [[ $instruction_name == mekugi.md ]]; then
+		instruction_sha=$mekugi_instruction_sha
 		instruction_diff_for_arm=$instruction_diff
 	fi
 	printf 'run %s: repetition %d %s (%d/%d)\n' \
 		"$task_id" "$repetition" "$arm" "$order" "$attempts_per_repetition"
 	workspace=$(mktemp -d "$run_dir/work/$run_id-XXXXXX") || return 1
-	trusted=$(mktemp -d /tmp/hpatch-capture-XXXXXX) || return 1
+	trusted=$(mktemp -d /tmp/mekugi-capture-XXXXXX) || return 1
 	repository="$workspace/repo"
 	mkdir -p "$artifact_dir" || return 1
 	printf '%s\n' "$arm" >"$artifact_dir/arm" || return 1
@@ -110,8 +110,8 @@ run_agent() {
 		cd "$repository" || exit 1
 		export BENCH_AGENT_SERVICE=$agent_service
 		export BENCH_ARTIFACT_DIR=$artifact_dir
-		export HPATCH_BENCH_MODE=$router_mode HPATCH_BENCH_PROTOCOL=$model_protocol
-		export HPATCH_BENCH_MENTOR=${arm_mentor[$arm]}
+		export MEKUGI_BENCH_MODE=$router_mode MEKUGI_BENCH_PROTOCOL=$model_protocol
+		export MEKUGI_BENCH_MENTOR=${arm_mentor[$arm]}
 		if [[ -n $codex_home ]]; then
 			export BENCH_CODEX_HOME=$codex_home
 		fi
@@ -291,7 +291,7 @@ run_agent() {
 				--arg arm "$arm" \
 				--argjson status "$commentary_coverage_status" '
 				{
-					schema: "hpatch.benchmark.commentary-coverage.v1",
+					schema: "mekugi.benchmark.commentary-coverage.v1",
 					mode: $mode,
 					arm: $arm,
 					profiles: [],

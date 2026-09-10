@@ -6,8 +6,8 @@ set -euo pipefail
 benchmark_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck source=bench.sh
 source "$benchmark_root/bench.sh"
-fixture=$(mktemp -d /tmp/hpatch-isolation-test-XXXXXX)
-export COMPOSE_PROJECT_NAME="hpatch_isolation_${fixture##*-}"
+fixture=$(mktemp -d /tmp/mekugi-isolation-test-XXXXXX)
+export COMPOSE_PROJECT_NAME="mekugi_isolation_${fixture##*-}"
 export COMPOSE_PROJECT_NAME=${COMPOSE_PROJECT_NAME,,}
 export BENCH_IMAGE=$BENCH_TEST_IMAGE BENCH_RUN_DIR=$fixture
 export BENCH_DEPENDENCY_CACHE="$fixture/cache" CODEX_AUTH_PATH="$fixture/auth.json"
@@ -20,7 +20,7 @@ cleanup_probe() {
     rm -rf -- "$fixture"
 }
 trap cleanup_probe EXIT
-mkdir -p "$fixture"/{instructions,hpatch-config,agent-issue-reports,cache,artifacts/probe,runtime,candidate}
+mkdir -p "$fixture"/{instructions,mekugi-config,agent-issue-reports,cache,artifacts/probe,runtime,candidate}
 : >"$fixture/auth.json"
 printf 'host-only\n' >"$fixture/host-marker"
 # Current launch scripts plus the real router and real Codex --version exercise
@@ -28,10 +28,10 @@ printf 'host-only\n' >"$fixture/host-marker"
 "${compose[@]}" run --interactive=false --no-tty --rm --no-deps \
     --env MEKUGI_RUNTIME_DIR=/runtime --volume "$fixture/runtime:/runtime" \
     --env BENCH_ARTIFACT_DIR=/artifacts --volume "$fixture/artifacts/probe:/artifacts" \
-    --env HPATCH_BENCH_MODE=hpatch --env HPATCH_BENCH_PROTOCOL=native \
-    --volume "$benchmark_root/session-entry.sh:/usr/local/bin/hpatch-benchmark-session:ro" \
-    --volume "$benchmark_root/agent-check.py:/usr/local/libexec/hpatch-agent-check.py:ro" \
-    hpatch-agent bash /usr/local/bin/hpatch-benchmark-session --version >"$fixture/startup.stdout" 2>"$fixture/startup.stderr" || {
+    --env MEKUGI_BENCH_MODE=mekugi --env MEKUGI_BENCH_PROTOCOL=native \
+    --volume "$benchmark_root/session-entry.sh:/usr/local/bin/mekugi-benchmark-session:ro" \
+    --volume "$benchmark_root/agent-check.py:/usr/local/libexec/mekugi-agent-check.py:ro" \
+    mekugi-agent bash /usr/local/bin/mekugi-benchmark-session --version >"$fixture/startup.stdout" 2>"$fixture/startup.stderr" || {
         cat "$fixture/startup.stderr" >&2; exit 1;
     }
 [[ -d $fixture/runtime/state/mekugi ]]

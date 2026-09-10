@@ -2,7 +2,7 @@
 
 ## REQ-COMMENTARY-001 — User-only operation and subagent commentary
 
-In Hpatch router mode, every non-strict function tool in the ordinary Responses `tools` catalog
+In `mekugi` router mode, every non-strict function tool in the ordinary Responses `tools` catalog
 with an object parameter schema receives one optional string property named `commentary`. A
 nonblank authored value is shown as assistant commentary immediately before the call and is removed
 before execution. An omitted or blank value produces no operation commentary. Strict tools,
@@ -206,7 +206,7 @@ Runtime author admission and rendered publications share the 16 KiB auxiliary by
 An oversized author suppresses capability creation; oversized rendered text is not retained,
 while completion handling and substantive tool execution remain unchanged. This local budget
 does not restrict valid Codex names or reject requests.
-Hpatch retains observed canonical names and parent-thread relationships for bounded
+Mekugi retains observed canonical names and parent-thread relationships for bounded
 root projection. It never infers ancestry from a name, message payload, or shared
 routing-session ID. Missing ancestry, cycles, conflicting identity, or exhausted
 auxiliary capacity suppress projection, not child output or tool execution.
@@ -298,7 +298,7 @@ render/write does not consume them. Ready root streaming notices precede provide
 output; child notices appear before substantive output only in the terminal
 response object, never as a later standalone child result. Exact retained IDs are
 removed from subsequent provider-bound input, including passthrough requests.
-In Hpatch mode, emitted notice IDs also enter the workspace-scoped durable commentary
+In `mekugi` mode, emitted notice IDs also enter the workspace-scoped durable commentary
 store so resume and forks remove them without a live queue or matching routing session.
 If that auxiliary retention fails, the notice stays pending and substantive output is
 unchanged. Compaction without a usable canonical workspace also leaves notices pending.

@@ -45,7 +45,7 @@ func TestRecorderObservesSingleListenerAndProviderRetries(t *testing.T) {
 	defer provider.Close()
 
 	capturePath := filepath.Join(t.TempDir(), "capture.jsonl")
-	recorder, err := New(Config{Output: capturePath, Mode: "hpatch", ModelProtocol: "native"})
+	recorder, err := New(Config{Output: capturePath, Mode: "mekugi", ModelProtocol: "native"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -79,7 +79,7 @@ func TestRecorderObservesSingleListenerAndProviderRetries(t *testing.T) {
 				continue
 			}
 			writer.Header().Set("Content-Type", "application/json")
-			_, _ = io.WriteString(writer, `{"status":"completed","output":[{"type":"custom_tool_call","call_id":"call-1","name":"exec","input":"// hpatch-proxy: apply translated patch\nawait tools.apply_patch(\"private patch\");\ntext(\"done\");"}]}`)
+			_, _ = io.WriteString(writer, `{"status":"completed","output":[{"type":"custom_tool_call","call_id":"call-1","name":"exec","input":"// mekugi-proxy: apply translated patch\nawait tools.apply_patch(\"private patch\");\ntext(\"done\");"}]}`)
 		}
 	})))
 	defer router.Close()
@@ -142,9 +142,9 @@ func TestRecorderObservesSingleListenerAndProviderRetries(t *testing.T) {
 		snapshot.Usage.ProviderAttempts != 1 || snapshot.Usage.InputTokens != 20 || snapshot.Usage.CachedInputTokens != 8 ||
 		snapshot.Transport.ClientRequests.Bytes == 0 || snapshot.Transport.ProviderAttemptRequests.Bytes != first.Request.Bytes+second.Request.Bytes ||
 		snapshot.ProviderTools["hpatch"].Calls != 1 || snapshot.DeliveredTools["exec"].Calls != 1 ||
-		snapshot.HPatch.Calls != 1 || snapshot.HPatch.Successful != 1 || snapshot.HPatch.Rejected != 0 ||
-		snapshot.HPatch.ProviderInputTokens != second.ToolCalls[0].InputTokens ||
-		snapshot.HPatch.DeliveredInputTokens != front.ToolCalls[0].InputTokens ||
+		snapshot.Mekugi.Calls != 1 || snapshot.Mekugi.Successful != 1 || snapshot.Mekugi.Rejected != 0 ||
+		snapshot.Mekugi.ProviderInputTokens != second.ToolCalls[0].InputTokens ||
+		snapshot.Mekugi.DeliveredInputTokens != front.ToolCalls[0].InputTokens ||
 		snapshot.Protocol.InputPayloadTokensSaved != 0 ||
 		snapshot.Semantic.ClientOutputs.Tokens != front.FinalOutput.Tokens ||
 		snapshot.Semantic.ProviderAttemptOutputs.Tokens != second.FinalOutput.Tokens ||
@@ -175,7 +175,7 @@ func (body *terminalResponseBody) Close() error {
 }
 
 func TestRecorderAcceptsConsumerCloseAfterTerminalResponse(t *testing.T) {
-	recorder, err := New(Config{Mode: "hpatch", ModelProtocol: "native"})
+	recorder, err := New(Config{Mode: "mekugi", ModelProtocol: "native"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -233,7 +233,7 @@ func (body *trackedRequestBody) Close() error {
 }
 
 func TestRecorderClosesAndRestoresNonReplayableProviderRequest(t *testing.T) {
-	recorder, err := New(Config{Mode: "hpatch", ModelProtocol: "native"})
+	recorder, err := New(Config{Mode: "mekugi", ModelProtocol: "native"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -258,7 +258,7 @@ func TestRecorderClosesAndRestoresNonReplayableProviderRequest(t *testing.T) {
 }
 
 func TestRecorderDoesNotForwardPartiallyReadProviderRequest(t *testing.T) {
-	recorder, err := New(Config{Mode: "hpatch", ModelProtocol: "native"})
+	recorder, err := New(Config{Mode: "mekugi", ModelProtocol: "native"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -282,7 +282,7 @@ func TestRecorderDoesNotForwardPartiallyReadProviderRequest(t *testing.T) {
 }
 
 func TestRecorderClosesOriginalProviderRequestWhenReplayFails(t *testing.T) {
-	recorder, err := New(Config{Mode: "hpatch", ModelProtocol: "native"})
+	recorder, err := New(Config{Mode: "mekugi", ModelProtocol: "native"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -314,13 +314,13 @@ func (reader failingReader) Read([]byte) (int, error) {
 }
 
 func TestSnapshotAccountsCacheCorrectionsDiagnosticsAndMissingEvidence(t *testing.T) {
-	recorder, err := New(Config{Mode: "hpatch", ModelProtocol: "native"})
+	recorder, err := New(Config{Mode: "mekugi", ModelProtocol: "native"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	complete := func(record captureRecord) captureRecord {
 		record.SchemaVersion = schemaVersion
-		record.Mode = "hpatch"
+		record.Mode = "mekugi"
 		record.ModelProtocol = "native"
 		record.StatusCode = http.StatusOK
 		record.ResponseStatus = "completed"
@@ -335,7 +335,7 @@ func TestSnapshotAccountsCacheCorrectionsDiagnosticsAndMissingEvidence(t *testin
 		complete(captureRecord{Boundary: "provider", CaptureID: "first", RequestSequence: 1, ProviderAttempt: 1, ThreadID: "thread", Usage: usage(100, 20, 10)}),
 		complete(captureRecord{Boundary: "codex", CaptureID: "first", RequestSequence: 1, ThreadID: "thread"}),
 		complete(captureRecord{Boundary: "provider", CaptureID: "second", RequestSequence: 2, ProviderAttempt: 1, ThreadID: "thread", Usage: usage(120, 80, 12), ToolCalls: []toolCallMetrics{{CallID: "correction", Name: "hpatch_recover", InputTokens: 4}}}),
-		complete(captureRecord{Boundary: "codex", CaptureID: "second", RequestSequence: 2, ThreadID: "thread", ToolCalls: []toolCallMetrics{{CallID: "correction", Name: "exec", InputTokens: 10, Kind: "hpatch_diagnostic", Diagnostic: "row-stale"}}}),
+		complete(captureRecord{Boundary: "codex", CaptureID: "second", RequestSequence: 2, ThreadID: "thread", ToolCalls: []toolCallMetrics{{CallID: "correction", Name: "exec", InputTokens: 10, Kind: "mekugi_diagnostic", Diagnostic: "row-stale"}}}),
 		complete(captureRecord{Boundary: "codex", CaptureID: "missing", RequestSequence: 3, ThreadID: "thread"}),
 	} {
 		state := states[record.CaptureID]
@@ -358,15 +358,15 @@ func TestSnapshotAccountsCacheCorrectionsDiagnosticsAndMissingEvidence(t *testin
 		snapshot.Cache.ColdOrNewUncachedInputTokens != 100 || snapshot.Cache.EligiblePrefixTokens != 100 ||
 		snapshot.Cache.EligiblePrefixCachedTokens != 80 || snapshot.Cache.EligiblePrefixMissTokens != 20 ||
 		snapshot.Cache.EligiblePrefixCacheRate == nil || *snapshot.Cache.EligiblePrefixCacheRate != 0.8 ||
-		snapshot.HPatch.Calls != 1 || snapshot.HPatch.Corrections != 1 || snapshot.HPatch.Rejected != 1 ||
-		snapshot.HPatch.Diagnostics["row-stale"] != 1 || snapshot.HPatch.CarrierInputTokensExpansion != 6 ||
+		snapshot.Mekugi.Calls != 1 || snapshot.Mekugi.Corrections != 1 || snapshot.Mekugi.Rejected != 1 ||
+		snapshot.Mekugi.Diagnostics["row-stale"] != 1 || snapshot.Mekugi.CarrierInputTokensExpansion != 6 ||
 		snapshot.Capture.MissingProvider != 1 {
 		t.Fatalf("snapshot = %#v", snapshot)
 	}
 }
 
 func TestSnapshotUsesTerminalOutputOnceInsteadOfWholeSSEStream(t *testing.T) {
-	recorder, err := New(Config{Mode: "hpatch", ModelProtocol: "native"})
+	recorder, err := New(Config{Mode: "mekugi", ModelProtocol: "native"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -424,7 +424,7 @@ func TestSnapshotUsesTerminalOutputOnceInsteadOfWholeSSEStream(t *testing.T) {
 }
 
 func TestObserveResponseMeasuresOnlyTerminalOutput(t *testing.T) {
-	recorder, err := New(Config{Mode: "hpatch", ModelProtocol: "ctp2"})
+	recorder, err := New(Config{Mode: "mekugi", ModelProtocol: "ctp2"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -459,12 +459,12 @@ func TestObserveResponseMeasuresOnlyTerminalOutput(t *testing.T) {
 }
 
 func TestRouterHTTPRejectionDoesNotBecomeCaptureCorruption(t *testing.T) {
-	recorder, err := New(Config{Mode: "hpatch", ModelProtocol: "native"})
+	recorder, err := New(Config{Mode: "mekugi", ModelProtocol: "native"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	handler := recorder.Handler(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
-		http.Error(writer, "responses request cannot satisfy the required hpatch rewrite", http.StatusBadGateway)
+		http.Error(writer, "responses request cannot satisfy the required mekugi rewrite", http.StatusBadGateway)
 	}))
 	handler.ServeHTTP(
 		httptest.NewRecorder(),
@@ -487,7 +487,7 @@ func TestSignedDifferenceSaturates(t *testing.T) {
 }
 
 func TestSnapshotBoundsExchangeDetailWithoutLosingTotals(t *testing.T) {
-	recorder, err := New(Config{Mode: "hpatch", ModelProtocol: "native"})
+	recorder, err := New(Config{Mode: "mekugi", ModelProtocol: "native"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -575,7 +575,7 @@ func (writer *discardStreamingWriter) Flush() {
 }
 
 func TestRecorderBoundsLargeStreamingObservationAfterFirstFlush(t *testing.T) {
-	recorder, err := New(Config{Mode: "hpatch", ModelProtocol: "native"})
+	recorder, err := New(Config{Mode: "mekugi", ModelProtocol: "native"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -621,7 +621,7 @@ func TestRecorderBoundsLargeStreamingObservationAfterFirstFlush(t *testing.T) {
 }
 
 func TestRecorderFinalizesClientCaptureWhenHandlerPanics(t *testing.T) {
-	recorder, err := New(Config{Mode: "hpatch", ModelProtocol: "native"})
+	recorder, err := New(Config{Mode: "mekugi", ModelProtocol: "native"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -710,30 +710,30 @@ func TestClassifyToolInputRetainsOnlyStableDiagnosticCodes(t *testing.T) {
 		wantKind   string
 		wantReason string
 	}{
-		{name: "apply carrier", input: hpatchApplyCarrierPrefix + `"*** Begin Patch\\n*** End Patch");\ntext("done");`, wantKind: "apply_patch"},
+		{name: "apply carrier", input: mekugiApplyCarrierPrefix + `"*** Begin Patch\\n*** End Patch");\ntext("done");`, wantKind: "apply_patch"},
 		{name: "exec command carrier", input: `const result = await tools.exec_command({"cmd":"true"});\ntext(result.output);`, wantKind: "exec_command"},
-		{name: "router diagnostic", input: `text("type: command 2, reason row-stale: private detail\n");`, wantKind: "hpatch_diagnostic", wantReason: "row-stale"},
-		{name: "apply substring in diagnostic", input: `text("type: command 2, reason file-path: missing tools.apply_patch(example)\n");`, wantKind: "hpatch_diagnostic", wantReason: "file-path"},
+		{name: "router diagnostic", input: `text("type: command 2, reason row-stale: private detail\n");`, wantKind: "mekugi_diagnostic", wantReason: "row-stale"},
+		{name: "apply substring in diagnostic", input: `text("type: command 2, reason file-path: missing tools.apply_patch(example)\n");`, wantKind: "mekugi_diagnostic", wantReason: "file-path"},
 		{name: "arbitrary text", input: `text("private sentinel\nmore private content");`, wantKind: "other"},
 		{name: "forged reason", input: `text("type: command 2, reason private-sentinel: detail\n");`, wantKind: "other"},
 		{name: "malformed envelope", input: `text("prefix, reason row-stale: detail\n");`, wantKind: "other"},
 		{
 			name:     "native apply carrier",
 			toolName: "exec_command",
-			input:    nativeInput(hpatchNativeApplyCarrierPrefix + "printf ok"),
+			input:    nativeInput(mekugiNativeApplyCarrierPrefix + "printf ok"),
 			wantKind: "apply_patch",
 		},
 		{
 			name:     "native report carrier",
 			toolName: "exec_command",
-			input:    nativeInput(hpatchNativeReportCarrierPrefix + "printf ok"),
-			wantKind: "hpatch_report",
+			input:    nativeInput(mekugiNativeReportCarrierPrefix + "printf ok"),
+			wantKind: "mekugi_report",
 		},
 		{
 			name:       "native diagnostic carrier",
 			toolName:   "exec_command",
-			input:      nativeInput(hpatchNativeDiagnosticCarrierPrefix + strconv.Quote(diagnostic) + "\nprintf ok"),
-			wantKind:   "hpatch_diagnostic",
+			input:      nativeInput(mekugiNativeDiagnosticCarrierPrefix + strconv.Quote(diagnostic) + "\nprintf ok"),
+			wantKind:   "mekugi_diagnostic",
 			wantReason: "row-stale",
 		},
 	} {
@@ -752,7 +752,7 @@ func TestClassifyToolInputRetainsOnlyStableDiagnosticCodes(t *testing.T) {
 
 func TestDurableCaptureDiscardsArbitraryTextCarrierContent(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "capture.jsonl")
-	recorder, err := New(Config{Output: path, Mode: "hpatch", ModelProtocol: "native"})
+	recorder, err := New(Config{Output: path, Mode: "mekugi", ModelProtocol: "native"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -772,13 +772,13 @@ func TestDurableCaptureDiscardsArbitraryTextCarrierContent(t *testing.T) {
 		t.Fatalf("durable capture retained arbitrary carrier content: %s", payload)
 	}
 	snapshot := recorder.snapshot()
-	if snapshot.HPatch.Diagnostics != nil && len(snapshot.HPatch.Diagnostics) != 0 {
-		t.Fatalf("diagnostics = %#v", snapshot.HPatch.Diagnostics)
+	if snapshot.Mekugi.Diagnostics != nil && len(snapshot.Mekugi.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v", snapshot.Mekugi.Diagnostics)
 	}
 }
 
 func TestCacheAttributionUsesFinalAttemptOfPrecedingLogicalRequest(t *testing.T) {
-	recorder, err := New(Config{Mode: "hpatch", ModelProtocol: "native"})
+	recorder, err := New(Config{Mode: "mekugi", ModelProtocol: "native"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -829,7 +829,7 @@ func TestCacheAttributionUsesFinalAttemptOfPrecedingLogicalRequest(t *testing.T)
 }
 
 func TestCacheAttributionFollowsRequestSequenceWhenResponsesFinishOutOfOrder(t *testing.T) {
-	recorder, err := New(Config{Mode: "hpatch", ModelProtocol: "native"})
+	recorder, err := New(Config{Mode: "mekugi", ModelProtocol: "native"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -867,7 +867,7 @@ func TestCacheAttributionFollowsRequestSequenceWhenResponsesFinishOutOfOrder(t *
 }
 
 func TestRecorderIgnoresUnregisteredResponsesSuffix(t *testing.T) {
-	recorder, err := New(Config{Mode: "hpatch", ModelProtocol: "native"})
+	recorder, err := New(Config{Mode: "mekugi", ModelProtocol: "native"})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -2,25 +2,25 @@ package router
 
 import (
 	"encoding/json"
-	"github.com/yusing/hpatch"
+	"github.com/yusing/mekugi"
 	"strconv"
 	"testing"
 )
 
 func TestReplayVisibleViewSurvivesRestartAndFork(t *testing.T) {
-	store, err := openHPatchReplayStore(t.TempDir())
+	store, err := openMekugiReplayStore(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
 	workspace := t.TempDir()
-	histories := map[string]hpatchHistory{}
+	histories := map[string]mekugiHistory{}
 	for _, id := range []string{"a", "b"} {
-		histories[id] = hpatchHistory{toolName: hpatchToolName, root: workspace, script: "original-" + id, carrierName: "exec", carrierKind: codeModeCarrierCustom, carrierPayload: "translated-" + id, upstreamItem: map[string]json.RawMessage{"type": mustMarshalJSON("custom_tool_call"), "name": mustMarshalJSON(hpatchToolName), "call_id": mustMarshalJSON(id), "input": mustMarshalJSON("original-" + id)}}
+		histories[id] = mekugiHistory{toolName: mekugiToolName, root: workspace, script: "original-" + id, carrierName: "exec", carrierKind: codeModeCarrierCustom, carrierPayload: "translated-" + id, upstreamItem: map[string]json.RawMessage{"type": mustMarshalJSON("custom_tool_call"), "name": mustMarshalJSON(mekugiToolName), "call_id": mustMarshalJSON(id), "input": mustMarshalJSON("original-" + id)}}
 	}
 	if err := store.put(t.Context(), workspace, histories); err != nil {
 		t.Fatal(err)
 	}
-	proxy := &hpatchProxy{replayStore: store}
+	proxy := &mekugiProxy{replayStore: store}
 	request := func(ids ...string) *parsedResponsesRequest {
 		items := []map[string]json.RawMessage{}
 		for _, id := range ids {
@@ -65,28 +65,28 @@ func TestReplayVisibleViewSurvivesRestartAndFork(t *testing.T) {
 }
 
 func TestReplayRecoveryAndAliasesAreRequestLocal(t *testing.T) {
-	store, err := openHPatchReplayStore(t.TempDir())
+	store, err := openMekugiReplayStore(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
 	workspace := t.TempDir()
-	alias := hpatch.TargetAlias{Path: "file", Before: "1:1111", After: "1:2222"}
-	histories := map[string]hpatchHistory{
-		"old": {toolName: hpatchToolName, root: workspace, script: "old", carrierName: "exec", carrierPayload: "old carrier", carrierKind: codeModeCarrierCustom, translationError: "rejected", evaluatorRejected: true, correlationID: "attempt", attempt: 1},
-		"new": {toolName: hpatchToolName, root: workspace, script: "new", carrierName: "exec", carrierPayload: "new carrier", carrierKind: codeModeCarrierCustom, report: "applied", aliases: []hpatch.TargetAlias{alias}},
+	alias := mekugi.TargetAlias{Path: "file", Before: "1:1111", After: "1:2222"}
+	histories := map[string]mekugiHistory{
+		"old": {toolName: mekugiToolName, root: workspace, script: "old", carrierName: "exec", carrierPayload: "old carrier", carrierKind: codeModeCarrierCustom, translationError: "rejected", evaluatorRejected: true, correlationID: "attempt", attempt: 1},
+		"new": {toolName: mekugiToolName, root: workspace, script: "new", carrierName: "exec", carrierPayload: "new carrier", carrierKind: codeModeCarrierCustom, report: "applied", aliases: []mekugi.TargetAlias{alias}},
 	}
 	if err := store.put(t.Context(), workspace, histories); err != nil {
 		t.Fatal(err)
 	}
-	proxy := &hpatchProxy{replayStore: store}
-	view := func(items ...any) *hpatchResponseTransform {
+	proxy := &mekugiProxy{replayStore: store}
+	view := func(items ...any) *mekugiResponseTransform {
 		t.Helper()
 		request := &parsedResponsesRequest{fields: map[string]json.RawMessage{"input": mustMarshalJSON(items)}}
 		visible, err := proxy.reconcileVisibleInput(t.Context(), request, workspace, "reused-route")
 		if err != nil {
 			t.Fatal(err)
 		}
-		return &hpatchResponseTransform{proxy: proxy, directory: workspace, visible: visible}
+		return &mekugiResponseTransform{proxy: proxy, directory: workspace, visible: visible}
 	}
 	output := func(id, text string) any {
 		return map[string]any{"type": "custom_tool_call_output", "call_id": id, "output": text}
@@ -107,10 +107,10 @@ func TestReplayRecoveryAndAliasesAreRequestLocal(t *testing.T) {
 	if len(parent.targetAliases()) != 1 || len(failed.targetAliases()) != 0 || len(fork.targetAliases()) != 0 {
 		t.Fatal("confirmation leaked between views")
 	}
-	if err := store.putCommentary(t.Context(), workspace, []string{"msg_hpatch_commentary_known"}); err != nil {
+	if err := store.putCommentary(t.Context(), workspace, []string{"msg_mekugi_commentary_known"}); err != nil {
 		t.Fatal(err)
 	}
-	request := &parsedResponsesRequest{fields: map[string]json.RawMessage{"input": mustMarshalJSON([]any{assistantCommentaryMessage("msg_hpatch_commentary_known", "known"), assistantCommentaryMessage("msg_hpatch_commentary_unknown", "unknown")})}}
+	request := &parsedResponsesRequest{fields: map[string]json.RawMessage{"input": mustMarshalJSON([]any{assistantCommentaryMessage("msg_mekugi_commentary_known", "known"), assistantCommentaryMessage("msg_mekugi_commentary_unknown", "unknown")})}}
 	if _, err := proxy.reconcileVisibleInput(t.Context(), request, workspace, "fork"); err != nil {
 		t.Fatal(err)
 	}
@@ -118,21 +118,21 @@ func TestReplayRecoveryAndAliasesAreRequestLocal(t *testing.T) {
 	if err := json.Unmarshal(request.fields["input"], &messages); err != nil {
 		t.Fatal(err)
 	}
-	if len(messages) != 1 || jsonString(messages[0], "id") != "msg_hpatch_commentary_unknown" {
+	if len(messages) != 1 || jsonString(messages[0], "id") != "msg_mekugi_commentary_unknown" {
 		t.Fatalf("commentary provenance = %s", request.fields["input"])
 	}
 }
 
 func TestReplayNoWorkspaceForkAndLateValidation(t *testing.T) {
-	store, err := openHPatchReplayStore(t.TempDir())
+	store, err := openMekugiReplayStore(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
-	history := hpatchHistory{toolName: hpatchToolName, carrierName: "exec", carrierKind: codeModeCarrierCustom, carrierPayload: "carrier", report: "applied"}
-	if err := store.put(t.Context(), "", map[string]hpatchHistory{"call": history}); err != nil {
+	history := mekugiHistory{toolName: mekugiToolName, carrierName: "exec", carrierKind: codeModeCarrierCustom, carrierPayload: "carrier", report: "applied"}
+	if err := store.put(t.Context(), "", map[string]mekugiHistory{"call": history}); err != nil {
 		t.Fatal(err)
 	}
-	proxy := &hpatchProxy{replayStore: store}
+	proxy := &mekugiProxy{replayStore: store}
 	makeRequest := func(payload string) *parsedResponsesRequest {
 		return &parsedResponsesRequest{fields: map[string]json.RawMessage{"input": mustMarshalJSON([]any{
 			map[string]any{"type": "custom_tool_call_output", "call_id": "call", "output": "applied"},
@@ -171,17 +171,17 @@ func TestReplayCompletedSSEIsDurableBeforeTerminal(t *testing.T) {
 	for _, native := range []bool{false, true} {
 		t.Run(strconv.FormatBool(native), func(t *testing.T) {
 			calls := 0
-			transform, proxy, _, _ := newHPatchTestTransform(t, testTranslator(t, &calls))
+			transform, proxy, _, _ := newMekugiTestTransform(t, testTranslator(t, &calls))
 			if native {
-				transform, _ = newNativeHPatchTestTransformWithProxy(t, proxy)
+				transform, _ = newNativeMekugiTestTransformWithProxy(t, proxy)
 			}
 			directory := t.TempDir()
-			store, err := openHPatchReplayStore(directory)
+			store, err := openMekugiReplayStore(directory)
 			if err != nil {
 				t.Fatal(err)
 			}
 			proxy.replayStore = store
-			added := testHPatchItem()
+			added := testMekugiItem()
 			added["status"] = "in_progress"
 			added["input"] = ""
 			added["extra"] = map[string]any{"kept": true}
@@ -191,7 +191,7 @@ func TestReplayCompletedSSEIsDurableBeforeTerminal(t *testing.T) {
 			if _, found, err := store.lookup(t.Context(), transform.directory, "call-H"); err != nil || found {
 				t.Fatalf("unfinished retained: %v %v", found, err)
 			}
-			emitted, err := transform.TransformSSE(mustTestJSON(t, map[string]any{"type": "response.custom_tool_call_input.done", "item_id": "item-H", "input": testHPatchScript}))
+			emitted, err := transform.TransformSSE(mustTestJSON(t, map[string]any{"type": "response.custom_tool_call_input.done", "item_id": "item-H", "input": testMekugiScript}))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -214,11 +214,11 @@ func TestReplayCompletedSSEIsDurableBeforeTerminal(t *testing.T) {
 			}
 			payloadField := carrierPayloadField(kind)
 			envelope.Item[payloadField] = done[payloadField]
-			reopened, err := openHPatchReplayStore(directory)
+			reopened, err := openMekugiReplayStore(directory)
 			if err != nil {
 				t.Fatal(err)
 			}
-			restarted := &hpatchProxy{replayStore: reopened}
+			restarted := &mekugiProxy{replayStore: reopened}
 			request := &parsedResponsesRequest{fields: map[string]json.RawMessage{"input": mustMarshalJSON([]any{envelope.Item})}}
 			if _, err := restarted.reconcileVisibleInput(t.Context(), request, transform.directory, "forked-route"); err != nil {
 				t.Fatal(err)
@@ -228,7 +228,7 @@ func TestReplayCompletedSSEIsDurableBeforeTerminal(t *testing.T) {
 				t.Fatal(err)
 			}
 			item := replayed[0]
-			if jsonString(item, "type") != "custom_tool_call" || jsonString(item, "name") != hpatchToolName || jsonString(item, "id") != "item-H" || jsonString(item, "input") != testHPatchScript || string(item["extra"]) != "{\"kept\":true}" || len(item["arguments"]) != 0 || calls != 1 {
+			if jsonString(item, "type") != "custom_tool_call" || jsonString(item, "name") != mekugiToolName || jsonString(item, "id") != "item-H" || jsonString(item, "input") != testMekugiScript || string(item["extra"]) != "{\"kept\":true}" || len(item["arguments"]) != 0 || calls != 1 {
 				t.Fatalf("restart replay lost original: %s, executions %d", request.fields["input"], calls)
 			}
 		})
@@ -236,41 +236,41 @@ func TestReplayCompletedSSEIsDurableBeforeTerminal(t *testing.T) {
 }
 
 func TestReplayStoreFailureDoesNotExposeCompletedCarrier(t *testing.T) {
-	transform, proxy, _, workspace := newHPatchTestTransform(t, testTranslator(t, new(int)))
-	store, err := openHPatchReplayStore(t.TempDir())
+	transform, proxy, _, workspace := newMekugiTestTransform(t, testTranslator(t, new(int)))
+	store, err := openMekugiReplayStore(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
 	proxy.replayStore = store
-	if err := store.put(t.Context(), workspace, map[string]hpatchHistory{"call-H": {script: "conflict"}}); err != nil {
+	if err := store.put(t.Context(), workspace, map[string]mekugiHistory{"call-H": {script: "conflict"}}); err != nil {
 		t.Fatal(err)
 	}
-	added := testHPatchItem()
+	added := testMekugiItem()
 	added["status"] = "in_progress"
 	added["input"] = ""
 	if _, err := transform.TransformSSE(mustTestJSON(t, map[string]any{"type": "response.output_item.added", "item": added})); err != nil {
 		t.Fatal(err)
 	}
-	visible, err := transform.TransformSSE(mustTestJSON(t, map[string]any{"type": "response.custom_tool_call_input.done", "item_id": "item-H", "input": testHPatchScript}))
+	visible, err := transform.TransformSSE(mustTestJSON(t, map[string]any{"type": "response.custom_tool_call_input.done", "item_id": "item-H", "input": testMekugiScript}))
 	if err == nil || len(visible) != 0 {
 		t.Fatalf("failed durability exposed carrier: %s %v", visible, err)
 	}
 }
 
 func TestReplayConcurrentViewsWithReusedRoutingKey(t *testing.T) {
-	store, err := openHPatchReplayStore(t.TempDir())
+	store, err := openMekugiReplayStore(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
 	workspace := t.TempDir()
-	histories := map[string]hpatchHistory{}
+	histories := map[string]mekugiHistory{}
 	for _, id := range []string{"parent", "fork"} {
-		histories[id] = hpatchHistory{toolName: hpatchToolName, script: id, carrierName: "exec", carrierKind: codeModeCarrierCustom, carrierPayload: id, translationError: "rejected", evaluatorRejected: true}
+		histories[id] = mekugiHistory{toolName: mekugiToolName, script: id, carrierName: "exec", carrierKind: codeModeCarrierCustom, carrierPayload: id, translationError: "rejected", evaluatorRejected: true}
 	}
 	if err := store.put(t.Context(), workspace, histories); err != nil {
 		t.Fatal(err)
 	}
-	proxy := &hpatchProxy{replayStore: store}
+	proxy := &mekugiProxy{replayStore: store}
 	for index := range 16 {
 		t.Run(strconv.Itoa(index), func(t *testing.T) {
 			t.Parallel()
@@ -280,7 +280,7 @@ func TestReplayConcurrentViewsWithReusedRoutingKey(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			transform := &hpatchResponseTransform{visible: visible}
+			transform := &mekugiResponseTransform{visible: visible}
 			recovered, err := transform.recoveryHistory()
 			if err != nil || recovered.script != id || len(visible) != 1 {
 				t.Fatalf("cross-contaminated view: %+v %v", recovered, err)
@@ -291,13 +291,13 @@ func TestReplayConcurrentViewsWithReusedRoutingKey(t *testing.T) {
 
 func TestReplayJSONExcludesUnfinishedCalls(t *testing.T) {
 	calls := 0
-	transform, proxy, _, workspace := newHPatchTestTransform(t, testTranslator(t, &calls))
-	store, err := openHPatchReplayStore(t.TempDir())
+	transform, proxy, _, workspace := newMekugiTestTransform(t, testTranslator(t, &calls))
+	store, err := openMekugiReplayStore(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
 	proxy.replayStore = store
-	unfinished := testHPatchItem()
+	unfinished := testMekugiItem()
 	unfinished["status"] = "in_progress"
 	if _, err := transform.TransformJSON(mustTestJSON(t, map[string]any{"status": "in_progress", "output": []any{unfinished}})); err != nil {
 		t.Fatal(err)
@@ -310,14 +310,14 @@ func TestReplayJSONExcludesUnfinishedCalls(t *testing.T) {
 func TestReplayReceivedReplyDoesNotRepeatAfterReconciliation(t *testing.T) {
 	workspace := t.TempDir()
 	storeDirectory := t.TempDir()
-	store, err := openHPatchReplayStore(storeDirectory)
+	store, err := openMekugiReplayStore(storeDirectory)
 	if err != nil {
 		t.Fatal(err)
 	}
-	proxy := newManagedHPatchProxy(t, testTranslator(t, new(int)))
+	proxy := newManagedMekugiProxy(t, testTranslator(t, new(int)))
 	proxy.replayStore = store
 	envelope := map[string]any{"type": "agent_message", "id": "received-reply", "author": "/root/worker", "recipient": "/root", "content": []any{map[string]any{"type": "input_text", "text": "Message Type: MESSAGE\nTask name: /root\nSender: /root/worker\nPayload:\nresult"}}}
-	prepare := func(proxy *hpatchProxy, input []any, thread string) (*hpatchResponseTransform, *parsedResponsesRequest) {
+	prepare := func(proxy *mekugiProxy, input []any, thread string) (*mekugiResponseTransform, *parsedResponsesRequest) {
 		t.Helper()
 		request, err := parseResponsesRequest(mustTestJSON(t, map[string]any{"model": "gpt-test", "input": input, "tools": testNativeResponsesTools(), "tool_choice": "auto"}))
 		if err != nil {
@@ -347,11 +347,11 @@ func TestReplayReceivedReplyDoesNotRepeatAfterReconciliation(t *testing.T) {
 	generated := original.Output[0]
 	for _, restart := range []bool{false, true} {
 		if restart {
-			reopened, err := openHPatchReplayStore(storeDirectory)
+			reopened, err := openMekugiReplayStore(storeDirectory)
 			if err != nil {
 				t.Fatal(err)
 			}
-			proxy = newManagedHPatchProxy(t, testTranslator(t, new(int)))
+			proxy = newManagedMekugiProxy(t, testTranslator(t, new(int)))
 			proxy.replayStore = reopened
 		}
 		next, request := prepare(proxy, []any{envelope, generated}, "continued-thread")

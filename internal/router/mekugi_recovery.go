@@ -10,28 +10,28 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/yusing/hpatch"
-	codexinstructions "github.com/yusing/hpatch/contrib/codex"
-	"github.com/yusing/hpatch/internal/hpatchsyntax"
+	"github.com/yusing/mekugi"
+	codexinstructions "github.com/yusing/mekugi/contrib/codex"
+	"github.com/yusing/mekugi/internal/hpatchsyntax"
 )
 
-const hpatchRecoveryToolName = "hpatch_recover"
+const mekugiRecoveryToolName = "hpatch_recover"
 
-func hpatchRecoveryGuidance(
+func mekugiRecoveryGuidance(
 	script string,
-	rejections []hpatch.HostRejection,
+	rejections []mekugi.HostRejection,
 	refreshed bool,
 ) string {
-	references, eligible := hpatchRecoveryReferences(script, rejections, refreshed)
+	references, eligible := mekugiRecoveryReferences(script, rejections, refreshed)
 	if !eligible {
 		return "\nThis rejection requires one complete corrected HPATCH/2 script through functions.hpatch; functions.hpatch_recover changes stale targets only.\n"
 	}
 	return codexinstructions.RecoveryGuidance(references)
 }
 
-func hpatchRecoveryReferences(
+func mekugiRecoveryReferences(
 	script string,
-	rejections []hpatch.HostRejection,
+	rejections []mekugi.HostRejection,
 	refreshed bool,
 ) (string, bool) {
 	commands := recoveryCommands(script)
@@ -62,14 +62,14 @@ func hpatchRecoveryReferences(
 	slices.Sort(indices)
 	for _, index := range indices {
 		command := commands[index-1]
-		fmt.Fprintf(&output, "    %s %s\n", command.handle, hpatchRecoveryCommandSummary(command))
+		fmt.Fprintf(&output, "    %s %s\n", command.handle, mekugiRecoveryCommandSummary(command))
 	}
 	output.WriteString("\nSend one line per listed command as C... CURRENT_TARGET. Put all corrections in one functions.hpatch_recover payload; the router preserves every operation and value and reevaluates the complete script.\n")
 	return output.String(), true
 }
 
-// hpatchRecoveryCommandSummary creates a summary string for a recovery command reference.
-func hpatchRecoveryCommandSummary(command recoveryCommandReference) string {
+// mekugiRecoveryCommandSummary creates a summary string for a recovery command reference.
+func mekugiRecoveryCommandSummary(command recoveryCommandReference) string {
 	summary := command.parts.operation
 	if command.parts.target != "" {
 		summary += " " + command.parts.target
@@ -80,13 +80,13 @@ func hpatchRecoveryCommandSummary(command recoveryCommandReference) string {
 	return summary + " [inline value]"
 }
 
-func hpatchLogicalRowsByPhysicalLine(script string, lines []hpatchsyntax.PhysicalLine) [][]int {
+func mekugiLogicalRowsByPhysicalLine(script string, lines []hpatchsyntax.PhysicalLine) [][]int {
 	mapped := make([][]int, len(lines))
 	offset := 0
 	logicalRow := 1
 	for index, line := range lines {
 		next := offset + len(line.Text) + len(line.Terminator)
-		count := hpatch.TextLineCount(script[offset:next])
+		count := mekugi.TextLineCount(script[offset:next])
 		for range count {
 			mapped[index] = append(mapped[index], logicalRow)
 			logicalRow++
@@ -96,18 +96,18 @@ func hpatchLogicalRowsByPhysicalLine(script string, lines []hpatchsyntax.Physica
 	return mapped
 }
 
-type hpatchOutcomeReporter interface {
+type mekugiOutcomeReporter interface {
 	ReportOutcome(ctx context.Context, stage, outcome string) error
 }
 
-// recoveryHistoryOf picks the newest call that hpatch actually evaluated.
+// recoveryHistoryOf picks the newest call that mekugi actually evaluated.
 // Proxy-rejected calls are skipped because they changed nothing. A successful
 // newest call blocks recovery of an older rejection.
-func recoveryHistoryOf(histories iter.Seq[hpatchHistory]) (hpatchHistory, error) {
-	var latest hpatchHistory
+func recoveryHistoryOf(histories iter.Seq[mekugiHistory]) (mekugiHistory, error) {
+	var latest mekugiHistory
 	found := false
 	for history := range histories {
-		if history.unevaluated || (history.toolName != hpatchToolName && history.toolName != hpatchRecoveryToolName) {
+		if history.unevaluated || (history.toolName != mekugiToolName && history.toolName != mekugiRecoveryToolName) {
 			continue
 		}
 		if !found || history.sequence > latest.sequence {
@@ -116,21 +116,21 @@ func recoveryHistoryOf(histories iter.Seq[hpatchHistory]) (hpatchHistory, error)
 		}
 	}
 	if !found {
-		return hpatchHistory{}, errors.New("no rejected hpatch script to recover; send a complete script")
+		return mekugiHistory{}, errors.New("no rejected HPATCH script to recover; send a complete script")
 	}
 	if latest.translationError == "" {
-		return hpatchHistory{}, errors.New("the most recent hpatch call succeeded; recovery edits require a rejected script, so send a complete script")
+		return mekugiHistory{}, errors.New("the most recent mekugi call succeeded; recovery edits require a rejected script, so send a complete script")
 	}
 	if !latest.evaluatorRejected {
-		return hpatchHistory{}, errors.New("the most recent hpatch call did not produce an evaluator rejection; send a complete script")
+		return mekugiHistory{}, errors.New("the most recent mekugi call did not produce an evaluator rejection; send a complete script")
 	}
 	return latest, nil
 }
 
-func latestRecoveryAttempt(histories iter.Seq[hpatchHistory], correlationID string) int {
+func latestRecoveryAttempt(histories iter.Seq[mekugiHistory], correlationID string) int {
 	latest := 0
 	for history := range histories {
-		if (history.toolName == hpatchToolName || history.toolName == hpatchRecoveryToolName) && history.correlationID == correlationID {
+		if (history.toolName == mekugiToolName || history.toolName == mekugiRecoveryToolName) && history.correlationID == correlationID {
 			latest = max(latest, history.attempt)
 		}
 	}
@@ -138,20 +138,20 @@ func latestRecoveryAttempt(histories iter.Seq[hpatchHistory], correlationID stri
 }
 
 // recoveryBaseline is the complete rejected script a following recovery edits.
-func (h hpatchHistory) recoveryBaseline() string {
+func (h mekugiHistory) recoveryBaseline() string {
 	if h.evaluated != "" {
 		return h.evaluated
 	}
 	return h.script
 }
 
-func (t *hpatchResponseTransform) translateRecovery(
+func (t *mekugiResponseTransform) translateRecovery(
 	callID, input string,
 	upstreamItem map[string]json.RawMessage,
-) (hpatchHistory, error) {
+) (mekugiHistory, error) {
 	if history, ok := t.local[callID]; ok {
-		if history.toolName != hpatchRecoveryToolName || history.pluginID != "" || history.script != input {
-			return hpatchHistory{}, fmt.Errorf("hpatch recovery call %q changed input", callID)
+		if history.toolName != mekugiRecoveryToolName || history.pluginID != "" || history.script != input {
+			return mekugiHistory{}, fmt.Errorf("mekugi recovery call %q changed input", callID)
 		}
 		if len(upstreamItem) != 0 {
 			history.upstreamItem = maps.Clone(upstreamItem)
@@ -159,11 +159,11 @@ func (t *hpatchResponseTransform) translateRecovery(
 		}
 		return history, nil
 	}
-	if len(input) > maxHPatchScriptBytes {
-		return hpatchHistory{}, fmt.Errorf("hpatch recovery call %q payload exceeds %d bytes", callID, maxHPatchScriptBytes)
+	if len(input) > maxMekugiScriptBytes {
+		return mekugiHistory{}, fmt.Errorf("mekugi recovery call %q payload exceeds %d bytes", callID, maxMekugiScriptBytes)
 	}
 	base, baseErr := t.recoveryHistory()
-	attemptMetadata := hpatch.AttemptMetadata{
+	attemptMetadata := mekugi.AttemptMetadata{
 		SessionID:      t.sessionID,
 		Title:          t.proxy.titles.title(t.sessionID),
 		CorrelationID:  callID,
@@ -171,11 +171,11 @@ func (t *hpatchResponseTransform) translateRecovery(
 		Attempt:        1,
 		Correction:     true,
 		Model:          t.model,
-		ToolName:       hpatchRecoveryToolName,
+		ToolName:       mekugiRecoveryToolName,
 		EmittedPayload: input,
 	}
 	if baseErr != nil {
-		return t.rejectUnevaluated(hpatchRecoveryToolName, callID, input, baseErr, attemptMetadata, "", nil, upstreamItem)
+		return t.rejectUnevaluated(mekugiRecoveryToolName, callID, input, baseErr, attemptMetadata, "", nil, upstreamItem)
 	}
 	attemptMetadata.CorrelationID = base.correlationID
 	if attemptMetadata.CorrelationID == "" {
@@ -184,7 +184,7 @@ func (t *hpatchResponseTransform) translateRecovery(
 	attemptMetadata.Attempt = t.nextRecoveryAttempt(attemptMetadata.CorrelationID, base.attempt)
 	if base.root != t.directory {
 		return t.rejectUnevaluated(
-			hpatchRecoveryToolName,
+			mekugiRecoveryToolName,
 			callID,
 			input,
 			errors.New("the rejected script belongs to a different worktree; send a complete script"),
@@ -198,7 +198,7 @@ func (t *hpatchResponseTransform) translateRecovery(
 	recovered, err := recoverScriptDetailed(t.ctx, baseline, input)
 	if err != nil {
 		return t.rejectUnevaluated(
-			hpatchRecoveryToolName,
+			mekugiRecoveryToolName,
 			callID,
 			input,
 			err,
@@ -213,25 +213,25 @@ func (t *hpatchResponseTransform) translateRecovery(
 	return t.evaluateScript(callID, input, recovered.script, attemptMetadata, upstreamItem)
 }
 
-func (t *hpatchResponseTransform) rejectUnevaluated(
+func (t *mekugiResponseTransform) rejectUnevaluated(
 	toolName, callID, input string,
 	rejection error,
-	attempt hpatch.AttemptMetadata,
+	attempt mekugi.AttemptMetadata,
 	referenceScript string,
-	rejections []hpatch.HostRejection,
+	rejections []mekugi.HostRejection,
 	upstreamItem map[string]json.RawMessage,
-) (hpatchHistory, error) {
+) (mekugiHistory, error) {
 	diagnostic := rejection.Error()
 	if referenceScript != "" {
-		diagnostic += hpatchRecoveryGuidance(referenceScript, rejections, false)
+		diagnostic += mekugiRecoveryGuidance(referenceScript, rejections, false)
 	}
-	if reporter, ok := t.proxy.translator.(hpatchOutcomeReporter); ok {
-		attemptContext := hpatch.WithAttemptMetadata(t.ctx, attempt)
+	if reporter, ok := t.proxy.translator.(mekugiOutcomeReporter); ok {
+		attemptContext := mekugi.WithAttemptMetadata(t.ctx, attempt)
 		if hookErr := reporter.ReportOutcome(attemptContext, "unevaluated", "rejected"); hookErr != nil {
-			diagnostic += "\nhpatch: warning: " + strings.TrimSpace(hookErr.Error()) + "\n"
+			diagnostic += "\nmekugi: warning: " + strings.TrimSpace(hookErr.Error()) + "\n"
 		}
 	}
-	history := hpatchHistory{
+	history := mekugiHistory{
 		toolName: toolName,
 		script:   input,
 
@@ -249,17 +249,17 @@ func (t *hpatchResponseTransform) rejectUnevaluated(
 // recoveryHistory is the rejected call a recovery in this turn edits. A
 // rejection this turn is newer than retained history, which commits only after
 // the response completes.
-func (t *hpatchResponseTransform) recoveryHistory() (hpatchHistory, error) {
+func (t *mekugiResponseTransform) recoveryHistory() (mekugiHistory, error) {
 	for _, history := range t.local {
 		if !history.unevaluated &&
-			(history.toolName == hpatchToolName || history.toolName == hpatchRecoveryToolName) {
+			(history.toolName == mekugiToolName || history.toolName == mekugiRecoveryToolName) {
 			return recoveryHistoryOf(maps.Values(t.local))
 		}
 	}
 	return recoveryHistoryOf(maps.Values(t.visible))
 }
 
-func (t *hpatchResponseTransform) nextRecoveryAttempt(correlationID string, baseAttempt int) int {
+func (t *mekugiResponseTransform) nextRecoveryAttempt(correlationID string, baseAttempt int) int {
 	latest := max(baseAttempt, latestRecoveryAttempt(maps.Values(t.visible), correlationID))
 	latest = max(latest, latestRecoveryAttempt(maps.Values(t.local), correlationID))
 	return max(latest+1, 2)

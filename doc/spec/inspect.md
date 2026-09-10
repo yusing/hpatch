@@ -50,7 +50,7 @@ exit nonzero. Stable codes are `usage`, `not_found`, `not_regular`, `not_utf8`,
 `outside_workspace`, `read`, `parse`, and `output_limit`. The centralized Codex guidance and
 private call contract embed a concise success, failure, and outline-entry shape rather than the
 normative specification schema. Shell replay keeps the original call and output; inspect_file is
-not model-visible, directly routed, or included in hpatch recovery ancestry. Passthrough mode
+not model-visible, directly routed, or included in mekugi recovery ancestry. Passthrough mode
 installs and advertises none of these surfaces.
 
 Acceptance:
@@ -64,6 +64,6 @@ Acceptance:
 3. Unsupported files are confined and checked as regular without content reads, UTF-8 validation,
    line counting, content detection, or command-level truncation.
 4. Router startup validates `inspect_file` inside the immutable built-in snapshot without an
-   executable frontend and exposes or routes only hpatch, shell, and configured model-visible
+   executable frontend and exposes or routes only mekugi, shell, and configured model-visible
    contributions. Eligible request instructions use the central guidance while unrelated
    content remains unchanged; CTP/2 follows `REQ-CTP-001`.

@@ -19,52 +19,52 @@ import (
 	"github.com/openai/openai-go/v3/packages/param"
 	"github.com/openai/openai-go/v3/responses"
 	"github.com/openai/openai-go/v3/shared"
-	"github.com/yusing/hpatch"
-	codexinstructions "github.com/yusing/hpatch/contrib/codex"
-	"github.com/yusing/hpatch/internal/router/toolplugin"
+	"github.com/yusing/mekugi"
+	codexinstructions "github.com/yusing/mekugi/contrib/codex"
+	"github.com/yusing/mekugi/internal/router/toolplugin"
 )
 
 const (
-	hpatchToolName     = "hpatch"
+	mekugiToolName     = "hpatch"
 	applyPatchToolName = "apply_patch"
 
-	maxHPatchScriptBytes = 1 << 20
-	maxHPatchPatchBytes  = 16 << 20
+	maxMekugiScriptBytes = 1 << 20
+	maxMekugiPatchBytes  = 16 << 20
 
-	maxHPatchPendingCalls = 128
+	maxMekugiPendingCalls = 128
 
 	shellArtifactPrefix = "@shell/"
 )
 
 var (
-	errHPatchCapacity = errors.New("hpatch proxy capacity exceeded")
+	errMekugiCapacity = errors.New("mekugi proxy capacity exceeded")
 	shellArtifactTTL  = time.Hour
 )
 
-type hpatchTranslationResult struct {
+type mekugiTranslationResult struct {
 	patch      []byte
 	report     string
 	diagnostic string
-	rejections []hpatch.HostRejection
-	failures   []hpatch.HostFailure
-	change     hpatch.HostChange
-	aliases    []hpatch.TargetAlias
+	rejections []mekugi.HostRejection
+	failures   []mekugi.HostFailure
+	change     mekugi.HostChange
+	aliases    []mekugi.TargetAlias
 }
 
-type hpatchTranslator interface {
-	Translate(ctx context.Context, directory, script string) (hpatchTranslationResult, error)
+type mekugiTranslator interface {
+	Translate(ctx context.Context, directory, script string) (mekugiTranslationResult, error)
 	ToolDescription() string
 }
 
-type hpatchApplier interface {
-	Apply(ctx context.Context, root *os.Root, script string) (hpatchTranslationResult, error)
+type mekugiApplier interface {
+	Apply(ctx context.Context, root *os.Root, script string) (mekugiTranslationResult, error)
 }
 
-type inProcessHPatchTranslator struct {
+type inProcessMekugiTranslator struct {
 	dataDirectory string
 }
 
-func hpatchDataDirectory() (string, error) {
+func mekugiDataDirectory() (string, error) {
 	configDirectory, err := os.UserConfigDir()
 	if err != nil {
 		return "", fmt.Errorf("determine mekugi data directory: %w", err)
@@ -72,39 +72,39 @@ func hpatchDataDirectory() (string, error) {
 	return filepath.Join(configDirectory, "mekugi"), nil
 }
 
-func newInProcessHPatchTranslator(dataDirectory string) hpatchTranslator {
-	return inProcessHPatchTranslator{dataDirectory: dataDirectory}
+func newInProcessMekugiTranslator(dataDirectory string) mekugiTranslator {
+	return inProcessMekugiTranslator{dataDirectory: dataDirectory}
 }
 
-func (inProcessHPatchTranslator) ToolDescription() string {
-	return hpatch.ToolDescription()
+func (inProcessMekugiTranslator) ToolDescription() string {
+	return mekugi.ToolDescription()
 }
 
-func (t inProcessHPatchTranslator) Translate(ctx context.Context, directory, script string) (hpatchTranslationResult, error) {
-	translated, err := hpatch.TranslateForHostAt(ctx, directory, script, t.dataDirectory)
+func (t inProcessMekugiTranslator) Translate(ctx context.Context, directory, script string) (mekugiTranslationResult, error) {
+	translated, err := mekugi.TranslateForHostAt(ctx, directory, script, t.dataDirectory)
 	if contextErr := ctx.Err(); contextErr != nil {
-		return hpatchTranslationResult{}, contextErr
+		return mekugiTranslationResult{}, contextErr
 	}
-	if len(translated.Patch) > maxHPatchPatchBytes {
-		return hpatchTranslationResult{}, fmt.Errorf("%w: hpatch translation output exceeds its configured bound", errHPatchCapacity)
+	if len(translated.Patch) > maxMekugiPatchBytes {
+		return mekugiTranslationResult{}, fmt.Errorf("%w: mekugi translation output exceeds its configured bound", errMekugiCapacity)
 	}
-	return hpatchTranslationResultOf(translated), err
+	return mekugiTranslationResultOf(translated), err
 }
 
-func (t inProcessHPatchTranslator) Apply(ctx context.Context, root *os.Root, script string) (hpatchTranslationResult, error) {
-	applied, err := hpatch.ApplyForHostRoot(ctx, root, script, t.dataDirectory)
+func (t inProcessMekugiTranslator) Apply(ctx context.Context, root *os.Root, script string) (mekugiTranslationResult, error) {
+	applied, err := mekugi.ApplyForHostRoot(ctx, root, script, t.dataDirectory)
 	if contextErr := ctx.Err(); contextErr != nil {
-		return hpatchTranslationResult{}, contextErr
+		return mekugiTranslationResult{}, contextErr
 	}
-	return hpatchTranslationResultOf(applied), err
+	return mekugiTranslationResultOf(applied), err
 }
 
-func (t inProcessHPatchTranslator) ReportOutcome(ctx context.Context, stage, outcome string) error {
-	return hpatch.ReportHostOutcome(ctx, t.dataDirectory, stage, outcome)
+func (t inProcessMekugiTranslator) ReportOutcome(ctx context.Context, stage, outcome string) error {
+	return mekugi.ReportHostOutcome(ctx, t.dataDirectory, stage, outcome)
 }
 
-func hpatchTranslationResultOf(translated hpatch.HostTranslation) hpatchTranslationResult {
-	return hpatchTranslationResult{
+func mekugiTranslationResultOf(translated mekugi.HostTranslation) mekugiTranslationResult {
+	return mekugiTranslationResult{
 		patch:      translated.Patch,
 		report:     translated.Report,
 		diagnostic: translated.Diagnostic,
@@ -115,8 +115,8 @@ func hpatchTranslationResultOf(translated hpatch.HostTranslation) hpatchTranslat
 	}
 }
 
-type hpatchProxy struct {
-	translator             hpatchTranslator
+type mekugiProxy struct {
+	translator             mekugiTranslator
 	registry               *toolRegistry
 	customizedInstructions bool
 	compactModelProtocol   bool
@@ -131,15 +131,15 @@ type hpatchProxy struct {
 	activity               *subagentActivity
 
 	mu              sync.RWMutex
-	replayStore     *hpatchReplayStore
-	sessions        map[string]*hpatchHistorySession
+	replayStore     *mekugiReplayStore
+	sessions        map[string]*mekugiHistorySession
 	activeSessions  map[string]int
 	historyBytes    int
 	sessionSequence uint64
 	closed          bool
 }
 
-func newHPatchProxy(translator hpatchTranslator, registry *toolRegistry, customizedInstructions, compactModelProtocol bool, titleCaches ...*sessionTitleCache) *hpatchProxy {
+func newMekugiProxy(translator mekugiTranslator, registry *toolRegistry, customizedInstructions, compactModelProtocol bool, titleCaches ...*sessionTitleCache) *mekugiProxy {
 	if translator == nil || registry == nil {
 		return nil
 	}
@@ -151,7 +151,7 @@ func newHPatchProxy(translator hpatchTranslator, registry *toolRegistry, customi
 	activity := newSubagentActivity()
 	broker := newCommentaryBroker()
 	broker.activity = activity
-	return &hpatchProxy{
+	return &mekugiProxy{
 		translator:             translator,
 		registry:               registry,
 		customizedInstructions: customizedInstructions,
@@ -162,12 +162,12 @@ func newHPatchProxy(translator hpatchTranslator, registry *toolRegistry, customi
 		commentary:             broker,
 		usage:                  newThreadUsage(),
 		activity:               activity,
-		sessions:               make(map[string]*hpatchHistorySession),
+		sessions:               make(map[string]*mekugiHistorySession),
 		activeSessions:         make(map[string]int),
 	}
 }
 
-func (p *hpatchProxy) Close() error {
+func (p *mekugiProxy) Close() error {
 	if p == nil {
 		return nil
 	}
@@ -199,7 +199,7 @@ func (p *hpatchProxy) Close() error {
 	return cleanupErr
 }
 
-type hpatchPendingCall struct {
+type mekugiPendingCall struct {
 	callID     string
 	toolName   string
 	structured bool
@@ -208,14 +208,14 @@ type hpatchPendingCall struct {
 	argumentsDone []byte
 }
 
-type hpatchResponseTransform struct {
+type mekugiResponseTransform struct {
 	ctx                   context.Context
-	proxy                 *hpatchProxy
+	proxy                 *mekugiProxy
 	sessionID             string
 	shellThreadID         string // Runtime identity remains available when activity attribution is invalid.
 	shellDirectory        string
 	model                 string
-	visible               map[string]hpatchHistory
+	visible               map[string]mekugiHistory
 	historySessionID      string
 	sessionActive         bool
 	threadID              string
@@ -228,9 +228,9 @@ type hpatchResponseTransform struct {
 	originalToolsPresent      bool
 	originalToolChoice        json.RawMessage
 	originalToolChoicePresent bool
-	pending                   map[string]hpatchPendingCall
+	pending                   map[string]mekugiPendingCall
 	nativeExecCalls           map[string]map[string]json.RawMessage
-	local                     map[string]hpatchHistory
+	local                     map[string]mekugiHistory
 	directory                 string
 	carriers                  codeModeCarrierCatalog
 	commentaryAuthor          string
@@ -254,7 +254,7 @@ type hpatchResponseTransform struct {
 	historyCommitted bool
 }
 
-func (t *hpatchResponseTransform) Close() {
+func (t *mekugiResponseTransform) Close() {
 	if t == nil {
 		return
 	}
@@ -266,12 +266,12 @@ func (t *hpatchResponseTransform) Close() {
 }
 
 // observeResponseUsage records provider-authoritative token usage for this response.
-func (t *hpatchResponseTransform) observeResponseUsage(counts tokenCounts) {
+func (t *mekugiResponseTransform) observeResponseUsage(counts tokenCounts) {
 	t.usageTracker.observe(counts)
 	t.usageObserved = true
 }
 
-func validateHPatchCompactionRequest(request *parsedResponsesRequest, metadata codexTurnMetadata) error {
+func validateMekugiCompactionRequest(request *parsedResponsesRequest, metadata codexTurnMetadata) error {
 	var compaction struct {
 		Trigger        string `json:"trigger"`
 		Reason         string `json:"reason"`
@@ -283,10 +283,10 @@ func validateHPatchCompactionRequest(request *parsedResponsesRequest, metadata c
 		[]string{compaction.Trigger, compaction.Reason, compaction.Implementation, compaction.Phase, compaction.Strategy},
 		func(value string) bool { return strings.TrimSpace(value) == "" },
 	) {
-		return errors.New("hpatch rewrite requires valid compaction metadata")
+		return errors.New("mekugi rewrite requires valid compaction metadata")
 	}
 	if !request.streamResponse {
-		return errors.New("hpatch compaction bypass requires a streaming request")
+		return errors.New("mekugi compaction bypass requires a streaming request")
 	}
 
 	var tools []json.RawMessage
@@ -296,7 +296,7 @@ func validateHPatchCompactionRequest(request *parsedResponsesRequest, metadata c
 		}
 	}
 	if len(tools) != 0 {
-		return errors.New("hpatch compaction request cannot expose tools")
+		return errors.New("mekugi compaction request cannot expose tools")
 	}
 
 	var items []json.RawMessage
@@ -304,12 +304,12 @@ func validateHPatchCompactionRequest(request *parsedResponsesRequest, metadata c
 		return fmt.Errorf("decode compaction input: %w", err)
 	}
 	if len(items) == 0 {
-		return errors.New("hpatch compaction request requires nonempty input")
+		return errors.New("mekugi compaction request requires nonempty input")
 	}
 	for _, rawItem := range items {
 		var item map[string]json.RawMessage
 		if err := json.Unmarshal(rawItem, &item); err != nil || item == nil {
-			return errors.New("hpatch compaction request contains a malformed input item")
+			return errors.New("mekugi compaction request contains a malformed input item")
 		}
 		if jsonString(item, "type") != "additional_tools" {
 			continue
@@ -319,44 +319,44 @@ func validateHPatchCompactionRequest(request *parsedResponsesRequest, metadata c
 			return fmt.Errorf("decode compaction additional tools: %w", err)
 		}
 		if len(additionalTools) != 0 {
-			return errors.New("hpatch compaction request cannot expose tools")
+			return errors.New("mekugi compaction request cannot expose tools")
 		}
 	}
 
 	var toolChoice string
 	if json.Unmarshal(request.fields["tool_choice"], &toolChoice) != nil || toolChoice != "auto" {
-		return errors.New("hpatch compaction request requires automatic tool choice")
+		return errors.New("mekugi compaction request requires automatic tool choice")
 	}
 	var parallelToolCalls bool
 	if err := json.Unmarshal(request.fields["parallel_tool_calls"], &parallelToolCalls); err != nil || parallelToolCalls {
-		return errors.New("hpatch compaction request requires disabled parallel tool calls")
+		return errors.New("mekugi compaction request requires disabled parallel tool calls")
 	}
 	return nil
 }
 
-func (p *hpatchProxy) prepareRequest(ctx context.Context, request *parsedResponsesRequest, sessionID, threadID string, metadata codexTurnMetadata, metadataValid bool) (*hpatchResponseTransform, error) {
+func (p *mekugiProxy) prepareRequest(ctx context.Context, request *parsedResponsesRequest, sessionID, threadID string, metadata codexTurnMetadata, metadataValid bool) (*mekugiResponseTransform, error) {
 	if p != nil {
 		request.filterInput(p.activity.stripInput)
 	}
 	if metadataValid && metadata.RequestKind == "compaction" {
-		if err := validateHPatchCompactionRequest(request, metadata); err != nil {
+		if err := validateMekugiCompactionRequest(request, metadata); err != nil {
 			return nil, err
 		}
 		return nil, nil
 	}
 	if p == nil {
-		return nil, errors.New("hpatch response proxy is unavailable")
+		return nil, errors.New("mekugi response proxy is unavailable")
 	}
 	if strings.TrimSpace(sessionID) == "" {
-		return nil, errors.New("hpatch rewrite requires a valid session ID")
+		return nil, errors.New("mekugi rewrite requires a valid session ID")
 	}
 	if !metadataValid || metadata.RequestKind != "turn" {
-		return nil, errors.New("hpatch rewrite requires valid turn metadata")
+		return nil, errors.New("mekugi rewrite requires valid turn metadata")
 	}
 	// Execution-free requests retain their native instructions, tools, and schema.
 	if request.isExecutionFreeRequest() {
 		if strings.TrimSpace(threadID) == "" {
-			return nil, errors.New("hpatch rewrite requires a valid Codex thread ID")
+			return nil, errors.New("mekugi rewrite requires a valid Codex thread ID")
 		}
 		return nil, nil
 	}
@@ -413,7 +413,7 @@ func (p *hpatchProxy) prepareRequest(ctx context.Context, request *parsedRespons
 		}
 	}
 	if strings.TrimSpace(threadID) == "" {
-		return nil, errors.New("hpatch rewrite requires a valid Codex thread ID")
+		return nil, errors.New("mekugi rewrite requires a valid Codex thread ID")
 	}
 	shellDirectory, err := p.storeShellRuntime(threadID)
 	if err != nil {
@@ -456,7 +456,7 @@ func (p *hpatchProxy) prepareRequest(ctx context.Context, request *parsedRespons
 		p.activity.collect(activityThreadID, "subagent-start\x00"+activityThreadID, "start", subagentStartCommentary(request))
 	}
 	deferredCommentary := p.drainCommentarySession(historySessionID, threadID)
-	transform := &hpatchResponseTransform{
+	transform := &mekugiResponseTransform{
 		ctx:              ctx,
 		proxy:            p,
 		sessionID:        sessionID,
@@ -474,9 +474,9 @@ func (p *hpatchProxy) prepareRequest(ctx context.Context, request *parsedRespons
 		originalToolsPresent:      originalToolsPresent,
 		originalToolChoice:        originalToolChoice,
 		originalToolChoicePresent: originalToolChoicePresent,
-		pending:                   make(map[string]hpatchPendingCall),
+		pending:                   make(map[string]mekugiPendingCall),
 		nativeExecCalls:           make(map[string]map[string]json.RawMessage),
-		local:                     make(map[string]hpatchHistory),
+		local:                     make(map[string]mekugiHistory),
 		directory:                 directory,
 		carriers:                  carriers,
 		subagentDeferred:          subagentDeferred,
@@ -540,9 +540,9 @@ func replaceCodeModeTools(fields map[string]json.RawMessage, catalog *responsesT
 		}
 	}
 	if codeModeToolChoiceRestricted(fields, owner.name) {
-		return "", false, incompatibleRequest("restricted_tool_choice", "The forced Code Mode tool choice prevents Hpatch replacement. Use automatic tool choice.")
+		return "", false, incompatibleRequest("restricted_tool_choice", "The forced Code Mode tool choice prevents Mekugi replacement. Use automatic tool choice.")
 	}
-	if err := exposeStandaloneHPatch(fields, catalog, owner, installedTools); err != nil {
+	if err := exposeStandaloneMekugi(fields, catalog, owner, installedTools); err != nil {
 		return "", false, err
 	}
 	return owner.name, true, nil
@@ -561,7 +561,7 @@ func replaceNativeTools(fields map[string]json.RawMessage, catalog *responsesToo
 	for index, tool := range tools {
 		name := tool.Name
 		if _, exists := installedNames[name]; exists {
-			return "", false, incompatibleRequest("invalid_tool_catalog", fmt.Sprintf("The request already defines %s. Remove the conflicting Hpatch tool definition.", name))
+			return "", false, incompatibleRequest("invalid_tool_catalog", fmt.Sprintf("The request already defines %s. Remove the conflicting HPATCH tool definition.", name))
 		}
 		switch name {
 		case applyPatchToolName:
@@ -599,7 +599,7 @@ func replaceNativeTools(fields map[string]json.RawMessage, catalog *responsesToo
 	if json.Unmarshal(fields["tool_choice"], &choice) == nil {
 		selected := choice.Name
 		if selected == applyPatchToolName || selected == nativeExecCommandToolName {
-			return "", false, incompatibleRequest("restricted_tool_choice", "The forced native tool choice prevents Hpatch replacement. Use automatic tool choice.")
+			return "", false, incompatibleRequest("restricted_tool_choice", "The forced native tool choice prevents Mekugi replacement. Use automatic tool choice.")
 		}
 	}
 	catalog.removeTop(applyPatchIndex)
@@ -723,8 +723,8 @@ func codeModeToolChoiceRestricted(fields map[string]json.RawMessage, codeToolNam
 	return choice.Type == "custom" && choice.Name == codeToolName
 }
 
-// exposeStandaloneHPatch exposes standalone hpatch tools in the tool catalog.
-func exposeStandaloneHPatch(fields map[string]json.RawMessage, catalog *responsesToolCatalog, owner *codeModeApplyPatchOwner, installedTools []*responsesToolDefinition) error {
+// exposeStandaloneMekugi exposes standalone mekugi tools in the tool catalog.
+func exposeStandaloneMekugi(fields map[string]json.RawMessage, catalog *responsesToolCatalog, owner *codeModeApplyPatchOwner, installedTools []*responsesToolDefinition) error {
 	owner.section.tools[owner.toolIndex].setDescription(owner.strippedDescription)
 	shellIndex := slices.IndexFunc(installedTools, func(tool *responsesToolDefinition) bool {
 		return tool.Name == "shell"
@@ -749,7 +749,7 @@ func exposeStandaloneHPatch(fields map[string]json.RawMessage, catalog *response
 	return nil
 }
 
-func (t *hpatchResponseTransform) routesTool(name string) bool {
+func (t *mekugiResponseTransform) routesTool(name string) bool {
 	if t == nil || t.proxy == nil {
 		return false
 	}
@@ -821,8 +821,8 @@ func stripCodeModeSection(description string, findHeading codeModeSectionMatcher
 
 // stripCodeModeApplyPatchSection removes the Code Mode apply_patch section from a
 // tool description. It also returns that removed section, which is the native
-// patch tool definition hpatch displaces: the host pays for one or the other as
-// request input, so measuring hpatch's definition cost requires the text it replaced.
+// patch tool definition mekugi displaces: the host pays for one or the other as
+// request input, so measuring mekugi's definition cost requires the text it replaced.
 func stripCodeModeApplyPatchSection(description string) (string, bool, error) {
 	findHeading := func(text string) (int, string) {
 		start := strings.Index(text, codeModeApplyPatchHeading)
@@ -992,10 +992,10 @@ func jsonString(object map[string]json.RawMessage, name string) string {
 	return value
 }
 
-func (t *hpatchResponseTransform) translate(callID, input string, upstreamItem map[string]json.RawMessage) (hpatchHistory, error) {
+func (t *mekugiResponseTransform) translate(callID, input string, upstreamItem map[string]json.RawMessage) (mekugiHistory, error) {
 	if history, ok := t.local[callID]; ok {
-		if history.toolName != hpatchToolName || history.pluginID != "" || history.script != input {
-			return hpatchHistory{}, fmt.Errorf("hpatch call %q changed input", callID)
+		if history.toolName != mekugiToolName || history.pluginID != "" || history.script != input {
+			return mekugiHistory{}, fmt.Errorf("mekugi call %q changed input", callID)
 		}
 		if len(upstreamItem) != 0 {
 			history.upstreamItem = maps.Clone(upstreamItem)
@@ -1003,16 +1003,16 @@ func (t *hpatchResponseTransform) translate(callID, input string, upstreamItem m
 		}
 		return history, nil
 	}
-	if len(input) > maxHPatchScriptBytes {
-		return hpatchHistory{}, fmt.Errorf("hpatch call %q script exceeds %d bytes", callID, maxHPatchScriptBytes)
+	if len(input) > maxMekugiScriptBytes {
+		return mekugiHistory{}, fmt.Errorf("mekugi call %q script exceeds %d bytes", callID, maxMekugiScriptBytes)
 	}
 
-	evaluated, err := hpatch.RewriteTargetAliases(input, t.targetAliases())
+	evaluated, err := mekugi.RewriteTargetAliases(input, t.targetAliases())
 	if err != nil {
 		// Preserve evaluator-owned syntax diagnostics for malformed scripts.
 		evaluated = input
 	}
-	attemptMetadata := hpatch.AttemptMetadata{
+	attemptMetadata := mekugi.AttemptMetadata{
 		SessionID:       t.sessionID,
 		Title:           t.proxy.titles.title(t.sessionID),
 		CorrelationID:   callID,
@@ -1020,7 +1020,7 @@ func (t *hpatchResponseTransform) translate(callID, input string, upstreamItem m
 		Attempt:         1,
 		Correction:      false,
 		Model:           t.model,
-		ToolName:        hpatchToolName,
+		ToolName:        mekugiToolName,
 		EmittedPayload:  input,
 		EvaluatedScript: evaluated,
 	}
@@ -1030,14 +1030,14 @@ func (t *hpatchResponseTransform) translate(callID, input string, upstreamItem m
 
 // evaluateScript owns target dispatch and result projection for both ordinary and
 // rebuilt recovery scripts. Recovery policy never selects a different storage root.
-func (t *hpatchResponseTransform) evaluateScript(
+func (t *mekugiResponseTransform) evaluateScript(
 	callID, input, evaluated string,
-	attemptMetadata hpatch.AttemptMetadata,
+	attemptMetadata mekugi.AttemptMetadata,
 	upstreamItem map[string]json.RawMessage,
-) (hpatchHistory, error) {
+) (mekugiHistory, error) {
 	var err error
 	applied := false
-	var translated hpatchTranslationResult
+	var translated mekugiTranslationResult
 	retainedStart := len(evaluated) - len(strings.TrimLeft(evaluated, "\r\n"))
 	retainedScript := evaluated
 	retainedBody, retained := strings.CutPrefix(evaluated[retainedStart:], "in "+shellArtifactPrefix)
@@ -1048,19 +1048,19 @@ func (t *hpatchResponseTransform) evaluateScript(
 	if retainedApply {
 		attemptMetadata.EvaluatedScript = retainedScript
 	}
-	attemptContext := hpatch.WithAttemptMetadata(t.ctx, attemptMetadata)
+	attemptContext := mekugi.WithAttemptMetadata(t.ctx, attemptMetadata)
 	if retainedApply {
 		root, release, openErr := t.proxy.shellRoot(t.shellDirectory)
 		if errors.Is(openErr, errRetainedShellUnavailable) {
 			return t.rejectUnevaluated(attemptMetadata.ToolName, callID, input, openErr, attemptMetadata, "", nil, upstreamItem)
 		}
 		if openErr != nil {
-			return hpatchHistory{}, fmt.Errorf("open retained shell directory: %w", openErr)
+			return mekugiHistory{}, fmt.Errorf("open retained shell directory: %w", openErr)
 		}
 		defer release()
-		applier, ok := t.proxy.translator.(hpatchApplier)
+		applier, ok := t.proxy.translator.(mekugiApplier)
 		if !ok {
-			return hpatchHistory{}, errors.New("hpatch translator cannot apply retained shell edits")
+			return mekugiHistory{}, errors.New("mekugi translator cannot apply retained shell edits")
 		}
 		translated, err = applier.Apply(attemptContext, root, retainedScript)
 		applied = err == nil
@@ -1069,10 +1069,10 @@ func (t *hpatchResponseTransform) evaluateScript(
 	}
 	if err != nil {
 		if contextErr := t.ctx.Err(); contextErr != nil {
-			return hpatchHistory{}, contextErr
+			return mekugiHistory{}, contextErr
 		}
-		if errors.Is(err, errHPatchCapacity) {
-			return hpatchHistory{}, err
+		if errors.Is(err, errMekugiCapacity) {
+			return mekugiHistory{}, err
 		}
 		evaluatorRejected := len(translated.rejections) != 0
 		diagnostic := translated.diagnostic
@@ -1080,9 +1080,9 @@ func (t *hpatchResponseTransform) evaluateScript(
 			diagnostic = err.Error()
 		}
 		if evaluatorRejected {
-			diagnostic += hpatchRecoveryGuidance(evaluated, translated.rejections, attemptMetadata.Correction)
+			diagnostic += mekugiRecoveryGuidance(evaluated, translated.rejections, attemptMetadata.Correction)
 		}
-		history := hpatchHistory{
+		history := mekugiHistory{
 			toolName: attemptMetadata.ToolName,
 			script:   input,
 
@@ -1101,12 +1101,12 @@ func (t *hpatchResponseTransform) evaluateScript(
 		return history, nil
 	}
 	patch := translated.patch
-	if len(patch) > maxHPatchPatchBytes {
-		return hpatchHistory{}, fmt.Errorf("hpatch call %q translation exceeds %d bytes", callID, maxHPatchPatchBytes)
+	if len(patch) > maxMekugiPatchBytes {
+		return mekugiHistory{}, fmt.Errorf("mekugi call %q translation exceeds %d bytes", callID, maxMekugiPatchBytes)
 	}
 	patchText := string(patch)
 	alreadySatisfied := translated.change.AlreadySatisfied
-	history := hpatchHistory{
+	history := mekugiHistory{
 		toolName: attemptMetadata.ToolName,
 		script:   input,
 
@@ -1118,7 +1118,7 @@ func (t *hpatchResponseTransform) evaluateScript(
 		confirmed:        applied,
 		aliases:          slices.Clone(translated.aliases),
 		carrierName:      t.codeModeToolName,
-		report:           hpatchReport(translated.report, translated.diagnostic),
+		report:           mekugiReport(translated.report, translated.diagnostic),
 		upstreamItem:     maps.Clone(upstreamItem),
 		correlationID:    attemptMetadata.CorrelationID,
 		attempt:          attemptMetadata.Attempt,
@@ -1127,26 +1127,26 @@ func (t *hpatchResponseTransform) evaluateScript(
 	return history, nil
 }
 
-func (t *hpatchResponseTransform) translateTool(name, callID, input string, upstreamItem map[string]json.RawMessage) (hpatchHistory, error) {
+func (t *mekugiResponseTransform) translateTool(name, callID, input string, upstreamItem map[string]json.RawMessage) (mekugiHistory, error) {
 	switch name {
-	case hpatchToolName:
+	case mekugiToolName:
 		return t.translate(callID, input, upstreamItem)
-	case hpatchRecoveryToolName:
+	case mekugiRecoveryToolName:
 		return t.translateRecovery(callID, input, upstreamItem)
 	case reportIssueToolName:
 		return t.translateReportIssue(callID, input, upstreamItem)
 	}
 	contribution, ok := t.proxy.registry.contribution(name)
 	if !ok || contribution.Builtin {
-		return hpatchHistory{}, fmt.Errorf("registered tool %q is unavailable", name)
+		return mekugiHistory{}, fmt.Errorf("registered tool %q is unavailable", name)
 	}
 	return t.translateRegisteredTool(contribution, callID, input, upstreamItem)
 }
 
-func (t *hpatchResponseTransform) translateReportIssue(callID, input string, upstreamItem map[string]json.RawMessage) (hpatchHistory, error) {
+func (t *mekugiResponseTransform) translateReportIssue(callID, input string, upstreamItem map[string]json.RawMessage) (mekugiHistory, error) {
 	if history, ok := t.local[callID]; ok {
 		if history.toolName != reportIssueToolName || history.script != input {
-			return hpatchHistory{}, fmt.Errorf("report_issue call %q changed input", callID)
+			return mekugiHistory{}, fmt.Errorf("report_issue call %q changed input", callID)
 		}
 		if len(upstreamItem) != 0 {
 			history.upstreamItem = maps.Clone(upstreamItem)
@@ -1154,7 +1154,7 @@ func (t *hpatchResponseTransform) translateReportIssue(callID, input string, ups
 		}
 		return history, nil
 	}
-	attemptContext := hpatch.WithAttemptMetadata(t.ctx, hpatch.AttemptMetadata{
+	attemptContext := mekugi.WithAttemptMetadata(t.ctx, mekugi.AttemptMetadata{
 		SessionID:       t.sessionID,
 		Title:           t.proxy.titles.title(t.sessionID),
 		CorrelationID:   callID,
@@ -1167,9 +1167,9 @@ func (t *hpatchResponseTransform) translateReportIssue(callID, input string, ups
 	})
 	report := "Issue reported."
 	if err := t.proxy.registry.DiagnoseHooks.Report(attemptContext, input); err != nil {
-		report = "Issue report was not delivered.\nhpatch: warning: " + strings.TrimSpace(err.Error()) + "\n"
+		report = "Issue report was not delivered.\nmekugi: warning: " + strings.TrimSpace(err.Error()) + "\n"
 	}
-	history := hpatchHistory{
+	history := mekugiHistory{
 		toolName:     reportIssueToolName,
 		script:       input,
 		carrierName:  t.codeModeToolName,
@@ -1181,10 +1181,10 @@ func (t *hpatchResponseTransform) translateReportIssue(callID, input string, ups
 	return history, nil
 }
 
-func (t *hpatchResponseTransform) translateRegisteredTool(contribution toolContribution, callID, input string, upstreamItem map[string]json.RawMessage) (hpatchHistory, error) {
+func (t *mekugiResponseTransform) translateRegisteredTool(contribution toolContribution, callID, input string, upstreamItem map[string]json.RawMessage) (mekugiHistory, error) {
 	if history, ok := t.local[callID]; ok {
 		if history.toolName != contribution.Name || history.pluginID != contribution.PluginID || history.script != input {
-			return hpatchHistory{}, fmt.Errorf("%s call %q changed input", contribution.Name, callID)
+			return mekugiHistory{}, fmt.Errorf("%s call %q changed input", contribution.Name, callID)
 		}
 		if len(upstreamItem) != 0 {
 			history.upstreamItem = maps.Clone(upstreamItem)
@@ -1218,7 +1218,7 @@ func (t *hpatchResponseTransform) translateRegisteredTool(contribution toolContr
 			)
 		}
 		if err != nil {
-			return hpatchHistory{}, fmt.Errorf("translate registered tool %s: %w", contribution.Name, err)
+			return mekugiHistory{}, fmt.Errorf("translate registered tool %s: %w", contribution.Name, err)
 		}
 	}
 	if !recovered && !translation.Rejected && shellTypeScriptMisuse(contribution, translation.Arguments) {
@@ -1252,11 +1252,11 @@ func (t *hpatchResponseTransform) translateRegisteredTool(contribution toolContr
 		}
 		payload = input
 		if err := t.carriers.require(name, kind); err != nil {
-			return hpatchHistory{}, err
+			return mekugiHistory{}, err
 		}
 	} else if translation.Rejected {
 		if err := t.carriers.require(name, kind); err != nil {
-			return hpatchHistory{}, fmt.Errorf("%s input rejection: %w", contribution.Name, err)
+			return mekugiHistory{}, fmt.Errorf("%s input rejection: %w", contribution.Name, err)
 		}
 		if diagnostic == "" {
 			diagnostic = contribution.Name + " rejected the model input"
@@ -1264,7 +1264,7 @@ func (t *hpatchResponseTransform) translateRegisteredTool(contribution toolContr
 		if t.nativeTools {
 			command := "printf %s " + shellQuoteArgument(diagnostic)
 			if diagnostic == shellTypeScriptDiagnostic {
-				command = hpatchNativeDiagnosticMarker + strconv.Quote(diagnostic) + "\n" + command
+				command = mekugiNativeDiagnosticMarker + strconv.Quote(diagnostic) + "\n" + command
 			}
 			payload = renderExecCarrier(
 				kind,
@@ -1279,7 +1279,7 @@ func (t *hpatchResponseTransform) translateRegisteredTool(contribution toolContr
 		switch translation.Carrier.Kind {
 		case "exec":
 			if err := t.carriers.require(name, kind); err != nil {
-				return hpatchHistory{}, fmt.Errorf("%s exec carrier: %w", contribution.Name, err)
+				return mekugiHistory{}, fmt.Errorf("%s exec carrier: %w", contribution.Name, err)
 			}
 			arguments := translation.Arguments
 			if splitPayload, ok := t.shellCatCarrier(contribution, kind, arguments, translation.Carrier.Template, translation.Carrier.Params, resultMetadata); ok {
@@ -1297,28 +1297,28 @@ func (t *hpatchResponseTransform) translateRegisteredTool(contribution toolContr
 				resultMetadata,
 			)
 			if err != nil {
-				return hpatchHistory{}, fmt.Errorf("%s exec carrier: %w", contribution.Name, err)
+				return mekugiHistory{}, fmt.Errorf("%s exec carrier: %w", contribution.Name, err)
 			}
 		case "custom":
 			kind = codeModeCarrierCustom
 			name = translation.Carrier.Name
 			payload = translation.Carrier.Payload
 			if err := t.carriers.require(name, kind); err != nil {
-				return hpatchHistory{}, fmt.Errorf("%s custom carrier: %w", contribution.Name, err)
+				return mekugiHistory{}, fmt.Errorf("%s custom carrier: %w", contribution.Name, err)
 			}
 		case "function":
 			kind = codeModeCarrierFunction
 			name = translation.Carrier.Name
 			payload = translation.Carrier.Payload
 			if err := t.carriers.require(name, kind); err != nil {
-				return hpatchHistory{}, fmt.Errorf("%s function carrier: %w", contribution.Name, err)
+				return mekugiHistory{}, fmt.Errorf("%s function carrier: %w", contribution.Name, err)
 			}
 			var arguments map[string]json.RawMessage
 			if json.Unmarshal([]byte(payload), &arguments) != nil || arguments == nil {
-				return hpatchHistory{}, fmt.Errorf("%s function carrier returned invalid JSON object arguments", contribution.Name)
+				return mekugiHistory{}, fmt.Errorf("%s function carrier returned invalid JSON object arguments", contribution.Name)
 			}
 		default:
-			return hpatchHistory{}, fmt.Errorf(
+			return mekugiHistory{}, fmt.Errorf(
 				"%s translator returned unsupported carrier kind %q",
 				contribution.Name,
 				translation.Carrier.Kind,
@@ -1346,7 +1346,7 @@ func (t *hpatchResponseTransform) translateRegisteredTool(contribution toolContr
 	} else if t.nativeTools && len(misuseWarnings) != 0 {
 		var arguments map[string]json.RawMessage
 		if json.Unmarshal([]byte(payload), &arguments) != nil || arguments == nil {
-			return hpatchHistory{}, fmt.Errorf("%s native exec carrier returned invalid arguments", contribution.Name)
+			return mekugiHistory{}, fmt.Errorf("%s native exec carrier returned invalid arguments", contribution.Name)
 		}
 		command := jsonString(arguments, "cmd")
 		for _, warning := range misuseWarnings {
@@ -1358,14 +1358,14 @@ func (t *hpatchResponseTransform) translateRegisteredTool(contribution toolContr
 		for _, warning := range misuseWarnings {
 			warnedPayload, warningInput, _, warningErr := insertExecCommandWarning(payload, warning)
 			if warningErr != nil {
-				return hpatchHistory{}, fmt.Errorf("%s interpreter-wrapper warning: %w", contribution.Name, warningErr)
+				return mekugiHistory{}, fmt.Errorf("%s interpreter-wrapper warning: %w", contribution.Name, warningErr)
 			}
 			misuseWarning += warningInput
 			payload = warnedPayload
 		}
 	}
 
-	history := hpatchHistory{
+	history := mekugiHistory{
 		toolName:         contribution.Name,
 		pluginID:         contribution.PluginID,
 		script:           input,
@@ -1382,7 +1382,7 @@ func (t *hpatchResponseTransform) translateRegisteredTool(contribution toolContr
 	return history, nil
 }
 
-func hpatchReport(report, diagnostic string) string {
+func mekugiReport(report, diagnostic string) string {
 	if diagnostic == "" {
 		return report
 	}
@@ -1399,24 +1399,24 @@ func retainedEvaluated(emitted, evaluated string) string {
 	return evaluated
 }
 
-func (t *hpatchResponseTransform) TransformJSON(payload []byte) ([]byte, error) {
+func (t *mekugiResponseTransform) TransformJSON(payload []byte) ([]byte, error) {
 	transformed, _, err := t.transformResponse(payload, "")
-	return transformed, criticalDiagnostic(err, "hpatch_json", "Hpatch response translation failed while processing a JSON response", true)
+	return transformed, criticalDiagnostic(err, "mekugi_json", "Mekugi response translation failed while processing a JSON response", true)
 }
 
-func (t *hpatchResponseTransform) Finish(streamEvent bool) error {
+func (t *mekugiResponseTransform) Finish(streamEvent bool) error {
 	if streamEvent && len(t.pending) != 0 {
-		return staticCriticalDiagnostic("stream_ended_incomplete_hpatch_call", "the upstream stream ended with an incomplete Hpatch call")
+		return staticCriticalDiagnostic("stream_ended_incomplete_mekugi_call", "the upstream stream ended with an incomplete HPATCH call")
 	}
 	return nil
 }
 
-func (t *hpatchResponseTransform) TransformSSE(payload []byte) ([][]byte, error) {
+func (t *mekugiResponseTransform) TransformSSE(payload []byte) ([][]byte, error) {
 	visible, err := t.transformSSE(payload)
-	return visible, criticalDiagnostic(err, "hpatch_sse", "Hpatch response translation failed while processing an upstream streaming event", true)
+	return visible, criticalDiagnostic(err, "mekugi_sse", "Mekugi response translation failed while processing an upstream streaming event", true)
 }
 
-func (t *hpatchResponseTransform) transformSSE(payload []byte) ([][]byte, error) {
+func (t *mekugiResponseTransform) transformSSE(payload []byte) ([][]byte, error) {
 	if len(t.subagentDeferred) != 0 {
 		t.subagentDeferred = t.retainCommentary(t.subagentDeferred...)
 		if len(t.subagentDeferred) == 0 {
@@ -1443,7 +1443,7 @@ func (t *hpatchResponseTransform) transformSSE(payload []byte) ([][]byte, error)
 	return append(generated, visible...), nil
 }
 
-func (t *hpatchResponseTransform) transformActivitySSE(payload []byte) ([][]byte, error) {
+func (t *mekugiResponseTransform) transformActivitySSE(payload []byte) ([][]byte, error) {
 	var envelope struct {
 		Type     string          `json:"type"`
 		ItemID   string          `json:"item_id"`
@@ -1455,7 +1455,7 @@ func (t *hpatchResponseTransform) transformActivitySSE(payload []byte) ([][]byte
 	}
 	if err := json.Unmarshal(payload, &envelope); err != nil {
 		if len(t.pending) != 0 {
-			return nil, staticCriticalDiagnostic("malformed_pending_hpatch_event", "the upstream sent a malformed event while an Hpatch call was pending")
+			return nil, staticCriticalDiagnostic("malformed_pending_mekugi_event", "the upstream sent a malformed event while an HPATCH call was pending")
 		}
 		return [][]byte{payload}, nil
 	}
@@ -1494,13 +1494,13 @@ func (t *hpatchResponseTransform) transformActivitySSE(payload []byte) ([][]byte
 				if itemID == "" || callID == "" {
 					return nil, staticCriticalDiagnostic("malformed_commentary_call", "the upstream emitted a malformed commentary function call")
 				}
-				if len(t.pending) >= maxHPatchPendingCalls {
+				if len(t.pending) >= maxMekugiPendingCalls {
 					return nil, staticCriticalDiagnostic("commentary_call_capacity", "the upstream commentary call capacity was exceeded")
 				}
 				if _, exists := t.pending[itemID]; exists || t.pendingCallKnown(callID) {
 					return nil, staticCriticalDiagnostic("reused_commentary_call", "the upstream reused a commentary call identity")
 				}
-				t.pending[itemID] = hpatchPendingCall{
+				t.pending[itemID] = mekugiPendingCall{
 					callID: callID, toolName: name, structured: true, added: bytes.Clone(payload),
 				}
 				return nil, nil
@@ -1511,15 +1511,15 @@ func (t *hpatchResponseTransform) transformActivitySSE(payload []byte) ([][]byte
 		}
 		itemID, callID := item.ID, item.CallID
 		if item.Type != "custom_tool_call" || itemID == "" || callID == "" {
-			return nil, staticCriticalDiagnostic("malformed_hpatch_call", "the upstream emitted a malformed Hpatch call")
+			return nil, staticCriticalDiagnostic("malformed_mekugi_call", "the upstream emitted a malformed HPATCH call")
 		}
-		if len(t.pending) >= maxHPatchPendingCalls {
-			return nil, staticCriticalDiagnostic("hpatch_call_capacity", "the upstream Hpatch call capacity was exceeded")
+		if len(t.pending) >= maxMekugiPendingCalls {
+			return nil, staticCriticalDiagnostic("mekugi_call_capacity", "the upstream HPATCH call capacity was exceeded")
 		}
 		if _, exists := t.pending[itemID]; exists {
-			return nil, staticCriticalDiagnostic("reused_hpatch_item", "the upstream reused an Hpatch item identity")
+			return nil, staticCriticalDiagnostic("reused_mekugi_item", "the upstream reused an HPATCH item identity")
 		}
-		t.pending[itemID] = hpatchPendingCall{callID: callID, toolName: name, added: bytes.Clone(payload)}
+		t.pending[itemID] = mekugiPendingCall{callID: callID, toolName: name, added: bytes.Clone(payload)}
 		return nil, nil
 
 	case "response.custom_tool_call_input.delta":
@@ -1536,7 +1536,7 @@ func (t *hpatchResponseTransform) transformActivitySSE(payload []byte) ([][]byte
 			return [][]byte{[]byte(`{"type":"response.in_progress"}`)}, nil
 		}
 		if _, pending := t.pending[envelope.ItemID]; pending {
-			return nil, unsupportedHPatchStreamEvent(envelope.Type)
+			return nil, unsupportedMekugiStreamEvent(envelope.Type)
 		}
 		return [][]byte{payload}, nil
 
@@ -1575,11 +1575,11 @@ func (t *hpatchResponseTransform) transformActivitySSE(payload []byte) ([][]byte
 			Item json.RawMessage `json:"item"`
 		}
 		if json.Unmarshal(pending.added, &addedEnvelope) != nil {
-			return nil, staticCriticalDiagnostic("malformed_buffered_hpatch_item", "Hpatch could not decode a buffered upstream item")
+			return nil, staticCriticalDiagnostic("malformed_buffered_mekugi_item", "Mekugi could not decode a buffered upstream item")
 		}
 		addedItem, ok := decodeResponsesItem(addedEnvelope.Item)
 		if !ok {
-			return nil, staticCriticalDiagnostic("malformed_buffered_hpatch_call", "Hpatch could not decode a buffered upstream call")
+			return nil, staticCriticalDiagnostic("malformed_buffered_mekugi_call", "Mekugi could not decode a buffered upstream call")
 		}
 		// input.done is already an executable handoff boundary. Retain the
 		// original item shape now; output_item.done may never arrive.
@@ -1613,7 +1613,7 @@ func (t *hpatchResponseTransform) transformActivitySSE(payload []byte) ([][]byte
 			return [][]byte{payload}, nil
 		}
 		if !pending.structured {
-			return nil, unsupportedHPatchStreamEvent(envelope.Type)
+			return nil, unsupportedMekugiStreamEvent(envelope.Type)
 		}
 		if len(pending.argumentsDone) != 0 {
 			return nil, staticCriticalDiagnostic("repeated_commentary_arguments", "the upstream repeated commentary argument completion")
@@ -1658,7 +1658,7 @@ func (t *hpatchResponseTransform) transformActivitySSE(payload []byte) ([][]byte
 			}
 			var addedItem map[string]json.RawMessage
 			if json.Unmarshal(pending.added, &addedEnvelope) != nil || json.Unmarshal(addedEnvelope.Item, &addedItem) != nil {
-				return nil, staticCriticalDiagnostic("malformed_buffered_commentary_call", "Hpatch could not decode a buffered commentary call")
+				return nil, staticCriticalDiagnostic("malformed_buffered_commentary_call", "Mekugi could not decode a buffered commentary call")
 			}
 			addedItem["arguments"] = item.fields["arguments"]
 			addedPayload, err := marshalProtocolJSON(addedItem)
@@ -1726,7 +1726,7 @@ func (t *hpatchResponseTransform) transformActivitySSE(payload []byte) ([][]byte
 		clear(t.nativeExecCalls)
 		if envelope.Type == "response.completed" {
 			if len(t.pending) != 0 {
-				return nil, staticCriticalDiagnostic("terminal_incomplete_hpatch_call", "the upstream completed with an incomplete Hpatch call")
+				return nil, staticCriticalDiagnostic("terminal_incomplete_mekugi_call", "the upstream completed with an incomplete HPATCH call")
 			}
 		} else {
 			clear(t.pending)
@@ -1802,30 +1802,30 @@ func (t *hpatchResponseTransform) transformActivitySSE(payload []byte) ([][]byte
 
 	default:
 		if _, pending := t.pending[envelope.ItemID]; pending || t.pendingCallKnown(envelope.CallID) || t.routesTool(envelope.Name) || envelope.Name == applyPatchToolName {
-			return nil, unsupportedHPatchStreamEvent(envelope.Type)
+			return nil, unsupportedMekugiStreamEvent(envelope.Type)
 		}
 		return [][]byte{payload}, nil
 	}
 }
 
-func unsupportedHPatchStreamEvent(eventType string) error {
-	underlying := fmt.Errorf("unsupported hpatch-related stream event %q", eventType)
+func unsupportedMekugiStreamEvent(eventType string) error {
+	underlying := fmt.Errorf("unsupported mekugi-related stream event %q", eventType)
 	switch eventType {
 	case "response.function_call_arguments.delta", "response.function_call_arguments.done":
 		return criticalDiagnostic(
 			underlying,
-			"unsupported_hpatch_stream_event:"+eventType,
-			fmt.Sprintf("the upstream emitted unsupported Hpatch-related streaming event %q", eventType),
+			"unsupported_mekugi_stream_event:"+eventType,
+			fmt.Sprintf("the upstream emitted unsupported HPATCH-related streaming event %q", eventType),
 			false,
 		)
 	default:
 		// Unknown event names are provider-controlled payload. Their lexical
 		// shape alone cannot establish that they are safe to display.
-		return criticalDiagnostic(underlying, "unsupported_hpatch_stream_event", "the upstream emitted an unsupported Hpatch-related streaming event", true)
+		return criticalDiagnostic(underlying, "unsupported_mekugi_stream_event", "the upstream emitted an unsupported HPATCH-related streaming event", true)
 	}
 }
 
-func (t *hpatchResponseTransform) pendingCallKnown(callID string) bool {
+func (t *mekugiResponseTransform) pendingCallKnown(callID string) bool {
 	for _, pending := range t.pending {
 		if callID != "" && pending.callID == callID {
 			return true
@@ -1834,7 +1834,7 @@ func (t *hpatchResponseTransform) pendingCallKnown(callID string) bool {
 	return false
 }
 
-func (t *hpatchResponseTransform) transformResponse(payload []byte, terminalStatus string) ([]byte, map[string]json.RawMessage, error) {
+func (t *mekugiResponseTransform) transformResponse(payload []byte, terminalStatus string) ([]byte, map[string]json.RawMessage, error) {
 	counts, observed := t.threadUsageCounts()
 	object, usageMessage, err := responseWithTokenUsageCommentary(
 		payload,
@@ -1862,7 +1862,7 @@ func (t *hpatchResponseTransform) transformResponse(payload []byte, terminalStat
 	if rawOutput, ok := object["output"]; ok {
 		var output []map[string]json.RawMessage
 		if err := json.Unmarshal(rawOutput, &output); err != nil {
-			return nil, nil, errors.New("decode hpatch-enabled response output")
+			return nil, nil, errors.New("decode mekugi-enabled response output")
 		}
 		activityMessages := t.retainCommentary(t.drainActivity()...)
 		t.activityMessages = append(t.activityMessages, activityMessages...)
@@ -1918,7 +1918,7 @@ func (t *hpatchResponseTransform) transformResponse(payload []byte, terminalStat
 	return transformed, usageMessage, err
 }
 
-func (t *hpatchResponseTransform) restoreResponseContract(object map[string]json.RawMessage) {
+func (t *mekugiResponseTransform) restoreResponseContract(object map[string]json.RawMessage) {
 	if _, ok := object["tools"]; ok {
 		if !t.originalToolsPresent {
 			delete(object, "tools")
@@ -1935,7 +1935,7 @@ func (t *hpatchResponseTransform) restoreResponseContract(object map[string]json
 	}
 }
 
-func (t *hpatchResponseTransform) transformOutputItem(item *responsesItem) (bool, error) {
+func (t *mekugiResponseTransform) transformOutputItem(item *responsesItem) (bool, error) {
 	name := item.Name
 	if t.codeModeToolName != "" && name == t.codeModeToolName &&
 		item.Type == "custom_tool_call" {
@@ -1977,7 +1977,7 @@ func (t *hpatchResponseTransform) transformOutputItem(item *responsesItem) (bool
 		if callID == "" {
 			return false, errors.New("Code Mode call has no call ID")
 		}
-		history := hpatchHistory{
+		history := mekugiHistory{
 			toolName: codeModeCommentaryHistoryTool,
 			script:   originalInput, carrierKind: codeModeCarrierCustom,
 			carrierName: name, carrierPayload: input, upstreamItem: item.cloneFields(),

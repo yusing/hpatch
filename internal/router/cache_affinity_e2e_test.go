@@ -139,14 +139,14 @@ func TestCodexCacheAffinityE2E(t *testing.T) {
 	transport := &cacheAffinityE2ETransport{delegate: upstreamTransport}
 
 	httpClient := &http.Client{Transport: transport}
-	translator := newInProcessHPatchTranslator(t.TempDir())
+	translator := newInProcessMekugiTranslator(t.TempDir())
 	var requestSequence atomic.Uint64
 	handler := responsesHandler(
 		t.Context(),
 		10*time.Minute,
 		newProviderClient(codexBaseURL, httpClient),
 		nil,
-		newManagedHPatchProxy(t, translator),
+		newManagedMekugiProxy(t, translator),
 		nil, nil,
 		&requestSequence,
 	)
@@ -173,7 +173,7 @@ func TestCodexCacheAffinityE2E(t *testing.T) {
 		t.Fatalf("initialize probe repository: %v\n%s", err, output)
 	}
 
-	model := environmentOrDefault("HPATCH_E2E_MODEL", "gpt-5.6-sol")
+	model := environmentOrDefault("MEKUGI_E2E_MODEL", "gpt-5.6-sol")
 	providerName := "cache-affinity-e2e"
 	providerConfig := "model_providers." + providerName + "={ name = " + strconv.Quote(providerName) +
 		", base_url = " + strconv.Quote(server.URL+"/v1") + ", wire_api = \"responses\", requires_openai_auth = true }"

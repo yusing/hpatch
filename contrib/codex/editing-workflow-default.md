@@ -55,5 +55,5 @@ so punctuation cannot create a regex error, and add `-A` or `-B` when a small am
 Every emitted match or context row is target-bearing. When the owner is known but the location
 is not, use inspect_file for structure or hgrep for a symbol. Copy inspect_file `LINE:HASH` spans
 directly as HPATCH targets. Use bounded hread for source text not supplied by the target-bearing
-search or outline. Ordinary reads do not supply verified row identities; use the hpatch reading
+search or outline. Ordinary reads do not supply verified row identities; use the mekugi reading
 tools when those identities are needed for the edit.

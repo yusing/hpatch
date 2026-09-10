@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 	"sync"
 
-	"github.com/yusing/hpatch"
-	"github.com/yusing/hpatch/internal/router/toolplugin"
+	"github.com/yusing/mekugi"
+	"github.com/yusing/mekugi/internal/router/toolplugin"
 )
 
 type (
@@ -23,7 +23,7 @@ type (
 		SnapshotDir    string
 		RuntimeRoot    string
 		NodeExecutable string
-		DiagnoseHooks  hpatch.DiagnoseHooks
+		DiagnoseHooks  mekugi.DiagnoseHooks
 
 		builtinTranslator *toolplugin.Translator
 

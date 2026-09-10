@@ -34,7 +34,7 @@ errors outside the active Codex UI. Critical request failures use the user-only
 commentary contract. The launcher prints undelivered notices and repetition
 summaries after Codex exits. In-memory metrics, explicit sanitized capture and
 final metrics exports, and opt-in issue reports are not operational logging.
-Hpatch mode also retains private durable replay state so resumed and forked conversations restore
+`mekugi` mode also retains private durable replay state so resumed and forked conversations restore
 their original model-visible tools. This is correctness state, not an operational session log.
 It lives at `$XDG_STATE_HOME/mekugi/replay`, or `~/.local/state/mekugi/replay` when that variable is
 unset, and survives wrapper shutdown. A relative `XDG_STATE_HOME` is invalid. Passthrough mode
@@ -113,7 +113,7 @@ supported tool catalog. It retains native input for the next turn without
 performing tool rewriting or CTP encoding. Generating requests cannot use prewarm metadata to
 bypass ordinary turn validation.
 
-Execution-free turns pass through without Hpatch instruction or tool rewriting or CTP
+Execution-free turns pass through without Mekugi instruction or tool rewriting or CTP
 encoding, regardless of their output schema. They require valid turn metadata and session
 and thread IDs. Catalogs may be empty or contain native helper tools and Codex's JavaScript
 Code Mode `exec` with optional `wait`, flat or namespaced. Nested clock and lookup declarations
@@ -121,9 +121,9 @@ are allowed. Generic preamble examples mentioning `tools.exec_command` are not d
 Admission depends on advertised tool declarations, not client preamble wording or request purpose.
 Malformed catalogs, duplicate tools, wrong-kind execution wrappers, and partial editing or
 process-execution catalogs do not qualify. Requests advertising native or nested editing or
-process-execution tools retain the existing Hpatch admission and rewriting checks.
+process-execution tools retain the existing Mekugi admission and rewriting checks.
 
-Request preparation and response restoration retain Hpatch tools, replay,
+Request preparation and response restoration retain HPATCH tools, replay,
 CTP/2, and native carrier behavior. Incremental input must retain enough
 connection-local native history to resolve those transformations while sending
 only new transformed input upstream when inherited instruction-bearing items still match
@@ -173,7 +173,7 @@ Acceptance:
 ### Provider WebSocket transport for HTTP clients
 
 HTTP requests to ChatGPT use pooled persistent WebSockets by default in both
-Hpatch and passthrough modes. The following pool and fallback rules apply to
+`mekugi` and `passthrough` modes. The following pool and fallback rules apply to
 that HTTP-to-WebSocket path, not the dedicated Codex WebSocket session.
 
 Each `response.create` carries the complete transformed request input. HTTP's

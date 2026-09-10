@@ -1,4 +1,4 @@
-package hpatch
+package mekugi
 
 import (
 	"context"
@@ -12,11 +12,11 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/yusing/hpatch/internal/hpatchsyntax"
-	"github.com/yusing/hpatch/internal/verifiedrow"
+	"github.com/yusing/mekugi/internal/hpatchsyntax"
+	"github.com/yusing/mekugi/internal/verifiedrow"
 )
 
-// Workspace is the filesystem authority for one hpatch operation. Root should
+// Workspace is the filesystem authority for one workspace edit. Root should
 // be opened from its canonical absolute path; absolute script paths are matched
 // against that name. CWD is root-relative and defaults to ".".
 // Callers coordinate writers to overlapping files and lifecycle paths, from the
@@ -720,7 +720,7 @@ func sanitizeDiagnostic(message string) string {
 
 // failureDiagnostic formats a failure message as a diagnostic.
 func failureDiagnostic(message string) string {
-	return fmt.Sprintf("hpatch: %s\n", sanitizeDiagnostic(message))
+	return fmt.Sprintf("mekugi: %s\n", sanitizeDiagnostic(message))
 }
 
 // evaluationDiagnostic formats an evaluation error as a diagnostic with repair context.
@@ -749,5 +749,5 @@ func evaluationDiagnostic(ctx context.Context, err error, dataDirectory string) 
 // warningDiagnostic formats a warning message as a diagnostic.
 func warningDiagnostic(message string) string {
 	message = sanitizeDiagnostic(message)
-	return fmt.Sprintf("hpatch: warning: %s\n", message)
+	return fmt.Sprintf("mekugi: warning: %s\n", message)
 }

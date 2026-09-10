@@ -32,12 +32,12 @@ const maxRetainedExchangeDetails = 4096
 
 const maxObservedResponseBytes = 8 << 20
 
-const hpatchApplyCarrierPrefix = "// hpatch-proxy: apply translated patch\nawait tools.apply_patch("
+const mekugiApplyCarrierPrefix = "// mekugi-proxy: apply translated patch\nawait tools.apply_patch("
 
 const (
-	hpatchNativeApplyCarrierPrefix      = "# hpatch-proxy: apply translated patch\n"
-	hpatchNativeReportCarrierPrefix     = "# hpatch-proxy: return hpatch report\n"
-	hpatchNativeDiagnosticCarrierPrefix = "# hpatch-proxy: return hpatch diagnostic "
+	mekugiNativeApplyCarrierPrefix      = "# mekugi-proxy: apply translated patch\n"
+	mekugiNativeReportCarrierPrefix     = "# mekugi-proxy: return mekugi report\n"
+	mekugiNativeDiagnosticCarrierPrefix = "# mekugi-proxy: return mekugi diagnostic "
 )
 
 type captureKey struct{}

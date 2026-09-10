@@ -8,7 +8,7 @@ prepare_instructions() {
 	diagnostic_instruction=$(cat <<'INSTRUCTION'
 ## Benchmark diagnostic reporting
 
-If any hpatch call is rejected or `hpatch_recover` is invoked, call `report_issue` exactly once after that recovery chain ends, then continue the task. Also report any distinct misleading or unnecessarily costly hpatch-related interaction once you have concrete evidence. State the intended action, the observed tool result or behavior, its impact, and the smallest useful improvement. Do not report project bugs, and do not speculate.
+If any mekugi call is rejected or `hpatch_recover` is invoked, call `report_issue` exactly once after that recovery chain ends, then continue the task. Also report any distinct misleading or unnecessarily costly mekugi-related interaction once you have concrete evidence. State the intended action, the observed tool result or behavior, its impact, and the smallest useful improvement. Do not report project bugs, and do not speculate.
 INSTRUCTION
 	)
 	offline_instruction=$(cat <<'INSTRUCTION'
@@ -27,27 +27,27 @@ INSTRUCTION
 			'.models[] | select(.slug == $model) | .base_instructions' \
 			>"$control_instruction"
 
-	cp "$control_instruction" "$hpatch_instruction"
+	cp "$control_instruction" "$mekugi_instruction"
 	if [[ $report_issues == true ]]; then
-		printf '\n%s\n' "$diagnostic_instruction" >>"$hpatch_instruction"
+		printf '\n%s\n' "$diagnostic_instruction" >>"$mekugi_instruction"
 	fi
 	printf '\n%s\n' "$offline_instruction" >>"$control_instruction"
-	printf '\n%s\n' "$offline_instruction" >>"$hpatch_instruction"
+	printf '\n%s\n' "$offline_instruction" >>"$mekugi_instruction"
 	if [[ $(grep -Fxc '## Benchmark isolation' "$control_instruction") -ne 1 ]] ||
-		[[ $(grep -Fxc '## Benchmark isolation' "$hpatch_instruction") -ne 1 ]]; then
+		[[ $(grep -Fxc '## Benchmark isolation' "$mekugi_instruction") -ne 1 ]]; then
 		printf 'bench.sh: benchmark isolation instructions were not installed exactly once\n' >&2
 		return 1
 	fi
 
-	diff -u --label control.md --label hpatch.md \
-		"$control_instruction" "$hpatch_instruction" >"$instruction_diff" ||
+	diff -u --label control.md --label mekugi.md \
+		"$control_instruction" "$mekugi_instruction" >"$instruction_diff" ||
 		diff_status=$?
 	if [[ $diff_status -gt 1 ]]; then
 		printf 'bench.sh: base-instruction diff failed with status %d\n' "$diff_status" >&2
 		return 1
 	fi
 	read -r control_instruction_sha _ < <(sha256sum "$control_instruction")
-	read -r hpatch_instruction_sha _ < <(sha256sum "$hpatch_instruction")
+	read -r mekugi_instruction_sha _ < <(sha256sum "$mekugi_instruction")
 }
 
 prepare_mentor_prompts() {
@@ -83,7 +83,7 @@ PROMPT
 }
 
 configure_issue_reporting() {
-	local settings_directory="$run_dir/hpatch-config/mekugi"
+	local settings_directory="$run_dir/mekugi-config/mekugi"
 	local mentor_parent_prompt_sha=
 	local mentor_child_prompt_sha=
 	local mentor_spawn_prompt_sha=
@@ -95,7 +95,7 @@ configure_issue_reporting() {
 
 	mkdir -p "$settings_directory" "$issue_reports_directory"
 	cat >"$settings_directory/settings.json" <<'JSON'
-{"hooks":{"diagnose":["hpatch-benchmark-report-issue {{shellquote .Title}} {{shellquote (format_markdown .)}}"]}}
+{"hooks":{"diagnose":["mekugi-benchmark-report-issue {{shellquote .Title}} {{shellquote (format_markdown .)}}"]}}
 JSON
 	jq -cn \
 		--argjson report_issue_enabled "$report_issues" \
@@ -104,7 +104,7 @@ JSON
 		--argjson require_ctp_output_compression "$require_ctp_output_compression" \
 		--arg benchmark_mode "$benchmark_mode" \
 		--arg task_contract_sha256 "$task_contract_sha256" \
-		--arg treatment_model_protocol "$HPATCH_BENCH_HPATCH_MODEL_PROTOCOL" \
+		--arg treatment_model_protocol "$MEKUGI_BENCH_MEKUGI_MODEL_PROTOCOL" \
 		--arg benchmark_commit "$benchmark_commit" \
 		--arg codex_release "$codex_release" \
 		--slurpfile build_identity "$run_dir/build-identity.json" \
@@ -162,7 +162,7 @@ snapshot() {
 		git -C "$source_repo" archive --format=tar "$revision" | tar -x -C "$destination" || return 1
 	fi
 	git -C "$destination" init --quiet || return 1
-	git -C "$destination" config user.name "hpatch benchmark" || return 1
+	git -C "$destination" config user.name "mekugi benchmark" || return 1
 	git -C "$destination" config user.email "benchmark@invalid" || return 1
 	git -C "$destination" config commit.gpgsign false || return 1
 	git -C "$destination" config core.hooksPath .git/no-hooks || return 1
@@ -376,7 +376,7 @@ validate_revision() {
 prepare_sessions() {
 	started=true
 	compose_used=true
-	if [[ $benchmark_mode == hpatch-only ]]; then import_control_baseline; fi
+	if [[ $benchmark_mode == mekugi-only ]]; then import_control_baseline; fi
 }
 
 run_phase() {
@@ -389,7 +389,7 @@ run_phase() {
 
 build_benchmark_image() {
 	local context
-	context=$(mktemp -d /tmp/hpatch-build-XXXXXX) || return 1
+	context=$(mktemp -d /tmp/mekugi-build-XXXXXX) || return 1
 	local build_status=0
 	python3 "$benchmark_root/build_inputs.py" "$benchmark_root/.." \
 		"$run_dir/build-inputs.tar" "$context" &&

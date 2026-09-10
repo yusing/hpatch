@@ -2,12 +2,12 @@
 
 ## REQ-CTP-001 — Lossless model-visible data-plane encoding
 
-Compact Token Protocol version 2 is the default Hpatch-mode model protocol. `--model-protocol native`
+Compact Token Protocol version 2 is the default `mekugi`-mode model protocol. `--model-protocol native`
 keeps request and response strings uncompressed. The removed `ctp1` value and every other unknown
 model protocol fail before the router listens. Passthrough mode uses native and rejects an explicit
 `ctp2` value.
 
-CTP/2 is a reversible representation between the ordinary Hpatch request projection and the model
+CTP/2 is a reversible representation between the ordinary Mekugi request projection and the model
 provider. It is not another Responses protocol or an edit-engine feature. Responses objects, roles,
 instruction priority, identifiers, statuses, reasoning, schemas, grammar definitions, streaming,
 usage, conversation selection, and compaction remain provider-owned and native. CTP/2 changes only
@@ -89,7 +89,7 @@ or choices, grammar definitions, JSON schemas, or executor carriers that are not
 An active request installs the CTP/2 response transformer even when every current request string is
 already native, because the model guidance may still emit a compact assistant response. Assistant
 text may contain one content-local representation or visible-line references to prior tool outputs
-from that request. The router restores assistant text before Hpatch translates registered calls. It
+from that request. The router restores assistant text before Mekugi translates registered calls. It
 never interprets CTP/2 in newly emitted tool names, custom-tool inputs, or function-call arguments.
 Validated Codex compaction requests bypass CTP/2 request and response transformation even when their
 history contains a textual developer message; compaction carries no CTP/2 guidance and remains native.
@@ -104,7 +104,7 @@ not duplicate output observations. Non-streaming and streaming responses therefo
 native assistant text.
 
 Decoded strings and serialized JSON or SSE remain within the existing 64 MiB upstream JSON buffer
-budget. Expansion fails before an oversized value reaches Hpatch or another downstream consumer.
+budget. Expansion fails before an oversized value reaches Mekugi or another downstream consumer.
 
 ### Observation
 
@@ -115,7 +115,7 @@ signed protocol savings include expansion and do not claim provider cache or bil
 ### Acceptance
 
 1. Native mode preserves request and response behavior without adding CTP/2 guidance or state.
-2. Hpatch mode defaults to `ctp2`; `ctp2` is accepted only in Hpatch mode; `ctp1` and unknown values fail before listening.
+2. `mekugi` mode defaults to `ctp2`; `ctp2` is accepted only in `mekugi` mode; `ctp1` and unknown values fail before listening.
 3. CTP/2 activates only with an existing native instruction carrier and never creates one.
    Validated compaction requests remain native and are not considered for activation.
 4. Every content-local dictionary and visible-line representation restores exact bytes, including
@@ -138,7 +138,7 @@ signed protocol savings include expansion and do not claim provider cache or bil
 
 ### Request wire preservation
 
-Stock passthrough MUST forward the validated original request bytes unchanged. Hpatch and CTP/2
+Stock passthrough MUST forward the validated original request bytes unchanged. Mekugi and CTP/2
 MUST preserve the received top-level envelope and untouched field values; only projected fields
 and newly added fields are written. A projected field with unchanged decoded content MUST retain
 its original spelling. Router-generated protocol JSON MUST disable HTML escaping of `<`, `>`,

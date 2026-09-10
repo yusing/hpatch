@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/yusing/hpatch"
+	"github.com/yusing/mekugi"
 	"mvdan.cc/sh/v3/expand"
 	"mvdan.cc/sh/v3/interp"
 	"mvdan.cc/sh/v3/syntax"
@@ -117,7 +117,7 @@ func splitShellCatWrites(body, directory string, variant syntax.LangVariant) ([]
 						}
 						text = strings.Join(lines, "\n")
 					}
-					if patch, err := hpatch.RenderFileWritePatch(path, text); err == nil {
+					if patch, err := mekugi.RenderFileWritePatch(path, text); err == nil {
 						step.patch = patch
 						// Add File can create missing parents, unlike cat redirection.
 						// Check at execution time, after preceding commands, and leave
@@ -159,7 +159,7 @@ func shellCatLiteralParts(parts []syntax.WordPart, quoted bool) bool {
 	return true
 }
 
-func (t *hpatchResponseTransform) shellCatCarrier(contribution toolContribution, kind codeModeCarrierKind, arguments []string, template string, params, metadata map[string]json.RawMessage) (string, bool) {
+func (t *mekugiResponseTransform) shellCatCarrier(contribution toolContribution, kind codeModeCarrierKind, arguments []string, template string, params, metadata map[string]json.RawMessage) (string, bool) {
 	if contribution.PluginID != builtinToolsPluginID || contribution.Name != "shell" || template != "" || len(arguments) != 2 {
 		return "", false
 	}
@@ -205,12 +205,12 @@ func (t *hpatchResponseTransform) shellCatCarrier(contribution toolContribution,
 	if kind == codeModeCarrierFunction {
 		for index, step := range steps {
 			if step.patch != "" {
-				commands[index] = "if " + step.guard + "; then\n" + hpatchNativeCommand(hpatchHistory{patch: step.patch}) + "\nelse\n" + commands[index] + "\nfi"
+				commands[index] = "if " + step.guard + "; then\n" + mekugiNativeCommand(mekugiHistory{patch: step.patch}) + "\nelse\n" + commands[index] + "\nfi"
 			}
 		}
 		command := strings.Join(commands, "\n")
 		if len(metadata) != 0 {
-			command += "\nhpatch_status=$?\nprintf '\\n%s\\n' " + shellQuoteArgument(string(mustMarshalJSON(metadata))) + "\nexit \"$hpatch_status\""
+			command += "\nmekugi_status=$?\nprintf '\\n%s\\n' " + shellQuoteArgument(string(mustMarshalJSON(metadata))) + "\nexit \"$mekugi_status\""
 		}
 		return string(mustMarshalJSON(execCommandArguments(command, params))), true
 	}

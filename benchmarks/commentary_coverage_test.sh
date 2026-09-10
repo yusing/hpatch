@@ -7,7 +7,7 @@ manifest="$benchmark_root/tasks/commentary-coverage/task.json"
 fixture=$(mktemp -d)
 trap 'rm -rf -- "$fixture"' EXIT
 
-for mode in hpatch-diagnostic ctp-only mentor-handoff; do
+for mode in mekugi-diagnostic ctp-only mentor-handoff; do
 	python3 "$checker" validate "$manifest" "$mode"
 done
 if python3 "$checker" validate "$manifest" paired >/dev/null 2>&1; then
@@ -30,7 +30,7 @@ cat >"$fixture/operations.jsonl" <<'JSONL'
 {"type":"item.completed","item":{"type":"agent_message","text":"Tokens: i=120, ci=80, o=30, r=20"}}
 JSONL
 
-python3 "$checker" check "$manifest" hpatch-diagnostic hpatch \
+python3 "$checker" check "$manifest" mekugi-diagnostic mekugi \
 	"$fixture/operations.jsonl" >"$fixture/result.json"
 jq -e '.passed == true and .profiles == ["operations", "reporting", "terminal"]' \
 	"$fixture/result.json" >/dev/null
@@ -43,7 +43,7 @@ for arm in native ctp; do
 		"$fixture/result.json" >/dev/null
 done
 
-if python3 "$checker" check "$manifest" hpatch-diagnostic hpatch \
+if python3 "$checker" check "$manifest" mekugi-diagnostic mekugi \
 	"$fixture/ctp.jsonl" >"$fixture/missing.json"; then
 	printf 'commentary coverage accepted a missing report_issue message\n' >&2
 	exit 1
@@ -67,7 +67,7 @@ cat >"$fixture/collaboration.jsonl" <<'JSONL'
 {"type":"item.completed","item":{"type":"agent_message","text":"Response from /root/implementation:\nverification: exhaustive commentary coverage passed"}}
 {"type":"item.completed","item":{"type":"agent_message","text":"Tokens: i=120, ci=80, o=30, r=20"}}
 JSONL
-for arm in hpatch hpatch-mentor; do
+for arm in mekugi mekugi-mentor; do
 	python3 "$checker" check "$manifest" mentor-handoff "$arm" \
 		"$fixture/collaboration.jsonl" >"$fixture/result.json"
 	jq -e '.passed == true and .profiles == ["collaboration", "terminal"]' \

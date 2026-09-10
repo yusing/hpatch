@@ -148,7 +148,7 @@ An immutable invocation baseline is an in-memory evaluation rule, not a cross-fi
 snapshot. If another writer changes a touched path outside this coordination contract, its
 changes can be overwritten without a stale-target rejection.
 
-Root application stages new contents in same-directory temporary files before starting the commit. Parse, validation, read, and evaluation failures leave the tree unchanged by hpatch.
+Root application stages new contents in same-directory temporary files before starting the commit. Parse, validation, read, and evaluation failures leave the tree unchanged by mekugi.
 A staging failure attempts to remove all temporary artifacts; cleanup failure returns
 nonzero and identifies every artifact it could not remove. Commit-time filesystem failures
 trigger rollback attempts using staged backups. Ordinary filesystems cannot provide a
@@ -171,7 +171,7 @@ bytes when its output is applied by the tool. Translation therefore returns LF-o
 that file to LF; this is a declared format limitation, not byte equivalence.
 
 Basic `Apply` returns errors for failures. Host variants place generic diagnostics
-and structured failure data in `HostTranslation`; rendered generic diagnostics use the `hpatch:`
+and structured failure data in `HostTranslation`; rendered generic diagnostics use the `mekugi:`
 prefix. Command failures have the stable rendered form:
 
 ```text

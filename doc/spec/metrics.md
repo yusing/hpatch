@@ -50,7 +50,7 @@ A durable record MUST contain only:
 It MUST NOT contain authorization material, prompts, instructions, message content, tool arguments,
 command output, response text, script text, patches, reports, or diagnostics beyond the stable code.
 
-`GET /api/metrics` MUST return `hpatch.capture.metrics.v4`. Its calculations MUST be made by the
+`GET /api/metrics` MUST return `mekugi.capture.metrics.v4`. Its calculations MUST be made by the
 capturer, not by the router, engine, plugin, benchmark report, or dashboard. The snapshot MUST expose:
 
 1. logical request and provider-attempt counts, including completed and failed logical requests;
@@ -71,7 +71,7 @@ capturer, not by the router, engine, plugin, benchmark report, or dashboard. The
    model-origin output in `output_index` order from finalized `response.output_item.done` items,
    excluding generated commentary there as well. A missing terminal event MUST NOT be treated as a
    completed output;
-5. signed CTP input byte and token savings between the actual post-replay, post-Hpatch native
+5. signed CTP input byte and token savings between the actual post-replay, post-Mekugi native
    request and its final provider request, never between raw client history and provider input,
    plus signed delivery expansion between their complete model-origin `output` arrays, excluding generated commentary, echoed tools, and all
    other response metadata, so repeated SSE framing and response metadata remain transport evidence
@@ -79,7 +79,7 @@ capturer, not by the router, engine, plugin, benchmark report, or dashboard. The
    or a hypothetical stock-model saving. Separate `output_text_tokens_saved` MUST compare only
    decoded assistant `output_text` strings, excluding tool calls and reasoning;
 6. provider-emitted and client-delivered tool aggregates;
-7. Hpatch call, correction, success, rejection, unmatched, diagnostic, provider-input,
+7. HPATCH call, correction, success, rejection, unmatched, diagnostic, provider-input,
    delivered-carrier-input, and signed delivered-carrier input expansion, not stock-model savings;
 8. a bounded recent window of per-logical-request exchanges containing every provider attempt and
    its usage, while cumulative totals remain process-lifetime totals; and
@@ -95,8 +95,8 @@ content, not event/data framing; repeated events remain stream evidence, not fin
 Non-JSON text is counted as literal text. Transport byte counts MUST remain exact observed bytes.
 These reproducible GPT-5 content estimates include envelope and opaque reasoning values when
 present; they MUST NOT be labeled as exact provider input or billed generated tokens.
-The Hpatch comparison MUST pair the
-actual provider-emitted Hpatch call with the actual delivered native carrier by tool-call identity;
+The HPATCH comparison MUST pair the
+actual provider-emitted HPATCH call with the actual delivered native carrier by tool-call identity;
 it MUST NOT synthesize an `apply_patch`, `exec_command`, shell command, or stock result.
 
 A benchmark report MUST read these calculations from the snapshot. It MAY independently reconcile
@@ -123,7 +123,7 @@ Acceptance:
    nor provider usage.
 4. Snapshot totals reconcile their exchanges and provider attempts, and benchmark validation rejects
    changed aggregate usage or nonzero capture-health errors.
-5. Passthrough, Hpatch-native, CTP/2, and Mentor Handoff use the same capture owner and endpoint;
+5. Passthrough, Mekugi with native protocol, CTP/2, and Mentor Handoff use the same capture owner and endpoint;
    none requires another listener.
 6. Cumulative metrics remain complete after the detailed exchange window fills, while health marks
    the discarded detail and benchmark validation rejects it.

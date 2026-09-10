@@ -24,7 +24,7 @@ import (
 	betesting "go.etcd.io/etcd/server/v3/storage/backend/testing"
 )
 
-func TestHPatchBenchmarkFastKeysRangeLimitAndCount(t *testing.T) {
+func TestMekugiBenchmarkFastKeysRangeLimitAndCount(t *testing.T) {
 	backend, _ := betesting.NewDefaultTmpBackend(t)
 	store := NewStore(zaptest.NewLogger(t), backend, &lease.FakeLessor{}, StoreConfig{})
 	defer cleanup(store, backend)

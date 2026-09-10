@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	codexinstructions "github.com/yusing/hpatch/contrib/codex"
+	codexinstructions "github.com/yusing/mekugi/contrib/codex"
 )
 
 func TestRenderModelInstructionsAtInstructionLifecycles(t *testing.T) {
@@ -60,11 +60,11 @@ func TestInstructionRewriteStrategiesAcrossModels(t *testing.T) {
 
 func TestCentralModelInstructionsHaveOneMarkerPair(t *testing.T) {
 	instructions := codexinstructions.InstructionsForModel("", true)
-	if strings.Count(instructions, hpatchInstructionsStartMarker) != 1 ||
-		strings.Count(instructions, hpatchInstructionsEndMarker) != 1 {
+	if strings.Count(instructions, mekugiInstructionsStartMarker) != 1 ||
+		strings.Count(instructions, mekugiInstructionsEndMarker) != 1 {
 		t.Fatal("central model instructions do not contain one marker pair")
 	}
-	if strings.Index(instructions, hpatchInstructionsStartMarker) >= strings.Index(instructions, hpatchInstructionsEndMarker) {
+	if strings.Index(instructions, mekugiInstructionsStartMarker) >= strings.Index(instructions, mekugiInstructionsEndMarker) {
 		t.Fatal("central model instruction markers are reversed")
 	}
 }
@@ -234,8 +234,8 @@ func TestRenderModelInstructionsFailsClosedForChangedUpstreamInstructions(t *tes
 	}{
 		{name: "missing stock section", input: "changed upstream instructions\n"},
 		{name: "nonblank stock separator", input: strings.Replace(stockModelInstructionsForTest("", ""), stockEditHeading+"\n\n", stockEditHeading+"\nnew upstream guidance\n", 1)},
-		{name: "incomplete marker", input: hpatchInstructionsStartMarker + "\n", customized: true},
-		{name: "reversed markers", input: hpatchInstructionsEndMarker + "\n" + hpatchInstructionsStartMarker + "\n", customized: true},
+		{name: "incomplete marker", input: mekugiInstructionsStartMarker + "\n", customized: true},
+		{name: "reversed markers", input: mekugiInstructionsEndMarker + "\n" + mekugiInstructionsStartMarker + "\n", customized: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			if _, _, err := renderModelInstructions(test.input, test.customized, codexinstructions.InstructionsForModel("", false)); err == nil {

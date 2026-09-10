@@ -25,20 +25,20 @@ import (
 	pb "go.etcd.io/etcd/api/v3/etcdserverpb"
 )
 
-type hpatchBenchmarkKVClient struct {
+type mekugiBenchmarkKVClient struct {
 	pb.KVClient
 	calls   int
 	options int
 }
 
-func (c *hpatchBenchmarkKVClient) RangeStream(_ context.Context, _ *pb.RangeRequest, options ...grpc.CallOption) (pb.KV_RangeStreamClient, error) {
+func (c *mekugiBenchmarkKVClient) RangeStream(_ context.Context, _ *pb.RangeRequest, options ...grpc.CallOption) (pb.KV_RangeStreamClient, error) {
 	c.calls++
 	c.options = len(options)
 	return nil, status.Error(codes.Unavailable, "stream unavailable")
 }
 
-func TestHPatchBenchmarkRetryForwardsRangeStream(t *testing.T) {
-	fake := &hpatchBenchmarkKVClient{}
+func TestMekugiBenchmarkRetryForwardsRangeStream(t *testing.T) {
+	fake := &mekugiBenchmarkKVClient{}
 	client := &retryKVClient{kc: fake}
 	_, err := client.RangeStream(t.Context(), &pb.RangeRequest{}, grpc.EmptyCallOption{})
 	if status.Code(err) != codes.Unavailable {

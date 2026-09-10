@@ -11,4 +11,4 @@ done
 # groups before executing even the qualification probe.
 exec setpriv --regid=65534 --clear-groups --bounding-set=-all \
  --inh-caps=-all --ambient-caps=-all --no-new-privs \
- python3 /usr/local/libexec/hpatch-agent-check.py "$@"
+ python3 /usr/local/libexec/mekugi-agent-check.py "$@"

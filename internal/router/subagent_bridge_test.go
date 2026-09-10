@@ -29,7 +29,7 @@ func TestSubagentBridgeProjectsAndRestoresPlaintext(t *testing.T) {
 			t.Fatal(err)
 		}
 		data := mustMarshalJSON(request.fields)
-		if bytes.Contains(data, []byte(`"encrypted":true`)) || !bytes.Contains(data, []byte(`"namespace":"hpatch_collaboration"`)) {
+		if bytes.Contains(data, []byte(`"encrypted":true`)) || !bytes.Contains(data, []byte(`"namespace":"mekugi_collaboration"`)) {
 			t.Fatalf("projection=%s", data)
 		}
 		if !strings.Contains(jsonString(request.fields, "instructions"), "plaintext") {

@@ -32,19 +32,19 @@ if (typeof wasi.initialize === "function") {
 const wasm = instance.exports;
 for (const name of [
   "memory",
-  "hpatch_core_abi_version",
-  "hpatch_core_reserve_input",
-  "hpatch_core_hash16",
-  "hpatch_core_line_count",
-  "hpatch_core_line_bounds",
-  "hpatch_core_invoke",
-  "hpatch_core_result_pointer",
+  "mekugi_core_abi_version",
+  "mekugi_core_reserve_input",
+  "mekugi_core_hash16",
+  "mekugi_core_line_count",
+  "mekugi_core_line_bounds",
+  "mekugi_core_invoke",
+  "mekugi_core_result_pointer",
 ]) {
   if (!(name in wasm)) {
     throw new Error(`shared-core WASM export ${name} is unavailable`);
   }
 }
-if (wasm.hpatch_core_abi_version() !== ABI_VERSION) {
+if (wasm.mekugi_core_abi_version() !== ABI_VERSION) {
   throw new Error(`shared-core WASM ABI must be version ${ABI_VERSION}`);
 }
 
@@ -74,7 +74,7 @@ function loadInput(value) {
   if (bytes.byteLength > 0xffff_ffff) {
     throw new SharedCoreError("input_too_large", "shared-core input exceeds WASM32 memory");
   }
-  const pointer = wasm.hpatch_core_reserve_input(bytes.byteLength);
+  const pointer = wasm.mekugi_core_reserve_input(bytes.byteLength);
   if (bytes.byteLength !== 0) {
     new Uint8Array(wasm.memory.buffer, pointer, bytes.byteLength).set(bytes);
   }
@@ -82,8 +82,8 @@ function loadInput(value) {
 
 function invoke(operation, value) {
   loadInput(value);
-  const length = wasm.hpatch_core_invoke(operation);
-  const pointer = wasm.hpatch_core_result_pointer();
+  const length = wasm.mekugi_core_invoke(operation);
+  const pointer = wasm.mekugi_core_result_pointer();
   const encoded = new Uint8Array(wasm.memory.buffer, pointer, length);
   const response = JSON.parse(decoder.decode(encoded));
   if (response?.ok !== true) {
@@ -98,7 +98,7 @@ function invoke(operation, value) {
 
 export function hashLine(value) {
   loadInput(value);
-  return wasm.hpatch_core_hash16().toString(16).padStart(4, "0");
+  return wasm.mekugi_core_hash16().toString(16).padStart(4, "0");
 }
 
 export function formatVerifiedRow(line, content) {
@@ -113,7 +113,7 @@ export function formatVerifiedRow(line, content) {
 
 export function lineCount(value) {
   loadInput(value);
-  return wasm.hpatch_core_line_count();
+  return wasm.mekugi_core_line_count();
 }
 
 export function lineBounds(value, line) {
@@ -121,7 +121,7 @@ export function lineBounds(value, line) {
     return null;
   }
   loadInput(value);
-  const pointer = wasm.hpatch_core_line_bounds(line);
+  const pointer = wasm.mekugi_core_line_bounds(line);
   if (pointer === 0) {
     return null;
   }

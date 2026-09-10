@@ -32,7 +32,7 @@ func (r *parsedResponsesRequest) responseTools() *responsesToolCatalog {
 	return r.toolCatalog
 }
 
-// isExecutionFreeRequest identifies catalogs that need no Hpatch editing or
+// isExecutionFreeRequest identifies catalogs that need no HPATCH editing or
 // process-execution projection. Other tools and output schemas remain Codex-owned.
 func (r *parsedResponsesRequest) isExecutionFreeRequest() bool {
 	// Admission precedes instruction rewriting, which can remove input items.

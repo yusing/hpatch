@@ -1,4 +1,4 @@
-package hpatch
+package mekugi
 
 import (
 	"slices"
@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-func TestHPatch2FinalStateReport(t *testing.T) {
+func TestMekugi2FinalStateReport(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, root, "file.txt", "alpha\nbeta\ngamma\n", 0o644)
 	script := "in file.txt\ntype " + row(2, "beta") + ` "B"`
@@ -29,7 +29,7 @@ func TestHPatch2FinalStateReport(t *testing.T) {
 	}
 }
 
-func TestHPatch2FinalStateReportProvidesReusableReplacementTarget(t *testing.T) {
+func TestMekugi2FinalStateReportProvidesReusableReplacementTarget(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, root, "file.txt", "alpha\nbeta\ngamma\n", 0o644)
 	before := row(2, "beta")
@@ -130,7 +130,7 @@ func TestRewriteTargetAliasesClassifiesSamePathRowSpanRelationsWithoutHashes(t *
 	}
 }
 
-func TestHPatch2FormattedReferencesTrackEditedContent(t *testing.T) {
+func TestMekugi2FormattedReferencesTrackEditedContent(t *testing.T) {
 	root := t.TempDir()
 	before := "package p\n\nvar ( a=1; b=2; c=3; d=4 )\n\nvar filler1=1\nvar filler2=2\nvar target=1\n"
 	writeTestFile(t, root, "file.go", before, 0o644)
@@ -156,7 +156,7 @@ func TestHPatch2FormattedReferencesTrackEditedContent(t *testing.T) {
 	}
 }
 
-func TestHPatch2FinalStateReportIsBounded(t *testing.T) {
+func TestMekugi2FinalStateReportIsBounded(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, root, "file.txt", "x x x x\n", 0o644)
 	script := "in file.txt\ntype " + row(1, "x x x x") + ` "x" 4 "y"`
@@ -169,7 +169,7 @@ func TestHPatch2FinalStateReportIsBounded(t *testing.T) {
 	}
 }
 
-func TestHPatch2InsertionReportNamesTargetRange(t *testing.T) {
+func TestMekugi2InsertionReportNamesTargetRange(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, root, "file.txt", "alpha\nbeta\n", 0o644)
 	script := "in file.txt\nadd " + row(2, "beta") + ` "inserted\n"`
@@ -185,7 +185,7 @@ func TestHPatch2InsertionReportNamesTargetRange(t *testing.T) {
 	}
 }
 
-func TestHPatch2PreviewDoesNotInventTrailingEmptyLine(t *testing.T) {
+func TestMekugi2PreviewDoesNotInventTrailingEmptyLine(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, root, "file.txt", "alpha\n", 0o644)
 	result, err := applyForHostAtTest(t, root, "in file.txt", "")
@@ -198,7 +198,7 @@ func TestHPatch2PreviewDoesNotInventTrailingEmptyLine(t *testing.T) {
 	}
 }
 
-func TestHPatch2EmptyNewFileReport(t *testing.T) {
+func TestMekugi2EmptyNewFileReport(t *testing.T) {
 	root := t.TempDir()
 	result, err := applyForHostAtTest(t, root, "new empty.txt", "")
 	if err != nil {
@@ -210,7 +210,7 @@ func TestHPatch2EmptyNewFileReport(t *testing.T) {
 	}
 }
 
-func TestHPatch2MovedMutationReportUsesFinalPath(t *testing.T) {
+func TestMekugi2MovedMutationReportUsesFinalPath(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, root, "old.txt", "alpha\n", 0o644)
 	script := "in old.txt\ntype " + row(1, "alpha") + ` "beta"` + "\nmv new.txt"
@@ -231,7 +231,7 @@ func TestHPatch2MovedMutationReportUsesFinalPath(t *testing.T) {
 	}
 }
 
-func TestHPatch2PreviewBoundsContent(t *testing.T) {
+func TestMekugi2PreviewBoundsContent(t *testing.T) {
 	root := t.TempDir()
 	content := strings.Repeat("界", 70) + "tail\n"
 	writeTestFile(t, root, "file.txt", content, 0o644)
@@ -245,7 +245,7 @@ func TestHPatch2PreviewBoundsContent(t *testing.T) {
 	}
 }
 
-func TestHPatch2PreviewEscapesControls(t *testing.T) {
+func TestMekugi2PreviewEscapesControls(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, root, "file.txt", "a\x01b\n", 0o644)
 	result, err := applyForHostAtTest(t, root, "in file.txt", "")
@@ -257,7 +257,7 @@ func TestHPatch2PreviewEscapesControls(t *testing.T) {
 	}
 }
 
-func TestHPatch2FinalStateNoActiveFile(t *testing.T) {
+func TestMekugi2FinalStateNoActiveFile(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, root, "file.txt", "alpha\n", 0o644)
 	result, err := applyForHostAtTest(t, root, "in file.txt\nrm", "")
@@ -270,7 +270,7 @@ func TestHPatch2FinalStateNoActiveFile(t *testing.T) {
 	}
 }
 
-func TestHPatch2FinalReferencesCoverCommandsFilesAndContinuation(t *testing.T) {
+func TestMekugi2FinalReferencesCoverCommandsFilesAndContinuation(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, root, "first.txt", "a0\na1\na2\na3\na4\n", 0o644)
 	writeTestFile(t, root, "second.txt", "b0\nb1\nb2\n", 0o644)
@@ -319,7 +319,7 @@ func TestHPatch2FinalReferencesCoverCommandsFilesAndContinuation(t *testing.T) {
 	}
 }
 
-func TestHPatch2FinalReferencesProjectCollapsedDeletion(t *testing.T) {
+func TestMekugi2FinalReferencesProjectCollapsedDeletion(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, root, "file.txt", "alpha\nbeta\ngamma\n", 0o644)
 	result, err := applyForHostAtTest(t, root, "in file.txt\ntype "+row(2, "beta")+` ""`, "")
@@ -334,7 +334,7 @@ func TestHPatch2FinalReferencesProjectCollapsedDeletion(t *testing.T) {
 	}
 }
 
-func TestHPatch2FinalReferencesAreBoundedAndDeduplicated(t *testing.T) {
+func TestMekugi2FinalReferencesAreBoundedAndDeduplicated(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, root, "file.txt", "zero\nx\none\ntwo\nx\nend\n", 0o644)
 	script := "in file.txt\ntype " + row(2, "x") + ` "x" 2 "y"`
@@ -352,7 +352,7 @@ func TestHPatch2FinalReferencesAreBoundedAndDeduplicated(t *testing.T) {
 	}
 }
 
-func TestHPatch2FinalReferencesPreserveUneditedActiveEmptyFile(t *testing.T) {
+func TestMekugi2FinalReferencesPreserveUneditedActiveEmptyFile(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, root, "edited.txt", "old\n", 0o644)
 	script := "in edited.txt\ntype " + row(1, "old") + " \"new\"\nnew empty.txt"

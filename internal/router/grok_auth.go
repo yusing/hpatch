@@ -43,7 +43,7 @@ func newGrokAuth(path, apiKey string) *grokAuth {
 }
 func (a *grokAuth) credentials(ctx context.Context) (grokCredentials, error) {
 	if a.apiKey != "" {
-		return grokCredentials{endpoint: grokAPIEndpoint, headers: http.Header{"Authorization": []string{"Bearer " + a.apiKey}, "User-Agent": []string{"hpatch"}}}, nil
+		return grokCredentials{endpoint: grokAPIEndpoint, headers: http.Header{"Authorization": []string{"Bearer " + a.apiKey}, "User-Agent": []string{"mekugi"}}}, nil
 	}
 	_, entry, err := a.read()
 	if err != nil {
@@ -65,9 +65,9 @@ func (a *grokAuth) credentials(ctx context.Context) (grokCredentials, error) {
 	}
 	return grokCredentials{endpoint: grokProxyEndpoint, headers: http.Header{
 		"Authorization": []string{"Bearer " + token}, "X-Xai-Token-Auth": []string{"xai-grok-cli"},
-		"X-Grok-Model-Override": []string{"grok-4.6"}, "X-Grok-Client-Identifier": []string{"hpatch"},
+		"X-Grok-Model-Override": []string{"grok-4.6"}, "X-Grok-Client-Identifier": []string{"mekugi"},
 		// The proxy gates its CLI wire protocol independently of our user agent.
-		"X-Grok-Client-Version": []string{"1.0.13"}, "X-Grok-Client-Mode": []string{"headless"}, "User-Agent": []string{"hpatch"},
+		"X-Grok-Client-Version": []string{"1.0.13"}, "X-Grok-Client-Mode": []string{"headless"}, "User-Agent": []string{"mekugi"},
 	}}, nil
 }
 func (a *grokAuth) read() (map[string]json.RawMessage, map[string]json.RawMessage, error) {
@@ -230,7 +230,7 @@ func writeGrokCredentials(path string, data []byte) error {
 	if err != nil || !info.Mode().IsRegular() {
 		return errors.New("Grok credential store is not a regular file")
 	}
-	file, err := os.CreateTemp(filepath.Dir(path), ".hpatch-grok-auth-")
+	file, err := os.CreateTemp(filepath.Dir(path), ".mekugi-grok-auth-")
 	if err != nil {
 		return errors.New("cannot prepare Grok credential update")
 	}

@@ -12,7 +12,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/yusing/hpatch/internal/router"
+	"github.com/yusing/mekugi/internal/router"
 )
 
 func runWrap(routerArgs, args []string) int {

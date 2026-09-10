@@ -10,7 +10,7 @@ import plugin from "../../../../plugins/shell.mjs";
 
 const originalCWD = process.cwd();
 const originalTMPDIR = process.env.TMPDIR;
-const originalTestValue = process.env.HPATCH_SHELL_TEST;
+const originalTestValue = process.env.MEKUGI_SHELL_TEST;
 const temporaryDirectories: string[] = [];
 const tool = plugin.tools[0];
 
@@ -38,9 +38,9 @@ afterEach(async () => {
     process.env.TMPDIR = originalTMPDIR;
   }
   if (originalTestValue === undefined) {
-    delete process.env.HPATCH_SHELL_TEST;
+    delete process.env.MEKUGI_SHELL_TEST;
   } else {
-    process.env.HPATCH_SHELL_TEST = originalTestValue;
+    process.env.MEKUGI_SHELL_TEST = originalTestValue;
   }
   await Promise.all(
     temporaryDirectories.splice(0).map((directory) => rm(directory, {recursive: true, force: true})),
@@ -49,7 +49,7 @@ afterEach(async () => {
 
 describe("installable shell plugin", () => {
   test("rejects unresolved retained references without opening a host file", async () => {
-    const directory = await temporaryDirectory("hpatch-shell-reference-");
+    const directory = await temporaryDirectory("mekugi-shell-reference-");
     const stored = path.join(directory, "outside-script");
     await writeFile(stored, "#!python3\nprint('outside')\n");
     expect(() => tool.parse(`#!script=${stored}`, {
@@ -203,12 +203,12 @@ describe("installable shell plugin", () => {
     const workingDirectory = path.join(workingRoot, "work");
     await mkdir(workingDirectory);
     process.env.TMPDIR = temporaryRoot;
-    process.env.HPATCH_SHELL_TEST = "inherited";
+    process.env.MEKUGI_SHELL_TEST = "inherited";
     process.chdir(workingDirectory);
 
     const input = [
       "#!node",
-      "process.stdout.write(`${process.cwd()}|${process.env.HPATCH_SHELL_TEST}`);",
+      "process.stdout.write(`${process.cwd()}|${process.env.MEKUGI_SHELL_TEST}`);",
       "process.exit(7);",
       "",
     ].join("\n");
@@ -237,7 +237,7 @@ describe("installable shell plugin", () => {
   });
 
   test("reports an unavailable interpreter", async () => {
-    const parsed = await tool.parse("#!hpatch-missing-interpreter\nignored");
+    const parsed = await tool.parse("#!mekugi-missing-interpreter\nignored");
     const result = await tool.execute(await tool.argv(parsed), {stdinFD: null, scriptReadFD: null, scriptWriteFD: null, outputBudgetBytes: 16 * 1024 * 1024});
 
     expect(result.exitCode).toBe(127);
@@ -353,14 +353,14 @@ describe("installable shell plugin", () => {
     const executed = spawnSync("node", [hostPath], {
       cwd: snapshotRoot,
       encoding: "utf8",
-      env: {...process.env, HPATCH_SHELL_HOST_TEST: "stdin", NODE_NO_WARNINGS: "1"},
+      env: {...process.env, MEKUGI_SHELL_HOST_TEST: "stdin", NODE_NO_WARNINGS: "1"},
       input: JSON.stringify({
         operation: "execute",
         outputBudgetBytes: 16 * 1024 * 1024,
         snapshotRoot,
         module: "shell.mjs",
         index: 0,
-        arguments: ["node", "process.stdout.write(`host:${process.env.HPATCH_SHELL_HOST_TEST}`)"],
+        arguments: ["node", "process.stdout.write(`host:${process.env.MEKUGI_SHELL_HOST_TEST}`)"],
       }),
     });
 
@@ -382,7 +382,7 @@ describe("installable shell plugin", () => {
     const codexHome = path.join(installRoot, "codex-home");
     const configPath = path.join(codexHome, "config.toml");
     const instructionsPath = path.join(codexHome, "custom-instructions.md");
-    const defaultInstructionsPath = path.join(codexHome, "hpatch-model-instructions.md");
+    const defaultInstructionsPath = path.join(codexHome, "mekugi-model-instructions.md");
     await mkdir(binaryDirectory, {recursive: true});
     const installEnvironment = {
       ...process.env,
@@ -429,7 +429,7 @@ ${installed.stderr}`);
       'printf "ready"',
       "",
     ].join("\n"), {mode: 0o755});
-    const wrapped = spawnSync(routerPath, ["--mode", "hpatch", "codex"], {
+    const wrapped = spawnSync(routerPath, ["--mode", "mekugi", "codex"], {
       cwd: repositoryRoot,
       encoding: "utf8",
       env: {

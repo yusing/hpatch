@@ -7,11 +7,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yusing/hpatch/internal/commentaryid"
+	"github.com/yusing/mekugi/internal/commentaryid"
 )
 
 func TestModelOutputExcludesGeneratedCommentary(t *testing.T) {
-	r, err := New(Config{Mode: "hpatch", ModelProtocol: "native"})
+	r, err := New(Config{Mode: "mekugi", ModelProtocol: "native"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -44,14 +44,14 @@ func TestModelOutputExcludesGeneratedCommentary(t *testing.T) {
 	}
 	for name, test := range cases {
 		t.Run(name, func(t *testing.T) {
-			record := captureRecord{Boundary: "codex", Mode: "hpatch"}
+			record := captureRecord{Boundary: "codex", Mode: "mekugi"}
 			got := observeResponse([]byte(test.payload), test.kind, &record, r.codec)
 			if string(got) != test.want || record.CaptureError != "" {
 				t.Fatalf("output=%s, error=%q; want %s", got, record.CaptureError, test.want)
 			}
 		})
 	}
-	for _, record := range []captureRecord{{Boundary: "provider", Mode: "hpatch"}, {Boundary: "codex", Mode: "passthrough"}} {
+	for _, record := range []captureRecord{{Boundary: "provider", Mode: "mekugi"}, {Boundary: "codex", Mode: "passthrough"}} {
 		got := observeResponse([]byte(`{"status":"completed","output":`+all+`}`), "application/json", &record, r.codec)
 		if string(got) != all {
 			t.Fatalf("unmodified boundary output = %s", got)
@@ -60,7 +60,7 @@ func TestModelOutputExcludesGeneratedCommentary(t *testing.T) {
 }
 
 func TestGeneratedCommentaryChangesTransportButNotOutputSavingsOrUsage(t *testing.T) {
-	r, err := New(Config{Mode: "hpatch", ModelProtocol: "native"})
+	r, err := New(Config{Mode: "mekugi", ModelProtocol: "native"})
 	if err != nil {
 		t.Fatal(err)
 	}

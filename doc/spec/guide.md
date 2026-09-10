@@ -22,7 +22,7 @@ CTP/2 section and stops after the ordinary guidance rewrite; CTP/2 injects the c
 then transforms only eligible model-visible strings under `REQ-CTP-001`.
 
 For each eligible turn carrying a non-null Responses `instructions` string, the router refreshes
-one current marked hpatch section or replaces the pinned stock Codex file-editing section and its
+one current marked mekugi section or replaces the pinned stock Codex file-editing section and its
 displaced rg and exec-command lines. The GPT-6 Astra stock template has no file-editing section:
 the router recognizes its pinned introduction and work-rules heading, replaces the pinned rg line
 immediately after the heading and blank separator with central guidance, and removes the pinned
@@ -75,7 +75,7 @@ and without CTP. The variants teach the following tool workflow:
    heredocs from interpreter-program submission. Put the optional interpreter selector first,
    followed by at most one `#!cmd=` and one `#!params=` in either order, then the source body.
 2. Inspect, edit, or rerun a retained shell script through its `@shell/` reference, and never mix
-   retained and workspace paths in one hpatch script.
+   retained and workspace paths in one HPATCH script.
 3. Acquire target-bearing context for existing-file edits. When a known identifier or literal is
    likely to become a target, use hgrep first with
    repeated fixed-string patterns, adding bounded context options when surrounding code is needed.
@@ -107,7 +107,7 @@ and without CTP. The variants teach the following tool workflow:
    payload. Use one complete ordinary script for non-target or mixed corrections. After
    re-rejection, discard all prior handles. Ordinary `functions.hpatch` and root APIs have no
    recovery mode.
-10. Let hpatch format changed Go files and syntax-check supported changed Python, JavaScript, and
+10. Let mekugi format changed Go files and syntax-check supported changed Python, JavaScript, and
     TypeScript files.
 
 Acceptance:

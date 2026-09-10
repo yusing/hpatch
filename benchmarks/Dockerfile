@@ -10,7 +10,7 @@ RUN go mod download
 COPY . .
 RUN go build -trimpath -o /out/mekugi ./cmd/mekugi
 RUN go build -trimpath -o /out/shell ./cmd/shell
-RUN go build -trimpath -o /out/hpatch-merge-captures ./benchmarks/cmd/merge-captures
+RUN go build -trimpath -o /out/mekugi-merge-captures ./benchmarks/cmd/merge-captures
 
 FROM golang:1.26-bookworm
 
@@ -33,10 +33,10 @@ RUN target="$(readlink -f /usr/local/bin/codex)" \
     && rm /usr/local/bin/codex \
     && ln -s "/opt/codex/packages/${target#/root/.codex/packages/}" /usr/local/libexec/codex-real
 COPY --chmod=0755 benchmarks/isolated-codex.sh /usr/local/bin/codex
-COPY --chmod=0755 benchmarks/session-entry.sh /usr/local/bin/hpatch-benchmark-session
-COPY --chmod=0755 benchmarks/agent-mounts.sh /usr/local/libexec/hpatch-agent-mounts
-COPY benchmarks/agent-check.py /usr/local/libexec/hpatch-agent-check.py
+COPY --chmod=0755 benchmarks/session-entry.sh /usr/local/bin/mekugi-benchmark-session
+COPY --chmod=0755 benchmarks/agent-mounts.sh /usr/local/libexec/mekugi-agent-mounts
+COPY benchmarks/agent-check.py /usr/local/libexec/mekugi-agent-check.py
 COPY --from=builder /out/ /usr/local/bin/
-COPY --chmod=0755 benchmarks/report-issue-hook.sh /usr/local/bin/hpatch-benchmark-report-issue
+COPY --chmod=0755 benchmarks/report-issue-hook.sh /usr/local/bin/mekugi-benchmark-report-issue
 
 WORKDIR /workspace

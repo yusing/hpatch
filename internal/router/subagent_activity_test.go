@@ -160,7 +160,7 @@ func TestCriticalErrorProjectionUsesOriginDespiteSharedSession(t *testing.T) {
 		t.Fatal("successful sibling inherited another thread's failure")
 	}
 	projected := a.drain("root-a", time.Time{}, maxCommentaryPublicationBytes)
-	if len(projected) != 1 || !strings.Contains(commentaryText(t, projected[0]), "[`/root/a`] Hpatch") {
+	if len(projected) != 1 || !strings.Contains(commentaryText(t, projected[0]), "[`/root/a`] Mekugi") {
 		t.Fatal(projected)
 	}
 	record("child-b", requestOutcomeFailed)

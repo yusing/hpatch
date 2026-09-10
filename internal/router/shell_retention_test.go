@@ -14,12 +14,12 @@ import (
 	"testing/synctest"
 	"time"
 
-	"github.com/yusing/hpatch/internal/shellruntime"
+	"github.com/yusing/mekugi/internal/shellruntime"
 )
 
-func newShellStorageTestProxy(t *testing.T) (*hpatchProxy, string) {
+func newShellStorageTestProxy(t *testing.T) (*mekugiProxy, string) {
 	t.Helper()
-	proxy := &hpatchProxy{
+	proxy := &mekugiProxy{
 		shellDirectory: t.TempDir(),
 		shellSessions:  make(map[string]*shellSession),
 		registry:       &toolRegistry{shellRuntime: "/unused-test-worker"},
@@ -45,14 +45,14 @@ func TestShellStorageRetriesAfterDescriptorExhaustion(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
 	command := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestShellStorageOpenFailureProcess$", "-test.v")
-	command.Env = append(os.Environ(), "HPATCH_SHELL_STORAGE_OPEN_FAILURE=1")
+	command.Env = append(os.Environ(), "MEKUGI_SHELL_STORAGE_OPEN_FAILURE=1")
 	if output, err := command.CombinedOutput(); err != nil {
 		t.Fatalf("storage open failure subprocess: %v\n%s", err, output)
 	}
 }
 
 func TestShellStorageOpenFailureProcess(t *testing.T) {
-	if os.Getenv("HPATCH_SHELL_STORAGE_OPEN_FAILURE") != "1" {
+	if os.Getenv("MEKUGI_SHELL_STORAGE_OPEN_FAILURE") != "1" {
 		return
 	}
 	parent, err := os.OpenRoot(t.TempDir())
@@ -289,17 +289,17 @@ func TestIdleShellStorageRejectsUnexpectedDirectories(t *testing.T) {
 }
 
 type expiryCheckingShellTranslator struct {
-	inProcessHPatchTranslator
+	inProcessMekugiTranslator
 	t      *testing.T
 	expire func()
 }
 
-func (translator expiryCheckingShellTranslator) Apply(ctx context.Context, root *os.Root, script string) (hpatchTranslationResult, error) {
+func (translator expiryCheckingShellTranslator) Apply(ctx context.Context, root *os.Root, script string) (mekugiTranslationResult, error) {
 	translator.expire()
 	if _, err := root.Stat("script"); err != nil {
 		translator.t.Fatalf("expiry removed an in-flight Apply input: %v", err)
 	}
-	result, err := translator.inProcessHPatchTranslator.Apply(ctx, root, script)
+	result, err := translator.inProcessMekugiTranslator.Apply(ctx, root, script)
 	if err == nil {
 		got, readErr := root.ReadFile("script")
 		if readErr != nil || string(got) != "printf fixed\n" {
@@ -310,8 +310,8 @@ func (translator expiryCheckingShellTranslator) Apply(ctx context.Context, root 
 }
 
 func TestRetainedShellApplyHoldsLeaseThroughExpiry(t *testing.T) {
-	translator := &expiryCheckingShellTranslator{inProcessHPatchTranslator: inProcessHPatchTranslator{dataDirectory: t.TempDir()}, t: t}
-	transform, proxy, _, _ := newHPatchTestTransform(t, translator)
+	translator := &expiryCheckingShellTranslator{inProcessMekugiTranslator: inProcessMekugiTranslator{dataDirectory: t.TempDir()}, t: t}
+	transform, proxy, _, _ := newMekugiTestTransform(t, translator)
 	if _, retained := proxy.retainShell(transform.shellDirectory, "script", "printf ok\n"); !retained {
 		t.Fatal("retention failed")
 	}
@@ -482,7 +482,7 @@ func TestShellRetentionShutdownPreservesReplacementDirectory(t *testing.T) {
 }
 
 func TestShellRerunPreservesOriginalHistoryAndRetainsResolvedBody(t *testing.T) {
-	transform, proxy, _, _ := newHPatchTestTransform(t, testTranslator(t, new(int)))
+	transform, proxy, _, _ := newMekugiTestTransform(t, testTranslator(t, new(int)))
 	const body = "#!python3\nprint('retained')\n"
 	if _, ok := proxy.retainShell(transform.shellDirectory, "original", body); !ok {
 		t.Fatal("retention failed")
@@ -507,7 +507,7 @@ func TestShellRerunPreservesOriginalHistoryAndRetainsResolvedBody(t *testing.T) 
 }
 
 func TestRetainedShellEditsCannotReachOutsideScripts(t *testing.T) {
-	transform, proxy, _, _ := newHPatchTestTransform(t, newInProcessHPatchTranslator(t.TempDir()))
+	transform, proxy, _, _ := newMekugiTestTransform(t, newInProcessMekugiTranslator(t.TempDir()))
 	if _, retained := proxy.retainShell(transform.shellDirectory, "seed", "private"); !retained {
 		t.Fatal("retention failed")
 	}
@@ -537,7 +537,7 @@ func TestShellRetentionLifecycle(t *testing.T) {
 	if err := os.Mkdir(directory, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	proxy := &hpatchProxy{shellDirectory: directory, shellSessions: make(map[string]*shellSession), registry: &toolRegistry{shellRuntime: "/unused-test-worker"}}
+	proxy := &mekugiProxy{shellDirectory: directory, shellSessions: make(map[string]*shellSession), registry: &toolRegistry{shellRuntime: "/unused-test-worker"}}
 	const sessionID = "019fe9b0-c75b-7f92-9ce0-1580bca5e4ab"
 	sessionDirectory, err := proxy.storeShellRuntime(sessionID)
 	if err != nil {
@@ -583,7 +583,7 @@ func TestShellRetentionLifecycle(t *testing.T) {
 }
 
 func TestRetainedShellEditWithoutActiveStorageIsRejected(t *testing.T) {
-	transform, _, _, _ := newHPatchTestTransform(t, newInProcessHPatchTranslator(t.TempDir()))
+	transform, _, _, _ := newMekugiTestTransform(t, newInProcessMekugiTranslator(t.TempDir()))
 	history, err := transform.translate("call-missing", "in @shell/missing\ntype 1:ef86 \"fixed\"\n", nil)
 	if err != nil || !history.unevaluated || !strings.Contains(history.translationError, "retained shell storage is unavailable") {
 		t.Fatalf("missing retained edit = %+v, %v", history, err)
@@ -593,16 +593,16 @@ func TestRetainedShellEditWithoutActiveStorageIsRejected(t *testing.T) {
 	}
 }
 
-func TestHPatchAppliesRetainedShellArtifactDirectly(t *testing.T) {
+func TestMekugiAppliesRetainedShellArtifactDirectly(t *testing.T) {
 	dataDirectory := t.TempDir()
 	outcomePath := filepath.Join(t.TempDir(), "outcome.txt")
 	settings := `{"hooks":{"outcome":["printf '%s' {{.EmittedBytes}}'|'{{.EvaluatedBytes}} > ` + shellQuoteArgument(outcomePath) + `"]}}`
 	if err := os.WriteFile(filepath.Join(dataDirectory, "settings.json"), []byte(settings), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	transform, proxy, _, _ := newHPatchTestTransform(
+	transform, proxy, _, _ := newMekugiTestTransform(
 		t,
-		newInProcessHPatchTranslator(dataDirectory),
+		newInProcessMekugiTranslator(dataDirectory),
 	)
 	reference, retained := proxy.retainShell(transform.shellDirectory, "call-shell", "printf ok\n")
 	if !retained {
@@ -631,8 +631,8 @@ func TestHPatchAppliesRetainedShellArtifactDirectly(t *testing.T) {
 	}
 }
 
-func TestHPatchRecoveryAppliesRetainedShellArtifactDirectly(t *testing.T) {
-	transform, proxy, _, _ := newHPatchTestTransform(t, newInProcessHPatchTranslator(t.TempDir()))
+func TestMekugiRecoveryAppliesRetainedShellArtifactDirectly(t *testing.T) {
+	transform, proxy, _, _ := newMekugiTestTransform(t, newInProcessMekugiTranslator(t.TempDir()))
 	reference, retained := proxy.retainShell(transform.shellDirectory, "call-shell", "printf ok\n")
 	if !retained {
 		t.Fatal("shell script was not retained")
@@ -650,7 +650,7 @@ func TestHPatchRecoveryAppliesRetainedShellArtifactDirectly(t *testing.T) {
 	if !history.applied || !history.confirmed || history.patch != "" || strings.Contains(history.carrierInput(), "apply_patch") || strings.Contains(history.carrierInput(), "exec_command") {
 		t.Fatalf("retained recovery used host patch carrier: %+v", history)
 	}
-	if history.toolName != hpatchRecoveryToolName || history.script != payload || history.correlationID != first.correlationID || history.attempt != 2 || !strings.HasPrefix(history.evaluated, "in "+reference+"\n") {
+	if history.toolName != mekugiRecoveryToolName || history.script != payload || history.correlationID != first.correlationID || history.attempt != 2 || !strings.HasPrefix(history.evaluated, "in "+reference+"\n") {
 		t.Fatalf("recovery identity = %+v", history)
 	}
 	path := filepath.Join(transform.shellDirectory, "call-shell")
@@ -668,14 +668,14 @@ func TestHPatchRecoveryAppliesRetainedShellArtifactDirectly(t *testing.T) {
 func TestInterruptedTerminalWithoutStatusDoesNotApplyUnfinishedShellEdit(t *testing.T) {
 	for _, status := range []string{"failed", "incomplete"} {
 		t.Run(status, func(t *testing.T) {
-			transform, proxy, _, _ := newHPatchTestTransform(t, newInProcessHPatchTranslator(t.TempDir()))
+			transform, proxy, _, _ := newMekugiTestTransform(t, newInProcessMekugiTranslator(t.TempDir()))
 			var output []any
 			for _, id := range []string{"complete", "unfinished"} {
 				reference, retained := proxy.retainShell(transform.shellDirectory, id, "printf ok\n")
 				if !retained {
 					t.Fatal("shell script was not retained")
 				}
-				item := testHPatchItem()
+				item := testMekugiItem()
 				item["id"], item["call_id"] = "item-"+id, "call-"+id
 				item["input"] = "in " + reference + "\ntype 1:ef86 \"printf fixed\"\n"
 				if id == "unfinished" {
@@ -707,17 +707,17 @@ func TestInterruptedTerminalWithoutStatusDoesNotApplyUnfinishedShellEdit(t *test
 	}
 }
 
-func TestHPatchTreatsShellArtifactLiteralAsContent(t *testing.T) {
+func TestMekugiTreatsShellArtifactLiteralAsContent(t *testing.T) {
 	const script = "in /tmp/repro.txt\ntype 1:6db7 \"literal @shell/ marker\"\n"
 	calls := 0
-	translator := hpatchTranslatorFunc(func(_ context.Context, _ string, gotScript string) ([]byte, error) {
+	translator := mekugiTranslatorFunc(func(_ context.Context, _ string, gotScript string) ([]byte, error) {
 		calls++
 		if gotScript != script {
 			t.Fatalf("script = %q", gotScript)
 		}
 		return []byte(testTranslatedPatch), nil
 	})
-	transform, _, _, _ := newHPatchTestTransform(t, translator)
+	transform, _, _, _ := newMekugiTestTransform(t, translator)
 	history, err := transform.translate("call-edit", script, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -728,7 +728,7 @@ func TestHPatchTreatsShellArtifactLiteralAsContent(t *testing.T) {
 }
 
 func TestShellResultMetadata(t *testing.T) {
-	proxy := newManagedHPatchProxy(t, testTranslator(t, new(int)))
+	proxy := newManagedMekugiProxy(t, testTranslator(t, new(int)))
 	shell, ok := proxy.registry.contribution("shell")
 	if !ok {
 		t.Fatal("shell contribution is unavailable")

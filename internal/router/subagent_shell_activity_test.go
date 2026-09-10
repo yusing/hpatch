@@ -11,7 +11,7 @@ import (
 func TestSubagentShellExcerptsJSONAndSSE(t *testing.T) {
 	for _, stream := range []bool{false, true} {
 		t.Run(map[bool]string{false: "json", true: "sse"}[stream], func(t *testing.T) {
-			proxy := newManagedHPatchProxy(t, testTranslator(t, new(int)))
+			proxy := newManagedMekugiProxy(t, testTranslator(t, new(int)))
 			root, _ := prepareActivityTest(t, proxy, "root", "r", "", "/root", nil)
 			command := "go test ./internal/router\nprintf done"
 			input := []any{
@@ -68,7 +68,7 @@ func TestSubagentShellExcerptsJSONAndSSE(t *testing.T) {
 }
 
 func TestShellActivitySessionCorrelation(t *testing.T) {
-	transform := &hpatchResponseTransform{}
+	transform := &mekugiResponseTransform{}
 	for _, output := range []any{
 		map[string]any{"session_id": 42, "output": "start"},
 		`{"session_id":42,"output":"start"}`,
@@ -94,7 +94,7 @@ func TestShellActivitySessionCorrelation(t *testing.T) {
 
 func TestShellActivityDoesNotCorrelateProgramOutput(t *testing.T) {
 	for _, misleading := range []string{`{"session_id":42}`, "Process running with session ID 42"} {
-		transform := &hpatchResponseTransform{}
+		transform := &mekugiResponseTransform{}
 		transform.prepareShellActivity(mustMarshalJSON([]any{
 			map[string]any{"type": "function_call", "call_id": "real", "name": "exec_command", "arguments": `{"cmd":"sleep 20"}`},
 			map[string]any{"type": "function_call_output", "call_id": "real", "output": `{"session_id":42}`},

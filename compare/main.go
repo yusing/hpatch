@@ -9,8 +9,8 @@ import (
 	"reflect"
 
 	"github.com/tiktoken-go/tokenizer"
-	"github.com/yusing/hpatch"
-	"github.com/yusing/hpatch/internal/patchtest"
+	"github.com/yusing/mekugi"
+	"github.com/yusing/mekugi/internal/patchtest"
 )
 
 type scenario struct {
@@ -27,11 +27,11 @@ func main() {
 	}
 
 	fmt.Printf("GPT-5 encoding: %s\n\n", codec.GetName())
-	fmt.Printf("%-28s %8s %12s %8s %11s\n", "scenario", "hpatch", "apply_patch", "saved", "reduction")
+	fmt.Printf("%-28s %8s %12s %8s %11s\n", "scenario", "mekugi", "apply_patch", "saved", "reduction")
 
-	var totalHPatch, totalApplyPatch int
+	var totalMekugi, totalApplyPatch int
 	for _, scenario := range scenarios() {
-		hpatchTree, err := runHPatch(scenario)
+		mekugiTree, err := runMekugi(scenario)
 		if err != nil {
 			fatalf("%s: %v", scenario.name, err)
 		}
@@ -39,25 +39,25 @@ func main() {
 		if err != nil {
 			fatalf("%s apply_patch input: %v", scenario.name, err)
 		}
-		if !reflect.DeepEqual(hpatchTree, patchTree) {
-			fatalf("%s representations differ:\nhpatch: %#v\napply_patch: %#v", scenario.name, hpatchTree, patchTree)
+		if !reflect.DeepEqual(mekugiTree, patchTree) {
+			fatalf("%s representations differ:\nmekugi: %#v\napply_patch: %#v", scenario.name, mekugiTree, patchTree)
 		}
 
-		hpatchTokens, err := codec.Count(scenario.script)
+		mekugiTokens, err := codec.Count(scenario.script)
 		if err != nil {
-			fatalf("tokenizing %s hpatch input: %v", scenario.name, err)
+			fatalf("tokenizing %s mekugi input: %v", scenario.name, err)
 		}
 		patchTokens, err := codec.Count(scenario.patch)
 		if err != nil {
 			fatalf("tokenizing %s apply_patch input: %v", scenario.name, err)
 		}
-		totalHPatch += hpatchTokens
+		totalMekugi += mekugiTokens
 		totalApplyPatch += patchTokens
-		printRow(scenario.name, hpatchTokens, patchTokens)
+		printRow(scenario.name, mekugiTokens, patchTokens)
 	}
 
 	fmt.Println()
-	printRow("total", totalHPatch, totalApplyPatch)
+	printRow("total", totalMekugi, totalApplyPatch)
 }
 
 func scenarios() []scenario {
@@ -108,8 +108,8 @@ func scenarios() []scenario {
 	}
 }
 
-func runHPatch(scenario scenario) (map[string]string, error) {
-	root, err := os.MkdirTemp("", "hpatch-compare-*")
+func runMekugi(scenario scenario) (map[string]string, error) {
+	root, err := os.MkdirTemp("", "mekugi-compare-*")
 	if err != nil {
 		return nil, err
 	}
@@ -124,8 +124,8 @@ func runHPatch(scenario scenario) (map[string]string, error) {
 		return nil, err
 	}
 	defer workspaceRoot.Close()
-	if err := hpatch.Apply(context.TODO(), hpatch.Workspace{Root: workspaceRoot}, scenario.script); err != nil {
-		return nil, fmt.Errorf("applying hpatch script: %w", err)
+	if err := mekugi.Apply(context.TODO(), mekugi.Workspace{Root: workspaceRoot}, scenario.script); err != nil {
+		return nil, fmt.Errorf("applying HPATCH script: %w", err)
 	}
 	return readTree(root)
 }
@@ -153,13 +153,13 @@ func readTree(root string) (map[string]string, error) {
 	return tree, err
 }
 
-func printRow(name string, hpatchTokens, patchTokens int) {
-	saved := patchTokens - hpatchTokens
+func printRow(name string, mekugiTokens, patchTokens int) {
+	saved := patchTokens - mekugiTokens
 	reduction := 0.0
 	if patchTokens != 0 {
 		reduction = float64(saved) / float64(patchTokens) * 100
 	}
-	fmt.Printf("%-28s %8d %12d %8d %10.1f%%\n", name, hpatchTokens, patchTokens, saved, reduction)
+	fmt.Printf("%-28s %8d %12d %8d %10.1f%%\n", name, mekugiTokens, patchTokens, saved, reduction)
 }
 
 func fatalf(format string, arguments ...any) {

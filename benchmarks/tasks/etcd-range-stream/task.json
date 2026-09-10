@@ -11,27 +11,27 @@
   "hidden_files": [
     {
       "source": "hidden_txn_test.go.txt",
-      "destination": "server/etcdserver/txn/hpatch_benchmark_test.go"
+      "destination": "server/etcdserver/txn/mekugi_benchmark_test.go"
     },
     {
       "source": "hidden_v3rpc_test.go.txt",
-      "destination": "server/etcdserver/api/v3rpc/hpatch_benchmark_test.go"
+      "destination": "server/etcdserver/api/v3rpc/mekugi_benchmark_test.go"
     },
     {
       "source": "hidden_server_test.go.txt",
-      "destination": "server/etcdserver/hpatch_benchmark_test.go"
+      "destination": "server/etcdserver/mekugi_benchmark_test.go"
     },
     {
       "source": "hidden_adapter_test.go.txt",
-      "destination": "server/proxy/grpcproxy/adapter/hpatch_benchmark_test.go"
+      "destination": "server/proxy/grpcproxy/adapter/mekugi_benchmark_test.go"
     },
     {
       "source": "hidden_proxy_mock_test.go.txt",
-      "destination": "client/v3/mock/mockserver/hpatch_benchmark_test.go"
+      "destination": "client/v3/mock/mockserver/mekugi_benchmark_test.go"
     },
     {
       "source": "hidden_client_test.go.txt",
-      "destination": "client/v3/hpatch_benchmark_test.go"
+      "destination": "client/v3/mekugi_benchmark_test.go"
     }
   ],
   "graders": [
@@ -47,7 +47,7 @@
         "./client/v3/mock/mockserver",
         "./client/v3",
         "-run",
-        "^TestHPatchBenchmark",
+        "^TestMekugiBenchmark",
         "-count=1"
       ],
       "required": true,

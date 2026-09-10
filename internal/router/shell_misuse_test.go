@@ -97,12 +97,12 @@ func TestShellMisuseRejectionDeliveryAndReplay(t *testing.T) {
 	for _, native := range []bool{false, true} {
 		for _, streaming := range []bool{false, true} {
 			t.Run("native="+strconv.FormatBool(native)+"/stream="+strconv.FormatBool(streaming), func(t *testing.T) {
-				proxy := newManagedHPatchProxy(t, testTranslator(t, new(int)))
-				var transform *hpatchResponseTransform
+				proxy := newManagedMekugiProxy(t, testTranslator(t, new(int)))
+				var transform *mekugiResponseTransform
 				if native {
-					transform, _ = newNativeHPatchTestTransformWithProxy(t, proxy)
+					transform, _ = newNativeMekugiTestTransformWithProxy(t, proxy)
 				} else {
-					transform, _, _, _ = newHPatchTestTransformWithProxy(t, proxy)
+					transform, _, _, _ = newMekugiTestTransformWithProxy(t, proxy)
 				}
 				// Neither a template nor a nested executor call may run during rejection.
 				input := "#!/bin/bash\n#!params={\"yield_time_ms\":1000}\n#!cmd=touch template-ran; {.}\nconst r = await tools.exec_command({cmd: 'touch script-ran'}); text(r);"
@@ -188,7 +188,7 @@ func TestShellMisuseRejectionDeliveryAndReplay(t *testing.T) {
 }
 
 func TestRetainedShellMisuse(t *testing.T) {
-	transform, proxy, _, _ := newHPatchTestTransform(t, testTranslator(t, new(int)))
+	transform, proxy, _, _ := newMekugiTestTransform(t, testTranslator(t, new(int)))
 	reference, retained := proxy.retainShell(transform.shellDirectory, "retained-source", `text("not Bash")`)
 	if !retained {
 		t.Fatal("could not retain fixture")

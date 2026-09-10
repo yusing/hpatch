@@ -16,10 +16,10 @@ func TestReplayContinuationMatchesLiveProviderInput(t *testing.T) {
 				t.Run(protocol+"/"+carrier+"/"+tool, func(t *testing.T) {
 					workspace, storage := t.TempDir(), t.TempDir()
 					translations := 0
-					newProxy := func() *hpatchProxy {
-						proxy := newManagedHPatchProxy(t, testTranslator(t, &translations))
+					newProxy := func() *mekugiProxy {
+						proxy := newManagedMekugiProxy(t, testTranslator(t, &translations))
 						var err error
-						proxy.replayStore, err = openHPatchReplayStore(storage)
+						proxy.replayStore, err = openMekugiReplayStore(storage)
 						if err != nil {
 							t.Fatal(err)
 						}
@@ -30,7 +30,7 @@ func TestReplayContinuationMatchesLiveProviderInput(t *testing.T) {
 					if protocol == "ctp2" {
 						codec = mustCTP2Codec(t)
 					}
-					modelCall := testHPatchItem()
+					modelCall := testMekugiItem()
 					modelCall["name"] = tool
 					if tool == "shell" {
 						modelCall["input"] = "cat > replay.txt <<'EOF'\nexact original text\nEOF"

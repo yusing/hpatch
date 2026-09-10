@@ -36,7 +36,7 @@ const (
 	codexBetaFeaturesHeader     = "x-codex-beta-features"
 	codexResponsesLiteHeader    = "x-openai-internal-codex-responses-lite"
 	openAISubagentHeader        = "x-openai-subagent"
-	hpatchCaptureIDHeader       = "x-hpatch-capture-id"
+	mekugiCaptureIDHeader       = "x-mekugi-capture-id"
 	codexSessionIDHeader        = "Session_id"
 	upstreamJSONBufferBytes     = 64 << 20
 )
@@ -276,7 +276,7 @@ func forwardCodexRequestHeaders(destination, source http.Header) {
 		// Codex owns this provider-issued, per-turn sticky-routing token. Relay
 		// it unchanged; never derive it from or retain it with the session key.
 		"x-codex-turn-state",
-		hpatchCaptureIDHeader,
+		mekugiCaptureIDHeader,
 	} {
 		for _, value := range source.Values(name) {
 			destination.Add(name, value)

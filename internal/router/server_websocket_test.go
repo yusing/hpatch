@@ -56,7 +56,7 @@ func socketEvent(kind, id string) map[string]any {
 	return map[string]any{"type": kind, "response": map[string]any{"id": id, "status": status, "output": []any{}}}
 }
 
-func testResponsesSocket(t *testing.T, ctx context.Context, upstream http.Handler, proxy *hpatchProxy, codec *ctp2Codec, headers http.Header) *websocket.Conn {
+func testResponsesSocket(t *testing.T, ctx context.Context, upstream http.Handler, proxy *mekugiProxy, codec *ctp2Codec, headers http.Header) *websocket.Conn {
 	t.Helper()
 	provider := httptest.NewServer(upstream)
 	t.Cleanup(provider.Close)
@@ -403,7 +403,7 @@ func TestResponsesWebSocketEndpointCloseWaitsAndRejectsNewAdmission(t *testing.T
 func TestResponsesWebSocketStartupPrewarmMetadata(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
 	defer cancel()
-	proxy := newManagedHPatchProxy(t, hpatchTranslatorFunc(func(context.Context, string, string) ([]byte, error) {
+	proxy := newManagedMekugiProxy(t, mekugiTranslatorFunc(func(context.Context, string, string) ([]byte, error) {
 		t.Error("prewarm must not execute tools")
 		return nil, nil
 	}))
@@ -475,7 +475,7 @@ func TestResponsesWebSocketStartupPrewarmMetadata(t *testing.T) {
 	}
 }
 
-func TestHPatchPrewarmRequiresExplicitNonGeneratingRequest(t *testing.T) {
+func TestMekugiPrewarmRequiresExplicitNonGeneratingRequest(t *testing.T) {
 	for _, generate := range []string{"", "true", "null", `"false"`} {
 		t.Run("generate="+generate, func(t *testing.T) {
 			request, err := parseResponsesRequest([]byte(`{"model":"gpt-test","input":[]}`))
@@ -485,7 +485,7 @@ func TestHPatchPrewarmRequiresExplicitNonGeneratingRequest(t *testing.T) {
 			if generate != "" {
 				request.fields["generate"] = json.RawMessage(generate)
 			}
-			proxy := &hpatchProxy{}
+			proxy := &mekugiProxy{}
 			if err := executeRequest(t.Context(), t.Context(), request, serverMetadataHeaders(t, "prewarm", nil), "session", &webSocketExchange{}, io.Discard, nil, proxy, nil, nil); err == nil {
 				t.Fatal("generating prewarm bypassed turn validation")
 			}
@@ -500,7 +500,7 @@ func TestResponsesHTTPPrewarmCannotBypassPreparation(t *testing.T) {
 	request.Header.Set(threadIDHeader, "prewarm-thread")
 	provider := &serverFakeProvider{}
 	recorder := httptest.NewRecorder()
-	responsesHandler(t.Context(), time.Minute, provider, nil, &hpatchProxy{}, nil, nil)(recorder, request)
+	responsesHandler(t.Context(), time.Minute, provider, nil, &mekugiProxy{}, nil, nil)(recorder, request)
 	if len(provider.forwarded) != 0 {
 		t.Fatal("HTTP prewarm reached a potentially generating provider")
 	}
@@ -528,9 +528,9 @@ func TestResponsesWebSocketLocalErrorStatus(t *testing.T) {
 			headers := codexAuthHeaders()
 			headers.Set(sessionIDHeader, "error-session")
 			headers.Set(threadIDHeader, "error-thread")
-			var proxy *hpatchProxy
+			var proxy *mekugiProxy
 			if test.metadata != "" {
-				proxy = newManagedHPatchProxy(t, testTranslator(t, new(int)))
+				proxy = newManagedMekugiProxy(t, testTranslator(t, new(int)))
 				metadata := serverMetadataHeaders(t, test.metadata, map[string]json.RawMessage{t.TempDir(): nil})
 				headers.Set(codexTurnMetadataHeader, metadata.Get(codexTurnMetadataHeader))
 			}

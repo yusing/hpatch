@@ -1,4 +1,4 @@
-package hpatch
+package mekugi
 
 import (
 	"bytes"
@@ -41,7 +41,7 @@ func TestErrorHookReceivesFailureAndRepairContext(t *testing.T) {
 			t.Fatalf("hook body does not contain %q:\n%s", fragment, body)
 		}
 	}
-	for _, omitted := range []string{"# hpatch command failed", "Description:", "Outcome:", "Category:", "Failed command", "Failure", "Diagnostic", "Repair context"} {
+	for _, omitted := range []string{"# mekugi command failed", "Description:", "Outcome:", "Category:", "Failed command", "Failure", "Diagnostic", "Repair context"} {
 		if strings.Contains(string(body), omitted) {
 			t.Fatalf("hook body unexpectedly contains %q:\n%s", omitted, body)
 		}
@@ -76,7 +76,7 @@ func TestReportIssueRunsDiagnoseHooksWithExactMarkdown(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "hpatch diagnostic\n" + markdown
+	want := "mekugi diagnostic\n" + markdown
 	if string(body) != want {
 		t.Fatalf("diagnose hook output = %q, want %q", body, want)
 	}
@@ -134,7 +134,7 @@ func TestErrorHookFailureDoesNotReplaceDiagnostic(t *testing.T) {
 	if !strings.HasPrefix(result.Diagnostic, "unknown-command: command 1, reason script-syntax: unknown or malformed command\n") {
 		t.Fatalf("original diagnostic was not preserved: %q", result.Diagnostic)
 	}
-	if !strings.Contains(result.Diagnostic, "hpatch: warning: running error hook 1: exit status 7\n") {
+	if !strings.Contains(result.Diagnostic, "mekugi: warning: running error hook 1: exit status 7\n") {
 		t.Fatalf("hook failure was not reported: %q", result.Diagnostic)
 	}
 }
@@ -150,7 +150,7 @@ func TestSettingsAreReadOnlyForEvaluationFailures(t *testing.T) {
 		t.Fatalf("successful ApplyForHost() error = %v", err)
 	}
 	result, err := applyForHostAtTest(t, root, "unknown-command\n", dataDirectory)
-	if err == nil || !strings.Contains(result.Diagnostic, "hpatch: warning: decoding settings:") {
+	if err == nil || !strings.Contains(result.Diagnostic, "mekugi: warning: decoding settings:") {
 		t.Fatalf("failed ApplyForHost() error = %v, diagnostic %q", err, result.Diagnostic)
 	}
 }
@@ -241,14 +241,14 @@ func TestMarkdownCodeSpanHandlesBackticks(t *testing.T) {
 func TestOutcomeHookMarkdownUsesSafeFence(t *testing.T) {
 	event := outcomeHookEvent{
 		attemptHookFields: attemptHookFields{Outcome: "succeeded"},
-		Title:             "hpatch attempt succeeded",
+		Title:             "mekugi attempt succeeded",
 		EmittedPayload:    "type <<PATCH\n```\nPATCH\n",
 	}
 	body := formatOutcomeHookMarkdown(event)
-	if event.Title != "hpatch attempt succeeded" {
+	if event.Title != "mekugi attempt succeeded" {
 		t.Fatalf("outcome title = %q", event.Title)
 	}
-	if !strings.Contains(body, "````hpatch\ntype <<PATCH\n```\nPATCH\n````") {
+	if !strings.Contains(body, "````mekugi\ntype <<PATCH\n```\nPATCH\n````") {
 		t.Fatalf("formatOutcomeHookMarkdown() = %q", body)
 	}
 	if strings.HasPrefix(body, "#") {
@@ -296,7 +296,7 @@ func TestRejectedAttemptReportsSettingsFailureOnce(t *testing.T) {
 	if err == nil {
 		t.Fatalf("translateForHostForTest() translation = %+v, want rejection", translated)
 	}
-	if count := strings.Count(translated.Diagnostic, "hpatch: warning: decoding settings:"); count != 1 {
+	if count := strings.Count(translated.Diagnostic, "mekugi: warning: decoding settings:"); count != 1 {
 		t.Fatalf("settings warning count = %d, diagnostic:\n%s", count, translated.Diagnostic)
 	}
 }
@@ -361,8 +361,8 @@ func TestErrorAndOutcomeHooksReceiveAttemptMetadata(t *testing.T) {
 		"Tool: `functions.hpatch`",
 		"Stage: `evaluated`",
 		"Outcome: `rejected`",
-		"## Emitted hpatch script",
-		"```hpatch\nunknown-command\n```",
+		"## Emitted HPATCH script",
+		"```mekugi\nunknown-command\n```",
 	} {
 		if !strings.Contains(string(outcome), want) {
 			t.Fatalf("rejected outcome hook lacks %q:\n%s", want, outcome)
@@ -398,7 +398,7 @@ func TestErrorAndOutcomeHooksReceiveAttemptMetadata(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(outcomeTitle) != "hpatch recovery attempt succeeded: Update note" {
+	if string(outcomeTitle) != "mekugi recovery attempt succeeded: Update note" {
 		t.Fatalf("outcome hook title = %q", outcomeTitle)
 	}
 	outcome, err = os.ReadFile(outcomePath)
@@ -410,7 +410,7 @@ func TestErrorAndOutcomeHooksReceiveAttemptMetadata(t *testing.T) {
 		"Stage: `translated`",
 		"Outcome: `succeeded`",
 		"## Emitted recovery payload",
-		"```hpatch-recover\n" + recoveryPayload + "\n```",
+		"```mekugi-recover\n" + recoveryPayload + "\n```",
 		"## Resolved recovery delta",
 		"    " + delta,
 		fmt.Sprintf("Router rebuilt a %d-byte complete HPATCH script; it was not model-emitted.", len(evaluatedScript)),
@@ -419,7 +419,7 @@ func TestErrorAndOutcomeHooksReceiveAttemptMetadata(t *testing.T) {
 			t.Fatalf("recovery outcome hook lacks %q:\n%s", want, outcome)
 		}
 	}
-	if strings.Contains(string(outcome), "```hpatch\n"+evaluatedScript) {
+	if strings.Contains(string(outcome), "```mekugi\n"+evaluatedScript) {
 		t.Fatalf("recovery outcome presents rebuilt script as emitted:\n%s", outcome)
 	}
 	metadataBody, err := os.ReadFile(metadataPath)

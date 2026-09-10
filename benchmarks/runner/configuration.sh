@@ -31,8 +31,8 @@ configure_benchmark() {
 		;;
 	esac
 	case $report_issues in
-	true) export HPATCH_BENCH_DIAGNOSE=1 ;;
-	false) export HPATCH_BENCH_DIAGNOSE=0 ;;
+	true) export MEKUGI_BENCH_DIAGNOSE=1 ;;
+	false) export MEKUGI_BENCH_DIAGNOSE=0 ;;
 	*)
 		printf 'bench.sh: BENCHMARK_REPORT_ISSUES must be true or false, got %s\n' "$report_issues" >&2
 		exit 2
@@ -40,14 +40,14 @@ configure_benchmark() {
 	esac
 	case "$benchmark_mode" in
 		paired|ctp-only|mentor-handoff) ;;
-		control-only|hpatch-only|hpatch-diagnostic)
+		control-only|mekugi-only|mekugi-diagnostic)
 			if ((repetitions != 1)); then
 				printf 'bench.sh: %s mode requires REPETITIONS=1; run separate trials for independent evidence\n' "$benchmark_mode" >&2
 				exit 2
 			fi
 			;;
 		*)
-			printf 'bench.sh: BENCHMARK_MODE must be paired, control-only, ctp-only, mentor-handoff, hpatch-only, or hpatch-diagnostic, got %s\n' "$benchmark_mode" >&2
+			printf 'bench.sh: BENCHMARK_MODE must be paired, control-only, ctp-only, mentor-handoff, mekugi-only, or mekugi-diagnostic, got %s\n' "$benchmark_mode" >&2
 			exit 2
 			;;
 	esac
@@ -70,8 +70,8 @@ configure_benchmark() {
 	native|ctp2) ;;
 	*) printf 'bench.sh: DIAGNOSTIC_MODEL_PROTOCOL must be native or ctp2\n' >&2; exit 2 ;;
 	esac
-	if [[ -n ${DIAGNOSTIC_MODEL_PROTOCOL+x} && $benchmark_mode != hpatch-diagnostic ]]; then
-	    printf 'bench.sh: DIAGNOSTIC_MODEL_PROTOCOL requires hpatch-diagnostic mode\n' >&2
+	if [[ -n ${DIAGNOSTIC_MODEL_PROTOCOL+x} && $benchmark_mode != mekugi-diagnostic ]]; then
+	    printf 'bench.sh: DIAGNOSTIC_MODEL_PROTOCOL requires mekugi-diagnostic mode\n' >&2
 	    exit 2
 	fi
 	task_id=${TASK_ID:-etcd-range-stream}
@@ -107,28 +107,28 @@ configure_benchmark() {
 
 configure_benchmark_plan() {
 	local arm
-	run_arms=(control hpatch)
+	run_arms=(control mekugi)
 	imported_arms=()
 	first_arm_order=1
-	export HPATCH_BENCH_HPATCH_MODEL_PROTOCOL=native
+	export MEKUGI_BENCH_MEKUGI_MODEL_PROTOCOL=native
 	case $benchmark_mode in
-	paired) HPATCH_BENCH_HPATCH_MODEL_PROTOCOL=ctp2 ;;
+	paired) MEKUGI_BENCH_MEKUGI_MODEL_PROTOCOL=ctp2 ;;
 	control-only) run_arms=(control) ;;
-	hpatch-only) run_arms=(hpatch); imported_arms=(control); first_arm_order=2 ;;
-	hpatch-diagnostic) run_arms=(hpatch); HPATCH_BENCH_HPATCH_MODEL_PROTOCOL=$diagnostic_model_protocol ;;
-	ctp-only) run_arms=(native ctp); HPATCH_BENCH_HPATCH_MODEL_PROTOCOL=ctp2 ;;
-	mentor-handoff) run_arms=(hpatch hpatch-mentor); HPATCH_BENCH_HPATCH_MODEL_PROTOCOL=$mentor_model_protocol ;;
+	mekugi-only) run_arms=(mekugi); imported_arms=(control); first_arm_order=2 ;;
+	mekugi-diagnostic) run_arms=(mekugi); MEKUGI_BENCH_MEKUGI_MODEL_PROTOCOL=$diagnostic_model_protocol ;;
+	ctp-only) run_arms=(native ctp); MEKUGI_BENCH_MEKUGI_MODEL_PROTOCOL=ctp2 ;;
+	mentor-handoff) run_arms=(mekugi mekugi-mentor); MEKUGI_BENCH_MEKUGI_MODEL_PROTOCOL=$mentor_model_protocol ;;
 	esac
 	retained_arms=("${imported_arms[@]}" "${run_arms[@]}")
 	declare -gA arm_services=() arm_modes=() arm_protocols=() arm_instructions=()
 	declare -gA arm_metrics=() arm_captures=() arm_mentor=()
 	for arm in "${retained_arms[@]}"; do
-		arm_services[$arm]=hpatch-agent
-		arm_modes[$arm]=hpatch
-		arm_protocols[$arm]=$HPATCH_BENCH_HPATCH_MODEL_PROTOCOL
-		arm_instructions[$arm]=hpatch.md
-		arm_metrics[$arm]=hpatch-metrics.json
-		arm_captures[$arm]=captures/hpatch.jsonl
+		arm_services[$arm]=mekugi-agent
+		arm_modes[$arm]=mekugi
+		arm_protocols[$arm]=$MEKUGI_BENCH_MEKUGI_MODEL_PROTOCOL
+		arm_instructions[$arm]=mekugi.md
+		arm_metrics[$arm]=mekugi-metrics.json
+		arm_captures[$arm]=captures/mekugi.jsonl
 		arm_mentor[$arm]=false
 		case $arm in
 		control|native)
@@ -141,14 +141,14 @@ configure_benchmark_plan() {
 				arm_instructions[$arm]=control.md
 			fi
 			;;
-		hpatch)
+		mekugi)
 			if [[ $benchmark_mode == mentor-handoff ]]; then
 				arm_services[$arm]=control-agent
 				arm_captures[$arm]=captures/control.jsonl
 			fi
 			;;
-		hpatch-mentor)
-			arm_metrics[$arm]=hpatch-mentor-metrics.json
+		mekugi-mentor)
+			arm_metrics[$arm]=mekugi-mentor-metrics.json
 			arm_mentor[$arm]=true
 			;;
 		esac
@@ -156,6 +156,10 @@ configure_benchmark_plan() {
 }
 
 initialize_run() {
+	if [[ $benchmark_mode == mekugi-only && -z $control_baseline_dir ]]; then
+		printf 'bench.sh: mekugi-only requires CONTROL_BASELINE_DIR from a current control-only run\n' >&2
+		exit 2
+	fi
 	results_root="$benchmark_root/results"
 	mkdir -p "$results_root"
 	if ! benchmark_commit=$(git -C "$benchmark_root/.." rev-parse HEAD); then
@@ -166,19 +170,16 @@ initialize_run() {
 		printf 'bench.sh: cannot determine pinned Codex CLI release\n' >&2
 		exit 1
 	fi
-	if [[ -z $control_baseline_dir ]]; then
-		control_baseline_dir="$results_root/c07600a74ac93d1ac6c38c47b80d85519458bc9f-1"
-	fi
 	run_dir=$(mktemp -d "$results_root/.staging-XXXXXX")
 	dependency_cache=$(mktemp -d "$results_root/.dependency-cache-XXXXXX")
 	dependency_workspace=
 
 	results="$run_dir/results.jsonl"
 	control_metrics="$run_dir/control-metrics.json"
-	hpatch_metrics="$run_dir/hpatch-metrics.json"
+	mekugi_metrics="$run_dir/mekugi-metrics.json"
 	if [[ $benchmark_mode == mentor-handoff ]]; then
-		control_metrics="$run_dir/hpatch-metrics.json"
-		hpatch_metrics="$run_dir/hpatch-mentor-metrics.json"
+		control_metrics="$run_dir/mekugi-metrics.json"
+		mekugi_metrics="$run_dir/mekugi-mentor-metrics.json"
 	fi
 	issue_reports_directory="$run_dir/agent-issue-reports"
 	issue_reports="$run_dir/agent-issue-reports.jsonl"
@@ -186,19 +187,19 @@ initialize_run() {
 	benchmark_config="$run_dir/benchmark-config.json"
 	instruction_dir="$run_dir/instructions"
 	control_instruction="$instruction_dir/control.md"
-	hpatch_instruction="$instruction_dir/hpatch.md"
-	instruction_diff="$instruction_dir/control-to-hpatch-request.diff"
+	mekugi_instruction="$instruction_dir/mekugi.md"
+	instruction_diff="$instruction_dir/control-to-mekugi-request.diff"
 	instruction_source="$benchmark_root/../contrib/codex/file-editing-instructions.md"
 	mentor_parent_prompt="$instruction_dir/mentor-parent.md"
 	mentor_child_prompt="$instruction_dir/mentor-child.md"
 	mentor_child_role_config="$instruction_dir/mentor-child.toml"
 	mentor_spawn_prompt="$instruction_dir/mentor-spawn-message.txt"
 	run_suffix=$(basename "$run_dir")
-	image_tag_prefix=${HPATCH_BENCH_IMAGE_TAG:-run}
-	export HPATCH_BENCH_IMAGE_TAG="$image_tag_prefix-${run_suffix#.staging-}"
-	benchmark_image="hpatch-bench:$HPATCH_BENCH_IMAGE_TAG"
+	image_tag_prefix=${MEKUGI_BENCH_IMAGE_TAG:-run}
+	export MEKUGI_BENCH_IMAGE_TAG="$image_tag_prefix-${run_suffix#.staging-}"
+	benchmark_image="mekugi-bench:$MEKUGI_BENCH_IMAGE_TAG"
 	control_instruction_sha=
-	hpatch_instruction_sha=
+	mekugi_instruction_sha=
 	result_files=()
 	worker_pids=()
 	started=false
@@ -208,8 +209,8 @@ initialize_run() {
 	export BENCH_RUN_DIR=$run_dir
 	export BENCH_DEPENDENCY_CACHE=$dependency_cache
 	export CODEX_AUTH_PATH=${CODEX_AUTH_PATH:-${CODEX_HOME:-$HOME/.codex}/auth.json}
-	compose_project_name="hpatch_bench_$(basename "$run_dir" | tr '[:upper:]' '[:lower:]' | tr -cd '[:alnum:]_')"
+	compose_project_name="mekugi_bench_$(basename "$run_dir" | tr '[:upper:]' '[:lower:]' | tr -cd '[:alnum:]_')"
 	export COMPOSE_PROJECT_NAME=$compose_project_name
-	export HPATCH_BENCH_COMPOSE_FILE="$benchmark_root/compose.yaml"
-	compose=(docker compose --progress quiet -f "$HPATCH_BENCH_COMPOSE_FILE")
+	export MEKUGI_BENCH_COMPOSE_FILE="$benchmark_root/compose.yaml"
+	compose=(docker compose --progress quiet -f "$MEKUGI_BENCH_COMPOSE_FILE")
 }

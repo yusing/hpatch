@@ -12,8 +12,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/yusing/hpatch/capturer"
-	codexinstructions "github.com/yusing/hpatch/contrib/codex"
+	"github.com/yusing/mekugi/capturer"
+	codexinstructions "github.com/yusing/mekugi/contrib/codex"
 )
 
 func TestCaptureShellMisuseAndInstructionRewrite(t *testing.T) {
@@ -29,7 +29,7 @@ func TestCaptureShellMisuseAndInstructionRewrite(t *testing.T) {
 						t.Fatal(err)
 					}
 					t.Cleanup(func() { _ = debug.close(); _ = os.RemoveAll(filepath.Dir(debug.paths[0])) })
-					recorder, err := capturer.New(capturer.Config{Mode: "hpatch", ModelProtocol: "native", Output: capturePath})
+					recorder, err := capturer.New(capturer.Config{Mode: "mekugi", ModelProtocol: "native", Output: capturePath})
 					if err != nil {
 						t.Fatal(err)
 					}
@@ -76,7 +76,7 @@ func TestCaptureShellMisuseAndInstructionRewrite(t *testing.T) {
 					}))
 					t.Cleanup(upstream.Close)
 					provider := captureReplayProvider{client: &http.Client{Transport: recorder.Transport(http.DefaultTransport)}, url: upstream.URL}
-					proxy := newManagedHPatchProxy(t, testTranslator(t, new(int)))
+					proxy := newManagedMekugiProxy(t, testTranslator(t, new(int)))
 					proxy.customizedInstructions = true
 					headers := serverMetadataHeaders(t, "turn", map[string]json.RawMessage{t.TempDir(): nil})
 					handler := recorder.Handler(debug.handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -160,11 +160,11 @@ func TestCaptureInstructionCarrierAndFailures(t *testing.T) {
 		{"null", "none", "unchanged", map[string]any{"instructions": nil}},
 		{"custom", "instructions", "custom-append", map[string]any{"instructions": "private custom prompt"}},
 		{"invalid type", "instructions", "rejected", map[string]any{"instructions": 42}},
-		{"invalid markers", "instructions", "rejected", map[string]any{"instructions": hpatchInstructionsStartMarker}},
+		{"invalid markers", "instructions", "rejected", map[string]any{"instructions": mekugiInstructionsStartMarker}},
 		{"developer fallback", "developer", "stock-gpt5", map[string]any{"instructions": "", "input": []any{map[string]any{"type": "message", "role": "developer", "content": stockModelInstructionsForTest("", "")}}}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			recorder, err := capturer.New(capturer.Config{Mode: "hpatch", ModelProtocol: "native"})
+			recorder, err := capturer.New(capturer.Config{Mode: "mekugi", ModelProtocol: "native"})
 			if err != nil {
 				t.Fatal(err)
 			}

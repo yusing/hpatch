@@ -5,19 +5,19 @@ The observations in this section were verified on 2026-07-28 with Codex CLI
 behavior, not an eternal Codex contract. Re-run the E2E checks after a Codex
 upgrade before changing routing assumptions.
 
-### Codex provides one implicit hpatch base directory
+### Codex provides one implicit mekugi base directory
 
-- A Codex session started in a directory inside this Git repository declares the enclosing repository root as its base directory. A nested `-C` directory does not create another hpatch base directory.
+- A Codex session started in a directory inside this Git repository declares the enclosing repository root as its base directory. A nested `-C` directory does not create another mekugi base directory.
 - In the Codex CLI 0.145.0 observation, `--add-dir` added a sandbox-writable root but did not add that directory to the `x-codex-turn-metadata` `workspaces` map. This metadata observation predates directory-based translation and must be rerun after Codex or router changes; it is not evidence of router confinement.
-- A standalone non-repository `/tmp` workdir, even with `--skip-git-repo-check`, supplied no usable base directory in that observation. The router now forwards such a turn; without a selected directory, absolute hpatch operands work and relative operands reject without falling back to the router process CWD.
-- Hpatch receives its base directory outside the script. Do not introduce `workspace_id`, workspace lists, dynamic workspace developer messages, patch rebasing, or multi-directory routing unless a real Codex request demonstrates that requirement.
+- A standalone non-repository `/tmp` workdir, even with `--skip-git-repo-check`, supplied no usable base directory in that observation. The router now forwards such a turn; without a selected directory, absolute mekugi operands work and relative operands reject without falling back to the router process CWD.
+- Mekugi receives its base directory outside the script. Do not introduce `workspace_id`, workspace lists, dynamic workspace developer messages, patch rebasing, or multi-directory routing unless a real Codex request demonstrates that requirement.
 
 The router validates and canonicalizes the optional declared base-directory string for normal server-side translation. It does not open a pinned engine root, impose filesystem confinement, or check directory identity before and after evaluation. Relative, `..`, symlink, and absolute operands use ordinary host path resolution when a directory is selected. Without one, only absolute operands are valid and router cwd is never used. Current Codex emits zero or one workspace entry. Codex remains responsible for permission checks when it executes the generated patch carrier.
 
 ### Interpret E2E output at the router boundary
 
 - The router converts an upstream `hpatch` call into the Code Mode carrier visible
-  to Codex. The Codex transcript can therefore label a successful hpatch operation
+  to Codex. The Codex transcript can therefore label a successful mekugi operation
   as `apply patch`. That label does not prove that the model selected the native
   `apply_patch` tool; inspect router behavior or the reconstructed call before
   making that claim.

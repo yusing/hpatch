@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/yusing/hpatch/capturer"
+	"github.com/yusing/mekugi/capturer"
 )
 
 func TestCaptureModelOutputThroughRouterCommentary(t *testing.T) {
@@ -35,7 +35,7 @@ func TestCaptureModelOutputThroughRouterCommentary(t *testing.T) {
 				stream.WriteString("\n\n")
 				payload = stream.Bytes()
 			}
-			recorder, err := capturer.New(capturer.Config{Mode: "hpatch", ModelProtocol: "native"})
+			recorder, err := capturer.New(capturer.Config{Mode: "mekugi", ModelProtocol: "native"})
 			if err != nil {
 				t.Fatal(err)
 			}

@@ -34,7 +34,7 @@ Acceptance:
 
 1. A regular-expression search with an explicit path and glob emits JSON-quoted paths,
    positive line numbers, four-digit hashes, and exact complete matching lines that can be
-   copied directly into an hpatch target.
+   copied directly into an HPATCH target.
 2. Shell quoting determines literal arguments, and ordinary redirection or pipelines operate
    as shell syntax rather than becoming hgrep argv. A conflicting hgrep output or transformed
    input mode still rejects before ripgrep starts. The `-R` compatibility flag does not reach
@@ -44,6 +44,6 @@ Acceptance:
    Token admission occurs after this deduplication, and an incomplete result retains admitted
    rows, writes its diagnostic to stderr, and returns nonzero.
 4. The model-visible shell call and output are replayed unchanged. No standalone hgrep call is
-   exposed, routed, or admitted to hpatch recovery history.
+   exposed, routed, or admitted to mekugi recovery history.
 5. Router startup validates hgrep inside the immutable built-in snapshot without installing a
    frontend. Passthrough mode loads and exposes none of these replacement surfaces.

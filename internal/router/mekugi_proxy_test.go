@@ -14,18 +14,18 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/yusing/hpatch"
-	codexinstructions "github.com/yusing/hpatch/contrib/codex"
-	"github.com/yusing/hpatch/internal/shellruntime"
+	"github.com/yusing/mekugi"
+	codexinstructions "github.com/yusing/mekugi/contrib/codex"
+	"github.com/yusing/mekugi/internal/shellruntime"
 )
 
 const (
 	testTranslatedPatch = "*** Begin Patch\n*** Add File: created.txt\n+payload\n*** End Patch\n"
-	testHPatchScript    = "new created.txt\ntype \"payload\"\n"
-	testHPatchReport    = "in created.txt\nlast type created.txt 1 ranges 1:1-1:1\nfiles add=1 update=0 move=0 delete=0\nrefs 2 type created.txt\n1:239f payload\n"
+	testMekugiScript    = "new created.txt\ntype \"payload\"\n"
+	testMekugiReport    = "in created.txt\nlast type created.txt 1 ranges 1:1-1:1\nfiles add=1 update=0 move=0 delete=0\nrefs 2 type created.txt\n1:239f payload\n"
 )
 
-const testHPatchToolDescription = "fixture hpatch description\nwith exact trailing newline\n"
+const testMekugiToolDescription = "fixture mekugi description\nwith exact trailing newline\n"
 
 const testCodeModeDescription = "Run JavaScript.\n- All nested tools are available on the global `tools` object, for example `await tools.exec_command(...)`. Tool names are exposed as normalized JavaScript identifiers.\n\n### `exec_command`\nRun a shell command.\n\nexec tool declaration:\n```ts\ndeclare const tools: { exec_command(args: { cmd: string; workdir?: string }): Promise<unknown>; };\n```\n\n### `apply_patch`\nThe default editor.\n\nexec tool declaration:\n```ts\ndeclare const tools: { apply_patch(input: string): Promise<unknown>; };\n```\n\n### `create_goal`\nCreate a goal."
 
@@ -115,7 +115,7 @@ func testFunctionsNamespaceTools(t *testing.T, fields map[string]json.RawMessage
 
 func testInstalledTools() []*responsesToolDefinition {
 	return []*responsesToolDefinition{
-		newResponsesToolDefinition(customGrammarTool(hpatchToolName, testHPatchToolDescription, hpatch.ToolGrammar())),
+		newResponsesToolDefinition(customGrammarTool(mekugiToolName, testMekugiToolDescription, mekugi.ToolGrammar())),
 		newResponsesToolDefinition(map[string]json.RawMessage{
 			"type":        mustMarshalJSON("custom"),
 			"name":        mustMarshalJSON("shell"),
@@ -132,39 +132,39 @@ func testNativeResponsesTools() []any {
 	}
 }
 
-type hpatchTranslatorFunc func(context.Context, string, string) ([]byte, error)
+type mekugiTranslatorFunc func(context.Context, string, string) ([]byte, error)
 
-func (f hpatchTranslatorFunc) Translate(ctx context.Context, workspace string, script string) (hpatchTranslationResult, error) {
+func (f mekugiTranslatorFunc) Translate(ctx context.Context, workspace string, script string) (mekugiTranslationResult, error) {
 	patch, err := f(ctx, workspace, script)
-	return hpatchTranslationResult{patch: patch, report: testHPatchReport}, err
+	return mekugiTranslationResult{patch: patch, report: testMekugiReport}, err
 }
 
-func (hpatchTranslatorFunc) ToolDescription() string {
-	return testHPatchToolDescription
+func (mekugiTranslatorFunc) ToolDescription() string {
+	return testMekugiToolDescription
 }
 
-type hpatchResultTranslatorFunc func(context.Context, string, string) (hpatchTranslationResult, error)
+type mekugiResultTranslatorFunc func(context.Context, string, string) (mekugiTranslationResult, error)
 
-func (f hpatchResultTranslatorFunc) Translate(ctx context.Context, workspace string, script string) (hpatchTranslationResult, error) {
+func (f mekugiResultTranslatorFunc) Translate(ctx context.Context, workspace string, script string) (mekugiTranslationResult, error) {
 	return f(ctx, workspace, script)
 }
 
-func (hpatchResultTranslatorFunc) ToolDescription() string {
-	return testHPatchToolDescription
+func (mekugiResultTranslatorFunc) ToolDescription() string {
+	return testMekugiToolDescription
 }
 
-func newManagedHPatchProxy(t *testing.T, translator hpatchTranslator) *hpatchProxy {
+func newManagedMekugiProxy(t *testing.T, translator mekugiTranslator) *mekugiProxy {
 	t.Helper()
 	if translator == nil {
 		return nil
 	}
-	if translator.ToolDescription() != testHPatchToolDescription {
-		return newManagedHPatchProxyWithDataDirectory(t, translator, t.TempDir())
+	if translator.ToolDescription() != testMekugiToolDescription {
+		return newManagedMekugiProxyWithDataDirectory(t, translator, t.TempDir())
 	}
 	return newProxyWithSharedTestRegistry(t, translator, sharedProxyTestRegistry(t))
 }
 
-func newManagedHPatchProxyWithDataDirectory(t *testing.T, translator hpatchTranslator, dataDirectory string) *hpatchProxy {
+func newManagedMekugiProxyWithDataDirectory(t *testing.T, translator mekugiTranslator, dataDirectory string) *mekugiProxy {
 	t.Helper()
 	if translator == nil {
 		return nil
@@ -174,7 +174,7 @@ func newManagedHPatchProxyWithDataDirectory(t *testing.T, translator hpatchTrans
 	if err != nil {
 		t.Fatal(err)
 	}
-	proxy := newHPatchProxy(translator, registry, false, false)
+	proxy := newMekugiProxy(translator, registry, false, false)
 	t.Cleanup(func() {
 		if err := errors.Join(proxy.Close(), registry.Close()); err != nil {
 			t.Error(err)
@@ -183,7 +183,7 @@ func newManagedHPatchProxyWithDataDirectory(t *testing.T, translator hpatchTrans
 	return proxy
 }
 
-func registeredWorkerInput(t *testing.T, proxy *hpatchProxy, name string, arguments []string) string {
+func registeredWorkerInput(t *testing.T, proxy *mekugiProxy, name string, arguments []string) string {
 	t.Helper()
 	contribution, ok := proxy.registry.contribution(name)
 	if !ok {
@@ -196,12 +196,12 @@ func registeredWorkerInput(t *testing.T, proxy *hpatchProxy, name string, argume
 	return input
 }
 
-func newHPatchTestTransform(t *testing.T, translator hpatchTranslator) (*hpatchResponseTransform, *hpatchProxy, *parsedResponsesRequest, string) {
+func newMekugiTestTransform(t *testing.T, translator mekugiTranslator) (*mekugiResponseTransform, *mekugiProxy, *parsedResponsesRequest, string) {
 	t.Helper()
-	return newHPatchTestTransformWithProxy(t, newManagedHPatchProxy(t, translator))
+	return newMekugiTestTransformWithProxy(t, newManagedMekugiProxy(t, translator))
 }
 
-func newHPatchTestTransformWithProxy(t *testing.T, proxy *hpatchProxy) (*hpatchResponseTransform, *hpatchProxy, *parsedResponsesRequest, string) {
+func newMekugiTestTransformWithProxy(t *testing.T, proxy *mekugiProxy) (*mekugiResponseTransform, *mekugiProxy, *parsedResponsesRequest, string) {
 	t.Helper()
 	workspace := t.TempDir()
 	request, err := parseResponsesRequest(mustTestJSON(t, map[string]any{
@@ -232,7 +232,7 @@ func newHPatchTestTransformWithProxy(t *testing.T, proxy *hpatchProxy) (*hpatchR
 	return transform, proxy, &request, workspace
 }
 
-func newNativeHPatchTestTransformWithProxy(t *testing.T, proxy *hpatchProxy) (*hpatchResponseTransform, *parsedResponsesRequest) {
+func newNativeMekugiTestTransformWithProxy(t *testing.T, proxy *mekugiProxy) (*mekugiResponseTransform, *parsedResponsesRequest) {
 	t.Helper()
 	workspace := t.TempDir()
 	request, err := parseResponsesRequest(mustTestJSON(t, map[string]any{
@@ -259,27 +259,27 @@ func newNativeHPatchTestTransformWithProxy(t *testing.T, proxy *hpatchProxy) (*h
 	return transform, &request
 }
 
-func testTranslator(t *testing.T, calls *int) hpatchTranslator {
+func testTranslator(t *testing.T, calls *int) mekugiTranslator {
 	t.Helper()
-	return hpatchTranslatorFunc(func(_ context.Context, directory string, script string) ([]byte, error) {
+	return mekugiTranslatorFunc(func(_ context.Context, directory string, script string) ([]byte, error) {
 		*calls++
 		if directory == "" {
 			t.Fatal("translator received no base directory")
 		}
-		if script != testHPatchScript {
+		if script != testMekugiScript {
 			t.Fatalf("script = %q", script)
 		}
 		return []byte(testTranslatedPatch), nil
 	})
 }
 
-func testHPatchItem() map[string]any {
+func testMekugiItem() map[string]any {
 	return map[string]any{
 		"type":    "custom_tool_call",
 		"id":      "item-H",
 		"call_id": "call-H",
-		"name":    hpatchToolName,
-		"input":   testHPatchScript,
+		"name":    mekugiToolName,
+		"input":   testMekugiScript,
 		"status":  "completed",
 		"future":  map[string]any{"kept": true},
 	}
@@ -349,7 +349,7 @@ func TestBuildCodeModeCarrierCatalogRejectsDuplicateNames(t *testing.T) {
 	}
 }
 
-func TestHPatchPrepareRequestRewritesNamespacedExecWithShell(t *testing.T) {
+func TestMekugiPrepareRequestRewritesNamespacedExecWithShell(t *testing.T) {
 	workspace := t.TempDir()
 	request, err := parseResponsesRequest(mustTestJSON(t, map[string]any{
 		"input":        []any{testCodeModeAdditionalTools(testCodeModeDescription)},
@@ -360,7 +360,7 @@ func TestHPatchPrepareRequestRewritesNamespacedExecWithShell(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	proxy := newManagedHPatchProxy(t, testTranslator(t, new(int)))
+	proxy := newManagedMekugiProxy(t, testTranslator(t, new(int)))
 
 	metadata := codexTurnMetadata{RequestKind: "turn", Directories: map[string]json.RawMessage{workspace: nil}}
 	transform, err := proxy.prepareRequest(t.Context(), &request, "session-functions-exec", "thread-functions-exec", metadata, true)
@@ -408,7 +408,7 @@ func TestHPatchPrepareRequestRewritesNamespacedExecWithShell(t *testing.T) {
 	}
 }
 
-func TestHPatchPrepareRequestSupportsAstraStockInstructions(t *testing.T) {
+func TestMekugiPrepareRequestSupportsAstraStockInstructions(t *testing.T) {
 	stock, err := os.ReadFile("testdata/gpt-6-astra-instructions.txt")
 	if err != nil {
 		t.Fatal(err)
@@ -422,14 +422,14 @@ func TestHPatchPrepareRequestSupportsAstraStockInstructions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	proxy := newManagedHPatchProxy(t, testTranslator(t, new(int)))
+	proxy := newManagedMekugiProxy(t, testTranslator(t, new(int)))
 	metadata := codexTurnMetadata{RequestKind: "turn", Directories: map[string]json.RawMessage{t.TempDir(): nil}}
 	transform, err := proxy.prepareRequest(t.Context(), &request, "astra-session", "astra-thread", metadata, true)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if transform == nil {
-		t.Fatal("Astra request did not receive Hpatch tool projection")
+		t.Fatal("Astra request did not receive HPATCH tool projection")
 	}
 	defer transform.Close()
 	if request.model() != "gpt-6-astra" {
@@ -445,10 +445,10 @@ func TestHPatchPrepareRequestSupportsAstraStockInstructions(t *testing.T) {
 	}
 }
 
-func TestHPatchPrepareRequestRefreshesWorkflowOnModelSwitch(t *testing.T) {
+func TestMekugiPrepareRequestRefreshesWorkflowOnModelSwitch(t *testing.T) {
 	for _, compact := range []bool{false, true} {
 		for _, developer := range []bool{false, true} {
-			proxy := newManagedHPatchProxy(t, testTranslator(t, new(int)))
+			proxy := newManagedMekugiProxy(t, testTranslator(t, new(int)))
 			proxy.compactModelProtocol = compact
 			metadata := codexTurnMetadata{RequestKind: "turn", Directories: map[string]json.RawMessage{t.TempDir(): nil}}
 			instructions := "prefix\n" + codexinstructions.InstructionsForModel("", false) + "suffix\n"
@@ -487,7 +487,7 @@ func TestHPatchPrepareRequestRefreshesWorkflowOnModelSwitch(t *testing.T) {
 	}
 }
 
-func TestHPatchPrepareRequestUsesCustomizedModelInstructions(t *testing.T) {
+func TestMekugiPrepareRequestUsesCustomizedModelInstructions(t *testing.T) {
 	workspace := t.TempDir()
 	newRequest := func(t *testing.T) parsedResponsesRequest {
 		t.Helper()
@@ -504,7 +504,7 @@ func TestHPatchPrepareRequestUsesCustomizedModelInstructions(t *testing.T) {
 	metadata := codexTurnMetadata{RequestKind: "turn", Directories: map[string]json.RawMessage{workspace: nil}}
 
 	t.Run("configured file appends", func(t *testing.T) {
-		proxy := newManagedHPatchProxy(t, testTranslator(t, new(int)))
+		proxy := newManagedMekugiProxy(t, testTranslator(t, new(int)))
 		proxy.customizedInstructions = true
 		request := newRequest(t)
 		transform, err := proxy.prepareRequest(t.Context(), &request, "custom-session", "custom-thread", metadata, true)
@@ -523,7 +523,7 @@ func TestHPatchPrepareRequestUsesCustomizedModelInstructions(t *testing.T) {
 	})
 
 	t.Run("unconfigured prompt fails before tool rewrite", func(t *testing.T) {
-		proxy := newManagedHPatchProxy(t, testTranslator(t, new(int)))
+		proxy := newManagedMekugiProxy(t, testTranslator(t, new(int)))
 		request := newRequest(t)
 		originalInput := bytes.Clone(request.fields["input"])
 		if _, err := proxy.prepareRequest(t.Context(), &request, "stock-session", "stock-thread", metadata, true); err == nil ||
@@ -536,8 +536,8 @@ func TestHPatchPrepareRequestUsesCustomizedModelInstructions(t *testing.T) {
 	})
 }
 
-func TestHPatchPrepareRequestExposesEditToolsAndShell(t *testing.T) {
-	transform, _, request, _ := newHPatchTestTransform(t, testTranslator(t, new(int)))
+func TestMekugiPrepareRequestExposesEditToolsAndShell(t *testing.T) {
+	transform, _, request, _ := newMekugiTestTransform(t, testTranslator(t, new(int)))
 	if !transform.originalToolsPresent || len(transform.originalTools) == 0 {
 		t.Fatal("original top-level tools were not retained")
 	}
@@ -545,11 +545,11 @@ func TestHPatchPrepareRequestExposesEditToolsAndShell(t *testing.T) {
 	if err := json.Unmarshal(request.fields["tools"], &topTools); err != nil {
 		t.Fatal(err)
 	}
-	if len(topTools) != 4 || jsonString(topTools[0], "name") != "lookup" || jsonString(topTools[1], "name") != hpatchToolName || jsonString(topTools[2], "name") != hpatchRecoveryToolName || jsonString(topTools[3], "name") != "shell" {
+	if len(topTools) != 4 || jsonString(topTools[0], "name") != "lookup" || jsonString(topTools[1], "name") != mekugiToolName || jsonString(topTools[2], "name") != mekugiRecoveryToolName || jsonString(topTools[3], "name") != "shell" {
 		t.Fatalf("top-level tools = %#v", topTools)
 	}
 	if jsonString(topTools[1], "type") != "custom" {
-		t.Fatalf("standalone hpatch definition = %#v", topTools[1])
+		t.Fatalf("standalone mekugi definition = %#v", topTools[1])
 	}
 	var format struct {
 		Type       string `json:"type"`
@@ -559,12 +559,12 @@ func TestHPatchPrepareRequestExposesEditToolsAndShell(t *testing.T) {
 	if err := json.Unmarshal(topTools[1]["format"], &format); err != nil {
 		t.Fatal(err)
 	}
-	if format.Type != "grammar" || format.Syntax != "lark" || format.Definition != hpatch.ToolGrammar() {
-		t.Fatalf("standalone hpatch format = %#v", topTools[1])
+	if format.Type != "grammar" || format.Syntax != "lark" || format.Definition != mekugi.ToolGrammar() {
+		t.Fatalf("standalone mekugi format = %#v", topTools[1])
 	}
 	exposed := jsonString(topTools[1], "description")
-	if exposed != testHPatchToolDescription {
-		t.Fatalf("standalone hpatch description = %q, want native tool help only", exposed)
+	if exposed != testMekugiToolDescription {
+		t.Fatalf("standalone mekugi description = %q, want native tool help only", exposed)
 	}
 	if description := jsonString(topTools[3], "description"); !strings.HasPrefix(description, "Run one free-form script. The selected interpreter receives the exact script body, and frontend standard input remains available as program data.\n\n### `#!params`") ||
 		strings.Contains(description, "#!cmd=") || strings.Contains(description, "@shell/") {
@@ -610,7 +610,7 @@ func TestHPatchPrepareRequestExposesEditToolsAndShell(t *testing.T) {
 	}
 }
 
-func TestHPatchNativeToolsUseExecCommandCarrierAndRestoreOriginalContract(t *testing.T) {
+func TestMekugiNativeToolsUseExecCommandCarrierAndRestoreOriginalContract(t *testing.T) {
 	workspace := t.TempDir()
 	originalTools := mustTestJSON(t, testNativeResponsesTools())
 	request, err := parseResponsesRequest(mustTestJSON(t, map[string]any{
@@ -623,7 +623,7 @@ func TestHPatchNativeToolsUseExecCommandCarrierAndRestoreOriginalContract(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
-	proxy := newManagedHPatchProxy(t, testTranslator(t, new(int)))
+	proxy := newManagedMekugiProxy(t, testTranslator(t, new(int)))
 	transform, err := proxy.prepareRequest(
 		t.Context(),
 		&request,
@@ -643,7 +643,7 @@ func TestHPatchNativeToolsUseExecCommandCarrierAndRestoreOriginalContract(t *tes
 	if err := json.Unmarshal(request.fields["tools"], &rewrittenTools); err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{nativeExecCommandToolName, "lookup", hpatchToolName, hpatchRecoveryToolName, "shell"} {
+	for _, name := range []string{nativeExecCommandToolName, "lookup", mekugiToolName, mekugiRecoveryToolName, "shell"} {
 		if !slices.ContainsFunc(rewrittenTools, func(tool map[string]json.RawMessage) bool {
 			return jsonString(tool, "name") == name
 		}) {
@@ -656,7 +656,7 @@ func TestHPatchNativeToolsUseExecCommandCarrierAndRestoreOriginalContract(t *tes
 		t.Fatalf("rewritten native tools retained apply_patch: %#v", rewrittenTools)
 	}
 
-	originalItem := mustTestJSON(t, testHPatchItem())
+	originalItem := mustTestJSON(t, testMekugiItem())
 	visible, err := transform.TransformJSON(mustTestJSON(t, map[string]any{
 		"status":      "completed",
 		"output":      []any{json.RawMessage(originalItem)},
@@ -686,15 +686,15 @@ func TestHPatchNativeToolsUseExecCommandCarrierAndRestoreOriginalContract(t *tes
 	if err := json.Unmarshal([]byte(jsonString(carrier, "arguments")), &arguments); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasPrefix(arguments.Command, hpatchNativeApplyMarker) ||
+	if !strings.HasPrefix(arguments.Command, mekugiNativeApplyMarker) ||
 		!strings.Contains(arguments.Command, shellQuoteArgument(testTranslatedPatch)) ||
-		!strings.Contains(arguments.Command, shellQuoteArgument(testHPatchReport)) {
+		!strings.Contains(arguments.Command, shellQuoteArgument(testMekugiReport)) {
 		t.Fatalf("native exec_command arguments = %q", arguments.Command)
 	}
 
 	replay, err := parseResponsesRequest(mustTestJSON(t, map[string]any{"input": []any{
 		carrier,
-		map[string]any{"type": "function_call_output", "call_id": "call-H", "output": testHPatchReport},
+		map[string]any{"type": "function_call_output", "call_id": "call-H", "output": testMekugiReport},
 	}}))
 	if err != nil {
 		t.Fatal(err)
@@ -714,12 +714,12 @@ func TestHPatchNativeToolsUseExecCommandCarrierAndRestoreOriginalContract(t *tes
 		t.Fatal(err)
 	}
 	if jsonString(replayedOutput, "type") != "custom_tool_call_output" ||
-		jsonString(replayedOutput, "output") != testHPatchReport {
+		jsonString(replayedOutput, "output") != testMekugiReport {
 		t.Fatalf("restored native replay output = %s", replayed[1])
 	}
 
 	outputOnly, err := parseResponsesRequest(mustTestJSON(t, map[string]any{"input": []any{
-		map[string]any{"type": "function_call_output", "call_id": "call-H", "output": testHPatchReport},
+		map[string]any{"type": "function_call_output", "call_id": "call-H", "output": testMekugiReport},
 	}}))
 	if err != nil {
 		t.Fatal(err)
@@ -732,19 +732,19 @@ func TestHPatchNativeToolsUseExecCommandCarrierAndRestoreOriginalContract(t *tes
 		t.Fatal(err)
 	}
 	if len(restoredOutputOnly) != 1 || jsonString(restoredOutputOnly[0], "type") != "custom_tool_call_output" ||
-		jsonString(restoredOutputOnly[0], "output") != testHPatchReport {
+		jsonString(restoredOutputOnly[0], "output") != testMekugiReport {
 		t.Fatalf("restored output-only native replay = %#v", restoredOutputOnly)
 	}
 }
 
-func TestHPatchNativeExecCommandAppliesPatchAndReturnsOnlyReport(t *testing.T) {
+func TestMekugiNativeExecCommandAppliesPatchAndReturnsOnlyReport(t *testing.T) {
 	var arguments struct {
 		Command string `json:"cmd"`
 		Login   *bool  `json:"login"`
 	}
 	nativeInput := renderExecCarrier(
 		codeModeCarrierFunction,
-		execCommandArguments(hpatchNativeCommand(hpatchHistory{patch: testTranslatedPatch, report: testHPatchReport}), nil),
+		execCommandArguments(mekugiNativeCommand(mekugiHistory{patch: testTranslatedPatch, report: testMekugiReport}), nil),
 		false,
 		nil,
 	)
@@ -757,16 +757,16 @@ func TestHPatchNativeExecCommandAppliesPatchAndReturnsOnlyReport(t *testing.T) {
 	bin := t.TempDir()
 	capturedPatch := filepath.Join(t.TempDir(), "patch")
 	applyPatch := filepath.Join(bin, applyPatchToolName)
-	if err := os.WriteFile(applyPatch, []byte("#!/bin/sh\ncat >\"$HPATCH_CAPTURE\"\nprintf 'native apply output\\n'\n"), 0o700); err != nil {
+	if err := os.WriteFile(applyPatch, []byte("#!/bin/sh\ncat >\"$MEKUGI_CAPTURE\"\nprintf 'native apply output\\n'\n"), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	command := exec.CommandContext(t.Context(), "bash", "-c", arguments.Command)
-	command.Env = append(os.Environ(), "PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"), "HPATCH_CAPTURE="+capturedPatch)
+	command.Env = append(os.Environ(), "PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"), "MEKUGI_CAPTURE="+capturedPatch)
 	output, err := command.Output()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(output) != testHPatchReport {
+	if string(output) != testMekugiReport {
 		t.Fatalf("native carrier output = %q, want report only", output)
 	}
 	patch, err := os.ReadFile(capturedPatch)
@@ -778,13 +778,13 @@ func TestHPatchNativeExecCommandAppliesPatchAndReturnsOnlyReport(t *testing.T) {
 	}
 }
 
-func TestHPatchNativeExecCommandPreservesFailureOutput(t *testing.T) {
+func TestMekugiNativeExecCommandPreservesFailureOutput(t *testing.T) {
 	var arguments struct {
 		Command string `json:"cmd"`
 	}
 	nativeInput := renderExecCarrier(
 		codeModeCarrierFunction,
-		execCommandArguments(hpatchNativeCommand(hpatchHistory{patch: testTranslatedPatch, report: testHPatchReport}), nil),
+		execCommandArguments(mekugiNativeCommand(mekugiHistory{patch: testTranslatedPatch, report: testMekugiReport}), nil),
 		false,
 		nil,
 	)
@@ -809,35 +809,35 @@ func TestHPatchNativeExecCommandPreservesFailureOutput(t *testing.T) {
 	}
 }
 
-func TestHPatchNativeDiagnosticAndAlreadySatisfiedUseReportCarriers(t *testing.T) {
+func TestMekugiNativeDiagnosticAndAlreadySatisfiedUseReportCarriers(t *testing.T) {
 	tests := []struct {
 		name       string
-		translated hpatchTranslationResult
+		translated mekugiTranslationResult
 		err        error
 		marker     string
 	}{
 		{
 			name:       "diagnostic",
-			translated: hpatchTranslationResult{diagnostic: "type: command 2, reason row-stale: current row\n"},
+			translated: mekugiTranslationResult{diagnostic: "type: command 2, reason row-stale: current row\n"},
 			err:        errors.New("rejected"),
-			marker:     hpatchNativeDiagnosticMarker,
+			marker:     mekugiNativeDiagnosticMarker,
 		},
 		{
 			name: "already satisfied",
-			translated: hpatchTranslationResult{
+			translated: mekugiTranslationResult{
 				report: "in file.txt\nlast none\n",
-				change: hpatch.HostChange{AlreadySatisfied: true},
+				change: mekugi.HostChange{AlreadySatisfied: true},
 			},
-			marker: hpatchNativeReportMarker,
+			marker: mekugiNativeReportMarker,
 		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			translator := hpatchResultTranslatorFunc(func(context.Context, string, string) (hpatchTranslationResult, error) {
+			translator := mekugiResultTranslatorFunc(func(context.Context, string, string) (mekugiTranslationResult, error) {
 				return test.translated, test.err
 			})
-			transform, _ := newNativeHPatchTestTransformWithProxy(t, newManagedHPatchProxy(t, translator))
-			history, err := transform.translate("call-H", testHPatchScript, nil)
+			transform, _ := newNativeMekugiTestTransformWithProxy(t, newManagedMekugiProxy(t, translator))
+			history, err := transform.translate("call-H", testMekugiScript, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -857,9 +857,9 @@ func TestHPatchNativeDiagnosticAndAlreadySatisfiedUseReportCarriers(t *testing.T
 	}
 }
 
-func TestHPatchNativeToolsTranslateShellAndStreamingHPatch(t *testing.T) {
-	proxy := newManagedHPatchProxy(t, testTranslator(t, new(int)))
-	transform, _ := newNativeHPatchTestTransformWithProxy(t, proxy)
+func TestMekugiNativeToolsTranslateShellAndStreamingMekugi(t *testing.T) {
+	proxy := newManagedMekugiProxy(t, testTranslator(t, new(int)))
+	transform, _ := newNativeMekugiTestTransformWithProxy(t, proxy)
 	history, err := transform.translateTool("shell", "call-shell", "printf ok\n", nil)
 	if err != nil {
 		t.Fatal(err)
@@ -879,15 +879,15 @@ func TestHPatchNativeToolsTranslateShellAndStreamingHPatch(t *testing.T) {
 		t.Fatalf("native shell arguments = %q", arguments.Command)
 	}
 
-	stream, _ := newNativeHPatchTestTransformWithProxy(t, proxy)
-	added := testHPatchItem()
+	stream, _ := newNativeMekugiTestTransformWithProxy(t, proxy)
+	added := testMekugiItem()
 	added["status"] = "in_progress"
 	added["input"] = ""
 	if visible, err := stream.TransformSSE(mustTestJSON(t, map[string]any{"type": "response.output_item.added", "item": added})); err != nil || visible != nil {
 		t.Fatalf("native buffered added = %q, error %v", visible, err)
 	}
 	done := mustTestJSON(t, map[string]any{
-		"type": "response.custom_tool_call_input.done", "item_id": "item-H", "input": testHPatchScript,
+		"type": "response.custom_tool_call_input.done", "item_id": "item-H", "input": testMekugiScript,
 	})
 	visible, err := stream.TransformSSE(done)
 	if err != nil || len(visible) != 2 || !bytes.Contains(visible[0], []byte(`"type":"function_call"`)) ||
@@ -896,10 +896,10 @@ func TestHPatchNativeToolsTranslateShellAndStreamingHPatch(t *testing.T) {
 	}
 }
 
-func TestHPatchRoutesOnlyModelVisibleRegistryTools(t *testing.T) {
-	transform, _, _, _ := newHPatchTestTransform(t, testTranslator(t, new(int)))
+func TestMekugiRoutesOnlyModelVisibleRegistryTools(t *testing.T) {
+	transform, _, _, _ := newMekugiTestTransform(t, testTranslator(t, new(int)))
 	for name, want := range map[string]bool{
-		hpatchToolName: true,
+		mekugiToolName: true,
 		"shell":        true,
 		"hread":        false,
 		"hgrep":        false,
@@ -915,7 +915,7 @@ func TestHPatchRoutesOnlyModelVisibleRegistryTools(t *testing.T) {
 
 func TestReportIssueRouting(t *testing.T) {
 	dataDirectory := t.TempDir()
-	registry, err := buildToolRegistry(t.Context(), dataDirectory, testHPatchToolDescription, true)
+	registry, err := buildToolRegistry(t.Context(), dataDirectory, testMekugiToolDescription, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -939,7 +939,7 @@ func TestReportIssueRouting(t *testing.T) {
 		if err := os.WriteFile(indexPath, []byte(`{"id":"session-1","thread_name":"Fix loop flaws"}`+"\n"), 0o600); err != nil {
 			t.Fatal(err)
 		}
-		proxy := newHPatchProxy(
+		proxy := newMekugiProxy(
 			testTranslator(t, new(int)),
 			registry,
 			false,
@@ -960,9 +960,9 @@ func TestReportIssueRouting(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(dataDirectory, "settings.json"), []byte(updatedSettings), 0o600); err != nil {
 			t.Fatal(err)
 		}
-		transform, _, _, _ := newHPatchTestTransformWithProxy(t, proxy)
+		transform, _, _, _ := newMekugiTestTransformWithProxy(t, proxy)
 
-		markdown := "# hpatch issue\n\nRepair context did not identify the stale row."
+		markdown := "# mekugi issue\n\nRepair context did not identify the stale row."
 		history, err := transform.translateTool(reportIssueToolName, "call-report", markdown, nil)
 		if err != nil {
 			t.Fatal(err)
@@ -995,52 +995,52 @@ func TestReportIssueRouting(t *testing.T) {
 		); err != nil {
 			t.Fatal(err)
 		}
-		proxy := newHPatchProxy(testTranslator(t, new(int)), registry, false, false)
+		proxy := newMekugiProxy(testTranslator(t, new(int)), registry, false, false)
 		t.Cleanup(func() {
 			if err := proxy.Close(); err != nil {
 				t.Error(err)
 			}
 		})
-		transform, _, _, _ := newHPatchTestTransformWithProxy(t, proxy)
+		transform, _, _, _ := newMekugiTestTransformWithProxy(t, proxy)
 
 		history, err := transform.translateTool(reportIssueToolName, "call-report", "diagnostic", nil)
 		if err != nil {
 			t.Fatal(err)
 		}
-		want := "Issue report was not delivered.\nhpatch: warning: running diagnose hook 1: exit status 9\n"
+		want := "Issue report was not delivered.\nmekugi: warning: running diagnose hook 1: exit status 9\n"
 		if history.report != want || history.carrierInput() != "text("+strconv.Quote(want)+");" {
 			t.Fatalf("report issue history = %+v, want report %q", history, want)
 		}
 	})
 
-	t.Run("call ID cannot be reused by hpatch", func(t *testing.T) {
+	t.Run("call ID cannot be reused by mekugi", func(t *testing.T) {
 		if err := os.Remove(filepath.Join(dataDirectory, "settings.json")); err != nil && !errors.Is(err, os.ErrNotExist) {
 			t.Fatal(err)
 		}
 		calls := 0
-		proxy := newHPatchProxy(testTranslator(t, &calls), registry, false, false)
+		proxy := newMekugiProxy(testTranslator(t, &calls), registry, false, false)
 		t.Cleanup(func() {
 			if err := proxy.Close(); err != nil {
 				t.Error(err)
 			}
 		})
-		transform, _, _, _ := newHPatchTestTransformWithProxy(t, proxy)
+		transform, _, _, _ := newMekugiTestTransformWithProxy(t, proxy)
 
 		input := "same input"
 		if _, err := transform.translateTool(reportIssueToolName, "shared-call", input, nil); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := transform.translateTool(hpatchToolName, "shared-call", input, nil); err == nil ||
-			!strings.Contains(err.Error(), "hpatch call \"shared-call\" changed input") {
+		if _, err := transform.translateTool(mekugiToolName, "shared-call", input, nil); err == nil ||
+			!strings.Contains(err.Error(), "mekugi call \"shared-call\" changed input") {
 			t.Fatalf("reused cross-tool call error = %v", err)
 		}
 		if calls != 0 {
-			t.Fatalf("hpatch translations = %d, want 0", calls)
+			t.Fatalf("mekugi translations = %d, want 0", calls)
 		}
 	})
 }
 
-func TestHPatchReplacementReplacesNamespacedExecCommandWithShellParams(t *testing.T) {
+func TestMekugiReplacementReplacesNamespacedExecCommandWithShellParams(t *testing.T) {
 	fields := map[string]json.RawMessage{
 		"input": mustTestJSON(t, []any{testCodeModeAdditionalTools(testCLICodeModeDescription)}),
 		"tools": mustTestJSON(t, []any{}),
@@ -1090,7 +1090,7 @@ func TestHPatchReplacementReplacesNamespacedExecCommandWithShellParams(t *testin
 	}
 }
 
-func TestHPatchReplacementReplacesFlatExecCommandWithShellParams(t *testing.T) {
+func TestMekugiReplacementReplacesFlatExecCommandWithShellParams(t *testing.T) {
 	fields := map[string]json.RawMessage{
 		"input": mustTestJSON(t, []any{testFlatCodeModeAdditionalTools(testCodeModeDescription)}),
 		"tools": mustTestJSON(t, []any{}),
@@ -1146,7 +1146,7 @@ func TestHPatchReplacementReplacesFlatExecCommandWithShellParams(t *testing.T) {
 	}
 }
 
-func TestHPatchReplacementKeepsBaseShellDescriptionWithoutExecCommandContract(t *testing.T) {
+func TestMekugiReplacementKeepsBaseShellDescriptionWithoutExecCommandContract(t *testing.T) {
 	description := "Run JavaScript.\n\n### `apply_patch`\nThe default editor.\n\nexec tool declaration:\n```ts\ndeclare const tools: { apply_patch(input: string): Promise<unknown>; };\n```\n\n### `create_goal`\nCreate a goal."
 	fields := map[string]json.RawMessage{
 		"input": mustTestJSON(t, []any{testCodeModeAdditionalTools(description)}),
@@ -1170,7 +1170,7 @@ func TestHPatchReplacementKeepsBaseShellDescriptionWithoutExecCommandContract(t 
 	}
 }
 
-func TestHPatchReplacementRejectsUnsupportedAndDuplicateExecCarriers(t *testing.T) {
+func TestMekugiReplacementRejectsUnsupportedAndDuplicateExecCarriers(t *testing.T) {
 	flat := func(name string) []any {
 		return []any{map[string]any{
 			"type": "additional_tools",
@@ -1250,7 +1250,7 @@ func TestStripCodeModeExecCommandContractRejectsUnownedReference(t *testing.T) {
 	}
 }
 
-func TestHPatchDirectAdditionalApplyPatchIsRejectedWithoutExecCarrier(t *testing.T) {
+func TestMekugiDirectAdditionalApplyPatchIsRejectedWithoutExecCarrier(t *testing.T) {
 	workspace := t.TempDir()
 	request, err := parseResponsesRequest(mustTestJSON(t, map[string]any{
 		"input": []any{
@@ -1271,7 +1271,7 @@ func TestHPatchDirectAdditionalApplyPatchIsRejectedWithoutExecCarrier(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	proxy := newManagedHPatchProxy(t, testTranslator(t, new(int)))
+	proxy := newManagedMekugiProxy(t, testTranslator(t, new(int)))
 	t.Cleanup(func() {
 		if err := proxy.Close(); err != nil {
 			t.Error(err)
@@ -1287,7 +1287,7 @@ func TestHPatchDirectAdditionalApplyPatchIsRejectedWithoutExecCarrier(t *testing
 	}
 }
 
-func TestHPatchAdditionalToolsReplacementRejectsDuplicateAndConflictingOwners(t *testing.T) {
+func TestMekugiAdditionalToolsReplacementRejectsDuplicateAndConflictingOwners(t *testing.T) {
 	execTool := func() map[string]any {
 		return map[string]any{"type": "custom", "name": "exec", "description": testCodeModeDescription}
 	}
@@ -1323,17 +1323,17 @@ func TestHPatchAdditionalToolsReplacementRejectsDuplicateAndConflictingOwners(t 
 			tools: []any{map[string]any{"type": "custom", "name": applyPatchToolName}},
 		},
 		{
-			name:  "existing hpatch collision",
+			name:  "existing mekugi collision",
 			input: []any{additional(execTool())},
-			tools: []any{map[string]any{"type": "custom", "name": hpatchToolName}},
+			tools: []any{map[string]any{"type": "custom", "name": mekugiToolName}},
 		},
 		{
 			name:  "direct namespaced apply_patch collision",
 			input: []any{additional(execTool(), map[string]any{"type": "custom", "name": applyPatchToolName})},
 		},
 		{
-			name:  "namespaced hpatch collision",
-			input: []any{additional(execTool(), map[string]any{"type": "custom", "name": hpatchToolName})},
+			name:  "namespaced mekugi collision",
+			input: []any{additional(execTool(), map[string]any{"type": "custom", "name": mekugiToolName})},
 		},
 	}
 	for _, test := range tests {
@@ -1355,7 +1355,7 @@ func TestHPatchAdditionalToolsReplacementRejectsDuplicateAndConflictingOwners(t 
 	}
 }
 
-func TestHPatchAdditionalToolsReplacementAlwaysRemovesExecCommand(t *testing.T) {
+func TestMekugiAdditionalToolsReplacementAlwaysRemovesExecCommand(t *testing.T) {
 	fields := map[string]json.RawMessage{
 		"input": mustTestJSON(t, []any{testCodeModeAdditionalTools(testCodeModeDescription)}),
 		"tools": mustTestJSON(t, []any{}),
@@ -1381,7 +1381,7 @@ func TestHPatchAdditionalToolsReplacementAlwaysRemovesExecCommand(t *testing.T) 
 	}
 }
 
-func TestHPatchAdditionalToolsReplacementLeavesUnsupportedAndMalformedRequestsUnchanged(t *testing.T) {
+func TestMekugiAdditionalToolsReplacementLeavesUnsupportedAndMalformedRequestsUnchanged(t *testing.T) {
 	tests := []struct {
 		name       string
 		input      json.RawMessage
@@ -1430,7 +1430,7 @@ func TestHPatchAdditionalToolsReplacementLeavesUnsupportedAndMalformedRequestsUn
 	}
 }
 
-func TestHPatchReplacementRetainsNamespacedExecOwnerName(t *testing.T) {
+func TestMekugiReplacementRetainsNamespacedExecOwnerName(t *testing.T) {
 	fields := map[string]json.RawMessage{
 		"input": mustTestJSON(t, []any{testCodeModeAdditionalTools(testCodeModeDescription)}),
 		"tools": mustTestJSON(t, []any{}),
@@ -1441,7 +1441,7 @@ func TestHPatchReplacementRetainsNamespacedExecOwnerName(t *testing.T) {
 	}
 }
 
-func TestHPatchPrepareRequestLeavesIneligibleRequestUnchanged(t *testing.T) {
+func TestMekugiPrepareRequestLeavesIneligibleRequestUnchanged(t *testing.T) {
 	workspace := t.TempDir()
 	request, err := parseResponsesRequest(mustTestJSON(t, map[string]any{
 		"input": []any{map[string]any{
@@ -1455,7 +1455,7 @@ func TestHPatchPrepareRequestLeavesIneligibleRequestUnchanged(t *testing.T) {
 	}
 	beforeInput := bytes.Clone(request.fields["input"])
 	beforeTools := bytes.Clone(request.fields["tools"])
-	proxy := newManagedHPatchProxy(t, testTranslator(t, new(int)))
+	proxy := newManagedMekugiProxy(t, testTranslator(t, new(int)))
 	metadata := codexTurnMetadata{RequestKind: "turn", Directories: map[string]json.RawMessage{workspace: nil}}
 	transform, err := proxy.prepareRequest(t.Context(), &request, "", "thread", metadata, true)
 	if err == nil || transform != nil || !strings.Contains(err.Error(), "valid session ID") || !bytes.Equal(beforeInput, request.fields["input"]) || !bytes.Equal(beforeTools, request.fields["tools"]) {
@@ -1463,9 +1463,9 @@ func TestHPatchPrepareRequestLeavesIneligibleRequestUnchanged(t *testing.T) {
 	}
 }
 
-func TestHPatchIneligibleContinuationDoesNotRestoreHistory(t *testing.T) {
-	proxy := newManagedHPatchProxy(t, testTranslator(t, new(int)))
-	if err := proxy.rememberBatch("session", map[string]hpatchHistory{"call-H": {script: testHPatchScript, patch: testTranslatedPatch}}); err != nil {
+func TestMekugiIneligibleContinuationDoesNotRestoreHistory(t *testing.T) {
+	proxy := newManagedMekugiProxy(t, testTranslator(t, new(int)))
+	if err := proxy.rememberBatch("session", map[string]mekugiHistory{"call-H": {script: testMekugiScript, patch: testTranslatedPatch}}); err != nil {
 		t.Fatal(err)
 	}
 	request, err := parseResponsesRequest([]byte(`{"input":[{"type":"custom_tool_call","name":"apply_patch","call_id":"call-H","input":` + jsonQuoted(testTranslatedPatch) + `}]}`))
@@ -1479,7 +1479,7 @@ func TestHPatchIneligibleContinuationDoesNotRestoreHistory(t *testing.T) {
 	}
 }
 
-func TestHPatchTranslationWithoutWorkspaceUsesNoBaseDirectory(t *testing.T) {
+func TestMekugiTranslationWithoutWorkspaceUsesNoBaseDirectory(t *testing.T) {
 	request, err := parseResponsesRequest(mustTestJSON(t, map[string]any{
 		"input": []any{testCodeModeAdditionalTools(testCodeModeDescription)},
 	}))
@@ -1488,17 +1488,17 @@ func TestHPatchTranslationWithoutWorkspaceUsesNoBaseDirectory(t *testing.T) {
 	}
 
 	calls := 0
-	translator := hpatchTranslatorFunc(func(_ context.Context, directory, script string) ([]byte, error) {
+	translator := mekugiTranslatorFunc(func(_ context.Context, directory, script string) ([]byte, error) {
 		calls++
 		if directory != "" {
 			t.Fatalf("directory = %q, want no base directory", directory)
 		}
-		if script != testHPatchScript {
+		if script != testMekugiScript {
 			t.Fatalf("script = %q", script)
 		}
 		return []byte(testTranslatedPatch), nil
 	})
-	proxy := newManagedHPatchProxy(t, translator)
+	proxy := newManagedMekugiProxy(t, translator)
 	transform, err := proxy.prepareRequest(
 		t.Context(),
 		&request,
@@ -1514,7 +1514,7 @@ func TestHPatchTranslationWithoutWorkspaceUsesNoBaseDirectory(t *testing.T) {
 
 	if _, err := transform.TransformJSON(mustTestJSON(t, map[string]any{
 		"status": "completed",
-		"output": []any{testHPatchItem()},
+		"output": []any{testMekugiItem()},
 	})); err != nil {
 		t.Fatal(err)
 	}
@@ -1523,15 +1523,15 @@ func TestHPatchTranslationWithoutWorkspaceUsesNoBaseDirectory(t *testing.T) {
 	}
 }
 
-func TestHPatchJSONWrapsPatchAndImmediateReportInCodeModeExec(t *testing.T) {
+func TestMekugiJSONWrapsPatchAndImmediateReportInCodeModeExec(t *testing.T) {
 	calls := 0
-	transform, proxy, _, _ := newHPatchTestTransform(t, testTranslator(t, &calls))
-	originalItem := mustTestJSON(t, testHPatchItem())
+	transform, proxy, _, _ := newMekugiTestTransform(t, testTranslator(t, &calls))
+	originalItem := mustTestJSON(t, testMekugiItem())
 	payload := mustTestJSON(t, map[string]any{
 		"status":      "completed",
 		"output":      []any{json.RawMessage(originalItem), map[string]any{"type": "message", "future": true}},
-		"tools":       []any{map[string]any{"type": "custom", "name": hpatchToolName}},
-		"tool_choice": map[string]any{"type": "custom", "name": hpatchToolName},
+		"tools":       []any{map[string]any{"type": "custom", "name": mekugiToolName}},
+		"tool_choice": map[string]any{"type": "custom", "name": mekugiToolName},
 		"future":      map[string]any{"kept": true},
 	})
 	visible, err := transform.TransformJSON(payload)
@@ -1561,12 +1561,12 @@ func TestHPatchJSONWrapsPatchAndImmediateReportInCodeModeExec(t *testing.T) {
 	if err := json.Unmarshal(response.Output[0], &carrier); err != nil {
 		t.Fatal(err)
 	}
-	wantInput := (hpatchHistory{patch: testTranslatedPatch, report: testHPatchReport}).carrierInput()
+	wantInput := (mekugiHistory{patch: testTranslatedPatch, report: testMekugiReport}).carrierInput()
 	if carrier.CallID != "call-H" || carrier.Name != "exec" || carrier.Input != wantInput || string(carrier.Future) != `{"kept":true}` {
 		t.Fatalf("translated call = %s", response.Output[0])
 	}
 
-	replay, err := parseResponsesRequest([]byte(`{"input":[` + string(response.Output[0]) + `,{"type":"custom_tool_call_output","call_id":"call-H","output":` + jsonQuoted(testHPatchReport) + `}]}`))
+	replay, err := parseResponsesRequest([]byte(`{"input":[` + string(response.Output[0]) + `,{"type":"custom_tool_call_output","call_id":"call-H","output":` + jsonQuoted(testMekugiReport) + `}]}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1580,8 +1580,8 @@ func TestHPatchJSONWrapsPatchAndImmediateReportInCodeModeExec(t *testing.T) {
 	if !bytes.Equal(items[0], originalItem) {
 		t.Fatalf("reconstructed prefix item = %s, want %s", items[0], originalItem)
 	}
-	if !bytes.Contains(items[1], []byte(`"output":`+jsonQuoted(testHPatchReport))) {
-		t.Fatalf("immediate hpatch report changed during replay: %s", items[1])
+	if !bytes.Contains(items[1], []byte(`"output":`+jsonQuoted(testMekugiReport))) {
+		t.Fatalf("immediate mekugi report changed during replay: %s", items[1])
 	}
 }
 
@@ -1627,7 +1627,7 @@ func TestNativeExecCommandAddsShellWarning(t *testing.T) {
 		t.Fatalf("reinsert first warning: changed %t, error %v\n%s", duplicateChange, err, idempotent)
 	}
 
-	transform, _, _, _ := newHPatchTestTransform(t, testTranslator(t, new(int)))
+	transform, _, _, _ := newMekugiTestTransform(t, testTranslator(t, new(int)))
 	visible, err := transform.TransformJSON(mustTestJSON(t, map[string]any{
 		"status": "completed",
 		"output": []any{
@@ -1650,7 +1650,7 @@ func TestNativeExecCommandAddsShellWarning(t *testing.T) {
 		t.Fatalf("native exec response = %s", visible)
 	}
 
-	stream, _, _, _ := newHPatchTestTransform(t, testTranslator(t, new(int)))
+	stream, _, _, _ := newMekugiTestTransform(t, testTranslator(t, new(int)))
 	added := mustTestJSON(t, map[string]any{
 		"type": "response.output_item.added",
 		"item": map[string]any{
@@ -1689,8 +1689,8 @@ func decodeExecCarrierArguments(t *testing.T, carrierInput string, destination a
 }
 
 func TestShellJSONTranslatesBashCasesEndToEnd(t *testing.T) {
-	proxy := newManagedHPatchProxy(t, testTranslator(t, new(int)))
-	transform, _, _, _ := newHPatchTestTransformWithProxy(t, proxy)
+	proxy := newManagedMekugiProxy(t, testTranslator(t, new(int)))
+	transform, _, _, _ := newMekugiTestTransformWithProxy(t, proxy)
 
 	tests := []struct {
 		name        string
@@ -1811,7 +1811,7 @@ func TestShellJSONTranslatesBashCasesEndToEnd(t *testing.T) {
 }
 
 func TestDirectBashExecCommand(t *testing.T) {
-	proxy := newManagedHPatchProxy(t, testTranslator(t, new(int)))
+	proxy := newManagedMekugiProxy(t, testTranslator(t, new(int)))
 	for _, test := range []struct {
 		name      string
 		arguments []string
@@ -1999,7 +1999,7 @@ func TestShellInterpreterWrapperAddsWarning(t *testing.T) {
 		t.Fatal("quoted interpreter wrapper was not detected")
 	}
 	warningInput := misuseWarningProjection(shellInterpreterWrapperWarning(misuses[0]))
-	transform, _, _, _ := newHPatchTestTransform(t, testTranslator(t, new(int)))
+	transform, _, _, _ := newMekugiTestTransform(t, testTranslator(t, new(int)))
 	visible, err := transform.TransformJSON(mustTestJSON(t, map[string]any{
 		"status": "completed",
 		"output": []any{map[string]any{
@@ -2050,7 +2050,7 @@ func TestShellStacksDistinctMisuseWarnings(t *testing.T) {
 
 	call := func(t *testing.T, input string) string {
 		t.Helper()
-		transform, _, _, _ := newHPatchTestTransform(t, testTranslator(t, new(int)))
+		transform, _, _, _ := newMekugiTestTransform(t, testTranslator(t, new(int)))
 		visible, err := transform.TransformJSON(mustTestJSON(t, map[string]any{
 			"status": "completed",
 			"output": []any{map[string]any{
@@ -2090,7 +2090,7 @@ func TestShellStacksDistinctMisuseWarnings(t *testing.T) {
 }
 
 func TestWorkerTemplateExecInputQuotesNestedShellCommand(t *testing.T) {
-	proxy := newManagedHPatchProxy(t, testTranslator(t, new(int)))
+	proxy := newManagedMekugiProxy(t, testTranslator(t, new(int)))
 	shell, ok := proxy.registry.contribution("shell")
 	if !ok {
 		t.Fatal("shell contribution is unavailable")
@@ -2125,7 +2125,7 @@ func TestWorkerTemplateExecInputQuotesNestedShellCommand(t *testing.T) {
 }
 
 func TestShellCarrierUsesFixedHelperForBuiltin(t *testing.T) {
-	proxy := newManagedHPatchProxy(t, testTranslator(t, new(int)))
+	proxy := newManagedMekugiProxy(t, testTranslator(t, new(int)))
 	shell, ok := proxy.registry.contribution("shell")
 	if !ok {
 		t.Fatal("shell contribution is unavailable")
@@ -2145,7 +2145,7 @@ func TestShellCarrierUsesFixedHelperForBuiltin(t *testing.T) {
 }
 
 func TestWorkerExecInputMergesValidatedParams(t *testing.T) {
-	proxy := newManagedHPatchProxy(t, testTranslator(t, new(int)))
+	proxy := newManagedMekugiProxy(t, testTranslator(t, new(int)))
 	shell, ok := proxy.registry.contribution("shell")
 	if !ok {
 		t.Fatal("shell contribution is unavailable")
@@ -2186,7 +2186,7 @@ func TestWorkerExecInputMergesValidatedParams(t *testing.T) {
 }
 
 func TestShellExecCarriersForwardNativeResultWithoutPolling(t *testing.T) {
-	proxy := newManagedHPatchProxy(t, testTranslator(t, new(int)))
+	proxy := newManagedMekugiProxy(t, testTranslator(t, new(int)))
 	shell, ok := proxy.registry.contribution("shell")
 	if !ok {
 		t.Fatal("shell contribution is unavailable")
@@ -2223,8 +2223,8 @@ func TestShellExecCarriersForwardNativeResultWithoutPolling(t *testing.T) {
 	}
 }
 
-func TestHPatchHistoryDoesNotCrossWorkspacesSharingSessionIdentity(t *testing.T) {
-	proxy := newManagedHPatchProxy(t, testTranslator(t, new(int)))
+func TestMekugiHistoryDoesNotCrossWorkspacesSharingSessionIdentity(t *testing.T) {
+	proxy := newManagedMekugiProxy(t, testTranslator(t, new(int)))
 	requestFor := func(t *testing.T, extraItems ...any) parsedResponsesRequest {
 		t.Helper()
 		items := []any{testCodeModeAdditionalTools(testCodeModeDescription)}
@@ -2255,7 +2255,7 @@ func TestHPatchHistoryDoesNotCrossWorkspacesSharingSessionIdentity(t *testing.T)
 	}
 	visible, err := first.TransformJSON(mustTestJSON(t, map[string]any{
 		"status": "completed",
-		"output": []any{testHPatchItem()},
+		"output": []any{testMekugiItem()},
 	}))
 	first.Close()
 	if err != nil {
@@ -2289,7 +2289,7 @@ func TestHPatchHistoryDoesNotCrossWorkspacesSharingSessionIdentity(t *testing.T)
 	if name := jsonString(replayed[1], "name"); name != "exec" {
 		t.Fatalf("cross-workspace replay restored tool name %q", name)
 	}
-	if input := jsonString(replayed[1], "input"); input != (hpatchHistory{patch: testTranslatedPatch, report: testHPatchReport}).carrierInput() {
+	if input := jsonString(replayed[1], "input"); input != (mekugiHistory{patch: testTranslatedPatch, report: testMekugiReport}).carrierInput() {
 		t.Fatalf("cross-workspace replay restored input %q", input)
 	}
 
@@ -2297,15 +2297,15 @@ func TestHPatchHistoryDoesNotCrossWorkspacesSharingSessionIdentity(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(history.translationError, "no rejected hpatch script to recover") {
+	if !strings.Contains(history.translationError, "no rejected HPATCH script to recover") {
 		t.Fatalf("cross-workspace recovery history = %+v", history)
 	}
 }
 
-func TestHPatchReplayPreservesImmediateApplyFailure(t *testing.T) {
-	proxy := newManagedHPatchProxy(t, testTranslator(t, new(int)))
-	history := hpatchHistory{script: testHPatchScript, patch: testTranslatedPatch, carrierName: "exec", report: testHPatchReport}
-	if err := proxy.rememberBatch("session", map[string]hpatchHistory{"call-H": history}); err != nil {
+func TestMekugiReplayPreservesImmediateApplyFailure(t *testing.T) {
+	proxy := newManagedMekugiProxy(t, testTranslator(t, new(int)))
+	history := mekugiHistory{script: testMekugiScript, patch: testTranslatedPatch, carrierName: "exec", report: testMekugiReport}
+	if err := proxy.rememberBatch("session", map[string]mekugiHistory{"call-H": history}); err != nil {
 		t.Fatal(err)
 	}
 	const applyFailure = "Failed to find expected lines in created.txt:\nmissing\n"
@@ -2319,20 +2319,20 @@ func TestHPatchReplayPreservesImmediateApplyFailure(t *testing.T) {
 	if err := proxy.reconcileInputPrefix(&request, "session"); err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Contains(request.fields["input"], []byte(jsonQuoted(applyFailure))) || bytes.Contains(request.fields["input"], []byte(jsonQuoted(testHPatchReport))) {
+	if !bytes.Contains(request.fields["input"], []byte(jsonQuoted(applyFailure))) || bytes.Contains(request.fields["input"], []byte(jsonQuoted(testMekugiReport))) {
 		t.Fatalf("apply failure changed during replay: %s", request.fields["input"])
 	}
 }
 
-func TestHPatchTranslationRewritesConfirmedTargetAlias(t *testing.T) {
+func TestMekugiTranslationRewritesConfirmedTargetAlias(t *testing.T) {
 	var translatedScript string
-	translator := hpatchResultTranslatorFunc(func(_ context.Context, _ string, script string) (hpatchTranslationResult, error) {
+	translator := mekugiResultTranslatorFunc(func(_ context.Context, _ string, script string) (mekugiTranslationResult, error) {
 		translatedScript = script
-		return hpatchTranslationResult{patch: []byte(testTranslatedPatch), report: testHPatchReport}, nil
+		return mekugiTranslationResult{patch: []byte(testTranslatedPatch), report: testMekugiReport}, nil
 	})
-	transform, _, _, _ := newHPatchTestTransform(t, translator)
-	alias := hpatch.TargetAlias{Path: "file.txt", Before: "2:1111", After: "3:2222"}
-	transform.visible = map[string]hpatchHistory{"call-first": {root: transform.directory, report: testHPatchReport, confirmed: true, aliases: []hpatch.TargetAlias{alias}}}
+	transform, _, _, _ := newMekugiTestTransform(t, translator)
+	alias := mekugi.TargetAlias{Path: "file.txt", Before: "2:1111", After: "3:2222"}
+	transform.visible = map[string]mekugiHistory{"call-first": {root: transform.directory, report: testMekugiReport, confirmed: true, aliases: []mekugi.TargetAlias{alias}}}
 
 	emitted := "in file.txt\ntype 2:1111 \"replacement\""
 	if _, err := transform.translate("call-next", emitted, nil); err != nil {
@@ -2351,10 +2351,10 @@ func TestHPatchTranslationRewritesConfirmedTargetAlias(t *testing.T) {
 	}
 }
 
-func TestHPatchReplayRejectsChangedExecCarrierAndIgnoresUnrelatedCalls(t *testing.T) {
-	proxy := newManagedHPatchProxy(t, testTranslator(t, new(int)))
-	history := hpatchHistory{script: testHPatchScript, patch: testTranslatedPatch, carrierName: "exec", report: testHPatchReport}
-	if err := proxy.rememberBatch("session", map[string]hpatchHistory{"call-H": history}); err != nil {
+func TestMekugiReplayRejectsChangedExecCarrierAndIgnoresUnrelatedCalls(t *testing.T) {
+	proxy := newManagedMekugiProxy(t, testTranslator(t, new(int)))
+	history := mekugiHistory{script: testMekugiScript, patch: testTranslatedPatch, carrierName: "exec", report: testMekugiReport}
+	if err := proxy.rememberBatch("session", map[string]mekugiHistory{"call-H": history}); err != nil {
 		t.Fatal(err)
 	}
 	changed, _ := parseResponsesRequest(mustTestJSON(t, map[string]any{"input": []any{map[string]any{
@@ -2370,33 +2370,33 @@ func TestHPatchReplayRejectsChangedExecCarrierAndIgnoresUnrelatedCalls(t *testin
 	}
 }
 
-func TestHPatchReportSeparatesHookWarning(t *testing.T) {
-	if got := hpatchReport("in file.txt 1:1", "hpatch: warning: hook failed\n"); got != "in file.txt 1:1\nhpatch: warning: hook failed\n" {
-		t.Fatalf("hpatchReport() = %q", got)
+func TestMekugiReportSeparatesHookWarning(t *testing.T) {
+	if got := mekugiReport("in file.txt 1:1", "mekugi: warning: hook failed\n"); got != "in file.txt 1:1\nmekugi: warning: hook failed\n" {
+		t.Fatalf("mekugiReport() = %q", got)
 	}
 }
 
-func TestHPatchExecInputQuotesPatchReportAndDiagnostic(t *testing.T) {
+func TestMekugiExecInputQuotesPatchReportAndDiagnostic(t *testing.T) {
 	patch := "*** Begin Patch\n*** Add File: quoted.txt\n+` ${value} \\\"\n*** End Patch\n"
 	report := "in quoted.txt 1:14\n1 ` ${value} \\\"\n"
-	input := (hpatchHistory{patch: patch, report: report}).carrierInput()
-	if !strings.HasPrefix(input, hpatchApplyExecMarker) || !strings.Contains(input, strconv.Quote(patch)) || !strings.Contains(input, strconv.Quote(report)) {
+	input := (mekugiHistory{patch: patch, report: report}).carrierInput()
+	if !strings.HasPrefix(input, mekugiApplyExecMarker) || !strings.Contains(input, strconv.Quote(patch)) || !strings.Contains(input, strconv.Quote(report)) {
 		t.Fatalf("unsafe or incomplete apply wrapper: %q", input)
 	}
 	diagnostic := "selector `x` rejected: ${value} " + string([]byte{'\\'})
-	if got := (hpatchHistory{translationError: diagnostic}).carrierInput(); got != "text("+strconv.Quote(diagnostic)+");" {
+	if got := (mekugiHistory{translationError: diagnostic}).carrierInput(); got != "text("+strconv.Quote(diagnostic)+");" {
 		t.Fatalf("diagnostic wrapper = %q", got)
 	}
 }
 
-func TestHPatchAlreadySatisfiedUsesDiagnosticCarrier(t *testing.T) {
-	translator := hpatchResultTranslatorFunc(func(context.Context, string, string) (hpatchTranslationResult, error) {
-		return hpatchTranslationResult{
+func TestMekugiAlreadySatisfiedUsesDiagnosticCarrier(t *testing.T) {
+	translator := mekugiResultTranslatorFunc(func(context.Context, string, string) (mekugiTranslationResult, error) {
+		return mekugiTranslationResult{
 			report: "in file.txt\nlast none\n",
-			change: hpatch.HostChange{AlreadySatisfied: true},
+			change: mekugi.HostChange{AlreadySatisfied: true},
 		}, nil
 	})
-	transform, _, _, _ := newHPatchTestTransform(t, translator)
+	transform, _, _, _ := newMekugiTestTransform(t, translator)
 	history, err := transform.translate("call-noop", "in file.txt\n", nil)
 	if err != nil {
 		t.Fatal(err)
@@ -2407,11 +2407,11 @@ func TestHPatchAlreadySatisfiedUsesDiagnosticCarrier(t *testing.T) {
 	}
 }
 
-func TestHPatchStreamingReplacesLifecycleWithoutChangingCallID(t *testing.T) {
+func TestMekugiStreamingReplacesLifecycleWithoutChangingCallID(t *testing.T) {
 	calls := 0
-	transform, _, _, _ := newHPatchTestTransform(t, testTranslator(t, &calls))
-	item := testHPatchItem()
-	added := testHPatchItem()
+	transform, _, _, _ := newMekugiTestTransform(t, testTranslator(t, &calls))
+	item := testMekugiItem()
+	added := testMekugiItem()
 	added["status"] = "in_progress"
 	added["input"] = ""
 
@@ -2423,8 +2423,8 @@ func TestHPatchStreamingReplacesLifecycleWithoutChangingCallID(t *testing.T) {
 	if err != nil || len(visible) != 1 || string(visible[0]) != `{"type":"response.in_progress"}` {
 		t.Fatalf("delta = %q, error %v", visible, err)
 	}
-	visible, err = transform.TransformSSE(mustTestJSON(t, map[string]any{"type": "response.custom_tool_call_input.done", "item_id": "item-H", "input": testHPatchScript}))
-	if err != nil || len(visible) != 2 || !bytes.Contains(visible[0], []byte(`"name":"exec"`)) || !bytes.Contains(visible[0], []byte(`"call_id":"call-H"`)) || !bytes.Contains(visible[1], []byte(jsonQuoted((hpatchHistory{patch: testTranslatedPatch, report: testHPatchReport}).carrierInput()))) {
+	visible, err = transform.TransformSSE(mustTestJSON(t, map[string]any{"type": "response.custom_tool_call_input.done", "item_id": "item-H", "input": testMekugiScript}))
+	if err != nil || len(visible) != 2 || !bytes.Contains(visible[0], []byte(`"name":"exec"`)) || !bytes.Contains(visible[0], []byte(`"call_id":"call-H"`)) || !bytes.Contains(visible[1], []byte(jsonQuoted((mekugiHistory{patch: testTranslatedPatch, report: testMekugiReport}).carrierInput()))) {
 		t.Fatalf("input.done = %q, error %v", visible, err)
 	}
 	visible, err = transform.TransformSSE(mustTestJSON(t, map[string]any{"type": "response.output_item.done", "item": item}))
@@ -2438,9 +2438,9 @@ func TestHPatchStreamingReplacesLifecycleWithoutChangingCallID(t *testing.T) {
 	}
 }
 
-func TestHPatchBufferedDeltaKeepsDownstreamSSEActiveWithoutLeakingInput(t *testing.T) {
-	transform, _, _, _ := newHPatchTestTransform(t, testTranslator(t, new(int)))
-	added := testHPatchItem()
+func TestMekugiBufferedDeltaKeepsDownstreamSSEActiveWithoutLeakingInput(t *testing.T) {
+	transform, _, _, _ := newMekugiTestTransform(t, testTranslator(t, new(int)))
+	added := testMekugiItem()
 	added["status"] = "in_progress"
 	added["input"] = ""
 	if visible, err := transform.TransformSSE(mustTestJSON(t, map[string]any{
@@ -2468,11 +2468,11 @@ func TestHPatchBufferedDeltaKeepsDownstreamSSEActiveWithoutLeakingInput(t *testi
 	}
 }
 
-func TestNonHPatchHistoryIsExcludedFromRecovery(t *testing.T) {
-	proxy := newManagedHPatchProxy(t, testTranslator(t, new(int)))
-	err := proxy.rememberBatch("session", map[string]hpatchHistory{
+func TestNonMekugiHistoryIsExcludedFromRecovery(t *testing.T) {
+	proxy := newManagedMekugiProxy(t, testTranslator(t, new(int)))
+	err := proxy.rememberBatch("session", map[string]mekugiHistory{
 		"call-H": {
-			toolName: hpatchToolName, script: testHPatchScript,
+			toolName: mekugiToolName, script: testMekugiScript,
 			translationError: "rejected", evaluatorRejected: true, sequence: 1,
 		},
 		"call-S": {
@@ -2491,16 +2491,16 @@ func TestNonHPatchHistoryIsExcludedFromRecovery(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if history.toolName != hpatchToolName || history.script != testHPatchScript {
+	if history.toolName != mekugiToolName || history.script != testMekugiScript {
 		t.Fatalf("recoverable history = %+v", history)
 	}
 
-	transform := &hpatchResponseTransform{
+	transform := &mekugiResponseTransform{
 		proxy:            proxy,
 		sessionID:        "session",
 		historySessionID: "session",
-		visible:          map[string]hpatchHistory{"call-H": history},
-		local: map[string]hpatchHistory{
+		visible:          map[string]mekugiHistory{"call-H": history},
+		local: map[string]mekugiHistory{
 			"call-local-shell": {
 				toolName: "shell",
 				script:   `hgrep alpha .`,
@@ -2512,22 +2512,22 @@ func TestNonHPatchHistoryIsExcludedFromRecovery(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if history.toolName != hpatchToolName || history.script != testHPatchScript {
+	if history.toolName != mekugiToolName || history.script != testMekugiScript {
 		t.Fatalf("recovery after local read-only call = %+v", history)
 	}
 }
 
-func TestHPatchNonEvaluatorFailureDoesNotBecomeRecoveryBaseline(t *testing.T) {
+func TestMekugiNonEvaluatorFailureDoesNotBecomeRecoveryBaseline(t *testing.T) {
 	calls := 0
-	transform, _, _, _ := newHPatchTestTransform(t, hpatchTranslatorFunc(func(context.Context, string, string) ([]byte, error) {
+	transform, _, _, _ := newMekugiTestTransform(t, mekugiTranslatorFunc(func(context.Context, string, string) ([]byte, error) {
 		calls++
 		return nil, errors.New("translator failed")
 	}))
-	first, err := transform.translate("call-1", testHPatchScript, nil)
+	first, err := transform.translate("call-1", testMekugiScript, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if first.evaluatorRejected || strings.Contains(first.translationError, "Use hpatch without `in`") {
+	if first.evaluatorRejected || strings.Contains(first.translationError, "Use mekugi without `in`") {
 		t.Fatalf("non-evaluator failure exposed recovery guidance: %+v", first)
 	}
 	second, err := transform.translateRecovery("call-2", "C1:ffff not-a-target", nil)
@@ -2541,7 +2541,7 @@ func TestHPatchNonEvaluatorFailureDoesNotBecomeRecoveryBaseline(t *testing.T) {
 	}
 }
 
-func TestHPatchUnevaluatedRecoveryRunsOutcomeHookOnce(t *testing.T) {
+func TestMekugiUnevaluatedRecoveryRunsOutcomeHookOnce(t *testing.T) {
 	dataDirectory := t.TempDir()
 	outcomePath := filepath.Join(t.TempDir(), "outcome.txt")
 	settings := fmt.Sprintf(
@@ -2551,9 +2551,9 @@ func TestHPatchUnevaluatedRecoveryRunsOutcomeHookOnce(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dataDirectory, "settings.json"), []byte(settings), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	transform, _, _, _ := newHPatchTestTransformWithProxy(
+	transform, _, _, _ := newMekugiTestTransformWithProxy(
 		t,
-		newManagedHPatchProxyWithDataDirectory(t, newInProcessHPatchTranslator(dataDirectory), dataDirectory),
+		newManagedMekugiProxyWithDataDirectory(t, newInProcessMekugiTranslator(dataDirectory), dataDirectory),
 	)
 	payload := "C1:ffff not-a-target"
 	history, err := transform.translateRecovery("call-recovery", payload, nil)
@@ -2573,23 +2573,23 @@ func TestHPatchUnevaluatedRecoveryRunsOutcomeHookOnce(t *testing.T) {
 	}
 }
 
-func TestHPatchRecoveryRetainsCorrelationAndRebuildsBeforeTranslation(t *testing.T) {
+func TestMekugiRecoveryRetainsCorrelationAndRebuildsBeforeTranslation(t *testing.T) {
 	base := "in file.txt\ntype 1:aaaa \"payload\"\n"
 	want := "in file.txt\ntype 2:bbbb \"payload\"\n"
 	calls := 0
 	var evaluated string
-	translator := hpatchResultTranslatorFunc(func(_ context.Context, _ string, script string) (hpatchTranslationResult, error) {
+	translator := mekugiResultTranslatorFunc(func(_ context.Context, _ string, script string) (mekugiTranslationResult, error) {
 		calls++
 		if calls == 1 {
-			return hpatchTranslationResult{
+			return mekugiTranslationResult{
 				diagnostic: "type: command 2, reason row-stale: rejected\n",
-				rejections: []hpatch.HostRejection{{Command: 2, SourceLine: 2, Operation: "type", Target: "line", Reason: "row-stale"}},
+				rejections: []mekugi.HostRejection{{Command: 2, SourceLine: 2, Operation: "type", Target: "line", Reason: "row-stale"}},
 			}, errors.New("rejected")
 		}
 		evaluated = script
-		return hpatchTranslationResult{patch: []byte(testTranslatedPatch)}, nil
+		return mekugiTranslationResult{patch: []byte(testTranslatedPatch)}, nil
 	})
-	transform, proxy, _, _ := newHPatchTestTransform(t, translator)
+	transform, proxy, _, _ := newMekugiTestTransform(t, translator)
 	first, err := transform.translate("call-1", base, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -2611,16 +2611,16 @@ func TestHPatchRecoveryRetainsCorrelationAndRebuildsBeforeTranslation(t *testing
 	}
 }
 
-func TestHPatchRecoveryRerejectionExposesCurrentHandles(t *testing.T) {
+func TestMekugiRecoveryRerejectionExposesCurrentHandles(t *testing.T) {
 	base := "in file.txt\ntype 1:aaaa \"value\"\n"
 	rebuilt := "in file.txt\ntype 2:bbbb \"value\"\n"
-	translator := hpatchResultTranslatorFunc(func(_ context.Context, _ string, _ string) (hpatchTranslationResult, error) {
-		return hpatchTranslationResult{
+	translator := mekugiResultTranslatorFunc(func(_ context.Context, _ string, _ string) (mekugiTranslationResult, error) {
+		return mekugiTranslationResult{
 			diagnostic: "type: command 2, reason row-stale: rejected\n",
-			rejections: []hpatch.HostRejection{{Command: 2, SourceLine: 2, Operation: "type", Target: "line", Reason: "row-stale"}},
+			rejections: []mekugi.HostRejection{{Command: 2, SourceLine: 2, Operation: "type", Target: "line", Reason: "row-stale"}},
 		}, errors.New("rejected")
 	})
-	transform, _, _, _ := newHPatchTestTransform(t, translator)
+	transform, _, _, _ := newMekugiTestTransform(t, translator)
 	first, err := transform.translate("call-1", base, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -2630,9 +2630,9 @@ func TestHPatchRecoveryRerejectionExposesCurrentHandles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, history := range []hpatchHistory{first, second} {
+	for _, history := range []mekugiHistory{first, second} {
 		if strings.Count(history.translationError, "Rejected target commands:") != 1 ||
-			strings.Contains(history.translationError, "Use hpatch without `in`") ||
+			strings.Contains(history.translationError, "Use mekugi without `in`") ||
 			strings.Contains(history.translationError, "accept") {
 			t.Fatalf("recovery guidance = %q", history.translationError)
 		}
@@ -2646,7 +2646,7 @@ func TestHPatchRecoveryRerejectionExposesCurrentHandles(t *testing.T) {
 	}
 }
 
-func TestHPatchRecoveryFixesAllEmittedTargetsAtomically(t *testing.T) {
+func TestMekugiRecoveryFixesAllEmittedTargetsAtomically(t *testing.T) {
 	base := "in first.go\n" +
 		"type 1:aaaa \"first\"\n" +
 		"in second.go\n" +
@@ -2655,24 +2655,24 @@ func TestHPatchRecoveryFixesAllEmittedTargetsAtomically(t *testing.T) {
 		"type 3:dddd \"first\"\n" +
 		"in second.go\n" +
 		"type 5:eeee..7:ffff \"second\"\n"
-	rejections := []hpatch.HostRejection{
+	rejections := []mekugi.HostRejection{
 		{Command: 2, SourceLine: 2, Operation: "type", Target: "line", Reason: "row-stale"},
 		{Command: 4, SourceLine: 4, Operation: "type", Target: "range", Reason: "row-stale"},
 	}
 
 	calls := 0
 	var evaluated string
-	transform, _, _, _ := newHPatchTestTransform(t, hpatchResultTranslatorFunc(func(_ context.Context, _ string, script string) (hpatchTranslationResult, error) {
+	transform, _, _, _ := newMekugiTestTransform(t, mekugiResultTranslatorFunc(func(_ context.Context, _ string, script string) (mekugiTranslationResult, error) {
 		calls++
 		if calls == 1 {
-			return hpatchTranslationResult{
+			return mekugiTranslationResult{
 				diagnostic: "type: command 2, reason row-stale: rejected\n" +
 					"type: command 4, reason row-stale: rejected\n",
 				rejections: rejections,
 			}, errors.New("rejected")
 		}
 		evaluated = script
-		return hpatchTranslationResult{patch: []byte(testTranslatedPatch)}, nil
+		return mekugiTranslationResult{patch: []byte(testTranslatedPatch)}, nil
 	}))
 	first, err := transform.translate("call-1", base, nil)
 	if err != nil {
@@ -2698,21 +2698,21 @@ func TestHPatchRecoveryFixesAllEmittedTargetsAtomically(t *testing.T) {
 	}
 }
 
-func TestHPatchFailedRecoveryPreservesEvaluatedBaseline(t *testing.T) {
+func TestMekugiFailedRecoveryPreservesEvaluatedBaseline(t *testing.T) {
 	base := "in file.txt\ntype 1:aaaa \"value\"\n"
 	want := "in file.txt\ntype 2:bbbb \"value\"\n"
 	calls := 0
 	var evaluated string
-	transform, _, _, _ := newHPatchTestTransform(t, hpatchResultTranslatorFunc(func(_ context.Context, _ string, script string) (hpatchTranslationResult, error) {
+	transform, _, _, _ := newMekugiTestTransform(t, mekugiResultTranslatorFunc(func(_ context.Context, _ string, script string) (mekugiTranslationResult, error) {
 		calls++
 		if calls == 1 {
-			return hpatchTranslationResult{
+			return mekugiTranslationResult{
 				diagnostic: "type: command 2, reason row-stale: rejected\n",
-				rejections: []hpatch.HostRejection{{Command: 2, SourceLine: 2, Operation: "type", Target: "line", Reason: "row-stale"}},
+				rejections: []mekugi.HostRejection{{Command: 2, SourceLine: 2, Operation: "type", Target: "line", Reason: "row-stale"}},
 			}, errors.New("rejected")
 		}
 		evaluated = script
-		return hpatchTranslationResult{patch: []byte(testTranslatedPatch)}, nil
+		return mekugiTranslationResult{patch: []byte(testTranslatedPatch)}, nil
 	}))
 	if _, err := transform.translate("call-1", base, nil); err != nil {
 		t.Fatal(err)
@@ -2736,21 +2736,21 @@ func TestHPatchFailedRecoveryPreservesEvaluatedBaseline(t *testing.T) {
 	}
 }
 
-func TestHPatchUnchangedTargetRecoveryPreservesEvaluatedBaseline(t *testing.T) {
+func TestMekugiUnchangedTargetRecoveryPreservesEvaluatedBaseline(t *testing.T) {
 	base := "in file.txt\ntype 1:aaaa \"value\"\n"
 	want := "in file.txt\ntype 2:bbbb \"value\"\n"
 	calls := 0
 	var evaluated string
-	transform, _, _, _ := newHPatchTestTransform(t, hpatchResultTranslatorFunc(func(_ context.Context, _ string, script string) (hpatchTranslationResult, error) {
+	transform, _, _, _ := newMekugiTestTransform(t, mekugiResultTranslatorFunc(func(_ context.Context, _ string, script string) (mekugiTranslationResult, error) {
 		calls++
 		if calls == 1 {
-			return hpatchTranslationResult{
+			return mekugiTranslationResult{
 				diagnostic: "type: command 2, reason row-stale: rejected\n",
-				rejections: []hpatch.HostRejection{{Command: 2, SourceLine: 2, Operation: "type", Target: "line", Reason: "row-stale"}},
+				rejections: []mekugi.HostRejection{{Command: 2, SourceLine: 2, Operation: "type", Target: "line", Reason: "row-stale"}},
 			}, errors.New("rejected")
 		}
 		evaluated = script
-		return hpatchTranslationResult{patch: []byte(testTranslatedPatch)}, nil
+		return mekugiTranslationResult{patch: []byte(testTranslatedPatch)}, nil
 	}))
 	if _, err := transform.translate("call-1", base, nil); err != nil {
 		t.Fatal(err)
@@ -2774,16 +2774,16 @@ func TestHPatchUnchangedTargetRecoveryPreservesEvaluatedBaseline(t *testing.T) {
 	}
 }
 
-func TestHPatchRecoveryUsesLatestRejectedRecoveryInSameResponse(t *testing.T) {
+func TestMekugiRecoveryUsesLatestRejectedRecoveryInSameResponse(t *testing.T) {
 	base := "in file.txt\ntype 1:aaaa \"value\"\n"
 	firstRebuilt := "in file.txt\ntype 2:bbbb \"value\"\n"
 	secondRebuilt := "in file.txt\ntype 3:cccc \"value\"\n"
 	var evaluated []string
-	transform, _, _, _ := newHPatchTestTransform(t, hpatchResultTranslatorFunc(func(_ context.Context, _ string, script string) (hpatchTranslationResult, error) {
+	transform, _, _, _ := newMekugiTestTransform(t, mekugiResultTranslatorFunc(func(_ context.Context, _ string, script string) (mekugiTranslationResult, error) {
 		evaluated = append(evaluated, script)
-		return hpatchTranslationResult{
+		return mekugiTranslationResult{
 			diagnostic: "type: command 2, reason row-stale: rejected\n",
-			rejections: []hpatch.HostRejection{{Command: 2, SourceLine: 2, Operation: "type", Target: "line", Reason: "row-stale"}},
+			rejections: []mekugi.HostRejection{{Command: 2, SourceLine: 2, Operation: "type", Target: "line", Reason: "row-stale"}},
 		}, errors.New("rejected")
 	}))
 	if _, err := transform.translate("call-1", base, nil); err != nil {
@@ -2808,15 +2808,15 @@ func TestHPatchRecoveryUsesLatestRejectedRecoveryInSameResponse(t *testing.T) {
 	}
 }
 
-func TestHPatchRetainedProxyRejectionAdvancesRecoveryAttempt(t *testing.T) {
-	proxy := newManagedHPatchProxy(t, testTranslator(t, new(int)))
-	if err := proxy.rememberBatch("session", map[string]hpatchHistory{
+func TestMekugiRetainedProxyRejectionAdvancesRecoveryAttempt(t *testing.T) {
+	proxy := newManagedMekugiProxy(t, testTranslator(t, new(int)))
+	if err := proxy.rememberBatch("session", map[string]mekugiHistory{
 		"call-1": {
-			toolName: hpatchToolName, script: testHPatchScript, translationError: "rejected",
+			toolName: mekugiToolName, script: testMekugiScript, translationError: "rejected",
 			evaluatorRejected: true, correlationID: "call-1", attempt: 1, sequence: 1,
 		},
 		"call-2": {
-			toolName: hpatchToolName, script: `type 2:ffff "bad"` + "\n",
+			toolName: mekugiToolName, script: `type 2:ffff "bad"` + "\n",
 			translationError: "stale", unevaluated: true,
 			correlationID: "call-1", attempt: 2, sequence: 2,
 		},
@@ -2835,11 +2835,11 @@ func TestHPatchRetainedProxyRejectionAdvancesRecoveryAttempt(t *testing.T) {
 	}
 }
 
-func TestHPatchTranslationFailureReturnsImmediateDiagnosticExec(t *testing.T) {
-	transform, proxy, _, workspace := newHPatchTestTransform(t, hpatchTranslatorFunc(func(context.Context, string, string) ([]byte, error) {
+func TestMekugiTranslationFailureReturnsImmediateDiagnosticExec(t *testing.T) {
+	transform, proxy, _, workspace := newMekugiTestTransform(t, mekugiTranslatorFunc(func(context.Context, string, string) ([]byte, error) {
 		return nil, errors.New("selector is not unique")
 	}))
-	originalItem := mustTestJSON(t, testHPatchItem())
+	originalItem := mustTestJSON(t, testMekugiItem())
 	visible, err := transform.TransformJSON(mustTestJSON(t, map[string]any{
 		"status": "completed",
 		"output": []any{
@@ -2897,30 +2897,30 @@ func TestHPatchTranslationFailureReturnsImmediateDiagnosticExec(t *testing.T) {
 	if err := json.Unmarshal(replay.fields["input"], &replayed); err != nil {
 		t.Fatal(err)
 	}
-	if len(replayed) != 4 || jsonString(replayed[1], "name") != hpatchToolName || jsonString(replayed[1], "input") != testHPatchScript || string(replayed[2]["future"]) != "true" || jsonString(replayed[2], "output") != history.translationError || jsonString(replayed[3], "output") != "keep" {
-		t.Fatalf("restored hpatch rejection = %s", replay.fields["input"])
+	if len(replayed) != 4 || jsonString(replayed[1], "name") != mekugiToolName || jsonString(replayed[1], "input") != testMekugiScript || string(replayed[2]["future"]) != "true" || jsonString(replayed[2], "output") != history.translationError || jsonString(replayed[3], "output") != "keep" {
+		t.Fatalf("restored mekugi rejection = %s", replay.fields["input"])
 	}
 }
 
-func TestHPatchStreamingTranslationFailureCompletesDiagnosticExecLifecycle(t *testing.T) {
-	transform, proxy, _, _ := newHPatchTestTransform(t, hpatchTranslatorFunc(func(context.Context, string, string) ([]byte, error) {
+func TestMekugiStreamingTranslationFailureCompletesDiagnosticExecLifecycle(t *testing.T) {
+	transform, proxy, _, _ := newMekugiTestTransform(t, mekugiTranslatorFunc(func(context.Context, string, string) ([]byte, error) {
 		return nil, errors.New("parent directory does not exist")
 	}))
-	item := testHPatchItem()
-	added := testHPatchItem()
+	item := testMekugiItem()
+	added := testMekugiItem()
 	added["status"] = "in_progress"
 	added["input"] = ""
 	completed := map[string]any{
 		"status":      "completed",
 		"output":      []any{item},
 		"future":      map[string]any{"kept": true},
-		"tools":       []any{map[string]any{"type": "custom", "name": hpatchToolName}},
-		"tool_choice": hpatchToolName,
+		"tools":       []any{map[string]any{"type": "custom", "name": mekugiToolName}},
+		"tool_choice": mekugiToolName,
 	}
 	body := "event: response.output_item.added\n" +
 		"data: " + string(mustTestJSON(t, map[string]any{"type": "response.output_item.added", "item": added})) + "\n\n" +
 		"event: response.custom_tool_call_input.done\n" +
-		"data: " + string(mustTestJSON(t, map[string]any{"type": "response.custom_tool_call_input.done", "item_id": "item-H", "input": testHPatchScript})) + "\n\n" +
+		"data: " + string(mustTestJSON(t, map[string]any{"type": "response.custom_tool_call_input.done", "item_id": "item-H", "input": testMekugiScript})) + "\n\n" +
 		"event: response.future\n" +
 		"data: " + string(mustTestJSON(t, map[string]any{"type": "response.future", "future": "future-preserved"})) + "\n\n" +
 		"event: response.output_item.done\n" +
@@ -2948,21 +2948,21 @@ func TestHPatchStreamingTranslationFailureCompletesDiagnosticExecLifecycle(t *te
 	}
 }
 
-func TestHPatchTerminalProjectionRestoresCompletedCallsOnly(t *testing.T) {
+func TestMekugiTerminalProjectionRestoresCompletedCallsOnly(t *testing.T) {
 	for _, native := range []bool{false, true} {
 		for _, status := range []string{"failed", "incomplete"} {
 			for _, transport := range []string{"json", "sse", "sse-after-item", "sse-after-incomplete-item", "sse-no-status"} {
 				t.Run(fmt.Sprintf("native=%v/%s/%s", native, status, transport), func(t *testing.T) {
 					calls := 0
-					proxy := newManagedHPatchProxy(t, testTranslator(t, &calls))
-					var transform *hpatchResponseTransform
+					proxy := newManagedMekugiProxy(t, testTranslator(t, &calls))
+					var transform *mekugiResponseTransform
 					if native {
-						transform, _ = newNativeHPatchTestTransformWithProxy(t, proxy)
+						transform, _ = newNativeMekugiTestTransformWithProxy(t, proxy)
 					} else {
-						transform, _, _, _ = newHPatchTestTransformWithProxy(t, proxy)
+						transform, _, _, _ = newMekugiTestTransformWithProxy(t, proxy)
 					}
-					completed := testHPatchItem()
-					unfinished := testHPatchItem()
+					completed := testMekugiItem()
+					unfinished := testMekugiItem()
 					unfinished["id"], unfinished["call_id"], unfinished["status"] = "item-unfinished", "call-unfinished", "in_progress"
 					// Even syntactically complete input is not executable before completion.
 					if transport == "sse-after-item" {
@@ -2981,8 +2981,8 @@ func TestHPatchTerminalProjectionRestoresCompletedCallsOnly(t *testing.T) {
 					}
 					responseFields := map[string]any{
 						"status": status, "output": []any{completed, unfinished},
-						"tools":       []any{map[string]any{"type": "custom", "name": hpatchToolName}},
-						"tool_choice": hpatchToolName, "future": map[string]any{"kept": true},
+						"tools":       []any{map[string]any{"type": "custom", "name": mekugiToolName}},
+						"tool_choice": mekugiToolName, "future": map[string]any{"kept": true},
 					}
 					wireStatus := status
 					if transport == "sse-no-status" {
@@ -3024,7 +3024,7 @@ func TestHPatchTerminalProjectionRestoresCompletedCallsOnly(t *testing.T) {
 					if calls != 1 || !remembered || jsonString(output[0], "name") != history.carrierName || jsonString(output[0], payloadField) != history.carrierInput() {
 						t.Fatalf("completed carrier: calls=%d remembered=%v output=%s", calls, remembered, visible)
 					}
-					if jsonString(output[1], "status") != unfinished["status"] || jsonString(output[1], "input") != testHPatchScript {
+					if jsonString(output[1], "status") != unfinished["status"] || jsonString(output[1], "input") != testMekugiScript {
 						t.Fatalf("unfinished call changed = %s", visible)
 					}
 					if _, remembered := proxy.history(transform.historySessionID, "call-unfinished"); remembered {
@@ -3039,12 +3039,12 @@ func TestHPatchTerminalProjectionRestoresCompletedCallsOnly(t *testing.T) {
 	}
 }
 
-func TestHPatchOutputItemDoneRespectsIncompleteStatus(t *testing.T) {
+func TestMekugiOutputItemDoneRespectsIncompleteStatus(t *testing.T) {
 	for _, status := range []string{"", "completed", "incomplete"} {
 		t.Run(status, func(t *testing.T) {
 			calls := 0
-			transform, proxy, _, _ := newHPatchTestTransform(t, testTranslator(t, &calls))
-			item := testHPatchItem()
+			transform, proxy, _, _ := newMekugiTestTransform(t, testTranslator(t, &calls))
+			item := testMekugiItem()
 			if status == "" {
 				delete(item, "status")
 			} else {
@@ -3066,49 +3066,49 @@ func TestHPatchOutputItemDoneRespectsIncompleteStatus(t *testing.T) {
 	}
 }
 
-func TestHPatchStreamingTranslationFailureRejectsMalformedTerminal(t *testing.T) {
-	transform, _, _, _ := newHPatchTestTransform(t, hpatchTranslatorFunc(func(context.Context, string, string) ([]byte, error) {
+func TestMekugiStreamingTranslationFailureRejectsMalformedTerminal(t *testing.T) {
+	transform, _, _, _ := newMekugiTestTransform(t, mekugiTranslatorFunc(func(context.Context, string, string) ([]byte, error) {
 		return nil, errors.New("selector is not unique")
 	}))
-	added := testHPatchItem()
+	added := testMekugiItem()
 	added["status"] = "in_progress"
 	added["input"] = ""
 	if visible, err := transform.TransformSSE(mustTestJSON(t, map[string]any{"type": "response.output_item.added", "item": added})); err != nil || visible != nil {
-		t.Fatalf("buffer hpatch call = %q, error %v", visible, err)
+		t.Fatalf("buffer mekugi call = %q, error %v", visible, err)
 	}
-	if visible, err := transform.TransformSSE(mustTestJSON(t, map[string]any{"type": "response.custom_tool_call_input.done", "item_id": "item-H", "input": testHPatchScript})); err != nil || len(visible) != 2 || !bytes.Contains(visible[1], []byte("selector is not unique")) {
-		t.Fatalf("release hpatch rejection carrier = %q, error %v", visible, err)
+	if visible, err := transform.TransformSSE(mustTestJSON(t, map[string]any{"type": "response.custom_tool_call_input.done", "item_id": "item-H", "input": testMekugiScript})); err != nil || len(visible) != 2 || !bytes.Contains(visible[1], []byte("selector is not unique")) {
+		t.Fatalf("release mekugi rejection carrier = %q, error %v", visible, err)
 	}
-	if visible, err := transform.TransformSSE(mustTestJSON(t, map[string]any{"type": "response.output_item.done", "item": testHPatchItem()})); err != nil || len(visible) != 1 {
-		t.Fatalf("complete hpatch rejection carrier = %q, error %v", visible, err)
+	if visible, err := transform.TransformSSE(mustTestJSON(t, map[string]any{"type": "response.output_item.done", "item": testMekugiItem()})); err != nil || len(visible) != 1 {
+		t.Fatalf("complete mekugi rejection carrier = %q, error %v", visible, err)
 	}
 	visible, err := transform.TransformSSE([]byte(`{"type":"response.completed","response":null}`))
-	if err == nil || visible != nil || !strings.Contains(err.Error(), "decode hpatch-enabled response") {
+	if err == nil || visible != nil || !strings.Contains(err.Error(), "decode mekugi-enabled response") {
 		t.Fatalf("malformed terminal = %q, error %v", visible, err)
 	}
 }
 
-func TestHPatchMalformedCallStillFailsRequest(t *testing.T) {
-	transform, proxy, _, _ := newHPatchTestTransform(t, testTranslator(t, new(int)))
-	item := testHPatchItem()
+func TestMekugiMalformedCallStillFailsRequest(t *testing.T) {
+	transform, proxy, _, _ := newMekugiTestTransform(t, testTranslator(t, new(int)))
+	item := testMekugiItem()
 	item["type"] = "message"
 	visible, err := transform.TransformJSON(mustTestJSON(t, map[string]any{"status": "completed", "output": []any{item}}))
 	if err == nil || visible != nil {
-		t.Fatalf("malformed hpatch call = visible %q, error %v", visible, err)
+		t.Fatalf("malformed mekugi call = visible %q, error %v", visible, err)
 	}
 	if _, remembered := proxy.history(transform.historySessionID, "call-H"); remembered {
-		t.Fatal("malformed hpatch call created history")
+		t.Fatal("malformed mekugi call created history")
 	}
 }
 
-func TestHPatchTranslationCancellationRemainsRequestCancellation(t *testing.T) {
-	transform, proxy, _, _ := newHPatchTestTransform(t, hpatchTranslatorFunc(func(ctx context.Context, _ string, _ string) ([]byte, error) {
+func TestMekugiTranslationCancellationRemainsRequestCancellation(t *testing.T) {
+	transform, proxy, _, _ := newMekugiTestTransform(t, mekugiTranslatorFunc(func(ctx context.Context, _ string, _ string) ([]byte, error) {
 		return nil, ctx.Err()
 	}))
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	transform.ctx = ctx
-	visible, err := transform.TransformJSON(mustTestJSON(t, map[string]any{"status": "completed", "output": []any{testHPatchItem()}}))
+	visible, err := transform.TransformJSON(mustTestJSON(t, map[string]any{"status": "completed", "output": []any{testMekugiItem()}}))
 	if !errors.Is(err, context.Canceled) || visible != nil {
 		t.Fatalf("canceled translation = visible %q, error %v", visible, err)
 	}
@@ -3117,14 +3117,14 @@ func TestHPatchTranslationCancellationRemainsRequestCancellation(t *testing.T) {
 	}
 }
 
-func TestHPatchHistoryByteAccountingIncludesExistingCalls(t *testing.T) {
-	proxy := newManagedHPatchProxy(t, testTranslator(t, new(int)))
-	if err := proxy.rememberBatch("session", map[string]hpatchHistory{
+func TestMekugiHistoryByteAccountingIncludesExistingCalls(t *testing.T) {
+	proxy := newManagedMekugiProxy(t, testTranslator(t, new(int)))
+	if err := proxy.rememberBatch("session", map[string]mekugiHistory{
 		"call-1": {script: "first"},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := proxy.rememberBatch("session", map[string]hpatchHistory{
+	if err := proxy.rememberBatch("session", map[string]mekugiHistory{
 		"call-2": {script: "second"},
 	}); err != nil {
 		t.Fatal(err)
@@ -3140,8 +3140,8 @@ func TestHPatchHistoryByteAccountingIncludesExistingCalls(t *testing.T) {
 	}
 }
 
-func TestHPatchHistoryDoesNotEvictActiveSessions(t *testing.T) {
-	proxy := newManagedHPatchProxy(t, testTranslator(t, new(int)))
+func TestMekugiHistoryDoesNotEvictActiveSessions(t *testing.T) {
+	proxy := newManagedMekugiProxy(t, testTranslator(t, new(int)))
 	t.Cleanup(func() {
 		if err := proxy.Close(); err != nil {
 			t.Error(err)
@@ -3149,7 +3149,7 @@ func TestHPatchHistoryDoesNotEvictActiveSessions(t *testing.T) {
 	})
 	for index := range maxSessionHistories {
 		sessionID := fmt.Sprintf("session-%03d", index)
-		if err := proxy.rememberBatch(sessionID, map[string]hpatchHistory{"call": {script: sessionID}}); err != nil {
+		if err := proxy.rememberBatch(sessionID, map[string]mekugiHistory{"call": {script: sessionID}}); err != nil {
 			t.Fatalf("remember session %d: %v", index, err)
 		}
 	}
@@ -3158,7 +3158,7 @@ func TestHPatchHistoryDoesNotEvictActiveSessions(t *testing.T) {
 	}
 	defer proxy.deactivateSession("session-000")
 
-	if err := proxy.rememberBatch("session-new", map[string]hpatchHistory{"call": {script: "new"}}); err != nil {
+	if err := proxy.rememberBatch("session-new", map[string]mekugiHistory{"call": {script: "new"}}); err != nil {
 		t.Fatal(err)
 	}
 	if _, ok := proxy.sessions["session-000"]; !ok {
@@ -3169,13 +3169,13 @@ func TestHPatchHistoryDoesNotEvictActiveSessions(t *testing.T) {
 	}
 }
 
-func TestHPatchHistoryEvictsOldestCallsAndSessions(t *testing.T) {
-	proxy := newManagedHPatchProxy(t, testTranslator(t, new(int)))
+func TestMekugiHistoryEvictsOldestCallsAndSessions(t *testing.T) {
+	proxy := newManagedMekugiProxy(t, testTranslator(t, new(int)))
 	for index := range maxSessionTurns + 1 {
 		callID := fmt.Sprintf("call-%03d", index)
-		err := proxy.rememberBatch("session", map[string]hpatchHistory{
+		err := proxy.rememberBatch("session", map[string]mekugiHistory{
 			callID: {
-				toolName:          hpatchToolName,
+				toolName:          mekugiToolName,
 				script:            callID,
 				translationError:  "rejected",
 				evaluatorRejected: true,
@@ -3202,11 +3202,11 @@ func TestHPatchHistoryEvictsOldestCallsAndSessions(t *testing.T) {
 
 	for index := range maxSessionHistories {
 		sessionID := fmt.Sprintf("session-%03d", index)
-		if err := proxy.rememberBatch(sessionID, map[string]hpatchHistory{"call": {script: sessionID}}); err != nil {
+		if err := proxy.rememberBatch(sessionID, map[string]mekugiHistory{"call": {script: sessionID}}); err != nil {
 			t.Fatalf("remember session %d: %v", index, err)
 		}
 	}
-	if err := proxy.rememberBatch("session-new", map[string]hpatchHistory{"call": {script: "new"}}); err != nil {
+	if err := proxy.rememberBatch("session-new", map[string]mekugiHistory{"call": {script: "new"}}); err != nil {
 		t.Fatalf("remember replacement session: %v", err)
 	}
 	if len(proxy.sessions) != maxSessionHistories {
@@ -3220,12 +3220,12 @@ func TestHPatchHistoryEvictsOldestCallsAndSessions(t *testing.T) {
 	}
 }
 
-func TestHPatchBoundsTranslationAndHistory(t *testing.T) {
+func TestMekugiBoundsTranslationAndHistory(t *testing.T) {
 	t.Run("translation output capacity", func(t *testing.T) {
-		transform, proxy, _, _ := newHPatchTestTransform(t, hpatchTranslatorFunc(func(context.Context, string, string) ([]byte, error) {
-			return make([]byte, maxHPatchPatchBytes+1), nil
+		transform, proxy, _, _ := newMekugiTestTransform(t, mekugiTranslatorFunc(func(context.Context, string, string) ([]byte, error) {
+			return make([]byte, maxMekugiPatchBytes+1), nil
 		}))
-		payload := mustTestJSON(t, map[string]any{"status": "completed", "output": []any{testHPatchItem()}})
+		payload := mustTestJSON(t, map[string]any{"status": "completed", "output": []any{testMekugiItem()}})
 		visible, err := transform.TransformJSON(payload)
 		if err == nil || visible != nil || !strings.Contains(err.Error(), "translation exceeds") {
 			t.Fatalf("oversized translation = visible %q, error %v", visible, err)
@@ -3236,12 +3236,12 @@ func TestHPatchBoundsTranslationAndHistory(t *testing.T) {
 	})
 
 	t.Run("script capacity", func(t *testing.T) {
-		transform, proxy, _, _ := newHPatchTestTransform(t, hpatchTranslatorFunc(func(context.Context, string, string) ([]byte, error) {
+		transform, proxy, _, _ := newMekugiTestTransform(t, mekugiTranslatorFunc(func(context.Context, string, string) ([]byte, error) {
 			t.Fatal("translator called for oversized script")
 			return nil, nil
 		}))
-		item := testHPatchItem()
-		item["input"] = strings.Repeat("x", maxHPatchScriptBytes+1)
+		item := testMekugiItem()
+		item["input"] = strings.Repeat("x", maxMekugiScriptBytes+1)
 		visible, err := transform.TransformJSON(mustTestJSON(t, map[string]any{"status": "completed", "output": []any{item}}))
 		if err == nil || visible != nil || !strings.Contains(err.Error(), "script exceeds") {
 			t.Fatalf("oversized script = visible bytes %d, error %v", len(visible), err)
@@ -3252,11 +3252,11 @@ func TestHPatchBoundsTranslationAndHistory(t *testing.T) {
 	})
 
 	t.Run("translator capacity", func(t *testing.T) {
-		transform, proxy, _, _ := newHPatchTestTransform(t, hpatchTranslatorFunc(func(context.Context, string, string) ([]byte, error) {
-			return nil, fmt.Errorf("%w: diagnostic overflow", errHPatchCapacity)
+		transform, proxy, _, _ := newMekugiTestTransform(t, mekugiTranslatorFunc(func(context.Context, string, string) ([]byte, error) {
+			return nil, fmt.Errorf("%w: diagnostic overflow", errMekugiCapacity)
 		}))
-		visible, err := transform.TransformJSON(mustTestJSON(t, map[string]any{"status": "completed", "output": []any{testHPatchItem()}}))
-		if !errors.Is(err, errHPatchCapacity) || visible != nil {
+		visible, err := transform.TransformJSON(mustTestJSON(t, map[string]any{"status": "completed", "output": []any{testMekugiItem()}}))
+		if !errors.Is(err, errMekugiCapacity) || visible != nil {
 			t.Fatalf("translator capacity = visible %q, error %v", visible, err)
 		}
 		if _, remembered := proxy.history(transform.historySessionID, "call-H"); remembered {
@@ -3265,9 +3265,9 @@ func TestHPatchBoundsTranslationAndHistory(t *testing.T) {
 	})
 
 	t.Run("global history", func(t *testing.T) {
-		proxy := newManagedHPatchProxy(t, testTranslator(t, new(int)))
-		proxy.historyBytes = maxHPatchHistoryGlobalBytes
-		if err := proxy.rememberBatch("session", map[string]hpatchHistory{"call": {script: "x", patch: "y"}}); err == nil {
+		proxy := newManagedMekugiProxy(t, testTranslator(t, new(int)))
+		proxy.historyBytes = maxMekugiHistoryGlobalBytes
+		if err := proxy.rememberBatch("session", map[string]mekugiHistory{"call": {script: "x", patch: "y"}}); err == nil {
 			t.Fatal("history exceeded global capacity")
 		}
 		if len(proxy.sessions) != 0 {
@@ -3276,9 +3276,9 @@ func TestHPatchBoundsTranslationAndHistory(t *testing.T) {
 	})
 
 	t.Run("batch history is atomic", func(t *testing.T) {
-		proxy := newManagedHPatchProxy(t, testTranslator(t, new(int)))
-		proxy.historyBytes = maxHPatchHistoryGlobalBytes - 1
-		err := proxy.rememberBatch("session", map[string]hpatchHistory{
+		proxy := newManagedMekugiProxy(t, testTranslator(t, new(int)))
+		proxy.historyBytes = maxMekugiHistoryGlobalBytes - 1
+		err := proxy.rememberBatch("session", map[string]mekugiHistory{
 			"call-first":  {script: "x", patch: "y"},
 			"call-second": {script: "x", patch: "y"},
 		})
@@ -3291,10 +3291,10 @@ func TestHPatchBoundsTranslationAndHistory(t *testing.T) {
 	})
 }
 
-func TestHPatchBoundsPendingStreamCallsAndRejectsRelatedFutureEvents(t *testing.T) {
+func TestMekugiBoundsPendingStreamCallsAndRejectsRelatedFutureEvents(t *testing.T) {
 	t.Run("duplicate item", func(t *testing.T) {
-		transform, _, _, _ := newHPatchTestTransform(t, testTranslator(t, new(int)))
-		added := testHPatchItem()
+		transform, _, _, _ := newMekugiTestTransform(t, testTranslator(t, new(int)))
+		added := testMekugiItem()
 		added["status"] = "in_progress"
 		added["input"] = ""
 		payload := mustTestJSON(t, map[string]any{"type": "response.output_item.added", "item": added})
@@ -3307,15 +3307,15 @@ func TestHPatchBoundsPendingStreamCallsAndRejectsRelatedFutureEvents(t *testing.
 	})
 
 	t.Run("pending count", func(t *testing.T) {
-		transform, _, _, _ := newHPatchTestTransform(t, testTranslator(t, new(int)))
-		for index := range maxHPatchPendingCalls + 1 {
-			added := testHPatchItem()
+		transform, _, _, _ := newMekugiTestTransform(t, testTranslator(t, new(int)))
+		for index := range maxMekugiPendingCalls + 1 {
+			added := testMekugiItem()
 			added["status"] = "in_progress"
 			added["input"] = ""
 			added["id"] = fmt.Sprintf("item-%d", index)
 			added["call_id"] = fmt.Sprintf("call-%d", index)
 			visible, err := transform.TransformSSE(mustTestJSON(t, map[string]any{"type": "response.output_item.added", "item": added}))
-			if index < maxHPatchPendingCalls {
+			if index < maxMekugiPendingCalls {
 				if err != nil || visible != nil {
 					t.Fatalf("pending item %d = visible %q, error %v", index, visible, err)
 				}
@@ -3328,8 +3328,8 @@ func TestHPatchBoundsPendingStreamCallsAndRejectsRelatedFutureEvents(t *testing.
 	})
 
 	t.Run("malformed pending event", func(t *testing.T) {
-		transform, _, _, _ := newHPatchTestTransform(t, testTranslator(t, new(int)))
-		added := testHPatchItem()
+		transform, _, _, _ := newMekugiTestTransform(t, testTranslator(t, new(int)))
+		added := testMekugiItem()
 		added["status"] = "in_progress"
 		added["input"] = ""
 		if _, err := transform.TransformSSE(mustTestJSON(t, map[string]any{"type": "response.output_item.added", "item": added})); err != nil {
@@ -3342,7 +3342,7 @@ func TestHPatchBoundsPendingStreamCallsAndRejectsRelatedFutureEvents(t *testing.
 	})
 
 	t.Run("malformed unrelated event", func(t *testing.T) {
-		transform, _, _, _ := newHPatchTestTransform(t, testTranslator(t, new(int)))
+		transform, _, _, _ := newMekugiTestTransform(t, testTranslator(t, new(int)))
 		malformed := []byte(`{"type":1,"future":"kept"}`)
 		visible, err := transform.TransformSSE(malformed)
 		if err != nil || len(visible) != 1 || !bytes.Equal(visible[0], malformed) {
@@ -3351,8 +3351,8 @@ func TestHPatchBoundsPendingStreamCallsAndRejectsRelatedFutureEvents(t *testing.
 	})
 
 	t.Run("incomplete terminal event", func(t *testing.T) {
-		transform, _, _, _ := newHPatchTestTransform(t, testTranslator(t, new(int)))
-		added := testHPatchItem()
+		transform, _, _, _ := newMekugiTestTransform(t, testTranslator(t, new(int)))
+		added := testMekugiItem()
 		added["status"] = "in_progress"
 		added["input"] = ""
 		if _, err := transform.TransformSSE(mustTestJSON(t, map[string]any{"type": "response.output_item.added", "item": added})); err != nil {
@@ -3365,8 +3365,8 @@ func TestHPatchBoundsPendingStreamCallsAndRejectsRelatedFutureEvents(t *testing.
 	})
 
 	t.Run("related future event", func(t *testing.T) {
-		transform, _, _, _ := newHPatchTestTransform(t, testTranslator(t, new(int)))
-		added := testHPatchItem()
+		transform, _, _, _ := newMekugiTestTransform(t, testTranslator(t, new(int)))
+		added := testMekugiItem()
 		added["status"] = "in_progress"
 		added["input"] = ""
 		if _, err := transform.TransformSSE(mustTestJSON(t, map[string]any{"type": "response.output_item.added", "item": added})); err != nil {
@@ -3379,7 +3379,7 @@ func TestHPatchBoundsPendingStreamCallsAndRejectsRelatedFutureEvents(t *testing.
 	})
 
 	t.Run("unrelated future event", func(t *testing.T) {
-		transform, _, _, _ := newHPatchTestTransform(t, testTranslator(t, new(int)))
+		transform, _, _, _ := newMekugiTestTransform(t, testTranslator(t, new(int)))
 		future := mustTestJSON(t, map[string]any{"type": "response.future", "call_id": "other", "name": "other"})
 		visible, err := transform.TransformSSE(future)
 		if err != nil || len(visible) != 1 || !bytes.Equal(visible[0], future) {
@@ -3388,15 +3388,15 @@ func TestHPatchBoundsPendingStreamCallsAndRejectsRelatedFutureEvents(t *testing.
 	})
 }
 
-func TestInProcessHPatchToolDescription(t *testing.T) {
-	translator := newInProcessHPatchTranslator(t.TempDir())
-	if got, want := translator.ToolDescription(), hpatch.ToolDescription(); got != want {
+func TestInProcessMekugiToolDescription(t *testing.T) {
+	translator := newInProcessMekugiTranslator(t.TempDir())
+	if got, want := translator.ToolDescription(), mekugi.ToolDescription(); got != want {
 		t.Fatalf("installed tool description differs from authoritative description:\n got %q\nwant %q", got, want)
 	}
 }
 
-func TestInProcessHPatchTranslatorUsesBaseDirectoryWithoutConfinement(t *testing.T) {
-	translator := newInProcessHPatchTranslator(t.TempDir())
+func TestInProcessMekugiTranslatorUsesBaseDirectoryWithoutConfinement(t *testing.T) {
+	translator := newInProcessMekugiTranslator(t.TempDir())
 	parent := t.TempDir()
 	directory := filepath.Join(parent, "base")
 	if err := os.Mkdir(directory, 0o700); err != nil {
@@ -3471,7 +3471,7 @@ func jsonQuoted(value string) string {
 	return strconv.Quote(value)
 }
 
-func TestHPatchReplacementSupportsTopLevelCodeModeForGrok(t *testing.T) {
+func TestMekugiReplacementSupportsTopLevelCodeModeForGrok(t *testing.T) {
 	workspace := t.TempDir()
 	request, err := parseResponsesRequest(mustTestJSON(t, map[string]any{
 		"model": grokModel, "stream": true, "input": []any{map[string]any{"role": "user", "content": "probe"}},
@@ -3480,7 +3480,7 @@ func TestHPatchReplacementSupportsTopLevelCodeModeForGrok(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	proxy := newManagedHPatchProxy(t, testTranslator(t, new(int)))
+	proxy := newManagedMekugiProxy(t, testTranslator(t, new(int)))
 	transform, err := proxy.prepareRequest(t.Context(), &request, "grok-session", "grok-thread", codexTurnMetadata{RequestKind: "turn", SubagentKind: "thread_spawn", Directories: map[string]json.RawMessage{workspace: nil}}, true)
 	if err != nil {
 		t.Fatal(err)
@@ -3500,7 +3500,7 @@ func TestHPatchReplacementSupportsTopLevelCodeModeForGrok(t *testing.T) {
 		}
 	}
 	if !names["hpatch"] || !names["shell"] || strings.Contains(execDescription, codeModeApplyPatchHeading) || strings.Contains(execDescription, "tools.exec_command") {
-		t.Fatal("Code Mode projection did not expose Hpatch and shell")
+		t.Fatal("Code Mode projection did not expose mekugi and shell")
 	}
 	if _, err := translateGrokRequest(mustTestJSON(t, request.fields)); err != nil {
 		t.Fatal(err)
@@ -3564,10 +3564,10 @@ func TestShellRecoversCodeModePrograms(t *testing.T) {
 			offset := inspectCodeModeRuntime(test.input).warningOffset
 			want := test.input[:offset] + warningInput + test.input[offset:]
 
-			translator := hpatchTranslatorFunc(func(context.Context, string, string) ([]byte, error) {
+			translator := mekugiTranslatorFunc(func(context.Context, string, string) ([]byte, error) {
 				return []byte(testTranslatedPatch), nil
 			})
-			transform, proxy, _, _ := newHPatchTestTransform(t, translator)
+			transform, proxy, _, _ := newMekugiTestTransform(t, translator)
 			visible, err := transform.TransformJSON(mustTestJSON(t, map[string]any{
 				"status": "completed",
 				"output": []any{map[string]any{

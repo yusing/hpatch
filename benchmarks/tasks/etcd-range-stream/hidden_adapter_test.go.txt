@@ -25,7 +25,7 @@ import (
 	pb "go.etcd.io/etcd/api/v3/etcdserverpb"
 )
 
-func TestHPatchBenchmarkProxyAdapterRejectsRangeStream(t *testing.T) {
+func TestMekugiBenchmarkProxyAdapterRejectsRangeStream(t *testing.T) {
 	_, err := (&kvs2kvc{}).RangeStream(context.Background(), &pb.RangeRequest{})
 	if status.Code(err) != codes.Unimplemented {
 		t.Fatalf("RangeStream error code = %s, want %s", status.Code(err), codes.Unimplemented)

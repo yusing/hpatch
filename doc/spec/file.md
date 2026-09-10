@@ -29,7 +29,7 @@ cancels that creation, including an empty initializer.
 
 `in` fails for missing or deleted paths. `mv` and `rm` fail without an active file.
 `new` and `mv` fail on destination collision. Parents of `new` and `mv` destinations must
-already exist. Hpatch does not create directories. All file and content changes remain
+already exist. Mekugi does not create directories. All file and content changes remain
 in memory until the complete invocation crosses the apply or translation boundary.
 
 Acceptance:

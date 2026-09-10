@@ -4,7 +4,7 @@ set -euo pipefail
 benchmark_root=$1
 shift
 if (($# == 0)); then
-	printf 'check-edit-loops: no retained hpatch event stream\n' >&2
+	printf 'check-edit-loops: no retained mekugi event stream\n' >&2
 	exit 1
 fi
 

@@ -71,7 +71,7 @@ export type Tool<T> = {
 };
 
 export type Plugin = {
-  apiVersion: "hpatch-tool-plugin/v1";
+  apiVersion: "mekugi-tool-plugin/v1";
   id: string;
   tools: Tool<unknown>[];
 };

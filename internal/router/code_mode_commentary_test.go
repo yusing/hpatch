@@ -10,7 +10,7 @@ import (
 )
 
 func TestCodeModeCommentaryLowersRuntimeExpressionAndPreservesOriginal(t *testing.T) {
-	transform, proxy, _, _ := newHPatchTestTransform(t, testTranslator(t, new(int)))
+	transform, proxy, _, _ := newMekugiTestTransform(t, testTranslator(t, new(int)))
 	proxy.commentaryEndpoint = "http://127.0.0.1:8080" + commentaryPublisherPath
 	source := "for (let i = 1; i <= 2; i++) {\n" +
 		"  await commentary(`Running ${i}/2`);\n" +
@@ -47,7 +47,7 @@ func TestCodeModeCommentaryLowersRuntimeExpressionAndPreservesOriginal(t *testin
 }
 
 func TestCodeModeCommentaryUsesOneRouteAndFallsBackToEvaluation(t *testing.T) {
-	transform, proxy, _, _ := newHPatchTestTransform(t, testTranslator(t, new(int)))
+	transform, proxy, _, _ := newMekugiTestTransform(t, testTranslator(t, new(int)))
 	proxy.commentaryEndpoint = "http://127.0.0.1:8080" + commentaryPublisherPath
 	lowered, changed, err := transform.lowerCodeModeCommentary(
 		"call-code", "await commentary('first');\nawait commentary('second');",
@@ -75,7 +75,7 @@ func TestCodeModeCommentaryUsesOneRouteAndFallsBackToEvaluation(t *testing.T) {
 }
 
 func TestCodeModeCommentarySupportsNestingAndAlwaysReturnsUndefined(t *testing.T) {
-	transform, proxy, _, _ := newHPatchTestTransform(t, testTranslator(t, new(int)))
+	transform, proxy, _, _ := newMekugiTestTransform(t, testTranslator(t, new(int)))
 	proxy.commentaryEndpoint = "http://127.0.0.1:8080" + commentaryPublisherPath
 	lowered, changed, err := transform.lowerCodeModeCommentary(
 		"call-nested", `await commentary(await commentary("inner"));`,
@@ -87,7 +87,7 @@ func TestCodeModeCommentarySupportsNestingAndAlwaysReturnsUndefined(t *testing.T
 }
 
 func TestCodeModeCommentaryLowersAuthoritativeStreamingInput(t *testing.T) {
-	transform, proxy, _, _ := newHPatchTestTransform(t, testTranslator(t, new(int)))
+	transform, proxy, _, _ := newMekugiTestTransform(t, testTranslator(t, new(int)))
 	proxy.commentaryEndpoint = "http://127.0.0.1:8080" + commentaryPublisherPath
 	source := `await commentary("Working");`
 	added := mustTestJSON(t, map[string]any{
@@ -137,7 +137,7 @@ func TestCodeModeCommentaryLowersAuthoritativeStreamingInput(t *testing.T) {
 }
 
 func TestCodeModeWithoutExplicitCommentaryPreservesOutput(t *testing.T) {
-	transform, proxy, _, _ := newHPatchTestTransform(t, testTranslator(t, new(int)))
+	transform, proxy, _, _ := newMekugiTestTransform(t, testTranslator(t, new(int)))
 	proxy.commentaryEndpoint = "http://127.0.0.1:8080" + commentaryPublisherPath
 	item := map[string]json.RawMessage{
 		"type": mustMarshalJSON("custom_tool_call"), "name": mustMarshalJSON(transform.codeModeToolName),
@@ -167,7 +167,7 @@ func TestCodeModeUnparseableInputPassesThrough(t *testing.T) {
 	} {
 		for _, streaming := range []bool{false, true} {
 			t.Run(source+"/streaming="+strconv.FormatBool(streaming), func(t *testing.T) {
-				transform, proxy, _, _ := newHPatchTestTransform(t, testTranslator(t, new(int)))
+				transform, proxy, _, _ := newMekugiTestTransform(t, testTranslator(t, new(int)))
 				proxy.commentaryEndpoint = "http://127.0.0.1:8080" + commentaryPublisherPath
 				item := map[string]any{
 					"type": "custom_tool_call", "name": transform.codeModeToolName,

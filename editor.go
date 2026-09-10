@@ -1,4 +1,4 @@
-package hpatch
+package mekugi
 
 import (
 	"cmp"
@@ -6,7 +6,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/yusing/hpatch/internal/verifiedrow"
+	"github.com/yusing/mekugi/internal/verifiedrow"
 )
 
 type targetSpan struct {

@@ -19,7 +19,7 @@ import (
 	"testing/synctest"
 	"time"
 
-	"github.com/yusing/hpatch/internal/patchtest"
+	"github.com/yusing/mekugi/internal/patchtest"
 )
 
 type serverForwardResult struct {
@@ -144,7 +144,7 @@ func TestExecuteRequestFailsClosedBeforeUpstreamWhenRewriteIsIneligible(t *testi
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			provider := &serverFakeProvider{}
-			err := executeRequest(t.Context(), t.Context(), serverRequest(t, test.mutate), test.headers, test.sessionID, provider, io.Discard, nil, newManagedHPatchProxy(t, testTranslator(t, new(int))), nil, nil)
+			err := executeRequest(t.Context(), t.Context(), serverRequest(t, test.mutate), test.headers, test.sessionID, provider, io.Discard, nil, newManagedMekugiProxy(t, testTranslator(t, new(int))), nil, nil)
 			if err == nil || !strings.Contains(err.Error(), test.want) {
 				t.Fatalf("error = %v, want containing %q", err, test.want)
 			}
@@ -168,8 +168,8 @@ func TestExecuteRequestDoesNotRequireWorkspaceMetadata(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			responseBody := string(mustTestJSON(t, map[string]any{"status": "completed"}))
 			provider := &serverFakeProvider{results: []serverForwardResult{{response: serverHTTPResponse(responseBody)}}}
-			proxy := newManagedHPatchProxy(t, hpatchTranslatorFunc(func(context.Context, string, string) ([]byte, error) {
-				t.Fatal("response without an hpatch call reached the translator")
+			proxy := newManagedMekugiProxy(t, mekugiTranslatorFunc(func(context.Context, string, string) ([]byte, error) {
+				t.Fatal("response without an mekugi call reached the translator")
 				return nil, nil
 			}))
 			var output bytes.Buffer
@@ -201,7 +201,7 @@ func TestExecuteRequestSupportsNativeToolsOnTheSameResponsesPath(t *testing.T) {
 		"status": "completed",
 		"output": []any{map[string]any{
 			"type": "custom_tool_call", "id": "item-H", "call_id": "call-H",
-			"name": hpatchToolName, "input": testHPatchScript, "status": "completed",
+			"name": mekugiToolName, "input": testMekugiScript, "status": "completed",
 		}},
 	})))}}}
 	request := serverRequest(t, func(request map[string]any) {
@@ -218,7 +218,7 @@ func TestExecuteRequestSupportsNativeToolsOnTheSameResponsesPath(t *testing.T) {
 		provider,
 		&output,
 		nil,
-		newManagedHPatchProxy(t, testTranslator(t, new(int))),
+		newManagedMekugiProxy(t, testTranslator(t, new(int))),
 		nil, nil,
 	)
 	if err != nil {
@@ -272,8 +272,8 @@ func TestExecuteRequestForwardsCompactionWithoutRouterRewrite(t *testing.T) {
 	response := serverHTTPResponse(responseBody)
 	response.Header.Set("Content-Type", "text/event-stream")
 	provider := &serverFakeProvider{results: []serverForwardResult{{response: response}}}
-	proxy := newManagedHPatchProxy(t, hpatchTranslatorFunc(func(context.Context, string, string) ([]byte, error) {
-		t.Fatal("compaction reached the hpatch translator")
+	proxy := newManagedMekugiProxy(t, mekugiTranslatorFunc(func(context.Context, string, string) ([]byte, error) {
+		t.Fatal("compaction reached the mekugi translator")
 		return nil, nil
 	}))
 	codec := mustCTP2Codec(t)
@@ -353,8 +353,8 @@ func TestExecuteRequestForwardsRewrittenRequestAndRecordsUsage(t *testing.T) {
 		"future": map[string]any{"kept": true},
 	}))
 	provider := &serverFakeProvider{results: []serverForwardResult{{response: serverHTTPResponse(responseBody)}}}
-	proxy := newManagedHPatchProxy(t, hpatchTranslatorFunc(func(context.Context, string, string) ([]byte, error) {
-		t.Fatal("response without an hpatch call reached the translator")
+	proxy := newManagedMekugiProxy(t, mekugiTranslatorFunc(func(context.Context, string, string) ([]byte, error) {
+		t.Fatal("response without an mekugi call reached the translator")
 		return nil, nil
 	}))
 	var output bytes.Buffer
@@ -419,7 +419,7 @@ func TestExecuteRequestForwardsRewrittenRequestAndRecordsUsage(t *testing.T) {
 	}
 }
 
-func TestShellHReadAfterAppliedHPatchCarrierRemainsModelVisible(t *testing.T) {
+func TestShellHReadAfterAppliedMekugiCarrierRemainsModelVisible(t *testing.T) {
 	workspace := t.TempDir()
 	path := filepath.Join(workspace, "file.txt")
 	initial := "alpha\nbeta\ngamma\n"
@@ -427,7 +427,7 @@ func TestShellHReadAfterAppliedHPatchCarrierRemainsModelVisible(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	hpatchScript := "in file.txt\ntype 2:f44e \"B\"\n"
+	mekugiScript := "in file.txt\ntype 2:f44e \"B\"\n"
 	shellInput := "hread file.txt 1:3"
 	provider := &serverFakeProvider{
 		results: []serverForwardResult{
@@ -435,7 +435,7 @@ func TestShellHReadAfterAppliedHPatchCarrierRemainsModelVisible(t *testing.T) {
 				"status": "completed",
 				"output": []any{map[string]any{
 					"type": "custom_tool_call", "id": "item-H", "call_id": "call-H",
-					"name": hpatchToolName, "input": hpatchScript, "status": "completed",
+					"name": mekugiToolName, "input": mekugiScript, "status": "completed",
 				}},
 			})))},
 			{response: serverHTTPResponse(string(mustTestJSON(t, map[string]any{
@@ -448,10 +448,10 @@ func TestShellHReadAfterAppliedHPatchCarrierRemainsModelVisible(t *testing.T) {
 			{response: serverHTTPResponse(`{"status":"completed","output":[]}`)},
 		},
 	}
-	translator := newInProcessHPatchTranslator(t.TempDir())
-	proxy := newManagedHPatchProxy(t, translator)
+	translator := newInProcessMekugiTranslator(t.TempDir())
+	proxy := newManagedMekugiProxy(t, translator)
 	headers := serverMetadataHeaders(t, "turn", map[string]json.RawMessage{workspace: nil})
-	const sessionID = "session-hpatch-shell-hread"
+	const sessionID = "session-mekugi-shell-hread"
 
 	requestWith := func(items ...any) parsedResponsesRequest {
 		return serverRequest(t, func(request map[string]any) {
@@ -490,20 +490,20 @@ func TestShellHReadAfterAppliedHPatchCarrierRemainsModelVisible(t *testing.T) {
 	firstVisible := runRequest(requestWith(map[string]any{"role": "user", "content": "edit file.txt"}))
 	firstItems := outputItems(firstVisible)
 	if len(firstItems) != 1 || jsonString(firstItems[0], "name") != "exec" {
-		t.Fatalf("translated hpatch response = %s", firstVisible)
+		t.Fatalf("translated mekugi response = %s", firstVisible)
 	}
-	hpatchCarrier := firstItems[0]
-	carrierInput := jsonString(hpatchCarrier, "input")
+	mekugiCarrier := firstItems[0]
+	carrierInput := jsonString(mekugiCarrier, "input")
 	program, ok := strings.CutPrefix(
 		carrierInput,
-		hpatchApplyExecMarker+"await tools.apply_patch(",
+		mekugiApplyExecMarker+"await tools.apply_patch(",
 	)
 	if !ok {
-		t.Fatalf("hpatch carrier input = %q", carrierInput)
+		t.Fatalf("mekugi carrier input = %q", carrierInput)
 	}
 	encodedPatch, encodedReport, ok := strings.Cut(program, ");\ntext(")
 	if !ok {
-		t.Fatalf("hpatch carrier framing = %q", carrierInput)
+		t.Fatalf("mekugi carrier framing = %q", carrierInput)
 	}
 	encodedReport = strings.TrimSuffix(encodedReport, ");")
 	patch, err := strconv.Unquote(encodedPatch)
@@ -522,10 +522,10 @@ func TestShellHReadAfterAppliedHPatchCarrierRemainsModelVisible(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	hpatchOutput := map[string]any{
+	mekugiOutput := map[string]any{
 		"type": "custom_tool_call_output", "call_id": "call-H", "output": report,
 	}
-	secondVisible := runRequest(requestWith(hpatchCarrier, hpatchOutput))
+	secondVisible := runRequest(requestWith(mekugiCarrier, mekugiOutput))
 	secondItems := outputItems(secondVisible)
 	if len(secondItems) != 1 ||
 		jsonString(secondItems[0], "name") != "exec" ||
@@ -564,7 +564,7 @@ func TestShellHReadAfterAppliedHPatchCarrierRemainsModelVisible(t *testing.T) {
 	shellOutput := map[string]any{
 		"type": "custom_tool_call_output", "call_id": "call-R", "output": shellStdout.String(),
 	}
-	runRequest(requestWith(hpatchCarrier, hpatchOutput, shellCarrier, shellOutput))
+	runRequest(requestWith(mekugiCarrier, mekugiOutput, shellCarrier, shellOutput))
 	if len(provider.forwarded) != 3 {
 		t.Fatalf("upstream requests = %d, want 3", len(provider.forwarded))
 	}
@@ -604,7 +604,7 @@ func TestExecuteRequestRejectsDirectAdditionalApplyPatchWithoutExecCarrier(t *te
 	responseBody := string(mustTestJSON(t, map[string]any{"status": "completed", "output": []any{}}))
 	provider := &serverFakeProvider{results: []serverForwardResult{{response: serverHTTPResponse(responseBody)}}}
 	var output bytes.Buffer
-	proxy := newManagedHPatchProxy(t, testTranslator(t, new(int)))
+	proxy := newManagedMekugiProxy(t, testTranslator(t, new(int)))
 	err := executeRequest(
 		t.Context(),
 		t.Context(),
@@ -637,7 +637,7 @@ func TestExecuteRequestRecordsUsageAndFailureWhenDeliveryFails(t *testing.T) {
 	}))
 	provider := &serverFakeProvider{results: []serverForwardResult{{response: serverHTTPResponse(responseBody)}}}
 	issues := NewCriticalErrors()
-	err := executeRequest(t.Context(), t.Context(), serverRequest(t, nil), serverMetadataHeaders(t, "turn", map[string]json.RawMessage{workspace: nil}), "session", provider, serverErrorWriter{err: io.ErrClosedPipe}, issues, newManagedHPatchProxy(t, testTranslator(t, new(int))), nil, nil)
+	err := executeRequest(t.Context(), t.Context(), serverRequest(t, nil), serverMetadataHeaders(t, "turn", map[string]json.RawMessage{workspace: nil}), "session", provider, serverErrorWriter{err: io.ErrClosedPipe}, issues, newManagedMekugiProxy(t, testTranslator(t, new(int))), nil, nil)
 	if err == nil {
 		t.Fatal("delivery failure returned no error")
 	}
@@ -725,7 +725,7 @@ func TestResponsesHandlerDoesNotLogClientCancellationAsOperationalEvent(t *testi
 		}, nil
 	})
 	issues := NewCriticalErrors()
-	handler := responsesHandler(t.Context(), time.Minute, provider, issues, newManagedHPatchProxy(t, nil), nil, nil)
+	handler := responsesHandler(t.Context(), time.Minute, provider, issues, newManagedMekugiProxy(t, nil), nil, nil)
 	handled := make(chan struct{})
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		handler(writer, request)
@@ -1204,7 +1204,7 @@ func TestExecuteRequestIndependentUpstreamCancellationIsFailure(t *testing.T) {
 
 func TestExecuteRequestTransformFailureLifecycle(t *testing.T) {
 	workspace := t.TempDir()
-	item := testHPatchItem()
+	item := testMekugiItem()
 	item["type"] = "message"
 	responseBody := string(mustTestJSON(t, map[string]any{
 		"status": "completed",
@@ -1216,7 +1216,7 @@ func TestExecuteRequestTransformFailureLifecycle(t *testing.T) {
 		t.Context(), t.Context(), serverRequest(t, nil),
 		serverMetadataHeaders(t, "turn", map[string]json.RawMessage{workspace: nil}),
 		"session", provider, io.Discard, issues,
-		newManagedHPatchProxy(t, testTranslator(t, new(int))), nil, nil,
+		newManagedMekugiProxy(t, testTranslator(t, new(int))), nil, nil,
 	)
 	if err == nil {
 		t.Fatal("transform failure returned no error")
@@ -1225,7 +1225,7 @@ func TestExecuteRequestTransformFailureLifecycle(t *testing.T) {
 
 func TestCommittedSSETransformFailureDefersSafeCauseToCriticalNotice(t *testing.T) {
 	workspace := t.TempDir()
-	added := testHPatchItem()
+	added := testMekugiItem()
 	added["status"] = "in_progress"
 	added["input"] = ""
 	secret := "Authorization Bearer token-plain prompt unquoted-secret-script"
@@ -1250,12 +1250,12 @@ func TestCommittedSSETransformFailureDefersSafeCauseToCriticalNotice(t *testing.
 	req.Header.Set(sessionIDHeader, "session")
 	output := httptest.NewRecorder()
 	responsesHandler(t.Context(), time.Minute, provider, issues,
-		newManagedHPatchProxy(t, testTranslator(t, new(int))), nil, nil)(output, req)
+		newManagedMekugiProxy(t, testTranslator(t, new(int))), nil, nil)(output, req)
 
 	if output.Code != http.StatusOK || !strings.Contains(output.Body.String(), "response.created") {
 		t.Fatalf("stream was not committed before transform failure: %d %s", output.Code, output.Body.String())
 	}
-	if strings.Contains(output.Body.String(), "unsupported Hpatch-related") || strings.Contains(output.Body.String(), secret) {
+	if strings.Contains(output.Body.String(), "unsupported HPATCH-related") || strings.Contains(output.Body.String(), secret) {
 		t.Fatalf("failure detail was written into the active response: %s", output.Body.String())
 	}
 	pending := strings.Join(issues.Pending(), "\n")
@@ -1412,7 +1412,7 @@ func TestProviderClientForwardsCodexAuthenticationAndRequestHeaders(t *testing.T
 	headers.Set(openAISubagentHeader, threadSpawnSubagent)
 	headers.Set(codexTurnMetadataHeader, "metadata")
 	headers.Set("x-codex-turn-state", "opaque-turn-state")
-	headers.Set(hpatchCaptureIDHeader, "capture")
+	headers.Set(mekugiCaptureIDHeader, "capture")
 	httpClient := &http.Client{Transport: serverRoundTripper(func(request *http.Request) (*http.Response, error) {
 		trusted := map[string]string{
 			"Authorization":      "Bearer caller-token",
@@ -1425,7 +1425,7 @@ func TestProviderClientForwardsCodexAuthenticationAndRequestHeaders(t *testing.T
 				t.Errorf("header %s = %q, want %q", name, got, value)
 			}
 		}
-		for _, name := range []string{threadIDHeader, clientRequestIDHeader, codexWindowIDHeader, codexBetaFeaturesHeader, codexResponsesLiteHeader, openAISubagentHeader, codexTurnMetadataHeader, "x-codex-turn-state", hpatchCaptureIDHeader} {
+		for _, name := range []string{threadIDHeader, clientRequestIDHeader, codexWindowIDHeader, codexBetaFeaturesHeader, codexResponsesLiteHeader, openAISubagentHeader, codexTurnMetadataHeader, "x-codex-turn-state", mekugiCaptureIDHeader} {
 			if got, want := request.Header.Values(name), headers.Values(name); !slices.Equal(got, want) {
 				t.Errorf("header %s = %q, want %q", name, got, want)
 			}

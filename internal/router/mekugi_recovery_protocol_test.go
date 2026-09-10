@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/yusing/hpatch"
+	"github.com/yusing/mekugi"
 )
 
 func recoverScriptForTest(ctx context.Context, rejectedScript, payload string) (string, error) {
@@ -14,10 +14,10 @@ func recoverScriptForTest(ctx context.Context, rejectedScript, payload string) (
 	return recovered.script, err
 }
 
-func TestHPatchRecoveryDescriptionIsNonInstructional(t *testing.T) {
+func TestMekugiRecoveryDescriptionIsNonInstructional(t *testing.T) {
 	const want = "Target correction for the latest rejected HPATCH/2 script. Invalid recovery leaves the retained script and workspace unchanged."
-	if hpatchRecoveryDescription != want {
-		t.Fatalf("hpatchRecoveryDescription = %q, want %q", hpatchRecoveryDescription, want)
+	if mekugiRecoveryDescription != want {
+		t.Fatalf("mekugiRecoveryDescription = %q, want %q", mekugiRecoveryDescription, want)
 	}
 }
 
@@ -213,15 +213,15 @@ func TestRecoveryGrammarContainsHandleAndOrdinaryTarget(t *testing.T) {
 		`start: _blank_line* recovery (_separator recovery)* _blank_line*`,
 		`recovery: HANDLE SP target`,
 	} {
-		if !strings.Contains(hpatchRecoveryGrammar, want) {
+		if !strings.Contains(mekugiRecoveryGrammar, want) {
 			t.Fatalf("recovery grammar does not contain %q", want)
 		}
 	}
 }
 
 func TestRecoveryGrammarMirrorsPublicMultilineTargetTerminal(t *testing.T) {
-	public := grammarTerminalLine(t, hpatch.ToolGrammar(), "TARGET_QUOTED")
-	recovery := grammarTerminalLine(t, hpatchRecoveryGrammar, "TARGET_QUOTED")
+	public := grammarTerminalLine(t, mekugi.ToolGrammar(), "TARGET_QUOTED")
+	recovery := grammarTerminalLine(t, mekugiRecoveryGrammar, "TARGET_QUOTED")
 	if recovery != public {
 		t.Fatalf("recovery TARGET_QUOTED = %q, public = %q", recovery, public)
 	}

@@ -35,7 +35,7 @@
       "command": [
         "sh",
         "-c",
-        "go test . -run '^TestHPatchBenchmarkCollapse$' -count=1 || { status=$?; printf '%s\\n' 'batch diagnostic collapse check failed'; exit \"$status\"; }"
+        "go test . -run '^TestMekugiBenchmarkCollapse$' -count=1 || { status=$?; printf '%s\\n' 'batch diagnostic collapse check failed'; exit \"$status\"; }"
       ],
       "required": true,
       "expect_base": "fail",

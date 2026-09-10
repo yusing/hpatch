@@ -1,14 +1,14 @@
-package hpatch
+package mekugi
 
 import (
 	_ "embed"
 
-	codexinstructions "github.com/yusing/hpatch/contrib/codex"
+	codexinstructions "github.com/yusing/mekugi/contrib/codex"
 )
 
 // ToolDescription returns the concise model-visible call contract.
 func ToolDescription() string {
-	return codexinstructions.HPatchToolDescription
+	return codexinstructions.MekugiToolDescription
 }
 
 //go:embed tool_grammar.lark

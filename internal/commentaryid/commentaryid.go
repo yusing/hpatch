@@ -4,8 +4,8 @@ package commentaryid
 import "strings"
 
 const (
-	OperationPrefix = "msg_hpatch_commentary_"
-	SubagentPrefix  = "msg_hpatch_subagent_commentary_"
+	OperationPrefix = "msg_mekugi_commentary_"
+	SubagentPrefix  = "msg_mekugi_subagent_commentary_"
 )
 
 // Generated reports membership in a router-owned message ID namespace. Message

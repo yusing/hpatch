@@ -1,4 +1,4 @@
-package hpatch
+package mekugi
 
 import (
 	"bytes"
@@ -149,7 +149,7 @@ func (hooks DiagnoseHooks) Report(ctx context.Context, markdown string) error {
 	defer cancel()
 	event := diagnoseHookEvent{
 		Body:  markdown,
-		Title: "hpatch diagnostic",
+		Title: "mekugi diagnostic",
 	}
 	if metadata, ok := attemptMetadataFromContext(ctx); ok && metadata.Title != "" {
 		event.Title = metadata.Title
@@ -221,7 +221,7 @@ func newErrorHookEvent(ctx context.Context, sourceError *commandError, diagnosti
 		FailedCommand: sourceError.Source,
 		Failure:       sourceError.Message,
 	}
-	event.Title = "hpatch command failed"
+	event.Title = "mekugi command failed"
 	if metadata, ok := attemptMetadataFromContext(ctx); ok {
 		event.attemptHookFields = newAttemptHookFields(metadata, "evaluated", "rejected", 0)
 		if metadata.Title != "" {
@@ -391,14 +391,14 @@ func runOutcomeHooks(
 	}
 	event := outcomeHookEvent{
 		attemptHookFields: newAttemptHookFields(metadata, stage, outcome, len(patch)),
-		Title:             "hpatch attempt " + outcome,
+		Title:             "mekugi attempt " + outcome,
 		EmittedPayload:    metadata.EmittedPayload,
 		EvaluatedScript:   metadata.EvaluatedScript,
 		RecoveryDelta:     metadata.RecoveryDelta,
 		Patch:             string(patch),
 	}
 	if metadata.Correction {
-		event.Title = "hpatch recovery attempt " + outcome
+		event.Title = "mekugi recovery attempt " + outcome
 	}
 	if metadata.Title != "" {
 		event.Title += ": " + metadata.Title
@@ -413,11 +413,11 @@ func formatOutcomeHookMarkdown(event outcomeHookEvent) string {
 	var body strings.Builder
 	writeAttemptHookFields(&body, event.attemptHookFields)
 	if event.EmittedPayload != "" {
-		label := "Emitted hpatch script"
-		language := "hpatch"
+		label := "Emitted HPATCH script"
+		language := "mekugi"
 		if event.Correction {
 			label = "Emitted recovery payload"
-			language = "hpatch-recover"
+			language = "mekugi-recover"
 		}
 		writeHookFencedBlock(&body, label, language, event.EmittedPayload)
 	}

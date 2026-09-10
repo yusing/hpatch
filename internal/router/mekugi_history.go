@@ -10,21 +10,21 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/yusing/hpatch"
+	"github.com/yusing/mekugi"
 )
 
 const (
-	maxHPatchHistorySessionBytes = 32 << 20
-	maxHPatchHistoryGlobalBytes  = 128 << 20
+	maxMekugiHistorySessionBytes = 32 << 20
+	maxMekugiHistoryGlobalBytes  = 128 << 20
 )
 
-type hpatchHistory struct {
+type mekugiHistory struct {
 	toolName string
 	pluginID string
 
 	script string
 	root   string
-	// evaluated is the script hpatch actually received when it differs from the
+	// evaluated is the script mekugi actually received when it differs from the
 	// model's payload, which happens when the payload was a recovery edit. Replay
 	// must restore what the model emitted, while a following recovery must target
 	// the script that produced the latest diagnostic.
@@ -41,38 +41,38 @@ type hpatchHistory struct {
 	outputWarning        string
 	translationError     string
 	evaluatorRejected    bool
-	rejections           []hpatch.HostRejection
+	rejections           []mekugi.HostRejection
 	correlationID        string
 	attempt              int
 	upstreamItem         map[string]json.RawMessage
 	replayCarrier        bool
 	commentaryMessageIDs []string
 	bytes                int
-	// unevaluated marks a call the proxy rejected before hpatch saw it. Such a
+	// unevaluated marks a call the proxy rejected before mekugi saw it. Such a
 	// recovery changed nothing and has no script of its own, so another recovery
 	// looks past it to the rejected script it was trying to repair.
 	unevaluated      bool
 	alreadySatisfied bool
 	confirmed        bool
-	aliases          []hpatch.TargetAlias
+	aliases          []mekugi.TargetAlias
 	// sequence orders a request-visible view (or the bounded memory cache).
 	// It is never durable: replay derives recovery order from the input.
 	sequence uint64
 }
 
-type hpatchHistorySession struct {
-	calls map[string]hpatchHistory
+type mekugiHistorySession struct {
+	calls map[string]mekugiHistory
 	bytes int
 	// nextSequence is the order to assign the session's next retained call.
 	nextSequence uint64
 	lastUsed     uint64
 }
 
-func (p *hpatchProxy) activateSession(sessionID string) error {
+func (p *mekugiProxy) activateSession(sessionID string) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.closed {
-		return errors.New("hpatch response proxy is closed")
+		return errors.New("mekugi response proxy is closed")
 	}
 	p.activeSessions[sessionID]++
 	if session := p.sessions[sessionID]; session != nil {
@@ -81,7 +81,7 @@ func (p *hpatchProxy) activateSession(sessionID string) error {
 	return nil
 }
 
-func (p *hpatchProxy) deactivateSession(sessionID string) {
+func (p *mekugiProxy) deactivateSession(sessionID string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.activeSessions[sessionID] <= 1 {
@@ -91,24 +91,24 @@ func (p *hpatchProxy) deactivateSession(sessionID string) {
 	p.activeSessions[sessionID]--
 }
 
-func (p *hpatchProxy) touchSession(session *hpatchHistorySession) {
+func (p *mekugiProxy) touchSession(session *mekugiHistorySession) {
 	p.sessionSequence++
 	session.lastUsed = p.sessionSequence
 }
 
-func (p *hpatchProxy) rememberBatch(sessionID string, histories map[string]hpatchHistory) error {
+func (p *mekugiProxy) rememberBatch(sessionID string, histories map[string]mekugiHistory) error {
 	if len(histories) == 0 {
 		return nil
 	}
-	prepared := make(map[string]hpatchHistory, len(histories))
+	prepared := make(map[string]mekugiHistory, len(histories))
 	for callID, history := range histories {
 		encodedItem, err := marshalProtocolJSON(history.upstreamItem)
 		if err != nil {
-			return fmt.Errorf("encode hpatch history item: %w", err)
+			return fmt.Errorf("encode mekugi history item: %w", err)
 		}
 		history.bytes = len(sessionID) + len(callID) + len(history.toolName) + len(history.pluginID) + len(history.script) + len(history.root) + len(history.evaluated) + len(history.patch) + len(history.carrierKind) + len(history.carrierName) + len(history.carrierPayload) + len(history.report) + len(history.outputWarning) + len(history.translationError) + len(history.correlationID) + len(encodedItem)
 		for _, rejection := range history.rejections {
-			history.bytes += hpatchRejectionTextBytes(rejection)
+			history.bytes += mekugiRejectionTextBytes(rejection)
 		}
 		for _, alias := range history.aliases {
 			history.bytes += len(alias.Path) + len(alias.Before) + len(alias.After)
@@ -119,14 +119,14 @@ func (p *hpatchProxy) rememberBatch(sessionID string, histories map[string]hpatc
 		prepared[callID] = history
 	}
 	if len(prepared) > maxSessionTurns {
-		return errors.New("hpatch history batch exceeds call capacity")
+		return errors.New("mekugi history batch exceeds call capacity")
 	}
 
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
 	existing := p.sessions[sessionID]
-	calls := make(map[string]hpatchHistory, len(prepared))
+	calls := make(map[string]mekugiHistory, len(prepared))
 	nextSequence := uint64(0)
 	oldSessionBytes := 0
 	sessionBytes := 0
@@ -158,13 +158,13 @@ func (p *hpatchProxy) rememberBatch(sessionID string, histories map[string]hpatc
 		protected[callID] = true
 	}
 
-	for len(calls) > maxSessionTurns || sessionBytes > maxHPatchHistorySessionBytes {
+	for len(calls) > maxSessionTurns || sessionBytes > maxMekugiHistorySessionBytes {
 		oldest, ok := oldestHistoryCall(calls, protected)
 		if !ok {
 			if len(calls) > maxSessionTurns {
-				return errors.New("hpatch history call capacity reached")
+				return errors.New("mekugi history call capacity reached")
 			}
-			return errors.New("hpatch history byte capacity reached")
+			return errors.New("mekugi history byte capacity reached")
 		}
 		sessionBytes -= calls[oldest].bytes
 		delete(calls, oldest)
@@ -194,12 +194,12 @@ func (p *hpatchProxy) rememberBatch(sessionID string, histories map[string]hpatc
 	})
 
 	evicted := make([]string, 0)
-	for sessionCount > maxSessionHistories || totalBytes > maxHPatchHistoryGlobalBytes {
+	for sessionCount > maxSessionHistories || totalBytes > maxMekugiHistoryGlobalBytes {
 		if len(evicted) == len(candidates) {
 			if sessionCount > maxSessionHistories {
-				return errors.New("hpatch history session capacity reached")
+				return errors.New("mekugi history session capacity reached")
 			}
-			return errors.New("hpatch history byte capacity reached")
+			return errors.New("mekugi history byte capacity reached")
 		}
 		id := candidates[len(evicted)].id
 		evicted = append(evicted, id)
@@ -211,7 +211,7 @@ func (p *hpatchProxy) rememberBatch(sessionID string, histories map[string]hpatc
 	}
 
 	if existing == nil {
-		existing = &hpatchHistorySession{}
+		existing = &mekugiHistorySession{}
 		p.sessions[sessionID] = existing
 	}
 	existing.calls = calls
@@ -222,14 +222,14 @@ func (p *hpatchProxy) rememberBatch(sessionID string, histories map[string]hpatc
 	return nil
 }
 
-func hpatchRejectionTextBytes(rejection hpatch.HostRejection) int {
+func mekugiRejectionTextBytes(rejection mekugi.HostRejection) int {
 	return len(rejection.Operation) + len(rejection.Target) + len(rejection.TargetAliasRelation) +
 		len(rejection.Reason) + len(rejection.Path)
 }
 
-func oldestHistoryCall(histories map[string]hpatchHistory, protected map[string]bool) (string, bool) {
+func oldestHistoryCall(histories map[string]mekugiHistory, protected map[string]bool) (string, bool) {
 	oldestID := ""
-	var oldest hpatchHistory
+	var oldest mekugiHistory
 	found := false
 	for callID, history := range histories {
 		if protected[callID] {
@@ -244,12 +244,12 @@ func oldestHistoryCall(histories map[string]hpatchHistory, protected map[string]
 	return oldestID, found
 }
 
-func (p *hpatchProxy) history(sessionID, callID string) (hpatchHistory, bool) {
+func (p *mekugiProxy) history(sessionID, callID string) (mekugiHistory, bool) {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 	session := p.sessions[sessionID]
 	if session == nil {
-		return hpatchHistory{}, false
+		return mekugiHistory{}, false
 	}
 	history, ok := session.calls[callID]
 	return history, ok
@@ -258,8 +258,8 @@ func (p *hpatchProxy) history(sessionID, callID string) (hpatchHistory, bool) {
 // reconcileVisibleInput constructs recovery ancestry from the validated request,
 // never from a routing session's most recent turn. All changes stay local until
 // the entire input is valid, including output confirmations.
-func (p *hpatchProxy) reconcileVisibleInput(ctx context.Context, request *parsedResponsesRequest, workspace, sessionID string) (map[string]hpatchHistory, error) {
-	visible := make(map[string]hpatchHistory)
+func (p *mekugiProxy) reconcileVisibleInput(ctx context.Context, request *parsedResponsesRequest, workspace, sessionID string) (map[string]mekugiHistory, error) {
+	visible := make(map[string]mekugiHistory)
 	raw, ok := request.fields["input"]
 	if !ok {
 		return visible, nil
@@ -365,7 +365,7 @@ func (p *hpatchProxy) reconcileVisibleInput(ctx context.Context, request *parsed
 		if len(history.upstreamItem) != 0 {
 			items[index] = maps.Clone(history.upstreamItem)
 		} else {
-			item["name"] = mustMarshalJSON(cmp.Or(history.toolName, hpatchToolName))
+			item["name"] = mustMarshalJSON(cmp.Or(history.toolName, mekugiToolName))
 			item["input"] = mustMarshalJSON(history.script)
 		}
 		changed = true
@@ -395,13 +395,13 @@ func appendToolOutputWarning(raw json.RawMessage, warning string) (json.RawMessa
 	return mustMarshalJSON(append(parts, notice)), true, nil
 }
 
-func (t *hpatchResponseTransform) recordLocal(callID string, history *hpatchHistory) {
+func (t *mekugiResponseTransform) recordLocal(callID string, history *mekugiHistory) {
 	if t.nativeTools && history.carrierKind == "" {
 		history.carrierKind = codeModeCarrierFunction
 		history.carrierName = nativeExecCommandToolName
 		history.carrierPayload = renderExecCarrier(
 			codeModeCarrierFunction,
-			execCommandArguments(hpatchNativeCommand(*history), nil),
+			execCommandArguments(mekugiNativeCommand(*history), nil),
 			false,
 			nil,
 		)
@@ -411,7 +411,7 @@ func (t *hpatchResponseTransform) recordLocal(callID string, history *hpatchHist
 	t.local[callID] = *history
 }
 
-func (t *hpatchResponseTransform) commitHistory() error {
+func (t *mekugiResponseTransform) commitHistory() error {
 	if t.historyCommitted {
 		return nil
 	}
@@ -428,15 +428,15 @@ func (t *hpatchResponseTransform) commitHistory() error {
 	return nil
 }
 
-func (t *hpatchResponseTransform) commitLocalCall(callID string) error {
+func (t *mekugiResponseTransform) commitLocalCall(callID string) error {
 	history, exists := t.local[callID]
 	if !exists {
 		return nil
 	}
-	if err := t.proxy.replayStore.put(t.ctx, t.directory, map[string]hpatchHistory{callID: history}); err != nil {
+	if err := t.proxy.replayStore.put(t.ctx, t.directory, map[string]mekugiHistory{callID: history}); err != nil {
 		return err
 	}
-	if err := t.proxy.rememberBatch(t.historySessionID, map[string]hpatchHistory{callID: history}); err != nil && t.proxy.replayStore == nil {
+	if err := t.proxy.rememberBatch(t.historySessionID, map[string]mekugiHistory{callID: history}); err != nil && t.proxy.replayStore == nil {
 		return err
 	}
 	t.handOffCommentary(callID)
@@ -444,13 +444,13 @@ func (t *hpatchResponseTransform) commitLocalCall(callID string) error {
 }
 
 // targetAliases includes only visible ancestry and calls applied in this turn.
-func (t *hpatchResponseTransform) targetAliases() []hpatch.TargetAlias {
+func (t *mekugiResponseTransform) targetAliases() []mekugi.TargetAlias {
 	histories := slices.Collect(maps.Values(t.visible))
-	slices.SortFunc(histories, func(a, b hpatchHistory) int { return cmp.Compare(a.sequence, b.sequence) })
+	slices.SortFunc(histories, func(a, b mekugiHistory) int { return cmp.Compare(a.sequence, b.sequence) })
 	local := slices.Collect(maps.Values(t.local))
-	slices.SortFunc(local, func(a, b hpatchHistory) int { return cmp.Compare(a.sequence, b.sequence) })
+	slices.SortFunc(local, func(a, b mekugiHistory) int { return cmp.Compare(a.sequence, b.sequence) })
 	histories = append(histories, local...)
-	var aliases []hpatch.TargetAlias
+	var aliases []mekugi.TargetAlias
 	for _, history := range histories {
 		if history.root == t.directory && (history.confirmed || history.applied) {
 			aliases = append(aliases, history.aliases...)

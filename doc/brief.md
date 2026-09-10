@@ -9,7 +9,7 @@ discard a complete atomic script and consume extra model turns.
 ## Outcome
 
 Provide an atomic edit tool whose mutation commands carry compact, verified targets.
-The agent emits replacement or inserted content once; hpatch resolves the target against
+The agent emits replacement or inserted content once; mekugi resolves the target against
 an immutable invocation baseline and constructs the ordinary `apply_patch` representation
 internally. A routed reader emits copyable line-and-content references that disambiguate
 repeated lines, detect stale inspection, and read several already-known files or ranges in
@@ -73,7 +73,7 @@ wall time must remain close to control.
 - `ApplyForHost`, `ApplyForHostRoot`, and `TranslateForHostAt` return
   `HostTranslation` with the rendered report, final state, and diagnostics.
 - Router-only target correction through `functions.hpatch_recover` with hashed command handles; an unchanged target rejects before reevaluation, and ordinary `functions.hpatch` and root APIs have no recovery mode.
-- Capture-owned provider usage, cache, protocol, tool, Hpatch-delivery, and completeness metrics.
+- Capture-owned provider usage, cache, protocol, tool, HPATCH-delivery, and completeness metrics.
 - Historical-commit benchmark tasks with hidden graders, paired randomized attempts, and
   structured artifacts.
 - Router-local tool plugins discovered from `mekugi/plugins` beneath the platform user
@@ -91,9 +91,9 @@ wall time must remain close to control.
 - Basic root Go API: `Apply` atomically updates an authorized workspace and returns an error.
 - Host APIs: `ApplyForHost`, `ApplyForHostRoot`, and `TranslateForHostAt` return
   `HostTranslation` for report, state, and diagnostics.
-- `mekugi --mode hpatch|passthrough codex`: expose model-visible hpatch and shell tools with
+- `mekugi --mode mekugi|passthrough codex`: expose model-visible hpatch and shell tools with
   private shell-internal hread, hgrep, hsymbol, and inspect_file commands, or the unchanged
-  control path. Hpatch mode defaults to CTP/2 and Mentor Handoff; passthrough stays native.
+  control path. `mekugi` mode defaults to CTP/2 and Mentor Handoff; passthrough stays native.
 - inspect_file outline spans are copyable `LINE:HASH` identities without source bodies.
 - `mekugi/plugins` beneath the platform user configuration directory: the configured tool-plugin
   discovery surface; the router has no plugin command-line flags.
@@ -103,7 +103,7 @@ wall time must remain close to control.
 - `make install`: regenerate the embedded plugin bundle and install `mekugi` plus the fixed
   `shell` helper without installing private command files or changing Codex configuration and
   instructions.
-- `hpatch-bench validate --manifest TASK.json` and `hpatch-bench run`: validate and run
+- `mekugi-bench validate --manifest TASK.json` and `mekugi-bench run`: validate and run
   paired historical-commit evaluations.
 - Script commands: `in`, `new`, `mv`, `rm`, `type`, and `add`.
 - `type` replaces its explicit target; an empty target-bearing value deletes the target,
@@ -158,7 +158,7 @@ wall time must remain close to control.
 - Changed Go files are parsed and formatted with Go's standard library before success.
 - Correctness is determined by required graders and path-scope checks, not reference-patch
   similarity. End-to-end Responses usage is authoritative for task-level token results.
-- In hpatch mode the router validates the complete discovered plugin registry before opening
+- In mekugi mode the router validates the complete discovered plugin registry before opening
   its listener or installing tool wrappers; any schema, identity, implementation, or wrapper
   mismatch reports diagnostics and stops startup without exposing a partial registry.
 - Each configured executor-backed contribution uses a session-private basename frontend

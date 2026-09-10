@@ -172,7 +172,7 @@ def child_configuration(
     if models != {expected_model} or efforts != {expected_effort}:
         raise ValueError("child rollout did not retain the fixed benchmark model configuration")
     return {
-        "schema": "hpatch.benchmark.child-proof.v1",
+        "schema": "mekugi.benchmark.child-proof.v1",
         "role": expected_role,
         "configured_model": expected_model,
         "configured_reasoning_effort": expected_effort,

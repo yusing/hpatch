@@ -15,7 +15,7 @@ import {
   decodeGoStringLiteral,
   hashLine,
   lineCount as sharedLineCount,
-} from "hpatch:core/v1";
+} from "mekugi:core/v1";
 import {
   byteLength,
   createExecutorTool,

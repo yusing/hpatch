@@ -10,9 +10,9 @@ import (
 func TestSubagentStartReportsObservedModelOnce(t *testing.T) {
 	for _, stream := range []bool{false, true} {
 		t.Run(map[bool]string{false: "json", true: "sse"}[stream], func(t *testing.T) {
-			proxy := newManagedHPatchProxy(t, testTranslator(t, new(int)))
+			proxy := newManagedMekugiProxy(t, testTranslator(t, new(int)))
 			root, _ := prepareActivityTest(t, proxy, "root-session", "root", "", "/root", nil)
-			prepareChild := func(session, model, effort string) *hpatchResponseTransform {
+			prepareChild := func(session, model, effort string) *mekugiResponseTransform {
 				t.Helper()
 				request, err := parseResponsesRequest(mustTestJSON(t, map[string]any{
 					"model": model, "reasoning": map[string]any{"effort": effort},
@@ -39,7 +39,7 @@ func TestSubagentStartReportsObservedModelOnce(t *testing.T) {
 				"content": mustMarshalJSON([]any{map[string]any{"type": "output_text", "text": "Substantive answer."}}),
 			}
 			response := mustTestJSON(t, map[string]any{"status": "completed", "output": []any{answer}})
-			emit := func(transform *hpatchResponseTransform) []byte {
+			emit := func(transform *mekugiResponseTransform) []byte {
 				t.Helper()
 				if stream {
 					events, err := transform.TransformSSE(mustTestJSON(t, map[string]any{

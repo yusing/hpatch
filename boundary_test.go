@@ -1,4 +1,4 @@
-package hpatch
+package mekugi
 
 import (
 	"bytes"
@@ -8,11 +8,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/yusing/hpatch/internal/hpatchsyntax"
-	"github.com/yusing/hpatch/internal/patchtest"
+	"github.com/yusing/mekugi/internal/hpatchsyntax"
+	"github.com/yusing/mekugi/internal/patchtest"
 )
 
-func TestHPatch2MoveOnlyTranslationUsesVerificationHunk(t *testing.T) {
+func TestMekugi2MoveOnlyTranslationUsesVerificationHunk(t *testing.T) {
 	for _, test := range []struct {
 		name    string
 		content string
@@ -38,7 +38,7 @@ func TestHPatch2MoveOnlyTranslationUsesVerificationHunk(t *testing.T) {
 	}
 }
 
-func TestHPatch2NetActionsCollapseMovesAndCanceledCreation(t *testing.T) {
+func TestMekugi2NetActionsCollapseMovesAndCanceledCreation(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, root, "start.txt", "content\n", 0o644)
 	script := strings.Join([]string{
@@ -60,7 +60,7 @@ func TestHPatch2NetActionsCollapseMovesAndCanceledCreation(t *testing.T) {
 	}
 }
 
-func TestHPatch2TranslateNormalizesCRLFDisplay(t *testing.T) {
+func TestMekugi2TranslateNormalizesCRLFDisplay(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, root, "text.txt", "old\r\nkeep\r\n", 0o644)
 	script := "in text.txt\ntype " + row(1, "old") + ` "new"`
@@ -76,7 +76,7 @@ func TestHPatch2TranslateNormalizesCRLFDisplay(t *testing.T) {
 	}
 }
 
-func TestHPatch2TranslateDisambiguatesRepeatedBlocks(t *testing.T) {
+func TestMekugi2TranslateDisambiguatesRepeatedBlocks(t *testing.T) {
 	root := t.TempDir()
 	content := "first\nrepeat\nvalue=old\nend\nmiddle\nrepeat\nvalue=old\nend\nlast\n"
 	writeTestFile(t, root, "text.txt", content, 0o644)
@@ -95,7 +95,7 @@ func TestHPatch2TranslateDisambiguatesRepeatedBlocks(t *testing.T) {
 	}
 }
 
-func TestHPatch2QuotedOperandsAcceptLiteralTabs(t *testing.T) {
+func TestMekugi2QuotedOperandsAcceptLiteralTabs(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, root, "text.txt", "old\tvalue\n", 0o644)
 	script := "in text.txt\ntype " + row(1, "old\tvalue") + " \"old\tvalue\" \"new\tvalue\""
@@ -108,7 +108,7 @@ func TestHPatch2QuotedOperandsAcceptLiteralTabs(t *testing.T) {
 	}
 }
 
-func TestHPatch2FixedHeredocPreservesLiteralCRLFBody(t *testing.T) {
+func TestMekugi2FixedHeredocPreservesLiteralCRLFBody(t *testing.T) {
 	root := t.TempDir()
 	script := "new file.txt\r\ntype <<PATCH\r\none \"quoted\" \\ slash\tinside\r\ntwo\r\nPATCH\r\n"
 	result, err := applyForHostAtTest(t, root, script, "")
@@ -120,7 +120,7 @@ func TestHPatch2FixedHeredocPreservesLiteralCRLFBody(t *testing.T) {
 	}
 }
 
-func TestHPatch2HeredocFailuresAreHeaderOwnedAndAtomic(t *testing.T) {
+func TestMekugi2HeredocFailuresAreHeaderOwnedAndAtomic(t *testing.T) {
 	tests := []struct {
 		name   string
 		script string
@@ -145,7 +145,7 @@ func TestHPatch2HeredocFailuresAreHeaderOwnedAndAtomic(t *testing.T) {
 	}
 }
 
-func TestHPatch2PhysicalNewlineInQuotedOperandIsHeaderOwned(t *testing.T) {
+func TestMekugi2PhysicalNewlineInQuotedOperandIsHeaderOwned(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, root, "file.txt", "original\n", 0o644)
 	script := "in file.txt\ntype " + row(1, "original") + " \"replacement\ntext\"\nrm\n"
@@ -157,7 +157,7 @@ func TestHPatch2PhysicalNewlineInQuotedOperandIsHeaderOwned(t *testing.T) {
 	}
 }
 
-func TestHPatch2ParserReportsIndependentSyntaxErrors(t *testing.T) {
+func TestMekugi2ParserReportsIndependentSyntaxErrors(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, root, "file.txt", "unchanged\n", 0o644)
 	script := "in file.txt\n" +
@@ -173,7 +173,7 @@ func TestHPatch2ParserReportsIndependentSyntaxErrors(t *testing.T) {
 	}
 }
 
-func TestHPatch2InvalidUTF8IsRejected(t *testing.T) {
+func TestMekugi2InvalidUTF8IsRejected(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "binary.txt"), []byte{0xff}, 0o644); err != nil {
 		t.Fatal(err)
@@ -184,7 +184,7 @@ func TestHPatch2InvalidUTF8IsRejected(t *testing.T) {
 	}
 }
 
-func TestHPatch2NoopModeBoundaries(t *testing.T) {
+func TestMekugi2NoopModeBoundaries(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, root, "file.txt", "same\n", 0o644)
 	applied, err := applyForHostAtTest(t, root, "in file.txt", "")
@@ -197,7 +197,7 @@ func TestHPatch2NoopModeBoundaries(t *testing.T) {
 	}
 }
 
-func TestHPatch2AbsoluteNormalizedAndCWDPaths(t *testing.T) {
+func TestMekugi2AbsoluteNormalizedAndCWDPaths(t *testing.T) {
 	rootPath := t.TempDir()
 	if err := os.Mkdir(filepath.Join(rootPath, "bin"), 0o755); err != nil {
 		t.Fatal(err)
@@ -221,7 +221,7 @@ func TestHPatch2AbsoluteNormalizedAndCWDPaths(t *testing.T) {
 	}
 }
 
-func TestHPatch2WorkspaceRejectsPathsOutsideRoot(t *testing.T) {
+func TestMekugi2WorkspaceRejectsPathsOutsideRoot(t *testing.T) {
 	rootPath := t.TempDir()
 	outside := t.TempDir()
 	writeTestFile(t, outside, "outside.txt", "old\n", 0o644)
@@ -266,7 +266,7 @@ func TestTranslateForHostAtWithoutDirectoryNeverUsesProcessCWD(t *testing.T) {
 	}
 }
 
-func TestHPatch2LifecycleFailuresAreAtomic(t *testing.T) {
+func TestMekugi2LifecycleFailuresAreAtomic(t *testing.T) {
 	tests := []struct {
 		name   string
 		script string

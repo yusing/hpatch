@@ -10,7 +10,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/yusing/hpatch/internal/shellsyntax"
+	"github.com/yusing/mekugi/internal/shellsyntax"
 
 	"mvdan.cc/sh/v3/expand"
 	"mvdan.cc/sh/v3/interp"
@@ -19,10 +19,10 @@ import (
 
 const (
 	nativeExecCommandToolName    = "exec_command"
-	hpatchApplyExecMarker        = "// hpatch-proxy: apply translated patch\n"
-	hpatchNativeApplyMarker      = "# hpatch-proxy: apply translated patch\n"
-	hpatchNativeReportMarker     = "# hpatch-proxy: return hpatch report\n"
-	hpatchNativeDiagnosticMarker = "# hpatch-proxy: return hpatch diagnostic "
+	mekugiApplyExecMarker        = "// mekugi-proxy: apply translated patch\n"
+	mekugiNativeApplyMarker      = "# mekugi-proxy: apply translated patch\n"
+	mekugiNativeReportMarker     = "# mekugi-proxy: return mekugi report\n"
+	mekugiNativeDiagnosticMarker = "# mekugi-proxy: return mekugi diagnostic "
 )
 
 type codeModeCarrierKind string
@@ -168,21 +168,21 @@ func shellQuoteArgument(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
 }
 
-// hpatchNativeCommand generates a native shell command for an hpatch history entry.
-func hpatchNativeCommand(history hpatchHistory) string {
+// mekugiNativeCommand generates a native shell command for an mekugi history entry.
+func mekugiNativeCommand(history mekugiHistory) string {
 	switch {
 	case history.translationError != "":
-		return hpatchNativeDiagnosticMarker + strconv.Quote(history.translationError) +
+		return mekugiNativeDiagnosticMarker + strconv.Quote(history.translationError) +
 			"\nprintf %s " + shellQuoteArgument(history.translationError)
 	case history.applied || history.alreadySatisfied || history.patch == "":
-		return hpatchNativeReportMarker + "printf %s " + shellQuoteArgument(history.report)
+		return mekugiNativeReportMarker + "printf %s " + shellQuoteArgument(history.report)
 	default:
-		return hpatchNativeApplyMarker +
-			"hpatch_apply_output=$(printf %s " + shellQuoteArgument(history.patch) + " | apply_patch; " +
-			"hpatch_status=$?; printf x; exit \"$hpatch_status\")\n" +
-			"hpatch_status=$?\n" +
-			"hpatch_apply_output=${hpatch_apply_output%x}\n" +
-			"if [ \"$hpatch_status\" -ne 0 ]; then printf %s \"$hpatch_apply_output\"; exit \"$hpatch_status\"; fi\n" +
+		return mekugiNativeApplyMarker +
+			"mekugi_apply_output=$(printf %s " + shellQuoteArgument(history.patch) + " | apply_patch; " +
+			"mekugi_status=$?; printf x; exit \"$mekugi_status\")\n" +
+			"mekugi_status=$?\n" +
+			"mekugi_apply_output=${mekugi_apply_output%x}\n" +
+			"if [ \"$mekugi_status\" -ne 0 ]; then printf %s \"$mekugi_apply_output\"; exit \"$mekugi_status\"; fi\n" +
 			"printf %s " + shellQuoteArgument(history.report)
 	}
 }
@@ -275,7 +275,7 @@ func (registry *toolRegistry) execCarrierPayload(
 	}
 	if kind == codeModeCarrierFunction && len(resultMetadata) != 0 {
 		metadata := string(mustMarshalJSON(resultMetadata))
-		command += "\nhpatch_status=$?\nprintf '\\n%s\\n' " + shellQuoteArgument(metadata) + "\nexit \"$hpatch_status\""
+		command += "\nmekugi_status=$?\nprintf '\\n%s\\n' " + shellQuoteArgument(metadata) + "\nexit \"$mekugi_status\""
 	}
 	return renderExecCarrier(
 		kind,
@@ -387,7 +387,7 @@ func insertExecCommandWarning(input, warning string) (string, string, bool, erro
 	return input[:projectionStart] + warningInput + input[projectionStart:], warningInput, true, nil
 }
 
-func (h hpatchHistory) carrierInput() string {
+func (h mekugiHistory) carrierInput() string {
 	if h.pluginID != "" || h.carrierKind != "" {
 		return h.carrierPayload
 	}
@@ -397,12 +397,12 @@ func (h hpatchHistory) carrierInput() string {
 	if h.applied || h.alreadySatisfied {
 		return "text(" + strconv.Quote(h.report) + ");"
 	}
-	return hpatchApplyExecMarker +
+	return mekugiApplyExecMarker +
 		"await tools.apply_patch(" + strconv.Quote(h.patch) + ");\n" +
 		"text(" + strconv.Quote(h.report) + ");"
 }
 
-func (h hpatchHistory) effectiveCarrierKind() codeModeCarrierKind {
+func (h mekugiHistory) effectiveCarrierKind() codeModeCarrierKind {
 	if h.carrierKind != "" {
 		return h.carrierKind
 	}

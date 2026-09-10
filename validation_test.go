@@ -1,4 +1,4 @@
-package hpatch
+package mekugi
 
 import (
 	"context"
@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-func TestHPatch2IndentationOnlyReplacementRejectsWithoutSuggestion(t *testing.T) {
+func TestMekugi2IndentationOnlyReplacementRejectsWithoutSuggestion(t *testing.T) {
 	rootPath := t.TempDir()
 	writeTestFile(t, rootPath, "script.sh", "header\n\texit \"$status\"\n", 0o644)
 	root, err := os.OpenRoot(rootPath)
@@ -167,7 +167,7 @@ func TestHostFailuresClassifyLanguageAndConflictScopes(t *testing.T) {
 	}
 }
 
-func TestHPatch2InvalidGoAfterMoveUsesContentOrigin(t *testing.T) {
+func TestMekugi2InvalidGoAfterMoveUsesContentOrigin(t *testing.T) {
 	tests := []struct {
 		name   string
 		setup  func(*testing.T, string)
@@ -202,7 +202,7 @@ mv moved.go`,
 	}
 }
 
-func TestHPatch2MoveOnlyGoValidationUsesMoveOrigin(t *testing.T) {
+func TestMekugi2MoveOnlyGoValidationUsesMoveOrigin(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, root, "source.txt", "not Go\n", 0o644)
 	result, err := applyForHostAtTest(t, root, "in source.txt\nmv moved.go", "")
@@ -213,7 +213,7 @@ func TestHPatch2MoveOnlyGoValidationUsesMoveOrigin(t *testing.T) {
 	}
 }
 
-func TestHPatch2ChangedGoFilesAreFormatted(t *testing.T) {
+func TestMekugi2ChangedGoFilesAreFormatted(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, root, "file.go", "package p\n\nvar value=1\n", 0o644)
 	script := "in file.go\ntype " + row(3, "var value=1") + ` "var value=2"`
@@ -226,7 +226,7 @@ func TestHPatch2ChangedGoFilesAreFormatted(t *testing.T) {
 	}
 }
 
-func TestHPatch2InvalidGoRejectsAtomically(t *testing.T) {
+func TestMekugi2InvalidGoRejectsAtomically(t *testing.T) {
 	rootPath := t.TempDir()
 	before := "package p\n\nvar value = 1\n"
 	writeTestFile(t, rootPath, "file.go", before, 0o644)
@@ -260,7 +260,7 @@ func TestHPatch2InvalidGoRejectsAtomically(t *testing.T) {
 	}
 }
 
-func TestHPatch2InvalidGoAttributesCausativeMutation(t *testing.T) {
+func TestMekugi2InvalidGoAttributesCausativeMutation(t *testing.T) {
 	rootPath := t.TempDir()
 	before := "package p\n\nvar first = 1\nvar second = 2\n"
 	writeTestFile(t, rootPath, "file.go", before, 0o644)
@@ -291,7 +291,7 @@ func TestHPatch2InvalidGoAttributesCausativeMutation(t *testing.T) {
 	}
 }
 
-func TestHPatch2InvalidGoCollectsDistinctCommandsInOneFile(t *testing.T) {
+func TestMekugi2InvalidGoCollectsDistinctCommandsInOneFile(t *testing.T) {
 	rootPath := t.TempDir()
 	before := "package p\n\nvar first = 1\nvar second = 2\n"
 	writeTestFile(t, rootPath, "file.go", before, 0o644)
@@ -320,7 +320,7 @@ func TestHPatch2InvalidGoCollectsDistinctCommandsInOneFile(t *testing.T) {
 	}
 }
 
-func TestHPatch2InvalidGoPreservesSameLineCommandLocations(t *testing.T) {
+func TestMekugi2InvalidGoPreservesSameLineCommandLocations(t *testing.T) {
 	rootPath := t.TempDir()
 	line := "var left = 1; var right = 2"
 	before := "package p\n\n" + line + "\n"
@@ -347,7 +347,7 @@ func TestHPatch2InvalidGoPreservesSameLineCommandLocations(t *testing.T) {
 	}
 }
 
-func TestHPatch2InvalidGoCollectsDistinctFiles(t *testing.T) {
+func TestMekugi2InvalidGoCollectsDistinctFiles(t *testing.T) {
 	rootPath := t.TempDir()
 	before := "package p\n\nvar value = 1\n"
 	writeTestFile(t, rootPath, "first.go", before, 0o644)
@@ -380,7 +380,7 @@ func TestHPatch2InvalidGoCollectsDistinctFiles(t *testing.T) {
 	}
 }
 
-func TestHPatch2InvalidGoReportsMultilineValueRow(t *testing.T) {
+func TestMekugi2InvalidGoReportsMultilineValueRow(t *testing.T) {
 	rootPath := t.TempDir()
 	before := "package p\n\nvar value = 1\n"
 	writeTestFile(t, rootPath, "file.go", before, 0o644)
@@ -426,7 +426,7 @@ func TestHPatch2InvalidGoReportsMultilineValueRow(t *testing.T) {
 	}
 }
 
-func TestHPatch2InvalidGoCollectsFarApartHeredocLocations(t *testing.T) {
+func TestMekugi2InvalidGoCollectsFarApartHeredocLocations(t *testing.T) {
 	body := "package p\nvar =\n" + strings.Repeat("var filler = 1\n", 100) + "var =\n"
 	script := "new file.go\ntype <<PATCH\n" + body + "PATCH\n"
 
@@ -453,7 +453,7 @@ func TestHPatch2InvalidGoCollectsFarApartHeredocLocations(t *testing.T) {
 	}
 }
 
-func TestHPatch2InvalidGoCollectsBeyondFormatterErrorCutoff(t *testing.T) {
+func TestMekugi2InvalidGoCollectsBeyondFormatterErrorCutoff(t *testing.T) {
 	const failureCount = 12
 	body := "package p\n" + strings.Repeat("var =\n", failureCount)
 	script := "new file.go\ntype <<PATCH\n" + body + "PATCH\n"
@@ -507,7 +507,7 @@ func TestValidationCancellationPrecedesCollectedFailures(t *testing.T) {
 	}
 }
 
-func TestHPatch2MultilineValueRowsUsePhysicalFraming(t *testing.T) {
+func TestMekugi2MultilineValueRowsUsePhysicalFraming(t *testing.T) {
 	rootPath := t.TempDir()
 	script := "new file.go\ntype <<PATCH\npackage p\rvar =\nPATCH\n"
 

@@ -11,7 +11,7 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/yusing/hpatch/internal/shellruntime"
+	"github.com/yusing/mekugi/internal/shellruntime"
 )
 
 type shellCommentaryDescriptor struct {
@@ -28,7 +28,7 @@ type ownedShellCommentary struct {
 
 // Commentary discovery is auxiliary: unavailable or replaced storage never
 // prevents a shell command from running.
-func (p *hpatchProxy) prepareShellCommentary(threadID, historySessionID, author string) {
+func (p *mekugiProxy) prepareShellCommentary(threadID, historySessionID, author string) {
 	if p.commentaryEndpoint == "" {
 		return
 	}

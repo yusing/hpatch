@@ -9,7 +9,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/yusing/hpatch/internal/router"
+	"github.com/yusing/mekugi/internal/router"
 )
 
 func main() {

@@ -29,7 +29,7 @@ func MergeSessions(directories []string, metrics, capture io.Writer) error {
 		if err := json.Unmarshal(encoded, &snapshot); err != nil {
 			return err
 		}
-		if snapshot.Schema != "hpatch.capture.metrics.v4" {
+		if snapshot.Schema != "mekugi.capture.metrics.v4" {
 			return errors.New("unsupported session metrics schema")
 		}
 		if index == 0 {

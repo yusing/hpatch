@@ -10,7 +10,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/yusing/hpatch/internal/commentaryid"
+	"github.com/yusing/mekugi/internal/commentaryid"
 )
 
 const subagentCommentaryMessagePrefix = commentaryid.SubagentPrefix
@@ -218,7 +218,7 @@ func responseWithTokenUsageCommentary(response []byte, counts tokenCounts, usage
 ) {
 	var object map[string]json.RawMessage
 	if err := json.Unmarshal(response, &object); err != nil || object == nil {
-		return nil, nil, errors.New("decode hpatch-enabled response")
+		return nil, nil, errors.New("decode mekugi-enabled response")
 	}
 	message := tokenUsageCommentary(response, counts, usageObserved, terminalStatus)
 	rawOutput, present := object["output"]
@@ -227,7 +227,7 @@ func responseWithTokenUsageCommentary(response []byte, counts tokenCounts, usage
 	}
 	var output []map[string]json.RawMessage
 	if err := json.Unmarshal(rawOutput, &output); err != nil {
-		return nil, nil, errors.New("decode hpatch-enabled response output")
+		return nil, nil, errors.New("decode mekugi-enabled response output")
 	}
 	output = append([]map[string]json.RawMessage{message}, output...)
 	encoded, err := marshalProtocolJSON(output)

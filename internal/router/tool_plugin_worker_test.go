@@ -23,7 +23,7 @@ func newToolPluginTestRegistry(t *testing.T) (*toolRegistry, string) {
 	if err := os.WriteFile(liveModule, []byte(testToolPluginDeclaration), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	registry, err := buildToolRegistry(t.Context(), dataDirectory, testHPatchToolDescription, false)
+	registry, err := buildToolRegistry(t.Context(), dataDirectory, testMekugiToolDescription, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -82,7 +82,7 @@ func TestToolPluginWorkerRunsPinnedImplementationInCodexContext(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("HPATCH_PLUGIN_TEST", "inherited")
+	t.Setenv("MEKUGI_PLUGIN_TEST", "inherited")
 
 	var stdout, stderr bytes.Buffer
 	handled, exitCode := RunToolPluginWorker(
@@ -125,7 +125,7 @@ func TestToolPluginWorkerResolvesBasenameFromPath(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", filepath.Dir(frontend))
-	t.Setenv("HPATCH_PLUGIN_TEST", "inherited")
+	t.Setenv("MEKUGI_PLUGIN_TEST", "inherited")
 
 	var stdout, stderr bytes.Buffer
 	handled, exitCode := RunToolPluginWorker(

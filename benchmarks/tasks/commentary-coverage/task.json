@@ -58,16 +58,16 @@
       }
     },
     "mode_arms": {
-      "hpatch-diagnostic": {
-        "hpatch": ["operations", "reporting", "terminal"]
+      "mekugi-diagnostic": {
+        "mekugi": ["operations", "reporting", "terminal"]
       },
       "ctp-only": {
         "native": ["operations", "terminal"],
         "ctp": ["operations", "terminal"]
       },
       "mentor-handoff": {
-        "hpatch": ["collaboration", "terminal"],
-        "hpatch-mentor": ["collaboration", "terminal"]
+        "mekugi": ["collaboration", "terminal"],
+        "mekugi-mentor": ["collaboration", "terminal"]
       }
     }
   },
@@ -84,7 +84,7 @@
       "command": [
         "sh",
         "-c",
-        "go test . -run '^TestHPatchBenchmarkCommentaryCoverage$' -count=1 || { status=$?; printf '%s\\n' 'commentary coverage check failed'; exit \"$status\"; }"
+        "go test . -run '^TestMekugiBenchmarkCommentaryCoverage$' -count=1 || { status=$?; printf '%s\\n' 'commentary coverage check failed'; exit \"$status\"; }"
       ],
       "required": true,
       "expect_base": "fail",

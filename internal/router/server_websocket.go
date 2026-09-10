@@ -16,13 +16,13 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
-	"github.com/yusing/hpatch/capturer"
+	"github.com/yusing/mekugi/capturer"
 )
 
 // A downstream socket owns a dedicated provider socket. In particular it never
 // enters the HTTP pool: accepted steering and previous_response_id are scoped
 // to this connection, including the quiet interval after response.completed.
-func responsesWebSocketHandler(lifecycle context.Context, timeout time.Duration, provider *providerClient, issues *CriticalErrors, proxy *hpatchProxy, codec *ctp2Codec, mentor *mentorHandoff) *responsesWebSocketEndpoint {
+func responsesWebSocketHandler(lifecycle context.Context, timeout time.Duration, provider *providerClient, issues *CriticalErrors, proxy *mekugiProxy, codec *ctp2Codec, mentor *mentorHandoff) *responsesWebSocketEndpoint {
 	lifecycle, cancel := context.WithCancel(lifecycle)
 	endpoint := &responsesWebSocketEndpoint{cancel: cancel}
 	endpoint.handler = func(w http.ResponseWriter, r *http.Request) {
@@ -242,7 +242,7 @@ type responsesWebSocket struct {
 	providerMessages <-chan webSocketMessage
 	timeout          time.Duration
 	issues           *CriticalErrors
-	proxy            *hpatchProxy
+	proxy            *mekugiProxy
 	codec            *ctp2Codec
 	mentor           *mentorHandoff
 	histories        map[string]*webSocketHistory
@@ -600,7 +600,7 @@ func (e *webSocketExchange) forwardExecution(startCtx, responseCtx context.Conte
 		if string(fields["generate"]) == "false" {
 			// Grok has no non-generating transport warmup. Preserve Codex's
 			// prewarm/history handshake without running and discarding inference.
-			response := map[string]any{"id": "resp_hpatch_warm_" + rand.Text(), "status": "completed", "output": []any{}}
+			response := map[string]any{"id": "resp_mekugi_warm_" + rand.Text(), "status": "completed", "output": []any{}}
 			payload := mustMarshalJSON(map[string]any{"type": "response.completed", "response": response})
 			return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": {"text/event-stream"}},
 				Body: io.NopCloser(bytes.NewReader(append(append([]byte("data: "), payload...), '\n', '\n')))}, nil

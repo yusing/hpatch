@@ -16,14 +16,14 @@ import (
 	"time"
 
 	"github.com/gofrs/flock"
-	"github.com/yusing/hpatch"
+	"github.com/yusing/mekugi"
 )
 
 const maxReplayRecordBytes = 32 << 20
 
 // Durable records are immutable translation facts. Request-local confirmation and
 // ordering are intentionally absent. The store never evicts resumable history.
-type hpatchReplayStore struct {
+type mekugiReplayStore struct {
 	directory          string
 	maxBytes           int64
 	maxCommentaryBytes int64
@@ -50,7 +50,7 @@ type replayHistory struct {
 	OutputWarning        string
 	TranslationError     string
 	EvaluatorRejected    bool
-	Rejections           []hpatch.HostRejection
+	Rejections           []mekugi.HostRejection
 	CorrelationID        string
 	Attempt              int
 	UpstreamItem         map[string]json.RawMessage
@@ -58,10 +58,10 @@ type replayHistory struct {
 	CommentaryMessageIDs []string
 	Unevaluated          bool
 	AlreadySatisfied     bool
-	Aliases              []hpatch.TargetAlias
+	Aliases              []mekugi.TargetAlias
 }
 
-func durableHistory(h hpatchHistory) replayHistory {
+func durableHistory(h mekugiHistory) replayHistory {
 	return replayHistory{
 		ToolName:             h.toolName,
 		PluginID:             h.pluginID,
@@ -88,8 +88,8 @@ func durableHistory(h hpatchHistory) replayHistory {
 		Aliases:              h.aliases,
 	}
 }
-func (h replayHistory) history() hpatchHistory {
-	return hpatchHistory{
+func (h replayHistory) history() mekugiHistory {
+	return mekugiHistory{
 		toolName:             h.ToolName,
 		pluginID:             h.PluginID,
 		script:               h.Script,
@@ -116,7 +116,7 @@ func (h replayHistory) history() hpatchHistory {
 	}
 }
 
-func defaultHPatchReplayDirectory() (string, error) {
+func defaultMekugiReplayDirectory() (string, error) {
 	base := os.Getenv("XDG_STATE_HOME")
 	if base == "" {
 		home, err := os.UserHomeDir()
@@ -130,7 +130,7 @@ func defaultHPatchReplayDirectory() (string, error) {
 	}
 	return filepath.Join(base, "mekugi", "replay"), nil
 }
-func openHPatchReplayStore(directory string) (*hpatchReplayStore, error) {
+func openMekugiReplayStore(directory string) (*mekugiReplayStore, error) {
 	directory, err := filepath.Abs(directory)
 	if err != nil {
 		return nil, err
@@ -172,7 +172,7 @@ func openHPatchReplayStore(directory string) (*hpatchReplayStore, error) {
 			break
 		}
 	}
-	s := &hpatchReplayStore{directory: directory, maxBytes: 1 << 30, maxCommentaryBytes: 16 << 20}
+	s := &mekugiReplayStore{directory: directory, maxBytes: 1 << 30, maxCommentaryBytes: 16 << 20}
 	if err := s.locked(context.Background(), func() error { return nil }); err != nil {
 		return nil, err
 	}
@@ -185,7 +185,7 @@ func replayRecordName(workspace, callID string, commentary bool) string {
 	}
 	return prefix + fmt.Sprintf("%x.json", sha256.Sum256(fmt.Appendf(nil, "%t\x00%s\x00%s", commentary, workspace, callID)))
 }
-func (s *hpatchReplayStore) locked(ctx context.Context, fn func() error) (err error) {
+func (s *mekugiReplayStore) locked(ctx context.Context, fn func() error) (err error) {
 	path := filepath.Join(s.directory, "store.lock")
 	info, e := os.Lstat(path)
 	if e == nil && !info.Mode().IsRegular() {
@@ -208,7 +208,7 @@ func (s *hpatchReplayStore) locked(ctx context.Context, fn func() error) (err er
 	}
 	return fn()
 }
-func (s *hpatchReplayStore) read(workspace, callID string, commentary bool) (replayRecord, bool, error) {
+func (s *mekugiReplayStore) read(workspace, callID string, commentary bool) (replayRecord, bool, error) {
 	name := filepath.Join(s.directory, replayRecordName(workspace, callID, commentary))
 	info, err := os.Lstat(name)
 	if errors.Is(err, os.ErrNotExist) {
@@ -246,7 +246,7 @@ func (s *hpatchReplayStore) read(workspace, callID string, commentary bool) (rep
 	}
 	return r, true, nil
 }
-func (s *hpatchReplayStore) lookup(ctx context.Context, workspace, callID string) (h hpatchHistory, found bool, err error) {
+func (s *mekugiReplayStore) lookup(ctx context.Context, workspace, callID string) (h mekugiHistory, found bool, err error) {
 	if s == nil {
 		return h, false, nil
 	}
@@ -258,14 +258,14 @@ func (s *hpatchReplayStore) lookup(ctx context.Context, workspace, callID string
 	})
 	return
 }
-func (s *hpatchReplayStore) hasCommentary(ctx context.Context, workspace, id string) (found bool, err error) {
+func (s *mekugiReplayStore) hasCommentary(ctx context.Context, workspace, id string) (found bool, err error) {
 	if s == nil {
 		return false, nil
 	}
 	err = s.locked(ctx, func() error { _, ok, e := s.read(workspace, id, true); found = ok; return e })
 	return
 }
-func (s *hpatchReplayStore) putCommentary(ctx context.Context, workspace string, ids []string) error {
+func (s *mekugiReplayStore) putCommentary(ctx context.Context, workspace string, ids []string) error {
 	if s == nil {
 		return nil
 	}
@@ -278,7 +278,7 @@ func (s *hpatchReplayStore) putCommentary(ctx context.Context, workspace string,
 		return nil
 	})
 }
-func (s *hpatchReplayStore) put(ctx context.Context, workspace string, histories map[string]hpatchHistory) error {
+func (s *mekugiReplayStore) put(ctx context.Context, workspace string, histories map[string]mekugiHistory) error {
 	if s == nil {
 		return nil
 	}
@@ -347,7 +347,7 @@ func mergeReplayHistory(old, next replayHistory) (replayHistory, error) {
 	}
 	return next, nil
 }
-func (s *hpatchReplayStore) write(r replayRecord) (err error) {
+func (s *mekugiReplayStore) write(r replayRecord) (err error) {
 	previous, exists, err := s.read(r.Workspace, r.CallID, r.Commentary)
 	if err != nil {
 		return err

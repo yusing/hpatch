@@ -35,21 +35,21 @@ import (
 	"go.etcd.io/etcd/server/v3/storage/schema"
 )
 
-type hpatchBenchmarkRangeStream struct {
+type mekugiBenchmarkRangeStream struct {
 	ctx       context.Context
 	responses []*pb.RangeStreamResponse
 	sendErr   error
 	onSend    func(int)
 }
 
-func (s *hpatchBenchmarkRangeStream) SetHeader(metadata.MD) error  { return nil }
-func (s *hpatchBenchmarkRangeStream) SendHeader(metadata.MD) error { return nil }
-func (s *hpatchBenchmarkRangeStream) SetTrailer(metadata.MD)       {}
-func (s *hpatchBenchmarkRangeStream) Context() context.Context     { return s.ctx }
-func (s *hpatchBenchmarkRangeStream) SendMsg(any) error            { return nil }
-func (s *hpatchBenchmarkRangeStream) RecvMsg(any) error            { return nil }
+func (s *mekugiBenchmarkRangeStream) SetHeader(metadata.MD) error  { return nil }
+func (s *mekugiBenchmarkRangeStream) SendHeader(metadata.MD) error { return nil }
+func (s *mekugiBenchmarkRangeStream) SetTrailer(metadata.MD)       {}
+func (s *mekugiBenchmarkRangeStream) Context() context.Context     { return s.ctx }
+func (s *mekugiBenchmarkRangeStream) SendMsg(any) error            { return nil }
+func (s *mekugiBenchmarkRangeStream) RecvMsg(any) error            { return nil }
 
-func (s *hpatchBenchmarkRangeStream) Send(response *pb.RangeStreamResponse) error {
+func (s *mekugiBenchmarkRangeStream) Send(response *pb.RangeStreamResponse) error {
 	if s.onSend != nil {
 		s.onSend(len(s.responses))
 	}
@@ -60,7 +60,7 @@ func (s *hpatchBenchmarkRangeStream) Send(response *pb.RangeStreamResponse) erro
 	return nil
 }
 
-func invokeHPatchBenchmarkRangeStream(t *testing.T, server *EtcdServer, request *pb.RangeRequest, stream *hpatchBenchmarkRangeStream) error {
+func invokeMekugiBenchmarkRangeStream(t *testing.T, server *EtcdServer, request *pb.RangeRequest, stream *mekugiBenchmarkRangeStream) error {
 	t.Helper()
 	method := reflect.ValueOf(server).MethodByName("RangeStream")
 	if !method.IsValid() {
@@ -113,7 +113,7 @@ func invokeHPatchBenchmarkRangeStream(t *testing.T, server *EtcdServer, request 
 	return err
 }
 
-func newHPatchBenchmarkServer(t *testing.T, value []byte) *EtcdServer {
+func newMekugiBenchmarkServer(t *testing.T, value []byte) *EtcdServer {
 	t.Helper()
 	backend, _ := betesting.NewDefaultTmpBackend(t)
 	store := mvcc.New(zaptest.NewLogger(t), backend, &lease.FakeLessor{}, mvcc.StoreConfig{})
@@ -139,10 +139,10 @@ func newHPatchBenchmarkServer(t *testing.T, value []byte) *EtcdServer {
 	return server
 }
 
-func TestHPatchBenchmarkPublicRangeStreamHandler(t *testing.T) {
-	server := newHPatchBenchmarkServer(t, []byte("value"))
-	stream := &hpatchBenchmarkRangeStream{ctx: t.Context()}
-	err := invokeHPatchBenchmarkRangeStream(t, server, &pb.RangeRequest{
+func TestMekugiBenchmarkPublicRangeStreamHandler(t *testing.T) {
+	server := newMekugiBenchmarkServer(t, []byte("value"))
+	stream := &mekugiBenchmarkRangeStream{ctx: t.Context()}
+	err := invokeMekugiBenchmarkRangeStream(t, server, &pb.RangeRequest{
 		Key: []byte("k00"), RangeEnd: []byte("l"), Serializable: true,
 	}, stream)
 	if err != nil {
@@ -164,8 +164,8 @@ func TestHPatchBenchmarkPublicRangeStreamHandler(t *testing.T) {
 	if err := server.authStore.AuthEnable(); err != nil {
 		t.Fatalf("AuthEnable returned error: %v", err)
 	}
-	denied := &hpatchBenchmarkRangeStream{ctx: t.Context()}
-	if err := invokeHPatchBenchmarkRangeStream(t, server, &pb.RangeRequest{
+	denied := &mekugiBenchmarkRangeStream{ctx: t.Context()}
+	if err := invokeMekugiBenchmarkRangeStream(t, server, &pb.RangeRequest{
 		Key: []byte("k00"), RangeEnd: []byte("l"), Serializable: true,
 	}, denied); err == nil {
 		t.Fatal("public RangeStream succeeded after authentication was enabled without credentials")
@@ -174,7 +174,7 @@ func TestHPatchBenchmarkPublicRangeStreamHandler(t *testing.T) {
 
 // The first response is bounded before any size feedback is available. Test
 // both a short range and large values so later adaptation cannot mask it.
-func TestHPatchBenchmarkRangeStreamInitialChunk(t *testing.T) {
+func TestMekugiBenchmarkRangeStreamInitialChunk(t *testing.T) {
 	for _, test := range []struct {
 		name      string
 		valueSize int
@@ -186,10 +186,10 @@ func TestHPatchBenchmarkRangeStreamInitialChunk(t *testing.T) {
 		{name: "limited", valueSize: 128, limit: 3, wantMax: 3},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			server := newHPatchBenchmarkServer(t, bytes.Repeat([]byte("x"), test.valueSize))
+			server := newMekugiBenchmarkServer(t, bytes.Repeat([]byte("x"), test.valueSize))
 			server.Cfg.MaxRequestBytes = 1024
-			stream := &hpatchBenchmarkRangeStream{ctx: t.Context()}
-			if err := invokeHPatchBenchmarkRangeStream(t, server, &pb.RangeRequest{
+			stream := &mekugiBenchmarkRangeStream{ctx: t.Context()}
+			if err := invokeMekugiBenchmarkRangeStream(t, server, &pb.RangeRequest{
 				Key: []byte("k00"), RangeEnd: []byte("l"), Limit: test.limit, Serializable: true,
 			}, stream); err != nil {
 				t.Fatal(err)
@@ -204,18 +204,18 @@ func TestHPatchBenchmarkRangeStreamInitialChunk(t *testing.T) {
 	}
 }
 
-func TestHPatchBenchmarkRangeStreamDataAndPinning(t *testing.T) {
-	server := newHPatchBenchmarkServer(t, bytes.Repeat([]byte("x"), 128))
+func TestMekugiBenchmarkRangeStreamDataAndPinning(t *testing.T) {
+	server := newMekugiBenchmarkServer(t, bytes.Repeat([]byte("x"), 128))
 	server.Cfg.MaxRequestBytes = 1024
 	initialRevision := server.KV().Rev()
-	stream := &hpatchBenchmarkRangeStream{ctx: t.Context()}
+	stream := &mekugiBenchmarkRangeStream{ctx: t.Context()}
 	stream.onSend = func(index int) {
 		if index == 0 {
 			server.KV().Put([]byte("k99"), []byte("late"), lease.NoLease)
 		}
 	}
 
-	err := invokeHPatchBenchmarkRangeStream(t, server, &pb.RangeRequest{Key: []byte("k00"), RangeEnd: []byte("l"), Serializable: true}, stream)
+	err := invokeMekugiBenchmarkRangeStream(t, server, &pb.RangeRequest{Key: []byte("k00"), RangeEnd: []byte("l"), Serializable: true}, stream)
 	if err != nil {
 		t.Fatalf("rangeStream returned error: %v", err)
 	}
@@ -247,18 +247,18 @@ func TestHPatchBenchmarkRangeStreamDataAndPinning(t *testing.T) {
 	}
 }
 
-func TestHPatchBenchmarkRangeStreamExplicitRevision(t *testing.T) {
-	server := newHPatchBenchmarkServer(t, bytes.Repeat([]byte("x"), 128))
+func TestMekugiBenchmarkRangeStreamExplicitRevision(t *testing.T) {
+	server := newMekugiBenchmarkServer(t, bytes.Repeat([]byte("x"), 128))
 	server.Cfg.MaxRequestBytes = 1024
 	pinnedRevision := server.KV().Rev()
-	stream := &hpatchBenchmarkRangeStream{ctx: t.Context()}
+	stream := &mekugiBenchmarkRangeStream{ctx: t.Context()}
 	stream.onSend = func(index int) {
 		if index == 0 {
 			server.KV().Put([]byte("k99"), []byte("late"), lease.NoLease)
 		}
 	}
 
-	err := invokeHPatchBenchmarkRangeStream(t, server, &pb.RangeRequest{
+	err := invokeMekugiBenchmarkRangeStream(t, server, &pb.RangeRequest{
 		Key: []byte("k00"), RangeEnd: []byte("l"), Revision: pinnedRevision, Serializable: true,
 	}, stream)
 	if err != nil {
@@ -280,12 +280,12 @@ func TestHPatchBenchmarkRangeStreamExplicitRevision(t *testing.T) {
 	}
 }
 
-func TestHPatchBenchmarkRangeStreamLargeValues(t *testing.T) {
-	server := newHPatchBenchmarkServer(t, bytes.Repeat([]byte("x"), 4096))
+func TestMekugiBenchmarkRangeStreamLargeValues(t *testing.T) {
+	server := newMekugiBenchmarkServer(t, bytes.Repeat([]byte("x"), 4096))
 	server.Cfg.MaxRequestBytes = 1024
-	stream := &hpatchBenchmarkRangeStream{ctx: t.Context()}
+	stream := &mekugiBenchmarkRangeStream{ctx: t.Context()}
 
-	err := invokeHPatchBenchmarkRangeStream(t, server, &pb.RangeRequest{Key: []byte("k00"), RangeEnd: []byte("l"), Serializable: true}, stream)
+	err := invokeMekugiBenchmarkRangeStream(t, server, &pb.RangeRequest{Key: []byte("k00"), RangeEnd: []byte("l"), Serializable: true}, stream)
 	if err != nil {
 		t.Fatalf("large-value rangeStream returned error: %v", err)
 	}
@@ -314,13 +314,13 @@ func TestHPatchBenchmarkRangeStreamLargeValues(t *testing.T) {
 	}
 }
 
-func TestHPatchBenchmarkRangeStreamGrowsSmallChunks(t *testing.T) {
-	server := newHPatchBenchmarkServer(t, []byte("x"))
+func TestMekugiBenchmarkRangeStreamGrowsSmallChunks(t *testing.T) {
+	server := newMekugiBenchmarkServer(t, []byte("x"))
 	for i := 20; i < 100; i++ {
 		server.KV().Put([]byte(fmt.Sprintf("k%02d", i)), []byte("x"), lease.NoLease)
 	}
-	stream := &hpatchBenchmarkRangeStream{ctx: t.Context()}
-	if err := invokeHPatchBenchmarkRangeStream(t, server, &pb.RangeRequest{
+	stream := &mekugiBenchmarkRangeStream{ctx: t.Context()}
+	if err := invokeMekugiBenchmarkRangeStream(t, server, &pb.RangeRequest{
 		Key: []byte("k00"), RangeEnd: []byte("l"), Serializable: true,
 	}, stream); err != nil {
 		t.Fatal(err)
@@ -341,11 +341,11 @@ func TestHPatchBenchmarkRangeStreamGrowsSmallChunks(t *testing.T) {
 	}
 }
 
-func TestHPatchBenchmarkRangeStreamCountOnlyAndLimit(t *testing.T) {
-	server := newHPatchBenchmarkServer(t, []byte("value"))
+func TestMekugiBenchmarkRangeStreamCountOnlyAndLimit(t *testing.T) {
+	server := newMekugiBenchmarkServer(t, []byte("value"))
 
-	countStream := &hpatchBenchmarkRangeStream{ctx: t.Context()}
-	err := invokeHPatchBenchmarkRangeStream(t, server, &pb.RangeRequest{
+	countStream := &mekugiBenchmarkRangeStream{ctx: t.Context()}
+	err := invokeMekugiBenchmarkRangeStream(t, server, &pb.RangeRequest{
 		Key: []byte("k00"), RangeEnd: []byte("l"), CountOnly: true, Serializable: true,
 	}, countStream)
 	if err != nil {
@@ -358,8 +358,8 @@ func TestHPatchBenchmarkRangeStreamCountOnlyAndLimit(t *testing.T) {
 		t.Fatalf("CountOnly returned %d KVs", len(countStream.responses[0].RangeResponse.Kvs))
 	}
 
-	limitedStream := &hpatchBenchmarkRangeStream{ctx: t.Context()}
-	err = invokeHPatchBenchmarkRangeStream(t, server, &pb.RangeRequest{
+	limitedStream := &mekugiBenchmarkRangeStream{ctx: t.Context()}
+	err = invokeMekugiBenchmarkRangeStream(t, server, &pb.RangeRequest{
 		Key: []byte("k00"), RangeEnd: []byte("l"), Limit: 5, Serializable: true,
 	}, limitedStream)
 	if err != nil {
@@ -375,11 +375,11 @@ func TestHPatchBenchmarkRangeStreamCountOnlyAndLimit(t *testing.T) {
 	}
 }
 
-func TestHPatchBenchmarkRangeStreamPropagatesSendError(t *testing.T) {
-	server := newHPatchBenchmarkServer(t, []byte("value"))
+func TestMekugiBenchmarkRangeStreamPropagatesSendError(t *testing.T) {
+	server := newMekugiBenchmarkServer(t, []byte("value"))
 	wantErr := errors.New("send failed")
-	stream := &hpatchBenchmarkRangeStream{ctx: t.Context(), sendErr: wantErr}
-	if err := invokeHPatchBenchmarkRangeStream(t, server, &pb.RangeRequest{Key: []byte("k00"), RangeEnd: []byte("l"), Serializable: true}, stream); !errors.Is(err, wantErr) {
+	stream := &mekugiBenchmarkRangeStream{ctx: t.Context(), sendErr: wantErr}
+	if err := invokeMekugiBenchmarkRangeStream(t, server, &pb.RangeRequest{Key: []byte("k00"), RangeEnd: []byte("l"), Serializable: true}, stream); !errors.Is(err, wantErr) {
 		t.Fatalf("rangeStream error = %v, want %v", err, wantErr)
 	}
 }

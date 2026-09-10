@@ -8,12 +8,12 @@ import (
 	"strings"
 
 	sitter "github.com/tree-sitter/go-tree-sitter"
-	"github.com/yusing/hpatch/internal/shellsyntax"
+	"github.com/yusing/mekugi/internal/shellsyntax"
 	"mvdan.cc/sh/v3/syntax"
 )
 
 // Presentation only: never evaluate code, expand paths, or alter the observed call.
-func subagentToolActivityTexts(item map[string]json.RawMessage, qualifiedName string, history *hpatchHistory) []string {
+func subagentToolActivityTexts(item map[string]json.RawMessage, qualifiedName string, history *mekugiHistory) []string {
 	name := jsonString(item, "name")
 	if commentaryExcluded(jsonString(item, "namespace"), name) {
 		return []string{"Tool call: " + commentaryCode(qualifiedName)}

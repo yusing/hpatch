@@ -20,7 +20,7 @@ const (
 	ctpReplayMaximumRecordBytes = 64 << 20
 	ctpReplayManifestVersion    = 1
 	ctpReplaySampleLimit        = 50
-	ctpReplaySelectionSeed      = "hpatch-ctp-replay-corpus-v1"
+	ctpReplaySelectionSeed      = "mekugi-ctp-replay-corpus-v1"
 	ctpReplaySelectionAlgorithm = "sha256(seed + NUL + session_id), ascending"
 	ctpReplayVariantAlgorithm   = "sha256(seed + NUL + rollout_id), ascending; sha256(content), ascending tie-break"
 	ctpReplayEligibility        = "completed stock Codex apply_patch/exec_command session with a string-valued exec call"
@@ -210,9 +210,9 @@ func TestCTPReplayNewContentResetsCompactedInputPrefix(t *testing.T) {
 }
 
 func TestFreezeCTPReplayCorpus(t *testing.T) {
-	destination := os.Getenv("HPATCH_CTP_REPLAY_FREEZE")
+	destination := os.Getenv("MEKUGI_CTP_REPLAY_FREEZE")
 	if destination == "" {
-		t.Skip("HPATCH_CTP_REPLAY_FREEZE is not set")
+		t.Skip("MEKUGI_CTP_REPLAY_FREEZE is not set")
 	}
 	root := os.Getenv("CODEX_HOME")
 	if root == "" {
@@ -235,9 +235,9 @@ func TestFreezeCTPReplayCorpus(t *testing.T) {
 
 func loadConfiguredCTPReplayCorpus(tb testing.TB) ([]ctpReplayCorpusSession, string) {
 	tb.Helper()
-	manifestPath := os.Getenv("HPATCH_CTP_REPLAY_MANIFEST")
+	manifestPath := os.Getenv("MEKUGI_CTP_REPLAY_MANIFEST")
 	if manifestPath == "" {
-		tb.Skip("HPATCH_CTP_REPLAY_MANIFEST is not set")
+		tb.Skip("MEKUGI_CTP_REPLAY_MANIFEST is not set")
 	}
 	repositoryRoot, err := filepath.Abs(filepath.Join("..", ".."))
 	if err != nil {
@@ -590,7 +590,7 @@ func inspectCTPReplayCandidate(data []byte) (ctpReplayCandidate, bool, error) {
 	instructions := strings.ToLower(metadata.BaseInstructions.Text)
 	stockCodeMode := strings.Contains(instructions, "apply_patch") &&
 		strings.Contains(instructions, "exec_command") &&
-		!strings.Contains(instructions, "hpatch")
+		!strings.Contains(instructions, "mekugi")
 	ok := sessionID != "" && rolloutID != "" && hasExec && terminal == "task_complete" && stockCodeMode
 	return ctpReplayCandidate{SessionID: sessionID, RolloutID: rolloutID, TotalTokens: totalTokens, Data: data}, ok, nil
 }

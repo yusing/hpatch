@@ -11,7 +11,7 @@ func subagentToolActivityText(item map[string]json.RawMessage, name string) stri
 	return subagentToolActivityTextWithHistory(item, name, nil)
 }
 
-func subagentToolActivityTextWithHistory(item map[string]json.RawMessage, name string, history *hpatchHistory) string {
+func subagentToolActivityTextWithHistory(item map[string]json.RawMessage, name string, history *mekugiHistory) string {
 	return strings.Join(subagentToolActivityTexts(item, name, history), "\n\n")
 }
 
@@ -273,7 +273,7 @@ func TestSubagentEditDisplayUsesRetainedTranslation(t *testing.T) {
 			"call_id": mustMarshalJSON("call-edit"),
 			"input":   mustMarshalJSON("source edit"),
 		}
-		history := &hpatchHistory{toolName: name, script: "source edit", patch: patch}
+		history := &mekugiHistory{toolName: name, script: "source edit", patch: patch}
 		if got := subagentToolActivityTextWithHistory(item, name, history); got != want {
 			t.Fatalf("%s translated display = %q, want %q", name, got, want)
 		}

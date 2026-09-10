@@ -1,4 +1,4 @@
-package hpatch
+package mekugi
 
 import (
 	"strings"
@@ -17,7 +17,7 @@ func repairFor(t *testing.T, content, script string) string {
 	return repair
 }
 
-func TestHPatch2RepairContextForIncompleteTextTarget(t *testing.T) {
+func TestMekugi2RepairContextForIncompleteTextTarget(t *testing.T) {
 	content := "none\ntarget\nnone\n"
 	anchor := row(1, "none")
 	repair := repairFor(t, content, "in file.txt\ntype "+anchor+` "target" 2 "replacement"`)
@@ -33,7 +33,7 @@ func TestHPatch2RepairContextForIncompleteTextTarget(t *testing.T) {
 	}
 }
 
-func TestHPatch2RepairContextForIncompleteUnanchoredTextTarget(t *testing.T) {
+func TestMekugi2RepairContextForIncompleteUnanchoredTextTarget(t *testing.T) {
 	repair := repairFor(t, "none\ntarget\nnone\n", `in file.txt
 type "target" 2 "replacement"`)
 	for _, want := range []string{
@@ -46,14 +46,14 @@ type "target" 2 "replacement"`)
 	}
 }
 
-func TestHPatch2RepairContextForStaleRow(t *testing.T) {
+func TestMekugi2RepairContextForStaleRow(t *testing.T) {
 	repair := repairFor(t, "alpha\nbeta\n", "in file.txt\ntype 2:0000 \"B\"")
 	if !strings.Contains(repair, "2:"+hashLine("beta")+" beta") {
 		t.Fatalf("repair = %q", repair)
 	}
 }
 
-func TestHPatch2RepairContextForStaleRangeEnd(t *testing.T) {
+func TestMekugi2RepairContextForStaleRangeEnd(t *testing.T) {
 	content := "one\ntwo\nthree\nfour\nfive\nsix\nseven\n"
 	repair := repairFor(t, content, "in file.txt\ntype "+row(1, "one")+"..7:0000 \"\"")
 	if !strings.Contains(repair, "7:"+hashLine("seven")+" seven") {
@@ -61,7 +61,7 @@ func TestHPatch2RepairContextForStaleRangeEnd(t *testing.T) {
 	}
 }
 
-func TestHPatch2MissingRowDoesNotGuessRepairContext(t *testing.T) {
+func TestMekugi2MissingRowDoesNotGuessRepairContext(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, root, "file.txt", "alpha\n", 0o644)
 	result, err := translateForHostAtTest(t, root, "in file.txt\ntype 9:0000 \"B\"", "")
@@ -73,7 +73,7 @@ func TestHPatch2MissingRowDoesNotGuessRepairContext(t *testing.T) {
 	}
 }
 
-func TestHPatch2RepairContextForEditConflict(t *testing.T) {
+func TestMekugi2RepairContextForEditConflict(t *testing.T) {
 	content := "alpha\nbeta\n"
 	script := "in file.txt\ntype " + row(1, "alpha") + ` "A"` + "\ntype " + row(1, "alpha") + ` ""`
 	repair := repairFor(t, content, script)
@@ -88,7 +88,7 @@ func TestHPatch2RepairContextForEditConflict(t *testing.T) {
 	}
 }
 
-func TestHPatch2RepairContextForReversedRange(t *testing.T) {
+func TestMekugi2RepairContextForReversedRange(t *testing.T) {
 	content := "alpha\nbeta\n"
 	script := "in file.txt\ntype " + row(2, "beta") + ".." + row(1, "alpha") + ` ""`
 	repair := repairFor(t, content, script)

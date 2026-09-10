@@ -1,7 +1,7 @@
 #!/bin/sh
 set -e
 
-work="${TMPDIR:-/tmp}/hpatch-nvm-download-$$"
+work="${TMPDIR:-/tmp}/mekugi-nvm-download-$$"
 test_bin="$work/bin"
 argv_log="$work/argv.log"
 proof="$work/evaluated"

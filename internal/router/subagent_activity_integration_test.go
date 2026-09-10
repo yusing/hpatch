@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-func prepareActivityTest(t *testing.T, proxy *hpatchProxy, session, thread, parent, name string, input []any) (*hpatchResponseTransform, *parsedResponsesRequest) {
+func prepareActivityTest(t *testing.T, proxy *mekugiProxy, session, thread, parent, name string, input []any) (*mekugiResponseTransform, *parsedResponsesRequest) {
 	t.Helper()
 	tools := []any{
 		map[string]any{"type": "function", "name": "lookup", "parameters": map[string]any{"type": "object", "properties": map[string]any{}}},
@@ -34,7 +34,7 @@ func prepareActivityTest(t *testing.T, proxy *hpatchProxy, session, thread, pare
 func TestRejectedChildIdentityDoesNotReuseEarlierAttribution(t *testing.T) {
 	for _, parent := range []string{"", "child"} {
 		t.Run("parent="+parent, func(t *testing.T) {
-			proxy := newManagedHPatchProxy(t, testTranslator(t, new(int)))
+			proxy := newManagedMekugiProxy(t, testTranslator(t, new(int)))
 			root, _ := prepareActivityTest(t, proxy, "root-session", "root", "", "/root", nil)
 			child, _ := prepareActivityTest(t, proxy, "child-session", "child", "root", "/root/alpha", nil)
 			child.Close()
@@ -71,7 +71,7 @@ func TestRejectedChildIdentityDoesNotReuseEarlierAttribution(t *testing.T) {
 func TestActualChildActivityProjectsWithoutChangingChildResult(t *testing.T) {
 	for _, stream := range []bool{false, true} {
 		t.Run(map[bool]string{false: "json", true: "sse"}[stream], func(t *testing.T) {
-			p := newManagedHPatchProxy(t, testTranslator(t, new(int)))
+			p := newManagedMekugiProxy(t, testTranslator(t, new(int)))
 			p.commentaryEndpoint = "http://127.0.0.1:8080" + commentaryPublisherPath
 			root, _ := prepareActivityTest(t, p, "root-session", "root-thread", "", "/root", nil)
 			other, _ := prepareActivityTest(t, p, "other-session", "other-root", "", "/root", nil)
@@ -133,7 +133,7 @@ func TestActualChildActivityProjectsWithoutChangingChildResult(t *testing.T) {
 }
 
 func TestSiblingReceiptAndOpaqueCallsKeepExactEnvelope(t *testing.T) {
-	p := newManagedHPatchProxy(t, testTranslator(t, new(int)))
+	p := newManagedMekugiProxy(t, testTranslator(t, new(int)))
 	root, _ := prepareActivityTest(t, p, "root", "r", "", "/root", nil)
 	body := strings.Repeat("evidence ", 100)
 	envelope := map[string]any{"type": "agent_message", "id": "envelope", "author": "/root/alpha", "recipient": "/root/beta", "content": []any{map[string]any{"type": "input_text", "text": "Message Type: MESSAGE\nTask name: /root/beta\nSender: /root/alpha\nPayload:\n" + body}}}
@@ -156,7 +156,7 @@ func TestSiblingReceiptAndOpaqueCallsKeepExactEnvelope(t *testing.T) {
 }
 
 func TestActivityCapacityDoesNotRejectToolsAndOpaqueReceipt(t *testing.T) {
-	p := newManagedHPatchProxy(t, testTranslator(t, new(int)))
+	p := newManagedMekugiProxy(t, testTranslator(t, new(int)))
 	p.commentaryEndpoint = "http://127.0.0.1:8080" + commentaryPublisherPath
 	root, _ := prepareActivityTest(t, p, "root", "r", "", "/root", nil)
 	envelope := map[string]any{"type": "agent_message", "id": "opaque", "author": "/root/a", "recipient": "/root/b", "content": []any{map[string]any{"type": "encrypted_content", "encrypted_content": "opaque-secret"}}}
@@ -182,7 +182,7 @@ func TestActivityCapacityDoesNotRejectToolsAndOpaqueReceipt(t *testing.T) {
 }
 
 func TestFirstChildRequestStripsInheritedRootCopies(t *testing.T) {
-	p := newManagedHPatchProxy(t, testTranslator(t, new(int)))
+	p := newManagedMekugiProxy(t, testTranslator(t, new(int)))
 	root, _ := prepareActivityTest(t, p, "root-session", "r", "", "/root", nil)
 	p.activity.observe("c", "r", "/root/existing", true)
 	p.activity.collect("c", "actual", "reply", "display-only real activity")

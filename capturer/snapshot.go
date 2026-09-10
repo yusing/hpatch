@@ -79,7 +79,7 @@ type toolAggregate struct {
 	ItemTokens  uint64 `json:"item_tokens"`
 }
 
-type hpatchMetrics struct {
+type mekugiMetrics struct {
 	Calls                       uint64            `json:"calls"`
 	Corrections                 uint64            `json:"corrections"`
 	Successful                  uint64            `json:"successful"`
@@ -158,7 +158,7 @@ type metricsSnapshot struct {
 	Protocol       protocolMetrics          `json:"protocol"`
 	ProviderTools  map[string]toolAggregate `json:"provider_tools"`
 	DeliveredTools map[string]toolAggregate `json:"delivered_tools"`
-	HPatch         hpatchMetrics            `json:"hpatch"`
+	Mekugi         mekugiMetrics            `json:"mekugi"`
 	Exchanges      []exchangeMetrics        `json:"exchanges"`
 	Capture        captureHealth            `json:"capture"`
 }
@@ -188,12 +188,12 @@ func (r *Recorder) snapshot() metricsSnapshot {
 
 func newMetricsSnapshot(mode, modelProtocol string) metricsSnapshot {
 	return metricsSnapshot{
-		Schema:         "hpatch.capture.metrics.v4",
+		Schema:         "mekugi.capture.metrics.v4",
 		Mode:           mode,
 		ModelProtocol:  modelProtocol,
 		ProviderTools:  map[string]toolAggregate{},
 		DeliveredTools: map[string]toolAggregate{},
-		HPatch:         hpatchMetrics{Diagnostics: map[string]uint64{}},
+		Mekugi:         mekugiMetrics{Diagnostics: map[string]uint64{}},
 	}
 }
 
@@ -274,7 +274,7 @@ func (r *Recorder) addExchange(front captureRecord, state *requestState, provide
 	} else {
 		r.recordCacheObservation(state, nil)
 	}
-	addHPatch(&r.metrics.HPatch, providerTools, exchange.DeliveredTools)
+	addMekugi(&r.metrics.Mekugi, providerTools, exchange.DeliveredTools)
 	if r.metrics.Cache.EligiblePrefixTokens != 0 {
 		rate := float64(r.metrics.Cache.EligiblePrefixCachedTokens) / float64(r.metrics.Cache.EligiblePrefixTokens)
 		r.metrics.Cache.EligiblePrefixCacheRate = &rate
@@ -326,7 +326,7 @@ func cloneMetricsSnapshot(source metricsSnapshot) metricsSnapshot {
 	clone := source
 	clone.ProviderTools = maps.Clone(source.ProviderTools)
 	clone.DeliveredTools = maps.Clone(source.DeliveredTools)
-	clone.HPatch.Diagnostics = maps.Clone(source.HPatch.Diagnostics)
+	clone.Mekugi.Diagnostics = maps.Clone(source.Mekugi.Diagnostics)
 	if source.Cache.EligiblePrefixCacheRate != nil {
 		rate := *source.Cache.EligiblePrefixCacheRate
 		clone.Cache.EligiblePrefixCacheRate = &rate
@@ -430,7 +430,7 @@ func addTools(totals map[string]toolAggregate, calls []toolCallMetrics) {
 	}
 }
 
-func addHPatch(total *hpatchMetrics, provider, delivered []toolCallMetrics) {
+func addMekugi(total *mekugiMetrics, provider, delivered []toolCallMetrics) {
 	byID := make(map[string]toolCallMetrics, len(delivered))
 	for _, call := range delivered {
 		byID[call.CallID] = call
@@ -451,7 +451,7 @@ func addHPatch(total *hpatchMetrics, provider, delivered []toolCallMetrics) {
 		}
 		total.DeliveredInputTokens += carrier.InputTokens
 		switch carrier.Kind {
-		case "apply_patch", "hpatch_report":
+		case "apply_patch", "mekugi_report":
 			total.Successful++
 		default:
 			total.Rejected++

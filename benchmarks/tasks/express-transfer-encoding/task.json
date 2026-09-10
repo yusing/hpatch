@@ -19,13 +19,13 @@
   "hidden_files": [
     {
       "source": "hidden_transfer_encoding.js",
-      "destination": ".hpatch_benchmark_transfer_encoding.js"
+      "destination": ".mekugi_benchmark_transfer_encoding.js"
     }
   ],
   "graders": [
     {
       "name": "transfer-encoding-response",
-      "command": ["node", ".hpatch_benchmark_transfer_encoding.js"],
+      "command": ["node", ".mekugi_benchmark_transfer_encoding.js"],
       "required": true,
       "expect_base": "fail",
       "baseline_output_contains": "res.send set Content-Length with Transfer-Encoding",

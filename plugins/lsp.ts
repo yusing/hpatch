@@ -167,7 +167,7 @@ export async function runLSPQuery(options: LSPQueryOptions): Promise<LSPQueryRes
       const initialized = await Promise.race([
         connection.sendRequest("initialize", {
           processId: process.pid,
-          clientInfo: {name: "hpatch", version: "1"},
+          clientInfo: {name: "mekugi", version: "1"},
           rootUri: workspaceURI,
           workspaceFolders: [{uri: workspaceURI, name: workspaceName}],
           capabilities: {

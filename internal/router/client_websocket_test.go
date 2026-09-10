@@ -17,7 +17,7 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
-	"github.com/yusing/hpatch/capturer"
+	"github.com/yusing/mekugi/capturer"
 )
 
 func TestProviderWebSocketReuseAndMetadata(t *testing.T) {
@@ -516,10 +516,10 @@ func TestProviderWebSocketWrappedErrorPreservesStatusAndHeaders(t *testing.T) {
 	}
 }
 
-func TestProviderWebSocketHpatchTranslationAndCapture(t *testing.T) {
+func TestProviderWebSocketMekugiTranslationAndCapture(t *testing.T) {
 	for _, stream := range []bool{false, true} {
 		t.Run(strconv.FormatBool(stream), func(t *testing.T) {
-			item := map[string]any{"type": "custom_tool_call", "id": "item-H", "call_id": "call-H", "name": hpatchToolName, "input": testHPatchScript, "status": "completed"}
+			item := map[string]any{"type": "custom_tool_call", "id": "item-H", "call_id": "call-H", "name": mekugiToolName, "input": testMekugiScript, "status": "completed"}
 			terminal := map[string]any{"id": "response", "status": "completed", "output": []any{item}, "usage": map[string]any{"input_tokens": 20, "output_tokens": 5}}
 			payloads := [][]byte{
 				mustTestJSON(t, map[string]any{"type": "response.output_item.done", "output_index": 0, "item": item}),
@@ -545,7 +545,7 @@ func TestProviderWebSocketHpatchTranslationAndCapture(t *testing.T) {
 				_, _, _ = conn.Read(r.Context())
 			}))
 			defer upstream.Close()
-			capture, err := capturer.New(capturer.Config{Mode: "hpatch", ModelProtocol: "ctp2"})
+			capture, err := capturer.New(capturer.Config{Mode: "mekugi", ModelProtocol: "ctp2"})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -555,7 +555,7 @@ func TestProviderWebSocketHpatchTranslationAndCapture(t *testing.T) {
 			client.enableWebSockets(t.Context())
 			defer client.websockets.close()
 			calls := 0
-			proxy := newManagedHPatchProxy(t, testTranslator(t, &calls))
+			proxy := newManagedMekugiProxy(t, testTranslator(t, &calls))
 			workspace := t.TempDir()
 			parsed := serverRequest(t, func(fields map[string]any) {
 				fields["stream"] = stream

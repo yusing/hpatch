@@ -11,7 +11,7 @@ import (
 func TestSubagentToolActivityJSONAndSSE(t *testing.T) {
 	for _, stream := range []bool{false, true} {
 		t.Run(map[bool]string{false: "json", true: "sse"}[stream], func(t *testing.T) {
-			proxy := newManagedHPatchProxy(t, testTranslator(t, new(int)))
+			proxy := newManagedMekugiProxy(t, testTranslator(t, new(int)))
 			root, _ := prepareActivityTest(t, proxy, "root", "r", "", "/root", nil)
 			child, _ := prepareActivityTest(t, proxy, "child", "c", "r", "/root/worker", nil)
 			calls := []map[string]any{
@@ -71,10 +71,10 @@ func TestSubagentTranslatedEditActivityJSONAndSSE(t *testing.T) {
 	for _, stream := range []bool{false, true} {
 		t.Run(map[bool]string{false: "json", true: "sse"}[stream], func(t *testing.T) {
 			calls := 0
-			proxy := newManagedHPatchProxy(t, testTranslator(t, &calls))
+			proxy := newManagedMekugiProxy(t, testTranslator(t, &calls))
 			root, _ := prepareActivityTest(t, proxy, "root", "r", "", "/root", nil)
 			child, _ := prepareActivityTest(t, proxy, "child", "c", "r", "/root/worker", nil)
-			call := testHPatchItem()
+			call := testMekugiItem()
 			original := mustTestJSON(t, call)
 			child.directory = t.TempDir()
 
@@ -137,7 +137,7 @@ func TestSubagentPatchFilesHaveSeparateCommentaries(t *testing.T) {
 		for _, stream := range []bool{false, true} {
 			t.Run(name+map[bool]string{false: "/json", true: "/sse"}[stream], func(t *testing.T) {
 				translations := 0
-				proxy := newManagedHPatchProxy(t, hpatchTranslatorFunc(func(context.Context, string, string) ([]byte, error) {
+				proxy := newManagedMekugiProxy(t, mekugiTranslatorFunc(func(context.Context, string, string) ([]byte, error) {
 					translations++
 					return []byte(patch), nil
 				}))
@@ -148,7 +148,7 @@ func TestSubagentPatchFilesHaveSeparateCommentaries(t *testing.T) {
 				if name == "exec" {
 					input = "await tools.apply_patch(" + string(mustTestJSON(t, patch)) + ")"
 				} else if name == "hpatch" {
-					input = testHPatchScript
+					input = testMekugiScript
 				}
 				call := map[string]any{"type": "custom_tool_call", "name": name, "id": "multi", "call_id": "multi", "input": input}
 				payload := mustTestJSON(t, map[string]any{"status": "completed", "output": []any{call}})
@@ -200,7 +200,7 @@ func TestSubagentPatchFilesHaveSeparateCommentaries(t *testing.T) {
 }
 
 func TestSubagentToolActivityRejectsPartialCalls(t *testing.T) {
-	proxy := newManagedHPatchProxy(t, testTranslator(t, new(int)))
+	proxy := newManagedMekugiProxy(t, testTranslator(t, new(int)))
 	root, _ := prepareActivityTest(t, proxy, "root", "r", "", "/root", nil)
 	child, _ := prepareActivityTest(t, proxy, "child", "c", "r", "/root/worker", nil)
 	for _, status := range []string{"in_progress", "incomplete"} {

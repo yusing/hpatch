@@ -1,4 +1,4 @@
-declare module "hpatch:core/v1" {
+declare module "mekugi:core/v1" {
   export class SharedCoreError extends Error {
     readonly code: string;
   }
