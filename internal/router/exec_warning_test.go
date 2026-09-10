@@ -114,10 +114,18 @@ func TestBatchedExecWarningDelivery(t *testing.T) {
 }
 
 func TestExecWarningsPreserveLocalOutputBinding(t *testing.T) {
-	const source = `const text = "local data"; const r = await tools.exec_command({cmd:"one"}); console.log(r.output, text);`
+	// Owning another likely global alias must not break diagnostic delivery either.
+	const source = `const globalThis = "local scope"; const text = "local data"; const r = await tools.exec_command({cmd:"one"}); console.log(r.output, text);`
 	for _, name := range []string{"exec", "shell"} {
 		t.Run(name, func(t *testing.T) {
-			transform, _, _, _ := newHPatchTestTransform(t, testTranslator(t, new(int)))
+			proxy := newManagedHPatchProxy(t, testTranslator(t, new(int)))
+			storeDirectory := t.TempDir()
+			var err error
+			proxy.replayStore, err = openHPatchReplayStore(storeDirectory)
+			if err != nil {
+				t.Fatal(err)
+			}
+			transform, _, _, workspace := newHPatchTestTransformWithProxy(t, proxy)
 			body, err := transform.TransformJSON(mustTestJSON(t, map[string]any{
 				"status": "completed", "output": []any{map[string]any{
 					"type": "custom_tool_call", "name": name, "call_id": "local-text", "input": source,
@@ -136,10 +144,59 @@ func TestExecWarningsPreserveLocalOutputBinding(t *testing.T) {
 			if program != source {
 				t.Fatal("warning rewrote a program owning the output helper")
 			}
-			host := `globalThis.tools = {exec_command: async x => ({output:x.cmd})};` + "\n"
-			output, err := exec.CommandContext(t.Context(), "bun", "--eval", host+program).CombinedOutput()
+			// The host and submitted module have separate lexical environments.
+			host := `globalThis.tools = {exec_command: async x => ({output:x.cmd})}; await import("data:text/javascript," + encodeURIComponent(` + string(mustMarshalJSON(program)) + "));"
+			output, err := exec.CommandContext(t.Context(), "node", "--input-type=module", "--eval", host).CombinedOutput()
 			if err != nil || string(output) != "one local data\n" {
 				t.Fatalf("carrier changed execution: %v: %s", err, output)
+			}
+			resumed := newManagedHPatchProxy(t, testTranslator(t, new(int)))
+			resumed.replayStore, err = openHPatchReplayStore(storeDirectory)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, original := range []any{
+				string(output),
+				[]any{map[string]string{"type": "input_text", "text": string(output)}, map[string]string{"type": "input_image", "image_url": "data:image/png;base64,fixture"}},
+			} {
+				replay, err := parseResponsesRequest(mustTestJSON(t, map[string]any{"input": []any{
+					response.Output[0], map[string]any{"type": "custom_tool_call_output", "call_id": "local-text", "output": original},
+				}}))
+				if err != nil {
+					t.Fatal(err)
+				}
+				// A fresh router/fork must project the persisted warning too, without
+				// commentary enabled or an in-memory parent record.
+				if _, err := resumed.reconcileVisibleInput(t.Context(), &replay, workspace, "fresh-fork"); err != nil {
+					t.Fatal(err)
+				}
+				var items []map[string]json.RawMessage
+				if err := json.Unmarshal(replay.fields["input"], &items); err != nil {
+					t.Fatal(err)
+				}
+				var parts []json.RawMessage
+				if err := json.Unmarshal(items[1]["output"], &parts); err != nil {
+					t.Fatal(err)
+				}
+				var wantOriginal []json.RawMessage
+				if _, ok := original.(string); ok {
+					wantOriginal = []json.RawMessage{mustMarshalJSON(map[string]string{"type": "input_text", "text": string(output)})}
+				} else if err := json.Unmarshal(mustMarshalJSON(original), &wantOriginal); err != nil {
+					t.Fatal(err)
+				}
+				if len(parts) != len(wantOriginal)+1 || !sameJSONValue(mustMarshalJSON(parts[:len(parts)-1]), mustMarshalJSON(wantOriginal)) {
+					t.Fatal("warning changed the original result parts")
+				}
+				var notice map[string]json.RawMessage
+				_ = json.Unmarshal(parts[len(parts)-1], &notice)
+				warning := jsonString(notice, "text")
+				if strings.Count(warning, nativeExecCommandWarning) != 1 || (name == "shell" && !strings.Contains(warning, shellCodeModeRecoveryWarning)) {
+					t.Fatalf("missing model-visible warnings: %q", warning)
+				}
+				first := string(replay.fields["input"])
+				if _, err := resumed.reconcileVisibleInput(t.Context(), &replay, workspace, "fresh-fork"); err != nil || string(replay.fields["input"]) != first {
+					t.Fatalf("warning duplicated on replay: %v", err)
+				}
 			}
 		})
 	}

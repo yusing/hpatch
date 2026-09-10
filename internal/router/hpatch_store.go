@@ -47,6 +47,7 @@ type replayHistory struct {
 	CarrierKind          codeModeCarrierKind
 	CarrierPayload       string
 	Report               string
+	OutputWarning        string
 	TranslationError     string
 	EvaluatorRejected    bool
 	Rejections           []hpatch.HostRejection
@@ -73,6 +74,7 @@ func durableHistory(h hpatchHistory) replayHistory {
 		CarrierKind:          h.carrierKind,
 		CarrierPayload:       h.carrierPayload,
 		Report:               h.report,
+		OutputWarning:        h.outputWarning,
 		TranslationError:     h.translationError,
 		EvaluatorRejected:    h.evaluatorRejected,
 		Rejections:           h.rejections,
@@ -99,6 +101,7 @@ func (h replayHistory) history() hpatchHistory {
 		carrierKind:          h.CarrierKind,
 		carrierPayload:       h.CarrierPayload,
 		report:               h.Report,
+		outputWarning:        h.OutputWarning,
 		translationError:     h.TranslationError,
 		evaluatorRejected:    h.EvaluatorRejected,
 		rejections:           h.Rejections,

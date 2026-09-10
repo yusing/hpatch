@@ -548,8 +548,8 @@ func nativeExecCommandInput(input string) (string, string, bool, bool) {
 	if !usage.execCommand {
 		return input, "", false, false
 	}
-	// Diagnostics must not turn a valid program into a call to its own local
-	// `text` binding (or a temporal-dead-zone error before that binding exists).
+	// An empty warning projection with detected=true defers delivery to the
+	// router-owned tool result, avoiding the program's local `text` binding.
 	if usage.textShadowed {
 		return input, "", false, true
 	}

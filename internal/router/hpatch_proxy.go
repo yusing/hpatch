@@ -1326,9 +1326,12 @@ func (t *hpatchResponseTransform) translateRegisteredTool(contribution toolContr
 		}
 	}
 	misuseWarning := ""
+	outputWarning := ""
 	if recovered {
 		usage := inspectCodeModeRuntime(payload)
-		if !usage.textShadowed {
+		if usage.textShadowed {
+			outputWarning = strings.Join(misuseWarnings, "\n") + "\n"
+		} else {
 			for _, warning := range misuseWarnings {
 				misuseWarning += misuseWarningProjection(warning)
 			}
@@ -1366,6 +1369,7 @@ func (t *hpatchResponseTransform) translateRegisteredTool(contribution toolContr
 		carrierName:      name,
 		carrierPayload:   payload,
 		translationError: diagnostic,
+		outputWarning:    outputWarning,
 		upstreamItem:     maps.Clone(upstreamItem),
 		replayCarrier:    recovered,
 	}
@@ -1944,7 +1948,11 @@ func (t *hpatchResponseTransform) transformOutputItem(item *responsesItem) (bool
 			item.setInput(retained.carrierPayload)
 			return retained.carrierPayload != originalInput, nil
 		}
-		input, _, changed, detected := nativeExecCommandInput(originalInput)
+		input, warningInput, changed, detected := nativeExecCommandInput(originalInput)
+		outputWarning := ""
+		if detected && warningInput == "" {
+			outputWarning = nativeExecCommandWarning + "\n"
+		}
 		if detected {
 			if changed {
 				item.setInput(input)
@@ -1955,7 +1963,7 @@ func (t *hpatchResponseTransform) transformOutputItem(item *responsesItem) (bool
 			return false, err
 		}
 		changed = changed || commentaryChanged
-		if t.proxy.commentaryEndpoint == "" {
+		if t.proxy.commentaryEndpoint == "" && outputWarning == "" {
 			if changed {
 				item.setInput(input)
 			}
@@ -1968,6 +1976,7 @@ func (t *hpatchResponseTransform) transformOutputItem(item *responsesItem) (bool
 			toolName: codeModeCommentaryHistoryTool,
 			script:   originalInput, carrierKind: codeModeCarrierCustom,
 			carrierName: name, carrierPayload: input, upstreamItem: item.cloneFields(),
+			outputWarning: outputWarning,
 		}
 		if !commentaryChanged {
 			history.replayCarrier = true

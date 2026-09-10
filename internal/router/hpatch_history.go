@@ -35,7 +35,10 @@ type hpatchHistory struct {
 	carrierKind    codeModeCarrierKind
 	carrierPayload string
 
-	report               string
+	report string
+	// Deferred diagnostics are projected onto the model-visible result, never
+	// evaluated in a program that owns the host's output-helper identifier.
+	outputWarning        string
 	translationError     string
 	evaluatorRejected    bool
 	rejections           []hpatch.HostRejection
@@ -103,7 +106,7 @@ func (p *hpatchProxy) rememberBatch(sessionID string, histories map[string]hpatc
 		if err != nil {
 			return fmt.Errorf("encode hpatch history item: %w", err)
 		}
-		history.bytes = len(sessionID) + len(callID) + len(history.toolName) + len(history.pluginID) + len(history.script) + len(history.root) + len(history.evaluated) + len(history.patch) + len(history.carrierKind) + len(history.carrierName) + len(history.carrierPayload) + len(history.report) + len(history.translationError) + len(history.correlationID) + len(encodedItem)
+		history.bytes = len(sessionID) + len(callID) + len(history.toolName) + len(history.pluginID) + len(history.script) + len(history.root) + len(history.evaluated) + len(history.patch) + len(history.carrierKind) + len(history.carrierName) + len(history.carrierPayload) + len(history.report) + len(history.outputWarning) + len(history.translationError) + len(history.correlationID) + len(encodedItem)
 		for _, rejection := range history.rejections {
 			history.bytes += hpatchRejectionTextBytes(rejection)
 		}
@@ -322,6 +325,16 @@ func (p *hpatchProxy) reconcileVisibleInput(ctx context.Context, request *parsed
 				history.confirmed = true
 			}
 			visible[callID] = history
+			if history.outputWarning != "" {
+				output, projected, err := appendToolOutputWarning(item["output"], history.outputWarning)
+				if err != nil {
+					return nil, fmt.Errorf("project call %q warning: %w", callID, err)
+				}
+				if projected {
+					item["output"] = output
+					changed = true
+				}
+			}
 			if !history.replayCarrier {
 				upstreamKind := codeModeCarrierCustom
 				if jsonString(history.upstreamItem, "type") == carrierItemType(codeModeCarrierFunction) {
@@ -365,6 +378,21 @@ func (p *hpatchProxy) reconcileVisibleInput(ctx context.Context, request *parsed
 		request.setInput(encoded)
 	}
 	return visible, nil
+}
+
+func appendToolOutputWarning(raw json.RawMessage, warning string) (json.RawMessage, bool, error) {
+	var parts []json.RawMessage
+	var text string
+	if json.Unmarshal(raw, &text) == nil {
+		parts = []json.RawMessage{mustMarshalJSON(map[string]string{"type": "input_text", "text": text})}
+	} else if err := json.Unmarshal(raw, &parts); err != nil {
+		return nil, false, errors.New("tool output must be text or content parts")
+	}
+	notice := mustMarshalJSON(map[string]string{"type": "input_text", "text": warning})
+	if len(parts) != 0 && sameJSONValue(parts[len(parts)-1], notice) {
+		return raw, false, nil
+	}
+	return mustMarshalJSON(append(parts, notice)), true, nil
 }
 
 func (t *hpatchResponseTransform) recordLocal(callID string, history *hpatchHistory) {

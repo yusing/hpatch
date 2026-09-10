@@ -257,7 +257,10 @@ Acceptance:
     strings, comments, unrelated helpers, and locally bound `tools` are not evidence of misuse.
     Warning insertion preserves execution, results, leading pragmas, and directive prologues.
     If the program locally binds or assigns the `text` output helper, leave its source unchanged
-    rather than injecting diagnostics that could call that binding or prevent execution.
+    and append the warnings as a separate text part of the model-visible tool result. Original
+    result text and multimodal parts remain intact. This projection is idempotent and retained
+    across fresh-process resume and forks, independently of commentary configuration; diagnostics
+    are not evaluated in the submitted program or substituted for its output.
     Native-only
     requests and other misplaced JavaScript/TypeScript use the rejection behavior above.
 17. Retain, read, edit, and rerun preserve the script body and original model-visible call.

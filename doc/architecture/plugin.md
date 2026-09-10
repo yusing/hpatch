@@ -203,6 +203,12 @@ hpatch alone attaches its existing recovery state. A plugin input rejection may 
 bounded diagnostic carrier, while a runtime-adapter failure, malformed translator result, or
 unavailable carrier fails routing and cannot be represented as successful translation.
 
+When authored Code Mode owns the `text` identifier, diagnostics are retained with the carrier
+instead of being evaluated inside that program. The replay owner appends one separate warning
+text part to the model-visible tool result, preserving the executor's original text and other
+content parts. The durable record carries this projection across resume and forks; repeated
+projection does not duplicate the warning. Commentary configuration does not control delivery.
+
 For hpatch, the immediate executor carrier contains the root engine's translated patch and
 already-rendered final-state report. Response restoration retains the original model-visible
 hpatch call and normal executor result for later model-visible history; it does not expose
