@@ -95,11 +95,17 @@ gawk/mawk/nawk to `awk`. Numeric version suffixes on these known executable fami
 Python, Ruby, Perl, PHP, Lua, and PowerShell are normalized too, such as `python3.12`
 and `php8.3`. Other interpreter names pass through unchanged after path and case
 normalization; unavailable or unsafe language tags use an untagged fence. Source text remains intact.
+Transparent result wrappers include inline `text(await tools.exec_command(...))` and
+`text(await tools.write_stdin(...))`, as well as `text(result)`, `text(result.output)`, and JSON result
+projections, with the matching local binding name. Recognition uses the JavaScript parse tree,
+not source-text matching, so whitespace variations do not affect it. The output-only projection displays the
+decoded command, preserving its line breaks rather than showing the JavaScript wrapper.
 Code Mode recognition accepts literal JavaScript objects with identifier or quoted keys and
 recursively static JSON-compatible values. It never evaluates source; computed keys, spreads,
 calls, references, and other dynamic expressions retain a `Run JavaScript` display with the
 original source in a `javascript` fence. A literal `write_stdin` call with no characters is
-shown as waiting for command output rather than as raw JavaScript.
+shown as `Wait` with its session ID rather than as raw JavaScript, matching native
+`write_stdin` polls. Calls that send nonempty characters display `Send input`.
 Simple literal `cat` and `hread` calls display `Read <file>`; `skills-mgr get <skill-name>`
 and reads of a named skill's `SKILL.md` display `Skill Read <skill-name>`.
 `skills-mgr get <skill-name>/<reference-path>` displays `Skill Reference Read` with the

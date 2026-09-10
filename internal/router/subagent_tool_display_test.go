@@ -53,10 +53,10 @@ func TestSubagentToolDisplay(t *testing.T) {
 		{"view_image", `{"path":"/tmp/a.png"}`, "View image\n`/tmp/a.png`"},
 		{"exec", `const result = await tools.exec_command({"cmd":"shell bash $'cat a\\n'","login":false}); text(JSON.stringify(Object.assign({}, result, {"retained":false})));`, "Read `a`"},
 		{"exec", `await tools.exec_command({"cmd":"echo a\necho b"})`, "Run\n```bash\necho a\necho b\n```"},
-		{"exec", `const r = await tools.write_stdin({session_id: 52915, chars: "", yield_time_ms: 30000, max_output_tokens: 3000}); text(r);`, "Wait for command output\n`session 52915`"},
-		{"exec", `await tools.write_stdin({session_id: -12, chars: ""})`, "Wait for command output\n`session -12`"},
-		{"exec", `await tools.write_stdin({session_id: 9007199254740993, chars: ""})`, "Wait for command output\n`session 9007199254740992`"},
-		{"exec", `await tools.write_stdin({session_id: -9007199254740993, chars: ""})`, "Wait for command output\n`session -9007199254740992`"},
+		{"exec", `const r = await tools.write_stdin({session_id: 52915, chars: "", yield_time_ms: 30000, max_output_tokens: 3000}); text(r);`, "Wait\n`session 52915`"},
+		{"exec", `await tools.write_stdin({session_id: -12, chars: ""})`, "Wait\n`session -12`"},
+		{"exec", `await tools.write_stdin({session_id: 9007199254740993, chars: ""})`, "Wait\n`session 9007199254740992`"},
+		{"exec", `await tools.write_stdin({session_id: -9007199254740993, chars: ""})`, "Wait\n`session -9007199254740992`"},
 		{"exec", `await tools.exec_command({cmd: 'cat a', login: false})`, "Read `a`"},
 		{"exec", `await tools.apply_patch("*** Begin Patch\n*** Add File: a\n+x\n*** End Patch\n")`, "Write `a`\n```diff\n+x\n```"},
 	}
@@ -69,6 +69,79 @@ func TestSubagentToolDisplay(t *testing.T) {
 		})
 	}
 }
+func TestSubagentCodeModeOutputProjection(t *testing.T) {
+	command := "python3 - <<'PY'\nimport pathlib, json\nprint('done')\nPY"
+	for _, projection := range []string{
+		"text(r.output)", "text ( r . output )", "text(/* output */ r.output)",
+		"text(r)", "text ( JSON . stringify ( r ) )",
+		`text(JSON.stringify(Object.assign( { }, r, { retained : false } )))`,
+	} {
+		source := "const r = await tools.exec_command({cmd:" +
+			string(mustMarshalJSON(command)) +
+			`,workdir:"/tmp",yield_time_ms:30000,max_output_tokens:12000});` +
+			"\n" + projection + ";"
+		item := map[string]json.RawMessage{"name": mustMarshalJSON("exec"), "input": mustMarshalJSON(source)}
+		want := "Run\n```bash\n" + command + "\n```"
+		if got := subagentToolActivityText(item, "exec"); got != want {
+			t.Fatalf("display = %q, want %q", got, want)
+		}
+	}
+}
+
+func TestSubagentWriteStdinDisplay(t *testing.T) {
+	for _, tt := range []struct {
+		arguments string
+		want      string
+	}{
+		{`{"session_id":52915}`, "Wait\n`session 52915`"},
+		{`{"session_id":52915,"chars":""}`, "Wait\n`session 52915`"},
+		{`{"session_id":52915,"chars":"yes"}`, "Send input\n`yes`"},
+	} {
+		for _, projection := range []string{"text(r)", "text (r . output)", "text(JSON.stringify(r))"} {
+			source := "const r = await tools . write_stdin(" + tt.arguments + ");\n" + projection + ";"
+			item := map[string]json.RawMessage{"input": mustMarshalJSON(source)}
+			native := map[string]json.RawMessage{"arguments": mustMarshalJSON(tt.arguments)}
+			want := subagentToolActivityText(native, "write_stdin")
+			if want != tt.want {
+				t.Fatalf("native display = %q, want %q", want, tt.want)
+			}
+			if got := subagentToolActivityText(item, "exec"); got != want {
+				t.Fatalf("Code Mode display = %q, want native display %q", got, want)
+			}
+		}
+	}
+}
+
+func TestSubagentInlineAwaitDisplay(t *testing.T) {
+	for _, tt := range []struct {
+		source, want string
+	}{
+		{
+			`text(await tools.exec_command({cmd:"cat /home/ubuntu/.codex/IMPLEMENTATION.md; git diff --stat; git diff -- internal/router/subagent_tool_display.go doc/spec/commentary.md",max_output_tokens:11000}));`,
+			"Run\n```bash\ncat /home/ubuntu/.codex/IMPLEMENTATION.md; git diff --stat; git diff -- internal/router/subagent_tool_display.go doc/spec/commentary.md\n```",
+		},
+		{
+			`text(await tools.exec_command({cmd:"skills-mgr get golang-best-practices; sed -n '1,245p' internal/router/subagent_tool_display.go; sed -n '320,475p' internal/router/subagent_tool_display.go; git diff -- internal/router/subagent_tool_display_test.go",max_output_tokens:10100}));`,
+			"Run\n```bash\nskills-mgr get golang-best-practices; sed -n '1,245p' internal/router/subagent_tool_display.go; sed -n '320,475p' internal/router/subagent_tool_display.go; git diff -- internal/router/subagent_tool_display_test.go\n```",
+		},
+		{
+			`text(await tools.exec_command({cmd:"gopls references internal/router/subagent_tool_display.go:17:6; sed -n '60,135p' doc/spec/commentary.md; sed -n '1,65p' internal/router/subagent_tool_display_test.go; sed -n '540,650p' internal/router/subagent_tool_display.go",max_output_tokens:5000}));`,
+			"Run\n```bash\ngopls references internal/router/subagent_tool_display.go:17:6; sed -n '60,135p' doc/spec/commentary.md; sed -n '1,65p' internal/router/subagent_tool_display_test.go; sed -n '540,650p' internal/router/subagent_tool_display.go\n```",
+		},
+		{
+			`text(await tools.write_stdin({session_id:23221,chars:"",yield_time_ms:1000,max_output_tokens:5000}));`,
+			"Wait\n`session 23221`",
+		},
+	} {
+		t.Run(tt.source, func(t *testing.T) {
+			item := map[string]json.RawMessage{"input": mustMarshalJSON(tt.source)}
+			if got := subagentToolActivityText(item, "exec"); got != tt.want {
+				t.Fatalf("display = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestSubagentRunInterpreterLanguages(t *testing.T) {
 	for _, tt := range []struct {
 		interpreters []string
@@ -109,6 +182,19 @@ func TestSubagentToolDisplayDoesNotUnwrapArbitraryCode(t *testing.T) {
 	for _, source := range []string{
 		`if (false) await tools.exec_command({"cmd":"cat a"})`,
 		`await tools.exec_command({"cmd":"cat a"}); await tools.exec_command({"cmd":"rm b"})`,
+		`text(await tools.exec_command({cmd:"cat a"}), other())`,
+		`other(await tools.exec_command({cmd:"cat a"}))`,
+		`text(await tools.exec_command({cmd:command}))`,
+		`text(await tools.exec_command({cmd:"cat a"})); other()`,
+		`text?.(await tools.exec_command({cmd:"cat a"}))`,
+		`const r = await tools.exec_command({cmd:"cat a"}); text(r["output"])`,
+		`const r = await tools.exec_command({cmd:"cat a"}); text(r.output, other())`,
+		`const r = await tools.exec_command({cmd:"cat a"}); text(JSON.stringify(other))`,
+		`const r = await tools.exec_command({cmd:"cat a"}); text(JSON.stringify(Object.assign({}, other, {retained:false})))`,
+		`const r = await tools.exec_command({cmd:"cat a"}); text(JSON.stringify(Object.assign({}, r, {retained:other()})))`,
+		`const r = await tools.exec_command({cmd:"cat a"}); text(other.output)`,
+		`const r = await tools.exec_command({cmd:"cat a"}); text(r.output())`,
+		`const r = await tools.exec_command({cmd:"cat a"}); text(r.output); other()`,
 		`const r = await tools.exec_command({"cmd":"cat a"}); text(other())`,
 		`await tools.exec_command({"cmd":command})`,
 		`await tools.exec_command({"cmd":"cat a"}`,

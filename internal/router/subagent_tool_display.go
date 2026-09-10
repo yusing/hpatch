@@ -195,9 +195,9 @@ func toolActivityWriteStdin(arguments map[string]json.RawMessage) string {
 	}
 	session := strings.TrimSpace(string(arguments["session_id"]))
 	if session == "" || !json.Valid([]byte(session)) {
-		return "Wait for command output"
+		return "Wait"
 	}
-	return "Wait for command output\n" + commentaryCode("session "+session)
+	return "Wait\n" + commentaryCode("session "+session)
 }
 
 func toolActivityShellArgv(argv []string) string {
@@ -422,6 +422,9 @@ func toolActivityUnwrapExec(source string) (map[string]json.RawMessage, bool) {
 	var expression *sitter.Node
 	if first.Kind() == "expression_statement" && len(statements) == 1 {
 		expression = first.NamedChild(0)
+		if args, ok := toolActivityCallArguments(expression, bytes, "text"); ok && len(args) == 1 {
+			expression = args[0]
+		}
 	} else if first.Kind() == "lexical_declaration" && first.NamedChildCount() == 1 && len(statements) == 2 {
 		declaration := first.NamedChild(0)
 		binding := declaration.ChildByFieldName("name")
@@ -429,9 +432,7 @@ func toolActivityUnwrapExec(source string) (map[string]json.RawMessage, bool) {
 			return nil, false
 		}
 		name := binding.Utf8Text(bytes)
-		tail := strings.TrimSuffix(strings.TrimSpace(statements[1].Utf8Text(bytes)), ";")
-		if tail != "text("+name+")" && tail != "text(JSON.stringify("+name+"))" &&
-			tail != "text(JSON.stringify(Object.assign({}, "+name+", {\"retained\":false})))" {
+		if !toolActivityResultProjection(statements[1], bytes, name) {
 			return nil, false
 		}
 		expression = declaration.ChildByFieldName("value")
@@ -447,13 +448,17 @@ func toolActivityUnwrapExec(source string) (map[string]json.RawMessage, bool) {
 	if callee == nil || args == nil || args.NamedChildCount() != 1 {
 		return nil, false
 	}
-	name := strings.TrimPrefix(callee.Utf8Text(bytes), "tools.")
+	property := callee.ChildByFieldName("property")
+	if property == nil {
+		return nil, false
+	}
+	name := property.Utf8Text(bytes)
 	switch name {
 	case "exec_command", "shell_command", "shell", "view_image", "write_stdin", "apply_patch":
 	default:
 		return nil, false
 	}
-	if callee.Utf8Text(bytes) != "tools."+name {
+	if !toolActivityMemberPath(callee, bytes, "tools", name) || call.ChildByFieldName("optional_chain") != nil {
 		return nil, false
 	}
 	value, ok := toolActivityStaticJavaScriptValue(args.NamedChild(0), bytes)
@@ -467,6 +472,76 @@ func toolActivityUnwrapExec(source string) (map[string]json.RawMessage, bool) {
 		item["arguments"] = mustMarshalJSON(string(mustMarshalJSON(value)))
 	}
 	return item, true
+}
+
+// Inspect the projection tree so formatting never determines whether a wrapper
+// is transparent. Only the bound result and the supported metadata copy qualify.
+func toolActivityResultProjection(statement *sitter.Node, source []byte, binding string) bool {
+	if statement.Kind() != "expression_statement" || statement.NamedChildCount() != 1 {
+		return false
+	}
+	args, ok := toolActivityCallArguments(statement.NamedChild(0), source, "text")
+	if !ok || len(args) != 1 {
+		return false
+	}
+	value := args[0]
+	if toolActivityMemberPath(value, source, binding) ||
+		toolActivityMemberPath(value, source, binding, "output") {
+		return true
+	}
+	args, ok = toolActivityCallArguments(value, source, "JSON", "stringify")
+	if !ok || len(args) != 1 {
+		return false
+	}
+	if toolActivityMemberPath(args[0], source, binding) {
+		return true
+	}
+	args, ok = toolActivityCallArguments(args[0], source, "Object", "assign")
+	if !ok || len(args) != 3 || !toolActivityMemberPath(args[1], source, binding) {
+		return false
+	}
+	target, targetOK := toolActivityStaticJavaScriptValue(args[0], source)
+	metadata, metadataOK := toolActivityStaticJavaScriptValue(args[2], source)
+	targetObject, targetIsObject := target.(map[string]any)
+	metadataObject, metadataIsObject := metadata.(map[string]any)
+	return targetOK && metadataOK && targetIsObject && metadataIsObject &&
+		len(targetObject) == 0 && len(metadataObject) == 1 && metadataObject["retained"] == false
+}
+
+func toolActivityCallArguments(node *sitter.Node, source []byte, path ...string) ([]*sitter.Node, bool) {
+	if node == nil || node.Kind() != "call_expression" ||
+		node.ChildByFieldName("optional_chain") != nil ||
+		!toolActivityMemberPath(node.ChildByFieldName("function"), source, path...) {
+		return nil, false
+	}
+	args := node.ChildByFieldName("arguments")
+	if args == nil || args.Kind() != "arguments" {
+		return nil, false
+	}
+	var values []*sitter.Node
+	for i := range args.NamedChildCount() {
+		child := args.NamedChild(uint(i))
+		if child.Kind() != "comment" {
+			values = append(values, child)
+		}
+	}
+	return values, true
+}
+
+func toolActivityMemberPath(node *sitter.Node, source []byte, path ...string) bool {
+	if node == nil || len(path) == 0 {
+		return false
+	}
+	if len(path) == 1 {
+		return node.Kind() == "identifier" && node.Utf8Text(source) == path[0]
+	}
+	if node.Kind() != "member_expression" || node.ChildByFieldName("optional_chain") != nil {
+		return false
+	}
+	property := node.ChildByFieldName("property")
+	return property != nil && property.Kind() == "property_identifier" &&
+		property.Utf8Text(source) == path[len(path)-1] &&
+		toolActivityMemberPath(node.ChildByFieldName("object"), source, path[:len(path)-1]...)
 }
 
 func toolActivityStaticJavaScriptValue(node *sitter.Node, source []byte) (any, bool) {
