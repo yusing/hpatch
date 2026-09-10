@@ -21,7 +21,6 @@ run_agent() {
 	local order=$3
 	local run_id
 	run_id="$task_id-$arm-r$(printf '%03d' "$repetition")"
-	local workspace
 	local repository
 	local artifact_dir="$run_dir/artifacts/$task_id/$run_id"
 	local agent_service=${arm_services[$arm]}
@@ -79,24 +78,22 @@ run_agent() {
 	fi
 	printf 'run %s: repetition %d %s (%d/%d)\n' \
 		"$task_id" "$repetition" "$arm" "$order" "$attempts_per_repetition"
-	workspace=$(mktemp -d "$run_dir/work/$run_id-XXXXXX")
+	workspace=$(mktemp -d "$run_dir/work/$run_id-XXXXXX") || return 1
+	trusted=$(mktemp -d /tmp/hpatch-capture-XXXXXX) || return 1
 	repository="$workspace/repo"
-	mkdir -p "$artifact_dir"
-	printf '%s\n' "$arm" >"$artifact_dir/arm"
+	mkdir -p "$artifact_dir" || return 1
+	printf '%s\n' "$arm" >"$artifact_dir/arm" || return 1
 	if [[ $benchmark_mode == mentor-handoff ]]; then
 		codex_home="$artifact_dir/codex-home"
 		child_events="$artifact_dir/child-events.jsonl"
 		child_proof="$artifact_dir/child-proof.json"
-		mkdir -m 0700 "$codex_home"
+		mkdir -m 0700 "$codex_home" || return 1
 	fi
-	snapshot "$base_commit" "$repository"
-	link_task_dependencies "$repository"
-	if [[ $dependency_kind == node ]]; then
-		git -C "$repository" add --force -- node_modules
-		git -C "$repository" commit --quiet --amend --no-edit
-	fi
+	snapshot "$base_commit" "$repository" || return 1
+	link_task_dependencies "$repository" || return 1
+	python3 "$benchmark_root/capture_tree.py" baseline "$repository" "$trusted" || return 1
 
-	agent_prompt=$(cat "$task/$prompt_file")
+	agent_prompt=$(cat "$task/$prompt_file") || return 1
 	if [[ $benchmark_mode == mentor-handoff ]]; then
 		root_model=$mentor_parent_model
 		root_reasoning_effort=$mentor_parent_reasoning_effort
@@ -105,13 +102,12 @@ run_agent() {
 			-c "agents.$mentor_child_role.description=\"Fixed benchmark implementation role\""
 			-c "agents.$mentor_child_role.config_file=\"/bench-instructions/${mentor_child_role_config##*/}\""
 		)
-		agent_prompt=$(cat "$mentor_parent_prompt")
+		agent_prompt=$(cat "$mentor_parent_prompt") || return 1
 	fi
 	started_at=$(date --utc --iso-8601=ns)
 	started_ms=$(date +%s%3N)
-	set +e
 	(
-		cd "$repository"
+		cd "$repository" || exit 1
 		export BENCH_AGENT_SERVICE=$agent_service
 		export BENCH_ARTIFACT_DIR=$artifact_dir
 		export HPATCH_BENCH_MODE=$router_mode HPATCH_BENCH_PROTOCOL=$model_protocol
@@ -135,13 +131,11 @@ run_agent() {
 			"$agent_prompt"
 	) >"$codex_stdout" 2>"$codex_stderr" &
 	active_agent_pid=$!
-	wait "$active_agent_pid"
-	exit_code=$?
+	if wait "$active_agent_pid"; then exit_code=0; else exit_code=$?; fi
 	if [[ $pair_canceled == true ]]; then
 		wait "$active_agent_pid" 2>/dev/null || true
 	fi
 	active_agent_pid=
-	set -e
 	if [[ $benchmark_mode == mentor-handoff ]]; then
 		if ! normalize_codex_home_permissions "$codex_home"; then
 			task_pass=false
@@ -152,6 +146,7 @@ run_agent() {
 		fi
 	fi
 	canceled=$pair_canceled
+	[[ $canceled != true ]] || return "$pair_cancel_status"
 	duration_ms=$(($(date +%s%3N) - started_ms))
 	executor_process_creation_errors=$(grep -Fc 'Failed to create unified exec process:' "$codex_stderr" || true)
 	executor_process_creation_errors=${executor_process_creation_errors:-0}
@@ -161,48 +156,37 @@ run_agent() {
 	if [[ $exit_code -ne 0 || $canceled == true ]]; then
 		task_pass=false
 	fi
-	if ! normalize_repository_permissions "$repository"; then
-		task_pass=false
-	fi
-
-	mapfile -d '' changed < <(
-		{
-			git -C "$repository" diff --name-only -z HEAD
-			git -C "$repository" ls-files --others --exclude-standard -z
-		} | sort -zu
-	)
+	normalize_repository_permissions "$repository" || return 1
+	python3 "$benchmark_root/capture_tree.py" capture "$repository" "$trusted" \
+		"$artifact_dir/changed-paths.json" "$diff_path" || return 1
+	changed_json=$(cat "$artifact_dir/changed-paths.json") || return 1
+	jq -j '.[] + "\u0000"' <<<"$changed_json" >"$trusted/changed-paths" || return 1
+	mapfile -d '' changed <"$trusted/changed-paths" || return 1
+	# Grade only the captured bytes, never the executor's mutable Git workspace.
+	repository="$trusted/candidate"
 	for path in "${changed[@]}"; do
 		if ! is_allowed_path "$path"; then
 			unauthorized+=("$path")
 			task_pass=false
 		fi
 	done
-	if ((${#changed[@]})); then
-		changed_json=$(printf '%s\0' "${changed[@]}" | jq -Rs 'split("\u0000")[:-1]')
-	else
-		changed_json='[]'
-	fi
 	if ((${#unauthorized[@]})); then
-		unauthorized_json=$(printf '%s\0' "${unauthorized[@]}" | jq -Rs 'split("\u0000")[:-1]')
+		unauthorized_json=$(printf '%s\0' "${unauthorized[@]}" | jq -Rs 'split("\u0000")[:-1]') || return 1
 	fi
 
-	git -C "$repository" add --intent-to-add --all -- .
-	git -C "$repository" diff --binary HEAD >"$diff_path"
-
-	if [[ $canceled == true ]]; then
-		: >"$artifact_dir/grader-$task_id.stdout"
-		: >"$artifact_dir/grader-$task_id.stderr"
-		grader_exit=$pair_cancel_status
+	if ! inject_hidden_tests "$repository" >"$artifact_dir/grader-$task_id.stdout" 2>"$artifact_dir/grader-$task_id.stderr"; then
+		grader_exit=125
 		grader_duration_ms=0
 	else
-		inject_hidden_tests "$repository"
 		grader_started_ms=$(date +%s%3N)
-		set +e
-		grade "$repository" "$artifact_dir/grader-$task_id.stdout" "$artifact_dir/grader-$task_id.stderr"
-		grader_exit=$?
-		set -e
+		if grade "$repository" "$artifact_dir/grader-$task_id.stdout" "$artifact_dir/grader-$task_id.stderr"; then
+			grader_exit=0
+		else
+			grader_exit=$?
+		fi
 		grader_duration_ms=$(($(date +%s%3N) - grader_started_ms))
 	fi
+
 	if [[ $grader_exit -ne 0 ]]; then
 		task_pass=false
 	fi
@@ -277,13 +261,13 @@ run_agent() {
 				stderr_path: $stderr_path,
 				child_events_path: null,
 				child_proof_path: null
-			}')
+			}') || return 1
 	fi
 	if [[ -f $child_events ]]; then
-		agent_json=$(jq -c --arg path "$child_events" '.child_events_path = $path' <<<"$agent_json")
+		agent_json=$(jq -c --arg path "$child_events" '.child_events_path = $path' <<<"$agent_json") || return 1
 	fi
 	if [[ -f $child_proof ]]; then
-		agent_json=$(jq -c --arg path "$child_proof" '.child_proof_path = $path' <<<"$agent_json")
+		agent_json=$(jq -c --arg path "$child_proof" '.child_proof_path = $path' <<<"$agent_json") || return 1
 	fi
 	if [[ -n $expected_final_response ]]; then
 		expected_response_required=true
@@ -315,12 +299,12 @@ run_agent() {
 					observed: {agent_messages: 0, successful_commands: 0, item_counts: {}},
 					missing: ["checker-error"],
 					checker_exit_code: $status
-				}')
+				}') || return 1
 			task_pass=false
 		fi
 		commentary_coverage_json=$(jq -c --arg path "$commentary_coverage_path" \
-			'. + {path: $path}' <<<"$commentary_coverage_json")
-		printf '%s\n' "$commentary_coverage_json" >"$commentary_coverage_path"
+			'. + {path: $path}' <<<"$commentary_coverage_json") || return 1
+		printf '%s\n' "$commentary_coverage_json" >"$commentary_coverage_path" || return 1
 	fi
 
 	grader_json=$(jq -cn \
@@ -349,12 +333,13 @@ run_agent() {
 			exit_code: (if $expected_response_passed then 0 else 1 end),
 			timed_out: false,
 			duration_ms: 0
-		}] else [] end)')
+		}] else [] end)') || return 1
 
 	# jq variables are supplied by the arguments below.
 	# shellcheck disable=SC2016
 	result_json=$(jq -cn \
 		--arg run_id "$run_id" \
+		--arg benchmark_image_id "${benchmark_image_id:-}" \
 		--arg arm "$arm" \
 		--argjson repetition "$repetition" \
 		--argjson order "$order" \
@@ -384,6 +369,7 @@ run_agent() {
 		--argjson task_pass "$task_pass" '
 		{
 			run_id: $run_id,
+			benchmark_image_id: $benchmark_image_id,
 			task_id: $task_id,
 			task_contract_sha256: $task_contract_sha256,
 			arm: $arm,
@@ -414,21 +400,41 @@ run_agent() {
 			diff_path: $diff_path,
 			graders: $graders,
 			task_pass: $task_pass
-		}')
-	printf '%s\n' "$result_json" >"$result_path"
+		}') || return 1
+	printf '%s\n' "$result_json" >"$result_path" || return 1
 
-	input_tokens=$(jq -r '.usage.input_tokens' <<<"$agent_json")
-	cached_tokens=$(jq -r '.usage.cached_input_tokens' <<<"$agent_json")
-	output_tokens=$(jq -r '.usage.output_tokens' <<<"$agent_json")
-	reasoning_tokens=$(jq -r '.usage.reasoning_output_tokens' <<<"$agent_json")
+	input_tokens=$(jq -r '.usage.input_tokens' <<<"$agent_json") || return 1
+	cached_tokens=$(jq -r '.usage.cached_input_tokens' <<<"$agent_json") || return 1
+	output_tokens=$(jq -r '.usage.output_tokens' <<<"$agent_json") || return 1
+	reasoning_tokens=$(jq -r '.usage.reasoning_output_tokens' <<<"$agent_json") || return 1
 	if [[ $task_pass == true ]]; then
 		printf 'pass %s: %d ms, input=%s cached=%s output=%s reasoning=%s\n' \
 			"$run_id" "$duration_ms" "$input_tokens" "$cached_tokens" "$output_tokens" "$reasoning_tokens"
 	else
 		printf 'fail %s\n' "$run_id"
 	fi
-	rm -rf "$workspace"
 	[[ $task_pass == true ]]
+}
+
+# Keep an explicit failure record even when preparation or capture cannot complete.
+run_attempt() {
+	local status=0 workspace= trusted=
+	run_agent "$@" || status=$?
+	if [[ -n $trusted ]]; then rm -rf -- "$trusted"; fi
+	if [[ -n $workspace ]]; then rm -rf -- "$workspace"; fi
+	local run_id
+	run_id="$task_id-$1-r$(printf '%03d' "$2")" || return 1
+	local artifact_dir="$run_dir/artifacts/$task_id/$run_id"
+	if [[ ! -s $artifact_dir/result.json ]]; then
+		mkdir -p "$artifact_dir" || return 1
+		jq -cn --arg run_id "$run_id" --arg task_id "$task_id" --arg arm "$1" \
+			--argjson repetition "$2" --argjson order "$3" \
+			'{run_id:$run_id, task_id:$task_id, arm:$arm, repetition:$repetition,
+			order_in_block:$order, task_pass:false, infrastructure_error:"mandatory attempt step failed"}' \
+			>"$artifact_dir/result.json" || return 1
+		status=1
+	fi
+	return "$status"
 }
 
 run_block() {
@@ -443,11 +449,11 @@ run_block() {
 		arms=("${run_arms[1]}" "${run_arms[0]}")
 	fi
 	if ((${#arms[@]} == 1)); then
-		run_agent "${arms[0]}" "$repetition" "$first_arm_order"
+		run_attempt "${arms[0]}" "$repetition" "$first_arm_order"
 		return
 	fi
 	for index in "${!arms[@]}"; do
-		run_agent "${arms[$index]}" "$repetition" "$((index + first_arm_order))" || block_status=1
+		run_attempt "${arms[$index]}" "$repetition" "$((index + first_arm_order))" || block_status=1
 		if [[ $pair_canceled == true ]]; then
 			return "$pair_cancel_status"
 		fi

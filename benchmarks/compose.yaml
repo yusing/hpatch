@@ -1,7 +1,7 @@
 name: ${COMPOSE_PROJECT_NAME:-hpatch-bench}
 
 x-bench-image: &bench-image
-  image: hpatch-bench:${HPATCH_BENCH_IMAGE_TAG:-local}
+  image: ${BENCH_IMAGE:-hpatch-bench:${HPATCH_BENCH_IMAGE_TAG:-local}}
 
 x-agent: &agent
   <<: *bench-image
@@ -35,16 +35,40 @@ services:
   dependency-loader:
     <<: *bench-image
     build:
-      context: ..
+      context: ${BENCH_BUILD_CONTEXT:-..}
       dockerfile: benchmarks/Dockerfile
     profiles: [setup]
     environment:
       GOSUMDB: "off"
       GOTOOLCHAIN: local
+      GOCACHE: /tmp/go-build
     networks:
       egress: {}
     volumes:
       - ${BENCH_DEPENDENCY_CACHE:?}:/go/pkg/mod
+
+  grader:
+    <<: *bench-image
+    profiles: [grading]
+    read_only: true
+    network_mode: none
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 512
+    mem_limit: 8g
+    tmpfs: ["/tmp:exec,size=4g,mode=1777"]
+    environment:
+      HOME: /tmp
+      GOMODCACHE: /go/pkg/mod
+      GOCACHE: /tmp/go-build
+      GOPROXY: "off"
+      GOSUMDB: "off"
+      GOTOOLCHAIN: local
+      GOVCS: "*:off"
+      PYTHONDONTWRITEBYTECODE: "1"
+    volumes:
+      - ${BENCH_DEPENDENCY_CACHE:?}:/go/pkg/mod:ro
+      - ${BENCH_DEPENDENCY_CACHE:?}:${BENCH_DEPENDENCY_CACHE:?}:ro
 
   control-agent:
     <<: *agent

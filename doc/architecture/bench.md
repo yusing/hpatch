@@ -10,6 +10,14 @@ imported membership, executor service, router mode/protocol, instructions, and c
 One block scheduler owns alternating order and per-block cancellation for all measured modes. Agents cannot reach the historical oracle or hidden grader before their
 changes are captured.
 
+The runner freezes Docker build inputs in a retained archive and pins subsequent containers to
+the built image ID. Candidate Git metadata is never an authority: a separate runner-owned index
+compares a trusted baseline with a filesystem copy, and only that captured copy reaches grading.
+Grading runs in a capability-free, network-disabled container with private temporary build caches
+and read-only dependency material. It cannot write authoritative artifacts or another attempt.
+The session launcher places replay state under its private runtime mount, writable to the router
+but read-only in the executor namespace.
+
 Each fresh arm has one `hpatch` process and one router listener. Codex connects directly to
 that listener. The router connects directly to the provider. The root `capturer` package observes
 both boundaries in-process and writes the arm's sanitized JSONL. The benchmark never inserts a

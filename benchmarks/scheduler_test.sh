@@ -27,7 +27,7 @@ for mode in paired control-only hpatch-only hpatch-diagnostic ctp-only mentor-ha
   esac
   [[ ${run_arms[*]} == "${expected[*]}" && ${retained_arms[*]} == "${retained[*]}" ]]
   calls="$fixture/$mode"
-  run_agent() {
+  run_attempt() {
    local arm=$1
    printf '%s %s %s %s %s %s %s %s\n' "$arm" "$2" "$3" "${arm_services[$arm]}" \
     "${arm_modes[$arm]}" "${arm_protocols[$arm]}" "${arm_instructions[$arm]}" "${arm_mentor[$arm]}" >>"$calls"
@@ -87,12 +87,12 @@ done
 export BENCHMARK_MODE=paired MODEL=gpt-5.6-sol REPETITIONS=1 BENCHMARK_REPORT_ISSUES=false
 configure_benchmark
 calls="$fixture/status"
-run_agent() { printf '%s\n' "$1" >>"$calls"; return 1; }
+run_attempt() { printf '%s\n' "$1" >>"$calls"; return 1; }
 status=0
 (run_block 1) || status=$?
 [[ $status == 1 && $(wc -l <"$calls") -eq 2 ]]
 : >"$calls"
-run_agent() { printf '%s\n' "$1" >>"$calls"; cancel_pair 143; }
+run_attempt() { printf '%s\n' "$1" >>"$calls"; cancel_pair 143; }
 status=0
 (run_block 1) || status=$?
 [[ $status == 143 && $(wc -l <"$calls") -eq 1 ]]

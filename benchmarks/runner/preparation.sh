@@ -107,6 +107,7 @@ JSON
 		--arg treatment_model_protocol "$HPATCH_BENCH_HPATCH_MODEL_PROTOCOL" \
 		--arg benchmark_commit "$benchmark_commit" \
 		--arg codex_release "$codex_release" \
+		--slurpfile build_identity "$run_dir/build-identity.json" \
 		--arg parent_model "$mentor_parent_model" \
 		--arg mentor_model_protocol "$mentor_model_protocol" \
 		--arg parent_reasoning_effort "$mentor_parent_reasoning_effort" \
@@ -123,6 +124,7 @@ JSON
 			treatment_model_protocol: $treatment_model_protocol,
 			benchmark_commit: $benchmark_commit,
 			codex_release: $codex_release,
+			build_identity: $build_identity[0],
 			mentor_handoff: {
 				enabled: ($benchmark_mode == "mentor-handoff"),
 				trigger: "thread_spawn",
@@ -153,27 +155,27 @@ snapshot() {
 	local revision=$1
 	local destination=$2
 
-	mkdir -p "$destination"
+	mkdir -p "$destination" || return 1
 	if [[ $source_is_public == true ]]; then
-		git --git-dir="$source_repo" archive --format=tar "$revision" | tar -x -C "$destination"
+		git --git-dir="$source_repo" archive --format=tar "$revision" | tar -x -C "$destination" || return 1
 	elif [[ $source_kind == git ]]; then
-		git -C "$source_repo" archive --format=tar "$revision" | tar -x -C "$destination"
+		git -C "$source_repo" archive --format=tar "$revision" | tar -x -C "$destination" || return 1
 	fi
-	git -C "$destination" init --quiet
-	git -C "$destination" config user.name "hpatch benchmark"
-	git -C "$destination" config user.email "benchmark@invalid"
-	git -C "$destination" config commit.gpgsign false
-	git -C "$destination" config core.hooksPath .git/no-hooks
-	git -C "$destination" add --all --force
+	git -C "$destination" init --quiet || return 1
+	git -C "$destination" config user.name "hpatch benchmark" || return 1
+	git -C "$destination" config user.email "benchmark@invalid" || return 1
+	git -C "$destination" config commit.gpgsign false || return 1
+	git -C "$destination" config core.hooksPath .git/no-hooks || return 1
+	git -C "$destination" add --all --force || return 1
 	GIT_AUTHOR_DATE=2000-01-01T00:00:00Z \
 		GIT_COMMITTER_DATE=2000-01-01T00:00:00Z \
-	git -C "$destination" commit --quiet --allow-empty -m "benchmark baseline"
+	git -C "$destination" commit --quiet --allow-empty -m "benchmark baseline" || return 1
 }
 
 link_task_dependencies() {
 	local repository=$1
 	if [[ $dependency_kind == node ]]; then
-		ln -s "$dependency_cache/node_modules" "$repository/node_modules"
+		ln -s "$dependency_cache/node_modules" "$repository/node_modules" || return 1
 	fi
 }
 
@@ -295,8 +297,8 @@ inject_hidden_tests() {
 	for index in "${!hidden_paths[@]}"; do
 		source="$task/${hidden_sources[$index]}"
 		destination="$repository/${hidden_paths[$index]}"
-		parent=$(dirname "$destination")
-		resolved_parent=$(realpath -m "$parent")
+		parent=$(dirname "$destination") || return 1
+		resolved_parent=$(realpath -m "$parent") || return 1
 		case "$resolved_parent/" in
 		"$repository/"*) ;;
 			*)
@@ -304,8 +306,8 @@ inject_hidden_tests() {
 			return 1
 			;;
 		esac
-		mkdir -p "$parent"
-		resolved_parent=$(realpath -e "$parent")
+		mkdir -p "$parent" || return 1
+		resolved_parent=$(realpath -e "$parent") || return 1
 		if [[ $resolved_parent != "$repository" && $resolved_parent != "$repository"/* ]]; then
 			printf 'hidden grader parent escapes workspace: %s\n' "$resolved_parent" >&2
 			return 1
@@ -314,7 +316,7 @@ inject_hidden_tests() {
 			printf 'hidden grader destination already exists: %s\n' "$destination" >&2
 			return 1
 		fi
-		install -m 0644 "$source" "$destination"
+		install -m 0644 "$source" "$destination" || return 1
 	done
 }
 
@@ -326,32 +328,15 @@ grade() {
 
 	verify_task_contract || return 1
 
-	case $dependency_kind in
-	go)
-		(
-			cd "$repository"
-			GOMODCACHE="$dependency_cache" GOCACHE="$dependency_cache/go-build" \
-			GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local \
-				timeout --signal=TERM --kill-after=10s "${grader_timeout}s" \
-				"${grader_command[@]}"
-		) >"$stdout" 2>"$stderr" || status=$?
-		;;
-	node)
-		(
-			cd "$repository"
-			PATH="$dependency_cache/node_modules/.bin:$PATH" \
-				timeout --signal=TERM --kill-after=10s "${grader_timeout}s" \
-				"${grader_command[@]}"
-		) >"$stdout" 2>"$stderr" || status=$?
-		;;
-	none)
-		(
-			cd "$repository"
-			timeout --signal=TERM --kill-after=10s "${grader_timeout}s" \
-				"${grader_command[@]}"
-		) >"$stdout" 2>"$stderr" || status=$?
-		;;
-	esac
+	# The grader can execute arbitrary candidate code. No credentials, artifacts,
+	# other workspaces, host namespaces, or writable shared caches enter this container.
+	compose_used=true
+	"${compose[@]}" run --interactive=false --no-tty --rm --no-deps \
+		--user "$(id -u):$(id -g)" \
+		--volume "$repository:$repository" --workdir "$repository" \
+		grader timeout --signal=TERM --kill-after=10s "${grader_timeout}s" \
+		"${grader_command[@]}" >"$stdout" 2>"$stderr" || status=$?
+
 	verify_task_contract || return 1
 	return "$status"
 }
@@ -365,9 +350,9 @@ validate_revision() {
 
 	printf 'validate %s: exporting %s\n' "$task_id" "$name"
 	workspace=$(mktemp -d "$run_dir/validate-$name-XXXXXX")
-	snapshot "$revision" "$workspace/repo"
-	link_task_dependencies "$workspace/repo"
-	inject_hidden_tests "$workspace/repo"
+	snapshot "$revision" "$workspace/repo" || return 1
+	link_task_dependencies "$workspace/repo" || return 1
+	inject_hidden_tests "$workspace/repo" || return 1
 	if grade "$workspace/repo" "$workspace/grader.stdout" "$workspace/grader.stderr"; then
 		actual=pass
 	else
@@ -400,4 +385,27 @@ run_phase() {
 	printf 'phase %s: starting\n' "$label"
 	"$@"
 	printf 'phase %s: passed (%ds)\n' "$label" "$((SECONDS - start))"
+}
+
+build_benchmark_image() {
+	local context
+	context=$(mktemp -d /tmp/hpatch-build-XXXXXX) || return 1
+	local build_status=0
+	python3 "$benchmark_root/build_inputs.py" "$benchmark_root/.." \
+		"$run_dir/build-inputs.tar" "$context" &&
+		BENCH_BUILD_CONTEXT="$context" "${compose[@]}" build dependency-loader || build_status=$?
+	rm -rf -- "$context"
+	((build_status == 0)) || return "$build_status"
+	benchmark_image_id=$(docker image inspect --format '{{.Id}}' "$benchmark_image") || return 1
+	benchmark_image=$benchmark_image_id
+	read -r build_inputs_sha256 _ < <(sha256sum "$run_dir/build-inputs.tar")
+	docker run --rm --network none "$benchmark_image_id" \
+		sha256sum /usr/local/bin/hpatch /usr/local/bin/shell /usr/local/libexec/codex-real \
+		>"$run_dir/binary-sha256.txt" || return 1
+	jq -cn --arg image_id "$benchmark_image_id" --arg source_sha256 "$build_inputs_sha256" \
+		--rawfile binaries "$run_dir/binary-sha256.txt" \
+		'{image_id:$image_id, build_inputs_sha256:$source_sha256, binaries:$binaries}' \
+		>"$run_dir/build-identity.json" || return 1
+	# All later containers use the immutable image ID, not a mutable tag.
+	export BENCH_IMAGE="$benchmark_image_id"
 }

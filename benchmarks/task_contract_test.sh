@@ -69,6 +69,19 @@ printf 'Task content and instruction matching: compatible import passed, mismatc
 
 # Exercise the actual grade wrapper: preserve grader failures and reject changes
 # made while the grader is running, not just changes before it starts.
+# Unit fixture for the container boundary; real isolation is checked separately.
+compose_fixture() {
+    local repository=
+    while (($#)); do
+        case $1 in
+            --workdir) repository=$2; shift 2 ;;
+            grader) shift; break ;;
+            *) shift ;;
+        esac
+    done
+    (cd "$repository" && "$@")
+}
+compose=(compose_fixture)
 dependency_kind=none grader_timeout=10
 grader_command=(bash -c 'exit 7')
 status=0

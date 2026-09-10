@@ -6,6 +6,23 @@ The benchmark MUST create independent historical workspaces for its measured arm
 grader material until after agent changes are captured, enforce the allowed changed-path boundary,
 and run the hidden executable grader. Correctness MUST take precedence over performance reporting.
 
+Mandatory preparation, capture, injection, and grading failures MUST fail the attempt even
+when execution is invoked conditionally. Injection failure MUST NOT execute a candidate-supplied
+grader. Failed attempts MUST retain available artifacts and a failed result.
+
+The runner MUST capture candidate filesystem bytes against a runner-owned baseline, independent
+of candidate Git HEAD, index, configuration, and ignore rules. Grading MUST consume the captured
+bytes in a network-disabled container with no host credentials, other attempts, authoritative
+artifacts, or writable shared dependency cache. Qualification and grading build caches MUST be
+private to each container and MUST NOT enter the dependency material exposed to agents.
+
+Each router MUST have a per-attempt writable replay-state directory that is read-only to its
+executor. Model-free container checks MUST exercise real router startup and executor restrictions.
+Each build MUST freeze and retain its actual source inputs, including uncommitted changes, and
+record their hash, built binary hashes, and immutable image ID. Later containers MUST use that
+image ID. Results MUST retain that identity alongside instruction hashes and router mode/protocol
+so the compiled guidance and effective treatment can be reproduced.
+
 Supported modes are:
 
 - `paired`: stock passthrough/native control versus Hpatch + CTP/2 with alternating order;

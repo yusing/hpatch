@@ -12,7 +12,7 @@ for mode in passthrough hpatch; do
  for protocol in native ctp2; do
   for mentor in false true; do
    CAPTURE="$fixture/args" PATH="$fixture:$PATH" BENCH_ARTIFACT_DIR=/benchmark-artifacts/session \
-    HPATCH_BENCH_MODE="$mode" HPATCH_BENCH_PROTOCOL="$protocol" HPATCH_BENCH_MENTOR="$mentor" \
+    HPATCH_RUNTIME_DIR="$fixture/runtime" HPATCH_BENCH_MODE="$mode" HPATCH_BENCH_PROTOCOL="$protocol" HPATCH_BENCH_MENTOR="$mentor" \
     bash "$benchmark_root/session-entry.sh" exec 'prompt with spaces'
    python3 - "$fixture/args" "$mode" "$protocol" "$mentor" <<'PY'
 import pathlib,sys
@@ -30,7 +30,7 @@ BENCH_RUN_DIR="$fixture" BENCH_DEPENDENCY_CACHE="$fixture/cache" CODEX_AUTH_PATH
 python3 - "$fixture/config.json" <<'PY'
 import json,sys
 services=json.load(open(sys.argv[1]))['services']
-assert set(services)=={'control-agent','hpatch-agent','dependency-loader'}
+assert set(services)=={'control-agent','hpatch-agent','dependency-loader','grader'}
 for name in ('control-agent','hpatch-agent'):
  s=services[name]
  assert s['read_only'] and 'NET_ADMIN' in s['cap_add'] and 'SYS_ADMIN' in s['cap_add']

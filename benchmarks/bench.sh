@@ -51,7 +51,7 @@ benchmark_main() {
 		"$run_dir/hpatch-runtime/control" "$run_dir/hpatch-runtime/hpatch" "$instruction_dir"
 	: >"$results"
 
-	run_phase image-build "${compose[@]}" build dependency-loader
+	run_phase image-build build_benchmark_image
 	run_phase instructions prepare_instructions
 	prepare_mentor_prompts
 	configure_issue_reporting

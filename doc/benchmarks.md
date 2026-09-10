@@ -46,6 +46,27 @@ and oracle passes the hidden grader. It does not run an agent. The runner prints
 times separately from agent wall time; a later measured invocation repeats preparation in its
 own isolated workspace and qualifies router/network isolation before invoking Codex.
 
+Builds retain `build-inputs.tar`, its SHA-256 hash, binary hashes, and the immutable Docker image
+ID. The archive includes uncommitted build inputs but excludes Git metadata, task source clones,
+and benchmark results. Later containers use the image ID rather than a mutable tag. Together with
+instruction hashes and each arm's mode/protocol, this identifies the implementation and compiled
+guidance used in the run.
+
+Candidate changes are captured against a runner-owned baseline, without trusting the candidate's
+Git index, HEAD, or ignore rules. Hidden graders run against that captured copy in a network-disabled
+container, not on the host. Dependency material is read-only; compilation caches are private and
+never passed from oracle qualification to an agent. If capture or grader injection fails, the
+attempt remains failed and no substituted grader runs.
+
+To check real startup and isolation without model calls, use an already built benchmark image:
+
+```sh
+BENCH_TEST_IMAGE=hpatch-bench:your-built-tag bash benchmarks/runtime_isolation_test.sh
+```
+
+This starts the real router and Codex `--version`, checks the executor's read-only replay state,
+and exercises the isolated grader and private caches. It does not need provider credentials.
+
 One Hpatch attempt against a matching published control:
 
 ```sh

@@ -14,7 +14,7 @@ configure_benchmark
 calls="$fixture/calls"
 record_compose() { printf '%s\n' "$*" >>"$calls"; }
 collect_router_metrics() { printf 'metrics %s\n' "$1" >>"$calls"; }
-run_agent() { printf 'agent %s\n' "$*" >>"$calls"; }
+run_attempt() { printf 'agent %s\n' "$*" >>"$calls"; }
 compose=(record_compose)
 started=false
 collected=false
