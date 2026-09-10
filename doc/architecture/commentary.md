@@ -97,8 +97,11 @@ ancestry and source identity without replacing final answers or entering provide
 
 The input boundary recognizes actual inter-agent envelopes addressed to the current canonical
 agent, including sibling and nested traffic. Plaintext replies are shown in full, never excerpted;
-replies exceeding the auxiliary rendering budget are omitted. Encrypted receipt is direction-only.
-Original model-visible envelopes remain unchanged. Deterministic router IDs suppress repeated
+replies exceeding the auxiliary rendering budget are omitted. Encrypted receipt is direction-only, including
+native two-part envelopes with a plaintext routing header and opaque encrypted content.
+Original model-visible envelopes remain unchanged. Only envelopes following the latest user
+message or assistant output are eligible for receipt projection; full-history replay cannot
+turn earlier, previously undisplayed replies into fresh activity. Deterministic router IDs suppress repeated
 local commentary on replay.
 
 The terminal response transformer also owns one user-only commentary projection of the provider's

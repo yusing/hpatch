@@ -160,8 +160,14 @@ An absent or malformed child identity never matches an unaddressed envelope. Val
 plaintext `MESSAGE` and `FINAL_ANSWER` payloads are shown in full as received replies,
 never as excerpts. Replies exceeding the auxiliary rendering budget are omitted
 from commentary without changing the original envelope. Encrypted envelopes show receipt
-and direction only. Malformed items produce no projection. Original envelopes
+and direction only, including native Codex envelopes containing a plaintext routing
+header followed by an opaque encrypted-content part. Malformed items produce no projection. Original envelopes
 and substantive answers remain intact in model-visible history.
+
+Received-reply projection considers only envelopes after the latest user message or
+assistant output in the request. Earlier envelopes remain model-visible history, not
+new activity, including after resume or full-history cache rebasing. Previously missed
+historical replies are not flushed into a later turn.
 
 Router-authored subagent commentary uses deterministic router-owned message IDs. The router removes
 those messages from later provider-bound input while preserving the original collaboration calls,

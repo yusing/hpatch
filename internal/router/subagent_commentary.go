@@ -49,7 +49,17 @@ func prepareSubagentInputCommentary(fields map[string]json.RawMessage, recipient
 		return nil
 	}
 	visible := make(map[string]struct{})
-	for _, item := range items {
+	currentInput := 0
+	for i, item := range items {
+		// A later user message or assistant output makes preceding envelopes
+		// historical, even if their commentary was never displayed. This boundary
+		// also works on full-history requests after resume or cache rebasing.
+		kind, role := jsonString(item, "type"), jsonString(item, "role")
+		if (kind == "message" || kind == "") && (role == "user" || role == "assistant") ||
+			kind == "reasoning" || strings.HasSuffix(kind, "_call") {
+			currentInput = i + 1
+		}
+
 		if jsonString(item, "type") == "message" && strings.HasPrefix(jsonString(item, "id"), subagentCommentaryMessagePrefix) {
 			visible[jsonString(item, "id")] = struct{}{}
 		}
@@ -64,7 +74,7 @@ func prepareSubagentInputCommentary(fields map[string]json.RawMessage, recipient
 
 	var commentary []map[string]json.RawMessage
 	budget := maxCommentaryPublicationBytes
-	for _, item := range items {
+	for _, item := range items[currentInput:] {
 		text, sender, ok := subagentResponse(item)
 		if !ok || jsonString(item, "recipient") != recipient {
 			continue
@@ -94,7 +104,16 @@ func subagentResponse(item map[string]json.RawMessage) (text, sender string, ok 
 		return "", "", false
 	}
 	var content []map[string]json.RawMessage
-	if json.Unmarshal(item["content"], &content) != nil || len(content) != 1 {
+	if json.Unmarshal(item["content"], &content) != nil {
+		return "", "", false
+	}
+	// Native Codex pairs the plaintext routing header with opaque ciphertext.
+	// Report receipt only; neither part is a plaintext reply payload.
+	if len(content) == 2 && jsonString(content[0], "type") == "input_text" &&
+		jsonString(content[1], "type") == "encrypted_content" {
+		return "", sender, true
+	}
+	if len(content) != 1 {
 		return "", "", false
 	}
 	if jsonString(content[0], "type") == "encrypted_content" {
