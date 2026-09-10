@@ -555,6 +555,10 @@ func executeRequest(
 	// supported model. HTTP requests must retain ordinary preparation checks.
 	_, webSocketRequest := provider.(*webSocketExchange)
 	prewarm := webSocketRequest && metadataValid && metadata.RequestKind == "prewarm" && string(parsedRequest.fields["generate"]) == "false"
+	if prewarm {
+		// Prewarm retains native instructions, including no CTP decoding guide.
+		compactTokens = nil
+	}
 	if hpatchCalls != nil && !prewarm {
 		hpatchTransform, err = hpatchCalls.prepareRequest(
 			ctx,
@@ -605,17 +609,6 @@ func executeRequest(
 	if err != nil {
 		return fmt.Errorf("encode native Responses request: %w", err)
 	}
-	nativeWire, err := parsedRequest.incrementalBody(nativeBody)
-	if err != nil {
-		return err
-	}
-	if exchange, ok := provider.(*webSocketExchange); ok && exchange.automatic {
-		// An automatic successor has no request on either wire. Record that
-		// explicitly so CTP capture can distinguish it from missing evidence.
-		capturer.ObserveNativeRequest(ctx, nil)
-	} else {
-		capturer.ObserveNativeRequest(ctx, nativeWire)
-	}
 	var forwardBody []byte
 	compactTransform, forwardBody, err = compactTokens.prepareRequest(&parsedRequest, nativeBody)
 	if err != nil {
@@ -624,7 +617,21 @@ func executeRequest(
 	if forwardBody == nil {
 		forwardBody = nativeBody
 	}
-	debug.instructions(forwardBody, headers, sessionID, debugID, parsedRequest.cachedInput)
+	if exchange, ok := provider.(*webSocketExchange); ok {
+		if err := exchange.prepareInstructionCache(&parsedRequest, forwardBody); err != nil {
+			return err
+		}
+	}
+	nativeWire, err := parsedRequest.incrementalBody(nativeBody)
+	if err != nil {
+		return err
+	}
+	if exchange, ok := provider.(*webSocketExchange); ok && exchange.automatic {
+		capturer.ObserveNativeRequest(ctx, nil)
+	} else {
+		capturer.ObserveNativeRequest(ctx, nativeWire)
+	}
+	projectedBody := forwardBody
 	finalization.failurePhase = requestFailureForward
 	cacheKey := parsedRequest.promptCacheKey()
 	if cacheKey == "" {
@@ -634,6 +641,11 @@ func executeRequest(
 	if err != nil {
 		return err
 	}
+	debugWire := forwardBody
+	if exchange, ok := provider.(*webSocketExchange); ok && exchange.automatic {
+		debugWire = nil
+	}
+	debug.instructions(projectedBody, debugWire, headers, sessionID, debugID, parsedRequest.cachedInput)
 	response, err := provider.forwardExecution(ctx, executionCtx, forwardBody, headers, cacheKey)
 	if err != nil {
 		return fmt.Errorf("execute request: %w", forwardCriticalDiagnostic(err))

@@ -324,10 +324,14 @@ directory. After Codex exits, it prints absolute paths to stderr for:
 - `instructions.jsonl`: exact instruction text, developer messages, and tool declarations
   after request rewriting, with thread and request identifiers.
 
-The dump includes effective Responses input before cached history is omitted from
-incremental WebSocket requests. `cached_input_items` identifies that cached prefix;
-`scope` is `effective_responses_request`. For Grok, this is the Responses representation
-before conversion to Chat Completions, not a raw provider-wire dump. Ordinary user
+The dump separates the local request projection (`scope: projected_responses_request`)
+from the prepared wire input. `developer_messages` and `additional_tools` include inherited
+instructions; `wire_developer_messages` and `wire_additional_tools` contain only the items
+being forwarded. `cached_input_items` counts the reused prefix. If inherited instructions
+or tool declarations changed, `cache_rebased` is true, the full projected history is sent,
+and `wire_previous_response_id` is null. `wire_request_present` is false for automatic
+successors, which have no outgoing request. These records describe preparation, not proof
+of provider acceptance. For Grok, they precede conversion to Chat Completions. Ordinary user
 messages, tool calls, and authentication headers are excluded. Instruction text is not
 sanitized and can contain private information supplied in your instructions.
 

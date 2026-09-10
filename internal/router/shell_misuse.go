@@ -10,7 +10,7 @@ import (
 
 const shellTypeScriptDiagnostic = "shell: [shell-typescript-misuse] Rejected before execution: the Bash body is invalid Bash but valid TypeScript/JavaScript. Use functions.exec for Code Mode helpers such as tools, ALL_TOOLS, and text when available; call collaboration tools directly. For an ordinary script, select an explicit interpreter with a shebang such as #!node or #!bun. No script or command template was executed."
 
-const shellCodeModeRecoveryWarning = "shell: [shell-code-mode-recovered] Recovered Code Mode JavaScript submitted through functions.shell; use functions.exec directly next time"
+const shellCodeModeRecoveryWarning = "shell: [shell-code-mode-recovered] Recovered Code Mode JavaScript submitted through functions.shell. Submit shell commands directly to functions.shell, without tools.exec_command or Promise wrappers. Use functions.exec only for other Code Mode helpers."
 
 // Recovery requires JavaScript syntax and a reference to the Code Mode runtime,
 // not text that merely resembles a call. Explicit shell headers, directives,
@@ -26,20 +26,62 @@ func shellCodeModeRecovery(contribution toolContribution, input string) bool {
 	if _, err := syntax.NewParser(syntax.Variant(syntax.LangBash)).Parse(strings.NewReader(program), ""); err == nil {
 		return false
 	}
+	return inspectCodeModeRuntime(program).runtime
+}
+
+type codeModeRuntimeUsage struct {
+	runtime              bool
+	execCommand          bool
+	warningOffset        int
+	nativeWarningOffset  int
+	nativeWarningPresent bool
+	textShadowed         bool
+}
+
+func inspectCodeModeRuntime(program string) codeModeRuntimeUsage {
+	var usage codeModeRuntimeUsage
 	parser := sitter.NewParser()
 	defer parser.Close()
 	if err := parser.SetLanguage(codeModeJavaScriptLanguage); err != nil {
-		return false
+		return usage
 	}
 	source := []byte(program)
 	tree := parser.Parse(source, nil)
 	if tree == nil {
-		return false
+		return usage
 	}
 	defer tree.Close()
 	root := tree.RootNode()
 	if root == nil || root.HasError() {
-		return false
+		return usage
+	}
+	// Do not displace a leading pragma, comment, or JavaScript directive prologue.
+	for i := range root.NamedChildCount() {
+		node := root.NamedChild(uint(i))
+		if node.Kind() == "comment" || node.Kind() == "hash_bang_line" {
+			continue
+		}
+		if node.Kind() == "expression_statement" && node.NamedChildCount() == 1 && node.NamedChild(0).Kind() == "string" {
+			continue
+		}
+		usage.warningOffset = int(node.StartByte())
+		break
+	}
+	usage.nativeWarningOffset = usage.warningOffset
+	canonical := strings.HasPrefix(program[usage.warningOffset:], codeModeExecCallPrefix)
+	for i := range root.NamedChildCount() {
+		node := root.NamedChild(uint(i))
+		if node.Kind() != "expression_statement" {
+			continue
+		}
+		text := node.Utf8Text(source)
+		if text == strings.TrimSpace(misuseWarningProjection(nativeExecCommandWarning)) {
+			usage.nativeWarningPresent = true
+		}
+		if canonical && (text == codeModeOutputProjection || text == codeModeJSONProjection || strings.HasPrefix(text, codeModeMetadataProjection)) {
+			usage.nativeWarningOffset = int(node.StartByte())
+			canonical = false
+		}
 	}
 
 	// Conservatively exclude a runtime name if any binding or assignment in the
@@ -82,34 +124,45 @@ func shellCodeModeRecovery(contribution toolContribution, input string) bool {
 		}
 	}
 	bindings(root)
-	var usesRuntime func(*sitter.Node) bool
-	usesRuntime = func(node *sitter.Node) bool {
+	usage.textShadowed = shadowed["text"]
+	var usesRuntime func(*sitter.Node)
+	usesRuntime = func(node *sitter.Node) {
 		if node.Kind() == "identifier" && node.Utf8Text(source) == "ALL_TOOLS" && !shadowed["ALL_TOOLS"] {
-			return true
+			usage.runtime = true
 		}
 		if node.Kind() == "call_expression" {
 			callee := node.ChildByFieldName("function")
 			if callee != nil && callee.Kind() == "identifier" && !shadowed[callee.Utf8Text(source)] {
 				switch callee.Utf8Text(source) {
 				case "text", "image", "audio", "generatedImage":
-					return true
+					usage.runtime = true
 				}
 			}
 			if callee != nil && (callee.Kind() == "member_expression" || callee.Kind() == "subscript_expression") {
 				object := callee.ChildByFieldName("object")
 				if object != nil && object.Kind() == "identifier" && object.Utf8Text(source) == "tools" && !shadowed["tools"] {
-					return true
+					usage.runtime = true
+					property := callee.ChildByFieldName("property")
+					if property != nil && property.Utf8Text(source) == "exec_command" {
+						usage.execCommand = true
+					}
+					index := callee.ChildByFieldName("index")
+					if index != nil && index.Kind() == "string" {
+						// Only literal bracket access, not dynamic expressions.
+						value := index.Utf8Text(source)
+						if value == `"exec_command"` || value == `'exec_command'` {
+							usage.execCommand = true
+						}
+					}
 				}
 			}
 		}
 		for i := range node.NamedChildCount() {
-			if usesRuntime(node.NamedChild(uint(i))) {
-				return true
-			}
+			usesRuntime(node.NamedChild(uint(i)))
 		}
-		return false
 	}
-	return usesRuntime(root)
+	usesRuntime(root)
+	return usage
 }
 
 var shellTypeScriptLanguage = sitter.NewLanguage(treeSitterTypeScript.LanguageTypescript())

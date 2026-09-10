@@ -20,6 +20,7 @@ type parsedResponsesRequest struct {
 	streamResponse bool
 	// cachedInput is the number of native input items already held by this WebSocket's provider.
 	cachedInput int
+	rebaseInput bool
 	toolCatalog *responsesToolCatalog
 }
 
@@ -168,7 +169,7 @@ func (r *parsedResponsesRequest) filterInput(filter func(map[string]json.RawMess
 // Preparation and CTP decoding still see that prefix; HTTP and Grok do not use
 // the provider's connection-local Responses cache.
 func (r parsedResponsesRequest) incrementalBody(body []byte) ([]byte, error) {
-	if r.cachedInput == 0 || isGrokModel(r.model()) {
+	if (r.cachedInput == 0 && !r.rebaseInput) || isGrokModel(r.model()) {
 		return body, nil
 	}
 	var fields map[string]json.RawMessage
@@ -177,6 +178,9 @@ func (r parsedResponsesRequest) incrementalBody(body []byte) ([]byte, error) {
 		return nil, errors.New("invalid WebSocket cached input boundary")
 	}
 	fields["input"] = mustMarshalJSON(input[r.cachedInput:])
+	if r.rebaseInput {
+		delete(fields, "previous_response_id")
+	}
 	return marshalProtocolJSON(fields)
 }
 

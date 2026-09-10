@@ -544,9 +544,21 @@ func shellInterpreterWrapperWarning(misuse shellWrapperMisuse) string {
 }
 
 func nativeExecCommandInput(input string) (string, string, bool, bool) {
-	rewritten, warningInput, changed, err := insertExecCommandWarning(input, nativeExecCommandWarning)
-	if err != nil {
+	usage := inspectCodeModeRuntime(input)
+	if !usage.execCommand {
 		return input, "", false, false
 	}
-	return rewritten, warningInput, changed, true
+	// Diagnostics must not turn a valid program into a call to its own local
+	// `text` binding (or a temporal-dead-zone error before that binding exists).
+	if usage.textShadowed {
+		return input, "", false, true
+	}
+	warningInput := misuseWarningProjection(nativeExecCommandWarning)
+	if usage.nativeWarningPresent {
+		return input, warningInput, false, true
+	}
+	// Insert at a syntax-tree statement boundary, never a source substring that
+	// might occur inside a quoted command. Keep canonical carrier classification.
+	offset := usage.nativeWarningOffset
+	return input[:offset] + warningInput + input[offset:], warningInput, true, true
 }

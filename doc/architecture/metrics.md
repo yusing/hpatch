@@ -4,7 +4,9 @@
 
 The opt-in debug artifact bundle is router-owned in `internal/router/debug.go`, not part
 of sanitized capture. It reuses capturer exports for capture and metrics, records a selected
-instruction snapshot after rewriting, and logs lifecycle/request outcomes without raw errors.
+instruction snapshot after rewriting alongside the prepared wire instruction subset, and logs
+lifecycle/request outcomes without raw errors. Local projection is not proof of delivery;
+cached-prefix reuse/replacement and request-less automatic successors are explicit in the dump.
 `cmd/hpatch/wrap.go` prints its paths only after the child and router exit.
 
 The root `capturer` subpackage is the sole owner of request correlation, payload measurement,
@@ -115,7 +117,8 @@ and offline aggregation; the router supplies actual wire payloads without
 computing metrics or retaining a second control history for capture.
 
 `internal/router/server_websocket.go` owns each downstream session and its
-dedicated provider connection, incremental native history, steering lifecycle,
+dedicated provider connection, incremental native history, instruction-prefix fingerprints,
+full-context replacement when inherited instruction projection changes, steering lifecycle,
 and adaptation through the shared request/response pipeline.
 `internal/router/client_websocket.go` owns the HTTP-client connection pool's
 leases, credential/routing partitioning, message framing, HTTP fallback

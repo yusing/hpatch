@@ -52,13 +52,15 @@ func TestDebugInstructionSelectionAndWriteFailure(t *testing.T) {
 	}
 	body := []byte(`{"model":"test","instructions":"exact\n  text\t","input":[{"role":"developer","content":[{"type":"input_text","text":"inherited"}]},{"type":"additional_tools","tools":[{"name":"shell","description":"exact tool"}]},{"role":"user","content":"excluded user"},{"type":"custom_tool_call","input":"excluded script"}]}`)
 	headers := http.Header{"Authorization": {"excluded credential"}, "X-Client-Request-Id": {"client-1"}}
-	d.instructions(body, headers, "session-1", "request-1", 1)
+	d.instructions(body, body, headers, "session-1", "request-1", 1)
 	dump, _ := os.ReadFile(d.paths[3])
 	var got struct {
-		Instructions string            `json:"instructions"`
-		Developers   []json.RawMessage `json:"developer_messages"`
-		Additional   []json.RawMessage `json:"additional_tools"`
-		Cached       int               `json:"cached_input_items"`
+		Instructions   string            `json:"instructions"`
+		Developers     []json.RawMessage `json:"developer_messages"`
+		Additional     []json.RawMessage `json:"additional_tools"`
+		Cached         int               `json:"cached_input_items"`
+		Scope          string            `json:"scope"`
+		WireDevelopers []json.RawMessage `json:"wire_developer_messages"`
 	}
 	if err := json.Unmarshal(dump, &got); err != nil || got.Instructions != "exact\n  text\t" || len(got.Developers) != 1 || len(got.Additional) != 1 || got.Cached != 1 {
 		t.Fatalf("instruction selection: %+v, %v", got, err)
@@ -66,12 +68,15 @@ func TestDebugInstructionSelectionAndWriteFailure(t *testing.T) {
 	if bytes.Contains(dump, []byte("excluded")) {
 		t.Fatal("dump retained data outside instruction scope")
 	}
+	if got.Scope != "projected_responses_request" || !sameJSONValue(mustMarshalJSON(got.WireDevelopers), mustMarshalJSON(got.Developers)) {
+		t.Fatal("dump does not distinguish projection from wire instructions")
+	}
 	// Post-startup write failure is retained for shutdown, not returned into
 	// request execution or printed over the active Codex terminal.
 	if err := d.dump.Close(); err != nil {
 		t.Fatal(err)
 	}
-	d.instructions(body, headers, "session-1", "request-2", 0)
+	d.instructions(body, body, headers, "session-1", "request-2", 0)
 	if err := d.close(); err == nil {
 		t.Fatal("debug write failure was lost")
 	}
@@ -148,9 +153,12 @@ func TestDebugWebSocketInheritedInstructions(t *testing.T) {
 			}
 			lines := bytes.Split(bytes.TrimSpace(dump), []byte{'\n'})
 			var record struct {
-				Instructions json.RawMessage   `json:"instructions"`
-				Developers   []json.RawMessage `json:"developer_messages"`
-				Cached       int               `json:"cached_input_items"`
+				Instructions   json.RawMessage   `json:"instructions"`
+				Developers     []json.RawMessage `json:"developer_messages"`
+				Cached         int               `json:"cached_input_items"`
+				WireDevelopers []json.RawMessage `json:"wire_developer_messages"`
+				WireAdditional []json.RawMessage `json:"wire_additional_tools"`
+				WireParent     string            `json:"wire_previous_response_id"`
 			}
 			if err := json.Unmarshal(lines[len(lines)-1], &record); err != nil {
 				t.Error(err)
@@ -161,6 +169,9 @@ func TestDebugWebSocketInheritedInstructions(t *testing.T) {
 			}
 			if id == "second" && record.Cached == 0 {
 				t.Error("dump lost cached-prefix provenance")
+			}
+			if id == "second" && (len(record.WireDevelopers) != 0 || len(record.WireAdditional) != 0 || record.WireParent != "first") {
+				t.Error("dump claims cached instructions were sent on continuation")
 			}
 			if err := providerSocketWrite(ctx, conn, socketEvent("response.created", id)); err != nil {
 				t.Error(err)

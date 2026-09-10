@@ -91,7 +91,7 @@ func (d *debugOutput) event(fields map[string]any) {
 	d.write(d.log, fields)
 }
 
-func (d *debugOutput) instructions(body []byte, headers http.Header, sessionID, requestID string, cachedInput int) {
+func (d *debugOutput) instructions(body, wire []byte, headers http.Header, sessionID, requestID string, cachedInput int) {
 	if d == nil {
 		return
 	}
@@ -102,8 +102,8 @@ func (d *debugOutput) instructions(body []byte, headers http.Header, sessionID, 
 		d.mu.Unlock()
 		return
 	}
-	// Export the effective Responses input before cached-prefix elision. This
-	// keeps inherited developer messages available on incremental continuations.
+	// Keep the local projection and the instruction-bearing wire subset distinct.
+	// A reconstructed prefix is not itself evidence of provider delivery.
 	var input []json.RawMessage
 	_ = json.Unmarshal(fields["input"], &input)
 	developers := []json.RawMessage{}
@@ -120,12 +120,34 @@ func (d *debugOutput) instructions(body []byte, headers http.Header, sessionID, 
 			additional = append(additional, raw)
 		}
 	}
+	var wireFields map[string]json.RawMessage
+	var wireInput []json.RawMessage
+	_ = json.Unmarshal(wire, &wireFields)
+	_ = json.Unmarshal(wireFields["input"], &wireInput)
+	wireDevelopers := []json.RawMessage{}
+	wireAdditional := []json.RawMessage{}
+	for _, raw := range wireInput {
+		var item map[string]json.RawMessage
+		if json.Unmarshal(raw, &item) != nil {
+			continue
+		}
+		if jsonString(item, "role") == "developer" {
+			wireDevelopers = append(wireDevelopers, raw)
+		}
+		if jsonString(item, "type") == "additional_tools" {
+			wireAdditional = append(wireAdditional, raw)
+		}
+	}
 	d.write(d.dump, map[string]any{
 		"timestamp": time.Now().UTC(), "request_id": requestID,
 		"client_request_id": headers.Get("x-client-request-id"),
 		"thread_id":         codexThreadID(headers), "session_id": sessionID,
-		"scope": "effective_responses_request", "cached_input_items": cachedInput,
-		"model": fields["model"], "previous_response_id": fields["previous_response_id"],
+		"scope": "projected_responses_request", "cached_input_items": cachedInput,
+		"wire_request_present": len(wire) != 0, "wire_input_items": len(wireInput),
+		"wire_developer_messages": wireDevelopers, "wire_additional_tools": wireAdditional,
+		"wire_previous_response_id": wireFields["previous_response_id"],
+		"cache_rebased":             len(wire) != 0 && jsonString(fields, "previous_response_id") != "" && jsonString(wireFields, "previous_response_id") == "",
+		"model":                     fields["model"], "previous_response_id": fields["previous_response_id"],
 		"instructions": fields["instructions"], "developer_messages": developers,
 		"tools": fields["tools"], "additional_tools": additional,
 	})

@@ -248,8 +248,17 @@ Acceptance:
     A runtime name bound or assigned anywhere in the program is conservatively excluded from
     recovery evidence; local lookalikes must not be treated as Code Mode globals.
     Explicit interpreter selections, directives, and retained references never opt into recovery.
-    Recovery preserves the exact program, prepends `shell-code-mode-recovered` guidance followed
-    by detected nested shell warnings, and replays the recovered Code Mode carrier. Native-only
+    Recovery preserves the exact program, adds `shell-code-mode-recovered` guidance followed
+    by detected nested shell warnings, and replays the recovered Code Mode carrier. Guidance
+    distinguishes shell commands, which belong directly in `functions.shell` without JavaScript
+    wrappers, from other Code Mode helpers. Both direct Code Mode calls and recovered programs
+    containing an unshadowed `tools.exec_command` call receive one `Use functions.shell` warning.
+    Detection uses JavaScript syntax, not the result variable, formatting, or Promise batching;
+    strings, comments, unrelated helpers, and locally bound `tools` are not evidence of misuse.
+    Warning insertion preserves execution, results, leading pragmas, and directive prologues.
+    If the program locally binds or assigns the `text` output helper, leave its source unchanged
+    rather than injecting diagnostics that could call that binding or prevent execution.
+    Native-only
     requests and other misplaced JavaScript/TypeScript use the rejection behavior above.
 17. Retain, read, edit, and rerun preserve the script body and original model-visible call.
     Unsafe thread IDs reject before runtime creation; unsafe artifact IDs cannot redirect

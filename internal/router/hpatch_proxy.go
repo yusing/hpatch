@@ -1242,6 +1242,9 @@ func (t *hpatchResponseTransform) translateRegisteredTool(contribution toolContr
 	var misuseWarnings []string
 	if recovered {
 		misuseWarnings = append(misuseWarnings, shellCodeModeRecoveryWarning)
+		if inspectCodeModeRuntime(input).execCommand {
+			misuseWarnings = append(misuseWarnings, nativeExecCommandWarning)
+		}
 		payload = input
 		if err := t.carriers.require(name, kind); err != nil {
 			return hpatchHistory{}, err
@@ -1324,10 +1327,14 @@ func (t *hpatchResponseTransform) translateRegisteredTool(contribution toolContr
 	}
 	misuseWarning := ""
 	if recovered {
-		for _, warning := range misuseWarnings {
-			misuseWarning += misuseWarningProjection(warning)
+		usage := inspectCodeModeRuntime(payload)
+		if !usage.textShadowed {
+			for _, warning := range misuseWarnings {
+				misuseWarning += misuseWarningProjection(warning)
+			}
 		}
-		payload = misuseWarning + payload
+		offset := usage.warningOffset
+		payload = payload[:offset] + misuseWarning + payload[offset:]
 	} else if t.nativeTools && len(misuseWarnings) != 0 {
 		var arguments map[string]json.RawMessage
 		if json.Unmarshal([]byte(payload), &arguments) != nil || arguments == nil {

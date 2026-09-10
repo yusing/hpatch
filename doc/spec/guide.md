@@ -50,6 +50,8 @@ strategy, selected model workflow, and whether a custom instruction file was con
 shape matching tries both stock shapes independently of workflow selection, including an
 Astra-shaped override sent to a non-Astra model. Evidence describes the rewrite decision, not
 proof that the model followed the guidance or that a later forwarding step succeeded.
+The WebSocket transport must not elide rewritten inherited instructions against a provider
+prefix containing their old values; its cache replacement contract is in `REQ-ROUTER-001`.
 
 The recovery template adjacent to the central source owns dynamic recovery prose. After each
 wholly row-stale evaluator rejection, the router supplies only the current handles and summaries

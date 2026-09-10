@@ -58,8 +58,13 @@ The instruction JSONL records preserve instruction text and JSON values for the 
 `instructions`, developer-role input messages, top-level tools, and `additional_tools`
 items after all request rewriting. They include timestamp, unique local request ID,
 client request ID, thread/session IDs, model, previous response ID, and cached input count.
-The dump records the effective Responses request before cached-prefix removal, not a raw
-wire message; Grok records precede Chat Completions conversion. No ordinary user messages,
+The dump uses `scope: projected_responses_request` for the local projection before
+cached-prefix removal. Separate `wire_developer_messages`, `wire_additional_tools`,
+`wire_previous_response_id`, and `wire_input_items` describe the prepared outgoing subset.
+`cache_rebased` identifies a full-history replacement of a stale instruction prefix;
+`cached_input_items` counts only the prefix actually reused. `wire_request_present` is false
+for automatic successors. A prepared snapshot does not claim successful provider acceptance;
+Grok records precede Chat Completions conversion. No ordinary user messages,
 tool call bodies, or authentication headers are exported. Router diagnostics record lifecycle
 and parsed-request outcome/phase/status, plus a safe diagnostic code and the notice's diagnostic
 reference for failures. Forwarding failures classify known wrapped transport errors without
@@ -105,7 +110,7 @@ automatic successor. A pending tool-result continuation uses the same
 Startup metadata with `request_kind="prewarm"` and explicit `generate=false`
 is a non-generating transport handshake and does not require workspaces or a
 supported tool catalog. It retains native input for the next turn without
-performing tool rewriting. Generating requests cannot use prewarm metadata to
+performing tool rewriting or CTP encoding. Generating requests cannot use prewarm metadata to
 bypass ordinary turn validation.
 
 Execution-free turns pass through without Hpatch instruction or tool rewriting or CTP
@@ -121,7 +126,15 @@ process-execution tools retain the existing Hpatch admission and rewriting check
 Request preparation and response restoration retain Hpatch tools, replay,
 CTP/2, and native carrier behavior. Incremental input must retain enough
 connection-local native history to resolve those transformations while sending
-only new transformed input upstream. Automatic successors inherit the parent
+only new transformed input upstream when inherited instruction-bearing items still match
+the provider's retained prefix. The transport fingerprints projected developer/system messages
+and `additional_tools` actually sent upstream. If their later projection changes, an explicit
+continuation sends the full projected history without `previous_response_id`; it does not
+discard rewritten instructions or declarations. This includes prewarm-to-turn and model-workflow
+transitions. Unchanged continuations retain incremental delivery. Accepted steering is not
+resent against the same parent. An automatic successor cannot silently adopt a changed
+instruction prefix: it fails rather than pretending an unsent rewrite took effect.
+Automatic successors inherit the parent
 request's translation context; explicit continuations use their own settings.
 Neither a dropped connection nor a failed send silently replays requests or
 steering. Shutdown and downstream disconnect release the owned connection.

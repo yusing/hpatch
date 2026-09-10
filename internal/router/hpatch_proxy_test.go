@@ -2083,7 +2083,7 @@ func TestShellStacksDistinctMisuseWarnings(t *testing.T) {
 		jsonQuoted(command) +
 		",\"login\":false});\ntext(JSON.stringify(result));"
 	recovered := call(t, recoveredInput)
-	wantPrefix := misuseWarningProjection(shellCodeModeRecoveryWarning) + wrapperInput + heredocInput
+	wantPrefix := misuseWarningProjection(shellCodeModeRecoveryWarning) + misuseWarningProjection(nativeExecCommandWarning) + wrapperInput + heredocInput
 	if recovered != wantPrefix+recoveredInput {
 		t.Fatalf("recovered shell warnings did not stack in order:\n%s", recovered)
 	}
@@ -3558,7 +3558,11 @@ func TestShellRecoversCodeModePrograms(t *testing.T) {
 				t.Fatal("Code Mode program was not recovered")
 			}
 			warningInput := misuseWarningProjection(shellCodeModeRecoveryWarning)
-			want := warningInput + test.input
+			if strings.Contains(test.input, "tools.exec_command") {
+				warningInput += misuseWarningProjection(nativeExecCommandWarning)
+			}
+			offset := inspectCodeModeRuntime(test.input).warningOffset
+			want := test.input[:offset] + warningInput + test.input[offset:]
 
 			translator := hpatchTranslatorFunc(func(context.Context, string, string) ([]byte, error) {
 				return []byte(testTranslatedPatch), nil
