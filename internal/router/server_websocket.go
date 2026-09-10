@@ -23,7 +23,7 @@ import (
 // A downstream socket owns a dedicated provider socket. In particular it never
 // enters the HTTP pool: accepted steering and previous_response_id are scoped
 // to this connection, including the quiet interval after response.completed.
-func responsesWebSocketHandler(lifecycle context.Context, timeout time.Duration, provider *providerClient, issues *CriticalErrors, proxy *mekugiProxy, codec *ctp2Codec, mentor *mentorHandoff) *responsesWebSocketEndpoint {
+func responsesWebSocketHandler(lifecycle context.Context, timeout time.Duration, provider *providerClient, issues *CriticalErrors, proxy *mekugiProxy, codec *ctp2Codec, mentor *mentorHandoff, compaction *contextCompactor) *responsesWebSocketEndpoint {
 	lifecycle, cancel := context.WithCancel(lifecycle)
 	endpoint := &responsesWebSocketEndpoint{cancel: cancel}
 	endpoint.handler = func(w http.ResponseWriter, r *http.Request) {
@@ -43,7 +43,8 @@ func responsesWebSocketHandler(lifecycle context.Context, timeout time.Duration,
 		defer stop()
 		s := &responsesWebSocket{
 			ctx: ctx, downstream: conn, provider: provider, headers: r.Header.Clone(),
-			timeout: timeout, issues: issues, proxy: proxy, codec: codec, mentor: mentor,
+			compaction: compaction,
+			timeout:    timeout, issues: issues, proxy: proxy, codec: codec, mentor: mentor,
 			clientMessages: readResponsesWebSocket(ctx, conn, cancel), histories: make(map[string]*webSocketHistory),
 		}
 		defer func() {
@@ -102,6 +103,9 @@ func (s *responsesWebSocket) writeError(ctx context.Context, err error) ([]byte,
 	status := http.StatusBadGateway
 	if _, ok := errors.AsType[*requestCompatibilityError](err); ok {
 		status = http.StatusBadRequest
+	}
+	if failure, ok := errors.AsType[*contextCompactionRequestError](err); ok {
+		status = failure.status
 	}
 	fields := map[string]any{"type": "error", "status": status, "error": map[string]string{"type": "invalid_request_error", "message": err.Error()}}
 	if upstream, ok := errors.AsType[*webSocketStatusError](err); ok {
@@ -246,6 +250,7 @@ type responsesWebSocket struct {
 	proxy            *mekugiProxy
 	codec            *ctp2Codec
 	mentor           *mentorHandoff
+	compaction       *contextCompactor
 	histories        map[string]*webSocketHistory
 	lastID           string
 	steers           []webSocketSteer
@@ -351,6 +356,9 @@ func (s *responsesWebSocket) control(body []byte) error {
 		input, err := webSocketInput(fields["input"])
 		if err != nil {
 			return err
+		}
+		if hasLocalContextCompaction(input) {
+			return incompatibleRequest("invalid_websocket_request", "local compaction envelopes require response.create, not steering")
 		}
 		if err := s.retain(input); err != nil {
 			return err
@@ -560,7 +568,18 @@ func (s *responsesWebSocket) execute(command, firstEvent []byte) error {
 	defer cancel()
 	exchange.ctx = executionCtx
 	output := &webSocketOutput{exchange: exchange}
-	err = executeRequest(startCtx, executionCtx, parsed, headers, routingSessionID(headers, parsed), exchange, output, s.issues, s.proxy, s.codec, s.mentor)
+	var capsule json.RawMessage
+	if s.compaction != nil {
+		capsule, err = s.compaction.prepare(executionCtx, &parsed, headers, false)
+	}
+	if err == nil {
+		if len(capsule) != 0 {
+			exchange.local = true
+			err = writeContextCompactionResponse(output, capsule, parsed.fields["input"], false)
+		} else {
+			err = executeRequest(startCtx, executionCtx, parsed, headers, routingSessionID(headers, parsed), exchange, output, s.issues, s.proxy, s.codec, s.mentor)
+		}
+	}
 	if err != nil && executionCtx.Err() == nil && !s.errorDelivered {
 		if payload, writeErr := s.writeError(executionCtx, err); writeErr == nil {
 			clientObservation.Message(payload)
@@ -575,6 +594,7 @@ type webSocketExchange struct {
 	session                 *responsesWebSocket
 	ctx                     context.Context
 	automatic               bool
+	local                   bool
 	first                   []byte
 	history                 *webSocketHistory
 	parentID                string
@@ -622,7 +642,7 @@ func (e *webSocketExchange) forwardExecution(startCtx, responseCtx context.Conte
 	if err != nil {
 		return nil, err
 	}
-	if len(previous) != 0 {
+	if len(previous) != 0 && string(previous) != "null" {
 		payload, err = replaceRawField(payload, "previous_response_id", previous)
 		if err != nil {
 			return nil, err
@@ -832,8 +852,18 @@ func (w *webSocketOutput) message(payload []byte) error {
 	if event.Type == "response.created" {
 		// Creation commits queued steering. Never replay accepted input after
 		// this point, even if delivery or the successor subsequently fails.
-		s.commitSteering(e.history, e.parentID)
+		if e.local {
+			// Local completion retains only the capsule, but does not admit a
+			// provider successor. Its accepted steering remains pending until
+			// that provider response actually starts.
+			e.history.parent = nil
+			e.history.input = nil
+		} else {
+			s.commitSteering(e.history, e.parentID)
+		}
+
 	}
+
 	switch event.Type {
 	case "response.completed", "response.incomplete", "response.failed":
 		if event.Response.ID == "" {
@@ -852,7 +882,12 @@ func (w *webSocketOutput) message(payload []byte) error {
 			e.history.output = event.Response.Output
 		}
 		s.histories[event.Response.ID] = e.history
-		s.lastID = event.Response.ID
+		// An automatic provider successor without an explicit parent belongs
+		// to the last provider response, never a locally generated compact ID.
+		if !e.local {
+			s.lastID = event.Response.ID
+		}
+
 	}
 	if err := s.downstream.Write(e.ctx, websocket.MessageText, payload); err != nil {
 		return err

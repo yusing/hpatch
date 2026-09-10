@@ -14,8 +14,8 @@ import (
 	"time"
 )
 
-// Both compact interfaces terminate here, before tool projection, CTP, or any
-// provider call. Codex remains the sole owner of scheduling and configuration.
+// Both transports use the same boundary before projection or provider calls.
+// Codex remains the sole owner of scheduling and configuration.
 func (c *contextCompactor) handler(next http.Handler) http.HandlerFunc {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		body, err := readResponsesRequest(io.LimitReader(request.Body, responsesRequestBufferBytes+1))
@@ -27,53 +27,25 @@ func (c *contextCompactor) handler(next http.Handler) http.HandlerFunc {
 			http.Error(writer, "Responses request exceeds the router buffer budget", http.StatusRequestEntityTooLarge)
 			return
 		}
-		metadata, metadataValid := decodeCodexTurnMetadata(request.Header)
-		standalone := request.URL.Path == "/v1/responses/compact"
-		compacting := standalone || (metadataValid && metadata.RequestKind == "compaction")
 		parsed, err := parseResponsesRequest(body)
 		if err != nil {
 			http.Error(writer, err.Error(), http.StatusBadRequest)
 			return
 		}
-		var input []json.RawMessage
-		if json.Unmarshal(parsed.fields["input"], &input) != nil || len(input) == 0 {
-			if !compacting {
-				request.Body = io.NopCloser(bytes.NewReader(body))
-				next.ServeHTTP(writer, request)
-				return
-			}
-			http.Error(writer, "local compaction requires a nonempty input item array", http.StatusBadRequest)
-			return
-		}
-		local := false
-		for _, raw := range input {
-			var item map[string]json.RawMessage
-			_ = json.Unmarshal(raw, &item)
-			local = local || strings.HasPrefix(jsonString(item, "encrypted_content"), "hpatch.compaction.") || strings.HasPrefix(jsonString(item, "id"), contextCompactionIDPrefix)
-		}
-		if !compacting && !local {
-			request.Body = io.NopCloser(bytes.NewReader(body))
-			next.ServeHTTP(writer, request)
-			return
-		}
-
-		for _, item := range input {
-			var fields map[string]json.RawMessage
-			if json.Unmarshal(item, &fields) != nil || fields == nil {
-				http.Error(writer, "compaction input items must be objects", http.StatusBadRequest)
-				return
-			}
-		}
-		input, err = c.restore(request.Context(), input)
+		standalone := request.URL.Path == "/v1/responses/compact"
+		capsule, err := c.prepare(request.Context(), &parsed, request.Header, standalone)
 		if err != nil {
-			http.Error(writer, err.Error(), http.StatusUnprocessableEntity)
+			status := http.StatusUnprocessableEntity
+			if failure, ok := errors.AsType[*contextCompactionRequestError](err); ok {
+				status = failure.status
+			}
+			http.Error(writer, err.Error(), status)
 			return
 		}
-		if !compacting {
-			parsed.setInput(mustMarshalJSON(input))
+		if len(capsule) == 0 {
 			body, err = parsed.wireBody(parsed.fields)
-			if err != nil || len(body) > responsesRequestBufferBytes {
-				http.Error(writer, "restored history exceeds the router buffer budget", http.StatusRequestEntityTooLarge)
+			if err != nil {
+				http.Error(writer, err.Error(), http.StatusBadRequest)
 				return
 			}
 			request.Body = io.NopCloser(bytes.NewReader(body))
@@ -81,76 +53,146 @@ func (c *contextCompactor) handler(next http.Handler) http.HandlerFunc {
 			next.ServeHTTP(writer, request)
 			return
 		}
-		if parsed.model() == "" {
-			http.Error(writer, "compaction requires a model", http.StatusBadRequest)
-			return
-		}
-		if !standalone {
-			var details struct {
-				Implementation string `json:"implementation"`
-			}
-			_ = json.Unmarshal(metadata.Compaction, &details)
-			if !parsed.streamResponse || details.Implementation != "responses_compaction_v2" {
-				http.Error(writer, "local compaction requires the standalone compact endpoint or streaming compaction V2; provider summaries are disabled", http.StatusUnprocessableEntity)
-				return
-			}
-			// This is a request control, not part of the durable history.
-			var last map[string]json.RawMessage
-			_ = json.Unmarshal(input[len(input)-1], &last)
-			if jsonString(last, "type") == "compaction_trigger" {
-				input = input[:len(input)-1]
-			}
-		}
-		reduced := reduceContextCompaction(input)
-		if slices.EqualFunc(input, reduced, func(a, b json.RawMessage) bool { return bytes.Equal(a, b) }) {
-			http.Error(writer, "no supported context reduction is available for this history; protected context was not discarded and no provider compaction was requested", http.StatusUnprocessableEntity)
-			return
-		}
-		capsule, err := c.seal(request.Context(), reduced)
-		if err != nil {
-			http.Error(writer, err.Error(), http.StatusUnprocessableEntity)
-			return
-		}
-		var sealedItem struct {
-			ID string `json:"id"`
-		}
-		_ = json.Unmarshal(capsule, &sealedItem)
-		responseID := "resp_" + strings.TrimPrefix(sealedItem.ID, "cmp_")
 		if standalone {
-			// Legacy Codex replaces its history wholesale. Keep real user messages
-			// visible to its user-input handling. Historical canonical context stays
-			// only in the capsule so it cannot be mistaken for a fresh injection.
-			var output []json.RawMessage
-			for _, item := range reduced {
-				var fields map[string]json.RawMessage
-				_ = json.Unmarshal(item, &fields)
-				if jsonString(fields, "type") == "message" && jsonString(fields, "role") == "user" && !contextCompactionFreshContext(item) {
-					output = append(output, item)
-				}
-			}
-			output = append(output, capsule)
 			writer.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(writer).Encode(map[string]any{
-				"object": "response.compaction", "id": responseID,
-				"created_at": time.Now().Unix(), "output": output,
-			})
-			return
+		} else {
+			writer.Header().Set("Content-Type", "text/event-stream")
 		}
-		// V2 retains its own selected user/context items, then appends exactly
-		// one compaction item. No synthetic assistant prose or provider usage.
-		writer.Header().Set("Content-Type", "text/event-stream")
-		for sequence, event := range []map[string]any{
-			{"type": "response.created", "response": map[string]any{"id": responseID, "status": "in_progress", "output": []any{}}},
-			{"type": "response.output_item.added", "output_index": 0, "item": capsule},
-			{"type": "response.output_item.done", "output_index": 0, "item": capsule},
-			{"type": "response.completed", "response": map[string]any{"id": responseID, "status": "completed", "output": []json.RawMessage{capsule}}},
-		} {
-			event["sequence_number"] = sequence
-			if _, err := fmt.Fprintf(writer, "event: %s\ndata: %s\n\n", event["type"], mustMarshalJSON(event)); err != nil {
-				return
-			}
+		_ = writeContextCompactionResponse(writer, capsule, parsed.fields["input"], standalone)
+	}
+}
+
+type contextCompactionRequestError struct {
+	status  int
+	message string
+}
+
+func (e *contextCompactionRequestError) Error() string { return e.message }
+
+func hasLocalContextCompaction(input []json.RawMessage) bool {
+	for _, raw := range input {
+		var item map[string]json.RawMessage
+		_ = json.Unmarshal(raw, &item)
+		if strings.HasPrefix(jsonString(item, "encrypted_content"), "hpatch.compaction.") || strings.HasPrefix(jsonString(item, "id"), contextCompactionIDPrefix) {
+			return true
 		}
 	}
+	return false
+}
+
+// prepare restores native input in place and returns a capsule only for a local
+// completion. It has no provider transport, including for unsupported requests.
+func (c *contextCompactor) prepare(ctx context.Context, parsed *parsedResponsesRequest, headers http.Header, standalone bool) (json.RawMessage, error) {
+	fail := func(status int, message string) (json.RawMessage, error) {
+		return nil, &contextCompactionRequestError{status: status, message: message}
+	}
+	metadata, valid := decodeCodexTurnMetadata(headers)
+	compacting := standalone || (valid && metadata.RequestKind == "compaction")
+	var input []json.RawMessage
+	if json.Unmarshal(parsed.fields["input"], &input) != nil || len(input) == 0 {
+		if !compacting {
+			return nil, nil
+		}
+		return fail(http.StatusBadRequest, "local compaction requires a nonempty input item array")
+	}
+	local := hasLocalContextCompaction(input)
+	if !compacting && !local {
+		return nil, nil
+	}
+	for _, item := range input {
+		var fields map[string]json.RawMessage
+		if json.Unmarshal(item, &fields) != nil || fields == nil {
+			return fail(http.StatusBadRequest, "compaction input items must be objects")
+		}
+	}
+	input, err := c.restore(ctx, input)
+	if err != nil {
+		return fail(http.StatusUnprocessableEntity, err.Error())
+	}
+	parsed.setInput(mustMarshalJSON(input))
+	if local {
+		// Provider-side history cannot represent a router-owned capsule. Send
+		// the restored timeline in full instead of trimming a cached prefix or
+		// naming a response that was completed only by the router.
+		parsed.cachedInput = 0
+		if _, exists := parsed.fields["previous_response_id"]; exists {
+			parsed.fields["previous_response_id"] = json.RawMessage("null")
+		}
+
+	}
+	body, err := parsed.wireBody(parsed.fields)
+	if err != nil || len(body) > responsesRequestBufferBytes {
+		return fail(http.StatusRequestEntityTooLarge, "restored history exceeds the router buffer budget")
+	}
+	if !compacting {
+		return nil, nil
+	}
+	if parsed.model() == "" {
+		return fail(http.StatusBadRequest, "compaction requires a model")
+	}
+	if !standalone {
+		var details struct {
+			Implementation string `json:"implementation"`
+		}
+		_ = json.Unmarshal(metadata.Compaction, &details)
+		if !parsed.streamResponse || details.Implementation != "responses_compaction_v2" {
+			return fail(http.StatusUnprocessableEntity, "local compaction requires the standalone compact endpoint or streaming compaction V2; provider summaries are disabled")
+		}
+		var last map[string]json.RawMessage
+		_ = json.Unmarshal(input[len(input)-1], &last)
+		if jsonString(last, "type") == "compaction_trigger" {
+			input = input[:len(input)-1]
+		}
+	}
+	reduced := reduceContextCompaction(input)
+	if slices.EqualFunc(input, reduced, func(a, b json.RawMessage) bool { return bytes.Equal(a, b) }) {
+		return fail(http.StatusUnprocessableEntity, "no supported context reduction is available for this history; protected context was not discarded and no provider compaction was requested")
+	}
+	capsule, err := c.seal(ctx, reduced)
+	if err != nil {
+		return fail(http.StatusUnprocessableEntity, err.Error())
+	}
+	parsed.setInput(mustMarshalJSON(reduced))
+	return capsule, nil
+}
+
+// The stream framing is shared by HTTP/SSE and the WebSocket output adapter.
+func writeContextCompactionResponse(writer io.Writer, capsule, retained json.RawMessage, standalone bool) error {
+	var sealedItem struct {
+		ID string `json:"id"`
+	}
+	_ = json.Unmarshal(capsule, &sealedItem)
+	responseID := "resp_" + strings.TrimPrefix(sealedItem.ID, "cmp_")
+	if standalone {
+		// Keep real user messages visible to legacy Codex's input handling.
+		// Historical canonical context stays only inside the capsule.
+		var input, output []json.RawMessage
+		_ = json.Unmarshal(retained, &input)
+		for _, item := range input {
+			var fields map[string]json.RawMessage
+			_ = json.Unmarshal(item, &fields)
+			if jsonString(fields, "type") == "message" && jsonString(fields, "role") == "user" && !contextCompactionFreshContext(item) {
+				output = append(output, item)
+			}
+		}
+		output = append(output, capsule)
+		return json.NewEncoder(writer).Encode(map[string]any{
+			"object": "response.compaction", "id": responseID,
+			"created_at": time.Now().Unix(), "output": output,
+		})
+	}
+	for sequence, event := range []map[string]any{
+		{"type": "response.created", "response": map[string]any{"id": responseID, "status": "in_progress", "output": []any{}}},
+		{"type": "response.output_item.added", "output_index": 0, "item": capsule},
+		{"type": "response.output_item.done", "output_index": 0, "item": capsule},
+		{"type": "response.completed", "response": map[string]any{"id": responseID, "status": "completed", "output": []json.RawMessage{capsule}}},
+	} {
+		event["sequence_number"] = sequence
+		if _, err := fmt.Fprintf(writer, "event: %s\ndata: %s\n\n", event["type"], mustMarshalJSON(event)); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // Restore the native timeline once. Codex may carry a subset of the original

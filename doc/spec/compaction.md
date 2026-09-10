@@ -15,10 +15,16 @@ The invocation also disables Codex request compression because the local router
 accepts uncompressed JSON, not ChatGPT Zstd request bodies.
 
 The router handles `POST /v1/responses/compact` locally. It also handles streaming
-`POST /v1/responses` requests identified by Codex metadata as
-`responses_compaction_v2`. Neither path calls a provider. Other metadata-tagged
+`POST /v1/responses` and WebSocket `response.create` requests identified by
+Codex metadata as `responses_compaction_v2`. None of these paths calls a provider.
+Other metadata-tagged
 compaction implementations fail explicitly instead of requesting a provider
-summary. Local handling applies in both router modes.
+summary. Local handling applies in both router modes. WebSocket continuation and
+resumption restore local envelopes before projection, without forwarding local
+response IDs or treating the restored timeline as provider-cached history.
+A locally completed compaction replaces its WebSocket history with the capsule;
+it does not retain the unpruned parent beside it. Steering cannot carry local
+envelopes.
 
 Compaction preserves user/developer instructions, corrections, authorization,
 and the active execution frontier. Older ordinary-assistant narration can omit an

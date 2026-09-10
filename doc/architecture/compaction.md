@@ -2,7 +2,7 @@
 
 ## CTR-COMPACTION-001 — Router-owned pruning and local envelopes
 
-The router's context-compaction HTTP boundary precedes ordinary Responses
+The router's shared context-compaction boundary precedes ordinary Responses
 projection and upstream transport. It owns local standalone and V2 completion,
 restoration of its own input envelopes, and bounded request decoding. Codex owns
 configuration resolution, trigger timing, retained client-side context, and
@@ -77,5 +77,9 @@ Neither those boundaries nor the provider interpret router-owned ciphertext.
 
 No provider transport is available to the local compaction handler. Errors leave
 Codex without a replacement window rather than silently losing context or issuing
-a model summary. Capture observes local HTTP traffic but local compaction does not
-fabricate provider token usage.
+a model summary. HTTP/SSE and WebSocket adapters share native restoration and
+local completion framing. The WebSocket adapter owns per-message metadata,
+incremental history, and resetting the provider cache relationship after restoring
+an envelope. Local completion replaces its native history with the capsule.
+Capture observes local traffic but local compaction does not fabricate provider
+token usage.
