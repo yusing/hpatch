@@ -24,12 +24,13 @@ func TestCodexArgsPreservesArguments(t *testing.T) {
 	forwarded := []string{"exec", "-c", "model=\"example\"", "--", "a prompt with spaces"}
 	args := codexArgs("http://127.0.0.1:12345/v1", forwarded)
 	index := slices.Index(forwarded, "--")
-	if !slices.Equal(args[:index], forwarded[:index]) || !slices.Equal(args[index+4:], forwarded[index:]) {
+	if !slices.Equal(args[:index], forwarded[:index]) || !slices.Equal(args[index+6:], forwarded[index:]) {
 		t.Fatalf("forwarded arguments changed: %q", args)
 	}
 	var config struct {
-		ModelProvider string `toml:"model_provider"`
-		Providers     map[string]struct {
+		IncludeCollaborationModeInstructions *bool  `toml:"include_collaboration_mode_instructions"`
+		ModelProvider                        string `toml:"model_provider"`
+		Providers                            map[string]struct {
 			Name       string `toml:"name"`
 			BaseURL    string `toml:"base_url"`
 			WireAPI    string `toml:"wire_api"`
@@ -38,7 +39,7 @@ func TestCodexArgsPreservesArguments(t *testing.T) {
 		} `toml:"model_providers"`
 	}
 	var settings []string
-	for i := index; i < index+4; i += 2 {
+	for i := index; i < index+6; i += 2 {
 		if args[i] != "-c" {
 			t.Fatalf("not a config override: %q", args)
 		}
@@ -47,6 +48,9 @@ func TestCodexArgsPreservesArguments(t *testing.T) {
 	if _, err := toml.Decode(strings.Join(settings, "\n"), &config); err != nil {
 		t.Fatal(err)
 	}
+	if config.IncludeCollaborationModeInstructions == nil || *config.IncludeCollaborationModeInstructions {
+		t.Fatalf("collaboration mode instructions not disabled: %q", args)
+	}
 	provider := config.Providers[config.ModelProvider]
 	if provider.Name == "" || provider.BaseURL != "http://127.0.0.1:12345/v1" || provider.WireAPI != "responses" || !provider.Auth || !provider.WebSockets {
 		t.Fatalf("provider = %+v", provider)
@@ -54,6 +58,23 @@ func TestCodexArgsPreservesArguments(t *testing.T) {
 	withoutDelimiter := []string{"exec", "-c", `model="example"`, "prompt"}
 	if got := codexArgs("http://127.0.0.1:12345/v1", withoutDelimiter); !slices.Equal(got[:len(withoutDelimiter)], withoutDelimiter) {
 		t.Fatalf("ordinary -c or prompt moved: %q", got)
+	}
+}
+
+func TestCodexArgsEnforcesCollaborationModeInstructions(t *testing.T) {
+	for _, forwarded := range [][]string{
+		{"-c", "include_collaboration_mode_instructions=true"},
+		{"-c", "include_collaboration_mode_instructions=true", "exec", "--config=include_collaboration_mode_instructions=true", "prompt"},
+		{"resume", "session", "-cinclude_collaboration_mode_instructions=true", "--", "prompt"},
+	} {
+		args := codexArgs("http://127.0.0.1:12345/v1", forwarded)
+		end := slices.Index(args, "--")
+		if end < 0 {
+			end = len(args)
+		}
+		if !slices.Equal(args[end-2:end], []string{"-c", "include_collaboration_mode_instructions=false"}) {
+			t.Fatalf("enforced override is not last before delimiter: %q", args)
+		}
 	}
 }
 

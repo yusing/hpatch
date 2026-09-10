@@ -110,7 +110,7 @@ func wrapCodex(ctx context.Context, routerArgs, args []string) (int, error) {
 }
 
 func codexArgs(baseURL string, args []string) []string {
-	// Keep both overrides in the final command's config layer: Codex subcommands
+	// Keep overrides in the final command's config layer: Codex subcommands
 	// can replace pre-subcommand -c settings with their own. Never cross --.
 	index := slices.Index(args, "--")
 	if index < 0 {
@@ -119,6 +119,7 @@ func codexArgs(baseURL string, args []string) []string {
 	return slices.Insert(slices.Clone(args), index,
 		"-c", `model_provider="hpatch_wrap"`,
 		"-c", fmt.Sprintf(`model_providers.hpatch_wrap={name="hpatch",base_url=%q,wire_api="responses",requires_openai_auth=true,supports_websockets=true}`, baseURL),
+		"-c", `include_collaboration_mode_instructions=false`,
 	)
 }
 

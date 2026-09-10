@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 
 	"github.com/BurntSushi/toml"
@@ -75,10 +74,6 @@ func rewriteReceivedModelInstructions(ctx context.Context, request *parsedRespon
 		capturer.ObserveInstructionRewrite(ctx, evidence)
 	}()
 
-	if err := stripDeveloperModeInstructions(request); err != nil {
-		return err
-	}
-
 	raw, present := request.fields["instructions"]
 	var received *string
 	if present {
@@ -108,93 +103,6 @@ func rewriteReceivedModelInstructions(ctx context.Context, request *parsedRespon
 	}
 	request.fields["instructions"] = mustMarshalJSON(rendered)
 	return nil
-}
-
-// Ignore the closing tag in Codex's backtick-quoted tag pair. Keep the next
-// character outside the block, including an adjacent block's opening bracket.
-var developerModeBlocks = []*regexp.Regexp{
-	regexp.MustCompile("(?s)(^|[^`])<collaboration_mode>.*?</collaboration_mode>([^`]|$)"),
-	regexp.MustCompile("(?s)(^|[^`])<request_user_input>.*?</request_user_input>([^`]|$)"),
-}
-
-func stripDeveloperModeText(text string) string {
-	for _, block := range developerModeBlocks {
-		for {
-			rewritten := block.ReplaceAllString(text, "$1$2")
-			if rewritten == text {
-				break
-			}
-			text = rewritten
-		}
-	}
-	return text
-}
-
-func stripDeveloperModeInstructions(request *parsedResponsesRequest) error {
-	raw := request.fields["input"]
-	if len(raw) == 0 {
-		return nil
-	}
-	input, err := decodeResponsesInput(raw)
-	if err != nil {
-		return fmt.Errorf("decode responses developer instructions: %w", err)
-	}
-	if !input.array {
-		return nil
-	}
-	kept := make([]json.RawMessage, 0, len(input.items))
-	changed := false
-	for _, raw := range input.items {
-		item, ok := decodeResponsesItem(raw)
-		if !ok || item.Type != "message" || item.Role != "developer" {
-			kept = append(kept, raw)
-			continue
-		}
-		modified := false
-		content, _, err := transformCTP2Content(item.Content, func(text string) string {
-			rewritten := stripDeveloperModeText(text)
-			modified = modified || rewritten != text
-			return rewritten
-		}, isCTP2InputTextPart)
-		if err != nil {
-			return err
-		}
-		if !modified {
-			kept = append(kept, raw)
-			continue
-		}
-		var text string
-		if json.Unmarshal(content, &text) == nil {
-			if strings.TrimSpace(text) == "" {
-				changed = true
-				continue
-			}
-		} else if parts, ok := decodeResponsesTextParts(content); ok {
-			original, _ := decodeResponsesTextParts(item.Content)
-			retained := parts[:0]
-			for index, part := range parts {
-				if part.text == nil || !isCTP2InputTextPart(part.typeName) || strings.TrimSpace(*part.text) != "" || *part.text == *original[index].text {
-					retained = append(retained, part)
-				}
-			}
-			if len(retained) == 0 {
-				changed = true
-				continue
-			}
-			content, err = encodeResponsesTextParts(retained)
-			if err != nil {
-				return err
-			}
-		}
-		changed = true
-		item.setContent(content)
-		kept = append(kept, mustMarshalJSON(item))
-	}
-	if changed {
-		input.items = kept
-		request.fields["input"], err = input.encode()
-	}
-	return err
 }
 
 func rewriteDeveloperModelInstructions(raw json.RawMessage, customized bool, modelInstructions string, evidence *capturer.InstructionRewrite) (json.RawMessage, bool, error) {

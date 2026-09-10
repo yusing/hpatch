@@ -12,6 +12,9 @@ and Codex-managed authentication against the fixed ChatGPT upstream. Provider
 selection in config and profiles is overridden without modifying configuration.
 Provider-selection arguments are rejected. Hpatch flags precede `codex`; subsequent
 arguments remain intact, including subcommands and `--` delimiters.
+The wrapper also enforces `include_collaboration_mode_instructions=false` in the
+final command's invocation-only config layer, after user overrides and before `--`.
+This disables Codex's collaboration-mode instruction injection without editing config files.
 
 Codex inherits cwd, stdin, stdout, stderr, and the environment, augmented only
 with `HPATCH_BASE_URL` and the private configured-plugin frontend directory at
