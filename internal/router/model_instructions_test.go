@@ -161,10 +161,13 @@ func TestRewriteAstraStockModelInstructions(t *testing.T) {
 					}
 					got = input[0].Content
 				}
-				want := strings.Replace(stock, stockRGInstruction+"\n", guidance, 1)
-				want = strings.Replace(want, stockExecInstruction+"\n", "", 1)
-				if got != want {
-					t.Fatal("Astra rewrite did not preserve unrelated stock instructions")
+				for _, paragraph := range strings.Split(stock, "\n\n") {
+					if strings.Contains(paragraph, "commentary") || strings.Contains(paragraph, stockRGInstruction) {
+						continue // Displaced progress and tool rules are covered by the family fixtures below.
+					}
+					if !strings.Contains(got, paragraph) {
+						t.Fatalf("Astra rewrite changed unrelated paragraph: %q", paragraph)
+					}
 				}
 				refreshed, _, err := renderModelInstructions(got, false, guidance)
 				if err != nil || refreshed != got {
@@ -176,7 +179,7 @@ func TestRewriteAstraStockModelInstructions(t *testing.T) {
 	for _, test := range []struct{ name, input string }{
 		{"changed identity", strings.Replace(stock, "an agent based on GPT-6", "an agent based on GPT-7", 1)},
 		{"missing search instruction", strings.Replace(stock, stockRGInstruction, "search differently", 1)},
-		{"missing exec instruction", strings.Replace(stock, stockExecInstruction, "execute differently", 1)},
+		{"missing execution anchor", strings.Replace(strings.Replace(stock, stockExecInstruction, "execute differently", 1), stockShellSafetyInstruction, "changed safety rule", 1)},
 		{"duplicate search instruction", stock + "\n" + stockRGInstruction},
 		{"changed rules heading", strings.Replace(stock, "# Rules for getting work done", "# Changed rules", 1)},
 		{"nonblank separator", strings.Replace(stock, "# Rules for getting work done\n\n", "# Rules for getting work done\nnew guidance\n", 1)},

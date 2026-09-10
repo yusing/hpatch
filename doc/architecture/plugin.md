@@ -101,7 +101,9 @@ recovery, JSON framing, and SSE framing.
 Codex owns base prompt delivery. The router owns request-local hpatch guidance injection: it
 refreshes a marked section, replaces the pinned stock editing section or GPT-6 Astra search line
 and displaced exec-command guidance, or appends only when the top-level Codex config declares
-`model_instructions_file`. An unconfigured unknown section fails
+`model_instructions_file`. Pinned conflicting progress and tool-scheduling fragments are also
+rewritten outside the marked section on every path; transport-independent safety rules remain.
+An unconfigured unknown section fails
 closed as upstream drift. This policy runs in memory and never changes Codex configuration or
 instruction files.
 

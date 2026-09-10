@@ -26,8 +26,16 @@ one current marked hpatch section or replaces the pinned stock Codex file-editin
 displaced rg and exec-command lines. The GPT-6 Astra stock template has no file-editing section:
 the router recognizes its pinned introduction and work-rules heading, replaces the pinned rg line
 immediately after the heading and blank separator with central guidance, and removes the pinned
-exec-command line. Both displaced lines must be unique, and an old file-editing section must be absent.
-It preserves all unrelated instruction content. At startup,
+exec-command line. The active Astra prompt may instead have no legacy exec-command line and one
+pinned transport-independent shell-safety line after the search line; that safety line is preserved.
+The search and execution anchors must be unique, and an old file-editing section must be absent.
+For stock, marked, and configured custom prompts, the router also rewrites pinned conflicting
+progress-channel, initial-update, skill-announcement, approval-rejection delivery, 60-second commentary/wait, Code Mode batching,
+and unrestricted parallelization fragments outside the owned section. Progress uses supported
+tool commentary, known reads and searches batch in a shell script, and parallelism respects tool
+contracts with hpatch running alone. Unrelated instructions, including authorization, validation,
+and shell-safety rules, are preserved. These rewrites cover the GPT-6 Astra and shared GPT-5.6
+Sol/Terra/Luna templates and the active Codex prompt. At startup,
 the router reads `$CODEX_HOME/config.toml`, falling back to `~/.codex/config.toml`, only to
 snapshot whether the top-level `model_instructions_file` key is set. A configured custom prompt
 without recognized stock or marked guidance receives the central guidance by append; without that setting,
@@ -98,8 +106,11 @@ Acceptance:
    it. Both the GPT-5 editing-section template and GPT-6 Astra work-rules template are supported.
    The workflow follows the request model, not the stock prompt shape or the proxy's first model.
    Switching models refreshes the existing marked section without retaining the other workflow.
-3. A marked prompt retains content before and after the owned section and refreshes idempotently;
-   a configured custom prompt without a recognized section retains its content before the append.
+3. A marked prompt retains unrelated content before and after the owned section and refreshes
+   idempotently; a configured custom prompt without a recognized section retains unrelated content
+   before the append. Pinned conflicting tool and progress fragments are rewritten in both paths,
+   including fragments inherited from earlier rewrites. Fixtures cover all four cached model IDs,
+   both instruction carriers, and both model protocols.
 4. Missing and null request instructions remain byte-equivalent. An unconfigured, unrecognized
    non-null instruction string fails before forwarding. CTP/2 never creates or encodes its selected
    instruction carrier, and `ctp1` fails before router startup.

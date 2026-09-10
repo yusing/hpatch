@@ -46,6 +46,17 @@ a fully expanded existing absolute path, never a reference or placeholder.
 
 {{.EditingWorkflow}}
 
+## Tool coordination
+
+Commentary routing applies to all progress notices, including initial updates, status answers,
+skill announcements, and updates before waiting. Use the supported tool mechanism when available;
+otherwise continue silently. A blocking question or final result can still use the final channel.
+Do not wake solely to emit a progress notice.
+
+Batch already-known reads and searches as commands in one `functions.shell` script, with bounded
+output. Parallelize other independent calls only when their tool contracts allow it; run hpatch
+alone and wait for its result before another tool call. Use only the tools exposed for this request.
+
 ## Shell reference
 
 The default interpreter is Bash. For another interpreter, put its command and arguments in a
