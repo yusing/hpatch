@@ -270,22 +270,7 @@ func TestToolRegistryStartup(t *testing.T) {
 		}
 	})
 
-	t.Run("configured shell cannot shadow the built-in", func(t *testing.T) {
-		dataDirectory := t.TempDir()
-		pluginDirectory := filepath.Join(dataDirectory, "plugins")
-		if err := os.Mkdir(pluginDirectory, 0o700); err != nil {
-			t.Fatal(err)
-		}
-		writePlugin(t, pluginDirectory, "shell.mjs", declaration("example.shell", "shell", ""))
-
-		registry, err := buildToolRegistry(t.Context(), dataDirectory, testHPatchToolDescription, false)
-		if registry != nil || err == nil ||
-			!strings.Contains(err.Error(), `tool name "shell" is owned by both builtin.shell and example.shell`) {
-			t.Fatalf("registry = %+v, error = %v", registry, err)
-		}
-	})
-
-	t.Run("independent declaration and ownership errors aggregate", func(t *testing.T) {
+	t.Run("declaration and ownership errors aggregate", func(t *testing.T) {
 		dataDirectory := t.TempDir()
 		pluginDirectory := filepath.Join(dataDirectory, "plugins")
 		if err := os.Mkdir(pluginDirectory, 0o700); err != nil {
@@ -295,6 +280,7 @@ func TestToolRegistryStartup(t *testing.T) {
 		writePlugin(t, pluginDirectory, "duplicate-a.mjs", declaration("duplicate.plugin", hpatchToolName, ""))
 		writePlugin(t, pluginDirectory, "duplicate-b.mjs", declaration("duplicate.plugin", "other_tool", ""))
 		writePlugin(t, pluginDirectory, "shell.mjs", declaration("shell.plugin", "eval", ""))
+		writePlugin(t, pluginDirectory, "configured-shell.mjs", declaration("example.shell", "shell", ""))
 		registry, err := buildToolRegistry(t.Context(), dataDirectory, testHPatchToolDescription, false)
 		if registry != nil || err == nil {
 			t.Fatalf("registry = %+v, error = %v", registry, err)
@@ -305,6 +291,7 @@ func TestToolRegistryStartup(t *testing.T) {
 			`plugin identity "duplicate.plugin"`,
 			`tool name "hpatch"`,
 			"collides with a shell keyword or built-in",
+			`tool name "shell" is owned by both builtin.shell and example.shell`,
 		} {
 			if !strings.Contains(diagnostic, fragment) {
 				t.Fatalf("startup diagnostic lacks %q:\n%s", fragment, diagnostic)

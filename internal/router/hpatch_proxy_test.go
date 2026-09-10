@@ -913,125 +913,131 @@ func TestHPatchRoutesOnlyModelVisibleRegistryTools(t *testing.T) {
 	}
 }
 
-func TestReportIssueRunsRouterHookWithoutWorker(t *testing.T) {
-	dataDirectory := t.TempDir()
-	bodyPath := filepath.Join(t.TempDir(), "body.md")
-	settings := fmt.Sprintf(
-		`{"hooks":{"diagnose":[%q]}}`,
-		"printf '%s\n%s' {{shellquote .Title}} {{shellquote (format_markdown .)}} > "+bodyPath,
-	)
-	if err := os.WriteFile(filepath.Join(dataDirectory, "settings.json"), []byte(settings), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	registry, err := buildToolRegistry(t.Context(), dataDirectory, testHPatchToolDescription, true)
-	if err != nil {
-		t.Fatal(err)
-	}
-	indexPath := filepath.Join(t.TempDir(), "session_index.jsonl")
-	if err := os.WriteFile(indexPath, []byte(`{"id":"session-1","thread_name":"Fix loop flaws"}`+"\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	proxy := newHPatchProxy(
-		testTranslator(t, new(int)),
-		registry,
-		false,
-		false,
-		newSessionTitleCacheAt(indexPath),
-	)
-	t.Cleanup(func() {
-		if err := errors.Join(proxy.Close(), registry.Close()); err != nil {
-			t.Error(err)
-		}
-	})
-	updatedBodyPath := filepath.Join(t.TempDir(), "updated-body.md")
-	updatedSettings := fmt.Sprintf(
-		`{"hooks":{"diagnose":[%q]}}`,
-		"printf '%s\n%s' {{shellquote .Title}} {{shellquote (format_markdown .)}} > "+updatedBodyPath,
-	)
-	if err := os.WriteFile(filepath.Join(dataDirectory, "settings.json"), []byte(updatedSettings), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	transform, _, _, _ := newHPatchTestTransformWithProxy(t, proxy)
-	markdown := "# hpatch issue\n\nRepair context did not identify the stale row."
-	history, err := transform.translateTool(reportIssueToolName, "call-report", markdown, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if history.toolName != reportIssueToolName ||
-		history.carrierName != transform.codeModeToolName ||
-		history.report != "Issue reported." ||
-		history.carrierInput() != "text("+strconv.Quote("Issue reported.")+");" {
-		t.Fatalf("report issue history = %+v", history)
-	}
-	body, err := os.ReadFile(updatedBodyPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := "Fix loop flaws\n" + markdown
-	if string(body) != want {
-		t.Fatalf("diagnose hook output = %q, want %q", body, want)
-	}
-	if _, ok := registry.wrapper(reportIssueToolName); ok {
-		t.Fatal("report issue unexpectedly installed a worker wrapper")
-	}
-}
-
-func TestReportIssueHookFailureDoesNotFailRouting(t *testing.T) {
-	dataDirectory := t.TempDir()
-	if err := os.WriteFile(
-		filepath.Join(dataDirectory, "settings.json"),
-		[]byte(`{"hooks":{"diagnose":["exit 9"]}}`),
-		0o600,
-	); err != nil {
-		t.Fatal(err)
-	}
-	registry, err := buildToolRegistry(t.Context(), dataDirectory, testHPatchToolDescription, true)
-	if err != nil {
-		t.Fatal(err)
-	}
-	proxy := newHPatchProxy(testTranslator(t, new(int)), registry, false, false)
-	t.Cleanup(func() {
-		if err := errors.Join(proxy.Close(), registry.Close()); err != nil {
-			t.Error(err)
-		}
-	})
-	transform, _, _, _ := newHPatchTestTransformWithProxy(t, proxy)
-
-	history, err := transform.translateTool(reportIssueToolName, "call-report", "diagnostic", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := "Issue report was not delivered.\nhpatch: warning: running diagnose hook 1: exit status 9\n"
-	if history.report != want || history.carrierInput() != "text("+strconv.Quote(want)+");" {
-		t.Fatalf("report issue history = %+v, want report %q", history, want)
-	}
-}
-
-func TestReportIssueCallIDCannotBeReusedByHPatch(t *testing.T) {
+func TestReportIssueRouting(t *testing.T) {
 	dataDirectory := t.TempDir()
 	registry, err := buildToolRegistry(t.Context(), dataDirectory, testHPatchToolDescription, true)
 	if err != nil {
 		t.Fatal(err)
 	}
-	calls := 0
-	proxy := newHPatchProxy(testTranslator(t, &calls), registry, false, false)
 	t.Cleanup(func() {
-		if err := errors.Join(proxy.Close(), registry.Close()); err != nil {
+		if err := registry.Close(); err != nil {
 			t.Error(err)
 		}
 	})
-	transform, _, _, _ := newHPatchTestTransformWithProxy(t, proxy)
-	input := "same input"
-	if _, err := transform.translateTool(reportIssueToolName, "shared-call", input, nil); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := transform.translateTool(hpatchToolName, "shared-call", input, nil); err == nil ||
-		!strings.Contains(err.Error(), "hpatch call \"shared-call\" changed input") {
-		t.Fatalf("reused cross-tool call error = %v", err)
-	}
-	if calls != 0 {
-		t.Fatalf("hpatch translations = %d, want 0", calls)
-	}
+
+	t.Run("runs current router hook without worker", func(t *testing.T) {
+		bodyPath := filepath.Join(t.TempDir(), "body.md")
+		settings := fmt.Sprintf(
+			`{"hooks":{"diagnose":[%q]}}`,
+			"printf '%s\n%s' {{shellquote .Title}} {{shellquote (format_markdown .)}} > "+bodyPath,
+		)
+		if err := os.WriteFile(filepath.Join(dataDirectory, "settings.json"), []byte(settings), 0o600); err != nil {
+			t.Fatal(err)
+		}
+
+		indexPath := filepath.Join(t.TempDir(), "session_index.jsonl")
+		if err := os.WriteFile(indexPath, []byte(`{"id":"session-1","thread_name":"Fix loop flaws"}`+"\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		proxy := newHPatchProxy(
+			testTranslator(t, new(int)),
+			registry,
+			false,
+			false,
+			newSessionTitleCacheAt(indexPath),
+		)
+		t.Cleanup(func() {
+			if err := proxy.Close(); err != nil {
+				t.Error(err)
+			}
+		})
+
+		updatedBodyPath := filepath.Join(t.TempDir(), "updated-body.md")
+		updatedSettings := fmt.Sprintf(
+			`{"hooks":{"diagnose":[%q]}}`,
+			"printf '%s\n%s' {{shellquote .Title}} {{shellquote (format_markdown .)}} > "+updatedBodyPath,
+		)
+		if err := os.WriteFile(filepath.Join(dataDirectory, "settings.json"), []byte(updatedSettings), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		transform, _, _, _ := newHPatchTestTransformWithProxy(t, proxy)
+
+		markdown := "# hpatch issue\n\nRepair context did not identify the stale row."
+		history, err := transform.translateTool(reportIssueToolName, "call-report", markdown, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if history.toolName != reportIssueToolName ||
+			history.carrierName != transform.codeModeToolName ||
+			history.report != "Issue reported." ||
+			history.carrierInput() != "text("+strconv.Quote("Issue reported.")+");" {
+			t.Fatalf("report issue history = %+v", history)
+		}
+
+		body, err := os.ReadFile(updatedBodyPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := "Fix loop flaws\n" + markdown
+		if string(body) != want {
+			t.Fatalf("diagnose hook output = %q, want %q", body, want)
+		}
+		if _, ok := registry.wrapper(reportIssueToolName); ok {
+			t.Fatal("report issue unexpectedly installed a worker wrapper")
+		}
+	})
+
+	t.Run("hook failure does not fail routing", func(t *testing.T) {
+		if err := os.WriteFile(
+			filepath.Join(dataDirectory, "settings.json"),
+			[]byte(`{"hooks":{"diagnose":["exit 9"]}}`),
+			0o600,
+		); err != nil {
+			t.Fatal(err)
+		}
+		proxy := newHPatchProxy(testTranslator(t, new(int)), registry, false, false)
+		t.Cleanup(func() {
+			if err := proxy.Close(); err != nil {
+				t.Error(err)
+			}
+		})
+		transform, _, _, _ := newHPatchTestTransformWithProxy(t, proxy)
+
+		history, err := transform.translateTool(reportIssueToolName, "call-report", "diagnostic", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := "Issue report was not delivered.\nhpatch: warning: running diagnose hook 1: exit status 9\n"
+		if history.report != want || history.carrierInput() != "text("+strconv.Quote(want)+");" {
+			t.Fatalf("report issue history = %+v, want report %q", history, want)
+		}
+	})
+
+	t.Run("call ID cannot be reused by hpatch", func(t *testing.T) {
+		if err := os.Remove(filepath.Join(dataDirectory, "settings.json")); err != nil && !errors.Is(err, os.ErrNotExist) {
+			t.Fatal(err)
+		}
+		calls := 0
+		proxy := newHPatchProxy(testTranslator(t, &calls), registry, false, false)
+		t.Cleanup(func() {
+			if err := proxy.Close(); err != nil {
+				t.Error(err)
+			}
+		})
+		transform, _, _, _ := newHPatchTestTransformWithProxy(t, proxy)
+
+		input := "same input"
+		if _, err := transform.translateTool(reportIssueToolName, "shared-call", input, nil); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := transform.translateTool(hpatchToolName, "shared-call", input, nil); err == nil ||
+			!strings.Contains(err.Error(), "hpatch call \"shared-call\" changed input") {
+			t.Fatalf("reused cross-tool call error = %v", err)
+		}
+		if calls != 0 {
+			t.Fatalf("hpatch translations = %d, want 0", calls)
+		}
+	})
 }
 
 func TestHPatchReplacementReplacesNamespacedExecCommandWithShellParams(t *testing.T) {
