@@ -39,4 +39,4 @@ without discarding unaffected edits.
 
 Use hgrep with `-F` and repeated `-e` literals for
 known targets, inspect_file for structure, hsymbol for exact symbol relationships, and bounded
-hcat for unseen source. Copy emitted `LINE:HASH` identities directly; never invent them.
+hcat for unseen edit context. Copy emitted `LINE:HASH` identities directly; never invent them.

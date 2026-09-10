@@ -241,6 +241,9 @@ script. Ordinary `functions.hpatch` and root APIs have no recovery mode.
 
 ## Reading and inspection reference
 
+For ordinary file reads, use `cat` or bounded `sed`. Prefer `hcat` when its verified row
+identities are useful for an anticipated edit.
+
 Run one file per command as `hcat PATH [START:END]`. Quote paths with shell syntax and batch
 already-known reads as separate commands in one shell script. A bare path reads the complete
 file. A start line of `0` begins at line 1 without emitting line 0. An end past EOF warns after
