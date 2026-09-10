@@ -176,17 +176,22 @@ func (a *subagentActivity) drain(root string, started time.Time, budget int) []m
 		}
 		// Group ready calls by author without waiting for more activity.
 		if event.kind == "tool" {
-			grouped := "In " + commentaryCode(a.threads[event.thread].name) + "\n\n" + toolActivityNested(strings.TrimPrefix(event.text, author))
+			grouped := strings.TrimPrefix(event.text, author)
+			text = toolActivityGroup(author, grouped)
+			if len(text) > budget || len(text) > maxCommentaryPublicationBytes {
+				text = event.text
+			}
 			for index+1 < len(a.events) {
 				next := a.events[index+1]
 				if next.thread != event.thread || next.kind != "tool" || next.observed.Before(started) != event.observed.Before(started) {
 					break
 				}
-				combined := grouped + "\n\n" + toolActivityNested(strings.TrimPrefix(next.text, author))
-				if len(combined) > budget || len(combined) > maxCommentaryPublicationBytes {
+				combined := grouped + "\n\n" + strings.TrimPrefix(next.text, author)
+				rendered := toolActivityGroup(author, combined)
+				if len(rendered) > budget || len(rendered) > maxCommentaryPublicationBytes {
 					break
 				}
-				text = combined
+				text = rendered
 				grouped = combined
 				index++
 			}

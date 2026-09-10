@@ -134,8 +134,10 @@ and are never grouped into one message. Their identities include the source call
 index, so repeated completed-call observations do not duplicate files, including repeated paths.
 Each file independently follows the existing delivery budget, deferral, and replay rules.
 Single-item root copies retain the inline agent prefix without an `In` heading or bullet wrapper.
-Two or more consecutive tool displays from the same child share an `In <canonical path>` heading with
-nested bullet items, including mixed action kinds. Grouping uses only calls already pending
+Consecutive matching actions from the same child collapse into one action heading, retaining
+every operand and source block in order. A single resulting action uses the inline agent prefix,
+without an `In` heading or bullets. Two or more resulting actions share an
+`In <canonical path>` heading with nested bullet items, including mixed action kinds. Grouping uses only calls already pending
 at a root delivery boundary and never waits for more calls. A different child, notice, or
 deferred/current boundary ends the group. Multiline details keep their nested code fences.
 Each source call remains independently deduplicated; grouped root copies remain user-only

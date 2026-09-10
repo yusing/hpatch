@@ -62,6 +62,67 @@ func toolActivityCode(input string) string {
 	return fence + "\n" + input + "\n" + fence
 }
 
+// Collapse adjacent action headings, keeping each detail (and fence) intact.
+// Blank lines within source code are not operation boundaries.
+func toolActivityGroup(author, text string) string {
+	var blocks []string
+	var lines []string
+	fence := ""
+	for line := range strings.SplitSeq(text, "\n") {
+		if line == "" && fence == "" {
+			if len(lines) > 0 {
+				blocks = append(blocks, strings.Join(lines, "\n"))
+				lines = nil
+			}
+			continue
+		}
+		lines = append(lines, line)
+		if fence != "" {
+			if line == fence {
+				fence = ""
+			}
+		} else if delimiter, ok := toolActivityFenceDelimiter(line); ok {
+			fence = delimiter
+		}
+	}
+	if len(lines) > 0 {
+		blocks = append(blocks, strings.Join(lines, "\n"))
+	}
+	var actions []string
+	previous := ""
+	for _, block := range blocks {
+		heading, detail, _ := strings.Cut(block, "\n")
+		separator := "\n"
+		// These classified operations place their operand on the heading line.
+		for _, label := range []string{"Read", "Skill Read", "Skill Reference Read", "List", "Search", "Inspect", "Write", "Edit", "Delete", "Move"} {
+			if operand, ok := strings.CutPrefix(heading, label+" "); ok && strings.HasPrefix(operand, "`") {
+				heading = label
+				if detail != "" {
+					operand += "\n" + detail
+				}
+				detail = operand
+				separator = " "
+				break
+			}
+		}
+		if heading == previous && len(actions) > 0 {
+			if detail != "" {
+				if strings.Contains(actions[len(actions)-1], "\n") {
+					separator = "\n"
+				}
+				actions[len(actions)-1] += separator + detail
+			}
+		} else {
+			actions = append(actions, block)
+			previous = heading
+		}
+	}
+	if len(actions) <= 1 {
+		return author + strings.Join(actions, "")
+	}
+	return "In " + strings.TrimSuffix(strings.TrimPrefix(author, "["), "] ") + "\n\n" + toolActivityNested(strings.Join(actions, "\n\n"))
+}
+
 // Indent continuation lines so fenced source stays inside its list item.
 // Blank lines outside a fence separate classified operations from one call.
 func toolActivityNested(text string) string {

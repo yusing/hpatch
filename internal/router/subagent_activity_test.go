@@ -184,7 +184,7 @@ func TestToolActivityGroupsSamePathWithoutWaiting(t *testing.T) {
 		t.Fatalf("group count: %d", len(messages))
 	}
 	for index, want := range []string{
-		"In `/root/c`\n\n- Read `0`\n\n- Read `1`\n\n- Read `2`\n\n- Read `3`\n\n- Read `4`",
+		"[`/root/c`] Read `0` `1` `2` `3` `4`",
 	} {
 		if got := commentaryText(t, messages[index]); got != want {
 			t.Fatalf("got %q, want %q", got, want)
@@ -245,9 +245,51 @@ func TestToolActivityGroupingPreservesMultilineSource(t *testing.T) {
 	a.collect("c", "one", "tool", "Run\n```\necho a\n  echo b\n```")
 	a.collect("c", "two", "tool", "Run\n```\necho c\n  echo d\n```")
 	messages := a.drain("r", time.Time{}, maxCommentaryPublicationBytes)
-	want := "In `/root/c`\n\n- Run\n  ```\n  echo a\n    echo b\n  ```\n\n- Run\n  ```\n  echo c\n    echo d\n  ```"
+	want := "[`/root/c`] Run\n```\necho a\n  echo b\n```\n```\necho c\n  echo d\n```"
 	if len(messages) != 1 || commentaryText(t, messages[0]) != want {
 		t.Fatalf("multiline grouping: %v", messages)
+	}
+}
+
+func TestToolActivityCollapsesActionsWithinAndAcrossCalls(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		calls []string
+		want  string
+	}{
+		{
+			name:  "one call",
+			calls: []string{"Read `a`\n\nRead `b`"},
+			want:  "[`/root/c`] Read `a` `b`",
+		},
+		{
+			name:  "mixed actions",
+			calls: []string{"Read `a`", "Read `b`\n\nSearch `c`", "Search `d`", "Read `e`"},
+			want:  "In `/root/c`\n\n- Read `a` `b`\n\n- Search `c` `d`\n\n- Read `e`",
+		},
+		{
+			name:  "separate single-file edits",
+			calls: []string{"Edit `a`\n```diff\n-old\n+new\n```", "Edit `b`\n```diff\n-before\n+after\n```"},
+			want:  "[`/root/c`] Edit `a`\n```diff\n-old\n+new\n```\n`b`\n```diff\n-before\n+after\n```",
+		},
+		{
+			name:  "source fences",
+			calls: []string{"Run\n````bash\nprintf '```'\n\n# Run\n````", "Run\n```python\nprint(1)\n```"},
+			want:  "[`/root/c`] Run\n````bash\nprintf '```'\n\n# Run\n````\n```python\nprint(1)\n```",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			a := newSubagentActivity()
+			a.observe("r", "", "/root", false)
+			a.observe("c", "r", "/root/c", true)
+			for index, call := range tc.calls {
+				a.collect("c", fmt.Sprint(index), "tool", call)
+			}
+			messages := a.drain("r", time.Time{}, maxCommentaryPublicationBytes)
+			if len(messages) != 1 || commentaryText(t, messages[0]) != tc.want {
+				t.Fatalf("collapsed display: %v", messages)
+			}
+		})
 	}
 }
 
