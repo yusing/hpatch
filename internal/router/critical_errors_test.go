@@ -5,11 +5,17 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
+
+	"github.com/coder/websocket"
 )
 
 func queueCritical(c *CriticalErrors, session string) {
@@ -259,5 +265,70 @@ func TestInvalidNativeCatalogIsBadRequestBeforeForwarding(t *testing.T) {
 		if output.Code != 400 || len(provider.forwarded) != 0 {
 			t.Fatalf("catalog reached upstream or remained retryable: %d %s", output.Code, output.Body.String())
 		}
+	}
+}
+
+func TestForwardFailureDiagnostics(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		err  error
+		code string
+	}{
+		{"eof", fmt.Errorf("private URL: %w", io.EOF), "upstream_eof"},
+		{"unexpected eof", io.ErrUnexpectedEOF, "upstream_unexpected_eof"},
+		{"reset", &net.OpError{Op: "read", Err: syscall.ECONNRESET}, "upstream_connection_reset"},
+		{"refused", syscall.ECONNREFUSED, "upstream_connection_refused"},
+		{"broken pipe", syscall.EPIPE, "upstream_broken_pipe"},
+		{"dns", &net.DNSError{Err: "private DNS detail", Name: "private host"}, "upstream_dns"},
+		{"write", &net.OpError{Op: "write", Err: errors.New("private detail")}, "upstream_network_write"},
+		{"close", websocket.CloseError{Code: websocket.StatusPolicyViolation, Reason: "private close reason"}, "upstream_websocket_close_1008"},
+		{"deadline", context.DeadlineExceeded, "upstream_deadline"},
+		{"canceled", context.Canceled, "upstream_canceled"},
+		{"unknown", errors.New("private unknown cause"), "upstream_transport_unknown"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Setenv("TMPDIR", t.TempDir())
+			flags := newRouterFlags(io.Discard)
+			*flags.debug = true
+			debug, err := openDebugOutput(flags)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = debug.close() })
+			ctx := context.WithValue(t.Context(), debugContextKey{}, debug)
+			request, err := parseResponsesRequest(mustTestJSON(t, titleRequestFields()))
+			if err != nil {
+				t.Fatal(err)
+			}
+			issues := NewCriticalErrors()
+			provider := &serverFakeProvider{results: []serverForwardResult{{err: test.err}}}
+			err = executeRequest(ctx, ctx, request, serverMetadataHeaders(t, "turn", nil), "diagnostic-session", provider, io.Discard, issues, nil, nil, nil)
+			if !errors.Is(err, test.err) {
+				t.Fatalf("original cause lost: %v", err)
+			}
+			data, err := os.ReadFile(debug.paths[0])
+			if err != nil {
+				t.Fatal(err)
+			}
+			lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+			var record map[string]any
+			if err := json.Unmarshal([]byte(lines[len(lines)-1]), &record); err != nil {
+				t.Fatal(err)
+			}
+			if record["diagnostic_code"] != test.code || record["phase"] != "forward" {
+				t.Fatalf("wrong diagnostic: %v", record)
+			}
+			reference, _ := record["diagnostic_reference"].(string)
+			if len(reference) != 12 {
+				t.Fatalf("missing reference: %v", record)
+			}
+			notices := strings.Join(issues.Pending(), "\n")
+			if !strings.Contains(notices, reference) {
+				t.Fatalf("notice/reference mismatch: %s", notices)
+			}
+			if strings.Contains(string(data)+notices, "private") {
+				t.Fatal("diagnostic leaked external error text")
+			}
+		})
 	}
 }

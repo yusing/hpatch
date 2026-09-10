@@ -135,7 +135,7 @@ func TestExecuteRequestFailsClosedBeforeUpstreamWhenRewriteIsIneligible(t *testi
 			input := request["input"].([]any)
 			additional := input[0].(map[string]any)
 			tools := additional["tools"].([]any)
-			tools[0].(map[string]any)["description"] = "Run JavaScript without apply_patch."
+			tools[0].(map[string]any)["description"] = "### exec_command\nRun a command without an editing tool."
 		}, want: "unsupported_tool_catalog"},
 		{name: "restricted Code Mode tool", sessionID: "session", headers: validHeaders, mutate: func(request map[string]any) {
 			request["tool_choice"] = map[string]any{"type": "custom", "name": "exec"}

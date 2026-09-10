@@ -25,14 +25,14 @@ func TestFailedPreparationDoesNotChangeActivityIdentity(t *testing.T) {
 	child, _ := prepareActivityTest(t, proxy, "child-session", "c", "r", "/root/child", nil)
 	child.Close()
 	root.drainActivity()
-	request, err := parseResponsesRequest([]byte(`{"model":"gpt-test","input":[],"tools":[]}`))
+	request, err := parseResponsesRequest([]byte(`{"model":"gpt-test","input":[],"tools":[{"type":"function","name":"exec_command"}]}`))
 	if err != nil {
 		t.Fatal(err)
 	}
 	_, err = proxy.prepareRequest(t.Context(), &request, "bad-session", "c", codexTurnMetadata{
 		RequestKind: "turn", ThreadID: "c", ParentThreadID: "other-root", AgentName: "/root/other", SubagentKind: "thread_spawn",
 	}, true)
-	if err == nil || !strings.Contains(err.Error(), "unsupported_tool_catalog") {
+	if err == nil || !strings.Contains(err.Error(), "missing_apply_patch") {
 		t.Fatal("expected unsupported catalog", err)
 	}
 	next, _ := prepareActivityTest(t, proxy, "next-session", "c", "r", "/root/child", nil)

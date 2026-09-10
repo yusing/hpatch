@@ -519,7 +519,7 @@ func TestResponsesWebSocketLocalErrorStatus(t *testing.T) {
 		{name: "invalid JSON", body: `{`, status: "400"},
 		{name: "invalid input", body: `{"type":"response.create","model":"gpt-test","input":42}`, status: "400"},
 		{name: "unknown parent", body: `{"type":"response.create","model":"gpt-test","previous_response_id":"missing"}`, status: "400"},
-		{name: "unsupported tools", body: `{"type":"response.create","model":"gpt-test","input":[]}`, metadata: "turn", status: "400"},
+		{name: "unsupported tools", body: `{"type":"response.create","model":"gpt-test","input":[],"tools":[{"type":"function","name":"exec_command"}]}`, metadata: "turn", status: "400"},
 		{name: "execution failure", body: `{"type":"response.create","model":"gpt-test","input":[]}`, metadata: "invalid", status: "502"},
 	} {
 		t.Run(test.name, func(t *testing.T) {

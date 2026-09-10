@@ -61,7 +61,9 @@ client request ID, thread/session IDs, model, previous response ID, and cached i
 The dump records the effective Responses request before cached-prefix removal, not a raw
 wire message; Grok records precede Chat Completions conversion. No ordinary user messages,
 tool call bodies, or authentication headers are exported. Router diagnostics record lifecycle
-and parsed-request outcome/phase/status, never arbitrary error text. Debug files remain
+and parsed-request outcome/phase/status, plus a safe diagnostic code and the notice's diagnostic
+reference for failures. Forwarding failures classify known wrapped transport errors without
+exporting addresses, URLs, WebSocket close reasons, or arbitrary error text. Debug files remain
 separate from sanitized metrics/capture. Initialization failure prevents launch; subsequent
 debug write failures are surfaced on exit without changing request execution.
 
@@ -106,16 +108,15 @@ supported tool catalog. It retains native input for the next turn without
 performing tool rewriting. Generating requests cannot use prewarm metadata to
 bypass ordinary turn validation.
 
-Structured turns used by Codex for auxiliary work such as task titles pass through without
-Hpatch instruction or tool rewriting or CTP encoding when they advertise no nested or native
-execution tools. They require valid turn metadata, session and thread IDs, and a
-`text.format.type` of `json_schema`. Catalogs may be empty or contain only Codex's bare
-JavaScript Code Mode `exec` and optional `wait`, flat or in the `functions` namespace.
-The bare Code Mode description contains the isolated JavaScript runtime contract but no
-nested tool declarations. Generic preamble examples mentioning `tools.exec_command` are
-not declarations. Their output schema remains provider-owned. Malformed catalogs, other
-tools, or Code Mode descriptions with nested tool declarations do not qualify; ordinary
-tool-bearing requests retain the existing Hpatch admission and rewriting checks.
+Execution-free turns pass through without Hpatch instruction or tool rewriting or CTP
+encoding, regardless of their output schema. They require valid turn metadata and session
+and thread IDs. Catalogs may be empty or contain native helper tools and Codex's JavaScript
+Code Mode `exec` with optional `wait`, flat or namespaced. Nested clock and lookup declarations
+are allowed. Generic preamble examples mentioning `tools.exec_command` are not declarations.
+Admission depends on advertised tool declarations, not client preamble wording or request purpose.
+Malformed catalogs, duplicate tools, wrong-kind execution wrappers, and partial editing or
+process-execution catalogs do not qualify. Requests advertising native or nested editing or
+process-execution tools retain the existing Hpatch admission and rewriting checks.
 
 Request preparation and response restoration retain Hpatch tools, replay,
 CTP/2, and native carrier behavior. Incremental input must retain enough

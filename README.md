@@ -316,7 +316,9 @@ hpatch --debug codex
 Debug mode creates a private `hpatch-debug-*` directory in the system temporary
 directory. After Codex exits, it prints absolute paths to stderr for:
 
-- `router.jsonl`: router lifecycle and parsed-request outcomes, without raw error text.
+- `router.jsonl`: router lifecycle and parsed-request outcomes, with safe failure codes and
+  diagnostic references matching the notices in Codex, without raw error text.
+
 - `capture.jsonl`: the same sanitized capture described above.
 - `metrics.json`: the final metrics snapshot.
 - `instructions.jsonl`: exact instruction text, developer messages, and tool declarations

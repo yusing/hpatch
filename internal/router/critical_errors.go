@@ -8,8 +8,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"net"
 	"slices"
 	"sync"
+	"syscall"
+
+	"github.com/coder/websocket"
 )
 
 // CriticalErrors retains only bounded, actionable session notices, never raw
@@ -53,6 +58,44 @@ func criticalDiagnostic(err error, code, summary string, distinct bool) error {
 	return &criticalDiagnosticError{err: err, code: code, summary: summary, distinct: distinct}
 }
 
+// Classify wrapped transport errors without copying addresses, close reasons,
+// URLs, headers, or arbitrary error text into notices or debug records.
+func forwardCriticalDiagnostic(err error) error {
+	code, summary := "upstream_transport_unknown", "the upstream transport failed without a recognized error type"
+	switch {
+	case errors.Is(err, context.DeadlineExceeded):
+		code, summary = "upstream_deadline", "the upstream request exceeded its deadline"
+	case errors.Is(err, context.Canceled):
+		code, summary = "upstream_canceled", "the upstream request was canceled"
+	case websocket.CloseStatus(err) != -1:
+		code = fmt.Sprintf("upstream_websocket_close_%d", websocket.CloseStatus(err))
+		summary = fmt.Sprintf("the upstream WebSocket closed with status %d", websocket.CloseStatus(err))
+	case errors.Is(err, io.ErrUnexpectedEOF):
+		code, summary = "upstream_unexpected_eof", "the upstream connection ended unexpectedly"
+	case errors.Is(err, io.EOF):
+		code, summary = "upstream_eof", "the upstream connection closed before a response was available"
+	case errors.Is(err, syscall.ECONNRESET):
+		code, summary = "upstream_connection_reset", "the upstream connection was reset"
+	case errors.Is(err, syscall.ECONNREFUSED):
+		code, summary = "upstream_connection_refused", "the upstream connection was refused"
+	case errors.Is(err, syscall.EPIPE):
+		code, summary = "upstream_broken_pipe", "the upstream connection closed while sending the request"
+	default:
+		if _, ok := errors.AsType[*net.DNSError](err); ok {
+			code, summary = "upstream_dns", "the upstream hostname could not be resolved"
+		} else if network, ok := errors.AsType[net.Error](err); ok && network.Timeout() {
+			code, summary = "upstream_network_timeout", "the upstream network operation timed out"
+		} else if operation, ok := errors.AsType[*net.OpError](err); ok {
+			switch operation.Op {
+			case "dial", "read", "write":
+				code = "upstream_network_" + operation.Op
+				summary = "the upstream network " + operation.Op + " operation failed"
+			}
+		}
+	}
+	return criticalDiagnostic(err, code, summary, true)
+}
+
 func staticCriticalDiagnostic(code, summary string) error {
 	return &criticalDiagnosticError{err: errors.New(summary), code: code, summary: summary}
 }
@@ -73,6 +116,14 @@ func (c *CriticalErrors) record(f *requestFinalization, err error) {
 		f.observation.outcome == requestOutcomeCanceledBeforeResponse || f.observation.outcome == requestOutcomeCanceledAfterResponse {
 		return
 	}
+	f.diagnosticReference = c.diagnosticReference(f, err)
+	f.diagnosticCode = "unclassified"
+	if diagnostic, ok := errors.AsType[*criticalDiagnosticError](err); ok {
+		f.diagnosticCode = diagnostic.code
+	}
+	if compatibility, ok := errors.AsType[*requestCompatibilityError](err); ok {
+		f.diagnosticCode = compatibility.code
+	}
 	category := string(f.failurePhase)
 	message := "Hpatch could not complete the request. Retry the turn; if it persists, restart the session."
 	if compatibility, ok := errors.AsType[*requestCompatibilityError](err); ok {
@@ -91,7 +142,7 @@ func (c *CriticalErrors) record(f *requestFinalization, err error) {
 			message = "Hpatch could not safely translate the response. No unsupported tool call was released."
 		}
 		if category == string(f.failurePhase) {
-			reference := c.diagnosticReference(f, err)
+			reference := f.diagnosticReference
 			phase := requestFailureDescription(f.failurePhase)
 			diagnostic, _ := errors.AsType[*criticalDiagnosticError](err)
 			switch {
@@ -118,6 +169,12 @@ func (c *CriticalErrors) record(f *requestFinalization, err error) {
 				category += ":unclassified:" + reference
 				message += " The detailed cause was not safe for display. Diagnostic reference: " + reference + "."
 			}
+		} else {
+			if f.diagnosticCode == "unclassified" {
+				f.diagnosticCode = category
+			}
+			category += ":" + f.diagnosticReference
+			message += " Diagnostic reference: " + f.diagnosticReference + "."
 		}
 	}
 	// Observe this request's safe description before session deduplication. A

@@ -432,6 +432,8 @@ type requestFinalization struct {
 	sessionID             string
 	failurePhase          requestFailurePhase
 	upstreamStatusCode    int
+	diagnosticReference   string
+	diagnosticCode        string
 	upstreamTerminalState responseTerminalState
 }
 
@@ -506,12 +508,18 @@ func executeRequest(
 
 	defer func() {
 		requestErr = errors.Join(requestErr, finalization.finish(executionCtx, requestErr, output, issues))
-		debug.event(map[string]any{
+		fields := map[string]any{
 			"event": "request_complete", "request_id": debugID,
 			"client_request_id": headers.Get("x-client-request-id"), "thread_id": codexThreadID(headers),
 			"session_id": sessionID, "outcome": finalization.observation.outcome.String(),
 			"phase": finalization.failurePhase, "upstream_status": finalization.upstreamStatusCode,
-		})
+		}
+		if finalization.diagnosticReference != "" {
+			fields["diagnostic_reference"] = finalization.diagnosticReference
+			fields["diagnostic_code"] = finalization.diagnosticCode
+		}
+		debug.event(fields)
+
 	}()
 
 	if err := ctx.Err(); err != nil {
@@ -628,7 +636,7 @@ func executeRequest(
 	}
 	response, err := provider.forwardExecution(ctx, executionCtx, forwardBody, headers, cacheKey)
 	if err != nil {
-		return fmt.Errorf("execute request: %w", err)
+		return fmt.Errorf("execute request: %w", forwardCriticalDiagnostic(err))
 	}
 	finalization.upstreamStatusCode = response.StatusCode
 	finalization.failurePhase = requestFailureInspectResponse

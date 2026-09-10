@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"maps"
+	"regexp"
 	"strings"
 )
 
@@ -30,17 +31,10 @@ func (r *parsedResponsesRequest) responseTools() *responsesToolCatalog {
 	return r.toolCatalog
 }
 
-func (r *parsedResponsesRequest) isAuxiliaryStructuredRequest() bool {
-	var text struct {
-		Format struct {
-			Type string `json:"type"`
-		} `json:"format"`
-	}
-	if json.Unmarshal(r.fields["text"], &text) != nil || text.Format.Type != "json_schema" {
-		return false
-	}
-	// Admission runs before instruction rewriting can remove input items. Do not
-	// cache additional-tool indexes until those transformations have finished.
+// isExecutionFreeRequest identifies catalogs that need no Hpatch editing or
+// process-execution projection. Other tools and output schemas remain Codex-owned.
+func (r *parsedResponsesRequest) isExecutionFreeRequest() bool {
+	// Admission precedes instruction rewriting, which can remove input items.
 	catalog := decodeResponsesToolCatalog(r.fields)
 	if catalog.inputObjectsErr != nil {
 		return false
@@ -51,23 +45,30 @@ func (r *parsedResponsesRequest) isAuxiliaryStructuredRequest() bool {
 		if section == nil || section.err != nil {
 			return false
 		}
+		seen := make(map[string]bool)
 		for _, node := range section.nodes {
 			if node == nil || node.definition == nil {
 				return false
 			}
 			tool := node.definition
+			if tool.Name == "" || seen[tool.Name] {
+				return false
+			}
+			seen[tool.Name] = true
 			if tool.Type == "namespace" {
-				if !namespaces || tool.Name != "functions" || node.nested == nil || !node.nested.array || !acceptSection(node.nested, false) {
+				if !namespaces || node.nested == nil || !node.nested.array || !acceptSection(node.nested, false) {
 					return false
 				}
 				continue
 			}
-			if node.nested != nil {
+			if node.nested != nil || (tool.Type != "function" && tool.Type != "custom") {
 				return false
 			}
 			switch tool.Name {
+			case "apply_patch", "exec_command", "hpatch", "hpatch_recover", "shell", "functions.exec":
+				return false
 			case "exec":
-				if execSeen || tool.Type != "custom" || !isBareCodeModeDescription(tool.Description) {
+				if execSeen || tool.Type != "custom" || !isExecutionFreeCodeModeDescription(tool.Description) {
 					return false
 				}
 				execSeen = true
@@ -76,8 +77,6 @@ func (r *parsedResponsesRequest) isAuxiliaryStructuredRequest() bool {
 					return false
 				}
 				waitSeen = true
-			default:
-				return false
 			}
 		}
 		return true
@@ -93,15 +92,23 @@ func (r *parsedResponsesRequest) isAuxiliaryStructuredRequest() bool {
 	return !waitSeen || execSeen
 }
 
-// Codex can retain its JavaScript exec/wait wrapper in auxiliary requests even
-// when there are no advertised nested tools. Examples in the generic preamble
-// mention exec_command; only tool declarations establish an executor catalog.
-func isBareCodeModeDescription(description string) bool {
-	return strings.HasPrefix(description, "Run JavaScript code to orchestrate/compose tool calls\n") &&
-		strings.Contains(description, "global `tools` object") &&
-		strings.Contains(description, "no Node, no file system, no network access, no console") &&
-		!strings.Contains(description, "###") &&
-		!strings.Contains(description, "declare const tools")
+// Both clients advertise nested tools through headings; the App also exposes
+// TypeScript declarations. Match declarations, not examples such as
+// `await tools.exec_command(...)`, and do not depend on the client's preamble.
+var codeModeExecutionDeclaration = regexp.MustCompile(`(?:^|[;{])\s*(?:apply_patch|exec_command|hpatch|hpatch_recover|shell)\s*\(`)
+
+func isExecutionFreeCodeModeDescription(description string) bool {
+	for line := range strings.SplitSeq(description, "\n") {
+		heading := strings.Fields(line)
+		if len(heading) < 2 || heading[0] != "###" {
+			continue
+		}
+		switch strings.Trim(heading[1], "`") {
+		case "apply_patch", "exec_command", "hpatch", "hpatch_recover", "shell":
+			return false
+		}
+	}
+	return !codeModeExecutionDeclaration.MatchString(description)
 }
 
 // setInput updates the request input and re-indexes additional tool groups.
