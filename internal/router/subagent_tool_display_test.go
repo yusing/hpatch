@@ -16,7 +16,7 @@ func TestSubagentToolDisplay(t *testing.T) {
 		{"shell", "skills-mgr get writing-readme/references/cli.md 10:30", "Skill Reference Read `writing-readme/references/cli.md 10:30`"},
 		{"shell", "skills-mgr get writing-readme 10:30", "Skill Read `writing-readme 10:30`"},
 		{"shell", "hread /skills/writing-readme/SKILL.md 1:20", "Skill Read `writing-readme 1:20`"},
-		{"shell", "  echo first\n  echo second\n", "Run\n```\n  echo first\n  echo second\n\n```"},
+		{"shell", "  echo first\n  echo second\n", "Run\n```bash\n  echo first\n  echo second\n```"},
 		{"shell", "cat /skills/writing-readme/SKILL.md", "Skill Read `writing-readme`"},
 		{"shell", "cat a\ncat b", "Read `a`\n\nRead `b`"},
 		{"shell", "hread a.go 1:20", "Read `a.go 1:20`"},
@@ -24,17 +24,26 @@ func TestSubagentToolDisplay(t *testing.T) {
 		{"shell", "inspect_file a.go", "Inspect `a.go`"},
 		{"shell", "ls src", "List `src`"},
 		{"shell", `{"command":[]}`, "Run"},
-		{"shell", "cat a > b", "Run\n`cat a > b`"},
-		{"shell", "cat a && rm b", "Run\n`cat a && rm b`"},
-		{"shell", "cat $(echo a)", "Run\n`cat $(echo a)`"},
-		{"shell", "cat *.go", "Run\n`cat *.go`"},
-		{"shell", "#!params={\"max_output_tokens\":20000}\ncat a\npwd", "Run\n```\n#!params={\"max_output_tokens\":20000}\ncat a\npwd\n```"},
-		{"shell", "echo a\n  echo b", "Run\n```\necho a\n  echo b\n```"},
+		{"shell", `{"command":["sh","-c","echo done"]}`, "Run\n```sh\necho done\n```"},
+		{"shell", "shell sh $'echo done'", "Run\n```sh\necho done\n```"},
+		{"shell", "#!python\nprint(1)", "Run\n```python\n#!python\nprint(1)\n```"},
+		{"shell", "#!python3\nprint(1)", "Run\n```python\n#!python3\nprint(1)\n```"},
+		{"shell", "#!/usr/bin/env -S python3 -u\nprint(1)", "Run\n```python\n#!/usr/bin/env -S python3 -u\nprint(1)\n```"},
+		{"shell", "#!node\nprint(1)", "Run\n```javascript\n#!node\nprint(1)\n```"},
+		{"shell", "#!ruby\nprint(1)", "Run\n```ruby\n#!ruby\nprint(1)\n```"},
+		{"shell", "#!sh\nprint(1)", "Run\n```sh\n#!sh\nprint(1)\n```"},
+		{"shell", "#!pwsh\nprint(1)", "Run\n```powershell\n#!pwsh\nprint(1)\n```"},
+		{"shell", "cat a > b", "Run\n```bash\ncat a > b\n```"},
+		{"shell", "cat a && rm b", "Run\n```bash\ncat a && rm b\n```"},
+		{"shell", "cat $(echo a)", "Run\n```bash\ncat $(echo a)\n```"},
+		{"shell", "cat *.go", "Run\n```bash\ncat *.go\n```"},
+		{"shell", "#!params={\"max_output_tokens\":20000}\ncat a\npwd", "Run\n```bash\n#!params={\"max_output_tokens\":20000}\ncat a\npwd\n```"},
+		{"shell", "echo a\n  echo b", "Run\n```bash\necho a\n  echo b\n```"},
 		{"exec_command", `{"cmd":"shell bash $'cat a\\n'","login":false}`, "Read `a`"},
 		{"shell", `{"command":["bash","-lc","cat a"]}`, "Read `a`"},
 		{"view_image", `{"path":"/tmp/a.png"}`, "View image\n`/tmp/a.png`"},
 		{"exec", `const result = await tools.exec_command({"cmd":"shell bash $'cat a\\n'","login":false}); text(JSON.stringify(Object.assign({}, result, {"retained":false})));`, "Read `a`"},
-		{"exec", `await tools.exec_command({"cmd":"echo a\necho b"})`, "Run\n```\necho a\necho b\n```"},
+		{"exec", `await tools.exec_command({"cmd":"echo a\necho b"})`, "Run\n```bash\necho a\necho b\n```"},
 		{"exec", `const r = await tools.write_stdin({session_id: 52915, chars: "", yield_time_ms: 30000, max_output_tokens: 3000}); text(r);`, "Wait for command output\n`session 52915`"},
 		{"exec", `await tools.write_stdin({session_id: -12, chars: ""})`, "Wait for command output\n`session -12`"},
 		{"exec", `await tools.write_stdin({session_id: 9007199254740993, chars: ""})`, "Wait for command output\n`session 9007199254740992`"},
@@ -51,6 +60,42 @@ func TestSubagentToolDisplay(t *testing.T) {
 		})
 	}
 }
+func TestSubagentRunInterpreterLanguages(t *testing.T) {
+	for _, tt := range []struct {
+		interpreters []string
+		language     string
+	}{
+		{[]string{"python2.7", "python3.12", "pythonw3", "pypy", "pypy3", "/usr/bin/python3.13", `C:\Python\python3.exe`, "/usr/bin/env -S python3.12 -u"}, "python"},
+		{[]string{"nodejs", "bun", "deno", "qjs", "quickjs"}, "javascript"},
+		{[]string{"ts-node", "ts-node-esm", "tsx"}, "typescript"},
+		{[]string{"ruby3.3", "jruby", "truffleruby"}, "ruby"},
+		{[]string{"perl5.40"}, "perl"},
+		{[]string{"php8.3"}, "php"},
+		{[]string{"lua5.4", "luajit2.1"}, "lua"},
+		{[]string{"tclsh8.6", "wish"}, "tcl"},
+		{[]string{"Rscript"}, "r"},
+		{[]string{"runghc", "runghc9.8", "runhaskell"}, "haskell"},
+		{[]string{"powershell.exe", "pwsh"}, "powershell"},
+		{[]string{"ash", "dash", "ksh93"}, "bash"},
+		{[]string{"gawk", "mawk", "nawk"}, "awk"},
+		{[]string{"julia"}, "julia"},
+		{[]string{"fish"}, "fish"},
+		{[]string{"custom3.2"}, "custom3.2"},
+		{[]string{"python-helper"}, "python-helper"},
+	} {
+		for _, interpreter := range tt.interpreters {
+			t.Run(interpreter, func(t *testing.T) {
+				source := "#!" + interpreter + "\nsource `with` backticks\n"
+				item := map[string]json.RawMessage{"name": mustMarshalJSON("shell"), "input": mustMarshalJSON(source)}
+				want := "Run\n```" + tt.language + "\n" + source + "```"
+				if got := subagentToolActivityText(item, "shell"); got != want {
+					t.Fatalf("got %q, want %q", got, want)
+				}
+			})
+		}
+	}
+}
+
 func TestSubagentToolDisplayDoesNotUnwrapArbitraryCode(t *testing.T) {
 	for _, source := range []string{
 		`if (false) await tools.exec_command({"cmd":"cat a"})`,
@@ -96,7 +141,7 @@ func TestSubagentBuiltinToolDisplay(t *testing.T) {
 	tests := []struct {
 		source, want string
 	}{
-		{`{"type":"shell_call","action":{"commands":["echo a","echo b"]}}`, "Run\n```\necho a\necho b\n```"},
+		{`{"type":"shell_call","action":{"commands":["echo a","echo b"]}}`, "Run\n```bash\necho a\necho b\n```"},
 		{`{"type":"local_shell_call","action":{"command":["bash","-lc","cat a"]}}`, "Read `a`"},
 		{`{"type":"web_search_call","action":{"type":"open_page","url":"https://example.com"}}`, "Open page\n`https://example.com`"},
 		{`{"type":"file_search_call","queries":["alpha","beta"]}`, "Search files\n```\nalpha\nbeta\n```"},

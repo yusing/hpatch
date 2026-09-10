@@ -53,7 +53,7 @@ func TestSubagentToolActivityJSONAndSSE(t *testing.T) {
 			want := "In `/root/worker`\n\n- Tool call: `functions.lookup`\n  `{\"query\":\"hello\"}`" +
 				"\n\n- Tool call: `external`\n  ```\n  first line\n  " + strings.Repeat("界", 300) + "\n  ```" +
 				"\n\n- Tool call: `collaboration.send_message`" +
-				"\n\n- Run\n  ```\n  echo a\n    echo b\n  ```" +
+				"\n\n- Run\n  ```bash\n  echo a\n    echo b\n  ```" +
 				"\n\n- Read `a`\n\n- Search web\n  `Go parser`"
 			if got != want {
 				t.Fatalf("grouped display: got %q, want %q", got, want)

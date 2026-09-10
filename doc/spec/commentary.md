@@ -85,6 +85,16 @@ provenance; they never replace child answers or add follow-up, message, wait, or
 Complete subagent tool calls are also forwarded as user-only activity, never as executable
 root calls. Known tools use operation labels rather than raw transport arguments. Shell calls
 and transparent, statically recognized Code Mode shell wrappers share a `Run` display.
+Nonempty `Run` previews use fenced code blocks even for single-line commands, tagged with
+the selected interpreter language: default/Bash uses `bash`, Python/Python3 uses `python`,
+and Node/Bun/Deno uses `javascript`. Common executable aliases normalize to renderer language
+names: PyPy/Pythonw to `python`, QuickJS to `javascript`, ts-node/tsx to `typescript`,
+JRuby/TruffleRuby to `ruby`, LuaJIT to `lua`, tclsh/wish to `tcl`, Rscript to `r`,
+runghc/runhaskell to `haskell`, pwsh to `powershell`, ash/dash/ksh to `bash`, and
+gawk/mawk/nawk to `awk`. Numeric version suffixes on these known executable families,
+Python, Ruby, Perl, PHP, Lua, and PowerShell are normalized too, such as `python3.12`
+and `php8.3`. Other interpreter names pass through unchanged after path and case
+normalization; unavailable or unsafe language tags use an untagged fence. Source text remains intact.
 Code Mode recognition accepts literal JavaScript objects with identifier or quoted keys and
 recursively static JSON-compatible values. It never evaluates source; computed keys, spreads,
 calls, references, and other dynamic expressions retain a `Run JavaScript` display with the

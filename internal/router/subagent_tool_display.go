@@ -44,7 +44,7 @@ func subagentToolActivityTextWithHistory(item map[string]json.RawMessage, qualif
 				return toolActivityShell(strings.Join(action.Commands, "\n"))
 			}
 			if len(action.Command) > 0 {
-				return toolActivityShell(toolActivityArgv(action.Command))
+				return toolActivityShellArgv(action.Command)
 			}
 		}
 		return "Run"
@@ -59,7 +59,7 @@ func subagentToolActivityTextWithHistory(item map[string]json.RawMessage, qualif
 			}
 			var argv []string
 			if json.Unmarshal(arguments["command"], &argv) == nil {
-				script = toolActivityArgv(argv)
+				return toolActivityShellArgv(argv)
 			}
 		}
 		return toolActivityShell(script)
@@ -160,18 +160,22 @@ func toolActivityWriteStdin(arguments map[string]json.RawMessage) string {
 	return "Wait for command output\n" + commentaryCode("session "+session)
 }
 
-func toolActivityArgv(argv []string) string {
+func toolActivityShellArgv(argv []string) string {
 	if len(argv) == 0 {
-		return ""
+		return "Run"
 	}
 	if len(argv) == 3 && (filepath.Base(argv[0]) == "bash" || filepath.Base(argv[0]) == "sh") &&
 		(argv[1] == "-c" || argv[1] == "-lc") {
-		return argv[2]
+		return toolActivityShellLanguage(argv[2], filepath.Base(argv[0]))
 	}
-	return workerCommand(argv[0], argv[1:])
+	return toolActivityShell(workerCommand(argv[0], argv[1:]))
 }
 
 func toolActivityShell(script string) string {
+	return toolActivityShellLanguage(script, "bash")
+}
+
+func toolActivityShellLanguage(script, language string) string {
 	// Native carriers may wrap the source in `shell bash $'...'`.
 	for range 2 {
 		program, err := syntax.NewParser().Parse(strings.NewReader(script), "")
@@ -191,6 +195,7 @@ func toolActivityShell(script string) string {
 			break
 		}
 		script = body
+		language = interpreter
 	}
 	parsed, err := shellsyntax.Parse(script)
 	if err == nil && !parsed.HasScript && parsed.CommandTemplate == "" && len(parsed.Interpreter) == 1 &&
@@ -199,7 +204,49 @@ func toolActivityShell(script string) string {
 			return summary
 		}
 	}
-	return toolActivityDetail("Run", script)
+	if strings.TrimSpace(script) == "" {
+		return "Run"
+	}
+	if err != nil || len(parsed.Interpreter) == 0 {
+		language = ""
+	} else if parsed.Interpreter[0] != "bash" {
+		language = shellsyntax.InterpreterIdentity(parsed.Interpreter[0])
+	}
+	// Normalize known executable families, including versioned names such as
+	// python3.12 and lua5.4. Leave other names intact for Codex's syntax lookup.
+	switch strings.TrimRight(language, "0123456789.") {
+	case "python", "pythonw", "pypy":
+		language = "python"
+	case "node", "nodejs", "bun", "deno", "qjs", "quickjs":
+		language = "javascript"
+	case "ts-node", "ts-node-esm", "tsx":
+		language = "typescript"
+	case "ruby", "jruby", "truffleruby":
+		language = "ruby"
+	case "perl":
+		language = "perl"
+	case "php":
+		language = "php"
+	case "lua", "luajit":
+		language = "lua"
+	case "tclsh", "wish":
+		language = "tcl"
+	case "rscript":
+		language = "r"
+	case "runghc", "runhaskell":
+		language = "haskell"
+	case "pwsh", "powershell":
+		language = "powershell"
+	case "ash", "dash", "ksh":
+		language = "bash"
+	case "gawk", "mawk", "nawk":
+		language = "awk"
+	}
+	// Interpreter filenames need not be safe Markdown info strings.
+	if strings.ContainsAny(language, "`~ \t\r\n") {
+		language = ""
+	}
+	return "Run\n" + toolActivityFenced(language, script)
 }
 
 func toolActivityReads(script string) (string, bool) {
