@@ -17,7 +17,9 @@ type parsedResponsesRequest struct {
 	originalFields map[string]json.RawMessage
 	fields         map[string]json.RawMessage
 	streamResponse bool
-	toolCatalog    *responsesToolCatalog
+	// cachedInput is the number of native input items already held by this WebSocket's provider.
+	cachedInput int
+	toolCatalog *responsesToolCatalog
 }
 
 // responseTools returns the decoded tool catalog, decoding it on first access.
@@ -53,6 +55,48 @@ func (r *parsedResponsesRequest) setInput(input json.RawMessage) {
 		groupIndex++
 	}
 	r.toolCatalog.inputItems = items
+}
+
+// filterInput retains the cached-prefix boundary through deletion-only projections.
+func (r *parsedResponsesRequest) filterInput(filter func(map[string]json.RawMessage)) {
+	if r.cachedInput == 0 {
+		filter(r.fields)
+		return
+	}
+	var before []json.RawMessage
+	_ = json.Unmarshal(r.fields["input"], &before)
+	filter(r.fields)
+	var after []json.RawMessage
+	_ = json.Unmarshal(r.fields["input"], &after)
+	// These filters only remove items. Match the retained subsequence before
+	// later projections rewrite item content.
+	retained := 0
+	next := 0
+	for index, item := range before {
+		if next < len(after) && sameJSONValue(item, after[next]) {
+			if index < r.cachedInput {
+				retained++
+			}
+			next++
+		}
+	}
+	r.cachedInput = retained
+}
+
+// incrementalBody removes only the projected prefix already cached upstream.
+// Preparation and CTP decoding still see that prefix; HTTP and Grok do not use
+// the provider's connection-local Responses cache.
+func (r parsedResponsesRequest) incrementalBody(body []byte) ([]byte, error) {
+	if r.cachedInput == 0 || isGrokModel(r.model()) {
+		return body, nil
+	}
+	var fields map[string]json.RawMessage
+	var input []json.RawMessage
+	if json.Unmarshal(body, &fields) != nil || json.Unmarshal(fields["input"], &input) != nil || r.cachedInput > len(input) {
+		return nil, errors.New("invalid WebSocket cached input boundary")
+	}
+	fields["input"] = mustMarshalJSON(input[r.cachedInput:])
+	return marshalProtocolJSON(fields)
 }
 
 // model returns the model name from the request.

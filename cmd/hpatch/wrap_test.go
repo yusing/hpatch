@@ -30,10 +30,11 @@ func TestCodexArgsPreservesArguments(t *testing.T) {
 	var config struct {
 		ModelProvider string `toml:"model_provider"`
 		Providers     map[string]struct {
-			Name    string `toml:"name"`
-			BaseURL string `toml:"base_url"`
-			WireAPI string `toml:"wire_api"`
-			Auth    bool   `toml:"requires_openai_auth"`
+			Name       string `toml:"name"`
+			BaseURL    string `toml:"base_url"`
+			WireAPI    string `toml:"wire_api"`
+			WebSockets bool   `toml:"supports_websockets"`
+			Auth       bool   `toml:"requires_openai_auth"`
 		} `toml:"model_providers"`
 	}
 	var settings []string
@@ -47,7 +48,7 @@ func TestCodexArgsPreservesArguments(t *testing.T) {
 		t.Fatal(err)
 	}
 	provider := config.Providers[config.ModelProvider]
-	if provider.Name == "" || provider.BaseURL != "http://127.0.0.1:12345/v1" || provider.WireAPI != "responses" || !provider.Auth {
+	if provider.Name == "" || provider.BaseURL != "http://127.0.0.1:12345/v1" || provider.WireAPI != "responses" || !provider.Auth || !provider.WebSockets {
 		t.Fatalf("provider = %+v", provider)
 	}
 	withoutDelimiter := []string{"exec", "-c", `model="example"`, "prompt"}

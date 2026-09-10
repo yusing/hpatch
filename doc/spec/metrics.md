@@ -3,7 +3,8 @@
 ## REQ-METRICS-001 — Captured Responses metrics
 
 `hpatch` MUST create one in-process capturer and MUST keep one HTTP listener. The same listener
-MUST serve `POST /v1/responses`, `GET /v1/models`, and `GET /api/metrics`. Enabling
+MUST serve `POST /v1/responses`, WebSocket upgrades at `GET /v1/responses`,
+`GET /v1/models`, and `GET /api/metrics`. Enabling
 `--capture-output PATH` MUST append sanitized schema-6 JSONL records at `PATH`; it MUST NOT start or
 require a capturer service, listener, proxy, or network hop.
 
@@ -250,7 +251,9 @@ these diagnoses.
 
 Provider WebSocket exchanges use the same request-private correlation, attempt
 sequence, sanitized records, snapshots, and offline aggregation as HTTP.
-Each sent `response.create` is one provider attempt. A rejected upgrade that
+Each sent `response.create` is one provider attempt. An automatic steering
+successor is a separate logical exchange and provider attempt with zero request
+bytes at both boundaries; capture MUST NOT invent a `response.create` payload. A rejected upgrade that
 ends the request is an HTTP-error attempt with zero request-body bytes; an
 unsupported handshake followed by HTTP fallback is negotiation, not a separate
 inference attempt. The fallback POST remains observed by the HTTP wrapper.
@@ -273,6 +276,32 @@ Terminal event types determine captured Responses status even when the embedded
 body omits status. Receiver-observed messages MUST be counted before delivery;
 early close and cancellation MUST finalize only after already-read queued or
 reserved messages have reached that lease's observer.
+
+Codex-facing WebSocket exchanges use the same private correlation and sanitized
+records as HTTP clients. The HTTP upgrade itself MUST NOT create a logical
+request. Each explicit create or automatic successor owns its restored
+downstream JSON observations and correlated provider attempts. Status 101
+describes the transport, not successful response completion. Internal SSE
+adaptation MUST NOT contribute synthetic framing bytes to either boundary.
+
+An explicit `generate:false` prewarm may complete locally without a provider
+attempt. Capture derives this exception from the observed request and persists
+`provider_expected:false` on the sanitized client record, so live and offline
+aggregation do not report a missing provider. An absent field still means a
+provider is expected. Any actual prewarm provider traffic remains measured.
+
+Application-level control messages, including `response.steer` and
+`response.steer.*`, are measured separately from logical response exchanges.
+Each observed client or provider control payload MUST immediately contribute
+exact payload bytes and decoded-content token estimates to its own boundary and
+direction, even if steering fails or the socket closes before a successor.
+Sanitized `codex_control` and `provider_control` records MUST contain only
+measurement and direction metadata, never raw control payloads. They MUST NOT
+increment logical requests, provider attempts, usage, or completion counts.
+Snapshots, offline aggregation, and the dashboard MUST expose the four
+`transport` measures `client_control_requests`, `client_control_responses`,
+`provider_control_requests`, and `provider_control_responses`. These measures
+are separate from ordinary request and response totals, not counted twice.
 
 Cache fingerprints, unlike transport measurements, normalize the transport-only
 `stream` field and `response.create` discriminator. They also exclude these

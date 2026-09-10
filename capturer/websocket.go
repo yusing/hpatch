@@ -7,10 +7,181 @@ import (
 	"io"
 	"iter"
 	"net/http"
+	"sync"
 	"time"
 )
 
 const webSocketContentType = "application/x-openai-websocket-json"
+
+type ResponsesWebSocketControlBoundary string
+
+const (
+	// ResponsesWebSocketControlCodex is the client-facing transport boundary.
+	ResponsesWebSocketControlCodex ResponsesWebSocketControlBoundary = "codex"
+	// ResponsesWebSocketControlProvider is the provider-facing transport boundary.
+	ResponsesWebSocketControlProvider ResponsesWebSocketControlBoundary = "provider"
+)
+
+type ResponsesWebSocketControlDirection string
+
+const (
+	// ResponsesWebSocketControlRequest identifies a control message sent
+	// toward a transport boundary.
+	ResponsesWebSocketControlRequest ResponsesWebSocketControlDirection = "request"
+	// ResponsesWebSocketControlResponse identifies a control message returned
+	// from a transport boundary.
+	ResponsesWebSocketControlResponse ResponsesWebSocketControlDirection = "response"
+)
+
+type responsesWebSocketFactoryKey struct{}
+
+type responsesWebSocketCapture struct {
+	recorder *Recorder
+	headers  http.Header
+
+	controlCaptureID  string
+	controlCaptureErr error
+}
+
+// ResponsesWebSocket observes one logical response delivered over the
+// Codex-facing WebSocket. Its messages are the restored JSON payloads delivered
+// to Codex, without WebSocket framing or provider-only representation.
+type ResponsesWebSocket struct {
+	state    *requestState
+	started  time.Time
+	request  []byte
+	response boundedObservation
+
+	mu       sync.Mutex
+	finished bool
+}
+
+// BeginResponsesWebSocket starts one logical Codex-facing exchange when ctx
+// came from Recorder.Handler's GET /v1/responses handler. A nil payload is a
+// valid automatic successor and is measured as zero request bytes.
+func BeginResponsesWebSocket(ctx context.Context, headers http.Header, payload []byte) (context.Context, *ResponsesWebSocket) {
+	capture, _ := ctx.Value(responsesWebSocketFactoryKey{}).(*responsesWebSocketCapture)
+	if capture == nil {
+		return ctx, nil
+	}
+	return capture.begin(ctx, headers, payload)
+}
+
+func (capture *responsesWebSocketCapture) begin(ctx context.Context, headers http.Header, payload []byte) (context.Context, *ResponsesWebSocket) {
+	state, err := capture.recorder.beginRequest(headers)
+	if err != nil {
+		capture.recorder.mu.Lock()
+		capture.recorder.metrics.Capture.SkippedRequests++
+		capture.recorder.mu.Unlock()
+		return ctx, nil
+	}
+	scoped := context.WithValue(ctx, captureKey{}, state)
+	return scoped, &ResponsesWebSocket{
+		state:   state,
+		started: time.Now(),
+		request: bytes.Clone(payload),
+	}
+}
+func (r *Recorder) newResponsesWebSocketCapture(headers http.Header) *responsesWebSocketCapture {
+	captureID, err := randomCaptureID()
+	return &responsesWebSocketCapture{
+		recorder:          r,
+		headers:           headers.Clone(),
+		controlCaptureID:  captureID,
+		controlCaptureErr: err,
+	}
+}
+
+// ObserveResponsesWebSocketControl records one actual WebSocket control
+// payload at either transport boundary. Call it once for the request payload
+// sent toward a boundary and once for the response payload read from it.
+func ObserveResponsesWebSocketControl(ctx context.Context, boundary ResponsesWebSocketControlBoundary, direction ResponsesWebSocketControlDirection, payload []byte) {
+	capture, _ := ctx.Value(responsesWebSocketFactoryKey{}).(*responsesWebSocketCapture)
+	if capture == nil {
+		return
+	}
+	capture.observeControl(boundary, direction, payload)
+}
+
+func (capture *responsesWebSocketCapture) observeControl(boundary ResponsesWebSocketControlBoundary, direction ResponsesWebSocketControlDirection, payload []byte) {
+	if boundary != ResponsesWebSocketControlCodex && boundary != ResponsesWebSocketControlProvider {
+		return
+	}
+	if direction != ResponsesWebSocketControlRequest && direction != ResponsesWebSocketControlResponse {
+		return
+	}
+	if capture.controlCaptureErr != nil {
+		capture.recorder.mu.Lock()
+		capture.recorder.metrics.Capture.SkippedRequests++
+		capture.recorder.mu.Unlock()
+		return
+	}
+	measurement, err := capture.recorder.measure(payload)
+	if err != nil {
+		measurement.Bytes = uint64(len(payload))
+	}
+	record := captureRecord{
+		SchemaVersion:    schemaVersion,
+		Boundary:         string(boundary) + "_control",
+		ControlDirection: direction,
+		CaptureID:        capture.controlCaptureID,
+		Mode:             capture.recorder.mode,
+		ModelProtocol:    capture.recorder.modelProtocol,
+		RequestID:        capture.headers.Get("x-client-request-id"),
+		SessionID:        capture.headers.Get("session-id"),
+		ThreadID:         capture.headers.Get("thread-id"),
+		Subagent:         capture.headers.Get("x-openai-subagent"),
+		StatusCode:       http.StatusSwitchingProtocols,
+		ResponseComplete: true,
+		ResponseStatus:   "control",
+		Transport:        "websocket",
+		CapturedAt:       time.Now().UTC(),
+	}
+	if direction == ResponsesWebSocketControlRequest {
+		record.Request = measurement
+	} else {
+		record.Response = measurement
+	}
+	if err != nil {
+		record.CaptureError = "measure WebSocket control payload"
+		record.ResponseComplete = false
+	}
+	capture.recorder.write(record, nil)
+}
+
+// Message measures one restored JSON message delivered to Codex.
+func (exchange *ResponsesWebSocket) Message(payload []byte) {
+	if exchange == nil {
+		return
+	}
+	exchange.mu.Lock()
+	defer exchange.mu.Unlock()
+	if exchange.finished {
+		return
+	}
+	_, _ = exchange.response.Write(payload)
+}
+
+// Finish records the logical exchange after its terminal downstream message and
+// correlated provider attempts have been observed.
+func (exchange *ResponsesWebSocket) Finish(err error) {
+	if exchange == nil {
+		return
+	}
+	exchange.mu.Lock()
+	if exchange.finished {
+		exchange.mu.Unlock()
+		return
+	}
+	exchange.finished = true
+	request := exchange.request
+	response := exchange.response.snapshot()
+	exchange.request = nil
+	exchange.response = boundedObservation{}
+	exchange.mu.Unlock()
+
+	exchange.state.recorder.recordExchange(exchange.state, "codex", 0, exchange.started, request, response, http.StatusSwitchingProtocols, webSocketContentType, "", err, providerResponseEvidence{})
+}
 
 // WebSocketAttempt observes one response.create exchange on a possibly reused
 // connection. Message records contain actual JSON payload bytes, not WebSocket

@@ -159,12 +159,17 @@ The wrapper uses the fixed Codex ChatGPT upstream and overrides provider
 selection for that invocation only. Standalone serving, fixed ports, custom
 providers, and provider-selection arguments such as `--oss` are not supported.
 
-Codex keeps its local HTTP/SSE connection. Hpatch uses persistent WebSockets to
-ChatGPT without changing Codex configuration; full model-visible input is still
-sent on every request. Networks must allow secure WebSocket connections to
-ChatGPT. Hpatch falls back to HTTP when the endpoint explicitly does not support
-the upgrade, not after an in-flight connection drops. A dropped request fails
-rather than being silently replayed. Grok requests remain on HTTP.
+The wrapper enables WebSockets between Codex and Hpatch for that invocation,
+without changing Codex configuration. Hpatch keeps the ChatGPT connection open
+across responses so a compatible Codex client can send
+[mid-turn steering](https://developers.openai.com/api/docs/guides/steering)
+updates. Steering requires a supporting client and model; enabling the transport
+does not add steering to an older Codex client.
+
+Networks must allow secure WebSocket connections to ChatGPT. Hpatch also accepts
+HTTP/SSE clients and can fall back to HTTP for those requests when ChatGPT
+explicitly rejects the WebSocket upgrade. It never silently replays a dropped
+request or accepted steering. Grok provider requests remain on HTTP.
 
 ### Options
 
@@ -176,7 +181,7 @@ rather than being silently replayed. Grok requests remain on HTTP.
 | `--grok` | `false` | Enable Grok subagents in Hpatch mode |
 | `--grok-auth-file` | `~/.grok/auth.json` | Select a Grok OAuth credential store |
 | `--timeout` | `10m` | Wait for the upstream response to start |
-| `--stream-idle-timeout` | `4m` | Limit gaps between provider WebSocket messages, or HTTP response bytes |
+| `--stream-idle-timeout` | `4m` | Limit gaps between provider messages during an active response, or HTTP response bytes |
 | `--capture-output PATH` | Disabled | Append sanitized JSONL metrics |
 | `--metrics-output PATH` | Disabled | Write the final metrics snapshot on shutdown, overwriting the destination |
 
