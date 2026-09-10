@@ -30,6 +30,29 @@ func (r *parsedResponsesRequest) responseTools() *responsesToolCatalog {
 	return r.toolCatalog
 }
 
+func (r *parsedResponsesRequest) isToolFreeStructuredRequest() bool {
+	var text struct {
+		Format struct {
+			Type string `json:"type"`
+		} `json:"format"`
+	}
+	if json.Unmarshal(r.fields["text"], &text) != nil || text.Format.Type != "json_schema" {
+		return false
+	}
+	// Admission runs before instruction rewriting can remove input items. Do not
+	// cache additional-tool indexes until those transformations have finished.
+	catalog := decodeResponsesToolCatalog(r.fields)
+	if catalog.inputObjectsErr != nil || catalog.top.err != nil || len(catalog.top.rawTools) != 0 {
+		return false
+	}
+	for _, group := range catalog.additional {
+		if group.tools.err != nil || !group.tools.array || len(group.tools.rawTools) != 0 {
+			return false
+		}
+	}
+	return true
+}
+
 // setInput updates the request input and re-indexes additional tool groups.
 func (r *parsedResponsesRequest) setInput(input json.RawMessage) {
 	r.fields["input"] = input

@@ -103,6 +103,13 @@ supported tool catalog. It retains native input for the next turn without
 performing tool rewriting. Generating requests cannot use prewarm metadata to
 bypass ordinary turn validation.
 
+Tool-free structured turns used by Codex for auxiliary work such as task titles pass
+through without Hpatch instruction or tool rewriting or CTP encoding. They require valid turn metadata,
+session and thread IDs, a `text.format.type` of `json_schema`, and no tools in either
+the top-level or additional-tool catalogs. Their output schema remains provider-owned.
+Malformed or nonempty catalogs do not qualify; unsupported tool-bearing requests still
+fail before upstream forwarding.
+
 Request preparation and response restoration retain Hpatch tools, replay,
 CTP/2, and native carrier behavior. Incremental input must retain enough
 connection-local native history to resolve those transformations while sending

@@ -70,6 +70,11 @@ Both model variants teach the following tool workflow, with different wording an
    select another interpreter with a direct compact shebang. Keep program input on standard input,
    use exactly one `{.}` in `#!cmd=`, place request-specific outer arguments in `#!params=`, and
    use native session facilities for PTY-backed or long-running executions.
+   Teach direct interpreter selection with `#!COMMAND [ARGS...]`: its body contains only the
+   selected interpreter's program, without a closing heredoc delimiter. Examples do not limit
+   interpreter selection. Subsequent shell checks belong in a separate default-Bash call
+   after success. Runtime failure may leave earlier statements' effects in place; inspect affected
+   state before retrying. Distinguish HPATCH's `<<PATCH` value syntax from shell submission.
 2. Inspect, edit, or rerun a retained shell script through its `@shell/` reference, and never mix
    retained and workspace paths in one hpatch script.
 3. Acquire target-bearing context for existing-file edits. When a known identifier or literal is

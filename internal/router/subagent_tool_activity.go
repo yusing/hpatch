@@ -2,6 +2,7 @@ package router
 
 import (
 	"encoding/json"
+	"strconv"
 	"strings"
 )
 
@@ -37,8 +38,17 @@ func (t *hpatchResponseTransform) collectSubagentToolCall(item map[string]json.R
 	} else if retained, exists := t.visible[callID]; exists {
 		history = &retained
 	}
-	text := subagentToolActivityTextWithHistory(item, name, history)
-	t.proxy.activity.collect(t.threadID, "tool-call\x00"+id, "tool", text)
+	displays := subagentToolActivityTexts(item, name, history)
+	for index, text := range displays {
+		source, kind := "tool-call\x00"+id, "tool"
+		if len(displays) > 1 {
+			// A multi-file patch produces separate messages, not a grouped tool
+			// preview. Indexes distinguish repeated paths within the same call.
+			source = "tool-file\x00" + strconv.Itoa(index) + "\x00" + id
+			kind = "file"
+		}
+		t.proxy.activity.collect(t.threadID, source, kind, text)
+	}
 }
 
 func toolActivityCode(input string) string {

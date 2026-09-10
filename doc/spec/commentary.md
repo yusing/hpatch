@@ -109,7 +109,12 @@ labels, retaining search flags and operands. Native web/file search, image viewi
 code execution, input sending, and editing calls use descriptive operation labels.
 A native `apply_patch` call unwraps its string or structured patch argument for display.
 A successfully translated `hpatch` or `hpatch_recover` call uses the already-retained translated
-patch and displays it in a `diff` fence. Display never executes or retranslates an edit.
+patch for display. Framed patches show one commentary per file with an inline-code path and an operation
+heading: `Write` for additions, `Edit` for updates, `Delete` for removals, and `Move`
+for renames. Each nonempty body follows in a `diff` fence. Patch begin/end markers, file headers,
+and end-of-file metadata are omitted; moves retain both source and destination paths in the
+heading. Literal added, removed, and context lines remain intact. Unrecognized patch framing
+retains the original source-level diff display. Display never executes or retranslates an edit.
 Rejected, unavailable, and already-satisfied translations retain a truthful source-level
 fallback rather than claiming a patch was applied.
 Unsupported compound or dynamic commands retain their source rather than claiming a simpler operation.
@@ -118,7 +123,11 @@ language-tagged fences and literal backticks. Transformed displays retain every 
 full detail without preview truncation. Unknown tools retain their qualified name and full input.
 Collaboration and user-messaging arguments remain opaque: only their tool identity is displayed.
 Calls without textual input show only the operation or tool name.
-Consecutive tool displays from the same child share an `In <canonical path>` heading with
+Different files in one patch have independently identified commentary messages, in patch order,
+and are never grouped into one message. Their identities include the source call and file-section
+index, so repeated completed-call observations do not duplicate files, including repeated paths.
+Each file independently follows the existing delivery budget, deferral, and replay rules.
+Other consecutive tool displays from the same child share an `In <canonical path>` heading with
 nested bullet items, including mixed action kinds. Grouping uses only calls already pending
 at a root delivery boundary and never waits for more calls. A different child, notice, or
 deferred/current boundary ends the group. Multiline details keep their nested code fences.

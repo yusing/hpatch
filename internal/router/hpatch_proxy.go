@@ -352,6 +352,14 @@ func (p *hpatchProxy) prepareRequest(ctx context.Context, request *parsedRespons
 	if !metadataValid || metadata.RequestKind != "turn" {
 		return nil, errors.New("hpatch rewrite requires valid turn metadata")
 	}
+	// Codex's temporary structured requests (for example, task titles) have
+	// no executor. Leave their instructions and output schema provider-owned.
+	if request.isToolFreeStructuredRequest() {
+		if strings.TrimSpace(threadID) == "" {
+			return nil, errors.New("hpatch rewrite requires a valid Codex thread ID")
+		}
+		return nil, nil
+	}
 	modelInstructions := codexinstructions.InstructionsForModel(request.model(), p.compactModelProtocol)
 	if err := rewriteReceivedModelInstructions(ctx, request, p.customizedInstructions, modelInstructions); err != nil {
 		return nil, err

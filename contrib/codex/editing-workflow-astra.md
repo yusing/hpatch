@@ -14,6 +14,8 @@ work silently. Standalone `phase: "commentary"` messages belong to the router, n
 
 Send shell commands directly to `functions.shell` as one free-form script. The body is the
 program, not a quoted command or outer heredoc; standard input remains available for program data.
+Select another interpreter with a first-line `#!COMMAND [ARGS...]`, then write only that
+interpreter's program in the body. Follow the Shell reference below for submission and recovery.
 
 ## Edit planning
 

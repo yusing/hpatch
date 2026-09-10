@@ -165,7 +165,7 @@ func (a *subagentActivity) drain(root string, started time.Time, budget int) []m
 		}
 		text := event.text
 		author := "[" + commentaryCode(a.threads[event.thread].name) + "] "
-		if event.kind == "tool" {
+		if event.kind == "tool" || event.kind == "file" {
 			text = "In " + commentaryCode(a.threads[event.thread].name) + "\n\n" + toolActivityNested(strings.TrimPrefix(event.text, author))
 		}
 		if event.observed.Before(started) {

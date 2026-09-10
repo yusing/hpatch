@@ -59,13 +59,31 @@ alone and wait for its result before another tool call. Use only the tools expos
 
 ## Shell reference
 
-The default interpreter is Bash. For another interpreter, put its command and arguments in a
-compact shebang on the first line, such as `#!uv run python` or
-`#!node --experimental-strip-types`. Use a direct command or path rather than `/usr/bin/env`.
+The default interpreter is Bash. Select another interpreter with a first-line
+`#!COMMAND [ARGS...]`, then write its program directly below it. The selector accepts an
+interpreter command or path with arguments, for example `#!python3`, `#!ruby`, `#!node`,
+`#!uv run python`, or `#!node --experimental-strip-types`; these are examples, not a whitelist.
+Use a direct command or path rather than `/usr/bin/env`.
+
+For example:
+
+```python
+#!python3
+values = [2, 3, 5]
+print(sum(values))
+```
+
+Submit the example's contents, without the Markdown fence. End the body at the last program
+statement, without a closing heredoc delimiter. Every body line belongs to the selected interpreter;
+run subsequent shell commands such as `gofmt` or tests in a separate default-Bash call after
+the interpreter call succeeds. After a runtime failure, check any affected state before retrying:
+statements before the failure may already have executed.
+
 Selectors named `bash` or ending in `/bash` use the embedded Bash evaluator; selectors named
 `sh` or ending in `/sh` use its POSIX evaluator.
 Omit Bash shebangs, and pass the script directly instead of wrapping it in Bash, `-c` or `-e`
-command-string quoting, or a heredoc.
+command-string quoting, or a heredoc. The HPATCH `<<PATCH` value form belongs only inside an
+Hpatch edit script, not around a shell call.
 
 Optional `#!key=value` directives follow the interpreter shebang or appear first. `#!cmd=`
 accepts exactly one `{.}` placeholder, which expands to the normalized shell helper command

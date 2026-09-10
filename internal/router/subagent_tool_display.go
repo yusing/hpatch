@@ -13,14 +13,10 @@ import (
 )
 
 // Presentation only: never evaluate code, expand paths, or alter the observed call.
-func subagentToolActivityText(item map[string]json.RawMessage, qualifiedName string) string {
-	return subagentToolActivityTextWithHistory(item, qualifiedName, nil)
-}
-
-func subagentToolActivityTextWithHistory(item map[string]json.RawMessage, qualifiedName string, history *hpatchHistory) string {
+func subagentToolActivityTexts(item map[string]json.RawMessage, qualifiedName string, history *hpatchHistory) []string {
 	name := jsonString(item, "name")
 	if commentaryExcluded(jsonString(item, "namespace"), name) {
-		return "Tool call: " + commentaryCode(qualifiedName)
+		return []string{"Tool call: " + commentaryCode(qualifiedName)}
 	}
 	input := jsonString(item, "arguments")
 	if input == "" {
@@ -29,7 +25,7 @@ func subagentToolActivityTextWithHistory(item map[string]json.RawMessage, qualif
 	shortName := strings.TrimPrefix(qualifiedName, "functions.")
 	if shortName == "exec" {
 		if nested, ok := toolActivityUnwrapExec(input); ok {
-			return subagentToolActivityText(nested, qualifiedToolName(jsonString(nested, "namespace"), jsonString(nested, "name")))
+			return subagentToolActivityTexts(nested, qualifiedToolName(jsonString(nested, "namespace"), jsonString(nested, "name")), nil)
 		}
 	}
 	var arguments map[string]json.RawMessage
@@ -41,13 +37,13 @@ func subagentToolActivityTextWithHistory(item map[string]json.RawMessage, qualif
 		}
 		if json.Unmarshal(item["action"], &action) == nil {
 			if len(action.Commands) > 0 {
-				return toolActivityShell(strings.Join(action.Commands, "\n"))
+				return []string{toolActivityShell(strings.Join(action.Commands, "\n"))}
 			}
 			if len(action.Command) > 0 {
-				return toolActivityShellArgv(action.Command)
+				return []string{toolActivityShellArgv(action.Command)}
 			}
 		}
-		return "Run"
+		return []string{"Run"}
 	}
 	switch shortName {
 	case "shell", "shell_command", "exec_command":
@@ -59,16 +55,16 @@ func subagentToolActivityTextWithHistory(item map[string]json.RawMessage, qualif
 			}
 			var argv []string
 			if json.Unmarshal(arguments["command"], &argv) == nil {
-				return toolActivityShellArgv(argv)
+				return []string{toolActivityShellArgv(argv)}
 			}
 		}
-		return toolActivityShell(script)
+		return []string{toolActivityShell(script)}
 	case "exec":
-		return toolActivityJavaScript(input)
+		return []string{toolActivityJavaScript(input)}
 	case "view_image":
-		return toolActivityDetail("View image", jsonString(arguments, "path"))
+		return []string{toolActivityDetail("View image", jsonString(arguments, "path"))}
 	case "write_stdin":
-		return toolActivityWriteStdin(arguments)
+		return []string{toolActivityWriteStdin(arguments)}
 	case "apply_patch":
 		patch := input
 		if arguments != nil {
@@ -78,12 +74,12 @@ func subagentToolActivityTextWithHistory(item map[string]json.RawMessage, qualif
 				patch = decoded
 			}
 		}
-		return toolActivityDiff("Edit", patch)
+		return toolActivityPatch(patch)
 	case "hpatch", "hpatch_recover":
 		if history != nil && history.translationError == "" && history.patch != "" {
-			return toolActivityDiff("Edit", history.patch)
+			return toolActivityPatch(history.patch)
 		}
-		return toolActivityDetail("Edit", input)
+		return []string{toolActivityDetail("Edit", input)}
 	}
 	switch jsonString(item, "type") {
 	case "web_search_call":
@@ -96,23 +92,23 @@ func subagentToolActivityTextWithHistory(item map[string]json.RawMessage, qualif
 			if query == "" && json.Unmarshal(action["queries"], &queries) == nil {
 				query = strings.Join(queries, "\n")
 			}
-			return toolActivityDetail("Search web", query)
+			return []string{toolActivityDetail("Search web", query)}
 		case "open_page":
-			return toolActivityDetail("Open page", jsonString(action, "url"))
+			return []string{toolActivityDetail("Open page", jsonString(action, "url"))}
 		case "find":
-			return toolActivityDetail("Find in page", jsonString(action, "pattern"))
+			return []string{toolActivityDetail("Find in page", jsonString(action, "pattern"))}
 		}
-		return "Search web"
+		return []string{"Search web"}
 	case "file_search_call":
 		var queries []string
 		_ = json.Unmarshal(item["queries"], &queries)
-		return toolActivityDetail("Search files", strings.Join(queries, "\n"))
+		return []string{toolActivityDetail("Search files", strings.Join(queries, "\n"))}
 	case "image_generation_call":
-		return "Generate image"
+		return []string{"Generate image"}
 	case "code_interpreter_call":
-		return toolActivityDetail("Run code", jsonString(item, "code"))
+		return []string{toolActivityDetail("Run code", jsonString(item, "code"))}
 	}
-	return toolActivityDetail("Tool call: "+commentaryCode(qualifiedName), input)
+	return []string{toolActivityDetail("Tool call: "+commentaryCode(qualifiedName), input)}
 }
 
 func toolActivityDetail(label, input string) string {
@@ -146,6 +142,50 @@ func toolActivityDiff(label, patch string) string {
 		return label
 	}
 	return label + "\n" + toolActivityFenced("diff", patch)
+}
+
+func toolActivityPatch(patch string) []string {
+	lines := strings.Split(strings.TrimSpace(strings.ReplaceAll(patch, "\r\n", "\n")), "\n")
+	if len(lines) < 2 || lines[0] != "*** Begin Patch" || lines[len(lines)-1] != "*** End Patch" {
+		return []string{toolActivityDiff("Edit", patch)}
+	}
+	var displays, body []string
+	label := ""
+	flush := func() {
+		if label != "" {
+			displays = append(displays, toolActivityDiff(label, strings.Join(body, "\n")))
+		}
+		body = nil
+	}
+	for _, line := range lines[1 : len(lines)-1] {
+		kind, path, _ := strings.Cut(line, ": ")
+		switch kind {
+		case "*** Add File", "*** Update File", "*** Delete File":
+			if path == "" {
+				return []string{toolActivityDiff("Edit", patch)}
+			}
+			flush()
+			operation := map[string]string{"*** Add File": "Write", "*** Update File": "Edit", "*** Delete File": "Delete"}[kind]
+			label = operation + " " + commentaryCode(path)
+		case "*** Move to":
+			if label == "" || path == "" {
+				return []string{toolActivityDiff("Edit", patch)}
+			}
+			label = "Move " + strings.TrimPrefix(label, "Edit ") + " → " + commentaryCode(path)
+		case "*** End of File":
+			// Patch metadata, not a line in the edited file.
+		default:
+			if label == "" {
+				return []string{toolActivityDiff("Edit", patch)}
+			}
+			body = append(body, line)
+		}
+	}
+	flush()
+	if len(displays) == 0 {
+		return []string{"Edit"}
+	}
+	return displays
 }
 
 func toolActivityWriteStdin(arguments map[string]json.RawMessage) string {

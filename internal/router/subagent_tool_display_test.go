@@ -6,6 +6,15 @@ import (
 	"testing"
 )
 
+// Most display tests compare one textual preview; delivery tests check message boundaries.
+func subagentToolActivityText(item map[string]json.RawMessage, name string) string {
+	return subagentToolActivityTextWithHistory(item, name, nil)
+}
+
+func subagentToolActivityTextWithHistory(item map[string]json.RawMessage, name string, history *hpatchHistory) string {
+	return strings.Join(subagentToolActivityTexts(item, name, history), "\n\n")
+}
+
 func TestSubagentToolDisplay(t *testing.T) {
 	tests := []struct {
 		name, input, want string
@@ -49,7 +58,7 @@ func TestSubagentToolDisplay(t *testing.T) {
 		{"exec", `await tools.write_stdin({session_id: 9007199254740993, chars: ""})`, "Wait for command output\n`session 9007199254740992`"},
 		{"exec", `await tools.write_stdin({session_id: -9007199254740993, chars: ""})`, "Wait for command output\n`session -9007199254740992`"},
 		{"exec", `await tools.exec_command({cmd: 'cat a', login: false})`, "Read `a`"},
-		{"exec", `await tools.apply_patch("*** Begin Patch\n*** Add File: a\n+x\n*** End Patch\n")`, "Edit\n```diff\n*** Begin Patch\n*** Add File: a\n+x\n*** End Patch\n```"},
+		{"exec", `await tools.apply_patch("*** Begin Patch\n*** Add File: a\n+x\n*** End Patch\n")`, "Write `a`\n```diff\n+x\n```"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name+"/"+tt.input, func(t *testing.T) {
@@ -171,7 +180,7 @@ func TestClassifiedToolActivityShowsEveryOperation(t *testing.T) {
 
 func TestSubagentEditDisplayUsesRetainedTranslation(t *testing.T) {
 	patch := "*** Begin Patch\n*** Update File: a\n@@\n-old\n+new\n*** End Patch\n"
-	want := "Edit\n```diff\n" + patch + "```"
+	want := "Edit `a`\n```diff\n@@\n-old\n+new\n```"
 	for _, name := range []string{"hpatch", "hpatch_recover"} {
 		item := map[string]json.RawMessage{
 			"name":    mustMarshalJSON(name),
@@ -207,5 +216,33 @@ func TestToolActivityNestedLanguageFencePreservesBlankLinesAndBackticks(t *testi
 	want := "- Edit\n  ````diff\n  +before\n  +``` literal\n  \n  +`after`\n  ````"
 	if nested != want {
 		t.Fatalf("nested language fence = %q, want %q", nested, want)
+	}
+}
+
+func TestSubagentEditDisplayFileSections(t *testing.T) {
+	patch := "*** Begin Patch\n*** Add File: a b.txt\n+*** Begin Patch\n+```\n+\n" +
+		"*** Update File: old.txt\n*** Move to: new.txt\n@@\n-old\n+new\n*** End of File\n" +
+		"*** Delete File: obsolete.txt\n*** End Patch\n"
+	want := "Write `a b.txt`\n````diff\n+*** Begin Patch\n+```\n+\n````\n\n" +
+		"Move `old.txt` → `new.txt`\n```diff\n@@\n-old\n+new\n```\n\nDelete `obsolete.txt`"
+	for _, source := range []string{patch, strings.ReplaceAll(patch, "\n", "\r\n")} {
+		item := map[string]json.RawMessage{"name": mustMarshalJSON("apply_patch"), "input": mustMarshalJSON(source)}
+		if got := subagentToolActivityText(item, "apply_patch"); got != want {
+			t.Fatalf("got %q, want %q", got, want)
+		}
+	}
+}
+
+func TestSubagentEditDisplayUnrecognizedPatch(t *testing.T) {
+	for _, patch := range []string{
+		"*** Begin Patch\n*** Update File: a\n+incomplete",
+		"*** Begin Patch\n*** Update File: \n+missing path\n*** End Patch",
+		"*** Begin Patch\nno file header\n*** End Patch",
+	} {
+		item := map[string]json.RawMessage{"name": mustMarshalJSON("apply_patch"), "input": mustMarshalJSON(patch)}
+		want := "Edit\n```diff\n" + patch + "\n```"
+		if got := subagentToolActivityText(item, "apply_patch"); got != want {
+			t.Fatalf("got %q, want %q", got, want)
+		}
 	}
 }

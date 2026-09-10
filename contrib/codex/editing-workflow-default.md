@@ -16,6 +16,8 @@ without a commentary message. Never emit a standalone assistant message with
 Use `functions.shell` for shell commands. Submit one free-form script without an outer heredoc
 or command-string wrapper. The selected evaluator receives the exact script body, and standard
 input remains available as program data.
+Select another interpreter with a first-line `#!COMMAND [ARGS...]`, then write only that
+interpreter's program in the body. Follow the Shell reference below for submission and recovery.
 
 ## Edit planning
 
