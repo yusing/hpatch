@@ -274,9 +274,6 @@ func (s *responsesWebSocket) control(body []byte) error {
 	if isWebSocketSteering(body) {
 		capturer.ObserveResponsesWebSocketControl(s.ctx, capturer.ResponsesWebSocketControlCodex, capturer.ResponsesWebSocketControlRequest, body)
 	}
-	if s.upstream == nil {
-		return errors.New("send response.create before a WebSocket control message; Grok does not support steering")
-	}
 	var fields map[string]json.RawMessage
 	_ = json.Unmarshal(body, &fields)
 	if jsonString(fields, "type") == "response.create" {
@@ -285,6 +282,9 @@ func (s *responsesWebSocket) control(body []byte) error {
 		}
 		s.queuedCreate = bytes.Clone(body)
 		return nil
+	}
+	if s.upstream == nil {
+		return errors.New("send response.create before a WebSocket control message; Grok does not support steering")
 	}
 	if jsonString(fields, "type") == "response.steer" {
 		input, err := webSocketInput(fields["input"])
@@ -764,10 +764,16 @@ func (w *webSocketOutput) message(payload []byte) error {
 		if event.Response.ID == "" {
 			return errors.New("provider terminal response has no id")
 		}
-		if err := s.retain(event.Response.Output); err != nil {
-			return err
-		}
 		if len(event.Response.Output) != 0 {
+			// The terminal snapshot replaces streamed items, not duplicates them.
+			retained := s.retainedBytes
+			for _, item := range e.history.output {
+				s.retainedBytes -= len(item)
+			}
+			if err := s.retain(event.Response.Output); err != nil {
+				s.retainedBytes = retained
+				return err
+			}
 			e.history.output = event.Response.Output
 		}
 		s.histories[event.Response.ID] = e.history

@@ -33,6 +33,24 @@ func socketRead(t *testing.T, ctx context.Context, conn *websocket.Conn) map[str
 	return fields
 }
 
+// Provider handlers propagate errors to their caller instead of invoking FailNow
+// outside the test goroutine.
+func providerSocketWrite(ctx context.Context, conn *websocket.Conn, value any) error {
+	return conn.Write(ctx, websocket.MessageText, mustMarshalJSON(value))
+}
+
+func providerSocketRead(ctx context.Context, conn *websocket.Conn) (map[string]json.RawMessage, error) {
+	_, body, err := conn.Read(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(body, &fields); err != nil {
+		return nil, err
+	}
+	return fields, nil
+}
+
 func socketEvent(kind, id string) map[string]any {
 	status := strings.TrimPrefix(kind, "response.")
 	return map[string]any{"type": kind, "response": map[string]any{"id": id, "status": status, "output": []any{}}}
@@ -66,23 +84,50 @@ func TestResponsesWebSocketSteeringAndAutomaticSuccessor(t *testing.T) {
 			return
 		}
 		defer upstream.CloseNow()
-		create := socketRead(t, ctx, upstream)
+		create, err := providerSocketRead(ctx, upstream)
+		if err != nil {
+			t.Error(err)
+			return
+		}
 		if jsonString(create, "type") != "response.create" {
 			t.Errorf("create = %s", mustMarshalJSON(create))
 		}
-		socketWrite(t, ctx, upstream, socketEvent("response.created", "parent"))
-		steer := socketRead(t, ctx, upstream)
+		if err := providerSocketWrite(ctx, upstream, socketEvent("response.created", "parent")); err != nil {
+			t.Error(err)
+			return
+		}
+		steer, err := providerSocketRead(ctx, upstream)
+		if err != nil {
+			t.Error(err)
+			return
+		}
 		if jsonString(steer, "type") != "response.steer" || jsonString(steer, "input") != "change direction" {
 			t.Errorf("steer = %s", mustMarshalJSON(steer))
 		}
-		socketWrite(t, ctx, upstream, map[string]any{"type": "response.steer.accepted", "steer": map[string]string{"id": "s1", "previous_response_id": "parent"}})
-		socketWrite(t, ctx, upstream, map[string]any{"type": "response.incomplete", "response": map[string]any{
+		if err := providerSocketWrite(ctx, upstream, map[string]any{"type": "response.steer.accepted", "steer": map[string]string{"id": "s1", "previous_response_id": "parent"}}); err != nil {
+			t.Error(err)
+			return
+		}
+		if err := providerSocketWrite(ctx, upstream, map[string]any{"type": "response.incomplete", "response": map[string]any{
 			"id": "parent", "status": "incomplete", "incomplete_details": map[string]string{"reason": "steered"}, "output": []any{},
-		}})
-		socketWrite(t, ctx, upstream, socketEvent("response.created", "successor"))
-		socketWrite(t, ctx, upstream, socketEvent("response.completed", "successor"))
+		}}); err != nil {
+			t.Error(err)
+			return
+		}
+		if err := providerSocketWrite(ctx, upstream, socketEvent("response.created", "successor")); err != nil {
+			t.Error(err)
+			return
+		}
+		if err := providerSocketWrite(ctx, upstream, socketEvent("response.completed", "successor")); err != nil {
+			t.Error(err)
+			return
+		}
 		// There must be no fabricated response.create for the automatic successor.
-		continuation := socketRead(t, ctx, upstream)
+		continuation, err := providerSocketRead(ctx, upstream)
+		if err != nil {
+			t.Error(err)
+			return
+		}
 		if jsonString(continuation, "previous_response_id") != "successor" {
 			t.Errorf("continuation = %s", mustMarshalJSON(continuation))
 		}
@@ -91,7 +136,10 @@ func TestResponsesWebSocketSteeringAndAutomaticSuccessor(t *testing.T) {
 		if len(input) != 1 || jsonString(input[0], "content") != "next task" {
 			t.Errorf("cached/steering input was replayed: %s", continuation["input"])
 		}
-		socketWrite(t, ctx, upstream, socketEvent("response.completed", "last"))
+		if err := providerSocketWrite(ctx, upstream, socketEvent("response.completed", "last")); err != nil {
+			t.Error(err)
+			return
+		}
 		_, _, _ = upstream.Read(ctx)
 	}), nil, nil, codexAuthHeaders())
 	socketWrite(t, ctx, conn, map[string]any{"type": "response.create", "model": "gpt-test", "input": "initial"})
@@ -126,24 +174,54 @@ func TestResponsesWebSocketPendingAndPrewarm(t *testing.T) {
 			return
 		}
 		defer upstream.CloseNow()
-		prewarm := socketRead(t, ctx, upstream)
+		prewarm, err := providerSocketRead(ctx, upstream)
+		if err != nil {
+			t.Error(err)
+			return
+		}
 		if string(prewarm["generate"]) != "false" {
 			t.Errorf("prewarm = %s", mustMarshalJSON(prewarm))
 		}
-		socketWrite(t, ctx, upstream, socketEvent("response.completed", "warm"))
-		create := socketRead(t, ctx, upstream)
+		if err := providerSocketWrite(ctx, upstream, socketEvent("response.completed", "warm")); err != nil {
+			t.Error(err)
+			return
+		}
+		create, err := providerSocketRead(ctx, upstream)
+		if err != nil {
+			t.Error(err)
+			return
+		}
 		if jsonString(create, "previous_response_id") != "warm" || string(create["input"]) != "[]" || len(create["generate"]) != 0 {
 			t.Errorf("prewarm continuation = %s", mustMarshalJSON(create))
 		}
-		socketWrite(t, ctx, upstream, socketEvent("response.created", "parent"))
-		_ = socketRead(t, ctx, upstream)
-		socketWrite(t, ctx, upstream, map[string]any{"type": "response.steer.accepted", "steer": map[string]string{"id": "s1", "previous_response_id": "parent"}})
-		socketWrite(t, ctx, upstream, map[string]any{"type": "response.completed", "response": map[string]any{
+		if err := providerSocketWrite(ctx, upstream, socketEvent("response.created", "parent")); err != nil {
+			t.Error(err)
+			return
+		}
+		if _, err := providerSocketRead(ctx, upstream); err != nil {
+			t.Error(err)
+			return
+		}
+		if err := providerSocketWrite(ctx, upstream, map[string]any{"type": "response.steer.accepted", "steer": map[string]string{"id": "s1", "previous_response_id": "parent"}}); err != nil {
+			t.Error(err)
+			return
+		}
+		if err := providerSocketWrite(ctx, upstream, map[string]any{"type": "response.completed", "response": map[string]any{
 			"id": "parent", "status": "completed", "output": []any{map[string]string{"type": "function_call", "id": "tool", "call_id": "call", "name": "lookup", "arguments": "{}", "status": "completed"}},
-		}})
-		socketWrite(t, ctx, upstream, map[string]any{"type": "response.steer.pending", "steer": map[string]string{"id": "s1", "previous_response_id": "parent"},
-			"reason": "waiting_for_required_input", "required_input": []any{map[string]string{"type": "function_call_output", "call_id": "call", "name": "lookup"}}})
-		next := socketRead(t, ctx, upstream)
+		}}); err != nil {
+			t.Error(err)
+			return
+		}
+		if err := providerSocketWrite(ctx, upstream, map[string]any{"type": "response.steer.pending", "steer": map[string]string{"id": "s1", "previous_response_id": "parent"},
+			"reason": "waiting_for_required_input", "required_input": []any{map[string]string{"type": "function_call_output", "call_id": "call", "name": "lookup"}}}); err != nil {
+			t.Error(err)
+			return
+		}
+		next, err := providerSocketRead(ctx, upstream)
+		if err != nil {
+			t.Error(err)
+			return
+		}
 		if jsonString(next, "previous_response_id") != "parent" {
 			t.Errorf("continuation parent = %s", mustMarshalJSON(next))
 		}
@@ -152,8 +230,14 @@ func TestResponsesWebSocketPendingAndPrewarm(t *testing.T) {
 		if len(input) != 1 || jsonString(input[0], "call_id") != "call" || jsonString(input[0], "output") != "result" {
 			t.Errorf("pending steering replayed or tool input lost: %s", next["input"])
 		}
-		socketWrite(t, ctx, upstream, socketEvent("response.created", "successor"))
-		socketWrite(t, ctx, upstream, socketEvent("response.completed", "successor"))
+		if err := providerSocketWrite(ctx, upstream, socketEvent("response.created", "successor")); err != nil {
+			t.Error(err)
+			return
+		}
+		if err := providerSocketWrite(ctx, upstream, socketEvent("response.completed", "successor")); err != nil {
+			t.Error(err)
+			return
+		}
 		_, _, _ = upstream.Read(ctx)
 	}), nil, nil, codexAuthHeaders())
 	socketWrite(t, ctx, conn, map[string]any{"type": "response.create", "model": "gpt-test", "input": "initial", "generate": false})
@@ -270,8 +354,14 @@ func TestResponsesWebSocketEndpointCloseWaitsAndRejectsNewAdmission(t *testing.T
 		}
 		defer conn.CloseNow()
 		defer close(upstreamClosed)
-		_ = socketRead(t, ctx, conn)
-		socketWrite(t, ctx, conn, socketEvent("response.created", "active"))
+		if _, err := providerSocketRead(ctx, conn); err != nil {
+			t.Error(err)
+			return
+		}
+		if err := providerSocketWrite(ctx, conn, socketEvent("response.created", "active")); err != nil {
+			t.Error(err)
+			return
+		}
 		_, _, _ = conn.Read(ctx)
 	}))
 	defer provider.Close()

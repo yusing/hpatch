@@ -574,7 +574,11 @@ func executeRequest(
 	if err != nil {
 		return err
 	}
-	if exchange, ok := provider.(*webSocketExchange); !ok || !exchange.automatic {
+	if exchange, ok := provider.(*webSocketExchange); ok && exchange.automatic {
+		// An automatic successor has no request on either wire. Record that
+		// explicitly so CTP capture can distinguish it from missing evidence.
+		capturer.ObserveNativeRequest(ctx, nil)
+	} else {
 		capturer.ObserveNativeRequest(ctx, nativeWire)
 	}
 	var forwardBody []byte
